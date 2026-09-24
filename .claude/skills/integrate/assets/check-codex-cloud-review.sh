@@ -12,13 +12,41 @@
 #   13 escalate (attempt 2 timed out)
 #   14 PR no longer open — GitHub answered and the PR is MERGED or CLOSED;
 #      terminal for the whole shepherd stage, never a wait-and-retry
+#   15 quota exhausted — the reviewer answered that it will NOT review this
+#      head: the finder replied to the trigger that its code-review usage
+#      limit is spent (harmon-devkit#573). Terminal non-result, never clean
+#      and never findings. Stop and report the blocker, naming the reset time
+#      where the reply carried one. Both `reserve --attempt 2` AND a fresh
+#      `--attempt 1` on the same head are refused — the one bounded
+#      re-trigger must not be spent on a reviewer that already said no, and
+#      there is deliberately no second same-head reservation route. So this
+#      head is not reviewable through this helper again: push a new commit,
+#      or have an operator remove this state file. A safe recovery route is
+#      carried in #1115.
+#   16 transient read — an evidence READ failed (harmon-devkit#508). Distinct
+#      from 12/13, which mean the reviewer's window elapsed with no verdict:
+#      nothing here says anything about the reviewer, so the caller retries
+#      the READ rather than the reviewer cycle, and a gate maps it to
+#      indeterminate-with-reason rather than to a not-clean failure.
+#   17 not carried — `carry` only (harmon-init#752). The previously reviewed
+#      clean verdict could not be shown to attest this head, so a fresh cycle
+#      is required: reserve and trigger exactly as before. A normal negative
+#      answer, never an error, and every fail-closed path in `carry` lands
+#      here with its reason rather than on 2.
 #   2  indeterminate — malformed, changed head, usage error, or a
 #      current-head verdict whose shape cannot be classified
 #
-# `settle` records the disposition of a badged finding that lives OUTSIDE an
+# 15, 16 and 17 are ADDITIONS: 0/10/11/12/13/14/2 keep their exact meanings, so
+# a caller pinned to the older contract still reads every code it knew — and 17
+# is reachable only from a subcommand that contract has never called.
+#
+# `settle` records the disposition of a finding that lives OUTSIDE an
 # inline thread — a top-level conversation comment or a review body — because
 # those two surfaces carry no reply linkage, so the in-thread adjudication path
 # can never reach them and `check` would report `findings` for them forever.
+# Its domain is everything `check` blocks on (`verdict_class == "findings"`),
+# not only badged bodies: a body misread as a finding must stay answerable, or
+# the misread strands the head instead of costing one recorded disposition.
 #
 # `reserve` creates the state a cycle runs on; `reap` is the other half of that
 # lifecycle. Nothing else removes a state file — a shepherded PR is still open
@@ -34,9 +62,13 @@ usage() {
     cat >&2 <<'EOF'
 Usage:
   check-codex-cloud-review.sh reserve --state FILE --repo OWNER/REPO --pr N --head SHA --attempt 1|2 [--finder SLUG]
+                                     [--previous-head SHA] [--run-id ID]
+                                     [--integration-cap N] [--integration-exempt-cap N]
   check-codex-cloud-review.sh attach --state FILE --trigger-id N
   check-codex-cloud-review.sh attach --state FILE --requested-at ISO8601
+  check-codex-cloud-review.sh carry --state FILE --head SHA [--run-id ID] [--repo-dir DIR]
   check-codex-cloud-review.sh check --state FILE [--actor-id N] [--actor-login LOGIN] [--timeout-min N] [--now ISO8601]
+                                   [--run-id ID] [--repo-dir DIR]
   check-codex-cloud-review.sh settle --state FILE --actor-id N --surface comment|review --id N --disposition declined|filed --note TEXT [--covers N] [--now ISO8601]
   check-codex-cloud-review.sh show --state FILE
   check-codex-cloud-review.sh reap --root DIR [--budget-sec N]
@@ -44,12 +76,85 @@ Usage:
 When --finder is given on reserve, actor identity and verdict classification
 are driven by the finder's profile in the trusted registry (C1-C3).
 
+`reserve` classifies each new cycle as charged or exempt against the two
+ceilings (harmon-init#1326) and keeps the running totals in state as
+`charged_cycles` / `exempt_cycles`. A cycle is exempt only when the previously
+reviewed head is an ancestor of this one AND the new commits changed no file
+the PR has under review — a base merge that re-reads identical code.
+Everything else, including anything that cannot be established, is charged.
+
+The previously reviewed head is taken from PERSISTED STATE, never from a
+caller: a caller free to name any SHA could otherwise skip past a fix commit
+and manufacture an exemption. `--previous-head` is therefore optional and
+purely confirmatory — supply it to have the reservation refuse rather than
+proceed if your idea of the last reviewed head disagrees with the record.
+
+--integration-cap and --integration-exempt-cap make `reserve` REFUSE a cycle
+that would exceed the ceiling it belongs to. A ceiling checked only by the
+readiness gate is checked after the review has already run, since the trigger
+is posted immediately after the reservation; this is the last point at which
+the spend can still be prevented. Omit them and the reservation proceeds, with
+the gate as the only backstop.
+
+--run-id scopes the totals to one run. The state file outlives the run that
+wrote it, so a second run against the same PR would otherwise inherit the
+first run's spend; naming a different run starts the totals again.
+
+`carry` (harmon-init#752) answers one question before a cycle is reserved:
+does the previously reviewed clean verdict still attest THIS head? It does
+when the head advanced by a base merge that left the reviewed change
+byte-identical — the case a fresh cycle re-attests the same bytes at the cost
+of a full reviewer window. Identity is a digest of the PR's own three-dot diff
+TEXT, computed twice from IMMUTABLE commit SHAs: once for the reviewed head
+against the base recorded for its verdict, once for the new head against the
+base GitHub reports now. Equal ids carry the verdict; anything else, including
+anything that cannot be established, requires a fresh cycle. It reads local git
+only — no reconstruction of what a reviewer saw from the API — and writes no
+GitHub state. (It is deliberately NOT `git patch-id`, which ignores hunk
+offsets and collides on a relocated identical edit; see `change_identity`.)
+
+A carry does not move the cycle. The state's head, trigger, request time and
+settlements all stay exactly where they were; the record simply adds that this
+cycle's verdict ALSO attests a later head. Everything downstream therefore
+keeps working on the cycle it always worked on: `settle` still binds to the
+commit a reviewer read, and `check` still runs the one evidence scan it always
+ran — against that same cycle — so a finding landing on the reviewed head
+after the carry blocks exactly as it would have without one. What the carry
+removes is the second REVIEW, never the second look. Before reading evidence
+`check` validates only the carry record's SHAPE; it re-derives the identity in
+`emit`, immediately before any verdict, so no interval exists between the proof
+and the answer it licenses.
+
+  exit 0   carried: state now attests this head, no cycle was spent, and
+           `check` will re-derive the same proof rather than trust the record.
+  exit 17  not carried: reserve and trigger a cycle exactly as before. This is
+           a normal negative answer, not an error, and every fail-closed path
+           that leaves the PR open lands here with its reason.
+  exit 14  the PR is MERGED or CLOSED: the stage is over. Stop — do not
+           reserve, trigger, or poll.
+  exit 2   usage error or unreadable state.
+
+--repo-dir names the checkout `carry` (and a later `check` re-verifying it)
+computes identities in; it defaults to the working directory. The identity is
+taken between named commits and never against the index or the working tree,
+so an unstaged edit cannot influence it.
+
 `check` exits 0 clean, 10 findings, 11 pending, 12 retry, 13 escalate,
-14 PR no longer open, 2 indeterminate. Exit 14 means GitHub answered and
+14 PR no longer open, 15 quota exhausted, 16 transient read,
+2 indeterminate. Exit 15 is terminal for the HEAD, not just the cycle: no
+same-head reservation is accepted afterwards, so recovery is a new commit or
+an operator removing the state file (see #1115). Exit 14 means GitHub answered and
 the PR is MERGED or CLOSED: terminal for the whole shepherd stage — stop,
-never wait, re-run, or re-trigger. A PR fetch that FAILS is still the
-transient bounded-wait path (pending/retry/escalate); only a non-open
-answer is 14. `reserve` and `attach` refuse a non-open PR outright,
+never wait, re-run, or re-trigger. A PR fetch that FAILS is exit 16, a
+transient READ failure — retry the read, not the reviewer cycle; only a
+non-open answer is 14. Exit 15 means the finder answered that its review
+quota is spent. It is terminal for the HEAD, not just the cycle: `reserve
+--attempt 2` is refused, and so is a fresh `--attempt 1` on the same head, so
+nothing re-reviews that commit through this helper. Recover by pushing a new
+commit, or have an operator remove the cycle state file
+(`git rev-parse --git-path integrate-codex/<owner>/<repo>/<n>.json`).
+A safe recovery route is carried in #1115.
+`reserve` and `attach` refuse a non-open PR outright,
 exit 2 with a reason naming the reported state.
 
 State locks are never reclaimed automatically. On lock-held, inspect the
@@ -108,11 +213,43 @@ reap_lock=
 reap_budget_sec=60
 reap_deadline_epoch=
 finder_slug=
+previous_head=
+run_id=
+# harmon-init#752: the checkout `carry` computes patch identities in. Every
+# identity is taken between two named commits, so this directory supplies the
+# object database and nothing else — the index and the working tree are never
+# read.
+repo_dir=.
+integration_cap=
+integration_exempt_cap=
 requested_at_arg=
+# harmon-devkit#573: the finder's usage-limit reply, once `check` has seen it.
+# Empty until the comment surface has actually been fetched and scanned, which
+# is what keeps the pre-evidence failure paths behaving exactly as before.
+quota_comment_id=
+quota_detected_at=
+quota_reset_at=
+# harmon-devkit#655: whether the current attempt's trigger still carries the
+# finder's pending reaction (👀). Empty/0 until the reaction surface has been
+# fetched, for the same reason.
+pending_reaction_live=0
+# harmon-devkit#573: the reset time a usage-limit reply may carry. Since
+# challenge round 2 deleted the reset-time carve-out, NO CONTROL FLOW READS
+# THIS — it is context for the human reading the blocker and nothing else, and
+# it must stay that way: the head accepts no further reservation whatever the
+# reset time says, so branching on it again would rebuild exactly the
+# carve-out that round 2 removed (findings `challenge-r2-codex-adversarial-5`
+# and `-6`). It is still extracted and persisted because "the quota resets at
+# X" is genuinely useful to whoever decides when a fresh push is worth making.
+# The recovery route itself is carried in #1115.
+# harmon-devkit#655: the hard ceiling a live pending reaction may extend the
+# attempt window to, measured from the trigger. A reviewer that is visibly
+# working is not absent, but it cannot hold a PR open forever either.
+eyes_ceiling_min=30
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
-    --state | --root | --repo | --pr | --head | --attempt | --trigger-id | --actor-id | --actor-login | --timeout-min | --budget-sec | --now | --surface | --id | --disposition | --note | --covers | --finder | --requested-at)
+    --state | --root | --repo | --pr | --head | --attempt | --trigger-id | --actor-id | --actor-login | --timeout-min | --budget-sec | --now | --surface | --id | --disposition | --note | --covers | --finder | --requested-at | --previous-head | --run-id | --integration-cap | --integration-exempt-cap | --repo-dir)
         [ "$#" -ge 2 ] || usage
         case "$1" in
         --state) state_file=$2 ;;
@@ -125,6 +262,11 @@ while [ "$#" -gt 0 ]; do
         --actor-id) actor_id=$2 ;;
         --actor-login) actor_login=$2 ;;
         --finder) finder_slug=$2 ;;
+        --previous-head) previous_head=$2 ;;
+        --run-id) run_id=$2 ;;
+        --repo-dir) repo_dir=$2 ;;
+        --integration-cap) integration_cap=$2 ;;
+        --integration-exempt-cap) integration_exempt_cap=$2 ;;
         --requested-at) requested_at_arg=$2 ;;
         --timeout-min)
             timeout_min=$2
@@ -159,6 +301,12 @@ valid_uint() {
     grep -Eq '^[1-9][0-9]*$' <<<"$1"
 }
 
+# A cycle counter is legitimately 0 before anything is spent, so it needs the
+# zero-permitting form rather than valid_uint's positive one.
+valid_uint_or_zero() {
+    grep -Eq '^(0|[1-9][0-9]*)$' <<<"$1"
+}
+
 valid_sha() {
     grep -Eq '^[0-9a-fA-F]{40}$' <<<"$1"
 }
@@ -172,6 +320,28 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 valid_time() {
     grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' <<<"$1"
 }
+
+# Challenge round 1, item A (2026-09-20, confirmed P1): `--now` is validated
+# HERE, once, before any command runs — not inside the functions that consume
+# it. Those validations happen only after the first GitHub read, and one of
+# them (`clock_epoch`, for the harmon-devkit#737 fetch budget) is called from
+# inside a command substitution, where `die` kills the subshell rather than the
+# script: `current_epoch=$(clock_epoch) || return 1` then made `run_gh` fail,
+# `provider_head` fail, and the caller report **exit 16** (a transient read).
+# A permanent usage error therefore rendered as the one exit class with no
+# escalation path — the gate repeats the read and the integrator poll loop
+# treats it like `11`, so a malformed flag would be retried forever instead of
+# being reported.
+#
+# `injected_now_epoch` is resolved once here too, so no consumer needs to shell
+# out per call and no arithmetic path can fail mid-read. A parse failure at
+# this point is a startup `die` (exit 2), which is what a bad argument deserves.
+injected_now_epoch=
+if [ -n "$now" ]; then
+    valid_time "$now" || die "--now must be an ISO-8601 UTC second"
+    injected_now_epoch=$(jq -nr --arg value "$now" '$value | fromdateiso8601') ||
+        die "--now is not a resolvable instant: $now"
+fi
 
 # harmon-devkit#223: the timeout governing an attempt cycle used to live only
 # in whatever `--timeout-min` a caller happened to pass, so `check
@@ -271,6 +441,32 @@ now_utc() {
     fi
 }
 
+# harmon-devkit#737 defect 2: the per-call fetch budget is computed against
+# the cycle's reservation, and it used the real wall clock for "now" while
+# every other time comparison in this helper honours `--now`. After a long
+# adjudication between `attach` and `check`, wall clock had already passed
+# the window, so `run_gh` clamped every request to one second and a review
+# that was unchanged and fully answered read as absent — `retry`/`pending`
+# for evidence that was sitting right there. The lane's workaround was to
+# reserve attempt 2 purely to buy a fresh budget, which posted a redundant
+# trigger.
+#
+# One clock for the whole invocation is the fix: when `--now` is supplied it
+# is authoritative for the budget exactly as it already is for `bounded_wait`
+# and `require_latest_window_elapsed`, so an injected clock makes the budget
+# reproducible instead of decaying in real time. Without `--now` this is the
+# unchanged `date -u '+%s'`.
+# Called from inside a command substitution, so it must never `die`: item A
+# above resolved and validated the injected clock at startup precisely so this
+# function is a pure echo with no failure mode of its own.
+clock_epoch() {
+    if [ -n "$injected_now_epoch" ]; then
+        printf '%s' "$injected_now_epoch"
+    else
+        date -u '+%s'
+    fi
+}
+
 # A disposition is recorded against the exact text it answered, so an edited
 # finding stops being settled. The body is hashed in its JSON-ENCODED form:
 # command substitution strips trailing newlines, and the encoded string keeps
@@ -297,8 +493,10 @@ content_fingerprint() {
 #   0 — the PR is OPEN; its headRefOid is on stdout.
 #   3 — GitHub answered and the PR is NOT open; the reported state
 #       (MERGED/CLOSED) is on stdout. Terminal, never a wait-and-retry.
-#   1 — the fetch failed or returned an unusable payload. Transient;
-#       callers route this to their bounded wait exactly as before.
+#   1 — the fetch failed or returned an unusable payload. Transient; `check`
+#       routes this to `transient_read_failure` (exit 16, harmon-devkit#508),
+#       `reserve`/`attach` still `die`. What it must never become is a
+#       window-elapsed retry: the read said nothing about the reviewer.
 # Always called via command substitution, so stdout carries the head (rc 0)
 # or the non-open state (rc 3) and nothing leaks into the caller's scope.
 provider_head() {
@@ -323,7 +521,7 @@ run_gh() {
         anchor_epoch=$(jq -nr \
             --arg value "$window_anchor" '$value | fromdateiso8601') ||
             return 1
-        current_epoch=$(date -u '+%s')
+        current_epoch=$(clock_epoch) || return 1
         remaining=$((anchor_epoch + timeout_min * 60 - current_epoch))
         if [ "$remaining" -le 0 ]; then
             # A post-window check still owes one terminal evidence sweep. Give
@@ -334,7 +532,18 @@ run_gh() {
                 call_timeout=1
             fi
         elif [ "$remaining" -lt "$call_timeout" ]; then
-            call_timeout=$remaining
+            # Challenge round 3, finding `challenge-r3-codex-adversarial-9`
+            # (confirmed P2): the carve-out above covered `remaining <= 0` but
+            # not the last minute before it, so a `check` landing inside the
+            # final 59 seconds of its window clamped every read to a
+            # sub-second budget and reported readable evidence absent — the
+            # same failure the carve-out exists to prevent, one minute
+            # earlier. `check` keeps its full budget on both sides of the
+            # boundary now; the clamp still applies to every other command,
+            # which has no terminal sweep to owe.
+            if [ "$command_name" != "check" ]; then
+                call_timeout=$remaining
+            fi
         fi
     elif [ -n "${reap_deadline_epoch:-}" ]; then
         # A sweep has no reservation to budget against, so without this every
@@ -348,6 +557,230 @@ run_gh() {
         fi
     fi
     "$timeout_bin" -k 1 "$call_timeout" gh "$@"
+}
+
+# harmon-init#752 — the change identity a carried verdict rests on.
+#
+# The PR's reviewed artifact is its three-dot diff (`base...head`), which is
+# exactly what GitHub renders and what the cloud reviewer reads. Two heads
+# whose three-dot diffs are the same text ARE the same change, so a verdict
+# about one is a verdict about the other. That is the whole carry-forward
+# argument, and it is why the mechanism is local git rather than an API
+# reconstruction of what the reviewer saw: both inputs are immutable commit
+# SHAs, and git answers from the object database.
+#
+# The identity is a digest of the CANONICAL DIFF TEXT, not `git patch-id`.
+#
+# Challenge round 1, finding `challenge-r1-codex-adversarial-1` (confirmed P1,
+# REPRODUCED): `git patch-id` deliberately ignores hunk offsets, so it collides
+# on a hunk RELOCATED between two regions whose context lines are identical —
+# which is exactly what a conflict resolution can do to a reviewed edit. A
+# fixture with two byte-identical stanzas produces two different trees and one
+# patch id:
+#
+#     first-anchor  id: 0ebecfe39dfcd94a8b1e857f41c8bdd9d6d08cf3
+#     second-anchor id: 0ebecfe39dfcd94a8b1e857f41c8bdd9d6d08cf3   trees equal? NO
+#
+# `--verbatim` does not help: it governs whitespace, not offsets. Nor does
+# `--full-index`, which the earlier design leaned on — the two `index` lines
+# above differ and the id is the same, so patch-id is not hashing them. The
+# fix is not a better patch-id flag; it is to stop discarding information. The
+# diff text already IS the canonical statement of the change, `@@` headers
+# included, so hashing it verbatim is both simpler and strictly stronger.
+#
+# What the flags buy, none of them incidental:
+#
+#   `--unified=3`, `--no-renames`, `-c diff.algorithm=myers`,
+#   `-c diff.indentHeuristic=true`, `-c diff.noprefix=false`,
+#   `-c diff.mnemonicPrefix=false`, `-c diff.relative=false`,
+#   `-c core.quotePath=true`, `-c diff.srcPrefix=a/`, `-c diff.dstPrefix=b/`,
+#   `-c diff.interHunkContext=0`, `-c diff.suppressBlankEmpty=false`,
+#   `-O/dev/null` — the knobs that make the same two trees render as different
+#   text, pinned because this value is recorded once and re-derived later,
+#   possibly in another checkout. Unpinned, drift produces a REFUSAL rather
+#   than a false carry, but a refusal costs the cycle the mechanism exists to
+#   save and misreports an unchanged change as moved.
+#
+#   Integration cycle 3 (claude), finding `integration-r3-claude-1` (confirmed
+#   P2, REPRODUCED): this comment called the list exhaustive and it was not.
+#   `diff.srcPrefix`/`diff.dstPrefix` survive `diff.noprefix=false`,
+#   `diff.interHunkContext` fuses hunks and rewrites the `@@` headers,
+#   `diff.suppressBlankEmpty` has no flag at all, and `diff.orderFile` reorders
+#   the files (overridden by `-O/dev/null`; an EMPTY `diff.orderFile` makes git
+#   fail outright). Each changed the hashed text on git 2.55; each is restored
+#   by its pin; and all five pins are byte-identical to default output, so no
+#   existing change id moves and `algorithm` keeps its `v1`.
+#
+#   `GIT_ATTR_SOURCE=<empty tree>`, `-c core.attributesFile=/dev/null` —
+#   integration cycle 5 (claude), finding `integration-r5-claude-1`: that list
+#   was closed over CONFIG KEYS, and attributes are the other input to
+#   rendering. They are read from the WORKING TREE, not the commits diffed, so
+#   the identity of two immutable SHAs depended on what was checked out.
+#   Sourcing attributes from the empty tree removes both that and any
+#   branch-shipped `.gitattributes`; `info/attributes` is refused above. On a
+#   clean config this is byte-identical to default output. A git older than
+#   2.40 ignores the variable: drift there costs a refusal, never a false carry.
+#   That is the whole claim — closed over the config keys and attribute sources
+#   git documents, not over every future one.
+#
+#   The `sed` that strips everything after a hunk header's closing `@@` —
+#   integration cycle 5 (codex-cloud, attempt 2), finding
+#   `integration-r5-codex-cloud-1` (confirmed P2, REPRODUCED): the text after
+#   `@@ -a,b +c,d @@` is funcname CONTEXT, chosen by a driver's
+#   `diff.<driver>.xfuncname`. Sourcing attributes from the empty tree removes
+#   every named driver, but a file with none still uses git's built-in
+#   default, and `diff.default.xfuncname` in config still rewrote its headers
+#   (reproduced: `@@ … @@ body1` vs `@@ … @@ FUNC main`). No flag disables it,
+#   so the representation drops it. Nothing about the change is lost: the
+#   offsets, the context lines, and every changed line are kept, and funcname
+#   is display text derived from the pre-image. Only a hunk header can start
+#   `@@ -` — content lines carry a ` `/`+`/`-` prefix and binary-patch lines
+#   a length letter. This moves the bytes `v1` hashes for any hunk with
+#   funcname text; no release has shipped `v1`, so its definition is fixed
+#   here rather than versioned.
+#
+#   `--no-ext-diff`, `--no-textconv` — a branch can ship `.gitattributes` and
+#   the repository can carry config that routes a file through an external
+#   diff driver or a textconv filter. Either would let branch-controlled code
+#   decide what the "change" looks like, which is a trust boundary this must
+#   not cross. Both are disabled.
+#
+#   `--binary`, `--full-index` — a binary edit must be visible rather than
+#   collapsing to the constant text "Binary files ... differ".
+#
+#   `--ignore-submodules=none` — a submodule pointer move is a change to the
+#   reviewed tree, and the default can hide it.
+#
+#   `--submodule=short` — integration cycle 3, finding
+#   `integration-r3-codex-cloud-3` (confirmed P2, REPRODUCED): `diff.submodule`
+#   is a display preference `--full-index` does not override. Under `log` a
+#   pointer move renders as `Submodule sub 1111111...2222222`, seven hex digits
+#   of each side, so two DIFFERENT pointer moves sharing those prefixes hashed
+#   identically and a changed submodule inherited the earlier clean verdict.
+#   `short` is the one format that prints both full gitlink IDs.
+#
+#   `--no-replace-objects` — challenge round 1, finding
+#   `challenge-r1-codex-adversarial-5` (confirmed P2): `refs/replace` entries
+#   are applied transparently by `cat-file`, `merge-base`, and `diff`, so a
+#   checkout carrying one can make an immutable SHA resolve to a synthetic
+#   commit — and both the carry and the later re-derivation would reproduce the
+#   same synthetic proof. The immutability the whole argument rests on is a
+#   property of the object database, so the one feature that overrides it is
+#   turned off for every command in this path, and the deprecated grafts file
+#   is refused outright since no flag disables it.
+#
+# Sets change_identity_value on success; change_identity_error and a non-zero
+# return otherwise. Every failure is a refusal to prove identity, never a
+# claim that the change differs — callers charge a fresh cycle on both.
+change_identity() {
+    ci_base=$1
+    ci_head=$2
+    change_identity_value=
+    change_identity_error=
+    if ! command -v git >/dev/null 2>&1; then
+        change_identity_error="git is required to establish a change identity"
+        return 1
+    fi
+    if ! git -C "$repo_dir" rev-parse --git-dir >/dev/null 2>&1; then
+        change_identity_error="--repo-dir $repo_dir is not a git checkout, so no change identity can be established"
+        return 1
+    fi
+    # `--no-replace-objects` covers `refs/replace`. Grafts are the older,
+    # deprecated form of the same override and no command-line flag disables
+    # them, so their presence is a refusal rather than something to work
+    # around.
+    #
+    # Integration cycle 1, finding `integration-r1-codex-cloud-2` (confirmed
+    # P2): the path was built from `--git-dir`, which in a LINKED WORKTREE is
+    # `.git/worktrees/<name>` — while grafts live in the COMMON directory and
+    # git honours them from there. Every agent worktree in this repo is a
+    # linked one, so the check was looking in the one place the file never is.
+    #
+    # Integration cycle 2, finding `integration-r2-claude-1` (confirmed P1,
+    # REPRODUCED): the FIX for that was itself inoperative. `--git-path`
+    # prints a path relative to the git process's cwd, and in a plain
+    # repository that is `.git/info/grafts` — while the `[ -e ]` that follows
+    # is evaluated by the SHELL, whose cwd is not `$repo_dir`. Measured with a
+    # planted graft and a foreign cwd: MISSED. The linked-worktree fixture
+    # passed only because that case happens to return an absolute path — it
+    # passed for a reason that does not generalize, exactly like the fixture it
+    # replaced. `--path-format=absolute` makes the answer independent of who is
+    # asking.
+    #
+    # Same clause, second half: a `rev-parse` that FAILS used to clear the
+    # variable and skip the check, which is a fail-OPEN inside a function whose
+    # contract is that every failure is a refusal. It refuses now.
+    if ! ci_grafts=$(git -C "$repo_dir" rev-parse --path-format=absolute \
+        --git-path info/grafts 2>/dev/null) || [ -z "$ci_grafts" ]; then
+        change_identity_error="cannot resolve where $repo_dir keeps info/grafts, so it cannot be shown that commit history is not overridden"
+        return 1
+    fi
+    if [ -e "$ci_grafts" ]; then
+        change_identity_error="$ci_grafts exists, so commit history in this checkout is overridden and no SHA is authoritative"
+        return 1
+    fi
+    # Integration cycle 5 (claude), finding `integration-r5-claude-1`
+    # (confirmed P2, REPRODUCED): git ATTRIBUTES change how the same two trees
+    # render (`-diff` turns a text hunk into a binary patch; a `diff=` driver's
+    # xfuncname rewrites the `@@` context). The per-directory `.gitattributes`
+    # and `core.attributesFile` are neutralized in the command below. This one
+    # is not: `$GIT_DIR/info/attributes` is local, unversioned, and outranks
+    # every other source — the same shape as `info/grafts` above, so it gets the
+    # same answer.
+    if ! ci_attributes=$(git -C "$repo_dir" rev-parse --path-format=absolute \
+        --git-path info/attributes 2>/dev/null) || [ -z "$ci_attributes" ]; then
+        change_identity_error="cannot resolve where $repo_dir keeps info/attributes, so it cannot be shown that diff rendering is not overridden"
+        return 1
+    fi
+    if [ -s "$ci_attributes" ]; then
+        change_identity_error="$ci_attributes is not empty, so this checkout overrides how diffs render and the change identity would depend on it"
+        return 1
+    fi
+    ci_empty_tree=$(git -C "$repo_dir" hash-object -t tree /dev/null) || {
+        change_identity_error="cannot compute the empty tree for $repo_dir's object format"
+        return 1
+    }
+    for ci_object in "$ci_base" "$ci_head"; do
+        if ! git -C "$repo_dir" --no-replace-objects cat-file -e "${ci_object}^{commit}" 2>/dev/null; then
+            change_identity_error="commit $ci_object is not in the object database at $repo_dir; fetch it, or run from the checkout the PR was pushed from"
+            return 1
+        fi
+    done
+    ci_output=$(GIT_ATTR_SOURCE=$ci_empty_tree git -C "$repo_dir" --no-replace-objects \
+        -c core.attributesFile=/dev/null \
+        -c core.quotePath=true \
+        -c diff.noprefix=false \
+        -c diff.mnemonicPrefix=false \
+        -c diff.relative=false \
+        -c diff.algorithm=myers \
+        -c diff.indentHeuristic=true \
+        -c diff.srcPrefix=a/ \
+        -c diff.dstPrefix=b/ \
+        -c diff.interHunkContext=0 \
+        -c diff.suppressBlankEmpty=false \
+        diff --no-color --no-ext-diff --no-textconv --no-renames --binary \
+        --full-index --unified=3 --ignore-submodules=none --submodule=short \
+        -O/dev/null "${ci_base}...${ci_head}" |
+        LC_ALL=C sed -E 's/^(@@ -[0-9]+(,[0-9]+)? \+[0-9]+(,[0-9]+)? @@).*$/\1/' |
+        git -C "$repo_dir" hash-object -t blob --stdin) || {
+        change_identity_error="cannot compute a change identity for ${ci_base}...${ci_head}"
+        return 1
+    }
+    # An EMPTY diff hashes to the empty blob rather than to nothing, so unlike
+    # `git patch-id` it does not produce an empty string that two empty patches
+    # would compare equal on. It is still refused: a PR whose diff has become
+    # empty is abandoned, not reviewed clean (AGENTS.md, "one endpoint is worth
+    # knowing"), and carrying a verdict onto no change at all attests nothing.
+    if [ "$ci_output" = "$(printf '' | git -C "$repo_dir" hash-object -t blob --stdin)" ]; then
+        change_identity_error="the diff ${ci_base}...${ci_head} is empty, so it has no change to identify"
+        return 1
+    fi
+    if ! valid_sha "$ci_output"; then
+        change_identity_error="git returned an unusable identity for ${ci_base}...${ci_head}"
+        return 1
+    fi
+    change_identity_value=$ci_output
+    return 0
 }
 
 write_state() {
@@ -372,6 +805,16 @@ write_state() {
 # record — it is no record at all, and honouring one would let `check` report
 # clean with nothing behind it. Corrupted or hand-reconstructed state must
 # reach the malformed-state refusal instead.
+#
+# harmon-init#752 added the `carry` record — a statement that this cycle's
+# verdict also attests a LATER head, proved by change identity. It adds no
+# phase and moves no head: the cycle is the same cycle, so `settle`, the
+# evidence scan, and the receipt all keep working on exactly the fields they
+# already used. The record's shape is validated here with everything else
+# `check` would otherwise have to trust, because a claim missing any field the
+# proof is re-derived from is malformed state rather than a weaker proof. It
+# stays version 2 because the fields are additive — a reader that has never
+# heard of them sees a state file it can still parse.
 #
 # Version 2 added `settled`. A version-1 file is read as if it were empty and
 # is REWRITTEN as version 2 by the next command that writes it, so an in-flight
@@ -404,11 +847,27 @@ read_state() {
       (.head | type == "string") and
       (.attempt == 1 or .attempt == 2) and
       (.phase == "reserved" or .phase == "attached") and
+      (.last_reviewed_verdict == null or .last_reviewed_verdict == "clean" or
+        .last_reviewed_verdict == "findings") and
+      (.carry == null or ((.carry | type == "object") and
+        (.carry.attests_head | type == "string") and
+        (.carry.from_head | type == "string") and
+        (.carry.base_sha | type == "string") and
+        (.carry.change_id | type == "string") and
+        (.carry.algorithm == "git-diff-digest/three-dot/v1") and
+        (.carry.generation | type == "number" and . >= 1 and floor == .) and
+        (.carry.carried_at | type == "string"))) and
       (.requires_full_window == null or
         (.requires_full_window | type == "boolean")) and
       (.previous_trigger_comment_id == null or
         (.previous_trigger_comment_id | type == "number" and . > 0)) and
+      (.first_trigger_comment_id == null or
+        (.first_trigger_comment_id | type == "number" and . > 0)) and
       (.timeout_min == null or (.timeout_min | type == "number")) and
+      (.quota_exhausted_at == null or (.quota_exhausted_at | type == "string")) and
+      (.quota_reset_at == null or (.quota_reset_at | type == "string")) and
+      (.quota_comment_id == null or
+        (.quota_comment_id | type == "number" and . > 0)) and
       (.boundary_source == null or
         (.boundary_source == "check-suite" or .boundary_source == "commit-date")) and
       (.commit_date_boundary == null or (.commit_date_boundary | type == "string")) and
@@ -468,22 +927,293 @@ reap_record() {
         }' >>"$reap_entries"
 }
 
+# `$5`, when given, is a JSON OBJECT of extra fields merged into the result —
+# additive only, so every existing key keeps its shape and a caller pinned to
+# the older output reads exactly what it did before. harmon-devkit#737 uses it
+# to enumerate every unanswered inline thread alongside the `findings` verdict,
+# because one accepted review id cannot name findings that came from two.
+# Codex cloud cycle 3, P1 (confirmed): classification used the last RESERVED
+# head as "the last reviewed head". A cycle that never produced a verdict —
+# pending, transient, quota-blocked, escalated — still left its head there, so
+# the next reservation could exempt the first request that would actually
+# produce a review. This PR demonstrated it: two cycles escalated with only a
+# 👀, and their heads would have counted as reviewed.
+#
+# The marker is written HERE rather than at each terminal emit, because there
+# are six of those and this change has already shipped that mistake four times:
+# a fact recorded in one place cannot be forgotten at a call site.
+#
+# harmon-init#752: the marker also records WHICH verdict landed. The exemption
+# classifier only ever needed "this head was reviewed", but a carried-forward
+# verdict is a claim that a specific CLEAN result still attests a later head,
+# so `clean` has to be distinguishable from `findings` here — nothing else on
+# the state file distinguishes them.
+mark_terminally_reviewed() {
+    reviewed_verdict=${1:-}
+    [ -n "${state_file:-}" ] && [ -f "$state_file" ] || return 0
+    [ -n "${state_head:-}" ] || return 0
+    # harmon-init#752: once a cycle has carried, re-corroborating the reviewed
+    # base against the LIVE base — which the base merge has moved — resolves it
+    # to unset and strands every later carry and every later exemption.
+    #
+    # Integration cycle 2, finding `integration-r2-claude-2` (confirmed P2),
+    # with the round-2 scaffolding checkpoint applied since this guard exists
+    # only because an earlier round added `.carry`. Disposition: IN SCOPE, but
+    # RESTRUCTURED — the guard was written as "skip the whole marker", which
+    # also suppressed the VERDICT CLASS, and that is the field `carry` gates
+    # on. A late `findings` on a carried cycle therefore left
+    # `last_reviewed_verdict` reading `clean`, and a further carry cited a
+    # clean verdict that had been contradicted — the exact fail-open the
+    # comment below it claims cannot arise.
+    #
+    # The guard now protects the one field that needs base corroboration and
+    # nothing else. The verdict class is a fact about THIS cycle's evidence and
+    # needs no base to be true, so it is always recorded.
+    carry_present=$(jq -r '.carry // empty' "$state_file" 2>/dev/null) || carry_present=
+    # Two reviewers pushed this from opposite sides and both were right.
+    #
+    # Codex (cycle 4): the base sampled at RESERVATION can be minutes stale by
+    # the time a verdict lands — if it advanced while polling, the review saw a
+    # newer base than state recorded.
+    # Greptile: the base sampled when the verdict is RECORDED can be newer than
+    # the one the review actually covered, because the base can advance between
+    # the reviewer posting and this poll observing it.
+    #
+    # Neither sampling point is the base the review saw; GitHub gives us no
+    # field that is. So do not pick one — CORROBORATE. If the base is unchanged
+    # between reservation and verdict, that is the base reviewed, and it is
+    # recorded. If it moved, what the review covered is genuinely unknown, and
+    # per the governing invariant the proof is left UNSET so the next cycle
+    # charges rather than trusting either sample.
+    # Integration cycle 3 (claude), nit (accepted): a carrying cycle discards
+    # this sample below, so it does not spend the API read on one.
+    reviewed_base_sha=
+    if [ -z "$carry_present" ]; then
+        reviewed_base_sha=$(run_gh api "repos/${state_repo:-}/pulls/${state_pr:-}" 2>/dev/null |
+            jq -r '.base.sha // empty' 2>/dev/null) || reviewed_base_sha=
+        valid_sha "$reviewed_base_sha" || reviewed_base_sha=
+        reserved_base_sha=$(jq -r '.base_sha // empty' "$state_file" 2>/dev/null) || reserved_base_sha=
+        [ -n "$reviewed_base_sha" ] && [ "$reviewed_base_sha" = "$reserved_base_sha" ] ||
+            reviewed_base_sha=
+    fi
+    jq --arg h "$state_head" --arg b "$reviewed_base_sha" \
+        --arg v "$reviewed_verdict" --arg carrying "$carry_present" \
+        '.last_reviewed_head = $h
+        | .last_reviewed_base_sha =
+            (if $carrying != "" then .last_reviewed_base_sha
+             elif $b == "" then null else $b end)
+        | .last_reviewed_verdict = (if $v == "" then null else $v end)' "$state_file" \
+        >"${state_file}.reviewed" 2>/dev/null &&
+        mv "${state_file}.reviewed" "$state_file" ||
+        rm -f "${state_file}.reviewed"
+}
+
+# harmon-init#752 — does this cycle still attest the head the PR is at?
+#
+# Challenge round 3, finding `challenge-r3-codex-adversarial-1` (confirmed P1):
+# the first version derived this once, up front, and then let a minutes-long
+# evidence scan run before emitting a verdict. Every liveness check in that
+# window compares the HEAD alone, so a PR retargeted to a different base — or a
+# base branch force-pushed — changes the three-dot diff under an unchanged head
+# and the verdict is about a diff that no longer exists. The identity is a
+# function of (base, head), and both have to still hold at the moment the
+# verdict is made.
+#
+# So it runs exactly once, immediately before the verdict, at the point that
+# dominates every clean and findings exit. A pending exit reports no verdict,
+# so it neither needs nor gets the proof. (Integration cycle 5 (claude),
+# finding `integration-r5-claude-3`: this sentence said "clean/findings/pending"
+# after `emit`'s hook became `clean | findings)` — the last of three sites.) Comparing the two fresh
+# identities to EACH OTHER is not enough on its own either: that would confirm
+# the change is self-consistent right now while saying nothing about whether it
+# is still the change the carry was proved over, so a state file edited to name
+# a different head would pass. Both fresh values are also compared against the
+# recorded one.
+#
+# Returns 0 when there is nothing to verify (this cycle carries nothing) or the
+# claim holds. Emits and exits otherwise — every failure is indeterminate,
+# never a weaker verdict.
+verify_carried_attestation() {
+    [ -n "${carry_attests:-}" ] || return 0
+    vca_payload=$(run_gh api "repos/$state_repo/pulls/$state_pr") || {
+        transient_read_failure "cannot read the PR base to re-derive what this cycle attests"
+    }
+    vca_live_head=$(jq -r '.head.sha // empty' <<<"$vca_payload" 2>/dev/null) || vca_live_head=
+    vca_live_base=$(jq -r '.base.sha // empty' <<<"$vca_payload" 2>/dev/null) || vca_live_base=
+    if ! valid_sha "$vca_live_base" || ! valid_sha "$vca_live_head"; then
+        emit indeterminate "the PR payload names no stable base and head, so what this cycle attests cannot be re-derived"
+        exit 2
+    fi
+    if [ "$vca_live_head" != "$carry_attests" ]; then
+        emit head-changed "this cycle attests $carry_attests but the PR is at $vca_live_head"
+        exit 2
+    fi
+    if ! command -v git >/dev/null 2>&1; then
+        emit indeterminate "git is required to re-derive what this cycle attests"
+        exit 2
+    fi
+    # Review round 2, finding `review-r2-codex-verification-1` (confirmed P2):
+    # this proved only that the REVIEWED head is an ancestor, while `carry`
+    # anchors every hop to the head it last attested as well. State that is
+    # repaired, restored from a backup, or otherwise altered could therefore
+    # pass `check` on a rewrite that `carry` itself refuses — the two sides of
+    # the same rule disagreeing. Both anchors, both places.
+    vca_anchors=$state_head
+    vca_from=$(jq -r '.carry.from_head // empty' "$state_file" 2>/dev/null) || vca_from=
+    [ -z "$vca_from" ] || [ "$vca_from" = "$state_head" ] ||
+        vca_anchors="$vca_anchors $vca_from"
+    for vca_anchor in $vca_anchors; do
+        if ! git -C "$repo_dir" --no-replace-objects merge-base --is-ancestor \
+            "$vca_anchor" "$carry_attests" 2>/dev/null; then
+            emit indeterminate "$vca_anchor is no longer an ancestor of $carry_attests (history was rewritten, or the commits are not in $repo_dir) — this cycle no longer attests it"
+            exit 2
+        fi
+    done
+    if ! change_identity "$carry_origin_base" "$state_head"; then
+        emit indeterminate "cannot re-derive the reviewed change's identity: $change_identity_error"
+        exit 2
+    fi
+    vca_origin_identity=$change_identity_value
+    if ! change_identity "$vca_live_base" "$carry_attests"; then
+        emit indeterminate "cannot re-derive the attested head's change identity: $change_identity_error"
+        exit 2
+    fi
+    if [ "$vca_origin_identity" != "$change_identity_value" ] ||
+        [ "$change_identity_value" != "$carry_recorded_identity" ]; then
+        emit indeterminate "this cycle no longer attests $carry_attests: the reviewed change is now $vca_origin_identity, that head's is $change_identity_value, and the carry recorded $carry_recorded_identity — reserve a fresh cycle"
+        exit 2
+    fi
+    # Review round 2, finding `review-r2-codex-verification-2` (confirmed P2):
+    # the (base, head) pair was read once and then hashed, so a retarget during
+    # the hashing itself would have been published as a verdict about the pair
+    # that no longer holds. Rounds 3 and 4 chased this interval by moving the
+    # check later each time, which is a regress with no end — so END it here
+    # instead: re-read the pair AFTER the hashing and require both unchanged.
+    # Nothing is derived after this point, only compared, so there is no later
+    # interval for a further round to find.
+    vca_final=$(run_gh api "repos/$state_repo/pulls/$state_pr") || {
+        transient_read_failure "cannot re-confirm the PR head and base after hashing"
+    }
+    if [ "$(jq -r '.head.sha // empty' <<<"$vca_final" 2>/dev/null)" != "$carry_attests" ] ||
+        [ "$(jq -r '.base.sha // empty' <<<"$vca_final" 2>/dev/null)" != "$vca_live_base" ]; then
+        emit indeterminate "the PR head or base moved while this cycle's attestation was being re-derived — the verdict would describe a change that is no longer the PR's; re-check rather than trusting it"
+        exit 2
+    fi
+    return 0
+}
+
 emit() {
     result=$1
     detail=$2
     surface=${3:-}
     accepted_id=${4:-}
+    extra=${5:-}
+    case "$result" in
+    clean | findings)
+        # harmon-init#752, challenge round 4, finding
+        # `challenge-r4-codex-adversarial-1` (confirmed P1): the attestation was
+        # verified at a fixed point in `check`, and rounds 3 and 4 each showed
+        # that point was not late enough — a retarget or base force-push during
+        # any later read (the PR-author fetch, a commit-prefix resolution)
+        # changes the three-dot diff under an unchanged head, and head-only
+        # liveness cannot see it. Moving the call one step later each round is a
+        # game with no end state, so it lives HERE instead: a verdict cannot be
+        # emitted without it, by construction, and there is no interval left to
+        # attack.
+        #
+        # No recursion is possible. `verify_carried_attestation` reports only
+        # `indeterminate`, `head-changed` and `transient-read`, none of which
+        # match this case, so its own emits pass straight through.
+        verify_carried_attestation
+        mark_terminally_reviewed "$result"
+        ;;
+    esac
+    # harmon-init#752: `head` stays the CYCLE's head — the commit a reviewer
+    # read and the one every receipt names — and a cycle that also attests a
+    # later head says so alongside it rather than by overwriting it. A caller
+    # that has never heard of carrying reads exactly the fields it always did.
+    carry_disclosure=null
+    if [ -n "${state_file:-}" ] && [ -f "$state_file" ]; then
+        carry_disclosure=$(jq -c '.carry // null' "$state_file" 2>/dev/null) || carry_disclosure=null
+    fi
     jq -cn \
         --arg status "$result" \
         --arg detail "$detail" \
         --arg head "${state_head:-}" \
+        --argjson carried "${carry_disclosure:-null}" \
         --argjson attempt "${state_attempt:-0}" \
         --arg surface "$surface" \
         --arg accepted_id "$accepted_id" \
+        --argjson extra "${extra:-null}" \
         '{status:$status,detail:$detail,head:$head,attempt:$attempt}
+         + (if ($carried | type) == "object" then {carried:$carried} else {} end)
          + (if $surface != "" and $accepted_id != "" then
               {accepted:{surface:$surface,id:$accepted_id,reviewed_commit:$head}}
-            else {} end)'
+            else {} end)
+         + (if ($extra | type) == "object" then $extra else {} end)'
+}
+
+# harmon-devkit#508: an evidence READ that failed says nothing about the
+# reviewer. Routing it through `bounded_wait` conflated the two, and because
+# `bounded_wait` compares against `requested_at` — always long past for a gate
+# re-checking a settled cycle — one flaky GitHub read turned an
+# adjudicated-clean cycle into a hard retry. This is its own terminal-shaped
+# answer with its own exit code, and the caller's remedy is to repeat the
+# READ, not to re-trigger a reviewer that was never absent.
+#
+# Deliberately NOT bounded by the attempt window: the window measures how long
+# the reviewer has had, and this result is not about the reviewer at all.
+transient_read_failure() {
+    emit transient-read "$1"
+    exit 16
+}
+
+# Records the usage-limit answer on the cycle's own state before reporting it,
+# so `reserve --attempt 2` can refuse the one bounded re-trigger rather than
+# spending it on a reviewer that has already said no. Runs under the caller's
+# existing state lock, like `persist_adopted_timeout`.
+persist_quota_evidence() {
+    payload=$(jq \
+        --argjson comment_id "$quota_comment_id" \
+        --arg detected "$quota_detected_at" \
+        --arg reset "$quota_reset_at" \
+        '.version = 2 |
+         .quota_comment_id = $comment_id |
+         .quota_exhausted_at = $detected |
+         .quota_reset_at = (if $reset == "" then null else $reset end)' \
+        "$state_file") || die "cannot record the usage-limit answer"
+    write_state "$state_file" "$payload"
+}
+
+# Reports the usage-limit answer and stops. Codex cloud-review cycle 2 on PR
+# harmon-devkit#1125, finding 4065974923 (confirmed P2): this used to live
+# ONLY inside `bounded_wait`, on the reasoning that absence of other evidence
+# is the only state a quota reply can be observed in. That is false. The reply
+# carries no `Reviewed commit` line, no verdict sentence and no badge, so it is
+# invisible to every classifier — but the classifiers themselves are not
+# invisible to it: a stale thumbs-up on the trigger, a clean review from an
+# earlier attempt, or a recorded disposition all exit 0 long before any path
+# reaches `bounded_wait`. The head was then certified clean by evidence that
+# predates the reviewer saying it would not review.
+#
+# So the answer is reported where it is READ, and this function is what both
+# sites call. It is terminal by construction: a usage limit is an answer, not
+# silence, and nothing later in the cycle can make it not one.
+quota_exhausted_terminal() {
+    persist_quota_evidence
+    quota_detail="$1; the finder replied that its code-review usage limit is exhausted (comment $quota_comment_id)"
+    if [ -n "$quota_reset_at" ]; then
+        quota_detail="$quota_detail; limit resets at $quota_reset_at"
+    else
+        quota_detail="$quota_detail; the reply named no reset time"
+    fi
+    # Challenge round 3, finding `challenge-r3-codex-adversarial-11`
+    # (confirmed P2): after the reset-time carve-out was deleted in round 2,
+    # every operator-facing string still implied the reset time was actionable
+    # and none named the route that actually exists. Name it.
+    quota_detail="$quota_detail; this head cannot be re-reviewed here — push a new commit or have an operator remove this state file (recovery route carried in #1115)"
+    emit quota-exhausted "$quota_detail"
+    exit 15
 }
 
 bounded_wait() {
@@ -492,6 +1222,27 @@ bounded_wait() {
         now=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
     fi
     valid_time "$now" || die "--now must be an ISO-8601 UTC second"
+    # harmon-devkit#573: the finder answering "I will not review this" is an
+    # ANSWER, not silence, so it must never be reported as waiting. Every path
+    # that would otherwise wait runs through here, which is exactly why the
+    # check lives here rather than at one call site: the quota reply is
+    # invisible to every classifier above (it carries no `Reviewed commit`
+    # line, no verdict sentence and no badge), so absence of other evidence is
+    # the only state it can ever be observed in. It is checked FIRST because
+    # it is terminal — a live 👀 alongside an exhausted quota is still a
+    # reviewer that is not going to answer.
+    #
+    # `$quota_comment_id` is empty on every pre-evidence failure path, so those
+    # keep their previous behaviour (and #508 has already moved read failures
+    # off this function entirely).
+    if [ -n "$quota_comment_id" ]; then
+        # Defence in depth only: the scan that sets `$quota_comment_id` now
+        # reports the answer terminally at the point it reads it (see
+        # `quota_exhausted_terminal`), so any path that still arrives here
+        # with one set has skipped that site and should not be allowed to
+        # wait on a reviewer that has already refused.
+        quota_exhausted_terminal "$detail"
+    fi
     requested_epoch=$(jq -nr \
         --arg value "$state_requested" '$value | fromdateiso8601') ||
         die "cannot parse request time"
@@ -504,6 +1255,39 @@ bounded_wait() {
     if [ "$elapsed" -lt "$timeout_seconds" ]; then
         emit pending "$detail"
         exit 11
+    fi
+    # harmon-devkit#655: the window must be bounded by evidence that the
+    # reviewer is NOT working, never by wall clock alone. The finder signals
+    # acceptance of a trigger with its pending reaction and replaces it with a
+    # terminal result, so while that reaction is still on THIS attempt's
+    # trigger the review is in progress and elapsing the window only forces a
+    # redundant re-trigger — which the two-attempt contract then counts against
+    # the head, turning a slow-but-live review into an escalation for a
+    # reviewer that was never absent (observed on ponderousdev/omator#447).
+    #
+    # The extension is bounded by a hard ceiling from the trigger, because a
+    # reaction that never resolves must not hold a PR open indefinitely: past
+    # the ceiling this falls through to the unchanged retry/escalate below,
+    # and so does a reaction that has VANISHED without a result (the caller
+    # never set `pending_reaction_live`, so nothing extends).
+    #
+    # `max(ceiling, timeout)` so a caller that deliberately configured a
+    # LONGER window than the ceiling is never cut short by it: the extension
+    # may only ever add time.
+    if [ "$pending_reaction_live" = "1" ]; then
+        # Challenge round 5, finding `challenge-r5-codex-adversarial-8`
+        # (confirmed P3): a `max(ceiling, timeout)` clamp used to sit here,
+        # described by its own comment as stopping the ceiling from shortening
+        # a longer configured window. It was dead code. Reaching this point
+        # already requires `elapsed >= timeout_seconds`, so when the timeout
+        # exceeds the ceiling the comparison below is false with or without
+        # the clamp — it never changed an outcome. The property it claimed to
+        # protect still holds; only the misleading code is gone.
+        ceiling_seconds=$((eyes_ceiling_min * 60))
+        if [ "$elapsed" -lt "$ceiling_seconds" ]; then
+            emit pending "$detail; the finder's pending reaction is still live on this attempt's trigger, so the window is extended to ${eyes_ceiling_min} minutes from the trigger"
+            exit 11
+        fi
     fi
     if [ "$state_attempt" = "1" ]; then
         emit retry "$detail; attempt 1 window elapsed"
@@ -560,7 +1344,7 @@ fetch_evidence() {
     fetch_pages "$endpoint" "$destination" || fetch_status=$?
     case "$fetch_status" in
     0) return ;;
-    1) bounded_wait "cannot fetch paginated $label" ;;
+    1) transient_read_failure "cannot fetch paginated $label" ;;
     *)
         emit indeterminate "paginated $label data is malformed"
         exit 2
@@ -601,8 +1385,23 @@ codex_verdict_defs=$(
           # reuse the exact same removal and the exact same metadata pattern
           # instead of restating them. Same regexes, same flags, same order —
           # `rest_is_boilerplate` behaves identically to before the split.
+          # Challenge round 3, finding `challenge-r3-codex-adversarial-1`
+          # (confirmed P1, provenance ORIGINAL — this predates every round of
+          # this change): the removal used to start at `<details`, so with one
+          # benign collapsed section anywhere above the About block the match
+          # ran from THAT tag through the About block's closing tag and deleted
+          # every line in between — including a concern. It defeated the
+          # clean-path safety net, `is_carrier_only`, and the round-2
+          # whole-body self-report test, all three of which read the stripped
+          # body.
+          #
+          # Anchored on the About SUMMARY instead, with `[^<]*` between the
+          # tags so the match cannot span an intervening `<details` at all.
+          # Same intent the original comment states — "removal is anchored on
+          # the block's SUMMARY, not on `<details` alone" — now actually
+          # enforced by the pattern.
           def strip_about_block:
-            gsub("<details.*?<summary>.*?about codex.*?</summary>.*?</details>";
+            gsub("<details[^<]*<summary>[^<]*about codex[^<]*</summary>.*?</details>";
                  ""; "im");
           def is_reviewed_commit_line:
             test(
@@ -702,13 +1501,383 @@ codex_verdict_defs=$(
               map(gsub("^[[:space:]]+|[[:space:]]+$"; "")) |
               map(select(. != "")) |
               all(is_reviewed_commit_line or (. == carrier_sentence)));
+          # harmon-devkit#675: when a session replies "Fixed in <sha>" to an
+          # inline finding, the connector sometimes reads the thread as an
+          # instruction, runs a fix task of its own, and posts a report on what
+          # IT did — as a thread follow-up, and (observed on harmon-devkit#710,
+          # comment 5504087486) as a top-level comment that opens
+          # "### Summary" and happens to contain "Reviewed commit `<sha>`".
+          #
+          # That top-level shape is the damaging one here: the Reviewed-commit
+          # phrase makes it candidate verdict evidence, `verdict_class` calls it
+          # `findings` because it does not open with the clean sentence, and
+          # `settle` then refuses it precisely because it carries no badge — so
+          # the cycle could never report clean for that head through this
+          # checker whatever the real review said. It is neither: the bot is
+          # describing work, not reporting a finding, so it is INFORMATIONAL
+          # and contributes to no aggregate.
+          #
+          # The test is deliberately content-NEGATIVE on the part that decides
+          # severity — no badge anywhere in the body, the same whole-body scan
+          # everything else here uses — and structural on the part that
+          # identifies the shape: a `Summary` heading, or the bot naming a
+          # commit it made on a branch of its own. It reads no prose for
+          # intent, so it does not reopen the failure family documented above
+          # `verdict_class`.
+          #
+          # Both failure directions are safe. An unrecognised self-report shape
+          # keeps today's behaviour exactly (`findings`, blocking) — that is a
+          # false block, which is the direction this file always chooses. And
+          # nothing badged can reach this class at all, so a real finding
+          # stated in a self-report-shaped body still blocks.
+          def trimmed_lines:
+            (body_text | ascii_downcase | split("\n") |
+              map(gsub("^[[:space:]]+|[[:space:]]+$"; "")));
+          def has_summary_heading:
+            (trimmed_lines |
+              any(.[]; test("^#{1,6}[[:space:]]*summary[[:space:]]*$")));
+          # Challenge round 1, finding `challenge-r1-codex-adversarial-1`
+          # (2026-09-20, confirmed P1): a `Summary` HEADING IS NOT EVIDENCE OF
+          # ANYTHING. The first version of this predicate was
+          # `(no badge) and (has_summary_heading or claims_own_commit)`, so the
+          # heading alone sufficed — and because `informational` is excluded
+          # from all three blocking scans, an unbadged prose concern written
+          # under that heading became invisible where it had previously been
+          # `findings`/exit 10. AGENTS.md § Severity gating is explicit that a
+          # finding "not badged at all, is adjudicated as at least a P2", so an
+          # unbadged concern IS a finding; the original safety note here
+          # ("nothing badged can reach this class") only ever covered the
+          # badged half of the problem.
+          #
+          # Two conditions now, and both are POSITIVE evidence that the bot is
+          # describing its own work rather than reporting on the code:
+          #
+          #   1. a recognized self-work marker — the bot naming a commit it
+          #      made, a PR it could not open, or a review it performed that
+          #      needed no change. These are the verbatim shapes observed on
+          #      harmon-devkit#665 (follow-up 3886149775) and harmon-devkit#710
+          #      (top-level 5504087486).
+          #   2. no finding footer. "Useful? React with 👍 / 👎." is the
+          #      machine-emitted line Codex appends to a finding, and it is the
+          #      same class of stable signal as the badge — not prose whose
+          #      meaning has to be read.
+          #
+          # This is an allowlist of observed phrasings, which the long comment
+          # above `verdict_class` warns against for the CLEAN path — and the
+          # distinction is the failure direction. There, a non-match deadlocked
+          # genuinely clean PRs. Here a non-match is `findings`: the body
+          # blocks and a human adjudicates it. Drift costs a false block, never
+          # a false green, which is the trade this file takes everywhere.
+          def self_work_marker:
+            (body_text | ascii_downcase |
+              (test("committed .*on `[^`]+` as `[0-9a-f]{7,40}`") or
+               test("a pull request could not be created") or
+               test("reviewed commit `[0-9a-f]{7,40}` and found no additional")));
+          def has_finding_footer:
+            (body_text | ascii_downcase | test("useful\\? react with"));
+          # Challenge round 2, findings `challenge-r2-codex-adversarial-1` and
+          # `-3` (confirmed P1, disposition RESTRUCTURE). Round 1 asked only
+          # whether a self-work marker appeared ANYWHERE, so a body could
+          # describe the bot's own work in one line and state an unanswered
+          # concern in the next and still classify `informational` — the
+          # concern then vanished from every blocking scan. The marker list
+          # was simultaneously too tight: a self-report phrased outside the
+          # three observed strings exited 10 with no way to answer it.
+          #
+          # The invariant, not the phrasing: **informational means the body
+          # states nothing but the bot's own work.** So the test is now
+          # whole-body and structural — every non-blank line outside the
+          # About block must be a heading, a bold-only label (`**Testing**`,
+          # which both observed reports use), or a list item. A free-standing
+          # prose paragraph is exactly what a concern looks like and exactly
+          # what a work report does not contain.
+          #
+          # The marker is kept as the positive half, because structure alone
+          # would admit any bulleted list. Both halves are required.
+          #
+          # Residual, stated rather than papered over: a concern written AS a
+          # bullet inside an otherwise-genuine report still classifies
+          # informational. That is why this predicate is only half the
+          # restructure — `settle` now accepts everything `check` blocks on,
+          # so misreading in the other direction costs one recorded
+          # disposition instead of a stranded head, and the classifier is free
+          # to fail closed.
+          # `is_reviewed_commit_line` rides along because it is Codex's OWN
+          # whole-line metadata — the same line `rest_is_boilerplate` accepts
+          # in a clean verdict — not prose a concern could hide in. Every other
+          # shape here is structural: a heading, a bold-only label, a list
+          # item.
+          def self_report_line:
+            (test("^#{1,6}[[:space:]]") or
+             test("^\\*\\*[^*]+\\*\\*[[:space:][:punct:]]*$") or
+             test("^[*+-][[:space:]]") or
+             test("^[0-9]+\\.[[:space:]]") or
+             is_reviewed_commit_line);
+          def states_only_own_work:
+            (body_text | ascii_downcase | strip_about_block | split("\n") |
+              map(gsub("^[[:space:]]+|[[:space:]]+$"; "")) |
+              map(select(. != "")) |
+              all(self_report_line));
+          def is_self_report:
+            (has_severity_marker | not) and
+            (has_finding_footer | not) and
+            has_summary_heading and
+            self_work_marker and
+            states_only_own_work;
+          # harmon-devkit#718's rolling "Codex Review Summary" table was
+          # accepted here as a verdict surface in round 1 and SPLIT OUT in
+          # challenge round 3 (findings `challenge-r3-codex-adversarial-2`,
+          # `-3`, `-4`, `-5`; carried in #1117). Reading a verdict out of that
+          # table meant deriving a head from parsed markdown, and three
+          # consecutive rounds reproduced a false-clean or stuck-head path
+          # through it: the Completed-row arm, the header/column resolution,
+          # the latest-row-per-commit keying, and the comment-level freshness
+          # stamp are all gone, with `settle`'s summary binding.
+          #
+          # What replaces it is a REJECTION FORM rather than a parser: a
+          # badged comment from the pinned actor, newer than the trigger, that
+          # this checker cannot bind to a head BLOCKS until it is settled by
+          # comment id (see the unbound-badged scan in `check`). The trigger
+          # already scopes the cycle to one PR and head, so nothing has to be
+          # derived from the body at all — which is what deletes the whole
+          # unbindable class instead of hardening it a fourth time.
+          # Restructured, not re-decided: a body that DOES open with the clean
+          # sentence classifies exactly as before (badge -> findings, trailing
+          # prose -> unrecognized, otherwise clean), and a body that does not
+          # is still `findings` unless it is the unbadged self-report shape
+          # above. The clean-template branch is checked first so a self-report
+          # heading can never reclassify a genuine clean verdict.
           def verdict_class:
-            if (first_line | startswith(clean_sentence) | not) then "findings"
-            elif has_severity_marker then "findings"
-            elif (rest_is_boilerplate | not) then "unrecognized"
-            else "clean" end;
+            if (first_line | startswith(clean_sentence)) then
+              (if has_severity_marker then "findings"
+               elif (rest_is_boilerplate | not) then "unrecognized"
+               else "clean" end)
+            elif is_self_report then "informational"
+            else "findings" end;
 JQDEFS
 )
+
+# harmon-init#1326: classify a cycle as CHARGED or EXEMPT against the
+# integration cap.
+#
+# The cap exists to bound how many times a reviewer is asked to look at work
+# that changed. A cycle whose head differs from the last reviewed head ONLY by
+# a base merge that touched nothing under review re-reads identical code by
+# construction — it cannot find anything the previous cycle did not — so
+# charging it measures the base branch's traffic rather than the change's
+# difficulty.
+#
+# The test is deliberately narrow, and it is a set intersection rather than a
+# judgement about merge commits:
+#
+#   exempt  <=>  previous_head is an ANCESTOR of head (the base was merged in,
+#                nothing was rewritten), AND no file the PR has under review
+#                appears among the files the new commits changed.
+#
+# "Under review" is computed from the CURRENT head, which is what makes the
+# rule self-correcting rather than a loophole:
+#   - a conflict resolution edits a file under review        -> intersects -> CHARGED
+#   - the author slips a real fix into the merge push        -> that file is
+#     under review at the new head                           -> intersects -> CHARGED
+#   - a clean merge of base commits touching other files     -> disjoint    -> EXEMPT
+#
+# THE INVARIANT: exempt only on positive proof. Every other outcome charges.
+#
+# Challenge rounds 1-3 each found a different way to be wrong about this, and
+# they all shared one shape — some input the classifier could not fully
+# establish, treated as if it had been. So the rule is stated once here and
+# every branch below obeys it: an uncertain compare, a truncated file list, a
+# state file that does not belong to this run, an unreadable patch, an
+# unexpected status — each charges. Under-exempting costs one cycle, which is
+# exactly the status quo this change improves on and never worse than it.
+# Over-exempting spends budget the reviewer never sanctioned, and no error in
+# that direction is recoverable once the cycle is gone.
+classify_cycle_charge() {
+    classify_prev=$1
+    classify_head=$2
+    classify_repo=$3
+    classify_pr=$4
+
+    if [ "$classify_prev" = "$classify_head" ]; then
+        charge_class=charged
+        charge_reason="head is unchanged from the last reviewed head"
+        return 0
+    fi
+
+    moved_payload=$(run_gh api "repos/$classify_repo/compare/$classify_prev...$classify_head") || {
+        charge_class=charged
+        charge_reason="cannot compare $classify_prev...$classify_head; charging"
+        return 0
+    }
+    # The compare API caps `files` at 300 with no truncation flag of its own,
+    # so a list at the cap may be incomplete and cannot prove that nothing
+    # under review moved. Per the invariant, that charges.
+    # A response without a usable `files` array tells us nothing about which
+    # files moved, and `// []` would turn that silence into an empty
+    # intersection — an exemption granted by absence of evidence, which is the
+    # one thing the invariant forbids.
+    if [ "$(jq -r '.files | type' <<<"$moved_payload" 2>/dev/null)" != "array" ]; then
+        charge_class=charged
+        charge_reason="the compare response carried no usable file array; charging"
+        return 0
+    fi
+    if [ "$(jq -r '(.files // []) | length' <<<"$moved_payload")" -ge 300 ]; then
+        charge_class=charged
+        charge_reason="the compare file list is at the API's 300-file cap and may be truncated; charging"
+        return 0
+    fi
+    moved_status=$(jq -r '.status // "unknown"' <<<"$moved_payload")
+    # "ahead" is the only status meaning the previously reviewed head is an
+    # ancestor of this one. "diverged" means history was rewritten under the
+    # cycle; "behind"/"identical" mean the head did not move forward. None is
+    # a base merge, and each charges.
+    if [ "$moved_status" != "ahead" ]; then
+        charge_class=charged
+        charge_reason="compare status is $moved_status, not a fast-forward base merge"
+        return 0
+    fi
+
+    # Parse locally rather than with `gh --jq`: the value is needed as a ref
+    # string either way, and one fewer flag on the read-only wrapper keeps its
+    # surface exactly as narrow as it documents.
+    classify_pr_payload=$(run_gh api "repos/$classify_repo/pulls/$classify_pr") ||
+        classify_pr_payload=
+    base_ref=$(jq -r '.base.ref // empty' <<<"$classify_pr_payload" 2>/dev/null) || base_ref=
+    if [ -z "$base_ref" ] || [ "$base_ref" = "null" ]; then
+        charge_class=charged
+        charge_reason="cannot read the PR base ref; charging"
+        return 0
+    fi
+
+    # Codex cloud cycle 3, P1 (confirmed): the PRIOR patch has to be compared
+    # against the base it was actually reviewed against. Computing both
+    # snapshots from the LIVE base hides the case this union exists to catch:
+    # if the reviewed head changed file F, and the base then independently
+    # lands the same final contents for F, then F drops out of both live-base
+    # comparisons AND out of the net moved list — an empty intersection, and an
+    # exemption, although a reviewed file left the patch. Per the invariant, a
+    # historical base that cannot be established charges rather than guesses.
+    classify_prev_base=$(jq -r '.last_reviewed_base_sha // empty' "$state_file" 2>/dev/null) ||
+        classify_prev_base=
+    if ! valid_sha "$classify_prev_base"; then
+        charge_class=charged
+        charge_reason="the base the previous cycle reviewed against is not recorded or not a commit SHA; charging"
+        return 0
+    fi
+
+    # Challenge round 1, P1 (confirmed): "under review" cannot be read from the
+    # CURRENT patch alone. A base merge that makes a reviewed file identical to
+    # base — or a conflict resolution that drops the branch's edit — removes
+    # that file from the current patch while it still shows up among the moved
+    # files. Intersecting against only the current set then finds nothing and
+    # exempts a cycle in which reviewed code really did change, or was lost.
+    #
+    # So compare against the union of the patch as it stood at the PREVIOUS
+    # reviewed head and as it stands now. A file that leaves the patch is still
+    # under review for this decision, which is the direction that matters: it
+    # is exactly the case where the merge silently rewrote the change.
+    # A ref may legally contain a slash (`release/2.x`), which would otherwise
+    # be read as extra path segments and 404 the compare.
+    # Codex, P1 (confirmed): comparing the current patch against a branch NAME
+    # leaves it mutable — the name resolves when the request is made, not when
+    # the payload was read. If the base advances between the two, and the new
+    # base independently lands the same contents as a real fix to reviewed file
+    # F, then F appears in the moved comparison but drops out of this one, and
+    # a changed-code cycle is falsely exempted. Pin it to the SHA the payload
+    # named, or charge.
+    classify_head_base=$(jq -r '.base.sha // empty' <<<"$classify_pr_payload" 2>/dev/null) ||
+        classify_head_base=
+    if ! valid_sha "$classify_head_base"; then
+        charge_class=charged
+        charge_reason="the PR payload names no stable base commit for the current patch; charging"
+        return 0
+    fi
+    prev_patch=$(run_gh api "repos/$classify_repo/compare/$classify_prev_base...$classify_prev") || {
+        charge_class=charged
+        charge_reason="cannot read the reviewed patch at $classify_prev; charging"
+        return 0
+    }
+    head_patch=$(run_gh api "repos/$classify_repo/compare/$classify_head_base...$classify_head") || {
+        charge_class=charged
+        charge_reason="cannot read the reviewed patch at $classify_head; charging"
+        return 0
+    }
+
+    for classify_payload in "$prev_patch" "$head_patch"; do
+        [ "$(jq -r '.files | type' <<<"$classify_payload" 2>/dev/null)" = "array" ] || {
+            charge_class=charged
+            charge_reason="a reviewed-patch response carried no usable file array; charging"
+            return 0
+        }
+    done
+    for truncation_check in "$prev_patch" "$head_patch"; do
+        [ "$(jq -r '(.files // []) | length' <<<"$truncation_check")" -lt 300 ] || {
+            charge_class=charged
+            charge_reason="a reviewed-patch file list is at the API's 300-file cap and may be truncated; charging"
+            return 0
+        }
+    done
+
+    # Self-found while driving this PR's own cycle 2: passing three full API
+    # payloads as `--argjson` arguments exceeds ARG_MAX on any sizeable PR
+    # ("Argument list too long"), the intersection then always fails, and the
+    # classifier can never grant an exemption — silently inert on exactly the
+    # PRs big enough to want one. The invariant held (it charged), which is why
+    # this was a lost exemption rather than a wrong one; the payloads now go
+    # through files instead of the argument vector.
+    classify_tmp=$(mktemp -d -t codex-classify-XXXXXX) || {
+        charge_class=charged
+        charge_reason="cannot create a scratch directory for classification; charging"
+        return 0
+    }
+    printf '%s' "$moved_payload" >"$classify_tmp/moved.json"
+    printf '%s' "$prev_patch" >"$classify_tmp/prev.json"
+    printf '%s' "$head_patch" >"$classify_tmp/head.json"
+    overlap=$(jq -r -n \
+        --slurpfile moved "$classify_tmp/moved.json" \
+        --slurpfile prev "$classify_tmp/prev.json" \
+        --slurpfile head "$classify_tmp/head.json" '
+          ($moved[0]) as $moved | ($prev[0]) as $prev | ($head[0]) as $head |
+          # Challenge round 2, P1 (confirmed): a rename is reported under the
+          # NEW name plus `previous_filename`. Matching only `filename` lets a
+          # merge that renames a reviewed file miss on both sides at once —
+          # the moved entry names the new path, the reviewed patch the old —
+          # and a file under review changes while the intersection stays
+          # empty. Both names count, on both sides.
+          def names: (.files // []) | map(.filename, .previous_filename) | map(select(. != null));
+          ($moved | names | unique) as $changed
+          | ($prev | names | unique) as $prev_files
+          | ($head | names | unique) as $head_files
+          | ($prev_files + $head_files | unique) as $under_review
+          # Codex, P1 (confirmed): restoring F to the previous patch does not
+          # restore it to the MOVED set. When the base independently lands the
+          # same final contents for a reviewed file, merging that base makes F
+          # leave the PR patch while the two head trees still agree on F — so
+          # the net previous...head comparison omits it entirely and the
+          # intersection comes back empty. A file entering or leaving the
+          # reviewed patch changed under review whether or not the trees
+          # differ, so the symmetric difference of the two patch file sets is
+          # charged alongside the intersection.
+          | (($prev_files - $head_files) + ($head_files - $prev_files)) as $patch_shift
+          | (($changed - ($changed - $under_review)) + $patch_shift | unique)
+          | join(", ")
+        ') || {
+        rm -rf "$classify_tmp"
+        charge_class=charged
+        charge_reason="cannot intersect the moved files with the reviewed patch; charging"
+        return 0
+    }
+    rm -rf "$classify_tmp"
+
+    if [ -n "$overlap" ]; then
+        charge_class=charged
+        charge_reason="the merge changed file(s) under review: $overlap"
+    else
+        charge_class=exempt
+        charge_reason="base merge touched no file under review"
+    fi
+    return 0
+}
 
 case "$command_name" in
 reserve)
@@ -731,6 +1900,7 @@ reserve)
     [ "$live_head" = "$head" ] || die "PR head changed before reservation"
 
     replaced_trigger_comment_id=
+    carried_first_trigger_comment_id=
     if [ -f "$state_file" ]; then
         read_state
         old_repo=$(jq -r '.repo' "$state_file")
@@ -740,9 +1910,66 @@ reserve)
         old_phase=$(jq -r '.phase' "$state_file")
         [ "$old_repo" = "$repo" ] && [ "$old_pr" = "$pr" ] ||
             die "state belongs to a different PR"
-        [ "$old_phase" != "reserved" ] ||
+        # Review round 3, P1 (confirmed): `check` refuses to resume state owned
+        # by another run and tells the caller to reserve fresh — but every
+        # guard below is written for state belonging to THIS run, so the same
+        # head would then be refused as a duplicate trigger and an unresolved
+        # reservation. The caller had no move left. State from a different run
+        # is this run's history of nothing at all, so treat it as absent: a
+        # fresh attempt-1 reservation, with the totals restarting (they are
+        # already reset by the run-scope branch further down).
+        foreign_run_state=0
+        if [ -n "$run_id" ]; then
+            old_run_id=$(jq -r '.run_id // empty' "$state_file")
+            # Unowned state is not this run's either. State written before run
+            # scoping existed records no owner, and treating that as "mine"
+            # rejects a legitimate same-head fresh reservation as a duplicate
+            # while letting its counters be inherited on a different head. A
+            # scoped call handles a missing owner exactly like a different
+            # one; the unresolved-reservation guard above is unaffected and
+            # still blocks a write-ahead record whoever owns it.
+            if [ "$old_run_id" != "$run_id" ]; then
+                foreign_run_state=1
+            fi
+        fi
+        # Duplicate round-3 pass, P1 (confirmed): foreign ATTACHED state is
+        # replaceable, foreign RESERVED state is not. `reserved` is the
+        # write-ahead record taken before the trigger is posted, so another
+        # run sitting in it may already have a live `@codex review` out.
+        # Overwriting that record loses the only reconciliation for it, and
+        # the other run can then attach its trigger to this run's state —
+        # duplicate or misattributed cycles. The run-scope bypass below must
+        # therefore not extend to it: an unresolved reservation stays blocked
+        # whoever owns it, which is what the reserve-before-write contract
+        # requires.
+        if [ "$old_phase" = "reserved" ]; then
             die "an unresolved reservation must be reconciled before replacing its head"
-        if [ "$old_head" = "$head" ]; then
+        fi
+        if [ "$foreign_run_state" = "1" ]; then
+            [ "$attempt" = "1" ] ||
+                die "a reservation replacing another run's state must begin at attempt 1"
+        fi
+        # Challenge round 2, findings `challenge-r2-codex-adversarial-5`
+        # and `-6` (2026-09-20, both confirmed P2, disposition DELETE):
+        # round 1's item-B carve-out — a fresh attempt-1 reservation once a
+        # recorded reset time had passed — is gone, and its round-1
+        # disposition is reversed by the orchestrator on the round-2 record.
+        # It opened on any past timestamp scraped from the body (so a reply
+        # naming an old date re-triggered a reviewer that had just refused,
+        # the exact waste harmon-devkit#573 measured), it could never open in
+        # the observed case (no observed reply carries a reset time), and it
+        # could not open even when one did, because the extractor accepted
+        # minute resolution while `valid_time` requires seconds. It also gave
+        # a guard whose whole value is having exactly one same-head
+        # reservation route a second one.
+        #
+        # The underlying concern is real and is NOT dropped: giving a
+        # quota-exhausted head a safe recovery route is carried in #1115. Until
+        # then the documented behaviour stands — report the blocker, and let a
+        # push or an operator clear the state.
+        if [ "$foreign_run_state" = "1" ]; then
+            :
+        elif [ "$old_head" = "$head" ]; then
             [ "$old_attempt" = "1" ] && [ "$attempt" = "2" ] &&
                 [ "$old_phase" = "attached" ] ||
                 die "refusing an uncontrolled duplicate trigger for this head"
@@ -755,6 +1982,35 @@ reserve)
             # recomputing this field from live GitHub evidence once a new
             # trigger is attached; this is only the value in between.
             replaced_trigger_comment_id=$(jq -r '.trigger_comment_id // empty' "$state_file")
+            # Review round 4, finding `review-r4-codex-verification-1`
+            # (confirmed P1, REPRODUCED): round 3 carried `reserved_at`
+            # forward here so the unbound-badge scan could bound on it. That
+            # made every attempt-2 `attach` read run under the one-second
+            # clamp, because `attach` sets no `requested_at` and `run_gh`
+            # therefore anchors its per-call budget on the reservation, which
+            # attempt 2 always finds elapsed. Five reads, two of them
+            # pagination sweeps, one second each: the re-trigger could not be
+            # attached at all, and the head stuck at `phase="reserved"`.
+            #
+            # The carry is GONE and `reserved_at` is stamped fresh per attempt
+            # again, because the scan no longer needs a clock at all — see the
+            # unbound-badge scan for the id-ordered invariant that replaced it.
+            # What DOES survive a re-reservation is the head FIRST TRIGGER id
+            # below, which is an id rather than a deadline and so cannot
+            # starve a fetch budget.
+            #
+            # Review round 5, finding `review-r5-codex-verification-2`
+            # (confirmed P2): this read the new field alone while `check`
+            # degrades a pre-field state with `// .trigger_comment_id`. So a
+            # state written before the field existed lost its anchor across the
+            # re-reservation, `attach` then filled the null with the SECOND
+            # trigger, and a badge answering the first one dropped below the
+            # boundary. Same fallback as `check`, for the same one upgrade
+            # case: the old state is `attached` here by the guard above, so its
+            # `trigger_comment_id` is the only first-trigger evidence there is.
+            carried_first_trigger_comment_id=$(jq -r \
+                '.first_trigger_comment_id // .trigger_comment_id // empty' \
+                "$state_file")
         else
             [ "$attempt" = "1" ] ||
                 die "a new head must begin at attempt 1"
@@ -763,16 +2019,205 @@ reserve)
         die "attempt 2 requires an attached attempt-1 state"
     fi
 
+    # The base this cycle is reviewed against, recorded now so a LATER cycle can
+    # compare the prior patch against the base it actually had rather than the
+    # live one (see classify_cycle_charge's historical-base note).
+    reserve_base_sha=$(run_gh api "repos/$repo/pulls/$pr" 2>/dev/null |
+        jq -r '.base.sha // empty' 2>/dev/null) || reserve_base_sha=
+    valid_sha "$reserve_base_sha" || reserve_base_sha=
+
     reserved_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
-    # Settlements are statements about a HEAD, not about an attempt, so attempt
-    # 2 of the same head keeps them — discarding them would make every attempt-2
-    # cycle re-block on findings a human already disposed of. A different head
-    # invalidates them, and this payload starts them empty.
+    # Settlements PERSIST as head-level statements for the record, but they
+    # never CERTIFY a later attempt. Attempt 2 of the same head keeps them so
+    # the cycle does not re-block on a finding a human already disposed of, and
+    # so the record of what was decided survives the reservation; a different
+    # head invalidates them and this payload starts empty.
+    #
+    # What persistence does not buy is a verdict. The `disposed_applied` exit
+    # still requires a disposed result NEWER than the latest trigger
+    # (`> $requested` there), because re-triggering asks for a new review and
+    # an older settlement says nothing about what that review found — the case
+    # `an earlier settled finding cannot make a re-trigger clean without new
+    # evidence` pins exactly that. Challenge round 3's finding
+    # `challenge-r3-codex-adversarial-10` proposed removing the filter and was
+    # adjudicated DECLINED as a false positive against this invariant: the
+    # change is a fail-open, and it makes that pinned case fail.
     carried_settled='[]'
     if [ -f "$state_file" ] && [ "$(jq -r '.head' "$state_file")" = "$head" ]; then
         carried_settled=$(jq -c '.settled // []' "$state_file")
     fi
+
+    # harmon-init#1326: the two cycle counters this stage spends. They persist
+    # across heads in this same state file, because the ceilings they answer to
+    # bound the STAGE, not a single cycle.
+    # Codex cloud cycle 3, P1 (confirmed): the documented quota-recovery path
+    # removes the cycle state, and these totals used to live only there — so an
+    # operator following the documented procedure silently forgot the run's
+    # spend, could then exceed the ceiling, and afterwards produced counters
+    # that disagree with the run-wide cycle ordinal and block readiness. (I did
+    # exactly this twice while driving this PR.) The totals bound a RUN, so they
+    # persist in a run-keyed sidecar that outlives any one cycle's state.
+    spend_file="${state_file%.json}.spend.json"
+    carried_charged=0
+    carried_exempt=0
+
+    # Claude cloud reviewer, P1 (confirmed): recovery used to be gated on the state
+    # file being ABSENT. But `reserve` supports a second path where the state
+    # exists and simply is not this run's — the foreign/unowned branch — and
+    # that path reset both counters to 0 without ever consulting the sidecar.
+    # Run A reserves on PR P; run B replaces the state; run A returns and gets
+    # a fresh full integration cap. Invisible to the gate's cross-check too,
+    # because after the reset the state and the reported split agree with each
+    # other.
+    #
+    # The question is not "does a state file exist" but "does it carry THIS
+    # run's counters". An unscoped call (no --run-id) keeps the old behaviour
+    # and reads whatever the state holds.
+    state_carries_my_counters=0
+    if [ -f "$state_file" ]; then
+        state_run_id=$(jq -r '.run_id // empty' "$state_file")
+        if [ -z "$run_id" ] || [ "$run_id" = "$state_run_id" ]; then
+            state_carries_my_counters=1
+        fi
+    fi
+
+    if [ "$state_carries_my_counters" = "1" ]; then
+        carried_charged=$(jq -r '.charged_cycles // 0' "$state_file")
+        carried_exempt=$(jq -r '.exempt_cycles // 0' "$state_file")
+        # Read back as arithmetic against a ceiling, so a hand-edited or
+        # truncated state must not quietly become a budget.
+        valid_uint_or_zero "$carried_charged" && valid_uint_or_zero "$carried_exempt" ||
+            die "persisted cycle counters are not non-negative integers (charged=$carried_charged exempt=$carried_exempt)"
+    elif [ -n "$run_id" ] && [ -f "$spend_file" ]; then
+        # ABSENT is fine: no record means nothing spent. PRESENT BUT UNUSABLE
+        # is not — that is unknown spend, and unknown spend is never room to
+        # spend more.
+        jq -e . "$spend_file" >/dev/null 2>&1 ||
+            die "the run-spend sidecar $spend_file is unreadable; the run's spend cannot be established — repair or remove it deliberately rather than reserving against unknown spend"
+        if jq -e --arg r "$run_id" 'has($r)' "$spend_file" >/dev/null 2>&1; then
+            recovered_charged=$(jq -r --arg r "$run_id" '.[$r].charged // empty' "$spend_file" 2>/dev/null) || recovered_charged=
+            recovered_exempt=$(jq -r --arg r "$run_id" '.[$r].exempt // empty' "$spend_file" 2>/dev/null) || recovered_exempt=
+            valid_uint_or_zero "$recovered_charged" && valid_uint_or_zero "$recovered_exempt" ||
+                die "the run-spend sidecar records an unusable entry for run $run_id (charged=$recovered_charged exempt=$recovered_exempt); repair it rather than reserving against unknown spend"
+            carried_charged=$recovered_charged
+            carried_exempt=$recovered_exempt
+        fi
+    fi
+    charge_class=charged
+    charge_reason="no persisted prior reviewed head; charging"
+    if [ "$attempt" = "1" ]; then
+        # Attempt 1 of a head is a NEW cycle, and the only thing that spends a
+        # ceiling. Classify it, then charge whichever counter it belongs to.
+        # Challenge round 1, P1 (confirmed): the previous reviewed head is
+        # DERIVED from persisted state, never taken on a caller's word. The
+        # state already records it, and a caller free to name any SHA can
+        # manufacture an exemption: given reviewed head A, a fix commit B and
+        # a base merge C, passing B classifies only B...C and exempts a cycle
+        # in which A...C changed reviewed code. `--previous-head` may now only
+        # RESTATE what state already says, so a caller that disagrees with the
+        # record is refused rather than believed.
+        classify_prev_head=
+        if [ -f "$state_file" ]; then
+            # Only a head that actually received a terminal verdict is a
+            # "previously reviewed head"; absent that, there is nothing proven
+            # to compare against and the cycle charges.
+            classify_prev_head=$(jq -r '.last_reviewed_head // empty' "$state_file")
+            [ "$classify_prev_head" != "$head" ] || classify_prev_head=
+        fi
+        if [ -n "$previous_head" ]; then
+            valid_sha "$previous_head" ||
+                die "--previous-head must be a full 40-hex commit"
+            [ -n "$classify_prev_head" ] ||
+                die "--previous-head was supplied but no persisted prior head exists to confirm it against"
+            [ "$previous_head" = "$classify_prev_head" ] ||
+                die "--previous-head $previous_head disagrees with the persisted last-reviewed head $classify_prev_head"
+        fi
+        # Per the invariant: an exemption rests on the persisted record of what
+        # the last cycle reviewed, so that record must belong to THIS run. When
+        # the caller names a run and state carries a different one — or none at
+        # all — the prior head is not this run's history and cannot license an
+        # exemption, whatever it says.
+        if [ -n "$run_id" ] && [ "$(jq -r '.run_id // empty' "$state_file" 2>/dev/null)" != "$run_id" ]; then
+            classify_prev_head=
+            charge_reason="the persisted state belongs to a different run; charging"
+        fi
+        if [ -n "$classify_prev_head" ]; then
+            classify_cycle_charge "$classify_prev_head" "$head" "$repo" "$pr"
+        fi
+        # Review round 1, P1 (confirmed): a cap is a CEILING, and a ceiling
+        # enforced only by the readiness gate is enforced after the money is
+        # spent — the prescribed sequence posts the trigger immediately after
+        # this reservation, so the review has already run by the time the gate
+        # objects. Refuse the reservation instead, at the one point where the
+        # spend is still preventable.
+        # The resolver produces exactly two shapes — equal to the charged cap, or
+        # 0 on a historical decode — so any other pair describes a policy that
+        # cannot exist. Refusing it here, before a trigger is posted, is the
+        # point: a caller passing `--integration-cap 4 --integration-exempt-cap
+        # 99` could otherwise have cycles 5..99 approved as exempt.
+        if [ -n "$integration_exempt_cap" ] && [ -n "$integration_cap" ]; then
+            [ "$integration_exempt_cap" = "0" ] ||
+                [ "$integration_exempt_cap" = "$integration_cap" ] ||
+                die "--integration-exempt-cap ($integration_exempt_cap) must be 0 or equal to --integration-cap ($integration_cap); no resolved policy produces any other pair"
+        fi
+        # An exempt ceiling of 0 is not "no exempt budget left", it is a policy
+        # with no exemption at all — what every historical (legacy/v1) decode
+        # resolves to, because those shapes spend one shared total. Refusing
+        # there would cap a migration run earlier than its own merge-base
+        # policy allowed. Charge the cycle to the budget that does exist
+        # instead; the exemption simply does not apply under that policy.
+        # An exempt ceiling of 0 is a policy with no exemption (every historical
+        # decode). An UNDECLARED ceiling is an unknown one — and by the
+        # governing invariant unknown charges. Both collapse to the same
+        # outcome, which also makes a caller pinned before this flag existed
+        # degrade to today's behaviour rather than into a run the gate will
+        # refuse to promote (Claude cloud reviewer, P2, confirmed).
+        if [ "$charge_class" = "exempt" ] &&
+            { [ -z "$integration_exempt_cap" ] || [ "$integration_exempt_cap" = "0" ]; }; then
+            charge_class=charged
+            if [ -z "$integration_exempt_cap" ]; then
+                charge_reason="$charge_reason (charged: no exempt ceiling was declared)"
+            else
+                charge_reason="$charge_reason (charged: this policy has no exempt ceiling)"
+            fi
+        fi
+        if [ "$charge_class" = "exempt" ]; then
+            [ -z "$integration_exempt_cap" ] ||
+                [ "$((carried_exempt + 1))" -le "$integration_exempt_cap" ] ||
+                die "this cycle is exempt but the exempt ceiling ($integration_exempt_cap) is already spent; no cycle remains to reserve"
+            carried_exempt=$((carried_exempt + 1))
+        else
+            [ -z "$integration_cap" ] ||
+                [ "$((carried_charged + 1))" -le "$integration_cap" ] ||
+                die "the integration cap ($integration_cap) is already spent; no charged cycle remains to reserve"
+            carried_charged=$((carried_charged + 1))
+        fi
+    else
+        # Attempt 2 re-triggers the SAME cycle after an incomplete first
+        # attempt. Re-classifying would be wrong twice over: the head has not
+        # moved, and charging again would make a flaky reviewer cost budget
+        # that the change never asked for. Carry attempt 1's verdict.
+        charge_class=$(jq -r '.charge // "charged"' "$state_file")
+        charge_reason=$(jq -r '.charge_reason // ""' "$state_file")
+    fi
     if [ "$attempt" = "2" ]; then
+        # harmon-devkit#573: the one bounded re-trigger exists for a reviewer
+        # that did not answer. A reviewer that answered "my code-review usage
+        # limit is exhausted" DID answer, so spending attempt 2 on it buys a
+        # second window on a known-blocked reviewer and then escalates for the
+        # wrong reason — the ~30 minutes the original issue measured. `check`
+        # recorded that answer on this state when it reported exit 15; refuse
+        # here rather than re-deriving it from GitHub, so the refusal is as
+        # deterministic as the reservation it guards.
+        recorded_quota_at=$(jq -r '.quota_exhausted_at // empty' "$state_file")
+        if [ -n "$recorded_quota_at" ]; then
+            recorded_quota_reset=$(jq -r '.quota_reset_at // empty' "$state_file")
+            quota_refusal="attempt 1 ended with the finder reporting an exhausted code-review usage limit at $recorded_quota_at"
+            if [ -n "$recorded_quota_reset" ]; then
+                quota_refusal="$quota_refusal (resets at $recorded_quota_reset)"
+            fi
+            die "$quota_refusal — re-triggering cannot produce a review; report the blocker, and recover by pushing a new commit or removing this state file (route carried in #1115)"
+        fi
         previous_requested_at=$(jq -r '.requested_at' "$state_file")
         valid_time "$previous_requested_at" ||
             die "attempt 1 state has an invalid request time"
@@ -854,6 +2299,18 @@ reserve)
         rm -rf "$finder_tmpdir"
     fi
 
+    # The head first trigger id survives a re-reservation, unlike the
+    # reservation timestamp above: it is what the unbound-badge scan orders
+    # against, and rebasing it on attempt 2 would hide every badge the
+    # connector posted while attempt 1 was timing out (which is
+    # `review-r3-codex-verification-1`, in its clock-free form).
+    if [ -n "$carried_first_trigger_comment_id" ]; then
+        valid_uint "$carried_first_trigger_comment_id" ||
+            die "attempt 1 state has an invalid first trigger id to carry forward"
+        payload_first_trigger_comment_id=$carried_first_trigger_comment_id
+    else
+        payload_first_trigger_comment_id=null
+    fi
     if [ -n "$replaced_trigger_comment_id" ]; then
         valid_uint "$replaced_trigger_comment_id" ||
             die "attempt 1 state has an invalid trigger id to carry forward"
@@ -861,6 +2318,29 @@ reserve)
     else
         payload_previous_trigger_comment_id=null
     fi
+
+    # Greptile, P1 (confirmed): the sidecar used to be written here, BEFORE the
+    # reservation state. A failed `write_state` then left spend recorded for a
+    # reservation that does not exist — and a retry, finding no state, charged
+    # the run a second time, consuming a ceiling with no review behind it.
+    #
+    # These two records cannot be made atomic with each other, so the sidecar is
+    # written after the state and ROLLED BACK if either step fails. The failure
+    # direction is then "reservation exists, spend not yet recorded", which the
+    # next reservation corrects from the state itself — rather than "spend
+    # recorded, reservation missing", which nothing corrects.
+    spend_snapshot=
+    if [ -n "$run_id" ] && [ -f "$spend_file" ]; then
+        spend_snapshot=$(cat "$spend_file" 2>/dev/null) || spend_snapshot=
+    fi
+    restore_spend() {
+        [ -n "$run_id" ] || return 0
+        if [ -n "$spend_snapshot" ]; then
+            printf '%s' "$spend_snapshot" >"$spend_file" 2>/dev/null || true
+        else
+            rm -f "$spend_file"
+        fi
+    }
 
     payload=$(jq -cn \
         --arg repo "$repo" \
@@ -872,17 +2352,44 @@ reserve)
         --argjson settled "$carried_settled" \
         --argjson finder "$finder_payload" \
         --argjson previous_trigger_comment_id "$payload_previous_trigger_comment_id" \
+        --arg charge "$charge_class" \
+        --arg charge_reason "$charge_reason" \
+        --argjson charged_cycles "$carried_charged" \
+        --argjson exempt_cycles "$carried_exempt" \
+        --arg run_id "$run_id" \
+        --arg base_sha "$reserve_base_sha" \
+        --argjson first_trigger_comment_id "$payload_first_trigger_comment_id" \
         '{
           version:2,repo:$repo,pr:$pr,head:$head,attempt:$attempt,
           phase:"reserved",reserved_at:$reserved_at,
           trigger_comment_id:null,requested_at:null,
           previous_trigger_comment_id:$previous_trigger_comment_id,
+          first_trigger_comment_id:$first_trigger_comment_id,
           requires_full_window:false,
           timeout_min:$timeout_min,
           settled:$settled,
-          finder:$finder
+          finder:$finder,
+          charge:$charge,
+          charge_reason:$charge_reason,
+          charged_cycles:$charged_cycles,
+          exempt_cycles:$exempt_cycles,
+          run_id:(if $run_id == "" then null else $run_id end),
+          base_sha:(if $base_sha == "" then null else $base_sha end)
         }')
-    write_state "$state_file" "$payload"
+    write_state "$state_file" "$payload" || {
+        restore_spend
+        die "cannot write the reservation state; the run's spend is left as it was"
+    }
+    if [ -n "$run_id" ]; then
+        [ -f "$spend_file" ] || printf '{}' >"$spend_file"
+        jq --arg r "$run_id" --argjson c "$carried_charged" --argjson e "$carried_exempt" \
+            '.[$r] = {charged: $c, exempt: $e}' "$spend_file" >"${spend_file}.next" 2>/dev/null &&
+            mv "${spend_file}.next" "$spend_file" || {
+            rm -f "${spend_file}.next"
+            restore_spend
+            die "cannot record this run's spend in $spend_file; the reservation stands but its spend is not durable — re-run the reservation"
+        }
+    fi
     release_state_lock
     printf '%s\n' "$payload"
     ;;
@@ -1104,6 +2611,10 @@ attach)
           )]
         ') || die "cannot classify prior review triggers"
 
+    # With no reconstruction evidence the only same-head trigger in view is the
+    # one being attached, so it IS the minimum. The branch below lowers this
+    # whenever it can authenticate an earlier one.
+    first_trigger_candidate=$trigger_id
     if [ "$requested_at" \< "$state_reserved" ] ||
         [ "$(printf '%s' "$prior_trigger_candidates" | jq 'length')" -gt 0 ]; then
         # A trigger that predates this local reservation is state-recovery
@@ -1142,6 +2653,33 @@ attach)
               [$candidates[] | select(.user.id as $id | $trusted | index($id))] |
               sort_by(.created_at, .id) | last // null | .id // null
             ')
+        # Review round 5, finding `review-r5-codex-verification-1` (confirmed
+        # P1, and a REPRODUCED false clean): the line above deliberately takes
+        # the NEWEST prior trigger, because that is what
+        # `previous_trigger_comment_id` means. The unbound-badge boundary needs
+        # the opposite — the EARLIEST — and it used to be filled with the
+        # trigger in hand instead, so a reconstruction over two same-head
+        # triggers anchored on the second and silently dropped every badge that
+        # answered the first. Reproduced as `rc=0 clean` over a live
+        # undisposed P0, with no `unbound_badged` key emitted at all.
+        #
+        # Same already-fetched, already-authenticated candidate set, no extra
+        # GitHub call: the minimum id among every same-head trigger this attach
+        # can see, including the one being attached. The boundary therefore
+        # only ever moves DOWN, which is the fail direction this scan commits
+        # to a few hundred lines below.
+        first_trigger_candidate=$(jq -nr \
+            --argjson candidates "$prior_trigger_candidates" \
+            --argjson attached "$trigger_id" \
+            --slurpfile registry "$trigger_registry_dir/registry.json" '
+              ($registry[0].trusted_orchestrator_actor_ids // []) as $trusted |
+              ([$candidates[] |
+                 select(.user.id as $id | $trusted | index($id)) | .id] +
+               [$attached]) |
+              map(select(type == "number" and . > 0)) | min // $attached
+            ')
+        valid_uint "$first_trigger_candidate" ||
+            die "cannot determine the head first trigger id from the fetched same-head triggers"
         rm -rf "$trigger_registry_dir"
         [ "$previous_trigger_comment_id" = null ] || requires_full_window=true
     fi
@@ -1150,6 +2688,7 @@ attach)
         --argjson id "$trigger_id" \
         --arg requested_at "$requested_at" \
         --argjson previous_trigger_comment_id "$previous_trigger_comment_id" \
+        --argjson first_trigger "$first_trigger_candidate" \
         --argjson requires_full_window "$requires_full_window" \
         --arg boundary_source "$boundary_source" \
         --arg commit_date_boundary "$commit_date_boundary" \
@@ -1159,6 +2698,24 @@ attach)
           .trigger_comment_id = $id |
           .requested_at = $requested_at |
           .previous_trigger_comment_id = $previous_trigger_comment_id |
+          # SET ONCE PER HEAD, then never rebased. This is the whole of the
+          # unbound-badge scan ordering now: no timestamps, no window, just
+          # "was this comment posted after the first thing we asked for on
+          # this head". A second attempt keeps attempt 1 id (carried through
+          # `reserve`), and a RECONSTRUCTION keeps whatever it was rebuilt
+          # around, because `//=` only fills a null. Rebasing it on a later
+          # attempt is exactly the defect `review-r3-codex-verification-1`
+          # reproduced, and anchoring it on a clock is the seam five
+          # consecutive rounds attacked.
+          # MONOTONE DECREASING, set once and then only ever lowered. A
+          # second attempt keeps attempt 1 id (carried through `reserve`), and
+          # a reconstruction that authenticates an EARLIER same-head trigger
+          # lowers it to that one — `review-r5-codex-verification-1`. It can
+          # never rise, so no later attach can hide a badge an earlier trigger
+          # had already drawn.
+          .first_trigger_comment_id =
+            ([(.first_trigger_comment_id // empty), $first_trigger] |
+              map(select(type == "number" and . > 0)) | min) |
           .requires_full_window = $requires_full_window |
           .boundary_source = $boundary_source |
           .commit_date_boundary = $commit_date_boundary |
@@ -1168,6 +2725,239 @@ attach)
     write_state "$state_file" "$payload"
     release_state_lock
     printf '%s\n' "$payload"
+    ;;
+
+carry)
+    # harmon-init#752. See the usage block for the argument the mechanism rests
+    # on; what follows is the order the refusals are made in, which is itself
+    # part of the contract: every precondition that can be answered from local
+    # state is answered before GitHub is called, so a run that cannot possibly
+    # carry does not spend a read finding that out.
+    #
+    # Challenge round 2, scaffolding checkpoint (findings
+    # `challenge-r2-codex-adversarial-1` P1, `-2` and `-3` P2 — every one of
+    # them reported as existing "only because round 1 added it"): round 1 made a
+    # carry MOVE the state to the new head and keep a snapshot of the old cycle
+    # to re-check recursively. The obligation was right — a carried verdict must
+    # be re-checked against live evidence, not re-read — but the mechanism grew
+    # its own failure surface: a disposable copy the documented `settle` path
+    # could not reach, a second liveness read racing the first, and a receipt
+    # the gate could only spot-check.
+    #
+    # All three are DELETED rather than hardened. The cycle state does not move.
+    # A carry records that this cycle's verdict also attests a LATER head, and
+    # nothing else changes: the head, the trigger, the request time, and the
+    # settlements stay exactly where `settle` and `check` already look for them.
+    # Re-checking the cycle is then not a thing this code does at all — it is
+    # what `check` already was, because it is still the same cycle.
+    [ -n "$head" ] || usage
+    valid_sha "$head" || die "head must be a full 40-hex commit"
+    acquire_state_lock
+    read_state
+
+    state_repo=$(jq -r '.repo' "$state_file")
+    state_pr=$(jq -r '.pr' "$state_file")
+    carry_cycle_head=$(jq -r '.head' "$state_file")
+    state_head=$carry_cycle_head
+    state_attempt=$(jq -r '.attempt' "$state_file")
+
+    # A carried verdict is a claim about what THIS run has already paid for.
+    # State owned by another run — or by no run at all, which a scoped caller
+    # cannot tell apart from a foreign one — is not this run's history, so it
+    # licenses nothing. Exactly the rule `reserve` applies to the exemption
+    # classifier, for exactly the same reason.
+    if [ -n "$run_id" ]; then
+        carry_state_run_id=$(jq -r '.run_id // empty' "$state_file")
+        if [ "$carry_state_run_id" != "$run_id" ]; then
+            emit not-carried "this cycle state belongs to run ${carry_state_run_id:-no run}, not $run_id — a verdict another run obtained cannot be carried into this one"
+            exit 17
+        fi
+    fi
+
+    # Self-found while re-reading the state machine: `carry` checked the
+    # VERDICT record and never the phase, so it would happily attest a later
+    # head from a cycle still in flight. `reserved` is the write-ahead record
+    # taken before a trigger is posted, and an `attached` head with no verdict
+    # is a live cycle; neither has produced anything to carry.
+    carry_verdict=$(jq -r '.last_reviewed_verdict // empty' "$state_file")
+    carry_reviewed_head=$(jq -r '.last_reviewed_head // empty' "$state_file")
+    carry_phase=$(jq -r '.phase' "$state_file")
+    # Review round 1, finding `review-r1-codex-verification-1` (confirmed P2):
+    # the verdict marker alone was the test, on the reasoning that `reserve`
+    # writes a fresh payload and so cannot leave `last_reviewed_head` behind.
+    # That holds for state this helper produces, and the condition was checking
+    # a CONSEQUENCE rather than the thing the comment claims — so hand-repaired
+    # or legacy state carrying both a `reserved` phase and a stale clean marker
+    # would have been carried past a live reservation. Both facts are cheap to
+    # assert and neither implies the other.
+    if [ "$carry_phase" != "attached" ] || [ "$carry_reviewed_head" != "$carry_cycle_head" ]; then
+        emit not-carried "this cycle is still in flight for $carry_cycle_head (phase $carry_phase) and has reached no verdict — there is nothing to carry"
+        exit 17
+    fi
+    # `findings` is a terminal verdict too, and it is recorded on the same
+    # marker — which is why the verdict class had to become part of the record.
+    # Only a clean one is carryable: carrying "there are findings" forward
+    # would attest nothing the gate can pass on, and carrying it as though it
+    # were clean is the fail-open this whole mechanism must not have.
+    if [ "$carry_verdict" != "clean" ]; then
+        emit not-carried "no clean verdict is recorded for $carry_cycle_head (last recorded verdict: ${carry_verdict:-none}) — there is nothing to carry"
+        exit 17
+    fi
+    # Challenge round 4, finding `challenge-r4-codex-adversarial-2` (confirmed
+    # P1): a cycle can be recorded clean and LATER receive a usage-limit reply,
+    # which exit 15 persists here while leaving the clean verdict in place.
+    # Carrying such a cycle skips the fresh trigger and then replays exit 15
+    # from it, so the documented recovery — push a new commit — cannot recover:
+    # the new commit gets carried instead of reserved, and the run is stuck at a
+    # terminal it can never clear. Exit 15 means this head is finished; a carry
+    # must not extend it to another one.
+    carry_quota_at=$(jq -r '.quota_exhausted_at // empty' "$state_file")
+    if [ -n "$carry_quota_at" ]; then
+        emit not-carried "the cycle for $carry_cycle_head ended with the finder reporting an exhausted usage limit at $carry_quota_at — that terminal cannot be carried to another head; reserve a fresh cycle"
+        exit 17
+    fi
+    # Without the base the verdict was read against there is no reviewed change
+    # to take an identity of. That base is recorded only when the reservation
+    # and the verdict agreed on it (see mark_terminally_reviewed); when they
+    # disagreed it is deliberately left unset, and unset is the invariant's
+    # answer, not a gap to fill with the live base.
+    carry_origin_base=$(jq -r '.last_reviewed_base_sha // empty' "$state_file")
+    if ! valid_sha "$carry_origin_base"; then
+        emit not-carried "the base the clean verdict was read against is not recorded — the reviewed change has no identity to compare against"
+        exit 17
+    fi
+    if [ "$carry_cycle_head" = "$head" ]; then
+        emit not-carried "this head IS the head the clean verdict named; no carry is needed or possible"
+        exit 17
+    fi
+
+    carry_previous_attests=$(jq -r '.carry.attests_head // empty' "$state_file")
+    carry_generation=$(jq -r '.carry.generation // 0' "$state_file")
+
+    provider_status=0
+    live_head=$(provider_head "$state_pr" "$state_repo") || provider_status=$?
+    if [ "$provider_status" -eq 3 ]; then
+        # Integration cycle 2, nit (accepted): 14 is this helper's documented
+        # code for "GitHub answered and the PR is MERGED or CLOSED", and `carry`
+        # was reporting it through `die` — exit 2, non-JSON — in a file that
+        # otherwise documents its exit codes to the letter.
+        # Integration cycle 3 (claude), finding `integration-r3-claude-2`: the
+        # caller was told to treat anything but 0 and 17 as "reserve one",
+        # which would call `reserve`, die with exit 2, and report a closed PR
+        # as indeterminate. 14 is now documented at every site that lists
+        # `carry`'s exits, as terminal.
+        emit pr-not-open \
+            "PR is ${live_head:-no longer open} — the stage is over; stop, do not re-trigger or keep polling"
+        exit 14
+    elif [ "$provider_status" -ne 0 ]; then
+        emit not-carried "cannot confirm the open PR head; not carrying"
+        exit 17
+    fi
+    if [ "$live_head" != "$head" ]; then
+        emit not-carried "the PR head is $live_head, not the $head this carry was asked about"
+        exit 17
+    fi
+    carry_pr_payload=$(run_gh api "repos/$state_repo/pulls/$state_pr") || carry_pr_payload=
+    carry_base=$(jq -r '.base.sha // empty' <<<"$carry_pr_payload" 2>/dev/null) || carry_base=
+    if ! valid_sha "$carry_base"; then
+        emit not-carried "the PR payload names no stable base commit for this head; not carrying"
+        exit 17
+    fi
+
+    # Ancestry, not just difference. A rebase or a force-push produces a head
+    # that can legitimately carry the same change identity while being a
+    # different line of history — new commits, new authorship, a base the
+    # reviewer never saw underneath. The carve-out this implements is a base
+    # CATCH-UP, so EVERY hop must be one.
+    #
+    # Challenge round 3, finding `challenge-r3-codex-adversarial-2` (confirmed
+    # P1): checking only that the REVIEWED head is an ancestor lets a chain
+    # launder a rewrite. Having carried O to H1, a force-push to an H2 that
+    # still descends from O passes — H1 is not in H2's history at all — and the
+    # record then states `from_head: H1`, provenance that is false and which
+    # the gate now promotes byte for byte. Each generation is anchored to the
+    # head it last attested as well as to the reviewed one.
+    carry_anchors=$carry_cycle_head
+    [ -z "$carry_previous_attests" ] ||
+        carry_anchors="$carry_anchors $carry_previous_attests"
+    if ! command -v git >/dev/null 2>&1; then
+        emit not-carried "git is required to establish that $head is a catch-up rather than a rewrite"
+        exit 17
+    fi
+    for carry_anchor in $carry_anchors; do
+        if ! git -C "$repo_dir" --no-replace-objects merge-base --is-ancestor \
+            "$carry_anchor" "$head" 2>/dev/null; then
+            emit not-carried "$carry_anchor is not an ancestor of $head (history was rewritten, or the commits are not in $repo_dir) — a fresh cycle is required"
+            exit 17
+        fi
+    done
+
+    if ! change_identity "$carry_origin_base" "$carry_cycle_head"; then
+        emit not-carried "cannot establish the reviewed change's identity: $change_identity_error"
+        exit 17
+    fi
+    carry_origin_identity=$change_identity_value
+    if ! change_identity "$carry_base" "$head"; then
+        emit not-carried "cannot establish this head's change identity: $change_identity_error"
+        exit 17
+    fi
+    carry_head_identity=$change_identity_value
+    if [ "$carry_origin_identity" != "$carry_head_identity" ]; then
+        emit not-carried "the change moved: the reviewed change is $carry_origin_identity and this head's is $carry_head_identity — a fresh cycle is required"
+        exit 17
+    fi
+
+    # Self-found: re-running `carry` for a head it already attests used to
+    # re-carry it, inflating `generation` and setting `from_head` to that head
+    # itself — so a resumed session doing the obvious thing corrupted its own
+    # provenance chain. Re-proving and saying so is the right answer to a
+    # repeated question; rewriting the record is not.
+    #
+    # Integration cycle 5 (claude), finding `integration-r5-claude-4` (P3):
+    # this path re-proved the two FRESH identities against each other and never
+    # against the RECORDED one, the rule `verify_carried_attestation` states and
+    # `check` enforces. Under any rendering drift it answered "the proof still
+    # holds" while re-presenting a record whose change_id differed. Now it asks
+    # the same question every other consumer asks.
+    if [ "$carry_previous_attests" = "$head" ] &&
+        [ "$(jq -r '.carry.change_id // empty' "$state_file")" != "$carry_head_identity" ]; then
+        emit not-carried "this cycle's carry record for $head names change identity $(jq -r '.carry.change_id // empty' "$state_file"), but the change now derives $carry_head_identity — the record no longer describes this head; a fresh cycle is required"
+        exit 17
+    fi
+    if [ "$carry_previous_attests" = "$head" ]; then
+        release_state_lock
+        emit carried \
+            "this cycle already attests $head, and the proof still holds (change identity $carry_head_identity)" \
+            "" "" "$(jq -c '{carried: .carry}' "$state_file")"
+        exit 0
+    fi
+
+    carried_at=$(date -u '+%Y-%m-%dT%H:%M:%SZ')
+    carry_generation=$((carry_generation + 1))
+    carry_payload=$(jq \
+        --arg attests "$head" \
+        --arg carried_at "$carried_at" \
+        --arg from_head "${carry_previous_attests:-$carry_cycle_head}" \
+        --arg base_sha "$carry_base" \
+        --arg identity "$carry_head_identity" \
+        --argjson generation "$carry_generation" '
+          .version = 2 |
+          .carry = {
+            attests_head: $attests,
+            from_head: $from_head,
+            base_sha: $base_sha,
+            change_id: $identity,
+            algorithm: "git-diff-digest/three-dot/v1",
+            generation: $generation,
+            carried_at: $carried_at
+          }
+        ' "$state_file")
+    write_state "$state_file" "$carry_payload"
+    release_state_lock
+    emit carried \
+        "the reviewed change is unchanged (change identity $carry_head_identity); the clean verdict for $carry_cycle_head attests $head with no cycle spent" \
+        "" "" "$(jq -c '{carried: .carry}' <<<"$carry_payload")"
+    exit 0
     ;;
 
 show)
@@ -1213,7 +3003,13 @@ reap)
     # into two, and a half-path that no longer resolves is a confusing way to
     # discover an unreadable directory. A find that could not complete is a
     # sweep that did not happen, so it fails rather than under-reporting.
-    find "$root_dir" -mindepth 3 -maxdepth 3 -type f -name '*.json' -print0 \
+    # `*.spend.json` is a run-keyed spend record, not a cycle state, so it is
+    # excluded here rather than enumerated and rejected: as a candidate it
+    # failed the schema check on every sweep, logging a permanent false
+    # "not a recognizable state file" entry and spending sweep budget
+    # (Claude cloud reviewer, P2, confirmed).
+    find "$root_dir" -mindepth 3 -maxdepth 3 -type f -name '*.json' \
+        ! -name '*.spend.json' -print0 \
         >"$reap_workdir/candidates" ||
         die "cannot enumerate state under $root_dir"
 
@@ -1309,6 +3105,11 @@ reap)
                 action=skipped
                 detail="state changed while its PR was being checked"
             elif rm -f "$candidate"; then
+                # The run-spend sidecar belongs to this state's PR and is only
+                # ever meaningful while that PR is open. It is removed together
+                # with a POSITIVELY identified closed-PR state — never on its
+                # own, since on its own it carries no PR identity to check.
+                rm -f "${candidate%.json}.spend.json"
                 rmdir "$reap_lock" 2>/dev/null || true
                 reap_lock=
                 action=reaped
@@ -1380,10 +3181,34 @@ check)
     state_head=$(jq -r '.head' "$state_file")
     state_attempt=$(jq -r '.attempt' "$state_file")
     state_phase=$(jq -r '.phase' "$state_file")
+    # Review round 2, P1 (confirmed): a new run that starts on the SAME head as
+    # a prior one finds that run's `attached` state and resumes it, skipping
+    # `reserve` — and with it the run-scope reset that lives there. The prior
+    # run's spend is then silently attributed to this one, and its cycle
+    # ordinal disagrees with the inherited totals. `reserve` cannot catch this
+    # because it is never called; the resume path has to, so the guard lives
+    # here where the resume actually happens.
     [ "$state_phase" = "attached" ] || {
         emit indeterminate "review request was reserved but its exact trigger is not attached"
         exit 2
     }
+    # Review round 5, P1 (confirmed): a caller that names a run is asking for
+    # EXACT ownership, so unowned state must not pass as this run's. State
+    # written before run scoping existed carries no owner, and treating that
+    # as "mine" is the same mistake as treating a foreign owner as mine — it
+    # just fails silently instead of loudly. A scoped call gets a scoped
+    # answer; an unscoped call (no --run-id) keeps the old behavior.
+    if [ -n "$run_id" ]; then
+        state_run_id=$(jq -r '.run_id // empty' "$state_file")
+        if [ -z "$state_run_id" ]; then
+            emit indeterminate "this cycle state records no owning run, so it cannot be confirmed as run $run_id's — reserve a fresh cycle"
+            exit 2
+        fi
+        if [ "$state_run_id" != "$run_id" ]; then
+            emit indeterminate "this cycle state belongs to run $state_run_id, not $run_id — reserve a fresh cycle rather than resuming another run's spend"
+            exit 2
+        fi
+    fi
 
     # Per-finder parameters (#804): when state carries a finder profile,
     # actor identity and classification are driven by it.
@@ -1408,6 +3233,25 @@ check)
     state_trigger=$(jq -r '.trigger_comment_id // empty' "$state_file")
     state_reserved=$(jq -r '.reserved_at' "$state_file")
     state_requested=$(jq -r '.requested_at' "$state_file")
+    # The head FIRST trigger id, the unbound-badge scan whole ordering. A state
+    # written before this field existed has none, and there is no way to
+    # recover which trigger came first from a resumed state, so it degrades to
+    # the trigger in hand.
+    #
+    # Review round 5, finding `review-r5-codex-verification-4` (confirmed P3):
+    # the previous version of this comment also claimed every state this
+    # version writes carries the field, and that is FALSE for a
+    # requested-reviewer finder — `attach --requested-at` records when the
+    # reviewer was requested and there is no trigger comment to record, so
+    # BOTH fields are null and this read came back empty. The boundary then
+    # degraded to `0`, which would make every unbound badge block forever
+    # rather than "degrade to the trigger in hand". It was inert only because
+    # the one requested-reviewer finder in the registry does not declare the
+    # `comment` surface, so the scan is never reached — one registry edit from
+    # live. The degradation is explicit at the scan itself now rather than
+    # resting on that coincidence.
+    state_first_trigger=$(jq -r \
+        '.first_trigger_comment_id // .trigger_comment_id // empty' "$state_file")
     # trigger_comment_id is null for requested-reviewer finders
     if [ "$finder_trigger_mechanism" = "review-comment" ]; then
         valid_uint "$state_trigger" || die "state has an invalid trigger ID"
@@ -1434,18 +3278,82 @@ check)
             "PR is ${first_head:-no longer open} — the stage is over; stop, do not re-trigger or keep polling"
         exit 14
     elif [ "$provider_status" -ne 0 ]; then
-        bounded_wait "cannot fetch the current open PR head"
+        transient_read_failure "cannot fetch the current open PR head"
     fi
-    [ "$first_head" = "$state_head" ] || {
+    # harmon-init#752. A cycle can attest a LATER head than its own: `carry`
+    # proved that head's change is byte-identical to the one this cycle
+    # reviewed. Two consequences, and they are the whole of it.
+    #
+    # First, two different heads are in play, and conflating them is how this
+    # breaks:
+    #
+    #   $state_head          — the head of the CYCLE. Every EVIDENCE binding
+    #                          keys off it: a `Reviewed commit:` line, a
+    #                          settled comment's prefix, the receipt this cycle
+    #                          emits. It is the head a reviewer actually read.
+    #   $expected_live_head  — the head the PR is expected to be AT. Every
+    #                          LIVENESS check keys off it. With no carry the
+    #                          two are the same value and every check below
+    #                          behaves exactly as it did before this existed.
+    #
+    # The distinction is named once, here, because there are three liveness
+    # sites and the first draft of this patched one of them.
+    #
+    # Second, what is checked HERE is the RECORD'S SHAPE — a claim missing any
+    # field the proof is re-derived from is malformed state, and there is no
+    # point reading evidence under it. The IDENTITY itself is re-derived
+    # elsewhere: in `emit`, immediately before any verdict, because rounds 3
+    # and 4 each showed that a fixed point earlier than that leaves an interval
+    # in which a retarget can land. See `verify_carried_attestation`.
+    #
+    # Integration cycle 2, finding `integration-r2-claude-4` (confirmed P3):
+    # this comment still said the identity was re-derived here "before any
+    # evidence is read", which round 4 made false and which contradicts the
+    # comment on the post-hash re-read. These are where the trust argument is
+    # written down, so two of them telling a reader opposite things about where
+    # the boundary sits is a real defect, not a typo.
+    #
+    # Everything after this point is the ORDINARY cycle check: challenge round
+    # 2 deleted the recursive re-check round 1 added, because re-checking the
+    # cycle is not something this code needs to do when the cycle was never
+    # copied in the first place.
+    expected_live_head=$state_head
+    carry_attests=$(jq -r '.carry.attests_head // empty' "$state_file")
+    if [ -n "$carry_attests" ]; then
+        carry_recorded_identity=$(jq -r '.carry.change_id // empty' "$state_file")
+        carry_origin_base=$(jq -r '.last_reviewed_base_sha // empty' "$state_file")
+        # Integration cycle 4, finding `integration-r4-codex-cloud-1`
+        # (confirmed P1): this demanded a CLEAN recorded verdict. A late finding
+        # records `findings`, so every later `check` then exited 2 here before
+        # it could see a settlement, and the carried cycle could never
+        # converge. The clean requirement belongs where a carry is CREATED
+        # (`carry` refuses any other verdict); here the evidence scan below is
+        # the authority, so a recorded verdict of either class is admissible.
+        carry_recorded_verdict=$(jq -r '.last_reviewed_verdict // empty' "$state_file")
+        if ! valid_sha "$carry_attests" || ! valid_sha "$carry_recorded_identity" ||
+            ! valid_sha "$carry_origin_base"; then
+            emit indeterminate "this cycle claims to attest a later head but its carry record is incomplete: it must name that head, the identity it proved, and the verdict and base it rests on"
+            exit 2
+        fi
+        case "$carry_recorded_verdict" in
+        clean | findings) ;;
+        *)
+            emit indeterminate "this cycle claims to attest a later head but records no verdict it was carried from"
+            exit 2
+            ;;
+        esac
+        expected_live_head=$carry_attests
+    fi
+    if [ "$first_head" != "$expected_live_head" ]; then
         emit head-changed "recorded evidence belongs to an older PR head"
         exit 2
-    }
+    fi
 
     workdir=$(mktemp -d -t codex-cloud-review-XXXXXX)
     trap 'rm -rf "$workdir"; rm -f "$lock_dir/pid"; rmdir "$lock_dir" 2>/dev/null || true' EXIT
 
     actor=$(run_gh api "users/$actor_login") || {
-        bounded_wait "cannot authenticate the configured finder actor"
+        transient_read_failure "cannot authenticate the configured finder actor"
     }
     printf '%s' "$actor" | jq -e \
         --argjson id "$actor_id" \
@@ -1462,7 +3370,7 @@ check)
     if [ "$finder_trigger_mechanism" = "review-comment" ] && [ -n "$state_trigger" ]; then
         expected_trigger_body=$(jq -r '.finder.trigger_body // "@codex review"' "$state_file")
         trigger=$(run_gh api "repos/$state_repo/issues/comments/$state_trigger") || {
-            bounded_wait "cannot re-fetch the exact trigger comment"
+            transient_read_failure "cannot re-fetch the exact trigger comment"
         }
         printf '%s' "$trigger" | jq -e \
             --argjson id "$state_trigger" \
@@ -1512,9 +3420,9 @@ check)
             "PR was closed or merged (${second_head:-state unknown}) while evidence was being fetched — the stage is over"
         exit 14
     elif [ "$provider_status" -ne 0 ]; then
-        bounded_wait "cannot re-fetch the PR head before verdict"
+        transient_read_failure "cannot re-fetch the PR head before verdict"
     fi
-    [ "$second_head" = "$state_head" ] || {
+    [ "$second_head" = "$expected_live_head" ] || {
         emit head-changed "PR head changed while evidence was being fetched"
         exit 2
     }
@@ -1553,6 +3461,112 @@ check)
           .[] | select(.user.id? == $id and .commit_id? == $head) |
           [(.id? // "" | tostring), (.submitted_at? // "")] | @tsv
         ' "$workdir/reviews.json")
+
+    # harmon-devkit#573: the usage-limit reply. When the connector's
+    # code-review quota is spent it answers the trigger with a top-level
+    # comment — observed verbatim on evanharmon1/harmon-init#1020, comment
+    # 5380551548: "You have reached your Codex usage limits for code reviews.
+    # You can see your limits in the [Codex usage dashboard](…)". It carries no
+    # verdict sentence, no `Reviewed commit` line and no badge, so every
+    # classifier below is blind to it and the cycle sat `pending` for the whole
+    # window, then spent attempt 2 on the same answer before escalating: ~30
+    # minutes to learn something the bot said in five seconds, and a blocker
+    # report that could not name the reset time.
+    #
+    # Matched on the one phrase the message is built around, case-insensitively,
+    # and only from the pinned actor after this attempt's own trigger. The match
+    # is deliberately narrow: a reworded message simply is not recognised, which
+    # restores exactly today's behaviour (wait out the window) rather than
+    # inventing a terminal answer — the same fail-closed direction the rest of
+    # this file takes.
+    #
+    # `bounded_wait` acts on this, not the code here, because absence of other
+    # evidence is the only state a quota reply can ever be observed in, and
+    # every waiting path funnels through there.
+    if finder_has_surface comment; then
+        # `challenge-r5-codex-adversarial-4`, second site: a usage-limit reply
+        # posted in the triggers own second was missed by the strict bound, so
+        # the cycle waited out its window and reported 12 instead of the
+        # terminal 15 the reply had already given it. Inclusive bound plus the
+        # monotonic comment-id tiebreak.
+        #
+        # The unbound-badge scan above DROPPED that tiebreak in review round 2
+        # and this site deliberately keeps it, because the two scans fail in
+        # opposite directions. Admitting one extra badge costs one recorded
+        # disposition. Admitting one extra usage-limit reply costs the cycle
+        # outright: a quota answer is TERMINAL, so a stale refusal read as
+        # this attempt answer would end every later cycle on this head with a
+        # blocker nobody can settle. Here the id tiebreak is the only thing
+        # that can order a same-second reply against the trigger, and unlike
+        # the badge scan there is no second wire shape it cannot separate — a
+        # usage-limit reply is never edited into existence.
+        quota_record=$(jq -r \
+            --argjson id "$actor_id" \
+            --arg requested "$state_requested" \
+            --argjson trigger "${state_trigger:-0}" '
+              [.[] | select(
+                .user.id? == $id and
+                (((.created_at? // "") > $requested) or
+                 (((.created_at? // "") == $requested) and
+                  ((.id? | type) == "number") and (.id > $trigger))) and
+                ((.body // "") | ascii_downcase |
+                  test("reached your codex usage limit"))
+              ) | select((.id? | type) == "number" and .id > 0)] |
+              sort_by(.created_at, .id) | last // null |
+              if . == null then ""
+              else
+                [(.id | tostring), (.created_at // ""),
+                 # A reset time where the reply carries one. No observed
+                 # instance does, so this stays empty rather than guessing;
+                 # the detail then says so explicitly instead of implying a
+                 # time nobody was told.
+                 ((((.body // "") | [match(
+                      "[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}(:[0-9]{2})?Z";
+                      "i"
+                    ).string] | first) // ""))] | join(",")
+              end
+            ' "$workdir/comments.json") || {
+            emit indeterminate "conversation comments could not be scanned for a usage-limit reply"
+            exit 2
+        }
+        if [ -n "$quota_record" ]; then
+            IFS=, read -r quota_comment_id quota_detected_at quota_reset_at \
+                <<<"$quota_record"
+            valid_time "$quota_detected_at" || {
+                emit indeterminate "the finder's usage-limit reply carries a malformed creation time"
+                exit 2
+            }
+            # Terminal HERE, not at the far end of the pass. Everything below
+            # this point is evidence evaluation, and several of its branches
+            # exit 0 — a thumbs-up on the trigger, a clean review, a recorded
+            # disposition. Each of those would certify a head the reviewer has
+            # just refused to review, which is the false clean finding
+            # 4065974923 reported.
+            quota_exhausted_terminal "the finder answered this attempt with a usage-limit reply"
+        fi
+    fi
+
+    # harmon-devkit#655: is the finder's pending reaction still on THIS
+    # attempt's trigger? `reactions.json` is fetched for the exact trigger
+    # comment and nothing else, so presence here is exactly the "current
+    # attempt's trigger" the issue asks about — and a reaction that has since
+    # been removed is simply absent from the fetch, which is how the
+    # vanished-without-result case keeps its existing retry behaviour.
+    #
+    # Read here rather than in `bounded_wait` so the extension can never be
+    # decided from an unfetched surface: a finder with no reaction surface, or
+    # a read that failed earlier (now exit 16), leaves this at 0.
+    if finder_has_surface reaction; then
+        pending_reaction_live=$(jq -r \
+            --argjson id "$actor_id" \
+            --arg pending "$finder_pending_reaction" '
+              if any(.[]; .user.id? == $id and .content? == $pending)
+              then "1" else "0" end
+            ' "$workdir/reactions.json") || {
+            emit indeterminate "exact-trigger reactions could not be scanned for the pending signal"
+            exit 2
+        }
+    fi
 
     # Success reactions must carry usable evidence metadata just like review
     # and comment results. Only the exact latest trigger is consulted.
@@ -1686,13 +3700,31 @@ check)
     # `pull_request_review_id` cannot be attributed to anything, so it settles
     # nothing at all: the whole settled set collapses to empty rather than
     # letting an unattributable finding be counted against some other review.
+    #
+    # Review round 2, finding `review-r2-codex-verification-1` (confirmed P1):
+    # this count and the partition below were TWO DOMAINS FOR ONE QUESTION.
+    # Challenge round 5 (`challenge-r5-codex-adversarial-5`) taught the
+    # partition to exempt a self-fix summary and left this count unfiltered,
+    # so a head whose only actor inline comment was a self-report counted 1
+    # here and produced an EMPTY bot set there: nothing was unadjudicated, so
+    # `adjudicated_findings` was set, and the attribution assertion below —
+    # which requires at least one attributed review — could never be satisfied.
+    # The cycle exited 2 and handed a benign, informational state to a human,
+    # while the same head with ZERO actor inline comments reached the ordinary
+    # pending path. Reproduced as exactly that asymmetry (2 versus 11).
+    #
+    # In the merge base the two domains AGREED, because neither filtered. The
+    # divergence was created by narrowing one of two coupled sites, which is
+    # why the fix is one predicate rather than a second filter: the count now
+    # asks the same `is_self_report` question every other consumer asks.
     inline_head_findings=$(jq \
         --argjson id "$actor_id" \
-        --arg head "$state_head" '
+        --arg head "$state_head" \
+        "$codex_verdict_defs"'
           [.[] | select(
             .user.id? == $id and
             (.original_commit_id? == $head)
-          )] | length
+          ) | select(is_self_report | not)] | length
         ' "$workdir/inline.json")
 
     adjudicated_findings=0
@@ -1720,7 +3752,7 @@ check)
         # caller re-reads the four surfaces immediately before accepting a
         # result.
         pr_payload=$(run_gh api "repos/$state_repo/pulls/$state_pr") || {
-            bounded_wait "cannot fetch the pull request author identity"
+            transient_read_failure "cannot fetch the pull request author identity"
         }
         pr_author_id=$(printf '%s' "$pr_payload" |
             jq -er 'select(.user.id | type == "number") | .user.id') || {
@@ -1736,15 +3768,20 @@ check)
             emit indeterminate "pull request payload reports a malformed head commit"
             exit 2
         }
-        [ "$pr_head" = "$state_head" ] || {
+        [ "$pr_head" = "$expected_live_head" ] || {
             emit head-changed "PR head changed while findings were being adjudicated"
             exit 2
         }
 
+        # The shared verdict defs are loaded here because the round-5 `-5`
+        # exemption below needs `is_self_report`, which lives in them. This is
+        # the same definition the top-level classifier and `readiness-gate.sh`
+        # use, which is the point: one predicate, three consumers.
         inline_partition=$(jq -c \
             --argjson id "$actor_id" \
             --argjson author "$pr_author_id" \
-            --arg head "$state_head" '
+            --arg head "$state_head" \
+            "$codex_verdict_defs"'
               def ts($value):
                 if ($value | type) == "string" and
                    ($value | test(
@@ -1757,14 +3794,45 @@ check)
               . as $all |
               [$all[] | select(
                 .user.id? == $id and (.original_commit_id? == $head)
-              )] as $bot |
+              )] as $bot_all |
+              # Challenge round 5, finding `challenge-r5-codex-adversarial-5`
+              # (confirmed P1, a CONTRACT BREAK against the governing file):
+              # AGENTS.md says a self-fix summary — an unbadged report from
+              # this bot describing a fix IT made, **in a thread** or as a
+              # top-level comment — is informational and owed no second reply.
+              # The top-level half was implemented in `verdict_class`, and
+              # `readiness-gate.sh` implements the thread half, but THIS
+              # partition selected every bot comment on the head with no
+              # exemption at all. So the bot own unbadged summary, posted
+              # after a session replied "Fixed in <sha>", held the cycle open
+              # and was named as the accepted finding evidence.
+              #
+              # It survived five rounds because every #675 fixture in this
+              # suite is top-level; the inline half of that sentence had no
+              # case, which is exactly how the two implementations diverged
+              # unnoticed. Same predicate as the other two consumers, so all
+              # three now answer the same question the same way.
+              [$bot_all[] | select(is_self_report | not)] as $bot |
               [$bot[] |
                 . as $comment |
                 ts($comment.created_at) as $posted |
                 ($comment | edited_at) as $edited |
+                # Challenge round 3, finding `challenge-r3-codex-adversarial-8`
+                # (confirmed P2): GitHub sets `in_reply_to_id` to the THREAD
+                # ROOT on every reply, not to the comment being answered, so
+                # matching `in_reply_to_id == $comment.id` only ever
+                # adjudicated a bot comment that was itself the root. A bot
+                # comment posted INTO an existing thread could never be
+                # answered — no reply names it — while `readiness-gate.sh` and
+                # `ai/agents/integrator.md` both group by root and reported the
+                # thread answered. Three implementations, two answers, and
+                # `settle` refuses inline targets, so the head could not be
+                # cleared. Grouping by root here makes all three agree.
+                ($comment.in_reply_to_id // $comment.id) as $root |
                 [$all[] | select(
-                  (($comment.id? | type) == "number") and
-                  (.in_reply_to_id? == $comment.id) and
+                  (($root | type) == "number") and
+                  ((.in_reply_to_id // .id) == $root) and
+                  ((.id? // null) != $comment.id) and
                   ((.user.id? | type) == "number") and
                   (.user.id != $id) and
                   ((((.author_association? // "") |
@@ -1775,6 +3843,23 @@ check)
                   (ts(.created_at) > $posted)
                 ) | ts(.created_at)] as $replies |
                 {
+                  comment: (
+                    if ($comment.id? | type) == "number"
+                    then $comment.id else null end
+                  ),
+                  # Challenge round 5, finding `challenge-r5-codex-adversarial-6`
+                  # (confirmed P2): `unanswered[]` emitted the per-comment id
+                  # while `ai/agents/integrator.md` tells the agent to feed it
+                  # into `unanswered_thread_roots`, and the schema defines
+                  # those as THREAD ids. A bot comment posted into an existing
+                  # thread is not its own root, so the agent was handed a value
+                  # the field does not accept. The root is what the reply
+                  # endpoint takes too, so it is the useful id either way.
+                  root: $root,
+                  path: (
+                    if ($comment.path? | type) == "string"
+                    then $comment.path else null end
+                  ),
                   review: (
                     if ($comment.pull_request_review_id? | type) == "number"
                     then $comment.pull_request_review_id else null end
@@ -1788,6 +3873,20 @@ check)
               {
                 unadjudicated:
                   ([$classified[] | select(.adjudicated | not)] | length),
+                # harmon-devkit#737 defect 1: every unanswered bot thread on
+                # this head, from EVERY review that posted one. The partition
+                # was already head-scoped rather than review-scoped, so the
+                # count was right; what a caller got back was one accepted
+                # review id, which cannot name findings that came from two
+                # reviews 18 minutes apart (observed on harmon-devkit#720, where
+                # the 14 inline findings of the second review went unanswered
+                # until the readiness gate caught them after every integration
+                # round was spent). Enumerating them is what lets the caller
+                # answer all of them in the round that surfaced them.
+                unanswered:
+                  ([$classified[] | select(.adjudicated | not) |
+                    {thread_root: .root, comment_id: .comment,
+                     review_id: .review, path: .path}]),
                 unattributed:
                   ([$classified[] | select(.review == null)] | length),
                 attributed:
@@ -1841,8 +3940,39 @@ check)
                       ) | .id | tostring] | last // ""
                     ' "$workdir/reviews.json")
             fi
+            inline_unanswered_extra=$(printf '%s' "$inline_partition" |
+                jq -c '{unanswered: (.unanswered // [])}') || {
+                emit indeterminate "unanswered current-head inline threads could not be enumerated"
+                exit 2
+            }
+            # Challenge round 3, finding `challenge-r3-codex-adversarial-7`
+            # (confirmed P2): `emit` omits `accepted` when the id is empty,
+            # but BOTH schemas require `accepted` on exit 10, so an exit 10
+            # with no citable review produced a result the validator rejects —
+            # the caller could not report the finding at all.
+            #
+            # A review is not the only thing that can be cited, and the
+            # finding is real either way: an inline comment with no fetchable
+            # review behind it (no review by the actor on this head, or one
+            # this check never saw) is still an unanswered finding, and the
+            # COMMENT is perfectly good accepted evidence for it. Cite that
+            # rather than downgrading a real finding to indeterminate.
+            inline_findings_surface=review
+            inline_findings_id=$inline_findings_review_id
+            if [ -z "$inline_findings_id" ]; then
+                inline_findings_surface=comment
+                inline_findings_id=$(printf '%s' "$inline_partition" | jq -r '
+                  [(.unanswered // [])[] |
+                   select((.comment_id | type) == "number") | .comment_id] |
+                  first // "" | tostring
+                ')
+            fi
+            [ -n "$inline_findings_id" ] || {
+                emit indeterminate "current-head inline findings are unanswered but carry no citable comment or review id"
+                exit 2
+            }
             emit findings "current-head inline review findings are unanswered by a trusted in-thread reply" \
-                review "$inline_findings_review_id"
+                "$inline_findings_surface" "$inline_findings_id" "$inline_unanswered_extra"
             exit 10
         fi
         adjudicated_findings=1
@@ -1926,6 +4056,10 @@ check)
                  disposed: ((.id as $rid | $disposed_reviews | index($rid)) != null)}
           ] + [
             $comments[0][] | select(.user.id? == $id) |
+            # harmon-devkit#675: an unbadged self-report body is not evidence
+            # about the review at all, so it must not be able to win "newest
+            # result" and hold a genuinely clean cycle at pending.
+            select(verdict_class != "informational") |
             ((.body // "") |
               try match(
                 "Reviewed commit[^0-9a-fA-F]+([0-9a-fA-F]{7,40})";
@@ -2092,18 +4226,25 @@ check)
     # candidacy elsewhere — an older, unrelated clean result could then be
     # accepted instead of failing closed on the newer, unclassifiable
     # comment. Matching the predicate here closes that gap.
+    # Informational self-reports (harmon-devkit#675) are deliberately NOT in
+    # this scan: the whole point of that class is that such a body is not
+    # evidence about the review, so an unusable id on one loses nothing there
+    # is to lose.
     malformed_top_level=$(jq -r \
         --argjson id "$actor_id" \
         --arg head "$state_head" \
         "$codex_verdict_defs"'
           [.[] | select(.user.id? == $id) |
-            ((.body // "") |
-              try match(
-                "Reviewed commit[^0-9a-fA-F]+([0-9a-fA-F]{7,40})";
-                "i"
-              ).captures[0].string catch "") as $prefix |
-            select($prefix != "") |
-            select(($head | ascii_downcase) | startswith($prefix | ascii_downcase)) |
+            select(verdict_class != "informational") |
+            select(
+              ((.body // "") |
+                try match(
+                  "Reviewed commit[^0-9a-fA-F]+([0-9a-fA-F]{7,40})";
+                  "i"
+                ).captures[0].string catch "") as $prefix |
+              ($prefix != "") and
+              (($head | ascii_downcase) | startswith($prefix | ascii_downcase))
+            ) |
             select((.id? | is_positive_integer) | not)
           ] | length
         ' "$workdir/comments.json") || {
@@ -2113,6 +4254,249 @@ check)
     if [ "$malformed_top_level" -gt 0 ]; then
         emit indeterminate "a Reviewed-commit top-level comment from the finder has no usable numeric id"
         exit 2
+    fi
+
+    # THE REJECTION FORM (challenge round 3, findings
+    # `challenge-r3-codex-adversarial-2` and `-3`, both P1, disposition SPLIT;
+    # the summary-table verdict surface it replaces is carried in #1117).
+    #
+    # Rounds 1 to 3 each tried to bind a badged comment to a head by PARSING
+    # its body, and each attempt reproduced a way to lose the badge: the
+    # Completed-row arm, then the header-driven columns, then a guard that
+    # asked whether the table named *any* commit when the question was whether
+    # it named *this* one — and whose `indeterminate` exit was unsettleable by
+    # construction, because it fired exactly when the binding it needed was
+    # unavailable.
+    #
+    # Nothing here derives a head any more. The reservation already pins one
+    # repo, one PR and one head, and the trigger already scopes the cycle, so a
+    # badged comment from the pinned actor posted after that trigger is either
+    # bound by its own `Reviewed commit` line — handled by the ordinary
+    # candidate path below, with its GitHub-verified prefix resolve — or it is
+    # not bound at all, and then it BLOCKS until a human settles it by comment
+    # id. `settle` accepts exactly that shape (see its own comment), so the
+    # block is always answerable: no parse, no unbindable class, and no way for
+    # a badge to be silently dropped.
+    #
+    # Fail direction: a badged comment about some OTHER head that names no
+    # commit also blocks here. That is one recorded disposition, which is the
+    # cheap side of this trade — the expensive side is the false clean this
+    # whole family of bugs produced.
+    # Challenge round 4, findings `challenge-r4-codex-adversarial-1` and `-2`
+    # (both confirmed P1). Two independent ways this scan dropped a live badge:
+    #
+    #   -1  It ended `sort_by(...) | last`, so only the NEWEST unbound badge
+    #       was ever considered and the disposed check tested only that one.
+    #       Settling the newest made every OLDER undisposed badge invisible —
+    #       reproduced as exit 0 with a live unsettled P0. Every undisposed
+    #       badge blocks now, and the OLDEST is cited so repeated settling
+    #       walks the list instead of clearing it in one go.
+    #
+    #   -2  The rejection form narrowed the stamp to `.created_at`, while the
+    #       guard it replaced used `(.updated_at // .created_at)`. A badge
+    #       ADDED BY AN EDIT after the trigger then vanished. One stamp policy
+    #       had been applied to three sites whose safety directions are
+    #       opposite: the CLEAN path wants the conservative `created_at` (that
+    #       is round 3's own `-4`), and this BLOCKING path wants the generous
+    #       one. Generous here, conservative there — they are different
+    #       questions, not one setting.
+    #
+    # Disposed ids are filtered inside the query so "is anything still
+    # unanswered" is one decision rather than a check against a single id.
+    # Challenge round 5, finding `challenge-r5-codex-adversarial-4` (confirmed
+    # P1, and a reproduced FALSE CLEAN over a live P0): this bound was strict
+    # while the clean-by-reaction path it races is inclusive
+    # (`.created_at? >= $requested`, pinned by the suite case
+    # `exact-trigger current-request +1 is clean`). So a badge stamped in the
+    # TRIGGERS OWN SECOND was dropped while a reaction in that same second
+    # certified the cycle clean — one second was the whole difference, and the
+    # result carried no `unbound_badged` key at all, so the caller was never
+    # told the finding existed.
+    #
+    # Conservative direction on a blocking scan: admitting one extra badge
+    # costs a recorded disposition, dropping one costs the invariant this
+    # whole form exists to hold.
+    #
+    # MAINTAINER RULING, review round 4 (findings `review-r4-codex-verification-1`
+    # and `-2`, both confirmed P1): this scan has NO CLOCK. The invariant is
+    #
+    #   every undisposed badged comment from the pinned actor that names no
+    #   reviewed commit and whose COMMENT ID exceeds the head FIRST TRIGGER
+    #   ID blocks, and is answered by comment id.
+    #
+    # Comment ids are monotonic within one resource type, and the first
+    # trigger id is written once per head at `attach` and never rebased, so
+    # there is nothing left to get wrong about seconds, edits, windows,
+    # reservations or reconstructions.
+    #
+    # MOOTED BY THIS RULING, and this is the point of it. Five consecutive
+    # rounds across two stages each closed one leak in one timestamp seam and
+    # each left another:
+    #
+    #   `challenge-r5-codex-adversarial-4`  strict bound dropped a badge in the
+    #                                       trigger own second; made it
+    #                                       inclusive, added an id tiebreak
+    #   `review-r1-codex-verification-1`     the stamp and the tiebreak read
+    #                                       different clocks; split the stamp
+    #                                       by edit provenance
+    #   `review-r2-codex-verification-2`     an edit inside the trigger second
+    #                                       is indistinguishable from no edit;
+    #                                       deleted the split, kept `>=`
+    #   `review-r3-codex-verification-1`     `attach` rebases the request time,
+    #                                       so a re-trigger hid a badge; moved
+    #                                       the anchor to the reservation
+    #   `review-r4-codex-verification-1`     that anchor starved `attach` own
+    #                                       fetch budget to one second
+    #   `review-r4-codex-verification-2`     and a reconstructed reservation can
+    #                                       postdate its trigger, hiding badges
+    #                                       again
+    #
+    # Every one of those was a correct fix to a real defect, and the family
+    # never converged, because a timestamp cannot answer "which request does
+    # this belong to" — ids can.
+    #
+    # DOCUMENTED BOUNDARY, accepted on the ruling rather than papered over: a
+    # comment that PRE-EXISTS the first trigger and is later EDITED to add a
+    # badge is NOT covered. Its id is below the boundary and no id ordering
+    # can see the edit. That reverses `review-r1-codex-verification-1`, whose
+    # suite case is retired with the tiebreak it pinned. The trade is
+    # deliberate: that shape needs the reviewer to edit an older comment
+    # instead of posting, while the clock-based alternatives demonstrably
+    # produced a fresh false clean every round. The same boundary is stated in
+    # `docs/glossary.md` and `docs/guides/codex-review.md`.
+    # `review-r5-codex-verification-4`: refuse rather than substitute a
+    # boundary. This scan orders comment ids against a comment id, so a state
+    # that has none — a requested-reviewer finder that nonetheless declares the
+    # `comment` surface — has no boundary to order against, and both available
+    # defaults are wrong: 0 blocks every badge the PR has ever carried, and
+    # "infinity" blocks none. Unknown is its own answer here as everywhere else
+    # in this file.
+    valid_uint "$state_first_trigger" || {
+        emit indeterminate "this cycle records no trigger comment id, so a badged conversation comment cannot be ordered against the review that asked for it — a finder that reads the comment surface must attach a trigger comment"
+        exit 2
+    }
+    unbound_badged_scan=$(jq -c \
+        --argjson id "$actor_id" \
+        --argjson first_trigger "$state_first_trigger" \
+        --argjson disposed "$disposed_comments" \
+        "$codex_verdict_defs"'
+          # The domain is bound ONCE and then answered exhaustively, which is
+          # `review-r4-codex-verification-3` and `-4`: the previous form
+          # computed its two keys from different filter sets, so a badge with
+          # a malformed id fell into NEITHER and was silently dropped
+          # (fail-open), while a head-bound, pre-trigger or already-disposed
+          # comment could land in the unusable key and block a head forever
+          # with no settle route (fail-closed). Same domain, three answers,
+          # and the shell checks they add up.
+          [.[] | select(.user.id? == $id) |
+            select(has_severity_marker) |
+            select(((.body // "") |
+              test("Reviewed commit[^0-9a-fA-F]+[0-9a-fA-F]{7,40}"; "i")) | not) |
+            # `. as $comment` first: jq evaluates `index(f)` with `.` bound to
+            # the ARRAY being searched, so a bare `index(.id)` resolves `.id`
+            # against `$disposed` and dies "Cannot index array with string id"
+            # the moment anything IS disposed. Found by the round-4 fixture
+            # `challenge-r4-codex-adversarial-1` at its settle step.
+            . as $comment |
+            select(($disposed | index($comment.id)) == null)
+          ] as $domain |
+          {
+            domain: ($domain | length),
+            # Not orderable and not settleable: a badge whose id is not a
+            # positive integer cannot be compared with the trigger id nor
+            # named in a `settle` call, so it is reported rather than dropped.
+            unusable: [$domain[] | select((.id? | is_positive_integer) | not) | .id],
+            # Deliberately excluded, and counted so the partition is provable:
+            # a badge at or below the first trigger id predates this head
+            # review. This is the documented boundary above.
+            prior: [$domain[] |
+              select(.id? | is_positive_integer) |
+              select(.id <= $first_trigger) | .id] | length,
+            ids: ([$domain[] |
+              select(.id? | is_positive_integer) |
+              select(.id > $first_trigger) | .id] | sort)
+          }
+        ' "$workdir/comments.json") || {
+        emit indeterminate "conversation comments could not be scanned for unbound badged findings"
+        exit 2
+    }
+    # The partition is checked, not asserted. If these ever stop adding up a
+    # badge has gone missing, which is the one thing this form promises cannot
+    # happen — so say so instead of reporting a verdict built on it.
+    #
+    # Gemini finding 4066758522 on PR harmon-devkit#1125 (adjudicated P3):
+    # this read `jq -er`, and `-e` exits 1 when the last output is `false`.
+    # So the one outcome the check exists to detect took the generic
+    # "could not be partitioned" path and the specific message below could
+    # never be reached. With `-r` the two branches split the way they were
+    # meant to: a `false` result gets its own sentence below, and this generic
+    # arm keeps the case where jq cannot run at all (unparseable scan output,
+    # rc 5). Note what `false` covers, since it is more than a mismatched sum:
+    # jq treats a missing key as null and `0 + null` as 0, so a scan payload
+    # that lost a key also lands on the specific message — which is true of
+    # it, because a key that is gone did not account for anything.
+    #
+    # Worth stating plainly, because a green suite is not evidence either
+    # branch has fired: `false` is unreachable from the scan as it stands.
+    # Every domain member is a positive integer or not, and if it is, its id
+    # is either at-or-below the boundary or above it — the three keys are
+    # exhaustive and disjoint by construction. This is defence against a
+    # future edit to that query, not a live path, and no fixture can drive it
+    # without a production hook that exists only for the test.
+    unbound_partition_ok=$(printf '%s' "$unbound_badged_scan" | jq -r '
+      (.domain == ((.unusable | length) + .prior + (.ids | length)))
+    ') || {
+        emit indeterminate "unbound badged findings could not be partitioned"
+        exit 2
+    }
+    [ "$unbound_partition_ok" = "true" ] || {
+        emit indeterminate "the unbound badged scan did not account for every badged comment it read — refusing to report a verdict built on an incomplete scan"
+        exit 2
+    }
+    unbound_unusable_ids=$(printf '%s' "$unbound_badged_scan" |
+        jq -c '{unbound_unusable: .unusable}') || {
+        emit indeterminate "unbound badged findings could not be checked for usable ids"
+        exit 2
+    }
+    unbound_unusable=$(printf '%s' "$unbound_badged_scan" |
+        jq -er '.unusable | length') || {
+        emit indeterminate "unbound badged findings could not be counted"
+        exit 2
+    }
+    [ "$unbound_unusable" -eq 0 ] || {
+        # `review-r4-codex-verification-5`: the ids are computed here and were
+        # then thrown away, so the operator was told to re-read "the comment"
+        # without being told which. The sibling branch below passes its ids
+        # through `emit`s extra slot; so does this one.
+        emit indeterminate "a badged conversation comment from the reviewer carries no usable comment id, so it can be neither ordered against this cycle nor settled — re-read the comments named here rather than treating the head as reviewed" \
+            "" "" "$unbound_unusable_ids"
+        exit 2
+    }
+    unbound_badged_ids=$(printf '%s' "$unbound_badged_scan" | jq -c '.ids') || {
+        emit indeterminate "unbound badged findings could not be enumerated"
+        exit 2
+    }
+    unbound_badged_count=$(printf '%s' "$unbound_badged_ids" |
+        jq -er 'length') || {
+        emit indeterminate "unbound badged findings could not be counted"
+        exit 2
+    }
+    if [ "$unbound_badged_count" -gt 0 ]; then
+        unbound_badged_oldest=$(printf '%s' "$unbound_badged_ids" |
+            jq -er 'first | tostring')
+        unbound_badged_extra=$(jq -cn \
+            --argjson ids "$unbound_badged_ids" '{unbound_badged: $ids}')
+        # Challenge round 4, finding `challenge-r4-codex-adversarial-8` (P3):
+        # the earlier wording said the comment "cannot be bound to a head"
+        # while `accepted.reviewed_commit` sat beside it carrying this cycle's
+        # head. Both are true of different things and the phrasing hid that:
+        # the COMMENT names no commit, and the CYCLE is pinned to this head by
+        # its reservation — which is exactly why settling by comment id is
+        # sound. The schema requires `accepted`, so the field stays; the
+        # sentence now says which one is which.
+        emit findings "$unbound_badged_count badged finding(s) from the finder name no reviewed commit of their own; this cycle is pinned to its reserved head, so settle each by comment id" \
+            comment "$unbound_badged_oldest" "$unbound_badged_extra"
+        exit 10
     fi
 
     # Classifying a current-head result is three-way, not binary, because
@@ -2387,6 +4771,9 @@ check)
         --argjson id "$actor_id" \
         "$codex_verdict_defs"'
           .[] | select(.user.id? == $id) |
+          # An unbadged self-report (harmon-devkit#675) is informational
+          # rather than a finding, and contributes to no aggregate.
+          select(verdict_class != "informational") |
           ((.body // "") |
             try match(
               "Reviewed commit[^0-9a-fA-F]+([0-9a-fA-F]{7,40})";
@@ -2438,7 +4825,7 @@ check)
             continue
         fi
         resolved_payload=$(run_gh api "repos/$state_repo/commits/$prefix") ||
-            bounded_wait "cannot resolve a reviewed commit prefix through GitHub"
+            transient_read_failure "cannot resolve a reviewed commit prefix through GitHub"
         resolved=$(printf '%s' "$resolved_payload" | jq -er '.sha') || {
             emit indeterminate "GitHub returned malformed commit-prefix data"
             exit 2
@@ -2726,6 +5113,19 @@ check)
                {id: ($r.id | tostring), time: ($r.submitted_at // "")}] |
               sort_by(.time, (.id | tonumber)) | last // null | .id // ""
             ' "$workdir/reviews.json")
+        # `created_at` throughout. The summary comment's edit-time stamp went
+        # out with the #718 verdict surface in challenge round 3 (carried in
+        # #1117); every comment this block can now see is dated once, when it
+        # was posted.
+        # `> $requested` is DELIBERATE and stays: a settlement recorded before
+        # the latest trigger cannot certify the re-review that trigger asked
+        # for. `an earlier settled finding cannot make a re-trigger clean
+        # without new evidence` pins it, and the reservation comment above
+        # states the same rule from the other side — settlements persist for
+        # the record, they do not certify a later attempt. Challenge round 3's
+        # finding `challenge-r3-codex-adversarial-10` proposed removing this
+        # filter and was adjudicated DECLINED as a false positive: removing it
+        # is a fail-open and makes that pinned case fail.
         disposed_comment_latest=$(jq -r \
             --argjson disposed "$disposed_comments" \
             --arg requested "$state_requested" '
@@ -2785,8 +5185,14 @@ settle)
     # answered it and `check` reports `findings` for that head forever — the
     # #275 deadlock, reappearing on the two surfaces the reply rule cannot
     # reach. This command is the local record of that answer, and it is
-    # deliberately narrow: it refuses anything it cannot prove is a badged
-    # finding, from the pinned actor, about the state's own head.
+    # deliberately narrow, and its DOMAIN IS WHAT `check` BLOCKS ON — every
+    # body whose `verdict_class` is `findings`, badged or not — never "what
+    # carries a badge" (challenge round 2, findings `-1`/`-3`; the pre-round-2
+    # badge-only wording was still stated here and in the file header, which
+    # is challenge round 5 finding `challenge-r5-codex-adversarial-3`). A
+    # target must still come from the pinned actor and resolve to this state's
+    # own head, or bind to it by comment id where the body names no commit of
+    # its own.
     [ -n "$surface" ] && [ -n "$target_id" ] && [ -n "$disposition" ] &&
         [ -n "$note" ] && [ -n "$actor_id" ] || usage
     valid_uint "$actor_id" || die "invalid actor ID"
@@ -2807,16 +5213,34 @@ settle)
     state_pr=$(jq -r '.pr' "$state_file")
     state_head=$(jq -r '.head' "$state_file")
     state_attempt=$(jq -r '.attempt' "$state_file")
-    state_requested=$(jq -r '.requested_at // empty' "$state_file")
+    settle_state_requested=$(jq -r '.requested_at // empty' "$state_file")
     valid_repo "$state_repo" || die "state has an invalid repository"
     valid_uint "$state_pr" || die "state has an invalid PR number"
     valid_sha "$state_head" || die "state has an invalid head"
-    valid_time "$state_requested" || die "state has an invalid request time"
-    # `state_reserved` is deliberately left unset, which gives `run_gh` its flat
-    # per-call budget: settlement is a human act that lands after the cycle
-    # reported findings, often long after the attempt window closed, and
-    # budgeting these reads against an elapsed reservation would leave them one
-    # second to complete.
+    valid_time "$settle_state_requested" ||
+        die "state has an invalid request time"
+    # Review round 4, finding `review-r4-codex-verification-6` (confirmed P2):
+    # this used to say `state_reserved` was "deliberately left unset, which
+    # gives `run_gh` its flat per-call budget" — and it is unset, but
+    # `window_anchor` is `${state_requested:-${state_reserved:-}}` and
+    # `state_requested` is read five lines up, so the anchor never reached the
+    # fallback the comment relied on. Settlement lands long after the window
+    # closes, so every read here ran on the one-second clamp: the comment
+    # described the intended behaviour and the code did the opposite.
+    #
+    # The budget is now flat because BOTH anchors are cleared for these reads,
+    # explicitly rather than by omission. Settlement is a human act that lands
+    # after the cycle reported findings, and a one-second budget on a
+    # `gh api` call makes it fail for reasons that have nothing to do with the
+    # disposition being recorded. The validated value is kept under its own
+    # name for the checks below.
+    # Read under its own name and never assigned to the anchor globals, so
+    # neither `state_requested` nor `state_reserved` is set in this scope and
+    # `window_anchor` stays empty. Cleared explicitly as well, because relying
+    # on a global being unset is exactly how the previous comment came to
+    # describe behaviour the code did not have.
+    state_requested=
+    state_reserved=
 
     case "$surface" in
     comment)
@@ -2833,33 +5257,53 @@ settle)
         # Same discipline `check` applies to a top-level result: the comment
         # must name a commit prefix that GitHub resolves to this head. A
         # disposition recorded against some other head answers nothing.
+        # THE REJECTION FORM's other half (challenge round 3, findings
+        # `challenge-r3-codex-adversarial-2`/`-3`; the summary-table binding
+        # this replaces is carried in #1117).
+        #
+        # A comment binds itself to a head with a `Reviewed commit` line, and
+        # when it carries one that binding is verified against GitHub exactly
+        # as before — a disposition recorded against another head answers
+        # nothing. What changed is the case with NO such line: `check` now
+        # blocks on a badged comment it cannot bind, so `settle` has to be able
+        # to answer it, or the block would be another stuck head. It can,
+        # because the head does not need to come from the body at all: THIS
+        # STATE already pins the repo, the PR and the head, and the caller is
+        # naming one comment id on that reserved cycle.
         settle_prefix=$(printf '%s' "$target" | jq -r '
-              (.body // "") |
-              try match(
+              (((.body // "") | [match(
                 "Reviewed commit[^0-9a-fA-F]+([0-9a-fA-F]{7,40})";
                 "i"
-              ).captures[0].string catch ""
+              ).captures[0].string] | first) // "")
             ')
-        grep -Eq '^[0-9a-fA-F]{7,40}$' <<<"$settle_prefix" ||
-            die "comment $target_id does not identify a reviewed commit"
-        settle_prefix_lower=$(printf '%s' "$settle_prefix" |
-            tr '[:upper:]' '[:lower:]')
-        settle_head_lower=$(printf '%s' "$state_head" |
-            tr '[:upper:]' '[:lower:]')
-        case "$settle_head_lower" in
-        "$settle_prefix_lower"*) ;;
-        *) die "comment $target_id reviews a commit that is not this head" ;;
-        esac
-        settle_resolved_payload=$(run_gh api \
-            "repos/$state_repo/commits/$settle_prefix") ||
-            die "cannot resolve the reviewed commit prefix through GitHub"
-        settle_resolved=$(printf '%s' "$settle_resolved_payload" |
-            jq -er '.sha') ||
-            die "GitHub returned malformed commit-prefix data"
-        valid_sha "$settle_resolved" ||
-            die "GitHub returned an invalid resolved commit"
-        [ "$settle_resolved" = "$state_head" ] ||
-            die "comment $target_id reviews a commit that is not this head"
+        if [ -z "$settle_prefix" ]; then
+            # Unbound: settled by comment id against this cycle's own head.
+            # The actor, the PR and the `verdict_class == "findings"` domain
+            # above have all already been checked, so nothing here is taken on
+            # trust from the body.
+            settle_resolved=$state_head
+        else
+            grep -Eq '^[0-9a-fA-F]{7,40}$' <<<"$settle_prefix" ||
+                die "comment $target_id names a malformed reviewed commit"
+            settle_prefix_lower=$(printf '%s' "$settle_prefix" |
+                tr '[:upper:]' '[:lower:]')
+            settle_head_lower=$(printf '%s' "$state_head" |
+                tr '[:upper:]' '[:lower:]')
+            case "$settle_head_lower" in
+            "$settle_prefix_lower"*) ;;
+            *) die "comment $target_id reviews a commit that is not this head" ;;
+            esac
+            settle_resolved_payload=$(run_gh api \
+                "repos/$state_repo/commits/$settle_prefix") ||
+                die "cannot resolve the reviewed commit prefix through GitHub"
+            settle_resolved=$(printf '%s' "$settle_resolved_payload" |
+                jq -er '.sha') ||
+                die "GitHub returned malformed commit-prefix data"
+            valid_sha "$settle_resolved" ||
+                die "GitHub returned an invalid resolved commit"
+            [ "$settle_resolved" = "$state_head" ] ||
+                die "comment $target_id reviews a commit that is not this head"
+        fi
         ;;
     review)
         target=$(run_gh api \
@@ -2875,19 +5319,42 @@ settle)
         ;;
     esac
 
+    # Review round 3, finding `review-r3-codex-verification-3` (confirmed P2):
+    # this read was `.created_at` alone while the blocking scan stamps a
+    # comment `(.updated_at // .created_at)`, so a payload the scan admitted
+    # could die here on `valid_time` and leave the head blocked with no
+    # disposition available — the stuck-cycle class, from the two sites
+    # reading different fields for the same fact. Same pair, same order, so
+    # whatever `check` blocks on, `settle` can time.
     case "$surface" in
-    comment) target_result_time=$(printf '%s' "$target" | jq -r '.created_at // ""') ;;
+    comment) target_result_time=$(printf '%s' "$target" |
+        jq -r '(.updated_at // .created_at) // ""') ;;
     review) target_result_time=$(printf '%s' "$target" | jq -r '.submitted_at // ""') ;;
     esac
     valid_time "$target_result_time" ||
         die "target $target_id has no usable result timestamp"
-    # The badge is the only machine-emitted signal that this is a finding at
-    # all. Requiring it keeps settlement off every other shape the surfaces
-    # carry — a clean verdict, a carrier body, an unrecognized one — none of
-    # which a disposition would mean anything about.
+    # Challenge round 2, findings `challenge-r2-codex-adversarial-1` and `-3`
+    # (confirmed P1, disposition RESTRUCTURE): settle's domain is WHAT `check`
+    # BLOCKS ON, not "what carries a badge".
+    #
+    # The badge-only rule was the second half of round 1's mistake. A bot
+    # comment that `check` classifies `findings` but that carries no badge —
+    # a self-report whose wording the `informational` test does not recognize,
+    # say — exits 10 with no way to be answered: `settle` refused it for
+    # having no badge, and there is no thread to reply in. The head was then
+    # un-reviewable through this helper, which is strictly worse than the
+    # "false block, recoverable by a human" the round-1 comment promised.
+    #
+    # Tying the domain to `verdict_class == "findings"` makes every blocking
+    # shape answerable, which is what lets the classifier above fail CLOSED
+    # safely: a body wrongly read as a finding now costs one recorded
+    # disposition instead of stranding the commit. It still keeps settlement
+    # off everything `check` does NOT block on — a clean verdict, a carrier
+    # body, an unrecognized one, an informational self-report — because none
+    # of those reaches `findings`.
     printf '%s' "$target" |
-        jq -e "$codex_verdict_defs"' has_severity_marker' >/dev/null ||
-        die "target $target_id carries no severity badge, so it is not a finding to settle"
+        jq -e "$codex_verdict_defs"' verdict_class == "findings"' >/dev/null ||
+        die "target $target_id is not a finding this checker blocks on, so there is nothing to settle"
 
     # A disposition settles the TARGET, and a target can hold more than one
     # finding: Codex sometimes states several in one body. Since the entry is
@@ -2910,8 +5377,13 @@ settle)
     # breaking the documented invocation. Matching the alt-text form counts
     # each badge once. A body that states findings as plain prose renders no
     # badge at all, so that shape falls back to the token scan, which is
-    # correct for it; `has_severity_marker` above has already established that
-    # at least one finding is present either way.
+    # correct for it.
+    #
+    # Since round 2 widened the domain above from "carries a badge" to "is
+    # what `check` blocks on", a target can legitimately count ZERO: an
+    # unbadged body that classifies `findings`. That needs no `--covers` —
+    # there are no separately-badged findings to under-answer — and the
+    # `> 1` guard below already says so without a special case.
     badge_count=$(printf '%s' "$target" |
         jq -r '((.body // "") | ascii_downcase) as $body |
                ([$body | scan("!\\[p[0-9]+ badge\\]")] | length) as $rendered |

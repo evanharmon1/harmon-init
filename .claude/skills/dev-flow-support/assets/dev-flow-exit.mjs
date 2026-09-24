@@ -1,0 +1,2567 @@
+#!/usr/bin/env node
+// dev-flow-exit.mjs — deterministic confidence-stage exit computation.
+//
+// Implements openspec/changes/dev-flow-v2/specs/exit-computation/spec.md and
+// specs/dev-flow-v2.md § "Convergence model v0" over a run directory (see
+// ai/schemas/README.md "Dev flow v2 exit computation: run directory layout"
+// for the exact shape) plus a resolved .devflow.toml policy
+// (devflow-policy.mjs).
+//
+// CLI:
+//   node dev-flow-exit.mjs --run <dir> --stage <challenge|review> \
+//     --policy <file> [--rigor <level>] [--merge-base-policy <file>] \
+//     [--current-head <sha>] [--history <file> | --repo-root <dir>] \
+//     [--heads <file>] [--closure <dir>] [--validator <path>]
+//     [--verification-only] [--json]
+//
+// No --registry / --merge-base-registry / --task-targets here on purpose:
+// exit computation reads the RESOLVED policy shape (rounds, convergence,
+// stages), which never depends on registry/Taskfile cross-validation to be
+// structurally complete — that check belongs entirely to `devflow-policy.mjs
+// resolve`, run once, before a caller ever invokes this script (see
+// ai/schemas/README.md).
+//
+// Exit codes: 0 continue, 20 converged, 21 diverging, 22 capped,
+// 2 indeterminate, 1 usage/parse error.
+//
+// Every verdict that has a complete latest round also carries an additive
+// `split_candidate` projection — the concentration/provenance evidence a
+// blocker report needs to offer "split the mechanism out" beside "order more
+// rounds" and "accept as spent" (specs/dev-flow-v2.md § The split strategy,
+// issue #747). It is a diagnostic: no outcome, exit code, or cap depends on
+// it, and it needs no policy knob.
+//
+// The --verification-only projection also carries an additive `rounds`
+// array — the machine-readable trajectory a caller reports FROM instead of
+// re-deriving round assembly itself via this module's own exported helpers
+// (harmon-devkit#1001). The final (non-verification-only) verdict never
+// carries this field: it is the projection review/SKILL.md's fenced public
+// comment is built from, which must publish only verified/corrected
+// provenance and fingerprint values, never a round's raw envelopes
+// (integration cycle 2, confirmed — an earlier revision attached it there
+// too). One entry per logical
+// round assembled for `--stage`, from the FULL (pre-ancestry-filter)
+// trajectory, in round order:
+//   { round, status, reviewed_head, unresolved_slot, substitutions,
+//     has_adjudication, adjudication, passes, blocked_passes, findings }
+// `adjudication` is the raw adjudication document for this round, or null.
+// `passes`/`blocked_passes` are `{name, envelope}` pairs — `passes` is every
+// schema/receipt-valid pass naming this stage+round (not narrowed to
+// whichever pass actually won a contested slot); `blocked_passes` is every
+// on-disk envelope for this stage+round whose status is "blocked",
+// UNFILTERED by receipt-backing (a caller that only trusts a receipted
+// attempt restricts this itself — this module has no opinion on that). Each
+// `findings[]` entry is `{id, adjudicated_priority, disposition,
+// provenance_status, verified_provenance, fingerprint_status,
+// verified_fingerprint}`; a finding whose round could not be ancestry-
+// retained for this invocation's --current-head/--repo-root carries
+// "not-measured" for both statuses and null for both verified values,
+// rather than a fabricated verdict. This is purely additive: no predicate,
+// exit code, or verdict depends on it, and it changes no existing check.
+//
+// Every indeterminate result under --json also carries an additive `code`
+// field alongside its existing free-text `reason` (harmon-devkit#1001,
+// review round 1) — a stable, machine-readable classification a caller can
+// switch on instead of string-matching `reason`. Most indeterminate call
+// sites leave it `null` (unchanged from before this field existed); the one
+// call site that currently sets a value is `"stage-not-active"` (`--stage
+// review` requested while the trusted receipt sequence's active stage is
+// still "challenge") — an EXPECTED condition for a run genuinely still in
+// progress, not evidence of corruption, which a caller may choose to
+// recognize and degrade gracefully rather than treat as a fatal error. This
+// changes no exit code, verdict, or existing check.
+//
+// The --verification-only projection also carries an additive
+// `resolved_rounds` object — `{challenge, review, integration, remediation,
+// min_rounds}`, the round-caps policy THIS invocation actually resolved and
+// used (harmon-devkit#1001, integration cycle 5). A caller that separately
+// retained a run's own resolved policy at dispatch time can compare the two
+// and fail closed on drift instead of silently trusting whichever caps a
+// later .devflow.toml edit happens to resolve today. Purely additive: no
+// predicate, exit code, or verdict depends on it.
+
+import { readFileSync, readdirSync, existsSync, writeFileSync, mkdtempSync, rmSync, realpathSync } from "node:fs";
+import path from "node:path";
+import os from "node:os";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+// devflow-policy.mjs and lib/toml-lite.mjs are DELIBERATELY NOT imported
+// here at module top level, even though they are only ever used inside
+// main() below. A static top-level import is hoisted and evaluated before
+// ANY of this module's own code runs — including tryDelegateToClosure's
+// own --closure check — so if this file is invoked from a branch checkout
+// where either sibling has been modified, that branch-controlled top-level
+// code would already have run (arbitrary side effects, up to and including
+// process.exit() before any output is even produced) before delegation to
+// a trusted --closure copy ever got a chance to happen. Post-merge cloud
+// review, confirmed real: the existing reader-self-modification-boundary
+// fixture only proved a poisoned CONSTANT never leaks into the resolved
+// output once execution reaches that point cleanly — it never proved the
+// poisoned module's top-level code doesn't run at all. Every use of these
+// two modules is confined to main(), after tryDelegateToClosure's own
+// early return, and pulled in via dynamic import() there instead — see
+// main() below.
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+const DEFAULT_VALIDATOR = path.join(HERE, "validate-result-schemas.mjs");
+
+const EXIT_CODES = { continue: 0, converged: 20, diverging: 21, capped: 22, indeterminate: 2 };
+
+// Every indeterminate exit previously only ever wrote prose to stderr —
+// under --json this left stdout completely EMPTY, unlike every other exit
+// path (the success printer below always emits a structured verdict), even
+// though the machine contract requires a structured indeterminate outcome
+// too and a caller reading only stdout could not distinguish "the run is
+// indeterminate" from "nothing happened, check stderr" without also
+// capturing stderr and hoping the exit code survived the caller's own
+// wrapper. Shepherd-stage cloud finding, confirmed. Centralized here rather
+// than duplicated at each of the nine indeterminate call sites in main().
+// harmon-devkit#1001 review round 1 (P1), confirmed and fixed: `reason` is
+// free text, so a caller (the local-record harvester) had no reliable way to
+// distinguish an EXPECTED indeterminate condition — e.g. "--stage review was
+// requested but challenge is still active" is not corruption, it is an
+// ordinary run genuinely still in progress — from a real one, short of
+// fragile string-matching. `code` is optional and additive: most call sites
+// pass none (so `code` stays null, exactly as this JSON shape always was for
+// them); only the one call site a caller needs to recognize sets one. No
+// exit code, verdict, or existing check changes — this is the same
+// machine-readable-output-only allowance the `rounds[]` trajectory field
+// already used.
+function indeterminate(args, reason, code = null) {
+  console.error(`dev-flow-exit: indeterminate: ${reason}`);
+  if (args && args.json) {
+    console.log(JSON.stringify({ outcome: "indeterminate", reason, code, rounds_counted: null, next_round: null }, null, 2));
+  }
+  return EXIT_CODES.indeterminate;
+}
+
+// Seam closed (lane #635, PR #713): result.challenger.schema.json now
+// exists, and challenge-stage/review-stage passes are no longer validated
+// under one hardcoded kind. "envelope" self-dispatches on each pass's own
+// declared `role` (validate-result-schemas.mjs: "runs exactly the same
+// payload + receipt checks as invoking the role's own kind name directly"),
+// so a challenger-shaped challenge pass and a reviewer-shaped review pass
+// each validate against their own schema without dev-flow-exit.mjs having
+// to know or assume which role produced a given pass.
+const PASS_VALIDATION_KIND = "envelope";
+
+// The two confidence stages, named once, for the cross-stage trajectory rules
+// below (the cap-integrity scans and the orphan-adjudication scan) so they
+// cannot drift apart. The adjudication COVERAGE scan is deliberately not among
+// them — see the note at `missingAdjudication`.
+const CONFIDENCE_STAGES = ["challenge", "review"];
+
+class ExitIndeterminate extends Error {}
+
+// ---------------------------------------------------------------------------
+// Run directory loading
+// ---------------------------------------------------------------------------
+
+function loadJson(file) {
+  return JSON.parse(readFileSync(file, "utf8"));
+}
+
+// Date.parse is not enough for a bound this file trusts. It accepts far more
+// than this schema family's timestamp shape, and — the part that matters —
+// it SILENTLY NORMALIZES an impossible calendar date: "2026-02-30T00:00:00Z"
+// parses happily as March 2nd, so a malformed started_at would bound every
+// pass against an instant a day and a half from the one it names, accepting
+// or rejecting passes on a date nobody wrote. Challenge round 2, confirmed.
+//
+// Same shape and same round-trip test validate-result-schemas.mjs already
+// applies to every *_at field (its TIMESTAMP_PARTS / isRealInstant pair): the
+// value must match the family's own pattern AND survive a round trip through
+// Date back to the identical Y-M-D h:m:s. Duplicated rather than imported
+// because that module is spawned as a subprocess here, never linked — the
+// two are deliberately not coupled at the module level (see
+// PASS_VALIDATION_KIND's own note) — and this is four lines of arithmetic.
+// Returns the epoch milliseconds, or null when the value is not a real
+// instant in that shape.
+const TIMESTAMP_PARTS = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?Z$/;
+
+function realInstant(value) {
+  const parts = TIMESTAMP_PARTS.exec(value);
+  if (!parts) return null;
+  const [, year, month, day, hour, minute, second] = parts;
+  const ms = Date.parse(value);
+  if (Number.isNaN(ms)) return null;
+  const d = new Date(ms);
+  const same =
+    d.getUTCFullYear() === Number(year) &&
+    d.getUTCMonth() + 1 === Number(month) &&
+    d.getUTCDate() === Number(day) &&
+    d.getUTCHours() === Number(hour) &&
+    d.getUTCMinutes() === Number(minute) &&
+    d.getUTCSeconds() === Number(second);
+  return same ? ms : null;
+}
+
+// The stage named by the LAST transition receipt, or null if none exists
+// yet. dev-flow-exit.mjs only ever computes challenge or review's exit
+// (args.stage is validated to one of those two), so this is used solely to
+// refuse computing review's exit while challenge is still active — see
+// main()'s use below.
+function latestActiveStage(receipts) {
+  let active = null;
+  for (const r of receipts || []) {
+    if (r.kind === "transition") active = r.stage;
+  }
+  return active;
+}
+
+// Whether the trusted receipt sequence records a transition into `stage` at
+// ANY point in its history — not merely whether it is the latest one. Used to
+// tell a genuine remediation re-entry (stage X ran, then an earlier stage was
+// re-entered) from a run that skipped straight past stage X without ever
+// entering it; only the former is a legitimate retrospective query.
+function hasEnteredStage(receipts, stage) {
+  for (const r of receipts || []) {
+    if (r.kind === "transition" && r.stage === stage) return true;
+  }
+  return false;
+}
+
+function loadRunDir(dir) {
+  const runRecordPath = path.join(dir, "run.json");
+  if (!existsSync(runRecordPath)) throw new ExitIndeterminate(`run directory ${dir} has no run.json`);
+  const runRecord = loadJson(runRecordPath);
+  // `receipts` is read by several callers before validateReceipts ever gets
+  // to apply its own Array.isArray guard — latestActiveStage's for...of is
+  // the first — so a present-but-non-array value threw a raw TypeError, and
+  // under --json that means exit 1 with EMPTY stdout and a stack trace,
+  // exactly where the machine contract promises a structured indeterminate
+  // body on every exit. Review round 1 (P2), confirmed and reproduced;
+  // pre-existing rather than introduced here, but this is the one place that
+  // can settle it for every reader at once. Absent stays absent (the array
+  // is optional); present-and-wrong is terminal, the same rule the
+  // chronology bounds already follow.
+  if (runRecord.receipts !== undefined && !Array.isArray(runRecord.receipts)) {
+    throw new ExitIndeterminate(
+      `run.json's receipts is present but not an array (${JSON.stringify(runRecord.receipts)}) — the trusted receipt sequence cannot be read`,
+    );
+  }
+  if (runRecord.slot_failures !== undefined && !Array.isArray(runRecord.slot_failures)) {
+    throw new ExitIndeterminate(
+      `run.json's slot_failures is present but not an array (${JSON.stringify(runRecord.slot_failures)}) — cannot tell an exhausted slot from an unrecorded one`,
+    );
+  }
+
+  // A pass file holding valid JSON that is not an object — `null` is the
+  // easy one — would otherwise be dereferenced by every later reader
+  // (`p.envelope.payload`, `p.envelope.head`) as a raw TypeError, which
+  // under --json means exit 1 with EMPTY stdout instead of the structured
+  // indeterminate body the machine contract promises. Guarded once here
+  // rather than at each use. Integrate cycle 3 on PR #800 (P2), confirmed.
+  const passesDir = path.join(dir, "passes");
+  const passes = existsSync(passesDir)
+    ? readdirSync(passesDir)
+      .filter((f) => f.endsWith(".json"))
+      .map((f) => {
+        const envelope = loadJson(path.join(passesDir, f));
+        if (envelope === null || typeof envelope !== "object" || Array.isArray(envelope)) {
+          throw new ExitIndeterminate(`pass file "${f}" does not contain a JSON object — it cannot be read as a result envelope`);
+        }
+        return { name: f.replace(/\.json$/, ""), file: path.join(passesDir, f), envelope };
+      })
+    : [];
+
+  const adjDir = path.join(dir, "adjudications");
+  const adjudications = existsSync(adjDir)
+    ? readdirSync(adjDir)
+      .filter((f) => f.endsWith(".json"))
+      .map((f) => ({ name: f.replace(/\.json$/, ""), file: path.join(adjDir, f), doc: loadJson(path.join(adjDir, f)) }))
+    : [];
+
+  return { runRecord, passes, adjudications };
+}
+
+// ---------------------------------------------------------------------------
+// validate-result-schemas.mjs delegation
+// ---------------------------------------------------------------------------
+
+function runValidator(validatorPath, args) {
+  const result = spawnSync(process.execPath, [validatorPath, ...args], { encoding: "utf8" });
+  return { status: result.status, stdout: result.stdout, stderr: result.stderr };
+}
+
+function validatePassSchema(validatorPath, passFile, { runId, initiatedBy, knownIdsFile }) {
+  const args = [PASS_VALIDATION_KIND, passFile];
+  if (runId) args.push("--run-id", runId, "--initiated-by", initiatedBy);
+  if (knownIdsFile) args.push("--known-ids", knownIdsFile);
+  const { status, stdout, stderr } = runValidator(validatorPath, args);
+  return { ok: status === 0, message: (stdout + stderr).trim() };
+}
+
+// passFiles binds the adjudication to the pass(es) it actually adjudicates
+// (one per configured finder for its own stage/round) via the validator's
+// own --pass cross-check, which proves — among other things — that the
+// adjudication's run_id agrees with the (already run-id-verified) pass, so
+// a stale adjudication document from a DIFFERENT run cannot supply a
+// downgraded priority or disposition for a finding id that happens to
+// collide. See ai/schemas/README.md "Adjudication ↔ source pass agreement".
+function validateAdjudicationSchema(validatorPath, adjFile, passFiles) {
+  const args = ["adjudication", adjFile];
+  for (const p of passFiles) args.push("--pass", p);
+  const { status, stdout, stderr } = runValidator(validatorPath, args);
+  return { ok: status === 0, message: (stdout + stderr).trim() };
+}
+
+// ---------------------------------------------------------------------------
+// Receipt validation: run binding, chronology, finding-id uniqueness
+// ---------------------------------------------------------------------------
+
+function validateReceipts(runRecord, passes, { validatorPath, tmpDir }) {
+  // A run record with no trusted identity of its own cannot bind anything
+  // to it — every pass's run/initiated_by check below would otherwise
+  // silently short-circuit to "nothing to compare against, so accept",
+  // which is exactly the untrusted-identity gap this check exists to close.
+  if (typeof runRecord.run_id !== "string" || !runRecord.run_id) {
+    throw new ExitIndeterminate("run.json has no run_id — cannot bind any pass to an active run identity");
+  }
+  if (typeof runRecord.initiated_by !== "string" || !runRecord.initiated_by) {
+    throw new ExitIndeterminate("run.json has no initiated_by — cannot bind any pass to an active run identity");
+  }
+  const diagnostics = [];
+  const receipts = Array.isArray(runRecord.receipts) ? runRecord.receipts : [];
+  const passSeqByName = new Map();
+  receipts.forEach((r, idx) => {
+    if (r.kind !== "pass") return;
+    // A repeated pass filename silently overwrote its earlier sequence
+    // number here (challenge round 3, confirmed): if the duplicate receipt
+    // sits after a later transition back into the pass's claimed stage,
+    // activeStageBefore(seq) below would use the LATER position and accept
+    // a pass that actually arrived under a different active stage,
+    // defeating the chronology boundary. A receipt filename must be unique;
+    // a duplicate makes the whole trajectory untrustworthy rather than
+    // relocating the pass.
+    if (passSeqByName.has(r.file)) {
+      throw new ExitIndeterminate(`run.json receipts contain more than one "pass" entry for file "${r.file}" (seq ${passSeqByName.get(r.file)}, ${idx})`);
+    }
+    passSeqByName.set(r.file, idx);
+  });
+  // A receipt names a pass whose JSON artifact is absent from passes/ —
+  // deleted, never written, or simply stale. Everything below this point
+  // iterates only files actually DISCOVERED under passes/ (`passes`, the
+  // parameter), so a receipt-only entry with no backing file was
+  // previously invisible in that direction — shepherd-stage cloud finding,
+  // confirmed: deleting a pass while its receipt survives let the trusted
+  // sequence still claim the slot was filled, silently authorizing
+  // redispatch (continue/no_rounds_yet) despite the receipt saying
+  // otherwise. The opposite direction (a pass with no receipt entry) was
+  // already caught below at "no receipt entry for this pass in run.receipts".
+  const passNamesOnDisk = new Set(passes.map((p) => p.name));
+  for (const [name, seq] of passSeqByName) {
+    if (!passNamesOnDisk.has(name)) {
+      throw new ExitIndeterminate(`run.json receipts name pass "${name}" (seq ${seq}) but no matching file exists under passes/ — receipt without evidence`);
+    }
+  }
+  // All transitions in receipt order, regardless of stage — used below to
+  // find whichever stage was ACTIVE immediately before a given pass arrived
+  // (not merely "some transition into this pass's stage happened earlier",
+  // which a stale pass arriving after the run moved on to a later stage
+  // would also satisfy).
+  const transitionsInOrder = receipts
+    .map((r, idx) => ({ ...r, seq: idx }))
+    .filter((r) => r.kind === "transition");
+
+  // Full lifecycle-edge legality (which stage-to-stage transitions are ever
+  // structurally legal — matching run.schema.json's own ALLOWED_EDGES) is
+  // deliberately NOT implemented here: this repo's own stage-regression
+  // valve (AGENTS.md) makes review -> challenge a LEGITIMATE re-entry, so a
+  // naive "no backward transition" rule would reject real trajectories, and
+  // getting the full graph right needs docs/product/domain.md's exact
+  // edges — out of scope for this pass; deferred as a P2 (see the PR's
+  // deferred findings). What IS caught here, cheaply and unambiguously
+  // regardless of which edges are legal: two transitions into the exact
+  // same stage with nothing between them is never meaningful (there is
+  // nothing a repeated "we are now in stage X" transition could legitimately
+  // record that the first one did not already).
+  for (let i = 1; i < transitionsInOrder.length; i++) {
+    if (transitionsInOrder[i].stage === transitionsInOrder[i - 1].stage) {
+      throw new ExitIndeterminate(
+        `run.json receipts contain two consecutive transitions into stage "${transitionsInOrder[i].stage}" (seq ${transitionsInOrder[i - 1].seq}, ${transitionsInOrder[i].seq}) with no transition between them`,
+      );
+    }
+  }
+
+  function activeStageBefore(seq) {
+    let active = null;
+    for (const t of transitionsInOrder) {
+      if (t.seq >= seq) break;
+      active = t.stage;
+    }
+    return active;
+  }
+
+  // The transition receipt that was active when a pass arrived — same walk
+  // as activeStageBefore, but returning the whole entry so the chronology
+  // bound below can read its optional `entered_at`.
+  function activeTransitionBefore(seq) {
+    let active = null;
+    for (const t of transitionsInOrder) {
+      if (t.seq >= seq) break;
+      active = t;
+    }
+    return active;
+  }
+
+  // harmon-devkit#685: "source passes' produced_at fall between run start
+  // and promotion and not before their stage entry". Ordering itself is
+  // never taken from a timestamp — that is the trusted receipt sequence's
+  // job (specs/dev-flow-v2.md: producer-supplied produced_at "SHALL be
+  // only a bounded sanity check ... never an ordering ... boundary"), and
+  // the receipt-order checks above are unchanged. This is exactly that
+  // bounded sanity check: a pass claiming to have been produced before the
+  // run existed, after it was promoted, or before the stage it names was
+  // even entered, is evidence from outside the run's own span however
+  // well-formed it is otherwise.
+  //
+  // Every bound is OPTIONAL and checked only when the run directory
+  // actually supplies it: `run.json`'s own `started_at` and
+  // `promotion.promoted_at`, and a transition receipt's own `entered_at`.
+  // The run directory is a documented SUBSET of the full run record
+  // (ai/schemas/README.md "Run directory layout") — a caller that carries
+  // those fields gets them enforced; one that does not is unchanged, so
+  // this can never turn a legitimate trajectory that simply omits them
+  // into a failure.
+  // A bound that is PRESENT but unparseable fails the whole trajectory
+  // rather than silently disabling itself: "the field is absent" and "the
+  // field is there but nonsense" must not reach the same outcome, or a
+  // typo'd started_at would waive exactly the check it was written to
+  // request. (Absent stays absent — see the OPTIONAL note above.)
+  // Only `undefined` (and, for `promotion`, `null` — the schema's own "not
+  // promoted yet") means ABSENT. Every other present value is checked:
+  // a number, an object, or a null where a timestamp belongs is malformed
+  // producer data, and the run directory is not schema-validated here, so
+  // treating it as absent would silently disable exactly the bound it was
+  // written to request. Challenge round 1, confirmed — the earlier
+  // `typeof value !== "string" -> return null` did precisely that.
+  function boundOrThrow(value, label) {
+    if (value === undefined) return null;
+    if (typeof value !== "string") {
+      throw new ExitIndeterminate(`run.json's ${label} is present but not a string (${JSON.stringify(value)}) — cannot bound any pass against it`);
+    }
+    const parsed = realInstant(value);
+    if (parsed === null) {
+      throw new ExitIndeterminate(`run.json's ${label} "${value}" is not a real instant in this schema family's timestamp shape — cannot bound any pass against it`);
+    }
+    return parsed;
+  }
+  const runStartedAt = boundOrThrow(runRecord.started_at, "started_at");
+  let runPromotedAt = null;
+  if (runRecord.promotion !== undefined && runRecord.promotion !== null) {
+    if (typeof runRecord.promotion !== "object" || Array.isArray(runRecord.promotion)) {
+      throw new ExitIndeterminate(`run.json's promotion is present but not an object (${JSON.stringify(runRecord.promotion)}) — cannot bound any pass against it`);
+    }
+    // A promotion entry that exists at all owes a promoted_at
+    // (run.schema.json requires it), so `undefined` here is malformed too,
+    // not the absent case boundOrThrow's own `undefined` branch covers.
+    if (runRecord.promotion.promoted_at === undefined) {
+      throw new ExitIndeterminate("run.json's promotion has no promoted_at — cannot bound any pass against it");
+    }
+    runPromotedAt = boundOrThrow(runRecord.promotion.promoted_at, "promotion.promoted_at");
+  }
+
+  function chronologyViolation(producedAt, seq) {
+    // The envelope's own produced_at shape is result.envelope.schema.json's
+    // job — validatePassSchema below rejects a malformed one on its own
+    // terms, with its own message, so this bound has nothing to add.
+    if (typeof producedAt !== "string") return null;
+    const t = Date.parse(producedAt);
+    if (Number.isNaN(t)) return null;
+    if (runStartedAt !== null && t < runStartedAt) {
+      return `produced_at "${producedAt}" is before the run's own started_at "${runRecord.started_at}"`;
+    }
+    if (runPromotedAt !== null && t > runPromotedAt) {
+      return `produced_at "${producedAt}" is after the run's promotion.promoted_at "${runRecord.promotion.promoted_at}"`;
+    }
+    const entry = activeTransitionBefore(seq);
+    if (entry) {
+      // Straight to boundOrThrow, with no typeof guard of its own: a guard
+      // here would reintroduce, for this third bound, exactly the
+      // present-but-malformed-reads-as-absent hole challenge round 1 found
+      // in the other two.
+      const enteredAt = boundOrThrow(entry.entered_at, `receipts[${entry.seq}].entered_at`);
+      if (enteredAt !== null && t < enteredAt) {
+        return `produced_at "${producedAt}" is before its own stage "${entry.stage}" was entered at "${entry.entered_at}"`;
+      }
+    }
+    return null;
+  }
+
+  const decorated = [];
+  const seenIds = new Set();
+  const knownIdsFile = tmpDir ? path.join(tmpDir, "known-ids.json") : null;
+
+  // Process in trusted receipt order (passes without a receipt entry sort
+  // last, in file-listing order, and are flagged).
+  const ordered = [...passes].sort((a, b) => {
+    const sa = passSeqByName.has(a.name) ? passSeqByName.get(a.name) : Infinity;
+    const sb = passSeqByName.has(b.name) ? passSeqByName.get(b.name) : Infinity;
+    return sa - sb;
+  });
+
+  for (const pass of ordered) {
+    const env = pass.envelope;
+    const payload = env.payload || {};
+    const seq = passSeqByName.has(pass.name) ? passSeqByName.get(pass.name) : null;
+
+    if (seq === null) {
+      diagnostics.push({ pass: pass.name, level: "reject", reason: "no receipt entry for this pass in run.receipts" });
+      continue;
+    }
+    // result.schema.json's own status enum ("completed"|"blocked") documents
+    // blocked as "the role could not [produce its full payload] (e.g. ... a
+    // finder that failed and will be retried once)" — schema-valid is not
+    // the same as semantically complete. Shepherd-stage cloud finding
+    // (round 4), confirmed: nothing here checked env.status at all, so a
+    // blocked envelope entered validPasses/logical-round assembly exactly
+    // like a genuine completed contribution — in the retry/fallback path,
+    // retaining a blocked primary alongside a successful fallback creates
+    // two claims for one slot; if the chain instead exhausts, the blocked
+    // result can suppress the terminal capped/finder_unavailable outcome
+    // that should fire. Confidence-stage assembly only ever wants completed
+    // envelopes; a blocked one is evidence the retry/fallback path must
+    // continue, not itself a claim on a slot.
+    if (env.status !== "completed") {
+      diagnostics.push({ pass: pass.name, level: "reject", reason: `envelope status is "${env.status}", not "completed" — a blocked result is not a completed slot claim` });
+      continue;
+    }
+    if (runRecord.run_id && env.run && env.run.run_id !== runRecord.run_id) {
+      diagnostics.push({ pass: pass.name, level: "reject", reason: `run_id "${env.run.run_id}" does not match the active run "${runRecord.run_id}"` });
+      continue;
+    }
+    if (runRecord.initiated_by && env.run && env.run.initiated_by !== runRecord.initiated_by) {
+      diagnostics.push({ pass: pass.name, level: "reject", reason: `initiated_by "${env.run.initiated_by}" does not match the active run "${runRecord.initiated_by}"` });
+      continue;
+    }
+    // The pass's own stage must be whichever stage was ACTIVE immediately
+    // before it arrived — not merely "entered at some earlier point" — so a
+    // stale pass received after the run has already moved on to a later
+    // stage is rejected rather than silently counted (exit-computation spec
+    // "Results are validated before interpretation": "a pass from an
+    // earlier stage SHALL NOT count in a later stage even when both name
+    // the same head").
+    const active = activeStageBefore(seq);
+    if (active !== payload.stage) {
+      diagnostics.push({
+        pass: pass.name,
+        level: "reject",
+        reason: `stage "${payload.stage}" was not the active stage when this pass arrived (seq ${seq}; active stage was ${active ? `"${active}"` : "none"})`,
+      });
+      continue;
+    }
+
+    const chronology = chronologyViolation(env.produced_at, seq);
+    if (chronology) {
+      diagnostics.push({ pass: pass.name, level: "reject", reason: `${chronology} — evidence from outside this run's own span` });
+      continue;
+    }
+
+    if (knownIdsFile) {
+      writeFileSync(knownIdsFile, JSON.stringify([...seenIds]));
+    }
+    const { ok, message } = validatePassSchema(validatorPath, pass.file, {
+      runId: runRecord.run_id,
+      initiatedBy: runRecord.initiated_by,
+      knownIdsFile,
+    });
+    if (!ok) {
+      diagnostics.push({ pass: pass.name, level: "reject", reason: `schema/receipt validation failed: ${message}` });
+      continue;
+    }
+
+    // A duplicate rejects the WHOLE pass, not just the colliding finding —
+    // "receipt validation rejects the result and it contributes no pass or
+    // finding" (specs/dev-flow-v2.md § Results). The schema validator's
+    // --known-ids check above already catches this in practice (its
+    // rejection reason differs and is what fixtures assert on); this loop
+    // is defense in depth, never the only thing standing between a
+    // duplicate id and being trusted.
+    const duplicateIds = (payload.findings || []).filter((f) => seenIds.has(f.id)).map((f) => f.id);
+    if (duplicateIds.length > 0) {
+      diagnostics.push({
+        pass: pass.name,
+        level: "reject",
+        reason: `duplicate finding id(s) already seen in this run: ${duplicateIds.join(", ")}`,
+      });
+      continue;
+    }
+    for (const f of payload.findings || []) seenIds.add(f.id);
+
+    decorated.push({ ...pass, payload, receiptSeq: seq });
+  }
+
+  return { validPasses: decorated, diagnostics };
+}
+
+// ---------------------------------------------------------------------------
+// Logical round assembly
+// ---------------------------------------------------------------------------
+
+function assembleLogicalRounds(stage, validPasses, adjudications, resolvedStage, runRecord, { allPasses = validPasses } = {}) {
+  // The pass -> adjudication direction is checked after assembly. This is
+  // adjudication -> pass: an adjudication for a round that was never
+  // dispatched is malformed trajectory evidence, not a document to ignore.
+  // Measure against every retained pass, including ones receipt validation
+  // rejected, because those still prove the round was dispatched.
+  const dispatchedRounds = new Set();
+  for (const pass of allPasses) {
+    const payload = pass.envelope ? pass.envelope.payload : pass.payload;
+    if (payload && typeof payload.stage === "string" && typeof payload.round === "number") {
+      dispatchedRounds.add(`${payload.stage}:${payload.round}`);
+    }
+  }
+  for (const slotFailure of Array.isArray(runRecord.slot_failures) ? runRecord.slot_failures : []) {
+    if (typeof slotFailure.stage === "string" && typeof slotFailure.round === "number") {
+      dispatchedRounds.add(`${slotFailure.stage}:${slotFailure.round}`);
+    }
+  }
+  const orphanAdjudication = adjudications.find(
+    (entry) => !dispatchedRounds.has(`${entry.doc.stage}:${entry.doc.round}`),
+  );
+  if (orphanAdjudication) {
+    throw new ExitIndeterminate(
+      `adjudication document "${orphanAdjudication.name}" names ${orphanAdjudication.doc.stage} round ${orphanAdjudication.doc.round}, but no pass or slot_failures record in this run ever named that round — an adjudication with no source pass is an error, not something to ignore`,
+    );
+  }
+
+  const stagePasses = validPasses.filter((p) => p.payload.stage === stage);
+  // Two individually-valid adjudication files naming the same (stage, round)
+  // may assign conflicting adjudicated priorities — silently keeping
+  // whichever readdirSync happened to list last let filesystem order decide
+  // whether a P1 gates the stage (challenge round 3, confirmed). Reject the
+  // ambiguity outright rather than picking one.
+  const adjByRound = new Map();
+  const adjFileByRound = new Map();
+  for (const a of adjudications) {
+    if (a.doc.stage !== stage) continue;
+    const prior = adjFileByRound.get(a.doc.round);
+    if (prior) {
+      throw new ExitIndeterminate(
+        `two adjudication documents both name stage "${stage}" round ${a.doc.round}: "${prior}" and "${a.file}" — ambiguous, cannot trust either`,
+      );
+    }
+    adjByRound.set(a.doc.round, a.doc);
+    adjFileByRound.set(a.doc.round, a.file);
+  }
+  const slotFailures = Array.isArray(runRecord.slot_failures)
+    ? runRecord.slot_failures.filter((s) => s.stage === stage)
+    : [];
+
+  const roundNumbers = new Set(stagePasses.map((p) => p.payload.round));
+  for (const sf of slotFailures) roundNumbers.add(sf.round);
+  const sorted = [...roundNumbers].sort((a, b) => a - b);
+
+  // An empty resolvedStage.finders[] means no [stage.*] configuration
+  // authority is available at all (the built-in default a merge-base
+  // historical decode uses — devflow-policy.mjs, [stage.*] has no
+  // legacy/v1 equivalent) rather than "this stage legitimately configures
+  // zero primary finders." Falling back to trivial per-round completeness
+  // in that case would silently mark every round complete regardless of
+  // what actually ran, so instead the expected slot set is derived from
+  // internal consistency: whichever slots the run's own passes actually
+  // used, unioned across every round of this stage.
+  let primarySlots = resolvedStage.finders;
+  if (primarySlots.length === 0) {
+    // Post-merge cloud review, confirmed: this observed-slot fallback only
+    // ever looked at stagePasses, so a slot that was exhausted with ONLY a
+    // slot_failures record and never produced any pass at all (blocked or
+    // complete) was invisible to the derived slot set — a round missing
+    // that slot entirely then had nothing to check it against and read as
+    // trivially complete (continue/no_rounds_yet) instead of the terminal
+    // capped/finder_unavailable its own recorded failure demands. Union in
+    // slotFailures' own slot names alongside stagePasses'.
+    const observed = new Set();
+    for (const p of stagePasses) observed.add(p.payload.slot || p.payload.finder);
+    for (const sf of slotFailures) observed.add(sf.slot);
+    primarySlots = [...observed];
+  }
+  const rounds = [];
+
+  for (const roundNumber of sorted) {
+    const passesThisRound = stagePasses.filter((p) => p.payload.round === roundNumber);
+    // A pass's claimed slot/substitutes_for is producer-asserted data, not
+    // an authority — validate every invariant the spec requires before a
+    // pass is allowed to fill a slot at all: a primary pass has finder ==
+    // slot and no substitutes_for; a fallback pass's substitutes_for must
+    // equal the slot it claims; the claimed slot must be one this stage
+    // actually configures; at most one pass may claim a given slot per
+    // round; and one finder cannot fill two slots in the same round.
+    // Anything that fails these is dropped from bySlot (never silently
+    // overwritten or trusted), which naturally falls through to
+    // finder_unavailable/breadth_exhausted handling below exactly as if no
+    // pass had arrived for that slot.
+    // Pass 1: group every STRUCTURALLY valid claim by the slot it names
+    // (finder == slot for a primary, substitutes_for == slot and
+    // finder != slot for a fallback, and the slot must actually be
+    // configured). A slot with more than one valid claim is exactly as
+    // untrusted as one with zero — resolving the conflict by picking
+    // whichever pass happened to be enumerated first would let a
+    // duplicate claim silently win, so BOTH are dropped in pass 2 below.
+    const validClaimsBySlot = new Map();
+    for (const p of passesThisRound) {
+      const slot = p.payload.slot || p.payload.finder;
+      const finder = p.payload.finder;
+      const isPrimaryClaim = !p.payload.substitutes_for;
+      const validPrimary = isPrimaryClaim && finder === slot;
+      // A fallback claim's finder must be one this slot's OWN configured
+      // finder_fallbacks chain actually names — review round 2, confirmed:
+      // checking only substitutes_for === slot && finder !== slot let any
+      // arbitrary, unauthorized finder fill a slot by merely claiming to
+      // substitute for it, bypassing the configured fallback chain entirely
+      // (exit-computation spec: only "the configured finder_fallbacks chain
+      // for that slot" may fill it after the primary's retry).
+      const validFallback =
+        !isPrimaryClaim && p.payload.substitutes_for === slot && finder !== slot && resolvedStage.finder_fallbacks.includes(finder);
+      if (!primarySlots.includes(slot) || !(validPrimary || validFallback)) continue;
+      const list = validClaimsBySlot.get(slot) || [];
+      list.push(p);
+      validClaimsBySlot.set(slot, list);
+    }
+    // Pass 2: a slot is filled only by a claim that is the SOLE valid claim
+    // for that slot AND whose finder is not already filling another slot
+    // this round (spec: "an actor already serving as a primary or
+    // substitute in the round cannot satisfy a second slot"). Iterated in
+    // primarySlots' own (configuration) order so a finder-reuse conflict
+    // resolves deterministically rather than depending on pass enumeration
+    // order.
+    const bySlot = new Map();
+    const claimedByFinder = new Set();
+    for (const slot of primarySlots) {
+      const claims = validClaimsBySlot.get(slot) || [];
+      if (claims.length !== 1) continue; // zero or duplicate claims: slot unresolved either way
+      const p = claims[0];
+      if (claimedByFinder.has(p.payload.finder)) continue;
+      bySlot.set(slot, p);
+      claimedByFinder.add(p.payload.finder);
+    }
+
+    const substitutions = [];
+    let unresolvedSlot = null;
+    let unresolvedReason = null;
+    for (const slot of primarySlots) {
+      if (bySlot.has(slot)) {
+        const p = bySlot.get(slot);
+        // An accepted pass AND a slot_failures record for the SAME
+        // (round, slot) directly contradict each other — one says the
+        // slot was filled, the other says the finder was unavailable/
+        // exhausted for it — even when their heads agree, unlike the
+        // reviewedHead-disagreement check below which only fires across
+        // DIFFERENT slots. Shepherd-stage cloud finding, confirmed: this
+        // branch previously never consulted slotFailures at all once a
+        // slot had a valid claim, silently letting the failure record
+        // disappear rather than flagging the trajectory as
+        // internally inconsistent.
+        const contradiction = slotFailures.find((s) => s.round === roundNumber && s.slot === slot);
+        if (contradiction) {
+          throw new ExitIndeterminate(
+            `round ${roundNumber} of stage "${stage}" has both an accepted pass and a slot_failures record for slot "${slot}" — these directly contradict each other`,
+          );
+        }
+        if (p.payload.substitutes_for) {
+          substitutions.push({ slot, ran: p.payload.finder, round: roundNumber });
+        }
+        continue;
+      }
+      const failure = slotFailures.find((s) => s.round === roundNumber && s.slot === slot);
+      if (failure) {
+        unresolvedSlot = slot;
+        unresolvedReason = failure.reason === "breadth_exhausted" ? "breadth_exhausted" : "finder_unavailable";
+        break;
+      }
+      // No accepted pass AND no matching slot_failures record for this
+      // slot — shepherd-stage cloud finding (round 3), confirmed:
+      // synthesizing finder_unavailable here has no actual evidence of
+      // exhaustion behind it; it is equally consistent with "still
+      // pending" (another finder in this round has not reported back
+      // either) or "a pass was rejected but no failure record was ever
+      // written." Neither is a confirmed terminal outcome, so this round
+      // cannot be safely assembled at all rather than confidently
+      // escalated on synthesized evidence.
+      throw new ExitIndeterminate(
+        `round ${roundNumber} of stage "${stage}" has no accepted pass and no slot_failures record for slot "${slot}" — cannot determine whether it is still pending or genuinely exhausted`,
+      );
+    }
+
+    // Evidence (reviewedHead, findings) is drawn ONLY from the ACCEPTED
+    // (bySlot) passes — a pass a slot claim rejected above (invalid slot,
+    // duplicate claim, reused finder) contributes no pass or finding, per
+    // "receipt validation rejects the result and it contributes no pass or
+    // finding" (specs/dev-flow-v2.md § Results). Using passesThisRound
+    // (every pass that merely NAMED this round, regardless of whether its
+    // slot claim survived) here would let a rejected pass still inject
+    // findings or invalidate an otherwise-clean shared head.
+    const acceptedPasses = [...bySlot.values()];
+    const reviewedHeads = new Set(acceptedPasses.map((p) => p.envelope.head));
+    // Every primary slot filled but the accepted passes disagree on which
+    // head they reviewed is an internally-inconsistent trajectory, not an
+    // ordinary unresolved slot — review round 1, confirmed: this previously
+    // still marked the round "complete" with reviewedHead null, letting it
+    // silently spend the numeric cap (maxRoundNumber counts every round
+    // number regardless of ancestry/retention) rather than being refused
+    // outright as untrustworthy, matching every other internal-consistency
+    // violation in this file (duplicate transitions, duplicate receipts,
+    // duplicate adjudications).
+    if (!unresolvedSlot && reviewedHeads.size > 1) {
+      throw new ExitIndeterminate(
+        `round ${roundNumber} of stage "${stage}" has every primary slot filled but its accepted passes disagree on reviewed_head (${[...reviewedHeads].join(", ")}) — trajectory inconsistent with itself`,
+      );
+    }
+    let reviewedHead = reviewedHeads.size === 1 ? [...reviewedHeads][0] : null;
+    if (!reviewedHead && unresolvedSlot) {
+      const failure = slotFailures.find((s) => s.round === roundNumber && s.slot === unresolvedSlot);
+      if (failure && failure.head) reviewedHead = failure.head;
+    }
+
+    const adjudication = adjByRound.get(roundNumber) || null;
+    const findings = [];
+    for (const p of acceptedPasses) {
+      for (const f of p.payload.findings || []) {
+        const entry = adjudication ? adjudication.adjudications.find((a) => a.finding_id === f.id) : null;
+        findings.push({
+          ...f,
+          round: roundNumber,
+          stage,
+          finder: p.payload.finder,
+          reviewedHead: p.envelope.head,
+          adjudicated_priority: entry ? entry.adjudicated_priority : null,
+          disposition: entry ? entry.disposition : null,
+        });
+      }
+    }
+
+    // Raw evidence for this round, carried on the round object purely for
+    // an external caller's own projection (harmon-devkit#1001: the local-
+    // record harvester consumes this instead of re-deriving round assembly
+    // itself via imported helpers). Additive only — no predicate or verdict
+    // above reads `passes`/`blockedPasses`/`adjudication`, so this cannot
+    // change exit-code or verdict semantics.
+    //
+    // `passes` mirrors `passesThisRound` (every schema/receipt-valid pass
+    // naming this stage+round), NOT the narrower `acceptedPasses`/`bySlot`
+    // result — a caller reporting evidence wants to see a pass that lost a
+    // slot conflict too, not just the one that won it.
+    const blockedPassesThisRound = allPasses.filter((p) => {
+      const payload = p.envelope.payload;
+      return payload && payload.stage === stage && payload.round === roundNumber && p.envelope.status === "blocked";
+    });
+
+    rounds.push({
+      round: roundNumber,
+      reviewedHead,
+      status: unresolvedSlot ? `capped/${unresolvedReason}` : "complete",
+      unresolvedSlot,
+      substitutions,
+      findings,
+      hasAdjudication: !!adjudication,
+      adjudication,
+      passes: passesThisRound.map((p) => ({ name: p.name, envelope: p.envelope })),
+      blockedPasses: blockedPassesThisRound.map((p) => ({ name: p.name, envelope: p.envelope })),
+    });
+  }
+
+  return rounds;
+}
+
+// ---------------------------------------------------------------------------
+// Change ledger (provenance/fingerprint evidence) — see ai/schemas/README.md.
+// ---------------------------------------------------------------------------
+
+// Returns `null` (not `[]`) when no real change-ledger source is available —
+// deliberately distinct from a real, legitimately EMPTY ledger (e.g. every
+// fixture whose rounds simply haven't touched much yet). `null` means
+// "nothing here can verify anything"; `[]` means "verified against real
+// evidence, which happens to record no matching entries" — verifyProvenance/
+// verifyFingerprint treat the two very differently: an empty-but-real ledger
+// can legitimately confirm `original` provenance (no tracked fix touched
+// this line), while an UNAVAILABLE ledger must never be silently treated as
+// confirming evidence, since that would let every finding evade verification
+// just by asserting the claim a missing ledger cannot contradict.
+function loadLedger({ historyFile, repoRoot }) {
+  if (historyFile) return loadJson(historyFile);
+  // Neither an explicit history file nor a repo root was given — including
+  // the advertised no-flags `task devflow:exit` usage — or repoRoot was
+  // given but the git adapter is deliberately not implemented yet (see
+  // ai/schemas/README.md / "## Deferred findings"). Both are "no evidence
+  // source configured", not "a real ledger that happens to be empty"
+  // (challenge round 3, confirmed): returning [] here let verifyProvenance
+  // certify every producer-asserted `original` claim by default, silently
+  // defeating provenance_share divergence detection. A fixture that wants a
+  // genuinely empty-but-real ledger supplies an explicit --history file
+  // containing `[]`.
+  return null;
+}
+
+function resolveOriginPath(pathName, beforeRound, ledger) {
+  if (!ledger) return pathName; // no ledger available: no rename can be tracked, origin is the path itself
+  let cur = pathName;
+  // Walk rounds strictly descending from beforeRound - 1, consulting each
+  // round at most once, rather than re-scanning the whole ledger until
+  // nothing changes. Shepherd-stage cloud finding, confirmed: a legitimate
+  // rename-back history (round 1: a.js -> b.js, round 2: b.js -> a.js)
+  // made the old scan-to-fixpoint loop bounce between the two paths
+  // forever — a real rename-back trajectory hung exit computation entirely
+  // rather than computing a wrong-but-terminating answer. Descending
+  // through each distinct earlier round exactly once still finds the same
+  // chain for a genuine (non-cyclic) rename history, and is bounded by
+  // construction.
+  const roundsDesc = [...new Set(ledger.filter((e) => e.round < beforeRound).map((e) => e.round))].sort((a, b) => b - a);
+  for (const round of roundsDesc) {
+    const entry = ledger.find((e) => e.round === round && e.path === cur && e.renamed_from);
+    if (entry) cur = entry.renamed_from;
+  }
+  return cur;
+}
+
+function ledgerEntriesForOrigin(originPath, beforeRound, ledger) {
+  // Entries whose (chain of renames back from entry.path) reaches originPath,
+  // restricted to rounds < beforeRound, in round order.
+  return ledger
+    .filter((e) => e.round < beforeRound)
+    .filter((e) => resolveOriginPath(e.path, e.round + 1, ledger) === originPath || e.path === originPath)
+    .sort((a, b) => a.round - b.round);
+}
+
+function verifyProvenance(finding, ledger) {
+  if (ledger === null) {
+    return { status: "unverified", value: finding.provenance, reason: "no change ledger is available to verify against" };
+  }
+  if (finding.line === null || finding.line === undefined) {
+    return { status: "unverified", value: finding.provenance, reason: "not line-anchored" };
+  }
+  const originPath = resolveOriginPath(finding.path, finding.round, ledger);
+  const relevant = ledgerEntriesForOrigin(originPath, finding.round, ledger);
+
+  let introducedAtRound = null;
+  for (const entry of relevant) {
+    if ((entry.added_lines || []).includes(finding.line)) introducedAtRound = entry.round;
+  }
+
+  // A later round's insertion or deletion AT OR ABOVE this line shifts
+  // every subsequent line number, so the ledger's recorded coordinate for
+  // an EARLIER round's add no longer equals where that content now sits
+  // (review round 2, confirmed) — a direct `=== finding.line` comparison
+  // would then find no match, fall through, and wrongly verify "original"
+  // for code that actually came from the earlier round, just renumbered.
+  // Only entries STRICTLY AFTER the one that introduced this line (or,
+  // when there is no introducing round at all — an "original" claim,
+  // which predates every tracked round — any entry in `relevant`) can have
+  // shifted ITS coordinate; an entry at or before the introducing round
+  // cannot retroactively shift a position recorded after it. Shepherd-
+  // stage cloud finding (round 2, about pre-existing code), confirmed: the
+  // prior single-pass version considered EVERY entry regardless of
+  // chronological relationship to `introducedAtRound`, so an earlier
+  // round's own unrelated add at a lower line number falsely flagged
+  // ambiguity for a line a LATER round introduced — the earlier add
+  // predates and has no bearing on it.
+  let ambiguousTouch = false;
+  for (const entry of relevant) {
+    if (introducedAtRound !== null && entry.round <= introducedAtRound) continue;
+    const touchedAtOrAbove = [...(entry.added_lines || []), ...(entry.deleted_lines || [])].some((l) => l <= finding.line);
+    if (touchedAtOrAbove) ambiguousTouch = true;
+  }
+
+  if (introducedAtRound !== null) {
+    // Shepherd-stage cloud finding (round 2, about pre-existing code),
+    // confirmed: this branch returned "verified"/"corrected" unconditionally,
+    // never consulting `ambiguousTouch` the way the "original" branch below
+    // already does. A later round's edit at-or-above this line can shift
+    // what the ledger's round-N coordinate now actually points at — the
+    // SAME reasoning that motivated ambiguousTouch in the first place — so
+    // a round:N match found under an ambiguous touch is not safe to
+    // confidently verify or correct either; report it undecidable instead.
+    if (ambiguousTouch) {
+      return {
+        status: "unverified",
+        value: finding.provenance,
+        reason: `line ${finding.line} at ${finding.path} matches round ${introducedAtRound}'s own add, but its region was later modified; mechanical attribution is undecidable`,
+      };
+    }
+    const computed = `round:${introducedAtRound}`;
+    if (finding.provenance === computed) return { status: "verified", value: computed };
+    return {
+      status: "corrected",
+      value: computed,
+      reason: `asserted "${finding.provenance}" but line ${finding.line} at ${finding.path} was introduced by round ${introducedAtRound}'s fix`,
+    };
+  }
+
+  if (finding.provenance === "original") {
+    if (ambiguousTouch) {
+      return { status: "unverified", value: "original", reason: "the anchor line's region was later modified; mechanical attribution is undecidable" };
+    }
+    return { status: "verified", value: "original" };
+  }
+  // No tracked round's fix added this line, so it predates every round —
+  // the SAME positive conclusion the "original" branch above reaches via
+  // introducedAtRound === null, just arriving here because the finding
+  // asserted round:N instead of original. Post-merge cloud review,
+  // confirmed: this previously stayed merely "unverified" rather than
+  // being corrected, even though the ledger rules out every round
+  // attribution — and provenance_share drops unverified findings from
+  // both its numerator and denominator, so a wrongly-unverified claim can
+  // silently produce a false diverging. Mirrors the "original" branch's
+  // own ambiguousTouch handling: an ambiguous region stays undecidable,
+  // otherwise the claim is corrected to what the ledger actually shows.
+  if (ambiguousTouch) {
+    return {
+      status: "unverified",
+      value: finding.provenance,
+      reason: "asserted round:N but no tracked round's fix added this line, and the anchor line's region was later modified; mechanical attribution is undecidable",
+    };
+  }
+  return {
+    status: "corrected",
+    value: "original",
+    reason: `asserted "${finding.provenance}" but no tracked round's fix added line ${finding.line} at ${finding.path} — it predates every tracked round`,
+  };
+}
+
+function verifyFingerprint(finding, allByStageId, ledger) {
+  const m = /^(repeat-of|supersedes):(.+)$/.exec(finding.fingerprint);
+  if (!m) {
+    if (finding.fingerprint !== "new") return { status: "unverified", value: finding.fingerprint, reason: "malformed fingerprint" };
+    return { status: "verified", value: "new" };
+  }
+  const [, , targetId] = m;
+  const target = allByStageId.get(targetId);
+  if (!target) return { status: "unverified", value: finding.fingerprint, reason: `referenced id "${targetId}" is not a known earlier finding` };
+  if (target.round >= finding.round) {
+    return { status: "unverified", value: finding.fingerprint, reason: `referenced id "${targetId}" is not from an earlier round` };
+  }
+  const originA = resolveOriginPath(finding.path, finding.round, ledger);
+  const originB = resolveOriginPath(target.path, target.round, ledger);
+  if (originA !== originB && finding.path !== target.path) {
+    return { status: "unverified", value: finding.fingerprint, reason: `no rename evidence connects "${finding.path}" back to "${target.path}"` };
+  }
+  // Path (or rename-tracked path) evidence alone connects two DIFFERENT
+  // lines in the same file, which two genuinely unrelated findings in that
+  // file would also satisfy — review round 1, confirmed: two unrelated
+  // findings could be marked a verified repeat merely by sharing a path,
+  // letting a fabricated repeat-of claim falsely trigger repeat_after_fix.
+  // Require the current finding's own line to be one round target.round's
+  // OWN fix actually added at the resolved origin path — the same ledger
+  // entries verifyProvenance's round:N attribution already uses, so a
+  // genuine repeat (the same defect resurfacing on the line the fix
+  // touched) still verifies while a same-file coincidence does not.
+  if (!ledger) {
+    return { status: "unverified", value: finding.fingerprint, reason: "no change ledger is available to verify against" };
+  }
+  const targetsFixEntries = ledgerEntriesForOrigin(originA, finding.round, ledger).filter((e) => e.round === target.round);
+  const lineTracesToTargetsFix = targetsFixEntries.some((e) => (e.added_lines || []).includes(finding.line));
+  if (!lineTracesToTargetsFix) {
+    return {
+      status: "unverified",
+      value: finding.fingerprint,
+      reason: `no ledger evidence connects line ${finding.line} at "${finding.path}" to round ${target.round}'s own fix`,
+    };
+  }
+  return { status: "verified", value: finding.fingerprint, targetDisposition: target.disposition };
+}
+
+function applyVerification(rounds, ledger) {
+  const corrections = [];
+  const allByStageId = new Map();
+  for (const r of rounds) for (const f of r.findings) allByStageId.set(f.id, f);
+
+  for (const r of rounds) {
+    for (const f of r.findings) {
+      const pv = verifyProvenance(f, ledger);
+      f.verifiedProvenance = pv.value;
+      f.provenanceStatus = pv.status;
+      if (pv.status === "corrected") {
+        corrections.push({ finding_id: f.id, field: "provenance", asserted: f.provenance, corrected: pv.value, evidence: pv.reason });
+      }
+
+      const fv = verifyFingerprint(f, allByStageId, ledger);
+      f.verifiedFingerprint = fv.value;
+      f.fingerprintStatus = fv.status;
+      f.fingerprintTargetDisposition = fv.targetDisposition || null;
+      if (fv.status === "corrected") {
+        corrections.push({ finding_id: f.id, field: "fingerprint", asserted: f.fingerprint, corrected: fv.value, evidence: fv.reason });
+      }
+    }
+  }
+  return corrections;
+}
+
+// ---------------------------------------------------------------------------
+// Predicate catalog (specs/dev-flow-v2.md § Convergence model v0)
+// ---------------------------------------------------------------------------
+
+function gatingFindings(round) {
+  return round.findings.filter((f) => f.adjudicated_priority === "P0" || f.adjudicated_priority === "P1");
+}
+
+function predicate_no_gating_findings(currentRound) {
+  return gatingFindings(currentRound).length === 0;
+}
+
+function predicate_provenance_share(currentRound, params) {
+  const excludeClasses = new Set(params.exclude_classes || []);
+  const gating = gatingFindings(currentRound).filter((f) => !excludeClasses.has(f.class) && f.provenanceStatus !== "unverified");
+  if (gating.length === 0) return false;
+  const roundProvenance = gating.filter((f) => f.verifiedProvenance.startsWith("round:")).length;
+  return roundProvenance / gating.length >= params.min;
+}
+
+function predicate_count_rising(retainedRoundsAsc, currentIndex, params) {
+  const need = params.increases;
+  if (currentIndex < need) return false;
+  const window = retainedRoundsAsc.slice(currentIndex - need, currentIndex + 1);
+  for (let i = 1; i < window.length; i++) {
+    if (gatingFindings(window[i]).length <= gatingFindings(window[i - 1]).length) return false;
+  }
+  const currentRound = retainedRoundsAsc[currentIndex];
+  // "corrected" is evidence-backed exactly like "verified" — it is what a
+  // producer's own "original" claim becomes once the ledger PROVES the line
+  // was actually introduced by an earlier round's fix (verifyProvenance);
+  // excluding it here (review round 2, confirmed) let a strictly-rising,
+  // evidence-corrected self-feeding trajectory evade count_rising's guard
+  // merely because the producer itself never asserted round:N.
+  const hasVerifiedRoundProvenance = gatingFindings(currentRound).some(
+    (f) => (f.provenanceStatus === "verified" || f.provenanceStatus === "corrected") && f.verifiedProvenance.startsWith("round:"),
+  );
+  return hasVerifiedRoundProvenance;
+}
+
+// `split` joins fix/restructure/delete as a disposition that CHANGED THE CODE
+// (specs/dev-flow-v2.md § The split strategy): splitting removes the mechanism
+// from the change under review, so a finding that recurs afterwards is the
+// same "the remedy did not stop it" signal a repeat after a fix is — not the
+// producer disagreeing, which is what `decline` marks and what this list has
+// always excluded.
+const CODE_CHANGING_DISPOSITIONS = ["fix", "restructure", "delete", "split"];
+
+function predicate_repeat_after_fix(currentRound) {
+  return gatingFindings(currentRound).some((f) => {
+    if (f.fingerprintStatus === "unverified") return false;
+    if (!f.verifiedFingerprint.startsWith("repeat-of:")) return false;
+    return CODE_CHANGING_DISPOSITIONS.includes(f.fingerprintTargetDisposition);
+  });
+}
+
+function evalPredicate(name, params, ctx) {
+  switch (name) {
+    case "no_gating_findings":
+      return predicate_no_gating_findings(ctx.currentRound);
+    case "provenance_share":
+      return predicate_provenance_share(ctx.currentRound, params);
+    case "count_rising":
+      return predicate_count_rising(ctx.retainedRoundsAsc, ctx.currentIndex, params);
+    case "repeat_after_fix":
+      return predicate_repeat_after_fix(ctx.currentRound);
+    default:
+      throw new ExitIndeterminate(`unknown predicate "${name}"`);
+  }
+}
+
+// Mirrors devflow-policy.mjs's validatePredicateExpr recursion: a list entry
+// is either a leaf (`predicate` string) or a nested `{any:[...]}|{all:[...]}`
+// composition node, evaluated by recursing into evalExpr itself. The resolved
+// policy already validated this shape at resolve time; this only interprets
+// it, matching "every implementation accepts and evaluates the expression
+// with exactly the catalog semantics" (exit-computation spec.md).
+function evalExpr(expr, ctx) {
+  const results = expr.list.map((entry) => {
+    if (typeof entry.predicate === "string") {
+      return { name: entry.predicate, hit: evalPredicate(entry.predicate, entry, ctx) };
+    }
+    // A nested list entry is stored in its raw `{any:[...]}|{all:[...]}`
+    // TOML/JSON shape (devflow-policy.mjs's validatePredicateExpr leaves
+    // list entries untouched) — normalize to the same {kind, list} shape
+    // evalExpr itself takes before recursing.
+    const nestedKind = entry.all ? "all" : "any";
+    const nested = evalExpr({ kind: nestedKind, list: entry[nestedKind] }, ctx);
+    // For the diverging/converged "reason" field, surface an actual
+    // triggering leaf predicate's name rather than just the composition
+    // operator, when one hit.
+    const innerHit = nested.results.find((r) => r.hit);
+    return { name: innerHit ? innerHit.name : `(${nestedKind})`, hit: nested.overall, nested: nested.results };
+  });
+  const overall = expr.kind === "all" ? results.every((r) => r.hit) : results.some((r) => r.hit);
+  return { overall, results };
+}
+
+// ---------------------------------------------------------------------------
+// Split-candidate signal (specs/dev-flow-v2.md § The split strategy)
+// ---------------------------------------------------------------------------
+//
+// A DIAGNOSTIC, never an outcome. It rides alongside whatever verdict
+// computeVerdict returns and changes none of them — issue #747's "Out of
+// scope" is explicit that the caps and the two-consecutive exit do not move.
+// What it buys is that `capped` can say WHY it capped: a blocker report can
+// offer "split the mechanism out" with evidence instead of only naming the
+// spent limit, and a session can propose the split at round 2 rather than
+// after nine rounds of hardening (omator#648).
+//
+// It takes NO configuration. Concentration is tested as unanimity — one
+// mechanism holds EVERY gating finding of the round — rather than against a
+// fraction, and the trajectory test is the immediately preceding round rather
+// than a window. Both are the only knob-free readings of "findings
+// concentrating in one mechanism across consecutive rounds", which is why
+// .devflow.toml gains no per-stage concentration threshold (#747 criterion 3;
+// openspec/changes/dev-flow-v2/specs/config/spec.md records the decision).
+
+// The mechanism a finding lives in. The rename chain is resolved through the
+// same ledger `verifyProvenance` uses, so a mechanism a later round renamed
+// is still ONE mechanism rather than two paths that never concentrate.
+function mechanismOf(finding, ledger) {
+  return resolveOriginPath(finding.path, finding.round, ledger);
+}
+
+// The mechanism holding the most of this round's gating findings, with its
+// share. Ties break on the path so two implementations agree (the spec's
+// "two implementations given the same rounds and policy must return the same
+// outcome and the same reason" applies to this projection too). Returns null
+// for a round with no gating findings at all — there is nothing to
+// concentrate.
+function concentrationOf(round, ledger) {
+  const gating = gatingFindings(round);
+  if (gating.length === 0) return null;
+  const byMechanism = new Map();
+  for (const finding of gating) {
+    const key = mechanismOf(finding, ledger);
+    if (!byMechanism.has(key)) byMechanism.set(key, []);
+    byMechanism.get(key).push(finding);
+  }
+  const ranked = [...byMechanism.entries()].sort((a, b) => b[1].length - a[1].length || (a[0] < b[0] ? -1 : 1));
+  const [mechanism, findings] = ranked[0];
+  return { mechanism, findings, concentration: findings.length / gating.length };
+}
+
+function computeSplitCandidate(retainedRoundsAsc, currentIndex, ledger) {
+  const currentRound = retainedRoundsAsc[currentIndex];
+  const current = concentrationOf(currentRound, ledger);
+  if (!current) {
+    return {
+      detected: false,
+      round: currentRound.round,
+      mechanism: null,
+      concentration: 0,
+      provenance_share: 0,
+      introduced_by_rounds: [],
+      finding_ids: [],
+      consecutive_rounds: [currentRound.round],
+      reason: "no_gating_findings",
+    };
+  }
+
+  // Round-wide, deliberately: the issue asks for "the share of a round's
+  // findings whose subject was added by earlier rounds of the same stage",
+  // which is the whole round, not just the concentrated mechanism. Unverified
+  // provenance leaves both numerator and denominator, exactly as
+  // predicate_provenance_share does — a claim no ledger could decide must
+  // neither manufacture nor mask the signal. `exclude_classes` is NOT applied:
+  // that parameter tunes a gating predicate, and this projection is evidence
+  // for a human rather than a gate.
+  const roundDecidable = gatingFindings(currentRound).filter((f) => f.provenanceStatus !== "unverified");
+  const roundAttributed = roundDecidable.filter((f) => f.verifiedProvenance.startsWith("round:"));
+  const provenanceShare = roundDecidable.length === 0 ? 0 : roundAttributed.length / roundDecidable.length;
+
+  const mechanismDecidable = current.findings.filter((f) => f.provenanceStatus !== "unverified");
+  const mechanismAttributed = mechanismDecidable.filter((f) => f.verifiedProvenance.startsWith("round:"));
+  const introducedByRounds = [...new Set(mechanismAttributed.map((f) => Number(f.verifiedProvenance.slice("round:".length))))].sort(
+    (a, b) => a - b,
+  );
+
+  // The immediately preceding round by ROUND NUMBER, not merely the previous
+  // array element — the same adjacency rule the two-consecutive convergence
+  // exit uses, and for the same reason: a retained set with a round excluded
+  // for ancestry would otherwise let two non-adjacent rounds pass as
+  // "consecutive".
+  const previousRound = currentIndex > 0 ? retainedRoundsAsc[currentIndex - 1] : null;
+  const previousAdjacent =
+    previousRound && previousRound.round === currentRound.round - 1 && previousRound.status === "complete"
+      ? previousRound
+      : null;
+  const previous = previousAdjacent ? concentrationOf(previousAdjacent, ledger) : null;
+  const previousConcentratedHere = !!previous && previous.concentration === 1 && previous.mechanism === current.mechanism;
+
+  // The round's own finding order, not a lexicographic sort of the ids: with
+  // ten or more findings "…-10" sorts before "…-2", which reads as a
+  // corrupted list in a blocker report. Round order is already deterministic
+  // (the pass's own findings array), which is all this projection owes.
+  const findingIds = current.findings.map((f) => f.id);
+  const base = {
+    round: currentRound.round,
+    mechanism: current.mechanism,
+    concentration: current.concentration,
+    provenance_share: provenanceShare,
+    introduced_by_rounds: introducedByRounds,
+    finding_ids: findingIds,
+    // Only report the two-round sequence when the CURRENT round is itself
+    // unanimous (cloud review, confirmed): otherwise a result carrying
+    // `concentration: 2/3`, `detected: false` and reason `not_concentrated`
+    // also claimed a concentrated pair of rounds, contradicting itself.
+    consecutive_rounds:
+      previousConcentratedHere && current.concentration === 1 ? [previousAdjacent.round, currentRound.round] : [currentRound.round],
+  };
+
+  if (current.concentration !== 1) return { ...base, detected: false, reason: "not_concentrated" };
+  // "Most sharply a mechanism added by an earlier round of the same PR"
+  // (#747): without at least one EVIDENCE-BACKED round:N attribution the
+  // concentration is just a change with one hot file, which is ordinary
+  // review, not a loop feeding on itself.
+  if (introducedByRounds.length === 0) return { ...base, detected: false, reason: "no_round_provenance" };
+  if (!previousConcentratedHere) return { ...base, detected: false, reason: "not_consecutive" };
+  return { ...base, detected: true, reason: "concentrated_round_provenance" };
+}
+
+// ---------------------------------------------------------------------------
+// Head ancestry
+// ---------------------------------------------------------------------------
+
+function loadHeadsMap(headsFile) {
+  if (!headsFile) return null;
+  return loadJson(headsFile);
+}
+
+function isAncestorOrEqual(candidate, currentHead, { headsMap, repoRoot }) {
+  if (candidate === currentHead) return true;
+  if (headsMap) {
+    let cur = currentHead;
+    const seen = new Set();
+    while (cur && !seen.has(cur)) {
+      seen.add(cur);
+      if (cur === candidate) return true;
+      cur = headsMap[cur] ? headsMap[cur].parent : null;
+    }
+    return false;
+  }
+  if (repoRoot) {
+    // `git merge-base --is-ancestor` documents exactly two meaningful exit
+    // statuses: 0 (is an ancestor) and 1 (is not — a genuine, valid "no").
+    // Any other status (128 for a missing/unreachable object in a shallow
+    // or incomplete checkout, among others) or a spawn failure (`.error`)
+    // is an execution error, not a valid "no" — shepherd-stage cloud
+    // finding (round 2, about pre-existing code), confirmed: collapsing
+    // every nonzero status to `false` mislabeled unavailable ancestry
+    // evidence as definitively invalidated, which could dispatch another
+    // round or escalate at the cap instead of correctly reporting
+    // "unknown".
+    const result = spawnSync("git", ["-C", repoRoot, "merge-base", "--is-ancestor", candidate, currentHead]);
+    if (result.error || result.status === null) return "unknown";
+    if (result.status === 0) return true;
+    if (result.status === 1) return false;
+    return "unknown";
+  }
+  return "unknown";
+}
+
+// ---------------------------------------------------------------------------
+// Verdict computation
+// ---------------------------------------------------------------------------
+
+function effectiveMinRounds(roundsPolicy, cap) {
+  return Math.min(roundsPolicy.min_rounds, cap);
+}
+
+// Computes ancestry for every round and filters to the RETAINED subset — a
+// round whose reviewedHead is a true ancestor-or-equal of currentHead, or
+// an incomplete round with no reviewedHead at all (slot_failures may omit
+// `head`; its terminal nature is inherent to the exhausted slot, never
+// contingent on comparing a head that does not exist — see computeVerdict's
+// own use of this below). Shared with applyVerification/verifyFingerprint
+// (post-merge cloud review, confirmed): they previously built their
+// repeat-of lookup map from the FULL unfiltered rounds list, so a
+// current-head finding could verify `repeat-of:<id>` against a finding
+// from an ancestry-incomparable/excluded round that computeVerdict itself
+// would never retain — both call sites now agree on exactly one retained
+// set instead of computing it independently and risking drift.
+function ancestryRetainedRounds(rounds, currentHead, ancestryOpts) {
+  const withAncestry = rounds.map((r) => ({
+    ...r,
+    ancestry: r.reviewedHead ? isAncestorOrEqual(r.reviewedHead, currentHead, ancestryOpts) : "unknown",
+  }));
+  const retained = withAncestry.filter((r) => r.ancestry === true || (r.status !== "complete" && r.reviewedHead === null));
+  retained.sort((a, b) => a.round - b.round);
+  return { withAncestry, retained };
+}
+
+function computeVerdict({ stage, rounds, convergence, cap, minRounds, currentHead, ancestryOpts, ledger = null }) {
+  const { withAncestry, retained } = ancestryRetainedRounds(rounds, currentHead, ancestryOpts);
+
+  // An incomplete round (capped/finder_unavailable or
+  // capped/breadth_exhausted) with NO recorded reviewedHead at all — a
+  // slot_failures entry is permitted to omit `head` — must still be
+  // retained: its terminal nature is inherent to the exhausted slot
+  // itself, never contingent on comparing a head that does not exist.
+  // Shepherd-stage cloud finding (round 3), confirmed: `ancestry === true`
+  // alone excluded it (reviewedHead null always computes ancestry
+  // "unknown"), so the round-2 "any incomplete round anywhere in retained
+  // is immediately terminal" check never even saw it, and the trajectory
+  // fell through to continue/no_rounds_yet below the cap instead of the
+  // recorded terminal outcome. Scoped narrowly to reviewedHead === null
+  // specifically (not "any unknown ancestry") — a round that DOES carry a
+  // head but whose ancestry could not be verified (no --heads/--repo-root
+  // supplied at all) stays correctly excluded, unchanged from before.
+  // (retained/withAncestry now come from the shared ancestryRetainedRounds
+  // helper above, which already applies exactly this rule.)
+
+  const maxRoundNumber = withAncestry.reduce((m, r) => Math.max(m, r.round), 0);
+  const capReached = maxRoundNumber >= cap;
+  const latest = retained.length > 0 ? retained[retained.length - 1] : null;
+  const isCurrentHeadRound = !!latest && latest.reviewedHead === currentHead;
+
+  // rounds_counted is the count of COMPLETE logical rounds only — an
+  // incomplete attempt (finder_unavailable / breadth_exhausted) counts no
+  // logical round at all (exit-computation spec: "no logical round is
+  // counted"). `retained` (and `latest` from it) still needs to include an
+  // incomplete round so the incomplete-current-head-round check above can
+  // find it; only the REPORTED metric excludes it.
+  //
+  // "Every substitution SHALL be recorded and disclosed" is unconditional
+  // (exit-computation spec "Logical rounds require every configured
+  // finder") — the "fallback substitutes for a blocked primary" scenario
+  // explicitly covers a round that COMPLETES via a substitution, not only
+  // a terminal/incomplete one. Post-merge cloud review, confirmed: only
+  // the capped/finder_unavailable|breadth_exhausted branch below ever
+  // carried `substitutions` on the returned verdict; every ordinary
+  // continue/converged/capped-clean verdict dropped it entirely, even
+  // though `fallback-substitutes-for-primary`'s own fixture exercises
+  // exactly this case. Aggregated onto `base` once so every verdict below
+  // inherits it via `...base`, as is the split-candidate diagnostic below.
+  //
+  // The split-candidate diagnostic rides on EVERY verdict that has an
+  // adjudicated latest round to read — `capped` above all (a blocker report
+  // that can only say "cap reached" is exactly what #747 exists to fix), but
+  // `continue` and `diverging` too, so a session can propose the split at
+  // round 2 instead of at the cap. It is computed from `latest` only when
+  // that round is complete: an incomplete round (finder_unavailable /
+  // breadth_exhausted) has no adjudication, so its findings carry no
+  // adjudicated priority and nothing about concentration could be true or
+  // false of it. Absent rather than false in that case — a reader must be
+  // able to tell "no signal was computable" from "the signal is negative".
+  // Suppressed once ANY retained round is incomplete (review round 1,
+  // confirmed): the branch below terminalizes a finder exhaustion on the
+  // grounds that "no later round is legal" after it, so a candidate computed
+  // from such a later round would advertise evidence drawn from a round the
+  // same verdict is about to declare illegal. Absent, not false — a reader
+  // must still be able to tell "no signal was computable" from "the signal is
+  // negative".
+  const trajectoryIsComplete = retained.every((r) => r.status === "complete");
+  // Also suppressed when the cap was reached but the round that reached it is
+  // not the retained current-head round (cloud review, confirmed): that
+  // verdict returns `capped`/`invalidated` precisely because the final
+  // permitted round cannot be trusted, and `latest` is then an EARLIER round.
+  // Attaching its candidate would let one verdict recommend splitting on
+  // round 2's evidence while declaring round 3 untrustworthy.
+  const capRoundIsTrusted = !capReached || (!!latest && isCurrentHeadRound && latest.round === maxRoundNumber);
+  const splitCandidate =
+    trajectoryIsComplete && capRoundIsTrusted && latest && latest.status === "complete"
+      ? computeSplitCandidate(retained, retained.indexOf(latest), ledger)
+      : null;
+
+  const base = {
+    stage,
+    rounds_counted: retained.filter((r) => r.status === "complete").length,
+    next_round: null,
+    substitutions: retained.flatMap((r) => r.substitutions || []),
+    ...(splitCandidate ? { split_candidate: splitCandidate } : {}),
+  };
+
+  // ANY incomplete round (finder_unavailable / breadth_exhausted) among the
+  // retained trajectory is always terminal — "no later round is legal" once
+  // a slot's retry and full fallback chain are exhausted (exit-computation
+  // spec "Logical rounds require every configured finder"), independent of
+  // whether the round-number ceiling was also reached, and independent of
+  // whether it happens to be `latest` by round number. Checking only
+  // `latest` (review round 2, confirmed) let a malformed or resumed
+  // trajectory bypass an earlier exhaustion entirely whenever a LATER,
+  // complete round also exists — re-dispatching a round at all after an
+  // exhaustion is itself illegal, so its presence must never let the
+  // exhaustion be silently overridden.
+  const firstIncomplete = retained.find((r) => r.status !== "complete");
+  if (firstIncomplete) {
+    // The blocker report a human escalation needs names WHICH slot and
+    // what was already tried, not just the generic reason — review round
+    // 3 (P2, confirmed): this terminal verdict previously dropped
+    // `unresolvedSlot`/`substitutions` entirely.
+    return {
+      ...base,
+      outcome: "capped",
+      reason: firstIncomplete.status.replace("capped/", ""),
+      action: "escalate",
+      unresolved_slot: firstIncomplete.unresolvedSlot,
+      incomplete_round: firstIncomplete.round,
+      substitutions: firstIncomplete.substitutions,
+    };
+  }
+
+  if (capReached) {
+    // The spec requires the FINAL PERMITTED ROUND ITSELF to review the
+    // current head — not merely "some retained round does." If the round
+    // actually at/beyond the cap (maxRoundNumber) got excluded from
+    // `retained` (ancestry false/unknown) while an EARLIER round coincides
+    // with currentHead, `latest` would point at that earlier round instead
+    // — review round 2, confirmed: this must be invalidated/escalate, never
+    // treated as if the earlier round were the qualifying final one.
+    if (!latest || !isCurrentHeadRound || latest.round !== maxRoundNumber) {
+      return { ...base, outcome: "capped", reason: "invalidated", action: "escalate" };
+    }
+    if (gatingFindings(latest).length === 0) {
+      return { ...base, outcome: "capped", reason: "clean", action: "advance" };
+    }
+    return { ...base, outcome: "capped", reason: "findings_remain", action: "escalate" };
+  }
+
+  if (isCurrentHeadRound && latest.status === "complete") {
+    const currentIndex = retained.indexOf(latest);
+    const ctx = { currentRound: latest, retainedRoundsAsc: retained, currentIndex };
+    const divergingEval = evalExpr(convergence.diverging, ctx);
+    if (divergingEval.overall) {
+      const hitName = divergingEval.results.find((r) => r.hit)?.name;
+      // No next_round: `diverging` is an escalating outcome exactly like
+      // `capped`/`converged` (neither of which sets one either, both
+      // inheriting base.next_round === null) — a session must choose
+      // delete/restructure/split/genuinely-in-scope before any further round is
+      // legitimate, per AGENTS.md's round-2 checkpoint discipline; which of
+      // those a fix disposition actually satisfies is the session's
+      // judgement to record (issue #636's own "Out of scope" section), not
+      // this script's to arbitrate from a free-text adjudication reason.
+      // Shepherd-stage cloud finding, confirmed: handing back a concrete
+      // next_round here, alongside an action string that names "fix" as one
+      // of three options, reads as authorizing an automated continue —
+      // exactly the self-feeding loop `diverging` exists to interrupt.
+      return { ...base, outcome: "diverging", reason: hitName, action: "fix-delete-restructure-or-split" };
+    }
+
+    // base.rounds_counted (COMPLETE rounds only), not retained.length (which
+    // still includes an incomplete finder_unavailable/breadth_exhausted
+    // attempt kept in `retained` so the incomplete-current-head check above
+    // can find it) — challenge round 3, confirmed: using the raw retained
+    // count let one real complete round plus one stale incomplete attempt
+    // satisfy min_rounds = 2.
+    if (gatingFindings(latest).length === 0) {
+      const convergedEval = evalExpr(convergence.converged, ctx);
+      if (convergedEval.overall) {
+        const isEmptyRound = latest.findings.length === 0;
+        if (isEmptyRound) {
+          // The empty-round shortcut: a round with NO findings at all ends
+          // the stage by itself, but only once min_rounds has been met —
+          // min_rounds constrains this exit alone (AGENTS.md "min_rounds
+          // constrains the empty-round exit alone and needs no separate
+          // check on the other two").
+          if (base.rounds_counted >= minRounds) {
+            return { ...base, outcome: "converged", reason: "empty_round", action: "advance" };
+          }
+        } else {
+          // A NONEMPTY clean round (findings exist but none are gating)
+          // needs a SECOND CONSECUTIVE clean round to converge — AGENTS.md
+          // "ends when two consecutive rounds adjudicate to zero P0 and
+          // zero P1 findings", and explicitly NOT via min_rounds ("min_rounds
+          // only governs the empty-round shortcut"). Post-merge cloud
+          // review, confirmed: this branch previously let ANY round satisfy
+          // convergence the moment rounds_counted >= minRounds, so with the
+          // common min_rounds = 1, a single nonempty all-P2 round converged
+          // immediately — never checking whether an earlier round was also
+          // clean.
+          // Array-adjacent, not round-number-adjacent, was wrong: if an
+          // intervening round was excluded from `retained` (ancestry
+          // incomparable/unknown), the array's previous ELEMENT is an
+          // earlier, non-consecutive round — e.g. retained = [round 1,
+          // round 3] with round 2 excluded, where round 1 is clean but is
+          // not round 3's immediate predecessor. That still let round 3
+          // converge on a confirmation that never actually happened.
+          // Shepherd-stage cloud finding, confirmed: require the array
+          // neighbor's OWN round number to be exactly one less, not merely
+          // its array position.
+          const previous = currentIndex > 0 ? retained[currentIndex - 1] : null;
+          const previousClean = previous && previous.round === latest.round - 1 && previous.status === "complete" && gatingFindings(previous).length === 0;
+          if (previousClean) {
+            return { ...base, outcome: "converged", reason: "predicates_satisfied", action: "advance" };
+          }
+        }
+      }
+    }
+  }
+
+  if (!latest) return { ...base, outcome: "continue", reason: "no_rounds_yet", action: "dispatch", next_round: maxRoundNumber + 1 };
+  if (!isCurrentHeadRound) return { ...base, outcome: "continue", reason: "invalidated", action: "dispatch", next_round: maxRoundNumber + 1 };
+  return { ...base, outcome: "continue", reason: "below_threshold", action: "dispatch", next_round: maxRoundNumber + 1 };
+}
+
+// ---------------------------------------------------------------------------
+// CLI
+// ---------------------------------------------------------------------------
+
+// Pull every occurrence of a repeatable `--flag value` pair out of an argv,
+// returning the values and the argv without them — the same helper
+// devflow-policy.mjs carries, for the same reason: parseArgs is last-wins and
+// is shared with every other flag, so a dropped occurrence would silently
+// reduce the finder set rather than erroring.
+function extractRepeatable(argv, flag) {
+  const values = [];
+  const rest = [];
+  // BOTH spellings. `--flag value` and the equally conventional
+  // `--flag=value` must mean the same thing: the equals form used to fall
+  // through to generic parsing, which recorded an unused composite key and
+  // left the run resolving to the configured finders alone — exit 0, no
+  // disclosure, a requested slot silently gone. The closure guard already
+  // treats `--flag=` as a selection request, so ignoring it here was
+  // internally inconsistent as well as lossy.
+  const eq = `${flag}=`;
+  for (let i = 0; i < argv.length; i++) {
+    if (argv[i].startsWith(eq)) {
+      values.push(argv[i].slice(eq.length));
+      continue;
+    }
+    if (argv[i] !== flag) {
+      rest.push(argv[i]);
+      continue;
+    }
+    const value = argv[i + 1];
+    if (value === undefined || value.startsWith("--")) {
+      values.push("");
+      continue;
+    }
+    values.push(value);
+    i++;
+  }
+  return { values, rest };
+}
+
+function parseArgs(argv) {
+  const args = {};
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a.startsWith("--")) {
+      const key = a.slice(2);
+      const next = argv[i + 1];
+      if (next === undefined || next.startsWith("--")) {
+        args[key] = true;
+      } else {
+        args[key] = next;
+        i++;
+      }
+    }
+  }
+  return args;
+}
+
+// Where the trusted reader may sit inside a `--closure` directory, most
+// specific first — the same probe list devflow-policy.mjs uses, for the same
+// reason (harmon-devkit#974): this reader is a vendored skill asset now, it
+// was a repository-root `scripts/` script before, and a consumer's flattened
+// `.claude/skills/` tree puts it somewhere else again. Keeping the `scripts/`
+// layout last is what lets a branch whose merge base predates the relocation
+// still pass its own self-modification check instead of refusing outright.
+// Every candidate lives inside the same caller-materialized closure directory
+// and is therefore equally trusted: this widens where the trusted copy may
+// sit, never whose copy counts.
+const CLOSURE_READER_PATHS = [
+  ["dev-flow-exit.mjs"],
+  ["assets", "dev-flow-exit.mjs"],
+  ["ai", "skills", "universal", "dev-flow-support", "assets", "dev-flow-exit.mjs"],
+  [".claude", "skills", "dev-flow-support", "assets", "dev-flow-exit.mjs"],
+  [".agents", "skills", "dev-flow-support", "assets", "dev-flow-exit.mjs"],
+  ["scripts", "dev-flow-exit.mjs"],
+];
+
+// Same self-modification boundary as devflow-policy.mjs's own --closure
+// (see its tryDelegateToClosure for the full rationale): this script's own
+// exit computation is exactly as gate-able as the policy it resolves, so a
+// change touching dev-flow-exit.mjs itself must also resolve under its
+// merge-base copy. Checked first, ahead of every other argument.
+function tryDelegateToClosure(argv) {
+  const idx = argv.indexOf("--closure");
+  if (idx === -1) return null;
+  const closureDir = argv[idx + 1];
+  if (!closureDir) {
+    console.error("dev-flow-exit: --closure requires a directory argument");
+    return 1;
+  }
+  const candidates = CLOSURE_READER_PATHS.map((rel) => path.join(closureDir, ...rel));
+  const trustedScript = candidates.find((candidate) => existsSync(candidate));
+  if (!trustedScript) {
+    // Same reasoning as devflow-policy.mjs's tryDelegateToClosure: a merge
+    // base that predates this reader's own existence has no trusted copy to
+    // delegate to — refuse outright, never fall back to the branch copy. Name
+    // every probed layout so the caller can see which were looked for.
+    console.error(
+      `dev-flow-exit: --closure directory has no dev-flow-exit.mjs (${closureDir}) — probed ${CLOSURE_READER_PATHS.map((rel) => rel.join("/")).join(", ")}; the reader must land on the merge base before a self-referential check can run; never falling back to the branch copy`,
+    );
+    return 1;
+  }
+  const passthrough = [...argv.slice(0, idx), ...argv.slice(idx + 2)];
+  // Same guard as devflow-policy.mjs's, for the same reason and on the same
+  // trust boundary: a merge-base reader written before per-run finder
+  // selection existed IGNORES --add-finder/--select-finder, so the run would
+  // resolve to the configured slots alone and exit 0 with no disclosure — an
+  // explicitly requested finder silently gone. Fixing only the policy reader
+  // left this sibling path unguarded, which is exactly the hole the closure
+  // mechanism exists to close.
+  const wantsSelection = passthrough.some(
+    (a) =>
+      a === "--add-finder" ||
+      a === "--select-finder" ||
+      a.startsWith("--add-finder=") ||
+      a.startsWith("--select-finder="),
+  );
+  let trustedSource = "";
+  const readTrustedSource = () => {
+    if (trustedSource) return trustedSource;
+    try {
+      trustedSource = readFileSync(trustedScript, "utf8");
+    } catch (err) {
+      console.error(`dev-flow-exit: could not read the --closure reader to check its flag support: ${err.message}`);
+      return null;
+    }
+    return trustedSource;
+  };
+  if (wantsSelection) {
+    const src = readTrustedSource();
+    if (!src) return 1;
+    if (!src.includes("--add-finder") || !src.includes("--select-finder")) {
+      console.error(
+        `dev-flow-exit: the --closure reader (${trustedScript}) predates --add-finder/--select-finder and would silently drop the requested finder(s) — refusing rather than computing an exit over a narrower set with no disclosure`,
+      );
+      return 1;
+    }
+  }
+  // #810: a persisted finder_selection in run.json widens the slot set the
+  // same way --add-finder does. An older merge-base reader that predates
+  // persisted selection would silently ignore the field and compute exit over
+  // the configured finders alone, dropping the recorded finder's pass and
+  // potentially reporting false convergence. This check is unconditional:
+  // when flags coexist with a persisted selection, the flag-support guard
+  // above covers the flags but not the persisted field, and main()'s
+  // disagreement check never runs because delegation exits first.
+  {
+    const runIdx = passthrough.indexOf("--run");
+    if (runIdx !== -1 && passthrough[runIdx + 1]) {
+      const runJsonPath = path.join(passthrough[runIdx + 1], "run.json");
+      try {
+        if (existsSync(runJsonPath)) {
+          const runDoc = JSON.parse(readFileSync(runJsonPath, "utf8"));
+          if (Array.isArray(runDoc.finder_selection) && runDoc.finder_selection.length > 0) {
+            const src = readTrustedSource();
+            if (!src) return 1;
+            if (!src.includes("finder_selection")) {
+              console.error(
+                `dev-flow-exit: the run record carries a persisted finder_selection but the --closure reader (${trustedScript}) predates that feature — refusing rather than computing an exit that silently drops the recorded finder set`,
+              );
+              return 1;
+            }
+          }
+        }
+      } catch {
+        // run.json parse failures are handled properly in main() after
+        // delegation — don't duplicate the error path here.
+      }
+    }
+  }
+  const result = spawnSync(process.execPath, [trustedScript, ...passthrough], { stdio: "inherit" });
+  if (result.error) {
+    console.error(`dev-flow-exit: could not exec the --closure reader: ${result.error.message}`);
+    return 1;
+  }
+  return result.status === null ? 1 : result.status;
+}
+
+async function main() {
+  const argv = process.argv.slice(2);
+  const delegated = tryDelegateToClosure(argv);
+  if (delegated !== null) return delegated;
+
+  // Deferred until here — see the comment where these used to be static
+  // top-level imports, above. Resolves relative to THIS file, same as a
+  // static import would; the only difference that matters is WHEN it runs.
+  const { parseToml, TomlError } = await import("./lib/toml-lite.mjs");
+  const { resolvePolicy, crossValidate, PolicyError, applyFinderSelection } =
+    await import("./devflow-policy.mjs");
+
+  // --add-finder / --select-finder are repeatable and must be lifted out
+  // before parseArgs, which is last-wins. See devflow-policy.mjs's own
+  // extractRepeatable for why a repeatable option is separated rather than
+  // changing how every flag parses.
+  const addFinders = extractRepeatable(argv, "--add-finder");
+  const selectFinders = extractRepeatable(addFinders.rest, "--select-finder");
+  const args = parseArgs(selectFinders.rest);
+  if (!args.run || !args.stage || !args.policy) {
+    console.error(
+      "usage: dev-flow-exit.mjs --run <dir> --stage <challenge|review> --policy <file>\n" +
+        "       [--add-finder <stage>:<slug>]... [--select-finder <stage>:<slug>]... [options]",
+    );
+    return 1;
+  }
+  if (args.stage !== "challenge" && args.stage !== "review") {
+    console.error(`dev-flow-exit: --stage must be "challenge" or "review", got "${args.stage}"`);
+    return 1;
+  }
+
+  let policyDoc, mergeBaseDoc;
+  try {
+    policyDoc = parseToml(readFileSync(args.policy, "utf8"));
+    if (args["merge-base-policy"]) mergeBaseDoc = parseToml(readFileSync(args["merge-base-policy"], "utf8"));
+  } catch (err) {
+    console.error(`dev-flow-exit: could not read/parse policy inputs: ${err.message}`);
+    return 1;
+  }
+
+  let resolved;
+  try {
+    resolved = resolvePolicy(policyDoc, { rigor: args.rigor, mergeBaseDoc });
+  } catch (err) {
+    if (err instanceof PolicyError || err instanceof TomlError) {
+      console.error(`dev-flow-exit: ${err.message}`);
+      return 1;
+    }
+    throw err;
+  }
+
+  // No --registry/--task-targets here on purpose (see this file's header
+  // comment) — but the registry/task-target-INDEPENDENT half of
+  // cross-validation (breadth sufficiency, a confidence stage with a
+  // nonzero cap but no configured finders) still has to run here too.
+  // Without it, a policy `devflow-policy.mjs resolve` would refuse (e.g.
+  // breadth too small for its own configured fallback chain) could still
+  // compute exits when this script is invoked directly — review round 1,
+  // confirmed.
+  const crossErrors = crossValidate(resolved, null, null).filter((e) => !e.startsWith("indeterminate:"));
+  if (crossErrors.length > 0) {
+    console.error(`dev-flow-exit: policy fails cross-validation: ${crossErrors[0]}`);
+    return 1;
+  }
+
+  let runDir;
+  try {
+    runDir = loadRunDir(args.run);
+  } catch (err) {
+    if (err instanceof ExitIndeterminate) {
+      return indeterminate(args, err.message);
+    }
+    console.error(`dev-flow-exit: could not read --run: ${err.message}`);
+    return 1;
+  }
+
+  // A per-run finder selection has to reach THIS resolution too (#796
+  // challenge round 3): devflow-policy.mjs applies --add-finder to its own
+  // in-memory result, and this script re-resolves the same file
+  // independently, so without the identical union its primarySlots would omit
+  // the added finder, drop that finder's pass and findings, and could report
+  // the round converged on the configured slots alone.
+  //
+  // AFTER cross-validation, exactly as the reader does it (#796 challenge
+  // round G). Applying it before put the added finder inside crossValidate's
+  // breadth arithmetic, so a tight policy the RESOLVER accepts was rejected
+  // here — the same rule disagreeing with itself across two files, and the
+  // skill says confidence finders never consume [breadth].max_agent_runs.
+  //
+  // #810: when the run record carries a persisted finder_selection, use it
+  // instead of requiring the caller to repeat the flags. A recorded
+  // selection and a repeated flag that disagree is a blocker — the run
+  // cannot have been two different shapes. A run with no recorded selection
+  // behaves exactly as before.
+  const hasPersistedSelection = Array.isArray(runDir.runRecord.finder_selection) && runDir.runRecord.finder_selection.length > 0;
+  const hasFlagSelection = addFinders.values.length > 0 || selectFinders.values.length > 0;
+
+  if (hasPersistedSelection && hasFlagSelection) {
+    // Both a persisted selection and CLI flags are present — they must agree
+    // or the run cannot be trusted: a recorded selection says "this is what
+    // the run used", and a flag saying something different means someone is
+    // re-running with a different shape, which the issue spec says is a
+    // blocker, not a silent preference for either.
+    const persistedSelection = applyFinderSelection(resolved, addFinders.values, selectFinders.values);
+    if (persistedSelection.error) {
+      console.error(`dev-flow-exit: ${persistedSelection.error}`);
+      return 1;
+    }
+    const persistedStages = new Set(runDir.runRecord.finder_selection.map((e) => e.stage));
+    for (const d of persistedSelection.disclosures || []) {
+      if (!persistedStages.has(d.stage)) {
+        console.error(
+          `dev-flow-exit: flags add a finder selection for stage "${d.stage}" which has no entry ` +
+            `in the run record's persisted finder_selection — a recorded selection and a repeated ` +
+            `flag that disagree is a blocker, not a silent preference for either`,
+        );
+        return 1;
+      }
+    }
+    for (const recorded of runDir.runRecord.finder_selection) {
+      const fromFlags = (persistedSelection.disclosures || []).find((d) => d.stage === recorded.stage);
+      const flagEffective = fromFlags ? fromFlags.effective : (resolved.stages[recorded.stage]?.finders ?? []);
+      const recordedEffective = recorded.effective;
+      if (
+        flagEffective.length !== recordedEffective.length ||
+        flagEffective.some((f, i) => f !== recordedEffective[i])
+      ) {
+        console.error(
+          `dev-flow-exit: the run record's persisted finder_selection for stage "${recorded.stage}" ` +
+            `(effective: [${recordedEffective.join(", ")}]) disagrees with the flags passed to this ` +
+            `invocation (effective: [${flagEffective.join(", ")}]) — a recorded selection and a repeated ` +
+            `flag that disagree is a blocker, not a silent preference for either`,
+        );
+        return 1;
+      }
+    }
+  } else if (hasPersistedSelection) {
+    // The run record has a persisted selection but no flags were passed —
+    // replay the recorded effective set directly rather than re-resolving
+    // from requested against the current policy. The persisted effective
+    // array is the authoritative record of what the run used; re-resolving
+    // would silently gain or lose slots if the policy's configured finders
+    // changed after the selection was made (#810 challenge round 1,
+    // confirmed).
+    for (const entry of runDir.runRecord.finder_selection) {
+      if (resolved.stages?.[entry.stage]) {
+        resolved.stages[entry.stage].finders = [...entry.effective];
+      }
+    }
+    resolved.finder_selection = runDir.runRecord.finder_selection;
+  } else {
+    // No persisted selection — apply flags as before (backward compat).
+    const selection = applyFinderSelection(resolved, addFinders.values, selectFinders.values);
+    if (selection.error) {
+      console.error(`dev-flow-exit: ${selection.error}`);
+      return 1;
+    }
+  }
+
+  // Stage-skipping (computing REVIEW's exit while challenge is the trusted
+  // receipt sequence's EXPLICITLY active stage) is only legal when
+  // challenge is fully disabled — post-merge cloud review, confirmed:
+  // nothing previously compared the requested --stage against the receipt
+  // sequence's own active stage at all, so `--stage review` computed a
+  // valid continue/no_rounds_yet verdict (authorizing review's first
+  // dispatch) even while a transition into "challenge" was the latest one
+  // recorded and its cap was nonzero. Scoped specifically to
+  // activeStage === "challenge" (not "no transition recorded at all"): the
+  // no-transition case already has its own considered, fixture-proven
+  // behavior below (a pass that arrived before any transition is rejected
+  // as invalid on its own terms, naturally yielding continue/no_rounds_yet
+  // with zero valid rounds) — this check must not relitigate that.
+  //
+  // The BACKWARD direction (--stage challenge while review is active) is
+  // handled separately, below verdict computation, rather than as an
+  // equally-unconditional early gate here — a second, later cloud finding
+  // confirmed that a blanket symmetric gate at this point wrongly refuses
+  // a legitimate retrospective query (challenge's OWN already-converged
+  // result, computed after the run moved on to review — see the
+  // stale-pass-after-stage-moved-on fixture, which exercises exactly this
+  // and expects `converged/empty_round` to still compute correctly). What
+  // must never happen is a backward query resolving to `continue`/dispatch
+  // (implying more challenge work should be authorized after review has
+  // already begun) — see the post-verdict guard below.
+  const activeStage = latestActiveStage(runDir.runRecord.receipts);
+  // A verification-only query is a RETROSPECTIVE read of review's own
+  // already-retained rounds, never a request to authorize new review work —
+  // that authorization question belongs solely to the final verdict below,
+  // which this carve-out never touches. Scoped to the case a remediation loop
+  // actually produces (review ran, then challenge was re-entered): only when
+  // the trusted receipts record review having been entered at some earlier
+  // point, distinct from "review is the latest active stage now". A run that
+  // skipped review entirely (no such transition ever recorded) still hits the
+  // guard below exactly as before — validateReceipts' own activeStageBefore
+  // binds each pass to the stage active WHEN IT ARRIVED, never to the run's
+  // current stage, so this only unblocks reading what was already legitimately
+  // retained. Integration cycle 2, confirmed.
+  const reviewRetrospectiveDuringChallenge =
+    args.stage === "review" &&
+    activeStage === "challenge" &&
+    args["verification-only"] &&
+    hasEnteredStage(runDir.runRecord.receipts, "review");
+  if (
+    args.stage === "review" &&
+    activeStage === "challenge" &&
+    resolved.rounds.challenge !== 0 &&
+    !reviewRetrospectiveDuringChallenge
+  ) {
+    return indeterminate(
+      args,
+      `--stage review was requested but the trusted receipt sequence's active stage is still "challenge" (cap ${resolved.rounds.challenge}, not disabled) — review cannot be active until challenge exits`,
+      "stage-not-active",
+    );
+  }
+
+  // harmon-devkit#685: "stage-skipping in stage_transitions (verify ->
+  // review without challenge, verify -> security without review) is valid
+  // only under the corresponding cap-0 policy". The check above catches
+  // review being computed while challenge is STILL ACTIVE; this catches
+  // the other, quieter shape — a trajectory that records having gone
+  // straight past a confidence stage that its own resolved policy still
+  // budgets rounds for.
+  //
+  // Deliberately keyed on a RECORDED verify -> <stage> edge, i.e. two
+  // consecutive transition receipts, never on "no challenge transition
+  // exists anywhere in this receipt list". The run directory's receipts
+  // array is a documented SUBSET (ai/schemas/README.md "Run directory
+  // layout") — the ordinary case records only the transition(s) for the
+  // stage under test, and inferring a skip from an absence would reject
+  // every such trajectory. An explicit verify -> review edge is a positive
+  // claim about what the run did, and the resolved policy is exactly what
+  // decides whether that claim is legal.
+  //
+  // verify -> security is checked here too even though this script never
+  // computes security's own exit: the trajectory being read is what makes
+  // the claim, and this process holds the policy that settles it — the
+  // same reasoning as every other internal-consistency refusal in this
+  // file (duplicate transitions, over-cap rounds, duplicate adjudications).
+  //
+  // A Map, not an object literal: `stage` is branch-controlled content, and
+  // a plain object's inherited keys ("constructor", "toString", ...) resolve
+  // to truthy values that are not stages at all — the same hazard
+  // lib/toml-lite.mjs's own __proto__ handling exists for.
+  // Each recorded verify -> <stage> edge names EVERY confidence stage it
+  // bypasses, not just the nearest one: verify -> security skips challenge
+  // and review alike, and the budgets are independent, so checking only
+  // review let a `review = 0, challenge = 3` policy advance on an edge that
+  // silently skipped challenge too (integrate cycle 4 on PR #800, confirmed).
+  const SKIP_EDGE_GUARDS = new Map([
+    ["review", ["challenge"]],
+    ["security", ["challenge", "review"]],
+  ]);
+  const transitionStages = (runDir.runRecord.receipts || []).filter((r) => r.kind === "transition");
+
+  // "A cap-0 stage has no rounds" is the other half of the same criterion,
+  // and it holds for EVERY confidence stage the run records, not only for
+  // the one whose exit is being computed. The cap-integrity checks further
+  // down are all scoped to args.stage, so a policy disabling challenge
+  // while the trajectory plainly shows challenge having run was invisible
+  // whenever review was the stage under computation — and the cap-0 branch
+  // of the skip guard below would then accept the skip on the strength of
+  // the very cap the trajectory contradicts. Challenge round 2, confirmed.
+  for (const stage of ["challenge", "review"]) {
+    if (resolved.rounds[stage] !== 0) continue;
+    const visited = transitionStages.some((t) => t.stage === stage);
+    const hasPass = runDir.passes.some((p) => p.envelope.payload && p.envelope.payload.stage === stage);
+    const hasAdjudication = runDir.adjudications.some((a) => a.doc.stage === stage);
+    const hasSlotFailure = (Array.isArray(runDir.runRecord.slot_failures) ? runDir.runRecord.slot_failures : []).some(
+      (sf) => sf.stage === stage,
+    );
+    const evidence = [
+      visited ? "a transition into it" : null,
+      hasPass ? "a pass naming it" : null,
+      hasAdjudication ? "an adjudication naming it" : null,
+      hasSlotFailure ? "a slot_failures record naming it" : null,
+    ].filter(Boolean);
+    if (evidence.length > 0) {
+      return indeterminate(
+        args,
+        `the resolved ${stage} cap is 0 (disabled) but the trajectory records ${evidence.join(", ")} — trajectory inconsistent with its own policy`,
+      );
+    }
+  }
+
+  for (let i = 1; i < transitionStages.length; i++) {
+    if (transitionStages[i - 1].stage !== "verify") continue;
+    const skippedStages = SKIP_EDGE_GUARDS.get(transitionStages[i].stage);
+    if (!skippedStages) continue;
+    for (const skipped of skippedStages) {
+      // Disabled is always fine, and a stage the run demonstrably entered
+      // earlier was not skipped at all: a remediation loop back into review
+      // (review -> implement -> verify -> review, both edges on
+      // run.schema.json's own ALLOWED_EDGES) records exactly this edge after
+      // challenge has already run and exited, and the same shape takes
+      // security -> implement -> verify -> security back into security.
+      if (resolved.rounds[skipped] === 0) continue;
+      if (transitionStages.slice(0, i).some((t) => t.stage === skipped)) continue;
+      return indeterminate(
+        args,
+        `the trusted receipt sequence records a "verify" -> "${transitionStages[i].stage}" transition with no earlier transition into "${skipped}", but the resolved ${skipped} cap is ${resolved.rounds[skipped]} (not disabled) — stage-skipping is legal only under a cap-0 policy for every stage the edge bypasses`,
+      );
+    }
+  }
+
+  const validatorPath = args.validator || DEFAULT_VALIDATOR;
+  // Preflight the validator's own existence before ever spawning it.
+  // Shepherd-stage cloud finding (round 2, about pre-existing code),
+  // confirmed: runValidator's `status === 0` check cannot distinguish "the
+  // validator ran and rejected this pass" from "the validator process
+  // itself couldn't even load" (a missing/broken --validator path spawns
+  // node successfully but node then exits non-zero on its own
+  // MODULE_NOT_FOUND) — every pass in the run would fail identically,
+  // silently degrading a valid completed round into what reads as "no
+  // passes at all" (continue/no_rounds_yet) instead of the indeterminate
+  // dependency failure it actually is. Preflighting here, once, before any
+  // pass is validated, closes the gap without needing to sniff error text
+  // per invocation.
+  if (!existsSync(validatorPath)) {
+    return indeterminate(args, `--validator path does not exist: ${validatorPath}`);
+  }
+  // Scratch space for the --known-ids file validateReceipts() feeds to
+  // validate-result-schemas.mjs — deliberately OUTSIDE --run (never written
+  // into the run directory, which may be a committed fixture) and cleaned
+  // up unconditionally.
+  const tmpDir = args.tmp || mkdtempSync(path.join(os.tmpdir(), "dev-flow-exit-"));
+
+  let validPasses, diagnostics;
+  try {
+    ({ validPasses, diagnostics } = validateReceipts(runDir.runRecord, runDir.passes, {
+      validatorPath,
+      tmpDir,
+    }));
+  } catch (err) {
+    if (err instanceof ExitIndeterminate) {
+      return indeterminate(args, err.message);
+    }
+    throw err;
+  } finally {
+    if (!args.tmp) rmSync(tmpDir, { recursive: true, force: true });
+  }
+
+  // Adjudications must be validated BEFORE assembleLogicalRounds joins them
+  // to findings and reads their adjudicated_priority for gating — an
+  // invalid adjudication (wrong run/head, schema violation) that were
+  // merely logged here and still consumed downstream could silently
+  // downgrade a real P0/P1 into an exit-computation result that trusts it.
+  const validAdjudications = [];
+  for (const adj of runDir.adjudications) {
+    if (adj.doc.stage !== args.stage) {
+      validAdjudications.push(adj);
+      continue;
+    }
+    // Manual run_id check as a floor even when no matching pass survives
+    // to bind --pass against below (every pass for this round rejected,
+    // or genuinely none exists yet) — --pass's own cross-check covers the
+    // common case more thoroughly (reviewed_head and finding-completeness
+    // too), but only when at least one pass is available to supply it.
+    if (adj.doc.run_id !== runDir.runRecord.run_id) {
+      diagnostics.push({
+        pass: adj.name,
+        level: "reject",
+        // subject discriminates a rejected ADJUDICATION document from a
+        // rejected PASS (validateReceipts' own diagnostics above, which
+        // carry no subject) — a caller that must fail closed only on a
+        // corrupt retained adjudication, never on an ordinary rejected
+        // pass, needs this to tell the two apart without pattern-matching
+        // `reason`'s free text. Additive; no existing field changes.
+        // Integration cycle 3, confirmed.
+        subject: "adjudication",
+        reason: `adjudication run_id "${adj.doc.run_id}" does not match the active run "${runDir.runRecord.run_id}"`,
+      });
+      continue;
+    }
+    const matchingPasses = validPasses
+      .filter((p) => p.payload.stage === adj.doc.stage && p.payload.round === adj.doc.round)
+      .map((p) => p.file);
+    const { ok, message } = validateAdjudicationSchema(validatorPath, adj.file, matchingPasses);
+    if (ok) {
+      validAdjudications.push(adj);
+    } else {
+      diagnostics.push({ pass: adj.name, level: "reject", subject: "adjudication", reason: `adjudication schema validation failed: ${message}` });
+    }
+  }
+
+  let rounds;
+  try {
+    rounds = assembleLogicalRounds(args.stage, validPasses, validAdjudications, resolved.stages[args.stage], runDir.runRecord, {
+      allPasses: runDir.passes,
+    });
+  } catch (err) {
+    if (err instanceof ExitIndeterminate) {
+      return indeterminate(args, err.message);
+    }
+    throw err;
+  }
+
+  const cap = resolved.rounds[args.stage];
+  const minRounds = effectiveMinRounds(resolved.rounds, cap);
+
+  // Cap integrity applies before BOTH output modes. --verification-only is a
+  // pre-adjudication projection, not permission to create/adjudicate a round
+  // the resolved policy forbids. Check retained and raw evidence here, before
+  // that mode can return successfully.
+  const overCapRound = rounds.find((r) => r.round > cap);
+  if (overCapRound) {
+    return indeterminate(args, `round ${overCapRound.round} exceeds the resolved ${args.stage} cap (${cap}) — trajectory inconsistent with its own policy`);
+  }
+  if (cap === 0 && rounds.length > 0) {
+    return indeterminate(args, `${args.stage} cap is 0 (disabled) but the trajectory contains round ${rounds[0].round} — trajectory inconsistent with its own policy`);
+  }
+  // Over-cap evidence anywhere in the trajectory, not only in the stage
+  // being computed. Every one of these checks used to be scoped to
+  // args.stage, so a challenge round 4 under a challenge cap of 3 stayed
+  // invisible while review's exit was computed and review could converge on
+  // a trajectory its own policy forbids (integrate cycle 3 on PR #800,
+  // confirmed). The cap-0 emptiness rule above is already cross-stage; this
+  // is the same rule for a positive cap.
+  for (const otherStage of CONFIDENCE_STAGES) {
+    const otherCap = resolved.rounds[otherStage];
+    if (typeof otherCap !== "number" || otherCap === 0) continue; // cap 0 handled above
+    const overCapPass = runDir.passes
+      .map((p) => p.envelope.payload)
+      .find((p) => p && p.stage === otherStage && typeof p.round === "number" && p.round > otherCap);
+    if (overCapPass) {
+      return indeterminate(args, `a ${otherStage} pass names round ${overCapPass.round}, exceeding the resolved ${otherStage} cap (${otherCap}), even though it did not survive receipt validation — trajectory inconsistent with its own policy`);
+    }
+    const overCapAdj = runDir.adjudications.find((a) => a.doc.stage === otherStage && a.doc.round > otherCap);
+    if (overCapAdj) {
+      return indeterminate(args, `a ${otherStage} adjudication names round ${overCapAdj.doc.round}, exceeding the resolved ${otherStage} cap (${otherCap}), even though it did not survive validation — trajectory inconsistent with its own policy`);
+    }
+    // slot_failures is round evidence too — assembleLogicalRounds derives a
+    // round number from it exactly as it does from a pass — so a round that
+    // exists ONLY as a slot failure is as over-cap as one with a pass. The
+    // cap-0 emptiness scan above already counts it; leaving it out here made
+    // the two halves of the same rule disagree (integrate cycle 4 on PR #800,
+    // confirmed).
+    const overCapSlotFailure = (Array.isArray(runDir.runRecord.slot_failures) ? runDir.runRecord.slot_failures : []).find(
+      (sf) => sf.stage === otherStage && typeof sf.round === "number" && sf.round > otherCap,
+    );
+    if (overCapSlotFailure) {
+      return indeterminate(args, `a ${otherStage} slot_failures record names round ${overCapSlotFailure.round}, exceeding the resolved ${otherStage} cap (${otherCap}) — trajectory inconsistent with its own policy`);
+    }
+  }
+  const presentRoundNumbers = [...new Set(rounds.map((r) => r.round))].sort((a, b) => a - b);
+  for (let i = 0; i < presentRoundNumbers.length; i++) {
+    if (presentRoundNumbers[i] !== i + 1) {
+      return indeterminate(args, `${args.stage} rounds are not contiguous from 1 (present: ${presentRoundNumbers.join(", ")}) — trajectory inconsistent with its own policy`);
+    }
+  }
+
+  // Every retained COMPLETE round needs its own adjudication document,
+  // including a clean, zero-finding one — review round 2, confirmed: the
+  // prior `findings.length > 0` guard meant a completed round with no
+  // findings at all bypassed this check entirely, so a clean round could
+  // certify convergence with no adjudication document ever having existed
+  // for it (exit-computation spec: "every retained pass to have exactly
+  // one adjudication document").
+  //
+  // This direction stays scoped to the stage under computation, deliberately.
+  // Integrate cycle 7 asked for it to be cross-stage like its mirror above,
+  // and cycle 9 then proved that widening unsound as built: `validAdjudications`
+  // passes OTHER-stage adjudications through unvalidated (see its construction
+  // above — only `args.stage` documents get the run_id and schema checks), which
+  // is harmless for the orphan scan that reads just `.stage` and `.round`, but
+  // not for a coverage scan, where an invalid or foreign-run document does not
+  // merely fail to be an orphan — it actively SATISFIES `hasAdjudication`. A
+  // foreign `run_id` on a challenge adjudication converged and returned
+  // `action: "advance"` with zero diagnostics (integrate cycle 9 on PR #800,
+  // confirmed and reproduced), which is a regression on exactly the kind of
+  // trajectory-integrity property harmon-devkit#685 exists to enforce.
+  //
+  // Reverted rather than hardened in place: doing it correctly means validating
+  // every confidence stage's adjudications before this scan, which is the same
+  // work as making BOTH directions cross-stage over validated inputs, and that
+  // belongs in one change with its own review rather than bolted onto this one.
+  // Tracked as harmon-devkit#824; until it lands, the asymmetry is the safe
+  // state — an unenforced invariant is weaker than this file should be, but
+  // an invariant an invalid document can satisfy is worse than not checking.
+  const missingAdjudication = rounds.some(
+    (r) => r.status === "complete" && (!r.hasAdjudication || r.findings.some((f) => f.adjudicated_priority === null)),
+  );
+  if (missingAdjudication && !args["verification-only"]) {
+    return indeterminate(args, "a completed round has no adjudication document, or a finding in it has no matching adjudication entry");
+  }
+
+  // --current-head must be an INDEPENDENTLY captured value (the caller's own
+  // `git rev-parse HEAD`), never derived from the evidence being certified —
+  // falling back to "whichever round is latest" would make that round
+  // trivially "the current head round" by construction, defeating head
+  // ancestry verification entirely (a stale round could certify convergence
+  // simply by being the last one recorded). Moved ahead of
+  // applyVerification (post-merge cloud review fix, see
+  // ancestryRetainedRounds above): fingerprint verification needs the same
+  // ancestry-retained set computeVerdict uses, so currentHead/ancestryOpts
+  // must exist before it runs, not after.
+  const currentHead = args["current-head"];
+  if (!currentHead) {
+    return indeterminate(args, "--current-head is required (an independently captured value, never derived from a round's own reviewed_head)");
+  }
+  // A typo'd --current-head (e.g. "typo") was accepted outright, so every
+  // real round's reviewed_head silently failed to match it and the
+  // trajectory was treated as fully invalidated instead of flagging the
+  // malformed input itself. Shepherd-stage cloud finding, confirmed. Same
+  // 40-hex-char full-SHA contract this schema family uses elsewhere
+  // (ai/schemas/run.schema.json's promotion.head pattern).
+  if (!/^[0-9a-f]{40}$/.test(currentHead)) {
+    return indeterminate(args, `--current-head must be a full 40-character commit SHA, got ${JSON.stringify(currentHead)}`);
+  }
+
+  // --heads and --history are optional evidence dependencies; an unreadable
+  // or malformed file should produce the same structured indeterminate
+  // result as other failures that prevent exit computation, not an
+  // uncaught exception with an empty --json stdout. Shepherd-stage cloud
+  // finding, confirmed.
+  let headsMap;
+  try {
+    headsMap = loadHeadsMap(args.heads);
+  } catch (err) {
+    return indeterminate(args, `--heads could not be read as JSON: ${err.message}`);
+  }
+  const ancestryOpts = { headsMap, repoRoot: args["repo-root"] };
+
+  let ledger;
+  try {
+    ledger = loadLedger({ historyFile: args.history, repoRoot: args["repo-root"] });
+  } catch (err) {
+    return indeterminate(args, `--history could not be read as JSON: ${err.message}`);
+  }
+  // Fingerprint verification (verifyFingerprint's repeat-of check) must
+  // never resolve a target finding from a round computeVerdict would
+  // exclude — an ancestry-incomparable or otherwise non-retained round is
+  // not part of the trajectory being certified, so a claim referencing one
+  // has no legitimate target to verify against, retained or not.
+  const { retained: ancestryRetainedForVerification } = ancestryRetainedRounds(rounds, currentHead, ancestryOpts);
+  const corrections = applyVerification(ancestryRetainedForVerification, ledger);
+
+  // The full (pre-ancestry-filter) trajectory, for a caller that reports
+  // history rather than gates on it (harmon-devkit#1001) — deliberately
+  // built from `rounds`, not `ancestryRetainedForVerification`: a multi-
+  // round local record's earlier rounds must still be reported even when
+  // this invocation's --current-head/--repo-root cannot establish real git
+  // ancestry for them. applyVerification above already mutated every
+  // gating finding it could reach IN PLACE (findings are shared by
+  // reference between `rounds` and its ancestry-retained subset), so a
+  // finding here from an ancestry-excluded round simply carries no
+  // provenanceStatus/fingerprintStatus yet — surfaced below as
+  // "not-measured", never fabricated.
+  const roundsForTrajectory = rounds.map((r) => ({
+    round: r.round,
+    status: r.status,
+    reviewed_head: r.reviewedHead,
+    unresolved_slot: r.unresolvedSlot,
+    substitutions: r.substitutions,
+    has_adjudication: r.hasAdjudication,
+    adjudication: r.adjudication,
+    passes: r.passes,
+    blocked_passes: r.blockedPasses,
+    findings: r.findings.map((f) => ({
+      id: f.id,
+      adjudicated_priority: f.adjudicated_priority,
+      disposition: f.disposition,
+      provenance_status: f.provenanceStatus ?? "not-measured",
+      verified_provenance: f.verifiedProvenance ?? null,
+      fingerprint_status: f.fingerprintStatus ?? "not-measured",
+      verified_fingerprint: f.verifiedFingerprint ?? null,
+    })),
+  }));
+  const retainedCompleteRounds = ancestryRetainedForVerification.filter((r) => r.status === "complete");
+  const retainedRoundNumbers = retainedCompleteRounds.map((r) => r.round);
+  const allCompleteRoundNumbers = rounds.filter((r) => r.status === "complete").map((r) => r.round);
+  const retentionChanged =
+    retainedRoundNumbers.length !== allCompleteRoundNumbers.length ||
+    retainedRoundNumbers.some((round, index) => round !== allCompleteRoundNumbers[index]);
+  const verifiedFindings = retainedCompleteRounds.flatMap((r) =>
+    r.findings.map((f) => ({
+      id: f.id,
+      provenance_status: f.provenanceStatus,
+      verified_provenance: f.verifiedProvenance,
+      fingerprint_status: f.fingerprintStatus,
+      verified_fingerprint: f.verifiedFingerprint,
+    })),
+  );
+
+  // A stage needs verified provenance and fingerprint facts before it can
+  // author this round's adjudication. This read-only projection never grants
+  // an exit; ordinary computation above still rejects a complete round that
+  // lacks an adjudication document.
+  if (args["verification-only"]) {
+    const incompleteRound = ancestryRetainedForVerification.find((r) => r.status !== "complete");
+    // Adjudication authority belongs to the newest logical round itself,
+    // never to any older retained round that happens to match current HEAD.
+    // An older round can still equal HEAD while a newer, unadjudicated pass
+    // reviewed only an ancestor; selecting the older match would then grant
+    // authority to adjudicate the newer stale evidence. The newest round must
+    // be complete, still unadjudicated, ancestry-retained, and an exact-head
+    // review before this projection may return `action: adjudicate`.
+    const latestRound = rounds.length > 0 ? rounds[rounds.length - 1] : null;
+    const adjudicationTarget =
+      latestRound && latestRound.status === "complete" && !latestRound.hasAdjudication ? latestRound : null;
+    const currentHeadRound = adjudicationTarget
+      ? retainedCompleteRounds.find((r) => r.round === adjudicationTarget.round && r.reviewedHead === currentHead)
+      : null;
+    const verification = incompleteRound
+      ? {
+          stage: args.stage,
+          outcome: "capped",
+          reason: incompleteRound.status.replace("capped/", ""),
+          action: "escalate",
+          rounds_counted: retainedCompleteRounds.length,
+          next_round: null,
+          incomplete_round: incompleteRound.round,
+          unresolved_slot: incompleteRound.unresolvedSlot,
+          substitutions: incompleteRound.substitutions,
+          partial_findings: incompleteRound.findings.map((finding) => finding.id),
+          corrections,
+          diagnostics,
+          verified_findings: verifiedFindings,
+        }
+      : !currentHeadRound
+        ? {
+            ...computeVerdict({
+              stage: args.stage,
+              rounds,
+              convergence: resolved.convergence,
+              cap,
+              minRounds,
+              currentHead,
+              ancestryOpts,
+              ledger,
+            }),
+            corrections,
+            diagnostics,
+            verified_findings: verifiedFindings,
+          }
+      : {
+          stage: args.stage,
+          outcome: "verification",
+          reason: "pre_adjudication",
+          action: "adjudicate",
+          corrections,
+          // Do not offer an adjudication target from an ancestry-invalidated
+          // round. applyVerification still receives the full retained
+          // ancestry above so repeat/fingerprint facts can be checked, while
+          // this projection exposes only the trajectory the caller may now
+          // adjudicate.
+          verified_findings: verifiedFindings,
+        };
+    // Attached uniformly across all three shapes above (the `pre_adjudication`
+    // shape previously carried no `diagnostics` at all — harmless in
+    // isolation, but a caller reading this projection uniformly needs it in
+    // every reachable shape, not just two of three).
+    verification.rounds = roundsForTrajectory;
+    verification.diagnostics = diagnostics;
+    if (retentionChanged) verification.retained_rounds = retainedRoundNumbers;
+    // Additive: the resolved round-caps policy THIS invocation actually used
+    // (from `resolved.rounds`, the same object the cap-integrity checks
+    // above already consult) — a caller that separately retained a run's
+    // OWN policy projection at dispatch time (harmon-devkit#1001 local-
+    // record harvester: policy.json) can compare the two and fail closed on
+    // drift, rather than silently trusting whichever caps a later
+    // .devflow.toml edit happens to resolve today. Integration cycle 5,
+    // confirmed. No existing field, predicate, or exit code changes.
+    verification.resolved_rounds = {
+      challenge: resolved.rounds.challenge,
+      review: resolved.rounds.review,
+      integration: resolved.rounds.integration,
+      remediation: resolved.rounds.remediation,
+      min_rounds: resolved.rounds.min_rounds,
+    };
+    // A retrospective read (reviewRetrospectiveDuringChallenge, above) is a
+    // report on review's own already-retained history — never a request this
+    // invocation may act on. Without this, the ordinary verification-only
+    // projection could still return `action: "adjudicate"` for a complete,
+    // unadjudicated retained round (or "dispatch"/"advance"/"escalate" from
+    // any of the other two shapes) — and `/review` treats that action as the
+    // SOLE authorization to write an adjudication (review/SKILL.md), so a
+    // review query issued only because challenge happens to be active could
+    // authorize new evidence in the wrong stage. Override the action alone,
+    // whatever the rounds contain; outcome/reason/rounds/diagnostics keep
+    // reporting the real retained state. Integration cycle 4, confirmed P1.
+    if (reviewRetrospectiveDuringChallenge) {
+      verification.action = "report-only";
+      verification.retrospective = true;
+    }
+    if (args.json) console.log(JSON.stringify(verification, null, 2));
+    else console.log(`${args.stage}: ${verification.outcome} (${verification.reason})`);
+    return incompleteRound ? EXIT_CODES.capped : 0;
+  }
+
+  let verdict;
+  if (cap === 0) {
+    verdict = { stage: args.stage, outcome: "capped", reason: "disabled", action: "advance", rounds_counted: 0, next_round: null };
+  } else {
+    verdict = computeVerdict({
+      stage: args.stage,
+      rounds,
+      convergence: resolved.convergence,
+      cap,
+      minRounds,
+      currentHead,
+      ancestryOpts,
+      ledger,
+    });
+  }
+
+  // A BACKWARD stage request (--stage challenge while review is already
+  // the active transition) resolving to `continue`/dispatch would
+  // authorize more challenge work after the run has moved past it — no
+  // legitimate exception exists for this direction; a real challenge
+  // re-entry must first record its own new transition, at which point
+  // activeStage would already read "challenge" again. Scoped to `continue`
+  // specifically (not every mismatch) because a backward query correctly
+  // reporting an already-settled converged/capped/diverging verdict for a
+  // superseded stage is a legitimate retrospective read, not an
+  // authorization to dispatch — see stale-pass-after-stage-moved-on.
+  // Shepherd-stage cloud finding, confirmed.
+  if (activeStage !== null && args.stage !== activeStage && activeStage !== "challenge" && verdict.outcome === "continue") {
+    return indeterminate(
+      args,
+      `--stage ${args.stage} was requested but the trusted receipt sequence's active stage is "${activeStage}" — a backward stage request cannot be authorized to dispatch more work`,
+    );
+  }
+
+  verdict.corrections = corrections;
+  verdict.diagnostics = diagnostics;
+  // applyVerification() already computed these per finding; corrections[]
+  // only records a MISMATCH (asserted != evidence-derived), so a claim that
+  // was simply confirmed as asserted — or left "unverified" because no
+  // evidence could decide it — has no other way to reach a caller (or the
+  // conformance corpus) short of exposing the full verified state here.
+  // The final confidence projection has the same evidence boundary as the
+  // pre-adjudication projection above: only complete logical rounds can
+  // contribute adjudicated, verified findings. A partial round can still
+  // contain a successful finder's raw findings when another configured
+  // slot exhausts its fallbacks, but those findings intentionally have no
+  // adjudication. They remain in passes/ for the blocker renderer; putting
+  // them here would falsely present them as verified adjudication evidence
+  // and make the blocker record internally inconsistent.
+  verdict.verified_findings = verifiedFindings;
+  // Deliberately NOT `verdict.rounds = roundsForTrajectory` here. The final
+  // verdict is the public projection the confidence-stage skill's fenced
+  // comment is built from (review/SKILL.md: "publish only the verified or
+  // corrected provenance and fingerprint values, never the producer's
+  // superseded assertions"); `rounds` carries every pass's raw envelope,
+  // which belongs only in the read-only --verification-only projection above
+  // (never published) that the harvester's trajectory reads it from. No
+  // caller reads `.rounds` off this non-verification-only path — the
+  // harvester only ever invokes this script with --verification-only.
+  // Integration cycle 2, confirmed.
+  if (verdict.outcome === "capped" && (verdict.reason === "finder_unavailable" || verdict.reason === "breadth_exhausted")) {
+    const incompleteRound = ancestryRetainedForVerification.find((round) => round.status !== "complete");
+    verdict.partial_findings = incompleteRound ? incompleteRound.findings.map((finding) => finding.id) : [];
+  }
+  if (retentionChanged) verdict.retained_rounds = retainedRoundNumbers;
+
+  if (args.json) {
+    console.log(JSON.stringify(verdict, null, 2));
+  } else {
+    console.log(`${args.stage}: ${verdict.outcome} (${verdict.reason}) rounds_counted=${verdict.rounds_counted} next_round=${verdict.next_round ?? "-"}`);
+    if (corrections.length > 0) {
+      console.log("corrections:");
+      for (const c of corrections) console.log(`  - ${c.finding_id} ${c.field}: ${c.asserted} -> ${c.corrected} (${c.evidence})`);
+    }
+    if (diagnostics.length > 0) {
+      console.log("diagnostics:");
+      for (const d of diagnostics) console.log(`  - ${d.pass}: ${d.reason}`);
+    }
+  }
+
+  return EXIT_CODES[verdict.outcome];
+}
+
+const isMain =
+  process.argv[1] &&
+  (() => {
+    try {
+      return realpathSync(fileURLToPath(import.meta.url)) === realpathSync(process.argv[1]);
+    } catch {
+      return fileURLToPath(import.meta.url) === process.argv[1];
+    }
+  })();
+if (isMain) {
+  main().then((code) => {
+    process.exitCode = code;
+  });
+}
+
+export {
+  ExitIndeterminate,
+  computeSplitCandidate,
+  loadRunDir,
+  validateReceipts,
+  validateAdjudicationSchema,
+  assembleLogicalRounds,
+  loadLedger,
+  verifyProvenance,
+  verifyFingerprint,
+  applyVerification,
+  evalPredicate,
+  evalExpr,
+  computeVerdict,
+  isAncestorOrEqual,
+  EXIT_CODES,
+};

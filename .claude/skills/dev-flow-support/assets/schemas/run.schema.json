@@ -1,0 +1,437 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/evanharmon1/harmon-devkit/ai/schemas/run.schema.json",
+  "title": "Dev flow v2 run record",
+  "$comment": "Orchestrator-authored, NOT wrapped in result.envelope.schema.json (see adjudication.schema.json's $comment for why). The ONLY home of mutable run state (specs/dev-flow-v2.md § Results): stage transitions, interventions, outcome, pr, evidence-comment bookkeeping, settlements, splits, and the promotion entry. Reserved on the issue at kickoff and edited in place at every transition up to ready-for-review (docs/decisions/0002).",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "run_id",
+    "initiated_by",
+    "started_at",
+    "stage_transitions",
+    "interventions",
+    "outcome",
+    "pr",
+    "evidence_comments",
+    "evidence_registrations",
+    "pr_bindings",
+    "outcome_transitions",
+    "settlements",
+    "promotion"
+  ],
+  "properties": {
+    "schema": { "const": 2 },
+    "run_id": { "type": "string", "minLength": 1 },
+    "initiated_by": { "enum": ["human", "foreman"] },
+    "started_at": {
+      "type": "string",
+      "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
+    },
+    "stage_transitions": {
+      "description": "Non-empty: a run always has at least kicked off. Structural shape (minItems, per-entry required) is a schema keyword; the array-wide coherence rule needs positional/cross-entry reasoning this subset engine cannot express, so it is a receipt check (checkStageTransitionsOrder in ai/skills/universal/dev-flow-support/assets/validate-result-schemas.mjs) instead: the first entry is kickoff, and every later entry is reached from the one immediately before it by one of the permitted lifecycle edges docs/product/domain.md's Dev-flow diagram draws (the run-span subset transcribed as ALLOWED_EDGES) — never any other transition, including an entry repeating its own immediate predecessor. This is a directed graph, not a linear order: legal remediation loops (for example challenge -> implement -> verify -> challenge) let a stage recur LATER in the array once a loop-back edge (such as review -> implement, or security -> implement) has been taken, and every entry but the last also records how/why it ended. See ai/schemas/README.md.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["stage", "entered_at"],
+        "properties": {
+          "stage": {
+            "description": "Only the stages within the run's own defined span: docs/product/domain.md's Concepts table scopes a 'run' to 'from kickoff until ready-for-review or until it ends earlier' — the same boundary specs/dev-flow-v2.md's Results section draws when it says everything after ready-for-review 'is derived at read time ... never written by an actor'. merge/deployment/release/smoke (stages 11-14) are the explicit examples given there (from the PR timeline and repository-wide workflow/release signals, never a stage_transitions entry); retro and wrap (15-16) are excluded for the identical reason — domain.md's own lifecycle table places both after merge, so they too fall outside the run's defined span even though the spec does not name them individually. 'escalate' is not a named stage at all (it is a terminal edge in that doc's state diagram) — an escalated run instead sets `outcome: escalated` and its last real stage_transitions entry's `exit` names the reason.",
+            "enum": [
+              "kickoff", "claim", "explore", "plan", "implement", "verify",
+              "challenge", "review", "security", "integration"
+            ]
+          },
+          "entered_at": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
+          },
+          "exit": {
+            "description": "Optional — set when this stage transition is known to have ended (e.g. 'converged', 'capped: 1 adjudicated P1 remaining'). Absent while the stage is still the run's current one.",
+            "type": "string",
+            "minLength": 1
+          },
+          "assembly": {
+            "description": "Feature-owner-authored lane assembly evidence. Present only on the implement transition whose output was assembled: the exact canonical feature head plus every selected and discarded lane. At least one lane must be accounted for across the two lists; the semantic validator also enforces implement-only placement, uniqueness, and disjoint lane sets.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["canonical_head", "integrated_lanes", "discarded_lanes"],
+            "properties": {
+              "canonical_head": {
+                "type": "string",
+                "pattern": "^[0-9a-f]{40}$"
+              },
+              "integrated_lanes": {
+                "type": "array",
+                "items": { "type": "string", "minLength": 1 }
+              },
+              "discarded_lanes": {
+                "type": "array",
+                "items": { "type": "string", "minLength": 1 }
+              }
+            }
+          }
+        }
+      }
+    },
+    "receipts": {
+      "description": "Optional append-order evidence consumed by ai/skills/universal/dev-flow-support/assets/dev-flow-exit.mjs. Transition receipts record the active confidence stage and its entry time; pass receipts bind a persisted pass filename to its position in that sequence.",
+      "type": "array",
+      "items": {
+        "oneOf": [
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "stage"],
+            "properties": {
+              "kind": { "const": "transition" },
+              "stage": {
+                "enum": [
+                  "kickoff", "claim", "explore", "plan", "implement", "verify",
+                  "challenge", "review", "security", "integration"
+                ]
+              },
+              "entered_at": {
+                "type": "string",
+                "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
+              }
+            }
+          },
+          {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["kind", "file"],
+            "properties": {
+              "kind": { "const": "pass" },
+              "file": { "type": "string", "minLength": 1 }
+            }
+          }
+        ]
+      }
+    },
+    "slot_failures": {
+      "description": "Optional evidence that a configured confidence-stage slot remained unfilled after its retry/fallback path, consumed by ai/skills/universal/dev-flow-support/assets/dev-flow-exit.mjs when assembling logical rounds.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["stage", "round", "slot", "reason"],
+        "properties": {
+          "stage": { "enum": ["challenge", "review"] },
+          "round": { "type": "integer", "minimum": 1 },
+          "slot": { "type": "string", "minLength": 1 },
+          "reason": { "enum": ["finder_unavailable", "breadth_exhausted"] },
+          "head": { "type": "string", "pattern": "^[0-9a-f]{40}$" }
+        }
+      }
+    },
+    "interventions": {
+      "description": "Every human touchpoint between kickoff and gh pr ready. kind distinguishes asked (answering an implementer's blocked_question, which the success metric counts separately) from other (every other human action, which the success metric counts as an intervention) — docs/glossary.md 'intervention'.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["kind", "at", "note"],
+        "properties": {
+          "kind": { "enum": ["asked", "other"] },
+          "at": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
+          },
+          "note": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "outcome": {
+      "description": "null while the run has not yet ended. One of the terminal states named by docs/glossary.md's 'run' entry once it has.",
+      "type": ["string", "null"],
+      "enum": [null, "ready-for-review", "capped", "escalated", "abandoned"]
+    },
+    "pr": {
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["number", "url"],
+      "properties": {
+        "number": { "type": "integer", "minimum": 1 },
+        "url": { "type": "string", "minLength": 1 }
+      }
+    },
+    "evidence_comments": {
+      "description": "Bookkeeping for every round/stage evidence comment posted to the issue or PR, so the harvester can authenticate what it reads back (specs/dev-flow-v2.md § Evidence: 'Authenticated when read').",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["id", "author_actor_id", "login", "digest", "marker"],
+        "properties": {
+          "id": {
+            "description": "The GitHub comment id.",
+            "type": "string",
+            "minLength": 1
+          },
+          "author_actor_id": {
+            "description": "The immutable GitHub actor id used for every authentication comparison. An integer (unlike the string ids used elsewhere in this schema family) because the spec is explicit that this is the field arithmetic/equality checks run against, never displayed — see ai/schemas/README.md.",
+            "type": "integer",
+            "minimum": 1
+          },
+          "login": {
+            "description": "Display only — a rename must never turn valid evidence into 'tampered', so authentication never compares this field.",
+            "type": "string",
+            "minLength": 1
+          },
+          "digest": {
+            "description": "A hash of the posted payload, so an edited comment is detected as tampered rather than silently replayed. Canonical format `sha256:<64 lowercase hex>` — a fixed algorithm and encoding, so independent producers and harvesters compute and compare the same representation rather than choosing incompatible ones.",
+            "type": "string",
+            "pattern": "^sha256:[0-9a-f]{64}$"
+          },
+          "marker": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["run_id", "stage", "destination", "round", "sequence"],
+            "properties": {
+              "run_id": { "type": "string", "minLength": 1 },
+              "stage": {
+                "description": "The same run-span stage list as stage_transitions[].stage above — an evidence comment is always posted for one of the run's own defined stages.",
+                "enum": [
+                  "kickoff", "claim", "explore", "plan", "implement", "verify",
+                  "challenge", "review", "security", "integration"
+                ]
+              },
+              "destination": {
+                "description": "Where this comment was posted (specs/dev-flow-v2.md § Evidence). `issue` covers every per-round comment — the spec is explicit that 'each round's evidence is posted to the issue' with no exception — the run record's own home, and a per-stage comment for a run that ends without ever opening a PR. `pr` is the per-stage rollup comment posted once the draft PR exists, linking back to the per-round issue comments.",
+                "enum": ["issue", "pr"]
+              },
+              "round": {
+                "description": "1-based: the round this comment carries evidence for, when it is one of the per-round comments the spec posts to the issue as each round is adjudicated. `null` for a per-stage rollup comment (whichever destination it landed on) — a stage comment aggregates the stage's rounds so far, so no single round number describes it.",
+                "type": ["integer", "null"],
+                "minimum": 1
+              },
+              "sequence": {
+                "description": "1-based — the Nth comment continuing this stage's evidence when GitHub's size limit forces a split.",
+                "type": "integer",
+                "minimum": 1
+              }
+            }
+          }
+        }
+      }
+    },
+    "evidence_registrations": {
+      "description": "Append-only chain protecting `evidence_comments[]` (a derived projection: the entries below, in seq order, minus the chain-only fields) against a silently removed or in-place-edited registration. `payload_digest` is the referenced evidence comment's own posted-content hash (ai/schemas/README.md 'Digest') — distinct from this entry's own `digest`, which authenticates the entry's position and content in THIS chain, not the comment it registers.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["seq", "digest", "prev_digest", "id", "author_actor_id", "login", "payload_digest", "marker", "registered_at"],
+        "properties": {
+          "seq": { "type": "integer", "minimum": 0 },
+          "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "prev_digest": { "type": "string", "pattern": "^(genesis|[0-9a-f]{64})$" },
+          "id": { "type": "string", "minLength": 1 },
+          "author_actor_id": { "type": "integer", "minimum": 1 },
+          "login": { "type": "string", "minLength": 1 },
+          "payload_digest": { "type": "string", "pattern": "^sha256:[0-9a-f]{64}$" },
+          "registered_at": {
+            "description": "When this entry was appended to the chain — distinct from the referenced comment's own creation time (a crash-recovery writer can register an already-posted comment slightly late). Not used to bound which evidence an --as-of read assembles into rounds (that already uses the comment's own created_at, authoritative and un-gameable by late registration); it exists so this chain matches the same immutable-timestamp requirement every other append-only array carries (evidence delta spec § 'Run history is append-only').",
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
+          },
+          "marker": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["run_id", "stage", "destination", "round", "sequence"],
+            "properties": {
+              "run_id": { "type": "string", "minLength": 1 },
+              "stage": {
+                "enum": [
+                  "kickoff", "claim", "explore", "plan", "implement", "verify",
+                  "challenge", "review", "security", "integration"
+                ]
+              },
+              "destination": { "enum": ["issue", "pr"] },
+              "round": { "type": ["integer", "null"], "minimum": 1 },
+              "sequence": { "type": "integer", "minimum": 1 }
+            }
+          }
+        }
+      }
+    },
+    "pr_bindings": {
+      "description": "Append-only chain protecting `pr` (a derived projection: the last entry's `number`/`url`, or null if this array is empty) against a silent swap to a different PR. `bound_at` is this entry's own creation time, letting `--as-of` reconstruct which PR (if any) the run was bound to at a given cutoff without depending on `pr`'s own live value.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["seq", "digest", "prev_digest", "number", "url", "bound_at"],
+        "properties": {
+          "seq": { "type": "integer", "minimum": 0 },
+          "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "prev_digest": { "type": "string", "pattern": "^(genesis|[0-9a-f]{64})$" },
+          "number": { "type": "integer", "minimum": 1 },
+          "url": { "type": "string", "minLength": 1 },
+          "bound_at": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
+          }
+        }
+      }
+    },
+    "outcome_transitions": {
+      "description": "Append-only chain protecting `outcome` (a derived projection: the last entry's `outcome`, or null if this array is empty) against a silent rewrite to a different terminal value. Distinct from `stage_transitions[]`, which records STAGE progress through the run; an entry here instead records a change to the run's own terminal state — never `null` (an entry exists only once a terminal value is set, matching `outcome`'s own enum minus `null`).",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["seq", "digest", "prev_digest", "outcome", "at"],
+        "properties": {
+          "seq": { "type": "integer", "minimum": 0 },
+          "digest": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "prev_digest": { "type": "string", "pattern": "^(genesis|[0-9a-f]{64})$" },
+          "outcome": { "enum": ["ready-for-review", "capped", "escalated", "abandoned"] },
+          "at": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
+          }
+        }
+      }
+    },
+    "settlements": {
+      "description": "Append-only. Each entry terminalizes exactly one finding's `defer` disposition (recorded in some round's adjudication.schema.json document) to one of the three terminal answers the readiness gate accepts. Immutable once appended — a finding still has exactly one adjudication (in adjudication.schema.json) and one terminal settlement (here), and neither document is edited in place to reflect the other.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["finding_id", "disposition", "settled_at", "reference"],
+        "properties": {
+          "finding_id": {
+            "type": "string",
+            "pattern": "^(challenge|review|integration)-r[1-9][0-9]*-[a-z0-9-]+-[1-9][0-9]*$"
+          },
+          "disposition": {
+            "description": "A settlement narrows a deferred finding to one of the three terminal answers — restructure/delete/defer are not valid settlement outcomes (specs/dev-flow-v2.md: 'there it is settled to fix, decline, or file').",
+            "enum": ["fix", "decline", "file"]
+          },
+          "settled_at": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
+          },
+          "reference": {
+            "description": "The evidence a human or CI can follow to confirm the settlement: the fix commit's sha, the comment id explaining a decline, or the follow-up issue number.",
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["type", "value"],
+            "properties": {
+              "type": { "enum": ["sha", "comment_id", "issue_number"] },
+              "value": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    },
+    "splits": {
+      "description": "Append-only. Each entry records one mechanism SPLIT OUT of the change under review (specs/dev-flow-v2.md \u00a7 The split strategy, issue #747): successive rounds' gating findings concentrated in it, so instead of hardening it once more the orchestrator removed it from this change, filed it as its own issue on the current milestone carrying the design constraints the rounds established, and ran one deletion round. Separate from `settlements[]`, which terminalizes a `defer`: a split is not a deferred finding coming due, it is a scope decision about the change. The per-finding half lives in the round's adjudication document (`disposition: \"split\"`, with a `reference` naming the same issue); this array is the run-level projection a readiness gate or retro can read without loading every round. `milestone` is required for exactly the reason the strategy exists \u2014 a mechanism filed with no milestone is the \"left to memory\" outcome the split is supposed to prevent.",
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["mechanism", "stage", "round", "issue", "milestone", "finding_ids", "split_at"],
+        "properties": {
+          "mechanism": {
+            "description": "What was removed, named the way the exit computation's `split_candidate.mechanism` names it: the repository path the concentrated findings resolved to (rename-tracked), or a longer human name where one file does not capture it.",
+            "type": "string",
+            "minLength": 1
+          },
+          "stage": {
+            "description": "Confidence stages only. `split` is not a valid adjudication disposition at stage `integration` (adjudication.schema.json's own top-level if/then), because dev-flow-exit.mjs produces `split_candidate` for challenge and review alone — so a run-level split naming `integration` could never have a valid adjudication to pair with. Narrowed here too so a consumer validating this schema on its own reaches the same answer.",
+            "enum": ["challenge", "review"]
+          },
+          "round": { "type": "integer", "minimum": 1 },
+          "issue": {
+            "description": "The issue the mechanism was filed as \u2014 a bare number for this repository, or owner/repo#<n> when it was filed elsewhere. Same grammar as a settlement/adjudication reference of type issue_number, and the same pattern, so a consumer validating this schema alone reaches the answer the semantic validator does instead of accepting an unusable value.",
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?:[1-9][0-9]*|[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[1-9][0-9]*)$"
+          },
+          "milestone": {
+            "description": "The milestone that issue was filed on \u2014 'the current milestone' (issue #747), recorded rather than assumed.",
+            "type": "string",
+            "minLength": 1
+          },
+          "finding_ids": {
+            "description": "The findings that lived in the mechanism and are answered by the split. Each must be adjudicated `split` in its round's document; the validator cross-checks that whenever --adjudication is supplied.",
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "pattern": "^(challenge|review)-r[1-9][0-9]*-[a-z0-9-]+-[1-9][0-9]*$"
+            }
+          },
+          "split_at": {
+            "type": "string",
+            "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
+          }
+        }
+      }
+    },
+    "promotion": {
+      "description": "null until the orchestrator promotes the draft to ready-for-review. 'Reached ready-for-review' for the success metric means this entry exists (specs/dev-flow-v2.md § Success metric) — a ready transition on the PR without it is an unexplained promotion, never counted as success.",
+      "type": ["object", "null"],
+      "additionalProperties": false,
+      "required": ["head", "promoted_at", "gate_fingerprint"],
+      "properties": {
+        "head": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "promoted_at": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"
+        },
+        "gate_fingerprint": {
+          "description": "The readiness gate's pre/post-promotion content fingerprint over body, reviews, and comments (AGENTS.md § Readiness gate; the vendored integrate skill's readiness-gate.sh).",
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    },
+    "finder_selection": {
+      "description": "The effective per-stage finder set when a per-run selection was made. Persisted as run evidence so a later invocation of dev-flow-exit.mjs that omits the --add-finder/--select-finder flags computes the same slots as the one that made the selection. Absent when no per-run selection was requested (the configured finders are the effective set). Each entry corresponds to one stage whose finder set was modified by a per-run request.",
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["stage", "configured", "requested", "effective"],
+        "properties": {
+          "stage": {
+            "enum": ["implement", "challenge", "review", "integration"]
+          },
+          "configured": {
+            "description": "The finders the policy's [stage.*] table configured for this stage, before any per-run selection.",
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "requested": {
+            "description": "The finders this run requested via --add-finder/--select-finder for this stage.",
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "effective": {
+            "description": "The union of configured and requested finders — the set that actually governs this stage's slot assembly.",
+            "type": "array",
+            "minItems": 1,
+            "items": { "type": "string", "minLength": 1 }
+          },
+          "retained_despite_selection": {
+            "description": "Configured finders that a --select-finder request did not name but that were kept because the configured set is never reduced. Empty when --add-finder was the only mechanism, or when --select-finder named every configured finder.",
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 }
+          }
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,1974 @@
+#!/usr/bin/env bash
+# ai/skills/universal/dev-flow-support/assets/test-result-schemas.sh — schema-check the dev-flow-v2 brief/result/record fixture
+# corpus (ai/schemas/fixtures/) and exercise the receipt-validation semantic
+# checks ai/skills/universal/dev-flow-support/assets/validate-result-schemas.mjs layers on top of raw schema
+# validation.
+#
+# Fixture corpus conventions (see ai/schemas/README.md):
+#   ai/schemas/fixtures/<schema-dir>/valid/*.json     — must validate (exit 0)
+#   ai/schemas/fixtures/<schema-dir>/invalid/*.json   — must be rejected
+#   ai/schemas/fixtures/<schema-dir>/invalid/*.reason — sibling plain-text
+#     file (one line) naming a substring the validator's rejection MUST
+#     contain, so "rejected" is checked for the expected reason, not just
+#     rejected at all. Every invalid fixture requires one.
+set -euo pipefail
+
+repo="$(git rev-parse --show-toplevel)"
+cd "$repo"
+
+validator="ai/skills/universal/dev-flow-support/assets/validate-result-schemas.mjs"
+schemas_dir="ai/schemas"
+fixtures_dir="ai/schemas/fixtures"
+
+test_tmp="$(mktemp -d)"
+trap 'rm -rf "$test_tmp"' EXIT
+
+fail() {
+    # shell-robustness: ok — always exits, so its status is never read
+    echo "TEST FAIL: $*" >&2
+    exit 1
+}
+
+command -v node >/dev/null 2>&1 || fail "node is required to validate the result schemas"
+[ -f "$validator" ] || fail "missing required asset: $validator"
+
+# The native-composition check that used to run from here now has its own root
+# target, `task test:result-schema-composition` (harmon-devkit#974). It belongs
+# there rather than here: it validates the AUTHORING schema tree at
+# `ai/schemas/`, which exists only in harmon-devkit, so a vendored copy of this
+# test could never run it — and reaching a repository-root `scripts/` path from
+# inside a vendored asset is exactly the dependency this issue removes.
+# `task verify` runs both, in the same `test:schemas` group.
+
+# Briefs are rendered Markdown rather than JSON documents. Exercise their
+# dedicated corpus separately so the established result/run fixture walker
+# below remains unchanged apart from skipping this non-JSON directory.
+brief_fixture_dir="$fixtures_dir/brief.envelope"
+brief_valid_count=0
+brief_invalid_count=0
+for f in "$brief_fixture_dir"/valid/*.md; do
+    [ -f "$f" ] || continue
+    brief_valid_count=$((brief_valid_count + 1))
+    if ! out="$(node "$validator" brief "$f" 2>&1)"; then
+        fail "valid brief fixture rejected: $f -> $out"
+    fi
+done
+for f in "$brief_fixture_dir"/invalid/*.md; do
+    [ -f "$f" ] || continue
+    reason_file="${f%.md}.reason"
+    [ -f "$reason_file" ] || fail "invalid brief fixture $f has no sibling .reason file"
+    expected="$(<"$reason_file")"
+    [ -n "$expected" ] || fail "$reason_file is empty"
+    brief_invalid_count=$((brief_invalid_count + 1))
+    if out="$(node "$validator" brief "$f" 2>&1)"; then
+        fail "invalid brief fixture accepted: $f"
+    fi
+    case "$out" in
+    *"$expected"*) ;;
+    *) fail "$f rejected for the wrong reason — expected substring '$expected', got: $out" ;;
+    esac
+done
+[ "$brief_valid_count" -ge 3 ] || fail "brief corpus requires at least 3 valid fixtures"
+[ "$brief_invalid_count" -ge 6 ] || fail "brief corpus requires at least 6 invalid fixtures"
+echo "PASS: brief envelope corpus OK ($brief_valid_count valid, $brief_invalid_count invalid)"
+
+# The deadline cross-check is contextual: it activates only when the rendered
+# record_directory exists. Materialize that context without making a fixture
+# depend on a repository-local absolute path.
+brief_run_dir="$test_tmp/brief-run"
+mkdir -p "$brief_run_dir"
+printf '%s\n' '{"started_at":"2026-09-13T12:01:00Z"}' >"$brief_run_dir/run.json"
+sed "s#/nonexistent/r#$brief_run_dir#" \
+    "$brief_fixture_dir/valid/minimal.md" >"$test_tmp/deadline-before-start.md"
+if out="$(node "$validator" brief "$test_tmp/deadline-before-start.md" 2>&1)"; then
+    fail "brief deadline before run started_at was accepted"
+fi
+case "$out" in
+*'is before run started_at'*) ;;
+*) fail "brief deadline cross-check rejected for the wrong reason: $out" ;;
+esac
+echo "PASS: brief deadline is checked against an existing run record"
+
+# brief.envelope uses rendered Markdown fixtures, so it cannot participate in
+# the JSON fixture/reason coverage walker below. Mutate the valid rendered
+# fixtures instead: every required property is removed once, and every enum is
+# replaced once, then the real brief validator must reject the mutation at the
+# expected schema location.
+node --input-type=module - "$schemas_dir/brief.envelope.schema.json" \
+    "$brief_fixture_dir/valid" "$validator" "$test_tmp/brief-mutations" <<'NODE'
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import path from 'node:path'
+
+const [schemaFile, validDir, validator, mutationDir] = process.argv.slice(2)
+const beginMarker = '<!-- BEGIN SCHEMA-BOUND ENVELOPE FACTS -->'
+const endMarker = '<!-- END SCHEMA-BOUND ENVELOPE FACTS -->'
+const schema = JSON.parse(readFileSync(schemaFile, 'utf8'))
+
+function loadFixture(file) {
+  const source = readFileSync(file, 'utf8')
+  const begin = source.indexOf(beginMarker)
+  const blockStart = begin + beginMarker.length
+  const openingFence = /^\s*```json\s*\n/.exec(source.slice(blockStart))
+  const jsonStart = openingFence ? blockStart + openingFence[0].length : -1
+  const closingFence = jsonStart === -1 ? null : /\n```[\t ]*(?=\r?\n|$)/.exec(source.slice(jsonStart))
+  const closingFenceEnd = closingFence ? jsonStart + closingFence.index + closingFence[0].length : -1
+  const end = closingFenceEnd === -1 ? -1 : source.indexOf(endMarker, closingFenceEnd)
+  const block = source.slice(begin + beginMarker.length, end).trim()
+  const match = /^```json\s*\n([\s\S]*)\n```$/.exec(block)
+  if (begin === -1 || !openingFence || !closingFence || end === -1 || !match) {
+    throw new Error(`cannot parse valid brief fixture ${file}`)
+  }
+  return { source, begin, end, envelope: JSON.parse(match[1]) }
+}
+
+function collect(node, currentPath, required, enums) {
+  if (node === null || typeof node !== 'object' || Array.isArray(node)) return
+  for (const name of node.required ?? []) required.push({ parent: currentPath, name })
+  if (Array.isArray(node.enum)) enums.push(currentPath)
+  for (const [name, child] of Object.entries(node.properties ?? {})) {
+    collect(child, [...currentPath, name], required, enums)
+  }
+  if (node.items) collect(node.items, [...currentPath, '*'], required, enums)
+}
+
+function concretePaths(value, pattern, prefix = []) {
+  if (pattern.length === 0) return [prefix]
+  const [part, ...rest] = pattern
+  if (part === '*') {
+    if (!Array.isArray(value)) return []
+    return value.flatMap((entry, index) => concretePaths(entry, rest, [...prefix, index]))
+  }
+  if (value === null || typeof value !== 'object' || !Object.hasOwn(value, part)) return []
+  return concretePaths(value[part], rest, [...prefix, part])
+}
+
+function valueAt(value, concretePath) {
+  return concretePath.reduce((current, part) => current[part], value)
+}
+
+function location(concretePath) {
+  return concretePath.reduce(
+    (result, part) => (typeof part === 'number' ? `${result}[${part}]` : `${result}.${part}`),
+    '$brief'
+  )
+}
+
+function renderMutation(fixture, envelope) {
+  const block = `\n\`\`\`json\n${JSON.stringify(envelope)}\n\`\`\`\n`
+  return fixture.source.slice(0, fixture.begin + beginMarker.length) + block + fixture.source.slice(fixture.end)
+}
+
+const fixtures = readdirSync(validDir)
+  .filter((entry) => entry.endsWith('.md'))
+  .sort()
+  .map((entry) => loadFixture(path.join(validDir, entry)))
+const required = []
+const enums = []
+collect(schema, [], required, enums)
+mkdirSync(mutationDir, { recursive: true })
+
+let failures = 0
+let caseNumber = 0
+function runMutation(kind, pattern, name = null) {
+  let selected
+  const derivedBody = kind === 'required' && pattern.length === 0 && name === 'body'
+  for (const fixture of fixtures) {
+    if (derivedBody) {
+      selected = { fixture, concrete: [] }
+      break
+    }
+    const targets = concretePaths(fixture.envelope, pattern)
+    const concrete = targets.find((candidate) => {
+      const value = valueAt(fixture.envelope, candidate)
+      return name === null || (value !== null && typeof value === 'object' && Object.hasOwn(value, name))
+    })
+    if (concrete) {
+      selected = { fixture, concrete }
+      break
+    }
+  }
+  if (!selected) {
+    console.error(`FAIL: no valid brief fixture contains mutation target ${location(pattern)}${name ? `.${name}` : ''}`)
+    failures += 1
+    return
+  }
+
+  const envelope = structuredClone(selected.fixture.envelope)
+  const target = valueAt(envelope, selected.concrete)
+  const expectedLocation = location(selected.concrete) + (name === null ? '' : `.${name}`)
+  const expected =
+    derivedBody
+      ? '$brief.body: body is absent'
+      : kind === 'required'
+      ? `${location(selected.concrete)}: missing required property ${name}`
+      : `${expectedLocation}: must be one of`
+  if (kind === 'required' && !derivedBody) delete target[name]
+  else {
+    if (!derivedBody) {
+      const parent = valueAt(envelope, selected.concrete.slice(0, -1))
+      parent[selected.concrete.at(-1)] = '__invalid_enum__'
+    }
+  }
+
+  const mutationFile = path.join(mutationDir, `${String(++caseNumber).padStart(3, '0')}-${kind}.md`)
+  const mutation = derivedBody
+    ? selected.fixture.source.slice(
+        selected.fixture.begin,
+        selected.fixture.end + endMarker.length
+      )
+    : renderMutation(selected.fixture, envelope)
+  writeFileSync(mutationFile, mutation)
+  const result = spawnSync(process.execPath, [validator, 'brief', mutationFile], { encoding: 'utf8' })
+  const output = `${result.stdout ?? ''}${result.stderr ?? ''}`
+  if (result.status === 0 || !output.includes(expected)) {
+    console.error(`FAIL: ${kind} mutation at ${expectedLocation} did not produce ${JSON.stringify(expected)}: ${output.trim()}`)
+    failures += 1
+  }
+}
+
+for (const entry of required) runMutation('required', entry.parent, entry.name)
+for (const enumPath of enums) runMutation('enum', enumPath)
+
+if (failures > 0) process.exit(1)
+console.log(
+  `PASS: brief.envelope.schema.json mutation coverage complete (${required.length} required, ${enums.length} enum)`
+)
+NODE
+
+# is_context_only_fixture PATH — true for a fixture the generic per-directory
+# valid/invalid loops below must not validate directly (checked in BOTH —
+# a sidecar or a flag-dependent document can live under either, e.g. a
+# --pass sidecar naming a real reviewer envelope belongs beside the valid
+# adjudication document it supports). Three kinds:
+#   - a *.known-ids.json / *.pass.json / *.known-adjudicated.json /
+#     *.adjudication.json sidecar: matches the *.json glob (it IS a .json
+#     file) but is never itself passed to the validator as a document to
+#     validate — only as the argument to another fixture's --known-ids /
+#     --pass / --known-adjudicated / --adjudication.
+#   - a fixture whose invalid-ness depends ENTIRELY on a run-context flag
+#     (--known-ids, --run-id/--initiated-by, --pass, --known-adjudicated,
+#     --adjudication) the generic loop never passes. By construction these
+#     are schema-valid and receipt-valid on their own — that is what makes
+#     the flagged case meaningful to test — so the generic loop's flagless
+#     invocation would otherwise accept them, contradicting "every
+#     invalid/*.json is rejected". They are exercised instead by the named
+#     run-context regression cases below, which pass the exact flag each
+#     one needs.
+is_context_only_fixture() {
+    case "$1" in
+    *.known-ids.json | *.pass.json | *.known-adjudicated.json | *.adjudication.json | *.receipts.json) return 0 ;;
+    */result.envelope.schema/invalid/run-mismatch.json) return 0 ;;
+    */result.reviewer.schema/invalid/duplicate-id-across-passes.json) return 0 ;;
+    */result.challenger.schema/invalid/duplicate-id-across-passes.json) return 0 ;;
+    */result.integrator.schema/invalid/known-ids-collision.json) return 0 ;;
+    */result.integrator.schema/invalid/applied-dispositions-unknown-finding-id.json) return 0 ;;
+    */adjudication.schema/invalid/pass-cross-check-missing-entry.json) return 0 ;;
+    */adjudication.schema/invalid/pass-cross-check-extra-entry.json) return 0 ;;
+    */adjudication.schema/invalid/pass-cross-check-reviewer-priority-drift.json) return 0 ;;
+    */adjudication.schema/invalid/mixed-role-union-adjudication.json) return 0 ;;
+    */adjudication.schema/invalid/pass-cross-check-head-mismatch.json) return 0 ;;
+    */adjudication.schema/invalid/integration-head-mismatch.json) return 0 ;;
+    */adjudication.schema/invalid/integration-round-mismatch.json) return 0 ;;
+    */adjudication.schema/invalid/known-adjudicated-collision.json) return 0 ;;
+    */run.schema/invalid/adjudicated-round-without-issue-evidence-marker.json) return 0 ;;
+    */run.schema/invalid/adjudicated-round-capped-without-issue-evidence-marker.json) return 0 ;;
+    */run.schema/invalid/adjudicated-round-only-pr-evidence-marker.json) return 0 ;;
+    */run.schema/invalid/settlement-of-fixed-finding.json) return 0 ;;
+    */run.schema/invalid/settlement-of-unknown-finding.json) return 0 ;;
+    */run.schema/invalid/ready-with-unsettled-deferral.json) return 0 ;;
+    */run.schema/invalid/split-of-fixed-finding.json) return 0 ;;
+    */run.schema/invalid/split-issue-disagrees-with-adjudication.json) return 0 ;;
+    */run.schema/invalid/split-adjudication-not-recorded.json) return 0 ;;
+    */run.schema/invalid/split-omitted-on-capped-run.json) return 0 ;;
+    */run.schema/invalid/adjudication-not-in-receipts.json) return 0 ;;
+    *) return 1 ;;
+    esac
+}
+
+# kind_for_dir DIR — map a fixtures/<dir> basename to the validator's <kind>
+# positional argument.
+kind_for_dir() {
+    case "$1" in
+    result.envelope.schema) echo "envelope" ;;
+    result.implementer.schema) echo "implementer" ;;
+    result.challenger.schema) echo "challenger" ;;
+    result.reviewer.schema) echo "reviewer" ;;
+    result.integrator.schema) echo "integrator" ;;
+    adjudication.schema) echo "adjudication" ;;
+    run.schema) echo "run" ;;
+    plan) echo "plan" ;;
+    *) fail "fixtures directory does not map to a known schema kind: $1" ;;
+    esac
+}
+
+schema_file_for_dir() {
+    case "$1" in
+    result.envelope.schema) echo "result.envelope.schema.json" ;;
+    result.implementer.schema) echo "result.implementer.schema.json" ;;
+    result.challenger.schema) echo "result.challenger.schema.json" ;;
+    result.reviewer.schema) echo "result.reviewer.schema.json" ;;
+    result.integrator.schema) echo "result.integrator.schema.json" ;;
+    adjudication.schema) echo "adjudication.schema.json" ;;
+    run.schema) echo "run.schema.json" ;;
+    plan) echo "plan.schema.json" ;;
+    *) fail "fixtures directory does not map to a known schema file: $1" ;;
+    esac
+}
+
+[ -d "$fixtures_dir" ] || fail "missing fixtures directory: $fixtures_dir"
+
+fixture_dirs_found=0
+valid_count=0
+invalid_count=0
+
+for dir in "$fixtures_dir"/*/; do
+    [ -d "$dir" ] || continue
+    base="$(basename "${dir%/}")"
+    # ai/schemas/fixtures/exit/ is a separate conformance corpus (the Dev
+    # flow v2 policy reader and exit-computation engine, #636) with its own
+    # per-case directory shape (policy.toml, registry.json, run/, ...) and
+    # its own test driver (ai/skills/universal/dev-flow-support/assets/test-dev-flow-exit.sh / task
+    # test:dev-flow-exit) — it is not one of this script's schema-fixture
+    # directories, so it is intentionally skipped here rather than mapped to
+    # a <kind>.
+    [ "$base" = "exit" ] && continue
+    # render/ holds golden fixtures for ai/skills/universal/dev-flow-support/assets/render-dev-flow.mjs, a
+    # projection tool rather than one of this family's six schema kinds
+    # (ai/schemas/README.md "Rendering"); ai/skills/universal/dev-flow-support/assets/test-render-dev-flow.sh
+    # owns it, so it is not iterated here.
+    [ "$base" = "render" ] && continue
+    # registry-trust/ holds the harvester's registry-allowlist timeline
+    # corpus (#741; ai/schemas/README.md "Fixture layout"): declarative
+    # scenarios for ai/skills/universal/retro/assets/dev-flow-stats.mjs's per-write trust binding,
+    # not documents of any schema kind; ai/skills/universal/retro/assets/test-dev-flow-stats.sh
+    # (task test:dev-flow-stats) renders and runs them, so it is not
+    # iterated here.
+    [ "$base" = "registry-trust" ] && continue
+    # finder-normalization/ holds one directory per REGISTERED FINDER: that
+    # finder's raw output in its own vendor shape, the arguments to decode it
+    # with, and the pass core it must decode to (#796; ai/schemas/README.md
+    # "Fixture layout"). Raw vendor output is not a document of any schema
+    # kind, so ai/skills/universal/review/assets/test-finder-normalization.sh (task
+    # test:finder-normalization) owns it and it is not iterated here.
+    [ "$base" = "finder-normalization" ] && continue
+    # brief.envelope is the rendered-Markdown corpus exercised above.
+    [ "$base" = "brief.envelope" ] && continue
+    kind="$(kind_for_dir "$base")"
+    fixture_dirs_found=$((fixture_dirs_found + 1))
+
+    if [ -d "${dir}valid" ]; then
+        for f in "${dir}valid"/*.json; do
+            [ -f "$f" ] || continue
+            is_context_only_fixture "$f" && continue
+            valid_count=$((valid_count + 1))
+            if ! out="$(node "$validator" "$kind" "$f" 2>&1)"; then
+                fail "valid fixture rejected: $f -> $out"
+            fi
+        done
+    fi
+    echo "PASS: every valid $base fixture validates"
+
+    if [ -d "${dir}invalid" ]; then
+        for f in "${dir}invalid"/*.json; do
+            [ -f "$f" ] || continue
+            is_context_only_fixture "$f" && continue
+            reason_file="${f%.json}.reason"
+            [ -f "$reason_file" ] ||
+                fail "invalid fixture $f has no sibling .reason file naming the expected rejection"
+            expected="$(cat "$reason_file")"
+            [ -n "$expected" ] || fail "$reason_file is empty"
+            invalid_count=$((invalid_count + 1))
+            if out="$(node "$validator" "$kind" "$f" 2>&1)"; then
+                fail "invalid fixture accepted (should have been rejected): $f"
+            fi
+            case "$out" in
+            *"$expected"*) ;;
+            *) fail "$f rejected for the wrong reason — expected substring '$expected', got: $out" ;;
+            esac
+        done
+    fi
+    echo "PASS: every invalid $base fixture is rejected for its documented reason"
+done
+
+[ "$fixture_dirs_found" -gt 0 ] || fail "no fixture directories found under $fixtures_dir"
+echo "PASS: fixture corpus OK ($valid_count valid, $invalid_count invalid, $fixture_dirs_found schema(s))"
+
+# These named plan-history regressions are the contract behind the generic
+# fixture walk above: a run keeps its original fence, can only append expansion
+# records after first appearing, and split dependencies follow wave order.
+for regression in \
+    plan/valid/recomputed.json \
+    plan/invalid/rewritten-run-fence.json \
+    plan/invalid/removed-run-expansion.json \
+    plan/invalid/reversed-split-wave-dependency.json \
+    plan/invalid/first-snapshot-expansion.json; do
+    [ -f "$fixtures_dir/$regression" ] || fail "missing plan-history regression fixture: $regression"
+done
+echo "PASS: plan-history regression fixture set is complete"
+
+# plan.schema.json is a new closed top-level record with nested required fields.
+# Mutate one complete valid plan so every required property and enum is proved
+# through the real `plan` entry point without maintaining dozens of repetitive
+# hand-copied fixtures; the curated corpus above retains reason-sidecar cases
+# for structural and cross-record semantic failures.
+node --input-type=module - "$schemas_dir/plan.schema.json" \
+    "$fixtures_dir/plan/valid/interactive.json" \
+    "$fixtures_dir/plan/valid/recomputed.json" \
+    "$validator" "$test_tmp/plan-mutations" <<'NODE'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import path from 'node:path'
+
+const [schemaFile, fixtureFile, expansionFixtureFile, validator, mutationDir] = process.argv.slice(2)
+const schema = JSON.parse(readFileSync(schemaFile, 'utf8'))
+const fixtures = [fixtureFile, expansionFixtureFile].map((file) => JSON.parse(readFileSync(file, 'utf8')))
+
+function resolveRef(ref) {
+  if (typeof ref !== 'string' || !ref.startsWith('#/')) return null
+  return ref
+    .slice(2)
+    .split('/')
+    .reduce((node, part) => node?.[part], schema)
+}
+
+function collect(node, currentPath, required, enums, stack = new Set()) {
+  if (!node || typeof node !== 'object' || Array.isArray(node)) return
+  if (node.$ref) {
+    const target = resolveRef(node.$ref)
+    if (target && !stack.has(target)) collect(target, currentPath, required, enums, new Set([...stack, target]))
+    return
+  }
+  for (const name of node.required ?? []) required.push({ parent: currentPath, name })
+  if (Array.isArray(node.enum)) enums.push(currentPath)
+  for (const [name, child] of Object.entries(node.properties ?? {})) {
+    collect(child, [...currentPath, name], required, enums, stack)
+  }
+  if (node.items) collect(node.items, [...currentPath, '*'], required, enums, stack)
+}
+
+function concretePaths(value, pattern, prefix = []) {
+  if (pattern.length === 0) return [prefix]
+  const [part, ...rest] = pattern
+  if (part === '*') {
+    if (!Array.isArray(value)) return []
+    return value.flatMap((entry, index) => concretePaths(entry, rest, [...prefix, index]))
+  }
+  if (!value || typeof value !== 'object' || !Object.hasOwn(value, part)) return []
+  return concretePaths(value[part], rest, [...prefix, part])
+}
+
+function valueAt(value, concretePath) {
+  return concretePath.reduce((current, part) => current[part], value)
+}
+
+function location(concretePath) {
+  return concretePath.reduce(
+    (result, part) => (typeof part === 'number' ? `${result}[${part}]` : `${result}.${part}`),
+    '$plan'
+  )
+}
+
+const required = []
+const enums = []
+collect(schema, [], required, enums)
+mkdirSync(mutationDir, { recursive: true })
+let failures = 0
+let caseNumber = 0
+
+function runMutation(kind, pattern, name = null) {
+  const fixture = fixtures.find((candidate) => concretePaths(candidate, pattern).length > 0)
+  const concrete = fixture && concretePaths(fixture, pattern)[0]
+  if (!concrete) {
+    console.error(`FAIL: no valid plan fixture contains ${location(pattern)}${name ? `.${name}` : ''}`)
+    failures += 1
+    return
+  }
+  const mutation = structuredClone(fixture)
+  const expected = kind === 'required'
+    ? `${location(concrete)}: missing required property ${name}`
+    : `${location(concrete)}: must be one of`
+  if (kind === 'required') delete valueAt(mutation, concrete)[name]
+  else {
+    const parent = valueAt(mutation, concrete.slice(0, -1))
+    parent[concrete.at(-1)] = '__invalid_enum__'
+  }
+  const file = path.join(mutationDir, `${String(++caseNumber).padStart(3, '0')}-${kind}.json`)
+  writeFileSync(file, `${JSON.stringify(mutation)}\n`)
+  const result = spawnSync(process.execPath, [validator, 'plan', file], { encoding: 'utf8' })
+  const output = `${result.stdout ?? ''}${result.stderr ?? ''}`
+  if (result.status === 0 || !output.includes(expected)) {
+    console.error(`FAIL: plan ${kind} mutation did not produce ${JSON.stringify(expected)}: ${output.trim()}`)
+    failures += 1
+  }
+}
+
+for (const entry of required) runMutation('required', entry.parent, entry.name)
+for (const enumPath of enums) runMutation('enum', enumPath)
+if (failures > 0) process.exit(1)
+console.log(`PASS: plan.schema.json mutation coverage complete (${required.length} required, ${enums.length} enum)`)
+NODE
+
+# --- Native harness composition (result.schema.json) -----------------------
+# result.schema.json is a self-contained composition (envelope properties +
+# $defs.<role> + allOf role dispatch) a native JSON-Schema validator can use
+# with no separate dispatch script. Two properties to prove: (a) it accepts
+# every valid role fixture and rejects every invalid one whose violation is
+# schema-level (a receipt/context-only violation — one that needs a sibling
+# envelope field, another document, or run context this composed schema
+# cannot see — is correctly NOT caught here; that is
+# ai/skills/universal/dev-flow-support/assets/validate-result-schemas.mjs's job, and SEMANTIC_ONLY below is the
+# explicit, auditable list of which fixtures those are); (b) $defs.<role>
+# never drifts from the standalone result.<role>.schema.json it was copied
+# from.
+node --input-type=module - "$schemas_dir" "$fixtures_dir" <<'NODE'
+import { createSchemaValidator, canonicalJson } from './ai/skills/universal/dev-flow-support/assets/lib/json-schema-subset.mjs'
+import { readFileSync, readdirSync } from 'node:fs'
+import path from 'node:path'
+
+const [schemasDir, fixturesDir] = process.argv.slice(2)
+
+const composed = JSON.parse(readFileSync(path.join(schemasDir, 'result.schema.json'), 'utf8'))
+const engine = createSchemaValidator(composed)
+engine.assertSupportedSchema(composed)
+
+const ROLE_DIRS = {
+  implementer: 'result.implementer.schema',
+  challenger: 'result.challenger.schema',
+  reviewer: 'result.reviewer.schema',
+  integrator: 'result.integrator.schema'
+}
+
+// Fixtures whose invalid-ness needs a receipt-validation / run-context check
+// this composed schema alone cannot express (ai/schemas/README.md's
+// "Composition" / "Receipt validation" sections name every one of these
+// checks). result.schema.json correctly ACCEPTS these fixtures on their
+// own; ai/skills/universal/dev-flow-support/assets/validate-result-schemas.mjs is what rejects them.
+const SEMANTIC_ONLY = new Set([
+  // The "missing-*" implementer status-conditional fixtures moved OFF this
+  // list once result.schema.json's allOf gained the completed/blocked
+  // requiredness branches, and the "empty"/"null" variants moved off too
+  // once that same allOf's then-branches gained minLength/minItems
+  // (role+status are both envelope-level, visible to the composed
+  // document unlike the standalone payload-only schema, whose SHARED
+  // property definitions cannot add minLength themselves — Foreman v1
+  // serializes summary as "" on a blocked result) — see
+  // ai/schemas/result.schema.json's own $comment.
+  'result.reviewer.schema/invalid/counts-mismatch-tally.json',
+  'result.reviewer.schema/invalid/duplicate-finding-id-within-pass.json',
+  'result.reviewer.schema/invalid/duplicate-id-across-passes.json',
+  'result.reviewer.schema/invalid/finding-id-finder-mismatch.json',
+  'result.reviewer.schema/invalid/finding-id-round-mismatch.json',
+  'result.reviewer.schema/invalid/finding-id-stage-mismatch.json',
+  'result.reviewer.schema/invalid/head-mismatch.json',
+  'result.reviewer.schema/invalid/blocked-with-findings.json',
+  // result.challenger.schema shares the same finding core and the same
+  // receipt-validation functions (checkFindingIds, checkReviewerBlockedStatus,
+  // checkHeadAgreement — see ai/skills/universal/dev-flow-support/assets/validate-result-schemas.mjs), so it needs
+  // the identical set of receipt-only fixtures, plus two challenger-only ones
+  // that need array-to-array comparison (attack_scenarios[] against
+  // findings[]) no single-document schema keyword can express.
+  'result.challenger.schema/invalid/counts-mismatch-tally.json',
+  'result.challenger.schema/invalid/duplicate-finding-id-within-pass.json',
+  'result.challenger.schema/invalid/duplicate-id-across-passes.json',
+  'result.challenger.schema/invalid/finding-id-finder-mismatch.json',
+  'result.challenger.schema/invalid/finding-id-round-mismatch.json',
+  'result.challenger.schema/invalid/finding-id-stage-mismatch.json',
+  'result.challenger.schema/invalid/head-mismatch.json',
+  'result.challenger.schema/invalid/blocked-with-findings.json',
+  'result.challenger.schema/invalid/attack-scenario-unknown-finding-reference.json',
+  'result.challenger.schema/invalid/attack-scenario-duplicate-id.json',
+  'result.integrator.schema/invalid/accepted-reviewed_commit-mismatch.json',
+  // harmon-init#752: which commit a receipt must name is conditional on a
+  // sibling object's CONTENT (carried.origin_head), which no keyword in this
+  // subset can compare a field against — the same category as the line above.
+  'result.integrator.schema/invalid/carried-receipt-names-neither-head.json',
+  // harmon-init#752 round 3: which head a carry ATTESTS is a cross-field
+  // comparison against the envelope, which no keyword in this subset can
+  // express — same category as the two lines above.
+  'result.integrator.schema/invalid/carried-attests-another-head.json',
+  // harmon-init#752 integration cycle 1: whether the codex-cloud mirror
+  // agrees with codex_cycle is a comparison between two sibling objects,
+  // which no keyword in this subset can express.
+  'result.integrator.schema/invalid/carried-mirror-contradicts-cycle.json',
+  'result.integrator.schema/invalid/applied-dispositions-duplicate-finding-id.json',
+  'result.integrator.schema/invalid/blocked-with-clean-verdict.json',
+  'result.integrator.schema/invalid/clean-with-empty-checks.json',
+  'result.integrator.schema/invalid/clean-with-failing-check.json',
+  'result.integrator.schema/invalid/clean-with-pending-cycle.json',
+  'result.integrator.schema/invalid/clean-with-required-check-skipping.json',
+  'result.integrator.schema/invalid/clean-with-unanswered-thread.json',
+  'result.integrator.schema/invalid/clean-with-unapplied-finding.json',
+  'result.integrator.schema/invalid/codex-cycle-nonterminal-with-accepted.json',
+  'result.integrator.schema/invalid/head-mismatch.json',
+  'result.integrator.schema/invalid/findings-duplicate-id.json',
+  'result.integrator.schema/invalid/findings-wrong-cycle.json',
+  'result.integrator.schema/invalid/known-ids-collision.json',
+  'result.integrator.schema/invalid/clean-with-fix-disposition.json',
+  'result.integrator.schema/invalid/clean-verdict-known-id-defer.json',
+  'result.integrator.schema/invalid/applied-dispositions-unknown-finding-id.json',
+  'result.integrator.schema/invalid/exit-code-13-with-pending.json',
+  'result.integrator.schema/invalid/exit-code-14-with-clean.json',
+  'result.integrator.schema/invalid/exit-code-10-with-pending.json',
+  'result.integrator.schema/invalid/exit-code-2-with-pending.json',
+  // harmon-devkit#573/#508: the two new exit codes pair with a verdict the
+  // same way 13/2 and 11/12 already do, and that pairing lives in
+  // EXIT_CODE_VERDICT_CONSTRAINTS rather than in the schema — a JSON Schema
+  // if/then cannot express "which rule applies depends on this sibling
+  // value". `accepted` on a non-terminal exit is likewise the validator's
+  // checkCodexCycleAcceptedScope, exactly as for its 11 counterpart above.
+  'result.integrator.schema/invalid/exit-code-15-with-pending.json',
+  'result.integrator.schema/invalid/exit-code-15-with-accepted.json',
+  'result.integrator.schema/invalid/exit-code-16-with-escalate.json',
+  // harmon-devkit#1050 integration cycle 1, finding 4064588966: the same
+  // pairing aggregated over codex_cycle AND every finder_cycles[] entry, by
+  // precedence escalate > findings > pending > clean. A schema cannot express
+  // it for the same reason it cannot express the single-cycle rule, and less
+  // so: the governing cycle is whichever one demands the most, which is not a
+  // fixed node the way `codex_cycle` was.
+  // Codex cycle 3 finding 4067133478: 11/12/16 are a floor of `pending`, so
+  // `escalate` is rejected by the exclusion rather than by an equality, and a
+  // `clean` mis-statement is caught by the clean rule before the floor. Both
+  // are validator-side for the same reason the rest of this family is.
+  'result.integrator.schema/invalid/transient-read-claims-clean.json',
+  'result.integrator.schema/invalid/cycles-escalate-outranks-pending.json',
+  'result.integrator.schema/invalid/finder-cycle-quota-exhausted-claims-pending.json',
+  'result.integrator.schema/invalid/finder-cycle-transient-read-claims-clean.json',
+  'result.integrator.schema/invalid/settled-at-produced-at-mismatch.json',
+  'result.integrator.schema/invalid/applied-dispositions-future-integration-round.json'
+])
+
+let failures = 0
+let validChecked = 0
+let invalidChecked = 0
+const semanticOnlySeen = new Set()
+
+for (const dir of Object.values(ROLE_DIRS)) {
+  const validDir = path.join(fixturesDir, dir, 'valid')
+  for (const entry of readdirSync(validDir)) {
+    if (!entry.endsWith('.json')) continue
+    const file = path.join(validDir, entry)
+    const instance = JSON.parse(readFileSync(file, 'utf8'))
+    const errors = engine.validate(instance, composed, '$result')
+    validChecked += 1
+    if (errors.length > 0) {
+      console.error(`FAIL: valid fixture rejected by result.schema.json: ${file} -> ${errors.join('; ')}`)
+      failures += 1
+    }
+  }
+  const invalidDir = path.join(fixturesDir, dir, 'invalid')
+  for (const entry of readdirSync(invalidDir)) {
+    if (!entry.endsWith('.json') || entry.includes('.known-ids.')) continue
+    const relKey = `${dir}/invalid/${entry}`
+    const file = path.join(invalidDir, entry)
+    if (SEMANTIC_ONLY.has(relKey)) {
+      semanticOnlySeen.add(relKey)
+      continue
+    }
+    const instance = JSON.parse(readFileSync(file, 'utf8'))
+    const errors = engine.validate(instance, composed, '$result')
+    invalidChecked += 1
+    if (errors.length === 0) {
+      console.error(
+        `FAIL: invalid fixture accepted by result.schema.json alone, expected a schema-level rejection: ${file}`
+      )
+      failures += 1
+    }
+  }
+}
+for (const key of SEMANTIC_ONLY) {
+  if (!semanticOnlySeen.has(key)) {
+    console.error(`FAIL: SEMANTIC_ONLY names a fixture that no longer exists: ${key}`)
+    failures += 1
+  }
+}
+if (failures === 0) {
+  console.log(
+    `PASS: result.schema.json accepts ${validChecked} valid role fixtures and rejects ${invalidChecked} schema-level invalid ones (${semanticOnlySeen.size} left to the validator script)`
+  )
+}
+
+// $defs.<role> must never drift from the standalone result.<role>.schema.json
+function stripDocMeta(doc) {
+  const { $schema, $id, title, $comment, ...rest } = doc
+  return rest
+}
+// The one necessary edit when nesting reviewer's own $defs.finding under
+// this file's $defs.reviewer: its internal #/$defs/finding reference
+// becomes #/$defs/reviewer/$defs/finding so it still resolves. Normalize
+// exactly that rewrite back before comparing — nothing else should differ.
+function normalizeReviewerRefs(fragment) {
+  return JSON.parse(JSON.stringify(fragment).replaceAll('#/$defs/reviewer/$defs/finding', '#/$defs/finding'))
+}
+// The challenger twin: its $defs nests both `finding` and `attackScenario`
+// under $defs.challenger in the composed document, so both internal refs need
+// the same rewrite-then-compare treatment.
+function normalizeChallengerRefs(fragment) {
+  return JSON.parse(
+    JSON.stringify(fragment).replaceAll('#/$defs/challenger/$defs/', '#/$defs/')
+  )
+}
+
+for (const role of Object.keys(ROLE_DIRS)) {
+  const standalone = stripDocMeta(
+    JSON.parse(readFileSync(path.join(schemasDir, `result.${role}.schema.json`), 'utf8'))
+  )
+  let composedDef = composed.$defs[role]
+  if (role === 'reviewer') composedDef = normalizeReviewerRefs(composedDef)
+  if (role === 'challenger') composedDef = normalizeChallengerRefs(composedDef)
+  if (canonicalJson(standalone) !== canonicalJson(composedDef)) {
+    console.error(
+      `FAIL: result.schema.json's \$defs.${role} has drifted from result.${role}.schema.json (compared minus $schema/$id/title/$comment)`
+    )
+    failures += 1
+  } else {
+    console.log(`PASS: result.schema.json's \$defs.${role} matches result.${role}.schema.json`)
+  }
+}
+
+// The role-fixture loop above proves the composed schema accepts/rejects
+// role-PAYLOAD-shaped violations, but exercises only the four role fixture
+// directories — it never runs the standalone envelope-invalid fixtures
+// (missing/malformed schema, role, status, head, produced_at, producer,
+// run) against the composed root, so an envelope-level regression there
+// (e.g. a required envelope field silently dropped from result.schema.json's
+// own root) would slip through this test file untouched. Every
+// envelope-invalid fixture is a violation of a field the composed root
+// ALSO carries directly (this file's own $comment: the composed root is
+// copied from result.envelope.schema.json, payload aside), so each one
+// must be schema-level rejectable by `composed` too — except the two named
+// below, whose violations need reasoning no JSON-Schema keyword (in either
+// copy of the field) can express at all, the same category as SEMANTIC_ONLY
+// above: produced_at-impossible-date is a calendar-validity check (the
+// pattern matches the STRING SHAPE of "2026-02-30T10:00:00Z"; only a real
+// date parse knows February has no 30th), and run-mismatch needs external
+// context (which run is "active") no single document carries.
+const ENVELOPE_SEMANTIC_ONLY = new Set(['produced_at-impossible-date.json', 'run-mismatch.json'])
+const envelopeInvalidDir = path.join(fixturesDir, 'result.envelope.schema', 'invalid')
+let envelopeChecked = 0
+const envelopeSemanticOnlySeen = new Set()
+for (const entry of readdirSync(envelopeInvalidDir)) {
+  if (!entry.endsWith('.json')) continue
+  if (ENVELOPE_SEMANTIC_ONLY.has(entry)) {
+    envelopeSemanticOnlySeen.add(entry)
+    continue
+  }
+  const file = path.join(envelopeInvalidDir, entry)
+  const instance = JSON.parse(readFileSync(file, 'utf8'))
+  const errors = engine.validate(instance, composed, '$result')
+  envelopeChecked += 1
+  if (errors.length === 0) {
+    console.error(
+      `FAIL: envelope-invalid fixture accepted by result.schema.json, expected a schema-level rejection: ${file}`
+    )
+    failures += 1
+  }
+}
+for (const name of ENVELOPE_SEMANTIC_ONLY) {
+  if (!envelopeSemanticOnlySeen.has(name)) {
+    console.error(`FAIL: ENVELOPE_SEMANTIC_ONLY names a fixture that no longer exists: ${name}`)
+    failures += 1
+  }
+}
+if (envelopeChecked === 0) {
+  console.error(`FAIL: no envelope-invalid fixtures found under ${envelopeInvalidDir} — the composed-root check ran nothing`)
+  failures += 1
+} else if (failures === 0) {
+  console.log(
+    `PASS: result.schema.json rejects all ${envelopeChecked} envelope-level invalid fixtures (${envelopeSemanticOnlySeen.size} left to the validator script)`
+  )
+}
+
+// $defs.<role> drift is checked above; the composed ROOT itself (everything
+// but the role-dispatched payload, which has no independent schema of its
+// own at this level) must never drift from result.envelope.schema.json
+// either — this is what actually caught the finding: removing `head` from
+// result.schema.json.required left every role-fixture and envelope-invalid
+// check above green, because none of those fixtures happens to omit head
+// AND rely on the composed root (rather than $defs) to reject it.
+{
+  const envelopeSchema = JSON.parse(
+    readFileSync(path.join(schemasDir, 'result.envelope.schema.json'), 'utf8')
+  )
+  const withoutPayload = (list) => (list ?? []).filter((name) => name !== 'payload')
+  const composedRequired = withoutPayload(composed.required).sort()
+  const envelopeRequired = withoutPayload(envelopeSchema.required).sort()
+  // Comparing Object.keys(...) alone (challenge r2 P2) proves only that the
+  // same NAMES exist on both sides — weakening just the composed copy's
+  // head.pattern to accept a 39-character SHA leaves the key lists equal and
+  // passes here, exactly the drift this check exists to catch. Compare the
+  // full property DEFINITION objects instead, canonicalized the same way the
+  // $defs.<role> drift check above already does, so a changed pattern/type/
+  // enum on either copy is caught, not only an added or removed key.
+  const withoutPayloadProps = (properties) => {
+    const { payload, ...rest } = properties ?? {}
+    return rest
+  }
+  const composedProperties = withoutPayloadProps(composed.properties)
+  const envelopeProperties = withoutPayloadProps(envelopeSchema.properties)
+  if (
+    canonicalJson(composedRequired) !== canonicalJson(envelopeRequired) ||
+    canonicalJson(composedProperties) !== canonicalJson(envelopeProperties)
+  ) {
+    console.error(
+      'FAIL: result.schema.json\'s root (required/properties, minus payload) has drifted from result.envelope.schema.json ' +
+        `(composed required=${JSON.stringify(composedRequired)} vs envelope required=${JSON.stringify(envelopeRequired)}; ` +
+        `composed properties=${JSON.stringify(composedProperties)} vs envelope properties=${JSON.stringify(envelopeProperties)})`
+    )
+    failures += 1
+  } else {
+    console.log('PASS: result.schema.json\'s root (required/properties, minus payload) matches result.envelope.schema.json')
+  }
+}
+
+process.exit(failures === 0 ? 0 : 1)
+NODE
+
+# --- Engine-level keyword tests (ai/skills/universal/dev-flow-support/assets/lib/json-schema-subset.mjs) -------
+# minimum/maximum and if/then/else were added to the shared subset engine
+# for this schema family (agent-registry.schema.json never needed them).
+# The fixture corpus exercises both in situ (round/line/attempt/sequence
+# lower bounds; the integrator's clean-verdict conditional), but the engine
+# itself is shared with scripts/validate-agent-registry.mjs, so it earns
+# direct, schema-agnostic tests of its own, isolated from any one schema's
+# semantics — mirroring how test-agent-registry.sh unit-tests the rest of
+# the engine's keywords via tiny inline schema/instance pairs.
+node --input-type=module - <<'NODE'
+import { createSchemaValidator } from './ai/skills/universal/dev-flow-support/assets/lib/json-schema-subset.mjs'
+
+let failures = 0
+function expect(description, condition) {
+  if (!condition) {
+    console.error(`FAIL: ${description}`)
+    failures += 1
+  } else {
+    console.log(`PASS: ${description}`)
+  }
+}
+
+// minimum / maximum
+{
+  const schema = { type: 'integer', minimum: 1, maximum: 3 }
+  const engine = createSchemaValidator(schema)
+  expect('minimum: rejects a value below it', engine.validate(0, schema, '$x').length > 0)
+  expect('minimum: accepts the boundary value', engine.validate(1, schema, '$x').length === 0)
+  expect('maximum: rejects a value above it', engine.validate(4, schema, '$x').length > 0)
+  expect('maximum: accepts the boundary value', engine.validate(3, schema, '$x').length === 0)
+  expect(
+    'minimum/maximum: error message names the bound',
+    engine.validate(0, schema, '$x').some((e) => e.includes('>= 1'))
+  )
+}
+
+// maxItems (added for #635's challenger completed/blocked attack_scenarios
+// conditional — minItems already existed for ac_test_map's non-emptiness)
+{
+  const schema = { type: 'array', minItems: 1, maxItems: 2 }
+  const engine = createSchemaValidator(schema)
+  expect('maxItems: rejects an array above it', engine.validate([1, 2, 3], schema, '$x').length > 0)
+  expect('maxItems: accepts the boundary value', engine.validate([1, 2], schema, '$x').length === 0)
+  expect('maxItems of 0: rejects any non-empty array', (() => {
+    const zeroSchema = { type: 'array', maxItems: 0 }
+    const zeroEngine = createSchemaValidator(zeroSchema)
+    return zeroEngine.validate([1], zeroSchema, '$x').length > 0
+  })())
+  expect('maxItems of 0: accepts an empty array', (() => {
+    const zeroSchema = { type: 'array', maxItems: 0 }
+    const zeroEngine = createSchemaValidator(zeroSchema)
+    return zeroEngine.validate([], zeroSchema, '$x').length === 0
+  })())
+  expect(
+    'maxItems: error message names the bound',
+    engine.validate([1, 2, 3], schema, '$x').some((e) => e.includes('at most 2 item(s)'))
+  )
+}
+
+// if / then / else
+{
+  const schema = {
+    type: 'object',
+    properties: { status: { enum: ['completed', 'blocked'] }, summary: { type: 'string' } },
+    if: { properties: { status: { const: 'completed' } }, required: ['status'] },
+    then: { required: ['summary'] },
+    else: { required: ['reason'] }
+  }
+  const engine = createSchemaValidator(schema)
+  expect(
+    'if/then: the then-branch requirement applies when if matches',
+    engine.validate({ status: 'completed' }, schema, '$x').some((e) => e.includes('summary'))
+  )
+  expect(
+    'if/then: the then-branch requirement is satisfied, no false positive',
+    engine.validate({ status: 'completed', summary: 'ok' }, schema, '$x').length === 0
+  )
+  expect(
+    'if/then/else: the else-branch requirement applies when if does not match',
+    engine.validate({ status: 'blocked' }, schema, '$x').some((e) => e.includes('reason'))
+  )
+  expect(
+    'if/then/else: a non-matching if never triggers the then-branch requirement',
+    !engine.validate({ status: 'blocked', reason: 'why' }, schema, '$x').some((e) => e.includes('summary'))
+  )
+}
+
+// if / then nested at a non-root property (result.integrator.schema.json's
+// codex_cycle: exit_code 0/10 requires accepted) — proves the engine
+// evaluates if/then wherever it appears in the schema tree, not only when
+// the whole instance is the thing being conditioned.
+{
+  const schema = {
+    type: 'object',
+    properties: {
+      cycle: {
+        type: ['object', 'null'],
+        properties: { exit_code: { enum: [0, 10, 11] }, accepted: { type: 'object' } },
+        if: { properties: { exit_code: { enum: [0, 10] } }, required: ['exit_code'] },
+        then: { required: ['accepted'] }
+      }
+    }
+  }
+  const engine = createSchemaValidator(schema)
+  expect(
+    'nested if/then: fires for a matching child object',
+    engine
+      .validate({ cycle: { exit_code: 0 } }, schema, '$x')
+      .some((e) => e.includes('cycle') && e.includes('accepted'))
+  )
+  expect(
+    'nested if/then: satisfied requirement produces no false positive',
+    engine.validate({ cycle: { exit_code: 0, accepted: {} } }, schema, '$x').length === 0
+  )
+  expect(
+    'nested if/then: a non-matching exit_code never requires accepted',
+    engine.validate({ cycle: { exit_code: 11 } }, schema, '$x').length === 0
+  )
+  expect(
+    'nested if/then: a null child is untouched by a condition scoped to it',
+    engine.validate({ cycle: null }, schema, '$x').length === 0
+  )
+}
+
+// allOf — unconditional composition (result.schema.json's role dispatch:
+// one {if, then} member per role, ALL of them always evaluated against the
+// whole instance).
+{
+  const schema = {
+    type: 'object',
+    properties: { role: { enum: ['a', 'b'] } },
+    allOf: [
+      { if: { properties: { role: { const: 'a' } }, required: ['role'] }, then: { required: ['x'] } },
+      { if: { properties: { role: { const: 'b' } }, required: ['role'] }, then: { required: ['y'] } }
+    ]
+  }
+  const engine = createSchemaValidator(schema)
+  expect(
+    'allOf: the matching member\'s then-branch fires',
+    engine.validate({ role: 'a' }, schema, '$x').some((e) => e.includes('missing required property x'))
+  )
+  expect(
+    'allOf: a non-matching member\'s then-branch never fires',
+    !engine.validate({ role: 'a', x: 1 }, schema, '$x').some((e) => e.includes('missing required property y'))
+  )
+  expect(
+    'allOf: every member is evaluated (not just the first)',
+    engine.validate({ role: 'b' }, schema, '$x').some((e) => e.includes('missing required property y'))
+  )
+  expect(
+    'allOf: satisfying every member\'s requirement produces no false positive',
+    engine.validate({ role: 'a', x: 1 }, schema, '$x').length === 0
+  )
+}
+
+// oneOf — exclusive composition. Two matching children must fail, which is
+// the semantic difference from anyOf and the path the disjoint receipt
+// variants cannot exercise themselves.
+{
+  const schema = {
+    oneOf: [
+      { type: 'object', required: ['shared'] },
+      { type: 'object', properties: { shared: { type: 'number' } } }
+    ]
+  }
+  const engine = createSchemaValidator(schema)
+  expect(
+    'oneOf: rejects a value matching two members',
+    engine
+      .validate({ shared: 1 }, schema, '$x')
+      .some((e) => e.includes('must match exactly one schema in oneOf (matched 2)'))
+  )
+}
+
+process.exit(failures === 0 ? 0 : 1)
+NODE
+echo "PASS: engine-level minimum/maximum, condition, and composition keyword tests"
+
+# --- Receipt-validation regression tests requiring run context -------------
+# These need an argument no single fixture file can carry on its own (a set
+# of prior finding ids, or the run the envelope is checked against), so they
+# are explicit named cases rather than entries in the generic corpus loop
+# above. Each still lives beside a real fixture file under the corpus so
+# Foreman's Python conformance run also has it to replay structurally (the
+# extra CLI context is this script's concern, not the fixture's).
+
+run_context_case() {
+    local description="$1" kind="$2" file="$3" expected="$4"
+    shift 4
+    local out
+    if out="$(node "$validator" "$kind" "$file" "$@" 2>&1)"; then
+        fail "$description: expected rejection, validator accepted $file"
+    fi
+    case "$out" in
+    *"$expected"*) ;;
+    *) fail "$description failed for the wrong reason: $out" ;;
+    esac
+    echo "PASS: $description"
+}
+
+run_context_case \
+    "duplicate finding id across passes in the same run is rejected" \
+    reviewer \
+    "$fixtures_dir/result.reviewer.schema/invalid/duplicate-id-across-passes.json" \
+    "collides with a finding already in the run" \
+    --known-ids "$fixtures_dir/result.reviewer.schema/invalid/duplicate-id-across-passes.known-ids.json"
+
+run_context_case \
+    "duplicate finding id across passes in the same run is rejected (challenger)" \
+    challenger \
+    "$fixtures_dir/result.challenger.schema/invalid/duplicate-id-across-passes.json" \
+    "collides with a finding already in the run" \
+    --known-ids "$fixtures_dir/result.challenger.schema/invalid/duplicate-id-across-passes.known-ids.json"
+
+run_context_case \
+    "a run that is not the active run is rejected" \
+    implementer \
+    "$fixtures_dir/result.envelope.schema/invalid/run-mismatch.json" \
+    "is not the active run" \
+    --run-id "run-0001-active" --initiated-by human
+
+adjudication_pass_dir="$fixtures_dir/adjudication.schema/invalid"
+
+run_context_case \
+    "an adjudication missing an entry for a pass finding is rejected" \
+    adjudication \
+    "$adjudication_pass_dir/pass-cross-check-missing-entry.json" \
+    "has no adjudication entry" \
+    --pass "$adjudication_pass_dir/pass-cross-check.pass.json"
+
+run_context_case \
+    "a blocked pass is rejected as --pass context" \
+    adjudication \
+    "$adjudication_pass_dir/pass-cross-check-missing-entry.json" \
+    "a blocked pass contributes no findings and cannot be used as --pass context" \
+    --pass "$adjudication_pass_dir/pass-cross-check-blocked-pass.pass.json"
+
+run_context_case \
+    "a blocked INTEGRATOR pass with no findings is still rejected as --pass context" \
+    adjudication \
+    "$fixtures_dir/adjudication.schema/valid/integration-adjudication.json" \
+    "a blocked pass contributes no findings and cannot be used as --pass context" \
+    --pass "$fixtures_dir/adjudication.schema/invalid/integration-blocked-pass-no-findings.pass.json"
+
+run_context_case \
+    "an adjudication entry naming an id absent from the pass is rejected" \
+    adjudication \
+    "$adjudication_pass_dir/pass-cross-check-extra-entry.json" \
+    "names a finding id absent from every --pass" \
+    --pass "$adjudication_pass_dir/pass-cross-check.pass.json"
+
+run_context_case \
+    "an adjudication entry's reviewer_priority drifting from the pass finding's priority is rejected" \
+    adjudication \
+    "$adjudication_pass_dir/pass-cross-check-reviewer-priority-drift.json" \
+    "does not match the pass finding's own priority" \
+    --pass "$adjudication_pass_dir/pass-cross-check.pass.json"
+
+run_context_case \
+    "an adjudication document naming a reviewed_head that disagrees with the pass is rejected" \
+    adjudication \
+    "$adjudication_pass_dir/pass-cross-check-head-mismatch.json" \
+    "does not match the pass payload's reviewed_head" \
+    --pass "$adjudication_pass_dir/pass-cross-check.pass.json"
+
+two_finder_dir="$fixtures_dir/adjudication.schema/valid"
+
+run_context_case \
+    "a union adjudication checked against only one of its two passes is rejected" \
+    adjudication \
+    "$two_finder_dir/two-finder-union-adjudication.json" \
+    "names a finding id absent from every --pass" \
+    --pass "$two_finder_dir/two-finder-a.pass.json"
+
+run_context_case \
+    "two --pass files repeating the same finder are rejected" \
+    adjudication \
+    "$two_finder_dir/two-finder-union-adjudication.json" \
+    "repeats finder codex-cli" \
+    --pass "$two_finder_dir/two-finder-a.pass.json" \
+    --pass "$two_finder_dir/two-finder-a.pass.json"
+
+# --pass agreement covers the full run identity (run_id AND initiated_by),
+# not just run_id -- a --pass file with a foreign initiated_by is otherwise
+# schema-valid on its own, so this is context-only (needs the OTHER pass to
+# disagree with).
+sed 's/"initiated_by": "human"/"initiated_by": "foreman"/' "$two_finder_dir/two-finder-b.pass.json" \
+    >"$test_tmp/two-finder-b-foreign-initiated-by.pass.json"
+run_context_case \
+    "two --pass files disagreeing on initiated_by (same run_id) are rejected" \
+    adjudication \
+    "$two_finder_dir/two-finder-union-adjudication.json" \
+    "disagreeing with" \
+    --pass "$two_finder_dir/two-finder-a.pass.json" \
+    --pass "$test_tmp/two-finder-b-foreign-initiated-by.pass.json"
+
+run_context_case \
+    "a --pass file whose run identity disagrees with the given --run-id/--initiated-by is rejected" \
+    adjudication \
+    "$fixtures_dir/adjudication.schema/valid/omator-397-challenge-r1-adjudication.json" \
+    "is not the active run" \
+    --pass "$fixtures_dir/result.reviewer.schema/valid/omator-397-challenge-r1.json" \
+    --run-id "wrong-run-id" --initiated-by human
+
+run_context_case \
+    "an adjudication entry already adjudicated by an earlier round document is rejected" \
+    adjudication \
+    "$adjudication_pass_dir/known-adjudicated-collision.json" \
+    "already adjudicated in an earlier round document of this run" \
+    --known-adjudicated "$adjudication_pass_dir/known-adjudicated-collision.known-adjudicated.json"
+
+settlement_cross_check_adjudication="$fixtures_dir/run.schema/invalid/settlement-cross-check.adjudication.json"
+
+run_context_case \
+    "a settlement of a finding adjudicated fix (not deferred) is rejected" \
+    run \
+    "$fixtures_dir/run.schema/invalid/settlement-of-fixed-finding.json" \
+    "was adjudicated fix, not defer" \
+    --adjudication "$settlement_cross_check_adjudication"
+
+run_context_case \
+    "a settlement of a finding absent from every supplied adjudication document is rejected" \
+    run \
+    "$fixtures_dir/run.schema/invalid/settlement-of-unknown-finding.json" \
+    "is not adjudicated in any supplied --adjudication document" \
+    --adjudication "$settlement_cross_check_adjudication"
+
+split_cross_check_adjudication="$fixtures_dir/run.schema/invalid/split-cross-check.adjudication.json"
+
+# The run-level splits[] projection and the per-finding `split` adjudications
+# are two documents describing one decision (#747). Neither proves the other
+# alone, so the binding is context-only: a split naming a finding that was
+# actually fixed, or naming a different issue than the adjudication filed it
+# as, is the "left to memory" failure with a paper trail.
+run_context_case \
+    "a split naming a finding adjudicated fix (not split) is rejected" \
+    run \
+    "$fixtures_dir/run.schema/invalid/split-of-fixed-finding.json" \
+    "was adjudicated fix, not split" \
+    --adjudication "$split_cross_check_adjudication"
+
+run_context_case \
+    "a split naming a different issue than its adjudication filed it as is rejected" \
+    run \
+    "$fixtures_dir/run.schema/invalid/split-issue-disagrees-with-adjudication.json" \
+    "but this split names 999" \
+    --adjudication "$split_cross_check_adjudication"
+
+split_promotion_adjudication="$fixtures_dir/run.schema/invalid/split-promotion.adjudication.json"
+
+# The two halves of the split's promotion contract, both context-only because
+# each needs the adjudication documents the run record cannot see (challenge
+# round 1, both confirmed): splits[] -> adjudications was checked, but neither
+# the converse nor the deletion round was.
+run_context_case \
+    "a promoted run whose splits[] omits a finding adjudicated split is rejected" \
+    run \
+    "$fixtures_dir/run.schema/invalid/split-adjudication-not-recorded.json" \
+    "was adjudicated split but no splits[] entry records it" \
+    --adjudication "$settlement_cross_check_adjudication" \
+    --adjudication "$split_promotion_adjudication"
+
+# The terminal-outcome half of the converse check, which `ready-for-review`
+# alone does not exercise (review round 2, confirmed: the fixture was on the
+# context-only allowlist with no case invoking it, so a regression restoring
+# the ready-for-review-only gate would have gone unnoticed).
+run_context_case \
+    "a capped run whose splits[] omits an adjudicated split is rejected" \
+    run \
+    "$fixtures_dir/run.schema/invalid/split-omitted-on-capped-run.json" \
+    "was adjudicated split but no splits[] entry records it" \
+    --adjudication "$split_promotion_adjudication"
+
+# The positive control: with every split recorded, the same promoted run
+# validates. Without it, the case above would pass just as well against a
+# check that rejected every split.
+split_complete_run="$test_tmp/split-complete-run.json"
+jq '.splits[0].finding_ids = ["review-r2-codex-cli-1", "review-r2-codex-cli-2"]' \
+    "$fixtures_dir/run.schema/invalid/split-adjudication-not-recorded.json" >"$split_complete_run"
+if ! out="$(node "$validator" run "$split_complete_run" \
+    --adjudication "$settlement_cross_check_adjudication" \
+    --adjudication "$split_promotion_adjudication" 2>&1)"; then
+    fail "a fully recorded split must validate: $out"
+fi
+echo "PASS: a promoted run recording every split validates"
+
+run_context_case \
+    "an --adjudication document belonging to a foreign run is rejected" \
+    run \
+    "$fixtures_dir/run.schema/valid/fresh-kickoff.json" \
+    "not this run's own run_id" \
+    --adjudication "$settlement_cross_check_adjudication"
+
+run_context_case \
+    "an --adjudication document naming a stage this run's stage_transitions never visited is rejected" \
+    run \
+    "$fixtures_dir/run.schema/valid/fresh-kickoff.json" \
+    "never appears in this run's stage_transitions" \
+    --adjudication "$fixtures_dir/run.schema/invalid/stage-not-visited.adjudication.json"
+
+run_context_case \
+    "the same --adjudication document supplied twice is rejected: a finding cannot be adjudicated more than once" \
+    run \
+    "$fixtures_dir/run.schema/valid/settlement-of-deferred.json" \
+    "is adjudicated more than once across the supplied --adjudication documents" \
+    --adjudication "$settlement_cross_check_adjudication" \
+    --adjudication "$settlement_cross_check_adjudication"
+
+run_context_case \
+    "a ready-for-review run with an unsettled deferred finding is rejected" \
+    run \
+    "$fixtures_dir/run.schema/invalid/ready-with-unsettled-deferral.json" \
+    "has no settlement, required when outcome is ready-for-review" \
+    --adjudication "$settlement_cross_check_adjudication"
+
+# Accepting cases for the same flags, so a false-positive rejection (the flag
+# firing when it should not) is caught too.
+accept_context_case() {
+    local description="$1" kind="$2" file="$3"
+    shift 3
+    local out
+    if ! out="$(node "$validator" "$kind" "$file" "$@" 2>&1)"; then
+        fail "$description: expected acceptance, validator rejected $file -> $out"
+    fi
+    echo "PASS: $description"
+}
+
+accept_context_case \
+    "a --pass file matching the given --run-id/--initiated-by is accepted" \
+    adjudication \
+    "$fixtures_dir/adjudication.schema/valid/omator-397-challenge-r1-adjudication.json" \
+    --pass "$fixtures_dir/result.reviewer.schema/valid/omator-397-challenge-r1.json" \
+    --run-id "omator-397" --initiated-by human
+
+accept_context_case \
+    "a run matching the active run is accepted" \
+    implementer \
+    "$fixtures_dir/result.implementer.schema/valid/completed.json" \
+    --run-id "run-0397-omator" --initiated-by human
+
+accept_context_case \
+    "a finding id absent from known-ids is accepted" \
+    reviewer \
+    "$fixtures_dir/result.reviewer.schema/valid/single-finding-null-line.json" \
+    --known-ids "$fixtures_dir/result.reviewer.schema/invalid/duplicate-id-across-passes.known-ids.json"
+
+accept_context_case \
+    "a genuine adjudication of its own pass is accepted (omator-397 challenge round 1)" \
+    adjudication \
+    "$fixtures_dir/adjudication.schema/valid/omator-397-challenge-r1-adjudication.json" \
+    --pass "$fixtures_dir/result.reviewer.schema/valid/omator-397-challenge-r1.json"
+
+# #635 challenge round 2: a challenge-stage --pass used to be hard-rejected as
+# "expected reviewer, found challenger" regardless of its actual content,
+# because passAllowedRoles/passRole never admitted the new role at all. Proven
+# both ways: a genuine CHALLENGER pass is now accepted (the fix), and a
+# REVIEWER pass for the same stage still is too (a pre-#635 trajectory, e.g.
+# every omator-397 challenge-round fixture above, must keep working).
+accept_context_case \
+    "a challenge-stage adjudication is accepted against a CHALLENGER --pass envelope" \
+    adjudication \
+    "$fixtures_dir/adjudication.schema/valid/challenger-pass-adjudication.json" \
+    --pass "$fixtures_dir/result.challenger.schema/valid/single-finding-null-line.json"
+
+run_context_case \
+    "a challenge-stage adjudication rejects an IMPLEMENTER --pass envelope (the role allowlist still excludes it)" \
+    adjudication \
+    "$fixtures_dir/adjudication.schema/valid/challenger-pass-adjudication.json" \
+    "expected reviewer or challenger, found" \
+    --pass "$fixtures_dir/result.implementer.schema/valid/completed.json"
+
+accept_context_case \
+    "an integration-stage adjudication is checked against an INTEGRATOR --pass envelope, priority fidelity skipped" \
+    adjudication \
+    "$fixtures_dir/adjudication.schema/valid/integration-adjudication.json" \
+    --pass "$fixtures_dir/adjudication.schema/valid/integration-adjudication.pass.json"
+
+accept_context_case \
+    "a blocked INTEGRATOR pass with non-empty findings is accepted as --pass context" \
+    adjudication \
+    "$fixtures_dir/adjudication.schema/valid/integration-blocked-adjudication.json" \
+    --pass "$fixtures_dir/adjudication.schema/valid/integration-blocked-pass-with-findings.pass.json"
+
+run_context_case \
+    "an integration-stage adjudication naming a reviewed_head that disagrees with the --pass envelope's head is rejected" \
+    adjudication \
+    "$fixtures_dir/adjudication.schema/invalid/integration-head-mismatch.json" \
+    "does not match the pass envelope's head" \
+    --pass "$fixtures_dir/adjudication.schema/valid/integration-adjudication.pass.json"
+
+run_context_case \
+    "an integration-stage adjudication naming a round that disagrees with the --pass envelope's integration_round is rejected" \
+    adjudication \
+    "$fixtures_dir/adjudication.schema/invalid/integration-round-mismatch.json" \
+    "does not match the pass envelope's integration_round" \
+    --pass "$fixtures_dir/adjudication.schema/invalid/integration-round-mismatch.pass.json"
+
+run_context_case \
+    "a second --pass for an integration-stage adjudication is rejected, naming the extra file" \
+    adjudication \
+    "$fixtures_dir/adjudication.schema/valid/integration-adjudication.json" \
+    "stage integration accepts at most one --pass" \
+    --pass "$fixtures_dir/adjudication.schema/valid/integration-adjudication.pass.json" \
+    --pass "$fixtures_dir/adjudication.schema/valid/integration-adjudication.pass.json"
+
+accept_context_case \
+    "a union adjudication checked against both of a two-finder round's passes is accepted" \
+    adjudication \
+    "$two_finder_dir/two-finder-union-adjudication.json" \
+    --pass "$two_finder_dir/two-finder-a.pass.json" \
+    --pass "$two_finder_dir/two-finder-b.pass.json"
+
+# #635 challenge round 2: a challenge-stage round can now legitimately mix a
+# pre-#635 reviewer pass with a #635 challenger one ACROSS DIFFERENT rounds
+# (each stays internally single-role), but never WITHIN one round's own
+# union — that would combine two different evidence contracts (challenger's
+# attack_scenarios vs reviewer's absence of them) into one adjudication.
+run_context_case \
+    "a union adjudication mixing a reviewer pass and a challenger pass in one round is rejected" \
+    adjudication \
+    "$fixtures_dir/adjudication.schema/invalid/mixed-role-union-adjudication.json" \
+    "a round aggregates passes from one role, never a mix" \
+    --pass "$fixtures_dir/adjudication.schema/valid/mixed-role-reviewer.pass.json" \
+    --pass "$fixtures_dir/adjudication.schema/valid/mixed-role-challenger.pass.json"
+
+accept_context_case \
+    "a settlement of a genuinely deferred finding is accepted" \
+    run \
+    "$fixtures_dir/run.schema/valid/settlement-of-deferred.json" \
+    --adjudication "$settlement_cross_check_adjudication"
+
+accept_context_case \
+    "a ready-for-review run whose deferred finding IS settled is accepted" \
+    run \
+    "$fixtures_dir/run.schema/valid/ready-with-settled-deferral.json" \
+    --adjudication "$settlement_cross_check_adjudication"
+
+# harmon-devkit#961: receipts are part of the run record in every run-kind
+# mode. The generic corpus loop above proves plain `run`; these explicit cases
+# prove the receipt-required and receipt-binding modes accept the same records.
+for receipt_fixture in \
+    "$fixtures_dir/run.schema/valid/receipts-transition-only.json" \
+    "$fixtures_dir/run.schema/valid/receipts-transition-pass.json" \
+    "$fixtures_dir/run.schema/valid/receipts-transition-no-entered-at.json"; do
+    accept_context_case \
+        "a receipt-bearing run is accepted by run --receipt ($(basename "$receipt_fixture"))" \
+        run \
+        "$receipt_fixture" \
+        --no-adjudications --receipt
+
+    accept_context_case \
+        "a receipt-bearing run is accepted by run --receipts ($(basename "$receipt_fixture"))" \
+        run \
+        "$receipt_fixture" \
+        --no-adjudications --receipts "$receipt_fixture"
+done
+
+# Each item-shape violation is already rejected by plain `run` in the corpus
+# loop. Exercise the two flag modes too and require their diagnostics to retain
+# the receipt's array index rather than collapsing to an unlocated oneOf error.
+for malformed_receipt in \
+    receipts-unknown-kind \
+    receipts-missing-stage \
+    receipts-missing-file \
+    receipts-extra-property; do
+    malformed_file="$fixtures_dir/run.schema/invalid/$malformed_receipt.json"
+    run_context_case \
+        "$malformed_receipt is rejected by run --receipt with an indexed diagnostic" \
+        run \
+        "$malformed_file" \
+        '$run.receipts[0]' \
+        --no-adjudications --receipt
+
+    run_context_case \
+        "$malformed_receipt is rejected by run --receipts with an indexed diagnostic" \
+        run \
+        "$malformed_file" \
+        '$run.receipts[0]' \
+        --no-adjudications --receipts "$malformed_file"
+done
+
+receipts_not_array="$fixtures_dir/run.schema/invalid/receipts-not-array.json"
+run_context_case \
+    "a non-array receipts value is rejected by run --receipt" \
+    run \
+    "$receipts_not_array" \
+    '$run.receipts' \
+    --no-adjudications --receipt
+
+run_context_case \
+    "a non-array receipts value is rejected by run --receipts before binding" \
+    run \
+    "$receipts_not_array" \
+    'has a non-array receipts field' \
+    --no-adjudications --receipts "$receipts_not_array"
+
+# harmon-devkit#821: --receipts strict mode — an adjudication whose stage has
+# no transition receipt in the --receipts record is rejected; without the flag,
+# the same fixture is accepted (the adjudication's stage IS in stage_transitions).
+receipts_strict_adjudication="$fixtures_dir/run.schema/invalid/adjudication-not-in-receipts.adjudication.json"
+receipts_strict_receipts="$fixtures_dir/run.schema/invalid/adjudication-not-in-receipts.receipts.json"
+receipts_split_valid="$test_tmp/receipts-split-valid.json"
+receipts_split_malformed="$test_tmp/receipts-split-malformed.json"
+receipts_split_impossible="$test_tmp/receipts-split-impossible.json"
+
+jq -n \
+    --arg run_id "run-0821-receipts-strict" \
+    '{run_id: $run_id, receipts: [{kind: "transition", stage: "challenge", entered_at: "2026-09-01T00:30:00Z"}]}' \
+    >"$receipts_split_valid"
+jq 'del(.receipts[0].stage)' "$receipts_split_valid" >"$receipts_split_malformed"
+jq '.receipts[0].entered_at = "2026-02-30T00:00:00Z"' \
+    "$receipts_split_valid" >"$receipts_split_impossible"
+
+run_context_case \
+    "a malformed independent --receipts entry is rejected with its index" \
+    run \
+    "$fixtures_dir/run.schema/invalid/adjudication-not-in-receipts.json" \
+    '$receipts.receipts[0]' \
+    --adjudication "$receipts_strict_adjudication" \
+    --receipts "$receipts_split_malformed"
+
+run_context_case \
+    "an impossible independent --receipts timestamp is rejected with its index" \
+    run \
+    "$fixtures_dir/run.schema/invalid/adjudication-not-in-receipts.json" \
+    '$receipts.receipts[0].entered_at' \
+    --adjudication "$receipts_strict_adjudication" \
+    --receipts "$receipts_split_impossible"
+
+accept_context_case \
+    "valid independent --receipts entries authorize their adjudication stage" \
+    run \
+    "$fixtures_dir/run.schema/invalid/adjudication-not-in-receipts.json" \
+    --adjudication "$receipts_strict_adjudication" \
+    --receipts "$receipts_split_valid"
+
+run_context_case \
+    "an independent --receipts transition must name a stage the run entered" \
+    run \
+    "$fixtures_dir/run.schema/invalid/adjudication-not-in-receipts.json" \
+    '$receipts.receipts[0].stage' \
+    --adjudication "$receipts_strict_adjudication" \
+    --receipts "$fixtures_dir/run.schema/invalid/receipts-stage-not-visited.json"
+
+run_context_case \
+    "an --adjudication whose stage has no transition receipt is rejected in --receipts strict mode (#821)" \
+    run \
+    "$fixtures_dir/run.schema/invalid/adjudication-not-in-receipts.json" \
+    "has no transition receipt in the --receipts record" \
+    --adjudication "$receipts_strict_adjudication" \
+    --receipts "$receipts_strict_receipts"
+
+accept_context_case \
+    "the same adjudication is accepted without --receipts (default mode, stage is in stage_transitions) (#821)" \
+    run \
+    "$fixtures_dir/run.schema/invalid/adjudication-not-in-receipts.json" \
+    --adjudication "$receipts_strict_adjudication"
+
+# harmon-devkit#685 (de-scoped receipt invariant, acceptance criterion 7):
+# "every adjudicated round has a matching issue evidence marker
+# (destination: issue, same stage/round); a `pr`-destination marker does not
+# substitute". The two rejections and the acceptance above are one pair: the
+# accepted fixture carries exactly the per-round issue marker the two
+# rejected ones lack, so the check cannot be satisfied by an over-broad
+# reading of either failure.
+run_context_case \
+    "a PROMOTED run with an adjudicated round and no issue evidence marker is rejected (#685)" \
+    run \
+    "$fixtures_dir/run.schema/invalid/adjudicated-round-without-issue-evidence-marker.json" \
+    'but no evidence marker with destination "issue" records it' \
+    --adjudication "$settlement_cross_check_adjudication"
+
+# The in-flight neighbour, and the reason the missing-marker half is gated on
+# promotion at all: a run adjudicates a round and THEN publishes its evidence
+# comment, so between those two writes the record legitimately holds the
+# adjudication without the marker. settlement-of-deferred.json is that state
+# (outcome: null) and must stay accepted — an unconditional rule would fault
+# the normal sequence rather than an attack.
+accept_context_case \
+    "an UNPROMOTED run whose adjudicated round has not published its evidence yet is accepted (#685)" \
+    run \
+    "$fixtures_dir/run.schema/valid/settlement-of-deferred.json" \
+    --adjudication "$settlement_cross_check_adjudication"
+
+# The in-flight window is `outcome: null` specifically, not "not promoted".
+# A capped/escalated/abandoned run has ENDED, and a capped run that never
+# opened a PR relies on its issue comments as the only harvestable record it
+# will ever have (Codex cloud-review cycle 1 on PR #800, confirmed).
+run_context_case \
+    "a CAPPED run with an adjudicated round and no issue evidence marker is rejected (#685)" \
+    run \
+    "$fixtures_dir/run.schema/invalid/adjudicated-round-capped-without-issue-evidence-marker.json" \
+    'required once the run has ended' \
+    --adjudication "$settlement_cross_check_adjudication"
+
+run_context_case \
+    "a per-stage pr rollup marker does not substitute for the per-round issue comment (#685)" \
+    run \
+    "$fixtures_dir/run.schema/invalid/adjudicated-round-only-pr-evidence-marker.json" \
+    'the per-round record belongs on the issue, and a pr comment never substitutes for it' \
+    --adjudication "$settlement_cross_check_adjudication"
+
+# --- Argument validation: fail closed, never silently skip a check --------
+
+# A malformed --known-ids / --known-adjudicated file (valid JSON, but not an
+# array of strings) must abort validation entirely rather than silently
+# disable the check it was meant to feed — reuse any existing object-shaped
+# fixture as "not an array".
+not_an_array_file="$fixtures_dir/adjudication.schema/valid/omator-397-challenge-r1-adjudication.json"
+
+fail_closed_case() {
+    local description="$1" kind="$2" file="$3" flag="$4" bad_file="$5" expected="$6"
+    local out status=0
+    out="$(node "$validator" "$kind" "$file" "$flag" "$bad_file" 2>&1)" || status=$?
+    if [ "$status" -ne 1 ]; then
+        fail "$description: expected exit 1, got $status: $out"
+    fi
+    case "$out" in
+    *"$expected"*) ;;
+    *) fail "$description failed for the wrong reason: $out" ;;
+    esac
+    echo "PASS: $description"
+}
+
+fail_closed_case \
+    "a --known-ids file that is not a JSON array of strings fails closed" \
+    reviewer \
+    "$fixtures_dir/result.reviewer.schema/valid/single-finding-null-line.json" \
+    --known-ids "$not_an_array_file" \
+    "must be a JSON array of strings"
+
+fail_closed_case \
+    "a --known-adjudicated file that is not a JSON array of strings fails closed" \
+    adjudication \
+    "$adjudication_pass_dir/known-adjudicated-collision.json" \
+    --known-adjudicated "$not_an_array_file" \
+    "must be a JSON array of strings"
+
+# --run-id and --initiated-by are a pair: one without the other is a usage
+# error (exit 2), not a guaranteed (and misleading) mismatch rejection.
+usage_error_case() {
+    local description="$1"
+    shift
+    local out status=0
+    out="$(node "$validator" "$@" 2>&1)" || status=$?
+    if [ "$status" -ne 2 ]; then
+        fail "$description: expected exit 2 (usage error), got $status: $out"
+    fi
+    echo "PASS: $description"
+}
+
+usage_error_case \
+    "--run-id without --initiated-by is a usage error" \
+    implementer "$fixtures_dir/result.implementer.schema/valid/completed.json" --run-id "run-0397-omator"
+
+usage_error_case \
+    "--initiated-by without --run-id is a usage error" \
+    implementer "$fixtures_dir/result.implementer.schema/valid/completed.json" --initiated-by human
+
+# A malformed --pass file must fail immediately, naming the --pass file
+# itself, before the primary document's own cross-checks ever run.
+printf '%s' '{"payload":{"findings":[]}}' >"$test_tmp/malformed-pass.json"
+if out="$(node "$validator" adjudication "$adjudication_pass_dir/pass-cross-check-missing-entry.json" \
+    --pass "$test_tmp/malformed-pass.json" 2>&1)"; then
+    fail "a malformed --pass file: expected rejection, validator accepted it"
+fi
+case "$out" in
+*"--pass file $test_tmp/malformed-pass.json is invalid"*) ;;
+*) fail "a malformed --pass file failed for the wrong reason: $out" ;;
+esac
+echo "PASS: a malformed --pass file fails immediately, naming the file"
+
+# Same contract for --adjudication (run kind's own context flag).
+printf '%s' '{"stage":"challenge"}' >"$test_tmp/malformed-adjudication.json"
+if out="$(node "$validator" run "$fixtures_dir/run.schema/valid/settlement-of-deferred.json" \
+    --adjudication "$test_tmp/malformed-adjudication.json" 2>&1)"; then
+    fail "a malformed --adjudication file: expected rejection, validator accepted it"
+fi
+case "$out" in
+*"--adjudication file $test_tmp/malformed-adjudication.json is invalid"*) ;;
+*) fail "a malformed --adjudication file failed for the wrong reason: $out" ;;
+esac
+echo "PASS: a malformed --adjudication file fails immediately, naming the file"
+
+# The validator must find its own schemas by its OWN location, not the
+# caller's cwd — run each of these from $test_tmp, a directory with no
+# ai/schemas of its own, using absolute paths for the validator and fixture.
+if ! out="$(cd "$test_tmp" && node "$repo/$validator" implementer \
+    "$repo/$fixtures_dir/result.implementer.schema/valid/completed.json" \
+    --run-id "run-0397-omator" --initiated-by human 2>&1)"; then
+    fail "default schemas dir from a different cwd: expected acceptance, got -> $out"
+fi
+echo "PASS: the validator resolves its schemas script-relatively, independent of the caller's cwd"
+
+if ! out="$(cd "$test_tmp" && RESULT_SCHEMAS_DIR="$repo/$schemas_dir" node "$repo/$validator" implementer \
+    "$repo/$fixtures_dir/result.implementer.schema/valid/completed.json" \
+    --run-id "run-0397-omator" --initiated-by human 2>&1)"; then
+    fail "RESULT_SCHEMAS_DIR override: expected acceptance, got -> $out"
+fi
+echo "PASS: RESULT_SCHEMAS_DIR overrides the default schemas directory"
+
+if ! out="$(cd "$test_tmp" && node "$repo/$validator" implementer \
+    "$repo/$fixtures_dir/result.implementer.schema/valid/completed.json" \
+    --run-id "run-0397-omator" --initiated-by human --schemas-dir "$repo/$schemas_dir" 2>&1)"; then
+    fail "--schemas-dir override: expected acceptance, got -> $out"
+fi
+echo "PASS: --schemas-dir overrides the default schemas directory"
+
+if ! out="$(cd "$test_tmp" && RESULT_SCHEMAS_DIR="/nonexistent-dir-xyz" node "$repo/$validator" implementer \
+    "$repo/$fixtures_dir/result.implementer.schema/valid/completed.json" \
+    --schemas-dir "$repo/$schemas_dir" 2>&1)"; then
+    fail "--schemas-dir should win over a conflicting RESULT_SCHEMAS_DIR: got -> $out"
+fi
+echo "PASS: --schemas-dir wins over a conflicting RESULT_SCHEMAS_DIR"
+
+# --receipt: without it, an omitted context flag simply skips the checks it
+# would have fed, and the success message says so; with it, every context
+# flag applicable to <kind> is required, naming each missing one.
+reviewer_receipt_fixture="$fixtures_dir/result.reviewer.schema/valid/single-finding-null-line.json"
+reviewer_receipt_run_id="run-2150-single-finding-null-line"
+empty_ids_file="$test_tmp/empty-ids.json"
+printf '[]' >"$empty_ids_file"
+
+out="$(node "$validator" reviewer "$reviewer_receipt_fixture" 2>&1)" || fail "reviewer with no context flags should still be accepted: $out"
+case "$out" in
+*"context skipped: --known-ids, --run-id"*) ;;
+*) fail "the success message should name every applicable flag that was skipped, got: $out" ;;
+esac
+echo "PASS: the success message names every applicable context flag left unsupplied"
+
+out="$(node "$validator" reviewer "$reviewer_receipt_fixture" \
+    --run-id "$reviewer_receipt_run_id" --initiated-by human --known-ids "$empty_ids_file" 2>&1)" ||
+    fail "reviewer with every applicable flag supplied should be accepted: $out"
+case "$out" in
+*"context skipped"*) fail "no context was actually skipped, the message should not claim otherwise: $out" ;;
+esac
+echo "PASS: the success message omits 'context skipped' once every applicable flag is supplied"
+
+receipt_status=0
+out="$(node "$validator" reviewer "$reviewer_receipt_fixture" --receipt 2>&1)" || receipt_status=$?
+[ "$receipt_status" -eq 2 ] || fail "--receipt with no context flags: expected exit 2 (usage error), got $receipt_status: $out"
+case "$out" in
+*"--receipt requires --known-ids"*"--receipt requires --run-id"*) ;;
+*) fail "--receipt's usage error should name every missing applicable flag, got: $out" ;;
+esac
+echo "PASS: --receipt's usage error names every missing applicable flag"
+
+accept_context_case \
+    "--receipt is satisfied once every applicable reviewer flag is supplied" \
+    reviewer "$reviewer_receipt_fixture" \
+    --receipt --run-id "$reviewer_receipt_run_id" --initiated-by human --known-ids "$empty_ids_file"
+
+# challenger shares reviewer's exact CONTEXT_FLAGS shape (--known-ids,
+# --run-id/--initiated-by) since it shares checkFindingIds — one round-trip
+# smoke test proves the wiring, not a full repeat of every reviewer case above.
+challenger_receipt_fixture="$fixtures_dir/result.challenger.schema/valid/single-finding-null-line.json"
+challenger_receipt_run_id="run-4002-single-finding-null-line"
+
+out="$(node "$validator" challenger "$challenger_receipt_fixture" 2>&1)" || fail "challenger with no context flags should still be accepted: $out"
+case "$out" in
+*"context skipped: --known-ids, --run-id"*) ;;
+*) fail "the challenger success message should name every applicable flag that was skipped, got: $out" ;;
+esac
+echo "PASS: the success message names every applicable context flag left unsupplied (challenger)"
+
+accept_context_case \
+    "--receipt is satisfied once every applicable challenger flag is supplied" \
+    challenger "$challenger_receipt_fixture" \
+    --receipt --run-id "$challenger_receipt_run_id" --initiated-by human --known-ids "$empty_ids_file"
+
+usage_error_case \
+    "--receipt on an adjudication with none of --pass, --known-adjudicated, or --run-id is a usage error" \
+    adjudication "$fixtures_dir/adjudication.schema/valid/omator-397-challenge-r1-adjudication.json" --receipt
+
+run_context_case \
+    "an adjudication document naming a run_id other than the given --run-id is rejected" \
+    adjudication \
+    "$fixtures_dir/adjudication.schema/valid/omator-397-challenge-r1-adjudication.json" \
+    "is not the active run" \
+    --run-id "wrong-run-id" --initiated-by human
+
+accept_context_case \
+    "an adjudication document naming the given --run-id is accepted" \
+    adjudication \
+    "$fixtures_dir/adjudication.schema/valid/omator-397-challenge-r1-adjudication.json" \
+    --run-id "omator-397" --initiated-by human
+
+usage_error_case \
+    "--receipt on a run record without --adjudication is a usage error" \
+    run "$fixtures_dir/run.schema/valid/fresh-kickoff.json" --receipt
+
+usage_error_case \
+    "--receipt on an integrator result without --known-ids or --run-id is a usage error" \
+    integrator "$fixtures_dir/result.integrator.schema/valid/verdict-clean.json" --receipt
+
+run_context_case \
+    "an integrator finding id colliding with --known-ids is rejected" \
+    integrator \
+    "$fixtures_dir/result.integrator.schema/invalid/known-ids-collision.json" \
+    "collides with a finding already in the run" \
+    --known-ids "$fixtures_dir/result.integrator.schema/invalid/known-ids-collision.known-ids.json"
+
+accept_context_case \
+    "an integrator finding id absent from --known-ids is accepted" \
+    integrator \
+    "$fixtures_dir/result.integrator.schema/invalid/known-ids-collision.json" \
+    --known-ids "$empty_ids_file"
+
+run_context_case \
+    "an applied_dispositions finding_id absent from both current findings and --known-ids is rejected" \
+    integrator \
+    "$fixtures_dir/result.integrator.schema/invalid/applied-dispositions-unknown-finding-id.json" \
+    "is neither one of this payload's own findings nor in --known-ids" \
+    --known-ids "$empty_ids_file"
+
+accept_context_case \
+    "an applied_dispositions finding_id present in --known-ids (an earlier cycle's finding) is accepted" \
+    integrator \
+    "$fixtures_dir/result.integrator.schema/invalid/applied-dispositions-unknown-finding-id.json" \
+    --known-ids "$fixtures_dir/result.integrator.schema/invalid/applied-dispositions-unknown-finding-id.known-ids.json"
+
+# harmon-devkit#685 (de-scoped receipt invariant, acceptance criterion 10):
+# "nested integrator passes' applied_dispositions ids are validated against
+# the run's known finding universe". The --known-ids pair above is the full
+# check; this pair is the half that needs no run context at all, so it holds
+# on the flagless path too — an integration finding from a round LATER than
+# this pass's own integration_round cannot be in any run's universe, while
+# one from an earlier round (and any challenge/review round, which counts a
+# different stage's rounds entirely) is ordinary and must stay accepted.
+run_context_case \
+    "an applied_dispositions id naming a later integration round than this pass is rejected without --known-ids (#685)" \
+    integrator \
+    "$fixtures_dir/result.integrator.schema/invalid/applied-dispositions-future-integration-round.json" \
+    "later than this pass's own integration_round"
+
+accept_context_case \
+    "an applied_dispositions id naming an earlier integration round, or any challenge round, stays accepted (#685)" \
+    integrator \
+    "$fixtures_dir/result.integrator.schema/valid/applied-dispositions-earlier-integration-round.json"
+
+run_context_case \
+    "a clean-verdict defer on a --known-ids finding is rejected exactly like a defer on the payload's own findings" \
+    integrator \
+    "$fixtures_dir/result.integrator.schema/invalid/clean-verdict-known-id-defer.json" \
+    "incompatible with verdict clean, even when supplied via --known-ids" \
+    --known-ids "$fixtures_dir/result.integrator.schema/invalid/clean-verdict-known-id-defer.known-ids.json"
+
+usage_error_case \
+    "--no-adjudications and --adjudication together are a usage error" \
+    run "$fixtures_dir/run.schema/valid/fresh-kickoff.json" \
+    --no-adjudications --adjudication "$settlement_cross_check_adjudication"
+
+accept_context_case \
+    "--receipt is satisfied for a fresh kickoff run by --no-adjudications" \
+    run "$fixtures_dir/run.schema/valid/fresh-kickoff.json" --receipt --no-adjudications
+
+accept_context_case \
+    "--receipt is satisfied for a ready-for-review run that never adjudicated anything" \
+    run "$fixtures_dir/run.schema/valid/ready-with-no-adjudications.json" --receipt --no-adjudications
+
+run_context_case \
+    "--no-adjudications rejects any existing settlement, since nothing can have adjudicated it" \
+    run \
+    "$fixtures_dir/run.schema/valid/ready-with-settled-deferral.json" \
+    "is not adjudicated in any supplied --adjudication document" \
+    --no-adjudications
+
+# --- Coverage: every required field and every enum has an invalid fixture --
+# Walks each schema file's own required[]/enum[] declarations (following
+# properties/items/$ref/$defs — the only containers this family's schemas
+# use) and cross-checks that the schema's invalid/*.reason corpus names each
+# one, so "mutation tests per required field and per enum" is verified
+# rather than merely hand-curated. Each requirement/enum is keyed by its
+# FULL schema path (e.g. "adjudications[].override.reason"), matching the
+# validator's own error-location format, not by its bare property name —
+# two different properties sharing a name at different paths in the same
+# schema (adjudication.schema.json has a bare `reason` on every entry AND
+# a nested `override.reason`) must not let one satisfy coverage for the
+# other. The path is turned into a regex ([] -> \[\d+\] for array items) and
+# matched against the actual "$loc: missing required property X" / "$loc:
+# must be one of" text the validator prints — i.e. this checks that the
+# .reason corpus quotes an error at THIS path, not merely that the words
+# appear somewhere in the corpus.
+node --input-type=module - "$schemas_dir" "$fixtures_dir" <<'NODE'
+import { readFileSync, readdirSync, existsSync } from 'node:fs'
+import path from 'node:path'
+
+const [schemasDir, fixturesDir] = process.argv.slice(2)
+
+const DIR_TO_SCHEMA = {
+  'result.envelope.schema': ['result.envelope.schema.json', '$result'],
+  'result.implementer.schema': ['result.implementer.schema.json', '$result.payload'],
+  'result.challenger.schema': ['result.challenger.schema.json', '$result.payload'],
+  'result.reviewer.schema': ['result.reviewer.schema.json', '$result.payload'],
+  'result.integrator.schema': ['result.integrator.schema.json', '$result.payload'],
+  'adjudication.schema': ['adjudication.schema.json', '$adjudication'],
+  'run.schema': ['run.schema.json', '$run']
+}
+
+function resolveRef(root, ref) {
+  if (typeof ref !== 'string' || !ref.startsWith('#/')) return undefined
+  return ref
+    .slice(2)
+    .split('/')
+    .reduce((node, part) => (node && typeof node === 'object' ? node[part] : undefined), root)
+}
+
+// collect ROOT SCHEMA CURRENT_PATH — CURRENT_PATH is the location of the
+// object SCHEMA itself describes (starts at the schema's own root
+// location, e.g. "$adjudication" or "$result.payload").
+function collect(root, schema, currentPath, required, enums, seen) {
+  if (schema === null || typeof schema !== 'object' || Array.isArray(schema)) return
+  if (schema.$ref) {
+    const target = resolveRef(root, schema.$ref)
+    if (target) collect(root, target, currentPath, required, enums, seen)
+    return
+  }
+  if (seen.has(schema)) return
+  seen.add(schema)
+  // Self-check at CURRENT_PATH, not just from the parent's properties loop:
+  // a type-conditional field (e.g. adjudication.schema.json's
+  // reviewer_priority, {type: [string,null], if: {type: string}, then:
+  // {enum: [...]}}) puts its enum inside `then`, still describing the SAME
+  // location — if/then/else recurse at the SAME currentPath below for
+  // exactly this reason, so the enum must be attributed there too, not
+  // only when a schema node is reached directly as a named property.
+  if (Array.isArray(schema.enum) && schema.enum.some((v) => v !== null)) {
+    enums.add(currentPath)
+  }
+  for (const name of schema.required ?? []) {
+    required.add(JSON.stringify({ parent: currentPath, name }))
+  }
+  for (const [key, child] of Object.entries(schema.properties ?? {})) {
+    collect(root, child, `${currentPath}.${key}`, required, enums, seen)
+  }
+  if (schema.items) collect(root, schema.items, `${currentPath}[]`, required, enums, seen)
+  for (const child of schema.oneOf ?? []) {
+    collect(root, child, currentPath, required, enums, seen)
+  }
+  for (const key of ['if', 'then', 'else']) {
+    if (schema[key]) collect(root, schema[key], currentPath, required, enums, seen)
+  }
+}
+
+function escapeRegExp(s) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+}
+
+// pathRegexFragment PATH — PATH with literal regex metacharacters escaped
+// and every "[]" (an array item, index unknown at schema-walk time) turned
+// into a digit wildcard, so it matches the validator's real "[N]" location
+// segment for whatever N a fixture's violating item happens to sit at.
+function pathRegexFragment(p) {
+  return p
+    .split(/(\[\])/g)
+    .map((part) => (part === '[]' ? '\\[\\d+\\]' : escapeRegExp(part)))
+    .join('')
+}
+
+// checkCoverage — pure function of the collected requirement/enum sets and
+// the corpus's .reason text; returns one failure message per uncovered
+// item. Kept separate from disk I/O so the self-test below can call it
+// directly against a synthetic (fixture-free) reasons string.
+function checkCoverage(schemaFile, required, enums, reasonsText) {
+  const failures = []
+  for (const raw of required) {
+    const { parent, name } = JSON.parse(raw)
+    const re = new RegExp(`${pathRegexFragment(parent)}: missing required property ${escapeRegExp(name)}\\b`)
+    if (!re.test(reasonsText)) {
+      failures.push(`${schemaFile}: no invalid fixture covers missing required property '${name}' at '${parent}'`)
+    }
+  }
+  for (const fullPath of enums) {
+    const re = new RegExp(`${pathRegexFragment(fullPath)}: must be one of`)
+    if (!re.test(reasonsText)) {
+      failures.push(`${schemaFile}: no invalid fixture covers an enum violation at '${fullPath}'`)
+    }
+  }
+  return failures
+}
+
+function reasonsTextFor(dir) {
+  const invalidDir = path.join(fixturesDir, dir, 'invalid')
+  let reasons = ''
+  if (existsSync(invalidDir)) {
+    for (const entry of readdirSync(invalidDir)) {
+      if (entry.endsWith('.reason')) reasons += `${readFileSync(path.join(invalidDir, entry), 'utf8')}\n`
+    }
+  }
+  return reasons
+}
+
+// Negative self-test FIRST: prove checkCoverage actually fails when
+// coverage is missing, against a REAL schema's REAL requirement/enum set,
+// before trusting it to pass the real corpus below. Without this, a
+// checker that always reports "complete" (the exact bug this replaces —
+// the old version split each entry into individual characters and matched
+// on the first one, which was satisfied by nearly anything) would go
+// uncaught by its own test suite.
+{
+  const [schemaFile] = DIR_TO_SCHEMA['adjudication.schema']
+  const schema = JSON.parse(readFileSync(path.join(schemasDir, schemaFile), 'utf8'))
+  const required = new Set()
+  const enums = new Set()
+  collect(schema, schema, '$adjudication', required, enums, new Set())
+  if (required.size === 0 || enums.size === 0) {
+    console.error('FAIL: self-test: adjudication.schema.json unexpectedly has no required fields or enums to test with')
+    process.exit(1)
+  }
+  const emptyCorpusFailures = checkCoverage(schemaFile, required, enums, '')
+  if (emptyCorpusFailures.length !== required.size + enums.size) {
+    console.error(
+      `FAIL: self-test: checkCoverage against an EMPTY fixture corpus should report all ${required.size + enums.size} items uncovered, reported ${emptyCorpusFailures.length} — the checker is not actually checking anything`
+    )
+    process.exit(1)
+  }
+  // And the inverse: the REAL corpus must not ALSO fail against this same
+  // schema's requirements — proves the self-test's "empty" case and the
+  // real case actually exercise the same code path with different inputs,
+  // not two independently-broken checks that coincidentally agree.
+  const realFailures = checkCoverage(schemaFile, required, enums, reasonsTextFor('adjudication.schema'))
+  if (realFailures.length >= emptyCorpusFailures.length) {
+    console.error(
+      'FAIL: self-test: the real fixture corpus covers no more than an empty corpus would — checkCoverage is not path-sensitive'
+    )
+    process.exit(1)
+  }
+  console.log(
+    `PASS: coverage self-test (empty corpus: ${emptyCorpusFailures.length}/${emptyCorpusFailures.length} uncovered, real corpus: ${realFailures.length} uncovered)`
+  )
+}
+
+let failures = 0
+for (const [dir, [schemaFile, rootLocation]] of Object.entries(DIR_TO_SCHEMA)) {
+  const schema = JSON.parse(readFileSync(path.join(schemasDir, schemaFile), 'utf8'))
+  const required = new Set()
+  const enums = new Set()
+  collect(schema, schema, rootLocation, required, enums, new Set())
+
+  const schemaFailures = checkCoverage(schemaFile, required, enums, reasonsTextFor(dir))
+  for (const message of schemaFailures) console.error(`FAIL: ${message}`)
+  failures += schemaFailures.length
+  if (schemaFailures.length === 0) console.log(`PASS: ${schemaFile} required/enum coverage complete`)
+}
+process.exit(failures === 0 ? 0 : 1)
+NODE
+
+echo "result schemas conformance OK"

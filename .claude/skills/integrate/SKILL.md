@@ -14,6 +14,38 @@ allowed-tools: Read, Glob, Grep, Bash(git status:*), Bash(git branch --show-curr
 
 # Integrate
 
+**Runtime assets travel with the skills.** Every executable this skill names is
+vendored by `task sync:skills`, never fetched from a repository-root `scripts/`
+path (harmon-devkit#974): a consumer that installed the skill has no such
+directory, so a root-relative dependency installs a skill that cannot run. Two
+shorthands are used below and resolve the same way in harmon-devkit's source
+tree and in a consumer's flattened `.claude/skills/` one:
+
+- `assets/<name>` — this skill's own asset, i.e. `${CLAUDE_SKILL_DIR}/assets/<name>`.
+- `<package>/assets/<name>` — a sibling package's asset. **Resolve
+  `${CLAUDE_SKILL_DIR}` physically first**, then append:
+
+  ```sh
+  skill_dir="$(cd "${CLAUDE_SKILL_DIR}" && pwd -P)"
+  support_dir="$skill_dir/../dev-flow-support/assets"
+  ```
+
+  The `cd`/`pwd -P` is load-bearing, not ceremony: where the skills directory
+  is reached through a symlink — harmon-devkit's own `.agents/skills/<name>`
+  entries are symlinks into `ai/skills/<category>/` — a **logical**
+  `${CLAUDE_SKILL_DIR}/../` splits by resolver. `ls` follows the link and
+  succeeds; Node collapses `..` with `path.resolve()` before touching the
+  filesystem and fails with `MODULE_NOT_FOUND`. Resolving physically first
+  makes both agree. This is the same rule `dev-flow-support`'s own `SKILL.md`
+  states for asset-to-asset calls; see it for the canonical wording.
+
+  The shared dev-flow v2 runtime (`devflow-policy.mjs`,
+  `validate-result-schemas.mjs`, `render-dev-flow.{sh,mjs}`,
+  `dev-flow-exit.{sh,mjs}`) lives in `dev-flow-support/assets/`.
+
+A missing sibling package is a blocker, not a fallback: vendor the `universal`
+category as a unit rather than resolving a runtime path some other way.
+
 **Arguments:** $ARGUMENTS
 
 **Version 2 only.** This skill and its readiness gate
@@ -39,7 +71,7 @@ migration visible; a stage that finds another way to finish hides it.
 
 A consumer that has not advanced its pin still has the retired single-stage
 skill at the pin it is on, which is exactly why the pin waits for the policy;
-`scripts/consumer-pin-audit.sh` is the check that the two agree. harmon-devkit's
+`orchestrate/assets/consumer-pin-audit.sh` is the check that the two agree. harmon-devkit's
 `.devflow.toml` is `schema_version = 2` (harmon-devkit#862), so this skill
 operates there natively; a consumer that has not yet migrated still has the
 retired single-stage skill at its pin and refuses as described above. Do
@@ -111,6 +143,21 @@ including the `task verify` a fix owes before the next round.
 When a cap of 0 skips a stage outright, there is no round to number: omit
 `round n/cap` and write `skipped (cap 0)` in `Stage` instead of inventing
 `round 0/0`.
+Where the integration stage has run any **exempt** cycle (harmon-init#1326),
+`round n/cap` counts the CHARGED ones and the exempt ones are named beside it
+— `cycle 3/4 (+1 exempt)` — never folded into `n`, and never left out. A head
+whose verdict was **carried** (harmon-init#752) ran no cycle at all and so
+moves no counter; it is named the same way, `(+k carried)`, for the opposite
+reason — nothing was spent, and a reader must still be able to see that a head
+is attested without a reviewer having read it. `k` is the cycle state's
+`.carry.generation`, the number of heads the current cycle has attested without
+a fresh review, never a constant 1: after two catch-up carries a `+1` would
+hide the first. Folding
+them in would report a budget that was not spent; leaving them out would hide
+work that really happened, and the reviewer really was asked to look. The
+spent numbers are read from the cycle state's `charged_cycles` /
+`exempt_cycles`, so the ledger and the readiness gate can never disagree about
+what was spent.
 Before a capped stage has begun its first round, a stage-entry or pending-wait
 ledger omits `round n/cap` and writes `waiting (no round yet)` in `Stage`;
 waiting, checks, and reviewer latency do not spend a round. Once a finding or
@@ -148,13 +195,78 @@ from what `AGENTS.md` actually states, never from inferring its vintage.
 
 **Two caps, counted separately, never combined.** The **integration cap**
 bounds how many current-head Codex cloud-review cycles this stage may drive;
-the **remediation cap** bounds how many fix pushes it may make. A Codex cycle
+the **remediation cap** bounds how many fix pushes it may make.
+
+**The integration cap charges only cycles that review something new**
+(harmon-init#1326). A cycle whose head differs from the last reviewed head
+ONLY by a base merge that changed no file under review re-reads identical code
+by construction — it cannot find anything the previous cycle did not — so
+charging it would measure the base branch's traffic rather than this change's
+difficulty. Such a cycle is **exempt**: it runs, and it spends the separate
+`rounds.integration_exempt` ceiling instead. Exempt is not free, and that
+second ceiling is why: a busy base branch could otherwise spend a whole run
+re-reviewing code nobody changed.
+
+**Before either ceiling, ask whether the cycle is needed at all**
+(harmon-init#752). The exemption above still runs the review — it spends a
+reviewer window and 10–15 minutes of wall clock to re-read bytes nobody
+changed. When the change is not merely *untouched by file* but **identical**,
+the previous clean verdict already covers this head, and the cycle can be
+skipped outright rather than paid for out of a second ceiling. `carry` decides
+that: it digests the PR's three-dot diff TEXT at the reviewed head and at this
+one, from immutable commit SHAs in the local checkout, and carries the verdict
+only when the two identities are equal. (Not `git patch-id`: it ignores hunk
+offsets, so a reviewed edit relocated between two identically-surrounded
+regions — a conflict resolution — gets the same id from two different trees.)
+Run it before `reserve`; exit 0 means carried (post no trigger, go straight to
+`check`), exit 17 means reserve the ordinary cycle, and exit 14 means the PR is
+merged or closed — the stage is over. The carry does **not** move
+the cycle: it records that an existing cycle's verdict also attests a later
+head. `check` then runs the one evidence scan it always ran, against the
+commit a reviewer actually read, and re-derives the claim immediately before
+any verdict — so a
+finding landing there after the carry still blocks, and `settle` still answers
+it on that same state. The carry removes the second review, never the second
+look.
+A carried head spends neither ceiling and advances no cycle ordinal, and the
+ledger names it as such — `cycle 3/4 (+1 exempt, +2 carried)`, the carried
+count read from `.carry.generation` — because a head
+attested without a reviewer reading it is exactly the thing a human reader must
+be able to see.
+
+The two mechanisms compose and do not overlap wastefully: `carry` is strictly
+stronger (content identity, local git, no API reconstruction) and strictly
+cheaper (no cycle), so it is tried first; the exemption catches what it cannot
+prove — a checkout without the history, a base the verdict was never
+corroborated against — where a cycle must run but should not be charged.
+
+Do not classify a cycle by eye. `reserve` decides it from evidence — the previous head must be an
+ancestor of this one, and the files the new commits changed must not intersect
+the files the PR has under review — and keeps the two running totals in state
+as `charged_cycles` / `exempt_cycles`. It reads the previously reviewed head
+from that same state rather than from anything you pass, so there is nothing
+to supply and no way to misreport it; `--previous-head` exists only to have
+the reservation refuse if your idea of the last reviewed head disagrees with
+the record. Pass `--run-id` so the totals belong to this run and a later run
+on the same PR does not inherit its spend. A conflict resolution, or a fix slipped
+into the merge push, touches a file under review and charges normally.
+Anything the check cannot establish charges, because an exemption is a spend
+the reviewer never sanctioned. Report both counts on the integrator result as
+`codex_cycle.charged` and `codex_cycle.exempt`, report a carried head as
+`codex_cycle.carried` (the gate cross-checks it against the durable checker
+state and refuses a claim that state does not record) and, identically, on the
+`codex-cloud` entry of `finder_cycles[]` (the two describe one cycle, and
+receipt validation rejects an envelope where they disagree), and pass
+`--integration-exempt-cap` to the readiness gate alongside `--integration-cap`
+so both ceilings are checked; omit the counters and the gate applies the
+original single-counter rule, which is correct for a pass that never
+classified anything. A Codex cycle
 that a fix push directly answers is not a second charge against remediation —
 one fix push, however many findings (Codex's or a human reviewer's) it
 answers, is one remediation unit.
 
 **Resolve them through the policy reader, and never hand-decode a shape.**
-`scripts/devflow-policy.mjs` is the one implementation of this resolution; a
+`dev-flow-support/assets/devflow-policy.mjs` is the one implementation of this resolution; a
 `schema_version = 2` `.devflow.toml` names the two caps directly as
 `rounds.integration` and `rounds.remediation`. This skill operates under
 version 2 and under nothing else — it carries no interpreter for the pre-v1
@@ -164,7 +276,7 @@ its refusal names the markers it actually found, so no procedure here has to
 restate an older shape's vocabulary in order to reject it.
 
 **On an ordinary review** — the change under review touches none of
-`scripts/devflow-policy.mjs`, `scripts/lib/toml-lite.mjs`, `.devflow.toml`,
+`dev-flow-support/assets/devflow-policy.mjs`, `dev-flow-support/assets/lib/toml-lite.mjs`, `.devflow.toml`,
 `agent-registry.json`, `Taskfile.yml`, or `taskfiles/` —
 `task devflow:policy -- resolve --policy .devflow.toml --registry
 agent-registry.json --taskfile-dir . --json` (add `--rigor <level>` for an
@@ -190,9 +302,34 @@ all. Materialize the merge-base copies first:
 ```sh
 base="$(git merge-base HEAD "$base_ref")"           # $base_ref from §1
 mb_dir="$(mktemp -d)"
-mkdir -p "$mb_dir/scripts/lib"
-git show "${base}:scripts/devflow-policy.mjs" >"$mb_dir/scripts/devflow-policy.mjs"
-git show "${base}:scripts/lib/toml-lite.mjs"  >"$mb_dir/scripts/lib/toml-lite.mjs"
+
+# ASK THE MERGE BASE which layout it has, rather than hardcoding one. The
+# loop below probes the reader's own `--closure` probe order — devflow-
+# policy.mjs's CLOSURE_READER_PATHS — narrowed to the repo-root-relative
+# candidates (the probe's other two entries, `devflow-policy.mjs` and
+# `assets/devflow-policy.mjs`, only apply when the supplied closure directory
+# already points at the skill or asset directory itself, which this
+# repo-root checkout never does), plus the legacy `scripts/devflow-policy.mjs`
+# path for any merge base predating harmon-devkit#974. First match wins here
+# too.
+reader=""
+for candidate in \
+    ai/skills/universal/dev-flow-support/assets/devflow-policy.mjs \
+    .claude/skills/dev-flow-support/assets/devflow-policy.mjs \
+    .agents/skills/dev-flow-support/assets/devflow-policy.mjs \
+    scripts/devflow-policy.mjs; do
+    git cat-file -e "${base}:${candidate}" 2>/dev/null && { reader="$candidate"; break; }
+done
+[ -n "$reader" ] || exit 1   # a merge base with no reader is a blocker, never
+                             # grounds to fall back to the branch's own copy
+
+# Materialize the reader AT THE MERGE BASE'S OWN RELATIVE PATH, so its
+# ES-module import of ./lib/toml-lite.mjs resolves and --closure's probe finds
+# the entrypoint where it expects it.
+reader_dir="$(dirname "$reader")"
+mkdir -p "$mb_dir/$reader_dir/lib"
+git show "${base}:${reader}"                    >"$mb_dir/${reader}"
+git show "${base}:${reader_dir}/lib/toml-lite.mjs" >"$mb_dir/${reader_dir}/lib/toml-lite.mjs"
 git show "${base}:.devflow.toml" >"$mb_dir/devflow.toml"
 
 # Always extract the merge-base registry — it is a repository file, so it
@@ -202,14 +339,14 @@ git show "${base}:agent-registry.json" >"$mb_dir/agent-registry.json"
 # Invoke the MATERIALIZED reader by path, never through `task devflow:policy`:
 # the task target is branch-controlled, so routing through it lets the branch
 # choose the command line that is supposed to constrain it.
-node "$mb_dir/scripts/devflow-policy.mjs" resolve --closure "$mb_dir" \
+node "$mb_dir/${reader}" resolve --closure "$mb_dir" \
     --policy .devflow.toml --merge-base-policy "$mb_dir/devflow.toml" \
     --merge-base-registry "$mb_dir/agent-registry.json" \
     --registry agent-registry.json --taskfile-dir . --json
 ```
 
 **Materialize the reader's whole closure, not just its entrypoint.** The
-reader imports `scripts/lib/toml-lite.mjs`, so extracting the entrypoint alone
+reader imports `dev-flow-support/assets/lib/toml-lite.mjs`, so extracting the entrypoint alone
 makes the re-exec fail with `ERR_MODULE_NOT_FOUND` before it resolves
 anything — and since this path is now the only one (there is no hand-decoding
 fallback), that failure is a hard stop rather than a degraded mode. A
@@ -274,8 +411,11 @@ this recipe asked for could not be decided, which is the same standing as a
 check that failed. If the reader grows another dependency, it belongs in this
 recipe too.
 
-`--closure <dir>` re-execs the trusted `<dir>/scripts/devflow-policy.mjs`
-before this checkout's own (possibly branch-modified) copy runs any of its
+`--closure <dir>` re-execs the trusted merge-base reader inside `<dir>` —
+probing `CLOSURE_READER_PATHS` (`devflow-policy.mjs`,
+`assets/devflow-policy.mjs`, the vendored skill layouts, then
+`scripts/devflow-policy.mjs`) in that fixed order before this checkout's own
+(possibly branch-modified) copy runs any of its
 own code — the reader's self-modification boundary protects the reader
 itself, not only the data it reads, since a branch could otherwise lower its
 own gate by editing the resolution code instead of the config. A merge base
@@ -304,7 +444,7 @@ the preamble — never hand-decode the file, guess caps, advance the pin, or
 continue by another route to get past it. `task devflow:policy -- detect --policy .devflow.toml --json` answers
 the same question on its own (exit 0 version 2, exit 1 an older or mixed
 shape with the message in `migration`, exit 2 unreadable), and
-`scripts/consumer-pin-audit.sh` is the standing check that a repository's
+`orchestrate/assets/consumer-pin-audit.sh` is the standing check that a repository's
 vendored-skill pin and its policy shape agree.
 
 A `rigor:*` label conflict resolves to the single strongest level by
@@ -516,6 +656,11 @@ watch. Leave Project fields unchanged; §7 records why they are manual.
   procedure would deadlock — the guard has already spent the undo and cannot
   reconcile an unverified head. That one comment only; every other write
   still routes.
+- **Being behind the base is not a mid-stage blocker.** A base that moved
+  mid-round is noted and carried, never acted on where it is noticed: a base
+  merge moves the head and throws away the CI and review results the round was
+  about to spend. The readiness gate resolves it, once, and the recipe is
+  "Base reconciliation" at the end of step 5.
 - **Unexplained promotion — `isDraft` flips to false with no `gh pr ready`
   issued by this session.** Read the `isDraft` from the round-start fetch every
   poll, not only at the gate: a flip caught late looks exactly like a PR that
@@ -535,7 +680,47 @@ watch. Leave Project fields unchanged; §7 records why they are manual.
     already-non-draft path prescribes; do **not** call `gh pr ready` again.
     Reverting a promotion the gate would itself have made un-notifies nobody
     and can override a genuine human click.
-  - **Otherwise** — the promotion sits on an unverified head or open findings.
+  - **Indeterminate, or ordinary post-promotion drift — report, never undo.**
+    A non-pass is not by itself evidence that the promotion was unjustified.
+    Two kinds never license an undo:
+
+    - **Anything the gate could not establish** — every `audit` exit 2,
+      whatever its condition. "I could not determine this" is not "this is
+      wrong", and reversing a human's handoff on it destroys a real thing over
+      an unproven one — while achieving nothing about the harm the
+      stay-draft rule guards, because `gh pr ready --undo` cannot unsend the
+      notifications that already went out. This generalises the rule stated
+      below for a failed timeline read rather than inventing one. Re-poll
+      briefly; if it stays unknown, **escalate with a blocker report naming
+      the condition**, and leave the PR as you found it.
+
+      Note the scope carefully, because it is easy to misread as a conflict
+      with the Dev Loop's "a failed **or indeterminate** condition is not a
+      pass: leave the PR draft". That rule governs **this session's own
+      promotion decision** — do not promote on an unproven condition. It does
+      not say to reverse a promotion somebody else already made, and the
+      reasoning it gives (the one-way door) argues against doing so: the door
+      is already open and an undo does not close it. A PR whose readiness
+      cannot be established is escalated loudly, not silently accepted.
+    - **State that changed *after* a correct promotion** — `audit-behind`,
+      `behind-base`, `base-retargeted`, `head-moved`. The base and the
+      contributor are not ours to hold still, and a PR drifting once it is in
+      a human's hands is ordinary. Report it to the maintainer; the remedy is
+      theirs. `behind-base` belongs here for the same reason as the rest: in
+      an **audit** it can only mean the base branch advanced while the gate
+      was comparing against it, which is drift by definition. (In `check` it
+      is an ordinary failure — check never routes through this branch, because
+      this branch is about PRs somebody else already promoted.)
+
+    This is deliberately a rule about kinds rather than a list of conditions.
+    The gate can emit dozens, and exempting them one at a time is a game you
+    lose by one condition every time a new one is added — which is exactly how
+    this text came to need rewriting.
+
+  - **Otherwise** — the gate positively established that the promotion sits on
+    an unverified head or open findings: failing checks, a `CHANGES_REQUESTED`
+    review, unanswered threads, unsettled deferred findings, a Codex cycle that
+    is not clean. Only these.
     **The undo is its own record, so read the PR's timeline before making
     another one**:
     `"${CLAUDE_SKILL_DIR}"/assets/gh-ro.sh --paginate repos/"$repo"/issues/<n>/timeline`
@@ -601,6 +786,11 @@ watch. Leave Project fields unchanged; §7 records why they are manual.
   check suites register on the new head before concluding anything; and
   if the repo genuinely has no applicable CI, say so explicitly and judge
   on reviews alone rather than treating the absence as pass or fail.
+  **CI has settled only when every required check has CONCLUDED; a pending
+  check, or an empty check list, is indeterminate and never a pass**
+  (`AGENTS.md` § Readiness gate — GitHub populates that list
+  asynchronously, so a read taken moments after a push reports nothing
+  *having run*, not nothing *to run*).
 - **Findings deferred into this stage — read the record, never the rendered
   Markdown.** Project the current settlement state:
   `render-dev-flow.sh readiness-input --record <dir> --head <headRefOid>`.
@@ -620,7 +810,7 @@ watch. Leave Project fields unchanged; §7 records why they are manual.
   disposition: `{type: sha, value: <sha>}` / `{type: comment_id, value: <id>}`
   / `{type: issue_number, value: <n>}`) to `run.json`'s `settlements[]` in
   the record directory, then validate the updated file
-  (`node scripts/validate-result-schemas.mjs run <record>/run.json --receipt
+  (`node dev-flow-support/assets/validate-result-schemas.mjs run <record>/run.json --receipt
   --adjudication <record>/adjudications/*.json`) before publishing anything
   from it — an invalid record must never reach `publish`. This is what
   removes the old class of failure entirely: there is no contributor-editable
@@ -636,7 +826,13 @@ watch. Leave Project fields unchanged; §7 records why they are manual.
   `--pr` that disagrees with `run.json`'s own `pr` field, and detects a
   second concurrent publish against the same record — treat either as a
   reconciliation the record's own state must resolve before retrying, not
-  something to force past.
+  something to force past. After every publish or other body edit lands,
+  re-read `headRefOid,body,closingIssuesReferences` together and stop with a
+  blocker report if any closing keyword the body claims targets an issue with
+  no corresponding linkage. Resolve claimed same-repo targets through the
+  issues endpoint first: a target whose payload identifies it as a pull
+  request is exempt because pull requests never appear in
+  `closingIssuesReferences`.
 - **Follow-ups still go through `track-work`.** Before filing one, **search
   the repo the follow-up is going into** — `track-work` §3 owns this step and
   the reasoning; the short form is
@@ -707,11 +903,15 @@ watch. Leave Project fields unchanged; §7 records why they are manual.
     fetch, never re-read at dispatch time (a mid-adjudication push would
     otherwise be laundered into "current");
   - the resolved `integration_round` ordinal (this run-wide pass number),
-    the resolved integration cap, and — where that cap is not 0 — this
-    pass's **Codex cycle number**: 1 for the stage's first cycle, one more
-    for each cycle a later pass actually drives, never above the cap (a
-    re-dispatch after a `pending` result continues the same cycle rather
-    than starting a new one). At cap 0 say so instead;
+    the resolved integration cap, the resolved `integration_exempt` ceiling,
+    and — where the integration cap is not 0 — this pass's **Codex cycle
+    number**: 1 for the stage's first cycle, one more for each cycle a later
+    pass actually drives (a re-dispatch after a `pending` result continues the
+    same cycle rather than starting a new one). At cap 0 say so instead.
+    That ordinal counts every cycle, so it may legitimately exceed the
+    integration cap once base-merge-only cycles are exempt from it
+    (harmon-init#1326) — what may not exceed the cap is the CHARGED count the
+    reserve state keeps, which is the number the readiness gate checks;
   - `run_id` and `initiated_by` — the active run's identity, read from
     `--record <dir>`'s own `run.json` (the same two values §6's gate binds
     the result to before trusting it);
@@ -759,7 +959,7 @@ watch. Leave Project fields unchanged; §7 records why they are manual.
     and hand the agent none.
 
   **Validate what comes back before using any of it**
-  (`node scripts/validate-result-schemas.mjs integrator <file>`) — a
+  (`node dev-flow-support/assets/validate-result-schemas.mjs integrator <file>`) — a
   dispatched role's result is a claim, not a fact, until it passes its own
   schema; a malformed result is rejected outright, never adjudicated or
   patched into shape.
@@ -778,7 +978,30 @@ watch. Leave Project fields unchanged; §7 records why they are manual.
     `codex_cycle.exit_code` `0`/`10` — terminal for this pass. A `10` (or
     any human finding the agent also surfaced) feeds `findings[]` into §3;
     a clean `0` with no other open finding and an empty
-    `unanswered_thread_roots` proceeds toward §6. When `finder_cycles` is
+    `unanswered_thread_roots` proceeds toward §6.
+    A `10` raised by inline threads carries `unanswered[]` on the checker's
+    own output — one `{thread_root, comment_id, review_id, path}` per
+    unadjudicated bot thread on the head, **from every review that posted
+    one**. It is each entry's `thread_root` that feeds
+    `unanswered_thread_roots`, which the schema defines as thread ids:
+    GitHub sets `in_reply_to_id` to the thread ROOT on every reply, so
+    `comment_id` names the comment that raised the finding and only
+    `thread_root` names the thread a reply lands in. Work that list,
+    not the single `accepted.id`: the bot can post two reviews on one head
+    minutes apart, and one accepted review id cannot name findings that came
+    from both (harmon-devkit#737, observed on harmon-devkit#720, where the
+    second review's fourteen inline findings went unanswered until the
+    readiness gate caught them after every integration round was spent). A
+    later bot review on the same head returns the cycle to `findings` even
+    after a clean one, so the last read before accepting a result is the one
+    that counts.
+    A badged comment from the finder carrying no `Reviewed commit` line of
+    its own does **not** vanish: every undisposed one blocks as `findings`
+    (exit 10, oldest cited) until settled by comment id, since the cycle is
+    pinned to its reserved head and nothing is parsed out of the body. The
+    summary comment's Completed row is **not** a clean form — that was
+    proposed, implemented, and split back out in harmon-devkit#1050, and is
+    carried in harmon-devkit#1117. When `finder_cycles` is
     present, every entry must also be terminal (exit_code 0 or 10) for the
     pass to be terminal-clean — a non-codex finder with exit_code 11 or 13
     has the same effect as the codex_cycle equivalent below.
@@ -790,11 +1013,47 @@ watch. Leave Project fields unchanged; §7 records why they are manual.
     should never see `12` at this level.
   - `codex_cycle.exit_code: 13` (both attempts timed out), `14` (the PR
     closed or merged — stop the **whole stage** immediately, matching §1's
-    never-integrate-a-closed-PR rule), or `2` (indeterminate) — stop and
-    reconcile per §6 rather than re-dispatching to try again. A `13` or `2`
-    always arrives as `verdict: "escalate"` (the validator pairs those exit
-    codes with that verdict) — that is this stop, not the remediation one
+    never-integrate-a-closed-PR rule), `15` (the reviewer's code-review
+    usage limit is exhausted), or `2` (indeterminate) — stop and
+    reconcile per §6 rather than re-dispatching to try again. A `13`, `15`
+    or `2` always arrives as `verdict: "escalate"` (the validator pairs those
+    exit codes with that verdict) — that is this stop, not the remediation one
     below, and says nothing about the remediation cap.
+    On **`15`** (harmon-devkit#573) the reviewer *answered*: it will not
+    review this head until its quota resets. Report the blocker naming the
+    reset time where the reply carried one, and do **not** re-trigger — the
+    checker refuses `reserve --attempt 2` against that state for exactly this
+    reason, so the one bounded re-trigger is not spent on a reviewer that has
+    already said no — and a fresh `reserve --attempt 1` on the same head is
+    refused too, by the single same-head reservation guard. That means the
+    commit stays un-reviewable through this helper until a push moves the head
+    or an operator clears the state; say so in the blocker rather than implying
+    the reset time is actionable. A safe recovery route is carried in
+    harmon-devkit#1115. (A reset-time carve-out was tried in challenge round 1
+    and deleted in round 2: it opened on any past timestamp scraped from the
+    body, re-triggering a reviewer that had just refused.)
+  - `codex_cycle.exit_code: 16` (a transient evidence-read failure,
+    harmon-devkit#508) — this says nothing about the reviewer, only that
+    GitHub would not answer a read. It arrives as `verdict: "pending"` and is
+    handled like `11`: bounded wait, then re-dispatch so the **read** is
+    repeated. Never treat it as a non-clean cycle; §6's gate reports it as
+    `codex-transient-read` (indeterminate with the reason), never
+    `codex-not-clean`.
+    **One way it is not like `11`:** a `11` that persists is a reviewer still
+    working, while a 16 that persists is a read that keeps failing — and the
+    causes that keep failing (a revoked token, a permission that no longer
+    covers the endpoint, a repository made private) are the ones repeating
+    will never fix. The agent's poll loop therefore counts **consecutive**
+    16s and breaks after the third, returning `status: "blocked"` with
+    `codex_cycle.exit_code: 16`, `verdict: "pending"` and a blocker line
+    naming the failing read — rather than a `completed` `pending` you would
+    re-dispatch into the identical failure until the wall clock is gone.
+    `blocked` because that is what the envelope's `status` enum offers
+    (`completed`/`blocked`); §6's gate keeps its own `codex-transient-read`
+    vocabulary for the same condition, which is a different field on a
+    different document. Treat that shape as a blocker to escalate, not as a
+    cycle to re-drive; a lone 16 between two good reads is still the ordinary
+    transient case.
   - `verdict: "escalate"` with a terminal or null `codex_cycle` — the
     resolved **remediation** cap is spent and a finding still needs a code
     fix (see "A resolved remediation cap of 0..." above, which is the
@@ -817,8 +1076,13 @@ watch. Leave Project fields unchanged; §7 records why they are manual.
   ```
 
   `--surface review` takes a review ID instead. `settle` refuses (exit 2) a
-  target that does not exist, was not written by the pinned actor, carries no
-  severity badge, or does not identify this state's head. A disposition
+  target that does not exist, was not written by the pinned actor, is not
+  something `check` blocks on, or names a commit that is not this state's
+  head. Two halves of that are easy to get wrong: it does **not** require a
+  severity badge — its domain is every body whose verdict is `findings`, so a
+  body misread as a finding stays answerable — and a target that names no
+  commit of its own is accepted, binding to the cycle's reserved head by
+  comment id. A disposition
   settles the **whole** target — where it carries several badges, pass
   `--covers <n>` matching that count, or a partial settlement would read as
   full. It fingerprints the body it settled, so a finding Codex edits
@@ -846,6 +1110,20 @@ fill in the current `round n/cap`; use the matching status glyph (`✅`, `🔴`,
   cap is 0, give other reviewers a bounded ~10–15-minute window after checks
   conclude; when it is not, the dispatched integrator agent's own two-attempt
   window (above) is that wait.
+- **The attempt window bounds a reviewer that is not working, never the clock
+  on its own.** While the finder's 👀 is still on the current attempt's
+  trigger comment, the attempt is in progress: the checker extends the window
+  to a hard ceiling of **30 minutes from the trigger** rather than returning
+  `12`, because elapsing it only forces a re-trigger that the two-attempt
+  contract then counts against the head — turning a slow-but-live review into
+  an escalation for a reviewer that was never absent (harmon-devkit#655,
+  observed on ponderousdev/omator#447: exit `12` at ~21:20Z with the 👀 still
+  on the trigger, and the findings arriving on the second cycle at ~21:32Z,
+  about when the first would have needed). A 👀 that has **vanished** with no
+  terminal result, or one still present past the ceiling, ends the attempt
+  exactly as before, so a stalled reviewer cannot hold a PR open
+  indefinitely. The ceiling never *shortens* a window a caller deliberately
+  configured longer.
 - A round begins when a check fails or a review lands findings. All workflows
   green and no unresolved findings means the candidate head may proceed to
   step 6's readiness gate; **do not stop or report a handoff here**. Never
@@ -957,7 +1235,23 @@ by root ID: work its output, don't re-derive which threads are owed a reply.
 Skip a thread only when nothing new arrived since your
 last answer; a reviewer follow-up posted after your reply is a fresh
 finding to adjudicate and answer (through the same root ID), while
-re-answering an unchanged thread just spams it. And post "fixed in `<sha>`" replies only **after** the verified
+re-answering an unchanged thread just spams it.
+
+**Write the fix reply as a statement, not as an instruction to the bot.**
+"Fixed in `<sha>`" sometimes reads to the Codex connector as a request to act:
+it runs a fix task of its own and posts a report on what *it* did — a
+follow-up summarising a commit it made on a branch it cannot push
+(harmon-devkit#675, observed on harmon-devkit#665 thread 3886138416 and again
+as a top-level comment on #710). Phrasing that describes the change already on
+the head, and addresses the human reading the thread rather than the reviewer,
+avoids provoking it: *"Adjudicated P2 — fixed in `dfc3648`: the helper's
+reserve → post → attach sequence is now named as the broker"* rather than
+*"Fixed in dfc3648, please re-check"*. Anything imperative — "address this",
+"re-review", "look again" — is the shape to avoid. When it happens anyway,
+that self-report is **informational**: an unbadged report of the bot's own
+work is neither a finding to adjudicate nor a follow-up owed a second reply,
+and the gate no longer raises `threads-new-follow-up` for it. A **badged**
+follow-up is a real finding and still blocks. And post "fixed in `<sha>`" replies only **after** the verified
 commit has actually been pushed (rejection-only replies can go out
 immediately) — a fix reply pointing at a commit that later gets amended or
 never pushed is a false claim.
@@ -1230,15 +1524,109 @@ is optional in addition, never a substitute for per-thread replies.
   declaring victory after a push is the classic failure mode this skill exists
   to prevent.
 
+### Base reconciliation
+
+The gate decides *whether* the head is behind and *against what*; this states
+the properties any reconciliation must satisfy. It deliberately does not
+restate the mechanism — `readiness-gate.sh` computes the base, the count and
+the condition, its failure message names all three, and a second hand-rolled
+recipe here would be one more thing to keep correct (an earlier draft of this
+section shipped a local `git rev-list` range that counted **ahead**, not
+behind).
+
+**Direction.** Merging the PR's own base branch **into** the feature branch is
+permitted, and is sometimes required before the gate can pass. Merging the
+feature branch **into** the base is the operation that needs per-merge human
+approval. They are opposite operations and only the second is a merge to
+`main`; an implementer who reads the second rule as forbidding the first will
+wait forever for a reconciliation that cannot arrive
+(evanharmon1/harmon-init#1203). Pushed history is never rebased or
+force-pushed — reconcile with a merge commit.
+
+**Base identity.** The base is the PR's own `baseRefName` in the **target**
+repository — never "the default branch" by habit, and never a local
+`origin/main`: a PR can target a release branch, and on a fork `origin` is the
+contributor's copy. Merging the wrong ref can leave the head level with
+something that is not its base. The gate reads `baseRefName`, and a retarget
+mid-gate stops the run (`base-retargeted`) rather than being re-measured
+against a moving target.
+
+**Timing — once, at the gate.** Being behind is **not a mid-stage blocker.**
+Notice it, record it, carry on; the gate is where it is resolved. Reacting on
+sight is expensive because a base merge moves the head, and a moved head
+invalidates the CI results and the review cycle about to be spent on it. On
+evanharmon1/harmon-init#1311 the base moved five times in one session and the
+branch was merged three times; two were mid-stage reactions that re-reviewed
+source which had not changed and found nothing.
+
+**Reconciliation is an ordinary remediation round.** It is not a special
+operation exempt from anything: it passes the round gate and the secret scan,
+it pushes the gated SHA, it spends remediation budget, and it counts against
+every cap that governs any other round. Two consequences follow rather than
+needing their own procedure:
+
+- With no remediation budget left, reconciliation is the **blocked stop** with
+  a report naming the unreconciled base — never a push anyway, and never a
+  promotion on a behind head. **The last remediation push is reserved the same
+  way the last cycle is**: before making a push that may be the final one,
+  preflight `behind` and fold the base merge into that same push. Deferring it
+  spends the last round on the fix alone and then needs a round that no longer
+  exists — with `remediation = 1`, a behind head and one confirmed finding,
+  merging and fixing together costs one round while doing them in sequence
+  costs two and ends blocked.
+- The merge moves the head, so it owes a fresh current-head cycle exactly as
+  any head move does. **The last permitted cycle is therefore reserved for the
+  reconciled head**: before dispatching it, run
+  `"$skill_dir"/assets/readiness-gate.sh behind --repo <repo> --pr <n>`
+  (read-only; 0 level, 1 behind, 2 could not establish) and, if it reports
+  behind, reconcile first and spend that cycle on the merged head. Use the
+  subcommand rather than a compare call of your own: ref encoding and the
+  fail-closed handling of an unreadable comparison live there and are tested
+  there, and an indeterminate answer must not be read as "level". Waiting for the gate
+  to report `behind-base` is too late by construction: the cycle is dispatched
+  *before* the gate runs, so a base that moved beforehand would consume the
+  last cycle on a head about to be superseded, and turn a recoverable branch
+  into a deterministic cap-reached blocker. Discovering it after the final
+  cycle is spent remains an escalation — the point of the reservation is that
+  it should not happen. Where the resolved integration cap is 0 no cloud cycle
+  is owed at all and the gate's Codex condition drops out, as everywhere else.
+
+**A PR the gate can establish is behind is never reported ready** — under any
+cap, at any round, however clean everything else is. That is the property all
+of the above exists to preserve; if a reading of this section ever conflicts
+with it, that reading is wrong.
+
+The qualifier is exact, not a hedge. The base is not under this repository's
+control, so a PR can fall behind a second after a correct promotion; that is
+ordinary, and resolving it is what the maintainer's "Update branch" is for.
+What the gate owes is that it never promotes a head it could see was behind —
+which is why the check runs again immediately before the verdict rather than
+once at the start. Undoing a promotion because the base moved afterwards is
+**not** the remedy: promotion is a one-way door (`gh pr ready --undo` cannot
+unsend the notifications), and § "Unexplained promotion" already refuses
+reflexive undos.
+
+This is enforced rather than merely stated: the behind checks run in `check`
+mode only. `audit` judges a promotion that already happened, so a behind head
+there is ordinary drift — and had audit failed on it, § "Unexplained
+promotion"'s *Otherwise* branch would have routed a perfectly valid human
+handoff into an undo. A promoted PR that has fallen behind is reported to the
+maintainer, never reversed by this session.
+
 ## 6. Stop conditions
 
 Every integration session ends at exactly one of these — there is no path
 that loops indefinitely:
 
 1. **Ready for human review** — all workflows pass, `reviewDecision` is not
-   `CHANGES_REQUESTED`, `mergeStateStatus` is not `DIRTY` or `BEHIND`
-   (conflicts and an out-of-date head are yours to resolve — a merge/update
-   with the base plus re-verification is a round), and no findings remain
+   `CHANGES_REQUESTED`, the head is **0 commits behind its base** (`behind_by`,
+   not `mergeStateStatus`, which is a cache that has read `CLEAN` for a head
+   sixteen commits behind), `mergeStateStatus` is not `DIRTY`, and it is
+   neither `UNKNOWN` nor — with the graph reporting 0 — still `BEHIND`, both
+   of which are *unknown-for-now* and re-polled rather than promoted on
+   (conflicts and an out-of-date head are yours to resolve — see "Base
+   reconciliation" at the end of step 5; a merge with the base plus
+   re-verification is a round), and no findings remain
    unresolved — including the low-priority ones deferred into this stage,
    which count as resolved once their box is ticked with the outcome. A
    finding carried in the PR body has no inline thread to answer, so its
@@ -1282,6 +1670,15 @@ that loops indefinitely:
      that closes the stage still echoes the fix that caused the final loop,
      per the `applied_dispositions` bullet in §5's dispatch input, and a
      pass that genuinely still owes a code change is not `clean` anyway.
+   - `--integration-exempt-cap <n>` — the resolved
+     `[rounds.<policy>].integration_exempt` ceiling (harmon-init#1326), which
+     bounds the base-merge-only cycles that do NOT spend `--integration-cap`.
+     Pass it whenever the result reports `codex_cycle.charged`/`.exempt`: an
+     exempt count under a caller that declared no ceiling has nothing to be
+     checked against, so the gate refuses it rather than trusting it. Omit it
+     only for a result that reports no split at all, which is one that never
+     classified its cycles and is therefore held to the original
+     single-counter rule.
    - `--codex-recheck <state file>` — the integrator's own
      `check-codex-cloud-review.sh` state file for this repo/PR:
      `git rev-parse --git-path "integrate-codex/$repo/<n>.json"`, the same
@@ -1295,6 +1692,7 @@ that loops indefinitely:
      --record <dir> \
      --integrator-result <file> \
      --integration-cap <n> \
+     --integration-exempt-cap <n> \
      --remediation-cap <n> \
      --codex-recheck <state file>
    ```
@@ -1312,6 +1710,9 @@ that loops indefinitely:
    asynchronously, `skipping` is neutral, and a required context that never
    registered appears in no list at all, which is exactly what the
    automation-coverage paragraph below exists to hold;
+   every issue the current body claims through `Closes`, `Fixes`, `Resolves`,
+   or their inflections present in `closingIssuesReferences`, with a missing
+   entry failing as `closing-linkage-missing` rather than indeterminate;
    every adjudication document in `--record` matched by a
    `destination: issue` evidence comment for its own stage and round in
    `run.json` (a `pr` rollup never substitutes — harmon-devkit#685);
@@ -1578,7 +1979,7 @@ Splitting is not an integration move.
 run record is validated *with* its adjudications, and nothing else in this
 stage does that — the readiness gate calls the renderer, whose cross-document
 validation does not read `splits`. So after recording a split, run
-`scripts/validate-result-schemas.mjs run <run.json> --adjudication <each round
+`dev-flow-support/assets/validate-result-schemas.mjs run <run.json> --adjudication <each round
 document>` and treat a failure as a blocker. It invokes checks that already
 exist: an omitted `splits[]` entry on a terminal run, a split naming a finding
 that was not adjudicated `split`, an entry naming a different issue than the
