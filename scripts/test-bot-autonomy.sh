@@ -13,7 +13,7 @@ set -euo pipefail
 # (build.yml's aggregate gate, required unconditionally), so a registry
 # change that adds a harness slug with no coverage entry fails an
 # already-required check regardless of which paths a PR touches. See
-# design.md - Risks ("Forgetting to add oh-my-pi's unsupported entry...").
+# #1137's requirement that every installed harness have an explicit entry.
 
 fail() {
     echo "FAIL: $*" >&2

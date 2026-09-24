@@ -636,7 +636,7 @@ decision; the follow-up below asks for it explicitly.
 
 **Follow-up issues to file**, each in the repository that owns it:
 
-- **harmon-init** — implement the `agent-environment-sprites` change
+- **harmon-init** — implement the sprite-lane design tracked in #1120
   (`feat:`; both layers; the offline `test:sprite-lane`); after the first
   real lane, record wall-clock, cost, Herdr detection, memory behaviour,
   and the literal egress hostnames in this note; a separate issue for
