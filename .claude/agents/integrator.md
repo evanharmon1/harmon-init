@@ -44,6 +44,28 @@ A workable brief names:
 - **the resolved `[rounds].integration` cap and this pass's cycle number** —
   or that the cap is 0, in which case you skip the whole Codex cycle (§4) and
   report `codex_cycle: null`.
+- **the run id, and the resolved `[rounds].integration_exempt` ceiling**
+  (harmon-init#1326). `integration` charges only cycles that review something
+  new; a cycle whose head differs from the last reviewed head ONLY by a base
+  merge that changed no file under review re-reads identical code and spends
+  the exempt ceiling instead. You do not judge which it is — pass `--run-id`
+  to `reserve` and it classifies from evidence, keeping the running totals in
+  its own state as `charged_cycles` / `exempt_cycles`. Pass BOTH ceilings on
+  every reservation as well: `reserve` refuses a cycle that would exceed the
+  one it belongs to, and that refusal is the only check that happens before
+  the trigger is posted — the readiness gate sees the overspend only after the
+  review has already run. Copy those two numbers
+  onto your result as `codex_cycle.charged` and `codex_cycle.exempt`, so the
+  readiness gate can check each ceiling against the counter it belongs to.
+  harmon-init#752 adds a third outcome above both ceilings: a head whose
+  reviewed change is provably unchanged spends NOTHING, because no cycle runs
+  at all. `carry` (§4) decides that, also from evidence; when it succeeds,
+  `cycle`, `charged`, and `exempt` all stay exactly where the last real cycle
+  left them, and `codex_cycle.carried` is what discloses why the head is
+  attested without a reviewer having read it. An
+  older brief that names neither is one whose cycles were all charged, and the
+  gate holds it to the single-counter rule; do not synthesize the split
+  yourself when the brief does not carry a run id.
 - **`applied_dispositions` to echo forward**, if the orchestrator wants them
   present on a clean verdict — a list of `{finding_id, disposition}` it has
   already decided and applied in an earlier round. You copy this list into
@@ -111,11 +133,13 @@ resolve, relative to it:
   handed, nothing else configurable, and it carries no subcommand for a
   top-level PR conversation comment at all.
 
-Resolve `scripts/validate-result-schemas.mjs` from the repository root for
-§7. If any of the four is missing, say so and stop — do not hand-roll their
-behavior; a hand-rolled substitute is exactly the failure mode
-`check-codex-cloud-review.sh`'s own header warns about (a poller that misses
-a clean top-level result and reports an already-green attempt incomplete).
+For §7, resolve `$DEV_FLOW_SUPPORT` per "Resolving the assets from an agent
+file" in `dev-flow-support`'s `SKILL.md` (harmon-devkit#974), then use
+`"$DEV_FLOW_SUPPORT/validate-result-schemas.mjs"`. If any of the four is
+missing, say so and stop — do not hand-roll their behavior; a hand-rolled
+substitute is exactly the failure mode `check-codex-cloud-review.sh`'s own
+header warns about (a poller that misses a clean top-level result and reports
+an already-green attempt incomplete).
 
 ## 3. Reap stale state, then settle checks before reserving anything
 
@@ -300,6 +324,15 @@ link broke, and a `;`-separated tail keeps running after a failure and
 reports on a cycle that never happened.
 Run the poll loop strictly sequentially in the foreground, never as a background task.
 
+**Compare the persisted `.run_id` with this run's before reusing any state.**
+Same-head attached state from ANOTHER run (or from before run scoping, which
+records no owner) is not this run's history: resuming it would attribute that
+run's spend here, and the scoped `check` refuses it with a terminal exit 2, so
+redispatching only repeats the same wall. Route it through a fresh attempt-1
+`reserve` with this run's `--run-id`, which is permitted precisely for attached
+foreign state. An unresolved `reserved` record is the one exception — it stays
+blocked whoever owns it, because a trigger may already be out against it.
+
 **Inspect the state file yourself before calling `reserve` — do not call it
 unconditionally and branch on what it reports.** `reserve --attempt 1`
 **dies** (nonzero, no distinguishing message your `|| exit` could branch on)
@@ -319,6 +352,40 @@ else
 fi
 ```
 
+**Before reserving a fresh cycle, ask whether one is needed at all**
+(harmon-init#752). When the head advanced only by a base catch-up merge, the
+PR's diff can be byte-identical to the one a reviewer already called clean —
+re-reviewing it re-attests the same bytes, and the cost is a full reviewer
+window plus a cap slot. `carry` answers that question from local git and
+writes no GitHub state:
+
+```sh
+carry_exit=0
+carry_out="$("$helper" carry --state "$state" --head "<head>" \
+    --run-id "<run id>" --repo-dir "$(git rev-parse --show-toplevel)")" || carry_exit=$?
+```
+
+- **exit 0** — carried. Post **no** trigger, run no `attach`, and skip the
+  fresh-cycle sequence entirely. Go straight to `check` below. The carry does
+  not move the cycle — it records that an existing cycle's verdict also attests
+  this head — so `check` runs the same evidence scan it always runs and
+  re-derives that claim immediately before any verdict it reaches. It can therefore come back `findings`
+  (exit 10) like any other: that is a late finding on the commit a reviewer
+  read, handled exactly as one, and `settle` answers it against this same
+  state.
+- **exit 17** — not carried, for the reason in the output. This is the
+  ordinary answer, not an error: continue to the three cases below exactly as
+  if you had never called it.
+- **exit 14** — the PR is merged or closed. The stage is over: reserve,
+  trigger, and poll nothing, and report `codex_cycle.exit_code: 14`, exactly as
+  a `check` that returned 14.
+- **any other exit** — treat as 17 and continue. `carry` is an optimization
+  over a cycle you were going to run anyway, so a broken one costs a cycle
+  rather than a verdict.
+
+Run it only when the state file exists and names a DIFFERENT head; there is
+nothing to carry otherwise, and `carry` will say so.
+
 Three cases, mutually exclusive:
 
 - **No state file, or state for a different head.** This is a fresh cycle.
@@ -326,7 +393,8 @@ Three cases, mutually exclusive:
 
   ```bash
   "$helper" reserve --state "$state" --repo "$repo" --pr <n> \
-      --head "<head>" --attempt 1 || exit
+      --head "<head>" --attempt 1 --run-id "<run id>" \
+      --integration-cap "<cap>" --integration-exempt-cap "<exempt cap>" || exit
   trigger_id="$("$skill_dir"/assets/gh-write-broker.sh trigger --repo "$repo" --pr <n>)" || exit
   "$helper" attach --state "$state" --trigger-id "$trigger_id" || exit
   ```
@@ -387,7 +455,8 @@ Three cases, mutually exclusive:
 
 ```bash
 check_exit=0
-check_out="$("$helper" check --state "$state" --actor-id 199175422)" || check_exit=$?
+check_out="$("$helper" check --state "$state" --actor-id 199175422 \
+    --run-id "<run id>")" || check_exit=$?
 ```
 
 Run this exact pair — **both lines, every time** — immediately before
@@ -402,12 +471,61 @@ Resetting to `0` first means every invocation starts from a known baseline
 and only moves off it when *this* call actually fails.
 
 `check` returns 0 clean, 10 findings, 11 pending, 12 retry, 13 escalate, 14
-PR no longer open, 2 indeterminate. On **12 (retry)**, repeat the
+PR no longer open, 15 quota exhausted, 16 transient read, 2 indeterminate. On
+**12 (retry)**, repeat the
 reserve/trigger/attach/check sequence once more with `--attempt 2` against
 the **same** state and head — this is the one bounded retry your brief
-expects; do not retry a second time. On **13 (escalate)**, **14**, or **2**,
+expects; do not retry a second time. On **13 (escalate)**, **14**, **15**, or
+**2**,
 stop driving the cycle and carry that exit code straight into `codex_cycle`
 (§7) — these are terminal for this pass, not something you work around.
+
+On **15 (quota exhausted)** the reviewer answered that its code-review usage
+limit is spent (harmon-devkit#573). Do **not** re-trigger: `reserve
+--attempt 2` refuses that state by design, because the one bounded retry
+exists for a reviewer that did not answer, and this one did. Carry the exit
+code straight into your result as `verdict: "escalate"`, and put the checker's
+`detail` — which names the reset time where the reply carried one, and the
+recovery route — in your REPORT, never in `codex_cycle`. Challenge round 3,
+finding `challenge-r3-codex-adversarial-12`: `codex_cycle` is
+`additionalProperties: false` and has no `detail` field, so an agent
+complying literally with the older wording produced a schema-invalid result,
+and one complying loosely dropped the datum four documents ask for. You do not
+wait out the reset yourself, and you cannot re-open the cycle: a fresh
+`--attempt 1` on the same head is refused by the single same-head reservation
+guard, so the commit stays un-reviewable through this helper until a push
+moves the head or an operator clears the checker state. Report that route;
+it is carried in harmon-devkit#1115.
+
+On **16 (transient read)** an evidence READ failed (harmon-devkit#508). This
+is emphatically **not** a statement about the reviewer, so it is neither a
+retry of the cycle nor an escalation: repeat the **read**. Inside this
+dispatch, treat it like `11` — the same bounded poll loop below picks it up on
+its next iteration — and if the window runs out still on 16, report
+`codex_cycle` with `exit_code: 16` and `verdict: "pending"`, no `accepted`.
+Never re-trigger and never reserve a fresh attempt to "get past" a 16: the
+reviewer was never absent, and the orchestrator's gate reads 16 as
+indeterminate-with-reason rather than as a non-clean cycle.
+
+**But 16 is not `11` forever, and that is the one way it differs.** A `11`
+that persists means a reviewer still working; a 16 that persists means a read
+that keeps failing, and the causes that keep failing are the ones repeating
+will never fix — a revoked token, a permission that no longer covers the
+endpoint, a repository made private under you. Polling those to the end of the
+window and reporting `pending` asks the orchestrator to re-dispatch you into
+the identical failure, which spends the whole wall clock on a condition that
+was decided at the first read. So **count CONSECUTIVE 16s, and after the third
+break out of the loop** and return `status: "blocked"` with a blocker line
+naming the read that failed — the endpoint and the checker's own detail, so the
+operator can see it is an access problem and not a reviewer problem. The
+counter resets on any other exit code, because a 16 between two successful
+reads is the transient case this arm exists for.
+
+`blocked` is the envelope word for it: `result.envelope.schema.json`'s `status`
+enum is `completed` / `blocked` and nothing else, so "report indeterminate"
+would be a result no validator accepts. The gate has its own vocabulary for
+this condition (`codex-transient-read`, indeterminate-with-reason) and that is
+a different field on a different document — do not carry it onto the envelope.
 On **11 (pending)**, do not end the pass on the first pending read — that
 would spend the orchestrator's whole dispatch budget re-invoking you for
 every single poll, exactly the long-poll cost this role exists to absorb
@@ -417,20 +535,54 @@ brief's cap implies (10–15 minutes per attempt):
 
 ```sh
 window_end=$((SECONDS + 900))  # 15 minutes; use your brief's own window if different
+consecutive_16=0
 while [ "$SECONDS" -lt "$window_end" ]; do
     check_exit=0
-    check_out="$("$helper" check --state "$state" --actor-id 199175422)" || check_exit=$?
-    [ "$check_exit" != "11" ] && break
+    check_out="$("$helper" check --state "$state" --actor-id 199175422 \
+    --run-id "<run id>")" || check_exit=$?
+    # 16 (transient read) keeps polling for the same reason 11 does: the
+    # remedy for a read that failed is to repeat the read. Only a terminal
+    # code breaks the loop.
+    [ "$check_exit" != "11" ] && [ "$check_exit" != "16" ] && break
+    # A read that fails three times running is not transient. Break and report
+    # `indeterminate` naming the failing read, rather than polling out the
+    # window and handing back a `pending` the orchestrator will re-dispatch
+    # into the same wall.
+    if [ "$check_exit" = "16" ]; then
+        consecutive_16=$((consecutive_16 + 1))
+        [ "$consecutive_16" -lt 3 ] || break
+    else
+        consecutive_16=0
+    fi
     sleep 90
 done
 ```
 
-Only once that loop exits — either a terminal `check_exit` broke it, or the
-window ran out still on 11 — do you stop driving the cycle for this pass.
-If the window elapsed still pending, report `codex_cycle` with
-`exit_code: 11` and no `accepted` (§7 shows the shape); a caller that wants
-another look dispatches you again for a fresh window, rather than this pass
-looping indefinitely on its own.
+Two things the loop's own window will not shorten. The checker extends an
+attempt while the bot's 👀 is still on that attempt's trigger, up to a hard
+ceiling of 30 minutes from the trigger (harmon-devkit#655), so a `11` that
+persists past your 15-minute poll is a review still running rather than an
+absent one — report it as `11` and let the orchestrator re-dispatch; do not
+re-trigger inside this dispatch. And a badged comment from the finder that
+carries no `Reviewed commit` line of its own does not disappear: it comes back
+as `findings` (exit 10) and is cleared by the orchestrator settling it by
+comment id, never by you. Reading a clean verdict out of the connector's
+rolling "Codex Review Summary" table was proposed and split back out
+(harmon-devkit#718, carried in harmon-devkit#1117) — do not expect a head to
+go terminal-clean from that row.
+
+Only once that loop exits — a terminal `check_exit` broke it, three
+consecutive 16s broke it, or the window ran out still on 11 — do you stop
+driving the cycle for this pass. If the window elapsed still pending, report
+`codex_cycle` with `exit_code: 11` and no `accepted` (§7 shows the shape); a
+caller that wants another look dispatches you again for a fresh window, rather
+than this pass looping indefinitely on its own. If the consecutive-16 budget
+broke it, report `status: "blocked"` with `codex_cycle.exit_code: 16`,
+`verdict: "pending"` (16's own rule in EXIT_CODE_VERDICT_CONSTRAINTS, which
+does not change because the read stopped being retriable) and a blocker line
+naming the failing read — the endpoint and the checker's detail — so the
+orchestrator escalates the access problem instead of spending its remaining
+dispatches on it.
 
 On **0 (clean)** or **10 (findings)**, `check_out` itself now carries the
 accepted evidence (harmon-devkit#639 gauntlet challenge round 4): build
@@ -440,6 +592,51 @@ reviewed_commit: (check_out | .accepted.reviewed_commit)}`. All three are
 always present together on these two exit codes; their absence is a
 malformed `check_out` your brief did not anticipate — stop and report it
 rather than fabricating a value.
+
+A cycle that **carries** (harmon-init#752) reports `check_out.carried`. Copy
+that object to `codex_cycle.carried` **verbatim** and add `origin_head`, which
+is `check_out.head` — the gate compares the whole object, byte for byte,
+against the record the checker keeps, so a single altered field reports
+`codex-carried-unproven` rather than promoting.
+
+Two things about this shape will catch you out if you copy by reflex:
+
+- **`check_out.head` is NOT the envelope head here.** It is the commit the
+  reviewer read, which is the point. `codex_cycle.head` is still the head your
+  brief named (the gated one); `codex_cycle.carried.origin_head` and
+  `accepted.reviewed_commit` are both `check_out.head`. That is the single
+  exception to heads-must-agree, and the receipt validator permits it only
+  when `carried` is present.
+- **Leave `cycle`, `charged`, and `exempt` where the last real cycle left
+  them.** A carried head ran no cycle and spent nothing; inflating any of the
+  three makes the gate's arithmetic disagree with the checker state.
+- **The `codex-cloud` entry of `finder_cycles[]` carries the SAME `carried`
+  object**, `origin_head` included. The two describe one cycle, and receipt
+  validation rejects the whole envelope when they disagree, including when the
+  mirror simply omits it. (Integration cycle 5, finding
+  `integration-r5-claude-2`: this rule was enforced in both validators and
+  stated nowhere a producer reads.) No other finder may carry one.
+
+A `10` raised by inline threads also carries `unanswered[]` — one
+`{thread_root, comment_id, review_id, path}` entry per unadjudicated bot
+thread on the head, **across every review that posted one**
+(harmon-devkit#737). Feed every entry's **`thread_root`** into
+`unanswered_thread_roots`, and the entry into `findings[]`. Map the **unique**
+thread roots to **strings** as you assemble that array: two unadjudicated
+comments in one thread share a root and must contribute one id, not two, and
+the schema types the field as strings while the checker emits the root as a
+JSON number — so passing the numbers straight through produces a result the
+validator rejects, and passing duplicates through inflates the gate count of
+what is unanswered.
+
+The two ids are not interchangeable: GitHub sets `in_reply_to_id` to the thread ROOT on every
+reply, so `comment_id` names the bot comment that raised the finding while
+`thread_root` names the thread a reply must land in — and
+`unanswered_thread_roots` is defined as thread ids
+(harmon-devkit#1050, `challenge-r5-codex-adversarial-6`). The single
+`accepted.id` names one review, and the bot can post two on one head minutes
+apart, so trusting it alone is how the second review's findings reach the
+readiness gate unanswered.
 
 You never call `settle`. A badged finding sitting outside an inline thread
 (a top-level comment or a review body) is a **finding** you report like any
@@ -462,7 +659,8 @@ explicit `--actor-id`:
 ```sh
 state_finder="$(git rev-parse --git-path "integrate-$slug/$repo/<n>.json")"
 "$helper" reserve --state "$state_finder" --repo "$repo" --pr <n> \
-    --head "<head>" --attempt 1 --finder "$slug" || exit
+    --head "<head>" --attempt 1 --finder "$slug" --run-id "<run id>" \
+    --integration-cap "<cap>" --integration-exempt-cap "<exempt cap>" || exit
 ```
 
 The trigger mechanism varies by finder — the trusted registry determines which:
@@ -479,7 +677,7 @@ The trigger mechanism varies by finder — the trusted registry determines which
 
 ```bash
 check_exit=0
-check_out="$("$helper" check --state "$state_finder")" || check_exit=$?
+check_out="$("$helper" check --state "$state_finder" --run-id "<run id>")" || check_exit=$?
 ```
 
 No `--actor-id` argument is needed when `--finder` was passed to `reserve` —
@@ -677,7 +875,10 @@ both being "now" (Codex cloud-review cycle on this PR, harmon-devkit#758).
 own `head`, `payload.codex_cycle.head` (when non-null),
 `payload.codex_cycle.accepted.reviewed_commit` (when present), and every
 `payload.finder_cycles[].head` and `.accepted.reviewed_commit` must all be
-identical, never separate reads of "the current head".
+identical, never separate reads of "the current head". The single exception is
+a CARRIED cycle (harmon-init#752), where `accepted.reviewed_commit` names
+`carried.origin_head` instead; every other field on that list still equals
+this head, including `codex_cycle.head` itself.
 
 Derive `$verdict` mechanically, never by feel: `clean` only when every
 required check is `pass` (or non-required and `skipping`), the Codex cycle
@@ -696,7 +897,12 @@ way the orchestrator's next move is to stop and reconcile rather than
 re-dispatch, so a timed-out cycle reported under any other verdict fails
 validation instead of returning the escalation evidence §4 promises. Exit
 `14` (the PR is no longer open) forbids `clean` and `pending` — report
-`findings` (the closed PR is the finding) or `escalate`. `codex_cycle`
+`findings` (the closed PR is the finding) or `escalate`. Exit `15` (the
+reviewer reported an exhausted usage limit) pairs with `escalate` for the
+same reason `13` does: the orchestrator's next move is to stop and report a
+blocker, never to re-dispatch. Exit `16` (a transient evidence read) pairs
+with `pending`, like `11` and `12` — the read is repeated, nothing is
+escalated over a GitHub call that would not answer. `codex_cycle`
 carries `accepted` only when its `exit_code` is 0 or 10 (omit the key
 otherwise, never null).
 
@@ -704,7 +910,9 @@ Validate before reporting it — as the full envelope, the same `envelope` kind
 the readiness gate itself validates, not the bare `integrator` payload kind:
 
 ```sh
-node scripts/validate-result-schemas.mjs envelope "$out_file"
+# $DEV_FLOW_SUPPORT resolved per §2's "Resolving the assets from an agent
+# file" reference.
+node "$DEV_FLOW_SUPPORT/validate-result-schemas.mjs" envelope "$out_file"
 ```
 
 A nonzero exit means fix the document and re-validate — never report an
@@ -736,3 +944,24 @@ your transcript. Cover:
   each reply you posted from §6, by comment ID.
 - **Blocked** — anything §1 stopped you on, or any read that failed and left
   a field `unknown` rather than a real value.
+
+The delegation contract that governs every dispatched agent here — exit plan
+mode before spawning, keep the core work in your own context, the shared
+working tree and `HEAD`, scratch namespacing, and what a relayed gating claim
+owes — is stated once in the `implement` skill's
+`assets/implementer-brief.md` § "Delegation contract". Read it there; it is
+not restated in this file. That section is written to be read standalone, so
+it needs no rendered brief to be usable.
+
+Resolve it the way this repository resolves any skill file: prefer
+`.agents/skills/implement/assets/implementer-brief.md`, then the
+harness-specific skills location, then one bounded glob. **If none of those
+is readable, do not guess the contract** — continue on `AGENTS.md` plus your
+dispatch brief, which is the degradation this repository's discover-don't-
+require rule prescribes, and keep to the narrower of what those two allow.
+
+Rule 5 has an audience split, and you are on the bounded-role side of it: you
+answer through the typed result your dispatch asked for, and your writes are
+exactly the ones this file permits. The report file and the publication
+sentinels that contract names belong to a PR-owning session or pane, never to
+you.

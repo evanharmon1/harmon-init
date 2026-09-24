@@ -3,9 +3,9 @@
 // the fixed measurement sections of a `/retro` report.
 //
 // A projection, never a second source of truth: every number below is read
-// from the run trajectory `scripts/dev-flow-stats.mjs --run <id> --json`
+// from the run trajectory `dev-flow-stats.mjs --run <id> --json`
 // harvests (issue #663) or from the resolved-policy line the renderer already
-// published into the PR body (`scripts/render-dev-flow.mjs`, issue #637).
+// published into the PR body (`dev-flow-support/assets/render-dev-flow.mjs`, issue #637).
 // Nothing here re-derives a disposition, a cap, or an exit.
 //
 // Usage:
@@ -45,6 +45,7 @@ import { execFileSync, spawnSync } from 'node:child_process'
 import { existsSync, readFileSync } from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
+import { fileURLToPath } from 'node:url'
 
 const TOOL = 'retro-run-report'
 const MAX_SYNC_BUFFER_BYTES = 64 * 1024 * 1024
@@ -141,7 +142,7 @@ function parseArgs(argv) {
   return args
 }
 
-// The same grammar scripts/dev-flow-stats.mjs enforces on its own --as-of:
+// The same grammar dev-flow-stats.mjs enforces on its own --as-of:
 // UTC "Z" form only (a timezone-less stamp would parse as LOCAL time, making
 // a "reproducible" cutoff environment-dependent), and calendar-valid, since
 // Date.parse silently NORMALIZES an impossible date like 2026-02-30 into a
@@ -229,7 +230,7 @@ function ghJson(argv) {
 // `gh pr view --json comments`, which returns only the first page: a stage
 // rollup on a busy PR sits well past comment 100, and a discovery that reads
 // only the first page would report "no run record" for a run that plainly has
-// one. Same call shape scripts/dev-flow-stats.mjs uses for the same reason.
+// one. Same call shape dev-flow-stats.mjs uses for the same reason.
 function fetchComments(repo, number, asOf) {
   const pages = ghJson(['api', '--paginate', '--slurp', `repos/${repo}/issues/${number}/comments`])
   const comments = Array.isArray(pages) ? pages.flat() : []
@@ -262,21 +263,27 @@ function repoRoot() {
   }
 }
 
-// The harvester lives in the repository under review, not beside this asset:
-// skills are vendored into consumer repos (flattened, under .agents/skills/),
-// while scripts/dev-flow-stats.mjs is `scripts/`-shipped and may simply not be
-// there. Resolving from the git top level rather than import.meta.url is what
-// makes "the retro skill is vendored but the harvester is not" the ordinary,
-// well-handled case instead of a crash.
+// The harvester is this asset's own SIBLING now (harmon-devkit#974): both ship
+// in the retro skill's `assets/`, so `task sync:skills` vendors them together
+// and the pair cannot arrive half-installed the way a skill-here /
+// repository-root-`scripts/`-there split could. It is therefore resolved from
+// this file's own location rather than from the git top level, which is what
+// makes the harvester findable in a consumer repo at all — a consumer has no
+// `ai/` tree, and the depth from an asset to a repository root differs between
+// harmon-devkit's source layout and a flattened `.claude/skills/` one.
+//
+// The "harvester missing" branch is kept even so: --stats-command still
+// overrides, and a partially-vendored package should say what is absent rather
+// than throw.
+const ASSET_DIR = path.dirname(fileURLToPath(import.meta.url))
+
 function resolveStatsCommand(explicit) {
   if (explicit) return statsCommandFor(explicit)
-  const root = repoRoot()
-  if (!root) return { missingReason: 'this directory is not inside a git repository, so the harvester could not be located' }
-  for (const candidate of ['scripts/dev-flow-stats.sh', 'scripts/dev-flow-stats.mjs']) {
-    const full = path.join(root, candidate)
+  for (const candidate of ['dev-flow-stats.sh', 'dev-flow-stats.mjs']) {
+    const full = path.join(ASSET_DIR, candidate)
     if (existsSync(full)) return statsCommandFor(full)
   }
-  return { missingReason: `${root} has no scripts/dev-flow-stats.sh or scripts/dev-flow-stats.mjs` }
+  return { missingReason: `${ASSET_DIR} has no dev-flow-stats.sh or dev-flow-stats.mjs beside this report generator — the retro skill's assets are incompletely vendored` }
 }
 
 function statsCommandFor(file) {
@@ -711,7 +718,7 @@ function discoverRun(args, trustedActorIds) {
 // authenticate their own retrospective — the evidence spec requires authority
 // to "derive solely from configured trusted orchestrator actor IDs", and
 // "whoever is logged in" is not configured (challenge round 2, confirmed P1).
-// scripts/dev-flow-stats.mjs already requires the ids explicitly; matching it
+// dev-flow-stats.mjs already requires the ids explicitly; matching it
 // removes the divergence rather than papering over it. agent-registry.json
 // will carry the allowlist under harmon-devkit#741; until then the caller
 // supplies it, from a committed --trusted-actors-file or the flag.
@@ -845,8 +852,15 @@ function harvestTrajectory(stats, args, runId, trusted) {
 // puts on the same page.
 const POLICY_BEGIN = '<!-- dev-flow:begin:policy-disclosure -->'
 const POLICY_END = '<!-- dev-flow:end:policy-disclosure -->'
+// harmon-init#1341: the exempt-cycle ceiling renders as an optional
+// ` (+N exempt)` immediately after the charged integration cap. It has to be
+// OPTIONAL in this pattern, not merely added: a retro routinely reads PRs
+// opened before the ceiling existed, or by a repo whose harmon-init pin
+// predates it, and a required group would turn every one of those into
+// "does not open with a parseable rigor line" — silently dropping the caps
+// the report exists to show. Group 6 is the exempt count when present.
 const POLICY_LINE_RE =
-  /^rigor:\s*`([^`]*)`\s*\(`([^`]*)`\)\s*→\s*challenge ≤(\d+), review ≤(\d+), integration (\d+), remediation (\d+), min_rounds (\d+)\s*$/
+  /^rigor:\s*`([^`]*)`\s*\(`([^`]*)`\)\s*→\s*challenge ≤(\d+), review ≤(\d+), integration (\d+)(?: \(\+(\d+) exempt\))?, remediation (\d+), min_rounds (\d+)\s*$/
 
 function readPolicyDisclosure(body) {
   if (typeof body !== 'string' || !body.includes(POLICY_BEGIN)) {
@@ -889,8 +903,12 @@ function readPolicyDisclosure(body) {
       challenge: Number(match[3]),
       review: Number(match[4]),
       integration: Number(match[5]),
-      remediation: Number(match[6]),
-      min_rounds: Number(match[7])
+      // Absent group => the disclosure named no exempt ceiling, which is not
+      // the same as a ceiling of 0: undefined means "this run had no exempt
+      // budget concept at all", and a consumer must not render it as "+0".
+      ...(match[6] === undefined ? {} : { integration_exempt: Number(match[6]) }),
+      remediation: Number(match[7]),
+      min_rounds: Number(match[8])
     },
     disclosures: lines.slice(1).filter((line) => line.startsWith('- ')).map((line) => line.slice(2))
   }
@@ -954,7 +972,21 @@ function measure(trajectory, policy) {
     // always read as a misleading zero (harmon-devkit#962 maintainer
     // extension: never a count, never zero).
     if (stage === 'integration') {
-      return { stage, entries, cap, integration_evidence: trajectory.integration_evidence || 'unavailable', interventions: stageInterventions }
+      // harmon-init#1341, challenge round 1 P1 (confirmed): the parser reads
+      // the exempt ceiling, so the report must carry it. `cap` alone answers
+      // "how many cycles were allowed?" with only the charged half, and for
+      // the integration stage that is the number a reader uses to judge
+      // whether a run overspent. Omitted when the disclosure named none, which
+      // is not the same as a ceiling of 0 — see the parser's own note.
+      const exemptCap = policy.present ? policy.rounds.integration_exempt : undefined
+      return {
+        stage,
+        entries,
+        cap,
+        ...(exemptCap === undefined ? {} : { exempt_cap: exemptCap }),
+        integration_evidence: trajectory.integration_evidence || 'unavailable',
+        interventions: stageInterventions
+      }
     }
     return {
       stage,
@@ -1139,8 +1171,14 @@ function renderMarkdown(report) {
   l.push('')
   if (report.policy.present) {
     const r = report.policy.rounds
+    // harmon-init#1341, Codex cloud cycle 3 P2: this is the line a reader takes
+    // as the run's budget, so it must carry the exempt ceiling too — otherwise
+    // every new-format retro opens with an incomplete summary and only reveals
+    // the extra allowance further down.
+    const exemptSuffix =
+      r.integration_exempt === undefined ? '' : ` (+${r.integration_exempt} exempt)`
     l.push(
-      `rigor: \`${safe(report.policy.rigor.level)}\` (\`${safe(report.policy.rigor.source)}\`) → challenge ≤${r.challenge}, review ≤${r.review}, integration ${r.integration}, remediation ${r.remediation}, min_rounds ${r.min_rounds}`
+      `rigor: \`${safe(report.policy.rigor.level)}\` (\`${safe(report.policy.rigor.source)}\`) → challenge ≤${r.challenge}, review ≤${r.review}, integration ${r.integration}${exemptSuffix}, remediation ${r.remediation}, min_rounds ${r.min_rounds}`
     )
     l.push('')
     l.push(
@@ -1164,7 +1202,14 @@ function renderMarkdown(report) {
     // local evidence can never authenticate a round/pass/finding count for
     // it — disclose that instead of a count that would always read as zero.
     if (stage.stage === 'integration') {
-      const cap = stage.cap === null ? 'no cap recorded' : `cap ${stage.cap} (disclosed, unverified)`
+      // harmon-init#1341: the charged cap alone understates what the run was
+      // allowed to spend once base-merge-only cycles have a ceiling of their
+      // own, and this line is where a reader judges whether a run overspent.
+      const exemptSuffix = stage.exempt_cap === undefined ? '' : ` + ${stage.exempt_cap} exempt`
+      const cap =
+        stage.cap === null
+          ? 'no cap recorded'
+          : `cap ${stage.cap}${exemptSuffix} (disclosed, unverified)`
       l.push(`- Rounds/passes/findings: not measured from local evidence (${cap}) — integration passes carry no authenticated evidence marker today.`)
     } else if (stage.cap !== null || stage.rounds_spent > 0) {
       const cap = stage.cap === null ? 'no cap recorded' : `cap ${stage.cap} (disclosed, unverified)`

@@ -9,7 +9,39 @@ description: >-
 
 # Orchestrate
 
-Resolve and announce policy with `scripts/devflow-policy.mjs`; record resolved
+**Runtime assets travel with the skills.** Every executable this skill names is
+vendored by `task sync:skills`, never fetched from a repository-root `scripts/`
+path (harmon-devkit#974): a consumer that installed the skill has no such
+directory, so a root-relative dependency installs a skill that cannot run. Two
+shorthands are used below and resolve the same way in harmon-devkit's source
+tree and in a consumer's flattened `.claude/skills/` one:
+
+- `assets/<name>` — this skill's own asset, i.e. `${CLAUDE_SKILL_DIR}/assets/<name>`.
+- `<package>/assets/<name>` — a sibling package's asset. **Resolve
+  `${CLAUDE_SKILL_DIR}` physically first**, then append:
+
+  ```sh
+  skill_dir="$(cd "${CLAUDE_SKILL_DIR}" && pwd -P)"
+  support_dir="$skill_dir/../dev-flow-support/assets"
+  ```
+
+  The `cd`/`pwd -P` is load-bearing, not ceremony: where the skills directory
+  is reached through a symlink — harmon-devkit's own `.agents/skills/<name>`
+  entries are symlinks into `ai/skills/<category>/` — a **logical**
+  `${CLAUDE_SKILL_DIR}/../` splits by resolver. `ls` follows the link and
+  succeeds; Node collapses `..` with `path.resolve()` before touching the
+  filesystem and fails with `MODULE_NOT_FOUND`. Resolving physically first
+  makes both agree. This is the same rule `dev-flow-support`'s own `SKILL.md`
+  states for asset-to-asset calls; see it for the canonical wording.
+
+  The shared dev-flow v2 runtime (`devflow-policy.mjs`,
+  `validate-result-schemas.mjs`, `render-dev-flow.{sh,mjs}`,
+  `dev-flow-exit.{sh,mjs}`) lives in `dev-flow-support/assets/`.
+
+A missing sibling package is a blocker, not a fallback: vendor the `universal`
+category as a unit rather than resolving a runtime path some other way.
+
+Resolve and announce policy with `dev-flow-support/assets/devflow-policy.mjs`; record resolved
 rigor, rounds, breadth, roles, strategy, and disclosures in the run. That
 reader operates under `schema_version = 2` and under nothing else: a legacy,
 v1, mixed, or unknown `.devflow.toml` is refused with one actionable message
@@ -17,7 +49,7 @@ v1, mixed, or unknown `.devflow.toml` is refused with one actionable message
 template, and hold `.skills-sync.yaml` at the last pre-v2 skills release until
 it has migrated). Report that message as a blocker and start no run; never
 hand-decode an older shape, invent caps, or advance the pin to get past it
-(harmon-devkit#604). `scripts/consumer-pin-audit.sh` is the standing check
+(harmon-devkit#604). `assets/consumer-pin-audit.sh` is the standing check
 that a repository's vendored-skill pin and its policy shape agree. Runtime
 isolation is optional; its absence alone is not a dispatch blocker. Every role
 still stays within its declared scope. Use one worktree and branch per lane,
@@ -70,7 +102,7 @@ Build and publish the plan in this order:
    expanded path, publish a complete new revision through the candidate,
    validate, rename, and canonical-readback sequence in step 7.
 6. **Emit and validate.** Write the closed record and validate it with
-   `node scripts/validate-result-schemas.mjs plan <plan.json>`. Refuse dispatch
+   `node dev-flow-support/assets/validate-result-schemas.mjs plan <plan.json>`. Refuse dispatch
    on a structural error, a broken revision digest, an incomplete overlap set,
    a graph/projection mismatch, an ownership error, or a cap violation.
    Immediately before each lane dispatch, compare the live target head with the
@@ -143,9 +175,16 @@ table before their intended sections.
 | `{{base-sha}}` | Lane creation record |
 | `{{worktree-path}}` | `git rev-parse --show-toplevel` in the lane |
 | `{{harness}}` | Selected implementer's registry harness |
+| `{{effort}}` | Reasoning effort the lane is expected to run at — the value its status line is checked against |
+| `{{codex-model-id}}` | Model id the Codex pane was launched with, or `n/a` for a non-Codex harness |
+| `{{codex-launch-flags}}` | The approval and sandbox policy the Codex pane was launched with. Default: `-a never -s workspace-write -c sandbox_workspace_write.network_access=true`. `--dangerously-bypass-approvals-and-sandbox` is a per-dispatch override, disclosed on the profile line; `n/a` for a non-Codex harness |
 | `{{report-path}}` | Nonce-scoped path under the common Git directory, or a path whose worktree exclusion the orchestrator has installed and verified |
+| `{{scratch-dir}}` | Per-lane subdirectory of the scratchpad; never the scratchpad root |
+| `{{repo-tier}}` | `light`, `standard`, or `heavy` — resolved by the base template's strongest-signal-wins procedure, never by matching a row's description |
+| `{{gate-bounds-override}}` | Repository's own measured gate bounds, or `None — use the base template's table.` |
+| `{{gate-commands}}` | The repository's actual gate invocations, one per line |
 | `{{generation}}` | Active pointer generation |
-| `{{active-state-path}}` | `scripts/dev-flow-monitor.sh active-path` |
+| `{{active-state-path}}` | `assets/dev-flow-monitor.sh active-path` |
 | `{{record-directory}}` | Active run record directory |
 | `{{policy-projection}}` | Resolved policy projection recorded at kickoff |
 | `{{file-scope-fence}}` | Orchestrator's lane ownership plan |
@@ -153,6 +192,7 @@ table before their intended sections.
 | `{{issue-number}}` | Claimed GitHub issue number |
 | `{{issue-title}}` | Fresh canonical-target `gh issue view` result |
 | `{{issue-url}}` | Canonical target-repository issue URL |
+| `{{unit-kind}}` | `implementation` or `proposal-only` — a proposal-only lane still runs every gate, commits, pushes and opens the draft PR; it stops there |
 | `{{claim-handoff}}` | Transaction-refreshed claim for the provisioned lane branch: authenticated comment ID, author ID, `updated_at`, expected assignees, and expected claim labels |
 | `{{verified-facts-and-rulings}}` | Orchestrator verification and attributed decisions |
 | `{{git-sandbox-note}}` | Harness-specific sandbox policy, or `Not applicable.` |
@@ -202,8 +242,37 @@ Render `assets/lane-brief.md` for every end-to-end, PR-owning implementation lan
 instead of hand-authoring a brief. Council proposal and synthesis implementers,
 and bounded remediation implementers, use their schema-bound role briefs and
 return the artifact or fix their dispatch requested; they do not receive this
-draft-publication contract. For a PR-owning lane, the source catalog above is
-the complete input contract: source every value, select the harness procedure
+draft-publication contract.
+
+Never write an implementer brief freehand, whatever its shape. Outside a v2 run
+— a dispatch with no run record — render the `implement` skill's
+`assets/implementer-brief.md` against its own source catalog
+(`implement/SKILL.md` § "Brief template source catalog") instead. That template
+is the base contract this one extends: its § "Hard rules", § "Gate commands and
+time bounds", § "Proposal-only units" and § "Delegation contract" are stated
+there once, and `assets/lane-brief.md` § "Inherited base contract" names all
+four and supplies their per-lane values rather than restating them. A brief
+composed from memory is how the 2026-09-06 fan-out shipped three workers that
+each broke a different one of those rules.
+
+`implement` is a **required dependency** of this skill, declared in
+`assets/policy-contract.json`. `assets/lane-brief.md` is the superset of that
+skill's brief template and names four of its sections without restating them,
+so a consumer holding `orchestrate` without `implement` renders a lane brief
+whose hard rules, gate bounds, proposal-only clause and delegation contract are
+absent. The lane brief therefore **blocks** when the base template is
+unreadable, rather than degrading — a one-command vendoring fix, not a mode to
+run in. The agent definitions under `ai/agents/` keep the discover-don't-require
+degradation: a bounded role can return an honest typed result without the
+contract, a lane cannot open an honest PR without it.
+
+Neither template is a work contract for a **bounded role subagent**. Both
+finish at a published draft PR, which `ai/agents/implementer.md` § "Never"
+forbids non-overridably; a role agent gets its own schema-bound role brief and
+returns a typed result. The delegation contract's rule 5 is the one place the
+two audiences meet, and it splits there explicitly.
+
+For a PR-owning lane, the source catalog above is the complete input contract: source every value, select the harness procedure
 named by the rendered brief. Provision the lane branch/worktree, then
 transactionally refresh the existing claim so its record names that exact branch.
 Authenticate the refreshed claim into the handoff snapshot without transferring
@@ -213,7 +282,7 @@ dispatch if any unreplaced `{{name}}` token remains. This is the renderer's
 check, not content validation of the opaque body; the `brief` validator checks
 double-brace tokens only inside the envelope block.
 Validate the rendered brief before dispatch and refuse dispatch on any failure:
-`node scripts/validate-result-schemas.mjs brief "$brief_path"`.
+`node dev-flow-support/assets/validate-result-schemas.mjs brief "$brief_path"`.
 Place the per-attempt report under the common Git directory, or install and
 verify its worktree exclusion before dispatch; an assertion that it is excluded
 is not evidence. Preserve its nonce-scoped sentinels. Prompts sent after dispatch
@@ -284,7 +353,7 @@ Reject a lane that requests feature-branch write authority.
 
 Immediately before every implementer invocation—initial lanes, council
 proposals and synthesis, and remediation—the feature owner calls
-`scripts/dev-flow-monitor.sh reserve-agent-run` with a deterministic dispatch
+`assets/dev-flow-monitor.sh reserve-agent-run` with a deterministic dispatch
 event and the resolved `[breadth].max_agent_runs`. Confidence finders and
 fallbacks spend the independent rounds envelope and never this implementer
 budget. The monitor pins the total implementer ceiling on the first reservation
@@ -352,7 +421,7 @@ context exhaustion so a fresh driver can re-arm the same monitor.
 
 Resolve the shared run directory with `git rev-parse --git-common-dir`, never by
 appending to a worktree's `.git` path (which is a file in linked worktrees).
-`scripts/dev-flow-monitor.sh state-path --run-id <run-id>` returns the canonical
+`assets/dev-flow-monitor.sh state-path --run-id <run-id>` returns the canonical
 `<git-common-dir>/dev-flow-v2/runs/<run-id>/monitor.json` path. Keep
 the schema-valid `run.json` beside it. Resolve the branch's shared active pointer
 with `active-path`, and activate a new run by compare-and-swap from the prior
