@@ -8,6 +8,35 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.46.0](https://github.com/evanharmon1/harmon-init/compare/v4.45.0...v4.46.0) (2026-09-24)
+
+
+### Features
+
+* **devcontainer:** fail fast when oh-my-pi's hashes are stale ([#1362](https://github.com/evanharmon1/harmon-init/issues/1362)) ([becee72](https://github.com/evanharmon1/harmon-init/commit/becee720195bee48097732a9e157ad0c281f0435))
+* **devflow:** document the carry-forward carve-out for a provably unchanged change ([#1344](https://github.com/evanharmon1/harmon-init/issues/1344)) ([61a5d73](https://github.com/evanharmon1/harmon-init/commit/61a5d73b6a6494aff5dc8e781d65f13928daff8b))
+* **devflow:** exempt base-merge-only review cycles from the integration cap ([#1340](https://github.com/evanharmon1/harmon-init/issues/1340)) ([b858d59](https://github.com/evanharmon1/harmon-init/commit/b858d595259d4198a89caa5db6dcc17ccff24b31)), closes [#1326](https://github.com/evanharmon1/harmon-init/issues/1326)
+* **template:** add use_gemini_code_assist option for gemini code assist reviews ([#1301](https://github.com/evanharmon1/harmon-init/issues/1301)) ([5300cf7](https://github.com/evanharmon1/harmon-init/commit/5300cf7bab610bac7f0d0b885a7f0399e7d82fb7))
+
+
+### Bug Fixes
+
+* **ci:** stop PR body edits re-running the build matrix, and pre-flight the closing-keyword guard ([#1335](https://github.com/evanharmon1/harmon-init/issues/1335)) ([0444a91](https://github.com/evanharmon1/harmon-init/commit/0444a91c9a16e694111709797984510ad762408c))
+* **ci:** update shellcheck version pins to v0.11.0 ([#1303](https://github.com/evanharmon1/harmon-init/issues/1303)) ([ff79e60](https://github.com/evanharmon1/harmon-init/commit/ff79e60924e3a53544d0d45362f6e25813194585))
+* **devcontainer:** assert the bot profile gh login is the bot ([#1311](https://github.com/evanharmon1/harmon-init/issues/1311)) ([a353fb5](https://github.com/evanharmon1/harmon-init/commit/a353fb563a2a88d99efcdf3e728d76600d4273d0))
+* **devcontainer:** fail the build when a required tailnet cannot be joined ([#1318](https://github.com/evanharmon1/harmon-init/issues/1318)) ([79df34f](https://github.com/evanharmon1/harmon-init/commit/79df34fd991663869c82b29bb0d8bb3b657e33db))
+* **devcontainer:** keep Codex model and reasoning effort overridable ([#1310](https://github.com/evanharmon1/harmon-init/issues/1310)) ([68579c7](https://github.com/evanharmon1/harmon-init/commit/68579c7bd71e05d55853c971f7229dd852745551))
+* **devcontainer:** update shared image to 68579c7b ([#1316](https://github.com/evanharmon1/harmon-init/issues/1316)) ([e0461a7](https://github.com/evanharmon1/harmon-init/commit/e0461a756f2a72f81d4d8fc58ffe0b8de6f4a47a))
+* **template:** allow `herdr agent start` in project-scope permissions ([#1306](https://github.com/evanharmon1/harmon-init/issues/1306)) ([ab364ba](https://github.com/evanharmon1/harmon-init/commit/ab364baae3074a9dcbeb088e3ef87b821e38306f))
+* **template:** harden the rendered devcontainer, setup-action, and session-audit defects from the v4.43.3 rollout ([#1319](https://github.com/evanharmon1/harmon-init/issues/1319)) ([5ab38d2](https://github.com/evanharmon1/harmon-init/commit/5ab38d2e6a994d5dfe60c527424a76aa48959a19))
+* **template:** isolate npm major updates ([#1363](https://github.com/evanharmon1/harmon-init/issues/1363)) ([c7865ce](https://github.com/evanharmon1/harmon-init/commit/c7865ce0abacb2e612cfe6c85404d91af2dba924))
+* **template:** keep lint-tool checksum pins in sync with Renovate version bumps ([#1352](https://github.com/evanharmon1/harmon-init/issues/1352)) ([ab44628](https://github.com/evanharmon1/harmon-init/commit/ab44628d9b9f743e069c56f24185c4221859df7d))
+* **template:** make managed-hook extraction and permission checks portable to BSD sed/stat ([#1355](https://github.com/evanharmon1/harmon-init/issues/1355)) ([aa1df65](https://github.com/evanharmon1/harmon-init/commit/aa1df65db01a626c0b2b755883577b5c7be3a643))
+* **template:** relax the protect-files Claude hook to credential-shaped paths only ([#1313](https://github.com/evanharmon1/harmon-init/issues/1313)) ([48295b2](https://github.com/evanharmon1/harmon-init/commit/48295b2122128a4fc0046bd9a8bc308f2ef193a7)), closes [#1308](https://github.com/evanharmon1/harmon-init/issues/1308)
+* **template:** retire shepherd paths and vocabulary, fix the trigger-id, remediation-counter, and model-invocation wording ([#1304](https://github.com/evanharmon1/harmon-init/issues/1304)) ([5a5c350](https://github.com/evanharmon1/harmon-init/commit/5a5c3504542bca730b11bb46d811520019a8df47))
+* **template:** stop double-pinning wrangler in Cloudflare workflows ([#1357](https://github.com/evanharmon1/harmon-init/issues/1357)) ([6558400](https://github.com/evanharmon1/harmon-init/commit/6558400a66455d78b16a2f554a957e50748e01b4))
+* **template:** sync harmon-devkit skills to v0.46.0 ([#1300](https://github.com/evanharmon1/harmon-init/issues/1300)) ([3479572](https://github.com/evanharmon1/harmon-init/commit/3479572a01939939512aba30b5f5a4c28cb17f39))
+
 ## [4.45.0](https://github.com/evanharmon1/harmon-init/compare/v4.44.0...v4.45.0) (2026-09-18)
 
 
