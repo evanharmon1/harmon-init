@@ -1,0 +1,257 @@
+#!/usr/bin/env bash
+# groom-scan.sh — read-only backlog scanner for the groom skill. Writes nothing,
+# ever. Emits one JSON dataset with everything the fan-out subagents and the
+# report need precomputed: open issues (with age, bot-ownership, and title
+# health already flagged), milestones, and whether the project board is
+# readable at all — noted rather than guessed at, per issue #1015.
+#
+# Title health reuses the SAME shared predicate check-issue-metadata.sh and
+# triage-scan.sh both call (issue-title-support/assets/issue-title.jq) rather
+# than shelling out to check-issue-metadata.sh per issue: the module IS the
+# logic check-issue-metadata.sh runs, and a per-issue subprocess over a
+# multi-hundred-issue backlog is the exact cost triage-scan.sh already avoids
+# the same way.
+#
+# Usage:
+#   groom-scan.sh --repo owner/repo [--limit N] [--out PATH]
+#
+# --out writes the scan itself (bound under GROOM_SCRATCH when the wrapper set
+# it, same convention as triage-scan.sh) so the caller never needs a shell
+# redirection.
+#
+# --limit defaults to 5000 (issue #1015's own motivating repo had 384 open
+# issues). A result that comes back AT the limit is refused outright rather
+# than silently truncated — "verify every open issue" cannot be honored on a
+# partial list, and a dropped/dead truncation flag defeats the point of
+# noting it at all (challenge round 1 finding 2). Pass a higher --limit to
+# proceed on a backlog that large.
+#
+# Exit: 0 = scan emitted, 2 = usage/environment error, 4 = refused (repo or
+#       out-path outside this run's binding, the open-issue count hit
+#       --limit, or, when --out is given, GROOM_SCRATCH itself does not
+#       exist).
+set -euo pipefail
+
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+title_module_dir="$script_dir/../../issue-title-support/assets"
+
+usage() {
+    echo "Usage: $0 --repo owner/repo [--limit N] [--out PATH]" >&2
+    exit 2
+}
+
+die() {
+    echo "groom-scan: $*" >&2
+    exit 2
+}
+
+# Same reasoning as triage-scan.sh: a run bound to one repository must never
+# read or publish another repository's issue data into this run's scratch dir.
+guard_repo_binding() {
+    local repo="$1"
+    if [ -n "${GROOM_REPO:-}" ] && [ "$repo" != "$GROOM_REPO" ]; then
+        echo "groom-scan: refused: --repo '$repo' does not match this run's" \
+            "bound repository '$GROOM_REPO'" >&2
+        exit 4
+    fi
+}
+
+guard_out_path() {
+    local out="$1" out_abs scratch
+    [ -n "$out" ] || return 0
+    [ -n "${GROOM_SCRATCH:-}" ] || return 0
+    scratch="$(cd "$GROOM_SCRATCH" 2>/dev/null && pwd -P)" || {
+        echo "groom-scan: refused: this run's scratch directory" \
+            "($GROOM_SCRATCH) does not exist" >&2
+        exit 4
+    }
+    out_abs="$(cd "$(dirname "$out")" 2>/dev/null && pwd -P)/$(basename "$out")" || {
+        echo "groom-scan: could not resolve --out path" >&2
+        exit 2
+    }
+    case "$out_abs" in
+    "$scratch"/*) ;;
+    *)
+        echo "groom-scan: refused: --out must live under this run's scratch" \
+            "directory ($GROOM_SCRATCH)" >&2
+        exit 4
+        ;;
+    esac
+}
+
+[ -r "$title_module_dir/issue-title.jq" ] ||
+    die "shared issue-title predicate is missing"
+
+repo=""
+limit=5000
+out=""
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+    --repo)
+        [ "$#" -ge 2 ] || usage
+        repo="$2"
+        shift 2
+        ;;
+    --limit)
+        [ "$#" -ge 2 ] || usage
+        limit="$2"
+        shift 2
+        ;;
+    --out)
+        [ "$#" -ge 2 ] || usage
+        out="$2"
+        shift 2
+        ;;
+    *) usage ;;
+    esac
+done
+[ -n "$repo" ] || usage
+guard_repo_binding "$repo"
+guard_out_path "$out"
+
+# Issue bodies at real-repo scale can exceed ARG_MAX via --argjson; a temp file
+# + --slurpfile read does not share that limit (same fix triage-scan.sh uses).
+scan_tmp="$(mktemp -d)" || die "could not create a temp directory"
+trap 'rm -rf "$scan_tmp"' EXIT
+
+owner_type="$(gh api "repos/$repo" -q .owner.type 2>"$scan_tmp/owner.err")" ||
+    die "could not determine owner type of $repo: $(cat "$scan_tmp/owner.err" 2>/dev/null)"
+
+open_fields="number,title,body,labels,milestone,assignees,author,createdAt,updatedAt,blockedBy,blocking"
+native_type_mode="n/a"
+open_json=""
+if [ "$owner_type" = "Organization" ]; then
+    native_type_mode="per-issue"
+    if open_json="$(gh issue list --repo "$repo" --state open \
+        --limit "$limit" --json "$open_fields,issueType" 2>/dev/null)"; then
+        native_type_mode="bulk"
+    else
+        open_json=""
+    fi
+fi
+if [ -z "$open_json" ]; then
+    open_json="$(gh issue list --repo "$repo" --state open --limit "$limit" \
+        --json "$open_fields")" ||
+        die "could not list open issues of $repo"
+fi
+
+open_count="$(jq length <<<"$open_json")"
+if [ "$open_count" -ge "$limit" ]; then
+    echo "groom-scan: refused: gh issue list returned $open_count open issue(s)," \
+        "at or above --limit $limit — this run cannot verify every open issue" \
+        "at that limit; pass a higher --limit to proceed" >&2
+    exit 4
+fi
+
+# Board access needs the `project` scope; note whether it is usable instead of
+# guessing (issue #1015's scan phase).
+board_access="unavailable: gh project list requires the project scope"
+owner="${repo%%/*}"
+if gh project list --owner "$owner" --format json >/dev/null 2>&1; then
+    board_access="available"
+fi
+
+printf '%s' "$open_json" >"$scan_tmp/open.json"
+
+# --paginate on an array-shaped endpoint writes ONE JSON array per page to
+# stdout, concatenated back to back — it does NOT merge pages into a single
+# array, and it does NOT unwrap each page into a stream of bare elements
+# (confirmed against `gh api --help` and gh 2.98.0's actual output; Codex
+# review on PR #1032, comment 4011648559). --slurpfile then reads every
+# top-level JSON value in the file into its own array slot, so
+# $milestones_arr ends up as an array of PAGE ARRAYS — even for a single
+# page, since slurpfile always wraps top-level values in its own outer
+# array. Flatten with `$milestones_arr[] | .[]` below to get each milestone
+# object regardless of how many pages were emitted; an empty `[]` page still
+# flattens to nothing. A FAILED call, by contrast, is fatal — same as the
+# open-issues fetch above — rather than silently converted into an empty
+# stream: swallowing the failure made an incomplete scan (auth expired, a
+# transient API error, an unavailable endpoint) indistinguishable from a
+# repository that genuinely has no milestones, which can drive an incorrect
+# regrouping recommendation (Codex review on PR #1032, comment 4012242594).
+gh api "repos/$repo/milestones" --paginate -X GET -f state=all \
+    -f per_page=100 >"$scan_tmp/milestones.pages" 2>"$scan_tmp/milestones.err" ||
+    die "could not list milestones of $repo: $(cat "$scan_tmp/milestones.err")"
+
+triage_apply="$script_dir/../../triage/assets/triage-apply.sh"
+manifest="./label-registry.json"
+[ -f "$manifest" ] || manifest=""
+manifest_arg=()
+[ -z "$manifest" ] || manifest_arg=(--manifest "$manifest")
+
+[ -x "$triage_apply" ] || die "triage-apply.sh is missing or not executable at $triage_apply"
+
+allowlist="$("$triage_apply" allowlist --repo "$repo" ${manifest_arg:+"${manifest_arg[@]}"})" ||
+    die "could not compute the classification allowlist via triage-apply.sh"
+work_types="$("$triage_apply" work-types --repo "$repo" ${manifest_arg:+"${manifest_arg[@]}"})" ||
+    die "could not compute the recognized work-type vocabulary via triage-apply.sh"
+axes="$("$triage_apply" axes --repo "$repo" ${manifest_arg:+"${manifest_arg[@]}"})" ||
+    die "could not compute the active classification axes via triage-apply.sh"
+axis_values="$("$triage_apply" axis-values --repo "$repo" ${manifest_arg:+"${manifest_arg[@]}"})" ||
+    die "could not compute the recognized axis values via triage-apply.sh"
+
+axes_json="$(printf '%s\n' "$axes" | jq -R . | jq -s 'map(select(. != ""))')"
+known_json="$(printf '%s\n' "$axis_values" | jq -R . | jq -s 'map(select(. != ""))')"
+wt_json="$(printf '%s\n' "$work_types" | jq -R . | jq -s 'map(select(. != ""))')"
+claim_stale="${TRIAGE_CLAIM_STALE_DAYS:-14}"
+needs_stale="${TRIAGE_NEEDS_STALE_DAYS:-30}"
+
+[ -z "$out" ] || exec >"$out"
+
+jq -n -L "$title_module_dir" \
+    --arg repo "$repo" \
+    --arg board_access "$board_access" \
+    --arg owner_type "$owner_type" \
+    --arg native_type_mode "$native_type_mode" \
+    --argjson axes "$axes_json" \
+    --argjson known "$known_json" \
+    --argjson wt "$wt_json" \
+    --argjson claim_stale "$claim_stale" \
+    --argjson needs_stale "$needs_stale" \
+    --slurpfile open_arr "$scan_tmp/open.json" \
+    --slurpfile milestones_arr "$scan_tmp/milestones.pages" '
+  include "issue-title";
+  include "issue-conformance";
+  def rel_count:
+    if type == "object" then (.totalCount // (.nodes // [] | length) // 0)
+    elif type == "array" then length
+    else 0 end;
+  ($open_arr[0]) as $open |
+  {
+    repo: $repo,
+    board_access: $board_access,
+    open_total: ($open | length),
+    milestones:
+      [ $milestones_arr[] | .[] | {number, title, state, description,
+                          open_issues: .open_issues, closed_issues: .closed_issues} ],
+    open:
+      [ $open[]
+        | (((now - (.updatedAt | fromdateiso8601)) / 86400) | floor) as $updated_days
+        | (((now - (.createdAt | fromdateiso8601)) / 86400) | floor) as $age_days
+        | ((.author.type == "Bot") or (.author.is_bot == true)
+           or (.author.login == "app/renovate")
+           or ((.author.login // "") | test("^app/|\\[bot\\]$"))) as $bot_owned
+        | (if $native_type_mode == "bulk"
+           then (if .issueType == null then "unset" else "set" end)
+           elif $owner_type == "Organization" then "unknown"
+           else "n/a" end) as $nts
+        | issue_conformance(.; $axes; $known; $wt; $owner_type; $nts; $claim_stale; $needs_stale) as $conf
+        | {
+            number, title,
+            body: (.body // ""),
+            labels: [.labels[].name],
+            milestone: (.milestone.title // null),
+            assignees: [.assignees[].login],
+            author_login: (.author.login // null),
+            bot_owned: $bot_owned,
+            createdAt, updatedAt,
+            age_days: $age_days,
+            days_since_update: $updated_days,
+            title_valid: $conf.title_valid,
+            title_warn: $conf.title_warn,
+            blocking_count: (.blocking | rel_count),
+            blocked_by_count: (.blockedBy | rel_count),
+            conformance: $conf
+          }
+      ]
+  }'
