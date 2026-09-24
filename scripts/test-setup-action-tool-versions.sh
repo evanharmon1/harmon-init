@@ -553,22 +553,30 @@ gitleaks_published_bin() {
 # package sits in /usr/bin (and, on a usr-merged host, /bin) next to `bash`,
 # `tar`, and everything else the installer runs, so dropping the directory
 # traded one host dependency for another ("bash: command not found"). A
-# directory that holds the tool is replaced by a shadow of itself — symlinks to
-# every other entry — built once per tool and directory.
+# directory that holds the tool is replaced by a shadow of itself — absolute
+# symlinks to every other entry.
+#
+# Each call builds its shadows fresh under its own `mktemp` directory, keyed by
+# the entry's position in PATH, and links the directory's canonical absolute
+# path. Nothing is cached or derived from the path's spelling, so two entries
+# can never share a shadow, and a relative PATH entry cannot leave dangling
+# links (both reproduced against an earlier version keyed by the path with its
+# slashes flattened).
 path_without_tool() {
-    local tool="$1" dir entry shadow kept=
+    local tool="$1" dir abs entry shadow shadow_root position=0 kept=
+    shadow_root="$(mktemp -d "${test_tmp}/path-shadow.XXXXXX")"
     local IFS=:
     for dir in $PATH; do
+        position=$((position + 1))
         [ -n "$dir" ] || continue
         if [ -x "${dir}/${tool}" ]; then
-            shadow="${test_tmp}/path-shadow/${tool}$(printf '%s' "$dir" | tr '/' '_')"
-            if [ ! -d "$shadow" ]; then
-                mkdir -p "$shadow"
-                for entry in "$dir"/*; do
-                    [ "${entry##*/}" = "$tool" ] && continue
-                    ln -s "$entry" "${shadow}/${entry##*/}"
-                done
-            fi
+            abs="$(cd "$dir" && pwd -P)"
+            shadow="${shadow_root}/${position}"
+            mkdir "$shadow"
+            for entry in "$abs"/*; do
+                [ "${entry##*/}" = "$tool" ] && continue
+                ln -s "$entry" "${shadow}/${entry##*/}"
+            done
             dir=$shadow
         fi
         kept="${kept:+${kept}:}${dir}"
