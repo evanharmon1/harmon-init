@@ -639,12 +639,20 @@ roots = (
     pathlib.Path(".github/workflows"),
     pathlib.Path("scripts"),
 )
+
+
+def is_contract_file(path: pathlib.Path) -> bool:
+    return path.suffix in {".yml", ".yaml"} or (
+        path.suffix == ".sh" and path.parts[:1] == ("scripts",)
+    )
+
+
 files = [
     path
     for root in roots
     if root.is_dir()
     for path in root.rglob("*")
-    if path.is_file() and path.suffix in {".yml", ".yaml"}
+    if path.is_file() and is_contract_file(path)
 ]
 violations = []
 
@@ -659,12 +667,19 @@ def contract_violations(source: str) -> list[str]:
         problems.append("workflows must not write the user-global .npmrc")
     if re.search(r"(?:>>?|\btee\b(?:\s+-a)?)\s*[\"']?(?:~|\$\{?HOME\}?)/\.config/(?:pnpm|npm|yarn)\b", flat):
         problems.append("workflows must not write user-global package-manager configuration")
-    if re.search(r"\bpnpm\b[^;&]{0,240}(?:--store-dir(?:=|\s+)|--store\s+)", flat):
+    if re.search(
+        r"\bpnpm\b[^;&]{0,240}(?:--store-dir(?:=|\s+)|--store\s+|--config[.-]store-dir(?:=|\s+))",
+        flat,
+    ):
         problems.append("workflows must not override pnpm's job-private store on a command")
     for line in source.splitlines():
-        if re.search(r"^\s*(?:export\s+)?PNPM_CONFIG_STORE_DIR\s*[:=]", line):
+        if re.search(
+            r"^\s*(?:export\s+)?PNPM_CONFIG_STORE_DIR\s*[:=]",
+            line,
+            flags=re.IGNORECASE,
+        ):
             problems.append("workflows must export PNPM_CONFIG_STORE_DIR only through the shared setup action")
-        elif re.search(r"\bPNPM_CONFIG_STORE_DIR\s*=", line) and not re.search(
+        elif re.search(r"\bPNPM_CONFIG_STORE_DIR\s*=", line, flags=re.IGNORECASE) and not re.search(
             r'^\s*echo\s+["\']PNPM_CONFIG_STORE_DIR=\$\{store_dir\}["\']\s*>>\s*["\']\$GITHUB_ENV["\']\s*$',
             line,
         ):
@@ -676,6 +691,10 @@ def contract_violations(source: str) -> list[str]:
 
 # Negative controls prove this guard fails on both regression classes rather
 # than merely scanning the current render and reporting it clean.
+if not is_contract_file(pathlib.Path("scripts/pnpm-store-negative-control.sh")):
+    print("pnpm-store guard does not scan rendered scripts/*.sh", file=sys.stderr)
+    raise SystemExit(1)
+
 for fixture in (
     'run: pnpm config set store-dir "$RUNNER_TEMP/store" --global',
     'run: pnpm -g config set "store-dir" "$RUNNER_TEMP/store"',
@@ -688,7 +707,9 @@ for fixture in (
     'run: echo "store-dir=$RUNNER_TEMP/store" | tee -a "$HOME/.npmrc"',
     'run: echo "store-dir=$RUNNER_TEMP/store" >> ~/.config/pnpm/rc',
     'run: pnpm install --store-dir "$HOME/.pnpm-store"',
+    'run: pnpm --config.store-dir="$HOME/.pnpm-store" install',
     'run: PNPM_CONFIG_STORE_DIR="$HOME/.pnpm-store" pnpm install',
+    'run: pnpm_config_store_dir="$HOME/.pnpm-store" pnpm install',
     'env:\n  PNPM_CONFIG_STORE_DIR: "$HOME/.pnpm-store"',
     'run: echo "PNPM_CONFIG_STORE_DIR=${GITHUB_WORKSPACE}/../.pnpm-store"',
 ):

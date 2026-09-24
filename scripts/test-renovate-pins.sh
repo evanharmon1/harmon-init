@@ -306,10 +306,16 @@ INTENTIONALLY_UNPAIRED_PINS = {
     # 2026-09-01 (docs/decisions/2026-09-01-adopt-openspec.md). AGENTS.md's
     # hard rules forbid it from reaching template/ or copier.yml.
     "@fission-ai/openspec",
-    # The root action pins the pnpm version harmon-init dogfoods. Generated
-    # repos leave pnpm/action-setup's version input unset so it can honor each
-    # consumer's packageManager declaration instead of conflicting with it.
-    "pnpm",
+}
+INTENTIONALLY_UNPAIRED_TWIN_PINS = {
+    # The root action pins the pnpm version harmon-init dogfoods. Its exact
+    # template twin leaves pnpm/action-setup's version input unset so it can
+    # honor each consumer's packageManager declaration instead.
+    (
+        ".github/actions/setup/action.yml",
+        "template/.github/actions/setup/action.yml.jinja",
+        "pnpm",
+    ),
 }
 
 template_setup = pathlib.Path("template/.github/actions/setup/action.yml.jinja").read_text()
@@ -340,7 +346,11 @@ for root_path, root_pins in sorted(file_pins.items()):
     if not tmpl_path:
         continue
     for dep, ds in sorted(root_pins - file_pins[tmpl_path]):
-        if dep in INTENTIONALLY_UNPAIRED_PINS:
+        if dep in INTENTIONALLY_UNPAIRED_PINS or (
+            root_path,
+            tmpl_path,
+            dep,
+        ) in INTENTIONALLY_UNPAIRED_TWIN_PINS:
             continue
         errors.append(
             f"{dep}: pinned in {root_path} but not extractable from its twin "
