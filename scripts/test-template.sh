@@ -626,7 +626,11 @@ import pathlib
 import re
 import sys
 
-roots = (pathlib.Path(".github/actions"), pathlib.Path(".github/workflows"))
+roots = (
+    pathlib.Path(".github/actions"),
+    pathlib.Path(".github/workflows"),
+    pathlib.Path("scripts"),
+)
 files = [
     path
     for root in roots
@@ -640,11 +644,23 @@ violations = []
 def contract_violations(source: str) -> list[str]:
     flat = re.sub(r"\\\s*\n", " ", source).replace("\n", " ")
     problems = []
-    package_config_set = r"\b(?:pnpm|npm)\b(?=[^;&]{0,240}\bconfig\b)(?=[^;&]{0,240}\bset\b)[^;&]{0,240}"
+    package_config_set = r"\b(?:pnpm|npm|yarn)\b(?=[^;&]{0,240}\bconfig\b)(?=[^;&]{0,240}\bset\b)[^;&]{0,240}"
     if re.search(package_config_set, flat):
         problems.append("workflows must use job-scoped environment variables, not package-manager config set")
     if re.search(r"(?:>>?|\btee\b(?:\s+-a)?)\s*[\"']?(?:~|\$\{?HOME\}?)/\.npmrc", flat):
         problems.append("workflows must not write the user-global .npmrc")
+    if re.search(r"(?:>>?|\btee\b(?:\s+-a)?)\s*[\"']?(?:~|\$\{?HOME\}?)/\.config/(?:pnpm|npm|yarn)\b", flat):
+        problems.append("workflows must not write user-global package-manager configuration")
+    if re.search(r"\bpnpm\b[^;&]{0,240}(?:--store-dir(?:=|\s+)|--store\s+)", flat):
+        problems.append("workflows must not override pnpm's job-private store on a command")
+    for line in source.splitlines():
+        if re.search(r"^\s*(?:export\s+)?PNPM_CONFIG_STORE_DIR\s*[:=]", line):
+            problems.append("workflows must export PNPM_CONFIG_STORE_DIR only through the shared setup action")
+        elif re.search(r"\bPNPM_CONFIG_STORE_DIR\s*=", line) and not re.search(
+            r'^\s*echo\s+["\']PNPM_CONFIG_STORE_DIR=\$\{store_dir\}["\']\s*>>\s*["\']\$GITHUB_ENV["\']\s*$',
+            line,
+        ):
+            problems.append("workflows must not override PNPM_CONFIG_STORE_DIR inline")
     if re.search(r"\$\{?GITHUB_WORKSPACE\}?/\.\.", flat):
         problems.append("store paths must not escape GITHUB_WORKSPACE")
     return problems
@@ -659,8 +675,13 @@ for fixture in (
     'run: pnpm config set --location=global "store-dir" "$RUNNER_TEMP/store"',
     'run: pnpm config set "store-dir" "$RUNNER_TEMP/store"',
     'run: npm config set "store-dir" "$RUNNER_TEMP/store" --global',
+    'run: yarn config set cache-folder "$HOME/.cache/yarn"',
     'run: echo "store-dir=$RUNNER_TEMP/store" >> ~/.npmrc',
     'run: echo "store-dir=$RUNNER_TEMP/store" | tee -a "$HOME/.npmrc"',
+    'run: echo "store-dir=$RUNNER_TEMP/store" >> ~/.config/pnpm/rc',
+    'run: pnpm install --store-dir "$HOME/.pnpm-store"',
+    'run: PNPM_CONFIG_STORE_DIR="$HOME/.pnpm-store" pnpm install',
+    'env:\n  PNPM_CONFIG_STORE_DIR: "$HOME/.pnpm-store"',
     'run: echo "PNPM_CONFIG_STORE_DIR=${GITHUB_WORKSPACE}/../.pnpm-store"',
 ):
     if not contract_violations(fixture):

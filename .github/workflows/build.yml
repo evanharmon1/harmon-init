@@ -226,8 +226,9 @@ jobs:
           # `file` backs the rendered lint-hygiene.sh's binary detection, which
           # fails closed. test-template.sh runs that rendered script directly, so
           # a runner without `file` would abort every profile before validation.
-          # This job does not use .github/actions/setup, so installing it there
-          # does not cover this path. Same self-hosted reasoning as yq above.
+          # This job uses .github/actions/setup without its lint-tools input,
+          # so that action does not install `file` for this path. Same
+          # self-hosted reasoning as yq above.
           ./scripts/ensure-file.sh
       - name: Configure git identity (copier renders run git init)
         run: |

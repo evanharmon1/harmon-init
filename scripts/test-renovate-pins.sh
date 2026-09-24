@@ -258,6 +258,26 @@ INTENTIONALLY_UNPAIRED_PINS = {
     "pnpm",
 }
 
+template_setup = pathlib.Path("template/.github/actions/setup/action.yml.jinja").read_text()
+template_setup_lines = template_setup.splitlines()
+pnpm_step = next(
+    (i for i, line in enumerate(template_setup_lines) if "- uses: pnpm/action-setup@" in line),
+    None,
+)
+if pnpm_step is None:
+    errors.append("template setup action is missing pnpm/action-setup")
+else:
+    pnpm_step_body = []
+    for line in template_setup_lines[pnpm_step + 1 :]:
+        if line.startswith("    - "):
+            break
+        pnpm_step_body.append(line)
+    if any(re.match(r"^\s+version\s*:", line) for line in pnpm_step_body):
+        errors.append(
+            "template setup action must leave pnpm/action-setup's version unset "
+            "so each consumer's packageManager declaration remains authoritative"
+        )
+
 twin_of = {twin_name(p): p for p in file_pins if p.startswith("template/")}
 for root_path, root_pins in sorted(file_pins.items()):
     if root_path.startswith("template/"):
