@@ -540,20 +540,37 @@ gitleaks_published_bin() {
     tail -n 1 "$github_path"
 }
 
-# The inherited PATH minus every directory holding the named tool. Each case
-# decides which copy of a tool — if any — the step can see, through
-# `pre_installed_path`; a real one leaking in from the host decides it
-# instead. That is not hypothetical: the sync-harmon-devkit job runs the setup
-# action (installing the PINNED gitleaks) before `task verify`, so the
-# "nothing installed" case found the real binary, reused it, fetched nothing,
-# and failed there while passing everywhere gitleaks was absent — or present
-# at a different version, which a developer machine usually is.
+# The inherited PATH with the named tool hidden. Each case decides which copy
+# of a tool — if any — the step can see, through `pre_installed_path`; a real
+# one leaking in from the host decides it instead. That is not hypothetical:
+# the sync-harmon-devkit job runs the setup action (installing the PINNED
+# gitleaks) before `task verify`, so the "nothing installed" case found the
+# real binary, reused it, fetched nothing, and failed there while passing
+# everywhere gitleaks was absent — or present at a different version, which a
+# developer machine usually is.
+#
+# Only the ONE binary is hidden, never its directory: a tool installed by an OS
+# package sits in /usr/bin (and, on a usr-merged host, /bin) next to `bash`,
+# `tar`, and everything else the installer runs, so dropping the directory
+# traded one host dependency for another ("bash: command not found"). A
+# directory that holds the tool is replaced by a shadow of itself — symlinks to
+# every other entry — built once per tool and directory.
 path_without_tool() {
-    local tool="$1" dir kept=
+    local tool="$1" dir entry shadow kept=
     local IFS=:
     for dir in $PATH; do
         [ -n "$dir" ] || continue
-        [ -x "${dir}/${tool}" ] && continue
+        if [ -x "${dir}/${tool}" ]; then
+            shadow="${test_tmp}/path-shadow/${tool}$(printf '%s' "$dir" | tr '/' '_')"
+            if [ ! -d "$shadow" ]; then
+                mkdir -p "$shadow"
+                for entry in "$dir"/*; do
+                    [ "${entry##*/}" = "$tool" ] && continue
+                    ln -s "$entry" "${shadow}/${entry##*/}"
+                done
+            fi
+            dir=$shadow
+        fi
         kept="${kept:+${kept}:}${dir}"
     done
     printf '%s' "$kept"
