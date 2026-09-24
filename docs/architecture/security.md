@@ -312,9 +312,7 @@ slugs, replaces that with one dispatch point:
   not undo a value already written to a persisted volume.
 
 See [../guides/devcontainers.md](../guides/devcontainers.md) for the
-per-harness mechanics and
-[openspec/specs/devcontainer/bot-autonomy/spec.md](../../openspec/specs/devcontainer/bot-autonomy/spec.md)
-for the full contract.
+per-harness mechanics and this document for the full security contract.
 
 ## Two identities: the bot vs the operator
 

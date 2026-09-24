@@ -20,8 +20,7 @@ bash .devcontainer/scripts/post-create-common.sh
 # Dev profile: apply the BALANCED Antigravity policy — auto-accept edits and an
 # allowlist of common commands, but still prompt for anything else — WHEN
 # HARMON_BOT_AUTONOMY_ANTIGRAVITY reads "enabled" (the rendered
-# use_antigravity_cli marker; see devcontainer.json and
-# https://github.com/evanharmon1/harmon-init/tree/main/openspec/changes/archive/2026-09-05-bot-autonomy-bootstrap). This is deliberately NOT the
+# use_antigravity_cli marker; see devcontainer.json). This is deliberately NOT the
 # bot's blanket always-proceed policy (antigravity-settings.json); a human
 # driving this container keeps a veto over unlisted or destructive commands.
 # ensure-antigravity-cli.sh always runs — its own internal marker check
@@ -40,9 +39,3 @@ fi
 # here — a conductor-spawned `claude` under dev's default, prompt-enabled
 # policy was never wrong).
 bash .devcontainer/scripts/post-create-conductor.sh
-
-# Root-only: put the pinned OpenSpec CLI on PATH so the generated /opsx/*
-# skills' bare `openspec` invocations resolve (harmon-init's own spec-driven
-# change tooling; docs/decisions/2026-09-01-adopt-openspec.md). Generated
-# repos never receive OpenSpec, so this line has no template counterpart.
-task spec:install

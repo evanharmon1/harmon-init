@@ -2,9 +2,7 @@
 set -euo pipefail
 
 # Unit tests for .devcontainer/scripts/bot-autonomy.sh and its modules — the
-# registry-completeness and structural-parity gates from
-# https://github.com/evanharmon1/harmon-init/tree/main/openspec/changes/archive/2026-09-05-bot-autonomy-bootstrap
-# (tasks 1.3, 1.4, 2.3), plus
+# registry-completeness and structural-parity gates, plus
 # behavioral fixtures for the per-harness modules not already covered by
 # scripts/devcontainer-assert.sh's unit mode. No container, no real
 # secrets — every fixture uses a scratch HOME/PATH/config file, never the
@@ -15,7 +13,7 @@ set -euo pipefail
 # (build.yml's aggregate gate, required unconditionally), so a registry
 # change that adds a harness slug with no coverage entry fails an
 # already-required check regardless of which paths a PR touches. See
-# design.md - Risks ("Forgetting to add oh-my-pi's unsupported entry...").
+# #1137's requirement that every installed harness have an explicit entry.
 
 fail() {
     echo "FAIL: $*" >&2
@@ -2122,31 +2120,5 @@ agy25_tamper2_quarantine="${agy25_tamper2_dir}/proof"
     fail "discard_launcher_transaction left the tampered file at its original, predictable pathname instead of quarantining it under a private name"
 [ ! -e "$agy25_link_transaction" ] ||
     fail "discard_launcher_transaction left its transaction record behind after reporting a mismatch"
-
-# The in-flight delta is the source for this correction and is reconciled into
-# the canonical requirement in the same commit. Compare the complete modified
-# requirement when those root-only OpenSpec artifacts are present; generated
-# repos intentionally ship neither file.
-agy24_canonical_spec="${repo_root}/openspec/specs/devcontainer/bot-autonomy/spec.md"
-agy24_delta_spec="${repo_root}/openspec/changes/agy-early-return/specs/devcontainer/bot-autonomy/spec.md"
-if [ -e "$agy24_canonical_spec" ] || [ -e "$agy24_delta_spec" ]; then
-    [ -f "$agy24_canonical_spec" ] && [ -f "$agy24_delta_spec" ] ||
-        fail "Antigravity canonical/delta spec pair is incomplete"
-    awk '
-        found && /^### Requirement:/ { exit }
-        /^### Requirement: Antigravity.*launcher/ { found = 1 }
-        found { print }
-    ' "$agy24_canonical_spec" >"${work_dir}/agy24-canonical-requirement"
-    awk '
-        found && /^### Requirement:/ { exit }
-        /^### Requirement: Antigravity.*launcher/ { found = 1 }
-        found { print }
-    ' "$agy24_delta_spec" >"${work_dir}/agy24-delta-requirement"
-    cmp -s "${work_dir}/agy24-canonical-requirement" "${work_dir}/agy24-delta-requirement" ||
-        fail "Antigravity canonical and in-flight delta requirements diverged"
-    grep -Fq 'independent ownership proof matches both its published filesystem identity' \
-        "${work_dir}/agy24-canonical-requirement" ||
-        fail "Antigravity spec does not require identity-and-content proof for managed cleanup"
-fi
 
 echo "All bot-autonomy unit tests passed."

@@ -3,9 +3,8 @@
 Research notes: time-boxed spikes that evaluate options against a stated
 rubric and end in a recommendation. A note is **evidence for a decision**,
 not the decision — the decision itself lands as an ADR in
-[../decisions/](../decisions/index.md) or as an OpenSpec change proposal under
-[`../../openspec/changes/`](../../openspec/changes/), and this note is what
-they cite. Unlike an ADR a note is not append-only: re-run the spike and
+[../decisions/](../decisions/index.md) or as a tracked implementation issue,
+and this note is what it cites. Unlike an ADR a note is not append-only: re-run the spike and
 revise it when the field moves, and date every claim so a reader can tell
 what was true when.
 

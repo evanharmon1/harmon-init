@@ -42,8 +42,6 @@ set -euo pipefail
 # no copilot binary exists at all — it is skipped, not failed. The CI
 # container assertion in scripts/devcontainer-assert.sh covers that case
 # instead, bounded to the one image pin for which it is legitimate.
-#
-# See https://github.com/evanharmon1/harmon-init/blob/main/openspec/changes/archive/2026-09-05-bot-autonomy-new-harnesses/design.md - Decisions.
 
 COPILOT_LINK="${BOT_AUTONOMY_COPILOT_LINK:-$HOME/.local/bin/copilot}"
 COPILOT_LINK_DIR="$(dirname "$COPILOT_LINK")"

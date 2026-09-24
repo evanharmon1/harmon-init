@@ -9,8 +9,7 @@ export DEVCONTAINER_GIT_EMAIL="evanharmon1-bot@users.noreply.github.com"
 # the operator's credential inside a bypassPermissions agent container.
 export DEVCONTAINER_GH_AUTH="token"
 
-# Ordering is load-bearing (AGENTS.md;
-# https://github.com/evanharmon1/harmon-init/tree/main/openspec/changes/archive/2026-09-05-bot-autonomy-bootstrap):
+# Ordering is load-bearing (see AGENTS.md):
 #   (i)   post-create-common.sh — workspace permissions and, on Coder, the
 #         persistent-volume symlink setup MUST run before anything below
 #         writes into those directories, or a write lands as the wrong owner
@@ -166,9 +165,3 @@ install_repo_managed_hooks() {
     done
 }
 install_repo_managed_hooks
-
-# Root-only: put the pinned OpenSpec CLI on PATH so the generated /opsx/*
-# skills' bare `openspec` invocations resolve (harmon-init's own spec-driven
-# change tooling; docs/decisions/2026-09-01-adopt-openspec.md). Generated
-# repos never receive OpenSpec, so this line has no template counterpart.
-task spec:install

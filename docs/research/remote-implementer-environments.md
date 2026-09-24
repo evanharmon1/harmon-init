@@ -14,9 +14,8 @@ sprite lane as the isolated runner, because the alternative its spec
 assumes — booting the image directly on Fly Machines — hits Fly's 8 GB
 rootfs limit with this image, and every other hosted option either cannot
 take the image as-is or gives up the persistence and cost profile Sprites
-have. The OpenSpec change
-[`agent-environment-sprites`](../../openspec/changes/agent-environment-sprites/)
-specs the opt-in, default-off option; the `[HUMAN]` lane run on harmon-init#1120 is
+have. The tracked design for the opt-in, default-off option is captured in
+harmon-init#1120; its `[HUMAN]` lane run is
 the proof this note cannot supply.
 
 Everything below that names a capability carries the URL it was read from
@@ -611,8 +610,8 @@ pane cannot pause a running gate), a TTL stops new work without destroying
 anything, and `task sprite:audit` lists every lane with its age and lease.
 A throwaway feasibility spike (Docker as a Service, a nested
 `devcontainer up`, `task verify` inside, a cold wake, the SSH attach) runs
-before any of that is productised. The specification is
-[`openspec/changes/agent-environment-sprites`](../../openspec/changes/agent-environment-sprites/);
+before any of that is productised. The implementation contract is tracked in
+harmon-init#1120;
 the option defaults off and discloses Fly's account and pricing terms next
 to the question. **Fallback:** a Coder workspace per lane — verified attach
 path, same shape, bounded by the Contraption host. If the Docker-in-sprite
@@ -637,7 +636,7 @@ decision; the follow-up below asks for it explicitly.
 
 **Follow-up issues to file**, each in the repository that owns it:
 
-- **harmon-init** — implement the `agent-environment-sprites` change
+- **harmon-init** — implement the sprite-lane design tracked in #1120
   (`feat:`; both layers; the offline `test:sprite-lane`); after the first
   real lane, record wall-clock, cost, Herdr detection, memory behaviour,
   and the literal egress hostnames in this note; a separate issue for
@@ -744,6 +743,5 @@ Primary sources read for this note (all fetched 2026-09-05):
 - This repository and its neighbours: AGENTS.md; docs/guides/herdr.md;
   docs/guides/devcontainers.md; docs/architecture/devcontainer-image.md;
   docs/architecture/security.md; `.foreman.toml`; `.devflow.toml`;
-  openspec/changes/bot-autonomy-bootstrap and harness-matrix;
   ponderousdev/foreman `specs/foreman-v2.md` (D1–D14) and issues foreman#8, foreman#30;
   harmon-init#636, harmon-init#690, harmon-init#750, harmon-init#1120 and its comments.

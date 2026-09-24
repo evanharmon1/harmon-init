@@ -373,7 +373,7 @@ Automated update of the immutable Harmon devcontainer toolchain image.
       repository carrying \`.pi/settings.json\` (or another trust-requiring
       resource) silently ignores that resource — no error, no prompt — the
       maintainer-decided outcome of pi's "no elevated trust" requirement
-      (bot-autonomy-new-harnesses's spec.md pi requirement), now provable
+      (#1137's pi requirement), now provable
       against the real binary
 
 ## Merging

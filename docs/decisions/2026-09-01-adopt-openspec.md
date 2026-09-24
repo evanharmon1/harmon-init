@@ -4,7 +4,10 @@ Date: 2026-09-01
 
 ## Status
 
-Accepted
+Superseded
+
+Superseded by
+[Retire the OpenSpec workflow](2026-09-23-retire-openspec-workflow.md).
 
 ## Context
 

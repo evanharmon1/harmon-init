@@ -301,12 +301,7 @@ for top in SWEEP:
 # Pins that deliberately differ between the dogfood root and template twin.
 # Keep this narrow and name the reason inline rather than growing a general
 # opt-out; the default for every other pin stays "must have a twin."
-INTENTIONALLY_UNPAIRED_PINS = {
-    # OpenSpec: root-only spec-driven change workflow, Evan's decision
-    # 2026-09-01 (docs/decisions/2026-09-01-adopt-openspec.md). AGENTS.md's
-    # hard rules forbid it from reaching template/ or copier.yml.
-    "@fission-ai/openspec",
-}
+INTENTIONALLY_UNPAIRED_PINS = set()
 INTENTIONALLY_UNPAIRED_TWIN_PINS = {
     # The root action pins the pnpm version harmon-init dogfoods. Its exact
     # template twin leaves pnpm/action-setup's version input unset so it can
