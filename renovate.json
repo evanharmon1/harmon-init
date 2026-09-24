@@ -201,6 +201,14 @@
       "groupName": "Astro"
     },
     {
+      "description": "Batch markdownlint-cli2 as \"Formatters\" — the template's twin rule also groups prettier and Black there, but this repo renders use_node/use_python off, so only markdownlint-cli2 applies here. Its script-pinned dependency (scripts/markdownlint.sh, under scripts/**) would otherwise land in the broad Devcontainer batch above; this rule must come after it (and after the fixture-specific groups, which own markdownlint-cli2 within tests/fixtures/** if it's ever added there) to reclaim it. shfmt is already isolated in the CI lint tools group (#1352) and is deliberately not duplicated here.",
+      "matchPackageNames": ["markdownlint-cli2"],
+      "groupName": "Formatters",
+      "prBodyNotes": [
+        "Run `task fix` and commit the reformat as a separate commit from this dependency bump; do not amend Renovate's commit."
+      ]
+    },
+    {
       "description": "Eject anthropics/claude-code-action from the batched GitHub Actions group and skip the 3-day release-age wait. It ships near-daily first-party releases, so grouping + minimumReleaseAge kept the whole Actions batch perpetually pending on the renovate/stability-days gate — each rebase pulled in a fresh release and reset the 3-day clock. It's a trusted first-party action and all updates are reviewed manually (automerge is off globally). Must come LAST so this override wins over every grouping rule (GitHub Actions, Devcontainer, template workflow pins).",
       "matchPackageNames": ["anthropics/claude-code-action"],
       "groupName": null,

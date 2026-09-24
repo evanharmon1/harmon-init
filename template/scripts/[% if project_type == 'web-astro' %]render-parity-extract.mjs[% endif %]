@@ -1,0 +1,231 @@
+// render-parity-extract.mjs — diff the reader-visible text of two dist/ trees.
+//
+// Extraction models what a browser actually renders, not the raw markup: drop
+// <script>/<style>/<svg>/<template> content entirely, preserve <pre>/<textarea>
+// content verbatim (whitespace-significant), let block-level elements force a
+// line break, and collapse every other run of whitespace (including a
+// newline introduced between two inline elements) to a single space — that
+// last part matters because that is exactly what compressHTML: false leaves
+// behind for the browser to collapse, and it is what a reflowed inline
+// newline actually renders as: a stray visible space, not nothing. This is
+// intentionally not a full HTML parser (same tradeoff as validate-jsonld.mjs
+// / validate-og.mjs) — it only needs to answer "did the visible text change",
+// not render the page.
+import { readFileSync, readdirSync, statSync, existsSync } from 'node:fs'
+import { join, relative } from 'node:path'
+
+const [, , dirA, dirB] = process.argv
+if (!dirA || !dirB) {
+  console.error('Usage: render-parity-extract.mjs <dir-a> <dir-b>')
+  process.exit(2)
+}
+for (const d of [dirA, dirB]) {
+  if (!existsSync(d)) {
+    console.error(`FAIL: ${d} not found`)
+    process.exit(1)
+  }
+}
+
+function htmlFiles(dir) {
+  const out = []
+  for (const entry of readdirSync(dir)) {
+    const p = join(dir, entry)
+    if (statSync(p).isDirectory()) out.push(...htmlFiles(p))
+    else if (entry.endsWith('.html')) out.push(p)
+  }
+  return out
+}
+
+// Elements a browser lays out on their own line. `br`/`hr` are included so a
+// forced break still separates otherwise-adjacent inline runs. Not
+// exhaustive against the full HTML spec, but covers the native block-level
+// set a real site is likely to use.
+const BLOCK_TAGS = new Set([
+  'p',
+  'div',
+  'section',
+  'article',
+  'header',
+  'footer',
+  'nav',
+  'main',
+  'aside',
+  'address',
+  'ul',
+  'ol',
+  'li',
+  'br',
+  'hr',
+  'table',
+  'caption',
+  'thead',
+  'tbody',
+  'tr',
+  'td',
+  'th',
+  'h1',
+  'h2',
+  'h3',
+  'h4',
+  'h5',
+  'h6',
+  'blockquote',
+  'pre',
+  'form',
+  'fieldset',
+  'legend',
+  'figure',
+  'figcaption',
+  'dl',
+  'dt',
+  'dd',
+  'details',
+  'summary',
+  'dialog',
+  'menu',
+  'search'
+])
+
+// Elements a browser renders whitespace-verbatim in. Their content is
+// extracted and preserved untouched (only tags/comments stripped) rather
+// than swept into the generic whitespace collapse below.
+const VERBATIM_TAGS = ['pre', 'textarea']
+
+const ENTITIES = { amp: '&', lt: '<', gt: '>', quot: '"', apos: "'", nbsp: ' ' }
+
+function decodeEntities(s) {
+  return s.replace(/&(#\d+|#x[0-9a-f]+|[a-z]+);/gi, (m, code) => {
+    if (code[0] === '#') {
+      const cp =
+        code[1].toLowerCase() === 'x' ? parseInt(code.slice(2), 16) : parseInt(code.slice(1), 10)
+      return Number.isNaN(cp) ? m : String.fromCodePoint(cp)
+    }
+    return ENTITIES[code.toLowerCase()] ?? m
+  })
+}
+
+// A sentinel (never legal in decoded HTML text) marks a forced block break so
+// it survives the whitespace-collapse pass below undisturbed. A second,
+// distinct sentinel wraps an extracted verbatim block's placeholder index so
+// it also survives that pass — its restoration happens AFTER the final
+// trim/join, not before, or trim() would eat the very leading/trailing
+// whitespace the block exists to preserve.
+const BREAK = '\u0000'
+const MARK = '\u0001'
+
+// Attribute content, quote-aware: any run of characters that are none of
+// `>`/`"`/`'`, OR a fully double-quoted string, OR a fully single-quoted
+// string. A naive `[^>]*` stops at the FIRST `>` even when it sits inside a
+// quoted attribute value — e.g. a Tailwind arbitrary variant like
+// `class="[&>svg]:block flex"` — which truncates the tag match early and
+// leaks the rest of the real tag as literal visible text (harmon-init#1350
+// Codex review round 4). This fragment is reused everywhere a tag is
+// matched so no call site can regress independently.
+const ATTRS = `(?:[^>"']|"[^"]*"|'[^']*')*`
+
+function stripTagsKeepWhitespace(html) {
+  // Used only inside a verbatim element, where whitespace is significant:
+  // strip comments and tags without collapsing a single space or newline.
+  return decodeEntities(
+    html.replace(/<!--[\s\S]*?-->/g, '').replace(new RegExp(`<\\/?[a-z0-9]+${ATTRS}>`, 'gi'), '')
+  )
+}
+
+function visibleText(html) {
+  let s = html.replace(/<!--[\s\S]*?-->/g, '')
+  s = s.replace(new RegExp(`<!doctype${ATTRS}>`, 'gi'), '')
+  // Removed as EMPTY, not a space: a space here would fabricate the same
+  // "collapses to one visible space" signature the whitespace pass below
+  // uses to catch a reflowed inline newline, hiding that exact bug whenever
+  // one of these sits directly against visible text with no whitespace in
+  // the source (e.g. an inline `<svg>` icon: `Open<svg>…</svg>.` must stay
+  // distinguishable from `Open<svg>…</svg>\n.`). <template> content is
+  // inert (never rendered until cloned by script) so it is dropped the same
+  // way.
+  s = s.replace(new RegExp(`<(script|style|template)\\b${ATTRS}>[\\s\\S]*?<\\/\\1>`, 'gi'), '')
+
+  // Verbatim elements (<pre>, <textarea>) render whitespace exactly as
+  // written, so protect their content from the general collapse below:
+  // extract it now, strip only its tags/comments, and splice the untouched
+  // result back in as the very last step — after trim(), or a leading/
+  // trailing space inside the block would be stripped right back out.
+  const blocks = []
+  for (const tag of VERBATIM_TAGS) {
+    s = s.replace(new RegExp(`<${tag}\\b${ATTRS}>([\\s\\S]*?)<\\/${tag}>`, 'gi'), (m, inner) => {
+      // The HTML parsing spec drops exactly one leading LF immediately after
+      // a <pre>/<textarea> start tag before it ever reaches the reader, so
+      // `<pre>\na</pre>` and `<pre>a</pre>` render identically; without this,
+      // a formatter that adds or removes that single conventional newline
+      // would trip the gate over a change nobody sees (harmon-init#1350
+      // Codex review round 3).
+      blocks.push(stripTagsKeepWhitespace(inner).replace(/^\n/, ''))
+      return `${BREAK}${MARK}${blocks.length - 1}${MARK}${BREAK}`
+    })
+  }
+
+  s = s.replace(new RegExp(`<svg\\b${ATTRS}>[\\s\\S]*?<\\/svg>`, 'gi'), '')
+  s = s.replace(new RegExp(`<\\/?([a-z0-9]+)${ATTRS}>`, 'gi'), (m, tag) =>
+    BLOCK_TAGS.has(tag.toLowerCase()) ? BREAK : ''
+  )
+  s = decodeEntities(s)
+  // Collapse EVERY remaining run of COLLAPSIBLE whitespace (space, tab, CR,
+  // LF, FF) — including a newline sitting between two inline elements — to
+  // exactly one space. Under compressHTML: false that whitespace-only text
+  // node is not stripped at build time, so the browser collapses it to one
+  // visible space; collapsing it to zero here would hide the exact bug this
+  // script exists to catch. `\s` is deliberately NOT used: it also matches
+  // U+00A0 (the decoded &nbsp;), which a browser does NOT collapse.
+  s = s.replace(/[ \t\r\n\f\v]+/g, ' ')
+  const collapsed = s
+    .split(BREAK)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .join('\n')
+  return collapsed.replace(new RegExp(`${MARK}(\\d+)${MARK}`, 'g'), (m, i) => blocks[Number(i)])
+}
+
+const filesA = new Map(htmlFiles(dirA).map((f) => [relative(dirA, f), f]))
+const filesB = new Map(htmlFiles(dirB).map((f) => [relative(dirB, f), f]))
+const pages = new Set([...filesA.keys(), ...filesB.keys()])
+
+// An SSR/server-output build can legitimately emit no static *.html at all,
+// in which case there is nothing here to prove parity over — that is
+// indeterminate, not a silent pass (harmon-init#1350 Codex review round 3).
+if (pages.size === 0) {
+  console.error(
+    'render-parity: no *.html files found in either build -- cannot verify parity for an SSR/server-only build with this tool'
+  )
+  process.exit(1)
+}
+
+let failed = 0
+for (const page of [...pages].sort()) {
+  const pathA = filesA.get(page)
+  const pathB = filesB.get(page)
+  if (!pathA || !pathB) {
+    console.error(`DIFF ${page}: page only exists in ${pathA ? 'the base' : 'HEAD'}`)
+    failed++
+    continue
+  }
+  const textA = visibleText(readFileSync(pathA, 'utf-8'))
+  const textB = visibleText(readFileSync(pathB, 'utf-8'))
+  if (textA !== textB) {
+    failed++
+    console.error(`DIFF ${page}:`)
+    const linesA = textA.split('\n')
+    const linesB = textB.split('\n')
+    const max = Math.max(linesA.length, linesB.length)
+    for (let i = 0; i < max; i++) {
+      if (linesA[i] !== linesB[i]) {
+        console.error(`  - ${linesA[i] ?? '<missing>'}`)
+        console.error(`  + ${linesB[i] ?? '<missing>'}`)
+      }
+    }
+  }
+}
+
+if (failed > 0) {
+  console.error(`render-parity: ${failed} page(s) differ in visible text`)
+  process.exit(1)
+}
+console.log(`render-parity: ${pages.size} page(s) match`)

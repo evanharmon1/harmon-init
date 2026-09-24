@@ -98,6 +98,7 @@ tasks:
       - task: test:renovate-pins
       - task: test:tool-pin-pairs
       - task: test:oh-my-pi-pin
+      - task: test:render-parity-cases
       - task: test:lint-hygiene
       - task: test:release-title
       - task: test:claim-release-merged
@@ -512,6 +513,11 @@ tasks:
     desc: Behavioural fixtures for the oh-my-pi verified-for marker guard
     cmds:
       - ./scripts/test-oh-my-pi-pin-cases.sh
+
+  test:render-parity-cases:
+    desc: Behavioural fixtures for the template's web-astro render-parity guard
+    cmds:
+      - ./scripts/test-render-parity-cases.sh
 
   test:lint-hygiene:
     desc: Behavioral fixtures for lint-hygiene's trigger-phrase adjacency scan
