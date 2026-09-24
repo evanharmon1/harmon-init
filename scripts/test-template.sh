@@ -640,10 +640,9 @@ violations = []
 def contract_violations(source: str) -> list[str]:
     flat = re.sub(r"\\\s*\n", " ", source).replace("\n", " ")
     problems = []
-    global_selector = r"(?:--global|-g|--location(?:=|\s+)global)"
     package_config_set = r"\b(?:pnpm|npm)\b(?=[^;&]{0,240}\bconfig\b)(?=[^;&]{0,240}\bset\b)[^;&]{0,240}"
-    if re.search(rf"{package_config_set}{global_selector}(?:\s|$)", flat):
-        problems.append("package-manager config set must not select global configuration")
+    if re.search(package_config_set, flat):
+        problems.append("workflows must use job-scoped environment variables, not package-manager config set")
     if re.search(r"(?:>>?|\btee\b(?:\s+-a)?)\s*[\"']?(?:~|\$\{?HOME\}?)/\.npmrc", flat):
         problems.append("workflows must not write the user-global .npmrc")
     if re.search(r"\$\{?GITHUB_WORKSPACE\}?/\.\.", flat):
@@ -658,6 +657,7 @@ for fixture in (
     'run: pnpm -g config set "store-dir" "$RUNNER_TEMP/store"',
     'run: pnpm config --global set "store-dir" "$RUNNER_TEMP/store"',
     'run: pnpm config set --location=global "store-dir" "$RUNNER_TEMP/store"',
+    'run: pnpm config set "store-dir" "$RUNNER_TEMP/store"',
     'run: npm config set "store-dir" "$RUNNER_TEMP/store" --global',
     'run: echo "store-dir=$RUNNER_TEMP/store" >> ~/.npmrc',
     'run: echo "store-dir=$RUNNER_TEMP/store" | tee -a "$HOME/.npmrc"',
