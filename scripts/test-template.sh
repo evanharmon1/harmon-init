@@ -677,20 +677,27 @@ def contract_violations(source: str, path: "pathlib.Path | None" = None) -> list
         problems.append("workflows must not override pnpm's job-private store on a command")
     # The literal "echo PNPM_CONFIG_STORE_DIR=${store_dir} >> $GITHUB_ENV" line is
     # only exempt from the inline-override check in the one file that owns it, and
-    # only when that same file derives store_dir from $RUNNER_TEMP — matching the
-    # echo text alone can't tell a job-private export from a persistent one.
-    export_exempt = path == SETUP_ACTION_PATH and bool(
-        re.search(r"\bstore_dir=\"?\$\{?RUNNER_TEMP\}?/", source)
-    )
+    # only when the store_dir assignment that reaches it — the nearest one above,
+    # not merely any assignment anywhere in the file — derives from $RUNNER_TEMP.
+    # A file-wide search would stay satisfied by an unrelated later assignment
+    # (e.g. the verification step's own store_dir) even if the export step's own
+    # assignment were changed to a persistent path.
+    path_is_setup_action = path == SETUP_ACTION_PATH
+    reaching_store_dir_is_runner_temp = False
     for line in source.splitlines():
+        if re.match(r"^\s*store_dir=", line):
+            reaching_store_dir_is_runner_temp = bool(
+                re.search(r"store_dir=\"?\$\{?RUNNER_TEMP\}?/", line)
+            )
         if re.search(
-            r"^\s*(?:export\s+)?PNPM_CONFIG_STORE_DIR\s*[:=]",
+            r"^\s*(?:export\s+)?[\"']?PNPM_CONFIG_STORE_DIR[\"']?\s*[:=]",
             line,
             flags=re.IGNORECASE,
         ):
             problems.append("workflows must export PNPM_CONFIG_STORE_DIR only through the shared setup action")
         elif re.search(r"\bPNPM_CONFIG_STORE_DIR\s*=", line, flags=re.IGNORECASE) and not (
-            export_exempt
+            path_is_setup_action
+            and reaching_store_dir_is_runner_temp
             and re.search(
                 r'^\s*echo\s+["\']PNPM_CONFIG_STORE_DIR=\$\{store_dir\}["\']\s*>>\s*["\']\$GITHUB_ENV["\']\s*$',
                 line,
@@ -724,6 +731,7 @@ for fixture in (
     'run: PNPM_CONFIG_STORE_DIR="$HOME/.pnpm-store" pnpm install',
     'run: pnpm_config_store_dir="$HOME/.pnpm-store" pnpm install',
     'env:\n  PNPM_CONFIG_STORE_DIR: "$HOME/.pnpm-store"',
+    'env:\n  "PNPM_CONFIG_STORE_DIR": "$HOME/.pnpm-store"',
     'run: echo "PNPM_CONFIG_STORE_DIR=${GITHUB_WORKSPACE}/../.pnpm-store"',
 ):
     if not contract_violations(fixture):
@@ -744,6 +752,11 @@ if contract_violations(f"{RUNNER_TEMP_ASSIGNMENT}\n{SAFE_EXPORT_LINE}", SETUP_AC
 for fixture_source, fixture_path, label in (
     (f"{RUNNER_TEMP_ASSIGNMENT}\n{SAFE_EXPORT_LINE}", None, "outside the shared setup action"),
     (f"{HOME_ASSIGNMENT}\n{SAFE_EXPORT_LINE}", SETUP_ACTION_PATH, "store_dir not derived from $RUNNER_TEMP"),
+    (
+        f"{HOME_ASSIGNMENT}\n{SAFE_EXPORT_LINE}\n{RUNNER_TEMP_ASSIGNMENT}",
+        SETUP_ACTION_PATH,
+        "a later unrelated $RUNNER_TEMP assignment must not retroactively excuse an earlier persistent one",
+    ),
 ):
     if not contract_violations(fixture_source, fixture_path):
         print(f"pnpm-store guard missed its negative control: {label}", file=sys.stderr)
