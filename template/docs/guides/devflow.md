@@ -109,9 +109,10 @@ clean verdict already covered, that verdict attests the new head too: no review
 runs and neither ceiling is spent, though CI still re-runs in full and the
 ledger names the head as carried. The exemption covers what a carry cannot
 prove. Carry takes effect only once every surface that must recognise it does —
-the integration stage's checker, readiness gate, and integrator agent, and the
-repository's own result schemas and validator — and until then every head is
-reviewed on its own.
+the checker, readiness gate, integrator agent, and the `dev-flow-support`
+result schemas and validator, all vendored through the skills pin at
+harmon-devkit `v0.47.0` or later — and until then every head is reviewed on its
+own.
 
 It also supplies `min_rounds` and the run-wide `wall_clock_min`. A cap is a
 ceiling, never a quota. Zero disables only the named heuristic activity; it

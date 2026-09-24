@@ -377,16 +377,14 @@ and it is still answered the ordinary way. What a carry removes is the second
 rather than read back from the record, so a resumed session trusts nothing a
 previous process wrote. Like the exemption, this belongs to the integration
 stage and takes effect only where that stage implements it. Every surface that
-drives or checks the cycle has to carry it. A skills-pin bump brings the
-vendored ones: the checker and readiness gate under `.claude/skills/`, and the
-integrator agent under `.claude/agents/` that drives the cycle — without it the
-loop never calls `carry` and re-reviews every head. It does **not** bring this
-repo's own `ai/schemas/result.integrator.schema.json`, the composed
-`ai/schemas/result.schema.json` that embeds it, and
-`scripts/validate-result-schemas.mjs` (plus their `template/` twins), which
-otherwise reject a carried result for naming a reviewed commit that is not the
-gated head. Until all of them carry it, every head is reviewed on its own and
-no verdict is carried.
+drives or checks the cycle has to carry it, and all of them arrive through the
+skills pin: the checker and readiness gate under `.claude/skills/`, the
+integrator agent under `.claude/agents/` that drives the cycle (without it the
+loop never calls `carry` and re-reviews every head), and the `dev-flow-support`
+package vendored beside them, whose result schemas and validator the gate uses
+(so they accept a result naming a reviewed commit that is not the gated head).
+harmon-devkit `v0.47.0` is the first release that carries all of them. At an
+older pin, every head is reviewed on its own and no verdict is carried.
 
 ### Readiness gate
 
@@ -531,9 +529,8 @@ see. The exemption above is the weaker, file-set test and stays for what the
 identity cannot prove; the two compose, carry first because it is both stricter
 and cheaper. The same carve-out in full, including why CI still re-runs
 unconditionally, is under § "Dev Loop" → the current-head Codex contract, and
-the same caveat applies, and it is more than a pin: until the vendored assets
-AND this repository's own result schemas (the integrator schema and the
-composed one embedding it) and validator all carry it, no verdict is carried.
+the same caveat applies: carry needs the vendored assets at harmon-devkit
+`v0.47.0` or later, and at an older pin no verdict is carried.
 
 **Role tiers refine the resolved rigor level; they never replace it.** Each
 `[rigor.<level>]` profile carries `orchestrator_tier`, `implementer_tier`,
