@@ -23,7 +23,14 @@ module.exports = {
     {
       files: '*.astro',
       options: {
-        parser: 'astro'
+        parser: 'astro',
+        // Must mirror `compressHTML` in astro.config.* (Astro's own default
+        // is true). A mismatch lets prettier-plugin-astro reflow
+        // whitespace-sensitive inline markup into a visibly different
+        // rendered page — scripts/test-astro-compress-parity.sh fails the
+        // build when these disagree (harmon-init#1350,
+        // ponderousdev/lawnomator-site#192).
+        astroCompressHTML: true
       }
     }
   ]

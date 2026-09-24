@@ -1,0 +1,155 @@
+#!/usr/bin/env bash
+# render-parity.sh — prove a change doesn't alter the built site's visible text.
+#
+# A formatter bump (prettier-plugin-astro in particular) can reflow
+# whitespace-sensitive inline markup with no code change behind it. Under
+# `compressHTML: false` a reflowed newline between two inline elements is not
+# a no-op: the browser collapses it to a single visible space that was not
+# there before (see docs/CHECKLIST.md and
+# scripts/test-astro-compress-parity.sh for the config half of this guard).
+#
+# Default mode builds the merge-base and HEAD into disposable git worktrees
+# and diffs their rendered dist/**/*.html visible text (render-parity-extract.mjs).
+# `--compare <dir-a> <dir-b>` skips the git/build step and diffs two
+# already-built directories directly; the root repo's behavioural test
+# (scripts/test-render-parity-cases.sh) uses this mode so it can exercise the
+# diff logic without a real Astro build.
+set -euo pipefail
+
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+script_dir="$(cd "$(dirname "$0")" && pwd)"
+cd "$repo_root"
+
+compare() {
+    node "${script_dir}/render-parity-extract.mjs" "$1" "$2"
+}
+
+if [ "${1:-}" = "--compare" ]; then
+    [ "$#" -eq 3 ] || {
+        echo "Usage: render-parity.sh --compare <dir-a> <dir-b>" >&2
+        exit 2
+    }
+    compare "$2" "$3"
+    exit $?
+fi
+
+# Base ref: RENDER_PARITY_BASE if set; on a pull request exactly
+# origin/$GITHUB_BASE_REF (never a fallback — a wrong base would compare
+# against the wrong tree); otherwise the first of origin/HEAD, origin/main,
+# origin/master. Same reasoning as scripts/test-tool-pin-pairs.sh. A fresh
+# local repo with no remote at all (the default when github_remote_create is
+# off) has genuinely nothing to compare against — that is a skip, not a hard
+# error, or `task ci` is unusable there (harmon-init#1350 Codex review
+# round 3, P2).
+resolve_base() {
+    if [ -n "${RENDER_PARITY_BASE:-}" ]; then
+        echo "$RENDER_PARITY_BASE"
+        return
+    fi
+    if [ -n "${GITHUB_BASE_REF:-}" ]; then
+        echo "origin/${GITHUB_BASE_REF}"
+        return
+    fi
+    for ref in origin/HEAD origin/main origin/master; do
+        if git rev-parse --verify --quiet "$ref" >/dev/null; then
+            echo "$ref"
+            return
+        fi
+    done
+}
+
+base_ref="$(resolve_base)"
+if [ -z "$base_ref" ]; then
+    echo "render-parity: no base ref to compare against (no origin remote and RENDER_PARITY_BASE unset) -- nothing to compare, skipping"
+    exit 0
+fi
+merge_base="$(git merge-base HEAD "$base_ref")"
+head_sha="$(git rev-parse HEAD)"
+
+if [ "$merge_base" = "$head_sha" ]; then
+    echo "render-parity: HEAD is the merge-base -- nothing to compare, skipping"
+    exit 0
+fi
+
+# Only a change to a known formatter package (or its own config file) may
+# require byte-for-byte-equivalent rendered output; an unrelated dependency
+# bump riding alongside a legitimate content edit must never trip this gate.
+# This is the SAME check whether invoked from CI or from `task ci`/
+# `task test:render-parity` locally — a second, drifted copy of this
+# predicate is exactly what let an earlier version of this gate fire on any
+# package.json/lockfile change at all (harmon-init#1350 Codex review round 2,
+# P1 + P2).
+formatter_package_pattern='"(prettier|prettier-plugin-[A-Za-z0-9._-]+|prettier-config-[A-Za-z0-9._-]+|markdownlint-cli2)"'
+formatter_relevant() {
+    if ! git diff --quiet "$merge_base" "$head_sha" -- prettier.config.cjs; then
+        return 0
+    fi
+    # Capture the diff fully before grepping it (never pipe git diff's own
+    # stdout straight into grep): under pipefail, grep closing the pipe after
+    # its first match can SIGPIPE git diff mid-write on a large diff, and
+    # that non-zero exit would read as "not relevant" (harmon-init#1350 Codex
+    # review round 3, P2 — the same class of bug as round 1's finding, now in
+    # this centralized predicate instead of the workflow step). Restricted to
+    # ADDED/REMOVED lines only (`^[+-][^+-]`, excluding the `+++`/`---`
+    # headers) so an unrelated dependency change that merely sits within diff
+    # context of an untouched formatter entry does not also activate the gate
+    # (round 3, P1).
+    local diff_content changed_lines
+    diff_content="$(git diff "$merge_base" "$head_sha" -- package.json pnpm-lock.yaml)"
+    # `grep -E` (no `-q`) reads its ENTIRE input rather than closing early on
+    # the first match, so this stage cannot itself trigger the pipe-closure
+    # class of bug above. The FINAL check, though, still could: even the
+    # already-fixed `printf | grep -q` remains vulnerable, because `pipefail`
+    # reports the RIGHTMOST NON-ZERO status across every stage, not merely
+    # the last stage's own exit code — so an upstream SIGPIPE still poisons
+    # the result even when the terminal `grep -q` itself found a match and
+    # exited 0 (harmon-init#1350 Codex review round 4, P2; reproduced with
+    # `PIPESTATUS=(141 141 0)` on a large diff). Bash's own `=~` operates on
+    # an in-memory string via a builtin, with no subprocess or pipe at all,
+    # so there is no pipe left to close early.
+    changed_lines="$(printf '%s\n' "$diff_content" | grep -E '^[+-][^+-]' || true)"
+    [[ "$changed_lines" =~ $formatter_package_pattern ]]
+}
+if ! formatter_relevant; then
+    echo "render-parity: no formatter-package change between ${merge_base} and ${head_sha} -- skipping"
+    exit 0
+fi
+
+# The base predates Astro being scaffolded (the template's own conventions-
+# only state has no package.json), so there is no buildable "before" to
+# compare against — installing there would fail with ERR_PNPM_NO_PKG_MANIFEST
+# before task build's own "not scaffolded yet" skip ever runs
+# (harmon-init#1350 Codex review round 2, P1).
+if ! git cat-file -e "${merge_base}:package.json" 2>/dev/null; then
+    echo "render-parity: merge-base (${merge_base}) has no package.json yet (Astro not scaffolded there) -- nothing to compare, skipping"
+    exit 0
+fi
+
+work_base="$(mktemp -d -t render-parity-base-XXXXXX)"
+work_head="$(mktemp -d -t render-parity-head-XXXXXX)"
+cleanup() {
+    git worktree remove --force "$work_base" >/dev/null 2>&1 || rm -rf "$work_base"
+    git worktree remove --force "$work_head" >/dev/null 2>&1 || rm -rf "$work_head"
+}
+trap cleanup EXIT
+
+git worktree add --detach --force "$work_base" "$merge_base" >/dev/null
+git worktree add --detach --force "$work_head" "$head_sha" >/dev/null
+
+build_one() (
+    cd "$1"
+    # Matches the setup action's own install step (see
+    # template/.github/actions/setup/action.yml.jinja): sharp's installer can
+    # prefer a self-hosted runner's global libvips over its bundled prebuilt,
+    # and that from-source build fails without node-addon-api. A step-scoped
+    # env var there does not carry into this script's own installs.
+    SHARP_IGNORE_GLOBAL_LIBVIPS=1 pnpm install --frozen-lockfile
+    task build
+)
+
+echo "render-parity: building merge-base (${merge_base})..."
+build_one "$work_base"
+echo "render-parity: building HEAD (${head_sha})..."
+build_one "$work_head"
+
+compare "${work_base}/dist" "${work_head}/dist"

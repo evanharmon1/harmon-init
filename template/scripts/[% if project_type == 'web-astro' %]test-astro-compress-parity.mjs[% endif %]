@@ -1,0 +1,110 @@
+// test-astro-compress-parity.mjs — the real-evaluation half of
+// test-astro-compress-parity.sh: actually LOADS astro.config.* and
+// prettier.config.cjs instead of pattern-matching their source text.
+//
+// A regex-based reader was tried first and repeatedly defeated: a URL
+// containing `//` read as a comment, a multiline property, a quoted key, an
+// unused same-named variable masquerading as an object-shorthand reference,
+// a mutable `let`/`var` binding reassigned after its initializer, and a
+// value supplied through an imported object were each a distinct way to
+// fool a text-pattern search (harmon-init#1350 Codex review rounds 2-3).
+// Actually requiring/importing the files sidesteps all of that at once: the
+// value we read is whatever the file really evaluates to, not a guess at
+// its shape.
+import { createRequire } from 'node:module'
+import { pathToFileURL } from 'node:url'
+import { resolve } from 'node:path'
+
+const [, , astroConfigPath, prettierConfigPath] = process.argv
+if (!astroConfigPath || !prettierConfigPath) {
+  console.error('Usage: test-astro-compress-parity.mjs <astro-config> <prettier-config>')
+  process.exit(2)
+}
+
+function isModuleNotFound(err) {
+  return err && (err.code === 'ERR_MODULE_NOT_FOUND' || err.code === 'MODULE_NOT_FOUND')
+}
+
+let astroConfig
+try {
+  const mod = await import(pathToFileURL(resolve(astroConfigPath)).href)
+  astroConfig = mod.default ?? {}
+} catch (err) {
+  if (isModuleNotFound(err)) {
+    console.log(
+      `test-astro-compress-parity: dependencies not installed yet -- skipping (install dependencies first)`
+    )
+    process.exit(0)
+  }
+  console.error(
+    `test-astro-compress-parity: could not evaluate ${astroConfigPath} (${err.message}) -- fix the config or, if it genuinely can't be loaded standalone (e.g. it depends on runtime-only state), verify astroCompressHTML by hand`
+  )
+  process.exit(1)
+}
+
+let prettierConfig
+try {
+  const require = createRequire(import.meta.url)
+  prettierConfig = require(resolve(prettierConfigPath))
+} catch (err) {
+  if (isModuleNotFound(err)) {
+    console.log(
+      `test-astro-compress-parity: dependencies not installed yet -- skipping (install dependencies first)`
+    )
+    process.exit(0)
+  }
+  console.error(
+    `test-astro-compress-parity: could not evaluate ${prettierConfigPath} (${err.message})`
+  )
+  process.exit(1)
+}
+
+// Astro's own default is true (HTML minification on) when the key is absent.
+const astroValue = astroConfig.compressHTML ?? true
+
+// Prettier's own `files` accepts either a single glob string or an array of
+// them, and when several overrides match the same file, the LAST matching
+// override in the array wins (later entries take precedence over earlier
+// ones) -- not the first. `.find()` picking the first exact-string match
+// missed both: an array-form `files: ['*.astro']` never matched at all, and
+// a config with an earlier `*.astro` override plus a later, more specific
+// one reported the wrong options object (harmon-init#1350 Codex review
+// round 4, P2).
+function matchesAstro(files) {
+  return Array.isArray(files) ? files.includes('*.astro') : files === '*.astro'
+}
+const matchingOverrides = (prettierConfig.overrides || []).filter((o) => matchesAstro(o.files))
+const astroOverride = matchingOverrides[matchingOverrides.length - 1]
+const prettierRaw = astroOverride?.options?.astroCompressHTML
+// The plugin's own default when the key is absent is its 'jsx' mode, which
+// never matches either alias below — an unset option is a mismatch by design.
+let prettierMode
+if (prettierRaw === true) prettierMode = 'html'
+else if (prettierRaw === false) prettierMode = 'none'
+else if (typeof prettierRaw === 'string') prettierMode = prettierRaw
+else if (prettierRaw === undefined) prettierMode = 'jsx'
+else {
+  console.error(
+    `test-astro-compress-parity: ${prettierConfigPath}'s astroCompressHTML evaluated to a non-string, non-boolean value (${JSON.stringify(prettierRaw)}) -- use a boolean or a mode string`
+  )
+  process.exit(1)
+}
+
+const expectedMode = astroValue ? 'html' : 'none'
+
+if (prettierMode !== expectedMode) {
+  const prettierDisplay =
+    prettierRaw === undefined ? "<unset, defaults to 'jsx'>" : JSON.stringify(prettierRaw)
+  console.error(
+    `test-astro-compress-parity: astroCompressHTML (${prettierConfigPath}: ${prettierDisplay}) disagrees with compressHTML (${astroConfigPath}: ${astroValue}).\n\n` +
+      `prettier-plugin-astro's astroCompressHTML must mirror Astro's own compressHTML\n` +
+      `(true -> 'html', false -> 'none'), or a formatter run can reflow\n` +
+      `whitespace-sensitive inline markup into a visibly different rendered page.\n` +
+      `Set astroCompressHTML: ${astroValue} in the '*.astro' override in ${prettierConfigPath}.`
+  )
+  process.exit(1)
+}
+
+console.log(
+  `test-astro-compress-parity OK: ${prettierConfigPath}'s astroCompressHTML (${prettierMode}) matches ${astroConfigPath}'s compressHTML (${astroValue})`
+)

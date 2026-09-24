@@ -399,7 +399,7 @@ if tmpl_on:
         ("scripts/devcontainer-smoke.sh", "@devcontainers/cli", "npm", "Devcontainer"),
         ("scripts/run-semgrep.sh", "semgrep", "pypi", "Devcontainer"),
         (".devcontainer/Dockerfile", "semgrep", "pypi", "Devcontainer"),
-        ("scripts/markdownlint.sh", "markdownlint-cli2", "npm", None),
+        ("scripts/markdownlint.sh", "markdownlint-cli2", "npm", "Formatters"),
         ("scripts/python-audit.sh", "pip-audit", "pypi", None),
     ]:
         got = resolve_group(tmpl_on, path, dep, ds)
