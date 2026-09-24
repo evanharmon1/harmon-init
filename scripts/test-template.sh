@@ -629,12 +629,174 @@ grep -q '^  security:sca:snyk:' Taskfile.yml || err "explicit optional Snyk SCA 
 grep -q 'snyk test --all-projects' Taskfile.yml || err "Snyk SCA must scan every detected manifest"
 grep -q '^  snyk:' .github/actions/setup/action.yml || err "shared setup action is missing the opt-in Snyk installer"
 grep -q 'SNYK_VERSION=' .github/actions/setup/action.yml || err "Snyk CLI must be pinned and Renovate-manageable"
+python3 - <<'PY' || err "rendered workflows/actions violate the job-private pnpm store contract"
+import pathlib
+import re
+import sys
+
+roots = (
+    pathlib.Path(".github/actions"),
+    pathlib.Path(".github/workflows"),
+    pathlib.Path("scripts"),
+)
+
+
+def is_contract_file(path: pathlib.Path) -> bool:
+    return path.suffix in {".yml", ".yaml"} or (
+        path.suffix == ".sh" and path.parts[:1] == ("scripts",)
+    )
+
+
+files = [
+    path
+    for root in roots
+    if root.is_dir()
+    for path in root.rglob("*")
+    if path.is_file() and is_contract_file(path)
+]
+violations = []
+
+
+SETUP_ACTION_PATH = pathlib.Path(".github/actions/setup/action.yml")
+
+
+def contract_violations(source: str, path: "pathlib.Path | None" = None) -> list[str]:
+    flat = re.sub(r"\\\s*\n", " ", source).replace("\n", " ")
+    problems = []
+    package_config_set = r"\b(?:pnpm|npm|yarn)\b(?=[^;&]{0,240}\bconfig\b)(?=[^;&]{0,240}\bset\b)[^;&]{0,240}"
+    if re.search(package_config_set, flat):
+        problems.append("workflows must use job-scoped environment variables, not package-manager config set")
+    if re.search(r"(?:>>?|\btee\b(?:\s+-a)?)\s*[\"']?(?:~|\$\{?HOME\}?)/\.npmrc", flat):
+        problems.append("workflows must not write the user-global .npmrc")
+    if re.search(r"(?:>>?|\btee\b(?:\s+-a)?)\s*[\"']?(?:~|\$\{?HOME\}?)/\.config/(?:pnpm|npm|yarn)\b", flat):
+        problems.append("workflows must not write user-global package-manager configuration")
+    if re.search(
+        r"\bpnpm\b[^;&]{0,240}(?:--store-dir(?:=|\s+)|--store\s+|--config[.-]store-dir(?:=|\s+))",
+        flat,
+    ):
+        problems.append("workflows must not override pnpm's job-private store on a command")
+    # The literal "echo PNPM_CONFIG_STORE_DIR=${store_dir} >> $GITHUB_ENV" line is
+    # only exempt from the inline-override check in the one file that owns it, and
+    # only when the store_dir assignment that reaches it — the nearest one above,
+    # not merely any assignment anywhere in the file — derives from $RUNNER_TEMP.
+    # A file-wide search would stay satisfied by an unrelated later assignment
+    # (e.g. the verification step's own store_dir) even if the export step's own
+    # assignment were changed to a persistent path.
+    path_is_setup_action = path == SETUP_ACTION_PATH
+    reaching_store_dir_is_runner_temp = False
+    for line in source.splitlines():
+        if re.match(r"^\s*store_dir=", line):
+            reaching_store_dir_is_runner_temp = bool(
+                re.search(r"store_dir=\"?\$\{?RUNNER_TEMP\}?/", line)
+            )
+        if re.search(
+            r"^\s*(?:export\s+)?[\"']?PNPM_CONFIG_STORE_DIR[\"']?\s*[:=]",
+            line,
+            flags=re.IGNORECASE,
+        ):
+            problems.append("workflows must export PNPM_CONFIG_STORE_DIR only through the shared setup action")
+        elif re.search(r"\bPNPM_CONFIG_STORE_DIR\s*=", line, flags=re.IGNORECASE) and not (
+            path_is_setup_action
+            and reaching_store_dir_is_runner_temp
+            and re.search(
+                r'^\s*echo\s+["\']PNPM_CONFIG_STORE_DIR=\$\{store_dir\}["\']\s*>>\s*["\']\$GITHUB_ENV["\']\s*$',
+                line,
+            )
+        ):
+            problems.append("workflows must not override PNPM_CONFIG_STORE_DIR inline")
+    if re.search(r"\$\{?GITHUB_WORKSPACE\}?/\.\.", flat):
+        problems.append("store paths must not escape GITHUB_WORKSPACE")
+    return problems
+
+
+# Negative controls prove this guard fails on both regression classes rather
+# than merely scanning the current render and reporting it clean.
+if not is_contract_file(pathlib.Path("scripts/pnpm-store-negative-control.sh")):
+    print("pnpm-store guard does not scan rendered scripts/*.sh", file=sys.stderr)
+    raise SystemExit(1)
+
+for fixture in (
+    'run: pnpm config set store-dir "$RUNNER_TEMP/store" --global',
+    'run: pnpm -g config set "store-dir" "$RUNNER_TEMP/store"',
+    'run: pnpm config --global set "store-dir" "$RUNNER_TEMP/store"',
+    'run: pnpm config set --location=global "store-dir" "$RUNNER_TEMP/store"',
+    'run: pnpm config set "store-dir" "$RUNNER_TEMP/store"',
+    'run: npm config set "store-dir" "$RUNNER_TEMP/store" --global',
+    'run: yarn config set cache-folder "$HOME/.cache/yarn"',
+    'run: echo "store-dir=$RUNNER_TEMP/store" >> ~/.npmrc',
+    'run: echo "store-dir=$RUNNER_TEMP/store" | tee -a "$HOME/.npmrc"',
+    'run: echo "store-dir=$RUNNER_TEMP/store" >> ~/.config/pnpm/rc',
+    'run: pnpm install --store-dir "$HOME/.pnpm-store"',
+    'run: pnpm --config.store-dir="$HOME/.pnpm-store" install',
+    'run: PNPM_CONFIG_STORE_DIR="$HOME/.pnpm-store" pnpm install',
+    'run: pnpm_config_store_dir="$HOME/.pnpm-store" pnpm install',
+    'env:\n  PNPM_CONFIG_STORE_DIR: "$HOME/.pnpm-store"',
+    'env:\n  "PNPM_CONFIG_STORE_DIR": "$HOME/.pnpm-store"',
+    'run: echo "PNPM_CONFIG_STORE_DIR=${GITHUB_WORKSPACE}/../.pnpm-store"',
+):
+    if not contract_violations(fixture):
+        print(f"pnpm-store guard missed its negative control: {fixture}", file=sys.stderr)
+        raise SystemExit(1)
+
+# The literal safe-echo line is exempt only in the shared setup action, and only
+# when that file derives store_dir from $RUNNER_TEMP — matching the echo text
+# alone can't distinguish a job-private export from a persistent one.
+SAFE_EXPORT_LINE = 'echo "PNPM_CONFIG_STORE_DIR=${store_dir}" >> "$GITHUB_ENV"'
+RUNNER_TEMP_ASSIGNMENT = 'store_dir="${RUNNER_TEMP}/.pnpm-store"'
+HOME_ASSIGNMENT = 'store_dir="$HOME/.pnpm-store"'
+
+if contract_violations(f"{RUNNER_TEMP_ASSIGNMENT}\n{SAFE_EXPORT_LINE}", SETUP_ACTION_PATH):
+    print("pnpm-store guard flagged its own job-private export as a violation", file=sys.stderr)
+    raise SystemExit(1)
+
+for fixture_source, fixture_path, label in (
+    (f"{RUNNER_TEMP_ASSIGNMENT}\n{SAFE_EXPORT_LINE}", None, "outside the shared setup action"),
+    (f"{HOME_ASSIGNMENT}\n{SAFE_EXPORT_LINE}", SETUP_ACTION_PATH, "store_dir not derived from $RUNNER_TEMP"),
+    (
+        f"{HOME_ASSIGNMENT}\n{SAFE_EXPORT_LINE}\n{RUNNER_TEMP_ASSIGNMENT}",
+        SETUP_ACTION_PATH,
+        "a later unrelated $RUNNER_TEMP assignment must not retroactively excuse an earlier persistent one",
+    ),
+):
+    if not contract_violations(fixture_source, fixture_path):
+        print(f"pnpm-store guard missed its negative control: {label}", file=sys.stderr)
+        raise SystemExit(1)
+
+for path in files:
+    text = path.read_text()
+    violations.extend(f"{path}: {problem}" for problem in contract_violations(text, path))
+
+if violations:
+    print("\n".join(violations), file=sys.stderr)
+    raise SystemExit(1)
+PY
 if [ -f prettier.config.cjs ] || [ -f pyproject.toml ]; then
     grep -q '^  install-deps:' .github/actions/setup/action.yml ||
         err "dependency-bearing profiles must expose the install-deps input"
 else
     ! grep -q '^  install-deps:' .github/actions/setup/action.yml ||
         err "dependency-free profiles must not expose an unused install-deps input"
+fi
+if grep -q 'brew "pnpm"' Brewfile; then
+    grep -q 'PNPM_CONFIG_STORE_DIR=${store_dir}' .github/actions/setup/action.yml ||
+        err "shared setup action does not export the job-private pnpm store"
+    grep -q 'resolved="$(pnpm config get store-dir)"' .github/actions/setup/action.yml ||
+        err "shared setup action does not verify pnpm's configured store base"
+    grep -q 'effective="$(pnpm store path)"' .github/actions/setup/action.yml ||
+        err "shared setup action does not print pnpm's effective store path"
+    export_line=$(grep -n 'name: Export job-private pnpm store' .github/actions/setup/action.yml | cut -d: -f1)
+    node_line=$(grep -n 'uses: actions/setup-node@' .github/actions/setup/action.yml | cut -d: -f1)
+    verify_line=$(grep -n 'name: Verify job-private pnpm store' .github/actions/setup/action.yml | cut -d: -f1)
+    [ "$export_line" -lt "$node_line" ] && [ "$node_line" -lt "$verify_line" ] ||
+        err "pnpm store export must precede setup-node and verification must follow it"
+fi
+if [ -f .github/workflows/deploy-preview.yml ]; then
+    grep -q 'uses: ./.github/actions/setup' .github/workflows/deploy-preview.yml ||
+        err "deploy-preview must use the shared job-private pnpm setup"
+    grep -q 'uses: ./.github/actions/setup' .github/workflows/release.yml ||
+        err "production deploy must use the shared job-private pnpm setup"
+    grep -A4 'uses: ./.github/actions/setup' .github/workflows/release.yml | grep -q 'cache: "false"' ||
+        err "production deploy must disable the lower-trust pnpm Actions cache"
 fi
 if [ -f pyproject.toml ]; then
     grep -q 'if \[ -f uv.lock \]; then' .github/actions/setup/action.yml ||

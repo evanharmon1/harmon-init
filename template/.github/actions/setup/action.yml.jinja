@@ -37,6 +37,17 @@ runs:
   steps:
 [% if use_node %]
     - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
+    # PNPM_CONFIG_STORE_DIR is pnpm's environment-variable form of
+    # `--store-dir`, verified empirically with pnpm 11 and 12 via
+    # `pnpm config get store-dir`. $RUNNER_TEMP is emptied for every job;
+    # unlike pnpm's user/global config or a sibling of $GITHUB_WORKSPACE, it
+    # cannot leak a store across jobs or repositories on a persistent runner.
+    - name: Export job-private pnpm store
+      shell: bash
+      run: |
+        : "${RUNNER_TEMP:?RUNNER_TEMP is required to isolate the pnpm store}"
+        store_dir="${RUNNER_TEMP}/.pnpm-store"
+        echo "PNPM_CONFIG_STORE_DIR=${store_dir}" >> "$GITHUB_ENV"
 [% endif %]
     - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
       with:
@@ -44,6 +55,25 @@ runs:
         node-version: "24"
 [% if use_node %]
         cache: ${{ inputs.cache == 'true' && 'pnpm' || '' }}
+    - name: Verify job-private pnpm store
+      shell: bash
+      run: |
+        store_dir="${RUNNER_TEMP}/.pnpm-store"
+        resolved="$(pnpm config get store-dir)"
+        echo "pnpm config get store-dir: ${resolved}"
+        if [ "$resolved" != "$store_dir" ]; then
+          echo "::error::pnpm did not honor PNPM_CONFIG_STORE_DIR: expected ${store_dir}, got ${resolved}" >&2
+          exit 1
+        fi
+        effective="$(pnpm store path)"
+        echo "pnpm store path: ${effective}"
+        case "$effective" in
+          "${store_dir}"/*) ;;
+          *)
+            echo "::error::pnpm's effective store path (${effective}) is not under ${store_dir}" >&2
+            exit 1
+            ;;
+        esac
 [% endif %]
     - uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97 # v7
       with:
