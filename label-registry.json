@@ -69,6 +69,31 @@
       ]
     },
     {
+      "family": "initiative",
+      "prefix": null,
+      "purpose": "Top-level parent issue horizon: a finite deliverable or a perennial area of ownership.",
+      "axis": "meta",
+      "source": "inline",
+      "writers": ["human"],
+      "writer_note": "humans, at planning or grooming",
+      "readers": "humans, saved views",
+      "lifecycle": "durable",
+      "lifecycle_note": "applied to a parent while its role is current; removed or changed when its horizon changes",
+      "exclusive": true,
+      "provision": true,
+      "color": "8250DF",
+      "values": [
+        {
+          "value": "epic",
+          "description": "Time-bound parent initiative with a defined future deliverable"
+        },
+        {
+          "value": "umbrella",
+          "description": "Open-ended parent issue for an enduring area, topic, or team"
+        }
+      ]
+    },
+    {
       "family": "workflow",
       "prefix": null,
       "purpose": "Transient triage states; blocked is the non-issue-blocker flag.",

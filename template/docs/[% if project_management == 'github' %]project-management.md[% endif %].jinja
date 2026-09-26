@@ -565,6 +565,10 @@ the taxonomy table below is generated from) and the starter set is created by
   accessibility, performance, tech debt, internationalization
 - **Source** — where the work came from (a customer request, AI authorship) —
   durable provenance, never removed
+- **Initiative** — the horizon of a top-level parent issue: `epic` for a
+  time-bound deliverable, or `umbrella` for an enduring area, topic, or team.
+  These human-written labels describe the parent; sub-issues remain the source
+  of the parent/child relationship
 - **Workflow** — transient triage states; `blocked` is the non-issue-blocker
   flag described above
 - **Layer** — which stack slice the change lives in
@@ -835,6 +839,7 @@ deliberately leaves it alone.
 |---|---|---|---|---|
 | `sec`, `a11y`, `perf`, `tech-debt`, `i18n`, `l10n` | humans, at triage | humans, saved views | provisioned; inert | applied when true, removed when not |
 | `customer-request`, `ai-generated` | whoever files or authors the work, human or agent | humans, saved views | provisioned; inert | durable provenance — never removed |
+| `epic`, `umbrella` | humans, at planning or grooming | humans, saved views | provisioned; inert | applied to a parent while its role is current; removed or changed when its horizon changes |
 | `needs-triage` | humans, the issue forms, and the triage skill | humans, the Triage view | provisioned; inert | added freely at filing; removed only when classification is complete |
 | `needs-requirements`, `blocked`, `waiting`, `needs-decision`, `needs-response`, `needs-communication` | humans, at triage | humans, the Triage view | provisioned; inert | transient — removed as soon as the state clears |
 | `bug`, `feature`, `task`, `research` | the issue forms on personal-account repos; humans or agents at triage | humans, saved views | provisioned; inert | durable classification — org repos use native issue Type and no work-type label |
@@ -1231,31 +1236,39 @@ week"; scoping the queue to `iteration:@current` adds nothing over *agent-set +
 Ready + priority*. Iteration is a human-cadence concept your agents don't have.
 (The native Iteration field stays available if you reach steady-state and want it.)
 
-## Hierarchy (sub-issues, not Epics)
+## Hierarchy (sub-issues with Epic and umbrella labels)
 
-There's **no Epic type, by design.** The "big initiative" role splits cleanly
-into two natives — **sub-issues** carry the *hierarchy* axis and **milestones**
-carry the *delivery-batch* axis — and GitHub stitches them together for you: a
+There's **no Epic type, by design.** GitHub **sub-issues** are the authoritative
+*hierarchy* axis, and **milestones** are the *delivery-batch* axis. The durable,
+human-written `epic` and `umbrella` labels describe a top-level parent issue's
+horizon; they do not create membership, rollups, or inheritance. A
 **sub-issue inherits its parent's Project and Milestone by default** (shipped
 2025-09). Assign them once on the parent and the child tree picks them up — no
 per-child bookkeeping.
 
+Use **`epic`** for a parent with a finite, time-bound deliverable. It may belong
+to a milestone, whose completion bar and optional due date remain the source of
+delivery tracking. Use **`umbrella`** for a perennial parent that covers an
+enduring area, topic, or team and has no single delivery endpoint. An issue is
+one or the other, never both; both normally gain sub-issues over time.
+
 So a parent issue "Scheduling v1" in milestone `v1.1.0` pulls its whole subtree
 into that release payload for free. Break big work down with **sub-issues** (up to
 8 levels — flip on **Show hierarchy** in a view to expand/collapse the tree)
-rather than a markdown checklist or an Epic type: you get the structure without
-the "Feature or Epic?" tax.
+rather than a markdown checklist: the `epic` label names the finite parent role,
+while the native relationship carries the structure.
 
-**Sub-issues are your only hierarchy axis; everything else stays flat.** Type,
+**Sub-issues are your only membership axis; everything else stays flat.** Type,
 Status, milestone, labels, and fields must never try to encode "part of" — that's
-the sub-issue's job, and only that. Once that's clear, the rest is just sizing and
-deciding what metadata rides on the parent vs. the leaves.
+the sub-issue's job, and only that. `epic` and `umbrella` are metadata on the
+parent, not substitutes for the relationship. Once that's clear, the rest is just
+sizing and deciding what metadata rides on the parent vs. the leaves.
 
-**The three-tier shape (replaces Epic → Story → Task with natives):** a
-**milestone** (the cross-feature shippable batch — possibly-unrelated work)
-contains parent
+**The common finite-delivery shape:** a **milestone** (the cross-feature
+shippable batch — possibly-unrelated work) contains `epic`-labelled parent
 **Feature** issues (each a cohesive capability), each of which contains **Task**
-sub-issues (mergeable slices). Full hierarchy, no synthetic Epic.
+sub-issues (mergeable slices). An `umbrella` can instead hold a perennial
+subtree without inventing a date or deliverable.
 
 The boundary that trips people up: **a milestone is a flat batch of unrelated
 features targeting one delivery outcome; a parent issue is one cohesive thing
@@ -1266,10 +1279,11 @@ batch; the parent-issue tree for a single feature.
 
 **Where metadata lives — parent vs. leaf.** The **parent** holds the durable
 context: the spec (your Given/When/Then acceptance criteria), the "why," the
-explicit *not*-doing reasoning, and — since sub-issues auto-inherit it — the
-**milestone and project** assignment. Set those once on the parent and the tree
-inherits; move the parent to `v1.1.0` and the whole tree moves with it. Never set
-the milestone per child.
+explicit *not*-doing reasoning, the `epic` or `umbrella` label, and — since
+sub-issues auto-inherit it — the **milestone and project** assignment. Set the
+milestone and project once on the parent and the tree inherits; move the parent
+to `v1.1.0` and the whole tree moves with it. Keep the initiative label on the
+parent; never set the milestone per child.
 
 The **leaves** hold execution: the `Task` type and the **`Size` points**. Put
 the estimate on the mergeable one-PR slices, not the parent — estimating a slice is
