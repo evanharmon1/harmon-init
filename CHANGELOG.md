@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.48.0](https://github.com/evanharmon1/harmon-init/compare/v4.47.1...v4.48.0) (2026-09-26)
+
+
+### Features
+
+* add epic and umbrella labels ([#1397](https://github.com/evanharmon1/harmon-init/issues/1397)) ([421e493](https://github.com/evanharmon1/harmon-init/commit/421e493982eed76fa55cc5be93e84146c36c3d70))
+
 ## [4.47.1](https://github.com/evanharmon1/harmon-init/compare/v4.47.0...v4.47.1) (2026-09-24)
 
 
