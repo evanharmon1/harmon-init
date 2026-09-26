@@ -245,6 +245,8 @@ i18n|5319E7|Internationalization
 l10n|5319E7|Localization
 customer-request|EC4899|Requested by a customer
 ai-generated|EC4899|Created or authored by an AI agent
+epic|8250DF|Time-bound parent initiative with a defined future deliverable
+umbrella|8250DF|Open-ended parent issue for an enduring area, topic, or team
 needs-triage|E36209|Awaiting triage
 needs-requirements|E36209|Requirements not yet defined
 blocked|E36209|Blocked by a non-issue dependency (reason in a comment)
