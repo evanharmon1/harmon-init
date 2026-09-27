@@ -1,6 +1,23 @@
 {
   "$schema": "./agent-registry.schema.json",
   "schema_version": 3,
+[% if trusted_orchestrator_actor_ids and (trusted_orchestrator_actor_ids | trim) %]
+[% if trusted_orchestrator_actor_ids is string %]
+[% set _raw = trusted_orchestrator_actor_ids.split(',') %]
+[% else %]
+[% set _raw = trusted_orchestrator_actor_ids %]
+[% endif %]
+[% set _ids = [] %]
+[% for item in _raw %]
+[% set _trimmed = (item | string) | trim %]
+[% if _trimmed %]
+[% set _ = _ids.append(_trimmed | int) %]
+[% endif %]
+[% endfor %]
+[% if _ids %]
+  "trusted_orchestrator_actor_ids": [[ _ids | tojson ]],
+[% endif %]
+[% endif %]
   "labels": {
     "suggest": {
       "prefix": "suggest",

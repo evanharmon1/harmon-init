@@ -42,6 +42,7 @@ skill_categories:
 
 use_foreman: true
 foreman_additional_trusted_actors: AdmiralFraggle
+trusted_orchestrator_actor_ids: "37220977, 269859446"
 
 # No first-party source language remains (foreman is a pinned external CLI,
 # not vendored Python), so CodeQL has nothing to analyze here. The template

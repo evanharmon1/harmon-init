@@ -87,7 +87,10 @@ if (jinja && (mode !== 'docs-table' || foreman || releasePlease)) {
 
 const here = path.dirname(fileURLToPath(import.meta.url))
 const manifestPath = path.resolve(manifestArg ?? path.join(here, '..', 'label-registry.json'))
-const agentRegistryPath = path.join(path.dirname(manifestPath), 'agent-registry.json')
+const localAgentRegistry = path.join(path.dirname(manifestPath), 'agent-registry.json')
+const agentRegistryPath = fs.existsSync(localAgentRegistry)
+  ? localAgentRegistry
+  : path.join(here, '..', 'agent-registry.json')
 const agentRenderer = path.join(here, 'agent-registry-labels.mjs')
 
 // Validate before rendering anything. This renderer is not only run by the

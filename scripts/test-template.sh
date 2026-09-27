@@ -225,6 +225,7 @@ full)
         --data ci_runner=self-hosted
         --data github_org=test-org
         --data claude_authorized_members="evanharmon1,reviewer-a,reviewer-b"
+        --data trusted_orchestrator_actor_ids="37220977,269859446"
         --data project_management=github
         --data snyk_scan_schedule=weekly
         --data release_content_paths="src docs"
@@ -430,6 +431,16 @@ if [ -f .github/workflows/build.yml ]; then
     grep -qF 'task test:agent-registry' .github/workflows/build.yml ||
         err "required CI does not run test:agent-registry"
 fi
+case "$profile" in
+full)
+    jq -e '.trusted_orchestrator_actor_ids == [37220977, 269859446]' agent-registry.json >/dev/null ||
+        err "agent-registry.json did not render expected trusted_orchestrator_actor_ids in full profile"
+    ;;
+minimal)
+    jq -e '.trusted_orchestrator_actor_ids == null' agent-registry.json >/dev/null ||
+        err "agent-registry.json rendered unexpected trusted_orchestrator_actor_ids in minimal profile"
+    ;;
+esac
 
 # The offline registry-drift gate binds label provisioning, provider wrappers,
 # and Foreman adapter selectors to the registry. It ships unconditionally and
