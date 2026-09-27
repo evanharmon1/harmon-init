@@ -22,7 +22,7 @@ project_type: general
 
 github_org: evanharmon1
 code_owner: evanharmon1
-claude_authorized_members: evanharmon1
+claude_authorized_members: evanharmon1,evanharmon1-bot,admiralfraggle,admiralfraggle-bot
 
 license: mit
 ci_runner: ubuntu-latest
