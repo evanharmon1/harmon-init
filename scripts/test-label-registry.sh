@@ -370,7 +370,9 @@ area:devcontainer|0E8A16|Dev containers, images, features
 area:pm|0E8A16|Labels, projects, issue tooling, PM docs
 area:skills|0E8A16|Shared agent skills and skills sync; subsystem workflow skills belong to that subsystem's area
 area:gauntlet|0E8A16|The challenge/review second-model stage: scripts, gates, and skill wiring"
-    check_lockfile template/label-registry.json template/agent-registry.json \
+    template_agent_reg="template/agent-registry.json"
+    [ -f "$template_agent_reg" ] || template_agent_reg="agent-registry.json"
+    check_lockfile template/label-registry.json "$template_agent_reg" \
         "$shared_inline
 $template_only_inline" "template layer"
 

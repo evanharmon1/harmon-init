@@ -128,7 +128,7 @@ with tempfile.TemporaryDirectory() as tmp:
         path.write_text(text)
         run = subprocess.run(
             ["node", "scripts/devflow-policy.mjs", "resolve", "--policy", str(path),
-             "--registry", "template/agent-registry.json", "--taskfile-dir", ".", "--json"],
+             "--registry", "agent-registry.json", "--taskfile-dir", ".", "--json"],
             text=True, capture_output=True,
         )
         if run.returncode != 0:

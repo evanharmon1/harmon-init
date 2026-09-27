@@ -229,6 +229,28 @@ foreman_additional_trusted_actors:
   default: ""
   when: "[[ use_foreman ]]"
 
+trusted_orchestrator_actor_ids:
+  type: str
+  help: >-
+    TRUSTED ORCHESTRATORS: comma-separated GitHub actor IDs (integers, not logins)
+    whose run-record and evidence comments are authenticated by the retro helper
+    and Dev Flow tools. Look up an ID with `gh api users/<login> --jq .id`.
+    Leave empty to configure no allowlist by default.
+  default: ""
+  validator: >-
+    [%- if trusted_orchestrator_actor_ids | trim -%]
+      [%- set raw_ids = trusted_orchestrator_actor_ids.split(',') | map('trim') | list -%]
+      [%- set invalid = namespace(value=false) -%]
+      [%- for id in raw_ids -%]
+        [%- if not id or not (id | regex_search('^[1-9][0-9]*$')) -%]
+          [%- set invalid.value = true -%]
+        [%- endif -%]
+      [%- endfor -%]
+      [%- if invalid.value -%]
+        trusted_orchestrator_actor_ids must be a comma-separated list of positive integer GitHub actor IDs (e.g. 37220977,269859446).
+      [%- endif -%]
+    [%- endif -%]
+
 use_codeql:
   type: bool
   help: >-
