@@ -398,13 +398,21 @@ esac
 # "image and VM install identical versions for the same release tag" is a diff
 # of two files. Its entries are the record's `tool` lines — every pinned tool a
 # tier installed or verified, under the image's keys — so no list here can fall
-# out of step with the tiers. The revision is the checkout's commit, else the
-# release tag the script was fetched from.
+# out of step with the tiers. The revision is the checkout's commit — suffixed
+# `-dirty` when the checkout has uncommitted or untracked changes, so a
+# manifest never attests a clean commit for bytes that were not that commit —
+# else the release tag the script was fetched from.
 manifest_dir="${HARMON_PREFIX}/share/harmon-remote-env"
 write_manifest() {
     local revision="" manifest="${manifest_dir}/manifest.json" before=""
     if [ -n "$self_dir" ]; then
         revision="$(git -C "$self_dir" -c safe.directory='*' rev-parse --verify HEAD 2>/dev/null || true)"
+        # --no-optional-locks: root reads the caller's checkout without
+        # refreshing (rewriting) its index.
+        if [ -n "$revision" ] &&
+            [ -n "$(git -C "$self_dir" -c safe.directory='*' --no-optional-locks status --porcelain 2>/dev/null)" ]; then
+            revision="${revision}-dirty"
+        fi
     fi
     if [ -z "$revision" ] && printf '%s' "$ref" | grep -Eq "$HARMON_RELEASE_TAG_RE"; then
         revision="$ref"

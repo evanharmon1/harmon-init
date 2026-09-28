@@ -182,7 +182,10 @@ At the end of a run the bootstrap writes
 produced by the **same** `generate-manifest.sh` the image runs and in the same
 shape (`schemaVersion`, `image.{name,revision,architecture}`, `tools`) — with
 `image.name` set to `harmon-remote-env` and `image.revision` the checkout's
-commit or, for the standalone form, the release tag it was fetched from. Its
+commit — suffixed `-dirty` when that checkout has uncommitted or untracked
+changes, so the manifest never attests a clean commit for bytes that were not
+that commit — or, for the standalone form, the release tag it was fetched
+from (no repository, so never dirty). Its
 `tools` are not a list the bootstrap keeps: every pinned tool a tier installs
 or verifies records `name=version` as it goes, and the manifest is that record
 under the same keys the image's manifest uses.

@@ -7,7 +7,7 @@ set -euo pipefail
 
 usage() {
     echo "Usage: $0 <revision> <architecture> <name=version>..." >&2
-    echo "  revision: a 40-hex commit, or the release tag (vX.Y.Z) a bootstrap fetched from" >&2
+    echo "  revision: a 40-hex commit (optionally suffixed -dirty by the remote bootstrap), or the release tag (vX.Y.Z) a bootstrap fetched from" >&2
     exit 2
 }
 
@@ -17,11 +17,17 @@ revision="$1"
 architecture="$2"
 shift 2
 
-case "$revision" in
+# A commit may carry a `-dirty` suffix: the remote bootstrap records it for
+# a checkout with uncommitted changes, so the manifest never attests a clean
+# commit for bytes that were not that commit. The image build always passes
+# a clean commit or a release tag.
+revision_core="${revision%-dirty}"
+case "$revision_core" in
 ????????????????????????????????????????)
-    case "$revision" in *[!0-9a-f]*) usage ;; esac
+    case "$revision_core" in *[!0-9a-f]*) usage ;; esac
     ;;
 *)
+    [ "$revision_core" = "$revision" ] || usage
     printf '%s' "$revision" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' || usage
     ;;
 esac
