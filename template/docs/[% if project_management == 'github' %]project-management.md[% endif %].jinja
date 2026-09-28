@@ -1366,8 +1366,8 @@ back later. Collect them instead on two dedicated issues:
   **Hierarchy is not dependency**). Closing the human issue unblocks the work
   through the same graph the dispatchers read.
 - **Never dispatched.** A `human` issue is never claimed, armed with
-  `foreman:*`, or implemented by an agent. The claim tooling refuses it;
-  Foreman does not read the label, so never arm one. `human` alone marks a standalone
+  `foreman:*`, or implemented by an agent. Do not rely on tooling to stop
+  it — Foreman, for one, does not read the label — so never arm one. `human` alone marks a standalone
   human-only issue such as a precondition; `human` + `umbrella` marks a
   collector.
 
