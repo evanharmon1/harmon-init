@@ -58,7 +58,7 @@ for guard in scripts/guard-closing-keywords.sh template/scripts/guard-closing-ke
     fi
     grep -Fq '[ -z "${PR_TITLE+x}" ] || [ -z "${PR_BODY+x}" ]' "$guard" ||
         fail "${guard}: closing-keyword guard does not distinguish unset metadata from an empty body"
-    grep -Fq 'gh pr list --head "$branch" --state open --limit 2 --json title,body' "$guard" ||
+    grep -Fq 'gh_rest_paginate_array "repos/${repo}/pulls?state=open&head=${head_query}" 2' "$guard" ||
         fail "${guard}: closing-keyword guard does not distinguish a missing PR from an API failure"
 done
 
@@ -87,7 +87,7 @@ cat >"${guard_bin}/gh" <<'EOF'
 printf '%s\n' "$*" >>"${GH_ARGS:?}"
 [ -z "${GH_PR_LIST_FAIL:-}" ] || exit 1
 case "${1:-} ${2:-}" in
-"pr list")
+"api repos/acme/repo/pulls?state=open&head=acme%3Afeature&per_page=2&page=1")
     if [ -n "${GH_NO_PR:-}" ]; then
         printf '%s\n' '[]'
     else
@@ -106,7 +106,7 @@ out=$(env -u PR_TITLE -u PR_BODY PATH="${guard_bin}:${PATH}" \
 [ "$rc" -ne 0 ] || fail "closing-keyword guard did not use fetched PR metadata: $out"
 grep -Fxq 'merge-base..head' "$guard_git_args" ||
     fail "closing-keyword guard did not scan exactly merge-base..head"
-[ "$(grep -c '^pr list ' "$guard_gh_args")" -eq 1 ] ||
+[ "$(grep -c '^api repos/acme/repo/pulls?state=open&head=acme%3Afeature&per_page=2&page=1$' "$guard_gh_args")" -eq 1 ] ||
     fail "closing-keyword guard did not fetch missing PR metadata atomically"
 
 out=$(env -u PR_TITLE -u PR_BODY PATH="${guard_bin}:${PATH}" \
