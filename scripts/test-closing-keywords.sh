@@ -247,6 +247,45 @@ out="$(cd "$tmp/remote-fixture" && PATH="$tmp/bin-gh:$PATH" bash -c \
 grep -qx 'api repos/acme/repo/issues/1' "$GH_STUB_CALLS" ||
     fail "github.com remote must not add --hostname, got: $(cat "$GH_STUB_CALLS")"
 
+echo '==> an explicit port survives only where it is the API authority'
+# A colon means three different things across the remote forms, so stripping it
+# everywhere cost an Enterprise instance published on a non-default port its API
+# authority before --hostname was ever passed (challenge r4). Each case asserts
+# the exact --hostname that reaches gh, which is the only thing the port is for.
+for spec in \
+    'https://ghe.example.com:8443/acme/repo.git|ghe.example.com:8443' \
+    'ssh://git@ghe.example.com:2222/acme/repo.git|ghe.example.com' \
+    'git@ghe.example.com:acme/repo.git|ghe.example.com'; do
+    form="${spec%%|*}"
+    want="${spec#*|}"
+    rm -rf "$tmp/remote-fixture"
+    git init -q "$tmp/remote-fixture"
+    git -C "$tmp/remote-fixture" remote add origin "$form"
+    : >"$GH_STUB_CALLS"
+    out="$(cd "$tmp/remote-fixture" && PATH="$tmp/bin-gh:$PATH" bash -c \
+        "unset GH_REPO GH_HOST; . '$repo_root/scripts/lib/gh-rest.sh'; repo=\"\$(gh_rest_repo)\"; echo \"\$repo \$(gh_rest_host)\"; gh_rest_api \"repos/\${repo}/issues/1\" >/dev/null")" ||
+        fail "ported remote ${form} read failed"
+    [ "$out" = "acme/repo ${want}" ] ||
+        fail "ported remote ${form} resolved to '${out}', expected 'acme/repo ${want}'"
+    grep -qx "api repos/acme/repo/issues/1 --hostname ${want}" "$GH_STUB_CALLS" ||
+        fail "ported remote ${form} read went to: $(cat "$GH_STUB_CALLS")"
+done
+# A port that is not a number leaves the authority unusable, so the derivation
+# says nothing at all — gh keeps its own choice — rather than passing on a
+# --hostname it cannot parse. The name is validated apart from the port for the
+# same reason: one class over `host:port` would have to admit `:` and would then
+# accept `ghe:8443:x` and `:443` as hosts.
+rm -rf "$tmp/remote-fixture"
+git init -q "$tmp/remote-fixture"
+git -C "$tmp/remote-fixture" remote add origin 'https://ghe.example.com:not-a-port/acme/repo.git'
+: >"$GH_STUB_CALLS"
+out="$(cd "$tmp/remote-fixture" && PATH="$tmp/bin-gh:$PATH" bash -c \
+    "unset GH_REPO GH_HOST; . '$repo_root/scripts/lib/gh-rest.sh'; echo \"\$(gh_rest_repo)|\$(gh_rest_host)\"; gh_rest_api 'repos/acme/repo/issues/1' >/dev/null")" ||
+    fail 'unparseable-port remote read failed'
+[ "$out" = 'acme/repo|' ] || fail "unparseable-port remote resolved to '${out}', expected no host"
+grep -q -- '--hostname' "$GH_STUB_CALLS" &&
+    fail "an unparseable port reached gh as a hostname: $(cat "$GH_STUB_CALLS")"
+
 echo '==> hyphenated owners and names resolve (this repository is one)'
 # The resolved OWNER/REPO was validated against `*[!A-Za-z0-9_.-/]*`, in which
 # `.-/` is the RANGE 0x2E-0x2F: it admitted `/` and rejected `-`, so EVERY
@@ -308,7 +347,7 @@ export GH_STUB_FAIL
     fail "REST guard metadata failure must be indeterminate: $(cat "$tmp/driver-err")"
 unset GH_STUB_FAIL
 
-echo '==> a fork PR is selected by head identity, not by the base owner'
+echo '==> a fork PR is found by a local ref match, not by a base-owner query'
 # The listing used to be filtered server side with `head=OWNER:branch` built from
 # the BASE repository's owner. GitHub matches that against the HEAD repository's
 # owner, so a PR opened from a fork matched nothing: the guard fell through to
@@ -325,8 +364,8 @@ grep -q 'inert pre-PR metadata' "$tmp/driver-err" &&
 # Its body too, not only its title: only the real one carries this reference.
 [ "$(proxy_guard "[{\"title\":\"fix: x\",\"body\":\"Resolves #2\",${fork_head},${fork_base}}]")" = 1 ] ||
     fail "a fork PR's real body was not used: $(cat "$tmp/driver-err")"
-# A head that has since moved falls back to the branch name — the fork-blind
-# matching `gh pr list --head "$branch"` did before the REST rewrite.
+# A head that has since moved remotely is still matched, because the ref is what
+# selects — the matching `gh pr list --head "$branch"` did before the rewrite.
 moved_head='"head":{"sha":"a1b2c3d4","ref":"feature","repo":{"full_name":"contributor/repo"}}'
 [ "$(proxy_guard "[{\"title\":\"fix: closes #2\",\"body\":\"\",${moved_head}}]")" = 1 ] ||
     fail "a fork PR whose head moved was not matched by branch: $(cat "$tmp/driver-err")"
@@ -336,6 +375,55 @@ other_head='"head":{"sha":"e5f6a7b8","ref":"feature","repo":{"full_name":"other/
     fail "two PRs matching one branch must stay indeterminate: $(cat "$tmp/driver-err")"
 grep -q 'multiple open PRs match branch' "$tmp/driver-err" ||
     fail "the multiple-match branch reported the wrong reason: $(cat "$tmp/driver-err")"
+
+echo '==> the branch ref selects the PR; a stranger on this head SHA does not'
+# The listing used to be selected on .head.sha == the local head FIRST, falling
+# back to the branch ref only when that matched nothing — so any unrelated open
+# PR that happened to share this checkout's head commit outranked the branch's
+# own PR and supplied the wrong title and body (challenge r4). Both listings
+# below hold such a stranger, and each verdict is reachable ONLY by reading the
+# branch's own PR: not by the old precedence, which reads the stranger, and not
+# by the placeholder path, which reads neither.
+stranger_head='"head":{"sha":"localhead","ref":"someone-elses-branch"}'
+mine_moved_head='"head":{"sha":"a1b2c3d4","ref":"feature"}'
+[ "$(proxy_guard "[{\"title\":\"fix: closes #1\",\"body\":\"\",${stranger_head}},{\"title\":\"fix: closes #2\",\"body\":\"\",${mine_moved_head}}]")" = 1 ] ||
+    fail "the branch's own PR was not the one read: $(cat "$tmp/driver-err")"
+[ "$(proxy_guard "[{\"title\":\"fix: closes #2\",\"body\":\"\",${stranger_head}},{\"title\":\"fix: closes #1\",\"body\":\"\",${mine_moved_head}}]")" = 0 ] ||
+    fail "a stranger sharing the head SHA supplied the verdict: $(cat "$tmp/driver-err")"
+grep -q 'inert pre-PR metadata' "$tmp/driver-err" &&
+    fail "the branch's own PR was demoted to placeholder metadata: $(cat "$tmp/driver-err")"
+
+echo '==> the local head SHA still narrows a ref several open PRs share'
+# Demoted from selector to tie-breaker, not dropped: two PRs on this branch's
+# ref resolve to the one whose head IS this checkout's, rather than staying
+# indeterminate the way two unidentifiable ones do.
+mine_here_head='"head":{"sha":"localhead","ref":"feature"}'
+same_ref_head='"head":{"sha":"e5f6a7b8","ref":"feature"}'
+[ "$(proxy_guard "[{\"title\":\"fix: closes #2\",\"body\":\"\",${mine_here_head}},{\"title\":\"fix: closes #1\",\"body\":\"\",${same_ref_head}}]")" = 1 ] ||
+    fail "the head SHA did not narrow two PRs on one ref: $(cat "$tmp/driver-err")"
+
+echo '==> a listing that filled its bound cannot witness an absence'
+# The lookup reads one bounded page of open PRs, and a repository with more can
+# leave an older branch's PR on a page nobody asked for. Grading that as "no PR"
+# fell through to the inert placeholder metadata and scanned the commits alone,
+# silently weakening the guard — so a full page with no match is indeterminate,
+# exactly as a failed listing is. This is the invariant the three status.sh
+# inventories encode: an incomplete read is unknown, never "none" (challenge r2).
+rc=0
+GH_STUB_FULL_PAGE=1 PATH="$tmp/bin:$PATH" GH_REPO=acme/repo BASE_SHA=HEAD HEAD_SHA=HEAD \
+    "$guard_driver" >"$tmp/driver-out" 2>"$tmp/driver-err" || rc=$?
+[ "$rc" = 2 ] ||
+    fail "a full open-PR page with no match must be indeterminate, got ${rc}: $(cat "$tmp/driver-err")"
+grep -q 'supply both PR_TITLE and PR_BODY' "$tmp/driver-err" ||
+    fail "the bound-filled listing did not name the remedy: $(cat "$tmp/driver-err")"
+grep -q 'inert pre-PR metadata' "$tmp/driver-err" &&
+    fail "a bound-filled listing was graded as an absence: $(cat "$tmp/driver-err")"
+# A page SHORT of the bound with no match really is an absence, and keeps the
+# placeholder path: that is the pre-PR pre-flight this guard is usually run as.
+[ "$(proxy_guard '[]')" = 0 ] ||
+    fail "a complete empty listing should scan commits inertly: $(cat "$tmp/driver-err")"
+grep -q 'inert pre-PR metadata' "$tmp/driver-err" ||
+    fail "a complete empty listing did not take the placeholder path: $(cat "$tmp/driver-err")"
 
 echo '==> a host-qualified GH_REPO reaches the guard only through the helper'
 # End-to-end, through the same stub: gh documents GH_REPO as [HOST/]OWNER/REPO,

@@ -33,15 +33,23 @@
 #   PR_TITLE="fix: …" PR_BODY="$(cat body.md)" task guard:closing-keywords
 #
 # If either is unset, the open PR for the current branch supplies both. That PR
-# is found by head IDENTITY rather than by a head-owner query: the bounded
-# open-PR listing is selected on .head.sha == the local head this run scanned,
-# then on .head.ref == the branch name. A `head=OWNER:branch` filter built from
-# the BASE repository's owner matches no PR opened from a fork, which silently
-# demoted a real fork PR to the placeholder metadata below (challenge r3).
-# Before a PR exists, a SUCCESSFUL empty listing substitutes inert placeholder
-# metadata so the commit messages are still scanned; an API failure stays
-# indeterminate rather than passing. Commit messages are read as data, never
-# executed.
+# is found by selecting the bounded open-PR listing LOCALLY on
+# .head.ref == the branch name — the semantics of the `gh pr list --head
+# "$branch"` this replaced. The filter runs here rather than server side because
+# a `head=OWNER:branch` query built from the BASE repository's owner matches no
+# PR opened from a fork, which silently demoted a real fork PR to the placeholder
+# metadata below (challenge r3); a local match on the ref has never had that
+# blind spot. The local head SHA only NARROWS a ref matched by several open PRs:
+# selecting on it gave any unrelated PR that happens to share this checkout's
+# head commit absolute precedence over the branch's own PR (challenge r4).
+#
+# Before a PR exists, a successful, COMPLETE and empty listing substitutes inert
+# placeholder metadata so the commit messages are still scanned. Two things are
+# indeterminate instead: a failed listing, and one that filled its bound without
+# matching — a partial list cannot witness an absence, and grading it as "no PR"
+# would quietly demote this guard to a commit-only scan (the invariant the
+# status.sh inventories encode, challenge r2). Commit messages are read as data,
+# never executed.
 #
 # Exit: 0 = ok, 1 = violation, 2 = indeterminate (refused to guess).
 set -euo pipefail
@@ -76,28 +84,41 @@ git log --format=%B "${merge_base}..${head_sha}" >"$commits_file"
 if [ -z "${PR_TITLE+x}" ] || [ -z "${PR_BODY+x}" ]; then
     branch="$(git branch --show-current)"
     # The head of the very range scanned above, as an object id: identity this
-    # checkout HAS, never an owner it has to guess. Empty (a rev that does not
-    # resolve) simply leaves the branch-name fallback below to do the matching.
+    # checkout HAS, never an owner it has to guess. It only ever narrows a ref
+    # that several open PRs share, so a rev that does not resolve (empty) costs
+    # nothing here.
     head_oid="$(git rev-parse --verify --quiet "${head_sha}^{commit}" || true)"
     repo="$(gh_rest_repo 2>/dev/null || true)"
+    # One page of open PRs, newest first. The 100 is spelled out at each of the
+    # three places it appears rather than held in a variable: test:tasks pins the
+    # helper call's bound as a literal shape assertion, exactly as it pins
+    # status.sh's three. `filled` reports the listing arriving AT that bound,
+    # which leaves a no-match result unproven rather than empty.
     if [ -z "$branch" ] || [ -z "$repo" ] ||
         ! pr_json="$(gh_rest_paginate_array "repos/${repo}/pulls?state=open&sort=updated&direction=desc" 100 |
-            jq -s --arg head "$head_oid" --arg branch "$branch" '
+            jq -s --arg head "$head_oid" --arg branch "$branch" --argjson limit 100 '
                 (add // []) as $open
-                | [$open[] | select($head != "" and .head.sha == $head)] as $exact
-                | (if ($exact | length) > 0 then $exact
-                   else [$open[] | select(.head.ref == $branch)] end)
-                | map({title, body})')"; then
+                | [$open[] | select(.head.ref == $branch)] as $on_branch
+                | (if ($on_branch | length) > 1
+                   then [$on_branch[] | select($head != "" and .head.sha == $head)]
+                   else [] end) as $narrowed
+                | (if ($narrowed | length) > 0 then $narrowed else $on_branch end)
+                | {filled: (($open | length) >= $limit), prs: map({title, body})}')"; then
         echo "guard:closing-keywords: could not list PR metadata for the current branch; supply both PR_TITLE and PR_BODY" >&2
         exit 2
     fi
-    pr_count="$(printf '%s' "$pr_json" | jq 'length')"
+    pr_count="$(printf '%s' "$pr_json" | jq '.prs | length')"
     if [ "$pr_count" -gt 1 ]; then
         echo "guard:closing-keywords: multiple open PRs match branch ${branch}; supply both PR_TITLE and PR_BODY" >&2
         exit 2
     elif [ "$pr_count" -eq 1 ]; then
-        PR_TITLE="$(printf '%s' "$pr_json" | jq -r '.[0].title')"
-        PR_BODY="$(printf '%s' "$pr_json" | jq -r '.[0].body // ""')"
+        PR_TITLE="$(printf '%s' "$pr_json" | jq -r '.prs[0].title')"
+        PR_BODY="$(printf '%s' "$pr_json" | jq -r '.prs[0].body // ""')"
+    elif [ "$(printf '%s' "$pr_json" | jq -r '.filled')" = true ]; then
+        # An incomplete read is not an absence: the page came back full, so an
+        # older branch's PR may be sitting on the page nobody asked for.
+        echo "guard:closing-keywords: open-PR listing filled its 100-PR bound with no match for ${branch}; absence is unproven — supply both PR_TITLE and PR_BODY" >&2
+        exit 2
     else
         echo "guard:closing-keywords: no open PR for ${branch}; checking commits with inert pre-PR metadata" >&2
         PR_TITLE="Pre-PR local CI"

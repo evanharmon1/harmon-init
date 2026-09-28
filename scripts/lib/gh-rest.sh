@@ -65,10 +65,22 @@ gh_rest_repo() {
 # gh_rest_host [REMOTE] — print the GitHub host the repository lives on: the
 # HOST/ prefix of GH_REPO when present, else GH_HOST (gh's own override, which
 # gh_target_host in gh-scopes.sh honours the same way), else the host of the
-# remote URL (https://HOST/..., ssh://git@HOST/..., git@HOST:...), else nothing.
-# Always exits 0: an empty result means "let gh pick", never an error.
+# remote URL (https://HOST[:PORT]/..., ssh://git@HOST[:PORT]/..., git@HOST:...),
+# else nothing. Always exits 0: an empty result means "let gh pick", never an
+# error.
+#
+# A colon means a different thing in each form, so the port is read per form
+# rather than stripped from all three (challenge r4):
+#   https://HOST:PORT/...   the port is part of the API AUTHORITY — an
+#                           Enterprise instance published on 8443 answers
+#                           nowhere else, so it is KEPT and travels on into
+#                           --hostname.
+#   ssh://git@HOST:PORT/... an SSH TRANSPORT port (2222 through a bastion, say)
+#                           says nothing about where the API listens: DROPPED.
+#   git@HOST:OWNER/REPO     scp-like, so the colon introduces the PATH and there
+#                           is no port to keep.
 gh_rest_host() {
-    local remote="${1:-}" url="" host=""
+    local remote="${1:-}" url="" host="" scheme="" name="" port=""
 
     case "${GH_REPO:-}" in
     */*/*)
@@ -90,18 +102,34 @@ gh_rest_host() {
     [ -n "${remote}" ] || return 0
     url="$(git remote get-url "${remote}" 2>/dev/null)" || return 0
     case "${url}" in
-    *://*)                 # scheme://[user@]host[:port]/path
+    *://*) # scheme://[user@]host[:port]/path
+        scheme="${url%%://*}"
         host="${url#*://}" # drop the scheme
         host="${host%%/*}" # drop the path
         host="${host##*@}" # drop any userinfo
-        host="${host%%:*}" # drop any port
+        # Keep an HTTP(S) port; drop any other scheme's transport port.
+        case "${scheme}" in
+        [Hh][Tt][Tt][Pp] | [Hh][Tt][Tt][Pp][Ss]) ;;
+        *) host="${host%%:*}" ;;
+        esac
         ;;
-    *@*:*) # scp-like: user@host:owner/repo
+    *@*:*) # scp-like: user@host:owner/repo — the colon starts the path
         host="${url#*@}"
         host="${host%%:*}"
         ;;
     esac
+    # Validate the name and any kept port separately. A single class over the
+    # whole authority would have to admit `:`, and would then pass `ghe:8443:x`
+    # and `:443`; splitting keeps the name exactly as strict as it was.
+    name="${host}"
     case "${host}" in
+    *:*)
+        name="${host%:*}"
+        port="${host##*:}"
+        case "${port}" in '' | *[!0-9]*) return 0 ;; esac
+        ;;
+    esac
+    case "${name}" in
     '' | *[!A-Za-z0-9.-]*) return 0 ;;
     esac
     printf '%s\n' "${host}"
