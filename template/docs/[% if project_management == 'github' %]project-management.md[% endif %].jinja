@@ -1324,39 +1324,51 @@ vendor setting, approve an account, try the feature by hand. Written as
 required `[HUMAN]` criteria on the issue that surfaced them, each one parks
 that issue: a `Closes #N` fails the closing-keywords check while a box is
 unticked, and an orchestrated run stalls on a human who deliberately circles
-back later. Collect them instead on two dedicated issues:
+back later. Collect them instead on two kinds of dedicated issue, which differ
+in scope:
 
 | | `(HUMAN): <outcome>` | `(QA): <outcome>` |
 |---|---|---|
 | Collects | human **actions** — credentials, settings, accounts, approvals, purchases, decisions | human **verification** — hands-on, exploratory, or acceptance testing of what shipped |
+| Scope | one per milestone or `epic`, plus one repo-wide for unscoped work | **one per repository** — the standing QA role or team |
+| Placement | in its milestone, and a sub-issue of its `epic` | in no milestone and under no parent; milestones and epics link to it |
+| Lifecycle | closes when every item is ticked | stays open; its checklist is the running QA queue |
 | Labels | `human` + `umbrella`, plus the usual classification and provenance labels | same |
 | Type | `Task` — native Issue Type on org repos, the `task` label on personal repos | same |
-| Example | `(HUMAN): Complete manual setup for v1.2 remote environments` | `(QA): Verify v1.2 remote environments end to end` |
+| Example | `(HUMAN): Complete manual setup for v1.2 remote environments` | `(QA): Verify shipped work by hand` |
 
-- **One of each per scope, for the scope's lifetime.** The scope is the
-  source issue's milestone; failing that, its `epic`; failing both, the
-  repository — one collector pair with no milestone serves all ungrouped
-  work. An epic's collectors live in the epic's repository, and sources in
-  other repositories cite them as `owner/repo#N`. An item stays on the
-  collector it was filed to even if its source later changes scope.
-  Whoever meets the first human task files it **lazily**, human or
-  agent. Its `## Provenance` carries one stable scope line
-  (`Collector scope: milestone <number>`, `Collector scope: <owner/repo>#<epic>`,
-  or `Collector scope: repository`). Search all states first
-  (`label:human label:umbrella`) and match on the title prefix plus that
-  scope line: append to the open one, reopen a closed one, and never file a
-  second. Two writers can still both miss and both file, so whoever finds two
-  open collectors for one scope merges the newer's items into the older,
-  repoints each moved item's source line at the older, and closes the newer
-  as a duplicate. Give it the scope's milestone, and under an `epic` also make it
-  that epic's sub-issue so the epic's rollup stays honest about the human
-  work still owed.
-- **Each task is one `- [ ] [HUMAN] …` acceptance criterion on the
+- **Find it before filing it.** Each collector's `## Provenance` carries one
+  stable scope line: `Collector scope: milestone <number>`,
+  `Collector scope: <owner/repo>#<epic>`, or `Collector scope: repository`
+  for a `(HUMAN):` collector, and always `Collector scope: repository` for
+  the `(QA):` issue. Search all states (`label:human label:umbrella`) and
+  match on the title prefix plus that scope line: append to the open one,
+  reopen a closed one, and never file a second. Whoever meets the first
+  human task files it **lazily**, human or agent. Two writers can still both
+  miss and both file, so whoever finds two open collectors for one scope
+  merges the newer's items into the older, repoints each moved item's
+  source line at the older, and closes the newer as a duplicate.
+- **`(HUMAN):` follows the work.** Its scope is the source issue's
+  milestone; failing that, its `epic`; failing both, the repository. Give it
+  that milestone, and under an `epic` also make it the epic's sub-issue so
+  the epic's rollup stays honest about the human work still owed. An epic's
+  `(HUMAN):` collector lives in the epic's repository, and sources in other
+  repositories cite it as `owner/repo#N`. An item stays on the collector it
+  was filed to even if its source later changes scope, and the collector
+  closes when every box is ticked.
+- **`(QA):` is a role, not a batch.** Each repository has exactly one,
+  standing for its QA role or team. It is never given a milestone, never
+  made a sub-issue, and stays open when its items are all ticked. Milestones
+  and epics reference it — a link in their body, or `Refs` — rather than
+  containing it, and an item can name the milestone or epic it verifies:
+  `- [ ] [HUMAN] Verify remote environments end to end (from #1412, v1.2)`.
+  A cross-repo epic's QA items go to each source repository's own `(QA):`
+  issue.
+- **Each task is one `- [ ] [HUMAN] …` acceptance criterion on its
   collector**, naming its source:
   `- [ ] [HUMAN] Add FLY_API_TOKEN to the repo secrets (from #1412)`, with
   the source written `owner/repo#N` when it lives in another repository.
-  Agents append items; a human ticks them. The collector closes when every box is
-  ticked.
+  Agents append items; a human ticks them.
 - **The source issue mentions, never blocks.** Record the task on the source
   issue as a plain line under `## Out of scope` —
   `Human follow-up (tracked in #1420): add FLY_API_TOKEN` — not as an
