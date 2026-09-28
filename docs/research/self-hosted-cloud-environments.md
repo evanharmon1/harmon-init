@@ -18,8 +18,10 @@ are a public beta **for Team and Enterprise organizations only**, off by
 default, so adopting them means moving off an individual plan onto a Team
 organization (minimum two seats) before a single session can run. The
 recommendation is therefore **adopt later** — keep #1403 and the hosted
-adapters exactly as planned, and file the self-hosted adapter as a fourth
-adapter to be built when (and only when) the plan move happens.
+adapters, with the one constraint the #1403 section names, and file the
+self-hosted adapter as a fourth adapter to be built when (and only when) the
+plan move happens and the dispatch-credential question is settled (a
+long-lived credential, or the monthly re-login accepted as a standing step).
 
 Everything below that names a capability carries the URL it was read from
 (see [Sources](#sources)); anything that could not be verified against a
@@ -127,13 +129,13 @@ image cannot be supplied, which is precisely why #1403 exists; here the
 it *is* the remote environment. And the image already exists:
 `.github/workflows/devcontainer-build.yml` builds
 `.devcontainer/devcontainer.json` through `devcontainers/ci` and pushes
-`ghcr.io/evanharmon1/harmon-init-devcontainer` on pushes to `main` that
-change the devcontainer surface (`scripts/devcontainer-changed.sh` gates the
-build job), with the pinned shared base, the repo's `.devcontainer/Dockerfile`
-overlay, and the devcontainer **features'** install payload (`python:1` at
-3.14, `docker-in-docker:2`, `github-cli:1`) applied. The runner image is a
-Docker-free render of that build (the posture section says why) plus the
-`claude` binary, and it must satisfy:
+`ghcr.io/evanharmon1/harmon-init-devcontainer` on every push to `main` (the
+change gate, `scripts/devcontainer-changed.sh`, reconciles to `true` on that
+event by design), with the pinned shared base, the repo's
+`.devcontainer/Dockerfile` overlay, and the devcontainer **features'** install
+payload (`python:1` at 3.14, `docker-in-docker:2`, `github-cli:1`) applied.
+The runner image is a Docker-free render of that build (the posture section
+says why) plus the `claude` binary, and it must satisfy:
 
 | Requirement | Source |
 |---|---|
@@ -371,12 +373,12 @@ Two routes, and they are very different in maturity.
 **Route 1 — a Coder workspace runs the runner.** Nothing special is needed:
 the documented host requirement is "a Linux or macOS host or container with
 outbound HTTPS to `api.anthropic.com`" plus the software floors above
-([quickstart][quickstart]). A workspace built from the published devcontainer
-image, running `claude self-hosted-runner` under its existing supervision,
-is a runner. This is available today, needs no partner programme, and reuses
-the box the platform already operates. Its shape is a **fixed fleet**, with
-the documented caveats: the environment secret sits on a host that also runs
-sessions, and one runner serves one owner at a time.
+([quickstart][quickstart]). A workspace built from a Docker-free render of the
+devcontainer build, running `claude self-hosted-runner` under its existing
+supervision, is a runner. This is available today, needs no partner
+programme, and reuses the box the platform already operates. Its shape is a
+**fixed fleet**, with the documented caveats: the environment secret sits on
+a host that also runs sessions, and one runner serves one owner at a time.
 
 **Route 2 — Coder Agent Relay.** Coder has built a first-class integration
 on exactly this mechanism: "Coder Agent Relay brokers the connection between
@@ -442,7 +444,7 @@ note. They are simply the wrong shape for *this* mechanism.
 | Host | Runs the runner today? | Devcontainer image as the session environment? | Verdict |
 |---|---|---|---|
 | Coder workspace (direct) | Yes — documented host requirements only | Yes — a Docker-free render of it; **unverified** until the trial | **The route, if adopted** |
-| Coder Agent Relay | Announced, early access / closed preview | Yes, via the mapped template | Watch; not available |
+| Coder Agent Relay | Announced, early access / closed preview | **Unverified** — early access; Cursor is the first supported provider | Watch; not available |
 | Fly.io Sprite | Binary is present, floors **unverified** | No — no custom base image | Reject for this purpose |
 
 ## Enforcing the agent posture (#1408) on a self-hosted environment
@@ -626,7 +628,7 @@ When it is run, these are the things only a real session can settle:
 | `--environment` exists in the installed CLI | ✅ verified — `claude --version` 2.1.270, help text quoted above, 2026-09-28 |
 | Environment creation, registration, runner lifecycle, network paths | ✅ primary docs, read 2026-09-28 |
 | A custom image is the documented container path; a bare host is the documented alternative | ✅ [deploy][deploy] ("Build your own around the `claude` binary"), [quickstart][quickstart] ("a Linux or macOS host or container") |
-| The rendered image is published with the overlay and the features' install payload applied | ✅ `.github/workflows/devcontainer-build.yml` builds `.devcontainer/devcontainer.json` through `devcontainers/ci` and pushes `ghcr.io/evanharmon1/harmon-init-devcontainer` on pushes to `main` that change the devcontainer surface (`scripts/devcontainer-changed.sh` gates the build job); feature runtime metadata is applied at container creation, not baked in |
+| The rendered image is published with the overlay and the features' install payload applied | ✅ `.github/workflows/devcontainer-build.yml` builds `.devcontainer/devcontainer.json` through `devcontainers/ci` and pushes `ghcr.io/evanharmon1/harmon-init-devcontainer` on every push to `main` (the change gate, `scripts/devcontainer-changed.sh`, reconciles to `true` on that event by design); feature runtime metadata is applied at container creation, not baked in |
 | The rendered image works as a runner image | ❓ **unverified** — no trial session (see above) |
 | Codex cloud documents no custom-image path | ✅ [Codex cloud environments][codexenv]: a default `universal` image plus a setup script, read 2026-09-28 |
 | GraphQL/REST limit is a proxy property and opt-in when self-hosted | ✅ documented on both sides |
