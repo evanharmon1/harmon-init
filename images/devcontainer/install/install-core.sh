@@ -68,16 +68,56 @@ if harmon_needs_all node "$NODE_VERSION" npm npx corepack -- node --version; the
     done
     rm -rf "$node_stage" "${tmp}/${node_tarball}"
 fi
-# corepack is bundled with the tarball. `corepack enable` rewrites its shims
-# every time it runs, so gate it on pnpm already resolving from OUR prefix — a
-# /usr/bin/pnpm on a pre-provisioned host is not the shim this creates.
+# ---------- corepack's pnpm shim (bundled with the Node tarball) ----------
+# `corepack enable` rewrites its shims every time it runs, so re-running it is
+# cheap and idempotent. The guard below exists only to keep the change log honest
+# about whether this run changed anything, which is why every uncertain answer
+# below re-runs the step rather than claiming a skip.
+#
+# THE RULE, the same one lib.sh states for version probes: a name that can lie is
+# not an answer. This used to be `[ "$(command -v pnpm)" = "${HARMON_BIN}/pnpm" ]`
+# — a test of the PATHNAME, which every executable sitting at that path passes.
+# The Node copy above adds to bin/ without removing what it does not own, so a
+# standalone pnpm a pre-provisioned VM had already installed there survived every
+# run: `pnpm` stayed that VM's copy, at that VM's version, while this tier
+# reported Corepack configured. The pathname was standing in for an identity, so
+# the identity is now checked directly and the pathname comparison is GONE rather
+# than kept beside it — `corepack enable` publishes into HARMON_BIN and cannot
+# move where PATH resolves, so gating on that too would report a change on every
+# run for a condition re-running cannot fix.
+#
+# The property is what the file IS: a corepack shim hands off to corepack's
+# runtime and so has to name it. `corepack enable` writes a relative symlink into
+# corepack's own dist/, whose launcher is a `require` of corepack's library, and a
+# shim written as a regular file would have to name it just the same — hence the
+# deliberately loose marker, which is the point of checking content instead of a
+# layout corepack is free to change. No standalone pnpm names it: it loads pnpm's
+# own dist, or it is a packed binary. Reading the path FOLLOWS the symlink, so
+# both shapes answer one question, and a dangling shim (Node reinstalled under a
+# moved prefix) reads as no answer and is recreated where the pathname test
+# skipped it.
+#
+# The read is bounded because the handoff is in the first line and a packed binary
+# at that path must not be streamed in full to learn it is not a shim. Anything
+# unreadable — absent, dangling, a directory, a permission error — is not a shim
+# this recognises, so the step runs. The redirect covers the whole statement, not
+# just the read: for a packed binary it is the SHELL, not head, that warns about
+# the NUL bytes a command substitution drops.
 export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
-if [ "$(command -v pnpm 2>/dev/null)" = "${HARMON_BIN}/pnpm" ]; then
+pnpm_shim_head=""
+if [ -f "${HARMON_BIN}/pnpm" ]; then
+    { pnpm_shim_head="$(head -c 4096 "${HARMON_BIN}/pnpm")"; } 2>/dev/null ||
+        pnpm_shim_head=""
+fi
+case "$pnpm_shim_head" in
+*corepack*)
     harmon_skip "corepack pnpm shim"
-else
+    ;;
+*)
     harmon_changed "corepack enable pnpm"
     corepack enable pnpm
-fi
+    ;;
+esac
 
 # ---------- uv (checksum-pinned GitHub release) ----------
 # The gate names uvx as well as uv: the tarball carries both and repository

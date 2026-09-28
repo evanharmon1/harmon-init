@@ -56,18 +56,41 @@ MARKDOWNLINT_VERSION=0.23.2
 # The version must MATCH the pin, and that is a safety condition rather than a
 # nicety: preferring any PATH binary would silently downgrade every machine
 # carrying an older global copy, which is the `latest` problem above in reverse.
-# A mismatch, an unreadable banner, or a banner in an unrecognised shape all
-# fall through to npx, so the pin decides what runs in every case.
+# A failed probe, a mismatch, an unreadable banner, or a banner in an
+# unrecognised shape all fall through to npx, so the pin decides what runs in
+# every case.
+#
+# THE RULE: a read that can fail is not an answer. The probe's exit STATUS is
+# taken first, and separately from parsing what it printed, because "it could
+# not say" and "it said the wrong version" are different facts and only the
+# second is about the pin. Discarding the status with `|| true` accepted a binary
+# that printed the pinned banner and exited nonzero — a damaged global install, a
+# broken wrapper, a Node runtime that has moved out from under it — as the pinned
+# linter, and `task check` then ran that broken executable in place of the npx
+# package that works.
+#
+# images/devcontainer/install/lib.sh states the same rule for the image's own
+# version probes (harmon_installed_version), and the duplication is DELIBERATE
+# rather than an oversight: this dispatcher cannot source that helper. It is
+# root-only — part of harmon-init's image build, with no template twin — so it
+# does not exist in a generated repository at all, and where it does exist it is
+# a file the image or the remote bootstrap installed, so sourcing it would make
+# resolving the linter depend on a provisioned machine. That is the one thing
+# this script must not assume: it also runs on fresh scaffolds and unprovisioned
+# CI. A change to the rule belongs in both places.
 markdownlint_path_bin=""
 if markdownlint_path_bin="$(command -v markdownlint-cli2 2>/dev/null)"; then
     # The banner's first line is `markdownlint-cli2 v<version> (markdownlint …)`.
     # Read with shell builtins alone, so resolving the linter needs nothing on
     # PATH but the linter.
-    markdownlint_banner="$("$markdownlint_path_bin" --version 2>/dev/null || true)"
-    case "${markdownlint_banner%%$'\n'*}" in
-    "markdownlint-cli2 v${MARKDOWNLINT_VERSION}" | "markdownlint-cli2 v${MARKDOWNLINT_VERSION} "*) ;;
-    *) markdownlint_path_bin="" ;;
-    esac
+    if markdownlint_banner="$("$markdownlint_path_bin" --version 2>/dev/null)"; then
+        case "${markdownlint_banner%%$'\n'*}" in
+        "markdownlint-cli2 v${MARKDOWNLINT_VERSION}" | "markdownlint-cli2 v${MARKDOWNLINT_VERSION} "*) ;;
+        *) markdownlint_path_bin="" ;;
+        esac
+    else
+        markdownlint_path_bin=""
+    fi
 fi
 
 if [ -x node_modules/.bin/markdownlint-cli2 ]; then

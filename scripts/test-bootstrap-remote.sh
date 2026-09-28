@@ -1292,11 +1292,11 @@ export RECORD="${root}/record"
 work="${root}/work"
 mkdir -p "$work"
 
-stub() { # stub <path> <label it records> <what --version prints>
+stub() { # stub <path> <label it records> <what --version prints> [<what --version exits>]
     mkdir -p "$(dirname "$1")"
     {
         printf '#!/bin/sh\n'
-        printf 'if [ "$1" = "--version" ]; then printf "%%s\\n" "%s"; exit 0; fi\n' "$3"
+        printf 'if [ "$1" = "--version" ]; then printf "%%s\\n" "%s"; exit %s; fi\n' "$3" "${4:-0}"
         printf 'printf "%%s\\n" "%s" >>"$RECORD"\n' "$2"
     } >"$1"
     chmod 0755 "$1"
@@ -1316,9 +1316,15 @@ stub "${mismatched}/markdownlint-cli2" path 'markdownlint-cli2 v0.0.1 (markdownl
 stub "${mismatched}/npx" npx 'npx'
 neither="${root}/neither"
 stub "${neither}/npx" npx 'npx'
+# A damaged global install, or a wrapper whose runtime has moved: it prints the
+# pinned banner and exits nonzero.
+failing="${root}/failing"
+stub "${failing}/markdownlint-cli2" path 'markdownlint-cli2 v@PIN@ (markdownlint v0.41.1)' 1
+stub "${failing}/npx" npx 'npx'
 
 chose MATCHING_PATH_BINARY "$matching"
 chose MISMATCHED_PATH_BINARY "$mismatched"
+chose FAILING_PATH_PROBE "$failing"
 chose NO_PATH_BINARY "$neither"
 stub "${work}/node_modules/.bin/markdownlint-cli2" local 'markdownlint-cli2 v@PIN@ (markdownlint v0.41.1)'
 chose REPO_LOCAL_WINS "$matching"
@@ -1332,6 +1338,7 @@ chose REPO_LOCAL_WINS "$matching"
     expected = {
         "MATCHING_PATH_BINARY": "path",
         "MISMATCHED_PATH_BINARY": "npx",
+        "FAILING_PATH_PROBE": "npx",
         "NO_PATH_BINARY": "npx",
         "REPO_LOCAL_WINS": "local",
     }
@@ -1345,6 +1352,9 @@ chose REPO_LOCAL_WINS "$matching"
         why = {
             "MATCHING_PATH_BINARY": "a PATH binary at the pin is what the bootstrap installed; npx would re-download it",
             "MISMATCHED_PATH_BINARY": "a PATH binary at the WRONG version must fall through, or the pin stops deciding",
+            "FAILING_PATH_PROBE": "a read that can fail is not an answer: a binary that PRINTS the pinned banner "
+            "and exits nonzero is a damaged install, not the pinned linter, and selecting it runs a broken "
+            "executable where the npx fallback would have worked. The probe's status decides before its output",
             "NO_PATH_BINARY": "with nothing on PATH the pinned npx fallback must still run",
             "REPO_LOCAL_WINS": "node_modules/.bin stays first, so hooks and CI match the lockfile",
         }
@@ -1921,6 +1931,126 @@ else:
         if probed.get(case) != want:
             fail(f"{INSTALL}/lib.sh: probe case {case} {probed.get(case)!r}, expected {want!r} — {why[case]}")
 
+# ── 23. the pnpm shim is what it IS, not what it is called ──────────────────
+# `corepack enable pnpm` publishes its shim into HARMON_BIN, and the step running
+# it was gated on `command -v pnpm` matching that path — a test of the NAME, which
+# any executable sitting there passes. The Node copy does not remove files it does
+# not own, so a standalone pnpm a pre-provisioned VM had already installed there
+# survived every run while the tier reported Corepack configured. The gate now
+# asks what the file IS, and that is EXECUTED here for § 16's reason: which files
+# a content test accepts is not visible in its text. The block is LIFTED out of
+# install-core.sh rather than restated, so this runs whatever is there now.
+core_start = core_text.find("# ---------- corepack")
+core_end = core_text.find("# ---------- uv ")
+corepack_block = core_text[core_start:core_end] if core_start != -1 and core_end > core_start else ""
+if "corepack enable pnpm" not in corepack_block:
+    fail(
+        f"{INSTALL}/install-core.sh: the corepack block could not be lifted from between its own section "
+        "header and the uv one — the shim gate would then be silently untested"
+    )
+else:
+    shim = r"""
+set -euo pipefail
+root="$(mktemp -d)"
+trap 'rm -rf "$root"' EXIT
+export HARMON_PREFIX="$root"
+export HARMON_BIN="${root}/bin"
+export HARMON_CHANGE_LOG="${root}/changes"
+export RAN="${root}/ran"
+. '@LIB@'
+harmon_ensure_bin
+mkdir -p "${root}/stub"
+# HARMON_BIN on PATH as it is on every real target (/usr/local/bin), so `pnpm`
+# resolving from the prefix is TRUE throughout: the pathname test this replaced
+# would pass every case below, which is the whole point of the cases.
+PATH="${root}/stub:${HARMON_BIN}:${PATH}"
+
+# What `corepack enable` writes: a launcher that hands off to corepack's runtime
+# and therefore names it. The real one symlinks this into corepack's dist/;
+# reading the shim's path follows that symlink to exactly these bytes.
+{
+    printf '#!/usr/bin/env node\n'
+    printf "require('./lib/corepack.cjs').runMain(['pnpm', ...process.argv.slice(2)]);\n"
+} >"${root}/shim"
+
+# A corepack that records THAT IT RAN and republishes the shim. `rm -f` first,
+# because the real one replaces the shim and a bare `>` would instead follow a
+# dangling symlink to a target whose directory is gone.
+{
+    printf '#!/bin/sh\n'
+    printf 'printf "ran\\n" >>"$RAN"\n'
+    printf 'rm -f "${HARMON_BIN}/pnpm"\n'
+    printf 'cp "%s" "${HARMON_BIN}/pnpm"\n' "${root}/shim"
+    printf 'chmod 0755 "${HARMON_BIN}/pnpm"\n'
+} >"${root}/stub/corepack"
+chmod 0755 "${root}/stub/corepack"
+
+gate() {
+@BLOCK@
+}
+verdict() { # verdict <label>
+    : >"$RAN"
+    : >"$HARMON_CHANGE_LOG"
+    : >"${root}/err"
+    gate >/dev/null 2>"${root}/err"
+    if grep -q '^install' "$HARMON_CHANGE_LOG"; then _v=changed; else _v=skipped; fi
+    if [ -s "$RAN" ]; then _v="${_v},ran"; else _v="${_v},idle"; fi
+    # Nothing on stderr: for a packed binary it is the SHELL, not head, that warns
+    # about the NUL bytes a substitution drops, so an unredirected read is noisy.
+    if [ -s "${root}/err" ]; then _v="${_v},noisy"; else _v="${_v},quiet"; fi
+    printf '%s %s\n' "$1" "$_v"
+}
+
+rm -f "${HARMON_BIN}/pnpm"
+verdict NO_SHIM_AT_ALL
+# NO_SHIM_AT_ALL left the stub's shim behind, so this is the genuine article and
+# the one case that may report nothing changed.
+verdict GENUINE_SHIM
+# A standalone pnpm AT the shim's own path — the case the pathname test skipped.
+printf '#!/bin/sh\nexec node /opt/pnpm/dist/pnpm.cjs "$@"\n' >"${HARMON_BIN}/pnpm"
+chmod 0755 "${HARMON_BIN}/pnpm"
+verdict STANDALONE_PNPM
+# …and the same thing packed as a binary, which is also the NUL-byte case.
+{ printf '\177ELF'; head -c 4096 /dev/zero; } >"${HARMON_BIN}/pnpm"
+chmod 0755 "${HARMON_BIN}/pnpm"
+verdict PACKED_PNPM_BINARY
+# A shim whose target went away with a moved prefix: unreadable is not a skip.
+ln -sf "${root}/removed-node/pnpm.js" "${HARMON_BIN}/pnpm"
+verdict DANGLING_SHIM
+"""
+    run = run_lifted(shim.replace("@LIB@", str(INSTALL / "lib.sh")).replace("@BLOCK@", corepack_block))
+    shimmed = {} if run is None else dict(
+        line.split(" ", 1) for line in run.stdout.splitlines() if line.count(" ") == 1
+    )
+    expected = {
+        "NO_SHIM_AT_ALL": "changed,ran,quiet",
+        "GENUINE_SHIM": "skipped,idle,quiet",
+        "STANDALONE_PNPM": "changed,ran,quiet",
+        "PACKED_PNPM_BINARY": "changed,ran,quiet",
+        "DANGLING_SHIM": "changed,ran,quiet",
+    }
+    why = {
+        "NO_SHIM_AT_ALL": "with no pnpm at all the step must run, or the prefix never gets a shim",
+        "GENUINE_SHIM": "the shim corepack just wrote must skip AND leave corepack unrun, or every run reports a "
+        "change it did not make and the bootstrap's idempotence claim is false",
+        "STANDALONE_PNPM": "a name that can lie is not an answer: an executable that is not the shim must be "
+        "recreated, or a pre-provisioned VM's pnpm survives forever while the tier reports Corepack configured",
+        "PACKED_PNPM_BINARY": "the same defect packed as a binary — and the read must stay quiet as well as "
+        "bounded, since the shell warns about the NUL bytes it drops from a substitution",
+        "DANGLING_SHIM": "a shim whose target is gone is no answer either, and the pathname test skipped it",
+    }
+    if run is None or run.returncode != 0 or len(shimmed) != len(expected):
+        fail(
+            f"{INSTALL}/install-core.sh: the pnpm shim cases could not run "
+            f"({'timed out' if run is None else f'exit {run.returncode}'}) — "
+            f"stderr: {'' if run is None else run.stderr.strip()[:300]!r}"
+        )
+    else:
+        for case, want in expected.items():
+            got = shimmed.get(case)
+            if got != want:
+                fail(f"{INSTALL}/install-core.sh: pnpm shim case {case} {got!r}, expected {want!r} — {why[case]}")
+
 
 for e in errors:
     print(f"FAIL: {e}", file=sys.stderr)
@@ -1948,4 +2078,5 @@ print("bootstrap-remote OK: the tier selection canonicalises once; no downstream
 print("bootstrap-remote OK: a staging file whose writer is gone is reaped, a live writer's is not, and a failed publish cleans up after itself")
 print("bootstrap-remote OK: the manifest's own staged write reaps by liveness too, and a failed publish fails the run without leaving litter")
 print("bootstrap-remote OK: a version probe that prints the pin and exits nonzero is treated as needing the install")
+print("bootstrap-remote OK: the corepack step recreates the pnpm shim unless the file at its path really is one")
 PY
