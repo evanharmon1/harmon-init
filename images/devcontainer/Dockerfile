@@ -124,8 +124,10 @@ RUN chmod 0755 /usr/local/share/harmon-devcontainer/install/*.sh
 # ---------- apt packages ----------
 # The core distribution packages come from install/apt-core.sh (shared with the
 # remote path); the rest are this image's interactive extras, passed as
-# arguments so both sets land in ONE apt transaction.
-RUN /usr/local/share/harmon-devcontainer/install/apt-core.sh \
+# arguments so both sets land in ONE apt transaction. HARMON_IMAGE_BUILD=1 is
+# what lets the script wipe /var/lib/apt/lists afterwards — layer hygiene
+# here, a host's package index on a VM, where it is never wiped.
+RUN HARMON_IMAGE_BUILD=1 /usr/local/share/harmon-devcontainer/install/apt-core.sh \
         bat \
         btop \
         direnv \

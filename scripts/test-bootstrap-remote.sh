@@ -133,32 +133,44 @@ for digest_var in ("node_amd64_sha256", "node_arm64_sha256"):
 
 # ── 5. THE invariant: nothing but versions.env declares a pin ───────────────
 PIN_DECL = re.compile(r"^\s*(?:export\s+|ARG\s+)?(?P<var>[A-Za-z_][A-Za-z0-9_]*(?:_VERSION|_SHA256|_sha256))=")
-# A pin can also be typed straight into a download URL, where no variable is
-# declared at all: `.../download/v3.53.1/task_linux_amd64.tar.gz` installs a
-# working tool and PIN_DECL never sees it. So a URL-bearing line may carry a
-# semver-shaped literal only as part of a variable expansion — `v${X_VERSION}`
-# is composed from versions.env, `v3.53.1` is a second pin owner.
-URL_LINE = re.compile(r"https?://")
-URL_PIN = re.compile(r"(?<![A-Za-z0-9_{}$.])v?[0-9]+\.[0-9]+\.[0-9]+(?![0-9])")
+# A pin can also be typed straight into a command, where no variable is
+# declared at all — `.../download/v3.53.1/task.tar.gz`, `npm install -g
+# pkg@1.2.3`, `uv tool install pkg==1.2.3` each install a working tool and
+# PIN_DECL never sees them. One invariant, with no version grammar per call
+# shape: no non-comment line may carry a version-shaped literal (v?N.N.N, or a
+# 64-hex digest) at all. Every such value arrives through a `${…}` expansion of
+# a versions.env name, so the expansions are erased first and whatever version
+# shape survives is a second pin owner.
+VERSION_LITERAL = re.compile(
+    r"(?<![A-Za-z0-9_.])v?[0-9]+\.[0-9]+\.[0-9]+(?![0-9])|(?<![0-9A-Za-z])[0-9a-f]{64}(?![0-9A-Za-z])"
+)
 
 
-def url_inlined_pin(line):
-    if not URL_LINE.search(line):
+def inlined_pin(line):
+    if line.lstrip().startswith("#"):
         return None
     stripped = re.sub(r"\$\{[^}]*\}|\$[A-Za-z_][A-Za-z0-9_]*", "", line)
-    m = URL_PIN.search(stripped)
+    m = VERSION_LITERAL.search(stripped)
     return m.group(0) if m else None
 
 
 # The detector's own contract, asserted here because the files it scans
-# contain no offending line to prove it against (a negative fixture).
-assert url_inlined_pin('curl "https://github.com/go-task/task/releases/download/v3.53.1/task.tar.gz"') == "v3.53.1"
-assert url_inlined_pin('    "https://nodejs.org/dist/v24.21.0/node.tar.xz" \\') == "v24.21.0"
-assert url_inlined_pin('wget https://example.com/tool-1.2.3-linux.tgz') == "1.2.3"
-assert url_inlined_pin('    "https://github.com/go-task/task/releases/download/v${TASK_VERSION}/task_linux_${arch}.tar.gz" |') is None
-assert url_inlined_pin('    "https://nodejs.org/dist/v${NODE_VERSION}/${node_tarball}"') is None
-assert url_inlined_pin('    "https://github.com/lycheeverse/lychee/releases/download/lychee-v${LYCHEE_VERSION}/x.tar.gz" |') is None
-assert url_inlined_pin('tar -xzf "${tmp}/node-1.2.3.tar.xz"') is None  # not a URL line
+# contain no offending line to prove it against (negative fixtures): a URL, an
+# npm @version, a uv ==version, a digest — and the composed forms of each.
+assert inlined_pin('curl "https://github.com/go-task/task/releases/download/v3.53.1/task.tar.gz"') == "v3.53.1"
+assert inlined_pin('    "https://nodejs.org/dist/v24.21.0/node.tar.xz" \\') == "v24.21.0"
+assert inlined_pin("npm install -g @openai/codex@0.155.1") == "0.155.1"
+assert inlined_pin("uv tool install --force semgrep==1.177.0") == "1.177.0"
+assert inlined_pin('harmon_verify_sha256 "$f" fa82fd8dde8e8eefdecada6aa0889666556cfceb690d06e0c3bca49eb3070a63') == (
+    "fa82fd8dde8e8eefdecada6aa0889666556cfceb690d06e0c3bca49eb3070a63"
+)
+assert inlined_pin('    "https://github.com/go-task/task/releases/download/v${TASK_VERSION}/task_linux_${arch}.tar.gz" |') is None
+assert inlined_pin('    "https://nodejs.org/dist/v${NODE_VERSION}/${node_tarball}"') is None
+assert inlined_pin('        npm install -g "${1}@${2}"') is None
+assert inlined_pin('        uv tool install --force "${1}==${2}"') is None
+assert inlined_pin('    harmon_verify_sha256 "${tmp}/${node_tarball}" "$node_sha"') is None
+assert inlined_pin("# a comment may name v3.53.1: documentation, not a pin") is None
+assert inlined_pin("    ubuntu 24.04, bash 3.2, git 2.43: two-part numbers are not versions here") is None
 
 for path in [BOOTSTRAP] + sorted(INSTALL.glob("*.sh")):
     for i, line in enumerate(path.read_text().splitlines(), 1):
@@ -170,11 +182,12 @@ for path in [BOOTSTRAP] + sorted(INSTALL.glob("*.sh")):
                 f"{path}:{i}: declares the pin {m['var']} — every version and checksum must come from "
                 f"{VERSIONS}, or the remote bootstrap and the shared image drift apart silently"
             )
-        literal = url_inlined_pin(line)
+        literal = inlined_pin(line)
         if literal:
             fail(
-                f"{path}:{i}: a download URL carries the literal version {literal!r} instead of a "
-                f"`${{…_VERSION}}` from {VERSIONS} — a pin typed into a URL is a second pin owner"
+                f"{path}:{i}: carries the version-shaped literal {literal!r} instead of a `${{…}}` "
+                f"expansion of a {VERSIONS} name — a version typed into a URL, an npm @version, "
+                "a uv ==version or a digest is a second pin owner"
             )
 
 # ── 4b. checksum pins move WITH their version pin ───────────────────────────

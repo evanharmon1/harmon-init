@@ -66,4 +66,8 @@ apt_installed="${apt_summary##* }"
 [ "${apt_installed:-0}" = 0 ] || harmon_changed "apt: ${apt_installed} package(s) newly installed"
 [ "${apt_upgraded:-0}" = 0 ] || harmon_upgraded "apt: ${apt_upgraded} package(s) upgraded from the archive"
 [ "${apt_installed:-0}${apt_upgraded:-0}" != 00 ] || harmon_skip "apt: every requested package present and current"
-rm -rf /var/lib/apt/lists/*
+# The apt lists are wiped only inside the image build (the Dockerfile sets
+# HARMON_IMAGE_BUILD=1): there they are layer weight. On a host they are the
+# host's own package index, and a provisioning script has no business
+# deleting it.
+[ "${HARMON_IMAGE_BUILD:-}" != 1 ] || rm -rf /var/lib/apt/lists/*

@@ -15,9 +15,10 @@ run-name: ${{ github.actor }} is proving the remote bootstrap on a stock Ubuntu 
 #               pinned version (apt upgrades are reported, not hidden), the
 #               pinned mikefarah yq beats a pre-provisioned Python yq by PATH
 #               order in the system profile, a user-level shadow is reported
-#               and not fatal, root never writes under a sudo caller's home, a
-#               pre-existing LC_ALL=C does not survive, and the default tiers
-#               fit the platform's roughly five-minute cached-setup budget.
+#               and not fatal, root never writes under a sudo caller's home
+#               and never executes that caller's ~/.profile, a pre-existing
+#               LC_ALL=C does not survive, and the default tiers fit the
+#               platform's roughly five-minute cached-setup budget.
 #
 # `task test:bootstrap-remote` is deliberately NOT added to build.yml's lint
 # job as well. That job enumerates its steps by hand precisely so nothing runs
@@ -158,7 +159,7 @@ jobs:
           fi
           cmp /tmp/manifest-first.json /usr/local/share/harmon-remote-env/manifest.json ||
             { echo "::error::the second run changed a pinned version (the manifest differs)"; exit 1; }
-      - name: Prove a user-level PATH shadow is reported, not fatal, and root stays out of the caller's home
+      - name: Prove a user-level PATH shadow is reported, not fatal, and root stays out of the caller's home and profile
         # The negative case for PATH precedence. bash reads ~/.profile AFTER
         # /etc/profile, and Ubuntu's stock /etc/skel/.profile puts ~/.local/bin
         # ahead of everything, so a yq planted there shadows the pinned one in
@@ -168,6 +169,11 @@ jobs:
         # 0. Run un-sudoed as that user so the sudo re-exec path is the one
         # exercised: root must come back with HOME=/root and leave nothing of
         # its own under /home/shadowed.
+        #
+        # The shadow check reads that user's login shell, which executes
+        # ~/.profile — so it has to run AS that user, never as root with the
+        # user's HOME. The planted ~/.profile tries to create a file only root
+        # can create; it must not exist afterwards.
         run: |
           useradd -m -s /bin/bash shadowed
           echo 'shadowed ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/shadowed
@@ -175,12 +181,14 @@ jobs:
           install -d /home/shadowed/.local/bin
           printf '#!/bin/sh\necho "a stand-in for the Python yq"\n' > /home/shadowed/.local/bin/yq
           chmod 0755 /home/shadowed/.local/bin/yq
-          chown -R shadowed:shadowed /home/shadowed/.local
+          echo 'touch /root/PROFILE-RAN-AS-ROOT 2>/dev/null || true' >> /home/shadowed/.profile
+          chown -R shadowed:shadowed /home/shadowed
           find /home/shadowed -mindepth 1 | sort > /tmp/shadowed-before.txt
           runuser -u shadowed -- env PATH=/usr/bin:/bin:/usr/local/bin LC_ALL=C \
             ./images/devcontainer/bootstrap-remote.sh 2>&1 | tee /tmp/bootstrap-shadow.log
           grep -q "WARNING: shadowed's login shell resolves yq to '/home/shadowed/.local/bin/yq'" /tmp/bootstrap-shadow.log
           grep -q "HARMON_BOOTSTRAP_NEW_INSTALLS=0" /tmp/bootstrap-shadow.log
+          test ! -e /root/PROFILE-RAN-AS-ROOT
           find /home/shadowed -mindepth 1 | sort > /tmp/shadowed-after.txt
           diff /tmp/shadowed-before.txt /tmp/shadowed-after.txt
           test -z "$(find /home/shadowed ! -user shadowed)"

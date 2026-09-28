@@ -34,9 +34,16 @@ if harmon_needs node "$NODE_VERSION" node --version; then
     node_tarball="node-v${NODE_VERSION}-linux-${node_arch}.tar.xz"
     harmon_fetch "https://nodejs.org/dist/v${NODE_VERSION}/${node_tarball}" "${tmp}/${node_tarball}"
     harmon_verify_sha256 "${tmp}/${node_tarball}" "$node_sha"
-    # Extracted into a staging directory and moved into the prefix only once
-    # the whole tarball is out, so an interrupted extraction leaves the prefix
-    # untouched rather than half a Node that `node --version` may still pass.
+    # Extracted into a staging directory (transient disk: one extra copy of
+    # the tarball's contents until the copy below finishes) and copied into
+    # the prefix only once the whole tarball is out, so an interrupted
+    # extraction leaves the prefix untouched. The copy order matters too:
+    # bin/ goes LAST because bin/node is what harmon_needs reads as the
+    # version witness and bin/npm is a relative symlink into
+    # ../lib/node_modules. lib/ first means the symlink's target exists the
+    # moment bin/ lands, and a copy that dies before bin/ leaves the OLD node
+    # (or none) in place, so the next run redoes the install instead of
+    # skipping a new node beside a dangling npm.
     # --no-same-owner: the tarball records nodejs.org's build uid/gid, which
     # exists on no machine this runs on.
     node_stage="${tmp}/node-${NODE_VERSION}"
@@ -45,7 +52,7 @@ if harmon_needs node "$NODE_VERSION" node --version; then
         --strip-components=1 --no-same-owner \
         --exclude='*/CHANGELOG.md' --exclude='*/LICENSE' --exclude='*/README.md'
     [ -x "${node_stage}/bin/node" ] || harmon_die "the Node tarball did not extract completely"
-    for node_dir in bin lib include share; do
+    for node_dir in lib include share bin; do
         [ -d "${node_stage}/${node_dir}" ] || continue
         install -d -m 0755 "${HARMON_PREFIX}/${node_dir}"
         cp -a "${node_stage}/${node_dir}/." "${HARMON_PREFIX}/${node_dir}/"

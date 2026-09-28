@@ -33,13 +33,19 @@ harmon_npm_global @playwright/cli "$PLAYWRIGHT_CLI_VERSION" playwright-cli
 # HARMON_BOOTSTRAP_CHANGES=0 — contradicting the idempotence this bootstrap
 # claims for every tier, not just the default ones.
 #
+# Both calls name the pinned binary by absolute path, never through npm's
+# package runner: that runner prefers a project-local node_modules/.bin in
+# the caller's cwd, so on a VM with a checkout it would run that project's
+# Playwright and install ITS Chromium revision. harmon_npm_global above has
+# just proved the pinned one resolves at ${HARMON_BIN}/playwright.
+#
 # The probe's exit status is read explicitly. Under `set -euo pipefail` a
 # failing probe inside `x="$(... | sed)"` aborts the script before any `if`
 # can look at $x, so a fallback written after the substitution never ran.
 probe_log="$(mktemp)"
 trap 'rm -f "$probe_log"' EXIT
 probe_ok=1
-npx playwright install --dry-run chromium >"$probe_log" 2>/dev/null || probe_ok=0
+"${HARMON_BIN}/playwright" install --dry-run chromium >"$probe_log" 2>/dev/null || probe_ok=0
 chromium_targets="$(sed -n 's/^[[:space:]]*Install location:[[:space:]]*//p' "$probe_log")"
 
 browsers_missing=0
@@ -65,7 +71,7 @@ if [ "$browsers_missing" -eq 0 ]; then
     harmon_skip "playwright chromium"
 else
     harmon_changed "playwright chromium"
-    npx playwright install --with-deps chromium
+    "${HARMON_BIN}/playwright" install --with-deps chromium
     # playwright-cli's own browser bootstrap is best-effort: it shares the
     # PLAYWRIGHT_BROWSERS_PATH above, so a failure here costs nothing already
     # installed by the line before it.

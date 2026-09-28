@@ -355,14 +355,26 @@ yq --version 2>&1 | grep -q 'mikefarah' ||
 # What it does NOT own: the invoking user's profile. bash reads ~/.profile after
 # /etc/profile, and a stock one puts ~/.local/bin ahead of everything, so a yq
 # there shadows the pinned one in that user's login shells and no system file
-# can prevent it. Checked in that user's real login shell; reported, never fatal.
-login_user="${SUDO_USER:-$(id -un)}"
+# can prevent it. Checked in that user's real login shell, AS that user: a
+# login shell executes ~/.profile, and running one as root with a user's HOME
+# would execute that user's file as uid 0. Without runuser the check is
+# skipped and says so; it never falls back to root. Reported, never fatal.
+login_user="${SUDO_USER:-root}"
 login_home="$(getent passwd "$login_user" 2>/dev/null | cut -d: -f6)"
-for tool in yq task; do
-    found="$(env -i HOME="${login_home:-$HOME}" USER="$login_user" PATH=/usr/bin:/bin bash -lc "command -v ${tool}" 2>/dev/null || true)"
-    [ "$found" != "${HARMON_BIN}/${tool}" ] || continue
-    warn "${login_user}'s login shell resolves ${tool} to '${found:-nothing}', not ${HARMON_BIN}/${tool}: a user-level PATH entry (${found%/*}) shadows the pinned toolchain. Remedy: in ${login_home:-$HOME}/.profile put ${HARMON_BIN} ahead of ${found%/*}, or remove ${found}."
-done
+login_uid="$(id -u "$login_user" 2>/dev/null || echo 0)"
+if [ "$login_uid" != 0 ] && ! command -v runuser >/dev/null 2>&1; then
+    printf "    (not checked) %s's login shell: runuser is unavailable, and the check never runs as root with a user's HOME\n" "$login_user"
+else
+    for tool in yq task; do
+        if [ "$login_uid" = 0 ]; then
+            found="$(env -i HOME="${login_home:-/root}" USER=root PATH=/usr/bin:/bin bash -lc "command -v ${tool}" 2>/dev/null || true)"
+        else
+            found="$(runuser -u "$login_user" -- env -i HOME="$login_home" USER="$login_user" PATH=/usr/bin:/bin bash -lc "command -v ${tool}" 2>/dev/null || true)"
+        fi
+        [ "$found" != "${HARMON_BIN}/${tool}" ] || continue
+        warn "${login_user}'s login shell resolves ${tool} to '${found:-nothing}', not ${HARMON_BIN}/${tool}: a user-level PATH entry (${found%/*}) shadows the pinned toolchain. Remedy: in ${login_home:-/root}/.profile put ${HARMON_BIN} ahead of ${found%/*}, or remove ${found}."
+    done
+fi
 
 # The EFFECTIVE locale, not LANG: `locale` reports what LC_CTYPE resolves to
 # after LC_ALL and LANG are both applied, so a surviving LC_ALL=C shows here
