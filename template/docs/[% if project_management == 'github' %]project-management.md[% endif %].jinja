@@ -1333,17 +1333,22 @@ back later. Collect them instead on two dedicated issues:
 | Type | `Task` — native Issue Type on org repos, the `task` label on personal repos | same |
 | Example | `(HUMAN): Complete manual setup for v1.2 remote environments` | `(QA): Verify v1.2 remote environments end to end` |
 
-- **One of each per milestone**, or per `epic` when the work has no milestone,
-  filed **lazily** by whoever meets the first human task — human or agent.
-  Search first (`is:open label:human label:umbrella milestone:"v1.2"`) and
-  append to the open one rather than filing a second. Give it the same
-  milestone; when it serves one `epic`, make it a sub-issue of that epic so
-  the epic's rollup stays honest about the human work still owed.
+- **One of each per scope, for the scope's lifetime.** The scope is the
+  source issue's milestone; failing that, its `epic`; failing both, the
+  repository — one collector pair with no milestone serves all ungrouped
+  work. Whoever meets the first human task files it **lazily**, human or
+  agent. Search all states first
+  (`label:human label:umbrella milestone:"v1.2"`): append to the open one,
+  reopen a closed one, and never file a second. Give it the scope's
+  milestone, and under an `epic` also make it that epic's sub-issue so the
+  epic's rollup stays honest about the human work still owed.
 - **Each task is one `- [ ] [HUMAN] …` acceptance criterion on the
   collector**, naming its source:
   `- [ ] [HUMAN] Add FLY_API_TOKEN to the repo secrets (from #1412)`. Agents
-  append items; a human ticks them. The collector closes when every box is
-  ticked.
+  append items; a human ticks them. A body edit is last-write-wins, so an
+  appender re-reads the body before and after writing, and in an
+  orchestrated run the orchestrator is the only writer. The collector closes
+  when every box is ticked.
 - **The source issue mentions, never blocks.** Record the task on the source
   issue as a plain line under `## Out of scope` —
   `Human follow-up (tracked in #1420): add FLY_API_TOKEN` — not as an
@@ -1351,12 +1356,14 @@ back later. Collect them instead on two dedicated issues:
   work merges.
 - **A precondition is a dependency, not a follow-up.** When the agent cannot
   do the work until the human step happens (the secret must exist before the
-  deploy test can run), track the step on the collector as usual, but mark the
-  source issue `blocked` with a comment naming the collector item, and do not
-  dispatch it until the step is ticked.
+  deploy test can run), the step is not a collector item: file it as its own
+  `human` issue and give the source issue a blocked-by edge on it (see
+  **Hierarchy is not dependency**). Closing the human issue unblocks the work
+  through the same graph the dispatchers read.
 - **Never dispatched.** A `human` issue is never claimed, armed with
   `foreman:*`, or implemented by an agent. `human` alone marks a standalone
-  human-only issue; `human` + `umbrella` marks a collector.
+  human-only issue such as a precondition; `human` + `umbrella` marks a
+  collector.
 
 ## Cross-repo work
 
