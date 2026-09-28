@@ -63,6 +63,17 @@ echo '==> no closing keyword is inert without issue metadata'
 
 echo '==> REST-only proxy reads preserve checker and guard verdicts'
 mkdir -p "$tmp/bin"
+cat >"$tmp/bin/git" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+case "${1:-}" in
+merge-base) printf '%s\n' base ;;
+rev-list) printf '%s\n' 0 ;;
+log) ;;
+branch) printf '%s\n' feature ;;
+*) exit 64 ;;
+esac
+STUB
 cat >"$tmp/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -102,7 +113,7 @@ repos/acme/repo/issues/2)
     ;;
 esac
 STUB
-chmod +x "$tmp/bin/gh"
+chmod +x "$tmp/bin/git" "$tmp/bin/gh"
 
 GH_STUB_CALLS="$tmp/proxy-calls"
 export GH_STUB_CALLS
@@ -137,12 +148,13 @@ proxy_guard() {
     echo "$rc"
 }
 [ "$(proxy_guard '[{"title":"fix: closes #1","body":""}]')" = 0 ] ||
-    fail 'REST guard completed-issue verdict should pass'
+    fail "REST guard completed-issue verdict should pass: $(cat "$tmp/driver-err")"
 [ "$(proxy_guard '[{"title":"fix: closes #2","body":""}]')" = 1 ] ||
-    fail 'REST guard unfinished-issue verdict should fail'
+    fail "REST guard unfinished-issue verdict should fail: $(cat "$tmp/driver-err")"
 GH_STUB_FAIL=1
 export GH_STUB_FAIL
-[ "$(proxy_guard '[]')" = 2 ] || fail 'REST guard metadata failure must be indeterminate'
+[ "$(proxy_guard '[]')" = 2 ] ||
+    fail "REST guard metadata failure must be indeterminate: $(cat "$tmp/driver-err")"
 unset GH_STUB_FAIL
 unset GH_STUB_CALLS
 
