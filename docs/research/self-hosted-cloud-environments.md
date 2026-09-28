@@ -153,12 +153,13 @@ supported build ([deploy][deploy]).
 lifecycle hooks.** It clones and spawns; there is no `devcontainer.json`, no
 `post-create.sh`, no `post-start.sh`. Everything those do today —
 `bot-autonomy.sh apply` and its `verify`, the Claude settings seed, the
-ownership fixes, the Herdr integrations — must move into the image build, or
-into a wrapper script / `command` lifecycle hook that `exec`s
-`"$CLAUDE_RUNNER_CLAUDE_BIN"` at the end ([configuration][config]). That is a
-real port, not a no-op — and with the features layer above it is two things
-to carry, not one — but both land in a place that runs identically for every
-session, rather than a second copy of the toolchain.
+ownership fixes, the Herdr integrations — is ported on one rule: privileged
+work (both scripts `sudo` to create, chown, and write under `/etc`) runs in
+the image build as root; a wrapper `command` hook that `exec`s
+`"$CLAUDE_RUNNER_CLAUDE_BIN"` carries only the unprivileged remainder
+([configuration][config]). A real port, not a no-op — with the features
+layer above, two things to carry — but both land in a place that runs
+identically for every session, rather than a second copy of the toolchain.
 
 Two image-shaped behaviours worth knowing:
 
@@ -352,19 +353,10 @@ it, before evaluating anything. That is the whole of the "adopt later".
 
 ### Remote Control does not change this
 
-The same page anticipates the individual-plan reader: "If you want to run
-Claude Code on your own always-on machine and drive it from other devices,
-use Remote Control, which is also available on Pro and Max plans"
-([self-hosted environments][shenv], read 2026-09-28). It is not a way around
-the plan gate for this epic, for three reasons. Remote Control drives a
-**local, already-running** Claude Code session from another device; it is not
-a cloud-session dispatch target — there is no `--environment` to send a lane
-to, so an orchestrator has nothing to route. It supplies no runner image, so
-the invariant this note is about (the devcontainer image *is* the remote
-environment) is not in play. And it leaves the self-hosted-environment gate
-exactly where it is: the page offers it as the Pro/Max alternative *because*
-self-hosted environments are not available there. The recommendation is
-unchanged.
+Remote Control lets other devices drive a Claude Code session that is already
+"running on your machine" ([Remote Control][remotecontrol], read 2026-09-28).
+It is not a destination an orchestrator can dispatch a new cloud lane to —
+there is no `--environment` for it — so it leaves the plan gate untouched.
 
 ## How Coder and Fly.io Sprites fit as the host
 
@@ -462,14 +454,14 @@ against #1408's decided positions:
 
 | Posture axis (#1408) | Enforcement point on a self-hosted environment |
 |---|---|
-| **Permissions — allow list, deny rules, no `ask`** | Two layers, the first conditional. Sessions read "the managed settings file in the runner image" ([cloud environments][cloudenv]) — the `/etc/claude-code/managed-settings.json` that `install-repo-config.sh` already writes. In the devcontainer that path is **not** a security boundary: `vscode` has passwordless `sudo` and the bot-autonomy module writes the file with `sudo`, so an agent can overwrite it ([devcontainer-image.md](../architecture/devcontainer-image.md)). On a runner image it becomes an enforcement point only under a precondition the image must meet deliberately: the file is root-owned and read-only to the session UID, that UID has no `sudo`, and the image is built that way on purpose — a departure from the devcontainer, whose lifecycle scripts rely on `sudo` non-interactively. The second layer is the wrapper script, which appends flags after `"$@"`: `--permission-mode auto` (single-value flags honour the last occurrence) and `--disallowed-tools`, which "denies tools even if another rule allows them"; list flags "accumulate across occurrences rather than overriding" ([configuration][config]). The wrapper is under the same rule: it must be read-only to the session, as Anthropic already requires of `--hooks-dir` and `~/.claude/` ([deploy][deploy]). |
+| **Permissions — allow list, deny rules, no `ask`** | Two layers, the first conditional. Sessions read "the managed settings file in the runner image" ([cloud environments][cloudenv]) — the `/etc/claude-code/managed-settings.json` that `install-repo-config.sh` already writes. In the devcontainer that path is **not** a security boundary: `vscode` has passwordless `sudo`, so an agent can overwrite it ([devcontainer-image.md](../architecture/devcontainer-image.md)). On a runner image it is an enforcement point only where the file is root-owned and read-only to a session UID that has no `sudo` and no Docker daemon (the Docker row). The second layer is the wrapper script, which appends flags after `"$@"`: `--permission-mode auto` (single-value flags honour the last occurrence) and `--disallowed-tools`, which "denies tools even if another rule allows them"; list flags "accumulate across occurrences rather than overriding" ([configuration][config]). The wrapper is under the same rule: it must be read-only to the session, as Anthropic already requires of `--hooks-dir` and `~/.claude/` ([deploy][deploy]). |
 | **Prompt-free operation** | Required, not merely desired: "A self-hosted session has no terminal attached, so an unanswered permission prompt stalls the turn until the user responds in the UI" ([configuration][config]). #1408's choice of auto mode with no `ask` rules is the only workable setting here. |
 | **A repository cannot loosen the posture** | `--confine-repo-settings enforce` — the runner scans each repository's committed settings for a grant resolving outside the workspace, a non-empty `env` block, or "an operator-posture override such as `sandbox.enabled: false`", and `enforce` "refuses the session" ([deploy][deploy]). Also `--trust-workspace false` to "drop repo-committed permission grants" entirely, and "A `defaultMode` of `auto` is only honored from the image-wide or user-level settings file, so a checked-out repository can't grant itself auto mode" ([configuration][config]). Nothing equivalent exists on a hosted VM. |
 | **Network — enforced egress allowlist** | Your own boundary, which is what #1408 and #286 want. Anthropic supplies the required-hosts table and states the product cannot enforce it ([deploy][deploy]). |
 | **Identity — the agent PAT, no bot/operator token** | Image-level credential or per-session minted from the wrapper. The documented preference is per-session ("a credential in the image is available to every session the image runs"), which is *stronger* than the agent PAT model #1408 settled for. |
-| **Secrets — no 1Password, no `op`, no Tailscale key** | Satisfied by construction: the image is ours and the env allowlist guard already exists. Note the environment secret itself is a new secret to hold, readable by any session on a fixed fleet ([deploy][deploy]). |
-| **Docker — per-repo opt-in, DinD only** | Our image, our call — but not free. DinD reaches the devcontainer as a feature (`docker-in-docker:2`), and a `FROM` build of the shared image drops the features layer (see the image section above), so a runner image has no Docker daemon unless one is re-added deliberately. Where a repository opts in, the adapter installs DinD in that repository's runner image; where it does not, the omission *is* the posture. |
-| **Marker** | Our image; unchanged. |
+| **Secrets — no 1Password, no `op`, no Tailscale key** | Satisfied only by what the image and wrapper put in the session's environment: the env allowlist guard (`init-env.sh`) is devcontainer.json's `initializeCommand` and does not run under the runner. Note the environment secret itself is a new secret to hold, readable by any session on a fixed fleet ([deploy][deploy]). |
+| **Docker — per-repo opt-in, DinD only** | A `FROM` build of the shared image drops the `docker-in-docker:2` feature, so a runner image has no Docker daemon unless the adapter re-adds it for a repository that opts in. Per repository image, DinD opt-in and the enforced managed-settings layer are mutually exclusive — docker-group access reaches every file on the host — so a DinD-enabled runner image has no enforced managed-settings layer and relies on `--confine-repo-settings enforce` and the network boundary only. |
+| **Marker** | Set by the runner image or its wrapper, not inherited: `FOREMAN_DEVCONTAINER=bot` and the `HARMON_BOT_AUTONOMY_*` markers are `containerEnv` entries in `.devcontainer/devcontainer.json`, which a `FROM` build drops exactly as it drops the features — and Foreman's D2 tripwire refuses to run without the first. |
 
 **A second caveat must be recorded with the rest**, because it too can
 silently void the first row. The runner image's managed settings file is
@@ -563,8 +555,9 @@ more directly.
 One issue, blocked on the plan move: *"(remote-env): Self-hosted Claude Code
 environment adapter"* — build a runner image `FROM` the shared devcontainer
 image, re-add the features layer (Python 3.14, `gh`, DinD where a repository
-opts in), port the devcontainer lifecycle into the image or a wrapper, run it
-with `--confine-repo-settings enforce` and default-deny egress, and document
+opts in), port the privileged lifecycle work into the image build and the
+rest into the wrapper, run it on a Coder workspace at `--capacity 1` with
+`--confine-repo-settings enforce` and default-deny egress, and document
 the adapter section in `docs/architecture/remote-environments.md` (the
 file #1403 creates).
 
@@ -573,16 +566,13 @@ section above records Anthropic's mitigation for the environment-secret
 exposure as on-demand runners with the secret on an orchestrator host that
 never runs user code, and a Coder workspace at `--capacity 1` is the opposite
 shape: a fixed fleet, secret on the host that runs sessions. The **fixed fleet
-is accepted here, for the two-person org and no further**, on three grounds:
-the only identities that can dispatch into the environment are the org's own
-seats ("any member of your Anthropic organization", [deploy][deploy]), so the
-population that could read the secret is the population that already holds
-it; the secret's documented reach is registering runners and picking up
-sessions on that one environment, not anything beyond it; and the on-demand
-shape needs a second, always-on host for the orchestrator, which is the
-sizing problem from the cost section again. The acceptance is conditional
-and the issue should say so: a third seat, or a runner host that holds
-anything beyond the workspace, reopens it in favour of the orchestrator
+is accepted here, for the two-person org and no further**, on two grounds:
+the secret's documented reach is registering runners and picking up sessions
+on that one environment, not anything beyond it ([deploy][deploy]); and the
+on-demand shape needs a second, always-on host for the orchestrator, which
+is the sizing problem from the cost section again. The acceptance is
+conditional and the issue should say so: a third seat, or a runner host that
+holds anything beyond the workspace, reopens it in favour of the orchestrator
 shape. It should carry the trial below as its `[HUMAN]` criterion.
 
 ## Trial session — pending
@@ -619,7 +609,7 @@ When it is run, these are the things only a real session can settle:
 |---|---|
 | `--environment` exists in the installed CLI | ✅ verified — `claude --version` 2.1.270, help text quoted above, 2026-09-28 |
 | Environment creation, registration, runner lifecycle, network paths | ✅ primary docs, read 2026-09-28 |
-| Custom runner image is required and unconstrained | ✅ "Anthropic doesn't publish a pre-built runner image" |
+| A custom image is the documented container path; a bare host is the documented alternative | ✅ [deploy][deploy] ("Build your own around the `claude` binary"), [quickstart][quickstart] ("a Linux or macOS host or container") |
 | The shared devcontainer image works as a runner image | ❓ **unverified** — no trial session (see above) |
 | GraphQL/REST limit is a proxy property and opt-in when self-hosted | ✅ documented on both sides |
 | Repository-declared plugins install in a self-hosted session | ❓ **unverified** — documented as not installed for cloud sessions generally; not restated for self-hosted |
@@ -642,6 +632,7 @@ All read 2026-09-28.
 - [Self-hosted environments reference][reference] — `https://code.claude.com/docs/en/self-hosted-environments-reference`
 - [Use Claude Code in the cloud][web] — `https://code.claude.com/docs/en/claude-code-on-the-web`
 - [Configure cloud environments][cloudenv] — `https://code.claude.com/docs/en/cloud-environments`
+- [Remote Control][remotecontrol] — `https://code.claude.com/docs/en/remote-control`
 - [Claude pricing][pricing] — `https://claude.com/pricing`
 - [Use Claude Code with your Team or Enterprise plan][teamdoc] — `https://support.claude.com/en/articles/11845131-use-claude-code-with-your-team-or-enterprise-plan`
 - [Coder + Anthropic][coderanthropic] — `https://coder.com/partners/anthropic`
@@ -661,6 +652,7 @@ All read 2026-09-28.
 [reference]: https://code.claude.com/docs/en/self-hosted-environments-reference
 [web]: https://code.claude.com/docs/en/claude-code-on-the-web
 [cloudenv]: https://code.claude.com/docs/en/cloud-environments
+[remotecontrol]: https://code.claude.com/docs/en/remote-control
 [pricing]: https://claude.com/pricing
 [teamdoc]: https://support.claude.com/en/articles/11845131-use-claude-code-with-your-team-or-enterprise-plan
 [coderanthropic]: https://coder.com/partners/anthropic
