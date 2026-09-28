@@ -44,9 +44,16 @@ else
         --exclude='*/CHANGELOG.md' --exclude='*/LICENSE' --exclude='*/README.md'
     rm -f "${tmp}/${node_tarball}"
 fi
-# corepack is bundled with the tarball; enabling pnpm is idempotent.
+# corepack is bundled with the tarball. `corepack enable` rewrites its shims
+# every time it runs, so gate it on pnpm already resolving from OUR prefix — a
+# /usr/bin/pnpm on a pre-provisioned host is not the shim this creates.
 export COREPACK_ENABLE_DOWNLOAD_PROMPT=0
-corepack enable pnpm
+if [ "$(command -v pnpm 2>/dev/null)" = "${HARMON_BIN}/pnpm" ]; then
+    harmon_skip "corepack pnpm shim"
+else
+    harmon_changed "corepack enable pnpm"
+    corepack enable pnpm
+fi
 
 # ---------- uv (checksum-pinned GitHub release) ----------
 if harmon_at_version uv "$UV_VERSION" uv --version; then

@@ -149,7 +149,7 @@ markdownlint_version="$(markdownlint-cli2 --version | grep -oE '[0-9]+\.[0-9]+\.
 # producer and the remote bootstrap can be proved to be running the same files.
 [ -f /usr/local/share/harmon-devcontainer/versions.env ] ||
     fail "the shared versions file is missing"
-for shared in apt-core install-core install-agents install-browsers install-posture; do
+for shared in apt-core install-core install-agents install-browsers; do
     [ -x "/usr/local/share/harmon-devcontainer/install/${shared}.sh" ] ||
         fail "shared install script ${shared}.sh is missing or not executable"
 done

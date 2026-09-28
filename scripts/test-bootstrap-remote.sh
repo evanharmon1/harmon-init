@@ -112,26 +112,54 @@ if len(extracted) < annotated:
 # Renovate cannot recompute these. Same trust shape as the oh-my-pi marker:
 # the guard proves the marker moved with the version, and PR review is what
 # proves somebody actually re-read SHASUMS256.txt.
-marker = None
-for i, line in enumerate(versions_lines, 1):
-    if line.startswith("node_amd64_sha256=") and i >= 2:
-        m = re.match(r"^# verified-for: (\S+)$", versions_lines[i - 2])
-        marker = m.group(1) if m else None
-if marker is None:
-    fail(f"{VERSIONS}: no '# verified-for: <version>' marker directly above node_amd64_sha256=")
-else:
-    node_version = next(
-        (line.split("=", 1)[1] for line in versions_lines if line.startswith("NODE_VERSION=")), None
-    )
-    if marker != node_version:
+VERIFIED_FOR = re.compile(r"^# verified-for: (?P<tag>\S+)$")
+node_version = next(
+    (line.split("=", 1)[1].split()[0] for line in versions_lines if line.startswith("NODE_VERSION=")), None
+)
+for digest_var in ("node_amd64_sha256", "node_arm64_sha256"):
+    marker = None
+    for i, line in enumerate(versions_lines, 1):
+        if line.startswith(f"{digest_var}=") and i >= 2:
+            m = VERIFIED_FOR.match(versions_lines[i - 2])
+            marker = m.group("tag") if m else None
+    if marker is None:
+        fail(f"{VERSIONS}: no '# verified-for: <version>' marker directly above {digest_var}=")
+    elif marker != node_version:
         fail(
-            f"{VERSIONS}: NODE_VERSION ({node_version}) has moved past the hand-verified release "
-            f"({marker}). Read https://nodejs.org/dist/v{node_version}/SHASUMS256.txt, copy the "
-            f"linux-x64 and linux-arm64 .tar.xz digests, and move the '# verified-for:' marker."
+            f"{VERSIONS}: NODE_VERSION ({node_version}) has moved past the release {digest_var} was "
+            f"hand-verified for ({marker}). Read https://nodejs.org/dist/v{node_version}/SHASUMS256.txt, "
+            f"copy the linux-x64 and linux-arm64 .tar.xz digests, and move BOTH '# verified-for:' markers."
         )
 
 # ── 5. THE invariant: nothing but versions.env declares a pin ───────────────
 PIN_DECL = re.compile(r"^\s*(?:export\s+|ARG\s+)?(?P<var>[A-Za-z_][A-Za-z0-9_]*(?:_VERSION|_SHA256|_sha256))=")
+# A pin can also be typed straight into a download URL, where no variable is
+# declared at all: `.../download/v3.53.1/task_linux_amd64.tar.gz` installs a
+# working tool and PIN_DECL never sees it. So a URL-bearing line may carry a
+# semver-shaped literal only as part of a variable expansion — `v${X_VERSION}`
+# is composed from versions.env, `v3.53.1` is a second pin owner.
+URL_LINE = re.compile(r"https?://")
+URL_PIN = re.compile(r"(?<![A-Za-z0-9_{}$.])v?[0-9]+\.[0-9]+\.[0-9]+(?![0-9])")
+
+
+def url_inlined_pin(line):
+    if not URL_LINE.search(line):
+        return None
+    stripped = re.sub(r"\$\{[^}]*\}|\$[A-Za-z_][A-Za-z0-9_]*", "", line)
+    m = URL_PIN.search(stripped)
+    return m.group(0) if m else None
+
+
+# The detector's own contract, asserted here because the files it scans
+# contain no offending line to prove it against (a negative fixture).
+assert url_inlined_pin('curl "https://github.com/go-task/task/releases/download/v3.53.1/task.tar.gz"') == "v3.53.1"
+assert url_inlined_pin('    "https://nodejs.org/dist/v24.21.0/node.tar.xz" \\') == "v24.21.0"
+assert url_inlined_pin('wget https://example.com/tool-1.2.3-linux.tgz') == "1.2.3"
+assert url_inlined_pin('    "https://github.com/go-task/task/releases/download/v${TASK_VERSION}/task_linux_${arch}.tar.gz" |') is None
+assert url_inlined_pin('    "https://nodejs.org/dist/v${NODE_VERSION}/${node_tarball}"') is None
+assert url_inlined_pin('    "https://github.com/lycheeverse/lychee/releases/download/lychee-v${LYCHEE_VERSION}/x.tar.gz" |') is None
+assert url_inlined_pin('tar -xzf "${tmp}/node-1.2.3.tar.xz"') is None  # not a URL line
+
 for path in [BOOTSTRAP] + sorted(INSTALL.glob("*.sh")):
     for i, line in enumerate(path.read_text().splitlines(), 1):
         if line.lstrip().startswith("#"):
@@ -141,6 +169,12 @@ for path in [BOOTSTRAP] + sorted(INSTALL.glob("*.sh")):
             fail(
                 f"{path}:{i}: declares the pin {m['var']} — every version and checksum must come from "
                 f"{VERSIONS}, or the remote bootstrap and the shared image drift apart silently"
+            )
+        literal = url_inlined_pin(line)
+        if literal:
+            fail(
+                f"{path}:{i}: a download URL carries the literal version {literal!r} instead of a "
+                f"`${{…_VERSION}}` from {VERSIONS} — a pin typed into a URL is a second pin owner"
             )
 
 # ── 4b. checksum pins move WITH their version pin ───────────────────────────
@@ -158,8 +192,14 @@ for path in [BOOTSTRAP] + sorted(INSTALL.glob("*.sh")):
 PAIR_MEMBER = re.compile(
     r"^(?P<var>[A-Za-z_][A-Za-z0-9_]*)=(?P<val>\S+)\s+# pin-pair: (?P<tool>[A-Za-z0-9._-]+)\s*$"
 )
+# A hash line's tag comes from its Renovate digest annotation — or, for the
+# Node digests that Renovate cannot recompute (nodejs.org publishes
+# SHASUMS256.txt, not release attachments), from the hand-written
+# `# verified-for:` marker. Either way the guard below proves the tag moved
+# with the version.
 DIGEST_ANNOT = re.compile(
     r"^# renovate: datasource=github-release-attachments depName=(?P<dep>\S+) digestVersion=(?P<tag>\S+)\s*$"
+    r"|^# verified-for: (?P<vtag>\S+)\s*$"
 )
 
 
@@ -184,7 +224,7 @@ def pin_pairs(lines):
             entry["version"] = (i, m["var"], m["val"])
         else:
             ann = DIGEST_ANNOT.match(lines[i - 2]) if i >= 2 else None
-            entry["hashes"].append((i, m["var"], m["val"], ann["tag"] if ann else None))
+            entry["hashes"].append((i, m["var"], m["val"], (ann["tag"] or ann["vtag"]) if ann else None))
     return out
 
 
@@ -208,7 +248,8 @@ for tool, entry in sorted(head_pairs.items()):
             fail(
                 f"{VERSIONS}:{line_no}: pin-pair '{tool}' hash {var} is not directly under a "
                 "`# renovate: datasource=github-release-attachments depName=… digestVersion=<tag>` "
-                "annotation, so Renovate will never update it"
+                "annotation (or, for a hand-verified digest, a `# verified-for: <version>` marker), "
+                "so nothing ties it to the release it was taken from"
             )
         elif tag.removeprefix("v") != vval.removeprefix("v"):
             fail(
@@ -320,7 +361,9 @@ if not listed:
     fail(f"{BOOTSTRAP}: HARMON_REMOTE_ASSETS is missing or not a newline-separated literal")
 else:
     declared = set(listed.group(1).split())
-    on_disk = {"versions.env"} | {f"install/{name}" for name in tier_scripts}
+    # generate-manifest.sh is in the set because the VM writes the same
+    # manifest the image does, with the same generator.
+    on_disk = {"versions.env", "generate-manifest.sh"} | {f"install/{name}" for name in tier_scripts}
     if declared != on_disk:
         fail(
             f"{BOOTSTRAP}: HARMON_REMOTE_ASSETS does not match images/devcontainer/ — "
@@ -340,18 +383,26 @@ else:
             fail(f"{BOOTSTRAP}: tier '{tier}' has no images/devcontainer/install/install-{tier}.sh")
     for name in tier_scripts:
         m = re.fullmatch(r"install-([a-z0-9-]+)\.sh", name)
-        if m and m.group(1) not in tiers and m.group(1) != "posture":
+        if m and m.group(1) not in tiers:
             fail(f"{INSTALL}/{name}: no tier named '{m.group(1)}' in HARMON_TIER_ORDER, so it never runs")
 
 # ── 9. the never-installed set ──────────────────────────────────────────────
 NEVER = {"op", "brew", "tailscale", "tailscaled"}
+NEVER_PREFIXES = {"/home/linuxbrew", "/opt/homebrew"}
 declared_never = re.search(r'HARMON_NEVER_INSTALL="([^"]+)"', bootstrap_text)
 if not declared_never or set(declared_never.group(1).split()) != NEVER:
     fail(f"{BOOTSTRAP}: HARMON_NEVER_INSTALL must be exactly {sorted(NEVER)}")
+declared_prefixes = re.search(r'HARMON_NEVER_PREFIXES="([^"]+)"', bootstrap_text)
+if not declared_prefixes or set(declared_prefixes.group(1).split()) != NEVER_PREFIXES:
+    fail(f"{BOOTSTRAP}: HARMON_NEVER_PREFIXES must be exactly {sorted(NEVER_PREFIXES)}")
+# The bootstrap is scanned as well as the tier scripts: it is the one file
+# that runs on every remote VM, and the only lines allowed to name the
+# forbidden set are the two declarations the closing check iterates.
 FORBIDDEN_TOKEN = re.compile(r"\b(1password|homebrew|linuxbrew|tailscale)\b", re.I)
-for path in sorted(INSTALL.glob("*.sh")):
+NEVER_DECL = re.compile(r"^\s*readonly HARMON_NEVER_(INSTALL|PREFIXES)=")
+for path in [BOOTSTRAP] + sorted(INSTALL.glob("*.sh")):
     for i, line in enumerate(path.read_text().splitlines(), 1):
-        if line.lstrip().startswith("#"):
+        if line.lstrip().startswith("#") or NEVER_DECL.match(line):
             continue
         if FORBIDDEN_TOKEN.search(line):
             fail(f"{path}:{i}: the bootstrap must never install 1Password, Homebrew, or Tailscale")
@@ -369,7 +420,9 @@ for label, text in ((str(DOCKERFILE), dockerfile_text),) + tuple(
                 fail(f"{label}:{i}: contacts {host}, which the remote adapter's network level denies")
 
 # ── 11. the image really runs the shared scripts ────────────────────────────
-for script in ("apt-core.sh", "install-core.sh", "install-agents.sh", "install-browsers.sh"):
+for script in tier_scripts:
+    if script == "lib.sh":
+        continue  # sourced by the others, never run
     if f"{SHARE}/install/{script}" not in dockerfile_text:
         fail(f"{DOCKERFILE}: does not run {SHARE}/install/{script} — the image would install its own copy")
 if f"COPY versions.env {SHARE}/versions.env" not in dockerfile_text:
@@ -396,6 +449,34 @@ if plan.returncode != 0:
 elif "./scripts/test-bootstrap-remote.sh" not in plan.stdout:
     fail("`task verify` does not run scripts/test-bootstrap-remote.sh")
 
+# ── 14. the standalone trust root: only a release tag is accepted ───────────
+# The ref is validated before the tier check and before the sudo re-exec, so
+# these run unprivileged and touch nothing: a refused ref exits 1 with the
+# reason, and an accepted-under-override ref gets past the ref check (to fail
+# on the deliberately bogus tier instead) while naming itself in a warning.
+def run_bootstrap(args, env_extra=None):
+    env = {k: v for k, v in os.environ.items() if not k.startswith("HARMON_")}
+    env.update(env_extra or {})
+    return subprocess.run(["bash", str(BOOTSTRAP), *args], capture_output=True, text=True, env=env)
+
+
+for bad_ref in ("main", "feature/x", "1.2.3", "v1.2", "v1.2.3-rc1", "8b8e60f"):
+    r = run_bootstrap(["--ref", bad_ref, "--tiers", "no-such-tier"])
+    if r.returncode != 1 or "not a release tag" not in r.stderr:
+        fail(f"{BOOTSTRAP}: --ref {bad_ref!r} must be refused as 'not a release tag' (exit {r.returncode}: {r.stderr.strip()[:120]!r})")
+r = run_bootstrap(["--tiers", "no-such-tier"], {"HARMON_INIT_REF": "main"})
+if r.returncode != 1 or "not a release tag" not in r.stderr:
+    fail(f"{BOOTSTRAP}: HARMON_INIT_REF=main must be refused the same way --ref main is")
+r = run_bootstrap(["--ref", "v1.2.4", "--tiers", "no-such-tier"], {"HARMON_INIT_REF": "v1.2.3"})
+if r.returncode != 1 or "disagree" not in r.stderr:
+    fail(f"{BOOTSTRAP}: --ref and HARMON_INIT_REF naming different tags must be refused as a disagreement")
+r = run_bootstrap(["--ref", "v1.2.3", "--tiers", "no-such-tier"])
+if r.returncode != 1 or "unknown tier" not in r.stderr or "not a release tag" in r.stderr:
+    fail(f"{BOOTSTRAP}: --ref v1.2.3 must pass the ref check (and fail on the bogus tier instead)")
+r = run_bootstrap(["--ref", "main", "--tiers", "no-such-tier"], {"HARMON_ALLOW_UNPINNED_REF": "1"})
+if r.returncode != 1 or "unknown tier" not in r.stderr or "WARNING" not in r.stderr or "main" not in r.stderr:
+    fail(f"{BOOTSTRAP}: HARMON_ALLOW_UNPINNED_REF=1 must let --ref main through with a WARNING naming the ref")
+
 for e in errors:
     print(f"FAIL: {e}", file=sys.stderr)
 if errors:
@@ -407,4 +488,5 @@ print(f"bootstrap-remote OK: {len(tier_scripts)} shared install script(s) declar
 print(f"bootstrap-remote OK: {len(head_pairs)} checksum pin-pair(s) agree with their version pin; {drift_note}")
 print("bootstrap-remote OK: the image runs the same scripts, from the same versions file")
 print("bootstrap-remote OK: no denied host, no 1Password/Homebrew/Tailscale, fetch list matches disk")
+print("bootstrap-remote OK: a non-release-tag ref is refused; the override warns and names it")
 PY

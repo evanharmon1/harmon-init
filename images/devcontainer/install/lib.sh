@@ -3,8 +3,9 @@
 # and bootstrap-remote.sh both run.
 #
 # Sourced, never executed. Every function is written to be safe to re-run: the
-# bootstrap's idempotence requirement (running it twice is a no-op the second
-# time) is met here rather than in each caller, so a new tool cannot forget it.
+# bootstrap's idempotence requirement (a second run performs no installs and
+# changes no versions) is met here rather than in each caller, so a new tool
+# cannot forget it.
 #
 # Portability: bash 3.2 and Linux coreutils only — no `mapfile`, no `grep -P`.
 

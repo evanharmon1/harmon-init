@@ -24,26 +24,38 @@ harmon_npm_global @playwright/test "$PLAYWRIGHT_VERSION" playwright
 harmon_npm_global @playwright/cli "$PLAYWRIGHT_CLI_VERSION" playwright-cli
 
 # Ask Playwright where it would put each artifact rather than guessing at a
-# directory name or dropping a marker file: `--dry-run` prints one
-# `Install location:` per browser, so "already installed" is the tool's own
-# answer and stays correct when a Playwright bump moves the chromium revision.
+# directory name: `--dry-run` prints one `Install location:` per browser, so
+# the set of locations is the tool's own answer and stays correct when a
+# Playwright bump moves the chromium revision.
 #
 # Without this the tier re-downloaded Chromium on every run and recorded a
 # change every time, so `--tiers core,agents,browsers` could never report
 # HARMON_BOOTSTRAP_CHANGES=0 — contradicting the idempotence this bootstrap
 # claims for every tier, not just the default ones.
-chromium_targets="$(npx playwright install --dry-run chromium 2>/dev/null |
-    sed -n 's/^[[:space:]]*Install location:[[:space:]]*//p')"
+#
+# The probe's exit status is read explicitly. Under `set -euo pipefail` a
+# failing probe inside `x="$(... | sed)"` aborts the script before any `if`
+# can look at $x, so a fallback written after the substitution never ran.
+probe_log="$(mktemp)"
+trap 'rm -f "$probe_log"' EXIT
+probe_ok=1
+npx playwright install --dry-run chromium >"$probe_log" 2>/dev/null || probe_ok=0
+chromium_targets="$(sed -n 's/^[[:space:]]*Install location:[[:space:]]*//p' "$probe_log")"
 
 browsers_missing=0
-if [ -z "$chromium_targets" ]; then
-    # A probe that answered nothing is not evidence of an install. Fall
-    # through and let Playwright decide, rather than skipping on a failure.
+if [ "$probe_ok" -ne 1 ] || [ -z "$chromium_targets" ]; then
+    # A probe that failed or answered nothing is not evidence of an install.
+    # Fall through and let Playwright decide, rather than skipping on a failure.
     browsers_missing=1
 else
+    # A directory is not an install: an interrupted download leaves one
+    # behind. Playwright writes INSTALLATION_COMPLETE into each location as
+    # the last step of a successful install (verified against the pinned
+    # @playwright/test: chromium, chromium_headless_shell and ffmpeg each
+    # carry it), and that marker is what "already installed" means here.
     while IFS= read -r target; do
         [ -n "$target" ] || continue
-        [ -d "$target" ] || browsers_missing=1
+        [ -f "${target}/INSTALLATION_COMPLETE" ] || browsers_missing=1
     done <<TARGETS
 ${chromium_targets}
 TARGETS

@@ -19,8 +19,9 @@ go-task version from the image.
 
 Two consequences, and they are the whole point:
 
-- bumping a version in one place updates the devcontainer **and** every remote
-  environment together;
+- for the same release tag, the image and a VM install **identical versions**
+  of every shared tool: one bump in `versions.env` moves both, and the two
+  manifests below are how that is checked rather than believed;
 - a remote bootstrap **cannot** pin anything the image does not — there is no
   second place to write a version.
 
@@ -39,8 +40,8 @@ exits 0 and the answers are quietly wrong:
 
 | Trap | What breaks | How the bootstrap answers it |
 | --- | --- | --- |
-| `/usr/bin/yq` is the **Python** yq | It shadows mikefarah yq v4, and every frontmatter then reads as invalid | Installs into `/usr/local/bin`, which precedes `/usr/bin`, and asserts the resolution before exiting |
-| The locale is POSIX (`LANG` unset) | NBSP stops reading as whitespace, so Unicode-title checks silently pass what they should reject | Sets `LANG=C.UTF-8` in `/etc/environment` and a `profile.d` drop-in, and asserts it |
+| `/usr/bin/yq` is the **Python** yq | It shadows mikefarah yq v4, and every frontmatter then reads as invalid | Installs into `/usr/local/bin` and puts that directory **first** on `PATH` by order, not membership — the `profile.d` drop-in removes every existing occurrence and prepends it — then asserts that `yq` and `task` *resolve* from it, in the running process and in a fresh login shell that starts with `/usr/bin` ahead |
+| The locale is POSIX (`LANG` unset), or `LC_ALL=C` is already set | NBSP stops reading as whitespace, so Unicode-title checks silently pass what they should reject; a pre-existing `LC_ALL=C` overrides any `LANG` set beside it | Sets `LANG=C.UTF-8` in `/etc/environment` (and rewrites an `LC_ALL=` line there when one exists), **forces** `LANG` and `LC_ALL` to `C.UTF-8` in the `profile.d` drop-in rather than defaulting them, and asserts the *effective* locale — `locale` must report a UTF-8 `LC_CTYPE`, in the process and in a fresh login shell seeded with `LC_ALL=C` |
 
 Ubuntu's **git 2.43** is kept deliberately: it is the git the shared image
 ships, and the git-core PPA is denied here anyway. A devkit test that failed on
@@ -77,7 +78,7 @@ Terraform install, and Terraform is image-only.
 | `images/devcontainer/install/install-core.sh` | the same file | The **core** tier |
 | `images/devcontainer/install/install-agents.sh` | the same file | The **agents** tier |
 | `images/devcontainer/install/install-browsers.sh` | the same file | The **browsers** tier |
-| `images/devcontainer/install/install-posture.sh` | the same file | The agent-posture extension point (below) |
+| `images/devcontainer/generate-manifest.sh` | the same file | Writes the tool manifest each side ends with (below) |
 | `images/devcontainer/Dockerfile` | `images/devcontainer/bootstrap-remote.sh` | The two entrypoints. Each runs the scripts above; each adds only what the other has no use for |
 
 Image-only pins stay as Dockerfile `ARG`s (Terraform, TFLint, the
@@ -103,8 +104,13 @@ loop on the VM.
 Never installed, in any tier, and asserted both by the bootstrap and by CI:
 **1Password (`op`), Homebrew, Tailscale.** The first and third are
 credential-bearing and a shared remote VM must not hold either; Homebrew is a
-second, unpinned package manager that would defeat the contract above. Neither
-Docker nor Homebrew is required to *run* the bootstrap.
+second, unpinned package manager that would defeat the contract above. The
+bootstrap's closing check is `PATH`-wide (`command -v`, the form a consumer
+cares about): it fails if any of them resolves from the prefix it owns or
+appeared on `PATH` during the run, and reports — without failing — one the
+host already had, because a self-hosted VM whose administrator installed
+Tailscale is not the bootstrap installing Tailscale. Neither Docker nor
+Homebrew is required to *run* the bootstrap.
 
 Interactive-terminal tools (zellij, herdr, starship, the TUIs) stay image-only.
 
@@ -115,42 +121,81 @@ Each adapter's setup step is a one-line call to it at a pinned harmon-init
 release tag — never a platform-specific copy:
 
 ```sh
-curl -fsSL https://raw.githubusercontent.com/evanharmon1/harmon-init/vX.Y.Z/images/devcontainer/bootstrap-remote.sh \
-  | sudo bash -s -- --ref vX.Y.Z
+HARMON_INIT_REF=vX.Y.Z   # the release tag, written once
+curl -fsSL "https://raw.githubusercontent.com/evanharmon1/harmon-init/${HARMON_INIT_REF}/images/devcontainer/bootstrap-remote.sh" \
+  | sudo bash -s -- --ref "$HARMON_INIT_REF"
 ```
 
-`--ref` is required in that form and is what pins it: fetched on its own, the
-script pulls its install scripts and `versions.env` from that same ref. From a
-checkout it uses the files beside it and ignores `--ref`. Fetching from a
-**release tag, never `main`**, is the contract: an adapter that tracked `main`
-would take an untested toolchain the moment anything merged.
+The tag is written **once** and read from that one variable: the URL the
+script is fetched from and the `--ref` it fetches its install scripts and
+`versions.env` from are the same value by construction, and if the script is
+ever handed both `--ref` and `HARMON_INIT_REF` it refuses unless they agree.
+From a checkout it uses the files beside it and ignores `--ref` for fetching.
+
+`--ref` must be a **release tag** (`vX.Y.Z`); a branch, a bare commit, or a
+pre-release is refused with the reason. That tag is the trust root this design
+chose, and it is worth stating what that does and does not buy: everything the
+standalone form runs comes from one immutable tag, protected by the release
+process and the branch rules that gate what gets tagged — **not** by a
+per-file signature or checksum, so it is as strong as the repository's
+release controls and no stronger. An adapter that tracked `main` would take an
+untested toolchain the moment anything merged, which is why the check exists.
+`HARMON_ALLOW_UNPINNED_REF=1` lifts it for CI and development only, and prints
+a warning naming the unpinned ref so a log can never pass one off as pinned.
 
 `--tiers core,agents,browsers` selects tiers (default `core,agents`); `core`
 cannot be skipped.
 
-It runs as root or under `sudo`, is non-interactive, and is **idempotent**: a
-second run installs nothing. That is asserted as a count, not as an exit
+It runs as root or under `sudo`, is non-interactive, and is **idempotent** in
+a precise sense: **a second run performs no installs and changes no
+versions** — no apt transaction (the package index is not even refreshed when
+every package is present), no download, no npm or uv install, no corepack
+shim, no manifest rewrite, and no rewrite of the two files under `/etc` when
+their content already matches. That is asserted as a count, not as an exit
 status — it prints `HARMON_BOOTSTRAP_CHANGES=<n>` and CI requires `0` on the
 second run, because a script that re-downloaded and re-installed everything
 also exits 0.
 
-### The agent-posture extension point
+The agent posture (managed Claude Code settings, Codex configuration) is not
+installed by the bootstrap today: #1404 adds the agent-posture install to both
+the image and the bootstrap in the same change.
 
-`install-posture.sh` runs last and **today does nothing**. Defining the managed
-Claude Code settings and Codex configuration is #1408's unit, and proving each
-platform honours them is #1404's. Until those land, running the bootstrap on a
-remote VM leaves the agent posture **unset** — stated here rather than left to
-be discovered. The step exists now so that work lands as one named phase at a
-fixed point in the sequence (after every tool it might reference is on `PATH`)
-instead of being retrofitted into the middle of a tier.
+### The manifest: checking that image and VM agree
+
+At the end of a run the bootstrap writes
+`/usr/local/share/harmon-remote-env/manifest.json` (under `HARMON_PREFIX`),
+produced by the **same** `generate-manifest.sh` the image runs and in the same
+shape (`schemaVersion`, `image.{name,revision,architecture}`, `tools`) — with
+`image.name` set to `harmon-remote-env` and `image.revision` the checkout's
+commit or, for the standalone form, the release tag it was fetched from. Its
+`tools` are the shared pins the selected tiers installed, under the same keys
+the image's manifest uses.
+
+That makes the drift claim testable rather than asserted. For the same release
+tag, the image's manifest and the VM's must agree on every tool the VM has;
+the image's carries more (its image-only tools), so the comparison is on the
+VM's key set:
+
+```sh
+vm=/usr/local/share/harmon-remote-env/manifest.json
+diff <(jq -S .tools "$vm") \
+     <(jq -S --slurpfile vm "$vm" '.tools | with_entries(select(.key | in($vm[0].tools)))' image-manifest.json)
+```
+
+(`image-manifest.json` is `/usr/local/share/harmon-devcontainer/manifest.json`
+copied out of a container running the image built from the same tag.) An
+empty diff is the contract holding; any line is a version that differs.
+`smoke.sh` stays image-only — it asserts the image's whole toolchain,
+including the tools the bootstrap never installs — so it is not the way to
+check a VM; the comparison above is.
 
 ## Proof
 
 | Check | Where | What it proves |
 | --- | --- | --- |
-| `task test:bootstrap-remote` | `task verify`, and the `guard` job | The pin contract, offline: no second pin owner, every pin Renovate-extractable, the fetch list matches the directory, no denied host |
-| `remote-bootstrap.yml` → `bootstrap` | CI, stock `ubuntu:24.04` container | It runs: the tiers install inside the budget, the second run changes nothing, the yq and locale traps are resolved, nothing forbidden is installed, and `task check` then passes in a harmon-init checkout |
-| `images/devcontainer/smoke.sh` | the built image | The image and the bootstrap really did install the same tools — the shared scripts ship in the image and the manifest records their versions |
+| `task test:bootstrap-remote` | `task verify`, and the `guard` job | The pin contract, offline: no second pin owner (declared or typed into a download URL), every pin Renovate-extractable, both Node digests verified for the pinned Node, the fetch list matches the directory, no denied host, no forbidden tool named by the bootstrap or a tier script, and a non-release-tag `--ref` is refused |
+| `remote-bootstrap.yml` → `bootstrap` | CI, stock `ubuntu:24.04` container, seeded with `/usr/bin` ahead of `/usr/local/bin` and `LC_ALL=C` | It runs: the tiers install inside the budget, the second run performs no installs and changes no versions, `yq` and `task` resolve from `/usr/local/bin` and the effective locale is UTF-8 in a fresh login shell, nothing forbidden appeared on `PATH`, the VM manifest names the pinned versions, and `task check` then passes in a harmon-init checkout |
+| `images/devcontainer/smoke.sh` | the built image | The image really runs the shared scripts — they ship in the image beside `versions.env`, and its manifest records their versions for the comparison above |
 
 The CI job runs on the runner's native architecture, so `vars.CI_RUNS_ON` is
 what decides whether arm64 is exercised. On GitHub-hosted runners it is amd64;

@@ -9,8 +9,9 @@
 # the remote platform itself.
 #
 # Installing the CLI is not the same as configuring it: the managed Claude Code
-# settings and Codex configuration are #1404's unit, installed through
-# install-posture.sh. See docs/architecture/remote-environments.md.
+# settings and Codex configuration are #1404's unit, which adds them to the
+# image and to the bootstrap in one change. See
+# docs/architecture/remote-environments.md.
 set -euo pipefail
 
 # shellcheck source=./lib.sh

@@ -11,9 +11,11 @@ run-name: ${{ github.actor }} is proving the remote bootstrap on a stock Ubuntu 
 #               bootstrap pins nothing of its own.
 #   bootstrap — the BEHAVIOUR, which no metadata check can reach: the scripts
 #               really do install a working toolchain on a stock ubuntu:24.04
-#               VM, a second run changes nothing, the pinned mikefarah yq beats
-#               a pre-provisioned Python yq, and the default tiers fit the
-#               platform's roughly five-minute cached-setup budget.
+#               VM, a second run performs no installs and changes no versions,
+#               the pinned mikefarah yq beats a pre-provisioned Python yq by
+#               PATH order, a pre-existing LC_ALL=C does not survive, and the
+#               default tiers fit the platform's roughly five-minute
+#               cached-setup budget.
 #
 # `task test:bootstrap-remote` is deliberately NOT added to build.yml's lint
 # job as well. That job enumerates its steps by hand precisely so nothing runs
@@ -95,12 +97,18 @@ jobs:
         # the answers are quietly wrong. `/usr/bin/yq` is the PYTHON yq, which
         # shadows mikefarah yq v4 and makes every frontmatter read as invalid;
         # the locale is POSIX, which stops NBSP reading as whitespace. Seeding
-        # them here is what makes the assertions below mean something.
+        # them here is what makes the assertions below mean something — and
+        # the harder shapes of both are seeded too: /usr/local/bin present on
+        # PATH but BEHIND /usr/bin (membership without precedence), and
+        # LC_ALL=C both in the environment and in /etc/environment, which a
+        # `${LC_ALL:-C.UTF-8}` default would have preserved.
         run: |
           apt-get update
           apt-get install -y --no-install-recommends ca-certificates curl git sudo yq
+          echo "LC_ALL=C" >> /etc/environment
           echo "seeded yq: $(command -v yq)"
           echo "seeded LANG: ${LANG:-<unset>}"
+          echo "seeded /etc/environment:"; cat /etc/environment
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
@@ -108,9 +116,11 @@ jobs:
           # fails closed on a pull request with no merge-base.
           fetch-depth: 0
       - name: Run the bootstrap (core + agents) and time it
+        # Under the seeded traps: /usr/bin ahead of /usr/local/bin, LC_ALL=C.
         run: |
           start=$(date +%s)
-          ./images/devcontainer/bootstrap-remote.sh | tee /tmp/bootstrap-first.log
+          env PATH=/usr/bin:/bin:/usr/local/bin LC_ALL=C \
+            ./images/devcontainer/bootstrap-remote.sh | tee /tmp/bootstrap-first.log
           elapsed=$(( $(date +%s) - start ))
           {
             echo "### Remote bootstrap"
@@ -124,23 +134,25 @@ jobs:
             echo "::error::core+agents took ${elapsed}s, over the ${BOOTSTRAP_BUDGET_SECONDS}s budget"
             exit 1
           fi
-      - name: Run it again and prove the second run changed nothing
+      - name: Run it again and prove the second run performs no installs and changes no versions
         # "Exited 0 again" is not idempotence: a script that re-downloaded and
         # re-installed everything also exits 0. The bootstrap counts its own
-        # install sites, and this asserts that count.
+        # install sites (every apt transaction, download, npm/uv install,
+        # corepack shim and manifest write), and this asserts that count.
         run: |
-          ./images/devcontainer/bootstrap-remote.sh | tee /tmp/bootstrap-second.log
+          env PATH=/usr/bin:/bin:/usr/local/bin LC_ALL=C \
+            ./images/devcontainer/bootstrap-remote.sh | tee /tmp/bootstrap-second.log
           changes=$(sed -n 's/^HARMON_BOOTSTRAP_CHANGES=//p' /tmp/bootstrap-second.log | tail -1)
-          echo "| second run | ${changes} change(s) |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| second run | ${changes} install(s)/change(s) |" >> "$GITHUB_STEP_SUMMARY"
           if [ "${changes:-unset}" != "0" ]; then
-            echo "::error::the second run applied ${changes:-unknown} change(s); the bootstrap is not idempotent"
+            echo "::error::the second run performed ${changes:-unknown} install(s)/change(s); the bootstrap is not idempotent"
             sed -n '/^==> /p' /tmp/bootstrap-second.log
             exit 1
           fi
-      - name: Prove the opt-in browsers tier is idempotent too
+      - name: Prove the opt-in browsers tier performs no installs on a second run either
         # Deliberately outside the budget assertion above: Chromium is larger
         # than the rest of the toolchain put together, which is why the tier is
-        # opt-in in the first place. But "a second run changes nothing" is
+        # opt-in in the first place. But "a second run performs no installs" is
         # claimed for EVERY tier, and the default-tier check above cannot see
         # the browsers tier at all — so without this step that claim is simply
         # never tested, which is how it was wrong when first written.
@@ -149,9 +161,9 @@ jobs:
           ./images/devcontainer/bootstrap-remote.sh --tiers core,agents,browsers \
             | tee /tmp/bootstrap-browsers.log
           changes=$(sed -n 's/^HARMON_BOOTSTRAP_CHANGES=//p' /tmp/bootstrap-browsers.log | tail -1)
-          echo "| browsers tier, second run | ${changes} change(s) |" >> "$GITHUB_STEP_SUMMARY"
+          echo "| browsers tier, second run | ${changes} install(s)/change(s) |" >> "$GITHUB_STEP_SUMMARY"
           if [ "${changes:-unset}" != "0" ]; then
-            echo "::error::the browsers tier's second run applied ${changes:-unknown} change(s)"
+            echo "::error::the browsers tier's second run performed ${changes:-unknown} install(s)/change(s)"
             sed -n '/^==> /p' /tmp/bootstrap-browsers.log
             exit 1
           fi
@@ -175,13 +187,33 @@ jobs:
           done
           exit "$status"
       - name: Assert the environment traps are resolved
+        # By ORDER and by EFFECT: yq and task must resolve from /usr/local/bin
+        # in a fresh login shell that starts with /usr/bin first, and the
+        # effective LC_CTYPE (what `locale` reports after LC_ALL and LANG are
+        # applied) must be UTF-8 in a fresh login shell that starts with
+        # LC_ALL=C — a LANG check alone passes with the trap still armed.
         run: |
-          . /etc/profile.d/harmon-remote-env.sh
-          echo "yq resolves to: $(command -v yq)"
-          test "$(command -v yq)" = /usr/local/bin/yq
-          yq --version | grep -q mikefarah
+          login() { env -i HOME=/root PATH=/usr/bin:/bin LC_ALL=C bash -lc "$*"; }
+          echo "login shell yq: $(login command -v yq)"
+          test "$(login command -v yq)" = /usr/local/bin/yq
+          test "$(login command -v task)" = /usr/local/bin/task
+          login yq --version | grep -q mikefarah
+          echo "login shell locale:"; login locale
+          login locale | grep -Eq '^LC_CTYPE="?[^"]*(UTF-8|utf8)'
           test "$(sed -n 's/^LANG=//p' /etc/environment)" = C.UTF-8
-          locale | grep -Eq 'LANG=.*(UTF-8|utf8)'
+          test "$(sed -n 's/^LC_ALL=//p' /etc/environment)" = C.UTF-8
+      - name: Assert the VM manifest matches the pins it was built from
+        # The same generator the image runs, so image and VM are comparable
+        # file to file for a release tag (docs/architecture/remote-environments.md).
+        run: |
+          manifest=/usr/local/share/harmon-remote-env/manifest.json
+          jq -e '.schemaVersion == 1 and .image.name == "harmon-remote-env"' "$manifest"
+          . images/devcontainer/versions.env
+          test "$(jq -r '.tools.yq' "$manifest")" = "$YQ_VERSION"
+          test "$(jq -r '.tools.task' "$manifest")" = "$TASK_VERSION"
+          test "$(jq -r '.tools.node' "$manifest")" = "$NODE_VERSION"
+          test "$(jq -r '.tools.codex' "$manifest")" = "$CODEX_VERSION"
+          test "$(jq -r '.image.revision' "$manifest")" = "$GITHUB_SHA"
       - name: Run the repository's own lint gate with only what the bootstrap installed
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"

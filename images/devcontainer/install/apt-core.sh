@@ -41,25 +41,43 @@ xz-utils
 yamllint
 "
 
-harmon_log "apt: installing the core distribution packages"
+harmon_log "apt: the core distribution packages"
 export DEBIAN_FRONTEND=noninteractive
-apt-get update
-# Unquoted on purpose: $packages is a newline-separated literal list and "$@"
-# carries the caller's extras, each already one word. `${1+"$@"}` rather than
-# a bare `"$@"`: the latter is an unbound-variable error under `set -u` on
-# bash 3.2 when no extras were passed.
-# `apt-get install` exits 0 whether or not it did anything, so read its own
-# summary line to decide whether this counted as a change: that is what makes
-# the bootstrap's second run provably a no-op rather than merely green.
-# Piped through tee (under `pipefail`) rather than captured into a variable, so
-# a failing apt still prints its diagnosis before the script aborts.
-apt_log="$(mktemp)"
-trap 'rm -f "$apt_log"' EXIT
+
+# Ask dpkg first. `apt-get update` is a network round-trip and a rewrite of
+# /var/lib/apt/lists on every run, so a second run that needs no package must
+# not perform it: "a second run performs no installs and changes no versions"
+# includes the package index. The status string rather than `dpkg -s`'s exit
+# code: that exits 0 for a package removed but not purged. `${1+"$@"}` rather
+# than a bare `"$@"`: the latter is an unbound-variable error under `set -u`
+# on bash 3.2 when no extras were passed. Unquoted $packages on purpose: a
+# newline-separated literal list.
+missing=""
 # shellcheck disable=SC2086
-apt-get install -y --no-install-recommends $packages ${1+"$@"} 2>&1 | tee "$apt_log"
-apt_counts="$(sed -n 's/^\([0-9][0-9]*\) upgraded, \([0-9][0-9]*\) newly installed.*/\1+\2/p' "$apt_log" | head -1)"
-case "${apt_counts:-0+0}" in
-0+0) harmon_skip "apt: every requested package already present" ;;
-*) harmon_changed "apt: ${apt_counts} package(s) upgraded+installed" ;;
-esac
-rm -rf /var/lib/apt/lists/*
+for pkg in $packages ${1+"$@"}; do
+    case "$(dpkg-query -W -f='${Status}' "$pkg" 2>/dev/null)" in
+    "install ok installed") ;;
+    *) missing="${missing} ${pkg}" ;;
+    esac
+done
+if [ -z "$missing" ]; then
+    harmon_skip "apt: every requested package already present"
+else
+    apt-get update
+    # `apt-get install` exits 0 whether or not it did anything, so read its own
+    # summary line to decide whether this counted as a change: that is what
+    # makes the bootstrap's second run provably a no-op rather than merely
+    # green. Piped through tee (under `pipefail`) rather than captured into a
+    # variable, so a failing apt still prints its diagnosis before the script
+    # aborts.
+    apt_log="$(mktemp)"
+    trap 'rm -f "$apt_log"' EXIT
+    # shellcheck disable=SC2086
+    apt-get install -y --no-install-recommends $packages ${1+"$@"} 2>&1 | tee "$apt_log"
+    apt_counts="$(sed -n 's/^\([0-9][0-9]*\) upgraded, \([0-9][0-9]*\) newly installed.*/\1+\2/p' "$apt_log" | head -1)"
+    case "${apt_counts:-0+0}" in
+    0+0) harmon_skip "apt: every requested package already present" ;;
+    *) harmon_changed "apt: ${apt_counts} package(s) upgraded+installed" ;;
+    esac
+    rm -rf /var/lib/apt/lists/*
+fi

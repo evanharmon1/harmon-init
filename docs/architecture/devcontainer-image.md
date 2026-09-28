@@ -71,8 +71,13 @@ the image at all. So the pins are split by audience:
 
 Putting a pin in `versions.env` is a promise that both paths install that tool,
 and `scripts/test-bootstrap-remote.sh` enforces it in both directions: no
-install script or bootstrap may declare a version of its own, and the
-Dockerfile may not re-declare one that moved. Two of those installs changed
+install script or bootstrap may declare a version of its own (nor type one
+into a download URL), and the Dockerfile may not re-declare one that moved.
+Both paths end by running the same `generate-manifest.sh`, so for one release
+tag the image's `manifest.json` and a VM's
+`/usr/local/share/harmon-remote-env/manifest.json` can be diffed on the
+shared keys; the one-line comparison is in
+[remote-environments.md](remote-environments.md). Two of those installs changed
 source when they moved, because a shared script cannot reach a host one side is
 denied — Node now comes from the checksum-pinned `nodejs.org` tarball rather
 than `deb.nodesource.com`, and uv from its checksum-pinned GitHub release
