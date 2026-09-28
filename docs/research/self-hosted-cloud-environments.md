@@ -336,10 +336,13 @@ This is the blocker, and it is not a technical one.
   minutes and the third lane waited 20–30 minutes per round
   ([remote-implementer-environments.md][refenv], from harmon-init#1120).
   Self-hosting makes every remote lane one more contender for that 32 GB, so
-  the implication is a sizing decision: one runner per active owner at
-  `--capacity 1` (the documented minimum fleet), gates serialised behind the
-  same `flock` if capacity is ever raised, or a second host before a second
-  lane runs concurrently.
+  the implication is a sizing decision. Two bounds apply: the owner lock
+  gives one runner per active owner, and `--capacity 1` gives one runner per
+  *concurrent session* — an orchestrator dispatching three lanes at once
+  needs three runners, whatever the owner count. Size the fleet for the
+  expected concurrent session count, serialise gates behind the same `flock`
+  if capacity is ever raised, and add a second host before that count
+  exceeds what one box carries.
 - **An operational cost that is easy to overlook:** non-interactive dispatch
   (`claude -p … --environment`) authenticates with a claude.ai OAuth token,
   and "there is no long-lived CI token for this today. The scope that grants
@@ -579,6 +582,12 @@ checks against a running session:
 - egress is default-deny beyond Anthropic's required-hosts table;
 - the runner runs with `--confine-repo-settings enforce`,
   `--trust-workspace false`, and `--capacity 1`;
+- harmon-init's committed `.claude/settings.json` no longer grants access
+  outside the workspace under the runner: its `additionalDirectories` and
+  `sandbox.filesystem.allowRead` name three `../` sibling checkouts, which
+  `--confine-repo-settings enforce` refuses by the rule above, so the adapter
+  clones the related repositories inside the workspace (or drops the grants
+  for the runner) before the first session;
 - the trial below passes, as the issue's `[HUMAN]` criterion.
 
 The issue has to choose its fleet shape deliberately: a Coder workspace at
@@ -615,9 +624,10 @@ When it is run, these are the things only a real session can settle:
 - Do the managed-settings preconditions hold, and does the image's
   `/etc/claude-code/managed-settings.json` then govern the session? A session
   that can `sudo` its way to the file has no enforcement layer at all.
-- Does `--confine-repo-settings enforce` accept harmon-init's own committed
-  `.claude/settings.json`, or refuse it — and does the session still work
-  with `--trust-workspace false` dropping its grants?
+- With the sibling grants relocated as the follow-up requires (the committed
+  `.claude/settings.json` would otherwise be refused: its `../` sibling paths
+  are outside-workspace grants under `--confine-repo-settings enforce`), does
+  the session still work with `--trust-workspace false` dropping its grants?
 - Does a session push a branch and open a draft PR under the agent identity,
   with full `gh` (GraphQL included) working?
 
