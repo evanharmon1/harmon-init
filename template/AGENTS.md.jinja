@@ -119,10 +119,11 @@ local diff. Work in PR-sized units; a PR handed to a human is the deliverable.
 `/orchestrator` is the session's standing operating mode; it dispatches
 `/implement` (claimed issue → gates → draft PR),[% if use_codex_review %] `/review` (both confidence
 stages),[% endif %] and `/integrate` (draft → ready for review). `/claim` comes first —
-agents can invoke `/claim` when appropriate without asking for
-confirmation (or it can be user-invoked) to ensure the issue is verified and
-claimed before implementation begins; `/claim` owns the claim writes, and
-`/implement` never claims directly. There is **no `dev-loop` skill** — those stages *are* the loop;
+the primary session or orchestrator can invoke `/claim` when appropriate without
+asking for confirmation (or it can be user-invoked) to ensure the issue is verified
+and claimed before implementation begins (preserving `/claim`'s own preflight and
+target-confirmation boundaries; subagents never claim); `/claim` owns the claim
+writes, and `/implement` never claims directly. There is **no `dev-loop` skill** — those stages *are* the loop;
 retired names map on (`gauntlet` → `review`, `shepherd` → `integrate`), and a
 pin still shipping a predecessor runs it under this policy.
 The skills carry the procedure — round mechanics, adjudication records, review
