@@ -20,7 +20,9 @@ body:
       description: >-
         Optional. One `- [ ]` item per criterion; tag `[CI]`/`[HUMAN]` where
         useful. Leave blank to file without criteria — triage adds them
-        before this is dispatched.
+        before this is dispatched. Human-only follow-ups (secrets, settings,
+        manual QA) belong on the milestone's `(HUMAN):` or `(QA):` collector
+        issue, not here.
   - type: textarea
     id: context
     attributes:

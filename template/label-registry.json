@@ -71,11 +71,11 @@
     {
       "family": "initiative",
       "prefix": null,
-      "purpose": "Top-level parent issue horizon: a finite deliverable or a perennial area of ownership.",
+      "purpose": "Parent issue horizon: a finite deliverable, a perennial area of ownership, or a human-task collector.",
       "axis": "meta",
       "source": "inline",
-      "writers": ["human"],
-      "writer_note": "humans, at planning or grooming",
+      "writers": ["human", "agent"],
+      "writer_note": "humans, at planning or grooming; agents when filing a (HUMAN)/(QA) collector or an approved breakdown",
       "readers": "humans, saved views",
       "lifecycle": "durable",
       "lifecycle_note": "applied to a parent while its role is current; removed or changed when its horizon changes",
@@ -89,7 +89,28 @@
         },
         {
           "value": "umbrella",
-          "description": "Open-ended parent issue for an enduring area, topic, or team"
+          "description": "Open-ended parent for an enduring area, topic, or team, or a (HUMAN)/(QA) collector"
+        }
+      ]
+    },
+    {
+      "family": "human-work",
+      "prefix": null,
+      "purpose": "Work only a human can do or verify, kept off the agent dispatch path.",
+      "axis": "meta",
+      "source": "inline",
+      "writers": ["human", "agent"],
+      "writer_note": "whoever files the human-only issue, human or agent",
+      "readers": "humans, saved views; agents, to skip dispatch",
+      "lifecycle": "durable",
+      "lifecycle_note": "applied while only a human can do the work; removed if it becomes dispatchable",
+      "exclusive": false,
+      "provision": true,
+      "color": "FBCA04",
+      "values": [
+        {
+          "value": "human",
+          "description": "Human-only work: actions or QA; never dispatched to an agent"
         }
       ]
     },
