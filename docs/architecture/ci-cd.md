@@ -118,9 +118,14 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
   release into a verified pin-and-sync PR (see below).
 - `remote-bootstrap.yml` — **root-only**: proves
   `images/devcontainer/bootstrap-remote.sh` on a stock `ubuntu:24.04` container.
-  Two jobs, because they prove different things. `guard` runs
-  `task test:bootstrap-remote` — the offline pin contract, also part of
-  `verify`. `bootstrap` runs the thing: it seeds the two traps a real remote VM
+  One job, because the offline half belongs everywhere. The pin contract
+  (`task test:bootstrap-remote`) runs unconditionally in `build.yml`'s `lint`
+  job and in `verify`, so a change to any input it reads — the install scripts,
+  the pins, or the allowlist tables in
+  [remote-environments.md](remote-environments.md) it derives its host sets
+  from — is checked on every pull request rather than behind a path filter that
+  had to be re-derived by hand whenever the guard grew an input. `bootstrap`
+  runs the thing: it seeds the two traps a real remote VM
   has (a Python `yq` at `/usr/bin/yq`, a POSIX locale), installs the core and
   agents tiers against a five-minute budget recorded in the job summary, runs
   the bootstrap a second time and requires **zero new installs** and a
