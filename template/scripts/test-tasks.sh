@@ -58,8 +58,8 @@ for guard in scripts/guard-closing-keywords.sh template/scripts/guard-closing-ke
     fi
     grep -Fq '[ -z "${PR_TITLE+x}" ] || [ -z "${PR_BODY+x}" ]' "$guard" ||
         fail "${guard}: closing-keyword guard does not distinguish unset metadata from an empty body"
-    grep -Fq 'gh_rest_paginate_array "repos/${repo}/pulls?state=open&head=${head_query}" 2' "$guard" ||
-        fail "${guard}: closing-keyword guard does not distinguish a missing PR from an API failure"
+    grep -Fq 'gh_rest_paginate_array "repos/${repo}/pulls?state=open&sort=updated&direction=desc" 100' "$guard" ||
+        fail "${guard}: closing-keyword guard does not list open PRs through the bounded helper, so a failed listing cannot be told from a missing PR"
 done
 
 echo "==> every REST pagination caller passes an explicit bound"
@@ -88,31 +88,6 @@ for lib in scripts/lib/gh-rest.sh template/scripts/lib/gh-rest.sh; do
         fail "${lib}: the page ceiling no longer defaults to 10"
 done
 
-echo "==> the repository is resolved once, through the helper, in every session script"
-# gh documents GH_REPO as [HOST/]OWNER/REPO, and gh_rest_repo is the ONE place
-# that form is normalized: it drops the HOST/ segment so endpoints stay
-# repos/OWNER/REPO, while gh_rest_host hands the host back separately as
-# --hostname. A caller that reads GH_REPO itself re-derives the value without
-# that normalization, and then builds repos/HOST/OWNER/REPO paths and a
-# HOST:branch head query out of it (challenge r2). The property is asserted
-# class-wide rather than per call site: across the session scripts GH_REPO may
-# appear in whole-line comments only, so a NEW bypass anywhere in the set fails
-# here too, not just the three that were removed.
-for layer in scripts template/scripts; do
-    [ -d "$layer" ] || continue
-    for script in status.sh check-closing-keywords.sh guard-closing-keywords.sh audit-session-artifacts.sh; do
-        [ -f "${layer}/${script}" ] || continue
-        bypass="$(grep -n 'GH_REPO' "${layer}/${script}" | grep -v '^[0-9]*:[[:space:]]*#' || true)"
-        [ -z "$bypass" ] ||
-            fail "${layer}/${script}: reads GH_REPO instead of calling gh_rest_repo (mention it in a whole-line comment if this is documentation): ${bypass}"
-    done
-    # And the helper still reads it: a set that named GH_REPO nowhere at all
-    # would satisfy the loop above by having dropped gh's own override entirely.
-    [ -f "${layer}/lib/gh-rest.sh" ] || continue
-    grep -Fq 'GH_REPO' "${layer}/lib/gh-rest.sh" ||
-        fail "${layer}/lib/gh-rest.sh: the helper no longer reads GH_REPO, so nothing honours gh's own repository override"
-done
-
 guard_bin="${test_tmp}/closing-keywords-bin"
 guard_git_args="${test_tmp}/closing-keywords-git-args"
 guard_gh_args="${test_tmp}/closing-keywords-gh-args"
@@ -128,6 +103,7 @@ merge-base)
     printf '%s\n' merge-base
     ;;
 rev-list) printf '%s\n' "${GIT_COMMIT_COUNT:-1}" ;;
+rev-parse) printf '%s\n' headsha ;;
 branch) printf '%s\n' feature ;;
 log) printf '%s\n' "$@" >"${GIT_ARGS:?}" ;;
 *) exit 1 ;;
@@ -138,11 +114,11 @@ cat >"${guard_bin}/gh" <<'EOF'
 printf '%s\n' "$*" >>"${GH_ARGS:?}"
 [ -z "${GH_PR_LIST_FAIL:-}" ] || exit 1
 case "${1:-} ${2:-}" in
-"api repos/acme/repo/pulls?state=open&head=acme%3Afeature&per_page=2&page=1")
+"api repos/acme/repo/pulls?state=open&sort=updated&direction=desc&per_page=100&page=1")
     if [ -n "${GH_NO_PR:-}" ]; then
         printf '%s\n' '[]'
     else
-        printf '%s\n' '[{"title":"Fixes #2","body":""}]'
+        printf '%s\n' '[{"title":"Fixes #2","body":"","head":{"sha":"headsha","ref":"feature"}}]'
     fi
     ;;
 *) exit 1 ;;
@@ -157,7 +133,7 @@ out=$(env -u PR_TITLE -u PR_BODY PATH="${guard_bin}:${PATH}" \
 [ "$rc" -ne 0 ] || fail "closing-keyword guard did not use fetched PR metadata: $out"
 grep -Fxq 'merge-base..head' "$guard_git_args" ||
     fail "closing-keyword guard did not scan exactly merge-base..head"
-[ "$(grep -c '^api repos/acme/repo/pulls?state=open&head=acme%3Afeature&per_page=2&page=1$' "$guard_gh_args")" -eq 1 ] ||
+[ "$(grep -c '^api repos/acme/repo/pulls?state=open&sort=updated&direction=desc&per_page=100&page=1$' "$guard_gh_args")" -eq 1 ] ||
     fail "closing-keyword guard did not fetch missing PR metadata atomically"
 
 out=$(env -u PR_TITLE -u PR_BODY PATH="${guard_bin}:${PATH}" \

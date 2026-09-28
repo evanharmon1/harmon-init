@@ -79,10 +79,25 @@ cp "${rest_lib}" "${TMP}/enterprise/scripts/lib/gh-rest.sh"
 git -C "${TMP}/enterprise" init -q
 git -C "${TMP}/enterprise" remote add origin git@ghe.example.com:owner/repo.git
 
+# A board repo whose owner AND name carry hyphens — the shape of this repository
+# itself. The resolved OWNER/REPO used to be validated against a class in which
+# `.-/` was the RANGE 0x2E-0x2F, so `-` was rejected, gh_rest_repo returned 1,
+# and the `if` guarding the open-PR read below simply skipped it: `task
+# status:gh` reported no open PRs at all, silently (challenge r3).
+mkdir -p "${TMP}/hyphenated/scripts/lib"
+cp "${status}" "${TMP}/hyphenated/scripts/status.sh"
+cp "${scopes_lib}" "${TMP}/hyphenated/scripts/gh-scopes.sh"
+cp "${output_lib}" "${TMP}/hyphenated/scripts/lib/output.sh"
+cp "${rest_lib}" "${TMP}/hyphenated/scripts/lib/gh-rest.sh"
+: >"${TMP}/hyphenated/scripts/setup-github-project.sh"
+git -C "${TMP}/hyphenated" init -q
+git -C "${TMP}/hyphenated" remote add origin git@github.com:my-org/harmon-init.git
+
 WITH_BOARD="${TMP}/with-board/scripts/status.sh"
 NO_BOARD="${TMP}/no-board/scripts/status.sh"
 SKILLS_ONLY="${TMP}/skills-only/scripts/status.sh"
 ENTERPRISE="${TMP}/enterprise/scripts/status.sh"
+HYPHENATED="${TMP}/hyphenated/scripts/status.sh"
 WITH_CODEX="${TMP}/with-codex/scripts/status.sh"
 CREDS_BOARD="${TMP}/creds-board/scripts/status.sh"
 ORG_REPO="${TMP}/org-repo/scripts/status.sh"
@@ -712,6 +727,20 @@ grep -q '^api repos/owner/repo/pulls?state=open&sort=updated&direction=desc&per_
     fail "Enterprise REST reads did not carry the remote's host: $(grep '^api ' "${STUB_CALLS}" | tr '\n' ';')"
 grep -q '^api repos/ghe.example.com/' "${STUB_CALLS}" &&
     fail "an Enterprise host leaked into the endpoint path: $(grep '^api ' "${STUB_CALLS}" | tr '\n' ';')"
+unset STUB_CALLS
+
+echo "==> a hyphenated owner and name still reach the open-PR read"
+# The two fixtures above are hyphen-free, which is why neither could see the
+# character-class defect: this read is the one that silently vanished.
+STUB_CALLS="${TMP}/hyphenated-calls.txt"
+export STUB_CALLS
+: >"${STUB_CALLS}"
+out="$(run_gh_section project "${HYPHENATED}")"
+case "$out" in
+*"not authenticated"*) fail "the hyphenated fixture's section did not render: ${out}" ;;
+esac
+grep -q '^api repos/my-org/harmon-init/pulls?state=open&sort=updated&direction=desc&per_page=10&page=1$' "${STUB_CALLS}" ||
+    fail "a hyphenated repository never reached the open-PR read: $(grep '^api ' "${STUB_CALLS}" | tr '\n' ';')"
 unset STUB_CALLS
 
 echo "==> GH_HOST still overrides the repository's remote"

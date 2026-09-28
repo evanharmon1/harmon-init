@@ -72,6 +72,7 @@ set -euo pipefail
 case "${1:-}" in
 merge-base) printf '%s\n' base ;;
 rev-list) printf '%s\n' 0 ;;
+rev-parse) printf '%s\n' localhead ;;
 log) ;;
 branch) printf '%s\n' feature ;;
 *) exit 64 ;;
@@ -103,6 +104,14 @@ graphql | search/* | repositories/*)
     exit 1
     ;;
 *'&page=2'*)
+    printf '[]\n'
+    ;;
+repos/acme/repo/pulls\?*head=*)
+    # GitHub's `head` filter is OWNER:ref matched against the HEAD repository's
+    # owner, so a filter built from the BASE owner matches nothing a fork opened.
+    # Answering it the way GitHub would is what makes the fork fixture below
+    # fail if that query shape ever comes back.
+    [ "${GH_STUB_FAIL:-0}" = 0 ] || exit 1
     printf '[]\n'
     ;;
 repos/acme/repo/pulls\?*)
@@ -238,6 +247,36 @@ out="$(cd "$tmp/remote-fixture" && PATH="$tmp/bin-gh:$PATH" bash -c \
 grep -qx 'api repos/acme/repo/issues/1' "$GH_STUB_CALLS" ||
     fail "github.com remote must not add --hostname, got: $(cat "$GH_STUB_CALLS")"
 
+echo '==> hyphenated owners and names resolve (this repository is one)'
+# The resolved OWNER/REPO was validated against `*[!A-Za-z0-9_.-/]*`, in which
+# `.-/` is the RANGE 0x2E-0x2F: it admitted `/` and rejected `-`, so EVERY
+# hyphenated repository failed resolution — evanharmon1/harmon-init included,
+# which cost `task guard:closing-keywords` its PR metadata and `task status:gh`
+# its whole open-PR section (challenge r3). Every fixture above is hyphen-free,
+# which is exactly why they missed it; these cover a hyphen in the name, in the
+# owner, and in both, across the remote URL forms.
+for spec in \
+    'git@github.com:evanharmon1/harmon-init.git|evanharmon1/harmon-init github.com' \
+    'https://github.com/acme/harmon-init.git|acme/harmon-init github.com' \
+    'ssh://git@ghe.example.com/my-org/widget.git|my-org/widget ghe.example.com' \
+    'git@ghe.example.com:my-org/harmon-init.git|my-org/harmon-init ghe.example.com'; do
+    form="${spec%%|*}"
+    want="${spec#*|}"
+    rm -rf "$tmp/remote-fixture"
+    git init -q "$tmp/remote-fixture"
+    git -C "$tmp/remote-fixture" remote add origin "$form"
+    out="$(cd "$tmp/remote-fixture" && PATH="$tmp/bin-gh:$PATH" bash -c \
+        "unset GH_REPO GH_HOST; . '$repo_root/scripts/lib/gh-rest.sh'; echo \"\$(gh_rest_repo) \$(gh_rest_host)\"")" ||
+        fail "hyphenated remote ${form} read failed"
+    [ "$out" = "$want" ] || fail "hyphenated remote ${form} resolved to '${out}', expected '${want}'"
+done
+# The same shape arriving through gh's own [HOST/]OWNER/REPO override.
+out="$(PATH="$tmp/bin:$PATH" GH_REPO=ghe.example.com/my-org/harmon-init bash -c \
+    '. scripts/lib/gh-rest.sh; echo "$(gh_rest_repo) $(gh_rest_host)"')" ||
+    fail 'hyphenated host-qualified GH_REPO read failed'
+[ "$out" = 'my-org/harmon-init ghe.example.com' ] ||
+    fail "hyphenated host-qualified GH_REPO resolved to '${out}'"
+
 proxy_checker() {
     local title="$1" rc=0
     : >"$tmp/proxy-commits"
@@ -259,15 +298,44 @@ proxy_guard() {
         BASE_SHA=HEAD HEAD_SHA=HEAD "$guard_driver" >"$tmp/driver-out" 2>"$tmp/driver-err" || rc=$?
     echo "$rc"
 }
-[ "$(proxy_guard '[{"title":"fix: closes #1","body":""}]')" = 0 ] ||
+[ "$(proxy_guard '[{"title":"fix: closes #1","body":"","head":{"sha":"localhead","ref":"feature"}}]')" = 0 ] ||
     fail "REST guard completed-issue verdict should pass: $(cat "$tmp/driver-err")"
-[ "$(proxy_guard '[{"title":"fix: closes #2","body":""}]')" = 1 ] ||
+[ "$(proxy_guard '[{"title":"fix: closes #2","body":"","head":{"sha":"localhead","ref":"feature"}}]')" = 1 ] ||
     fail "REST guard unfinished-issue verdict should fail: $(cat "$tmp/driver-err")"
 GH_STUB_FAIL=1
 export GH_STUB_FAIL
 [ "$(proxy_guard '[]')" = 2 ] ||
     fail "REST guard metadata failure must be indeterminate: $(cat "$tmp/driver-err")"
 unset GH_STUB_FAIL
+
+echo '==> a fork PR is selected by head identity, not by the base owner'
+# The listing used to be filtered server side with `head=OWNER:branch` built from
+# the BASE repository's owner. GitHub matches that against the HEAD repository's
+# owner, so a PR opened from a fork matched nothing: the guard fell through to
+# its inert placeholder metadata and scanned the commits against a title and
+# body that were never the PR's (challenge r3). The gh stub answers any
+# head-filtered listing with [], the way GitHub answers one naming the wrong
+# owner, so a regression to that query shape fails every case below.
+fork_head='"head":{"sha":"localhead","ref":"feature","repo":{"full_name":"contributor/repo"}}'
+fork_base='"base":{"repo":{"full_name":"acme/repo"}}'
+[ "$(proxy_guard "[{\"title\":\"fix: closes #2\",\"body\":\"\",${fork_head},${fork_base}}]")" = 1 ] ||
+    fail "a fork PR's real title was not used: $(cat "$tmp/driver-err")"
+grep -q 'inert pre-PR metadata' "$tmp/driver-err" &&
+    fail "a fork PR was demoted to placeholder metadata: $(cat "$tmp/driver-err")"
+# Its body too, not only its title: only the real one carries this reference.
+[ "$(proxy_guard "[{\"title\":\"fix: x\",\"body\":\"Resolves #2\",${fork_head},${fork_base}}]")" = 1 ] ||
+    fail "a fork PR's real body was not used: $(cat "$tmp/driver-err")"
+# A head that has since moved falls back to the branch name — the fork-blind
+# matching `gh pr list --head "$branch"` did before the REST rewrite.
+moved_head='"head":{"sha":"a1b2c3d4","ref":"feature","repo":{"full_name":"contributor/repo"}}'
+[ "$(proxy_guard "[{\"title\":\"fix: closes #2\",\"body\":\"\",${moved_head}}]")" = 1 ] ||
+    fail "a fork PR whose head moved was not matched by branch: $(cat "$tmp/driver-err")"
+# Two PRs on one branch name stay fail-closed rather than picking one.
+other_head='"head":{"sha":"e5f6a7b8","ref":"feature","repo":{"full_name":"other/repo"}}'
+[ "$(proxy_guard "[{\"title\":\"fix: closes #1\",\"body\":\"\",${moved_head}},{\"title\":\"fix: closes #2\",\"body\":\"\",${other_head}}]")" = 2 ] ||
+    fail "two PRs matching one branch must stay indeterminate: $(cat "$tmp/driver-err")"
+grep -q 'multiple open PRs match branch' "$tmp/driver-err" ||
+    fail "the multiple-match branch reported the wrong reason: $(cat "$tmp/driver-err")"
 
 echo '==> a host-qualified GH_REPO reaches the guard only through the helper'
 # End-to-end, through the same stub: gh documents GH_REPO as [HOST/]OWNER/REPO,
@@ -278,12 +346,12 @@ echo '==> a host-qualified GH_REPO reaches the guard only through the helper'
 # answers repos/acme/repo/pulls alone, so a bypass cannot reach a verdict here.
 : >"$GH_STUB_CALLS"
 rc=0
-GH_STUB_PR_JSON='[{"title":"fix: closes #1","body":""}]' PATH="$tmp/bin:$PATH" \
+GH_STUB_PR_JSON='[{"title":"fix: closes #1","body":"","head":{"sha":"localhead","ref":"feature"}}]' PATH="$tmp/bin:$PATH" \
     GH_REPO=ghe.example.com/acme/repo BASE_SHA=HEAD HEAD_SHA=HEAD \
     "$guard_driver" >"$tmp/driver-out" 2>"$tmp/driver-err" || rc=$?
 [ "$rc" = 0 ] ||
     fail "host-qualified GH_REPO guard run exited ${rc}: $(cat "$tmp/driver-err")"
-grep -qx 'api repos/acme/repo/pulls?state=open&head=acme%3Afeature&per_page=2&page=1 --hostname ghe.example.com' \
+grep -qx 'api repos/acme/repo/pulls?state=open&sort=updated&direction=desc&per_page=100&page=1 --hostname ghe.example.com' \
     "$GH_STUB_CALLS" ||
     fail "host-qualified GH_REPO did not reach the PR lookup normalized: $(grep '^api ' "$GH_STUB_CALLS" | tr '\n' ';')"
 grep -q 'repos/ghe.example.com/' "$GH_STUB_CALLS" &&

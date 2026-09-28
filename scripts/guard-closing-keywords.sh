@@ -32,8 +32,13 @@
 #
 #   PR_TITLE="fix: …" PR_BODY="$(cat body.md)" task guard:closing-keywords
 #
-# If either is unset, the open PR for the current branch supplies both. Before
-# a PR exists, a SUCCESSFUL empty listing substitutes inert placeholder
+# If either is unset, the open PR for the current branch supplies both. That PR
+# is found by head IDENTITY rather than by a head-owner query: the bounded
+# open-PR listing is selected on .head.sha == the local head this run scanned,
+# then on .head.ref == the branch name. A `head=OWNER:branch` filter built from
+# the BASE repository's owner matches no PR opened from a fork, which silently
+# demoted a real fork PR to the placeholder metadata below (challenge r3).
+# Before a PR exists, a SUCCESSFUL empty listing substitutes inert placeholder
 # metadata so the commit messages are still scanned; an API failure stays
 # indeterminate rather than passing. Commit messages are read as data, never
 # executed.
@@ -70,11 +75,19 @@ git log --format=%B "${merge_base}..${head_sha}" >"$commits_file"
 
 if [ -z "${PR_TITLE+x}" ] || [ -z "${PR_BODY+x}" ]; then
     branch="$(git branch --show-current)"
+    # The head of the very range scanned above, as an object id: identity this
+    # checkout HAS, never an owner it has to guess. Empty (a rev that does not
+    # resolve) simply leaves the branch-name fallback below to do the matching.
+    head_oid="$(git rev-parse --verify --quiet "${head_sha}^{commit}" || true)"
     repo="$(gh_rest_repo 2>/dev/null || true)"
-    owner="${repo%%/*}"
-    head_query="$(gh_rest_urlencode "${owner}:${branch}")"
     if [ -z "$branch" ] || [ -z "$repo" ] ||
-        ! pr_json="$(gh_rest_paginate_array "repos/${repo}/pulls?state=open&head=${head_query}" 2 | jq -s 'add | map({title, body})')"; then
+        ! pr_json="$(gh_rest_paginate_array "repos/${repo}/pulls?state=open&sort=updated&direction=desc" 100 |
+            jq -s --arg head "$head_oid" --arg branch "$branch" '
+                (add // []) as $open
+                | [$open[] | select($head != "" and .head.sha == $head)] as $exact
+                | (if ($exact | length) > 0 then $exact
+                   else [$open[] | select(.head.ref == $branch)] end)
+                | map({title, body})')"; then
         echo "guard:closing-keywords: could not list PR metadata for the current branch; supply both PR_TITLE and PR_BODY" >&2
         exit 2
     fi

@@ -53,8 +53,11 @@ gh_rest_repo() {
     name="${path##*/}"
     path="${path%/*}"
     owner="${path##*/}"
+    # The hyphen is LAST in the class deliberately: `.-/` is the RANGE
+    # 0x2E-0x2F, which admits `/` and rejects every hyphenated owner or name —
+    # this repository's own included (challenge r3).
     case "${owner}/${name}" in
-    */ | /* | *[!A-Za-z0-9_.-/]*) return 1 ;;
+    */ | /* | *[!A-Za-z0-9_./-]*) return 1 ;;
     esac
     printf '%s/%s\n' "${owner}" "${name}"
 }
@@ -102,12 +105,6 @@ gh_rest_host() {
     '' | *[!A-Za-z0-9.-]*) return 0 ;;
     esac
     printf '%s\n' "${host}"
-}
-
-# gh_rest_urlencode VALUE — encode one query value without external language
-# runtimes beyond jq, which every caller already requires for JSON handling.
-gh_rest_urlencode() {
-    jq -rn --arg value "$1" '$value | @uri'
 }
 
 # gh_rest_api ENDPOINT [gh-api options...] — one bounded REST read. Callers may
