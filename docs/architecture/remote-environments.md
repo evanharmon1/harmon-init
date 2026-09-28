@@ -40,7 +40,7 @@ exits 0 and the answers are quietly wrong:
 
 | Trap | What breaks | How the bootstrap answers it |
 | --- | --- | --- |
-| `/usr/bin/yq` is the **Python** yq | It shadows mikefarah yq v4, and every frontmatter then reads as invalid | Installs into `/usr/local/bin` and puts that directory **first** on `PATH` by order, not membership — the `profile.d` drop-in removes every existing occurrence and prepends it — then asserts that `yq` and `task` *resolve* from it in the running process, which sourced that very drop-in. What the bootstrap does not own it reports: bash reads `~/.profile` *after* `/etc/profile`, and a stock one prepends `~/.local/bin`, so a `yq` there still shadows the pinned one in that user's login shells — the closing check runs the invoking user's real login shell *as that user* (via `runuser`, the user named by `SUDO_USER`; skipped with a note where `runuser` is missing, never run as root with the user's `HOME`, since a login shell executes `~/.profile`) and prints a warning naming the shadowing path and the remedy, and exits 0. Root's own `HOME` is the running uid's passwd home on every entry path — `sudo -E` preserves the caller's, and the bootstrap replaces it before any tier runs — so no probe and no install ever sources or writes under the caller's home |
+| `/usr/bin/yq` is the **Python** yq | It shadows mikefarah yq v4, and every frontmatter then reads as invalid | Installs into `/usr/local/bin` and puts that directory **first** on `PATH` by order, not membership, for bash and POSIX-sh login shells — the `/etc/profile.d` drop-in removes every existing occurrence and prepends it — then asserts that `yq` and `task` *resolve* from it in the running process, which sourced that very drop-in. What the bootstrap does not own it reports: bash reads `~/.profile` *after* `/etc/profile`, and a stock one prepends `~/.local/bin`, so a `yq` there still shadows the pinned one in that user's login shells — the closing check runs the invoking user's real login shell *as that user* (via `runuser`, the user named by `SUDO_USER`; skipped with a note where `runuser` is missing, never run as root with the user's `HOME`, since a login shell executes `~/.profile`) and prints a warning naming the shadowing path and the remedy, and exits 0. Root's own `HOME` is the running uid's passwd home on every entry path — `sudo -E` preserves the caller's, and the bootstrap replaces it before any tier runs — so no probe and no install ever sources or writes under the caller's home |
 | The locale is POSIX (`LANG` unset), or `LC_ALL=C` is already set | NBSP stops reading as whitespace, so Unicode-title checks silently pass what they should reject; a pre-existing `LC_ALL=C` overrides any `LANG` set beside it | Sets `LANG=C.UTF-8` in `/etc/environment` (and rewrites an `LC_ALL=` line there when one exists), **forces** `LANG` and `LC_ALL` to `C.UTF-8` in the `profile.d` drop-in rather than defaulting them, and asserts the *effective* locale — `locale` must report a UTF-8 `LC_CTYPE`, in the process and in a fresh login shell seeded with `LC_ALL=C` |
 
 Ubuntu's **git 2.43** is kept deliberately: it is the git the shared image
@@ -53,9 +53,34 @@ git the image does not have.
 Probed through the environment's egress proxy on 2026-09-27. The core and
 agents tiers download only from the allowed column.
 
-| Allowed | Denied |
+| Allowed host | Why the bootstrap reaches it |
 | --- | --- |
-| GitHub release assets (`release-assets.githubusercontent.com`), `raw.githubusercontent.com`, `nodejs.org`, `archive.ubuntu.com`, `registry.npmjs.org`, `pypi.org`, `proxy.golang.org`, `releases.hashicorp.com` | `deb.nodesource.com`, `astral.sh`, `keybase.io`, `ppa.launchpadcontent.net`, `cli.github.com`, `dl.google.com` |
+| `github.com` | the origin of every GitHub release download: `github.com/<owner>/<repo>/releases/download/…` answers **302**, so it is contacted for task, gh, uv, gitleaks and the rest even though the bytes come from the next host |
+| `release-assets.githubusercontent.com` | the 302 target that actually serves GitHub release assets |
+| `raw.githubusercontent.com` | the standalone entry fetches `versions.env`, `lib.sh` and the tier scripts from the release tag |
+| `nodejs.org` | the checksum-pinned Node tarball |
+| `archive.ubuntu.com` | the apt packages of the core tier |
+| `registry.npmjs.org` | `npm install -g` for the npm-installed tools (codex, markdownlint-cli2, Playwright) |
+| `pypi.org` | package **metadata** for `uv tool install` — the wheels come from the next host |
+| `files.pythonhosted.org` | the wheels `uv tool install` actually downloads (semgrep, copier) |
+| `proxy.golang.org` | probed allowed; no tier reaches it today |
+| `releases.hashicorp.com` | probed allowed; no tier reaches it today (Terraform is image-only) |
+| `cdn.playwright.dev` | Chromium for the **opt-in** browsers tier only; the default tiers never contact it |
+
+| Denied host | What it would have been for |
+| --- | --- |
+| `deb.nodesource.com` | the NodeSource apt repository (Node now comes from `nodejs.org`) |
+| `astral.sh` | the uv installer script (uv now comes from its GitHub release) |
+| `keybase.io` | HashiCorp's PGP key for the Terraform install (image-only) |
+| `ppa.launchpadcontent.net` | the git-core PPA (Ubuntu's git 2.43 is kept) |
+| `cli.github.com` | the gh apt repository (gh comes from its GitHub release) |
+| `dl.google.com` | Google's apt repositories |
+
+`scripts/test-bootstrap-remote.sh` keeps this table honest in both directions:
+every host the install scripts and the bootstrap contact — literally in a URL,
+or through `apt-get`, `npm install`, `uv tool install` and Playwright's browser
+download — must appear in the allowed table, and no denied host may appear in
+any install script or the Dockerfile.
 
 Two of the denials moved the **image** as well as the bootstrap, because a
 shared script cannot reach a host one side is denied: Node now comes from the
@@ -181,9 +206,12 @@ a byte-identical manifest on the second run, because a script that
 re-downloaded and re-installed everything also exits 0.
 
 One residual is stated rather than solved: the bootstrap guarantees `PATH`
-precedence for the system profile and its own process, and can only *report*
-a user-level shadow such as `~/.local/bin/yq`, because that user's own profile
-runs last.
+precedence for bash and POSIX-sh login shells (the ones that read
+`/etc/profile.d`) and for its own process, and can only *report* a user-level
+shadow such as `~/.local/bin/yq`, because that user's own profile runs last.
+zsh login shells on Ubuntu do not read `/etc/profile.d` at all, so a user
+whose login shell is zsh must source `/etc/profile.d/harmon-remote-env.sh` or
+put `/usr/local/bin` first on `PATH` themselves.
 
 The agent posture (managed Claude Code settings, Codex configuration) is not
 installed by the bootstrap today: #1404 adds the agent-posture install to both

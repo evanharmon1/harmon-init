@@ -518,17 +518,20 @@ for path in [BOOTSTRAP] + sorted(INSTALL.glob("*.sh")):
 # `$(getent … | cut …)`. Under `set -euo pipefail` a miss (getent exits 2 for
 # a uid or name with no entry) fails the pipeline, the substitution, and with
 # it the script, so the `${…:-/root}` written on the next line never runs.
-# Fixed once (challenge r1-7), reintroduced by round 4, refixed (r5-5): every
-# getent substitution in the bootstrap must end in `|| true` so the fallback
-# it is paired with is reachable.
-for line_no, line in enumerate(bootstrap_text.splitlines(), 1):
-    if line.lstrip().startswith("#") or "$(getent" not in line:
-        continue
-    if "|| true)" not in line:
-        fail(
-            f"{BOOTSTRAP}:{line_no}: getent substitution without `|| true` — under pipefail a "
-            "miss aborts the script before its :-/root fallback runs (r1-7/r5-5)"
-        )
+# Fixed once (challenge r1-7), reintroduced by round 4, refixed (r5-5), then
+# found a fourth time in lib.sh's cache cleanup (review r1-3) because this
+# check read the bootstrap alone: every getent substitution in the bootstrap
+# AND in the shared install scripts must end in `|| true` so the fallback it
+# is paired with is reachable.
+for path in [BOOTSTRAP] + sorted(INSTALL.glob("*.sh")):
+    for line_no, line in enumerate(path.read_text().splitlines(), 1):
+        if line.lstrip().startswith("#") or "$(getent" not in line:
+            continue
+        if "|| true)" not in line:
+            fail(
+                f"{path}:{line_no}: getent substitution without `|| true` — under pipefail a "
+                "miss aborts the script before its :-/root fallback runs (r1-7/r5-5/review r1-3)"
+            )
 
 # ── 9. the never-installed set ──────────────────────────────────────────────
 NEVER = {"op", "brew", "tailscale", "tailscaled"}
@@ -562,6 +565,64 @@ for label, text in ((str(DOCKERFILE), dockerfile_text),) + tuple(
         for i, line in enumerate(text.splitlines(), 1):
             if host in line and not line.lstrip().startswith("#"):
                 fail(f"{label}:{i}: contacts {host}, which the remote adapter's network level denies")
+
+# ── 10b. …and every host the tiers DO reach is on the documented allowlist ──
+# The positive direction of 10. The allowlist in remote-environments.md is what
+# an adapter's network policy is configured from, so a host the scripts contact
+# and the table omits is an install that fails only on the VM — and the
+# omissions are the indirect ones: github.com (the 302 origin of every release
+# download; release-assets.githubusercontent.com is only the target),
+# files.pythonhosted.org (uv downloads wheels there; pypi.org is metadata only)
+# and cdn.playwright.dev (the browsers tier's Chromium). Literal URL hosts are
+# extracted from the scripts; the hosts a package manager reaches on the
+# script's behalf are derived from the command that invokes it.
+DOC = pathlib.Path("docs/architecture/remote-environments.md")
+URL_HOST = re.compile(r"https?://([A-Za-z0-9.-]+\.[A-Za-z]{2,})")
+IMPLIED_HOSTS = (
+    (re.compile(r"\bapt-get\s+(?:\S+\s+)*install\b"), ("archive.ubuntu.com",)),
+    (re.compile(r"\bnpm\s+install\b"), ("registry.npmjs.org",)),
+    (re.compile(r"\buv\s+tool\s+install\b"), ("pypi.org", "files.pythonhosted.org")),
+    (re.compile(r"\bplaywright\S*\s+install\b"), ("cdn.playwright.dev",)),
+    (re.compile(r"github\.com/[^/\s\"']+/[^/\s\"']+/releases/download/"), ("release-assets.githubusercontent.com",)),
+)
+reached = {}
+for path in [BOOTSTRAP] + sorted(INSTALL.glob("*.sh")):
+    for i, line in enumerate(path.read_text().splitlines(), 1):
+        if line.lstrip().startswith("#"):
+            continue
+        for host in URL_HOST.findall(line):
+            reached.setdefault(host, f"{path}:{i}")
+        for pattern, hosts in IMPLIED_HOSTS:
+            if pattern.search(line):
+                for host in hosts:
+                    reached.setdefault(host, f"{path}:{i}")
+if not reached:
+    fail(f"{INSTALL}: no host reached by any install script — the host extractor no longer matches the call sites")
+doc_text = DOC.read_text() if DOC.exists() else ""
+section = re.search(r"^### The network the bootstrap may use\n(.*?)(?=^## |^### |\Z)", doc_text, re.M | re.S)
+allowed = set()
+if not section:
+    fail(f"{DOC}: no '### The network the bootstrap may use' section to read the allowlist from")
+else:
+    tables = re.split(r"\n\s*\n", section.group(1))
+    allowed_table = next((t for t in tables if t.lstrip().startswith("| Allowed host |")), None)
+    if allowed_table is None:
+        fail(f"{DOC}: the network section has no table whose first column is 'Allowed host'")
+    else:
+        for row in allowed_table.splitlines()[2:]:
+            cell = row.split("|")[1].strip() if row.startswith("|") else ""
+            m = re.fullmatch(r"`([A-Za-z0-9.-]+)`", cell)
+            if m:
+                allowed.add(m.group(1))
+        for host in DENIED:
+            if host in allowed:
+                fail(f"{DOC}: {host} is listed as allowed but the remote adapter's network level denies it")
+for host, where in sorted(reached.items()):
+    if host not in allowed:
+        fail(
+            f"{where}: reaches {host}, which the allowed-host table in {DOC} does not list — an "
+            "adapter configured from that table would block the install"
+        )
 
 # ── 11. the image really runs the shared scripts ────────────────────────────
 for script in tier_scripts:
@@ -685,7 +746,8 @@ print(f"bootstrap-remote OK: {len(head_pairs)} checksum pin-pair(s) agree with t
 print("bootstrap-remote OK: the image runs the same scripts, from the same versions file")
 print("bootstrap-remote OK: no denied host, no 1Password/Homebrew/Tailscale, fetch list matches disk")
 print("bootstrap-remote OK: no piped or live-prefix tar extraction in install/*.sh or bootstrap-remote.sh")
-print("bootstrap-remote OK: every getent substitution in the bootstrap reaches its :-/root fallback on a miss")
+print("bootstrap-remote OK: every getent substitution in the bootstrap and install/*.sh reaches its :-/root fallback on a miss")
+print(f"bootstrap-remote OK: all {len(reached)} host(s) the tiers reach are on the documented allowlist")
 print("bootstrap-remote OK: a non-release-tag ref is refused; the override warns and names it")
 print(f"bootstrap-remote OK: the default tiers record {len(recorded_by_default)} pin(s) for the manifest, under the image's keys")
 PY

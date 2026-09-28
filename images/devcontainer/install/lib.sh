@@ -236,8 +236,11 @@ harmon_uv_tool() {
 # again, and doing it here rather than in the Dockerfile keeps the two paths
 # identical. Scoped to the RUNNING user's own home from the passwd database,
 # never to an inherited HOME: root must not delete a caller's ~/.npm.
+# `|| true` for the same reason as the bootstrap's own getent sites: under
+# pipefail a passwd miss (getent exits 2) would abort the script before the
+# fallback on the next line runs.
 harmon_cleanup_caches() {
-    _hcc_home="$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6)"
+    _hcc_home="$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6 || true)"
     _hcc_home="${_hcc_home:-${HOME:-/root}}"
     rm -rf "${_hcc_home}/.cache/uv"
     command -v npm >/dev/null 2>&1 && HOME="$_hcc_home" npm cache clean --force >/dev/null 2>&1

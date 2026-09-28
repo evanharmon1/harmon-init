@@ -52,7 +52,10 @@
       "dockerDashComposeVersion": "v2"
     },
     "ghcr.io/tailscale/codespace/tailscale": {},
-    "ghcr.io/devcontainers/features/github-cli:1": {},
+    // No github-cli feature: the core tier of the shared image ships the
+    // pinned gh at /usr/local/bin/gh (images/devcontainer/smoke.sh asserts
+    // it), and a feature-installed /usr/bin/gh would be a second, unpinned
+    // copy.
     "ghcr.io/itsmechlark/features/1password:1.5.0": {}
   },
   "mounts": [
@@ -88,8 +91,9 @@
   // than blanking — it deletes the value from BOTH profiles' env-files, losing
   // data rather than shadowing it. Scoping the unset to a `gh` shell wrapper
   // does not work: git runs the credential helper as
-  // `!/usr/bin/gh auth git-credential`, an absolute path that bypasses any
-  // shell function, so `git push` would go on using the alias.
+  // `!/usr/local/bin/gh auth git-credential` (the pinned gh the shared
+  // image's core tier installs), an absolute path that bypasses any shell
+  // function, so `git push` would go on using the alias.
   //
   // GH_TOKEN itself needs no entry — init-env.sh knows that name and evicts it
   // from the env-file.

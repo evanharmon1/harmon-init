@@ -123,7 +123,10 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
   `verify`. `bootstrap` runs the thing: it seeds the two traps a real remote VM
   has (a Python `yq` at `/usr/bin/yq`, a POSIX locale), installs the core and
   agents tiers against a five-minute budget recorded in the job summary, runs
-  the bootstrap a second time and requires it to report **zero** changes,
+  the bootstrap a second time and requires **zero new installs** and a
+  **byte-identical manifest** (no pinned version moved) — apt upgrades are
+  reported in the job summary, not gated, because the apt packages are
+  unpinned and converge on the archive by design —
   asserts that `op`, Homebrew and Tailscale are absent, and then runs
   `task check` in the checkout using only what the bootstrap installed. Its
   container job is fork-gated like the image publisher's, for the same reason:

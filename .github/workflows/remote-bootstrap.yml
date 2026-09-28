@@ -24,9 +24,11 @@ run-name: ${{ github.actor }} is proving the remote bootstrap on a stock Ubuntu 
 #
 # `task test:bootstrap-remote` is deliberately NOT added to build.yml's lint
 # job as well. That job enumerates its steps by hand precisely so nothing runs
-# only in local `verify` (#962) — but this workflow's path filter already
-# covers every input the guard reads, so listing it twice would spend a second
-# runner on the same result and leave two places to keep in step.
+# only in local `verify` (#962) — but this workflow's path filter names every
+# input the guard reads (images/devcontainer/, renovate.json, every
+# scripts/*.sh for the one-version-per-dependency check, and Taskfile.yml for
+# the "verify runs this guard" check), so listing it twice would spend a
+# second runner on the same result and leave two places to keep in step.
 on:
   # The two path lists are spelled out twice rather than shared through a YAML
   # anchor: GitHub's workflow parser does not support anchors, so an anchor
@@ -34,14 +36,16 @@ on:
   pull_request:
     paths:
       - "images/devcontainer/**"
-      - "scripts/test-bootstrap-remote.sh"
+      - "scripts/**"
+      - "Taskfile.yml"
       - "renovate.json"
       - ".github/workflows/remote-bootstrap.yml"
   push:
     branches: [main]
     paths:
       - "images/devcontainer/**"
-      - "scripts/test-bootstrap-remote.sh"
+      - "scripts/**"
+      - "Taskfile.yml"
       - "renovate.json"
       - ".github/workflows/remote-bootstrap.yml"
 
@@ -63,6 +67,11 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
+          # The guard's pin-pair drift check compares versions.env against the
+          # merge-base and skips itself, with a notice, when no origin/main
+          # exists — which is what a depth-1 checkout gives it. Full history so
+          # the check actually runs here, as it does in build.yml's lint job.
+          fetch-depth: 0
       - uses: ./.github/actions/setup
       - run: task test:bootstrap-remote
 
