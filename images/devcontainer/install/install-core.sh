@@ -21,6 +21,7 @@ set -euo pipefail
 harmon_load_versions
 
 arch="$(harmon_arch)"
+harmon_ensure_bin
 harmon_tmpdir_init
 tmp="$HARMON_TMPDIR"
 
@@ -74,7 +75,7 @@ if harmon_at_version task "$TASK_VERSION" task --version; then
     harmon_skip "task ${TASK_VERSION}"
 else
     harmon_changed "task ${TASK_VERSION}"
-    curl -fsSL --retry 3 --retry-delay 2 \
+    curl "${HARMON_CURL_OPTS[@]}" \
         "https://github.com/go-task/task/releases/download/v${TASK_VERSION}/task_linux_${arch}.tar.gz" |
         tar -xz -C "$HARMON_BIN" task
 fi
@@ -128,7 +129,7 @@ if harmon_at_version actionlint "$ACTIONLINT_VERSION" actionlint -version; then
     harmon_skip "actionlint ${ACTIONLINT_VERSION}"
 else
     harmon_changed "actionlint ${ACTIONLINT_VERSION}"
-    curl -fsSL --retry 3 --retry-delay 2 \
+    curl "${HARMON_CURL_OPTS[@]}" \
         "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_${arch}.tar.gz" |
         tar -xz -C "$HARMON_BIN" actionlint
 fi
@@ -147,7 +148,7 @@ if harmon_at_version gitleaks "$GITLEAKS_VERSION" gitleaks version; then
     harmon_skip "gitleaks ${GITLEAKS_VERSION}"
 else
     harmon_changed "gitleaks ${GITLEAKS_VERSION}"
-    curl -fsSL --retry 3 --retry-delay 2 \
+    curl "${HARMON_CURL_OPTS[@]}" \
         "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_$(harmon_pick x64 arm64).tar.gz" |
         tar -xz -C "$HARMON_BIN" gitleaks
 fi
@@ -157,7 +158,7 @@ if harmon_at_version lychee "$LYCHEE_VERSION" lychee --version; then
 else
     harmon_changed "lychee ${LYCHEE_VERSION}"
     lychee_arch="$(harmon_pick x86_64 aarch64)"
-    curl -fsSL --retry 3 --retry-delay 2 \
+    curl "${HARMON_CURL_OPTS[@]}" \
         "https://github.com/lycheeverse/lychee/releases/download/lychee-v${LYCHEE_VERSION}/lychee-${lychee_arch}-unknown-linux-gnu.tar.gz" |
         tar -xz --strip-components=1 -C "$HARMON_BIN" \
             "lychee-${lychee_arch}-unknown-linux-gnu/lychee"

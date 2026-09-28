@@ -16,6 +16,7 @@ set -euo pipefail
 # shellcheck source=./lib.sh
 . "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 harmon_load_versions
+harmon_ensure_bin
 
 command -v npm >/dev/null 2>&1 ||
     harmon_die "npm is missing — run the core tier before the agents tier"

@@ -176,30 +176,45 @@ export HARMON_CHANGE_LOG="$change_log"
 # C locale stops NBSP reading as whitespace — which silently changes what the
 # title checkers in this toolchain accept. /etc/environment is read by PAM for
 # every session; the profile.d drop-in covers login shells that bypass it.
+# Both writes are conditional on the content actually differing. Rewriting a
+# byte-identical file is not a change the install counter should report, but it
+# does churn mtime and inode on two system files every single run — which is
+# exactly what configuration-drift tooling watches. "The second run changed
+# nothing" should be true of the filesystem, not only of the counter.
 set_locale() {
-    local marker="LANG=C.UTF-8"
-    if [ -f /etc/environment ]; then
-        if grep -q '^LANG=' /etc/environment; then
-            sed -i "s|^LANG=.*|${marker}|" /etc/environment
-        else
-            printf '%s\n' "$marker" >>/etc/environment
-        fi
-    else
+    local marker="LANG=C.UTF-8" profile=/etc/profile.d/harmon-remote-env.sh tmp
+    if [ ! -f /etc/environment ]; then
         printf '%s\n' "$marker" >/etc/environment
+    elif grep -qx "$marker" /etc/environment; then
+        : # already exactly right; leave the file alone
+    elif grep -q '^LANG=' /etc/environment; then
+        sed -i "s|^LANG=.*|${marker}|" /etc/environment
+    else
+        printf '%s\n' "$marker" >>/etc/environment
     fi
+
     install -d -m 0755 /etc/profile.d
-    cat >/etc/profile.d/harmon-remote-env.sh <<'PROFILE'
+    tmp="$(mktemp)"
+    # ${HARMON_BIN} is interpolated now; ${LANG}, ${LC_ALL} and ${PATH} are
+    # escaped so they stay for the login shell to expand. The prefix is
+    # configurable (HARMON_PREFIX), and a drop-in that hardcoded
+    # /usr/local/bin left a custom prefix working only until this process
+    # exited — the next login could not find its own tools.
+    cat >"$tmp" <<PROFILE
 # Installed by harmon-init images/devcontainer/bootstrap-remote.sh.
-export LANG=${LANG:-C.UTF-8}
-export LC_ALL=${LC_ALL:-C.UTF-8}
-# The pinned toolchain lives in /usr/local/bin and must outrank a
+export LANG=\${LANG:-C.UTF-8}
+export LC_ALL=\${LC_ALL:-C.UTF-8}
+# The pinned toolchain lives in ${HARMON_BIN} and must outrank a
 # pre-provisioned /usr/bin copy (notably the Python yq).
-case ":${PATH}:" in
-*:/usr/local/bin:*) ;;
-*) export PATH="/usr/local/bin:${PATH}" ;;
+case ":\${PATH}:" in
+*:${HARMON_BIN}:*) ;;
+*) export PATH="${HARMON_BIN}:\${PATH}" ;;
 esac
 PROFILE
-    chmod 0644 /etc/profile.d/harmon-remote-env.sh
+    if ! cmp -s "$tmp" "$profile"; then
+        install -m 0644 "$tmp" "$profile"
+    fi
+    rm -f "$tmp"
     export LANG=C.UTF-8 LC_ALL=C.UTF-8
 }
 set_locale

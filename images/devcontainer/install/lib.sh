@@ -26,6 +26,14 @@ export HARMON_BIN="${HARMON_BIN:-${HARMON_PREFIX}/bin}"
 export UV_TOOL_BIN_DIR="${UV_TOOL_BIN_DIR:-${HARMON_BIN}}"
 export UV_TOOL_DIR="${UV_TOOL_DIR:-/opt/uv-tools}"
 
+# Every download in this toolchain uses these options. They were duplicated at
+# each inline `curl … | tar` call site, which had already drifted: those four
+# omitted --retry-connrefused, so a remote VM whose egress proxy refused a
+# connection failed where harmon_fetch would have retried. One array, one
+# behaviour.
+# shellcheck disable=SC2034  # read by the install scripts that source this file
+HARMON_CURL_OPTS=(-fsSL --retry 3 --retry-delay 2 --retry-connrefused)
+
 harmon_log() { printf '==> %s\n' "$*"; }
 
 # harmon_changed / harmon_skip — the idempotence record.
@@ -77,7 +85,7 @@ harmon_pick() {
 # harmon_fetch <url> <destination>
 # Retries because a remote VM reaches these hosts through an egress proxy.
 harmon_fetch() {
-    curl -fsSL --retry 3 --retry-delay 2 --retry-connrefused "$1" -o "$2" ||
+    curl "${HARMON_CURL_OPTS[@]}" "$1" -o "$2" ||
         harmon_die "download failed: $1"
 }
 
@@ -110,9 +118,20 @@ harmon_at_version() {
     [ "$(harmon_installed_version "$_hav_cmd" "$@")" = "$_hav_want" ]
 }
 
+# harmon_ensure_bin — the install prefix's bin directory exists.
+#
+# Called once per tier. harmon_install_bin creates it on demand, but the
+# `curl … | tar -xz -C "$HARMON_BIN"` installs cannot: tar fails outright on a
+# missing directory. /usr/local/bin exists on every real target, so this only
+# ever bites a non-default HARMON_PREFIX — which is exactly the case where
+# half the tier would install and half would not.
+harmon_ensure_bin() {
+    install -d -m 0755 "$HARMON_BIN"
+}
+
 # harmon_install_bin <source-file> <installed-name>
 harmon_install_bin() {
-    install -d -m 0755 "$HARMON_BIN"
+    harmon_ensure_bin
     install -m 0755 "$1" "${HARMON_BIN}/$2"
 }
 

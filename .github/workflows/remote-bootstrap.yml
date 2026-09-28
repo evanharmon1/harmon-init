@@ -137,6 +137,25 @@ jobs:
             sed -n '/^==> /p' /tmp/bootstrap-second.log
             exit 1
           fi
+      - name: Prove the opt-in browsers tier is idempotent too
+        # Deliberately outside the budget assertion above: Chromium is larger
+        # than the rest of the toolchain put together, which is why the tier is
+        # opt-in in the first place. But "a second run changes nothing" is
+        # claimed for EVERY tier, and the default-tier check above cannot see
+        # the browsers tier at all — so without this step that claim is simply
+        # never tested, which is how it was wrong when first written.
+        run: |
+          ./images/devcontainer/bootstrap-remote.sh --tiers core,agents,browsers >/dev/null
+          ./images/devcontainer/bootstrap-remote.sh --tiers core,agents,browsers \
+            | tee /tmp/bootstrap-browsers.log
+          changes=$(sed -n 's/^HARMON_BOOTSTRAP_CHANGES=//p' /tmp/bootstrap-browsers.log | tail -1)
+          echo "| browsers tier, second run | ${changes} change(s) |" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${changes:-unset}" != "0" ]; then
+            echo "::error::the browsers tier's second run applied ${changes:-unknown} change(s)"
+            sed -n '/^==> /p' /tmp/bootstrap-browsers.log
+            exit 1
+          fi
+
       - name: Assert what the bootstrap must never have installed
         # The bootstrap checks its own install prefix; this checks the whole
         # PATH, which is the assertion a consumer actually cares about.

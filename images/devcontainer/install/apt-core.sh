@@ -20,12 +20,21 @@ set -euo pipefail
 #
 # jq, shellcheck, yamllint are dev-loop gate tools; the rest are what the
 # download-and-verify path itself needs (xz-utils for the Node tarball).
+#
+# python3 is listed even though `yamllint` already pulls it in transitively
+# (verified: exactly this list on a bare ubuntu:24.04 leaves python3 3.12.3 at
+# /usr/bin/python3). The gate invokes the interpreter DIRECTLY — the pin-pair
+# and hygiene guards `task check` runs are python3 scripts — so it is a core
+# dependency, not an implementation detail of a linter. Left undeclared, it
+# would vanish the day yamllint is replaced by a Go or Rust equivalent, and
+# the breakage would land on a remote VM rather than here.
 packages="
 ca-certificates
 curl
 file
 git
 jq
+python3
 shellcheck
 unzip
 xz-utils
