@@ -393,14 +393,22 @@ mine_moved_head='"head":{"sha":"a1b2c3d4","ref":"feature"}'
 grep -q 'inert pre-PR metadata' "$tmp/driver-err" &&
     fail "the branch's own PR was demoted to placeholder metadata: $(cat "$tmp/driver-err")"
 
-echo '==> the local head SHA still narrows a ref several open PRs share'
-# Demoted from selector to tie-breaker, not dropped: two PRs on this branch's
-# ref resolve to the one whose head IS this checkout's, rather than staying
-# indeterminate the way two unidentifiable ones do.
+echo '==> two open PRs on one ref refuse rather than guess which one is ours'
+# Round 4 demoted the local head SHA from selector to tie-breaker here, so two
+# PRs on this branch's ref resolved to whichever head WAS this checkout's. Two
+# forks can share a ref, so a branch whose own PR had advanced remotely while an
+# unrelated same-ref PR still carried this checkout's stale commit had the
+# stranger's title and body read as its own (challenge r5). Separating them
+# needs head-repository identity this checkout does not have, so the ref is the
+# whole selector and several matches are indeterminate. The first PR below holds
+# this checkout's head SHA and closes an unfinished issue, so a surviving
+# tie-breaker would narrow to it and return 1 instead of refusing.
 mine_here_head='"head":{"sha":"localhead","ref":"feature"}'
 same_ref_head='"head":{"sha":"e5f6a7b8","ref":"feature"}'
-[ "$(proxy_guard "[{\"title\":\"fix: closes #2\",\"body\":\"\",${mine_here_head}},{\"title\":\"fix: closes #1\",\"body\":\"\",${same_ref_head}}]")" = 1 ] ||
-    fail "the head SHA did not narrow two PRs on one ref: $(cat "$tmp/driver-err")"
+[ "$(proxy_guard "[{\"title\":\"fix: closes #2\",\"body\":\"\",${mine_here_head}},{\"title\":\"fix: closes #1\",\"body\":\"\",${same_ref_head}}]")" = 2 ] ||
+    fail "a same-ref PR sharing this checkout's head SHA was narrowed to instead of refused: $(cat "$tmp/driver-err")"
+grep -q 'multiple open PRs match branch' "$tmp/driver-err" ||
+    fail "the same-ref refusal reported the wrong reason: $(cat "$tmp/driver-err")"
 
 echo '==> a listing that filled its bound cannot witness an absence'
 # The lookup reads one bounded page of open PRs, and a repository with more can
