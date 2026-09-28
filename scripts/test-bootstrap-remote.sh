@@ -1931,22 +1931,36 @@ else:
         if probed.get(case) != want:
             fail(f"{INSTALL}/lib.sh: probe case {case} {probed.get(case)!r}, expected {want!r} — {why[case]}")
 
-# ── 23. the pnpm shim is what it IS, not what it is called ──────────────────
+# ── 23. the pnpm shim is what it IS, not what it is called — and it must WIN ──
 # `corepack enable pnpm` publishes its shim into HARMON_BIN, and the step running
 # it was gated on `command -v pnpm` matching that path — a test of the NAME, which
 # any executable sitting there passes. The Node copy does not remove files it does
 # not own, so a standalone pnpm a pre-provisioned VM had already installed there
-# survived every run while the tier reported Corepack configured. The gate now
-# asks what the file IS, and that is EXECUTED here for § 16's reason: which files
-# a content test accepts is not visible in its text. The block is LIFTED out of
-# install-core.sh rather than restated, so this runs whatever is there now.
+# survived every run while the tier reported Corepack configured. The gate now asks
+# what the file IS, and that is EXECUTED here for § 16's reason: which files a
+# content test accepts is not visible in its text.
+#
+# The pathname test did assert one real thing the identity check cannot — that our
+# prefix wins PATH precedence — so the block reports a pnpm that shadows the shim
+# rather than dropping the property or gating on it (gating would re-run corepack
+# and report a change every run for something re-running cannot fix). Both halves
+# are covered below, on their own axes, and the marker's 4096-byte read bound is
+# exercised from both sides: the bound is LIFTED from the block rather than
+# restated, so tightening it there cannot leave this asserting the old edge.
 core_start = core_text.find("# ---------- corepack")
 core_end = core_text.find("# ---------- uv ")
 corepack_block = core_text[core_start:core_end] if core_start != -1 and core_end > core_start else ""
+read_bound = re.search(r"head -c ([0-9]+)", corepack_block)
 if "corepack enable pnpm" not in corepack_block:
     fail(
         f"{INSTALL}/install-core.sh: the corepack block could not be lifted from between its own section "
         "header and the uv one — the shim gate would then be silently untested"
+    )
+elif not read_bound:
+    fail(
+        f"{INSTALL}/install-core.sh: the shim read has no `head -c <bytes>` bound this test can lift, so the "
+        "boundary cases below cannot be built at the real edge — and an unbounded read would stream a packed "
+        "multi-megabyte pnpm into a shell variable to learn it is not a shim"
     )
 else:
     shim = r"""
@@ -1961,17 +1975,31 @@ export RAN="${root}/ran"
 harmon_ensure_bin
 mkdir -p "${root}/stub"
 # HARMON_BIN on PATH as it is on every real target (/usr/local/bin), so `pnpm`
-# resolving from the prefix is TRUE throughout: the pathname test this replaced
-# would pass every case below, which is the whole point of the cases.
+# resolving from the prefix is TRUE throughout except where a case plants a shadow
+# in ${root}/stub, which sits ahead of it: the pathname test this replaced would
+# pass every other case below, which is the whole point of the cases.
 PATH="${root}/stub:${HARMON_BIN}:${PATH}"
 
-# What `corepack enable` writes: a launcher that hands off to corepack's runtime
-# and therefore names it. The real one symlinks this into corepack's dist/;
-# reading the shim's path follows that symlink to exactly these bytes.
+# What `corepack enable` writes, as corepack writes it TODAY — these are the bytes
+# of corepack's own dist/pnpm.js. It requires `module` BEFORE it requires its own
+# library, which is why a marker may not key on the first require. The real one
+# symlinks this into corepack's dist/; reading the shim's path follows that symlink
+# to exactly these bytes.
+shim_req="require('./lib/corepack.cjs').runMain(['pnpm', ...process.argv.slice(2)]);"
 {
     printf '#!/usr/bin/env node\n'
-    printf "require('./lib/corepack.cjs').runMain(['pnpm', ...process.argv.slice(2)]);\n"
+    printf "process.env.COREPACK_ENABLE_DOWNLOAD_PROMPT??='1'\n"
+    printf "require('module').enableCompileCache?.();\n"
+    printf '%s\n' "$shim_req"
 } >"${root}/shim"
+
+# The shape older corepacks wrote: the same handoff and nothing before it. Both
+# must be accepted, or an image whose Node ships either corepack re-runs the step
+# and reports a change on every run.
+{
+    printf '#!/usr/bin/env node\n'
+    printf '%s\n' "$shim_req"
+} >"${root}/legacy-shim"
 
 # A corepack that records THAT IT RAN and republishes the shim. `rm -f` first,
 # because the real one replaces the shim and a bare `>` would instead follow a
@@ -1985,6 +2013,34 @@ PATH="${root}/stub:${HARMON_BIN}:${PATH}"
 } >"${root}/stub/corepack"
 chmod 0755 "${root}/stub/corepack"
 
+# A standalone pnpm, loading pnpm's OWN dist: used both AT the shim's path and as
+# a PATH shadow ahead of it.
+printf '#!/bin/sh\nexec node /opt/pnpm/dist/pnpm.cjs "$@"\n' >"${root}/standalone"
+chmod 0755 "${root}/standalone"
+
+# The read bound, from both sides. The padding is computed so that the last byte
+# the marker needs — the final character of the `corepack` inside the require's
+# quoted module path — lands exactly ON the last byte the read returns, and then
+# one byte past it. Derived from the fixtures' own lengths and the bound lifted
+# from the block, so neither edge is a second magic number.
+read_bound=@BOUND@
+corepack_word=corepack
+shim_pre="${shim_req%%${corepack_word}*}"
+shim_shebang='#!/usr/bin/env node'
+# What precedes the require line: the shebang and its newline, then '//' opening a
+# comment, then the padding, then that line's newline.
+pad_overhead=$((${#shim_shebang} + 1 + 2 + 1))
+edge_pad=$((read_bound - ${#shim_pre} - ${#corepack_word} - pad_overhead))
+write_padded() { # write_padded <pad-bytes>
+    {
+        printf '%s\n' "$shim_shebang"
+        printf '//'
+        printf "%${1}s" '' | tr ' ' x
+        printf '\n%s\n' "$shim_req"
+    } >"${HARMON_BIN}/pnpm"
+    chmod 0755 "${HARMON_BIN}/pnpm"
+}
+
 gate() {
 @BLOCK@
 }
@@ -1995,9 +2051,22 @@ verdict() { # verdict <label>
     gate >/dev/null 2>"${root}/err"
     if grep -q '^install' "$HARMON_CHANGE_LOG"; then _v=changed; else _v=skipped; fi
     if [ -s "$RAN" ]; then _v="${_v},ran"; else _v="${_v},idle"; fi
-    # Nothing on stderr: for a packed binary it is the SHELL, not head, that warns
-    # about the NUL bytes a substitution drops, so an unredirected read is noisy.
-    if [ -s "${root}/err" ]; then _v="${_v},noisy"; else _v="${_v},quiet"; fi
+    # The shadow report is its own axis: the step owes one exactly when `pnpm` does
+    # not resolve to the shim, and owes silence when it does. Never a record and
+    # never an exit code, so idempotence reads the same either way.
+    if grep -q 'WARNING: pnpm resolves to' "${root}/err"; then
+        _v="${_v},reported"
+    else
+        _v="${_v},silent"
+    fi
+    # Nothing ELSE on stderr: for a packed binary it is the SHELL, not head, that
+    # warns about the NUL bytes a substitution drops, so an unredirected read is
+    # noisy — and that noise has to stay distinguishable from the report above.
+    if grep -v 'WARNING: pnpm resolves to' "${root}/err" | grep -q .; then
+        _v="${_v},noisy"
+    else
+        _v="${_v},quiet"
+    fi
     printf '%s %s\n' "$1" "$_v"
 }
 
@@ -2006,43 +2075,108 @@ verdict NO_SHIM_AT_ALL
 # NO_SHIM_AT_ALL left the stub's shim behind, so this is the genuine article and
 # the one case that may report nothing changed.
 verdict GENUINE_SHIM
+# The same genuine shim with a pre-provisioned pnpm ahead of it on PATH: still a
+# skip, because corepack cannot move PATH, but it must SAY SO.
+cp "${root}/standalone" "${root}/stub/pnpm"
+chmod 0755 "${root}/stub/pnpm"
+verdict GENUINE_SHIM_SHADOWED
+rm -f "${root}/stub/pnpm"
+# The older corepack's two-line shim, unshadowed again.
+cp "${root}/legacy-shim" "${HARMON_BIN}/pnpm"
+chmod 0755 "${HARMON_BIN}/pnpm"
+verdict LEGACY_SHIM
 # A standalone pnpm AT the shim's own path — the case the pathname test skipped.
-printf '#!/bin/sh\nexec node /opt/pnpm/dist/pnpm.cjs "$@"\n' >"${HARMON_BIN}/pnpm"
+cp "${root}/standalone" "${HARMON_BIN}/pnpm"
 chmod 0755 "${HARMON_BIN}/pnpm"
 verdict STANDALONE_PNPM
-# …and the same thing packed as a binary, which is also the NUL-byte case.
+# A node-shaped wrapper around pnpm that merely MENTIONS corepack, which a
+# bare-word marker accepts and pnpm's own sources give every chance to occur.
+{
+    printf '#!/usr/bin/env node\n'
+    printf '// corepack is not used here; corepack enable would install one\n'
+    printf "require('/opt/pnpm/dist/pnpm.cjs');\n"
+} >"${HARMON_BIN}/pnpm"
+chmod 0755 "${HARMON_BIN}/pnpm"
+verdict NODE_WRAPPER_MENTIONS_COREPACK
+# …and the same defect packed as a binary, which is also the NUL-byte case.
 { printf '\177ELF'; head -c 4096 /dev/zero; } >"${HARMON_BIN}/pnpm"
 chmod 0755 "${HARMON_BIN}/pnpm"
 verdict PACKED_PNPM_BINARY
+# A packed pnpm whose own bytes carry the handoff string: pnpm bundles
+# corepack-aware code, so this is the realistic packed case rather than the empty
+# one above, and only the shebang anchor rejects it.
+{
+    printf '\177ELF'
+    head -c 2048 /dev/zero
+    printf '%s' "$shim_req"
+    head -c 2048 /dev/zero
+} >"${HARMON_BIN}/pnpm"
+chmod 0755 "${HARMON_BIN}/pnpm"
+verdict PACKED_PNPM_NAMING_COREPACK
+if [ "$edge_pad" -lt 1 ]; then
+    # Reported rather than skipped: a bound too small to pad up to is a finding
+    # about the block, not a reason for these two cases to quietly not exist.
+    printf 'BOUND_FIXTURE_UNBUILDABLE pad=%s\n' "$edge_pad"
+else
+    write_padded "$edge_pad"
+    verdict MARKER_AT_WINDOW_EDGE
+    write_padded "$((edge_pad + 1))"
+    verdict MARKER_PAST_WINDOW
+fi
 # A shim whose target went away with a moved prefix: unreadable is not a skip.
 ln -sf "${root}/removed-node/pnpm.js" "${HARMON_BIN}/pnpm"
 verdict DANGLING_SHIM
 """
-    run = run_lifted(shim.replace("@LIB@", str(INSTALL / "lib.sh")).replace("@BLOCK@", corepack_block))
+    run = run_lifted(
+        shim.replace("@LIB@", str(INSTALL / "lib.sh"))
+        .replace("@BLOCK@", corepack_block)
+        .replace("@BOUND@", read_bound.group(1))
+    )
     shimmed = {} if run is None else dict(
         line.split(" ", 1) for line in run.stdout.splitlines() if line.count(" ") == 1
     )
     expected = {
-        "NO_SHIM_AT_ALL": "changed,ran,quiet",
-        "GENUINE_SHIM": "skipped,idle,quiet",
-        "STANDALONE_PNPM": "changed,ran,quiet",
-        "PACKED_PNPM_BINARY": "changed,ran,quiet",
-        "DANGLING_SHIM": "changed,ran,quiet",
+        "NO_SHIM_AT_ALL": "changed,ran,silent,quiet",
+        "GENUINE_SHIM": "skipped,idle,silent,quiet",
+        "GENUINE_SHIM_SHADOWED": "skipped,idle,reported,quiet",
+        "LEGACY_SHIM": "skipped,idle,silent,quiet",
+        "STANDALONE_PNPM": "changed,ran,silent,quiet",
+        "NODE_WRAPPER_MENTIONS_COREPACK": "changed,ran,silent,quiet",
+        "PACKED_PNPM_BINARY": "changed,ran,silent,quiet",
+        "PACKED_PNPM_NAMING_COREPACK": "changed,ran,silent,quiet",
+        "MARKER_AT_WINDOW_EDGE": "skipped,idle,silent,quiet",
+        "MARKER_PAST_WINDOW": "changed,ran,silent,quiet",
+        "DANGLING_SHIM": "changed,ran,silent,quiet",
     }
     why = {
         "NO_SHIM_AT_ALL": "with no pnpm at all the step must run, or the prefix never gets a shim",
         "GENUINE_SHIM": "the shim corepack just wrote must skip AND leave corepack unrun, or every run reports a "
         "change it did not make and the bootstrap's idempotence claim is false",
+        "GENUINE_SHIM_SHADOWED": "the shim is right and PATH is not: corepack enable cannot move PATH, so the step "
+        "must skip and RECORD NOTHING — but silence here is the pathname test's property lost, and the tier would "
+        "report Corepack configured while the pnpm a caller gets is the VM's",
+        "LEGACY_SHIM": "the handoff without corepack's newer preamble is still the handoff; rejecting it would "
+        "re-run the step on every run against an older Node's corepack",
         "STANDALONE_PNPM": "a name that can lie is not an answer: an executable that is not the shim must be "
         "recreated, or a pre-provisioned VM's pnpm survives forever while the tier reports Corepack configured",
+        "NODE_WRAPPER_MENTIONS_COREPACK": "the marker is the launcher's handoff, not the word: a wrapper that "
+        "loads pnpm's own dist and only mentions corepack in a comment is not a shim, and accepting it is the "
+        "identity check reduced to a substring search",
         "PACKED_PNPM_BINARY": "the same defect packed as a binary — and the read must stay quiet as well as "
         "bounded, since the shell warns about the NUL bytes it drops from a substitution",
+        "PACKED_PNPM_NAMING_COREPACK": "a packed pnpm carries corepack-aware strings of its own, so the word "
+        "alone cannot decide this: what rejects it is that its first line is no node shebang",
+        "MARKER_AT_WINDOW_EDGE": "a handoff ending on the last byte the read returns is inside the window and "
+        "must be accepted, or the bound is tighter than the block documents",
+        "MARKER_PAST_WINDOW": "one byte further out is outside it: the read is bounded on purpose, and a shim it "
+        "cannot see must be recreated rather than skipped on a guess",
         "DANGLING_SHIM": "a shim whose target is gone is no answer either, and the pathname test skipped it",
     }
     if run is None or run.returncode != 0 or len(shimmed) != len(expected):
         fail(
             f"{INSTALL}/install-core.sh: the pnpm shim cases could not run "
             f"({'timed out' if run is None else f'exit {run.returncode}'}) — "
+            f"stdout: {'' if run is None else run.stdout.strip()[-300:]!r} "
             f"stderr: {'' if run is None else run.stderr.strip()[:300]!r}"
         )
     else:
@@ -2050,7 +2184,6 @@ verdict DANGLING_SHIM
             got = shimmed.get(case)
             if got != want:
                 fail(f"{INSTALL}/install-core.sh: pnpm shim case {case} {got!r}, expected {want!r} — {why[case]}")
-
 
 for e in errors:
     print(f"FAIL: {e}", file=sys.stderr)
@@ -2078,5 +2211,5 @@ print("bootstrap-remote OK: the tier selection canonicalises once; no downstream
 print("bootstrap-remote OK: a staging file whose writer is gone is reaped, a live writer's is not, and a failed publish cleans up after itself")
 print("bootstrap-remote OK: the manifest's own staged write reaps by liveness too, and a failed publish fails the run without leaving litter")
 print("bootstrap-remote OK: a version probe that prints the pin and exits nonzero is treated as needing the install")
-print("bootstrap-remote OK: the corepack step recreates the pnpm shim unless the file at its path really is one")
+print("bootstrap-remote OK: the corepack step recreates the pnpm shim unless the file at its path really is corepack's launcher, at either edge of its bounded read, and reports a pnpm that shadows it on PATH")
 PY

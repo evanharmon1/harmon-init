@@ -69,6 +69,16 @@ harmon_die() {
     exit 1
 }
 
+# The non-fatal counterpart of harmon_die, and the tier scripts' counterpart of
+# bootstrap-remote.sh's `warn`, which this mirrors exactly as harmon_die mirrors
+# that file's `die`: the tiers run as their own processes, so that file's helper
+# is not in scope here. For a condition the run must REPORT and cannot fix — a
+# pre-provisioned tool shadowing ours on PATH being the case this repository
+# already handles this way.
+harmon_warn() {
+    printf 'harmon-install: WARNING: %s\n' "$*" >&2
+}
+
 harmon_load_versions() {
     [ -f "$HARMON_VERSIONS_FILE" ] || harmon_die "versions file not found: $HARMON_VERSIONS_FILE"
     set -a
