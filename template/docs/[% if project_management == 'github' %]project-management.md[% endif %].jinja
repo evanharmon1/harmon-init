@@ -565,10 +565,14 @@ the taxonomy table below is generated from) and the starter set is created by
   accessibility, performance, tech debt, internationalization
 - **Source** — where the work came from (a customer request, AI authorship) —
   durable provenance, never removed
-- **Initiative** — the horizon of a top-level parent issue: `epic` for a
-  time-bound deliverable, or `umbrella` for an enduring area, topic, or team.
-  These human-written labels describe the parent; sub-issues remain the source
-  of the parent/child relationship
+- **Initiative** — the horizon of a parent issue: `epic` for a time-bound
+  deliverable, or `umbrella` for an enduring area, topic, or team — or for a
+  `(HUMAN):`/`(QA):` collector (see **Human-task and QA collectors** below).
+  These labels describe the issue; sub-issues remain the source of the
+  parent/child relationship
+- **Human work** — `human` marks work only a human can do or verify. Agents
+  may file a `human` issue or append to one, but never claim, arm, or
+  implement it
 - **Workflow** — transient triage states; `blocked` is the non-issue-blocker
   flag described above
 - **Layer** — which stack slice the change lives in
@@ -839,7 +843,8 @@ deliberately leaves it alone.
 |---|---|---|---|---|
 | `sec`, `a11y`, `perf`, `tech-debt`, `i18n`, `l10n` | humans, at triage | humans, saved views | provisioned; inert | applied when true, removed when not |
 | `customer-request`, `ai-generated` | whoever files or authors the work, human or agent | humans, saved views | provisioned; inert | durable provenance — never removed |
-| `epic`, `umbrella` | humans, at planning or grooming | humans, saved views | provisioned; inert | applied to a parent while its role is current; removed or changed when its horizon changes |
+| `epic`, `umbrella` | humans, at planning or grooming; agents when filing a (HUMAN)/(QA) collector or an approved breakdown | humans, saved views | provisioned; inert | applied to a parent while its role is current; removed or changed when its horizon changes |
+| `human` | whoever files the human-only issue, human or agent | humans, saved views; agents, to skip dispatch | provisioned; inert | applied while only a human can do the work; removed if it becomes dispatchable |
 | `needs-triage` | humans, the issue forms, and the triage skill | humans, the Triage view | provisioned; inert | added freely at filing; removed only when classification is complete |
 | `needs-requirements`, `blocked`, `waiting`, `needs-decision`, `needs-response`, `needs-communication` | humans, at triage | humans, the Triage view | provisioned; inert | transient — removed as soon as the state clears |
 | `bug`, `feature`, `task`, `research` | the issue forms on personal-account repos; humans or agents at triage | humans, saved views | provisioned; inert | durable classification — org repos use native issue Type and no work-type label |
@@ -1239,9 +1244,9 @@ Ready + priority*. Iteration is a human-cadence concept your agents don't have.
 ## Hierarchy (sub-issues with Epic and umbrella labels)
 
 There's **no Epic type, by design.** GitHub **sub-issues** are the authoritative
-*hierarchy* axis, and **milestones** are the *delivery-batch* axis. The durable,
-human-written `epic` and `umbrella` labels describe a top-level parent issue's
-horizon; they do not create membership, rollups, or inheritance. A
+*hierarchy* axis, and **milestones** are the *delivery-batch* axis. The durable
+`epic` and `umbrella` labels describe a parent issue's horizon; they do not
+create membership, rollups, or inheritance. A
 **sub-issue inherits its parent's Project and Milestone by default** (shipped
 2025-09). Assign them once on the parent and the child tree picks them up — no
 per-child bookkeeping.
@@ -1251,6 +1256,8 @@ to a milestone, whose completion bar and optional due date remain the source of
 delivery tracking. Use **`umbrella`** for a perennial parent that covers an
 enduring area, topic, or team and has no single delivery endpoint. An issue is
 one or the other, never both; both normally gain sub-issues over time.
+`umbrella` also marks the human-task and QA collectors described at the end of
+this section, which gather work rather than decompose it.
 
 So a parent issue "Scheduling v1" in milestone `v1.1.0` pulls its whole subtree
 into that release payload for free. Break big work down with **sub-issues** (up to
@@ -1310,6 +1317,76 @@ before."* If A must finish before B but B isn't part of A, that's a **dependency
 **Blocked is not a status** above) — not a parent-child link. Conflating them
 corrupts the tree; keep composition (sub-issues) and sequencing (dependencies) in
 separate mechanisms.
+
+**Human-task and QA collectors.** Long-running work — a milestone or an `epic`
+— usually needs things only a human can do: set a secret, flip a GitHub or
+vendor setting, approve an account, try the feature by hand. Written as
+required `[HUMAN]` criteria on the issue that surfaced them, each one parks
+that issue: a `Closes #N` fails the closing-keywords check while a box is
+unticked, and an orchestrated run stalls on a human who deliberately circles
+back later. Collect them instead on two kinds of dedicated issue, which differ
+in scope:
+
+| | `(HUMAN): <outcome>` | `(QA): <outcome>` |
+|---|---|---|
+| Collects | human **actions** — credentials, settings, accounts, approvals, purchases, decisions | human **verification** — hands-on, exploratory, or acceptance testing of what shipped |
+| Scope | one per milestone or `epic`, plus one repo-wide for unscoped work | **one per repository** — the standing QA role or team |
+| Placement | in its milestone, and a sub-issue of its `epic` | in no milestone and under no parent; milestones and epics link to it |
+| Lifecycle | closes when every item is ticked | stays open; its checklist is the running QA queue |
+| Labels | `human` + `umbrella`, plus the usual classification and provenance labels | same |
+| Type | `Task` — native Issue Type on org repos, the `task` label on personal repos | same |
+| Example | `(HUMAN): Complete manual setup for v1.2 remote environments` | `(QA): Verify shipped work by hand` |
+
+- **Find it before filing it.** Each collector's `## Provenance` carries one
+  stable scope line: `Collector scope: milestone <number>`,
+  `Collector scope: <owner/repo>#<epic>`, or `Collector scope: repository`
+  for a `(HUMAN):` collector, and always `Collector scope: repository` for
+  the `(QA):` issue. Search all states (`label:human label:umbrella`) and
+  match on the title prefix plus that scope line: append to the open one,
+  reopen a closed one, and never file a second. Whoever meets the first
+  human task files it **lazily**, human or agent. Two writers can still both
+  miss and both file, so whoever finds two open collectors for one scope
+  merges the newer's items into the older, repoints each moved item's
+  source line at the older, and closes the newer as a duplicate.
+- **`(HUMAN):` follows the work.** Its scope is the source issue's
+  milestone; failing that, its `epic`; failing both, the repository. Give it
+  that milestone, and under an `epic` also make it the epic's sub-issue so
+  the epic's rollup stays honest about the human work still owed. An epic's
+  `(HUMAN):` collector lives in the epic's repository, and sources in other
+  repositories cite it as `owner/repo#N`. An item stays on the collector it
+  was filed to even if its source later changes scope, and the collector
+  closes when every box is ticked.
+- **`(QA):` is a role, not a batch.** Each repository has exactly one,
+  standing for its QA role or team. It is never given a milestone, never
+  made a sub-issue, and stays open when its items are all ticked. Milestones
+  and epics reference it — a link in their body, or `Refs` — rather than
+  containing it, and an item can name the milestone or epic it verifies:
+  `- [ ] [HUMAN] Verify remote environments end to end (from #1412, v1.2)`.
+  A cross-repo epic's QA items go to each source repository's own `(QA):`
+  issue.
+- **Each task is one `- [ ] [HUMAN] …` acceptance criterion on its
+  collector**, naming its source:
+  `- [ ] [HUMAN] Add FLY_API_TOKEN to the repo secrets (from #1412)`, with
+  the source written `owner/repo#N` when it lives in another repository.
+  Agents append items; a human ticks them.
+- **The source issue mentions, never blocks.** Record the task on the source
+  issue as a plain line under `## Out of scope` —
+  `Human follow-up (tracked in #1420): add FLY_API_TOKEN` — not as an
+  acceptance criterion, so the issue closes as soon as its agent-verifiable
+  work merges. That line is the durable record and the collector item is its
+  index: an issue-body edit is last-write-wins, so two concurrent appends can
+  drop one item, and the source line is how a later pass finds it again.
+- **A precondition is a dependency, not a follow-up.** When the agent cannot
+  do the work until the human step happens (the secret must exist before the
+  deploy test can run), the step is not a collector item: file it as its own
+  `human` issue and give the source issue a blocked-by edge on it (see
+  **Hierarchy is not dependency**). Closing the human issue unblocks the work
+  through the same graph the dispatchers read.
+- **Never dispatched.** A `human` issue is never claimed, armed with
+  `foreman:*`, or implemented by an agent. Do not rely on tooling to stop
+  it — Foreman, for one, does not read the label — so never arm one. `human` alone marks a standalone
+  human-only issue such as a precondition; `human` + `umbrella` marks a
+  collector.
 
 ## Cross-repo work
 
