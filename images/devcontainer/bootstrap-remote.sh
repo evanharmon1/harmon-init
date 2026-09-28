@@ -18,14 +18,20 @@
 #   # so a failure stops the chain. Never `curl … | sudo bash`: a pipeline's
 #   # status is its LAST command's, so a 404 or a truncated transfer exits 0 —
 #   # the adapter reports a successful setup having installed nothing, and a
-#   # partial script has already run as root. Nothing removes the temporary
-#   # file afterwards on purpose: a trailing cleanup command would become the
-#   # chain's exit status and put the same bug back.
+#   # partial script has already run as root. The script goes into a PRIVATE
+#   # directory (`mktemp -d` plus an explicit mode 0700 rather than a trusted
+#   # default), never a bare `mktemp` in shared /tmp: BASH_SOURCE would then
+#   # make /tmp this script's own directory, and the sibling-asset branch
+#   # below would accept a /tmp/install/lib.sh that any unprivileged local
+#   # user could have pre-created — root sourcing another user's code. Nothing
+#   # removes the directory afterwards on purpose: a trailing cleanup command
+#   # would become the chain's exit status and put the swallowed-failure bug
+#   # back.
 #   HARMON_INIT_REF=vX.Y.Z
-#   harmon_bootstrap="$(mktemp)"
-#   curl -fsSL "https://raw.githubusercontent.com/evanharmon1/harmon-init/${HARMON_INIT_REF}/images/devcontainer/bootstrap-remote.sh" \
-#     -o "$harmon_bootstrap" \
-#     && sudo bash "$harmon_bootstrap" --ref "$HARMON_INIT_REF"
+#   harmon_bootstrap_dir="$(mktemp -d)" && chmod 0700 "$harmon_bootstrap_dir" \
+#     && curl -fsSL "https://raw.githubusercontent.com/evanharmon1/harmon-init/${HARMON_INIT_REF}/images/devcontainer/bootstrap-remote.sh" \
+#       -o "${harmon_bootstrap_dir}/bootstrap-remote.sh" \
+#     && sudo bash "${harmon_bootstrap_dir}/bootstrap-remote.sh" --ref "$HARMON_INIT_REF"
 #
 # The ref must be a release tag (vX.Y.Z). That tag is the trust root of the
 # standalone form: the script and everything it fetches come from one tag,
@@ -57,6 +63,10 @@ set -euo pipefail
 
 readonly HARMON_REPO_RAW="https://raw.githubusercontent.com/evanharmon1/harmon-init"
 readonly HARMON_RELEASE_TAG_RE='^v[0-9]+\.[0-9]+\.[0-9]+$'
+# The system profile drop-in this script owns. Declared here rather than beside
+# set_locale because the prefix validation names it, and one path spelled twice
+# is a path that will disagree with itself.
+readonly HARMON_PROFILE_DROPIN=/etc/profile.d/harmon-remote-env.sh
 
 # The files this script needs when it was fetched on its own (the standalone
 # recipe above), relative to images/devcontainer/. Kept equal to what is actually
@@ -92,6 +102,42 @@ die() {
 
 warn() {
     printf 'bootstrap-remote: WARNING: %s\n' "$*" >&2
+}
+
+# check_safe_path <variable-name> <value> — the value is an absolute path this
+# script may render into a shell file verbatim, or the run stops naming the
+# caller's mistake.
+#
+# The install prefix is interpolated into /etc/profile.d/harmon-remote-env.sh,
+# which this process sources and so does every later login shell on the machine.
+# The defect that matters is not injection — whoever sets the prefix already
+# runs this as root and could write that file directly — it is CORRUPTION: a
+# prefix carrying a quote, a `$`, a backtick or a newline writes a broken
+# drop-in and breaks every login shell, persistently, long after the run that
+# did it. Refusing such a prefix with a reason is a better outcome than escaping
+# it into something that works here and is copied somewhere else.
+# SAFE ADMITS an absolute path of ordinary path characters — ASCII letters and
+# digits and `. _ - + @ /` — and nothing else. `:` is refused with the rest
+# because a colon cannot survive in a PATH entry however carefully it is quoted.
+# Matched with a `case` pattern rather than a grep on purpose: grep is
+# LINE-oriented, so `printf '%s' "$v" | grep -Eq '^…$'` accepts any value whose
+# FIRST line matches — it would have waved through the newline that is the one
+# character most certain to corrupt the drop-in.
+check_safe_path() {
+    local why=""
+    case "$2" in
+    /*) ;;
+    *) why="it is not an absolute path" ;;
+    esac
+    if [ -z "$why" ]; then
+        case "$2" in
+        *[!A-Za-z0-9._+@/-]*)
+            why="it carries a character outside letters, digits and '. _ - + @ /' — whitespace, a newline, a quote, a '\$', a backtick and ':' are all refused rather than escaped"
+            ;;
+        esac
+    fi
+    [ -z "$why" ] ||
+        die "${1} '${2}' is not a safe absolute path: ${why}. It is rendered into ${HARMON_PROFILE_DROPIN} verbatim, and that file is sourced by this root process and by every later login shell on the machine, so a value that cannot be written there safely is refused at the door instead of escaped."
 }
 
 usage() {
@@ -163,10 +209,67 @@ if [ -n "$ref" ] && ! printf '%s' "$ref" | grep -Eq "$HARMON_RELEASE_TAG_RE"; th
     fi
 fi
 
-for tier in $(printf '%s' "$tiers" | tr ',' ' '); do
-    case " ${HARMON_TIER_ORDER} " in
-    *" ${tier} "*) ;;
-    *) die "unknown tier '${tier}' (known: ${HARMON_TIER_ORDER// /, })" ;;
+# ---------- the install prefix ----------
+# Validated here, beside the ref and for the same reason: before the sudo
+# re-exec, so a caller's typo costs nothing and the offline guard can prove the
+# refusal without root. BOTH settable values are checked, not only the prefix:
+# lib.sh derives HARMON_BIN as `${HARMON_BIN:-${HARMON_PREFIX}/bin}`, so those
+# two are its only inputs and checking both is what makes the RENDERED value
+# safe by construction — `sudo -E` carries a HARMON_BIN the re-exec never
+# forwards, and validating the prefix alone would leave that path open. Only a
+# value the caller actually SET is checked; the defaults are lib.sh's, and
+# appending `/bin` to an admitted path cannot produce a character that was not.
+[ -z "${HARMON_PREFIX:-}" ] || check_safe_path HARMON_PREFIX "$HARMON_PREFIX"
+[ -z "${HARMON_BIN:-}" ] || check_safe_path HARMON_BIN "$HARMON_BIN"
+
+# ---------- the tier selection: ONE canonical value ----------
+# This used to be a permissive parse followed by a strict one: validation split
+# on commas AND whitespace, so `--tiers 'core, agents'` validated cleanly, while
+# every later membership check split on commas alone, kept the leading space and
+# silently dropped ` agents`. The run then exited 0 reporting a selection it had
+# not installed. Two parsers of one string will disagree again, so there is now
+# one: `tiers` is REPLACED here by the canonical form, and the install loop, the
+# core check and the manifest's tier field all read that single value. The
+# canonical form is deduplicated and spelled in HARMON_TIER_ORDER order, so one
+# selection always spells itself one way — `--tiers agents,core` and `--tiers
+# 'core, agents'` are the same set and say so.
+tiers_given="$tiers"
+tiers_seen=""
+tiers_rest="$tiers_given"
+while :; do
+    tier="${tiers_rest%%,*}"
+    # Trim surrounding whitespace only. Whitespace INSIDE an element is not
+    # trimmed away into a valid tier: `--tiers 'core agents'` is one unknown
+    # element and is refused, not silently read as two.
+    tier="${tier#"${tier%%[![:space:]]*}"}"
+    tier="${tier%"${tier##*[![:space:]]}"}"
+    [ -n "$tier" ] ||
+        die "empty tier in --tiers '${tiers_given}' (known: ${HARMON_TIER_ORDER// /, })"
+    # Exact equality against each known tier, not `case " $HARMON_TIER_ORDER "
+    # in *" $tier "*`: in a case pattern the element is a GLOB and the list is
+    # one space-separated string, so `c*` and even `core agents` matched a run
+    # of the known names and were accepted as a tier. They were then refused
+    # further down for the wrong reason ("core cannot be skipped"), which is the
+    # kind of near-miss that becomes a real acceptance the moment the tier list
+    # grows a name that is a prefix of another.
+    tier_known=0
+    for known_tier in $HARMON_TIER_ORDER; do
+        if [ "$tier" = "$known_tier" ]; then
+            tier_known=1
+        fi
+    done
+    [ "$tier_known" = 1 ] ||
+        die "unknown tier '${tier}' in --tiers '${tiers_given}' (known: ${HARMON_TIER_ORDER// /, })"
+    tiers_seen="${tiers_seen},${tier},"
+    case "$tiers_rest" in
+    *,*) tiers_rest="${tiers_rest#*,}" ;;
+    *) break ;;
+    esac
+done
+tiers=""
+for tier in $HARMON_TIER_ORDER; do
+    case "$tiers_seen" in
+    *",${tier},"*) tiers="${tiers:+${tiers},}${tier}" ;;
     esac
 done
 case ",${tiers}," in
@@ -232,13 +335,79 @@ cleanup() {
 }
 trap cleanup EXIT
 
+# unsafe_asset_dir <directory> — prints WHY this root process must not run
+# executable assets out of <directory>, and nothing at all when it may.
+#
+# The branch below SOURCES ${self_dir}/install/lib.sh as root and executes the
+# tier scripts beside it, and self_dir is simply wherever the caller put this
+# file. A standalone recipe that downloaded it with a bare `mktemp` made that
+# directory shared /tmp — so any unprivileged local user could pre-create
+# /tmp/install/lib.sh and the root process would source it. Arbitrary code
+# execution as root, and it arrived as the remedy for a lesser defect. The
+# recipe at the top of this file now uses a private `mktemp -d`, but a recipe is
+# a thing adapters copy imperfectly, so the refusal lives HERE, where it holds
+# whatever the caller typed — which is the layer that reaches a real host.
+#
+# UNSAFE is exactly two conditions, and admits nothing else: the directory is
+# world-writable (anyone at all can add or replace an asset), or it is owned by
+# neither root nor the invoking user (its owner can). A directory whose mode and
+# owner cannot be READ is unsafe too, on the rule this change states in three
+# places: an unreadable answer is not a clean one.
+#
+# Both the directory holding this file and the install/ directory beside it are
+# checked. install/ is where the assets actually live, and an attacker who
+# cannot touch the parent may still own the child.
+unsafe_asset_dir() {
+    local dir="$1" mode="" owner="" invoking=""
+    mode="$(stat -c '%a' "$dir" 2>/dev/null || true)"
+    owner="$(stat -c '%u' "$dir" 2>/dev/null || true)"
+    if [ -z "$mode" ] || [ -z "$owner" ]; then
+        printf 'the mode and owner of %s could not be read' "$dir"
+        return 0
+    fi
+    if [ "$(((8#$mode) & 2))" -ne 0 ]; then
+        printf '%s is world-writable (mode %s)' "$dir" "$mode"
+        return 0
+    fi
+    # The INVOKING user, through SUDO_USER, as the shadow check near the end of
+    # this file does: this process is already root, so its own uid answers
+    # nothing. An unset or unknown SUDO_USER falls back to the running uid.
+    invoking="$(id -u "${SUDO_USER:-}" 2>/dev/null || true)"
+    invoking="${invoking:-$(id -u)}"
+    if [ "$owner" != 0 ] && [ "$owner" != "$invoking" ]; then
+        printf '%s is owned by uid %s, which is neither root nor the invoking user (uid %s)' \
+            "$dir" "$owner" "$invoking"
+        return 0
+    fi
+    return 0
+}
+
+asset_refusal=""
 if [ -n "$self_dir" ] && [ -r "${self_dir}/install/lib.sh" ]; then
+    asset_refusal="$(unsafe_asset_dir "$self_dir")"
+    if [ -z "$asset_refusal" ]; then
+        asset_refusal="$(unsafe_asset_dir "${self_dir}/install")"
+    fi
+fi
+
+if [ -n "$self_dir" ] && [ -r "${self_dir}/install/lib.sh" ] && [ -z "$asset_refusal" ]; then
     asset_dir="$self_dir"
     assets_local=1
     printf '==> using the install scripts beside this file (%s)\n' "$asset_dir"
 else
-    [ -n "$ref" ] || die "the install scripts are not beside this file; pass --ref <harmon-init release tag> so they can be fetched from a pinned release"
+    if [ -n "$asset_refusal" ]; then
+        warn "refusing the install scripts beside this file: ${asset_refusal}. A directory anyone can write to, or that a third party owns, can hand this root process an install script of its own choosing; fetching from the pinned release tag instead."
+    fi
+    if [ -z "$ref" ]; then
+        if [ -n "$asset_refusal" ]; then
+            die "the install scripts beside this file cannot be trusted (${asset_refusal}) and no --ref was given, so there is nothing safe to run. Re-run this script from a private directory (mktemp -d, mode 0700), or pass --ref <harmon-init release tag> to fetch the install scripts from a pinned release."
+        fi
+        die "the install scripts are not beside this file; pass --ref <harmon-init release tag> so they can be fetched from a pinned release"
+    fi
     fetched_dir="$(mktemp -d)"
+    # Stated rather than inherited, for the same reason the recipe states it:
+    # this is the directory root is about to execute install scripts out of.
+    chmod 0700 "$fetched_dir"
     asset_dir="$fetched_dir"
     assets_local=0
     printf '==> fetching the install scripts from harmon-init %s\n' "$ref"
@@ -273,8 +442,9 @@ tab="$(printf '\t')"
 # byte-identical file is not a change the install counter should report, but it
 # does churn mtime and inode on two system files every single run — which is
 # exactly what configuration-drift tooling watches. "The second run changed
-# nothing" should be true of the filesystem, not only of the counter.
-readonly HARMON_PROFILE_DROPIN=/etc/profile.d/harmon-remote-env.sh
+# nothing" should be true of the filesystem, not only of the counter. The
+# drop-in's path is HARMON_PROFILE_DROPIN, declared with the other constants at
+# the top because the prefix validation names it too.
 
 # ensure_environment_line <key> <value> — /etc/environment carries KEY=VALUE,
 # rewriting an existing KEY= line (whatever its value or quoting) and appending
@@ -304,7 +474,16 @@ set_locale() {
     install -d -m 0755 /etc/profile.d
     tmp="$(mktemp)"
     # ${HARMON_BIN} is interpolated now; everything else is escaped so it stays
-    # for the login shell to expand. The prefix is configurable
+    # for the login shell to expand. Every interpolation of it lands INSIDE
+    # double quotes, and that is load-bearing rather than tidy: this file is
+    # sourced by this root process and by every login shell on the machine, so
+    # an unquoted path with a space in it would silently write a broken drop-in
+    # that breaks every later login, persistently. The quoting handles an
+    # awkward path; check_safe_path above is what stops a hostile one, because
+    # no amount of quoting survives a value carrying its own quote or newline.
+    # scripts/test-bootstrap-remote.sh holds both halves.
+    #
+    # The prefix is configurable
     # (HARMON_PREFIX), and a drop-in that hardcoded /usr/local/bin left a
     # custom prefix working only until this process exited — the next login
     # could not find its own tools. POSIX sh, not bash: /etc/profile.d is read
@@ -469,14 +648,36 @@ esac
 manifest_dir="${HARMON_PREFIX}/share/harmon-remote-env"
 write_manifest() {
     local revision="" manifest="${manifest_dir}/manifest.json" before=""
-    local after="" before_tiers="" manifest_tiers="" tier=""
+    local after="" before_tiers="" status_out="" status_rc=0
     if [ "$assets_local" = 1 ]; then
         revision="$(git -C "$self_dir" -c safe.directory='*' rev-parse --verify HEAD 2>/dev/null || true)"
-        # --no-optional-locks: root reads the caller's checkout without
-        # refreshing (rewriting) its index.
-        if [ -n "$revision" ] &&
-            [ -n "$(git -C "$self_dir" -c safe.directory='*' --no-optional-locks status --porcelain 2>/dev/null)" ]; then
-            revision="${revision}-dirty"
+        if [ -n "$revision" ]; then
+            # THE RULE, and this is the third surface in this change that needed
+            # it: absence and cleanliness are CLAIMS, and a claim requires a
+            # SUCCESSFUL read — not merely an empty one. `git status
+            # --porcelain` prints nothing both when the checkout is clean and
+            # when the command failed outright (an unreadable repository, a
+            # safe.directory refusal, a git that rejects an option), so its
+            # output and its exit status are captured separately instead of the
+            # output being read as the answer. On a failed read no manifest is
+            # written, because every alternative is a lie: suffixing `-dirty`
+            # invents a fact, and attesting the bare commit hands the
+            # image-to-VM comparison a clean commit for bytes nobody checked —
+            # exactly the guarantee the comment above this function makes.
+            # Clearing `revision` and falling through would be wrong too: the
+            # assets came from the CHECKOUT, so the release tag supplied none of
+            # them (review r2-3), which is why this returns instead.
+            # --no-optional-locks: root reads the caller's checkout without
+            # refreshing (rewriting) its index.
+            status_out="$(git -C "$self_dir" -c safe.directory='*' --no-optional-locks status --porcelain 2>/dev/null)" ||
+                status_rc=$?
+            if [ "$status_rc" -ne 0 ]; then
+                warn "no manifest written: git exited ${status_rc} reading the working-tree status of ${self_dir}, so whether the installed bytes are commit ${revision} cannot be established. An empty status from a FAILED read is not a clean checkout, and a manifest attesting one would defeat the image-to-VM comparison it exists for."
+                return 0
+            fi
+            if [ -n "$status_out" ]; then
+                revision="${revision}-dirty"
+            fi
         fi
     fi
     if [ -z "$revision" ] && printf '%s' "$ref" | grep -Eq "$HARMON_RELEASE_TAG_RE"; then
@@ -490,24 +691,22 @@ write_manifest() {
         before="$(cat "$manifest")"
         before_tiers="$(printf '%s' "$before" | jq -r '.image.tiers // ""' 2>/dev/null || true)"
     fi
-    # The tier set these entries were produced from travels INTO the manifest,
-    # spelled in HARMON_TIER_ORDER order so one selection always spells itself
-    # one way and `--tiers agents,core` is not mistaken for a different set than
-    # `--tiers core,agents`.
-    for tier in $HARMON_TIER_ORDER; do
-        case ",${tiers}," in
-        *",${tier},"*) manifest_tiers="${manifest_tiers:+${manifest_tiers},}${tier}" ;;
-        esac
-    done
+    # The tier set these entries were produced from travels INTO the manifest as
+    # `$tiers` itself — the one canonical value built at validation, already
+    # deduplicated and spelled in HARMON_TIER_ORDER order. It used to be
+    # re-derived here with a second pass over the caller's string, which is how
+    # `--tiers 'core, agents'` could have recorded a tier set the install loop
+    # never ran: one representation, consumed everywhere, cannot disagree with
+    # itself.
     # shellcheck disable=SC2046  # the record is one name=version token per line
     HARMON_MANIFEST_DIR="$manifest_dir" HARMON_MANIFEST_NAME=harmon-remote-env \
-        HARMON_MANIFEST_TIERS="$manifest_tiers" \
+        HARMON_MANIFEST_TIERS="$tiers" \
         bash "${asset_dir}/generate-manifest.sh" "$revision" "$(harmon_arch)" \
         $(sed -n "s/^tool${tab}//p" "$change_log")
     after="$(cat "$manifest")"
     if [ "$before" = "$after" ]; then
         harmon_skip "manifest ${manifest}"
-    elif [ -z "$before" ] || [ "$before_tiers" = "$manifest_tiers" ]; then
+    elif [ -z "$before" ] || [ "$before_tiers" = "$tiers" ]; then
         harmon_changed "manifest ${manifest} (${revision})"
     else
         # A manifest is ONE RUN's records, so a run whose tier set differs from
@@ -520,14 +719,14 @@ write_manifest() {
         # compared. The idempotence claim ("a second run leaves the manifest
         # byte-identical") is a claim about two runs of the SAME tiers, and this
         # is the branch where that precondition does not hold.
-        warn "the manifest at ${manifest} records tiers '${before_tiers:-none (written before the tier set was recorded)}' and this run selected '${manifest_tiers}'. Its entries are this run's records, so tools only the other tier set installs are no longer listed — they may still be installed. Compared on the tools both tier sets cover, and nothing else."
+        warn "the manifest at ${manifest} records tiers '${before_tiers:-none (written before the tier set was recorded)}' and this run selected '${tiers}'. Its entries are this run's records, so tools only the other tier set installs are no longer listed — they may still be installed. Compared on the tools both tier sets cover, and nothing else."
         if printf '%s\n' "$before" "$after" | jq -e -s '
             (.[0].tools // {}) as $a | (.[1].tools // {}) as $b
             | ($a | with_entries(select(.key | in($b)))) == ($b | with_entries(select(.key | in($a))))
             ' >/dev/null 2>&1; then
-            harmon_skip "manifest ${manifest} (tier set ${before_tiers:-none} -> ${manifest_tiers}; every shared tool unchanged)"
+            harmon_skip "manifest ${manifest} (tier set ${before_tiers:-none} -> ${tiers}; every shared tool unchanged)"
         else
-            harmon_changed "manifest ${manifest} (${revision}; tier set ${before_tiers:-none} -> ${manifest_tiers}; a shared tool's version differs)"
+            harmon_changed "manifest ${manifest} (${revision}; tier set ${before_tiers:-none} -> ${tiers}; a shared tool's version differs)"
         fi
     fi
 }

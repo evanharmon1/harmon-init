@@ -19,6 +19,7 @@ set -euo pipefail
 cd "$(git rev-parse --show-toplevel)"
 
 python3 - <<'PY'
+import base64
 import json
 import os
 import pathlib
@@ -904,6 +905,26 @@ for label, text in ((BOOTSTRAP, bootstrap_text), (DOC, doc_text)):
                 f"{label}: the documented standalone recipe does not download to a file (`curl … -o <file>`), so "
                 f"nothing can short-circuit the run when the download fails: {shown!r}"
             )
+        # …and that file goes in a PRIVATE directory. A bare `mktemp` put the
+        # script in shared /tmp, which makes /tmp the script's own directory —
+        # and the sibling-asset branch then accepts a /tmp/install/lib.sh that
+        # any local user could have pre-created, for the root process to source.
+        # The script refuses an unsafe directory on its own account (§ 18), and
+        # this is the other half: the recipe an adapter copies must not create
+        # the condition in the first place. The mode is asserted as well as the
+        # `-d`, because "mktemp -d defaults to 0700" is a fact about an
+        # implementation and not a promise the recipe makes.
+        if re.search(r"\$\(\s*mktemp\s*\)|`\s*mktemp\s*`", command) or not re.search(r"mktemp\s+-d", command):
+            fail(
+                f"{label}: the documented standalone recipe does not download into a private directory "
+                f"(`mktemp -d`). A bare `mktemp` lands in shared /tmp, which becomes the script's own directory "
+                f"and makes /tmp/install/lib.sh a sibling asset any local user can plant: {shown!r}"
+            )
+        if not re.search(r"chmod\s+0?700\b", command):
+            fail(
+                f"{label}: the documented standalone recipe does not state the temporary directory's mode "
+                f"(`chmod 0700`), so its privacy rests on mktemp's default rather than on the recipe: {shown!r}"
+            )
 
 # ── 15. the manifest is what the tiers installed, under the image's keys ────
 # The VM manifest is serialised from the run record, which the lib.sh helpers
@@ -1038,6 +1059,38 @@ manifest_dir="${root}/m-local"
 write_manifest
 printf 'LOCAL_HEAD %s\n' "$local_head"
 printf 'LOCAL_REVISION %s\n' "$(jq -r .image.revision "${manifest_dir}/manifest.json")"
+# The tier field is the ONE canonical value `tiers` holds, not a second
+# derivation from the caller's string.
+printf 'LOCAL_TIERS %s\n' "$(jq -r '.image.tiers // "none"' "${manifest_dir}/manifest.json")"
+
+# (3) the same checkout, DIRTY: the commit is still named, suffixed, because the
+# cleanliness read SUCCEEDED and said the tree had changed.
+printf 'uncommitted\n' >>"${root}/local/README.md"
+manifest_dir="${root}/m-dirty"
+write_manifest
+printf 'DIRTY_REVISION %s\n' "$(jq -r .image.revision "${manifest_dir}/manifest.json")"
+
+# (4) the cleanliness read FAILS. `git status --porcelain` prints nothing both
+# when a checkout is clean and when the command failed outright, so an empty
+# answer from a FAILED read must not be attested as a clean commit — and must
+# not fall through to the release tag either, since the assets came from the
+# checkout and the tag supplied none of them. No manifest at all is the only
+# honest outcome, and this stub makes the failure happen without breaking the
+# rev-parse beside it.
+git() {
+    case " $* " in
+    *" status "*) return 128 ;;
+    esac
+    command git "$@"
+}
+manifest_dir="${root}/m-unreadable"
+write_manifest
+unset -f git
+if [ -f "${manifest_dir}/manifest.json" ]; then
+    printf 'UNREADABLE_STATUS %s\n' "$(jq -r .image.revision "${manifest_dir}/manifest.json")"
+else
+    printf 'UNREADABLE_STATUS none\n'
+fi
 """
     harness = (
         harness.replace("@TAG_RE@", tag_re_decl.group(1))
@@ -1049,12 +1102,31 @@ printf 'LOCAL_REVISION %s\n' "$(jq -r .image.revision "${manifest_dir}/manifest.
     out = dict(
         line.split(" ", 1) for line in run.stdout.splitlines() if line.count(" ") == 1
     )
-    if run.returncode != 0 or len(out) != 4:
+    if run.returncode != 0 or len(out) != 7:
         fail(
             f"{BOOTSTRAP}: the manifest provenance case could not run (exit {run.returncode}) — "
             f"stderr: {run.stderr.strip()[:300]!r}"
         )
     else:
+        if out["DIRTY_REVISION"] != f"{out['LOCAL_HEAD']}-dirty":
+            fail(
+                f"{BOOTSTRAP}: write_manifest recorded revision {out['DIRTY_REVISION']!r} for a checkout with "
+                f"uncommitted changes at {out['LOCAL_HEAD'][:12]} — a successful status read that reports a dirty "
+                "tree must still suffix the commit, or restructuring the read has dropped the `-dirty` marker"
+            )
+        if out["UNREADABLE_STATUS"] != "none":
+            fail(
+                f"{BOOTSTRAP}: the cleanliness probe failed and write_manifest still attested revision "
+                f"{out['UNREADABLE_STATUS']!r}. `git status --porcelain` prints nothing when it FAILS as well as "
+                "when the tree is clean, so a manifest written off that read attests a clean commit for bytes "
+                "nobody checked — absence and cleanliness are claims that need a successful read"
+            )
+        if out["LOCAL_TIERS"] != "core,agents":
+            fail(
+                f"{BOOTSTRAP}: the manifest recorded tiers {out['LOCAL_TIERS']!r} for a run whose canonical "
+                "selection was 'core,agents' — the manifest field must consume the one canonical value, not a "
+                "second parse of the caller's string"
+            )
         if out["FOREIGN_REVISION"] != "v9.9.9":
             fail(
                 f"{BOOTSTRAP}: write_manifest recorded revision {out['FOREIGN_REVISION']!r} for an install "
@@ -1251,6 +1323,492 @@ chose REPO_LOCAL_WINS "$matching"
             if got != want:
                 fail(f"{MARKDOWNLINT}: {case} ran {got!r}, expected {want!r} — {why[case]}")
 
+# ── 18. the install prefix: refused at the door, quoted where it is rendered ─
+# HARMON_BIN is interpolated into /etc/profile.d/harmon-remote-env.sh, which this
+# root process sources and so does every login shell on the machine afterwards. A
+# prefix carrying a quote, a `$`, a backtick or a newline writes a broken drop-in
+# and breaks every later login, persistently — so the value is validated before
+# anything else runs (unprivileged, like the ref check, which is why these cases
+# can run at all) and quoted at the render site as well. Both halves are checked:
+# the refusals below pin the ADMITTED set as tightly as the refused one, because a
+# validator that quietly started accepting a space would put the corruption back.
+for bad_prefix, why in (
+    ("/opt/$(id -u)", "a command substitution the login shell would run"),
+    ("/opt/`id -u`", "a backtick substitution the login shell would run"),
+    ('/opt/"harmon"', "a double quote, which closes the quoting around it"),
+    ("/opt/harmon bin", "a space"),
+    ("/opt/a:b", "a colon, which cannot survive as a PATH entry"),
+    ("opt/harmon", "a relative path, so nothing pins where the tools went"),
+    ("/opt/harmon\nexport EVIL=1", "a newline — a line-oriented check would accept this"),
+):
+    r = run_bootstrap(["--tiers", "no-such-tier"], {"HARMON_PREFIX": bad_prefix})
+    if r.returncode != 1 or "is not a safe absolute path" not in r.stderr:
+        fail(
+            f"{BOOTSTRAP}: HARMON_PREFIX {bad_prefix!r} must be refused as an unsafe path ({why}) before anything "
+            f"else runs (exit {r.returncode}: {r.stderr.strip()[:160]!r})"
+        )
+for bad_bin in ("/opt/bin:/tmp/bin", "/opt/$(whoami)/bin", "/opt/bin\nPATH=/tmp"):
+    r = run_bootstrap(["--tiers", "no-such-tier"], {"HARMON_BIN": bad_bin})
+    if r.returncode != 1 or "is not a safe absolute path" not in r.stderr:
+        fail(
+            f"{BOOTSTRAP}: HARMON_BIN {bad_bin!r} must be refused as an unsafe path too. It is the value the "
+            "drop-in renders, `sudo -E` carries it where the sudo re-exec does not, and validating only the "
+            f"prefix it is usually derived from leaves that path open (exit {r.returncode}: "
+            f"{r.stderr.strip()[:160]!r})"
+        )
+r = run_bootstrap(["--tiers", "no-such-tier"], {"HARMON_PREFIX": "/opt/harmon-remote_env.1+2@x"})
+if r.returncode != 1 or "unknown tier" not in r.stderr or "safe absolute path" in r.stderr:
+    fail(
+        f"{BOOTSTRAP}: an ordinary absolute prefix of path characters must pass the prefix check (and fail on the "
+        f"bogus tier instead), or a legitimate HARMON_PREFIX has been made unusable (exit {r.returncode}: "
+        f"{r.stderr.strip()[:160]!r})"
+    )
+
+# The other half, in the heredoc that becomes the drop-in: every interpolation of
+# the prefix must open its double quote immediately before the value. Validation
+# stops a hostile prefix; the quoting is what keeps an awkward-but-admitted one
+# from splitting a word in a file every login shell reads. A rendered COMMENT line
+# is exempt — it cannot be split, only newline-terminated, which validation
+# refuses.
+profile_start = bootstrap_text.find('cat >"$tmp" <<PROFILE\n')
+profile_end = bootstrap_text.find("\nPROFILE\n", profile_start)
+if profile_start < 0 or profile_end < 0:
+    fail(f"{BOOTSTRAP}: no PROFILE heredoc to check — the drop-in quoting case cannot run")
+else:
+    body = bootstrap_text[profile_start + len('cat >"$tmp" <<PROFILE\n'):profile_end]
+    for line in body.splitlines():
+        if "${HARMON_BIN}" not in line or line.lstrip().startswith("#"):
+            continue
+        if '"${HARMON_BIN}' not in line or line.count("${HARMON_BIN}") != line.count('"${HARMON_BIN}'):
+            fail(
+                f"{BOOTSTRAP}: the profile drop-in interpolates the prefix unquoted, so a prefix containing a "
+                f"space would write a drop-in that breaks every login shell: {line.strip()[:120]!r}"
+            )
+
+def run_lifted(script, args=(), limit=120):
+    """Run a harness built from code lifted out of the scripts under test.
+
+    Bounded on purpose. § 20 lifts a `while` loop out of the bootstrap, so an
+    edit that stopped advancing it would hang `task verify` rather than fail it —
+    and a gate that hangs is worse than one that is wrong, because nothing
+    reports it. A timeout comes back as None and reads as "could not run".
+    """
+    try:
+        return subprocess.run(
+            ["bash", "-s", *args], input=script, capture_output=True, text=True, timeout=limit
+        )
+    except subprocess.TimeoutExpired:
+        return None
+
+
+# ── 19. the asset directory a ROOT process runs install scripts out of ──────
+# The sibling-asset branch SOURCES ${self_dir}/install/lib.sh as root, and
+# self_dir is wherever the caller put this file. A standalone recipe that
+# downloaded it with a bare `mktemp` made that directory shared /tmp — so any
+# unprivileged local user could pre-create /tmp/install/lib.sh and root would
+# source it. § 14 holds the recipe's shape; this holds the layer that does not
+# depend on every adapter copying the recipe correctly, which is the one that
+# reaches a real host.
+#
+# EXECUTED, not pattern-matched: which directory the assets come from is a
+# decision, and the block is lifted out of bootstrap-remote.sh and planted as a
+# real file inside each candidate directory, because `BASH_SOURCE` is how that
+# decision is made. curl is stubbed so the fetch fallback is observable offline.
+locate_start = bootstrap_text.find("# ---------- locate the install scripts ----------")
+locate_end = bootstrap_text.find('export HARMON_VERSIONS_FILE="${asset_dir}/versions.env"')
+if locate_start < 0 or locate_end < 0:
+    fail(f"{BOOTSTRAP}: the asset-location block could not be lifted — the asset-directory cases cannot run")
+else:
+    worker = r"""set -euo pipefail
+die() { printf 'bootstrap-remote: %s\n' "$*" >&2; exit 1; }
+warn() { printf 'bootstrap-remote: WARNING: %s\n' "$*" >&2; }
+HARMON_REPO_RAW='https://harmon-init.invalid'
+HARMON_REMOTE_ASSETS='
+versions.env
+generate-manifest.sh
+install/lib.sh
+'
+ref="${HARNESS_REF-v9.9.9}"
+# The one harness-only seam: a directory whose mode and owner cannot be READ has
+# to be refused too — an unreadable answer is not a clean one — and stat does not
+# fail on a directory root can reach, so the failure is injected rather than
+# contrived out of the filesystem.
+stat() {
+    [ "${HARNESS_BREAK_STAT:-}" = 1 ] && return 1
+    command stat "$@"
+}
+curl() {
+    _dest=""
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+        -o)
+            _dest="$2"
+            shift 2
+            ;;
+        *) shift ;;
+        esac
+    done
+    [ -n "$_dest" ] || return 1
+    printf 'fetched\n' >"$_dest"
+}
+""" + bootstrap_text[locate_start:locate_end] + r"""
+printf 'ASSETS_LOCAL %s\n' "$assets_local"
+"""
+    driver = r"""
+set -euo pipefail
+unset SUDO_USER
+root="$(mktemp -d)"
+trap 'chmod -R u+rwx "$root" >/dev/null 2>&1 || true; rm -rf "$root"' EXIT
+
+plant() { # plant <dir> — the lifted block, as a real file, with a sibling asset
+    mkdir -p "${1}/install"
+    printf '%s' '@WORKER_B64@' | base64 -d >"${1}/bootstrap-remote.sh"
+    printf 'placeholder\n' >"${1}/install/lib.sh"
+}
+
+run_case() { # run_case <label> <dir> -> <label> <local>:<refused>:<stopped>
+    _label="$1"
+    _dir="$2"
+    _out=""
+    _out="$(bash "${_dir}/bootstrap-remote.sh" 2>"${root}/${_label}.err")" || true
+    _local="$(printf '%s\n' "$_out" | sed -n 's/^ASSETS_LOCAL //p')"
+    _refused=no
+    if grep -q 'refusing the install scripts' "${root}/${_label}.err"; then
+        _refused=yes
+    fi
+    _stopped=no
+    if grep -q 'cannot be trusted' "${root}/${_label}.err"; then
+        _stopped=yes
+    fi
+    printf '%s %s:%s:%s\n' "$_label" "${_local:-none}" "$_refused" "$_stopped"
+}
+
+private="${root}/private"
+plant "$private"
+chmod 0700 "$private" "${private}/install"
+run_case PRIVATE_DIR "$private"
+
+shared="${root}/shared"
+plant "$shared"
+chmod 0700 "${shared}/install"
+chmod 0777 "$shared"
+run_case WORLD_WRITABLE_DIR "$shared"
+
+child="${root}/child"
+plant "$child"
+chmod 0700 "$child"
+chmod 0777 "${child}/install"
+run_case WORLD_WRITABLE_INSTALL "$child"
+
+# Owned by a third party: root running the script while the assets belong to an
+# unprivileged user is the multi-user host this refusal exists for. Whoever is
+# running these tests owns the directory, so the OTHER party is named through
+# SUDO_USER; as root, the directory is chowned away instead.
+foreign="${root}/foreign"
+plant "$foreign"
+chmod 0700 "$foreign" "${foreign}/install"
+if [ "$(id -u)" -eq 0 ]; then
+    chown -R 65534 "$foreign"
+    run_case FOREIGN_OWNER "$foreign"
+else
+    export SUDO_USER=root
+    run_case FOREIGN_OWNER "$foreign"
+    unset SUDO_USER
+fi
+
+unreadable="${root}/unreadable"
+plant "$unreadable"
+chmod 0700 "$unreadable" "${unreadable}/install"
+export HARNESS_BREAK_STAT=1
+run_case UNREADABLE_MODE "$unreadable"
+unset HARNESS_BREAK_STAT
+
+# Refused with nowhere safe to fall back to: the run STOPS. Accepting the
+# directory anyway, or reporting success having installed nothing, are both worse.
+noref="${root}/noref"
+plant "$noref"
+chmod 0700 "${noref}/install"
+chmod 0777 "$noref"
+export HARNESS_REF=""
+run_case REFUSED_WITHOUT_REF "$noref"
+unset HARNESS_REF
+""".replace("@WORKER_B64@", base64.b64encode(worker.encode()).decode())
+    run = run_lifted(driver)
+    got = {} if run is None else dict(
+        line.split(" ", 1) for line in run.stdout.splitlines() if line.count(" ") == 1
+    )
+    expected = {
+        "PRIVATE_DIR": "1:no:no",
+        "WORLD_WRITABLE_DIR": "0:yes:no",
+        "WORLD_WRITABLE_INSTALL": "0:yes:no",
+        "FOREIGN_OWNER": "0:yes:no",
+        "UNREADABLE_MODE": "0:yes:no",
+        "REFUSED_WITHOUT_REF": "none:yes:yes",
+    }
+    why = {
+        "PRIVATE_DIR": "a private directory owned by the invoking user is exactly the recipe's own shape and must "
+        "still be used, or the standalone path silently stops being offline-capable",
+        "WORLD_WRITABLE_DIR": "any local user can plant install/lib.sh in a world-writable directory, so the "
+        "assets beside the script must be refused and the pinned fetch taken instead",
+        "WORLD_WRITABLE_INSTALL": "install/ is where the assets actually are; an attacker who cannot touch the "
+        "parent may still own the child",
+        "FOREIGN_OWNER": "a directory owned by neither root nor the invoking user is a directory its owner can "
+        "rewrite between the check and the source",
+        "UNREADABLE_MODE": "a mode and owner that could not be read is not a clean answer, and a check that "
+        "fails open is worse than no check at all",
+        "REFUSED_WITHOUT_REF": "with the siblings refused and no pinned ref there is nothing safe to run, and "
+        "the run must stop saying so rather than proceed",
+    }
+    if run is None or run.returncode != 0 or len(got) != len(expected):
+        fail(
+            f"{BOOTSTRAP}: the asset-directory cases could not run "
+            f"({'timed out' if run is None else f'exit {run.returncode}'}) — "
+            f"stderr: {'' if run is None else run.stderr.strip()[:300]!r}"
+        )
+    else:
+        for case, want in expected.items():
+            if got.get(case) != want:
+                fail(
+                    f"{BOOTSTRAP}: asset-directory case {case} gave {got.get(case)!r} "
+                    f"(local:refused:stopped), expected {want!r} — {why[case]}"
+                )
+
+# ── 20. the tier selection is ONE canonical value ───────────────────────────
+# Validation used to split on commas AND whitespace while every later membership
+# check split on commas alone, so `--tiers 'core, agents'` validated and then
+# installed core only — the run exiting 0 reporting a selection it had not
+# installed. EXECUTED, because the canonical spelling is the whole point and a
+# pattern match cannot see it.
+canon_start = bootstrap_text.find('tiers_given="$tiers"')
+canon_end = bootstrap_text.find("# ---------- privilege ----------")
+default_decl = re.search(r'^readonly HARMON_DEFAULT_TIERS="([^"]+)"', bootstrap_text, re.M)
+if canon_start < 0 or canon_end < 0 or not order or not default_decl:
+    fail(f"{BOOTSTRAP}: the tier canonicalisation block could not be lifted — its cases cannot run")
+else:
+    canon = (
+        "set -euo pipefail\n"
+        "HARMON_TIER_ORDER='" + order.group(1) + "'\n"
+        "die() { printf 'REFUSED\\n'; exit 1; }\n"
+        'tiers="$1"\n'
+        + bootstrap_text[canon_start:canon_end]
+        + "printf 'CANONICAL %s\\n' \"$tiers\"\n"
+    )
+    cases = [
+        ("core,agents", "core,agents", "the ordinary spelling is unchanged"),
+        ("core, agents", "core,agents", "whitespace after a comma was the original defect"),
+        (" core ,\tagents ", "core,agents", "surrounding whitespace is trimmed, tabs included"),
+        ("agents,core", "core,agents", "one selection spells itself one way, in tier order"),
+        ("core,core", "core", "a repeated element collapses rather than being installed twice"),
+        ("browsers,core", "core,browsers", "order comes from HARMON_TIER_ORDER, not the caller"),
+        ("core,agents,browsers", "core,agents,browsers", "every tier at once still canonicalises to itself"),
+        ("core,,agents", "REFUSED", "an empty element is a typo, not a tier"),
+        ("core,agents,", "REFUSED", "a trailing comma is the same typo"),
+        ("", "REFUSED", "an empty selection installs nothing and must say so"),
+        ("core,nope", "REFUSED", "an unknown element is refused by name"),
+        ("core agents", "REFUSED", "whitespace INSIDE an element is one unknown tier, never two"),
+        ("c*", "REFUSED", "a glob must not match a run of the known names in a case pattern"),
+        # These two are why membership is an equality test and not `case " $order
+        # " in *" $tier "*`: in a case pattern the element is a GLOB and the known
+        # tiers are one space-separated string, so `agents browsers` and `c*` both
+        # matched a RUN of the known names, were accepted as a tier, and then
+        # vanished from the canonical set — leaving `core` alone and a run that
+        # exits 0 having installed less than was asked for. Exactly the defect
+        # this section exists for, arriving through the validator instead.
+        ("core,agents browsers", "REFUSED", "a multi-word element must not match a run of the known tiers"),
+        ("core,c*", "REFUSED", "nor may a glob, which would silently reduce the selection to core"),
+        ("agents", "REFUSED", "core is the base every other tier builds on"),
+    ]
+    cases.append((default_decl.group(1), default_decl.group(1), "the shipped default must already be canonical"))
+    for given, want, because in cases:
+        run = run_lifted(canon, (given,), limit=30)
+        if run is None:
+            fail(
+                f"{BOOTSTRAP}: canonicalising --tiers {given!r} did not terminate. The loop must advance past a "
+                "comma or break on every pass — a `continue` that skips the advance spins forever"
+            )
+            continue
+        got = run.stdout.strip().splitlines()[-1] if run.stdout.strip() else ""
+        got = got[len("CANONICAL "):] if got.startswith("CANONICAL ") else got
+        if got != want:
+            fail(
+                f"{BOOTSTRAP}: --tiers {given!r} canonicalised to {got!r}, expected {want!r} — {because}"
+            )
+
+# …and nothing downstream re-derives it. The manifest's tier field was the second
+# derivation, which is how an unnormalised selection could have been RECORDED as a
+# tier set the install loop never ran.
+if wm_start >= 0 and wm_end >= 0:
+    wm_text = bootstrap_text[wm_start:wm_end]
+    if 'HARMON_MANIFEST_TIERS="$tiers"' not in wm_text:
+        fail(
+            f"{BOOTSTRAP}: write_manifest does not pass the canonical `$tiers` as HARMON_MANIFEST_TIERS — the "
+            "manifest field must consume the one canonical value rather than deriving its own"
+        )
+    if re.search(r"for \w+ in \$HARMON_TIER_ORDER", wm_text):
+        fail(
+            f"{BOOTSTRAP}: write_manifest loops over HARMON_TIER_ORDER again — a second parse of the tier "
+            "selection is exactly what the canonical value replaced, and two parses will disagree again"
+        )
+
+# ── 21. abandoned staging files are reaped by LIVENESS, never by age ────────
+# Putting the pid in the staging name closed the interleave race between two
+# concurrent runs and, on its own, made every abandoned staging file permanently
+# unreapable: a later run has a different pid, and a tool already at the pin never
+# reaches harmon_install_bin at all. Both properties have to hold at once, which
+# is why this is executed against real files rather than asserted about the name.
+reap = r"""
+set -euo pipefail
+root="$(mktemp -d)"
+trap 'rm -rf "$root"' EXIT
+export HARMON_PREFIX="$root"
+export HARMON_BIN="${root}/bin"
+. '@LIB@'
+harmon_ensure_bin
+
+# A writer that is GONE: a child this shell has already reaped.
+sleep 0 &
+dead=$!
+wait "$dead" 2>/dev/null || true
+: >"${HARMON_BIN}/.gone.${dead}.harmon-staging"
+# A writer that is LIVE: this very process.
+: >"${HARMON_BIN}/.live.$$.harmon-staging"
+# A name with no pid field: not something this wrote, so not something it deletes.
+: >"${HARMON_BIN}/.nopid.harmon-staging"
+
+# The sweep every tier runs, whether or not it installs anything — which is the
+# half that matters, since a tool already at the pin is skipped entirely.
+harmon_ensure_bin
+
+state() { # state <label> <path>
+    if [ -e "$2" ]; then printf '%s kept\n' "$1"; else printf '%s reaped\n' "$1"; fi
+}
+state DEAD_WRITER "${HARMON_BIN}/.gone.${dead}.harmon-staging"
+state LIVE_WRITER "${HARMON_BIN}/.live.$$.harmon-staging"
+state NO_PID_FIELD "${HARMON_BIN}/.nopid.harmon-staging"
+
+# And a publish that FAILS removes its own staging path rather than leaving one
+# for a later sweep: the sweep is the fallback for interruptions no handler sees
+# (a kill, a power loss), not the routine path.
+printf 'x\n' >"${root}/src"
+mv() { return 1; }
+(harmon_install_bin "${root}/src" failtool) >/dev/null 2>&1 || true
+unset -f mv
+if [ -n "$(find "$HARMON_BIN" -maxdepth 1 -name '.failtool.*.harmon-staging' -print -quit)" ]; then
+    printf 'FAILED_PUBLISH kept\n'
+else
+    printf 'FAILED_PUBLISH reaped\n'
+fi
+"""
+run = run_lifted(reap.replace("@LIB@", str(INSTALL / "lib.sh")))
+reaped = {} if run is None else dict(
+    line.split(" ", 1) for line in run.stdout.splitlines() if line.count(" ") == 1
+)
+expected = {
+    "DEAD_WRITER": "reaped",
+    "LIVE_WRITER": "kept",
+    "NO_PID_FIELD": "kept",
+    "FAILED_PUBLISH": "reaped",
+}
+why = {
+    "DEAD_WRITER": "a staging file whose writer is gone is litter, and a later run has a different pid, so "
+    "nothing but a liveness sweep will ever remove it",
+    "LIVE_WRITER": "deleting a live writer's staging file is the exact race the pid in the name exists to "
+    "prevent — reaping by age or by pattern alone would do it",
+    "NO_PID_FIELD": "a name this code did not write is left alone rather than guessed at",
+    "FAILED_PUBLISH": "a writer about to die should clean up after itself instead of relying on the sweep",
+}
+if run is None or run.returncode != 0 or len(reaped) != len(expected):
+    fail(
+        f"{INSTALL}/lib.sh: the staging-reap cases could not run "
+        f"({'timed out' if run is None else f'exit {run.returncode}'}) — "
+        f"stderr: {'' if run is None else run.stderr.strip()[:300]!r}"
+    )
+else:
+    for case, want in expected.items():
+        if reaped.get(case) != want:
+            fail(f"{INSTALL}/lib.sh: staging case {case} was {reaped.get(case)!r}, expected {want!r} — {why[case]}")
+
+# ── 22. a version probe must SUCCEED as well as match ───────────────────────
+# The helper preserved the probe's exit status and the comparison discarded it, so
+# a binary that printed the pinned version and exited nonzero was accepted as
+# healthy, recorded in the manifest, and skipped on every later run. Fixed in the
+# shared helper, so the property holds for every pinned tool rather than the ones
+# somebody remembered — and executed here for the same reason § 16 is.
+probe = r"""
+set -euo pipefail
+root="$(mktemp -d)"
+trap 'rm -rf "$root"' EXIT
+export HARMON_PREFIX="$root"
+export HARMON_BIN="${root}/bin"
+. '@LIB@'
+harmon_ensure_bin
+PATH="${HARMON_BIN}:${PATH}"
+
+probe() { # probe <what it prints> <what it exits>
+    printf '#!/bin/sh\nprintf "%%s\\n" "%s"\nexit %s\n' "$1" "$2" >"${HARMON_BIN}/tool"
+    chmod 0755 "${HARMON_BIN}/tool"
+}
+probe_long_banner() { # a probe whose banner is far larger than a pipe buffer
+    {
+        printf '#!/bin/sh\n'
+        printf 'printf "tool 9.9.9\\n"\n'
+        printf "yes 'bundled 8.8.8' | head -20000\n"
+    } >"${HARMON_BIN}/tool"
+    chmod 0755 "${HARMON_BIN}/tool"
+}
+verdict() { # verdict <label>
+    if harmon_needs tool 9.9.9 tool --version >/dev/null 2>&1; then
+        printf '%s needs\n' "$1"
+    else
+        printf '%s skips\n' "$1"
+    fi
+}
+
+probe "tool 9.9.9" 0
+verdict MATCHES_AND_SUCCEEDS
+probe "tool 9.9.9" 1
+verdict MATCHES_BUT_FAILS
+probe "tool 1.1.1" 0
+verdict MISMATCHES
+probe_long_banner
+verdict MATCHES_WITH_LONG_BANNER
+probe "no version anywhere" 0
+verdict NOTHING_TO_PARSE
+"""
+run = run_lifted(probe.replace("@LIB@", str(INSTALL / "lib.sh")))
+probed = {} if run is None else dict(
+    line.split(" ", 1) for line in run.stdout.splitlines() if line.count(" ") == 1
+)
+expected = {
+    "MATCHES_AND_SUCCEEDS": "skips",
+    "MATCHES_BUT_FAILS": "needs",
+    "MISMATCHES": "needs",
+    "MATCHES_WITH_LONG_BANNER": "skips",
+    "NOTHING_TO_PARSE": "needs",
+}
+why = {
+    "MATCHES_AND_SUCCEEDS": "a healthy tool at the pin is still skipped, or every run reinstalls everything",
+    "MATCHES_BUT_FAILS": "a probe that printed the pinned version and exited nonzero is a broken tool, not a "
+    "healthy one — accepting it records it in the manifest and skips it forever",
+    "MISMATCHES": "the version half of the decision is untouched",
+    "MATCHES_WITH_LONG_BANNER": "requiring the probe to succeed must not make the PARSE's status matter. A "
+    "banner larger than a pipe buffer makes `head -1` close the pipe while grep is still writing, so grep dies "
+    "of SIGPIPE — and under pipefail that would read as a failed probe and reinstall a perfectly healthy tool "
+    "on every run. The banner is oversized on purpose: a short one fits the buffer and proves nothing",
+    "NOTHING_TO_PARSE": "a tool that answered but said nothing version-shaped is a mismatch, which reinstalls",
+}
+if run is None or run.returncode != 0 or len(probed) != len(expected):
+    fail(
+        f"{INSTALL}/lib.sh: the version-probe cases could not run "
+        f"({'timed out' if run is None else f'exit {run.returncode}'}) — "
+        f"stderr: {'' if run is None else run.stderr.strip()[:300]!r}"
+    )
+else:
+    for case, want in expected.items():
+        if probed.get(case) != want:
+            fail(f"{INSTALL}/lib.sh: probe case {case} {probed.get(case)!r}, expected {want!r} — {why[case]}")
+
+
 for e in errors:
     print(f"FAIL: {e}", file=sys.stderr)
 if errors:
@@ -1271,4 +1829,9 @@ print("bootstrap-remote OK: the manifest revision names the assets actually run 
 print("bootstrap-remote OK: the documented standalone recipe downloads to a file and is never a bare pipe into a shell, in both copies")
 print("bootstrap-remote OK: a block publishing several executables re-runs unless every one of them is present at the pin")
 print("bootstrap-remote OK: markdownlint-cli2 resolves to a PATH binary at the pin, node_modules/.bin first, npx only as the fallback")
+print("bootstrap-remote OK: an unsafe HARMON_PREFIX is refused before anything runs, and the drop-in quotes the prefix it renders")
+print("bootstrap-remote OK: sibling install scripts are refused out of a world-writable or third-party directory, and the pinned fetch is taken")
+print("bootstrap-remote OK: the tier selection canonicalises once; no downstream consumer re-parses it")
+print("bootstrap-remote OK: a staging file whose writer is gone is reaped, a live writer's is not, and a failed publish cleans up after itself")
+print("bootstrap-remote OK: a version probe that prints the pin and exits nonzero is treated as needing the install")
 PY

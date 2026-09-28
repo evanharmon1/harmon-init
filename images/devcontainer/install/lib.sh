@@ -109,12 +109,34 @@ harmon_verify_sha256() {
 }
 
 # harmon_installed_version <command> <version-command...>
-# Prints the first dotted version triple the tool reports, or nothing.
+# Prints the first dotted version triple the tool reports, and SUCCEEDS only
+# when the tool actually answered.
+#
+# THE RULE, stated here because this is the shared place every pinned tool comes
+# through: a read that can fail is not an answer until it has succeeded. The
+# probe used to be the last stage of a pipeline (`<probe> | grep | head`), whose
+# status is its LAST command's, so a binary that printed the pinned version and
+# exited nonzero — a broken dynamic link, a missing runtime, a half-installed
+# node — was read as healthy, recorded in the manifest, and skipped on every
+# later run. The probe's own exit status is therefore taken FIRST, separately
+# from parsing what it said, and a failed probe fails the function: the caller
+# has to be able to tell "it says 9.9.9" from "it could not say".
 harmon_installed_version() {
     _hiv_cmd="$1"
     shift
-    command -v "$_hiv_cmd" >/dev/null 2>&1 || return 0
-    "$@" 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+([-.][A-Za-z0-9.]+)?' | head -1
+    command -v "$_hiv_cmd" >/dev/null 2>&1 || return 1
+    _hiv_out="$("$@" 2>/dev/null)" || return 1
+    # The PARSE, by contrast, is allowed to come back empty and still succeed.
+    # A tool that answered but said nothing version-shaped is a MISMATCH, which
+    # the caller's comparison already handles, and failing here would conflate
+    # "the tool is broken" with "its output format changed". The `|| true` is
+    # also what keeps a SIGPIPE off the probe's account: `head -1` closes the
+    # pipe while grep may still be writing, and for a banner larger than a pipe
+    # buffer grep really does die of it — which under pipefail would reinstall a
+    # perfectly healthy tool on every run. A short multi-version banner fits the
+    # buffer and never signals, so this is the case a test has to provoke
+    # deliberately rather than stumble on (test-bootstrap-remote.sh § 22).
+    printf '%s\n' "$_hiv_out" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+([-.][A-Za-z0-9.]+)?' | head -1 || true
 }
 
 # harmon_at_version <command> <wanted> <version-command...>
@@ -122,12 +144,25 @@ harmon_installed_version() {
 # resolves from the prefix we install into. The second half matters on a
 # pre-provisioned VM: a /usr/bin copy at the same version is still the wrong
 # one, because a later bump would leave it shadowing nothing we control.
+#
+# The conjunction is three-way, not two: the probe must have SUCCEEDED as well
+# as matched. Substituting the helper's output inside `[ … = … ]` discarded its
+# status, which is the same defect one layer up — so the status is captured on
+# its own line where `||` can act on it, and no call site has to remember.
+#
+# Today the helper also prints nothing when it fails, so the comparison alone
+# would reinstall anyway and this `|| return 1` is belt as well as braces. It
+# stays because that is a property of the helper's current body, not a contract:
+# a later edit that printed a partial parse before failing would make the
+# comparison the only thing standing between a broken tool and the manifest. The
+# rule is stated where the decision is made.
 harmon_at_version() {
     _hav_cmd="$1"
     _hav_want="$2"
     shift 2
     [ "$(command -v "$_hav_cmd" 2>/dev/null)" = "${HARMON_BIN}/${_hav_cmd}" ] || return 1
-    [ "$(harmon_installed_version "$_hav_cmd" "$@")" = "$_hav_want" ]
+    _hav_seen="$(harmon_installed_version "$_hav_cmd" "$@")" || return 1
+    [ "$_hav_seen" = "$_hav_want" ]
 }
 
 # harmon_needs <command> <version> <version-command...>
@@ -201,14 +236,57 @@ harmon_needs_all() {
     harmon_changed "$_hna_cmd $_hna_want"
 }
 
-# harmon_ensure_bin — the install prefix's bin directory exists.
+# harmon_writer_alive <pid> — true when a process with that pid exists, and true
+# also when the question cannot be answered.
+#
+# /proc rather than `kill -0`: kill reports the same failure for "no such
+# process" and "not permitted to signal it", so a staging file belonging to a
+# LIVE writer running as another user would read as reapable. Anything
+# unanswerable — no procfs, a field that is not a pid — counts as alive, because
+# the cost of keeping a stale file is disk and the cost of a wrong answer is
+# deleting the bytes a concurrent writer is mid-way through staging, which is the
+# exact race the pid in the name exists to prevent. A recycled pid keeps a stale
+# file around longer; it never deletes a live one.
+harmon_writer_alive() {
+    case "${1:-}" in
+    '' | *[!0-9]*) return 0 ;;
+    esac
+    [ -d /proc ] || return 0
+    [ -d "/proc/$1" ]
+}
+
+# harmon_reap_staging — remove staging files whose writer is GONE.
+#
+# Putting the pid in the staging name closed the interleave race between two
+# concurrent runs and, on its own, made every abandoned staging file permanently
+# unreapable: a later run has a different pid, and a tool already at the pin is
+# skipped without ever reaching harmon_install_bin — so an interrupted bootstrap
+# left a full-size hidden executable in the prefix forever, on exactly the small
+# VMs this toolchain targets. Reaping by LIVENESS rather than by age or by name
+# alone keeps both properties at once: an abandoned file goes, and a live
+# concurrent writer's file is never touched. Run from harmon_ensure_bin, which
+# every tier calls whether or not it installs anything, so the sweep is not
+# conditional on the very install that was skipped.
+harmon_reap_staging() {
+    for _hrs_file in "${HARMON_BIN}"/.*.harmon-staging; do
+        [ -f "$_hrs_file" ] || continue # an unmatched glob, or a stray directory
+        _hrs_pid="${_hrs_file%.harmon-staging}"
+        _hrs_pid="${_hrs_pid##*.}"
+        harmon_writer_alive "$_hrs_pid" || rm -f "$_hrs_file"
+    done
+    return 0
+}
+
+# harmon_ensure_bin — the install prefix's bin directory exists, and carries no
+# staging file left behind by a writer that is gone.
 #
 # Called once per tier, and by harmon_install_bin on demand. /usr/local/bin
-# exists on every real target, so this only ever bites a non-default
-# HARMON_PREFIX — which is exactly the case where half the tier would install
-# and half would not.
+# exists on every real target, so the directory half only ever bites a
+# non-default HARMON_PREFIX — which is exactly the case where half the tier would
+# install and half would not.
 harmon_ensure_bin() {
     install -d -m 0755 "$HARMON_BIN"
+    harmon_reap_staging
 }
 
 # harmon_install_bin <source-file> <installed-name>
@@ -228,10 +306,22 @@ harmon_ensure_bin() {
 # prevent. With the pid the name identifies the WRITER, so what a run renames
 # is always the bytes it staged itself; the rename stays a same-directory
 # rename, which is the atomicity invariant and is unchanged.
+#
+# Either step failing removes THIS run's staging path before it dies: a writer
+# that is about to stop existing should not leave a file only a liveness sweep
+# can clean up, and the sweep is the fallback for the interruptions no handler
+# sees (a kill, a power loss), not the routine path.
 harmon_install_bin() {
     harmon_ensure_bin
-    install -m 0755 "$1" "${HARMON_BIN}/.${2}.$$.harmon-staging"
-    mv -f "${HARMON_BIN}/.${2}.$$.harmon-staging" "${HARMON_BIN}/$2"
+    _hib_stage="${HARMON_BIN}/.${2}.$$.harmon-staging"
+    if ! install -m 0755 "$1" "$_hib_stage"; then
+        rm -f "$_hib_stage"
+        harmon_die "could not stage $2 into ${HARMON_BIN}"
+    fi
+    if ! mv -f "$_hib_stage" "${HARMON_BIN}/$2"; then
+        rm -f "$_hib_stage"
+        harmon_die "could not publish $2 into ${HARMON_BIN}"
+    fi
 }
 
 # harmon_install_archive_bin <url> <installed-name> <member> [sha256]

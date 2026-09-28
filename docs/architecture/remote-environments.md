@@ -183,10 +183,10 @@ release tag — never a platform-specific copy:
 
 ```sh
 HARMON_INIT_REF=vX.Y.Z   # the release tag, written once
-harmon_bootstrap="$(mktemp)"
-curl -fsSL "https://raw.githubusercontent.com/evanharmon1/harmon-init/${HARMON_INIT_REF}/images/devcontainer/bootstrap-remote.sh" \
-  -o "$harmon_bootstrap" \
-  && sudo bash "$harmon_bootstrap" --ref "$HARMON_INIT_REF"
+harmon_bootstrap_dir="$(mktemp -d)" && chmod 0700 "$harmon_bootstrap_dir" \
+  && curl -fsSL "https://raw.githubusercontent.com/evanharmon1/harmon-init/${HARMON_INIT_REF}/images/devcontainer/bootstrap-remote.sh" \
+    -o "${harmon_bootstrap_dir}/bootstrap-remote.sh" \
+  && sudo bash "${harmon_bootstrap_dir}/bootstrap-remote.sh" --ref "$HARMON_INIT_REF"
 ```
 
 The tag is written **once** and read from that one variable: the URL the
@@ -203,11 +203,24 @@ having installed nothing, and a truncated script has already run as root. `set
 -o pipefail` in the adapter would fix it, but a recipe that is only safe when
 the caller remembers something is a recipe that will be run unsafely; `curl -o`
 plus `&&` propagates the failure by construction. Nothing deletes the temporary
-file: a trailing `rm` would become the chain's exit status and reintroduce
-exactly the bug, and the file is a few kilobytes on a VM that is about to be
+directory: a trailing `rm` would become the chain's exit status and reintroduce
+exactly the bug, and a few kilobytes are nothing on a VM that is about to be
 thrown away. `scripts/test-bootstrap-remote.sh` § 14 holds this shape in place
-— it fails if either copy of the recipe becomes a bare pipe into a shell, or
-stops downloading to a file.
+— it fails if either copy of the recipe becomes a bare pipe into a shell, stops
+downloading to a file, or stops using a private directory.
+
+The script goes into a **private directory** (`mktemp -d`, with mode `0700`
+stated rather than inherited from a default), not a bare `mktemp` file in shared
+`/tmp`. `BASH_SOURCE` is how the script finds the install scripts beside it, so a
+download into `/tmp` makes `/tmp` its own directory — and any unprivileged local
+user can pre-create `/tmp/install/lib.sh` for the root process to source.
+Arbitrary code execution as root, from nothing more than where the download
+landed. The bootstrap **also** refuses on its own account: it will not run
+sibling install scripts out of a directory that is world-writable, or that is
+owned by neither root nor the invoking user, and falls back to the pinned fetch
+saying which it was. That second layer is the one that holds, because it does
+not depend on every adapter copying this recipe correctly — and an adapter
+copying it imperfectly is how the first layer fails on a real host.
 
 `--ref` must be a **release tag** (`vX.Y.Z`); a branch, a bare commit, or a
 pre-release is refused with the reason. That tag is the trust root this design
