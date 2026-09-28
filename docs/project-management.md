@@ -1241,15 +1241,19 @@ back later. Collect them instead on two dedicated issues:
 - **One of each per scope, for the scope's lifetime.** The scope is the
   source issue's milestone; failing that, its `epic`; failing both, the
   repository — one collector pair with no milestone serves all ungrouped
-  work. Whoever meets the first human task files it **lazily**, human or
+  work. An epic's collectors live in the epic's repository, and sources in
+  other repositories cite them as `owner/repo#N`. An item stays on the
+  collector it was filed to even if its source later changes scope.
+  Whoever meets the first human task files it **lazily**, human or
   agent. Its `## Provenance` carries one stable scope line
   (`Collector scope: milestone <number>`, `Collector scope: <owner/repo>#<epic>`,
   or `Collector scope: repository`). Search all states first
   (`label:human label:umbrella`) and match on the title prefix plus that
   scope line: append to the open one, reopen a closed one, and never file a
   second. Two writers can still both miss and both file, so whoever finds two
-  open collectors for one scope merges the newer's items into the older and
-  closes the newer as a duplicate. Give it the scope's milestone, and under an `epic` also make it
+  open collectors for one scope merges the newer's items into the older,
+  repoints each moved item's source line at the older, and closes the newer
+  as a duplicate. Give it the scope's milestone, and under an `epic` also make it
   that epic's sub-issue so the epic's rollup stays honest about the human
   work still owed.
 - **Each task is one `- [ ] [HUMAN] …` acceptance criterion on the
