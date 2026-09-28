@@ -1337,11 +1337,14 @@ back later. Collect them instead on two dedicated issues:
   source issue's milestone; failing that, its `epic`; failing both, the
   repository — one collector pair with no milestone serves all ungrouped
   work. Whoever meets the first human task files it **lazily**, human or
-  agent. Search all states first
-  (`label:human label:umbrella milestone:"v1.2"`): append to the open one,
-  reopen a closed one, and never file a second. Give it the scope's
-  milestone, and under an `epic` also make it that epic's sub-issue so the
-  epic's rollup stays honest about the human work still owed.
+  agent. Its `## Provenance` carries one stable scope line
+  (`Collector scope: milestone <number>`, `Collector scope: <owner/repo>#<epic>`,
+  or `Collector scope: repository`). Search all states first
+  (`label:human label:umbrella`) and match on the title prefix plus that
+  scope line: append to the open one, reopen a closed one, and never file a
+  second. Give it the scope's milestone, and under an `epic` also make it
+  that epic's sub-issue so the epic's rollup stays honest about the human
+  work still owed.
 - **Each task is one `- [ ] [HUMAN] …` acceptance criterion on the
   collector**, naming its source:
   `- [ ] [HUMAN] Add FLY_API_TOKEN to the repo secrets (from #1412)`. Agents

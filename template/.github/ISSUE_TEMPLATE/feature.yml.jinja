@@ -40,9 +40,12 @@ body:
       description: >-
         Optional. One `- [ ]` item per criterion; tag `[CI]`/`[HUMAN]` where
         useful. Leave blank to file without criteria — triage adds them
-        before this is dispatched. Human-only follow-ups (secrets, settings,
-        manual QA) belong on the milestone's `(HUMAN):` or `(QA):` collector
-        issue, not here.
+        before this is dispatched.
+[% if project_management == 'github' %]
+        Human-only follow-ups (secrets, settings,
+        manual QA) belong on the issue's `(HUMAN):` or `(QA):` collector —
+        its milestone's, else its epic's, else the repo-wide one — not here.
+[% endif %]
   - type: textarea
     id: alternatives
     attributes:
