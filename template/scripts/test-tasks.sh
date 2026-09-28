@@ -62,6 +62,32 @@ for guard in scripts/guard-closing-keywords.sh template/scripts/guard-closing-ke
         fail "${guard}: closing-keyword guard does not distinguish a missing PR from an API failure"
 done
 
+echo "==> every REST pagination caller passes an explicit bound"
+# The helpers refuse a missing MAX_ITEMS and cap every walk at GH_REST_MAX_PAGES,
+# but a caller that passes 0 still asks for every page under that ceiling. The
+# session scripts' reads are all answerable from a bounded window, so each one
+# names its bound here (challenge r1: the REST rewrite had turned bounded single
+# reads into whole-repository walks).
+for status in scripts/status.sh template/scripts/status.sh; do
+    [ -f "$status" ] || continue
+    grep -Fq '"repos/${status_repo}/pulls?state=open&sort=updated&direction=desc" 10' "$status" ||
+        fail "${status}: open-PR list is not bounded to 10"
+    grep -Fq '"repos/${OWNER}/${REPO}/pulls?state=all&sort=updated&direction=desc" 100' "$status" ||
+        fail "${status}: renovate heuristic is not bounded to the 100 most recent PRs"
+    grep -Fq '"repos/${OWNER}/${REPO}/pulls/comments?sort=updated&direction=desc" 100' "$status" ||
+        fail "${status}: coderabbit heuristic is not bounded to the 100 most recent review comments"
+done
+for audit in scripts/audit-session-artifacts.sh template/scripts/audit-session-artifacts.sh; do
+    [ -f "$audit" ] || continue
+    grep -Fq '"repos/${gh_repo}/pulls?state=closed&sort=updated&direction=desc" "$pr_limit"' "$audit" ||
+        fail "${audit}: closed-PR scan does not pass pr_limit as its pagination bound"
+done
+for lib in scripts/lib/gh-rest.sh template/scripts/lib/gh-rest.sh; do
+    [ -f "$lib" ] || continue
+    grep -Fq 'GH_REST_MAX_PAGES:-10' "$lib" ||
+        fail "${lib}: the page ceiling no longer defaults to 10"
+done
+
 guard_bin="${test_tmp}/closing-keywords-bin"
 guard_git_args="${test_tmp}/closing-keywords-git-args"
 guard_gh_args="${test_tmp}/closing-keywords-gh-args"

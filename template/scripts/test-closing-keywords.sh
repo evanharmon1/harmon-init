@@ -3,6 +3,9 @@
 # guard. The fixture directory replaces GitHub's read-only Issues API.
 set -euo pipefail
 cd "$(dirname "$0")/.."
+# Absolute, captured BEFORE any fixture `cd`: the remote fixtures below run the
+# helpers from another directory and must still source this checkout's library.
+repo_root="$PWD"
 
 guard="./scripts/check-closing-keywords.sh"
 guard_driver="./scripts/guard-closing-keywords.sh"
@@ -83,6 +86,17 @@ set -euo pipefail
     exit 64
 }
 endpoint="${2:-}"
+if [ "${GH_STUB_ENDLESS:-0}" = 1 ]; then
+    # Every page is full (exactly per_page items, as GitHub answers), so only
+    # a bound can end the walk.
+    n="${endpoint##*per_page=}"
+    n="${n%%&*}"
+    case "$endpoint" in
+    orgs/acme/issue-fields\?*) jq -cn --argjson n "$n" '{issue_fields: [range(0;$n) | {id:.}]}' ;;
+    *) jq -cn --argjson n "$n" '[range(0;$n) | {number:.}]' ;;
+    esac
+    exit 0
+fi
 case "$endpoint" in
 graphql | search/* | repositories/*)
     echo 'HTTP 403: GitHub GraphQL/search/paginate links are unavailable' >&2
@@ -125,6 +139,104 @@ grep -q 'repos/acme/repo/pulls?state=open&per_page=100&page=2' "$GH_STUB_CALLS" 
     fail 'explicit REST pagination never requested page 2'
 grep -q 'repositories/' "$GH_STUB_CALLS" &&
     fail 'REST pagination followed a forbidden numeric repositories link'
+
+echo '==> the page ceiling bounds every walk and returns its own code'
+# MAX_ITEMS=0 against an endless endpoint: without GH_REST_MAX_PAGES this would
+# be the unbounded whole-repository walk the helpers exist to prevent.
+: >"$GH_STUB_CALLS"
+rc=0
+GH_STUB_ENDLESS=1 GH_REST_MAX_PAGES=3 PATH="$tmp/bin:$PATH" bash -c \
+    '. scripts/lib/gh-rest.sh; gh_rest_paginate_array "repos/acme/repo/pulls?state=all" 0' >/dev/null || rc=$?
+[ "$rc" = 4 ] || fail "page ceiling on an array walk returned ${rc}, expected 4"
+[ "$(grep -c '^api repos/acme/repo/pulls' "$GH_STUB_CALLS")" = 3 ] ||
+    fail "page ceiling let the array walk request $(grep -c '^api ' "$GH_STUB_CALLS") pages, expected 3"
+: >"$GH_STUB_CALLS"
+rc=0
+GH_STUB_ENDLESS=1 GH_REST_MAX_PAGES=2 PATH="$tmp/bin:$PATH" bash -c \
+    '. scripts/lib/gh-rest.sh; gh_rest_paginate_key "orgs/acme/issue-fields" issue_fields' >/dev/null || rc=$?
+[ "$rc" = 4 ] || fail "page ceiling on a keyed walk returned ${rc}, expected 4"
+[ "$(grep -c '^api orgs/acme/issue-fields' "$GH_STUB_CALLS")" = 2 ] ||
+    fail "page ceiling let the keyed walk request $(grep -c '^api ' "$GH_STUB_CALLS") pages, expected 2"
+# A MAX_ITEMS under the ceiling ends the walk normally, without spending it.
+: >"$GH_STUB_CALLS"
+count="$(GH_STUB_ENDLESS=1 GH_REST_MAX_PAGES=3 PATH="$tmp/bin:$PATH" bash -c \
+    '. scripts/lib/gh-rest.sh; gh_rest_paginate_array "repos/acme/repo/pulls?state=all" 150 | jq -s "add | length"')" ||
+    fail 'a bounded walk under the ceiling must succeed'
+[ "$count" = 150 ] || fail "MAX_ITEMS=150 returned ${count} items"
+[ "$(grep -c '^api ' "$GH_STUB_CALLS")" = 2 ] || fail 'MAX_ITEMS=150 should cost exactly two pages'
+rc=0
+GH_REST_MAX_PAGES=0 PATH="$tmp/bin:$PATH" bash -c \
+    '. scripts/lib/gh-rest.sh; gh_rest_paginate_array "repos/acme/repo/pulls?state=all" 0' >/dev/null 2>&1 || rc=$?
+[ "$rc" = 2 ] || fail "GH_REST_MAX_PAGES=0 must be rejected (got ${rc}); zero would mean no ceiling"
+
+echo '==> MAX_ITEMS is a required positional, never guessed from a following option'
+for args in '"repos/acme/repo/pulls?state=open"' '"repos/acme/repo/pulls?state=open" -H "Accept: x"' '"repos/acme/repo/pulls?state=open" ten'; do
+    : >"$GH_STUB_CALLS"
+    rc=0
+    PATH="$tmp/bin:$PATH" bash -c ". scripts/lib/gh-rest.sh; gh_rest_paginate_array ${args}" >/dev/null 2>&1 || rc=$?
+    [ "$rc" = 2 ] || fail "gh_rest_paginate_array ${args} returned ${rc}, expected 2"
+    [ ! -s "$GH_STUB_CALLS" ] || fail "gh_rest_paginate_array ${args} reached gh with an unusable limit"
+done
+: >"$GH_STUB_CALLS"
+PATH="$tmp/bin:$PATH" bash -c \
+    '. scripts/lib/gh-rest.sh; gh_rest_paginate_array "repos/acme/repo/pulls?state=open" 5' >/dev/null ||
+    fail 'two-argument form failed'
+[ "$(grep -c '^api repos/acme/repo/pulls?state=open&per_page=5&page=1$' "$GH_STUB_CALLS")" = 1 ] ||
+    fail "two-argument form forwarded the endpoint wrongly: $(cat "$GH_STUB_CALLS")"
+: >"$GH_STUB_CALLS"
+PATH="$tmp/bin:$PATH" bash -c \
+    '. scripts/lib/gh-rest.sh; gh_rest_paginate_array "repos/acme/repo/pulls?state=open" 5 -H "Accept: x"' >/dev/null ||
+    fail 'limit-then-option form failed'
+[ "$(grep -c '^api repos/acme/repo/pulls?state=open&per_page=5&page=1 -H Accept: x$' "$GH_STUB_CALLS")" = 1 ] ||
+    fail "limit-then-option form forwarded the endpoint wrongly: $(cat "$GH_STUB_CALLS")"
+
+echo '==> the GitHub host survives into every REST read'
+# gh documents GH_REPO as [HOST/]OWNER/REPO. Splitting the host off keeps the
+# endpoint at repos/OWNER/REPO; passing it back as --hostname keeps the read on
+# the host it names. The git stub answers nothing about remotes here, so the
+# host can only have come from GH_REPO.
+: >"$GH_STUB_CALLS"
+out="$(PATH="$tmp/bin:$PATH" GH_REPO=ghe.example.com/acme/repo bash -c \
+    '. scripts/lib/gh-rest.sh; repo="$(gh_rest_repo)"; echo "$repo $(gh_rest_host)"; gh_rest_api "repos/${repo}/issues/1" >/dev/null')" ||
+    fail 'host-qualified GH_REPO read failed'
+[ "$out" = 'acme/repo ghe.example.com' ] || fail "host-qualified GH_REPO parsed as '${out}'"
+grep -qx 'api repos/acme/repo/issues/1 --hostname ghe.example.com' "$GH_STUB_CALLS" ||
+    fail "host-qualified GH_REPO read went to: $(cat "$GH_STUB_CALLS")"
+# Plain OWNER/REPO with no remote: no host is known, so gh keeps its own choice.
+: >"$GH_STUB_CALLS"
+out="$(PATH="$tmp/bin:$PATH" GH_REPO=acme/repo bash -c \
+    'unset GH_HOST; . scripts/lib/gh-rest.sh; echo "$(gh_rest_repo)|$(gh_rest_host)"; gh_rest_api "repos/acme/repo/issues/1" >/dev/null')" ||
+    fail 'plain GH_REPO read failed'
+[ "$out" = 'acme/repo|' ] || fail "plain GH_REPO parsed as '${out}'"
+grep -qx 'api repos/acme/repo/issues/1' "$GH_STUB_CALLS" ||
+    fail "plain GH_REPO read went to: $(cat "$GH_STUB_CALLS")"
+# Remote-derived hosts: an SSH Enterprise remote in both URL forms carries its
+# host; a github.com remote adds nothing. Real git builds these fixtures, so
+# only gh is stubbed on PATH for them.
+mkdir -p "$tmp/bin-gh"
+cp "$tmp/bin/gh" "$tmp/bin-gh/gh"
+for form in ssh://git@ghe.example.com/acme/repo.git git@ghe.example.com:acme/repo.git; do
+    rm -rf "$tmp/remote-fixture"
+    git init -q "$tmp/remote-fixture"
+    git -C "$tmp/remote-fixture" remote add origin "$form"
+    : >"$GH_STUB_CALLS"
+    out="$(cd "$tmp/remote-fixture" && PATH="$tmp/bin-gh:$PATH" bash -c \
+        "unset GH_REPO GH_HOST; . '$repo_root/scripts/lib/gh-rest.sh'; repo=\"\$(gh_rest_repo)\"; echo \"\$repo \$(gh_rest_host)\"; gh_rest_api \"repos/\${repo}/issues/1\" >/dev/null")" ||
+        fail "remote ${form} read failed"
+    [ "$out" = 'acme/repo ghe.example.com' ] || fail "remote ${form} parsed as '${out}'"
+    grep -qx 'api repos/acme/repo/issues/1 --hostname ghe.example.com' "$GH_STUB_CALLS" ||
+        fail "remote ${form} read went to: $(cat "$GH_STUB_CALLS")"
+done
+rm -rf "$tmp/remote-fixture"
+git init -q "$tmp/remote-fixture"
+git -C "$tmp/remote-fixture" remote add origin https://github.com/acme/repo.git
+: >"$GH_STUB_CALLS"
+out="$(cd "$tmp/remote-fixture" && PATH="$tmp/bin-gh:$PATH" bash -c \
+    "unset GH_REPO GH_HOST; . '$repo_root/scripts/lib/gh-rest.sh'; echo \"\$(gh_rest_repo) \$(gh_rest_host)\"; gh_rest_api 'repos/acme/repo/issues/1' >/dev/null")" ||
+    fail 'github.com remote read failed'
+[ "$out" = 'acme/repo github.com' ] || fail "github.com remote parsed as '${out}'"
+grep -qx 'api repos/acme/repo/issues/1' "$GH_STUB_CALLS" ||
+    fail "github.com remote must not add --hostname, got: $(cat "$GH_STUB_CALLS")"
 
 proxy_checker() {
     local title="$1" rc=0

@@ -995,13 +995,16 @@ if [[ "${SECTION}" == "setup" ]]; then
             (run_timeout "${NETWORK_TIMEOUT}" gh api "${APPS_PATH}" \
                 --jq '[.installations[].app_slug]' \
                 >"${d}/apps.json" 2>/dev/null || echo 'null' >"${d}/apps.json") &
-            # Heuristic fallback signals for the two apps.
+            # Heuristic fallback signals for the two apps. Both reads are
+            # bounded to the 100 most recent items — a heuristic that walked the
+            # whole PR history would spend one request per hundred PRs for a
+            # yes/no answer the newest page already gives (challenge r1).
             (GH_REST_TIMEOUT="${NETWORK_TIMEOUT}" gh_rest_paginate_array \
-                "repos/${OWNER}/${REPO}/pulls?state=all&sort=updated&direction=desc" 0 |
+                "repos/${OWNER}/${REPO}/pulls?state=all&sort=updated&direction=desc" 100 |
                 jq -s 'add | map(select(.user.login | test("^renovate(\\[bot\\])?$";"i"))) | .[:1] | map({number})' \
                     >"${d}/renovate-pr.json" 2>/dev/null || echo '[]' >"${d}/renovate-pr.json") &
             (GH_REST_TIMEOUT="${NETWORK_TIMEOUT}" gh_rest_paginate_array \
-                "repos/${OWNER}/${REPO}/pulls/comments" 0 |
+                "repos/${OWNER}/${REPO}/pulls/comments?sort=updated&direction=desc" 100 |
                 jq -s '[add[].user.login] | map(select(test("coderabbit";"i"))) | length' \
                     >"${d}/coderabbit.txt" 2>/dev/null || echo 0 >"${d}/coderabbit.txt") &
             (

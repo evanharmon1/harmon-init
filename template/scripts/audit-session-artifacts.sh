@@ -205,16 +205,21 @@ else
     if command -v gh >/dev/null 2>&1 && [ "$has_remote" = true ] && [ -n "$default_branch" ]; then
         gh_repo="$(gh_rest_repo "$remote" 2>/dev/null)" || gh_repo=""
     fi
+    # pr_limit caps the CLOSED PRs scanned (most recently updated first) — it
+    # is the pagination bound, not a post-filter, so the walk can never grow
+    # with the repository's history (challenge r1). Merged PRs are the subset
+    # of that scan with a merged_at, so the cap note below is about what was
+    # scanned, not about how many of them turned out to be merged.
     pr_limit="${AUDIT_PR_LIMIT:-1000}"
     if [ -n "$gh_repo" ] &&
         GH_REST_TIMEOUT="${GH_TIMEOUT:-30}" gh_rest_paginate_array \
-            "repos/${gh_repo}/pulls?state=closed&sort=updated&direction=desc" 0 2>/dev/null |
-        jq -sr --argjson limit "$pr_limit" \
-            'add | map(select(.merged_at != null)) | .[:$limit][] | [.head.ref, .head.sha, (.number | tostring), .base.ref] | @tsv' \
-            >"$tmp/merged-prs" 2>/dev/null; then
-        merged_seen="$(wc -l <"$tmp/merged-prs" | tr -d ' ')"
-        if [ "$merged_seen" -ge "$pr_limit" ]; then
-            echo "  (note: merged-PR listing hit its $pr_limit cap — 'no merged PR' below may be incomplete)"
+            "repos/${gh_repo}/pulls?state=closed&sort=updated&direction=desc" "$pr_limit" 2>/dev/null |
+        jq -s 'add // []' >"$tmp/closed-prs" 2>/dev/null &&
+        jq -r 'map(select(.merged_at != null))[] | [.head.ref, .head.sha, (.number | tostring), .base.ref] | @tsv' \
+            "$tmp/closed-prs" >"$tmp/merged-prs" 2>/dev/null; then
+        closed_seen="$(jq 'length' "$tmp/closed-prs")"
+        if [ "$closed_seen" -ge "$pr_limit" ]; then
+            echo "  (note: closed-PR scan hit its $pr_limit cap — 'no merged PR' below may be incomplete)"
         fi
         # A branch checked out in a linked worktree is one `clean:branches`
         # will refuse — `git branch -d` declines it, and that task guards the

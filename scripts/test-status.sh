@@ -669,6 +669,9 @@ echo "==> the auth host comes from the repository, not a github.com assumption"
 STUB_HOSTS="${TMP}/hosts.txt"
 export STUB_HOSTS
 : >"${STUB_HOSTS}"
+STUB_CALLS="${TMP}/enterprise-calls.txt"
+export STUB_CALLS
+: >"${STUB_CALLS}"
 out="$(run_gh_section records-hostname "${ENTERPRISE}")"
 grep -qx 'ghe.example.com' "${STUB_HOSTS}" ||
     fail "probe used $(tr '\n' ' ' <"${STUB_HOSTS}") — expected the remote's host"
@@ -677,6 +680,14 @@ case "$out" in
 *"token has 'project'"*) ;;
 *) fail "expected the Enterprise section to render, got: ${out}" ;;
 esac
+# The REST reads must follow the same host: the endpoint stays repos/OWNER/REPO
+# (never repos/HOST/OWNER/REPO) and --hostname carries the Enterprise host, or
+# every read after the auth probe silently goes to github.com (challenge r1).
+grep -q '^api repos/owner/repo/pulls?state=open&sort=updated&direction=desc&per_page=10&page=1 --hostname ghe.example.com$' "${STUB_CALLS}" ||
+    fail "Enterprise REST reads did not carry the remote's host: $(grep '^api ' "${STUB_CALLS}" | tr '\n' ';')"
+grep -q '^api repos/ghe.example.com/' "${STUB_CALLS}" &&
+    fail "an Enterprise host leaked into the endpoint path: $(grep '^api ' "${STUB_CALLS}" | tr '\n' ';')"
+unset STUB_CALLS
 
 echo "==> GH_HOST still overrides the repository's remote"
 : >"${STUB_HOSTS}"
