@@ -90,6 +90,29 @@ if [ "$cmd" = repo ] && [ "$sub" = view ]; then
     echo "stub/fixture"
     exit 0
 fi
+if [ "$cmd" = api ]; then
+    endpoint="${2:-}"
+    case "$endpoint" in
+    graphql | search/* | repositories/*)
+        echo "HTTP 403: REST-only proxy rejection" >&2
+        exit 1
+        ;;
+    *"&page=2"*)
+        echo '[]'
+        exit 0
+        ;;
+    repos/stub/fixture/pulls\?*)
+        if [ -n "${GH_STUB_PRS:-}" ] && [ -f "$GH_STUB_PRS" ]; then
+            jq -Rn '[inputs | split("\t") | {head:{ref:.[0],sha:.[1]},number:(.[2]|tonumber),base:{ref:.[3]},merged_at:"2026-01-01T00:00:00Z"}]' <"$GH_STUB_PRS"
+        else
+            echo '[]'
+        fi
+        exit 0
+        ;;
+    esac
+    echo "gh stub: unexpected REST endpoint: $endpoint" >&2
+    exit 64
+fi
 if [ "$cmd" = pr ] && [ "$sub" = list ]; then
     head_filter=""
     batch=false
@@ -150,6 +173,7 @@ exit 64
 STUB
 chmod +x "$stub_bin/gh"
 PATH="$stub_bin:$PATH"
+export GH_REPO=stub/fixture
 
 # ── Fixture repository ──────────────────────────────────────────────────────
 
@@ -172,9 +196,10 @@ git -C "$fixture" symbolic-ref HEAD refs/heads/main
 # The scripts resolve their repo root from their own location, so the fixture
 # gets its own copy — the same way generated repos ship them. worktree-lock.sh
 # rides along because the delete path sources its lifecycle-lock protocol.
-mkdir -p "$fixture/scripts"
+mkdir -p "$fixture/scripts/lib"
 cp "$repo/scripts/clean-branches.sh" "$repo/scripts/audit-session-artifacts.sh" \
     "$repo/scripts/worktree-lock.sh" "$fixture/scripts/"
+cp "$repo/scripts/lib/gh-rest.sh" "$fixture/scripts/lib/"
 
 # make_branch <name> <file> — new branch off main with one pushed commit;
 # echoes the tip. Leaves the checkout back on main.
@@ -1773,7 +1798,9 @@ git -C "$f2" symbolic-ref --delete refs/remotes/origin/HEAD 2>/dev/null || true
 g1_tip="$(git -C "$f2" rev-parse refs/heads/g1)"
 printf '%s\t%s\t%s\t%s\n' g1 "$g1_tip" 201 trunk >>"$GH_STUB_PRS"
 mkdir -p "$f2/scripts"
+mkdir -p "$f2/scripts/lib"
 cp "$repo/scripts/audit-session-artifacts.sh" "$f2/scripts/"
+cp "$repo/scripts/lib/gh-rest.sh" "$f2/scripts/lib/"
 
 nodef_out="$(cd "$f2" && bash scripts/audit-session-artifacts.sh 2>&1)" ||
     fail "no-local-default audit exited nonzero: $nodef_out"

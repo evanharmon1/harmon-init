@@ -25,6 +25,8 @@ NETWORK_TIMEOUT="${NETWORK_TIMEOUT:-5}"
 # board plain, stable text for logs and scripts/test-status.sh.
 # shellcheck source=scripts/lib/output.sh
 . "${REPO_ROOT}/scripts/lib/output.sh"
+# shellcheck source=scripts/lib/gh-rest.sh
+. "${REPO_ROOT}/scripts/lib/gh-rest.sh"
 
 # ── Tool detection ──────────────────────────────────────────────────────────
 
@@ -253,10 +255,13 @@ derive_gh_scope_state "${GH_AUTH_FILE}"
 # Without the guard, `task status:setup` would spend two network calls fetching
 # data nothing displays.
 if [[ "${GH_AUTHED}" == true ]] && should_show "gh"; then
-    run_timeout "${NETWORK_TIMEOUT}" gh pr list --limit 10 \
-        --json number,title,headRefName \
-        >"${TMPDIR_STATUS}/prs.json" 2>/dev/null &
-    PID_PRS=$!
+    if status_repo="$(gh_rest_repo 2>/dev/null)"; then
+        (GH_REST_TIMEOUT="${NETWORK_TIMEOUT}" gh_rest_paginate_array \
+            "repos/${status_repo}/pulls?state=open&sort=updated&direction=desc" 10 |
+            jq -s 'add | map({number, title, headRefName: .head.ref})' \
+                >"${TMPDIR_STATUS}/prs.json" 2>/dev/null) &
+        PID_PRS=$!
+    fi
 
     run_timeout "${NETWORK_TIMEOUT}" gh run list --branch "${CURRENT_BRANCH}" \
         --limit 5 --json status,conclusion,name,createdAt \
@@ -896,11 +901,15 @@ if [[ "${SECTION}" == "setup" ]]; then
 
         # Repo identity — every API call below needs owner/repo, so resolve it
         # synchronously first.
-        run_timeout "${NETWORK_TIMEOUT}" gh repo view \
-            --json nameWithOwner,visibility,isPrivate,defaultBranchRef \
-            >"${d}/repo.json" 2>/dev/null || echo '{}' >"${d}/repo.json"
+        NWO="$(gh_rest_repo 2>/dev/null || true)"
+        if [ -n "${NWO}" ]; then
+            GH_REST_TIMEOUT="${NETWORK_TIMEOUT}" gh_rest_api "repos/${NWO}" \
+                >"${d}/repo.json" 2>/dev/null || echo '{}' >"${d}/repo.json"
+        else
+            echo '{}' >"${d}/repo.json"
+        fi
 
-        NWO="$(jq -r '.nameWithOwner // empty' "${d}/repo.json")"
+        NWO="$(jq -r '.full_name // empty' "${d}/repo.json")"
 
         HAS_REMOTE=true
         [ -z "${NWO}" ] && HAS_REMOTE=false
@@ -920,8 +929,8 @@ if [[ "${SECTION}" == "setup" ]]; then
             OWNER="${NWO%%/*}"
             REPO="${NWO##*/}"
             VISIBILITY="$(jq -r '.visibility // "?"' "${d}/repo.json" | tr '[:upper:]' '[:lower:]')"
-            IS_PRIVATE="$(jq -r '.isPrivate // false' "${d}/repo.json")"
-            DEFAULT_BRANCH="$(jq -r '.defaultBranchRef.name // "?"' "${d}/repo.json")"
+            IS_PRIVATE="$(jq -r '.private // false' "${d}/repo.json")"
+            DEFAULT_BRANCH="$(jq -r '.default_branch // "?"' "${d}/repo.json")"
             OWNER_TYPE="$(run_timeout "${NETWORK_TIMEOUT}" gh api "repos/${OWNER}/${REPO}" \
                 --jq '.owner.type' 2>/dev/null || echo "User")"
             if [[ "${OWNER_TYPE}" == "Organization" ]]; then
@@ -960,42 +969,41 @@ if [[ "${SECTION}" == "setup" ]]; then
                 echo no >"${d}/ci-runs-on-probe"
             fi) &
             (run_timeout "${NETWORK_TIMEOUT}" gh release list --limit 1 >"${d}/release.txt" 2>/dev/null || :) &
-            # shellcheck disable=SC2016 # $o/$r are GraphQL variables, not shell
-            (run_timeout "${NETWORK_TIMEOUT}" gh api graphql \
-                -f query='query($o:String!,$r:String!){repository(owner:$o,name:$r){projectsV2(first:10){nodes{title number}}}}' \
-                -F o="${OWNER}" -F r="${REPO}" \
-                >"${d}/projects.json" 2>/dev/null || echo '{}' >"${d}/projects.json") &
+            # Projects v2 has no REST read equivalent. A REST-only session must
+            # say this surface is unavailable instead of failing the audit or
+            # silently grading an empty response as "no project".
+            echo unavailable >"${d}/projects-rest"
             # PM setup surface — audit the results of the setup:github-* tasks the
             # repo actually ships (each script is the marker it opted in).
             if [ -f scripts/setup-github-labels.sh ]; then
-                # The REST endpoint with --paginate, not `gh label list`: the
-                # check below compares against the WHOLE starter set, so any
-                # fixed page cap (gh's default 30, or any --limit) can drop a
-                # real label on a label-heavy repo and report it as missing.
-                # One name per line — --paginate emits a document per page.
-                (run_timeout "${NETWORK_TIMEOUT}" gh api "repos/${OWNER}/${REPO}/labels" --paginate --jq '.[].name' \
-                    >"${d}/labels.txt" 2>/dev/null || : >"${d}/labels.txt") &
+                (GH_REST_TIMEOUT="${NETWORK_TIMEOUT}" gh_rest_paginate_array \
+                    "repos/${OWNER}/${REPO}/labels" 0 |
+                    jq -sr 'add | .[].name' >"${d}/labels.txt" 2>/dev/null || : >"${d}/labels.txt") &
             fi
             if [ -f scripts/setup-github-issue-types.sh ]; then
-                (run_timeout "${NETWORK_TIMEOUT}" gh api "orgs/${OWNER}/issue-types" --paginate \
-                    >"${d}/issue-types.json" 2>/dev/null || echo 'null' >"${d}/issue-types.json") &
+                (GH_REST_TIMEOUT="${NETWORK_TIMEOUT}" gh_rest_paginate_array \
+                    "orgs/${OWNER}/issue-types" 0 |
+                    jq -s 'add' >"${d}/issue-types.json" 2>/dev/null || echo 'null' >"${d}/issue-types.json") &
             fi
             if [ -f scripts/setup-github-issue-fields.sh ]; then
-                (run_timeout "${NETWORK_TIMEOUT}" gh api "orgs/${OWNER}/issue-fields" \
-                    -H "X-GitHub-Api-Version: 2026-03-10" --paginate \
-                    >"${d}/issue-fields.json" 2>/dev/null || echo 'null' >"${d}/issue-fields.json") &
+                (GH_REST_TIMEOUT="${NETWORK_TIMEOUT}" gh_rest_paginate_key \
+                    "orgs/${OWNER}/issue-fields" issue_fields \
+                    -H "X-GitHub-Api-Version: 2026-03-10" |
+                    jq -s 'add' >"${d}/issue-fields.json" 2>/dev/null || echo 'null' >"${d}/issue-fields.json") &
             fi
             # App installs — definitive when we hold admin scope, else 'null'.
             (run_timeout "${NETWORK_TIMEOUT}" gh api "${APPS_PATH}" \
                 --jq '[.installations[].app_slug]' \
                 >"${d}/apps.json" 2>/dev/null || echo 'null' >"${d}/apps.json") &
             # Heuristic fallback signals for the two apps.
-            (run_timeout "${NETWORK_TIMEOUT}" gh pr list --state all --author "app/renovate" \
-                --limit 1 --json number >"${d}/renovate-pr.json" 2>/dev/null ||
-                echo '[]' >"${d}/renovate-pr.json") &
-            (run_timeout "${NETWORK_TIMEOUT}" gh api "repos/${OWNER}/${REPO}/pulls/comments?per_page=100" \
-                --jq '[.[].user.login] | map(select(test("coderabbit";"i"))) | length' \
-                >"${d}/coderabbit.txt" 2>/dev/null || echo 0 >"${d}/coderabbit.txt") &
+            (GH_REST_TIMEOUT="${NETWORK_TIMEOUT}" gh_rest_paginate_array \
+                "repos/${OWNER}/${REPO}/pulls?state=all&sort=updated&direction=desc" 0 |
+                jq -s 'add | map(select(.user.login | test("^renovate(\\[bot\\])?$";"i"))) | .[:1] | map({number})' \
+                    >"${d}/renovate-pr.json" 2>/dev/null || echo '[]' >"${d}/renovate-pr.json") &
+            (GH_REST_TIMEOUT="${NETWORK_TIMEOUT}" gh_rest_paginate_array \
+                "repos/${OWNER}/${REPO}/pulls/comments" 0 |
+                jq -s '[add[].user.login] | map(select(test("coderabbit";"i"))) | length' \
+                    >"${d}/coderabbit.txt" 2>/dev/null || echo 0 >"${d}/coderabbit.txt") &
             (
                 if out="$(run_timeout "${NETWORK_TIMEOUT}" gh api \
                     "/${PKG_NS}/${OWNER}/packages/container/${REPO}-devcontainer" 2>&1)"; then
@@ -1193,20 +1201,8 @@ if [[ "${SECTION}" == "setup" ]]; then
                     checkline unknown "CodeRabbit app access" \
                         "no config; confirm repo is excluded from the App installation"
                 fi
-                if jq -e '.data.repository' "${d}/projects.json" >/dev/null 2>&1; then
-                    proj_count="$(jq -r '(.data.repository.projectsV2.nodes // []) | length' \
-                        "${d}/projects.json" 2>/dev/null || echo 0)"
-                    if [ "${proj_count:-0}" -gt 0 ]; then
-                        proj_title="$(jq -r '.data.repository.projectsV2.nodes[0].title // "?"' \
-                            "${d}/projects.json" 2>/dev/null)"
-                        checkline ok "GitHub Project linked" "${proj_title}"
-                    else
-                        checkline no "GitHub Project linked" "link a Project v2 to the repo"
-                    fi
-                else
-                    checkline unknown "GitHub Project linked" \
-                        "unreadable — ${GH_REMEDY}"
-                fi
+                checkline unknown "GitHub Project linked" \
+                    "unavailable through the REST-only GitHub API"
                 if [ -f scripts/setup-github-labels.sh ]; then
                     # The expected set comes from the label-registry renderer —
                     # the same rendering `task setup:github-labels` provisions
@@ -1266,10 +1262,7 @@ if [[ "${SECTION}" == "setup" ]]; then
                     fi
                 fi
                 if [ -f scripts/setup-github-issue-fields.sh ]; then
-                    # One `name<TAB>data_type` per line, not a joined string:
-                    # `gh api --paginate` writes one JSON document per page, so jq
-                    # runs per page and any single-line delimiter trick breaks at a
-                    # page boundary.
+                    # One `name<TAB>data_type` per line, not a joined string.
                     field_rows="$(jq -r '(if type == "object" then (.issue_fields // []) elif type == "array" then . else [] end) | .[] | "\(.name)\t\(.data_type // "")"' "${d}/issue-fields.json" 2>/dev/null || echo "")"
                     # Product must be present AND of the right type: an org that
                     # happens to own a text-incompatible field named `Product`

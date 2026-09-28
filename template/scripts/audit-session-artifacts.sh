@@ -26,6 +26,8 @@ export GIT_NO_REPLACE_OBJECTS=1
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
+# shellcheck source=scripts/lib/gh-rest.sh
+. "${REPO_ROOT}/scripts/lib/gh-rest.sh"
 
 tmp="$(mktemp -d "${TMPDIR:-/tmp}/audit-session.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
@@ -201,14 +203,14 @@ else
     # result in it (challenge r2).
     gh_repo=""
     if command -v gh >/dev/null 2>&1 && [ "$has_remote" = true ] && [ -n "$default_branch" ]; then
-        gh_repo="$(net_probe gh repo view "$(git remote get-url "$remote")" \
-            --json nameWithOwner --jq .nameWithOwner 2>/dev/null)" || gh_repo=""
+        gh_repo="$(gh_rest_repo "$remote" 2>/dev/null)" || gh_repo=""
     fi
     pr_limit="${AUDIT_PR_LIMIT:-1000}"
     if [ -n "$gh_repo" ] &&
-        net_probe gh pr list --repo "$gh_repo" --state merged --limit "$pr_limit" \
-            --json number,headRefName,headRefOid,baseRefName \
-            --jq '.[] | [.headRefName, .headRefOid, (.number | tostring), .baseRefName] | @tsv' \
+        GH_REST_TIMEOUT="${GH_TIMEOUT:-30}" gh_rest_paginate_array \
+            "repos/${gh_repo}/pulls?state=closed&sort=updated&direction=desc" 0 2>/dev/null |
+        jq -sr --argjson limit "$pr_limit" \
+            'add | map(select(.merged_at != null)) | .[:$limit][] | [.head.ref, .head.sha, (.number | tostring), .base.ref] | @tsv' \
             >"$tmp/merged-prs" 2>/dev/null; then
         merged_seen="$(wc -l <"$tmp/merged-prs" | tr -d ' ')"
         if [ "$merged_seen" -ge "$pr_limit" ]; then

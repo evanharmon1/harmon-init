@@ -32,6 +32,7 @@ status="./scripts/status.sh"
 # below therefore needs both files, not just the script under test.
 scopes_lib="./scripts/gh-scopes.sh"
 output_lib="./scripts/lib/output.sh"
+rest_lib="./scripts/lib/gh-rest.sh"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
@@ -55,6 +56,7 @@ for fixture in with-board no-board skills-only with-codex creds-board org-repo; 
     cp "${status}" "${TMP}/${fixture}/scripts/status.sh"
     cp "${scopes_lib}" "${TMP}/${fixture}/scripts/gh-scopes.sh"
     cp "${output_lib}" "${TMP}/${fixture}/scripts/lib/output.sh"
+    cp "${rest_lib}" "${TMP}/${fixture}/scripts/lib/gh-rest.sh"
 done
 # The markers status.sh feature-detects on. Contents are never read.
 : >"${TMP}/with-board/scripts/setup-github-project.sh"
@@ -72,6 +74,7 @@ mkdir -p "${TMP}/enterprise/scripts/lib"
 cp "${status}" "${TMP}/enterprise/scripts/status.sh"
 cp "${scopes_lib}" "${TMP}/enterprise/scripts/gh-scopes.sh"
 cp "${output_lib}" "${TMP}/enterprise/scripts/lib/output.sh"
+cp "${rest_lib}" "${TMP}/enterprise/scripts/lib/gh-rest.sh"
 : >"${TMP}/enterprise/scripts/setup-github-project.sh"
 git -C "${TMP}/enterprise" init -q
 git -C "${TMP}/enterprise" remote add origin git@ghe.example.com:owner/repo.git
@@ -271,9 +274,26 @@ make_stub() {
             ;;
         esac
         echo 'fi'
-        echo 'if [ "$1" = "repo" ] && [ "$2" = "view" ] && [ -n "${GH_REPO_JSON:-}" ]; then'
-        echo '    printf "%s\n" "$GH_REPO_JSON"'
-        echo '    exit 0'
+        echo 'if [ "$1" = "api" ]; then'
+        echo '    endpoint="${2:-}"'
+        echo '    case "$endpoint" in'
+        echo '    graphql | search/* | repositories/*) echo "HTTP 403: REST-only proxy rejection" >&2; exit 1 ;;'
+        echo '    *"&page=2"*) echo "[]"; exit 0 ;;'
+        echo '    repos/*/*\?* | repos/*/*)'
+        echo '        case "$endpoint" in'
+        echo '        */pulls\?* | */labels\?* | */pulls/comments\?* | */rulesets) echo "[]" ;;'
+        echo '        */vulnerability-alerts) echo "[]" ;;'
+        echo '        */private-vulnerability-reporting) echo "{}" ;;'
+        echo '        *) [ -n "${GH_REPO_JSON:-}" ] || exit 1; printf "%s\n" "$GH_REPO_JSON" ;;'
+        echo '        esac'
+        echo '        exit 0'
+        echo '        ;;'
+        echo '    orgs/*/issue-types\?*) echo "[]"; exit 0 ;;'
+        echo '    orgs/*/issue-fields\?*) echo "{\"issue_fields\":[]}"; exit 0 ;;'
+        echo '    orgs/*/installations | user/installations) echo "{\"installations\":[]}"; exit 0 ;;'
+        echo '    esac'
+        echo '    echo "stub: unexpected REST endpoint: $endpoint" >&2'
+        echo '    exit 1'
         echo 'fi'
         echo 'if [ "$1" = "variable" ] && [ "$2" = "list" ] && [ -n "${GH_VARIABLES_JSON:-}" ]; then'
         echo '    printf "%s\n" "$GH_VARIABLES_JSON"'
@@ -444,7 +464,11 @@ make_isolated_bin() {
 run_setup_section() {
     make_stub "$1"
     local script="${2:-${WITH_CODEX}}"
-    PATH="${TMP}/bin:${PATH}" NO_COLOR=1 "${script}" setup 2>&1
+    local stub_repo="${GH_REPO:-}"
+    if [ -z "${stub_repo}" ] && [ -n "${GH_REPO_JSON:-}" ]; then
+        stub_repo="$(jq -r '.full_name // empty' <<<"${GH_REPO_JSON}")"
+    fi
+    GH_REPO="${stub_repo}" PATH="${TMP}/bin:${PATH}" NO_COLOR=1 "${script}" setup 2>&1
 }
 
 # run_creds_section GH_SCENARIO [SCRIPT] — status.sh's standalone credentials
@@ -474,7 +498,7 @@ run_setup_isolated() {
     make_stub "$1"
     make_isolated_bin ""
     local script="${2:-${WITH_CODEX}}"
-    PATH="${TMP}/bin-iso" NO_COLOR=1 "${script}" setup 2>&1
+    GH_REPO="${GH_REPO:-}" PATH="${TMP}/bin-iso" NO_COLOR=1 "${script}" setup 2>&1
 }
 
 # summary_field OUTPUT NAME — the count NAME carries on status.sh's Summary line
@@ -486,7 +510,7 @@ summary_field() {
 
 echo "==> public setup status audits the exact CI_RUNS_ON safety value"
 make_codex_stub in
-public_repo='{"nameWithOwner":"owner/public","visibility":"PUBLIC","isPrivate":false,"defaultBranchRef":{"name":"main"}}'
+public_repo='{"full_name":"owner/public","visibility":"PUBLIC","private":false,"default_branch":"main","owner":{"type":"Organization"}}'
 out="$(GH_REPO_JSON="$public_repo" \
     GH_VARIABLES_JSON='[{"name":"CI_RUNS_ON"}]' \
     GH_CI_RUNS_ON_JSON='{"name":"CI_RUNS_ON","value":"\"ubuntu-latest\""}' \
@@ -511,7 +535,7 @@ case "$out" in
 *) fail "failed public variable probes were reported as missing: ${out}" ;;
 esac
 
-internal_repo='{"nameWithOwner":"owner/internal","visibility":"INTERNAL","isPrivate":false,"defaultBranchRef":{"name":"main"}}'
+internal_repo='{"full_name":"owner/internal","visibility":"INTERNAL","private":false,"default_branch":"main","owner":{"type":"Organization"}}'
 out="$(GH_REPO_JSON="$internal_repo" \
     GH_VARIABLES_JSON='[{"name":"CI_RUNS_ON"}]' \
     GH_CI_RUNS_ON_JSON='{"name":"CI_RUNS_ON","value":"[\"self-hosted\",\"linux\"]"}' \
@@ -527,6 +551,20 @@ case "$out" in
 *"Project board writes"*"token has 'project'"*) ;;
 *) fail "expected a satisfied board-writes line, got: ${out}" ;;
 esac
+
+echo "==> REST-only setup completes and marks the GraphQL-only project surface unavailable"
+STUB_CALLS="${TMP}/rest-only-calls.txt"
+export STUB_CALLS
+: >"${STUB_CALLS}"
+out="$(GH_REPO_JSON="$public_repo" run_setup_section project)"
+case "$out" in
+*"GitHub Project linked"*"unavailable through the REST-only GitHub API"*) ;;
+*) fail "expected an explicit unavailable project line, got: ${out}" ;;
+esac
+if grep -E '(^| )(graphql|search/|repositories/)|--paginate| pr (list|view)| issue view| label list' "${STUB_CALLS}" >/dev/null; then
+    fail "REST-only status used a forbidden GitHub surface: $(tr '\n' ' ' <"${STUB_CALLS}")"
+fi
+unset STUB_CALLS
 
 echo "==> read-only 'read:project' is NOT reported as satisfied"
 # The state most easily mistaken for working: --show reads the card fine, so the

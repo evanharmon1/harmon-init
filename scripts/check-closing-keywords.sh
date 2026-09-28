@@ -11,6 +11,10 @@
 # Exit: 0 clean, 1 unchecked work, 2 could not verify (fail closed).
 set -euo pipefail
 
+script_dir="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
+# shellcheck source=scripts/lib/gh-rest.sh
+. "${script_dir}/lib/gh-rest.sh"
+
 usage() {
     echo "Usage: $0 --repo owner/repo [--body-env VAR] [--title-env VAR] [--commits-file PATH]" >&2
     exit 2
@@ -111,7 +115,7 @@ fetch_issue_body() {
         [ -f "$fixture" ] || return 3
         cat "$fixture"
     else
-        gh issue view "$number" --repo "$repo" --json body --jq '.body // ""' 2>/dev/null || return 3
+        gh_rest_api "repos/${repo}/issues/${number}" --jq '.body // ""' 2>/dev/null || return 3
     fi
 }
 

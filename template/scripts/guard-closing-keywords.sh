@@ -40,6 +40,8 @@ set -euo pipefail
 # the Taskfile always runs from the repo root, but a hand-run from a
 # subdirectory would otherwise fail with a confusing "no such file".
 script_dir="$(CDPATH='' cd -- "$(dirname -- "$0")" && pwd)"
+# shellcheck source=scripts/lib/gh-rest.sh
+. "${script_dir}/lib/gh-rest.sh"
 
 commits_file=$(mktemp)
 trap 'rm -f "$commits_file"' EXIT
@@ -63,7 +65,12 @@ git log --format=%B "${merge_base}..${head_sha}" >"$commits_file"
 
 if [ -z "${PR_TITLE+x}" ] || [ -z "${PR_BODY+x}" ]; then
     branch="$(git branch --show-current)"
-    if [ -z "$branch" ] || ! pr_json="$(gh pr list --head "$branch" --state open --limit 2 --json title,body)"; then
+    repo="${GH_REPO:-}"
+    [ -n "$repo" ] || repo="$(gh_rest_repo 2>/dev/null || true)"
+    owner="${repo%%/*}"
+    head_query="$(gh_rest_urlencode "${owner}:${branch}")"
+    if [ -z "$branch" ] || [ -z "$repo" ] ||
+        ! pr_json="$(gh_rest_paginate_array "repos/${repo}/pulls?state=open&head=${head_query}" 2 | jq -s 'add | map({title, body})')"; then
         echo "guard:closing-keywords: could not list PR metadata for the current branch; supply both PR_TITLE and PR_BODY" >&2
         exit 2
     fi
@@ -84,7 +91,10 @@ export PR_TITLE PR_BODY
 
 repo="${GH_REPO:-}"
 if [ -z "$repo" ]; then
-    repo="$(gh repo view --json nameWithOwner --jq .nameWithOwner)"
+    if ! repo="$(gh_rest_repo)"; then
+        echo "guard:closing-keywords: could not resolve owner/repository from the current remote" >&2
+        exit 2
+    fi
 fi
 
 "$script_dir/check-closing-keywords.sh" --repo "$repo" \
