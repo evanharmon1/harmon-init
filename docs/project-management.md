@@ -1247,21 +1247,23 @@ back later. Collect them instead on two dedicated issues:
   or `Collector scope: repository`). Search all states first
   (`label:human label:umbrella`) and match on the title prefix plus that
   scope line: append to the open one, reopen a closed one, and never file a
-  second. Give it the scope's milestone, and under an `epic` also make it
+  second. Two writers can still both miss and both file, so whoever finds two
+  open collectors for one scope merges the newer's items into the older and
+  closes the newer as a duplicate. Give it the scope's milestone, and under an `epic` also make it
   that epic's sub-issue so the epic's rollup stays honest about the human
   work still owed.
 - **Each task is one `- [ ] [HUMAN] …` acceptance criterion on the
   collector**, naming its source:
   `- [ ] [HUMAN] Add FLY_API_TOKEN to the repo secrets (from #1412)`. Agents
-  append items; a human ticks them. A body edit is last-write-wins, so an
-  appender re-reads the body before and after writing, and in an
-  orchestrated run the orchestrator is the only writer. The collector closes
-  when every box is ticked.
+  append items; a human ticks them. The collector closes when every box is
+  ticked.
 - **The source issue mentions, never blocks.** Record the task on the source
   issue as a plain line under `## Out of scope` —
   `Human follow-up (tracked in #1420): add FLY_API_TOKEN` — not as an
   acceptance criterion, so the issue closes as soon as its agent-verifiable
-  work merges.
+  work merges. That line is the durable record and the collector item is its
+  index: an issue-body edit is last-write-wins, so two concurrent appends can
+  drop one item, and the source line is how a later pass finds it again.
 - **A precondition is a dependency, not a follow-up.** When the agent cannot
   do the work until the human step happens (the secret must exist before the
   deploy test can run), the step is not a collector item: file it as its own
@@ -1269,7 +1271,8 @@ back later. Collect them instead on two dedicated issues:
   **Hierarchy is not dependency**). Closing the human issue unblocks the work
   through the same graph the dispatchers read.
 - **Never dispatched.** A `human` issue is never claimed, armed with
-  `foreman:*`, or implemented by an agent. `human` alone marks a standalone
+  `foreman:*`, or implemented by an agent. The claim tooling refuses it;
+  Foreman does not read the label, so never arm one. `human` alone marks a standalone
   human-only issue such as a precondition; `human` + `umbrella` marks a
   collector.
 

@@ -37,7 +37,8 @@ body:
 [% if project_management == 'github' %]
         Human-only follow-ups (secrets, settings,
         manual QA) belong on the issue's `(HUMAN):` or `(QA):` collector —
-        its milestone's, else its epic's, else the repo-wide one — not here.
+        its milestone's, else its epic's, else the repo-wide one — not here,
+        unless this issue is that collector.
 [% endif %]
   - type: textarea
     id: context
