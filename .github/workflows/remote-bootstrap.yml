@@ -5,10 +5,7 @@ run-name: ${{ github.actor }} is proving the remote bootstrap on a stock Ubuntu 
 # release tag but never prove it; images/devcontainer/ has no template twin, so
 # there is nothing to render.
 #
-# Two jobs, two different kinds of proof:
-#   guard     — the pin CONTRACT, offline: every tool the bootstrap installs
-#               takes its version from the file the Dockerfile reads, and the
-#               bootstrap pins nothing of its own.
+# One job, one kind of proof:
 #   bootstrap — the BEHAVIOUR, which no metadata check can reach: the scripts
 #               really do install a working toolchain on a stock ubuntu:24.04
 #               VM, a second run performs no new installs and changes no
@@ -22,13 +19,12 @@ run-name: ${{ github.actor }} is proving the remote bootstrap on a stock Ubuntu 
 #               does not survive, and the default tiers fit the platform's
 #               roughly five-minute cached-setup budget.
 #
-# `task test:bootstrap-remote` is deliberately NOT added to build.yml's lint
-# job as well. That job enumerates its steps by hand precisely so nothing runs
-# only in local `verify` (#962) — but this workflow's path filter names every
-# input the guard reads (images/devcontainer/, renovate.json, every
-# scripts/*.sh for the one-version-per-dependency check, and Taskfile.yml for
-# the "verify runs this guard" check), so listing it twice would spend a
-# second runner on the same result and leave two places to keep in step.
+# The pin CONTRACT is not proved here. `task test:bootstrap-remote` runs
+# unconditionally in build.yml's lint job, which has no path filter, so it sees
+# every PR — including one that edits only an input this workflow's filter does
+# not name. This workflow proves behaviour only, and the path filter below is
+# correct for that: a documentation edit cannot change what the scripts install
+# on a real container.
 on:
   # The two path lists are spelled out twice rather than shared through a YAML
   # anchor: GitHub's workflow parser does not support anchors, so an anchor
@@ -60,21 +56,6 @@ permissions:
   contents: read
 
 jobs:
-  guard:
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-          # The guard's pin-pair drift check compares versions.env against the
-          # merge-base and skips itself, with a notice, when no origin/main
-          # exists — which is what a depth-1 checkout gives it. Full history so
-          # the check actually runs here, as it does in build.yml's lint job.
-          fetch-depth: 0
-      - uses: ./.github/actions/setup
-      - run: task test:bootstrap-remote
-
   bootstrap:
     # A fork PR gets no repository-controlled container run, for the same
     # reason publish-harmon-devcontainer.yml declines to build fork

@@ -782,9 +782,16 @@ for needed in ("!versions.env", "!install"):
 if "!bootstrap-remote.sh" in ignore:
     fail(f"{IMG}/.dockerignore: bootstrap-remote.sh must stay out of the build context; the image never runs it")
 
-# ── 13. verify actually runs this guard ─────────────────────────────────────
-# `task --dry` prints its plan on stderr, so merge the streams rather than
-# reading stdout and concluding the task is missing.
+# ── 13. verify AND ci actually run this guard ───────────────────────────────
+# Nothing anywhere enumerates this guard's inputs. A workflow path filter that
+# tried to was wrong twice — it missed scripts/** and Taskfile.yml, then missed
+# docs/architecture/remote-environments.md once section 10 began deriving the
+# host tables from that document — so the list was deleted rather than extended
+# a third time. What replaces it is this: the guard proves it runs at all, on
+# both paths, and a filter it could fall behind no longer exists.
+#
+# Local. `task --dry` prints its plan on stderr, so merge the streams rather
+# than reading stdout and concluding the task is missing.
 plan = subprocess.run(
     ["task", "--dry", "verify"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
 )
@@ -792,6 +799,31 @@ if plan.returncode != 0:
     fail("`task --dry verify` failed, so this guard's own wiring cannot be checked")
 elif "./scripts/test-bootstrap-remote.sh" not in plan.stdout:
     fail("`task verify` does not run scripts/test-bootstrap-remote.sh")
+
+# CI. The `lint` job specifically, not build.yml as a whole: lint is the job
+# with no path filter, so it is the one placement that sees a PR touching any
+# input the guard reads. The job's own block is sliced out by indentation so
+# the step cannot satisfy this check from some other, filtered job.
+BUILD = pathlib.Path(".github/workflows/build.yml")
+build_lines = BUILD.read_text().splitlines()
+if "jobs:" not in build_lines:
+    fail(f"{BUILD}: no top-level `jobs:` key, so this guard's CI wiring cannot be checked")
+else:
+    lint_steps = []
+    in_lint = False
+    for line in build_lines[build_lines.index("jobs:") + 1 :]:
+        job = re.fullmatch(r"  (?P<name>[A-Za-z0-9_-]+):\s*", line)
+        if job:
+            in_lint = job["name"] == "lint"
+        elif in_lint:
+            lint_steps.append(line)
+    if not lint_steps:
+        fail(f"{BUILD}: no `lint:` job found under `jobs:`, so this guard's CI wiring cannot be checked")
+    elif not re.search(r"^\s*(?:- )?run: task test:bootstrap-remote\s*$", "\n".join(lint_steps), re.M):
+        fail(
+            f"{BUILD}: the lint job does not run `task test:bootstrap-remote`. That job is the only one with no "
+            "path filter, so without this step a pull request editing an input this guard reads runs it in no CI job"
+        )
 
 # ── 14. the standalone trust root: only a release tag is accepted ───────────
 # The ref is validated before the tier check and before the sudo re-exec, so
