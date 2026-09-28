@@ -67,6 +67,10 @@ ${chromium_targets}
 TARGETS
 fi
 
+# The marker is the whole contract, so a re-run with it present is a skip, not
+# a repair: the documented remedy for a browser broken AFTER the marker was
+# written (a system dependency removed, say) is to remove the install location
+# or its INSTALLATION_COMPLETE, and the next run then reinstalls --with-deps.
 if [ "$browsers_missing" -eq 0 ]; then
     harmon_skip "playwright chromium"
 else

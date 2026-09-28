@@ -16,9 +16,11 @@ run-name: ${{ github.actor }} is proving the remote bootstrap on a stock Ubuntu 
 #               pinned mikefarah yq beats a pre-provisioned Python yq by PATH
 #               order in the system profile, a user-level shadow is reported
 #               and not fatal, root never writes under a sudo caller's home
-#               and never executes that caller's ~/.profile, a pre-existing
-#               LC_ALL=C does not survive, and the default tiers fit the
-#               platform's roughly five-minute cached-setup budget.
+#               and never executes that caller's ~/.profile — on the re-exec
+#               entry AND the already-root `sudo -E` entry, which arrives
+#               with the caller's HOME preserved — a pre-existing LC_ALL=C
+#               does not survive, and the default tiers fit the platform's
+#               roughly five-minute cached-setup budget.
 #
 # `task test:bootstrap-remote` is deliberately NOT added to build.yml's lint
 # job as well. That job enumerates its steps by hand precisely so nothing runs
@@ -191,6 +193,28 @@ jobs:
           test ! -e /root/PROFILE-RAN-AS-ROOT
           find /home/shadowed -mindepth 1 | sort > /tmp/shadowed-after.txt
           diff /tmp/shadowed-before.txt /tmp/shadowed-after.txt
+          test -z "$(find /home/shadowed ! -user shadowed)"
+      - name: Prove the already-root entry (sudo -E) stays out of the caller's home and profile too
+        # The re-exec above is one entry path of three. `sudo -E` arrives
+        # ALREADY root with the caller's HOME preserved (asserted first, so the
+        # trap is proved armed rather than assumed), and the piped
+        # `sudo bash -s` form arrives the same way; the bootstrap sets HOME to
+        # the running uid's passwd home on every path before a tier runs, and
+        # this is the proof for the path the re-exec never sees. Same user,
+        # same planted shadow and marker profile, same three assertions.
+        run: |
+          entry_uid="$(runuser -u shadowed -- sudo -E id -u)"
+          entry_home="$(runuser -u shadowed -- sudo -E env | sed -n 's/^HOME=//p')"
+          echo "sudo -E enters as uid ${entry_uid} with HOME=${entry_home}"
+          test "${entry_uid} ${entry_home}" = "0 /home/shadowed"
+          find /home/shadowed -mindepth 1 | sort > /tmp/shadowed-before-sudo-e.txt
+          runuser -u shadowed -- sudo -E env PATH=/usr/bin:/bin:/usr/local/bin LC_ALL=C \
+            ./images/devcontainer/bootstrap-remote.sh 2>&1 | tee /tmp/bootstrap-sudo-e.log
+          grep -q "WARNING: shadowed's login shell resolves yq to '/home/shadowed/.local/bin/yq'" /tmp/bootstrap-sudo-e.log
+          grep -q "HARMON_BOOTSTRAP_NEW_INSTALLS=0" /tmp/bootstrap-sudo-e.log
+          test ! -e /root/PROFILE-RAN-AS-ROOT
+          find /home/shadowed -mindepth 1 | sort > /tmp/shadowed-after-sudo-e.txt
+          diff /tmp/shadowed-before-sudo-e.txt /tmp/shadowed-after-sudo-e.txt
           test -z "$(find /home/shadowed ! -user shadowed)"
       - name: Prove the opt-in browsers tier performs no new installs on a second run either
         # Deliberately outside the budget assertion above: Chromium is larger

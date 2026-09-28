@@ -86,14 +86,16 @@ if harmon_needs uv "$UV_VERSION" uv --version; then
 fi
 
 # ---------- checksum-free GitHub release binaries ----------
-# These mirror the shared image's long-standing install shape exactly: the
-# upstream projects publish no stable per-asset digest this repository has
-# reviewed, so the pin is the release tag. Changing that is a separate
-# decision from moving the installs, and moving the installs is this file's job.
+# The upstream projects publish no stable per-asset digest this repository has
+# reviewed, so the pin is the release tag. Changing that is a separate decision
+# from how the installs are done, and how they are done is one path: a bare
+# binary goes harmon_fetch → harmon_install_bin, an archived one goes through
+# harmon_install_archive_bin. Both stage first and touch the live path last,
+# so an interrupted install leaves the previous tool working (lib.sh).
 if harmon_needs task "$TASK_VERSION" task --version; then
-    curl "${HARMON_CURL_OPTS[@]}" \
-        "https://github.com/go-task/task/releases/download/v${TASK_VERSION}/task_linux_${arch}.tar.gz" |
-        tar -xz -C "$HARMON_BIN" task
+    harmon_install_archive_bin \
+        "https://github.com/go-task/task/releases/download/v${TASK_VERSION}/task_linux_${arch}.tar.gz" \
+        task task
 fi
 
 if harmon_needs lefthook "$LEFTHOOK_VERSION" lefthook version; then
@@ -105,12 +107,9 @@ fi
 
 if harmon_needs gh "$GH_VERSION" gh --version; then
     gh_dir="gh_${GH_VERSION}_linux_${arch}"
-    harmon_fetch \
+    harmon_install_archive_bin \
         "https://github.com/cli/cli/releases/download/v${GH_VERSION}/${gh_dir}.tar.gz" \
-        "${tmp}/gh.tar.gz"
-    tar -xzf "${tmp}/gh.tar.gz" -C "$tmp" "${gh_dir}/bin/gh"
-    harmon_install_bin "${tmp}/${gh_dir}/bin/gh" gh
-    rm -rf "${tmp}/gh.tar.gz" "${tmp}/${gh_dir}"
+        gh "${gh_dir}/bin/gh"
 fi
 
 # mikefarah yq v4. On a pre-provisioned VM /usr/bin/yq is the *Python* yq and
@@ -130,9 +129,9 @@ if harmon_needs shfmt "$SHFMT_VERSION" shfmt --version; then
 fi
 
 if harmon_needs actionlint "$ACTIONLINT_VERSION" actionlint -version; then
-    curl "${HARMON_CURL_OPTS[@]}" \
-        "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_${arch}.tar.gz" |
-        tar -xz -C "$HARMON_BIN" actionlint
+    harmon_install_archive_bin \
+        "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_${arch}.tar.gz" \
+        actionlint actionlint
 fi
 
 if harmon_needs hadolint "$HADOLINT_VERSION" hadolint --version; then
@@ -143,17 +142,16 @@ if harmon_needs hadolint "$HADOLINT_VERSION" hadolint --version; then
 fi
 
 if harmon_needs gitleaks "$GITLEAKS_VERSION" gitleaks version; then
-    curl "${HARMON_CURL_OPTS[@]}" \
-        "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_$(harmon_pick x64 arm64).tar.gz" |
-        tar -xz -C "$HARMON_BIN" gitleaks
+    harmon_install_archive_bin \
+        "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_$(harmon_pick x64 arm64).tar.gz" \
+        gitleaks gitleaks
 fi
 
 if harmon_needs lychee "$LYCHEE_VERSION" lychee --version; then
     lychee_arch="$(harmon_pick x86_64 aarch64)"
-    curl "${HARMON_CURL_OPTS[@]}" \
-        "https://github.com/lycheeverse/lychee/releases/download/lychee-v${LYCHEE_VERSION}/lychee-${lychee_arch}-unknown-linux-gnu.tar.gz" |
-        tar -xz --strip-components=1 -C "$HARMON_BIN" \
-            "lychee-${lychee_arch}-unknown-linux-gnu/lychee"
+    harmon_install_archive_bin \
+        "https://github.com/lycheeverse/lychee/releases/download/lychee-v${LYCHEE_VERSION}/lychee-${lychee_arch}-unknown-linux-gnu.tar.gz" \
+        lychee "lychee-${lychee_arch}-unknown-linux-gnu/lychee"
 fi
 
 # ---------- Python tools (uv) and Node tools (npm) ----------

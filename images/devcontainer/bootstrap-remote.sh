@@ -30,7 +30,10 @@
 #     no PINNED tool version (HARMON_BOOTSTRAP_NEW_INSTALLS=0, same manifest);
 #     apt packages are unpinned and converge on the archive, and an upgrade
 #     there is reported (HARMON_BOOTSTRAP_UPGRADES), never hidden;
-#   - non-interactive, amd64 and arm64, runs as root or through sudo;
+#   - non-interactive, amd64 and arm64, runs as root or through sudo — and on
+#     EVERY entry path (re-exec, `sudo -E`, the piped `sudo bash -s`) HOME is
+#     the running uid's passwd home before a tier runs, so root never writes
+#     under a caller's home and never sources a caller's ~/.profile;
 #   - needs neither Docker nor Homebrew;
 #   - never installs 1Password (`op`), Homebrew, or Tailscale: none may
 #     resolve at the end of a run that did not resolve at its start;
@@ -167,18 +170,33 @@ esac
 # scripts are shared with a Docker build that has no sudo at all, and a
 # half-privileged run that installs some tools and fails on others is worse
 # than one that refuses up front.
-# The re-exec hands root an EXPLICIT environment, not `-E`: HOME is root's, so
-# nothing root writes lands under the caller's home; tiers and ref travel as
-# arguments, and the HARMON_* variables read from the environment only when set.
+# The re-exec hands root an EXPLICIT environment, not `-E`: tiers and ref
+# travel as arguments, and the HARMON_* variables read from the environment
+# only when set. HOME is deliberately NOT set here — the block after this one
+# sets it for every entry path, and this is only one of them.
 if [ "$(id -u)" -ne 0 ]; then
     if [ -r "${BASH_SOURCE[0]}" ] && command -v sudo >/dev/null 2>&1; then
-        exec sudo -- env HOME=/root \
+        exec sudo -- env \
             ${HARMON_PREFIX+"HARMON_PREFIX=${HARMON_PREFIX}"} \
             ${HARMON_ALLOW_UNPINNED_REF+"HARMON_ALLOW_UNPINNED_REF=${HARMON_ALLOW_UNPINNED_REF}"} \
             bash "${BASH_SOURCE[0]}" --tiers "$tiers" ${ref:+--ref "$ref"}
     fi
     die "must run as root; pipe into 'sudo bash' or re-run under sudo"
 fi
+
+# ---------- HOME: the running uid's, on every entry path ----------
+# Root is established, but WHOSE home root has is decided by how it got here:
+# the re-exec above arrives with root's, while `sudo -E` (measured:
+# `sudo -nE bash -c 'echo $(id -u) $HOME'` → `0 /home/vscode`) and the piped
+# `sudo bash -s` arrive already root with the CALLER's HOME. Everything below
+# reads HOME — npm's ~/.npm, uv's ~/.cache, the login-shell locale probe that
+# sources ~/.profile — so a caller's HOME here means root-owned files under an
+# unprivileged user's home and that user's ~/.profile executed as uid 0. One
+# rule, applied once, before any tier: HOME is the running uid's passwd home.
+# The INVOKING user is still known through SUDO_USER; the shadow check near
+# the end uses it on purpose, and runs AS that user.
+HOME="$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6)"
+export HOME="${HOME:-/root}"
 
 # ---------- locate the install scripts ----------
 self_dir=""
@@ -303,12 +321,25 @@ set_locale
 . "$HARMON_PROFILE_DROPIN"
 
 # ---------- the never-installed set ----------
-# The one invariant: a forbidden tool may not resolve at the end of the run
-# unless it already resolved at the start — PATH-wide, on the PATH the closing
-# check uses.
+# The one invariant, for BOTH lists: nothing forbidden may be present at the
+# end of the run that was not present at its start — a command resolving
+# anywhere on the PATH the closing check uses, or a package manager's prefix
+# existing. Pre-existing ones are reported by path, never fatal: a self-hosted
+# VM whose administrator installed Tailscale, or that already carries a
+# Homebrew prefix, is not the bootstrap installing either. Commands and
+# prefixes share this one predicate and the two loops below, so a list cannot
+# be snapshotted at the start and forgotten at the end.
+# forbidden_present <command|/prefix> — prints where it is and succeeds;
+# prints nothing and fails when absent.
+forbidden_present() {
+    case "$1" in
+    /*) [ -d "$1" ] && printf '%s' "$1" ;;
+    *) command -v "$1" 2>/dev/null ;;
+    esac
+}
 never_before=""
-for forbidden in $HARMON_NEVER_INSTALL; do
-    if command -v "$forbidden" >/dev/null 2>&1; then
+for forbidden in $HARMON_NEVER_INSTALL $HARMON_NEVER_PREFIXES; do
+    if forbidden_present "$forbidden" >/dev/null; then
         never_before="${never_before} ${forbidden}"
     fi
 done
@@ -329,17 +360,13 @@ done
 # ---------- verify what the tiers promised ----------
 printf '\n==> verifying\n'
 
-for forbidden in $HARMON_NEVER_INSTALL; do
-    found="$(command -v "$forbidden" 2>/dev/null || true)"
+for forbidden in $HARMON_NEVER_INSTALL $HARMON_NEVER_PREFIXES; do
+    found="$(forbidden_present "$forbidden" || true)"
     [ -n "$found" ] || continue
     case " ${never_before} " in
     *" ${forbidden} "*) printf '    (pre-existing, not ours) %s at %s\n' "$forbidden" "$found" ;;
-    *) die "${forbidden} resolves at ${found} and did not before this run — the bootstrap must never install ${forbidden}" ;;
+    *) die "${forbidden} is present at ${found} and was not before this run — the bootstrap must never install ${forbidden}" ;;
     esac
-done
-for prefix in $HARMON_NEVER_PREFIXES; do
-    [ ! -d "$prefix" ] ||
-        die "${prefix} exists — the bootstrap must never install the package manager that owns it"
 done
 
 # PATH precedence, by order, where the bootstrap owns the order: this process
@@ -359,17 +386,24 @@ yq --version 2>&1 | grep -q 'mikefarah' ||
 # login shell executes ~/.profile, and running one as root with a user's HOME
 # would execute that user's file as uid 0. Without runuser the check is
 # skipped and says so; it never falls back to root. Reported, never fatal.
+# runuser lives in /usr/sbin, which a caller's PATH need not carry (`sudo -E
+# env PATH=/usr/bin:/bin …` hands root exactly that), so it is looked up in
+# the sbin directories too rather than skipping the check on a PATH accident.
 login_user="${SUDO_USER:-root}"
 login_home="$(getent passwd "$login_user" 2>/dev/null | cut -d: -f6)"
 login_uid="$(id -u "$login_user" 2>/dev/null || echo 0)"
-if [ "$login_uid" != 0 ] && ! command -v runuser >/dev/null 2>&1; then
+runuser_bin="$(command -v runuser 2>/dev/null || true)"
+for candidate in /usr/sbin/runuser /sbin/runuser; do
+    [ -n "$runuser_bin" ] || [ ! -x "$candidate" ] || runuser_bin="$candidate"
+done
+if [ "$login_uid" != 0 ] && [ -z "$runuser_bin" ]; then
     printf "    (not checked) %s's login shell: runuser is unavailable, and the check never runs as root with a user's HOME\n" "$login_user"
 else
     for tool in yq task; do
         if [ "$login_uid" = 0 ]; then
             found="$(env -i HOME="${login_home:-/root}" USER=root PATH=/usr/bin:/bin bash -lc "command -v ${tool}" 2>/dev/null || true)"
         else
-            found="$(runuser -u "$login_user" -- env -i HOME="$login_home" USER="$login_user" PATH=/usr/bin:/bin bash -lc "command -v ${tool}" 2>/dev/null || true)"
+            found="$("$runuser_bin" -u "$login_user" -- env -i HOME="$login_home" USER="$login_user" PATH=/usr/bin:/bin bash -lc "command -v ${tool}" 2>/dev/null || true)"
         fi
         [ "$found" != "${HARMON_BIN}/${tool}" ] || continue
         warn "${login_user}'s login shell resolves ${tool} to '${found:-nothing}', not ${HARMON_BIN}/${tool}: a user-level PATH entry (${found%/*}) shadows the pinned toolchain. Remedy: in ${login_home:-/root}/.profile put ${HARMON_BIN} ahead of ${found%/*}, or remove ${found}."
@@ -387,7 +421,7 @@ case "$process_ctype" in
 *UTF-8 | *utf8) ;;
 *) die "the effective locale is LC_CTYPE='${process_ctype:-unset}', not UTF-8" ;;
 esac
-login_ctype="$(effective_ctype env -i HOME="${HOME:-/root}" PATH=/usr/bin:/bin LC_ALL=C bash -lc locale)"
+login_ctype="$(effective_ctype env -i HOME="$HOME" PATH=/usr/bin:/bin LC_ALL=C bash -lc locale)"
 case "$login_ctype" in
 *UTF-8 | *utf8) ;;
 *) die "a fresh login shell that started with LC_ALL=C still has LC_CTYPE='${login_ctype:-unset}' — ${HARMON_PROFILE_DROPIN} did not force the locale" ;;

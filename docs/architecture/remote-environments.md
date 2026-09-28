@@ -40,7 +40,7 @@ exits 0 and the answers are quietly wrong:
 
 | Trap | What breaks | How the bootstrap answers it |
 | --- | --- | --- |
-| `/usr/bin/yq` is the **Python** yq | It shadows mikefarah yq v4, and every frontmatter then reads as invalid | Installs into `/usr/local/bin` and puts that directory **first** on `PATH` by order, not membership — the `profile.d` drop-in removes every existing occurrence and prepends it — then asserts that `yq` and `task` *resolve* from it in the running process, which sourced that very drop-in. What the bootstrap does not own it reports: bash reads `~/.profile` *after* `/etc/profile`, and a stock one prepends `~/.local/bin`, so a `yq` there still shadows the pinned one in that user's login shells — the closing check runs the invoking user's real login shell *as that user* (via `runuser`; skipped with a note where it is missing, never run as root with the user's `HOME`, since a login shell executes `~/.profile`) and prints a warning naming the shadowing path and the remedy, and exits 0 |
+| `/usr/bin/yq` is the **Python** yq | It shadows mikefarah yq v4, and every frontmatter then reads as invalid | Installs into `/usr/local/bin` and puts that directory **first** on `PATH` by order, not membership — the `profile.d` drop-in removes every existing occurrence and prepends it — then asserts that `yq` and `task` *resolve* from it in the running process, which sourced that very drop-in. What the bootstrap does not own it reports: bash reads `~/.profile` *after* `/etc/profile`, and a stock one prepends `~/.local/bin`, so a `yq` there still shadows the pinned one in that user's login shells — the closing check runs the invoking user's real login shell *as that user* (via `runuser`, the user named by `SUDO_USER`; skipped with a note where `runuser` is missing, never run as root with the user's `HOME`, since a login shell executes `~/.profile`) and prints a warning naming the shadowing path and the remedy, and exits 0. Root's own `HOME` is the running uid's passwd home on every entry path — `sudo -E` preserves the caller's, and the bootstrap replaces it before any tier runs — so no probe and no install ever sources or writes under the caller's home |
 | The locale is POSIX (`LANG` unset), or `LC_ALL=C` is already set | NBSP stops reading as whitespace, so Unicode-title checks silently pass what they should reject; a pre-existing `LC_ALL=C` overrides any `LANG` set beside it | Sets `LANG=C.UTF-8` in `/etc/environment` (and rewrites an `LC_ALL=` line there when one exists), **forces** `LANG` and `LC_ALL` to `C.UTF-8` in the `profile.d` drop-in rather than defaulting them, and asserts the *effective* locale — `locale` must report a UTF-8 `LC_CTYPE`, in the process and in a fresh login shell seeded with `LC_ALL=C` |
 
 Ubuntu's **git 2.43** is kept deliberately: it is the git the shared image
@@ -103,19 +103,26 @@ loop on the VM.
 
 The browsers tier's "installed" contract is Playwright's own
 `INSTALLATION_COMPLETE` marker in each browser location; a system dependency
-removed after that marker was written is outside the bootstrap's guarantee,
-and re-running the tier re-runs `--with-deps`.
+removed after that marker was written is outside the bootstrap's guarantee.
+Re-running the tier does **not** repair it — the marker makes the run skip —
+so the remedy is to remove the browser's install location (or just its
+`INSTALLATION_COMPLETE`), after which the next run reinstalls it with
+`--with-deps`.
 
 Never installed, in any tier, and asserted both by the bootstrap and by CI:
 **1Password (`op`), Homebrew, Tailscale.** The first and third are
 credential-bearing and a shared remote VM must not hold either; Homebrew is a
 second, unpinned package manager that would defeat the contract above. The
-bootstrap's closing check is `PATH`-wide (`command -v`, the form a consumer
-cares about) and states one invariant: it fails if any of them resolves at the
-end of the run and did not at the start, and reports by path — without failing
-— one the host already had, because a self-hosted VM whose administrator
-installed Tailscale is not the bootstrap installing Tailscale. Neither Docker
-nor Homebrew is required to *run* the bootstrap.
+bootstrap's closing check states one invariant for both the commands (`op`,
+`brew`, `tailscale`, `tailscaled`, `PATH`-wide via `command -v`, the form a
+consumer cares about) and Homebrew's prefixes (`/home/linuxbrew`,
+`/opt/homebrew`): it fails if any of them is present at the end of the run
+and was not at the start, and reports by path — without failing — one the
+host already had, because a self-hosted VM whose administrator installed
+Tailscale, or that already carries a Homebrew prefix, is not the bootstrap
+installing either. Both lists are snapshotted at the start and re-read at the
+end through the same predicate, so neither can be checked on mere existence.
+Neither Docker nor Homebrew is required to *run* the bootstrap.
 
 Interactive-terminal tools (zellij, herdr, starship, the TUIs) stay image-only.
 
@@ -151,9 +158,16 @@ a warning naming the unpinned ref so a log can never pass one off as pinned.
 `--tiers core,agents,browsers` selects tiers (default `core,agents`); `core`
 cannot be skipped.
 
-It runs as root or under `sudo` (an unprivileged caller is re-executed under
-`sudo` with an explicit environment and `HOME=/root`, so root never writes
-under the caller's home), is non-interactive, and is **idempotent** in a
+It runs as root or under `sudo`, and on **every** entry path — the re-exec of
+an unprivileged caller (done under `sudo` with an explicit environment: tiers
+and ref as arguments, the `HARMON_*` variables only when set), `sudo -E`, and
+the piped `sudo bash -s` — it sets `HOME` to the running uid's passwd home
+before any tier runs. `sudo -E` in particular arrives already root with the
+*caller's* `HOME`, and without that step npm and uv would leave root-owned
+files under the caller's home and the closing locale probe would source the
+caller's `~/.profile` as root; the invoking user is still known through
+`SUDO_USER` for the shadow check above. It is non-interactive, and is
+**idempotent** in a
 precise sense: **a second run performs no new installs and changes no pinned
 tool version** — no download, no npm or uv install, no corepack shim, no
 manifest rewrite, and no rewrite of the two files under `/etc` when their
@@ -222,7 +236,7 @@ check a VM; the comparison above is.
 | Check | Where | What it proves |
 | --- | --- | --- |
 | `task test:bootstrap-remote` | `task verify`, and the `guard` job | The pin contract, offline: no second pin owner (declared or typed into a download URL), every pin Renovate-extractable, both Node digests verified for the pinned Node, the fetch list matches the directory, no denied host, no forbidden tool named by the bootstrap or a tier script, and a non-release-tag `--ref` is refused |
-| `remote-bootstrap.yml` → `bootstrap` | CI, stock `ubuntu:24.04` container, seeded with `/usr/bin` ahead of `/usr/local/bin` and `LC_ALL=C` | It runs: the tiers install inside the budget, the second run performs no new installs and leaves the manifest byte-identical, `yq` and `task` resolve from `/usr/local/bin` and the effective locale is UTF-8 in a fresh login shell on the system profile path, a user with `~/.local/bin/yq` planted gets the shadow warning and exit 0 through the un-sudoed re-exec path with nothing of root's left in that home and that user's `~/.profile` never executed as root, nothing forbidden appeared on `PATH`, every VM manifest key names its pin, and `task check` then passes in a harmon-init checkout |
+| `remote-bootstrap.yml` → `bootstrap` | CI, stock `ubuntu:24.04` container, seeded with `/usr/bin` ahead of `/usr/local/bin` and `LC_ALL=C` | It runs: the tiers install inside the budget, the second run performs no new installs and leaves the manifest byte-identical, `yq` and `task` resolve from `/usr/local/bin` and the effective locale is UTF-8 in a fresh login shell on the system profile path, a user with `~/.local/bin/yq` planted gets the shadow warning and exit 0 through the un-sudoed re-exec path **and** through `sudo -E` (asserted to enter as uid 0 with that user's `HOME`), each with nothing of root's left in that home and that user's `~/.profile` never executed as root, nothing forbidden appeared on `PATH`, every VM manifest key names its pin, and `task check` then passes in a harmon-init checkout |
 | `images/devcontainer/smoke.sh` | the built image | The image really runs the shared scripts — they ship in the image beside `versions.env`, and its manifest records their versions for the comparison above |
 
 The CI job runs on the runner's native architecture, so `vars.CI_RUNS_ON` is

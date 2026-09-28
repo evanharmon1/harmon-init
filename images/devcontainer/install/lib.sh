@@ -147,19 +147,56 @@ harmon_needs() {
 
 # harmon_ensure_bin — the install prefix's bin directory exists.
 #
-# Called once per tier. harmon_install_bin creates it on demand, but the
-# `curl … | tar -xz -C "$HARMON_BIN"` installs cannot: tar fails outright on a
-# missing directory. /usr/local/bin exists on every real target, so this only
-# ever bites a non-default HARMON_PREFIX — which is exactly the case where
-# half the tier would install and half would not.
+# Called once per tier, and by harmon_install_bin on demand. /usr/local/bin
+# exists on every real target, so this only ever bites a non-default
+# HARMON_PREFIX — which is exactly the case where half the tier would install
+# and half would not.
 harmon_ensure_bin() {
     install -d -m 0755 "$HARMON_BIN"
 }
 
 # harmon_install_bin <source-file> <installed-name>
+#
+# The LAST step of every binary install, and the only thing that touches the
+# live path. install(1) copies into its destination, so a copy that dies
+# part-way leaves a truncated executable where a working tool was; the copy
+# therefore lands beside the live path and a same-directory rename — atomic on
+# every filesystem this runs on — puts it in place. The live path is always
+# the old binary or the new one, never a fragment of either, and a binary that
+# is currently executing is replaced rather than hitting "text file busy".
 harmon_install_bin() {
     harmon_ensure_bin
-    install -m 0755 "$1" "${HARMON_BIN}/$2"
+    install -m 0755 "$1" "${HARMON_BIN}/.${2}.harmon-staging"
+    mv -f "${HARMON_BIN}/.${2}.harmon-staging" "${HARMON_BIN}/$2"
+}
+
+# harmon_install_archive_bin <url> <installed-name> <member> [sha256]
+#
+# THE path an archive-packaged binary takes into HARMON_BIN: download to
+# staging, verify when the pin carries a digest, extract IN staging, and hand
+# the one member to harmon_install_bin last. Never `curl … | tar -C
+# "$HARMON_BIN"`: a stream that dies mid-archive has already truncated the
+# live tool it was replacing, and the tool stays broken until the next run
+# (scripts/test-bootstrap-remote.sh refuses that pattern anywhere in these
+# scripts). <member> is the archive path of the binary; its basename is what
+# lands in staging. tar detects the compression itself, so .tar.gz and .tar.xz
+# take the same call. --no-same-owner: release archives record the publisher's
+# build uid, which exists on no machine this runs on.
+harmon_install_archive_bin() {
+    _hiab_url="$1"
+    _hiab_name="$2"
+    _hiab_member="$3"
+    _hiab_sha="${4:-}"
+    _hiab_stage="${HARMON_TMPDIR:?harmon_tmpdir_init must run before harmon_install_archive_bin}/${_hiab_name}.stage"
+    rm -rf "$_hiab_stage"
+    mkdir -p "$_hiab_stage"
+    harmon_fetch "$_hiab_url" "${_hiab_stage}/archive"
+    [ -z "$_hiab_sha" ] || harmon_verify_sha256 "${_hiab_stage}/archive" "$_hiab_sha"
+    tar -xf "${_hiab_stage}/archive" -C "$_hiab_stage" --no-same-owner "$_hiab_member"
+    [ -f "${_hiab_stage}/${_hiab_member}" ] ||
+        harmon_die "${_hiab_member} did not extract from ${_hiab_url}"
+    harmon_install_bin "${_hiab_stage}/${_hiab_member}" "$_hiab_name"
+    rm -rf "$_hiab_stage"
 }
 
 # harmon_tmpdir_init — create HARMON_TMPDIR and remove it when the calling

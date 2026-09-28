@@ -399,6 +399,116 @@ else:
         if m and m.group(1) not in tiers:
             fail(f"{INSTALL}/{name}: no tier named '{m.group(1)}' in HARMON_TIER_ORDER, so it never runs")
 
+# ── 8b. every archive is extracted in staging, never into the live prefix ───
+# The install invariant (lib.sh harmon_install_archive_bin): download to
+# staging, verify, extract IN staging, and move the binary into HARMON_BIN
+# last. `curl … | tar -C "$HARMON_BIN"` violates it twice — a stream that dies
+# mid-archive has already truncated the live tool — and it was removed from
+# four sites after being fixed at one, so the rule is checked mechanically:
+#   (a) no tar reads from a pipe (an archive is a file in staging first);
+#   (b) every extracting tar names a -C target, and that target is a STAGING
+#       directory: `$tmp`, `$HARMON_TMPDIR`, or a variable the same file
+#       assigns from one of those (or from `mktemp -d`) — never HARMON_BIN,
+#       HARMON_PREFIX, an absolute path, or the working directory.
+# Shell lines are joined the way the shell reads them (a trailing `\`, `|`,
+# `&&`, `||` continues the command) so a `-C` on a continuation line is seen
+# with its tar.
+STAGING_ASSIGN = re.compile(
+    r'^\s*(?P<var>[A-Za-z_][A-Za-z0-9_]*)=["\']?(?:\$\{?(?P<src>tmp|HARMON_TMPDIR)\b|\$\(mktemp -d\))'
+)
+TAR_WORD = re.compile(r"(?:^|[\s;(])tar\s")
+TAR_PIPED = re.compile(r"(?<!\|)\|(?!\|)\s*tar\s")
+TAR_TARGET = re.compile(r"(?:\s-C\s+|\s--directory[= ])(?P<target>\"[^\"]*\"|'[^']*'|\S+)")
+TAR_EXTRACTS = re.compile(r"\star\s+(?:\S+\s+)*?(?:-[A-Za-z]*x[A-Za-z]*|--extract|--get)\b")
+
+
+def logical_lines(text):
+    """Yield (first_line_no, joined_line) with comments dropped and continuations joined."""
+    buf, start = "", None
+    for i, raw in enumerate(text.splitlines(), 1):
+        if raw.lstrip().startswith("#"):
+            continue
+        line = raw.rstrip()
+        if start is None:
+            start = i
+        if line.endswith("\\"):
+            buf += line[:-1] + " "
+            continue
+        buf += line
+        if buf.rstrip().endswith(("|", "&&")) or re.search(r"(?<!\|)\|\|$", buf.rstrip()):
+            buf += " "
+            continue
+        yield start, buf
+        buf, start = "", None
+    if buf:
+        yield start, buf
+
+
+def extraction_faults(text):
+    """Every tar in `text` that streams from a pipe or extracts outside staging: (line, kind, why)."""
+    staging = {"tmp", "HARMON_TMPDIR"}
+    for _, line in logical_lines(text):
+        m = STAGING_ASSIGN.match(line)
+        if m:
+            staging.add(m["var"])
+    faults = []
+    for line_no, line in logical_lines(text):
+        if not TAR_WORD.search(" " + line):
+            continue
+        if TAR_PIPED.search(line):
+            faults.append((line_no, "pipe", "tar reads from a pipe; download the archive into staging first"))
+            continue
+        if not TAR_EXTRACTS.search(" " + line):
+            continue
+        t = TAR_TARGET.search(line)
+        if not t:
+            faults.append((line_no, "no-target", "tar extracts with no -C, into whatever the working directory is"))
+            continue
+        target = t["target"].strip("\"'")
+        v = re.match(r"^\$\{?(?P<var>[A-Za-z_][A-Za-z0-9_]*)(?::[^}]*)?\}?(?:/|$)", target)
+        if not v or v["var"] not in staging:
+            faults.append((line_no, "target", f"tar extracts into {target!r}, which is not a staging directory"))
+    return faults
+
+
+def fault_kinds(text):
+    return [kind for _, kind, _ in extraction_faults(text)]
+
+
+# The detector's own contract, proved against fixtures because the files it
+# scans contain no offending line: the four removed sites, the two prefix
+# forms, a bare extraction, and the staged shapes that must pass.
+assert fault_kinds(
+    'curl "${HARMON_CURL_OPTS[@]}" \\\n    "https://x/task.tar.gz" |\n    tar -xz -C "$HARMON_BIN" task\n'
+) == ["pipe"]
+assert fault_kinds(
+    'curl "$u" |\n    tar -xz --strip-components=1 -C "$HARMON_BIN" \\\n        "lychee-x/lychee"\n'
+) == ["pipe"]
+assert fault_kinds('tar -xzf "${tmp}/a.tgz" -C "$HARMON_BIN" task') == ["target"]
+assert fault_kinds('tar -xJf "$f" -C "${HARMON_PREFIX}" --strip-components=1') == ["target"]
+assert fault_kinds("tar -xzf a.tgz -C /usr/local/bin gitleaks") == ["target"]
+assert fault_kinds('tar --extract --file "$a" --directory "$HARMON_BIN"') == ["target"]
+assert fault_kinds('tar -xzf "$a" -C "$cwd_of_choice"') == ["target"]
+assert fault_kinds('tar -xzf "${tmp}/a.tgz" task') == ["no-target"]
+assert fault_kinds('tar -xzf "${tmp}/gh.tar.gz" -C "$tmp" "${gh_dir}/bin/gh"') == []
+assert fault_kinds('tar -xzf "$a" -C "${HARMON_TMPDIR}/x" --no-same-owner "$m"') == []
+assert fault_kinds(
+    'node_stage="${tmp}/node-${NODE_VERSION}"\nmkdir -p "$node_stage"\n'
+    'tar -xJf "${tmp}/${node_tarball}" -C "$node_stage" \\\n    --strip-components=1 --no-same-owner\n'
+) == []
+assert fault_kinds('_s="${HARMON_TMPDIR:?first}/${_n}.stage"\ntar -xf "${_s}/archive" -C "$_s" --no-same-owner "$_m"\n') == []
+assert fault_kinds('scratch="$(mktemp -d)"\ntar -xzf "$a" -C "$scratch"') == []
+assert fault_kinds('tar -tzf "$a" | head -1') == []  # listing, not extracting
+assert fault_kinds('# tar -xz -C "$HARMON_BIN" task: a comment') == []
+assert fault_kinds('false || tar -xzf "$a" -C "$tmp"') == []  # `||` is not a pipe
+
+for path in [BOOTSTRAP] + sorted(INSTALL.glob("*.sh")):
+    for line_no, _kind, why in extraction_faults(path.read_text()):
+        fail(
+            f"{path}:{line_no}: {why} — every archive install goes through lib.sh "
+            "harmon_install_archive_bin (stage, verify, extract in staging, move into HARMON_BIN last)"
+        )
+
 # ── 9. the never-installed set ──────────────────────────────────────────────
 NEVER = {"op", "brew", "tailscale", "tailscaled"}
 NEVER_PREFIXES = {"/home/linuxbrew", "/opt/homebrew"}
@@ -553,6 +663,7 @@ print(f"bootstrap-remote OK: {len(tier_scripts)} shared install script(s) declar
 print(f"bootstrap-remote OK: {len(head_pairs)} checksum pin-pair(s) agree with their version pin; {drift_note}")
 print("bootstrap-remote OK: the image runs the same scripts, from the same versions file")
 print("bootstrap-remote OK: no denied host, no 1Password/Homebrew/Tailscale, fetch list matches disk")
+print("bootstrap-remote OK: every archive is extracted in staging; nothing streams into the live prefix")
 print("bootstrap-remote OK: a non-release-tag ref is refused; the override warns and names it")
 print(f"bootstrap-remote OK: the default tiers record {len(recorded_by_default)} pin(s) for the manifest, under the image's keys")
 PY
