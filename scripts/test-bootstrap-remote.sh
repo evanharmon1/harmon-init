@@ -566,25 +566,73 @@ for label, text in ((str(DOCKERFILE), dockerfile_text),) + tuple(
             if host in line and not line.lstrip().startswith("#"):
                 fail(f"{label}:{i}: contacts {host}, which the remote adapter's network level denies")
 
-# ── 10b. …and every host the tiers DO reach is on the documented allowlist ──
-# The positive direction of 10. The allowlist in remote-environments.md is what
-# an adapter's network policy is configured from, so a host the scripts contact
-# and the table omits is an install that fails only on the VM — and the
-# omissions are the indirect ones: github.com (the 302 origin of every release
-# download; release-assets.githubusercontent.com is only the target),
+# ── 10b. the documented allowlist IS the host set the tiers reach ────────────
+# Both directions of 10. The allowlist in remote-environments.md is what an
+# adapter's network policy is configured from, so a host the scripts contact and
+# the table omits is an install that fails only on the VM — and the omissions
+# are the indirect ones: github.com (the 302 origin of every release download;
+# release-assets.githubusercontent.com is only the target),
 # files.pythonhosted.org (uv downloads wheels there; pypi.org is metadata only)
 # and cdn.playwright.dev (the browsers tier's Chromium). Literal URL hosts are
 # extracted from the scripts; the hosts a package manager reaches on the
 # script's behalf are derived from the command that invokes it.
+#
+# The reverse direction is what stops this guard certifying an INCOMPLETE table
+# (review r2-2): while the apt implication was a tuple typed out here, the table
+# and the tuple agreed on one mirror and were wrong together, and a check that
+# only asks "is everything reached listed?" cannot see that. So a listed host
+# nothing reaches now fails too — it is either a host the doc invented or one
+# whose call site was deleted, and an allowlist wider than the installs justify
+# is a policy nobody can audit. A host deliberately allowed with no caller says
+# so in its own Why column (UNREACHED_MARKER), and the guard then requires it
+# NOT to be reached, so that exemption cannot hide a live call site either.
 DOC = pathlib.Path("docs/architecture/remote-environments.md")
+UNREACHED_MARKER = "no tier reaches it today"
 URL_HOST = re.compile(r"https?://([A-Za-z0-9.-]+\.[A-Za-z]{2,})")
+# The apt mirrors are written ONCE — images/devcontainer/install/apt-mirrors.txt
+# — and derived from there by both consumers: this implication and, through the
+# two directions below, the documented table. Enumerating them at this line
+# missed a host three times (security.ubuntu.com serves amd64's security pocket
+# from its own host; ports.ubuntu.com serves every arm64 pocket), so lengthening
+# a tuple here is not the fix — the file is.
+#
+# `apt-get update` counts as much as `apt-get install`: a bare update contacts
+# every mirror the VM's sources name, which is how noble-security is reached
+# with no package installed at all.
+APT_MIRRORS = INSTALL / "apt-mirrors.txt"
+apt_mirrors = ()
+if not APT_MIRRORS.exists():
+    fail(f"{APT_MIRRORS}: missing — section 10b derives the apt implication from this file")
+else:
+    apt_mirrors = tuple(
+        line.strip()
+        for line in APT_MIRRORS.read_text().splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    )
+    if not apt_mirrors:
+        fail(f"{APT_MIRRORS}: names no mirror, so `apt-get` would imply no host at all")
+    for mirror in apt_mirrors:
+        if not re.fullmatch(r"[A-Za-z0-9.-]+\.[A-Za-z]{2,}", mirror):
+            fail(f"{APT_MIRRORS}: {mirror!r} is not a bare hostname (one host per line, `#` for comments)")
 IMPLIED_HOSTS = (
-    (re.compile(r"\bapt-get\s+(?:\S+\s+)*install\b"), ("archive.ubuntu.com",)),
+    (re.compile(r"\bapt-get\s+(?:\S+\s+)*(?:install|update)\b"), apt_mirrors),
     (re.compile(r"\bnpm\s+install\b"), ("registry.npmjs.org",)),
     (re.compile(r"\buv\s+tool\s+install\b"), ("pypi.org", "files.pythonhosted.org")),
     (re.compile(r"\bplaywright\S*\s+install\b"), ("cdn.playwright.dev",)),
     (re.compile(r"github\.com/[^/\s\"']+/[^/\s\"']+/releases/download/"), ("release-assets.githubusercontent.com",)),
 )
+
+
+def implied_by(line):
+    """The hosts section 10b derives from one script line — the real extractor,
+    shared with the scenario cases below so they cannot test a stale copy."""
+    hosts = set()
+    for pattern, hosts_for in IMPLIED_HOSTS:
+        if pattern.search(line):
+            hosts.update(hosts_for)
+    return hosts
+
+
 reached = {}
 for path in [BOOTSTRAP] + sorted(INSTALL.glob("*.sh")):
     for i, line in enumerate(path.read_text().splitlines(), 1):
@@ -592,15 +640,14 @@ for path in [BOOTSTRAP] + sorted(INSTALL.glob("*.sh")):
             continue
         for host in URL_HOST.findall(line):
             reached.setdefault(host, f"{path}:{i}")
-        for pattern, hosts in IMPLIED_HOSTS:
-            if pattern.search(line):
-                for host in hosts:
-                    reached.setdefault(host, f"{path}:{i}")
+        for host in implied_by(line):
+            reached.setdefault(host, f"{path}:{i}")
 if not reached:
     fail(f"{INSTALL}: no host reached by any install script — the host extractor no longer matches the call sites")
 doc_text = DOC.read_text() if DOC.exists() else ""
 section = re.search(r"^### The network the bootstrap may use\n(.*?)(?=^## |^### |\Z)", doc_text, re.M | re.S)
-allowed = set()
+# host -> the row's Why cell, because the reverse direction is decided by it.
+allowed = {}
 if not section:
     fail(f"{DOC}: no '### The network the bootstrap may use' section to read the allowlist from")
 else:
@@ -610,10 +657,12 @@ else:
         fail(f"{DOC}: the network section has no table whose first column is 'Allowed host'")
     else:
         for row in allowed_table.splitlines()[2:]:
-            cell = row.split("|")[1].strip() if row.startswith("|") else ""
-            m = re.fullmatch(r"`([A-Za-z0-9.-]+)`", cell)
+            if not row.startswith("|"):
+                continue
+            cells = row.split("|")
+            m = re.fullmatch(r"`([A-Za-z0-9.-]+)`", cells[1].strip())
             if m:
-                allowed.add(m.group(1))
+                allowed[m.group(1)] = "|".join(cells[2:]).strip().rstrip("|").strip()
         for host in DENIED:
             if host in allowed:
                 fail(f"{DOC}: {host} is listed as allowed but the remote adapter's network level denies it")
@@ -623,6 +672,38 @@ for host, where in sorted(reached.items()):
             f"{where}: reaches {host}, which the allowed-host table in {DOC} does not list — an "
             "adapter configured from that table would block the install"
         )
+    elif UNREACHED_MARKER in allowed[host]:
+        fail(
+            f"{DOC}: the {host} row claims '{UNREACHED_MARKER}', but {where} reaches it — the row is "
+            "stale, and the exemption below is only sound while its claim is true"
+        )
+for host, why in sorted(allowed.items()):
+    if host in reached or UNREACHED_MARKER in why:
+        continue
+    fail(
+        f"{DOC}: lists {host} as allowed, but no install script and not the bootstrap reaches it — an "
+        f"allowlist wider than the installs need; delete the row, or write '{UNREACHED_MARKER}' in its "
+        "Why column the way the probed-but-unused rows do"
+    )
+# The two scenarios this restructure exists for, as explicit cases. Each is run
+# through implied_by() — the extractor itself — so the file above and the
+# documented table are both proved to cover it, and neither can regress quietly.
+for scenario, script_line, host in (
+    (
+        "a bare `apt-get update` on stock noble refreshes the security pocket from its own host",
+        "apt-get update",
+        "security.ubuntu.com",
+    ),
+    (
+        "arm64 apt traffic is served by ports, not by archive/security (arm64 is a declared target)",
+        "apt-get install -y --no-install-recommends $packages",
+        "ports.ubuntu.com",
+    ),
+):
+    if host not in implied_by(script_line):
+        fail(f"{APT_MIRRORS}: `{script_line}` does not imply {host} — {scenario}")
+    elif host not in allowed:
+        fail(f"{DOC}: the allowed-host table does not list {host} — {scenario}")
 
 # ── 11. the image really runs the shared scripts ────────────────────────────
 for script in tier_scripts:
@@ -734,6 +815,111 @@ if consumed_by_default != recorded_by_default:
 if not recorded_by_default:
     fail(f"{INSTALL}: no tier records any pin — the recording-helper regex no longer matches the call sites")
 
+# ── 15b. the manifest revision names the assets that were actually run ──────
+# write_manifest() read the local checkout's HEAD whenever `self_dir` merely
+# existed, while the tiers use local assets only when `asset_dir == self_dir`
+# (review r2-3). Run the standalone entry from inside an unrelated repository
+# with --ref and the manifest attested that repository's commit for bytes it
+# never supplied — an image-to-VM diff then compares against a revision with no
+# connection to what is installed.
+#
+# The function is EXECUTED, not pattern-matched, and its text is lifted from
+# bootstrap-remote.sh so this case cannot pass against a stale copy of it. Both
+# sides of the gate are asserted: a fetched install must name the ref, and a
+# local-checkout install must still name HEAD — a gate that simply never took
+# the checkout branch would satisfy the first on its own.
+wm_start = bootstrap_text.find("write_manifest() {")
+wm_end = bootstrap_text.find("\n}\n", wm_start)
+tag_re_decl = re.search(r"^readonly HARMON_RELEASE_TAG_RE='([^']+)'", bootstrap_text, re.M)
+if wm_start < 0 or wm_end < 0:
+    fail(f"{BOOTSTRAP}: no write_manifest() function to exercise — the manifest provenance case cannot run")
+elif not tag_re_decl:
+    fail(f"{BOOTSTRAP}: HARMON_RELEASE_TAG_RE is not a single-quoted literal, so the harness cannot reuse it")
+else:
+    harness = r"""
+set -euo pipefail
+# Stubs for the run-record helpers only; nothing the revision is decided by.
+warn() { printf 'warn: %s\n' "$*" >&2; }
+harmon_skip() { :; }
+harmon_changed() { :; }
+harmon_arch() { printf 'amd64\n'; }
+tab="$(printf '\t')"
+HARMON_RELEASE_TAG_RE='@TAG_RE@'
+ref=v9.9.9
+root="$(mktemp -d)"
+trap 'rm -rf "$root"' EXIT
+change_log="${root}/record"
+printf 'tool%stask=3.45.4\n' "$tab" >"$change_log"
+
+new_repo() { # a real git checkout, committed clean, with nothing else in it
+    mkdir -p "$1"
+    git -C "$1" init -q >/dev/null 2>&1
+    printf 'unrelated\n' >"$1/README.md"
+    git -C "$1" add README.md >/dev/null 2>&1
+    git -C "$1" -c user.name=t -c user.email=t@e -c commit.gpgsign=false \
+        commit -q -m init >/dev/null 2>&1
+    git -C "$1" rev-parse --verify HEAD
+}
+
+@WRITE_MANIFEST@
+}
+
+# (1) the standalone entry sits in a FOREIGN repo; the assets were fetched.
+foreign_head="$(new_repo "${root}/foreign")"
+fetched="${root}/fetched"
+mkdir -p "$fetched"
+cp '@GENERATOR@' "${fetched}/generate-manifest.sh"
+self_dir="${root}/foreign"
+asset_dir="$fetched"
+assets_local=0
+manifest_dir="${root}/m-foreign"
+write_manifest
+printf 'FOREIGN_HEAD %s\n' "$foreign_head"
+printf 'FOREIGN_REVISION %s\n' "$(jq -r .image.revision "${manifest_dir}/manifest.json")"
+
+# (2) the assets came from the checkout beside this file.
+local_head="$(new_repo "${root}/local")"
+cp '@GENERATOR@' "${root}/local/generate-manifest.sh"
+git -C "${root}/local" add generate-manifest.sh >/dev/null 2>&1
+git -C "${root}/local" -c user.name=t -c user.email=t@e -c commit.gpgsign=false \
+    commit -q -m gen >/dev/null 2>&1
+local_head="$(git -C "${root}/local" rev-parse --verify HEAD)"
+self_dir="${root}/local"
+asset_dir="$self_dir"
+assets_local=1
+manifest_dir="${root}/m-local"
+write_manifest
+printf 'LOCAL_HEAD %s\n' "$local_head"
+printf 'LOCAL_REVISION %s\n' "$(jq -r .image.revision "${manifest_dir}/manifest.json")"
+"""
+    harness = (
+        harness.replace("@TAG_RE@", tag_re_decl.group(1))
+        .replace("@WRITE_MANIFEST@", bootstrap_text[wm_start:wm_end])
+        .replace("@GENERATOR@", str(IMG / "generate-manifest.sh"))
+    )
+    run = subprocess.run(["bash", "-s"], input=harness, capture_output=True, text=True)
+    out = dict(
+        line.split(" ", 1) for line in run.stdout.splitlines() if line.count(" ") == 1
+    )
+    if run.returncode != 0 or len(out) != 4:
+        fail(
+            f"{BOOTSTRAP}: the manifest provenance case could not run (exit {run.returncode}) — "
+            f"stderr: {run.stderr.strip()[:300]!r}"
+        )
+    else:
+        if out["FOREIGN_REVISION"] != "v9.9.9":
+            fail(
+                f"{BOOTSTRAP}: write_manifest recorded revision {out['FOREIGN_REVISION']!r} for an install "
+                f"whose assets were FETCHED at --ref v9.9.9 while the script sat in an unrelated checkout "
+                f"(HEAD {out['FOREIGN_HEAD'][:12]}) — the revision must name the ref the bytes came from"
+            )
+        if out["LOCAL_REVISION"] != out["LOCAL_HEAD"]:
+            fail(
+                f"{BOOTSTRAP}: write_manifest recorded revision {out['LOCAL_REVISION']!r} for an install that "
+                f"ran the assets beside it, whose checkout is at {out['LOCAL_HEAD'][:12]} — gating the revision "
+                "on the local assets must not stop a local run naming its commit"
+            )
+
 for e in errors:
     print(f"FAIL: {e}", file=sys.stderr)
 if errors:
@@ -750,4 +936,5 @@ print("bootstrap-remote OK: every getent substitution in the bootstrap and insta
 print(f"bootstrap-remote OK: all {len(reached)} host(s) the tiers reach are on the documented allowlist")
 print("bootstrap-remote OK: a non-release-tag ref is refused; the override warns and names it")
 print(f"bootstrap-remote OK: the default tiers record {len(recorded_by_default)} pin(s) for the manifest, under the image's keys")
+print("bootstrap-remote OK: the manifest revision names the assets actually run — the checkout's HEAD only when the checkout supplied them")
 PY

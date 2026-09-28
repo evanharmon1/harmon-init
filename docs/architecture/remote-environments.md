@@ -59,7 +59,9 @@ agents tiers download only from the allowed column.
 | `release-assets.githubusercontent.com` | the 302 target that actually serves GitHub release assets |
 | `raw.githubusercontent.com` | the standalone entry fetches `versions.env`, `lib.sh` and the tier scripts from the release tag |
 | `nodejs.org` | the checksum-pinned Node tarball |
-| `archive.ubuntu.com` | the apt packages of the core tier |
+| `archive.ubuntu.com` | the apt packages of the core tier. One of the three Ubuntu archive mirrors the VM's **own** apt sources configure, so `apt-get update` alone contacts them whether or not a package is installed; the set is written once in `images/devcontainer/install/apt-mirrors.txt` and both this table and the guard's apt implication are derived from it. amd64: the release, updates and backports pockets |
+| `security.ubuntu.com` | the same apt run's **security** pocket on amd64 (`noble-security`) — a separate host, not a path under the archive, so an allowlist holding only the line above blocks a stock `apt-get update` |
+| `ports.ubuntu.com` | the same packages on **arm64**, a declared target of the shared image: there every pocket, security included, is served from ports rather than from archive/security |
 | `registry.npmjs.org` | `npm install -g` for the npm-installed tools (codex, markdownlint-cli2, Playwright) |
 | `pypi.org` | package **metadata** for `uv tool install` — the wheels come from the next host |
 | `files.pythonhosted.org` | the wheels `uv tool install` actually downloads (semgrep, copier) |
@@ -80,7 +82,14 @@ agents tiers download only from the allowed column.
 every host the install scripts and the bootstrap contact — literally in a URL,
 or through `apt-get`, `npm install`, `uv tool install` and Playwright's browser
 download — must appear in the allowed table, and no denied host may appear in
-any install script or the Dockerfile.
+any install script or the Dockerfile. The allowed table is read the other way
+round as well: a row nothing reaches fails, unless its own text says `no tier
+reaches it today` — which is why the two probed-but-unused rows say exactly that
+— and a row carrying that phrase fails the moment something does reach it.
+Without that direction a table can be *incomplete* and still be certified, which
+is how the apt row named one mirror while apt contacted three; the apt mirrors
+are now written once, in `images/devcontainer/install/apt-mirrors.txt`, and the
+guard derives its apt implication from that file rather than naming hosts itself.
 
 Two of the denials moved the **image** as well as the bootstrap, because a
 shared script cannot reach a host one side is denied: Node now comes from the

@@ -209,6 +209,12 @@ self_dir=""
 if [ -r "${BASH_SOURCE[0]}" ]; then
     self_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 fi
+# Whether the assets the tiers RUN came from that directory. `self_dir` alone
+# does not answer it: this file can sit in any git checkout (copied in, vendored,
+# or a repo that only holds the standalone entry) while the install scripts are
+# fetched from `--ref`, and only the branch below knows which happened. The
+# manifest's provenance is decided by this flag, never by self_dir (review r2-3).
+assets_local=0
 
 fetched_dir=""
 cleanup() {
@@ -219,11 +225,13 @@ trap cleanup EXIT
 
 if [ -n "$self_dir" ] && [ -r "${self_dir}/install/lib.sh" ]; then
     asset_dir="$self_dir"
+    assets_local=1
     printf '==> using the install scripts beside this file (%s)\n' "$asset_dir"
 else
     [ -n "$ref" ] || die "the install scripts are not beside this file; pass --ref <harmon-init release tag> so they can be fetched from a pinned release"
     fetched_dir="$(mktemp -d)"
     asset_dir="$fetched_dir"
+    assets_local=0
     printf '==> fetching the install scripts from harmon-init %s\n' "$ref"
     # Every URL is built from the ONE validated ref above.
     for asset in $HARMON_REMOTE_ASSETS; do
@@ -440,14 +448,19 @@ esac
 # "image and VM install identical versions for the same release tag" is a diff
 # of two files. Its entries are the record's `tool` lines — every pinned tool a
 # tier installed or verified, under the image's keys — so no list here can fall
-# out of step with the tiers. The revision is the checkout's commit — suffixed
-# `-dirty` when the checkout has uncommitted or untracked changes, so a
-# manifest never attests a clean commit for bytes that were not that commit —
-# else the release tag the script was fetched from.
+# out of step with the tiers. The revision names the source of the assets that
+# were actually RUN: the checkout's commit when the tiers came from the checkout
+# beside this file — suffixed `-dirty` when that checkout has uncommitted or
+# untracked changes, so a manifest never attests a clean commit for bytes that
+# were not that commit — else the release tag they were fetched from. Reading
+# `self_dir`'s HEAD whenever it merely EXISTS attributed a fetched install to
+# whatever repository this file happened to be sitting in (review r2-3), which
+# is worse than no revision at all: the image-to-VM comparison would be run
+# against a commit that never supplied a byte of what is installed.
 manifest_dir="${HARMON_PREFIX}/share/harmon-remote-env"
 write_manifest() {
     local revision="" manifest="${manifest_dir}/manifest.json" before=""
-    if [ -n "$self_dir" ]; then
+    if [ "$assets_local" = 1 ]; then
         revision="$(git -C "$self_dir" -c safe.directory='*' rev-parse --verify HEAD 2>/dev/null || true)"
         # --no-optional-locks: root reads the caller's checkout without
         # refreshing (rewriting) its index.

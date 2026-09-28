@@ -49,15 +49,14 @@
       "tflint": "latest"
     },
 [% endif %]
-    // No 1Password CLI in the bot profile — this container must hold no path
-    // to production secrets (docs/guides/devcontainers.md). The human dev
-    // profile (.devcontainer/dev/) keeps its own op feature. No github-cli
-    // feature either: the core tier of the shared image ships the pinned gh
-    // at /usr/local/bin/gh (images/devcontainer/smoke.sh asserts it), and a
-    // feature-installed /usr/bin/gh would be a second, unpinned copy.
     "ghcr.io/devcontainers/features/docker-in-docker:2": {
       "dockerDashComposeVersion": "v2"
-    }
+    },
+    // No 1Password CLI in the bot profile — this container must hold no path
+    // to production secrets (docs/guides/devcontainers.md). The human dev
+    // profile (.devcontainer/dev/) keeps its own op feature.
+    // Keep until the Dockerfile's image pin ships /usr/local/bin/gh in its core tier; that pin-bump PR deletes this.
+    "ghcr.io/devcontainers/features/github-cli:1": {}
   },
   "mounts": [
     [% if use_python %]
