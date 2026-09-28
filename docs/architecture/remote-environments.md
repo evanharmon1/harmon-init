@@ -78,14 +78,21 @@ agents tiers download only from the allowed column.
 | `cli.github.com` | the gh apt repository (gh comes from its GitHub release) |
 | `dl.google.com` | Google's apt repositories |
 
-`scripts/test-bootstrap-remote.sh` keeps this table honest in both directions:
+`scripts/test-bootstrap-remote.sh` keeps both tables honest in both directions:
 every host the install scripts and the bootstrap contact — literally in a URL,
 or through `apt-get`, `npm install`, `uv tool install` and Playwright's browser
-download — must appear in the allowed table, and no denied host may appear in
-any install script or the Dockerfile. The allowed table is read the other way
-round as well: a row nothing reaches fails, unless its own text says `no tier
-reaches it today` — which is why the two probed-but-unused rows say exactly that
-— and a row carrying that phrase fails the moment something does reach it.
+download — must appear in the allowed table. The denied table is read straight
+out of this section as the guard's own denied set, so the two cannot drift: none
+of its hosts may appear in the Dockerfile, the bootstrap or an install script,
+with one exemption — `keybase.io` in the Dockerfile, for the reason the last
+paragraph of this section gives. That exemption is enforced in both directions
+too: it fails if it goes stale (nothing contacts `keybase.io` any more), and
+`keybase.io` still fails if it appears in the shared path — the bootstrap or
+`install/*.sh` — which is what would actually break a VM. The allowed table is
+read the other way round as well: a row nothing reaches fails, unless its own
+text says `no tier reaches it today` — which is why the two probed-but-unused
+rows say exactly that — and a row carrying that phrase fails the moment
+something does reach it.
 Without that direction a table can be *incomplete* and still be certified, which
 is how the apt row named one mirror while apt contacted three; the apt mirrors
 are now written once, in `images/devcontainer/install/apt-mirrors.txt`, and the

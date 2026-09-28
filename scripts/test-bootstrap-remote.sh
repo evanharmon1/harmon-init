@@ -555,16 +555,96 @@ for path in [BOOTSTRAP] + sorted(INSTALL.glob("*.sh")):
             fail(f"{path}:{i}: the bootstrap must never install 1Password, Homebrew, or Tailscale")
 
 # ── 10. the denied hosts are gone from BOTH paths ───────────────────────────
-# deb.nodesource.com and astral.sh are denied on the Claude Code on the web VM,
-# so an image that still used them could not share its install scripts at all.
-DENIED = ("deb.nodesource.com", "astral.sh")
-for label, text in ((str(DOCKERFILE), dockerfile_text),) + tuple(
-    (str(p), p.read_text()) for p in sorted(INSTALL.glob("*.sh"))
-):
-    for host in DENIED:
+# The denied set is READ OUT of the network section's denied table in
+# remote-environments.md, by the same parser that reads the allowed table for
+# 10b, so the guard and the document cannot drift. It used to be a two-host
+# tuple typed out here while the table listed six rows, which made the
+# document's claim — that no denied host may appear in the install scripts or
+# the Dockerfile — untrue of four of them (review r3 verification-1).
+#
+# Those hosts are denied on the Claude Code on the web VM, so an image that
+# still used one could not share its install scripts at all. Two of them moved
+# the image as well (Node now comes from nodejs.org, uv from its GitHub
+# release); the rest have no call site left to move.
+DOC = pathlib.Path("docs/architecture/remote-environments.md")
+UNREACHED_MARKER = "no tier reaches it today"
+HOST_CELL = re.compile(r"`([A-Za-z0-9.-]+)`")
+doc_text = DOC.read_text() if DOC.exists() else ""
+section = re.search(r"^### The network the bootstrap may use\n(.*?)(?=^## |^### |\Z)", doc_text, re.M | re.S)
+doc_tables = re.split(r"\n\s*\n", section.group(1)) if section else ()
+if not section:
+    fail(f"{DOC}: no '### The network the bootstrap may use' section to read the host tables from")
+
+
+def doc_hosts(first_column):
+    """host -> the rest of the row, for one table of the network section.
+
+    Both tables are read through this one parser, so neither can acquire its own
+    notion of a well-formed row: a first column that is not a single backticked
+    hostname FAILS rather than being dropped from the map (review r3
+    verification-2 — a dropped row is a host the guard silently stops
+    enforcing), the same strictness apt-mirrors.txt is read with below.
+    """
+    rows = {}
+    table = next((t for t in doc_tables if t.lstrip().startswith(f"| {first_column} |")), None)
+    if table is None:
+        fail(f"{DOC}: the network section has no table whose first column is '{first_column}'")
+        return rows
+    for row in table.splitlines()[2:]:
+        if not row.startswith("|"):
+            continue
+        cells = row.split("|")
+        m = HOST_CELL.fullmatch(cells[1].strip())
+        if not m:
+            fail(
+                f"{DOC}: the '{first_column}' table row {row.strip()!r} does not name one backticked "
+                "hostname in its first column, so the guard cannot enforce it"
+            )
+            continue
+        rows[m.group(1)] = "|".join(cells[2:]).strip().rstrip("|").strip()
+    return rows
+
+
+# host -> the rest of the row, because 10b's reverse direction is decided by the
+# Why cell it carries.
+allowed = doc_hosts("Allowed host")
+denied = doc_hosts("Denied host")
+if section and not denied:
+    fail(f"{DOC}: the denied table names no host, so this section would enforce nothing")
+for host in sorted(denied):
+    if host in allowed:
+        fail(f"{DOC}: {host} is listed as allowed but the remote adapter's network level denies it")
+
+# One exemption, named here and enforced in BOTH directions. keybase.io is a
+# denied row AND live code in the Dockerfile: it fetches HashiCorp's PGP key for
+# the Terraform install, and Terraform is image-only, so the host is contacted
+# at image build time and never on a VM. The exemption is scoped to the
+# Dockerfile, so keybase.io still fails in the shared path — the bootstrap or
+# install/*.sh, which is what would actually break a VM — and it fails when it
+# goes STALE too: if nothing contacts the host any more, this entry and the
+# paragraph the doc states the exception in are both wrong.
+DENIED_EXEMPT = {"keybase.io": str(DOCKERFILE)}
+denied_seen = {}
+for label, text in (
+    (str(DOCKERFILE), dockerfile_text),
+    (str(BOOTSTRAP), bootstrap_text),
+) + tuple((str(p), p.read_text()) for p in sorted(INSTALL.glob("*.sh"))):
+    for host in sorted(denied):
         for i, line in enumerate(text.splitlines(), 1):
-            if host in line and not line.lstrip().startswith("#"):
-                fail(f"{label}:{i}: contacts {host}, which the remote adapter's network level denies")
+            if host not in line or line.lstrip().startswith("#"):
+                continue
+            denied_seen.setdefault(host, f"{label}:{i}")
+            if DENIED_EXEMPT.get(host) == label:
+                continue
+            fail(f"{label}:{i}: contacts {host}, which the remote adapter's network level denies")
+for host, where in sorted(DENIED_EXEMPT.items()):
+    if host not in denied:
+        fail(f"{DOC}: {host} is exempted here, but the denied table no longer lists it — drop the exemption")
+    elif host not in denied_seen:
+        fail(
+            f"{where}: no longer contacts {host}, so its exemption above is stale — delete the exemption, "
+            f"and the paragraph in {DOC} that states the exception"
+        )
 
 # ── 10b. the documented allowlist IS the host set the tiers reach ────────────
 # Both directions of 10. The allowlist in remote-environments.md is what an
@@ -586,8 +666,6 @@ for label, text in ((str(DOCKERFILE), dockerfile_text),) + tuple(
 # is a policy nobody can audit. A host deliberately allowed with no caller says
 # so in its own Why column (UNREACHED_MARKER), and the guard then requires it
 # NOT to be reached, so that exemption cannot hide a live call site either.
-DOC = pathlib.Path("docs/architecture/remote-environments.md")
-UNREACHED_MARKER = "no tier reaches it today"
 URL_HOST = re.compile(r"https?://([A-Za-z0-9.-]+\.[A-Za-z]{2,})")
 # The apt mirrors are written ONCE — images/devcontainer/install/apt-mirrors.txt
 # — and derived from there by both consumers: this implication and, through the
@@ -644,28 +722,8 @@ for path in [BOOTSTRAP] + sorted(INSTALL.glob("*.sh")):
             reached.setdefault(host, f"{path}:{i}")
 if not reached:
     fail(f"{INSTALL}: no host reached by any install script — the host extractor no longer matches the call sites")
-doc_text = DOC.read_text() if DOC.exists() else ""
-section = re.search(r"^### The network the bootstrap may use\n(.*?)(?=^## |^### |\Z)", doc_text, re.M | re.S)
-# host -> the row's Why cell, because the reverse direction is decided by it.
-allowed = {}
-if not section:
-    fail(f"{DOC}: no '### The network the bootstrap may use' section to read the allowlist from")
-else:
-    tables = re.split(r"\n\s*\n", section.group(1))
-    allowed_table = next((t for t in tables if t.lstrip().startswith("| Allowed host |")), None)
-    if allowed_table is None:
-        fail(f"{DOC}: the network section has no table whose first column is 'Allowed host'")
-    else:
-        for row in allowed_table.splitlines()[2:]:
-            if not row.startswith("|"):
-                continue
-            cells = row.split("|")
-            m = re.fullmatch(r"`([A-Za-z0-9.-]+)`", cells[1].strip())
-            if m:
-                allowed[m.group(1)] = "|".join(cells[2:]).strip().rstrip("|").strip()
-        for host in DENIED:
-            if host in allowed:
-                fail(f"{DOC}: {host} is listed as allowed but the remote adapter's network level denies it")
+# The allowed map was parsed in 10, by the one parser the two tables share; the
+# denied table's own direction is enforced there.
 for host, where in sorted(reached.items()):
     if host not in allowed:
         fail(
