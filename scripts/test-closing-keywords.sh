@@ -89,12 +89,18 @@ set -euo pipefail
 endpoint="${2:-}"
 if [ "${GH_STUB_ENDLESS:-0}" = 1 ]; then
     # Every page is full (exactly per_page items, as GitHub answers), so only
-    # a bound can end the walk.
+    # a bound can end the walk. Items are numbered by OFFSET — page p holds
+    # (p-1)*per_page .. p*per_page-1 — because that is what an offset-paginated
+    # REST endpoint does. A fixture that ignored the page number could not tell
+    # a coherent walk from one that re-reads a window it already had, which is
+    # how a shrinking per_page survived until review r1.
     n="${endpoint##*per_page=}"
     n="${n%%&*}"
+    p="${endpoint##*&page=}"
+    p="${p%%&*}"
     case "$endpoint" in
-    orgs/acme/issue-fields\?*) jq -cn --argjson n "$n" '{issue_fields: [range(0;$n) | {id:.}]}' ;;
-    *) jq -cn --argjson n "$n" '[range(0;$n) | {number:.}]' ;;
+    orgs/acme/issue-fields\?*) jq -cn --argjson n "$n" --argjson p "$p" '{issue_fields: [range(0;$n) | {id: (. + ($p - 1) * $n)}]}' ;;
+    *) jq -cn --argjson n "$n" --argjson p "$p" '[range(0;$n) | {number: (. + ($p - 1) * $n)}]' ;;
     esac
     exit 0
 fi
@@ -167,12 +173,24 @@ GH_STUB_ENDLESS=1 GH_REST_MAX_PAGES=2 PATH="$tmp/bin:$PATH" bash -c \
 [ "$(grep -c '^api orgs/acme/issue-fields' "$GH_STUB_CALLS")" = 2 ] ||
     fail "page ceiling let the keyed walk request $(grep -c '^api ' "$GH_STUB_CALLS") pages, expected 2"
 # A MAX_ITEMS under the ceiling ends the walk normally, without spending it.
+# 150 is neither smaller than nor a multiple of the page size, so it is the
+# bound that catches a request size derived from the remaining count: the walk
+# must keep asking for the SAME per_page and trim the surplus locally. The
+# assertion is DISTINCTNESS, not the count — the count was already right while
+# the contents were wrong (150 entries holding 100 distinct values), which is
+# exactly how this survived until review r1.
 : >"$GH_STUB_CALLS"
-count="$(GH_STUB_ENDLESS=1 GH_REST_MAX_PAGES=3 PATH="$tmp/bin:$PATH" bash -c \
-    '. scripts/lib/gh-rest.sh; gh_rest_paginate_array "repos/acme/repo/pulls?state=all" 150 | jq -s "add | length"')" ||
+numbers="$(GH_STUB_ENDLESS=1 GH_REST_MAX_PAGES=3 PATH="$tmp/bin:$PATH" bash -c \
+    '. scripts/lib/gh-rest.sh; gh_rest_paginate_array "repos/acme/repo/pulls?state=all" 150 | jq -s "add | map(.number)"')" ||
     fail 'a bounded walk under the ceiling must succeed'
+count="$(jq 'length' <<<"$numbers")"
+distinct="$(jq 'unique | length' <<<"$numbers")"
 [ "$count" = 150 ] || fail "MAX_ITEMS=150 returned ${count} items"
+[ "$distinct" = 150 ] ||
+    fail "MAX_ITEMS=150 returned ${count} items holding only ${distinct} distinct ones"
 [ "$(grep -c '^api ' "$GH_STUB_CALLS")" = 2 ] || fail 'MAX_ITEMS=150 should cost exactly two pages'
+[ "$(grep -c 'per_page=100&' "$GH_STUB_CALLS")" = 2 ] ||
+    fail "MAX_ITEMS=150 varied the requested page size: $(cat "$GH_STUB_CALLS")"
 rc=0
 GH_REST_MAX_PAGES=0 PATH="$tmp/bin:$PATH" bash -c \
     '. scripts/lib/gh-rest.sh; gh_rest_paginate_array "repos/acme/repo/pulls?state=all" 0' >/dev/null 2>&1 || rc=$?

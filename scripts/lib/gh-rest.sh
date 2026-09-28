@@ -179,6 +179,16 @@ gh_rest_max_pages() {
 # page", still under the GH_REST_MAX_PAGES ceiling (returns 4 when a further
 # page would exceed it). The endpoint may already contain a query string;
 # per_page/page are always supplied explicitly.
+#
+# The requested per_page NEVER depends on how many items remain (review r1).
+# These endpoints are OFFSET-paginated: page=2 means "skip one per_page window",
+# not "whatever follows the items already read". Narrowing the request for a
+# final short page therefore moves the window BACKWARDS — per_page=100&page=1
+# then per_page=50&page=2 re-reads items 51-100 and never reads 101-150, so a
+# MAX_ITEMS=150 walk returns 150 entries holding 100 distinct ones and reports
+# success. The request size is fixed for the whole walk and the surplus is
+# trimmed LOCALLY on the page that overshoots the bound, which leaves every
+# offset coherent whatever MAX_ITEMS is.
 gh_rest_paginate_array() {
     [ "$#" -ge 2 ] || return 2
     local endpoint="$1" max_items="$2" page=1 page_size=100 total=0
@@ -187,16 +197,24 @@ gh_rest_paginate_array() {
     case "${max_items}" in '' | *[!0-9]*) return 2 ;; esac
     max_pages="$(gh_rest_max_pages)" || return 2
     case "${endpoint}" in *\?*) separator='&' ;; *) separator='?' ;; esac
+    # Clamped ONCE, before the walk, from the bound alone — never from the
+    # remaining count — so a sub-page bound still costs one request for exactly
+    # that many items. Constant, and positive, from here on.
+    if [ "${max_items}" -gt 0 ] && [ "${max_items}" -lt "${page_size}" ]; then
+        page_size="${max_items}"
+    fi
 
     while :; do
-        if [ "${max_items}" -gt 0 ] && [ "$((max_items - total))" -lt "${page_size}" ]; then
-            page_size=$((max_items - total))
-        fi
-        [ "${page_size}" -gt 0 ] || return 0
         [ "${page}" -le "${max_pages}" ] || return 4
         payload="$(gh_rest_api "${endpoint}${separator}per_page=${page_size}&page=${page}" "$@")" || return
         jq -e 'type == "array"' >/dev/null 2>&1 <<<"${payload}" || return 3
         count="$(jq 'length' <<<"${payload}")" || return 3
+        if [ "${max_items}" -gt 0 ] && [ "$((total + count))" -gt "${max_items}" ]; then
+            # This page overshoots MAX_ITEMS: drop the surplus here, where it is
+            # visible, rather than having asked for a smaller page.
+            jq --argjson keep "$((max_items - total))" '.[0:$keep]' <<<"${payload}" || return 3
+            return 0
+        fi
         printf '%s\n' "${payload}"
         total=$((total + count))
         [ "${count}" -lt "${page_size}" ] && return 0
