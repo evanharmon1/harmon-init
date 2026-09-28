@@ -32,9 +32,11 @@ bootstrap for hosted VMs. This note does **not** reopen that decision: it
 asks only whether self-hosting is a better route to the same invariant, and
 what would change downstream if it were adopted. #1403 is load-bearing for
 Claude Code on the web (#1407) and Codex cloud (#750) whatever this note
-concludes, because neither platform documents a way to supply an image —
-Codex cloud runs a default `universal` image plus your setup script ([Codex
-cloud environments][codexenv], read 2026-09-28).
+concludes, because neither platform documents a way to supply an image — on
+Claude Code on the web "replacing the base image entirely isn't supported yet"
+([cloud environments][cloudenv], read 2026-09-28), and Codex cloud runs a
+default `universal` image plus your setup script ([Codex cloud
+environments][codexenv], read 2026-09-28).
 
 The capability still exists in the installed CLI. `claude --version` reports
 `2.1.270 (Claude Code)` in this devcontainer, and the issue's verify command
@@ -125,10 +127,12 @@ image cannot be supplied, which is precisely why #1403 exists; here the
 it *is* the remote environment. And the image already exists:
 `.github/workflows/devcontainer-build.yml` builds
 `.devcontainer/devcontainer.json` through `devcontainers/ci` and pushes
-`ghcr.io/evanharmon1/harmon-init-devcontainer` on every push to `main`, with
-the pinned shared base, the repo's `.devcontainer/Dockerfile` overlay, and the
-devcontainer **features** (`python:1` at 3.14, `docker-in-docker:2`,
-`github-cli:1`) already applied. The runner image is that image plus the
+`ghcr.io/evanharmon1/harmon-init-devcontainer` on pushes to `main` that
+change the devcontainer surface (`scripts/devcontainer-changed.sh` gates the
+build job), with the pinned shared base, the repo's `.devcontainer/Dockerfile`
+overlay, and the devcontainer **features'** install payload (`python:1` at
+3.14, `docker-in-docker:2`, `github-cli:1`) applied. The runner image is a
+Docker-free render of that build (the posture section says why) plus the
 `claude` binary, and it must satisfy:
 
 | Requirement | Source |
@@ -152,6 +156,9 @@ verify, not by a recipe written here:
 - the `containerEnv` markers (`FOREMAN_DEVCONTAINER=bot`,
   `HARMON_BOT_AUTONOMY_*`), so that Foreman's D2 tripwire and the bot-autonomy
   checks see the container they see locally;
+- the features' runtime metadata (`privileged`, `init`, `entrypoint`,
+  `mounts`, `containerEnv`, `capAdd`), which the devcontainer CLI applies at
+  container creation and a plain container run does not;
 - the `initializeCommand` env allowlist guard (`init-env.sh`), so that only
   allowlisted variables reach a session;
 - the lifecycle hooks' effects (`post-create.sh`, `post-start.sh`:
@@ -449,15 +456,20 @@ Sessions read "the managed settings file in the runner image"
 that `install-repo-config.sh` already writes. It is an enforcement point only
 under the **managed-settings preconditions**: the file is root-owned and
 read-only to the session UID; that UID has no `sudo`; no Docker daemon is
-reachable from the session (docker-group access reaches every file on the
-host); and the organization deploys no server-managed settings keys, since
-"by default, when your organization delivers any server-managed keys,
-sessions ignore the runner image's file apart from the keys Claude Code reads
-from every admin source" ([configuration][config]). The devcontainer fails the
-first two — `vscode` has passwordless `sudo`
-([devcontainer-image.md](../architecture/devcontainer-image.md)) — and the
-fourth is a standing constraint on the Team organization, asserted rather than
-assumed. The [trial](#trial-session--pending) checks the whole set.
+reachable from the session (root inside a privileged container can mount the
+host filesystem, which defeats every read-only-to-the-session defence at once
+— the managed-settings file, the wrapper, `--hooks-dir`, `~/.claude/`); and
+the organization deploys no server-managed settings keys, since "by default,
+when your organization delivers any server-managed keys, sessions ignore the
+runner image's file apart from the keys Claude Code reads from every admin
+source" ([configuration][config]). The devcontainer passes the first
+(`install-repo-config.sh`, run as root from the Dockerfile, installs the file
+root-owned at mode 0644) and fails the second and third — `vscode` has
+passwordless `sudo`
+([devcontainer-image.md](../architecture/devcontainer-image.md)) and the bot
+profile carries `docker-in-docker:2` — and the fourth is a standing
+constraint on the Team organization, asserted rather than assumed. The
+[trial](#trial-session--pending) checks the whole set.
 
 | Posture axis (#1408) | Enforcement point on a self-hosted environment |
 |---|---|
@@ -467,7 +479,7 @@ assumed. The [trial](#trial-session--pending) checks the whole set.
 | **Network — enforced egress allowlist** | Your own boundary, which is what #1408 and #286 want. Anthropic supplies the required-hosts table and states the product cannot enforce it ([deploy][deploy]). |
 | **Identity — the agent PAT, no bot/operator token** | Image-level credential or per-session minted from the wrapper. The documented preference is per-session ("a credential in the image is available to every session the image runs"), which is *stronger* than the agent PAT model #1408 settled for. |
 | **Secrets — no 1Password, no `op`, no Tailscale key** | Not carried by the image: the env allowlist guard (`init-env.sh`) is `initializeCommand`, and the adapter must replace it so that only allowlisted variables reach a session. The environment secret is itself a new secret to hold, readable by any session on a fixed fleet ([deploy][deploy]). |
-| **Docker — per-repo opt-in, DinD only** | A repository's DinD opt-in is incompatible with the managed-settings preconditions: a DinD-enabled runner image has no enforced managed-settings layer. |
+| **Docker — per-repo opt-in, DinD only** | A repository's DinD opt-in is incompatible with the managed-settings preconditions: root inside a privileged container can mount the host filesystem, so a DinD-enabled runner image has no enforced managed-settings layer — and no read-only wrapper, `--hooks-dir`, or `~/.claude/` either. |
 | **Marker** | Not carried by the image (`containerEnv`): the adapter must set `FOREMAN_DEVCONTAINER=bot` and the `HARMON_BOT_AUTONOMY_*` markers, or Foreman's D2 tripwire refuses to run. |
 
 Two further posture-adjacent facts: session hooks supplied by the control
@@ -495,16 +507,17 @@ remove.
 
 ### Effect on #1403
 
-**No work removed; one thing changes.** #1403's bootstrap exists because
-Claude Code on the web "ignores `devcontainer.json` and has no custom image",
-and Codex cloud (#750) documents only its default `universal` image plus a
-setup script ([Codex cloud environments][codexenv]). Both remain, so the
-bootstrap remains the single entrypoint for them. What adoption would add is a
-platform that *bypasses* the bootstrap: the runner is the published rendered
-image, so the pinned installs need to stay where they are
-(`images/devcontainer/`), not to be reachable as a standalone script. What the
-rendered image does not carry (the image section above) is adapter work, not
-bootstrap work.
+**No work removed; one thing changes.** #1403's bootstrap exists because on
+Claude Code on the web "replacing the base image entirely isn't supported
+yet" ([cloud environments][cloudenv]; that it also ignores `devcontainer.json`
+is **unverified**), and Codex cloud (#750) documents only its default
+`universal` image plus a setup script ([Codex cloud environments][codexenv]).
+Both remain, so the bootstrap remains the single entrypoint for them. What
+adoption would add is a platform that *bypasses* the bootstrap: the runner is
+a published rendered image, so the pinned installs need to stay where they
+are (`images/devcontainer/`), not to be reachable as a standalone script. What
+the rendered image does not carry (the image section above) is adapter work,
+not bootstrap work.
 
 The one thing that changes is a constraint on #1403's tier/timing design.
 "Core and agents tiers complete within 5 minutes", driven by the hosted
@@ -541,33 +554,44 @@ directly.
 ### Follow-up to file (not filed by this note)
 
 One issue, blocked on the plan move: *"(remote-env): Self-hosted Claude Code
-environment adapter"* — run `ghcr.io/evanharmon1/harmon-init-devcontainer`
-plus the `claude` binary as the runner on a Coder workspace, and document the
+environment adapter"* — run the rendered image of a Docker-free profile plus
+the `claude` binary as the runner on a Coder workspace, and document the
 adapter section in `docs/architecture/remote-environments.md` (the file #1403
-creates). Its acceptance criteria are checks against a running session:
+creates). Not the published `harmon-init-devcontainer` as it stands: that is
+the bot profile's render, and its `docker-in-docker:2` fails the first check
+below. The **agent** posture #1408 defines is Docker-off by default, so its
+rendered image is the natural base once it exists; until then a Docker-free
+render is required, and a repository that opts into DinD forgoes the enforced
+managed-settings layer (the Docker row above). Its acceptance criteria are
+checks against a running session:
 
 - the managed-settings preconditions hold;
 - `FOREMAN_DEVCONTAINER=bot` and the `HARMON_BOT_AUTONOMY_*` markers are set;
 - an `init-env.sh` equivalent bounds the session's environment;
+- the lifecycle hooks' effects hold: bot-autonomy applied and verified, the
+  settings seed present, the Herdr integrations in place;
 - every privileged setup step has a build-time or root-owned runtime home;
 - the features come from the rendered image, not a hand re-add;
+- the runner base is pinned by image digest, not by a mutable tag;
 - egress is default-deny beyond Anthropic's required-hosts table;
-- the runner runs with `--confine-repo-settings enforce` and `--capacity 1`;
+- the runner runs with `--confine-repo-settings enforce`,
+  `--trust-workspace false`, and `--capacity 1`;
 - the trial below passes, as the issue's `[HUMAN]` criterion.
 
 The issue has to choose its fleet shape deliberately: a Coder workspace at
 `--capacity 1` is the opposite of the on-demand shape the security section
 records as Anthropic's mitigation for the environment-secret exposure — a
 fixed fleet, secret on the host that runs sessions. The **fixed fleet is
-accepted here, for the two-person org and no further**, on three grounds:
-every seat's sessions execute code on the host that holds the secret, so the
-population able to read it equals the org's seats — at two, the operator and
-the bot; the secret's documented reach is registering runners and picking up
-sessions on that one environment, not anything beyond it ([deploy][deploy]);
-and the on-demand shape needs a second, always-on host for the orchestrator,
-which is the sizing problem from the cost section again. A third seat, or a
-runner host that holds anything beyond the workspace, reopens it in favour of
-the orchestrator shape.
+accepted here, for the two-person org and no further**, with its residual
+named: the reader of the secret is model-directed session code, not an
+identity, so any session's code on the fleet can read and use it. The
+acceptance rests on the secret's bounded reach — registering runners and
+picking up sessions on that one environment, not anything beyond it
+([deploy][deploy]) — and on the second, always-on host the on-demand shape
+needs for its orchestrator, the sizing problem from the cost section again.
+A third seat reopens it in favour of the orchestrator shape, because more
+dispatchers means more code that can read the secret; so does a runner host
+that holds anything beyond the workspace.
 
 ## Trial session — pending
 
@@ -589,7 +613,8 @@ When it is run, these are the things only a real session can settle:
   `/etc/claude-code/managed-settings.json` then govern the session? A session
   that can `sudo` its way to the file has no enforcement layer at all.
 - Does `--confine-repo-settings enforce` accept harmon-init's own committed
-  `.claude/settings.json`, or refuse it?
+  `.claude/settings.json`, or refuse it — and does the session still work
+  with `--trust-workspace false` dropping its grants?
 - Does a session push a branch and open a draft PR under the agent identity,
   with full `gh` (GraphQL included) working?
 
@@ -600,7 +625,7 @@ When it is run, these are the things only a real session can settle:
 | `--environment` exists in the installed CLI | ✅ verified — `claude --version` 2.1.270, help text quoted above, 2026-09-28 |
 | Environment creation, registration, runner lifecycle, network paths | ✅ primary docs, read 2026-09-28 |
 | A custom image is the documented container path; a bare host is the documented alternative | ✅ [deploy][deploy] ("Build your own around the `claude` binary"), [quickstart][quickstart] ("a Linux or macOS host or container") |
-| The rendered image is published with the overlay and the features applied | ✅ `.github/workflows/devcontainer-build.yml` builds `.devcontainer/devcontainer.json` through `devcontainers/ci` and pushes `ghcr.io/evanharmon1/harmon-init-devcontainer` on every push to `main` |
+| The rendered image is published with the overlay and the features' install payload applied | ✅ `.github/workflows/devcontainer-build.yml` builds `.devcontainer/devcontainer.json` through `devcontainers/ci` and pushes `ghcr.io/evanharmon1/harmon-init-devcontainer` on pushes to `main` that change the devcontainer surface (`scripts/devcontainer-changed.sh` gates the build job); feature runtime metadata is applied at container creation, not baked in |
 | The rendered image works as a runner image | ❓ **unverified** — no trial session (see above) |
 | Codex cloud documents no custom-image path | ✅ [Codex cloud environments][codexenv]: a default `universal` image plus a setup script, read 2026-09-28 |
 | GraphQL/REST limit is a proxy property and opt-in when self-hosted | ✅ documented on both sides |
