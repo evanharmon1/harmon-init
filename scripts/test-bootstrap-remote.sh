@@ -34,6 +34,25 @@ def fail(msg):
     errors.append(msg)
 
 
+def run_lifted(script, args=(), limit=120):
+    """Run a harness built from code lifted out of the scripts under test.
+
+    Bounded on purpose, and the bound is not optional: § 20 lifts a `while` loop
+    out of the bootstrap, so an edit that stopped advancing it would HANG `task
+    verify` rather than fail it — and a gate that hangs is worse than one that is
+    wrong, because nothing reports it and the process outlives the run. Every
+    harness in this file that executes lifted or sourced product code goes
+    through here for that reason. A timeout comes back as None and reads as
+    "could not run".
+    """
+    try:
+        return subprocess.run(
+            ["bash", "-s", *args], input=script, capture_output=True, text=True, timeout=limit
+        )
+    except subprocess.TimeoutExpired:
+        return None
+
+
 IMG = pathlib.Path("images/devcontainer")
 VERSIONS = IMG / "versions.env"
 INSTALL = IMG / "install"
@@ -834,16 +853,27 @@ else:
 def run_bootstrap(args, env_extra=None):
     env = {k: v for k, v in os.environ.items() if not k.startswith("HARMON_")}
     env.update(env_extra or {})
-    return subprocess.run(["bash", str(BOOTSTRAP), *args], capture_output=True, text=True, env=env)
+    # Bounded like run_lifted, and for the same reason: this runs the product
+    # script itself, and a validation edit that stopped terminating would hang
+    # `task verify` instead of failing it. These cases are all refusals, so the
+    # bound is generous and still bounded.
+    return subprocess.run(
+        ["bash", str(BOOTSTRAP), *args], capture_output=True, text=True, env=env, timeout=120
+    )
 
 
-for bad_ref in ("main", "feature/x", "1.2.3", "v1.2", "v1.2.3-rc1", "8b8e60f"):
+# The last two carry an embedded NEWLINE, which is the case a line-oriented
+# `printf '%s' "$ref" | grep -Eq '^…$'` waved through: grep matches per LINE, so
+# a value whose first line is a release tag passed as one. The check is a
+# whole-string match now, as the install-prefix check already was.
+for bad_ref in ("main", "feature/x", "1.2.3", "v1.2", "v1.2.3-rc1", "8b8e60f", "v1.2.3\nx", "v1.2.3\n"):
     r = run_bootstrap(["--ref", bad_ref, "--tiers", "no-such-tier"])
     if r.returncode != 1 or "not a release tag" not in r.stderr:
         fail(f"{BOOTSTRAP}: --ref {bad_ref!r} must be refused as 'not a release tag' (exit {r.returncode}: {r.stderr.strip()[:120]!r})")
-r = run_bootstrap(["--tiers", "no-such-tier"], {"HARMON_INIT_REF": "main"})
-if r.returncode != 1 or "not a release tag" not in r.stderr:
-    fail(f"{BOOTSTRAP}: HARMON_INIT_REF=main must be refused the same way --ref main is")
+for bad_env in ("main", "v1.2.3\nx"):
+    r = run_bootstrap(["--tiers", "no-such-tier"], {"HARMON_INIT_REF": bad_env})
+    if r.returncode != 1 or "not a release tag" not in r.stderr:
+        fail(f"{BOOTSTRAP}: HARMON_INIT_REF={bad_env!r} must be refused the same way --ref {bad_env!r} is")
 r = run_bootstrap(["--ref", "v1.2.4", "--tiers", "no-such-tier"], {"HARMON_INIT_REF": "v1.2.3"})
 if r.returncode != 1 or "disagree" not in r.stderr:
     fail(f"{BOOTSTRAP}: --ref and HARMON_INIT_REF naming different tags must be refused as a disagreement")
@@ -907,13 +937,14 @@ for label, text in ((BOOTSTRAP, bootstrap_text), (DOC, doc_text)):
             )
         # …and that file goes in a PRIVATE directory. A bare `mktemp` put the
         # script in shared /tmp, which makes /tmp the script's own directory —
-        # and the sibling-asset branch then accepts a /tmp/install/lib.sh that
-        # any local user could have pre-created, for the root process to source.
-        # The script refuses an unsafe directory on its own account (§ 18), and
-        # this is the other half: the recipe an adapter copies must not create
-        # the condition in the first place. The mode is asserted as well as the
-        # `-d`, because "mktemp -d defaults to 0700" is a fact about an
-        # implementation and not a promise the recipe makes.
+        # where any local user could pre-create a /tmp/install/lib.sh for a root
+        # process to source. § 19 is the other, independent half and the one that
+        # holds without the recipe: given a --ref, which this recipe always
+        # passes, the script reads nothing beside itself, so that planted file is
+        # never consulted. This half is still asserted because a recipe adapters
+        # copy must not create the condition in the first place. The mode is
+        # asserted as well as the `-d`, because "mktemp -d defaults to 0700" is a
+        # fact about an implementation and not a promise the recipe makes.
         if re.search(r"\$\(\s*mktemp\s*\)|`\s*mktemp\s*`", command) or not re.search(r"mktemp\s+-d", command):
             fail(
                 f"{label}: the documented standalone recipe does not download into a private directory "
@@ -1098,14 +1129,15 @@ fi
         .replace("@WRITE_MANIFEST@", bootstrap_text[wm_start:wm_end])
         .replace("@GENERATOR@", str(IMG / "generate-manifest.sh"))
     )
-    run = subprocess.run(["bash", "-s"], input=harness, capture_output=True, text=True)
-    out = dict(
+    run = run_lifted(harness)
+    out = {} if run is None else dict(
         line.split(" ", 1) for line in run.stdout.splitlines() if line.count(" ") == 1
     )
-    if run.returncode != 0 or len(out) != 7:
+    if run is None or run.returncode != 0 or len(out) != 7:
         fail(
-            f"{BOOTSTRAP}: the manifest provenance case could not run (exit {run.returncode}) — "
-            f"stderr: {run.stderr.strip()[:300]!r}"
+            f"{BOOTSTRAP}: the manifest provenance case could not run "
+            f"({'timed out' if run is None else f'exit {run.returncode}'}) — "
+            f"stderr: {'' if run is None else run.stderr.strip()[:300]!r}"
         )
     else:
         if out["DIRTY_REVISION"] != f"{out['LOCAL_HEAD']}-dirty":
@@ -1192,13 +1224,10 @@ verdict UV_COMPLETE harmon_needs_all uv 8.8.8 uvx -- uv --version
 stub node "v1.1.1"
 verdict NODE_WRONG_VERSION harmon_needs_all node 9.9.9 npm npx corepack -- node --version
 """
-run = subprocess.run(
-    ["bash", "-s"],
-    input=completeness.replace("@LIB@", str(INSTALL / "lib.sh")),
-    capture_output=True,
-    text=True,
+run = run_lifted(completeness.replace("@LIB@", str(INSTALL / "lib.sh")))
+verdicts = {} if run is None else dict(
+    line.split(" ", 1) for line in run.stdout.splitlines() if line.count(" ") == 1
 )
-verdicts = dict(line.split(" ", 1) for line in run.stdout.splitlines() if line.count(" ") == 1)
 expected = {
     "NODE_NPM_ABSENT": "needs",
     "NODE_COMPLETE": "skips",
@@ -1207,10 +1236,11 @@ expected = {
     "UV_COMPLETE": "skips",
     "NODE_WRONG_VERSION": "needs",
 }
-if run.returncode != 0 or len(verdicts) != len(expected):
+if run is None or run.returncode != 0 or len(verdicts) != len(expected):
     fail(
-        f"{INSTALL}/lib.sh: the completeness cases could not run (exit {run.returncode}) — "
-        f"stderr: {run.stderr.strip()[:300]!r}"
+        f"{INSTALL}/lib.sh: the completeness cases could not run "
+        f"({'timed out' if run is None else f'exit {run.returncode}'}) — "
+        f"stderr: {'' if run is None else run.stderr.strip()[:300]!r}"
     )
 else:
     for case, want in expected.items():
@@ -1293,23 +1323,23 @@ chose NO_PATH_BINARY "$neither"
 stub "${work}/node_modules/.bin/markdownlint-cli2" local 'markdownlint-cli2 v@PIN@ (markdownlint v0.41.1)'
 chose REPO_LOCAL_WINS "$matching"
 """
-    run = subprocess.run(
-        ["bash", "-s"],
-        input=dispatch.replace("@SCRIPT@", str(MARKDOWNLINT.resolve())).replace("@PIN@", pin_decl.group(1)),
-        capture_output=True,
-        text=True,
+    run = run_lifted(
+        dispatch.replace("@SCRIPT@", str(MARKDOWNLINT.resolve())).replace("@PIN@", pin_decl.group(1))
     )
-    chosen = dict(line.split(" ", 1) for line in run.stdout.splitlines() if line.count(" ") == 1)
+    chosen = {} if run is None else dict(
+        line.split(" ", 1) for line in run.stdout.splitlines() if line.count(" ") == 1
+    )
     expected = {
         "MATCHING_PATH_BINARY": "path",
         "MISMATCHED_PATH_BINARY": "npx",
         "NO_PATH_BINARY": "npx",
         "REPO_LOCAL_WINS": "local",
     }
-    if run.returncode != 0 or len(chosen) != len(expected):
+    if run is None or run.returncode != 0 or len(chosen) != len(expected):
         fail(
-            f"{MARKDOWNLINT}: the dispatch cases could not run (exit {run.returncode}) — "
-            f"stderr: {run.stderr.strip()[:300]!r}"
+            f"{MARKDOWNLINT}: the dispatch cases could not run "
+            f"({'timed out' if run is None else f'exit {run.returncode}'}) — "
+            f"stderr: {'' if run is None else run.stderr.strip()[:300]!r}"
         )
     else:
         why = {
@@ -1385,35 +1415,25 @@ else:
                 f"space would write a drop-in that breaks every login shell: {line.strip()[:120]!r}"
             )
 
-def run_lifted(script, args=(), limit=120):
-    """Run a harness built from code lifted out of the scripts under test.
-
-    Bounded on purpose. § 20 lifts a `while` loop out of the bootstrap, so an
-    edit that stopped advancing it would hang `task verify` rather than fail it —
-    and a gate that hangs is worse than one that is wrong, because nothing
-    reports it. A timeout comes back as None and reads as "could not run".
-    """
-    try:
-        return subprocess.run(
-            ["bash", "-s", *args], input=script, capture_output=True, text=True, timeout=limit
-        )
-    except subprocess.TimeoutExpired:
-        return None
-
-
-# ── 19. the asset directory a ROOT process runs install scripts out of ──────
+# ── 19. with a ref, the assets come from the TAG and nowhere else ───────────
 # The sibling-asset branch SOURCES ${self_dir}/install/lib.sh as root, and
-# self_dir is wherever the caller put this file. A standalone recipe that
-# downloaded it with a bare `mktemp` made that directory shared /tmp — so any
-# unprivileged local user could pre-create /tmp/install/lib.sh and root would
-# source it. § 14 holds the recipe's shape; this holds the layer that does not
-# depend on every adapter copying the recipe correctly, which is the one that
-# reaches a real host.
+# self_dir is wherever the caller put this file: a standalone recipe that
+# downloaded it with a bare `mktemp` made that directory shared /tmp, where any
+# unprivileged local user could pre-create /tmp/install/lib.sh for root to
+# source. An ownership-and-permissions predicate on that directory was deleted
+# rather than hardened a third time, because a check-then-source decision about
+# a directory an attacker may own cannot be won: what holds instead is that the
+# directory is NEVER CONSULTED when a ref was given. § 14 holds the recipe's
+# shape, which is the second and independent reason; this holds the one that does
+# not depend on every adapter copying the recipe correctly.
 #
 # EXECUTED, not pattern-matched: which directory the assets come from is a
 # decision, and the block is lifted out of bootstrap-remote.sh and planted as a
 # real file inside each candidate directory, because `BASH_SOURCE` is how that
-# decision is made. curl is stubbed so the fetch fallback is observable offline.
+# decision is made. curl is stubbed so the fetch is observable offline, and it
+# writes a MARKER different from the planted sibling's, so "the tag was the
+# source" is proved by the bytes the run would go on to execute rather than by
+# a flag alone.
 locate_start = bootstrap_text.find("# ---------- locate the install scripts ----------")
 locate_end = bootstrap_text.find('export HARMON_VERSIONS_FILE="${asset_dir}/versions.env"')
 if locate_start < 0 or locate_end < 0:
@@ -1429,14 +1449,6 @@ generate-manifest.sh
 install/lib.sh
 '
 ref="${HARNESS_REF-v9.9.9}"
-# The one harness-only seam: a directory whose mode and owner cannot be READ has
-# to be refused too — an unreadable answer is not a clean one — and stat does not
-# fail on a directory root can reach, so the failure is injected rather than
-# contrived out of the filesystem.
-stat() {
-    [ "${HARNESS_BREAK_STAT:-}" = 1 ] && return 1
-    command stat "$@"
-}
 curl() {
     _dest=""
     while [ "$#" -gt 0 ]; do
@@ -1449,88 +1461,72 @@ curl() {
         esac
     done
     [ -n "$_dest" ] || return 1
-    printf 'fetched\n' >"$_dest"
+    printf 'FETCHED\n' >"$_dest"
 }
 """ + bootstrap_text[locate_start:locate_end] + r"""
 printf 'ASSETS_LOCAL %s\n' "$assets_local"
+# The bytes the run would go on to source as root, named by their marker. This is
+# the half a flag cannot prove: `assets_local=0` says the fetch branch was taken,
+# while this says the lib.sh about to be sourced is the fetched one.
+printf 'LIB_SOURCE %s\n' "$(cat "${asset_dir}/install/lib.sh")"
 """
     driver = r"""
 set -euo pipefail
-unset SUDO_USER
 root="$(mktemp -d)"
 trap 'chmod -R u+rwx "$root" >/dev/null 2>&1 || true; rm -rf "$root"' EXIT
 
 plant() { # plant <dir> — the lifted block, as a real file, with a sibling asset
     mkdir -p "${1}/install"
     printf '%s' '@WORKER_B64@' | base64 -d >"${1}/bootstrap-remote.sh"
-    printf 'placeholder\n' >"${1}/install/lib.sh"
+    printf 'SIBLING\n' >"${1}/install/lib.sh"
+    printf 'SIBLING\n' >"${1}/versions.env"
 }
 
-run_case() { # run_case <label> <dir> -> <label> <local>:<refused>:<stopped>
+run_case() { # run_case <label> <dir> -> <label> <local>:<lib-source>
     _label="$1"
     _dir="$2"
     _out=""
     _out="$(bash "${_dir}/bootstrap-remote.sh" 2>"${root}/${_label}.err")" || true
     _local="$(printf '%s\n' "$_out" | sed -n 's/^ASSETS_LOCAL //p')"
-    _refused=no
-    if grep -q 'refusing the install scripts' "${root}/${_label}.err"; then
-        _refused=yes
-    fi
-    _stopped=no
-    if grep -q 'cannot be trusted' "${root}/${_label}.err"; then
-        _stopped=yes
-    fi
-    printf '%s %s:%s:%s\n' "$_label" "${_local:-none}" "$_refused" "$_stopped"
+    _lib="$(printf '%s\n' "$_out" | sed -n 's/^LIB_SOURCE //p')"
+    printf '%s %s:%s\n' "$_label" "${_local:-none}" "${_lib:-none}"
 }
 
+# A ref was given and perfectly ordinary private siblings sit beside the script:
+# the tag still wins, because there is no preference to compute.
 private="${root}/private"
 plant "$private"
 chmod 0700 "$private" "${private}/install"
-run_case PRIVATE_DIR "$private"
+run_case REF_WITH_PRIVATE_SIBLINGS "$private"
 
+# The escalation shape itself: the script's own directory is world-writable, so
+# any local user could have planted that install/lib.sh. Nothing beside the
+# script is read, which is why its mode and owner no longer have to be judged.
 shared="${root}/shared"
 plant "$shared"
-chmod 0700 "${shared}/install"
 chmod 0777 "$shared"
-run_case WORLD_WRITABLE_DIR "$shared"
+chmod 0777 "${shared}/install"
+run_case REF_WITH_WORLD_WRITABLE_SIBLINGS "$shared"
 
-child="${root}/child"
-plant "$child"
-chmod 0700 "$child"
-chmod 0777 "${child}/install"
-run_case WORLD_WRITABLE_INSTALL "$child"
-
-# Owned by a third party: root running the script while the assets belong to an
-# unprivileged user is the multi-user host this refusal exists for. Whoever is
-# running these tests owns the directory, so the OTHER party is named through
-# SUDO_USER; as root, the directory is chowned away instead.
-foreign="${root}/foreign"
-plant "$foreign"
-chmod 0700 "$foreign" "${foreign}/install"
-if [ "$(id -u)" -eq 0 ]; then
-    chown -R 65534 "$foreign"
-    run_case FOREIGN_OWNER "$foreign"
-else
-    export SUDO_USER=root
-    run_case FOREIGN_OWNER "$foreign"
-    unset SUDO_USER
-fi
-
-unreadable="${root}/unreadable"
-plant "$unreadable"
-chmod 0700 "$unreadable" "${unreadable}/install"
-export HARNESS_BREAK_STAT=1
-run_case UNREADABLE_MODE "$unreadable"
-unset HARNESS_BREAK_STAT
-
-# Refused with nowhere safe to fall back to: the run STOPS. Accepting the
-# directory anyway, or reporting success having installed nothing, are both worse.
-noref="${root}/noref"
-plant "$noref"
-chmod 0700 "${noref}/install"
-chmod 0777 "$noref"
+# No ref: the documented checkout form, where the siblings are the only thing
+# there is to run — and the offline path the remote-bootstrap CI job takes.
+checkout="${root}/checkout"
+plant "$checkout"
+chmod 0700 "$checkout" "${checkout}/install"
 export HARNESS_REF=""
-run_case REFUSED_WITHOUT_REF "$noref"
+run_case NO_REF_USES_SIBLINGS "$checkout"
+
+# No ref and no siblings: a hard failure naming the fix, never a run that
+# installs nothing and exits 0.
+bare="${root}/bare"
+plant "$bare"
+rm -rf "${bare}/install" "${bare}/versions.env"
+run_case NO_REF_NO_SIBLINGS "$bare"
+if grep -q 'not beside this file' "${root}/NO_REF_NO_SIBLINGS.err"; then
+    printf 'NO_REF_NO_SIBLINGS_REASON named\n'
+else
+    printf 'NO_REF_NO_SIBLINGS_REASON silent\n'
+fi
 unset HARNESS_REF
 """.replace("@WORKER_B64@", base64.b64encode(worker.encode()).decode())
     run = run_lifted(driver)
@@ -1538,30 +1534,29 @@ unset HARNESS_REF
         line.split(" ", 1) for line in run.stdout.splitlines() if line.count(" ") == 1
     )
     expected = {
-        "PRIVATE_DIR": "1:no:no",
-        "WORLD_WRITABLE_DIR": "0:yes:no",
-        "WORLD_WRITABLE_INSTALL": "0:yes:no",
-        "FOREIGN_OWNER": "0:yes:no",
-        "UNREADABLE_MODE": "0:yes:no",
-        "REFUSED_WITHOUT_REF": "none:yes:yes",
+        "REF_WITH_PRIVATE_SIBLINGS": "0:FETCHED",
+        "REF_WITH_WORLD_WRITABLE_SIBLINGS": "0:FETCHED",
+        "NO_REF_USES_SIBLINGS": "1:SIBLING",
+        "NO_REF_NO_SIBLINGS": "none:none",
+        "NO_REF_NO_SIBLINGS_REASON": "named",
     }
     why = {
-        "PRIVATE_DIR": "a private directory owned by the invoking user is exactly the recipe's own shape and must "
-        "still be used, or the standalone path silently stops being offline-capable",
-        "WORLD_WRITABLE_DIR": "any local user can plant install/lib.sh in a world-writable directory, so the "
-        "assets beside the script must be refused and the pinned fetch taken instead",
-        "WORLD_WRITABLE_INSTALL": "install/ is where the assets actually are; an attacker who cannot touch the "
-        "parent may still own the child",
-        "FOREIGN_OWNER": "a directory owned by neither root nor the invoking user is a directory its owner can "
-        "rewrite between the check and the source",
-        "UNREADABLE_MODE": "a mode and owner that could not be read is not a clean answer, and a check that "
-        "fails open is worse than no check at all",
-        "REFUSED_WITHOUT_REF": "with the siblings refused and no pinned ref there is nothing safe to run, and "
-        "the run must stop saying so rather than proceed",
+        "REF_WITH_PRIVATE_SIBLINGS": "a ref names the ONLY source. Preferring siblings when they look safe is "
+        "what made the trust root the directory rather than the tag, and it is the branch whose ownership "
+        "predicate had to be deleted — a run given a tag must fetch from it even where the siblings are fine",
+        "REF_WITH_WORLD_WRITABLE_SIBLINGS": "this is the root-privilege escalation: a world-writable directory "
+        "beside the script is an install/lib.sh any local user can write, and the lifted block must source the "
+        "FETCHED bytes instead. `assets_local=0` alone would not prove it — the marker is the proof",
+        "NO_REF_USES_SIBLINGS": "with no ref there is nothing else to run: the documented checkout form and the "
+        "CI job that exercises the working tree's own scripts both depend on the siblings being used",
+        "NO_REF_NO_SIBLINGS": "no ref and no assets beside the file is a hard failure, never a run that reports "
+        "success having installed nothing",
+        "NO_REF_NO_SIBLINGS_REASON": "the failure has to name the fix (pass --ref), or the operator is left "
+        "guessing at what a bootstrap that stopped immediately wanted",
     }
     if run is None or run.returncode != 0 or len(got) != len(expected):
         fail(
-            f"{BOOTSTRAP}: the asset-directory cases could not run "
+            f"{BOOTSTRAP}: the asset-source cases could not run "
             f"({'timed out' if run is None else f'exit {run.returncode}'}) — "
             f"stderr: {'' if run is None else run.stderr.strip()[:300]!r}"
         )
@@ -1569,8 +1564,8 @@ unset HARNESS_REF
         for case, want in expected.items():
             if got.get(case) != want:
                 fail(
-                    f"{BOOTSTRAP}: asset-directory case {case} gave {got.get(case)!r} "
-                    f"(local:refused:stopped), expected {want!r} — {why[case]}"
+                    f"{BOOTSTRAP}: asset-source case {case} gave {got.get(case)!r} "
+                    f"(assets_local:lib-marker), expected {want!r} — {why[case]}"
                 )
 
 # ── 20. the tier selection is ONE canonical value ───────────────────────────
@@ -1585,6 +1580,28 @@ default_decl = re.search(r'^readonly HARMON_DEFAULT_TIERS="([^"]+)"', bootstrap_
 if canon_start < 0 or canon_end < 0 or not order or not default_decl:
     fail(f"{BOOTSTRAP}: the tier canonicalisation block could not be lifted — its cases cannot run")
 else:
+    # The trim's character class must not be one whose members the ambient locale
+    # decides. This block runs long before set_locale forces C.UTF-8 — it has to,
+    # so a refused selection costs nothing and can be proved without root — and a
+    # POSIX [:space:] class there makes the canonical tier set depend on the
+    # environment, in a file whose own header warns about that exact trap. The
+    # cases below cannot see this: they pass under either spelling, because the
+    # locale that would separate them is not the one the harness runs in.
+    # COMMENTS are exempt, and deliberately: the comment that explains why the
+    # class was replaced has to be able to name it, and a check that forbade that
+    # would be enforced by deleting the explanation.
+    canon_code = "\n".join(
+        line
+        for line in bootstrap_text[canon_start:canon_end].splitlines()
+        if not line.lstrip().startswith("#")
+    )
+    if "[:space:]" in canon_code:
+        fail(
+            f"{BOOTSTRAP}: the tier canonicalisation trims with a POSIX [:space:] class, whose members the "
+            "ambient locale decides, and it runs long before set_locale forces C.UTF-8. Trim with an explicit "
+            "ASCII class (space and tab) instead, or move the canonicalisation after the locale is forced — "
+            "which costs the pre-re-exec refusal this block is placed here for"
+        )
     canon = (
         "set -euo pipefail\n"
         "HARMON_TIER_ORDER='" + order.group(1) + "'\n"
@@ -1728,6 +1745,102 @@ else:
         if reaped.get(case) != want:
             fail(f"{INSTALL}/lib.sh: staging case {case} was {reaped.get(case)!r}, expected {want!r} — {why[case]}")
 
+# ── 21b. …and for the manifest, the toolchain's OTHER staged write ───────────
+# generate-manifest.sh stages and renames for the same reason harmon_install_bin
+# does, and on a VM the manifest it protects is the only record of what is
+# installed there. It cannot call lib.sh's helper — both callers run it as its own
+# PROCESS, which inherits no shell functions, and the image build copies this one
+# file into /usr/local/sbin with no lib.sh to source — so the predicate is
+# duplicated there, and a duplicate nothing exercises is a duplicate that drifts.
+# Executed against the real generator and real files, as § 21 is.
+manifest_reap = r"""
+set -euo pipefail
+root="$(mktemp -d)"
+trap 'rm -rf "$root"' EXIT
+export HARMON_MANIFEST_DIR="${root}/share"
+export HARMON_MANIFEST_NAME=harmon-remote-env
+manifest="${HARMON_MANIFEST_DIR}/manifest.json"
+gen() { bash '@GENERATOR@' "$1" amd64 task=3.45.4; }
+gen 1111111111111111111111111111111111111111
+
+# A writer that is GONE: a child this shell has already reaped.
+sleep 0 &
+dead=$!
+wait "$dead" 2>/dev/null || true
+: >"${manifest}.${dead}.harmon-staging"
+# A writer that is LIVE: this very process.
+: >"${manifest}.$$.harmon-staging"
+# A name with no pid field: not something this wrote, so not something it deletes.
+: >"${manifest}.harmon-staging"
+
+# The same revision again, so the content is byte-identical and the staging
+# branch is never reached — which is the run that must sweep anyway, and the
+# overwhelmingly common one on a VM that re-runs the bootstrap.
+gen 1111111111111111111111111111111111111111
+
+state() { # state <label> <path>
+    if [ -e "$2" ]; then printf '%s kept\n' "$1"; else printf '%s reaped\n' "$1"; fi
+}
+state MANIFEST_DEAD_WRITER "${manifest}.${dead}.harmon-staging"
+state MANIFEST_LIVE_WRITER "${manifest}.$$.harmon-staging"
+state MANIFEST_NO_PID_FIELD "${manifest}.harmon-staging"
+
+# And a publish that FAILS removes its own staging path. The generator is a
+# separate process, so `mv` is broken through PATH rather than a shell function,
+# and every staging file planted above is cleared first so the only one this can
+# find is the failed run's own.
+rm -f "${manifest}".*.harmon-staging "${manifest}.harmon-staging"
+shim="${root}/shim"
+mkdir -p "$shim"
+printf '#!/bin/sh\nexit 1\n' >"${shim}/mv"
+chmod 0755 "${shim}/mv"
+if PATH="${shim}:${PATH}" gen 2222222222222222222222222222222222222222 >/dev/null 2>&1; then
+    printf 'MANIFEST_FAILED_PUBLISH_STATUS zero\n'
+else
+    printf 'MANIFEST_FAILED_PUBLISH_STATUS nonzero\n'
+fi
+if [ -n "$(find "$HARMON_MANIFEST_DIR" -maxdepth 1 -name 'manifest.json.*.harmon-staging' -print -quit)" ]; then
+    printf 'MANIFEST_FAILED_PUBLISH kept\n'
+else
+    printf 'MANIFEST_FAILED_PUBLISH reaped\n'
+fi
+"""
+run = run_lifted(manifest_reap.replace("@GENERATOR@", str(IMG / "generate-manifest.sh")))
+staged = {} if run is None else dict(
+    line.split(" ", 1) for line in run.stdout.splitlines() if line.count(" ") == 1
+)
+expected = {
+    "MANIFEST_DEAD_WRITER": "reaped",
+    "MANIFEST_LIVE_WRITER": "kept",
+    "MANIFEST_NO_PID_FIELD": "kept",
+    "MANIFEST_FAILED_PUBLISH_STATUS": "nonzero",
+    "MANIFEST_FAILED_PUBLISH": "reaped",
+}
+why = {
+    "MANIFEST_DEAD_WRITER": "an abandoned manifest staging file is a full-size file in the prefix that nothing "
+    "else will ever remove: a later run has a different pid, and the common run writes nothing here at all "
+    "because the manifest has not changed — so the sweep cannot be conditional on the write",
+    "MANIFEST_LIVE_WRITER": "deleting a live writer's staging file is the race the pid in the name exists to "
+    "prevent, and two bootstraps on one VM are exactly that case",
+    "MANIFEST_NO_PID_FIELD": "a name this code did not write is left alone rather than guessed at",
+    "MANIFEST_FAILED_PUBLISH_STATUS": "a manifest that could not be published must fail the run; exiting 0 "
+    "would report a VM whose record of what is installed was never written",
+    "MANIFEST_FAILED_PUBLISH": "a writer about to die cleans up after itself instead of relying on the sweep",
+}
+if run is None or run.returncode != 0 or len(staged) != len(expected):
+    fail(
+        f"{IMG}/generate-manifest.sh: the manifest staging cases could not run "
+        f"({'timed out' if run is None else f'exit {run.returncode}'}) — "
+        f"stderr: {'' if run is None else run.stderr.strip()[:300]!r}"
+    )
+else:
+    for case, want in expected.items():
+        if staged.get(case) != want:
+            fail(
+                f"{IMG}/generate-manifest.sh: manifest staging case {case} was {staged.get(case)!r}, "
+                f"expected {want!r} — {why[case]}"
+            )
+
 # ── 22. a version probe must SUCCEED as well as match ───────────────────────
 # The helper preserved the probe's exit status and the comparison discarded it, so
 # a binary that printed the pinned version and exited nonzero was accepted as
@@ -1830,8 +1943,9 @@ print("bootstrap-remote OK: the documented standalone recipe downloads to a file
 print("bootstrap-remote OK: a block publishing several executables re-runs unless every one of them is present at the pin")
 print("bootstrap-remote OK: markdownlint-cli2 resolves to a PATH binary at the pin, node_modules/.bin first, npx only as the fallback")
 print("bootstrap-remote OK: an unsafe HARMON_PREFIX is refused before anything runs, and the drop-in quotes the prefix it renders")
-print("bootstrap-remote OK: sibling install scripts are refused out of a world-writable or third-party directory, and the pinned fetch is taken")
+print("bootstrap-remote OK: given a ref the assets come from the tag and the script's own directory is never read; without one the siblings are used or the run stops")
 print("bootstrap-remote OK: the tier selection canonicalises once; no downstream consumer re-parses it")
 print("bootstrap-remote OK: a staging file whose writer is gone is reaped, a live writer's is not, and a failed publish cleans up after itself")
+print("bootstrap-remote OK: the manifest's own staged write reaps by liveness too, and a failed publish fails the run without leaving litter")
 print("bootstrap-remote OK: a version probe that prints the pin and exits nonzero is treated as needing the install")
 PY

@@ -20,13 +20,15 @@
 #   # the adapter reports a successful setup having installed nothing, and a
 #   # partial script has already run as root. The script goes into a PRIVATE
 #   # directory (`mktemp -d` plus an explicit mode 0700 rather than a trusted
-#   # default), never a bare `mktemp` in shared /tmp: BASH_SOURCE would then
-#   # make /tmp this script's own directory, and the sibling-asset branch
-#   # below would accept a /tmp/install/lib.sh that any unprivileged local
-#   # user could have pre-created — root sourcing another user's code. Nothing
-#   # removes the directory afterwards on purpose: a trailing cleanup command
-#   # would become the chain's exit status and put the swallowed-failure bug
-#   # back.
+#   # default), never a bare `mktemp` in shared /tmp, which would make /tmp
+#   # this script's own directory. That is the SECOND of two independent
+#   # reasons root cannot be handed another user's code, and it stays here
+#   # precisely because it is no longer the only one: this form passes --ref,
+#   # and given a ref the script fetches every asset from that tag and reads
+#   # nothing beside itself, so a /tmp/install/lib.sh an unprivileged user
+#   # pre-created is never consulted. Nothing removes the directory afterwards
+#   # on purpose: a trailing cleanup command would become the chain's exit
+#   # status and put the swallowed-failure bug back.
 #   HARMON_INIT_REF=vX.Y.Z
 #   harmon_bootstrap_dir="$(mktemp -d)" && chmod 0700 "$harmon_bootstrap_dir" \
 #     && curl -fsSL "https://raw.githubusercontent.com/evanharmon1/harmon-init/${HARMON_INIT_REF}/images/devcontainer/bootstrap-remote.sh" \
@@ -152,10 +154,13 @@ usage: bootstrap-remote.sh [--tiers core,agents,browsers] [--ref vX.Y.Z] [--help
             agents   the Codex CLI at the shared image's pin
             browsers Playwright Chromium (opt-in; large)
   --ref     The harmon-init RELEASE TAG (vX.Y.Z) to fetch the install scripts
-            from when this script was fetched on its own; ignored for fetching
-            when they sit beside it. Also settable as HARMON_INIT_REF; when
-            both are given they must agree. Anything but a release tag is
-            refused unless HARMON_ALLOW_UNPINNED_REF=1 (CI and development).
+            and versions.env from. Given a ref, that tag is the ONLY source:
+            files sitting beside this script are never read, whatever their
+            ownership or mode. Omit it to run the install scripts beside this
+            one, which is the form used from a checkout. Also settable as
+            HARMON_INIT_REF; when both are given they must agree. Anything but
+            a release tag is refused unless HARMON_ALLOW_UNPINNED_REF=1 (CI
+            and development).
 
 Environment: HARMON_PREFIX (default /usr/local), HARMON_BOOTSTRAP_TIERS,
              HARMON_INIT_REF, HARMON_ALLOW_UNPINNED_REF.
@@ -197,11 +202,23 @@ done
 # Validated before anything else happens (before the tier check, before the
 # sudo re-exec) so that a refused ref costs nothing and the offline guard can
 # prove the refusal without root.
+#
+# Matched with bash's `=~` rather than `printf '%s' "$ref" | grep -Eq '^…$'`,
+# for the reason check_safe_path states above: grep is LINE-oriented, so the
+# pipeline form accepts any value whose FIRST line matches, and
+# `v1.2.3<newline>anything` passed the release-tag check. An ERE has no
+# multiline mode — `$` anchors the end of the STRING, not of a line — so `=~`
+# answers about the whole value. Both single-line values this file validates
+# are now validated the same way, rather than one by shape and one by first
+# line; the tag reaches a URL and argv rather than a shell string, so the blast
+# radius was small, but two idioms for one job is a question waiting to be
+# asked. The pattern stays in HARMON_RELEASE_TAG_RE and unquoted on the right
+# of `=~`: quoting it there would match it as a literal.
 if [ -n "$ref_env" ] && [ -n "$ref_arg" ] && [ "$ref_env" != "$ref_arg" ]; then
     die "--ref '${ref_arg}' and HARMON_INIT_REF '${ref_env}' disagree; the tag must be written once"
 fi
 ref="${ref_arg:-$ref_env}"
-if [ -n "$ref" ] && ! printf '%s' "$ref" | grep -Eq "$HARMON_RELEASE_TAG_RE"; then
+if [ -n "$ref" ] && ! [[ $ref =~ $HARMON_RELEASE_TAG_RE ]]; then
     if [ "${HARMON_ALLOW_UNPINNED_REF:-}" = "1" ]; then
         warn "ref '${ref}' is not a release tag; proceeding because HARMON_ALLOW_UNPINNED_REF=1 (CI and development only — an adapter must pin a vX.Y.Z tag)"
     else
@@ -236,13 +253,23 @@ fi
 tiers_given="$tiers"
 tiers_seen=""
 tiers_rest="$tiers_given"
+# Space and tab, spelled out. The trim below used `[![:space:]]`, whose meaning
+# comes from the ambient locale — and this block runs LONG before set_locale
+# forces C.UTF-8, in a file whose own header warns that a change of locale
+# changes what counts as whitespace. Moving the canonicalisation after
+# set_locale is not the cleaner fix: it runs here on purpose, before the sudo
+# re-exec, so a refused selection costs nothing and the offline guard can prove
+# the refusal without root — and the re-exec forwards the CANONICAL value. An
+# explicit ASCII class instead, so the trim means exactly one thing in every
+# environment this runs in.
+tier_ws=$' \t'
 while :; do
     tier="${tiers_rest%%,*}"
     # Trim surrounding whitespace only. Whitespace INSIDE an element is not
     # trimmed away into a valid tier: `--tiers 'core agents'` is one unknown
     # element and is refused, not silently read as two.
-    tier="${tier#"${tier%%[![:space:]]*}"}"
-    tier="${tier%"${tier##*[![:space:]]}"}"
+    tier="${tier#"${tier%%[!$tier_ws]*}"}"
+    tier="${tier%"${tier##*[!$tier_ws]}"}"
     [ -n "$tier" ] ||
         die "empty tier in --tiers '${tiers_given}' (known: ${HARMON_TIER_ORDER// /, })"
     # Exact equality against each known tier, not `case " $HARMON_TIER_ORDER "
@@ -317,6 +344,28 @@ HOME="$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6 || true)"
 export HOME="${HOME:-/root}"
 
 # ---------- locate the install scripts ----------
+# TWO sources, and `--ref` decides which — never both, and never a preference
+# between them.
+#
+# WITH a ref, that tag is the only source: every asset is fetched from it into a
+# private directory this run made itself, and a file sitting beside this script
+# is not read at all, whatever its ownership or mode. That is what makes the
+# standalone form's trust root the TAG rather than whichever directory the
+# download happened to land in. It replaced an ownership-and-permissions
+# predicate on the script's own directory, and deleting the question is a better
+# answer than a third attempt at answering it: that predicate checked two
+# directories and so could not answer for the path's ancestors (a 0700 directory
+# inside a world-writable, non-sticky parent can be swapped out from under it),
+# it checked the container rather than the contents (a mode-0666 install/lib.sh
+# inside a private directory passed), and it left a window between the check and
+# the `source` for the very swap it was looking for. None of those has anywhere
+# to land once the directory is never consulted.
+#
+# WITHOUT a ref the caller ran this file out of a checkout — the documented
+# `sudo ./images/devcontainer/bootstrap-remote.sh` form, and the one the
+# remote-bootstrap CI job uses to exercise the working tree's own scripts. The
+# assets beside this file are then the only thing there is to run: there is no
+# pinned source to fall back to, and the operator chose the path they ran.
 self_dir=""
 if [ -r "${BASH_SOURCE[0]}" ]; then
     self_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -335,75 +384,14 @@ cleanup() {
 }
 trap cleanup EXIT
 
-# unsafe_asset_dir <directory> — prints WHY this root process must not run
-# executable assets out of <directory>, and nothing at all when it may.
-#
-# The branch below SOURCES ${self_dir}/install/lib.sh as root and executes the
-# tier scripts beside it, and self_dir is simply wherever the caller put this
-# file. A standalone recipe that downloaded it with a bare `mktemp` made that
-# directory shared /tmp — so any unprivileged local user could pre-create
-# /tmp/install/lib.sh and the root process would source it. Arbitrary code
-# execution as root, and it arrived as the remedy for a lesser defect. The
-# recipe at the top of this file now uses a private `mktemp -d`, but a recipe is
-# a thing adapters copy imperfectly, so the refusal lives HERE, where it holds
-# whatever the caller typed — which is the layer that reaches a real host.
-#
-# UNSAFE is exactly two conditions, and admits nothing else: the directory is
-# world-writable (anyone at all can add or replace an asset), or it is owned by
-# neither root nor the invoking user (its owner can). A directory whose mode and
-# owner cannot be READ is unsafe too, on the rule this change states in three
-# places: an unreadable answer is not a clean one.
-#
-# Both the directory holding this file and the install/ directory beside it are
-# checked. install/ is where the assets actually live, and an attacker who
-# cannot touch the parent may still own the child.
-unsafe_asset_dir() {
-    local dir="$1" mode="" owner="" invoking=""
-    mode="$(stat -c '%a' "$dir" 2>/dev/null || true)"
-    owner="$(stat -c '%u' "$dir" 2>/dev/null || true)"
-    if [ -z "$mode" ] || [ -z "$owner" ]; then
-        printf 'the mode and owner of %s could not be read' "$dir"
-        return 0
+if [ -z "$ref" ]; then
+    if [ -z "$self_dir" ] || [ ! -r "${self_dir}/install/lib.sh" ]; then
+        die "the install scripts are not beside this file; pass --ref <harmon-init release tag> so they can be fetched from a pinned release"
     fi
-    if [ "$(((8#$mode) & 2))" -ne 0 ]; then
-        printf '%s is world-writable (mode %s)' "$dir" "$mode"
-        return 0
-    fi
-    # The INVOKING user, through SUDO_USER, as the shadow check near the end of
-    # this file does: this process is already root, so its own uid answers
-    # nothing. An unset or unknown SUDO_USER falls back to the running uid.
-    invoking="$(id -u "${SUDO_USER:-}" 2>/dev/null || true)"
-    invoking="${invoking:-$(id -u)}"
-    if [ "$owner" != 0 ] && [ "$owner" != "$invoking" ]; then
-        printf '%s is owned by uid %s, which is neither root nor the invoking user (uid %s)' \
-            "$dir" "$owner" "$invoking"
-        return 0
-    fi
-    return 0
-}
-
-asset_refusal=""
-if [ -n "$self_dir" ] && [ -r "${self_dir}/install/lib.sh" ]; then
-    asset_refusal="$(unsafe_asset_dir "$self_dir")"
-    if [ -z "$asset_refusal" ]; then
-        asset_refusal="$(unsafe_asset_dir "${self_dir}/install")"
-    fi
-fi
-
-if [ -n "$self_dir" ] && [ -r "${self_dir}/install/lib.sh" ] && [ -z "$asset_refusal" ]; then
     asset_dir="$self_dir"
     assets_local=1
     printf '==> using the install scripts beside this file (%s)\n' "$asset_dir"
 else
-    if [ -n "$asset_refusal" ]; then
-        warn "refusing the install scripts beside this file: ${asset_refusal}. A directory anyone can write to, or that a third party owns, can hand this root process an install script of its own choosing; fetching from the pinned release tag instead."
-    fi
-    if [ -z "$ref" ]; then
-        if [ -n "$asset_refusal" ]; then
-            die "the install scripts beside this file cannot be trusted (${asset_refusal}) and no --ref was given, so there is nothing safe to run. Re-run this script from a private directory (mktemp -d, mode 0700), or pass --ref <harmon-init release tag> to fetch the install scripts from a pinned release."
-        fi
-        die "the install scripts are not beside this file; pass --ref <harmon-init release tag> so they can be fetched from a pinned release"
-    fi
     fetched_dir="$(mktemp -d)"
     # Stated rather than inherited, for the same reason the recipe states it:
     # this is the directory root is about to execute install scripts out of.
@@ -680,7 +668,7 @@ write_manifest() {
             fi
         fi
     fi
-    if [ -z "$revision" ] && printf '%s' "$ref" | grep -Eq "$HARMON_RELEASE_TAG_RE"; then
+    if [ -z "$revision" ] && [[ $ref =~ $HARMON_RELEASE_TAG_RE ]]; then
         revision="$ref"
     fi
     if [ -z "$revision" ]; then

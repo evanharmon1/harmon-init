@@ -193,7 +193,12 @@ The tag is written **once** and read from that one variable: the URL the
 script is fetched from and the `--ref` it fetches its install scripts and
 `versions.env` from are the same value by construction, and if the script is
 ever handed both `--ref` and `HARMON_INIT_REF` it refuses unless they agree.
-From a checkout it uses the files beside it and ignores `--ref` for fetching.
+`--ref` decides where the assets come from, and there is no preference between
+the two sources: **given a ref, that tag is the only source** — every asset is
+fetched from it and a file sitting beside the script is never read, whatever its
+ownership or mode. Omit `--ref` and the files beside the script are used, which
+is the form run from a checkout (and the one the `remote-bootstrap` CI job uses
+to exercise the working tree's own scripts).
 
 The download is its **own command**, and the script runs only if it succeeded.
 Not a stylistic preference: a pipeline's exit status is its *last* command's,
@@ -211,16 +216,26 @@ downloading to a file, or stops using a private directory.
 
 The script goes into a **private directory** (`mktemp -d`, with mode `0700`
 stated rather than inherited from a default), not a bare `mktemp` file in shared
-`/tmp`. `BASH_SOURCE` is how the script finds the install scripts beside it, so a
-download into `/tmp` makes `/tmp` its own directory — and any unprivileged local
-user can pre-create `/tmp/install/lib.sh` for the root process to source.
-Arbitrary code execution as root, from nothing more than where the download
-landed. The bootstrap **also** refuses on its own account: it will not run
-sibling install scripts out of a directory that is world-writable, or that is
-owned by neither root nor the invoking user, and falls back to the pinned fetch
-saying which it was. That second layer is the one that holds, because it does
+`/tmp`, which would make `/tmp` the script's own directory. Two independent
+things now have to be true for root to be handed another user's code, and this
+recipe is only one of them — which is why it stays even though it is no longer
+the one that holds. The other is the script itself: this form passes `--ref`,
+and **given a ref the script reads nothing beside itself**, so a
+`/tmp/install/lib.sh` an unprivileged local user pre-created is never consulted,
+and its ownership and mode never have to be judged. That is the layer that does
 not depend on every adapter copying this recipe correctly — and an adapter
-copying it imperfectly is how the first layer fails on a real host.
+copying it imperfectly is how the recipe's own protection fails on a real host.
+
+Deleting the question was deliberate, and it replaced an
+ownership-and-permissions predicate on the script's own directory. That
+predicate had to decide whether a directory could be trusted between the check
+and the `source`, which is not a decision a shell script can win: it examined
+two directories and so could not answer for the path's ancestors (a `0700`
+directory inside a world-writable, non-sticky parent can be swapped out from
+under it), it examined the container rather than the contents (a mode-`0666`
+`install/lib.sh` inside a private directory passed), and the window between
+check and use is the swap it was looking for. Not consulting the directory at
+all has none of that to answer.
 
 `--ref` must be a **release tag** (`vX.Y.Z`); a branch, a bare commit, or a
 pre-release is refused with the reason. That tag is the trust root this design
