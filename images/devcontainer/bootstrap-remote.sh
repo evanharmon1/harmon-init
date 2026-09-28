@@ -26,17 +26,21 @@
 #
 # Properties, each asserted by scripts/test-bootstrap-remote.sh or the
 # remote-bootstrap CI job:
-#   - idempotent: a second run performs no installs and changes no versions
-#     (it prints HARMON_BOOTSTRAP_CHANGES=0) and exits 0;
+#   - idempotent, precisely: a second run performs no NEW installs and changes
+#     no PINNED tool version (HARMON_BOOTSTRAP_NEW_INSTALLS=0, same manifest);
+#     apt packages are unpinned and converge on the archive, and an upgrade
+#     there is reported (HARMON_BOOTSTRAP_UPGRADES), never hidden;
 #   - non-interactive, amd64 and arm64, runs as root or through sudo;
 #   - needs neither Docker nor Homebrew;
-#   - never installs 1Password (`op`), Homebrew, or Tailscale;
-#   - puts its own bin directory FIRST on PATH — by order, not membership — so
-#     the pinned mikefarah yq v4 beats a pre-provisioned /usr/bin/yq (the
-#     Python yq), and forces a UTF-8 locale, because a POSIX one makes NBSP
-#     stop reading as whitespace;
-#   - records what it installed in a manifest of the same shape the image
-#     writes, so image and VM can be compared for the same release tag.
+#   - never installs 1Password (`op`), Homebrew, or Tailscale: none may
+#     resolve at the end of a run that did not resolve at its start;
+#   - puts its own bin directory FIRST on PATH — by order, not membership — in
+#     the system profile and its own process, so the pinned mikefarah yq v4
+#     beats a pre-provisioned /usr/bin/yq (the Python yq); a user-level shadow
+#     (~/.local/bin from a stock ~/.profile) is reported, never fatal. Forces
+#     a UTF-8 locale, because a POSIX one makes NBSP stop reading as whitespace;
+#   - records what the tiers installed in a manifest of the same shape the
+#     image writes, so image and VM can be compared for the same release tag.
 set -euo pipefail
 
 readonly HARMON_REPO_RAW="https://raw.githubusercontent.com/evanharmon1/harmon-init"
@@ -163,9 +167,15 @@ esac
 # scripts are shared with a Docker build that has no sudo at all, and a
 # half-privileged run that installs some tools and fails on others is worse
 # than one that refuses up front.
+# The re-exec hands root an EXPLICIT environment, not `-E`: HOME is root's, so
+# nothing root writes lands under the caller's home; tiers and ref travel as
+# arguments, and the HARMON_* variables read from the environment only when set.
 if [ "$(id -u)" -ne 0 ]; then
     if [ -r "${BASH_SOURCE[0]}" ] && command -v sudo >/dev/null 2>&1; then
-        exec sudo -E -- bash "${BASH_SOURCE[0]}" --tiers "$tiers" ${ref:+--ref "$ref"}
+        exec sudo -- env HOME=/root \
+            ${HARMON_PREFIX+"HARMON_PREFIX=${HARMON_PREFIX}"} \
+            ${HARMON_ALLOW_UNPINNED_REF+"HARMON_ALLOW_UNPINNED_REF=${HARMON_ALLOW_UNPINNED_REF}"} \
+            bash "${BASH_SOURCE[0]}" --tiers "$tiers" ${ref:+--ref "$ref"}
     fi
     die "must run as root; pipe into 'sudo bash' or re-run under sudo"
 fi
@@ -208,21 +218,10 @@ export HARMON_VERSIONS_FILE="${asset_dir}/versions.env"
 # shellcheck source=./install/lib.sh
 . "${asset_dir}/install/lib.sh"
 
+# The run record (lib.sh: `<kind><TAB><text>` lines).
 change_log="$(mktemp)"
 export HARMON_CHANGE_LOG="$change_log"
-
-# ---------- the never-installed set: what was here before we started ----------
-# The closing check is PATH-wide (`command -v`, the form a consumer cares
-# about), so it has to know what the host already had: a self-hosted VM whose
-# administrator installed Tailscale is not the bootstrap installing Tailscale.
-# What fails the run is a forbidden tool that appeared during it, or one that
-# resolves from the prefix this script owns.
-never_before=""
-for forbidden in $HARMON_NEVER_INSTALL; do
-    if command -v "$forbidden" >/dev/null 2>&1; then
-        never_before="${never_before} ${forbidden}"
-    fi
-done
+tab="$(printf '\t')"
 
 # ---------- locale and PATH ----------
 # The remote VM's locale is POSIX with LANG unset (observed 2026-09-27), and a
@@ -303,6 +302,17 @@ set_locale
 # shellcheck source=/dev/null
 . "$HARMON_PROFILE_DROPIN"
 
+# ---------- the never-installed set ----------
+# The one invariant: a forbidden tool may not resolve at the end of the run
+# unless it already resolved at the start — PATH-wide, on the PATH the closing
+# check uses.
+never_before=""
+for forbidden in $HARMON_NEVER_INSTALL; do
+    if command -v "$forbidden" >/dev/null 2>&1; then
+        never_before="${never_before} ${forbidden}"
+    fi
+done
+
 # ---------- install ----------
 "${asset_dir}/install/apt-core.sh"
 for tier in $HARMON_TIER_ORDER; do
@@ -322,12 +332,9 @@ printf '\n==> verifying\n'
 for forbidden in $HARMON_NEVER_INSTALL; do
     found="$(command -v "$forbidden" 2>/dev/null || true)"
     [ -n "$found" ] || continue
-    case "$found" in
-    "${HARMON_BIN}"/*) die "${found} exists — the bootstrap must never install ${forbidden}" ;;
-    esac
     case " ${never_before} " in
     *" ${forbidden} "*) printf '    (pre-existing, not ours) %s at %s\n' "$forbidden" "$found" ;;
-    *) die "${forbidden} appeared on PATH (${found}) during this run — the bootstrap must never install ${forbidden}" ;;
+    *) die "${forbidden} resolves at ${found} and did not before this run — the bootstrap must never install ${forbidden}" ;;
     esac
 done
 for prefix in $HARMON_NEVER_PREFIXES; do
@@ -335,28 +342,31 @@ for prefix in $HARMON_NEVER_PREFIXES; do
         die "${prefix} exists — the bootstrap must never install the package manager that owns it"
 done
 
-# PATH precedence, by order: the tool must RESOLVE from our bin directory, in
-# this process and in a fresh login shell that starts with /usr/bin ahead of
-# everything (the pre-provisioned VM's shape). Both yq and task, because both
-# have a /usr/bin candidate on a pre-provisioned host.
-assert_resolves_under_bin() {
-    local tool="$1" path login_path
-    path="$(command -v "$tool" 2>/dev/null || true)"
-    [ "$path" = "${HARMON_BIN}/${tool}" ] ||
-        die "${tool} resolves to '${path:-nothing}', not ${HARMON_BIN}/${tool} — the pinned toolchain lost PATH precedence in this process"
-    login_path="$(env -i HOME="${HOME:-/root}" PATH=/usr/bin:/bin bash -lc "command -v ${tool}" 2>/dev/null || true)"
-    [ "$login_path" = "${HARMON_BIN}/${tool}" ] ||
-        die "a fresh login shell resolves ${tool} to '${login_path:-nothing}', not ${HARMON_BIN}/${tool} — ${HARMON_PROFILE_DROPIN} did not win PATH precedence"
-}
-assert_resolves_under_bin yq
-assert_resolves_under_bin task
+# PATH precedence, by order, where the bootstrap owns the order: this process
+# runs the system drop-in, so yq and task resolving from our bin here proves it.
+for tool in yq task; do
+    found="$(command -v "$tool" 2>/dev/null || true)"
+    [ "$found" = "${HARMON_BIN}/${tool}" ] ||
+        die "${tool} resolves to '${found:-nothing}', not ${HARMON_BIN}/${tool} — ${HARMON_PROFILE_DROPIN} did not win PATH precedence"
+done
 yq --version 2>&1 | grep -q 'mikefarah' ||
     die "yq at ${HARMON_BIN}/yq is not mikefarah yq: $(yq --version 2>&1)"
 
+# What it does NOT own: the invoking user's profile. bash reads ~/.profile after
+# /etc/profile, and a stock one puts ~/.local/bin ahead of everything, so a yq
+# there shadows the pinned one in that user's login shells and no system file
+# can prevent it. Checked in that user's real login shell; reported, never fatal.
+login_user="${SUDO_USER:-$(id -un)}"
+login_home="$(getent passwd "$login_user" 2>/dev/null | cut -d: -f6)"
+for tool in yq task; do
+    found="$(env -i HOME="${login_home:-$HOME}" USER="$login_user" PATH=/usr/bin:/bin bash -lc "command -v ${tool}" 2>/dev/null || true)"
+    [ "$found" != "${HARMON_BIN}/${tool}" ] || continue
+    warn "${login_user}'s login shell resolves ${tool} to '${found:-nothing}', not ${HARMON_BIN}/${tool}: a user-level PATH entry (${found%/*}) shadows the pinned toolchain. Remedy: in ${login_home:-$HOME}/.profile put ${HARMON_BIN} ahead of ${found%/*}, or remove ${found}."
+done
+
 # The EFFECTIVE locale, not LANG: `locale` reports what LC_CTYPE resolves to
 # after LC_ALL and LANG are both applied, so a surviving LC_ALL=C shows here
-# where a LANG check would pass. Checked in this process and in a fresh login
-# shell seeded with the trap itself.
+# where a LANG check would pass. This process, and a login shell seeded with it.
 effective_ctype() {
     "$@" 2>/dev/null | sed -n 's/^LC_CTYPE=//p' | tr -d '"'
 }
@@ -372,14 +382,15 @@ case "$login_ctype" in
 esac
 
 # ---------- record what was installed ----------
-# The same manifest the image writes (generate-manifest.sh, the same file),
-# so "image and VM install identical versions for the same release tag" is a
-# comparison of two files rather than a sentence in a document. The revision
-# is the checkout's commit when this ran from one, else the release tag it
-# was fetched from.
+# The same manifest the image writes (generate-manifest.sh, the same file), so
+# "image and VM install identical versions for the same release tag" is a diff
+# of two files. Its entries are the record's `tool` lines — every pinned tool a
+# tier installed or verified, under the image's keys — so no list here can fall
+# out of step with the tiers. The revision is the checkout's commit, else the
+# release tag the script was fetched from.
 manifest_dir="${HARMON_PREFIX}/share/harmon-remote-env"
 write_manifest() {
-    local revision="" manifest="${manifest_dir}/manifest.json" before="" tier
+    local revision="" manifest="${manifest_dir}/manifest.json" before=""
     if [ -n "$self_dir" ]; then
         revision="$(git -C "$self_dir" -c safe.directory='*' rev-parse --verify HEAD 2>/dev/null || true)"
     fi
@@ -390,35 +401,23 @@ write_manifest() {
         warn "no manifest written: the source revision is unknown (not a git checkout, and no release tag). The image-to-VM comparison needs one or the other."
         return 0
     fi
-    set -- "task=${TASK_VERSION}" "node=${NODE_VERSION}" "gh=${GH_VERSION}" \
-        "lychee=${LYCHEE_VERSION}" "markdownlint-cli2=${MARKDOWNLINT_CLI2_VERSION}" \
-        "shfmt=${SHFMT_VERSION}" "hadolint=${HADOLINT_VERSION}" \
-        "actionlint=${ACTIONLINT_VERSION}" "yq=${YQ_VERSION}" \
-        "semgrep=${SEMGREP_VERSION}" "copier=${COPIER_VERSION}" \
-        "lefthook=${LEFTHOOK_VERSION}" "gitleaks=${GITLEAKS_VERSION}" "uv=${UV_VERSION}"
-    for tier in $HARMON_TIER_ORDER; do
-        case ",${tiers}," in
-        *",${tier},"*)
-            case "$tier" in
-            agents) set -- "$@" "codex=${CODEX_VERSION}" ;;
-            browsers) set -- "$@" "playwright=${PLAYWRIGHT_VERSION}" "playwright-cli=${PLAYWRIGHT_CLI_VERSION}" ;;
-            esac
-            ;;
-        esac
-    done
     [ ! -f "$manifest" ] || before="$(cat "$manifest")"
+    # shellcheck disable=SC2046  # the record is one name=version token per line
     HARMON_MANIFEST_DIR="$manifest_dir" HARMON_MANIFEST_NAME=harmon-remote-env \
-        bash "${asset_dir}/generate-manifest.sh" "$revision" "$(harmon_arch)" "$@"
+        bash "${asset_dir}/generate-manifest.sh" "$revision" "$(harmon_arch)" \
+        $(sed -n "s/^tool${tab}//p" "$change_log")
     if [ "$before" = "$(cat "$manifest")" ]; then
         harmon_skip "manifest ${manifest}"
     else
         harmon_changed "manifest ${manifest} (${revision})"
     fi
 }
-harmon_load_versions
 write_manifest
 
-changes="$(grep -c . "$change_log" 2>/dev/null || true)"
+new_installs="$(grep -c "^install${tab}" "$change_log" || true)"
+upgrades="$(grep -c "^upgrade${tab}" "$change_log" || true)"
 rm -f "$change_log"
-printf '\n==> bootstrap complete: tiers %s, %s change(s) applied\n' "$tiers" "${changes:-0}"
-printf 'HARMON_BOOTSTRAP_CHANGES=%s\n' "${changes:-0}"
+printf '\n==> bootstrap complete: tiers %s, %s new install(s), %s apt upgrade(s)\n' "$tiers" "$new_installs" "$upgrades"
+printf 'HARMON_BOOTSTRAP_NEW_INSTALLS=%s\n' "$new_installs"
+printf 'HARMON_BOOTSTRAP_UPGRADES=%s\n' "$upgrades"
+printf 'HARMON_BOOTSTRAP_CHANGES=%s\n' "$((new_installs + upgrades))"

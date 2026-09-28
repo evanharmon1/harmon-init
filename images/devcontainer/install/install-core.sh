@@ -28,21 +28,29 @@ tmp="$HARMON_TMPDIR"
 # ---------- Node.js (checksum-pinned nodejs.org tarball) ----------
 # Installed under ${HARMON_PREFIX} so it wins PATH precedence over a
 # pre-provisioned /usr/bin/node (the remote VM ships Node 22).
-if harmon_at_version node "$NODE_VERSION" node --version; then
-    harmon_skip "node ${NODE_VERSION}"
-else
+if harmon_needs node "$NODE_VERSION" node --version; then
     node_arch="$(harmon_pick x64 arm64)"
     node_sha="$(harmon_pick "$node_amd64_sha256" "$node_arm64_sha256")"
     node_tarball="node-v${NODE_VERSION}-linux-${node_arch}.tar.xz"
-    harmon_changed "node ${NODE_VERSION} (${node_arch})"
     harmon_fetch "https://nodejs.org/dist/v${NODE_VERSION}/${node_tarball}" "${tmp}/${node_tarball}"
     harmon_verify_sha256 "${tmp}/${node_tarball}" "$node_sha"
+    # Extracted into a staging directory and moved into the prefix only once
+    # the whole tarball is out, so an interrupted extraction leaves the prefix
+    # untouched rather than half a Node that `node --version` may still pass.
     # --no-same-owner: the tarball records nodejs.org's build uid/gid, which
     # exists on no machine this runs on.
-    tar -xJf "${tmp}/${node_tarball}" -C "$HARMON_PREFIX" \
+    node_stage="${tmp}/node-${NODE_VERSION}"
+    mkdir -p "$node_stage"
+    tar -xJf "${tmp}/${node_tarball}" -C "$node_stage" \
         --strip-components=1 --no-same-owner \
         --exclude='*/CHANGELOG.md' --exclude='*/LICENSE' --exclude='*/README.md'
-    rm -f "${tmp}/${node_tarball}"
+    [ -x "${node_stage}/bin/node" ] || harmon_die "the Node tarball did not extract completely"
+    for node_dir in bin lib include share; do
+        [ -d "${node_stage}/${node_dir}" ] || continue
+        install -d -m 0755 "${HARMON_PREFIX}/${node_dir}"
+        cp -a "${node_stage}/${node_dir}/." "${HARMON_PREFIX}/${node_dir}/"
+    done
+    rm -rf "$node_stage" "${tmp}/${node_tarball}"
 fi
 # corepack is bundled with the tarball. `corepack enable` rewrites its shims
 # every time it runs, so gate it on pnpm already resolving from OUR prefix — a
@@ -56,13 +64,10 @@ else
 fi
 
 # ---------- uv (checksum-pinned GitHub release) ----------
-if harmon_at_version uv "$UV_VERSION" uv --version; then
-    harmon_skip "uv ${UV_VERSION}"
-else
+if harmon_needs uv "$UV_VERSION" uv --version; then
     uv_arch="$(harmon_pick x86_64 aarch64)"
     uv_sha="$(harmon_pick "$uv_amd64_sha256" "$uv_arm64_sha256")"
     uv_tarball="uv-${uv_arch}-unknown-linux-gnu.tar.gz"
-    harmon_changed "uv ${UV_VERSION} (${uv_arch})"
     harmon_fetch "https://github.com/astral-sh/uv/releases/download/${UV_VERSION}/${uv_tarball}" \
         "${tmp}/${uv_tarball}"
     harmon_verify_sha256 "${tmp}/${uv_tarball}" "$uv_sha"
@@ -78,29 +83,20 @@ fi
 # upstream projects publish no stable per-asset digest this repository has
 # reviewed, so the pin is the release tag. Changing that is a separate
 # decision from moving the installs, and moving the installs is this file's job.
-if harmon_at_version task "$TASK_VERSION" task --version; then
-    harmon_skip "task ${TASK_VERSION}"
-else
-    harmon_changed "task ${TASK_VERSION}"
+if harmon_needs task "$TASK_VERSION" task --version; then
     curl "${HARMON_CURL_OPTS[@]}" \
         "https://github.com/go-task/task/releases/download/v${TASK_VERSION}/task_linux_${arch}.tar.gz" |
         tar -xz -C "$HARMON_BIN" task
 fi
 
-if harmon_at_version lefthook "$LEFTHOOK_VERSION" lefthook version; then
-    harmon_skip "lefthook ${LEFTHOOK_VERSION}"
-else
-    harmon_changed "lefthook ${LEFTHOOK_VERSION}"
+if harmon_needs lefthook "$LEFTHOOK_VERSION" lefthook version; then
     harmon_fetch \
         "https://github.com/evilmartians/lefthook/releases/download/v${LEFTHOOK_VERSION}/lefthook_${LEFTHOOK_VERSION}_Linux_$(harmon_pick x86_64 arm64)" \
         "${tmp}/lefthook"
     harmon_install_bin "${tmp}/lefthook" lefthook
 fi
 
-if harmon_at_version gh "$GH_VERSION" gh --version; then
-    harmon_skip "gh ${GH_VERSION}"
-else
-    harmon_changed "gh ${GH_VERSION}"
+if harmon_needs gh "$GH_VERSION" gh --version; then
     gh_dir="gh_${GH_VERSION}_linux_${arch}"
     harmon_fetch \
         "https://github.com/cli/cli/releases/download/v${GH_VERSION}/${gh_dir}.tar.gz" \
@@ -113,57 +109,39 @@ fi
 # mikefarah yq v4. On a pre-provisioned VM /usr/bin/yq is the *Python* yq and
 # shadows this one under a PATH that puts /usr/bin first; installing into
 # ${HARMON_BIN} is what wins, and bootstrap-remote.sh asserts the resolution.
-if harmon_at_version yq "$YQ_VERSION" yq --version; then
-    harmon_skip "yq ${YQ_VERSION}"
-else
-    harmon_changed "yq ${YQ_VERSION}"
+if harmon_needs yq "$YQ_VERSION" yq --version; then
     harmon_fetch "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_${arch}" \
         "${tmp}/yq"
     harmon_install_bin "${tmp}/yq" yq
 fi
 
-if harmon_at_version shfmt "$SHFMT_VERSION" shfmt --version; then
-    harmon_skip "shfmt ${SHFMT_VERSION}"
-else
-    harmon_changed "shfmt ${SHFMT_VERSION}"
+if harmon_needs shfmt "$SHFMT_VERSION" shfmt --version; then
     harmon_fetch \
         "https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}/shfmt_v${SHFMT_VERSION}_linux_${arch}" \
         "${tmp}/shfmt"
     harmon_install_bin "${tmp}/shfmt" shfmt
 fi
 
-if harmon_at_version actionlint "$ACTIONLINT_VERSION" actionlint -version; then
-    harmon_skip "actionlint ${ACTIONLINT_VERSION}"
-else
-    harmon_changed "actionlint ${ACTIONLINT_VERSION}"
+if harmon_needs actionlint "$ACTIONLINT_VERSION" actionlint -version; then
     curl "${HARMON_CURL_OPTS[@]}" \
         "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_${arch}.tar.gz" |
         tar -xz -C "$HARMON_BIN" actionlint
 fi
 
-if harmon_at_version hadolint "$HADOLINT_VERSION" hadolint --version; then
-    harmon_skip "hadolint ${HADOLINT_VERSION}"
-else
-    harmon_changed "hadolint ${HADOLINT_VERSION}"
+if harmon_needs hadolint "$HADOLINT_VERSION" hadolint --version; then
     harmon_fetch \
         "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-Linux-$(harmon_pick x86_64 arm64)" \
         "${tmp}/hadolint"
     harmon_install_bin "${tmp}/hadolint" hadolint
 fi
 
-if harmon_at_version gitleaks "$GITLEAKS_VERSION" gitleaks version; then
-    harmon_skip "gitleaks ${GITLEAKS_VERSION}"
-else
-    harmon_changed "gitleaks ${GITLEAKS_VERSION}"
+if harmon_needs gitleaks "$GITLEAKS_VERSION" gitleaks version; then
     curl "${HARMON_CURL_OPTS[@]}" \
         "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_$(harmon_pick x64 arm64).tar.gz" |
         tar -xz -C "$HARMON_BIN" gitleaks
 fi
 
-if harmon_at_version lychee "$LYCHEE_VERSION" lychee --version; then
-    harmon_skip "lychee ${LYCHEE_VERSION}"
-else
-    harmon_changed "lychee ${LYCHEE_VERSION}"
+if harmon_needs lychee "$LYCHEE_VERSION" lychee --version; then
     lychee_arch="$(harmon_pick x86_64 aarch64)"
     curl "${HARMON_CURL_OPTS[@]}" \
         "https://github.com/lycheeverse/lychee/releases/download/lychee-v${LYCHEE_VERSION}/lychee-${lychee_arch}-unknown-linux-gnu.tar.gz" |

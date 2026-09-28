@@ -3,9 +3,10 @@
 # and bootstrap-remote.sh both run.
 #
 # Sourced, never executed. Every function is written to be safe to re-run: the
-# bootstrap's idempotence requirement (a second run performs no installs and
-# changes no versions) is met here rather than in each caller, so a new tool
-# cannot forget it.
+# bootstrap's idempotence requirement (a second run performs no NEW installs
+# and changes no PINNED tool version; apt packages are unpinned and converge on
+# the archive, so an upgrade there is reported as a change) is met here rather
+# than in each caller, so a new tool cannot forget it.
 #
 # Portability: bash 3.2 and Linux coreutils only — no `mapfile`, no `grep -P`.
 
@@ -37,19 +38,29 @@ HARMON_CURL_OPTS=(-fsSL --retry 3 --retry-delay 2 --retry-connrefused)
 
 harmon_log() { printf '==> %s\n' "$*"; }
 
-# harmon_changed / harmon_skip — the idempotence record.
-#
-# The bootstrap must be a no-op on a second run, and "exited 0 again" does not
-# prove that: a script that re-downloaded and re-installed everything also
-# exits 0. So every install site calls exactly one of these, and
-# bootstrap-remote.sh counts the `harmon_changed` lines. A second run reporting
-# a non-zero count is the failure, and CI asserts the count rather than the
-# exit status. HARMON_CHANGE_LOG is set by the bootstrap; when a script is run
-# directly (the Dockerfile does exactly that) the counter is simply absent.
+# The run record. One line per event, `<kind><TAB><text>`, appended to
+# HARMON_CHANGE_LOG by every install site — across the tier scripts, which run
+# as separate processes, so a file rather than a variable. Three kinds:
+#   install  a new install, or a pinned tool moved to its pin;
+#   upgrade  an unpinned apt package that converged on the archive;
+#   tool     `name=version` for every pinned tool a tier installed OR verified.
+# bootstrap-remote.sh counts the first two separately (a second run must show
+# zero installs; upgrades are legitimate and reported) and serialises the third
+# as the manifest, so the manifest is what the tiers did rather than a list
+# kept beside them. "Exited 0 again" proves none of this: a script that
+# re-downloaded everything also exits 0. When a script runs with no record
+# (the Dockerfile runs them directly) the helpers only print.
+harmon_record() {
+    [ -n "${HARMON_CHANGE_LOG:-}" ] && printf '%s\t%s\n' "$1" "$2" >>"$HARMON_CHANGE_LOG"
+    return 0
+}
 harmon_changed() {
     printf '==> %s\n' "$*"
-    [ -n "${HARMON_CHANGE_LOG:-}" ] && printf '%s\n' "$*" >>"$HARMON_CHANGE_LOG"
-    return 0
+    harmon_record install "$*"
+}
+harmon_upgraded() {
+    printf '==> %s\n' "$*"
+    harmon_record upgrade "$*"
 }
 harmon_skip() { printf '    (already at the pinned version) %s\n' "$*"; }
 
@@ -119,6 +130,21 @@ harmon_at_version() {
     [ "$(harmon_installed_version "$_hav_cmd" "$@")" = "$_hav_want" ]
 }
 
+# harmon_needs <command> <version> <version-command...>
+# The one decision every pinned install makes: true when <command> must be
+# installed (not at <version>, or not resolving from HARMON_BIN), false when it
+# is already right. Records `<command>=<version>` either way, so a tool is in
+# the manifest exactly when a tier installed or verified it, and prints the
+# install/skip line so a call site is `if harmon_needs …; then <install>; fi`.
+harmon_needs() {
+    harmon_record tool "$1=$2"
+    if harmon_at_version "$1" "$2" "${@:3}"; then
+        harmon_skip "$1 $2"
+        return 1
+    fi
+    harmon_changed "$1 $2"
+}
+
 # harmon_ensure_bin — the install prefix's bin directory exists.
 #
 # Called once per tier. harmon_install_bin creates it on demand, but the
@@ -153,32 +179,30 @@ harmon_tmpdir_init() {
 
 # harmon_npm_global <package> <version> <command>
 # npm's own idempotence is a network round-trip even when nothing changes, so
-# check the installed version first.
+# decide first — through harmon_needs, like every other pinned tool: a same
+# version under a pre-provisioned prefix is still not ours.
 harmon_npm_global() {
-    if [ "$(harmon_installed_version "$3" "$3" --version)" = "$2" ]; then
-        harmon_skip "${1}@${2}"
-        return 0
+    if harmon_needs "$3" "$2" "$3" --version; then
+        npm install -g "${1}@${2}"
     fi
-    harmon_changed "npm install -g ${1}@${2}"
-    npm install -g "${1}@${2}"
 }
 
 # harmon_uv_tool <package> <version> <command>
 harmon_uv_tool() {
-    if harmon_at_version "$3" "$2" "$3" --version; then
-        harmon_skip "$1==$2"
-        return 0
+    if harmon_needs "$3" "$2" "$3" --version; then
+        uv tool install --force "${1}==${2}"
     fi
-    harmon_changed "uv tool install ${1}==${2}"
-    uv tool install --force "${1}==${2}"
 }
 
 # harmon_cleanup_caches — download caches are pure residue: build layers the
 # image ships, and disk pressure on a small VM. Neither environment reads them
 # again, and doing it here rather than in the Dockerfile keeps the two paths
-# identical.
+# identical. Scoped to the RUNNING user's own home from the passwd database,
+# never to an inherited HOME: root must not delete a caller's ~/.npm.
 harmon_cleanup_caches() {
-    rm -rf "${HOME:-/root}/.cache/uv"
-    command -v npm >/dev/null 2>&1 && npm cache clean --force >/dev/null 2>&1
+    _hcc_home="$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6)"
+    _hcc_home="${_hcc_home:-${HOME:-/root}}"
+    rm -rf "${_hcc_home}/.cache/uv"
+    command -v npm >/dev/null 2>&1 && HOME="$_hcc_home" npm cache clean --force >/dev/null 2>&1
     return 0
 }

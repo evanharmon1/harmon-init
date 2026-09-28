@@ -477,6 +477,58 @@ r = run_bootstrap(["--ref", "main", "--tiers", "no-such-tier"], {"HARMON_ALLOW_U
 if r.returncode != 1 or "unknown tier" not in r.stderr or "WARNING" not in r.stderr or "main" not in r.stderr:
     fail(f"{BOOTSTRAP}: HARMON_ALLOW_UNPINNED_REF=1 must let --ref main through with a WARNING naming the ref")
 
+# ── 15. the manifest is what the tiers installed, under the image's keys ────
+# The VM manifest is serialised from the run record, which the lib.sh helpers
+# append `name=version` to for every pinned tool a tier installs or verifies —
+# so there is no manifest list to drift, and this proves the two things that
+# would let one drift back in. Both sides are DERIVED, nothing is listed here:
+#   (a) every `*_VERSION` pin a tier script consumes reaches the record through
+#       one of the recording helpers (a pin read by a hand-rolled `if` would
+#       install fine and vanish from the manifest);
+#   (b) the key each tier records for a pin is the key the Dockerfile's manifest
+#       layer gives the same pin, so image and VM manifests share a key space.
+RECORDERS = re.compile(
+    r'\bharmon_needs\s+(?P<key1>[a-z0-9-]+)\s+"\$(?P<var1>[A-Z0-9_]+_VERSION)"'
+    r'|\bharmon_(?:npm_global|uv_tool)\s+\S+\s+"\$(?P<var2>[A-Z0-9_]+_VERSION)"\s+(?P<key2>[a-z0-9-]+)\b'
+)
+CONSUMED = re.compile(r"\$\{?(?P<var>[A-Z][A-Z0-9_]*_VERSION)\b")
+image_keys = {var: key for key, var in re.findall(r'"([a-z0-9-]+)=\$\{([A-Z0-9_]+)\}"', dockerfile_text)}
+default_tiers = re.search(r'HARMON_DEFAULT_TIERS="([^"]+)"', bootstrap_text)
+default_tiers = set(default_tiers.group(1).split(",")) if default_tiers else set()
+recorded_by_default = set()
+consumed_by_default = set()
+for name in tier_scripts:
+    m = re.fullmatch(r"install-([a-z0-9-]+)\.sh", name)
+    if not m:
+        continue
+    tier, text = m.group(1), (INSTALL / name).read_text()
+    code = "\n".join(line for line in text.splitlines() if not line.lstrip().startswith("#"))
+    consumed = set(CONSUMED.findall(code))
+    recorded = {}
+    for mo in RECORDERS.finditer(code):
+        key, var = mo["key1"] or mo["key2"], mo["var1"] or mo["var2"]
+        if var in recorded:
+            fail(f"{INSTALL}/{name}: {var} is recorded twice (as {recorded[var]} and {key}); the manifest would carry a duplicate key")
+        recorded[var] = key
+    unrecorded = sorted(consumed - set(recorded))
+    if unrecorded:
+        fail(
+            f"{INSTALL}/{name}: {unrecorded} are read by the tier but reach the manifest through no recording helper "
+            "(harmon_needs / harmon_npm_global / harmon_uv_tool) — the VM would install them and not record them"
+        )
+    for var, key in sorted(recorded.items()):
+        if var not in image_keys:
+            fail(f"{INSTALL}/{name}: records {key}={var} but {DOCKERFILE}'s manifest layer has no entry for {var}")
+        elif image_keys[var] != key:
+            fail(f"{INSTALL}/{name}: records {var} as {key!r} but the image's manifest names it {image_keys[var]!r}")
+    if tier in default_tiers:
+        recorded_by_default |= set(recorded)
+        consumed_by_default |= consumed
+if consumed_by_default != recorded_by_default:
+    fail(f"default tiers {sorted(default_tiers)}: pins consumed {sorted(consumed_by_default)} != pins recorded {sorted(recorded_by_default)}")
+if not recorded_by_default:
+    fail(f"{INSTALL}: no tier records any pin — the recording-helper regex no longer matches the call sites")
+
 for e in errors:
     print(f"FAIL: {e}", file=sys.stderr)
 if errors:
@@ -489,4 +541,5 @@ print(f"bootstrap-remote OK: {len(head_pairs)} checksum pin-pair(s) agree with t
 print("bootstrap-remote OK: the image runs the same scripts, from the same versions file")
 print("bootstrap-remote OK: no denied host, no 1Password/Homebrew/Tailscale, fetch list matches disk")
 print("bootstrap-remote OK: a non-release-tag ref is refused; the override warns and names it")
+print(f"bootstrap-remote OK: the default tiers record {len(recorded_by_default)} pin(s) for the manifest, under the image's keys")
 PY

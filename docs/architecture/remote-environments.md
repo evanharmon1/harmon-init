@@ -40,7 +40,7 @@ exits 0 and the answers are quietly wrong:
 
 | Trap | What breaks | How the bootstrap answers it |
 | --- | --- | --- |
-| `/usr/bin/yq` is the **Python** yq | It shadows mikefarah yq v4, and every frontmatter then reads as invalid | Installs into `/usr/local/bin` and puts that directory **first** on `PATH` by order, not membership — the `profile.d` drop-in removes every existing occurrence and prepends it — then asserts that `yq` and `task` *resolve* from it, in the running process and in a fresh login shell that starts with `/usr/bin` ahead |
+| `/usr/bin/yq` is the **Python** yq | It shadows mikefarah yq v4, and every frontmatter then reads as invalid | Installs into `/usr/local/bin` and puts that directory **first** on `PATH` by order, not membership — the `profile.d` drop-in removes every existing occurrence and prepends it — then asserts that `yq` and `task` *resolve* from it in the running process, which sourced that very drop-in. What the bootstrap does not own it reports: bash reads `~/.profile` *after* `/etc/profile`, and a stock one prepends `~/.local/bin`, so a `yq` there still shadows the pinned one in that user's login shells — the closing check runs the invoking user's real login shell and prints a warning naming the shadowing path and the remedy, and exits 0 |
 | The locale is POSIX (`LANG` unset), or `LC_ALL=C` is already set | NBSP stops reading as whitespace, so Unicode-title checks silently pass what they should reject; a pre-existing `LC_ALL=C` overrides any `LANG` set beside it | Sets `LANG=C.UTF-8` in `/etc/environment` (and rewrites an `LC_ALL=` line there when one exists), **forces** `LANG` and `LC_ALL` to `C.UTF-8` in the `profile.d` drop-in rather than defaulting them, and asserts the *effective* locale — `locale` must report a UTF-8 `LC_CTYPE`, in the process and in a fresh login shell seeded with `LC_ALL=C` |
 
 Ubuntu's **git 2.43** is kept deliberately: it is the git the shared image
@@ -101,16 +101,21 @@ what the dev loop actually gates on and nothing else.
 from the original tier list and the omission was found by running a full dev
 loop on the VM.
 
+The browsers tier's "installed" contract is Playwright's own
+`INSTALLATION_COMPLETE` marker in each browser location; a system dependency
+removed after that marker was written is outside the bootstrap's guarantee,
+and re-running the tier re-runs `--with-deps`.
+
 Never installed, in any tier, and asserted both by the bootstrap and by CI:
 **1Password (`op`), Homebrew, Tailscale.** The first and third are
 credential-bearing and a shared remote VM must not hold either; Homebrew is a
 second, unpinned package manager that would defeat the contract above. The
 bootstrap's closing check is `PATH`-wide (`command -v`, the form a consumer
-cares about): it fails if any of them resolves from the prefix it owns or
-appeared on `PATH` during the run, and reports — without failing — one the
-host already had, because a self-hosted VM whose administrator installed
-Tailscale is not the bootstrap installing Tailscale. Neither Docker nor
-Homebrew is required to *run* the bootstrap.
+cares about) and states one invariant: it fails if any of them resolves at the
+end of the run and did not at the start, and reports by path — without failing
+— one the host already had, because a self-hosted VM whose administrator
+installed Tailscale is not the bootstrap installing Tailscale. Neither Docker
+nor Homebrew is required to *run* the bootstrap.
 
 Interactive-terminal tools (zellij, herdr, starship, the TUIs) stay image-only.
 
@@ -146,15 +151,25 @@ a warning naming the unpinned ref so a log can never pass one off as pinned.
 `--tiers core,agents,browsers` selects tiers (default `core,agents`); `core`
 cannot be skipped.
 
-It runs as root or under `sudo`, is non-interactive, and is **idempotent** in
-a precise sense: **a second run performs no installs and changes no
-versions** — no apt transaction (the package index is not even refreshed when
-every package is present), no download, no npm or uv install, no corepack
-shim, no manifest rewrite, and no rewrite of the two files under `/etc` when
-their content already matches. That is asserted as a count, not as an exit
-status — it prints `HARMON_BOOTSTRAP_CHANGES=<n>` and CI requires `0` on the
-second run, because a script that re-downloaded and re-installed everything
-also exits 0.
+It runs as root or under `sudo` (an unprivileged caller is re-executed under
+`sudo` with an explicit environment and `HOME=/root`, so root never writes
+under the caller's home), is non-interactive, and is **idempotent** in a
+precise sense: **a second run performs no new installs and changes no pinned
+tool version** — no download, no npm or uv install, no corepack shim, no
+manifest rewrite, and no rewrite of the two files under `/etc` when their
+content already matches. The apt packages are deliberately *unpinned* and
+converge on the archive: every run refreshes the index and lets apt upgrade
+them, and an upgrade is **reported as a change, never hidden**. That is
+asserted as counts, not as an exit status — it prints
+`HARMON_BOOTSTRAP_NEW_INSTALLS=<n>` and `HARMON_BOOTSTRAP_UPGRADES=<n>` (and
+their sum as `HARMON_BOOTSTRAP_CHANGES`), and CI requires `NEW_INSTALLS=0` plus
+a byte-identical manifest on the second run, because a script that
+re-downloaded and re-installed everything also exits 0.
+
+One residual is stated rather than solved: the bootstrap guarantees `PATH`
+precedence for the system profile and its own process, and can only *report*
+a user-level shadow such as `~/.local/bin/yq`, because that user's own profile
+runs last.
 
 The agent posture (managed Claude Code settings, Codex configuration) is not
 installed by the bootstrap today: #1404 adds the agent-posture install to both
@@ -168,23 +183,33 @@ produced by the **same** `generate-manifest.sh` the image runs and in the same
 shape (`schemaVersion`, `image.{name,revision,architecture}`, `tools`) — with
 `image.name` set to `harmon-remote-env` and `image.revision` the checkout's
 commit or, for the standalone form, the release tag it was fetched from. Its
-`tools` are the shared pins the selected tiers installed, under the same keys
-the image's manifest uses.
+`tools` are not a list the bootstrap keeps: every pinned tool a tier installs
+or verifies records `name=version` as it goes, and the manifest is that record
+under the same keys the image's manifest uses.
+`scripts/test-bootstrap-remote.sh` proves the key set — every `*_VERSION` pin
+the default tiers read is recorded, under the key the Dockerfile's manifest
+layer gives the same pin — with both sides derived from the files, so no
+third list exists to drift.
 
 That makes the drift claim testable rather than asserted. For the same release
-tag, the image's manifest and the VM's must agree on every tool the VM has;
-the image's carries more (its image-only tools), so the comparison is on the
-VM's key set:
+tag, the image's manifest and the VM's must agree on every **shared** pin. The
+image's manifest carries more (its image-only tools), so the image side is
+narrowed to the keys `versions.env` pins — never to the keys the VM happens to
+have, which would hide a shared tool the VM failed to record:
 
 ```sh
 vm=/usr/local/share/harmon-remote-env/manifest.json
+shared=$(sed -n 's/^\([A-Z][A-Z0-9_]*\)_VERSION=.*/\1/p' images/devcontainer/versions.env | tr 'A-Z_' 'a-z-' | jq -Rn '[inputs]')
 diff <(jq -S .tools "$vm") \
-     <(jq -S --slurpfile vm "$vm" '.tools | with_entries(select(.key | in($vm[0].tools)))' image-manifest.json)
+     <(jq -S --argjson shared "$shared" '.tools | with_entries(select(.key | IN($shared[])))' image-manifest.json)
 ```
 
 (`image-manifest.json` is `/usr/local/share/harmon-devcontainer/manifest.json`
 copied out of a container running the image built from the same tag.) An
-empty diff is the contract holding; any line is a version that differs.
+empty diff is the contract holding; a version line is a pin that differs, and
+a key present only on the image side is a shared tool the VM did not record —
+expected only for a tier the VM did not select (the browsers pins, by
+default).
 `smoke.sh` stays image-only — it asserts the image's whole toolchain,
 including the tools the bootstrap never installs — so it is not the way to
 check a VM; the comparison above is.
@@ -194,7 +219,7 @@ check a VM; the comparison above is.
 | Check | Where | What it proves |
 | --- | --- | --- |
 | `task test:bootstrap-remote` | `task verify`, and the `guard` job | The pin contract, offline: no second pin owner (declared or typed into a download URL), every pin Renovate-extractable, both Node digests verified for the pinned Node, the fetch list matches the directory, no denied host, no forbidden tool named by the bootstrap or a tier script, and a non-release-tag `--ref` is refused |
-| `remote-bootstrap.yml` → `bootstrap` | CI, stock `ubuntu:24.04` container, seeded with `/usr/bin` ahead of `/usr/local/bin` and `LC_ALL=C` | It runs: the tiers install inside the budget, the second run performs no installs and changes no versions, `yq` and `task` resolve from `/usr/local/bin` and the effective locale is UTF-8 in a fresh login shell, nothing forbidden appeared on `PATH`, the VM manifest names the pinned versions, and `task check` then passes in a harmon-init checkout |
+| `remote-bootstrap.yml` → `bootstrap` | CI, stock `ubuntu:24.04` container, seeded with `/usr/bin` ahead of `/usr/local/bin` and `LC_ALL=C` | It runs: the tiers install inside the budget, the second run performs no new installs and leaves the manifest byte-identical, `yq` and `task` resolve from `/usr/local/bin` and the effective locale is UTF-8 in a fresh login shell on the system profile path, a user with `~/.local/bin/yq` planted gets the shadow warning and exit 0 through the un-sudoed re-exec path with nothing of root's left in that home, nothing forbidden appeared on `PATH`, every VM manifest key names its pin, and `task check` then passes in a harmon-init checkout |
 | `images/devcontainer/smoke.sh` | the built image | The image really runs the shared scripts — they ship in the image beside `versions.env`, and its manifest records their versions for the comparison above |
 
 The CI job runs on the runner's native architecture, so `vars.CI_RUNS_ON` is
