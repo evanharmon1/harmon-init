@@ -22,6 +22,8 @@ Everything below that names a capability carries the URL it was read from
 (see [Sources](#sources)); anything that could not be verified against a
 primary source is marked **unverified**.
 
+**Follow-on spike:** [self-hosted-cloud-environments.md](self-hosted-cloud-environments.md) (harmon-init#1410) revisits the Claude Code and Coder rows against Claude Code's *self-hosted environments*, where the runner image is one you build — and reaches "adopt later", gated on a Team or Enterprise plan.
+
 ## The problem, restated as a target contract
 
 The bot devcontainer is the reference environment, and "matches the
