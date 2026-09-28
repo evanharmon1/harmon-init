@@ -9,14 +9,23 @@
 # devcontainer and every remote environment together.
 #
 # This is the ONLY remote setup script. Each platform adapter's setup step is a
-# one-line call to it at a pinned harmon-init release tag — never a
+# call to it at a pinned harmon-init release tag — never a
 # platform-specific copy. See docs/architecture/remote-environments.md.
 #
 #   sudo ./images/devcontainer/bootstrap-remote.sh                  # from a checkout
 #
-#   HARMON_INIT_REF=vX.Y.Z                                           # standalone: the
+#   # standalone: the tag is written ONCE, and the download is its own command
+#   # so a failure stops the chain. Never `curl … | sudo bash`: a pipeline's
+#   # status is its LAST command's, so a 404 or a truncated transfer exits 0 —
+#   # the adapter reports a successful setup having installed nothing, and a
+#   # partial script has already run as root. Nothing removes the temporary
+#   # file afterwards on purpose: a trailing cleanup command would become the
+#   # chain's exit status and put the same bug back.
+#   HARMON_INIT_REF=vX.Y.Z
+#   harmon_bootstrap="$(mktemp)"
 #   curl -fsSL "https://raw.githubusercontent.com/evanharmon1/harmon-init/${HARMON_INIT_REF}/images/devcontainer/bootstrap-remote.sh" \
-#     | sudo bash -s -- --ref "$HARMON_INIT_REF"                     # tag, written once
+#     -o "$harmon_bootstrap" \
+#     && sudo bash "$harmon_bootstrap" --ref "$HARMON_INIT_REF"
 #
 # The ref must be a release tag (vX.Y.Z). That tag is the trust root of the
 # standalone form: the script and everything it fetches come from one tag,
@@ -49,8 +58,8 @@ set -euo pipefail
 readonly HARMON_REPO_RAW="https://raw.githubusercontent.com/evanharmon1/harmon-init"
 readonly HARMON_RELEASE_TAG_RE='^v[0-9]+\.[0-9]+\.[0-9]+$'
 
-# The files this script needs when it was fetched on its own (the piped
-# one-liner), relative to images/devcontainer/. Kept equal to what is actually
+# The files this script needs when it was fetched on its own (the standalone
+# recipe above), relative to images/devcontainer/. Kept equal to what is actually
 # on disk by scripts/test-bootstrap-remote.sh, so adding a tier script cannot
 # leave the standalone path silently fetching an incomplete set.
 readonly HARMON_REMOTE_ASSETS="
@@ -460,6 +469,7 @@ esac
 manifest_dir="${HARMON_PREFIX}/share/harmon-remote-env"
 write_manifest() {
     local revision="" manifest="${manifest_dir}/manifest.json" before=""
+    local after="" before_tiers="" manifest_tiers="" tier=""
     if [ "$assets_local" = 1 ]; then
         revision="$(git -C "$self_dir" -c safe.directory='*' rev-parse --verify HEAD 2>/dev/null || true)"
         # --no-optional-locks: root reads the caller's checkout without
@@ -476,15 +486,49 @@ write_manifest() {
         warn "no manifest written: the source revision is unknown (not a git checkout, and no release tag). The image-to-VM comparison needs one or the other."
         return 0
     fi
-    [ ! -f "$manifest" ] || before="$(cat "$manifest")"
+    if [ -f "$manifest" ]; then
+        before="$(cat "$manifest")"
+        before_tiers="$(printf '%s' "$before" | jq -r '.image.tiers // ""' 2>/dev/null || true)"
+    fi
+    # The tier set these entries were produced from travels INTO the manifest,
+    # spelled in HARMON_TIER_ORDER order so one selection always spells itself
+    # one way and `--tiers agents,core` is not mistaken for a different set than
+    # `--tiers core,agents`.
+    for tier in $HARMON_TIER_ORDER; do
+        case ",${tiers}," in
+        *",${tier},"*) manifest_tiers="${manifest_tiers:+${manifest_tiers},}${tier}" ;;
+        esac
+    done
     # shellcheck disable=SC2046  # the record is one name=version token per line
     HARMON_MANIFEST_DIR="$manifest_dir" HARMON_MANIFEST_NAME=harmon-remote-env \
+        HARMON_MANIFEST_TIERS="$manifest_tiers" \
         bash "${asset_dir}/generate-manifest.sh" "$revision" "$(harmon_arch)" \
         $(sed -n "s/^tool${tab}//p" "$change_log")
-    if [ "$before" = "$(cat "$manifest")" ]; then
+    after="$(cat "$manifest")"
+    if [ "$before" = "$after" ]; then
         harmon_skip "manifest ${manifest}"
-    else
+    elif [ -z "$before" ] || [ "$before_tiers" = "$manifest_tiers" ]; then
         harmon_changed "manifest ${manifest} (${revision})"
+    else
+        # A manifest is ONE RUN's records, so a run whose tier set differs from
+        # the one that wrote the file lists a different set of tools by design:
+        # the tools only the other tier set installs are simply not in this
+        # run's record, whether or not they are still installed. Reporting that
+        # as a changed pin is a false positive, and reporting nothing would hide
+        # the entries that just left the file — so compare like with like, the
+        # tools BOTH tier sets cover, and say out loud that that is what was
+        # compared. The idempotence claim ("a second run leaves the manifest
+        # byte-identical") is a claim about two runs of the SAME tiers, and this
+        # is the branch where that precondition does not hold.
+        warn "the manifest at ${manifest} records tiers '${before_tiers:-none (written before the tier set was recorded)}' and this run selected '${manifest_tiers}'. Its entries are this run's records, so tools only the other tier set installs are no longer listed — they may still be installed. Compared on the tools both tier sets cover, and nothing else."
+        if printf '%s\n' "$before" "$after" | jq -e -s '
+            (.[0].tools // {}) as $a | (.[1].tools // {}) as $b
+            | ($a | with_entries(select(.key | in($b)))) == ($b | with_entries(select(.key | in($a))))
+            ' >/dev/null 2>&1; then
+            harmon_skip "manifest ${manifest} (tier set ${before_tiers:-none} -> ${manifest_tiers}; every shared tool unchanged)"
+        else
+            harmon_changed "manifest ${manifest} (${revision}; tier set ${before_tiers:-none} -> ${manifest_tiers}; a shared tool's version differs)"
+        fi
     fi
 }
 write_manifest

@@ -145,6 +145,62 @@ harmon_needs() {
     harmon_changed "$1 $2"
 }
 
+# harmon_have_bins <name>...
+# True when every name is present and executable in HARMON_BIN.
+#
+# The file test, not `command -v`: PATH can resolve a name to some OTHER copy
+# on the machine, and what a block publishes is the copy in its own prefix.
+# `-x` follows symlinks, which is what makes this usable for Node — npm, npx
+# and corepack are relative symlinks into ../lib/node_modules, so a dangling
+# one reads as not executable and the block reinstalls.
+harmon_have_bins() {
+    for _hhb_name in "$@"; do
+        [ -x "${HARMON_BIN}/${_hhb_name}" ] || return 1
+    done
+    return 0
+}
+
+# harmon_needs_all <command> <version> <also>... -- <version-command...>
+# harmon_needs for a block that publishes MORE THAN ONE executable.
+#
+# A version number is not proof that a block finished. A first install copies a
+# staged tree into the prefix piece by piece, so an interruption can publish the
+# version witness while the siblings beside it are still missing — after which
+# harmon_needs reads the new version, skips the block on every later run, and
+# the run dies on the missing sibling instead of repairing it. Same shape when a
+# block extracts two binaries and the gate consults one: the prefix keeps the
+# pinned witness and never regains the other. So the decision is the CONJUNCTION
+# of the two properties: <command> at <version> from HARMON_BIN (the existing
+# comparison, unchanged) AND every <also> present and executable there. Either
+# half failing re-runs the block, which is what makes the damage repairable.
+#
+# <also> is every OTHER executable the block publishes; `--` ends that list and
+# the rest is the version command, exactly as harmon_needs takes it. Records and
+# prints what harmon_needs records and prints, so a call site stays
+# `if harmon_needs_all …; then <install>; fi` and the manifest is unaffected.
+harmon_needs_all() {
+    _hna_cmd="$1"
+    _hna_want="$2"
+    shift 2
+    _hna_also=()
+    while [ "$#" -gt 0 ] && [ "$1" != "--" ]; do
+        _hna_also+=("$1")
+        shift
+    done
+    [ "${1:-}" = "--" ] ||
+        harmon_die "harmon_needs_all ${_hna_cmd}: no -- separating the companion list from the version command"
+    shift
+    [ "${#_hna_also[@]}" -gt 0 ] ||
+        harmon_die "harmon_needs_all ${_hna_cmd}: no companion executable named — use harmon_needs for a lone binary"
+    [ "$#" -gt 0 ] || harmon_die "harmon_needs_all ${_hna_cmd}: no version command"
+    harmon_record tool "${_hna_cmd}=${_hna_want}"
+    if harmon_at_version "$_hna_cmd" "$_hna_want" "$@" && harmon_have_bins "${_hna_also[@]}"; then
+        harmon_skip "$_hna_cmd $_hna_want"
+        return 1
+    fi
+    harmon_changed "$_hna_cmd $_hna_want"
+}
+
 # harmon_ensure_bin — the install prefix's bin directory exists.
 #
 # Called once per tier, and by harmon_install_bin on demand. /usr/local/bin
@@ -164,10 +220,18 @@ harmon_ensure_bin() {
 # every filesystem this runs on — puts it in place. The live path is always
 # the old binary or the new one, never a fragment of either, and a binary that
 # is currently executing is replaced rather than hitting "text file busy".
+#
+# The staging name carries the PID as well as the tool name. A name derived
+# from the tool alone is shared by every process installing that tool, so two
+# runs on one VM would write the same staging file and each could rename the
+# other's half-written copy into place — the one thing this function exists to
+# prevent. With the pid the name identifies the WRITER, so what a run renames
+# is always the bytes it staged itself; the rename stays a same-directory
+# rename, which is the atomicity invariant and is unchanged.
 harmon_install_bin() {
     harmon_ensure_bin
-    install -m 0755 "$1" "${HARMON_BIN}/.${2}.harmon-staging"
-    mv -f "${HARMON_BIN}/.${2}.harmon-staging" "${HARMON_BIN}/$2"
+    install -m 0755 "$1" "${HARMON_BIN}/.${2}.$$.harmon-staging"
+    mv -f "${HARMON_BIN}/.${2}.$$.harmon-staging" "${HARMON_BIN}/$2"
 }
 
 # harmon_install_archive_bin <url> <installed-name> <member> [sha256]

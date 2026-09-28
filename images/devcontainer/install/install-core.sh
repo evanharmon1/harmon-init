@@ -28,7 +28,12 @@ tmp="$HARMON_TMPDIR"
 # ---------- Node.js (checksum-pinned nodejs.org tarball) ----------
 # Installed under ${HARMON_PREFIX} so it wins PATH precedence over a
 # pre-provisioned /usr/bin/node (the remote VM ships Node 22).
-if harmon_needs node "$NODE_VERSION" node --version; then
+#
+# The gate names npm, npx and corepack as well as node: this block publishes
+# four executables and node's version alone is no evidence the other three
+# landed. See harmon_needs_all in lib.sh, and the copy-order note below for the
+# half the ordering already covers.
+if harmon_needs_all node "$NODE_VERSION" npm npx corepack -- node --version; then
     node_arch="$(harmon_pick x64 arm64)"
     node_sha="$(harmon_pick "$node_amd64_sha256" "$node_arm64_sha256")"
     node_tarball="node-v${NODE_VERSION}-linux-${node_arch}.tar.xz"
@@ -38,12 +43,16 @@ if harmon_needs node "$NODE_VERSION" node --version; then
     # the tarball's contents until the copy below finishes) and copied into
     # the prefix only once the whole tarball is out, so an interrupted
     # extraction leaves the prefix untouched. The copy order matters too:
-    # bin/ goes LAST because bin/node is what harmon_needs reads as the
-    # version witness and bin/npm is a relative symlink into
-    # ../lib/node_modules. lib/ first means the symlink's target exists the
-    # moment bin/ lands, and a copy that dies before bin/ leaves the OLD node
-    # (or none) in place, so the next run redoes the install instead of
-    # skipping a new node beside a dangling npm.
+    # bin/ goes LAST because bin/node is what the gate reads as the version
+    # witness and bin/npm is a relative symlink into ../lib/node_modules. lib/
+    # first means the symlink's target exists the moment bin/ lands, and a copy
+    # that dies before bin/ leaves the OLD node (or none) in place, so the next
+    # run redoes the install instead of skipping a new node beside a dangling
+    # npm. What the ordering cannot cover is an interruption INSIDE this last
+    # copy, which can publish bin/node while bin/npm is still missing: on a
+    # FIRST install there is no old node for the version comparison to catch,
+    # and the run would then skip the block for good and die later on the
+    # missing npm. That half is the gate's companion list above, not this loop.
     # --no-same-owner: the tarball records nodejs.org's build uid/gid, which
     # exists on no machine this runs on.
     node_stage="${tmp}/node-${NODE_VERSION}"
@@ -71,7 +80,11 @@ else
 fi
 
 # ---------- uv (checksum-pinned GitHub release) ----------
-if harmon_needs uv "$UV_VERSION" uv --version; then
+# The gate names uvx as well as uv: the tarball carries both and repository
+# operations invoke uvx directly (the Semgrep and Foreman wrappers), so a prefix
+# holding the pinned uv without uvx would skip this block for good and leave the
+# toolchain unusable while the bootstrap reported success.
+if harmon_needs_all uv "$UV_VERSION" uvx -- uv --version; then
     uv_arch="$(harmon_pick x86_64 aarch64)"
     uv_sha="$(harmon_pick "$uv_amd64_sha256" "$uv_arm64_sha256")"
     uv_tarball="uv-${uv_arch}-unknown-linux-gnu.tar.gz"
@@ -80,8 +93,11 @@ if harmon_needs uv "$UV_VERSION" uv --version; then
     harmon_verify_sha256 "${tmp}/${uv_tarball}" "$uv_sha"
     tar -xzf "${tmp}/${uv_tarball}" -C "$tmp" --strip-components=1 \
         "uv-${uv_arch}-unknown-linux-gnu/uv" "uv-${uv_arch}-unknown-linux-gnu/uvx"
-    harmon_install_bin "${tmp}/uv" uv
+    # uvx before uv, for the reason bin/ is copied last above: uv is the version
+    # witness, so publishing it last means an interruption always leaves a
+    # version the gate rejects rather than a pinned uv beside a stale uvx.
     harmon_install_bin "${tmp}/uvx" uvx
+    harmon_install_bin "${tmp}/uv" uv
     rm -f "${tmp}/${uv_tarball}" "${tmp}/uv" "${tmp}/uvx"
 fi
 

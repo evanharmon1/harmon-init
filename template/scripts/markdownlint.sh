@@ -2,9 +2,11 @@
 # markdownlint.sh — resolve markdownlint-cli2 and run it in check or fix mode.
 #
 # Prefer the repo-pinned binary (node_modules/.bin) so hooks/CI match the
-# lockfile; fall back to npx for non-node repos and fresh scaffolds. Invoking
+# lockfile; then a PATH-installed binary already AT the pin, which is what a
+# provisioned machine (the devcontainer image, a remote VM the bootstrap set up)
+# has; fall back to npx for non-node repos and fresh scaffolds. Invoking
 # the .bin shim directly is package-manager-agnostic (works under npm too,
-# where `pnpm exec` would break). Keeps this bin-vs-npx dispatch out of the
+# where `pnpm exec` would break). Keeps this dispatch out of the
 # Taskfile per the "keep cmds trivial; non-trivial shell lives in scripts/*.sh"
 # rule.
 #
@@ -40,11 +42,38 @@ default_globs=(
 # renovate: datasource=npm depName=markdownlint-cli2
 MARKDOWNLINT_VERSION=0.23.2
 
-# Prefer a repo-local install; otherwise fetch a PINNED version. Resolving
-# `latest` here meant a new upstream rule could turn every repo red with no
-# commit — the opposite of what a lint gate is for.
+# Prefer a repo-local install; then a PATH binary at the pin; otherwise fetch a
+# PINNED version. Resolving `latest` here meant a new upstream rule could turn
+# every repo red with no commit — the opposite of what a lint gate is for.
+#
+# The PATH step is there because `npx` never looks at PATH: it resolves a local
+# or remote npm package. A machine the devcontainer image or the remote
+# bootstrap provisioned already carries markdownlint-cli2 at this pin, and
+# without this step `task check` re-downloaded it — so a job claiming to run
+# with only what its setup installed did not, and an environment whose egress
+# closes after setup could not run the gate at all.
+#
+# The version must MATCH the pin, and that is a safety condition rather than a
+# nicety: preferring any PATH binary would silently downgrade every machine
+# carrying an older global copy, which is the `latest` problem above in reverse.
+# A mismatch, an unreadable banner, or a banner in an unrecognised shape all
+# fall through to npx, so the pin decides what runs in every case.
+markdownlint_path_bin=""
+if markdownlint_path_bin="$(command -v markdownlint-cli2 2>/dev/null)"; then
+    # The banner's first line is `markdownlint-cli2 v<version> (markdownlint …)`.
+    # Read with shell builtins alone, so resolving the linter needs nothing on
+    # PATH but the linter.
+    markdownlint_banner="$("$markdownlint_path_bin" --version 2>/dev/null || true)"
+    case "${markdownlint_banner%%$'\n'*}" in
+    "markdownlint-cli2 v${MARKDOWNLINT_VERSION}" | "markdownlint-cli2 v${MARKDOWNLINT_VERSION} "*) ;;
+    *) markdownlint_path_bin="" ;;
+    esac
+fi
+
 if [ -x node_modules/.bin/markdownlint-cli2 ]; then
     run=(node_modules/.bin/markdownlint-cli2)
+elif [ -n "$markdownlint_path_bin" ]; then
+    run=("$markdownlint_path_bin")
 else
     run=(npx --yes "markdownlint-cli2@${MARKDOWNLINT_VERSION}")
 fi

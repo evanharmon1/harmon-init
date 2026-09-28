@@ -144,11 +144,18 @@ from the original tier list and the omission was found by running a full dev
 loop on the VM.
 
 The browsers tier's "installed" contract is Playwright's own
-`INSTALLATION_COMPLETE` marker in each browser location; a system dependency
-removed after that marker was written is outside the bootstrap's guarantee.
-Re-running the tier does **not** repair it — the marker makes the run skip —
-so the remedy is to remove the browser's install location (or just its
-`INSTALLATION_COMPLETE`), after which the next run reinstalls it with
+`INSTALLATION_COMPLETE` marker in each browser location **and** the shared
+cache being readable by the unprivileged runtime user — `o+rx` on every entry
+under `PLAYWRIGHT_BROWSERS_PATH`, because the tier installs as root while the
+session runs as `vscode` or another account. The marker attests the download,
+not the permission, so the permission is checked rather than inferred from it:
+a complete-looking cache whose permissions were left wrong (an interruption
+between the download and the `chmod`, a restrictive umask) is repaired by the
+next run with a `chmod` and no re-download. A system dependency removed after
+the marker was written is still outside the bootstrap's guarantee, and
+re-running the tier does **not** repair that — the marker makes the download
+skip — so the remedy there remains to remove the browser's install location (or
+just its `INSTALLATION_COMPLETE`), after which the next run reinstalls it with
 `--with-deps`.
 
 Never installed, in any tier, and asserted both by the bootstrap and by CI:
@@ -171,13 +178,15 @@ Interactive-terminal tools (zellij, herdr, starship, the TUIs) stay image-only.
 ## The entrypoint
 
 `images/devcontainer/bootstrap-remote.sh` is the **only** remote setup script.
-Each adapter's setup step is a one-line call to it at a pinned harmon-init
+Each adapter's setup step is a call to it at a pinned harmon-init
 release tag — never a platform-specific copy:
 
 ```sh
 HARMON_INIT_REF=vX.Y.Z   # the release tag, written once
+harmon_bootstrap="$(mktemp)"
 curl -fsSL "https://raw.githubusercontent.com/evanharmon1/harmon-init/${HARMON_INIT_REF}/images/devcontainer/bootstrap-remote.sh" \
-  | sudo bash -s -- --ref "$HARMON_INIT_REF"
+  -o "$harmon_bootstrap" \
+  && sudo bash "$harmon_bootstrap" --ref "$HARMON_INIT_REF"
 ```
 
 The tag is written **once** and read from that one variable: the URL the
@@ -185,6 +194,20 @@ script is fetched from and the `--ref` it fetches its install scripts and
 `versions.env` from are the same value by construction, and if the script is
 ever handed both `--ref` and `HARMON_INIT_REF` it refuses unless they agree.
 From a checkout it uses the files beside it and ignores `--ref` for fetching.
+
+The download is its **own command**, and the script runs only if it succeeded.
+Not a stylistic preference: a pipeline's exit status is its *last* command's,
+so `curl … | sudo bash` exits **0** when the download 404s or the connection
+drops mid-transfer — every adapter copying it would report a successful setup
+having installed nothing, and a truncated script has already run as root. `set
+-o pipefail` in the adapter would fix it, but a recipe that is only safe when
+the caller remembers something is a recipe that will be run unsafely; `curl -o`
+plus `&&` propagates the failure by construction. Nothing deletes the temporary
+file: a trailing `rm` would become the chain's exit status and reintroduce
+exactly the bug, and the file is a few kilobytes on a VM that is about to be
+thrown away. `scripts/test-bootstrap-remote.sh` § 14 holds this shape in place
+— it fails if either copy of the recipe becomes a bare pipe into a shell, or
+stops downloading to a file.
 
 `--ref` must be a **release tag** (`vX.Y.Z`); a branch, a bare commit, or a
 pre-release is refused with the reason. That tag is the trust root this design
@@ -239,7 +262,8 @@ the image and the bootstrap in the same change.
 At the end of a run the bootstrap writes
 `/usr/local/share/harmon-remote-env/manifest.json` (under `HARMON_PREFIX`),
 produced by the **same** `generate-manifest.sh` the image runs and in the same
-shape (`schemaVersion`, `image.{name,revision,architecture}`, `tools`) — with
+shape (`schemaVersion`, `image.{name,revision,architecture}`, `tools`) plus
+`image.tiers`, the tier set the entries were produced from — with
 `image.name` set to `harmon-remote-env` and `image.revision` the checkout's
 commit — suffixed `-dirty` when that checkout has uncommitted or untracked
 changes, so the manifest never attests a clean commit for bytes that were not
@@ -247,7 +271,14 @@ that commit — or, for the standalone form, the release tag it was fetched
 from (no repository, so never dirty). Its
 `tools` are not a list the bootstrap keeps: every pinned tool a tier installs
 or verifies records `name=version` as it goes, and the manifest is that record
-under the same keys the image's manifest uses.
+under the same keys the image's manifest uses. `image.tiers` is there because
+that makes the entries ONE RUN's records: `--tiers core` after a
+`--tiers core,agents,browsers` run writes fewer tools by design, and without the
+field a reader cannot tell that narrowing from a tool having vanished. The
+bootstrap's own before/after check reads it, and when the two tier sets differ it
+says so and compares only the tools both sets cover instead of reporting the
+narrowing as a changed pin. The image build installs its whole toolchain, has no
+tier selection to name, and omits the field.
 `scripts/test-bootstrap-remote.sh` proves the key set — every `*_VERSION` pin
 the default tiers read is recorded, under the key the Dockerfile's manifest
 layer gives the same pin — with both sides derived from the files, so no

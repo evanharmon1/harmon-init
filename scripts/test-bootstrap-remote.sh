@@ -367,7 +367,7 @@ if overlap:
     )
 
 # ── 7. the standalone fetch list matches what is on disk ────────────────────
-# Without this, adding a tier script leaves the piped one-liner fetching an
+# Without this, adding a tier script leaves the standalone recipe fetching an
 # incomplete set — and failing only on a remote VM nobody is watching.
 listed = re.search(r'HARMON_REMOTE_ASSETS="\n(.*?)\n"', bootstrap_text, re.S)
 if not listed:
@@ -853,6 +853,58 @@ r = run_bootstrap(["--ref", "main", "--tiers", "no-such-tier"], {"HARMON_ALLOW_U
 if r.returncode != 1 or "unknown tier" not in r.stderr or "WARNING" not in r.stderr or "main" not in r.stderr:
     fail(f"{BOOTSTRAP}: HARMON_ALLOW_UNPINNED_REF=1 must let --ref main through with a WARNING naming the ref")
 
+# The same recipe must also PROPAGATE A FAILED DOWNLOAD, which the tag check
+# above cannot help with: a pipeline's exit status is its LAST command's, and the
+# caller's shell has no pipefail, so `curl … | sudo bash` exits 0 when the
+# download 404s or the transfer truncates. Every adapter copying it would then
+# report a successful setup having installed nothing — and a truncated script has
+# already run as root. The recipe therefore downloads to a file and runs it only
+# on a successful download, which is a property of its SHAPE and so is checked
+# here rather than remembered. Both copies are checked: they are copies of each
+# other and one can be fixed alone.
+#
+# Comment markers are stripped and backslash continuations joined first, so the
+# recipe is read as the one command it is — the pipe lives on a continuation
+# line, where a line-by-line scan would not see it beside the URL.
+RECIPE_URL = re.compile(r"raw\.githubusercontent\.com/evanharmon1/harmon-init/\S*bootstrap-remote\.sh")
+PIPE_TO_SHELL = re.compile(r"\|\s*(?:sudo\b[^|]*?\s)?(?:ba|da|z|k)?sh\b")
+
+
+def recipe_commands(text):
+    joined, buf = [], ""
+    for raw_line in text.splitlines():
+        buf += re.sub(r"^\s*#\s?", "", raw_line)
+        if buf.rstrip().endswith("\\"):
+            buf = buf.rstrip()[:-1]
+            continue
+        joined.append(buf)
+        buf = ""
+    if buf:
+        joined.append(buf)
+    return [c for c in joined if RECIPE_URL.search(c)]
+
+
+for label, text in ((BOOTSTRAP, bootstrap_text), (DOC, doc_text)):
+    commands = recipe_commands(text)
+    if not commands:
+        fail(
+            f"{label}: no documented standalone recipe found (nothing fetches bootstrap-remote.sh from the raw "
+            "URL), so this check enforces nothing — move the recipe back or move this check to where it went"
+        )
+    for command in commands:
+        shown = " ".join(command.split())[:160]
+        if PIPE_TO_SHELL.search(command):
+            fail(
+                f"{label}: the documented standalone recipe pipes the download straight into a shell. A pipeline "
+                "reports its LAST command's status, so a failed or truncated download exits 0 and an adapter "
+                f"reports a setup that installed nothing: {shown!r}"
+            )
+        if not re.search(r"(?:^|\s)-o(?:\s|=)", command):
+            fail(
+                f"{label}: the documented standalone recipe does not download to a file (`curl … -o <file>`), so "
+                f"nothing can short-circuit the run when the download fails: {shown!r}"
+            )
+
 # ── 15. the manifest is what the tiers installed, under the image's keys ────
 # The VM manifest is serialised from the run record, which the lib.sh helpers
 # append `name=version` to for every pinned tool a tier installs or verifies —
@@ -864,7 +916,7 @@ if r.returncode != 1 or "unknown tier" not in r.stderr or "WARNING" not in r.std
 #   (b) the key each tier records for a pin is the key the Dockerfile's manifest
 #       layer gives the same pin, so image and VM manifests share a key space.
 RECORDERS = re.compile(
-    r'\bharmon_needs\s+(?P<key1>[a-z0-9-]+)\s+"\$(?P<var1>[A-Z0-9_]+_VERSION)"'
+    r'\bharmon_needs(?:_all)?\s+(?P<key1>[a-z0-9-]+)\s+"\$(?P<var1>[A-Z0-9_]+_VERSION)"'
     r'|\bharmon_(?:npm_global|uv_tool)\s+\S+\s+"\$(?P<var2>[A-Z0-9_]+_VERSION)"\s+(?P<key2>[a-z0-9-]+)\b'
 )
 CONSUMED = re.compile(r"\$\{?(?P<var>[A-Z][A-Z0-9_]*_VERSION)\b")
@@ -890,7 +942,8 @@ for name in tier_scripts:
     if unrecorded:
         fail(
             f"{INSTALL}/{name}: {unrecorded} are read by the tier but reach the manifest through no recording helper "
-            "(harmon_needs / harmon_npm_global / harmon_uv_tool) — the VM would install them and not record them"
+            "(harmon_needs / harmon_needs_all / harmon_npm_global / harmon_uv_tool) — the VM would install them "
+            "and not record them"
         )
     for var, key in sorted(recorded.items()):
         if var not in image_keys:
@@ -925,6 +978,8 @@ if wm_start < 0 or wm_end < 0:
     fail(f"{BOOTSTRAP}: no write_manifest() function to exercise — the manifest provenance case cannot run")
 elif not tag_re_decl:
     fail(f"{BOOTSTRAP}: HARMON_RELEASE_TAG_RE is not a single-quoted literal, so the harness cannot reuse it")
+elif not order:
+    fail(f"{BOOTSTRAP}: HARMON_TIER_ORDER is not a double-quoted literal, so the harness cannot reuse it")
 else:
     harness = r"""
 set -euo pipefail
@@ -935,6 +990,8 @@ harmon_changed() { :; }
 harmon_arch() { printf 'amd64\n'; }
 tab="$(printf '\t')"
 HARMON_RELEASE_TAG_RE='@TAG_RE@'
+HARMON_TIER_ORDER='@TIER_ORDER@'
+tiers=core,agents
 ref=v9.9.9
 root="$(mktemp -d)"
 trap 'rm -rf "$root"' EXIT
@@ -984,6 +1041,7 @@ printf 'LOCAL_REVISION %s\n' "$(jq -r .image.revision "${manifest_dir}/manifest.
 """
     harness = (
         harness.replace("@TAG_RE@", tag_re_decl.group(1))
+        .replace("@TIER_ORDER@", order.group(1))
         .replace("@WRITE_MANIFEST@", bootstrap_text[wm_start:wm_end])
         .replace("@GENERATOR@", str(IMG / "generate-manifest.sh"))
     )
@@ -1010,6 +1068,189 @@ printf 'LOCAL_REVISION %s\n' "$(jq -r .image.revision "${manifest_dir}/manifest.
                 "on the local assets must not stop a local run naming its commit"
             )
 
+# ── 16. a version number is not a completeness check ────────────────────────
+# A block that publishes SEVERAL executables can be interrupted after the one the
+# gate reads as its version witness and before the rest. A gate that consults the
+# version alone then skips that block on every later run, so the prefix keeps a
+# pinned witness beside a missing sibling and re-running never repairs it: the
+# run dies on the missing npm, or on a uvx the Semgrep and Foreman wrappers
+# invoke directly. lib.sh's harmon_needs_all is the conjunction that fixes it —
+# EXECUTED here, because a pattern match cannot tell whether the conjunction is
+# the right way round.
+completeness = r"""
+set -euo pipefail
+root="$(mktemp -d)"
+trap 'rm -rf "$root"' EXIT
+export HARMON_PREFIX="$root"
+export HARMON_BIN="${root}/bin"
+. '@LIB@'
+harmon_ensure_bin
+PATH="${HARMON_BIN}:${PATH}"
+
+stub() { # stub <name> <what its version command prints>
+    printf '#!/bin/sh\nprintf "%%s\\n" "%s"\n' "$2" >"${HARMON_BIN}/$1"
+    chmod 0755 "${HARMON_BIN}/$1"
+}
+verdict() { # verdict <label> <gate...>
+    label="$1"
+    shift
+    if "$@" >/dev/null 2>&1; then printf '%s needs\n' "$label"; else printf '%s skips\n' "$label"; fi
+}
+
+# Node: the pinned version witness present, a sibling missing — what an
+# interrupted FIRST install leaves behind, where there is no older node for the
+# version comparison to catch.
+stub node "v9.9.9"
+verdict NODE_NPM_ABSENT harmon_needs_all node 9.9.9 npm npx corepack -- node --version
+stub npm "9.9.9"
+stub npx "9.9.9"
+stub corepack "9.9.9"
+verdict NODE_COMPLETE harmon_needs_all node 9.9.9 npm npx corepack -- node --version
+rm -f "${HARMON_BIN}/npx"
+verdict NODE_NPX_ABSENT harmon_needs_all node 9.9.9 npm npx corepack -- node --version
+
+# uv: the tarball carries uv AND uvx while the version command reads uv alone.
+stub uv "uv 8.8.8"
+verdict UV_UVX_ABSENT harmon_needs_all uv 8.8.8 uvx -- uv --version
+stub uvx "uvx 8.8.8"
+verdict UV_COMPLETE harmon_needs_all uv 8.8.8 uvx -- uv --version
+
+# The version half is untouched: a complete prefix at the WRONG version still
+# installs, or this would have traded one blind spot for another.
+stub node "v1.1.1"
+verdict NODE_WRONG_VERSION harmon_needs_all node 9.9.9 npm npx corepack -- node --version
+"""
+run = subprocess.run(
+    ["bash", "-s"],
+    input=completeness.replace("@LIB@", str(INSTALL / "lib.sh")),
+    capture_output=True,
+    text=True,
+)
+verdicts = dict(line.split(" ", 1) for line in run.stdout.splitlines() if line.count(" ") == 1)
+expected = {
+    "NODE_NPM_ABSENT": "needs",
+    "NODE_COMPLETE": "skips",
+    "NODE_NPX_ABSENT": "needs",
+    "UV_UVX_ABSENT": "needs",
+    "UV_COMPLETE": "skips",
+    "NODE_WRONG_VERSION": "needs",
+}
+if run.returncode != 0 or len(verdicts) != len(expected):
+    fail(
+        f"{INSTALL}/lib.sh: the completeness cases could not run (exit {run.returncode}) — "
+        f"stderr: {run.stderr.strip()[:300]!r}"
+    )
+else:
+    for case, want in expected.items():
+        got = verdicts.get(case)
+        if got != want:
+            fail(
+                f"{INSTALL}/lib.sh: harmon_needs_all {case} {got!r}, expected {want!r} — a block must re-run "
+                "unless its version witness is at the pin AND every executable it publishes is present"
+            )
+
+# …and the two call sites that need it name every executable their block
+# publishes, or the helper is correct and unused where it matters.
+core_text = (INSTALL / "install-core.sh").read_text()
+for gated, companions in (("node", ["corepack", "npm", "npx"]), ("uv", ["uvx"])):
+    site = re.search(rf'^if harmon_needs_all {gated} "\$[A-Z0-9_]+_VERSION" (.+?) -- ', core_text, re.M)
+    if not site:
+        fail(
+            f"{INSTALL}/install-core.sh: the {gated} block is not gated on harmon_needs_all with a companion "
+            f"list — {gated}'s version alone is no evidence the rest of the block's executables landed"
+        )
+    elif sorted(site.group(1).split()) != companions:
+        fail(
+            f"{INSTALL}/install-core.sh: the {gated} gate names companions {sorted(site.group(1).split())}, "
+            f"expected {companions} — every other executable that block publishes"
+        )
+
+# ── 17. `task check` runs the markdownlint the bootstrap installed ──────────
+# The bootstrap's CI job runs `task check` last and claims it uses only what the
+# bootstrap installed. scripts/markdownlint.sh is where that was false: `npx
+# --yes markdownlint-cli2@<pin>` resolves a local or remote npm PACKAGE and never
+# the global binary install-core.sh puts on PATH, so the gate re-downloaded what
+# it had just been given — and an environment whose egress closes after setup
+# could not run it at all. The dispatcher therefore prefers a PATH binary AT THE
+# PIN, and the version match is the safety condition: preferring any PATH binary
+# would silently downgrade every machine carrying an older global copy, the
+# `latest` failure that pin exists to prevent, in reverse. Executed with stubs,
+# because which binary a dispatcher CHOOSES is not visible in its text.
+MARKDOWNLINT = pathlib.Path("scripts/markdownlint.sh")
+pin_decl = re.search(r"^MARKDOWNLINT_VERSION=(\S+)$", MARKDOWNLINT.read_text(), re.M)
+if not pin_decl:
+    fail(f"{MARKDOWNLINT}: no MARKDOWNLINT_VERSION pin to compare a PATH binary against")
+else:
+    dispatch = r"""
+set -euo pipefail
+bash_bin="$(command -v bash)"
+root="$(mktemp -d)"
+trap 'rm -rf "$root"' EXIT
+export RECORD="${root}/record"
+work="${root}/work"
+mkdir -p "$work"
+
+stub() { # stub <path> <label it records> <what --version prints>
+    mkdir -p "$(dirname "$1")"
+    {
+        printf '#!/bin/sh\n'
+        printf 'if [ "$1" = "--version" ]; then printf "%%s\\n" "%s"; exit 0; fi\n' "$3"
+        printf 'printf "%%s\\n" "%s" >>"$RECORD"\n' "$2"
+    } >"$1"
+    chmod 0755 "$1"
+}
+chose() { # chose <label> <stub dir>
+    : >"$RECORD"
+    (cd "$work" && PATH="$2" "$bash_bin" '@SCRIPT@' check README.md >/dev/null 2>&1) ||
+        printf 'exited-non-zero\n' >>"$RECORD"
+    printf '%s %s\n' "$1" "$(tr '\n' ',' <"$RECORD" | sed 's/,$//')"
+}
+
+matching="${root}/matching"
+stub "${matching}/markdownlint-cli2" path 'markdownlint-cli2 v@PIN@ (markdownlint v0.41.1)'
+stub "${matching}/npx" npx 'npx'
+mismatched="${root}/mismatched"
+stub "${mismatched}/markdownlint-cli2" path 'markdownlint-cli2 v0.0.1 (markdownlint v0.41.1)'
+stub "${mismatched}/npx" npx 'npx'
+neither="${root}/neither"
+stub "${neither}/npx" npx 'npx'
+
+chose MATCHING_PATH_BINARY "$matching"
+chose MISMATCHED_PATH_BINARY "$mismatched"
+chose NO_PATH_BINARY "$neither"
+stub "${work}/node_modules/.bin/markdownlint-cli2" local 'markdownlint-cli2 v@PIN@ (markdownlint v0.41.1)'
+chose REPO_LOCAL_WINS "$matching"
+"""
+    run = subprocess.run(
+        ["bash", "-s"],
+        input=dispatch.replace("@SCRIPT@", str(MARKDOWNLINT.resolve())).replace("@PIN@", pin_decl.group(1)),
+        capture_output=True,
+        text=True,
+    )
+    chosen = dict(line.split(" ", 1) for line in run.stdout.splitlines() if line.count(" ") == 1)
+    expected = {
+        "MATCHING_PATH_BINARY": "path",
+        "MISMATCHED_PATH_BINARY": "npx",
+        "NO_PATH_BINARY": "npx",
+        "REPO_LOCAL_WINS": "local",
+    }
+    if run.returncode != 0 or len(chosen) != len(expected):
+        fail(
+            f"{MARKDOWNLINT}: the dispatch cases could not run (exit {run.returncode}) — "
+            f"stderr: {run.stderr.strip()[:300]!r}"
+        )
+    else:
+        why = {
+            "MATCHING_PATH_BINARY": "a PATH binary at the pin is what the bootstrap installed; npx would re-download it",
+            "MISMATCHED_PATH_BINARY": "a PATH binary at the WRONG version must fall through, or the pin stops deciding",
+            "NO_PATH_BINARY": "with nothing on PATH the pinned npx fallback must still run",
+            "REPO_LOCAL_WINS": "node_modules/.bin stays first, so hooks and CI match the lockfile",
+        }
+        for case, want in expected.items():
+            got = chosen.get(case)
+            if got != want:
+                fail(f"{MARKDOWNLINT}: {case} ran {got!r}, expected {want!r} — {why[case]}")
+
 for e in errors:
     print(f"FAIL: {e}", file=sys.stderr)
 if errors:
@@ -1027,4 +1268,7 @@ print(f"bootstrap-remote OK: all {len(reached)} host(s) the tiers reach are on t
 print("bootstrap-remote OK: a non-release-tag ref is refused; the override warns and names it")
 print(f"bootstrap-remote OK: the default tiers record {len(recorded_by_default)} pin(s) for the manifest, under the image's keys")
 print("bootstrap-remote OK: the manifest revision names the assets actually run — the checkout's HEAD only when the checkout supplied them")
+print("bootstrap-remote OK: the documented standalone recipe downloads to a file and is never a bare pipe into a shell, in both copies")
+print("bootstrap-remote OK: a block publishing several executables re-runs unless every one of them is present at the pin")
+print("bootstrap-remote OK: markdownlint-cli2 resolves to a PATH binary at the pin, node_modules/.bin first, npx only as the fallback")
 PY

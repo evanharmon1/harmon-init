@@ -67,12 +67,34 @@ ${chromium_targets}
 TARGETS
 fi
 
-# The marker is the whole contract, so a re-run with it present is a skip, not
-# a repair: the documented remedy for a browser broken AFTER the marker was
-# written (a system dependency removed, say) is to remove the install location
-# or its INSTALLATION_COMPLETE, and the next run then reinstalls --with-deps.
-if [ "$browsers_missing" -eq 0 ]; then
+# The markers say the DOWNLOAD finished. They say nothing about the OTHER half
+# of what this tier promises: that the unprivileged runtime user can read the
+# shared cache. These install as root, the image runs as `vscode`, and a remote
+# VM may hand the session to another account again — so an interruption between
+# the markers and the recursive chmod below, or a restrictive umask, leaves a
+# cache that looks complete and cannot be opened. Inferring the permission from
+# the marker would take the skip branch on every later run and never repair it.
+# So the permission is CHECKED, with the same test the repair makes true:
+# `chmod -R o+rx` leaves o+r and o+x set on every entry, and the first entry
+# without both is what this finds. On a tree that is already correct the walk
+# finds nothing and the tier still skips.
+browsers_unreadable=""
+if [ -d "$PLAYWRIGHT_BROWSERS_PATH" ]; then
+    browsers_unreadable="$(find "$PLAYWRIGHT_BROWSERS_PATH" \! -perm -o+rx -print -quit 2>/dev/null || true)"
+fi
+
+# A re-run is a repair for the permissions and a skip for everything else: the
+# documented remedy for a browser broken AFTER the marker was written (a system
+# dependency removed, say) is still to remove the install location or its
+# INSTALLATION_COMPLETE, because reinstalling Chromium on the strength of a
+# marker being present is what made this tier non-idempotent in the first place.
+if [ "$browsers_missing" -eq 0 ] && [ -z "$browsers_unreadable" ]; then
     harmon_skip "playwright chromium"
+elif [ "$browsers_missing" -eq 0 ]; then
+    # Downloaded but not readable: repair the permissions alone. No re-download
+    # — the markers are trustworthy about what they actually attest.
+    harmon_changed "playwright chromium cache permissions (${browsers_unreadable} was not readable by other users)"
+    chmod -R o+rx "$PLAYWRIGHT_BROWSERS_PATH"
 else
     harmon_changed "playwright chromium"
     "${HARMON_BIN}/playwright" install --with-deps chromium
