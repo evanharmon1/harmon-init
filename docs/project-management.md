@@ -1258,8 +1258,9 @@ back later. Collect them instead on two dedicated issues:
   work still owed.
 - **Each task is one `- [ ] [HUMAN] …` acceptance criterion on the
   collector**, naming its source:
-  `- [ ] [HUMAN] Add FLY_API_TOKEN to the repo secrets (from #1412)`. Agents
-  append items; a human ticks them. The collector closes when every box is
+  `- [ ] [HUMAN] Add FLY_API_TOKEN to the repo secrets (from #1412)`, with
+  the source written `owner/repo#N` when it lives in another repository.
+  Agents append items; a human ticks them. The collector closes when every box is
   ticked.
 - **The source issue mentions, never blocks.** Record the task on the source
   issue as a plain line under `## Out of scope` —
