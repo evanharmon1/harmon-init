@@ -116,14 +116,29 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
 - `close-milestone-on-release.yml` — closes the milestone matching the tag on release publish.
 - `sync-harmon-devkit.yml` — **root-only**: turns a published harmon-devkit
   release into a verified pin-and-sync PR (see below).
+- `remote-bootstrap.yml` — **root-only**: proves
+  `images/devcontainer/bootstrap-remote.sh` on a stock `ubuntu:24.04` container.
+  Two jobs, because they prove different things. `guard` runs
+  `task test:bootstrap-remote` — the offline pin contract, also part of
+  `verify`. `bootstrap` runs the thing: it seeds the two traps a real remote VM
+  has (a Python `yq` at `/usr/bin/yq`, a POSIX locale), installs the core and
+  agents tiers against a five-minute budget recorded in the job summary, runs
+  the bootstrap a second time and requires it to report **zero** changes,
+  asserts that `op`, Homebrew and Tailscale are absent, and then runs
+  `task check` in the checkout using only what the bootstrap installed. Its
+  container job is fork-gated like the image publisher's, for the same reason:
+  it executes checked-out shell as root. The job runs on the runner's native
+  architecture, so `vars.CI_RUNS_ON` is what decides whether arm64 is
+  exercised. See [remote-environments.md](remote-environments.md).
 
 ## Root-only vs template-shipped workflows
 
 Most root workflows are the rendered form of a `template/` twin and must be
 edited in lockstep (AGENTS.md, "Dogfood parity"). A few are **root-only**: they
 exist because harmon-init sits inside harmon-platform, and a generated repo has
-no such edge. `close-milestone-on-release.yml`, `sync-harmon-devkit.yml`, and
-`publish-harmon-devcontainer.yml` are root-only; they have no `template/`
+no such edge. `close-milestone-on-release.yml`, `sync-harmon-devkit.yml`,
+`publish-harmon-devcontainer.yml`, and `remote-bootstrap.yml` are root-only;
+they have no `template/`
 counterpart, and the dogfood checks are
 twin-driven (they walk `template/`), so root-only files are correctly invisible
 to them. Do not add a twin to make them "consistent".
@@ -222,6 +237,14 @@ runs publish immutable source tags and validate anonymous pulls before the
 least-privilege CI App token is minted for pin propagation. The complete image,
 overlay, bootstrap, monotonic-update, and rollback contract is documented in
 [devcontainer-image.md](devcontainer-image.md).
+
+The same producer directory also owns the **remote** path: the install scripts
+under `images/devcontainer/install/` and the pins in
+`images/devcontainer/versions.env` are run both by that Dockerfile and by
+`bootstrap-remote.sh` on a cloud VM that cannot pull the image at all. That is
+why a change under `images/devcontainer/` triggers `remote-bootstrap.yml` as
+well as the publisher — see
+[remote-environments.md](remote-environments.md).
 
 ## Authentication
 

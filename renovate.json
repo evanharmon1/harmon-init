@@ -29,6 +29,22 @@
     },
     {
       "customType": "regex",
+      "description": "Shared remote-bootstrap tool pins, `FOO_VERSION=x.y.z` shell-variable style in images/devcontainer/versions.env. Root-only: that file is the single source of truth the shared image Dockerfile and bootstrap-remote.sh BOTH read, so a pin invisible here freezes the devcontainer and every remote environment at once. Generated repositories have no images/devcontainer/, so there is no template twin to keep in the same group.",
+      "managerFilePatterns": ["/images/devcontainer/versions\\.env$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+[A-Z0-9_]+_VERSION=(?<currentValue>\\S+)"
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "Per-architecture checksum pins in images/devcontainer/versions.env — same shape as the workflow/action checksum manager below: `*_sha256=<hex>` under a `# renovate: datasource=github-release-attachments … digestVersion=<tag>` annotation, one annotated line per architecture. Node's digests are deliberately NOT managed here: nodejs.org publishes SHASUMS256.txt rather than release attachments, so they are hand-verified behind the `# verified-for:` marker scripts/test-bootstrap-remote.sh enforces.",
+      "managerFilePatterns": ["/images/devcontainer/versions\\.env$/"],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>github-release-attachments) depName=(?<depName>\\S+) digestVersion=(?<currentValue>\\S+)\\s+[a-z0-9_]+_sha256=(?<currentDigest>[0-9a-f]{64})"
+      ]
+    },
+    {
+      "customType": "regex",
       "description": "Workflow and composite-action tool pins (both layers), `version:`/`<tool>_version:` style. Composite actions are included because template/.github/actions/setup/action.yml.jinja pins setup-task and setup-tflint this way, and a `workflows/`-only pattern leaves them invisible here — the same silent rot the SHA manager below was added for.",
       "managerFilePatterns": ["/(workflows|actions)/.*\\.ya?ml(\\[% endif %\\])?(\\.jinja)?$/"],
       "matchStrings": [

@@ -25,7 +25,7 @@ if [ -n "${EXPECTED_ARCHITECTURE:-}" ]; then
         fail "manifest architecture does not match $EXPECTED_ARCHITECTURE"
 fi
 
-for tool in task shfmt hadolint actionlint terraform-docs terraform tflint yq lefthook gitleaks sops act uv semgrep copier \
+for tool in task node npm gh markdownlint-cli2 shfmt hadolint actionlint terraform-docs terraform tflint yq lefthook gitleaks sops act uv semgrep copier \
     claude codex copilot pi omp opencode agy agent-deck playwright playwright-cli zellij workmux aoe sesh herdr dmux starship \
     dive fx glow lazygit tokei xh gum gh-dash wtfutil lychee tv fresh ttt mc nano; do
     command -v "$tool" >/dev/null 2>&1 || fail "$tool is not on PATH"
@@ -49,6 +49,10 @@ run_version() {
 # live multiplexer session for a zero exit, so their safe help probes only need
 # to reject loader/command-not-found failures (126/127).
 run_version task task --version
+run_version node node --version
+run_version npm npm --version
+run_version gh gh --version
+run_version markdownlint-cli2 markdownlint-cli2 --version
 run_version shfmt shfmt --version
 run_version hadolint hadolint --version
 run_version actionlint actionlint -version
@@ -119,6 +123,36 @@ done
 task_version="$(task --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
 [ "$task_version" = "$(jq -r '.tools.task' "$manifest")" ] ||
     fail "task $task_version does not match the manifest"
+
+# The tools images/devcontainer/install/ shares with bootstrap-remote.sh. Node
+# and gh are the two the base image could otherwise supply at a version nobody
+# pinned, so assert the path as well as the version: a /usr/bin copy winning
+# would mean the image and a remote VM no longer run the same binary.
+node_version="$(node --version | sed 's/^v//')"
+[ "$node_version" = "$(jq -r '.tools.node' "$manifest")" ] ||
+    fail "node $node_version does not match the manifest"
+[ "$(command -v node)" = /usr/local/bin/node ] ||
+    fail "command -v node does not resolve to /usr/local/bin/node"
+gh_version="$(gh --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+[ "$gh_version" = "$(jq -r '.tools.gh' "$manifest")" ] ||
+    fail "gh $gh_version does not match the manifest"
+[ "$(command -v gh)" = /usr/local/bin/gh ] ||
+    fail "command -v gh does not resolve to /usr/local/bin/gh"
+lychee_version="$(lychee --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+[ "$lychee_version" = "$(jq -r '.tools.lychee' "$manifest")" ] ||
+    fail "lychee $lychee_version does not match the manifest"
+markdownlint_version="$(markdownlint-cli2 --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)"
+[ "$markdownlint_version" = "$(jq -r '.tools["markdownlint-cli2"]' "$manifest")" ] ||
+    fail "markdownlint-cli2 $markdownlint_version does not match the manifest"
+
+# The shared install scripts and the pins they read ship in the image, so the
+# producer and the remote bootstrap can be proved to be running the same files.
+[ -f /usr/local/share/harmon-devcontainer/versions.env ] ||
+    fail "the shared versions file is missing"
+for shared in apt-core install-core install-agents install-browsers install-posture; do
+    [ -x "/usr/local/share/harmon-devcontainer/install/${shared}.sh" ] ||
+        fail "shared install script ${shared}.sh is missing or not executable"
+done
 terraform_version="$(terraform version -json | jq -r '.terraform_version')"
 [ "$terraform_version" = "$(jq -r '.tools.terraform' "$manifest")" ] ||
     fail "Terraform $terraform_version does not match the manifest"

@@ -42,14 +42,46 @@ The image:
   consumer pin;
 - contains `/usr/local/sbin/install-harmon-repo-config`, the stable contract by
   which a consumer installs its checked-in policy overlay;
+- contains `/usr/local/share/harmon-devcontainer/{versions.env,install/}`, the
+  shared installs it was built from — so "the image and the remote bootstrap
+  ran the same scripts" is checkable on the image itself rather than asserted;
 - contains no repository checkout, project dependencies, credentials, secrets,
   mounts, ports, or repository-specific config;
 - finishes as `root`, ready for an extension layer. A thin consumer explicitly
   returns to `USER vscode` after installing its overlay.
 
 The producer build context is `images/devcontainer/`, whose `.dockerignore`
-allows only the Dockerfile and contract helpers. This is the primary control
-that prevents unrelated repository contents from entering a layer.
+allows only the Dockerfile, the contract helpers, and the shared install
+scripts below. This is the primary control that prevents unrelated repository
+contents from entering a layer.
+
+## Shared installs and the pin split
+
+The Dockerfile is no longer the only thing that installs this toolchain. The
+scripts under `images/devcontainer/install/`, reading their versions from
+`images/devcontainer/versions.env`, are run **both** by this image and by
+`images/devcontainer/bootstrap-remote.sh` on a stock Ubuntu VM that cannot pull
+the image at all. So the pins are split by audience:
+
+- **`versions.env`** — every pin on the remote path: Node, uv, go-task,
+  lefthook, gh, yq, shfmt, actionlint, hadolint, gitleaks, lychee, semgrep,
+  copier, markdownlint-cli2, the Codex CLI, Playwright.
+- **Dockerfile `ARG`s** — everything the remote path never installs: Terraform,
+  TFLint, the interactive-terminal tools, the other agent CLIs.
+
+Putting a pin in `versions.env` is a promise that both paths install that tool,
+and `scripts/test-bootstrap-remote.sh` enforces it in both directions: no
+install script or bootstrap may declare a version of its own, and the
+Dockerfile may not re-declare one that moved. Two of those installs changed
+source when they moved, because a shared script cannot reach a host one side is
+denied — Node now comes from the checksum-pinned `nodejs.org` tarball rather
+than `deb.nodesource.com`, and uv from its checksum-pinned GitHub release
+rather than `astral.sh`. Node is pinned to an exact patch release as a result;
+the apt repository pinned only its major.
+
+The full contract, the remote environment's observed properties, and the
+per-platform adapters are in
+[remote-environments.md](remote-environments.md).
 
 ## Thin consumers
 
@@ -175,6 +207,9 @@ merges, every later publication takes the rolling automated path.
 ## Local commands
 
 ```bash
+# Offline pin contract for the shared installs and the remote bootstrap
+task test:bootstrap-remote
+
 # Offline manifest/reference/sync tests
 task test:devcontainer:image:automation
 

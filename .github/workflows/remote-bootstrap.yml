@@ -1,0 +1,170 @@
+name: Remote bootstrap
+run-name: ${{ github.actor }} is proving the remote bootstrap on a stock Ubuntu VM
+
+# ROOT-ONLY. Generated repositories call the bootstrap at a pinned harmon-init
+# release tag but never prove it; images/devcontainer/ has no template twin, so
+# there is nothing to render.
+#
+# Two jobs, two different kinds of proof:
+#   guard     — the pin CONTRACT, offline: every tool the bootstrap installs
+#               takes its version from the file the Dockerfile reads, and the
+#               bootstrap pins nothing of its own.
+#   bootstrap — the BEHAVIOUR, which no metadata check can reach: the scripts
+#               really do install a working toolchain on a stock ubuntu:24.04
+#               VM, a second run changes nothing, the pinned mikefarah yq beats
+#               a pre-provisioned Python yq, and the default tiers fit the
+#               platform's roughly five-minute cached-setup budget.
+#
+# `task test:bootstrap-remote` is deliberately NOT added to build.yml's lint
+# job as well. That job enumerates its steps by hand precisely so nothing runs
+# only in local `verify` (#962) — but this workflow's path filter already
+# covers every input the guard reads, so listing it twice would spend a second
+# runner on the same result and leave two places to keep in step.
+on:
+  # The two path lists are spelled out twice rather than shared through a YAML
+  # anchor: GitHub's workflow parser does not support anchors, so an anchor
+  # here would be a parse error at dispatch time rather than a lint failure.
+  pull_request:
+    paths:
+      - "images/devcontainer/**"
+      - "scripts/test-bootstrap-remote.sh"
+      - "renovate.json"
+      - ".github/workflows/remote-bootstrap.yml"
+  push:
+    branches: [main]
+    paths:
+      - "images/devcontainer/**"
+      - "scripts/test-bootstrap-remote.sh"
+      - "renovate.json"
+      - ".github/workflows/remote-bootstrap.yml"
+
+concurrency:
+  group: >-
+    remote-bootstrap-${{
+      github.event_name == 'pull_request' && github.event.pull_request.number || 'main'
+    }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  guard:
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - run: task test:bootstrap-remote
+
+  bootstrap:
+    # A fork PR gets no repository-controlled container run, for the same
+    # reason publish-harmon-devcontainer.yml declines to build fork
+    # Dockerfiles: this job executes checked-out shell as root.
+    if: >-
+      github.event_name == 'push' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
+    timeout-minutes: 45
+    container:
+      # STOCK Ubuntu 24.04, deliberately: the point is to prove the bootstrap
+      # needs nothing the platform did not already give it. Pinned by digest,
+      # because a floating `24.04` would let "stock" change underneath the
+      # proof.
+      #
+      # The job therefore runs on whatever architecture the runner is. On
+      # GitHub-hosted runners that is amd64; point `vars.CI_RUNS_ON` at arm64
+      # hardware and the same job proves arm64 with no other change. Until
+      # such a runner exists the arm64 download paths are checksum-verified
+      # but not executed, which docs/architecture/remote-environments.md says
+      # outright rather than leaving to be assumed.
+      image: ubuntu:24.04@sha256:a08e551cb33850e4740772b38217fc1796a66da2506d312abe51acda354ff061
+      options: --user root
+    env:
+      # The core+agents budget the platform's cached setup has to fit
+      # (roughly five minutes on Claude Code on the web). Measured on a
+      # GitHub-hosted runner, which is NOT the same machine as the remote VM —
+      # #1407's HUMAN item proves the VM.
+      BOOTSTRAP_BUDGET_SECONDS: "300"
+    steps:
+      - name: Seed the pre-provisioned VM this bootstrap actually meets
+        # The observed Claude Code on the web VM (2026-09-27) is not bare: it
+        # ships curl, git, sudo — and two traps where everything exits 0 and
+        # the answers are quietly wrong. `/usr/bin/yq` is the PYTHON yq, which
+        # shadows mikefarah yq v4 and makes every frontmatter read as invalid;
+        # the locale is POSIX, which stops NBSP reading as whitespace. Seeding
+        # them here is what makes the assertions below mean something.
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates curl git sudo yq
+          echo "seeded yq: $(command -v yq)"
+          echo "seeded LANG: ${LANG:-<unset>}"
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # `task check` runs scripts/test-tool-pin-pairs.sh, whose drift check
+          # fails closed on a pull request with no merge-base.
+          fetch-depth: 0
+      - name: Run the bootstrap (core + agents) and time it
+        run: |
+          start=$(date +%s)
+          ./images/devcontainer/bootstrap-remote.sh | tee /tmp/bootstrap-first.log
+          elapsed=$(( $(date +%s) - start ))
+          {
+            echo "### Remote bootstrap"
+            echo
+            echo "| Measurement | Value |"
+            echo "| --- | --- |"
+            echo "| architecture | \`$(uname -m)\` |"
+            echo "| core + agents tiers | **${elapsed}s** (budget ${BOOTSTRAP_BUDGET_SECONDS}s) |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$elapsed" -gt "$BOOTSTRAP_BUDGET_SECONDS" ]; then
+            echo "::error::core+agents took ${elapsed}s, over the ${BOOTSTRAP_BUDGET_SECONDS}s budget"
+            exit 1
+          fi
+      - name: Run it again and prove the second run changed nothing
+        # "Exited 0 again" is not idempotence: a script that re-downloaded and
+        # re-installed everything also exits 0. The bootstrap counts its own
+        # install sites, and this asserts that count.
+        run: |
+          ./images/devcontainer/bootstrap-remote.sh | tee /tmp/bootstrap-second.log
+          changes=$(sed -n 's/^HARMON_BOOTSTRAP_CHANGES=//p' /tmp/bootstrap-second.log | tail -1)
+          echo "| second run | ${changes} change(s) |" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${changes:-unset}" != "0" ]; then
+            echo "::error::the second run applied ${changes:-unknown} change(s); the bootstrap is not idempotent"
+            sed -n '/^==> /p' /tmp/bootstrap-second.log
+            exit 1
+          fi
+      - name: Assert what the bootstrap must never have installed
+        # The bootstrap checks its own install prefix; this checks the whole
+        # PATH, which is the assertion a consumer actually cares about.
+        run: |
+          status=0
+          for forbidden in op brew tailscale tailscaled; do
+            if command -v "$forbidden" >/dev/null 2>&1; then
+              echo "::error::${forbidden} is on PATH after the bootstrap"
+              status=1
+            fi
+          done
+          for prefix in /home/linuxbrew /opt/homebrew; do
+            if [ -d "$prefix" ]; then
+              echo "::error::${prefix} exists after the bootstrap"
+              status=1
+            fi
+          done
+          exit "$status"
+      - name: Assert the environment traps are resolved
+        run: |
+          . /etc/profile.d/harmon-remote-env.sh
+          echo "yq resolves to: $(command -v yq)"
+          test "$(command -v yq)" = /usr/local/bin/yq
+          yq --version | grep -q mikefarah
+          test "$(sed -n 's/^LANG=//p' /etc/environment)" = C.UTF-8
+          locale | grep -Eq 'LANG=.*(UTF-8|utf8)'
+      - name: Run the repository's own lint gate with only what the bootstrap installed
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          . /etc/profile.d/harmon-remote-env.sh
+          task check
