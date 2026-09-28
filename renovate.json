@@ -3,6 +3,7 @@
   "extends": ["config:recommended"],
   "timezone": "America/Chicago",
   "schedule": ["* * * * 6", "* 0-4 * * 0"],
+  "updateNotScheduled": false,
   "prConcurrentLimit": 10,
   "automerge": false,
   "dependencyDashboard": true,
