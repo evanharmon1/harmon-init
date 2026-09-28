@@ -6,18 +6,20 @@ environment* rather than on an Anthropic VM. Is routing the epic's remote
 lanes there a better way to hold the epic's invariant — remote sessions run
 the devcontainer's environment from one source of truth — than bootstrapping
 a stock hosted VM (#1403)?
-**Answer in three sentences:** technically yes and by a wide margin — the
-runner image is one **you** build, so the shared devcontainer image can *be*
-the remote environment instead of being re-created in it, the GraphQL/REST
-restriction that breaks `gh` on Claude Code on the web disappears, and the
-agent posture (#1408) gains enforcement points that hosted environments do
-not offer. Commercially it is gated: self-hosted environments are a public
-beta **for Team and Enterprise organizations only**, off by default, so
-adopting them means moving off an individual plan onto a Team organization
-(minimum two seats) before a single session can run. The recommendation is
-therefore **adopt later** — keep #1403 and the hosted adapters exactly as
-planned, and file the self-hosted adapter as a fourth adapter to be built
-when (and only when) the plan move happens.
+**Answer in three sentences:** on the documentation, yes and by a wide
+margin — the runner image is one **you** build, so the shared devcontainer
+image can *be* the remote environment instead of being re-created in it (that
+the shared image works as a runner image is the load-bearing claim, and it is
+**unverified** until the [trial](#trial-session--pending) runs), the
+GraphQL/REST restriction that breaks `gh` on Claude Code on the web
+disappears, and the agent posture (#1408) gains enforcement points that hosted
+environments do not offer. Commercially it is gated: self-hosted environments
+are a public beta **for Team and Enterprise organizations only**, off by
+default, so adopting them means moving off an individual plan onto a Team
+organization (minimum two seats) before a single session can run. The
+recommendation is therefore **adopt later** — keep #1403 and the hosted
+adapters exactly as planned, and file the self-hosted adapter as a fourth
+adapter to be built when (and only when) the plan move happens.
 
 Everything below that names a capability carries the URL it was read from
 (see [Sources](#sources)); anything that could not be verified against a
@@ -106,18 +108,33 @@ hypothesis in the issue body.
 
 ## Can it use a custom container image — specifically the shared devcontainer image?
 
-**Yes, and it is the only option:** "Anthropic doesn't publish a pre-built
-runner image. Build your own around the `claude` binary, layering in whatever
-toolchain your repositories need: language runtimes, compilers, package
-managers, and MCP sidecars" ([deploy][deploy], read 2026-09-28). The
-documented minimal Dockerfile is `debian:bookworm-slim` plus the `claude`
-binary — nothing about it prevents starting from
+**Yes.** A custom image is the documented container path: "Anthropic doesn't
+publish a pre-built runner image. Build your own around the `claude` binary,
+layering in whatever toolchain your repositories need: language runtimes,
+compilers, package managers, and MCP sidecars" ([deploy][deploy], read
+2026-09-28). It is not the only documented path — the host requirement is "a
+Linux or macOS host or container" ([quickstart][quickstart]), so a bare host
+running the binary is the documented alternative — but it is the one that
+matters here. The documented minimal Dockerfile is `debian:bookworm-slim`
+plus the `claude` binary — nothing about it prevents starting from
 `ghcr.io/evanharmon1/harmon-devcontainer` instead.
 
 This is the finding that matters for the epic. On Claude Code on the web the
 image cannot be supplied, which is precisely why #1403 exists; here the
 **image is the interface**, so the devcontainer is not re-created remotely,
-it *is* the remote environment. What the image must satisfy:
+it *is* the remote environment — with one qualification. The reference
+environment is three layers, not one: the pinned shared base image, the
+repo's thin `.devcontainer/Dockerfile` overlay, and the devcontainer
+**features** ([remote-implementer-environments.md][refenv], the reference
+table). A runner image built `FROM` the shared image reproduces the first
+layer; the overlay is a `COPY` away; but the features —
+`ghcr.io/devcontainers/features/python:1` at 3.14, `docker-in-docker:2`, and
+`github-cli:1`, declared in `.devcontainer/devcontainer.json` — are applied by
+the devcontainer tooling at build time, and the runner runs no devcontainer
+tooling, so nothing applies them. The runner image must re-add that layer
+itself — Python 3.14, Docker-in-Docker where a repository opts in, and
+`gh` — alongside the lifecycle port described below. What the image must
+satisfy:
 
 | Requirement | Source |
 |---|---|
@@ -139,8 +156,9 @@ lifecycle hooks.** It clones and spawns; there is no `devcontainer.json`, no
 ownership fixes, the Herdr integrations — must move into the image build, or
 into a wrapper script / `command` lifecycle hook that `exec`s
 `"$CLAUDE_RUNNER_CLAUDE_BIN"` at the end ([configuration][config]). That is a
-real port, not a no-op, but it is a port of *one* file into a place that runs
-identically for every session, rather than a second copy of the toolchain.
+real port, not a no-op — and with the features layer above it is two things
+to carry, not one — but both land in a place that runs identically for every
+session, rather than a second copy of the toolchain.
 
 Two image-shaped behaviours worth knowing:
 
@@ -304,9 +322,19 @@ This is the blocker, and it is not a technical one.
   Team plan seat"; premium seats "offer more usage for team members with
   heavier workloads" ([Team/Enterprise support article][teamdoc], read
   2026-09-28).
-- **Cost, compute side:** yours, entirely — and the Coder box the platform
-  already runs is the obvious candidate, so the marginal compute cost may be
-  zero.
+- **Cost, compute side:** yours, entirely — and it is contention and sizing,
+  not zero. The Coder box the platform already runs is the obvious host, but
+  the measured constraint is already on record: three lanes on the 32 GB
+  Coder devcontainer had to be serialised behind a `flock`, each gate then
+  took ~10 minutes and the third lane waited 20–30 minutes per round
+  ([remote-implementer-environments.md][refenv], from harmon-init#1120).
+  Self-hosting moves session execution onto that same box, so every remote
+  lane becomes one more contender for the same 32 GB rather than a session
+  someone else's VM absorbs. What that implies is a sizing decision, not a
+  free ride: one runner per active owner at `--capacity 1` (the documented
+  minimum fleet, and one session per runner), gates serialised behind the
+  same `flock` if capacity is ever raised, or a second host before a second
+  lane is meant to run concurrently.
 - **An operational cost that is easy to overlook:** non-interactive dispatch
   (`claude -p … --environment`) authenticates with a claude.ai OAuth token,
   and "there is no long-lived CI token for this today. The scope that grants
@@ -321,6 +349,22 @@ Net: a single-operator platform would have to stand up a two-seat Team
 organization (**$40/month** annually billed at standard seats, more for the
 usage headroom a full dev loop wants) and move the Claude Code identity onto
 it, before evaluating anything. That is the whole of the "adopt later".
+
+### Remote Control does not change this
+
+The same page anticipates the individual-plan reader: "If you want to run
+Claude Code on your own always-on machine and drive it from other devices,
+use Remote Control, which is also available on Pro and Max plans"
+([self-hosted environments][shenv], read 2026-09-28). It is not a way around
+the plan gate for this epic, for three reasons. Remote Control drives a
+**local, already-running** Claude Code session from another device; it is not
+a cloud-session dispatch target — there is no `--environment` to send a lane
+to, so an orchestrator has nothing to route. It supplies no runner image, so
+the invariant this note is about (the devcontainer image *is* the remote
+environment) is not in play. And it leaves the self-hosted-environment gate
+exactly where it is: the page offers it as the Pro/Max alternative *because*
+self-hosted environments are not available there. The recommendation is
+unchanged.
 
 ## How Coder and Fly.io Sprites fit as the host
 
@@ -381,8 +425,14 @@ Sprites are a poor fit as a **runner host**, for three reasons that compound:
    *is* a poll loop, and "if the runner stops polling for about 60 seconds,
    the server requeues the session for another runner" ([self-hosted
    environments][shenv]). A runner that sleeps is a runner that loses its
-   sessions; a runner kept awake is a sprite billed continuously, which
-   throws away the reason to choose Sprites.
+   sessions. The orchestrator pattern above — one runner per queued session,
+   booted through a `spawn-runner` hook ([configuration][config]) — is the
+   documented way to make the *runners* short-lived, but the orchestrator is
+   itself a long-lived process that must be running to see the queue, so it
+   moves the always-on requirement up one level rather than removing it:
+   something is awake and billed continuously either way, and a sprite kept
+   awake for that job throws away the reason to choose Sprites. This reason
+   weakens the fit; reasons 1 and 3 are what decide it.
 3. **The image problem returns one level down.** Because the sprite cannot
    *be* the devcontainer, running the devcontainer inside it needs the
    Docker-in-sprite arrangement the #1120 note flagged as its single biggest
@@ -412,26 +462,28 @@ against #1408's decided positions:
 
 | Posture axis (#1408) | Enforcement point on a self-hosted environment |
 |---|---|
-| **Permissions — allow list, deny rules, no `ask`** | Two layers. Sessions read "the managed settings file in the runner image" ([cloud environments][cloudenv]), which is where `install-repo-config.sh` already writes `/etc/claude-code/managed-settings.json`. On top, the wrapper script appends flags after `"$@"`: `--permission-mode auto` (single-value flags honour the last occurrence) and `--disallowed-tools`, which "denies tools even if another rule allows them"; list flags "accumulate across occurrences rather than overriding" ([configuration][config]). |
+| **Permissions — allow list, deny rules, no `ask`** | Two layers, the first conditional. Sessions read "the managed settings file in the runner image" ([cloud environments][cloudenv]) — the `/etc/claude-code/managed-settings.json` that `install-repo-config.sh` already writes. In the devcontainer that path is **not** a security boundary: `vscode` has passwordless `sudo` and the bot-autonomy module writes the file with `sudo`, so an agent can overwrite it ([devcontainer-image.md](../architecture/devcontainer-image.md)). On a runner image it becomes an enforcement point only under a precondition the image must meet deliberately: the file is root-owned and read-only to the session UID, that UID has no `sudo`, and the image is built that way on purpose — a departure from the devcontainer, whose lifecycle scripts rely on `sudo` non-interactively. The second layer is the wrapper script, which appends flags after `"$@"`: `--permission-mode auto` (single-value flags honour the last occurrence) and `--disallowed-tools`, which "denies tools even if another rule allows them"; list flags "accumulate across occurrences rather than overriding" ([configuration][config]). The wrapper is under the same rule: it must be read-only to the session, as Anthropic already requires of `--hooks-dir` and `~/.claude/` ([deploy][deploy]). |
 | **Prompt-free operation** | Required, not merely desired: "A self-hosted session has no terminal attached, so an unanswered permission prompt stalls the turn until the user responds in the UI" ([configuration][config]). #1408's choice of auto mode with no `ask` rules is the only workable setting here. |
 | **A repository cannot loosen the posture** | `--confine-repo-settings enforce` — the runner scans each repository's committed settings for a grant resolving outside the workspace, a non-empty `env` block, or "an operator-posture override such as `sandbox.enabled: false`", and `enforce` "refuses the session" ([deploy][deploy]). Also `--trust-workspace false` to "drop repo-committed permission grants" entirely, and "A `defaultMode` of `auto` is only honored from the image-wide or user-level settings file, so a checked-out repository can't grant itself auto mode" ([configuration][config]). Nothing equivalent exists on a hosted VM. |
 | **Network — enforced egress allowlist** | Your own boundary, which is what #1408 and #286 want. Anthropic supplies the required-hosts table and states the product cannot enforce it ([deploy][deploy]). |
 | **Identity — the agent PAT, no bot/operator token** | Image-level credential or per-session minted from the wrapper. The documented preference is per-session ("a credential in the image is available to every session the image runs"), which is *stronger* than the agent PAT model #1408 settled for. |
 | **Secrets — no 1Password, no `op`, no Tailscale key** | Satisfied by construction: the image is ours and the env allowlist guard already exists. Note the environment secret itself is a new secret to hold, readable by any session on a fixed fleet ([deploy][deploy]). |
-| **Docker — per-repo opt-in, DinD only** | Our image, our call; unchanged. |
+| **Docker — per-repo opt-in, DinD only** | Our image, our call — but not free. DinD reaches the devcontainer as a feature (`docker-in-docker:2`), and a `FROM` build of the shared image drops the features layer (see the image section above), so a runner image has no Docker daemon unless one is re-added deliberately. Where a repository opts in, the adapter installs DinD in that repository's runner image; where it does not, the omission *is* the posture. |
 | **Marker** | Our image; unchanged. |
 
-**One caveat must be recorded with the rest**, because it can silently void
-the first row. The runner image's managed settings file is combined with
-Anthropic's server-managed settings under the ordinary precedence rules: "by
-default, when your organization delivers any server-managed keys, sessions
-ignore the runner image's file apart from the keys Claude Code reads from
-every admin source" ([configuration][config]). An organization that deploys
-*any* server-managed settings can therefore neutralise the image's posture
-file. On a Team organization created for this purpose, deploying no
-server-managed keys keeps the image authoritative — but that is now a
-standing operational constraint, and it should be asserted rather than
-assumed. Verifying it is part of the trial below.
+**A second caveat must be recorded with the rest**, because it too can
+silently void the first row. The runner image's managed settings file is
+combined with Anthropic's server-managed settings under the ordinary
+precedence rules: "by default, when your organization delivers any
+server-managed keys, sessions ignore the runner image's file apart from the
+keys Claude Code reads from every admin source" ([configuration][config]). An
+organization that deploys *any* server-managed settings can therefore
+neutralise the image's posture file. On a Team organization created for this
+purpose, deploying no server-managed keys keeps the image authoritative — but
+that is now a standing operational constraint, and it should be asserted
+rather than assumed. Verifying both — the file-ownership precondition in the
+first row and the absence of server-managed keys — is part of the trial
+below.
 
 Two further posture-adjacent facts: session hooks supplied by the control
 plane "enter the ordinary merged hook configuration, not the managed tier, so
@@ -450,24 +502,34 @@ better than any hosted adapter — the devcontainer image *is* the environment,
 nowhere else. It is blocked on one thing that no amount of engineering
 changes: self-hosted environments are a Team/Enterprise public beta, and this
 platform is on an individual plan. Revisit when a Team organization exists
-for another reason, or when Anthropic extends the beta.
+for another reason (or Anthropic extends the beta) **and** either a
+long-lived dispatch credential exists or the monthly `claude auth login` that
+the 30-day cap on `user:sessions:claude_code` imposes ([testing][testing]) is
+accepted as a standing human step. The plan is the gate; the re-auth is the
+recurring cost the decision has to carry, and it does not go away with the
+plan move.
 
 ### Effect on #1403
 
-**No work removed. Nothing changes.** #1403's bootstrap exists because Claude
-Code on the web "ignores `devcontainer.json` and has no custom image", and
-Codex cloud (#750) is the same. Both remain, so the bootstrap remains the
+**No work removed; one thing changes.** #1403's bootstrap exists because
+Claude Code on the web "ignores `devcontainer.json` and has no custom image",
+and Codex cloud (#750) is the same. Both remain, so the bootstrap remains the
 single entrypoint for them. What adoption would add is a platform that
 *bypasses* the bootstrap: a self-hosted runner image is built `FROM` the
 shared image, so it needs the pinned installs to stay where they are
-(`images/devcontainer/`), not to be reachable as a standalone script.
+(`images/devcontainer/`), not to be reachable as a standalone script. The
+bypass is not total — the features layer (Python 3.14, DinD where opted in,
+`gh`) is not in the shared image, and the runner image re-adds it (see the
+image section above) — but that is image-build work in the adapter, not work
+for the bootstrap.
 
-One point of contact is worth keeping in view while #1403 lands: the
-tier/timing design ("core and agents tiers complete within 5 minutes", driven
-by the hosted setup-script cache) is a hosted-platform constraint with no
-analogue here. Keep that budget a property of the *adapters* that need it
-rather than of the bootstrap's structure, and the self-hosted adapter costs
-nothing later.
+The one thing that changes is a constraint on #1403's tier/timing design.
+"Core and agents tiers complete within 5 minutes", driven by the hosted
+setup-script cache, is a hosted-platform constraint with no analogue here.
+That budget must stay a property of the *adapters* that need it rather than
+of the bootstrap's structure; if it leaks into the structure, the self-hosted
+adapter inherits a limit that means nothing on its platform. Kept as an
+adapter property, the self-hosted adapter costs nothing later.
 
 ### Effect on #1407
 
@@ -500,11 +562,28 @@ more directly.
 
 One issue, blocked on the plan move: *"(remote-env): Self-hosted Claude Code
 environment adapter"* — build a runner image `FROM` the shared devcontainer
-image, port the devcontainer lifecycle into the image or a wrapper, run it on
-a Coder workspace at `--capacity 1` with `--confine-repo-settings enforce`
-and default-deny egress, and document the adapter section in
-`docs/architecture/remote-environments.md` (the file #1403 creates). It
-should carry the trial below as its `[HUMAN]` criterion.
+image, re-add the features layer (Python 3.14, `gh`, DinD where a repository
+opts in), port the devcontainer lifecycle into the image or a wrapper, run it
+with `--confine-repo-settings enforce` and default-deny egress, and document
+the adapter section in `docs/architecture/remote-environments.md` (the
+file #1403 creates).
+
+The issue has to choose its fleet shape deliberately, because the security
+section above records Anthropic's mitigation for the environment-secret
+exposure as on-demand runners with the secret on an orchestrator host that
+never runs user code, and a Coder workspace at `--capacity 1` is the opposite
+shape: a fixed fleet, secret on the host that runs sessions. The **fixed fleet
+is accepted here, for the two-person org and no further**, on three grounds:
+the only identities that can dispatch into the environment are the org's own
+seats ("any member of your Anthropic organization", [deploy][deploy]), so the
+population that could read the secret is the population that already holds
+it; the secret's documented reach is registering runners and picking up
+sessions on that one environment, not anything beyond it; and the on-demand
+shape needs a second, always-on host for the orchestrator, which is the
+sizing problem from the cost section again. The acceptance is conditional
+and the issue should say so: a third seat, or a runner host that holds
+anything beyond the workspace, reopens it in favour of the orchestrator
+shape. It should carry the trial below as its `[HUMAN]` criterion.
 
 ## Trial session — pending
 
@@ -524,7 +603,11 @@ When it is run, these are the things only a real session can settle:
   (#1407) and the Bash tool's ceiling is 10 minutes, so
   `BASH_MAX_TIMEOUT_MS` on the runner is the likely fix — untested.
 - Does the image's `/etc/claude-code/managed-settings.json` actually govern
-  the session, with no server-managed keys deployed?
+  the session, with no server-managed keys deployed — and is the file
+  root-owned and read-only to the session UID, with no `sudo` for that UID?
+  Verify this in the trial: a session that can `sudo` its way to the file
+  has no enforcement layer at all, which is the devcontainer's own documented
+  position ([devcontainer-image.md](../architecture/devcontainer-image.md)).
 - Does `--confine-repo-settings enforce` accept harmon-init's own committed
   `.claude/settings.json`, or refuse it?
 - Does a session push a branch and open a draft PR under the agent identity,
@@ -587,3 +670,4 @@ All read 2026-09-28.
 [spritesdocs]: https://docs.fly.io/sprites/working-with-sprites/
 [spritespage]: https://fly.io/sprites/
 [spritesimage]: https://community.fly.io/t/sprites-base-image/26789
+[refenv]: remote-implementer-environments.md
