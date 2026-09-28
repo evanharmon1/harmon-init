@@ -413,6 +413,10 @@ else:
 # Shell lines are joined the way the shell reads them (a trailing `\`, `|`,
 # `&&`, `||` continues the command) so a `-C` on a continuation line is seen
 # with its tar.
+# What this does NOT detect, by design (r5-6): a dashless `tar xzf`, an
+# `unzip -d`, or a `curl -o` straight onto the live path — for those forms the
+# invariant is enforced by routing every archive through the one install
+# helper, and is reviewed rather than proved here.
 STAGING_ASSIGN = re.compile(
     r'^\s*(?P<var>[A-Za-z_][A-Za-z0-9_]*)=["\']?(?:\$\{?(?P<src>tmp|HARMON_TMPDIR)\b|\$\(mktemp -d\))'
 )
@@ -507,6 +511,23 @@ for path in [BOOTSTRAP] + sorted(INSTALL.glob("*.sh")):
         fail(
             f"{path}:{line_no}: {why} — every archive install goes through lib.sh "
             "harmon_install_archive_bin (stage, verify, extract in staging, move into HARMON_BIN last)"
+        )
+
+# ── 8c. every getent lookup survives a miss under pipefail ──────────────────
+# HOME and the invoking user's home are read from passwd through
+# `$(getent … | cut …)`. Under `set -euo pipefail` a miss (getent exits 2 for
+# a uid or name with no entry) fails the pipeline, the substitution, and with
+# it the script, so the `${…:-/root}` written on the next line never runs.
+# Fixed once (challenge r1-7), reintroduced by round 4, refixed (r5-5): every
+# getent substitution in the bootstrap must end in `|| true` so the fallback
+# it is paired with is reachable.
+for line_no, line in enumerate(bootstrap_text.splitlines(), 1):
+    if line.lstrip().startswith("#") or "$(getent" not in line:
+        continue
+    if "|| true)" not in line:
+        fail(
+            f"{BOOTSTRAP}:{line_no}: getent substitution without `|| true` — under pipefail a "
+            "miss aborts the script before its :-/root fallback runs (r1-7/r5-5)"
         )
 
 # ── 9. the never-installed set ──────────────────────────────────────────────
@@ -663,7 +684,8 @@ print(f"bootstrap-remote OK: {len(tier_scripts)} shared install script(s) declar
 print(f"bootstrap-remote OK: {len(head_pairs)} checksum pin-pair(s) agree with their version pin; {drift_note}")
 print("bootstrap-remote OK: the image runs the same scripts, from the same versions file")
 print("bootstrap-remote OK: no denied host, no 1Password/Homebrew/Tailscale, fetch list matches disk")
-print("bootstrap-remote OK: every archive is extracted in staging; nothing streams into the live prefix")
+print("bootstrap-remote OK: no piped or live-prefix tar extraction in install/*.sh or bootstrap-remote.sh")
+print("bootstrap-remote OK: every getent substitution in the bootstrap reaches its :-/root fallback on a miss")
 print("bootstrap-remote OK: a non-release-tag ref is refused; the override warns and names it")
 print(f"bootstrap-remote OK: the default tiers record {len(recorded_by_default)} pin(s) for the manifest, under the image's keys")
 PY

@@ -195,7 +195,13 @@ fi
 # rule, applied once, before any tier: HOME is the running uid's passwd home.
 # The INVOKING user is still known through SUDO_USER; the shadow check near
 # the end uses it on purpose, and runs AS that user.
-HOME="$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6)"
+# The `|| true` is load-bearing: under pipefail a getent miss (exit 2 — a
+# container uid with no passwd entry) fails the substitution and, under `-e`,
+# the script, so the `:-/root` on the next line would never run. Fixed once
+# (challenge r1-7), reintroduced by round 4, refixed (r5-5); every getent
+# substitution below carries the same guard, and test-bootstrap-remote.sh
+# checks for it.
+HOME="$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6 || true)"
 export HOME="${HOME:-/root}"
 
 # ---------- locate the install scripts ----------
@@ -390,7 +396,9 @@ yq --version 2>&1 | grep -q 'mikefarah' ||
 # env PATH=/usr/bin:/bin …` hands root exactly that), so it is looked up in
 # the sbin directories too rather than skipping the check on a PATH accident.
 login_user="${SUDO_USER:-root}"
-login_home="$(getent passwd "$login_user" 2>/dev/null | cut -d: -f6)"
+# `|| true` as on the HOME lookup (r5-5): a SUDO_USER with no passwd entry
+# must reach the `:-/root` fallback where login_home is read, not abort here.
+login_home="$(getent passwd "$login_user" 2>/dev/null | cut -d: -f6 || true)"
 login_uid="$(id -u "$login_user" 2>/dev/null || echo 0)"
 runuser_bin="$(command -v runuser 2>/dev/null || true)"
 for candidate in /usr/sbin/runuser /sbin/runuser; do
