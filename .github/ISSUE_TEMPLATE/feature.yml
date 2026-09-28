@@ -25,12 +25,9 @@ body:
     attributes:
       label: Acceptance criteria
       description: >-
-        Optional. One `- [ ]` item per criterion; tag `[CI]`/`[HUMAN]` where
-        useful. Leave blank to file without criteria — triage adds them
-        before this is dispatched. Human-only follow-ups (secrets, settings,
-        manual QA) belong on the issue's `(HUMAN):` or `(QA):` collector —
-        its milestone's, else its epic's, else the repo-wide one — not here,
-        unless this issue is that collector.
+        Optional. One `- [ ]` item per criterion, tagged `[CI]`/`[HUMAN]`;
+        triage adds them if blank. Human-only steps go on the
+        `(HUMAN):`/`(QA):` collector, not here, unless this is one.
   - type: textarea
     id: alternatives
     attributes:
