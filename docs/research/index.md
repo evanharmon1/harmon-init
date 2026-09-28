@@ -26,3 +26,12 @@ Conventions:
   Claude Code cloud, Codex cloud, Coder, remote dev containers, Fly.io
   Sprites and Fly Machines, and the wider sandbox field, scored on one
   rubric.
+
+- [self-hosted-cloud-environments.md](self-hosted-cloud-environments.md)
+  — whether routing the remote dev loop to a **self-hosted Claude Code
+  environment** (`claude --environment ccpool_…`), hosted on Coder or a
+  Fly.io Sprite, beats bootstrapping a stock cloud VM (harmon-init#1410,
+  extending the spike above): how an environment and its runners work, the
+  custom runner image, which Claude Code on the web behaviours carry over,
+  the security model, the Team/Enterprise plan gate, and how the agent
+  posture would be enforced.

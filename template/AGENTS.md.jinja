@@ -118,9 +118,12 @@ local diff. Work in PR-sized units; a PR handed to a human is the deliverable.
 **The loop is the stage skills; this section is the policy they run under.**
 `/orchestrator` is the session's standing operating mode; it dispatches
 `/implement` (claimed issue → gates → draft PR),[% if use_codex_review %] `/review` (both confidence
-stages),[% endif %] and `/integrate` (draft → ready for review). `/claim` comes first
-but is **user-invoked** — typing it authorizes its issue writes — and `/implement`
-never claims. There is **no `dev-loop` skill** — those stages *are* the loop;
+stages),[% endif %] and `/integrate` (draft → ready for review). `/claim` comes first —
+the primary session or orchestrator can invoke `/claim` when appropriate without
+asking for confirmation (or it can be user-invoked) to ensure the issue is verified
+and claimed before implementation begins (preserving `/claim`'s own preflight and
+target-confirmation boundaries; subagents never claim); `/claim` owns the claim
+writes, and `/implement` never claims directly. There is **no `dev-loop` skill** — those stages *are* the loop;
 retired names map on (`gauntlet` → `review`, `shepherd` → `integrate`), and a
 pin still shipping a predecessor runs it under this policy.
 The skills carry the procedure — round mechanics, adjudication records, review
@@ -131,7 +134,7 @@ is vendored, this section is the whole contract and its invariants are owed anyw
 where a **vendored** skill states a different cap, floor, or exit condition, **this file wins**.
 
 ```text
-/claim (user) → /implement [ code → task verify → [% if use_codex_review %]challenge → review → [% endif %]task security → DRAFT PR ]
+/claim → /implement [ code → task verify → [% if use_codex_review %]challenge → review → [% endif %]task security → DRAFT PR ]
   → /integrate [ CI → deferred findings → reviewers → readiness gate ]
   → ready for review → human review → human merge
 ```
