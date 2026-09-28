@@ -276,6 +276,31 @@ make_stub() {
         echo 'fi'
         echo 'if [ "$1" = "api" ]; then'
         echo '    endpoint="${2:-}"'
+        # GH_STUB_FULL_PAGES=1: answer the three completeness-required
+        # inventories with a FULL page every time, exactly as GitHub answers a
+        # list longer than per_page. Only a bound can end such a walk, so this
+        # is what lets a case drive gh_rest_paginate_* into its
+        # GH_REST_MAX_PAGES ceiling (exit 4) instead of a natural short page.
+        cat <<'STUB'
+    if [ "${GH_STUB_FULL_PAGES:-0}" = 1 ]; then
+        page_items="${endpoint##*per_page=}"
+        page_items="${page_items%%&*}"
+        case "$endpoint" in
+        */labels\?*)
+            jq -cn --argjson n "$page_items" '[range(0;$n) | {name:"l\(.)"}]'
+            exit 0
+            ;;
+        orgs/*/issue-types\?*)
+            jq -cn --argjson n "$page_items" '[range(0;$n) | {name:"t\(.)"}]'
+            exit 0
+            ;;
+        orgs/*/issue-fields\?*)
+            jq -cn --argjson n "$page_items" '{issue_fields:[range(0;$n) | {name:"f\(.)",data_type:"text"}]}'
+            exit 0
+            ;;
+        esac
+    fi
+STUB
         echo '    case "$endpoint" in'
         echo '    graphql | search/* | repositories/*) echo "HTTP 403: REST-only proxy rejection" >&2; exit 1 ;;'
         echo '    *"&page=2"*) echo "[]"; exit 0 ;;'
@@ -1544,5 +1569,95 @@ if [ -f "$hook" ] && [ -f "$settings" ]; then
 else
     echo "    (skipped: no devcontainer hook/settings in this profile)"
 fi
+
+# ── Completeness-required inventories ────────────────────────────────────────
+# status.sh walks labels, org issue types, and org issue fields with MAX_ITEMS=0,
+# so the GH_REST_MAX_PAGES ceiling — not the data — can be what ends the walk,
+# and the pages that did arrive are a PARTIAL list. Each of those three
+# renderers can print a definite verdict about what the repository lacks, and
+# printing it from a partial list is an absence nobody observed (challenge r2).
+# No fixture above ships the setup:github-* markers, so this one is the first to
+# render any of the three.
+mkdir -p "${TMP}/inventories/scripts/lib" "${TMP}/bin-node"
+cp "${status}" "${TMP}/inventories/scripts/status.sh"
+cp "${scopes_lib}" "${TMP}/inventories/scripts/gh-scopes.sh"
+cp "${output_lib}" "${TMP}/inventories/scripts/lib/output.sh"
+cp "${rest_lib}" "${TMP}/inventories/scripts/lib/gh-rest.sh"
+: >"${TMP}/inventories/scripts/setup-github-labels.sh"
+: >"${TMP}/inventories/scripts/setup-github-issue-types.sh"
+: >"${TMP}/inventories/scripts/setup-github-issue-fields.sh"
+# The labels renderer takes its WANT list from the label-registry renderer. Both
+# paths are markers it only tests with -f, and the node stub below supplies the
+# rendering, so these cases assert on how status.sh grades an inventory rather
+# than on whatever label-registry.json happens to hold today.
+: >"${TMP}/inventories/label-registry.json"
+: >"${TMP}/inventories/scripts/label-registry-render.mjs"
+{
+    echo '#!/usr/bin/env bash'
+    echo '[ "${1:-}" != --version ] || { echo v20.0.0; exit 0; }'
+    echo 'printf "%s\n" "area:ci|ci and automation" "type:bug|a defect"'
+} >"${TMP}/bin-node/node"
+chmod +x "${TMP}/bin-node/node"
+INVENTORIES="${TMP}/inventories/scripts/status.sh"
+inventory_repo='{"full_name":"owner/repo","visibility":"PUBLIC","private":false,"default_branch":"main","owner":{"type":"Organization"}}'
+
+# run_inventory_section — the setup audit on the fixture above, with the node
+# stub ahead of the shared bin so no other case inherits it.
+run_inventory_section() {
+    make_stub project
+    PATH="${TMP}/bin-node:${TMP}/bin:${PATH}" NO_COLOR=1 \
+        GH_REPO=owner/repo GH_REPO_JSON="${inventory_repo}" \
+        "${INVENTORIES}" setup 2>&1
+}
+
+echo "==> a read that trips the page ceiling reports unknown, never an absence"
+# GH_REST_MAX_PAGES=1 against full pages: page 1 arrives, page 2 is refused, and
+# the walk returns 4 holding one page of a list it never finished reading.
+out="$(GH_STUB_FULL_PAGES=1 GH_REST_MAX_PAGES=1 run_inventory_section)"
+for label in "Starter labels" "Org issue types" "Org issue fields"; do
+    case "$out" in
+    *"[?] ${label} - read truncated at the 1-page ceiling"*) ;;
+    *) fail "a truncated read was not reported as unknown for ${label}: ${out}" ;;
+    esac
+done
+case "$out" in
+*"run task setup:github-labels"*)
+    fail "a truncated label read still told the reader to provision labels: ${out}"
+    ;;
+esac
+case "$out" in
+*"run task setup:github-issue-types"*)
+    fail "a truncated issue-type read still told the reader to provision types: ${out}"
+    ;;
+esac
+case "$out" in
+*"run task setup:github-issue-fields"*)
+    fail "a truncated issue-field read still told the reader to provision fields: ${out}"
+    ;;
+esac
+
+echo "==> a complete, genuinely empty read still renders its existing verdict"
+# The other half of the invariant: completeness gates the claim, it does not
+# suppress it. An unprovisioned repository answers every page and answers it
+# empty, and that IS an observed absence. Labels are the one of the three whose
+# empty verdict is a definite negative; org issue types and fields have always
+# reported an empty read as unknown-needs-admin:org, and must keep saying that
+# rather than borrowing the truncation reason.
+out="$(run_inventory_section)"
+case "$out" in
+*"[ ] Starter labels - run task setup:github-labels"*) ;;
+*) fail "an empty label read lost its provisioning verdict: ${out}" ;;
+esac
+case "$out" in
+*"[?] Org issue types - needs admin:org"*) ;;
+*) fail "an empty issue-type read lost its existing verdict: ${out}" ;;
+esac
+case "$out" in
+*"[?] Org issue fields - needs admin:org (public preview)"*) ;;
+*) fail "an empty issue-field read lost its existing verdict: ${out}" ;;
+esac
+case "$out" in
+*"read truncated at the"*) fail "a complete read was reported as truncated: ${out}" ;;
+esac
 
 echo "status.sh tests passed"

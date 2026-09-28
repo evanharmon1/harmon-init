@@ -20,7 +20,12 @@
 #   HEAD_SHA   head commit-ish for the range          (default: HEAD)
 #   PR_TITLE   the PR title  — see "PR metadata" below
 #   PR_BODY    the PR body   — see "PR metadata" below
-#   GH_REPO    owner/name    (default: `gh repo view` on the current remote)
+#   GH_REPO    [HOST/]OWNER/REPO — gh's own documented form, and the only
+#              input read here; it is resolved through gh_rest_repo, which
+#              drops any HOST/ segment so endpoints stay repos/OWNER/REPO.
+#              The host is not lost: it travels separately, as the
+#              --hostname gh_rest_api derives from gh_rest_host.
+#              (default: the current git remote)
 #
 # PR metadata: both PR_TITLE and PR_BODY are used verbatim when BOTH are set —
 # which is how you pre-flight a title/body you have not published yet:
@@ -65,8 +70,7 @@ git log --format=%B "${merge_base}..${head_sha}" >"$commits_file"
 
 if [ -z "${PR_TITLE+x}" ] || [ -z "${PR_BODY+x}" ]; then
     branch="$(git branch --show-current)"
-    repo="${GH_REPO:-}"
-    [ -n "$repo" ] || repo="$(gh_rest_repo 2>/dev/null || true)"
+    repo="$(gh_rest_repo 2>/dev/null || true)"
     owner="${repo%%/*}"
     head_query="$(gh_rest_urlencode "${owner}:${branch}")"
     if [ -z "$branch" ] || [ -z "$repo" ] ||
@@ -89,12 +93,9 @@ if [ -z "${PR_TITLE+x}" ] || [ -z "${PR_BODY+x}" ]; then
 fi
 export PR_TITLE PR_BODY
 
-repo="${GH_REPO:-}"
-if [ -z "$repo" ]; then
-    if ! repo="$(gh_rest_repo)"; then
-        echo "guard:closing-keywords: could not resolve owner/repository from the current remote" >&2
-        exit 2
-    fi
+if ! repo="$(gh_rest_repo)"; then
+    echo "guard:closing-keywords: could not resolve owner/repository from the current remote" >&2
+    exit 2
 fi
 
 "$script_dir/check-closing-keywords.sh" --repo "$repo" \

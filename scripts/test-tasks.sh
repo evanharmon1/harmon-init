@@ -88,6 +88,31 @@ for lib in scripts/lib/gh-rest.sh template/scripts/lib/gh-rest.sh; do
         fail "${lib}: the page ceiling no longer defaults to 10"
 done
 
+echo "==> the repository is resolved once, through the helper, in every session script"
+# gh documents GH_REPO as [HOST/]OWNER/REPO, and gh_rest_repo is the ONE place
+# that form is normalized: it drops the HOST/ segment so endpoints stay
+# repos/OWNER/REPO, while gh_rest_host hands the host back separately as
+# --hostname. A caller that reads GH_REPO itself re-derives the value without
+# that normalization, and then builds repos/HOST/OWNER/REPO paths and a
+# HOST:branch head query out of it (challenge r2). The property is asserted
+# class-wide rather than per call site: across the session scripts GH_REPO may
+# appear in whole-line comments only, so a NEW bypass anywhere in the set fails
+# here too, not just the three that were removed.
+for layer in scripts template/scripts; do
+    [ -d "$layer" ] || continue
+    for script in status.sh check-closing-keywords.sh guard-closing-keywords.sh audit-session-artifacts.sh; do
+        [ -f "${layer}/${script}" ] || continue
+        bypass="$(grep -n 'GH_REPO' "${layer}/${script}" | grep -v '^[0-9]*:[[:space:]]*#' || true)"
+        [ -z "$bypass" ] ||
+            fail "${layer}/${script}: reads GH_REPO instead of calling gh_rest_repo (mention it in a whole-line comment if this is documentation): ${bypass}"
+    done
+    # And the helper still reads it: a set that named GH_REPO nowhere at all
+    # would satisfy the loop above by having dropped gh's own override entirely.
+    [ -f "${layer}/lib/gh-rest.sh" ] || continue
+    grep -Fq 'GH_REPO' "${layer}/lib/gh-rest.sh" ||
+        fail "${layer}/lib/gh-rest.sh: the helper no longer reads GH_REPO, so nothing honours gh's own repository override"
+done
+
 guard_bin="${test_tmp}/closing-keywords-bin"
 guard_git_args="${test_tmp}/closing-keywords-git-args"
 guard_gh_args="${test_tmp}/closing-keywords-gh-args"

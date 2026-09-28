@@ -975,21 +975,71 @@ if [[ "${SECTION}" == "setup" ]]; then
             echo unavailable >"${d}/projects-rest"
             # PM setup surface — audit the results of the setup:github-* tasks the
             # repo actually ships (each script is the marker it opted in).
+            #
+            # These three inventories are COMPLETENESS-REQUIRED: their renderers
+            # below can report "not provisioned", and an absence is only ever
+            # observed by seeing the whole list. gh_rest_paginate_* returns 4
+            # when the GH_REST_MAX_PAGES ceiling truncates a walk, and some other
+            # non-zero when the read fails outright; either way what arrived is a
+            # PARTIAL list, and grading a partial list as "none" states an
+            # absence nobody observed (challenge r2). So the invariant is
+            # encoded once, here, rather than re-argued per call site: an
+            # inventory whose reader can claim absence may claim it only after a
+            # complete successful read, and a truncated or failed read is
+            # unknown, never "none". Each read goes through inventory_read and
+            # each renderer consults inventory_complete before it reads the data.
+            #
+            # inventory_read NAME READER... — run READER, keep its pages in
+            # ${d}/NAME.pages, and record ${d}/NAME.state.
+            inventory_read() {
+                local name="$1" state=complete rc=0
+                shift
+                "$@" >"${d}/${name}.pages" 2>/dev/null || rc=$?
+                case "${rc}" in
+                0) state=complete ;;
+                4) state=truncated ;;
+                *) state=failed ;;
+                esac
+                printf '%s\n' "${state}" >"${d}/${name}.state"
+            }
+            # A missing state file reads as `failed`, not as complete: it means
+            # the read never ran, which is the one case a default must not grade.
+            inventory_state() { cat "${d}/$1.state" 2>/dev/null || echo failed; }
+            inventory_complete() { [ "$(inventory_state "$1")" = complete ]; }
+            # inventory_unknown NAME LABEL — the checkline an incomplete read
+            # earns, in the shape the label-registry render failure already uses.
+            # The reason names the truncation, so the reader can tell "nobody saw
+            # the whole list" from "the list is empty".
+            inventory_unknown() {
+                local reason="read failed — inventory unchecked"
+                [ "$(inventory_state "$1")" != truncated ] ||
+                    reason="read truncated at the ${GH_REST_MAX_PAGES:-10}-page ceiling — inventory unchecked"
+                checkline unknown "$2" "${reason}"
+            }
             if [ -f scripts/setup-github-labels.sh ]; then
-                (GH_REST_TIMEOUT="${NETWORK_TIMEOUT}" gh_rest_paginate_array \
-                    "repos/${OWNER}/${REPO}/labels" 0 |
-                    jq -sr 'add | .[].name' >"${d}/labels.txt" 2>/dev/null || : >"${d}/labels.txt") &
+                (
+                    GH_REST_TIMEOUT="${NETWORK_TIMEOUT}" inventory_read labels \
+                        gh_rest_paginate_array "repos/${OWNER}/${REPO}/labels" 0
+                    jq -sr 'add | .[].name' <"${d}/labels.pages" \
+                        >"${d}/labels.txt" 2>/dev/null || : >"${d}/labels.txt"
+                ) &
             fi
             if [ -f scripts/setup-github-issue-types.sh ]; then
-                (GH_REST_TIMEOUT="${NETWORK_TIMEOUT}" gh_rest_paginate_array \
-                    "orgs/${OWNER}/issue-types" 0 |
-                    jq -s 'add' >"${d}/issue-types.json" 2>/dev/null || echo 'null' >"${d}/issue-types.json") &
+                (
+                    GH_REST_TIMEOUT="${NETWORK_TIMEOUT}" inventory_read issue-types \
+                        gh_rest_paginate_array "orgs/${OWNER}/issue-types" 0
+                    jq -s 'add' <"${d}/issue-types.pages" \
+                        >"${d}/issue-types.json" 2>/dev/null || echo 'null' >"${d}/issue-types.json"
+                ) &
             fi
             if [ -f scripts/setup-github-issue-fields.sh ]; then
-                (GH_REST_TIMEOUT="${NETWORK_TIMEOUT}" gh_rest_paginate_key \
-                    "orgs/${OWNER}/issue-fields" issue_fields \
-                    -H "X-GitHub-Api-Version: 2026-03-10" |
-                    jq -s 'add' >"${d}/issue-fields.json" 2>/dev/null || echo 'null' >"${d}/issue-fields.json") &
+                (
+                    GH_REST_TIMEOUT="${NETWORK_TIMEOUT}" inventory_read issue-fields \
+                        gh_rest_paginate_key "orgs/${OWNER}/issue-fields" issue_fields \
+                        -H "X-GitHub-Api-Version: 2026-03-10"
+                    jq -s 'add' <"${d}/issue-fields.pages" \
+                        >"${d}/issue-fields.json" 2>/dev/null || echo 'null' >"${d}/issue-fields.json"
+                ) &
             fi
             # App installs — definitive when we hold admin scope, else 'null'.
             (run_timeout "${NETWORK_TIMEOUT}" gh api "${APPS_PATH}" \
@@ -999,6 +1049,13 @@ if [[ "${SECTION}" == "setup" ]]; then
             # bounded to the 100 most recent items — a heuristic that walked the
             # whole PR history would spend one request per hundred PRs for a
             # yes/no answer the newest page already gives (challenge r1).
+            #
+            # Deliberately NOT completeness-required like the three inventories
+            # above, and the asymmetry is the point: MAX_ITEMS=100 is exactly one
+            # 100-item page, so each walk returns on its first page and can never
+            # reach the page ceiling — there is no truncation here to tell apart
+            # from emptiness. A miss is a documented heuristic negative about the
+            # newest page, never a claim that the whole history holds nothing.
             (GH_REST_TIMEOUT="${NETWORK_TIMEOUT}" gh_rest_paginate_array \
                 "repos/${OWNER}/${REPO}/pulls?state=all&sort=updated&direction=desc" 100 |
                 jq -s 'add | map(select(.user.login | test("^renovate(\\[bot\\])?$";"i"))) | .[:1] | map({number})' \
@@ -1221,8 +1278,12 @@ if [[ "${SECTION}" == "setup" ]]; then
                     # The WHOLE inventory now comes from the renderer, so
                     # without node or the manifest nothing can be enumerated:
                     # report unknown rather than grading an empty want-list —
-                    # or a renderer failure — as complete.
-                    if ! command -v node >/dev/null 2>&1; then
+                    # or a renderer failure — as complete. The HAVE side owes
+                    # the same: an empty labels.txt is only evidence of an
+                    # unprovisioned repo when the read that produced it finished.
+                    if ! inventory_complete labels; then
+                        inventory_unknown labels "Starter labels"
+                    elif ! command -v node >/dev/null 2>&1; then
                         checkline unknown "Starter labels" "node unavailable — label inventory unchecked"
                     elif [ ! -f label-registry.json ] || [ ! -f scripts/label-registry-render.mjs ]; then
                         checkline unknown "Starter labels" "label-registry.json missing — label inventory unchecked"
@@ -1255,47 +1316,55 @@ if [[ "${SECTION}" == "setup" ]]; then
                     fi
                 fi
                 if [ -f scripts/setup-github-issue-types.sh ]; then
-                    type_names="$(jq -r 'if type == "array" then (map(.name) | join(",")) else "" end' "${d}/issue-types.json" 2>/dev/null || echo "")"
-                    if [ -z "${type_names}" ]; then
-                        checkline unknown "Org issue types" "needs admin:org"
-                    elif grep 'Research' <<<"${type_names}" >/dev/null; then
-                        checkline ok "Org issue types" "Bug/Feature/Task/Research"
+                    if ! inventory_complete issue-types; then
+                        inventory_unknown issue-types "Org issue types"
                     else
-                        checkline no "Org issue types" "run task setup:github-issue-types"
+                        type_names="$(jq -r 'if type == "array" then (map(.name) | join(",")) else "" end' "${d}/issue-types.json" 2>/dev/null || echo "")"
+                        if [ -z "${type_names}" ]; then
+                            checkline unknown "Org issue types" "needs admin:org"
+                        elif grep 'Research' <<<"${type_names}" >/dev/null; then
+                            checkline ok "Org issue types" "Bug/Feature/Task/Research"
+                        else
+                            checkline no "Org issue types" "run task setup:github-issue-types"
+                        fi
                     fi
                 fi
                 if [ -f scripts/setup-github-issue-fields.sh ]; then
-                    # One `name<TAB>data_type` per line, not a joined string.
-                    field_rows="$(jq -r '(if type == "object" then (.issue_fields // []) elif type == "array" then . else [] end) | .[] | "\(.name)\t\(.data_type // "")"' "${d}/issue-fields.json" 2>/dev/null || echo "")"
-                    # Product must be present AND of the right type: an org that
-                    # happens to own a text-incompatible field named `Product`
-                    # can never get it created (GitHub cannot change a field's
-                    # data type in place). Reporting it done would hide exactly
-                    # what the setup script warns about. The retired Agent,
-                    # Domain, and Layer fields are deliberately NOT wanted here:
-                    # the setup script no longer creates any of them, so
-                    # requiring one would report a permanent false failure on
-                    # every fresh org (#662, #875).
-                    missing_fields=""
-                    wrong_fields=""
-                    for want in Product:text; do
-                        wname="${want%%:*}"
-                        wtype="${want##*:}"
-                        htype="$(awk -F'\t' -v n="${wname}" '$1 == n { print $2; exit }' <<<"${field_rows}")"
-                        if ! grep -xF "${wname}" < <(printf '%s\n' "${field_rows}" | cut -f1) >/dev/null; then
-                            missing_fields="${missing_fields}${missing_fields:+, }${wname}"
-                        elif [ -n "${htype}" ] && [ "${htype}" != "${wtype}" ]; then
-                            wrong_fields="${wrong_fields}${wrong_fields:+, }${wname} is ${htype}"
-                        fi
-                    done
-                    if [ -z "${field_rows}" ]; then
-                        checkline unknown "Org issue fields" "needs admin:org (public preview)"
-                    elif [ -n "${wrong_fields}" ]; then
-                        checkline no "Org issue fields" "wrong type: ${wrong_fields} — rename/delete, then re-run task setup:github-issue-fields"
-                    elif [ -z "${missing_fields}" ]; then
-                        checkline ok "Org issue fields" "Product"
+                    if ! inventory_complete issue-fields; then
+                        inventory_unknown issue-fields "Org issue fields"
                     else
-                        checkline no "Org issue fields" "missing ${missing_fields} — run task setup:github-issue-fields"
+                        # One `name<TAB>data_type` per line, not a joined string.
+                        field_rows="$(jq -r '(if type == "object" then (.issue_fields // []) elif type == "array" then . else [] end) | .[] | "\(.name)\t\(.data_type // "")"' "${d}/issue-fields.json" 2>/dev/null || echo "")"
+                        # Product must be present AND of the right type: an org that
+                        # happens to own a text-incompatible field named `Product`
+                        # can never get it created (GitHub cannot change a field's
+                        # data type in place). Reporting it done would hide exactly
+                        # what the setup script warns about. The retired Agent,
+                        # Domain, and Layer fields are deliberately NOT wanted here:
+                        # the setup script no longer creates any of them, so
+                        # requiring one would report a permanent false failure on
+                        # every fresh org (#662, #875).
+                        missing_fields=""
+                        wrong_fields=""
+                        for want in Product:text; do
+                            wname="${want%%:*}"
+                            wtype="${want##*:}"
+                            htype="$(awk -F'\t' -v n="${wname}" '$1 == n { print $2; exit }' <<<"${field_rows}")"
+                            if ! grep -xF "${wname}" < <(printf '%s\n' "${field_rows}" | cut -f1) >/dev/null; then
+                                missing_fields="${missing_fields}${missing_fields:+, }${wname}"
+                            elif [ -n "${htype}" ] && [ "${htype}" != "${wtype}" ]; then
+                                wrong_fields="${wrong_fields}${wrong_fields:+, }${wname} is ${htype}"
+                            fi
+                        done
+                        if [ -z "${field_rows}" ]; then
+                            checkline unknown "Org issue fields" "needs admin:org (public preview)"
+                        elif [ -n "${wrong_fields}" ]; then
+                            checkline no "Org issue fields" "wrong type: ${wrong_fields} — rename/delete, then re-run task setup:github-issue-fields"
+                        elif [ -z "${missing_fields}" ]; then
+                            checkline ok "Org issue fields" "Product"
+                        else
+                            checkline no "Org issue fields" "missing ${missing_fields} — run task setup:github-issue-fields"
+                        fi
                     fi
                 fi
                 if [ "${has_release_wf}" = 1 ]; then

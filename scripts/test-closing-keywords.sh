@@ -268,6 +268,32 @@ export GH_STUB_FAIL
 [ "$(proxy_guard '[]')" = 2 ] ||
     fail "REST guard metadata failure must be indeterminate: $(cat "$tmp/driver-err")"
 unset GH_STUB_FAIL
+
+echo '==> a host-qualified GH_REPO reaches the guard only through the helper'
+# End-to-end, through the same stub: gh documents GH_REPO as [HOST/]OWNER/REPO,
+# and the guard now resolves it exclusively through gh_rest_repo. While it read
+# GH_REPO itself it built repos/ghe.example.com/acme/repo/pulls and a
+# ghe.example.com:feature head query — an endpoint that cannot exist, from a
+# host whose only correct destination is --hostname (challenge r2). The stub
+# answers repos/acme/repo/pulls alone, so a bypass cannot reach a verdict here.
+: >"$GH_STUB_CALLS"
+rc=0
+GH_STUB_PR_JSON='[{"title":"fix: closes #1","body":""}]' PATH="$tmp/bin:$PATH" \
+    GH_REPO=ghe.example.com/acme/repo BASE_SHA=HEAD HEAD_SHA=HEAD \
+    "$guard_driver" >"$tmp/driver-out" 2>"$tmp/driver-err" || rc=$?
+[ "$rc" = 0 ] ||
+    fail "host-qualified GH_REPO guard run exited ${rc}: $(cat "$tmp/driver-err")"
+grep -qx 'api repos/acme/repo/pulls?state=open&head=acme%3Afeature&per_page=2&page=1 --hostname ghe.example.com' \
+    "$GH_STUB_CALLS" ||
+    fail "host-qualified GH_REPO did not reach the PR lookup normalized: $(grep '^api ' "$GH_STUB_CALLS" | tr '\n' ';')"
+grep -q 'repos/ghe.example.com/' "$GH_STUB_CALLS" &&
+    fail "the host leaked into an endpoint path: $(grep '^api ' "$GH_STUB_CALLS" | tr '\n' ';')"
+grep -q 'ghe.example.com%3A' "$GH_STUB_CALLS" &&
+    fail "the host leaked into the head query: $(grep '^api ' "$GH_STUB_CALLS" | tr '\n' ';')"
+# ...and the checker it hands off to was given the normalized OWNER/REPO too:
+# only that spelling reaches the issue read the verdict above came from.
+grep -q '^api repos/acme/repo/issues/1 .*--hostname ghe.example.com$' "$GH_STUB_CALLS" ||
+    fail "the checker was handed a host-qualified repository: $(grep '^api ' "$GH_STUB_CALLS" | tr '\n' ';')"
 unset GH_STUB_CALLS
 
 echo 'closing-keywords guard: all cases passed'

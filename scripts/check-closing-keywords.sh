@@ -20,7 +20,11 @@ usage() {
     exit 2
 }
 
-repo="${GH_REPO:-}"
+# One repository resolution for every session script: gh_rest_repo reads
+# GH_REPO (in gh's [HOST/]OWNER/REPO form) or the git remote and returns
+# OWNER/REPO, so no endpoint built here can carry a host segment. --repo below
+# overrides it and is OWNER/REPO by contract.
+repo="$(gh_rest_repo 2>/dev/null || true)"
 body_env=""
 title_env=""
 commits_file=""
