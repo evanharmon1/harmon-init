@@ -441,7 +441,7 @@ note. They are simply the wrong shape for *this* mechanism.
 
 | Host | Runs the runner today? | Devcontainer image as the session environment? | Verdict |
 |---|---|---|---|
-| Coder workspace (direct) | Yes — documented host requirements only | Yes, it is the image | **The route, if adopted** |
+| Coder workspace (direct) | Yes — documented host requirements only | Yes — a Docker-free render of it; **unverified** until the trial | **The route, if adopted** |
 | Coder Agent Relay | Announced, early access / closed preview | Yes, via the mapped template | Watch; not available |
 | Fly.io Sprite | Binary is present, floors **unverified** | No — no custom base image | Reject for this purpose |
 
@@ -553,15 +553,16 @@ directly.
 
 ### Follow-up to file (not filed by this note)
 
-One issue, blocked on the plan move: *"(remote-env): Self-hosted Claude Code
-environment adapter"* — run the rendered image of a Docker-free profile plus
-the `claude` binary as the runner on a Coder workspace, and document the
-adapter section in `docs/architecture/remote-environments.md` (the file #1403
-creates). Not the published `harmon-init-devcontainer` as it stands: that is
-the bot profile's render, and its `docker-in-docker:2` fails the first check
-below. The **agent** posture #1408 defines is Docker-off by default, so its
-rendered image is the natural base once it exists; until then a Docker-free
-render is required, and a repository that opts into DinD forgoes the enforced
+One issue in harmon-init, blocked on the plan move: *"(remote-env):
+Self-hosted Claude Code environment adapter"* — run the rendered image of a
+Docker-free profile plus the `claude` binary as the runner on a Coder
+workspace, and document the adapter section in
+`docs/architecture/remote-environments.md` (the file #1403 creates). Not the
+published `harmon-init-devcontainer` as it stands: that is the bot profile's
+render, and its `docker-in-docker:2` fails the first check below. The
+**agent** posture #1408 defines is Docker-off by default, so its rendered
+image is the natural base once it exists; until then a Docker-free render is
+required, and a repository that opts into DinD forgoes the enforced
 managed-settings layer (the Docker row above). Its acceptance criteria are
 checks against a running session:
 
@@ -631,11 +632,16 @@ When it is run, these are the things only a real session can settle:
 | GraphQL/REST limit is a proxy property and opt-in when self-hosted | ✅ documented on both sides |
 | Repository-declared plugins install in a self-hosted session | ❓ **unverified** — documented as not installed for cloud sessions generally; not restated for self-hosted |
 | Team/Enterprise gating, ZDR exclusion, billing model | ✅ primary docs + pricing page, read 2026-09-28 |
+| `user:sessions:claude_code` is capped server-side at 30 days — no long-lived CI token for dispatch | ✅ documented — [testing][testing], read 2026-09-28 |
 | Coder workspace can host a runner | ✅ by the documented host requirements; ❓ **unverified** in practice |
 | Coder Agent Relay supports Claude Code | ◐ announced 2026-09-15, "early access with select design partners"; Coder's own docs list Cursor as the first supported provider |
 | Sprites cannot take a custom base image | ✅ Fly staff statement, thread re-read 2026-09-28 with no later contradiction |
 | Preinstalled Claude CLI on a sprite meets the 2.1.224 runner floor | ❓ **unverified** |
 | A sprite can host a long-lived polling runner economically | ❌ reasoned from documented sleep behaviour + the 60-second requeue; not measured — weakens the fit, reasons 1 and 3 decide it |
+| Sessions read the runner image's managed settings file | ✅ documented — [cloud environments][cloudenv], read 2026-09-28 |
+| The four managed-settings preconditions hold on a Docker-free render | ❓ **unverified** — pending the trial session (see above) |
+| The devcontainer passes precondition 1 (root-owned, mode 0644, via `install-repo-config.sh`) and fails 2 (passwordless `sudo`) and 3 (`docker-in-docker:2`) | ✅ verified against this repository, 2026-09-28 |
+| No server-managed settings keys are deployed on the Team organization | ◐ asserted as a standing constraint, not assumed; checked in the trial |
 
 ## Sources
 
