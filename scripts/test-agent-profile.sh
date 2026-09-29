@@ -28,10 +28,14 @@ set -euo pipefail
 #   7. egress             — the list parses, resolves, refuses an
 #                           allow-nothing filter and an over-broad literal
 #                           or @github-meta range (0.0.0.0/x, wider than
-#                           /16); apply fails closed — any failure leaves
-#                           the OUTPUT/FORWARD policy DROP; the lifecycle
-#                           snapshots it root-owned at create, applies it
-#                           first, and applies only the snapshot at start
+#                           /16); apply and establish fail closed — any
+#                           failure, a failed iptables install or a refused
+#                           snapshot included, leaves the OUTPUT/FORWARD
+#                           policy DROP, and with no iptables at all says it
+#                           could not; the lifecycle snapshots it root-owned
+#                           at create, applies it first, and applies only
+#                           the snapshot at start, closing egress without it
+#                           when the snapshot is missing
 
 fail() {
     echo "FAIL: $*" >&2
@@ -616,6 +620,46 @@ grep -Fxq -- 'iptables -A HARMON_EGRESS -d 198.51.100.0/24 -j ACCEPT' "$ipt_log"
 ! grep -Fq 'apply did not complete' "$apply_err" ||
     fail "a successful egress apply still ran its failure path"
 
+# The trap is armed before iptables is installed. With no iptables and a
+# failing install there is nothing to set DROP with, so apply must say so
+# (CRITICAL) and exit non-zero; once the install has put iptables on PATH, a
+# failure later in it must still leave the policies DROP. The curated PATH
+# keeps any real iptables on this machine out of both runs.
+noipt_bin="${work_dir}/noipt-bin"
+noipt_sbin="${work_dir}/noipt-sbin"
+mkdir -p "$noipt_bin" "$noipt_sbin"
+for tool in dirname basename; do
+    ln -s "$(command -v "$tool")" "${noipt_bin}/${tool}"
+done
+cp "${ipt_bin}/id" "${noipt_bin}/id"
+printf '#!/bin/sh
+exit 100
+' >"${noipt_bin}/apt-get"
+chmod +x "${noipt_bin}/apt-get"
+: >"$ipt_log"
+if PATH="${noipt_bin}:${noipt_sbin}" EGRESS_ALLOWLIST_SHARED="${work_dir}/list.txt" EGRESS_ALLOWLIST_LOCAL=/nonexistent \
+    "$BASH" "$egress" apply >/dev/null 2>"$apply_err"; then
+    fail "egress apply succeeded although iptables could not be installed"
+fi
+grep -Fq 'CRITICAL: could not close egress' "$apply_err" ||
+    fail "egress apply with no installable iptables did not say it could not close egress: $(cat "$apply_err")"
+! grep -Fq 'did not complete — egress policy left at DROP' "$apply_err" ||
+    fail "egress apply with no iptables claimed to have left egress at DROP"
+cat >"${noipt_bin}/apt-get" <<EOF
+#!/bin/sh
+# Installs iptables, then fails (a later package step, a signal).
+cp "${ipt_bin}/iptables" "${ipt_bin}/ip6tables" "${noipt_sbin}/"
+exit 100
+EOF
+ln -s "$(command -v cp)" "${noipt_bin}/cp"
+: >"$ipt_log"
+if PATH="${noipt_bin}:${noipt_sbin}" EGRESS_ALLOWLIST_SHARED="${work_dir}/list.txt" EGRESS_ALLOWLIST_LOCAL=/nonexistent \
+    "$BASH" "$egress" apply >/dev/null 2>"$apply_err"; then
+    fail "egress apply succeeded although the iptables install failed"
+fi
+grep -Fxq -- 'iptables -P OUTPUT DROP' "$ipt_log" && grep -Fxq -- 'iptables -P FORWARD DROP' "$ipt_log" ||
+    fail "a failed iptables install left the OUTPUT/FORWARD policy open: $(cat "$apply_err")"
+
 # The snapshot: the applier and both lists copied out of the checkout, and a
 # later edit to the checkout changes nothing the snapshot applies.
 # EGRESS_SNAPSHOT_DIR stands in for the root-owned directory.
@@ -651,17 +695,62 @@ if EGRESS_SNAPSHOT_DIR="$snap_dir" bash "${snap_checkout}/scripts/egress-allowli
 fi
 [ "$(cat "${snap_dir}/egress-allowlist.txt")" = "$snap_good" ] || fail "a refused snapshot overwrote the good one"
 
-# The lifecycle: post-create snapshots, then applies FROM the snapshot before
-# anything else; post-start applies only the snapshot and never reads the
-# checkout's applier.
+# establish — post-create's one egress step: snapshot, then apply FROM the
+# snapshot, fail-closed around both. A list the snapshot refuses leaves the
+# policies DROP and exits non-zero; a valid checkout ends with the snapshot's
+# filter installed.
+establish_log="${work_dir}/establish.err"
+run_establish() {
+    : >"$ipt_log"
+    PATH="${ipt_bin}:${PATH}" EGRESS_SNAPSHOT_DIR="${work_dir}/establish-root/harmon-egress" \
+        EGRESS_RESOLVER="$stub_resolver" EGRESS_RESOLV_CONF="${work_dir}/resolv.conf" \
+        bash "${snap_checkout}/scripts/egress-allowlist.sh" establish >/dev/null 2>"$establish_log"
+}
+# The checkout still carries the 0.0.0.0/0 line appended above.
+if run_establish; then
+    fail "egress establish succeeded on a list the snapshot refuses"
+fi
+grep -Fq "'0.0.0.0/0'" "$establish_log" || fail "egress establish did not fail at the snapshot's refusal: $(cat "$establish_log")"
+grep -Fxq -- 'iptables -P OUTPUT DROP' "$ipt_log" && grep -Fxq -- 'iptables -P FORWARD DROP' "$ipt_log" ||
+    fail "a snapshot refusal in egress establish left the OUTPUT/FORWARD policy open: $(cat "$establish_log")"
+! grep -q -- '-j ACCEPT' "$ipt_log" || fail "a refused egress establish still installed ACCEPT rules: $(cat "$ipt_log")"
+printf 'good.example\n198.51.100.0/24\n' >"${snap_checkout}/egress-allowlist.txt"
+run_establish || fail "egress establish failed on a valid checkout: $(cat "$establish_log")"
+grep -Fxq -- 'iptables -A HARMON_EGRESS -d 198.51.100.0/24 -j ACCEPT' "$ipt_log" ||
+    fail "a successful egress establish did not allow a listed destination: $(cat "$ipt_log")"
+! grep -Fq 'did not complete' "$establish_log" || fail "a successful egress establish still ran its failure path"
+cmp -s "$egress" "${work_dir}/establish-root/harmon-egress/scripts/egress-allowlist.sh" ||
+    fail "egress establish did not write the snapshot it applies"
+
+# The lifecycle: post-create establishes egress before anything else;
+# post-start applies only the snapshot, never reads the checkout's applier,
+# and closes egress itself when the snapshot applier is missing.
 snap_applier=/usr/local/share/harmon-egress/scripts/egress-allowlist.sh
 grep -q "^SNAPSHOT_DIR=${snap_applier%/scripts/*}\$" "$egress" ||
     fail "egress-allowlist.sh does not snapshot to ${snap_applier%/scripts/*}, the path the lifecycle applies from"
-[ "$(grep -Ev '^[[:space:]]*(#|$)' .devcontainer/agent/post-create.sh | sed -n 's/^\(bash .*\)$/\1/p' | head -n 2)" = "bash .devcontainer/scripts/egress-allowlist.sh snapshot
-bash ${snap_applier} apply" ] ||
-    fail "the agent post-create does not snapshot the egress lists and apply the snapshot before anything else"
-[ "$(grep -Ev '^[[:space:]]*(#|$)' .devcontainer/agent/post-start.sh | sed -n 's/^\(bash .*\)$/\1/p' | head -n 1)" = "bash ${snap_applier} apply" ] ||
+[ "$(grep -Ev '^[[:space:]]*(#|$)' .devcontainer/agent/post-create.sh | grep -m 1 'bash ')" = "bash .devcontainer/scripts/egress-allowlist.sh establish" ] ||
+    fail "the agent post-create does not establish egress (snapshot, then apply the snapshot) before anything else"
+[ "$(grep -Ev '^[[:space:]]*(#|$)' .devcontainer/agent/post-start.sh | grep -m 1 'bash ')" = "if ! bash ${snap_applier} apply; then" ] ||
     fail "the agent post-start does not apply the egress snapshot before anything else"
+# Run post-start against a snapshot path that does not exist: the start fails
+# and the policies are DROP. sudo is a pass-through stub; the log path moves
+# into the scratch directory.
+start_bin="${work_dir}/start-bin"
+mkdir -p "$start_bin"
+printf '#!/bin/sh
+[ "$1" = -n ] && shift
+exec "$@"
+' >"${start_bin}/sudo"
+chmod +x "${start_bin}/sudo"
+sed -e "s|/usr/local/share/harmon-egress|${work_dir}/no-snapshot|g" \
+    -e "s|/tmp/devcontainer-post-start.log|${work_dir}/post-start.log|g" \
+    .devcontainer/agent/post-start.sh >"${work_dir}/post-start.sh"
+: >"$ipt_log"
+if (cd "$work_dir" && PATH="${start_bin}:${ipt_bin}:${PATH}" bash "${work_dir}/post-start.sh"); then
+    fail "the agent post-start succeeded with no egress snapshot"
+fi
+grep -Fxq -- 'iptables -P OUTPUT DROP' "$ipt_log" && grep -Fxq -- 'iptables -P FORWARD DROP' "$ipt_log" ||
+    fail "the agent post-start left the OUTPUT/FORWARD policy open with no egress snapshot: $(cat "${work_dir}/post-start.log")"
 ! grep -Ev '^[[:space:]]*#' .devcontainer/agent/post-start.sh | grep -q 'egress-allowlist\.txt\|\.devcontainer/scripts/egress-allowlist\.sh' ||
     fail "the agent post-start reads the checkout's egress applier or lists (only the root-owned snapshot may be applied at start)"
 jq -e '.runArgs | index("--cap-add=NET_ADMIN")' <<<"$agent_cfg" >/dev/null ||

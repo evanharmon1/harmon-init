@@ -277,18 +277,27 @@ reads `.devcontainer/egress-allowlist.txt` (the shared list, harmon-init#286)
 plus the optional per-repo `.devcontainer/egress-allowlist.local.txt`, then
 installs a default-deny netfilter policy: loopback, replies, DNS to the
 configured resolvers, and the listed destinations pass; everything else is
-refused. It needs `--cap-add=NET_ADMIN`, and it fails the container start if
-the filter cannot be installed. Claude Code's deny rules cover `sudo`,
+refused. It needs `--cap-add=NET_ADMIN`, and it fails the container create
+or start if the filter cannot be installed. Claude Code's deny rules cover `sudo`,
 `iptables`, `nft`, and `ipset`, so it cannot lift the filter through its own
 tools — the first layer above, not a boundary against repository code run
 with root.
 
 - **Applied from a root-owned snapshot.** post-create runs
-  `egress-allowlist.sh snapshot`, which copies the applier and both lists out
+  `egress-allowlist.sh establish`, which copies the applier and both lists out
   of the checkout into `/usr/local/share/harmon-egress/` (root-owned, closed
   to writes), and applies from there; every start applies that snapshot and
   never the checkout. An edit to the checkout's lists — by an agent or anyone
   else — changes nothing until the operator re-snapshots it.
+- **Fails closed — and where it cannot.** Every step meant to install the
+  filter (`apply`, post-create's `establish`, and post-start's apply of the
+  snapshot) leaves the OUTPUT and FORWARD policies DROP when it does not
+  complete: a failed iptables install, a list the snapshot or the plan
+  refuses, a failed rule or verify, a signal, or a missing snapshot. The one
+  case it cannot cover is iptables failing to install at all — nothing is
+  left to set DROP with, so it prints a `CRITICAL: could not close egress`
+  line instead. Either way the create or start fails, and a container whose
+  create or start failed must not be used: rebuild it after fixing the cause.
 - **No over-broad entries.** A list line that is `0.0.0.0` in any form, or a
   CIDR wider than `/16`, fails `apply` closed with the file and line named.
   A range fetched through `@github-meta` is held to the same rule and fails

@@ -347,7 +347,12 @@ The security contract, by layer:
   credential. No 1Password, no Tailscale, never `ANTHROPIC_API_KEY`.
 - **Network — default-deny egress.** `egress-allowlist.sh` installs the filter
   before anything else at create and at every start, and fails the container
-  if it cannot. Post-create snapshots the applier and both lists into a
+  if it cannot. Every such failure leaves the OUTPUT and FORWARD policies
+  DROP — a failed iptables install, a refused list at snapshot or apply, a
+  failed rule or verify, a missing snapshot — except when iptables itself
+  could not be installed: nothing can set DROP then, and the step says so
+  (`CRITICAL`). A container whose create or start failed must not be used.
+  Post-create snapshots the applier and both lists into a
   root-owned directory, and every start applies that snapshot, never the
   writable checkout. A `0.0.0.0` entry or a CIDR wider than `/16` fails
   closed, whether it is a list line or a range fetched through

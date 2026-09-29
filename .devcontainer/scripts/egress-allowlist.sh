@@ -18,11 +18,23 @@ set -euo pipefail
 #                                  runs it only from the snapshot below.
 #   egress-allowlist.sh snapshot — validate the lists, then copy this applier
 #                                  and both lists to a root-owned directory
-#                                  (/usr/local/share/harmon-egress). Agent
-#                                  post-create runs it once; every later apply
-#                                  runs from there, so an edit to the writable
-#                                  checkout cannot widen egress at the next
-#                                  start. Root.
+#                                  (/usr/local/share/harmon-egress). Every
+#                                  later apply runs from there, so an edit to
+#                                  the writable checkout cannot widen egress
+#                                  at the next start. Root.
+#   egress-allowlist.sh establish — agent post-create's single egress step:
+#                                  install iptables, snapshot, then apply FROM
+#                                  the snapshot, with the same fail_closed
+#                                  exit as apply around all three. Root.
+#
+# "Fails closed" means: once running as root, every exit of apply or
+# establish short of a verified filter — a refused list, a failed iptables
+# install, a failed rule, a failed verify, a signal — sets the OUTPUT and
+# FORWARD policies to DROP and exits non-zero. The one exit it cannot close
+# is the one with no iptables at all (it could not be installed): there is
+# nothing to set DROP with, so it prints a CRITICAL line instead. Either way
+# the create or start that ran it fails, and a container whose create or
+# start failed must not be used.
 #   egress-allowlist.sh verify   — fail unless the default-deny filter is in
 #                                  place (root; re-execs through `sudo -n`).
 #   egress-allowlist.sh blocked  — print every destination refused since the
@@ -199,8 +211,9 @@ ensure_iptables() {
     command -v iptables >/dev/null 2>&1 && command -v ip6tables >/dev/null 2>&1 && return 0
     # The shared image ships iptables only through the Docker-in-Docker
     # feature, which the agent posture omits. Install it while egress is
-    # still open (this runs before the filter exists); fail closed if that
-    # is impossible.
+    # still open (this runs before the filter exists). fail_closed is
+    # already armed: if the install fails part-way with iptables present it
+    # sets DROP, and with no iptables it prints the CRITICAL line.
     echo "==> egress-allowlist: installing iptables..."
     DEBIAN_FRONTEND=noninteractive apt-get update -qq &&
         DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends iptables >/dev/null ||
@@ -212,31 +225,48 @@ has_global_ipv6() {
     awk '$4 == "00" {found=1} END {exit found ? 0 : 1}' /proc/net/if_inet6 2>/dev/null
 }
 
-# fail_closed — apply's EXIT trap. It is armed before anything in apply can
-# fail and disarmed only once the filter is installed AND verified, so every
-# other exit — a plan refusal (an over-broad literal or @github-meta range, an
-# invalid list, an empty resolved set), a failed iptables call, a failed
-# verify, a signal — leaves the OUTPUT and FORWARD policies DROP: egress
-# denied, never left open. Each step is attempted whatever the one before it
-# did, and the exit status is never 0.
+# fail_closed — the EXIT trap of apply and establish. It is armed as soon as
+# they run as root — before iptables is installed, before any list is read —
+# and disarmed only once the filter is installed AND verified, so every other
+# exit — a failed iptables install, a plan or snapshot refusal (an over-broad
+# literal or @github-meta range, an invalid list, an empty resolved set), a
+# failed iptables call, a failed verify, a signal — leaves the OUTPUT and
+# FORWARD policies DROP: egress denied, never left open. The one exit it
+# cannot close is the one with no iptables binary (it could not be
+# installed): nothing can set DROP, so it says so on a CRITICAL line and the
+# container must not be used. Each step is attempted whatever the one before
+# it did, nothing here can abort before its message, and the exit status is
+# never 0.
 fail_closed() {
-    local rc=$?
+    local rc=$? closed=1
     trap - EXIT
-    iptables -P OUTPUT DROP ||
-        echo "egress-allowlist: CRITICAL: could not set the OUTPUT policy to DROP" >&2
-    iptables -P FORWARD DROP ||
-        echo "egress-allowlist: CRITICAL: could not set the FORWARD policy to DROP" >&2
-    ip6tables -P OUTPUT DROP 2>/dev/null || true
-    ip6tables -P FORWARD DROP 2>/dev/null || true
-    echo "egress-allowlist: apply did not complete — egress policy left at DROP" >&2
+    if command -v iptables >/dev/null 2>&1; then
+        iptables -P OUTPUT DROP || {
+            closed=0
+            echo "egress-allowlist: CRITICAL: could not set the OUTPUT policy to DROP" >&2
+        }
+        iptables -P FORWARD DROP || {
+            closed=0
+            echo "egress-allowlist: CRITICAL: could not set the FORWARD policy to DROP" >&2
+        }
+        ip6tables -P OUTPUT DROP 2>/dev/null || true
+        ip6tables -P FORWARD DROP 2>/dev/null || true
+    else
+        closed=0
+        echo "egress-allowlist: CRITICAL: could not close egress — iptables is not installed, so nothing can set the policy to DROP; do not use this container" >&2
+    fi
+    if [ "$closed" -eq 1 ]; then
+        echo "egress-allowlist: ${STEP} did not complete — egress policy left at DROP" >&2
+    fi
     [ "$rc" -ne 0 ] || rc=1
     exit "$rc"
 }
 
 cmd_apply() {
     as_root apply
-    ensure_iptables
+    STEP=apply
     trap fail_closed EXIT
+    ensure_iptables
     # Resolve everything BEFORE touching the filter: resolution needs the
     # network the filter is about to close. A failure here still exits
     # through fail_closed, so it denies egress rather than leaving it open.
@@ -339,6 +369,21 @@ cmd_snapshot() {
     echo "==> egress-allowlist: snapshot written to ${dir}."
 }
 
+# cmd_establish — snapshot, then apply the snapshot, as ONE fail-closed step:
+# a list the snapshot refuses, or an applier that fails, leaves egress DROP
+# rather than open. iptables is installed first so that DROP can be set even
+# when the snapshot is what fails.
+cmd_establish() {
+    local dir="${EGRESS_SNAPSHOT_DIR:-$SNAPSHOT_DIR}"
+    as_root establish
+    STEP=establish
+    trap fail_closed EXIT
+    ensure_iptables
+    cmd_snapshot
+    bash "${dir}/scripts/egress-allowlist.sh" apply
+    trap - EXIT
+}
+
 cmd_blocked() {
     if [ ! -r "$RECENT_FILE" ]; then
         echo "egress-allowlist: no blocked-destination record at ${RECENT_FILE} (filter not applied, or this kernel lacks xt_recent)"
@@ -356,10 +401,11 @@ apply) cmd_apply ;;
 verify) cmd_verify ;;
 blocked) cmd_blocked ;;
 snapshot) cmd_snapshot ;;
+establish) cmd_establish ;;
 plan) cmd_plan ;;
 hosts) cmd_hosts ;;
 *)
-    echo "Usage: $0 <apply|verify|snapshot|blocked|plan|hosts>" >&2
+    echo "Usage: $0 <apply|verify|snapshot|establish|blocked|plan|hosts>" >&2
     exit 2
     ;;
 esac
