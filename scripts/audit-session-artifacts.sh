@@ -203,7 +203,18 @@ else
     # result in it (challenge r2).
     gh_repo=""
     if command -v gh >/dev/null 2>&1 && [ "$has_remote" = true ] && [ -n "$default_branch" ]; then
+        # The SELECTED remote first: this script picks one and every other
+        # section reports about that one, so resolving the PR evidence from an
+        # ambient GH_REPO naming a different repository made one section of one
+        # report talk about another repository (integration r2). gh_rest_repo
+        # honours the argument over GH_REPO for exactly that reason.
         gh_repo="$(gh_rest_repo "$remote" 2>/dev/null)" || gh_repo=""
+        # A remote that names no GitHub repository — a local mirror, a file://
+        # path, an internal proxy URL — has no repository to disagree with, and
+        # ambient configuration is then the only identification available. Fall
+        # back rather than skipping the whole PR read, which is what the
+        # argument-first precedence above would otherwise cost those checkouts.
+        [ -n "$gh_repo" ] || gh_repo="$(gh_rest_repo 2>/dev/null || true)"
     fi
     # pr_limit caps the CLOSED PRs scanned (most recently updated first) — it
     # is the pagination bound, not a post-filter, so the walk can never grow

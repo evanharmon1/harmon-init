@@ -394,6 +394,45 @@ out="$(PATH="$tmp/bin:$PATH" GH_REPO=ghe.example.com/my-org/harmon-init bash -c 
 [ "$out" = 'my-org/harmon-init ghe.example.com' ] ||
     fail "hyphenated host-qualified GH_REPO resolved to '${out}'"
 
+echo '==> an explicitly passed remote outranks GH_REPO and GH_HOST'
+# An argument is the caller's deliberate choice of remote; GH_REPO and GH_HOST
+# are ambient. Both helpers read their argument only AFTER the environment, so
+# an exported GH_REPO naming an unrelated repository won every call — including
+# audit-session-artifacts.sh's `gh_rest_repo "$remote"`, which iterates remotes
+# precisely because it means a specific one. That audit then read its
+# pull-request evidence from GH_REPO's repository while every other section of
+# it, and clean-branches.sh beside it, stayed on the remote actually selected
+# (integration r2). The fixture gives `upstream` a different owner, name AND
+# host from both `origin` and the environment, so each assertion below can only
+# pass by reading the argument.
+rm -rf "$tmp/precedence-fixture"
+git init -q "$tmp/precedence-fixture"
+git -C "$tmp/precedence-fixture" remote add origin 'git@github.com:acme/repo.git'
+git -C "$tmp/precedence-fixture" remote add upstream 'ssh://git@ghe.example.com/other-org/widget.git'
+# 1. An explicit remote beats a GH_REPO naming a different repository — and the
+#    host travels with it, so the pair cannot answer about two repositories.
+out="$(cd "$tmp/precedence-fixture" && PATH="$tmp/bin-gh:$PATH" \
+    GH_REPO=ghe.other.example.com/elsewhere/wrong-repo GH_HOST=ghe.other.example.com bash -c \
+    ". '$repo_root/scripts/lib/gh-rest.sh'; echo \"\$(gh_rest_repo upstream) \$(gh_rest_host upstream)\"")" ||
+    fail 'explicit remote with GH_REPO set failed'
+[ "$out" = 'other-org/widget ghe.example.com' ] ||
+    fail "an explicit remote must outrank GH_REPO/GH_HOST, resolved '${out}'"
+# 2. No argument: GH_REPO keeps its precedence, host segment split off as before
+#    — every other caller depends on it, and closing-keywords.yml exports it.
+out="$(cd "$tmp/precedence-fixture" && PATH="$tmp/bin-gh:$PATH" \
+    GH_REPO=ghe.other.example.com/elsewhere/wrong-repo bash -c \
+    "unset GH_HOST; . '$repo_root/scripts/lib/gh-rest.sh'; echo \"\$(gh_rest_repo) \$(gh_rest_host)\"")" ||
+    fail 'no-argument GH_REPO resolution failed'
+[ "$out" = 'elsewhere/wrong-repo ghe.other.example.com' ] ||
+    fail "GH_REPO must still win with no argument, resolved '${out}'"
+# 3. No argument and no GH_REPO/GH_HOST: still the default remote, unchanged.
+out="$(cd "$tmp/precedence-fixture" && PATH="$tmp/bin-gh:$PATH" bash -c \
+    "unset GH_REPO GH_HOST; . '$repo_root/scripts/lib/gh-rest.sh'; echo \"\$(gh_rest_repo) \$(gh_rest_host)\"")" ||
+    fail 'no-argument remote resolution failed'
+[ "$out" = 'acme/repo github.com' ] ||
+    fail "no argument and no GH_REPO must resolve origin, resolved '${out}'"
+rm -rf "$tmp/precedence-fixture"
+
 proxy_checker() {
     local title="$1" rc=0
     : >"$tmp/proxy-commits"

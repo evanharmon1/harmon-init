@@ -21,10 +21,19 @@
 # gh_rest_repo [REMOTE] — print OWNER/REPO from GH_REPO or a git remote.
 # GH_REPO may carry gh's documented [HOST/]OWNER/REPO form; the host segment is
 # dropped here (gh_rest_host recovers it) so endpoints stay repos/OWNER/REPO.
+#
+# An explicitly passed REMOTE outranks GH_REPO. An argument is the caller's
+# deliberate statement about which remote to resolve; GH_REPO is ambient
+# configuration that may name an unrelated repository. A caller that iterates
+# remotes — audit-session-artifacts.sh does — would otherwise read its
+# pull-request evidence from GH_REPO's repository while every other section of
+# the same audit stayed on the remote it had selected (integration r2). With no
+# argument GH_REPO keeps its precedence: every other caller relies on that, and
+# this repository's workflows export it deliberately.
 gh_rest_repo() {
     local remote="${1:-}" url path owner name
 
-    if [ -n "${GH_REPO:-}" ]; then
+    if [ -z "${remote}" ] && [ -n "${GH_REPO:-}" ]; then
         path="${GH_REPO}"
         case "${path}" in */*/*) path="${path#*/}" ;; esac
         printf '%s\n' "${path}"
@@ -70,6 +79,12 @@ gh_rest_repo() {
 # else nothing. Always exits 0: an empty result means "let gh pick", never an
 # error.
 #
+# An explicitly passed REMOTE outranks both GH_REPO and GH_HOST, for the reason
+# gh_rest_repo does and on the same argument: the two functions answer about the
+# same remote, so a caller passing one must not get the argument's repository
+# paired with ambient configuration's host. With no argument both keep their
+# precedence, unchanged.
+#
 # A colon means a different thing in each form, so the port is read per form
 # rather than stripped from all three (challenge r4):
 #   https://HOST:PORT/...   the port is part of the API AUTHORITY — an
@@ -87,15 +102,17 @@ gh_rest_repo() {
 gh_rest_host() {
     local remote="${1:-}" url="" host="" scheme="" name="" port=""
 
-    case "${GH_REPO:-}" in
-    */*/*)
-        printf '%s\n' "${GH_REPO%%/*}"
-        return 0
-        ;;
-    esac
-    if [ -n "${GH_HOST:-}" ]; then
-        printf '%s\n' "${GH_HOST}"
-        return 0
+    if [ -z "${remote}" ]; then
+        case "${GH_REPO:-}" in
+        */*/*)
+            printf '%s\n' "${GH_REPO%%/*}"
+            return 0
+            ;;
+        esac
+        if [ -n "${GH_HOST:-}" ]; then
+            printf '%s\n' "${GH_HOST}"
+            return 0
+        fi
     fi
     if [ -z "${remote}" ]; then
         if git remote 2>/dev/null | grep -qx origin; then
