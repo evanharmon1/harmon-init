@@ -89,10 +89,11 @@ if [ -z "${PR_TITLE+x}" ] || [ -z "${PR_BODY+x}" ]; then
     branch="$(git branch --show-current)"
     repo="$(gh_rest_repo 2>/dev/null || true)"
     # One page of open PRs, newest first. The 100 is spelled out at each of the
-    # three places it appears rather than held in a variable: test:tasks pins the
+    # four places it appears rather than held in a variable: test:tasks pins the
     # helper call's bound as a literal shape assertion, exactly as it pins
     # status.sh's three. `filled` reports the listing arriving AT that bound,
-    # which leaves a no-match result unproven rather than empty.
+    # which leaves both a no-match and a lone-match result unproven rather than
+    # settled.
     if [ -z "$branch" ] || [ -z "$repo" ] ||
         ! pr_json="$(gh_rest_paginate_array "repos/${repo}/pulls?state=open&sort=updated&direction=desc" 100 |
             jq -s --arg branch "$branch" --argjson limit 100 '
@@ -105,6 +106,13 @@ if [ -z "${PR_TITLE+x}" ] || [ -z "${PR_BODY+x}" ]; then
     pr_count="$(printf '%s' "$pr_json" | jq '.prs | length')"
     if [ "$pr_count" -gt 1 ]; then
         echo "guard:closing-keywords: multiple open PRs match branch ${branch}; supply both PR_TITLE and PR_BODY" >&2
+        exit 2
+    elif [ "$pr_count" -eq 1 ] && [ "$(printf '%s' "$pr_json" | jq -r '.filled')" = true ]; then
+        # Uniqueness and absence are the same claim about the same incomplete
+        # read: the page came back full, so a second PR on this ref may be
+        # sitting on the page nobody asked for, and the lone match is unique
+        # only within the bound.
+        echo "guard:closing-keywords: open-PR listing filled its 100-PR bound with one match for ${branch}; uniqueness is unproven — supply both PR_TITLE and PR_BODY" >&2
         exit 2
     elif [ "$pr_count" -eq 1 ]; then
         PR_TITLE="$(printf '%s' "$pr_json" | jq -r '.prs[0].title')"

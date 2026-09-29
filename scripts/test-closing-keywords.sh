@@ -451,6 +451,28 @@ grep -q 'inert pre-PR metadata' "$tmp/driver-err" &&
 grep -q 'inert pre-PR metadata' "$tmp/driver-err" ||
     fail "a complete empty listing did not take the placeholder path: $(cat "$tmp/driver-err")"
 
+echo '==> a listing that filled its bound cannot witness a lone match either'
+# Uniqueness and absence are the same claim about the same incomplete read, and
+# `.filled` was consulted only on the absence branch: one visible match on a
+# full page was accepted as unique while a second PR on this ref could be
+# sitting on the page nobody asked for, so the advertised multiple-match refusal
+# went unproven in exactly the case the read was incomplete (review r2). The
+# fixture is a full page holding exactly one ref match, whose title closes a
+# COMPLETE issue — so accepting it returns 0 here rather than the refusal.
+filled_one_match="$(jq -cn '[{title:"fix: closes #1",body:"",head:{sha:"localhead",ref:"feature"}}] + [range(0;99) | {number:.}]')"
+[ "$(proxy_guard "$filled_one_match")" = 2 ] ||
+    fail "a full open-PR page with one match must be indeterminate: $(cat "$tmp/driver-err")"
+grep -q 'uniqueness is unproven' "$tmp/driver-err" ||
+    fail "the lone-match refusal did not name uniqueness as the unproven claim: $(cat "$tmp/driver-err")"
+grep -q 'supply both PR_TITLE and PR_BODY' "$tmp/driver-err" ||
+    fail "the lone-match refusal did not name the remedy: $(cat "$tmp/driver-err")"
+# A page SHORT of the bound with one match is a COMPLETE read, so that match
+# really is the only one and its real title and body are still what get scanned.
+[ "$(proxy_guard '[{"title":"fix: x","body":"Resolves #2","head":{"sha":"localhead","ref":"feature"}}]')" = 1 ] ||
+    fail "a short listing's lone match did not supply its real title and body: $(cat "$tmp/driver-err")"
+grep -q 'inert pre-PR metadata' "$tmp/driver-err" &&
+    fail "a short listing's lone match was demoted to placeholder metadata: $(cat "$tmp/driver-err")"
+
 echo '==> a host-qualified GH_REPO reaches the guard only through the helper'
 # End-to-end, through the same stub: gh documents GH_REPO as [HOST/]OWNER/REPO,
 # and the guard now resolves it exclusively through gh_rest_repo. While it read
