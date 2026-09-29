@@ -1021,7 +1021,10 @@ if len(doc_recipes) == 1 and len(guide_recipes) == 1:
     if guide_body[:1] == [GUIDE_SHEBANG]:
         guide_body = guide_body[1:]
     guide_body, guide_refs = ref_slot(guide_body)
-    doc_body, _ = ref_slot(doc_recipes[0])
+    doc_body, doc_refs = ref_slot(doc_recipes[0])
+    for value in doc_refs:
+        if value != "vX.Y.Z":
+            fail(f"{DOC}: HARMON_INIT_REF={value!r} must stay the generic placeholder vX.Y.Z; only the guide pins a release tag")
     for value in guide_refs:
         if not GUIDE_REF_OK.match(value):
             fail(f"{GUIDE}: HARMON_INIT_REF={value!r} must be the placeholder vX.Y.Z or a release tag vMAJOR.MINOR.PATCH")

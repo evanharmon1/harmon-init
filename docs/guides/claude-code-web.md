@@ -266,12 +266,15 @@ evidence tag from [the table at the top](#how-to-read-the-evidence-in-this-guide
 never a guess. **Follow-up** names where a failure is tracked or the workaround
 that exists today.
 
-A vendored script stops at its first failing call, so a row's later calls are
-not reached through the proxy until the first one works. The live observation
-therefore records, for each script, the **first** call that failed and its
-class — a GraphQL refusal, or a paginated REST read that fails after page 1 —
-and leaves the calls after it unobserved. Making every helper reach its later
-calls is harmon-devkit#1207's work, not a gap in this table.
+Most vendored scripts abort at their first failing call, so their later calls
+are not reached through the proxy until that one works; a few tolerate a failed
+read and carry on (`release-claim.sh`'s paginated comments read, for one). The
+live observation therefore records, for each script, every call the run
+actually reached and its result — a GraphQL refusal, or a paginated REST read
+that fails after page 1 — and marks a call unobserved only when an earlier
+failure aborted the script before it. Making every helper reach its later calls
+is harmon-devkit#1207's work, not a gap in this table. Where a script has more
+than one row, each row's **Result** records the calls that row names.
 
 | Call | Made by | Result through the proxy | Follow-up / workaround |
 | --- | --- | --- | --- |
@@ -409,8 +412,8 @@ background" as "finished". The supported ways to run it:
 
 1. **Detached, then poll the log** — the form this repository's lane briefs use:
 
-   ```sh
-   log=$(mktemp /tmp/verify.XXXXXX)
+   ```bash
+   log="$(mktemp -d)/verify.log"
    nohup bash -c 'task verify; echo GATE-EXIT=$?' > "$log" 2>&1 & disown
    echo "$log"
    ```
