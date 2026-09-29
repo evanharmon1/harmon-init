@@ -386,7 +386,10 @@ The security contract, by layer:
 
 - **AI bot** (`evanharmon1-bot`) — runs in the primary
   devcontainer with a scoped fine-grained PAT (Write, no admin) for its in-container
-  git pushes. Cannot push to or merge `main`. (CI **workflows** authenticate
+  git pushes. Cannot push to `main`; the rulesets require code-owner approval
+  and green checks for a merge into it, which its `pull_requests: write` can
+  then perform once a human has approved — merging stays the maintainer's
+  decision. (CI **workflows** authenticate
   separately as the `evanharmon1-ci` GitHub App — see below.)
 - **Operator** (you) — the human `dev/` devcontainer and the host, authenticated
   by an ordinary `gh auth login` against your own account. The bot's PAT is
@@ -502,7 +505,10 @@ Write it down rather than re-derive it under pressure:
 
 - **The selected repos** — at the level each collaborator grant allows, capped by
   the permission table. It can push branches, open PRs, and comment. It **cannot**
-  merge `main` (ruleset + CODEOWNERS), edit workflows, or change settings.
+  merge `main` unapproved: the ruleset and CODEOWNERS require code-owner
+  approval and green checks, though its `pull_requests: write` can perform a
+  merge a human has approved — merging stays the maintainer's decision. Nor
+  can it edit workflows or change settings.
 
 **Read is cheap; write is the line.** Variables are read-only deliberately:
 write could opt a private repository into paid CodeQL or mutate other

@@ -1366,11 +1366,48 @@ s.listen(1)' "$ts_sock" 2>/dev/null && [ -S "$ts_sock" ]; then
         # The token aliases are cleared explicitly: unit mode also runs
         # inside the bot container, whose real GH_TOKEN would otherwise
         # leak into every case's environment.
+        # The posture is pinned to bot for the same reason: the helper's
+        # wording is posture-aware, and unit mode also runs inside the agent
+        # container, whose FOREMAN_DEVCONTAINER=agent would otherwise switch
+        # every bot-wording assertion below to the agent's.
         gh_id_rc=0
         gh_id_out="$(GH_IDENTITY_TEST_FIXTURE="$gh_id_fixture" \
-            GH_IDENTITY_TEST_RC="$1" \
+            GH_IDENTITY_TEST_RC="$1" FOREMAN_DEVCONTAINER=bot \
             GH_TOKEN= GITHUB_TOKEN= GH_ENTERPRISE_TOKEN= GITHUB_ENTERPRISE_TOKEN= \
             PATH="$gh_id_bin" "$bash_bin" "$gh_check" 2>&1)" || gh_id_rc=$?
+    }
+
+    # $1 = posture (FOREMAN_DEVCONTAINER), $2 = stub gh exit code, $3 =
+    # GH_TOKEN value (empty for none). The posture-wording cases below.
+    gh_identity_posture_run() {
+        gh_id_rc=0
+        gh_id_out="$(GH_IDENTITY_TEST_FIXTURE="$gh_id_fixture" \
+            GH_IDENTITY_TEST_RC="$2" FOREMAN_DEVCONTAINER="$1" \
+            GH_TOKEN="$3" GITHUB_TOKEN= GH_ENTERPRISE_TOKEN= GITHUB_ENTERPRISE_TOKEN= \
+            PATH="$gh_id_bin" "$bash_bin" "$gh_check" 2>&1)" || gh_id_rc=$?
+    }
+
+    # $1 = case label; the rest are substrings the output must NOT contain.
+    gh_identity_refute() {
+        local refute_label="$1" refute_text
+        shift
+        for refute_text in "$@"; do
+            case "$gh_id_out" in
+            *"$refute_text"*) fail "${refute_label} prints '${refute_text}': ${gh_id_out}" ;;
+            esac
+        done
+    }
+
+    # $1 = case label; the rest are substrings the output MUST contain.
+    gh_identity_expect() {
+        local expect_label="$1" expect_text
+        shift
+        for expect_text in "$@"; do
+            case "$gh_id_out" in
+            *"$expect_text"*) ;;
+            *) fail "${expect_label} does not print '${expect_text}': ${gh_id_out}" ;;
+            esac
+        done
     }
 
     # gh ABSENT from PATH: indeterminate (3), never a violation — the image
@@ -1891,6 +1928,132 @@ s.listen(1)' "$ts_sock" 2>/dev/null && [ -S "$ts_sock" ]; then
     gh_identity_run 124
     [ "$gh_id_rc" = "1" ] ||
         fail "timed-out enumeration with a parsed non-bot login exited ${gh_id_rc}, expected violation (1)"
+
+    # POSTURE WORDING. The agent posture (FOREMAN_DEVCONTAINER=agent) runs the
+    # same tripwire from its post-start, but its PAT is AGENT_GH_TOKEN,
+    # projected into .devcontainer/agent/devcontainer.env, and its harness runs
+    # in auto mode with bypass disabled. Every banner and remedy there must say
+    # so and must never send the operator to the bot's GH_TOKEN chain; the bot
+    # wording is pinned alongside so the switch cannot drift it.
+    local gh_id_posture gh_id_case
+    local gh_id_bot_remedy=("template parameter" ".devcontainer/devcontainer.env")
+    local gh_id_bot_banner=("BOT CONTAINER" "bypassPermissions")
+
+    # Unauthenticated (2) and a stored NON-BOT login (1): the two banners.
+    for gh_id_posture in bot agent; do
+        printf '%s\n' \
+            'You are not logged into any GitHub hosts. To log in, run: gh auth login' \
+            >"$gh_id_fixture"
+        gh_identity_posture_run "$gh_id_posture" 1 ""
+        gh_id_case="${gh_id_posture}-posture unauthenticated gh-identity banner"
+        [ "$gh_id_rc" = "2" ] || fail "${gh_id_case} exited ${gh_id_rc}, expected 2"
+        if offers_login "$gh_id_out"; then
+            fail "${gh_id_case} offers an operator login"
+        fi
+        if [ "$gh_id_posture" = agent ]; then
+            gh_identity_expect "$gh_id_case" "AGENT CONTAINER" "auto-mode agent container" \
+                "AGENT_GH_TOKEN" ".devcontainer/agent/devcontainer.env"
+            gh_identity_refute "$gh_id_case" "${gh_id_bot_banner[@]}" "${gh_id_bot_remedy[@]}"
+        else
+            gh_identity_expect "$gh_id_case" "${gh_id_bot_banner[@]}" "${gh_id_bot_remedy[@]}"
+            gh_identity_refute "$gh_id_case" "AGENT CONTAINER" "AGENT_GH_TOKEN"
+        fi
+
+        printf '%s\n' \
+            'github.com' \
+            '  ✓ Logged in to github.com account someoperator (keyring)' \
+            >"$gh_id_fixture"
+        gh_identity_posture_run "$gh_id_posture" 0 ""
+        gh_id_case="${gh_id_posture}-posture non-bot gh-identity banner"
+        [ "$gh_id_rc" = "1" ] || fail "${gh_id_case} exited ${gh_id_rc}, expected 1"
+        if [ "$gh_id_posture" = agent ]; then
+            gh_identity_expect "$gh_id_case" "AGENT CONTAINER" "auto-mode" "AGENT_GH_TOKEN"
+            gh_identity_refute "$gh_id_case" "${gh_id_bot_banner[@]}" "${gh_id_bot_remedy[@]}"
+        else
+            gh_identity_expect "$gh_id_case" "${gh_id_bot_banner[@]}" "${gh_id_bot_remedy[@]}"
+            gh_identity_refute "$gh_id_case" "AGENT CONTAINER" "AGENT_GH_TOKEN"
+        fi
+    done
+
+    # The two exit-3 paths that carried a fixed bot-PAT remedy: an
+    # environment token gh could not validate, and one gh attributes to no
+    # host. Under agent both name AGENT_GH_TOKEN and the agent env file; under
+    # bot both keep the bot's GH_TOKEN chain.
+    for gh_id_posture in bot agent; do
+        printf '%s\n' \
+            'github.com' \
+            '  X Failed to log in to github.com using token (GH_TOKEN)' \
+            '  - Active account: true' \
+            >"$gh_id_fixture"
+        gh_identity_posture_run "$gh_id_posture" 1 sentinel-token
+        gh_id_case="${gh_id_posture}-posture unverifiable-token remedy"
+        [ "$gh_id_rc" = "3" ] || fail "${gh_id_case} exited ${gh_id_rc}, expected 3"
+        if [ "$gh_id_posture" = agent ]; then
+            gh_identity_expect "$gh_id_case" "AGENT_GH_TOKEN" ".devcontainer/agent/devcontainer.env"
+            gh_identity_refute "$gh_id_case" "bot PAT" "${gh_id_bot_remedy[@]}"
+        else
+            gh_identity_expect "$gh_id_case" "bot PAT" "${gh_id_bot_remedy[@]}"
+            gh_identity_refute "$gh_id_case" "AGENT_GH_TOKEN"
+        fi
+
+        printf '%s\n' \
+            'You are not logged into any GitHub hosts. To log in, run: gh auth login' \
+            >"$gh_id_fixture"
+        gh_identity_posture_run "$gh_id_posture" 1 sentinel-token
+        gh_id_case="${gh_id_posture}-posture unattributed-token remedy"
+        [ "$gh_id_rc" = "3" ] || fail "${gh_id_case} exited ${gh_id_rc}, expected 3"
+        if [ "$gh_id_posture" = agent ]; then
+            gh_identity_expect "$gh_id_case" "AGENT_GH_TOKEN" ".devcontainer/agent/devcontainer.env"
+            gh_identity_refute "$gh_id_case" "bot PAT as GH_TOKEN"
+        else
+            gh_identity_expect "$gh_id_case" "bot PAT as GH_TOKEN"
+            gh_identity_refute "$gh_id_case" "AGENT_GH_TOKEN"
+        fi
+        gh_identity_refute "$gh_id_case" "sentinel-token"
+
+        # A shadowed alias (GITHUB_TOKEN differing from the GH_TOKEN gh
+        # enumerated) and an enterprise token gh never enumerated: the other
+        # two exit-3 paths that named the bot's GH_TOKEN.
+        printf '%s\n' \
+            'github.com' \
+            '  ✓ Logged in to github.com account someowner-bot (GH_TOKEN)' \
+            >"$gh_id_fixture"
+        gh_id_rc=0
+        gh_id_out="$(GH_IDENTITY_TEST_FIXTURE="$gh_id_fixture" GH_IDENTITY_TEST_RC=0 \
+            FOREMAN_DEVCONTAINER="$gh_id_posture" \
+            GH_TOKEN=sentinel-token GITHUB_TOKEN=sentinel-shadowed \
+            GH_ENTERPRISE_TOKEN= GITHUB_ENTERPRISE_TOKEN= \
+            PATH="$gh_id_bin" "$bash_bin" "$gh_check" 2>&1)" || gh_id_rc=$?
+        gh_id_case="${gh_id_posture}-posture shadowed-alias remedy"
+        [ "$gh_id_rc" = "3" ] || fail "${gh_id_case} exited ${gh_id_rc}, expected 3"
+        if [ "$gh_id_posture" = agent ]; then
+            gh_identity_expect "$gh_id_case" "GITHUB_TOKEN" "AGENT_GH_TOKEN" \
+                ".devcontainer/agent/devcontainer.env"
+            gh_identity_refute "$gh_id_case" "provisioned bot GH_TOKEN"
+        else
+            gh_identity_expect "$gh_id_case" "GITHUB_TOKEN" "provisioned bot GH_TOKEN"
+            gh_identity_refute "$gh_id_case" "AGENT_GH_TOKEN"
+        fi
+        gh_identity_refute "$gh_id_case" "sentinel-token" "sentinel-shadowed"
+
+        gh_id_rc=0
+        gh_id_out="$(GH_IDENTITY_TEST_FIXTURE="$gh_id_fixture" GH_IDENTITY_TEST_RC=0 \
+            FOREMAN_DEVCONTAINER="$gh_id_posture" \
+            GH_TOKEN=sentinel-token GITHUB_TOKEN= \
+            GH_ENTERPRISE_TOKEN=sentinel-ghes GITHUB_ENTERPRISE_TOKEN= \
+            PATH="$gh_id_bin" "$bash_bin" "$gh_check" 2>&1)" || gh_id_rc=$?
+        gh_id_case="${gh_id_posture}-posture unenumerated-enterprise-token remedy"
+        [ "$gh_id_rc" = "3" ] || fail "${gh_id_case} exited ${gh_id_rc}, expected 3"
+        if [ "$gh_id_posture" = agent ]; then
+            gh_identity_expect "$gh_id_case" "GH_ENTERPRISE_TOKEN" "AGENT_GH_TOKEN" \
+                ".devcontainer/agent/devcontainer.env"
+            gh_identity_refute "$gh_id_case" "bot PAT as GH_TOKEN"
+        else
+            gh_identity_expect "$gh_id_case" "GH_ENTERPRISE_TOKEN" "bot PAT as GH_TOKEN"
+            gh_identity_refute "$gh_id_case" "AGENT_GH_TOKEN"
+        fi
+        gh_identity_refute "$gh_id_case" "sentinel-token" "sentinel-ghes"
+    done
 
     # A WEDGED gh (stalled network, DNS, or credential backend) must not
     # hang the callers: post-start and the container assert invoke the
