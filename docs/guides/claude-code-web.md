@@ -392,11 +392,15 @@ background" as "finished". The supported ways to run it:
 1. **Detached, then poll the log** — the form this repository's lane briefs use:
 
    ```sh
-   nohup bash -c 'task verify; echo GATE-EXIT=$?' > /tmp/verify.log 2>&1 & disown
+   log=$(mktemp /tmp/verify.XXXXXX)
+   nohup bash -c 'task verify; echo GATE-EXIT=$?' > "$log" 2>&1 & disown
+   echo "$log"
    ```
 
-   then read `/tmp/verify.log` until it prints `GATE-EXIT=<code>`. That line, not
-   the absence of output, is the result. The single quotes are load-bearing:
+   then read `$log` (the path the last line printed) until it contains
+   `GATE-EXIT=<code>`. The log is per run, so an older detached run's exit line
+   cannot satisfy this poll. That line, not the absence of output, is the
+   result. The single quotes are load-bearing:
    inside double quotes the *calling* shell expands `$?` before `bash -c` starts,
    so the line would report the status of whatever ran before — and a failed
    verify could print `GATE-EXIT=0`.
