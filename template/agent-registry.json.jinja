@@ -101,14 +101,20 @@
     {
       "slug": "deepseek",
       "display_name": "DeepSeek",
-      "models": [{ "slug": "v4-1-flash", "display_name": "V4.1 Flash", "tier": "standard" }]
+      "models": [
+        { "slug": "v4-1-flash", "display_name": "V4.1 Flash", "tier": "standard", "default": true },
+        { "slug": "v4-pro", "display_name": "V4 Pro", "tier": "standard" },
+        { "slug": "v4-flash", "display_name": "V4 Flash", "tier": "economy" }
+      ]
     },
     {
       "slug": "glm",
       "display_name": "GLM",
       "models": [
-        { "slug": "5-3", "display_name": "5.3", "tier": "standard" },
-        { "slug": "5-3-flash", "display_name": "5.3 Flash", "tier": "economy" }
+        { "slug": "5-3", "display_name": "5.3", "tier": "standard", "default": true },
+        { "slug": "5-2", "display_name": "5.2", "tier": "standard" },
+        { "slug": "5-3-flash", "display_name": "5.3 Flash", "tier": "economy", "default": true },
+        { "slug": "4-7-flash", "display_name": "4.7 Flash", "tier": "economy" }
       ]
     },
     {
@@ -154,6 +160,12 @@
         {
           "slug": "small-4",
           "display_name": "Small 4",
+          "tier": "standard",
+          "default": true
+        },
+        {
+          "slug": "devstral-small-2",
+          "display_name": "Devstral Small 2",
           "tier": "standard"
         }
       ]
@@ -245,7 +257,7 @@
       "family_constraint": { "kind": "fixed", "family": "qwen" },
       "model_resolution": {
         "owner": "provider-wrapper",
-        "details": "The provider-rewired wrapper fixes the family; per-role model env vars select Qwen3.8-Max for the main/reasoning roles, Qwen3-Coder-Plus for coding, and Qwen3.8-Flash for lightweight/subagent roles."
+        "details": "The provider-rewired wrapper fixes the family; per-role model env vars select Qwen3.7-Max for the main/reasoning roles and Qwen3-Coder-Plus for the coding/subagent roles."
       },
       "provider_rewired": true,
       "roles": ["implementer", "challenger", "reviewer", "integrator"],

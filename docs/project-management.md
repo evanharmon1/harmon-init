@@ -847,12 +847,12 @@ with no adapter behind it is a false capability that can strand armed work.
 | `gpt` | GPT | `astra`, `sol`, `terra`, `luna` |
 | `mai` | MAI | `code-1-1-flash`, `thinking-1` |
 | `qwen` | Qwen | `max`, `coder-plus`, `coder`, `flash`, `coder-next`, `coder-30b` |
-| `deepseek` | DeepSeek | `v4-1-flash` |
-| `glm` | GLM | `5-3`, `5-3-flash` |
+| `deepseek` | DeepSeek | `v4-1-flash`, `v4-pro`, `v4-flash` |
+| `glm` | GLM | `5-3`, `5-2`, `5-3-flash`, `4-7-flash` |
 | `kimi` | Kimi | `k3` |
 | `minimax` | MiniMax | `m3` |
 | `gemini` | Gemini | `3-1-pro`, `3-8-flash`, `3-7-flash`, `3-6-flash`, `3-5-flash-lite` |
-| `mistral` | Mistral | `medium-3-5`, `small-4` |
+| `mistral` | Mistral | `medium-3-5`, `small-4`, `devstral-small-2` |
 
 `Model selected by` values:
 
