@@ -891,8 +891,11 @@ if r.returncode != 1 or "unknown tier" not in r.stderr or "WARNING" not in r.std
 # report a successful setup having installed nothing — and a truncated script has
 # already run as root. The recipe therefore downloads to a file and runs it only
 # on a successful download, which is a property of its SHAPE and so is checked
-# here rather than remembered. Both copies are checked: they are copies of each
-# other and one can be fixed alone.
+# here rather than remembered. Every copy is checked: they are copies of each
+# other and one can be fixed alone. The third copy is the Claude Code on the web
+# guide's setup script — the text a person pastes into the platform — which the
+# guide says is the entrypoint "unchanged"; that claim is held below, not
+# trusted.
 #
 # Comment markers are stripped and backslash continuations joined first, so the
 # recipe is read as the one command it is — the pipe lives on a continuation
@@ -915,7 +918,12 @@ def recipe_commands(text):
     return [c for c in joined if RECIPE_URL.search(c)]
 
 
-for label, text in ((BOOTSTRAP, bootstrap_text), (DOC, doc_text)):
+GUIDE = pathlib.Path("docs/guides/claude-code-web.md")
+if not GUIDE.exists():
+    fail(f"{GUIDE} is missing, so its copy of the standalone recipe cannot be checked — move this check with it")
+guide_text = GUIDE.read_text() if GUIDE.exists() else ""
+
+for label, text in ((BOOTSTRAP, bootstrap_text), (DOC, doc_text), (GUIDE, guide_text)):
     commands = recipe_commands(text)
     if not commands:
         fail(
@@ -956,6 +964,52 @@ for label, text in ((BOOTSTRAP, bootstrap_text), (DOC, doc_text)):
                 f"{label}: the documented standalone recipe does not state the temporary directory's mode "
                 f"(`chmod 0700`), so its privacy rests on mktemp's default rather than on the recipe: {shown!r}"
             )
+
+# The shape checks above prove each copy SAFE; they do not prove the guide's copy
+# is the SAME recipe — a guide that added an install line, dropped `--ref`, or
+# pinned a different variable would still pass them. So the guide's fenced block
+# must equal the architecture document's, line for line. Exactly one difference
+# is allowed, and it is spelled out here rather than tolerated by a looser match:
+# a single `#!/bin/bash` as the first line, because the platform's setup-script
+# field is a script file of its own. Anything else — a second leading line, a
+# different interpreter, an edit anywhere inside — fails.
+GUIDE_SHEBANG = "#!/bin/bash"
+
+
+def recipe_blocks(text):
+    blocks, current = [], None
+    for line in text.splitlines():
+        if re.match(r"^\s*```", line):
+            if current is None:
+                current = []
+            else:
+                blocks.append(current)
+                current = None
+        elif current is not None:
+            current.append(line)
+    return [b for b in blocks if RECIPE_URL.search("\n".join(b))]
+
+
+doc_recipes, guide_recipes = recipe_blocks(doc_text), recipe_blocks(guide_text)
+if len(doc_recipes) != 1:
+    fail(f"{DOC}: expected exactly one fenced standalone recipe to compare the guide against, found {len(doc_recipes)}")
+if len(guide_recipes) != 1:
+    fail(f"{GUIDE}: expected exactly one fenced setup-script recipe, found {len(guide_recipes)}")
+if len(doc_recipes) == 1 and len(guide_recipes) == 1:
+    guide_body = guide_recipes[0]
+    if guide_body[:1] == [GUIDE_SHEBANG]:
+        guide_body = guide_body[1:]
+    if guide_body != doc_recipes[0]:
+        first = next(
+            (i for i, (g, d) in enumerate(zip(guide_body, doc_recipes[0])) if g != d),
+            min(len(guide_body), len(doc_recipes[0])),
+        )
+        got = guide_body[first] if first < len(guide_body) else "<end of block>"
+        want = doc_recipes[0][first] if first < len(doc_recipes[0]) else "<end of block>"
+        fail(
+            f"{GUIDE}: the setup-script recipe is not the architecture document's recipe (only a leading "
+            f"{GUIDE_SHEBANG!r} may differ). First difference at recipe line {first + 1}: {got!r}, expected {want!r}"
+        )
 
 # ── 15. the manifest is what the tiers installed, under the image's keys ────
 # The VM manifest is serialised from the run record, which the lib.sh helpers

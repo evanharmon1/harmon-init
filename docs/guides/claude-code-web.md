@@ -37,7 +37,7 @@ it. One environment serves every repository, because nothing in it is per-repo.
 | Field | Value |
 | --- | --- |
 | **Name** | `harmon-remote` |
-| **Network access** | **Trusted** — see [Network](#network) |
+| **Network access** | **Trusted**; **Custom** with `semgrep.dev` added if sessions open their own draft PRs — see [Network](#network) |
 | **Environment variables** | see [Environment variables](#environment-variables); none is a secret |
 | **Setup script** | the block below |
 
@@ -81,8 +81,10 @@ Rules for this script, each with its reason:
   against the platform's stock tools and pass or fail for the wrong reasons — the
   Python `yq` on the VM's `PATH` is the documented example.
 - **Keep the download its own command.** Piping `curl` into a shell exits 0 when
-  the download fails. `scripts/test-bootstrap-remote.sh` holds the shape in the
-  architecture document; this copy must not diverge from it.
+  the download fails. `scripts/test-bootstrap-remote.sh` checks that shape in
+  every copy of the recipe, and holds this one equal to the architecture
+  document's line for line; the leading `#!/bin/bash` is the only difference it
+  allows.
 - **The default tiers only** (`core,agents`). The browsers tier is larger than
   everything else together and would put the five-minute cache budget at risk.
 - **No `--tiers` flag, no other install lines.** Anything the loop needs belongs
@@ -104,14 +106,16 @@ tier contacts and which this guide does not enable. `ports.ubuntu.com` is the
 arm64 archive; the cloud VM is x86-64, so it is never contacted, and `*.ubuntu.com`
 is on the list anyway.
 
-**Added domains: none.** That list is provisional, and it is empty on purpose:
-the rule is that a domain is added only after a *recorded denial* under Trusted
-while the bootstrap and `task verify` ran. The denials recorded so far all
-belong to things this environment does not use:
+**Added domains: none**, for sessions that end at a pushed branch, which is what
+a cloud lane does ([What runs where](#what-runs-where)). That list is
+provisional, and it is empty on purpose: the rule is that a domain is added only
+after a *recorded denial* under Trusted while the bootstrap, `task verify`, or —
+in a session that opens its own draft PR — `task security` ran. The denials
+recorded so far, and the one that a session opening its own draft PR needs:
 
 | Host | Denied for | Added? | Reason |
 | --- | --- | --- | --- |
-| `semgrep.dev` | `task security`'s Semgrep step | No | CI's SAST covers it, and the guide's environment does not need the step to pass. Add only if a session must run the full `task security` |
+| `semgrep.dev` | `task security`'s Semgrep step — observed 2026-09-27, under a network level presumed, but not recorded, to be Trusted | **Only where the session opens the draft PR itself**, which makes the level **Custom** | `task security` must pass before the draft PR (`AGENTS.md`), and this host is what its Semgrep step needs. A lane that stops at a pushed branch leaves the gate to the machine that opens the PR — see [Long-running gates](#long-running-gates). Never skip the gate instead |
 | `api.openai.com`, `auth.openai.com`, `chatgpt.com` | the Codex CLI (#1406) | No | Ephemeral clouds never hold a Codex login (#1408 decision 4): the orchestrator reviews the lane's pushed branch from its own pane |
 | `deb.nodesource.com`, `astral.sh`, `keybase.io`, `ppa.launchpadcontent.net`, `cli.github.com`, `dl.google.com` | installer hosts (#1403) | No | The bootstrap no longer contacts them; the denied table in the architecture document is guarded so they cannot return |
 | `cafe.github.com` | `gh` telemetry | No | Harmless |
@@ -249,7 +253,10 @@ asked to integrate anyway will hit them.
 
 ### The `gh` call inventory
 
-One row per call the dev-loop skills and scripts make. **Result** is the
+One row per call the dev-loop skills and scripts make, found by searching the
+vendored `claim`, `implement`, `review`, `integrate`, `track-work`, `orchestrate`
+and `dev-flow-support` skills (harmon-devkit `v0.47.0`) and their `assets/` for
+`gh` subcommands. **Result** is the
 evidence tag from [the table at the top](#how-to-read-the-evidence-in-this-guide),
 never a guess. **Follow-up** names where a failure is tracked or the workaround
 that exists today.
@@ -259,10 +266,17 @@ that exists today.
 | `gh pr list`, `gh pr view`, `gh pr checks`, `gh pr ready`, `gh issue view`, `gh issue edit`, `gh issue comment`, `gh label list` | any of the scripts below, or by hand | **fail, 403** — observed 2026-09-27 | `gh api repos/{o}/{r}/…` over REST; promotion through `POST …/ccr/ready_for_review`. The helper scripts: [harmon-devkit#1207](https://github.com/evanharmon1/harmon-devkit/issues/1207) |
 | `claim-transaction.sh` (`/claim`): `gh issue view/edit/comment`, `gh api user`, `gh api --paginate --slurp` | claim skill (vendored) | **fail** on the GraphQL issue calls — observed 2026-09-27 | harmon-devkit#1207. The 2026-09-27 session used a session-local `gh` shim mapping the subcommands to REST — a stopgap, not a fix |
 | `tick-criteria-core.sh`: `gh issue view`, `gh issue edit`, `gh api user` | track-work skill (vendored) | **fail** — observed 2026-09-27 | harmon-devkit#1207. The write also gets the footer (above) |
-| `check-closing-keywords.sh` (the vendored copy): `gh issue view`, `gh pr view` | track-work skill (vendored) | **fail** — observed 2026-09-27 | harmon-devkit#1207 |
+| `check-closing-keywords.sh` (the vendored copy): `gh issue view`, `gh pr view`; `gh repo view` when no `--repo` or `GH_REPO` is given | track-work skill (vendored) | **fail** — observed 2026-09-27; the `gh repo view` fallback expected to fail, not yet observed (GraphQL-backed) | harmon-devkit#1207. Pass `--repo` so the fallback never runs |
+| `gh pr create --draft`, then `gh pr view --json headRefOid,isDraft` to confirm it | implement skill (vendored), the draft-first step `AGENTS.md` requires; the orchestrate skill's lane brief | expected to fail, not yet observed — `gh pr create` is GraphQL-backed | The GitHub MCP create-PR tool, observed to work 2026-09-27 (whether it can open a *draft* was not recorded); GitHub's REST `POST repos/{o}/{r}/pulls` with `draft: true`, and a readback of `head.sha` and `draft` from `repos/{o}/{r}/pulls/{n}`, not yet tried through the proxy. harmon-devkit#1207. A cloud lane leaves this to the orchestrator ([What runs where](#what-runs-where)) |
+| `gh pr edit --body-file` (ticking `## Deferred findings`, and `render-dev-flow.mjs publish`, which then re-reads the body with `gh pr view`) | integrate skill; dev-flow-support package (vendored) | expected to fail, not yet observed — GraphQL-backed | REST `PATCH repos/{o}/{r}/pulls/{n}` with `body`, not yet tried through the proxy. `publish` also compares the re-read body's fingerprint with what it wrote, which the footer (below) would break — expected, not yet observed. harmon-devkit#1207 |
+| `gh repo view <remote-url> --json nameWithOwner` | implement and review skills (vendored), resolving the target repository; the claim skill's entry gate | expected to fail, not yet observed — GraphQL-backed | Derive `owner/repo` from `git remote get-url`, or read it from REST `repos/{o}/{r}` (plain REST works — observed 2026-09-27). harmon-devkit#1207 |
+| `gh issue list`, `gh issue create`, `gh issue close` | track-work skill (duplicate search, filing and closing issues); integrate skill (filing follow-ups); claim skill (open-issue scan) | expected to fail, not yet observed — GraphQL-backed, like the `gh issue` calls in the first row | REST `repos/{o}/{r}/issues`: `GET` with `state=all`, paged (see Search, above); `POST` to create; `PATCH` with `state` and `state_reason` to close. harmon-devkit#1207 |
+| `gh run list --commit`, `gh run view --log-failed`, `gh run rerun --failed` | integrate skill (vendored), CI remediation | expected, not yet observed — `gh run` uses the REST Actions API, not GraphQL | Run `gh run list` in the first live session and record it |
+| `trusted-registry.sh`: `gh pr view --json baseRefOid`, `gh api repos/…/contents` | integrate skill (vendored), sourced by `check-codex-cloud-review.sh` and `gh-write-broker.sh` | expected to fail on `gh pr view`, not yet observed — GraphQL-backed; the `contents` read is plain REST | REST `repos/{o}/{r}/pulls/{n}` returns `base.sha`. harmon-devkit#1207 |
+| `gh auth git-credential` (the forced credential-helper push in `AGENTS.md` and the integrate skill) | a push on an unprovisioned host | expected, not yet observed; not needed — a plain `git push` to the session's branch works (observed 2026-09-27), because the platform configures git itself | Push with plain `git push` in a cloud session |
 | `release-claim.sh`, `check-issue-metadata.sh`: `gh issue edit/comment`, `gh label list`, `gh api --paginate --slurp` | track-work skill (vendored) | expected, not yet observed — the same GraphQL-backed subcommands as the first row | harmon-devkit#1207 |
 | `set-issue-status.sh`: `gh api graphql` (Projects v2) | track-work skill (vendored) | expected to fail, not yet observed — Projects v2 is GraphQL-only and documented as unreachable | No REST route is known. The skills treat Project status as a non-authoritative view, so the loop does not need it. Tracked in [harmon-devkit#1207](https://github.com/evanharmon1/harmon-devkit/issues/1207), which either finds a REST route or makes the helper refuse with its exit 2; until then it can only fail behind the proxy |
-| `readiness-gate.sh`: `gh pr view`, `gh api graphql --paginate --slurp` (review threads), `gh api repos/…`, `gh pr ready` | integrate skill (vendored) | **fail** on `gh pr view` — observed 2026-09-27 | Conditions were checked by hand over REST (`…/ccr/review_threads`, `…/ccr/ready_for_review`). harmon-devkit#1207; orchestrator-side, see [What runs where](#what-runs-where) |
+| `readiness-gate.sh`: `gh pr view`, `gh api graphql --paginate --slurp` (review threads), `gh api repos/…`, `gh api user`, `gh pr ready` | integrate skill (vendored) | **fail** on `gh pr view` — observed 2026-09-27 | Conditions were checked by hand over REST (`…/ccr/review_threads`, `…/ccr/ready_for_review`). harmon-devkit#1207; orchestrator-side, see [What runs where](#what-runs-where) |
 | `check-codex-cloud-review.sh`: `gh pr view`, `gh api --paginate --slurp` | integrate skill (vendored) | **fail** on `gh pr view` — observed 2026-09-27; the pagination fails past page 1 — observed 2026-09-27 | The current-head cycle was checked by hand over REST. harmon-devkit#1207 |
 | `gh-ro.sh`, `gh-write-broker.sh`: `gh api` with a pinned method | integrate skill (vendored) | plain REST reads and writes work — observed 2026-09-27 for `gh api repos/…`; these two wrappers themselves not yet observed | GET refuses `graphql` by design |
 | `round-push.sh`: `gh api --hostname …` | review skill (vendored) | expected, not yet observed | — |
@@ -378,11 +392,14 @@ background" as "finished". The supported ways to run it:
 1. **Detached, then poll the log** — the form this repository's lane briefs use:
 
    ```sh
-   nohup bash -c "task verify; echo GATE-EXIT=$?" > /tmp/verify.log 2>&1 & disown
+   nohup bash -c 'task verify; echo GATE-EXIT=$?' > /tmp/verify.log 2>&1 & disown
    ```
 
    then read `/tmp/verify.log` until it prints `GATE-EXIT=<code>`. That line, not
-   the absence of output, is the result.
+   the absence of output, is the result. The single quotes are load-bearing:
+   inside double quotes the *calling* shell expands `$?` before `bash -c` starts,
+   so the line would report the status of whatever ran before — and a failed
+   verify could print `GATE-EXIT=0`.
 2. **Its component tasks**, each under the limit: `task check` (lint, the fast
    gate), then the individual `task test:*` targets `verify` is made of.
 3. **Raise the ceiling** with `BASH_DEFAULT_TIMEOUT_MS` and `BASH_MAX_TIMEOUT_MS`
@@ -390,9 +407,21 @@ background" as "finished". The supported ways to run it:
    only moves the limit to ten minutes; a gate longer than that still needs the
    first form.
 
-`task security` runs its Semgrep step against `semgrep.dev`, which Trusted
-denies (see [Network](#network)); run `task security:secrets` on its own, and let
-CI's SAST cover the rest.
+**`task security` is owed before the draft PR, in the cloud as anywhere else**
+(`AGENTS.md`), and it is never skipped. Its Semgrep step contacts `semgrep.dev`,
+which was denied on 2026-09-27 under a network level presumed, but not
+recorded, to be Trusted (see [Network](#network)). Meet the gate one of two ways:
+
+- **In the session:** add `semgrep.dev` under **Custom** network access, with the
+  default package-manager list kept, so the full `task security` runs there.
+- **Outside it**, where the environment cannot be changed: the session stops at
+  a pushed branch, and the draft PR is opened only after `task security` has
+  passed on a machine that can run it. That is already the shape of a cloud lane
+  ([What runs where](#what-runs-where)): the orchestrator runs the gate before it
+  opens the PR.
+
+`task security:secrets` on its own is the per-push secret scan, not a substitute
+for the pre-PR gate.
 
 ## Other behaviour worth knowing
 
