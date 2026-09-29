@@ -191,6 +191,37 @@ you did not create[% if github_org != author_git_provider_username and project_m
 and audit every reachable project board for unexpected card moves or field
 changes[% endif %].
 
+## The agent PAT (the agent posture's own token)
+
+The **agent** devcontainer (`.devcontainer/agent/`; see harmon-init's
+[three-posture ADR](https://github.com/evanharmon1/harmon-init/blob/main/docs/decisions/2026-09-29-agent-posture-three-posture-model.md))
+authenticates with a **separate** fine-grained PAT on the same bot account —
+never the bot's own `GH_TOKEN`:
+
+- **Same permissions as the bot's PAT** (the table above), so it can push
+  feature branches, open draft PRs, comment, and label, and has no
+  administration, secrets, or workflow permission. The rulesets refuse a
+  direct or force push to `main`, and a merge to `main` needs code-owner
+  approval and green required checks — but they do not stop this PAT from
+  merging: once a human has approved and the checks pass, its
+  `pull_requests: write` can perform that merge. Its `contents: write` does
+  let it create releases and push to any branch no ruleset protects, because
+  a fine-grained PAT cannot separate those from contents.
+- **Expiry of 180 days at most** — shorter than the bot's — and its **own
+  selected-repository list**, limited to the repositories that allow remote
+  lanes. One per resource owner, for the same reason as above.
+- **Supplied as `AGENT_GH_TOKEN`** in the host environment. `init-env.sh
+  --profile agent` projects it into `.devcontainer/agent/devcontainer.env`
+  and refuses to build if that file holds any other credential; the agent
+  post-create logs `gh` in from it. A distinct name is the point: a host
+  that exports the bot's `GH_TOKEN` can never feed it to an agent container.
+
+Revoke it independently of the bot's PAT: rotating one never touches the
+other. For Claude Code on the web, where `/web-setup` holds a single token
+across resource owners, the agent identity is instead a **classic** PAT on the bot
+account with `repo` scope and no `workflow` scope, bounded by the bot's
+per-repo collaborator grants (harmon-init#1407).
+
 ## What the bot cannot do — by construction
 
 - **Push to or merge `main`** — the ruleset blocks it for every actor, and

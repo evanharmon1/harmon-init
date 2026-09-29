@@ -353,7 +353,10 @@ The security contract, by layer:
   closed, whether it is a list line or a range fetched through
   `@github-meta`. Refused destinations are recorded
   (`egress-allowlist.sh blocked`) for the lane report.
-- **Docker — non- **Residuals — where the boundaries are.** Command-level denies are a
+- **Docker — none by default.** Never the host socket; Docker-in-Docker only
+  through the documented per-repo opt-in (`HARMON_AGENT_DOCKER=dind`), which
+  the same egress filter still covers.
+- **Residuals — where the boundaries are.** Command-level denies are a
   best-effort first layer for a cooperating harness (Claude Code's rules;
   Codex has none): they are not transitive through repository code —
   Taskfile targets and git hooks, which the agent runs through `task` and
@@ -362,18 +365,15 @@ The security contract, by layer:
   without guaranteeing `gh api` is read-only. The boundary for **GitHub
   writes** is the agent PAT's scopes (no administration, secrets, or
   workflow) plus the repository rulesets (no direct or force push to `main`;
-  a merge needs code-owner review). The PAT's `contents: write` lets it
-  create releases and push non-protected branches — a fine-grained PAT cannot
-  separate releases from contents. The boundary for the **network** is the
-  egress filter; it lives inside the container and needs `NET_ADMIN`, and
-  the container user keeps passwordless `sudo`, so repository code run with
-  root can lift it. Narrowing `sudo` is tracked in
-  [#1432](https://github.com/evanharmon1/harmon-init/issues/1432). DNS to
-  the configured resolvers stays open. See the ADR's Consequences for the
-  full list.
-
- is tracked in
-  [#1432](https://github.com/evanharmon1/harmon-init/issues/1432). DNS to
+  a merge to `main` needs code-owner approval and green required checks). The
+  rulesets do not stop the PAT from merging: once a human has approved and
+  the checks pass, its `pull_requests: write` can perform that merge. Its
+  `contents: write` lets it create releases and push non-protected branches
+  — a fine-grained PAT cannot separate releases from contents. The boundary
+  for the **network** is the egress filter; it lives inside the container
+  and needs `NET_ADMIN`, and the container user keeps passwordless `sudo`,
+  so repository code run with root can lift it. Narrowing `sudo` is tracked
+  in [#1432](https://github.com/evanharmon1/harmon-init/issues/1432). DNS to
   the configured resolvers stays open. See the ADR's Consequences for the
   full list.
 

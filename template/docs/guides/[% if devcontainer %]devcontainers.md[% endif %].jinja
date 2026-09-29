@@ -233,8 +233,8 @@ the devcontainer definition itself must come from a trusted checkout — the
 default branch or a reviewed ref — because `initializeCommand` runs the
 checkout's code on the host, for this profile as for every other.
 It is **never looser than bot on any axis**; the reasoning for every choice
-is in the three-posture ADR
-([docs/decisions/2026-09-29-agent-posture-three-posture-model.md](../decisions/2026-09-29-agent-posture-three-posture-model.md)).
+is in harmon-init's three-posture ADR
+([docs/decisions/2026-09-29-agent-posture-three-posture-model.md](https://github.com/evanharmon1/harmon-init/blob/main/docs/decisions/2026-09-29-agent-posture-three-posture-model.md)).
 Its containerEnv marker is `FOREMAN_DEVCONTAINER=agent`: scripts tell `bot`,
 `agent`, and unset (dev) apart, and nothing reads `agent` as `bot`. Foreman
 refuses to dispatch from it by design.
@@ -268,10 +268,12 @@ One first layer and two boundaries — only the boundaries are claimed as such:
   read-only.
 - **GitHub writes are bounded by the agent PAT's scopes plus the repository
   rulesets.** The PAT has no administration, secrets, or workflow permission;
-  the rulesets refuse a direct or force push to `main`, and a merge needs
-  code-owner review. The PAT's `contents: write` does let it create releases
-  and push to any branch no ruleset protects — a fine-grained PAT cannot
-  separate releases from contents.
+  the rulesets refuse a direct or force push to `main`, and a merge to `main`
+  needs code-owner approval and green required checks. They do not stop the
+  PAT from merging: once a human has approved and the checks pass, its
+  `pull_requests: write` can perform that merge. Its `contents: write` does
+  let it create releases and push to any branch no ruleset protects — a
+  fine-grained PAT cannot separate releases from contents.
 - **The network is bounded by the egress filter** (below). Its residual is
   root: the container user keeps passwordless `sudo`, so repository code run
   with root can lift the filter; harmon-init#1432 tracks narrowing it.
@@ -289,7 +291,7 @@ or a bare `NAME` line that would pass a host value through — **stops the
 build** with the offending name (never its value). The other profiles quietly
 evict a disallowed name; the agent profile refuses instead, because nobody is
 watching to notice a repaired misconfiguration. The Codex login, where an
-environment persists one (#1406), lives in the `~/.codex` volume, not the
+environment persists one (harmon-init#1406), lives in the `~/.codex` volume, not the
 env-file.
 
 ### Egress allowlist

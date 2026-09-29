@@ -2460,15 +2460,32 @@ assert_container() {
         fi
         docker exec -u vscode "$container_id" curl -fsS -m 20 -o /dev/null https://api.github.com/zen ||
             fail "an allowlisted host (api.github.com) is not reachable from the agent container"
+        # The record must name an address example.com resolved to, written by
+        # THIS probe: resolve it in the container and drop those addresses
+        # from the record first, so neither an unrelated refusal nor a stale
+        # entry can satisfy the check below.
+        local probe_addrs probe_addr probe_recorded=""
+        probe_addrs="$(docker exec -u vscode "$container_id" getent ahostsv4 example.com 2>/dev/null |
+            awk '{print $1}' | sort -u)" || true
+        [ -n "$probe_addrs" ] ||
+            fail "example.com does not resolve in the agent container, so its refusal cannot be attributed"
+        while IFS= read -r probe_addr; do
+            docker exec -u root "$container_id" sh -c \
+                'printf -- "-%s\n" "$1" >/proc/net/xt_recent/harmon_egress_blocked' sh "$probe_addr" </dev/null ||
+                fail "cannot clear ${probe_addr} from the agent container's blocked-destination record"
+        done <<<"$probe_addrs"
         if docker exec -u vscode "$container_id" curl -sS -m 10 -o /dev/null https://example.com 2>/dev/null; then
             fail "a host outside the egress allowlist (example.com) is reachable from the agent container"
         fi
         agent_out="$(docker exec -u vscode -w "$workspace_folder" "$container_id" \
             bash .devcontainer/scripts/egress-allowlist.sh blocked 2>&1)" || true
-        case "$agent_out" in
-        *"blocked "*) ;;
-        *) fail "the refused example.com connection was not recorded for the lane report: ${agent_out}" ;;
-        esac
+        while IFS= read -r probe_addr; do
+            if awk -v a="$probe_addr" '$1 == "blocked" && $2 == a {found = 1} END {exit found ? 0 : 1}' <<<"$agent_out"; then
+                probe_recorded=1
+            fi
+        done <<<"$probe_addrs"
+        [ -n "$probe_recorded" ] ||
+            fail "the refused example.com connection ($(printf '%s' "$probe_addrs" | tr '\n' ' ')) was not recorded for the lane report: ${agent_out}"
     else
         [ "$codex_sandbox" = "workspace-write" ] || fail "human Codex sandbox is '${codex_sandbox}'"
         [ "$codex_approval" = "on-request" ] || fail "human Codex approval policy is '${codex_approval}'"

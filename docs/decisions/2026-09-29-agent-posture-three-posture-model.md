@@ -161,12 +161,14 @@ Mechanically:
   - **The boundary for GitHub writes is the agent PAT's scopes plus the
     repository rulesets.** The PAT has no administration, secrets, or workflow
     permission, so no route reaches those. The rulesets refuse a direct or
-    force push to `main` for every actor, and a merge needs code-owner review.
-    A bare `git push` while on `main` is not expressible as a rule; the
-    ruleset and the no-commit-to-main hook bound it. Disclosed plainly: the
-    PAT's `contents: write` lets it create releases and push to any branch no
-    ruleset protects, by any route, because a fine-grained PAT cannot separate
-    releases from contents.
+    force push to `main` for every actor, and a merge to `main` needs
+    code-owner approval and green required checks. A bare `git push` while on
+    `main` is not expressible as a rule; the ruleset and the no-commit-to-main
+    hook bound it. Disclosed plainly: the rulesets do not stop the PAT from
+    merging — once a human has approved and the checks pass, its
+    `pull_requests: write` can perform that merge; and its `contents: write`
+    lets it create releases and push to any branch no ruleset protects, by any
+    route, because a fine-grained PAT cannot separate releases from contents.
   - **The boundary for the network is the egress filter**, with one residual.
     The filter lives inside the container and needs `NET_ADMIN`; the container
     user keeps passwordless `sudo` (the shared lifecycle scripts use it). So

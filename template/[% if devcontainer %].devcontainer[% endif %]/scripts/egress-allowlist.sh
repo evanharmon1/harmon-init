@@ -11,7 +11,9 @@ set -euo pipefail
 #                                  root (re-execs through `sudo -n`). Exits
 #                                  non-zero — failing the lifecycle step that
 #                                  called it — if enforcement cannot be
-#                                  installed. Idempotent; re-run it to pick up
+#                                  installed, and then leaves the OUTPUT and
+#                                  FORWARD policies DROP (fail_closed below).
+#                                  Idempotent; re-run it to pick up
 #                                  rotated CDN addresses. The agent lifecycle
 #                                  runs it only from the snapshot below.
 #   egress-allowlist.sh snapshot — validate the lists, then copy this applier
@@ -154,7 +156,10 @@ github_meta_ranges() {
 # the @github-meta response.
 cmd_plan() {
     local entries entry addr resolved reason out=""
-    entries="$(cmd_hosts)"
+    # Explicit, not left to set -e: apply runs this inside $(...), where bash
+    # does not inherit errexit, so a refused list line would otherwise leave
+    # the entries before it standing as the plan.
+    entries="$(cmd_hosts)" || exit 1
     while IFS= read -r entry; do
         if [ "$entry" = "@github-meta" ]; then
             resolved="$(github_meta_ranges)" || {
@@ -207,17 +212,38 @@ has_global_ipv6() {
     awk '$4 == "00" {found=1} END {exit found ? 0 : 1}' /proc/net/if_inet6 2>/dev/null
 }
 
+# fail_closed — apply's EXIT trap. It is armed before anything in apply can
+# fail and disarmed only once the filter is installed AND verified, so every
+# other exit — a plan refusal (an over-broad literal or @github-meta range, an
+# invalid list, an empty resolved set), a failed iptables call, a failed
+# verify, a signal — leaves the OUTPUT and FORWARD policies DROP: egress
+# denied, never left open. Each step is attempted whatever the one before it
+# did, and the exit status is never 0.
+fail_closed() {
+    local rc=$?
+    trap - EXIT
+    iptables -P OUTPUT DROP ||
+        echo "egress-allowlist: CRITICAL: could not set the OUTPUT policy to DROP" >&2
+    iptables -P FORWARD DROP ||
+        echo "egress-allowlist: CRITICAL: could not set the FORWARD policy to DROP" >&2
+    ip6tables -P OUTPUT DROP 2>/dev/null || true
+    ip6tables -P FORWARD DROP 2>/dev/null || true
+    echo "egress-allowlist: apply did not complete — egress policy left at DROP" >&2
+    [ "$rc" -ne 0 ] || rc=1
+    exit "$rc"
+}
+
 cmd_apply() {
     as_root apply
     ensure_iptables
+    trap fail_closed EXIT
     # Resolve everything BEFORE touching the filter: resolution needs the
-    # network the filter is about to close.
+    # network the filter is about to close. A failure here still exits
+    # through fail_closed, so it denies egress rather than leaving it open.
     local plan dns dest ns
     plan="$(cmd_plan)"
     dns="$(resolvers)"
 
-    # Fail-closed ordering: the DROP policies land first, so any failure
-    # below leaves the container denying egress, never allowing it.
     iptables -P OUTPUT DROP
     iptables -P FORWARD DROP
     iptables -N "$CHAIN" 2>/dev/null || iptables -F "$CHAIN"
@@ -262,6 +288,7 @@ cmd_apply() {
 
     echo "==> egress-allowlist: default-deny egress installed ($(printf '%s\n' "$plan" | grep -c .) allowed destinations)."
     cmd_verify
+    trap - EXIT
 }
 
 cmd_verify() {

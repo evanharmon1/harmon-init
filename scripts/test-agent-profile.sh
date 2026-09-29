@@ -28,7 +28,8 @@ set -euo pipefail
 #   7. egress             — the list parses, resolves, refuses an
 #                           allow-nothing filter and an over-broad literal
 #                           or @github-meta range (0.0.0.0/x, wider than
-#                           /16); the lifecycle
+#                           /16); apply fails closed — any failure leaves
+#                           the OUTPUT/FORWARD policy DROP; the lifecycle
 #                           snapshots it root-owned at create, applies it
 #                           first, and applies only the snapshot at start
 
@@ -557,6 +558,63 @@ done
 [ "$(EGRESS_ALLOWLIST_SHARED="${work_dir}/meta-only.txt" EGRESS_ALLOWLIST_LOCAL=/nonexistent \
     EGRESS_GITHUB_META_FILE="${work_dir}/meta.json" bash "$egress" plan 2>/dev/null)" = "$(printf '140.82.112.0/20\n185.199.108.0/22')" ] ||
     fail "egress plan refused or altered a normal @github-meta response"
+
+# Apply fails closed: every exit short of a verified filter leaves the OUTPUT
+# and FORWARD policies DROP. Stub `id` (so apply runs as "root" without sudo)
+# and iptables/ip6tables (which record each call instead of executing it) on
+# PATH; the -S answers are what a fully installed filter reports, so the
+# success run reaches verify and passes.
+ipt_bin="${work_dir}/ipt-bin"
+ipt_log="${work_dir}/ipt.log"
+mkdir -p "$ipt_bin"
+printf '#!/bin/sh\necho 0\n' >"${ipt_bin}/id"
+cat >"${ipt_bin}/iptables" <<EOF
+#!/bin/sh
+echo "\$(basename "\$0") \$*" >>"${ipt_log}"
+case "\$*" in
+"-S OUTPUT") printf '%s\n' '-P OUTPUT DROP' '-A OUTPUT -j HARMON_EGRESS' ;;
+"-S FORWARD") printf '%s\n' '-P FORWARD DROP' ;;
+"-S HARMON_EGRESS") printf '%s\n' '-A HARMON_EGRESS -j REJECT --reject-with icmp-admin-prohibited' ;;
+-C*) exit 1 ;;
+esac
+exit 0
+EOF
+cp "${ipt_bin}/iptables" "${ipt_bin}/ip6tables"
+chmod +x "${ipt_bin}/id" "${ipt_bin}/iptables" "${ipt_bin}/ip6tables"
+printf 'nameserver 192.0.2.53\n' >"${work_dir}/resolv.conf"
+# run_apply <list> [meta-file] — apply against the stubs; the exit status is
+# apply's, the recorded calls land in $ipt_log, stderr in $apply_err.
+apply_err="${work_dir}/apply.err"
+run_apply() {
+    : >"$ipt_log"
+    PATH="${ipt_bin}:${PATH}" EGRESS_ALLOWLIST_SHARED="$1" EGRESS_ALLOWLIST_LOCAL=/nonexistent \
+        EGRESS_RESOLVER="$stub_resolver" EGRESS_GITHUB_META_FILE="${2:-${work_dir}/meta.json}" \
+        EGRESS_RESOLV_CONF="${work_dir}/resolv.conf" bash "$egress" apply >/dev/null 2>"$apply_err"
+}
+printf 'good.example\n10.0.0.0/8\n' >"${work_dir}/broad-literal.txt"
+printf '{"git":["140.82.112.0/20"],"web":["0.0.0.0/0"],"api":[],"packages":[]}\n' >"${work_dir}/meta-broad.json"
+for failing in "broad-literal.txt:10.0.0.0/8:" "meta-only.txt:0.0.0.0/0:${work_dir}/meta-broad.json" "dead.txt::"; do
+    list="${failing%%:*}"
+    refused="${failing#*:}"
+    meta="${refused#*:}"
+    refused="${refused%%:*}"
+    if run_apply "${work_dir}/${list}" "$meta"; then
+        fail "egress apply succeeded on a failing plan (${list})"
+    fi
+    grep -Fxq -- 'iptables -P OUTPUT DROP' "$ipt_log" ||
+        fail "a failing egress plan (${list}) left the OUTPUT policy open: $(cat "$apply_err")"
+    grep -Fxq -- 'iptables -P FORWARD DROP' "$ipt_log" ||
+        fail "a failing egress plan (${list}) left the FORWARD policy open: $(cat "$apply_err")"
+    ! grep -q -- '-j ACCEPT' "$ipt_log" ||
+        fail "a failing egress plan (${list}) still installed ACCEPT rules: $(cat "$ipt_log")"
+    [ -z "$refused" ] || ! grep -Fq -- "-d ${refused} " "$ipt_log" ||
+        fail "a failing egress plan (${list}) installed a rule for the refused range ${refused}"
+done
+run_apply "${work_dir}/list.txt" || fail "egress apply failed against the stubs on a valid fixture: $(cat "$apply_err")"
+grep -Fxq -- 'iptables -A HARMON_EGRESS -d 198.51.100.0/24 -j ACCEPT' "$ipt_log" ||
+    fail "a successful egress apply did not allow a listed destination: $(cat "$ipt_log")"
+! grep -Fq 'apply did not complete' "$apply_err" ||
+    fail "a successful egress apply still ran its failure path"
 
 # The snapshot: the applier and both lists copied out of the checkout, and a
 # later edit to the checkout changes nothing the snapshot applies.

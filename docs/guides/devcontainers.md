@@ -244,10 +244,12 @@ One first layer and two boundaries — only the boundaries are claimed as such:
   read-only.
 - **GitHub writes are bounded by the agent PAT's scopes plus the repository
   rulesets.** The PAT has no administration, secrets, or workflow permission;
-  the rulesets refuse a direct or force push to `main`, and a merge needs
-  code-owner review. The PAT's `contents: write` does let it create releases
-  and push to any branch no ruleset protects — a fine-grained PAT cannot
-  separate releases from contents.
+  the rulesets refuse a direct or force push to `main`, and a merge to `main`
+  needs code-owner approval and green required checks. They do not stop the
+  PAT from merging: once a human has approved and the checks pass, its
+  `pull_requests: write` can perform that merge. Its `contents: write` does
+  let it create releases and push to any branch no ruleset protects — a
+  fine-grained PAT cannot separate releases from contents.
 - **The network is bounded by the egress filter** (below). Its residual is
   root: the container user keeps passwordless `sudo`, so repository code run
   with root can lift the filter; harmon-init#1432 tracks narrowing it.
