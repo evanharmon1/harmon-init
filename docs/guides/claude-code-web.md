@@ -280,6 +280,7 @@ that exists today.
 | `trusted-registry.sh`: `gh pr view --json baseRefOid`, `gh api repos/…/contents` | integrate skill (vendored), sourced by `check-codex-cloud-review.sh` and `gh-write-broker.sh` | expected to fail on `gh pr view`, not yet observed — GraphQL-backed; the `contents` read is plain REST | REST `repos/{o}/{r}/pulls/{n}` returns `base.sha`. harmon-devkit#1207 |
 | `gh auth git-credential` (the forced credential-helper push in `AGENTS.md` and the integrate skill) | a push on an unprovisioned host | expected, not yet observed; not needed — a plain `git push` to the session's branch works (observed 2026-09-27), because the platform configures git itself | Push with plain `git push` in a cloud session |
 | `release-claim.sh`, `check-issue-metadata.sh`: `gh issue edit/comment`, `gh label list`, `gh api --paginate --slurp` | track-work skill (vendored) | expected, not yet observed — the same GraphQL-backed subcommands as the first row | harmon-devkit#1207 |
+| `release-claim.sh`: `gh api repos/{o}/{r}/issues/{n}` (the issue, read twice), and `gh api --paginate --slurp` over the issue's `timeline` and `comments` | track-work skill (vendored) | expected to work for the plain issue reads, and for page 1 of the paginated reads, which then fail on the proxy's rejected next-page link; not yet observed. Record which read failed before the script reaches its GraphQL writes | harmon-devkit#1207 (explicit `page=N` pagination) |
 | `check-issue-metadata.sh`: `gh api repos/{o}/{r}` (owner type) and, for an organization owner only, `gh api orgs/{owner}/issue-types` | track-work skill (vendored) | expected to work (plain REST), not yet observed; the organization call is skipped for a personal-account owner | — |
 | `set-issue-status.sh`: `gh api graphql` (Projects v2) | track-work skill (vendored) | expected to fail, not yet observed — Projects v2 is GraphQL-only and documented as unreachable | No REST route is known. The skills treat Project status as a non-authoritative view, so the loop does not need it. Tracked in [harmon-devkit#1207](https://github.com/evanharmon1/harmon-devkit/issues/1207), which either finds a REST route or makes the helper refuse with its exit 2; until then it can only fail behind the proxy |
 | `readiness-gate.sh`: `gh pr view`, `gh api graphql --paginate --slurp` (review threads), `gh api repos/…`, `gh api user`, `gh pr ready` | integrate skill (vendored) | **fail** on `gh pr view` — observed 2026-09-27 | Conditions were checked by hand over REST (`…/ccr/review_threads`, `…/ccr/ready_for_review`). harmon-devkit#1207; orchestrator-side, see [What runs where](#what-runs-where) |
@@ -380,8 +381,9 @@ there: the small set of cross-project rules that are safety or communication
 rules rather than repository facts — never write to a password manager or
 credential store unless that exact write was requested, and even then restate
 what will be written and get confirmation before running it; never terminate a
-process without approval; never
-merge or cut a release without explicit approval, and the reply-style
+process without approval; never merge or cut a release, because both are the
+maintainer's decisions and an agent acts on one only with explicit, per-merge
+(or per-release) approval; and the reply-style
 preferences. Keep them short: they are injected into every session. Everything
 that is true of a repository — commands, gates, the dev loop, conventions —
 belongs in that repository's `AGENTS.md`, where it is versioned and reviewable.
