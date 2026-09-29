@@ -321,6 +321,10 @@ with root.
   long run can start refusing a listed host;
   `sudo bash /usr/local/share/harmon-egress/scripts/egress-allowlist.sh apply`
   re-resolves.
+- **The default bridge network only.** On a user-defined Docker network or a
+  compose setup, `resolv.conf` points at Docker's embedded resolver
+  (`127.0.0.11`), whose upstream queries are not in the allow set, so DNS
+  resolution fails once the filter installs.
 
 ### Docker in the agent posture: per-repo opt-in
 

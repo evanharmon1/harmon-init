@@ -192,7 +192,11 @@ Mechanically:
     [#1432](https://github.com/evanharmon1/harmon-init/issues/1432). DNS is
     allowed to the configured resolvers, so DNS remains a narrow channel.
     Addresses are resolved at start, so a CDN rotating addresses mid-run can
-    refuse a listed host until the next `apply`.
+    refuse a listed host until the next `apply`. On a user-defined Docker
+    network or a compose setup, `resolv.conf` points at Docker's embedded
+    resolver (`127.0.0.11`), whose upstream queries are not in the allow set,
+    so DNS resolution fails once the filter installs; the supported setup is
+    the default bridge network.
 - The operator mints the agent PATs (one per owner, ≤180 days, on the bot
   account) and ratifies this record; an unattended agent-devcontainer lane
   returning its work to the orchestrator with no human step after launch is

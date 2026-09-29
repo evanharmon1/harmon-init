@@ -35,6 +35,13 @@ if [ "${1:-}" = "--profile" ]; then
     shift 2
 fi
 
+# The agent profile names its env-file explicitly, as its initializeCommand
+# does: the default below is the bot's env-file, which the agent must never
+# read or write.
+if [ "$PROFILE" = "agent" ] && [ -z "${1:-}" ]; then
+    echo "init-env.sh: --profile agent needs the agent env-file path (.devcontainer/agent/devcontainer.env); it never falls back to the bot's .devcontainer/devcontainer.env" >&2
+    exit 1
+fi
 ENV_FILE="${1:-.devcontainer/devcontainer.env}"
 shift || true
 

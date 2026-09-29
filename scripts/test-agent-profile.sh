@@ -164,7 +164,7 @@ grep -q 'elsewhere/settings.json' <<<"$fixture_copies" || fail "single-source ch
 grep -q 'elsewhere/codex.toml' <<<"$fixture_copies" || fail "single-source check missed a re-commented TOML copy"
 
 # The agent devcontainer installs from the image copy of that source.
-grep -q 'CONFIG_DIR=/usr/local/share/devcontainer-config/agent' "$agent_autonomy" ||
+grep -qx 'BAKED_CONFIG_DIR=/usr/local/share/devcontainer-config/agent' "$agent_autonomy" ||
     fail "agent-autonomy.sh no longer installs from the image copy of ${agent_config_dir}"
 grep -Eq '^bash \.devcontainer/agent/agent-autonomy\.sh apply$' .devcontainer/agent/post-create.sh ||
     fail "the agent post-create does not install the agent profile (agent-autonomy.sh apply)"
@@ -326,13 +326,21 @@ bash "$agent_autonomy" coverage >/dev/null || fail "agent-autonomy.sh coverage f
 
 # The dispatcher needs only these tools; a curated PATH keeps the real
 # harness binaries this environment may have installed out of the fixture.
+# curated_bin <dir> <tool>... — link each tool this machine has into <dir>.
+autonomy_tools="bash awk jq install chmod readlink dirname git mktemp cat sudo"
+curated_bin() {
+    local dir="$1" tool tool_path
+    shift
+    mkdir -p "$dir"
+    for tool in "$@"; do
+        tool_path="$(command -v "$tool" 2>/dev/null || true)"
+        [ -n "$tool_path" ] || continue
+        ln -s "$tool_path" "${dir}/${tool}"
+    done
+}
 safe_bin="${work_dir}/safe-bin"
-mkdir -p "$safe_bin"
-for tool in bash awk jq sha256sum install chmod readlink dirname git mktemp cat sudo; do
-    tool_path="$(command -v "$tool" 2>/dev/null || true)"
-    [ -n "$tool_path" ] || continue
-    ln -s "$tool_path" "${safe_bin}/${tool}"
-done
+# shellcheck disable=SC2086 # the tool list is split on purpose
+curated_bin "$safe_bin" $autonomy_tools sha256sum shasum
 fake_bin="${work_dir}/fake-bin"
 mkdir -p "$fake_bin"
 for exe in claude codex opencode agy; do
@@ -342,12 +350,17 @@ done
 fake_etc="${work_dir}/etc"
 mkdir -p "${fake_etc}/claude-code" "${fake_etc}/codex"
 echo '{}' >"${fake_etc}/claude-code/managed-settings.json"
+# run_autonomy <subcommand> — the unit test's opt-in to the checkout's profile
+# (AGENT_AUTONOMY_CONFIG_DIR) and scratch destinations; PATH is
+# ${autonomy_path}, the fake harnesses plus the curated tools unless a case
+# below narrows it.
+autonomy_path="${fake_bin}:${safe_bin}"
 run_autonomy() {
     AGENT_AUTONOMY_CONFIG_DIR="${repo_root}/${agent_config_dir}" \
         AGENT_AUTONOMY_REGISTRY="${repo_root}/agent-registry.json" \
         AGENT_AUTONOMY_CLAUDE_MANAGED="${fake_etc}/claude-code/managed-settings.json" \
         AGENT_AUTONOMY_CODEX_MANAGED="${fake_etc}/codex/managed_config.toml" \
-        PATH="${fake_bin}:${safe_bin}" bash "$agent_autonomy" "$@"
+        PATH="$autonomy_path" "$BASH" "$agent_autonomy" "$@"
 }
 
 if FOREMAN_DEVCONTAINER=bot run_autonomy apply >/dev/null 2>&1; then
@@ -375,6 +388,94 @@ echo '{"permissions":{"defaultMode":"bypassPermissions"}}' >"${fake_etc}/claude-
 if FOREMAN_DEVCONTAINER=agent run_autonomy verify >/dev/null 2>&1; then
     fail "verify passed with drifted Claude managed settings"
 fi
+
+# The digest is never empty. A PATH with shasum but no sha256sum (a stock
+# macOS host) installs and verifies; a tampered installed file still fails
+# there. A PATH with neither fails apply and verify loudly — never two empty
+# digests comparing equal. Where this machine has no shasum, a shim over
+# sha256sum stands in for it.
+shasum_bin="${work_dir}/shasum-bin"
+# shellcheck disable=SC2086 # the tool list is split on purpose
+curated_bin "$shasum_bin" $autonomy_tools shasum
+if [ ! -e "${shasum_bin}/shasum" ]; then
+    printf '#!/bin/sh\n[ "$1" = -a ] && [ "$2" = 256 ] || exit 2\nshift 2\nexec %s "$@"\n' "$(command -v sha256sum)" >"${shasum_bin}/shasum"
+    chmod +x "${shasum_bin}/shasum"
+fi
+nodigest_bin="${work_dir}/nodigest-bin"
+# shellcheck disable=SC2086 # the tool list is split on purpose
+curated_bin "$nodigest_bin" $autonomy_tools
+chmod +x "${fake_bin}/opencode" "${fake_bin}/agy"
+rm -f "${fake_etc}/codex/managed_config.toml"
+echo '{}' >"${fake_etc}/claude-code/managed-settings.json"
+autonomy_path="${fake_bin}:${shasum_bin}"
+FOREMAN_DEVCONTAINER=agent run_autonomy apply >/dev/null || fail "apply failed with shasum but no sha256sum on PATH"
+cmp -s "$agent_settings" "${fake_etc}/claude-code/managed-settings.json" ||
+    fail "apply with shasum but no sha256sum did not install the agent Claude settings over a drifted file"
+cmp -s "$agent_codex" "${fake_etc}/codex/managed_config.toml" ||
+    fail "apply with shasum but no sha256sum did not install the agent Codex config"
+FOREMAN_DEVCONTAINER=agent run_autonomy verify >/dev/null || fail "verify failed with shasum but no sha256sum on PATH"
+printf '\n# tampered\n' >>"${fake_etc}/codex/managed_config.toml"
+if FOREMAN_DEVCONTAINER=agent run_autonomy verify >/dev/null 2>&1; then
+    fail "verify passed a tampered Codex managed config with shasum but no sha256sum on PATH"
+fi
+autonomy_path="${fake_bin}:${nodigest_bin}"
+for sub in apply verify; do
+    if digest_out="$(FOREMAN_DEVCONTAINER=agent run_autonomy "$sub" 2>&1)"; then
+        fail "${sub} succeeded with neither sha256sum nor shasum on PATH"
+    fi
+    grep -Fq 'neither sha256sum nor shasum' <<<"$digest_out" ||
+        fail "${sub} with neither sha256sum nor shasum did not say why it failed: ${digest_out}"
+done
+autonomy_path="${fake_bin}:${safe_bin}"
+
+# A refused harness reached through a (relative) symlink: the link's target
+# is what loses its execute bit.
+link_bin="${work_dir}/link-bin"
+mkdir -p "$link_bin" "${work_dir}/opt/copilot"
+printf '#!/bin/sh\nexit 0\n' >"${work_dir}/opt/copilot/copilot-real"
+chmod +x "${work_dir}/opt/copilot/copilot-real"
+ln -s ../opt/copilot/copilot-real "${link_bin}/copilot"
+autonomy_path="${link_bin}:${fake_bin}:${safe_bin}"
+FOREMAN_DEVCONTAINER=agent run_autonomy apply >/dev/null || fail "apply failed over a symlinked refused harness"
+[ ! -x "${work_dir}/opt/copilot/copilot-real" ] || fail "apply did not refuse the target of a symlinked refused harness (copilot)"
+FOREMAN_DEVCONTAINER=agent run_autonomy verify >/dev/null || fail "verify failed after refusing a symlinked harness"
+autonomy_path="${fake_bin}:${safe_bin}"
+
+# Under the agent marker the profile comes only from the baked image copy,
+# never from the writable checkout beside the script. A copy of the script
+# with the baked path moved into scratch shows both sides: baked copy missing
+# fails (though a checkout profile sits beside it), baked copy present wins
+# over an edited checkout copy, and without the marker the checkout is still
+# read (the static coverage check).
+baked_tree="${work_dir}/baked-tree"
+mkdir -p "${baked_tree}/.devcontainer/agent" "${baked_tree}/.devcontainer/config/agent"
+cp "${agent_config_dir}/"* "${baked_tree}/.devcontainer/config/agent/"
+jq '.permissions.defaultMode = "bypassPermissions"' "$agent_settings" >"${baked_tree}/.devcontainer/config/agent/claude-managed-settings.json"
+sed "s|/usr/local/share/devcontainer-config/agent|${work_dir}/baked-image|g" "$agent_autonomy" >"${baked_tree}/.devcontainer/agent/agent-autonomy.sh"
+run_baked() {
+    AGENT_AUTONOMY_REGISTRY="${repo_root}/agent-registry.json" \
+        AGENT_AUTONOMY_CLAUDE_MANAGED="${fake_etc}/claude-code/managed-settings.json" \
+        AGENT_AUTONOMY_CODEX_MANAGED="${fake_etc}/codex/managed_config.toml" \
+        PATH="${fake_bin}:${safe_bin}" "$BASH" "${baked_tree}/.devcontainer/agent/agent-autonomy.sh" "$@"
+}
+echo '{}' >"${fake_etc}/claude-code/managed-settings.json"
+for sub in apply verify; do
+    if baked_out="$(FOREMAN_DEVCONTAINER=agent run_baked "$sub" 2>&1)"; then
+        fail "${sub} under the agent marker read the checkout's profile when the baked copy was missing"
+    fi
+    grep -Fq "the baked agent profile ${work_dir}/baked-image is missing" <<<"$baked_out" ||
+        fail "${sub} under the agent marker with no baked profile did not say why it failed: ${baked_out}"
+done
+grep -qx '{}' "${fake_etc}/claude-code/managed-settings.json" ||
+    fail "apply installed the checkout's profile when the baked copy was missing"
+AGENT_AUTONOMY_REGISTRY="${repo_root}/agent-registry.json" bash "${baked_tree}/.devcontainer/agent/agent-autonomy.sh" coverage >/dev/null ||
+    fail "coverage without the agent marker no longer reads the checkout's profile"
+mkdir -p "${work_dir}/baked-image"
+cp "${agent_config_dir}/"* "${work_dir}/baked-image/"
+FOREMAN_DEVCONTAINER=agent run_baked apply >/dev/null || fail "apply under the agent marker failed with the baked profile present"
+cmp -s "$agent_settings" "${fake_etc}/claude-code/managed-settings.json" ||
+    fail "apply under the agent marker installed the checkout's edited profile instead of the baked one"
+FOREMAN_DEVCONTAINER=agent run_baked verify >/dev/null || fail "verify under the agent marker failed against the baked profile"
 
 # A registry slug with no bucket fails coverage.
 jq '.harnesses += [{slug: "brand-new-harness"}]' agent-registry.json >"${work_dir}/registry-new.json"
@@ -425,6 +526,16 @@ printf 'GH_TOKEN=super-secret-value\n' >"${env_dir}/value.env"
 value_out="$(cd "$env_dir" && env -i PATH="$PATH" HOME="$env_dir" \
     bash "${repo_root}/${init_env}" --profile agent value.env AGENT_GH_TOKEN 2>&1 || true)"
 ! grep -q 'super-secret-value' <<<"$value_out" || fail "init-env.sh printed a secret value while failing closed"
+# The agent profile needs its env-file named: it never falls back to the
+# bot's .devcontainer/devcontainer.env.
+mkdir -p "${env_dir}/.devcontainer"
+noenv_out="$(cd "$env_dir" && env -i PATH="$PATH" HOME="$env_dir" AGENT_GH_TOKEN=agent-pat \
+    bash "${repo_root}/${init_env}" --profile agent 2>&1)" &&
+    fail "init-env.sh --profile agent ran with no env-file path"
+grep -Fq -- '--profile agent needs the agent env-file path' <<<"$noenv_out" ||
+    fail "init-env.sh --profile agent with no env-file path did not say why it failed: ${noenv_out}"
+[ ! -e "${env_dir}/.devcontainer/devcontainer.env" ] ||
+    fail "init-env.sh --profile agent with no env-file path wrote the bot's env-file"
 # The bot and dev profiles evict the agent PAT.
 printf 'AGENT_GH_TOKEN=agent-pat\nGH_TOKEN=bot\n' >"${env_dir}/bot.env"
 (cd "$env_dir" && env -i PATH="$PATH" HOME="$env_dir" bash "${repo_root}/${init_env}" bot.env GH_TOKEN) >/dev/null 2>&1 ||
@@ -545,6 +656,16 @@ for broad in 0.0.0.0/0 0.0.0.0/8 0.0.0.0/32 0.0.0.0 10.0.0.0/8 128.0.0.0/1 172.1
             fail "the refusal of ${broad} (${which} list) does not name the line: ${broad_out}"
     done
 done
+# An octet above 255 matches the address pattern but is no address: refused
+# with the file and line named, before it can reach iptables.
+for bogus in 999.1.1.1 192.0.2.256 256.0.0.0/16; do
+    printf 'good.example\n%s\n' "$bogus" >"${work_dir}/octet.txt"
+    octet_out="$(EGRESS_ALLOWLIST_SHARED="${work_dir}/octet.txt" EGRESS_ALLOWLIST_LOCAL=/nonexistent \
+        EGRESS_RESOLVER="$stub_resolver" bash "$egress" plan 2>&1)" &&
+        fail "egress plan accepted the out-of-range address ${bogus}"
+    grep -Fq "egress-allowlist: ${work_dir}/octet.txt:2: '${bogus}' has an octet above 255" <<<"$octet_out" ||
+        fail "the refusal of the out-of-range address ${bogus} does not name the file and line: ${octet_out}"
+done
 printf '172.16.0.0/16\n198.51.100.0/24\n203.0.113.7/32\n203.0.113.8\n' >"${work_dir}/narrow.txt"
 [ "$(EGRESS_ALLOWLIST_SHARED="${work_dir}/narrow.txt" EGRESS_ALLOWLIST_LOCAL=/nonexistent bash "$egress" plan 2>/dev/null)" = "$(printf '172.16.0.0/16\n198.51.100.0/24\n203.0.113.7/32\n203.0.113.8')" ] ||
     fail "egress plan refused or altered a /16, /24, /32 or bare-address entry"
@@ -574,12 +695,23 @@ ipt_bin="${work_dir}/ipt-bin"
 ipt_log="${work_dir}/ipt.log"
 mkdir -p "$ipt_bin"
 printf '#!/bin/sh\necho 0\n' >"${ipt_bin}/id"
+# A listing in \${ipt_listing}/<chain> replaces the stub's answer for that
+# chain, and \${ipt_listing}/<chain>.absent makes the chain not exist.
+ipt_listing="${work_dir}/ipt-listing"
+mkdir -p "$ipt_listing"
 cat >"${ipt_bin}/iptables" <<EOF
 #!/bin/sh
 echo "\$(basename "\$0") \$*" >>"${ipt_log}"
 case "\$*" in
+"-S "*)
+    [ ! -e "${ipt_listing}/\${2}.absent" ] || exit 1
+    if [ -f "${ipt_listing}/\${2}" ]; then cat "${ipt_listing}/\${2}"; exit 0; fi
+    ;;
+esac
+case "\$*" in
 "-S OUTPUT") printf '%s\n' '-P OUTPUT DROP' '-A OUTPUT -j HARMON_EGRESS' ;;
-"-S FORWARD") printf '%s\n' '-P FORWARD DROP' ;;
+"-S FORWARD") printf '%s\n' '-P FORWARD DROP' '-A FORWARD -j HARMON_EGRESS' ;;
+"-S DOCKER-USER") printf '%s\n' '-N DOCKER-USER' '-A DOCKER-USER -j HARMON_EGRESS' ;;
 "-S HARMON_EGRESS") printf '%s\n' '-A HARMON_EGRESS -j REJECT --reject-with icmp-admin-prohibited' ;;
 -C*) exit 1 ;;
 esac
@@ -621,6 +753,38 @@ grep -Fxq -- 'iptables -A HARMON_EGRESS -d 198.51.100.0/24 -j ACCEPT' "$ipt_log"
     fail "a successful egress apply did not allow a listed destination: $(cat "$ipt_log")"
 ! grep -Fq 'apply did not complete' "$apply_err" ||
     fail "a successful egress apply still ran its failure path"
+
+# verify proves the forwarded path too: FORWARD's first rule reaches the
+# filter — directly, or through DOCKER-USER once a Docker-in-Docker daemon
+# has put its own jump on top — and DOCKER-USER, where it exists, jumps to
+# the filter first. Each case replaces one chain's listing in the stub.
+# run_verify <expect: pass|fail> <case> — verify against the stub listings.
+run_verify() {
+    local verify_out
+    if verify_out="$(PATH="${ipt_bin}:${PATH}" EGRESS_IF_INET6=/nonexistent bash "$egress" verify 2>&1)"; then
+        [ "$1" = pass ] || fail "egress verify passed ${2}"
+    else
+        [ "$1" = fail ] || fail "egress verify failed ${2}: ${verify_out}"
+    fi
+}
+run_verify pass "on a fully installed filter"
+printf '%s\n' '-P FORWARD DROP' '-A FORWARD -j DOCKER-USER' '-A FORWARD -j DOCKER-FORWARD' '-A FORWARD -j HARMON_EGRESS' >"${ipt_listing}/FORWARD"
+run_verify pass "with a Docker-in-Docker daemon's DOCKER-USER jump on top of FORWARD"
+printf '%s\n' '-P FORWARD DROP' '-A FORWARD -j DOCKER-FORWARD' '-A FORWARD -j HARMON_EGRESS' >"${ipt_listing}/FORWARD"
+run_verify fail "with a rule ahead of the FORWARD jump to HARMON_EGRESS"
+printf '%s\n' '-P FORWARD DROP' >"${ipt_listing}/FORWARD"
+run_verify fail "with no FORWARD jump to HARMON_EGRESS"
+rm -f "${ipt_listing}/FORWARD"
+printf '%s\n' '-N DOCKER-USER' '-A DOCKER-USER -j RETURN' >"${ipt_listing}/DOCKER-USER"
+run_verify fail "with a DOCKER-USER chain that does not jump to HARMON_EGRESS"
+printf '%s\n' '-N DOCKER-USER' '-A DOCKER-USER -j ACCEPT' '-A DOCKER-USER -j HARMON_EGRESS' >"${ipt_listing}/DOCKER-USER"
+run_verify fail "with a rule ahead of the DOCKER-USER jump to HARMON_EGRESS"
+rm -f "${ipt_listing}/DOCKER-USER"
+: >"${ipt_listing}/DOCKER-USER.absent"
+run_verify pass "with no DOCKER-USER chain and the FORWARD jump first"
+printf '%s\n' '-P FORWARD DROP' '-A FORWARD -j DOCKER-USER' '-A FORWARD -j HARMON_EGRESS' >"${ipt_listing}/FORWARD"
+run_verify fail "with FORWARD jumping first to a DOCKER-USER chain it cannot read"
+rm -f "${ipt_listing}/FORWARD" "${ipt_listing}/DOCKER-USER.absent"
 
 # The trap is armed before iptables is installed. With no iptables and a
 # failing install there is nothing to set DROP with, so apply must say so
@@ -829,9 +993,13 @@ sed -e "s|/usr/local/share/harmon-egress|${work_dir}/no-snapshot|g" \
     -e "s|/tmp/devcontainer-post-start.log|${work_dir}/post-start.log|g" \
     .devcontainer/agent/post-start.sh >"${work_dir}/post-start.sh"
 : >"$ipt_log"
-if (cd "$work_dir" && PATH="${start_bin}:${ipt_bin}:${PATH}" bash "${work_dir}/post-start.sh"); then
+if (cd "$work_dir" && PATH="${start_bin}:${ipt_bin}:${PATH}" bash "${work_dir}/post-start.sh") 2>"${work_dir}/post-start.stderr"; then
     fail "the agent post-start succeeded with no egress snapshot"
 fi
+# The failing start says so on the stderr it was started with, not only in
+# its log, and names the log.
+grep -Fq "post-start: egress filter not installed — failing the start; do not use this container (details: ${work_dir}/post-start.log)" "${work_dir}/post-start.stderr" ||
+    fail "the agent post-start did not report its failed start on the original stderr: $(cat "${work_dir}/post-start.stderr")"
 grep -Fxq -- 'iptables -P OUTPUT DROP' "$ipt_log" && grep -Fxq -- 'iptables -P FORWARD DROP' "$ipt_log" ||
     fail "the agent post-start left the OUTPUT/FORWARD policy open with no egress snapshot: $(cat "${work_dir}/post-start.log")"
 # (c) The post-start fallback follows the applier's rule: it flushes the
@@ -843,7 +1011,7 @@ sed -e "s|/usr/local/share/harmon-egress|${work_dir}/no-snapshot|g" \
     .devcontainer/agent/post-start.sh >"${work_dir}/post-start-state.sh"
 run_state_start() {
     cp "$1" "${work_dir}/if_inet6.start"
-    (cd "$work_dir" && PATH="${start_bin}:${state_bin}:${PATH}" bash "${work_dir}/post-start-state.sh")
+    (cd "$work_dir" && PATH="${start_bin}:${state_bin}:${PATH}" bash "${work_dir}/post-start-state.sh") 2>"${work_dir}/post-start.stderr"
 }
 seed_filter
 run_state_start "$v6_global" && fail "the agent post-start succeeded with no egress snapshot over an existing filter"
@@ -860,6 +1028,8 @@ seed_filter
 run_state_start "$v6_global" && fail "the agent post-start succeeded with no egress snapshot and a failing ip6tables"
 grep -Fq 'post-start: CRITICAL: could not close egress' "${work_dir}/post-start.log" ||
     fail "the agent post-start fallback did not print the CRITICAL line when ip6tables failed with global IPv6: $(cat "${work_dir}/post-start.log")"
+grep -Fq 'post-start: CRITICAL: could not close egress' "${work_dir}/post-start.stderr" ||
+    fail "the agent post-start fallback did not print the CRITICAL line on the original stderr: $(cat "${work_dir}/post-start.stderr")"
 ! grep -Fq 'left at DROP' "${work_dir}/post-start.log" ||
     fail "the agent post-start fallback claimed DROP although the ip6tables policy failed with global IPv6 present"
 ! grep -Ev '^[[:space:]]*#' .devcontainer/agent/post-start.sh | grep -q 'egress-allowlist\.txt\|\.devcontainer/scripts/egress-allowlist\.sh' ||

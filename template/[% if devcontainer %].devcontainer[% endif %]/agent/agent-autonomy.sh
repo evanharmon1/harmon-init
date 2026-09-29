@@ -29,10 +29,24 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+fail() {
+    echo "agent-autonomy: $*" >&2
+    exit 1
+}
+
+# The profile source. Under the agent marker it is ONLY the baked, root-owned
+# image copy: reading it from the writable checkout would let an edited copy
+# be installed by apply and then match itself in verify. The checkout is used
+# when there is no agent marker (the static coverage check on a host), or when
+# AGENT_AUTONOMY_CONFIG_DIR names a directory — a seam only the host-side unit
+# test (scripts/test-agent-profile.sh) sets.
+BAKED_CONFIG_DIR=/usr/local/share/devcontainer-config/agent
 CONFIG_DIR="${AGENT_AUTONOMY_CONFIG_DIR:-}"
 if [ -z "$CONFIG_DIR" ]; then
-    if [ -d /usr/local/share/devcontainer-config/agent ]; then
-        CONFIG_DIR=/usr/local/share/devcontainer-config/agent
+    if [ -d "$BAKED_CONFIG_DIR" ]; then
+        CONFIG_DIR="$BAKED_CONFIG_DIR"
+    elif [ "${FOREMAN_DEVCONTAINER:-}" = "agent" ]; then
+        fail "the baked agent profile ${BAKED_CONFIG_DIR} is missing — under the agent posture the profile is never read from the writable checkout"
     else
         CONFIG_DIR="$(cd "${SCRIPT_DIR}/../config/agent" && pwd)"
     fi
@@ -42,11 +56,6 @@ CLAUDE_SRC="${CONFIG_DIR}/claude-managed-settings.json"
 CODEX_SRC="${CONFIG_DIR}/codex-managed-config.toml"
 CLAUDE_MANAGED="${AGENT_AUTONOMY_CLAUDE_MANAGED:-/etc/claude-code/managed-settings.json}"
 CODEX_MANAGED="${AGENT_AUTONOMY_CODEX_MANAGED:-/etc/codex/managed_config.toml}"
-
-fail() {
-    echo "agent-autonomy: $*" >&2
-    exit 1
-}
 
 require_agent_marker() {
     [ "${FOREMAN_DEVCONTAINER:-}" = "agent" ] ||
@@ -71,8 +80,41 @@ resolve_registry() {
     return 1
 }
 
+# require_digest_tool — pick the SHA-256 tool: GNU sha256sum, else the
+# shasum a stock macOS host ships, else fail. apply and verify call it first,
+# so a missing tool is a loud failure and never two empty digests comparing
+# equal.
+DIGEST_TOOL=""
+require_digest_tool() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        DIGEST_TOOL=sha256sum
+    elif command -v shasum >/dev/null 2>&1; then
+        DIGEST_TOOL=shasum
+    else
+        fail "neither sha256sum nor shasum is installed — cannot compare the agent profile"
+    fi
+}
+
+# checksum <file> — the file's SHA-256, never an empty string: a digest that
+# cannot be computed (unreadable file, failed tool) fails instead.
 checksum() {
-    sha256sum "$1" | awk '{print $1}'
+    local sum=""
+    case "$DIGEST_TOOL" in
+    sha256sum) sum="$(sha256sum "$1" | awk '{print $1}')" || sum="" ;;
+    shasum) sum="$(shasum -a 256 "$1" | awk '{print $1}')" || sum="" ;;
+    esac
+    [ -n "$sum" ] || fail "could not compute the SHA-256 of $1"
+    printf '%s\n' "$sum"
+}
+
+# same_digest <a> <b> — 0 when the two files have the same SHA-256, 1 when
+# they differ. A digest that cannot be computed exits the script: it is an
+# error, never a match and never a mismatch to act on.
+same_digest() {
+    local a b
+    a="$(checksum "$1")" || fail "cannot compare $1 with $2"
+    b="$(checksum "$2")" || fail "cannot compare $1 with $2"
+    [ "$a" = "$b" ]
 }
 
 # install_as_root <src> <dest> — install with sudo only when the destination
@@ -82,8 +124,8 @@ install_as_root() {
     if [ -w "$dest" ] || { [ ! -e "$dest" ] && [ -w "$(dirname "$dest")" ]; }; then
         install -m 0644 "$src" "$dest"
     else
-        sudo install -d -m 0755 "$(dirname "$dest")"
-        sudo install -m 0644 "$src" "$dest"
+        sudo -n install -d -m 0755 "$(dirname "$dest")"
+        sudo -n install -m 0644 "$src" "$dest"
     fi
 }
 
@@ -107,6 +149,25 @@ resolve_executable() {
     return 1
 }
 
+# resolve_path <path> — <path> with every symlink followed, as an absolute
+# physical path. Not `readlink -f`, which BSD readlink lacks before macOS
+# 12.3: plain readlink one hop at a time, then the cd + pwd -P idiom the
+# other devcontainer scripts use for the directory. Bounded against a loop.
+resolve_path() {
+    local path="$1" link hops=0 dir
+    while [ -L "$path" ]; do
+        hops=$((hops + 1))
+        [ "$hops" -le 40 ] || return 1
+        link="$(readlink "$path")" || return 1
+        case "$link" in
+        /*) path="$link" ;;
+        *) path="$(dirname "$path")/${link}" ;;
+        esac
+    done
+    dir="$(cd "$(dirname "$path")" && pwd -P)" || return 1
+    printf '%s/%s\n' "$dir" "${path##*/}"
+}
+
 # refuse_executable <name> — make every copy of <name> that resolves on PATH
 # non-executable. Loops because a second copy further down PATH becomes the
 # resolution once the first is refused. Bounded so a PATH that keeps
@@ -116,11 +177,11 @@ refuse_executable() {
     while path="$(resolve_executable "$name")"; do
         attempts=$((attempts + 1))
         [ "$attempts" -le 10 ] || fail "could not refuse '${name}': it still resolves to ${path}"
-        target="$(readlink -f "$path")"
+        target="$(resolve_path "$path")" || fail "could not resolve ${path}"
         if [ -O "$target" ]; then
             chmod a-x "$target"
         else
-            sudo chmod a-x "$target"
+            sudo -n chmod a-x "$target"
         fi
         echo "==> agent-autonomy: refused ${name} (${target} is no longer executable)"
     done
@@ -132,12 +193,13 @@ cmd_apply() {
     [ -f "$CLAUDE_SRC" ] || fail "agent Claude settings not found at ${CLAUDE_SRC}"
     [ -f "$CODEX_SRC" ] || fail "agent Codex config not found at ${CODEX_SRC}"
     [ -f "$HARNESSES" ] || fail "harness table not found at ${HARNESSES}"
+    require_digest_tool
 
-    if [ ! -f "$CLAUDE_MANAGED" ] || [ "$(checksum "$CLAUDE_MANAGED")" != "$(checksum "$CLAUDE_SRC")" ]; then
+    if [ ! -f "$CLAUDE_MANAGED" ] || ! same_digest "$CLAUDE_MANAGED" "$CLAUDE_SRC"; then
         install_as_root "$CLAUDE_SRC" "$CLAUDE_MANAGED"
         echo "==> agent-autonomy: agent Claude managed settings installed at ${CLAUDE_MANAGED}"
     fi
-    if [ ! -f "$CODEX_MANAGED" ] || [ "$(checksum "$CODEX_MANAGED")" != "$(checksum "$CODEX_SRC")" ]; then
+    if [ ! -f "$CODEX_MANAGED" ] || ! same_digest "$CODEX_MANAGED" "$CODEX_SRC"; then
         install_as_root "$CODEX_SRC" "$CODEX_MANAGED"
         echo "==> agent-autonomy: agent Codex managed config installed at ${CODEX_MANAGED}"
     fi
@@ -153,11 +215,14 @@ cmd_apply() {
 cmd_verify() {
     require_agent_marker verify
     local failed=0 exe path
-    [ -f "$CLAUDE_MANAGED" ] && [ "$(checksum "$CLAUDE_MANAGED")" = "$(checksum "$CLAUDE_SRC")" ] || {
+    [ -f "$CLAUDE_SRC" ] || fail "agent Claude settings not found at ${CLAUDE_SRC}"
+    [ -f "$CODEX_SRC" ] || fail "agent Codex config not found at ${CODEX_SRC}"
+    require_digest_tool
+    [ -f "$CLAUDE_MANAGED" ] && same_digest "$CLAUDE_MANAGED" "$CLAUDE_SRC" || {
         echo "agent-autonomy: verify failed — ${CLAUDE_MANAGED} does not match the shipped agent settings ${CLAUDE_SRC}" >&2
         failed=1
     }
-    [ -f "$CODEX_MANAGED" ] && [ "$(checksum "$CODEX_MANAGED")" = "$(checksum "$CODEX_SRC")" ] || {
+    [ -f "$CODEX_MANAGED" ] && same_digest "$CODEX_MANAGED" "$CODEX_SRC" || {
         echo "agent-autonomy: verify failed — ${CODEX_MANAGED} does not match the shipped agent config ${CODEX_SRC}" >&2
         failed=1
     }

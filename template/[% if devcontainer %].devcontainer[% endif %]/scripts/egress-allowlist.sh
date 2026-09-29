@@ -102,6 +102,16 @@ as_root() {
     fi
 }
 
+# ipv4_in_range <ipv4-entry> — every octet of an IPV4_RE match is at most 255
+# (the pattern bounds the digits, not the value).
+ipv4_in_range() {
+    local octet
+    local IFS=.
+    for octet in ${1%%/*}; do
+        [ "$octet" -le 255 ] || return 1
+    done
+}
+
 # overbroad <ipv4-entry> — print why the entry would allow far more than one
 # service (the unspecified address in any form, or a CIDR wider than
 # /MIN_PREFIX); print nothing when it is narrow enough to become a rule.
@@ -129,6 +139,8 @@ cmd_hosts() {
             entry="$(printf '%s' "$entry" | tr -d '[:space:]')"
             [ -n "$entry" ] || continue
             if [[ "$entry" =~ $IPV4_RE ]]; then
+                ipv4_in_range "$entry" ||
+                    fail "${file}:${lineno}: '${entry}' has an octet above 255 — not an IPv4 address"
                 reason="$(overbroad "$entry")"
                 [ -z "$reason" ] || fail "${file}:${lineno}: '${entry}' ${reason}"
                 printf '%s\n' "$entry"
@@ -191,7 +203,7 @@ cmd_plan() {
             }
         fi
         while IFS= read -r addr; do
-            [[ "$addr" =~ $IPV4_RE ]] || continue
+            [[ "$addr" =~ $IPV4_RE ]] && ipv4_in_range "$addr" || continue
             # A fetched meta range becomes a rule without review, so it is held
             # to the same over-broad refusal as a literal list line.
             if [ "$entry" = "@github-meta" ]; then
@@ -340,15 +352,44 @@ cmd_apply() {
     trap - EXIT
 }
 
+# first_rule <chain> — the first rule of an `iptables -S <chain>` listing on
+# stdin (the -P/-N line is not a rule); empty when the chain has none.
+first_rule() {
+    grep -m 1 -- "^-A $1 " || true
+}
+
 cmd_verify() {
     as_root verify
     command -v iptables >/dev/null 2>&1 || fail "verify failed — iptables is not installed, so nothing enforces egress"
-    local out last
+    local out last forward docker_user=""
     out="$(iptables -S OUTPUT)" || fail "verify failed — cannot read the OUTPUT chain"
     grep -qx -- '-P OUTPUT DROP' <<<"$out" || fail "verify failed — OUTPUT policy is not DROP"
     [ "$(sed -n 2p <<<"$out")" = "-A OUTPUT -j ${CHAIN}" ] ||
         fail "verify failed — the first OUTPUT rule is not the ${CHAIN} jump"
-    iptables -S FORWARD | grep -qx -- '-P FORWARD DROP' || fail "verify failed — FORWARD policy is not DROP"
+    forward="$(iptables -S FORWARD)" || fail "verify failed — cannot read the FORWARD chain"
+    grep -qx -- '-P FORWARD DROP' <<<"$forward" || fail "verify failed — FORWARD policy is not DROP"
+    # DOCKER-USER, where it exists, must send everything to the filter first:
+    # it is what keeps a Docker-in-Docker daemon's nested containers inside
+    # it. apply inserts the jump at the top, and Docker never rewrites the
+    # chain, so any other first rule is a filter someone has loosened.
+    if docker_user="$(iptables -S DOCKER-USER 2>/dev/null)"; then
+        [ "$(first_rule DOCKER-USER <<<"$docker_user")" = "-A DOCKER-USER -j ${CHAIN}" ] ||
+            fail "verify failed — the first DOCKER-USER rule is not the ${CHAIN} jump, so nested containers can route around the filter"
+    else
+        docker_user=""
+    fi
+    # Forwarded traffic must reach the filter before any other rule: through
+    # the FORWARD jump apply inserts first, or — once a Docker-in-Docker
+    # daemon has started and put its own DOCKER-USER jump on top, as it does
+    # on every start — through DOCKER-USER, whose first rule is checked above.
+    case "$(first_rule FORWARD <<<"$forward")" in
+    "-A FORWARD -j ${CHAIN}") ;;
+    "-A FORWARD -j DOCKER-USER")
+        [ -n "$docker_user" ] ||
+            fail "verify failed — the first FORWARD rule jumps to DOCKER-USER, which cannot be read"
+        ;;
+    *) fail "verify failed — the first FORWARD rule is not the ${CHAIN} jump (nor a DOCKER-USER jump that reaches it)" ;;
+    esac
     last="$(iptables -S "$CHAIN" | tail -n 1)"
     [ "$last" = "-A ${CHAIN} -j REJECT --reject-with icmp-admin-prohibited" ] ||
         fail "verify failed — ${CHAIN} does not end in its REJECT rule (last rule: ${last})"
@@ -370,8 +411,11 @@ cmd_snapshot() {
         dir="$SNAPSHOT_DIR"
         # Root ownership of the files is worthless if the container user can
         # rename the directory that holds them.
+        # Every ancestor, / included.
         path="$dir"
-        while path="${path%/*}" && [ -n "$path" ]; do
+        while [ "$path" != / ]; do
+            path="${path%/*}"
+            [ -n "$path" ] || path=/
             [ -z "$(find "$path" -maxdepth 0 \( ! -user root -o -perm -002 -o -perm -020 \))" ] ||
                 fail "${path} is not root-owned and closed to writes — refusing to snapshot under it"
         done

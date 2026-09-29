@@ -2,8 +2,20 @@
 set -euo pipefail
 
 # Redirect all output to a log file to avoid SIGPIPE when VS Code
-# disconnects the pipe before the script finishes.
-exec &>/tmp/devcontainer-post-start.log
+# disconnects the pipe before the script finishes. fd 3 keeps the original
+# stderr, so the fail-closed lines below reach whoever started the container
+# as well as the log.
+POST_START_LOG=/tmp/devcontainer-post-start.log
+exec 3>&2
+exec &>"$POST_START_LOG"
+
+# alert <line> — a line a human must see: to the log, then to the original
+# stderr. That write runs in a subshell, so a pipe VS Code already closed
+# cannot kill this script before it exits non-zero.
+alert() {
+    echo "$*" >&2
+    (echo "$*" >&3) 2>/dev/null || true
+}
 
 # Egress FIRST, on every start: the filter lives in the container's network
 # namespace, which a restart recreates empty. It applies from the root-owned
@@ -36,11 +48,11 @@ if ! bash /usr/local/share/harmon-egress/scripts/egress-allowlist.sh apply; then
         close_egress_family ip6tables 2>/dev/null || true
     fi
     if [ "$closed" -eq 1 ]; then
-        echo "post-start: egress policy left at DROP" >&2
+        alert "post-start: egress policy left at DROP"
     else
-        echo "post-start: CRITICAL: could not close egress (no iptables, no root, or a DROP or flush step failed) — do not use this container" >&2
+        alert "post-start: CRITICAL: could not close egress (no iptables, no root, or a DROP or flush step failed) — do not use this container"
     fi
-    echo "post-start: egress filter not installed — failing the start" >&2
+    alert "post-start: egress filter not installed — failing the start; do not use this container (details: ${POST_START_LOG})"
     exit 1
 fi
 
