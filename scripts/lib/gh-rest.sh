@@ -52,6 +52,16 @@ gh_rest_repo() {
     case "${url}" in
     *://*)
         path="${url#*://}"
+        # A scheme URL's AUTHORITY is everything before the first `/`, less any
+        # userinfo — and a remote with no authority names no host, so it is not
+        # a GitHub remote however its last two path segments read.
+        # `file:///srv/mirrors/acme/widget` resolved as acme/widget, which sent
+        # a local mirror's endpoint to the DEFAULT host and, worse, defeated a
+        # caller's ambient fallback: a resolved-looking repository is exactly
+        # what stops that fallback from running (integration r3). Rejected here
+        # rather than in each caller, because every caller would need the same
+        # test. `*@` is the userinfo-only case, `ssh://git@/acme/widget`.
+        case "${path%%/*}" in '' | *@) return 1 ;; esac
         path="${path#*@}"
         path="${path#*/}"
         ;;

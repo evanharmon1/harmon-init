@@ -202,6 +202,7 @@ else
     # durable delivery, since a stacked base can be deleted with the merge
     # result in it (challenge r2).
     gh_repo=""
+    gh_host=""
     if command -v gh >/dev/null 2>&1 && [ "$has_remote" = true ] && [ -n "$default_branch" ]; then
         # The SELECTED remote first: this script picks one and every other
         # section reports about that one, so resolving the PR evidence from an
@@ -209,12 +210,27 @@ else
         # report talk about another repository (integration r2). gh_rest_repo
         # honours the argument over GH_REPO for exactly that reason.
         gh_repo="$(gh_rest_repo "$remote" 2>/dev/null)" || gh_repo=""
+        # The HOST comes from the same remote. gh_rest_api resolves it through
+        # the NO-ARGUMENT gh_rest_host, which prefers ambient GH_REPO/GH_HOST —
+        # so the selected remote's owner/repo could be sent to a different
+        # GitHub instance entirely (integration r3). GH_REST_HOST short-circuits
+        # that derivation (see the library header): it is read with `-`, not
+        # `:-`, so an EMPTY value means "no --hostname" while an unset one means
+        # "derive". Passing the resolved value therefore stays correct when the
+        # remote yields no host — that is the "let gh pick" case, not a gap.
+        gh_host="$(gh_rest_host "$remote" 2>/dev/null || true)"
         # A remote that names no GitHub repository — a local mirror, a file://
         # path, an internal proxy URL — has no repository to disagree with, and
         # ambient configuration is then the only identification available. Fall
         # back rather than skipping the whole PR read, which is what the
         # argument-first precedence above would otherwise cost those checkouts.
-        [ -n "$gh_repo" ] || gh_repo="$(gh_rest_repo 2>/dev/null || true)"
+        # Repository and host fall back TOGETHER, or the ambient repository
+        # would be pinned to a host derived from a remote that is not a GitHub
+        # remote — a read aimed at where the repository is not.
+        if [ -z "$gh_repo" ]; then
+            gh_repo="$(gh_rest_repo 2>/dev/null || true)"
+            gh_host="$(gh_rest_host 2>/dev/null || true)"
+        fi
     fi
     # pr_limit caps the CLOSED PRs scanned (most recently updated first) — it
     # is the pagination bound, not a post-filter, so the walk can never grow
@@ -223,7 +239,7 @@ else
     # scanned, not about how many of them turned out to be merged.
     pr_limit="${AUDIT_PR_LIMIT:-1000}"
     if [ -n "$gh_repo" ] &&
-        GH_REST_TIMEOUT="${GH_TIMEOUT:-30}" gh_rest_paginate_array \
+        GH_REST_TIMEOUT="${GH_TIMEOUT:-30}" GH_REST_HOST="$gh_host" gh_rest_paginate_array \
             "repos/${gh_repo}/pulls?state=closed&sort=updated&direction=desc" "$pr_limit" 2>/dev/null |
         jq -s 'add // []' >"$tmp/closed-prs" 2>/dev/null &&
         jq -r 'map(select(.merged_at != null))[] | [.head.ref, .head.sha, (.number | tostring), .base.ref] | @tsv' \
