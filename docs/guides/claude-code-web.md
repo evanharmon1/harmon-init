@@ -281,7 +281,8 @@ that exists today.
 | `gh-ro.sh`, `gh-write-broker.sh`: `gh api` with a pinned method | integrate skill (vendored) | plain REST reads and writes work — observed 2026-09-27 for `gh api repos/…`; these two wrappers themselves not yet observed | GET refuses `graphql` by design |
 | `round-push.sh`: `gh api --hostname …` | review skill (vendored) | expected, not yet observed | — |
 | `lane-watch.sh`: `gh pr list`, `gh api --paginate --slurp`, `gh pr ready --undo` | orchestrate skill (vendored) | expected to fail, not yet observed — GraphQL-backed subcommands | Orchestrator-side; not run in a cloud lane |
-| `scripts/status.sh`, `scripts/check-closing-keywords.sh`, `scripts/guard-closing-keywords.sh`, `scripts/audit-session-artifacts.sh` | harmon-init's own | **REST since #1430**: `gh api` through the bounded `gh_rest_*` helpers, with a page ceiling. `status.sh` still calls `gh auth status` and `gh run list`, which are not on the helpers — expected, not yet observed | Run `task status` in the first live session and record it |
+| `scripts/status.sh`, `scripts/check-closing-keywords.sh`, `scripts/guard-closing-keywords.sh`, `scripts/audit-session-artifacts.sh` | harmon-init's own | **REST since #1430** for the calls that go through the bounded `gh_rest_*` helpers, with a page ceiling. `status.sh` also makes the calls in the next row, which do not | Run `task status` in the first live session and record it |
+| `status.sh` outside the `gh_rest_*` helpers: `gh auth status`, `gh run list`; raw `gh api` for `repos/{o}/{r}`, `…/rulesets`, `…/vulnerability-alerts`, `…/private-vulnerability-reporting`, the app installations (`orgs/{o}/installations` or `user/installations`) and the GHCR package; `gh secret list`, `gh variable list`, `gh variable get`; `gh release list`; `gh auth token` | harmon-init's own (`task status`) | `gh auth status`, `gh run list`: expected, not yet observed. Raw `gh api` reads: expected to work (plain REST), not yet observed. `gh secret list`, `gh variable list`/`get`: expected, not yet observed — REST-backed (the Actions secrets and variables endpoints). `gh release list`: expected to fail, not yet observed — GraphQL-backed (gh 2.98.0 sends it to `/graphql`, seen locally with `GH_DEBUG=api`, not through the proxy). `gh auth token`: local, no network call | `gh release list` is harmon-init's to fix; the REST route is `gh api 'repos/{o}/{r}/releases?per_page=1'`. `status.sh` does not abort on any of these — each call has a fallback — but a failed `gh release list` reads as **Release published: no** with the `task release:init` remedy, a false negative rather than an unavailable line |
 | `task foreman:plan`, `foreman:dispatch`, `foreman:watch` | the pinned Foreman CLI, run through `uvx` from a git URL | expected, not yet observed — the calls Foreman makes are in its own repository, not enumerated here. Dispatch refuses on the local runner for public repos by design | Orchestrator-side; not run in a cloud lane |
 | `gh api repos/{o}/{r}/…` (REST), `gh api user` | anything | **works** — observed 2026-09-27 | — |
 | `gh api search/issues` | ad hoc | **fail, 403** — observed 2026-09-27 | `repos/{o}/{r}/issues?state=all`, paged |
@@ -485,11 +486,14 @@ Observed:  *pending*
 
 ## Pending observations
 
-Five acceptance criteria of
-[#1407](https://github.com/evanharmon1/harmon-init/issues/1407) need a live
-Claude Code on the web session run by the maintainer, and one further item comes
-out of writing this guide. Each result goes in the section named, replacing the
-`_pending_` line, with the date and the Claude Code version.
+Six acceptance criteria of
+[#1407](https://github.com/evanharmon1/harmon-init/issues/1407) — 1 (its
+pinned-tag slot), 3, 4, 7, 8 and 11 — need a live Claude Code on the web session
+run by the maintainer, and one further item, the unnumbered row, comes out of
+writing this guide. Each result goes in the section named, with the date and the
+Claude Code version: where that section has an `Observed:  *pending*` line, the
+result replaces it; elsewhere the section's **Pending observation** paragraph
+says where it lands.
 
 | # | What has to be seen | Where the result lands |
 | --- | --- | --- |
