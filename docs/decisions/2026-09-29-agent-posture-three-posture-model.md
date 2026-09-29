@@ -117,7 +117,15 @@ Mechanically:
    start fails, and **a container whose create or start failed must not be
    used**. The same filter hooks
    Docker's `DOCKER-USER` chain, so a Docker-in-Docker opt-in cannot route
-   around it. Post-create copies the applier and both lists out of the
+   around it. That hook has two consequences for a repository that opts in.
+   Traffic between nested containers is forwarded too, so it also goes
+   through `DOCKER-USER` → `HARMON_EGRESS` and is rejected unless the
+   repository adds its nested bridge subnet (Docker's default,
+   `172.17.0.0/16`, is exactly at the `/16` floor) to
+   `.devcontainer/egress-allowlist.local.txt`. And an `ACCEPT` reached
+   through `DOCKER-USER` ends the whole `FORWARD` traversal, so traffic to an
+   allowed destination skips Docker's own `DOCKER-ISOLATION-*` chains.
+   Post-create copies the applier and both lists out of the
    writable checkout into a root-owned snapshot
    (`/usr/local/share/harmon-egress/`), and every start applies that
    snapshot, never the checkout — so a plain file edit cannot widen egress at
@@ -197,6 +205,15 @@ Mechanically:
     resolver (`127.0.0.11`), whose upstream queries are not in the allow set,
     so DNS resolution fails once the filter installs; the supported setup is
     the default bridge network.
+  - **The profile's source directory has an override the marker does not
+    close.** `agent-autonomy.sh` reads `AGENT_AUTONOMY_CONFIG_DIR` before it
+    branches on the agent marker, so under the marker that variable can
+    still point `apply` — and then `verify`, which compares against the same
+    directory — at a directory other than the baked, root-owned image copy.
+    It is a unit-test seam, but nothing restricts it to the test. It grants
+    nothing the root residual above does not already grant (with `sudo`, the
+    managed settings can be overwritten outright), so it is covered by
+    [#1432](https://github.com/evanharmon1/harmon-init/issues/1432).
 - The operator mints the agent PATs (one per owner, ≤180 days, on the bot
   account) and ratifies this record; an unattended agent-devcontainer lane
   returning its work to the orchestrator with no human step after launch is

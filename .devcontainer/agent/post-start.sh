@@ -17,6 +17,12 @@ alert() {
     (echo "$*" >&3) 2>/dev/null || true
 }
 
+# Every other failure — the profile's drift gate (agent-autonomy.sh verify)
+# included — would otherwise exit non-zero with nothing on the original
+# stderr. The egress path below reports its own failure and disarms this, so
+# its lines are not repeated.
+trap 'rc=$?; [ "$rc" -eq 0 ] || alert "post-start: failed (exit ${rc}) — do not use this container (details: ${POST_START_LOG})"' EXIT
+
 # Egress FIRST, on every start: the filter lives in the container's network
 # namespace, which a restart recreates empty. It applies from the root-owned
 # snapshot post-create wrote, never from the writable checkout, so an edit to
@@ -53,6 +59,7 @@ if ! bash /usr/local/share/harmon-egress/scripts/egress-allowlist.sh apply; then
         alert "post-start: CRITICAL: could not close egress (no iptables, no root, or a DROP or flush step failed) — do not use this container"
     fi
     alert "post-start: egress filter not installed — failing the start; do not use this container (details: ${POST_START_LOG})"
+    trap - EXIT
     exit 1
 fi
 

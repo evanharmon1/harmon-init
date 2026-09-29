@@ -70,34 +70,63 @@ work_dir="$(mktemp -d)"
 trap 'rm -rf "$work_dir"' EXIT
 
 # jsonc_to_json <file> — devcontainer.json is JSONC. Strip // and /* */
-# comments outside strings, then trailing commas, so jq can read it.
+# comments outside strings, then trailing commas outside strings, so jq can
+# read it. One walk copies string literals verbatim and hands everything else
+# to a pass, so neither pass can touch a string's contents.
 jsonc_to_json() {
     python3 - "$1" <<'PY'
-import json, re, sys
-src = open(sys.argv[1], encoding="utf-8").read()
-out, i, n, in_str = [], 0, len(src), False
-while i < n:
-    c = src[i]
-    if in_str:
-        out.append(c)
-        if c == "\\":
-            out.append(src[i + 1]); i += 2; continue
-        if c == '"':
-            in_str = False
-        i += 1
-    elif c == '"':
-        in_str = True; out.append(c); i += 1
-    elif src.startswith("//", i):
-        while i < n and src[i] != "\n":
+import json, sys
+
+def walk(src, outside):
+    out, i, n, in_str = [], 0, len(src), False
+    while i < n:
+        c = src[i]
+        if in_str:
+            out.append(c)
+            if c == "\\":
+                out.append(src[i + 1]); i += 2; continue
+            if c == '"':
+                in_str = False
             i += 1
-    elif src.startswith("/*", i):
-        i = src.index("*/", i) + 2
-    else:
-        out.append(c); i += 1
-text = re.sub(r",(\s*[}\]])", r"\1", "".join(out))
-json.dump(json.loads(text), sys.stdout)
+        elif c == '"':
+            in_str = True; out.append(c); i += 1
+        else:
+            i = outside(src, i, out)
+    return "".join(out)
+
+def comments(src, i, out):
+    if src.startswith("//", i):
+        while i < len(src) and src[i] != "\n":
+            i += 1
+        return i
+    if src.startswith("/*", i):
+        return src.index("*/", i) + 2
+    out.append(src[i])
+    return i + 1
+
+def trailing_commas(src, i, out):
+    if src[i] == ",":
+        j = i + 1
+        while j < len(src) and src[j].isspace():
+            j += 1
+        if j < len(src) and src[j] in "}]":
+            return i + 1
+    out.append(src[i])
+    return i + 1
+
+src = open(sys.argv[1], encoding="utf-8").read()
+json.dump(json.loads(walk(walk(src, comments), trailing_commas)), sys.stdout)
 PY
 }
+
+# Fixture: comments and trailing commas go; string contents that look like
+# either stay.
+printf '%s\n' '{' '  // a comment' '  "a": "x,}y,]z // not a comment",' '  "b": [1, 2, /* c */],' '}' >"${work_dir}/fixture.jsonc"
+jsonc_fixture="$(jsonc_to_json "${work_dir}/fixture.jsonc")" || fail "jsonc_to_json could not read a JSONC fixture"
+[ "$(jq -r '.a' <<<"$jsonc_fixture")" = 'x,}y,]z // not a comment' ] ||
+    fail "jsonc_to_json altered a string value that contains ',}' or ',]': ${jsonc_fixture}"
+[ "$(jq -c '.b' <<<"$jsonc_fixture")" = '[1,2]' ] ||
+    fail "jsonc_to_json did not strip a trailing comma: ${jsonc_fixture}"
 
 # ── 1. Single source ────────────────────────────────────────────────────
 echo "==> 1. the agent profile has exactly one source"
@@ -656,19 +685,21 @@ for broad in 0.0.0.0/0 0.0.0.0/8 0.0.0.0/32 0.0.0.0 10.0.0.0/8 128.0.0.0/1 172.1
             fail "the refusal of ${broad} (${which} list) does not name the line: ${broad_out}"
     done
 done
-# An octet above 255 matches the address pattern but is no address: refused
-# with the file and line named, before it can reach iptables.
-for bogus in 999.1.1.1 192.0.2.256 256.0.0.0/16; do
+# An octet above 255 matches the address pattern but is no address, and an
+# octet with a leading zero is one a parser may read as octal — a different
+# address: both refused with the file and line named, before either can reach
+# iptables.
+for bogus in 999.1.1.1 192.0.2.256 256.0.0.0/16 010.1.1.1 192.0.2.01 10.00.0.0/16; do
     printf 'good.example\n%s\n' "$bogus" >"${work_dir}/octet.txt"
     octet_out="$(EGRESS_ALLOWLIST_SHARED="${work_dir}/octet.txt" EGRESS_ALLOWLIST_LOCAL=/nonexistent \
         EGRESS_RESOLVER="$stub_resolver" bash "$egress" plan 2>&1)" &&
         fail "egress plan accepted the out-of-range address ${bogus}"
-    grep -Fq "egress-allowlist: ${work_dir}/octet.txt:2: '${bogus}' has an octet above 255" <<<"$octet_out" ||
+    grep -Fq "egress-allowlist: ${work_dir}/octet.txt:2: '${bogus}' has an octet above 255 or with a leading zero" <<<"$octet_out" ||
         fail "the refusal of the out-of-range address ${bogus} does not name the file and line: ${octet_out}"
 done
-printf '172.16.0.0/16\n198.51.100.0/24\n203.0.113.7/32\n203.0.113.8\n' >"${work_dir}/narrow.txt"
-[ "$(EGRESS_ALLOWLIST_SHARED="${work_dir}/narrow.txt" EGRESS_ALLOWLIST_LOCAL=/nonexistent bash "$egress" plan 2>/dev/null)" = "$(printf '172.16.0.0/16\n198.51.100.0/24\n203.0.113.7/32\n203.0.113.8')" ] ||
-    fail "egress plan refused or altered a /16, /24, /32 or bare-address entry"
+printf '172.16.0.0/16\n198.51.100.0/24\n203.0.113.7/32\n203.0.113.8\n10.0.0.1\n' >"${work_dir}/narrow.txt"
+[ "$(EGRESS_ALLOWLIST_SHARED="${work_dir}/narrow.txt" EGRESS_ALLOWLIST_LOCAL=/nonexistent bash "$egress" plan 2>/dev/null)" = "$(printf '10.0.0.1\n172.16.0.0/16\n198.51.100.0/24\n203.0.113.7/32\n203.0.113.8')" ] ||
+    fail "egress plan refused or altered a /16, /24, /32 or bare-address entry (a lone 0 octet included)"
 
 # A range fetched through @github-meta becomes a rule unreviewed, so it gets
 # the same refusal: a meta response carrying 0.0.0.0/0 or a /8 fails the plan
@@ -713,7 +744,7 @@ case "\$*" in
 "-S FORWARD") printf '%s\n' '-P FORWARD DROP' '-A FORWARD -j HARMON_EGRESS' ;;
 "-S DOCKER-USER") printf '%s\n' '-N DOCKER-USER' '-A DOCKER-USER -j HARMON_EGRESS' ;;
 "-S HARMON_EGRESS") printf '%s\n' '-A HARMON_EGRESS -j REJECT --reject-with icmp-admin-prohibited' ;;
--C*) exit 1 ;;
+-C* | -D*) exit 1 ;;
 esac
 exit 0
 EOF
@@ -827,26 +858,52 @@ grep -Fxq -- 'iptables -P OUTPUT DROP' "$ipt_log" && grep -Fxq -- 'iptables -P F
     fail "a failed iptables install left the OUTPUT/FORWARD policy open: $(cat "$apply_err")"
 
 # One fail-closed invariant, over a STATEFUL stub that keeps each family's
-# HARMON_EGRESS rules in a file (-N/-F/-A/-S act on it) and can be told to
-# fail its -P calls: a failure removes every allow rule a previous filter left
-# in the chain as well as setting DROP, and "left at DROP" is printed only
-# when every step for every family the container has succeeded — with a
-# global IPv6 address, an ip6tables policy failure is a failure.
+# chains in files — HARMON_EGRESS in <family>.rules, any other chain in
+# <family>.chain.<name>, OUTPUT and FORWARD always present with a policy — so
+# -P/-N/-F/-S/-A/-I/-D/-C act on real state, and that can be told to fail its
+# -P calls: a failure removes every allow rule a previous filter left in the
+# chain as well as setting DROP, and "left at DROP" is printed only when every
+# step for every family the container has succeeded — with a global IPv6
+# address, an ip6tables policy failure is a failure.
 state_bin="${work_dir}/ipt-state-bin"
 state_dir="${work_dir}/ipt-state"
 mkdir -p "$state_bin"
 cat >"${state_bin}/iptables" <<EOF
 #!/bin/sh
 fam="\$(basename "\$0")"
-rules="${state_dir}/\${fam}.rules"
 echo "\${fam} \$*" >>"${ipt_log}"
-case "\$*" in
-"-P "*) [ ! -e "${state_dir}/\${fam}.policy-fails" ] || exit 1 ;;
-"-N HARMON_EGRESS") [ ! -e "\$rules" ] || exit 1; : >"\$rules" ;;
-"-F HARMON_EGRESS") [ -e "\$rules" ] || exit 1; : >"\$rules" ;;
-"-S HARMON_EGRESS") [ -e "\$rules" ] || exit 1; cat "\$rules" ;;
-"-A HARMON_EGRESS "*) [ -e "\$rules" ] || exit 1; echo "\$*" >>"\$rules" ;;
--C*) exit 1 ;;
+op="\$1" chain="\$2"
+case "\$chain" in
+HARMON_EGRESS) f="${state_dir}/\${fam}.rules" ;;
+*) f="${state_dir}/\${fam}.chain.\${chain}" ;;
+esac
+case "\$chain" in
+OUTPUT | FORWARD) builtin=1; [ -e "\$f" ] || : >"\$f" ;;
+*) builtin=0 ;;
+esac
+policy="${state_dir}/\${fam}.policy.\${chain}"
+case "\$op" in
+-P)
+    [ ! -e "${state_dir}/\${fam}.policy-fails" ] || exit 1
+    echo "\$3" >"\$policy" ;;
+-N) [ "\$builtin" -eq 0 ] && [ ! -e "\$f" ] || exit 1; : >"\$f" ;;
+-F) [ -e "\$f" ] || exit 1; : >"\$f" ;;
+-S)
+    [ -e "\$f" ] || exit 1
+    if [ "\$builtin" -eq 1 ]; then echo "-P \$chain \$(cat "\$policy" 2>/dev/null || echo ACCEPT)"; else echo "-N \$chain"; fi
+    cat "\$f" ;;
+-A) [ -e "\$f" ] || exit 1; echo "\$*" >>"\$f" ;;
+-I)
+    [ -e "\$f" ] && [ "\$3" = 1 ] || exit 1
+    shift 3
+    { echo "-A \$chain \$*"; cat "\$f"; } >"\$f.tmp" && mv "\$f.tmp" "\$f" ;;
+-D | -C)
+    [ -e "\$f" ] || exit 1
+    shift 2
+    line="-A \$chain \$*"
+    grep -Fxq -- "\$line" "\$f" || exit 1
+    [ "\$op" = -D ] || exit 0
+    awk -v l="\$line" '!d && \$0 == l { d = 1; next } { print }' "\$f" >"\$f.tmp" && mv "\$f.tmp" "\$f" ;;
 esac
 exit 0
 EOF
@@ -906,6 +963,30 @@ seed_filter
 run_state_apply "$v6_none" && fail "egress apply succeeded on a failing plan with no global IPv6"
 grep -Fq 'apply did not complete — egress policy left at DROP' "$apply_err" ||
     fail "egress fail-closed with no global IPv6 did not claim DROP after closing IPv4: $(cat "$apply_err")"
+# (c) A re-apply puts every jump to the filter first, exactly once, even where
+# a rule was prepended above an existing jump (and a duplicate sits below);
+# verify then passes. Checking for the jump and inserting it only when absent
+# would leave it second, and verify would fail.
+seed_filter
+for fam in iptables ip6tables; do
+    printf '%s\n' '-A OUTPUT -o eth0 -j ACCEPT' '-A OUTPUT -j HARMON_EGRESS' '-A OUTPUT -j HARMON_EGRESS' >"${state_dir}/${fam}.chain.OUTPUT"
+done
+printf '%s\n' '-A FORWARD -j DOCKER-USER' '-A FORWARD -j HARMON_EGRESS' >"${state_dir}/iptables.chain.FORWARD"
+printf '%s\n' '-A DOCKER-USER -j RETURN' '-A DOCKER-USER -j HARMON_EGRESS' '-A DOCKER-USER -j HARMON_EGRESS' >"${state_dir}/iptables.chain.DOCKER-USER"
+PATH="${state_bin}:${PATH}" EGRESS_ALLOWLIST_SHARED="${work_dir}/list.txt" EGRESS_ALLOWLIST_LOCAL=/nonexistent \
+    EGRESS_RESOLVER="$stub_resolver" EGRESS_GITHUB_META_FILE="${work_dir}/meta.json" \
+    EGRESS_RESOLV_CONF="${work_dir}/resolv.conf" EGRESS_IF_INET6="$v6_global" \
+    bash "$egress" apply >/dev/null 2>"$apply_err" ||
+    fail "egress re-apply over a filter whose jumps are no longer first failed: $(cat "$apply_err")"
+for jump in iptables:OUTPUT iptables:FORWARD iptables:DOCKER-USER ip6tables:OUTPUT; do
+    fam="${jump%%:*}" chain="${jump#*:}"
+    [ "$(head -n 1 "${state_dir}/${fam}.chain.${chain}")" = "-A ${chain} -j HARMON_EGRESS" ] ||
+        fail "egress re-apply left the ${fam} ${chain} jump to HARMON_EGRESS below another rule: $(cat "${state_dir}/${fam}.chain.${chain}")"
+    [ "$(grep -Fxc -- "-A ${chain} -j HARMON_EGRESS" "${state_dir}/${fam}.chain.${chain}")" -eq 1 ] ||
+        fail "egress re-apply left the ${fam} ${chain} jump to HARMON_EGRESS other than exactly once: $(cat "${state_dir}/${fam}.chain.${chain}")"
+done
+PATH="${state_bin}:${PATH}" EGRESS_IF_INET6="$v6_global" bash "$egress" verify >/dev/null 2>"$apply_err" ||
+    fail "egress verify failed after a re-apply that moved the jumps first: $(cat "$apply_err")"
 
 # The snapshot: the applier and both lists copied out of the checkout, and a
 # later edit to the checkout changes nothing the snapshot applies.
@@ -1002,6 +1083,22 @@ grep -Fq "post-start: egress filter not installed — failing the start; do not 
     fail "the agent post-start did not report its failed start on the original stderr: $(cat "${work_dir}/post-start.stderr")"
 grep -Fxq -- 'iptables -P OUTPUT DROP' "$ipt_log" && grep -Fxq -- 'iptables -P FORWARD DROP' "$ipt_log" ||
     fail "the agent post-start left the OUTPUT/FORWARD policy open with no egress snapshot: $(cat "${work_dir}/post-start.log")"
+! grep -Fq 'post-start: failed (exit' "${work_dir}/post-start.stderr" ||
+    fail "the agent post-start repeated its egress failure through the generic exit alert: $(cat "${work_dir}/post-start.stderr")"
+# Any later failure — here the profile's drift gate (agent-autonomy.sh verify)
+# — also reaches the original stderr, naming the exit status and the log.
+verify_fail_dir="${work_dir}/verify-fail"
+mkdir -p "${verify_fail_dir}/.devcontainer/agent" "${work_dir}/ok-snapshot/scripts"
+printf '#!/bin/sh\nexit 0\n' >"${work_dir}/ok-snapshot/scripts/egress-allowlist.sh"
+printf '#!/bin/sh\necho "agent-autonomy: drift" >&2\nexit 3\n' >"${verify_fail_dir}/.devcontainer/agent/agent-autonomy.sh"
+sed -e "s|/usr/local/share/harmon-egress|${work_dir}/ok-snapshot|g" \
+    -e "s|/tmp/devcontainer-post-start.log|${work_dir}/post-start.log|g" \
+    .devcontainer/agent/post-start.sh >"${work_dir}/post-start-verify.sh"
+if (cd "$verify_fail_dir" && PATH="${start_bin}:${ipt_bin}:${PATH}" bash "${work_dir}/post-start-verify.sh") 2>"${work_dir}/post-start.stderr"; then
+    fail "the agent post-start succeeded although agent-autonomy.sh verify failed"
+fi
+grep -Fxq "post-start: failed (exit 3) — do not use this container (details: ${work_dir}/post-start.log)" "${work_dir}/post-start.stderr" ||
+    fail "a failed agent-autonomy.sh verify did not reach the original stderr: $(cat "${work_dir}/post-start.stderr")"
 # (c) The post-start fallback follows the applier's rule: it flushes the
 # chain a previous start left, and claims DROP only when every step for every
 # family succeeded. /proc/net/if_inet6 moves to a fixture.

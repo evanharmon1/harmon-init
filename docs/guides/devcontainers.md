@@ -351,6 +351,21 @@ socket mount always. The nested daemon's containers are filtered by the same
 egress allowlist (the filter hooks Docker's `DOCKER-USER` chain). Say so in
 the PR that turns it on — it widens what the agent can build and run.
 
+Two consequences of that hook come with the opt-in:
+
+- **Nested containers cannot reach each other until you allow their
+  subnet.** Traffic between two nested containers is forwarded too, so it
+  also goes through `DOCKER-USER` → `HARMON_EGRESS`, and is rejected there
+  like any unlisted destination. A repository whose nested containers talk
+  to each other (a compose stack) adds its nested bridge subnet to
+  `.devcontainer/egress-allowlist.local.txt` — for Docker's default bridge
+  that is `172.17.0.0/16`, exactly at the list's `/16` floor.
+- **An allowed destination skips Docker's own isolation chains.** An
+  `ACCEPT` reached through `DOCKER-USER` ends the whole `FORWARD`
+  traversal, so traffic to an allowlisted destination never reaches
+  Docker's `DOCKER-ISOLATION-*` chains, which would otherwise keep separate
+  nested networks apart.
+
 ## Run it locally
 
 - **VS Code:** "Dev Containers: Reopen in Container" → pick the **Dev** profile

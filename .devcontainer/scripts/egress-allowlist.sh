@@ -103,11 +103,13 @@ as_root() {
 }
 
 # ipv4_in_range <ipv4-entry> — every octet of an IPV4_RE match is at most 255
-# (the pattern bounds the digits, not the value).
+# (the pattern bounds the digits, not the value) and has no leading zero
+# (010 is 10 to bash's test but may be octal 8 to an inet_aton-style parser).
 ipv4_in_range() {
     local octet
     local IFS=.
     for octet in ${1%%/*}; do
+        case "$octet" in 0?*) return 1 ;; esac
         [ "$octet" -le 255 ] || return 1
     done
 }
@@ -140,7 +142,7 @@ cmd_hosts() {
             [ -n "$entry" ] || continue
             if [[ "$entry" =~ $IPV4_RE ]]; then
                 ipv4_in_range "$entry" ||
-                    fail "${file}:${lineno}: '${entry}' has an octet above 255 — not an IPv4 address"
+                    fail "${file}:${lineno}: '${entry}' has an octet above 255 or with a leading zero — not an IPv4 address"
                 reason="$(overbroad "$entry")"
                 [ -z "$reason" ] || fail "${file}:${lineno}: '${entry}' ${reason}"
                 printf '%s\n' "$entry"
@@ -293,6 +295,20 @@ fail_closed() {
     exit "$rc"
 }
 
+# jump_first <iptables|ip6tables> <chain> — make the jump to the filter the
+# first rule of <chain>, exactly once. Checking for the jump and inserting it
+# only when absent would leave an existing jump wherever it already is — below
+# any rule prepended since — and verify, which requires it first, would then
+# fail. So every existing copy is deleted (duplicates too) and one inserted at
+# the top. apply sets the OUTPUT and FORWARD policies to DROP before calling
+# this, so the moment between the delete and the insert fails closed: traffic
+# that meets no jump meets the DROP policy. DOCKER-USER is reached only from
+# FORWARD, whose own jump is already first by the time DOCKER-USER is moved.
+jump_first() {
+    while "$1" -D "$2" -j "$CHAIN" 2>/dev/null; do :; done
+    "$1" -I "$2" 1 -j "$CHAIN"
+}
+
 cmd_apply() {
     as_root apply
     STEP=apply
@@ -308,13 +324,13 @@ cmd_apply() {
     iptables -P OUTPUT DROP
     iptables -P FORWARD DROP
     iptables -N "$CHAIN" 2>/dev/null || iptables -F "$CHAIN"
-    iptables -C OUTPUT -j "$CHAIN" 2>/dev/null || iptables -I OUTPUT 1 -j "$CHAIN"
-    iptables -C FORWARD -j "$CHAIN" 2>/dev/null || iptables -I FORWARD 1 -j "$CHAIN"
+    jump_first iptables OUTPUT
+    jump_first iptables FORWARD
     # DOCKER-USER is the chain a Docker daemon never rewrites and always
     # consults first, so a per-repo Docker-in-Docker opt-in cannot route
     # nested containers around this filter.
     iptables -N DOCKER-USER 2>/dev/null || true
-    iptables -C DOCKER-USER -j "$CHAIN" 2>/dev/null || iptables -I DOCKER-USER 1 -j "$CHAIN"
+    jump_first iptables DOCKER-USER
 
     iptables -A "$CHAIN" -o lo -j ACCEPT
     iptables -A "$CHAIN" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
@@ -337,7 +353,7 @@ cmd_apply() {
     # outright except loopback and replies.
     if ip6tables -P OUTPUT DROP 2>/dev/null && ip6tables -P FORWARD DROP 2>/dev/null; then
         ip6tables -N "$CHAIN" 2>/dev/null || ip6tables -F "$CHAIN"
-        ip6tables -C OUTPUT -j "$CHAIN" 2>/dev/null || ip6tables -I OUTPUT 1 -j "$CHAIN"
+        jump_first ip6tables OUTPUT
         ip6tables -A "$CHAIN" -o lo -j ACCEPT
         ip6tables -A "$CHAIN" -m conntrack --ctstate ESTABLISHED,RELATED -j ACCEPT
         ip6tables -A "$CHAIN" -j REJECT
@@ -364,7 +380,7 @@ cmd_verify() {
     local out last forward docker_user=""
     out="$(iptables -S OUTPUT)" || fail "verify failed — cannot read the OUTPUT chain"
     grep -qx -- '-P OUTPUT DROP' <<<"$out" || fail "verify failed — OUTPUT policy is not DROP"
-    [ "$(sed -n 2p <<<"$out")" = "-A OUTPUT -j ${CHAIN}" ] ||
+    [ "$(first_rule OUTPUT <<<"$out")" = "-A OUTPUT -j ${CHAIN}" ] ||
         fail "verify failed — the first OUTPUT rule is not the ${CHAIN} jump"
     forward="$(iptables -S FORWARD)" || fail "verify failed — cannot read the FORWARD chain"
     grep -qx -- '-P FORWARD DROP' <<<"$forward" || fail "verify failed — FORWARD policy is not DROP"
