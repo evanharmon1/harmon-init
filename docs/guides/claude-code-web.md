@@ -202,6 +202,11 @@ touch is bounded by its per-repo collaborator grants, as in
 [bot-account.md](bot-account.md). The operator's own token is the fallback if the
 platform refuses a token whose GitHub user differs from the claude.ai account.
 
+Because the token carries no `workflow` scope, a cloud session cannot push a
+branch that adds or edits anything under `.github/workflows/`: GitHub refuses the
+push. Route a change that touches workflows to a local or bot-devcontainer lane
+instead of a cloud session.
+
 **Until that is done, the identity is whichever `gh` token `/web-setup` last
 received (the operator's own, by default), or the Claude GitHub App if that was
 the connection.** The comment replies the platform posts on your behalf are
@@ -275,6 +280,7 @@ that exists today.
 | `trusted-registry.sh`: `gh pr view --json baseRefOid`, `gh api repos/…/contents` | integrate skill (vendored), sourced by `check-codex-cloud-review.sh` and `gh-write-broker.sh` | expected to fail on `gh pr view`, not yet observed — GraphQL-backed; the `contents` read is plain REST | REST `repos/{o}/{r}/pulls/{n}` returns `base.sha`. harmon-devkit#1207 |
 | `gh auth git-credential` (the forced credential-helper push in `AGENTS.md` and the integrate skill) | a push on an unprovisioned host | expected, not yet observed; not needed — a plain `git push` to the session's branch works (observed 2026-09-27), because the platform configures git itself | Push with plain `git push` in a cloud session |
 | `release-claim.sh`, `check-issue-metadata.sh`: `gh issue edit/comment`, `gh label list`, `gh api --paginate --slurp` | track-work skill (vendored) | expected, not yet observed — the same GraphQL-backed subcommands as the first row | harmon-devkit#1207 |
+| `check-issue-metadata.sh`: `gh api repos/{o}/{r}` (owner type) and, for an organization owner only, `gh api orgs/{owner}/issue-types` | track-work skill (vendored) | expected to work (plain REST), not yet observed; the organization call is skipped for a personal-account owner | — |
 | `set-issue-status.sh`: `gh api graphql` (Projects v2) | track-work skill (vendored) | expected to fail, not yet observed — Projects v2 is GraphQL-only and documented as unreachable | No REST route is known. The skills treat Project status as a non-authoritative view, so the loop does not need it. Tracked in [harmon-devkit#1207](https://github.com/evanharmon1/harmon-devkit/issues/1207), which either finds a REST route or makes the helper refuse with its exit 2; until then it can only fail behind the proxy |
 | `readiness-gate.sh`: `gh pr view`, `gh api graphql --paginate --slurp` (review threads), `gh api repos/…`, `gh api user`, `gh pr ready` | integrate skill (vendored) | **fail** on `gh pr view` — observed 2026-09-27 | Conditions were checked by hand over REST (`…/ccr/review_threads`, `…/ccr/ready_for_review`). harmon-devkit#1207; orchestrator-side, see [What runs where](#what-runs-where) |
 | `check-codex-cloud-review.sh`: `gh pr view`, `gh api --paginate --slurp` | integrate skill (vendored) | **fail** on `gh pr view` — observed 2026-09-27; the pagination fails past page 1 — observed 2026-09-27 | The current-head cycle was checked by hand over REST. harmon-devkit#1207 |
@@ -372,7 +378,9 @@ Account preferences are the only channel for a rule that has to hold in **every*
 repo a session might open, including one with no `AGENTS.md` of this shape. Put
 there: the small set of cross-project rules that are safety or communication
 rules rather than repository facts — never write to a password manager or
-credential store unprompted, never terminate a process without approval, never
+credential store unless that exact write was requested, and even then restate
+what will be written and get confirmation before running it; never terminate a
+process without approval; never
 merge or cut a release without explicit approval, and the reply-style
 preferences. Keep them short: they are injected into every session. Everything
 that is true of a repository — commands, gates, the dev loop, conventions —

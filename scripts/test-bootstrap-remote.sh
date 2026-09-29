@@ -968,11 +968,12 @@ for label, text in ((BOOTSTRAP, bootstrap_text), (DOC, doc_text), (GUIDE, guide_
 # The shape checks above prove each copy SAFE; they do not prove the guide's copy
 # is the SAME recipe — a guide that added an install line, dropped `--ref`, or
 # pinned a different variable would still pass them. So the guide's fenced block
-# must equal the architecture document's, line for line. Exactly one difference
-# is allowed, and it is spelled out here rather than tolerated by a looser match:
+# must equal the architecture document's, line for line. Two differences are
+# allowed, and both are spelled out here rather than tolerated by a looser match:
 # a single `#!/bin/bash` as the first line, because the platform's setup-script
-# field is a script file of its own. Anything else — a second leading line, a
-# different interpreter, an edit anywhere inside — fails.
+# field is a script file of its own; and the HARMON_INIT_REF= value (below).
+# Anything else — a second leading line, a different interpreter, an edit
+# anywhere inside — fails.
 GUIDE_SHEBANG = "#!/bin/bash"
 
 
@@ -995,17 +996,42 @@ if len(doc_recipes) != 1:
     fail(f"{DOC}: expected exactly one fenced standalone recipe to compare the guide against, found {len(doc_recipes)}")
 if len(guide_recipes) != 1:
     fail(f"{GUIDE}: expected exactly one fenced setup-script recipe, found {len(guide_recipes)}")
+# The one value the two copies may legitimately disagree on is the tag. The
+# architecture document keeps the placeholder, while the guide tells its reader to
+# pin the first release that carries the bootstrap — so the HARMON_INIT_REF= value
+# is compared as a slot, and the guide's value must be the placeholder or a
+# concrete release tag (never a branch such as main).
+REF_LINE = re.compile(r"^(\s*HARMON_INIT_REF=)(\S+)(.*)$")
+GUIDE_REF_OK = re.compile(r"^(vX\.Y\.Z|v[0-9]+\.[0-9]+\.[0-9]+)$")
+
+
+def ref_slot(block):
+    out, values = [], []
+    for line in block:
+        m = REF_LINE.match(line)
+        if m:
+            values.append(m.group(2))
+            line = f"{m.group(1)}<tag>{m.group(3)}"
+        out.append(line)
+    return out, values
+
+
 if len(doc_recipes) == 1 and len(guide_recipes) == 1:
     guide_body = guide_recipes[0]
     if guide_body[:1] == [GUIDE_SHEBANG]:
         guide_body = guide_body[1:]
-    if guide_body != doc_recipes[0]:
+    guide_body, guide_refs = ref_slot(guide_body)
+    doc_body, _ = ref_slot(doc_recipes[0])
+    for value in guide_refs:
+        if not GUIDE_REF_OK.match(value):
+            fail(f"{GUIDE}: HARMON_INIT_REF={value!r} must be the placeholder vX.Y.Z or a release tag vMAJOR.MINOR.PATCH")
+    if guide_body != doc_body:
         first = next(
-            (i for i, (g, d) in enumerate(zip(guide_body, doc_recipes[0])) if g != d),
-            min(len(guide_body), len(doc_recipes[0])),
+            (i for i, (g, d) in enumerate(zip(guide_body, doc_body)) if g != d),
+            min(len(guide_body), len(doc_body)),
         )
         got = guide_body[first] if first < len(guide_body) else "<end of block>"
-        want = doc_recipes[0][first] if first < len(doc_recipes[0]) else "<end of block>"
+        want = doc_body[first] if first < len(doc_body) else "<end of block>"
         fail(
             f"{GUIDE}: the setup-script recipe is not the architecture document's recipe (only a leading "
             f"{GUIDE_SHEBANG!r} may differ). First difference at recipe line {first + 1}: {got!r}, expected {want!r}"
