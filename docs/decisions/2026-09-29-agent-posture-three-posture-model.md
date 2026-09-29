@@ -29,6 +29,13 @@ cloud, Sprites) or work on untrusted input. Bot is too permissive there; dev
 assumes a human. Left alone, each remote environment would improvise its own
 posture, which is the drift #1264 exists to stop.
 
+Untrusted input enters this posture as **data** — issue text, diffs, pull
+request content — never as the environment's own definition. The agent
+devcontainer must be opened from a trusted checkout (the default branch or a
+reviewed ref): `initializeCommand` runs the checkout's code on the host for
+every profile, before any control below exists, so opening the agent
+devcontainer on an untrusted branch hands that branch the host.
+
 The operator decided on 2026-09-27 (recorded on #1408, with the 2026-09-27
 amendment on PAT expiry) to add a third, first-class posture. The priority
 order behind every choice below is the operator's: **autonomy first, then
@@ -45,10 +52,10 @@ remote environment (the remote half is #1404).
 |---|---|---|---|
 | **Marker** (`FOREMAN_DEVCONTAINER`) | unset | `bot` | `agent` |
 | **Identity** | operator's `gh auth login` | bot fine-grained PAT (`GH_TOKEN`) | agent fine-grained PAT on the bot account (`AGENT_GH_TOKEN`), one per resource owner, ≤180 days, own repository list (remote-lane repos only); commits as the bot |
-| **Permissions** | Claude prompts (managed allow list, no default mode) | blanket `Bash(git:*)`/`Bash(gh:*)` + gate tools, bypass mode | explicit dev-loop allow list; deny (not ask) for merge, release, repo admin, secrets, variables, workflow runs, force-push, pushes to `main`, `task release/secret`, disabling the Codex gate, `op`, `.env*` reads, and the egress-tamper commands (`sudo`, `iptables`, `nft`, `ipset`); **no `ask` rules**; only managed rules apply |
+| **Permissions** | Claude prompts (managed allow list, no default mode) | blanket `Bash(git:*)`/`Bash(gh:*)` + gate tools, bypass mode | explicit dev-loop allow list; deny (not ask) for merge, release, repo admin, secrets, variables, workflow runs, `gh api` writes, force-push, pushes to `main`, `task release/secret`, disabling the Codex gate, `op`, `.env*` reads, and the egress-tamper commands (`sudo`, `iptables`, `nft`, `ipset`); **no `ask` rules**; only managed rules apply |
 | **Harness autonomy** | per-harness defaults; Codex `workspace-write` + `on-request` | every installed harness fully autonomous (`bot-autonomy.sh`); Codex `danger-full-access` + `never` | Claude Code **auto mode** with `disableBypassPermissionsMode: "disable"`; Codex `workspace-write` + `never` (network on inside the sandbox); **every other harness refused** |
 | **Secrets** | 1Password feature, `TS_AUTHKEY`, operator login, opt-in provider keys | bot `GH_TOKEN`, `FOREMAN_AGENT_GH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, opt-in provider keys; no `TS_AUTHKEY`, no 1Password | only `AGENT_GH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, where persisted the environment's own Codex login (#1406), and the disclosed opt-in provider keys; `ANTHROPIC_API_KEY` never; **the env guard fails closed on anything else** |
-| **Network** | open; tailnet | open | **default-deny egress allowlist, enforced at every start**; one shared list (#286) plus per-repo additions; refused destinations recorded for the lane report |
+| **Network** | open; tailnet | open | **default-deny egress allowlist, enforced at every start** from a root-owned snapshot taken at create; one shared list (#286) plus per-repo additions; refused destinations recorded for the lane report |
 | **Docker** | Docker-in-Docker | Docker-in-Docker | **none by default**; a per-repo, disclosed Docker-in-Docker opt-in; never the host socket |
 
 Mechanically:
@@ -68,6 +75,12 @@ Mechanically:
    refused under the agent marker: its executable is made non-executable at
    create, and a start fails if one is runnable again. Every
    `agent-registry.json` harness is classified supported, aliased, or refused.
+   Refusal is a **launcher control, not a sandbox**: it stops an orchestrator
+   or operator from starting a refused harness under the agent marker, not an
+   agent that deliberately runs one through an interpreter or a fresh
+   install. It also rests on a file mode that root can restore;
+   [#1432](https://github.com/evanharmon1/harmon-init/issues/1432) tracks
+   making it independent of one.
 4. **The env guard fails closed.** `init-env.sh --profile agent` stops the
    build — naming the variable, never its value — when the allow-list or the
    env-file holds anything the posture does not admit. Bot and dev quietly
@@ -80,7 +93,12 @@ Mechanically:
    filter first thing in both lifecycle scripts, before any harness can start,
    and a failure to install it fails the container. The same filter hooks
    Docker's `DOCKER-USER` chain, so a Docker-in-Docker opt-in cannot route
-   around it.
+   around it. Post-create copies the applier and both lists out of the
+   writable checkout into a root-owned snapshot
+   (`/usr/local/share/harmon-egress/`), and every start applies that
+   snapshot, never the checkout — so a plain file edit cannot widen egress at
+   the next start. A list line that is `0.0.0.0` in any form, or a CIDR wider
+   than `/16`, fails `apply` closed, naming the line.
 6. **Foreman stays out.** Its D2 tripwire refuses to run anywhere the marker is
    not `bot`, so it refuses the agent posture by design. Making agent the
    Foreman dispatch default is #1264's call once this exists.
@@ -115,16 +133,21 @@ Mechanically:
   allow list and outside any bot deny rule.
 - **Residuals, stated plainly.** The egress filter lives inside the container
   and needs `NET_ADMIN`; the container user keeps passwordless `sudo` (the
-  shared lifecycle scripts use it), so the filter bounds what the harnesses
-  reach through their own permission layers — which deny `sudo` and the
-  filter commands — and is not a boundary against root in the container.
-  Narrowing `sudo` is follow-up work. DNS is allowed to the configured
-  resolvers, so DNS remains a narrow channel. Addresses are resolved at start,
-  so a CDN rotating addresses mid-run can refuse a listed host until the next
-  `apply`. `gh api` writes that use form fields are not denied by rule (they
-  share syntax with GraphQL reads); the agent PAT's own permissions bound
-  them. A bare `git push` while on `main` is not expressible as a rule; the
-  branch ruleset and the no-commit-to-main hook bound it.
+  shared lifecycle scripts use it). So the filter — and the root-owned
+  snapshot it applies from — bounds what the harnesses reach **through their
+  own permission layers**, which deny `sudo` and the filter commands. It is
+  not a boundary against a deliberate agent that runs repository code with
+  root: those deny rules do not follow a command into a Taskfile target or a
+  git hook, and either can call `sudo`. Narrowing `sudo` is tracked in
+  [#1432](https://github.com/evanharmon1/harmon-init/issues/1432). DNS is
+  allowed to the configured resolvers, so DNS remains a narrow channel.
+  Addresses are resolved at start, so a CDN rotating addresses mid-run can
+  refuse a listed host until the next `apply`. `gh api` is read-only by rule:
+  the method, input, and every form-field flag (`-f`, `-F`, `--field`,
+  `--raw-field`) are denied in any position, which also denies GraphQL
+  queries sent through `-f query=` — REST is the documented read path. A bare
+  `git push` while on `main` is not expressible as a rule; the branch ruleset
+  and the no-commit-to-main hook bound it.
 - The operator mints the agent PATs (one per owner, ≤180 days, on the bot
   account) and ratifies this record; an unattended agent-devcontainer lane
   returning its work to the orchestrator with no human step after launch is

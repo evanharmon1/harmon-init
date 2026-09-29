@@ -2446,6 +2446,15 @@ assert_container() {
         agent_out="$(docker exec -u root -w "$workspace_folder" "$container_id" \
             bash .devcontainer/scripts/egress-allowlist.sh verify 2>&1)" || agent_rc=$?
         [ "$agent_rc" -eq 0 ] || fail "egress-allowlist.sh verify failed in the agent container: ${agent_out}"
+        # Every start applies the snapshot post-create wrote, so it must exist
+        # and be root-owned and closed to writes, or an edit by the container
+        # user would widen egress at the next start.
+        docker exec -u vscode "$container_id" test -x /usr/local/share/harmon-egress/scripts/egress-allowlist.sh ||
+            fail "the agent container has no egress snapshot for its starts to apply"
+        agent_out="$(docker exec -u root "$container_id" find /usr/local/share/harmon-egress \
+            \( ! -user root -o -perm -002 -o -perm -020 \) 2>&1)" ||
+            fail "cannot inspect the egress snapshot in the agent container: ${agent_out}"
+        [ -z "$agent_out" ] || fail "the egress snapshot is not root-owned and closed to writes: ${agent_out}"
         if grep -Eqx '[[:space:]]*example\.com[[:space:]]*' "${repo_root}/.devcontainer/egress-allowlist.txt"; then
             fail "example.com is on the egress allowlist; the refusal probe below needs it off"
         fi

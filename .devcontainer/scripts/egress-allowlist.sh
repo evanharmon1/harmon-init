@@ -12,7 +12,15 @@ set -euo pipefail
 #                                  non-zero — failing the lifecycle step that
 #                                  called it — if enforcement cannot be
 #                                  installed. Idempotent; re-run it to pick up
-#                                  list edits or rotated CDN addresses.
+#                                  rotated CDN addresses. The agent lifecycle
+#                                  runs it only from the snapshot below.
+#   egress-allowlist.sh snapshot — validate the lists, then copy this applier
+#                                  and both lists to a root-owned directory
+#                                  (/usr/local/share/harmon-egress). Agent
+#                                  post-create runs it once; every later apply
+#                                  runs from there, so an edit to the writable
+#                                  checkout cannot widen egress at the next
+#                                  start. Root.
 #   egress-allowlist.sh verify   — fail unless the default-deny filter is in
 #                                  place (root; re-execs through `sudo -n`).
 #   egress-allowlist.sh blocked  — print every destination refused since the
@@ -23,8 +31,12 @@ set -euo pipefail
 #   egress-allowlist.sh hosts    — print the validated list entries.
 #
 # The lists: .devcontainer/egress-allowlist.txt (shared, owned by harmon-init)
-# plus the optional per-repo .devcontainer/egress-allowlist.local.txt. Format
-# is documented at the top of the shared list.
+# plus the optional per-repo .devcontainer/egress-allowlist.local.txt, read
+# relative to this script — so the snapshot copy reads the snapshot's lists.
+# Format is documented at the top of the shared list. A literal address may
+# not be 0.0.0.0 in any form, nor a CIDR wider than /16: either would turn one
+# list line into an allow-everything rule. IPv6 literals are not accepted at
+# all — v6 egress is closed outright (see apply).
 #
 # Scope, stated plainly: this is enforcement INSIDE the container's network
 # namespace, which needs CAP_NET_ADMIN. It bounds what the agent harnesses
@@ -43,6 +55,12 @@ CHAIN=HARMON_EGRESS
 # world-readable /proc file, so `blocked` needs no daemon and no root.
 RECENT_NAME=harmon_egress_blocked
 RECENT_FILE="${EGRESS_RECENT_FILE:-/proc/net/xt_recent/${RECENT_NAME}}"
+# The root-owned snapshot the agent lifecycle applies from. Its layout mirrors
+# .devcontainer/ (scripts/egress-allowlist.sh beside the lists one level up),
+# so the list paths above resolve inside it unchanged.
+SNAPSHOT_DIR=/usr/local/share/harmon-egress
+# The narrowest prefix a literal CIDR entry may have.
+MIN_PREFIX=16
 
 IPV4_RE='^([0-9]{1,3}\.){3}[0-9]{1,3}(/([0-9]|[12][0-9]|3[0-2]))?$'
 HOST_RE='^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?(\.[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)+$'
@@ -76,8 +94,19 @@ cmd_hosts() {
             entry="${line%%#*}"
             entry="$(printf '%s' "$entry" | tr -d '[:space:]')"
             [ -n "$entry" ] || continue
-            if [ "$entry" = "@github-meta" ] ||
-                [[ "$entry" =~ $IPV4_RE ]] ||
+            if [[ "$entry" =~ $IPV4_RE ]]; then
+                case "$entry" in
+                0.0.0.0 | 0.0.0.0/*)
+                    fail "${file}:${lineno}: '${entry}' is the unspecified address — refusing an entry that allows every destination"
+                    ;;
+                */*)
+                    [ "${entry#*/}" -ge "$MIN_PREFIX" ] ||
+                        fail "${file}:${lineno}: '${entry}' is wider than /${MIN_PREFIX} — refusing an over-broad CIDR"
+                    ;;
+                esac
+                printf '%s\n' "$entry"
+                count=$((count + 1))
+            elif [ "$entry" = "@github-meta" ] ||
                 [[ "$entry" =~ $HOST_RE ]]; then
                 printf '%s\n' "$entry"
                 count=$((count + 1))
@@ -237,6 +266,35 @@ cmd_verify() {
     echo "==> egress-allowlist: verify passed."
 }
 
+# cmd_snapshot — copy this applier and both lists into the root-owned
+# snapshot. The lists are validated first, so a list apply would refuse never
+# replaces a good snapshot. EGRESS_SNAPSHOT_DIR (test-only; like the other
+# overrides it never crosses the sudo re-exec) writes an unprivileged copy.
+cmd_snapshot() {
+    local dir="${EGRESS_SNAPSHOT_DIR:-}" path
+    if [ -z "$dir" ]; then
+        as_root snapshot
+        dir="$SNAPSHOT_DIR"
+        # Root ownership of the files is worthless if the container user can
+        # rename the directory that holds them.
+        path="$dir"
+        while path="${path%/*}" && [ -n "$path" ]; do
+            [ -z "$(find "$path" -maxdepth 0 \( ! -user root -o -perm -002 -o -perm -020 \))" ] ||
+                fail "${path} is not root-owned and closed to writes — refusing to snapshot under it"
+        done
+    fi
+    cmd_hosts >/dev/null
+    install -d -m 0755 "$dir" "${dir}/scripts"
+    install -m 0755 "${BASH_SOURCE[0]}" "${dir}/scripts/egress-allowlist.sh"
+    install -m 0644 "$SHARED_LIST" "${dir}/egress-allowlist.txt"
+    if [ -f "$LOCAL_LIST" ]; then
+        install -m 0644 "$LOCAL_LIST" "${dir}/egress-allowlist.local.txt"
+    else
+        rm -f "${dir}/egress-allowlist.local.txt"
+    fi
+    echo "==> egress-allowlist: snapshot written to ${dir}."
+}
+
 cmd_blocked() {
     if [ ! -r "$RECENT_FILE" ]; then
         echo "egress-allowlist: no blocked-destination record at ${RECENT_FILE} (filter not applied, or this kernel lacks xt_recent)"
@@ -253,10 +311,11 @@ case "${1:-}" in
 apply) cmd_apply ;;
 verify) cmd_verify ;;
 blocked) cmd_blocked ;;
+snapshot) cmd_snapshot ;;
 plan) cmd_plan ;;
 hosts) cmd_hosts ;;
 *)
-    echo "Usage: $0 <apply|verify|blocked|plan|hosts>" >&2
+    echo "Usage: $0 <apply|verify|snapshot|blocked|plan|hosts>" >&2
     exit 2
     ;;
 esac

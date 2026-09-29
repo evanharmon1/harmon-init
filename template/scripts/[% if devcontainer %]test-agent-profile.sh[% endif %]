@@ -25,9 +25,11 @@ set -euo pipefail
 #                           and fails closed on everything else
 #   6. Docker             — no socket ever; Docker-in-Docker only with the
 #                           documented opt-in
-#   7. egress             — the list parses, resolves, and refuses to install
-#                           an allow-nothing filter; the lifecycle applies it
-#                           first
+#   7. egress             — the list parses, resolves, refuses an
+#                           allow-nothing filter and an over-broad literal
+#                           (0.0.0.0/x, wider than /16); the lifecycle
+#                           snapshots it root-owned at create, applies it
+#                           first, and applies only the snapshot at start
 
 fail() {
     echo "FAIL: $*" >&2
@@ -188,6 +190,20 @@ Bash(gh variable delete *)
 Bash(gh workflow run *)
 Bash(gh workflow enable *)
 Bash(gh workflow disable *)
+Bash(gh api -X*)
+Bash(gh api * -X*)
+Bash(gh api --method*)
+Bash(gh api * --method*)
+Bash(gh api --input*)
+Bash(gh api * --input*)
+Bash(gh api -f*)
+Bash(gh api * -f*)
+Bash(gh api -F*)
+Bash(gh api * -F*)
+Bash(gh api --field*)
+Bash(gh api * --field*)
+Bash(gh api --raw-field*)
+Bash(gh api * --raw-field*)
 Bash(git push --force*)
 Bash(git push * --force*)
 Bash(git push -f*)
@@ -467,7 +483,7 @@ grep -q 'host Docker socket' <<<"$(docker_violations "$sock_cfg")" ||
     fail "Docker check missed a host Docker socket mount (even with the opt-in)"
 
 # ── 7. Egress ───────────────────────────────────────────────────────────
-echo "==> 7. egress allowlist parses, resolves, refuses an allow-nothing filter, and is applied first"
+echo "==> 7. egress allowlist parses, resolves, refuses an allow-nothing filter or an over-broad literal, and is applied first from a root-owned snapshot"
 
 bash "$egress" hosts >/dev/null || fail "the shared egress allowlist does not parse"
 for required in @github-meta github.com api.github.com api.anthropic.com api.openai.com chatgpt.com registry.npmjs.org pypi.org files.pythonhosted.org; do
@@ -502,10 +518,77 @@ printf 'extra.example\n' >"${work_dir}/local.txt"
 grep -Fxq extra.example <(EGRESS_ALLOWLIST_SHARED="${work_dir}/list.txt" EGRESS_ALLOWLIST_LOCAL="${work_dir}/local.txt" bash "$egress" hosts) ||
     fail "egress hosts ignored the per-repo local list"
 
-[ "$(grep -Ev '^[[:space:]]*(#|$)' .devcontainer/agent/post-create.sh | sed -n 's/^\(bash .*\)$/\1/p' | head -n 1)" = "bash .devcontainer/scripts/egress-allowlist.sh apply" ] ||
-    fail "the agent post-create does not apply the egress filter before anything else"
-[ "$(grep -Ev '^[[:space:]]*(#|$)' .devcontainer/agent/post-start.sh | sed -n 's/^\(bash .*\)$/\1/p' | head -n 1)" = "bash .devcontainer/scripts/egress-allowlist.sh apply" ] ||
-    fail "the agent post-start does not apply the egress filter before anything else"
+# An over-broad literal is one line that allows every destination: refused
+# in either list, naming the line, and never reaching plan. A /16 (the
+# widest allowed), a /24 and a bare address are accepted.
+for broad in 0.0.0.0/0 0.0.0.0/8 0.0.0.0/32 0.0.0.0 10.0.0.0/8 128.0.0.0/1 172.16.0.0/12 192.0.0.0/15; do
+    printf 'good.example\n%s\n' "$broad" >"${work_dir}/broad.txt"
+    for which in shared local; do
+        if [ "$which" = shared ]; then
+            broad_out="$(EGRESS_ALLOWLIST_SHARED="${work_dir}/broad.txt" EGRESS_ALLOWLIST_LOCAL=/nonexistent \
+                EGRESS_RESOLVER="$stub_resolver" bash "$egress" plan 2>&1)" &&
+                fail "egress plan accepted the over-broad entry ${broad} in the shared list"
+        else
+            broad_out="$(EGRESS_ALLOWLIST_SHARED="${work_dir}/list.txt" EGRESS_ALLOWLIST_LOCAL="${work_dir}/broad.txt" \
+                EGRESS_RESOLVER="$stub_resolver" EGRESS_GITHUB_META_FILE="${work_dir}/meta.json" bash "$egress" plan 2>&1)" &&
+                fail "egress plan accepted the over-broad entry ${broad} in the local list"
+        fi
+        grep -Fq "broad.txt:2: '${broad}'" <<<"$broad_out" ||
+            fail "the refusal of ${broad} (${which} list) does not name the line: ${broad_out}"
+    done
+done
+printf '172.16.0.0/16\n198.51.100.0/24\n203.0.113.7/32\n203.0.113.8\n' >"${work_dir}/narrow.txt"
+[ "$(EGRESS_ALLOWLIST_SHARED="${work_dir}/narrow.txt" EGRESS_ALLOWLIST_LOCAL=/nonexistent bash "$egress" plan 2>/dev/null)" = "$(printf '172.16.0.0/16\n198.51.100.0/24\n203.0.113.7/32\n203.0.113.8')" ] ||
+    fail "egress plan refused or altered a /16, /24, /32 or bare-address entry"
+
+# The snapshot: the applier and both lists copied out of the checkout, and a
+# later edit to the checkout changes nothing the snapshot applies.
+# EGRESS_SNAPSHOT_DIR stands in for the root-owned directory.
+snap_checkout="${work_dir}/snap-checkout/.devcontainer"
+snap_dir="${work_dir}/snap-root/harmon-egress"
+mkdir -p "${snap_checkout}/scripts"
+cp "$egress" "${snap_checkout}/scripts/egress-allowlist.sh"
+printf 'good.example\n198.51.100.0/24\n' >"${snap_checkout}/egress-allowlist.txt"
+printf '203.0.113.0/24\n' >"${snap_checkout}/egress-allowlist.local.txt"
+EGRESS_SNAPSHOT_DIR="$snap_dir" bash "${snap_checkout}/scripts/egress-allowlist.sh" snapshot >/dev/null ||
+    fail "egress snapshot failed on a valid checkout"
+cmp -s "$egress" "${snap_dir}/scripts/egress-allowlist.sh" || fail "the snapshot does not carry the applier"
+[ -x "${snap_dir}/scripts/egress-allowlist.sh" ] || fail "the snapshot applier is not executable"
+snap_plan_before="$(EGRESS_RESOLVER="$stub_resolver" bash "${snap_dir}/scripts/egress-allowlist.sh" plan 2>/dev/null)"
+[ "$snap_plan_before" = "$(printf '192.0.2.10\n192.0.2.11\n198.51.100.0/24\n203.0.113.0/24')" ] ||
+    fail "the snapshot applier did not resolve the snapshot's own lists: ${snap_plan_before}"
+printf 'good.example\n198.51.100.0/24\n192.0.2.0/24\n' >"${snap_checkout}/egress-allowlist.txt"
+printf '203.0.113.0/24\n100.64.0.0/16\n' >"${snap_checkout}/egress-allowlist.local.txt"
+printf '#!/bin/sh\necho 0.0.0.0/0\n' >"${snap_checkout}/scripts/egress-allowlist.sh"
+[ "$(EGRESS_RESOLVER="$stub_resolver" bash "${snap_dir}/scripts/egress-allowlist.sh" plan 2>/dev/null)" = "$snap_plan_before" ] ||
+    fail "editing the checkout's lists after the snapshot changed what the snapshot applies"
+# A re-snapshot drops a local list the checkout no longer has, and refuses a
+# list apply would refuse without touching the good snapshot.
+cp "$egress" "${snap_checkout}/scripts/egress-allowlist.sh"
+rm "${snap_checkout}/egress-allowlist.local.txt"
+EGRESS_SNAPSHOT_DIR="$snap_dir" bash "${snap_checkout}/scripts/egress-allowlist.sh" snapshot >/dev/null ||
+    fail "egress re-snapshot failed on a valid checkout"
+[ ! -e "${snap_dir}/egress-allowlist.local.txt" ] || fail "a re-snapshot kept a local list the checkout no longer has"
+snap_good="$(cat "${snap_dir}/egress-allowlist.txt")"
+printf '0.0.0.0/0\n' >>"${snap_checkout}/egress-allowlist.txt"
+if EGRESS_SNAPSHOT_DIR="$snap_dir" bash "${snap_checkout}/scripts/egress-allowlist.sh" snapshot >/dev/null 2>&1; then
+    fail "egress snapshot accepted an over-broad list"
+fi
+[ "$(cat "${snap_dir}/egress-allowlist.txt")" = "$snap_good" ] || fail "a refused snapshot overwrote the good one"
+
+# The lifecycle: post-create snapshots, then applies FROM the snapshot before
+# anything else; post-start applies only the snapshot and never reads the
+# checkout's applier.
+snap_applier=/usr/local/share/harmon-egress/scripts/egress-allowlist.sh
+grep -q "^SNAPSHOT_DIR=${snap_applier%/scripts/*}\$" "$egress" ||
+    fail "egress-allowlist.sh does not snapshot to ${snap_applier%/scripts/*}, the path the lifecycle applies from"
+[ "$(grep -Ev '^[[:space:]]*(#|$)' .devcontainer/agent/post-create.sh | sed -n 's/^\(bash .*\)$/\1/p' | head -n 2)" = "bash .devcontainer/scripts/egress-allowlist.sh snapshot
+bash ${snap_applier} apply" ] ||
+    fail "the agent post-create does not snapshot the egress lists and apply the snapshot before anything else"
+[ "$(grep -Ev '^[[:space:]]*(#|$)' .devcontainer/agent/post-start.sh | sed -n 's/^\(bash .*\)$/\1/p' | head -n 1)" = "bash ${snap_applier} apply" ] ||
+    fail "the agent post-start does not apply the egress snapshot before anything else"
+! grep -Ev '^[[:space:]]*#' .devcontainer/agent/post-start.sh | grep -q 'egress-allowlist\.txt\|\.devcontainer/scripts/egress-allowlist\.sh' ||
+    fail "the agent post-start reads the checkout's egress applier or lists (only the root-owned snapshot may be applied at start)"
 jq -e '.runArgs | index("--cap-add=NET_ADMIN")' <<<"$agent_cfg" >/dev/null ||
     fail "the agent devcontainer lacks --cap-add=NET_ADMIN, so the egress filter cannot be installed"
 

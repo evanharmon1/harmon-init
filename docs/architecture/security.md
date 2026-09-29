@@ -318,8 +318,12 @@ per-harness mechanics and this document for the full security contract.
 
 The **agent** posture (`.devcontainer/agent/`, marker
 `FOREMAN_DEVCONTAINER=agent`) is for an agent that runs where nobody watches —
-a third-party cloud VM, or work on untrusted input. It is **never looser than
-bot on any axis**; the decision and every "not" are in
+a third-party cloud VM, or work on untrusted input. Untrusted input enters it
+as data (issues, diffs, pull request content); the devcontainer definition
+must come from a trusted checkout (the default branch or a reviewed ref),
+because `initializeCommand` runs checkout code on the host for every profile.
+It is **never looser than bot on any axis**; the decision and every "not" are
+in
 [../decisions/2026-09-29-agent-posture-three-posture-model.md](../decisions/2026-09-29-agent-posture-three-posture-model.md).
 The security contract, by layer:
 
@@ -341,16 +345,22 @@ The security contract, by layer:
   credential. No 1Password, no Tailscale, never `ANTHROPIC_API_KEY`.
 - **Network — default-deny egress.** `egress-allowlist.sh` installs the filter
   before anything else at create and at every start, and fails the container
-  if it cannot. Refused destinations are recorded (`egress-allowlist.sh
-  blocked`) for the lane report.
+  if it cannot. Post-create snapshots the applier and both lists into a
+  root-owned directory, and every start applies that snapshot, never the
+  writable checkout. A `0.0.0.0` entry or a CIDR wider than `/16` fails
+  closed. Refused destinations are recorded (`egress-allowlist.sh blocked`)
+  for the lane report.
 - **Docker — none by default.** Never the host socket; Docker-in-Docker only
   through the documented per-repo opt-in (`HARMON_AGENT_DOCKER=dind`), which
   the same egress filter still covers.
 - **Residuals.** The filter lives inside the container and needs
   `NET_ADMIN`, and the container user keeps passwordless `sudo`: the harness
   deny rules keep an agent from lifting it through its own tools, but it is
-  not a boundary against root in the container. DNS to the configured
-  resolvers stays open. See the ADR's Consequences for the full list.
+  not a boundary against a deliberate agent that runs repository code
+  (Taskfile targets, git hooks) with root. Narrowing `sudo` is tracked in
+  [#1432](https://github.com/evanharmon1/harmon-init/issues/1432). DNS to
+  the configured resolvers stays open. See the ADR's Consequences for the
+  full list.
 
 ## Two identities: the bot vs the operator
 

@@ -10,8 +10,12 @@ export DEVCONTAINER_GIT_EMAIL="evanharmon1-bot@users.noreply.github.com"
 export DEVCONTAINER_GH_AUTH="agent-token"
 
 # Ordering is load-bearing:
-#   (i)   egress-allowlist.sh apply — default-deny egress FIRST, so every step
-#         below (and every agent after it) already runs under the filter.
+#   (i)   egress-allowlist.sh snapshot, then apply FROM the snapshot —
+#         default-deny egress FIRST, so every step below (and every agent
+#         after it) already runs under the filter. The snapshot copies the
+#         applier and both lists out of the writable checkout into a
+#         root-owned directory; every later apply (post-start) runs from it,
+#         so an edit to the checkout cannot widen egress at the next start.
 #         Fails the container on any enforcement failure.
 #   (ii)  agent-autonomy.sh apply — the agent Claude/Codex managed policy and
 #         the refusal of every harness without an agent-capable
@@ -21,7 +25,8 @@ export DEVCONTAINER_GH_AUTH="agent-token"
 #   (iv)  post-create-common.sh — the shared workspace setup.
 #   (v)   both verifies, last, so drift introduced by anything above fails
 #         container creation.
-bash .devcontainer/scripts/egress-allowlist.sh apply
+bash .devcontainer/scripts/egress-allowlist.sh snapshot
+bash /usr/local/share/harmon-egress/scripts/egress-allowlist.sh apply
 bash .devcontainer/agent/agent-autonomy.sh apply
 
 # The PAT goes to gh on stdin, never argv, and is stored as gh's own
@@ -36,4 +41,4 @@ fi
 bash .devcontainer/scripts/post-create-common.sh
 
 bash .devcontainer/agent/agent-autonomy.sh verify
-bash .devcontainer/scripts/egress-allowlist.sh verify
+bash /usr/local/share/harmon-egress/scripts/egress-allowlist.sh verify
