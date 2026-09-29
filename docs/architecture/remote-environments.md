@@ -211,8 +211,11 @@ plus `&&` propagates the failure by construction. Nothing deletes the temporary
 directory: a trailing `rm` would become the chain's exit status and reintroduce
 exactly the bug, and a few kilobytes are nothing on a VM that is about to be
 thrown away. `scripts/test-bootstrap-remote.sh` § 14 holds this shape in place
-— it fails if either copy of the recipe becomes a bare pipe into a shell, stops
-downloading to a file, or stops using a private directory.
+— it fails if any of the three copies of the recipe (the bootstrap script's,
+this document's, and the
+[Claude Code on the web guide](../guides/claude-code-web.md)'s) becomes a bare
+pipe into a shell, stops downloading to a file, or stops using a private
+directory.
 
 The script goes into a **private directory** (`mktemp -d`, with mode `0700`
 stated rather than inherited from a default), not a bare `mktemp` file in shared

@@ -90,7 +90,7 @@ Rules for this script, each with its reason:
 - **No `--tiers` flag, no other install lines.** Anything the loop needs belongs
   in the shared scripts, so the image and every other remote adapter get it too.
 
-**Pending observation (criterion 11, and the caching claim):** the bootstrap has
+**Pending observation (criterion 1, the caching claim):** the bootstrap has
 been proven only in CI on a stock `ubuntu:24.04` container on a GitHub-hosted
 runner. Whether it finishes inside the platform's cache budget **on the real VM**
 has not been measured. Record it under
