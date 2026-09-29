@@ -27,7 +27,8 @@ set -euo pipefail
 #                           documented opt-in
 #   7. egress             — the list parses, resolves, refuses an
 #                           allow-nothing filter and an over-broad literal
-#                           (0.0.0.0/x, wider than /16); the lifecycle
+#                           or @github-meta range (0.0.0.0/x, wider than
+#                           /16); the lifecycle
 #                           snapshots it root-owned at create, applies it
 #                           first, and applies only the snapshot at start
 
@@ -483,7 +484,7 @@ grep -q 'host Docker socket' <<<"$(docker_violations "$sock_cfg")" ||
     fail "Docker check missed a host Docker socket mount (even with the opt-in)"
 
 # ── 7. Egress ───────────────────────────────────────────────────────────
-echo "==> 7. egress allowlist parses, resolves, refuses an allow-nothing filter or an over-broad literal, and is applied first from a root-owned snapshot"
+echo "==> 7. egress allowlist parses, resolves, refuses an allow-nothing filter or an over-broad literal or meta range, and is applied first from a root-owned snapshot"
 
 bash "$egress" hosts >/dev/null || fail "the shared egress allowlist does not parse"
 for required in @github-meta github.com api.github.com api.anthropic.com api.openai.com chatgpt.com registry.npmjs.org pypi.org files.pythonhosted.org; do
@@ -540,6 +541,22 @@ done
 printf '172.16.0.0/16\n198.51.100.0/24\n203.0.113.7/32\n203.0.113.8\n' >"${work_dir}/narrow.txt"
 [ "$(EGRESS_ALLOWLIST_SHARED="${work_dir}/narrow.txt" EGRESS_ALLOWLIST_LOCAL=/nonexistent bash "$egress" plan 2>/dev/null)" = "$(printf '172.16.0.0/16\n198.51.100.0/24\n203.0.113.7/32\n203.0.113.8')" ] ||
     fail "egress plan refused or altered a /16, /24, /32 or bare-address entry"
+
+# A range fetched through @github-meta becomes a rule unreviewed, so it gets
+# the same refusal: a meta response carrying 0.0.0.0/0 or a /8 fails the plan
+# (and so apply), naming the source and the range, instead of being skipped.
+printf '@github-meta\n' >"${work_dir}/meta-only.txt"
+for broad in 0.0.0.0/0 10.0.0.0/8; do
+    printf '{"git":["140.82.112.0/20"],"web":["%s"],"api":[],"packages":["185.199.108.0/22"]}\n' "$broad" >"${work_dir}/meta-broad.json"
+    broad_out="$(EGRESS_ALLOWLIST_SHARED="${work_dir}/meta-only.txt" EGRESS_ALLOWLIST_LOCAL=/nonexistent \
+        EGRESS_GITHUB_META_FILE="${work_dir}/meta-broad.json" bash "$egress" plan 2>&1)" &&
+        fail "egress plan accepted the over-broad @github-meta range ${broad}"
+    grep -Fq "@github-meta: '${broad}'" <<<"$broad_out" ||
+        fail "the refusal of the @github-meta range ${broad} does not name its source and range: ${broad_out}"
+done
+[ "$(EGRESS_ALLOWLIST_SHARED="${work_dir}/meta-only.txt" EGRESS_ALLOWLIST_LOCAL=/nonexistent \
+    EGRESS_GITHUB_META_FILE="${work_dir}/meta.json" bash "$egress" plan 2>/dev/null)" = "$(printf '140.82.112.0/20\n185.199.108.0/22')" ] ||
+    fail "egress plan refused or altered a normal @github-meta response"
 
 # The snapshot: the applier and both lists copied out of the checkout, and a
 # later edit to the checkout changes nothing the snapshot applies.

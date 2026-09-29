@@ -218,7 +218,7 @@ refuses to dispatch from it by design.
 | Axis | What the agent devcontainer does |
 |---|---|
 | Identity | `AGENT_GH_TOKEN`, the agent's own fine-grained PAT on the bot account ([bot-account.md](bot-account.md)). post-create logs `gh` in from it; `GH_TOKEN` and its aliases are blanked. |
-| Harnesses | Claude Code (auto mode, bypass disabled, explicit allow/deny, no `ask`) and Codex (`workspace-write`, approval `never`). Every other installed harness is **refused**: `agent-autonomy.sh apply` makes its executable non-executable and `verify` fails if one is runnable again. |
+| Harnesses | Claude Code, through its managed allow/deny rules (auto mode, bypass disabled, no `ask`), and Codex, through its sandbox (`workspace-write`, never `danger-full-access`, approval `never`) with no command-level deny list. Every other installed harness is **refused**: `agent-autonomy.sh apply` makes its executable non-executable and `verify` fails if one is runnable again. |
 | Secrets | Only `AGENT_GH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, and (opt-in) the alternative-provider keys. No 1Password, no Tailscale, never `ANTHROPIC_API_KEY`. |
 | Network | Default-deny egress allowlist, enforced at every start from a root-owned snapshot taken at create. |
 | Docker | None by default (see the opt-in below). |
@@ -228,6 +228,31 @@ The single source of its harness policy is `.devcontainer/config/agent/`
 `harnesses.json`). Nothing else may carry a copy — `task test:agent-profile`
 fails if one appears. `agent-autonomy.sh` installs it over the image's managed
 settings at create and re-verifies it at every start.
+
+### Where the agent's boundaries are
+
+One first layer and two boundaries — only the boundaries are claimed as such:
+
+- **Command-level denies are a best-effort first layer** for a cooperating
+  harness. Claude Code's deny rules match the command it is about to run;
+  Codex has no command-level deny list at all, only its sandbox. The denies
+  are not transitive through repository code: the agent may run `task` and
+  make commits, so Taskfile targets and git hooks run outside them. Pattern
+  matching can also miss another spelling of the same flags, such as bundled
+  short flags. The `gh api` denies (method, input, and form-field flags) keep
+  a cooperating harness to reads; they are not a guarantee that `gh api` is
+  read-only.
+- **GitHub writes are bounded by the agent PAT's scopes plus the repository
+  rulesets.** The PAT has no administration, secrets, or workflow permission;
+  the rulesets refuse a direct or force push to `main`, and a merge needs
+  code-owner review. The PAT's `contents: write` does let it create releases
+  and push to any branch no ruleset protects — a fine-grained PAT cannot
+  separate releases from contents.
+- **The network is bounded by the egress filter** (below). Its residual is
+  root: the container user keeps passwordless `sudo`, so repository code run
+  with root can lift the filter; harmon-init#1432 tracks narrowing it.
+
+The ADR's Consequences state the same in full.
 
 ### Agent env-file: fail closed
 
@@ -251,9 +276,10 @@ plus the optional per-repo `.devcontainer/egress-allowlist.local.txt`, then
 installs a default-deny netfilter policy: loopback, replies, DNS to the
 configured resolvers, and the listed destinations pass; everything else is
 refused. It needs `--cap-add=NET_ADMIN`, and it fails the container start if
-the filter cannot be installed. The harnesses' deny rules cover `sudo`,
-`iptables`, `nft`, and `ipset`, so an agent cannot lift it through its own
-tools.
+the filter cannot be installed. Claude Code's deny rules cover `sudo`,
+`iptables`, `nft`, and `ipset`, so it cannot lift the filter through its own
+tools — the first layer above, not a boundary against repository code run
+with root.
 
 - **Applied from a root-owned snapshot.** post-create runs
   `egress-allowlist.sh snapshot`, which copies the applier and both lists out
@@ -261,9 +287,11 @@ tools.
   to writes), and applies from there; every start applies that snapshot and
   never the checkout. An edit to the checkout's lists — by an agent or anyone
   else — changes nothing until the operator re-snapshots it.
-- **No over-broad literals.** A list line that is `0.0.0.0` in any form, or a
+- **No over-broad entries.** A list line that is `0.0.0.0` in any form, or a
   CIDR wider than `/16`, fails `apply` closed with the file and line named.
-  IPv6 literals are not accepted; IPv6 egress is closed outright.
+  A range fetched through `@github-meta` is held to the same rule and fails
+  `apply` closed naming `@github-meta` and the range. IPv6 literals are not
+  accepted; IPv6 egress is closed outright.
 
 - **A refused host leaves evidence.** `bash .devcontainer/scripts/egress-allowlist.sh blocked`
   prints every destination refused since the container started (address, and

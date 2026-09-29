@@ -332,7 +332,9 @@ The security contract, by layer:
   "disable"`, `allowManagedPermissionRulesOnly`, an explicit dev-loop allow
   list, deny rules for merge/release/admin/secrets/workflows/force-push/pushes
   to `main`/`op`/`.env*`/the egress-tamper commands, and no `ask` rule) and
-  the agent Codex managed config (`workspace-write`, approval `never`).
+  the agent Codex managed config (`workspace-write`, never
+  `danger-full-access`, approval `never` — its sandbox is the criterion, and
+  it carries no command-level deny list).
   `.devcontainer/agent/agent-autonomy.sh apply` installs both at create and
   refuses every other harness; `verify` re-checks at every start.
   `scripts/test-agent-profile.sh` (in `task verify`) fails on a second copy,
@@ -348,16 +350,29 @@ The security contract, by layer:
   if it cannot. Post-create snapshots the applier and both lists into a
   root-owned directory, and every start applies that snapshot, never the
   writable checkout. A `0.0.0.0` entry or a CIDR wider than `/16` fails
-  closed. Refused destinations are recorded (`egress-allowlist.sh blocked`)
-  for the lane report.
-- **Docker — none by default.** Never the host socket; Docker-in-Docker only
-  through the documented per-repo opt-in (`HARMON_AGENT_DOCKER=dind`), which
-  the same egress filter still covers.
-- **Residuals.** The filter lives inside the container and needs
-  `NET_ADMIN`, and the container user keeps passwordless `sudo`: the harness
-  deny rules keep an agent from lifting it through its own tools, but it is
-  not a boundary against a deliberate agent that runs repository code
-  (Taskfile targets, git hooks) with root. Narrowing `sudo` is tracked in
+  closed, whether it is a list line or a range fetched through
+  `@github-meta`. Refused destinations are recorded
+  (`egress-allowlist.sh blocked`) for the lane report.
+- **Docker — non- **Residuals — where the boundaries are.** Command-level denies are a
+  best-effort first layer for a cooperating harness (Claude Code's rules;
+  Codex has none): they are not transitive through repository code —
+  Taskfile targets and git hooks, which the agent runs through `task` and
+  commits — and pattern matching can miss flag spellings such as bundled
+  short flags, so the `gh api` denies keep a cooperating harness to reads
+  without guaranteeing `gh api` is read-only. The boundary for **GitHub
+  writes** is the agent PAT's scopes (no administration, secrets, or
+  workflow) plus the repository rulesets (no direct or force push to `main`;
+  a merge needs code-owner review). The PAT's `contents: write` lets it
+  create releases and push non-protected branches — a fine-grained PAT cannot
+  separate releases from contents. The boundary for the **network** is the
+  egress filter; it lives inside the container and needs `NET_ADMIN`, and
+  the container user keeps passwordless `sudo`, so repository code run with
+  root can lift it. Narrowing `sudo` is tracked in
+  [#1432](https://github.com/evanharmon1/harmon-init/issues/1432). DNS to
+  the configured resolvers stays open. See the ADR's Consequences for the
+  full list.
+
+ is tracked in
   [#1432](https://github.com/evanharmon1/harmon-init/issues/1432). DNS to
   the configured resolvers stays open. See the ADR's Consequences for the
   full list.

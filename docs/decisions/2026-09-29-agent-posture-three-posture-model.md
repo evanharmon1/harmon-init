@@ -71,8 +71,19 @@ Mechanically:
    `allowManagedPermissionRulesOnly` keeps a repository's own settings from
    adding rules — including the `ask` rules a repository keeps for its
    interactive users, which would stall an unattended run.
-3. **Refusal, not neglect.** A harness that cannot express the deny list is
-   refused under the agent marker: its executable is made non-executable at
+3. **Refusal, not neglect.** A harness runs under the agent marker only
+   through a configuration that makes it agent-capable, and the criterion
+   differs per harness (the operator's Harnesses decision on #1408):
+   - **Claude Code** — its managed allow and deny rules
+     (`claude-managed-settings.json`): the explicit allow list, the deny
+     rules in the table, no `ask` rule, and managed rules only.
+   - **Codex** — its sandbox: `workspace-write`, never `danger-full-access`,
+     with approval `never` (`codex-managed-config.toml`). Codex carries **no
+     command-level deny list**; inside the sandbox it may run any command. For
+     Codex the GitHub-write boundary is therefore the agent PAT's scopes plus
+     the repository rulesets (see Consequences), never a rule.
+
+   Every other harness is refused: its executable is made non-executable at
    create, and a start fails if one is runnable again. Every
    `agent-registry.json` harness is classified supported, aliased, or refused.
    Refusal is a **launcher control, not a sandbox**: it stops an orchestrator
@@ -98,7 +109,9 @@ Mechanically:
    (`/usr/local/share/harmon-egress/`), and every start applies that
    snapshot, never the checkout — so a plain file edit cannot widen egress at
    the next start. A list line that is `0.0.0.0` in any form, or a CIDR wider
-   than `/16`, fails `apply` closed, naming the line.
+   than `/16`, fails `apply` closed, naming the line; so does such a range in
+   the `@github-meta` response, naming the source and the range, since a
+   fetched range becomes a rule unreviewed.
 6. **Foreman stays out.** Its D2 tripwire refuses to run anywhere the marker is
    not `bot`, so it refuses the agent posture by design. Making agent the
    Foreman dispatch default is #1264's call once this exists.
@@ -131,23 +144,40 @@ Mechanically:
 - "What may an unattended agent do" has one answer, and the tests make
   loosening it a visible failure: the agent allow list must stay inside bot's
   allow list and outside any bot deny rule.
-- **Residuals, stated plainly.** The egress filter lives inside the container
-  and needs `NET_ADMIN`; the container user keeps passwordless `sudo` (the
-  shared lifecycle scripts use it). So the filter — and the root-owned
-  snapshot it applies from — bounds what the harnesses reach **through their
-  own permission layers**, which deny `sudo` and the filter commands. It is
-  not a boundary against a deliberate agent that runs repository code with
-  root: those deny rules do not follow a command into a Taskfile target or a
-  git hook, and either can call `sudo`. Narrowing `sudo` is tracked in
-  [#1432](https://github.com/evanharmon1/harmon-init/issues/1432). DNS is
-  allowed to the configured resolvers, so DNS remains a narrow channel.
-  Addresses are resolved at start, so a CDN rotating addresses mid-run can
-  refuse a listed host until the next `apply`. `gh api` is read-only by rule:
-  the method, input, and every form-field flag (`-f`, `-F`, `--field`,
-  `--raw-field`) are denied in any position, which also denies GraphQL
-  queries sent through `-f query=` — REST is the documented read path. A bare
-  `git push` while on `main` is not expressible as a rule; the branch ruleset
-  and the no-commit-to-main hook bound it.
+- **Residuals, stated plainly: where the boundaries are.** The posture has
+  one first layer and two boundaries, and only the boundaries are claimed as
+  such.
+  - **Command-level denies are a best-effort first layer for a cooperating
+    harness.** Claude Code's deny rules (Codex has none — item 3) match the
+    command a harness is about to run. They are not transitive through
+    repository code: an agent allowed `task` and commits runs Taskfile
+    targets and git hooks, and no deny rule follows a command into either.
+    Pattern matching can also miss another spelling of the same flags —
+    bundled short flags, for one. The `gh api` denies are this layer: the
+    method, input, and every form-field flag (`-f`, `-F`, `--field`,
+    `--raw-field`) are denied in any position, which also denies GraphQL
+    queries sent through `-f query=` (REST is the documented read path). They
+    keep a cooperating harness to reads; they do not make `gh api` read-only.
+  - **The boundary for GitHub writes is the agent PAT's scopes plus the
+    repository rulesets.** The PAT has no administration, secrets, or workflow
+    permission, so no route reaches those. The rulesets refuse a direct or
+    force push to `main` for every actor, and a merge needs code-owner review.
+    A bare `git push` while on `main` is not expressible as a rule; the
+    ruleset and the no-commit-to-main hook bound it. Disclosed plainly: the
+    PAT's `contents: write` lets it create releases and push to any branch no
+    ruleset protects, by any route, because a fine-grained PAT cannot separate
+    releases from contents.
+  - **The boundary for the network is the egress filter**, with one residual.
+    The filter lives inside the container and needs `NET_ADMIN`; the container
+    user keeps passwordless `sudo` (the shared lifecycle scripts use it). So
+    the filter — and the root-owned snapshot it applies from — holds against a
+    harness's own tools, where Claude Code's deny rules cover `sudo` and the
+    filter commands, but not against repository code run with root: a Taskfile
+    target or git hook can call `sudo`. That root residual is tracked in
+    [#1432](https://github.com/evanharmon1/harmon-init/issues/1432). DNS is
+    allowed to the configured resolvers, so DNS remains a narrow channel.
+    Addresses are resolved at start, so a CDN rotating addresses mid-run can
+    refuse a listed host until the next `apply`.
 - The operator mints the agent PATs (one per owner, ≤180 days, on the bot
   account) and ratifies this record; an unattended agent-devcontainer lane
   returning its work to the orchestrator with no human step after launch is

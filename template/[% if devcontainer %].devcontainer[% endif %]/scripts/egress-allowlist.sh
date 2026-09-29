@@ -35,8 +35,10 @@ set -euo pipefail
 # relative to this script — so the snapshot copy reads the snapshot's lists.
 # Format is documented at the top of the shared list. A literal address may
 # not be 0.0.0.0 in any form, nor a CIDR wider than /16: either would turn one
-# list line into an allow-everything rule. IPv6 literals are not accepted at
-# all — v6 egress is closed outright (see apply).
+# list line into an allow-everything rule. The same refusal applies to every
+# range fetched through @github-meta, which becomes a rule unreviewed: an
+# over-broad one fails the plan (and so apply) rather than being skipped. IPv6
+# literals are not accepted at all — v6 egress is closed outright (see apply).
 #
 # Scope, stated plainly: this is enforcement INSIDE the container's network
 # namespace, which needs CAP_NET_ADMIN. It bounds what the agent harnesses
@@ -83,8 +85,23 @@ as_root() {
     fi
 }
 
+# overbroad <ipv4-entry> — print why the entry would allow far more than one
+# service (the unspecified address in any form, or a CIDR wider than
+# /MIN_PREFIX); print nothing when it is narrow enough to become a rule.
+overbroad() {
+    case "$1" in
+    0.0.0.0 | 0.0.0.0/*)
+        echo "is the unspecified address — refusing an entry that allows every destination"
+        ;;
+    */*)
+        [ "${1#*/}" -ge "$MIN_PREFIX" ] ||
+            echo "is wider than /${MIN_PREFIX} — refusing an over-broad CIDR"
+        ;;
+    esac
+}
+
 cmd_hosts() {
-    local file line entry lineno count=0
+    local file line entry lineno reason count=0
     [ -f "$SHARED_LIST" ] || fail "shared allowlist not found at ${SHARED_LIST}"
     for file in "$SHARED_LIST" "$LOCAL_LIST"; do
         [ -f "$file" ] || continue
@@ -95,15 +112,8 @@ cmd_hosts() {
             entry="$(printf '%s' "$entry" | tr -d '[:space:]')"
             [ -n "$entry" ] || continue
             if [[ "$entry" =~ $IPV4_RE ]]; then
-                case "$entry" in
-                0.0.0.0 | 0.0.0.0/*)
-                    fail "${file}:${lineno}: '${entry}' is the unspecified address — refusing an entry that allows every destination"
-                    ;;
-                */*)
-                    [ "${entry#*/}" -ge "$MIN_PREFIX" ] ||
-                        fail "${file}:${lineno}: '${entry}' is wider than /${MIN_PREFIX} — refusing an over-broad CIDR"
-                    ;;
-                esac
+                reason="$(overbroad "$entry")"
+                [ -z "$reason" ] || fail "${file}:${lineno}: '${entry}' ${reason}"
                 printf '%s\n' "$entry"
                 count=$((count + 1))
             elif [ "$entry" = "@github-meta" ] ||
@@ -140,9 +150,10 @@ github_meta_ranges() {
 
 # cmd_plan — the resolved allow set, one IPv4 address or CIDR per line. A host
 # that does not resolve is warned about and skipped (a dead host must not stop
-# the container); an empty result is fatal.
+# the container); an empty result is fatal, and so is an over-broad range in
+# the @github-meta response.
 cmd_plan() {
-    local entries entry addr resolved out=""
+    local entries entry addr resolved reason out=""
     entries="$(cmd_hosts)"
     while IFS= read -r entry; do
         if [ "$entry" = "@github-meta" ]; then
@@ -161,6 +172,12 @@ cmd_plan() {
         fi
         while IFS= read -r addr; do
             [[ "$addr" =~ $IPV4_RE ]] || continue
+            # A fetched meta range becomes a rule without review, so it is held
+            # to the same over-broad refusal as a literal list line.
+            if [ "$entry" = "@github-meta" ]; then
+                reason="$(overbroad "$addr")"
+                [ -z "$reason" ] || fail "@github-meta: '${addr}' (from ${GITHUB_META_URL}) ${reason}"
+            fi
             out="${out}${addr}"$'\n'
         done <<<"$resolved"
     done <<<"$entries"

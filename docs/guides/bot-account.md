@@ -171,8 +171,11 @@ authenticates with a **separate** fine-grained PAT on the same bot account —
 never the bot's own `GH_TOKEN`:
 
 - **Same permissions as the bot's PAT** (the table above), so it can push
-  feature branches, open draft PRs, comment, and label, and has no merge,
-  release, administration, secrets, or workflow permission.
+  feature branches, open draft PRs, comment, and label, and has no
+  administration, secrets, or workflow permission; the rulesets keep it from
+  merging or pushing to `main`. Its `contents: write` does let it create
+  releases and push to any branch no ruleset protects, because a fine-grained
+  PAT cannot separate those from contents.
 - **Expiry of 180 days at most** — shorter than the bot's — and its **own
   selected-repository list**, limited to the repositories that allow remote
   lanes. One per resource owner, for the same reason as above.
