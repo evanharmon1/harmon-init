@@ -105,12 +105,15 @@ Mechanically:
    and a failure to install it fails the container. "Fails closed" means
    exactly this: every path that is meant to establish the filter — `apply`,
    post-create's `establish` (snapshot, then apply the snapshot), and
-   post-start's apply of that snapshot — leaves the OUTPUT and FORWARD
-   policies DROP when it does not complete, whether it stopped at the
-   iptables install, a refused list, a failed rule, a failed verify, a
-   signal, or a missing snapshot. The one case it cannot cover is iptables
-   itself failing to install: there is then nothing to set DROP with, so the
-   step prints a CRITICAL line instead and fails. In every case the create or
+   post-start's apply of that snapshot — when it does not complete, whether
+   it stopped at the iptables install, a refused list, a failed rule, a
+   failed verify, a signal, or a missing snapshot, flushes the filter
+   chain's allow rules and sets the OUTPUT and FORWARD policies to DROP for
+   every address family the container has (IPv4 always, IPv6 when it has a
+   global address). It reports egress left at DROP only when every one of
+   those steps succeeded; otherwise — iptables itself failing to install, or
+   any DROP or flush step failing — the step prints a CRITICAL line instead
+   and fails. In every case the create or
    start fails, and **a container whose create or start failed must not be
    used**. The same filter hooks
    Docker's `DOCKER-USER` chain, so a Docker-in-Docker opt-in cannot route

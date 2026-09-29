@@ -31,8 +31,10 @@ set -euo pipefail
 #                           /16); apply and establish fail closed — any
 #                           failure, a failed iptables install or a refused
 #                           snapshot included, leaves the OUTPUT/FORWARD
-#                           policy DROP, and with no iptables at all says it
-#                           could not; the lifecycle snapshots it root-owned
+#                           policy DROP and flushes a previous filter's
+#                           allow rules, and claims DROP only when every
+#                           step for every address family succeeded (else
+#                           a CRITICAL line); the lifecycle snapshots it root-owned
 #                           at create, applies it first, and applies only
 #                           the snapshot at start, closing egress without it
 #                           when the snapshot is missing
@@ -660,6 +662,87 @@ fi
 grep -Fxq -- 'iptables -P OUTPUT DROP' "$ipt_log" && grep -Fxq -- 'iptables -P FORWARD DROP' "$ipt_log" ||
     fail "a failed iptables install left the OUTPUT/FORWARD policy open: $(cat "$apply_err")"
 
+# One fail-closed invariant, over a STATEFUL stub that keeps each family's
+# HARMON_EGRESS rules in a file (-N/-F/-A/-S act on it) and can be told to
+# fail its -P calls: a failure removes every allow rule a previous filter left
+# in the chain as well as setting DROP, and "left at DROP" is printed only
+# when every step for every family the container has succeeded — with a
+# global IPv6 address, an ip6tables policy failure is a failure.
+state_bin="${work_dir}/ipt-state-bin"
+state_dir="${work_dir}/ipt-state"
+mkdir -p "$state_bin"
+cat >"${state_bin}/iptables" <<EOF
+#!/bin/sh
+fam="\$(basename "\$0")"
+rules="${state_dir}/\${fam}.rules"
+echo "\${fam} \$*" >>"${ipt_log}"
+case "\$*" in
+"-P "*) [ ! -e "${state_dir}/\${fam}.policy-fails" ] || exit 1 ;;
+"-N HARMON_EGRESS") [ ! -e "\$rules" ] || exit 1; : >"\$rules" ;;
+"-F HARMON_EGRESS") [ -e "\$rules" ] || exit 1; : >"\$rules" ;;
+"-S HARMON_EGRESS") [ -e "\$rules" ] || exit 1; cat "\$rules" ;;
+"-A HARMON_EGRESS "*) [ -e "\$rules" ] || exit 1; echo "\$*" >>"\$rules" ;;
+-C*) exit 1 ;;
+esac
+exit 0
+EOF
+cp "${state_bin}/iptables" "${state_bin}/ip6tables"
+cp "${ipt_bin}/id" "${state_bin}/id"
+chmod +x "${state_bin}/iptables" "${state_bin}/ip6tables" "${state_bin}/id"
+v6_global="${work_dir}/if_inet6.global"
+v6_none="${work_dir}/if_inet6.none"
+printf '20010db8000000000000000000000001 02 40 00 00 eth0\n' >"$v6_global"
+printf '00000000000000000000000000000001 01 80 10 80 lo\n' >"$v6_none"
+# seed_filter — the state a previous successful apply leaves: both families'
+# chains present and holding ACCEPT rules.
+seed_filter() {
+    rm -rf "$state_dir"
+    mkdir -p "$state_dir"
+    printf '%s\n' '-A HARMON_EGRESS -o lo -j ACCEPT' '-A HARMON_EGRESS -d 198.51.100.0/24 -j ACCEPT' \
+        '-A HARMON_EGRESS -j REJECT --reject-with icmp-admin-prohibited' >"${state_dir}/iptables.rules"
+    printf '%s\n' '-A HARMON_EGRESS -o lo -j ACCEPT' '-A HARMON_EGRESS -j REJECT' >"${state_dir}/ip6tables.rules"
+    : >"$ipt_log"
+}
+# run_state_apply <if_inet6-fixture> — re-apply with a failing plan over the
+# seeded filter; the exit status is apply's.
+run_state_apply() {
+    PATH="${state_bin}:${PATH}" EGRESS_ALLOWLIST_SHARED="${work_dir}/broad-literal.txt" EGRESS_ALLOWLIST_LOCAL=/nonexistent \
+        EGRESS_RESOLVER="$stub_resolver" EGRESS_RESOLV_CONF="${work_dir}/resolv.conf" EGRESS_IF_INET6="$1" \
+        bash "$egress" apply >/dev/null 2>"$apply_err"
+}
+# (a) A failing re-apply over an existing filter leaves no allow rule behind.
+seed_filter
+if run_state_apply "$v6_global"; then
+    fail "egress re-apply succeeded on a failing plan over an existing filter"
+fi
+for fam in iptables ip6tables; do
+    grep -Fxq -- "${fam} -F HARMON_EGRESS" "$ipt_log" ||
+        fail "a failing egress re-apply did not flush the existing ${fam} HARMON_EGRESS chain: $(cat "$ipt_log")"
+    ! grep -q -- '-j ACCEPT' "${state_dir}/${fam}.rules" ||
+        fail "a failing egress re-apply left the previous ${fam} allow rules in place: $(cat "${state_dir}/${fam}.rules")"
+    grep -Fxq -- "${fam} -P OUTPUT DROP" "$ipt_log" && grep -Fxq -- "${fam} -P FORWARD DROP" "$ipt_log" ||
+        fail "a failing egress re-apply left the ${fam} OUTPUT/FORWARD policy open: $(cat "$apply_err")"
+done
+grep -Fq 'apply did not complete — egress policy left at DROP' "$apply_err" ||
+    fail "a failing egress re-apply whose every close step succeeded did not say egress was left at DROP: $(cat "$apply_err")"
+# (b) An ip6tables policy failure with global IPv6 is a failure to close:
+# CRITICAL, never the DROP claim. Without global IPv6 the same failure is the
+# best-effort v6 close apply itself tolerates, and the claim stands.
+seed_filter
+: >"${state_dir}/ip6tables.policy-fails"
+if run_state_apply "$v6_global"; then
+    fail "egress apply succeeded on a failing plan with a failing ip6tables"
+fi
+grep -Fq 'CRITICAL: could not close egress' "$apply_err" ||
+    fail "egress fail-closed with global IPv6 and a failing ip6tables policy did not print the CRITICAL line: $(cat "$apply_err")"
+! grep -Fq 'egress policy left at DROP' "$apply_err" ||
+    fail "egress fail-closed claimed DROP although the ip6tables policy failed with global IPv6 present"
+seed_filter
+: >"${state_dir}/ip6tables.policy-fails"
+run_state_apply "$v6_none" && fail "egress apply succeeded on a failing plan with no global IPv6"
+grep -Fq 'apply did not complete — egress policy left at DROP' "$apply_err" ||
+    fail "egress fail-closed with no global IPv6 did not claim DROP after closing IPv4: $(cat "$apply_err")"
+
 # The snapshot: the applier and both lists copied out of the checkout, and a
 # later edit to the checkout changes nothing the snapshot applies.
 # EGRESS_SNAPSHOT_DIR stands in for the root-owned directory.
@@ -751,6 +834,34 @@ if (cd "$work_dir" && PATH="${start_bin}:${ipt_bin}:${PATH}" bash "${work_dir}/p
 fi
 grep -Fxq -- 'iptables -P OUTPUT DROP' "$ipt_log" && grep -Fxq -- 'iptables -P FORWARD DROP' "$ipt_log" ||
     fail "the agent post-start left the OUTPUT/FORWARD policy open with no egress snapshot: $(cat "${work_dir}/post-start.log")"
+# (c) The post-start fallback follows the applier's rule: it flushes the
+# chain a previous start left, and claims DROP only when every step for every
+# family succeeded. /proc/net/if_inet6 moves to a fixture.
+sed -e "s|/usr/local/share/harmon-egress|${work_dir}/no-snapshot|g" \
+    -e "s|/tmp/devcontainer-post-start.log|${work_dir}/post-start.log|g" \
+    -e "s|/proc/net/if_inet6|${work_dir}/if_inet6.start|g" \
+    .devcontainer/agent/post-start.sh >"${work_dir}/post-start-state.sh"
+run_state_start() {
+    cp "$1" "${work_dir}/if_inet6.start"
+    (cd "$work_dir" && PATH="${start_bin}:${state_bin}:${PATH}" bash "${work_dir}/post-start-state.sh")
+}
+seed_filter
+run_state_start "$v6_global" && fail "the agent post-start succeeded with no egress snapshot over an existing filter"
+for fam in iptables ip6tables; do
+    ! grep -q -- '-j ACCEPT' "${state_dir}/${fam}.rules" ||
+        fail "the agent post-start fallback left the previous ${fam} allow rules in place: $(cat "${state_dir}/${fam}.rules")"
+    grep -Fxq -- "${fam} -P OUTPUT DROP" "$ipt_log" && grep -Fxq -- "${fam} -P FORWARD DROP" "$ipt_log" ||
+        fail "the agent post-start fallback left the ${fam} OUTPUT/FORWARD policy open: $(cat "${work_dir}/post-start.log")"
+done
+grep -Fq 'post-start: egress policy left at DROP' "${work_dir}/post-start.log" ||
+    fail "the agent post-start fallback did not say egress was left at DROP after closing every family: $(cat "${work_dir}/post-start.log")"
+seed_filter
+: >"${state_dir}/ip6tables.policy-fails"
+run_state_start "$v6_global" && fail "the agent post-start succeeded with no egress snapshot and a failing ip6tables"
+grep -Fq 'post-start: CRITICAL: could not close egress' "${work_dir}/post-start.log" ||
+    fail "the agent post-start fallback did not print the CRITICAL line when ip6tables failed with global IPv6: $(cat "${work_dir}/post-start.log")"
+! grep -Fq 'left at DROP' "${work_dir}/post-start.log" ||
+    fail "the agent post-start fallback claimed DROP although the ip6tables policy failed with global IPv6 present"
 ! grep -Ev '^[[:space:]]*#' .devcontainer/agent/post-start.sh | grep -q 'egress-allowlist\.txt\|\.devcontainer/scripts/egress-allowlist\.sh' ||
     fail "the agent post-start reads the checkout's egress applier or lists (only the root-owned snapshot may be applied at start)"
 jq -e '.runArgs | index("--cap-add=NET_ADMIN")' <<<"$agent_cfg" >/dev/null ||

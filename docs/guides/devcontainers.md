@@ -291,13 +291,17 @@ with root.
   else — changes nothing until the operator re-snapshots it.
 - **Fails closed — and where it cannot.** Every step meant to install the
   filter (`apply`, post-create's `establish`, and post-start's apply of the
-  snapshot) leaves the OUTPUT and FORWARD policies DROP when it does not
-  complete: a failed iptables install, a list the snapshot or the plan
-  refuses, a failed rule or verify, a signal, or a missing snapshot. The one
-  case it cannot cover is iptables failing to install at all — nothing is
-  left to set DROP with, so it prints a `CRITICAL: could not close egress`
-  line instead. Either way the create or start fails, and a container whose
-  create or start failed must not be used: rebuild it after fixing the cause.
+  snapshot), when it does not complete — a failed iptables install, a list
+  the snapshot or the plan refuses, a failed rule or verify, a signal, or a
+  missing snapshot — flushes the filter chain's allow rules, so a previous
+  allowlist does not outlive a failed re-apply, and sets the OUTPUT and
+  FORWARD policies to DROP, for every address family the container has
+  (IPv4 always, IPv6 when it has a global address). It says egress was left
+  at DROP only when every one of those steps succeeded; when one did not —
+  iptables failing to install at all, or a DROP or flush step failing — it
+  prints a `CRITICAL: could not close egress` line instead. Either way the
+  create or start fails, and a container whose create or start failed must
+  not be used: rebuild it after fixing the cause.
 - **No over-broad entries.** A list line that is `0.0.0.0` in any form, or a
   CIDR wider than `/16`, fails `apply` closed with the file and line named.
   A range fetched through `@github-meta` is held to the same rule and fails

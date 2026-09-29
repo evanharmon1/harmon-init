@@ -8,19 +8,38 @@ exec &>/tmp/devcontainer-post-start.log
 # Egress FIRST, on every start: the filter lives in the container's network
 # namespace, which a restart recreates empty. It applies from the root-owned
 # snapshot post-create wrote, never from the writable checkout, so an edit to
-# the checkout's lists or applier changes nothing here. The applier leaves
-# OUTPUT/FORWARD at DROP on any failure it reaches; the fallback below covers
-# the ones it cannot — the snapshot missing or unreadable, or a failure before
-# it runs as root — without relying on it. Either way the start fails, and a
-# container whose start failed must not be used.
+# the checkout's lists or applier changes nothing here. The applier closes
+# egress on any failure it reaches; the fallback below covers the ones it
+# cannot — the snapshot missing or unreadable, or a failure before it runs as
+# root — without relying on it, under the applier's own rule: for each
+# address family the container has (IPv4 always, IPv6 when it has a global
+# address), set OUTPUT/FORWARD to DROP and flush the filter chain if it
+# exists, and say "left at DROP" only if every one of those steps succeeded.
+# Either way the start fails, and a container whose start failed must not be
+# used.
+close_egress_family() {
+    local ipt="$1" ok=0
+    sudo -n "$ipt" -P OUTPUT DROP || ok=1
+    sudo -n "$ipt" -P FORWARD DROP || ok=1
+    if sudo -n "$ipt" -S HARMON_EGRESS >/dev/null 2>&1; then
+        sudo -n "$ipt" -F HARMON_EGRESS || ok=1
+    fi
+    return "$ok"
+}
 if ! bash /usr/local/share/harmon-egress/scripts/egress-allowlist.sh apply; then
     closed=1
-    sudo -n iptables -P OUTPUT DROP || closed=0
-    sudo -n iptables -P FORWARD DROP || closed=0
-    sudo -n ip6tables -P OUTPUT DROP 2>/dev/null || true
-    sudo -n ip6tables -P FORWARD DROP 2>/dev/null || true
-    [ "$closed" -eq 1 ] ||
-        echo "post-start: CRITICAL: could not close egress (no iptables, or no root) — do not use this container" >&2
+    close_egress_family iptables || closed=0
+    # The applier's has_global_ipv6 test: the 4th field is the scope; 00 is global.
+    if awk '$4 == "00" {found=1} END {exit found ? 0 : 1}' /proc/net/if_inet6 2>/dev/null; then
+        close_egress_family ip6tables || closed=0
+    else
+        close_egress_family ip6tables 2>/dev/null || true
+    fi
+    if [ "$closed" -eq 1 ]; then
+        echo "post-start: egress policy left at DROP" >&2
+    else
+        echo "post-start: CRITICAL: could not close egress (no iptables, no root, or a DROP or flush step failed) — do not use this container" >&2
+    fi
     echo "post-start: egress filter not installed — failing the start" >&2
     exit 1
 fi

@@ -15,14 +15,15 @@ this is the *procedure*.
 Two identities, deliberately:
 
 - **`evanharmon1-bot`** — the AI agent's identity inside
-  the bot devcontainer. Write access, no admin, cannot merge `main`.
+  the bot devcontainer. Write access, no admin; it cannot push to `main`, and
+  nothing merges into `main` without the operator's code-owner approval.
 - **`evanharmon1`** (you) — the operator. Full access,
   from the human `dev/` profile or the host.
 
-The split is what makes "an agent cannot merge to `main`" enforceable server-side
-rather than by convention. Anything running in the bot devcontainer can read this
-token out of the environment, so treat it as the agent's own credential and give
-it nothing you would not give the agent.
+The split is what makes "nothing reaches `main` without the operator's
+approval" enforceable server-side rather than by convention. Anything running
+in the bot devcontainer can read this token out of the environment, so treat it
+as the agent's own credential and give it nothing you would not give the agent.
 
 CI *workflows* are a **third** identity — they authenticate as the
 `evanharmon1-ci` GitHub App with short-lived tokens, not this PAT. Don't
@@ -159,9 +160,11 @@ rebuild the devcontainer so the env-file re-reads it. Nothing else references th
 value, which is the point of keeping it in exactly one place.
 
 A leaked bot PAT is bounded but not harmless: it can push branches and open PRs
-on the selected repos. It **cannot** merge `main`, edit workflows, or change repo
-settings. Revoke, re-issue, and check the repos' branch and PR lists for anything
-you did not create.
+on the selected repos. It **cannot** push to `main`, edit workflows, or change
+repo settings, and it can merge into `main` only a PR a human has already
+approved with green checks — merging stays the maintainer's decision. Revoke,
+re-issue, and check the repos' branch and PR lists for anything you did not
+create.
 
 ## The agent PAT (the agent posture's own token)
 
@@ -173,12 +176,13 @@ never the bot's own `GH_TOKEN`:
 - **Same permissions as the bot's PAT** (the table above), so it can push
   feature branches, open draft PRs, comment, and label, and has no
   administration, secrets, or workflow permission. The rulesets refuse a
-  direct or force push to `main`, and a merge to `main` needs code-owner
-  approval and green required checks — but they do not stop this PAT from
-  merging: once a human has approved and the checks pass, its
-  `pull_requests: write` can perform that merge. Its `contents: write` does
-  let it create releases and push to any branch no ruleset protects, because
-  a fine-grained PAT cannot separate those from contents.
+  direct or force push to `main` and require code-owner approval and green
+  required checks for a merge into it; as with the bot's PAT, once a human
+  has approved and the checks pass, its `pull_requests: write` can perform
+  that merge, and merging stays the maintainer's decision. Its
+  `contents: write` does let it create releases and push to any branch no
+  ruleset protects, because a fine-grained PAT cannot separate those from
+  contents.
 - **Expiry of 180 days at most** — shorter than the bot's — and its **own
   selected-repository list**, limited to the repositories that allow remote
   lanes. One per resource owner, for the same reason as above.
@@ -196,8 +200,12 @@ per-repo collaborator grants (#1407).
 
 ## What the bot cannot do — by construction
 
-- **Push to or merge `main`** — the ruleset blocks it for every actor, and
-  CODEOWNERS requires the operator's review.
+- **Push to `main`, or merge into it unapproved** — the rulesets refuse a
+  direct or force push to `main` for every actor, and require code-owner
+  approval (the operator's, per CODEOWNERS) and green required checks for a
+  merge. A PAT with `pull_requests: write` — this one or the agent's — can
+  perform a merge a human has already approved; merging stays the
+  maintainer's decision.
 - **Edit `.github/workflows/`** — no Workflows permission, so it cannot rewrite
   CI to run with Actions secrets.
 - **Change settings, rulesets, or bypass lists** — no Administration.

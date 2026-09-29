@@ -11,7 +11,8 @@ set -euo pipefail
 #                                  root (re-execs through `sudo -n`). Exits
 #                                  non-zero — failing the lifecycle step that
 #                                  called it — if enforcement cannot be
-#                                  installed, and then leaves the OUTPUT and
+#                                  installed, and then removes the filter's
+#                                  allow rules and leaves the OUTPUT and
 #                                  FORWARD policies DROP (fail_closed below).
 #                                  Idempotent; re-run it to pick up
 #                                  rotated CDN addresses. The agent lifecycle
@@ -29,12 +30,13 @@ set -euo pipefail
 #
 # "Fails closed" means: once running as root, every exit of apply or
 # establish short of a verified filter — a refused list, a failed iptables
-# install, a failed rule, a failed verify, a signal — sets the OUTPUT and
-# FORWARD policies to DROP and exits non-zero. The one exit it cannot close
-# is the one with no iptables at all (it could not be installed): there is
-# nothing to set DROP with, so it prints a CRITICAL line instead. Either way
-# the create or start that ran it fails, and a container whose create or
-# start failed must not be used.
+# install, a failed rule, a failed verify, a signal — flushes the chain's
+# allow rules, sets the OUTPUT and FORWARD policies to DROP for every address
+# family the container has, and exits non-zero. It says egress was left at
+# DROP only when every one of those steps succeeded; otherwise — no iptables
+# at all, or any step failing — it prints a CRITICAL do-not-use line instead.
+# Either way the create or start that ran it fails, and a container whose
+# create or start failed must not be used.
 #   egress-allowlist.sh verify   — fail unless the default-deny filter is in
 #                                  place (root; re-execs through `sudo -n`).
 #   egress-allowlist.sh blocked  — print every destination refused since the
@@ -65,6 +67,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SHARED_LIST="${EGRESS_ALLOWLIST_SHARED:-${SCRIPT_DIR}/../egress-allowlist.txt}"
 LOCAL_LIST="${EGRESS_ALLOWLIST_LOCAL:-${SCRIPT_DIR}/../egress-allowlist.local.txt}"
 RESOLV_CONF="${EGRESS_RESOLV_CONF:-/etc/resolv.conf}"
+IF_INET6="${EGRESS_IF_INET6:-/proc/net/if_inet6}"
 GITHUB_META_URL="https://api.github.com/meta"
 CHAIN=HARMON_EGRESS
 # xt_recent keeps the last 100 refused destination addresses in a
@@ -213,7 +216,7 @@ ensure_iptables() {
     # feature, which the agent posture omits. Install it while egress is
     # still open (this runs before the filter exists). fail_closed is
     # already armed: if the install fails part-way with iptables present it
-    # sets DROP, and with no iptables it prints the CRITICAL line.
+    # closes egress, and with no iptables it prints the CRITICAL line.
     echo "==> egress-allowlist: installing iptables..."
     DEBIAN_FRONTEND=noninteractive apt-get update -qq &&
         DEBIAN_FRONTEND=noninteractive apt-get install -y -qq --no-install-recommends iptables >/dev/null ||
@@ -222,7 +225,23 @@ ensure_iptables() {
 
 has_global_ipv6() {
     # /proc/net/if_inet6: the 4th field is the scope; 00 is global.
-    awk '$4 == "00" {found=1} END {exit found ? 0 : 1}' /proc/net/if_inet6 2>/dev/null
+    awk '$4 == "00" {found=1} END {exit found ? 0 : 1}' "$IF_INET6" 2>/dev/null
+}
+
+# close_family <iptables|ip6tables> — deny one address family's egress: set
+# the OUTPUT and FORWARD policies DROP, then flush the chain's rules if the
+# chain exists. The OUTPUT/FORWARD/DOCKER-USER jumps stay, so traffic reaches
+# the empty chain, falls through it, and meets the DROP policy — a previous
+# allowlist cannot outlive the failure. Every step is attempted; the status
+# is non-zero if any of them failed.
+close_family() {
+    local ipt="$1" ok=0
+    "$ipt" -P OUTPUT DROP || ok=1
+    "$ipt" -P FORWARD DROP || ok=1
+    if "$ipt" -S "$CHAIN" >/dev/null 2>&1; then
+        "$ipt" -F "$CHAIN" || ok=1
+    fi
+    return "$ok"
 }
 
 # fail_closed — the EXIT trap of apply and establish. It is armed as soon as
@@ -230,33 +249,33 @@ has_global_ipv6() {
 # and disarmed only once the filter is installed AND verified, so every other
 # exit — a failed iptables install, a plan or snapshot refusal (an over-broad
 # literal or @github-meta range, an invalid list, an empty resolved set), a
-# failed iptables call, a failed verify, a signal — leaves the OUTPUT and
-# FORWARD policies DROP: egress denied, never left open. The one exit it
-# cannot close is the one with no iptables binary (it could not be
-# installed): nothing can set DROP, so it says so on a CRITICAL line and the
-# container must not be used. Each step is attempted whatever the one before
-# it did, nothing here can abort before its message, and the exit status is
-# never 0.
+# failed iptables call, a failed verify, a signal — runs it.
+#
+# One invariant: it closes every address family the container has (IPv4
+# always; IPv6 when has_global_ipv6, the same test apply and verify use), and it
+# says "left at DROP" only if every step of that succeeded. Any other outcome
+# — no iptables at all, or any step failing — prints the CRITICAL do-not-use
+# line instead. IPv6 without a global address is closed best-effort, as apply
+# treats it. Nothing here can abort before its message, and the exit status
+# is never 0.
 fail_closed() {
     local rc=$? closed=1
     trap - EXIT
-    if command -v iptables >/dev/null 2>&1; then
-        iptables -P OUTPUT DROP || {
-            closed=0
-            echo "egress-allowlist: CRITICAL: could not set the OUTPUT policy to DROP" >&2
-        }
-        iptables -P FORWARD DROP || {
-            closed=0
-            echo "egress-allowlist: CRITICAL: could not set the FORWARD policy to DROP" >&2
-        }
-        ip6tables -P OUTPUT DROP 2>/dev/null || true
-        ip6tables -P FORWARD DROP 2>/dev/null || true
-    else
+    if ! command -v iptables >/dev/null 2>&1; then
         closed=0
-        echo "egress-allowlist: CRITICAL: could not close egress — iptables is not installed, so nothing can set the policy to DROP; do not use this container" >&2
+        echo "egress-allowlist: iptables is not installed, so nothing can set the policy to DROP" >&2
+    else
+        close_family iptables || closed=0
+        if has_global_ipv6; then
+            close_family ip6tables || closed=0
+        else
+            close_family ip6tables 2>/dev/null || true
+        fi
     fi
     if [ "$closed" -eq 1 ]; then
         echo "egress-allowlist: ${STEP} did not complete — egress policy left at DROP" >&2
+    else
+        echo "egress-allowlist: CRITICAL: could not close egress — ${STEP} did not complete and egress could not be confirmed closed; do not use this container" >&2
     fi
     [ "$rc" -ne 0 ] || rc=1
     exit "$rc"
