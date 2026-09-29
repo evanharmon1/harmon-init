@@ -891,8 +891,11 @@ if r.returncode != 1 or "unknown tier" not in r.stderr or "WARNING" not in r.std
 # report a successful setup having installed nothing — and a truncated script has
 # already run as root. The recipe therefore downloads to a file and runs it only
 # on a successful download, which is a property of its SHAPE and so is checked
-# here rather than remembered. Both copies are checked: they are copies of each
-# other and one can be fixed alone.
+# here rather than remembered. Every copy is checked: they are copies of each
+# other and one can be fixed alone. The third copy is the Claude Code on the web
+# guide's setup script — the text a person pastes into the platform — which the
+# guide says is the entrypoint "unchanged"; that claim is held below, not
+# trusted.
 #
 # Comment markers are stripped and backslash continuations joined first, so the
 # recipe is read as the one command it is — the pipe lives on a continuation
@@ -915,7 +918,12 @@ def recipe_commands(text):
     return [c for c in joined if RECIPE_URL.search(c)]
 
 
-for label, text in ((BOOTSTRAP, bootstrap_text), (DOC, doc_text)):
+GUIDE = pathlib.Path("docs/guides/claude-code-web.md")
+if not GUIDE.exists():
+    fail(f"{GUIDE} is missing, so its copy of the standalone recipe cannot be checked — move this check with it")
+guide_text = GUIDE.read_text() if GUIDE.exists() else ""
+
+for label, text in ((BOOTSTRAP, bootstrap_text), (DOC, doc_text), (GUIDE, guide_text)):
     commands = recipe_commands(text)
     if not commands:
         fail(
@@ -956,6 +964,81 @@ for label, text in ((BOOTSTRAP, bootstrap_text), (DOC, doc_text)):
                 f"{label}: the documented standalone recipe does not state the temporary directory's mode "
                 f"(`chmod 0700`), so its privacy rests on mktemp's default rather than on the recipe: {shown!r}"
             )
+
+# The shape checks above prove each copy SAFE; they do not prove the guide's copy
+# is the SAME recipe — a guide that added an install line, dropped `--ref`, or
+# pinned a different variable would still pass them. So the guide's fenced block
+# must equal the architecture document's, line for line. Two differences are
+# allowed, and both are spelled out here rather than tolerated by a looser match:
+# a single `#!/bin/bash` as the first line, because the platform's setup-script
+# field is a script file of its own; and the HARMON_INIT_REF= value (below).
+# Anything else — a second leading line, a different interpreter, an edit
+# anywhere inside — fails.
+GUIDE_SHEBANG = "#!/bin/bash"
+
+
+def recipe_blocks(text):
+    blocks, current = [], None
+    for line in text.splitlines():
+        if re.match(r"^\s*```", line):
+            if current is None:
+                current = []
+            else:
+                blocks.append(current)
+                current = None
+        elif current is not None:
+            current.append(line)
+    return [b for b in blocks if RECIPE_URL.search("\n".join(b))]
+
+
+doc_recipes, guide_recipes = recipe_blocks(doc_text), recipe_blocks(guide_text)
+if len(doc_recipes) != 1:
+    fail(f"{DOC}: expected exactly one fenced standalone recipe to compare the guide against, found {len(doc_recipes)}")
+if len(guide_recipes) != 1:
+    fail(f"{GUIDE}: expected exactly one fenced setup-script recipe, found {len(guide_recipes)}")
+# The one value the two copies may legitimately disagree on is the tag. The
+# architecture document keeps the placeholder, while the guide tells its reader to
+# pin the first release that carries the bootstrap — so the HARMON_INIT_REF= value
+# is compared as a slot, and the guide's value must be the placeholder or a
+# concrete release tag (never a branch such as main).
+REF_LINE = re.compile(r"^(\s*HARMON_INIT_REF=)(\S+)(.*)$")
+GUIDE_REF_OK = re.compile(r"^(vX\.Y\.Z|v[0-9]+\.[0-9]+\.[0-9]+)$")
+
+
+def ref_slot(block):
+    out, values = [], []
+    for line in block:
+        m = REF_LINE.match(line)
+        if m:
+            values.append(m.group(2))
+            line = f"{m.group(1)}<tag>{m.group(3)}"
+        out.append(line)
+    return out, values
+
+
+if len(doc_recipes) == 1 and len(guide_recipes) == 1:
+    guide_body = guide_recipes[0]
+    if guide_body[:1] == [GUIDE_SHEBANG]:
+        guide_body = guide_body[1:]
+    guide_body, guide_refs = ref_slot(guide_body)
+    doc_body, doc_refs = ref_slot(doc_recipes[0])
+    for value in doc_refs:
+        if value != "vX.Y.Z":
+            fail(f"{DOC}: HARMON_INIT_REF={value!r} must stay the generic placeholder vX.Y.Z; only the guide pins a release tag")
+    for value in guide_refs:
+        if not GUIDE_REF_OK.match(value):
+            fail(f"{GUIDE}: HARMON_INIT_REF={value!r} must be the placeholder vX.Y.Z or a release tag vMAJOR.MINOR.PATCH")
+    if guide_body != doc_body:
+        first = next(
+            (i for i, (g, d) in enumerate(zip(guide_body, doc_body)) if g != d),
+            min(len(guide_body), len(doc_body)),
+        )
+        got = guide_body[first] if first < len(guide_body) else "<end of block>"
+        want = doc_body[first] if first < len(doc_body) else "<end of block>"
+        fail(
+            f"{GUIDE}: the setup-script recipe is not the architecture document's recipe (only a leading "
+            f"{GUIDE_SHEBANG!r} may differ). First difference at recipe line {first + 1}: {got!r}, expected {want!r}"
+        )
 
 # ── 15. the manifest is what the tiers installed, under the image's keys ────
 # The VM manifest is serialised from the run record, which the lib.sh helpers
@@ -2202,7 +2285,7 @@ print(f"bootstrap-remote OK: all {len(reached)} host(s) the tiers reach are on t
 print("bootstrap-remote OK: a non-release-tag ref is refused; the override warns and names it")
 print(f"bootstrap-remote OK: the default tiers record {len(recorded_by_default)} pin(s) for the manifest, under the image's keys")
 print("bootstrap-remote OK: the manifest revision names the assets actually run — the checkout's HEAD only when the checkout supplied them")
-print("bootstrap-remote OK: the documented standalone recipe downloads to a file and is never a bare pipe into a shell, in both copies")
+print("bootstrap-remote OK: the documented standalone recipe downloads to a file and is never a bare pipe into a shell, in all three copies")
 print("bootstrap-remote OK: a block publishing several executables re-runs unless every one of them is present at the pin")
 print("bootstrap-remote OK: markdownlint-cli2 resolves to a PATH binary at the pin, node_modules/.bin first, npx only as the fallback")
 print("bootstrap-remote OK: an unsafe HARMON_PREFIX is refused before anything runs, and the drop-in quotes the prefix it renders")
