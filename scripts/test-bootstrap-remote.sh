@@ -2297,7 +2297,7 @@ print(f"bootstrap-remote OK: all {len(reached)} host(s) the tiers reach are on t
 print("bootstrap-remote OK: a non-release-tag ref is refused; the override warns and names it")
 print(f"bootstrap-remote OK: the default tiers record {len(recorded_by_default)} pin(s) for the manifest, under the image's keys")
 print("bootstrap-remote OK: the manifest revision names the assets actually run — the checkout's HEAD only when the checkout supplied them")
-print("bootstrap-remote OK: the documented standalone recipe downloads to a file and is never a bare pipe into a shell, in all three copies")
+print("bootstrap-remote OK: the documented standalone recipe downloads to a file and is never a bare pipe into a shell, in every copy")
 print("bootstrap-remote OK: a block publishing several executables re-runs unless every one of them is present at the pin")
 print("bootstrap-remote OK: markdownlint-cli2 resolves to a PATH binary at the pin, node_modules/.bin first, npx only as the fallback")
 print("bootstrap-remote OK: an unsafe HARMON_PREFIX is refused before anything runs, and the drop-in quotes the prefix it renders")

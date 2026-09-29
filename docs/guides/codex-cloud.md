@@ -221,13 +221,19 @@ The policy, in order of precedence:
    2026-09-29*), which is what makes *none* the right number for the gate: the
    agent phase could not use one anyway. The current generation's network
    secrets are different — a proxy substitutes them on HTTPS requests during
-   tasks (*docs (current), 2026-09-29*) — and none is needed for the gate; add one
-   only for a documented reason and record it in the table above.
+   tasks (*docs (current), 2026-09-29*) — and none is needed for the gate. The
+   environment holds none, and adding a network secret is a change to the agent
+   posture: it needs a decision recorded on
+   [#1408](https://github.com/evanharmon1/harmon-init/issues/1408) first, with its
+   scope stated, before it is added and recorded in the table above.
 3. **GitHub access is whatever the Codex connector grants**, and nothing is
    configured here. Its comments arrive under the connector's bot identity
-   (`chatgpt-codex-connector[bot]`, observed 2026-09-27). A Codex cloud task
-   cannot open a pull request without a human click (the decision recorded in
-   #750 on 2026-09-27); the orchestrator pushes the branch and owns the PR.
+   (`chatgpt-codex-connector[bot]`, observed 2026-09-27). The lane is used on
+   the basis that a Codex cloud task does not open a pull request: the
+   orchestrator pushes the branch and owns the PR. That is a **decision recorded
+   in #750 on 2026-09-27** about how the lane is used, not an observation of what
+   the connector's write permissions allow. What they allow is *expected, not yet
+   observed*, and is a row in [Pending observations](#pending-observations).
 4. **No Codex login is ever needed *inside* the task.** Ephemeral clouds never
    hold a Codex login (#1408 decision 4, 2026-09-27); here the platform *is* the
    login. The local `codex` client that submits and applies tasks uses the
@@ -236,27 +242,28 @@ The policy, in order of precedence:
 
 ## What starts a Codex cloud task
 
-**Any Codex mention — the at-sign followed by the word `codex` — in an issue or
-pull request comment or body starts a Codex cloud task in the repository's
-legacy environment, unless the mention is a request for a review, which starts a
-cloud review.** Both then run in the environment above.
+**Whatever the platform does with a Codex mention — the at-sign followed by the
+word `codex` — an agent writing GitHub text never writes the literal mention,
+in a comment or a body, on an issue or a pull request, unless it means to start
+a Codex cloud task or review.** That is a precaution, and it holds whether or not
+every row below is confirmed. A task or review it starts runs in the environment
+above.
 
-What each source says, without making the guide something a mention could match:
+What each surface is documented or observed to do, and what is only expected,
+without making the guide something a mention could match:
 
 | Where | What is known | Status |
 | --- | --- | --- |
 | A pull request comment | a mention with anything other than a review request "starts a legacy cloud chat using your pull request as context"; with a review request it runs a code review (*docs (GitHub), 2026-09-29*) | docs |
 | An **issue** comment | mentions in comments on issues #1402 and #1406 started tasks, and the connector replied with a task link (observed 2026-09-27) | observed 2026-09-27. The docs read describe only pull requests |
-| An issue or pull request **body** | the docs read say nothing. #750 records that a mention there also starts a task | expected, not yet observed. Treat as true |
-| A quoted, fenced or code-spanned mention | the docs read say nothing about whether the connector ignores it | unknown. Treat every occurrence as live |
+| An issue or pull request **body** | the docs read say nothing. #750 records that a mention there also starts a task | expected, not yet observed. The precaution above does not depend on it |
+| A quoted, fenced or code-spanned mention | the docs read say nothing about whether the connector ignores it | unknown. The precaution above covers every occurrence |
 
-The rule for whoever writes GitHub text, agents included: **never write the
-literal mention in an issue or pull request body or comment, nor in a commit
-message, unless a Codex cloud task or review is what you mean to start.** Say
-"the at-sign followed by `codex`", or "a Codex mention", in words. It costs a
-task, and the reviewer's usage limit (the reviewer answered with a usage-limit
-notice on 2026-09-29), for an accident. The one deliberate use — the integration
-stage's review request on a draft PR — is specified in
+The rule costs nothing to follow: say "the at-sign followed by `codex`", or "a
+Codex mention", in words, and never write the literal mention in a commit message
+either. An accident costs a task, and the reviewer's usage limit (the reviewer
+answered with a usage-limit notice on 2026-09-29). The one deliberate use — the
+integration stage's review request on a draft PR — is specified in
 [codex-review.md](codex-review.md) and `AGENTS.md`; this guide does not restate
 its wording for the same reason.
 
@@ -278,6 +285,10 @@ Two roles, decided on 2026-09-27
   ([harmon-devkit#1215](https://github.com/evanharmon1/harmon-devkit/issues/1215));
   this guide makes the *environment* able to run the gate for those tasks. A lane
   therefore completes its **role**, not the PR, as on the other remote platforms.
+  The lane is **conditional on the posture decision** the Permissions row below
+  says is owed on [#1408](https://github.com/evanharmon1/harmon-init/issues/1408):
+  the guide provisions the environment, and does not by itself authorize sending
+  the lane work.
 
 ### The agent posture, as far as Codex cloud can express it
 
@@ -293,7 +304,7 @@ to here:
 | Network | the agent-phase level and, under **On**, an allowlist and a method limit | docs (legacy), 2026-09-29. The list is per environment |
 | Identity | the connector's bot; no token of ours | observed 2026-09-27 |
 | Permissions | **cannot be expressed** as the deny list: no page read gives an environment a permission or approval configuration. Whether a checked-in `~/.codex` configuration is honoured in the cloud is unknown | expected, not yet observed. A harness that cannot express the deny list is refused in the agent profile (#1408), so this needs the decision recorded there, not improvised here |
-| Sandbox mode | the cloud's own isolated workspace per task; not the CLI's `workspace-write` | docs (current), 2026-09-29 |
+| Sandbox mode | **current generation:** "each new task gets its own isolated workspace from the published environment" (*docs (current), 2026-09-29*). **Legacy:** the page says only that Codex "creates a container and checks out your repo" for a chat (*docs (legacy), 2026-09-29*) and states no isolation property. Reviews and mention-started tasks run in the legacy environment, so its isolation, and that it is not the CLI's `workspace-write`, are expected, not yet observed | docs (current), 2026-09-29; legacy: expected, not yet observed |
 | Docker | not needed by the gate; the bootstrap does not install it | [architecture](../architecture/remote-environments.md#tiers). Whether the cloud image has one is unknown |
 
 ## Bridges between the terminal and Codex cloud
@@ -397,6 +408,7 @@ answer from the docs. Each result goes in the section named, with the date and t
 | — | Whether setup runs as root or with `sudo`; whether a failing setup script fails the task; the base image and whether it puts anything ahead of `/usr/local/bin` | [Setup script](#setup-script) |
 | — | Whether the agent's shell reads the bootstrap's `/etc/profile.d` drop-in and resolves `task` and `yq` from `/usr/local/bin` | [Environment variables](#environment-variables) |
 | — | Whether an issue or pull request body mention starts a task; whether a quoted mention does | [What starts a Codex cloud task](#what-starts-a-codex-cloud-task) |
+| — | What the connector's write permissions on the repository allow, in particular whether a task can push a branch or open a pull request, since the implementer lane assumes it does not | [Identity and secrets](#identity-and-secrets) |
 | — | Whether a checked-in Codex configuration is honoured in the cloud, for the agent posture | [The agent posture](#the-agent-posture-as-far-as-codex-cloud-can-express-it) |
 | — | Whether the reviewer's usage limit (reached on 2026-09-29) has reset, which can block criteria 3 and 4 | [Pending observations](#pending-observations) |
 
