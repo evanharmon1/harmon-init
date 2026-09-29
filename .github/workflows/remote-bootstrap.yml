@@ -1,0 +1,286 @@
+name: Remote bootstrap
+run-name: ${{ github.actor }} is proving the remote bootstrap on a stock Ubuntu VM
+
+# ROOT-ONLY. Generated repositories call the bootstrap at a pinned harmon-init
+# release tag but never prove it; images/devcontainer/ has no template twin, so
+# there is nothing to render.
+#
+# One job, one kind of proof:
+#   bootstrap — the BEHAVIOUR, which no metadata check can reach: the scripts
+#               really do install a working toolchain on a stock ubuntu:24.04
+#               VM, a second run performs no new installs and changes no
+#               pinned version (apt upgrades are reported, not hidden), the
+#               pinned mikefarah yq beats a pre-provisioned Python yq by PATH
+#               order in the system profile, a user-level shadow is reported
+#               and not fatal, root never writes under a sudo caller's home
+#               and never executes that caller's ~/.profile — on the re-exec
+#               entry AND the already-root `sudo -E` entry, which arrives
+#               with the caller's HOME preserved — a pre-existing LC_ALL=C
+#               does not survive, and the default tiers fit the platform's
+#               roughly five-minute cached-setup budget.
+#
+# The pin CONTRACT is not proved here. `task test:bootstrap-remote` runs
+# unconditionally in build.yml's lint job, which has no path filter, so it sees
+# every PR — including one that edits only an input this workflow's filter does
+# not name. This workflow proves behaviour only, and the path filter below is
+# correct for that: a documentation edit cannot change what the scripts install
+# on a real container.
+on:
+  # The two path lists are spelled out twice rather than shared through a YAML
+  # anchor: GitHub's workflow parser does not support anchors, so an anchor
+  # here would be a parse error at dispatch time rather than a lint failure.
+  pull_request:
+    paths:
+      - "images/devcontainer/**"
+      - "scripts/**"
+      - "Taskfile.yml"
+      - "renovate.json"
+      - ".github/workflows/remote-bootstrap.yml"
+  push:
+    branches: [main]
+    paths:
+      - "images/devcontainer/**"
+      - "scripts/**"
+      - "Taskfile.yml"
+      - "renovate.json"
+      - ".github/workflows/remote-bootstrap.yml"
+
+concurrency:
+  group: >-
+    remote-bootstrap-${{
+      github.event_name == 'pull_request' && github.event.pull_request.number || 'main'
+    }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  bootstrap:
+    # A fork PR gets no repository-controlled container run, for the same
+    # reason publish-harmon-devcontainer.yml declines to build fork
+    # Dockerfiles: this job executes checked-out shell as root.
+    if: >-
+      github.event_name == 'push' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
+    timeout-minutes: 45
+    container:
+      # STOCK Ubuntu 24.04, deliberately: the point is to prove the bootstrap
+      # needs nothing the platform did not already give it. Pinned by digest,
+      # because a floating `24.04` would let "stock" change underneath the
+      # proof.
+      #
+      # The job therefore runs on whatever architecture the runner is. On
+      # GitHub-hosted runners that is amd64; point `vars.CI_RUNS_ON` at arm64
+      # hardware and the same job proves arm64 with no other change. Until
+      # such a runner exists the arm64 download paths are checksum-verified
+      # but not executed, which docs/architecture/remote-environments.md says
+      # outright rather than leaving to be assumed.
+      image: ubuntu:24.04@sha256:a08e551cb33850e4740772b38217fc1796a66da2506d312abe51acda354ff061
+      options: --user root
+    env:
+      # The core+agents budget the platform's cached setup has to fit
+      # (roughly five minutes on Claude Code on the web). Measured on a
+      # GitHub-hosted runner, which is NOT the same machine as the remote VM —
+      # #1407's HUMAN item proves the VM.
+      BOOTSTRAP_BUDGET_SECONDS: "300"
+    steps:
+      - name: Seed the pre-provisioned VM this bootstrap actually meets
+        # The observed Claude Code on the web VM (2026-09-27) is not bare: it
+        # ships curl, git, sudo — and two traps where everything exits 0 and
+        # the answers are quietly wrong. `/usr/bin/yq` is the PYTHON yq, which
+        # shadows mikefarah yq v4 and makes every frontmatter read as invalid;
+        # the locale is POSIX, which stops NBSP reading as whitespace. Seeding
+        # them here is what makes the assertions below mean something — and
+        # the harder shapes of both are seeded too: /usr/local/bin present on
+        # PATH but BEHIND /usr/bin (membership without precedence), and
+        # LC_ALL=C both in the environment and in /etc/environment, which a
+        # `${LC_ALL:-C.UTF-8}` default would have preserved.
+        run: |
+          apt-get update
+          apt-get install -y --no-install-recommends ca-certificates curl git sudo yq
+          echo "LC_ALL=C" >> /etc/environment
+          echo "seeded yq: $(command -v yq)"
+          echo "seeded LANG: ${LANG:-<unset>}"
+          echo "seeded /etc/environment:"; cat /etc/environment
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # `task check` runs scripts/test-tool-pin-pairs.sh, whose drift check
+          # fails closed on a pull request with no merge-base.
+          fetch-depth: 0
+      - name: Run the bootstrap (core + agents) and time it
+        # Under the seeded traps: /usr/bin ahead of /usr/local/bin, LC_ALL=C.
+        run: |
+          start=$(date +%s)
+          env PATH=/usr/bin:/bin:/usr/local/bin LC_ALL=C \
+            ./images/devcontainer/bootstrap-remote.sh | tee /tmp/bootstrap-first.log
+          elapsed=$(( $(date +%s) - start ))
+          {
+            echo "### Remote bootstrap"
+            echo
+            echo "| Measurement | Value |"
+            echo "| --- | --- |"
+            echo "| architecture | \`$(uname -m)\` |"
+            echo "| core + agents tiers | **${elapsed}s** (budget ${BOOTSTRAP_BUDGET_SECONDS}s) |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$elapsed" -gt "$BOOTSTRAP_BUDGET_SECONDS" ]; then
+            echo "::error::core+agents took ${elapsed}s, over the ${BOOTSTRAP_BUDGET_SECONDS}s budget"
+            exit 1
+          fi
+          cp /usr/local/share/harmon-remote-env/manifest.json /tmp/manifest-first.json
+      - name: Run it again and prove the second run performs no new installs and changes no pinned version
+        # "Exited 0 again" is not idempotence: a script that re-downloaded and
+        # re-installed everything also exits 0. The bootstrap counts its own
+        # install sites (every download, npm/uv install, corepack shim, newly
+        # installed apt package and manifest write) separately from the apt
+        # upgrades it lets through — the apt packages are unpinned and converge
+        # on the archive by design — so the claim is two assertions: zero new
+        # installs, and a byte-identical manifest (no pinned version moved).
+        run: |
+          env PATH=/usr/bin:/bin:/usr/local/bin LC_ALL=C \
+            ./images/devcontainer/bootstrap-remote.sh | tee /tmp/bootstrap-second.log
+          installs=$(sed -n 's/^HARMON_BOOTSTRAP_NEW_INSTALLS=//p' /tmp/bootstrap-second.log | tail -1)
+          upgrades=$(sed -n 's/^HARMON_BOOTSTRAP_UPGRADES=//p' /tmp/bootstrap-second.log | tail -1)
+          echo "| second run | ${installs} new install(s), ${upgrades} apt upgrade(s) |" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${installs:-unset}" != "0" ]; then
+            echo "::error::the second run performed ${installs:-unknown} new install(s); the bootstrap is not idempotent"
+            sed -n '/^==> /p' /tmp/bootstrap-second.log
+            exit 1
+          fi
+          cmp /tmp/manifest-first.json /usr/local/share/harmon-remote-env/manifest.json ||
+            { echo "::error::the second run changed a pinned version (the manifest differs)"; exit 1; }
+      - name: Prove a user-level PATH shadow is reported, not fatal, and root stays out of the caller's home and profile
+        # The negative case for PATH precedence. bash reads ~/.profile AFTER
+        # /etc/profile, and Ubuntu's stock /etc/skel/.profile puts ~/.local/bin
+        # ahead of everything, so a yq planted there shadows the pinned one in
+        # that user's login shells and no system drop-in can prevent it. The
+        # bootstrap owns the system profile and its own process; for the user's
+        # profile it owes a warning naming the shadow and the remedy, and exit
+        # 0. Run un-sudoed as that user so the sudo re-exec path is the one
+        # exercised: root must come back with HOME=/root and leave nothing of
+        # its own under /home/shadowed.
+        #
+        # The shadow check reads that user's login shell, which executes
+        # ~/.profile — so it has to run AS that user, never as root with the
+        # user's HOME. The planted ~/.profile tries to create a file only root
+        # can create; it must not exist afterwards.
+        run: |
+          useradd -m -s /bin/bash shadowed
+          echo 'shadowed ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/shadowed
+          chmod 0440 /etc/sudoers.d/shadowed
+          install -d /home/shadowed/.local/bin
+          printf '#!/bin/sh\necho "a stand-in for the Python yq"\n' > /home/shadowed/.local/bin/yq
+          chmod 0755 /home/shadowed/.local/bin/yq
+          echo 'touch /root/PROFILE-RAN-AS-ROOT 2>/dev/null || true' >> /home/shadowed/.profile
+          chown -R shadowed:shadowed /home/shadowed
+          find /home/shadowed -mindepth 1 | sort > /tmp/shadowed-before.txt
+          runuser -u shadowed -- env PATH=/usr/bin:/bin:/usr/local/bin LC_ALL=C \
+            ./images/devcontainer/bootstrap-remote.sh 2>&1 | tee /tmp/bootstrap-shadow.log
+          grep -q "WARNING: shadowed's login shell resolves yq to '/home/shadowed/.local/bin/yq'" /tmp/bootstrap-shadow.log
+          grep -q "HARMON_BOOTSTRAP_NEW_INSTALLS=0" /tmp/bootstrap-shadow.log
+          test ! -e /root/PROFILE-RAN-AS-ROOT
+          find /home/shadowed -mindepth 1 | sort > /tmp/shadowed-after.txt
+          diff /tmp/shadowed-before.txt /tmp/shadowed-after.txt
+          test -z "$(find /home/shadowed ! -user shadowed)"
+      - name: Prove the already-root entry (sudo -E) stays out of the caller's home and profile too
+        # The re-exec above is one entry path of three. `sudo -E` arrives
+        # ALREADY root with the caller's HOME preserved (asserted first, so the
+        # trap is proved armed rather than assumed), and the piped
+        # `sudo bash -s` form arrives the same way; the bootstrap sets HOME to
+        # the running uid's passwd home on every path before a tier runs, and
+        # this is the proof for the path the re-exec never sees. Same user,
+        # same planted shadow and marker profile, same three assertions.
+        run: |
+          entry_uid="$(runuser -u shadowed -- sudo -E id -u)"
+          entry_home="$(runuser -u shadowed -- sudo -E env | sed -n 's/^HOME=//p')"
+          echo "sudo -E enters as uid ${entry_uid} with HOME=${entry_home}"
+          test "${entry_uid} ${entry_home}" = "0 /home/shadowed"
+          find /home/shadowed -mindepth 1 | sort > /tmp/shadowed-before-sudo-e.txt
+          runuser -u shadowed -- sudo -E env PATH=/usr/bin:/bin:/usr/local/bin LC_ALL=C \
+            ./images/devcontainer/bootstrap-remote.sh 2>&1 | tee /tmp/bootstrap-sudo-e.log
+          grep -q "WARNING: shadowed's login shell resolves yq to '/home/shadowed/.local/bin/yq'" /tmp/bootstrap-sudo-e.log
+          grep -q "HARMON_BOOTSTRAP_NEW_INSTALLS=0" /tmp/bootstrap-sudo-e.log
+          test ! -e /root/PROFILE-RAN-AS-ROOT
+          find /home/shadowed -mindepth 1 | sort > /tmp/shadowed-after-sudo-e.txt
+          diff /tmp/shadowed-before-sudo-e.txt /tmp/shadowed-after-sudo-e.txt
+          test -z "$(find /home/shadowed ! -user shadowed)"
+      - name: Prove the opt-in browsers tier performs no new installs on a second run either
+        # Deliberately outside the budget assertion above: Chromium is larger
+        # than the rest of the toolchain put together, which is why the tier is
+        # opt-in in the first place. But "a second run performs no new installs"
+        # is claimed for EVERY tier, and the default-tier check above cannot see
+        # the browsers tier at all — so without this step that claim is simply
+        # never tested, which is how it was wrong when first written.
+        run: |
+          ./images/devcontainer/bootstrap-remote.sh --tiers core,agents,browsers >/dev/null
+          ./images/devcontainer/bootstrap-remote.sh --tiers core,agents,browsers \
+            | tee /tmp/bootstrap-browsers.log
+          installs=$(sed -n 's/^HARMON_BOOTSTRAP_NEW_INSTALLS=//p' /tmp/bootstrap-browsers.log | tail -1)
+          echo "| browsers tier, second run | ${installs} new install(s) |" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${installs:-unset}" != "0" ]; then
+            echo "::error::the browsers tier's second run performed ${installs:-unknown} new install(s)"
+            sed -n '/^==> /p' /tmp/bootstrap-browsers.log
+            exit 1
+          fi
+
+      - name: Assert what the bootstrap must never have installed
+        # The bootstrap fails on a forbidden tool that resolves at the end of a
+        # run and did not at its start; on a container that started with none,
+        # that is the same as none being on PATH now.
+        run: |
+          status=0
+          for forbidden in op brew tailscale tailscaled; do
+            if command -v "$forbidden" >/dev/null 2>&1; then
+              echo "::error::${forbidden} is on PATH after the bootstrap"
+              status=1
+            fi
+          done
+          for prefix in /home/linuxbrew /opt/homebrew; do
+            if [ -d "$prefix" ]; then
+              echo "::error::${prefix} exists after the bootstrap"
+              status=1
+            fi
+          done
+          exit "$status"
+      - name: Assert the environment traps are resolved
+        # By ORDER and by EFFECT, on the system profile path (root's ~/.profile
+        # adds nothing to PATH, so this is /etc/profile.d alone): yq and task
+        # must resolve from /usr/local/bin in a fresh login shell that starts
+        # with /usr/bin first, and the effective LC_CTYPE (what `locale`
+        # reports after LC_ALL and LANG are applied) must be UTF-8 in a fresh
+        # login shell that starts with LC_ALL=C — a LANG check alone passes
+        # with the trap still armed.
+        run: |
+          login() { env -i HOME=/root PATH=/usr/bin:/bin LC_ALL=C bash -lc "$*"; }
+          echo "login shell yq: $(login command -v yq)"
+          test "$(login command -v yq)" = /usr/local/bin/yq
+          test "$(login command -v task)" = /usr/local/bin/task
+          login yq --version | grep -q mikefarah
+          echo "login shell locale:"; login locale
+          login locale | grep -Eq '^LC_CTYPE="?[^"]*(UTF-8|utf8)'
+          test "$(sed -n 's/^LANG=//p' /etc/environment)" = C.UTF-8
+          test "$(sed -n 's/^LC_ALL=//p' /etc/environment)" = C.UTF-8
+      - name: Assert the VM manifest matches the pins it was built from
+        # The same generator the image runs, so image and VM are comparable
+        # file to file for a release tag (docs/architecture/remote-environments.md).
+        # Every key, not a sample: the manifest is derived from what the tiers
+        # recorded, and each key names its versions.env pin by the image's
+        # convention (`markdownlint-cli2` ↔ MARKDOWNLINT_CLI2_VERSION).
+        run: |
+          manifest=/usr/local/share/harmon-remote-env/manifest.json
+          jq -e '.schemaVersion == 1 and .image.name == "harmon-remote-env"' "$manifest"
+          set -a; . images/devcontainer/versions.env; set +a
+          for key in $(jq -r '.tools | keys[]' "$manifest"); do
+            var="$(printf '%s' "$key" | tr 'a-z-' 'A-Z_')_VERSION"
+            test "$(jq -r --arg k "$key" '.tools[$k]' "$manifest")" = "$(printenv "$var")"
+          done
+          test "$(jq -r '.tools | length' "$manifest")" -gt 0
+          test "$(jq -r '.tools.codex' "$manifest")" = "$CODEX_VERSION"
+          test "$(jq -r '.image.revision' "$manifest")" = "$GITHUB_SHA"
+      - name: Run the repository's own lint gate with only what the bootstrap installed
+        run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          . /etc/profile.d/harmon-remote-env.sh
+          task check
