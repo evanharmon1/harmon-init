@@ -367,7 +367,18 @@ adapter shares, and the section is where a platform's specifics go.
 
 | Platform | Issue | Section |
 | --- | --- | --- |
-| Claude Code on the web | #1407 | *(pending)* |
+| Claude Code on the web | #1407 | [Claude Code on the web](#claude-code-on-the-web) |
 | Codex cloud | #750 | *(pending)* |
 | Sprites | #1411 | *(pending)* |
 | Self-hosted | #1410 | *(pending)* |
+
+### Claude Code on the web
+
+One environment for all repos, whose setup script is the entrypoint above at a
+pinned release tag and whose network level is **Trusted**. The platform takes no
+custom image and ignores `devcontainer.json`, so the setup script is the whole
+adapter. Everything specific to the platform — the environment's configuration,
+the secrets policy, how its GitHub proxy changes the `gh` calls the dev loop
+makes, the terminal-to-cloud bridges, and the observations still owed by a live
+session — is in
+[docs/guides/claude-code-web.md](../guides/claude-code-web.md).
