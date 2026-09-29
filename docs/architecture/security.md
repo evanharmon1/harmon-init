@@ -314,6 +314,44 @@ slugs, replaces that with one dispatch point:
 See [../guides/devcontainers.md](../guides/devcontainers.md) for the
 per-harness mechanics and this document for the full security contract.
 
+## Agent devcontainer: the unattended posture
+
+The **agent** posture (`.devcontainer/agent/`, marker
+`FOREMAN_DEVCONTAINER=agent`) is for an agent that runs where nobody watches —
+a third-party cloud VM, or work on untrusted input. It is **never looser than
+bot on any axis**; the decision and every "not" are in
+[../decisions/2026-09-29-agent-posture-three-posture-model.md](../decisions/2026-09-29-agent-posture-three-posture-model.md).
+The security contract, by layer:
+
+- **Harness policy — one source.** `.devcontainer/config/agent/` holds the
+  agent Claude managed settings (auto mode, `disableBypassPermissionsMode:
+  "disable"`, `allowManagedPermissionRulesOnly`, an explicit dev-loop allow
+  list, deny rules for merge/release/admin/secrets/workflows/force-push/pushes
+  to `main`/`op`/`.env*`/the egress-tamper commands, and no `ask` rule) and
+  the agent Codex managed config (`workspace-write`, approval `never`).
+  `.devcontainer/agent/agent-autonomy.sh apply` installs both at create and
+  refuses every other harness; `verify` re-checks at every start.
+  `scripts/test-agent-profile.sh` (in `task verify`) fails on a second copy,
+  on an agent allow rule bot does not grant or bot denies, on an `ask` rule,
+  and on Codex `danger-full-access`.
+- **Credentials — fail closed.** `init-env.sh --profile agent` admits only
+  `AGENT_GH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, and the disclosed opt-in
+  provider keys, and stops the build on anything else. The container blanks
+  `GH_TOKEN` and its aliases so the stored agent login is the only GitHub
+  credential. No 1Password, no Tailscale, never `ANTHROPIC_API_KEY`.
+- **Network — default-deny egress.** `egress-allowlist.sh` installs the filter
+  before anything else at create and at every start, and fails the container
+  if it cannot. Refused destinations are recorded (`egress-allowlist.sh
+  blocked`) for the lane report.
+- **Docker — none by default.** Never the host socket; Docker-in-Docker only
+  through the documented per-repo opt-in (`HARMON_AGENT_DOCKER=dind`), which
+  the same egress filter still covers.
+- **Residuals.** The filter lives inside the container and needs
+  `NET_ADMIN`, and the container user keeps passwordless `sudo`: the harness
+  deny rules keep an agent from lifting it through its own tools, but it is
+  not a boundary against root in the container. DNS to the configured
+  resolvers stays open. See the ADR's Consequences for the full list.
+
 ## Two identities: the bot vs the operator
 
 - **AI bot** (`evanharmon1-bot`) — runs in the primary
@@ -588,6 +626,7 @@ TODO: enumerate the tokens/secrets this repo depends on and where each lives:
 | `SNYK_TOKEN` | optional Snyk CLI scans; also the weekly `snyk-scheduled.yml` | local env / 1Password locally; repo Actions secret for the weekly schedule | manual |
 | `GH_TOKEN` (the bot's PAT) | the **bot** devcontainer's `gh`/git operations — never the `dev/` profile | 1Password Environment → devcontainer `--env-file` | manual; re-issue before expiry ([guides/bot-account.md](../guides/bot-account.md)) |
 | `FOREMAN_AGENT_GH_TOKEN` (read-only PAT) | handed by foreman to dispatched agents as their `GH_TOKEN`; bot profile only, required before any dispatch | 1Password Environment → devcontainer `--env-file` | manual; rotate with the bot PAT |
+| `AGENT_GH_TOKEN` (the agent PAT) | the **agent** devcontainer's `gh`/git operations (stored as gh's login at create); never the bot or dev profile | host environment → `init-env.sh --profile agent` → `.devcontainer/agent/devcontainer.env` | manual; ≤180-day expiry, one per resource owner ([guides/bot-account.md](../guides/bot-account.md)) |
 | TODO | TODO | TODO | TODO |
 
 ## Rotation & incident notes

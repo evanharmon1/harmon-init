@@ -163,6 +163,31 @@ on the selected repos. It **cannot** merge `main`, edit workflows, or change rep
 settings. Revoke, re-issue, and check the repos' branch and PR lists for anything
 you did not create.
 
+## The agent PAT (the agent posture's own token)
+
+The **agent** devcontainer (`.devcontainer/agent/`; see
+[../decisions/2026-09-29-agent-posture-three-posture-model.md](../decisions/2026-09-29-agent-posture-three-posture-model.md))
+authenticates with a **separate** fine-grained PAT on the same bot account —
+never the bot's own `GH_TOKEN`:
+
+- **Same permissions as the bot's PAT** (the table above), so it can push
+  feature branches, open draft PRs, comment, and label, and has no merge,
+  release, administration, secrets, or workflow permission.
+- **Expiry of 180 days at most** — shorter than the bot's — and its **own
+  selected-repository list**, limited to the repositories that allow remote
+  lanes. One per resource owner, for the same reason as above.
+- **Supplied as `AGENT_GH_TOKEN`** in the host environment. `init-env.sh
+  --profile agent` projects it into `.devcontainer/agent/devcontainer.env`
+  and refuses to build if that file holds any other credential; the agent
+  post-create logs `gh` in from it. A distinct name is the point: a host
+  that exports the bot's `GH_TOKEN` can never feed it to an agent container.
+
+Revoke it independently of the bot's PAT: rotating one never touches the
+other. For Claude Code on the web, where `/web-setup` holds a single token
+across both owners, the agent identity is instead a **classic** PAT on the bot
+account with `repo` scope and no `workflow` scope, bounded by the bot's
+per-repo collaborator grants (#1407).
+
 ## What the bot cannot do — by construction
 
 - **Push to or merge `main`** — the ruleset blocks it for every actor, and
