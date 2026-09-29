@@ -1,0 +1,216 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# AGENT PROFILE ONLY. Installs and verifies the agent posture's harness policy
+# (docs/decisions/2026-09-29-agent-posture-three-posture-model.md), keyed by
+# agent-registry.json's harness slugs.
+#
+#   agent-autonomy.sh apply     — install the agent Claude managed settings and
+#                                 the agent Codex managed config, and REFUSE
+#                                 every installed harness that has no
+#                                 agent-capable configuration (its executable
+#                                 is made non-executable). Idempotent.
+#   agent-autonomy.sh verify    — fail unless both managed files match the
+#                                 shipped agent profile byte for byte and no
+#                                 refused harness's executable resolves on
+#                                 PATH.
+#   agent-autonomy.sh coverage  — static check, no container: every
+#                                 agent-registry.json slug is exactly one of
+#                                 supported, aliased to a supported slug, or
+#                                 refused. Run by scripts/test-agent-profile.sh.
+#
+# apply and verify refuse to run unless FOREMAN_DEVCONTAINER is exactly
+# "agent": this script must never rewrite the bot or dev profile's policy.
+#
+# The profile it installs lives ONLY in .devcontainer/config/agent/ (baked into
+# the image at /usr/local/share/devcontainer-config/agent/ by the Dockerfile's
+# COPY of .devcontainer/config/). No other file may carry a copy;
+# scripts/test-agent-profile.sh enforces that.
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+CONFIG_DIR="${AGENT_AUTONOMY_CONFIG_DIR:-}"
+if [ -z "$CONFIG_DIR" ]; then
+    if [ -d /usr/local/share/devcontainer-config/agent ]; then
+        CONFIG_DIR=/usr/local/share/devcontainer-config/agent
+    else
+        CONFIG_DIR="$(cd "${SCRIPT_DIR}/../config/agent" && pwd)"
+    fi
+fi
+HARNESSES="${CONFIG_DIR}/harnesses.json"
+CLAUDE_SRC="${CONFIG_DIR}/claude-managed-settings.json"
+CODEX_SRC="${CONFIG_DIR}/codex-managed-config.toml"
+CLAUDE_MANAGED="${AGENT_AUTONOMY_CLAUDE_MANAGED:-/etc/claude-code/managed-settings.json}"
+CODEX_MANAGED="${AGENT_AUTONOMY_CODEX_MANAGED:-/etc/codex/managed_config.toml}"
+
+fail() {
+    echo "agent-autonomy: $*" >&2
+    exit 1
+}
+
+require_agent_marker() {
+    [ "${FOREMAN_DEVCONTAINER:-}" = "agent" ] ||
+        fail "refusing to $1 outside the agent posture (FOREMAN_DEVCONTAINER='${FOREMAN_DEVCONTAINER:-}', expected 'agent')"
+}
+
+resolve_registry() {
+    if [ -n "${AGENT_AUTONOMY_REGISTRY:-}" ]; then
+        printf '%s' "${AGENT_AUTONOMY_REGISTRY}"
+        return 0
+    fi
+    if [ -f "${PWD}/agent-registry.json" ]; then
+        printf '%s' "${PWD}/agent-registry.json"
+        return 0
+    fi
+    local root
+    root="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+    if [ -n "$root" ] && [ -f "${root}/agent-registry.json" ]; then
+        printf '%s' "${root}/agent-registry.json"
+        return 0
+    fi
+    return 1
+}
+
+checksum() {
+    sha256sum "$1" | awk '{print $1}'
+}
+
+# install_as_root <src> <dest> — install with sudo only when the destination
+# (or, for a new file, its directory) is not writable by the caller.
+install_as_root() {
+    local src="$1" dest="$2"
+    if [ -w "$dest" ] || { [ ! -e "$dest" ] && [ -w "$(dirname "$dest")" ]; }; then
+        install -m 0644 "$src" "$dest"
+    else
+        sudo install -d -m 0755 "$(dirname "$dest")"
+        sudo install -m 0644 "$src" "$dest"
+    fi
+}
+
+refused_executables() {
+    jq -r '.refused | to_entries[] | .value.executable // empty' "$HARNESSES"
+}
+
+# resolve_executable <name> — the first EXECUTABLE <name> on PATH. Not
+# `command -v`: bash falls back to reporting a non-executable match when no
+# executable one exists, so a refused binary would still "resolve".
+resolve_executable() {
+    local dir
+    local IFS=:
+    for dir in $PATH; do
+        [ -n "$dir" ] || dir=.
+        if [ -f "${dir}/$1" ] && [ -x "${dir}/$1" ]; then
+            printf '%s\n' "${dir}/$1"
+            return 0
+        fi
+    done
+    return 1
+}
+
+# refuse_executable <name> — make every copy of <name> that resolves on PATH
+# non-executable. Loops because a second copy further down PATH becomes the
+# resolution once the first is refused. Bounded so a PATH that keeps
+# resolving (a wrapper that recreates itself) fails instead of spinning.
+refuse_executable() {
+    local name="$1" path target attempts=0
+    while path="$(resolve_executable "$name")"; do
+        attempts=$((attempts + 1))
+        [ "$attempts" -le 10 ] || fail "could not refuse '${name}': it still resolves to ${path}"
+        target="$(readlink -f "$path")"
+        if [ -O "$target" ]; then
+            chmod a-x "$target"
+        else
+            sudo chmod a-x "$target"
+        fi
+        echo "==> agent-autonomy: refused ${name} (${target} is no longer executable)"
+    done
+}
+
+cmd_apply() {
+    require_agent_marker apply
+    command -v jq >/dev/null 2>&1 || fail "jq not found"
+    [ -f "$CLAUDE_SRC" ] || fail "agent Claude settings not found at ${CLAUDE_SRC}"
+    [ -f "$CODEX_SRC" ] || fail "agent Codex config not found at ${CODEX_SRC}"
+    [ -f "$HARNESSES" ] || fail "harness table not found at ${HARNESSES}"
+
+    if [ ! -f "$CLAUDE_MANAGED" ] || [ "$(checksum "$CLAUDE_MANAGED")" != "$(checksum "$CLAUDE_SRC")" ]; then
+        install_as_root "$CLAUDE_SRC" "$CLAUDE_MANAGED"
+        echo "==> agent-autonomy: agent Claude managed settings installed at ${CLAUDE_MANAGED}"
+    fi
+    if [ ! -f "$CODEX_MANAGED" ] || [ "$(checksum "$CODEX_MANAGED")" != "$(checksum "$CODEX_SRC")" ]; then
+        install_as_root "$CODEX_SRC" "$CODEX_MANAGED"
+        echo "==> agent-autonomy: agent Codex managed config installed at ${CODEX_MANAGED}"
+    fi
+
+    local exe
+    while IFS= read -r exe; do
+        [ -n "$exe" ] || continue
+        refuse_executable "$exe"
+    done < <(refused_executables)
+    echo "==> agent-autonomy: apply complete."
+}
+
+cmd_verify() {
+    require_agent_marker verify
+    local failed=0 exe path
+    [ -f "$CLAUDE_MANAGED" ] && [ "$(checksum "$CLAUDE_MANAGED")" = "$(checksum "$CLAUDE_SRC")" ] || {
+        echo "agent-autonomy: verify failed — ${CLAUDE_MANAGED} does not match the shipped agent settings ${CLAUDE_SRC}" >&2
+        failed=1
+    }
+    [ -f "$CODEX_MANAGED" ] && [ "$(checksum "$CODEX_MANAGED")" = "$(checksum "$CODEX_SRC")" ] || {
+        echo "agent-autonomy: verify failed — ${CODEX_MANAGED} does not match the shipped agent config ${CODEX_SRC}" >&2
+        failed=1
+    }
+    while IFS= read -r exe; do
+        [ -n "$exe" ] || continue
+        if path="$(resolve_executable "$exe")"; then
+            echo "agent-autonomy: verify failed — refused harness executable '${exe}' still resolves to ${path}" >&2
+            failed=1
+        fi
+    done < <(refused_executables)
+    [ "$failed" -eq 0 ] || fail "verify failed — see above"
+    echo "==> agent-autonomy: verify passed."
+}
+
+cmd_coverage() {
+    command -v jq >/dev/null 2>&1 || fail "jq not found"
+    [ -f "$HARNESSES" ] || fail "harness table not found at ${HARNESSES}"
+    local registry slugs slug hits failed=0 target
+    registry="$(resolve_registry)" || fail "agent-registry.json not found"
+    slugs="$(jq -r '.harnesses[].slug' "$registry")" || fail "could not read ${registry}"
+    while IFS= read -r slug; do
+        [ -n "$slug" ] || continue
+        hits="$(jq --arg s "$slug" '[(.supported // {}), (.aliases // {}), (.refused // {})] | map(select(has($s))) | length' "$HARNESSES")"
+        if [ "$hits" -ne 1 ]; then
+            echo "agent-autonomy: coverage failed — '${slug}' is in ${hits} buckets (need exactly one of supported, aliases, refused)" >&2
+            failed=1
+            continue
+        fi
+        target="$(jq -r --arg s "$slug" '.aliases[$s] // empty' "$HARNESSES")"
+        if [ -n "$target" ] && [ "$(jq -r --arg t "$target" '.supported | has($t)' "$HARNESSES")" != "true" ]; then
+            echo "agent-autonomy: coverage failed — '${slug}' aliases to '${target}', which is not supported" >&2
+            failed=1
+        fi
+    done <<<"$slugs"
+    # The reverse direction: a table entry no registry slug reaches is stale.
+    local entry
+    while IFS= read -r entry; do
+        [ -n "$entry" ] || continue
+        grep -Fxq -- "$entry" <<<"$slugs" || {
+            echo "agent-autonomy: coverage failed — '${entry}' is in harnesses.json but not in ${registry}" >&2
+            failed=1
+        }
+    done < <(jq -r '(.supported // {}), (.aliases // {}), (.refused // {}) | keys[]' "$HARNESSES")
+    [ "$failed" -eq 0 ] || fail "coverage failed — see above"
+    echo "==> agent-autonomy: coverage passed."
+}
+
+case "${1:-}" in
+apply) cmd_apply ;;
+verify) cmd_verify ;;
+coverage) cmd_coverage ;;
+*)
+    echo "Usage: $0 <apply|verify|coverage>" >&2
+    exit 2
+    ;;
+esac

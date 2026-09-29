@@ -38,16 +38,30 @@ set -euo pipefail
 #      identity is then unknown even when stored bot logins are also present,
 #      because gh prefers the environment token for writes
 #
-# Callers: .devcontainer/post-start.sh (warn-only, `|| true`, into the
-# post-start log), scripts/status.sh's creds section (the VISIBLE surface —
-# the session-start hook renders it; gated there to the bot profile), and
-# scripts/devcontainer-assert.sh container mode (fails on exit 1 only).
+# Callers: .devcontainer/post-start.sh and .devcontainer/agent/post-start.sh
+# (warn-only, `|| true`, into the post-start log), scripts/status.sh's creds
+# section (the VISIBLE surface — the session-start hook renders it; gated
+# there to the bot profile), and scripts/devcontainer-assert.sh container
+# mode (fails on exit 1 only).
 
 banner() {
     echo "=============================================================="
 }
 
+# The agent posture (FOREMAN_DEVCONTAINER=agent) is checked by the same '-bot'
+# relationship — its PAT lives on the bot account — but provisions a different
+# variable, so its remedy names that chain instead. Never the bot's GH_TOKEN.
 remedy_provisioning() {
+    if [ "${FOREMAN_DEVCONTAINER:-}" = "agent" ]; then
+        echo "  Remedy — fix the PROVISIONING chain that supplies the AGENT PAT:"
+        echo "    * export AGENT_GH_TOKEN (the agent's own fine-grained PAT on the"
+        echo "      bot account — never the bot's GH_TOKEN) in the host"
+        echo "      environment that .devcontainer/scripts/init-env.sh projects"
+        echo "      into .devcontainer/agent/devcontainer.env;"
+        echo "    * rebuild: the agent post-create logs gh in from it."
+        echo "  See docs/guides/bot-account.md."
+        return 0
+    fi
     echo "  Remedy — fix the PROVISIONING chain that supplies the bot PAT:"
     echo "    * on Coder: set the workspace's GitHub PAT template parameter"
     echo "      (template parameter -> workspace env -> init-env.sh ->"
