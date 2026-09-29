@@ -17,6 +17,10 @@
 # github.com, so an Enterprise remote or a host-qualified GH_REPO is read from
 # the host it names. Export GH_REST_HOST to short-circuit the derivation (an
 # empty value means "no --hostname").
+#
+# A host that carries a PORT is the one authority gh's flag cannot express: it
+# is REFUSED with 5 rather than passed or quietly trimmed (see gh_rest_api),
+# and every helper here propagates that 5 unchanged.
 
 # gh_rest_repo [REMOTE] — print OWNER/REPO from GH_REPO or a git remote.
 # GH_REPO may carry gh's documented [HOST/]OWNER/REPO form; the host segment is
@@ -99,8 +103,15 @@ gh_rest_repo() {
 # rather than stripped from all three (challenge r4):
 #   https://HOST:PORT/...   the port is part of the API AUTHORITY — an
 #                           Enterprise instance published on 8443 answers
-#                           nowhere else, so it is KEPT and travels on into
-#                           --hostname.
+#                           nowhere else — so it is KEPT here and REPORTED as
+#                           the host. It does NOT travel on into --hostname,
+#                           which gh will not parse with a colon in it:
+#                           gh_rest_api refuses such a host instead
+#                           (integration r4). Reporting it is still right,
+#                           because the alternative — printing nothing — is
+#                           this function's "let gh pick", which is the silent
+#                           default-host read that trimming the port would
+#                           have caused.
 #   ssh://git@HOST:PORT/... an SSH TRANSPORT port (2222 through a bastion, say)
 #                           says nothing about where the API listens: DROPPED.
 #   [user@]HOST:OWNER/REPO  scp-like, so the colon introduces the PATH and there
@@ -174,13 +185,44 @@ gh_rest_host() {
 # gh_rest_api ENDPOINT [gh-api options...] — one bounded REST read. Callers may
 # set GH_REST_TIMEOUT; stock macOS uses gtimeout when coreutils provides it.
 # The host is derived once per call (see the header) and passed as --hostname
-# whenever it is neither empty nor github.com.
+# whenever it is neither empty nor github.com — unless it carries a port, which
+# is refused with 5.
 gh_rest_api() {
     local endpoint="$1" timeout_bin="" host
     shift
     host="${GH_REST_HOST-$(gh_rest_host)}"
+    # ONE case decides what becomes of the derived host, and the arm that builds
+    # --hostname is the LAST of the three. `case` runs the first match, so no
+    # colon-bearing value can reach the flag unless the arm below it is deleted
+    # first — which is why the invariant lives at this single construction site
+    # rather than in each caller.
+    #
+    # `gh api --hostname ghe.example.com:8443` answers "error parsing
+    # `--hostname`: invalid hostname" and exits BEFORE issuing the request
+    # (verified on gh 2.98.0), so every read on a custom-port Enterprise
+    # instance was a usage error for as long as the port travelled on. Challenge
+    # r4 asked for it to travel, reasoning correctly that the port belongs to
+    # the REST authority and never checking what the flag accepts; five rounds
+    # missed it because the test stub accepted any hostname (integration r4).
+    #
+    # Refusing beats both alternatives. Trimming the port would send the read to
+    # the DEFAULT port of that name, where a different server may answer for the
+    # same instance — silently wrong, which is worse than not reading at all.
+    # Passing it makes every read a parse error no caller can act on.
     case "${host}" in
     '' | github.com) ;;
+    *:*)
+        {
+            printf 'gh-rest: %s: a GitHub host with a port is not addressable\n' "${host}"
+            printf 'gh-rest: gh api --hostname rejects any colon-bearing value,\n'
+            printf 'gh-rest: and gh auth login --hostname cannot store a\n'
+            printf 'gh-rest: credential for such a host at all. To read this\n'
+            printf 'gh-rest: instance, let gh resolve the host itself with\n'
+            printf 'gh-rest:   GH_REST_HOST= GH_HOST=%s\n' "${host}"
+            printf 'gh-rest: and GH_ENTERPRISE_TOKEN set — GH_HOST does keep a port.\n'
+        } >&2
+        return 5
+        ;;
     *) set -- "$@" --hostname "${host}" ;;
     esac
     if [ -z "${GH_REST_TIMEOUT:-}" ]; then

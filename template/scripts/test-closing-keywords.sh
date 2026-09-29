@@ -82,6 +82,29 @@ cat >"$tmp/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 set -euo pipefail
 [ -z "${GH_STUB_CALLS:-}" ] || printf '%s\n' "$*" >>"${GH_STUB_CALLS}"
+# A ledger of every call this stub ever saw, never truncated between cases, so
+# the suite can assert a property over ALL of its traffic and not only over the
+# case in hand.
+[ -z "${GH_STUB_ALL_CALLS:-}" ] || printf '%s\n' "$*" >>"${GH_STUB_ALL_CALLS}"
+# Reject a colon-bearing --hostname the way the real binary does: gh 2.98.0
+# answers "error parsing `--hostname`: invalid hostname" and exits BEFORE
+# requesting anything. A stub that accepted ANY hostname is precisely what let a
+# kept port look correct for five review rounds (integration r4), so the fixture
+# now has the contract the flag actually has.
+stub_prev=""
+for stub_arg in "$@"; do
+    case "${stub_prev}" in
+    --hostname)
+        case "${stub_arg}" in
+        *:*)
+            echo 'error parsing `--hostname`: invalid hostname' >&2
+            exit 1
+            ;;
+        esac
+        ;;
+    esac
+    stub_prev="${stub_arg}"
+done
 [ "${1:-}" = api ] || {
     echo "proxy: non-REST gh command rejected: $*" >&2
     exit 64
@@ -158,6 +181,12 @@ chmod +x "$tmp/bin/git" "$tmp/bin/gh"
 GH_STUB_CALLS="$tmp/proxy-calls"
 export GH_STUB_CALLS
 : >"$GH_STUB_CALLS"
+# Never truncated, unlike GH_STUB_CALLS: the suite-wide --hostname assertion at
+# the foot of this file is the one check that does not depend on a fixture
+# happening to exercise the path.
+GH_STUB_ALL_CALLS="$tmp/proxy-calls-all"
+export GH_STUB_ALL_CALLS
+: >"$GH_STUB_ALL_CALLS"
 page_count="$(GH_STUB_FULL_PAGE=1 PATH="$tmp/bin:$PATH" bash -c \
     '. scripts/lib/gh-rest.sh; gh_rest_paginate_array "repos/acme/repo/pulls?state=open" 0 | jq -s "add | length"')"
 [ "$page_count" = 100 ] || fail "explicit REST pagination returned ${page_count}, expected 100"
@@ -325,13 +354,14 @@ for spec in \
         fail "scp-like remote ${form} read went to: $(cat "$GH_STUB_CALLS")"
 done
 
-echo '==> an explicit port survives only where it is the API authority'
+echo '==> a transport port is dropped; a scp-like colon is a path'
 # A colon means three different things across the remote forms, so stripping it
 # everywhere cost an Enterprise instance published on a non-default port its API
-# authority before --hostname was ever passed (challenge r4). Each case asserts
-# the exact --hostname that reaches gh, which is the only thing the port is for.
+# authority before --hostname was ever passed (challenge r4). These are the forms
+# whose colon is NOT an API port, so each still resolves to a bare host, and each
+# asserts the exact --hostname that reaches gh.
 for spec in \
-    'https://ghe.example.com:8443/acme/repo.git|ghe.example.com:8443' \
+    'https://ghe.example.com/acme/repo.git|ghe.example.com' \
     'ssh://git@ghe.example.com:2222/acme/repo.git|ghe.example.com' \
     'git@ghe.example.com:acme/repo.git|ghe.example.com'; do
     form="${spec%%|*}"
@@ -342,17 +372,74 @@ for spec in \
     : >"$GH_STUB_CALLS"
     out="$(cd "$tmp/remote-fixture" && PATH="$tmp/bin-gh:$PATH" bash -c \
         "unset GH_REPO GH_HOST; . '$repo_root/scripts/lib/gh-rest.sh'; repo=\"\$(gh_rest_repo)\"; echo \"\$repo \$(gh_rest_host)\"; gh_rest_api \"repos/\${repo}/issues/1\" >/dev/null")" ||
-        fail "ported remote ${form} read failed"
+        fail "remote ${form} read failed"
     [ "$out" = "acme/repo ${want}" ] ||
-        fail "ported remote ${form} resolved to '${out}', expected 'acme/repo ${want}'"
+        fail "remote ${form} resolved to '${out}', expected 'acme/repo ${want}'"
     grep -qx "api repos/acme/repo/issues/1 --hostname ${want}" "$GH_STUB_CALLS" ||
-        fail "ported remote ${form} read went to: $(cat "$GH_STUB_CALLS")"
+        fail "remote ${form} read went to: $(cat "$GH_STUB_CALLS")"
 done
+
+echo '==> an API port is reported, then refused rather than handed to --hostname'
+# `gh api --hostname ghe.example.com:8443` answers "error parsing `--hostname`:
+# invalid hostname" and exits BEFORE requesting anything, so the port challenge
+# r4 kept made every read on a custom-port Enterprise instance a usage error —
+# on exactly the configuration keeping it was meant to serve. Five rounds missed
+# it because the stub accepted any hostname (integration r4).
+#
+# gh_rest_host still REPORTS the true authority: printing nothing there would
+# mean "let gh pick", i.e. the silent default-host read that trimming the port
+# would have caused. gh_rest_api is where it stops, and it stops with a message
+# naming the host and the one configuration that does work.
+rm -rf "$tmp/remote-fixture"
+git init -q "$tmp/remote-fixture"
+git -C "$tmp/remote-fixture" remote add origin 'https://ghe.example.com:8443/acme/repo.git'
+: >"$GH_STUB_CALLS"
+rc=0
+out="$(cd "$tmp/remote-fixture" && PATH="$tmp/bin-gh:$PATH" bash -c \
+    "unset GH_REPO GH_HOST; . '$repo_root/scripts/lib/gh-rest.sh'; repo=\"\$(gh_rest_repo)\"; echo \"\$repo \$(gh_rest_host)\"; gh_rest_api \"repos/\${repo}/issues/1\" >/dev/null" \
+    2>"$tmp/ported-err")" || rc=$?
+[ "$rc" = 5 ] ||
+    fail "a ported authority must be refused with 5, got ${rc}: $(cat "$tmp/ported-err")"
+[ "$out" = 'acme/repo ghe.example.com:8443' ] ||
+    fail "the ported authority must still be reported, resolved '${out}'"
+[ ! -s "$GH_STUB_CALLS" ] ||
+    fail "a ported authority reached gh at all: $(cat "$GH_STUB_CALLS")"
+grep -q 'ghe.example.com:8443' "$tmp/ported-err" ||
+    fail "the refusal did not name the unsupported host: $(cat "$tmp/ported-err")"
+grep -q 'GH_REST_HOST= GH_HOST=ghe.example.com:8443' "$tmp/ported-err" ||
+    fail "the refusal did not name what the operator can do: $(cat "$tmp/ported-err")"
+# The guard is on the RESOLVED authority, so no source of one routes around it:
+# gh's own default host with a port is refused too, and so is a port arriving
+# through the GH_REST_HOST short-circuit rather than a remote URL.
+for host in github.com:443 ghe.example.com:8443; do
+    : >"$GH_STUB_CALLS"
+    rc=0
+    PATH="$tmp/bin:$PATH" GH_REST_HOST="$host" bash -c \
+        '. scripts/lib/gh-rest.sh; gh_rest_api "repos/acme/repo/issues/1"' \
+        >/dev/null 2>"$tmp/ported-err" || rc=$?
+    [ "$rc" = 5 ] || fail "GH_REST_HOST=${host} must be refused with 5, got ${rc}"
+    [ ! -s "$GH_STUB_CALLS" ] ||
+        fail "GH_REST_HOST=${host} reached gh: $(cat "$GH_STUB_CALLS")"
+done
+# ...and the refusal propagates through the paginating helpers unchanged, which
+# are what every caller actually uses.
+: >"$GH_STUB_CALLS"
+rc=0
+PATH="$tmp/bin:$PATH" GH_REST_HOST=ghe.example.com:8443 bash -c \
+    '. scripts/lib/gh-rest.sh; gh_rest_paginate_array "repos/acme/repo/pulls" 10' \
+    >/dev/null 2>&1 || rc=$?
+[ "$rc" = 5 ] || fail "gh_rest_paginate_array must propagate the refusal as 5, got ${rc}"
+[ ! -s "$GH_STUB_CALLS" ] ||
+    fail "a refused authority still reached gh through the walk: $(cat "$GH_STUB_CALLS")"
+
 # A port that is not a number leaves the authority unusable, so the derivation
 # says nothing at all — gh keeps its own choice — rather than passing on a
 # --hostname it cannot parse. The name is validated apart from the port for the
 # same reason: one class over `host:port` would have to admit `:` and would then
-# accept `ghe:8443:x` and `:443` as hosts.
+# accept `ghe:8443:x` and `:443` as hosts. Note this arm yields NO host where the
+# valid-port case above yields a refusal: a remote git itself cannot fetch is
+# left to gh's own default, while a real instance on a real port is named and
+# stopped.
 rm -rf "$tmp/remote-fixture"
 git init -q "$tmp/remote-fixture"
 git -C "$tmp/remote-fixture" remote add origin 'https://ghe.example.com:not-a-port/acme/repo.git'
@@ -598,5 +685,16 @@ grep -q 'ghe.example.com%3A' "$GH_STUB_CALLS" &&
 grep -q '^api repos/acme/repo/issues/1 .*--hostname ghe.example.com$' "$GH_STUB_CALLS" ||
     fail "the checker was handed a host-qualified repository: $(grep '^api ' "$GH_STUB_CALLS" | tr '\n' ';')"
 unset GH_STUB_CALLS
+
+echo '==> no --hostname this suite ever handed gh carried a port'
+# The property, stated over every gh call the whole suite made rather than over
+# the one fixture that happens to exercise a port: the real binary rejects a
+# colon-bearing value outright, so the library must never emit one. The stub
+# enforces the same rule at the boundary, which fails the case that emits it;
+# this reads the ledger, which fails even if no case thought to look.
+grep -n -- '--hostname [^ ]*:' "$GH_STUB_ALL_CALLS" &&
+    fail 'a colon-bearing --hostname reached gh'
+[ -s "$GH_STUB_ALL_CALLS" ] ||
+    fail 'the suite-wide gh ledger is empty, so the assertion above proved nothing'
 
 echo 'closing-keywords guard: all cases passed'
