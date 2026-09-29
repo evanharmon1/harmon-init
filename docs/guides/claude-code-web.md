@@ -266,10 +266,17 @@ evidence tag from [the table at the top](#how-to-read-the-evidence-in-this-guide
 never a guess. **Follow-up** names where a failure is tracked or the workaround
 that exists today.
 
+A vendored script stops at its first failing call, so a row's later calls are
+not reached through the proxy until the first one works. The live observation
+therefore records, for each script, the **first** call that failed and its
+class — a GraphQL refusal, or a paginated REST read that fails after page 1 —
+and leaves the calls after it unobserved. Making every helper reach its later
+calls is harmon-devkit#1207's work, not a gap in this table.
+
 | Call | Made by | Result through the proxy | Follow-up / workaround |
 | --- | --- | --- | --- |
 | `gh pr list`, `gh pr view`, `gh pr checks`, `gh pr ready`, `gh issue view`, `gh issue edit`, `gh issue comment`, `gh label list` | any of the scripts below, or by hand | **fail, 403** — observed 2026-09-27 | `gh api repos/{o}/{r}/…` over REST; promotion through `POST …/ccr/ready_for_review`. The helper scripts: [harmon-devkit#1207](https://github.com/evanharmon1/harmon-devkit/issues/1207) |
-| `claim-transaction.sh` (`/claim`): `gh issue view/edit/comment`, `gh api user`, `gh api --paginate --slurp` | claim skill (vendored) | **fail** on the GraphQL issue calls — observed 2026-09-27 | harmon-devkit#1207. The 2026-09-27 session used a session-local `gh` shim mapping the subcommands to REST — a stopgap, not a fix |
+| `claim-transaction.sh` (`/claim`): `gh issue view/edit/comment`, `gh api user`, `gh api --paginate --slurp` | claim skill (vendored) | **fail** on the GraphQL issue calls — observed 2026-09-27. The script aborts at its first `gh issue view`, so its paginated `comments` and `timeline` reads (page 1 expected to work, later pages to fail) are not reached | harmon-devkit#1207. The 2026-09-27 session used a session-local `gh` shim mapping the subcommands to REST — a stopgap, not a fix |
 | `tick-criteria-core.sh`: `gh issue view`, `gh issue edit`, `gh api user` | track-work skill (vendored) | **fail** — observed 2026-09-27 | harmon-devkit#1207. The write also gets the footer (above) |
 | `check-closing-keywords.sh` (the vendored copy): `gh issue view`, `gh pr view`; `gh repo view` when no `--repo` or `GH_REPO` is given | track-work skill (vendored) | **fail** — observed 2026-09-27; the `gh repo view` fallback expected to fail, not yet observed (GraphQL-backed) | harmon-devkit#1207. Pass `--repo` so the fallback never runs |
 | `gh pr create --draft`, then `gh pr view --json headRefOid,isDraft` to confirm it | implement skill (vendored), the draft-first step `AGENTS.md` requires; the orchestrate skill's lane brief | expected to fail, not yet observed — `gh pr create` is GraphQL-backed | The GitHub MCP create-PR tool, observed to work 2026-09-27 (whether it can open a *draft* was not recorded); GitHub's REST `POST repos/{o}/{r}/pulls` with `draft: true`, and a readback of `head.sha` and `draft` from `repos/{o}/{r}/pulls/{n}`, not yet tried through the proxy. harmon-devkit#1207. A cloud lane leaves this to the orchestrator ([What runs where](#what-runs-where)) |
@@ -415,8 +422,9 @@ background" as "finished". The supported ways to run it:
    inside double quotes the *calling* shell expands `$?` before `bash -c` starts,
    so the line would report the status of whatever ran before — and a failed
    verify could print `GATE-EXIT=0`.
-2. **Its component tasks**, each under the limit: `task check` (lint, the fast
-   gate), then the individual `task test:*` targets `verify` is made of.
+2. **Its component tasks**, each under the limit: every entry
+   `task --summary verify` lists, in order — `check`, the `audit:*` guard, and
+   each `test:*` target. Running a subset is not a verify.
 3. **Raise the ceiling** with `BASH_DEFAULT_TIMEOUT_MS` and `BASH_MAX_TIMEOUT_MS`
    in the environment ([Environment variables](#environment-variables)). This
    only moves the limit to ten minutes; a gate longer than that still needs the
