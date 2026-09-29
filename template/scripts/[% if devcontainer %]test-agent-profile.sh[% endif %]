@@ -129,11 +129,14 @@ find_copies() {
 copies="$(find_copies "$repo_root")"
 [ -z "$copies" ] || fail "the agent profile is duplicated outside ${agent_config_dir}: ${copies}"
 
-# The template twin must be the SAME source, byte for byte, not a fork.
+# The template twin (harmon-init itself; a generated repo has none) must be
+# the SAME source, byte for byte, not a fork.
 twin_dir="template/[% if devcontainer %].devcontainer[% endif %]/config/agent"
-for f in claude-managed-settings.json codex-managed-config.toml harnesses.json; do
-    cmp -s "${agent_config_dir}/${f}" "${twin_dir}/${f}" || fail "${twin_dir}/${f} is not identical to ${agent_config_dir}/${f}"
-done
+if [ -d "$twin_dir" ]; then
+    for f in claude-managed-settings.json codex-managed-config.toml harnesses.json; do
+        cmp -s "${agent_config_dir}/${f}" "${twin_dir}/${f}" || fail "${twin_dir}/${f} is not identical to ${agent_config_dir}/${f}"
+    done
+fi
 
 # Fixture: a reformatted JSON copy and a re-commented TOML copy are caught.
 fixture_repo="${work_dir}/single-source"

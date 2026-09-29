@@ -154,6 +154,7 @@ tasks:
       - task: test:image-staleness
       - task: test:open-devcontainer
       - task: test:bot-autonomy
+      - task: test:agent-profile
       - task: test:devcontainer-changed
 [% endif %]
       - task: test
@@ -871,6 +872,15 @@ tasks:
     cmds:
       - ./scripts/devcontainer-smoke.sh .devcontainer/dev/devcontainer.json
 
+  test:devcontainer:agent:
+    # Builds and starts the agent posture, then proves live what its unit test
+    # proves statically: the egress filter refuses an unlisted host and records
+    # it, refused harnesses stay refused, and no forbidden credential or Docker
+    # reached the container. Needs Docker, like the other smoke tasks.
+    desc: Smoke test the agent (unattended) devcontainer via the devcontainers CLI
+    cmds:
+      - ./scripts/devcontainer-smoke.sh .devcontainer/agent/devcontainer.json
+
   test:devcontainer:permissions:
     desc: Unit-assert devcontainer permission invariants (no container needed)
     cmds:
@@ -905,6 +915,14 @@ tasks:
     desc: Unit-test bot-autonomy.sh's registry coverage, Codex parity, and per-module fixtures (no container needed)
     cmds:
       - ./scripts/test-bot-autonomy.sh
+
+  test:agent-profile:
+    # Wired into `verify` with no devcontainer paths: filter, like
+    # test:bot-autonomy — the agent posture's single source, deny list, env
+    # guard, Docker rule, and egress list are checked on every PR.
+    desc: Unit-test the agent posture (single source, Claude/Codex policy, env guard, Docker, egress; no container needed)
+    cmds:
+      - ./scripts/test-agent-profile.sh
 
   test:devcontainer-changed:
     desc: Unit-test the devcontainer-build.yml change detector (devcontainer-changed.sh)
