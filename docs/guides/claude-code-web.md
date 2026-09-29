@@ -83,8 +83,8 @@ Rules for this script, each with its reason:
 - **Keep the download its own command.** Piping `curl` into a shell exits 0 when
   the download fails. `scripts/test-bootstrap-remote.sh` checks that shape in
   every copy of the recipe, and holds this one equal to the architecture
-  document's line for line; the leading `#!/bin/bash` is the only difference it
-  allows.
+  document's line for line; the leading `#!/bin/bash` and the pinned tag are the
+  only differences it allows.
 - **The default tiers only** (`core,agents`). The browsers tier is larger than
   everything else together and would put the five-minute cache budget at risk.
 - **No `--tiers` flag, no other install lines.** Anything the loop needs belongs
