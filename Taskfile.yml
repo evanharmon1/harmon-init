@@ -106,6 +106,7 @@ tasks:
       - task: test:setup-github-project
       - task: test:sync-devkit-release
       - task: test:devcontainer:image:automation
+      - task: test:bootstrap-remote
       - task: test:skills-pin-parity
       - task: test:tag-hygiene
       - task: test:dogfood-parity
@@ -392,6 +393,15 @@ tasks:
     desc: Unit-test shared-image manifest/publish/pin automation (offline, stubbed boundaries)
     cmds:
       - ./scripts/test-devcontainer-image-automation.sh
+
+  test:bootstrap-remote:
+    # The pin guard the remote-bootstrap invariant needs: every tool the
+    # bootstrap installs takes its version from the same file the Dockerfile
+    # reads, and the bootstrap declares no pin of its own. Offline and
+    # metadata-only; the runtime proof is .github/workflows/remote-bootstrap.yml.
+    desc: Guard the shared image/remote-bootstrap pin contract (offline)
+    cmds:
+      - ./scripts/test-bootstrap-remote.sh
 
   test:hooks:
     desc: Round-trip the Taskfile targets the Claude hooks delegate to

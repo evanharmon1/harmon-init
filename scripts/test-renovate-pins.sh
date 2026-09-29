@@ -41,7 +41,16 @@ fi
 python3 - <<'PY'
 import json, re, sys, pathlib
 
-def load_shell_manager(path):
+def load_shell_manager(path, probe="scripts/example.sh"):
+    """The `FOO_VERSION=` manager that covers shell SCRIPTS.
+
+    Selected by managerFilePatterns rather than by being first in the list.
+    There is more than one `_VERSION=` manager now — images/devcontainer/
+    versions.env has its own — and "first wins" silently returned that one the
+    moment it was declared earlier in the file, reporting every genuinely
+    covered scripts/*.sh pin as invisible to Renovate. Order in customManagers
+    means nothing to Renovate, so it must mean nothing here either.
+    """
     raw = pathlib.Path(path).read_text()
     # The template config is jinja-templated, so it is not always valid JSON;
     # pull the manager out textually and fall back to a JSON parse when clean.
@@ -56,7 +65,10 @@ def load_shell_manager(path):
             except json.JSONDecodeError:
                 pass
     for m in mgrs:
-        if any("_VERSION=" in s for s in m.get("matchStrings", [])):
+        if not any("_VERSION=" in s for s in m.get("matchStrings", [])):
+            continue
+        pats = [re.compile(x.strip("/")) for x in m.get("managerFilePatterns", [])]
+        if any(rx.search(probe) for rx in pats):
             return m
     return None
 

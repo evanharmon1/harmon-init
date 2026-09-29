@@ -47,7 +47,7 @@ tier_order = ["local", "economy", "standard", "frontier", "apex"]
 #
 # Announcement line (worked example — fill in what actually resolved):
 #   rigor: standard (default) → rounds standard: challenge ≤3, review ≤3,
-#   integration ≤4, remediation ≤4, min_rounds 1, wall_clock 120m ·
+#   integration ≤4, remediation ≤4, min_rounds 1, wall_clock 720m ·
 #   breadth standard: runs ≤6, parallel ≤3 · tiers orch/impl/chal/rev/integ
 #   = frontier/standard/frontier/standard/economy · strategy: plan (default)
 
@@ -191,7 +191,7 @@ review         = 1
 integration    = 1
 remediation    = 2
 min_rounds     = 1
-wall_clock_min = 30
+wall_clock_min = 180
 
 [rounds.light]
 challenge      = 2
@@ -199,7 +199,7 @@ review         = 2
 integration    = 3
 remediation    = 3
 min_rounds     = 1
-wall_clock_min = 60
+wall_clock_min = 360
 
 [rounds.standard]
 challenge      = 3
@@ -207,7 +207,7 @@ review         = 3
 integration    = 4
 remediation    = 4
 min_rounds     = 1
-wall_clock_min = 120
+wall_clock_min = 720
 
 [rounds.thorough]
 challenge      = 4
@@ -215,7 +215,7 @@ review         = 4
 integration    = 5
 remediation    = 5
 min_rounds     = 1
-wall_clock_min = 240
+wall_clock_min = 1440
 
 [rounds.deep]
 challenge      = 5
@@ -223,7 +223,7 @@ review         = 5
 integration    = 6
 remediation    = 6
 min_rounds     = 1
-wall_clock_min = 480
+wall_clock_min = 2880
 
 [rounds.forensic]
 challenge      = 6
@@ -231,7 +231,7 @@ review         = 6
 integration    = 8
 remediation    = 8
 min_rounds     = 2   # forensic: a single empty round never ends a stage
-wall_clock_min = 720
+wall_clock_min = 4320
 
 # ── Breadth — horizontal scale: how many agents, how wide ───────────────────
 # max_agent_runs: total dispatches across the run (orchestration +
