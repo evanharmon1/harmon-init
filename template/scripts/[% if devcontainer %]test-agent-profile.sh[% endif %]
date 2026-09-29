@@ -1129,7 +1129,7 @@ grep -Fq 'post-start: CRITICAL: could not close egress' "${work_dir}/post-start.
     fail "the agent post-start fallback did not print the CRITICAL line on the original stderr: $(cat "${work_dir}/post-start.stderr")"
 ! grep -Fq 'left at DROP' "${work_dir}/post-start.log" ||
     fail "the agent post-start fallback claimed DROP although the ip6tables policy failed with global IPv6 present"
-! grep -Ev '^[[:space:]]*#' .devcontainer/agent/post-start.sh | grep -q 'egress-allowlist\.txt\|\.devcontainer/scripts/egress-allowlist\.sh' ||
+! grep -Ev '^[[:space:]]*#' .devcontainer/agent/post-start.sh | grep -Eq 'egress-allowlist\.txt|\.devcontainer/scripts/egress-allowlist\.sh' ||
     fail "the agent post-start reads the checkout's egress applier or lists (only the root-owned snapshot may be applied at start)"
 jq -e '.runArgs | index("--cap-add=NET_ADMIN")' <<<"$agent_cfg" >/dev/null ||
     fail "the agent devcontainer lacks --cap-add=NET_ADMIN, so the egress filter cannot be installed"

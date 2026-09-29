@@ -427,13 +427,16 @@ cmd_snapshot() {
         dir="$SNAPSHOT_DIR"
         # Root ownership of the files is worthless if the container user can
         # rename the directory that holds them.
-        # Every ancestor, / included.
+        # The snapshot directory itself (when it already exists) and every
+        # ancestor, / included.
         path="$dir"
-        while [ "$path" != / ]; do
-            path="${path%/*}"
+        [ -e "$path" ] || path="${path%/*}"
+        while :; do
             [ -n "$path" ] || path=/
             [ -z "$(find "$path" -maxdepth 0 \( ! -user root -o -perm -002 -o -perm -020 \))" ] ||
                 fail "${path} is not root-owned and closed to writes — refusing to snapshot under it"
+            [ "$path" != / ] || break
+            path="${path%/*}"
         done
     fi
     cmd_hosts >/dev/null
