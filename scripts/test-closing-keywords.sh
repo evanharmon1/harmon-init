@@ -104,6 +104,17 @@ if [ "${GH_STUB_ENDLESS:-0}" = 1 ]; then
     esac
     exit 0
 fi
+# One explicit page of a keyed preview, in whichever documented shape the case
+# under test needs: the array wrapped under the key, the bare array, or a payload
+# that is neither. Inert unless a case sets it.
+if [ -n "${GH_STUB_KEYED_PAYLOAD:-}" ]; then
+    case "$endpoint" in
+    orgs/acme/issue-fields\?*)
+        printf '%s\n' "$GH_STUB_KEYED_PAYLOAD"
+        exit 0
+        ;;
+    esac
+fi
 case "$endpoint" in
 graphql | search/* | repositories/*)
     echo 'HTTP 403: GitHub GraphQL/search/paginate links are unavailable' >&2
@@ -172,6 +183,30 @@ GH_STUB_ENDLESS=1 GH_REST_MAX_PAGES=2 PATH="$tmp/bin:$PATH" bash -c \
 [ "$rc" = 4 ] || fail "page ceiling on a keyed walk returned ${rc}, expected 4"
 [ "$(grep -c '^api orgs/acme/issue-fields' "$GH_STUB_CALLS")" = 2 ] ||
     fail "page ceiling let the keyed walk request $(grep -c '^api ' "$GH_STUB_CALLS") pages, expected 2"
+
+echo '==> the keyed walk reads both documented page shapes, and neither as an error'
+# The issue-fields preview documents its page BOTH ways: the array wrapped under
+# the key, and the bare array. The reader required the wrapper, so the other
+# shape returned 3 — a FAILED read, which status.sh renders as `unknown`, so an
+# org that really does have the fields would be told nobody could see them
+# (review r1). Both shapes must parse to the SAME list. A payload that is
+# neither must still fail: an error object is not an empty page.
+for spec in \
+    'wrapped|{"issue_fields":[{"name":"Product"}]}' \
+    'bare|[{"name":"Product"}]'; do
+    shape="${spec%%|*}"
+    payload="${spec#*|}"
+    out="$(GH_STUB_KEYED_PAYLOAD="$payload" PATH="$tmp/bin:$PATH" bash -c \
+        'set -o pipefail; . scripts/lib/gh-rest.sh; gh_rest_paginate_key "orgs/acme/issue-fields" issue_fields | jq -cs add')" ||
+        fail "the ${shape} page shape failed the keyed walk"
+    [ "$out" = '[{"name":"Product"}]' ] ||
+        fail "the ${shape} page shape parsed to ${out}, expected [{\"name\":\"Product\"}]"
+done
+rc=0
+GH_STUB_KEYED_PAYLOAD='{"message":"Not Found"}' PATH="$tmp/bin:$PATH" bash -c \
+    '. scripts/lib/gh-rest.sh; gh_rest_paginate_key "orgs/acme/issue-fields" issue_fields' >/dev/null 2>&1 || rc=$?
+[ "$rc" = 3 ] ||
+    fail "a payload that is neither documented shape returned ${rc}, expected 3 — an error object must not be walked as an empty page"
 # A MAX_ITEMS under the ceiling ends the walk normally, without spending it.
 # 150 is neither smaller than nor a multiple of the page size, so it is the
 # bound that catches a request size derived from the remaining count: the walk
@@ -264,6 +299,31 @@ out="$(cd "$tmp/remote-fixture" && PATH="$tmp/bin-gh:$PATH" bash -c \
 [ "$out" = 'acme/repo github.com' ] || fail "github.com remote parsed as '${out}'"
 grep -qx 'api repos/acme/repo/issues/1' "$GH_STUB_CALLS" ||
     fail "github.com remote must not add --hostname, got: $(cat "$GH_STUB_CALLS")"
+
+echo '==> an scp-like remote with no user still carries its host'
+# git reads `HOST:OWNER/REPO` as ssh exactly as it reads `git@HOST:OWNER/REPO`,
+# and this arm matched `*@*:*` only — so a userless Enterprise remote resolved
+# acme/repo with an EMPTY host and its REST read went to github.com silently
+# (review r1). The scheme arm above already owns every `://` URL, so matching
+# `*:*` here applies the same test gh_rest_repo applies to the same URL: the two
+# cannot disagree about what an scp-like remote is. The colon still starts the
+# path and is still never a port, which is what the exact --hostname asserts.
+for spec in \
+    'ghe.example.com:acme/repo.git|acme/repo ghe.example.com' \
+    'git@ghe.example.com:acme/repo.git|acme/repo ghe.example.com'; do
+    form="${spec%%|*}"
+    want="${spec#*|}"
+    rm -rf "$tmp/remote-fixture"
+    git init -q "$tmp/remote-fixture"
+    git -C "$tmp/remote-fixture" remote add origin "$form"
+    : >"$GH_STUB_CALLS"
+    out="$(cd "$tmp/remote-fixture" && PATH="$tmp/bin-gh:$PATH" bash -c \
+        "unset GH_REPO GH_HOST; . '$repo_root/scripts/lib/gh-rest.sh'; repo=\"\$(gh_rest_repo)\"; echo \"\$repo \$(gh_rest_host)\"; gh_rest_api \"repos/\${repo}/issues/1\" >/dev/null")" ||
+        fail "scp-like remote ${form} read failed"
+    [ "$out" = "$want" ] || fail "scp-like remote ${form} resolved to '${out}', expected '${want}'"
+    grep -qx "api repos/${want%% *}/issues/1 --hostname ${want##* }" "$GH_STUB_CALLS" ||
+        fail "scp-like remote ${form} read went to: $(cat "$GH_STUB_CALLS")"
+done
 
 echo '==> an explicit port survives only where it is the API authority'
 # A colon means three different things across the remote forms, so stripping it

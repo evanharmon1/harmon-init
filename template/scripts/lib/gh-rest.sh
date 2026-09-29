@@ -65,7 +65,8 @@ gh_rest_repo() {
 # gh_rest_host [REMOTE] — print the GitHub host the repository lives on: the
 # HOST/ prefix of GH_REPO when present, else GH_HOST (gh's own override, which
 # gh_target_host in gh-scopes.sh honours the same way), else the host of the
-# remote URL (https://HOST[:PORT]/..., ssh://git@HOST[:PORT]/..., git@HOST:...),
+# remote URL (https://HOST[:PORT]/..., ssh://git@HOST[:PORT]/...,
+# [user@]HOST:...),
 # else nothing. Always exits 0: an empty result means "let gh pick", never an
 # error.
 #
@@ -77,8 +78,12 @@ gh_rest_repo() {
 #                           --hostname.
 #   ssh://git@HOST:PORT/... an SSH TRANSPORT port (2222 through a bastion, say)
 #                           says nothing about where the API listens: DROPPED.
-#   git@HOST:OWNER/REPO     scp-like, so the colon introduces the PATH and there
-#                           is no port to keep.
+#   [user@]HOST:OWNER/REPO  scp-like, so the colon introduces the PATH and there
+#                           is no port to keep. The userinfo is OPTIONAL: git
+#                           reads `ghe.example.com:acme/repo` as ssh too, and an
+#                           arm that required `@` dropped that host silently
+#                           while gh_rest_repo still resolved acme/repo — an
+#                           Enterprise read sent to the default host (review r1).
 gh_rest_host() {
     local remote="${1:-}" url="" host="" scheme="" name="" port=""
 
@@ -113,9 +118,13 @@ gh_rest_host() {
         *) host="${host%%:*}" ;;
         esac
         ;;
-    *@*:*) # scp-like: user@host:owner/repo — the colon starts the path
-        host="${url#*@}"
-        host="${host%%:*}"
+    *:*) # scp-like: [user@]host:owner/repo — the colon starts the path
+        # Every scheme URL was taken by the arm above, so a colon surviving to
+        # here is git's scp-like form by construction — which is exactly the
+        # test gh_rest_repo already applies to the same URL. Matching `*:*` in
+        # both is what keeps the pair from disagreeing about what a remote is.
+        host="${url#*@}"   # drop any userinfo; a no-op when there is none
+        host="${host%%:*}" # the first colon starts the path, so never a port
         ;;
     esac
     # Validate the name and any kept port separately. A single class over the
@@ -224,19 +233,29 @@ gh_rest_paginate_array() {
 }
 
 # gh_rest_paginate_key ENDPOINT KEY [gh-api options...] — for paginated REST
-# previews that wrap their array in an object (for example `issue_fields`).
+# previews whose page is EITHER their array wrapped in an object under KEY (for
+# example `issue_fields`) OR the bare array. Emits the array either way.
 # Bounded by the same GH_REST_MAX_PAGES ceiling (returns 4 when exceeded).
+#
+# Both shapes are documented for the same preview, so betting on one made the
+# other a failed read — and a failed read is rendered `unknown`, so a caller
+# whose org really does have the fields would have been told nobody could see
+# them (review r1). One selector serves every step of the walk, which is what
+# keeps the validation, the count and the emitted page talking about the same
+# value. Anything else selects null and still fails the read with 3: an error
+# object is neither shape, and must not be walked as if it were empty.
 gh_rest_paginate_key() {
     local endpoint="$1" key="$2" page=1 page_size=100 separator payload count max_pages
+    local select='if type == "array" then . elif type == "object" then .[$key] else null end'
     shift 2
     max_pages="$(gh_rest_max_pages)" || return 2
     case "${endpoint}" in *\?*) separator='&' ;; *) separator='?' ;; esac
     while :; do
         [ "${page}" -le "${max_pages}" ] || return 4
         payload="$(gh_rest_api "${endpoint}${separator}per_page=${page_size}&page=${page}" "$@")" || return
-        jq -e --arg key "${key}" '.[$key] | type == "array"' >/dev/null 2>&1 <<<"${payload}" || return 3
-        count="$(jq --arg key "${key}" '.[$key] | length' <<<"${payload}")" || return 3
-        jq --arg key "${key}" '.[$key]' <<<"${payload}"
+        jq -e --arg key "${key}" "${select} | type == \"array\"" >/dev/null 2>&1 <<<"${payload}" || return 3
+        count="$(jq --arg key "${key}" "${select} | length" <<<"${payload}")" || return 3
+        jq --arg key "${key}" "${select}" <<<"${payload}"
         [ "${count}" -lt "${page_size}" ] && return 0
         page=$((page + 1))
     done

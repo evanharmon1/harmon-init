@@ -329,7 +329,18 @@ STUB
         echo '        exit 0'
         echo '        ;;'
         echo '    orgs/*/issue-types\?*) echo "[]"; exit 0 ;;'
-        echo '    orgs/*/issue-fields\?*) echo "{\"issue_fields\":[]}"; exit 0 ;;'
+        # The preview documents its page in two shapes, and a read can also
+        # simply fail. `empty` (the default) keeps every existing case on the
+        # wrapped-and-empty answer they were written against.
+        echo '    orgs/*/issue-fields\?*)'
+        echo '        case "${GH_STUB_ISSUE_FIELDS:-empty}" in'
+        echo '        wrapped) echo "{\"issue_fields\":[{\"name\":\"Product\",\"data_type\":\"text\"}]}" ;;'
+        echo '        bare) echo "[{\"name\":\"Product\",\"data_type\":\"text\"}]" ;;'
+        echo '        fail) exit 1 ;;'
+        echo '        *) echo "{\"issue_fields\":[]}" ;;'
+        echo '        esac'
+        echo '        exit 0'
+        echo '        ;;'
         echo '    orgs/*/installations | user/installations) echo "{\"installations\":[]}"; exit 0 ;;'
         echo '    esac'
         echo '    echo "stub: unexpected REST endpoint: $endpoint" >&2'
@@ -1687,6 +1698,36 @@ case "$out" in
 esac
 case "$out" in
 *"read truncated at the"*) fail "a complete read was reported as truncated: ${out}" ;;
+esac
+
+echo "==> both documented issue-field page shapes render the same field list"
+# The preview documents its page as the array wrapped under `issue_fields` AND as
+# the bare array. The reader required the wrapper, so the other shape was a
+# FAILED read — rendered `unknown`, which told an org that really does have the
+# field that nobody could see it (review r1). The shape is the only difference
+# between these two runs, so the verdict may not depend on it.
+for shape in wrapped bare; do
+    out="$(GH_STUB_ISSUE_FIELDS="$shape" run_inventory_section)"
+    case "$out" in
+    *"[x] Org issue fields - Product"*) ;;
+    *) fail "the ${shape} issue-field page shape did not render the field list: ${out}" ;;
+    esac
+done
+
+echo "==> a failed issue-field read still renders unknown, never an absence"
+# Completeness is what accepting a second shape must not cost. A read that FAILED
+# is still a list nobody saw, so it may borrow neither the provisioning verdict
+# nor the needs-admin one — the same invariant the truncation cases above assert,
+# on the other incomplete-read code path.
+out="$(GH_STUB_ISSUE_FIELDS=fail run_inventory_section)"
+case "$out" in
+*"[?] Org issue fields - read failed — inventory unchecked"*) ;;
+*) fail "a failed issue-field read was not reported as unknown: ${out}" ;;
+esac
+case "$out" in
+*"run task setup:github-issue-fields"*)
+    fail "a failed issue-field read still told the reader to provision fields: ${out}"
+    ;;
 esac
 
 echo "status.sh tests passed"

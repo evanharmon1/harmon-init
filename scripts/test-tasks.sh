@@ -88,6 +88,43 @@ for lib in scripts/lib/gh-rest.sh template/scripts/lib/gh-rest.sh; do
         fail "${lib}: the page ceiling no longer defaults to 10"
 done
 
+echo "==> the closing-keyword workflow fetches every library the guard sources"
+# The workflow runs the guard from a FETCH, not a checkout: it pulls
+# scripts/check-closing-keywords.sh out of the contents API and executes it. The
+# moment that guard grew `. "${script_dir}/lib/gh-rest.sh"`, a one-file fetch
+# became a program that dies on a missing file — and no PR's own CI can catch
+# that, because GitHub takes the workflow definition from the DEFAULT BRANCH:
+# every PR keeps running the pair already on main, and the new script and the
+# new workflow only meet after the merge, in the NEXT PR's required check. So the
+# pairing is asserted here instead — each library the guard sources is fetched
+# from the same parameterised ref, written where ${script_dir} resolves it, and
+# removed by the step's trap.
+for pair in \
+    'scripts/check-closing-keywords.sh|.github/workflows/closing-keywords.yml' \
+    'template/scripts/check-closing-keywords.sh|template/.github/workflows/closing-keywords.yml.jinja'; do
+    guard_script="${pair%%|*}"
+    workflow="${pair#*|}"
+    { [ -f "$guard_script" ] && [ -f "$workflow" ]; } || continue
+    trap_line="$(grep -F "trap 'rm -f" "$workflow" || true)"
+    sourced="$(sed -n 's|^\. "[$]{script_dir}/\([^"]*\)".*|\1|p' "$guard_script")"
+    [ -n "$sourced" ] ||
+        fail "${guard_script}: no \${script_dir} library is sourced, so this assertion checks nothing — remove it, or fix the extraction"
+    while IFS= read -r lib; do
+        grep -Fq "contents/scripts/${lib}?ref=\$1" "$workflow" ||
+            fail "${workflow}: ${guard_script} sources ${lib}, but the workflow never fetches scripts/${lib} from the ref it fetches the guard from — the guard it runs would die on a missing file"
+        grep -Fq "> ./${lib}" "$workflow" ||
+            fail "${workflow}: scripts/${lib} is not written to ./${lib}, where the guard's \${script_dir}/${lib} resolves"
+        grep -Fq "./${lib}" <<<"$trap_line" ||
+            fail "${workflow}: ./${lib} is fetched into the workspace and never removed by the step's trap"
+        libdir="$(dirname "$lib")"
+        if [ "$libdir" != . ] &&
+            ! grep -Fq "rmdir ./${libdir}" <<<"$trap_line" &&
+            ! grep -Fq "rm -rf ./${libdir}" <<<"$trap_line"; then
+            fail "${workflow}: the trap removes ./${lib} but leaves the ./${libdir} directory behind"
+        fi
+    done <<<"$sourced"
+done
+
 guard_bin="${test_tmp}/closing-keywords-bin"
 guard_git_args="${test_tmp}/closing-keywords-git-args"
 guard_gh_args="${test_tmp}/closing-keywords-gh-args"
