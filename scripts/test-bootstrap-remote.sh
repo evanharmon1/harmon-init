@@ -892,10 +892,10 @@ if r.returncode != 1 or "unknown tier" not in r.stderr or "WARNING" not in r.std
 # already run as root. The recipe therefore downloads to a file and runs it only
 # on a successful download, which is a property of its SHAPE and so is checked
 # here rather than remembered. Every copy is checked: they are copies of each
-# other and one can be fixed alone. The third copy is the Claude Code on the web
-# guide's setup script — the text a person pastes into the platform — which the
-# guide says is the entrypoint "unchanged"; that claim is held below, not
-# trusted.
+# other and one can be fixed alone. The further copies are the platform guides'
+# setup scripts (Claude Code on the web, Codex cloud) — the text a person pastes
+# into the platform — which each guide says is the entrypoint "unchanged"; that
+# claim is held below, not trusted.
 #
 # Comment markers are stripped and backslash continuations joined first, so the
 # recipe is read as the one command it is — the pipe lives on a continuation
@@ -918,12 +918,19 @@ def recipe_commands(text):
     return [c for c in joined if RECIPE_URL.search(c)]
 
 
-GUIDE = pathlib.Path("docs/guides/claude-code-web.md")
-if not GUIDE.exists():
-    fail(f"{GUIDE} is missing, so its copy of the standalone recipe cannot be checked — move this check with it")
-guide_text = GUIDE.read_text() if GUIDE.exists() else ""
+# Each platform guide that carries a fenced setup-script copy is held to the
+# same checks. Adding an adapter guide with its own copy means adding it here.
+GUIDES = [
+    pathlib.Path("docs/guides/claude-code-web.md"),
+    pathlib.Path("docs/guides/codex-cloud.md"),
+]
+guide_texts = {}
+for GUIDE in GUIDES:
+    if not GUIDE.exists():
+        fail(f"{GUIDE} is missing, so its copy of the standalone recipe cannot be checked — move this check with it")
+    guide_texts[GUIDE] = GUIDE.read_text() if GUIDE.exists() else ""
 
-for label, text in ((BOOTSTRAP, bootstrap_text), (DOC, doc_text), (GUIDE, guide_text)):
+for label, text in ((BOOTSTRAP, bootstrap_text), (DOC, doc_text), *guide_texts.items()):
     commands = recipe_commands(text)
     if not commands:
         fail(
@@ -991,11 +998,14 @@ def recipe_blocks(text):
     return [b for b in blocks if RECIPE_URL.search("\n".join(b))]
 
 
-doc_recipes, guide_recipes = recipe_blocks(doc_text), recipe_blocks(guide_text)
+doc_recipes = recipe_blocks(doc_text)
 if len(doc_recipes) != 1:
-    fail(f"{DOC}: expected exactly one fenced standalone recipe to compare the guide against, found {len(doc_recipes)}")
-if len(guide_recipes) != 1:
-    fail(f"{GUIDE}: expected exactly one fenced setup-script recipe, found {len(guide_recipes)}")
+    fail(f"{DOC}: expected exactly one fenced standalone recipe to compare the guides against, found {len(doc_recipes)}")
+guide_recipe_blocks = {}
+for GUIDE, guide_text in guide_texts.items():
+    guide_recipe_blocks[GUIDE] = recipe_blocks(guide_text)
+    if len(guide_recipe_blocks[GUIDE]) != 1:
+        fail(f"{GUIDE}: expected exactly one fenced setup-script recipe, found {len(guide_recipe_blocks[GUIDE])}")
 # The one value the two copies may legitimately disagree on is the tag. The
 # architecture document keeps the placeholder, while the guide tells its reader to
 # pin the first release that carries the bootstrap — so the HARMON_INIT_REF= value
@@ -1016,7 +1026,9 @@ def ref_slot(block):
     return out, values
 
 
-if len(doc_recipes) == 1 and len(guide_recipes) == 1:
+for GUIDE, guide_recipes in guide_recipe_blocks.items():
+    if len(doc_recipes) != 1 or len(guide_recipes) != 1:
+        continue
     guide_body = guide_recipes[0]
     if guide_body[:1] == [GUIDE_SHEBANG]:
         guide_body = guide_body[1:]
@@ -1024,7 +1036,7 @@ if len(doc_recipes) == 1 and len(guide_recipes) == 1:
     doc_body, doc_refs = ref_slot(doc_recipes[0])
     for value in doc_refs:
         if value != "vX.Y.Z":
-            fail(f"{DOC}: HARMON_INIT_REF={value!r} must stay the generic placeholder vX.Y.Z; only the guide pins a release tag")
+            fail(f"{DOC}: HARMON_INIT_REF={value!r} must stay the generic placeholder vX.Y.Z; only a guide pins a release tag")
     for value in guide_refs:
         if not GUIDE_REF_OK.match(value):
             fail(f"{GUIDE}: HARMON_INIT_REF={value!r} must be the placeholder vX.Y.Z or a release tag vMAJOR.MINOR.PATCH")
