@@ -211,8 +211,11 @@ plus `&&` propagates the failure by construction. Nothing deletes the temporary
 directory: a trailing `rm` would become the chain's exit status and reintroduce
 exactly the bug, and a few kilobytes are nothing on a VM that is about to be
 thrown away. `scripts/test-bootstrap-remote.sh` § 14 holds this shape in place
-— it fails if either copy of the recipe becomes a bare pipe into a shell, stops
-downloading to a file, or stops using a private directory.
+— it fails if any of the three copies of the recipe (the bootstrap script's,
+this document's, and the
+[Claude Code on the web guide](../guides/claude-code-web.md)'s) becomes a bare
+pipe into a shell, stops downloading to a file, or stops using a private
+directory.
 
 The script goes into a **private directory** (`mktemp -d`, with mode `0700`
 stated rather than inherited from a default), not a bare `mktemp` file in shared
@@ -367,7 +370,18 @@ adapter shares, and the section is where a platform's specifics go.
 
 | Platform | Issue | Section |
 | --- | --- | --- |
-| Claude Code on the web | #1407 | *(pending)* |
+| Claude Code on the web | #1407 | [Claude Code on the web](#claude-code-on-the-web) |
 | Codex cloud | #750 | *(pending)* |
 | Sprites | #1411 | *(pending)* |
 | Self-hosted | #1410 | *(pending)* |
+
+### Claude Code on the web
+
+One environment for all repos, whose setup script is the entrypoint above at a
+pinned release tag and whose network level is **Trusted**. The platform takes no
+custom image and ignores `devcontainer.json`, so the setup script is the whole
+adapter. Everything specific to the platform — the environment's configuration,
+the secrets policy, how its GitHub proxy changes the `gh` calls the dev loop
+makes, the terminal-to-cloud bridges, and the observations still owed by a live
+session — is in
+[docs/guides/claude-code-web.md](../guides/claude-code-web.md).
