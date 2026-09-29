@@ -184,7 +184,7 @@ if resolve_reader 2>/dev/null; then
 fi
 
 reset_policy
-replace_in_table rounds.standard 'wall_clock_min = 120' 'wall_clock_min = 0'
+replace_in_table rounds.standard 'wall_clock_min = 720' 'wall_clock_min = 0'
 if resolve_reader 2>/dev/null; then
     echo "FAIL: JS reader accepted zero wall-clock ceiling" >&2
     exit 1
