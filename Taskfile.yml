@@ -94,6 +94,7 @@ tasks:
       - task: test:status
       - task: test:gh-scopes
       - task: test:related-repos
+      - task: test:setup-remote
       - task: test:meta-install
       - task: test:copier-validators
       - task: test:renovate-pins
@@ -518,6 +519,11 @@ tasks:
     cmds:
       - ./scripts/test-bootstrap-related-repos.sh
 
+  test:setup-remote:
+    desc: Unit-test task setup:remote — idempotency, the lefthook shim, sibling clones into the checkout's parent (stubbed lefthook/gh, no network)
+    cmds:
+      - ./scripts/test-setup-remote.sh
+
   test:meta-install:
     desc: Unit-test the .meta sidecar installer's ~-expansion and refusals
     cmds:
@@ -859,6 +865,11 @@ tasks:
     desc: Install git hooks via lefthook
     cmds:
       - lefthook install
+
+  setup:remote:
+    desc: Prepare this checkout for the dev loop on a remote platform (no devcontainer hooks) — git hooks, frozen dependencies, related repos beside it. Idempotent
+    cmds:
+      - ./scripts/setup-remote.sh
 
   setup:github:
     desc: Apply idempotent GitHub repo settings via gh (Dependabot alerts, private vulnerability reporting, Actions runner routing)

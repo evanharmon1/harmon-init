@@ -2,9 +2,18 @@
 set -euo pipefail
 
 # Clone "related" repos listed in .devcontainer/related-repos.txt into
-# /workspaces/, adjacent to the main repo. Idempotent and NON-DESTRUCTIVE: if a
+# /workspaces/ (or the directory given as the first argument), adjacent to the
+# main repo. Idempotent and NON-DESTRUCTIVE: if a
 # target dir already exists it is left completely untouched (no fetch, no pull,
 # no checkout, no warning) — fetching is fetch-related-repos.sh's job at start.
+#
+# Usage: bootstrap-related-repos.sh [TARGET_DIR]
+#   TARGET_DIR (optional) is the directory the siblings are cloned into; an
+#   argument wins over WORKSPACES_DIR, which wins over the /workspaces default.
+#   `task setup:remote` passes the checkout's parent directory so a remote
+#   platform (which has no /workspaces) gets the same siblings the devcontainer
+#   does. The devcontainer's own call sites pass nothing and still target
+#   /workspaces.
 #
 # Runs on devcontainer create (post-create-common.sh), on devcontainer start
 # (post-start-common.sh in background), and upon scope verification in
@@ -27,7 +36,8 @@ set -euo pipefail
 #
 # Environment variable overrides (for tests and host customization):
 #   CONFIG_FILE                  Path to related-repos.txt (default: ../related-repos.txt)
-#   WORKSPACES_DIR               Destination parent directory (default: /workspaces)
+#   WORKSPACES_DIR               Destination parent directory (default: /workspaces;
+#                                the TARGET_DIR argument takes precedence)
 #   RELATED_REPOS_GIT_BASE_URL   Base URL for git clone fallback (default: https://${GH_HOST}/, else the host of
 #                                this repo's origin remote, else https://github.com/)
 #   RELATED_REPOS_MV_ATOMIC      Force atomic publish (1 = GNU mv -T, 0 = non-GNU detect-and-undo)
@@ -55,7 +65,7 @@ trap 'exit 129' HUP
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/../related-repos.txt}"
-WORKSPACES_DIR="${WORKSPACES_DIR:-/workspaces}"
+WORKSPACES_DIR="${1:-${WORKSPACES_DIR:-/workspaces}}"
 
 if [ -n "${RELATED_REPOS_GIT_BASE_URL:-}" ]; then
     GIT_BASE_URL="${RELATED_REPOS_GIT_BASE_URL}"

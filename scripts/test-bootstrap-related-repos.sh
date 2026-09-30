@@ -524,4 +524,29 @@ signal_case TERM 143
 signal_case INT 130
 signal_case HUP 129
 
+# --- Test 15: the target directory is a positional argument ---
+echo "==> the target directory argument wins over WORKSPACES_DIR"
+rm -rf "${WORKSPACES}" "${TMP}/arg-target" && mkdir -p "${WORKSPACES}" "${TMP}/arg-target"
+echo "test-owner/test-repo" >"${CONFIG}"
+(
+    make_stub unauthenticated
+    export PATH="${BIN_DIR}:${PATH}"
+    export WORKSPACES_DIR="${WORKSPACES}" # the decoy the argument must beat
+    export CONFIG_FILE="${CONFIG}"
+    export RELATED_REPOS_GIT_BASE_URL="file://${BARE_BASE}/"
+    bash "${SUT}" "${TMP}/arg-target" >/dev/null
+)
+[ -d "${TMP}/arg-target/test-repo/.git" ] || fail "expected the clone in the argument directory"
+[ ! -e "${WORKSPACES}/test-repo" ] || fail "the argument must win over WORKSPACES_DIR"
+
+echo "==> the default target stays /workspaces and the devcontainer call sites pass no argument"
+grep -q 'WORKSPACES_DIR="${1:-${WORKSPACES_DIR:-/workspaces}}"' "${SUT}" || fail "the default target must remain /workspaces"
+for site in .devcontainer/scripts/post-create-common.sh .devcontainer/scripts/post-start-common.sh; do
+    calls="$(grep 'bootstrap-related-repos\.sh' "$site" | grep -v '^[[:space:]]*#' || true)"
+    [ -n "$calls" ] || fail "$site no longer calls bootstrap-related-repos.sh"
+    if printf '%s\n' "$calls" | grep -Eq 'bootstrap-related-repos\.sh[[:space:]]+[^[:space:]&;|)<>]'; then
+        fail "$site must call bootstrap-related-repos.sh without a target argument (so it targets /workspaces)"
+    fi
+done
+
 echo "test-bootstrap-related-repos.sh passed"

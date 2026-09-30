@@ -126,6 +126,7 @@ tasks:
       - task: test:gh-scopes
 [% if devcontainer %]
       - task: test:related-repos
+      - task: test:setup-remote
 [% endif %]
       - task: test:meta-install
 [% if use_codex_review %]
@@ -811,6 +812,11 @@ tasks:
     desc: Unit-test the related-repo bootstrap fallback and idempotency (stubbed gh/git, no network)
     cmds:
       - ./scripts/test-bootstrap-related-repos.sh
+
+  test:setup-remote:
+    desc: Unit-test task setup:remote — idempotency, the lefthook shim, sibling clones into the checkout's parent (stubbed lefthook/gh, no network)
+    cmds:
+      - ./scripts/test-setup-remote.sh
 [% endif %]
 
   test:meta-install:
@@ -1151,6 +1157,11 @@ tasks:
     desc: Install git hooks via lefthook
     cmds:
       - lefthook install
+
+  setup:remote:
+    desc: Prepare this checkout for the dev loop on a remote platform (no devcontainer hooks) — git hooks, frozen dependencies, related repos beside it. Idempotent
+    cmds:
+      - ./scripts/setup-remote.sh
 
   # ── GitHub setup ───────────────────────────────────────────────
   # One-time, idempotent repo settings applied via gh (safe to re-run); run once
