@@ -12,10 +12,11 @@ one's status.
 - One ADR per file, named `YYYY-MM-DD-<kebab-title>.md` — the date the
   record was filed, fixed at creation and never changed by a later status
   change (a `Proposed` record keeps its filing date when accepted; the
-  `Status` line carries the outcome). Records from before this convention
-  keep their numbered `NNNN-` names; both forms are valid. The one
-  exception is the seed record below: the project template maintains it,
-  so a template update re-titles a numbered seed to the date form.
+  `Status` line carries the outcome). Records filed under the older numbered
+  `NNNN-` convention are renamed to the date form
+  ([2026-09-30-rename-numbered-decision-records-by-date.md](2026-09-30-rename-numbered-decision-records-by-date.md)).
+  The one exception is the seed record below: the project template maintains
+  it, so a template update re-titles a numbered seed to the date form.
 - Start with
   [2026-06-19-record-architecture-decisions.md](2026-06-19-record-architecture-decisions.md)
   — the meta-ADR for the process. The project template maintains it: its
@@ -43,7 +44,8 @@ one's status.
   — Dev flow v2: the session orchestrates; results are schema-bound
   (Accepted; D2 amended by 2026-09-13).
 - [2026-08-29-name-decision-records-by-date.md](2026-08-29-name-decision-records-by-date.md)
-  — name decision records by date instead of sequence number (Accepted).
+  — name decision records by date instead of sequence number
+  (Accepted; amended by 2026-09-30).
 - [2026-09-01-adopt-openspec.md](2026-09-01-adopt-openspec.md) — superseded
   by the decision to retire the root-only OpenSpec workflow.
 - [2026-09-02-remove-guard-process-kill-hook.md](2026-09-02-remove-guard-process-kill-hook.md)
@@ -55,3 +57,5 @@ one's status.
 - [2026-09-29-agent-posture-three-posture-model.md](2026-09-29-agent-posture-three-posture-model.md)
   — proposed: a third devcontainer posture, **agent**, for unattended runs,
   never looser than bot on any axis.
+- [2026-09-30-rename-numbered-decision-records-by-date.md](2026-09-30-rename-numbered-decision-records-by-date.md)
+  — rename numbered decision records by date (Accepted).

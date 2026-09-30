@@ -4,7 +4,7 @@ Date: 2026-08-29
 
 ## Status
 
-Accepted
+Accepted; amended by [2026-09-30-rename-numbered-decision-records-by-date.md](2026-09-30-rename-numbered-decision-records-by-date.md) (numbered records are renamed)
 
 Amends two clauses of [the seed record](2026-06-19-record-architecture-decisions.md)
 (formerly `0001-record-architecture-decisions.md`): the naming rule
