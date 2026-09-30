@@ -38,7 +38,7 @@ repos.
 | Effort | The human time estimate for work a human will do, on the modified Fibonacci ladder (1, 2, 3, 5, 8, 13, 20). Human tasks only, never agent work. Avoid: size, story points. |
 | Priority | The human's ranking of when the issue should be worked: urgent, high, medium, low. Human-only and never required; unset means an agent does not start it without asking. Avoid: P0–P3 (review-finding severities). |
 | Family | A model lineage: claude, gpt, gemini, qwen… Distinct from a **harness** (the executable that runs it). |
-| Claim | The lock recording who actually took the work: `claim:<family>[:<model>]`. |
+| Claim | The marker recording which model family took the work: `claim:<family>[:<model>]`. A signal, not a lock; the harness and runtime are in the claim comment. |
 | triaged | Every required classification is present: Type (or work-type label), one `area:*`, `layer:*`, and `domain:*` (or their explicit inapplicable value), Risk, Complexity, Impact. `needs-triage` is derived from this, never set by hand. |
 | Size | Retired: superseded by Effort (human tasks) and Complexity (every issue). |
 | `suggest:*` | Retired: the family suggestion, superseded by Tier. |

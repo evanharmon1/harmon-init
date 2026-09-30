@@ -6,20 +6,22 @@ Date: 2026-09-30
 
 Accepted
 
-Supersedes every rule in [ADR 0005](2026-08-07-unified-agent-vocabulary.md)
-and [ADR 0006](2026-08-16-method-and-tier-axes.md) that defines, amends, or
-consumes `suggest:*` — among them ADR 0005 D6's suggestion half and ADR
-0006's D3 candidate narrowing, its D6 suggestion provenance, and its
-amendment to ADR 0005 D6: `suggest:*` is retired, and the Tier derived below
-replaces it. The `claim:<family>[:<model>]` half of ADR 0005 D6 stands
-unchanged.
+Supersedes whatever an earlier record says that conflicts with the
+retirements in D8 — `suggest:*`, the `Size` project field, the
+personal-project `Priority` field, and the ponderousdev `Agent` issue field
+— among them [ADR 0005](2026-08-07-unified-agent-vocabulary.md) D6's
+suggestion half, ADR 0005 D10's listing of `Size` as planning metadata, and
+[ADR 0006](2026-08-16-method-and-tier-axes.md)'s D3 candidate narrowing, its
+D6 suggestion provenance, and its amendment to ADR 0005 D6. The Tier derived
+below replaces `suggest:*`. The `claim:<family>[:<model>]` half of ADR 0005
+D6 stands unchanged.
 
 Amends [ADR 0006](2026-08-16-method-and-tier-axes.md) D5 (the resolution
 order) by inserting the pinned and derived Tier (D5 below), and
 [ADR 0007](2026-08-24-rigor-and-strategy-axes.md) D5 (which role a tier input
 targets) by adding the pinned Tier as another implementer-only input.
-Everything else in those two records stands, apart from the `suggest:*`
-rules superseded above.
+Everything else in those two records stands, apart from the rules
+superseded above.
 
 The design record is the body of epic
 [#1444](https://github.com/evanharmon1/harmon-init/issues/1444) and its
@@ -167,8 +169,9 @@ Retired:
 
 Unchanged:
 
-- `claim:<family>[:<model>]`, the lock naming the runtime that actually took
-  the work.
+- `claim:<family>[:<model>]`, unchanged: the marker naming the model family
+  that took the work (ADR 0005 D6) — a signal, not a mutex; the harness and
+  runtime live in the claim record.
 - `tier:<role>:*` labels, as execution-policy overrides.
 - The model catalog, which stays in `agent-registry.json`; `.devflow.toml`
   selects from it and may override it per repository.
