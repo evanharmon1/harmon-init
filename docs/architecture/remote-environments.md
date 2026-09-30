@@ -409,8 +409,22 @@ check a VM; the comparison above is.
 | Check | Where | What it proves |
 | --- | --- | --- |
 | `task test:bootstrap-remote` | `task verify`, and `build.yml`'s `lint` job on every pull request | The pin contract, offline: no second pin owner (declared or typed into a download URL), every pin Renovate-extractable, both Node digests verified for the pinned Node, the fetch list matches the directory, no denied host, no forbidden tool named by the bootstrap or a tier script, a non-release-tag `--ref` is refused, the agent posture comes only from `.devcontainer/config/agent/`, installs byte-identical and idempotent, leaves a file already there in place unless `HARMON_AGENT_POSTURE_REPLACE=1`, never overwrites a kept copy, and changes no harness executable's mode, and no piped or live-prefix `tar` extraction in the bootstrap or a tier script. That last check is shape-based: a dashless `tar xzf`, an `unzip -d`, or a `curl -o` straight onto the live path is not detected, and for those forms the stage-verify-extract-move invariant is enforced by the one install helper in `lib.sh` and reviewed, not proved |
-| `remote-bootstrap.yml` → `bootstrap` | CI, stock `ubuntu:24.04` container, seeded with `/usr/bin` ahead of `/usr/local/bin` and `LC_ALL=C` | It runs: the tiers install inside the budget, the second run performs no new installs and leaves the manifest byte-identical, `yq` and `task` resolve from `/usr/local/bin` and the effective locale is UTF-8 in a fresh login shell on the system profile path, a user with `~/.local/bin/yq` planted gets the shadow warning and exit 0 through the un-sudoed re-exec path **and** through `sudo -E` (asserted to enter as uid 0 with that user's `HOME`), each with nothing of root's left in that home and that user's `~/.profile` never executed as root, nothing forbidden appeared on `PATH`, the agent posture passed `agent-autonomy.sh verify` for the files it wrote (the bootstrap fails otherwise), every VM manifest key names its pin, and `task check` then passes in a harmon-init checkout |
+| `remote-bootstrap.yml` → `bootstrap` | CI, stock `ubuntu:24.04` container, seeded with `/usr/bin` ahead of `/usr/local/bin` and `LC_ALL=C` | It runs: the tiers install inside the budget, the second run performs no new installs and leaves the manifest byte-identical, `yq` and `task` resolve from `/usr/local/bin` and the effective locale is UTF-8 in a fresh login shell on the system profile path, a user with `~/.local/bin/yq` planted gets the shadow warning and exit 0 through the un-sudoed re-exec path **and** through `sudo -E` (asserted to enter as uid 0 with that user's `HOME`), each with nothing of root's left in that home and that user's `~/.profile` never executed as root, nothing forbidden appeared on `PATH`, the agent posture is delivered — after the first run both managed destinations are byte-identical to `.devcontainer/config/agent/` and the run printed `HARMON_BOOTSTRAP_POSTURE_GAPS=0` — every VM manifest key names its pin, and `task check` then passes in a harmon-init checkout. Every step that pipes the bootstrap through `tee` runs under `pipefail`, so a bootstrap that dies fails the step it died in |
 | `images/devcontainer/smoke.sh` | the built image | The image really runs the shared scripts — they ship in the image beside `versions.env`, and its manifest records their versions for the comparison above |
+
+**The `remote-bootstrap` job is advisory.** It is path-filtered and is not a
+required status check (see [branch-protection.md](branch-protection.md)), yet it
+is the only end-to-end evidence that the agent posture is delivered on a real
+machine: a pull request can merge with it red, or without it having run. Making
+it required needs the unfiltered-aggregator shape `devcontainer-verify` uses — a
+job that runs on every event and decides internally whether there is anything to
+prove — and that is follow-up work, not part of this change.
+
+**The `--ref` posture fetch is not executed by any test or job** until the first
+release that carries these files exists: CI runs the bootstrap from its
+checkout, and a tag cannot serve files it does not contain. Until then what holds
+is § 24 of `scripts/test-bootstrap-remote.sh`, which keeps the fetched asset
+list equal to the files on disk and runs the fetch against a stubbed download.
 
 The CI job runs on the runner's native architecture, so `vars.CI_RUNS_ON` is
 what decides whether arm64 is exercised. On GitHub-hosted runners it is amd64;

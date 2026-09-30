@@ -122,26 +122,23 @@ jobs:
       - name: Run the bootstrap (core + agents) and time it
         # Under the seeded traps: /usr/bin ahead of /usr/local/bin, LC_ALL=C.
         run: |
+          # A pipeline's status is its LAST command's: without this, a bootstrap
+          # that dies still passes the step because `tee` exited 0.
+          set -o pipefail
           start=$(date +%s)
           env PATH=/usr/bin:/bin:/usr/local/bin LC_ALL=C \
             ./images/devcontainer/bootstrap-remote.sh | tee /tmp/bootstrap-first.log
           elapsed=$(( $(date +%s) - start ))
+          # The agent posture, checked BEFORE the budget so a slow run still
+          # reports it: on a container that had no managed files, both must now
+          # be the checked-in definition byte for byte, and the run must have
+          # recorded no gap. The summary table is opened here for that reason.
           {
             echo "### Remote bootstrap"
             echo
             echo "| Measurement | Value |"
             echo "| --- | --- |"
-            echo "| architecture | \`$(uname -m)\` |"
-            echo "| core + agents tiers | **${elapsed}s** (budget ${BOOTSTRAP_BUDGET_SECONDS}s) |"
           } >> "$GITHUB_STEP_SUMMARY"
-          if [ "$elapsed" -gt "$BOOTSTRAP_BUDGET_SECONDS" ]; then
-            echo "::error::core+agents took ${elapsed}s, over the ${BOOTSTRAP_BUDGET_SECONDS}s budget"
-            exit 1
-          fi
-          cp /usr/local/share/harmon-remote-env/manifest.json /tmp/manifest-first.json
-          # The agent posture: on a container that had no managed files, both
-          # must now be the checked-in definition byte for byte, and the run
-          # must have recorded no gap.
           cmp .devcontainer/config/agent/claude-managed-settings.json /etc/claude-code/managed-settings.json ||
             { echo "::error::/etc/claude-code/managed-settings.json is not the agent definition"; exit 1; }
           cmp .devcontainer/config/agent/codex-managed-config.toml /etc/codex/managed_config.toml ||
@@ -152,6 +149,15 @@ jobs:
             echo "::error::the first run recorded ${gaps:-no} agent-posture gap(s); expected 0 on a container with no managed files"
             exit 1
           fi
+          {
+            echo "| architecture | \`$(uname -m)\` |"
+            echo "| core + agents tiers | **${elapsed}s** (budget ${BOOTSTRAP_BUDGET_SECONDS}s) |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$elapsed" -gt "$BOOTSTRAP_BUDGET_SECONDS" ]; then
+            echo "::error::core+agents took ${elapsed}s, over the ${BOOTSTRAP_BUDGET_SECONDS}s budget"
+            exit 1
+          fi
+          cp /usr/local/share/harmon-remote-env/manifest.json /tmp/manifest-first.json
       - name: Run it again and prove the second run performs no new installs and changes no pinned version
         # "Exited 0 again" is not idempotence: a script that re-downloaded and
         # re-installed everything also exits 0. The bootstrap counts its own
@@ -161,6 +167,9 @@ jobs:
         # on the archive by design — so the claim is two assertions: zero new
         # installs, and a byte-identical manifest (no pinned version moved).
         run: |
+          # A pipeline's status is its LAST command's: without this, a bootstrap
+          # that dies still passes the step because `tee` exited 0.
+          set -o pipefail
           env PATH=/usr/bin:/bin:/usr/local/bin LC_ALL=C \
             ./images/devcontainer/bootstrap-remote.sh | tee /tmp/bootstrap-second.log
           installs=$(sed -n 's/^HARMON_BOOTSTRAP_NEW_INSTALLS=//p' /tmp/bootstrap-second.log | tail -1)
@@ -189,6 +198,9 @@ jobs:
         # user's HOME. The planted ~/.profile tries to create a file only root
         # can create; it must not exist afterwards.
         run: |
+          # A pipeline's status is its LAST command's: without this, a bootstrap
+          # that dies still passes the step because `tee` exited 0.
+          set -o pipefail
           useradd -m -s /bin/bash shadowed
           echo 'shadowed ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/shadowed
           chmod 0440 /etc/sudoers.d/shadowed
@@ -215,6 +227,9 @@ jobs:
         # this is the proof for the path the re-exec never sees. Same user,
         # same planted shadow and marker profile, same three assertions.
         run: |
+          # A pipeline's status is its LAST command's: without this, a bootstrap
+          # that dies still passes the step because `tee` exited 0.
+          set -o pipefail
           entry_uid="$(runuser -u shadowed -- sudo -E id -u)"
           entry_home="$(runuser -u shadowed -- sudo -E env | sed -n 's/^HOME=//p')"
           echo "sudo -E enters as uid ${entry_uid} with HOME=${entry_home}"
@@ -236,6 +251,9 @@ jobs:
         # the browsers tier at all — so without this step that claim is simply
         # never tested, which is how it was wrong when first written.
         run: |
+          # A pipeline's status is its LAST command's: without this, a bootstrap
+          # that dies still passes the step because `tee` exited 0.
+          set -o pipefail
           ./images/devcontainer/bootstrap-remote.sh --tiers core,agents,browsers >/dev/null
           ./images/devcontainer/bootstrap-remote.sh --tiers core,agents,browsers \
             | tee /tmp/bootstrap-browsers.log

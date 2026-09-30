@@ -132,6 +132,9 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
   **byte-identical manifest** (no pinned version moved) — apt upgrades are
   reported in the job summary, not gated, because the apt packages are
   unpinned and converge on the archive by design —
+  asserts that the agent posture landed (both managed destinations
+  byte-identical to `.devcontainer/config/agent/`, and
+  `HARMON_BOOTSTRAP_POSTURE_GAPS=0` on the first run),
   asserts that `op`, Homebrew and Tailscale are absent, and then runs
   `task check` in the checkout using only what the bootstrap installed. Its
   container job is fork-gated like the image publisher's, for the same reason:
@@ -251,7 +254,9 @@ under `images/devcontainer/install/` and the pins in
 `images/devcontainer/versions.env` are run both by that Dockerfile and by
 `bootstrap-remote.sh` on a cloud VM that cannot pull the image at all. That is
 why a change under `images/devcontainer/` triggers `remote-bootstrap.yml` as
-well as the publisher — see
+well as the publisher. The bootstrap also installs the agent posture from
+`.devcontainer/agent/agent-autonomy.sh` and `.devcontainer/config/agent/`, so a
+change under either triggers `remote-bootstrap.yml` too — see
 [remote-environments.md](remote-environments.md).
 
 ## Authentication
