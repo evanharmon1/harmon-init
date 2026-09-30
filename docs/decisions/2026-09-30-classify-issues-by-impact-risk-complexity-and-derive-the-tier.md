@@ -36,11 +36,11 @@ Two constraints shaped the mechanics:
 - **Field types.** Organization issue fields are TEXT, SINGLE_SELECT, DATE,
   NUMBER, or MULTI_SELECT; there is no boolean. Personal-account repositories
   have no issue fields at all, only labels.
-- **Actions minutes.** The harmonops and ponderousdev organizations share
-  3,000 Team-plan minutes a month and nearly every ponderousdev repository is
-  private. A job bills a full minute, and GitHub emits one `labeled` event per
-  label, so a per-event writer for agent traffic spends minutes on every
-  write. The four evanharmon1 repositories are public and run free.
+- **Actions minutes.** The harmonops and ponderousdev organizations are on
+  the Team plan, with 3,000 shared minutes a month, and nearly every
+  ponderousdev repository is private. A job bills a full minute, and GitHub
+  emits one `labeled` event per label, so a per-event writer for agent
+  traffic spends minutes on every write. The four evanharmon1 repositories are public and run free.
 
 ## Decision
 
@@ -49,8 +49,8 @@ Two constraints shaped the mechanics:
 **Issue classification** is the set of inherent attributes of an issue: what
 it *is*. **Execution policy** (`.devflow.toml`: rigor, strategy, role tiers,
 budgets) decides how the factory *runs* an issue, and may override any
-default the classification implies. Fields describe the issue; they do not
-decide how it is run.
+default the classification implies. Fields describe what an issue is;
+`.devflow.toml` decides how it is run.
 
 ### D2 — The axes and their scales
 
