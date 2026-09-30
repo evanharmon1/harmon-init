@@ -287,7 +287,23 @@ rm -rf "${WORKSPACES}/.bootstrap-orphan-live.$$.222222"
 
 # --- Test 9: post-start-common.sh starts bootstrap-related-repos.sh detached ---
 echo "==> post-start-common.sh starts bootstrap-related-repos.sh detached"
-grep -E -q '^[[:space:]]*nohup bash \.devcontainer/scripts/bootstrap-related-repos\.sh' .devcontainer/scripts/post-start-common.sh ||
-    fail "expected post-start-common.sh to start bootstrap-related-repos.sh detached with nohup"
+awk '/^[[:space:]]*nohup bash \.devcontainer\/scripts\/bootstrap-related-repos\.sh/ {
+    line = $0
+    while (line ~ /\\$/) {
+        sub(/\\$/, "", line)
+        if ((getline next_line) > 0) {
+            line = line next_line
+        } else {
+            break
+        }
+    }
+    if (line ~ /&[[:space:]]*$/) {
+        matched = 1
+    }
+}
+END {
+    exit (!matched)
+}' .devcontainer/scripts/post-start-common.sh ||
+    fail "expected post-start-common.sh to start bootstrap-related-repos.sh detached with nohup and trailing &"
 
 echo "test-bootstrap-related-repos.sh passed"
