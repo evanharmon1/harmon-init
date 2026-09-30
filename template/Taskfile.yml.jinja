@@ -124,6 +124,9 @@ tasks:
       - task: test:output
       - task: test:status
       - task: test:gh-scopes
+[% if devcontainer %]
+      - task: test:related-repos
+[% endif %]
       - task: test:meta-install
 [% if use_codex_review %]
       - task: test:codex-review
@@ -802,6 +805,13 @@ tasks:
     desc: Unit-test the gh scope refresh task's refusals and post-refresh verification (stubbed gh, no network)
     cmds:
       - ./scripts/test-setup-gh-scopes.sh
+[% if devcontainer %]
+
+  test:related-repos:
+    desc: Unit-test the related-repo bootstrap fallback and idempotency (stubbed gh/git, no network)
+    cmds:
+      - ./scripts/test-bootstrap-related-repos.sh
+[% endif %]
 
   test:meta-install:
     desc: Unit-test the .meta sidecar installer's ~-expansion and refusals

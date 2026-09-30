@@ -818,9 +818,10 @@ not the missing volume — it is that something is **recreating** the container
 behind your back. Chase that instead; see
 [Attach paths and container managers](#attach-paths-and-container-managers).
 
-Nothing fails hard before you log in. `post-create` prints the commands above and
-sibling repos are skipped with a warning (re-run
-`bash .devcontainer/scripts/bootstrap-related-repos.sh` afterwards). What does
+Nothing fails hard before you log in. `post-create` prints the commands above,
+public sibling repos clone via HTTPS fallback while private ones are skipped
+with a warning (missing siblings are automatically cloned in the background on
+container start and upon completing `task setup:gh-scopes`). What does
 not work is anything that talks to GitHub *as you*: `git push`, `gh pr`,
 `gh api`.
 
@@ -1285,15 +1286,22 @@ environment gitconfig baked into the image at `~/.config/git/config`, so
 in-container git operations never depend on an SSH agent). They are:
 
 - **cloned** into `/workspaces/`, beside this repo, on container **create**
-  (`scripts/bootstrap-related-repos.sh`) — so a rebuilt or persistence-lost
-  container re-populates them;
+  and in the background on container **start** (`.devcontainer/scripts/bootstrap-related-repos.sh`),
+  with fallback to `git clone` for public repos when `gh` is unauthenticated,
+  and re-triggered upon completing `task setup:gh-scopes` — so a rebuilt or
+  persistence-lost container re-populates them and missing siblings clone
+  automatically once authenticated;
 - **fetched** non-destructively on container **start**
-  (`scripts/fetch-related-repos.sh`).
+  (`.devcontainer/scripts/fetch-related-repos.sh`).
 
 Both are safe to re-run: an already-cloned sibling is **never clobbered** —
 clone skips it, and start runs `git fetch` only (never pull / merge / checkout),
-so uncommitted work, local commits, and the checked-out branch stay put. The
-list is preserved across `copier update` (an empty list is a no-op).
+so uncommitted work, local commits, and the checked-out branch stay put.
+Overlapping runs are safe: each repo is cloned into its own private temporary
+directory and moved into place atomically on success, so only one run can
+publish and a failed or interrupted clone never deletes a user's existing
+checkout.
+The list is preserved across `copier update` (an empty list is a no-op).
 
 To let Claude read and search the cloned siblings, add them to
 `.claude/settings.json` in **two** places — `permissions.additionalDirectories`
