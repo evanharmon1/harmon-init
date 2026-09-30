@@ -16,15 +16,20 @@ run-name: ${{ github.actor }} is proving the remote bootstrap on a stock Ubuntu 
 #               and never executes that caller's ~/.profile — on the re-exec
 #               entry AND the already-root `sudo -E` entry, which arrives
 #               with the caller's HOME preserved — a pre-existing LC_ALL=C
-#               does not survive, and the default tiers fit the platform's
-#               roughly five-minute cached-setup budget.
+#               does not survive, the default tiers fit the platform's
+#               roughly five-minute cached-setup budget, and the agent posture
+#               lands byte-identical to .devcontainer/config/agent/ with no
+#               recorded gap.
 #
 # The pin CONTRACT is not proved here. `task test:bootstrap-remote` runs
 # unconditionally in build.yml's lint job, which has no path filter, so it sees
 # every PR — including one that edits only an input this workflow's filter does
 # not name. This workflow proves behaviour only, and the path filter below is
 # correct for that: a documentation edit cannot change what the scripts install
-# on a real container.
+# on a real container. An edit to the agent posture's installer
+# (.devcontainer/agent/agent-autonomy.sh) or its definition
+# (.devcontainer/config/agent/) can — the bootstrap installs both — so both are
+# named in the lists below.
 on:
   # The two path lists are spelled out twice rather than shared through a YAML
   # anchor: GitHub's workflow parser does not support anchors, so an anchor
@@ -35,6 +40,8 @@ on:
       - "scripts/**"
       - "Taskfile.yml"
       - "renovate.json"
+      - ".devcontainer/agent/agent-autonomy.sh"
+      - ".devcontainer/config/agent/**"
       - ".github/workflows/remote-bootstrap.yml"
   push:
     branches: [main]
@@ -43,6 +50,8 @@ on:
       - "scripts/**"
       - "Taskfile.yml"
       - "renovate.json"
+      - ".devcontainer/agent/agent-autonomy.sh"
+      - ".devcontainer/config/agent/**"
       - ".github/workflows/remote-bootstrap.yml"
 
 concurrency:
@@ -130,6 +139,19 @@ jobs:
             exit 1
           fi
           cp /usr/local/share/harmon-remote-env/manifest.json /tmp/manifest-first.json
+          # The agent posture: on a container that had no managed files, both
+          # must now be the checked-in definition byte for byte, and the run
+          # must have recorded no gap.
+          cmp .devcontainer/config/agent/claude-managed-settings.json /etc/claude-code/managed-settings.json ||
+            { echo "::error::/etc/claude-code/managed-settings.json is not the agent definition"; exit 1; }
+          cmp .devcontainer/config/agent/codex-managed-config.toml /etc/codex/managed_config.toml ||
+            { echo "::error::/etc/codex/managed_config.toml is not the agent definition"; exit 1; }
+          gaps=$(sed -n 's/^HARMON_BOOTSTRAP_POSTURE_GAPS=//p' /tmp/bootstrap-first.log | tail -1)
+          echo "| agent posture gaps | ${gaps:-unset} |" >> "$GITHUB_STEP_SUMMARY"
+          if [ "${gaps:-unset}" != "0" ]; then
+            echo "::error::the first run recorded ${gaps:-no} agent-posture gap(s); expected 0 on a container with no managed files"
+            exit 1
+          fi
       - name: Run it again and prove the second run performs no new installs and changes no pinned version
         # "Exited 0 again" is not idempotence: a script that re-downloaded and
         # re-installed everything also exits 0. The bootstrap counts its own

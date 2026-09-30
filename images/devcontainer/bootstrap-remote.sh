@@ -994,4 +994,6 @@ printf 'HARMON_BOOTSTRAP_UPGRADES=%s\n' "$upgrades"
 printf 'HARMON_BOOTSTRAP_CHANGES=%s\n' "$((new_installs + upgrades))"
 # Managed files left in place, so the agent posture is NOT applied for them. A
 # gap, not a change: a second run reports the same gaps and still installs 0.
+# Printed here with the other counters, so a run that fails in a tier AFTER the
+# posture step prints none of them; its nonzero exit status is what says so.
 printf 'HARMON_BOOTSTRAP_POSTURE_GAPS=%s\n' "$posture_gaps"

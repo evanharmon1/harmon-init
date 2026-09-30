@@ -278,7 +278,9 @@ asserted as counts, not as an exit status — it prints
 their sum as `HARMON_BOOTSTRAP_CHANGES`), plus
 `HARMON_BOOTSTRAP_POSTURE_GAPS=<n>`, the managed paths the agent posture was
 not applied to ([below](#the-agent-posture)) — a gap, not a change, so it is
-outside that sum. CI requires `NEW_INSTALLS=0` plus
+outside that sum. All four are printed at the end of a run, so a run that fails
+part-way prints none of them and its nonzero exit status is what reports it.
+CI requires `NEW_INSTALLS=0` plus
 a byte-identical manifest on the second run, because a script that
 re-downloaded and re-installed everything also exits 0.
 
@@ -297,7 +299,9 @@ Every run, whatever the tiers, installs the **agent posture**
 Claude Code settings to `/etc/claude-code/managed-settings.json` and the agent
 Codex configuration to `/etc/codex/managed_config.toml`, the paths both
 harnesses read as managed policy and the ones the agent devcontainer installs
-to.
+to. It is installed **immediately after `apt-core.sh`** (which provides `jq`,
+its one dependency) **and before any tier**, so a tier that fails can never
+leave a harness installed on the machine without its managed policy.
 
 - **One definition, no copy.** The only definition is
   `.devcontainer/config/agent/`. From a checkout the bootstrap reads it in
@@ -445,7 +449,9 @@ installed, and where it does not, what enforces the posture instead. Two gaps
 are common to every platform VM: the bootstrap does not refuse harness
 executables there, and a managed file the platform put there first is left in
 place, with the posture not applied for it, unless the operator opts in with
-`HARMON_AGENT_POSTURE_REPLACE=1`. Evidence
+`HARMON_AGENT_POSTURE_REPLACE=1`. On every platform the posture is installed
+immediately after `apt-core.sh` and before any tier, so a failing tier never
+leaves a harness installed without its managed policy. Evidence
 tags are the guides': **docs** with the date re-read, **observed** with the date
 and source, **expected, not yet observed**, and **pending** for a `[HUMAN]`
 criterion of [#1404](https://github.com/evanharmon1/harmon-init/issues/1404)
@@ -465,7 +471,8 @@ rules must be listed. Then ask it to run `gh pr merge 1`, which must be refused
 without a prompt. Run `codex` and check that `/status` shows `workspace-write`
 and approval `never`. On the Sprite, `sudo FOREMAN_DEVCONTAINER=agent
 AGENT_AUTONOMY_CONFIG_DIR=<checkout>/.devcontainer/config/agent bash
-<checkout>/.devcontainer/agent/agent-autonomy.sh verify --platform-vm` must pass; in the
+<checkout>/.devcontainer/agent/agent-autonomy.sh verify --platform-vm` must pass,
+where `<checkout>` is a clean checkout at the tag the bootstrap ran; in the
 devcontainer, `bash .devcontainer/agent/agent-autonomy.sh verify`. Record the
 date and the Claude Code and `codex` versions here.
 
