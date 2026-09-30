@@ -2,7 +2,7 @@
 """devflow-resolve.py — minimal reference resolver for .devflow.toml.
 
 Resolves a rigor + strategy execution policy the way AGENTS.md's Dev Loop
-describes and ADR 0007 (docs/decisions/2026-08-24-rigor-and-strategy-axes.md)
+describes and ADR 2026-08-24 (docs/decisions/2026-08-24-rigor-and-strategy-axes.md)
 records: explicit operator instruction > rigor:*/strategy:* labels >
 default_rigor/default_strategy > the built-in fallback. The built-in
 fallback is a FLOOR, not a bypass: even when .devflow.toml is entirely
@@ -14,14 +14,14 @@ against) is a deterministic error, never silently discarded.
 Trust is a CONSUMER input, not something this resolver infers: --label is
 UNVERIFIED by default, and --trusted-label marks the subset whose provenance
 the caller has already verified against its own trusted-actor configuration
-(ADR 0006 D6). Unattended automation may act only on trusted labels (D6.1) —
+(ADR 2026-08-16 D6). Unattended automation may act only on trusted labels (D6.1) —
 every other --label is ignored, with a warning naming it, and falls back to
 the default. An interactive session may still act on any --label (advisory,
 as before trust existed as a concept here), but an off-default result driven
 by an untrusted one sets requires_confirmation, so the operator is asked
 before it is used rather than applied silently (D6.2). An --override is
 always trusted by definition — it is the explicit, attributable instruction
-channel ADR 0006 D5 describes, never repository content.
+channel ADR 2026-08-16 D5 describes, never repository content.
 
 Only labels in the rigor:/strategy:/tier: namespaces are this resolver's
 business — anything else (including retired `method:*`, a plain `bug`, or an
@@ -83,7 +83,7 @@ provisioned label shape at all: treated as unknown (ignored with a warning),
 exactly like any other value that names no concrete ladder tier. `--override
 tier=adaptive` and `--override tier.<role>=adaptive` are rejected outright
 (invalid_input) for a different reason — an override is the explicit,
-attributable instruction channel (ADR 0006 D5), and "defer this to a
+attributable instruction channel (ADR 2026-08-16 D5), and "defer this to a
 preflight classifier" is not a concrete instruction, so an operator wanting
 that must use the `tier:adaptive` LABEL rather than an override.
 
@@ -94,7 +94,7 @@ wins outright for the role that resolved to `adaptive`. Absent it, an
 adaptive-resolved role reports preflight_required=true (also aggregated at
 the top level) and provisionally uses the rigor profile's own tier for that
 role — never a claim that preflight has already run. A concrete tier label on
-the same role still beats `adaptive` (ADR 0006 D5) before any of this
+the same role still beats `adaptive` (ADR 2026-08-16 D5) before any of this
 applies, exactly as a stronger concrete label beats a weaker one.
 requires_confirmation stays honest throughout: it is computed from what was
 actually requested (`adaptive`) for trust purposes, not from whatever
@@ -159,7 +159,7 @@ Inputs, precisely:
                              strongest-wins by ladder rank, regardless of
                              input order: a conflict can only ever raise the
                              tier, mirroring how a rigor conflict can only
-                             ever buy more depth (ADR 0006 D5). `adaptive` is
+                             ever buy more depth (ADR 2026-08-16 D5). `adaptive` is
                              only reachable via the unqualified tier:adaptive
                              form — tier:<role>:adaptive is not a provisioned
                              label shape and is treated as unknown (see the
@@ -167,7 +167,7 @@ Inputs, precisely:
   --trusted-label F:V       the subset of labels (same FAMILY:VALUE forms as
                              --label, same namespace filter) whose provenance
                              the CALLER has already verified against its own
-                             trusted-actor configuration (ADR 0006 D6) —
+                             trusted-actor configuration (ADR 2026-08-16 D6) —
                              repeatable, and need not literally duplicate a
                              --label entry. Under --unattended, ONLY trusted
                              labels participate in resolution. In interactive
@@ -180,7 +180,7 @@ Inputs, precisely:
                              --override would be.
   --override KEY=VALUE      an explicit, attributable operator instruction,
                              repeatable — always trusted by definition
-                             (ADR 0006 D5: an explicit instruction arrives on
+                             (ADR 2026-08-16 D5: an explicit instruction arrives on
                              the operator's attributable channel and is never
                              repository content). KEY is one of: rigor,
                              strategy, tier (unqualified, implementer only),
@@ -194,7 +194,7 @@ Inputs, precisely:
                              EVERY role that resolved to `adaptive`, not a
                              single role. Absent, an adaptive-resolved role
                              reports preflight_required instead of guessing.
-  --unattended               two effects, both from ADR 0006 D6.1: an
+  --unattended               two effects, both from ADR 2026-08-16 D6.1: an
                              ambiguous strategy conflict falls back to
                              default_strategy with a warning instead of
                              erroring, AND only --trusted-label values are
@@ -659,7 +659,7 @@ def filter_labels_by_trust(raw_labels, trusted_labels, *, unattended, warnings):
     Interactive: every --label still applies (trust only affects
     requires_confirmation later) — --trusted-label entries are unioned in so
     a caller may assert trust for a label it did not separately re-pass via
-    --label. Unattended (ADR 0006 D6.1): ONLY trusted labels apply; every
+    --label. Unattended (ADR 2026-08-16 D6.1): ONLY trusted labels apply; every
     other --label is dropped with a warning naming it, and --trusted-label
     entries are still unioned in for the same reason as above.
     """
@@ -769,12 +769,12 @@ def strongest_tier_per_role(tier_candidates):
     """Labels are an unordered set — GitHub attaches no meaning to which was
     applied first — so multiple tier labels landing on one role must resolve
     identically regardless of input order. Strongest-by-ladder-rank is the
-    same conflict rule rigor itself uses (ADR 0006 D5: "a label only ever
+    same conflict rule rigor itself uses (ADR 2026-08-16 D5: "a label only ever
     buys more capability or oversight"): a conflict can only ever raise the
     tier, never silently weaken it by depending on which label happened to
     be seen, or applied, last.
 
-    A CONCRETE tier always beats `adaptive` for the same role (ADR 0006 D5)
+    A CONCRETE tier always beats `adaptive` for the same role (ADR 2026-08-16 D5)
     — `adaptive` is not on the ladder, so it never wins a rank comparison
     against something that is. A role whose candidates are ALL `adaptive`
     resolves to `adaptive` itself, for resolve_tiers to handle (preflight
@@ -815,7 +815,7 @@ def validate_override_tier_values(unqualified, scoped, errors):
     """Overrides are explicit and attributable, so an invalid tier value here
     is a hard error (never a silently-dropped candidate the way a bad label
     is). `adaptive` is REJECTED here specifically — an override is the
-    explicit, attributable instruction channel (ADR 0006 D5), and "defer
+    explicit, attributable instruction channel (ADR 2026-08-16 D5), and "defer
     this to a preflight classifier" is not a concrete instruction the way
     naming a ladder tier is; an operator wanting preflight classification
     must use the tier:adaptive LABEL instead (unqualified only — see the
@@ -980,7 +980,7 @@ def required_agent_runs_and_parallel(topology, min_agents):
         proposers have finished). Needs max_agent_runs >= min_agents + 1
         and max_parallel_agents >= min_agents.
       lead-and-workers (orchestrate): min_agents counts the lead PLUS its
-        workers (ADR 0007 D2's "a lead plus at least one worker") — the
+        workers (ADR 2026-08-24 D2's "a lead plus at least one worker") — the
         WHOLE minimum roster, lead included. Needs max_agent_runs >=
         min_agents and max_parallel_agents >= min_agents, exactly like the
         generic fallback below — there is no "the lead doesn't count"
@@ -1379,7 +1379,7 @@ def main():
     off_profile = any(t["off_profile"] for t in tiers.values())
     preflight_required = any(t["preflight_required"] for t in tiers.values())
 
-    # Interactive-only (ADR 0006 D6.2): an off-default/off-profile result is
+    # Interactive-only (ADR 2026-08-16 D6.2): an off-default/off-profile result is
     # fine when it came from an explicit override or a TRUSTED label — both
     # are attributable to an authorized actor. It requires operator
     # confirmation when the label that produced it is not in --trusted-label.

@@ -15,8 +15,9 @@ one's status.
   `Status` line carries the outcome). Records filed under the older numbered
   `NNNN-` convention are renamed to the date form
   ([2026-09-30-rename-numbered-decision-records-by-date.md](2026-09-30-rename-numbered-decision-records-by-date.md)).
-  The one exception is the seed record below: the project template maintains
-  it, so a template update re-titles a numbered seed to the date form.
+  The seed record below follows the same rule through its own mechanism:
+  the project template maintains it, so a template update re-titles a
+  numbered seed to the date form.
 - Start with
   [2026-06-19-record-architecture-decisions.md](2026-06-19-record-architecture-decisions.md)
   — the meta-ADR for the process. The project template maintains it: its

@@ -1,10 +1,10 @@
-# 5. Use one model-centric agent vocabulary and registry
+# Use one model-centric agent vocabulary and registry
 
 Date: 2026-08-07
 
 ## Status
 
-Accepted. Amends ADR 0002's issue-field-versus-label arming decision: Foreman
+Accepted. Amends ADR 2026-07-12's issue-field-versus-label arming decision: Foreman
 arming is label-only on every owner type because the label timeline records the
 actor and project-field changes do not.
 

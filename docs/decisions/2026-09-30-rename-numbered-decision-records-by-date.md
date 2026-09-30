@@ -7,9 +7,10 @@ Date: 2026-09-30
 Accepted — maintainer decision of 2026-09-30, recorded on
 harmon-init#1446: date-named records are a harmon-platform-wide standard.
 Amends [2026-08-29-name-decision-records-by-date.md](2026-08-29-name-decision-records-by-date.md)
-— its first Decision bullet (numbered records keep their names) and its
-"Not: renumbering or renaming existing records" clause. Its seed-record
-bullet and everything else stand.
+wherever that record keeps numbered names or treats the two filename forms as
+permanently mixed — its grandfathering, its mixed-directory and cross-form
+ordering consequences, and its rejection of renaming; the date-naming rule
+itself and the seed-record mechanism stand.
 
 ## Context
 

@@ -111,11 +111,11 @@ Issues become cheap to classify and route, for humans and agents alike:
       authenticated — the shipped defaults therefore create no account, trial, or paid-SaaS
       dependency (Hard Rule preserved), and escalation can never switch a repo to a vendor it
       does not already use. The `local` tier's machinery binding is explicit: its entries
-      resolve to the registry's `-local` endpoint-variant harnesses (ADR 0005 D9), and
+      resolve to the registry's `-local` endpoint-variant harnesses (ADR 2026-08-07 D9), and
       validation fails a local entry whose family has no registered `-local` harness.
       `escalate_to` chains validate as referential, acyclic, and monotonic toward `apex`;
       *when* escalation fires (failure, refusal, operator policy — never cost alone) is
-      defined in ADR 0006. Candidate selection is deterministic, also in ADR 0006: the
+      defined in ADR 2026-08-16. Candidate selection is deterministic, also in ADR 2026-08-16: the
       resolved tier names the stratum; a `suggest:<family>[:<model>]` narrows within it only
       when that family is configured and eligible (otherwise it is ignored with a note) —
       and unattended consumption of a suggestion is subject to the same provenance
@@ -151,7 +151,7 @@ Issues become cheap to classify and route, for humans and agents alike:
       the resolved rigor's budget (`max_agent_runs` or `max_parallel_agents`) is a reported
       incompatibility, never a silent substitution. (#1047, superseding this spec's original
       `method:*` requirement from #855.)
-- [ ] Resolution and trust (ADR 0006, re-scoped by ADR 0007): explicit instruction > label >
+- [ ] Resolution and trust (ADR 2026-08-16, re-scoped by ADR 2026-08-24): explicit instruction > label >
       config default > built-in — where an **explicit instruction** is one arriving on the
       operator's attributable channel (the interactive session's human input, or the
       automation's own configuration) and never repository content: issue bodies, comments,
@@ -165,7 +165,7 @@ Issues become cheap to classify and route, for humans and agents alike:
       `default_strategy` with a warning. Off-default resolutions — above or below, for rigor,
       strategy, or any individual role tier — are disclosed in the PR body (#809 doctrine
       extended). Consumer trust is stated as **invariants**; the concrete timeline-validation
-      algorithm is deliberately not specified here — it is ADR 0006 / foreman#139 design work
+      algorithm is deliberately not specified here — it is ADR 2026-08-16 / foreman#139 design work
       under #855, and the adversarial scenarios raised in this spec's review are carried there
       as required test cases:
       1. **Unattended automation** acts on a strategy or suggestion label only after
@@ -183,7 +183,7 @@ Issues become cheap to classify and route, for humans and agents alike:
       3. Advisory families fail open to the config default; arming stays fail-closed.
       Rigor's values are called **levels** in all prose from here on; "tier" belongs to the
       model axis. (#855)
-- [ ] ADR 0005 D6 amendment: suggestions become human- **or agent-**authored; `suggest:*` stays
+- [ ] ADR 2026-08-07 D6 amendment: suggestions become human- **or agent-**authored; `suggest:*` stays
       family[:model] (vendor preference), `tier:*` is the human-decided policy layer;
       `suggest:tier:<value>` is reserved, not built. `claim:*` stays on the family axis; the
       claim record gains `harness:`/`model:`/`session:` fields (harmon-devkit#450). (#855)
@@ -259,7 +259,7 @@ Issues become cheap to classify and route, for humans and agents alike:
 - **Then** the label is ignored with a warning and the config default applies — and no
   sequence of untrusted applies **or removals** anywhere on the axis can move the outcome
   away from what trusted actors' surviving actions alone would produce (the provenance
-  invariant; the concrete algorithm lives with ADR 0006 / foreman#139)
+  invariant; the concrete algorithm lives with ADR 2026-08-16 / foreman#139)
 
 ### Scenario: two strategy labels are ambiguous, not ranked
 
@@ -341,7 +341,7 @@ Issues become cheap to classify and route, for humans and agents alike:
   harmon-init, harmon-devkit, and ponderousdev/foreman (colors: area `0E8A16`, tier `7057FF`,
   method `BF3989`, task `6E7781`, research `0E7C86`); #851 formalizes them — the manifest must
   adopt these exact names/colors so provisioning reconciles instead of fighting. `method:*` was
-  retired in favor of `strategy:*` under #1047 (ADR 0007); its color `BF3989` carries over to
+  retired in favor of `strategy:*` under #1047 (ADR 2026-08-24); its color `BF3989` carries over to
   `strategy` so provisioning reconciles the same way.
 - Design rails inherited from upstream foreman (v2.5.0 source, verified): unrecognized
   `foreman:*` labels arm as backend selectors; `type:<commit-type>` is parsed (two = error);

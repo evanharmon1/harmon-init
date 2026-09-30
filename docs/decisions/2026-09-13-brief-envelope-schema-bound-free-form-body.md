@@ -13,7 +13,7 @@ agent brief is a validated envelope plus an opaque body, not unstructured
 prose. The original rationale — nothing downstream parses the brief — is now
 half false: the monitor, the readiness gate, `dev-flow-exit.sh`, and retro
 all read specific brief facts, and every brief-drift incident in the
-slate-#2 run was a machine-read fact that existed only as prose. ADR 0009
+slate-#2 run was a machine-read fact that existed only as prose. ADR 2026-08-29 (Dev flow v2)
 carries the reciprocal notice.
 
 ## Context

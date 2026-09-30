@@ -1,13 +1,13 @@
-# 7. Rigor and strategy execution-policy axes
+# Rigor and strategy execution-policy axes
 
 Date: 2026-08-24
 
 ## Status
 
 Accepted — the amendment to D3 (the `[review.*]` tables renamed; shipped as
-`[rounds.*]` — see ADR 0009's amendment note), D4, D8, and D9 proposed by
+`[rounds.*]` — see ADR 2026-08-29 (Dev flow v2)'s amendment note), D4, D8, and D9 proposed by
 [ADR 2026-08-29 (Dev flow v2)](2026-08-29-dev-flow-v2-orchestrator-and-results.md) is **in effect**
-as of 0009's acceptance (2026-09-12). ADR 0009 amends D4, D8, and D9 where
+as of ADR 2026-08-29 (Dev flow v2)'s acceptance (2026-09-12). ADR 2026-08-29 (Dev flow v2) amends D4, D8, and D9 where
 they define the `shepherd` cap as bounding CI, human-review, and Codex
 findings alike: the renamed `integration` cap bounds Codex re-review cycles
 only, and a separate `remediation` cap bounds fix pushes in that stage.
@@ -16,13 +16,13 @@ Supersedes [ADR 2026-08-16](2026-08-16-method-and-tier-axes.md) D4 (the method r
 its `[method]` table are retired along with `method:*`) and amends its D5
 (resolution order and conflict handling below now covers `rigor:*` and
 `strategy:*` as the primary label inputs, not `tier:*`/`method:*`; see
-D7/D8 below for what changes and what does not). ADR 0006's D1–D3, D6, D7's
+D7/D8 below for what changes and what does not). ADR 2026-08-16's D1–D3, D6, D7's
 tier-ladder content, and D8 stand unchanged — the `[tier.*]` model they
 describe is byte-for-byte the same table this ADR re-scopes to per-role
 resolution. Authoritative requirements live in
 [`specs/issue-strategy.md`](../../specs/issue-strategy.md); on any conflict
 the spec wins. Planned under evanharmon1/harmon-init#1047, following the
-milestone "Issue strategy overhaul" that ADR 0006 opened; #1048 (schema
+milestone "Issue strategy overhaul" that ADR 2026-08-16 opened; #1048 (schema
 version, language-neutral fixtures, a conformance harness) is a later,
 narrower follow-up this ADR does not implement.
 
@@ -42,7 +42,7 @@ This ADR establishes `rigor` (how much confidence, effort, depth, and
 budget) and `strategy` (how the work is organized and performed) as the two
 primary axes. Review policy, per-role model tier, and budget envelope
 become rigor's lower-level components rather than peer choices; `method` is
-retired in favor of `strategy`, which adds topology fields ADR 0006's
+retired in favor of `strategy`, which adds topology fields ADR 2026-08-16's
 `method` never had (planning, delegation, coordination, selection,
 synthesis, human gates) and drops the fixed conflict rank that made
 `method` resolvable in the first place — deliberately; see D7.
@@ -63,7 +63,7 @@ edge cases the old floor forbade.
 policy, and budget envelope are **components of a rigor level**, not
 independent top-level defaults — `.devflow.toml` has exactly two selection
 defaults, `default_rigor` and `default_strategy`. **Not:** `default_tier`
-and `default_method` as peer top-level scalars (ADR 0006's shape) — that
+and `default_method` as peer top-level scalars (ADR 2026-08-16's shape) — that
 model made "how much" a human had to reconstruct from three uncoordinated
 choices instead of stating once.
 
@@ -77,7 +77,7 @@ and the reviewer checking it are different jobs with different minimum
 capability needs — collapsing them to one tier either overpays for the
 cheapest role or underpays for the most demanding one. Built-in levels
 satisfy `orchestrator_tier >= implementer_tier` and `reviewer_tier >=
-implementer_tier` under the ladder order (ADR 0006 D2); an attributable
+implementer_tier` under the ladder order (ADR 2026-08-16 D2); an attributable
 explicit override may violate either invariant but must be recorded and
 disclosed as an off-profile decision rather than silently accepted.
 
@@ -150,7 +150,7 @@ strategy.
 Two `strategy:*` labels on the same issue are **ambiguous** and require
 resolution — an interactive session asks; unattended automation falls back
 to `default_strategy` with a warning. **Not:** a fixed cross-strategy rank
-like the `[method].rank` this replaces (ADR 0006 D4, now retired). Rigor
+like the `[method].rank` this replaces (ADR 2026-08-16 D4, now retired). Rigor
 has an inherent more-or-less continuum, which is exactly what makes
 "strongest label wins" both meaningful and safe — a rigor conflict can only
 ever buy more depth and budget. Topology choices do not sit on a single
@@ -265,5 +265,5 @@ on their own first.
   values or policy meaning that `.devflow.toml` and this ADR now own.
 - Nothing in a generated repo gains a runtime dependency: `rigor:*` and
   `strategy:*` remain inert routing preferences that arm nothing, exactly
-  as `tier:*`/`method:*` did under ADR 0006; `foreman:*` remains the only
+  as `tier:*`/`method:*` did under ADR 2026-08-16; `foreman:*` remains the only
   arming surface.

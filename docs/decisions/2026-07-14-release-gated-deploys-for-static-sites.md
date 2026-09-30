@@ -1,4 +1,4 @@
-# 3. Release-gated production deploys for static sites (not web apps)
+# Release-gated production deploys for static sites (not web apps)
 
 Date: 2026-07-14
 

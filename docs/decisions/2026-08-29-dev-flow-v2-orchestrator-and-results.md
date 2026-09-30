@@ -1,4 +1,4 @@
-# 9. Dev flow v2 — the session orchestrates; results are schema-bound
+# Dev flow v2 — the session orchestrates; results are schema-bound
 
 Date: 2026-08-29
 
@@ -30,11 +30,11 @@ validated envelope. Maintainer decision recorded on
 Extends [ADR 2026-08-24](2026-08-24-rigor-and-strategy-axes.md): rigor and strategy stay
 the two primary axes, and this record adds the execution model those axes
 select — who decides what during a run, and what form the evidence takes.
-**Amends ADR 0007 D3, D4, D8, and D9** — D3 where it names the `[review.*]` policy tables this record renames to `[caps.*]` (the shipped policies survive under the new name; the legacy section names do not), and the others the `shepherd` cap as
+**Amends ADR 2026-08-24 D3, D4, D8, and D9** — D3 where it names the `[review.*]` policy tables this record renames to `[caps.*]` (the shipped policies survive under the new name; the legacy section names do not), and the others the `shepherd` cap as
 bounding CI, human-review, and Codex findings alike: under this record the
 renamed `integration` cap bounds Codex re-review cycles only, answering CI
 and human findings is unconditional, and fix pushes in that stage are bounded
-by a separate `remediation` cap whose terminal action is escalation. ADR 0007
+by a separate `remediation` cap whose terminal action is escalation. ADR 2026-08-24
 carries the reciprocal notice.
 Authoritative requirements live in harmon-devkit's `specs/dev-flow-v2.md` —
 the reviewed revision is
