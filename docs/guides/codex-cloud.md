@@ -53,10 +53,12 @@ decides which part of this guide applies.
 
 Three consequences for this repository:
 
-1. **Everything the issue is about — mention-started tasks and cloud reviews —
-   runs in the legacy environment**, so the [environment](#the-environment)
-   below is written for it. That is where a setup script, and the secrets model
-   the issue cites, exist.
+1. **Cloud reviews and the documented GitHub-integration surfaces —
+   mention-started tasks — run in the legacy environment**, so the
+   [environment](#the-environment) below is written for it. That is where a
+   setup script, and the secrets model the issue cites, exist. Which generation
+   the `codex cloud exec` lane targets is not stated (the next item), so
+   criterion 4 may need the current-generation configuration as well.
 2. **Which generation a task submitted with `codex cloud exec` runs in is
    unknown.** The docs describe the flag as the "target Codex cloud environment
    identifier" and say nothing more. It is a
@@ -285,10 +287,8 @@ Two roles, decided on 2026-09-27
   ([harmon-devkit#1215](https://github.com/evanharmon1/harmon-devkit/issues/1215));
   this guide makes the *environment* able to run the gate for those tasks. A lane
   therefore completes its **role**, not the PR, as on the other remote platforms.
-  The lane is **conditional on the posture decision** the Permissions row below
-  says is owed on [#1408](https://github.com/evanharmon1/harmon-init/issues/1408):
-  the guide provisions the environment, and does not by itself authorize sending
-  the lane work.
+  See [the posture section](#the-agent-posture-as-far-as-codex-cloud-can-express-it)
+  for what the lane waits on.
 
 ### The agent posture, as far as Codex cloud can express it
 
@@ -306,6 +306,26 @@ to here:
 | Permissions | **cannot be expressed** as the deny list: no page read gives an environment a permission or approval configuration. Whether a checked-in `~/.codex` configuration is honoured in the cloud is unknown | expected, not yet observed. A harness that cannot express the deny list is refused in the agent profile (#1408), so this needs the decision recorded there, not improvised here |
 | Sandbox mode | **current generation:** "each new task gets its own isolated workspace from the published environment" (*docs (current), 2026-09-29*). **Legacy:** the page says only that Codex "creates a container and checks out your repo" for a chat (*docs (legacy), 2026-09-29*) and states no isolation property. Reviews and mention-started tasks run in the legacy environment, so its isolation, and that it is not the CLI's `workspace-write`, are expected, not yet observed | docs (current), 2026-09-29; legacy: expected, not yet observed |
 | Docker | not needed by the gate; the bootstrap does not install it | [architecture](../architecture/remote-environments.md#tiers). Whether the cloud image has one is unknown |
+
+**What holds for every use of the environment.** Every task that runs in it,
+whatever started it, gets no secret, carries no token of ours and is granted no
+permission; the environment adds the installed tools and the agent-phase network
+level. Both roles are decided uses (#1408 decision 5), and cloud reviews and
+mention-started tasks already run on this repository's pull requests through the
+platform's connector whether or not the environment is provisioned, so
+provisioning changes what they can execute, not what they can write. The
+consideration this raises: a review of a pull request from an untrusted author
+executes that pull request's repository code (the checks) inside the environment.
+What bounds it is the table above (no secret, no token, the configured agent-phase
+network level) plus the platform's own per-task isolation, which for the legacy
+environment is expected, not yet observed. The permissions axis is the one axis
+not yet decided (the Permissions row). Until that decision is recorded on
+[#1408](https://github.com/evanharmon1/harmon-init/issues/1408):
+
+- reviews and mention-started tasks continue as they already run;
+- the implementer lane is not sent work;
+- the guide provisions the environment and does not by itself authorize sending
+  the lane work.
 
 ## Bridges between the terminal and Codex cloud
 
