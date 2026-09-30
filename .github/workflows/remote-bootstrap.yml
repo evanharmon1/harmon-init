@@ -121,6 +121,10 @@ jobs:
           fetch-depth: 0
       - name: Run the bootstrap (core + agents) and time it
         # Under the seeded traps: /usr/bin ahead of /usr/local/bin, LC_ALL=C.
+        # bash, explicitly: this job runs in a container whose default `run:`
+        # shell is `sh` (dash), which rejects `set -o pipefail` and fails the
+        # step before the bootstrap runs. `shell: bash` also applies pipefail.
+        shell: bash
         run: |
           # A pipeline's status is its LAST command's: without this, a bootstrap
           # that dies still passes the step because `tee` exited 0.
@@ -166,6 +170,10 @@ jobs:
         # upgrades it lets through — the apt packages are unpinned and converge
         # on the archive by design — so the claim is two assertions: zero new
         # installs, and a byte-identical manifest (no pinned version moved).
+        # bash, explicitly: this job runs in a container whose default `run:`
+        # shell is `sh` (dash), which rejects `set -o pipefail` and fails the
+        # step before the bootstrap runs. `shell: bash` also applies pipefail.
+        shell: bash
         run: |
           # A pipeline's status is its LAST command's: without this, a bootstrap
           # that dies still passes the step because `tee` exited 0.
@@ -197,6 +205,10 @@ jobs:
         # ~/.profile — so it has to run AS that user, never as root with the
         # user's HOME. The planted ~/.profile tries to create a file only root
         # can create; it must not exist afterwards.
+        # bash, explicitly: this job runs in a container whose default `run:`
+        # shell is `sh` (dash), which rejects `set -o pipefail` and fails the
+        # step before the bootstrap runs. `shell: bash` also applies pipefail.
+        shell: bash
         run: |
           # A pipeline's status is its LAST command's: without this, a bootstrap
           # that dies still passes the step because `tee` exited 0.
@@ -226,6 +238,10 @@ jobs:
         # the running uid's passwd home on every path before a tier runs, and
         # this is the proof for the path the re-exec never sees. Same user,
         # same planted shadow and marker profile, same three assertions.
+        # bash, explicitly: this job runs in a container whose default `run:`
+        # shell is `sh` (dash), which rejects `set -o pipefail` and fails the
+        # step before the bootstrap runs. `shell: bash` also applies pipefail.
+        shell: bash
         run: |
           # A pipeline's status is its LAST command's: without this, a bootstrap
           # that dies still passes the step because `tee` exited 0.
@@ -250,6 +266,10 @@ jobs:
         # is claimed for EVERY tier, and the default-tier check above cannot see
         # the browsers tier at all — so without this step that claim is simply
         # never tested, which is how it was wrong when first written.
+        # bash, explicitly: this job runs in a container whose default `run:`
+        # shell is `sh` (dash), which rejects `set -o pipefail` and fails the
+        # step before the bootstrap runs. `shell: bash` also applies pipefail.
+        shell: bash
         run: |
           # A pipeline's status is its LAST command's: without this, a bootstrap
           # that dies still passes the step because `tee` exited 0.
