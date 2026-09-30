@@ -211,11 +211,14 @@ plus `&&` propagates the failure by construction. Nothing deletes the temporary
 directory: a trailing `rm` would become the chain's exit status and reintroduce
 exactly the bug, and a few kilobytes are nothing on a VM that is about to be
 thrown away. `scripts/test-bootstrap-remote.sh` § 14 holds this shape in place
-— it fails if any of the three copies of the recipe (the bootstrap script's,
-this document's, and the
-[Claude Code on the web guide](../guides/claude-code-web.md)'s) becomes a bare
+— it fails if any copy of the recipe (the bootstrap script's own, this
+document's, and that of every guide under `docs/` that carries it, currently the
+[Claude Code on the web guide](../guides/claude-code-web.md) and the
+[Codex cloud guide](../guides/codex-cloud.md)) becomes a bare
 pipe into a shell, stops downloading to a file, or stops using a private
-directory.
+directory. The guides are found by the recipe's URL, and the links in this
+paragraph must be exactly the guides found: one that carries the recipe and is
+not linked here fails, and so does one linked here that no longer carries it.
 
 The script goes into a **private directory** (`mktemp -d`, with mode `0700`
 stated rather than inherited from a default), not a bare `mktemp` file in shared
@@ -371,7 +374,7 @@ adapter shares, and the section is where a platform's specifics go.
 | Platform | Issue | Section |
 | --- | --- | --- |
 | Claude Code on the web | #1407 | [Claude Code on the web](#claude-code-on-the-web) |
-| Codex cloud | #750 | *(pending)* |
+| Codex cloud | #750 | [Codex cloud](#codex-cloud) |
 | Sprites | #1411 | *(pending)* |
 | Self-hosted | #1410 | *(pending)* |
 
@@ -385,3 +388,19 @@ the secrets policy, how its GitHub proxy changes the `gh` calls the dev loop
 makes, the terminal-to-cloud bridges, and the observations still owed by a live
 session — is in
 [docs/guides/claude-code-web.md](../guides/claude-code-web.md).
+
+### Codex cloud
+
+One environment per repository, whose setup script is the entrypoint above at a
+pinned release tag. OpenAI documents two generations of Codex cloud, and the
+surfaces the platform cares about — cloud reviews and tasks started by a Codex
+mention — run in the **legacy** one, which has a setup script and secrets that
+are removed before the agent phase; which generation `codex cloud exec` targets
+is not stated and is a pending observation. The bootstrap downloads in the
+setup phase, which always has internet, so the agent-phase network level is
+decided by what the gate does when it runs, not by the host table above.
+Everything specific to the platform — the environment's configuration, the
+network levels, what a Codex mention starts, the `codex cloud exec` and `apply`
+bridge for the implementer lane, and the observations still owed by a
+provisioned environment — is in
+[docs/guides/codex-cloud.md](../guides/codex-cloud.md).
