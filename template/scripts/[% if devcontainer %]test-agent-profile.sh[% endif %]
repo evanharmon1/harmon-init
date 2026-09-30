@@ -408,6 +408,26 @@ cmp -s "$agent_codex" "${fake_etc}/codex/managed_config.toml" || fail "apply did
 [ -x "${fake_bin}/claude" ] && [ -x "${fake_bin}/codex" ] || fail "apply refused an agent-capable harness"
 FOREMAN_DEVCONTAINER=agent run_autonomy verify >/dev/null || fail "verify failed right after apply"
 
+# The platform-VM seam (`--platform-vm`, passed only by the remote bootstrap) is
+# an ARGUMENT: an environment variable of the same meaning — the variable this
+# seam briefly was — must change nothing, because a devcontainer.json
+# containerEnv entry could set it for the agent devcontainer's own lifecycle.
+# Neither lifecycle hook may pass the flag.
+chmod +x "${fake_bin}/opencode"
+AGENT_AUTONOMY_SKIP_HARNESS_REFUSAL=1 FOREMAN_DEVCONTAINER=agent run_autonomy apply >/dev/null ||
+    fail "apply failed with AGENT_AUTONOMY_SKIP_HARNESS_REFUSAL=1 in the environment"
+[ ! -x "${fake_bin}/opencode" ] ||
+    fail "apply skipped harness refusal because of an environment variable — only --platform-vm may skip it"
+chmod +x "${fake_bin}/opencode"
+if AGENT_AUTONOMY_SKIP_HARNESS_REFUSAL=1 FOREMAN_DEVCONTAINER=agent run_autonomy verify >/dev/null 2>&1; then
+    fail "verify skipped the refused-harness check because of an environment variable — only --platform-vm may skip it"
+fi
+chmod -x "${fake_bin}/opencode"
+for hook in .devcontainer/agent/post-create.sh .devcontainer/agent/post-start.sh; do
+    ! grep -q -- '--platform-vm' "$hook" ||
+        fail "${hook} passes --platform-vm: the agent devcontainer must always refuse harnesses"
+done
+
 chmod +x "${fake_bin}/opencode"
 if FOREMAN_DEVCONTAINER=agent run_autonomy verify >/dev/null 2>&1; then
     fail "verify passed with a refused harness (opencode) executable again"

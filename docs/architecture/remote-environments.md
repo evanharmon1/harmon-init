@@ -58,7 +58,7 @@ agents tiers download only from the allowed column.
 | --- | --- |
 | `github.com` | the origin of every GitHub release download: `github.com/<owner>/<repo>/releases/download/…` answers **302**, so it is contacted for task, gh, uv, gitleaks and the rest even though the bytes come from the next host |
 | `release-assets.githubusercontent.com` | the 302 target that actually serves GitHub release assets |
-| `raw.githubusercontent.com` | the standalone entry fetches `versions.env`, `lib.sh` and the tier scripts from the release tag |
+| `raw.githubusercontent.com` | the standalone entry fetches `versions.env`, `lib.sh` and the tier scripts from the release tag, and the agent posture from the same tag: `.devcontainer/agent/agent-autonomy.sh`, `.devcontainer/config/agent/claude-managed-settings.json`, `.devcontainer/config/agent/codex-managed-config.toml` and `.devcontainer/config/agent/harnesses.json` |
 | `nodejs.org` | the checksum-pinned Node tarball |
 | `archive.ubuntu.com` | the apt packages of the core tier. One of the three Ubuntu archive mirrors the VM's **own** apt sources configure, so `apt-get update` alone contacts them whether or not a package is installed; the set is written once in `images/devcontainer/install/apt-mirrors.txt` and both this table and the guard's apt implication are derived from it. amd64: the release, updates and backports pockets |
 | `security.ubuntu.com` | the same apt run's **security** pocket on amd64 (`noble-security`) — a separate host, not a path under the archive, so an allowlist holding only the line above blocks a stock `apt-get update` |
@@ -269,13 +269,18 @@ caller's `~/.profile` as root; the invoking user is still known through
 **idempotent** in a
 precise sense: **a second run performs no new installs and changes no pinned
 tool version** — no download, no npm or uv install, no corepack shim, no
-manifest rewrite, and no rewrite of the two files under `/etc` when their
+manifest rewrite, and no rewrite of the files it owns under `/etc` when their
 content already matches. The apt packages are deliberately *unpinned* and
 converge on the archive: every run refreshes the index and lets apt upgrade
 them, and an upgrade is **reported as a change, never hidden**. That is
 asserted as counts, not as an exit status — it prints
 `HARMON_BOOTSTRAP_NEW_INSTALLS=<n>` and `HARMON_BOOTSTRAP_UPGRADES=<n>` (and
-their sum as `HARMON_BOOTSTRAP_CHANGES`), and CI requires `NEW_INSTALLS=0` plus
+their sum as `HARMON_BOOTSTRAP_CHANGES`), plus
+`HARMON_BOOTSTRAP_POSTURE_GAPS=<n>`, the managed paths the agent posture was
+not applied to ([below](#the-agent-posture)) — a gap, not a change, so it is
+outside that sum. All four are printed at the end of a run, so a run that fails
+part-way prints none of them and its nonzero exit status is what reports it.
+CI requires `NEW_INSTALLS=0` plus
 a byte-identical manifest on the second run, because a script that
 re-downloaded and re-installed everything also exits 0.
 
@@ -287,9 +292,67 @@ zsh login shells on Ubuntu do not read `/etc/profile.d` at all, so a user
 whose login shell is zsh must source `/etc/profile.d/harmon-remote-env.sh` or
 put `/usr/local/bin` first on `PATH` themselves.
 
-The agent posture (managed Claude Code settings, Codex configuration) is not
-installed by the bootstrap today: #1404 adds the agent-posture install to both
-the image and the bootstrap in the same change.
+### The agent posture
+
+Every run, whatever the tiers, installs the **agent posture**
+([#1408](https://github.com/evanharmon1/harmon-init/issues/1408)): the agent
+Claude Code settings to `/etc/claude-code/managed-settings.json` and the agent
+Codex configuration to `/etc/codex/managed_config.toml`, the paths both
+harnesses read as managed policy and the ones the agent devcontainer installs
+to. It is installed **immediately after `apt-core.sh`** (which provides `jq`,
+its one dependency) **and before any tier**, so a tier that fails can never
+leave a harness installed on the machine without its managed policy.
+
+- **One definition, no copy.** The only definition is
+  `.devcontainer/config/agent/`. From a checkout the bootstrap reads it in
+  place; with `--ref` it fetches it from **the same tag** as the install
+  scripts, into the same private directory. It carries no copy of its own:
+  `scripts/test-bootstrap-remote.sh` § 24 fails if any file under
+  `images/devcontainer/` is a copy or a second definition, and runs the install
+  to prove it writes files byte-identical to the checked-in ones.
+- **One installer.** The install is the definition's own
+  `.devcontainer/agent/agent-autonomy.sh`, `apply` and then `verify` — the
+  script the agent devcontainer runs — told the posture
+  (`FOREMAN_DEVCONTAINER=agent`), the definition's location, and the two
+  destinations. `verify` fails the run unless each file the bootstrap wrote
+  matches the definition byte for byte. A second run installs nothing.
+- **Harness executables are never modified.** In the agent devcontainer
+  `apply` also makes every harness the definition refuses non-executable. On a
+  platform's VM those executables are the platform's, so the bootstrap runs
+  `apply --platform-vm` and `verify --platform-vm`, which handle the two files
+  only and say so in the log. It is an argument rather than an environment
+  variable so that nothing a repository sets can switch it on in the agent
+  devcontainer, whose lifecycle never passes it. Harness refusal on a platform VM is a
+  recorded delivery gap, and the platform's own controls are named per
+  platform [below](#how-each-platform-receives-the-agent-posture).
+- **A file already there is left in place.** `/etc/claude-code/` and
+  `/etc/codex/` are created when missing. Anything already at either path that
+  is not the definition — a file, or a symlink, dangling or not — may be the
+  platform's own managed policy, possibly a stronger control than ours, so by
+  default it is **not replaced**: the run reports its path and what it is (its
+  SHA-256, or where a symlink points), says the agent posture is **not
+  applied** for it, counts it in `HARMON_BOOTSTRAP_POSTURE_GAPS`, and still
+  completes. That is a delivery gap for that machine, not a failed run; an
+  adapter that must know asserts on the counter, never on the warning text.
+  `HARMON_AGENT_POSTURE_REPLACE=1` is the operator's explicit opt-in to replace
+  it; the previous entry is then kept beside it as
+  `<path>.replaced-<unique suffix>`, a name never used before, so a second
+  replacement cannot overwrite the first kept copy. The variable is forwarded
+  through the `sudo` re-exec like the other `HARMON_*` settings.
+- **Hooks are not delivered.** The definition's hook commands name the agent
+  image's hook scripts (`/etc/claude-code/hooks/`, `/etc/codex/hooks/`, and the
+  session-end archive hook under `/usr/local/share/devcontainer-config/`). The
+  bootstrap installs no hooks — hook guards in remote sessions are deferred by
+  [#1402](https://github.com/evanharmon1/harmon-init/issues/1402) — so it warns
+  naming each hook command the machine does not have. The permission rules do
+  not depend on them. A missing hook command is expected to surface as a
+  non-blocking hook error each time the hook fires (expected, not yet
+  observed).
+
+What the bootstrap proves is that the files are **installed**. Whether a
+platform's harness then **honours** them is a property of the platform, not of
+this script, and is recorded per platform under
+[How each platform receives the agent posture](#how-each-platform-receives-the-agent-posture).
 
 ### The manifest: checking that image and VM agree
 
@@ -345,9 +408,23 @@ check a VM; the comparison above is.
 
 | Check | Where | What it proves |
 | --- | --- | --- |
-| `task test:bootstrap-remote` | `task verify`, and `build.yml`'s `lint` job on every pull request | The pin contract, offline: no second pin owner (declared or typed into a download URL), every pin Renovate-extractable, both Node digests verified for the pinned Node, the fetch list matches the directory, no denied host, no forbidden tool named by the bootstrap or a tier script, a non-release-tag `--ref` is refused, and no piped or live-prefix `tar` extraction in the bootstrap or a tier script. That last check is shape-based: a dashless `tar xzf`, an `unzip -d`, or a `curl -o` straight onto the live path is not detected, and for those forms the stage-verify-extract-move invariant is enforced by the one install helper in `lib.sh` and reviewed, not proved |
-| `remote-bootstrap.yml` → `bootstrap` | CI, stock `ubuntu:24.04` container, seeded with `/usr/bin` ahead of `/usr/local/bin` and `LC_ALL=C` | It runs: the tiers install inside the budget, the second run performs no new installs and leaves the manifest byte-identical, `yq` and `task` resolve from `/usr/local/bin` and the effective locale is UTF-8 in a fresh login shell on the system profile path, a user with `~/.local/bin/yq` planted gets the shadow warning and exit 0 through the un-sudoed re-exec path **and** through `sudo -E` (asserted to enter as uid 0 with that user's `HOME`), each with nothing of root's left in that home and that user's `~/.profile` never executed as root, nothing forbidden appeared on `PATH`, every VM manifest key names its pin, and `task check` then passes in a harmon-init checkout |
+| `task test:bootstrap-remote` | `task verify`, and `build.yml`'s `lint` job on every pull request | The pin contract, offline: no second pin owner (declared or typed into a download URL), every pin Renovate-extractable, both Node digests verified for the pinned Node, the fetch list matches the directory, no denied host, no forbidden tool named by the bootstrap or a tier script, a non-release-tag `--ref` is refused, the agent posture comes only from `.devcontainer/config/agent/`, installs byte-identical and idempotent, leaves a file already there in place unless `HARMON_AGENT_POSTURE_REPLACE=1`, never overwrites a kept copy, and changes no harness executable's mode, and no piped or live-prefix `tar` extraction in the bootstrap or a tier script. That last check is shape-based: a dashless `tar xzf`, an `unzip -d`, or a `curl -o` straight onto the live path is not detected, and for those forms the stage-verify-extract-move invariant is enforced by the one install helper in `lib.sh` and reviewed, not proved |
+| `remote-bootstrap.yml` → `bootstrap` | CI, stock `ubuntu:24.04` container, seeded with `/usr/bin` ahead of `/usr/local/bin` and `LC_ALL=C` | It runs: the tiers install inside the budget, the second run performs no new installs and leaves the manifest byte-identical, `yq` and `task` resolve from `/usr/local/bin` and the effective locale is UTF-8 in a fresh login shell on the system profile path, a user with `~/.local/bin/yq` planted gets the shadow warning and exit 0 through the un-sudoed re-exec path **and** through `sudo -E` (asserted to enter as uid 0 with that user's `HOME`), each with nothing of root's left in that home and that user's `~/.profile` never executed as root, nothing forbidden appeared on `PATH`, the agent posture is delivered — after the first run both managed destinations are byte-identical to `.devcontainer/config/agent/` and the run printed `HARMON_BOOTSTRAP_POSTURE_GAPS=0` — every VM manifest key names its pin, and `task check` then passes in a harmon-init checkout. Every step that pipes the bootstrap through `tee` runs under `pipefail`, so a bootstrap that dies fails the step it died in |
 | `images/devcontainer/smoke.sh` | the built image | The image really runs the shared scripts — they ship in the image beside `versions.env`, and its manifest records their versions for the comparison above |
+
+**The `remote-bootstrap` job is advisory.** It is path-filtered and is not a
+required status check (see [branch-protection.md](branch-protection.md)), yet it
+is the only end-to-end evidence that the agent posture is delivered on a real
+machine: a pull request can merge with it red, or without it having run. Making
+it required needs the unfiltered-aggregator shape `devcontainer-verify` uses — a
+job that runs on every event and decides internally whether there is anything to
+prove — and that is follow-up work, not part of this change.
+
+**The `--ref` posture fetch is not executed by any test or job** until the first
+release that carries these files exists: CI runs the bootstrap from its
+checkout, and a tag cannot serve files it does not contain. Until then what holds
+is § 24 of `scripts/test-bootstrap-remote.sh`, which keeps the fetched asset
+list equal to the files on disk and runs the fetch against a stubbed download.
 
 The CI job runs on the runner's native architecture, so `vars.CI_RUNS_ON` is
 what decides whether arm64 is exercised. On GitHub-hosted runners it is amd64;
@@ -377,6 +454,45 @@ adapter shares, and the section is where a platform's specifics go.
 | Codex cloud | #750 | [Codex cloud](#codex-cloud) |
 | Sprites | #1411 | *(pending)* |
 | Self-hosted | #1410 | *(pending)* |
+
+### How each platform receives the agent posture
+
+The bootstrap installs [the agent posture](#the-agent-posture) the same way
+everywhere. What differs is whether the platform's harness reads what was
+installed, and where it does not, what enforces the posture instead. Two gaps
+are common to every platform VM: the bootstrap does not refuse harness
+executables there, and a managed file the platform put there first is left in
+place, with the posture not applied for it, unless the operator opts in with
+`HARMON_AGENT_POSTURE_REPLACE=1`. On every platform the posture is installed
+immediately after `apt-core.sh` and before any tier, so a failing tier never
+leaves a harness installed without its managed policy. Evidence
+tags are the guides': **docs** with the date re-read, **observed** with the date
+and source, **expected, not yet observed**, and **pending** for a `[HUMAN]`
+criterion of [#1404](https://github.com/evanharmon1/harmon-init/issues/1404)
+that needs a live session.
+
+| Platform | Delivery | Recorded gap | Evidence |
+| --- | --- | --- | --- |
+| Claude Code on the web | The setup script's bootstrap writes `/etc/claude-code/managed-settings.json`, creating the directory | Whether a session honours a managed file written by the setup script is **unproven**: the VM had no `/etc/claude-code/`, the platform supplies its own settings overlay (`CCR_SETTINGS_JSON_OVERLAY`), and a server-side auto-mode classifier sits above whatever loads. If the file is ignored, the fallback is the repository's `.claude/settings.json` (single-repository sessions only) or the platform overlay, chosen by the live check. Harness refusal is not applied; what bounds the session instead is the platform's classifier and that the platform starts Claude Code, not another harness. No hooks | observed 2026-09-27 ([evidence](https://github.com/evanharmon1/harmon-init/issues/1404#issuecomment-5860625696)) for the VM; delivery expected, not yet observed — pending, criterion 2 ([guide](../guides/claude-code-web.md#the-agent-posture)) |
+| Codex cloud | The setup script's bootstrap writes `/etc/codex/managed_config.toml`, creating the directory | Whether the cloud agent reads a managed config written in the setup phase is **unproven**, and no page gives an environment a permission or approval configuration. The Codex configuration has no deny list to lose: it pins `workspace-write` and approval `never`, and the Claude deny list has no Codex equivalent. Harness refusal is not applied; the platform runs Codex and nothing else, inside its per-task isolation. No hooks | docs (legacy), 2026-09-29; delivery expected, not yet observed — pending, criterion 3 ([guide](../guides/codex-cloud.md#the-agent-posture-as-far-as-codex-cloud-can-express-it)) |
+| Sprites | The bootstrap, once [#1411](https://github.com/evanharmon1/harmon-init/issues/1411) builds the adapter; the machine is ours, so the files install as they do in the agent devcontainer | The adapter does not exist yet. Harness refusal is not applied by the bootstrap; whether the adapter adds it, or installs only the harnesses the posture supports, is #1411's to decide. No hooks | expected, not yet observed — pending, criterion 4 |
+| Self-hosted | The same bootstrap, once [#1410](https://github.com/evanharmon1/harmon-init/issues/1410) builds the adapter | The adapter does not exist yet. The same two gaps as every platform VM apply: harness refusal is not applied by the bootstrap, and a managed file already there is left in place unless `HARMON_AGENT_POSTURE_REPLACE=1`. No hooks | expected, not yet observed — pending, #1410 |
+| Agent devcontainer | Not the bootstrap: `.devcontainer/agent/post-create.sh` runs `agent-autonomy.sh apply` and `verify` against the image's baked copy of the same definition, and the image installs the hooks; `apply` there also refuses the harnesses the definition refuses | None recorded | the definition is tested by `scripts/test-agent-profile.sh`; in effect in a live session: pending, criterion 4 |
+
+**Pending observation (#1404 criterion 4):** on a Sprite, once #1411 exists, and
+in the agent devcontainer, start `claude` and run `/permissions`: the agent deny
+rules must be listed. Then ask it to run `gh pr merge 1`, which must be refused
+without a prompt. Run `codex` and check that `/status` shows `workspace-write`
+and approval `never`. On the Sprite, `sudo FOREMAN_DEVCONTAINER=agent
+AGENT_AUTONOMY_CONFIG_DIR=<checkout>/.devcontainer/config/agent bash
+<checkout>/.devcontainer/agent/agent-autonomy.sh verify --platform-vm` must pass,
+where `<checkout>` is a clean checkout at the tag the bootstrap ran; in the
+devcontainer, `bash .devcontainer/agent/agent-autonomy.sh verify`. Record the
+date and the Claude Code and `codex` versions here.
+
+Observed (Sprite):  *pending*
+
+Observed (agent devcontainer):  *pending*
 
 ### Claude Code on the web
 
