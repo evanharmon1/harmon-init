@@ -268,7 +268,8 @@ build** with the offending name (never its value). The other profiles quietly
 evict a disallowed name; the agent profile refuses instead, because nobody is
 watching to notice a repaired misconfiguration. The Codex login, where an
 environment persists one (#1406), lives in the `~/.codex` volume, not the
-env-file: the environment runs `codex login` once, at provisioning, and its
+env-file.
+The environment runs `codex login` once, at provisioning, and its
 `~/.codex/auth.json` is never copied to another machine (the refresh token is
 single-use, so a copy would invalidate both holders).
 
