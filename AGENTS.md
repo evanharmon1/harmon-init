@@ -694,9 +694,11 @@ is the lane's second model, in the sense § Second-Model Review requires, and
 Codex cloud review of the PR covers the integration stage. A **persistent
 environment** (the agent devcontainer, Sprites) logs in once, at provisioning,
 and runs Codex locally; that login stays on that environment and is never
-copied to another machine. The Codex Claude Code plugin is provided only where a
-persistent login exists, never in an ephemeral cloud. Nothing here sets or asks
-for an OpenAI API key: the plan, not API credit, pays for it.
+copied to another machine. An ephemeral cloud session does not install the
+plugins a repository enables ([docs/guides/claude-code-web.md](docs/guides/claude-code-web.md#account-preferences-account-skills-and-what-does-not-carry-over)),
+so the Codex Claude Code plugin runs only where a persistent login exists.
+Nothing here sets or asks for an OpenAI API key: the plan, not API credit, pays
+for it.
 
 ## Second-Model Review (Codex)
 

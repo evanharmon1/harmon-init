@@ -25,7 +25,18 @@
 # Residual: this is a textual, best-effort control. It cannot catch every
 # spelling (a variable holding the command name, an encoded path, a login driven
 # by a tool it does not scan). It stops the plain and the accidental ones, and
-# the self-test below proves it does that for every token.
+# the self-test below proves it does that for every token. Two more, stated
+# plainly:
+#   - An allowlisted line is excused by its exact text anywhere in its file, so
+#     moving an operator-only line verbatim into a remote-lane section is not
+#     caught. Review catches that; the guard does not.
+#   - Only the `~/.codex` and trailing-slash `.codex/` spellings are matched, so
+#     `$HOME/.codex` or `/home/vscode/.codex` without a slash is not. A bare
+#     `.codex` token is deliberately not used: the agent devcontainer mounts that
+#     directory legitimately, and the persistent login lives in it.
+# A `codex` at the end of one line followed by `login` at the start of the next
+# non-blank line in the same file (a YAML-folded command) is matched too; a full
+# YAML or shell parser is out of scope.
 #
 # Self-proving: a planted violation in a temporary copy of the surfaces must
 # fail, for every token, so a scan that silently stopped matching cannot pass.
@@ -59,23 +70,23 @@ TOKENS=(
 
 # Remote-environment surfaces: directories are scanned recursively, files
 # directly. Whatever does not exist in the repository under test is skipped.
+# Not scanned at all: docs/research/ (an assessment of rejected options, not
+# guidance). Every guide and architecture page is scanned, so a new remote
+# adapter page is covered the day it is added rather than when someone lists it.
 SURFACE_DIRS=(
     'images/devcontainer'
     '.devcontainer'
     '.github/workflows'
+    '.github/actions'
+    'docs/guides'
+    'docs/architecture'
 )
 SURFACE_FILES=(
     'scripts/setup-remote.sh'
     'AGENTS.md'
-    'docs/guides/claude-code-web.md'
-    'docs/guides/codex-cloud.md'
-    'docs/guides/codex-review.md'
-    'docs/guides/devcontainers.md'
-    'docs/architecture/remote-environments.md'
 )
 
-# Allowlist: "file@@complete line@@reason". Not scanned at all: docs/research/
-# (an assessment of rejected options, not guidance).
+# Allowlist: "file@@complete line@@reason".
 ALLOW=(
     '.devcontainer/config/claude-hooks/protect-files.sh@@    ".codex/config.toml"@@configuration path in a comment or protected-path list, not a credential'
     '.devcontainer/config/codex-managed-config.toml@@# silently outranks `-c`, ~/.codex/config.toml and a trusted project@@configuration path in a comment or protected-path list, not a credential'
@@ -92,6 +103,7 @@ ALLOW=(
     'docs/guides/codex-review.md@@- **Auth expired** — `codex login status`, then `codex login` (or@@operator-machine troubleshooting: re-authenticate after expiry'
     'docs/guides/codex-review.md@@  `codex login --device-auth` without a browser).@@operator-machine troubleshooting on a host without a browser'
     'docs/guides/codex-review.md@@  `~/.codex/config.toml`, and a trusted project `.codex/config.toml` alike,@@configuration path, not a credential'
+    # The next entry and the one for (harmon-init#1406) are the root and template wording of the same sentence.
     'docs/guides/devcontainers.md@@environment persists one (#1406), lives in the `~/.codex` volume, not the@@where the persistent login lives: the volume, not the env-file'
     'docs/guides/devcontainers.md@@The environment runs `codex login` once, at provisioning, and its@@the rule itself: a persistent environment holds exactly one login, and its file never leaves it'
     'docs/guides/devcontainers.md@@`~/.codex/auth.json` is never copied to another machine (the refresh token is@@the rule itself: a persistent environment holds exactly one login, and its file never leaves it'
@@ -114,6 +126,16 @@ norm() {
     printf '%s' "$s"
 }
 
+# The allowlist in compare form, computed once: normalising inside the scan loop
+# forks per entry per hit, and the self-test scans many times.
+ALLOW_FILES=()
+ALLOW_TEXTS=()
+for entry in "${ALLOW[@]+"${ALLOW[@]}"}"; do
+    ALLOW_FILES+=("${entry%%@@*}")
+    etext="${entry#*@@}"
+    ALLOW_TEXTS+=("$(norm "${etext%%@@*}")")
+done
+
 # scan ROOT — print "file:line:text" for every unexplained hit under ROOT (text
 # normalised, backslash-continued lines joined and numbered by the physical line
 # they start on), then "SCANNED n". A file that cannot be read prints
@@ -124,7 +146,7 @@ norm() {
 # tokens across all the text files, so a scan costs two processes, not three per
 # file — the self-test runs it many times.
 scan() {
-    local root="$1" file line text entry efile etext tokstr rc hits allowed listing scanned=0
+    local root="$1" file line text entry efile etext tokstr rc hits allowed listing d f k scanned=0
     local files=() textfiles=()
     for d in "${SURFACE_DIRS[@]}"; do
         if [ -d "${root}/${d}" ]; then
@@ -170,19 +192,35 @@ scan() {
         tokstr="$(printf '%s\037' "${TOKENS[@]}")"
         rc=0
         hits="$(cd "$root" && awk -v tokens="$tokstr" '
-            function emit(f, s, t,   i) {
+            function emit(f, s, t,   i, tt, hit) {
                 gsub(/[ \t]+/, " ", t)
+                tt = t
+                sub(/^ /, "", tt)
+                # A `codex` ending one line and `login` opening the next
+                # non-blank line (a YAML-folded command) is one command.
+                if (pend != "" && tt != "") {
+                    if (tt ~ /^login([^A-Za-z0-9_-]|$)/) print pfile ":" pline ":" pend " " tt
+                    pend = ""
+                }
+                hit = 0
                 for (i = 1; i <= n; i++) {
                     if (T[i] != "" && index(t, T[i])) {
                         print substr(f, 3) ":" s ":" t
-                        return
+                        hit = 1
+                        break
                     }
+                }
+                if (!hit && t ~ /(^| )codex ?$/) {
+                    pend = t
+                    pfile = substr(f, 3)
+                    pline = s
                 }
             }
             BEGIN { n = split(tokens, T, "\037") }
             FNR == 1 {
                 if (cont) { emit(pf, start, buf); buf = ""; cont = 0 }
                 pf = FILENAME
+                pend = ""
             }
             {
                 line = $0
@@ -207,12 +245,9 @@ scan() {
             text="${line#*:}"
             text="${text#*:}"
             allowed=0
-            for entry in "${ALLOW[@]+"${ALLOW[@]}"}"; do
-                efile="${entry%%@@*}"
-                [ "$efile" = "$file" ] || continue
-                etext="${entry#*@@}"
-                etext="${etext%%@@*}"
-                [ "$text" = "$(norm "$etext")" ] && allowed=1
+            for ((k = 0; k < ${#ALLOW_FILES[@]}; k++)); do
+                [ "${ALLOW_FILES[k]}" = "$file" ] || continue
+                [ "$text" = "${ALLOW_TEXTS[k]}" ] && allowed=1
             done
             [ "$allowed" -eq 1 ] || echo "$line"
         done <<<"$hits"
@@ -224,16 +259,15 @@ scan() {
 # SCAN_COUNT from scan's output.
 split_scan() {
     SCAN_ERR="" SCAN_HITS="" SCAN_COUNT=""
-    case "$1" in
-    *GUARD-ERROR*)
-        SCAN_ERR="$(printf '%s\n' "$1" | grep 'GUARD-ERROR' | head -n 1)"
-        ;;
-    *)
-        SCAN_COUNT="${1##*SCANNED }"
-        SCAN_HITS="${1%SCANNED *}"
-        SCAN_HITS="${SCAN_HITS%$'\n'}"
-        ;;
-    esac
+    # scan emits a guard error as a line that BEGINS with the marker; a hit line
+    # begins with its file path, so a surface line quoting the marker is a hit.
+    if SCAN_ERR="$(printf '%s\n' "$1" | grep '^GUARD-ERROR ' | head -n 1)" && [ -n "$SCAN_ERR" ]; then
+        return 0
+    fi
+    SCAN_ERR=""
+    SCAN_COUNT="${1##*SCANNED }"
+    SCAN_HITS="${1%SCANNED *}"
+    SCAN_HITS="${SCAN_HITS%$'\n'}"
 }
 
 # --- 1. The repository under test is clean ---
@@ -302,6 +336,21 @@ printf 'echo start\ncodex\tlogin\n' >"${FIX}/${planted}"
 expect_hit "codex login separated by a tab" "$planted" "2:"
 printf 'echo start\nrun  --device-auth  now\n' >"${FIX}/${planted}"
 expect_hit "a token flanked by doubled blanks" "$planted" "2:"
+rm -f "${FIX}/${planted}"
+
+# A YAML-folded command: `codex` ends one line, `login` opens the next.
+mkdir -p "${FIX}/.github/workflows"
+printf 'name: x\njobs:\n  a:\n    steps:\n      - run: >-\n          codex\n          login\n' >"${FIX}/.github/workflows/folded.yml"
+expect_hit "a YAML-folded codex / login" ".github/workflows/folded.yml" "6:"
+printf 'jobs:\n  a:\n    steps:\n      - run: echo codex\n        login-check: x\n' >"${FIX}/.github/workflows/folded.yml"
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "codex followed by a login-prefixed word must not match, got: ${SCAN_HITS}"
+rm -f "${FIX}/.github/workflows/folded.yml"
+
+# A surface line that merely contains the guard-error marker is a violation (it
+# carries a token), never mistaken for a guard error.
+printf 'echo start\nGUARD-ERROR OPENAI_API_KEY leaked\n' >"${FIX}/${planted}"
+expect_hit "a surface line quoting the guard-error marker" "$planted" "2:"
 rm -f "${FIX}/${planted}"
 
 # The workflow directory is scanned as a whole, not one named file.
