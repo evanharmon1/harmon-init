@@ -23,6 +23,7 @@ project-specific (domain) terms as the model firms up.
 [% endif %]
 | bot vs operator | Two identities: the AI **bot** account (scoped; `main` needs code-owner approval and green checks, and though its `pull_requests: write` PAT can perform a merge a human has approved, merging stays the maintainer's decision) and the human **operator** (full access). See [architecture/security.md](architecture/security.md). |
 | TODO: term | TODO: project-specific definition |
+[% if project_management == 'github' %]
 
 ## Issue classification
 
@@ -46,3 +47,4 @@ repos.
 | triaged | Every required classification is present: Type (or work-type label), one `area:*`, `layer:*`, and `domain:*` (or their explicit inapplicable value), Risk, Complexity, Impact. `needs-triage` is derived from this, never set by hand. |
 | Size | Retired: superseded by Effort (human tasks) and Complexity (every issue). |
 | `suggest:*` | Retired: the family suggestion, superseded by Tier. |
+[% endif %]

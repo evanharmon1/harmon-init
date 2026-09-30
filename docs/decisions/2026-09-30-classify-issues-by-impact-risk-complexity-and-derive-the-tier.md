@@ -119,7 +119,12 @@ absent:
 
 A human pins a tier from the GitHub UI by setting Tier and adding the
 `tier:pinned` label, on both owner types. Nothing automated writes over a
-pinned Tier.
+pinned Tier. A pin is a label input like any other, so the label-provenance
+rule applies to it: an interactive session confirms a pin the operator has
+not authorized, and unattended automation honors a pin only after verifying
+its provenance, otherwise resolving as if it were absent
+([ADR 0006](2026-08-16-method-and-tier-axes.md) D6; `AGENTS.md` "Nothing
+here arms anything").
 
 Execution-policy resolution becomes:
 
@@ -201,6 +206,12 @@ with a skim of the resulting tier distribution per repository.
 - A write that updates Risk or Complexity but fails on Tier leaves a stale
   Tier until the next write or the daily reconciler corrects it; the design
   accepts that window rather than adding safeguards (D3).
+- On personal-account repositories an unqualified `tier:<value>` label
+  changes meaning, from a human implementer override (ADR 0007 D5) to the
+  stored, derived Tier that automation may rewrite; a human who wants to fix
+  the tier adds `tier:pinned`. Rollout must pin any human-applied
+  `tier:<value>` label on an open issue before the backfill runs
+  ([#1453](https://github.com/evanharmon1/harmon-init/issues/1453)).
 - The work is split across the epic's children: the label registry
   ([#1447](https://github.com/evanharmon1/harmon-init/issues/1447)), the
   organization fields and Effort ladder
