@@ -277,3 +277,6 @@ else
 
     echo "==> protect-files regression tests OK"
 fi
+
+# git-merge-guard replaces the Bash(git merge:*) ask rules; see the script header.
+bash "$(dirname "${BASH_SOURCE[0]}")/test-git-merge-guard.sh"
