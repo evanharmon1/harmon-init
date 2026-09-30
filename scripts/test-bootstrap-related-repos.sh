@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # test-bootstrap-related-repos.sh — unit-test bootstrap-related-repos.sh fallback,
-# concurrency locking, and idempotency (stubbed gh/git and local bare git repo, no network).
+# private temporary directories with atomic publish, and idempotency (stubbed gh/git
+# and local bare git repo, no network).
 #
 # Run via `task test:related-repos`.
 set -euo pipefail
@@ -82,7 +83,14 @@ chmod +x "${BIN_DIR}/git"
 # --- Stub mv that can simulate concurrent target creation before publish ---
 cat <<EOF >"${BIN_DIR}/mv"
 #!/usr/bin/env bash
+if [ -n "\${STUB_MV_LOG:-}" ]; then
+    echo "\$*" >>"\${STUB_MV_LOG}"
+fi
 if [ "\$1" = "--version" ]; then
+    if [ "\${STUB_MV:-}" = "no-version" ]; then
+        echo "mv: unrecognized option '--version'" >&2
+        exit 64
+    fi
     exec "${REAL_MV}" --version
 fi
 if [ "\${STUB_MV:-}" = "concurrent-dir" ]; then
@@ -275,6 +283,20 @@ RELATED_REPOS_MV_ATOMIC=0 STUB_MV="concurrent-dir" run_sut auth-ok >/dev/null 2>
 [ -z "$(find "${WORKSPACES}/test-repo" -mindepth 1 ! -name 'marker.txt' -print -quit 2>/dev/null)" ] || fail "clone was nested inside concurrently created directory (fallback path)"
 [ -z "$(find "${WORKSPACES}" -name '.bootstrap-*' -print -quit 2>/dev/null)" ] || fail "temporary clone directory was not cleaned up after publish skip (fallback path)"
 
+# 5c: an mv whose --version fails (non-GNU) must select the fallback publish, never `mv -T`
+rm -rf "${WORKSPACES}" && mkdir -p "${WORKSPACES}"
+echo "test-owner/test-repo" >"${CONFIG}"
+mv_log="${TMP}/mv-no-version.log"
+rm -f "${mv_log}"
+rc=0
+STUB_MV="no-version" STUB_MV_LOG="${mv_log}" run_sut auth-ok >/dev/null 2>&1 || rc=$?
+[ "$rc" -eq 0 ] || fail "script must exit 0 when mv --version fails (non-GNU mv)"
+[ -d "${WORKSPACES}/test-repo/.git" ] || fail "repo was not published via the fallback path when mv --version fails"
+grep -q -- '--version' "${mv_log}" || fail "expected the script to probe mv --version"
+if grep -Eq '(^| )-T( |$)' "${mv_log}"; then
+    fail "mv -T used although mv --version failed; expected the fallback publish path"
+fi
+
 # --- Test 6: Plain file at target is left intact and publish fails safely ---
 echo "==> plain file at target is left intact"
 rm -rf "${WORKSPACES}" && mkdir -p "${WORKSPACES}"
@@ -324,11 +346,15 @@ rm -rf "${WORKSPACES}/.bootstrap-orphan-live.$$.222222"
 
 # --- Test 9: post-start-common.sh starts bootstrap-related-repos.sh detached ---
 echo "==> post-start-common.sh starts bootstrap-related-repos.sh detached"
-# The job runs from a subshell that ignores SIGHUP BEFORE it execs nohup, so a
-# HUP between fork and exec cannot kill it: (trap '' HUP; exec nohup bash ... </dev/null >>log 2>&1) &
+# SIGHUP is ignored in the PARENT before the fork (inherited across fork and exec, so
+# the child is immune from its first instruction), then restored after the launches:
+#   trap '' HUP
+#   bash .devcontainer/scripts/bootstrap-related-repos.sh </dev/null >>log 2>&1 &
+#   bash .devcontainer/scripts/fetch-related-repos.sh </dev/null >>log 2>&1 &
+#   trap - HUP
+# nohup and a HUP-ignoring subshell are the old, window-leaving forms and must not return.
 awk '
-    /^[[:space:]]*trap .. HUP[[:space:]]*$/ { trapped = 1; next }
-    /^[[:space:]]*exec nohup bash \.devcontainer\/scripts\/bootstrap-related-repos\.sh/ {
+    function joined(   line, next_line) {
         line = $0
         while (line ~ /\\$/) {
             sub(/\\$/, "", line)
@@ -338,17 +364,28 @@ awk '
                 break
             }
         }
-        if (trapped && line ~ /<[[:space:]]*\/dev\/null/ && (getline closer) > 0 && closer ~ /^[[:space:]]*\)[[:space:]]*&[[:space:]]*$/) {
-            matched = 1
-        }
-        trapped = 0
+        return line
+    }
+    /^[[:space:]]*trap .. HUP[[:space:]]*$/ { state = 1; next }
+    state == 1 && /^[[:space:]]*bash \.devcontainer\/scripts\/bootstrap-related-repos\.sh/ {
+        line = joined()
+        if (line ~ /<[[:space:]]*\/dev\/null/ && line ~ /&[[:space:]]*$/) { state = 2; next }
+        state = 0
         next
     }
-    /[^[:space:]]/ && !/^[[:space:]]*\(/ { trapped = 0 }
+    state == 2 && /^[[:space:]]*bash \.devcontainer\/scripts\/fetch-related-repos\.sh/ {
+        line = joined()
+        if (line ~ /<[[:space:]]*\/dev\/null/ && line ~ /&[[:space:]]*$/) { state = 3; next }
+        state = 0
+        next
+    }
+    state == 3 && /^[[:space:]]*trap - HUP[[:space:]]*$/ { matched = 1; state = 0; next }
+    /[^[:space:]]/ && !/^[[:space:]]*#/ { state = 0 }
+    /nohup .*(bootstrap|fetch)-related-repos/ { nohup_seen = 1 }
     END {
-        exit (!matched)
+        exit (!matched || nohup_seen)
     }' .devcontainer/scripts/post-start-common.sh ||
-    fail "expected post-start-common.sh to start bootstrap-related-repos.sh detached from a HUP-ignoring subshell with exec nohup, </dev/null, and trailing &"
+    fail "expected post-start-common.sh to ignore SIGHUP in the parent (trap '' HUP), start bootstrap and fetch detached with </dev/null and a trailing &, then restore (trap - HUP), without nohup"
 
 # --- Test 10: mktemp failure does not abort script under set -e ---
 echo "==> mktemp failure does not abort script under set -e"
@@ -485,5 +522,6 @@ signal_case() {
 }
 signal_case TERM 143
 signal_case INT 130
+signal_case HUP 129
 
 echo "test-bootstrap-related-repos.sh passed"

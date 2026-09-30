@@ -44,24 +44,26 @@ fi
 
 # --- Bootstrap missing related repos in the background ---
 # Clones any missing sibling repos configured in .devcontainer/related-repos.txt
-# into /workspaces/. nohup'd + backgrounded so container start is never blocked.
-# The subshell ignores SIGHUP BEFORE it execs nohup: a bare `nohup cmd &` leaves a
-# window between fork and nohup's own exec in which a HUP kills the job, and a
-# sleep to paper over that would only shrink the window.
-(
-    trap '' HUP
-    exec nohup bash .devcontainer/scripts/bootstrap-related-repos.sh </dev/null >>"$HOME/.related-repos-bootstrap.log" 2>&1
-) &
+# into /workspaces/. Backgrounded so container start is never blocked.
+#
+# SIGHUP is ignored in THIS shell before the jobs are forked and restored after.
+# POSIX guarantees an ignored signal stays ignored across fork and exec, so each
+# child starts with SIGHUP already ignored and is immune from its first
+# instruction; there is no window between fork and a later `trap` or `nohup` in
+# which a HUP could kill it. nohup would add nothing (the disposition is already
+# inherited and the redirections keep the jobs off the tty). A process-group
+# SIGTERM at container teardown still ends them, which is expected.
+trap '' HUP
+bash .devcontainer/scripts/bootstrap-related-repos.sh </dev/null >>"$HOME/.related-repos-bootstrap.log" 2>&1 &
 
 # --- Freshen related repos in the background (non-destructive git fetch) ---
 # Reads .devcontainer/related-repos.txt and git-fetches already-cloned siblings
 # in /workspaces/ so they track their remotes. NEVER pulls/merges/checks out —
-# local work is left untouched. nohup'd + backgrounded so it neither delays the
-# session nor is killed by SIGHUP when the shell exits. No-op for an empty list.
-(
-    trap '' HUP
-    exec nohup bash .devcontainer/scripts/fetch-related-repos.sh </dev/null >>"$HOME/.related-repos-fetch.log" 2>&1
-) &
+# local work is left untouched. Backgrounded, with SIGHUP ignored in the parent
+# before the fork (see above), so it neither delays the session nor is killed
+# when the shell exits. No-op for an empty list.
+bash .devcontainer/scripts/fetch-related-repos.sh </dev/null >>"$HOME/.related-repos-fetch.log" 2>&1 &
+trap - HUP
 
 echo "==> Starting tmux session..."
 if command -v tmux &>/dev/null; then
@@ -123,9 +125,10 @@ if [ "${DEVCONTAINER_TAILSCALE:-}" = "true" ]; then
     # checked properly against BackendState.
     #
     # Run in foreground — post-start output is already redirected to a log file
-    # so there is no SIGPIPE risk. (The detached `nohup … </dev/null … &` jobs
+    # so there is no SIGPIPE risk. (The detached `… </dev/null … &` jobs
     # above are different: they survive the postStartCommand process group's
-    # exit because SIGHUP is ignored; a process-group SIGTERM at container
-    # teardown still ends them, which is expected.)
+    # exit because they inherited an ignored SIGHUP from this shell before the
+    # fork; a process-group SIGTERM at container teardown still ends them, which
+    # is expected.)
     bash .devcontainer/scripts/tailscale-connect.sh
 fi

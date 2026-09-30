@@ -41,12 +41,20 @@ trigger_related_repos_bootstrap() {
     if [ -f "${bootstrap}" ]; then
         local log_file="${HOME}/.related-repos-bootstrap.log"
         echo "==> Bootstrapping related repos in the background (log: ${log_file})..."
-        # Ignore SIGHUP in the subshell BEFORE it execs nohup, so a HUP arriving
-        # between fork and exec (a pty tearing down) cannot kill the job.
-        (
-            trap '' HUP
-            exec nohup bash "${bootstrap}" </dev/null >>"${log_file}" 2>&1
-        ) &
+        # Ignore SIGHUP in THIS shell before the fork, then restore what it was.
+        # An ignored signal stays ignored across fork and exec (POSIX), so the job
+        # is immune from its first instruction: a HUP from a pty tearing down
+        # cannot land in a window before a later trap or nohup takes effect. A
+        # process-group SIGTERM still ends it, which is expected.
+        local prev_hup
+        prev_hup="$(trap -p HUP)"
+        trap '' HUP
+        bash "${bootstrap}" </dev/null >>"${log_file}" 2>&1 &
+        if [ -n "${prev_hup}" ]; then
+            eval "${prev_hup}"
+        else
+            trap - HUP
+        fi
     fi
 }
 
