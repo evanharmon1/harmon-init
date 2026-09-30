@@ -124,13 +124,22 @@ norm() {
 # tokens across all the text files, so a scan costs two processes, not three per
 # file — the self-test runs it many times.
 scan() {
-    local root="$1" file line text entry efile etext tokstr rc hits allowed scanned=0
+    local root="$1" file line text entry efile etext tokstr rc hits allowed listing scanned=0
     local files=() textfiles=()
     for d in "${SURFACE_DIRS[@]}"; do
         if [ -d "${root}/${d}" ]; then
+            # find's own exit status must be seen: a directory it cannot list
+            # would otherwise drop out of the scan and still pass. The listing
+            # lives under TMP, removed by the EXIT trap.
+            listing="$(mktemp "${TMP}/listing.XXXXXX")"
+            if ! find "${root}/${d}" -type f >"$listing" 2>/dev/null ||
+                ! LC_ALL=C sort -o "$listing" "$listing" 2>/dev/null; then
+                echo "GUARD-ERROR guard could not list ${d}"
+                return 0
+            fi
             while IFS= read -r file; do
                 files+=("${file#"${root}"/}")
-            done < <(find "${root}/${d}" -type f | LC_ALL=C sort)
+            done <"$listing"
         fi
     done
     for f in "${SURFACE_FILES[@]}"; do
@@ -353,6 +362,23 @@ else
     esac
     chmod 600 "${FIX}/.devcontainer/agent/unreadable.sh"
     rm -f "${FIX}/.devcontainer/agent/unreadable.sh"
+fi
+
+# A surface directory the guard cannot list is an error too: find's failure must
+# not let the directory drop out of the scan. Root lists everything.
+if [ "$(id -u)" -eq 0 ]; then
+    echo "==> skipped: the unlistable-directory case cannot run as root"
+else
+    mkdir -p "${FIX}/.devcontainer/unlistable"
+    printf 'harmless\n' >"${FIX}/.devcontainer/unlistable/file.sh"
+    chmod 000 "${FIX}/.devcontainer/unlistable"
+    split_scan "$(scan "$FIX")"
+    case "$SCAN_ERR" in
+    *"could not list .devcontainer"*) ;;
+    *) fail "an unlistable surface directory must be a guard error, got: ${SCAN_ERR:-<none>} ${SCAN_HITS}" ;;
+    esac
+    chmod 755 "${FIX}/.devcontainer/unlistable"
+    rm -rf "${FIX}/.devcontainer/unlistable"
 fi
 
 # A root with none of the surfaces scans nothing — which the caller rejects.
