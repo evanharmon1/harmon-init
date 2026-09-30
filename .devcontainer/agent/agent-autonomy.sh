@@ -49,7 +49,10 @@ fail() {
 # are the platform's; refusing them there is a recorded delivery gap, not this
 # script's to do. It is an ARGUMENT, never an environment variable, so nothing
 # a repository can set (a devcontainer.json containerEnv entry) can switch it
-# on for the agent devcontainer's own lifecycle, which never passes it.
+# on for the agent devcontainer's own lifecycle, which never passes it. The
+# seams above — AGENT_AUTONOMY_CONFIG_DIR, AGENT_AUTONOMY_CLAUDE_MANAGED and
+# AGENT_AUTONOMY_CODEX_MANAGED — are still environment variables, open to the
+# same containerEnv route; that residual is tracked in #1432.
 PLATFORM_VM=0
 BAKED_CONFIG_DIR=/usr/local/share/devcontainer-config/agent
 CONFIG_DIR="${AGENT_AUTONOMY_CONFIG_DIR:-}"

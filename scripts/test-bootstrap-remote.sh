@@ -2510,6 +2510,16 @@ fi
         fail(f"{BOOTSTRAP}: the posture step no longer runs agent-autonomy.sh apply and verify with --platform-vm")
     if "printf 'HARMON_BOOTSTRAP_POSTURE_GAPS=%s\\n' \"$posture_gaps\"" not in bootstrap_text:
         fail(f"{BOOTSTRAP}: the run no longer reports HARMON_BOOTSTRAP_POSTURE_GAPS beside its install counters")
+    # The posture is installed right after apt-core and BEFORE any tier, so a
+    # failing tier cannot leave a harness without its managed policy.
+    apt_core_at = bootstrap_text.find('"${asset_dir}/install/apt-core.sh"\n')
+    posture_call_at = bootstrap_text.find("\ninstall_agent_posture\n")
+    tier_loop_at = bootstrap_text.find("\nfor tier in $HARMON_TIER_ORDER; do\n    case \",${tiers},\" in")
+    if not (0 <= apt_core_at < posture_call_at < tier_loop_at):
+        fail(
+            f"{BOOTSTRAP}: install_agent_posture must run after apt-core.sh (its jq) and before the tier loop — "
+            "a tier that fails afterwards would otherwise leave a harness installed without its managed policy"
+        )
     for seam_file, seam_text in ((BOOTSTRAP, bootstrap_text), (AGENT_AUTONOMY, AGENT_AUTONOMY.read_text())):
         if "AGENT_AUTONOMY_SKIP_HARNESS_REFUSAL" in seam_text:
             fail(
@@ -2730,10 +2740,11 @@ trap 'rm -rf "$root"' EXIT
 printf '%s' '@WORKER_B64@' | base64 -d >"${root}/fn.sh"
 printf '#!/bin/sh\n' >"${root}/present.sh"
 chmod 0755 "${root}/present.sh"
-printf '{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"%s/present.sh %s/absent-claude-arg.sh --flag"},{"type":"command","command":"%s/absent-claude.sh"}]}]}}\n' "$root" "$root" "$root" >"${root}/claude.json"
+printf '{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"%s/present.sh\\t%s/absent-claude-arg.sh --flag"},{"type":"command","command":"%s/absent-claude.sh"}]}]}}\n' "$root" "$root" "$root" >"${root}/claude.json"
 # The second command is indented and spaced as a TOML writer may emit it: the
-# scan must not be anchored to column 0.
-printf 'command = "%s/absent-codex.sh %s/present.sh"\n  command  =  "%s/present.sh %s/absent-codex-arg.sh"\n' "$root" "$root" "$root" "$root" >"${root}/codex.toml"
+# scan must not be anchored to column 0. Its words, like the Claude command's
+# first two, are separated by a TAB: the split is on any whitespace.
+printf 'command = "%s/absent-codex.sh %s/present.sh"\n  command  =  "%s/present.sh\t%s/absent-codex-arg.sh"\n' "$root" "$root" "$root" "$root" >"${root}/codex.toml"
 HARMON_AGENT_CLAUDE_MANAGED="${root}/claude.json" HARMON_AGENT_CODEX_MANAGED="${root}/codex.toml" \
     bash -c '. "$1"; posture_missing_hooks' _ "${root}/fn.sh" | sed "s|^${root}/|MISSING |"
 """.replace(

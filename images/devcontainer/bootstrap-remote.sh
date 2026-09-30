@@ -421,6 +421,10 @@ assets_local=0
 
 fetched_dir=""
 posture_scratch=""
+# The agent posture's run state, file-scope like the rest: the managed paths
+# left in place as found, and their count for HARMON_BOOTSTRAP_POSTURE_GAPS.
+posture_left_in_place=""
+posture_gaps=0
 cleanup() {
     [ -n "$fetched_dir" ] && rm -rf "$fetched_dir"
     [ -n "$posture_scratch" ] && rm -rf "$posture_scratch"
@@ -469,7 +473,9 @@ tab="$(printf '\t')"
 # From the SAME source as the install scripts, decided by the same flag: the
 # checkout the tiers came from, or the tag they were fetched from. Never a mix,
 # and never a copy carried here. Fetched before any tier runs, so a tag that
-# lacks the definition stops the run before it has installed anything.
+# lacks the definition stops the run before it has installed anything; and
+# installed before any tier too (below, right after apt-core), so a failing
+# tier cannot leave a harness on this machine without its managed policy.
 if [ "$assets_local" = 1 ]; then
     posture_root="$(cd "${self_dir}/../.." && pwd)"
     for asset in $HARMON_AGENT_POSTURE_ASSETS; do
@@ -602,16 +608,12 @@ done
 
 # ---------- install ----------
 "${asset_dir}/install/apt-core.sh"
-for tier in $HARMON_TIER_ORDER; do
-    case ",${tiers}," in
-    *",${tier},"*)
-        printf '\n'
-        "${asset_dir}/install/install-${tier}.sh"
-        ;;
-    esac
-done
 
 # ---------- the agent posture ----------
+# Installed HERE, right after apt-core (which provides jq, its one dependency)
+# and before any tier: a tier that fails must never leave a harness installed
+# on this machine without its managed policy.
+#
 # Every remote environment runs under the agent posture (#1408): the agent
 # Claude Code managed settings and the agent Codex managed config, located
 # above. They are installed and verified by the definition's own installer,
@@ -734,11 +736,11 @@ posture_missing_hooks() {
     {
         case " ${posture_left_in_place} " in
         *" ${HARMON_AGENT_CLAUDE_MANAGED} "*) ;;
-        *) jq -r '.. | objects | .command? | select(type == "string") | split(" ")[] | select(startswith("/"))' "$HARMON_AGENT_CLAUDE_MANAGED" ;;
+        *) jq -r '.. | objects | .command? | select(type == "string") | split("\\s+"; "")[] | select(startswith("/"))' "$HARMON_AGENT_CLAUDE_MANAGED" ;;
         esac
         case " ${posture_left_in_place} " in
         *" ${HARMON_AGENT_CODEX_MANAGED} "*) ;;
-        *) sed -n 's/^[[:space:]]*command[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$HARMON_AGENT_CODEX_MANAGED" | tr ' ' '\n' | sed -n '/^\//p' ;;
+        *) sed -n 's/^[[:space:]]*command[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$HARMON_AGENT_CODEX_MANAGED" | tr ' \t' '\n\n' | sed -n '/^\//p' ;;
         esac
     } | sort -u | while IFS= read -r cmd; do
         [ -n "$cmd" ] && [ ! -x "$cmd" ] && printf '%s\n' "$cmd"
@@ -749,7 +751,7 @@ posture_missing_hooks() {
 install_agent_posture() {
     local config_dir="${posture_root}/.devcontainer/config/agent"
     local autonomy="${posture_root}/.devcontainer/agent/agent-autonomy.sh"
-    local missing step claude_target codex_target covered=""
+    local missing step dest claude_target codex_target covered=""
     printf '\n==> agent posture (from %s)\n' "${ref:-the checkout at ${posture_root}}"
     # Global, so cleanup() removes it on every exit, a die in the loop included.
     posture_scratch="$(mktemp -d)"
@@ -770,8 +772,12 @@ install_agent_posture() {
     # The count the run reports beside its install counters, so a run that left
     # every destination in place cannot read like a clean re-run.
     posture_gaps="$(printf '%s' "$posture_left_in_place" | wc -w | tr -d ' ')"
-    [ "$claude_target" != "$HARMON_AGENT_CLAUDE_MANAGED" ] || covered="${covered} ${HARMON_AGENT_CLAUDE_MANAGED}"
-    [ "$codex_target" != "$HARMON_AGENT_CODEX_MANAGED" ] || covered="${covered} ${HARMON_AGENT_CODEX_MANAGED}"
+    for dest in "$HARMON_AGENT_CLAUDE_MANAGED" "$HARMON_AGENT_CODEX_MANAGED"; do
+        case " ${posture_left_in_place} " in
+        *" ${dest} "*) ;;
+        *) covered="${covered} ${dest}" ;;
+        esac
+    done
     for step in apply verify; do
         FOREMAN_DEVCONTAINER=agent \
             AGENT_AUTONOMY_CONFIG_DIR="$config_dir" \
@@ -789,11 +795,22 @@ install_agent_posture() {
     if [ -n "$posture_left_in_place" ]; then
         warn "the agent posture is NOT applied for:${posture_left_in_place} — each was left in place as found (see above). That is a delivery gap for this machine, not a failed run."
     fi
-    missing="$(posture_missing_hooks)"
+    # A report, so it can never fail the run: a scan that errors says so.
+    missing="$(posture_missing_hooks)" ||
+        warn "could not scan the installed agent posture's hook commands — the hook-gap report below is incomplete"
     [ -z "$missing" ] ||
         warn "the agent posture names hook commands this machine does not have: $(printf '%s' "$missing" | tr '\n' ' ' | sed 's/ $//') — the bootstrap installs no hooks (hook guards in remote sessions are deferred by #1402), so each is a failing command whenever its hook fires. The permission rules do not depend on them."
 }
 install_agent_posture
+
+for tier in $HARMON_TIER_ORDER; do
+    case ",${tiers}," in
+    *",${tier},"*)
+        printf '\n'
+        "${asset_dir}/install/install-${tier}.sh"
+        ;;
+    esac
+done
 
 # ---------- verify what the tiers promised ----------
 printf '\n==> verifying\n'
