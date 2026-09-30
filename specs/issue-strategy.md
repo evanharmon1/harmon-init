@@ -4,7 +4,7 @@
 - **Owner:** Evan Harmon
 - **Date:** 2026-08-13
 - **Related:** milestone [Issue strategy overhaul](https://github.com/evanharmon1/harmon-init/milestone/2)
-  (#849–#858) · [ADR 0005](../docs/decisions/0005-unified-agent-vocabulary.md) · #754 · #809 · #620 ·
+  (#849–#858) · [ADR 2026-08-07](../docs/decisions/2026-08-07-unified-agent-vocabulary.md) · #754 · #809 · #620 ·
   [ponderousdev/foreman#139](https://github.com/ponderousdev/foreman/issues/139) ·
   [ponderousdev/foreman#169](https://github.com/ponderousdev/foreman/issues/169) ·
   harmon-devkit [#449](https://github.com/evanharmon1/harmon-devkit/issues/449),
@@ -46,7 +46,7 @@ Issues become cheap to classify and route, for humans and agents alike:
   delegation, and human gates). `tier:*` becomes an advanced, role-scoped refinement of rigor's
   own per-role tiers rather than a peer axis with its own default; both `rigor:*` and
   `strategy:*` are consumable by foreman under its trust model. (#1047, superseding this spec's
-  original `method:*`; see [ADR 0007](../docs/decisions/0007-rigor-and-strategy-axes.md).)
+  original `method:*`; see [ADR 2026-08-24](../docs/decisions/2026-08-24-rigor-and-strategy-axes.md).)
 - One authoring standard (title rule, body skeleton, metadata checklist) enforced by a checker
   and mirrored by the issue forms.
 - A manifest-governed triage skill that classifies the backlog and reports what it cannot decide.
@@ -103,7 +103,7 @@ Issues become cheap to classify and route, for humans and agents alike:
       directly, and those three values are the default for every role absent an override.
       An unqualified `tier:<value>` label or override refines the **implementer** tier only;
       `tier:orchestrator:<value>` / `tier:implementer:<value>` / `tier:reviewer:<value>`
-      refine one named role. See [ADR 0007](../docs/decisions/0007-rigor-and-strategy-axes.md)
+      refine one named role. See [ADR 2026-08-24](../docs/decisions/2026-08-24-rigor-and-strategy-axes.md)
       D2/D5.)
 - [ ] Tier tables are **inert routing preferences, never dependencies**: nothing in a
       generated repo invokes any model because the config exists, and an acting consumer may
@@ -130,13 +130,13 @@ Issues become cheap to classify and route, for humans and agents alike:
       outright as a `[rigor.*]` role-tier value or an override target — a role always resolves
       to a concrete ladder rung or not at all (inert), never to `adaptive` itself. (#855;
       restated #1047 without `default_tier`/`[method]`, which no longer exist — see
-      [ADR 0007](../docs/decisions/0007-rigor-and-strategy-axes.md) D5/D12.)
+      [ADR 2026-08-24](../docs/decisions/2026-08-24-rigor-and-strategy-axes.md) D5/D12.)
 - [ ] `strategy:*` values `oneshot | plan | plan-approved | orchestrate | council | human-led`
       (replacing `method:*`, retired via the existing retired-family pattern);
       `default_strategy` in `.devflow.toml`. Each value carries machine-readable `topology`,
       `planning`, `delegation`, optional `coordination`/`selection`/`synthesis`/`min_agents`,
       and `human_gates` fields (defined without relying on the value's name — see
-      [ADR 0007](../docs/decisions/0007-rigor-and-strategy-axes.md) and
+      [ADR 2026-08-24](../docs/decisions/2026-08-24-rigor-and-strategy-axes.md) and
       `docs/guides/devflow.md`). Unlike the `method:*` rank it replaces, **strategy conflicts
       are ambiguous, not ranked**: two `strategy:*` labels on one issue require resolution
       (an interactive session asks; unattended automation falls back to `default_strategy`

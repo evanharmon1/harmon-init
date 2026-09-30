@@ -2,7 +2,7 @@
 """devflow-resolve.py — minimal reference resolver for .devflow.toml.
 
 Resolves a rigor + strategy execution policy the way AGENTS.md's Dev Loop
-describes and ADR 0007 (docs/decisions/0007-rigor-and-strategy-axes.md)
+describes and ADR 0007 (docs/decisions/2026-08-24-rigor-and-strategy-axes.md)
 records: explicit operator instruction > rigor:*/strategy:* labels >
 default_rigor/default_strategy > the built-in fallback. The built-in
 fallback is a FLOOR, not a bypass: even when .devflow.toml is entirely

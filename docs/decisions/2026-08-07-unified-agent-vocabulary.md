@@ -53,7 +53,7 @@ The following decisions are adopted together:
    `suggest:<family>[:<model>]` and `claim:<family>[:<model>]`. Suggestions are
    human-authored advice; claims are live, agent-authored ownership and are
    released at wrap or shepherd completion. Neither arms automation.
-   **Amended 2026-08-16 ([ADR 0006](0006-method-and-tier-axes.md)):**
+   **Amended 2026-08-16 ([ADR 2026-08-16](2026-08-16-method-and-tier-axes.md)):**
    suggestions are now human- **or agent-**authored; `suggest:*` stays
    `family[:model]` (a vendor preference), `tier:*` is the human-decided policy
    layer of the model axis, and `suggest:tier:<value>` is reserved, not built.

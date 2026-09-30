@@ -324,7 +324,7 @@ Where a run dispatches the schema-bound **role agents** instead, each returns a
 typed result validated by `ai/schemas/result.envelope.schema.json` and its
 per-role `result.{implementer,challenger,reviewer,integrator}.schema.json` and
 nothing more; that result is **immutable** ([ADR
-0009](docs/decisions/0009-dev-flow-v2-orchestrator-and-results.md) D2), its
+0009](docs/decisions/2026-08-29-dev-flow-v2-orchestrator-and-results.md) D2), its
 adjudication a separate record keyed by finding id that every consumer reads.
 Either kind never merges, never promotes, never widens its scope, nor
 adjudicates its own findings.

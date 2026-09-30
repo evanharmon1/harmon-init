@@ -383,7 +383,7 @@ is the `suggest:*` label family plus the `Status: Agent Queue` lane; which agent
 neither answer without duplicating the label vocabulary, and on an organization
 the Projects V2 API could not even write it — see
 [Label or field?](#label-or-field) and
-[ADR 0005](decisions/0005-unified-agent-vocabulary.md).
+[ADR 2026-08-07](decisions/2026-08-07-unified-agent-vocabulary.md).
 
 There is likewise deliberately **no `Domain` or `Layer` field** (#875). Both
 used to exist as a field *and* a label — `domain:` / `layer:` below — with
@@ -827,7 +827,7 @@ from one machine-readable source, `agent-registry.json`, validated against
 executable that runs it. `suggest:` and `claim:` name families;
 `foreman:<adapter>` names harness machinery. The reasoning, and the rules for
 naming a family or a harness slug, are in
-[ADR 0005](decisions/0005-unified-agent-vocabulary.md).
+[ADR 2026-08-07](decisions/2026-08-07-unified-agent-vocabulary.md).
 
 The tables below are **generated** from that file — `task test:registry-docs`
 regenerates them and fails on any difference, so they cannot drift from what

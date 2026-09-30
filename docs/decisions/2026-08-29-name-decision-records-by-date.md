@@ -21,7 +21,7 @@ v2", 2026-08-28) surfaced the cost of sequential numbering: an agent filing a
 new ADR must first look up the last number in use, and two branches that each
 add a record race for the same next number. That race is not hypothetical —
 PR #1114 and this repo's own
-[0008-versioned-devflow-compatibility-contract.md](0008-versioned-devflow-compatibility-contract.md)
+[0008-versioned-devflow-compatibility-contract.md](2026-08-25-versioned-devflow-compatibility-contract.md)
 collided on `0008-` exactly this way. The number itself carries no
 information a reader can use before opening the file.
 

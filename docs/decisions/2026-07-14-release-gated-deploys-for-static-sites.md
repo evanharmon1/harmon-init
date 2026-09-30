@@ -22,7 +22,7 @@ opposite things from the `main` → production relationship:
 Both are also scaffolded alongside automation that can land commits on `main`
 without a human writing them: the `claude-*` actions, GitHub Copilot's coding
 agent, Renovate, and foreman-driven agent PRs (see
-[0002](0002-foreman-deterministic-supervisor.md)). So "what does a merge to
+[ADR 2026-07-12](2026-07-12-foreman-deterministic-supervisor.md)). So "what does a merge to
 `main` do?" is a safety question, not just an ergonomics one.
 
 A single default (deploy-on-merge everywhere, or release-gate everywhere) is
@@ -75,7 +75,7 @@ The rationale each way:
   forward-fix, not a release gate.
 - **The automation-safety concern is already covered elsewhere.** For web apps
   the guard is the **human-merge-only** rule from
-  [0002](0002-foreman-deterministic-supervisor.md) — branch protection,
+  [ADR 2026-07-12](2026-07-12-foreman-deterministic-supervisor.md) — branch protection,
   code-owner review, no auto-merge, and a bot token without bypass or
   `workflows` write. `main` is human-gated even though it deploys, so
   release-gating would trade away the frequent-deploy benefit **without adding
