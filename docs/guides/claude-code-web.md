@@ -507,14 +507,41 @@ snapshot was taken before this session's clone. So the rule that holds regardles
 - **Setup script**: machine-level, repository-independent — the bootstrap, and
   nothing that reads a checkout.
 - **Per-checkout preparation** — installing the git hooks, and anything that reads
-  the clone — runs when the session starts, not in the setup script: a
-  `SessionStart` hook in the repository's `.claude/settings.json`, guarded on
-  `CLAUDE_CODE_REMOTE=true` so it does nothing locally (*docs, 2026-09-29*). That
-  hook runs only in a single-repository session.
+  the clone — runs when the session starts, not in the setup script. The
+  platform's mechanism for that is a `SessionStart` hook in the repository's
+  `.claude/settings.json`, guarded on `CLAUDE_CODE_REMOTE=true` so it does nothing
+  locally, and it runs only in a single-repository session (*docs, 2026-09-29*).
+  This repository has deliberately **not** adopted that hook (its
+  `.claude/settings.json` is unchanged), so nothing triggers the preparation by
+  itself: the agent runs the task below once.
 
-There is no `task setup:remote` in this repository today (checked 2026-09-29),
-so the preparation is either a `SessionStart` hook that calls existing tasks, or
-a task added in a follow-up once the observation below says what it must do.
+`task setup:remote` (`scripts/setup-remote.sh`,
+[#1405](https://github.com/evanharmon1/harmon-init/issues/1405)) is that
+preparation as one task, which the agent runs once on a fresh checkout —
+`AGENTS.md` tells it to, because the repository ships no hook that would. It runs `lefthook install` (when
+lefthook is on `PATH`), frozen `pnpm` / `uv` installs from the lockfiles that
+exist, and the same sibling clones the devcontainer makes
+(`.devcontainer/related-repos.txt`), into the checkout's **parent** directory:
+the layout observed on 2026-09-27 (`/home/user/<repo>`), so the `../harmon-devkit`
+entries in `additionalDirectories` and `sandbox.filesystem.allowRead` resolve. It
+is idempotent, never prompts (git terminal prompts are disabled, ssh runs with
+`BatchMode=yes` unless the caller already set `GIT_SSH_COMMAND`, in which case the
+caller's value governs, and pnpm runs with `CI=true`), skips a missing tool with a note, warns and continues past a
+repository it cannot clone, and exits non-zero only when a step that could run
+failed. It prints where it cloned, because a platform that does not clone one
+level below a writable directory would otherwise show only as a missing sibling.
+
+Siblings are **reference context**: a session may push only to its own repository
+and branch (the *Pushes* row above), so a change to a sibling cannot be pushed
+from here. The pre-push hook that `lefthook install` sets up is not a substitute
+for `task verify`, so run that yourself. Public siblings clone anonymously through the
+session's git proxy; a private sibling, or one that needs GitHub API calls, must
+be attached to the session (*observed 2026-09-27*,
+[evidence on #1405](https://github.com/evanharmon1/harmon-init/issues/1405#issuecomment-5860625784)).
+The task's behaviour is tested in a fixture repository
+(`scripts/test-setup-remote.sh`); that it leaves the siblings readable and
+`task verify` runnable in a live session on `ponderousdev/omator` is **pending**,
+criterion 6 of #1405.
 
 **Pending observation (criterion 11):** the guide records the answer here once a
 live session has given it. Probe: in a *new* copy of the environment, add one

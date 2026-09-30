@@ -670,6 +670,17 @@ meets its exit condition on round 1 is done, whatever the cap allowed.
   reason. Fix the issue's criteria — or drop the closing keyword to `Refs` —
   rather than bypassing it.
 
+### Remote environments
+
+On a fresh checkout in a remote environment (Claude Code on the web, Codex
+cloud — anywhere with no devcontainer), no hook or devcontainer lifecycle
+script has run: run `task setup:remote` first. It is idempotent — it installs
+the lefthook git hooks, installs dependencies from the lockfile, and clones the
+repos in `.devcontainer/related-repos.txt` (when present) beside the checkout.
+Those siblings are reference context, not pushable where the platform only
+allows pushes to the session's own repository and branch. The pre-push hook is
+not a substitute for `task verify`, so run it yourself.
+
 ## Second-Model Review (Codex)
 
 A second AI model (the OpenAI Codex CLI) reviews changes on demand — opt-in
