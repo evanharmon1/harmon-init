@@ -37,8 +37,20 @@ rm -rf "${SCRATCH}"
 BIN_DIR="${TMP}/bin"
 mkdir -p "${BIN_DIR}"
 
-REAL_GIT="$(which git)"
-REAL_MV="$(which mv)"
+REAL_GIT="$(command -v git)"
+REAL_MV="$(command -v mv)"
+REAL_MKTEMP="$(command -v mktemp)"
+
+# --- Stub mktemp that can simulate tempdir creation failure ---
+cat <<EOF >"${BIN_DIR}/mktemp"
+#!/usr/bin/env bash
+if [ "\${STUB_MKTEMP:-}" = "fail" ]; then
+    echo "mktemp: failed to create directory: Permission denied" >&2
+    exit 1
+fi
+exec "${REAL_MKTEMP}" "\$@"
+EOF
+chmod +x "${BIN_DIR}/mktemp"
 
 # --- Stub git that enforces offline operation and logs arguments ---
 cat <<EOF >"${BIN_DIR}/git"
@@ -81,6 +93,9 @@ elif [ "\${STUB_MV:-}" = "concurrent-file" ]; then
     if [ -n "\$dest" ]; then
         echo "user-plain-file" >"\$dest"
     fi
+elif [ "\${STUB_MV:-}" = "fail-publish" ]; then
+    echo "mv: simulated I/O error during publish" >&2
+    exit 5
 fi
 exec "${REAL_MV}" "\$@"
 EOF
@@ -165,13 +180,19 @@ WORKSPACES="${TMP}/workspaces"
 CONFIG="${TMP}/related-repos.txt"
 
 run_sut() {
-    local scenario="$1"
-    make_stub "${scenario}"
-    export PATH="${BIN_DIR}:${PATH}"
-    export WORKSPACES_DIR="${WORKSPACES}"
-    export CONFIG_FILE="${CONFIG}"
-    export RELATED_REPOS_GIT_BASE_URL="file://${BARE_BASE}/"
-    bash "${SUT}"
+    (
+        local scenario="$1"
+        make_stub "${scenario}"
+        export PATH="${BIN_DIR}:${PATH}"
+        export WORKSPACES_DIR="${WORKSPACES}"
+        export CONFIG_FILE="${CONFIG}"
+        if [ "${TEST_UNSET_BASE_URL:-}" = "1" ]; then
+            unset RELATED_REPOS_GIT_BASE_URL
+        else
+            export RELATED_REPOS_GIT_BASE_URL="${RELATED_REPOS_GIT_BASE_URL:-file://${BARE_BASE}/}"
+        fi
+        bash "${SUT}"
+    )
 }
 
 # --- Test 1: Unauthenticated gh falls back to git clone (offline) ---
@@ -274,14 +295,20 @@ while kill -0 "$dead_pid" 2>/dev/null; do
 done
 mkdir -p "${WORKSPACES}/.bootstrap-orphan-dead.${dead_pid}.111111"
 mkdir -p "${WORKSPACES}/.bootstrap-orphan-live.$$.222222"
-touch -t 202601010000 "${WORKSPACES}/.bootstrap-orphan-dead.${dead_pid}.111111"
-touch -t 202601010000 "${WORKSPACES}/.bootstrap-orphan-live.$$.222222"
+mkdir -p "${WORKSPACES}/.bootstrap-orphan-stale-live.$$.333333"
+python3 -c "import os, time; [os.utime(p, (time.time() - 7200, time.time() - 7200)) for p in ['${WORKSPACES}/.bootstrap-orphan-dead.${dead_pid}.111111', '${WORKSPACES}/.bootstrap-orphan-live.$$.222222']]"
+python3 -c "import os, time; os.utime('${WORKSPACES}/.bootstrap-orphan-stale-live.$$.333333', (time.time() - 172800, time.time() - 172800))"
 out="$(run_sut auth-ok 2>&1)"
 [ ! -d "${WORKSPACES}/.bootstrap-orphan-dead.${dead_pid}.111111" ] || fail "old orphan directory with dead PID should have been reaped"
 [ -d "${WORKSPACES}/.bootstrap-orphan-live.$$.222222" ] || fail "old directory with live PID must not be reaped"
+[ ! -d "${WORKSPACES}/.bootstrap-orphan-stale-live.$$.333333" ] || fail "directory older than 24h must be reaped unconditionally even with live PID"
 case "$out" in
 *"Removing orphaned temporary bootstrap directory"*) ;;
 *) fail "expected log message for reaped orphan directory, got: $out" ;;
+esac
+case "$out" in
+*"Removing stale temporary bootstrap directory"*) ;;
+*) fail "expected log message for 24h stale orphan directory, got: $out" ;;
 esac
 rm -rf "${WORKSPACES}/.bootstrap-orphan-live.$$.222222"
 
@@ -297,13 +324,69 @@ awk '/^[[:space:]]*nohup bash \.devcontainer\/scripts\/bootstrap-related-repos\.
             break
         }
     }
-    if (line ~ /&[[:space:]]*$/) {
+    if (line ~ /<\s*\/dev\/null/ && line ~ /&[[:space:]]*$/) {
         matched = 1
     }
 }
 END {
     exit (!matched)
 }' .devcontainer/scripts/post-start-common.sh ||
-    fail "expected post-start-common.sh to start bootstrap-related-repos.sh detached with nohup and trailing &"
+    fail "expected post-start-common.sh to start bootstrap-related-repos.sh detached with nohup, </dev/null, and trailing &"
+
+# --- Test 10: mktemp failure does not abort script under set -e ---
+echo "==> mktemp failure does not abort script under set -e"
+rm -rf "${WORKSPACES}" && mkdir -p "${WORKSPACES}"
+echo "test-owner/test-repo" >"${CONFIG}"
+rc=0
+out="$(STUB_MKTEMP=fail run_sut auth-ok 2>&1)" || rc=$?
+[ "$rc" -eq 0 ] || fail "script must exit 0 when mktemp fails"
+case "$out" in
+*"WARNING: failed to create temporary directory"*) ;;
+*) fail "expected warning when mktemp fails, got: $out" ;;
+esac
+case "$out" in
+*"Bootstrap complete: 0 cloned, 0 skipped, 1 failed"*) ;;
+*) fail "expected 1 failed in summary when mktemp fails, got: $out" ;;
+esac
+
+# --- Test 11: fallback URL derives from GH_HOST when base URL unset ---
+echo "==> fallback URL derives from GH_HOST when base URL unset"
+rm -rf "${WORKSPACES}" && mkdir -p "${WORKSPACES}"
+echo "test-owner/test-repo" >"${CONFIG}"
+GIT_LOG="${TMP}/git-host.log"
+rm -f "${GIT_LOG}"
+export GIT_LOG
+TEST_UNSET_BASE_URL=1 GH_HOST="github.mycompany.internal" run_sut unauthenticated >/dev/null 2>&1 || true
+[ -f "${GIT_LOG}" ] || fail "expected git to be invoked for fallback"
+if ! grep -q "https://github.mycompany.internal/test-owner/test-repo.git" "${GIT_LOG}"; then
+    fail "expected clone from derived GH_HOST, got: $(cat "${GIT_LOG}")"
+fi
+
+# --- Test 12: invalid RELATED_REPOS_MV_ATOMIC warns and falls back ---
+echo "==> invalid RELATED_REPOS_MV_ATOMIC warns and falls back"
+rm -rf "${WORKSPACES}" && mkdir -p "${WORKSPACES}"
+echo "test-owner/test-repo" >"${CONFIG}"
+out="$(RELATED_REPOS_MV_ATOMIC=invalid run_sut auth-ok 2>&1)"
+case "$out" in
+*"WARNING: invalid RELATED_REPOS_MV_ATOMIC='invalid'"*) ;;
+*) fail "expected warning for invalid RELATED_REPOS_MV_ATOMIC, got: $out" ;;
+esac
+[ -d "${WORKSPACES}/test-repo/.git" ] || fail "clone should succeed despite invalid override"
+
+# --- Test 13: publish failure when target does not exist counts as failed ---
+echo "==> publish failure when target does not exist counts as failed"
+rm -rf "${WORKSPACES}" && mkdir -p "${WORKSPACES}"
+echo "test-owner/test-repo" >"${CONFIG}"
+rc=0
+out="$(STUB_MV=fail-publish run_sut auth-ok 2>&1)" || rc=$?
+[ "$rc" -eq 0 ] || fail "script must exit 0 on publish failure"
+case "$out" in
+*"WARNING: failed to publish test-repo to ${WORKSPACES}/test-repo (exit 5)"*) ;;
+*) fail "expected failed to publish warning with exit code, got: $out" ;;
+esac
+case "$out" in
+*"Bootstrap complete: 0 cloned, 0 skipped, 1 failed"*) ;;
+*) fail "expected 1 failed in summary on publish failure, got: $out" ;;
+esac
 
 echo "test-bootstrap-related-repos.sh passed"

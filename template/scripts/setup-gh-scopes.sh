@@ -19,7 +19,9 @@
 #      credential unattended.
 #
 # Read-only until the refresh: it prints the current scopes, then asks gh for
-# the missing ones. Token VALUES are never printed or captured.
+# the missing ones. After a landed grant, it triggers a background clone of
+# missing sibling repos (.devcontainer/scripts/bootstrap-related-repos.sh). Token
+# VALUES are never printed or captured.
 set -euo pipefail
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -38,7 +40,8 @@ trigger_related_repos_bootstrap() {
     if [ -f "${bootstrap}" ]; then
         local log_file="${HOME}/.related-repos-bootstrap.log"
         echo "==> Bootstrapping related repos in the background (log: ${log_file})..."
-        nohup bash "${bootstrap}" >>"${log_file}" 2>&1 &
+        nohup bash "${bootstrap}" </dev/null >>"${log_file}" 2>&1 &
+        # Allow the detached background process to spawn cleanly before terminal/pty teardown.
         sleep 0.1
     fi
 }

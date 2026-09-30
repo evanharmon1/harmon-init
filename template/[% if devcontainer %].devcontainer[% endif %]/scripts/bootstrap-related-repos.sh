@@ -21,6 +21,12 @@ set -euo pipefail
 #
 # Failures (missing config, bad URL, network errors) log a warning and
 # continue — this script never causes post-create, post-start, or scope setup to fail.
+#
+# Environment variable overrides (for tests and host customization):
+#   CONFIG_FILE                  Path to related-repos.txt (default: ../related-repos.txt)
+#   WORKSPACES_DIR               Destination parent directory (default: /workspaces)
+#   RELATED_REPOS_GIT_BASE_URL   Base URL for git clone fallback (default: https://${GH_HOST}/ or https://github.com/)
+#   RELATED_REPOS_MV_ATOMIC      Force atomic publish (1 = GNU mv -T, 0 = non-GNU detect-and-undo)
 
 # Prevent VS Code's JS debug bootloader from breaking child Node processes
 # spawned by gh. See post-create-common.sh for the full explanation.
@@ -29,13 +35,40 @@ unset NODE_OPTIONS
 # Never prompt or hang on missing credentials or behind egress filters.
 export GIT_TERMINAL_PROMPT=0
 
+clone_tmp=""
+cleanup() {
+    if [ -n "${clone_tmp:-}" ] && [ -d "$clone_tmp" ]; then
+        rm -rf "$clone_tmp" || true
+    fi
+}
+trap cleanup EXIT INT TERM HUP
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/../related-repos.txt}"
 WORKSPACES_DIR="${WORKSPACES_DIR:-/workspaces}"
-GIT_BASE_URL="${RELATED_REPOS_GIT_BASE_URL:-https://github.com/}"
+
+if [ -n "${RELATED_REPOS_GIT_BASE_URL:-}" ]; then
+    GIT_BASE_URL="${RELATED_REPOS_GIT_BASE_URL}"
+elif [ -n "${GH_HOST:-}" ]; then
+    GIT_BASE_URL="https://${GH_HOST}/"
+else
+    GIT_BASE_URL="https://github.com/"
+fi
 
 if [ -n "${RELATED_REPOS_MV_ATOMIC:-}" ]; then
-    MV_ATOMIC="$RELATED_REPOS_MV_ATOMIC"
+    case "$RELATED_REPOS_MV_ATOMIC" in
+    0 | 1)
+        MV_ATOMIC="$RELATED_REPOS_MV_ATOMIC"
+        ;;
+    *)
+        echo "==> WARNING: invalid RELATED_REPOS_MV_ATOMIC='${RELATED_REPOS_MV_ATOMIC}' (expected 0 or 1); ignoring override." >&2
+        if mv --version >/dev/null 2>&1; then
+            MV_ATOMIC=1
+        else
+            MV_ATOMIC=0
+        fi
+        ;;
+    esac
 elif mv --version >/dev/null 2>&1; then
     MV_ATOMIC=1
 else
@@ -58,13 +91,21 @@ fi
 # ownership on the workspace folder itself, not its parent. Make it writable
 # by vscode so subsequent `git clone` calls can create sibling directories.
 # Idempotent: chown is a no-op if ownership already matches.
-if [ ! -w "$WORKSPACES_DIR" ]; then
+if [ "$WORKSPACES_DIR" = "/workspaces" ] && [ ! -w "$WORKSPACES_DIR" ]; then
     if command -v sudo >/dev/null 2>&1; then
-        sudo chown vscode:vscode "$WORKSPACES_DIR" 2>/dev/null || true
+        sudo chown vscode:vscode "$WORKSPACES_DIR" || true
     fi
 fi
 
 # --- Clean up orphaned temporary directories ---
+# Unconditionally sweep temporary bootstrap directories older than 24 hours (1440 min)
+# regardless of PID, protecting persisted workspaces from accumulated orphans across restarts.
+while IFS= read -r stale_dir; do
+    [ -n "$stale_dir" ] || continue
+    echo "==> Removing stale temporary bootstrap directory: ${stale_dir} (older than 24h)"
+    rm -rf "$stale_dir" || true
+done < <(find "$WORKSPACES_DIR" -maxdepth 1 -name '.bootstrap-*' -type d -mmin +1440 2>/dev/null || true)
+
 # Remove leftover .bootstrap-* directories older than 60 minutes from runs whose
 # process is no longer alive. Directories with an active PID or unparseable name
 # are left alone.
@@ -83,7 +124,7 @@ while IFS= read -r orphan_dir; do
     *)
         if ! kill -0 "$pid" 2>/dev/null; then
             echo "==> Removing orphaned temporary bootstrap directory: ${orphan_dir} (dead PID: ${pid})"
-            rm -rf "$orphan_dir"
+            rm -rf "$orphan_dir" || true
         fi
         ;;
     esac
@@ -147,7 +188,12 @@ while IFS= read -r raw_line || [ -n "$raw_line" ]; do
     # Clone into a private temporary directory first. Never clone into $target
     # directly: if a user or concurrent process creates $target in between,
     # cleaning up a failed clone must never remove the user's checkout.
-    clone_tmp="$(mktemp -d "${WORKSPACES_DIR}/.bootstrap-${basename}.$$.XXXXXX")"
+    clone_tmp=""
+    if ! clone_tmp="$(mktemp -d "${WORKSPACES_DIR}/.bootstrap-${basename}.$$.XXXXXX" 2>&1)"; then
+        echo "==> WARNING: failed to create temporary directory for ${target_spec}: ${clone_tmp}" >&2
+        failed=$((failed + 1))
+        continue
+    fi
 
     # Decide whether to use gh (for owner/repo shorthand) or git (for URLs).
     use_gh=false
@@ -177,8 +223,13 @@ while IFS= read -r raw_line || [ -n "$raw_line" ]; do
 
             if [ "$clone_rc" -ne 0 ]; then
                 echo "==> WARNING: gh repo clone failed for ${target_spec} (exit ${clone_rc}); falling back to git clone." >&2
-                rm -rf "$clone_tmp"
-                clone_tmp="$(mktemp -d "${WORKSPACES_DIR}/.bootstrap-${basename}.$$.XXXXXX")"
+                rm -rf "$clone_tmp" || true
+                clone_tmp=""
+                if ! clone_tmp="$(mktemp -d "${WORKSPACES_DIR}/.bootstrap-${basename}.$$.XXXXXX" 2>&1)"; then
+                    echo "==> WARNING: failed to create temporary directory for ${target_spec} fallback: ${clone_tmp}" >&2
+                    failed=$((failed + 1))
+                    continue
+                fi
             fi
         else
             echo "==> gh is unauthenticated; falling back to git clone for ${target_spec}"
@@ -225,7 +276,7 @@ while IFS= read -r raw_line || [ -n "$raw_line" ]; do
                 # causing BSD/fallback mv to nest $clone_tmp inside $target.
                 # Detect and undo: remove only our own nested temporary directory,
                 # leaving everything else under $target untouched.
-                rm -rf "$nested_tmp"
+                rm -rf "$nested_tmp" || true
                 publish_rc=1
             fi
         fi
@@ -233,15 +284,23 @@ while IFS= read -r raw_line || [ -n "$raw_line" ]; do
 
         if [ "$publish_rc" -eq 0 ]; then
             cloned=$((cloned + 1))
-        else
+            clone_tmp=""
+        elif [ -e "$target" ]; then
             echo "==> Skipping ${basename} (destination ${target} appeared concurrently or already exists)"
             skipped=$((skipped + 1))
-            rm -rf "$clone_tmp"
+            rm -rf "$clone_tmp" || true
+            clone_tmp=""
+        else
+            echo "==> WARNING: failed to publish ${basename} to ${target} (exit ${publish_rc}); continuing." >&2
+            failed=$((failed + 1))
+            rm -rf "$clone_tmp" || true
+            clone_tmp=""
         fi
     else
         echo "==> WARNING: failed to clone ${target_spec} (exit ${clone_rc}); continuing." >&2
         failed=$((failed + 1))
-        rm -rf "$clone_tmp"
+        rm -rf "$clone_tmp" || true
+        clone_tmp=""
     fi
 done <"$CONFIG_FILE"
 

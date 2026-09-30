@@ -169,6 +169,8 @@ run_sut_pty() {
     # A subshell with explicit exports rather than `env`: pty_exec is a shell
     # function, and `env` can only exec a real binary.
     (
+        mkdir -p "${TMP}/home"
+        export HOME="${TMP}/home"
         export PATH="${TMP}/bin:${PATH}"
         export TMP_PHASE="${TMP}/phase-marker"
         rm -f "${TMP_PHASE}"
@@ -189,6 +191,8 @@ rc_pty_of() {
     make_stub "${scenario}"
     local rc=0
     (
+        mkdir -p "${TMP}/home"
+        export HOME="${TMP}/home"
         export PATH="${TMP}/bin:${PATH}"
         export TMP_PHASE="${TMP}/phase-marker"
         rm -f "${TMP_PHASE}"
@@ -299,7 +303,7 @@ EOF
     chmod +x "${TMP}/repo/.devcontainer/scripts/bootstrap-related-repos.sh"
     out="$(run_sut_pty lands-after-refresh GH_HOST=github.com)"
     case "$out" in
-    *"Bootstrapping related repos in the background"*"${HOME}/.related-repos-bootstrap.log"*) ;;
+    *"Bootstrapping related repos in the background"*"${TMP}/home/.related-repos-bootstrap.log"*) ;;
     *) fail "expected background bootstrap invocation notice naming log path, got: ${out}" ;;
     esac
     for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do

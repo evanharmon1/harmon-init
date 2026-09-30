@@ -46,15 +46,15 @@ fi
 # Clones any missing sibling repos configured in .devcontainer/related-repos.txt
 # into /workspaces/. nohup'd + backgrounded so container start is never blocked.
 nohup bash .devcontainer/scripts/bootstrap-related-repos.sh \
-    >>"$HOME/.related-repos-bootstrap.log" 2>&1 &
+    </dev/null >>"$HOME/.related-repos-bootstrap.log" 2>&1 &
 
 # --- Freshen related repos in the background (non-destructive git fetch) ---
 # Reads .devcontainer/related-repos.txt and git-fetches already-cloned siblings
 # in /workspaces/ so they track their remotes. NEVER pulls/merges/checks out —
 # local work is left untouched. nohup'd + backgrounded so it neither delays the
-# session nor is killed with the postStart process group. No-op for an empty list.
+# session nor is killed by SIGHUP when the shell exits. No-op for an empty list.
 nohup bash .devcontainer/scripts/fetch-related-repos.sh \
-    >>"$HOME/.related-repos-fetch.log" 2>&1 &
+    </dev/null >>"$HOME/.related-repos-fetch.log" 2>&1 &
 
 echo "==> Starting tmux session..."
 if command -v tmux &>/dev/null; then
