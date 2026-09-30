@@ -105,6 +105,9 @@ elif [ ! -f "$BOOTSTRAP" ]; then
     note_skipped "related repos: ${BOOTSTRAP} is not present in this repository"
 else
     PARENT="$(dirname "$ROOT")"
+    # Skipping is deliberate, in preference to the bootstrap's /workspaces sudo chown
+    # repair path: setup:remote never takes ownership of a directory it did not
+    # create, so that branch is unreachable from here by design.
     if [ ! -w "$PARENT" ]; then
         echo "==> WARNING: ${PARENT} is not writable; related repos cannot be cloned there." >&2
         note_skipped "related repos: ${PARENT} is not writable"

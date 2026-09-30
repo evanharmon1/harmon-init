@@ -35,11 +35,14 @@ set -euo pipefail
 # subdirectory is ever removed. The (empty) subdirectory is left in place: removing
 # it would race a concurrent bootstrap between its mkdir and mktemp.
 # Trust boundary: the ownership/mode checks on that subdirectory are pathname-based,
-# so the TARGET directory must itself be private to the invoking user (a remote
-# platform's checkout parent is; the devcontainer's /workspaces is). In a shared,
-# world-writable, non-sticky parent another user could rename the subdirectory away
-# after the checks or pre-create a final target, which no check here can defend; the
-# script refuses only a staging directory that is not private.
+# so the TARGET directory must itself be private to the invoking user, or live in a
+# sandbox with no other principal that can write to it (a remote platform's session
+# is; the devcontainer's /workspaces is). In a shared, world-writable, non-sticky
+# parent another user could rename the subdirectory away after the checks or
+# pre-create a final target, which no check here can defend. The chmod 700 after the
+# mkdir follows a symlink, so a swap inside that window is the same undefendable
+# case (the mode check below refuses a swapped-in symlink whose own mode is
+# world-writable). The script refuses only a staging directory that is not private.
 #
 # Failures (missing config, bad URL, network errors) log a warning and
 # continue — a failure never produces a non-zero exit, so it never causes
