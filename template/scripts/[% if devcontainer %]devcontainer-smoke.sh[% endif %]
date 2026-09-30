@@ -113,7 +113,7 @@ echo "==> Running devcontainer smoke test for ${CONFIG_PATH}..."
 # tailscale-connect.sh is invoked from; and opting out stays an explicit act at
 # the CALL SITE, so no devcontainer.json can disable the gate from inside the
 # config the gate exists to guard (devcontainer-assert.sh enforces that).
-# Inert for the bot profile, which never marks the tailnet required.
+# Inert for the bot and agent profiles, which never mark the tailnet required.
 "$TIMEOUT_BIN" -k 30 1800 "${DEVCONTAINER_CMD[@]}" up \
     --workspace-folder "${WORKSPACE_ROOT}" \
     --config "${CONFIG_PATH}" \
@@ -142,12 +142,18 @@ if [ -z "${REMOTE_WORKSPACE_FOLDER}" ]; then
 fi
 
 # Derive the profile from the config's parent-dir basename: the dev profile
-# lives in .devcontainer/dev/, everything else is the bot profile.
-if [ "$(basename "$(dirname "${CONFIG_PATH}")")" = "dev" ]; then
-    PROFILE="dev"
-else
-    PROFILE="bot"
-fi
+# lives in .devcontainer/dev/, the agent posture in .devcontainer/agent/, and
+# the bot profile at .devcontainer/ itself. Anything else is an error, never a
+# silent bot — the three postures assert different things.
+case "$(basename "$(dirname "${CONFIG_PATH}")")" in
+dev) PROFILE="dev" ;;
+agent) PROFILE="agent" ;;
+.devcontainer) PROFILE="bot" ;;
+*)
+    echo "devcontainer smoke test: cannot tell which profile ${CONFIG_PATH} is (expected .devcontainer/, .devcontainer/dev/, or .devcontainer/agent/)" >&2
+    exit 1
+    ;;
+esac
 
 echo "==> Asserting ${PROFILE} permission invariants in the running container..."
 bash "$(dirname "$0")/devcontainer-assert.sh" container "${CONFIG_PATH}" "${CONTAINER_ID}" "${PROFILE}" "${REMOTE_WORKSPACE_FOLDER}"

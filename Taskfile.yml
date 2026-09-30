@@ -106,6 +106,7 @@ tasks:
       - task: test:setup-github-project
       - task: test:sync-devkit-release
       - task: test:devcontainer:image:automation
+      - task: test:bootstrap-remote
       - task: test:skills-pin-parity
       - task: test:tag-hygiene
       - task: test:dogfood-parity
@@ -123,6 +124,7 @@ tasks:
       - task: test:image-staleness
       - task: test:open-devcontainer
       - task: test:bot-autonomy
+      - task: test:agent-profile
       - task: test:codex-review
       - task: test:template-helpers
       - task: test:template
@@ -348,6 +350,15 @@ tasks:
     cmds:
       - ./scripts/devcontainer-smoke.sh .devcontainer/dev/devcontainer.json
 
+  test:devcontainer:agent:
+    # Builds and starts the agent posture, then proves live what its unit test
+    # proves statically: the egress filter refuses an unlisted host and records
+    # it, refused harnesses stay refused, and no forbidden credential or Docker
+    # reached the container. Needs Docker, like the other smoke tasks.
+    desc: Smoke test the agent (unattended) devcontainer via the devcontainers CLI
+    cmds:
+      - ./scripts/devcontainer-smoke.sh .devcontainer/agent/devcontainer.json
+
   test:devcontainer:permissions:
     desc: Unit-assert devcontainer permission invariants (no container needed)
     cmds:
@@ -383,6 +394,14 @@ tasks:
     cmds:
       - ./scripts/test-bot-autonomy.sh
 
+  test:agent-profile:
+    # Wired into `verify` with no devcontainer paths: filter, like
+    # test:bot-autonomy — the agent posture's single source, deny list, env
+    # guard, Docker rule, and egress list are checked on every PR.
+    desc: Unit-test the agent posture (single source, Claude/Codex policy, env guard, Docker, egress; no container needed)
+    cmds:
+      - ./scripts/test-agent-profile.sh
+
   test:devcontainer:image:
     desc: Build and smoke-test the canonical shared image and current repository overlay
     cmds:
@@ -392,6 +411,15 @@ tasks:
     desc: Unit-test shared-image manifest/publish/pin automation (offline, stubbed boundaries)
     cmds:
       - ./scripts/test-devcontainer-image-automation.sh
+
+  test:bootstrap-remote:
+    # The pin guard the remote-bootstrap invariant needs: every tool the
+    # bootstrap installs takes its version from the same file the Dockerfile
+    # reads, and the bootstrap declares no pin of its own. Offline and
+    # metadata-only; the runtime proof is .github/workflows/remote-bootstrap.yml.
+    desc: Guard the shared image/remote-bootstrap pin contract (offline)
+    cmds:
+      - ./scripts/test-bootstrap-remote.sh
 
   test:hooks:
     desc: Round-trip the Taskfile targets the Claude hooks delegate to

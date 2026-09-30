@@ -159,13 +159,15 @@ assert_unit() {
     # are scripts/test-bot-autonomy.sh's job (wired into `task verify`
     # unconditionally); this file only asserts the surrounding wiring.
 
-    local bot_config dev_config shell_aliases gh_browser
+    local bot_config dev_config agent_config shell_aliases gh_browser
     bot_config="${repo_root}/.devcontainer/devcontainer.json"
     dev_config="${repo_root}/.devcontainer/dev/devcontainer.json"
+    agent_config="${repo_root}/.devcontainer/agent/devcontainer.json"
     shell_aliases="${repo_root}/.devcontainer/config/shell-aliases.sh"
     gh_browser="${repo_root}/.devcontainer/config/gh-browser.sh"
     [ -f "$bot_config" ] || fail "bot devcontainer.json not found at ${bot_config}"
     [ -f "$dev_config" ] || fail "dev devcontainer.json not found at ${dev_config}"
+    [ -f "$agent_config" ] || fail "agent devcontainer.json not found at ${agent_config}"
     [ -f "$shell_aliases" ] || fail "shell-aliases.sh not found at ${shell_aliases}"
     [ -x "$gh_browser" ] || fail "GitHub browser bridge is missing or not executable at ${gh_browser}"
     grep '^unset BROWSER$' "$shell_aliases" >/dev/null ||
@@ -1364,11 +1366,48 @@ s.listen(1)' "$ts_sock" 2>/dev/null && [ -S "$ts_sock" ]; then
         # The token aliases are cleared explicitly: unit mode also runs
         # inside the bot container, whose real GH_TOKEN would otherwise
         # leak into every case's environment.
+        # The posture is pinned to bot for the same reason: the helper's
+        # wording is posture-aware, and unit mode also runs inside the agent
+        # container, whose FOREMAN_DEVCONTAINER=agent would otherwise switch
+        # every bot-wording assertion below to the agent's.
         gh_id_rc=0
         gh_id_out="$(GH_IDENTITY_TEST_FIXTURE="$gh_id_fixture" \
-            GH_IDENTITY_TEST_RC="$1" \
+            GH_IDENTITY_TEST_RC="$1" FOREMAN_DEVCONTAINER=bot \
             GH_TOKEN= GITHUB_TOKEN= GH_ENTERPRISE_TOKEN= GITHUB_ENTERPRISE_TOKEN= \
             PATH="$gh_id_bin" "$bash_bin" "$gh_check" 2>&1)" || gh_id_rc=$?
+    }
+
+    # $1 = posture (FOREMAN_DEVCONTAINER), $2 = stub gh exit code, $3 =
+    # GH_TOKEN value (empty for none). The posture-wording cases below.
+    gh_identity_posture_run() {
+        gh_id_rc=0
+        gh_id_out="$(GH_IDENTITY_TEST_FIXTURE="$gh_id_fixture" \
+            GH_IDENTITY_TEST_RC="$2" FOREMAN_DEVCONTAINER="$1" \
+            GH_TOKEN="$3" GITHUB_TOKEN= GH_ENTERPRISE_TOKEN= GITHUB_ENTERPRISE_TOKEN= \
+            PATH="$gh_id_bin" "$bash_bin" "$gh_check" 2>&1)" || gh_id_rc=$?
+    }
+
+    # $1 = case label; the rest are substrings the output must NOT contain.
+    gh_identity_refute() {
+        local refute_label="$1" refute_text
+        shift
+        for refute_text in "$@"; do
+            case "$gh_id_out" in
+            *"$refute_text"*) fail "${refute_label} prints '${refute_text}': ${gh_id_out}" ;;
+            esac
+        done
+    }
+
+    # $1 = case label; the rest are substrings the output MUST contain.
+    gh_identity_expect() {
+        local expect_label="$1" expect_text
+        shift
+        for expect_text in "$@"; do
+            case "$gh_id_out" in
+            *"$expect_text"*) ;;
+            *) fail "${expect_label} does not print '${expect_text}': ${gh_id_out}" ;;
+            esac
+        done
     }
 
     # gh ABSENT from PATH: indeterminate (3), never a violation — the image
@@ -1890,6 +1929,132 @@ s.listen(1)' "$ts_sock" 2>/dev/null && [ -S "$ts_sock" ]; then
     [ "$gh_id_rc" = "1" ] ||
         fail "timed-out enumeration with a parsed non-bot login exited ${gh_id_rc}, expected violation (1)"
 
+    # POSTURE WORDING. The agent posture (FOREMAN_DEVCONTAINER=agent) runs the
+    # same tripwire from its post-start, but its PAT is AGENT_GH_TOKEN,
+    # projected into .devcontainer/agent/devcontainer.env, and its harness runs
+    # in auto mode with bypass disabled. Every banner and remedy there must say
+    # so and must never send the operator to the bot's GH_TOKEN chain; the bot
+    # wording is pinned alongside so the switch cannot drift it.
+    local gh_id_posture gh_id_case
+    local gh_id_bot_remedy=("template parameter" ".devcontainer/devcontainer.env")
+    local gh_id_bot_banner=("BOT CONTAINER" "bypassPermissions")
+
+    # Unauthenticated (2) and a stored NON-BOT login (1): the two banners.
+    for gh_id_posture in bot agent; do
+        printf '%s\n' \
+            'You are not logged into any GitHub hosts. To log in, run: gh auth login' \
+            >"$gh_id_fixture"
+        gh_identity_posture_run "$gh_id_posture" 1 ""
+        gh_id_case="${gh_id_posture}-posture unauthenticated gh-identity banner"
+        [ "$gh_id_rc" = "2" ] || fail "${gh_id_case} exited ${gh_id_rc}, expected 2"
+        if offers_login "$gh_id_out"; then
+            fail "${gh_id_case} offers an operator login"
+        fi
+        if [ "$gh_id_posture" = agent ]; then
+            gh_identity_expect "$gh_id_case" "AGENT CONTAINER" "auto-mode agent container" \
+                "AGENT_GH_TOKEN" ".devcontainer/agent/devcontainer.env"
+            gh_identity_refute "$gh_id_case" "${gh_id_bot_banner[@]}" "${gh_id_bot_remedy[@]}"
+        else
+            gh_identity_expect "$gh_id_case" "${gh_id_bot_banner[@]}" "${gh_id_bot_remedy[@]}"
+            gh_identity_refute "$gh_id_case" "AGENT CONTAINER" "AGENT_GH_TOKEN"
+        fi
+
+        printf '%s\n' \
+            'github.com' \
+            '  ✓ Logged in to github.com account someoperator (keyring)' \
+            >"$gh_id_fixture"
+        gh_identity_posture_run "$gh_id_posture" 0 ""
+        gh_id_case="${gh_id_posture}-posture non-bot gh-identity banner"
+        [ "$gh_id_rc" = "1" ] || fail "${gh_id_case} exited ${gh_id_rc}, expected 1"
+        if [ "$gh_id_posture" = agent ]; then
+            gh_identity_expect "$gh_id_case" "AGENT CONTAINER" "auto-mode" "AGENT_GH_TOKEN"
+            gh_identity_refute "$gh_id_case" "${gh_id_bot_banner[@]}" "${gh_id_bot_remedy[@]}"
+        else
+            gh_identity_expect "$gh_id_case" "${gh_id_bot_banner[@]}" "${gh_id_bot_remedy[@]}"
+            gh_identity_refute "$gh_id_case" "AGENT CONTAINER" "AGENT_GH_TOKEN"
+        fi
+    done
+
+    # The two exit-3 paths that carried a fixed bot-PAT remedy: an
+    # environment token gh could not validate, and one gh attributes to no
+    # host. Under agent both name AGENT_GH_TOKEN and the agent env file; under
+    # bot both keep the bot's GH_TOKEN chain.
+    for gh_id_posture in bot agent; do
+        printf '%s\n' \
+            'github.com' \
+            '  X Failed to log in to github.com using token (GH_TOKEN)' \
+            '  - Active account: true' \
+            >"$gh_id_fixture"
+        gh_identity_posture_run "$gh_id_posture" 1 sentinel-token
+        gh_id_case="${gh_id_posture}-posture unverifiable-token remedy"
+        [ "$gh_id_rc" = "3" ] || fail "${gh_id_case} exited ${gh_id_rc}, expected 3"
+        if [ "$gh_id_posture" = agent ]; then
+            gh_identity_expect "$gh_id_case" "AGENT_GH_TOKEN" ".devcontainer/agent/devcontainer.env"
+            gh_identity_refute "$gh_id_case" "bot PAT" "${gh_id_bot_remedy[@]}"
+        else
+            gh_identity_expect "$gh_id_case" "bot PAT" "${gh_id_bot_remedy[@]}"
+            gh_identity_refute "$gh_id_case" "AGENT_GH_TOKEN"
+        fi
+
+        printf '%s\n' \
+            'You are not logged into any GitHub hosts. To log in, run: gh auth login' \
+            >"$gh_id_fixture"
+        gh_identity_posture_run "$gh_id_posture" 1 sentinel-token
+        gh_id_case="${gh_id_posture}-posture unattributed-token remedy"
+        [ "$gh_id_rc" = "3" ] || fail "${gh_id_case} exited ${gh_id_rc}, expected 3"
+        if [ "$gh_id_posture" = agent ]; then
+            gh_identity_expect "$gh_id_case" "AGENT_GH_TOKEN" ".devcontainer/agent/devcontainer.env"
+            gh_identity_refute "$gh_id_case" "bot PAT as GH_TOKEN"
+        else
+            gh_identity_expect "$gh_id_case" "bot PAT as GH_TOKEN"
+            gh_identity_refute "$gh_id_case" "AGENT_GH_TOKEN"
+        fi
+        gh_identity_refute "$gh_id_case" "sentinel-token"
+
+        # A shadowed alias (GITHUB_TOKEN differing from the GH_TOKEN gh
+        # enumerated) and an enterprise token gh never enumerated: the other
+        # two exit-3 paths that named the bot's GH_TOKEN.
+        printf '%s\n' \
+            'github.com' \
+            '  ✓ Logged in to github.com account someowner-bot (GH_TOKEN)' \
+            >"$gh_id_fixture"
+        gh_id_rc=0
+        gh_id_out="$(GH_IDENTITY_TEST_FIXTURE="$gh_id_fixture" GH_IDENTITY_TEST_RC=0 \
+            FOREMAN_DEVCONTAINER="$gh_id_posture" \
+            GH_TOKEN=sentinel-token GITHUB_TOKEN=sentinel-shadowed \
+            GH_ENTERPRISE_TOKEN= GITHUB_ENTERPRISE_TOKEN= \
+            PATH="$gh_id_bin" "$bash_bin" "$gh_check" 2>&1)" || gh_id_rc=$?
+        gh_id_case="${gh_id_posture}-posture shadowed-alias remedy"
+        [ "$gh_id_rc" = "3" ] || fail "${gh_id_case} exited ${gh_id_rc}, expected 3"
+        if [ "$gh_id_posture" = agent ]; then
+            gh_identity_expect "$gh_id_case" "GITHUB_TOKEN" "AGENT_GH_TOKEN" \
+                ".devcontainer/agent/devcontainer.env"
+            gh_identity_refute "$gh_id_case" "provisioned bot GH_TOKEN"
+        else
+            gh_identity_expect "$gh_id_case" "GITHUB_TOKEN" "provisioned bot GH_TOKEN"
+            gh_identity_refute "$gh_id_case" "AGENT_GH_TOKEN"
+        fi
+        gh_identity_refute "$gh_id_case" "sentinel-token" "sentinel-shadowed"
+
+        gh_id_rc=0
+        gh_id_out="$(GH_IDENTITY_TEST_FIXTURE="$gh_id_fixture" GH_IDENTITY_TEST_RC=0 \
+            FOREMAN_DEVCONTAINER="$gh_id_posture" \
+            GH_TOKEN=sentinel-token GITHUB_TOKEN= \
+            GH_ENTERPRISE_TOKEN=sentinel-ghes GITHUB_ENTERPRISE_TOKEN= \
+            PATH="$gh_id_bin" "$bash_bin" "$gh_check" 2>&1)" || gh_id_rc=$?
+        gh_id_case="${gh_id_posture}-posture unenumerated-enterprise-token remedy"
+        [ "$gh_id_rc" = "3" ] || fail "${gh_id_case} exited ${gh_id_rc}, expected 3"
+        if [ "$gh_id_posture" = agent ]; then
+            gh_identity_expect "$gh_id_case" "GH_ENTERPRISE_TOKEN" "AGENT_GH_TOKEN" \
+                ".devcontainer/agent/devcontainer.env"
+            gh_identity_refute "$gh_id_case" "bot PAT as GH_TOKEN"
+        else
+            gh_identity_expect "$gh_id_case" "GH_ENTERPRISE_TOKEN" "bot PAT as GH_TOKEN"
+            gh_identity_refute "$gh_id_case" "AGENT_GH_TOKEN"
+        fi
+        gh_identity_refute "$gh_id_case" "sentinel-token" "sentinel-ghes"
+    done
+
     # A WEDGED gh (stalled network, DNS, or credential backend) must not
     # hang the callers: post-start and the container assert invoke the
     # helper with no wrapper, so the bound has to live inside it. The stub
@@ -1972,6 +2137,17 @@ s.listen(1)' "$ts_sock" 2>/dev/null && [ -S "$ts_sock" ]; then
     *GH_TOKEN*) ;;
     *) fail "status board's bot-profile gh remedy does not name GH_TOKEN: ${remedy_out}" ;;
     esac
+    # The agent posture is its own answer, never the bot's: no login, and
+    # the agent's own variable rather than the bot's GH_TOKEN.
+    remedy_out="$(FOREMAN_DEVCONTAINER=agent "$bash_bin" -c \
+        "$(sed -n '/^gh_login_remedy() {/,/^}/p' "$status_sh"); gh_login_remedy")"
+    if offers_login "$remedy_out"; then
+        fail "status board's gh remedy offers an interactive login in the agent posture: ${remedy_out}"
+    fi
+    case "$remedy_out" in
+    *AGENT_GH_TOKEN*) ;;
+    *) fail "status board's agent-posture gh remedy does not name AGENT_GH_TOKEN: ${remedy_out}" ;;
+    esac
     remedy_out="$(FOREMAN_DEVCONTAINER= "$bash_bin" -c \
         "$(sed -n '/^gh_login_remedy() {/,/^}/p' "$status_sh"); gh_login_remedy")"
     if ! offers_login "$remedy_out"; then
@@ -1996,6 +2172,17 @@ s.listen(1)' "$ts_sock" 2>/dev/null && [ -S "$ts_sock" ]; then
     *GH_TOKEN*) ;;
     *) fail "status board's bot-profile scope remedy does not point at re-provisioning GH_TOKEN: ${remedy_out}" ;;
     esac
+    remedy_out="$(FOREMAN_DEVCONTAINER=agent "$bash_bin" -c \
+        ". \"$scopes_lib\"; $scope_src; gh_scope_remedy_default")"
+    case "$remedy_out" in
+    *"setup:gh-scopes"* | *"gh auth refresh"* | *"gh auth login"*)
+        fail "status board's agent-posture scope remedy tells the reader to act on the current login: ${remedy_out}"
+        ;;
+    esac
+    case "$remedy_out" in
+    *AGENT_GH_TOKEN*) ;;
+    *) fail "status board's agent-posture scope remedy does not point at re-provisioning AGENT_GH_TOKEN: ${remedy_out}" ;;
+    esac
     remedy_out="$(FOREMAN_DEVCONTAINER= "$bash_bin" -c \
         ". \"$scopes_lib\"; $scope_src; gh_scope_remedy_default")"
     case "$remedy_out" in
@@ -2006,11 +2193,18 @@ s.listen(1)' "$ts_sock" 2>/dev/null && [ -S "$ts_sock" ]; then
     # 11. Static devcontainer.json invariants via the devcontainers CLI.
     assert_config_invariants "$repo_root" "$bot_config" bot
     assert_config_invariants "$repo_root" "$dev_config" dev
+    assert_config_invariants "$repo_root" "$agent_config" agent
 
     echo "==> devcontainer unit assertions passed."
 }
 
 # assert_config_invariants <repo_root> <config> <profile>
+# agent: everything bot forbids, plus: the containerEnv marker is exactly
+#      "agent", init-env.sh runs in its fail-closed --profile agent mode and
+#      never allow-lists the bot's GH_TOKEN, every env token that would outrank
+#      the agent login is blanked, NET_ADMIN is granted for the egress filter,
+#      the host Docker socket is never mounted, and Docker-in-Docker appears
+#      only with the documented HARMON_AGENT_DOCKER=dind opt-in.
 # bot: NO tailscale feature, NO 1Password CLI feature, NO /dev/net/tun runArg,
 #      NO TS_AUTHKEY in initializeCommand — the bot container must hold no path
 #      to production secrets or the tailnet. dev: all four present.
@@ -2042,7 +2236,7 @@ assert_config_invariants() {
     has_ts_init="$(printf '%s' "$cfg" |
         jq -r '(.configuration.initializeCommand // "") | test("TS_AUTHKEY") | if . then 1 else 0 end')"
     has_gh_init="$(printf '%s' "$cfg" |
-        jq -r '(.configuration.initializeCommand // "") | test("GH_TOKEN") | if . then 1 else 0 end')"
+        jq -r '(.configuration.initializeCommand // "") | test("(^|[^A-Z_])GH_TOKEN") | if . then 1 else 0 end')"
     local foreman_marker gh_browser_config terminal_browser_config
     foreman_marker="$(printf '%s' "$cfg" |
         jq -r '.configuration.containerEnv.FOREMAN_DEVCONTAINER // ""')"
@@ -2128,7 +2322,36 @@ assert_config_invariants() {
         # unless FOREMAN_DEVCONTAINER=bot, so losing this marker breaks every
         # task foreman:* while verify stays green.
         [ "$foreman_marker" = "bot" ] || fail "bot config does not set containerEnv.FOREMAN_DEVCONTAINER=bot (foreman refuses to start)"
-    else
+    elif [ "$profile" = "agent" ]; then
+        [ "$has_ts_feature" = "0" ] || fail "agent config has a tailscale feature"
+        [ "$has_op_feature" = "0" ] || fail "agent config has a 1Password CLI feature"
+        [ "$has_tun" = "0" ] || fail "agent config requests /dev/net/tun"
+        [ "$has_ts_init" = "0" ] || fail "agent config references TS_AUTHKEY in initializeCommand"
+        [ "$has_gh_init" = "0" ] || fail "agent config references the bot's GH_TOKEN in initializeCommand (the agent posture uses AGENT_GH_TOKEN)"
+        [ -z "$gh_browser_config" ] || fail "agent config sets GH_BROWSER — operator OAuth belongs only in the human profile"
+        [ "$foreman_marker" = "agent" ] ||
+            fail "agent config sets containerEnv.FOREMAN_DEVCONTAINER='${foreman_marker}', expected 'agent'"
+        printf '%s' "$cfg" | jq -e '(.configuration.initializeCommand // "") | startswith("bash .devcontainer/scripts/init-env.sh --profile agent ")' >/dev/null ||
+            fail "agent config does not run init-env.sh in its fail-closed --profile agent mode"
+        printf '%s' "$cfg" | jq -e '(.configuration.runArgs // []) | index("--cap-add=NET_ADMIN")' >/dev/null ||
+            fail "agent config lacks --cap-add=NET_ADMIN, so its egress filter cannot be installed"
+        if printf '%s' "$cfg" | jq -e '[((.configuration.mounts // [])[] | tostring), (.configuration.runArgs // [])[]] | any(test("docker\\.sock"))' >/dev/null; then
+            fail "agent config mounts the host Docker socket"
+        fi
+        local agent_dind agent_docker_marker alias_var blanked
+        agent_dind="$(printf '%s' "$cfg" |
+            jq -r '[.configuration.features // {} | keys[] | select(test("docker-in-docker|docker-outside-of-docker|docker-from-docker"))] | length')"
+        agent_docker_marker="$(printf '%s' "$cfg" | jq -r '.configuration.containerEnv.HARMON_AGENT_DOCKER // ""')"
+        if [ "$agent_dind" != "0" ] && [ "$agent_docker_marker" != "dind" ]; then
+            fail "agent config installs Docker without the documented HARMON_AGENT_DOCKER=dind opt-in"
+        fi
+        for alias_var in GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN; do
+            blanked="$(printf '%s' "$cfg" |
+                jq -r --arg v "$alias_var" '(.configuration.containerEnv // {})[$v] // "<absent>"')"
+            [ "$blanked" = "" ] ||
+                fail "agent config does not blank ${alias_var} in containerEnv (gh would prefer it over the agent login); found '${blanked}'"
+        done
+    elif [ "$profile" = "dev" ]; then
         [ "$has_ts_feature" != "0" ] || fail "dev config is missing the tailscale feature"
         [ "$has_op_feature" != "0" ] || fail "dev config is missing the 1Password CLI feature"
         [ "$has_tun" != "0" ] || fail "dev config is missing the /dev/net/tun device"
@@ -2153,6 +2376,8 @@ assert_config_invariants() {
             [ "$blanked" = "" ] ||
                 fail "dev config does not blank ${alias_var} in containerEnv (gh would prefer it over the operator's login); found '${blanked}'"
         done
+    else
+        fail "unknown devcontainer profile '${profile}' (expected bot, dev, or agent)"
     fi
 }
 
@@ -2321,6 +2546,109 @@ assert_container() {
         elif [ "$copilot_marker" = "enabled" ]; then
             fail "HARMON_BOT_AUTONOMY_COPILOT=enabled but no copilot resolves on PATH in the bot container, and this image is not the pre-harness-matrix pin — the autonomy wrapper is missing or its binary is gone"
         fi
+    elif [ "$profile" = "agent" ]; then
+        # The AGENT posture, live: every static invariant above, re-checked
+        # against what the running container actually does.
+        [ "$codex_sandbox" = "workspace-write" ] || fail "agent Codex sandbox is '${codex_sandbox}' (never danger-full-access)"
+        [ "$codex_approval" = "never" ] || fail "agent Codex approval policy is '${codex_approval}'"
+        # The agent PAT lives on the bot account, so the bot relationship holds.
+        case "$git_email" in
+        *-bot@*) ;;
+        *) fail "agent git email '${git_email}' does not contain '-bot@'" ;;
+        esac
+        case "$git_name" in
+        *-bot) ;;
+        *) fail "agent git name '${git_name}' does not end with '-bot'" ;;
+        esac
+        local agent_marker
+        agent_marker="$(docker exec -u vscode "$container_id" printenv FOREMAN_DEVCONTAINER 2>/dev/null || true)"
+        [ "$agent_marker" = "agent" ] || fail "FOREMAN_DEVCONTAINER is '${agent_marker}' in the agent container, expected 'agent'"
+
+        local gh_identity_rc=0
+        docker exec -i -u vscode "$container_id" bash -s \
+            <"${repo_root}/.devcontainer/scripts/check-bot-gh-identity.sh" ||
+            gh_identity_rc=$?
+        case "$gh_identity_rc" in
+        0 | 2 | 3) ;;
+        1) fail "agent container gh credential does not match the '-bot' relationship (see warning above)" ;;
+        *) fail "could not run the gh-identity check in the agent container (exit ${gh_identity_rc})" ;;
+        esac
+
+        if docker exec -u vscode "$container_id" sh -c 'command -v tailscale' >/dev/null 2>&1; then
+            fail "tailscale CLI is present in the agent container"
+        fi
+        if docker exec -u vscode "$container_id" sh -c 'command -v op' >/dev/null 2>&1; then
+            fail "the 1Password CLI is present in the agent container"
+        fi
+        # Captured, never echoed (same discipline as the bot's TS_AUTHKEY check).
+        local forbidden_var forbidden_val
+        for forbidden_var in GH_TOKEN GITHUB_TOKEN FOREMAN_AGENT_GH_TOKEN TS_AUTHKEY ANTHROPIC_API_KEY OP_SERVICE_ACCOUNT_TOKEN; do
+            forbidden_val="$(docker exec -u vscode "$container_id" printenv "$forbidden_var" 2>/dev/null || true)"
+            [ -z "$forbidden_val" ] || fail "${forbidden_var} is set in the agent container"
+        done
+
+        # No Docker unless the documented opt-in turned it on, and never the
+        # host socket.
+        if docker exec -u vscode "$container_id" sh -c 'test -S /var/run/docker.sock'; then
+            if [ "$(docker exec -u vscode "$container_id" printenv HARMON_AGENT_DOCKER 2>/dev/null || true)" != "dind" ]; then
+                fail "a Docker socket exists in the agent container without the HARMON_AGENT_DOCKER=dind opt-in"
+            fi
+        fi
+
+        local agent_out agent_rc
+        agent_rc=0
+        agent_out="$(docker exec -u vscode -w "$workspace_folder" "$container_id" \
+            bash .devcontainer/agent/agent-autonomy.sh verify 2>&1)" || agent_rc=$?
+        [ "$agent_rc" -eq 0 ] || fail "agent-autonomy.sh verify failed in the agent container: ${agent_out}"
+
+        # Egress: the filter is installed, a listed host is reachable, an
+        # unlisted one is refused, and the refusal is recorded for the lane
+        # report. example.com is the reserved documentation domain (RFC 2606)
+        # and must never be on the list.
+        agent_rc=0
+        agent_out="$(docker exec -u root -w "$workspace_folder" "$container_id" \
+            bash .devcontainer/scripts/egress-allowlist.sh verify 2>&1)" || agent_rc=$?
+        [ "$agent_rc" -eq 0 ] || fail "egress-allowlist.sh verify failed in the agent container: ${agent_out}"
+        # Every start applies the snapshot post-create wrote, so it must exist
+        # and be root-owned and closed to writes, or an edit by the container
+        # user would widen egress at the next start.
+        docker exec -u vscode "$container_id" test -x /usr/local/share/harmon-egress/scripts/egress-allowlist.sh ||
+            fail "the agent container has no egress snapshot for its starts to apply"
+        agent_out="$(docker exec -u root "$container_id" find /usr/local/share/harmon-egress \
+            \( ! -user root -o -perm -002 -o -perm -020 \) 2>&1)" ||
+            fail "cannot inspect the egress snapshot in the agent container: ${agent_out}"
+        [ -z "$agent_out" ] || fail "the egress snapshot is not root-owned and closed to writes: ${agent_out}"
+        if grep -Eqx '[[:space:]]*example\.com[[:space:]]*' "${repo_root}/.devcontainer/egress-allowlist.txt"; then
+            fail "example.com is on the egress allowlist; the refusal probe below needs it off"
+        fi
+        docker exec -u vscode "$container_id" curl -fsS -m 20 -o /dev/null https://api.github.com/zen ||
+            fail "an allowlisted host (api.github.com) is not reachable from the agent container"
+        # The record must name an address example.com resolved to, written by
+        # THIS probe: resolve it in the container and drop those addresses
+        # from the record first, so neither an unrelated refusal nor a stale
+        # entry can satisfy the check below.
+        local probe_addrs probe_addr probe_recorded=""
+        probe_addrs="$(docker exec -u vscode "$container_id" getent ahostsv4 example.com 2>/dev/null |
+            awk '{print $1}' | sort -u)" || true
+        [ -n "$probe_addrs" ] ||
+            fail "example.com does not resolve in the agent container, so its refusal cannot be attributed"
+        while IFS= read -r probe_addr; do
+            docker exec -u root "$container_id" sh -c \
+                'printf -- "-%s\n" "$1" >/proc/net/xt_recent/harmon_egress_blocked' sh "$probe_addr" </dev/null ||
+                fail "cannot clear ${probe_addr} from the agent container's blocked-destination record"
+        done <<<"$probe_addrs"
+        if docker exec -u vscode "$container_id" curl -sS -m 10 -o /dev/null https://example.com 2>/dev/null; then
+            fail "a host outside the egress allowlist (example.com) is reachable from the agent container"
+        fi
+        agent_out="$(docker exec -u vscode -w "$workspace_folder" "$container_id" \
+            bash .devcontainer/scripts/egress-allowlist.sh blocked 2>&1)" || true
+        while IFS= read -r probe_addr; do
+            if awk -v a="$probe_addr" '$1 == "blocked" && $2 == a {found = 1} END {exit found ? 0 : 1}' <<<"$agent_out"; then
+                probe_recorded=1
+            fi
+        done <<<"$probe_addrs"
+        [ -n "$probe_recorded" ] ||
+            fail "the refused example.com connection ($(printf '%s' "$probe_addrs" | tr '\n' ' ')) was not recorded for the lane report: ${agent_out}"
     else
         [ "$codex_sandbox" = "workspace-write" ] || fail "human Codex sandbox is '${codex_sandbox}'"
         [ "$codex_approval" = "on-request" ] || fail "human Codex approval policy is '${codex_approval}'"

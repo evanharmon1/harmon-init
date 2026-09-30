@@ -25,6 +25,8 @@ NETWORK_TIMEOUT="${NETWORK_TIMEOUT:-5}"
 # board plain, stable text for logs and scripts/test-status.sh.
 # shellcheck source=scripts/lib/output.sh
 . "${REPO_ROOT}/scripts/lib/output.sh"
+# shellcheck source=scripts/lib/gh-rest.sh
+. "${REPO_ROOT}/scripts/lib/gh-rest.sh"
 
 # ── Tool detection ──────────────────────────────────────────────────────────
 
@@ -203,8 +205,13 @@ GH_SCOPES_LINE=""
 # in derive_gh_scope_state below already say "reissue", which is correct in
 # both profiles; only this stored-credential default needed splitting.
 gh_scope_remedy_default() {
+    # Three postures, three answers: the marker is "bot", "agent", or unset
+    # (dev) — and agent is never read as bot, because its credential is a
+    # different variable (AGENT_GH_TOKEN).
     if [ "${FOREMAN_DEVCONTAINER:-}" = "bot" ]; then
         printf '%s' "bot profile: re-provision GH_TOKEN with the required permissions — never widen the current login here"
+    elif [ "${FOREMAN_DEVCONTAINER:-}" = "agent" ]; then
+        printf '%s' "agent posture: re-provision AGENT_GH_TOKEN with the required permissions — never widen the current login here"
     else
         printf '%s' "run: task setup:gh-scopes (or: gh auth refresh -s $(gh_scopes_request_list))"
     fi
@@ -253,10 +260,13 @@ derive_gh_scope_state "${GH_AUTH_FILE}"
 # Without the guard, `task status:setup` would spend two network calls fetching
 # data nothing displays.
 if [[ "${GH_AUTHED}" == true ]] && should_show "gh"; then
-    run_timeout "${NETWORK_TIMEOUT}" gh pr list --limit 10 \
-        --json number,title,headRefName \
-        >"${TMPDIR_STATUS}/prs.json" 2>/dev/null &
-    PID_PRS=$!
+    if status_repo="$(gh_rest_repo 2>/dev/null)"; then
+        (GH_REST_TIMEOUT="${NETWORK_TIMEOUT}" gh_rest_paginate_array \
+            "repos/${status_repo}/pulls?state=open&sort=updated&direction=desc" 10 |
+            jq -s 'add | map({number, title, headRefName: .head.ref})' \
+                >"${TMPDIR_STATUS}/prs.json" 2>/dev/null) &
+        PID_PRS=$!
+    fi
 
     run_timeout "${NETWORK_TIMEOUT}" gh run list --branch "${CURRENT_BRANCH}" \
         --limit 5 --json status,conclusion,name,createdAt \
@@ -650,6 +660,8 @@ render_gh_scope_check() {
 gh_login_remedy() {
     if [ "${FOREMAN_DEVCONTAINER:-}" = "bot" ]; then
         printf '%s' "bot profile: provision GH_TOKEN — never an interactive login here"
+    elif [ "${FOREMAN_DEVCONTAINER:-}" = "agent" ]; then
+        printf '%s' "agent posture: provision AGENT_GH_TOKEN — never an interactive login here"
     else
         printf '%s' "gh auth login"
     fi
@@ -896,11 +908,15 @@ if [[ "${SECTION}" == "setup" ]]; then
 
         # Repo identity — every API call below needs owner/repo, so resolve it
         # synchronously first.
-        run_timeout "${NETWORK_TIMEOUT}" gh repo view \
-            --json nameWithOwner,visibility,isPrivate,defaultBranchRef \
-            >"${d}/repo.json" 2>/dev/null || echo '{}' >"${d}/repo.json"
+        NWO="$(gh_rest_repo 2>/dev/null || true)"
+        if [ -n "${NWO}" ]; then
+            GH_REST_TIMEOUT="${NETWORK_TIMEOUT}" gh_rest_api "repos/${NWO}" \
+                >"${d}/repo.json" 2>/dev/null || echo '{}' >"${d}/repo.json"
+        else
+            echo '{}' >"${d}/repo.json"
+        fi
 
-        NWO="$(jq -r '.nameWithOwner // empty' "${d}/repo.json")"
+        NWO="$(jq -r '.full_name // empty' "${d}/repo.json")"
 
         HAS_REMOTE=true
         [ -z "${NWO}" ] && HAS_REMOTE=false
@@ -920,8 +936,8 @@ if [[ "${SECTION}" == "setup" ]]; then
             OWNER="${NWO%%/*}"
             REPO="${NWO##*/}"
             VISIBILITY="$(jq -r '.visibility // "?"' "${d}/repo.json" | tr '[:upper:]' '[:lower:]')"
-            IS_PRIVATE="$(jq -r '.isPrivate // false' "${d}/repo.json")"
-            DEFAULT_BRANCH="$(jq -r '.defaultBranchRef.name // "?"' "${d}/repo.json")"
+            IS_PRIVATE="$(jq -r '.private // false' "${d}/repo.json")"
+            DEFAULT_BRANCH="$(jq -r '.default_branch // "?"' "${d}/repo.json")"
             OWNER_TYPE="$(run_timeout "${NETWORK_TIMEOUT}" gh api "repos/${OWNER}/${REPO}" \
                 --jq '.owner.type' 2>/dev/null || echo "User")"
             if [[ "${OWNER_TYPE}" == "Organization" ]]; then
@@ -960,42 +976,101 @@ if [[ "${SECTION}" == "setup" ]]; then
                 echo no >"${d}/ci-runs-on-probe"
             fi) &
             (run_timeout "${NETWORK_TIMEOUT}" gh release list --limit 1 >"${d}/release.txt" 2>/dev/null || :) &
-            # shellcheck disable=SC2016 # $o/$r are GraphQL variables, not shell
-            (run_timeout "${NETWORK_TIMEOUT}" gh api graphql \
-                -f query='query($o:String!,$r:String!){repository(owner:$o,name:$r){projectsV2(first:10){nodes{title number}}}}' \
-                -F o="${OWNER}" -F r="${REPO}" \
-                >"${d}/projects.json" 2>/dev/null || echo '{}' >"${d}/projects.json") &
+            # Projects v2 has no REST read equivalent. A REST-only session must
+            # say this surface is unavailable instead of failing the audit or
+            # silently grading an empty response as "no project".
+            echo unavailable >"${d}/projects-rest"
             # PM setup surface — audit the results of the setup:github-* tasks the
             # repo actually ships (each script is the marker it opted in).
+            #
+            # These three inventories are COMPLETENESS-REQUIRED: their renderers
+            # below can report "not provisioned", and an absence is only ever
+            # observed by seeing the whole list. gh_rest_paginate_* returns 4
+            # when the GH_REST_MAX_PAGES ceiling truncates a walk, and some other
+            # non-zero when the read fails outright; either way what arrived is a
+            # PARTIAL list, and grading a partial list as "none" states an
+            # absence nobody observed (challenge r2). So the invariant is
+            # encoded once, here, rather than re-argued per call site: an
+            # inventory whose reader can claim absence may claim it only after a
+            # complete successful read, and a truncated or failed read is
+            # unknown, never "none". Each read goes through inventory_read and
+            # each renderer consults inventory_complete before it reads the data.
+            #
+            # inventory_read NAME READER... — run READER, keep its pages in
+            # ${d}/NAME.pages, and record ${d}/NAME.state.
+            inventory_read() {
+                local name="$1" state=complete rc=0
+                shift
+                "$@" >"${d}/${name}.pages" 2>/dev/null || rc=$?
+                case "${rc}" in
+                0) state=complete ;;
+                4) state=truncated ;;
+                *) state=failed ;;
+                esac
+                printf '%s\n' "${state}" >"${d}/${name}.state"
+            }
+            # A missing state file reads as `failed`, not as complete: it means
+            # the read never ran, which is the one case a default must not grade.
+            inventory_state() { cat "${d}/$1.state" 2>/dev/null || echo failed; }
+            inventory_complete() { [ "$(inventory_state "$1")" = complete ]; }
+            # inventory_unknown NAME LABEL — the checkline an incomplete read
+            # earns, in the shape the label-registry render failure already uses.
+            # The reason names the truncation, so the reader can tell "nobody saw
+            # the whole list" from "the list is empty".
+            inventory_unknown() {
+                local reason="read failed — inventory unchecked"
+                [ "$(inventory_state "$1")" != truncated ] ||
+                    reason="read truncated at the ${GH_REST_MAX_PAGES:-10}-page ceiling — inventory unchecked"
+                checkline unknown "$2" "${reason}"
+            }
             if [ -f scripts/setup-github-labels.sh ]; then
-                # The REST endpoint with --paginate, not `gh label list`: the
-                # check below compares against the WHOLE starter set, so any
-                # fixed page cap (gh's default 30, or any --limit) can drop a
-                # real label on a label-heavy repo and report it as missing.
-                # One name per line — --paginate emits a document per page.
-                (run_timeout "${NETWORK_TIMEOUT}" gh api "repos/${OWNER}/${REPO}/labels" --paginate --jq '.[].name' \
-                    >"${d}/labels.txt" 2>/dev/null || : >"${d}/labels.txt") &
+                (
+                    GH_REST_TIMEOUT="${NETWORK_TIMEOUT}" inventory_read labels \
+                        gh_rest_paginate_array "repos/${OWNER}/${REPO}/labels" 0
+                    jq -sr 'add | .[].name' <"${d}/labels.pages" \
+                        >"${d}/labels.txt" 2>/dev/null || : >"${d}/labels.txt"
+                ) &
             fi
             if [ -f scripts/setup-github-issue-types.sh ]; then
-                (run_timeout "${NETWORK_TIMEOUT}" gh api "orgs/${OWNER}/issue-types" --paginate \
-                    >"${d}/issue-types.json" 2>/dev/null || echo 'null' >"${d}/issue-types.json") &
+                (
+                    GH_REST_TIMEOUT="${NETWORK_TIMEOUT}" inventory_read issue-types \
+                        gh_rest_paginate_array "orgs/${OWNER}/issue-types" 0
+                    jq -s 'add' <"${d}/issue-types.pages" \
+                        >"${d}/issue-types.json" 2>/dev/null || echo 'null' >"${d}/issue-types.json"
+                ) &
             fi
             if [ -f scripts/setup-github-issue-fields.sh ]; then
-                (run_timeout "${NETWORK_TIMEOUT}" gh api "orgs/${OWNER}/issue-fields" \
-                    -H "X-GitHub-Api-Version: 2026-03-10" --paginate \
-                    >"${d}/issue-fields.json" 2>/dev/null || echo 'null' >"${d}/issue-fields.json") &
+                (
+                    GH_REST_TIMEOUT="${NETWORK_TIMEOUT}" inventory_read issue-fields \
+                        gh_rest_paginate_key "orgs/${OWNER}/issue-fields" issue_fields \
+                        -H "X-GitHub-Api-Version: 2026-03-10"
+                    jq -s 'add' <"${d}/issue-fields.pages" \
+                        >"${d}/issue-fields.json" 2>/dev/null || echo 'null' >"${d}/issue-fields.json"
+                ) &
             fi
             # App installs — definitive when we hold admin scope, else 'null'.
             (run_timeout "${NETWORK_TIMEOUT}" gh api "${APPS_PATH}" \
                 --jq '[.installations[].app_slug]' \
                 >"${d}/apps.json" 2>/dev/null || echo 'null' >"${d}/apps.json") &
-            # Heuristic fallback signals for the two apps.
-            (run_timeout "${NETWORK_TIMEOUT}" gh pr list --state all --author "app/renovate" \
-                --limit 1 --json number >"${d}/renovate-pr.json" 2>/dev/null ||
-                echo '[]' >"${d}/renovate-pr.json") &
-            (run_timeout "${NETWORK_TIMEOUT}" gh api "repos/${OWNER}/${REPO}/pulls/comments?per_page=100" \
-                --jq '[.[].user.login] | map(select(test("coderabbit";"i"))) | length' \
-                >"${d}/coderabbit.txt" 2>/dev/null || echo 0 >"${d}/coderabbit.txt") &
+            # Heuristic fallback signals for the two apps. Both reads are
+            # bounded to the 100 most recent items — a heuristic that walked the
+            # whole PR history would spend one request per hundred PRs for a
+            # yes/no answer the newest page already gives (challenge r1).
+            #
+            # Deliberately NOT completeness-required like the three inventories
+            # above, and the asymmetry is the point: MAX_ITEMS=100 is exactly one
+            # 100-item page, so each walk returns on its first page and can never
+            # reach the page ceiling — there is no truncation here to tell apart
+            # from emptiness. A miss is a documented heuristic negative about the
+            # newest page, never a claim that the whole history holds nothing.
+            (GH_REST_TIMEOUT="${NETWORK_TIMEOUT}" gh_rest_paginate_array \
+                "repos/${OWNER}/${REPO}/pulls?state=all&sort=updated&direction=desc" 100 |
+                jq -s 'add | map(select(.user.login | test("^renovate(\\[bot\\])?$";"i"))) | .[:1] | map({number})' \
+                    >"${d}/renovate-pr.json" 2>/dev/null || echo '[]' >"${d}/renovate-pr.json") &
+            (GH_REST_TIMEOUT="${NETWORK_TIMEOUT}" gh_rest_paginate_array \
+                "repos/${OWNER}/${REPO}/pulls/comments?sort=updated&direction=desc" 100 |
+                jq -s '[add[].user.login] | map(select(test("coderabbit";"i"))) | length' \
+                    >"${d}/coderabbit.txt" 2>/dev/null || echo 0 >"${d}/coderabbit.txt") &
             (
                 if out="$(run_timeout "${NETWORK_TIMEOUT}" gh api \
                     "/${PKG_NS}/${OWNER}/packages/container/${REPO}-devcontainer" 2>&1)"; then
@@ -1087,6 +1162,11 @@ if [[ "${SECTION}" == "setup" ]]; then
                     checkline ok "Dev profile (dev/devcontainer.json)"
                 else
                     checkline no "Dev profile (dev/devcontainer.json)"
+                fi
+                if [ -f .devcontainer/agent/devcontainer.json ]; then
+                    checkline ok "Agent posture (agent/devcontainer.json)"
+                else
+                    checkline no "Agent posture (agent/devcontainer.json)"
                 fi
                 if [ -f .devcontainer/devcontainer.env ]; then
                     checkline ok "Secrets env seeded" "devcontainer.env"
@@ -1193,20 +1273,8 @@ if [[ "${SECTION}" == "setup" ]]; then
                     checkline unknown "CodeRabbit app access" \
                         "no config; confirm repo is excluded from the App installation"
                 fi
-                if jq -e '.data.repository' "${d}/projects.json" >/dev/null 2>&1; then
-                    proj_count="$(jq -r '(.data.repository.projectsV2.nodes // []) | length' \
-                        "${d}/projects.json" 2>/dev/null || echo 0)"
-                    if [ "${proj_count:-0}" -gt 0 ]; then
-                        proj_title="$(jq -r '.data.repository.projectsV2.nodes[0].title // "?"' \
-                            "${d}/projects.json" 2>/dev/null)"
-                        checkline ok "GitHub Project linked" "${proj_title}"
-                    else
-                        checkline no "GitHub Project linked" "link a Project v2 to the repo"
-                    fi
-                else
-                    checkline unknown "GitHub Project linked" \
-                        "unreadable — ${GH_REMEDY}"
-                fi
+                checkline unknown "GitHub Project linked" \
+                    "unavailable through the REST-only GitHub API"
                 if [ -f scripts/setup-github-labels.sh ]; then
                     # The expected set comes from the label-registry renderer —
                     # the same rendering `task setup:github-labels` provisions
@@ -1222,8 +1290,12 @@ if [[ "${SECTION}" == "setup" ]]; then
                     # The WHOLE inventory now comes from the renderer, so
                     # without node or the manifest nothing can be enumerated:
                     # report unknown rather than grading an empty want-list —
-                    # or a renderer failure — as complete.
-                    if ! command -v node >/dev/null 2>&1; then
+                    # or a renderer failure — as complete. The HAVE side owes
+                    # the same: an empty labels.txt is only evidence of an
+                    # unprovisioned repo when the read that produced it finished.
+                    if ! inventory_complete labels; then
+                        inventory_unknown labels "Starter labels"
+                    elif ! command -v node >/dev/null 2>&1; then
                         checkline unknown "Starter labels" "node unavailable — label inventory unchecked"
                     elif [ ! -f label-registry.json ] || [ ! -f scripts/label-registry-render.mjs ]; then
                         checkline unknown "Starter labels" "label-registry.json missing — label inventory unchecked"
@@ -1256,50 +1328,55 @@ if [[ "${SECTION}" == "setup" ]]; then
                     fi
                 fi
                 if [ -f scripts/setup-github-issue-types.sh ]; then
-                    type_names="$(jq -r 'if type == "array" then (map(.name) | join(",")) else "" end' "${d}/issue-types.json" 2>/dev/null || echo "")"
-                    if [ -z "${type_names}" ]; then
-                        checkline unknown "Org issue types" "needs admin:org"
-                    elif grep 'Research' <<<"${type_names}" >/dev/null; then
-                        checkline ok "Org issue types" "Bug/Feature/Task/Research"
+                    if ! inventory_complete issue-types; then
+                        inventory_unknown issue-types "Org issue types"
                     else
-                        checkline no "Org issue types" "run task setup:github-issue-types"
+                        type_names="$(jq -r 'if type == "array" then (map(.name) | join(",")) else "" end' "${d}/issue-types.json" 2>/dev/null || echo "")"
+                        if [ -z "${type_names}" ]; then
+                            checkline unknown "Org issue types" "needs admin:org"
+                        elif grep 'Research' <<<"${type_names}" >/dev/null; then
+                            checkline ok "Org issue types" "Bug/Feature/Task/Research"
+                        else
+                            checkline no "Org issue types" "run task setup:github-issue-types"
+                        fi
                     fi
                 fi
                 if [ -f scripts/setup-github-issue-fields.sh ]; then
-                    # One `name<TAB>data_type` per line, not a joined string:
-                    # `gh api --paginate` writes one JSON document per page, so jq
-                    # runs per page and any single-line delimiter trick breaks at a
-                    # page boundary.
-                    field_rows="$(jq -r '(if type == "object" then (.issue_fields // []) elif type == "array" then . else [] end) | .[] | "\(.name)\t\(.data_type // "")"' "${d}/issue-fields.json" 2>/dev/null || echo "")"
-                    # Product must be present AND of the right type: an org that
-                    # happens to own a text-incompatible field named `Product`
-                    # can never get it created (GitHub cannot change a field's
-                    # data type in place). Reporting it done would hide exactly
-                    # what the setup script warns about. The retired Agent,
-                    # Domain, and Layer fields are deliberately NOT wanted here:
-                    # the setup script no longer creates any of them, so
-                    # requiring one would report a permanent false failure on
-                    # every fresh org (#662, #875).
-                    missing_fields=""
-                    wrong_fields=""
-                    for want in Product:text; do
-                        wname="${want%%:*}"
-                        wtype="${want##*:}"
-                        htype="$(awk -F'\t' -v n="${wname}" '$1 == n { print $2; exit }' <<<"${field_rows}")"
-                        if ! grep -xF "${wname}" < <(printf '%s\n' "${field_rows}" | cut -f1) >/dev/null; then
-                            missing_fields="${missing_fields}${missing_fields:+, }${wname}"
-                        elif [ -n "${htype}" ] && [ "${htype}" != "${wtype}" ]; then
-                            wrong_fields="${wrong_fields}${wrong_fields:+, }${wname} is ${htype}"
-                        fi
-                    done
-                    if [ -z "${field_rows}" ]; then
-                        checkline unknown "Org issue fields" "needs admin:org (public preview)"
-                    elif [ -n "${wrong_fields}" ]; then
-                        checkline no "Org issue fields" "wrong type: ${wrong_fields} — rename/delete, then re-run task setup:github-issue-fields"
-                    elif [ -z "${missing_fields}" ]; then
-                        checkline ok "Org issue fields" "Product"
+                    if ! inventory_complete issue-fields; then
+                        inventory_unknown issue-fields "Org issue fields"
                     else
-                        checkline no "Org issue fields" "missing ${missing_fields} — run task setup:github-issue-fields"
+                        # One `name<TAB>data_type` per line, not a joined string.
+                        field_rows="$(jq -r '(if type == "object" then (.issue_fields // []) elif type == "array" then . else [] end) | .[] | "\(.name)\t\(.data_type // "")"' "${d}/issue-fields.json" 2>/dev/null || echo "")"
+                        # Product must be present AND of the right type: an org that
+                        # happens to own a text-incompatible field named `Product`
+                        # can never get it created (GitHub cannot change a field's
+                        # data type in place). Reporting it done would hide exactly
+                        # what the setup script warns about. The retired Agent,
+                        # Domain, and Layer fields are deliberately NOT wanted here:
+                        # the setup script no longer creates any of them, so
+                        # requiring one would report a permanent false failure on
+                        # every fresh org (#662, #875).
+                        missing_fields=""
+                        wrong_fields=""
+                        for want in Product:text; do
+                            wname="${want%%:*}"
+                            wtype="${want##*:}"
+                            htype="$(awk -F'\t' -v n="${wname}" '$1 == n { print $2; exit }' <<<"${field_rows}")"
+                            if ! grep -xF "${wname}" < <(printf '%s\n' "${field_rows}" | cut -f1) >/dev/null; then
+                                missing_fields="${missing_fields}${missing_fields:+, }${wname}"
+                            elif [ -n "${htype}" ] && [ "${htype}" != "${wtype}" ]; then
+                                wrong_fields="${wrong_fields}${wrong_fields:+, }${wname} is ${htype}"
+                            fi
+                        done
+                        if [ -z "${field_rows}" ]; then
+                            checkline unknown "Org issue fields" "needs admin:org (public preview)"
+                        elif [ -n "${wrong_fields}" ]; then
+                            checkline no "Org issue fields" "wrong type: ${wrong_fields} — rename/delete, then re-run task setup:github-issue-fields"
+                        elif [ -z "${missing_fields}" ]; then
+                            checkline ok "Org issue fields" "Product"
+                        else
+                            checkline no "Org issue fields" "missing ${missing_fields} — run task setup:github-issue-fields"
+                        fi
                     fi
                 fi
                 if [ "${has_release_wf}" = 1 ]; then

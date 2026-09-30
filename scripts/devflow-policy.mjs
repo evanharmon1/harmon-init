@@ -162,7 +162,7 @@ const BUILTIN_GATE_DEFAULTS = {
 // v1 stores wall_clock_min under its selected [budget.*] rather than
 // [rounds.*]). Built-in fallbacks cover only truly absent historical values.
 const BUILTIN_REMEDIATION_FALLBACK = (integrationCap) => integrationCap
-const BUILTIN_WALL_CLOCK_MIN_FALLBACK = 240
+const BUILTIN_WALL_CLOCK_MIN_FALLBACK = 1440
 // A legacy shape has no [breadth.*]. Schema v1 calls the same horizontal
 // ceilings [budget.*], so decodeHistoricalPolicy maps them when present.
 // This fallback covers older documents that predate those compatible fields.
@@ -184,7 +184,7 @@ const BUILTIN_ABSENT_ROUNDS = Object.freeze({
   integration_exempt: 4,
   remediation: 4,
   min_rounds: 1,
-  wall_clock_min: 120,
+  wall_clock_min: 720,
   shared_budget: false
 })
 const BUILTIN_ABSENT_BREADTH = Object.freeze({

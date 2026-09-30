@@ -471,7 +471,8 @@ git config --file "$ENV_GITCONFIG" user.email "${DEVCONTAINER_GIT_EMAIL}"
 # operator credential — `workflow` scope and all — inside a bypassPermissions
 # agent container, which is the exact escalation the bot PAT's denials exist to
 # stop (docs/architecture/security.md). Each profile's own post-create.sh
-# declares which remedy applies via DEVCONTAINER_GH_AUTH; anything else falls
+# declares which remedy applies via DEVCONTAINER_GH_AUTH ("login" for dev,
+# "agent-token" for the agent posture's AGENT_GH_TOKEN); anything else falls
 # back to the token message, so the operator instructions can only ever appear
 # where a wrapper explicitly asked for them.
 #
@@ -510,6 +511,13 @@ gh_auth_help() {
         echo ""
         echo "  Then re-run: bash .devcontainer/scripts/bootstrap-related-repos.sh"
         echo "  See docs/guides/devcontainers.md."
+    elif [ "${DEVCONTAINER_GH_AUTH:-token}" = "agent-token" ]; then
+        echo "  This AGENT-posture container authenticates from AGENT_GH_TOKEN,"
+        echo "  the agent's own PAT on the bot account. Do NOT run"
+        echo "  'gh auth login' here, and never supply the bot's GH_TOKEN."
+        echo "  Populate AGENT_GH_TOKEN in the host environment (init-env.sh"
+        echo "  projects it into .devcontainer/agent/devcontainer.env) and"
+        echo "  rebuild. See docs/guides/bot-account.md."
     else
         echo "  This profile authenticates from GH_TOKEN. Do NOT run"
         echo "  'gh auth login' here — that would put a human credential in an"

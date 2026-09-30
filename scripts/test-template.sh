@@ -1239,7 +1239,7 @@ if [ -d .devcontainer ]; then
     elif [ -z "$timeout_bin" ]; then
         required timeout "devcontainer config check" || fail=1
     else
-        for cfg in .devcontainer/devcontainer.json .devcontainer/dev/devcontainer.json; do
+        for cfg in .devcontainer/devcontainer.json .devcontainer/dev/devcontainer.json .devcontainer/agent/devcontainer.json; do
             [ -f "$cfg" ] || continue
             "$timeout_bin" -k 5 60 devcontainer read-configuration \
                 --docker-path true \
@@ -2018,6 +2018,30 @@ else
         err "test-bot-autonomy.sh missing from devcontainer output"
     grep -q -- '- task: test:bot-autonomy' Taskfile.yml ||
         err "verify task is missing the bot-autonomy registry-completeness test"
+    # The AGENT posture (#1408) renders with every devcontainer, and its own
+    # unit test — single source, Claude/Codex policy, env guard, Docker, and
+    # egress — must pass against the RENDERED tree, where the agent
+    # devcontainer.json is a jinja render rather than the root copy.
+    for agent_file in .devcontainer/agent/devcontainer.json .devcontainer/agent/post-create.sh \
+        .devcontainer/agent/post-start.sh .devcontainer/agent/agent-autonomy.sh \
+        .devcontainer/config/agent/claude-managed-settings.json \
+        .devcontainer/config/agent/codex-managed-config.toml .devcontainer/config/agent/harnesses.json \
+        .devcontainer/egress-allowlist.txt .devcontainer/scripts/egress-allowlist.sh; do
+        [ -f "$agent_file" ] || err "${agent_file} missing from devcontainer output (agent posture)"
+    done
+    [ -x scripts/test-agent-profile.sh ] ||
+        err "test-agent-profile.sh missing from devcontainer output"
+    grep -q -- '- task: test:agent-profile' Taskfile.yml ||
+        err "verify task is missing the agent-posture unit test"
+    grep -q '^  test:devcontainer:agent:' Taskfile.yml ||
+        err "Taskfile is missing the agent devcontainer smoke task"
+    if grep -Fq 'bot-autonomy.sh' < <(grep -Ev '^[[:space:]]*#' .devcontainer/agent/post-create.sh .devcontainer/agent/post-start.sh); then
+        err "the agent posture calls bot-autonomy.sh (bot-only)"
+    fi
+    if [ -d .git ]; then
+        agent_test_out="$(bash scripts/test-agent-profile.sh 2>&1)" ||
+            err "test-agent-profile.sh fails in the rendered repo: $(printf '%s' "$agent_test_out" | tail -n 3)"
+    fi
     [ ! -e .devcontainer/scripts/enable-claude-bypass.sh ] ||
         err "retired enable-claude-bypass.sh still rendered"
     [ ! -e .devcontainer/scripts/enable-codex-bypass.sh ] ||
@@ -2071,7 +2095,7 @@ else
     # byte-compare them, and template/ could reintroduce the Feature while the
     # root copy stays correct — shipping the flake to every consumer with
     # nothing here failing.
-    for dc_cfg in .devcontainer/devcontainer.json .devcontainer/dev/devcontainer.json; do
+    for dc_cfg in .devcontainer/devcontainer.json .devcontainer/dev/devcontainer.json .devcontainer/agent/devcontainer.json; do
         [ -f "$dc_cfg" ] || continue
         ! grep -q 'features/go-task' "$dc_cfg" ||
             err "rendered $dc_cfg installs task via a devcontainer Feature (harmon-init#427)"
@@ -2085,7 +2109,7 @@ else
     # the root copy stays correct. The providers wrapper renders only when
     # use_alternative_claude_providers is on, hence the existence guard.
     for dc_file in .devcontainer/devcontainer.json .devcontainer/dev/devcontainer.json \
-        .devcontainer/config/claude-providers.sh; do
+        .devcontainer/agent/devcontainer.json .devcontainer/config/claude-providers.sh; do
         [ -f "$dc_file" ] || continue
         ! grep -q 'CLAUDE_CODE_EFFORT_LEVEL' "$dc_file" ||
             err "rendered $dc_file forces CLAUDE_CODE_EFFORT_LEVEL — effort selection belongs to Claude Code settings"
@@ -2239,6 +2263,13 @@ if [ -d .devcontainer ]; then
     if grep -Fq '"COPILOT_ALLOW_ALL"' .devcontainer/dev/devcontainer.json; then
         err "dev devcontainer.json carries COPILOT_ALLOW_ALL — a human's interactive Copilot session must never be allow-all"
     fi
+    # The agent posture refuses Copilot outright and pins allow-all OFF,
+    # whatever use_copilot_cli answered.
+    if grep -Fq '"HARMON_BOT_AUTONOMY_COPILOT"' .devcontainer/agent/devcontainer.json; then
+        err "agent devcontainer.json carries the bot-only HARMON_BOT_AUTONOMY_COPILOT marker"
+    fi
+    grep -Fq '"COPILOT_ALLOW_ALL": "false"' .devcontainer/agent/devcontainer.json ||
+        err "agent devcontainer.json does not pin COPILOT_ALLOW_ALL to false"
     # Fixture-seeded state these modules' verify reads lives on named volumes,
     # so a smoke run must not contaminate (or be contaminated by) a real one.
     for volume in copilot-config pi-config omp-config; do
@@ -2278,7 +2309,7 @@ if [ -d .devcontainer ]; then
     if [ "$profile" = "full" ]; then
         [ -f .devcontainer/config/claude-providers.sh ] ||
             err ".devcontainer/config/claude-providers.sh missing (use_alternative_claude_providers=true)"
-        for dc_cfg in .devcontainer/devcontainer.json .devcontainer/dev/devcontainer.json; do
+        for dc_cfg in .devcontainer/devcontainer.json .devcontainer/dev/devcontainer.json .devcontainer/agent/devcontainer.json; do
             [ -f "$dc_cfg" ] || continue
             grep -q 'KIMI_API_KEY MOONSHOT_API_KEY DEEPSEEK_API_KEY ZAI_API_KEY QWEN_API_KEY' "$dc_cfg" ||
                 err "$dc_cfg initializeCommand omits the provider keys (use_alternative_claude_providers=true)"
@@ -2286,7 +2317,7 @@ if [ -d .devcontainer ]; then
     else
         [ ! -f .devcontainer/config/claude-providers.sh ] ||
             err ".devcontainer/config/claude-providers.sh rendered but use_alternative_claude_providers is off"
-        for dc_cfg in .devcontainer/devcontainer.json .devcontainer/dev/devcontainer.json; do
+        for dc_cfg in .devcontainer/devcontainer.json .devcontainer/dev/devcontainer.json .devcontainer/agent/devcontainer.json; do
             [ -f "$dc_cfg" ] || continue
             # Each key checked independently, not as one contiguous string: a
             # whole-sequence grep only catches all five keys leaking together,

@@ -32,6 +32,7 @@ status="./scripts/status.sh"
 # below therefore needs both files, not just the script under test.
 scopes_lib="./scripts/gh-scopes.sh"
 output_lib="./scripts/lib/output.sh"
+rest_lib="./scripts/lib/gh-rest.sh"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
@@ -55,6 +56,7 @@ for fixture in with-board no-board skills-only with-codex creds-board org-repo; 
     cp "${status}" "${TMP}/${fixture}/scripts/status.sh"
     cp "${scopes_lib}" "${TMP}/${fixture}/scripts/gh-scopes.sh"
     cp "${output_lib}" "${TMP}/${fixture}/scripts/lib/output.sh"
+    cp "${rest_lib}" "${TMP}/${fixture}/scripts/lib/gh-rest.sh"
 done
 # The markers status.sh feature-detects on. Contents are never read.
 : >"${TMP}/with-board/scripts/setup-github-project.sh"
@@ -72,14 +74,30 @@ mkdir -p "${TMP}/enterprise/scripts/lib"
 cp "${status}" "${TMP}/enterprise/scripts/status.sh"
 cp "${scopes_lib}" "${TMP}/enterprise/scripts/gh-scopes.sh"
 cp "${output_lib}" "${TMP}/enterprise/scripts/lib/output.sh"
+cp "${rest_lib}" "${TMP}/enterprise/scripts/lib/gh-rest.sh"
 : >"${TMP}/enterprise/scripts/setup-github-project.sh"
 git -C "${TMP}/enterprise" init -q
 git -C "${TMP}/enterprise" remote add origin git@ghe.example.com:owner/repo.git
+
+# A board repo whose owner AND name carry hyphens — the shape of this repository
+# itself. The resolved OWNER/REPO used to be validated against a class in which
+# `.-/` was the RANGE 0x2E-0x2F, so `-` was rejected, gh_rest_repo returned 1,
+# and the `if` guarding the open-PR read below simply skipped it: `task
+# status:gh` reported no open PRs at all, silently (challenge r3).
+mkdir -p "${TMP}/hyphenated/scripts/lib"
+cp "${status}" "${TMP}/hyphenated/scripts/status.sh"
+cp "${scopes_lib}" "${TMP}/hyphenated/scripts/gh-scopes.sh"
+cp "${output_lib}" "${TMP}/hyphenated/scripts/lib/output.sh"
+cp "${rest_lib}" "${TMP}/hyphenated/scripts/lib/gh-rest.sh"
+: >"${TMP}/hyphenated/scripts/setup-github-project.sh"
+git -C "${TMP}/hyphenated" init -q
+git -C "${TMP}/hyphenated" remote add origin git@github.com:my-org/harmon-init.git
 
 WITH_BOARD="${TMP}/with-board/scripts/status.sh"
 NO_BOARD="${TMP}/no-board/scripts/status.sh"
 SKILLS_ONLY="${TMP}/skills-only/scripts/status.sh"
 ENTERPRISE="${TMP}/enterprise/scripts/status.sh"
+HYPHENATED="${TMP}/hyphenated/scripts/status.sh"
 WITH_CODEX="${TMP}/with-codex/scripts/status.sh"
 CREDS_BOARD="${TMP}/creds-board/scripts/status.sh"
 ORG_REPO="${TMP}/org-repo/scripts/status.sh"
@@ -271,9 +289,62 @@ make_stub() {
             ;;
         esac
         echo 'fi'
-        echo 'if [ "$1" = "repo" ] && [ "$2" = "view" ] && [ -n "${GH_REPO_JSON:-}" ]; then'
-        echo '    printf "%s\n" "$GH_REPO_JSON"'
-        echo '    exit 0'
+        echo 'if [ "$1" = "api" ]; then'
+        echo '    endpoint="${2:-}"'
+        # GH_STUB_FULL_PAGES=1: answer the three completeness-required
+        # inventories with a FULL page every time, exactly as GitHub answers a
+        # list longer than per_page. Only a bound can end such a walk, so this
+        # is what lets a case drive gh_rest_paginate_* into its
+        # GH_REST_MAX_PAGES ceiling (exit 4) instead of a natural short page.
+        cat <<'STUB'
+    if [ "${GH_STUB_FULL_PAGES:-0}" = 1 ]; then
+        page_items="${endpoint##*per_page=}"
+        page_items="${page_items%%&*}"
+        case "$endpoint" in
+        */labels\?*)
+            jq -cn --argjson n "$page_items" '[range(0;$n) | {name:"l\(.)"}]'
+            exit 0
+            ;;
+        orgs/*/issue-types\?*)
+            jq -cn --argjson n "$page_items" '[range(0;$n) | {name:"t\(.)"}]'
+            exit 0
+            ;;
+        orgs/*/issue-fields\?*)
+            jq -cn --argjson n "$page_items" '{issue_fields:[range(0;$n) | {name:"f\(.)",data_type:"text"}]}'
+            exit 0
+            ;;
+        esac
+    fi
+STUB
+        echo '    case "$endpoint" in'
+        echo '    graphql | search/* | repositories/*) echo "HTTP 403: REST-only proxy rejection" >&2; exit 1 ;;'
+        echo '    *"&page=2"*) echo "[]"; exit 0 ;;'
+        echo '    repos/*/*\?* | repos/*/*)'
+        echo '        case "$endpoint" in'
+        echo '        */pulls\?* | */labels\?* | */pulls/comments\?* | */rulesets) echo "[]" ;;'
+        echo '        */vulnerability-alerts) echo "[]" ;;'
+        echo '        */private-vulnerability-reporting) echo "{}" ;;'
+        echo '        *) [ -n "${GH_REPO_JSON:-}" ] || exit 1; printf "%s\n" "$GH_REPO_JSON" ;;'
+        echo '        esac'
+        echo '        exit 0'
+        echo '        ;;'
+        echo '    orgs/*/issue-types\?*) echo "[]"; exit 0 ;;'
+        # The preview documents its page in two shapes, and a read can also
+        # simply fail. `empty` (the default) keeps every existing case on the
+        # wrapped-and-empty answer they were written against.
+        echo '    orgs/*/issue-fields\?*)'
+        echo '        case "${GH_STUB_ISSUE_FIELDS:-empty}" in'
+        echo '        wrapped) echo "{\"issue_fields\":[{\"name\":\"Product\",\"data_type\":\"text\"}]}" ;;'
+        echo '        bare) echo "[{\"name\":\"Product\",\"data_type\":\"text\"}]" ;;'
+        echo '        fail) exit 1 ;;'
+        echo '        *) echo "{\"issue_fields\":[]}" ;;'
+        echo '        esac'
+        echo '        exit 0'
+        echo '        ;;'
+        echo '    orgs/*/installations | user/installations) echo "{\"installations\":[]}"; exit 0 ;;'
+        echo '    esac'
+        echo '    echo "stub: unexpected REST endpoint: $endpoint" >&2'
+        echo '    exit 1'
         echo 'fi'
         echo 'if [ "$1" = "variable" ] && [ "$2" = "list" ] && [ -n "${GH_VARIABLES_JSON:-}" ]; then'
         echo '    printf "%s\n" "$GH_VARIABLES_JSON"'
@@ -444,7 +515,11 @@ make_isolated_bin() {
 run_setup_section() {
     make_stub "$1"
     local script="${2:-${WITH_CODEX}}"
-    PATH="${TMP}/bin:${PATH}" NO_COLOR=1 "${script}" setup 2>&1
+    local stub_repo="${GH_REPO:-}"
+    if [ -z "${stub_repo}" ] && [ -n "${GH_REPO_JSON:-}" ]; then
+        stub_repo="$(jq -r '.full_name // empty' <<<"${GH_REPO_JSON}")"
+    fi
+    GH_REPO="${stub_repo}" PATH="${TMP}/bin:${PATH}" NO_COLOR=1 "${script}" setup 2>&1
 }
 
 # run_creds_section GH_SCENARIO [SCRIPT] — status.sh's standalone credentials
@@ -474,7 +549,7 @@ run_setup_isolated() {
     make_stub "$1"
     make_isolated_bin ""
     local script="${2:-${WITH_CODEX}}"
-    PATH="${TMP}/bin-iso" NO_COLOR=1 "${script}" setup 2>&1
+    GH_REPO="${GH_REPO:-}" PATH="${TMP}/bin-iso" NO_COLOR=1 "${script}" setup 2>&1
 }
 
 # summary_field OUTPUT NAME — the count NAME carries on status.sh's Summary line
@@ -486,7 +561,7 @@ summary_field() {
 
 echo "==> public setup status audits the exact CI_RUNS_ON safety value"
 make_codex_stub in
-public_repo='{"nameWithOwner":"owner/public","visibility":"PUBLIC","isPrivate":false,"defaultBranchRef":{"name":"main"}}'
+public_repo='{"full_name":"owner/public","visibility":"PUBLIC","private":false,"default_branch":"main","owner":{"type":"Organization"}}'
 out="$(GH_REPO_JSON="$public_repo" \
     GH_VARIABLES_JSON='[{"name":"CI_RUNS_ON"}]' \
     GH_CI_RUNS_ON_JSON='{"name":"CI_RUNS_ON","value":"\"ubuntu-latest\""}' \
@@ -511,7 +586,7 @@ case "$out" in
 *) fail "failed public variable probes were reported as missing: ${out}" ;;
 esac
 
-internal_repo='{"nameWithOwner":"owner/internal","visibility":"INTERNAL","isPrivate":false,"defaultBranchRef":{"name":"main"}}'
+internal_repo='{"full_name":"owner/internal","visibility":"INTERNAL","private":false,"default_branch":"main","owner":{"type":"Organization"}}'
 out="$(GH_REPO_JSON="$internal_repo" \
     GH_VARIABLES_JSON='[{"name":"CI_RUNS_ON"}]' \
     GH_CI_RUNS_ON_JSON='{"name":"CI_RUNS_ON","value":"[\"self-hosted\",\"linux\"]"}' \
@@ -527,6 +602,20 @@ case "$out" in
 *"Project board writes"*"token has 'project'"*) ;;
 *) fail "expected a satisfied board-writes line, got: ${out}" ;;
 esac
+
+echo "==> REST-only setup completes and marks the GraphQL-only project surface unavailable"
+STUB_CALLS="${TMP}/rest-only-calls.txt"
+export STUB_CALLS
+: >"${STUB_CALLS}"
+out="$(GH_REPO_JSON="$public_repo" run_setup_section project)"
+case "$out" in
+*"GitHub Project linked"*"unavailable through the REST-only GitHub API"*) ;;
+*) fail "expected an explicit unavailable project line, got: ${out}" ;;
+esac
+if grep -E '(^| )(graphql|search/|repositories/)|--paginate| pr (list|view)| issue view| label list' "${STUB_CALLS}" >/dev/null; then
+    fail "REST-only status used a forbidden GitHub surface: $(tr '\n' ' ' <"${STUB_CALLS}")"
+fi
+unset STUB_CALLS
 
 echo "==> read-only 'read:project' is NOT reported as satisfied"
 # The state most easily mistaken for working: --show reads the card fine, so the
@@ -631,6 +720,9 @@ echo "==> the auth host comes from the repository, not a github.com assumption"
 STUB_HOSTS="${TMP}/hosts.txt"
 export STUB_HOSTS
 : >"${STUB_HOSTS}"
+STUB_CALLS="${TMP}/enterprise-calls.txt"
+export STUB_CALLS
+: >"${STUB_CALLS}"
 out="$(run_gh_section records-hostname "${ENTERPRISE}")"
 grep -qx 'ghe.example.com' "${STUB_HOSTS}" ||
     fail "probe used $(tr '\n' ' ' <"${STUB_HOSTS}") — expected the remote's host"
@@ -639,6 +731,28 @@ case "$out" in
 *"token has 'project'"*) ;;
 *) fail "expected the Enterprise section to render, got: ${out}" ;;
 esac
+# The REST reads must follow the same host: the endpoint stays repos/OWNER/REPO
+# (never repos/HOST/OWNER/REPO) and --hostname carries the Enterprise host, or
+# every read after the auth probe silently goes to github.com (challenge r1).
+grep -q '^api repos/owner/repo/pulls?state=open&sort=updated&direction=desc&per_page=10&page=1 --hostname ghe.example.com$' "${STUB_CALLS}" ||
+    fail "Enterprise REST reads did not carry the remote's host: $(grep '^api ' "${STUB_CALLS}" | tr '\n' ';')"
+grep -q '^api repos/ghe.example.com/' "${STUB_CALLS}" &&
+    fail "an Enterprise host leaked into the endpoint path: $(grep '^api ' "${STUB_CALLS}" | tr '\n' ';')"
+unset STUB_CALLS
+
+echo "==> a hyphenated owner and name still reach the open-PR read"
+# The two fixtures above are hyphen-free, which is why neither could see the
+# character-class defect: this read is the one that silently vanished.
+STUB_CALLS="${TMP}/hyphenated-calls.txt"
+export STUB_CALLS
+: >"${STUB_CALLS}"
+out="$(run_gh_section project "${HYPHENATED}")"
+case "$out" in
+*"not authenticated"*) fail "the hyphenated fixture's section did not render: ${out}" ;;
+esac
+grep -q '^api repos/my-org/harmon-init/pulls?state=open&sort=updated&direction=desc&per_page=10&page=1$' "${STUB_CALLS}" ||
+    fail "a hyphenated repository never reached the open-PR read: $(grep '^api ' "${STUB_CALLS}" | tr '\n' ';')"
+unset STUB_CALLS
 
 echo "==> GH_HOST still overrides the repository's remote"
 : >"${STUB_HOSTS}"
@@ -1495,5 +1609,125 @@ if [ -f "$hook" ] && [ -f "$settings" ]; then
 else
     echo "    (skipped: no devcontainer hook/settings in this profile)"
 fi
+
+# ── Completeness-required inventories ────────────────────────────────────────
+# status.sh walks labels, org issue types, and org issue fields with MAX_ITEMS=0,
+# so the GH_REST_MAX_PAGES ceiling — not the data — can be what ends the walk,
+# and the pages that did arrive are a PARTIAL list. Each of those three
+# renderers can print a definite verdict about what the repository lacks, and
+# printing it from a partial list is an absence nobody observed (challenge r2).
+# No fixture above ships the setup:github-* markers, so this one is the first to
+# render any of the three.
+mkdir -p "${TMP}/inventories/scripts/lib" "${TMP}/bin-node"
+cp "${status}" "${TMP}/inventories/scripts/status.sh"
+cp "${scopes_lib}" "${TMP}/inventories/scripts/gh-scopes.sh"
+cp "${output_lib}" "${TMP}/inventories/scripts/lib/output.sh"
+cp "${rest_lib}" "${TMP}/inventories/scripts/lib/gh-rest.sh"
+: >"${TMP}/inventories/scripts/setup-github-labels.sh"
+: >"${TMP}/inventories/scripts/setup-github-issue-types.sh"
+: >"${TMP}/inventories/scripts/setup-github-issue-fields.sh"
+# The labels renderer takes its WANT list from the label-registry renderer. Both
+# paths are markers it only tests with -f, and the node stub below supplies the
+# rendering, so these cases assert on how status.sh grades an inventory rather
+# than on whatever label-registry.json happens to hold today.
+: >"${TMP}/inventories/label-registry.json"
+: >"${TMP}/inventories/scripts/label-registry-render.mjs"
+{
+    echo '#!/usr/bin/env bash'
+    echo '[ "${1:-}" != --version ] || { echo v20.0.0; exit 0; }'
+    echo 'printf "%s\n" "area:ci|ci and automation" "type:bug|a defect"'
+} >"${TMP}/bin-node/node"
+chmod +x "${TMP}/bin-node/node"
+INVENTORIES="${TMP}/inventories/scripts/status.sh"
+inventory_repo='{"full_name":"owner/repo","visibility":"PUBLIC","private":false,"default_branch":"main","owner":{"type":"Organization"}}'
+
+# run_inventory_section — the setup audit on the fixture above, with the node
+# stub ahead of the shared bin so no other case inherits it.
+run_inventory_section() {
+    make_stub project
+    PATH="${TMP}/bin-node:${TMP}/bin:${PATH}" NO_COLOR=1 \
+        GH_REPO=owner/repo GH_REPO_JSON="${inventory_repo}" \
+        "${INVENTORIES}" setup 2>&1
+}
+
+echo "==> a read that trips the page ceiling reports unknown, never an absence"
+# GH_REST_MAX_PAGES=1 against full pages: page 1 arrives, page 2 is refused, and
+# the walk returns 4 holding one page of a list it never finished reading.
+out="$(GH_STUB_FULL_PAGES=1 GH_REST_MAX_PAGES=1 run_inventory_section)"
+for label in "Starter labels" "Org issue types" "Org issue fields"; do
+    case "$out" in
+    *"[?] ${label} - read truncated at the 1-page ceiling"*) ;;
+    *) fail "a truncated read was not reported as unknown for ${label}: ${out}" ;;
+    esac
+done
+case "$out" in
+*"run task setup:github-labels"*)
+    fail "a truncated label read still told the reader to provision labels: ${out}"
+    ;;
+esac
+case "$out" in
+*"run task setup:github-issue-types"*)
+    fail "a truncated issue-type read still told the reader to provision types: ${out}"
+    ;;
+esac
+case "$out" in
+*"run task setup:github-issue-fields"*)
+    fail "a truncated issue-field read still told the reader to provision fields: ${out}"
+    ;;
+esac
+
+echo "==> a complete, genuinely empty read still renders its existing verdict"
+# The other half of the invariant: completeness gates the claim, it does not
+# suppress it. An unprovisioned repository answers every page and answers it
+# empty, and that IS an observed absence. Labels are the one of the three whose
+# empty verdict is a definite negative; org issue types and fields have always
+# reported an empty read as unknown-needs-admin:org, and must keep saying that
+# rather than borrowing the truncation reason.
+out="$(run_inventory_section)"
+case "$out" in
+*"[ ] Starter labels - run task setup:github-labels"*) ;;
+*) fail "an empty label read lost its provisioning verdict: ${out}" ;;
+esac
+case "$out" in
+*"[?] Org issue types - needs admin:org"*) ;;
+*) fail "an empty issue-type read lost its existing verdict: ${out}" ;;
+esac
+case "$out" in
+*"[?] Org issue fields - needs admin:org (public preview)"*) ;;
+*) fail "an empty issue-field read lost its existing verdict: ${out}" ;;
+esac
+case "$out" in
+*"read truncated at the"*) fail "a complete read was reported as truncated: ${out}" ;;
+esac
+
+echo "==> both documented issue-field page shapes render the same field list"
+# The preview documents its page as the array wrapped under `issue_fields` AND as
+# the bare array. The reader required the wrapper, so the other shape was a
+# FAILED read — rendered `unknown`, which told an org that really does have the
+# field that nobody could see it (review r1). The shape is the only difference
+# between these two runs, so the verdict may not depend on it.
+for shape in wrapped bare; do
+    out="$(GH_STUB_ISSUE_FIELDS="$shape" run_inventory_section)"
+    case "$out" in
+    *"[x] Org issue fields - Product"*) ;;
+    *) fail "the ${shape} issue-field page shape did not render the field list: ${out}" ;;
+    esac
+done
+
+echo "==> a failed issue-field read still renders unknown, never an absence"
+# Completeness is what accepting a second shape must not cost. A read that FAILED
+# is still a list nobody saw, so it may borrow neither the provisioning verdict
+# nor the needs-admin one — the same invariant the truncation cases above assert,
+# on the other incomplete-read code path.
+out="$(GH_STUB_ISSUE_FIELDS=fail run_inventory_section)"
+case "$out" in
+*"[?] Org issue fields - read failed — inventory unchecked"*) ;;
+*) fail "a failed issue-field read was not reported as unknown: ${out}" ;;
+esac
+case "$out" in
+*"run task setup:github-issue-fields"*)
+    fail "a failed issue-field read still told the reader to provision fields: ${out}"
+    ;;
+esac
 
 echo "status.sh tests passed"
