@@ -1711,12 +1711,37 @@ if [ "$profile" = "full" ] || [ "$profile" = "meta" ]; then
     grep -q 'challenge:codex:' Taskfile.yml || err "challenge:codex task missing (use_codex_review=true)"
     grep -q 'codex:gate:enable:' Taskfile.yml || err "codex:gate:enable task missing (use_codex_review=true)"
     grep -q '"codex@openai-codex": true' .claude/settings.json || err ".claude/settings.json missing codex plugin enablement (use_codex_review=true)"
+    # The remote second-model guard ships with the rule it guards, and must pass
+    # against the RENDERED surfaces: the root copy scans harmon-init's own files,
+    # so a forbidden line added only under template/ first fails here.
+    if [ ! -x scripts/test-remote-codex-policy.sh ]; then
+        err "scripts/test-remote-codex-policy.sh missing or not executable (use_codex_review=true)"
+    elif ! ./scripts/test-remote-codex-policy.sh; then
+        err "rendered Codex policy guard fails"
+    fi
+    if have task; then
+        grep -qF './scripts/test-remote-codex-policy.sh' \
+            <<<"$(task --color=false --dry verify 2>&1 || true)" ||
+            err "task verify does not reach test:remote-codex-policy (use_codex_review=true)"
+    else
+        required task "remote Codex policy verify reachability" || fail=1
+    fi
+    if [ -f .github/workflows/build.yml ]; then
+        grep -qF 'task test:remote-codex-policy' .github/workflows/build.yml ||
+            err "required CI does not run test:remote-codex-policy (use_codex_review=true)"
+    fi
 else
     [ ! -f scripts/codex-review.sh ] || err "scripts/codex-review.sh rendered but use_codex_review is off"
     [ ! -f scripts/codex-gate.sh ] || err "scripts/codex-gate.sh rendered but use_codex_review is off"
     [ ! -f docs/guides/codex-review.md ] || err "docs/guides/codex-review.md rendered but use_codex_review is off"
     ! grep -q 'challenge:codex' Taskfile.yml || err "challenge:codex task rendered but use_codex_review is off"
     ! grep -q 'codex@openai-codex' .claude/settings.json || err "codex plugin enablement rendered but use_codex_review is off"
+    [ ! -f scripts/test-remote-codex-policy.sh ] || err "scripts/test-remote-codex-policy.sh rendered but use_codex_review is off"
+    ! grep -q 'test:remote-codex-policy:' Taskfile.yml || err "test:remote-codex-policy task rendered but use_codex_review is off"
+    if [ -f .github/workflows/build.yml ]; then
+        ! grep -qF 'task test:remote-codex-policy' .github/workflows/build.yml ||
+            err "CI runs test:remote-codex-policy but use_codex_review is off"
+    fi
 fi
 if [ "$profile" = "full" ]; then
     grep -Fq '@codex review' AGENTS.md || err "AGENTS missing explicit Codex shepherd trigger (use_codex_cloud_review=true)"
