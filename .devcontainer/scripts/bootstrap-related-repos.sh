@@ -34,6 +34,12 @@ set -euo pipefail
 # passes a checkout's parent ($HOME, /tmp, ...), so nothing outside that
 # subdirectory is ever removed. The (empty) subdirectory is left in place: removing
 # it would race a concurrent bootstrap between its mkdir and mktemp.
+# Trust boundary: the ownership/mode checks on that subdirectory are pathname-based,
+# so the TARGET directory must itself be private to the invoking user (a remote
+# platform's checkout parent is; the devcontainer's /workspaces is). In a shared,
+# world-writable, non-sticky parent another user could rename the subdirectory away
+# after the checks or pre-create a final target, which no check here can defend; the
+# script refuses only a staging directory that is not private.
 #
 # Failures (missing config, bad URL, network errors) log a warning and
 # continue — a failure never produces a non-zero exit, so it never causes

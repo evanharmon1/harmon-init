@@ -13,7 +13,8 @@
 #                           checkout (its PARENT directory), by the same script
 #                           the devcontainer uses
 #
-# Never prompts. A step whose tool is missing is reported as skipped; the exit
+# Never prompts (git: GIT_TERMINAL_PROMPT=0 and, unless GIT_SSH_COMMAND is already set,
+# ssh BatchMode; pnpm: CI=true). A step whose tool is missing is reported as skipped; the exit
 # status is non-zero only when a step that could run failed. A related repo that
 # cannot be cloned is a warning from the bootstrap script, not a failure.
 set -euo pipefail
@@ -25,6 +26,12 @@ cd "$ROOT"
 
 # Never prompt or hang on missing credentials or behind egress filters.
 export GIT_TERMINAL_PROMPT=0
+# GIT_TERMINAL_PROMPT does not govern ssh: an ssh remote (git@host:owner/repo.git)
+# could otherwise prompt for an unknown host key or a passphrase. BatchMode makes
+# ssh fail instead. A caller's own GIT_SSH_COMMAND is left alone.
+if [ -z "${GIT_SSH_COMMAND+x}" ]; then
+    export GIT_SSH_COMMAND="ssh -oBatchMode=yes"
+fi
 unset NODE_OPTIONS
 
 did=""
@@ -93,6 +100,8 @@ else
         echo "==> WARNING: ${PARENT} is not writable; related repos cannot be cloned there." >&2
     fi
     echo "==> Related repos are cloned into ${PARENT}"
+    echo "    (the target directory must be private to you: a remote platform's checkout parent is;"
+    echo "    the bootstrap refuses only a staging directory inside it that is not)"
     # The bootstrap exits 0 whatever it could not clone (it warns on stderr), so a
     # missing sibling never fails setup; only a crash of the script itself does.
     run_step "related repos -> ${PARENT}" bash "$BOOTSTRAP" "$PARENT"

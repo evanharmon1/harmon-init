@@ -10,6 +10,7 @@ cd "$(dirname "$0")/.."
 REPO_ROOT="$PWD"
 
 unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN GH_HOST
+unset GIT_SSH_COMMAND # a host may set one; the default (unset) case is what is under test
 unset NODE_OPTIONS GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS
 # Hermetic git: a platform may inject config (SSH->HTTPS rewrites, hooks paths).
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
@@ -89,6 +90,7 @@ EOF
 REAL_GIT="$(command -v git)"
 cat >"${STUB_BIN}/git" <<EOF
 #!/usr/bin/env bash
+[ -z "\${STUB_LOG_DIR:-}" ] || echo "\${GIT_SSH_COMMAND-unset}" >>"\${STUB_LOG_DIR}/git-ssh.log"
 for arg in "\$@"; do
     case "\$arg" in
     http://* | https://* | ssh://* | git@*)
@@ -169,6 +171,9 @@ all_output | grep -q 'WARNING: failed to clone test-owner/missing-repo' || fail 
 all_output | grep -q "Skipping existing-repo" || fail "the existing directory must be reported as skipped"
 all_output | grep -q "cloned into ${FIX_PARENT}" || fail "the task must print where it cloned"
 all_output | grep -q 'reference context' || fail "the task must say siblings are reference context"
+all_output | grep -q 'must be private to you' || fail "the task must state that the target directory must be private to the user"
+[ -s "${LOG_DIR}/git-ssh.log" ] || fail "expected git to be invoked with GIT_SSH_COMMAND recorded"
+[ "$(sort -u "${LOG_DIR}/git-ssh.log")" = "ssh -oBatchMode=yes" ] || fail "git must run with GIT_SSH_COMMAND=\"ssh -oBatchMode=yes\" (so an ssh remote cannot prompt), got: $(sort -u "${LOG_DIR}/git-ssh.log")"
 all_output | grep -q "session's own repository" || fail "the task must say siblings cannot be pushed from Claude Code on the web"
 
 echo "==> .git/hooks/pre-push is the lefthook shim"
@@ -214,6 +219,14 @@ RUN_DIR="${TMP}/linkdir/checkout-link" run_setup "${STUBS_PATH}"
 [ "$rc" -eq 0 ] || fail "symlinked run must succeed (rc=$rc): $(all_output)"
 [ -d "${FIX_PARENT}/sibling-a/.git" ] || fail "siblings must land beside the real checkout ($(ls -A "${FIX_PARENT}"))"
 [ -z "$(find "${TMP}/linkdir" -mindepth 1 -maxdepth 1 ! -name checkout-link -print -quit)" ] || fail "nothing may be cloned beside the symlink"
+
+# --- A caller's own GIT_SSH_COMMAND is left alone ---
+echo "==> an existing GIT_SSH_COMMAND is preserved"
+make_fixture sshcmd "test-owner/sibling-a"
+rm -f "${LOG_DIR}/git-ssh.log"
+run_setup "${STUBS_PATH}" "GIT_SSH_COMMAND=ssh -i /custom/key"
+[ "$rc" -eq 0 ] || fail "custom GIT_SSH_COMMAND run must succeed (rc=$rc): $(all_output)"
+[ "$(sort -u "${LOG_DIR}/git-ssh.log")" = "ssh -i /custom/key" ] || fail "a caller's GIT_SSH_COMMAND must not be overwritten, got: $(sort -u "${LOG_DIR}/git-ssh.log")"
 
 # --- A tool that is missing is skipped, not a failure ---
 echo "==> a missing lefthook is reported and the run continues"
