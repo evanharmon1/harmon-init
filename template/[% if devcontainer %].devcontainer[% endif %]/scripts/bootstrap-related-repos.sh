@@ -34,48 +34,6 @@ CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/../related-repos.txt}"
 WORKSPACES_DIR="${WORKSPACES_DIR:-/workspaces}"
 GIT_BASE_URL="${RELATED_REPOS_GIT_BASE_URL:-https://github.com/}"
 
-# --- Concurrency control ---
-# Avoid concurrent bootstrap runs (e.g. create + start or start + setup:gh-scopes)
-# attempting to clone into the same directory at once. Record the owner PID to
-# detect and reclaim stale locks after an unclean exit.
-LOCK_DIR="${BOOTSTRAP_LOCK_DIR:-${TMPDIR:-/tmp}/bootstrap-related-repos.lock}"
-
-acquire_lock() {
-    if mkdir "$LOCK_DIR" 2>/dev/null; then
-        echo "$$" >"$LOCK_DIR/pid"
-        return 0
-    fi
-
-    local lock_pid=""
-    if [ -f "$LOCK_DIR/pid" ]; then
-        lock_pid="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
-    fi
-
-    local is_stale=false
-    if [ -z "$lock_pid" ]; then
-        is_stale=true
-    elif ! kill -0 "$lock_pid" 2>/dev/null; then
-        is_stale=true
-    fi
-
-    if [ "$is_stale" = true ]; then
-        echo "==> Stale lock detected (PID: ${lock_pid:-none}); removing and retrying..."
-        rm -rf "$LOCK_DIR"
-        if mkdir "$LOCK_DIR" 2>/dev/null; then
-            echo "$$" >"$LOCK_DIR/pid"
-            return 0
-        fi
-    fi
-
-    return 1
-}
-
-if ! acquire_lock; then
-    echo "==> Another related-repo bootstrap is already in progress; exiting."
-    exit 0
-fi
-trap 'rm -rf "$LOCK_DIR" 2>/dev/null || true' EXIT INT TERM HUP
-
 # --- Pre-flight checks ---
 
 if [ ! -f "$CONFIG_FILE" ]; then
@@ -97,6 +55,15 @@ if [ ! -w "$WORKSPACES_DIR" ]; then
         sudo chown vscode:vscode "$WORKSPACES_DIR" 2>/dev/null || true
     fi
 fi
+
+# --- Clean up orphaned temporary directories ---
+# Remove leftover .bootstrap-* directories older than 60 minutes (from runs killed
+# mid-clone). Younger ones are left alone since concurrent runs may own them.
+while IFS= read -r orphan_dir; do
+    [ -n "$orphan_dir" ] || continue
+    echo "==> Removing orphaned temporary bootstrap directory: ${orphan_dir}"
+    rm -rf "$orphan_dir"
+done < <(find "$WORKSPACES_DIR" -maxdepth 1 -name '.bootstrap-*' -type d -mmin +60 2>/dev/null || true)
 
 # --- Parse and clone ---
 
@@ -216,13 +183,22 @@ while IFS= read -r raw_line || [ -n "$raw_line" ]; do
     fi
 
     if [ "$clone_rc" -eq 0 ]; then
-        if [ -e "$target" ]; then
-            echo "==> Skipping ${basename} (already present at ${target})"
+        # Atomically publish into the target path. GNU coreutils mv -T treats the
+        # destination as a normal file/directory target rather than a directory into
+        # which to move; it renames atomically when $target is absent and fails
+        # (without nesting or clobbering) if $target already exists as a non-empty
+        # directory or file. (Note: this script runs only in the Linux devcontainer).
+        set +e
+        mv -T "$clone_tmp" "$target" 2>/dev/null
+        publish_rc=$?
+        set -e
+
+        if [ "$publish_rc" -eq 0 ]; then
+            cloned=$((cloned + 1))
+        else
+            echo "==> Skipping ${basename} (destination ${target} appeared concurrently or already exists)"
             skipped=$((skipped + 1))
             rm -rf "$clone_tmp"
-        else
-            mv "$clone_tmp" "$target"
-            cloned=$((cloned + 1))
         fi
     else
         echo "==> WARNING: failed to clone ${target_spec} (exit ${clone_rc}); continuing." >&2

@@ -1270,11 +1270,11 @@ in-container git operations never depend on an SSH agent). They are:
 Both are safe to re-run: an already-cloned sibling is **never clobbered** —
 clone skips it, and start runs `git fetch` only (never pull / merge / checkout),
 so uncommitted work, local commits, and the checked-out branch stay put.
-A PID-checked lock prevents concurrent runs and automatically reclaims stale
-locks left by crashed or terminated containers. Each repo is cloned into a
-private temporary directory and moved into place only on success, ensuring a
-failed or interrupted clone never deletes a user's existing checkout. The list
-is preserved across `copier update` (an empty list is a no-op).
+Overlapping runs are safe because each clones into its own private temporary
+directory and only one can publish into place. Each repo is cloned into a
+private temporary directory and moved into place atomically on success,
+ensuring a failed or interrupted clone never deletes a user's existing checkout.
+The list is preserved across `copier update` (an empty list is a no-op).
 
 To let Claude read and search the cloned siblings, add them to
 `.claude/settings.json` in **two** places — `permissions.additionalDirectories`

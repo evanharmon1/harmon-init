@@ -57,6 +57,31 @@ exec "${REAL_GIT}" "\$@"
 EOF
 chmod +x "${BIN_DIR}/git"
 
+# --- Stub mv that can simulate concurrent target creation before publish ---
+cat <<EOF >"${BIN_DIR}/mv"
+#!/usr/bin/env bash
+if [ "\${STUB_MV:-}" = "concurrent-dir" ]; then
+    dest=""
+    for arg in "\$@"; do
+        dest="\$arg"
+    done
+    if [ -n "\$dest" ]; then
+        mkdir -p "\$dest"
+        echo "user-checkout-data" >"\${dest}/marker.txt"
+    fi
+elif [ "\${STUB_MV:-}" = "concurrent-file" ]; then
+    dest=""
+    for arg in "\$@"; do
+        dest="\$arg"
+    done
+    if [ -n "\$dest" ]; then
+        echo "user-plain-file" >"\$dest"
+    fi
+fi
+exec /usr/bin/mv "\$@"
+EOF
+chmod +x "${BIN_DIR}/mv"
+
 make_stub() {
     local scenario="$1"
     cat <<EOF >"${BIN_DIR}/gh"
@@ -134,7 +159,6 @@ EOF
 
 WORKSPACES="${TMP}/workspaces"
 CONFIG="${TMP}/related-repos.txt"
-LOCK_DIR="${TMP}/test.lock"
 
 run_sut() {
     local scenario="$1"
@@ -142,7 +166,6 @@ run_sut() {
     export PATH="${BIN_DIR}:${PATH}"
     export WORKSPACES_DIR="${WORKSPACES}"
     export CONFIG_FILE="${CONFIG}"
-    export BOOTSTRAP_LOCK_DIR="${LOCK_DIR}"
     export RELATED_REPOS_GIT_BASE_URL="file://${BARE_BASE}/"
     bash "${SUT}"
 }
@@ -195,16 +218,29 @@ run_sut auth-ok
 [ -f "${WORKSPACES}/test-repo/marker.txt" ] || fail "existing repository contents must not be clobbered"
 [ ! -d "${WORKSPACES}/test-repo/.git" ] || fail "skipped repo should not have been cloned over"
 
-# --- Test 5: Concurrent target creation does not delete user checkout ---
+# --- Test 5: Concurrent target creation does not delete user checkout or nest clone ---
 echo "==> concurrent target creation does not delete user checkout"
 rm -rf "${WORKSPACES}" && mkdir -p "${WORKSPACES}"
 echo "test-owner/test-repo" >"${CONFIG}"
 rc=0
-run_sut concurrent-user-create >/dev/null 2>&1 || rc=$?
+STUB_MV="concurrent-dir" run_sut auth-ok >/dev/null 2>&1 || rc=$?
 [ "$rc" -eq 0 ] || fail "script must exit 0 when target created concurrently"
-[ -f "${WORKSPACES}/test-repo/user-file.txt" ] || fail "user checkout was deleted by bootstrap cleanup"
+[ -f "${WORKSPACES}/test-repo/marker.txt" ] || fail "user checkout was deleted or clobbered by bootstrap"
+[ -z "$(find "${WORKSPACES}/test-repo" -mindepth 1 ! -name 'marker.txt' -print -quit 2>/dev/null)" ] || fail "clone was nested inside concurrently created directory"
+[ -z "$(find "${WORKSPACES}" -name '.bootstrap-*' -print -quit 2>/dev/null)" ] || fail "temporary clone directory was not cleaned up after publish skip"
 
-# --- Test 6: Branch suffix is preserved during fallback ---
+# --- Test 6: Plain file at target is left intact and publish fails safely ---
+echo "==> plain file at target is left intact"
+rm -rf "${WORKSPACES}" && mkdir -p "${WORKSPACES}"
+echo "test-owner/test-repo" >"${CONFIG}"
+rc=0
+STUB_MV="concurrent-file" run_sut auth-ok >/dev/null 2>&1 || rc=$?
+[ "$rc" -eq 0 ] || fail "script must exit 0 when target is a plain file"
+[ -f "${WORKSPACES}/test-repo" ] || fail "target plain file was removed"
+[ "$(cat "${WORKSPACES}/test-repo")" = "user-plain-file" ] || fail "target plain file was overwritten"
+[ -z "$(find "${WORKSPACES}" -name '.bootstrap-*' -print -quit 2>/dev/null)" ] || fail "temporary directory was not cleaned up when target is a plain file"
+
+# --- Test 7: Branch suffix is preserved during fallback ---
 echo "==> branch suffix is preserved during fallback"
 rm -rf "${WORKSPACES}" && mkdir -p "${WORKSPACES}"
 echo "test-owner/test-repo@feature-branch" >"${CONFIG}"
@@ -213,36 +249,21 @@ run_sut unauthenticated
 current_branch="$(git -C "${WORKSPACES}/test-repo" rev-parse --abbrev-ref HEAD)"
 [ "$current_branch" = "feature-branch" ] || fail "expected branch feature-branch, got $current_branch"
 
-# --- Test 7: Stale lock with dead PID is reclaimed ---
-echo "==> stale lock with dead PID is reclaimed"
+# --- Test 8: Orphaned temporary directories older than 60 minutes are reaped ---
+echo "==> orphaned temporary directories older than 60 minutes are reaped"
 rm -rf "${WORKSPACES}" && mkdir -p "${WORKSPACES}"
-echo "test-owner/test-repo" >"${CONFIG}"
-mkdir -p "${LOCK_DIR}"
-dead_pid=999999
-while kill -0 "$dead_pid" 2>/dev/null; do
-    dead_pid=$((dead_pid + 1))
-done
-echo "$dead_pid" >"${LOCK_DIR}/pid"
-rc=0
-run_sut auth-ok >/dev/null 2>&1 || rc=$?
-[ "$rc" -eq 0 ] || fail "run should reclaim stale lock and exit 0"
-[ -d "${WORKSPACES}/test-repo/.git" ] || fail "expected repo to be cloned after reclaiming stale lock"
-rm -rf "${LOCK_DIR}" 2>/dev/null || true
-
-# --- Test 8: Active lock with live PID exits 0 without cloning ---
-echo "==> active lock with live PID exits 0 without cloning"
-rm -rf "${WORKSPACES}" && mkdir -p "${WORKSPACES}"
-echo "test-owner/test-repo" >"${CONFIG}"
-mkdir -p "${LOCK_DIR}"
-echo "$$" >"${LOCK_DIR}/pid"
-rc=0
-out="$(run_sut auth-ok 2>&1)" || rc=$?
-rm -rf "${LOCK_DIR}" 2>/dev/null || true
-[ "$rc" -eq 0 ] || fail "active lock run must exit 0"
+: >"${CONFIG}"
+mkdir -p "${WORKSPACES}/.bootstrap-orphan-old.111111"
+mkdir -p "${WORKSPACES}/.bootstrap-orphan-fresh.222222"
+touch -t 202601010000 "${WORKSPACES}/.bootstrap-orphan-old.111111"
+touch "${WORKSPACES}/.bootstrap-orphan-fresh.222222"
+out="$(run_sut auth-ok 2>&1)"
+[ ! -d "${WORKSPACES}/.bootstrap-orphan-old.111111" ] || fail "old orphan directory should have been reaped"
+[ -d "${WORKSPACES}/.bootstrap-orphan-fresh.222222" ] || fail "fresh orphan directory must not be reaped"
 case "$out" in
-*"already in progress"*) ;;
-*) fail "expected lock rejection message, got: $out" ;;
+*"Removing orphaned temporary bootstrap directory"*) ;;
+*) fail "expected log message for reaped orphan directory, got: $out" ;;
 esac
-[ ! -e "${WORKSPACES}/test-repo" ] || fail "active lock run should not clone"
+rm -rf "${WORKSPACES}/.bootstrap-orphan-fresh.222222"
 
 echo "test-bootstrap-related-repos.sh passed"
