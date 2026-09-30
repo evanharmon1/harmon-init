@@ -2503,6 +2503,18 @@ fi
             if got.get(case) != want:
                 fail(f"{BOOTSTRAP}: posture-source case {case} gave {got.get(case)!r}, expected {want!r} — {why[case]}")
 
+    # The platform-VM seam is the ARGUMENT to both steps, and nothing else: the
+    # executed cases below prove what it does, this proves how it is asked for.
+    posture_block = bootstrap_text[pinstall_start:pinstall_end]
+    if 'bash "$autonomy" "$step" --platform-vm' not in posture_block or "for step in apply verify; do" not in posture_block:
+        fail(f"{BOOTSTRAP}: the posture step no longer runs agent-autonomy.sh apply and verify with --platform-vm")
+    for seam_file, seam_text in ((BOOTSTRAP, bootstrap_text), (AGENT_AUTONOMY, AGENT_AUTONOMY.read_text())):
+        if "AGENT_AUTONOMY_SKIP_HARNESS_REFUSAL" in seam_text:
+            fail(
+                f"{seam_file}: names AGENT_AUTONOMY_SKIP_HARNESS_REFUSAL — skipping harness refusal is the "
+                "--platform-vm argument, never an environment variable a repository could set"
+            )
+
     # What a run installs. The lifted block runs the REAL agent-autonomy.sh
     # against destinations under a temporary root, under a PATH built only of
     # symlinks to the tools it needs plus one planted refused harness. Never

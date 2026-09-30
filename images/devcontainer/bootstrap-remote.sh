@@ -606,7 +606,7 @@ done
 # above. They are installed and verified by the definition's own installer,
 # agent-autonomy.sh — the script the agent devcontainer runs — so there is one
 # install path rather than two that agree today. It is told four things, for
-# this one child process only:
+# this one child process only — three in its environment, one as an argument:
 #   FOREMAN_DEVCONTAINER=agent  the posture this machine runs under. The script
 #                               refuses to touch managed policy without it,
 #                               which is what keeps it off the bot and dev
@@ -619,8 +619,7 @@ done
 #                               than this ref's.
 #   AGENT_AUTONOMY_*_MANAGED    the destinations, stated rather than defaulted
 #                               so this file and that one cannot disagree.
-#   AGENT_AUTONOMY_SKIP_HARNESS_REFUSAL=1
-#                               install and verify the two files only. In the
+#   --platform-vm               install and verify the two files only. In the
 #                               agent devcontainer apply also makes every harness
 #                               the definition refuses non-executable; on a
 #                               platform's VM those executables are the
@@ -629,6 +628,10 @@ done
 #                               platform VM is a recorded delivery gap, with the
 #                               platform's own controls named per platform in
 #                               docs/architecture/remote-environments.md.
+#                               An argument, never an environment variable, so
+#                               no repository setting can switch it on in the
+#                               agent devcontainer, whose lifecycle never
+#                               passes it.
 #
 # A file already at a destination that is NOT the definition is left in place:
 # a platform may supply managed policy of its own, and replacing it could
@@ -727,8 +730,7 @@ install_agent_posture() {
             AGENT_AUTONOMY_CONFIG_DIR="$config_dir" \
             AGENT_AUTONOMY_CLAUDE_MANAGED="$claude_target" \
             AGENT_AUTONOMY_CODEX_MANAGED="$codex_target" \
-            AGENT_AUTONOMY_SKIP_HARNESS_REFUSAL=1 \
-            bash "$autonomy" "$step" ||
+            bash "$autonomy" "$step" --platform-vm ||
             die "agent-autonomy.sh ${step} failed — the agent posture is not in effect on this machine"
     done
     rm -rf "$scratch"

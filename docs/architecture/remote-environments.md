@@ -311,9 +311,11 @@ to.
   matches the definition byte for byte. A second run installs nothing.
 - **Harness executables are never modified.** In the agent devcontainer
   `apply` also makes every harness the definition refuses non-executable. On a
-  platform's VM those executables are the platform's, so the bootstrap passes
-  `AGENT_AUTONOMY_SKIP_HARNESS_REFUSAL=1` and `apply` and `verify` handle the
-  two files only, saying so in the log. Harness refusal on a platform VM is a
+  platform's VM those executables are the platform's, so the bootstrap runs
+  `apply --platform-vm` and `verify --platform-vm`, which handle the two files
+  only and say so in the log. It is an argument rather than an environment
+  variable so that nothing a repository sets can switch it on in the agent
+  devcontainer, whose lifecycle never passes it. Harness refusal on a platform VM is a
   recorded delivery gap, and the platform's own controls are named per
   platform [below](#how-each-platform-receives-the-agent-posture).
 - **A file already there is left in place.** `/etc/claude-code/` and
@@ -448,6 +450,7 @@ that needs a live session.
 | Claude Code on the web | The setup script's bootstrap writes `/etc/claude-code/managed-settings.json`, creating the directory | Whether a session honours a managed file written by the setup script is **unproven**: the VM had no `/etc/claude-code/`, the platform supplies its own settings overlay (`CCR_SETTINGS_JSON_OVERLAY`), and a server-side auto-mode classifier sits above whatever loads. If the file is ignored, the fallback is the repository's `.claude/settings.json` (single-repository sessions only) or the platform overlay, chosen by the live check. Harness refusal is not applied; what bounds the session instead is the platform's classifier and that the platform starts Claude Code, not another harness. No hooks | observed 2026-09-27 ([evidence](https://github.com/evanharmon1/harmon-init/issues/1404#issuecomment-5860625696)) for the VM; delivery expected, not yet observed — pending, criterion 2 ([guide](../guides/claude-code-web.md#the-agent-posture)) |
 | Codex cloud | The setup script's bootstrap writes `/etc/codex/managed_config.toml`, creating the directory | Whether the cloud agent reads a managed config written in the setup phase is **unproven**, and no page gives an environment a permission or approval configuration. The Codex configuration has no deny list to lose: it pins `workspace-write` and approval `never`, and the Claude deny list has no Codex equivalent. Harness refusal is not applied; the platform runs Codex and nothing else, inside its per-task isolation. No hooks | docs (legacy), 2026-09-29; delivery expected, not yet observed — pending, criterion 3 ([guide](../guides/codex-cloud.md#the-agent-posture-as-far-as-codex-cloud-can-express-it)) |
 | Sprites | The bootstrap, once [#1411](https://github.com/evanharmon1/harmon-init/issues/1411) builds the adapter; the machine is ours, so the files install as they do in the agent devcontainer | The adapter does not exist yet. Harness refusal is not applied by the bootstrap; whether the adapter adds it, or installs only the harnesses the posture supports, is #1411's to decide. No hooks | expected, not yet observed — pending, criterion 4 |
+| Self-hosted | The same bootstrap, once [#1410](https://github.com/evanharmon1/harmon-init/issues/1410) builds the adapter | The adapter does not exist yet. The same two gaps as every platform VM apply: harness refusal is not applied by the bootstrap, and a managed file already there is left in place unless `HARMON_AGENT_POSTURE_REPLACE=1`. No hooks | expected, not yet observed — pending, #1410 |
 | Agent devcontainer | Not the bootstrap: `.devcontainer/agent/post-create.sh` runs `agent-autonomy.sh apply` and `verify` against the image's baked copy of the same definition, and the image installs the hooks; `apply` there also refuses the harnesses the definition refuses | None recorded | the definition is tested by `scripts/test-agent-profile.sh`; in effect in a live session: pending, criterion 4 |
 
 **Pending observation (#1404 criterion 4):** on a Sprite, once #1411 exists, and
@@ -455,9 +458,8 @@ in the agent devcontainer, start `claude` and run `/permissions`: the agent deny
 rules must be listed. Then ask it to run `gh pr merge 1`, which must be refused
 without a prompt. Run `codex` and check that `/status` shows `workspace-write`
 and approval `never`. On the Sprite, `sudo FOREMAN_DEVCONTAINER=agent
-AGENT_AUTONOMY_CONFIG_DIR=<checkout>/.devcontainer/config/agent
-AGENT_AUTONOMY_SKIP_HARNESS_REFUSAL=1 bash
-<checkout>/.devcontainer/agent/agent-autonomy.sh verify` must pass; in the
+AGENT_AUTONOMY_CONFIG_DIR=<checkout>/.devcontainer/config/agent bash
+<checkout>/.devcontainer/agent/agent-autonomy.sh verify --platform-vm` must pass; in the
 devcontainer, `bash .devcontainer/agent/agent-autonomy.sh verify`. Record the
 date and the Claude Code and `codex` versions here.
 

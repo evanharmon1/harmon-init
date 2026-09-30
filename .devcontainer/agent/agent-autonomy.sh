@@ -43,11 +43,14 @@ fail() {
 # (images/devcontainer/bootstrap-remote.sh), which runs as root before any
 # agent session from a checkout or tag it fetched itself.
 #
-# AGENT_AUTONOMY_SKIP_HARNESS_REFUSAL=1 — the remote bootstrap's other seam:
-# apply and verify handle the two managed files only, and leave every harness
-# executable's mode alone. On a platform's VM those executables are the
-# platform's; refusing them there is a recorded delivery gap, not this
-# script's to do.
+# `apply --platform-vm` / `verify --platform-vm` — the remote bootstrap's
+# other seam: apply and verify handle the two managed files only, and leave
+# every harness executable's mode alone. On a platform's VM those executables
+# are the platform's; refusing them there is a recorded delivery gap, not this
+# script's to do. It is an ARGUMENT, never an environment variable, so nothing
+# a repository can set (a devcontainer.json containerEnv entry) can switch it
+# on for the agent devcontainer's own lifecycle, which never passes it.
+PLATFORM_VM=0
 BAKED_CONFIG_DIR=/usr/local/share/devcontainer-config/agent
 CONFIG_DIR="${AGENT_AUTONOMY_CONFIG_DIR:-}"
 if [ -z "$CONFIG_DIR" ]; then
@@ -213,8 +216,8 @@ cmd_apply() {
     fi
 
     local exe
-    if [ "${AGENT_AUTONOMY_SKIP_HARNESS_REFUSAL:-}" = "1" ]; then
-        echo "==> agent-autonomy: harness refusal skipped (AGENT_AUTONOMY_SKIP_HARNESS_REFUSAL=1); no executable was modified"
+    if [ "$PLATFORM_VM" = 1 ]; then
+        echo "==> agent-autonomy: harness refusal skipped (--platform-vm); no executable was modified"
     else
         while IFS= read -r exe; do
             [ -n "$exe" ] || continue
@@ -238,8 +241,8 @@ cmd_verify() {
         echo "agent-autonomy: verify failed — ${CODEX_MANAGED} does not match the shipped agent config ${CODEX_SRC}" >&2
         failed=1
     }
-    if [ "${AGENT_AUTONOMY_SKIP_HARNESS_REFUSAL:-}" = "1" ]; then
-        echo "==> agent-autonomy: refused-harness check skipped (AGENT_AUTONOMY_SKIP_HARNESS_REFUSAL=1)"
+    if [ "$PLATFORM_VM" = 1 ]; then
+        echo "==> agent-autonomy: refused-harness check skipped (--platform-vm)"
     else
         while IFS= read -r exe; do
             [ -n "$exe" ] || continue
@@ -286,12 +289,27 @@ cmd_coverage() {
     echo "==> agent-autonomy: coverage passed."
 }
 
-case "${1:-}" in
-apply) cmd_apply ;;
-verify) cmd_verify ;;
-coverage) cmd_coverage ;;
-*)
-    echo "Usage: $0 <apply|verify|coverage>" >&2
+usage() {
+    echo "Usage: $0 <apply|verify> [--platform-vm] | $0 coverage" >&2
     exit 2
+}
+
+subcommand="${1:-}"
+[ "$#" -eq 0 ] || shift
+case "$subcommand" in
+apply | verify)
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+        --platform-vm) PLATFORM_VM=1 ;;
+        *) usage ;;
+        esac
+        shift
+    done
+    "cmd_${subcommand}"
     ;;
+coverage)
+    [ "$#" -eq 0 ] || usage
+    cmd_coverage
+    ;;
+*) usage ;;
 esac
