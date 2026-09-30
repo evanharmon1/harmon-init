@@ -153,6 +153,19 @@ workspace its variables on the tabs/panes you create inside it) — and they
 are the right place for gate variables an orchestrator sets under explicit
 human authorization (never in the worker's prompt). When to reach for a worktree at all is [worktrees.md](worktrees.md).
 
+A worker in its own worktree can keep up with the default branch without a
+prompt: the `git-merge-guard` hook stays silent for one literal merge or pull
+at a time, run in that worktree — `git pull --no-rebase origin main --no-edit`,
+or `git fetch origin` and then `git merge origin/main --no-edit` as two Bash
+calls. Joined with `&&` they ask, as do `git merge --abort` and
+`git pull --rebase`. Both silent forms need a resolvable `origin/HEAD`
+(`git remote set-head origin --auto`). The hook also asks on text about git: a
+heredoc commit message or PR body that mentions `merge` or `pull`, or that
+has the word `git` followed by a backtick, quote, glob or expansion, and in an
+unattended run an ask is a denial — so a worker always writes commit messages
+and PR bodies to a file with the Write tool (not a Bash heredoc) and passes
+them with `git commit -F <file>` and `gh pr create --body-file <file>`.
+
 ## Fan-out: orchestrating many workers from one session
 
 A Claude Code (or any) session running inside a Herdr pane can act as an
@@ -212,8 +225,9 @@ Be precise about what the grant concedes, because it is not nothing. The
 launch line decides the *worker's* gate, and the lines this rule exists to
 permit start a child with no approval layer at all — so an orchestrator that
 can launch a worker can reach anything its own `ask` rules would have stopped
-(this repo asks on `gh pr merge`, `git merge`, `git push origin main`, and
-force-pushes) simply by asking a child to do it. That is accepted here for two
+(this repo asks on `gh pr merge`; on any `git merge`/`git pull` that the
+`git-merge-guard` hook cannot verify lands on a feature branch; on
+`git push origin main`; and on force-pushes) simply by asking a child to do it. That is accepted here for two
 reasons, neither of which is "it is safe": the orchestrator already holds
 `Bash(task:*)`, an unconditional grant over a checked-out Taskfile, so no new
 capability class is created; and the fan-out brief is trusted by construction

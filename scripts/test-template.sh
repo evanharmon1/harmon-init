@@ -1718,6 +1718,19 @@ else
     ! grep -q 'challenge:codex' Taskfile.yml || err "challenge:codex task rendered but use_codex_review is off"
     ! grep -q 'codex@openai-codex' .claude/settings.json || err "codex plugin enablement rendered but use_codex_review is off"
 fi
+# git-merge-guard replaces the `git merge` ask rules in every profile: the hook
+# must be registered on Bash (fail-closed fallback included) and those rules gone.
+[ -x .claude/hooks/git-merge-guard.py ] || err ".claude/hooks/git-merge-guard.py missing or not executable"
+[ -x scripts/test-git-merge-guard.sh ] || err "scripts/test-git-merge-guard.sh missing or not executable"
+jq -e '[.hooks.PreToolUse[]? | select(.matcher == "Bash") | .hooks[]?
+    | select(.type == "command"
+        and (.command | contains("\"$CLAUDE_PROJECT_DIR/.claude/hooks/git-merge-guard.py\""))
+        and (.command | contains("|| printf")))] | length == 1' .claude/settings.json >/dev/null ||
+    err ".claude/settings.json does not register git-merge-guard.py as a PreToolUse Bash hook with the ask fallback"
+jq -e '[.permissions.ask[] | select(test("^Bash\\(git merge"))] | length == 0' .claude/settings.json >/dev/null ||
+    err ".claude/settings.json still asks on every git merge (the guard replaces those rules)"
+jq -e '.permissions.ask | (index("Bash(gh pr merge)") != null) and (index("Bash(git push origin main)") != null) and (index("Bash(git push --force:*)") != null)' .claude/settings.json >/dev/null ||
+    err ".claude/settings.json lost the gh pr merge / push-to-main / force-push ask rules"
 if [ "$profile" = "full" ]; then
     grep -Fq '@codex review' AGENTS.md || err "AGENTS missing explicit Codex shepherd trigger (use_codex_cloud_review=true)"
     grep -Fq 'headRefOid' AGENTS.md || err "AGENTS missing current-head Codex shepherd contract (use_codex_cloud_review=true)"
