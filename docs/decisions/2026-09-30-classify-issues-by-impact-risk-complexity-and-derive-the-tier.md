@@ -6,16 +6,20 @@ Date: 2026-09-30
 
 Accepted
 
-Supersedes [ADR 0005](2026-08-07-unified-agent-vocabulary.md) D6 as far as
-it defines `suggest:<family>[:<model>]` (including ADR 0006's amendment of
-that half): `suggest:*` is retired, and the Tier derived below replaces it.
-The `claim:<family>[:<model>]` half of D6 stands unchanged.
+Supersedes every rule in [ADR 0005](2026-08-07-unified-agent-vocabulary.md)
+and [ADR 0006](2026-08-16-method-and-tier-axes.md) that defines, amends, or
+consumes `suggest:*` — among them ADR 0005 D6's suggestion half and ADR
+0006's D3 candidate narrowing, its D6 suggestion provenance, and its
+amendment to ADR 0005 D6: `suggest:*` is retired, and the Tier derived below
+replaces it. The `claim:<family>[:<model>]` half of ADR 0005 D6 stands
+unchanged.
 
 Amends [ADR 0006](2026-08-16-method-and-tier-axes.md) D5 (the resolution
 order) by inserting the pinned and derived Tier (D5 below), and
 [ADR 0007](2026-08-24-rigor-and-strategy-axes.md) D5 (which role a tier input
 targets) by adding the pinned Tier as another implementer-only input.
-Everything else in those two records stands.
+Everything else in those two records stands, apart from the `suggest:*`
+rules superseded above.
 
 The design record is the body of epic
 [#1444](https://github.com/evanharmon1/harmon-init/issues/1444) and its
