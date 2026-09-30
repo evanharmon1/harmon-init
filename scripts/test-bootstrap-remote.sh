@@ -2508,6 +2508,8 @@ fi
     posture_block = bootstrap_text[pinstall_start:pinstall_end]
     if 'bash "$autonomy" "$step" --platform-vm' not in posture_block or "for step in apply verify; do" not in posture_block:
         fail(f"{BOOTSTRAP}: the posture step no longer runs agent-autonomy.sh apply and verify with --platform-vm")
+    if "printf 'HARMON_BOOTSTRAP_POSTURE_GAPS=%s\\n' \"$posture_gaps\"" not in bootstrap_text:
+        fail(f"{BOOTSTRAP}: the run no longer reports HARMON_BOOTSTRAP_POSTURE_GAPS beside its install counters")
     for seam_file, seam_text in ((BOOTSTRAP, bootstrap_text), (AGENT_AUTONOMY, AGENT_AUTONOMY.read_text())):
         if "AGENT_AUTONOMY_SKIP_HARNESS_REFUSAL" in seam_text:
             fail(
@@ -2530,14 +2532,15 @@ HARMON_AGENT_CLAUDE_MANAGED="${HARNESS_DEST}/etc/claude-code/managed-settings.js
 HARMON_AGENT_CODEX_MANAGED="${HARNESS_DEST}/etc/codex/managed_config.toml"
 posture_root='@REPO@'
 ref=''
-""".replace("@REPO@", repo_root) + bootstrap_text[pinstall_start:pinstall_end] + "\ninstall_agent_posture\n"
+posture_scratch=''
+""".replace("@REPO@", repo_root) + bootstrap_text[pinstall_start:pinstall_end] + "\ninstall_agent_posture\nprintf 'POSTURE_GAPS=%s\\n' \"$posture_gaps\"\n"
     install_driver = r"""
 set -euo pipefail
 root="$(mktemp -d)"
 trap 'chmod -R u+rwx "$root" >/dev/null 2>&1 || true; rm -rf "$root"' EXIT
 printf '%s' '@WORKER_B64@' | base64 -d >"${root}/install.sh"
 mkdir -p "${root}/bin" "${root}/harness" "${root}/tmp"
-for tool in bash env jq cmp cp install mktemp rm dirname cut sort sed tr awk chmod mkdir cat readlink grep head; do
+for tool in bash env jq cmp cp install mktemp rm dirname cut sort sed tr awk chmod mkdir cat readlink grep head wc; do
     real="$(command -v "$tool")" || { printf 'MISSING_TOOL %s\n' "$tool"; exit 0; }
     ln -s "$real" "${root}/bin/${tool}"
 done
@@ -2572,6 +2575,7 @@ run() { # run <label> [NAME=VALUE] — one bootstrap posture step, with its own 
         sed 's/^/    /' "${root}/${_label}.err" >&2
     fi
     printf '%s_INSTALLS %s\n' "$_label" "$(grep -c '^install' "$HARNESS_LOG" || true)"
+    printf '%s_GAPS %s\n' "$_label" "$(sed -n 's/^POSTURE_GAPS=//p' "${root}/${_label}.out")"
 }
 same() { cmp -s "$1" "$2" && echo same || echo differs; }
 kept_count() { ls "${claude}".replaced-* 2>/dev/null | wc -l | tr -d ' '; }
@@ -2593,7 +2597,7 @@ run PLATFORM
 printf 'PLATFORM_CLAUDE %s\n' "$(grep -q '"platform": 1' "$claude" && echo left || echo replaced)"
 printf 'PLATFORM_KEPT %s\n' "$(kept_count)"
 printf 'PLATFORM_WARNED %s\n' "$(grep -q "WARNING: found ${claude} (sha256 [0-9a-f]\{64\}) that is not the agent posture — left in place" "${root}/PLATFORM.err" && echo named || echo silent)"
-printf 'PLATFORM_GAP %s\n' "$(grep -q "NOT applied for: ${claude} " "${root}/PLATFORM.err" && echo reported || echo silent)"
+printf 'PLATFORM_COVERED %s\n' "$(grep -qF "==> agent posture: verify covered ${codex} (not verified, left in place: ${claude})" "${root}/PLATFORM.out" && echo named || echo silent)"
 
 # The operator's explicit opt-in: replaced, the platform's bytes kept.
 run REPLACE HARMON_AGENT_POSTURE_REPLACE=1
@@ -2607,6 +2611,21 @@ run REPLACE_AGAIN HARMON_AGENT_POSTURE_REPLACE=1
 printf 'REPLACE_AGAIN_KEPT %s\n' "$(kept_count)"
 printf 'REPLACE_AGAIN_BOTH %s\n' "$(cat "${claude}".replaced-* 2>/dev/null | grep -c '"platform": [12]' || true)"
 
+# A platform's symlink to a target it has not populated yet: NOT absent, so
+# left in place like any other file found there — never replaced silently.
+rm -f "$claude"
+ln -s "${root}/not-yet/managed-settings.json" "$claude"
+run DANGLING
+printf 'DANGLING_LINK %s\n' "$([ -L "$claude" ] && [ ! -e "$claude" ] && echo kept || echo replaced)"
+printf 'DANGLING_WARNED %s\n' "$(grep -qF "WARNING: found ${claude} (a dangling symlink to ${root}/not-yet/managed-settings.json)" "${root}/DANGLING.err" && echo named || echo silent)"
+run DANGLING_REPLACE HARMON_AGENT_POSTURE_REPLACE=1
+printf 'DANGLING_REPLACE_CLAUDE %s\n' "$([ ! -L "$claude" ] && cmp -s "$claude" "$claude_def" && echo same || echo differs)"
+kept_links=0
+for kept in "${claude}".replaced-*; do
+    [ -L "$kept" ] && kept_links=$((kept_links + 1))
+done
+printf 'DANGLING_REPLACE_KEPT_LINK %s\n' "$kept_links"
+
 modes >"${root}/modes.after"
 printf 'MODES %s\n' "$(cmp -s "${root}/modes.before" "${root}/modes.after" && echo unchanged || echo changed)"
 """.replace("@WORKER_B64@", base64.b64encode(install_worker.encode()).decode()).replace("@REPO@", repo_root)
@@ -2615,49 +2634,77 @@ printf 'MODES %s\n' "$(cmp -s "${root}/modes.before" "${root}/modes.after" && ec
     expected = {
         "FRESH_EXIT": "0",
         "FRESH_INSTALLS": "2",
+        "FRESH_GAPS": "0",
         "FRESH_CLAUDE": "same",
         "FRESH_CODEX": "same",
         "FRESH_HARNESS": "untouched",
         "FRESH_SKIP_SAID": "said",
         "RERUN_EXIT": "0",
         "RERUN_INSTALLS": "0",
+        "RERUN_GAPS": "0",
         "PLATFORM_EXIT": "0",
         "PLATFORM_INSTALLS": "0",
+        "PLATFORM_GAPS": "1",
         "PLATFORM_CLAUDE": "left",
         "PLATFORM_KEPT": "0",
         "PLATFORM_WARNED": "named",
-        "PLATFORM_GAP": "reported",
+        "PLATFORM_COVERED": "named",
         "REPLACE_EXIT": "0",
         "REPLACE_INSTALLS": "1",
+        "REPLACE_GAPS": "0",
         "REPLACE_CLAUDE": "same",
         "REPLACE_KEPT": "1",
         "REPLACE_AGAIN_EXIT": "0",
         "REPLACE_AGAIN_KEPT": "2",
         "REPLACE_AGAIN_BOTH": "2",
+        "DANGLING_EXIT": "0",
+        "DANGLING_INSTALLS": "0",
+        "DANGLING_GAPS": "1",
+        "DANGLING_LINK": "kept",
+        "DANGLING_WARNED": "named",
+        "DANGLING_REPLACE_EXIT": "0",
+        "DANGLING_REPLACE_INSTALLS": "1",
+        "DANGLING_REPLACE_GAPS": "0",
+        "DANGLING_REPLACE_CLAUDE": "same",
+        "DANGLING_REPLACE_KEPT_LINK": "1",
         "MODES": "unchanged",
     }
     why = {
         "FRESH_EXIT": "a first run on a machine with no /etc/claude-code/ (Claude Code on the web) must succeed, creating it",
         "FRESH_INSTALLS": "each managed file written is one recorded install",
+        "FRESH_GAPS": "a run that wrote every destination reports no posture gap",
         "FRESH_CLAUDE": "the installed Claude settings must be the checked-in definition, byte for byte",
         "FRESH_CODEX": "the installed Codex config must be the checked-in definition, byte for byte",
         "FRESH_HARNESS": "on a platform VM the harness executables are the platform's: the bootstrap never changes their modes",
         "FRESH_SKIP_SAID": "skipping harness refusal is said out loud, so the gap is visible in the log",
         "RERUN_EXIT": "a second run must succeed",
         "RERUN_INSTALLS": "a second run installs nothing — the bootstrap's idempotence claim covers the posture too",
+        "RERUN_GAPS": "a clean re-run reports no posture gap",
         "PLATFORM_EXIT": "a platform-supplied file is a delivery gap, not a failed run",
         "PLATFORM_INSTALLS": "a file left in place is not an install",
+        "PLATFORM_GAPS": "a file left in place is COUNTED — HARMON_BOOTSTRAP_POSTURE_GAPS is what tells this run from a clean re-run",
         "PLATFORM_CLAUDE": "without the opt-in, a platform's managed file is never replaced — it may be the stronger control",
         "PLATFORM_KEPT": "nothing was replaced, so nothing is kept",
         "PLATFORM_WARNED": "the file found is reported, with its path and digest",
-        "PLATFORM_GAP": "the run says the posture is NOT applied for that file",
+        "PLATFORM_COVERED": "the step names what verify covered, and that the file left in place was not verified",
         "REPLACE_EXIT": "the opt-in replace must succeed",
         "REPLACE_INSTALLS": "only the replaced file counts as an install",
+        "REPLACE_GAPS": "a replaced file is no longer a gap",
         "REPLACE_CLAUDE": "under HARMON_AGENT_POSTURE_REPLACE=1 the platform's file is replaced by the definition",
         "REPLACE_KEPT": "the platform's bytes are kept beside it, never lost",
         "REPLACE_AGAIN_EXIT": "a second opt-in replace must succeed",
         "REPLACE_AGAIN_KEPT": "a second replacement keeps a SECOND copy — a kept copy is never overwritten",
         "REPLACE_AGAIN_BOTH": "both platform files survive, byte for byte",
+        "DANGLING_EXIT": "a dangling symlink at a destination is a gap, not a failed run",
+        "DANGLING_INSTALLS": "a dangling symlink is not absent: nothing is installed through or over it",
+        "DANGLING_GAPS": "a dangling symlink left in place is counted as a gap",
+        "DANGLING_LINK": "without the opt-in the platform's symlink is left exactly as found",
+        "DANGLING_WARNED": "the symlink and where it points are reported",
+        "DANGLING_REPLACE_EXIT": "the opt-in replace of a dangling symlink must succeed",
+        "DANGLING_REPLACE_INSTALLS": "the replaced symlink is one install",
+        "DANGLING_REPLACE_GAPS": "a replaced symlink is no longer a gap",
+        "DANGLING_REPLACE_CLAUDE": "the symlink is replaced by a regular file holding the definition",
+        "DANGLING_REPLACE_KEPT_LINK": "the kept copy is the symlink itself, not a failed copy of its missing target",
         "MODES": "the posture step changes no file mode outside its temporary destinations",
     }
     if run is None or run.returncode != 0 or any(k.startswith("MISSING_TOOL") for k in got):
@@ -2683,25 +2730,27 @@ trap 'rm -rf "$root"' EXIT
 printf '%s' '@WORKER_B64@' | base64 -d >"${root}/fn.sh"
 printf '#!/bin/sh\n' >"${root}/present.sh"
 chmod 0755 "${root}/present.sh"
-printf '{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"%s/present.sh --flag"},{"type":"command","command":"%s/absent-claude.sh"}]}]}}\n' "$root" "$root" >"${root}/claude.json"
-printf 'command = "%s/absent-codex.sh %s/present.sh"\n' "$root" "$root" >"${root}/codex.toml"
+printf '{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"%s/present.sh %s/absent-claude-arg.sh --flag"},{"type":"command","command":"%s/absent-claude.sh"}]}]}}\n' "$root" "$root" "$root" >"${root}/claude.json"
+printf 'command = "%s/absent-codex.sh %s/present.sh"\ncommand = "%s/present.sh %s/absent-codex-arg.sh"\n' "$root" "$root" "$root" "$root" >"${root}/codex.toml"
 HARMON_AGENT_CLAUDE_MANAGED="${root}/claude.json" HARMON_AGENT_CODEX_MANAGED="${root}/codex.toml" \
     bash -c '. "$1"; posture_missing_hooks' _ "${root}/fn.sh" | sed "s|^${root}/|MISSING |"
 """.replace(
         "@WORKER_B64@",
         base64.b64encode(
             (
-                "die() { exit 1; }\nwarn() { :; }\nharmon_changed() { :; }\n"
+                "die() { exit 1; }\nwarn() { :; }\nharmon_changed() { :; }\nposture_left_in_place=''\n"
                 + bootstrap_text[pinstall_start:pinstall_end]
             ).encode()
         ).decode(),
     )
     run = run_lifted(hooks_driver)
     missing = [] if run is None else sorted(run.stdout.split())
-    if run is None or run.returncode != 0 or missing != ["MISSING", "MISSING", "absent-claude.sh", "absent-codex.sh"]:
+    want_missing = ["MISSING"] * 4 + ["absent-claude-arg.sh", "absent-claude.sh", "absent-codex-arg.sh", "absent-codex.sh"]
+    if run is None or run.returncode != 0 or missing != want_missing:
         fail(
-            f"{BOOTSTRAP}: posture_missing_hooks reported {missing!r}, expected the two absent hook commands "
-            "and not the present one — the hook gap on a VM would go unreported "
+            f"{BOOTSTRAP}: posture_missing_hooks reported {missing!r}, expected every absent absolute path in a hook "
+            "command — first word AND argument (a Codex hook is a wrapper whose argument is the hook script) — and "
+            "not the present one; the hook gap on a VM would go unreported "
             f"(stderr: {'' if run is None else run.stderr.strip()[:300]!r})"
         )
 
