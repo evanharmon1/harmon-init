@@ -18,7 +18,8 @@
 # by `login` is one line, reported at the line it starts on.
 #
 # The allowlist excuses a line only when its COMPLETE text equals an entry for
-# that file — never a substring — so a prescriptive sentence that quotes an
+# that file — never a substring — compared in the normalised form (runs of
+# blanks collapsed) on both sides — so a prescriptive sentence that quotes an
 # excused phrase still fails, and editing an excused line re-opens it for review.
 #
 # Residual: this is a textual, best-effort control. It cannot catch every
@@ -102,15 +103,29 @@ ALLOW=(
     'docs/guides/devcontainers.md@@environment persists one (harmon-init#1406), lives in the `~/.codex` volume, not the@@where the persistent login lives: the volume, not the env-file'
 )
 
-# scan ROOT — print "file:line:text" for every unexplained hit under ROOT, then
-# "SCANNED n". A file that cannot be read prints "GUARD-ERROR ..." instead and
-# no SCANNED line. Always returns 0; the caller reads the output.
-scan() {
-    local root="$1" file line text entry efile etext tok allowed rc joined hits scanned=0
-    local files=() pattern_args=()
-    for tok in "${TOKENS[@]}"; do
-        pattern_args+=(-e "$tok")
+# norm TEXT — collapse every run of blanks (spaces and tabs) to one space, so
+# `codex  login` and a tab-separated form read like `codex login`. Tokens are
+# matched, and the allowlist compared, on this normalised form on both sides.
+norm() {
+    local s="${1//$'\t'/ }"
+    while [[ "$s" == *"  "* ]]; do
+        s="${s//  / }"
     done
+    printf '%s' "$s"
+}
+
+# scan ROOT — print "file:line:text" for every unexplained hit under ROOT (text
+# normalised, backslash-continued lines joined and numbered by the physical line
+# they start on), then "SCANNED n". A file that cannot be read prints
+# "GUARD-ERROR ..." instead and no SCANNED line. Always returns 0; the caller
+# reads the output.
+#
+# One grep classifies every file (text vs empty/binary) and one awk matches the
+# tokens across all the text files, so a scan costs two processes, not three per
+# file — the self-test runs it many times.
+scan() {
+    local root="$1" file line text entry efile etext tokstr rc hits allowed scanned=0
+    local files=() textfiles=()
     for d in "${SURFACE_DIRS[@]}"; do
         if [ -d "${root}/${d}" ]; then
             while IFS= read -r file; do
@@ -122,66 +137,77 @@ scan() {
         [ -f "${root}/${f}" ] && files+=("$f")
     done
     for file in "${files[@]+"${files[@]}"}"; do
-        # grep -I: 0 = has text, 1 = empty or binary (nothing to scan), 2+ = error.
-        rc=0
-        (cd "$root" && grep -Iq . -- "$file") 2>/dev/null || rc=$?
-        if [ "$rc" -ge 2 ]; then
+        if [ ! -r "${root}/${file}" ]; then
             echo "GUARD-ERROR guard could not read ${file}"
             return 0
         fi
         scanned=$((scanned + 1))
-        [ "$rc" -eq 0 ] || continue
-        # Join backslash-continued lines (whitespace collapsed on a joined line),
-        # numbering each logical line by the physical line it starts on.
-        if ! joined="$(cd "$root" && awk '
+    done
+    [ "$scanned" -gt 0 ] || {
+        echo "SCANNED 0"
+        return 0
+    }
+    # grep -Il: 0/1 = ran (1 = no text file at all), 2+ = error.
+    rc=0
+    hits="$(cd "$root" && grep -Il . -- "${files[@]}" 2>/dev/null)" || rc=$?
+    if [ "$rc" -ge 2 ]; then
+        echo "GUARD-ERROR guard could not read the surface files"
+        return 0
+    fi
+    if [ -n "$hits" ]; then
+        while IFS= read -r file; do
+            textfiles+=("./${file}")
+        done <<<"$hits"
+        tokstr="$(printf '%s\037' "${TOKENS[@]}")"
+        rc=0
+        hits="$(cd "$root" && awk -v tokens="$tokstr" '
+            function emit(f, s, t,   i) {
+                gsub(/[ \t]+/, " ", t)
+                for (i = 1; i <= n; i++) {
+                    if (T[i] != "" && index(t, T[i])) {
+                        print substr(f, 3) ":" s ":" t
+                        return
+                    }
+                }
+            }
+            BEGIN { n = split(tokens, T, "\037") }
+            FNR == 1 {
+                if (cont) { emit(pf, start, buf); buf = ""; cont = 0 }
+                pf = FILENAME
+            }
             {
                 line = $0
                 if (line ~ /\\$/) {
-                    if (!cont) start = NR
+                    if (!cont) start = FNR
                     sub(/\\$/, "", line)
                     buf = buf line
                     cont = 1
                     next
                 }
-                if (cont) {
-                    text = buf line
-                    gsub(/[ \t]+/, " ", text)
-                    print start ":" text
-                    buf = ""
-                    cont = 0
-                } else {
-                    print NR ":" line
-                }
+                if (cont) { emit(FILENAME, start, buf line); buf = ""; cont = 0 }
+                else emit(FILENAME, FNR, line)
             }
-            END {
-                if (cont) {
-                    gsub(/[ \t]+/, " ", buf)
-                    print start ":" buf
-                }
-            }' "./$file" 2>/dev/null)"; then
-            echo "GUARD-ERROR guard could not read ${file}"
+            END { if (cont) emit(pf, start, buf) }' "${textfiles[@]}" 2>/dev/null)" || rc=$?
+        if [ "$rc" -ne 0 ]; then
+            echo "GUARD-ERROR guard could not scan the surface files"
             return 0
         fi
-        rc=0
-        hits="$(printf '%s\n' "$joined" | grep -F "${pattern_args[@]}")" || rc=$?
-        if [ "$rc" -ge 2 ]; then
-            echo "GUARD-ERROR guard could not scan ${file}"
-            return 0
-        fi
-        [ "$rc" -eq 0 ] || continue
         while IFS= read -r line; do
+            [ -n "$line" ] || continue
+            file="${line%%:*}"
             text="${line#*:}"
+            text="${text#*:}"
             allowed=0
             for entry in "${ALLOW[@]+"${ALLOW[@]}"}"; do
                 efile="${entry%%@@*}"
                 [ "$efile" = "$file" ] || continue
                 etext="${entry#*@@}"
                 etext="${etext%%@@*}"
-                [ "$text" = "$etext" ] && allowed=1
+                [ "$text" = "$(norm "$etext")" ] && allowed=1
             done
-            [ "$allowed" -eq 1 ] || echo "${file}:${line}"
+            [ "$allowed" -eq 1 ] || echo "$line"
         done <<<"$hits"
-    done
+    fi
     echo "SCANNED ${scanned}"
 }
 
@@ -260,6 +286,15 @@ printf 'echo start\ncodex \\\n    login --device-flow\n' >"${FIX}/${planted}"
 expect_hit "a backslash-continued codex login" "$planted" "2:"
 rm -f "${FIX}/${planted}"
 
+# Runs of blanks do not hide the command: two spaces, and a tab, still match.
+printf 'echo start\ncodex  login\n' >"${FIX}/${planted}"
+expect_hit "codex login with two spaces" "$planted" "2:"
+printf 'echo start\ncodex\tlogin\n' >"${FIX}/${planted}"
+expect_hit "codex login separated by a tab" "$planted" "2:"
+printf 'echo start\nrun  --device-auth  now\n' >"${FIX}/${planted}"
+expect_hit "a token flanked by doubled blanks" "$planted" "2:"
+rm -f "${FIX}/${planted}"
+
 # The workflow directory is scanned as a whole, not one named file.
 mkdir -p "${FIX}/.github/workflows"
 printf 'name: x\nenv:\n  OPENAI_API_KEY: ${{ secrets.K }}\n' >"${FIX}/.github/workflows/planted.yml"
@@ -276,17 +311,31 @@ for f in docs/guides/codex-review.md docs/architecture/remote-environments.md AG
 done
 
 # An allowlisted line quoted inside a new prescriptive sentence must still fail:
-# the allowlist excuses complete lines, never the phrases inside them.
+# the allowlist excuses complete lines, never the phrases inside them. One
+# scratch copy carries every entry's phrase relocated into its own sentence
+# (distinct lines); one scan must report every one of them.
+FIX_FULL="${TMP}/fixture-relocated"
+cp -R "$FIX" "$FIX_FULL"
+relocated=0
 for entry in "${ALLOW[@]+"${ALLOW[@]}"}"; do
     efile="${entry%%@@*}"
     etext="${entry#*@@}"
     etext="${etext%%@@*}"
-    [ -f "${FIX}/${efile}" ] || continue
-    cp "${FIX}/${efile}" "${TMP}/saved"
-    printf '\nOn every ephemeral VM, do this first: %s\n' "$etext" >>"${FIX}/${efile}"
-    expect_hit "an excused line quoted in a prescriptive sentence in ${efile}" "$efile"
-    cp "${TMP}/saved" "${FIX}/${efile}"
+    [ -f "${FIX_FULL}/${efile}" ] || continue
+    relocated=$((relocated + 1))
+    printf '\nOn every ephemeral VM, do this first [relocated-%s]: %s\n' "$relocated" "$etext" >>"${FIX_FULL}/${efile}"
 done
+[ "$relocated" -gt 0 ] || fail "no allowlist entry could be relocated; the quoting case would pass vacuously"
+split_scan "$(scan "$FIX_FULL")"
+[ -z "$SCAN_ERR" ] || fail "${SCAN_ERR#GUARD-ERROR }"
+for ((i = 1; i <= relocated; i++)); do
+    case "$SCAN_HITS" in
+    *"[relocated-${i}]:"*) ;;
+    *) fail "an excused line relocated into a prescriptive sentence was not reported (entry ${i} of ${relocated})" ;;
+    esac
+done
+[ "$(printf '%s\n' "$SCAN_HITS" | grep -c 'relocated-')" -eq "$relocated" ] ||
+    fail "expected exactly ${relocated} relocated-phrase hits, got: ${SCAN_HITS}"
 fixture_hits
 [ -z "$SCAN_HITS" ] || fail "restoring the fixture must scan clean again"
 
