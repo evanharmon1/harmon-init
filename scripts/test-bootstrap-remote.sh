@@ -2328,6 +2328,314 @@ verdict DANGLING_SHIM
             if got != want:
                 fail(f"{INSTALL}/install-core.sh: pnpm shim case {case} {got!r}, expected {want!r} — {why[case]}")
 
+# ── 24. the agent posture comes from the ONE definition, and really lands ────
+# #1404: every remote environment runs under the agent posture (#1408), and the
+# bootstrap delivers it from .devcontainer/config/agent/ — the directory the
+# agent devcontainer installs from, and the only place the definition may live.
+# Three properties, each of which rots silently:
+#   (a) the fetch list names exactly what agent-autonomy.sh reads, so the
+#       standalone (--ref) form cannot fetch an incomplete posture;
+#   (b) nothing under images/devcontainer/ carries a copy of the definition or a
+#       second one — a copy installs perfectly and stops tracking the original
+#       the first time either is edited;
+#   (c) EXECUTED: a run installs files byte-identical to the checked-in ones,
+#       a second run installs nothing, a file a platform put there first is
+#       reported and kept rather than silently replaced, and the refused
+#       harnesses really are refused.
+AGENT_CONFIG = pathlib.Path(".devcontainer/config/agent")
+AGENT_AUTONOMY = pathlib.Path(".devcontainer/agent/agent-autonomy.sh")
+posture_listed = re.search(r'HARMON_AGENT_POSTURE_ASSETS="\n(.*?)\n"', bootstrap_text, re.S)
+definition_files = sorted(p for p in AGENT_CONFIG.glob("*") if p.is_file()) if AGENT_CONFIG.is_dir() else []
+if not posture_listed:
+    fail(f"{BOOTSTRAP}: HARMON_AGENT_POSTURE_ASSETS is missing or not a newline-separated literal")
+elif not definition_files or not AGENT_AUTONOMY.is_file():
+    fail(f"{AGENT_CONFIG}/ or {AGENT_AUTONOMY} is missing — there is no agent posture to deliver")
+else:
+    declared_posture = set(posture_listed.group(1).split())
+    want_posture = {str(AGENT_AUTONOMY)} | {str(p) for p in definition_files}
+    if declared_posture != want_posture:
+        fail(
+            f"{BOOTSTRAP}: HARMON_AGENT_POSTURE_ASSETS does not match {AGENT_CONFIG}/ plus {AGENT_AUTONOMY} — "
+            f"missing {sorted(want_posture - declared_posture)}, stale {sorted(declared_posture - want_posture)}"
+        )
+    autonomy_text = AGENT_AUTONOMY.read_text()
+    for p in definition_files:
+        if p.name not in autonomy_text:
+            fail(f"{AGENT_AUTONOMY} does not read {p.name}, which the bootstrap fetches for it")
+
+# (b) The detector is checked against the definition itself first: a detector
+# that flags nothing proves nothing, and this is the half a later edit to the
+# definition's shape would quietly disarm.
+claude_def = AGENT_CONFIG / "claude-managed-settings.json"
+claude_rules = []
+try:
+    claude_json = json.loads(claude_def.read_text())
+    claude_rules = list(claude_json["permissions"]["allow"]) + list(claude_json["permissions"]["deny"])
+except (OSError, ValueError, KeyError, TypeError) as exc:
+    fail(f"{claude_def}: could not read its permission rules ({exc}) — the copy check cannot run")
+definition_bytes = {}
+for p in definition_files:
+    definition_bytes[p] = p.read_bytes()
+
+
+def carries_definition(data):
+    """Why a file's bytes are a copy of the agent definition or a second one, or None."""
+    for src, raw in definition_bytes.items():
+        if data == raw:
+            return f"a byte-for-byte copy of {src}"
+    text = data.decode("utf-8", "replace")
+    if "allowManagedPermissionRulesOnly" in text:
+        return "a Claude Code managed-settings definition (allowManagedPermissionRulesOnly)"
+    carried = [r for r in claude_rules if json.dumps(r) in text]
+    if len(carried) >= 3:
+        return f"{len(carried)} of the agent definition's permission rules, quoted as JSON strings"
+    if re.search(r"^\s*approval_policy\s*=", text, re.M):
+        return "a Codex managed-config definition (an approval_policy assignment)"
+    if re.search(r'"refused"\s*:', text) and re.search(r'"supported"\s*:', text):
+        return "a harness table (supported and refused keys)"
+    return None
+
+
+for p, raw in definition_bytes.items():
+    if carries_definition(raw) is None:
+        fail(f"{p}: the copy detector does not flag the definition itself — the images/devcontainer/ scan below would pass anything")
+if claude_rules and carries_definition(("[\n  " + ",\n  ".join(json.dumps(r) for r in claude_rules[-4:]) + "\n]\n").encode()) is None:
+    fail(f"{claude_def}: the copy detector misses a partial copy (four permission rules pasted into a list)")
+for p in sorted(IMG.rglob("*")):
+    if not p.is_file():
+        continue
+    why_copy = carries_definition(p.read_bytes())
+    if why_copy:
+        fail(
+            f"{p}: carries {why_copy}. The agent posture's ONLY source is {AGENT_CONFIG}/; the bootstrap "
+            "installs it from the checkout or the tag it runs from, and a copy here would stop tracking "
+            "the definition the first time either is edited"
+        )
+
+# (c) Where the posture comes from, EXECUTED: the locate block is lifted and run
+# for both sources, with curl stubbed so the fetch is observable offline.
+plocate_start = bootstrap_text.find("# ---------- locate the agent posture ----------")
+plocate_end = bootstrap_text.find("# ---------- locale and PATH ----------")
+pinstall_start = bootstrap_text.find("# ---------- the agent posture ----------")
+pinstall_end = bootstrap_text.find("\ninstall_agent_posture\n")
+repo_root = os.getcwd()
+if min(plocate_start, plocate_end, pinstall_start, pinstall_end) < 0 or not posture_listed:
+    fail(f"{BOOTSTRAP}: the agent-posture blocks could not be lifted — where the posture comes from, and what it installs, would be untested")
+else:
+    posture_assets_literal = posture_listed.group(1)
+    locate_worker = r"""set -euo pipefail
+die() { printf 'bootstrap-remote: %s\n' "$*" >&2; exit 1; }
+HARMON_REPO_RAW='https://harmon-init.invalid'
+HARMON_AGENT_POSTURE_ASSETS='
+@ASSETS@
+'
+curl() {
+    _dest=""
+    _url=""
+    while [ "$#" -gt 0 ]; do
+        case "$1" in
+        -o) _dest="$2"; shift 2 ;;
+        https://*) _url="$1"; shift ;;
+        *) shift ;;
+        esac
+    done
+    printf '%s\n' "$_url" >>"${HARNESS_URLS}"
+    printf 'FETCHED\n' >"$_dest"
+}
+""".replace("@ASSETS@", posture_assets_literal) + bootstrap_text[plocate_start:plocate_end] + r"""
+printf 'POSTURE_ROOT %s\n' "$posture_root"
+"""
+    locate_driver = r"""
+set -euo pipefail
+root="$(mktemp -d)"
+trap 'rm -rf "$root"' EXIT
+printf '%s' '@WORKER_B64@' | base64 -d >"${root}/locate.sh"
+export HARNESS_URLS="${root}/urls"
+: >"$HARNESS_URLS"
+# The tag: every file from the tag's own URL, into the run's private directory.
+mkdir -p "${root}/fetched"
+out="$(assets_local=0 ref=v9.9.9 fetched_dir="${root}/fetched" bash -c '. "$1"' _ "${root}/locate.sh")"
+printf 'REF_ROOT %s\n' "$( [ "${out#POSTURE_ROOT }" = "${root}/fetched/posture" ] && echo private || echo "other:${out}")"
+printf 'REF_URLS %s\n' "$(sort "$HARNESS_URLS" | tr '\n' ' ')"
+printf 'REF_FILES %s\n' "$(cd "${root}/fetched/posture" && find . -type f | sort | tr '\n' ' ')"
+# The checkout: read in place, from the repository root two levels up.
+: >"$HARNESS_URLS"
+out="$(assets_local=1 ref= self_dir="@REPO@/images/devcontainer" fetched_dir= bash -c '. "$1"' _ "${root}/locate.sh")"
+printf 'CHECKOUT_ROOT %s\n' "$( [ "${out#POSTURE_ROOT }" = "@REPO@" ] && echo repo || echo "other:${out}")"
+printf 'CHECKOUT_FETCHES %s\n' "$(wc -l <"$HARNESS_URLS" | tr -d ' ')"
+# A checkout without the definition: a hard stop that names the fix.
+mkdir -p "${root}/bare/images/devcontainer"
+if assets_local=1 ref= self_dir="${root}/bare/images/devcontainer" fetched_dir= bash -c '. "$1"' _ "${root}/locate.sh" >/dev/null 2>"${root}/bare.err"; then
+    printf 'BARE ran\n'
+elif grep -q 'pass --ref' "${root}/bare.err"; then
+    printf 'BARE refused\n'
+else
+    printf 'BARE silent\n'
+fi
+""".replace("@WORKER_B64@", base64.b64encode(locate_worker.encode()).decode()).replace("@REPO@", repo_root)
+    run = run_lifted(locate_driver)
+    got = {} if run is None else dict(line.split(" ", 1) for line in run.stdout.splitlines() if " " in line)
+    assets_sorted = sorted(posture_assets_literal.split())
+    expected = {
+        "REF_ROOT": "private",
+        "REF_URLS": "".join(f"https://harmon-init.invalid/v9.9.9/{a} " for a in assets_sorted),
+        "REF_FILES": "".join(f"./{a} " for a in assets_sorted),
+        "CHECKOUT_ROOT": "repo",
+        "CHECKOUT_FETCHES": "0",
+        "BARE": "refused",
+    }
+    why = {
+        "REF_ROOT": "given a ref, the posture lands in the run's own private directory, as the install scripts do",
+        "REF_URLS": "given a ref, every posture file comes from THAT tag — the same trust root as the tiers",
+        "REF_FILES": "the fetched set is the declared set, nothing missing",
+        "CHECKOUT_ROOT": "from a checkout, the definition is read in place at the repository root, never copied",
+        "CHECKOUT_FETCHES": "from a checkout nothing is fetched: one source per run, never a mix",
+        "BARE": "a checkout without the definition stops the run and names --ref, rather than installing no posture",
+    }
+    if run is None or run.returncode != 0:
+        fail(
+            f"{BOOTSTRAP}: the posture-source cases could not run "
+            f"({'timed out' if run is None else f'exit {run.returncode}'}) — "
+            f"stderr: {'' if run is None else run.stderr.strip()[:300]!r}"
+        )
+    else:
+        for case, want in expected.items():
+            if got.get(case) != want:
+                fail(f"{BOOTSTRAP}: posture-source case {case} gave {got.get(case)!r}, expected {want!r} — {why[case]}")
+
+    # What a run installs. The lifted block runs the REAL agent-autonomy.sh
+    # against destinations under a temporary root, under a PATH built only of
+    # symlinks to the tools it needs plus one planted refused harness. Never
+    # the ambient PATH: apply makes every refused harness it can resolve
+    # non-executable, and a developer machine carries real ones (opencode, agy).
+    install_worker = r"""set -euo pipefail
+die() { printf 'bootstrap-remote: %s\n' "$*" >&2; exit 1; }
+warn() { printf 'bootstrap-remote: WARNING: %s\n' "$*" >&2; }
+harmon_changed() { printf '==> %s\n' "$*"; printf 'install\t%s\n' "$*" >>"$HARNESS_LOG"; }
+HARMON_AGENT_CLAUDE_MANAGED="${HARNESS_DEST}/etc/claude-code/managed-settings.json"
+HARMON_AGENT_CODEX_MANAGED="${HARNESS_DEST}/etc/codex/managed_config.toml"
+posture_root='@REPO@'
+ref=''
+""".replace("@REPO@", repo_root) + bootstrap_text[pinstall_start:pinstall_end] + "\ninstall_agent_posture\n"
+    install_driver = r"""
+set -euo pipefail
+root="$(mktemp -d)"
+trap 'chmod -R u+rwx "$root" >/dev/null 2>&1 || true; rm -rf "$root"' EXIT
+printf '%s' '@WORKER_B64@' | base64 -d >"${root}/install.sh"
+mkdir -p "${root}/bin" "${root}/harness"
+for tool in bash env jq sha256sum cmp cp install date dirname cut sort sed tr awk chmod mkdir cat readlink grep head; do
+    real="$(command -v "$tool")" || { printf 'MISSING_TOOL %s\n' "$tool"; exit 0; }
+    ln -s "$real" "${root}/bin/${tool}"
+done
+printf '#!/bin/sh\nexit 0\n' >"${root}/harness/copilot"
+chmod 0755 "${root}/harness/copilot"
+run() { # run <label> — one bootstrap posture step, with its own record
+    export HARNESS_LOG="${root}/$1.log" HARNESS_DEST="${root}/dest"
+    : >"$HARNESS_LOG"
+    if env -i HARNESS_LOG="$HARNESS_LOG" HARNESS_DEST="$HARNESS_DEST" HOME="$root" \
+        PATH="${root}/bin:${root}/harness" "${root}/bin/bash" "${root}/install.sh" \
+        >"${root}/$1.out" 2>"${root}/$1.err"; then
+        printf '%s_EXIT 0\n' "$1"
+    else
+        printf '%s_EXIT failed\n' "$1"
+        sed 's/^/    /' "${root}/$1.err" >&2
+    fi
+    printf '%s_INSTALLS %s\n' "$1" "$(grep -c '^install' "$HARNESS_LOG" || true)"
+}
+same() { cmp -s "$1" "$2" && echo same || echo differs; }
+claude="${root}/dest/etc/claude-code/managed-settings.json"
+codex="${root}/dest/etc/codex/managed_config.toml"
+
+run FRESH
+printf 'FRESH_CLAUDE %s\n' "$(same "$claude" '@REPO@/.devcontainer/config/agent/claude-managed-settings.json')"
+printf 'FRESH_CODEX %s\n' "$(same "$codex" '@REPO@/.devcontainer/config/agent/codex-managed-config.toml')"
+printf 'FRESH_REFUSED %s\n' "$([ -x "${root}/harness/copilot" ] && echo executable || echo refused)"
+
+run RERUN
+
+# A platform put its own managed settings there first.
+printf '{"platform": true}\n' >"$claude"
+run PLATFORM
+printf 'PLATFORM_CLAUDE %s\n' "$(same "$claude" '@REPO@/.devcontainer/config/agent/claude-managed-settings.json')"
+kept="$(ls "${claude}".replaced-* 2>/dev/null | head -1 || true)"
+printf 'PLATFORM_KEPT %s\n' "$([ -n "$kept" ] && grep -q '"platform": true' "$kept" && echo kept || echo lost)"
+printf 'PLATFORM_WARNED %s\n' "$(grep -q "WARNING: found ${claude} (sha256 " "${root}/PLATFORM.err" && echo named || echo silent)"
+""".replace("@WORKER_B64@", base64.b64encode(install_worker.encode()).decode()).replace("@REPO@", repo_root)
+    run = run_lifted(install_driver)
+    got = {} if run is None else dict(line.split(" ", 1) for line in run.stdout.splitlines() if " " in line)
+    expected = {
+        "FRESH_EXIT": "0",
+        "FRESH_INSTALLS": "2",
+        "FRESH_CLAUDE": "same",
+        "FRESH_CODEX": "same",
+        "FRESH_REFUSED": "refused",
+        "RERUN_EXIT": "0",
+        "RERUN_INSTALLS": "0",
+        "PLATFORM_EXIT": "0",
+        "PLATFORM_INSTALLS": "1",
+        "PLATFORM_CLAUDE": "same",
+        "PLATFORM_KEPT": "kept",
+        "PLATFORM_WARNED": "named",
+    }
+    why = {
+        "FRESH_EXIT": "a first run on a machine with no /etc/claude-code/ (Claude Code on the web) must succeed, creating it",
+        "FRESH_INSTALLS": "each managed file written is one recorded install",
+        "FRESH_CLAUDE": "the installed Claude settings must be the checked-in definition, byte for byte",
+        "FRESH_CODEX": "the installed Codex config must be the checked-in definition, byte for byte",
+        "FRESH_REFUSED": "a harness the definition refuses must not stay executable",
+        "RERUN_EXIT": "a second run must succeed",
+        "RERUN_INSTALLS": "a second run installs nothing — the bootstrap's idempotence claim covers the posture too",
+        "PLATFORM_EXIT": "a platform-supplied file must not fail the run",
+        "PLATFORM_INSTALLS": "only the replaced file counts as an install",
+        "PLATFORM_CLAUDE": "the platform's file is replaced by the definition",
+        "PLATFORM_KEPT": "the platform's bytes are kept beside it, never lost",
+        "PLATFORM_WARNED": "the replacement is reported, naming the file and its digest — never silent",
+    }
+    if run is None or run.returncode != 0 or any(k.startswith("MISSING_TOOL") for k in got):
+        fail(
+            f"{BOOTSTRAP}: the posture-install cases could not run "
+            f"({'timed out' if run is None else f'exit {run.returncode}'}; {got.get('MISSING_TOOL', '')}) — "
+            f"stderr: {'' if run is None else run.stderr.strip()[:300]!r}"
+        )
+    else:
+        for case, want in expected.items():
+            if got.get(case) != want:
+                fail(
+                    f"{BOOTSTRAP}: posture-install case {case} gave {got.get(case)!r}, expected {want!r} — {why[case]}"
+                    + (f" — stderr: {run.stderr.strip()[:300]!r}" if run.stderr.strip() else "")
+                )
+
+    # The hook-gap report: a hook command that does not exist here is named, one
+    # that does is not. Lifted from the same block, against planted files.
+    hooks_driver = r"""
+set -euo pipefail
+root="$(mktemp -d)"
+trap 'rm -rf "$root"' EXIT
+printf '%s' '@WORKER_B64@' | base64 -d >"${root}/fn.sh"
+printf '#!/bin/sh\n' >"${root}/present.sh"
+chmod 0755 "${root}/present.sh"
+printf '{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"%s/present.sh --flag"},{"type":"command","command":"%s/absent-claude.sh"}]}]}}\n' "$root" "$root" >"${root}/claude.json"
+printf 'command = "%s/absent-codex.sh %s/present.sh"\n' "$root" "$root" >"${root}/codex.toml"
+HARMON_AGENT_CLAUDE_MANAGED="${root}/claude.json" HARMON_AGENT_CODEX_MANAGED="${root}/codex.toml" \
+    bash -c '. "$1"; posture_missing_hooks' _ "${root}/fn.sh" | sed "s|^${root}/|MISSING |"
+""".replace(
+        "@WORKER_B64@",
+        base64.b64encode(
+            (
+                "die() { exit 1; }\nwarn() { :; }\nharmon_changed() { :; }\n"
+                + bootstrap_text[pinstall_start:pinstall_end]
+            ).encode()
+        ).decode(),
+    )
+    run = run_lifted(hooks_driver)
+    missing = [] if run is None else sorted(run.stdout.split())
+    if run is None or run.returncode != 0 or missing != ["MISSING", "MISSING", "absent-claude.sh", "absent-codex.sh"]:
+        fail(
+            f"{BOOTSTRAP}: posture_missing_hooks reported {missing!r}, expected the two absent hook commands "
+            "and not the present one — the hook gap on a VM would go unreported "
+            f"(stderr: {'' if run is None else run.stderr.strip()[:300]!r})"
+        )
+
 for e in errors:
     print(f"FAIL: {e}", file=sys.stderr)
 if errors:
@@ -2355,4 +2663,5 @@ print("bootstrap-remote OK: a staging file whose writer is gone is reaped, a liv
 print("bootstrap-remote OK: the manifest's own staged write reaps by liveness too, and a failed publish fails the run without leaving litter")
 print("bootstrap-remote OK: a version probe that prints the pin and exits nonzero is treated as needing the install")
 print("bootstrap-remote OK: the corepack step recreates the pnpm shim unless the file at its path really is corepack's launcher, at either edge of its bounded read, and reports a pnpm that shadows it on PATH")
+print("bootstrap-remote OK: the agent posture is fetched with the tiers' own source, carried as no copy under images/devcontainer/, installed byte-identical, idempotent, and never replaces a platform file silently")
 PY
