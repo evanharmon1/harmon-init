@@ -190,10 +190,12 @@ usage: bootstrap-remote.sh [--tiers core,agents,browsers] [--ref vX.Y.Z] [--help
 Every run, whatever the tiers, installs the agent posture from the same
 checkout or tag: .devcontainer/config/agent/ to
 /etc/claude-code/managed-settings.json and /etc/codex/managed_config.toml,
-through .devcontainer/agent/agent-autonomy.sh. A different file already at
-either path is reported and left in place (the posture is then not applied
-for it) unless HARMON_AGENT_POSTURE_REPLACE=1, which replaces it and keeps
-the previous file beside it. Harness executables are never modified.
+through .devcontainer/agent/agent-autonomy.sh. Anything already at either
+path that is not the definition — a file, or a symlink, dangling or not — is
+left in place, reported, and counted in HARMON_BOOTSTRAP_POSTURE_GAPS (the
+posture is then not applied for it) unless HARMON_AGENT_POSTURE_REPLACE=1,
+which replaces it and keeps the previous entry beside it. Harness executables
+are never modified.
 
 Environment: HARMON_PREFIX (default /usr/local), HARMON_BOOTSTRAP_TIERS,
              HARMON_INIT_REF, HARMON_ALLOW_UNPINNED_REF,
@@ -659,14 +661,20 @@ posture_digest() {
 }
 
 # posture_describe <path> — what was found there: its SHA-256, or, for a
-# symlink, where it points and whether that target exists.
+# symlink, where it points and whether that target exists. Only a regular file
+# has a digest; anything else (a directory, a device) says so rather than
+# printing an empty one.
 posture_describe() {
     if [ -L "$1" ] && [ ! -e "$1" ]; then
         printf 'a dangling symlink to %s' "$(readlink "$1")"
-    elif [ -L "$1" ]; then
+    elif [ -L "$1" ] && [ -f "$1" ]; then
         printf 'a symlink to %s, sha256 %s' "$(readlink "$1")" "$(posture_digest "$1")"
-    else
+    elif [ -L "$1" ]; then
+        printf 'a symlink to %s, not a regular file' "$(readlink "$1")"
+    elif [ -f "$1" ]; then
         printf 'sha256 %s' "$(posture_digest "$1")"
+    else
+        printf 'not a regular file'
     fi
 }
 
@@ -730,7 +738,7 @@ posture_missing_hooks() {
         esac
         case " ${posture_left_in_place} " in
         *" ${HARMON_AGENT_CODEX_MANAGED} "*) ;;
-        *) sed -n 's/^command = "\([^"]*\)".*/\1/p' "$HARMON_AGENT_CODEX_MANAGED" | tr ' ' '\n' | sed -n '/^\//p' ;;
+        *) sed -n 's/^[[:space:]]*command[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$HARMON_AGENT_CODEX_MANAGED" | tr ' ' '\n' | sed -n '/^\//p' ;;
         esac
     } | sort -u | while IFS= read -r cmd; do
         [ -n "$cmd" ] && [ ! -x "$cmd" ] && printf '%s\n' "$cmd"
@@ -745,6 +753,9 @@ install_agent_posture() {
     printf '\n==> agent posture (from %s)\n' "${ref:-the checkout at ${posture_root}}"
     # Global, so cleanup() removes it on every exit, a die in the loop included.
     posture_scratch="$(mktemp -d)"
+    # Stated rather than inherited, as for fetched_dir: root's installer writes
+    # the decoy destinations here.
+    chmod 0700 "$posture_scratch"
     claude_target="$(prepare_posture_dest "${config_dir}/claude-managed-settings.json" \
         "$HARMON_AGENT_CLAUDE_MANAGED" "${posture_scratch}/managed-settings.json")"
     codex_target="$(prepare_posture_dest "${config_dir}/codex-managed-config.toml" \

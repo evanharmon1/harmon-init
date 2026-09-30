@@ -275,7 +275,10 @@ converge on the archive: every run refreshes the index and lets apt upgrade
 them, and an upgrade is **reported as a change, never hidden**. That is
 asserted as counts, not as an exit status — it prints
 `HARMON_BOOTSTRAP_NEW_INSTALLS=<n>` and `HARMON_BOOTSTRAP_UPGRADES=<n>` (and
-their sum as `HARMON_BOOTSTRAP_CHANGES`), and CI requires `NEW_INSTALLS=0` plus
+their sum as `HARMON_BOOTSTRAP_CHANGES`), plus
+`HARMON_BOOTSTRAP_POSTURE_GAPS=<n>`, the managed paths the agent posture was
+not applied to ([below](#the-agent-posture)) — a gap, not a change, so it is
+outside that sum. CI requires `NEW_INSTALLS=0` plus
 a byte-identical manifest on the second run, because a script that
 re-downloaded and re-installed everything also exits 0.
 
@@ -319,13 +322,16 @@ to.
   recorded delivery gap, and the platform's own controls are named per
   platform [below](#how-each-platform-receives-the-agent-posture).
 - **A file already there is left in place.** `/etc/claude-code/` and
-  `/etc/codex/` are created when missing. A different file already at either
-  path may be the platform's own managed policy, possibly a stronger control
-  than ours, so by default it is **not replaced**: the run reports its path and
-  SHA-256, says the agent posture is **not applied** for that file, and still
-  completes. That is a delivery gap for that machine, not a failed run.
+  `/etc/codex/` are created when missing. Anything already at either path that
+  is not the definition — a file, or a symlink, dangling or not — may be the
+  platform's own managed policy, possibly a stronger control than ours, so by
+  default it is **not replaced**: the run reports its path and what it is (its
+  SHA-256, or where a symlink points), says the agent posture is **not
+  applied** for it, counts it in `HARMON_BOOTSTRAP_POSTURE_GAPS`, and still
+  completes. That is a delivery gap for that machine, not a failed run; an
+  adapter that must know asserts on the counter, never on the warning text.
   `HARMON_AGENT_POSTURE_REPLACE=1` is the operator's explicit opt-in to replace
-  it; the previous file is then kept beside it as
+  it; the previous entry is then kept beside it as
   `<path>.replaced-<unique suffix>`, a name never used before, so a second
   replacement cannot overwrite the first kept copy. The variable is forwarded
   through the `sudo` re-exec like the other `HARMON_*` settings.

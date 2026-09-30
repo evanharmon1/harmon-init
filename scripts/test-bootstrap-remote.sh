@@ -2731,7 +2731,9 @@ printf '%s' '@WORKER_B64@' | base64 -d >"${root}/fn.sh"
 printf '#!/bin/sh\n' >"${root}/present.sh"
 chmod 0755 "${root}/present.sh"
 printf '{"hooks":{"PreToolUse":[{"hooks":[{"type":"command","command":"%s/present.sh %s/absent-claude-arg.sh --flag"},{"type":"command","command":"%s/absent-claude.sh"}]}]}}\n' "$root" "$root" "$root" >"${root}/claude.json"
-printf 'command = "%s/absent-codex.sh %s/present.sh"\ncommand = "%s/present.sh %s/absent-codex-arg.sh"\n' "$root" "$root" "$root" "$root" >"${root}/codex.toml"
+# The second command is indented and spaced as a TOML writer may emit it: the
+# scan must not be anchored to column 0.
+printf 'command = "%s/absent-codex.sh %s/present.sh"\n  command  =  "%s/present.sh %s/absent-codex-arg.sh"\n' "$root" "$root" "$root" "$root" >"${root}/codex.toml"
 HARMON_AGENT_CLAUDE_MANAGED="${root}/claude.json" HARMON_AGENT_CODEX_MANAGED="${root}/codex.toml" \
     bash -c '. "$1"; posture_missing_hooks' _ "${root}/fn.sh" | sed "s|^${root}/|MISSING |"
 """.replace(
