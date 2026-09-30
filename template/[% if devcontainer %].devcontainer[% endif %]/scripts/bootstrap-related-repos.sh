@@ -149,8 +149,9 @@ fi
 
 # --- Dedicated staging directory ---
 # All temporary clone directories (and the sweeps below) live here and nowhere else
-# under the target. A symlink or non-directory at this path is never followed or
-# replaced: skip rather than sweep or clone through it.
+# under the target. A symlink, a non-directory, a directory owned by someone else or
+# one that is group/world-writable is never used or replaced: skip rather than sweep
+# or clone through it.
 STAGE_DIR="${WORKSPACES_DIR%/}/.related-repos-bootstrap"
 if [ -L "$STAGE_DIR" ] || { [ -e "$STAGE_DIR" ] && [ ! -d "$STAGE_DIR" ]; }; then
     echo "==> WARNING: ${STAGE_DIR} exists and is not a plain directory; skipping related-repo bootstrap." >&2
@@ -158,6 +159,17 @@ if [ -L "$STAGE_DIR" ] || { [ -e "$STAGE_DIR" ] && [ ! -d "$STAGE_DIR" ]; }; the
 fi
 if [ ! -d "$STAGE_DIR" ] && ! (umask 077 && mkdir -p "$STAGE_DIR") 2>/dev/null; then
     echo "==> WARNING: could not create ${STAGE_DIR}; skipping related-repo bootstrap." >&2
+    exit 0
+fi
+# Trust it only if it is ours and private: on a shared host with a world-writable
+# parent another user could pre-create it, then swap a finished clone before the
+# atomic publish. No fallback to another path: skip.
+if [ ! -O "$STAGE_DIR" ]; then
+    echo "==> WARNING: ${STAGE_DIR} is not owned by the current user; skipping related-repo bootstrap." >&2
+    exit 0
+fi
+if [ -n "$(find "$STAGE_DIR" -maxdepth 0 \( -perm -g+w -o -perm -o+w \) -print 2>/dev/null)" ]; then
+    echo "==> WARNING: ${STAGE_DIR} is group- or world-writable; skipping related-repo bootstrap." >&2
     exit 0
 fi
 

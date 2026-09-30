@@ -330,6 +330,7 @@ while kill -0 "$dead_pid" 2>/dev/null; do
 done
 STAGE="${WORKSPACES}/.related-repos-bootstrap"
 mkdir -p "${STAGE}"
+chmod 700 "${STAGE}" # private, whatever the ambient umask
 mkdir -p "${STAGE}/.bootstrap-orphan-dead.${dead_pid}.111111"
 mkdir -p "${STAGE}/.bootstrap-orphan-live.$$.222222"
 mkdir -p "${STAGE}/.bootstrap-orphan-stale-live.$$.333333"
@@ -377,6 +378,30 @@ run_sut auth-ok >/dev/null 2>&1 || rc=$?
 [ "$rc" -eq 0 ] || fail "a symlinked staging directory is a warning, not a failure"
 [ ! -e "${WORKSPACES}/test-repo" ] || fail "must not clone through a symlinked staging directory"
 [ -z "$(ls -A "${TMP}/elsewhere")" ] || fail "must not write through a symlinked staging directory"
+
+echo "==> a group-writable staging directory is refused: warning, no clones, directory untouched"
+rm -rf "${WORKSPACES}" && mkdir -p "${WORKSPACES}/.related-repos-bootstrap"
+chmod 770 "${WORKSPACES}/.related-repos-bootstrap"
+mkdir "${WORKSPACES}/.related-repos-bootstrap/.bootstrap-planted"
+echo "test-owner/test-repo" >"${CONFIG}"
+rc=0
+out="$(run_sut auth-ok 2>&1)" || rc=$?
+[ "$rc" -eq 0 ] || fail "an unsafe staging directory is a warning, not a failure"
+case "$out" in
+*"group- or world-writable; skipping"*) ;;
+*) fail "expected the group-writable warning, got: $out" ;;
+esac
+[ ! -e "${WORKSPACES}/test-repo" ] || fail "must not clone when the staging directory is group-writable"
+[ -d "${WORKSPACES}/.related-repos-bootstrap/.bootstrap-planted" ] || fail "the refused staging directory must be untouched"
+[ "$(ls -A "${WORKSPACES}/.related-repos-bootstrap")" = ".bootstrap-planted" ] || fail "nothing may be written to a refused staging directory"
+rm -rf "${WORKSPACES}" && mkdir -p "${WORKSPACES}/.related-repos-bootstrap"
+chmod 707 "${WORKSPACES}/.related-repos-bootstrap"
+out="$(run_sut auth-ok 2>&1)" || fail "a world-writable staging directory is a warning, not a failure"
+case "$out" in
+*"group- or world-writable; skipping"*) ;;
+*) fail "expected the world-writable warning, got: $out" ;;
+esac
+[ ! -e "${WORKSPACES}/test-repo" ] || fail "must not clone when the staging directory is world-writable"
 
 # --- Test 9: post-start-common.sh starts bootstrap-related-repos.sh detached ---
 echo "==> post-start-common.sh starts bootstrap-related-repos.sh detached"
