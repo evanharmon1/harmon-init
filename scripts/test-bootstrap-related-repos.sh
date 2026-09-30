@@ -324,24 +324,31 @@ rm -rf "${WORKSPACES}/.bootstrap-orphan-live.$$.222222"
 
 # --- Test 9: post-start-common.sh starts bootstrap-related-repos.sh detached ---
 echo "==> post-start-common.sh starts bootstrap-related-repos.sh detached"
-awk '/^[[:space:]]*nohup bash \.devcontainer\/scripts\/bootstrap-related-repos\.sh/ {
-    line = $0
-    while (line ~ /\\$/) {
-        sub(/\\$/, "", line)
-        if ((getline next_line) > 0) {
-            line = line next_line
-        } else {
-            break
+# The job runs from a subshell that ignores SIGHUP BEFORE it execs nohup, so a
+# HUP between fork and exec cannot kill it: (trap '' HUP; exec nohup bash ... </dev/null >>log 2>&1) &
+awk '
+    /^[[:space:]]*trap .. HUP[[:space:]]*$/ { trapped = 1; next }
+    /^[[:space:]]*exec nohup bash \.devcontainer\/scripts\/bootstrap-related-repos\.sh/ {
+        line = $0
+        while (line ~ /\\$/) {
+            sub(/\\$/, "", line)
+            if ((getline next_line) > 0) {
+                line = line next_line
+            } else {
+                break
+            }
         }
+        if (trapped && line ~ /<[[:space:]]*\/dev\/null/ && (getline closer) > 0 && closer ~ /^[[:space:]]*\)[[:space:]]*&[[:space:]]*$/) {
+            matched = 1
+        }
+        trapped = 0
+        next
     }
-    if (line ~ /<\s*\/dev\/null/ && line ~ /&[[:space:]]*$/) {
-        matched = 1
-    }
-}
-END {
-    exit (!matched)
-}' .devcontainer/scripts/post-start-common.sh ||
-    fail "expected post-start-common.sh to start bootstrap-related-repos.sh detached with nohup, </dev/null, and trailing &"
+    /[^[:space:]]/ && !/^[[:space:]]*\(/ { trapped = 0 }
+    END {
+        exit (!matched)
+    }' .devcontainer/scripts/post-start-common.sh ||
+    fail "expected post-start-common.sh to start bootstrap-related-repos.sh detached from a HUP-ignoring subshell with exec nohup, </dev/null, and trailing &"
 
 # --- Test 10: mktemp failure does not abort script under set -e ---
 echo "==> mktemp failure does not abort script under set -e"
@@ -383,6 +390,8 @@ cp "${SUT}" "${ORIGIN_FIXTURE}/.devcontainer/scripts/bootstrap-related-repos.sh"
 origin_cases="https://ghe-https.example.com/o/r.git|ghe-https.example.com
 ssh://git@ghe-ssh.example.com:2222/o/r.git|ghe-ssh.example.com
 git@ghe-scp.example.com:o/r.git|ghe-scp.example.com
+https://ghe-port.example.com:8443/o/r.git|ghe-port.example.com:8443
+https://user@ghe-user.example.com:8443/o/r@v1.git|ghe-user.example.com:8443
 |github.com"
 while IFS='|' read -r origin_url expected_host; do
     "${REAL_GIT}" -C "${ORIGIN_FIXTURE}" config --unset remote.origin.url 2>/dev/null || true
@@ -391,7 +400,13 @@ while IFS='|' read -r origin_url expected_host; do
     GIT_LOG="${TMP}/git-origin.log"
     rm -f "${GIT_LOG}"
     export GIT_LOG
-    SUT="${ORIGIN_FIXTURE}/.devcontainer/scripts/bootstrap-related-repos.sh" TEST_UNSET_BASE_URL=1 run_sut unauthenticated >/dev/null 2>&1 || true
+    # A subshell, so SUT (and the unset) cannot outlive this call: prefix
+    # assignments on a shell function call are not reliably scoped to it.
+    (
+        SUT="${ORIGIN_FIXTURE}/.devcontainer/scripts/bootstrap-related-repos.sh"
+        TEST_UNSET_BASE_URL=1
+        run_sut unauthenticated
+    ) >/dev/null 2>&1 || true
     [ -f "${GIT_LOG}" ] || fail "expected git to be invoked for fallback (origin '${origin_url}')"
     grep -q "clone.*https://${expected_host}/test-owner/test-repo.git" "${GIT_LOG}" ||
         fail "expected clone from origin host ${expected_host} (origin '${origin_url}'), got: $(cat "${GIT_LOG}")"
@@ -430,32 +445,45 @@ case "$out" in
 *) fail "expected 1 failed in summary on publish failure, got: $out" ;;
 esac
 
-# --- Test 14: TERM stops the bootstrap; it must not keep cloning the remaining entries ---
-echo "==> TERM terminates the bootstrap and cleans up its temporary directory"
-rm -rf "${WORKSPACES}" && mkdir -p "${WORKSPACES}"
-printf '%s\n' "test-owner/test-repo" "test-owner/second-repo" >"${CONFIG}"
-make_stub unauthenticated
-CLONE_LOG="${TMP}/clone-term.log"
-rm -f "${CLONE_LOG}"
-PATH="${BIN_DIR}:${PATH}" WORKSPACES_DIR="${WORKSPACES}" CONFIG_FILE="${CONFIG}" \
-    RELATED_REPOS_GIT_BASE_URL="file://${BARE_BASE}/" \
-    STUB_GIT_CLONE_SLEEP=3 STUB_GIT_CLONE_LOG="${CLONE_LOG}" \
-    bash "${SUT}" >/dev/null 2>&1 &
-sut_pid=$!
-waited=0
-while [ ! -s "${CLONE_LOG}" ] && [ "$waited" -lt 100 ]; do
-    sleep 0.1
-    waited=$((waited + 1))
-done
-[ -s "${CLONE_LOG}" ] || {
-    kill -TERM "$sut_pid" 2>/dev/null || true
-    fail "first clone never started"
+# --- Test 14: a signal stops the bootstrap; it must not keep cloning the remaining entries ---
+# INT is what an operator sends to the foreground post-create call; TERM and HUP
+# are what teardown sends. Each must terminate with the conventional 128+n status,
+# after exactly one clone attempt, leaving no temporary directory behind.
+# job control is switched on around the launch: a non-interactive shell starts an
+# async job with SIGINT ignored, and a signal ignored at entry cannot be trapped,
+# which would test the harness instead of the script.
+signal_case() {
+    local sig="$1" want="$2"
+    echo "==> ${sig} terminates the bootstrap and cleans up its temporary directory"
+    rm -rf "${WORKSPACES}" && mkdir -p "${WORKSPACES}"
+    printf '%s\n' "test-owner/test-repo" "test-owner/second-repo" >"${CONFIG}"
+    make_stub unauthenticated
+    local clone_log="${TMP}/clone-${sig}.log"
+    rm -f "${clone_log}"
+    set -m
+    PATH="${BIN_DIR}:${PATH}" WORKSPACES_DIR="${WORKSPACES}" CONFIG_FILE="${CONFIG}" \
+        RELATED_REPOS_GIT_BASE_URL="file://${BARE_BASE}/" \
+        STUB_GIT_CLONE_SLEEP=3 STUB_GIT_CLONE_LOG="${clone_log}" \
+        bash "${SUT}" >/dev/null 2>&1 &
+    local sut_pid=$!
+    set +m
+    local waited=0
+    while [ ! -s "${clone_log}" ] && [ "$waited" -lt 100 ]; do
+        sleep 0.1
+        waited=$((waited + 1))
+    done
+    [ -s "${clone_log}" ] || {
+        kill -TERM "$sut_pid" 2>/dev/null || true
+        fail "first clone never started (${sig})"
+    }
+    kill -"${sig}" "$sut_pid"
+    local rc=0
+    wait "$sut_pid" || rc=$?
+    [ "$rc" -eq "$want" ] || fail "expected exit ${want} after ${sig}, got $rc"
+    [ "$(wc -l <"${clone_log}" | tr -d ' ')" -eq 1 ] || fail "${sig} must stop the loop; clones attempted: $(cat "${clone_log}")"
+    [ -z "$(find "${WORKSPACES}" -name '.bootstrap-*' -print -quit 2>/dev/null)" ] || fail "temporary directory was not cleaned up after ${sig}"
 }
-kill -TERM "$sut_pid"
-rc=0
-wait "$sut_pid" || rc=$?
-[ "$rc" -eq 143 ] || fail "expected exit 143 after TERM, got $rc"
-[ "$(wc -l <"${CLONE_LOG}" | tr -d ' ')" -eq 1 ] || fail "TERM must stop the loop; clones attempted: $(cat "${CLONE_LOG}")"
-[ -z "$(find "${WORKSPACES}" -name '.bootstrap-*' -print -quit 2>/dev/null)" ] || fail "temporary directory was not cleaned up after TERM"
+signal_case TERM 143
+signal_case INT 130
 
 echo "test-bootstrap-related-repos.sh passed"

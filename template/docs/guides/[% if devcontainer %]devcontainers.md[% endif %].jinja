@@ -1286,13 +1286,13 @@ environment gitconfig baked into the image at `~/.config/git/config`, so
 in-container git operations never depend on an SSH agent). They are:
 
 - **cloned** into `/workspaces/`, beside this repo, on container **create**
-  and in the background on container **start** (`scripts/bootstrap-related-repos.sh`),
+  and in the background on container **start** (`.devcontainer/scripts/bootstrap-related-repos.sh`),
   with fallback to `git clone` for public repos when `gh` is unauthenticated,
   and re-triggered upon completing `task setup:gh-scopes` — so a rebuilt or
   persistence-lost container re-populates them and missing siblings clone
   automatically once authenticated;
 - **fetched** non-destructively on container **start**
-  (`scripts/fetch-related-repos.sh`).
+  (`.devcontainer/scripts/fetch-related-repos.sh`).
 
 Both are safe to re-run: an already-cloned sibling is **never clobbered** —
 clone skips it, and start runs `git fetch` only (never pull / merge / checkout),

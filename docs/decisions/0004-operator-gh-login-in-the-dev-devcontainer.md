@@ -66,7 +66,10 @@ Six forks came with that, each decided here:
 
 3. **Unauthenticated is loud, never fatal.** Nothing in the dev profile hard-
    requires GitHub auth: `bootstrap-related-repos.sh` falls back to `git clone`
-   over HTTPS for public siblings and exits 0, `fetch-related-repos.sh` is
+   over HTTPS for public siblings and never exits non-zero on a failure (only a
+   signal — INT, TERM, or HUP — terminates it, with the signal's exit status
+   after cleanup, which in the foreground post-create call correctly aborts
+   create), `fetch-related-repos.sh` is
    backgrounded to a log, and the skills sync clones public harmon-devkit over
    plain HTTPS. `post-create` prints the exact commands to run.
 

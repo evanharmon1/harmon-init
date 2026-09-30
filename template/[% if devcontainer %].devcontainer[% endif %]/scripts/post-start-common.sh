@@ -45,16 +45,23 @@ fi
 # --- Bootstrap missing related repos in the background ---
 # Clones any missing sibling repos configured in .devcontainer/related-repos.txt
 # into /workspaces/. nohup'd + backgrounded so container start is never blocked.
-nohup bash .devcontainer/scripts/bootstrap-related-repos.sh \
-    </dev/null >>"$HOME/.related-repos-bootstrap.log" 2>&1 &
+# The subshell ignores SIGHUP BEFORE it execs nohup: a bare `nohup cmd &` leaves a
+# window between fork and nohup's own exec in which a HUP kills the job, and a
+# sleep to paper over that would only shrink the window.
+(
+    trap '' HUP
+    exec nohup bash .devcontainer/scripts/bootstrap-related-repos.sh </dev/null >>"$HOME/.related-repos-bootstrap.log" 2>&1
+) &
 
 # --- Freshen related repos in the background (non-destructive git fetch) ---
 # Reads .devcontainer/related-repos.txt and git-fetches already-cloned siblings
 # in /workspaces/ so they track their remotes. NEVER pulls/merges/checks out —
 # local work is left untouched. nohup'd + backgrounded so it neither delays the
 # session nor is killed by SIGHUP when the shell exits. No-op for an empty list.
-nohup bash .devcontainer/scripts/fetch-related-repos.sh \
-    </dev/null >>"$HOME/.related-repos-fetch.log" 2>&1 &
+(
+    trap '' HUP
+    exec nohup bash .devcontainer/scripts/fetch-related-repos.sh </dev/null >>"$HOME/.related-repos-fetch.log" 2>&1
+) &
 
 echo "==> Starting tmux session..."
 if command -v tmux &>/dev/null; then

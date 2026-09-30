@@ -19,7 +19,8 @@
 #      credential unattended.
 #
 # Read-only until the refresh: it prints the current scopes, then asks gh for
-# the missing ones. After a landed grant, it triggers a background clone of
+# the missing ones. After a landed grant, or when no grant was needed because the
+# credential already carries every scope, it triggers a background clone of
 # missing sibling repos (.devcontainer/scripts/bootstrap-related-repos.sh). Token
 # VALUES are never printed or captured.
 set -euo pipefail
@@ -40,7 +41,12 @@ trigger_related_repos_bootstrap() {
     if [ -f "${bootstrap}" ]; then
         local log_file="${HOME}/.related-repos-bootstrap.log"
         echo "==> Bootstrapping related repos in the background (log: ${log_file})..."
-        nohup bash "${bootstrap}" </dev/null >>"${log_file}" 2>&1 &
+        # Ignore SIGHUP in the subshell BEFORE it execs nohup, so a HUP arriving
+        # between fork and exec (a pty tearing down) cannot kill the job.
+        (
+            trap '' HUP
+            exec nohup bash "${bootstrap}" </dev/null >>"${log_file}" 2>&1
+        ) &
     fi
 }
 

@@ -20,7 +20,10 @@ set -euo pipefail
 # Lines starting with # are comments. Blank lines are ignored.
 #
 # Failures (missing config, bad URL, network errors) log a warning and
-# continue — this script never causes post-create, post-start, or scope setup to fail.
+# continue — a failure never produces a non-zero exit, so it never causes
+# post-create, post-start, or scope setup to fail. A signal (INT/TERM/HUP) is
+# not a failure: it terminates the script with the signal's exit status after
+# cleanup, which in the foreground post-create call correctly aborts create.
 #
 # Environment variable overrides (for tests and host customization):
 #   CONFIG_FILE                  Path to related-repos.txt (default: ../related-repos.txt)
@@ -60,23 +63,29 @@ elif [ -n "${GH_HOST:-}" ]; then
     GIT_BASE_URL="https://${GH_HOST}/"
 else
     # No override: an Enterprise checkout usually has no GH_HOST but its origin
-    # remote names the host. Parse it the way gh does (repository context), local
-    # and network-free, and fall back to github.com only if that yields nothing.
+    # remote names the host. This derives a CLONE base URL (local, network-free),
+    # which is why it keeps the port of an http(s) origin: a server on :8443 is
+    # cloned from :8443. scripts/gh-scopes.sh's gh_target_host() resolves a gh
+    # HOSTNAME instead, which is portless, so this is not a copy of that function.
+    # github.com is the last resort when there is no origin to read.
     origin_url="$(git -C "${SCRIPT_DIR}/.." config --get remote.origin.url 2>/dev/null || true)"
-    origin_host=""
+    origin_authority=""
     case "${origin_url}" in
-    *://*)                               # scheme://[user@]host[:port]/path
-        origin_host="${origin_url#*://}" # drop the scheme
-        origin_host="${origin_host#*@}"  # drop any userinfo
-        origin_host="${origin_host%%/*}" # drop the path
-        origin_host="${origin_host%%:*}" # drop any port
+    *://*) # scheme://[user@]host[:port]/path
+        origin_authority="${origin_url#*://}"
+        origin_authority="${origin_authority%%/*}" # the path first: it may contain '@'
+        origin_authority="${origin_authority##*@}" # then any userinfo
+        case "${origin_url}" in
+        http://* | https://*) ;;                         # the port is the web port: keep it
+        *) origin_authority="${origin_authority%%:*}" ;; # ssh:// etc: the port is not the https port
+        esac
         ;;
-    *@*:*) # scp-like: user@host:owner/repo
-        origin_host="${origin_url#*@}"
-        origin_host="${origin_host%%:*}"
+    *@*:*) # scp-like: user@host:owner/repo (no port; the colon starts the path)
+        origin_authority="${origin_url#*@}"
+        origin_authority="${origin_authority%%:*}"
         ;;
     esac
-    GIT_BASE_URL="https://${origin_host:-github.com}/"
+    GIT_BASE_URL="https://${origin_authority:-github.com}/"
 fi
 
 if [ -n "${RELATED_REPOS_MV_ATOMIC:-}" ]; then
@@ -340,5 +349,6 @@ else
     echo "==> Bootstrap complete: ${cloned} cloned, ${skipped} skipped, ${failed} failed"
 fi
 
-# Always exit 0 — failures are logged but never block post-create.
+# Failures are logged and never produce a non-zero exit, so they never block
+# post-create; only a signal (trapped above) terminates with a non-zero status.
 exit 0
