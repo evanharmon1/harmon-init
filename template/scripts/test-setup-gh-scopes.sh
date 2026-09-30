@@ -169,6 +169,8 @@ run_sut_pty() {
     # A subshell with explicit exports rather than `env`: pty_exec is a shell
     # function, and `env` can only exec a real binary.
     (
+        mkdir -p "${TMP}/home"
+        export HOME="${TMP}/home"
         export PATH="${TMP}/bin:${PATH}"
         export TMP_PHASE="${TMP}/phase-marker"
         rm -f "${TMP_PHASE}"
@@ -189,6 +191,8 @@ rc_pty_of() {
     make_stub "${scenario}"
     local rc=0
     (
+        mkdir -p "${TMP}/home"
+        export HOME="${TMP}/home"
         export PATH="${TMP}/bin:${PATH}"
         export TMP_PHASE="${TMP}/phase-marker"
         rm -f "${TMP_PHASE}"
@@ -287,6 +291,52 @@ if [ "${PTY_OK}" = true ]; then
     *"All requested GitHub CLI scopes are present"*) ;;
     *) fail "expected success after a landed refresh, got: ${out}" ;;
     esac
+
+    echo "==> triggers bootstrap-related-repos.sh upon successful refresh grant"
+    mkdir -p "${TMP}/repo/.devcontainer/scripts"
+    rm -f "${TMP}/bootstrap-marker"
+    cat <<EOF >"${TMP}/repo/.devcontainer/scripts/bootstrap-related-repos.sh"
+#!/usr/bin/env bash
+touch "${TMP}/bootstrap-marker"
+exit 0
+EOF
+    chmod +x "${TMP}/repo/.devcontainer/scripts/bootstrap-related-repos.sh"
+    out="$(run_sut_pty lands-after-refresh GH_HOST=github.com)"
+    case "$out" in
+    *"Bootstrapping related repos in the background"*"${TMP}/home/.related-repos-bootstrap.log"*) ;;
+    *) fail "expected background bootstrap invocation notice naming log path, got: ${out}" ;;
+    esac
+    for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+        [ -f "${TMP}/bootstrap-marker" ] && break
+        sleep 0.2
+    done
+    [ -f "${TMP}/bootstrap-marker" ] || fail "bootstrap marker file was not created after grant landed"
+
+    echo "==> bootstrap-related-repos.sh failure does not change exit status of setup-gh-scopes"
+    cat <<EOF >"${TMP}/repo/.devcontainer/scripts/bootstrap-related-repos.sh"
+#!/usr/bin/env bash
+exit 1
+EOF
+    [ "$(rc_pty_of lands-after-refresh GH_HOST=github.com)" = 0 ] ||
+        fail "setup-gh-scopes must succeed even if bootstrap-related-repos.sh exits non-zero"
+
+    echo "==> bootstrap is NOT triggered if refresh does not land"
+    rm -f "${TMP}/bootstrap-marker"
+    cat <<EOF >"${TMP}/repo/.devcontainer/scripts/bootstrap-related-repos.sh"
+#!/usr/bin/env bash
+touch "${TMP}/bootstrap-marker"
+exit 0
+EOF
+    chmod +x "${TMP}/repo/.devcontainer/scripts/bootstrap-related-repos.sh"
+    out="$(run_sut_pty does-not-land GH_HOST=github.com)"
+    case "$out" in
+    *"Bootstrapping related repos"*) fail "bootstrap should not be invoked when grant verification fails: ${out}" ;;
+    esac
+    sleep 0.5
+    [ ! -f "${TMP}/bootstrap-marker" ] || fail "bootstrap marker was created even though grant verification failed"
+
+    rm -rf "${TMP}/repo/.devcontainer"
+    rm -f "${TMP}/bootstrap-marker"
 
     echo "==> FAILS when the refresh silently did not land"
     # The whole reason this script verifies rather than trusting the exit code.

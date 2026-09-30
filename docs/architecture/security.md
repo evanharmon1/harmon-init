@@ -335,8 +335,12 @@ The security contract, by layer:
   the agent Codex managed config (`workspace-write`, never
   `danger-full-access`, approval `never` — its sandbox is the criterion, and
   it carries no command-level deny list).
-  `.devcontainer/agent/agent-autonomy.sh apply` installs both at create and
-  refuses every other harness; `verify` re-checks at every start.
+  In the agent devcontainer, `.devcontainer/agent/agent-autonomy.sh apply`
+  installs both at create and refuses every other harness, and `verify`
+  re-checks at every start. The remote bootstrap runs both with
+  `--platform-vm`, which installs and verifies the two files but refuses no
+  harness — a recorded delivery gap on platform VMs; see
+  [How each platform receives the agent posture](remote-environments.md#how-each-platform-receives-the-agent-posture).
   `scripts/test-agent-profile.sh` (in `task verify`) fails on a second copy,
   on an agent allow rule bot does not grant or bot denies, on an `ask` rule,
   and on Codex `danger-full-access`.
