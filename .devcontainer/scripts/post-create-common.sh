@@ -493,8 +493,9 @@ fi
 
 gh_auth_help() {
     echo "=============================================================="
-    echo "  GitHub CLI is NOT authenticated — gh pr / gh api and the"
-    echo "  related-repo clones will fail until this is fixed."
+    echo "  GitHub CLI is NOT authenticated — gh pr / gh api will fail."
+    echo "  Public siblings clone over HTTPS without a login, private ones"
+    echo "  after 'task setup:gh-scopes', which starts the bootstrap itself."
     echo ""
     if [ "${DEVCONTAINER_GH_AUTH:-token}" = "login" ]; then
         echo "  This profile authenticates as you. Log in:"
@@ -509,7 +510,6 @@ gh_auth_help() {
             echo "    $1"
         fi
         echo ""
-        echo "  Then re-run: bash .devcontainer/scripts/bootstrap-related-repos.sh"
         echo "  See docs/guides/devcontainers.md."
     elif [ "${DEVCONTAINER_GH_AUTH:-token}" = "agent-token" ]; then
         echo "  This AGENT-posture container authenticates from AGENT_GH_TOKEN,"

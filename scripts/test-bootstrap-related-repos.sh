@@ -224,14 +224,25 @@ run_sut auth-ok
 
 # --- Test 5: Concurrent target creation does not delete user checkout or nest clone ---
 echo "==> concurrent target creation does not delete user checkout"
+# 5a: GNU atomic path
 rm -rf "${WORKSPACES}" && mkdir -p "${WORKSPACES}"
 echo "test-owner/test-repo" >"${CONFIG}"
 rc=0
 STUB_MV="concurrent-dir" run_sut auth-ok >/dev/null 2>&1 || rc=$?
-[ "$rc" -eq 0 ] || fail "script must exit 0 when target created concurrently"
-[ -f "${WORKSPACES}/test-repo/marker.txt" ] || fail "user checkout was deleted or clobbered by bootstrap"
-[ -z "$(find "${WORKSPACES}/test-repo" -mindepth 1 ! -name 'marker.txt' -print -quit 2>/dev/null)" ] || fail "clone was nested inside concurrently created directory"
-[ -z "$(find "${WORKSPACES}" -name '.bootstrap-*' -print -quit 2>/dev/null)" ] || fail "temporary clone directory was not cleaned up after publish skip"
+[ "$rc" -eq 0 ] || fail "script must exit 0 when target created concurrently (GNU path)"
+[ -f "${WORKSPACES}/test-repo/marker.txt" ] || fail "user checkout was deleted or clobbered by bootstrap (GNU path)"
+[ -z "$(find "${WORKSPACES}/test-repo" -mindepth 1 ! -name 'marker.txt' -print -quit 2>/dev/null)" ] || fail "clone was nested inside concurrently created directory (GNU path)"
+[ -z "$(find "${WORKSPACES}" -name '.bootstrap-*' -print -quit 2>/dev/null)" ] || fail "temporary clone directory was not cleaned up after publish skip (GNU path)"
+
+# 5b: Non-GNU fallback path with detect-and-undo (forced via RELATED_REPOS_MV_ATOMIC=0)
+rm -rf "${WORKSPACES}" && mkdir -p "${WORKSPACES}"
+echo "test-owner/test-repo" >"${CONFIG}"
+rc=0
+RELATED_REPOS_MV_ATOMIC=0 STUB_MV="concurrent-dir" run_sut auth-ok >/dev/null 2>&1 || rc=$?
+[ "$rc" -eq 0 ] || fail "script must exit 0 when target created concurrently (fallback path)"
+[ -f "${WORKSPACES}/test-repo/marker.txt" ] || fail "user checkout was deleted or clobbered by bootstrap (fallback path)"
+[ -z "$(find "${WORKSPACES}/test-repo" -mindepth 1 ! -name 'marker.txt' -print -quit 2>/dev/null)" ] || fail "clone was nested inside concurrently created directory (fallback path)"
+[ -z "$(find "${WORKSPACES}" -name '.bootstrap-*' -print -quit 2>/dev/null)" ] || fail "temporary clone directory was not cleaned up after publish skip (fallback path)"
 
 # --- Test 6: Plain file at target is left intact and publish fails safely ---
 echo "==> plain file at target is left intact"

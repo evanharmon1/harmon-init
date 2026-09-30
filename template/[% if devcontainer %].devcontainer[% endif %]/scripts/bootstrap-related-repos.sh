@@ -34,7 +34,9 @@ CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/../related-repos.txt}"
 WORKSPACES_DIR="${WORKSPACES_DIR:-/workspaces}"
 GIT_BASE_URL="${RELATED_REPOS_GIT_BASE_URL:-https://github.com/}"
 
-if mv --version >/dev/null 2>&1; then
+if [ -n "${RELATED_REPOS_MV_ATOMIC:-}" ]; then
+    MV_ATOMIC="$RELATED_REPOS_MV_ATOMIC"
+elif mv --version >/dev/null 2>&1; then
     MV_ATOMIC=1
 else
     MV_ATOMIC=0
@@ -208,7 +210,8 @@ while IFS= read -r raw_line || [ -n "$raw_line" ]; do
         # Publish into the target path. Inside the Linux devcontainer GNU coreutils
         # mv -T provides an atomic rename that fails safely without nesting if $target
         # already exists as a non-empty directory or file. On platforms without GNU mv
-        # (e.g. macOS during host-side testing), fall back to a guarded check and mv.
+        # (e.g. macOS during host-side testing), fall back to a guarded check and mv,
+        # with detect-and-undo if a directory appeared concurrently.
         set +e
         if [ "$MV_ATOMIC" -eq 1 ]; then
             mv -T "$clone_tmp" "$target" 2>/dev/null
@@ -216,6 +219,15 @@ while IFS= read -r raw_line || [ -n "$raw_line" ]; do
         else
             [ ! -e "$target" ] && mv "$clone_tmp" "$target" 2>/dev/null
             publish_rc=$?
+            nested_tmp="${target}/$(basename "$clone_tmp")"
+            if [ "$publish_rc" -eq 0 ] && [ -e "$nested_tmp" ]; then
+                # Target was created concurrently after the [ ! -e "$target" ] check,
+                # causing BSD/fallback mv to nest $clone_tmp inside $target.
+                # Detect and undo: remove only our own nested temporary directory,
+                # leaving everything else under $target untouched.
+                rm -rf "$nested_tmp"
+                publish_rc=1
+            fi
         fi
         set -e
 
