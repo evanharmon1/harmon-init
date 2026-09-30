@@ -18,7 +18,9 @@
 # cannot be cloned is a warning from the bootstrap script, not a failure.
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# -P: the PHYSICAL path, so a checkout entered through a symlink still clones its
+# siblings beside the real checkout rather than beside the symlink.
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$ROOT"
 
 # Never prompt or hang on missing credentials or behind egress filters.
@@ -60,8 +62,9 @@ fi
 # --- 2. dependencies, frozen to the lockfile ---
 if [ -f pnpm-lock.yaml ]; then
     if command -v pnpm >/dev/null 2>&1; then
-        # CI=true makes pnpm fail instead of prompting (e.g. before purging node_modules).
-        run_step "pnpm install --frozen-lockfile" env CI="${CI:-true}" pnpm install --frozen-lockfile
+        # CI=true is forced, whatever was inherited (CI=false would let pnpm prompt, e.g.
+        # before purging node_modules): with it pnpm fails instead of prompting.
+        run_step "pnpm install --frozen-lockfile" env CI=true pnpm install --frozen-lockfile
     else
         note_skipped "dependencies: pnpm-lock.yaml present but pnpm is not on PATH"
     fi
@@ -70,7 +73,7 @@ else
 fi
 if [ -f uv.lock ]; then
     if command -v uv >/dev/null 2>&1; then
-        run_step "uv sync --frozen" uv sync --frozen
+        run_step "uv sync --frozen" env CI=true uv sync --frozen
     else
         note_skipped "dependencies: uv.lock present but uv is not on PATH"
     fi

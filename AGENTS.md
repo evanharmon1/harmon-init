@@ -678,8 +678,8 @@ script has run: run `task setup:remote` first. It is idempotent — it installs
 the lefthook git hooks, installs dependencies from the lockfile, and clones the
 repos in `.devcontainer/related-repos.txt` (when present) beside the checkout.
 Those siblings are reference context, not pushable where the platform only
-allows pushes to the session's own repository and branch. Only the pre-push
-secret scan runs on push, so run `task verify` yourself.
+allows pushes to the session's own repository and branch. The pre-push hook is
+not a substitute for `task verify`, so run it yourself.
 
 ## Second-Model Review (Codex)
 

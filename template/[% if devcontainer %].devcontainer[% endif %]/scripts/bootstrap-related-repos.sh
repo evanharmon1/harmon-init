@@ -28,6 +28,13 @@ set -euo pipefail
 #
 # Lines starting with # are comments. Blank lines are ignored.
 #
+# Every temporary clone directory lives in ONE dedicated subdirectory of the target
+# (<target>/.related-repos-bootstrap, mode 0700), and the orphan sweeps run only
+# inside it. The target is a general-purpose directory when `task setup:remote`
+# passes a checkout's parent ($HOME, /tmp, ...), so nothing outside that
+# subdirectory is ever removed. The (empty) subdirectory is left in place: removing
+# it would race a concurrent bootstrap between its mkdir and mktemp.
+#
 # Failures (missing config, bad URL, network errors) log a warning and
 # continue — a failure never produces a non-zero exit, so it never causes
 # post-create, post-start, or scope setup to fail. A signal (INT/TERM/HUP) is
@@ -140,14 +147,29 @@ if [ "$WORKSPACES_DIR" = "/workspaces" ] && [ ! -w "$WORKSPACES_DIR" ]; then
     fi
 fi
 
+# --- Dedicated staging directory ---
+# All temporary clone directories (and the sweeps below) live here and nowhere else
+# under the target. A symlink or non-directory at this path is never followed or
+# replaced: skip rather than sweep or clone through it.
+STAGE_DIR="${WORKSPACES_DIR%/}/.related-repos-bootstrap"
+if [ -L "$STAGE_DIR" ] || { [ -e "$STAGE_DIR" ] && [ ! -d "$STAGE_DIR" ]; }; then
+    echo "==> WARNING: ${STAGE_DIR} exists and is not a plain directory; skipping related-repo bootstrap." >&2
+    exit 0
+fi
+if [ ! -d "$STAGE_DIR" ] && ! (umask 077 && mkdir -p "$STAGE_DIR") 2>/dev/null; then
+    echo "==> WARNING: could not create ${STAGE_DIR}; skipping related-repo bootstrap." >&2
+    exit 0
+fi
+
 # --- Clean up orphaned temporary directories ---
 # Unconditionally sweep temporary bootstrap directories older than 24 hours (1440 min)
 # regardless of PID, protecting persisted workspaces from accumulated orphans across restarts.
+# Only inside STAGE_DIR: a foreign .bootstrap-* directory in the target is not ours.
 while IFS= read -r stale_dir; do
     [ -n "$stale_dir" ] || continue
     echo "==> Removing stale temporary bootstrap directory: ${stale_dir} (older than 24h)"
     rm -rf "$stale_dir" || true
-done < <(find "$WORKSPACES_DIR" -maxdepth 1 -name '.bootstrap-*' -type d -mmin +1440 2>/dev/null || true)
+done < <(find "$STAGE_DIR" -maxdepth 1 -name '.bootstrap-*' -type d -mmin +1440 2>/dev/null || true)
 
 # Remove leftover .bootstrap-* directories older than 60 minutes from runs whose
 # process is no longer alive. Directories with an active PID or unparseable name
@@ -171,7 +193,7 @@ while IFS= read -r orphan_dir; do
         fi
         ;;
     esac
-done < <(find "$WORKSPACES_DIR" -maxdepth 1 -name '.bootstrap-*' -type d -mmin +60 2>/dev/null || true)
+done < <(find "$STAGE_DIR" -maxdepth 1 -name '.bootstrap-*' -type d -mmin +60 2>/dev/null || true)
 
 # --- Parse and clone ---
 
@@ -232,7 +254,7 @@ while IFS= read -r raw_line || [ -n "$raw_line" ]; do
     # directly: if a user or concurrent process creates $target in between,
     # cleaning up a failed clone must never remove the user's checkout.
     clone_tmp=""
-    if ! clone_tmp="$(mktemp -d "${WORKSPACES_DIR}/.bootstrap-${basename}.$$.XXXXXX" 2>&1)"; then
+    if ! clone_tmp="$(mktemp -d "${STAGE_DIR}/.bootstrap-${basename}.$$.XXXXXX" 2>&1)"; then
         echo "==> WARNING: failed to create temporary directory for ${target_spec}: ${clone_tmp}" >&2
         clone_tmp="" # mktemp's error text is not a path; keep the EXIT trap unarmed
         failed=$((failed + 1))
@@ -269,7 +291,7 @@ while IFS= read -r raw_line || [ -n "$raw_line" ]; do
                 echo "==> WARNING: gh repo clone failed for ${target_spec} (exit ${clone_rc}); falling back to git clone." >&2
                 rm -rf "$clone_tmp" || true
                 clone_tmp=""
-                if ! clone_tmp="$(mktemp -d "${WORKSPACES_DIR}/.bootstrap-${basename}.$$.XXXXXX" 2>&1)"; then
+                if ! clone_tmp="$(mktemp -d "${STAGE_DIR}/.bootstrap-${basename}.$$.XXXXXX" 2>&1)"; then
                     echo "==> WARNING: failed to create temporary directory for ${target_spec} fallback: ${clone_tmp}" >&2
                     clone_tmp="" # mktemp's error text is not a path; keep the EXIT trap unarmed
                     failed=$((failed + 1))

@@ -45,6 +45,9 @@ REAL_MKTEMP="$(command -v mktemp)"
 # --- Stub mktemp that can simulate tempdir creation failure ---
 cat <<EOF >"${BIN_DIR}/mktemp"
 #!/usr/bin/env bash
+if [ -n "\${STUB_MKTEMP_LOG:-}" ]; then
+    echo "\$*" >>"\${STUB_MKTEMP_LOG}"
+fi
 if [ "\${STUB_MKTEMP:-}" = "fail" ]; then
     echo "mktemp: failed to create directory: Permission denied" >&2
     exit 1
@@ -317,23 +320,33 @@ run_sut unauthenticated
 current_branch="$(git -C "${WORKSPACES}/test-repo" rev-parse --abbrev-ref HEAD)"
 [ "$current_branch" = "feature-branch" ] || fail "expected branch feature-branch, got $current_branch"
 
-# --- Test 8: Orphaned temporary directories older than 60 minutes with dead PID are reaped ---
-echo "==> orphaned temporary directories older than 60 minutes with dead PID are reaped"
+# --- Test 8: Orphaned temporary directories inside the staging directory are reaped; foreign ones are not ---
+echo "==> orphaned temporary directories in the staging directory are reaped, foreign .bootstrap-* directories are not"
 rm -rf "${WORKSPACES}" && mkdir -p "${WORKSPACES}"
 : >"${CONFIG}"
 dead_pid=999999
 while kill -0 "$dead_pid" 2>/dev/null; do
     dead_pid=$((dead_pid + 1))
 done
-mkdir -p "${WORKSPACES}/.bootstrap-orphan-dead.${dead_pid}.111111"
-mkdir -p "${WORKSPACES}/.bootstrap-orphan-live.$$.222222"
-mkdir -p "${WORKSPACES}/.bootstrap-orphan-stale-live.$$.333333"
-python3 -c "import os, time; [os.utime(p, (time.time() - 7200, time.time() - 7200)) for p in ['${WORKSPACES}/.bootstrap-orphan-dead.${dead_pid}.111111', '${WORKSPACES}/.bootstrap-orphan-live.$$.222222']]"
-python3 -c "import os, time; os.utime('${WORKSPACES}/.bootstrap-orphan-stale-live.$$.333333', (time.time() - 172800, time.time() - 172800))"
+STAGE="${WORKSPACES}/.related-repos-bootstrap"
+mkdir -p "${STAGE}"
+mkdir -p "${STAGE}/.bootstrap-orphan-dead.${dead_pid}.111111"
+mkdir -p "${STAGE}/.bootstrap-orphan-live.$$.222222"
+mkdir -p "${STAGE}/.bootstrap-orphan-stale-live.$$.333333"
+python3 -c "import os, time; [os.utime(p, (time.time() - 7200, time.time() - 7200)) for p in ['${STAGE}/.bootstrap-orphan-dead.${dead_pid}.111111', '${STAGE}/.bootstrap-orphan-live.$$.222222']]"
+python3 -c "import os, time; os.utime('${STAGE}/.bootstrap-orphan-stale-live.$$.333333', (time.time() - 172800, time.time() - 172800))"
+# Foreign directories in the target (the checkout's parent is a general-purpose
+# directory) that merely look like ours: neither the 24h rule nor the dead-PID
+# rule may touch them.
+mkdir -p "${WORKSPACES}/.bootstrap-foo" "${WORKSPACES}/.bootstrap-foreign-dead.${dead_pid}.444444"
+echo "keep" >"${WORKSPACES}/.bootstrap-foo/user-data.txt"
+python3 -c "import os, time; [os.utime(p, (time.time() - 172800, time.time() - 172800)) for p in ['${WORKSPACES}/.bootstrap-foo', '${WORKSPACES}/.bootstrap-foreign-dead.${dead_pid}.444444']]"
 out="$(run_sut auth-ok 2>&1)"
-[ ! -d "${WORKSPACES}/.bootstrap-orphan-dead.${dead_pid}.111111" ] || fail "old orphan directory with dead PID should have been reaped"
-[ -d "${WORKSPACES}/.bootstrap-orphan-live.$$.222222" ] || fail "old directory with live PID must not be reaped"
-[ ! -d "${WORKSPACES}/.bootstrap-orphan-stale-live.$$.333333" ] || fail "directory older than 24h must be reaped unconditionally even with live PID"
+[ ! -d "${STAGE}/.bootstrap-orphan-dead.${dead_pid}.111111" ] || fail "old orphan directory with dead PID should have been reaped"
+[ -d "${STAGE}/.bootstrap-orphan-live.$$.222222" ] || fail "old directory with live PID must not be reaped"
+[ ! -d "${STAGE}/.bootstrap-orphan-stale-live.$$.333333" ] || fail "directory older than 24h must be reaped unconditionally even with live PID"
+[ -f "${WORKSPACES}/.bootstrap-foo/user-data.txt" ] || fail "a foreign .bootstrap-* directory older than a day must survive"
+[ -d "${WORKSPACES}/.bootstrap-foreign-dead.${dead_pid}.444444" ] || fail "a foreign .bootstrap-* directory with a dead-PID name must survive"
 case "$out" in
 *"Removing orphaned temporary bootstrap directory"*) ;;
 *) fail "expected log message for reaped orphan directory, got: $out" ;;
@@ -342,7 +355,28 @@ case "$out" in
 *"Removing stale temporary bootstrap directory"*) ;;
 *) fail "expected log message for 24h stale orphan directory, got: $out" ;;
 esac
-rm -rf "${WORKSPACES}/.bootstrap-orphan-live.$$.222222"
+rm -rf "${STAGE}/.bootstrap-orphan-live.$$.222222"
+
+echo "==> the staging directory is private and never a symlink or a file"
+rm -rf "${WORKSPACES}" && mkdir -p "${WORKSPACES}"
+echo "test-owner/test-repo" >"${CONFIG}"
+STUB_MKTEMP_LOG="${TMP}/mktemp.log"
+rm -f "${STUB_MKTEMP_LOG}"
+export STUB_MKTEMP_LOG
+run_sut auth-ok >/dev/null 2>&1
+unset STUB_MKTEMP_LOG
+[ -s "${TMP}/mktemp.log" ] || fail "expected the clone to create a temporary directory"
+grep -qv "${WORKSPACES}/.related-repos-bootstrap/" "${TMP}/mktemp.log" && fail "every temporary clone directory must live in the staging directory: $(cat "${TMP}/mktemp.log")"
+mode="$(stat -c %a "${WORKSPACES}/.related-repos-bootstrap" 2>/dev/null || stat -f %Lp "${WORKSPACES}/.related-repos-bootstrap")"
+[ "$mode" = "700" ] || fail "staging directory must be created with mode 0700, got ${mode}"
+[ -d "${WORKSPACES}/test-repo/.git" ] || fail "clone must be published from the staging directory into the target"
+rm -rf "${WORKSPACES}" && mkdir -p "${WORKSPACES}" "${TMP}/elsewhere"
+ln -s "${TMP}/elsewhere" "${WORKSPACES}/.related-repos-bootstrap"
+rc=0
+run_sut auth-ok >/dev/null 2>&1 || rc=$?
+[ "$rc" -eq 0 ] || fail "a symlinked staging directory is a warning, not a failure"
+[ ! -e "${WORKSPACES}/test-repo" ] || fail "must not clone through a symlinked staging directory"
+[ -z "$(ls -A "${TMP}/elsewhere")" ] || fail "must not write through a symlinked staging directory"
 
 # --- Test 9: post-start-common.sh starts bootstrap-related-repos.sh detached ---
 echo "==> post-start-common.sh starts bootstrap-related-repos.sh detached"

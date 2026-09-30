@@ -68,6 +68,7 @@ for tool in pnpm uv; do
     cat >"${STUB_BIN}/${tool}" <<EOF
 #!/usr/bin/env bash
 echo "\$*" >>"\${STUB_LOG_DIR}/${tool}.log"
+echo "\${CI-unset}" >>"\${STUB_LOG_DIR}/${tool}.ci"
 exit 0
 EOF
 done
@@ -130,7 +131,7 @@ run_setup() {
         export STUB_LOG_DIR="${LOG_DIR}"
         export RELATED_REPOS_GIT_BASE_URL="file://${BARE_BASE}/"
         for kv in "$@"; do export "$kv"; done
-        task --silent -t "${REPO_ROOT}/Taskfile.yml" -d "${FIX}" setup:remote
+        task --silent -t "${REPO_ROOT}/Taskfile.yml" -d "${RUN_DIR:-${FIX}}" setup:remote
     ) >"${OUT}" 2>"${ERR}" || rc=$?
 }
 
@@ -187,11 +188,13 @@ $(diff <(printf '%s\n' "$before") <(printf '%s\n' "$after") || true)"
 echo "==> dependencies install frozen from the lockfiles that exist"
 make_fixture deps -
 touch "${FIX}/pnpm-lock.yaml" "${FIX}/uv.lock"
-rm -f "${LOG_DIR}"/*.log
-run_setup "${STUBS_PATH}"
+rm -f "${LOG_DIR}"/*.log "${LOG_DIR}"/*.ci
+run_setup "${STUBS_PATH}" CI=false # an inherited CI=false must not let pnpm prompt
 [ "$rc" -eq 0 ] || fail "deps run must succeed (rc=$rc): $(all_output)"
 grep -qx 'install --frozen-lockfile' "${LOG_DIR}/pnpm.log" || fail "pnpm must install --frozen-lockfile"
 grep -qx 'sync --frozen' "${LOG_DIR}/uv.log" || fail "uv must sync --frozen"
+[ "$(cat "${LOG_DIR}/pnpm.ci")" = "true" ] || fail "pnpm must receive CI=true whatever was inherited, got: $(cat "${LOG_DIR}/pnpm.ci")"
+[ "$(cat "${LOG_DIR}/uv.ci")" = "true" ] || fail "uv must receive CI=true whatever was inherited, got: $(cat "${LOG_DIR}/uv.ci")"
 all_output | grep -q 'no .devcontainer/related-repos.txt' || fail "a missing related-repos.txt must be reported as skipped"
 
 echo "==> no lockfile means no dependency install"
@@ -201,6 +204,16 @@ run_setup "${STUBS_PATH}"
 [ "$rc" -eq 0 ] || fail "no-lockfile run must succeed (rc=$rc): $(all_output)"
 [ ! -e "${LOG_DIR}/pnpm.log" ] && [ ! -e "${LOG_DIR}/uv.log" ] || fail "pnpm/uv must not run without a lockfile"
 [ -z "$(find "${FIX_PARENT}" -mindepth 1 -maxdepth 1 ! -name checkout -print -quit)" ] || fail "without related-repos.txt nothing may be created beside the checkout"
+
+# --- A checkout entered through a symlink still gets its siblings beside the real one ---
+echo "==> a symlinked checkout clones siblings beside the real checkout"
+make_fixture symlinked "test-owner/sibling-a"
+mkdir -p "${TMP}/linkdir"
+ln -s "${FIX}" "${TMP}/linkdir/checkout-link"
+RUN_DIR="${TMP}/linkdir/checkout-link" run_setup "${STUBS_PATH}"
+[ "$rc" -eq 0 ] || fail "symlinked run must succeed (rc=$rc): $(all_output)"
+[ -d "${FIX_PARENT}/sibling-a/.git" ] || fail "siblings must land beside the real checkout ($(ls -A "${FIX_PARENT}"))"
+[ -z "$(find "${TMP}/linkdir" -mindepth 1 -maxdepth 1 ! -name checkout-link -print -quit)" ] || fail "nothing may be cloned beside the symlink"
 
 # --- A tool that is missing is skipped, not a failure ---
 echo "==> a missing lefthook is reported and the run continues"
