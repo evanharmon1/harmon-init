@@ -307,19 +307,23 @@ to here:
 | Sandbox mode | **current generation:** "each new task gets its own isolated workspace from the published environment" (*docs (current), 2026-09-29*). **Legacy:** the page says only that Codex "creates a container and checks out your repo" for a chat (*docs (legacy), 2026-09-29*) and states no isolation property. Reviews and mention-started tasks run in the legacy environment, so its isolation, and that it is not the CLI's `workspace-write`, are expected, not yet observed | docs (current), 2026-09-29; legacy: expected, not yet observed |
 | Docker | not needed by the gate; the bootstrap does not install it | [architecture](../architecture/remote-environments.md#tiers). Whether the cloud image has one is unknown |
 
-**What holds for every use of the environment.** Every task that runs in it,
-whatever started it, gets no secret, carries no token of ours and is granted no
-permission; the environment adds the installed tools and the agent-phase network
-level. Both roles are decided uses (#1408 decision 5), and cloud reviews and
-mention-started tasks already run on this repository's pull requests through the
-platform's connector whether or not the environment is provisioned, so
-provisioning changes what they can execute, not what they can write. The
-consideration this raises: a review of a pull request from an untrusted author
-executes that pull request's repository code (the checks) inside the environment.
-What bounds it is the table above (no secret, no token, the configured agent-phase
-network level) plus the platform's own per-task isolation, which for the legacy
-environment is expected, not yet observed. The permissions axis is the one axis
-not yet decided (the Permissions row). Until that decision is recorded on
+**What holds for every use of the environment.** For every task that runs in it,
+whatever started it, the environment's configuration adds no secret, no token of
+ours and no permission of its own; it adds the installed tools and the agent-phase
+network level. What a task may do on GitHub is whatever the platform's connector
+grants, which is expected, not yet observed
+([Pending observations](#pending-observations)). Both roles are decided uses
+(#1408 decision 5), and cloud reviews and mention-started tasks already run on this
+repository's pull requests through the platform's connector whether or not the
+environment is provisioned, so provisioning does not change what the connector
+lets them write; it changes what they can execute. The consideration this raises:
+a review of a pull request from an untrusted author executes that pull request's
+repository code (the checks) inside the environment. What bounds it is the table
+above (no secret, no token of ours, the configured agent-phase network level) plus
+the platform's own per-task isolation, which for the legacy environment is
+expected, not yet observed. The connector's write permissions are not a bound this
+guide can state until they are observed. The permissions axis is the one axis not
+yet decided (the Permissions row). Until that decision is recorded on
 [#1408](https://github.com/evanharmon1/harmon-init/issues/1408):
 
 - reviews and mention-started tasks continue as they already run;
