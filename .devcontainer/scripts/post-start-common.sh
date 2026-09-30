@@ -116,7 +116,9 @@ if [ "${DEVCONTAINER_TAILSCALE:-}" = "true" ]; then
     # checked properly against BackendState.
     #
     # Run in foreground — post-start output is already redirected to a log file
-    # so there is no SIGPIPE risk, and background processes get killed when
-    # VS Code's postStartCommand process group exits.
+    # so there is no SIGPIPE risk. (The detached `nohup … </dev/null … &` jobs
+    # above are different: they survive the postStartCommand process group's
+    # exit because SIGHUP is ignored; a process-group SIGTERM at container
+    # teardown still ends them, which is expected.)
     bash .devcontainer/scripts/tailscale-connect.sh
 fi

@@ -58,6 +58,15 @@ cat <<EOF >"${BIN_DIR}/git"
 if [ -n "\${GIT_LOG:-}" ]; then
     echo "\$*" >>"\${GIT_LOG}"
 fi
+if [ -n "\${STUB_GIT_CLONE_SLEEP:-}" ]; then
+    for arg in "\$@"; do
+        if [ "\$arg" = "clone" ]; then
+            echo "\$*" >>"\${STUB_GIT_CLONE_LOG}"
+            sleep "\${STUB_GIT_CLONE_SLEEP}"
+            exit 1
+        fi
+    done
+fi
 for arg in "\$@"; do
     case "\$arg" in
     *https://github.com* | *https://*)
@@ -232,6 +241,7 @@ run_sut unauthenticated >/dev/null 2>&1 || rc=$?
 [ "$rc" -eq 0 ] || fail "script must exit 0 even when clone fails"
 [ ! -e "${WORKSPACES}/nonexistent-repo" ] || fail "failed clone must not leave a directory behind"
 grep -q "nonexistent-repo.git" "${GIT_LOG}" || fail "expected offline git fallback attempt"
+[ -z "$(find "${WORKSPACES}" -name '.bootstrap-*' -print -quit 2>/dev/null)" ] || fail "temporary directory was not cleaned up after both clones failed"
 
 # --- Test 4: Already-present repo is skipped ---
 echo "==> already-present repo is skipped"
@@ -362,6 +372,33 @@ if ! grep -q "https://github.mycompany.internal/test-owner/test-repo.git" "${GIT
     fail "expected clone from derived GH_HOST, got: $(cat "${GIT_LOG}")"
 fi
 
+# 11b: no GH_HOST, no base URL: the host comes from the checkout's origin remote
+# (both URL forms), and github.com only when there is no origin at all. The script
+# is copied into a throwaway repo so its origin is under the test's control.
+echo "==> fallback URL derives from the origin remote host when GH_HOST is unset"
+ORIGIN_FIXTURE="${TMP}/origin-fixture"
+mkdir -p "${ORIGIN_FIXTURE}/.devcontainer/scripts"
+cp "${SUT}" "${ORIGIN_FIXTURE}/.devcontainer/scripts/bootstrap-related-repos.sh"
+"${REAL_GIT}" -C "${ORIGIN_FIXTURE}" init -q
+origin_cases="https://ghe-https.example.com/o/r.git|ghe-https.example.com
+ssh://git@ghe-ssh.example.com:2222/o/r.git|ghe-ssh.example.com
+git@ghe-scp.example.com:o/r.git|ghe-scp.example.com
+|github.com"
+while IFS='|' read -r origin_url expected_host; do
+    "${REAL_GIT}" -C "${ORIGIN_FIXTURE}" config --unset remote.origin.url 2>/dev/null || true
+    [ -z "${origin_url}" ] || "${REAL_GIT}" -C "${ORIGIN_FIXTURE}" config remote.origin.url "${origin_url}"
+    rm -rf "${WORKSPACES}" && mkdir -p "${WORKSPACES}"
+    GIT_LOG="${TMP}/git-origin.log"
+    rm -f "${GIT_LOG}"
+    export GIT_LOG
+    SUT="${ORIGIN_FIXTURE}/.devcontainer/scripts/bootstrap-related-repos.sh" TEST_UNSET_BASE_URL=1 run_sut unauthenticated >/dev/null 2>&1 || true
+    [ -f "${GIT_LOG}" ] || fail "expected git to be invoked for fallback (origin '${origin_url}')"
+    grep -q "clone.*https://${expected_host}/test-owner/test-repo.git" "${GIT_LOG}" ||
+        fail "expected clone from origin host ${expected_host} (origin '${origin_url}'), got: $(cat "${GIT_LOG}")"
+done <<EOF
+${origin_cases}
+EOF
+
 # --- Test 12: invalid RELATED_REPOS_MV_ATOMIC warns and falls back ---
 echo "==> invalid RELATED_REPOS_MV_ATOMIC warns and falls back"
 rm -rf "${WORKSPACES}" && mkdir -p "${WORKSPACES}"
@@ -385,8 +422,40 @@ case "$out" in
 *) fail "expected failed to publish warning with exit code, got: $out" ;;
 esac
 case "$out" in
+*"simulated I/O error during publish"*) ;;
+*) fail "expected mv's stderr in the publish-failure warning, got: $out" ;;
+esac
+case "$out" in
 *"Bootstrap complete: 0 cloned, 0 skipped, 1 failed"*) ;;
 *) fail "expected 1 failed in summary on publish failure, got: $out" ;;
 esac
+
+# --- Test 14: TERM stops the bootstrap; it must not keep cloning the remaining entries ---
+echo "==> TERM terminates the bootstrap and cleans up its temporary directory"
+rm -rf "${WORKSPACES}" && mkdir -p "${WORKSPACES}"
+printf '%s\n' "test-owner/test-repo" "test-owner/second-repo" >"${CONFIG}"
+make_stub unauthenticated
+CLONE_LOG="${TMP}/clone-term.log"
+rm -f "${CLONE_LOG}"
+PATH="${BIN_DIR}:${PATH}" WORKSPACES_DIR="${WORKSPACES}" CONFIG_FILE="${CONFIG}" \
+    RELATED_REPOS_GIT_BASE_URL="file://${BARE_BASE}/" \
+    STUB_GIT_CLONE_SLEEP=3 STUB_GIT_CLONE_LOG="${CLONE_LOG}" \
+    bash "${SUT}" >/dev/null 2>&1 &
+sut_pid=$!
+waited=0
+while [ ! -s "${CLONE_LOG}" ] && [ "$waited" -lt 100 ]; do
+    sleep 0.1
+    waited=$((waited + 1))
+done
+[ -s "${CLONE_LOG}" ] || {
+    kill -TERM "$sut_pid" 2>/dev/null || true
+    fail "first clone never started"
+}
+kill -TERM "$sut_pid"
+rc=0
+wait "$sut_pid" || rc=$?
+[ "$rc" -eq 143 ] || fail "expected exit 143 after TERM, got $rc"
+[ "$(wc -l <"${CLONE_LOG}" | tr -d ' ')" -eq 1 ] || fail "TERM must stop the loop; clones attempted: $(cat "${CLONE_LOG}")"
+[ -z "$(find "${WORKSPACES}" -name '.bootstrap-*' -print -quit 2>/dev/null)" ] || fail "temporary directory was not cleaned up after TERM"
 
 echo "test-bootstrap-related-repos.sh passed"

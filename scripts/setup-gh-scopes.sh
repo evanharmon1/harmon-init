@@ -41,8 +41,6 @@ trigger_related_repos_bootstrap() {
         local log_file="${HOME}/.related-repos-bootstrap.log"
         echo "==> Bootstrapping related repos in the background (log: ${log_file})..."
         nohup bash "${bootstrap}" </dev/null >>"${log_file}" 2>&1 &
-        # Allow the detached background process to spawn cleanly before terminal/pty teardown.
-        sleep 0.1
     fi
 }
 

@@ -25,7 +25,8 @@ set -euo pipefail
 # Environment variable overrides (for tests and host customization):
 #   CONFIG_FILE                  Path to related-repos.txt (default: ../related-repos.txt)
 #   WORKSPACES_DIR               Destination parent directory (default: /workspaces)
-#   RELATED_REPOS_GIT_BASE_URL   Base URL for git clone fallback (default: https://${GH_HOST}/ or https://github.com/)
+#   RELATED_REPOS_GIT_BASE_URL   Base URL for git clone fallback (default: https://${GH_HOST}/, else the host of
+#                                this repo's origin remote, else https://github.com/)
 #   RELATED_REPOS_MV_ATOMIC      Force atomic publish (1 = GNU mv -T, 0 = non-GNU detect-and-undo)
 
 # Prevent VS Code's JS debug bootloader from breaking child Node processes
@@ -41,7 +42,13 @@ cleanup() {
         rm -rf "$clone_tmp" || true
     fi
 }
-trap cleanup EXIT INT TERM HUP
+# Signals must TERMINATE the script, not just run cleanup: a trap handler that
+# returns swallows the signal and the clone loop would carry on. Exiting from the
+# signal trap fires the EXIT trap exactly once, which does the cleanup.
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+trap 'exit 129' HUP
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/../related-repos.txt}"
@@ -52,7 +59,24 @@ if [ -n "${RELATED_REPOS_GIT_BASE_URL:-}" ]; then
 elif [ -n "${GH_HOST:-}" ]; then
     GIT_BASE_URL="https://${GH_HOST}/"
 else
-    GIT_BASE_URL="https://github.com/"
+    # No override: an Enterprise checkout usually has no GH_HOST but its origin
+    # remote names the host. Parse it the way gh does (repository context), local
+    # and network-free, and fall back to github.com only if that yields nothing.
+    origin_url="$(git -C "${SCRIPT_DIR}/.." config --get remote.origin.url 2>/dev/null || true)"
+    origin_host=""
+    case "${origin_url}" in
+    *://*)                               # scheme://[user@]host[:port]/path
+        origin_host="${origin_url#*://}" # drop the scheme
+        origin_host="${origin_host#*@}"  # drop any userinfo
+        origin_host="${origin_host%%/*}" # drop the path
+        origin_host="${origin_host%%:*}" # drop any port
+        ;;
+    *@*:*) # scp-like: user@host:owner/repo
+        origin_host="${origin_url#*@}"
+        origin_host="${origin_host%%:*}"
+        ;;
+    esac
+    GIT_BASE_URL="https://${origin_host:-github.com}/"
 fi
 
 if [ -n "${RELATED_REPOS_MV_ATOMIC:-}" ]; then
@@ -191,6 +215,7 @@ while IFS= read -r raw_line || [ -n "$raw_line" ]; do
     clone_tmp=""
     if ! clone_tmp="$(mktemp -d "${WORKSPACES_DIR}/.bootstrap-${basename}.$$.XXXXXX" 2>&1)"; then
         echo "==> WARNING: failed to create temporary directory for ${target_spec}: ${clone_tmp}" >&2
+        clone_tmp="" # mktemp's error text is not a path; keep the EXIT trap unarmed
         failed=$((failed + 1))
         continue
     fi
@@ -227,6 +252,7 @@ while IFS= read -r raw_line || [ -n "$raw_line" ]; do
                 clone_tmp=""
                 if ! clone_tmp="$(mktemp -d "${WORKSPACES_DIR}/.bootstrap-${basename}.$$.XXXXXX" 2>&1)"; then
                     echo "==> WARNING: failed to create temporary directory for ${target_spec} fallback: ${clone_tmp}" >&2
+                    clone_tmp="" # mktemp's error text is not a path; keep the EXIT trap unarmed
                     failed=$((failed + 1))
                     continue
                 fi
@@ -264,11 +290,12 @@ while IFS= read -r raw_line || [ -n "$raw_line" ]; do
         # (e.g. macOS during host-side testing), fall back to a guarded check and mv,
         # with detect-and-undo if a directory appeared concurrently.
         set +e
+        publish_err=""
         if [ "$MV_ATOMIC" -eq 1 ]; then
-            mv -T "$clone_tmp" "$target" 2>/dev/null
+            publish_err="$(mv -T "$clone_tmp" "$target" 2>&1 >/dev/null)"
             publish_rc=$?
         else
-            [ ! -e "$target" ] && mv "$clone_tmp" "$target" 2>/dev/null
+            [ ! -e "$target" ] && publish_err="$(mv "$clone_tmp" "$target" 2>&1 >/dev/null)"
             publish_rc=$?
             nested_tmp="${target}/$(basename "$clone_tmp")"
             if [ "$publish_rc" -eq 0 ] && [ -e "$nested_tmp" ]; then
@@ -291,7 +318,7 @@ while IFS= read -r raw_line || [ -n "$raw_line" ]; do
             rm -rf "$clone_tmp" || true
             clone_tmp=""
         else
-            echo "==> WARNING: failed to publish ${basename} to ${target} (exit ${publish_rc}); continuing." >&2
+            echo "==> WARNING: failed to publish ${basename} to ${target} (exit ${publish_rc})${publish_err:+: ${publish_err}}; continuing." >&2
             failed=$((failed + 1))
             rm -rf "$clone_tmp" || true
             clone_tmp=""
