@@ -30,7 +30,9 @@ run in the working directory Claude Code reports in the hook payload (a lane
 merges from its own worktree), where that checkout is on a named branch that
 is not main/master and
 differs from every remote's resolved default branch -- at least one remote
-default must resolve (`git remote set-head <remote> --auto`), or it asks.
+default must resolve (`git remote set-head <remote> --auto`), or it asks. With
+several remotes, a branch that is the default of one remote whose HEAD is unset
+stays silent unless another remote's HEAD names it.
 
 The parser only decides when to stay SILENT; any gap in it costs a prompt,
 never a silent merge. (The decision to remove guard-process-kill,
