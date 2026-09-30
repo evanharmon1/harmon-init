@@ -113,8 +113,9 @@ else
         note_skipped "related repos: ${PARENT} is not writable"
     else
         echo "==> Related repos are cloned into ${PARENT}"
-        echo "    (the target directory must be private to you: a remote platform's checkout parent is;"
-        echo "    the bootstrap refuses only a staging directory inside it that is not)"
+        echo "    (the target directory must be private to you, or in a sandbox with no other principal that can write"
+        echo "    to it: a remote platform's session is, and so is the devcontainer's /workspaces; the bootstrap refuses"
+        echo "    only a staging directory inside it that is not)"
         # The bootstrap exits 0 whatever it could not clone (it warns on stderr), so a
         # missing sibling never fails setup; only a crash of the script itself does.
         run_step "related repos -> ${PARENT}" bash "$BOOTSTRAP" "$PARENT"

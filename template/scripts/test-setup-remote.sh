@@ -185,7 +185,7 @@ if [ "$HAVE_BOOTSTRAP" = 1 ]; then
     all_output | grep -q "Skipping existing-repo" || fail "the existing directory must be reported as skipped"
     all_output | grep -q "cloned into ${FIX_PARENT}" || fail "the task must print where it cloned"
     all_output | grep -q 'reference context' || fail "the task must say siblings are reference context"
-    all_output | grep -q 'must be private to you' || fail "the task must state that the target directory must be private to the user"
+    all_output | grep -q 'private to you' || fail "the task must state that the target directory must be private to the user"
     [ -s "${LOG_DIR}/git-ssh.log" ] || fail "expected git to be invoked with GIT_SSH_COMMAND recorded"
     [ "$(sort -u "${LOG_DIR}/git-ssh.log")" = "ssh -oBatchMode=yes" ] || fail "git must run with GIT_SSH_COMMAND=\"ssh -oBatchMode=yes\" (so an ssh remote cannot prompt), got: $(sort -u "${LOG_DIR}/git-ssh.log")"
     all_output | grep -q "session's own repository" || fail "the task must say siblings cannot be pushed from Claude Code on the web"
