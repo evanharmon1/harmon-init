@@ -34,6 +34,12 @@ CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/../related-repos.txt}"
 WORKSPACES_DIR="${WORKSPACES_DIR:-/workspaces}"
 GIT_BASE_URL="${RELATED_REPOS_GIT_BASE_URL:-https://github.com/}"
 
+if mv --version >/dev/null 2>&1; then
+    MV_ATOMIC=1
+else
+    MV_ATOMIC=0
+fi
+
 # --- Pre-flight checks ---
 
 if [ ! -f "$CONFIG_FILE" ]; then
@@ -57,12 +63,28 @@ if [ ! -w "$WORKSPACES_DIR" ]; then
 fi
 
 # --- Clean up orphaned temporary directories ---
-# Remove leftover .bootstrap-* directories older than 60 minutes (from runs killed
-# mid-clone). Younger ones are left alone since concurrent runs may own them.
+# Remove leftover .bootstrap-* directories older than 60 minutes from runs whose
+# process is no longer alive. Directories with an active PID or unparseable name
+# are left alone.
 while IFS= read -r orphan_dir; do
     [ -n "$orphan_dir" ] || continue
-    echo "==> Removing orphaned temporary bootstrap directory: ${orphan_dir}"
-    rm -rf "$orphan_dir"
+    dir_name="${orphan_dir##*/}"
+    remainder="${dir_name#.bootstrap-}"
+    [ "$remainder" != "$dir_name" ] || continue
+    prefix="${remainder%.*}"
+    [ "$prefix" != "$remainder" ] || continue
+    pid="${prefix##*.}"
+    case "$pid" in
+    '' | *[!0-9]*)
+        continue
+        ;;
+    *)
+        if ! kill -0 "$pid" 2>/dev/null; then
+            echo "==> Removing orphaned temporary bootstrap directory: ${orphan_dir} (dead PID: ${pid})"
+            rm -rf "$orphan_dir"
+        fi
+        ;;
+    esac
 done < <(find "$WORKSPACES_DIR" -maxdepth 1 -name '.bootstrap-*' -type d -mmin +60 2>/dev/null || true)
 
 # --- Parse and clone ---
@@ -123,7 +145,7 @@ while IFS= read -r raw_line || [ -n "$raw_line" ]; do
     # Clone into a private temporary directory first. Never clone into $target
     # directly: if a user or concurrent process creates $target in between,
     # cleaning up a failed clone must never remove the user's checkout.
-    clone_tmp="$(mktemp -d "${WORKSPACES_DIR}/.bootstrap-${basename}.XXXXXX")"
+    clone_tmp="$(mktemp -d "${WORKSPACES_DIR}/.bootstrap-${basename}.$$.XXXXXX")"
 
     # Decide whether to use gh (for owner/repo shorthand) or git (for URLs).
     use_gh=false
@@ -154,7 +176,7 @@ while IFS= read -r raw_line || [ -n "$raw_line" ]; do
             if [ "$clone_rc" -ne 0 ]; then
                 echo "==> WARNING: gh repo clone failed for ${target_spec} (exit ${clone_rc}); falling back to git clone." >&2
                 rm -rf "$clone_tmp"
-                clone_tmp="$(mktemp -d "${WORKSPACES_DIR}/.bootstrap-${basename}.XXXXXX")"
+                clone_tmp="$(mktemp -d "${WORKSPACES_DIR}/.bootstrap-${basename}.$$.XXXXXX")"
             fi
         else
             echo "==> gh is unauthenticated; falling back to git clone for ${target_spec}"
@@ -183,14 +205,18 @@ while IFS= read -r raw_line || [ -n "$raw_line" ]; do
     fi
 
     if [ "$clone_rc" -eq 0 ]; then
-        # Atomically publish into the target path. GNU coreutils mv -T treats the
-        # destination as a normal file/directory target rather than a directory into
-        # which to move; it renames atomically when $target is absent and fails
-        # (without nesting or clobbering) if $target already exists as a non-empty
-        # directory or file. (Note: this script runs only in the Linux devcontainer).
+        # Publish into the target path. Inside the Linux devcontainer GNU coreutils
+        # mv -T provides an atomic rename that fails safely without nesting if $target
+        # already exists as a non-empty directory or file. On platforms without GNU mv
+        # (e.g. macOS during host-side testing), fall back to a guarded check and mv.
         set +e
-        mv -T "$clone_tmp" "$target" 2>/dev/null
-        publish_rc=$?
+        if [ "$MV_ATOMIC" -eq 1 ]; then
+            mv -T "$clone_tmp" "$target" 2>/dev/null
+            publish_rc=$?
+        else
+            [ ! -e "$target" ] && mv "$clone_tmp" "$target" 2>/dev/null
+            publish_rc=$?
+        fi
         set -e
 
         if [ "$publish_rc" -eq 0 ]; then

@@ -290,8 +290,10 @@ if [ "${PTY_OK}" = true ]; then
 
     echo "==> triggers bootstrap-related-repos.sh upon successful refresh grant"
     mkdir -p "${TMP}/repo/.devcontainer/scripts"
+    rm -f "${TMP}/bootstrap-marker"
     cat <<EOF >"${TMP}/repo/.devcontainer/scripts/bootstrap-related-repos.sh"
 #!/usr/bin/env bash
+touch "${TMP}/bootstrap-marker"
 exit 0
 EOF
     chmod +x "${TMP}/repo/.devcontainer/scripts/bootstrap-related-repos.sh"
@@ -300,6 +302,11 @@ EOF
     *"Bootstrapping related repos in the background"*"${HOME}/.related-repos-bootstrap.log"*) ;;
     *) fail "expected background bootstrap invocation notice naming log path, got: ${out}" ;;
     esac
+    for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+        [ -f "${TMP}/bootstrap-marker" ] && break
+        sleep 0.2
+    done
+    [ -f "${TMP}/bootstrap-marker" ] || fail "bootstrap marker file was not created after grant landed"
 
     echo "==> bootstrap-related-repos.sh failure does not change exit status of setup-gh-scopes"
     cat <<EOF >"${TMP}/repo/.devcontainer/scripts/bootstrap-related-repos.sh"
@@ -310,12 +317,22 @@ EOF
         fail "setup-gh-scopes must succeed even if bootstrap-related-repos.sh exits non-zero"
 
     echo "==> bootstrap is NOT triggered if refresh does not land"
+    rm -f "${TMP}/bootstrap-marker"
+    cat <<EOF >"${TMP}/repo/.devcontainer/scripts/bootstrap-related-repos.sh"
+#!/usr/bin/env bash
+touch "${TMP}/bootstrap-marker"
+exit 0
+EOF
+    chmod +x "${TMP}/repo/.devcontainer/scripts/bootstrap-related-repos.sh"
     out="$(run_sut_pty does-not-land GH_HOST=github.com)"
     case "$out" in
     *"Bootstrapping related repos"*) fail "bootstrap should not be invoked when grant verification fails: ${out}" ;;
     esac
+    sleep 0.5
+    [ ! -f "${TMP}/bootstrap-marker" ] || fail "bootstrap marker was created even though grant verification failed"
 
     rm -rf "${TMP}/repo/.devcontainer"
+    rm -f "${TMP}/bootstrap-marker"
 
     echo "==> FAILS when the refresh silently did not land"
     # The whole reason this script verifies rather than trusting the exit code.

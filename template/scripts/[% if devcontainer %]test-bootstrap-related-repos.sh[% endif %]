@@ -38,6 +38,7 @@ BIN_DIR="${TMP}/bin"
 mkdir -p "${BIN_DIR}"
 
 REAL_GIT="$(which git)"
+REAL_MV="$(which mv)"
 
 # --- Stub git that enforces offline operation and logs arguments ---
 cat <<EOF >"${BIN_DIR}/git"
@@ -60,6 +61,9 @@ chmod +x "${BIN_DIR}/git"
 # --- Stub mv that can simulate concurrent target creation before publish ---
 cat <<EOF >"${BIN_DIR}/mv"
 #!/usr/bin/env bash
+if [ "\$1" = "--version" ]; then
+    exec "${REAL_MV}" --version
+fi
 if [ "\${STUB_MV:-}" = "concurrent-dir" ]; then
     dest=""
     for arg in "\$@"; do
@@ -78,7 +82,7 @@ elif [ "\${STUB_MV:-}" = "concurrent-file" ]; then
         echo "user-plain-file" >"\$dest"
     fi
 fi
-exec /usr/bin/mv "\$@"
+exec "${REAL_MV}" "\$@"
 EOF
 chmod +x "${BIN_DIR}/mv"
 
@@ -249,21 +253,30 @@ run_sut unauthenticated
 current_branch="$(git -C "${WORKSPACES}/test-repo" rev-parse --abbrev-ref HEAD)"
 [ "$current_branch" = "feature-branch" ] || fail "expected branch feature-branch, got $current_branch"
 
-# --- Test 8: Orphaned temporary directories older than 60 minutes are reaped ---
-echo "==> orphaned temporary directories older than 60 minutes are reaped"
+# --- Test 8: Orphaned temporary directories older than 60 minutes with dead PID are reaped ---
+echo "==> orphaned temporary directories older than 60 minutes with dead PID are reaped"
 rm -rf "${WORKSPACES}" && mkdir -p "${WORKSPACES}"
 : >"${CONFIG}"
-mkdir -p "${WORKSPACES}/.bootstrap-orphan-old.111111"
-mkdir -p "${WORKSPACES}/.bootstrap-orphan-fresh.222222"
-touch -t 202601010000 "${WORKSPACES}/.bootstrap-orphan-old.111111"
-touch "${WORKSPACES}/.bootstrap-orphan-fresh.222222"
+dead_pid=999999
+while kill -0 "$dead_pid" 2>/dev/null; do
+    dead_pid=$((dead_pid + 1))
+done
+mkdir -p "${WORKSPACES}/.bootstrap-orphan-dead.${dead_pid}.111111"
+mkdir -p "${WORKSPACES}/.bootstrap-orphan-live.$$.222222"
+touch -t 202601010000 "${WORKSPACES}/.bootstrap-orphan-dead.${dead_pid}.111111"
+touch -t 202601010000 "${WORKSPACES}/.bootstrap-orphan-live.$$.222222"
 out="$(run_sut auth-ok 2>&1)"
-[ ! -d "${WORKSPACES}/.bootstrap-orphan-old.111111" ] || fail "old orphan directory should have been reaped"
-[ -d "${WORKSPACES}/.bootstrap-orphan-fresh.222222" ] || fail "fresh orphan directory must not be reaped"
+[ ! -d "${WORKSPACES}/.bootstrap-orphan-dead.${dead_pid}.111111" ] || fail "old orphan directory with dead PID should have been reaped"
+[ -d "${WORKSPACES}/.bootstrap-orphan-live.$$.222222" ] || fail "old directory with live PID must not be reaped"
 case "$out" in
 *"Removing orphaned temporary bootstrap directory"*) ;;
 *) fail "expected log message for reaped orphan directory, got: $out" ;;
 esac
-rm -rf "${WORKSPACES}/.bootstrap-orphan-fresh.222222"
+rm -rf "${WORKSPACES}/.bootstrap-orphan-live.$$.222222"
+
+# --- Test 9: post-start-common.sh starts bootstrap-related-repos.sh detached ---
+echo "==> post-start-common.sh starts bootstrap-related-repos.sh detached"
+grep -E -q '^[[:space:]]*nohup bash \.devcontainer/scripts/bootstrap-related-repos\.sh' .devcontainer/scripts/post-start-common.sh ||
+    fail "expected post-start-common.sh to start bootstrap-related-repos.sh detached with nohup"
 
 echo "test-bootstrap-related-repos.sh passed"

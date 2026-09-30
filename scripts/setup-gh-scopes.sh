@@ -39,6 +39,7 @@ trigger_related_repos_bootstrap() {
         local log_file="${HOME}/.related-repos-bootstrap.log"
         echo "==> Bootstrapping related repos in the background (log: ${log_file})..."
         nohup bash "${bootstrap}" >>"${log_file}" 2>&1 &
+        sleep 0.1
     fi
 }
 
