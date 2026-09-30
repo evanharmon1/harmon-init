@@ -205,8 +205,13 @@ GH_SCOPES_LINE=""
 # in derive_gh_scope_state below already say "reissue", which is correct in
 # both profiles; only this stored-credential default needed splitting.
 gh_scope_remedy_default() {
+    # Three postures, three answers: the marker is "bot", "agent", or unset
+    # (dev) — and agent is never read as bot, because its credential is a
+    # different variable (AGENT_GH_TOKEN).
     if [ "${FOREMAN_DEVCONTAINER:-}" = "bot" ]; then
         printf '%s' "bot profile: re-provision GH_TOKEN with the required permissions — never widen the current login here"
+    elif [ "${FOREMAN_DEVCONTAINER:-}" = "agent" ]; then
+        printf '%s' "agent posture: re-provision AGENT_GH_TOKEN with the required permissions — never widen the current login here"
     else
         printf '%s' "run: task setup:gh-scopes (or: gh auth refresh -s $(gh_scopes_request_list))"
     fi
@@ -655,6 +660,8 @@ render_gh_scope_check() {
 gh_login_remedy() {
     if [ "${FOREMAN_DEVCONTAINER:-}" = "bot" ]; then
         printf '%s' "bot profile: provision GH_TOKEN — never an interactive login here"
+    elif [ "${FOREMAN_DEVCONTAINER:-}" = "agent" ]; then
+        printf '%s' "agent posture: provision AGENT_GH_TOKEN — never an interactive login here"
     else
         printf '%s' "gh auth login"
     fi
@@ -1155,6 +1162,11 @@ if [[ "${SECTION}" == "setup" ]]; then
                     checkline ok "Dev profile (dev/devcontainer.json)"
                 else
                     checkline no "Dev profile (dev/devcontainer.json)"
+                fi
+                if [ -f .devcontainer/agent/devcontainer.json ]; then
+                    checkline ok "Agent posture (agent/devcontainer.json)"
+                else
+                    checkline no "Agent posture (agent/devcontainer.json)"
                 fi
                 if [ -f .devcontainer/devcontainer.env ]; then
                     checkline ok "Secrets env seeded" "devcontainer.env"

@@ -34,3 +34,6 @@ one's status.
   — briefs get a schema-bound envelope around a free-form body (amends 0009 D2).
 - [2026-09-23-retire-openspec-workflow.md](2026-09-23-retire-openspec-workflow.md)
   — OpenSpec is retired in favor of the existing issue, ADR, and plain-spec workflow.
+- [2026-09-29-agent-posture-three-posture-model.md](2026-09-29-agent-posture-three-posture-model.md)
+  — proposed: a third devcontainer posture, **agent**, for unattended runs,
+  never looser than bot on any axis.
