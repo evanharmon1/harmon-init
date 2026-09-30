@@ -58,7 +58,16 @@ run_step() {
 echo "==> setup:remote in ${ROOT}"
 
 # --- 1. git hooks ---
-if [ ! -f lefthook.yml ] && [ ! -f lefthook.yaml ] && [ ! -f .lefthook.yml ]; then
+# Every config name lefthook itself searches for.
+has_lefthook_config=false
+for cfg in lefthook.yml lefthook.yaml lefthook.toml lefthook.json \
+    .lefthook.yml .lefthook.yaml .lefthook.toml .lefthook.json; do
+    if [ -f "$cfg" ]; then
+        has_lefthook_config=true
+        break
+    fi
+done
+if [ "$has_lefthook_config" = false ]; then
     note_skipped "git hooks: no lefthook config in this repository"
 elif ! command -v lefthook >/dev/null 2>&1; then
     note_skipped "git hooks: lefthook is not on PATH (no pre-commit/pre-push gate will run; install lefthook, then re-run)"
@@ -98,15 +107,17 @@ else
     PARENT="$(dirname "$ROOT")"
     if [ ! -w "$PARENT" ]; then
         echo "==> WARNING: ${PARENT} is not writable; related repos cannot be cloned there." >&2
+        note_skipped "related repos: ${PARENT} is not writable"
+    else
+        echo "==> Related repos are cloned into ${PARENT}"
+        echo "    (the target directory must be private to you: a remote platform's checkout parent is;"
+        echo "    the bootstrap refuses only a staging directory inside it that is not)"
+        # The bootstrap exits 0 whatever it could not clone (it warns on stderr), so a
+        # missing sibling never fails setup; only a crash of the script itself does.
+        run_step "related repos -> ${PARENT}" bash "$BOOTSTRAP" "$PARENT"
+        echo "==> Sibling repos are reference context. Claude Code on the web only allows pushes to"
+        echo "    the session's own repository and branch, so changes to a sibling cannot be pushed from here."
     fi
-    echo "==> Related repos are cloned into ${PARENT}"
-    echo "    (the target directory must be private to you: a remote platform's checkout parent is;"
-    echo "    the bootstrap refuses only a staging directory inside it that is not)"
-    # The bootstrap exits 0 whatever it could not clone (it warns on stderr), so a
-    # missing sibling never fails setup; only a crash of the script itself does.
-    run_step "related repos -> ${PARENT}" bash "$BOOTSTRAP" "$PARENT"
-    echo "==> Sibling repos are reference context. Claude Code on the web only allows pushes to"
-    echo "    the session's own repository and branch, so changes to a sibling cannot be pushed from here."
 fi
 
 # --- summary ---

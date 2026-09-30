@@ -79,6 +79,12 @@ trap 'exit 129' HUP
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/../related-repos.txt}"
 WORKSPACES_DIR="${1:-${WORKSPACES_DIR:-/workspaces}}"
+# Normalize once (one trailing slash, unless the value is exactly "/") so the staging
+# directory, the clone targets and the /workspaces check all derive from one value.
+case "$WORKSPACES_DIR" in
+/) ;;
+*/) WORKSPACES_DIR="${WORKSPACES_DIR%/}" ;;
+esac
 
 if [ -n "${RELATED_REPOS_GIT_BASE_URL:-}" ]; then
     GIT_BASE_URL="${RELATED_REPOS_GIT_BASE_URL}"
@@ -158,20 +164,23 @@ fi
 # under the target. A symlink, a non-directory, a directory owned by someone else or
 # one that is group/world-writable is never used or replaced: skip rather than sweep
 # or clone through it.
-STAGE_DIR="${WORKSPACES_DIR%/}/.related-repos-bootstrap"
+STAGE_DIR="${WORKSPACES_DIR}/.related-repos-bootstrap"
 if [ -L "$STAGE_DIR" ] || { [ -e "$STAGE_DIR" ] && [ ! -d "$STAGE_DIR" ]; }; then
     echo "==> WARNING: ${STAGE_DIR} exists and is not a plain directory; skipping related-repo bootstrap." >&2
     exit 0
 fi
-if [ ! -d "$STAGE_DIR" ] && ! (umask 077 && mkdir -p "$STAGE_DIR") 2>/dev/null; then
-    echo "==> WARNING: could not create ${STAGE_DIR}; skipping related-repo bootstrap." >&2
-    exit 0
+if [ ! -d "$STAGE_DIR" ]; then
+    # chmod as well as umask: a default ACL on the parent can override the umask.
+    if ! (umask 077 && mkdir -p "$STAGE_DIR" && chmod 700 "$STAGE_DIR") 2>/dev/null; then
+        echo "==> WARNING: could not create ${STAGE_DIR}; skipping related-repo bootstrap." >&2
+        exit 0
+    fi
 fi
 # Trust it only if it is ours and private: on a shared host with a world-writable
 # parent another user could pre-create it, then swap a finished clone before the
 # atomic publish. No fallback to another path: skip.
 if [ ! -O "$STAGE_DIR" ]; then
-    echo "==> WARNING: ${STAGE_DIR} is not owned by the current user; skipping related-repo bootstrap." >&2
+    echo "==> WARNING: ${STAGE_DIR} is not owned by the current user; remove it and re-run, or run as its owner; skipping related-repo bootstrap." >&2
     exit 0
 fi
 if [ -n "$(find "$STAGE_DIR" -maxdepth 0 \( -perm -g+w -o -perm -o+w \) -print 2>/dev/null)" ]; then

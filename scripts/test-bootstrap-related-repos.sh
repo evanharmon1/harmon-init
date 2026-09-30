@@ -121,6 +121,20 @@ exec "${REAL_MV}" "\$@"
 EOF
 chmod +x "${BIN_DIR}/mv"
 
+# --- Stub mkdir that simulates a parent default ACL overriding the umask ---
+REAL_MKDIR="$(command -v mkdir)"
+cat <<EOF >"${BIN_DIR}/mkdir"
+#!/usr/bin/env bash
+"${REAL_MKDIR}" "\$@" || exit \$?
+if [ -n "\${STUB_MKDIR_MODE:-}" ]; then
+    for arg in "\$@"; do
+        last="\$arg"
+    done
+    chmod "\${STUB_MKDIR_MODE}" "\$last"
+fi
+EOF
+chmod +x "${BIN_DIR}/mkdir"
+
 make_stub() {
     local scenario="$1"
     cat <<EOF >"${BIN_DIR}/gh"
@@ -597,6 +611,35 @@ echo "test-owner/test-repo" >"${CONFIG}"
 )
 [ -d "${TMP}/arg-target/test-repo/.git" ] || fail "expected the clone in the argument directory"
 [ ! -e "${WORKSPACES}/test-repo" ] || fail "the argument must win over WORKSPACES_DIR"
+
+echo "==> the staging directory is created 0700 whatever the umask or a parent ACL does"
+rm -rf "${WORKSPACES}" && mkdir -p "${WORKSPACES}"
+echo "test-owner/test-repo" >"${CONFIG}"
+(
+    umask 000                                           # inherited umask
+    STUB_MKDIR_MODE=775 run_sut auth-ok >/dev/null 2>&1 # a default ACL widening what the umask made
+)
+mode="$(stat -c %a "${WORKSPACES}/.related-repos-bootstrap" 2>/dev/null || stat -f %Lp "${WORKSPACES}/.related-repos-bootstrap")"
+[ "$mode" = "700" ] || fail "the created staging directory must be 0700 despite umask 000 and a widening ACL, got ${mode}"
+[ -d "${WORKSPACES}/test-repo/.git" ] || fail "a staging directory this run created and fixed to 0700 must be used"
+
+echo "==> a trailing slash on the target is normalized once"
+rm -rf "${TMP}/slash-target" && mkdir -p "${TMP}/slash-target"
+STUB_MKTEMP_LOG="${TMP}/mktemp-slash.log"
+rm -f "${STUB_MKTEMP_LOG}"
+export STUB_MKTEMP_LOG
+(
+    make_stub auth-ok
+    export PATH="${BIN_DIR}:${PATH}"
+    unset WORKSPACES_DIR
+    export CONFIG_FILE="${CONFIG}"
+    export RELATED_REPOS_GIT_BASE_URL="file://${BARE_BASE}/"
+    bash "${SUT}" "${TMP}/slash-target/" >/dev/null 2>&1
+)
+unset STUB_MKTEMP_LOG
+[ -d "${TMP}/slash-target/test-repo/.git" ] || fail "a target with a trailing slash must be cloned into"
+grep -q '//' "${TMP}/mktemp-slash.log" && fail "a trailing slash must not leave a double slash in derived paths: $(cat "${TMP}/mktemp-slash.log")"
+grep -q "${TMP}/slash-target/.related-repos-bootstrap/" "${TMP}/mktemp-slash.log" || fail "the staging directory must derive from the normalized target: $(cat "${TMP}/mktemp-slash.log")"
 
 echo "==> the default target stays /workspaces and the devcontainer call sites pass no argument"
 grep -q 'WORKSPACES_DIR="${1:-${WORKSPACES_DIR:-/workspaces}}"' "${SUT}" || fail "the default target must remain /workspaces"

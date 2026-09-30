@@ -16,7 +16,8 @@ unset NODE_OPTIONS GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_CONFIG_COUNT GIT_CON
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 
 TMP="$(mktemp -d)"
-trap 'rm -rf "${TMP}"' EXIT
+# A scenario may chmod a directory read-only; restore write access before removing it.
+trap 'chmod -R u+w "${TMP}" 2>/dev/null; rm -rf "${TMP}"' EXIT
 
 fail() {
     echo "TEST FAIL: $*" >&2
@@ -103,6 +104,16 @@ exec "${REAL_GIT}" "\$@"
 EOF
 chmod +x "${STUB_BIN}"/*
 
+# A repository generated without a devcontainer ships setup:remote (and this test)
+# but not the bootstrap script: the sibling-clone scenarios then cannot run, and the
+# task is expected to say it skipped the related repos.
+HAVE_BOOTSTRAP=0
+if [ -f "${REPO_ROOT}/.devcontainer/scripts/bootstrap-related-repos.sh" ]; then
+    HAVE_BOOTSTRAP=1
+else
+    echo "skip: .devcontainer/scripts/bootstrap-related-repos.sh is absent; the sibling-clone scenarios are skipped"
+fi
+
 # make_fixture <name> <related-repos.txt content|-> — a git repository standing in
 # for a rendered template repo, one directory below a writable parent. The real
 # scripts are copied in; the Taskfile is the repository's own (run via -t/-d).
@@ -113,7 +124,9 @@ make_fixture() {
     mkdir -p "${FIX}/scripts" "${FIX}/.devcontainer/scripts"
     git init -q "${FIX}"
     cp "${REPO_ROOT}/scripts/setup-remote.sh" "${FIX}/scripts/setup-remote.sh"
-    cp "${REPO_ROOT}/.devcontainer/scripts/bootstrap-related-repos.sh" "${FIX}/.devcontainer/scripts/"
+    if [ "$HAVE_BOOTSTRAP" = 1 ]; then
+        cp "${REPO_ROOT}/.devcontainer/scripts/bootstrap-related-repos.sh" "${FIX}/.devcontainer/scripts/"
+    fi
     printf 'pre-push:\n  commands:\n    noop:\n      run: "true"\n' >"${FIX}/lefthook.yml"
     if [ "$related" != "-" ]; then
         printf '%s\n' "$related" >"${FIX}/.devcontainer/related-repos.txt"
@@ -161,20 +174,25 @@ echo "custom-content" >"${FIX_PARENT}/existing-repo/marker.txt"
 rm -f "${LOG_DIR}"/*.log
 run_setup "${STUBS_PATH}"
 [ "$rc" -eq 0 ] || fail "first run must succeed (rc=$rc): $(all_output)"
-[ -d "${FIX_PARENT}/sibling-a/.git" ] || fail "sibling-a must be cloned into the checkout's parent"
-[ -d "${FIX_PARENT}/sibling-b/.git" ] || fail "sibling-b (listed after the failing entry) must be cloned: the run continues"
-[ ! -e "${FIX_PARENT}/missing-repo" ] || fail "an uncloneable repository must leave nothing behind"
-[ "$(cat "${FIX_PARENT}/existing-repo/marker.txt")" = "custom-content" ] || fail "an existing directory must not be modified"
-[ ! -d "${FIX_PARENT}/existing-repo/.git" ] || fail "an existing directory must not be cloned over"
-[ -z "$(find "${FIX_PARENT}" -name '.bootstrap-*' -print -quit)" ] || fail "no temporary bootstrap directory may survive"
-all_output | grep -q 'WARNING: failed to clone test-owner/missing-repo' || fail "the uncloneable repository must produce a warning: $(all_output)"
-all_output | grep -q "Skipping existing-repo" || fail "the existing directory must be reported as skipped"
-all_output | grep -q "cloned into ${FIX_PARENT}" || fail "the task must print where it cloned"
-all_output | grep -q 'reference context' || fail "the task must say siblings are reference context"
-all_output | grep -q 'must be private to you' || fail "the task must state that the target directory must be private to the user"
-[ -s "${LOG_DIR}/git-ssh.log" ] || fail "expected git to be invoked with GIT_SSH_COMMAND recorded"
-[ "$(sort -u "${LOG_DIR}/git-ssh.log")" = "ssh -oBatchMode=yes" ] || fail "git must run with GIT_SSH_COMMAND=\"ssh -oBatchMode=yes\" (so an ssh remote cannot prompt), got: $(sort -u "${LOG_DIR}/git-ssh.log")"
-all_output | grep -q "session's own repository" || fail "the task must say siblings cannot be pushed from Claude Code on the web"
+if [ "$HAVE_BOOTSTRAP" = 1 ]; then
+    [ -d "${FIX_PARENT}/sibling-a/.git" ] || fail "sibling-a must be cloned into the checkout's parent"
+    [ -d "${FIX_PARENT}/sibling-b/.git" ] || fail "sibling-b (listed after the failing entry) must be cloned: the run continues"
+    [ ! -e "${FIX_PARENT}/missing-repo" ] || fail "an uncloneable repository must leave nothing behind"
+    [ "$(cat "${FIX_PARENT}/existing-repo/marker.txt")" = "custom-content" ] || fail "an existing directory must not be modified"
+    [ ! -d "${FIX_PARENT}/existing-repo/.git" ] || fail "an existing directory must not be cloned over"
+    [ -z "$(find "${FIX_PARENT}" -name '.bootstrap-*' -print -quit)" ] || fail "no temporary bootstrap directory may survive"
+    all_output | grep -q 'WARNING: failed to clone test-owner/missing-repo' || fail "the uncloneable repository must produce a warning: $(all_output)"
+    all_output | grep -q "Skipping existing-repo" || fail "the existing directory must be reported as skipped"
+    all_output | grep -q "cloned into ${FIX_PARENT}" || fail "the task must print where it cloned"
+    all_output | grep -q 'reference context' || fail "the task must say siblings are reference context"
+    all_output | grep -q 'must be private to you' || fail "the task must state that the target directory must be private to the user"
+    [ -s "${LOG_DIR}/git-ssh.log" ] || fail "expected git to be invoked with GIT_SSH_COMMAND recorded"
+    [ "$(sort -u "${LOG_DIR}/git-ssh.log")" = "ssh -oBatchMode=yes" ] || fail "git must run with GIT_SSH_COMMAND=\"ssh -oBatchMode=yes\" (so an ssh remote cannot prompt), got: $(sort -u "${LOG_DIR}/git-ssh.log")"
+    all_output | grep -q "session's own repository" || fail "the task must say siblings cannot be pushed from Claude Code on the web"
+else
+    all_output | grep -q 'is not present in this repository' || fail "without the bootstrap script the task must report the related repos as skipped: $(all_output)"
+    [ -z "$(find "${FIX_PARENT}" -mindepth 1 -maxdepth 1 ! -name checkout ! -name existing-repo -print -quit)" ] || fail "nothing may be cloned without the bootstrap script"
+fi
 
 echo "==> .git/hooks/pre-push is the lefthook shim"
 [ -x "${FIX}/.git/hooks/pre-push" ] || fail "pre-push must be installed and executable"
@@ -210,23 +228,43 @@ run_setup "${STUBS_PATH}"
 [ ! -e "${LOG_DIR}/pnpm.log" ] && [ ! -e "${LOG_DIR}/uv.log" ] || fail "pnpm/uv must not run without a lockfile"
 [ -z "$(find "${FIX_PARENT}" -mindepth 1 -maxdepth 1 ! -name checkout -print -quit)" ] || fail "without related-repos.txt nothing may be created beside the checkout"
 
-# --- A checkout entered through a symlink still gets its siblings beside the real one ---
-echo "==> a symlinked checkout clones siblings beside the real checkout"
-make_fixture symlinked "test-owner/sibling-a"
-mkdir -p "${TMP}/linkdir"
-ln -s "${FIX}" "${TMP}/linkdir/checkout-link"
-RUN_DIR="${TMP}/linkdir/checkout-link" run_setup "${STUBS_PATH}"
-[ "$rc" -eq 0 ] || fail "symlinked run must succeed (rc=$rc): $(all_output)"
-[ -d "${FIX_PARENT}/sibling-a/.git" ] || fail "siblings must land beside the real checkout ($(ls -A "${FIX_PARENT}"))"
-[ -z "$(find "${TMP}/linkdir" -mindepth 1 -maxdepth 1 ! -name checkout-link -print -quit)" ] || fail "nothing may be cloned beside the symlink"
+if [ "$HAVE_BOOTSTRAP" = 1 ]; then
+    # --- A checkout entered through a symlink still gets its siblings beside the real one ---
+    echo "==> a symlinked checkout clones siblings beside the real checkout"
+    make_fixture symlinked "test-owner/sibling-a"
+    mkdir -p "${TMP}/linkdir"
+    ln -s "${FIX}" "${TMP}/linkdir/checkout-link"
+    RUN_DIR="${TMP}/linkdir/checkout-link" run_setup "${STUBS_PATH}"
+    [ "$rc" -eq 0 ] || fail "symlinked run must succeed (rc=$rc): $(all_output)"
+    [ -d "${FIX_PARENT}/sibling-a/.git" ] || fail "siblings must land beside the real checkout ($(ls -A "${FIX_PARENT}"))"
+    [ -z "$(find "${TMP}/linkdir" -mindepth 1 -maxdepth 1 ! -name checkout-link -print -quit)" ] || fail "nothing may be cloned beside the symlink"
 
-# --- A caller's own GIT_SSH_COMMAND is left alone ---
-echo "==> an existing GIT_SSH_COMMAND is preserved"
-make_fixture sshcmd "test-owner/sibling-a"
-rm -f "${LOG_DIR}/git-ssh.log"
-run_setup "${STUBS_PATH}" "GIT_SSH_COMMAND=ssh -i /custom/key"
-[ "$rc" -eq 0 ] || fail "custom GIT_SSH_COMMAND run must succeed (rc=$rc): $(all_output)"
-[ "$(sort -u "${LOG_DIR}/git-ssh.log")" = "ssh -i /custom/key" ] || fail "a caller's GIT_SSH_COMMAND must not be overwritten, got: $(sort -u "${LOG_DIR}/git-ssh.log")"
+    # --- A caller's own GIT_SSH_COMMAND is left alone ---
+    echo "==> an existing GIT_SSH_COMMAND is preserved"
+    make_fixture sshcmd "test-owner/sibling-a"
+    rm -f "${LOG_DIR}/git-ssh.log"
+    run_setup "${STUBS_PATH}" "GIT_SSH_COMMAND=ssh -i /custom/key"
+    [ "$rc" -eq 0 ] || fail "custom GIT_SSH_COMMAND run must succeed (rc=$rc): $(all_output)"
+    [ "$(sort -u "${LOG_DIR}/git-ssh.log")" = "ssh -i /custom/key" ] || fail "a caller's GIT_SSH_COMMAND must not be overwritten, got: $(sort -u "${LOG_DIR}/git-ssh.log")"
+
+    # --- A non-writable parent is skipped, not reported as a clone ---
+    echo "==> a non-writable parent is reported as skipped and nothing is cloned"
+    make_fixture readonly "test-owner/sibling-a"
+    chmod 555 "${FIX_PARENT}"
+    if [ -w "${FIX_PARENT}" ]; then
+        chmod 755 "${FIX_PARENT}"
+        echo "skip: the parent is writable despite chmod 555 (running as root); non-writable-parent scenario skipped"
+    else
+        rm -f "${LOG_DIR}"/*.log
+        run_setup "${STUBS_PATH}"
+        chmod 755 "${FIX_PARENT}"
+        [ "$rc" -eq 0 ] || fail "a non-writable parent is a skip, not a failure (rc=$rc): $(all_output)"
+        all_output | grep -q '^  - related repos: .*is not writable' || fail "the related repos must be listed under Skipped: $(all_output)"
+        ! all_output | grep -q '^  + related repos' || fail "a non-writable parent must not be reported as Ran: $(all_output)"
+        [ ! -e "${LOG_DIR}/gh.log" ] || fail "the bootstrap must not run against a non-writable parent"
+        [ ! -e "${FIX_PARENT}/sibling-a" ] || fail "nothing may be cloned into a non-writable parent"
+    fi
+fi
 
 # --- A tool that is missing is skipped, not a failure ---
 echo "==> a missing lefthook is reported and the run continues"
@@ -236,13 +274,32 @@ run_setup "${MIN_BIN}" # no lefthook on PATH
 all_output | grep -q 'lefthook is not on PATH' || fail "a missing lefthook must be reported as skipped: $(all_output)"
 [ ! -e "${FIX}/.git/hooks/pre-push" ] || fail "no pre-push shim can exist without lefthook"
 
+# --- Every config name lefthook itself searches for counts ---
+echo "==> lefthook config detection covers every name lefthook searches"
+for cfg in lefthook.yml lefthook.yaml lefthook.toml lefthook.json .lefthook.yml .lefthook.yaml .lefthook.toml .lefthook.json; do
+    make_fixture "cfg-${cfg}" -
+    rm -f "${FIX}/lefthook.yml" "${FIX}/lefthook.yaml"
+    : >"${FIX}/${cfg}"
+    rm -f "${LOG_DIR}/lefthook.log"
+    run_setup "${STUBS_PATH}"
+    [ "$rc" -eq 0 ] || fail "${cfg}: run must succeed (rc=$rc): $(all_output)"
+    [ -s "${LOG_DIR}/lefthook.log" ] || fail "${cfg} must count as a lefthook config (lefthook install was not run)"
+done
+make_fixture cfg-none -
+rm -f "${FIX}/lefthook.yml" "${LOG_DIR}/lefthook.log"
+run_setup "${STUBS_PATH}"
+[ ! -e "${LOG_DIR}/lefthook.log" ] || fail "without any lefthook config, lefthook install must not run"
+all_output | grep -q 'no lefthook config' || fail "a missing lefthook config must be reported as skipped"
+
 # --- A step that could run and failed is a non-zero exit, and later steps still run ---
 echo "==> a failing lefthook fails the task but the related repos are still cloned"
 make_fixture failing "test-owner/sibling-a"
 run_setup "${STUBS_PATH}" STUB_LEFTHOOK=fail
 [ "$rc" -ne 0 ] || fail "a failed lefthook install must produce a non-zero exit"
 all_output | grep -q 'lefthook install failed' || fail "the failure must be named: $(all_output)"
-[ -d "${FIX_PARENT}/sibling-a/.git" ] || fail "later steps must still run after a failed step"
+if [ "$HAVE_BOOTSTRAP" = 1 ]; then
+    [ -d "${FIX_PARENT}/sibling-a/.git" ] || fail "later steps must still run after a failed step"
+fi
 
 # --- Real lefthook, when the host has it: the shim is the genuine article ---
 if [ -n "${REAL_LEFTHOOK}" ]; then

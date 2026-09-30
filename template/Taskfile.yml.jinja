@@ -126,8 +126,8 @@ tasks:
       - task: test:gh-scopes
 [% if devcontainer %]
       - task: test:related-repos
-      - task: test:setup-remote
 [% endif %]
+      - task: test:setup-remote
       - task: test:meta-install
 [% if use_codex_review %]
       - task: test:codex-review
@@ -812,12 +812,12 @@ tasks:
     desc: Unit-test the related-repo bootstrap fallback and idempotency (stubbed gh/git, no network)
     cmds:
       - ./scripts/test-bootstrap-related-repos.sh
+[% endif %]
 
   test:setup-remote:
     desc: Unit-test task setup:remote — idempotency, the lefthook shim, sibling clones into the checkout's parent (stubbed lefthook/gh, no network)
     cmds:
       - ./scripts/test-setup-remote.sh
-[% endif %]
 
   test:meta-install:
     desc: Unit-test the .meta sidecar installer's ~-expansion and refusals

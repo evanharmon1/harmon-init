@@ -423,13 +423,14 @@ repository-independent, and reads no checkout.
 `task setup:remote` (`scripts/setup-remote.sh`,
 [#1405](https://github.com/evanharmon1/harmon-init/issues/1405)) is the
 per-checkout preparation as one task, which the agent runs once on a fresh
-checkout — `AGENTS.md` tells it to, because no hook will, and the setup script
-stays machine-level. It runs `lefthook install` (when lefthook is on `PATH`),
+checkout — `AGENTS.md` tells it to, because the repository ships no hook that
+would, and the setup script stays machine-level. It runs `lefthook install` (when lefthook is on `PATH`),
 frozen `pnpm` / `uv` installs from the lockfiles that exist, and the same sibling
 clones the devcontainer makes (`.devcontainer/related-repos.txt`), into the
 checkout's **parent** directory. It is idempotent, never prompts (git terminal
-prompts and ssh are disabled, and pnpm runs with `CI=true`), skips a missing tool
-with a note, warns and continues past a repository it cannot clone, and exits
+prompts are disabled, ssh runs with `BatchMode=yes` unless the caller already set
+`GIT_SSH_COMMAND`, in which case the caller's value governs, and pnpm runs with
+`CI=true`), skips a missing tool with a note, warns and continues past a repository it cannot clone, and exits
 non-zero only when a step that could run failed. It prints where it cloned.
 
 Siblings are **reference context**, not something a task pushes. Whether a Codex
