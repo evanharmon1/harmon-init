@@ -32,16 +32,49 @@ export GIT_TERMINAL_PROMPT=0
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/../related-repos.txt}"
 WORKSPACES_DIR="${WORKSPACES_DIR:-/workspaces}"
+GIT_BASE_URL="${RELATED_REPOS_GIT_BASE_URL:-https://github.com/}"
 
 # --- Concurrency control ---
 # Avoid concurrent bootstrap runs (e.g. create + start or start + setup:gh-scopes)
-# attempting to clone into the same directory at once.
+# attempting to clone into the same directory at once. Record the owner PID to
+# detect and reclaim stale locks after an unclean exit.
 LOCK_DIR="${BOOTSTRAP_LOCK_DIR:-${TMPDIR:-/tmp}/bootstrap-related-repos.lock}"
-if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+
+acquire_lock() {
+    if mkdir "$LOCK_DIR" 2>/dev/null; then
+        echo "$$" >"$LOCK_DIR/pid"
+        return 0
+    fi
+
+    local lock_pid=""
+    if [ -f "$LOCK_DIR/pid" ]; then
+        lock_pid="$(cat "$LOCK_DIR/pid" 2>/dev/null || true)"
+    fi
+
+    local is_stale=false
+    if [ -z "$lock_pid" ]; then
+        is_stale=true
+    elif ! kill -0 "$lock_pid" 2>/dev/null; then
+        is_stale=true
+    fi
+
+    if [ "$is_stale" = true ]; then
+        echo "==> Stale lock detected (PID: ${lock_pid:-none}); removing and retrying..."
+        rm -rf "$LOCK_DIR"
+        if mkdir "$LOCK_DIR" 2>/dev/null; then
+            echo "$$" >"$LOCK_DIR/pid"
+            return 0
+        fi
+    fi
+
+    return 1
+}
+
+if ! acquire_lock; then
     echo "==> Another related-repo bootstrap is already in progress; exiting."
     exit 0
 fi
-trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT
+trap 'rm -rf "$LOCK_DIR" 2>/dev/null || true' EXIT INT TERM HUP
 
 # --- Pre-flight checks ---
 
@@ -120,6 +153,11 @@ while IFS= read -r raw_line || [ -n "$raw_line" ]; do
         continue
     fi
 
+    # Clone into a private temporary directory first. Never clone into $target
+    # directly: if a user or concurrent process creates $target in between,
+    # cleaning up a failed clone must never remove the user's checkout.
+    clone_tmp="$(mktemp -d "${WORKSPACES_DIR}/.bootstrap-${basename}.XXXXXX")"
+
     # Decide whether to use gh (for owner/repo shorthand) or git (for URLs).
     use_gh=false
     if [[ "$target_spec" != *://* && "$target_spec" != *@*:* && "$target_spec" == */* ]]; then
@@ -129,71 +167,67 @@ while IFS= read -r raw_line || [ -n "$raw_line" ]; do
     branch_label="${branch:-default branch}"
     echo "==> Cloning ${target_spec} (${branch_label}) -> ${target}"
 
+    clone_rc=1
     if [ "$use_gh" = true ]; then
         gh_auth=false
         if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
             gh_auth=true
         fi
 
-        clone_success=false
         if [ "$gh_auth" = true ]; then
             set +e
             if [ -n "$branch" ]; then
-                gh repo clone "$target_spec" "$target" -- --branch "$branch" --quiet
+                gh repo clone "$target_spec" "$clone_tmp" -- --branch "$branch" --quiet
             else
-                gh repo clone "$target_spec" "$target" -- --quiet
+                gh repo clone "$target_spec" "$clone_tmp" -- --quiet
             fi
-            rc=$?
+            clone_rc=$?
             set -e
 
-            if [ "$rc" -eq 0 ]; then
-                clone_success=true
-                cloned=$((cloned + 1))
-            else
-                echo "==> WARNING: gh repo clone failed for ${target_spec} (exit ${rc}); falling back to git clone." >&2
-                # Clean up partial directory if gh left a stub behind
-                [ -e "$target" ] && rm -rf "$target"
+            if [ "$clone_rc" -ne 0 ]; then
+                echo "==> WARNING: gh repo clone failed for ${target_spec} (exit ${clone_rc}); falling back to git clone." >&2
+                rm -rf "$clone_tmp"
+                clone_tmp="$(mktemp -d "${WORKSPACES_DIR}/.bootstrap-${basename}.XXXXXX")"
             fi
         else
             echo "==> gh is unauthenticated; falling back to git clone for ${target_spec}"
         fi
 
-        if [ "$clone_success" = false ]; then
-            fallback_url="https://github.com/${target_spec}.git"
+        if [ "$clone_rc" -ne 0 ]; then
+            fallback_url="${GIT_BASE_URL%/}/${target_spec}.git"
             set +e
             if [ -n "$branch" ]; then
-                git clone --quiet --branch "$branch" "$fallback_url" "$target"
+                git clone --quiet --branch "$branch" "$fallback_url" "$clone_tmp"
             else
-                git clone --quiet "$fallback_url" "$target"
+                git clone --quiet "$fallback_url" "$clone_tmp"
             fi
-            git_rc=$?
+            clone_rc=$?
             set -e
-
-            if [ "$git_rc" -eq 0 ]; then
-                cloned=$((cloned + 1))
-            else
-                echo "==> WARNING: failed to clone ${target_spec} via git (exit ${git_rc}); continuing." >&2
-                failed=$((failed + 1))
-                [ -e "$target" ] && rm -rf "$target"
-            fi
         fi
     else
         set +e
         if [ -n "$branch" ]; then
-            git clone --quiet --branch "$branch" "$target_spec" "$target"
+            git clone --quiet --branch "$branch" "$target_spec" "$clone_tmp"
         else
-            git clone --quiet "$target_spec" "$target"
+            git clone --quiet "$target_spec" "$clone_tmp"
         fi
-        git_rc=$?
+        clone_rc=$?
         set -e
+    fi
 
-        if [ "$git_rc" -eq 0 ]; then
-            cloned=$((cloned + 1))
+    if [ "$clone_rc" -eq 0 ]; then
+        if [ -e "$target" ]; then
+            echo "==> Skipping ${basename} (already present at ${target})"
+            skipped=$((skipped + 1))
+            rm -rf "$clone_tmp"
         else
-            echo "==> WARNING: failed to clone ${target_spec} (exit ${git_rc}); continuing." >&2
-            failed=$((failed + 1))
-            [ -e "$target" ] && rm -rf "$target"
+            mv "$clone_tmp" "$target"
+            cloned=$((cloned + 1))
         fi
+    else
+        echo "==> WARNING: failed to clone ${target_spec} (exit ${clone_rc}); continuing." >&2
+        failed=$((failed + 1))
+        rm -rf "$clone_tmp"
     fi
 done <"$CONFIG_FILE"
 

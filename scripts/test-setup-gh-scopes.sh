@@ -289,18 +289,17 @@ if [ "${PTY_OK}" = true ]; then
     esac
 
     echo "==> triggers bootstrap-related-repos.sh upon successful refresh grant"
-    BOOTSTRAP_LOG="${TMP}/bootstrap-trigger.log"
     mkdir -p "${TMP}/repo/.devcontainer/scripts"
     cat <<EOF >"${TMP}/repo/.devcontainer/scripts/bootstrap-related-repos.sh"
 #!/usr/bin/env bash
-echo "BOOTSTRAP_INVOKED" >>"${BOOTSTRAP_LOG}"
 exit 0
 EOF
     chmod +x "${TMP}/repo/.devcontainer/scripts/bootstrap-related-repos.sh"
-    rm -f "${BOOTSTRAP_LOG}"
     out="$(run_sut_pty lands-after-refresh GH_HOST=github.com)"
-    [ -f "${BOOTSTRAP_LOG}" ] || fail "expected bootstrap-related-repos.sh to be invoked after refresh grant"
-    grep -q "BOOTSTRAP_INVOKED" "${BOOTSTRAP_LOG}" || fail "expected bootstrap invocation logged"
+    case "$out" in
+    *"Bootstrapping related repos in the background"*"${HOME}/.related-repos-bootstrap.log"*) ;;
+    *) fail "expected background bootstrap invocation notice naming log path, got: ${out}" ;;
+    esac
 
     echo "==> bootstrap-related-repos.sh failure does not change exit status of setup-gh-scopes"
     cat <<EOF >"${TMP}/repo/.devcontainer/scripts/bootstrap-related-repos.sh"
@@ -311,14 +310,10 @@ EOF
         fail "setup-gh-scopes must succeed even if bootstrap-related-repos.sh exits non-zero"
 
     echo "==> bootstrap is NOT triggered if refresh does not land"
-    cat <<EOF >"${TMP}/repo/.devcontainer/scripts/bootstrap-related-repos.sh"
-#!/usr/bin/env bash
-echo "BOOTSTRAP_INVOKED" >>"${BOOTSTRAP_LOG}"
-exit 0
-EOF
-    rm -f "${BOOTSTRAP_LOG}"
-    run_sut_pty does-not-land GH_HOST=github.com >/dev/null 2>&1 || true
-    [ ! -f "${BOOTSTRAP_LOG}" ] || fail "bootstrap should not be invoked when grant verification fails"
+    out="$(run_sut_pty does-not-land GH_HOST=github.com)"
+    case "$out" in
+    *"Bootstrapping related repos"*) fail "bootstrap should not be invoked when grant verification fails: ${out}" ;;
+    esac
 
     rm -rf "${TMP}/repo/.devcontainer"
 

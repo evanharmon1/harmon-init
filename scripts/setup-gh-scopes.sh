@@ -36,7 +36,9 @@ die() {
 trigger_related_repos_bootstrap() {
     local bootstrap="${REPO_ROOT}/.devcontainer/scripts/bootstrap-related-repos.sh"
     if [ -f "${bootstrap}" ]; then
-        bash "${bootstrap}" || true
+        local log_file="${HOME}/.related-repos-bootstrap.log"
+        echo "==> Bootstrapping related repos in the background (log: ${log_file})..."
+        nohup bash "${bootstrap}" >>"${log_file}" 2>&1 &
     fi
 }
 
