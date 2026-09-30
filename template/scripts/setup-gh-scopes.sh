@@ -33,6 +33,13 @@ die() {
     exit 1
 }
 
+trigger_related_repos_bootstrap() {
+    local bootstrap="${REPO_ROOT}/.devcontainer/scripts/bootstrap-related-repos.sh"
+    if [ -f "${bootstrap}" ]; then
+        bash "${bootstrap}" || true
+    fi
+}
+
 command -v gh >/dev/null 2>&1 || die "gh is not installed (brew install gh)"
 
 # 1. Env-token refusal, for the token family gh actually uses on THIS host.
@@ -160,6 +167,7 @@ kv "Requesting" "${REQUEST_LIST}"
 if [ -z "$(gh_scopes_missing_requested "${scopes_before}")" ]; then
     checkline na "OAuth refresh" "already complete; no browser flow needed"
     output_summary "Scope setup"
+    trigger_related_repos_bootstrap
     output_done "GitHub CLI scopes are already ready"
     exit 0
 fi
@@ -197,4 +205,5 @@ fi
 
 checkline ok "OAuth scopes" "$(gh_scopes_request_list)"
 output_summary "Scope setup"
+trigger_related_repos_bootstrap
 output_done "All requested GitHub CLI scopes are present"

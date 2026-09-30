@@ -42,6 +42,12 @@ if command -v jq &>/dev/null; then
     fi
 fi
 
+# --- Bootstrap missing related repos in the background ---
+# Clones any missing sibling repos configured in .devcontainer/related-repos.txt
+# into /workspaces/. nohup'd + backgrounded so container start is never blocked.
+nohup bash .devcontainer/scripts/bootstrap-related-repos.sh \
+    >>"$HOME/.related-repos-bootstrap.log" 2>&1 &
+
 # --- Freshen related repos in the background (non-destructive git fetch) ---
 # Reads .devcontainer/related-repos.txt and git-fetches already-cloned siblings
 # in /workspaces/ so they track their remotes. NEVER pulls/merges/checks out —

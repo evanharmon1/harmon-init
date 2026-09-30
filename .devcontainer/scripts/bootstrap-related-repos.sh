@@ -6,11 +6,13 @@ set -euo pipefail
 # target dir already exists it is left completely untouched (no fetch, no pull,
 # no checkout, no warning) — fetching is fetch-related-repos.sh's job at start.
 #
-# Runs on devcontainer create (post-create-common.sh), so a rebuilt or
-# persistence-lost container re-clones any sibling that is missing.
+# Runs on devcontainer create (post-create-common.sh), on devcontainer start
+# (post-start-common.sh in background), and upon scope verification in
+# setup-gh-scopes.sh, so a rebuilt, persistence-lost, or newly authenticated
+# container re-clones any sibling that is missing.
 #
 # Config format (.devcontainer/related-repos.txt):
-#   owner/repo                       # default branch, cloned via gh CLI
+#   owner/repo                       # default branch, cloned via gh CLI or git fallback
 #   owner/repo@branch                # specific branch
 #   https://github.com/owner/repo    # full URL (also supports .git suffix)
 #   git@github.com:owner/repo.git    # ssh URL
@@ -18,15 +20,28 @@ set -euo pipefail
 # Lines starting with # are comments. Blank lines are ignored.
 #
 # Failures (missing config, bad URL, network errors) log a warning and
-# continue — this script never causes post-create to fail.
+# continue — this script never causes post-create, post-start, or scope setup to fail.
 
 # Prevent VS Code's JS debug bootloader from breaking child Node processes
 # spawned by gh. See post-create-common.sh for the full explanation.
 unset NODE_OPTIONS
 
+# Never prompt or hang on missing credentials or behind egress filters.
+export GIT_TERMINAL_PROMPT=0
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-CONFIG_FILE="${SCRIPT_DIR}/../related-repos.txt"
-WORKSPACES_DIR="/workspaces"
+CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/../related-repos.txt}"
+WORKSPACES_DIR="${WORKSPACES_DIR:-/workspaces}"
+
+# --- Concurrency control ---
+# Avoid concurrent bootstrap runs (e.g. create + start or start + setup:gh-scopes)
+# attempting to clone into the same directory at once.
+LOCK_DIR="${BOOTSTRAP_LOCK_DIR:-${TMPDIR:-/tmp}/bootstrap-related-repos.lock}"
+if ! mkdir "$LOCK_DIR" 2>/dev/null; then
+    echo "==> Another related-repo bootstrap is already in progress; exiting."
+    exit 0
+fi
+trap 'rmdir "$LOCK_DIR" 2>/dev/null || true' EXIT
 
 # --- Pre-flight checks ---
 
@@ -45,7 +60,9 @@ fi
 # by vscode so subsequent `git clone` calls can create sibling directories.
 # Idempotent: chown is a no-op if ownership already matches.
 if [ ! -w "$WORKSPACES_DIR" ]; then
-    sudo chown vscode:vscode "$WORKSPACES_DIR"
+    if command -v sudo >/dev/null 2>&1; then
+        sudo chown vscode:vscode "$WORKSPACES_DIR" 2>/dev/null || true
+    fi
 fi
 
 # --- Parse and clone ---
@@ -112,30 +129,71 @@ while IFS= read -r raw_line || [ -n "$raw_line" ]; do
     branch_label="${branch:-default branch}"
     echo "==> Cloning ${target_spec} (${branch_label}) -> ${target}"
 
-    set +e
     if [ "$use_gh" = true ]; then
-        if [ -n "$branch" ]; then
-            gh repo clone "$target_spec" "$target" -- --branch "$branch" --quiet
+        gh_auth=false
+        if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
+            gh_auth=true
+        fi
+
+        clone_success=false
+        if [ "$gh_auth" = true ]; then
+            set +e
+            if [ -n "$branch" ]; then
+                gh repo clone "$target_spec" "$target" -- --branch "$branch" --quiet
+            else
+                gh repo clone "$target_spec" "$target" -- --quiet
+            fi
+            rc=$?
+            set -e
+
+            if [ "$rc" -eq 0 ]; then
+                clone_success=true
+                cloned=$((cloned + 1))
+            else
+                echo "==> WARNING: gh repo clone failed for ${target_spec} (exit ${rc}); falling back to git clone." >&2
+                # Clean up partial directory if gh left a stub behind
+                [ -e "$target" ] && rm -rf "$target"
+            fi
         else
-            gh repo clone "$target_spec" "$target" -- --quiet
+            echo "==> gh is unauthenticated; falling back to git clone for ${target_spec}"
+        fi
+
+        if [ "$clone_success" = false ]; then
+            fallback_url="https://github.com/${target_spec}.git"
+            set +e
+            if [ -n "$branch" ]; then
+                git clone --quiet --branch "$branch" "$fallback_url" "$target"
+            else
+                git clone --quiet "$fallback_url" "$target"
+            fi
+            git_rc=$?
+            set -e
+
+            if [ "$git_rc" -eq 0 ]; then
+                cloned=$((cloned + 1))
+            else
+                echo "==> WARNING: failed to clone ${target_spec} via git (exit ${git_rc}); continuing." >&2
+                failed=$((failed + 1))
+                [ -e "$target" ] && rm -rf "$target"
+            fi
         fi
     else
+        set +e
         if [ -n "$branch" ]; then
             git clone --quiet --branch "$branch" "$target_spec" "$target"
         else
             git clone --quiet "$target_spec" "$target"
         fi
-    fi
-    rc=$?
-    set -e
+        git_rc=$?
+        set -e
 
-    if [ "$rc" -eq 0 ]; then
-        cloned=$((cloned + 1))
-    else
-        echo "==> WARNING: failed to clone ${target_spec} (exit ${rc}); continuing." >&2
-        failed=$((failed + 1))
-        # Clean up partial clone if gh/git left a stub directory behind.
-        [ -d "$target" ] && rm -rf "$target"
+        if [ "$git_rc" -eq 0 ]; then
+            cloned=$((cloned + 1))
+        else
+            echo "==> WARNING: failed to clone ${target_spec} (exit ${git_rc}); continuing." >&2
+            failed=$((failed + 1))
+            [ -e "$target" ] && rm -rf "$target"
+        fi
     fi
 done <"$CONFIG_FILE"
 
