@@ -103,6 +103,11 @@ harmon_bootstrap_dir="$(mktemp -d)" && chmod 0700 "$harmon_bootstrap_dir" \
 
 Rules for this script, each with its reason:
 
+- **The first line is a shebang.** The setup-script field is treated as a script
+  file of its own, which is why the block opens with `#!/bin/bash`
+  (*expected, not yet observed*). It is inert if the platform sources the field
+  instead, where it reads as a comment. It is the only line this block adds to
+  the architecture document's recipe.
 - **Pin a release tag, never `main`.** The bootstrap refuses anything that is not
   `vX.Y.Z`. The tag is the trust root. Changing the script also resets the
   container cache (*docs (legacy), 2026-09-29*: cache invalidation happens when
@@ -305,7 +310,7 @@ to here:
 | Secrets | none in the environment; legacy secrets are setup-only | docs (legacy), 2026-09-29 |
 | Network | the agent-phase level and, under **On**, an allowlist and a method limit | docs (legacy), 2026-09-29. The list is per environment |
 | Identity | the connector's bot; no token of ours | observed 2026-09-27 |
-| Permissions | **cannot be expressed** as the deny list: no page read gives an environment a permission or approval configuration. Whether a checked-in `~/.codex` configuration is honoured in the cloud is unknown | expected, not yet observed. A harness that cannot express the deny list is refused in the agent profile (#1408), so this needs the decision recorded there, not improvised here |
+| Permissions | **cannot be expressed** as the deny list: no page read gives an environment a permission or approval configuration. Today nothing installs a Codex configuration in the environment at all: the bootstrap does not install the agent posture, and #1404 is where that install lands ([architecture](../architecture/remote-environments.md)). Whether a checked-in `~/.codex` configuration would be honoured in the cloud is a second, later question, and is unknown | expected, not yet observed. A harness that cannot express the deny list is refused in the agent profile (#1408), so this needs the decision recorded there, not improvised here |
 | Sandbox mode | **current generation:** "each new task gets its own isolated workspace from the published environment" (*docs (current), 2026-09-29*). **Legacy:** the page says only that Codex "creates a container and checks out your repo" for a chat (*docs (legacy), 2026-09-29*) and states no isolation property. Reviews and mention-started tasks run in the legacy environment, so its isolation, and that it is not the CLI's `workspace-write`, are expected, not yet observed | docs (current), 2026-09-29; legacy: expected, not yet observed |
 | Docker | not needed by the gate; the bootstrap does not install it | [architecture](../architecture/remote-environments.md#tiers). Whether the cloud image has one is unknown |
 
@@ -384,9 +389,10 @@ echo "$log"
 ```
 
 then read `$log` until it contains `GATE-EXIT=<code>`; that line, not the absence
-of output, is the result. The single quotes are load-bearing: inside double
-quotes the calling shell expands `$?` first, and a failed verify could print
-`GATE-EXIT=0`. Whether a Codex cloud task stops a detached process when it ends,
+of output, is the result. The log is per run (`mktemp -d`), so an older detached
+run's exit line cannot satisfy this poll. The single quotes are load-bearing:
+inside double quotes the calling shell expands `$?` first, and a failed verify
+could print `GATE-EXIT=0`. Whether a Codex cloud task stops a detached process when it ends,
 and whether it has a wall-clock limit that a 15-minute gate exceeds, is not
 stated: a **pending observation** under criterion 2.
 

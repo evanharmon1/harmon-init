@@ -918,17 +918,27 @@ def recipe_commands(text):
     return [c for c in joined if RECIPE_URL.search(c)]
 
 
-# Each platform guide that carries a fenced setup-script copy is held to the
-# same checks. Adding an adapter guide with its own copy means adding it here.
-GUIDES = [
-    pathlib.Path("docs/guides/claude-code-web.md"),
-    pathlib.Path("docs/guides/codex-cloud.md"),
-]
-guide_texts = {}
-for GUIDE in GUIDES:
-    if not GUIDE.exists():
-        fail(f"{GUIDE} is missing, so its copy of the standalone recipe cannot be checked — move this check with it")
-    guide_texts[GUIDE] = GUIDE.read_text() if GUIDE.exists() else ""
+# Each platform guide that carries a copy of the recipe is held to the same
+# checks. The set is DERIVED, not listed: every Markdown file under docs/ whose
+# text names the recipe URL, less the architecture document that owns the recipe.
+# A new adapter guide that carries the recipe therefore enrols itself, and one
+# that copies it without being listed cannot escape the checks. The anchor below
+# keeps an accidental exclusion of the existing guide (a rename, a URL edit) from
+# quietly shrinking the set.
+GUIDE_ANCHOR = pathlib.Path("docs/guides/claude-code-web.md")
+GUIDES = sorted(
+    path
+    for path in pathlib.Path("docs").rglob("*.md")
+    if path != DOC and RECIPE_URL.search(path.read_text())
+)
+if not GUIDES:
+    fail("no guide under docs/ carries the standalone recipe, so the guide checks below enforce nothing")
+elif GUIDE_ANCHOR not in GUIDES:
+    fail(
+        f"{GUIDE_ANCHOR} is not among the guides that carry the standalone recipe ({[str(g) for g in GUIDES]}), "
+        "so it is no longer being held to the recipe checks — restore its copy or move this anchor with it"
+    )
+guide_texts = {GUIDE: GUIDE.read_text() for GUIDE in GUIDES}
 
 for label, text in ((BOOTSTRAP, bootstrap_text), (DOC, doc_text), *guide_texts.items()):
     commands = recipe_commands(text)
@@ -1026,6 +1036,14 @@ def ref_slot(block):
     return out, values
 
 
+# The placeholder rule depends on the architecture document alone, so it is
+# checked once here and not again for every guide.
+if len(doc_recipes) == 1:
+    _, doc_ref_values = ref_slot(doc_recipes[0])
+    for value in doc_ref_values:
+        if value != "vX.Y.Z":
+            fail(f"{DOC}: HARMON_INIT_REF={value!r} must stay the generic placeholder vX.Y.Z; only a guide pins a release tag")
+
 for GUIDE, guide_recipes in guide_recipe_blocks.items():
     if len(doc_recipes) != 1 or len(guide_recipes) != 1:
         continue
@@ -1033,10 +1051,7 @@ for GUIDE, guide_recipes in guide_recipe_blocks.items():
     if guide_body[:1] == [GUIDE_SHEBANG]:
         guide_body = guide_body[1:]
     guide_body, guide_refs = ref_slot(guide_body)
-    doc_body, doc_refs = ref_slot(doc_recipes[0])
-    for value in doc_refs:
-        if value != "vX.Y.Z":
-            fail(f"{DOC}: HARMON_INIT_REF={value!r} must stay the generic placeholder vX.Y.Z; only a guide pins a release tag")
+    doc_body, _ = ref_slot(doc_recipes[0])
     for value in guide_refs:
         if not GUIDE_REF_OK.match(value):
             fail(f"{GUIDE}: HARMON_INIT_REF={value!r} must be the placeholder vX.Y.Z or a release tag vMAJOR.MINOR.PATCH")
