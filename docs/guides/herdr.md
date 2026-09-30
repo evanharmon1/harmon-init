@@ -157,8 +157,8 @@ prompt: the `git-merge-guard` hook stays silent for one literal merge or pull
 at a time, run in that worktree — `git pull --no-rebase origin main --no-edit`,
 or `git fetch origin` and then `git merge origin/main --no-edit` as two Bash
 calls. Joined with `&&` they ask, as do `git merge --abort` and
-`git pull --rebase`. Both silent forms need a resolvable `origin/HEAD`
-(`git remote set-head origin --auto`). The hook also asks on text about git: a
+`git pull --rebase`. Both silent forms need a resolvable remote HEAD (usually
+`git remote set-head origin --auto`). The hook also asks on text about git: a
 heredoc commit message or PR body that mentions `merge` or `pull`, or that
 has the word `git` followed by a backtick, quote, glob or expansion, and in an
 unattended run an ask is a denial — so a worker always writes commit messages
