@@ -892,10 +892,10 @@ if r.returncode != 1 or "unknown tier" not in r.stderr or "WARNING" not in r.std
 # already run as root. The recipe therefore downloads to a file and runs it only
 # on a successful download, which is a property of its SHAPE and so is checked
 # here rather than remembered. Every copy is checked: they are copies of each
-# other and one can be fixed alone. The third copy is the Claude Code on the web
-# guide's setup script — the text a person pastes into the platform — which the
-# guide says is the entrypoint "unchanged"; that claim is held below, not
-# trusted.
+# other and one can be fixed alone. The further copies are the platform guides'
+# setup scripts (Claude Code on the web, Codex cloud) — the text a person pastes
+# into the platform — which each guide says is the entrypoint "unchanged"; that
+# claim is held below, not trusted.
 #
 # Comment markers are stripped and backslash continuations joined first, so the
 # recipe is read as the one command it is — the pipe lives on a continuation
@@ -918,12 +918,74 @@ def recipe_commands(text):
     return [c for c in joined if RECIPE_URL.search(c)]
 
 
-GUIDE = pathlib.Path("docs/guides/claude-code-web.md")
-if not GUIDE.exists():
-    fail(f"{GUIDE} is missing, so its copy of the standalone recipe cannot be checked — move this check with it")
-guide_text = GUIDE.read_text() if GUIDE.exists() else ""
+def recipe_blocks(text):
+    blocks, current = [], None
+    for line in text.splitlines():
+        if re.match(r"^\s*```", line):
+            if current is None:
+                current = []
+            else:
+                blocks.append(current)
+                current = None
+        elif current is not None:
+            current.append(line)
+    return [b for b in blocks if RECIPE_URL.search("\n".join(b))]
 
-for label, text in ((BOOTSTRAP, bootstrap_text), (DOC, doc_text), (GUIDE, guide_text)):
+
+# Each platform guide that carries a copy of the recipe is held to the same
+# checks. The set is DERIVED, not listed: every Markdown file under docs/ whose
+# text names the recipe URL, less the architecture document that owns the recipe.
+# A new adapter guide that carries the recipe therefore enrols itself, and one
+# that copies it without being listed cannot escape the checks.
+GUIDES = sorted(
+    path
+    for path in pathlib.Path("docs").rglob("*.md")
+    if path != DOC and RECIPE_URL.search(path.read_text())
+)
+guide_texts = {GUIDE: GUIDE.read_text() for GUIDE in GUIDES}
+
+# Enrolment is by text, so it can also SHRINK silently: a guide whose URL line is
+# wrapped or factored stops matching, and nothing then checks the recipe a person
+# pastes into the platform. The other half of the invariant is the architecture
+# document's own sentence about this check, which links every guide that carries
+# the recipe. The two sets must be EQUAL: a carrier that stops matching fails
+# (the prose still names it), and a carrier the prose does not name fails (the
+# prose stays honest). There is no second list to forget.
+ENTRY_MARK = "§ 14 holds this shape in place"
+entry_paragraphs = [para for para in re.split(r"\n\s*\n", doc_text) if ENTRY_MARK in " ".join(para.split())]
+if len(entry_paragraphs) != 1:
+    fail(
+        f"{DOC}: expected exactly one paragraph saying {ENTRY_MARK!r}, which links the guides that carry the "
+        f"recipe, found {len(entry_paragraphs)} — the guide set cannot be checked against the document"
+    )
+else:
+    documented_guides = {
+        pathlib.Path(os.path.normpath(DOC.parent / target))
+        for target in re.findall(r"\]\(([^)#\s]+\.md)(?:#[^)\s]*)?\)", entry_paragraphs[0])
+    }
+    if documented_guides != set(GUIDES):
+        fail(
+            f"{DOC}: the guides linked in the paragraph saying {ENTRY_MARK!r} are not the guides that carry the "
+            f"recipe. Linked but not carrying it (its URL line no longer matches, or the copy is gone): "
+            f"{sorted(str(g) for g in documented_guides - set(GUIDES))}. Carrying it but not linked: "
+            f"{sorted(str(g) for g in set(GUIDES) - documented_guides)}"
+        )
+
+# A file that cites the URL in prose but carries no FENCED recipe is enrolled by
+# the loose predicate above (an unfenced copy must still fail), and would then
+# fail every shape check below with messages that read as "your recipe is unsafe".
+# Say what is actually wrong once, and skip the checks that cannot apply.
+cite_only = {g for g in GUIDES if not recipe_blocks(guide_texts[g])}
+for GUIDE in sorted(cite_only):
+    fail(
+        f"{GUIDE}: cites the recipe URL but carries no fenced recipe. Either it is an unfenced copy of the "
+        "recipe (fence it, so it can be held to the entrypoint) or a prose citation that should not name the "
+        "raw URL"
+    )
+
+for label, text in ((BOOTSTRAP, bootstrap_text), (DOC, doc_text), *guide_texts.items()):
+    if label in cite_only:
+        continue
     commands = recipe_commands(text)
     if not commands:
         fail(
@@ -977,25 +1039,16 @@ for label, text in ((BOOTSTRAP, bootstrap_text), (DOC, doc_text), (GUIDE, guide_
 GUIDE_SHEBANG = "#!/bin/bash"
 
 
-def recipe_blocks(text):
-    blocks, current = [], None
-    for line in text.splitlines():
-        if re.match(r"^\s*```", line):
-            if current is None:
-                current = []
-            else:
-                blocks.append(current)
-                current = None
-        elif current is not None:
-            current.append(line)
-    return [b for b in blocks if RECIPE_URL.search("\n".join(b))]
-
-
-doc_recipes, guide_recipes = recipe_blocks(doc_text), recipe_blocks(guide_text)
+doc_recipes = recipe_blocks(doc_text)
 if len(doc_recipes) != 1:
-    fail(f"{DOC}: expected exactly one fenced standalone recipe to compare the guide against, found {len(doc_recipes)}")
-if len(guide_recipes) != 1:
-    fail(f"{GUIDE}: expected exactly one fenced setup-script recipe, found {len(guide_recipes)}")
+    fail(f"{DOC}: expected exactly one fenced standalone recipe to compare the guides against, found {len(doc_recipes)}")
+guide_recipe_blocks = {}
+for GUIDE, guide_text in guide_texts.items():
+    if GUIDE in cite_only:
+        continue
+    guide_recipe_blocks[GUIDE] = recipe_blocks(guide_text)
+    if len(guide_recipe_blocks[GUIDE]) != 1:
+        fail(f"{GUIDE}: expected exactly one fenced setup-script recipe, found {len(guide_recipe_blocks[GUIDE])}")
 # The one value the two copies may legitimately disagree on is the tag. The
 # architecture document keeps the placeholder, while the guide tells its reader to
 # pin the first release that carries the bootstrap — so the HARMON_INIT_REF= value
@@ -1016,15 +1069,22 @@ def ref_slot(block):
     return out, values
 
 
-if len(doc_recipes) == 1 and len(guide_recipes) == 1:
+# The placeholder rule depends on the architecture document alone, so it is
+# checked once here and not again for every guide.
+if len(doc_recipes) == 1:
+    _, doc_ref_values = ref_slot(doc_recipes[0])
+    for value in doc_ref_values:
+        if value != "vX.Y.Z":
+            fail(f"{DOC}: HARMON_INIT_REF={value!r} must stay the generic placeholder vX.Y.Z; only a guide pins a release tag")
+
+for GUIDE, guide_recipes in guide_recipe_blocks.items():
+    if len(doc_recipes) != 1 or len(guide_recipes) != 1:
+        continue
     guide_body = guide_recipes[0]
     if guide_body[:1] == [GUIDE_SHEBANG]:
         guide_body = guide_body[1:]
     guide_body, guide_refs = ref_slot(guide_body)
-    doc_body, doc_refs = ref_slot(doc_recipes[0])
-    for value in doc_refs:
-        if value != "vX.Y.Z":
-            fail(f"{DOC}: HARMON_INIT_REF={value!r} must stay the generic placeholder vX.Y.Z; only the guide pins a release tag")
+    doc_body, _ = ref_slot(doc_recipes[0])
     for value in guide_refs:
         if not GUIDE_REF_OK.match(value):
             fail(f"{GUIDE}: HARMON_INIT_REF={value!r} must be the placeholder vX.Y.Z or a release tag vMAJOR.MINOR.PATCH")
@@ -2285,7 +2345,7 @@ print(f"bootstrap-remote OK: all {len(reached)} host(s) the tiers reach are on t
 print("bootstrap-remote OK: a non-release-tag ref is refused; the override warns and names it")
 print(f"bootstrap-remote OK: the default tiers record {len(recorded_by_default)} pin(s) for the manifest, under the image's keys")
 print("bootstrap-remote OK: the manifest revision names the assets actually run — the checkout's HEAD only when the checkout supplied them")
-print("bootstrap-remote OK: the documented standalone recipe downloads to a file and is never a bare pipe into a shell, in all three copies")
+print("bootstrap-remote OK: the documented standalone recipe downloads to a file and is never a bare pipe into a shell, in every copy")
 print("bootstrap-remote OK: a block publishing several executables re-runs unless every one of them is present at the pin")
 print("bootstrap-remote OK: markdownlint-cli2 resolves to a PATH binary at the pin, node_modules/.bin first, npx only as the fallback")
 print("bootstrap-remote OK: an unsafe HARMON_PREFIX is refused before anything runs, and the drop-in quotes the prefix it renders")

@@ -42,5 +42,10 @@ Calm, repeatable how-tos read *in advance* (the crisis counterpart is
   level, secrets and identity, what the platform's GitHub proxy does to the
   `gh` calls in the dev loop (with a call inventory), the `--cloud` /
   `--teleport` bridges, and the observations still pending a live session.
+- [codex-cloud.md](codex-cloud.md) — the Codex cloud environment: the two
+  documented generations and which surfaces use which, the setup script at a
+  pinned release tag, agent-phase network level, secrets, what a Codex mention
+  starts, the `codex cloud exec` / `apply` implementer-lane bridge, and the
+  observations still pending a provisioned environment.
 
 TODO: add more guides, e.g. "local development setup", "add a feature", "how X works".
