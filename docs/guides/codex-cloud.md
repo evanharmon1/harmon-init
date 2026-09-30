@@ -310,7 +310,7 @@ to here:
 | Secrets | none in the environment; legacy secrets are setup-only | docs (legacy), 2026-09-29 |
 | Network | the agent-phase level and, under **On**, an allowlist and a method limit | docs (legacy), 2026-09-29. The list is per environment |
 | Identity | the connector's bot; no token of ours | observed 2026-09-27 |
-| Permissions | **cannot be expressed** as the deny list: no page read gives an environment a permission or approval configuration. Today nothing installs a Codex configuration in the environment at all: the bootstrap does not install the agent posture, and #1404 is where that install lands ([architecture](../architecture/remote-environments.md)). Whether a checked-in `~/.codex` configuration would be honoured in the cloud is a second, later question, and is unknown | expected, not yet observed. A harness that cannot express the deny list is refused in the agent profile (#1408), so this needs the decision recorded there, not improvised here |
+| Permissions | **cannot be expressed** as the deny list: no page read gives an environment a permission or approval configuration. The setup script's bootstrap installs the agent Codex configuration to `/etc/codex/managed_config.toml` ([architecture](../architecture/remote-environments.md#the-agent-posture)), which pins `workspace-write` and approval `never` but carries no deny list, because the Claude deny list has no Codex equivalent. Whether the cloud agent reads a managed config written in the setup phase is **unproven**; see the check below. A file the platform already put at that path is left in place and the posture reported as not applied for it, unless the setup script sets `HARMON_AGENT_POSTURE_REPLACE=1`. The bootstrap refuses no harness here: it never changes a harness executable's mode on a platform VM, and the platform runs Codex and nothing else. Its hook commands name the agent image's hook scripts, which the bootstrap does not install | delivery: expected, not yet observed — pending, #1404 criterion 3. A harness that cannot express the deny list is refused in the agent profile (#1408), so this needs the decision recorded there, not improvised here |
 | Sandbox mode | **current generation:** "each new task gets its own isolated workspace from the published environment" (*docs (current), 2026-09-29*). **Legacy:** the page says only that Codex "creates a container and checks out your repo" for a chat (*docs (legacy), 2026-09-29*) and states no isolation property. Reviews and mention-started tasks run in the legacy environment, so its isolation, and that it is not the CLI's `workspace-write`, are expected, not yet observed | docs (current), 2026-09-29; legacy: expected, not yet observed |
 | Docker | not needed by the gate; the bootstrap does not install it | [architecture](../architecture/remote-environments.md#tiers). Whether the cloud image has one is unknown |
 
@@ -341,6 +341,17 @@ yet decided (the Permissions row). Until that decision is recorded on
 - the implementer lane is not sent work;
 - the guide provisions the environment and does not by itself authorize sending
   the lane work.
+
+**Pending observation (#1404 criterion 3):** in a Codex cloud task in an
+environment whose setup script ran the bootstrap, ask the task to run
+`cat /etc/codex/managed_config.toml` and report its sandbox mode and approval
+policy as the running agent sees them. Record whether the file is present in
+the agent phase and whether the running agent's settings match it. Where they
+do not, record which parts Codex cloud cannot express and what enforces them
+instead (the platform's per-task isolation, the agent-phase network level, the
+connector's permissions). Note the date and the `codex` version.
+
+Observed:  *pending*
 
 ## Bridges between the terminal and Codex cloud
 
@@ -409,13 +420,26 @@ repository exists when the *first* setup script runs. So the same rule as for th
 other remote platforms holds: the setup script is machine-level and
 repository-independent, and reads no checkout.
 
-There is **no `task setup:remote`** in this repository today (checked
-2026-09-29). #750 says the setup script is "followed by `task setup:remote`"; that
-is a forward reference to
-[#1405](https://github.com/evanharmon1/harmon-init/issues/1405), which is open.
-Until it exists, run the gate directly: `task verify`, or its component tasks
-(`task --summary verify` lists them). Nothing in this guide should be read as
-assuming the task.
+`task setup:remote` (`scripts/setup-remote.sh`,
+[#1405](https://github.com/evanharmon1/harmon-init/issues/1405)) is the
+per-checkout preparation as one task, which the agent runs once on a fresh
+checkout — `AGENTS.md` tells it to, because the repository ships no hook that
+would, and the setup script stays machine-level. It runs `lefthook install` (when lefthook is on `PATH`),
+frozen `pnpm` / `uv` installs from the lockfiles that exist, and the same sibling
+clones the devcontainer makes (`.devcontainer/related-repos.txt`), into the
+checkout's **parent** directory. It is idempotent, never prompts (git terminal
+prompts are disabled, ssh runs with `BatchMode=yes` unless the caller already set
+`GIT_SSH_COMMAND`, in which case the caller's value governs, and pnpm runs with
+`CI=true`), skips a missing tool with a note, warns and continues past a repository it cannot clone, and exits
+non-zero only when a step that could run failed. It prints where it cloned.
+
+Siblings are **reference context**, not something a task pushes. Whether a Codex
+cloud task's checkout sits one level below a writable directory, and whether the
+task can reach GitHub to clone when internet access is limited, are **not
+observed** here: the task's own output shows where it cloned, and a clone it
+cannot make is a warning, not a failure. Its behaviour is tested in a fixture
+repository (`scripts/test-setup-remote.sh`); a live Codex cloud task running it is
+pending.
 
 **Pending observation:** record whether the repository is present when the setup
 script runs (a probe line in a *copy* of the environment: `ls -d /workspace/*/.git`
@@ -430,7 +454,9 @@ Observed:  *pending*
 Three acceptance criteria of
 [#750](https://github.com/evanharmon1/harmon-init/issues/750) — 2, 3 and 4 — need
 a provisioned environment and live tasks run by the maintainer, and criterion 1's
-pinned-tag slot needs a release. The rest are questions this guide could not
+pinned-tag slot needs a release. Criterion 3 of
+[#1404](https://github.com/evanharmon1/harmon-init/issues/1404) (the agent
+posture) needs one too. The rest are questions this guide could not
 answer from the docs. Each result goes in the section named, with the date and the
 `codex` version, replacing the tag in the text.
 
@@ -446,7 +472,7 @@ answer from the docs. Each result goes in the section named, with the date and t
 | — | Whether the agent phase's locale is UTF-8 without the `LANG` variable set | [Environment variables](#environment-variables) |
 | — | Whether an issue or pull request body mention starts a task; whether a quoted mention does | [What starts a Codex cloud task](#what-starts-a-codex-cloud-task) |
 | — | What the connector's write permissions on the repository allow, in particular whether a task can push a branch or open a pull request, since the implementer lane assumes it does not | [Identity and secrets](#identity-and-secrets) |
-| — | Whether a checked-in Codex configuration is honoured in the cloud, for the agent posture | [The agent posture](#the-agent-posture-as-far-as-codex-cloud-can-express-it) |
+| #1404-3 | Whether the agent Codex configuration the bootstrap installs is in effect in a task, or which parts Codex cloud cannot express and what enforces them instead | [The agent posture](#the-agent-posture-as-far-as-codex-cloud-can-express-it) |
 | — | Whether the legacy environment's image has Docker; the gate does not need it and the bootstrap does not install it | [The agent posture](#the-agent-posture-as-far-as-codex-cloud-can-express-it) |
 | — | What isolation the legacy environment gives a review or a mention-started task | [The agent posture](#the-agent-posture-as-far-as-codex-cloud-can-express-it) |
 | — | Whether a task submitted with `codex cloud exec` runs on the pushed GitHub branch rather than the local checkout | [Bridges](#bridges-between-the-terminal-and-codex-cloud) |

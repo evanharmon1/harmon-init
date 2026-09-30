@@ -45,6 +45,9 @@ REAL_MKTEMP="$(command -v mktemp)"
 # --- Stub mktemp that can simulate tempdir creation failure ---
 cat <<EOF >"${BIN_DIR}/mktemp"
 #!/usr/bin/env bash
+if [ -n "\${STUB_MKTEMP_LOG:-}" ]; then
+    echo "\$*" >>"\${STUB_MKTEMP_LOG}"
+fi
 if [ "\${STUB_MKTEMP:-}" = "fail" ]; then
     echo "mktemp: failed to create directory: Permission denied" >&2
     exit 1
@@ -117,6 +120,20 @@ fi
 exec "${REAL_MV}" "\$@"
 EOF
 chmod +x "${BIN_DIR}/mv"
+
+# --- Stub mkdir that simulates a parent default ACL overriding the umask ---
+REAL_MKDIR="$(command -v mkdir)"
+cat <<EOF >"${BIN_DIR}/mkdir"
+#!/usr/bin/env bash
+"${REAL_MKDIR}" "\$@" || exit \$?
+if [ -n "\${STUB_MKDIR_MODE:-}" ]; then
+    for arg in "\$@"; do
+        last="\$arg"
+    done
+    chmod "\${STUB_MKDIR_MODE}" "\$last"
+fi
+EOF
+chmod +x "${BIN_DIR}/mkdir"
 
 make_stub() {
     local scenario="$1"
@@ -317,23 +334,34 @@ run_sut unauthenticated
 current_branch="$(git -C "${WORKSPACES}/test-repo" rev-parse --abbrev-ref HEAD)"
 [ "$current_branch" = "feature-branch" ] || fail "expected branch feature-branch, got $current_branch"
 
-# --- Test 8: Orphaned temporary directories older than 60 minutes with dead PID are reaped ---
-echo "==> orphaned temporary directories older than 60 minutes with dead PID are reaped"
+# --- Test 8: Orphaned temporary directories inside the staging directory are reaped; foreign ones are not ---
+echo "==> orphaned temporary directories in the staging directory are reaped, foreign .bootstrap-* directories are not"
 rm -rf "${WORKSPACES}" && mkdir -p "${WORKSPACES}"
 : >"${CONFIG}"
 dead_pid=999999
 while kill -0 "$dead_pid" 2>/dev/null; do
     dead_pid=$((dead_pid + 1))
 done
-mkdir -p "${WORKSPACES}/.bootstrap-orphan-dead.${dead_pid}.111111"
-mkdir -p "${WORKSPACES}/.bootstrap-orphan-live.$$.222222"
-mkdir -p "${WORKSPACES}/.bootstrap-orphan-stale-live.$$.333333"
-python3 -c "import os, time; [os.utime(p, (time.time() - 7200, time.time() - 7200)) for p in ['${WORKSPACES}/.bootstrap-orphan-dead.${dead_pid}.111111', '${WORKSPACES}/.bootstrap-orphan-live.$$.222222']]"
-python3 -c "import os, time; os.utime('${WORKSPACES}/.bootstrap-orphan-stale-live.$$.333333', (time.time() - 172800, time.time() - 172800))"
+STAGE="${WORKSPACES}/.related-repos-bootstrap"
+mkdir -p "${STAGE}"
+chmod 700 "${STAGE}" # private, whatever the ambient umask
+mkdir -p "${STAGE}/.bootstrap-orphan-dead.${dead_pid}.111111"
+mkdir -p "${STAGE}/.bootstrap-orphan-live.$$.222222"
+mkdir -p "${STAGE}/.bootstrap-orphan-stale-live.$$.333333"
+python3 -c "import os, time; [os.utime(p, (time.time() - 7200, time.time() - 7200)) for p in ['${STAGE}/.bootstrap-orphan-dead.${dead_pid}.111111', '${STAGE}/.bootstrap-orphan-live.$$.222222']]"
+python3 -c "import os, time; os.utime('${STAGE}/.bootstrap-orphan-stale-live.$$.333333', (time.time() - 172800, time.time() - 172800))"
+# Foreign directories in the target (the checkout's parent is a general-purpose
+# directory) that merely look like ours: neither the 24h rule nor the dead-PID
+# rule may touch them.
+mkdir -p "${WORKSPACES}/.bootstrap-foo" "${WORKSPACES}/.bootstrap-foreign-dead.${dead_pid}.444444"
+echo "keep" >"${WORKSPACES}/.bootstrap-foo/user-data.txt"
+python3 -c "import os, time; [os.utime(p, (time.time() - 172800, time.time() - 172800)) for p in ['${WORKSPACES}/.bootstrap-foo', '${WORKSPACES}/.bootstrap-foreign-dead.${dead_pid}.444444']]"
 out="$(run_sut auth-ok 2>&1)"
-[ ! -d "${WORKSPACES}/.bootstrap-orphan-dead.${dead_pid}.111111" ] || fail "old orphan directory with dead PID should have been reaped"
-[ -d "${WORKSPACES}/.bootstrap-orphan-live.$$.222222" ] || fail "old directory with live PID must not be reaped"
-[ ! -d "${WORKSPACES}/.bootstrap-orphan-stale-live.$$.333333" ] || fail "directory older than 24h must be reaped unconditionally even with live PID"
+[ ! -d "${STAGE}/.bootstrap-orphan-dead.${dead_pid}.111111" ] || fail "old orphan directory with dead PID should have been reaped"
+[ -d "${STAGE}/.bootstrap-orphan-live.$$.222222" ] || fail "old directory with live PID must not be reaped"
+[ ! -d "${STAGE}/.bootstrap-orphan-stale-live.$$.333333" ] || fail "directory older than 24h must be reaped unconditionally even with live PID"
+[ -f "${WORKSPACES}/.bootstrap-foo/user-data.txt" ] || fail "a foreign .bootstrap-* directory older than a day must survive"
+[ -d "${WORKSPACES}/.bootstrap-foreign-dead.${dead_pid}.444444" ] || fail "a foreign .bootstrap-* directory with a dead-PID name must survive"
 case "$out" in
 *"Removing orphaned temporary bootstrap directory"*) ;;
 *) fail "expected log message for reaped orphan directory, got: $out" ;;
@@ -342,7 +370,52 @@ case "$out" in
 *"Removing stale temporary bootstrap directory"*) ;;
 *) fail "expected log message for 24h stale orphan directory, got: $out" ;;
 esac
-rm -rf "${WORKSPACES}/.bootstrap-orphan-live.$$.222222"
+rm -rf "${STAGE}/.bootstrap-orphan-live.$$.222222"
+
+echo "==> the staging directory is private and never a symlink or a file"
+rm -rf "${WORKSPACES}" && mkdir -p "${WORKSPACES}"
+echo "test-owner/test-repo" >"${CONFIG}"
+STUB_MKTEMP_LOG="${TMP}/mktemp.log"
+rm -f "${STUB_MKTEMP_LOG}"
+export STUB_MKTEMP_LOG
+run_sut auth-ok >/dev/null 2>&1
+unset STUB_MKTEMP_LOG
+[ -s "${TMP}/mktemp.log" ] || fail "expected the clone to create a temporary directory"
+grep -qv "${WORKSPACES}/.related-repos-bootstrap/" "${TMP}/mktemp.log" && fail "every temporary clone directory must live in the staging directory: $(cat "${TMP}/mktemp.log")"
+mode="$(stat -c %a "${WORKSPACES}/.related-repos-bootstrap" 2>/dev/null || stat -f %Lp "${WORKSPACES}/.related-repos-bootstrap")"
+[ "$mode" = "700" ] || fail "staging directory must be created with mode 0700, got ${mode}"
+[ -d "${WORKSPACES}/test-repo/.git" ] || fail "clone must be published from the staging directory into the target"
+rm -rf "${WORKSPACES}" && mkdir -p "${WORKSPACES}" "${TMP}/elsewhere"
+ln -s "${TMP}/elsewhere" "${WORKSPACES}/.related-repos-bootstrap"
+rc=0
+run_sut auth-ok >/dev/null 2>&1 || rc=$?
+[ "$rc" -eq 0 ] || fail "a symlinked staging directory is a warning, not a failure"
+[ ! -e "${WORKSPACES}/test-repo" ] || fail "must not clone through a symlinked staging directory"
+[ -z "$(ls -A "${TMP}/elsewhere")" ] || fail "must not write through a symlinked staging directory"
+
+echo "==> a group-writable staging directory is refused: warning, no clones, directory untouched"
+rm -rf "${WORKSPACES}" && mkdir -p "${WORKSPACES}/.related-repos-bootstrap"
+chmod 770 "${WORKSPACES}/.related-repos-bootstrap"
+mkdir "${WORKSPACES}/.related-repos-bootstrap/.bootstrap-planted"
+echo "test-owner/test-repo" >"${CONFIG}"
+rc=0
+out="$(run_sut auth-ok 2>&1)" || rc=$?
+[ "$rc" -eq 0 ] || fail "an unsafe staging directory is a warning, not a failure"
+case "$out" in
+*"group- or world-writable; skipping"*) ;;
+*) fail "expected the group-writable warning, got: $out" ;;
+esac
+[ ! -e "${WORKSPACES}/test-repo" ] || fail "must not clone when the staging directory is group-writable"
+[ -d "${WORKSPACES}/.related-repos-bootstrap/.bootstrap-planted" ] || fail "the refused staging directory must be untouched"
+[ "$(ls -A "${WORKSPACES}/.related-repos-bootstrap")" = ".bootstrap-planted" ] || fail "nothing may be written to a refused staging directory"
+rm -rf "${WORKSPACES}" && mkdir -p "${WORKSPACES}/.related-repos-bootstrap"
+chmod 707 "${WORKSPACES}/.related-repos-bootstrap"
+out="$(run_sut auth-ok 2>&1)" || fail "a world-writable staging directory is a warning, not a failure"
+case "$out" in
+*"group- or world-writable; skipping"*) ;;
+*) fail "expected the world-writable warning, got: $out" ;;
+esac
+[ ! -e "${WORKSPACES}/test-repo" ] || fail "must not clone when the staging directory is world-writable"
 
 # --- Test 9: post-start-common.sh starts bootstrap-related-repos.sh detached ---
 echo "==> post-start-common.sh starts bootstrap-related-repos.sh detached"
@@ -523,5 +596,59 @@ signal_case() {
 signal_case TERM 143
 signal_case INT 130
 signal_case HUP 129
+
+# --- Test 15: the target directory is a positional argument ---
+echo "==> the target directory argument wins over WORKSPACES_DIR"
+rm -rf "${WORKSPACES}" "${TMP}/arg-target" && mkdir -p "${WORKSPACES}" "${TMP}/arg-target"
+echo "test-owner/test-repo" >"${CONFIG}"
+(
+    make_stub unauthenticated
+    export PATH="${BIN_DIR}:${PATH}"
+    export WORKSPACES_DIR="${WORKSPACES}" # the decoy the argument must beat
+    export CONFIG_FILE="${CONFIG}"
+    export RELATED_REPOS_GIT_BASE_URL="file://${BARE_BASE}/"
+    bash "${SUT}" "${TMP}/arg-target" >/dev/null
+)
+[ -d "${TMP}/arg-target/test-repo/.git" ] || fail "expected the clone in the argument directory"
+[ ! -e "${WORKSPACES}/test-repo" ] || fail "the argument must win over WORKSPACES_DIR"
+
+echo "==> the staging directory is created 0700 whatever the umask or a parent ACL does"
+rm -rf "${WORKSPACES}" && mkdir -p "${WORKSPACES}"
+echo "test-owner/test-repo" >"${CONFIG}"
+(
+    umask 000                                           # inherited umask
+    STUB_MKDIR_MODE=775 run_sut auth-ok >/dev/null 2>&1 # a default ACL widening what the umask made
+)
+mode="$(stat -c %a "${WORKSPACES}/.related-repos-bootstrap" 2>/dev/null || stat -f %Lp "${WORKSPACES}/.related-repos-bootstrap")"
+[ "$mode" = "700" ] || fail "the created staging directory must be 0700 despite umask 000 and a widening ACL, got ${mode}"
+[ -d "${WORKSPACES}/test-repo/.git" ] || fail "a staging directory this run created and fixed to 0700 must be used"
+
+echo "==> a trailing slash on the target is normalized once"
+rm -rf "${TMP}/slash-target" && mkdir -p "${TMP}/slash-target"
+STUB_MKTEMP_LOG="${TMP}/mktemp-slash.log"
+rm -f "${STUB_MKTEMP_LOG}"
+export STUB_MKTEMP_LOG
+(
+    make_stub auth-ok
+    export PATH="${BIN_DIR}:${PATH}"
+    unset WORKSPACES_DIR
+    export CONFIG_FILE="${CONFIG}"
+    export RELATED_REPOS_GIT_BASE_URL="file://${BARE_BASE}/"
+    bash "${SUT}" "${TMP}/slash-target/" >/dev/null 2>&1
+)
+unset STUB_MKTEMP_LOG
+[ -d "${TMP}/slash-target/test-repo/.git" ] || fail "a target with a trailing slash must be cloned into"
+grep -q '//' "${TMP}/mktemp-slash.log" && fail "a trailing slash must not leave a double slash in derived paths: $(cat "${TMP}/mktemp-slash.log")"
+grep -q "${TMP}/slash-target/.related-repos-bootstrap/" "${TMP}/mktemp-slash.log" || fail "the staging directory must derive from the normalized target: $(cat "${TMP}/mktemp-slash.log")"
+
+echo "==> the default target stays /workspaces and the devcontainer call sites pass no argument"
+grep -q 'WORKSPACES_DIR="${1:-${WORKSPACES_DIR:-/workspaces}}"' "${SUT}" || fail "the default target must remain /workspaces"
+for site in .devcontainer/scripts/post-create-common.sh .devcontainer/scripts/post-start-common.sh; do
+    calls="$(grep 'bootstrap-related-repos\.sh' "$site" | grep -v '^[[:space:]]*#' || true)"
+    [ -n "$calls" ] || fail "$site no longer calls bootstrap-related-repos.sh"
+    if printf '%s\n' "$calls" | grep -Eq 'bootstrap-related-repos\.sh[[:space:]]+[^[:space:]&;|)<>]'; then
+        fail "$site must call bootstrap-related-repos.sh without a target argument (so it targets /workspaces)"
+    fi
+done
 
 echo "test-bootstrap-related-repos.sh passed"
