@@ -29,7 +29,7 @@ yet:
 | **observed 2026-09-27** | Seen in a real Codex cloud task, recorded in the connector's own comments on [#1402](https://github.com/evanharmon1/harmon-init/issues/1402#issuecomment-5860661367) and [#1406](https://github.com/evanharmon1/harmon-init/issues/1406#issuecomment-5860668523) |
 | **observed 2026-09-29 (local CLI)** | Printed by `codex --help` on `codex-cli 0.157.1` in the maintainer's devcontainer. That is the local client, not the cloud |
 | **expected, not yet observed** | Derived from the docs or from how a script is written. **Not** an observation |
-| **pending** | A `[HUMAN]` acceptance criterion of #750 that needs a provisioned environment and live tasks run by the maintainer. Each has a marked place below and a row in [Pending observations](#pending-observations) |
+| **pending** | A `[HUMAN]` acceptance criterion of #750, or another observation, that needs a provisioned environment and live tasks run by the maintainer. Each has a marked place below and a row in [Pending observations](#pending-observations) |
 
 The docs moved while this was written: the `developers.openai.com/codex/…`
 addresses answer a permanent redirect to `learn.chatgpt.com/docs/…`. Where the
@@ -275,7 +275,8 @@ Two roles, decided on 2026-09-27
 ([#1408, decision 5](https://github.com/evanharmon1/harmon-init/issues/1408#issuecomment-5862697420)):
 
 - **A review environment first.** Cloud reviews and mention-started tasks run in
-  the legacy environment above. Before it was provisioned they could reason
+  the legacy environment above (*docs (current), 2026-09-29*; see
+  [Two generations](#two-generations-of-codex-cloud)). Before it was provisioned they could reason
   about the code but not execute it, and reported gaps as an "environment
   limitation": `task`, copier and shellcheck unavailable, and a Go Task install
   blocked by the egress policy (observed 2026-09-27, on #1402 and #1406). After
@@ -315,10 +316,14 @@ grants, which is expected, not yet observed
 ([Pending observations](#pending-observations)). Both roles are decided uses
 (#1408 decision 5), and cloud reviews and mention-started tasks already run on this
 repository's pull requests through the platform's connector whether or not the
-environment is provisioned, so provisioning does not change what the connector
-lets them write; it changes what they can execute. The consideration this raises:
-a review of a pull request from an untrusted author executes that pull request's
-repository code (the checks) inside the environment. What bounds it is the table
+environment is provisioned (*docs (GitHub), 2026-09-29*; a connector task was
+observed 2026-09-27 on issues), so provisioning is expected not to change what
+the connector lets them write (expected, not yet observed); it changes what they
+can execute. The consideration this raises:
+once the environment is provisioned, a review is expected to execute repository
+checks (expected, not yet observed; criterion 3), and for a pull request from an
+untrusted author those checks are that pull request's repository code, run inside
+the environment. What bounds it is the table
 above (no secret, no token of ours, the configured agent-phase network level) plus
 the platform's own per-task isolation, which for the legacy environment is
 expected, not yet observed. The connector's write permissions are not a bound this
@@ -425,15 +430,19 @@ answer from the docs. Each result goes in the section named, with the date and t
 | # | What has to be seen | Where the result lands |
 | --- | --- | --- |
 | 1 | The `vX.Y.Z` of the first release that carries the bootstrap, and that the setup script finishes, as which user and in how long | [Setup script](#setup-script) |
-| 2 | A Codex cloud task on harmon-init runs `task verify` to completion; every network denial recorded; whether a detached run survives | [Network](#network), [Long-running gates](#long-running-gates) |
+| 2 | A Codex cloud task on harmon-init runs `task verify` to completion; every network denial recorded; whether a detached run survives, and whether a 15-minute gate exceeds a wall-clock limit | [Network](#network), [Long-running gates](#long-running-gates) |
 | 3 | A Codex cloud review on a harmon-init PR, run after provisioning, shows in its output that it executed at least one repo check | [What Codex cloud is used for](#what-codex-cloud-is-used-for) |
 | 4 | A task submitted with `codex cloud exec` runs the gate, and its diff applies cleanly to a local worktree with `codex cloud apply` and no human step | [Bridges](#bridges-between-the-terminal-and-codex-cloud) |
 | — | Which generation `codex cloud exec --env` runs in | [Two generations of Codex cloud](#two-generations-of-codex-cloud) |
-| — | Whether setup runs as root or with `sudo`; whether a failing setup script fails the task; the base image and whether it puts anything ahead of `/usr/local/bin` | [Setup script](#setup-script) |
+| — | Whether setup runs as root or with `sudo`; whether a failing setup script fails the task; the base image and whether it puts anything ahead of `/usr/local/bin`; the setup time limit | [Setup script](#setup-script) |
 | — | Whether the agent's shell reads the bootstrap's `/etc/profile.d` drop-in and resolves `task` and `yq` from `/usr/local/bin` | [Environment variables](#environment-variables) |
+| — | Whether the agent phase's locale is UTF-8 without the `LANG` variable set | [Environment variables](#environment-variables) |
 | — | Whether an issue or pull request body mention starts a task; whether a quoted mention does | [What starts a Codex cloud task](#what-starts-a-codex-cloud-task) |
 | — | What the connector's write permissions on the repository allow, in particular whether a task can push a branch or open a pull request, since the implementer lane assumes it does not | [Identity and secrets](#identity-and-secrets) |
 | — | Whether a checked-in Codex configuration is honoured in the cloud, for the agent posture | [The agent posture](#the-agent-posture-as-far-as-codex-cloud-can-express-it) |
+| — | What isolation the legacy environment gives a review or a mention-started task | [The agent posture](#the-agent-posture-as-far-as-codex-cloud-can-express-it) |
+| — | Whether a task submitted with `codex cloud exec` runs on the pushed GitHub branch rather than the local checkout | [Bridges](#bridges-between-the-terminal-and-codex-cloud) |
+| — | Whether the repository is present when the setup script runs, and whether a task's checkout has a merge base and the tags the release-title and dogfood checks read | [When per-checkout preparation runs](#when-per-checkout-preparation-runs) |
 | — | Whether the reviewer's usage limit (reached on 2026-09-29) has reset, which can block criteria 3 and 4 | [Pending observations](#pending-observations) |
 
 Criteria 2, 3 and 4 are not met by this guide, and the guide does not claim
