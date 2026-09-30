@@ -1,8 +1,9 @@
 # Codex cloud
 
-One Codex cloud environment per repository that runs the repo's own gate from
-the shared bootstrap — and what is known, and not yet known, about how OpenAI's
-two generations of Codex cloud behave.
+One Codex cloud environment per repository, set up to run the repo's own gate
+from the shared bootstrap — a task running the gate to completion there has not
+been observed yet (criterion 2, pending) — and what is known, and not yet known,
+about how OpenAI's two generations of Codex cloud behave.
 
 Read this when creating or editing the environment in ChatGPT, when a Codex
 cloud task or review reports a missing tool or a blocked download, or when
@@ -440,6 +441,7 @@ answer from the docs. Each result goes in the section named, with the date and t
 | — | Whether an issue or pull request body mention starts a task; whether a quoted mention does | [What starts a Codex cloud task](#what-starts-a-codex-cloud-task) |
 | — | What the connector's write permissions on the repository allow, in particular whether a task can push a branch or open a pull request, since the implementer lane assumes it does not | [Identity and secrets](#identity-and-secrets) |
 | — | Whether a checked-in Codex configuration is honoured in the cloud, for the agent posture | [The agent posture](#the-agent-posture-as-far-as-codex-cloud-can-express-it) |
+| — | Whether the legacy environment's image has Docker; the gate does not need it and the bootstrap does not install it | [The agent posture](#the-agent-posture-as-far-as-codex-cloud-can-express-it) |
 | — | What isolation the legacy environment gives a review or a mention-started task | [The agent posture](#the-agent-posture-as-far-as-codex-cloud-can-express-it) |
 | — | Whether a task submitted with `codex cloud exec` runs on the pushed GitHub branch rather than the local checkout | [Bridges](#bridges-between-the-terminal-and-codex-cloud) |
 | — | Whether the repository is present when the setup script runs, and whether a task's checkout has a merge base and the tags the release-title and dogfood checks read | [When per-checkout preparation runs](#when-per-checkout-preparation-runs) |
