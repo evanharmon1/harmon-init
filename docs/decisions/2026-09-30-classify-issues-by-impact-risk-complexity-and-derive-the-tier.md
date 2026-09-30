@@ -11,10 +11,11 @@ it defines `suggest:<family>[:<model>]` (including ADR 0006's amendment of
 that half): `suggest:*` is retired, and the Tier derived below replaces it.
 The `claim:<family>[:<model>]` half of D6 stands unchanged.
 
-Amends the resolution order of [ADR 0006](2026-08-16-method-and-tier-axes.md)
-D5 and [ADR 0007](2026-08-24-rigor-and-strategy-axes.md) D5 by inserting the
-pinned Tier and the derived Tier (D5 below). Everything else in those two
-records stands.
+Amends [ADR 0006](2026-08-16-method-and-tier-axes.md) D5 (the resolution
+order) by inserting the pinned and derived Tier (D5 below), and
+[ADR 0007](2026-08-24-rigor-and-strategy-axes.md) D5 (which role a tier input
+targets) by adding the pinned Tier as another implementer-only input.
+Everything else in those two records stands.
 
 The design record is the body of epic
 [#1444](https://github.com/evanharmon1/harmon-init/issues/1444) and its
@@ -101,7 +102,8 @@ test). The starting cells:
 | l | standard | standard | frontier | frontier | apex |
 | xl | frontier | frontier | frontier | apex | apex |
 
-The stored Tier is a **materialized cache**, never an input:
+The stored Tier is a **materialized cache** that readers recompute when
+absent:
 
 - **Write at source.** Every writer of Risk or Complexity (triage,
   track-work, breakdown) writes Tier and `needs-triage` in the same call, so
@@ -196,6 +198,9 @@ with a skim of the resulting tier distribution per repository.
   every role-tier invariant a pin breaks is disclosed in the PR body.
 - Agent writes are free of Actions minutes on the hot path; drift is
   corrected once a day per organization rather than per event.
+- A write that updates Risk or Complexity but fails on Tier leaves a stale
+  Tier until the next write or the daily reconciler corrects it; the design
+  accepts that window rather than adding safeguards (D3).
 - The work is split across the epic's children: the label registry
   ([#1447](https://github.com/evanharmon1/harmon-init/issues/1447)), the
   organization fields and Effort ladder
