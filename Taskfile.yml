@@ -93,6 +93,7 @@ tasks:
       - task: test:output
       - task: test:status
       - task: test:gh-scopes
+      - task: test:related-repos
       - task: test:meta-install
       - task: test:copier-validators
       - task: test:renovate-pins
@@ -511,6 +512,11 @@ tasks:
     desc: Unit-test the gh scope refresh task's refusals and post-refresh verification (stubbed gh, no network)
     cmds:
       - ./scripts/test-setup-gh-scopes.sh
+
+  test:related-repos:
+    desc: Unit-test the related-repo bootstrap fallback and idempotency (stubbed gh/git, no network)
+    cmds:
+      - ./scripts/test-bootstrap-related-repos.sh
 
   test:meta-install:
     desc: Unit-test the .meta sidecar installer's ~-expansion and refusals

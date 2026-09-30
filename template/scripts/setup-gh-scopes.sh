@@ -19,7 +19,10 @@
 #      credential unattended.
 #
 # Read-only until the refresh: it prints the current scopes, then asks gh for
-# the missing ones. Token VALUES are never printed or captured.
+# the missing ones. After a landed grant, or when no grant was needed because the
+# credential already carries every scope, it triggers a background clone of
+# missing sibling repos (.devcontainer/scripts/bootstrap-related-repos.sh). Token
+# VALUES are never printed or captured.
 set -euo pipefail
 
 REPO_ROOT="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -31,6 +34,28 @@ cd "${REPO_ROOT}"
 die() {
     echo "setup:gh-scopes: $*" >&2
     exit 1
+}
+
+trigger_related_repos_bootstrap() {
+    local bootstrap="${REPO_ROOT}/.devcontainer/scripts/bootstrap-related-repos.sh"
+    if [ -f "${bootstrap}" ]; then
+        local log_file="${HOME}/.related-repos-bootstrap.log"
+        echo "==> Bootstrapping related repos in the background (log: ${log_file})..."
+        # Ignore SIGHUP in THIS shell before the fork, then restore what it was.
+        # An ignored signal stays ignored across fork and exec (POSIX), so the job
+        # is immune from its first instruction: a HUP from a pty tearing down
+        # cannot land in a window before a later trap or nohup takes effect. A
+        # process-group SIGTERM still ends it, which is expected.
+        local prev_hup
+        prev_hup="$(trap -p HUP)"
+        trap '' HUP
+        bash "${bootstrap}" </dev/null >>"${log_file}" 2>&1 &
+        if [ -n "${prev_hup}" ]; then
+            eval "${prev_hup}"
+        else
+            trap - HUP
+        fi
+    fi
 }
 
 command -v gh >/dev/null 2>&1 || die "gh is not installed (brew install gh)"
@@ -160,6 +185,7 @@ kv "Requesting" "${REQUEST_LIST}"
 if [ -z "$(gh_scopes_missing_requested "${scopes_before}")" ]; then
     checkline na "OAuth refresh" "already complete; no browser flow needed"
     output_summary "Scope setup"
+    trigger_related_repos_bootstrap
     output_done "GitHub CLI scopes are already ready"
     exit 0
 fi
@@ -197,4 +223,5 @@ fi
 
 checkline ok "OAuth scopes" "$(gh_scopes_request_list)"
 output_summary "Scope setup"
+trigger_related_repos_bootstrap
 output_done "All requested GitHub CLI scopes are present"
