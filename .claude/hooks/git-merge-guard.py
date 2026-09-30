@@ -51,7 +51,9 @@ It gates only git merge/pull: `git reset --hard`, `git restore` and
 would, and this hook does not see them. Nor does it see the commands that
 advance main without a merge or pull: `git fetch . feat:main`,
 `git push . HEAD:main`, `git branch -f main feat` and
-`git update-ref refs/heads/main`. `git pull --rebase` is not silent,
+`git update-ref refs/heads/main`. Direct `git merge-recursive` and `git merge-file`
+are silent too: they write the index or a file but create no commit and move
+no ref, so nothing lands on main. `git pull --rebase` is not silent,
 because it can rewrite already-pushed feature-branch commits; neither is a
 `git pull` that names no mode, because `pull.rebase` can make it a rebase. In unattended
 runs (`claude -p`, lanes) an "ask" is effectively a denial, so a conflicted
@@ -146,6 +148,8 @@ GIT_VALUE_OPTIONS = (
     "--namespace",
     "--attr-source",
     "--shallow-file",
+    "--config-env",
+    "--super-prefix",
 )
 # Words are split on whitespace and these shell operators when a command
 # cannot be tokenized.

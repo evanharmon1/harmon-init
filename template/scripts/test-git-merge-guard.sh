@@ -184,6 +184,8 @@ matrix() { # guard
     # Options that take a separate value shift the subcommand slot.
     case_ "$g" ask "$r" "git --attr-source HEAD \$'\\x6d\\x65\\x72\\x67\\x65' feat"
     case_ "$g" ask "$r" "git --shallow-file /dev/null \$'\\x6d\\x65\\x72\\x67\\x65' feat"
+    case_ "$g" ask "$r" "git --config-env user.name=FOO \"\$SUB\" feat"
+    case_ "$g" ask "$r" "git --super-prefix sub/ \$'\\x6d\\x65\\x72\\x67\\x65' feat"
     # Scripts are not seen through: a bare path is silent (documented limit),
     # but a shell name in front of it is indirection and asks.
     case_ "$g" silent "${r}/wt" "./scripts/merge-main.sh"
