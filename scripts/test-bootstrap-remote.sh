@@ -918,29 +918,74 @@ def recipe_commands(text):
     return [c for c in joined if RECIPE_URL.search(c)]
 
 
+def recipe_blocks(text):
+    blocks, current = [], None
+    for line in text.splitlines():
+        if re.match(r"^\s*```", line):
+            if current is None:
+                current = []
+            else:
+                blocks.append(current)
+                current = None
+        elif current is not None:
+            current.append(line)
+    return [b for b in blocks if RECIPE_URL.search("\n".join(b))]
+
+
 # Each platform guide that carries a copy of the recipe is held to the same
 # checks. The set is DERIVED, not listed: every Markdown file under docs/ whose
 # text names the recipe URL, less the architecture document that owns the recipe.
 # A new adapter guide that carries the recipe therefore enrols itself, and one
-# that copies it without being listed cannot escape the checks. The anchor below
-# keeps an accidental exclusion of the existing guide (a rename, a URL edit) from
-# quietly shrinking the set.
-GUIDE_ANCHOR = pathlib.Path("docs/guides/claude-code-web.md")
+# that copies it without being listed cannot escape the checks.
 GUIDES = sorted(
     path
     for path in pathlib.Path("docs").rglob("*.md")
     if path != DOC and RECIPE_URL.search(path.read_text())
 )
-if not GUIDES:
-    fail("no guide under docs/ carries the standalone recipe, so the guide checks below enforce nothing")
-elif GUIDE_ANCHOR not in GUIDES:
-    fail(
-        f"{GUIDE_ANCHOR} is not among the guides that carry the standalone recipe ({[str(g) for g in GUIDES]}), "
-        "so it is no longer being held to the recipe checks — restore its copy or move this anchor with it"
-    )
 guide_texts = {GUIDE: GUIDE.read_text() for GUIDE in GUIDES}
 
+# Enrolment is by text, so it can also SHRINK silently: a guide whose URL line is
+# wrapped or factored stops matching, and nothing then checks the recipe a person
+# pastes into the platform. The other half of the invariant is the architecture
+# document's own sentence about this check, which links every guide that carries
+# the recipe. The two sets must be EQUAL: a carrier that stops matching fails
+# (the prose still names it), and a carrier the prose does not name fails (the
+# prose stays honest). There is no second list to forget.
+ENTRY_MARK = "§ 14 holds this shape in place"
+entry_paragraphs = [para for para in re.split(r"\n\s*\n", doc_text) if ENTRY_MARK in " ".join(para.split())]
+if len(entry_paragraphs) != 1:
+    fail(
+        f"{DOC}: expected exactly one paragraph saying {ENTRY_MARK!r}, which links the guides that carry the "
+        f"recipe, found {len(entry_paragraphs)} — the guide set cannot be checked against the document"
+    )
+else:
+    documented_guides = {
+        pathlib.Path(os.path.normpath(DOC.parent / target))
+        for target in re.findall(r"\]\(([^)#\s]+\.md)(?:#[^)\s]*)?\)", entry_paragraphs[0])
+    }
+    if documented_guides != set(GUIDES):
+        fail(
+            f"{DOC}: the guides linked in the paragraph saying {ENTRY_MARK!r} are not the guides that carry the "
+            f"recipe. Linked but not carrying it (its URL line no longer matches, or the copy is gone): "
+            f"{sorted(str(g) for g in documented_guides - set(GUIDES))}. Carrying it but not linked: "
+            f"{sorted(str(g) for g in set(GUIDES) - documented_guides)}"
+        )
+
+# A file that cites the URL in prose but carries no FENCED recipe is enrolled by
+# the loose predicate above (an unfenced copy must still fail), and would then
+# fail every shape check below with messages that read as "your recipe is unsafe".
+# Say what is actually wrong once, and skip the checks that cannot apply.
+cite_only = {g for g in GUIDES if not recipe_blocks(guide_texts[g])}
+for GUIDE in sorted(cite_only):
+    fail(
+        f"{GUIDE}: cites the recipe URL but carries no fenced recipe. Either it is an unfenced copy of the "
+        "recipe (fence it, so it can be held to the entrypoint) or a prose citation that should not name the "
+        "raw URL"
+    )
+
 for label, text in ((BOOTSTRAP, bootstrap_text), (DOC, doc_text), *guide_texts.items()):
+    if label in cite_only:
+        continue
     commands = recipe_commands(text)
     if not commands:
         fail(
@@ -994,25 +1039,13 @@ for label, text in ((BOOTSTRAP, bootstrap_text), (DOC, doc_text), *guide_texts.i
 GUIDE_SHEBANG = "#!/bin/bash"
 
 
-def recipe_blocks(text):
-    blocks, current = [], None
-    for line in text.splitlines():
-        if re.match(r"^\s*```", line):
-            if current is None:
-                current = []
-            else:
-                blocks.append(current)
-                current = None
-        elif current is not None:
-            current.append(line)
-    return [b for b in blocks if RECIPE_URL.search("\n".join(b))]
-
-
 doc_recipes = recipe_blocks(doc_text)
 if len(doc_recipes) != 1:
     fail(f"{DOC}: expected exactly one fenced standalone recipe to compare the guides against, found {len(doc_recipes)}")
 guide_recipe_blocks = {}
 for GUIDE, guide_text in guide_texts.items():
+    if GUIDE in cite_only:
+        continue
     guide_recipe_blocks[GUIDE] = recipe_blocks(guide_text)
     if len(guide_recipe_blocks[GUIDE]) != 1:
         fail(f"{GUIDE}: expected exactly one fenced setup-script recipe, found {len(guide_recipe_blocks[GUIDE])}")

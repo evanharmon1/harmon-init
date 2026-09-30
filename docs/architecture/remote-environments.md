@@ -211,12 +211,14 @@ plus `&&` propagates the failure by construction. Nothing deletes the temporary
 directory: a trailing `rm` would become the chain's exit status and reintroduce
 exactly the bug, and a few kilobytes are nothing on a VM that is about to be
 thrown away. `scripts/test-bootstrap-remote.sh` § 14 holds this shape in place
-— it fails if any of the four copies of the recipe (the bootstrap script's,
-this document's, the
-[Claude Code on the web guide](../guides/claude-code-web.md)'s, and the
-[Codex cloud guide](../guides/codex-cloud.md)'s) becomes a bare
+— it fails if any copy of the recipe (the bootstrap script's own, this
+document's, and that of every guide under `docs/` that carries it, currently the
+[Claude Code on the web guide](../guides/claude-code-web.md) and the
+[Codex cloud guide](../guides/codex-cloud.md)) becomes a bare
 pipe into a shell, stops downloading to a file, or stops using a private
-directory.
+directory. The guides are found by the recipe's URL, and the links in this
+paragraph must be exactly the guides found: one that carries the recipe and is
+not linked here fails, and so does one linked here that no longer carries it.
 
 The script goes into a **private directory** (`mktemp -d`, with mode `0700`
 stated rather than inherited from a default), not a bare `mktemp` file in shared
