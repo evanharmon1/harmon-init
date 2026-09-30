@@ -38,16 +38,47 @@ set -euo pipefail
 #      identity is then unknown even when stored bot logins are also present,
 #      because gh prefers the environment token for writes
 #
-# Callers: .devcontainer/post-start.sh (warn-only, `|| true`, into the
-# post-start log), scripts/status.sh's creds section (the VISIBLE surface —
-# the session-start hook renders it; gated there to the bot profile), and
-# scripts/devcontainer-assert.sh container mode (fails on exit 1 only).
+# Callers: .devcontainer/post-start.sh and .devcontainer/agent/post-start.sh
+# (warn-only, `|| true`, into the post-start log), scripts/status.sh's creds
+# section (the VISIBLE surface — the session-start hook renders it; gated
+# there to the bot profile), and scripts/devcontainer-assert.sh container
+# mode (fails on exit 1 only).
 
 banner() {
     echo "=============================================================="
 }
 
+# The agent posture (FOREMAN_DEVCONTAINER=agent) is checked by the same '-bot'
+# relationship — its PAT lives on the bot account — but provisions a different
+# variable, so its remedy names that chain instead. Never the bot's GH_TOKEN.
+is_agent_posture() {
+    [ "${FOREMAN_DEVCONTAINER:-}" = "agent" ]
+}
+
+# The banners name the posture actually running: the agent posture runs Claude
+# Code in auto mode with bypass disabled, so calling it a bypassPermissions
+# container would misdescribe it. The bot wording is unchanged.
+if is_agent_posture; then
+    posture_label="AGENT CONTAINER"
+    posture_article="an"
+    posture_mode="auto-mode"
+else
+    posture_label="BOT CONTAINER"
+    posture_article="a"
+    posture_mode="bypassPermissions"
+fi
+
 remedy_provisioning() {
+    if is_agent_posture; then
+        echo "  Remedy — fix the PROVISIONING chain that supplies the AGENT PAT:"
+        echo "    * export AGENT_GH_TOKEN (the agent's own fine-grained PAT on the"
+        echo "      bot account — never the bot's GH_TOKEN) in the host"
+        echo "      environment that .devcontainer/scripts/init-env.sh projects"
+        echo "      into .devcontainer/agent/devcontainer.env;"
+        echo "    * rebuild: the agent post-create logs gh in from it."
+        echo "  See docs/guides/bot-account.md."
+        return 0
+    fi
     echo "  Remedy — fix the PROVISIONING chain that supplies the bot PAT:"
     echo "    * on Coder: set the workspace's GitHub PAT template parameter"
     echo "      (template parameter -> workspace env -> init-env.sh ->"
@@ -221,14 +252,14 @@ done
 # regardless of what the unnamed token would have resolved to.
 if [ -n "$bad" ]; then
     banner
-    echo "  BOT CONTAINER: gh holds a credential for a NON-BOT account:"
+    echo "  ${posture_label}: gh holds a credential for a NON-BOT account:"
     echo ""
     echo "      ${bad}"
     echo ""
     echo "  GitHub writes can be attributed to that account — immediately"
     echo "  when it is the active credential, or after an account switch —"
-    echo "  and a personal credential must never sit inside a"
-    echo "  bypassPermissions agent container."
+    echo "  and a personal credential must never sit inside ${posture_article}"
+    echo "  ${posture_mode} agent container."
     echo ""
     echo "  First remove the human credential (and consider rotating it):"
     if [ "$bad_stored" = true ]; then
@@ -254,6 +285,16 @@ fi
 # unjustified. Indeterminate rather than a violation — the value could as
 # easily be a stale copy of the bot's own PAT as a personal credential.
 if [ -n "$shadowed_aliases" ]; then
+    if is_agent_posture; then
+        echo "==> gh-identity: ${shadowed_aliases} is set with a value different from" \
+            "the token gh actually uses, and gh enumerates only the highest-precedence" \
+            "environment token — that credential cannot be attributed. The agent" \
+            "posture blanks every environment token alias: unset them, and provision" \
+            "the agent PAT as AGENT_GH_TOKEN through" \
+            ".devcontainer/agent/devcontainer.env; bot login unverified until then" \
+            "(indeterminate)."
+        exit 3
+    fi
     echo "==> gh-identity: ${shadowed_aliases} is set with a value different from" \
         "the token gh actually uses, and gh enumerates only the highest-precedence" \
         "environment token — that credential cannot be attributed. Unset the" \
@@ -275,6 +316,14 @@ elif [ -n "${GITHUB_ENTERPRISE_TOKEN:-}" ]; then
 fi
 if [ -n "$enterprise_winner" ] &&
     ! printf '%s\n' "$status_out" | grep -qF "(${enterprise_winner})"; then
+    if is_agent_posture; then
+        echo "==> gh-identity: ${enterprise_winner} is set but no gh auth status record is" \
+            "sourced from it, so that token was never enumerated — bot login unverified" \
+            "(indeterminate). The agent posture blanks every environment token alias:" \
+            "unset the enterprise aliases, and provision the agent PAT as" \
+            "AGENT_GH_TOKEN through .devcontainer/agent/devcontainer.env."
+        exit 3
+    fi
     echo "==> gh-identity: ${enterprise_winner} is set but no gh auth status record is" \
         "sourced from it, so that token was never enumerated — bot login unverified" \
         "(indeterminate). Provision the bot PAT as GH_TOKEN and unset the enterprise" \
@@ -298,6 +347,15 @@ if [ "$status_rc" = "124" ] || [ "$status_rc" = "137" ]; then
 fi
 
 if [ "$unnamed_token" = true ]; then
+    if is_agent_posture; then
+        echo "==> gh-identity: a token from the environment is present but could not be" \
+            "validated (offline, rate-limited, or expired) — the ACTIVE gh identity is" \
+            "unverified. The agent posture blanks every environment token alias, so" \
+            "unset this one; if this persists, re-provision the agent PAT" \
+            "(AGENT_GH_TOKEN in the host env that init-env.sh projects into" \
+            ".devcontainer/agent/devcontainer.env) and rebuild."
+        exit 3
+    fi
     echo "==> gh-identity: a token from the environment is present but could not be" \
         "validated (offline, rate-limited, or expired) — the ACTIVE gh identity is" \
         "unverified. If this persists, re-provision the bot PAT (on Coder: the" \
@@ -308,10 +366,10 @@ fi
 
 unauthenticated_banner() {
     banner
-    echo "  BOT CONTAINER: GitHub CLI is NOT authenticated."
+    echo "  ${posture_label}: GitHub CLI is NOT authenticated."
     echo ""
     echo "  Do NOT run 'gh auth login' here — that would put a human"
-    echo "  credential inside a bypassPermissions agent container."
+    echo "  credential inside ${posture_article} ${posture_mode} agent container."
     echo ""
     remedy_provisioning
     banner
@@ -346,6 +404,14 @@ case "$status_out" in
     # enumeration, so identity is unverified — not a clean unauthenticated
     # state.
     if [ "$env_token_present" = true ]; then
+        if is_agent_posture; then
+            echo "==> gh-identity: an environment token is set but gh attributes it to no" \
+                "host, so it was never enumerated — bot login unverified (indeterminate)." \
+                "The agent posture blanks every environment token alias: unset them, and" \
+                "provision the agent PAT as AGENT_GH_TOKEN through" \
+                ".devcontainer/agent/devcontainer.env."
+            exit 3
+        fi
         echo "==> gh-identity: an environment token is set but gh attributes it to no" \
             "host, so it was never enumerated — bot login unverified (indeterminate)." \
             "Provision the bot PAT as GH_TOKEN and unset the other token aliases."

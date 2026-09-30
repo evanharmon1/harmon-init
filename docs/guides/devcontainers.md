@@ -1,6 +1,6 @@
 # Devcontainers
 
-Harmon Init ships a **dual-profile** devcontainer. Both profiles share
+Harmon Init ships a devcontainer in **three postures**. All three share
 one `Dockerfile` and the baked `.devcontainer/config/` tree; they differ in
 which secrets and capabilities they allow.
 
@@ -8,6 +8,7 @@ which secrets and capabilities they allow.
 |---|---|---|---|---|
 | **Bot** | `.devcontainer/devcontainer.json` | AI agents (Claude Code, Codex, OpenCode, Antigravity, Copilot CLI, pi, oh-my-pi) | the bot's PAT via `GH_TOKEN` | no |
 | **Dev** | `.devcontainer/dev/devcontainer.json` | humans | the operator's own `gh auth login` | yes (`TS_AUTHKEY`, `--device=/dev/net/tun`) |
+| **Agent** | `.devcontainer/agent/devcontainer.json` | unattended agents (Claude Code, Codex only) | the agent's own PAT via `AGENT_GH_TOKEN` | no — and egress is allowlisted |
 
 Each profile authenticates as the identity it commits as, and the omissions are
 what make that true: the bot profile leaves `TS_AUTHKEY` off its allow-list so a
@@ -198,6 +199,172 @@ documented mechanism that neuters `COPILOT_ALLOW_ALL` and every
 administrator/organization control this module surfaces rather than
 overrides. That check runs **only** while the option is on — a locked-out
 bypass mode is irrelevant when Copilot autonomy is off.
+
+## Agent posture: the unattended profile
+
+The **agent** posture (`.devcontainer/agent/`) is for an agent that runs
+unattended somewhere nobody watches — a cloud VM, or work on untrusted input.
+Untrusted input enters it as **data** (issues, diffs, pull request content);
+the devcontainer definition itself must come from a trusted checkout — the
+default branch or a reviewed ref — because `initializeCommand` runs the
+checkout's code on the host, for this profile as for every other.
+It is **never looser than bot on any axis**; the reasoning for every choice
+is in the three-posture ADR
+([docs/decisions/2026-09-29-agent-posture-three-posture-model.md](../decisions/2026-09-29-agent-posture-three-posture-model.md)).
+Its containerEnv marker is `FOREMAN_DEVCONTAINER=agent`: scripts tell `bot`,
+`agent`, and unset (dev) apart, and nothing reads `agent` as `bot`. Foreman
+refuses to dispatch from it by design.
+
+| Axis | What the agent devcontainer does |
+|---|---|
+| Identity | `AGENT_GH_TOKEN`, the agent's own fine-grained PAT on the bot account ([bot-account.md](bot-account.md)). post-create logs `gh` in from it; `GH_TOKEN` and its aliases are blanked. |
+| Harnesses | Claude Code, through its managed allow/deny rules (auto mode, bypass disabled, no `ask`), and Codex, through its sandbox (`workspace-write`, never `danger-full-access`, approval `never`) with no command-level deny list. Every other installed harness is **refused**: `agent-autonomy.sh apply` makes its executable non-executable and `verify` fails if one is runnable again. |
+| Secrets | Only `AGENT_GH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, and (opt-in) the alternative-provider keys. No 1Password, no Tailscale, never `ANTHROPIC_API_KEY`. |
+| Network | Default-deny egress allowlist, enforced at every start from a root-owned snapshot taken at create. |
+| Docker | None by default (see the opt-in below). |
+
+The single source of its harness policy is `.devcontainer/config/agent/`
+(`claude-managed-settings.json`, `codex-managed-config.toml`,
+`harnesses.json`). Nothing else may carry a copy — `task test:agent-profile`
+fails if one appears. `agent-autonomy.sh` installs it over the image's managed
+settings at create and re-verifies it at every start.
+
+### Where the agent's boundaries are
+
+One first layer and two boundaries — only the boundaries are claimed as such:
+
+- **Command-level denies are a best-effort first layer** for a cooperating
+  harness. Claude Code's deny rules match the command it is about to run;
+  Codex has no command-level deny list at all, only its sandbox. The denies
+  are not transitive through repository code: the agent may run `task` and
+  make commits, so Taskfile targets and git hooks run outside them. Pattern
+  matching can also miss another spelling of the same flags, such as bundled
+  short flags. The `gh api` denies (method, input, and form-field flags) keep
+  a cooperating harness to reads; they are not a guarantee that `gh api` is
+  read-only.
+- **GitHub writes are bounded by the agent PAT's scopes plus the repository
+  rulesets.** The PAT has no administration, secrets, or workflow permission;
+  the rulesets refuse a direct or force push to `main`, and a merge to `main`
+  needs code-owner approval and green required checks. They do not stop the
+  PAT from merging: once a human has approved and the checks pass, its
+  `pull_requests: write` can perform that merge. Its `contents: write` does
+  let it create releases and push to any branch no ruleset protects — a
+  fine-grained PAT cannot separate releases from contents.
+- **The network is bounded by the egress filter** (below). Its residual is
+  root: the container user keeps passwordless `sudo`, so repository code run
+  with root can lift the filter; harmon-init#1432 tracks narrowing it.
+
+The ADR's Consequences state the same in full.
+
+### Agent env-file: fail closed
+
+The agent's `initializeCommand` runs `init-env.sh --profile agent`. In that
+mode the env-file may hold **only** the names the command allow-lists, and
+the allow-list may name only `AGENT_GH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, and
+the alternative-provider keys. Any other name — the bot's `GH_TOKEN` or
+`FOREMAN_AGENT_GH_TOKEN`, `TS_AUTHKEY`, an `OP_*` token, `ANTHROPIC_API_KEY`,
+or a bare `NAME` line that would pass a host value through — **stops the
+build** with the offending name (never its value). The other profiles quietly
+evict a disallowed name; the agent profile refuses instead, because nobody is
+watching to notice a repaired misconfiguration. The Codex login, where an
+environment persists one (#1406), lives in the `~/.codex` volume, not the
+env-file.
+
+### Egress allowlist
+
+The egress filter is installed first in both agent lifecycle scripts. It
+reads `.devcontainer/egress-allowlist.txt` (the shared list, harmon-init#286)
+plus the optional per-repo `.devcontainer/egress-allowlist.local.txt`, then
+installs a default-deny netfilter policy: loopback, replies, DNS to the
+configured resolvers, and the listed destinations pass; everything else is
+refused. It needs `--cap-add=NET_ADMIN`, and it fails the container create
+or start if the filter cannot be installed. Claude Code's deny rules cover `sudo`,
+`iptables`, `nft`, and `ipset`, so it cannot lift the filter through its own
+tools — the first layer above, not a boundary against repository code run
+with root.
+
+- **Applied from a root-owned snapshot.** post-create runs
+  `egress-allowlist.sh establish`, which copies the applier and both lists out
+  of the checkout into `/usr/local/share/harmon-egress/` (root-owned, closed
+  to writes), and applies from there; every start applies that snapshot and
+  never the checkout. An edit to the checkout's lists — by an agent or anyone
+  else — changes nothing until the operator re-snapshots it.
+- **Fails closed — and where it cannot.** Every step meant to install the
+  filter (`apply`, post-create's `establish`, and post-start's apply of the
+  snapshot), when it does not complete — a failed iptables install, a list
+  the snapshot or the plan refuses, a failed rule or verify, a signal, or a
+  missing snapshot — flushes the filter chain's allow rules, so a previous
+  allowlist does not outlive a failed re-apply, and sets the OUTPUT and
+  FORWARD policies to DROP, for every address family the container has
+  (IPv4 always, IPv6 when it has a global address). It says egress was left
+  at DROP only when every one of those steps succeeded; when one did not —
+  iptables failing to install at all, or a DROP or flush step failing — it
+  prints a `CRITICAL: could not close egress` line instead. Either way the
+  create or start fails, and a container whose create or start failed must
+  not be used: rebuild it after fixing the cause.
+- **No over-broad entries.** A list line that is `0.0.0.0` in any form, or a
+  CIDR wider than `/16`, fails `apply` closed with the file and line named.
+  A range fetched through `@github-meta` is held to the same rule and fails
+  `apply` closed naming `@github-meta` and the range. IPv6 literals are not
+  accepted; IPv6 egress is closed outright.
+
+- **A refused host leaves evidence.** `bash .devcontainer/scripts/egress-allowlist.sh blocked`
+  prints every destination refused since the container started (address, and
+  reverse name where one resolves), with no root needed. Put its output in the
+  lane report of any unattended run that failed on the network.
+- **Adding a host:** a need every repository shares goes in the shared list,
+  with the reason; a need of this repository alone goes in
+  `egress-allowlist.local.txt`. Either way, a rebuild picks it up, or, in a
+  running container, `sudo bash .devcontainer/scripts/egress-allowlist.sh snapshot`
+  followed by a restart.
+- **Addresses are resolved at start.** A CDN that rotates addresses during a
+  long run can start refusing a listed host;
+  `sudo bash /usr/local/share/harmon-egress/scripts/egress-allowlist.sh apply`
+  re-resolves.
+- **The default bridge network only.** On a user-defined Docker network or a
+  compose setup, `resolv.conf` points at Docker's embedded resolver
+  (`127.0.0.11`), whose upstream queries are not in the allow set, so DNS
+  resolution fails once the filter installs.
+
+### Docker in the agent posture: per-repo opt-in
+
+The agent devcontainer has **no Docker**: no Docker-in-Docker feature, and
+never the host Docker socket (a socket mount hands the agent the host).
+A repository whose gate needs Docker (harmon-infra) opts in with a
+deliberate, reviewed edit to its `.devcontainer/agent/devcontainer.json` —
+both halves, in the same change:
+
+```jsonc
+"features": {
+  "ghcr.io/devcontainers/features/docker-in-docker:2": {
+    "dockerDashComposeVersion": "v2"
+  }
+},
+"containerEnv": {
+  "HARMON_AGENT_DOCKER": "dind"
+}
+```
+
+`HARMON_AGENT_DOCKER=dind` is the disclosure: `task test:agent-profile` and
+`devcontainer-assert.sh` fail on Docker-in-Docker without it, and on a Docker
+socket mount always. The nested daemon's containers are filtered by the same
+egress allowlist (the filter hooks Docker's `DOCKER-USER` chain). Say so in
+the PR that turns it on — it widens what the agent can build and run.
+
+Two consequences of that hook come with the opt-in:
+
+- **Nested containers cannot reach each other until you allow their
+  subnet.** Traffic between two nested containers is forwarded too, so it
+  also goes through `DOCKER-USER` → `HARMON_EGRESS`, and is rejected there
+  like any unlisted destination. A repository whose nested containers talk
+  to each other (a compose stack) adds its nested bridge subnet to
+  `.devcontainer/egress-allowlist.local.txt` — for Docker's default bridge
+  that is `172.17.0.0/16`, exactly at the list's `/16` floor.
+- **An allowed destination skips Docker's own isolation chains.** An
+  `ACCEPT` reached through `DOCKER-USER` ends the whole `FORWARD`
+  traversal, so traffic to an allowlisted destination never reaches
+  Docker's `DOCKER-ISOLATION-*` chains, which would otherwise keep separate
+  nested networks apart.
 
 ## Run it locally
 
