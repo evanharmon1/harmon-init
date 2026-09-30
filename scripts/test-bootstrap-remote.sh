@@ -2506,8 +2506,10 @@ fi
     # What a run installs. The lifted block runs the REAL agent-autonomy.sh
     # against destinations under a temporary root, under a PATH built only of
     # symlinks to the tools it needs plus one planted refused harness. Never
-    # the ambient PATH: apply makes every refused harness it can resolve
-    # non-executable, and a developer machine carries real ones (opencode, agy).
+    # the ambient PATH: were harness refusal ever re-enabled on this path, a
+    # developer machine's real refused harnesses (opencode, agy) would lose
+    # their execute bit. The digest tool is either GNU sha256sum or the shasum
+    # stock macOS ships, as agent-autonomy.sh itself accepts.
     install_worker = r"""set -euo pipefail
 die() { printf 'bootstrap-remote: %s\n' "$*" >&2; exit 1; }
 warn() { printf 'bootstrap-remote: WARNING: %s\n' "$*" >&2; }
@@ -2522,44 +2524,79 @@ set -euo pipefail
 root="$(mktemp -d)"
 trap 'chmod -R u+rwx "$root" >/dev/null 2>&1 || true; rm -rf "$root"' EXIT
 printf '%s' '@WORKER_B64@' | base64 -d >"${root}/install.sh"
-mkdir -p "${root}/bin" "${root}/harness"
-for tool in bash env jq sha256sum cmp cp install date dirname cut sort sed tr awk chmod mkdir cat readlink grep head; do
+mkdir -p "${root}/bin" "${root}/harness" "${root}/tmp"
+for tool in bash env jq cmp cp install mktemp rm dirname cut sort sed tr awk chmod mkdir cat readlink grep head; do
     real="$(command -v "$tool")" || { printf 'MISSING_TOOL %s\n' "$tool"; exit 0; }
     ln -s "$real" "${root}/bin/${tool}"
 done
+if real="$(command -v sha256sum)"; then
+    ln -s "$real" "${root}/bin/sha256sum"
+elif real="$(command -v shasum)"; then
+    ln -s "$real" "${root}/bin/shasum"
+else
+    printf 'MISSING_TOOL sha256sum-or-shasum\n'
+    exit 0
+fi
 printf '#!/bin/sh\nexit 0\n' >"${root}/harness/copilot"
 chmod 0755 "${root}/harness/copilot"
-run() { # run <label> — one bootstrap posture step, with its own record
-    export HARNESS_LOG="${root}/$1.log" HARNESS_DEST="${root}/dest"
+# Every mode the posture step must never change: the tools, the planted
+# harness, and the checked-in definition it installs from.
+modes() {
+    ls -lR "${root}/bin" "${root}/harness" '@REPO@/.devcontainer/config/agent' | grep -v '^total'
+    ls -l '@REPO@/.devcontainer/agent/agent-autonomy.sh'
+}
+modes >"${root}/modes.before"
+run() { # run <label> [NAME=VALUE] — one bootstrap posture step, with its own record
+    _label="$1"
+    shift
+    export HARNESS_LOG="${root}/${_label}.log" HARNESS_DEST="${root}/dest"
     : >"$HARNESS_LOG"
-    if env -i HARNESS_LOG="$HARNESS_LOG" HARNESS_DEST="$HARNESS_DEST" HOME="$root" \
+    if env -i HARNESS_LOG="$HARNESS_LOG" HARNESS_DEST="$HARNESS_DEST" HOME="$root" TMPDIR="${root}/tmp" "$@" \
         PATH="${root}/bin:${root}/harness" "${root}/bin/bash" "${root}/install.sh" \
-        >"${root}/$1.out" 2>"${root}/$1.err"; then
-        printf '%s_EXIT 0\n' "$1"
+        >"${root}/${_label}.out" 2>"${root}/${_label}.err"; then
+        printf '%s_EXIT 0\n' "$_label"
     else
-        printf '%s_EXIT failed\n' "$1"
-        sed 's/^/    /' "${root}/$1.err" >&2
+        printf '%s_EXIT failed\n' "$_label"
+        sed 's/^/    /' "${root}/${_label}.err" >&2
     fi
-    printf '%s_INSTALLS %s\n' "$1" "$(grep -c '^install' "$HARNESS_LOG" || true)"
+    printf '%s_INSTALLS %s\n' "$_label" "$(grep -c '^install' "$HARNESS_LOG" || true)"
 }
 same() { cmp -s "$1" "$2" && echo same || echo differs; }
+kept_count() { ls "${claude}".replaced-* 2>/dev/null | wc -l | tr -d ' '; }
 claude="${root}/dest/etc/claude-code/managed-settings.json"
 codex="${root}/dest/etc/codex/managed_config.toml"
+claude_def='@REPO@/.devcontainer/config/agent/claude-managed-settings.json'
 
 run FRESH
-printf 'FRESH_CLAUDE %s\n' "$(same "$claude" '@REPO@/.devcontainer/config/agent/claude-managed-settings.json')"
+printf 'FRESH_CLAUDE %s\n' "$(same "$claude" "$claude_def")"
 printf 'FRESH_CODEX %s\n' "$(same "$codex" '@REPO@/.devcontainer/config/agent/codex-managed-config.toml')"
-printf 'FRESH_REFUSED %s\n' "$([ -x "${root}/harness/copilot" ] && echo executable || echo refused)"
+printf 'FRESH_HARNESS %s\n' "$([ -x "${root}/harness/copilot" ] && echo untouched || echo modified)"
+printf 'FRESH_SKIP_SAID %s\n' "$(grep -q 'harness refusal skipped' "${root}/FRESH.out" && echo said || echo silent)"
 
 run RERUN
 
-# A platform put its own managed settings there first.
-printf '{"platform": true}\n' >"$claude"
+# A platform put its own managed settings there first: left in place.
+printf '{"platform": 1}\n' >"$claude"
 run PLATFORM
-printf 'PLATFORM_CLAUDE %s\n' "$(same "$claude" '@REPO@/.devcontainer/config/agent/claude-managed-settings.json')"
-kept="$(ls "${claude}".replaced-* 2>/dev/null | head -1 || true)"
-printf 'PLATFORM_KEPT %s\n' "$([ -n "$kept" ] && grep -q '"platform": true' "$kept" && echo kept || echo lost)"
-printf 'PLATFORM_WARNED %s\n' "$(grep -q "WARNING: found ${claude} (sha256 " "${root}/PLATFORM.err" && echo named || echo silent)"
+printf 'PLATFORM_CLAUDE %s\n' "$(grep -q '"platform": 1' "$claude" && echo left || echo replaced)"
+printf 'PLATFORM_KEPT %s\n' "$(kept_count)"
+printf 'PLATFORM_WARNED %s\n' "$(grep -q "WARNING: found ${claude} (sha256 [0-9a-f]\{64\}) that is not the agent posture — left in place" "${root}/PLATFORM.err" && echo named || echo silent)"
+printf 'PLATFORM_GAP %s\n' "$(grep -q "NOT applied for: ${claude} " "${root}/PLATFORM.err" && echo reported || echo silent)"
+
+# The operator's explicit opt-in: replaced, the platform's bytes kept.
+run REPLACE HARMON_AGENT_POSTURE_REPLACE=1
+printf 'REPLACE_CLAUDE %s\n' "$(same "$claude" "$claude_def")"
+printf 'REPLACE_KEPT %s\n' "$(kept_count)"
+
+# A second platform file, replaced again at once: the first kept copy must
+# survive, whatever the clock says.
+printf '{"platform": 2}\n' >"$claude"
+run REPLACE_AGAIN HARMON_AGENT_POSTURE_REPLACE=1
+printf 'REPLACE_AGAIN_KEPT %s\n' "$(kept_count)"
+printf 'REPLACE_AGAIN_BOTH %s\n' "$(cat "${claude}".replaced-* 2>/dev/null | grep -c '"platform": [12]' || true)"
+
+modes >"${root}/modes.after"
+printf 'MODES %s\n' "$(cmp -s "${root}/modes.before" "${root}/modes.after" && echo unchanged || echo changed)"
 """.replace("@WORKER_B64@", base64.b64encode(install_worker.encode()).decode()).replace("@REPO@", repo_root)
     run = run_lifted(install_driver)
     got = {} if run is None else dict(line.split(" ", 1) for line in run.stdout.splitlines() if " " in line)
@@ -2568,28 +2605,48 @@ printf 'PLATFORM_WARNED %s\n' "$(grep -q "WARNING: found ${claude} (sha256 " "${
         "FRESH_INSTALLS": "2",
         "FRESH_CLAUDE": "same",
         "FRESH_CODEX": "same",
-        "FRESH_REFUSED": "refused",
+        "FRESH_HARNESS": "untouched",
+        "FRESH_SKIP_SAID": "said",
         "RERUN_EXIT": "0",
         "RERUN_INSTALLS": "0",
         "PLATFORM_EXIT": "0",
-        "PLATFORM_INSTALLS": "1",
-        "PLATFORM_CLAUDE": "same",
-        "PLATFORM_KEPT": "kept",
+        "PLATFORM_INSTALLS": "0",
+        "PLATFORM_CLAUDE": "left",
+        "PLATFORM_KEPT": "0",
         "PLATFORM_WARNED": "named",
+        "PLATFORM_GAP": "reported",
+        "REPLACE_EXIT": "0",
+        "REPLACE_INSTALLS": "1",
+        "REPLACE_CLAUDE": "same",
+        "REPLACE_KEPT": "1",
+        "REPLACE_AGAIN_EXIT": "0",
+        "REPLACE_AGAIN_KEPT": "2",
+        "REPLACE_AGAIN_BOTH": "2",
+        "MODES": "unchanged",
     }
     why = {
         "FRESH_EXIT": "a first run on a machine with no /etc/claude-code/ (Claude Code on the web) must succeed, creating it",
         "FRESH_INSTALLS": "each managed file written is one recorded install",
         "FRESH_CLAUDE": "the installed Claude settings must be the checked-in definition, byte for byte",
         "FRESH_CODEX": "the installed Codex config must be the checked-in definition, byte for byte",
-        "FRESH_REFUSED": "a harness the definition refuses must not stay executable",
+        "FRESH_HARNESS": "on a platform VM the harness executables are the platform's: the bootstrap never changes their modes",
+        "FRESH_SKIP_SAID": "skipping harness refusal is said out loud, so the gap is visible in the log",
         "RERUN_EXIT": "a second run must succeed",
         "RERUN_INSTALLS": "a second run installs nothing — the bootstrap's idempotence claim covers the posture too",
-        "PLATFORM_EXIT": "a platform-supplied file must not fail the run",
-        "PLATFORM_INSTALLS": "only the replaced file counts as an install",
-        "PLATFORM_CLAUDE": "the platform's file is replaced by the definition",
-        "PLATFORM_KEPT": "the platform's bytes are kept beside it, never lost",
-        "PLATFORM_WARNED": "the replacement is reported, naming the file and its digest — never silent",
+        "PLATFORM_EXIT": "a platform-supplied file is a delivery gap, not a failed run",
+        "PLATFORM_INSTALLS": "a file left in place is not an install",
+        "PLATFORM_CLAUDE": "without the opt-in, a platform's managed file is never replaced — it may be the stronger control",
+        "PLATFORM_KEPT": "nothing was replaced, so nothing is kept",
+        "PLATFORM_WARNED": "the file found is reported, with its path and digest",
+        "PLATFORM_GAP": "the run says the posture is NOT applied for that file",
+        "REPLACE_EXIT": "the opt-in replace must succeed",
+        "REPLACE_INSTALLS": "only the replaced file counts as an install",
+        "REPLACE_CLAUDE": "under HARMON_AGENT_POSTURE_REPLACE=1 the platform's file is replaced by the definition",
+        "REPLACE_KEPT": "the platform's bytes are kept beside it, never lost",
+        "REPLACE_AGAIN_EXIT": "a second opt-in replace must succeed",
+        "REPLACE_AGAIN_KEPT": "a second replacement keeps a SECOND copy — a kept copy is never overwritten",
+        "REPLACE_AGAIN_BOTH": "both platform files survive, byte for byte",
+        "MODES": "the posture step changes no file mode outside its temporary destinations",
     }
     if run is None or run.returncode != 0 or any(k.startswith("MISSING_TOOL") for k in got):
         fail(
@@ -2663,5 +2720,5 @@ print("bootstrap-remote OK: a staging file whose writer is gone is reaped, a liv
 print("bootstrap-remote OK: the manifest's own staged write reaps by liveness too, and a failed publish fails the run without leaving litter")
 print("bootstrap-remote OK: a version probe that prints the pin and exits nonzero is treated as needing the install")
 print("bootstrap-remote OK: the corepack step recreates the pnpm shim unless the file at its path really is corepack's launcher, at either edge of its bounded read, and reports a pnpm that shadows it on PATH")
-print("bootstrap-remote OK: the agent posture is fetched with the tiers' own source, carried as no copy under images/devcontainer/, installed byte-identical, idempotent, and never replaces a platform file silently")
+print("bootstrap-remote OK: the agent posture is fetched with the tiers' own source, carried as no copy under images/devcontainer/, installed byte-identical and idempotent, leaves a platform's file in place unless told to replace it, and changes no harness mode")
 PY

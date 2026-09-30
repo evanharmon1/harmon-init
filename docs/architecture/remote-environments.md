@@ -58,7 +58,7 @@ agents tiers download only from the allowed column.
 | --- | --- |
 | `github.com` | the origin of every GitHub release download: `github.com/<owner>/<repo>/releases/download/…` answers **302**, so it is contacted for task, gh, uv, gitleaks and the rest even though the bytes come from the next host |
 | `release-assets.githubusercontent.com` | the 302 target that actually serves GitHub release assets |
-| `raw.githubusercontent.com` | the standalone entry fetches `versions.env`, `lib.sh` and the tier scripts from the release tag |
+| `raw.githubusercontent.com` | the standalone entry fetches `versions.env`, `lib.sh` and the tier scripts from the release tag, and the agent posture from the same tag: `.devcontainer/agent/agent-autonomy.sh`, `.devcontainer/config/agent/claude-managed-settings.json`, `.devcontainer/config/agent/codex-managed-config.toml` and `.devcontainer/config/agent/harnesses.json` |
 | `nodejs.org` | the checksum-pinned Node tarball |
 | `archive.ubuntu.com` | the apt packages of the core tier. One of the three Ubuntu archive mirrors the VM's **own** apt sources configure, so `apt-get update` alone contacts them whether or not a package is installed; the set is written once in `images/devcontainer/install/apt-mirrors.txt` and both this table and the guard's apt implication are derived from it. amd64: the release, updates and backports pockets |
 | `security.ubuntu.com` | the same apt run's **security** pocket on amd64 (`noble-security`) — a separate host, not a path under the archive, so an allowlist holding only the line above blocks a stock `apt-get update` |
@@ -307,16 +307,26 @@ to.
   `.devcontainer/agent/agent-autonomy.sh`, `apply` and then `verify` — the
   script the agent devcontainer runs — told the posture
   (`FOREMAN_DEVCONTAINER=agent`), the definition's location, and the two
-  destinations. `apply` also makes every harness the definition refuses
-  non-executable; `verify` fails the run unless both files match the
-  definition byte for byte and no refused harness resolves on `PATH`. A second
-  run installs nothing.
-- **A file already there is never replaced silently.** `/etc/claude-code/` and
+  destinations. `verify` fails the run unless each file the bootstrap wrote
+  matches the definition byte for byte. A second run installs nothing.
+- **Harness executables are never modified.** In the agent devcontainer
+  `apply` also makes every harness the definition refuses non-executable. On a
+  platform's VM those executables are the platform's, so the bootstrap passes
+  `AGENT_AUTONOMY_SKIP_HARNESS_REFUSAL=1` and `apply` and `verify` handle the
+  two files only, saying so in the log. Harness refusal on a platform VM is a
+  recorded delivery gap, and the platform's own controls are named per
+  platform [below](#how-each-platform-receives-the-agent-posture).
+- **A file already there is left in place.** `/etc/claude-code/` and
   `/etc/codex/` are created when missing. A different file already at either
-  path is reported with its SHA-256, kept beside it as
-  `<path>.replaced-<UTC timestamp>`, and then replaced: the posture is the
-  contract, and the kept copy is how an operator sees, and can restore, what a
-  platform had put there.
+  path may be the platform's own managed policy, possibly a stronger control
+  than ours, so by default it is **not replaced**: the run reports its path and
+  SHA-256, says the agent posture is **not applied** for that file, and still
+  completes. That is a delivery gap for that machine, not a failed run.
+  `HARMON_AGENT_POSTURE_REPLACE=1` is the operator's explicit opt-in to replace
+  it; the previous file is then kept beside it as
+  `<path>.replaced-<unique suffix>`, a name never used before, so a second
+  replacement cannot overwrite the first kept copy. The variable is forwarded
+  through the `sudo` re-exec like the other `HARMON_*` settings.
 - **Hooks are not delivered.** The definition's hook commands name the agent
   image's hook scripts (`/etc/claude-code/hooks/`, `/etc/codex/hooks/`, and the
   session-end archive hook under `/usr/local/share/devcontainer-config/`). The
@@ -386,8 +396,8 @@ check a VM; the comparison above is.
 
 | Check | Where | What it proves |
 | --- | --- | --- |
-| `task test:bootstrap-remote` | `task verify`, and `build.yml`'s `lint` job on every pull request | The pin contract, offline: no second pin owner (declared or typed into a download URL), every pin Renovate-extractable, both Node digests verified for the pinned Node, the fetch list matches the directory, no denied host, no forbidden tool named by the bootstrap or a tier script, a non-release-tag `--ref` is refused, the agent posture comes only from `.devcontainer/config/agent/` and installs byte-identical, idempotent, and never silently over a file already there, and no piped or live-prefix `tar` extraction in the bootstrap or a tier script. That last check is shape-based: a dashless `tar xzf`, an `unzip -d`, or a `curl -o` straight onto the live path is not detected, and for those forms the stage-verify-extract-move invariant is enforced by the one install helper in `lib.sh` and reviewed, not proved |
-| `remote-bootstrap.yml` → `bootstrap` | CI, stock `ubuntu:24.04` container, seeded with `/usr/bin` ahead of `/usr/local/bin` and `LC_ALL=C` | It runs: the tiers install inside the budget, the second run performs no new installs and leaves the manifest byte-identical, `yq` and `task` resolve from `/usr/local/bin` and the effective locale is UTF-8 in a fresh login shell on the system profile path, a user with `~/.local/bin/yq` planted gets the shadow warning and exit 0 through the un-sudoed re-exec path **and** through `sudo -E` (asserted to enter as uid 0 with that user's `HOME`), each with nothing of root's left in that home and that user's `~/.profile` never executed as root, nothing forbidden appeared on `PATH`, the agent posture passed `agent-autonomy.sh verify` (the bootstrap fails otherwise), every VM manifest key names its pin, and `task check` then passes in a harmon-init checkout |
+| `task test:bootstrap-remote` | `task verify`, and `build.yml`'s `lint` job on every pull request | The pin contract, offline: no second pin owner (declared or typed into a download URL), every pin Renovate-extractable, both Node digests verified for the pinned Node, the fetch list matches the directory, no denied host, no forbidden tool named by the bootstrap or a tier script, a non-release-tag `--ref` is refused, the agent posture comes only from `.devcontainer/config/agent/`, installs byte-identical and idempotent, leaves a file already there in place unless `HARMON_AGENT_POSTURE_REPLACE=1`, never overwrites a kept copy, and changes no harness executable's mode, and no piped or live-prefix `tar` extraction in the bootstrap or a tier script. That last check is shape-based: a dashless `tar xzf`, an `unzip -d`, or a `curl -o` straight onto the live path is not detected, and for those forms the stage-verify-extract-move invariant is enforced by the one install helper in `lib.sh` and reviewed, not proved |
+| `remote-bootstrap.yml` → `bootstrap` | CI, stock `ubuntu:24.04` container, seeded with `/usr/bin` ahead of `/usr/local/bin` and `LC_ALL=C` | It runs: the tiers install inside the budget, the second run performs no new installs and leaves the manifest byte-identical, `yq` and `task` resolve from `/usr/local/bin` and the effective locale is UTF-8 in a fresh login shell on the system profile path, a user with `~/.local/bin/yq` planted gets the shadow warning and exit 0 through the un-sudoed re-exec path **and** through `sudo -E` (asserted to enter as uid 0 with that user's `HOME`), each with nothing of root's left in that home and that user's `~/.profile` never executed as root, nothing forbidden appeared on `PATH`, the agent posture passed `agent-autonomy.sh verify` for the files it wrote (the bootstrap fails otherwise), every VM manifest key names its pin, and `task check` then passes in a harmon-init checkout |
 | `images/devcontainer/smoke.sh` | the built image | The image really runs the shared scripts — they ship in the image beside `versions.env`, and its manifest records their versions for the comparison above |
 
 The CI job runs on the runner's native architecture, so `vars.CI_RUNS_ON` is
@@ -423,7 +433,11 @@ adapter shares, and the section is where a platform's specifics go.
 
 The bootstrap installs [the agent posture](#the-agent-posture) the same way
 everywhere. What differs is whether the platform's harness reads what was
-installed, and where it does not, what enforces the posture instead. Evidence
+installed, and where it does not, what enforces the posture instead. Two gaps
+are common to every platform VM: the bootstrap does not refuse harness
+executables there, and a managed file the platform put there first is left in
+place, with the posture not applied for it, unless the operator opts in with
+`HARMON_AGENT_POSTURE_REPLACE=1`. Evidence
 tags are the guides': **docs** with the date re-read, **observed** with the date
 and source, **expected, not yet observed**, and **pending** for a `[HUMAN]`
 criterion of [#1404](https://github.com/evanharmon1/harmon-init/issues/1404)
@@ -431,17 +445,18 @@ that needs a live session.
 
 | Platform | Delivery | Recorded gap | Evidence |
 | --- | --- | --- | --- |
-| Claude Code on the web | The setup script's bootstrap writes `/etc/claude-code/managed-settings.json`, creating the directory | Whether a session honours a managed file written by the setup script is **unproven**: the VM had no `/etc/claude-code/`, the platform supplies its own settings overlay (`CCR_SETTINGS_JSON_OVERLAY`), and a server-side auto-mode classifier sits above whatever loads. If the file is ignored, the fallback is the repository's `.claude/settings.json` (single-repository sessions only) or the platform overlay, chosen by the live check. No hooks | observed 2026-09-27 ([evidence](https://github.com/evanharmon1/harmon-init/issues/1404#issuecomment-5860625696)) for the VM; delivery expected, not yet observed — pending, criterion 2 ([guide](../guides/claude-code-web.md#the-agent-posture)) |
-| Codex cloud | The setup script's bootstrap writes `/etc/codex/managed_config.toml`, creating the directory | Whether the cloud agent reads a managed config written in the setup phase is **unproven**, and no page gives an environment a permission or approval configuration. The Codex configuration has no deny list to lose: it pins `workspace-write` and approval `never`, and the Claude deny list has no Codex equivalent. No hooks | docs (legacy), 2026-09-29; delivery expected, not yet observed — pending, criterion 3 ([guide](../guides/codex-cloud.md#the-agent-posture-as-far-as-codex-cloud-can-express-it)) |
-| Sprites | The bootstrap, once [#1411](https://github.com/evanharmon1/harmon-init/issues/1411) builds the adapter; the machine is ours, so the files install as they do in the agent devcontainer | The adapter does not exist yet. No hooks | expected, not yet observed — pending, criterion 4 |
-| Agent devcontainer | Not the bootstrap: `.devcontainer/agent/post-create.sh` runs `agent-autonomy.sh apply` and `verify` against the image's baked copy of the same definition, and the image installs the hooks | None recorded | the definition is tested by `scripts/test-agent-profile.sh`; in effect in a live session: pending, criterion 4 |
+| Claude Code on the web | The setup script's bootstrap writes `/etc/claude-code/managed-settings.json`, creating the directory | Whether a session honours a managed file written by the setup script is **unproven**: the VM had no `/etc/claude-code/`, the platform supplies its own settings overlay (`CCR_SETTINGS_JSON_OVERLAY`), and a server-side auto-mode classifier sits above whatever loads. If the file is ignored, the fallback is the repository's `.claude/settings.json` (single-repository sessions only) or the platform overlay, chosen by the live check. Harness refusal is not applied; what bounds the session instead is the platform's classifier and that the platform starts Claude Code, not another harness. No hooks | observed 2026-09-27 ([evidence](https://github.com/evanharmon1/harmon-init/issues/1404#issuecomment-5860625696)) for the VM; delivery expected, not yet observed — pending, criterion 2 ([guide](../guides/claude-code-web.md#the-agent-posture)) |
+| Codex cloud | The setup script's bootstrap writes `/etc/codex/managed_config.toml`, creating the directory | Whether the cloud agent reads a managed config written in the setup phase is **unproven**, and no page gives an environment a permission or approval configuration. The Codex configuration has no deny list to lose: it pins `workspace-write` and approval `never`, and the Claude deny list has no Codex equivalent. Harness refusal is not applied; the platform runs Codex and nothing else, inside its per-task isolation. No hooks | docs (legacy), 2026-09-29; delivery expected, not yet observed — pending, criterion 3 ([guide](../guides/codex-cloud.md#the-agent-posture-as-far-as-codex-cloud-can-express-it)) |
+| Sprites | The bootstrap, once [#1411](https://github.com/evanharmon1/harmon-init/issues/1411) builds the adapter; the machine is ours, so the files install as they do in the agent devcontainer | The adapter does not exist yet. Harness refusal is not applied by the bootstrap; whether the adapter adds it, or installs only the harnesses the posture supports, is #1411's to decide. No hooks | expected, not yet observed — pending, criterion 4 |
+| Agent devcontainer | Not the bootstrap: `.devcontainer/agent/post-create.sh` runs `agent-autonomy.sh apply` and `verify` against the image's baked copy of the same definition, and the image installs the hooks; `apply` there also refuses the harnesses the definition refuses | None recorded | the definition is tested by `scripts/test-agent-profile.sh`; in effect in a live session: pending, criterion 4 |
 
 **Pending observation (#1404 criterion 4):** on a Sprite, once #1411 exists, and
 in the agent devcontainer, start `claude` and run `/permissions`: the agent deny
 rules must be listed. Then ask it to run `gh pr merge 1`, which must be refused
 without a prompt. Run `codex` and check that `/status` shows `workspace-write`
 and approval `never`. On the Sprite, `sudo FOREMAN_DEVCONTAINER=agent
-AGENT_AUTONOMY_CONFIG_DIR=<checkout>/.devcontainer/config/agent bash
+AGENT_AUTONOMY_CONFIG_DIR=<checkout>/.devcontainer/config/agent
+AGENT_AUTONOMY_SKIP_HARNESS_REFUSAL=1 bash
 <checkout>/.devcontainer/agent/agent-autonomy.sh verify` must pass; in the
 devcontainer, `bash .devcontainer/agent/agent-autonomy.sh verify`. Record the
 date and the Claude Code and `codex` versions here.
