@@ -52,7 +52,8 @@ one's status.
 - [2026-09-02-remove-guard-process-kill-hook.md](2026-09-02-remove-guard-process-kill-hook.md)
   — the process-kill guard hook is removed; the hard rule binds the agent directly (Accepted).
 - [2026-09-13-brief-envelope-schema-bound-free-form-body.md](2026-09-13-brief-envelope-schema-bound-free-form-body.md)
-  — briefs get a schema-bound envelope around a free-form body (Accepted; amends 2026-08-29 D2).
+  — briefs get a schema-bound envelope around a free-form body
+  (Accepted; amends 2026-08-29 (Dev flow v2) D2).
 - [2026-09-23-retire-openspec-workflow.md](2026-09-23-retire-openspec-workflow.md)
   — OpenSpec is retired in favor of the existing issue, ADR, and plain-spec workflow (Accepted).
 - [2026-09-29-agent-posture-three-posture-model.md](2026-09-29-agent-posture-three-posture-model.md)
