@@ -128,6 +128,7 @@ tasks:
       - task: test:related-repos
 [% endif %]
       - task: test:setup-remote
+      - task: test:remote-codex-policy
       - task: test:meta-install
 [% if use_codex_review %]
       - task: test:codex-review
@@ -818,6 +819,11 @@ tasks:
     desc: Unit-test task setup:remote — idempotency, the lefthook shim, sibling clones into the checkout's parent (stubbed lefthook/gh, no network)
     cmds:
       - ./scripts/test-setup-remote.sh
+
+  test:remote-codex-policy:
+    desc: Guard the remote second-model rule — no Codex credential vocabulary on a remote-environment surface (offline)
+    cmds:
+      - ./scripts/test-remote-codex-policy.sh
 
   test:meta-install:
     desc: Unit-test the .meta sidecar installer's ~-expansion and refusals

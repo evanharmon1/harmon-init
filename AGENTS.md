@@ -681,6 +681,21 @@ Those siblings are reference context, not pushable where the platform only
 allows pushes to the session's own repository and branch. The pre-push hook is
 not a substitute for `task verify`, so run it yourself.
 
+**Second model on a remote lane.** Every remote lane gets a Codex second-model
+review on the ChatGPT plan with no human step: ephemeral cloud VMs never hold
+Codex credentials, and a persistent environment may hold exactly one Codex login
+of its own. On an **ephemeral cloud** the orchestrator runs `task challenge` and
+`task review` against the lane's pushed branch from its own local pane, where
+Codex is already logged in, and the lane's PR body records that review in its
+stage ledger as `reviewed from <host> at <head>` — that orchestrator-side review
+is the lane's second model, in the sense § Second-Model Review requires, and
+Codex cloud review of the PR covers the integration stage. A **persistent
+environment** (the agent devcontainer, Sprites) logs in once, at provisioning,
+and runs Codex locally; that login stays on that environment and is never
+copied to another machine. The Codex Claude Code plugin is provided only where a
+persistent login exists, never in an ephemeral cloud. Nothing here sets or asks
+for an OpenAI API key: the plan, not API credit, pays for it.
+
 ## Second-Model Review (Codex)
 
 A second AI model (the OpenAI Codex CLI) reviews changes on demand — opt-in
