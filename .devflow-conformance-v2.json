@@ -1629,6 +1629,81 @@
           ]
         }
       }
+    },
+    {
+      "name": "unachievable-derived-tier-stays-advisory-under-council",
+      "basis": "branch",
+      "overrides": ["strategy=council"],
+      "issue": {
+        "risk": "trivial",
+        "complexity": "xs"
+      },
+      "expect": {
+        "exit": 0,
+        "warning_diagnostics": [
+          {
+            "code": "tier-unachievable",
+            "subject": "implementer"
+          }
+        ],
+        "result": {
+          "tiers": {
+            "implementer": {
+              "value": "local",
+              "source": "derived"
+            }
+          },
+          "disclosures": [
+            {
+              "code": "off-profile-tier",
+              "role": "implementer"
+            }
+          ],
+          "selections": {
+            "strategy": {
+              "value": "council",
+              "source": "explicit"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "unachievable-derived-tier-stays-advisory-with-a-stage-pool",
+      "basis": "branch",
+      "config_replacements": [
+        [
+          "[stage.implement]\n# pool",
+          "[stage.implement]\npool = [\"claude-code\", \"codex-cli\"]\n# pool"
+        ]
+      ],
+      "issue": {
+        "risk": "trivial",
+        "complexity": "xs"
+      },
+      "expect": {
+        "exit": 0,
+        "warning_diagnostics": [
+          {
+            "code": "tier-unachievable",
+            "subject": "implementer"
+          }
+        ],
+        "result": {
+          "tiers": {
+            "implementer": {
+              "value": "local",
+              "source": "derived"
+            }
+          },
+          "disclosures": [
+            {
+              "code": "off-profile-tier",
+              "role": "implementer"
+            }
+          ]
+        }
+      }
     }
   ]
 }

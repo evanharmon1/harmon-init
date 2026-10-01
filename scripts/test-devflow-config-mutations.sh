@@ -554,4 +554,50 @@ if resolve_reader --strategy oneshot 2>/dev/null; then
     echo "FAIL: JS reader accepted a role with no executable family/harness/tier tuple" >&2
     exit 1
 fi
+# harmon-init#1449, review round 2 (R2-F1): every capability check in
+# crossValidate reads the AUTHORED role tier through authoredTierOf(). A site
+# reverted to the input-driven `.tier` turns an issue whose derived tier no
+# family can serve into a hard cross-validation error instead of the
+# tier-unachievable advisory. The v2 corpus must kill each reversion.
+reset_policy
+cp scripts/devflow-policy.mjs "$tmp/pristine.devflow-policy.mjs"
+reader_reversion_is_killed() {
+    name="$1"
+    case_name="$2"
+    python3 - "$3" "$4" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path("scripts/devflow-policy.mjs")
+text = path.read_text()
+old, new = sys.argv[1:]
+if text.count(old) != 1:
+    raise SystemExit(f"expected exactly one occurrence of {old!r}, found {text.count(old)}")
+path.write_text(text.replace(old, new, 1))
+PY
+    if python3 scripts/test-devflow-conformance.py \
+        --fixture .devflow-conformance-v2.json \
+        --config .devflow.toml >"$tmp/$name.out" 2>&1; then
+        echo "FAIL: v2 corpus did not kill reader reversion: $name" >&2
+        exit 1
+    fi
+    if ! grep -q "$case_name" "$tmp/$name.out"; then
+        echo "FAIL: reader reversion $name was not killed by $case_name" >&2
+        cat "$tmp/$name.out" >&2
+        exit 1
+    fi
+    cp "$tmp/pristine.devflow-policy.mjs" scripts/devflow-policy.mjs
+}
+reader_reversion_is_killed council-input-tier \
+    unachievable-derived-tier-stays-advisory-under-council \
+    'model.tier === authoredTierOf(resolved.roles.implementer))' \
+    'model.tier === resolved.roles.implementer.tier)'
+reader_reversion_is_killed pool-input-tier \
+    unachievable-derived-tier-stays-advisory-with-a-stage-pool \
+    'model.tier === authoredTierOf(roleConfig))' \
+    'model.tier === roleConfig.tier)'
+reader_reversion_is_killed role-input-tier \
+    matrix-corner-xs-trivial-derives-local \
+    'const authoredTier = authoredTierOf(r)' \
+    'const authoredTier = r.tier'
 echo "devflow v2 mutation guards OK"

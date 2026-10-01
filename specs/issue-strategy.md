@@ -263,7 +263,8 @@ Issues become cheap to classify and route, for humans and agents alike:
 
 ### Scenario: untrusted strategy labels are inert to automation
 
-- **Given** `tier:apex` applied by a login not in the automation's trusted-actor configuration
+- **Given** `tier:implementer:apex` applied by a login not in the automation's trusted-actor
+  configuration
 - **When** unattended automation resolves the tier from the label timeline immediately before
   acting
 - **Then** the label is ignored with a warning and the config default applies — and no

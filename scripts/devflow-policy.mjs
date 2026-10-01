@@ -1267,6 +1267,16 @@ function resolveStrategy(doc, requestedStrategy) {
  * which is itself reported by the CLI as reduced-confidence, never silent).
  * `taskTargets` is a Set<string> of bare target names, or null.
  */
+// The tier a role's AUTHORED configuration resolves to, before any issue,
+// pin, operator, or label tier input (applyTierInputs keeps it as
+// `profile_tier`). Every capability check in crossValidate reads this one
+// helper: those checks ask whether the POLICY can serve its own roles, while an
+// input-driven tier no family can serve is tierAchievabilityWarnings()'s
+// advisory — so a classified issue can never turn a sound policy invalid.
+function authoredTierOf(roleEntry) {
+  return roleEntry?.profile_tier ?? roleEntry?.tier
+}
+
 export function crossValidate(resolved, registryDoc, taskTargets) {
   const errors = []
 
@@ -1479,10 +1489,7 @@ export function crossValidate(resolved, registryDoc, taskTargets) {
         .map((slug) => ({ slug, family: familyBySlug.get(slug) }))
         .filter(({ family }) => family)
       const tierAware = knownFamilies.some(({ family }) => Array.isArray(family.models))
-      // The AUTHORED tier (before any issue/operator/label tier input) is
-      // what this policy promises it can serve; an input-driven tier the
-      // families cannot serve is tierAchievabilityWarnings()'s advisory.
-      const authoredTier = r.profile_tier ?? r.tier
+      const authoredTier = authoredTierOf(r)
       const tierEligibleFamilies = knownFamilies.filter(({ family }) => {
         if (!tierAware) return true
         return (
@@ -1604,7 +1611,7 @@ export function crossValidate(resolved, registryDoc, taskTargets) {
             if (!family) return false
             if (
               Array.isArray(family.models) &&
-              !family.models.some((model) => model.tier === roleConfig.tier)
+              !family.models.some((model) => model.tier === authoredTierOf(roleConfig))
             ) {
               return false
             }
@@ -1617,7 +1624,7 @@ export function crossValidate(resolved, registryDoc, taskTargets) {
         if (!hasExecutablePoolTuple) {
           errors.push(
             `[stage.${stage}].pool has no executable intersection with [role.${stageRole}] ` +
-              `for tier "${roleConfig?.tier}"`
+              `for tier "${authoredTierOf(roleConfig)}"`
           )
         }
       }
@@ -1657,7 +1664,7 @@ export function crossValidate(resolved, registryDoc, taskTargets) {
         const familySlug = harness.family_constraint.family
         if (!resolved.roles.implementer.families.includes(familySlug)) continue
         const family = familyBySlug.get(familySlug)
-        if (!family?.models?.some((model) => model.tier === resolved.roles.implementer.tier)) {
+        if (!family?.models?.some((model) => model.tier === authoredTierOf(resolved.roles.implementer))) {
           continue
         }
         eligibleFamilies.add(familySlug)
