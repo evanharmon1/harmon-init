@@ -25,8 +25,9 @@ project-specific (domain) terms as the model firms up.
 Inherent attributes of an issue itself, distinct from the **execution policy**
 (`.devflow.toml`: rigor, strategy, role tiers, budgets), which decides how the
 factory runs an issue and may override any default the classification implies.
-Stored as issue fields on organization repos and as labels on personal-account
-repos.
+Impact, Risk, Complexity, Tier, Priority, and Effort are issue fields on
+organization repos and labels on personal-account repos; Type, `area:*`,
+`layer:*`, and `domain:*` keep their existing storage.
 
 | Term | Meaning |
 |---|---|
@@ -39,6 +40,6 @@ repos.
 | Priority | The human's ranking of when the issue should be worked: urgent, high, medium, low. Human-only and never required; unset means an agent does not start it without asking. Avoid: P0–P3 (review-finding severities). |
 | Family | A model lineage: claude, gpt, gemini, qwen… Distinct from a **harness** (the executable that runs it). |
 | Claim | The marker recording which model family took the work: `claim:<family>[:<model>]`. A signal, not a lock; the harness and runtime are in the claim comment. |
-| triaged | Every required classification is present: Type (or work-type label), one `area:*`, `layer:*`, and `domain:*` (or their explicit inapplicable value), Risk, Complexity, Impact. `needs-triage` is derived from this, never set by hand. |
+| triaged | Every required classification is present: Type (or work-type label), one label from each of the `area:*`, `layer:*`, and `domain:*` families (or that family's explicit `none` value), Risk, Complexity, Impact. `needs-triage` is derived from this, never set by hand. |
 | Size | Retired: superseded by Effort (human tasks) and Complexity (every issue). |
 | `suggest:*` | Retired: the family suggestion, superseded by Tier. |

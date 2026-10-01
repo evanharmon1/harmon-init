@@ -61,8 +61,12 @@ default the classification implies. Fields describe what an issue is;
 
 ### D2 — The axes and their scales
 
-Stored as issue fields on organization repositories and as exclusive labels
-on personal-account repositories.
+Impact, Risk, Complexity, Tier, Priority, and Effort are issue fields on
+organization repositories and exclusive labels on personal-account
+repositories; Start date and Target date are organization fields only. Type,
+`area:*`, `layer:*`, and `domain:*` keep their existing storage: the native
+Issue Type, or the work-type label on personal-account repositories, and
+labels.
 
 | Axis | Scale | Who sets | Required for "triaged" |
 |---|---|---|---|
@@ -140,14 +144,21 @@ Execution-policy resolution becomes:
 4. derived Tier
 5. `default_rigor`
 
-A pin sets the **implementer** tier only. Any role-tier invariant a pin
-breaks is disclosed in the PR body, not corrected.
+The built-in fallback for an absent policy file stays as ADR 0006 D5 and
+AGENTS.md describe it.
+
+A pin sets the **implementer** tier only. A pin can leave the resolved role
+tiers outside the ladder invariants; that is disclosed in the PR body, not
+corrected. The authored-profile role-tier floor that `devflow-policy.mjs`
+enforces on `[rigor.*]` tables is unaffected and still rejects a profile that
+violates it.
 
 ### D6 — "Triaged" is derived
 
 An issue is **triaged** when every required axis in D2 is present: Type (or
-the work-type label), one `area:*`, `layer:*`, and `domain:*` (or their
-explicit `none` value), Risk, Complexity, and Impact. `needs-triage` is
+the work-type label), one label from each of the `area:*`, `layer:*`, and
+`domain:*` families (or that family's explicit `none` value), Risk,
+Complexity, and Impact. `needs-triage` is
 derived from that and never set by hand.
 
 ### D7 — The agent queue
@@ -219,6 +230,9 @@ with a skim of the resulting tier distribution per repository.
   the tier adds `tier:pinned`. Rollout must pin any human-applied
   `tier:<value>` label on an open issue before the backfill runs
   ([#1453](https://github.com/evanharmon1/harmon-init/issues/1453)).
+- #1449 puts the matrix in `.devflow.toml`, so it also amends that file's
+  header comment, which today scopes the file to `tier_order` and tier
+  choices, and `.devflow.schema.json`.
 - The work is split across the epic's children: the label registry
   ([#1447](https://github.com/evanharmon1/harmon-init/issues/1447)), the
   organization fields and Effort ladder
