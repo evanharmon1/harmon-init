@@ -44,4 +44,4 @@ organization repos and labels on personal-account repos; Type, `area:*`,
 | Size | Retired: superseded by Effort (human tasks) and Complexity (every issue). |
 | `suggest:*` | Retired: the family suggestion, superseded by Tier. |
 | `tier:adaptive` | Retired 2026-10-01: no rung on the Tier scale. The label is removed and the issue resolves through its derived Tier. |
-| needs-review | The issue's PR is waiting for human review: the integration stage adds it at ready-for-review, when it removes `claim:*`, and removes it if review sends the work back. It keeps the issue out of the agent queue. |
+| `needs-review` | The issue's PR is waiting for human review: the integration stage adds it at ready-for-review, when it removes `claim:*`, and removes it if review sends the work back. It keeps the issue out of the agent queue. |

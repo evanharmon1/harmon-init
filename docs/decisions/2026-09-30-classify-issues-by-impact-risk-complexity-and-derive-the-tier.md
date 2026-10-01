@@ -170,8 +170,10 @@ blocked. `needs-review` (maintainer decision 2026-10-01) is added to the
 issue by the integration stage at ready-for-review, in the step that removes
 `claim:*`, and removed if review pulls the work back into fix rounds; it
 keeps an issue whose PR awaits human review out of the queue and lists what
-awaits the maintainer. The project board and its Status pipeline stay as they
-are, for human views. Milestones are unchanged.
+awaits the maintainer. The integration stage is a vendored harmon-devkit
+skill, so the write lands through harmon-devkit#1255 and a skills-pin bump
+here; the label itself is #1447's. The project board and its Status pipeline
+stay as they are, for human views. Milestones are unchanged.
 
 ### D8 — Retirements, and what is unchanged
 
@@ -184,8 +186,13 @@ Retired:
 - The ponderousdev `Agent` issue field.
 - `tier:adaptive` (maintainer decision 2026-10-01): it has no rung on the
   Tier scale, so the label is retired with a migration. Removing it leaves
-  the issue to resolve through its derived Tier, and an `adaptive` label or
-  override resolves as if absent, with a warning.
+  the issue to resolve through its derived Tier, and a `tier:adaptive` label
+  still present resolves as if absent, with a warning. `adaptive` as a
+  configured role tier or override target stays rejected outright, as
+  `specs/issue-strategy.md` and the policy reader already require. #1447
+  retires the registry value; #1449 changes the resolver, amends
+  `specs/issue-strategy.md`, and revises the conformance fixtures that define
+  `adaptive`, under the versioned contract in ADR 2026-08-25.
 
 Unchanged:
 
