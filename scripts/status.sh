@@ -975,7 +975,26 @@ if [[ "${SECTION}" == "setup" ]]; then
                 echo 'null' >"${d}/ci-runs-on.json"
                 echo no >"${d}/ci-runs-on-probe"
             fi) &
-            (run_timeout "${NETWORK_TIMEOUT}" gh release list --limit 1 >"${d}/release.txt" 2>/dev/null || :) &
+            # Latest release, over REST: `gh release list` is GraphQL-backed, and a
+            # REST-only proxy refuses it. The read's OUTCOME is recorded beside its
+            # body, because an empty result and a failed read look identical in the
+            # body alone and mean opposite things: "no release exists" is an
+            # observation, "the read failed" is not. A body that is not a JSON
+            # array of releases (an error document, a proxy page, an array of
+            # error objects) is a failed read too: every element must be an
+            # object with a non-empty string tag_name, and the body must be
+            # exactly one JSON document (a proxy's error document followed by
+            # an empty array must not read as "none"). An empty array stays a
+            # successful "none".
+            (if GH_REST_TIMEOUT="${NETWORK_TIMEOUT}" gh_rest_api \
+                "repos/${OWNER}/${REPO}/releases?per_page=1" \
+                >"${d}/release.json" 2>/dev/null &&
+                jq -se 'length == 1 and (.[0] | type == "array" and all(.[]; type == "object" and (.tag_name | type == "string" and length > 0)))' \
+                    "${d}/release.json" >/dev/null 2>&1; then
+                echo ok >"${d}/release.state"
+            else
+                echo failed >"${d}/release.state"
+            fi) &
             # Projects v2 has no REST read equivalent. A REST-only session must
             # say this surface is unavailable instead of failing the audit or
             # silently grading an empty response as "no project".
@@ -1380,8 +1399,17 @@ if [[ "${SECTION}" == "setup" ]]; then
                     fi
                 fi
                 if [ "${has_release_wf}" = 1 ]; then
-                    if [ -s "${d}/release.txt" ]; then
-                        rel="$(head -1 "${d}/release.txt" | awk '{print $1}')"
+                    # Three outcomes, never two: a release exists, the read
+                    # succeeded and found none, or the read failed. Only the
+                    # middle one may recommend `task release:init`; a failed
+                    # read states no absence and prescribes no remedy (the
+                    # Projects line above is the same shape). A missing state
+                    # file reads as failed — the read never ran.
+                    if [ "$(cat "${d}/release.state" 2>/dev/null || echo failed)" != ok ]; then
+                        checkline unknown "Release published" \
+                            "unavailable — latest release read failed"
+                    elif rel="$(jq -r '.[0].tag_name // empty' "${d}/release.json" 2>/dev/null)" &&
+                        [ -n "${rel}" ]; then
                         checkline ok "Release published" "${rel}"
                     else
                         checkline no "Release published" "task release:init"
