@@ -1337,7 +1337,7 @@ minimal) # project_management=github on a PERSONAL account, use_foreman=false
         err "project-management.md omits the area: solution-space label-family guidance"
     grep -qF 'At most one each of `area:`/`domain:`/`layer:` per issue' docs/project-management.md ||
         err "project-management.md omits the area/domain/layer cardinality guidance"
-    grep -qF '**Tier** — which model-routing stratum works a specific **role**' docs/project-management.md ||
+    grep -qF '**Tier** — the model-routing stratum an issue runs at.' docs/project-management.md ||
         err "project-management.md omits the tier: label-family guidance"
     grep -qF '**Strategy** — the primary topology/workflow axis' docs/project-management.md ||
         err "project-management.md omits the strategy: label-family guidance"

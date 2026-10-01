@@ -186,8 +186,7 @@ function agentRecords(rendererMode) {
 }
 
 function registryFamilyRecords(family) {
-  const rendererMode =
-    family.registry_set === 'foreman-adapters' ? 'foreman-adapters' : 'suggest-claim'
+  const rendererMode = family.registry_set === 'foreman-adapters' ? 'foreman-adapters' : 'claim'
   const lines = agentRecords(rendererMode).filter((line) => line.startsWith(`${family.prefix}:`))
   for (const line of lines) {
     const color = line.split('|')[1]
@@ -259,8 +258,8 @@ if (mode === 'inventory') {
 
   // Resolve the agent-registry bases before consuming any open-value family.
   // Manifest order is documentation order, not an authorization boundary: an
-  // open family must never fall back to a broad `suggest:`/`claim:` prefix just
-  // because its agent-registry family appears later in the file.
+  // open family must never fall back to a broad `claim:` prefix just because
+  // its agent-registry family appears later in the file.
   for (const family of manifest.families ?? []) {
     if (family.retired === true || family.source !== 'agent-registry' || family.prefix === null)
       continue
