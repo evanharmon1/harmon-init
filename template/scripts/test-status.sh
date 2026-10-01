@@ -641,9 +641,12 @@ esac
 # a GraphQL-backed or otherwise proxy-refused surface. Every pattern is anchored
 # on `(^| )` because the log line is the bare `$*` of the gh call: a `gh pr list`
 # is logged as `pr list ...`, with no leading space for a ` pr list` pattern to
-# match. `release list` is GraphQL-backed, and is the call #1437 removed.
+# match. `release list` is GraphQL-backed, and is the call #1437 removed. The
+# `search` and `project` subcommands are refused by the proxy the same way as
+# the `search/` and GraphQL endpoints, and `pr checks` / `pr status` are
+# GraphQL-backed like `pr list` and `pr view`.
 assert_rest_only_calls() {
-    if grep -E '(^| )(graphql|search/|repositories/)|--paginate|(^| )pr (list|view)|(^| )issue (list|view)|(^| )label list|(^| )release (list|view)' "${STUB_CALLS}" >/dev/null; then
+    if grep -E '(^| )(graphql|search/|repositories/)|--paginate|(^| )pr (list|view|checks|status)|(^| )issue (list|view)|(^| )label list|(^| )release (list|view)|(^| )search |(^| )project ' "${STUB_CALLS}" >/dev/null; then
         fail "$1 used a forbidden GitHub surface: $(tr '\n' ' ' <"${STUB_CALLS}")"
     fi
 }
@@ -740,7 +743,7 @@ done
 make_stub project
 out="$(cd "${TMP}/with-release" && GH_REPO_JSON="$public_repo" GH_REPO=owner/public \
     PATH="${TMP}/bin:${PATH}" NO_COLOR=1 "${WITH_RELEASE}" 2>&1)"
-for header in "Git Status" "GitHub Status" "Environment" "Local Credentials"; do
+for header in "Git Status" "GitHub Status" "Codebase Stats" "Environment" "Local Credentials"; do
     case "$out" in
     *"${header}"*) ;;
     *) fail "the whole-block run lacks its ${header} section: ${out}" ;;

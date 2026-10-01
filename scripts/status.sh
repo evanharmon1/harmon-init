@@ -1405,7 +1405,6 @@ if [[ "${SECTION}" == "setup" ]]; then
                     # read states no absence and prescribes no remedy (the
                     # Projects line above is the same shape). A missing state
                     # file reads as failed — the read never ran.
-                    rel=""
                     if [ "$(cat "${d}/release.state" 2>/dev/null || echo failed)" != ok ]; then
                         checkline unknown "Release published" \
                             "unavailable — latest release read failed"
