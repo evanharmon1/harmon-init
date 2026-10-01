@@ -117,7 +117,7 @@
     {
       "family": "workflow",
       "prefix": null,
-      "purpose": "Transient triage states; blocked is the non-issue-blocker flag.",
+      "purpose": "Transient triage and review-hand-off states; blocked is the non-issue-blocker flag.",
       "axis": "workflow",
       "source": "inline",
       "writers": ["human"],
@@ -159,6 +159,14 @@
         {
           "value": "needs-communication",
           "description": "An update needs to be communicated out"
+        },
+        {
+          "value": "needs-review",
+          "description": "PR ready for human review; out of the agent queue",
+          "writers": ["human", "agent"],
+          "writer_note": "the integration stage, at ready-for-review; humans",
+          "readers": "humans, the review list; the agent queue, which excludes it",
+          "lifecycle_note": "added at ready-for-review, when `claim:*` is removed; removed if review pulls the work back into fix rounds"
         }
       ]
     },
@@ -240,7 +248,7 @@
       "writer_note": "humans or agents, at triage",
       "readers": "humans, `gh issue list --label`",
       "lifecycle": "durable",
-      "lifecycle_note": "durable classification; the label family is the only surface — there is no paired project field",
+      "lifecycle_note": "durable classification; the label family is the only surface — there is no paired project field; `layer:none` records that the axis does not apply",
       "exclusive": true,
       "provision": true,
       "color": "1D76DB",
@@ -264,6 +272,10 @@
         {
           "value": "infra",
           "description": "Hosts, networking, containers, provisioning — IaC and config rather than app code"
+        },
+        {
+          "value": "none",
+          "description": "Inapplicable: the work is not in a single stack slice"
         }
       ]
     },
@@ -277,7 +289,7 @@
       "writer_note": "humans or agents, at triage",
       "readers": "humans, `gh issue list --label`",
       "lifecycle": "durable",
-      "lifecycle_note": "durable classification; the label family is the only surface — there is no paired project field",
+      "lifecycle_note": "durable classification; the label family is the only surface — there is no paired project field; `domain:none` records that the axis does not apply",
       "exclusive": true,
       "provision": true,
       "color": "FBCA04",
@@ -315,6 +327,10 @@
           "description": "The ready-to-code environment: devcontainer, images, codespaces, editor setup"
         },
         {
+          "value": "none",
+          "description": "Inapplicable: the work serves no single product capability"
+        },
+        {
           "value": "platform",
           "retired": true,
           "writer_note": "nobody — retired at root",
@@ -340,7 +356,7 @@
       "writer_note": "humans or agents, at triage",
       "readers": "humans, `gh issue list --label`",
       "lifecycle": "durable",
-      "lifecycle_note": "durable classification; area = solution space, domain = problem space, layer = stack slice",
+      "lifecycle_note": "durable classification; area = solution space, domain = problem space, layer = stack slice; `area:none` records that the axis does not apply",
       "exclusive": true,
       "provision": true,
       "color": "0E8A16",
@@ -402,6 +418,10 @@
           "description": "Documentation content and structure; a subsystem's own docs belong to that subsystem's area"
         },
         {
+          "value": "none",
+          "description": "Inapplicable: the work belongs to no single codebase subsystem"
+        },
+        {
           "value": "template",
           "retired": true,
           "writer_note": "nobody — renamed",
@@ -414,6 +434,200 @@
           "writer_note": "nobody — renamed",
           "trust_note": "retired — renamed to `area:gauntlet`; codex is the current backend, not the stage",
           "lifecycle_note": "use guarded `--prune` with `--migrate area:codex=area:gauntlet`"
+        }
+      ]
+    },
+    {
+      "family": "impact",
+      "prefix": "impact",
+      "purpose": "Expected significance of completing the issue: core versus marginal benefit, not common versus uncommon path — a rare but severe bug can be high.",
+      "axis": "classification",
+      "source": "inline",
+      "writers": ["human", "agent"],
+      "writer_note": "humans or agents, at triage or filing — agent-authored issues arrive with it set",
+      "readers": "humans, saved views",
+      "lifecycle": "durable",
+      "lifecycle_note": "durable classification; required for an issue to count as triaged",
+      "trust_note": "provisioned; **advisory** — a required axis for triaged; arms nothing",
+      "exclusive": true,
+      "provision": true,
+      "color": "0052CC",
+      "values": [
+        {
+          "value": "minimal",
+          "description": "Impact: marginal benefit; most users would not notice it"
+        },
+        {
+          "value": "low",
+          "description": "Impact: small benefit to a few users or a narrow use case"
+        },
+        {
+          "value": "medium",
+          "description": "Impact: clear benefit to a meaningful share of users or goals"
+        },
+        {
+          "value": "high",
+          "description": "Impact: core benefit, or severe harm prevented even if rarely triggered"
+        },
+        {
+          "value": "massive",
+          "description": "Impact: transformative; current goals depend on it"
+        }
+      ]
+    },
+    {
+      "family": "risk",
+      "prefix": "risk",
+      "purpose": "How consequential a failure is if the change is implemented incorrectly; for a bug fix, the danger of the fix — the harm it prevents belongs in Impact.",
+      "axis": "classification",
+      "source": "inline",
+      "writers": ["human", "agent"],
+      "writer_note": "humans or agents, at triage or filing — agent-authored issues arrive with it set",
+      "readers": "humans, saved views; the Tier derivation (Risk × Complexity)",
+      "lifecycle": "durable",
+      "lifecycle_note": "durable classification; required for triaged; whoever changes it re-derives the Tier in the same write",
+      "trust_note": "provisioned; **read by agents** — an input to the derived Tier (Risk × Complexity); arms nothing",
+      "exclusive": true,
+      "provision": true,
+      "color": "B60205",
+      "values": [
+        {
+          "value": "trivial",
+          "description": "Risk: a mistake is harmless and trivially reversible"
+        },
+        {
+          "value": "low",
+          "description": "Risk: a mistake is contained, caught quickly, and cheap to undo"
+        },
+        {
+          "value": "medium",
+          "description": "Risk: a mistake breaks a feature or needs a careful rollback"
+        },
+        {
+          "value": "high",
+          "description": "Risk: a mistake reaches many users or their data; recovery is costly"
+        },
+        {
+          "value": "critical",
+          "description": "Risk: a mistake risks data loss, security exposure, or an irreversible outage"
+        }
+      ]
+    },
+    {
+      "family": "complexity",
+      "prefix": "complexity",
+      "purpose": "How difficult the work is to understand, design, implement, and verify correctly, including how likely it is to grow; set on every issue, never a time estimate.",
+      "axis": "classification",
+      "source": "inline",
+      "writers": ["human", "agent"],
+      "writer_note": "humans or agents, at triage or filing — agent-authored issues arrive with it set",
+      "readers": "humans, saved views; the Tier derivation (Risk × Complexity)",
+      "lifecycle": "durable",
+      "lifecycle_note": "durable classification; required for triaged; whoever changes it re-derives the Tier in the same write",
+      "trust_note": "provisioned; **read by agents** — an input to the derived Tier (Risk × Complexity); arms nothing",
+      "exclusive": true,
+      "provision": true,
+      "color": "F9D0C4",
+      "values": [
+        {
+          "value": "xs",
+          "description": "Complexity: a tiny, well-understood change with obvious verification"
+        },
+        {
+          "value": "s",
+          "description": "Complexity: small and local; a clear approach across a few files"
+        },
+        {
+          "value": "m",
+          "description": "Complexity: moderate; several components and some design choices"
+        },
+        {
+          "value": "l",
+          "description": "Complexity: large; cross-cutting, with real design and wide verification"
+        },
+        {
+          "value": "xl",
+          "description": "Complexity: very large or uncertain; likely to grow or need splitting"
+        }
+      ]
+    },
+    {
+      "family": "priority",
+      "prefix": "priority",
+      "purpose": "The human's ranking of when to work the issue; never required — unset means an agent asks before starting.",
+      "axis": "meta",
+      "source": "inline",
+      "writers": ["human"],
+      "writer_note": "humans only — an agent never sets or changes it",
+      "readers": "humans, saved views; the agent queue (an issue with no Priority is not queued)",
+      "lifecycle": "durable",
+      "lifecycle_note": "set by a human when ranking the work; changed as priorities move",
+      "trust_note": "provisioned; **advisory** — orders the agent queue; arms nothing",
+      "exclusive": true,
+      "provision": true,
+      "color": "FF7619",
+      "values": [
+        {
+          "value": "urgent",
+          "description": "Priority: work on this now, ahead of everything else"
+        },
+        {
+          "value": "high",
+          "description": "Priority: next up; schedule soon"
+        },
+        {
+          "value": "medium",
+          "description": "Priority: normal queue order"
+        },
+        {
+          "value": "low",
+          "description": "Priority: when nothing more pressing remains"
+        }
+      ]
+    },
+    {
+      "family": "effort",
+      "prefix": "effort",
+      "purpose": "The human time estimate for work a human will do, on a modified Fibonacci ladder; human tasks only, never agent work.",
+      "axis": "meta",
+      "source": "inline",
+      "writers": ["human"],
+      "writer_note": "humans only, on a human task — agent work carries Complexity instead",
+      "readers": "humans, saved views",
+      "lifecycle": "durable",
+      "lifecycle_note": "set by a human when estimating a human task; agent issues never carry it",
+      "trust_note": "provisioned; **advisory** — a human estimate; arms nothing",
+      "exclusive": true,
+      "provision": true,
+      "color": "C5DEF5",
+      "values": [
+        {
+          "value": "1",
+          "description": "Effort: 1, the smallest step on the modified Fibonacci ladder (human tasks only)"
+        },
+        {
+          "value": "2",
+          "description": "Effort: 2 on the modified Fibonacci ladder (human tasks only)"
+        },
+        {
+          "value": "3",
+          "description": "Effort: 3 on the modified Fibonacci ladder (human tasks only)"
+        },
+        {
+          "value": "5",
+          "description": "Effort: 5 on the modified Fibonacci ladder (human tasks only)"
+        },
+        {
+          "value": "8",
+          "description": "Effort: 8 on the modified Fibonacci ladder (human tasks only)"
+        },
+        {
+          "value": "13",
+          "description": "Effort: 13 on the modified Fibonacci ladder (human tasks only)"
+        },
+        {
+          "value": "20",
+          "description": "Effort: 20, the largest step on the modified Fibonacci ladder (human tasks only)"
         }
       ]
     },
@@ -462,22 +676,22 @@
     {
       "family": "tier",
       "prefix": "tier",
-      "purpose": "Model-routing stratum for the issue — the human-decided policy layer of the model axis.",
+      "purpose": "The issue's model stratum, derived from Risk × Complexity and stored as a cache; a human pins one with tier:pinned.",
       "axis": "strategy",
       "source": "inline",
-      "writers": ["human"],
-      "writer_note": "humans, at triage or planning — never an agent on itself",
-      "readers": "humans and agents — overrides the implementer tier; models are classified in `agent-registry.json` (ADR 2026-08-16/2026-08-24)",
+      "writers": ["human", "agent", "tool:github-actions"],
+      "writer_note": "agents, in the write that sets Risk or Complexity, and the GitHub Actions reconciler; humans may set one, and pin it with `tier:pinned`",
+      "readers": "humans and agents — the issue's derived (or pinned) Tier, an input to the implementer tier; models are classified in `agent-registry.json` (ADR 2026-09-30)",
       "lifecycle": "durable",
-      "lifecycle_note": "set when the default tier would be wrong; strongest-wins resolution per ADR 2026-08-16",
-      "trust_note": "provisioned; **advisory** — resolved against `.devflow.toml`'s `tier_order`; arms nothing",
+      "lifecycle_note": "a materialized cache — rewritten whenever Risk or Complexity changes and by the daily reconciler, recomputed by readers when absent; never rewritten while `tier:pinned` is present",
+      "trust_note": "provisioned; **read by agents** — a pin outranks the derived Tier and both rank below an operator instruction; resolved against `.devflow.toml`'s `tier_order`; arms nothing",
       "exclusive": false,
       "provision": true,
       "color": "7057FF",
       "values": [
         {
           "value": "local",
-          "description": "Model tier: self-hosted endpoint first; may escalate to economy"
+          "description": "Model tier: work a small self-hosted model can do, possibly slowly"
         },
         {
           "value": "economy",
@@ -496,8 +710,22 @@
           "description": "Model tier: mythos-class leading edge (fable, sol)"
         },
         {
+          "value": "pinned",
+          "description": "Tier pin: a human fixed this issue's tier; nothing automated rewrites it",
+          "writers": ["human"],
+          "writer_note": "humans only, from the GitHub UI, together with setting the Tier",
+          "readers": "agents and automation — a pinned Tier is never rewritten",
+          "lifecycle_note": "added with the Tier value; removed to hand the Tier back to derivation",
+          "trust_note": "provisioned; **provenance-checked** — an interactive session confirms a pin the operator has not authorized, and unattended automation honors one only after verifying who applied it (ADR 2026-09-30 D5)"
+        },
+        {
           "value": "adaptive",
-          "description": "Model tier: cheap preflight classifies, then chooses or escalates"
+          "description": "Model tier: cheap preflight classifies, then chooses or escalates",
+          "retired": true,
+          "writer_note": "nobody — retired 2026-10-01",
+          "readers": "humans — retired, see the derived Tier (`tier:<value>`)",
+          "trust_note": "retired — no rung on the Tier scale (ADR 2026-09-30 D8); never provisioned",
+          "lifecycle_note": "remove the label from each issue — it then resolves through its derived Tier — then use guarded `--prune`"
         }
       ]
     },
@@ -688,18 +916,19 @@
     {
       "family": "suggest",
       "prefix": "suggest",
-      "purpose": "Advisory routing: which agent family should implement the issue. Never Foreman arming.",
+      "purpose": "Retired: advisory family routing, superseded by the derived Tier (`tier:<value>`).",
       "axis": "model",
       "source": "agent-registry",
       "registry_set": "suggest",
-      "writers": ["human", "agent"],
-      "writer_note": "humans or agents, at planning",
-      "readers": "humans, the Agent queue view",
+      "writers": [],
+      "writer_note": "nobody — superseded by the derived Tier",
+      "readers": "humans — retired, see `tier:*`",
       "lifecycle": "durable",
-      "lifecycle_note": "set at planning; survives the work and is never rewritten by a claim",
-      "trust_note": "provisioned from the registry (family level only); advisory — arms nothing",
+      "lifecycle_note": "remove the label from each issue — it then resolves through its derived Tier — then use guarded `--prune` (no `--migrate`: nothing replaces a family suggestion one-to-one)",
+      "trust_note": "retired — superseded by the derived Tier; never provisioned and no longer rendered from the agent registry",
       "exclusive": false,
-      "provision": true,
+      "provision": false,
+      "retired": true,
       "placeholder": "<family>",
       "color": "BFD4F2",
       "values": []
@@ -707,17 +936,18 @@
     {
       "family": "suggest-model",
       "prefix": "suggest",
-      "purpose": "Model-level refinement of a family suggestion; applied alongside the family label, never instead of it.",
+      "purpose": "Retired: model-level refinement of a family suggestion, superseded by the derived Tier.",
       "axis": "model",
       "source": "tool-owned",
-      "writers": ["human", "agent"],
-      "writer_note": "humans or agents, at planning",
-      "readers": "humans",
+      "writers": [],
+      "writer_note": "nobody — superseded by the derived Tier",
+      "readers": "humans — retired, see `tier:*`",
       "lifecycle": "durable",
-      "lifecycle_note": "refines the family label; apply both",
-      "trust_note": "**tool-owned, created on demand** — seeding every model would be an unbounded roster",
+      "lifecycle_note": "remove the label from each issue, then use guarded `--prune`",
+      "trust_note": "retired — never provisioned; no tool creates it any more",
       "exclusive": false,
       "provision": false,
+      "retired": true,
       "open_values": true,
       "placeholder": "<family>:<model>",
       "color": "BFD4F2",

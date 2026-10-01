@@ -6,7 +6,7 @@
 # docs/project-management.md for the human-facing table, which is generated from
 # the same file), and this script provisions whatever
 # scripts/label-registry-render.mjs renders from it. The agent families
-# (suggest:/claim:/foreman:<adapter>) come from agent-registry.json via the same
+# (claim:/foreman:<adapter>) come from agent-registry.json via the same
 # renderer, so provisioning, inventory, docs, and both registries cannot fork
 # (test-label-registry.sh and test-registry-drift.sh gate them together).
 #
@@ -22,6 +22,12 @@
 # guarded prune.
 # Retired values are intentionally reportable. The move is best-effort at
 # GitHub's non-atomic API boundary and requires a quiescent maintenance window.
+# A retired label with no one-to-one replacement (`suggest:*`, superseded by the
+# derived Tier; `tier:adaptive`, which has no rung on the Tier scale) has no
+# --migrate destination: remove it from each issue — the issue then resolves
+# through its derived Tier — and --prune offers the now-unassociated label.
+# Prune never strips associations itself; it refuses a label that still has
+# any, and nothing is deleted without the confirmation below.
 # Destructive maintenance assumes the operator has paused label/issue/PR/
 # discussion writers for a quiescent window; GitHub cannot atomically bind the final association
 # read to the subsequent label DELETE request.
@@ -421,7 +427,7 @@ if [ "$report_unregistered" = 1 ] || [ "$prune" = 1 ]; then
 
     is_broker_migration_source() {
         case "$1" in
-        agent:github-copilot | agent:github-copilot:* | suggest:copilot | suggest:copilot:* | claim:copilot | claim:copilot:*) return 0 ;;
+        agent:github-copilot | agent:github-copilot:* | claim:copilot | claim:copilot:*) return 0 ;;
         esac
         return 1
     }
@@ -434,11 +440,6 @@ if [ "$report_unregistered" = 1 ] || [ "$prune" = 1 ]; then
         agent:gemini-cli) printf '%s' 'claim:gemini' ;;
         agent:kimi-k2) printf '%s' 'claim:kimi' ;;
         agent:qwen-code) printf '%s' 'claim:qwen' ;;
-        suggest:codex) printf '%s' 'suggest:gpt' ;;
-        suggest:codex:*)
-            suffix="${source#*:}"
-            printf 'suggest:gpt:%s' "${suffix#*:}"
-            ;;
         claim:codex) printf '%s' 'claim:gpt' ;;
         claim:codex:*)
             suffix="${source#*:}"
