@@ -1132,6 +1132,30 @@ STUB
             fail "broker-source refusal reached label deletion for $broker_old"
     done
 
+    # Retired labels with no one-to-one replacement are refused as migration
+    # SOURCES too (a migration would stamp an unrelated label on every record,
+    # e.g. suggest:* -> claim:* would mark issues as claimed).
+    for retired_source in 'suggest:gpt=feature' 'suggest:gpt:sol=feature' 'suggest:gpt=claim:gpt' 'tier:adaptive=tier:standard'; do
+        retired_old="${retired_source%%=*}"
+        reset_maintenance
+        if retired_src_out="$(STUB_LOG="$maintenance_log" STUB_STATE="$maintenance_state" PATH="$maintenance_stub:$PATH" \
+            bash scripts/setup-github-labels.sh --repo drift/check --prune --yes \
+            --migrate "$retired_source" 2>&1)"; then
+            fail "a retired label was accepted as a migration source: $retired_source"
+        fi
+        case "$retired_src_out" in
+        *"migration source '$retired_old' is retired with no one-to-one replacement; remove it from each issue"*) ;;
+        *) fail "retired migration source $retired_old was not refused with the removal guidance: $retired_src_out" ;;
+        esac
+        case "$retired_src_out" in
+        *"Prune confirmed by explicit --yes"*)
+            fail "retired-source validation reached destructive confirmation for $retired_old"
+            ;;
+        esac
+        ! grep -Eq '^(issue|pr|discussion|delete|create) ' "$maintenance_log" ||
+            fail "refusing retired migration source $retired_old still reached a write path"
+    done
+
     reset_maintenance
     if broker_fixed_out="$(STUB_SCENARIO=broker-unresolved STUB_LOG="$maintenance_log" STUB_STATE="$maintenance_state" PATH="$maintenance_stub:$PATH" \
         bash scripts/setup-github-labels.sh --repo drift/check --prune --yes \

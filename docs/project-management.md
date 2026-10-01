@@ -541,17 +541,16 @@ the taxonomy table below is generated from) and the starter set is created by
   Two present are **ambiguous**, not resolved to either: unlike rigor's
   more-or-less continuum, topologies have no rank between them, so a
   conflict is a resolution error rather than a silent pick.
-- **Tier** — which model-routing stratum works a specific **role** —
-  orchestrator, implementer, reviewer, challenger, or integrator — advisory,
-  human-written, and inert
-  until a consumer resolves it under its own trust model. An unqualified
-  `tier:<value>` label is not a role override: it is the issue's stored Tier, a
-  cache of the derived Tier, or the pinned Tier with `tier:pinned`; only an
+- **Tier** — the model-routing stratum an issue runs at. An unqualified
+  `tier:<value>` label is the issue's stored Tier, a cache of the derived Tier,
+  or the pinned Tier with `tier:pinned`; it is not a role override, and only an
   unqualified operator instruction targets the **implementer** role. A scoped
   `tier:orchestrator:<value>` / `tier:implementer:<value>` /
   `tier:reviewer:<value>` / `tier:challenger:<value>` /
-  `tier:integrator:<value>` targets exactly the role it names. Absent any
-  override, all five roles come from the resolved rigor level. All 25
+  `tier:integrator:<value>` is a role override — advisory, human-written, and
+  inert until a consumer resolves it under its own trust model — and targets
+  exactly the role it names. Absent any override, all five roles come from the
+  resolved rigor level. All 25
   scoped values (5 roles × 5 concrete tiers) are **provisioned** like every
   other tier value, not created on demand.
 

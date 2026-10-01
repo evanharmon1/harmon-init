@@ -432,6 +432,16 @@ if [ "$report_unregistered" = 1 ] || [ "$prune" = 1 ]; then
         return 1
     }
 
+    # Retired with no one-to-one replacement: a migration would stamp an
+    # unrelated label on every associated record (suggest:* -> claim:* would
+    # mark issues as claimed). Remove the label from each issue instead.
+    is_retired_without_replacement() {
+        case "$1" in
+        suggest:* | tier:adaptive) return 0 ;;
+        esac
+        return 1
+    }
+
     fixed_migration_destination() {
         local source="$1" suffix
         case "$source" in
@@ -462,6 +472,9 @@ if [ "$report_unregistered" = 1 ] || [ "$prune" = 1 ]; then
             else
                 canonical_old="$old"
                 source_complete=1
+            fi
+            if is_retired_without_replacement "$canonical_old"; then
+                die "migration source '$canonical_old' is retired with no one-to-one replacement; remove it from each issue (the issue then resolves through its derived Tier), then rerun --prune"
             fi
             if is_broker_migration_source "$canonical_old"; then
                 die "migration source '$canonical_old' is broker-derived and has no trustworthy single destination; re-express or remove each matching record manually using its confirmed family/model, then rerun --prune"
