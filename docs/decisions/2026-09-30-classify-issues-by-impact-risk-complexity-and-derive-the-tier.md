@@ -6,6 +6,8 @@ Date: 2026-09-30
 
 Accepted
 
+D2's storage of the Tier axis is amended by [ADR 2026-10-01 (Tier as a label)](2026-10-01-store-the-tier-as-a-label-on-every-owner-type.md): the Tier is a label on every owner type.
+
 Supersedes whatever an earlier record says that conflicts with the
 retirements in D8 — `suggest:*`, the `Size` project field, the
 personal-project `Priority` field, the ponderousdev `Agent` issue field, and
