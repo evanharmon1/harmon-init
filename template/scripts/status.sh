@@ -982,12 +982,14 @@ if [[ "${SECTION}" == "setup" ]]; then
             # observation, "the read failed" is not. A body that is not a JSON
             # array of releases (an error document, a proxy page, an array of
             # error objects) is a failed read too: every element must be an
-            # object with a string tag_name. An empty array stays a successful
-            # "none".
+            # object with a non-empty string tag_name, and the body must be
+            # exactly one JSON document (a proxy's error document followed by
+            # an empty array must not read as "none"). An empty array stays a
+            # successful "none".
             (if GH_REST_TIMEOUT="${NETWORK_TIMEOUT}" gh_rest_api \
                 "repos/${OWNER}/${REPO}/releases?per_page=1" \
                 >"${d}/release.json" 2>/dev/null &&
-                jq -e 'type == "array" and all(.[]; type == "object" and (.tag_name | type == "string"))' \
+                jq -se 'length == 1 and (.[0] | type == "array" and all(.[]; type == "object" and (.tag_name | type == "string" and length > 0)))' \
                     "${d}/release.json" >/dev/null 2>&1; then
                 echo ok >"${d}/release.state"
             else

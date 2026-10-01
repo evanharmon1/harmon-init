@@ -341,13 +341,19 @@ STUB
         # (default) is a successful read of a repository with no release,
         # `present` one with v4.47.1, `fail` the proxy refusing the read,
         # `garbage` a 200 that is not a release list at all, and `malformed` a JSON
-        # array whose elements are not releases (a proxy's error objects).
+        # array whose elements are not releases (a proxy's error objects),
+        # `empty-tag` a release with an empty tag_name, `two-documents` an error
+        # document followed by an empty array, and `trailing-document` an empty
+        # array followed by an error document (valid up to the first document).
         echo '        */releases\?*)'
         echo '            case "${GH_STUB_RELEASES:-none}" in'
         echo '            present) echo "[{\"tag_name\":\"v4.47.1\",\"draft\":false}]" ;;'
         echo '            fail) echo "HTTP 403: REST-only proxy rejection" >&2; exit 1 ;;'
         echo '            garbage) echo "<html>proxy error</html>" ;;'
         echo '            malformed) echo "[{\"message\":\"rate limited\"}]" ;;'
+        echo '            empty-tag) echo "[{\"tag_name\":\"\"}]" ;;'
+        echo '            two-documents) echo "[{\"message\":\"rate limited\"}]"; echo "[]" ;;'
+        echo '            trailing-document) echo "[]"; echo "[{\"message\":\"rate limited\"}]" ;;'
         echo '            *) echo "[]" ;;'
         echo '            esac'
         echo '            ;;'
@@ -690,7 +696,7 @@ case "$out" in
 esac
 
 echo "==> a failed release read reports unavailable and prints no remedy"
-for mode in fail garbage malformed; do
+for mode in fail garbage malformed empty-tag two-documents trailing-document; do
     out="$(run_release_setup "${mode}")"
     case "$out" in
     *"[?] Release published - unavailable"*) ;;
