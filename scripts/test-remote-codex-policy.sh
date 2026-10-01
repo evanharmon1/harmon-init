@@ -190,7 +190,7 @@ done
 # tokens across all the text files, so a scan costs two processes, not three per
 # file — the self-test runs it many times.
 scan() {
-    local root="$1" file line text tokstr strictstr rc hits allowed listing d f k scanned=0
+    local root="$1" file line text tokstr strictstr namestr rc hits allowed listing d f k scanned=0
     local files=() textfiles=() prune_args=() x g
     for x in ${EXCLUDE_DIRS[@]+"${EXCLUDE_DIRS[@]}"}; do
         prune_args+=(-path "${root}/${x}" -prune -o)
@@ -491,7 +491,12 @@ for ef in .devcontainer/devcontainer.env.example .devcontainer/agent/devcontaine
     expect_hit "a bare OPENAI_API_KEY in ${ef}" "$ef"
     cp "${TMP}/saved" "${FIX}/${ef}"
 done
-[ "$env_cases" -gt 0 ] || fail "no environment example exists in the fixture; the env-example cases would pass vacuously"
+# The examples ship only with the devcontainer, so the floor applies only where the
+# repository under test has one (not the fixture, which this test builds a
+# .devcontainer in): a devcontainer without its example is a vacuous pass and fails.
+if [ -d .devcontainer ] && [ "$env_cases" -eq 0 ]; then
+    fail "a .devcontainer exists but no environment example does; the env-example cases would pass vacuously"
+fi
 # A setup script is scanned whatever its name after setup-, with the Codex-scoped rule.
 printf '#!/usr/bin/env bash\ncodex login\n' >"${FIX}/scripts/setup-sprite.sh"
 expect_hit "a login in a new setup script" "scripts/setup-sprite.sh" "2:"
