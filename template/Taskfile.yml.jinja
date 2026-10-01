@@ -131,6 +131,7 @@ tasks:
       - task: test:meta-install
 [% if use_codex_review %]
       - task: test:codex-review
+      - task: test:remote-codex-policy
 [% endif %]
       - task: test:lint-hygiene
 [% if use_release_please %]
@@ -829,6 +830,11 @@ tasks:
     desc: Unit-test codex-review.sh target selection (offline, stubbed codex)
     cmds:
       - ./scripts/test-codex-review.sh
+
+  test:remote-codex-policy:
+    desc: Guard the remote second-model rule — no Codex credential vocabulary on a remote-environment surface (offline)
+    cmds:
+      - ./scripts/test-remote-codex-policy.sh
 [% endif %]
 
   test:lint-hygiene:
