@@ -88,14 +88,13 @@ Each `[rigor.<level>]` profile points to:
 `rigor_order` is the only ranking of rigor names. The five `*_tier` fields use
 `tier_order`; role floors and other cross-field invariants are enforced by the
 reader. An unqualified operator tier instruction targets the implementer. Among
-labels, only a role-scoped `tier:<role>:<value>` label is an override, and it
-targets exactly one of the five roles. An unqualified `tier:<value>` label is
-not an override: it is the issue's stored Tier (ADR 2026-09-30, Consequences),
-which a consumer passes as `--stored-tier` — the cache the derived Tier is
-compared against — or, beside `tier:pinned`, as the pinned value. On an
-organization repository the Tier field is the stored Tier, and a stray
-unqualified label is the same cache input. Every off-profile role choice is
-visible in the PR body.
+labels, only a role-scoped `tier:<role>:<value>` label and the pin are
+overrides; a role-scoped label targets exactly one of the five roles. An
+unqualified `tier:<value>` label is not an override: on every owner type it is
+the issue's stored Tier (maintainer decision 2026-10-01 — Tier is a label, not
+an organization issue field), which a consumer passes as `--stored-tier` — the
+cache the derived Tier is compared against — or, beside `tier:pinned`, as the
+pinned value. Every off-profile role choice is visible in the PR body.
 
 `adaptive` is retired as a tier value (ADR 2026-09-30 D8). A leftover
 `tier:adaptive` label — a stored-Tier value that names no rung — resolves as if
