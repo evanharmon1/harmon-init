@@ -288,6 +288,8 @@ echo "==> the related-repo bootstrap is detached in the race-free form"
 # The behavioural marker test below passes under the old, racy forms too (a HUP
 # landing between the fork and a trap inside the child is not reproducible), so
 # the detach form is pinned statically, inside trigger_related_repos_bootstrap:
+#   prev_hup="$(trap -p HUP)"        the old disposition is captured first (under
+#                                    set -u the restore aborts without it)
 #   trap '' HUP                      the PARENT ignores SIGHUP before the fork
 #   bash "${bootstrap}" ... </dev/null >>log 2>&1 &     then forks, detached
 #   eval "${prev_hup}" / trap - HUP  and restores what it was after the fork
@@ -313,7 +315,8 @@ detach_form_ok() {
     !infn { next }
     /^[[:space:]]*#/ { next }
     /nohup/ { nohup_seen = 1 }
-    $0 ~ ("^[[:space:]]*trap (" sq sq "|\"\") HUP[[:space:]]*$") { state = 1; next }
+    /^[[:space:]]*prev_hup="\$\(trap -p HUP\)"[[:space:]]*$/ { captured = 1 }
+    $0 ~ ("^[[:space:]]*trap (" sq sq "|\"\") HUP[[:space:]]*$") { state = 1; if (captured) armed = 1; next }
     state == 1 && /^[[:space:]]*bash "\$\{bootstrap\}"/ {
         line = joined()
         if (line ~ /<[[:space:]]*\/dev\/null/ && line ~ /&[[:space:]]*$/) { state = 2; next }
@@ -324,7 +327,7 @@ detach_form_ok() {
     state == 2 && /^[[:space:]]*trap - HUP[[:space:]]*$/ { reset = 1 }
     /[^[:space:]]/ && state == 1 { state = 0 }
     END {
-        exit (!(restored && reset) || nohup_seen)
+        exit (!(armed && restored && reset) || nohup_seen)
     }' "$1"
 }
 detach_form_ok "${script}" ||
@@ -348,6 +351,7 @@ mutate_detach "the trailing & removed from the forked command" '/bash "\${bootst
 mutate_detach "nohup in front of the forked command" '/bash "\${bootstrap}"/s#bash "#nohup bash "#'
 mutate_detach "the saved disposition no longer restored" '/eval "\${prev_hup}"/d'
 mutate_detach "the default disposition no longer restored" '/^[[:space:]]*trap - HUP$/d'
+mutate_detach "the saved disposition never captured before the ignore" '/prev_hup="\$(trap -p HUP)"/d'
 # ...and a reworded comment must not be able to fail it.
 # (awk, not sed: a newline in a sed replacement is GNU-only, and on BSD sed the
 # "comment" would silently become a literal n, making this case vacuous.)
@@ -471,6 +475,26 @@ EOF
     want_sep="$(cd "${TMP}/layout/sepbase" && pwd -P)"
     assert_bootstrap_target "${TMP}/layout/sepbase/checkout/scripts/setup-gh-scopes.sh" "${want_sep}" \
         "a --separate-git-dir checkout"
+    # ...and a linked worktree whose PRIMARY keeps its git directory elsewhere
+    # (--separate-git-dir). Git reports the common dir as <store>/.git, and
+    # <store> even passes for a working-tree top level, but it is not a checkout:
+    # the override must not trust it, and the argument falls back to the linked
+    # worktree's own physical parent.
+    mkdir -p "${TMP}/layout/sepprimary/store" "${TMP}/layout/sepprimary/work"
+    cp -R "${TMP}/repo" "${TMP}/layout/sepprimary/work/primary"
+    (
+        cd "${TMP}/layout/sepprimary/work/primary"
+        git init -q --separate-git-dir "${TMP}/layout/sepprimary/store/.git"
+        git add -A
+        git -c user.name=test -c user.email=test@example.invalid -c commit.gpgsign=false \
+            -c core.hooksPath=/dev/null commit -q -m fixture
+        git worktree add -q .worktrees/linked -b linked
+    ) >/dev/null 2>&1 || fail "test setup: could not build a linked worktree of a --separate-git-dir primary"
+    [ -f "${TMP}/layout/sepprimary/work/primary/.worktrees/linked/scripts/setup-gh-scopes.sh" ] ||
+        fail "test setup: that linked worktree has no copy of the script"
+    want_sepwt="$(cd "${TMP}/layout/sepprimary/work/primary/.worktrees" && pwd -P)"
+    assert_bootstrap_target "${TMP}/layout/sepprimary/work/primary/.worktrees/linked/scripts/setup-gh-scopes.sh" "${want_sepwt}" \
+        "a linked worktree of a --separate-git-dir primary"
     rm -rf "${TMP}/layout"
 
     echo "==> bootstrap-related-repos.sh failure does not change exit status of setup-gh-scopes"

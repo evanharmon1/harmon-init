@@ -113,6 +113,8 @@ else
         *) origin_authority="${origin_authority%%:*}" ;; # ssh:// etc: the port is not the https port
         esac
         ;;
+    *::*) # <transport>::<address> (gitremote-helpers(7)): a remote-helper URL names no host, so fall back
+        ;;
     *:*) # scp-like [user@]host:path (no port; the colon starts the path) — git's rule: no '/' before the first colon
         origin_authority="${origin_url%%:*}"
         case "${origin_authority}" in
