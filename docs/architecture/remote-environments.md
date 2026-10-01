@@ -540,7 +540,8 @@ lane by comparing the stored policy with a fresh generation, since whether a
 checkpoint restore reverts it is pending. That policy is generated from the
 shared egress allowlist by `sprites/network-policy.sh` — the one file harmon-init
 ships for Sprites — with `task test:sprites-policy` proving every allowlist
-entry reaches it. And a Sprite persists, so it holds one Codex login of its
+entry the policy can express reaches it, and that the other kinds are a named
+limitation (`@github-meta`) or a refusal (an IPv4 address or CIDR). And a Sprite persists, so it holds one Codex login of its
 own, made once by the maintainer. The procedure — cost and account, the
 provisioning commands, credential delivery, applying and checking the policy,
 attaching Herdr, and the observations still owed by a provisioned Sprite — is

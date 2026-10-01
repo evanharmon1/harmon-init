@@ -45,8 +45,10 @@ it also needs `devcontainer`, because the allowlist lives there).
   memory at $0.04375 per GB-hour, hot storage at $0.000683 per GB-hour while
   awake and cold storage at $0.000027 per GB-hour; a Sprite is billed while
   *running* and not while *warm* or *cold*, and goes from running to warm
-  within seconds of having nothing to do (*pricing, 2026-10-01*). A paused
-  Sprite keeps its disk, and keeps paying for it, until it is destroyed.
+  within seconds of having nothing to do (*pricing, 2026-10-01*). A warm or
+  cold Sprite keeps its disk and its storage bill: "A sprite that exists but
+  does nothing costs nothing beyond its storage" (*pricing, 2026-10-01*), so
+  it pays for storage until it is destroyed.
 - **Public and private repositories alike.** Fly.io's terms do not
   distinguish them: the Sprite holds whatever the agent's token can read.
 
@@ -232,10 +234,10 @@ How each allowlist entry maps:
 
 The policy ends with `{"domain": "*", "action": "deny"}` and never includes the
 platform's `defaults` preset: the shared list is the only source.
-`task test:sprites-policy` proves that every entry the parser prints reaches the
-policy, that a policy with a missing, extra or changed rule fails the
-comparison, and that an address entry fails generation rather than being
-dropped.
+`task test:sprites-policy` proves that every entry the policy can express
+reaches it, that the other kinds are a named limitation (`@github-meta`) or a
+refusal (an address entry fails generation rather than being dropped), and that
+a policy with a missing, extra or changed rule fails the comparison.
 
 ## Attaching Herdr
 
