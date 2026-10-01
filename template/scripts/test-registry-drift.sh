@@ -9,9 +9,10 @@
 # this check adds the bindings between the registry and the things that consume it:
 #
 #   1. schema        — the registry still validates (fail fast before comparing).
-#   2. label output  — the rendered suggest:/claim:/foreman: labels are exactly
+#   2. label output  — the rendered claim:/foreman: labels are exactly
 #                      the family-level + provisionable set the registry implies
-#                      (no agent:*, no seeded model-level, no non-production adapter).
+#                      (no agent:*, no suggest:*, no seeded model-level, no
+#                      non-production adapter).
 #   3. provisioning  — setup-github-labels.sh renders those labels from the
 #                      registry instead of hand-listing a forkable copy.
 #   4. wrappers      — every claude-<family> provider wrapper maps to a
@@ -72,20 +73,27 @@ names="$(printf '%s\n' "$rendered" | sed -n 's/|.*//p')"
 
 # 2a. No retired agent:* labels may appear anywhere in the rendered set.
 if grep -q '^agent:' <<<"$names"; then
-    fail "rendered labels still contain a retired agent:* label — the agent vocabulary is now suggest:/claim: (ADR 2026-08-07 D6)"
+    fail "rendered labels still contain a retired agent:* label — the agent vocabulary is now claim: (ADR 2026-08-07 D6)"
 fi
 
-# 2b. Only FAMILY-level suggest:/claim: are seeded (exactly one colon in the
+# 2a'. suggest:* is retired (superseded by the derived Tier, ADR 2026-09-30).
+# The registry may keep DECLARING the namespace (the pinned breakdown label
+# discovery requires it until #1473), but nothing may render or seed it.
+if grep -q '^suggest:' <<<"$names"; then
+    fail "rendered labels still contain a retired suggest:* label — suggest was superseded by the derived Tier and must not be seeded (ADR 2026-09-30 D8)"
+fi
+
+# 2b. Only FAMILY-level claim: labels are seeded (exactly one colon in the
 # name); a two-colon name would be a seeded model-level label.
-if grep -Eq '^(suggest|claim):[a-z0-9-]+:' <<<"$names"; then
-    fail "a model-level suggest:/claim: label is being seeded — model-level labels are created on demand, only family-level are provisioned (AC2)"
+if grep -Eq '^claim:[a-z0-9-]+:' <<<"$names"; then
+    fail "a model-level claim: label is being seeded — model-level labels are created on demand, only family-level are provisioned (AC2)"
 fi
 
-# 2c. The suggest:/claim: names are EXACTLY one per registered family slug.
+# 2c. The claim: names are EXACTLY one per registered family slug.
 # Compare the derived name sets, not just counts: a renderer that emitted
-# `suggest:claude` nine times would satisfy a count check (and collapse under a
+# `claim:claude` nine times would satisfy a count check (and collapse under a
 # later sort -u) while provisioning only one of the nine expected families.
-for ns in suggest claim; do
+for ns in claim; do
     want_ns="$(jq -r --arg p "$ns" '.families[].slug | $p + ":" + .' "$registry" | sort -u)"
     got_ns="$(printf '%s\n' "$names" | grep "^${ns}:" | sort -u || true)"
     [ "$want_ns" = "$got_ns" ] ||
@@ -113,15 +121,15 @@ if [ -f "$labels_script" ]; then
     # No hardcoded agent:* / suggest:* / claim:* / foreman:<family> selector
     # lines (the leading `word:` of a `name|color|desc` label line).
     if grep -Eq '^agent:[a-z0-9-]+\|' "$labels_script"; then
-        fail "$labels_script still hard-lists a retired agent:* label line — remove it; the agent vocabulary is registry-rendered suggest:/claim: (ADR 2026-08-07 D6)"
+        fail "$labels_script still hard-lists a retired agent:* label line — remove it; the agent vocabulary is registry-rendered claim: (ADR 2026-08-07 D6)"
     fi
     if grep -Eq '^(suggest|claim):[a-z0-9-]+\|' "$labels_script"; then
-        fail "$labels_script hard-lists a suggest:/claim: label line — these must come from agent-registry-labels.mjs so they cannot fork from the registry"
+        fail "$labels_script hard-lists a suggest:/claim: label line — claim: must come from agent-registry-labels.mjs so it cannot fork from the registry, and suggest: is retired"
     fi
     # Behavioral binding: actually RUN the provisioning script with `gh` stubbed
     # to just echo the label name, and confirm every registry-rendered label is
     # emitted. A filename grep alone would pass if a future edit called the wrong
-    # renderer mode (suggest-claim vs foreman-adapters) or dropped a delegation;
+    # renderer mode (claim vs foreman-adapters) or dropped a delegation;
     # running it observes what would really be provisioned. --foreman exercises
     # both renderer modes regardless of whether this profile arms Foreman.
     stub_dir="$(mktemp -d)"
@@ -138,10 +146,11 @@ STUB
     rm -rf "$stub_dir"
     missing="$(comm -23 <(printf '%s\n' "$names" | sort -u) <(printf '%s\n' "$emitted"))"
     if [ -n "$missing" ]; then
-        fail "$labels_script did not provision registry label(s) [$(echo "$missing" | tr '\n' ' ')] when run — it must render every mode (suggest-claim AND foreman-adapters) from agent-registry-labels.mjs"
+        fail "$labels_script did not provision registry label(s) [$(echo "$missing" | tr '\n' ' ')] when run — it must render every mode (claim AND foreman-adapters) from agent-registry-labels.mjs"
     fi
     # ...and the REVERSE direction: the script must not emit a registry-namespace
-    # label the registry does not define. suggest:/claim: are wholly registry-owned;
+    # label the registry does not define. claim: is wholly registry-owned, and a
+    # suggest: label is never legitimate (retired);
     # in foreman:, only the <adapter> selectors are — the four protocol labels are
     # foreman's own workflow state and are legitimately static. Without this, a
     # re-added hardcoded phantom selector (e.g. `foreman:codex` with no adapter)
