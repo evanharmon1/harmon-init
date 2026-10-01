@@ -10,7 +10,8 @@ set -euo pipefail
 #       the allowlist format, reading the shared list and the optional
 #       per-repo .local list — so the policy cannot drift from the list it is
 #       generated from; harmon-init's own scripts/test-sprites-policy.sh
-#       proves that every entry reaches it.
+#       proves that every entry the policy can express reaches it, and that
+#       the other kinds are a named limitation or a refusal (below).
 #
 #   <token source> | bash sprites/network-policy.sh apply <sprite-name>
 #       Generate the policy and set it on the named Sprite through the Sprites
