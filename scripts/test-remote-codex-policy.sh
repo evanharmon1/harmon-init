@@ -24,13 +24,15 @@
 # YAML step) is caught too and reported as `file:L1-L2: <line 1> / <line 2>`; a
 # folded hit cannot be allowlisted, the source has to be rewritten.
 #
-# OPENAI_API_KEY and a file named auth.json are legitimate application
-# configuration (a generated project may use either for its own app), so outside
-# the strict tier below only their Codex use is the rule's subject: each is
-# reported on a line that also mentions `codex`, in any case — which is why
-# `~/.codex/auth.json` still fails everywhere. The strict tier is the invariant
-# that nothing which PROVISIONS a remote environment may carry Codex credentials
-# or the API key at all: there both are reported bare.
+# The one rule outside the strict tier: a line is reported only if it mentions
+# `codex` (any case) — every token, the login flags included. A generated project
+# may use `--with-api-key`, `--device-auth`, an OPENAI_API_KEY or an auth.json for
+# its own app and CLI; only their Codex use is this rule's subject, so `our-app
+# login --with-api-key` passes and `codex login --with-api-key` fails. The login
+# invariant and the `~/.codex` / `.codex/` tokens already carry the word, so
+# `~/.codex/auth.json` fails everywhere. The strict tier is the invariant that
+# nothing which PROVISIONS a remote environment may carry Codex credentials or the
+# API key at all: there every token is reported bare.
 #
 # The allowlist excuses a line only when its COMPLETE text equals an entry for
 # that file — never a substring — compared in the normalised form (runs of
@@ -51,8 +53,8 @@
 #     directory legitimately, and the persistent login lives in it.
 #   - A command folded across THREE lines whose middle line holds only options
 #     (`codex` / `--opt` / `login`) is not joined; only two-line folds are.
-#   - Outside the strict tier, the key or an auth.json with `codex` only on a
-#     neighbouring line is not caught. Inside the strict tier neither applies.
+#   - Outside the strict tier, a token with `codex` only on a neighbouring line
+#     is not caught. Inside the strict tier that does not apply.
 # A full YAML or shell parser is out of scope.
 #
 # Self-proving: a planted violation in a temporary copy of the surfaces must
@@ -73,11 +75,13 @@ fail() {
     exit 1
 }
 
-# Plain credential vocabulary, reported wherever it appears: each names a login
-# flag, or a directory a login leaves behind. Pattern rules complement it inside
-# the awk matcher: a Codex login (the invariant above), and OPENAI_API_KEY or
-# auth.json on a line that mentions `codex` (bare inside the strict tier).
+# Plain credential vocabulary: each names a login flag, the API key, a login's
+# credential file, or a directory a login leaves behind. Whether a hit counts is
+# decided by the one rule above (a `codex` on the line, or the strict tier); the
+# Codex login invariant is a pattern rule inside the awk matcher.
 TOKENS=(
+    'OPENAI_API_KEY'
+    'auth.json'
     '--device-auth'
     '--with-api-key'
     '--with-access-token'
@@ -112,12 +116,16 @@ SURFACE_FILES=(
 )
 # Strict tier — the remote-bootstrap entry points (a directory is matched
 # recursively, each entry only where it exists): nothing that provisions a remote
-# environment may carry Codex credentials or the API key at all, so OPENAI_API_KEY
-# and auth.json are reported bare here and need a `codex` on the line elsewhere.
+# environment may carry Codex credentials or the API key at all, so every token is
+# reported bare here and needs a `codex` on the line elsewhere.
 STRICT_PATHS=(
     'images/devcontainer'
-    'scripts/setup-remote.sh'
     '.github/workflows/remote-bootstrap.yml'
+)
+# Every discovered setup script is strict too (the glob is expanded where it
+# exists): a remote setup script follows the name, and it provisions.
+STRICT_GLOBS=(
+    'scripts/setup-*.sh'
 )
 # Also strict: the environment examples a remote environment is provisioned from,
 # as "directory::file name" (the name is matched anywhere under the directory).
@@ -191,7 +199,7 @@ done
 # file — the self-test runs it many times.
 scan() {
     local root="$1" file line text tokstr strictstr namestr rc hits allowed listing d f k scanned=0
-    local files=() textfiles=() prune_args=() x g
+    local files=() textfiles=() prune_args=() stricts=() x g
     for x in ${EXCLUDE_DIRS[@]+"${EXCLUDE_DIRS[@]}"}; do
         prune_args+=(-path "${root}/${x}" -prune -o)
     done
@@ -243,7 +251,13 @@ scan() {
             textfiles+=("./${file}")
         done <<<"$hits"
         tokstr="$(printf '%s\037' "${TOKENS[@]}")"
-        strictstr="$(printf '%s\037' "${STRICT_PATHS[@]}")"
+        stricts=("${STRICT_PATHS[@]}")
+        for g in "${STRICT_GLOBS[@]}"; do
+            for f in "${root}"/${g}; do
+                [ -f "$f" ] && stricts+=("${f#"${root}"/}")
+            done
+        done
+        strictstr="$(printf '%s\037' "${stricts[@]}")"
         namestr="$(printf '%s\037' "${STRICT_NAMES[@]}")"
         rc=0
         hits="$(cd "$root" && awk -v tokens="$tokstr" -v strictlist="$strictstr" -v namelist="$namestr" '
@@ -258,23 +272,18 @@ scan() {
                     if (tt ~ FOLDTAIL) print pfile ":" pline "-" s ": " pend " / " tt
                     pend = ""
                 }
+                # One rule: outside the strict tier a line counts only if it
+                # mentions codex (any case); inside it every token is bare.
                 hit = 0
-                for (i = 1; i <= n; i++) {
-                    if (T[i] != "" && index(t, T[i])) {
-                        print substr(f, 3) ":" s ":" t
-                        hit = 1
-                        break
+                if (strict || tolower(t) ~ /codex/) {
+                    for (i = 1; i <= n; i++) {
+                        if (T[i] != "" && index(t, T[i])) {
+                            hit = 1
+                            break
+                        }
                     }
-                }
-                # The key and an auth.json are application configuration outside
-                # the strict tier; only their Codex use is the rule'"'"'s subject.
-                if (!hit && (index(t, "OPENAI_API_KEY") || index(t, "auth.json")) && (strict || tolower(t) ~ /codex/)) {
-                    print substr(f, 3) ":" s ":" t
-                    hit = 1
-                }
-                if (!hit && t ~ LOGIN) {
-                    print substr(f, 3) ":" s ":" t
-                    hit = 1
+                    if (!hit && t ~ LOGIN) hit = 1
+                    if (hit) print substr(f, 3) ":" s ":" t
                 }
                 if (!hit && t ~ FOLDHEAD) {
                     pend = t
@@ -415,7 +424,7 @@ expect_hit() {
 mkdir -p "${FIX}/.devcontainer/agent"
 planted=".devcontainer/agent/planted.sh"
 for tok in "${TOKENS[@]}"; do
-    printf 'echo start\nrun %s now\n' "$tok" >"${FIX}/${planted}"
+    printf 'echo start\nrun codex %s now\n' "$tok" >"${FIX}/${planted}"
     expect_hit "token '${tok}' in a scanned directory" "$planted" "2:"
 done
 
@@ -429,7 +438,7 @@ printf 'echo start\ncodex  login\n' >"${FIX}/${planted}"
 expect_hit "codex login with two spaces" "$planted" "2:"
 printf 'echo start\ncodex\tlogin\n' >"${FIX}/${planted}"
 expect_hit "codex login separated by a tab" "$planted" "2:"
-printf 'echo start\nrun  --device-auth  now\n' >"${FIX}/${planted}"
+printf 'echo start\nrun codex  --device-auth  now\n' >"${FIX}/${planted}"
 expect_hit "a token flanked by doubled blanks" "$planted" "2:"
 rm -f "${FIX}/${planted}"
 
@@ -458,6 +467,20 @@ printf 'echo start\nCODEX_HOME=x OPENAI_API_KEY=$K node app.js\n' >"${FIX}/${pla
 expect_hit "OPENAI_API_KEY paired with CODEX_HOME (any case)" "$planted" "2:"
 rm -f "${FIX}/${planted}"
 
+# The one rule outside the strict tier: a line counts only if it mentions codex. An
+# application's own CLI and configuration use the same flags and names.
+mkdir -p "${FIX}/.github/workflows" "${FIX}/docs/guides"
+printf '# App\n\nRun our-app login --with-api-key to sign in.\n' >"${FIX}/docs/guides/planted-app.md"
+printf 'jobs:\n  a:\n    steps:\n      - run: tool --device-auth\n      - run: tool --with-access-token "$T"\n' >"${FIX}/.github/workflows/app.yml"
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "an application's own login flags must not be reported, got: ${SCAN_HITS}"
+rm -f "${FIX}/.github/workflows/app.yml"
+printf '# App\n\nRun codex login --with-api-key to sign in.\n' >"${FIX}/docs/guides/planted-app.md"
+expect_hit "codex login with a flag in a guide" "docs/guides/planted-app.md" "3:"
+printf '# App\n\nRun codex --with-api-key to sign in.\n' >"${FIX}/docs/guides/planted-app.md"
+expect_hit "a login flag on a codex line in a guide" "docs/guides/planted-app.md" "3:"
+rm -f "${FIX}/docs/guides/planted-app.md"
+
 # Strict tier: nothing that provisions a remote environment may carry the key or
 # an auth.json at all (no `codex` needed); outside it only their Codex use counts.
 strict_cases=0
@@ -470,6 +493,9 @@ for sf in scripts/setup-remote.sh .github/workflows/remote-bootstrap.yml; do
     cp "${TMP}/saved" "${FIX}/${sf}"
     printf '\ncat auth.json\n' >>"${FIX}/${sf}"
     expect_hit "a bare auth.json in ${sf}" "$sf"
+    cp "${TMP}/saved" "${FIX}/${sf}"
+    printf '\ntool --with-api-key\n' >>"${FIX}/${sf}"
+    expect_hit "a bare login flag in ${sf}" "$sf"
     cp "${TMP}/saved" "${FIX}/${sf}"
 done
 if [ -d "${FIX}/images/devcontainer" ]; then
@@ -500,6 +526,9 @@ fi
 # A setup script is scanned whatever its name after setup-, with the Codex-scoped rule.
 printf '#!/usr/bin/env bash\ncodex login\n' >"${FIX}/scripts/setup-sprite.sh"
 expect_hit "a login in a new setup script" "scripts/setup-sprite.sh" "2:"
+# ... and it is strict: a bare key or flag there fails with no codex on the line.
+printf '#!/usr/bin/env bash\nexport OPENAI_API_KEY=x\n' >"${FIX}/scripts/setup-sprite.sh"
+expect_hit "a bare OPENAI_API_KEY in a new setup script" "scripts/setup-sprite.sh" "2:"
 rm -f "${FIX}/scripts/setup-sprite.sh"
 # Outside the strict tier an app's own key or auth.json passes; the Codex one fails.
 mkdir -p "${FIX}/docs/guides"
@@ -541,10 +570,10 @@ rm -f "${FIX}/.github/workflows/planted.yml"
 
 # All of docs/ is scanned except docs/research/ (rejected-option assessments).
 mkdir -p "${FIX}/docs/decisions" "${FIX}/docs/research"
-printf 'x\nrun --device-auth\n' >"${FIX}/docs/research/planted.md"
+printf 'x\nrun codex --device-auth\n' >"${FIX}/docs/research/planted.md"
 fixture_hits
 [ -z "$SCAN_HITS" ] || fail "docs/research/ must not be scanned, got: ${SCAN_HITS}"
-printf 'x\nrun --device-auth\n' >"${FIX}/docs/decisions/planted.md"
+printf 'x\nrun codex --device-auth\n' >"${FIX}/docs/decisions/planted.md"
 expect_hit "a token in docs/decisions" "docs/decisions/planted.md" "2:"
 rm -f "${FIX}/docs/research/planted.md" "${FIX}/docs/decisions/planted.md"
 

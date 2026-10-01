@@ -2269,6 +2269,31 @@ if [ "$profile" = "full" ]; then
     fi
 fi
 
+# A generated repository with second-model review ON and the devcontainer OFF:
+# the pair the remote Codex policy guard's environment-example floor once broke,
+# because the examples it wants render only with the devcontainer. A third
+# surgical render (only on the "meta" pass, which already turns the review on)
+# rather than a new profile; it overrides the two answers under test and turns
+# Foreman off, which copier.yml requires without a devcontainer.
+if [ "$profile" = "meta" ]; then
+    nodc_dest="$job_tmp/render-codex-no-devcontainer"
+    if copier copy --trust --defaults --vcs-ref=HEAD \
+        "${copier_flags[@]+"${copier_flags[@]}"}" \
+        "${data_args[@]}" --data devcontainer=false --data use_foreman=false \
+        "$repo_root" "$nodc_dest"; then
+        [ ! -d "$nodc_dest/.devcontainer" ] ||
+            err "the Codex-on/devcontainer-off render still has a .devcontainer"
+        if [ ! -x "$nodc_dest/scripts/test-remote-codex-policy.sh" ]; then
+            err "the Codex-on/devcontainer-off render has no executable remote Codex policy guard"
+        else
+            (cd "$nodc_dest" && ./scripts/test-remote-codex-policy.sh) ||
+                err "the remote Codex policy guard fails in a Codex-on/devcontainer-off render"
+        fi
+    else
+        err "use_codex_review=true, devcontainer=false render failed to generate"
+    fi
+fi
+
 # ── 9e1b. Copilot CLI / pi / oh-my-pi bot-autonomy modules ────────────────
 # Same "module always present, policy Copier-gated" contract as 9e1, with two
 # differences this section exists to pin down: Copilot's marker AND its
