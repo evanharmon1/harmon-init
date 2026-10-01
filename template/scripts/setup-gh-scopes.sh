@@ -40,6 +40,11 @@ trigger_related_repos_bootstrap() {
     local bootstrap="${REPO_ROOT}/.devcontainer/scripts/bootstrap-related-repos.sh"
     if [ -f "${bootstrap}" ]; then
         local log_file="${HOME}/.related-repos-bootstrap.log"
+        # Name the target directory: the PHYSICAL checkout's parent, as
+        # setup-remote.sh computes it, so siblings land beside the checkout on any
+        # layout. In the devcontainer that is /workspaces, the bootstrap's default.
+        local checkout_parent
+        checkout_parent="$(dirname -- "$(cd -- "${REPO_ROOT}" && pwd -P)")"
         echo "==> Bootstrapping related repos in the background (log: ${log_file})..."
         # Ignore SIGHUP in THIS shell before the fork, then restore what it was.
         # An ignored signal stays ignored across fork and exec (POSIX), so the job
@@ -49,7 +54,7 @@ trigger_related_repos_bootstrap() {
         local prev_hup
         prev_hup="$(trap -p HUP)"
         trap '' HUP
-        bash "${bootstrap}" </dev/null >>"${log_file}" 2>&1 &
+        bash "${bootstrap}" "${checkout_parent}" </dev/null >>"${log_file}" 2>&1 &
         if [ -n "${prev_hup}" ]; then
             eval "${prev_hup}"
         else

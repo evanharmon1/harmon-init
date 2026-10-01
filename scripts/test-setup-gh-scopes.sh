@@ -277,6 +277,77 @@ case "$out" in
 *) fail "expected an enterprise env-token refusal, got: ${out}" ;;
 esac
 
+echo "==> the related-repo bootstrap is detached in the race-free form"
+# The behavioural marker test below passes under the old, racy forms too (a HUP
+# landing between the fork and a trap inside the child is not reproducible), so
+# the detach form is pinned statically, inside trigger_related_repos_bootstrap:
+#   trap '' HUP                      the PARENT ignores SIGHUP before the fork
+#   bash "${bootstrap}" ... </dev/null >>log 2>&1 &     then forks, detached
+#   eval "${prev_hup}" / trap - HUP  and restores what it was after the fork
+# An ignored signal stays ignored across fork and exec, so the job is immune from
+# its first instruction. nohup, or a trap set inside the child, leaves a window and
+# must not return. Comment lines never count, in either direction.
+detach_form_ok() {
+    awk -v sq="'" '
+    function joined(   line, next_line) {
+        line = $0
+        while (line ~ /\\$/) {
+            sub(/\\$/, "", line)
+            if ((getline next_line) > 0) {
+                line = line next_line
+            } else {
+                break
+            }
+        }
+        return line
+    }
+    /^trigger_related_repos_bootstrap\(\) \{/ { infn = 1; next }
+    infn && /^\}/ { infn = 0 }
+    !infn { next }
+    /^[[:space:]]*#/ { next }
+    /nohup/ { nohup_seen = 1 }
+    $0 ~ ("^[[:space:]]*trap (" sq sq "|\"\") HUP[[:space:]]*$") { state = 1; next }
+    state == 1 && /^[[:space:]]*bash "\$\{bootstrap\}"/ {
+        line = joined()
+        if (line ~ /<[[:space:]]*\/dev\/null/ && line ~ /&[[:space:]]*$/) { state = 2; next }
+        state = 0
+        next
+    }
+    state == 2 && /eval .*prev_hup/ { restored = 1 }
+    state == 2 && /^[[:space:]]*trap - HUP[[:space:]]*$/ { reset = 1 }
+    /[^[:space:]]/ && state == 1 { state = 0 }
+    END {
+        exit (!(restored && reset) || nohup_seen)
+    }' "$1"
+}
+detach_form_ok "${script}" ||
+    fail "expected trigger_related_repos_bootstrap to ignore SIGHUP in the parent (trap '' HUP), fork the bootstrap with </dev/null and a trailing &, then restore it, without nohup"
+
+# The guard is only worth anything if it can fail: break each element once in a
+# scratch copy (never the real file) and require the verdict to follow.
+mutate_detach() { # DESCRIPTION SED-EXPRESSION
+    sed "$2" "${script}" >"${TMP}/detach-mutant.sh"
+    if cmp -s "${script}" "${TMP}/detach-mutant.sh"; then
+        fail "test setup: the mutation '$1' did not change the script"
+    fi
+    if detach_form_ok "${TMP}/detach-mutant.sh"; then
+        fail "the detach guard accepted a script with $1"
+    fi
+}
+mutate_detach "the parent-side HUP ignore removed" "/^[[:space:]]*trap '' HUP\$/d"
+mutate_detach "the HUP ignore reset to the default (trap -- HUP)" "s/^\\([[:space:]]*\\)trap '' HUP\$/\\1trap -- HUP/"
+mutate_detach "</dev/null removed from the forked command" '/bash "\${bootstrap}"/s# </dev/null##'
+mutate_detach "the trailing & removed from the forked command" '/bash "\${bootstrap}"/s# &$##'
+mutate_detach "nohup in front of the forked command" '/bash "\${bootstrap}"/s#bash "#nohup bash "#'
+mutate_detach "the saved disposition no longer restored" '/eval "\${prev_hup}"/d'
+mutate_detach "the default disposition no longer restored" '/^[[:space:]]*trap - HUP$/d'
+# ...and a reworded comment must not be able to fail it.
+{
+    sed 's/^trigger_related_repos_bootstrap() {$/&\n    # nohup bash bootstrap was the old form/' "${script}"
+} >"${TMP}/detach-comment.sh"
+detach_form_ok "${TMP}/detach-comment.sh" ||
+    fail "the detach guard failed on a comment that merely mentions nohup"
+
 if [ "${PTY_OK}" = true ]; then
     echo "==> a logged-out host is told to log in, not refreshed"
     out="$(run_sut_pty logged-out GH_HOST=github.com)"
@@ -311,6 +382,56 @@ EOF
         sleep 0.2
     done
     [ -f "${TMP}/bootstrap-marker" ] || fail "bootstrap marker file was not created after grant landed"
+
+    echo "==> the bootstrap is told the checkout's physical parent, on any layout"
+    # The bootstrap's default target is /workspaces, which is right only inside the
+    # devcontainer; anywhere else a scope refresh would clone into a directory that
+    # does not exist. The trigger names the target, as setup-remote.sh does: the
+    # parent of the PHYSICAL checkout (pwd -P).
+    cat <<EOF >"${TMP}/repo/.devcontainer/scripts/bootstrap-related-repos.sh"
+#!/usr/bin/env bash
+printf '%s\n' "\$#" "\${1:-}" >"${TMP}/bootstrap-args"
+exit 0
+EOF
+    chmod +x "${TMP}/repo/.devcontainer/scripts/bootstrap-related-repos.sh"
+    # assert_bootstrap_target SUT-PATH EXPECTED-DIR DESCRIPTION
+    assert_bootstrap_target() {
+        local sut="$1" want="$2" what="$3" i
+        rm -f "${TMP}/bootstrap-args"
+        (
+            SUT="${sut}"
+            run_sut_pty lands-after-refresh GH_HOST=github.com
+        ) >/dev/null
+        for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+            [ -s "${TMP}/bootstrap-args" ] && break
+            sleep 0.2
+        done
+        [ -s "${TMP}/bootstrap-args" ] || fail "${what}: the bootstrap was not started"
+        [ "$(sed -n 1p "${TMP}/bootstrap-args")" = 1 ] ||
+            fail "${what}: the bootstrap must get exactly one argument, got: $(tr '\n' ' ' <"${TMP}/bootstrap-args")"
+        [ "$(sed -n 2p "${TMP}/bootstrap-args")" = "${want}" ] ||
+            fail "${what}: expected the target ${want}, got: $(sed -n 2p "${TMP}/bootstrap-args")"
+    }
+    # A checkout whose parent is a directory named "workspaces" — the devcontainer
+    # layout, without needing a writable /workspaces on this host...
+    mkdir -p "${TMP}/layout/workspaces"
+    cp -R "${TMP}/repo" "${TMP}/layout/workspaces/checkout"
+    want_ws="$(cd "${TMP}/layout/workspaces" && pwd -P)"
+    assert_bootstrap_target "${TMP}/layout/workspaces/checkout/scripts/setup-gh-scopes.sh" "${want_ws}" \
+        "a checkout under a workspaces directory"
+    # ...one under another directory, which is the case the default got wrong...
+    mkdir -p "${TMP}/layout/elsewhere/deep"
+    cp -R "${TMP}/repo" "${TMP}/layout/elsewhere/deep/checkout"
+    want_el="$(cd "${TMP}/layout/elsewhere/deep" && pwd -P)"
+    [ "${want_el}" != "${want_ws}" ] || fail "test setup: the two layouts must resolve to different parents"
+    assert_bootstrap_target "${TMP}/layout/elsewhere/deep/checkout/scripts/setup-gh-scopes.sh" "${want_el}" \
+        "a checkout under another directory"
+    # ...and one entered through a symlink, where the PHYSICAL parent wins.
+    mkdir -p "${TMP}/layout/links"
+    ln -s "${TMP}/layout/elsewhere/deep/checkout" "${TMP}/layout/links/alias"
+    assert_bootstrap_target "${TMP}/layout/links/alias/scripts/setup-gh-scopes.sh" "${want_el}" \
+        "a checkout entered through a symlink"
+    rm -rf "${TMP}/layout"
 
     echo "==> bootstrap-related-repos.sh failure does not change exit status of setup-gh-scopes"
     cat <<EOF >"${TMP}/repo/.devcontainer/scripts/bootstrap-related-repos.sh"

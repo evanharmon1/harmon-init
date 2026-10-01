@@ -116,6 +116,12 @@ else
         origin_authority="${origin_url#*@}"
         origin_authority="${origin_authority%%:*}"
         ;;
+    *:*) # scp-like without a user: host:owner/repo (git's own rule: no '/' before the first colon)
+        origin_authority="${origin_url%%:*}"
+        case "${origin_authority}" in
+        */* | *@*) origin_authority="" ;;
+        esac
+        ;;
     esac
     GIT_BASE_URL="https://${origin_authority:-github.com}/"
 fi
