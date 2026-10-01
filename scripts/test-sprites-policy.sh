@@ -15,8 +15,11 @@
 #      policy cannot express (an IPv4 address or CIDR) or a refused list fails
 #      generation loudly rather than being dropped;
 #   4. `apply` sends exactly the generated policy to the documented endpoint
-#      with the token on curl's stdin — never in its arguments — and fails when
-#      the API refuses it (curl is stubbed; nothing leaves the machine).
+#      with the token on curl's stdin — never in its arguments — runs curl with
+#      -q first (no ~/.curlrc), and fails when the API refuses it (curl is
+#      stubbed; nothing leaves the machine);
+#   5. the generator reads the lists of the checkout it lives in, whatever the
+#      parser's list-path overrides are set to in the caller's environment.
 #
 # Usage: scripts/test-sprites-policy.sh [<dir holding network-policy.sh>]
 # The directory defaults to this repository's sprites/; test-template.sh passes
@@ -58,16 +61,30 @@ check_policy() {
     fi
 }
 
-# generate_with SHARED LOCAL — run the generator against fixture lists through
-# the parser's own list-path overrides; stdout to policy.json, stderr to err.
+# A fixture checkout with the generator's own layout: the generator, the
+# parser, and the two lists beside it. The generator ignores the parser's
+# list-path environment overrides on purpose, so fixtures go in by tree.
+FX="${TMP}/fixture"
+mkdir -p "${FX}/sprites" "${FX}/.devcontainer/scripts"
+cp "$GEN" "${FX}/sprites/network-policy.sh"
+cp "$ALLOWLIST_SH" "${FX}/.devcontainer/scripts/egress-allowlist.sh"
+
+# generate_with SHARED [LOCAL] — install the lists into the fixture tree (no
+# LOCAL: no .local list) and run its generator; stdout to policy.json, stderr
+# to err.
 generate_with() {
-    EGRESS_ALLOWLIST_SHARED="$1" EGRESS_ALLOWLIST_LOCAL="$2" \
-        bash "$GEN" generate >"${TMP}/policy.json" 2>"${TMP}/err"
+    cp "$1" "${FX}/.devcontainer/egress-allowlist.txt"
+    rm -f "${FX}/.devcontainer/egress-allowlist.local.txt"
+    [ -z "${2:-}" ] || cp "$2" "${FX}/.devcontainer/egress-allowlist.local.txt"
+    env -u EGRESS_ALLOWLIST_SHARED -u EGRESS_ALLOWLIST_LOCAL \
+        bash "${FX}/sprites/network-policy.sh" generate >"${TMP}/policy.json" 2>"${TMP}/err"
 }
 
 echo "==> 1. the generated policy carries every allowlist entry"
-bash "$ALLOWLIST_SH" hosts >"${TMP}/hosts" || fail "the allowlist parser refused the lists"
-bash "$GEN" generate >"${TMP}/real.json" 2>"${TMP}/real.err" || fail "generate failed: $(cat "${TMP}/real.err")"
+env -u EGRESS_ALLOWLIST_SHARED -u EGRESS_ALLOWLIST_LOCAL bash "$ALLOWLIST_SH" hosts >"${TMP}/hosts" ||
+    fail "the allowlist parser refused the lists"
+env -u EGRESS_ALLOWLIST_SHARED -u EGRESS_ALLOWLIST_LOCAL bash "$GEN" generate >"${TMP}/real.json" 2>"${TMP}/real.err" ||
+    fail "generate failed: $(cat "${TMP}/real.err")"
 out="$(check_policy "${TMP}/real.json" "${TMP}/hosts")" || fail "policy differs from the allowlist: ${out}"
 pass "$(grep -cvx '@github-meta' "${TMP}/hosts") hostnames, in order, then the closing deny"
 if grep -qx '@github-meta' "${TMP}/hosts"; then
@@ -116,8 +133,15 @@ generate_with "${TMP}/shared.txt" "${TMP}/local-bad.txt" && fail "a malformed en
 pass "a list the parser refuses generates nothing"
 
 printf '@github-meta\n' >"${TMP}/meta-only.txt"
-generate_with "${TMP}/meta-only.txt" "${TMP}/absent.txt" && fail "a list with no hostname produced a deny-everything policy"
+generate_with "${TMP}/meta-only.txt" && fail "a list with no hostname produced a deny-everything policy"
 pass "a list with no hostname is refused"
+
+# A stale export of the parser's list-path overrides must not replace the
+# policy: the generator reads the lists of the checkout it lives in.
+EGRESS_ALLOWLIST_SHARED="${TMP}/shared.txt" EGRESS_ALLOWLIST_LOCAL="${TMP}/local.txt" \
+    bash "$GEN" generate >"${TMP}/exported.json" 2>/dev/null || fail "generate failed with the overrides exported"
+cmp -s "${TMP}/exported.json" "${TMP}/real.json" || fail "exported EGRESS_ALLOWLIST_* overrides replaced the checkout's policy"
+pass "exported list-path overrides are ignored"
 
 echo "==> 4. apply: the documented endpoint, the token on stdin only"
 mkdir -p "${TMP}/bin"
@@ -133,11 +157,12 @@ token="tok-$$-secret"
 printf '%s\n' "$token" | PATH="${TMP}/bin:${PATH}" STUB_DIR="$TMP" bash "$GEN" apply my-sprite 2>"${TMP}/apply.err" ||
     fail "apply failed against a stub API: $(cat "${TMP}/apply.err")"
 grep -qF "$token" "${TMP}/argv" && fail "the token reached curl's arguments"
+[ "$(head -n 1 "${TMP}/argv")" = "-q" ] || fail "curl's first argument is not -q, so the operator's ~/.curlrc is read"
 grep -qxF "https://api.sprites.dev/v1/sprites/my-sprite/policy/network" "${TMP}/argv" || fail "apply did not target the documented endpoint"
 grep -qxF -- "POST" "${TMP}/argv" || fail "apply did not POST"
 grep -qxF "header = \"Authorization: Bearer ${token}\"" "${TMP}/config" || fail "the token did not reach curl's stdin config"
 cmp -s <(jq -S . "${TMP}/body") <(jq -S . "${TMP}/real.json") || fail "apply sent a body other than the generated policy"
-pass "POST to /v1/sprites/<name>/policy/network, generated body, token only on stdin"
+pass "POST to /v1/sprites/<name>/policy/network, generated body, token only on stdin, -q first"
 
 printf '%s\n' "$token" | PATH="${TMP}/bin:${PATH}" STUB_DIR="$TMP" STUB_EXIT=22 bash "$GEN" apply my-sprite 2>/dev/null &&
     fail "apply reported success when the API refused the policy"

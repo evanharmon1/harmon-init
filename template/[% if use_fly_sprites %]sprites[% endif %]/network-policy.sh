@@ -17,8 +17,9 @@ set -euo pipefail
 #       API (POST /v1/sprites/<name>/policy/network). The API token is read
 #       from STDIN — never an argument, never an environment variable, never a
 #       file — and handed to curl on its stdin as a config line, so it appears
-#       in no process listing. Run it from the operator's checkout, never from
-#       inside the Sprite: the policy is read-only there by design.
+#       in no process listing; curl runs with -q, so no ~/.curlrc is read.
+#       Run it from the operator's checkout, never from inside the Sprite: the
+#       policy is read-only there by design.
 #
 # How each allowlist entry kind maps (Sprites network policy, docs read
 # 2026-10-01: https://docs.fly.io/sprites/concepts/networking/). The policy is
@@ -59,7 +60,10 @@ usage() {
 cmd_generate() {
     local entries entry sep="" rules=""
     [ -f "$ALLOWLIST_SH" ] || fail "egress allowlist script not found at ${ALLOWLIST_SH}"
-    entries="$(bash "$ALLOWLIST_SH" hosts)" ||
+    # Always this checkout's own lists: the parser honours list-path overrides
+    # (for its own tests), and a stale export of either would otherwise
+    # replace the policy silently.
+    entries="$(env -u EGRESS_ALLOWLIST_SHARED -u EGRESS_ALLOWLIST_LOCAL bash "$ALLOWLIST_SH" hosts)" ||
         fail "the egress allowlist was refused (see above); no policy generated"
     while IFS= read -r entry; do
         [ -n "$entry" ] || continue
@@ -87,9 +91,11 @@ cmd_apply() {
     case "$token" in *'"'* | *'\'*) fail "the token contains a quote or backslash; refusing to build a curl config from it" ;; esac
     policy="$(cmd_generate)"
     # The token goes to curl on its stdin as a config line; the policy goes as
-    # the request body on file descriptor 3.
+    # the request body on file descriptor 3. `-q` must be curl's FIRST argument
+    # (it is ignored anywhere else): it skips the operator's ~/.curlrc, where a
+    # trace, verbose, url or proxy line would print or redirect the header.
     printf 'header = "Authorization: Bearer %s"\n' "$token" |
-        curl --config - --fail-with-body -sS --max-time 60 \
+        curl -q --config - --fail-with-body -sS --max-time 60 \
             -X POST -H 'Content-Type: application/json' \
             --data-binary @/dev/fd/3 \
             "${SPRITES_API_URL}/v1/sprites/${name}/policy/network" 3<<<"$policy" >/dev/null ||

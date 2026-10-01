@@ -36,7 +36,9 @@ unless a repository answers `use_fly_sprites: yes` in Copier (default **no**;
 it also needs `devcontainer`, because the allowlist lives there).
 
 - **A credit card on file.** "All organizations (except for Linked
-  Organizations) require a credit card on file" (*pricing, 2026-10-01*).
+  Organizations) require a credit card on file"
+  ([Fly.io resource pricing](https://docs.fly.io/about/pricing), read 2026-10-01;
+  [fly.io/sprites](https://fly.io/sprites) does not state it).
 - **Trial credit.** "New organizations get $30 in trial credit", one per
   organization (*pricing, 2026-10-01*).
 - **Billed while running, storage while idle.** CPU at $0.07 per CPU-hour,
@@ -100,7 +102,9 @@ managed file already present is left in place unless
 **3. Close egress** to the shared allowlist, from outside, before any credential
 or agent reaches the Sprite: see [Network policy](#network-policy).
 
-**4. Deliver the credentials** (next section).
+**4. Deliver the credentials** (next section). Before the checkpoint, confirm each
+arrived — an empty file would be checkpointed as if it were a credential:
+`sprite exec -s "$SPRITE" -- bash -lc 'gh auth status && test -s "$HOME/.config/harmon-agent/claude-oauth-token"'`.
 
 **5. Clone the repository and prepare the checkout:**
 
@@ -199,8 +203,10 @@ op read "op://<vault>/<item>/<field>" | bash sprites/network-policy.sh apply "$S
 
 `apply` sends `POST https://api.sprites.dev/v1/sprites/<name>/policy/network`
 with the generated rules (*docs, 2026-10-01*). It hands the token to `curl` on
-its stdin, so the token appears in no argument list. Re-run it whenever either
-list changes. Then confirm what the Sprite enforces:
+its stdin, so the token appears in no argument list. Run `generate` and `apply`
+from a checkout of the default branch (or the pinned release tag), never from a
+lane's branch, so an allowlist edit an agent pushed cannot widen its own Sprite
+before it is reviewed and merged. Re-run `apply` whenever either list changes. Then confirm what the Sprite enforces:
 
 ```sh
 diff <(bash sprites/network-policy.sh generate | jq -S .) \
@@ -245,3 +251,4 @@ environments on a Sprite (#1410).
 | `sprite exec` without `--tty` passes stdin through, for the credential steps | the criterion-4 run |
 | The agent posture is in effect in a session on the Sprite | #1404 criterion 4 ([pending observation](../architecture/remote-environments.md#how-each-platform-receives-the-agent-posture)) |
 | `/.sprite/policy/network.json` equals a fresh `generate` after `apply` | the criterion-4 run |
+| Whether restoring a checkpoint — which a process inside the Sprite can do — reverts the network policy; the docs do not say | the criterion-4 run |
