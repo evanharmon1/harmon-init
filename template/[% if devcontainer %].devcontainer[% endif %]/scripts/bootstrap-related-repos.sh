@@ -113,14 +113,11 @@ else
         *) origin_authority="${origin_authority%%:*}" ;; # ssh:// etc: the port is not the https port
         esac
         ;;
-    *@*:*) # scp-like: user@host:owner/repo (no port; the colon starts the path)
-        origin_authority="${origin_url#*@}"
-        origin_authority="${origin_authority%%:*}"
-        ;;
-    *:*) # scp-like without a user: host:owner/repo (git's own rule: no '/' before the first colon)
+    *:*) # scp-like [user@]host:path (no port; the colon starts the path) — git's rule: no '/' before the first colon
         origin_authority="${origin_url%%:*}"
         case "${origin_authority}" in
-        */* | *@*) origin_authority="" ;;
+        */* | ?) origin_authority="" ;; # a local path, or a drive letter (C:/…)
+        *) origin_authority="${origin_authority##*@}" ;;
         esac
         ;;
     esac

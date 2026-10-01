@@ -533,6 +533,8 @@ ssh://git@ghe-ssh.example.com:2222/o/r.git|ghe-ssh.example.com
 git@ghe-scp.example.com:o/r.git|ghe-scp.example.com
 ghe.example.com:owner/repo.git|ghe.example.com
 /srv/git/o:r.git|github.com
+C:/src/repo|github.com
+/srv/git/a@b:c/r.git|github.com
 https://ghe-port.example.com:8443/o/r.git|ghe-port.example.com:8443
 https://user@ghe-user.example.com:8443/o/r@v1.git|ghe-user.example.com:8443
 |github.com"
