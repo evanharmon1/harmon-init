@@ -39,7 +39,7 @@ one's status.
 - [2026-08-16-method-and-tier-axes.md](2026-08-16-method-and-tier-axes.md)
   — method and tier strategy axes (Accepted; D4 superseded by 2026-08-24).
 - [2026-08-24-rigor-and-strategy-axes.md](2026-08-24-rigor-and-strategy-axes.md)
-  — rigor and strategy execution-policy axes (Accepted; amended by 2026-08-29 Dev flow v2).
+  — rigor and strategy execution-policy axes (Accepted; amended by 2026-08-29 (Dev flow v2)).
 - [2026-08-25-versioned-devflow-compatibility-contract.md](2026-08-25-versioned-devflow-compatibility-contract.md)
   — version the devflow compatibility contract (Accepted).
 - [2026-08-29-dev-flow-v2-orchestrator-and-results.md](2026-08-29-dev-flow-v2-orchestrator-and-results.md)
@@ -48,8 +48,8 @@ one's status.
 - [2026-08-29-name-decision-records-by-date.md](2026-08-29-name-decision-records-by-date.md)
   — name decision records by date instead of sequence number
   (Accepted; amended by 2026-09-30).
-- [2026-09-01-adopt-openspec.md](2026-09-01-adopt-openspec.md) — superseded
-  by the decision to retire the root-only OpenSpec workflow.
+- [2026-09-01-adopt-openspec.md](2026-09-01-adopt-openspec.md)
+  — adopt OpenSpec for spec-driven changes at the repo root (Superseded by 2026-09-23).
 - [2026-09-02-remove-guard-process-kill-hook.md](2026-09-02-remove-guard-process-kill-hook.md)
   — the process-kill guard hook is removed; the hard rule binds the agent directly (Accepted).
 - [2026-09-13-brief-envelope-schema-bound-free-form-body.md](2026-09-13-brief-envelope-schema-bound-free-form-body.md)
