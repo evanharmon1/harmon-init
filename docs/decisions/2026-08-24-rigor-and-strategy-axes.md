@@ -28,6 +28,10 @@ milestone "Issue strategy overhaul" that ADR 2026-08-16 opened; #1048 (schema
 version, language-neutral fixtures, a conformance harness) is a later,
 narrower follow-up this ADR does not implement.
 
+**Amended** by
+[ADR 2026-09-30 (issue classification)](2026-09-30-classify-issues-by-impact-risk-complexity-and-derive-the-tier.md):
+D5 gains the pinned and derived Tier as implementer-only inputs.
+
 ## Context
 
 `.devflow.toml` grew its round-cap vocabulary (`rigor`, but scoped only to
