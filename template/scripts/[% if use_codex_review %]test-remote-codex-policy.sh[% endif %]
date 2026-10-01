@@ -24,9 +24,13 @@
 # YAML step) is caught too and reported as `file:L1-L2: <line 1> / <line 2>`; a
 # folded hit cannot be allowlisted, the source has to be rewritten.
 #
-# OPENAI_API_KEY alone is legitimate application configuration (a generated
-# project may use it for its own app), so only its Codex use is the rule's
-# subject: the key is reported on a line that also mentions `codex`, in any case.
+# OPENAI_API_KEY and a file named auth.json are legitimate application
+# configuration (a generated project may use either for its own app), so outside
+# the strict tier below only their Codex use is the rule's subject: each is
+# reported on a line that also mentions `codex`, in any case — which is why
+# `~/.codex/auth.json` still fails everywhere. The strict tier is the invariant
+# that nothing which PROVISIONS a remote environment may carry Codex credentials
+# or the API key at all: there both are reported bare.
 #
 # The allowlist excuses a line only when its COMPLETE text equals an entry for
 # that file — never a substring — compared in the normalised form (runs of
@@ -36,8 +40,8 @@
 # Residual: this is a textual, best-effort control. It cannot catch every
 # spelling (a variable holding the command name, an encoded path, a login driven
 # by a tool it does not scan). It stops the plain and the accidental ones, and
-# the self-test below proves it does that for every token and both pattern
-# rules. Two more, stated plainly:
+# the self-test below proves it does that for every token and every pattern
+# rule. More, stated plainly:
 #   - An allowlisted line is excused by its exact text anywhere in its file, so
 #     moving an operator-only line verbatim into a remote-lane section is not
 #     caught. Review catches that; the guard does not.
@@ -45,6 +49,10 @@
 #     `$HOME/.codex` or `/home/vscode/.codex` without a slash is not. A bare
 #     `.codex` token is deliberately not used: the agent devcontainer mounts that
 #     directory legitimately, and the persistent login lives in it.
+#   - A command folded across THREE lines whose middle line holds only options
+#     (`codex` / `--opt` / `login`) is not joined; only two-line folds are.
+#   - Outside the strict tier, the key or an auth.json with `codex` only on a
+#     neighbouring line is not caught. Inside the strict tier neither applies.
 # A full YAML or shell parser is out of scope.
 #
 # Self-proving: a planted violation in a temporary copy of the surfaces must
@@ -65,12 +73,11 @@ fail() {
     exit 1
 }
 
-# Plain credential vocabulary: each names a login flag, or the file or directory a
-# login leaves behind. Two pattern rules complement it inside the awk matcher: a
-# Codex login (the invariant above) and OPENAI_API_KEY on a line that mentions
-# `codex`.
+# Plain credential vocabulary, reported wherever it appears: each names a login
+# flag, or a directory a login leaves behind. Pattern rules complement it inside
+# the awk matcher: a Codex login (the invariant above), and OPENAI_API_KEY or
+# auth.json on a line that mentions `codex` (bare inside the strict tier).
 TOKENS=(
-    'auth.json'
     '--device-auth'
     '--with-api-key'
     '--with-access-token'
@@ -98,6 +105,15 @@ EXCLUDE_DIRS=(
 SURFACE_FILES=(
     'scripts/setup-remote.sh'
     'AGENTS.md'
+)
+# Strict tier — the remote-bootstrap entry points (a directory is matched
+# recursively, each entry only where it exists): nothing that provisions a remote
+# environment may carry Codex credentials or the API key at all, so OPENAI_API_KEY
+# and auth.json are reported bare here and need a `codex` on the line elsewhere.
+STRICT_PATHS=(
+    'images/devcontainer'
+    'scripts/setup-remote.sh'
+    '.github/workflows/remote-bootstrap.yml'
 )
 
 # Allowlist: "file@@complete line@@reason".
@@ -162,7 +178,7 @@ done
 # tokens across all the text files, so a scan costs two processes, not three per
 # file — the self-test runs it many times.
 scan() {
-    local root="$1" file line text entry efile etext tokstr rc hits allowed listing d f k scanned=0
+    local root="$1" file line text tokstr strictstr rc hits allowed listing d f k scanned=0
     local files=() textfiles=() prune_args=() x
     for x in "${EXCLUDE_DIRS[@]}"; do
         prune_args+=(-path "${root}/${x}" -prune -o)
@@ -173,7 +189,7 @@ scan() {
             # would otherwise drop out of the scan and still pass. The listing
             # lives under TMP, removed by the EXIT trap.
             listing="$(mktemp "${TMP}/listing.XXXXXX")"
-            if ! find "${root}/${d}" "${prune_args[@]}" -type f -print >"$listing" 2>/dev/null ||
+            if ! find "${root}/${d}" ${prune_args[@]+"${prune_args[@]}"} -type f -print >"$listing" 2>/dev/null ||
                 ! LC_ALL=C sort -o "$listing" "$listing" 2>/dev/null; then
                 echo "GUARD-ERROR guard could not list ${d}"
                 return 0
@@ -209,8 +225,9 @@ scan() {
             textfiles+=("./${file}")
         done <<<"$hits"
         tokstr="$(printf '%s\037' "${TOKENS[@]}")"
+        strictstr="$(printf '%s\037' "${STRICT_PATHS[@]}")"
         rc=0
-        hits="$(cd "$root" && awk -v tokens="$tokstr" '
+        hits="$(cd "$root" && awk -v tokens="$tokstr" -v strictlist="$strictstr" '
             function emit(f, s, t,   i, tt, hit) {
                 gsub(/[ \t]+/, " ", t)
                 tt = t
@@ -230,9 +247,9 @@ scan() {
                         break
                     }
                 }
-                # The key alone is application configuration; only its Codex use
-                # is the rule'"'"'s subject.
-                if (!hit && index(t, "OPENAI_API_KEY") && tolower(t) ~ /codex/) {
+                # The key and an auth.json are application configuration outside
+                # the strict tier; only their Codex use is the rule'"'"'s subject.
+                if (!hit && (index(t, "OPENAI_API_KEY") || index(t, "auth.json")) && (strict || tolower(t) ~ /codex/)) {
                     print substr(f, 3) ":" s ":" t
                     hit = 1
                 }
@@ -246,8 +263,15 @@ scan() {
                     pline = s
                 }
             }
+            function is_strict(path,   i) {
+                for (i = 1; i <= ns; i++) {
+                    if (S[i] != "" && (path == S[i] || index(path, S[i] "/") == 1)) return 1
+                }
+                return 0
+            }
             BEGIN {
                 n = split(tokens, T, "\037")
+                ns = split(strictlist, S, "\037")
                 W = "(^|[^A-Za-z0-9_-])codex( -[^ ]+( [^ -][^ ]*)?)*"
                 LOGIN = W " login([^A-Za-z0-9_-]|$)"
                 FOLDHEAD = W " ?$"
@@ -257,6 +281,7 @@ scan() {
                 if (cont) { emit(pf, start, buf); buf = ""; cont = 0 }
                 pf = FILENAME
                 pend = ""
+                strict = is_strict(substr(FILENAME, 3))
             }
             {
                 line = $0
@@ -399,6 +424,39 @@ printf 'echo start\nCODEX_HOME=x OPENAI_API_KEY=$K node app.js\n' >"${FIX}/${pla
 expect_hit "OPENAI_API_KEY paired with CODEX_HOME (any case)" "$planted" "2:"
 rm -f "${FIX}/${planted}"
 
+# Strict tier: nothing that provisions a remote environment may carry the key or
+# an auth.json at all (no `codex` needed); outside it only their Codex use counts.
+strict_cases=0
+for sf in scripts/setup-remote.sh .github/workflows/remote-bootstrap.yml; do
+    [ -f "${FIX}/${sf}" ] || continue
+    strict_cases=$((strict_cases + 1))
+    cp "${FIX}/${sf}" "${TMP}/saved"
+    printf '\nexport OPENAI_API_KEY=x\n' >>"${FIX}/${sf}"
+    expect_hit "a bare OPENAI_API_KEY in ${sf}" "$sf"
+    cp "${TMP}/saved" "${FIX}/${sf}"
+    printf '\ncat auth.json\n' >>"${FIX}/${sf}"
+    expect_hit "a bare auth.json in ${sf}" "$sf"
+    cp "${TMP}/saved" "${FIX}/${sf}"
+done
+if [ -d "${FIX}/images/devcontainer" ]; then
+    strict_cases=$((strict_cases + 1))
+    printf 'echo start\nexport OPENAI_API_KEY=x\n' >"${FIX}/images/devcontainer/planted.sh"
+    expect_hit "a bare OPENAI_API_KEY under images/devcontainer" "images/devcontainer/planted.sh" "2:"
+    printf 'echo start\ncat auth.json\n' >"${FIX}/images/devcontainer/planted.sh"
+    expect_hit "a bare auth.json under images/devcontainer" "images/devcontainer/planted.sh" "2:"
+    rm -f "${FIX}/images/devcontainer/planted.sh"
+fi
+[ "$strict_cases" -gt 0 ] || fail "no strict-tier surface exists in the fixture; the strict-tier cases would pass vacuously"
+# Outside the strict tier an app's own key or auth.json passes; the Codex one fails.
+mkdir -p "${FIX}/docs/guides"
+printf '# App\n\nOur app stores sessions in auth.json.\n' >"${FIX}/docs/guides/planted-app.md"
+printf 'echo start\nexport OPENAI_API_KEY=x\n' >"${FIX}/${planted}"
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "an app's own auth.json or key outside the strict tier must pass, got: ${SCAN_HITS}"
+printf '# App\n\nCopy ~/.codex/auth.json to the VM.\n' >"${FIX}/docs/guides/planted-app.md"
+expect_hit "~/.codex/auth.json in a guide" "docs/guides/planted-app.md" "3:"
+rm -f "${FIX}/docs/guides/planted-app.md" "${FIX}/${planted}"
+
 # A YAML-folded command: `codex` ends one line, `login` opens the next; options
 # may sit on either side of the fold. Reported with both real lines.
 mkdir -p "${FIX}/.github/workflows"
@@ -415,7 +473,7 @@ rm -f "${FIX}/.github/workflows/folded.yml"
 
 # A surface line that merely contains the guard-error marker is a violation (it
 # carries a token), never mistaken for a guard error.
-printf 'echo start\nGUARD-ERROR auth.json leaked\n' >"${FIX}/${planted}"
+printf 'echo start\nGUARD-ERROR ~/.codex leaked\n' >"${FIX}/${planted}"
 expect_hit "a surface line quoting the guard-error marker" "$planted" "2:"
 rm -f "${FIX}/${planted}"
 
@@ -509,4 +567,4 @@ fi
 mkdir -p "${TMP}/empty"
 [ "$(scan "${TMP}/empty" | tail -n 1)" = "SCANNED 0" ] || fail "an empty root must report SCANNED 0"
 
-echo "remote codex policy OK: ${scanned} surface files clean; planted violations fail for all ${#TOKENS[@]} plain tokens and both pattern rules"
+echo "remote codex policy OK: ${scanned} surface files clean; planted violations fail for all ${#TOKENS[@]} plain tokens and every pattern rule"
