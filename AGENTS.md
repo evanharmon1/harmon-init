@@ -575,7 +575,11 @@ acts on a label only after verifying its provenance end-to-end from its own
 trusted-actor configuration, re-read immediately before acting, and otherwise
 falls back to the config default with a warning (the invariants are
 ADR 2026-08-16 D6; the timeline algorithm is deferred to foreman#139). An agent
-never applies a `rigor:*`, `strategy:*`, or `tier:*` label to itself. **Any
+never applies a `rigor:*`, `strategy:*`, or `tier:*` label to itself — except
+the derived classification Tier: an unqualified `tier:<value>` is a cache of
+Risk × Complexity (ADR 2026-09-30), so writing it records what the issue is,
+not how it is run. Choosing an execution-policy tier for oneself
+(`tier:<role>:*`, `tier:pinned`) stays forbidden. **Any
 off-default resolution, and any off-profile role tier, is disclosed in the PR
 body** — both are a visible line for the human reviewer, never something
 inferred from behavior.
