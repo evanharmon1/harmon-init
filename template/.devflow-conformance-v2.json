@@ -27,10 +27,7 @@
     {
       "name": "explicit-overrides-win",
       "basis": "branch",
-      "overrides": [
-        "rigor=deep",
-        "strategy=council"
-      ],
+      "overrides": ["rigor=deep", "strategy=council"],
       "expect": {
         "exit": 0,
         "result": {
@@ -53,10 +50,7 @@
       "name": "self-edit-reads-merge-base-policy",
       "basis": "merge-base",
       "merge_base_replacements": [
-        [
-          "default_rigor    = \"standard\"",
-          "default_rigor    = \"light\""
-        ]
+        ["default_rigor    = \"standard\"", "default_rigor    = \"light\""]
       ],
       "expect": {
         "exit": 0,
@@ -100,12 +94,7 @@
     {
       "name": "legacy-version-is-refused",
       "basis": "branch",
-      "config_replacements": [
-        [
-          "schema_version = 2",
-          "schema_version = 1"
-        ]
-      ],
+      "config_replacements": [["schema_version = 2", "schema_version = 1"]],
       "expect": {
         "exit": 1,
         "error_diagnostics": [
@@ -291,30 +280,12 @@
       "name": "absent-matrix-is-indeterminate",
       "basis": "branch",
       "config_replacements": [
-        [
-          "\n[tier.matrix]\n",
-          "\n"
-        ],
-        [
-          "\nxs = {",
-          "\n# xs = {"
-        ],
-        [
-          "\ns  = {",
-          "\n# s  = {"
-        ],
-        [
-          "\nm  = {",
-          "\n# m  = {"
-        ],
-        [
-          "\nl  = {",
-          "\n# l  = {"
-        ],
-        [
-          "\nxl = {",
-          "\n# xl = {"
-        ]
+        ["\n[tier.matrix]\n", "\n"],
+        ["\nxs = {", "\n# xs = {"],
+        ["\ns  = {", "\n# s  = {"],
+        ["\nm  = {", "\n# m  = {"],
+        ["\nl  = {", "\n# l  = {"],
+        ["\nxl = {", "\n# xl = {"]
       ],
       "issue": {
         "risk": "high",
@@ -501,9 +472,7 @@
     {
       "name": "pin-above-rigor-label",
       "basis": "branch",
-      "authorized_labels": [
-        "rigor:deep"
-      ],
+      "authorized_labels": ["rigor:deep"],
       "pin": {
         "tier": "economy",
         "marker_trusted": true,
@@ -548,9 +517,7 @@
     {
       "name": "operator-rigor-does-not-displace-a-pin",
       "basis": "branch",
-      "overrides": [
-        "rigor=deep"
-      ],
+      "overrides": ["rigor=deep"],
       "pin": {
         "tier": "economy",
         "marker_trusted": true,
@@ -583,9 +550,7 @@
     {
       "name": "operator-tier-beats-pin",
       "basis": "branch",
-      "overrides": [
-        "tier=frontier"
-      ],
+      "overrides": ["tier=frontier"],
       "pin": {
         "tier": "economy",
         "marker_trusted": true,
@@ -712,9 +677,7 @@
     {
       "name": "derived-tier-below-role-label",
       "basis": "branch",
-      "authorized_labels": [
-        "tier:implementer:economy"
-      ],
+      "authorized_labels": ["tier:implementer:economy"],
       "issue": {
         "risk": "critical",
         "complexity": "xl"
@@ -744,9 +707,7 @@
     {
       "name": "derived-tier-below-rigor-label",
       "basis": "branch",
-      "authorized_labels": [
-        "rigor:light"
-      ],
+      "authorized_labels": ["rigor:light"],
       "issue": {
         "risk": "critical",
         "complexity": "xl"
@@ -777,9 +738,7 @@
     {
       "name": "leftover-adaptive-label-resolves-as-absent",
       "basis": "branch",
-      "authorized_labels": [
-        "tier:adaptive"
-      ],
+      "authorized_labels": ["tier:adaptive"],
       "expect": {
         "exit": 0,
         "warning_diagnostics": [
@@ -802,9 +761,7 @@
     {
       "name": "operator-adaptive-tier-is-rejected",
       "basis": "branch",
-      "overrides": [
-        "tier=adaptive"
-      ],
+      "overrides": ["tier=adaptive"],
       "expect": {
         "exit": 1,
         "error_diagnostics": [

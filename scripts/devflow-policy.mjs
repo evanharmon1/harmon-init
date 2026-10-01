@@ -2634,6 +2634,12 @@ function parseTierMapOption(value, option) {
     if (!role || !tier) {
       throw new PolicyError(`--${option} entries must be role=tier, got ${JSON.stringify(entry)}`)
     }
+    // Checked here, not only in applyTierInputs: assigning a key such as
+    // `__proto__` to a plain object is silently dropped, so an unknown role
+    // must be refused before it is ever stored.
+    if (!ROLES.includes(role)) {
+      throw new PolicyError(`--${option} names unknown role ${JSON.stringify(role)}`)
+    }
     if (Object.hasOwn(result, role)) {
       throw new PolicyError(`--${option} names ${role} more than once`)
     }
