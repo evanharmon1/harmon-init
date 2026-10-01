@@ -227,7 +227,7 @@ with a skim of the resulting tier distribution per repository.
   human-applied suggestion, and "triaged" becomes checkable rather than a
   hand-maintained label.
 - Resolution gains two layers, the pinned Tier and the derived Tier, and
-  every role-tier invariant a pin breaks is disclosed in the PR body.
+  every resolved role-tier invariant a pin breaks is disclosed in the PR body.
 - Agent writes are free of Actions minutes on the hot path; drift is
   corrected once a day per organization rather than per event.
 - A write that updates Risk or Complexity but fails on Tier leaves a stale
