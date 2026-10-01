@@ -58,7 +58,6 @@ one's status.
 - [2026-09-23-retire-openspec-workflow.md](2026-09-23-retire-openspec-workflow.md)
   — OpenSpec is retired in favor of the existing issue, ADR, and plain-spec workflow (Accepted).
 - [2026-09-29-agent-posture-three-posture-model.md](2026-09-29-agent-posture-three-posture-model.md)
-  — proposed: a third devcontainer posture, **agent**, for unattended runs,
-  never looser than bot on any axis.
+  — three postures: dev, bot, and agent (Proposed).
 - [2026-09-30-rename-numbered-decision-records-by-date.md](2026-09-30-rename-numbered-decision-records-by-date.md)
   — rename numbered decision records by date (Accepted).

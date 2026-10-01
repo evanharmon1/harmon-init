@@ -14,7 +14,7 @@ itself and the seed-record mechanism stand.
 
 ## Context
 
-The 2026-08-29 record adopted date names for new records only, leaving
+The 2026-08-29 naming record adopted date names for new records only, leaving
 `docs/decisions/` mixed; the maintainer has since made the date form the
 standard across harmon-platform.
 
@@ -38,6 +38,14 @@ repositories rename their own records under their own issues.
   PR under the rolling-update policy (AGENTS.md "Critical Copier Gotchas").
 - Records filed on the same day share a date prefix, so prose names such a
   record by date and title (for example "ADR 2026-08-29 (Dev flow v2)").
+- Links from other harmon-platform repositories into these records break the same
+  way; harmon-devkit's are tracked in harmon-devkit#1254. A reference this
+  repository makes to another repository's record by number, such as
+  harmonops/harmon-infra's ADR-0006 in the template's Terraform workflow, stays
+  correct only until that repository renames its own records.
+- The `standardize-repo` audit must now report a remaining numbered record as
+  drift and recommend renaming it, which widens the follow-up the 2026-08-29
+  naming record states as accepting the date form too (harmon-devkit#667).
 
 **Not:** redirect stubs at the old paths — offered to the maintainer on
 2026-09-30 and not chosen.

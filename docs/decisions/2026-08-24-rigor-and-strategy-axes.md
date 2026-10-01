@@ -5,12 +5,14 @@ Date: 2026-08-24
 ## Status
 
 Accepted — the amendment to D3 (the `[review.*]` tables renamed; shipped as
-`[rounds.*]` — see ADR 2026-08-29 (Dev flow v2)'s amendment note), D4, D8, and D9 proposed by
-[ADR 2026-08-29 (Dev flow v2)](2026-08-29-dev-flow-v2-orchestrator-and-results.md) is **in effect**
-as of ADR 2026-08-29 (Dev flow v2)'s acceptance (2026-09-12). ADR 2026-08-29 (Dev flow v2) amends D4, D8, and D9 where
-they define the `shepherd` cap as bounding CI, human-review, and Codex
-findings alike: the renamed `integration` cap bounds Codex re-review cycles
-only, and a separate `remediation` cap bounds fix pushes in that stage.
+`[rounds.*]` — see ADR 2026-08-29 (Dev flow v2)'s amendment note), D4, D8, and
+D9 proposed by
+[ADR 2026-08-29 (Dev flow v2)](2026-08-29-dev-flow-v2-orchestrator-and-results.md)
+is **in effect** as of ADR 2026-08-29 (Dev flow v2)'s acceptance (2026-09-12).
+ADR 2026-08-29 (Dev flow v2) amends D4, D8, and D9 where they define the
+`shepherd` cap as bounding CI, human-review, and Codex findings alike: the
+renamed `integration` cap bounds Codex re-review cycles only, and a separate
+`remediation` cap bounds fix pushes in that stage.
 
 Supersedes [ADR 2026-08-16](2026-08-16-method-and-tier-axes.md) D4 (the method rank and
 its `[method]` table are retired along with `method:*`) and amends its D5
