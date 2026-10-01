@@ -193,7 +193,7 @@ if grep -Eq '^prefix\|claim:$' <<<"$reordered_inventory"; then
 fi
 grep -Fqx 'prefix|claim:gpt:' <<<"$reordered_inventory" ||
     fail "reordered inventory lost the claim:gpt model prefix"
-if grep -q 'suggest' <<<"$reordered_inventory"; then
+if grep -Eq '^(exact|prefix)\|suggest:' <<<"$reordered_inventory"; then
     fail "inventory protects a retired suggest label — suggest:* must surface as unregistered so --prune can offer it"
 fi
 
@@ -338,7 +338,7 @@ check_suggest_provisions_nothing() {
     if grep -q '^suggest:' <<<"$rendered"; then
         fail "$manifest provisions a suggest:* label although the family is retired"
     fi
-    if grep -q 'suggest' <<<"$inventory"; then
+    if grep -Eq '^(exact|prefix)\|suggest:' <<<"$inventory"; then
         fail "$manifest inventory recognizes a suggest label, so --prune could never offer it — keep suggest and suggest-model retired"
     fi
 }

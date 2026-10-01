@@ -655,7 +655,7 @@
           "writers": ["human"],
           "writer_note": "humans only, from the GitHub UI, together with setting the Tier",
           "readers": "agents and automation — a pinned Tier is never rewritten",
-          "lifecycle_note": "added with the Tier value; removed to hand the Tier back to derivation",
+          "lifecycle_note": "added with the Tier value; removed to hand the Tier back to derivation; a human pinning a different tier replaces the existing Tier label first, since two tier values at once is a conflict for the reader to resolve, never one a writer creates",
           "trust_note": "provisioned; **provenance-checked** — an interactive session confirms a pin the operator has not authorized, and unattended automation honors one only after verifying who applied it (ADR 2026-09-30 D5)"
         },
         {
@@ -677,7 +677,7 @@
       "source": "inline",
       "writers": ["human"],
       "writer_note": "humans, at triage or planning — never an agent on itself",
-      "readers": "humans and agents — targets exactly the role it names; models are classified in `agent-registry.json` (ADR 2026-08-16/2026-08-24), unlike the unqualified `tier:<value>` which targets the implementer only",
+      "readers": "humans and agents — targets exactly the role it names; models are classified in `agent-registry.json` (ADR 2026-08-16/2026-08-24), unlike the unqualified `tier:<value>`, which is the issue's stored Tier rather than a role override",
       "lifecycle": "durable",
       "lifecycle_note": "set when one role's tier should differ from the rigor's own profile; strongest-wins per role",
       "trust_note": "provisioned; **advisory** — resolved against `.devflow.toml`'s `tier_order`; arms nothing",
