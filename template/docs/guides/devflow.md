@@ -27,8 +27,8 @@ workflow; those are consumer trust boundaries. A consumer applies the
 precedence below and passes the resulting request to the reader: the rigor and
 strategy, who chose the rigor (`--rigor-source operator|label`), role-tier
 overrides already split into operator instructions (`--tier-overrides`) and
-authorized labels (`--tier-labels`), the issue's classification
-(`--risk`, `--complexity`, `--stored-tier`), and any pin (`--pinned-tier` with
+authorized `tier:<role>:*` labels (`--tier-labels`), the issue's classification
+and stored Tier (`--risk`, `--complexity`, `--stored-tier`), and any pin (`--pinned-tier` with
 `--pin-marker-trusted` / `--pin-value-trusted`). The reader owns the order those
 resolve in, not the trust decisions behind them.
 `scripts/test-devflow-config.sh` checks both dogfood copies and exercises the
@@ -87,12 +87,19 @@ Each `[rigor.<level>]` profile points to:
 
 `rigor_order` is the only ranking of rigor names. The five `*_tier` fields use
 `tier_order`; role floors and other cross-field invariants are enforced by the
-reader. An unqualified `tier:<value>` override targets the implementer. A
-scoped `tier:<role>:<value>` override targets exactly one of the five roles.
-Every off-profile role choice is visible in the PR body.
+reader. An unqualified operator tier instruction targets the implementer. Among
+labels, only a role-scoped `tier:<role>:<value>` label is an override, and it
+targets exactly one of the five roles. An unqualified `tier:<value>` label is
+not an override: it is the issue's stored Tier (ADR 2026-09-30, Consequences),
+which a consumer passes as `--stored-tier` — the cache the derived Tier is
+compared against — or, beside `tier:pinned`, as the pinned value. On an
+organization repository the Tier field is the stored Tier, and a stray
+unqualified label is the same cache input. Every off-profile role choice is
+visible in the PR body.
 
 `adaptive` is retired as a tier value (ADR 2026-09-30 D8). A leftover
-`tier:adaptive` label resolves as if absent, with a `tier-retired` warning;
+`tier:adaptive` label — a stored-Tier value that names no rung — resolves as if
+absent, with a `tier-retired` warning;
 `adaptive` as a configured role tier, a matrix cell, or an operator tier
 instruction is rejected.
 

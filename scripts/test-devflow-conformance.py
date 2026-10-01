@@ -134,6 +134,12 @@ def v2_case_inputs(name: str, case: dict) -> tuple[dict, list[str]]:
     instructions and `authorized_labels` are labels whose provenance the
     consumer already verified. Label parsing and conflict reconciliation live
     here, never in the reader (docs/guides/devflow.md).
+
+    Only role-scoped `tier:<role>:<value>` labels are overrides. An
+    unqualified `tier:<value>` label is the issue's stored Tier (ADR 2026-09-30
+    Consequences) — the cache the reader compares the derived Tier against —
+    so it maps to the stored-Tier input, never to an implementer override. A
+    pin is the `pin` input, not a `tier:pinned` label.
     """
     overrides = case.get("overrides", [])
     if not isinstance(overrides, list) or not all(isinstance(value, str) for value in overrides):
@@ -162,12 +168,15 @@ def v2_case_inputs(name: str, case: dict) -> tuple[dict, list[str]]:
             )
     label_selections: dict[str, list[str]] = {}
     label_tiers: dict[str, list[str]] = {}
+    stored_tier_labels: list[str] = []
     for label in labels:
         parts = label.split(":")
         if len(parts) == 2 and parts[0] in {"rigor", "strategy"} and parts[1]:
             label_selections.setdefault(parts[0], []).append(parts[1])
+        elif label == "tier:pinned":
+            raise ValueError(f"{name}: express a pin with the pin input, not a tier:pinned label")
         elif len(parts) == 2 and parts[0] == "tier" and parts[1]:
-            label_tiers.setdefault("implementer", []).append(parts[1])
+            stored_tier_labels.append(parts[1])
         elif len(parts) == 3 and parts[0] == "tier" and parts[1] in V2_ROLES and parts[2]:
             label_tiers.setdefault(parts[1], []).append(parts[2])
         else:
@@ -190,6 +199,12 @@ def v2_case_inputs(name: str, case: dict) -> tuple[dict, list[str]]:
     if label_tiers:
         flags.extend(["--tier-labels", ",".join(f"{r}={v[0]}" for r, v in label_tiers.items())])
     issue = case.get("issue")
+    if stored_tier_labels:
+        if len(stored_tier_labels) != 1:
+            raise ValueError(f"{name}: an issue carries at most one unqualified tier label")
+        if issue is not None and "tier" in issue:
+            raise ValueError(f"{name}: give the stored Tier as issue.tier or a tier label, not both")
+        issue = {**(issue or {}), "tier": stored_tier_labels[0]}
     if issue is not None:
         if not isinstance(issue, dict) or set(issue) - {"risk", "complexity", "tier"}:
             raise ValueError(f"{name}: issue must be an object of risk/complexity/tier")

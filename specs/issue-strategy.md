@@ -102,9 +102,12 @@ Issues become cheap to classify and route, for humans and agents alike:
       not a tier semantic. (#855; re-scoped #1047 — there is no `default_tier`: each
       `[rigor.*]` level names `orchestrator_tier`/`implementer_tier`/`reviewer_tier`
       directly, and those three values are the default for every role absent an override.
-      An unqualified `tier:<value>` label or override refines the **implementer** tier only;
+      An unqualified `tier:<value>` override refines the **implementer** tier only;
       `tier:orchestrator:<value>` / `tier:implementer:<value>` / `tier:reviewer:<value>`
-      refine one named role. See [ADR 2026-08-24](../docs/decisions/2026-08-24-rigor-and-strategy-axes.md)
+      refine one named role. Amended by ADR 2026-09-30 (#1449): among labels only the
+      role-scoped `tier:<role>:<value>` form is an override — an unqualified `tier:<value>`
+      label is the issue's stored (derived) Tier, a cache the reader compares against, or with
+      `tier:pinned` the pinned value. See [ADR 2026-08-24](../docs/decisions/2026-08-24-rigor-and-strategy-axes.md)
       D2/D5.)
 - [ ] Tier tables are **inert routing preferences, never dependencies**: nothing in a
       generated repo invokes any model because the config exists, and an acting consumer may

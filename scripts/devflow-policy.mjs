@@ -2300,7 +2300,19 @@ function resolveIssueTierInput(input, matrix, pin, warnings) {
   }
   const risk = input.risk ?? null
   const complexity = input.complexity ?? null
-  const storedTier = input.tier ?? null
+  let storedTier = input.tier ?? null
+  // A leftover tier:adaptive label is a stored-Tier value that no longer
+  // names a rung (ADR 2026-09-30 D8): it resolves as if absent.
+  if (storedTier === RETIRED_TIER) {
+    warnings.push(
+      tierWarning(
+        'tier-retired',
+        'issue.tier',
+        `the stored Tier "${RETIRED_TIER}" (a leftover tier:${RETIRED_TIER} label) is retired (ADR 2026-09-30 D8) and resolves as if absent`
+      )
+    )
+    storedTier = null
+  }
   const base = { risk, complexity, stored_tier: storedTier }
   if (risk === null && complexity === null) {
     if (storedTier !== null && pin.status !== 'honored') {
@@ -2482,9 +2494,11 @@ export function tierAchievabilityWarnings(resolved, registryDoc) {
  *     operator or a rigor:* label chose outranks the derived Tier, the
  *     default does not.
  *   - tierOverrides / tierLabels: { role: tier } from an operator tier
- *     instruction / from authorized tier:<role>:* labels (an unqualified
- *     tier:<value> label targets the implementer). One value per role:
- *     label conflicts are the consumer's to reconcile first.
+ *     instruction (an unqualified one targets the implementer) / from
+ *     authorized role-scoped tier:<role>:* labels — the only label overrides.
+ *     An unqualified tier:<value> label is NOT an override: it is the stored
+ *     Tier (ADR 2026-09-30 Consequences), passed as issueTier.tier. One value
+ *     per role: label conflicts are the consumer's to reconcile first.
  *   - pinnedTier: { tier, markerTrusted, valueTrusted } — the tier:pinned
  *     marker's value and whether each half's provenance was verified.
  *   - issueTier: { risk, complexity, tier } — the issue's classification and
