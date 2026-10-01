@@ -116,7 +116,7 @@ recorded so far, and the one that a session opening its own draft PR needs:
 | Host | Denied for | Added? | Reason |
 | --- | --- | --- | --- |
 | `semgrep.dev` | `task security`'s Semgrep step — observed 2026-09-27, under a network level presumed, but not recorded, to be Trusted | **Only where the session opens the draft PR itself**, which makes the level **Custom** | `task security` must pass before the draft PR (`AGENTS.md`), and this host is what its Semgrep step needs. A lane that stops at a pushed branch leaves the gate to the machine that opens the PR — see [Long-running gates](#long-running-gates). Never skip the gate instead |
-| `api.openai.com`, `auth.openai.com`, `chatgpt.com` | the Codex CLI (#1406) | No | Ephemeral clouds never hold a Codex login (#1408 decision 4): the orchestrator reviews the lane's pushed branch from its own pane |
+| `api.openai.com`, `auth.openai.com`, `chatgpt.com` | the Codex CLI (#1406) | No | Ephemeral clouds never hold a Codex login (#1408 decision 4): the orchestrator reviews the lane's pushed branch from its own pane, and the lane's PR records it (`AGENTS.md` § Remote environments) |
 | `deb.nodesource.com`, `astral.sh`, `keybase.io`, `ppa.launchpadcontent.net`, `cli.github.com`, `dl.google.com` | installer hosts (#1403) | No | The bootstrap no longer contacts them; the denied table in the architecture document is guarded so they cannot return |
 | `cafe.github.com` | `gh` telemetry | No | Harmless |
 | `cdn.playwright.dev` | Playwright Chromium | No | Browsers tier only, off by default; not on the Trusted list |

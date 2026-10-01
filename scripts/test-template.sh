@@ -1711,12 +1711,37 @@ if [ "$profile" = "full" ] || [ "$profile" = "meta" ]; then
     grep -q 'challenge:codex:' Taskfile.yml || err "challenge:codex task missing (use_codex_review=true)"
     grep -q 'codex:gate:enable:' Taskfile.yml || err "codex:gate:enable task missing (use_codex_review=true)"
     grep -q '"codex@openai-codex": true' .claude/settings.json || err ".claude/settings.json missing codex plugin enablement (use_codex_review=true)"
+    # The remote second-model guard ships with the rule it guards, and must pass
+    # against the RENDERED surfaces: the root copy scans harmon-init's own files,
+    # so a forbidden line added only under template/ first fails here.
+    if [ ! -x scripts/test-remote-codex-policy.sh ]; then
+        err "scripts/test-remote-codex-policy.sh missing or not executable (use_codex_review=true)"
+    elif ! ./scripts/test-remote-codex-policy.sh; then
+        err "rendered Codex policy guard fails"
+    fi
+    if have task; then
+        grep -qF './scripts/test-remote-codex-policy.sh' \
+            <<<"$(task --color=false --dry verify 2>&1 || true)" ||
+            err "task verify does not reach test:remote-codex-policy (use_codex_review=true)"
+    else
+        required task "remote Codex policy verify reachability" || fail=1
+    fi
+    if [ -f .github/workflows/build.yml ]; then
+        grep -qF 'task test:remote-codex-policy' .github/workflows/build.yml ||
+            err "required CI does not run test:remote-codex-policy (use_codex_review=true)"
+    fi
 else
     [ ! -f scripts/codex-review.sh ] || err "scripts/codex-review.sh rendered but use_codex_review is off"
     [ ! -f scripts/codex-gate.sh ] || err "scripts/codex-gate.sh rendered but use_codex_review is off"
     [ ! -f docs/guides/codex-review.md ] || err "docs/guides/codex-review.md rendered but use_codex_review is off"
     ! grep -q 'challenge:codex' Taskfile.yml || err "challenge:codex task rendered but use_codex_review is off"
     ! grep -q 'codex@openai-codex' .claude/settings.json || err "codex plugin enablement rendered but use_codex_review is off"
+    [ ! -f scripts/test-remote-codex-policy.sh ] || err "scripts/test-remote-codex-policy.sh rendered but use_codex_review is off"
+    ! grep -q 'test:remote-codex-policy:' Taskfile.yml || err "test:remote-codex-policy task rendered but use_codex_review is off"
+    if [ -f .github/workflows/build.yml ]; then
+        ! grep -qF 'task test:remote-codex-policy' .github/workflows/build.yml ||
+            err "CI runs test:remote-codex-policy but use_codex_review is off"
+    fi
 fi
 # git-merge-guard replaces the `git merge` ask rules in every profile: the hook
 # must be registered on Bash (fail-closed fallback included) and those rules gone.
@@ -2241,6 +2266,31 @@ if [ "$profile" = "full" ]; then
         ) || err "devcontainer=true, use_antigravity_cli=false render failed task test:devcontainer:permissions"
     else
         err "devcontainer=true, use_antigravity_cli=false render failed to generate"
+    fi
+fi
+
+# A generated repository with second-model review ON and the devcontainer OFF:
+# the pair the remote Codex policy guard's environment-example floor once broke,
+# because the examples it wants render only with the devcontainer. A third
+# surgical render (only on the "meta" pass, which already turns the review on)
+# rather than a new profile; it overrides the two answers under test and turns
+# Foreman off, which copier.yml requires without a devcontainer.
+if [ "$profile" = "meta" ]; then
+    nodc_dest="$job_tmp/render-codex-no-devcontainer"
+    if copier copy --trust --defaults --vcs-ref=HEAD \
+        "${copier_flags[@]+"${copier_flags[@]}"}" \
+        "${data_args[@]}" --data devcontainer=false --data use_foreman=false \
+        "$repo_root" "$nodc_dest"; then
+        [ ! -d "$nodc_dest/.devcontainer" ] ||
+            err "the Codex-on/devcontainer-off render still has a .devcontainer"
+        if [ ! -x "$nodc_dest/scripts/test-remote-codex-policy.sh" ]; then
+            err "the Codex-on/devcontainer-off render has no executable remote Codex policy guard"
+        else
+            (cd "$nodc_dest" && ./scripts/test-remote-codex-policy.sh) ||
+                err "the remote Codex policy guard fails in a Codex-on/devcontainer-off render"
+        fi
+    else
+        err "use_codex_review=true, devcontainer=false render failed to generate"
     fi
 fi
 

@@ -19,3 +19,29 @@ project-specific (domain) terms as the model firms up.
 | 1Password Environments | How devcontainer/local secrets are supplied — a virtual `.env` mounted over a pipe, never written to disk or git. |
 | bot vs operator | Two identities: the AI **bot** account (scoped; `main` needs code-owner approval and green checks, and though its `pull_requests: write` PAT can perform a merge a human has approved, merging stays the maintainer's decision) and the human **operator** (full access). See [architecture/security.md](architecture/security.md). |
 | TODO: term | TODO: project-specific definition |
+
+## Issue classification
+
+Inherent attributes of an issue itself, distinct from the **execution policy**
+(`.devflow.toml`: rigor, strategy, role tiers, budgets), which decides how the
+factory runs an issue and may override any default the classification implies.
+Impact, Risk, Complexity, Tier, Priority, and Effort are issue fields on
+organization repos and labels on personal-account repos; Type, `area:*`,
+`layer:*`, and `domain:*` keep their existing storage.
+
+| Term | Meaning |
+|---|---|
+| Impact | The expected significance of completing the issue for the product's users or the business, given current goals — core benefit versus marginal benefit, not common path versus uncommon path; a rarely triggered bug with severe consequences can be high impact. Scale: minimal, low, medium, high, massive. Avoid: value, importance, severity. |
+| Risk | How consequential a failure could be if the change is implemented incorrectly. For a bug fix, the danger of the fix belongs here; the harm it prevents belongs in Impact. Scale: trivial, low, medium, high, critical. Avoid: severity, blast radius. |
+| Complexity | How difficult the work is to understand, design, implement, and verify correctly, including how likely it is to grow during implementation. On every issue; AI-settable. Scale: xs, s, m, l, xl. Avoid: size, effort, difficulty. |
+| Tier | The model stratum the issue is suggested to run at — `local`, `economy`, `standard`, `frontier`, `apex` — derived by a pure function from Risk × Complexity (a risk-dominant matrix in `.devflow.toml`) and written by whoever writes the inputs; a materialized cache that readers recompute when absent. `local` is work a small self-hosted model can do and that may take a while. Avoid: suggest, model, family. |
+| Tier pin | A human choosing the Tier from the GitHub UI: the Tier value plus the `tier:pinned` label. Nothing automated writes over a pinned Tier. In execution-policy resolution a pin sits below an operator instruction and above `rigor:*`, sets the implementer tier only, and any resolved role-tier invariant it breaks is disclosed in the PR body rather than corrected. |
+| Effort | The human time estimate for work a human will do, on the modified Fibonacci ladder (1, 2, 3, 5, 8, 13, 20). Human tasks only, never agent work. Avoid: size, story points. |
+| Priority | The human's ranking of when the issue should be worked: urgent, high, medium, low. Human-only and never required; unset means an agent does not start it without asking. Avoid: P0–P3 (review-finding severities). |
+| Family | A model lineage: claude, gpt, gemini, qwen… Distinct from a **harness** (the executable that runs it). |
+| Claim | The marker recording which model family took the work: `claim:<family>[:<model>]`. A signal, not a lock; the harness and runtime are in the claim comment. |
+| triaged | Every required classification is present: Type (or work-type label), one label from each of the `area:*`, `layer:*`, and `domain:*` families (or that family's explicit `none` value), Risk, Complexity, Impact. `needs-triage` is derived from this, never set by hand. |
+| Size | Retired: superseded by Effort (human tasks) and Complexity (every issue). |
+| `suggest:*` | Retired: the family suggestion, superseded by Tier. |
+| `tier:adaptive` | Retired 2026-10-01: no rung on the Tier scale. The label is removed and the issue resolves through its derived Tier. |
+| `needs-review` | The issue's PR is waiting for human review: the integration stage adds it at ready-for-review, when it removes `claim:*`, and removes it if review sends the work back. It keeps the issue out of the agent queue. |
