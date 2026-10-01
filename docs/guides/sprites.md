@@ -129,10 +129,10 @@ checkout, and the credential files of step 4 — and not running processes.
 session on the Sprite. A process inside the Sprite can also restore its own
 checkpoints (`sprite-env`), so a checkpoint is a reset point, not a control
 boundary; the network policy is the control, because it cannot be changed from
-inside (*docs, 2026-10-01*) — provided a restore does not revert it, which the
-docs do not say ([pending](#pending-observations)). Until that settles, re-run
-`apply`, which is idempotent, after every restore, whether the operator, the
-platform or a process inside the Sprite made it.
+inside (*docs, 2026-10-01*). Whether a restore reverts it is not documented
+([pending](#pending-observations)), so the guarantee is keyed to state, not to
+events: before a lane starts or is attached, run `apply` and confirm the stored
+policy equals `generate`'s output ([Network policy](#network-policy)).
 
 **7. The maintainer's one Codex login** (below), after the checkpoint.
 
@@ -209,9 +209,13 @@ with the generated rules (*docs, 2026-10-01*). It hands the token to `curl` on
 its stdin, so the token appears in no argument list. Run `generate` and `apply`
 from a checkout of the default branch (or the pinned release tag), never from a
 lane's branch, so an allowlist edit an agent pushed cannot widen its own Sprite
-before it is reviewed and merged. Re-run `apply` whenever either list changes,
-and after every checkpoint restore (see [Provisioning](#provisioning), step 6).
-Then confirm what the Sprite enforces:
+before it is reviewed and merged. Re-run `apply` whenever either list changes.
+
+**Before a lane starts on the Sprite, or a Herdr tab is attached to it,** run
+`apply` and confirm that the stored policy equals a fresh generation. The check
+reads the Sprite's state, so it holds whatever a checkpoint restore did to the
+policy and whether `apply` replaces or merges an earlier one — both
+[pending](#pending-observations):
 
 ```sh
 diff <(bash sprites/network-policy.sh generate | jq -S .) \
@@ -257,3 +261,4 @@ environments on a Sprite (#1410).
 | The agent posture is in effect in a session on the Sprite | #1404 criterion 4 ([pending observation](../architecture/remote-environments.md#how-each-platform-receives-the-agent-posture)) |
 | `/.sprite/policy/network.json` equals a fresh `generate` after `apply` | the criterion-4 run |
 | Whether restoring a checkpoint — which a process inside the Sprite can do — reverts the network policy; the docs do not say | the criterion-4 run |
+| Whether `apply` replaces the stored policy or merges with an earlier one; the docs do not say | the criterion-4 run |

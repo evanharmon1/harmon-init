@@ -60,10 +60,11 @@ usage() {
 cmd_generate() {
     local entries entry sep="" rules=""
     [ -f "$ALLOWLIST_SH" ] || fail "egress allowlist script not found at ${ALLOWLIST_SH}"
-    # The policy is a function of this checkout's lists and nothing else: the
-    # parser runs with NO caller environment (PATH only, no startup files), so
-    # no exported variable — a list-path override, BASH_ENV, anything — can
-    # change what it reads or prints.
+    # The parser runs under env -i (PATH only, no startup files), so it reads
+    # only this checkout's lists whatever EGRESS_ALLOWLIST_* or BASH_ENV the
+    # caller exports. Trust boundary: the operator's own shell — its PATH,
+    # BASH_ENV and functions, which act before this line — is trusted, as for
+    # any script the operator runs.
     entries="$(env -i PATH="$PATH" bash --noprofile --norc "$ALLOWLIST_SH" hosts)" ||
         fail "the egress allowlist was refused (see above); no policy generated"
     while IFS= read -r entry; do
@@ -84,7 +85,7 @@ cmd_generate() {
 }
 
 cmd_apply() {
-    local name="${1:-}" token policy code
+    local name="${1:-}" token policy out code body
     [[ "$name" =~ $NAME_RE ]] || fail "'${name}' is not a Sprite name (lowercase letters, digits and hyphens)"
     [ ! -t 0 ] || fail "pipe the Sprites API token on stdin, e.g. from a secret store read; it is never taken as an argument"
     IFS= read -r token || [ -n "$token" ] || fail "no token on stdin"
@@ -95,18 +96,25 @@ cmd_apply() {
     # the request body on file descriptor 3. `-q` must be curl's FIRST argument
     # (it is ignored anywhere else): it skips the operator's ~/.curlrc, where a
     # trace, verbose, url or proxy line would print or redirect the header.
-    # Only a 2xx is success: curl fails at 400+ but follows no redirect, so a
-    # 3xx would otherwise read as applied.
-    code="$(printf 'header = "Authorization: Bearer %s"\n' "$token" |
-        curl -q --config - --fail-with-body -sS --max-time 60 \
-            -o /dev/null -w '%{http_code}' \
+    # One call returns the response body, then the HTTP status on a last line
+    # of its own (-w). A non-zero curl exit is a transport failure (no answer:
+    # timeout, refused connection, empty reply); any answer but a 2xx is a
+    # refusal, reported with its status and body. curl follows no redirect, so
+    # a 3xx is a refusal too.
+    out="$(printf 'header = "Authorization: Bearer %s"\n' "$token" |
+        curl -q --config - -sS --max-time 60 -w '\n%{http_code}' \
             -X POST -H 'Content-Type: application/json' \
             --data-binary @/dev/fd/3 \
             "${SPRITES_API_URL}/v1/sprites/${name}/policy/network" 3<<<"$policy")" ||
-        fail "the Sprites API refused the policy for '${name}'"
+        fail "could not reach the Sprites API for '${name}' (curl transport failure, see above); the policy was not applied"
+    code="${out##*$'\n'}"
+    body="${out%$'\n'*}"
     case "$code" in
     2??) ;;
-    *) fail "the Sprites API answered HTTP ${code} for '${name}'; the policy was not applied" ;;
+    *)
+        [ -z "$body" ] || printf '%s\n' "$body" >&2
+        fail "the Sprites API refused the policy for '${name}' with HTTP ${code}; it was not applied"
+        ;;
     esac
     echo "sprites-network-policy: applied to ${name}; check it with: sprite exec -s ${name} -- cat /.sprite/policy/network.json" >&2
 }

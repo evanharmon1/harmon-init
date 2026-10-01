@@ -149,13 +149,21 @@ pass "the caller's environment (list-path overrides, BASH_ENV) is ignored"
 
 echo "==> 4. apply: the documented endpoint, the token on stdin only"
 mkdir -p "${TMP}/bin"
+# The stub answers in the shape the real call requests: on a transport
+# failure an error on stderr and a non-zero exit; otherwise the response body,
+# then — only when a write-out was requested — a newline and the status (200 by
+# default, as the docs state).
 cat >"${TMP}/bin/curl" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$@" >"${STUB_DIR}/argv"
 cat >"${STUB_DIR}/config"
 cat <&3 >"${STUB_DIR}/body"
-printf '%s' "${STUB_CODE:-204}"
-exit "${STUB_EXIT:-0}"
+if [ "${STUB_EXIT:-0}" -ne 0 ]; then
+    echo "curl: (${STUB_EXIT}) stub transport failure" >&2
+    exit "$STUB_EXIT"
+fi
+printf '%s' "${STUB_BODY:-}"
+case " $* " in *" -w "*) printf '\n%s' "${STUB_CODE:-200}" ;; esac
 STUB
 chmod +x "${TMP}/bin/curl"
 token="tok-$$-secret"
@@ -169,9 +177,17 @@ grep -qxF "header = \"Authorization: Bearer ${token}\"" "${TMP}/config" || fail 
 cmp -s <(jq -S . "${TMP}/body") <(jq -S . "${TMP}/real.json") || fail "apply sent a body other than the generated policy"
 pass "POST to /v1/sprites/<name>/policy/network, generated body, token only on stdin, -q first"
 
-printf '%s\n' "$token" | PATH="${TMP}/bin:${PATH}" STUB_DIR="$TMP" STUB_EXIT=22 bash "$GEN" apply my-sprite 2>/dev/null &&
+printf '%s\n' "$token" | PATH="${TMP}/bin:${PATH}" STUB_DIR="$TMP" STUB_CODE=403 STUB_BODY='{"error":"stub-forbidden"}' \
+    bash "$GEN" apply my-sprite 2>"${TMP}/apply.err" &&
     fail "apply reported success when the API refused the policy"
-pass "an API refusal fails apply"
+grep -qF 'stub-forbidden' "${TMP}/apply.err" || fail "the API's error body did not reach stderr"
+grep -qF 'HTTP 403' "${TMP}/apply.err" || fail "the refusal does not name its HTTP status"
+pass "an API refusal fails apply, with its status and body on stderr"
+
+printf '%s\n' "$token" | PATH="${TMP}/bin:${PATH}" STUB_DIR="$TMP" STUB_EXIT=28 bash "$GEN" apply my-sprite 2>"${TMP}/apply.err" &&
+    fail "apply reported success on a transport failure"
+grep -qF 'could not reach' "${TMP}/apply.err" || fail "a transport failure is worded as an HTTP refusal"
+pass "a transport failure fails apply, worded as one"
 
 printf '%s\n' "$token" | PATH="${TMP}/bin:${PATH}" STUB_DIR="$TMP" STUB_CODE=307 bash "$GEN" apply my-sprite 2>/dev/null &&
     fail "apply reported success on a 307 redirect"
