@@ -1555,6 +1555,80 @@
           ]
         }
       }
+    },
+    {
+      "name": "matching-stored-tier-is-a-cache-hit",
+      "basis": "branch",
+      "authorized_labels": ["tier:frontier"],
+      "issue": {
+        "risk": "high",
+        "complexity": "m"
+      },
+      "expect": {
+        "exit": 0,
+        "result": {
+          "tiers": {
+            "implementer": {
+              "value": "frontier",
+              "source": "derived"
+            }
+          },
+          "issue_tier": {
+            "status": "derived",
+            "value": "frontier",
+            "cache": "match"
+          },
+          "disclosures": [
+            {
+              "code": "off-profile-tier",
+              "role": "implementer"
+            },
+            {
+              "code": "role-tier-floor",
+              "role": "reviewer"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "stronger-input-suppresses-tier-indeterminacy",
+      "basis": "branch",
+      "pin": {
+        "tier": "frontier",
+        "marker_trusted": true,
+        "value_trusted": true
+      },
+      "issue": {
+        "risk": "high"
+      },
+      "expect": {
+        "exit": 0,
+        "result": {
+          "tiers": {
+            "implementer": {
+              "value": "frontier",
+              "source": "pinned"
+            }
+          },
+          "issue_tier": {
+            "status": "indeterminate"
+          },
+          "pin": {
+            "status": "honored"
+          },
+          "disclosures": [
+            {
+              "code": "off-profile-tier",
+              "role": "implementer"
+            },
+            {
+              "code": "role-tier-floor",
+              "role": "reviewer"
+            }
+          ]
+        }
+      }
     }
   ]
 }

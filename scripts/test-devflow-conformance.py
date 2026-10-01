@@ -135,11 +135,12 @@ def v2_case_inputs(name: str, case: dict) -> tuple[dict, list[str]]:
     consumer already verified. Label parsing and conflict reconciliation live
     here, never in the reader (docs/guides/devflow.md).
 
-    Only role-scoped `tier:<role>:<value>` labels are overrides. An
-    unqualified `tier:<value>` label is the issue's stored Tier (ADR 2026-09-30
-    Consequences) — the cache the reader compares the derived Tier against —
-    so it maps to the stored-Tier input, never to an implementer override. A
-    pin is the `pin` input, not a `tier:pinned` label.
+    Only role-scoped `tier:<role>:<value>` labels are role overrides. An
+    unqualified `tier:<value>` label is the issue's stored Tier (ADR 2026-09-30)
+    — a cache of the derived Tier, which maps to the stored-Tier input, or,
+    with `tier:pinned` also present, the pinned Tier. This corpus expresses a
+    pin with the `pin` input (marker and value provenance), so a `tier:pinned`
+    label is refused here.
     """
     overrides = case.get("overrides", [])
     if not isinstance(overrides, list) or not all(isinstance(value, str) for value in overrides):

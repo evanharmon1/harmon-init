@@ -2496,9 +2496,11 @@ export function tierAchievabilityWarnings(resolved, registryDoc) {
  *   - tierOverrides / tierLabels: { role: tier } from an operator tier
  *     instruction (an unqualified one targets the implementer) / from
  *     authorized role-scoped tier:<role>:* labels — the only label overrides.
- *     An unqualified tier:<value> label is NOT an override: it is the stored
- *     Tier (ADR 2026-09-30 Consequences), passed as issueTier.tier. One value
- *     per role: label conflicts are the consumer's to reconcile first.
+ *     An unqualified tier:<value> label is NOT a role override: it is the
+ *     issue's stored Tier (ADR 2026-09-30) — a cache of the derived Tier,
+ *     passed as issueTier.tier, or, with tier:pinned also present, the pinned
+ *     Tier, passed as pinnedTier. One value per role: label conflicts are the
+ *     consumer's to reconcile first.
  *   - pinnedTier: { tier, markerTrusted, valueTrusted } — the tier:pinned
  *     marker's value and whether each half's provenance was verified.
  *   - issueTier: { risk, complexity, tier } — the issue's classification and

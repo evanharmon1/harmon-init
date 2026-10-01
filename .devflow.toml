@@ -26,8 +26,11 @@ rigor_order = ["cursory", "light", "standard", "thorough", "deep", "forensic"]
 # families[].models[] carries `tier: "<rung>"` (frontier is opus-class, apex
 # mythos-class), and a family with two models at one rung marks one
 # `default: true` — so resolving a model is a registry lookup: the resolved
-# family's model at the resolved rung. Two tier:* labels on one issue resolve
-# to whichever sorts later here (a conflict only ever buys more capability).
+# family's model at the resolved rung. Two tier:<role>:* labels for the same
+# role resolve to whichever sorts later here (a conflict only ever buys more
+# capability). An unqualified tier:<value> label is not a role override: it is
+# the issue's stored Tier — a cache of the derived Tier, or the pinned Tier when
+# tier:pinned is also present.
 # `adaptive` is retired (ADR 2026-09-30 D8): it is not a rung, a leftover
 # tier:adaptive label resolves as if absent with a warning, and `adaptive` as
 # a configured or operator tier is rejected. Escalation climbs one rung at a time in

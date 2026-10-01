@@ -246,8 +246,10 @@ Issues become cheap to classify and route, for humans and agents alike:
 
 ### Scenario: tier conflict can only buy more
 
-- **Given** an issue carrying both `tier:economy` and `tier:standard`
-- **When** an agent (or foreman, later) resolves the (unqualified, implementer-scoped) tier
+- **Given** an issue carrying both `tier:implementer:economy` and `tier:implementer:standard`
+  (role-scoped overrides; an unqualified `tier:<value>` label is the stored Tier, not an
+  override — ADR 2026-09-30)
+- **When** an agent (or foreman, later) resolves the implementer tier
 - **Then** the resolution is `standard`, and any role tier that ends up below the resolved
   rigor's own profile for that role is disclosed in the PR body
 

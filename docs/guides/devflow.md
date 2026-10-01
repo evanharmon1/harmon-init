@@ -90,8 +90,8 @@ Each `[rigor.<level>]` profile points to:
 reader. An unqualified operator tier instruction targets the implementer. Among
 labels, only a role-scoped `tier:<role>:<value>` label and the pin are
 overrides; a role-scoped label targets exactly one of the five roles. An
-unqualified `tier:<value>` label is not an override: on every owner type it is
-the issue's stored Tier (maintainer decision 2026-10-01 — Tier is a label, not
+unqualified `tier:<value>` label is not a role override: on every owner type it
+is the issue's stored Tier (maintainer decision 2026-10-01 — Tier is a label, not
 an organization issue field), which a consumer passes as `--stored-tier` — the
 cache the derived Tier is compared against — or, beside `tier:pinned`, as the
 pinned value. Every off-profile role choice is visible in the PR body.
