@@ -24,8 +24,9 @@
 # GitHub's non-atomic API boundary and requires a quiescent maintenance window.
 # A retired label with no one-to-one replacement (`suggest:*`, superseded by the
 # derived Tier; `tier:adaptive`, which has no rung on the Tier scale) has no
-# --migrate destination: remove it from each issue — the issue then resolves
-# through its derived Tier — and --prune offers the now-unassociated label.
+# --migrate destination: remove it from every issue, pull request, and
+# discussion that carries it (an issue then resolves through its derived Tier)
+# and --prune offers the now-unassociated label.
 # Prune never strips associations itself; it refuses a label that still has
 # any, and nothing is deleted without the confirmation below.
 # Destructive maintenance assumes the operator has paused label/issue/PR/
@@ -474,7 +475,7 @@ if [ "$report_unregistered" = 1 ] || [ "$prune" = 1 ]; then
                 source_complete=1
             fi
             if is_retired_without_replacement "$canonical_old"; then
-                die "migration source '$canonical_old' is retired with no one-to-one replacement; remove it from each issue (the issue then resolves through its derived Tier), then rerun --prune"
+                die "migration source '$canonical_old' is retired with no one-to-one replacement; remove it from every issue, pull request, and discussion that carries it (an issue then resolves through its derived Tier), then rerun --prune"
             fi
             if is_broker_migration_source "$canonical_old"; then
                 die "migration source '$canonical_old' is broker-derived and has no trustworthy single destination; re-express or remove each matching record manually using its confirmed family/model, then rerun --prune"

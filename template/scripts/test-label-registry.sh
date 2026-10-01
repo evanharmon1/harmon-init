@@ -1134,9 +1134,24 @@ STUB
 
     # Retired labels with no one-to-one replacement are refused as migration
     # SOURCES too (a migration would stamp an unrelated label on every record,
-    # e.g. suggest:* -> claim:* would mark issues as claimed).
-    for retired_source in 'suggest:gpt=feature' 'suggest:gpt:sol=feature' 'suggest:gpt=claim:gpt' 'tier:adaptive=tier:standard'; do
-        retired_old="${retired_source%%=*}"
+    # e.g. suggest:* -> claim:* would mark issues as claimed). Each row is
+    # SPEC|NAME-IN-THE-REFUSAL: a present source is named as typed, a source
+    # differing only in case is named by its canonical live label, an absent
+    # source (mixed case included — the one row that reaches the helper's own
+    # case handling, since a live label is canonicalized first) and the bare
+    # prefix are named as typed.
+    for retired_row in \
+        'suggest:gpt=feature|suggest:gpt' \
+        'suggest:gpt:sol=feature|suggest:gpt:sol' \
+        'suggest:gpt=claim:gpt|suggest:gpt' \
+        'tier:adaptive=tier:standard|tier:adaptive' \
+        'suggest:never-existed=feature|suggest:never-existed' \
+        'Suggest:GPT=feature|suggest:gpt' \
+        'Tier:Adaptive=tier:standard|tier:adaptive' \
+        'Suggest:Never-Existed=feature|Suggest:Never-Existed' \
+        'suggest:=feature|suggest:'; do
+        retired_source="${retired_row%%|*}"
+        retired_old="${retired_row#*|}"
         reset_maintenance
         if retired_src_out="$(STUB_LOG="$maintenance_log" STUB_STATE="$maintenance_state" PATH="$maintenance_stub:$PATH" \
             bash scripts/setup-github-labels.sh --repo drift/check --prune --yes \
@@ -1144,7 +1159,7 @@ STUB
             fail "a retired label was accepted as a migration source: $retired_source"
         fi
         case "$retired_src_out" in
-        *"migration source '$retired_old' is retired with no one-to-one replacement; remove it from each issue"*) ;;
+        *"migration source '$retired_old' is retired with no one-to-one replacement; remove it from every issue, pull request, and discussion that carries it"*) ;;
         *) fail "retired migration source $retired_old was not refused with the removal guidance: $retired_src_out" ;;
         esac
         case "$retired_src_out" in
