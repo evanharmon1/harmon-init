@@ -28,6 +28,9 @@ cd "$(dirname "$0")/.."
 # nothing to do with the code. The explicit env-token cases set what they need,
 # one variable at a time.
 unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN GH_HOST
+# Likewise git's own discovery variables (set when this runs under a git hook), so
+# the worktree case below finds the repository it builds, not the caller's.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR
 
 script="./scripts/setup-gh-scopes.sh"
 scopes_lib="./scripts/gh-scopes.sh"
@@ -35,6 +38,10 @@ output_lib="./scripts/lib/output.sh"
 
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
+# Keep git from walking above the temp directory, so a fixture that is not itself a
+# repository is never mistaken for part of one that happens to contain $TMPDIR.
+GIT_CEILING_DIRECTORIES="$(cd "${TMP}" && pwd -P)"
+export GIT_CEILING_DIRECTORIES
 
 # A board-carrying fixture, so the required list includes the Projects scopes.
 mkdir -p "${TMP}/repo/scripts"
@@ -342,9 +349,11 @@ mutate_detach "nohup in front of the forked command" '/bash "\${bootstrap}"/s#ba
 mutate_detach "the saved disposition no longer restored" '/eval "\${prev_hup}"/d'
 mutate_detach "the default disposition no longer restored" '/^[[:space:]]*trap - HUP$/d'
 # ...and a reworded comment must not be able to fail it.
-{
-    sed 's/^trigger_related_repos_bootstrap() {$/&\n    # nohup bash bootstrap was the old form/' "${script}"
-} >"${TMP}/detach-comment.sh"
+# (awk, not sed: a newline in a sed replacement is GNU-only, and on BSD sed the
+# "comment" would silently become a literal n, making this case vacuous.)
+awk '{ print } /^trigger_related_repos_bootstrap\(\) \{$/ { print "    # nohup bash bootstrap was the old form" }' "${script}" >"${TMP}/detach-comment.sh"
+grep -q '^    # nohup bash bootstrap was the old form$' "${TMP}/detach-comment.sh" ||
+    fail "test setup: the comment line was not inserted"
 detach_form_ok "${TMP}/detach-comment.sh" ||
     fail "the detach guard failed on a comment that merely mentions nohup"
 
@@ -431,6 +440,24 @@ EOF
     ln -s "${TMP}/layout/elsewhere/deep/checkout" "${TMP}/layout/links/alias"
     assert_bootstrap_target "${TMP}/layout/links/alias/scripts/setup-gh-scopes.sh" "${want_el}" \
         "a checkout entered through a symlink"
+    # ...and a linked worktree, which sits INSIDE its primary checkout (this
+    # repository's own .worktrees/<name> layout): siblings belong beside the
+    # PRIMARY checkout, not under its .worktrees directory.
+    mkdir -p "${TMP}/layout/base"
+    cp -R "${TMP}/repo" "${TMP}/layout/base/primary"
+    (
+        cd "${TMP}/layout/base/primary"
+        git init -q
+        git add -A
+        git -c user.name=test -c user.email=test@example.invalid -c commit.gpgsign=false \
+            -c core.hooksPath=/dev/null commit -q -m fixture
+        git worktree add -q .worktrees/linked -b linked
+    ) >/dev/null 2>&1 || fail "test setup: could not build a repository with a linked worktree"
+    [ -f "${TMP}/layout/base/primary/.worktrees/linked/scripts/setup-gh-scopes.sh" ] ||
+        fail "test setup: the linked worktree has no copy of the script"
+    want_primary="$(cd "${TMP}/layout/base" && pwd -P)"
+    assert_bootstrap_target "${TMP}/layout/base/primary/.worktrees/linked/scripts/setup-gh-scopes.sh" "${want_primary}" \
+        "a linked worktree"
     rm -rf "${TMP}/layout"
 
     echo "==> bootstrap-related-repos.sh failure does not change exit status of setup-gh-scopes"

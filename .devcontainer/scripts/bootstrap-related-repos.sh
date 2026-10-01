@@ -12,8 +12,9 @@ set -euo pipefail
 #   argument wins over WORKSPACES_DIR, which wins over the /workspaces default.
 #   `task setup:remote` passes the checkout's parent directory so a remote
 #   platform (which has no /workspaces) gets the same siblings the devcontainer
-#   does. The devcontainer's own call sites pass nothing and still target
-#   /workspaces.
+#   does, and so does `task setup:gh-scopes` (its scope-refresh trigger). The
+#   devcontainer's lifecycle call sites (post-create, post-start) pass nothing
+#   and still target /workspaces.
 #
 # Runs on devcontainer create (post-create-common.sh), on devcontainer start
 # (post-start-common.sh in background), and upon scope verification in

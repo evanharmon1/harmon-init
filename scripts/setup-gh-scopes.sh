@@ -43,8 +43,21 @@ trigger_related_repos_bootstrap() {
         # Name the target directory: the PHYSICAL checkout's parent, as
         # setup-remote.sh computes it, so siblings land beside the checkout on any
         # layout. In the devcontainer that is /workspaces, the bootstrap's default.
-        local checkout_parent
+        local checkout_parent primary_git primary_root
         checkout_parent="$(dirname -- "$(cd -- "${REPO_ROOT}" && pwd -P)")"
+        # A linked worktree (task worktree:new puts one at <main>/.worktrees/<name>)
+        # lives INSIDE its primary checkout, so its own parent is the wrong place for
+        # siblings: use the primary working tree's parent. Anything else (not in git,
+        # a bare common dir, an old git without --path-format) keeps the value above.
+        if primary_git="$(git -C "${REPO_ROOT}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"; then
+            case "${primary_git}" in
+            */.git)
+                if primary_root="$(cd -- "${primary_git%/.git}" 2>/dev/null && pwd -P)"; then
+                    checkout_parent="$(dirname -- "${primary_root}")"
+                fi
+                ;;
+            esac
+        fi
         echo "==> Bootstrapping related repos in the background (log: ${log_file})..."
         # Ignore SIGHUP in THIS shell before the fork, then restore what it was.
         # An ignored signal stays ignored across fork and exec (POSIX), so the job
