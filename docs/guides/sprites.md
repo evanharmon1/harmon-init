@@ -242,7 +242,7 @@ platform's `defaults` preset: the shared list is the only source.
 `task test:sprites-policy` proves that every entry the policy can express
 reaches it, that the other kinds are a named limitation (`@github-meta`) or a
 refusal (an address entry fails generation rather than being dropped), and that
-a policy with a missing, extra or changed rule fails the comparison.
+a policy with a missing, extra or changed rule or field fails the comparison.
 
 ## Attaching Herdr
 

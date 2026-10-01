@@ -45,18 +45,22 @@ pass() { echo "  ok: $*"; }
 [ -f "$ALLOWLIST_SH" ] || fail "no egress allowlist parser at ${ALLOWLIST_SH}"
 command -v jq >/dev/null 2>&1 || fail "jq is required"
 
-# check_policy POLICY_FILE HOSTS_FILE — succeed only when the policy is exactly
+# check_policy POLICY_FILE HOSTS_FILE — succeed only when the policy is, as a
+# whole document, exactly what the generator must emit: {"rules": [...]} with
 # the hosts' allow rules (in order, @github-meta excluded) followed by the
-# closing `*` deny; print the first difference otherwise.
+# closing `*` deny, each rule carrying `domain` and `action` and nothing else,
+# and no other top-level key. Both sides are compared canonically (jq -S), so
+# an extra field anywhere fails; print the first difference otherwise.
 check_policy() {
     local want got
-    want="$(grep -vx '@github-meta' "$2" | jq -R '{domain: ., action: "allow"}' | jq -s -c '. + [{domain: "*", action: "deny"}]')"
-    got="$(jq -c '[.rules[] | {domain, action} + (if has("include") then {include} else {} end)]' "$1")" || {
-        echo "policy is not valid JSON with a rules array"
+    want="$(grep -vx '@github-meta' "$2" | jq -R '{domain: ., action: "allow"}' |
+        jq -s -S -c '{rules: (. + [{domain: "*", action: "deny"}])}')"
+    got="$(jq -S -c . "$1")" || {
+        echo "policy is not valid JSON"
         return 1
     }
     if [ "$want" != "$got" ]; then
-        diff <(jq '.[]' <<<"$want") <(jq '.[]' <<<"$got") | head -5
+        diff <(jq -S . <<<"$want") <(jq -S . <<<"$got") | head -5
         return 1
     fi
 }
@@ -106,6 +110,8 @@ mutate "a changed domain" '.rules[0].domain = "github.example"'
 mutate "a changed action" '.rules[0].action = "deny"'
 mutate "no closing deny" 'del(.rules[-1])'
 mutate "the defaults preset" '.rules = [{include: "defaults"}] + .rules'
+mutate "a rule with an extra field" '.rules[0].ports = [80]'
+mutate "an extra top-level key" '.extra = true'
 
 echo "==> 3. fixture lists: the .local list, and entries the policy cannot express"
 printf '# shared\n@github-meta\ngithub.com\napi.example.com # trailing comment\n' >"${TMP}/shared.txt"
@@ -153,11 +159,21 @@ mkdir -p "${TMP}/bin"
 # failure an error on stderr and a non-zero exit; otherwise the response body,
 # then — only when a write-out was requested — a newline and the status (200 by
 # default, as the docs state).
+# Like real curl, it reads its config from stdin only when given `--config -`
+# and the request body from fd 3 only when given `--data-binary @/dev/fd/3`;
+# otherwise the captured config or body is empty, and the assertions on them
+# fail.
 cat >"${TMP}/bin/curl" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$@" >"${STUB_DIR}/argv"
-cat >"${STUB_DIR}/config"
-cat <&3 >"${STUB_DIR}/body"
+read_config=0 read_body=0 prev=""
+for arg in "$@"; do
+    [ "$prev" = "--config" ] && [ "$arg" = "-" ] && read_config=1
+    [ "$prev" = "--data-binary" ] && [ "$arg" = "@/dev/fd/3" ] && read_body=1
+    prev="$arg"
+done
+if [ "$read_config" = 1 ]; then cat >"${STUB_DIR}/config"; else : >"${STUB_DIR}/config"; fi
+if [ "$read_body" = 1 ]; then cat <&3 >"${STUB_DIR}/body"; else : >"${STUB_DIR}/body"; fi
 if [ "${STUB_EXIT:-0}" -ne 0 ]; then
     echo "curl: (${STUB_EXIT}) stub transport failure" >&2
     exit "$STUB_EXIT"

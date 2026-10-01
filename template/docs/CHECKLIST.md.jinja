@@ -108,9 +108,13 @@ the compatibility reason in the rule's `description`.
       credit; a Sprite is billed for compute while running and for storage
       while idle), and a Sprites API token for that organization kept in your
       secret store — the `sprite` CLI and `sprites/network-policy.sh apply`
-      read it, nothing commits it. Then, once per Sprite, the maintainer signs
-      its Codex CLI in by hand through `sprite console`; an agent never does,
-      and that login is never copied to another machine. Procedure: harmon-init's
+      read it, nothing commits it.
+[% if use_codex_review %]
+      Then, once per Sprite, the maintainer signs its Codex CLI in by hand
+      through `sprite console`; an agent never does, and that login is never
+      copied to another machine.
+[% endif %]
+      Procedure: harmon-init's
       [Sprites guide](https://github.com/evanharmon1/harmon-init/blob/main/docs/guides/sprites.md).
 [% endif %]
 [% endif %]
