@@ -118,9 +118,11 @@ for consumers that need the Tier alone.
   a write that updated Risk or Complexity but failed to update Tier cannot be
   read as current, with or without a reconciler.
 - **Indeterminate, never guessed.** A partial classification, an off-scale
-  value, or a classified issue under a policy with no matrix leaves the
-  derived rung indeterminate: the reader exits 3 when that rung is the one
-  that decides the implementer tier.
+  value, or a classified issue under a policy file that has no matrix leaves
+  the derived rung indeterminate: the reader exits 3 when that rung is the one
+  that decides the implementer tier. With no policy file at all, the built-in
+  fallback keeps tiers inert: the classification is recorded as `inert`
+  (`tier-inert-absent-policy`) and never applied.
 - **The pin.** A human pins a Tier by setting it and adding `tier:pinned`. The
   pin is two independently mutable values, so it is honored only when the
   consumer verified the provenance of both the marker and the current value;

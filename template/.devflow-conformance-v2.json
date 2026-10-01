@@ -315,17 +315,18 @@
       }
     },
     {
-      "name": "absent-policy-classified-issue-is-indeterminate",
+      "name": "absent-policy-classified-issue-is-inert",
       "basis": "absent",
       "issue": {
         "risk": "high",
         "complexity": "m"
       },
       "expect": {
-        "exit": 3,
-        "error_diagnostics": [
+        "exit": 0,
+        "error_diagnostics": [],
+        "warning_diagnostics": [
           {
-            "code": "indeterminate",
+            "code": "tier-inert-absent-policy",
             "subject": "issue_tier"
           }
         ],
@@ -338,7 +339,49 @@
             }
           },
           "issue_tier": {
-            "status": "indeterminate"
+            "status": "inert",
+            "value": null,
+            "cache": "absent"
+          }
+        }
+      }
+    },
+    {
+      "name": "absent-policy-classified-issue-keeps-an-honored-pin",
+      "basis": "absent",
+      "issue": {
+        "risk": "high",
+        "complexity": "m"
+      },
+      "pin": {
+        "tier": "frontier",
+        "marker_trusted": true,
+        "value_trusted": true
+      },
+      "expect": {
+        "exit": 0,
+        "error_diagnostics": [],
+        "warning_diagnostics": [
+          {
+            "code": "tier-inert-absent-policy",
+            "subject": "issue_tier"
+          }
+        ],
+        "result": {
+          "config_source": "built-in-fallback",
+          "tiers": {
+            "implementer": {
+              "value": "frontier",
+              "source": "pinned"
+            }
+          },
+          "issue_tier": {
+            "status": "inert",
+            "value": null,
+            "cache": "pinned"
+          },
+          "pin": {
+            "status": "honored"
           }
         }
       }

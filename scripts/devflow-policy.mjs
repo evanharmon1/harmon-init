@@ -2397,7 +2397,30 @@ function applyTierInputs(resolved, opts = {}) {
   const operator = normalizeTierMap(tierOverrides, 'operator', ladder, warnings)
   const labels = normalizeTierMap(tierLabels, 'label', ladder, warnings)
   const pin = resolvePinInput(pinnedTier, ladder, warnings)
-  const issue = resolveIssueTierInput(issueTier, matrix, pin, warnings)
+  let issue = resolveIssueTierInput(issueTier, matrix, pin, warnings)
+  // No .devflow.toml at all: the built-in fallback keeps tiers inert
+  // (ADR 2026-08-16 D5, specs/issue-strategy.md "Built-in fallbacks"), so a
+  // classified issue is recorded, never applied — and never indeterminate,
+  // which would stop a policy-less repository from running the loop. A
+  // PRESENT policy without [tier.matrix] stays indeterminate: its author could
+  // have written the table.
+  if (resolved.decodedFrom === 'absent' && issue.status === 'indeterminate') {
+    const reason =
+      'no .devflow.toml: the built-in fallback derives no Tier (ADR 2026-08-16 D5); the classification is recorded, not applied'
+    let cache = 'unverifiable'
+    if (pin.status === 'honored') cache = 'pinned'
+    else if (issue.stored_tier === null) cache = 'absent'
+    issue = {
+      status: 'inert',
+      risk: issue.risk,
+      complexity: issue.complexity,
+      stored_tier: issue.stored_tier,
+      tier: null,
+      cache,
+      reason
+    }
+    warnings.push(tierWarning('tier-inert-absent-policy', 'issue_tier', reason))
+  }
   const rigorChosen = requestedRigor !== undefined
 
   const roles = {}
