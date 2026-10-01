@@ -1704,6 +1704,85 @@
           ]
         }
       }
+    },
+    {
+      "name": "rigor-chosen-by-operator-is-reported",
+      "basis": "branch",
+      "overrides": ["rigor=deep"],
+      "expect": {
+        "exit": 0,
+        "result": {
+          "selections": {
+            "rigor": {
+              "value": "deep",
+              "source": "explicit",
+              "chosen_by": "operator"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "rigor-chosen-by-label-is-reported",
+      "basis": "branch",
+      "authorized_labels": ["rigor:light"],
+      "expect": {
+        "exit": 0,
+        "result": {
+          "selections": {
+            "rigor": {
+              "value": "light",
+              "source": "label",
+              "chosen_by": "label"
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "rigor-chosen-by-is-null-without-a-rigor",
+      "basis": "branch",
+      "expect": {
+        "exit": 0,
+        "result": {
+          "selections": {
+            "rigor": {
+              "value": "standard",
+              "source": "default",
+              "chosen_by": null
+            }
+          }
+        }
+      }
+    },
+    {
+      "name": "honored-pin-without-classification-reports-pinned-cache",
+      "basis": "branch",
+      "authorized_labels": ["tier:apex"],
+      "pin": {
+        "tier": "apex",
+        "marker_trusted": true,
+        "value_trusted": true
+      },
+      "expect": {
+        "exit": 0,
+        "result": {
+          "tiers": {
+            "implementer": {
+              "value": "apex",
+              "source": "pinned"
+            }
+          },
+          "issue_tier": {
+            "status": "absent",
+            "value": null,
+            "cache": "pinned"
+          },
+          "pin": {
+            "status": "honored"
+          }
+        }
+      }
     }
   ]
 }

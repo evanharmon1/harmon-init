@@ -2296,7 +2296,12 @@ function resolvePinInput(input, ladder, warnings) {
 // the stored Tier can never be read as current. The stored Tier is a cache
 // to compare against, never an input — not even when the inputs are absent.
 function resolveIssueTierInput(input, matrix, pin, warnings) {
-  if (input === undefined || input === null) return { status: 'absent' }
+  // An honored pin is the issue's Tier whatever the classification says, so
+  // its cache state is `pinned` on every path — classified or not.
+  const pinned = pin.status === 'honored'
+  if (input === undefined || input === null) {
+    return { status: 'absent', cache: pinned ? 'pinned' : 'absent' }
+  }
   if (typeof input !== 'object' || Array.isArray(input)) {
     throw new PolicyError('issueTier must be { risk, complexity, tier }')
   }
@@ -2322,7 +2327,7 @@ function resolveIssueTierInput(input, matrix, pin, warnings) {
   }
   const base = { risk, complexity, stored_tier: storedTier }
   if (risk === null && complexity === null) {
-    if (storedTier !== null && pin.status !== 'honored') {
+    if (storedTier !== null && !pinned) {
       warnings.push(
         tierWarning(
           'tier-cache-unverifiable',
@@ -2331,7 +2336,10 @@ function resolveIssueTierInput(input, matrix, pin, warnings) {
         )
       )
     }
-    return { status: 'absent', ...base, cache: storedTier === null ? 'absent' : 'unverifiable' }
+    let cache = 'unverifiable'
+    if (pinned) cache = 'pinned'
+    else if (storedTier === null) cache = 'absent'
+    return { status: 'absent', ...base, cache }
   }
   let reason = null
   if (risk === null || complexity === null) {
@@ -2346,7 +2354,7 @@ function resolveIssueTierInput(input, matrix, pin, warnings) {
   if (reason !== null) return { status: 'indeterminate', ...base, reason }
   const tier = deriveTier(matrix, { risk, complexity })
   let cache = 'absent'
-  if (pin.status === 'honored') {
+  if (pinned) {
     cache = 'pinned'
   } else if (storedTier !== null) {
     cache = storedTier === tier ? 'match' : 'stale'
@@ -2447,6 +2455,13 @@ function applyTierInputs(resolved, opts = {}) {
 
   return {
     ...resolved,
+    // Who chose the rigor: the operator, an authorized rigor:* label, or
+    // nobody (null) when the default resolved. It decides whether the derived
+    // Tier may refine the implementer, so consumers can see which applied.
+    rigor: {
+      ...resolved.rigor,
+      chosen_by: requestedRigor === undefined ? null : (rigorSource ?? 'operator')
+    },
     tier_matrix: matrix,
     roles,
     issue_tier: issue,

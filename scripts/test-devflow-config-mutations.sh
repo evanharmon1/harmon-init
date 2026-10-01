@@ -156,6 +156,7 @@ rejects_reader non-string-default-strategy replace_once \
     'default_strategy = 1'
 rejects_reader missing-dormant-rigor delete_table rigor.light
 rejects_reader adaptive-matrix-cell replace_in_table tier.matrix 'xs = { trivial = "local"' 'xs = { trivial = "adaptive"'
+rejects_reader unknown-matrix-cell replace_in_table tier.matrix 'xs = { trivial = "local"' 'xs = { trivial = "ultra"'
 rejects_reader missing-matrix-column replace_in_table tier.matrix 'xl = { trivial = "frontier", ' 'xl = { '
 rejects_reader extra-matrix-column replace_in_table tier.matrix 'xs = { trivial' 'xs = { extreme = "apex", trivial'
 rejects_reader unknown-matrix-row replace_in_table tier.matrix 'xl = {' 'xxl = {'

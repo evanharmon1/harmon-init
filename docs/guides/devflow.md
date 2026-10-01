@@ -25,7 +25,8 @@ and cross-validates registry and Taskfile references. It deliberately does not
 authenticate GitHub actors, read labels, reconcile label conflicts, or arm a
 workflow; those are consumer trust boundaries. A consumer applies the
 precedence below and passes the resulting request to the reader: the rigor and
-strategy, who chose the rigor (`--rigor-source operator|label`), role-tier
+strategy, who chose the rigor (`--rigor-source operator|label`, echoed back as
+`rigor.chosen_by`, which is null when no rigor is passed), role-tier
 overrides already split into operator instructions (`--tier-overrides`) and
 authorized `tier:<role>:*` labels (`--tier-labels`), the issue's classification
 and stored Tier (`--risk`, `--complexity`, `--stored-tier`), and any pin (`--pinned-tier` with

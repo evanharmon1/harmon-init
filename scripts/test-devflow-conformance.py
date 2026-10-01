@@ -241,6 +241,7 @@ def v2_normalize(resolved: dict, sources: dict, basis: str) -> dict:
             "rigor": {
                 "value": resolved["rigor"]["level"],
                 "source": sources.get("rigor", default_source),
+                "chosen_by": resolved["rigor"]["chosen_by"],
             },
             "strategy": {
                 "value": resolved["strategy"]["name"],
