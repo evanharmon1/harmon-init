@@ -741,8 +741,10 @@ done
 # "completed" by skipping a section cannot pass.
 : >"${STUB_CALLS}"
 make_stub project
+rc=0
 out="$(cd "${TMP}/with-release" && GH_REPO_JSON="$public_repo" GH_REPO=owner/public \
-    PATH="${TMP}/bin:${PATH}" NO_COLOR=1 "${WITH_RELEASE}" 2>&1)"
+    PATH="${TMP}/bin:${PATH}" NO_COLOR=1 "${WITH_RELEASE}" 2>&1)" || rc=$?
+[ "${rc}" -eq 0 ] || fail "the whole-block header run exited ${rc}: ${out}"
 for header in "Git Status" "GitHub Status" "Codebase Stats" "Environment" "Local Credentials"; do
     case "$out" in
     *"${header}"*) ;;
