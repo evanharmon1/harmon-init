@@ -11,10 +11,10 @@
 // are created on demand, never seeded (an unbounded roster otherwise). Foreman
 // adapter selectors are emitted only for adapters the registry marks
 // `provision_label` (a selector without a production adapter can strand armed
-// work — ADR 0005 D11), so `mock` never yields a `foreman:mock` label.
+// work — ADR 2026-08-07 D11), so `mock` never yields a `foreman:mock` label.
 //
 // The same registry also drives the human-facing family and harness tables in
-// docs/project-management.md (ADR 0005 D10): `docs-tables` renders them as
+// docs/project-management.md (ADR 2026-08-07 D10): `docs-tables` renders them as
 // markdown, and test-registry-docs.sh fails when the committed doc no longer
 // matches. That mode emits documentation, not label records, so it is
 // deliberately NOT part of `all`.
@@ -143,7 +143,7 @@ if (mode === 'docs-tables') {
   const cell = (value, where) => field(value, where)
   const code = (value) => '`' + value + '`'
   // Adapters ACCUMULATE per harness rather than overwriting. Nothing in the
-  // schema or in ADR 0005 D11 says one harness has at most one adapter — two
+  // schema or in ADR 2026-08-07 D11 says one harness has at most one adapter — two
   // backends can legitimately drive the same executable — so a `set()` here
   // would silently publish only the last one, and the doc would understate what
   // can dispatch that harness. Rejecting the second instead would fail a
