@@ -93,7 +93,8 @@ Issues become cheap to classify and route, for humans and agents alike:
 - [ ] `area:*` family — harmon-init values (template, devcontainer, ci, tasks, skills, foreman,
       codex, worktree, release, security, pm, docs); generic template starter (ci, docs, deps,
       build). Rule: area = solution space, domain = problem space, layer = stack slice. (#854)
-- [ ] `tier:*` ladder `local → economy → standard → frontier → apex` plus `adaptive`; `apex` =
+- [ ] `tier:*` ladder `local → economy → standard → frontier → apex` (`adaptive`, once a
+      sixth value, is retired — ADR 2026-09-30 D8; see the fallback item below); `apex` =
       mythos-class (fable, sol), `frontier` = opus-class. `.devflow.toml` gains
       `[tier.<value>]` tables mapping families to `agent-registry.json` model slugs
       (validated), `escalate_to` chains, and `endpoint = "local"` on the self-hosted tier.
@@ -126,9 +127,11 @@ Issues become cheap to classify and route, for humans and agents alike:
 - [ ] Built-in fallbacks are defined: absent `.devflow.toml` entirely, resolution uses the
       built-in review policy equivalent to `standard` (3 / 3 / 4, `min_rounds` 1), strategy
       `plan`, and tiers **inert** — the labels still classify, and nothing resolves a role to a
-      concrete model. `adaptive` is never a terminal answer for a role tier: it is rejected
-      outright as a `[rigor.*]` role-tier value or an override target — a role always resolves
-      to a concrete ladder rung or not at all (inert), never to `adaptive` itself. (#855;
+      concrete model. `adaptive` is retired (ADR 2026-09-30 D8; #1449): it is rejected
+      outright as a `[rigor.*]` or `[role.*]` tier value, a `[tier.matrix]` cell, or an
+      operator override target, and a leftover `tier:adaptive` label resolves as if absent
+      with a warning naming the retirement — a role always resolves to a concrete ladder rung
+      or not at all (inert). (#855;
       restated #1047 without `default_tier`/`[method]`, which no longer exist — see
       [ADR 2026-08-24](../docs/decisions/2026-08-24-rigor-and-strategy-axes.md) D5/D12.)
 - [ ] `strategy:*` values `oneshot | plan | plan-approved | orchestrate | council | human-led`
@@ -158,8 +161,10 @@ Issues become cheap to classify and route, for humans and agents alike:
       and PR text are untrusted input and can never outrank labels or config. Merge-base copy
       applies when the change edits `.devflow.toml` — every parameter, not only defaults.
       **Rigor conflicts resolve strongest-wins by `rigor_order`** (a label only ever buys more
-      depth and budget); **role-tier conflicts resolve strongest-wins on the tier ladder**, and
-      a concrete tier always beats `adaptive`; **strategy conflicts are ambiguous** — there is
+      depth and budget); **role-tier conflicts resolve strongest-wins on the tier ladder**;
+      the implementer tier also takes a pinned Tier above labels and an issue's derived
+      Tier below them (ADR 2026-09-30 D5, `docs/guides/devflow.md` "Issue Tier");
+      **strategy conflicts are ambiguous** — there is
       no rank, because topologies are not orderable against each other the way rigor levels
       are, so an interactive session must ask and unattended automation falls back to
       `default_strategy` with a warning. Off-default resolutions — above or below, for rigor,

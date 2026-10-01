@@ -847,8 +847,9 @@ decisions):
   chosen over a per-schema keyword because every schema in this family uses
   the identical timestamp shape, so a per-schema version would just be the
   same check copied six times.
-- **`producer.tier`** excludes `adaptive`: that value is a `.devflow.toml`
-  resolution *input*, never a fact about a run that already executed.
+- **`producer.tier`** excludes `adaptive`: that value is retired as a tier
+  (ADR 2026-09-30 D8) and was only ever a resolution *input*, never a fact
+  about a run that already executed.
 - **`checks[].required` is a required boolean, not an inferred one.**
   `gh pr checks --required` already distinguishes required from advisory
   checks, and a clean verdict treats them differently (see
