@@ -1,7 +1,7 @@
 {
   "schema_version": 2,
   "kind": "harmon-init.devflow.conformance",
-  "description": "V2 policy corpus. Consumers must reject v1 input with a migration hint.",
+  "description": "V2 policy corpus. Consumers must reject v1 input with a migration hint. overrides are operator instructions; authorized_labels are rigor:/strategy:/tier: labels whose provenance the consumer already verified; issue and pin carry an issue's classification and its tier:pinned value (ADR 2026-09-30 D4/D5).",
   "result_schema_version": 2,
   "cases": [
     {
@@ -12,8 +12,14 @@
         "result": {
           "config_schema_version": 2,
           "selections": {
-            "rigor": { "value": "standard", "source": "default" },
-            "strategy": { "value": "plan", "source": "default" }
+            "rigor": {
+              "value": "standard",
+              "source": "default"
+            },
+            "strategy": {
+              "value": "plan",
+              "source": "default"
+            }
           }
         }
       }
@@ -21,15 +27,24 @@
     {
       "name": "explicit-overrides-win",
       "basis": "branch",
-      "overrides": ["rigor=deep", "strategy=council"],
+      "overrides": [
+        "rigor=deep",
+        "strategy=council"
+      ],
       "expect": {
         "exit": 0,
         "result": {
           "config_schema_version": 2,
           "config_source": "operating",
           "selections": {
-            "rigor": { "value": "deep", "source": "explicit" },
-            "strategy": { "value": "council", "source": "explicit" }
+            "rigor": {
+              "value": "deep",
+              "source": "explicit"
+            },
+            "strategy": {
+              "value": "council",
+              "source": "explicit"
+            }
           }
         }
       }
@@ -38,7 +53,10 @@
       "name": "self-edit-reads-merge-base-policy",
       "basis": "merge-base",
       "merge_base_replacements": [
-        ["default_rigor    = \"standard\"", "default_rigor    = \"light\""]
+        [
+          "default_rigor    = \"standard\"",
+          "default_rigor    = \"light\""
+        ]
       ],
       "expect": {
         "exit": 0,
@@ -46,8 +64,14 @@
           "config_schema_version": 2,
           "config_source": "merge-base",
           "selections": {
-            "rigor": { "value": "light", "source": "default" },
-            "strategy": { "value": "plan", "source": "default" }
+            "rigor": {
+              "value": "light",
+              "source": "default"
+            },
+            "strategy": {
+              "value": "plan",
+              "source": "default"
+            }
           }
         }
       }
@@ -61,8 +85,14 @@
           "config_schema_version": 2,
           "config_source": "built-in-fallback",
           "selections": {
-            "rigor": { "value": "standard", "source": "builtin" },
-            "strategy": { "value": "plan", "source": "builtin" }
+            "rigor": {
+              "value": "standard",
+              "source": "builtin"
+            },
+            "strategy": {
+              "value": "plan",
+              "source": "builtin"
+            }
           }
         }
       }
@@ -70,10 +100,719 @@
     {
       "name": "legacy-version-is-refused",
       "basis": "branch",
-      "config_replacements": [["schema_version = 2", "schema_version = 1"]],
+      "config_replacements": [
+        [
+          "schema_version = 2",
+          "schema_version = 1"
+        ]
+      ],
       "expect": {
         "exit": 1,
-        "error_diagnostics": [{ "code": "migration_required", "subject": "schema_version" }]
+        "error_diagnostics": [
+          {
+            "code": "migration_required",
+            "subject": "schema_version"
+          }
+        ]
+      }
+    },
+    {
+      "name": "matrix-corner-xs-trivial-derives-local",
+      "basis": "branch",
+      "issue": {
+        "risk": "trivial",
+        "complexity": "xs"
+      },
+      "expect": {
+        "exit": 0,
+        "result": {
+          "tiers": {
+            "implementer": {
+              "value": "local",
+              "source": "derived"
+            }
+          },
+          "issue_tier": {
+            "status": "derived",
+            "value": "local",
+            "cache": "absent"
+          },
+          "disclosures": [
+            {
+              "code": "off-profile-tier",
+              "role": "implementer"
+            }
+          ]
+        },
+        "warning_diagnostics": [
+          {
+            "code": "tier-unachievable",
+            "subject": "implementer"
+          }
+        ]
+      }
+    },
+    {
+      "name": "matrix-corner-xs-critical-derives-frontier",
+      "basis": "branch",
+      "issue": {
+        "risk": "critical",
+        "complexity": "xs"
+      },
+      "expect": {
+        "exit": 0,
+        "result": {
+          "tiers": {
+            "implementer": {
+              "value": "frontier",
+              "source": "derived"
+            }
+          },
+          "issue_tier": {
+            "status": "derived",
+            "value": "frontier",
+            "cache": "absent"
+          },
+          "disclosures": [
+            {
+              "code": "off-profile-tier",
+              "role": "implementer"
+            },
+            {
+              "code": "role-tier-floor",
+              "role": "reviewer"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "matrix-corner-xl-trivial-derives-frontier",
+      "basis": "branch",
+      "issue": {
+        "risk": "trivial",
+        "complexity": "xl"
+      },
+      "expect": {
+        "exit": 0,
+        "result": {
+          "tiers": {
+            "implementer": {
+              "value": "frontier",
+              "source": "derived"
+            }
+          },
+          "issue_tier": {
+            "status": "derived",
+            "value": "frontier",
+            "cache": "absent"
+          },
+          "disclosures": [
+            {
+              "code": "off-profile-tier",
+              "role": "implementer"
+            },
+            {
+              "code": "role-tier-floor",
+              "role": "reviewer"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "matrix-corner-xl-critical-derives-apex-above-default-rigor",
+      "basis": "branch",
+      "issue": {
+        "risk": "critical",
+        "complexity": "xl"
+      },
+      "expect": {
+        "exit": 0,
+        "result": {
+          "tiers": {
+            "implementer": {
+              "value": "apex",
+              "source": "derived"
+            }
+          },
+          "issue_tier": {
+            "status": "derived",
+            "value": "apex",
+            "cache": "absent"
+          },
+          "disclosures": [
+            {
+              "code": "off-profile-tier",
+              "role": "implementer"
+            },
+            {
+              "code": "role-tier-floor",
+              "role": "orchestrator"
+            },
+            {
+              "code": "role-tier-floor",
+              "role": "challenger"
+            },
+            {
+              "code": "role-tier-floor",
+              "role": "reviewer"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "matrix-centre-m-medium-derives-standard",
+      "basis": "branch",
+      "issue": {
+        "risk": "medium",
+        "complexity": "m"
+      },
+      "expect": {
+        "exit": 0,
+        "result": {
+          "tiers": {
+            "implementer": {
+              "value": "standard",
+              "source": "derived"
+            }
+          },
+          "issue_tier": {
+            "status": "derived",
+            "value": "standard",
+            "cache": "absent"
+          },
+          "disclosures": []
+        }
+      }
+    },
+    {
+      "name": "absent-matrix-is-indeterminate",
+      "basis": "branch",
+      "config_replacements": [
+        [
+          "\n[tier.matrix]\n",
+          "\n"
+        ],
+        [
+          "\nxs = {",
+          "\n# xs = {"
+        ],
+        [
+          "\ns  = {",
+          "\n# s  = {"
+        ],
+        [
+          "\nm  = {",
+          "\n# m  = {"
+        ],
+        [
+          "\nl  = {",
+          "\n# l  = {"
+        ],
+        [
+          "\nxl = {",
+          "\n# xl = {"
+        ]
+      ],
+      "issue": {
+        "risk": "high",
+        "complexity": "m"
+      },
+      "expect": {
+        "exit": 3,
+        "error_diagnostics": [
+          {
+            "code": "indeterminate",
+            "subject": "issue_tier"
+          }
+        ],
+        "result": {
+          "tiers": {
+            "implementer": {
+              "value": "standard",
+              "source": "profile"
+            }
+          },
+          "issue_tier": {
+            "status": "indeterminate",
+            "value": null
+          },
+          "disclosures": []
+        }
+      }
+    },
+    {
+      "name": "absent-policy-classified-issue-is-indeterminate",
+      "basis": "absent",
+      "issue": {
+        "risk": "high",
+        "complexity": "m"
+      },
+      "expect": {
+        "exit": 3,
+        "error_diagnostics": [
+          {
+            "code": "indeterminate",
+            "subject": "issue_tier"
+          }
+        ],
+        "result": {
+          "config_source": "built-in-fallback",
+          "tiers": {
+            "implementer": {
+              "value": "standard",
+              "source": "profile"
+            }
+          },
+          "issue_tier": {
+            "status": "indeterminate"
+          }
+        }
+      }
+    },
+    {
+      "name": "partial-classification-is-indeterminate",
+      "basis": "branch",
+      "issue": {
+        "risk": "high"
+      },
+      "expect": {
+        "exit": 3,
+        "error_diagnostics": [
+          {
+            "code": "indeterminate",
+            "subject": "issue_tier"
+          }
+        ],
+        "result": {
+          "tiers": {
+            "implementer": {
+              "value": "standard",
+              "source": "profile"
+            }
+          },
+          "issue_tier": {
+            "status": "indeterminate"
+          }
+        }
+      }
+    },
+    {
+      "name": "off-scale-risk-is-indeterminate",
+      "basis": "branch",
+      "issue": {
+        "risk": "severe",
+        "complexity": "m"
+      },
+      "expect": {
+        "exit": 3,
+        "error_diagnostics": [
+          {
+            "code": "indeterminate",
+            "subject": "issue_tier"
+          }
+        ],
+        "result": {
+          "tiers": {
+            "implementer": {
+              "value": "standard",
+              "source": "profile"
+            }
+          },
+          "issue_tier": {
+            "status": "indeterminate"
+          }
+        }
+      }
+    },
+    {
+      "name": "stale-stored-tier-is-recomputed-on-read",
+      "basis": "branch",
+      "issue": {
+        "risk": "high",
+        "complexity": "l",
+        "tier": "standard"
+      },
+      "expect": {
+        "exit": 0,
+        "warning_diagnostics": [
+          {
+            "code": "tier-cache-stale",
+            "subject": "issue.tier"
+          }
+        ],
+        "result": {
+          "tiers": {
+            "implementer": {
+              "value": "frontier",
+              "source": "derived"
+            }
+          },
+          "issue_tier": {
+            "status": "derived",
+            "value": "frontier",
+            "cache": "stale"
+          },
+          "disclosures": [
+            {
+              "code": "off-profile-tier",
+              "role": "implementer"
+            },
+            {
+              "code": "role-tier-floor",
+              "role": "reviewer"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "stored-tier-without-inputs-is-never-an-input",
+      "basis": "branch",
+      "issue": {
+        "tier": "apex"
+      },
+      "expect": {
+        "exit": 0,
+        "warning_diagnostics": [
+          {
+            "code": "tier-cache-unverifiable",
+            "subject": "issue.tier"
+          }
+        ],
+        "result": {
+          "tiers": {
+            "implementer": {
+              "value": "standard",
+              "source": "profile"
+            }
+          },
+          "issue_tier": {
+            "status": "absent",
+            "value": null,
+            "cache": "unverifiable"
+          },
+          "disclosures": []
+        }
+      }
+    },
+    {
+      "name": "pin-above-rigor-label",
+      "basis": "branch",
+      "authorized_labels": [
+        "rigor:deep"
+      ],
+      "pin": {
+        "tier": "economy",
+        "marker_trusted": true,
+        "value_trusted": true
+      },
+      "issue": {
+        "risk": "critical",
+        "complexity": "xl"
+      },
+      "expect": {
+        "exit": 0,
+        "result": {
+          "selections": {
+            "rigor": {
+              "value": "deep",
+              "source": "label"
+            }
+          },
+          "tiers": {
+            "implementer": {
+              "value": "economy",
+              "source": "pinned"
+            }
+          },
+          "issue_tier": {
+            "status": "derived",
+            "value": "apex",
+            "cache": "pinned"
+          },
+          "pin": {
+            "status": "honored"
+          },
+          "disclosures": [
+            {
+              "code": "off-profile-tier",
+              "role": "implementer"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "operator-rigor-does-not-displace-a-pin",
+      "basis": "branch",
+      "overrides": [
+        "rigor=deep"
+      ],
+      "pin": {
+        "tier": "economy",
+        "marker_trusted": true,
+        "value_trusted": true
+      },
+      "expect": {
+        "exit": 0,
+        "result": {
+          "selections": {
+            "rigor": {
+              "value": "deep",
+              "source": "explicit"
+            }
+          },
+          "tiers": {
+            "implementer": {
+              "value": "economy",
+              "source": "pinned"
+            }
+          },
+          "disclosures": [
+            {
+              "code": "off-profile-tier",
+              "role": "implementer"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "operator-tier-beats-pin",
+      "basis": "branch",
+      "overrides": [
+        "tier=frontier"
+      ],
+      "pin": {
+        "tier": "economy",
+        "marker_trusted": true,
+        "value_trusted": true
+      },
+      "expect": {
+        "exit": 0,
+        "result": {
+          "tiers": {
+            "implementer": {
+              "value": "frontier",
+              "source": "operator"
+            }
+          },
+          "disclosures": [
+            {
+              "code": "off-profile-tier",
+              "role": "implementer"
+            },
+            {
+              "code": "role-tier-floor",
+              "role": "reviewer"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "pin-with-untrusted-value-resolves-unpinned",
+      "basis": "branch",
+      "pin": {
+        "tier": "apex",
+        "marker_trusted": true,
+        "value_trusted": false
+      },
+      "issue": {
+        "risk": "low",
+        "complexity": "s"
+      },
+      "expect": {
+        "exit": 0,
+        "warning_diagnostics": [
+          {
+            "code": "pin-untrusted",
+            "subject": "pin"
+          }
+        ],
+        "result": {
+          "tiers": {
+            "implementer": {
+              "value": "economy",
+              "source": "derived"
+            }
+          },
+          "pin": {
+            "status": "ignored"
+          },
+          "issue_tier": {
+            "status": "derived",
+            "value": "economy"
+          },
+          "disclosures": [
+            {
+              "code": "off-profile-tier",
+              "role": "implementer"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "pin-leaves-companions-below-implementer-is-disclosed",
+      "basis": "branch",
+      "pin": {
+        "tier": "apex",
+        "marker_trusted": true,
+        "value_trusted": true
+      },
+      "expect": {
+        "exit": 0,
+        "result": {
+          "tiers": {
+            "orchestrator": {
+              "value": "frontier",
+              "source": "profile"
+            },
+            "implementer": {
+              "value": "apex",
+              "source": "pinned"
+            },
+            "challenger": {
+              "value": "frontier",
+              "source": "profile"
+            },
+            "reviewer": {
+              "value": "standard",
+              "source": "profile"
+            }
+          },
+          "pin": {
+            "status": "honored"
+          },
+          "disclosures": [
+            {
+              "code": "off-profile-tier",
+              "role": "implementer"
+            },
+            {
+              "code": "role-tier-floor",
+              "role": "orchestrator"
+            },
+            {
+              "code": "role-tier-floor",
+              "role": "challenger"
+            },
+            {
+              "code": "role-tier-floor",
+              "role": "reviewer"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "derived-tier-below-role-label",
+      "basis": "branch",
+      "authorized_labels": [
+        "tier:implementer:economy"
+      ],
+      "issue": {
+        "risk": "critical",
+        "complexity": "xl"
+      },
+      "expect": {
+        "exit": 0,
+        "result": {
+          "tiers": {
+            "implementer": {
+              "value": "economy",
+              "source": "label"
+            }
+          },
+          "issue_tier": {
+            "status": "derived",
+            "value": "apex"
+          },
+          "disclosures": [
+            {
+              "code": "off-profile-tier",
+              "role": "implementer"
+            }
+          ]
+        }
+      }
+    },
+    {
+      "name": "derived-tier-below-rigor-label",
+      "basis": "branch",
+      "authorized_labels": [
+        "rigor:light"
+      ],
+      "issue": {
+        "risk": "critical",
+        "complexity": "xl"
+      },
+      "expect": {
+        "exit": 0,
+        "result": {
+          "selections": {
+            "rigor": {
+              "value": "light",
+              "source": "label"
+            }
+          },
+          "tiers": {
+            "implementer": {
+              "value": "economy",
+              "source": "profile"
+            }
+          },
+          "issue_tier": {
+            "status": "derived",
+            "value": "apex"
+          },
+          "disclosures": []
+        }
+      }
+    },
+    {
+      "name": "leftover-adaptive-label-resolves-as-absent",
+      "basis": "branch",
+      "authorized_labels": [
+        "tier:adaptive"
+      ],
+      "expect": {
+        "exit": 0,
+        "warning_diagnostics": [
+          {
+            "code": "tier-retired",
+            "subject": "tier:implementer"
+          }
+        ],
+        "result": {
+          "tiers": {
+            "implementer": {
+              "value": "standard",
+              "source": "profile"
+            }
+          },
+          "disclosures": []
+        }
+      }
+    },
+    {
+      "name": "operator-adaptive-tier-is-rejected",
+      "basis": "branch",
+      "overrides": [
+        "tier=adaptive"
+      ],
+      "expect": {
+        "exit": 1,
+        "error_diagnostics": [
+          {
+            "code": "tier_retired",
+            "subject": "override"
+          }
+        ]
       }
     }
   ]

@@ -6,7 +6,8 @@
 # exits), [role.*] (per-role tier baselines and family/harness preferences),
 # [stage.*] (stage → registry actors). Model-tier CLASSIFICATION lives in
 # agent-registry.json (each model entry carries its stratum); this file holds
-# only tier_order and the per-role/per-rigor tier CHOICES.
+# tier_order, the per-role/per-rigor tier CHOICES, and [tier.matrix] — the
+# risk × complexity matrix that derives an issue's Tier (ADR 2026-09-30 D4).
 # Anchor spec: specs/dev-flow-v2.md (harmon-devkit).
 #
 # Schema v2 is an incompatible change under ADR 2026-08-25: v1 consumers reject
@@ -26,8 +27,10 @@ rigor_order = ["cursory", "light", "standard", "thorough", "deep", "forensic"]
 # mythos-class), and a family with two models at one rung marks one
 # `default: true` — so resolving a model is a registry lookup: the resolved
 # family's model at the resolved rung. Two tier:* labels on one issue resolve
-# to whichever sorts later here (a conflict only ever buys more capability;
-# a concrete tier beats `adaptive`). Escalation climbs one rung at a time in
+# to whichever sorts later here (a conflict only ever buys more capability).
+# `adaptive` is retired (ADR 2026-09-30 D8): it is not a rung, a leftover
+# tier:adaptive label resolves as if absent with a warning, and `adaptive` as
+# a configured or operator tier is rejected. Escalation climbs one rung at a time in
 # this order, fires on failure/refusal/operator policy — never cost alone —
 # only where the resolved rigor's tier_escalation allows it, and never
 # switches family or vendor (family fallback is [role.*].families' separate,
@@ -38,8 +41,15 @@ tier_order = ["local", "economy", "standard", "frontier", "apex"]
 #   explicit operator instruction (attributable channel; never issue/PR text)
 #     > rigor:*/strategy:* labels > defaults above > built-in fallback
 # tier:<role>:* labels refine the resolved profile ([role.*] baseline, then
-# the rigor level's *_tier override). Off-default/off-profile resolutions are
-# disclosed in the PR body. Merge-base rule: when the change under review
+# the rigor level's *_tier override). The implementer tier has two more
+# rungs (ADR 2026-09-30 D5), each setting the implementer only:
+#   operator tier instruction > pinned Tier (tier:pinned, provenance of both
+#   the marker and the value verified) > tier:<role>:* label / the profile of
+#   an operator- or rigor:*-chosen rigor > derived Tier ([tier.matrix]) >
+#   default_rigor's profile
+# Off-default/off-profile resolutions — including a role tier a pin or a
+# derived Tier leaves below the implementer — are disclosed in the PR body,
+# never corrected. Merge-base rule: when the change under review
 # edits THIS FILE or agent-registry.json, every value read during policy
 # resolution comes from the merge-base copy. Nothing here arms anything;
 # .foreman.toml remains the arming surface, and Foreman derives
@@ -461,10 +471,25 @@ delegation  = "optional"
 human_gates = ["after-discovery", "after-plan", "before-publication"]
 description = "Strategy: human owns central decisions; AI does bounded pieces"
 
+# ── Tier matrix — an issue's Tier from Risk × Complexity ────────────────────
+# Rows are Complexity (xs … xl), columns Risk (trivial … critical); every cell
+# is a tier_order rung. Risk-dominant by design (ADR 2026-09-30 D4). The reader
+# derives an unpinned issue's Tier from this matrix on EVERY read; a Tier
+# stored on the issue is a cache it compares against, never an input. A pinned
+# Tier (tier:pinned) is read as stored. The derived or pinned Tier seeds the
+# implementer tier only; the other roles keep the resolved profile's tiers.
+# Absent matrix + a classified issue = indeterminate, never a guess.
+[tier.matrix]
+xs = { trivial = "local",    low = "local",    medium = "economy",  high = "standard", critical = "frontier" }
+s  = { trivial = "local",    low = "economy",  medium = "standard", high = "standard", critical = "frontier" }
+m  = { trivial = "economy",  low = "standard", medium = "standard", high = "frontier", critical = "apex" }
+l  = { trivial = "standard", low = "standard", medium = "frontier", high = "frontier", critical = "apex" }
+xl = { trivial = "frontier", low = "frontier", medium = "frontier", high = "apex",     critical = "apex" }
+
 # ── Model tiers ─────────────────────────────────────────────────────────────
-# There is no [tier.*] section in schema v2. The v1 family→model maps,
-# escalate_to chains, and the local-endpoint binding all restated registry
-# facts and are gone:
+# [tier.matrix] above is the only [tier.*] table in schema v2. The v1
+# family→model maps, escalate_to chains, and the local-endpoint binding all
+# restated registry facts and are gone:
 #   - stratum classification → agent-registry.json: each families[].models[]
 #     entry carries `tier` (and `default: true` where a family has two models
 #     at one rung), e.g.

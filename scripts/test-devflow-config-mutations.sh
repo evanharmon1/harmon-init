@@ -100,6 +100,13 @@ rejects unknown-strategy-key replace_in_table strategy.oneshot '[strategy.onesho
 rejects constitutional-strategy-gate replace_in_table strategy.oneshot 'human_gates = []' 'human_gates = ["merge"]'
 rejects inverted-role-tier replace_in_table rigor.cursory 'implementer_tier  = "economy"' 'implementer_tier  = "apex"'
 rejects adaptive-role-tier replace_in_table rigor.standard 'reviewer_tier     = "standard"' 'reviewer_tier     = "adaptive"'
+# [tier.matrix] (ADR 2026-09-30 D4): a closed 5 x 5 grid of tier_order rungs.
+rejects adaptive-matrix-cell replace_in_table tier.matrix 'xs = { trivial = "local"' 'xs = { trivial = "adaptive"'
+rejects unknown-matrix-cell replace_in_table tier.matrix 'xs = { trivial = "local"' 'xs = { trivial = "ultra"'
+rejects missing-matrix-column replace_in_table tier.matrix 'xl = { trivial = "frontier", ' 'xl = { '
+rejects extra-matrix-column replace_in_table tier.matrix 'xs = { trivial' 'xs = { extreme = "apex", trivial'
+rejects unknown-matrix-row replace_in_table tier.matrix 'xl = {' 'xxl = {'
+rejects tier-table-without-matrix replace_once $'\n[tier.matrix]\n' $'\n[tier.grid]\n'
 
 # Exercise the shipped JS parser directly. Python's tomllib also rejects
 # these mutations in test-devflow-config.sh, but that would let a regression
@@ -148,6 +155,26 @@ rejects_reader non-string-default-strategy replace_once \
     'default_strategy = "plan"' \
     'default_strategy = 1'
 rejects_reader missing-dormant-rigor delete_table rigor.light
+rejects_reader adaptive-matrix-cell replace_in_table tier.matrix 'xs = { trivial = "local"' 'xs = { trivial = "adaptive"'
+rejects_reader missing-matrix-column replace_in_table tier.matrix 'xl = { trivial = "frontier", ' 'xl = { '
+rejects_reader extra-matrix-column replace_in_table tier.matrix 'xs = { trivial' 'xs = { extreme = "apex", trivial'
+rejects_reader unknown-matrix-row replace_in_table tier.matrix 'xl = {' 'xxl = {'
+rejects_reader tier-table-without-matrix replace_once $'\n[tier.matrix]\n' $'\n[tier.grid]\n'
+
+# The matrix is optional: a policy without it is valid, and only an issue
+# that carries a classification finds its derived-Tier rung indeterminate
+# (exit 3) — never a guessed Tier, never a silent pass.
+reset_policy
+delete_table tier.matrix
+resolve_reader
+set +e
+resolve_reader --risk high --complexity m 2>/dev/null
+matrixless_status=$?
+set -e
+if [ "$matrixless_status" -ne 3 ]; then
+    echo "FAIL: a classified issue under a matrix-less policy must be indeterminate (exit 3), got $matrixless_status" >&2
+    exit 1
+fi
 rejects_reader unknown-rigor-order-entry replace_once \
     'rigor_order = ["cursory", "light", "standard", "thorough", "deep", "forensic"]' \
     'rigor_order = ["cursory", "ghost", "standard", "thorough", "deep", "forensic"]'
