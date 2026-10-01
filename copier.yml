@@ -484,6 +484,26 @@ use_alternative_claude_providers:
   default: no
   when: "[[ devcontainer ]]"
 
+use_fly_sprites:
+  type: bool
+  help: >-
+    FLY.IO SPRITES: Add sprites/network-policy.sh, which generates a Fly.io
+    Sprite's egress network policy from the devcontainer's shared egress
+    allowlist and applies it from outside the Sprite, plus the human-only
+    checklist steps for running remote agent lanes on Sprites? Defaults off.
+    Sprites are PAID: they need a Fly.io organization with a credit card on
+    file; a new organization gets a one-time $30 trial credit; a Sprite is
+    billed per second while running (about $0.07 per CPU-hour and $0.04375 per
+    GB-hour of memory) and only for storage while idle (fly.io/sprites and
+    docs.fly.io/about/pricing, read 2026-10-01). Public and private
+    repositories are treated alike: the Sprite clones whatever the agent's
+    token can read. Needs the devcontainer (the allowlist lives there).
+    Choosing no adds nothing and removes the template-managed sprites/
+    directory; destroy any Sprites in your Fly.io organization separately.
+  default: no
+  when: "[[ devcontainer ]]"
+  validator: "[% if use_fly_sprites and not devcontainer %]Enable DEVCONTAINER before FLY.IO SPRITES.[% endif %]"
+
 project_management:
   type: str
   help: "PROJECT MGMT: Add a project-management doc (docs/project-management.md)?"

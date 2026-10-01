@@ -101,6 +101,7 @@ TOKENS=(
 SURFACE_DIRS=(
     'images/devcontainer'
     '.devcontainer'
+    'sprites'
     '.github/workflows'
     '.github/actions'
     'docs'
@@ -117,9 +118,12 @@ SURFACE_FILES=(
 # Strict tier — the remote-bootstrap entry points (a directory is matched
 # recursively, each entry only where it exists): nothing that provisions a remote
 # environment may carry Codex credentials or the API key at all, so every token is
-# reported bare here and needs a `codex` on the line elsewhere.
+# reported bare here and needs a `codex` on the line elsewhere. `sprites` is the
+# opt-in Fly.io Sprites provisioning surface (#1411): a Sprite's one Codex login is
+# the maintainer's, made by hand, so nothing there may handle one.
 STRICT_PATHS=(
     'images/devcontainer'
+    'sprites'
     '.github/workflows/remote-bootstrap.yml'
 )
 # Every discovered setup script is strict too (the glob is expanded where it
@@ -505,6 +509,14 @@ if [ -d "${FIX}/images/devcontainer" ]; then
     printf 'echo start\ncat auth.json\n' >"${FIX}/images/devcontainer/planted.sh"
     expect_hit "a bare auth.json under images/devcontainer" "images/devcontainer/planted.sh" "2:"
     rm -f "${FIX}/images/devcontainer/planted.sh"
+fi
+if [ -d "${FIX}/sprites" ]; then
+    strict_cases=$((strict_cases + 1))
+    printf 'echo start\nexport OPENAI_API_KEY=x\n' >"${FIX}/sprites/planted.sh"
+    expect_hit "a bare OPENAI_API_KEY under sprites" "sprites/planted.sh" "2:"
+    printf 'echo start\ncat auth.json\n' >"${FIX}/sprites/planted.sh"
+    expect_hit "a bare auth.json under sprites" "sprites/planted.sh" "2:"
+    rm -f "${FIX}/sprites/planted.sh"
 fi
 [ "$strict_cases" -gt 0 ] || fail "no strict-tier surface exists in the fixture; the strict-tier cases would pass vacuously"
 # The environment examples are strict too, wherever they sit under .devcontainer.

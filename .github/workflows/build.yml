@@ -65,6 +65,7 @@ jobs:
       - run: task test:devflow-config
       - run: task test:codex-review
       - run: task test:remote-codex-policy
+      - run: task test:sprites-policy
       - run: task test:ci-results
       - run: task test:devcontainer-changed
       - run: task test:status
