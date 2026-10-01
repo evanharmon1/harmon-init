@@ -305,7 +305,8 @@ Binding on every stage, skill, and harness, whatever rigor resolved:
   and each stage is bounded for its own reason, so a decision to stop one loop
   is never a decision about another's.
 - **Never self-apply a `rigor:`, `strategy:`, or `tier:` label** (nor the
-  retired `method:`), and never treat a label as arming anything.
+  retired `method:`), except the derived classification Tier (§ "Rigor and
+  Strategy"), and never treat a label as arming anything.
 - **Checks green is a non-terminal state.** Bot and human reviews land *after*
   checks settle, so an empty comment list read the moment `gh pr checks --watch`
   returns means "not reviewed yet", not "nothing to answer". Wait for **both**
@@ -538,9 +539,12 @@ the same caveat applies: carry needs the vendored assets at harmon-devkit
 **Role tiers refine the resolved rigor level; they never replace it.** Each
 `[rigor.<level>]` profile carries `orchestrator_tier`, `implementer_tier`,
 `challenger_tier`, `reviewer_tier`, and `integrator_tier`; `[role.*]` supplies
-the role's baseline tier and ordered family/harness preferences. Unqualified
-`tier:<value>` input targets the implementer; `tier:<role>:<value>` targets
-one of those five roles. Resolve conflicts on `tier_order`, disclose every
+the role's baseline tier and ordered family/harness preferences. An
+unqualified operator tier instruction targets the implementer, and
+`tier:<role>:<value>` targets one of those five roles. An unqualified
+`tier:<value>` label is not a role override: it is the issue's stored Tier, a
+cache of the derived Tier, or the pinned Tier when `tier:pinned` is also
+present. Resolve role-label conflicts on `tier_order`, disclose every
 off-profile choice, and never silently change model family or vendor.
 
 **When the change under review edits `.devflow.toml`, `agent-registry.json`,
@@ -575,7 +579,11 @@ acts on a label only after verifying its provenance end-to-end from its own
 trusted-actor configuration, re-read immediately before acting, and otherwise
 falls back to the config default with a warning (the invariants are
 ADR 2026-08-16 D6; the timeline algorithm is deferred to foreman#139). An agent
-never applies a `rigor:*`, `strategy:*`, or `tier:*` label to itself. **Any
+never applies a `rigor:*`, `strategy:*`, or `tier:*` label to itself — except
+the derived classification Tier: an unqualified `tier:<value>` is a cache of
+Risk × Complexity (ADR 2026-09-30), so writing it records what the issue is,
+not how it is run. Choosing an execution-policy tier for oneself
+(`tier:<role>:*`, `tier:pinned`) stays forbidden. **Any
 off-default resolution, and any off-profile role tier, is disclosed in the PR
 body** — both are a visible line for the human reviewer, never something
 inferred from behavior.

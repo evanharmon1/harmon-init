@@ -30,6 +30,7 @@
     "labels": {
       "type": "object",
       "additionalProperties": false,
+      "$comment": "`suggest` is a retired label namespace (superseded by the derived Tier, ADR 2026-09-30) that stays declared until #1473, because the pinned breakdown label discovery requires it. Nothing renders or provisions suggest labels.",
       "required": ["suggest", "claim"],
       "properties": {
         "suggest": { "$ref": "#/$defs/labelNamespace" },
@@ -70,7 +71,7 @@
       "pattern": "^[a-z0-9]+(?:-[a-z0-9]+)*$"
     },
     "labelSlug": {
-      "$comment": "Slugs that render into label names: the longest prefixes (suggest:/foreman:) are 8 chars with the colon, so 42 keeps every <prefix>:<slug> within GitHub's 50-char name limit. Model and harness slugs are runtime identifiers and stay unbounded.",
+      "$comment": "Slugs that render into label names: the longest prefix (foreman:) is 8 chars with the colon, so 42 keeps every <prefix>:<slug> within GitHub's 50-char name limit. Model and harness slugs are runtime identifiers and stay unbounded.",
       "type": "string",
       "minLength": 1,
       "maxLength": 42,
@@ -116,7 +117,7 @@
       "properties": {
         "slug": { "$ref": "#/$defs/labelSlug" },
         "display_name": {
-          "$comment": "64: the longest family description wrapper ('Suggested for the … family (advisory)') is 36 chars, so 64 is the longest display_name whose rendered descriptions stay under GitHub's 100.",
+          "$comment": "64: the longest family description wrapper ('Claimed by …') is 11 chars, so rendered descriptions stay well under GitHub's 100; the bound stays conservative.",
           "type": "string",
           "minLength": 1,
           "maxLength": 64

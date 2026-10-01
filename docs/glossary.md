@@ -25,9 +25,10 @@ project-specific (domain) terms as the model firms up.
 Inherent attributes of an issue itself, distinct from the **execution policy**
 (`.devflow.toml`: rigor, strategy, role tiers, budgets), which decides how the
 factory runs an issue and may override any default the classification implies.
-Impact, Risk, Complexity, Tier, Priority, and Effort are issue fields on
-organization repos and labels on personal-account repos; Type, `area:*`,
-`layer:*`, and `domain:*` keep their existing storage.
+Impact, Risk, Complexity, Priority, and Effort are issue fields on
+organization repos and labels on personal-account repos; the Tier is a label on
+every owner type; Type, `area:*`, `layer:*`, and `domain:*` keep their existing
+storage.
 
 | Term | Meaning |
 |---|---|
