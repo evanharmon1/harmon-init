@@ -35,11 +35,14 @@ one's status.
 - [2026-08-03-operator-gh-login-in-the-dev-devcontainer.md](2026-08-03-operator-gh-login-in-the-dev-devcontainer.md)
   — the dev devcontainer authenticates as the operator, not the bot (Accepted).
 - [2026-08-07-unified-agent-vocabulary.md](2026-08-07-unified-agent-vocabulary.md)
-  — use one model-centric agent vocabulary and registry (Accepted; amends 2026-07-12 arming).
+  — use one model-centric agent vocabulary and registry (Accepted; amends 2026-07-12 arming;
+  partly superseded by 2026-09-30 (issue classification)).
 - [2026-08-16-method-and-tier-axes.md](2026-08-16-method-and-tier-axes.md)
-  — method and tier strategy axes (Accepted; D4 superseded by 2026-08-24).
+  — method and tier strategy axes (Accepted; D4 superseded by 2026-08-24; amended and partly
+  superseded by 2026-09-30 (issue classification)).
 - [2026-08-24-rigor-and-strategy-axes.md](2026-08-24-rigor-and-strategy-axes.md)
-  — rigor and strategy execution-policy axes (Accepted; amended by 2026-08-29 (Dev flow v2)).
+  — rigor and strategy execution-policy axes (Accepted; amended by 2026-08-29 (Dev flow v2) and
+  2026-09-30 (issue classification)).
 - [2026-08-25-versioned-devflow-compatibility-contract.md](2026-08-25-versioned-devflow-compatibility-contract.md)
   — version the devflow compatibility contract (Accepted).
 - [2026-08-29-dev-flow-v2-orchestrator-and-results.md](2026-08-29-dev-flow-v2-orchestrator-and-results.md)
@@ -59,5 +62,7 @@ one's status.
   — OpenSpec is retired in favor of the existing issue, ADR, and plain-spec workflow (Accepted).
 - [2026-09-29-agent-posture-three-posture-model.md](2026-09-29-agent-posture-three-posture-model.md)
   — three postures: dev, bot, and agent (Proposed).
+- [2026-09-30-classify-issues-by-impact-risk-complexity-and-derive-the-tier.md](2026-09-30-classify-issues-by-impact-risk-complexity-and-derive-the-tier.md)
+  — classify issues by impact, risk, and complexity, and derive the tier (Accepted).
 - [2026-09-30-rename-numbered-decision-records-by-date.md](2026-09-30-rename-numbered-decision-records-by-date.md)
   — rename numbered decision records by date (Accepted).

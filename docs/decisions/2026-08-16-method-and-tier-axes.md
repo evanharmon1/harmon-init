@@ -21,6 +21,13 @@ amendment). Authoritative requirements live in
 spec wins. Planned under evanharmon1/harmon-init#855 (milestone "Issue strategy
 overhaul").
 
+**Amended** by
+[ADR 2026-09-30 (issue classification)](2026-09-30-classify-issues-by-impact-risk-complexity-and-derive-the-tier.md):
+D5's resolution order gains the pinned and derived Tier. **Superseded** by it:
+D3's suggestion narrowing, D6's suggestion provenance, the § D6 amendment to
+ADR 2026-08-07, and the `adaptive` tier (D2's `adaptive` rung, D5's
+concrete-tier-beats-`adaptive` rule, and D7's `adaptive` rules).
+
 ## Context
 
 Two strategy axes are decided in the spec but, until now, unrecorded and

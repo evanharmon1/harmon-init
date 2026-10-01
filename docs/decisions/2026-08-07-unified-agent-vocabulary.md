@@ -8,6 +8,10 @@ Accepted. Amends ADR 2026-07-12's issue-field-versus-label arming decision: Fore
 arming is label-only on every owner type because the label timeline records the
 actor and project-field changes do not.
 
+**Partly superseded** by
+[ADR 2026-09-30 (issue classification)](2026-09-30-classify-issues-by-impact-risk-complexity-and-derive-the-tier.md):
+D6's `suggest:*` half and D10's listing of `Size` as planning metadata.
+
 ## Context
 
 Agent identity had become several incompatible vocabularies. Project planning

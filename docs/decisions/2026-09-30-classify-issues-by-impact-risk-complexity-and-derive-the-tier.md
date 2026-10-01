@@ -8,17 +8,18 @@ Accepted
 
 Supersedes whatever an earlier record says that conflicts with the
 retirements in D8 — `suggest:*`, the `Size` project field, the
-personal-project `Priority` field, and the ponderousdev `Agent` issue field
-— among them [ADR 0005](2026-08-07-unified-agent-vocabulary.md) D6's
-suggestion half, ADR 0005 D10's listing of `Size` as planning metadata, and
-[ADR 0006](2026-08-16-method-and-tier-axes.md)'s D3 candidate narrowing, its
-D6 suggestion provenance, and its amendment to ADR 0005 D6. The Tier derived
-below replaces `suggest:*`. The `claim:<family>[:<model>]` half of ADR 0005
-D6 stands unchanged.
+personal-project `Priority` field, the ponderousdev `Agent` issue field, and
+`tier:adaptive` — among them
+[ADR 2026-08-07](2026-08-07-unified-agent-vocabulary.md) D6's suggestion
+half, ADR 2026-08-07 D10's listing of `Size` as planning metadata, and
+[ADR 2026-08-16](2026-08-16-method-and-tier-axes.md)'s D3 candidate
+narrowing, its D6 suggestion provenance, its amendment to ADR 2026-08-07 D6,
+and its `adaptive` tier. The Tier derived below replaces `suggest:*`. The
+`claim:<family>[:<model>]` half of ADR 2026-08-07 D6 stands unchanged.
 
-Amends [ADR 0006](2026-08-16-method-and-tier-axes.md) D5 (the resolution
+Amends [ADR 2026-08-16](2026-08-16-method-and-tier-axes.md) D5 (the resolution
 order) by inserting the pinned and derived Tier (D5 below), and
-[ADR 0007](2026-08-24-rigor-and-strategy-axes.md) D5 (which role a tier input
+[ADR 2026-08-24](2026-08-24-rigor-and-strategy-axes.md) D5 (which role a tier input
 targets) by adding the pinned Tier as another implementer-only input.
 Everything else in those two records stands, apart from the rules
 superseded above.
@@ -133,7 +134,7 @@ pinned Tier. A pin is a label input like any other, so the label-provenance
 rule applies to it: an interactive session confirms a pin the operator has
 not authorized, and unattended automation honors a pin only after verifying
 its provenance, otherwise resolving as if it were absent
-([ADR 0006](2026-08-16-method-and-tier-axes.md) D6; `AGENTS.md` "Nothing
+([ADR 2026-08-16](2026-08-16-method-and-tier-axes.md) D6; `AGENTS.md` "Nothing
 here arms anything").
 
 Execution-policy resolution becomes:
@@ -144,7 +145,7 @@ Execution-policy resolution becomes:
 4. derived Tier
 5. `default_rigor`
 
-The built-in fallback for an absent policy file stays as ADR 0006 D5 and
+The built-in fallback for an absent policy file stays as ADR 2026-08-16 D5 and
 AGENTS.md describe it.
 
 A pin sets the **implementer** tier only. A pin can leave the resolved role
@@ -158,15 +159,19 @@ violates it.
 An issue is **triaged** when every required axis in D2 is present: Type (or
 the work-type label), one label from each of the `area:*`, `layer:*`, and
 `domain:*` families (or that family's explicit `none` value), Risk,
-Complexity, and Impact. `needs-triage` is
-derived from that and never set by hand.
+Complexity, and Impact. `needs-triage` is derived from that and never set by
+hand.
 
 ### D7 — The agent queue
 
 The agent queue is every issue that is open, triaged, has Priority set,
-carries no `claim:*` label, is not `human`, and is not blocked. The project
-board and its Status pipeline stay as they are, for human views. Milestones
-are unchanged.
+carries no `claim:*` label, is not `human`, is not `needs-review`, and is not
+blocked. `needs-review` (maintainer decision 2026-10-01) is added to the
+issue by the integration stage at ready-for-review, in the step that removes
+`claim:*`, and removed if review pulls the work back into fix rounds; it
+keeps an issue whose PR awaits human review out of the queue and lists what
+awaits the maintainer. The project board and its Status pipeline stay as they
+are, for human views. Milestones are unchanged.
 
 ### D8 — Retirements, and what is unchanged
 
@@ -177,11 +182,15 @@ Retired:
   Complexity (every issue).
 - The personal-project `Priority` field.
 - The ponderousdev `Agent` issue field.
+- `tier:adaptive` (maintainer decision 2026-10-01): it has no rung on the
+  Tier scale, so the label is retired with a migration. Removing it leaves
+  the issue to resolve through its derived Tier, and an `adaptive` label or
+  override resolves as if absent, with a warning.
 
 Unchanged:
 
 - `claim:<family>[:<model>]`, unchanged: the marker naming the model family
-  that took the work (ADR 0005 D6) — a signal, not a mutex; the harness and
+  that took the work (ADR 2026-08-07 D6) — a signal, not a mutex; the harness and
   runtime live in the claim record.
 - `tier:<role>:*` labels, as execution-policy overrides.
 - The model catalog, which stays in `agent-registry.json`; `.devflow.toml`
@@ -225,7 +234,7 @@ with a skim of the resulting tier distribution per repository.
   Tier until the next write or the daily reconciler corrects it; the design
   accepts that window rather than adding safeguards (D3).
 - On personal-account repositories an unqualified `tier:<value>` label
-  changes meaning, from a human implementer override (ADR 0007 D5) to the
+  changes meaning, from a human implementer override (ADR 2026-08-24 D5) to the
   stored, derived Tier that automation may rewrite; a human who wants to fix
   the tier adds `tier:pinned`. Rollout must pin any human-applied
   `tier:<value>` label on an open issue before the backfill runs
