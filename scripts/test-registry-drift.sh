@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-registry-drift.sh — the OFFLINE drift gate that binds label provisioning,
 # provider wrappers, and Foreman adapter selectors to the machine-readable agent
-# registry (agent-registry.json). Runs in `task verify` / `task ci` (ADR 0005
+# registry (agent-registry.json). Runs in `task verify` / `task ci` (ADR 2026-08-07
 # D11: "later drift checks bind provisioning, wrappers, and the pinned upstream
 # adapter roster to the same contract").
 #
@@ -72,7 +72,7 @@ names="$(printf '%s\n' "$rendered" | sed -n 's/|.*//p')"
 
 # 2a. No retired agent:* labels may appear anywhere in the rendered set.
 if grep -q '^agent:' <<<"$names"; then
-    fail "rendered labels still contain a retired agent:* label — the agent vocabulary is now suggest:/claim: (ADR 0005 D6)"
+    fail "rendered labels still contain a retired agent:* label — the agent vocabulary is now suggest:/claim: (ADR 2026-08-07 D6)"
 fi
 
 # 2b. Only FAMILY-level suggest:/claim: are seeded (exactly one colon in the
@@ -97,7 +97,7 @@ done
 want_foreman="$(jq -r '.foreman_adapters[] | select(.provision_label == true) | "foreman:" + .slug' "$registry" | sort)"
 got_foreman="$(printf '%s\n' "$names" | grep '^foreman:' | sort || true)"
 if [ "$want_foreman" != "$got_foreman" ]; then
-    fail "provisioned foreman:<adapter> selectors [$(echo "$got_foreman" | tr '\n' ' ')] != registry provision_label adapters [$(echo "$want_foreman" | tr '\n' ' ')] — a selector without a production adapter can strand armed work (ADR 0005 D11)"
+    fail "provisioned foreman:<adapter> selectors [$(echo "$got_foreman" | tr '\n' ' ')] != registry provision_label adapters [$(echo "$want_foreman" | tr '\n' ' ')] — a selector without a production adapter can strand armed work (ADR 2026-08-07 D11)"
 fi
 
 # ── 3. provisioning script ─────────────────────────────────────────────────
@@ -113,7 +113,7 @@ if [ -f "$labels_script" ]; then
     # No hardcoded agent:* / suggest:* / claim:* / foreman:<family> selector
     # lines (the leading `word:` of a `name|color|desc` label line).
     if grep -Eq '^agent:[a-z0-9-]+\|' "$labels_script"; then
-        fail "$labels_script still hard-lists a retired agent:* label line — remove it; the agent vocabulary is registry-rendered suggest:/claim: (ADR 0005 D6)"
+        fail "$labels_script still hard-lists a retired agent:* label line — remove it; the agent vocabulary is registry-rendered suggest:/claim: (ADR 2026-08-07 D6)"
     fi
     if grep -Eq '^(suggest|claim):[a-z0-9-]+\|' "$labels_script"; then
         fail "$labels_script hard-lists a suggest:/claim: label line — these must come from agent-registry-labels.mjs so they cannot fork from the registry"
@@ -151,7 +151,7 @@ STUB
         grep -vxF -e foreman:approved -e foreman:hold -e foreman:satisfied -e foreman:external |
         grep -vxF -f <(printf '%s\n' "$names") || true)"
     if [ -n "$extra" ]; then
-        fail "$labels_script provisions registry-namespace label(s) [$(echo "$extra" | tr '\n' ' ')] the registry does not define — a hardcoded selector (e.g. a re-added phantom foreman:<adapter>) bypasses the registry (ADR 0005 D11)"
+        fail "$labels_script provisions registry-namespace label(s) [$(echo "$extra" | tr '\n' ' ')] the registry does not define — a hardcoded selector (e.g. a re-added phantom foreman:<adapter>) bypasses the registry (ADR 2026-08-07 D11)"
     fi
 else
     echo "note: $labels_script not present in this profile — skipping the provisioning-script binding" >&2
@@ -161,7 +161,7 @@ fi
 # Every claude-<family>[-local] wrapper that ships MUST correspond to a
 # provider-rewired harness claude-code-<family>[-local] in the registry (no
 # orphan wrappers). The -local suffix is a sanctioned endpoint-variant marker
-# (ADR 0005 D9 amendment) for a wrapper of the SAME family, not a distinct
+# (ADR 2026-08-07 D9 amendment) for a wrapper of the SAME family, not a distinct
 # "<family>-local" family — claude-qwen-local() maps to family "qwen", not
 # "qwen-local" — so it is stripped before the family lookup but kept in the
 # harness slug. The reverse mapping is allowed: the registry may declare a
@@ -200,7 +200,7 @@ bad_provision="$(jq -r '
                   or .harness == null))
     | .slug' "$registry")"
 if [ -n "$bad_provision" ]; then
-    fail "foreman adapter(s) [$(echo "$bad_provision" | tr '\n' ' ')] set provision_label:true but are not a production, dispatchable, harness-mapped adapter — a public selector must map to real production machinery (ADR 0005 D11)"
+    fail "foreman adapter(s) [$(echo "$bad_provision" | tr '\n' ' ')] set provision_label:true but are not a production, dispatchable, harness-mapped adapter — a public selector must map to real production machinery (ADR 2026-08-07 D11)"
 fi
 
 # The arming label is foreman:<slug>, but Foreman resolves it to the backend

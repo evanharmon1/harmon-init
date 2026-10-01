@@ -464,7 +464,7 @@ if [ -f .github/workflows/build.yml ]; then
 fi
 
 # The published family/harness tables are generated from the registry and gated
-# against it (ADR 0005 D10). Like the drift gate it ships unconditionally and
+# against it (ADR 2026-08-07 D10). Like the drift gate it ships unconditionally and
 # passes on every profile — it says so and skips where the profile's
 # project_management answer renders no GitHub Projects document. Called bare
 # here, so the answers-file DEFAULT path is exercised too.
@@ -1605,7 +1605,7 @@ iac | full)
             err "CHECKLIST legacy-label migration can silently truncate a capped association sweep"
         ! grep -Fq '[project-management.md](project-management.md)' <<<"$checklist_flat" ||
             err "CHECKLIST links to the omitted GitHub project-management doc for project_management=none"
-        ! grep -Fq 'ADR 0005' <<<"$checklist_flat" ||
+        ! grep -Fq 'ADR 2026-08-07' <<<"$checklist_flat" ||
             err "CHECKLIST cites a repository-only ADR for project_management=none"
         grep -Fq 'Copilot is a broker, not a fixed family: `mai` is only the picker default' <<<"$checklist_flat" ||
             err "CHECKLIST loses the Copilot broker/default-family distinction"

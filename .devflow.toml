@@ -9,7 +9,7 @@
 # only tier_order and the per-role/per-rigor tier CHOICES.
 # Anchor spec: specs/dev-flow-v2.md (harmon-devkit).
 #
-# Schema v2 is an incompatible change under ADR 0008: v1 consumers reject
+# Schema v2 is an incompatible change under ADR 2026-08-25: v1 consumers reject
 # this file with a migration hint; v2 consumers refuse the v1/legacy shapes.
 schema_version = 2
 
@@ -468,7 +468,7 @@ description = "Strategy: human owns central decisions; AI does bounded pieces"
 #       { "slug": "haiku",  "display_name": "Haiku",  "tier": "economy"  }
 #   - escalation chains → derived: one rung up tier_order (see top of file)
 #   - local endpoint binding → the registry's `-local` harness variants
-#     (ADR 0005) already carry it; `local`-tier models are those served by a
+#     (ADR 2026-08-07) already carry it; `local`-tier models are those served by a
 #     registered local harness
 # Adding a model is now ONE edit in ONE file (the registry); this file never
 # names a concrete model. Both files resolve under the merge-base rule when

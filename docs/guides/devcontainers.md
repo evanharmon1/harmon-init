@@ -798,7 +798,7 @@ If you find yourself logging in far more often than you rebuild, the problem is
 not the missing volume — it is that something is **recreating** the container
 behind your back. Chase that instead; see
 [Attach paths and container managers](#attach-paths-and-container-managers), and
-[decisions/0004](../decisions/0004-operator-gh-login-in-the-dev-devcontainer.md)
+[decisions/2026-08-03](../decisions/2026-08-03-operator-gh-login-in-the-dev-devcontainer.md)
 for why a `gh-config-*` volume is not the fix.
 
 Nothing fails hard before you log in. `post-create` prints the commands above,
@@ -1221,7 +1221,7 @@ data all sit on named volumes precisely so a recreation is survivable, and
 `~/.claude.json` is symlinked onto one for the same reason (below). What is
 lost is container-local scratch — and, in `dev/`, the `gh` login, which is on
 no volume by decision rather than by omission
-([decisions/0004](../decisions/0004-operator-gh-login-in-the-dev-devcontainer.md)).
+([decisions/2026-08-03](../decisions/2026-08-03-operator-gh-login-in-the-dev-devcontainer.md)).
 That makes the login a useful **canary**: a re-auth prompt you did not expect is
 the cheapest signal that a recreation happened. The fix for re-authenticating too
 often is to stop the silent recreations, not to persist a plaintext token.
