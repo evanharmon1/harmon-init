@@ -68,8 +68,9 @@ Codex login, so no device login, copied auth file, or API key is part of a
 lane's setup. The orchestrator runs `task challenge` and `task review` against
 the lane's pushed branch from its own local pane, and the lane's PR body records
 that review in its stage ledger as `reviewed from <host> at <head>`. A
-persistent environment (the agent devcontainer, Sprites) logs in once, for
-itself, and runs Codex locally. The rule and its reasons are in AGENTS.md
+persistent environment (the agent devcontainer, Sprites) gets one login of its
+own, made once by the maintainer when provisioning it (never by an agent), and
+runs Codex locally. The rule and its reasons are in AGENTS.md
 ("Remote environments").
 
 ## Manual reviews

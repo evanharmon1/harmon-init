@@ -691,10 +691,13 @@ of its own. On an **ephemeral cloud** the orchestrator runs `task challenge` and
 Codex is already logged in, and the lane's PR body records that review in its
 stage ledger as `reviewed from <host> at <head>` — that orchestrator-side review
 is the lane's second model, in the sense § Second-Model Review requires, and
-Codex cloud review of the PR covers the integration stage. A **persistent
-environment** (the agent devcontainer, Sprites) logs in once, at provisioning,
-and runs Codex locally; that login stays on that environment and is never
-copied to another machine. An ephemeral cloud session does not install the
+Codex cloud review of the PR covers the integration stage.
+A **persistent environment** (the agent devcontainer, Sprites) gets its one
+Codex login when the **maintainer** provisions it: the maintainer runs
+`codex login` once on that environment, and an agent never does (§ Hard Rules:
+a credential write needs the maintainer's explicit request). It then runs Codex
+locally; the login stays on that environment and is never copied to another
+machine. An ephemeral cloud session does not install the
 plugins a repository enables ([docs/guides/claude-code-web.md](docs/guides/claude-code-web.md#account-preferences-account-skills-and-what-does-not-carry-over)),
 so the Codex Claude Code plugin runs only where a persistent login exists.
 Nothing here sets or asks for an OpenAI API key: the plan, not API credit, pays

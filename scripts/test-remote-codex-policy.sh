@@ -90,8 +90,10 @@ TOKENS=(
 # the repository under test is skipped. All of docs/ is scanned (so a new adapter
 # page is covered the day it is added) except docs/research/, which assesses
 # rejected options rather than guiding anyone. scripts/ is excluded because its
-# Codex scripts are operator-machine tooling that legitimately logs in locally —
-# so a NEW remote setup script must be added to SURFACE_FILES to be covered.
+# Codex scripts are operator-machine tooling that legitimately logs in locally,
+# except every scripts/setup-*.sh (SURFACE_GLOBS): a new remote setup script that
+# follows the name is covered the day it is added; one that does not must be
+# added to SURFACE_FILES.
 SURFACE_DIRS=(
     'images/devcontainer'
     '.devcontainer'
@@ -102,8 +104,10 @@ SURFACE_DIRS=(
 EXCLUDE_DIRS=(
     'docs/research'
 )
+SURFACE_GLOBS=(
+    'scripts/setup-*.sh'
+)
 SURFACE_FILES=(
-    'scripts/setup-remote.sh'
     'AGENTS.md'
 )
 # Strict tier — the remote-bootstrap entry points (a directory is matched
@@ -114,6 +118,13 @@ STRICT_PATHS=(
     'images/devcontainer'
     'scripts/setup-remote.sh'
     '.github/workflows/remote-bootstrap.yml'
+)
+# Also strict: the environment examples a remote environment is provisioned from,
+# as "directory::file name" (the name is matched anywhere under the directory).
+# init-env.sh never admits OPENAI_API_KEY (it is not an opt-in provider key), so a
+# key in these files could never reach the container, and no consumer needs one.
+STRICT_NAMES=(
+    '.devcontainer::devcontainer.env.example'
 )
 
 # Allowlist: "file@@complete line@@reason".
@@ -135,15 +146,16 @@ ALLOW=(
     'docs/guides/codex-review.md@@  `~/.codex/config.toml`, and a trusted project `.codex/config.toml` alike,@@configuration path, not a credential'
     'docs/copier-options.md@@| 18 | `use_shared_agents` | bool | **yes** | `use_skills_sync` | Also vendors devkit subagents into `.claude/agents` + `.codex/agents/implementer.toml` |@@the repository'"'"'s own .codex/agents/ configuration path, not a credential'
     'docs/copier-options.md@@| `use_skills_sync and use_shared_agents` | `.codex/agents/implementer.toml` |@@the repository'"'"'s own .codex/agents/ configuration path, not a credential'
+    'AGENTS.md@@`codex login` once on that environment, and an agent never does (§ Hard Rules:@@the rule itself: the maintainer, never an agent, makes a persistent environment'"'"'s one login'
     # The next entry and the one for (harmon-init#1406) are the root and template wording of the same sentence.
     'docs/guides/devcontainers.md@@environment persists one (#1406), lives in the `~/.codex` volume, not the@@where the persistent login lives: the volume, not the env-file'
-    'docs/guides/devcontainers.md@@The environment runs `codex login` once, at provisioning, and its@@the rule itself: a persistent environment holds exactly one login, and its file never leaves it'
+    'docs/guides/devcontainers.md@@The maintainer runs `codex login` once on the environment when provisioning it@@the rule itself: the maintainer, never an agent, makes a persistent environment'"'"'s one login'
     'docs/guides/devcontainers.md@@`~/.codex/auth.json` is never copied to another machine (the refresh token is@@the rule itself: a persistent environment holds exactly one login, and its file never leaves it'
     'docs/guides/devcontainers.md@@  - Substring patterns: `.claude/settings.json`, `.codex/config.toml`, `/etc/claude-code/`, `/etc/codex/`@@configuration path, not a credential'
     'docs/guides/devcontainers.md@@is an unoverridable requirement that beats `-c`, `~/.codex/config.toml` and a@@configuration path, not a credential'
     'docs/guides/devcontainers.md@@trusted project `.codex/config.toml` without saying so. Only the sandbox and@@configuration path, not a credential'
     'docs/guides/devcontainers.md@@persist regardless, in the `~/.claude`, `~/.codex`, `~/.local/share/opencode`,@@the list of persisted home directories'
-    'docs/architecture/remote-environments.md@@| **agents** | yes | The Codex CLI at the image'"'"'s pin. Used only where an environment persists and holds its own login (#1406); ephemeral clouds install it and never log in. A persistent environment runs `codex login` once, at provisioning, and its `~/.codex/auth.json` is never copied to another machine: the refresh token is single-use, so a copy would invalidate both holders |@@the rule itself: a persistent environment holds exactly one login, and its file never leaves it'
+    'docs/architecture/remote-environments.md@@| **agents** | yes | The Codex CLI at the image'"'"'s pin. Used only where an environment persists and holds its own login (#1406); ephemeral clouds install it and never log in. A persistent environment'"'"'s login is made once, when the maintainer runs `codex login` on it while provisioning (an agent never does; `AGENTS.md` § Hard Rules), and its `~/.codex/auth.json` is never copied to another machine: the refresh token is single-use, so a copy would invalidate both holders |@@the rule itself: a persistent environment holds exactly one login, made by the maintainer, and its file never leaves it'
     'docs/guides/devcontainers.md@@environment persists one (harmon-init#1406), lives in the `~/.codex` volume, not the@@where the persistent login lives: the volume, not the env-file'
 )
 
@@ -179,8 +191,8 @@ done
 # file — the self-test runs it many times.
 scan() {
     local root="$1" file line text tokstr strictstr rc hits allowed listing d f k scanned=0
-    local files=() textfiles=() prune_args=() x
-    for x in "${EXCLUDE_DIRS[@]}"; do
+    local files=() textfiles=() prune_args=() x g
+    for x in ${EXCLUDE_DIRS[@]+"${EXCLUDE_DIRS[@]}"}; do
         prune_args+=(-path "${root}/${x}" -prune -o)
     done
     for d in "${SURFACE_DIRS[@]}"; do
@@ -201,6 +213,12 @@ scan() {
     done
     for f in "${SURFACE_FILES[@]}"; do
         [ -f "${root}/${f}" ] && files+=("$f")
+    done
+    for g in "${SURFACE_GLOBS[@]}"; do
+        # Unmatched, the glob stays literal and fails the -f test.
+        for f in "${root}"/${g}; do
+            [ -f "$f" ] && files+=("${f#"${root}"/}")
+        done
     done
     for file in "${files[@]+"${files[@]}"}"; do
         if [ ! -r "${root}/${file}" ]; then
@@ -226,8 +244,9 @@ scan() {
         done <<<"$hits"
         tokstr="$(printf '%s\037' "${TOKENS[@]}")"
         strictstr="$(printf '%s\037' "${STRICT_PATHS[@]}")"
+        namestr="$(printf '%s\037' "${STRICT_NAMES[@]}")"
         rc=0
-        hits="$(cd "$root" && awk -v tokens="$tokstr" -v strictlist="$strictstr" '
+        hits="$(cd "$root" && awk -v tokens="$tokstr" -v strictlist="$strictstr" -v namelist="$namestr" '
             function emit(f, s, t,   i, tt, hit) {
                 gsub(/[ \t]+/, " ", t)
                 tt = t
@@ -263,15 +282,22 @@ scan() {
                     pline = s
                 }
             }
-            function is_strict(path,   i) {
+            function is_strict(path,   i, dir, name) {
                 for (i = 1; i <= ns; i++) {
                     if (S[i] != "" && (path == S[i] || index(path, S[i] "/") == 1)) return 1
+                }
+                for (i = 1; i <= nn; i++) {
+                    if (N[i] == "") continue
+                    dir = substr(N[i], 1, index(N[i], "::") - 1)
+                    name = substr(N[i], index(N[i], "::") + 2)
+                    if (index(path, dir "/") == 1 && (path == dir "/" name || index(path, "/" name) == length(path) - length(name))) return 1
                 }
                 return 0
             }
             BEGIN {
                 n = split(tokens, T, "\037")
                 ns = split(strictlist, S, "\037")
+                nn = split(namelist, N, "\037")
                 W = "(^|[^A-Za-z0-9_-])codex( -[^ ]+( [^ -][^ ]*)?)*"
                 LOGIN = W " login([^A-Za-z0-9_-]|$)"
                 FOLDHEAD = W " ?$"
@@ -356,6 +382,14 @@ for f in "${SURFACE_FILES[@]}"; do
         mkdir -p "${FIX}/$(dirname "$f")"
         cp "$f" "${FIX}/$f"
     fi
+done
+for g in "${SURFACE_GLOBS[@]}"; do
+    for f in $g; do
+        if [ -f "$f" ]; then
+            mkdir -p "${FIX}/$(dirname "$f")"
+            cp "$f" "${FIX}/$f"
+        fi
+    done
 done
 
 fixture_hits() {
@@ -447,6 +481,21 @@ if [ -d "${FIX}/images/devcontainer" ]; then
     rm -f "${FIX}/images/devcontainer/planted.sh"
 fi
 [ "$strict_cases" -gt 0 ] || fail "no strict-tier surface exists in the fixture; the strict-tier cases would pass vacuously"
+# The environment examples are strict too, wherever they sit under .devcontainer.
+env_cases=0
+for ef in .devcontainer/devcontainer.env.example .devcontainer/agent/devcontainer.env.example; do
+    [ -f "${FIX}/${ef}" ] || continue
+    env_cases=$((env_cases + 1))
+    cp "${FIX}/${ef}" "${TMP}/saved"
+    printf '\nOPENAI_API_KEY=\n' >>"${FIX}/${ef}"
+    expect_hit "a bare OPENAI_API_KEY in ${ef}" "$ef"
+    cp "${TMP}/saved" "${FIX}/${ef}"
+done
+[ "$env_cases" -gt 0 ] || fail "no environment example exists in the fixture; the env-example cases would pass vacuously"
+# A setup script is scanned whatever its name after setup-, with the Codex-scoped rule.
+printf '#!/usr/bin/env bash\ncodex login\n' >"${FIX}/scripts/setup-sprite.sh"
+expect_hit "a login in a new setup script" "scripts/setup-sprite.sh" "2:"
+rm -f "${FIX}/scripts/setup-sprite.sh"
 # Outside the strict tier an app's own key or auth.json passes; the Codex one fails.
 mkdir -p "${FIX}/docs/guides"
 printf '# App\n\nOur app stores sessions in auth.json.\n' >"${FIX}/docs/guides/planted-app.md"
@@ -455,6 +504,8 @@ fixture_hits
 [ -z "$SCAN_HITS" ] || fail "an app's own auth.json or key outside the strict tier must pass, got: ${SCAN_HITS}"
 printf '# App\n\nCopy ~/.codex/auth.json to the VM.\n' >"${FIX}/docs/guides/planted-app.md"
 expect_hit "~/.codex/auth.json in a guide" "docs/guides/planted-app.md" "3:"
+printf '# App\n\nRestore the codex credentials into auth.json.\n' >"${FIX}/docs/guides/planted-app.md"
+expect_hit "auth.json with codex but no directory in a guide" "docs/guides/planted-app.md" "3:"
 rm -f "${FIX}/docs/guides/planted-app.md" "${FIX}/${planted}"
 
 # A YAML-folded command: `codex` ends one line, `login` opens the next; options

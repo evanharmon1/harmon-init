@@ -269,7 +269,8 @@ evict a disallowed name; the agent profile refuses instead, because nobody is
 watching to notice a repaired misconfiguration. The Codex login, where an
 environment persists one (#1406), lives in the `~/.codex` volume, not the
 env-file.
-The environment runs `codex login` once, at provisioning, and its
+The maintainer runs `codex login` once on the environment when provisioning it
+(an agent never does: AGENTS.md § Hard Rules). Its
 `~/.codex/auth.json` is never copied to another machine (the refresh token is
 single-use, so a copy would invalidate both holders).
 

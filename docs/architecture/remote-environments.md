@@ -136,7 +136,7 @@ what the dev loop actually gates on and nothing else.
 | Tier | Default | Contents |
 | --- | --- | --- |
 | **core** | yes | Node + corepack/pnpm, uv, go-task, lefthook, gh, mikefarah yq, shfmt, actionlint, hadolint, gitleaks, lychee, semgrep, copier, markdownlint-cli2, and Ubuntu's packaged git, jq, shellcheck, yamllint, python3 |
-| **agents** | yes | The Codex CLI at the image's pin. Used only where an environment persists and holds its own login (#1406); ephemeral clouds install it and never log in. A persistent environment runs `codex login` once, at provisioning, and its `~/.codex/auth.json` is never copied to another machine: the refresh token is single-use, so a copy would invalidate both holders |
+| **agents** | yes | The Codex CLI at the image's pin. Used only where an environment persists and holds its own login (#1406); ephemeral clouds install it and never log in. A persistent environment's login is made once, when the maintainer runs `codex login` on it while provisioning (an agent never does; `AGENTS.md` § Hard Rules), and its `~/.codex/auth.json` is never copied to another machine: the refresh token is single-use, so a copy would invalidate both holders |
 | **browsers** | no | Playwright Chromium. Opt-in because it is larger than everything above put together |
 
 `markdownlint-cli2` is in core because `lint:markdown` needs it — it was missing
