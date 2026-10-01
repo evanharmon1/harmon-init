@@ -148,11 +148,13 @@ Execution-policy resolution becomes:
 The built-in fallback for an absent policy file stays as ADR 2026-08-16 D5 and
 AGENTS.md describe it.
 
-A pin sets the **implementer** tier only. A pin can leave the resolved role
-tiers outside the ladder invariants; that is disclosed in the PR body, not
-corrected. The authored-profile role-tier floor that `devflow-policy.mjs`
-enforces on `[rigor.*]` tables is unaffected and still rejects a profile that
-violates it.
+A pin sets the **implementer** tier only. The derived Tier likewise sets
+only the implementer tier; the other role tiers come from the resolved rigor
+profile. A pin can leave the resolved role tiers outside the ladder
+invariants; that is disclosed in the PR body, not corrected. The
+authored-profile role-tier floor that `devflow-policy.mjs` enforces on
+`[rigor.*]` tables is unaffected and still rejects a profile that violates
+it.
 
 ### D6 — "Triaged" is derived
 
@@ -185,14 +187,10 @@ Retired:
 - The personal-project `Priority` field.
 - The ponderousdev `Agent` issue field.
 - `tier:adaptive` (maintainer decision 2026-10-01): it has no rung on the
-  Tier scale, so the label is retired with a migration. Removing it leaves
-  the issue to resolve through its derived Tier, and a `tier:adaptive` label
-  still present resolves as if absent, with a warning. `adaptive` as a
-  configured role tier or override target stays rejected outright, as
-  `specs/issue-strategy.md` and the policy reader already require. #1447
-  retires the registry value; #1449 changes the resolver, amends
-  `specs/issue-strategy.md`, and revises the conformance fixtures that define
-  `adaptive`, under the versioned contract in ADR 2026-08-25.
+  Tier scale, so the label is retired with a migration. The migration, and
+  every surface that still treats `adaptive` as a tier, belong to #1447 (the
+  registry value) and #1449 (the policy readers, the spec, and the schemas),
+  with the vendored reader's counterpart in harmon-devkit#1248.
 
 Unchanged:
 

@@ -30,7 +30,7 @@ narrower follow-up this ADR does not implement.
 
 **Amended** by
 [ADR 2026-09-30 (issue classification)](2026-09-30-classify-issues-by-impact-risk-complexity-and-derive-the-tier.md):
-D5 gains the pinned Tier as another implementer-only input.
+D5 gains the pinned and derived Tier as implementer-only inputs.
 
 ## Context
 

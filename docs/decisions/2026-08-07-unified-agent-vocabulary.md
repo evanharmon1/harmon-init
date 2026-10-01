@@ -10,7 +10,8 @@ actor and project-field changes do not.
 
 **Partly superseded** by
 [ADR 2026-09-30 (issue classification)](2026-09-30-classify-issues-by-impact-risk-complexity-and-derive-the-tier.md):
-D4's advisory-routing clause (`suggest:*`), D6's `suggest:*` half, and D10's
+D4's advisory-routing clause (`suggest:*`), D6's `suggest:*` half, D8's
+`suggest:*` migration guidance (its `claim:*` guidance stands), and D10's
 listing of `Size` as planning metadata.
 
 ## Context
