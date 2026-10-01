@@ -86,7 +86,7 @@ switch (mutation) {
     adapter('claude').harness = null
     break
   case 'harness-axis':
-    registry.labels.claim.axis = 'harness'
+    registry.labels.suggest.axis = 'harness'
     break
   case 'public-mock':
     adapter('mock').provision_label = true
@@ -412,7 +412,7 @@ rejects "a provider-rewired harness slug with an unsanctioned suffix" \
 rejects "production adapters without a harness mapping" \
     'production-without-harness' \
     'needs a production harness mapping'
-rejects "harness-centric claim labels" \
+rejects "harness-centric suggestion labels" \
     'harness-axis' \
     'must equal "model"'
 rejects "public labels for the test-only mock adapter" \

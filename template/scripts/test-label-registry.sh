@@ -322,12 +322,28 @@ check_classification_registry() {
 if [ "$template_mode" = 1 ]; then
     check_classification_registry label-registry.json
     check_classification_registry template/label-registry.json
-    # The template agent registry is Jinja, so jq cannot read it: the retired
-    # namespace must simply be gone from its labels block.
-    if grep -q '"prefix": "suggest"' template/agent-registry.json.jinja; then
-        fail "template/agent-registry.json.jinja still declares the retired suggest label namespace"
-    fi
 fi
+
+# The agent registry keeps DECLARING the retired suggest namespace until #1473
+# (the pinned breakdown label discovery requires labels.suggest). Declaring it
+# must provision and protect nothing: no suggest:* label is rendered for
+# provisioning, and the inventory leaves every suggest:* label unrecognized so
+# a live one is reported and offered for guarded --prune.
+check_suggest_provisions_nothing() {
+    local manifest="$1" rendered inventory
+    rendered="$(node scripts/label-registry-render.mjs labels --foreman --release-please "$manifest")" ||
+        fail "$manifest: label rendering failed"
+    inventory="$(node scripts/label-registry-render.mjs inventory "$manifest")" ||
+        fail "$manifest: inventory rendering failed"
+    if grep -q '^suggest:' <<<"$rendered"; then
+        fail "$manifest provisions a suggest:* label although the family is retired"
+    fi
+    if grep -q 'suggest' <<<"$inventory"; then
+        fail "$manifest inventory recognizes a suggest label, so --prune could never offer it — keep suggest and suggest-model retired"
+    fi
+}
+check_suggest_provisions_nothing label-registry.json
+[ "$template_mode" = 1 ] && check_suggest_provisions_nothing template/label-registry.json
 
 # The four foreman protocol labels ship four different colors upstream
 # (ponderousdev/foreman); the per-value color overrides exist to reproduce

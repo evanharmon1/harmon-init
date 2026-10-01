@@ -30,9 +30,10 @@
     "labels": {
       "type": "object",
       "additionalProperties": false,
-      "$comment": "`suggest` was retired by #1447 (superseded by the derived Tier, ADR 2026-09-30). additionalProperties is false on purpose: a registry that still declares it fails here and names what to remove. schema_version is unchanged.",
-      "required": ["claim"],
+      "$comment": "`suggest` is a retired label namespace (superseded by the derived Tier, ADR 2026-09-30) that stays declared until #1473, because the pinned breakdown label discovery requires it. Nothing renders or provisions suggest labels.",
+      "required": ["suggest", "claim"],
       "properties": {
+        "suggest": { "$ref": "#/$defs/labelNamespace" },
         "claim": { "$ref": "#/$defs/labelNamespace" }
       }
     },
@@ -81,7 +82,7 @@
       "additionalProperties": false,
       "required": ["prefix", "axis", "scopes", "arming"],
       "properties": {
-        "prefix": { "const": "claim" },
+        "prefix": { "enum": ["suggest", "claim"] },
         "axis": { "const": "model" },
         "scopes": {
           "type": "array",

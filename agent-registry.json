@@ -3,6 +3,12 @@
   "schema_version": 3,
   "trusted_orchestrator_actor_ids": [37220977, 269859446],
   "labels": {
+    "suggest": {
+      "prefix": "suggest",
+      "axis": "model",
+      "scopes": ["family", "model"],
+      "arming": false
+    },
     "claim": {
       "prefix": "claim",
       "axis": "model",

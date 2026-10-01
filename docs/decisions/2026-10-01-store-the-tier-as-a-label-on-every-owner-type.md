@@ -26,8 +26,10 @@ at most one tier value; `tier:pinned` is the separate pin marker beside it.
 The other axes keep their D2 storage: Impact, Risk, Complexity, Priority, and
 Effort are issue fields on organization repositories and labels on
 personal-account repositories. The pin is unchanged: a human sets the Tier
-label and adds `tier:pinned`. Everything else in the 2026-09-30 record,
-including the derivation (D4) and the resolution order (D5), stands.
+label and adds `tier:pinned`. Where the 2026-09-30 record's pin rationale
+(Declined alternatives, "A separate override field") says "the Tier field",
+read "the Tier label". Everything else in that record, including the
+derivation (D4) and the resolution order (D5), stands.
 
 ## Consequences
 
