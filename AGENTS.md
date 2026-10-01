@@ -207,7 +207,7 @@ doneness, a strict
 write contract, and **never a merge**. The CLI lives in
 [ponderousdev/foreman](https://github.com/ponderousdev/foreman) (spec, ADRs,
 and architecture docs there); this repo pins a released tag via
-`FOREMAN_VERSION` and runs it through `uvx` — no source is vendored (ADR 0002
+`FOREMAN_VERSION` and runs it through `uvx` — no source is vendored (ADR 2026-07-12
 records the v1 in-repo design this superseded). The wrapper and config ship
 to generated repos, so they are two-layer twins. Foreman's own PRs follow
 the same draft-first lifecycle as the Dev Loop below: it opens draft PRs
@@ -324,7 +324,7 @@ Where a run dispatches the schema-bound **role agents** instead, each returns a
 typed result validated by `ai/schemas/result.envelope.schema.json` and its
 per-role `result.{implementer,challenger,reviewer,integrator}.schema.json` and
 nothing more; that result is **immutable** ([ADR
-0009](docs/decisions/0009-dev-flow-v2-orchestrator-and-results.md) D2), its
+2026-08-29 (Dev flow v2)](docs/decisions/2026-08-29-dev-flow-v2-orchestrator-and-results.md) D2), its
 adjudication a separate record keyed by finding id that every consumer reads.
 Either kind never merges, never promotes, never widens its scope, nor
 adjudicates its own findings.
@@ -558,7 +558,7 @@ such external pin exists, resolution is indeterminate and stops. A branch copy
 is never a bootstrap trust source.
 
 **Nothing here arms anything.** A `rigor:*`/`strategy:*` label invokes no
-model and starts no workflow by existing (ADR 0006 D1) — the shipped defaults
+model and starts no workflow by existing (ADR 2026-08-16 D1) — the shipped defaults
 add no account, trial, or paid-SaaS dependency, and escalation never switches
 a repo to a vendor it does not already use. `foreman:*` remains the only
 arming surface, and `.foreman.toml` remains authoritative for arming, trusted
@@ -574,7 +574,7 @@ other spends money — arising from a label the operator has not authorized
 acts on a label only after verifying its provenance end-to-end from its own
 trusted-actor configuration, re-read immediately before acting, and otherwise
 falls back to the config default with a warning (the invariants are
-ADR 0006 D6; the timeline algorithm is deferred to foreman#139). An agent
+ADR 2026-08-16 D6; the timeline algorithm is deferred to foreman#139). An agent
 never applies a `rigor:*`, `strategy:*`, or `tier:*` label to itself. **Any
 off-default resolution, and any off-profile role tier, is disclosed in the PR
 body** — both are a visible line for the human reviewer, never something
@@ -627,8 +627,10 @@ meets its exit condition on round 1 is done, whatever the cap allowed.
   the ruleset would allow it. Open the draft PR and integrate it — checks green
   with reviews unpolled is not the stopping point — then promote it through the
   readiness gate, report, and stop; merging is always a human decision.
-  (`.claude/settings.json` backstops this with `permissions.ask` rules on merge
-  commands.) `gh pr ready` is *not* a merge and agents may run it — but only
+  (`.claude/settings.json` backstops this with `permissions.ask` rules on
+  `gh pr merge`, pushes to main and force-pushes, plus the `git-merge-guard`
+  hook, which asks before any `git merge`/`git pull` it cannot verify lands on
+  a feature branch.) `gh pr ready` is *not* a merge and agents may run it — but only
   out of a passing readiness gate, never to signal "I think this looks done".
 - **Reply to every inline PR review comment in its own thread** — bot
   reviewers and humans alike. Treat findings as

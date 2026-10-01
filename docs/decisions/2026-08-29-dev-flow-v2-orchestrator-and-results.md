@@ -1,4 +1,4 @@
-# 9. Dev flow v2 — the session orchestrates; results are schema-bound
+# Dev flow v2 — the session orchestrates; results are schema-bound
 
 Date: 2026-08-29
 
@@ -6,7 +6,7 @@ Date: 2026-08-29
 
 Accepted (2026-09-12) — both acceptance conditions have held since:
 evanharmon1/harmon-devkit#665 merged (and the spec was subsequently revised
-by harmon-devkit#700/#739/#852), and [ADR 0008](0008-versioned-devflow-compatibility-contract.md)
+by harmon-devkit#700/#739/#852), and [ADR 2026-08-25](2026-08-25-versioned-devflow-compatibility-contract.md)
 is Accepted. Maintainer approval recorded on
 [harmon-init#1115](https://github.com/evanharmon1/harmon-init/issues/1115).
 
@@ -27,15 +27,17 @@ now false. The body remains free-form; only the machine-read facts gain a
 validated envelope. Maintainer decision recorded on
 [harmon-devkit#910](https://github.com/evanharmon1/harmon-devkit/issues/910).
 
-Extends [ADR 0007](0007-rigor-and-strategy-axes.md): rigor and strategy stay
+Extends [ADR 2026-08-24](2026-08-24-rigor-and-strategy-axes.md): rigor and strategy stay
 the two primary axes, and this record adds the execution model those axes
 select — who decides what during a run, and what form the evidence takes.
-**Amends ADR 0007 D3, D4, D8, and D9** — D3 where it names the `[review.*]` policy tables this record renames to `[caps.*]` (the shipped policies survive under the new name; the legacy section names do not), and the others the `shepherd` cap as
-bounding CI, human-review, and Codex findings alike: under this record the
-renamed `integration` cap bounds Codex re-review cycles only, answering CI
-and human findings is unconditional, and fix pushes in that stage are bounded
-by a separate `remediation` cap whose terminal action is escalation. ADR 0007
-carries the reciprocal notice.
+**Amends ADR 2026-08-24 D3, D4, D8, and D9** — D3 where it names the
+`[review.*]` policy tables this record renames to `[caps.*]` (the shipped
+policies survive under the new name; the legacy section names do not), and the
+others the `shepherd` cap as bounding CI, human-review, and Codex findings
+alike: under this record the renamed `integration` cap bounds Codex re-review
+cycles only, answering CI and human findings is unconditional, and fix pushes
+in that stage are bounded by a separate `remediation` cap whose terminal action
+is escalation. ADR 2026-08-24 carries the reciprocal notice.
 Authoritative requirements live in harmon-devkit's `specs/dev-flow-v2.md` —
 the reviewed revision is
 [3509de7](https://github.com/evanharmon1/harmon-devkit/blob/3509de75c73d4615362825155c3e1e3aa42cda77/specs/dev-flow-v2.md),
@@ -105,7 +107,7 @@ tier.
 ### D3 — Consequences carried into this repository
 
 - The `[review.*]` → `[caps.*]` rename is an incompatible change under
-  [ADR 0008](0008-versioned-devflow-compatibility-contract.md): `.devflow.toml`
+  [ADR 2026-08-25](2026-08-25-versioned-devflow-compatibility-contract.md): `.devflow.toml`
   declares `schema_version = 2`, `.devflow.schema.json` gains the v2 branch,
   and `.devflow-conformance-v2.json` is the fixture corpus consumers (the
   skills, Foreman) test against; v1 consumers reject the v2 file with the

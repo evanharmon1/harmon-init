@@ -168,7 +168,7 @@ STUB_VARIABLE_RC=0
 echo "==> the retired Agent field is never created"
 # The fixture above deliberately has no Agent field, so any mutation naming one
 # is the script recreating it. Advisory routing is the suggest:* label family
-# plus Status: Agent Queue; the live claim is a claim:* label (ADR 0005 D4).
+# plus Status: Agent Queue; the live claim is a claim:* label (ADR 2026-08-07 D4).
 case "$(cat "$MUTATIONS")" in
 *'name:"Agent"'*) fail "the retired Agent field was created — routing lives in suggest:*/claim:* labels" ;;
 esac

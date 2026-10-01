@@ -12,7 +12,7 @@
 #   1. An env token (GH_TOKEN / GITHUB_TOKEN and the enterprise variants) is
 #      set. That token OVERRIDES the stored one, so `gh auth refresh` would
 #      quietly repair a credential the current shell will never use — and in a
-#      bot container it is the credential-escalation ADR 0004 exists to
+#      bot container it is the credential-escalation ADR 2026-08-03 exists to
 #      prevent. The remedy there is to reissue the token at its source.
 #   2. There is no TTY. The refresh is a browser device-code flow; an agent or
 #      a CI job cannot complete it, and neither should re-mint the operator's
@@ -72,7 +72,7 @@ command -v gh >/dev/null 2>&1 || die "gh is not installed (brew install gh)"
 #    Where the variable DOES apply, the refusal stands: an env token overrides
 #    the stored credential, so `gh auth refresh` would repair something this
 #    shell never uses — and in a bot container it is the credential escalation
-#    ADR 0004 exists to prevent.
+#    ADR 2026-08-03 exists to prevent.
 #
 #    Resolved before the TTY check because the host is needed either way, and
 #    named individually because the fix differs per variable.
