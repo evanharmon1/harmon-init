@@ -186,8 +186,7 @@ function agentRecords(rendererMode) {
 }
 
 function registryFamilyRecords(family) {
-  const rendererMode =
-    family.registry_set === 'foreman-adapters' ? 'foreman-adapters' : 'claim'
+  const rendererMode = family.registry_set === 'foreman-adapters' ? 'foreman-adapters' : 'claim'
   const lines = agentRecords(rendererMode).filter((line) => line.startsWith(`${family.prefix}:`))
   for (const line of lines) {
     const color = line.split('|')[1]

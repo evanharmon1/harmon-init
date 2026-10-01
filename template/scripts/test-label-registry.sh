@@ -226,15 +226,27 @@ check_rigor label-registry.json .devflow.toml
 # rendered profile checks its own concrete .devflow.toml above.
 [ "$template_mode" = 1 ] && check_rigor template/label-registry.json .devflow.toml
 
+# Vendored triage derives its REQUIRED axes from every exclusive non-retired
+# `classification` family whatever its writers, and refuses a classification
+# family on a reserved prefix such as `tier`. So priority/effort (not required
+# for "triaged") and tier must NOT be classification families. This guards ANY
+# manifest, generated repositories included.
+check_triage_axes() {
+    local manifest="$1" fam axis
+    for fam in priority effort tier; do
+        axis="$(jq -r --arg f "$fam" '[.families[] | select(.family == $f) | .axis][0] // "absent"' "$manifest")"
+        [ "$axis" != classification ] ||
+            fail "$manifest family $fam uses the classification axis — triage tooling would make it a required axis for triaged (use meta or strategy)"
+    done
+}
+check_triage_axes label-registry.json
+
 # The issue-classification model (ADR 2026-09-30), pinned per layer so the AC
 # properties — families, scales, writers, retirements — cannot drift quietly.
-# Two of these pins exist because a vendored consumer reads them:
-#   * triage derives its REQUIRED axes from every exclusive non-retired
-#     `classification` family whatever its writers, and refuses a classification
-#     family on a reserved prefix such as `tier`. So priority/effort (not
-#     required for "triaged") and tier must NOT be classification families.
-#   * the manifest keys are a closed vendored contract, so `none` is an ordinary
-#     value, not a flagged one.
+# TEMPLATE repository only: a generated repository owns its manifest values, so
+# these exact pins would turn a local customization into a verify failure. The
+# manifest keys are a closed vendored contract, so `none` is an ordinary value,
+# not a flagged one.
 check_classification_registry() {
     local manifest="$1" got want
     q() { jq -r "$1" "$manifest"; }
@@ -307,8 +319,8 @@ check_classification_registry() {
     [ "$(jq -r '.families[] | select(.family == "workflow") | .lifecycle' "$manifest")" = transient ] ||
         fail "$manifest workflow family must stay transient (needs-review is added at ready-for-review and removed on pull-back)"
 }
-check_classification_registry label-registry.json
 if [ "$template_mode" = 1 ]; then
+    check_classification_registry label-registry.json
     check_classification_registry template/label-registry.json
     # The template agent registry is Jinja, so jq cannot read it: the retired
     # namespace must simply be gone from its labels block.
