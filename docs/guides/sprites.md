@@ -220,9 +220,14 @@ policy and whether `apply` replaces or merges an earlier one — both
 [pending](#pending-observations):
 
 ```sh
-diff <(bash sprites/network-policy.sh generate | jq -S .) \
-     <(sprite exec -s "$SPRITE" -- cat /.sprite/policy/network.json | jq -S .)
+set -o pipefail
+want="$(bash sprites/network-policy.sh generate | jq -S .)" &&
+    have="$(sprite exec -s "$SPRITE" -- cat /.sprite/policy/network.json | jq -S .)" &&
+    diff <(printf '%s\n' "$want") <(printf '%s\n' "$have")
 ```
+
+A failing producer stops the check before the comparison, so only two
+successfully produced, identical policies exit 0.
 
 How each allowlist entry maps:
 
