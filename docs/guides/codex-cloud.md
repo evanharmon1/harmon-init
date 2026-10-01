@@ -246,7 +246,8 @@ The policy, in order of precedence:
    hold a Codex login (#1408 decision 4, 2026-09-27); here the platform *is* the
    login. The local `codex` client that submits and applies tasks uses the
    maintainer's own ChatGPT login, from the orchestrator's pane, never from a
-   cloud environment.
+   cloud environment. The second-model rule for remote lanes is in `AGENTS.md`
+   § Remote environments.
 
 ## What starts a Codex cloud task
 
