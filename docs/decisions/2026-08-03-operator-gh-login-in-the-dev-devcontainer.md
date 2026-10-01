@@ -1,4 +1,4 @@
-# 4. The dev devcontainer authenticates as the operator, not the bot
+# The dev devcontainer authenticates as the operator, not the bot
 
 Date: 2026-08-03
 

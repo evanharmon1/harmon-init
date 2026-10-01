@@ -59,7 +59,7 @@ run_with() {
 
 # Every field present. Deliberately no Agent, Domain, or Layer field: all
 # three are retired (advisory routing is suggest:*/claim:* labels + Status:
-# Agent Queue for Agent, ADR 0005 D4; Domain/Layer's only surface is the
+# Agent Queue for Agent, ADR 2026-08-07 D4; Domain/Layer's only surface is the
 # domain:/layer: labels, #875).
 complete='[
  {"id":1,"name":"Product","data_type":"text"}
