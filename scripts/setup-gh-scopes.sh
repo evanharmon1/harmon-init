@@ -43,13 +43,18 @@ trigger_related_repos_bootstrap() {
         # Name the target directory: the PHYSICAL checkout's parent, as
         # setup-remote.sh computes it, so siblings land beside the checkout on any
         # layout. In the devcontainer that is /workspaces, the bootstrap's default.
-        local checkout_parent primary_git primary_root
+        local checkout_parent own_git primary_git primary_root
         checkout_parent="$(dirname -- "$(cd -- "${REPO_ROOT}" && pwd -P)")"
         # A linked worktree (task worktree:new puts one at <main>/.worktrees/<name>)
         # lives INSIDE its primary checkout, so its own parent is the wrong place for
-        # siblings: use the primary working tree's parent. Anything else (not in git,
-        # a bare common dir, an old git without --path-format) keeps the value above.
-        if primary_git="$(git -C "${REPO_ROOT}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)"; then
+        # siblings: use the primary working tree's parent. Only a linked worktree
+        # qualifies (its git dir differs from the common dir) and only when the common
+        # dir is a plain <checkout>/.git. Every other layout — a plain checkout, a
+        # --separate-git-dir one, one nested in a larger repository, not in git, an
+        # old git without --path-format — keeps the value above.
+        if own_git="$(git -C "${REPO_ROOT}" rev-parse --path-format=absolute --git-dir 2>/dev/null)" &&
+            primary_git="$(git -C "${REPO_ROOT}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" &&
+            [ "${own_git}" != "${primary_git}" ]; then
             case "${primary_git}" in
             */.git)
                 if primary_root="$(cd -- "${primary_git%/.git}" 2>/dev/null && pwd -P)"; then

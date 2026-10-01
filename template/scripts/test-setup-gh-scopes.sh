@@ -458,6 +458,19 @@ EOF
     want_primary="$(cd "${TMP}/layout/base" && pwd -P)"
     assert_bootstrap_target "${TMP}/layout/base/primary/.worktrees/linked/scripts/setup-gh-scopes.sh" "${want_primary}" \
         "a linked worktree"
+    # ...but ONLY a linked worktree gets that treatment. A --separate-git-dir
+    # checkout whose git directory happens to be named .git elsewhere is still an
+    # ordinary checkout: it keeps its own parent, not the git directory's.
+    mkdir -p "${TMP}/layout/sepbase" "${TMP}/layout/gitstore"
+    cp -R "${TMP}/repo" "${TMP}/layout/sepbase/checkout"
+    (
+        cd "${TMP}/layout/sepbase/checkout"
+        git init -q --separate-git-dir "${TMP}/layout/gitstore/.git"
+    ) >/dev/null 2>&1 || fail "test setup: could not build a --separate-git-dir checkout"
+    [ -f "${TMP}/layout/gitstore/.git/HEAD" ] || fail "test setup: the separate git directory was not created"
+    want_sep="$(cd "${TMP}/layout/sepbase" && pwd -P)"
+    assert_bootstrap_target "${TMP}/layout/sepbase/checkout/scripts/setup-gh-scopes.sh" "${want_sep}" \
+        "a --separate-git-dir checkout"
     rm -rf "${TMP}/layout"
 
     echo "==> bootstrap-related-repos.sh failure does not change exit status of setup-gh-scopes"
