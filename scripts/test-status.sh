@@ -93,7 +93,21 @@ cp "${rest_lib}" "${TMP}/hyphenated/scripts/lib/gh-rest.sh"
 git -C "${TMP}/hyphenated" init -q
 git -C "${TMP}/hyphenated" remote add origin git@github.com:my-org/harmon-init.git
 
+# A repo that ships a release workflow, so the setup audit renders its
+# "Release published" line (the check is gated on that file). It is a git repo
+# with a GitHub remote so the whole-block run below resolves a branch and an
+# owner/repo the way a real checkout does.
+mkdir -p "${TMP}/with-release/scripts/lib" "${TMP}/with-release/.github/workflows"
+cp "${status}" "${TMP}/with-release/scripts/status.sh"
+cp "${scopes_lib}" "${TMP}/with-release/scripts/gh-scopes.sh"
+cp "${output_lib}" "${TMP}/with-release/scripts/lib/output.sh"
+cp "${rest_lib}" "${TMP}/with-release/scripts/lib/gh-rest.sh"
+: >"${TMP}/with-release/.github/workflows/release.yml"
+git -C "${TMP}/with-release" init -q
+git -C "${TMP}/with-release" remote add origin git@github.com:owner/public.git
+
 WITH_BOARD="${TMP}/with-board/scripts/status.sh"
+WITH_RELEASE="${TMP}/with-release/scripts/status.sh"
 NO_BOARD="${TMP}/no-board/scripts/status.sh"
 SKILLS_ONLY="${TMP}/skills-only/scripts/status.sh"
 ENTERPRISE="${TMP}/enterprise/scripts/status.sh"
@@ -323,6 +337,26 @@ STUB
         echo '        case "$endpoint" in'
         echo '        */pulls\?* | */labels\?* | */pulls/comments\?* | */rulesets) echo "[]" ;;'
         echo '        */vulnerability-alerts) echo "[]" ;;'
+        # The latest-release read. GH_STUB_RELEASES picks the answer: `none`
+        # (default) is a successful read of a repository with no release,
+        # `present` one with v4.47.1, `fail` the proxy refusing the read,
+        # `garbage` a 200 that is not a release list at all, and `malformed` a JSON
+        # array whose elements are not releases (a proxy's error objects),
+        # `empty-tag` a release with an empty tag_name, `two-documents` an error
+        # document followed by an empty array, and `trailing-document` an empty
+        # array followed by an error document (valid up to the first document).
+        echo '        */releases\?*)'
+        echo '            case "${GH_STUB_RELEASES:-none}" in'
+        echo '            present) echo "[{\"tag_name\":\"v4.47.1\",\"draft\":false}]" ;;'
+        echo '            fail) echo "HTTP 403: REST-only proxy rejection" >&2; exit 1 ;;'
+        echo '            garbage) echo "<html>proxy error</html>" ;;'
+        echo '            malformed) echo "[{\"message\":\"rate limited\"}]" ;;'
+        echo '            empty-tag) echo "[{\"tag_name\":\"\"}]" ;;'
+        echo '            two-documents) echo "[{\"message\":\"rate limited\"}]"; echo "[]" ;;'
+        echo '            trailing-document) echo "[]"; echo "[{\"message\":\"rate limited\"}]" ;;'
+        echo '            *) echo "[]" ;;'
+        echo '            esac'
+        echo '            ;;'
         echo '        */private-vulnerability-reporting) echo "{}" ;;'
         echo '        *) [ -n "${GH_REPO_JSON:-}" ] || exit 1; printf "%s\n" "$GH_REPO_JSON" ;;'
         echo '        esac'
@@ -603,6 +637,20 @@ case "$out" in
 *) fail "expected a satisfied board-writes line, got: ${out}" ;;
 esac
 
+# assert_rest_only_calls LABEL — fail if the stub's call log ($STUB_CALLS) holds
+# a GraphQL-backed or otherwise proxy-refused surface. Every pattern is anchored
+# on `(^| )` because the log line is the bare `$*` of the gh call: a `gh pr list`
+# is logged as `pr list ...`, with no leading space for a ` pr list` pattern to
+# match. `release list` is GraphQL-backed, and is the call #1437 removed. The
+# `search` and `project` subcommands are refused by the proxy the same way as
+# the `search/` and GraphQL endpoints, and `pr checks` / `pr status` are
+# GraphQL-backed like `pr list` and `pr view`.
+assert_rest_only_calls() {
+    if grep -E '(^| )(graphql|search/|repositories/)|--paginate|(^| )pr (list|view|checks|status)|(^| )issue (list|view)|(^| )label list|(^| )release (list|view)|(^| )search |(^| )project ' "${STUB_CALLS}" >/dev/null; then
+        fail "$1 used a forbidden GitHub surface: $(tr '\n' ' ' <"${STUB_CALLS}")"
+    fi
+}
+
 echo "==> REST-only setup completes and marks the GraphQL-only project surface unavailable"
 STUB_CALLS="${TMP}/rest-only-calls.txt"
 export STUB_CALLS
@@ -612,9 +660,108 @@ case "$out" in
 *"GitHub Project linked"*"unavailable through the REST-only GitHub API"*) ;;
 *) fail "expected an explicit unavailable project line, got: ${out}" ;;
 esac
-if grep -E '(^| )(graphql|search/|repositories/)|--paginate| pr (list|view)| issue view| label list' "${STUB_CALLS}" >/dev/null; then
-    fail "REST-only status used a forbidden GitHub surface: $(tr '\n' ' ' <"${STUB_CALLS}")"
-fi
+assert_rest_only_calls "REST-only setup status"
+unset STUB_CALLS
+
+# ── Release line (#1437) ─────────────────────────────────────────────────────
+# The line states one of three things and only the middle one may recommend a
+# remedy: a release exists, the read succeeded and found none, or the read
+# failed. Every case runs under the REST-only stub (GraphQL, search and
+# repositories/ refused with a 403), the shape of a Claude Code on the web
+# session, and checks the call log so a GraphQL-backed read cannot hide behind a
+# stub that happens to answer it.
+STUB_CALLS="${TMP}/release-calls.txt"
+export STUB_CALLS
+run_release_setup() {
+    : >"${STUB_CALLS}"
+    GH_STUB_RELEASES="$1" GH_REPO_JSON="$public_repo" run_setup_section project "${WITH_RELEASE}"
+}
+
+echo "==> the release line reports a release read over REST"
+out="$(run_release_setup present)"
+case "$out" in
+*"[x] Release published - v4.47.1"*) ;;
+*) fail "expected the latest release on the release line, got: ${out}" ;;
+esac
+assert_rest_only_calls "the release line"
+grep -F 'releases?per_page=1' "${STUB_CALLS}" >/dev/null ||
+    fail "the release line did not read repos/{owner}/{repo}/releases?per_page=1: $(tr '\n' ' ' <"${STUB_CALLS}")"
+case "$out" in
+*"task release:init"*) fail "a repository with a release was told to run release:init: ${out}" ;;
+*) ;;
+esac
+
+echo "==> a successful read that finds no release still recommends release:init"
+out="$(run_release_setup none)"
+case "$out" in
+*"[ ] Release published"*"task release:init"*) ;;
+*) fail "an observed absence must keep its remedy, got: ${out}" ;;
+esac
+
+echo "==> a failed release read reports unavailable and prints no remedy"
+for mode in fail garbage malformed empty-tag two-documents trailing-document; do
+    out="$(run_release_setup "${mode}")"
+    case "$out" in
+    *"[?] Release published - unavailable"*) ;;
+    *) fail "a ${mode} release read was not reported as unavailable: ${out}" ;;
+    esac
+    case "$out" in
+    *"Release published"*"task release:init"* | *"[ ] Release published"*)
+        fail "a ${mode} release read stated an absence it did not observe: ${out}"
+        ;;
+    *) ;;
+    esac
+    assert_rest_only_calls "the ${mode} release read"
+done
+
+echo "==> every section, and the whole block, completes under the REST-only stub"
+# The forbidden-surface check above covered the setup section alone, so a
+# GraphQL-backed call reintroduced in any other section would have passed: the
+# stub answers `pr list` and `run list` with `[]` and a grep nobody ran saw
+# nothing. Each section, and one run with NO section argument (the whole status
+# block), now runs with every gh call logged. A read the proxy refuses must
+# render as a line of its own; the proxy's raw error text appearing in the
+# output means a failure leaked through instead.
+for section in "" git gh creds code env setup; do
+    : >"${STUB_CALLS}"
+    make_stub project
+    rc=0
+    out="$(cd "${TMP}/with-release" && GH_STUB_RELEASES=fail GH_REPO_JSON="$public_repo" \
+        GH_REPO=owner/public PATH="${TMP}/bin:${PATH}" NO_COLOR=1 \
+        "${WITH_RELEASE}" ${section:+"${section}"} 2>&1)" || rc=$?
+    label="the ${section:-whole-block} run"
+    [ "${rc}" -eq 0 ] || fail "${label} exited ${rc} under the REST-only stub: ${out}"
+    case "$out" in
+    *"HTTP 403"* | *"stub: unexpected"*) fail "${label} leaked a refused read instead of reporting it: ${out}" ;;
+    *) ;;
+    esac
+    assert_rest_only_calls "${label}"
+done
+# The whole block must still hold every default section's header, so a run that
+# "completed" by skipping a section cannot pass.
+: >"${STUB_CALLS}"
+make_stub project
+rc=0
+out="$(cd "${TMP}/with-release" && GH_REPO_JSON="$public_repo" GH_REPO=owner/public \
+    PATH="${TMP}/bin:${PATH}" NO_COLOR=1 "${WITH_RELEASE}" 2>&1)" || rc=$?
+[ "${rc}" -eq 0 ] || fail "the whole-block header run exited ${rc}: ${out}"
+for header in "Git Status" "GitHub Status" "Codebase Stats" "Environment" "Local Credentials"; do
+    case "$out" in
+    *"${header}"*) ;;
+    *) fail "the whole-block run lacks its ${header} section: ${out}" ;;
+    esac
+done
+# The sections that cannot be filled through REST say so: the setup audit is
+# where the GraphQL-only Projects surface and the (here refused) release read
+# live, and both must be named unavailable rather than graded absent.
+out="$(GH_STUB_RELEASES=fail GH_REPO_JSON="$public_repo" run_setup_section project "${WITH_RELEASE}")"
+for line in "GitHub Project linked - unavailable through the REST-only GitHub API" \
+    "Release published - unavailable"; do
+    case "$out" in
+    *"${line}"*) ;;
+    *) fail "the setup audit did not report '${line}': ${out}" ;;
+    esac
+done
 unset STUB_CALLS
 
 echo "==> read-only 'read:project' is NOT reported as satisfied"
