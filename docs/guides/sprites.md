@@ -129,7 +129,10 @@ checkout, and the credential files of step 4 — and not running processes.
 session on the Sprite. A process inside the Sprite can also restore its own
 checkpoints (`sprite-env`), so a checkpoint is a reset point, not a control
 boundary; the network policy is the control, because it cannot be changed from
-inside (*docs, 2026-10-01*).
+inside (*docs, 2026-10-01*) — provided a restore does not revert it, which the
+docs do not say ([pending](#pending-observations)). Until that settles, re-run
+`apply`, which is idempotent, after every restore, whether the operator, the
+platform or a process inside the Sprite made it.
 
 **7. The maintainer's one Codex login** (below), after the checkpoint.
 
@@ -206,7 +209,9 @@ with the generated rules (*docs, 2026-10-01*). It hands the token to `curl` on
 its stdin, so the token appears in no argument list. Run `generate` and `apply`
 from a checkout of the default branch (or the pinned release tag), never from a
 lane's branch, so an allowlist edit an agent pushed cannot widen its own Sprite
-before it is reviewed and merged. Re-run `apply` whenever either list changes. Then confirm what the Sprite enforces:
+before it is reviewed and merged. Re-run `apply` whenever either list changes,
+and after every checkpoint restore (see [Provisioning](#provisioning), step 6).
+Then confirm what the Sprite enforces:
 
 ```sh
 diff <(bash sprites/network-policy.sh generate | jq -S .) \

@@ -9,8 +9,8 @@ set -euo pipefail
 #       `.devcontainer/scripts/egress-allowlist.sh hosts` — the one parser of
 #       the allowlist format, reading the shared list and the optional
 #       per-repo .local list — so the policy cannot drift from the list it is
-#       generated from; scripts/test-sprites-policy.sh proves that every entry
-#       reaches it.
+#       generated from; harmon-init's own scripts/test-sprites-policy.sh
+#       proves that every entry reaches it.
 #
 #   <token source> | bash sprites/network-policy.sh apply <sprite-name>
 #       Generate the policy and set it on the named Sprite through the Sprites
@@ -60,10 +60,11 @@ usage() {
 cmd_generate() {
     local entries entry sep="" rules=""
     [ -f "$ALLOWLIST_SH" ] || fail "egress allowlist script not found at ${ALLOWLIST_SH}"
-    # Always this checkout's own lists: the parser honours list-path overrides
-    # (for its own tests), and a stale export of either would otherwise
-    # replace the policy silently.
-    entries="$(env -u EGRESS_ALLOWLIST_SHARED -u EGRESS_ALLOWLIST_LOCAL bash "$ALLOWLIST_SH" hosts)" ||
+    # The policy is a function of this checkout's lists and nothing else: the
+    # parser runs with NO caller environment (PATH only, no startup files), so
+    # no exported variable — a list-path override, BASH_ENV, anything — can
+    # change what it reads or prints.
+    entries="$(env -i PATH="$PATH" bash --noprofile --norc "$ALLOWLIST_SH" hosts)" ||
         fail "the egress allowlist was refused (see above); no policy generated"
     while IFS= read -r entry; do
         [ -n "$entry" ] || continue
@@ -83,23 +84,30 @@ cmd_generate() {
 }
 
 cmd_apply() {
-    local name="${1:-}" token policy
+    local name="${1:-}" token policy code
     [[ "$name" =~ $NAME_RE ]] || fail "'${name}' is not a Sprite name (lowercase letters, digits and hyphens)"
     [ ! -t 0 ] || fail "pipe the Sprites API token on stdin, e.g. from a secret store read; it is never taken as an argument"
     IFS= read -r token || [ -n "$token" ] || fail "no token on stdin"
     [ -n "$token" ] || fail "empty token on stdin"
-    case "$token" in *'"'* | *'\'*) fail "the token contains a quote or backslash; refusing to build a curl config from it" ;; esac
+    case "$token" in *'"'* | *'\'* | *[[:cntrl:]]*) fail "the token contains a quote, backslash or control character; refusing to build a curl config from it" ;; esac
     policy="$(cmd_generate)"
     # The token goes to curl on its stdin as a config line; the policy goes as
     # the request body on file descriptor 3. `-q` must be curl's FIRST argument
     # (it is ignored anywhere else): it skips the operator's ~/.curlrc, where a
     # trace, verbose, url or proxy line would print or redirect the header.
-    printf 'header = "Authorization: Bearer %s"\n' "$token" |
+    # Only a 2xx is success: curl fails at 400+ but follows no redirect, so a
+    # 3xx would otherwise read as applied.
+    code="$(printf 'header = "Authorization: Bearer %s"\n' "$token" |
         curl -q --config - --fail-with-body -sS --max-time 60 \
+            -o /dev/null -w '%{http_code}' \
             -X POST -H 'Content-Type: application/json' \
             --data-binary @/dev/fd/3 \
-            "${SPRITES_API_URL}/v1/sprites/${name}/policy/network" 3<<<"$policy" >/dev/null ||
+            "${SPRITES_API_URL}/v1/sprites/${name}/policy/network" 3<<<"$policy")" ||
         fail "the Sprites API refused the policy for '${name}'"
+    case "$code" in
+    2??) ;;
+    *) fail "the Sprites API answered HTTP ${code} for '${name}'; the policy was not applied" ;;
+    esac
     echo "sprites-network-policy: applied to ${name}; check it with: sprite exec -s ${name} -- cat /.sprite/policy/network.json" >&2
 }
 

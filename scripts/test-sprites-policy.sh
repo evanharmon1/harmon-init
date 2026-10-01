@@ -136,12 +136,16 @@ printf '@github-meta\n' >"${TMP}/meta-only.txt"
 generate_with "${TMP}/meta-only.txt" && fail "a list with no hostname produced a deny-everything policy"
 pass "a list with no hostname is refused"
 
-# A stale export of the parser's list-path overrides must not replace the
-# policy: the generator reads the lists of the checkout it lives in.
-EGRESS_ALLOWLIST_SHARED="${TMP}/shared.txt" EGRESS_ALLOWLIST_LOCAL="${TMP}/local.txt" \
-    bash "$GEN" generate >"${TMP}/exported.json" 2>/dev/null || fail "generate failed with the overrides exported"
-cmp -s "${TMP}/exported.json" "${TMP}/real.json" || fail "exported EGRESS_ALLOWLIST_* overrides replaced the checkout's policy"
-pass "exported list-path overrides are ignored"
+# The caller's environment must not change the policy: the parser runs with
+# none. Exported list-path overrides, and a BASH_ENV that would print an
+# extra entry into the parser's output, must leave the checkout's own policy.
+# (The BASH_ENV file fires only inside the parser: the bash running the
+# generator itself is the caller's, and reads BASH_ENV by design.)
+printf 'case "$0" in *egress-allowlist.sh) echo smuggled.example.net ;; esac\n' >"${TMP}/bash-env.sh"
+EGRESS_ALLOWLIST_SHARED="${TMP}/shared.txt" EGRESS_ALLOWLIST_LOCAL="${TMP}/local.txt" BASH_ENV="${TMP}/bash-env.sh" \
+    bash "$GEN" generate >"${TMP}/exported.json" 2>/dev/null || fail "generate failed with the caller's environment set"
+cmp -s "${TMP}/exported.json" "${TMP}/real.json" || fail "the caller's environment (EGRESS_ALLOWLIST_*, BASH_ENV) changed the checkout's policy"
+pass "the caller's environment (list-path overrides, BASH_ENV) is ignored"
 
 echo "==> 4. apply: the documented endpoint, the token on stdin only"
 mkdir -p "${TMP}/bin"
@@ -150,6 +154,7 @@ cat >"${TMP}/bin/curl" <<'STUB'
 printf '%s\n' "$@" >"${STUB_DIR}/argv"
 cat >"${STUB_DIR}/config"
 cat <&3 >"${STUB_DIR}/body"
+printf '%s' "${STUB_CODE:-204}"
 exit "${STUB_EXIT:-0}"
 STUB
 chmod +x "${TMP}/bin/curl"
@@ -167,6 +172,10 @@ pass "POST to /v1/sprites/<name>/policy/network, generated body, token only on s
 printf '%s\n' "$token" | PATH="${TMP}/bin:${PATH}" STUB_DIR="$TMP" STUB_EXIT=22 bash "$GEN" apply my-sprite 2>/dev/null &&
     fail "apply reported success when the API refused the policy"
 pass "an API refusal fails apply"
+
+printf '%s\n' "$token" | PATH="${TMP}/bin:${PATH}" STUB_DIR="$TMP" STUB_CODE=307 bash "$GEN" apply my-sprite 2>/dev/null &&
+    fail "apply reported success on a 307 redirect"
+pass "a non-2xx answer (307) fails apply"
 
 printf '%s\n' "$token" | PATH="${TMP}/bin:${PATH}" STUB_DIR="$TMP" bash "$GEN" apply 'Bad;Name' 2>/dev/null &&
     fail "apply accepted a malformed Sprite name"
