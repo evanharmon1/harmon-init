@@ -95,9 +95,11 @@ Issues become cheap to classify and route, for humans and agents alike:
       build). Rule: area = solution space, domain = problem space, layer = stack slice. (#854)
 - [ ] `tier:*` ladder `local → economy → standard → frontier → apex` (`adaptive`, once a
       sixth value, is retired — ADR 2026-09-30 D8; see the fallback item below); `apex` =
-      mythos-class (fable, sol), `frontier` = opus-class. `.devflow.toml` gains
-      `[tier.<value>]` tables mapping families to `agent-registry.json` model slugs
-      (validated), `escalate_to` chains, and `endpoint = "local"` on the self-hosted tier.
+      mythos-class (fable, sol), `frontier` = opus-class. `.devflow.toml` carries
+      `tier_order` and `[tier.matrix]` (Risk × Complexity → Tier, ADR 2026-09-30 D4); model
+      mapping is `agent-registry.json`'s (each model carries its `tier`), and escalation is
+      one rung up `tier_order` (#1047, schema v2 — the v1 `[tier.<value>]` tables,
+      `escalate_to` chains, and `endpoint = "local"` are gone).
       `tier:local` escalates to economy; privacy-pinning is a future separate concern label,
       not a tier semantic. (#855; re-scoped #1047 — there is no `default_tier`: each
       `[rigor.*]` level names `orchestrator_tier`/`implementer_tier`/`reviewer_tier`
