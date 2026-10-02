@@ -105,12 +105,25 @@ tasks:
 [% endif %]
       - task: check
       - task: audit:agent-instructions
-      - task: test:agent-instructions-size
-      - task: test:agent-skill-links
 [% if use_node %]
       - task: build
 [% endif %]
       - task: validate
+      - task: test:suite
+      - task: test
+
+  test:suite:
+    # The ONE list of `test:*` targets that both `verify` and the required Build
+    # workflow's `lint` job run (build.yml calls this task in a single step), so
+    # the two cannot drift and nothing parses the workflow to police them.
+    # A new `test:*` guard that belongs in the gate is added HERE and nowhere
+    # else; `test:verify-ci-parity` fails if either caller stops running it.
+    # Not in this list: `build`, `validate` and `test` (the project's own tiers
+    # — CI runs them in their own job) and the `ci`-only checks.
+    desc: The test:* targets verify and the Build workflow's lint job both run
+    cmds:
+      - task: test:agent-instructions-size
+      - task: test:agent-skill-links
 [% if project_type == 'web-astro' %]
       - task: test:astro-compress-parity
 [% endif %]
@@ -162,7 +175,7 @@ tasks:
       - task: test:agent-profile
       - task: test:devcontainer-changed
 [% endif %]
-      - task: test
+      - task: test:verify-ci-parity
 
   # ── Quality Checks ────────────────────────────────────────────
   check:
@@ -782,6 +795,11 @@ tasks:
     desc: Guard the Taskfile itself (compiles; setup tasks are safe no-ops)
     cmds:
       - ./scripts/test-tasks.sh
+
+  test:verify-ci-parity:
+    desc: Fail if the Build workflow stops calling test:suite or verify stops running it
+    cmds:
+      - ./scripts/test-verify-ci-parity.sh
 
   test:ci-results:
     desc: Unit-test CI aggregate and closing-keyword fail-closed truth tables

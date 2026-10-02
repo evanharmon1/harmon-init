@@ -93,6 +93,19 @@ err() {
     fail=1
 }
 
+# Required CI runs every `test:*` target through ONE step, `task test:suite`
+# (#1461; the per-profile "verify <-> CI parity" section below asserts the call),
+# so "required CI runs X" means "X is in the suite's plan". Without go-task the
+# plan cannot be read: that fails in CI and is an explicit SKIP locally, via
+# `required` like every other missing tool here — never a silent pass.
+suite_runs() {
+    have task || {
+        required task "suite membership of $1" || return 1
+        return 0
+    }
+    grep -qF "task: [$1]" <<<"$(task --color=false --dry test:suite 2>&1 || true)"
+}
+
 # ── Quiet-but-not-silent command capture (#934) ─────────────────────────────
 #
 # A rendered-repo gate that can fail with no evidence turns an intermittent
@@ -418,6 +431,48 @@ else
     err "no Taskfile.yml generated"
 fi
 
+# ── 1-ci. verify <-> required CI parity holds in every render profile (#1461) ──
+# Both run their `test:*` targets through the one aggregate task, so a rendered
+# repo's required Build workflow runs every target its `verify` runs. Asserted
+# three ways: the `lint` job calls the aggregate, `verify` lists it itself, and
+# every `test:*` target in verify's plan is in the aggregate's plan — then the
+# rendered guard (with its planted cases) runs. The first two are plain text
+# checks on the rendered files (a block runs from its two-space-indented key to
+# the next one), the third asks `task` for the plan.
+if [ -f .github/workflows/build.yml ]; then
+    awk '/^  lint:[[:space:]]*$/ { on = 1; next } on && /^  [^ #]/ { exit } on' .github/workflows/build.yml |
+        grep -Eq '^[[:space:]]*(-[[:space:]]+)?run:[[:space:]]+task test:suite[[:space:]]*$' ||
+        err "rendered build.yml's lint job does not call \`task test:suite\` in a step"
+    awk '/^  verify:[[:space:]]*$/ { on = 1; next } on && /^  [^ #]/ { exit } on' Taskfile.yml |
+        grep -Eq '^[[:space:]]+-[[:space:]]+task:[[:space:]]+test:suite[[:space:]]*$' ||
+        err "rendered \`verify\` does not list \`task: test:suite\` itself"
+    if have task; then
+        # A plan that cannot be read (a broken rendered Taskfile) must fail the
+        # profile, not leave the loop below with no targets to compare.
+        parity_plans_ok=1
+        parity_verify_plan="$(task --color=false --dry verify 2>&1)" || {
+            echo "$parity_verify_plan" >&2
+            err "could not read the plan of rendered \`task verify\` (task --dry verify failed), so verify <-> CI parity was not compared"
+            parity_plans_ok=0
+        }
+        parity_suite_plan="$(task --color=false --dry test:suite 2>&1)" || {
+            echo "$parity_suite_plan" >&2
+            err "could not read the plan of rendered \`task test:suite\` (task --dry test:suite failed), so verify <-> CI parity was not compared"
+            parity_plans_ok=0
+        }
+        if [ "$parity_plans_ok" = 1 ]; then
+            for parity_target in $(grep -oE '^task: \[test:[^]]+\]' <<<"$parity_verify_plan" | sed -E 's/^task: \[(.*)\]$/\1/'); do
+                grep -qF "task: [${parity_target}]" <<<"$parity_suite_plan" ||
+                    err "rendered verify runs ${parity_target}, which the required Build workflow's test:suite does not"
+            done
+        fi
+        run_quiet verify-ci-parity ./scripts/test-verify-ci-parity.sh ||
+            err "rendered test-verify-ci-parity.sh fails"
+    else
+        required task "verify <-> CI parity" || fail=1
+    fi
+fi
+
 # ── 1a. Machine-readable agent vocabulary survives every render profile ──
 if [ ! -x scripts/test-agent-registry.sh ]; then
     err "agent registry test is missing or not executable"
@@ -432,7 +487,7 @@ else
     required task "agent registry verify reachability" || fail=1
 fi
 if [ -f .github/workflows/build.yml ]; then
-    grep -qF 'task test:agent-registry' .github/workflows/build.yml ||
+    suite_runs test:agent-registry ||
         err "required CI does not run test:agent-registry"
 fi
 case "$profile" in
@@ -463,7 +518,7 @@ else
     required task "registry-drift verify reachability" || fail=1
 fi
 if [ -f .github/workflows/build.yml ]; then
-    grep -qF 'task test:registry-drift' .github/workflows/build.yml ||
+    suite_runs test:registry-drift ||
         err "required CI does not run test:registry-drift"
 fi
 
@@ -501,7 +556,7 @@ else
     required task "registry-docs verify reachability" || fail=1
 fi
 if [ -f .github/workflows/build.yml ]; then
-    grep -qF 'task test:registry-docs' .github/workflows/build.yml ||
+    suite_runs test:registry-docs ||
         err "required CI does not run test:registry-docs"
 fi
 
@@ -552,7 +607,7 @@ else
     required task "worktree entrypoint reachability" || fail=1
 fi
 if [ -f .github/workflows/build.yml ]; then
-    grep -qF 'task test:worktree' .github/workflows/build.yml ||
+    suite_runs test:worktree ||
         err "required CI does not run test:worktree"
 fi
 
@@ -604,7 +659,7 @@ else
     required task "label-registry verify reachability + execution" || fail=1
 fi
 if [ -f .github/workflows/build.yml ]; then
-    grep -qF 'task test:label-registry' .github/workflows/build.yml ||
+    suite_runs test:label-registry ||
         err "required CI does not run test:label-registry"
 fi
 
@@ -851,7 +906,7 @@ if [ "$validation_scope" = "renovate-config" ]; then
 fi
 grep -q '^use_codeql:' .copier-answers.yml || err "answers file does not persist explicit use_codeql intent"
 grep -q '^codeql_languages:' .copier-answers.yml || err "answers file does not persist explicit codeql_languages"
-grep -q 'task test:ci-results' .github/workflows/build.yml ||
+suite_runs test:ci-results ||
     err "rendered build workflow does not run the CI result helper regression (test:ci-results)"
 [ -x scripts/test-ci-results.sh ] || err "CI result helper regression missing or not executable"
 ./scripts/test-ci-results.sh >/dev/null || err "rendered CI result helper regression failed"
@@ -1731,7 +1786,7 @@ if [ "$profile" = "full" ] || [ "$profile" = "meta" ]; then
         required task "remote Codex policy verify reachability" || fail=1
     fi
     if [ -f .github/workflows/build.yml ]; then
-        grep -qF 'task test:remote-codex-policy' .github/workflows/build.yml ||
+        suite_runs test:remote-codex-policy ||
             err "required CI does not run test:remote-codex-policy (use_codex_review=true)"
     fi
 else

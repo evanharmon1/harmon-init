@@ -29,6 +29,21 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
   base-**branch** change; losing that re-run is accepted, because retargeting a
   PR is rare and `strict_required_status_checks_policy` forces an up-to-date
   head before merge, which arrives as a `synchronize`.
+  **One list, not two** (#962, #1461): the `lint` job runs `check`, then a
+  single `task test:suite` step — the Taskfile's aggregate of every `test:*`
+  target `task verify` runs — so a guard added to `verify` is in CI by
+  construction instead of by someone remembering to list it in the workflow
+  too. The accepted cost is one Actions step for the whole suite rather than a
+  named step per test. Outside the suite, each with its reason beside it in
+  the workflow: `test:template` (it runs as the `template-test` matrix, one
+  profile per leg), `verify:skills` (network), `test:devcontainer:permissions`
+  (a `ci`-only unit check), and the `audit:*` step (not a `test:*` target).
+  `task test:verify-ci-parity` — in the suite, in both layers, and also its own
+  `lint` step so deleting the suite step cannot silence it — fails if
+  `build.yml`'s `lint` job stops calling `test:suite`, if `verify` stops running
+  it, or if `verify` lists a `test:*` target directly (`test:template` aside,
+  where the `template-test` job exists); `scripts/test-template.sh` asserts the
+  same for every rendered profile.
 - `closing-keywords.yml` — the metadata-only gate that refuses a same-repo
   `Closes #N` while `#N` has unchecked task-list items. It lives in its own
   workflow precisely so it can keep `pull_request.edited`: it reads the PR
@@ -119,8 +134,8 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
 - `remote-bootstrap.yml` — **root-only**: proves
   `images/devcontainer/bootstrap-remote.sh` on a stock `ubuntu:24.04` container.
   One job, because the offline half belongs everywhere. The pin contract
-  (`task test:bootstrap-remote`) runs unconditionally in `build.yml`'s `lint`
-  job and in `verify`, so a change to any input it reads — the install scripts,
+  (`task test:bootstrap-remote`) runs unconditionally, inside `test:suite`,
+  in `build.yml`'s `lint` job and in `verify`, so a change to any input it reads — the install scripts,
   the pins, or the allowlist tables in
   [remote-environments.md](remote-environments.md) it derives its host sets
   from — is checked on every pull request rather than behind a path filter that
