@@ -531,10 +531,7 @@
       "purpose": "The AI's suggested priority, p0–p4; the human Priority overrides it, and for a bug it reads as severity (how bad, and how important to fix before a merge or deploy). Advisory.",
       "axis": "meta",
       "source": "inline",
-      "writers": [
-        "human",
-        "agent"
-      ],
+      "writers": ["human", "agent"],
       "writer_note": "agents or humans — the AI's suggestion, never required; a review finding filed as an issue carries its adjudicated badge (P0→p0, P1→p1, P2→p2, P3→p3; nothing from a review maps to p4)",
       "readers": "humans, saved views; the effective priority, which is the human `priority` when set and else this suggestion",
       "lifecycle": "durable",
