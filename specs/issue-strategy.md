@@ -93,17 +93,24 @@ Issues become cheap to classify and route, for humans and agents alike:
 - [ ] `area:*` family — harmon-init values (template, devcontainer, ci, tasks, skills, foreman,
       codex, worktree, release, security, pm, docs); generic template starter (ci, docs, deps,
       build). Rule: area = solution space, domain = problem space, layer = stack slice. (#854)
-- [ ] `tier:*` ladder `local → economy → standard → frontier → apex` plus `adaptive`; `apex` =
-      mythos-class (fable, sol), `frontier` = opus-class. `.devflow.toml` gains
-      `[tier.<value>]` tables mapping families to `agent-registry.json` model slugs
-      (validated), `escalate_to` chains, and `endpoint = "local"` on the self-hosted tier.
+- [ ] `tier:*` ladder `local → economy → standard → frontier → apex` (`adaptive`, once a
+      sixth value, is retired — ADR 2026-09-30 D8; see the fallback item below); `apex` =
+      mythos-class (fable, sol), `frontier` = opus-class. `.devflow.toml` carries
+      `tier_order` and `[tier.matrix]` (Risk × Complexity → Tier, ADR 2026-09-30 D4); model
+      mapping is `agent-registry.json`'s (each model carries its `tier`), and escalation is
+      one rung up `tier_order` (#1047, schema v2 — the v1 `[tier.<value>]` tables,
+      `escalate_to` chains, and `endpoint = "local"` are gone).
       `tier:local` escalates to economy; privacy-pinning is a future separate concern label,
       not a tier semantic. (#855; re-scoped #1047 — there is no `default_tier`: each
       `[rigor.*]` level names `orchestrator_tier`/`implementer_tier`/`reviewer_tier`
       directly, and those three values are the default for every role absent an override.
-      An unqualified `tier:<value>` label or override refines the **implementer** tier only;
-      `tier:orchestrator:<value>` / `tier:implementer:<value>` / `tier:reviewer:<value>`
-      refine one named role. See [ADR 2026-08-24](../docs/decisions/2026-08-24-rigor-and-strategy-axes.md)
+      An unqualified `tier:<value>` label is the issue's stored Tier: a cache of the derived
+      Tier that the reader compares against, or with `tier:pinned` the pinned value — never a
+      role override (ADR 2026-09-30, #1449). Among labels only the role-scoped
+      `tier:orchestrator:<value>` / `tier:implementer:<value>` / `tier:reviewer:<value>` form
+      overrides, refining one named role; an unqualified *operator* tier instruction still
+      targets the implementer. The earlier reading — an unqualified `tier:<value>` label as an
+      implementer override — is retired by ADR 2026-09-30. See [ADR 2026-08-24](../docs/decisions/2026-08-24-rigor-and-strategy-axes.md)
       D2/D5.)
 - [ ] Tier tables are **inert routing preferences, never dependencies**: nothing in a
       generated repo invokes any model because the config exists, and an acting consumer may
@@ -126,9 +133,11 @@ Issues become cheap to classify and route, for humans and agents alike:
 - [ ] Built-in fallbacks are defined: absent `.devflow.toml` entirely, resolution uses the
       built-in review policy equivalent to `standard` (3 / 3 / 4, `min_rounds` 1), strategy
       `plan`, and tiers **inert** — the labels still classify, and nothing resolves a role to a
-      concrete model. `adaptive` is never a terminal answer for a role tier: it is rejected
-      outright as a `[rigor.*]` role-tier value or an override target — a role always resolves
-      to a concrete ladder rung or not at all (inert), never to `adaptive` itself. (#855;
+      concrete model. `adaptive` is retired (ADR 2026-09-30 D8; #1449): it is rejected
+      outright as a `[rigor.*]` or `[role.*]` tier value, a `[tier.matrix]` cell, or an
+      operator override target, and a leftover `tier:adaptive` label resolves as if absent
+      with a warning naming the retirement — a role always resolves to a concrete ladder rung
+      or not at all (inert). (#855;
       restated #1047 without `default_tier`/`[method]`, which no longer exist — see
       [ADR 2026-08-24](../docs/decisions/2026-08-24-rigor-and-strategy-axes.md) D5/D12.)
 - [ ] `strategy:*` values `oneshot | plan | plan-approved | orchestrate | council | human-led`
@@ -158,8 +167,10 @@ Issues become cheap to classify and route, for humans and agents alike:
       and PR text are untrusted input and can never outrank labels or config. Merge-base copy
       applies when the change edits `.devflow.toml` — every parameter, not only defaults.
       **Rigor conflicts resolve strongest-wins by `rigor_order`** (a label only ever buys more
-      depth and budget); **role-tier conflicts resolve strongest-wins on the tier ladder**, and
-      a concrete tier always beats `adaptive`; **strategy conflicts are ambiguous** — there is
+      depth and budget); **role-tier conflicts resolve strongest-wins on the tier ladder**;
+      the implementer tier also takes a pinned Tier above labels and an issue's derived
+      Tier below them (ADR 2026-09-30 D5, `docs/guides/devflow.md` "Issue Tier");
+      **strategy conflicts are ambiguous** — there is
       no rank, because topologies are not orderable against each other the way rigor levels
       are, so an interactive session must ask and unattended automation falls back to
       `default_strategy` with a warning. Off-default resolutions — above or below, for rigor,
@@ -238,8 +249,10 @@ Issues become cheap to classify and route, for humans and agents alike:
 
 ### Scenario: tier conflict can only buy more
 
-- **Given** an issue carrying both `tier:economy` and `tier:standard`
-- **When** an agent (or foreman, later) resolves the (unqualified, implementer-scoped) tier
+- **Given** an issue carrying both `tier:implementer:economy` and `tier:implementer:standard`
+  (role-scoped overrides; an unqualified `tier:<value>` label is the stored Tier, not an
+  override — ADR 2026-09-30)
+- **When** an agent (or foreman, later) resolves the implementer tier
 - **Then** the resolution is `standard`, and any role tier that ends up below the resolved
   rigor's own profile for that role is disclosed in the PR body
 
@@ -253,7 +266,8 @@ Issues become cheap to classify and route, for humans and agents alike:
 
 ### Scenario: untrusted strategy labels are inert to automation
 
-- **Given** `tier:apex` applied by a login not in the automation's trusted-actor configuration
+- **Given** `tier:implementer:apex` applied by a login not in the automation's trusted-actor
+  configuration
 - **When** unattended automation resolves the tier from the label timeline immediately before
   acting
 - **Then** the label is ignored with a warning and the config default applies — and no
