@@ -80,7 +80,9 @@ export const EVENT_TYPES = Object.freeze(['opened', 'labeled', 'unlabeled', 'typ
 export function workTypeLabels(registry) {
   const family = (registry?.families ?? []).find((f) => f.family === 'work-type')
   if (!family) throw new Error('label-registry.json has no work-type family')
-  return (family.values ?? family.labels ?? []).map((v) => (typeof v === 'string' ? v : v.value ?? v.name))
+  return (family.values ?? family.labels ?? []).map((v) =>
+    typeof v === 'string' ? v : (v.value ?? v.name)
+  )
 }
 
 /** Is `name` a label whose change can alter the Tier or "triaged"? */
@@ -92,22 +94,33 @@ export function isInputLabel(name, workTypes) {
 /** The only labels this script may ever add or remove. */
 export function assertWritable(label) {
   const ok = label === NEEDS_TRIAGE || TIER_VALUES.some((t) => label === `tier:${t}`)
-  if (!ok) throw new Error(`refusing to write ${JSON.stringify(label)}: only tier:<value> and ${NEEDS_TRIAGE} are writable`)
+  if (!ok)
+    throw new Error(
+      `refusing to write ${JSON.stringify(label)}: only tier:<value> and ${NEEDS_TRIAGE} are writable`
+    )
   return label
 }
 
 function axisValue(issue, { axis, field, prefix }, reports) {
   const fromField = (issue.fields ?? {})[field] ?? null
-  const fromLabels = [...new Set(issue.labels.filter((l) => l.startsWith(prefix)).map((l) => l.slice(prefix.length)))]
+  const fromLabels = [
+    ...new Set(issue.labels.filter((l) => l.startsWith(prefix)).map((l) => l.slice(prefix.length)))
+  ]
   if (fromField !== null) {
     if (fromLabels.some((v) => v !== fromField)) {
-      reports.push({ code: 'field-label-conflict', message: `${field} field is ${fromField} but labels say ${fromLabels.join(', ')}; the field wins` })
+      reports.push({
+        code: 'field-label-conflict',
+        message: `${field} field is ${fromField} but labels say ${fromLabels.join(', ')}; the field wins`
+      })
     }
     return { present: true, value: fromField }
   }
   if (fromLabels.length === 0) return { present: false, value: null }
   if (fromLabels.length > 1) {
-    reports.push({ code: 'ambiguous-input', message: `${fromLabels.length} ${axis} labels (${fromLabels.join(', ')}); no ${axis} value is read` })
+    reports.push({
+      code: 'ambiguous-input',
+      message: `${fromLabels.length} ${axis} labels (${fromLabels.join(', ')}); no ${axis} value is read`
+    })
     return { present: true, value: null }
   }
   return { present: true, value: fromLabels[0] }
@@ -143,20 +156,32 @@ export function decide(issue, ctx) {
 
   const tierLabels = labels.filter((l) => TIER_VALUES.some((t) => l === `tier:${t}`))
   if (labels.includes(RETIRED_TIER_LABEL)) {
-    reports.push({ code: 'tier-retired', message: `${RETIRED_TIER_LABEL} is retired and left for its migration (#1447)` })
+    reports.push({
+      code: 'tier-retired',
+      message: `${RETIRED_TIER_LABEL} is retired and left for its migration (#1447)`
+    })
   }
 
   let tier = null
   if (labels.includes(PIN_LABEL)) {
     // Nothing automated writes over a pinned Tier (D5).
     if (tierLabels.length > 1) {
-      reports.push({ code: 'ambiguous-pin', message: `${PIN_LABEL} with ${tierLabels.join(', ')}: left for a human, never resolved by picking one` })
+      reports.push({
+        code: 'ambiguous-pin',
+        message: `${PIN_LABEL} with ${tierLabels.join(', ')}: left for a human, never resolved by picking one`
+      })
     } else if (tierLabels.length === 0) {
-      reports.push({ code: 'pin-without-tier', message: `${PIN_LABEL} without a tier value: left for a human` })
+      reports.push({
+        code: 'pin-without-tier',
+        message: `${PIN_LABEL} without a tier value: left for a human`
+      })
     }
   } else if (values.risk === null || values.complexity === null) {
     if (tierLabels.length > 0) {
-      reports.push({ code: 'cache-unverifiable', message: `${tierLabels.join(', ')} without both Risk and Complexity: left in place, never used as an input` })
+      reports.push({
+        code: 'cache-unverifiable',
+        message: `${tierLabels.join(', ')} without both Risk and Complexity: left in place, never used as an input`
+      })
     }
   } else if (ctx.derive === null) {
     reports.push({ code: 'tier-not-derivable', message: `tier not derivable: ${ctx.underivable}` })
@@ -196,19 +221,35 @@ export async function loadDerivation(root, candidates = READER_CANDIDATES) {
   const readerPath = candidates.map((c) => resolvePath(root, c)).find((p) => existsSync(p))
   if (!readerPath) return { derive: null, underivable: 'no policy reader found', reader: null }
   const policyPath = resolvePath(root, '.devflow.toml')
-  if (!existsSync(policyPath)) return { derive: null, underivable: 'no .devflow.toml', reader: readerPath }
+  if (!existsSync(policyPath))
+    return { derive: null, underivable: 'no .devflow.toml', reader: readerPath }
   try {
     const reader = await import(pathToFileURL(readerPath).href)
     if (typeof reader.deriveTier !== 'function' || typeof reader.resolvePolicy !== 'function') {
-      return { derive: null, underivable: `the reader at ${readerPath} has no deriveTier`, reader: readerPath }
+      return {
+        derive: null,
+        underivable: `the reader at ${readerPath} has no deriveTier`,
+        reader: readerPath
+      }
     }
-    const { parseToml } = await import(new URL('./lib/toml-lite.mjs', pathToFileURL(readerPath)).href)
+    const { parseToml } = await import(
+      new URL('./lib/toml-lite.mjs', pathToFileURL(readerPath)).href
+    )
     const resolved = reader.resolvePolicy(parseToml(readFileSync(policyPath, 'utf8')))
     const matrix = resolved?.tier_matrix ?? null
-    if (matrix === null) return { derive: null, underivable: 'the policy has no [tier.matrix]', reader: readerPath }
-    return { derive: (risk, complexity) => reader.deriveTier(matrix, { risk, complexity }), underivable: null, reader: readerPath }
+    if (matrix === null)
+      return { derive: null, underivable: 'the policy has no [tier.matrix]', reader: readerPath }
+    return {
+      derive: (risk, complexity) => reader.deriveTier(matrix, { risk, complexity }),
+      underivable: null,
+      reader: readerPath
+    }
   } catch (err) {
-    return { derive: null, underivable: `the reader at ${readerPath} could not resolve the policy: ${err.message}`, reader: readerPath }
+    return {
+      derive: null,
+      underivable: `the reader at ${readerPath} could not resolve the policy: ${err.message}`,
+      reader: readerPath
+    }
   }
 }
 
@@ -254,13 +295,22 @@ function makeClient(token) {
     'user-agent': 'classification-reconcile'
   }
   async function graphql(query, variables) {
-    const res = await fetch(graphqlUrl, { method: 'POST', headers, body: JSON.stringify({ query, variables }) })
+    const res = await fetch(graphqlUrl, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ query, variables })
+    })
     const body = await res.json().catch(() => ({}))
-    if (!res.ok || body.errors) throw new Error(`GraphQL ${res.status}: ${JSON.stringify(body.errors ?? body)}`)
+    if (!res.ok || body.errors)
+      throw new Error(`GraphQL ${res.status}: ${JSON.stringify(body.errors ?? body)}`)
     return body.data
   }
   async function rest(method, path, payload) {
-    const res = await fetch(`${api}${path}`, { method, headers, body: payload === undefined ? undefined : JSON.stringify(payload) })
+    const res = await fetch(`${api}${path}`, {
+      method,
+      headers,
+      body: payload === undefined ? undefined : JSON.stringify(payload)
+    })
     if (method === 'DELETE' && res.status === 404) return null // already gone
     if (!res.ok) throw new Error(`${method} ${path}: ${res.status} ${await res.text()}`)
     return res.status === 204 ? null : res.json()
@@ -307,7 +357,8 @@ export function parseRepositories(raw, fallback) {
     .filter(Boolean)
   const repos = list.length > 0 ? list : fallback ? [fallback] : []
   for (const r of repos) {
-    if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(r)) throw new Error(`not an owner/name repository: ${JSON.stringify(r)}`)
+    if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(r))
+      throw new Error(`not an owner/name repository: ${JSON.stringify(r)}`)
   }
   return repos
 }
@@ -317,12 +368,16 @@ async function main() {
   const dryRun = process.env.RECONCILE_DRY_RUN === 'true'
   const issueNumber = Number.parseInt(process.env.RECONCILE_ISSUE || '0', 10) || 0
   const repos = parseRepositories(process.env.RECONCILE_REPOSITORIES, process.env.GITHUB_REPOSITORY)
-  if (repos.length === 0) throw new Error('no repository: set RECONCILE_REPOSITORIES or GITHUB_REPOSITORY')
-  if (issueNumber > 0 && repos.length !== 1) throw new Error('RECONCILE_ISSUE needs exactly one repository')
+  if (repos.length === 0)
+    throw new Error('no repository: set RECONCILE_REPOSITORIES or GITHUB_REPOSITORY')
+  if (issueNumber > 0 && repos.length !== 1)
+    throw new Error('RECONCILE_ISSUE needs exactly one repository')
   const token = process.env.GH_TOKEN
   if (!token) throw new Error('GH_TOKEN is not set')
 
-  const workTypes = workTypeLabels(JSON.parse(readFileSync(resolvePath(root, 'label-registry.json'), 'utf8')))
+  const workTypes = workTypeLabels(
+    JSON.parse(readFileSync(resolvePath(root, 'label-registry.json'), 'utf8'))
+  )
   const derivation = await loadDerivation(root)
   const ctx = { workTypes, derive: derivation.derive, underivable: derivation.underivable }
   const client = makeClient(token)
@@ -332,8 +387,13 @@ async function main() {
     summary.push(line)
   }
   if (derivation.derive === null) {
-    console.log(`::warning title=classification reconcile::tier not derivable: ${derivation.underivable}; maintaining ${NEEDS_TRIAGE} only`)
-    summary.push(`> **Tier not derivable:** ${derivation.underivable}. \`${NEEDS_TRIAGE}\` is still maintained; no Tier is written.`, '')
+    console.log(
+      `::warning title=classification reconcile::tier not derivable: ${derivation.underivable}; maintaining ${NEEDS_TRIAGE} only`
+    )
+    summary.push(
+      `> **Tier not derivable:** ${derivation.underivable}. \`${NEEDS_TRIAGE}\` is still maintained; no Tier is written.`,
+      ''
+    )
   }
   log(`| Issue | Added | Removed | Reports |`)
   log(`|---|---|---|---|`)
@@ -342,7 +402,10 @@ async function main() {
   let seen = 0
   for (const repo of repos) {
     const [owner, name] = repo.split('/')
-    const issues = issueNumber > 0 ? [await fetchIssue(client, owner, name, issueNumber)].filter(Boolean) : openIssues(client, owner, name)
+    const issues =
+      issueNumber > 0
+        ? [await fetchIssue(client, owner, name, issueNumber)].filter(Boolean)
+        : openIssues(client, owner, name)
     for await (const issue of issues) {
       seen += 1
       let plan = decide(issue, ctx)
@@ -352,24 +415,34 @@ async function main() {
         const fresh = await fetchIssue(client, owner, name, issue.number)
         plan = fresh ? decide(fresh, ctx) : { add: [], remove: [], reports: [] }
         const path = `/repos/${owner}/${name}/issues/${issue.number}/labels`
-        if (plan.add.length > 0) await client.rest('POST', path, { labels: plan.add.map(assertWritable) })
-        for (const l of plan.remove) await client.rest('DELETE', `${path}/${encodeURIComponent(assertWritable(l))}`)
+        if (plan.add.length > 0)
+          await client.rest('POST', path, { labels: plan.add.map(assertWritable) })
+        for (const l of plan.remove)
+          await client.rest('DELETE', `${path}/${encodeURIComponent(assertWritable(l))}`)
       }
       // Ambiguity and pins are reported per issue; the run-wide "not
       // derivable" reason is reported once above.
       const reports = plan.reports.filter((r) => r.code !== 'tier-not-derivable')
-      for (const r of reports) console.log(`::warning title=${repo}#${issue.number} ${r.code}::${r.message}`)
+      for (const r of reports)
+        console.log(`::warning title=${repo}#${issue.number} ${r.code}::${r.message}`)
       if (plan.add.length > 0 || plan.remove.length > 0 || reports.length > 0) {
         if (plan.add.length > 0 || plan.remove.length > 0) changed += 1
         const cell = (xs) => xs.map((x) => `\`${x}\``).join(' ') || '—'
-        log(`| ${repo}#${issue.number} | ${cell(plan.add)} | ${cell(plan.remove)} | ${reports.map((r) => `${r.code}: ${r.message}`).join('<br>') || '—'} |`)
+        log(
+          `| ${repo}#${issue.number} | ${cell(plan.add)} | ${cell(plan.remove)} | ${reports.map((r) => `${r.code}: ${r.message}`).join('<br>') || '—'} |`
+        )
       }
     }
   }
   log('')
-  log(`${dryRun ? 'Dry run: would change' : 'Changed'} ${changed} of ${seen} open issue(s) in ${repos.join(', ')}.`)
+  log(
+    `${dryRun ? 'Dry run: would change' : 'Changed'} ${changed} of ${seen} open issue(s) in ${repos.join(', ')}.`
+  )
   if (process.env.GITHUB_STEP_SUMMARY) {
-    appendFileSync(process.env.GITHUB_STEP_SUMMARY, `## Classification reconcile\n\n${summary.join('\n')}\n`)
+    appendFileSync(
+      process.env.GITHUB_STEP_SUMMARY,
+      `## Classification reconcile\n\n${summary.join('\n')}\n`
+    )
   }
 }
 

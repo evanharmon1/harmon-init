@@ -12,11 +12,13 @@ run-name: >-
 #     organization repository (Team-plan minutes are shared and most org
 #     repositories are private). Walks this repository's open issues.
 #   - workflow_call: classification-event.yml calls it for one issue. An
-#     organization-level caller may also pass `repositories` plus the `token`
-#     secret (a CI GitHub App installation token) to walk every repository in
-#     the organization daily — the opt-in path in docs/architecture/ci-cd.md.
-#     Without `token` the walk is limited to the calling repository, because
-#     GITHUB_TOKEN is repository-scoped.
+#     organization-level caller may also pass `repositories` plus the
+#     CLASSIFICATION_TOKEN secret (a CI GitHub App installation token) to walk
+#     every repository in the organization daily — the opt-in path in
+#     docs/architecture/ci-cd.md. Without it the walk is limited to the calling
+#     repository, because GITHUB_TOKEN is repository-scoped. On schedule and
+#     workflow_dispatch the same expression reads a repository or organization
+#     secret named CLASSIFICATION_TOKEN, so setting one is the opt-in there.
 #   - workflow_dispatch: by hand, with an optional dry run.
 #
 # The checked-out repository supplies the script, the policy (.devflow.toml,
@@ -50,7 +52,7 @@ on:
   workflow_call:
     inputs:
       repositories:
-        description: "owner/name list to walk (default: the calling repository); needs the token secret beyond it"
+        description: "owner/name list to walk (default: the calling repository); needs the CLASSIFICATION_TOKEN secret beyond it"
         type: string
         required: false
         default: ""
@@ -65,7 +67,7 @@ on:
         required: false
         default: false
     secrets:
-      token:
+      CLASSIFICATION_TOKEN:
         description: "Optional cross-repository token (a CI GitHub App installation token with Issues: write); defaults to GITHUB_TOKEN"
         required: false
 
@@ -89,7 +91,7 @@ jobs:
           node-version: "24"
       - name: Reconcile Tier and needs-triage
         env:
-          GH_TOKEN: ${{ secrets.token || github.token }}
+          GH_TOKEN: ${{ secrets.CLASSIFICATION_TOKEN || github.token }}
           RECONCILE_REPOSITORIES: ${{ inputs.repositories }}
           RECONCILE_ISSUE: ${{ inputs.issue }}
           RECONCILE_DRY_RUN: ${{ inputs.dry-run }}

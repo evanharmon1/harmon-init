@@ -232,10 +232,16 @@ mints an installation token from the CI GitHub App that already exists
 (`actions/create-github-app-token` over `CI_APP_CLIENT_ID` /
 `CI_APP_PRIVATE_KEY`, the same App `claude-*.yml` and `release.yml` use, with
 Issues: write). It then calls `classification-reconcile.yml` with that token
-as the `token` secret and the organization's repository list as the
-`repositories` input. The caller's checkout supplies the script, the reader
+as the `CLASSIFICATION_TOKEN` secret and the organization's repository list as
+the `repositories` input. The caller's checkout supplies the script, the reader
 and the `.devflow.toml` whose matrix governs the walk. Without the secret, a
 walk covers only the calling repository.
+
+The workflow reads the token as `secrets.CLASSIFICATION_TOKEN || github.token`.
+On `schedule` and `workflow_dispatch` that same expression reads a repository
+or organization secret named `CLASSIFICATION_TOKEN`. Setting one on a
+repository is therefore the documented opt-in for a wider walk on those
+triggers. Leave it unset to stay on `GITHUB_TOKEN`.
 
 **Minutes model.** The organizations are on the Team plan with a shared pool,
 and most of their repositories are private. A job bills at least one full
