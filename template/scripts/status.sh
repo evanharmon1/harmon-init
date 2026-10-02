@@ -1398,6 +1398,7 @@ Effort:single_select:1,2,3,5,8,13,20"
                         missing_fields=""
                         wrong_fields=""
                         short_fields=""
+                        untyped_fields=""
                         while IFS= read -r want; do
                             [ -n "${want}" ] || continue
                             wname="${want%%:*}"
@@ -1409,7 +1410,11 @@ Effort:single_select:1,2,3,5,8,13,20"
                             hopts="$(cut -f3 <<<"${frow}")"
                             if [ -z "${frow}" ]; then
                                 missing_fields="${missing_fields}${missing_fields:+, }${wname}"
-                            elif [ -n "${htype}" ] && [ "${htype}" != "${wtype}" ]; then
+                            elif [ -z "${htype}" ]; then
+                                # Named but untyped: a changed or malformed preview
+                                # response, not evidence the type is right.
+                                untyped_fields="${untyped_fields}${untyped_fields:+, }${wname}"
+                            elif [ "${htype}" != "${wtype}" ]; then
                                 wrong_fields="${wrong_fields}${wrong_fields:+, }${wname} is ${htype}"
                             elif [ -n "${wopts}" ]; then
                                 lacking=""
@@ -1432,6 +1437,8 @@ Effort:single_select:1,2,3,5,8,13,20"
                             [ -z "${missing_fields}" ] || field_gaps="missing ${missing_fields}"
                             [ -z "${short_fields}" ] || field_gaps="${field_gaps}${field_gaps:+; }${short_fields}"
                             checkline no "Org issue fields" "${field_gaps} — run task setup:github-issue-fields"
+                        elif [ -n "${untyped_fields}" ]; then
+                            checkline unknown "Org issue fields" "type unreadable for ${untyped_fields} — inventory unchecked"
                         else
                             checkline ok "Org issue fields" "Product, Impact, Risk, Complexity, Priority (AI), Effort"
                         fi

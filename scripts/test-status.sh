@@ -1915,6 +1915,11 @@ issue_fields_case "a field of the wrong data type" \
 issue_fields_case "a field with no options array" \
     'map(if .name == "Complexity" then del(.options) else . end)' \
     "[ ] Org issue fields - Complexity lacks xs, s, m, l, xl — run task setup:github-issue-fields"
+# A field that keeps its name and options but loses its data_type is a changed or
+# malformed preview response: the verdict is unknown, never ok (challenge r3, C3-F4).
+issue_fields_case "a field with no data_type" \
+    'map(if .name == "Impact" then del(.data_type) else . end)' \
+    "[?] Org issue fields - type unreadable for Impact — inventory unchecked"
 # An option is one option however its name is spelled: a name that merely lists
 # the wanted ones, joined by a comma or by the control character the renderer
 # itself joins with, must not satisfy them (challenge r1, C1-F4).

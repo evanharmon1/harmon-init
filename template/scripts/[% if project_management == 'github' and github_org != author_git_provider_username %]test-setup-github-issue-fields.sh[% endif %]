@@ -40,9 +40,10 @@ fail() {
 # other method — DELETE above all — is recorded as a bad call and refused.
 # GH_FAIL_PATCH makes the PATCH reject, GH_FAIL_READ makes the list read fail,
 # GH_FAIL_SEARCH / GH_SEARCH_INCOMPLETE / GH_SEARCH_GARBAGE make the usage probe
-# fail, report an incomplete result, or return a non-answer, and GH_DROP_FIELD
+# fail, report an incomplete result, or return a non-answer, GH_DROP_FIELD
 # names a field the list read stops returning from read number GH_DROP_FROM on
-# (a field that disappears while the script runs).
+# (a field that disappears while the script runs), and GH_LIST_BODY replaces what
+# every list read returns with that raw body (an error document, a wrapped page).
 mkdir -p "$tmp/bin"
 cat >"$tmp/bin/gh" <<'STUB'
 #!/usr/bin/env bash
@@ -81,7 +82,9 @@ GET)
     echo READ >>"$CALLS"
     r=$(($(cat "$STUB_READS") + 1))
     echo "$r" >"$STUB_READS"
-    if [ -n "${GH_DROP_FIELD:-}" ] && [ "$r" -ge "${GH_DROP_FROM:-2}" ]; then
+    if [ -n "${GH_LIST_BODY:-}" ]; then
+        printf '%s' "$GH_LIST_BODY"
+    elif [ -n "${GH_DROP_FIELD:-}" ] && [ "$r" -ge "${GH_DROP_FROM:-2}" ]; then
         jq -c --arg d "$GH_DROP_FIELD" 'map(select(.name != $d))' "$STUB_FIELDS_FILE"
     else
         cat "$STUB_FIELDS_FILE"
@@ -267,6 +270,10 @@ grep -q "Shipped options kept - Effort: High (search count 0), Medium (search co
     fail "each kept shipped option must be reported with its search count"
 grep -q "delete each in the org's issue-field settings once no issue holds it" "$tmp/out" ||
     fail "the report must say the deletion is the operator's"
+grep -q "A search count of 0 only means no issue this token's search can see" "$tmp/out" ||
+    fail "the report must say what a count of 0 does and does not cover (challenge r3, C3-F1)"
+grep -q "Enumerate the issues that hold a value before" "$tmp/out" || fail "the report must tell the operator to enumerate first"
+grep -q "harmon-init#910" "$tmp/out" || fail "the report must point at #910"
 [ "$(opt_names "$(state_field Effort)")" = '["1","2","3","5","8","13","20","High","Medium","Low"]' ] ||
     fail "the org's Effort should hold the ladder and the shipped options after the run"
 
@@ -480,6 +487,24 @@ if GH_FAIL_READ=1 "$script" --org testorg >"$tmp/out" 2>&1; then
     fail "a failed read must fail the script"
 fi
 [ "$(posts)" = 0 ] && [ "$(patches)" = 0 ] || fail "a failed read must not be followed by a write"
+
+echo "==> an error document in place of the inventory is a failed read, never an empty organization"
+# {"message":…} is what the API answers when the preview is unavailable (challenge
+# r3, C3-F3): reading it as "no fields" would start creating fields from an
+# inventory the script never saw.
+reset_stub "$builtin"
+if GH_LIST_BODY='{"message":"preview unavailable","documentation_url":"https://docs.github.com"}' "$script" --org testorg >"$tmp/out" 2>&1; then
+    fail "an unrecognized inventory document must fail the script"
+fi
+grep -q "Could not read issue fields" "$tmp/out" || fail "expected the failed-read message for an error document"
+[ "$(posts)" = 0 ] && [ "$(patches)" = 0 ] || fail "an error document must not be followed by a write"
+
+echo "==> both documented inventory shapes are still accepted"
+# The bare array is covered by every case above; the {"issue_fields":[…]} wrapper
+# the preview also documents is read the same way, and a complete org writes nothing.
+GH_LIST_BODY="$(jq -c '{issue_fields: .}' "$tmp/provisioned.json")" run_with "$(cat "$tmp/provisioned.json")"
+[ "$(posts)" = 0 ] && [ "$(patches)" = 0 ] || fail "a complete org read through the wrapper shape must write nothing"
+grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "the wrapper shape must read as a complete org"
 
 echo "==> a field that disappears while the script runs is a warning, never a ready outcome"
 # Present in the inventory, gone from the re-read its own reconcile makes

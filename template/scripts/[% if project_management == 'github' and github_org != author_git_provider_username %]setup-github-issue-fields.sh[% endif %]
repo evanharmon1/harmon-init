@@ -151,12 +151,17 @@ effort_shipped_defaults='["High","Medium","Low"]'
 #
 # Normalizing: the list endpoint returns a bare array; tolerate an
 # {"issue_fields":[...]} wrapper too, and `--paginate`'s multiple concatenated
-# documents — `jq -s` slurps every document, so the pages become one array.
+# documents — `jq -s` slurps every document, so the pages become one array. Any
+# OTHER document — an error object such as {"message":"…"}, say — is a failed read,
+# never an empty organization: reading it as "no fields" would send the script off
+# creating fields from an inventory it never saw.
 refresh_fields() {
     _raw=$(gh api "orgs/$org/issue-fields" -H "X-GitHub-Api-Version: $api_version" --paginate 2>/dev/null || true)
     [ -n "$_raw" ] || return 1
     _json=$(printf '%s' "$_raw" |
-        jq -s '[ .[] | if type == "object" then (.issue_fields // []) else . end | .[] ]' 2>/dev/null || true)
+        jq -s 'if all(.[]; type == "array" or (type == "object" and (.issue_fields | type) == "array"))
+               then [ .[] | if type == "object" then .issue_fields else . end | .[] ]
+               else error("unrecognized issue-fields response") end' 2>/dev/null || true)
     [ -n "$_json" ] || return 1
     existing_json="$_json"
 }
@@ -393,6 +398,9 @@ fi
 # warning: the org is provisioned either way). Deleting one is the operator's step.
 if [ -n "$shipped_report" ]; then
     checkline info "Shipped options kept" "$shipped_report — delete each in the org's issue-field settings once no issue holds it"
+    echo "    A search count of 0 only means no issue this token's search can see: it cannot see repositories this" >&2
+    echo "    token cannot read, and its index can lag an edit. Enumerate the issues that hold a value before" >&2
+    echo "    deleting an option — deleting one blanks it on every issue (harmon-init#910)." >&2
 fi
 
 if [ -n "$incompatible" ] || [ -n "$unreconciled" ]; then

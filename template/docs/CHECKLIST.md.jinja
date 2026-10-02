@@ -308,9 +308,12 @@ the compatibility reason in the rule's `description`.
       `1, 2, 3, 5, 8, 13, 20` to the built-in **Effort** field beside GitHub's
       shipped High/Medium/Low options. Removing those shipped options is left
       to you, because removing an option blanks it on every issue that holds
-      it: the run reports how many issues hold each, and once none does, delete
-      it in the org's issue-field settings (**Settings → Planning → Issue
-      fields**). There is deliberately no Tier, Domain, or Layer issue field —
+      it: the run reports how many issues its search finds for each, but a count
+      of 0 only means no issue that search can see — not one in a repository
+      your token cannot read, and its index can lag an edit — so enumerate the
+      issues that hold a value first, and once none does, delete the option in
+      the org's issue-field settings (**Settings → Planning → Issue fields**).
+      There is deliberately no Tier, Domain, or Layer issue field —
       see [project-management.md](project-management.md), "Label or field?".
       Priority (the human override of Priority (AI)) and the date fields are
       GitHub built-in issue fields, left as shipped. Idempotent and additive: a
