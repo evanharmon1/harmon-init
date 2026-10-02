@@ -38,9 +38,12 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
   the workflow: `test:template` (it runs as the `template-test` matrix, one
   profile per leg), `verify:skills` (network), `test:devcontainer:permissions`
   (a `ci`-only unit check), and the `audit:*` step (not a `test:*` target).
-  `task test:verify-ci-parity` — itself in the suite, in both layers — fails if
-  `build.yml` stops calling `test:suite` or `verify` stops running it, and
-  `scripts/test-template.sh` asserts the same for every rendered profile.
+  `task test:verify-ci-parity` — in the suite, in both layers, and also its own
+  `lint` step so deleting the suite step cannot silence it — fails if
+  `build.yml`'s `lint` job stops calling `test:suite`, if `verify` stops running
+  it, or if `verify` lists a `test:*` target directly (`test:template` aside,
+  where the `template-test` job exists); `scripts/test-template.sh` asserts the
+  same for every rendered profile.
 - `closing-keywords.yml` — the metadata-only gate that refuses a same-repo
   `Closes #N` while `#N` has unchecked task-list items. It lives in its own
   workflow precisely so it can keep `pull_request.edited`: it reads the PR
