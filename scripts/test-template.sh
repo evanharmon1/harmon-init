@@ -236,6 +236,10 @@ full)
         --data use_antigravity_cli=true
         --data use_copilot_cli=true
         --data use_alternative_claude_providers=true
+        # use_fly_sprites defaults OFF (Sprites need a paid Fly.io org), so this
+        # is the only profile that renders sprites/; every other one proves the
+        # default renders none of it (#1411).
+        --data use_fly_sprites=true
         --data devcontainer_coder_folder_uri="vscode-remote://dev-container+7b22686f737450617468223a222f7372762f636f6465722f736d6f6b652d74657374222c22636f6e66696746696c65223a7b2270617468223a222f7372762f636f6465722f736d6f6b652d746573742f2e646576636f6e7461696e65722f6465762f646576636f6e7461696e65722e6a736f6e227d7d@ssh-remote+coder.dev/workspaces/smoke-test"
         --data use_foreman=true
         --data foreman_additional_trusted_actors="AdmiralFraggle,review-app[bot]"
@@ -2291,6 +2295,36 @@ if [ "$profile" = "meta" ]; then
         fi
     else
         err "use_codex_review=true, devcontainer=false render failed to generate"
+    fi
+fi
+
+# ── Fly.io Sprites opt-in (#1411) ─────────────────────────────────────
+# Paid SaaS defaults off: only `full` answers use_fly_sprites=true, and there the
+# rendered generator must pass the same derivation test the root runs, against
+# the RENDERED project's own allowlist. Every other profile renders with the
+# default and must contain nothing for Sprites.
+if [ "$profile" = "full" ]; then
+    if [ ! -x "$dest/sprites/network-policy.sh" ]; then
+        err "use_fly_sprites=true did not render an executable sprites/network-policy.sh"
+    else
+        "$repo_root/scripts/test-sprites-policy.sh" "$dest/sprites" >"$job_tmp/sprites-policy.log" 2>&1 ||
+            err "the rendered Sprites network-policy generator fails test-sprites-policy: $(tail -3 "$job_tmp/sprites-policy.log")"
+    fi
+else
+    [ ! -e "$dest/sprites" ] || err "profile '$profile' rendered sprites/ without opting in to use_fly_sprites"
+fi
+# The allowlist the policy is generated from ships only with the devcontainer,
+# so the opt-in must be refused without it rather than render a generator with
+# nothing to read. `minimal` already turns the devcontainer off.
+if [ "$profile" = "minimal" ]; then
+    sprites_nodc_dest="$job_tmp/render-sprites-no-devcontainer"
+    if copier copy --trust --defaults --vcs-ref=HEAD \
+        "${copier_flags[@]+"${copier_flags[@]}"}" \
+        "${data_args[@]}" --data use_fly_sprites=true \
+        "$repo_root" "$sprites_nodc_dest" >"$job_tmp/sprites-nodc.log" 2>&1; then
+        err "use_fly_sprites=true was accepted with devcontainer=false"
+    elif ! grep -q 'Enable DEVCONTAINER before FLY.IO SPRITES' "$job_tmp/sprites-nodc.log"; then
+        err "use_fly_sprites=true, devcontainer=false failed for a reason other than the opt-in validator: $(tail -3 "$job_tmp/sprites-nodc.log")"
     fi
 fi
 

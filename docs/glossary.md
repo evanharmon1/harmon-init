@@ -25,7 +25,7 @@ project-specific (domain) terms as the model firms up.
 Inherent attributes of an issue itself, distinct from the **execution policy**
 (`.devflow.toml`: rigor, strategy, role tiers, budgets), which decides how the
 factory runs an issue and may override any default the classification implies.
-Impact, Risk, Complexity, Priority, and Effort are issue fields on
+Impact, Risk, Complexity, Priority, Priority (AI), and Effort are issue fields on
 organization repos and labels on personal-account repos; the Tier is a label on
 every owner type; Type, `area:*`, `layer:*`, and `domain:*` keep their existing
 storage.
@@ -38,7 +38,8 @@ storage.
 | Tier | The model stratum the issue is suggested to run at — `local`, `economy`, `standard`, `frontier`, `apex` — derived by a pure function from Risk × Complexity (a risk-dominant matrix in `.devflow.toml`) and written by whoever writes the inputs; a materialized cache that readers recompute when absent. `local` is work a small self-hosted model can do and that may take a while. Avoid: suggest, model, family. |
 | Tier pin | A human choosing the Tier from the GitHub UI: the Tier value plus the `tier:pinned` label. Nothing automated writes over a pinned Tier. In execution-policy resolution a pin sits below an operator instruction and above `rigor:*`, sets the implementer tier only, and any resolved role-tier invariant it breaks is disclosed in the PR body rather than corrected. |
 | Effort | The human time estimate for work a human will do, on the modified Fibonacci ladder (1, 2, 3, 5, 8, 13, 20). Human tasks only, never agent work. Avoid: size, story points. |
-| Priority | The human's ranking of when the issue should be worked: urgent, high, medium, low. Human-only and never required; unset means an agent does not start it without asking. Avoid: P0–P3 (review-finding severities). |
+| Priority | The human's ranking of when the issue should be worked: urgent, high, medium, low. Human-only and never required; unset means an agent does not start it without asking. It overrides the AI's suggested Priority (AI). Avoid: P0–P3 (review-finding severities). |
+| Priority (AI) | The AI's suggested priority — `p0`, `p1`, `p2`, `p3`, `p4` — written by an agent or a human from what it knows at the time: an issue field on organization repos, a `priority-ai:<value>` label on personal-account repos. The human Priority overrides it, so the **effective priority** is Priority when set, else Priority (AI). Advisory and never required; it arms nothing. For a bug it reads as severity — how bad the defect is and how important it is to fix before merging or deploying: `p0` blocks a merge or deploy, `p1` is a real defect to fix next, `p2` is worth fixing but not blocking, `p3` is cosmetic or informational, `p4` is negligible. A review finding filed as an issue carries its adjudicated badge (P0→`p0`, P1→`p1`, P2→`p2`, P3→`p3`); nothing from a review maps to `p4`. Avoid: urgency, P0–P3 (the review-finding badges it is set from). |
 | Family | A model lineage: claude, gpt, gemini, qwen… Distinct from a **harness** (the executable that runs it). |
 | Claim | The marker recording which model family took the work: `claim:<family>[:<model>]`. A signal, not a lock; the harness and runtime are in the claim comment. |
 | triaged | Every required classification is present: Type (or work-type label), one label from each of the `area:*`, `layer:*`, and `domain:*` families (or that family's explicit `none` value), Risk, Complexity, Impact. `needs-triage` is derived from this, never set by hand. |

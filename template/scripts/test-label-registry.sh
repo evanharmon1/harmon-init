@@ -228,12 +228,12 @@ check_rigor label-registry.json .devflow.toml
 
 # Vendored triage derives its REQUIRED axes from every exclusive non-retired
 # `classification` family whatever its writers, and refuses a classification
-# family on a reserved prefix such as `tier`. So priority/effort (not required
-# for "triaged") and tier must NOT be classification families. This guards ANY
-# manifest, generated repositories included.
+# family on a reserved prefix such as `tier`. So priority/priority-ai/effort
+# (not required for "triaged") and tier must NOT be classification families.
+# This guards ANY manifest, generated repositories included.
 check_triage_axes() {
     local manifest="$1" fam axis
-    for fam in priority effort tier; do
+    for fam in priority priority-ai effort tier; do
         axis="$(jq -r --arg f "$fam" '[.families[] | select(.family == $f) | .axis][0] // "absent"' "$manifest")"
         [ "$axis" != classification ] ||
             fail "$manifest family $fam uses the classification axis — triage tooling would make it a required axis for triaged (use meta or strategy)"
@@ -254,7 +254,7 @@ check_classification_registry() {
     got="$(q '[.families[] | select(.axis == "classification" and .exclusive == true and .retired != true) | .family] | sort | join(",")')"
     want="area,complexity,domain,impact,layer,risk"
     [ "$got" = "$want" ] ||
-        fail "$manifest exclusive classification families [$got] != the triaged axes [$want] — triage tooling requires exactly these (priority, effort and tier are not required for triaged and must use another axis)"
+        fail "$manifest exclusive classification families [$got] != the triaged axes [$want] — triage tooling requires exactly these (priority, priority-ai, effort and tier are not required for triaged and must use another axis)"
 
     local fam_values
     for fam_values in \
@@ -262,10 +262,11 @@ check_classification_registry() {
         'risk=trivial,low,medium,high,critical' \
         'complexity=xs,s,m,l,xl' \
         'priority=urgent,high,medium,low' \
+        'priority-ai=p0,p1,p2,p3,p4' \
         'effort=1,2,3,5,8,13,20'; do
         local fam="${fam_values%%=*}" values="${fam_values#*=}"
         got="$(jq -r --arg f "$fam" '.families[] | select(.family == $f) | [.values[].value] | join(",")' "$manifest")"
-        [ "$got" = "$values" ] || fail "$manifest family $fam values [$got] != the ADR 2026-09-30 D2 scale [$values]"
+        [ "$got" = "$values" ] || fail "$manifest family $fam values [$got] != the accepted scale [$values] (ADR 2026-09-30 D2; priority-ai: ADR 2026-10-01, Priority AI axis)"
         [ "$(jq -r --arg f "$fam" '.families[] | select(.family == $f) | "\(.exclusive) \(.provision) \(.prefix)"' "$manifest")" = "true true $fam" ] ||
             fail "$manifest family $fam must be an exclusive, provisioned, $fam:-prefixed family"
     done
@@ -278,6 +279,24 @@ check_classification_registry() {
         [ "$(jq -c --arg f "$fam" '.families[] | select(.family == $f) | [.axis, .writers]' "$manifest")" = '["meta",["human"]]' ] ||
             fail "$manifest family $fam must be a human-only meta family — a classification family would become a required triage axis"
     done
+    # Priority (AI): the AI's suggested priority beside the human one. It is a
+    # meta family so it never becomes a required triage axis, writable by human
+    # and agent (the human `priority` family stays human-only above), and its
+    # notes must keep saying that the human Priority overrides it and that it
+    # arms nothing (ADR 2026-10-01, Priority AI axis).
+    [ "$(jq -c '.families[] | select(.family == "priority-ai") | [.axis, .writers]' "$manifest")" = '["meta",["human","agent"]]' ] ||
+        fail "$manifest family priority-ai must be a meta family writable by human and agent — a classification family would become a required triage axis, and the AI's suggestion is agent-written"
+    local note
+    for note in purpose trust_note; do
+        jq -r --arg k "$note" '.families[] | select(.family == "priority-ai") | .[$k]' "$manifest" | grep -Fq "AI's suggest" ||
+            fail "$manifest family priority-ai $note must say it is the AI's suggestion"
+    done
+    for note in purpose lifecycle_note trust_note; do
+        jq -r --arg k "$note" '.families[] | select(.family == "priority-ai") | .[$k]' "$manifest" | grep -Fq 'overrid' ||
+            fail "$manifest family priority-ai $note must state that the human priority family overrides it"
+    done
+    jq -r '.families[] | select(.family == "priority-ai") | .trust_note' "$manifest" | grep -Fq 'arms nothing' ||
+        fail "$manifest family priority-ai trust_note must state that it arms nothing"
 
     # none = inapplicable, on exactly the three taxonomy families.
     for fam in area layer domain; do
@@ -414,6 +433,11 @@ priority:urgent|FF7619|Priority: work on this now, ahead of everything else
 priority:high|FF7619|Priority: next up; schedule soon
 priority:medium|FF7619|Priority: normal queue order
 priority:low|FF7619|Priority: when nothing more pressing remains
+priority-ai:p0|B60205|Priority (AI): blocks a merge or deploy — critical
+priority-ai:p1|FF7619|Priority (AI): a real defect or must-do; next
+priority-ai:p2|FBCA04|Priority (AI): worth doing, not blocking
+priority-ai:p3|1D76DB|Priority (AI): cosmetic or informational
+priority-ai:p4|BFC5CB|Priority (AI): negligible
 effort:1|C5DEF5|Effort: 1, the smallest step on the modified Fibonacci ladder (human tasks only)
 effort:2|C5DEF5|Effort: 2 on the modified Fibonacci ladder (human tasks only)
 effort:3|C5DEF5|Effort: 3 on the modified Fibonacci ladder (human tasks only)
@@ -580,7 +604,7 @@ STUB
     if grep -Eq '^(suggest:|tier:adaptive$)' <<<"$emitted"; then
         fail "setup-github-labels.sh provisioned a retired label (suggest:* or tier:adaptive) — retired labels are only ever reported and pruned"
     fi
-    for expected_label in risk:high complexity:xl impact:massive priority:urgent effort:13 tier:pinned needs-review area:none layer:none domain:none; do
+    for expected_label in risk:high complexity:xl impact:massive priority:urgent priority-ai:p0 priority-ai:p4 effort:13 tier:pinned needs-review area:none layer:none domain:none; do
         grep -Fqx "$expected_label" <<<"$emitted" ||
             fail "setup-github-labels.sh did not provision $expected_label"
     done
