@@ -63,6 +63,11 @@ one's status.
 - [2026-09-29-agent-posture-three-posture-model.md](2026-09-29-agent-posture-three-posture-model.md)
   — three postures: dev, bot, and agent (Proposed).
 - [2026-09-30-classify-issues-by-impact-risk-complexity-and-derive-the-tier.md](2026-09-30-classify-issues-by-impact-risk-complexity-and-derive-the-tier.md)
-  — classify issues by impact, risk, and complexity, and derive the tier (Accepted).
+  — classify issues by impact, risk, and complexity, and derive the tier
+  (Accepted; amended by 2026-10-01 (Tier as a label) and 2026-10-01 (Priority AI axis)).
 - [2026-09-30-rename-numbered-decision-records-by-date.md](2026-09-30-rename-numbered-decision-records-by-date.md)
   — rename numbered decision records by date (Accepted).
+- [2026-10-01-store-the-tier-as-a-label-on-every-owner-type.md](2026-10-01-store-the-tier-as-a-label-on-every-owner-type.md)
+  — store the Tier as a label on every owner type (Accepted; amends 2026-09-30 (issue classification) D2).
+- [2026-10-01-add-a-priority-ai-axis-suggested-by-agents.md](2026-10-01-add-a-priority-ai-axis-suggested-by-agents.md)
+  — add a Priority (AI) axis, p0–p4, suggested by agents (Accepted; amends 2026-09-30 (issue classification) D2 and D3).

@@ -65,6 +65,7 @@ jobs:
       - run: task test:devflow-config
       - run: task test:codex-review
       - run: task test:remote-codex-policy
+      - run: task test:sprites-policy
       - run: task test:ci-results
       - run: task test:devcontainer-changed
       - run: task test:status
@@ -213,7 +214,7 @@ jobs:
             | tar -xz -C /tmp actionlint
           sudo mv /tmp/actionlint /usr/local/bin/
           # renovate: datasource=github-releases depName=gitleaks/gitleaks extractVersion=^v?(?<version>.+)$
-          GITLEAKS_VERSION=8.24.3
+          GITLEAKS_VERSION=8.30.1
           curl -fsSL --retry 3 -o /tmp/gitleaks.tgz \
             "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_x64.tar.gz"
           tar -xzf /tmp/gitleaks.tgz -C /tmp
@@ -226,7 +227,7 @@ jobs:
           # Must be mikefarah/yq: `pip install yq` is a different tool (a jq
           # wrapper) whose expression syntax this audit does not use.
           # renovate: datasource=github-releases depName=mikefarah/yq extractVersion=^v?(?<version>.+)$
-          YQ_VERSION=4.53.3
+          YQ_VERSION=4.53.6
           curl -fsSL --retry 3 -o /tmp/yq \
             "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64"
           sudo install -m 0755 /tmp/yq /usr/local/bin/yq

@@ -6,6 +6,10 @@ Date: 2026-09-30
 
 Accepted
 
+D2's storage of the Tier axis is amended by [ADR 2026-10-01 (Tier as a label)](2026-10-01-store-the-tier-as-a-label-on-every-owner-type.md): the Tier is a label on every owner type.
+
+D2's scales and D3's writers are amended by [ADR 2026-10-01 (Priority AI axis)](2026-10-01-add-a-priority-ai-axis-suggested-by-agents.md): a second axis, Priority (AI), `p0`–`p4`, written by agents and humans; the human Priority overrides it.
+
 Supersedes whatever an earlier record says that conflicts with the
 retirements in D8 — `suggest:*`, the `Size` project field, the
 personal-project `Priority` field, the ponderousdev `Agent` issue field, and

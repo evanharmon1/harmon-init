@@ -101,6 +101,22 @@ the compatibility reason in the rule's `description`.
       supplied as `AGENT_GH_TOKEN`, never as `GH_TOKEN`. Procedure:
       [guides/devcontainers.md](guides/devcontainers.md) (agent posture).
 [% endif %]
+[% if use_fly_sprites %]
+- [ ] **[human-only] Fly.io Sprites (paid, opt-in)** — only if this repo runs
+      remote agent lanes on Sprites (`use_fly_sprites`). A Fly.io organization
+      with a credit card on file (new organizations get a one-time trial
+      credit; a Sprite is billed for compute while running and for storage
+      while idle), and a Sprites API token for that organization kept in your
+      secret store — the `sprite` CLI and `sprites/network-policy.sh apply`
+      read it, nothing commits it.
+[% if use_codex_review %]
+      Then, once per Sprite, the maintainer signs its Codex CLI in by hand
+      through `sprite console`; an agent never does, and that login is never
+      copied to another machine.
+[% endif %]
+      Procedure: harmon-init's
+      [Sprites guide](https://github.com/evanharmon1/harmon-init/blob/main/docs/guides/sprites.md).
+[% endif %]
 [% endif %]
 - [ ] Import the branch ruleset (see [architecture/branch-protection.md](architecture/branch-protection.md)) — do this once `build.yml`[% if use_codeql %], `codeql.yml`[% endif %][% if include_terraform %], `terraform.yml`[% endif %][% if devcontainer %], `devcontainer-build.yml`[% endif %] are on `main` so the required `verify`/`security`[% if use_codeql %]/`codeql-verify`[% endif %][% if include_terraform %]/`terraform-verify`[% endif %][% if devcontainer %]/`devcontainer-verify`[% endif %] checks resolve. **Use the UI import:** Settings → Rules → Rulesets → **New ruleset ▸ Import a ruleset** → select `.github/Branch Protection Ruleset - Protect Main.json`. (Prefer the UI over `gh api … rulesets`: the API `POST` is not idempotent — re-running creates a duplicate ruleset — and currently rejects the `merge_queue` rule. To later change the ruleset, edit the existing one in the UI rather than re-importing.)
 - [ ] **[human-only] Add `closing-keywords` to the live branch ruleset** —
