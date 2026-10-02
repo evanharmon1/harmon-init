@@ -49,12 +49,14 @@ trigger_related_repos_bootstrap() {
         checkout_root="$(cd -- "${REPO_ROOT}" && pwd -P)"
         checkout_parent="$(dirname -- "${checkout_root}")"
         # A linked worktree that `task worktree:new` made lives at
-        # <main>/.worktrees/<name>, INSIDE its primary checkout, so its own parent is
-        # the wrong place for siblings: use the primary working tree's parent. That
-        # override needs the primary ESTABLISHED, not inferred from a path shape: this
-        # checkout is a linked worktree (its git dir differs from the common dir), the
-        # common dir is <root>/.git, <root> is itself the top level of a working tree
-        # of that same repository, and this checkout sits at <root>/.worktrees/<name>.
+        # <main>/.worktrees/<name> (a Claude Code agent worktree at
+        # <main>/.claude/worktrees/<name>), INSIDE its primary checkout, so its own
+        # parent is the wrong place for siblings: use the primary working tree's
+        # parent. That override needs the primary ESTABLISHED, not inferred from a
+        # path shape: this checkout is a linked worktree (its git dir differs from the
+        # common dir), the common dir is <root>/.git, <root> is itself the top level
+        # of a working tree of that same repository, and this checkout sits at
+        # <root>/.worktrees/<name> or <root>/.claude/worktrees/<name>.
         # The exact layout is what excludes an ancestor of the checkout that merely
         # holds a --separate-git-dir store named .git: git treats that directory as a
         # working tree, but a worktree anywhere else beneath it is not one of ours.
@@ -70,7 +72,7 @@ trigger_related_repos_bootstrap() {
                     [ "$(git -C "${primary_root}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" = "${primary_git}" ] &&
                     [ "$(cd -- "$(git -C "${primary_root}" rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null && pwd -P)" = "${primary_root}" ]; then
                     case "${checkout_root}" in
-                    "${primary_root}"/.worktrees/*) checkout_parent="$(dirname -- "${primary_root}")" ;;
+                    "${primary_root}"/.worktrees/* | "${primary_root}"/.claude/worktrees/*) checkout_parent="$(dirname -- "${primary_root}")" ;;
                     esac
                 fi
                 ;;
