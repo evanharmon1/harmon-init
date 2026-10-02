@@ -136,13 +136,15 @@ inside (*docs, 2026-10-01*). Whether a restore reverts it is not documented
 events: before a lane starts or is attached, run `apply` and confirm the stored
 policy equals `generate`'s output ([Network policy](#network-policy)).
 
-**7. The maintainer's one Codex login** (below), after the checkpoint.
+**7. The maintainer's one Codex login** (below), after the checkpoint — only
+where Codex review is enabled (`use_codex_review`); otherwise skip this step.
 
 ## Credentials
 
-Three credentials, each set up **once per Sprite**, never committed, never
-logged and never on a command line (an argument is visible in a process
-listing, so `sprite exec --env` is not used for them). The agent PAT and the
+Three credentials (two where Codex review, `use_codex_review`, is off), each
+set up **once per Sprite**, never committed, never logged and never on a
+command line (an argument is visible in a process listing, so
+`sprite exec --env` is not used for them). The agent PAT and the
 Claude token are delivered from outside on stdin; the Codex sign-in is the
 exception, made interactively by the maintainer in `sprite console` (below). The
 examples read from 1Password with `op read`; any secret store works, and nothing
@@ -175,7 +177,9 @@ That `sprite exec` without `--tty` passes its stdin to the command is
   there, once. No script does it and an agent never does. The credential stays
   on that Sprite and is never copied to another machine: its refresh token is
   single-use, so a copy would invalidate both. A restore to a checkpoint taken
-  before the sign-in removes it, and the maintainer signs in again.
+  before the sign-in removes it, and the maintainer signs in again. This
+  applies only where Codex review is enabled (`use_codex_review`); a repository
+  without it has the two credentials above and skips step 7.
 
 `task test:remote-codex-policy` scans `sprites/` as a strict provisioning
 surface, so no Codex credential handling can be added there.
