@@ -86,6 +86,9 @@ the family in both layers.
 
 ## Declined alternatives
 
+The rationales below were recorded by the orchestrating session from the issue
+and ADR 2026-09-30, not stated by the maintainer.
+
 - **Letting agents write Priority.** Priority is the human's ranking
   (2026-09-30 D2 and D3), and the agent queue reads it (2026-09-30 D7). An agent
   writing it would leave no way to tell the human's ranking from an agent's own
@@ -128,5 +131,6 @@ the family in both layers.
   the effective-priority rule in the Agent queue and Needs review views
   (#1451), triage suggesting it
   ([harmon-devkit#1250](https://github.com/evanharmon1/harmon-devkit/issues/1250)),
-  and the review-finding filing path, a harmon-devkit issue on the integrate
-  and review skills that D4 requires.
+  and the review-finding filing path that D4 requires, on the integrate and
+  review skills
+  ([harmon-devkit#1256](https://github.com/evanharmon1/harmon-devkit/issues/1256)).

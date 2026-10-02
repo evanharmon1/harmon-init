@@ -64,7 +64,7 @@ one's status.
   — three postures: dev, bot, and agent (Proposed).
 - [2026-09-30-classify-issues-by-impact-risk-complexity-and-derive-the-tier.md](2026-09-30-classify-issues-by-impact-risk-complexity-and-derive-the-tier.md)
   — classify issues by impact, risk, and complexity, and derive the tier
-  (Accepted; amended by 2026-10-01).
+  (Accepted; amended by 2026-10-01 (Tier as a label) and 2026-10-01 (Priority AI axis)).
 - [2026-09-30-rename-numbered-decision-records-by-date.md](2026-09-30-rename-numbered-decision-records-by-date.md)
   — rename numbered decision records by date (Accepted).
 - [2026-10-01-store-the-tier-as-a-label-on-every-owner-type.md](2026-10-01-store-the-tier-as-a-label-on-every-owner-type.md)
