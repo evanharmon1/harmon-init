@@ -162,14 +162,24 @@ That `sprite exec` without `--tty` passes its stdin to the command is
     sprite exec -s "$SPRITE" -- bash -lc 'gh auth login --with-token && gh auth setup-git'
   ```
 
-- **`CLAUDE_CODE_OAUTH_TOKEN`**, written to a file only its user can read. The
-  lane's launcher exports it from there:
+- **`CLAUDE_CODE_OAUTH_TOKEN`**, written to a file only its user can read:
 
   ```sh
   op read "op://<vault>/<item>/<field>" |
     sprite exec -s "$SPRITE" -- bash -c \
       'umask 077 && mkdir -p "$HOME/.config/harmon-agent" && cat >"$HOME/.config/harmon-agent/claude-oauth-token"'
   ```
+
+  Inside the Sprite, the shell that starts Claude Code exports it from that
+  file first (`export` is a shell builtin, so the value is in no process
+  listing):
+
+  ```sh
+  export CLAUDE_CODE_OAUTH_TOKEN="$(cat "$HOME/.config/harmon-agent/claude-oauth-token")"
+  ```
+
+  Whatever launches a lane — by hand today, evanharmon1/harmon-devkit#1215
+  later — runs it before `claude`.
 
 - **The Sprite's own Codex sign-in.** A Sprite persists, so it holds exactly one
   Codex sign-in of its own (`AGENTS.md` § "Remote environments"). The maintainer
@@ -260,8 +270,10 @@ alternative is SSH, with `sprite proxy --ssh -s "$SPRITE"` as the
 `ProxyCommand` (*docs, 2026-10-01*).
 
 How an orchestrator launches the lane into that tab is out of scope here
-(evanharmon1/harmon-devkit#1215); so is running Claude Code self-hosted
-environments on a Sprite (#1410).
+(evanharmon1/harmon-devkit#1215), beyond the one contract under
+[Credentials](#credentials): the launcher exports the Claude token from its file
+before `claude`. Running Claude Code self-hosted environments on a Sprite
+(#1410) is out of scope too.
 
 ## Pending observations
 
