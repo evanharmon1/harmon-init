@@ -302,15 +302,18 @@ the compatibility reason in the rule's `description`.
       project-automation.yml and the claude-* workflows read (they fall back to
       the project title).
 - [ ] Org issue fields: run `task setup:github-issue-fields` (needs `gh` with the
-      `admin:org` scope) to add the org's **Product** issue field. There is
-      deliberately no Domain or Layer issue field — see
+      `admin:org` scope) to add the org's **Product** field and the
+      issue-classification fields **Impact**, **Risk**, **Complexity**, and
+      **Priority (AI)**, and to rewrite the built-in **Effort** options to the
+      modified Fibonacci ladder `1, 2, 3, 5, 8, 13, 20` — GitHub's shipped
+      High/Medium/Low options are removed, so check that no issue holds one
+      first. There is deliberately no Tier, Domain, or Layer issue field — see
       [project-management.md](project-management.md), "Label or field?".
-      Priority/Effort (and the date fields) are GitHub built-in issue fields, left
-      at their defaults — tune options in the org's issue-field settings if you
-      like. **The numeric estimate is the `Size` project number field** (created
-      by `task setup:github-project`; only project number fields sum in view
-      group headers). Idempotent: it creates the field if missing and leaves it
-      alone if already present.
+      Priority (the human override of Priority (AI)) and the date fields are
+      GitHub built-in issue fields, left as shipped. Idempotent and additive: a
+      re-run creates only what is missing and never deletes a field; an old
+      `Agent` field is reported, not deleted — enumerate the issues that hold a
+      value before removing it yourself.
 [% else %]
       On a personal account it also creates Priority/Product/Size as project
       fields (issue fields are org-only; there is deliberately no Domain or

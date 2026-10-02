@@ -1364,37 +1364,70 @@ if [[ "${SECTION}" == "setup" ]]; then
                     if ! inventory_complete issue-fields; then
                         inventory_unknown issue-fields "Org issue fields"
                     else
-                        # One `name<TAB>data_type` per line, not a joined string.
-                        field_rows="$(jq -r '(if type == "object" then (.issue_fields // []) elif type == "array" then . else [] end) | .[] | "\(.name)\t\(.data_type // "")"' "${d}/issue-fields.json" 2>/dev/null || echo "")"
-                        # Product must be present AND of the right type: an org that
-                        # happens to own a text-incompatible field named `Product`
-                        # can never get it created (GitHub cannot change a field's
-                        # data type in place). Reporting it done would hide exactly
-                        # what the setup script warns about. The retired Agent,
-                        # Domain, and Layer fields are deliberately NOT wanted here:
-                        # the setup script no longer creates any of them, so
+                        # One `name<TAB>data_type<TAB>options` per line, not a joined
+                        # string; options are the single-select's option names in
+                        # display order, comma-joined (empty for any other type).
+                        field_rows="$(jq -r '(if type == "object" then (.issue_fields // []) elif type == "array" then . else [] end) | .[] | "\(.name)\t\(.data_type // "")\t\([ (if (.options | type) == "array" then .options else [] end) | sort_by(.priority // 0)[] | .name | tostring ] | join(","))"' "${d}/issue-fields.json" 2>/dev/null || echo "")"
+                        # The want-list: `name:data_type:options`, one per line, so a
+                        # name may carry spaces. Each field must be present AND of
+                        # the right type (GitHub cannot change a field's data type
+                        # in place, so an org that owns a wrong-typed `Impact` can
+                        # never get it created — reporting it done would hide
+                        # exactly what the setup script warns about) AND carry every
+                        # wanted option; options an owner added on top are fine.
+                        # Priority is deliberately NOT wanted: it is GitHub's
+                        # built-in human priority, left as shipped. The retired
+                        # Agent, Domain, Layer, and Tier fields are NOT wanted
+                        # either: the setup script creates none of them, so
                         # requiring one would report a permanent false failure on
-                        # every fresh org (#662, #875).
+                        # every fresh org (#662, #875, ADR 2026-10-01). The rows
+                        # must stay equal to what setup-github-issue-fields.sh
+                        # provisions; its test compares the two.
+                        want_fields="Product:text:
+Impact:single_select:minimal,low,medium,high,massive
+Risk:single_select:trivial,low,medium,high,critical
+Complexity:single_select:xs,s,m,l,xl
+Priority (AI):single_select:p0,p1,p2,p3,p4
+Effort:single_select:1,2,3,5,8,13,20"
                         missing_fields=""
                         wrong_fields=""
-                        for want in Product:text; do
+                        short_fields=""
+                        while IFS= read -r want; do
+                            [ -n "${want}" ] || continue
                             wname="${want%%:*}"
-                            wtype="${want##*:}"
-                            htype="$(awk -F'\t' -v n="${wname}" '$1 == n { print $2; exit }' <<<"${field_rows}")"
-                            if ! grep -xF "${wname}" < <(printf '%s\n' "${field_rows}" | cut -f1) >/dev/null; then
+                            wrest="${want#*:}"
+                            wtype="${wrest%%:*}"
+                            wopts="${wrest#*:}"
+                            frow="$(awk -F'\t' -v n="${wname}" '$1 == n { print; exit }' <<<"${field_rows}")"
+                            htype="$(cut -f2 <<<"${frow}")"
+                            hopts="$(cut -f3 <<<"${frow}")"
+                            if [ -z "${frow}" ]; then
                                 missing_fields="${missing_fields}${missing_fields:+, }${wname}"
                             elif [ -n "${htype}" ] && [ "${htype}" != "${wtype}" ]; then
                                 wrong_fields="${wrong_fields}${wrong_fields:+, }${wname} is ${htype}"
+                            elif [ -n "${wopts}" ]; then
+                                lacking=""
+                                while IFS= read -r wopt; do
+                                    case ",${hopts}," in
+                                    *",${wopt},"*) ;;
+                                    *) lacking="${lacking}${lacking:+, }${wopt}" ;;
+                                    esac
+                                done < <(tr ',' '\n' <<<"${wopts}")
+                                [ -z "${lacking}" ] ||
+                                    short_fields="${short_fields}${short_fields:+; }${wname} lacks ${lacking}"
                             fi
-                        done
+                        done <<<"${want_fields}"
                         if [ -z "${field_rows}" ]; then
                             checkline unknown "Org issue fields" "needs admin:org (public preview)"
                         elif [ -n "${wrong_fields}" ]; then
                             checkline no "Org issue fields" "wrong type: ${wrong_fields} — rename/delete, then re-run task setup:github-issue-fields"
-                        elif [ -z "${missing_fields}" ]; then
-                            checkline ok "Org issue fields" "Product"
+                        elif [ -n "${missing_fields}" ] || [ -n "${short_fields}" ]; then
+                            field_gaps=""
+                            [ -z "${missing_fields}" ] || field_gaps="missing ${missing_fields}"
+                            [ -z "${short_fields}" ] || field_gaps="${field_gaps}${field_gaps:+; }${short_fields}"
+                            checkline no "Org issue fields" "${field_gaps} — run task setup:github-issue-fields"
                         else
-                            checkline no "Org issue fields" "missing ${missing_fields} — run task setup:github-issue-fields"
+                            checkline ok "Org issue fields" "Product, Impact, Risk, Complexity, Priority (AI), Effort"
                         fi
                     fi
                 fi
