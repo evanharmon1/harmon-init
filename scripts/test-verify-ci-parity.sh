@@ -40,14 +40,19 @@ verify_runs_suite() {
     block "$1" verify | grep -E '^[[:space:]]+-[[:space:]]+task:[[:space:]]+test:suite[[:space:]]*$' >/dev/null
 }
 
-# Every `test:*` entry in `verify` must be the suite, or test:template — which
-# runs as the template-test job's matrix, not in the lint job (generated repos
-# have no test:template; the allowance is harmless there). Anything else would
-# run locally and in no required Build step: the drift this guard exists for.
+# verify_has_no_stray_tests TASKFILE WORKFLOW — every `test:*` entry in
+# `verify` must be the suite, or test:template when (and only when) the same
+# build.yml defines the `template-test:` job it runs as. A repository without
+# that job has no required step for test:template, so there it is stray like
+# any other entry: it would run locally and in no required Build step, the
+# drift this guard exists for.
 verify_has_no_stray_tests() {
-    local stray
+    local stray allowed='suite'
+    if grep -Eq '^  template-test:[[:space:]]*$' "$2"; then
+        allowed='(suite|template)'
+    fi
     stray="$(block "$1" verify | grep -E '^[[:space:]]+-[[:space:]]+task:[[:space:]]+test:' |
-        grep -Ev 'task:[[:space:]]+test:(suite|template)[[:space:]]*$' || true)"
+        grep -Ev "task:[[:space:]]+test:${allowed}[[:space:]]*\$" || true)"
     [ -z "$stray" ] || {
         echo "$stray" >&2
         return 1
@@ -60,7 +65,7 @@ workflow_calls_suite "$workflow" ||
     fail "the Build workflow's lint job no longer runs \`task test:suite\` in a step — add it back rather than listing test:* targets in build.yml"
 verify_runs_suite "$taskfile" ||
     fail "\`verify\` no longer lists \`task: test:suite\` itself"
-verify_has_no_stray_tests "$taskfile" ||
+verify_has_no_stray_tests "$taskfile" "$workflow" ||
     fail "\`verify\` lists the test:* entries above directly — add them to test:suite instead, or the Build workflow never runs them"
 
 # Planted cases: every check above must be able to fail.
@@ -81,10 +86,13 @@ printf '%s\n' 'jobs:' '  lint:' '    steps:' '      - run: task test:suite' '  s
 workflow_calls_suite "${scratch}/ok.yml" ||
     fail "planted case: a lint job that runs the aggregate step was rejected"
 
+printf '%s\n' 'jobs:' '  lint:' '    steps:' '      - run: task test:suite' '  template-test:' '    steps:' >"${scratch}/with-matrix.yml"
 printf '%s\n' 'tasks:' '  verify:' '    cmds:' '      - task: check' '      - task: test:suite' '      - task: test:template' \
     '  test:suite:' '    cmds:' '      - task: test:verify-ci-parity' >"${scratch}/ok.Taskfile"
-verify_runs_suite "${scratch}/ok.Taskfile" && verify_has_no_stray_tests "${scratch}/ok.Taskfile" ||
-    fail "planted case: a verify that runs the suite (+ test:template) was rejected"
+verify_runs_suite "${scratch}/ok.Taskfile" && verify_has_no_stray_tests "${scratch}/ok.Taskfile" "${scratch}/with-matrix.yml" ||
+    fail "planted case: a verify that runs the suite (+ test:template, with the template-test job present) was rejected"
+! verify_has_no_stray_tests "${scratch}/ok.Taskfile" "${scratch}/ok.yml" 2>/dev/null ||
+    fail "planted case: a direct test:template in verify passed although the workflow has no template-test job"
 printf '%s\n' 'tasks:' '  verify:' '    cmds:' '      - task: check' '      - task: test:verify-ci-parity' \
     '  test:suite:' '    cmds:' '      - task: test:verify-ci-parity' >"${scratch}/leaf.Taskfile"
 ! verify_runs_suite "${scratch}/leaf.Taskfile" ||
@@ -95,7 +103,7 @@ printf '%s\n' 'tasks:' '  verify:' '    cmds:' '      - task: check' '      - ec
     fail "planted case: a verify that does not run the suite still passed"
 printf '%s\n' 'tasks:' '  verify:' '    cmds:' '      - task: test:suite' '      - task: test:renovate-config' \
     '  test:suite:' '    cmds:' '      - task: test:verify-ci-parity' >"${scratch}/stray.Taskfile"
-! verify_has_no_stray_tests "${scratch}/stray.Taskfile" 2>/dev/null ||
+! verify_has_no_stray_tests "${scratch}/stray.Taskfile" "${scratch}/with-matrix.yml" 2>/dev/null ||
     fail "planted case: a verify with a direct test:* entry still passed"
 
 echo "test-verify-ci-parity: PASS"
