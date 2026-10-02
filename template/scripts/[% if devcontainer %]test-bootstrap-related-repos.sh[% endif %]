@@ -536,6 +536,16 @@ ghe.example.com:owner/repo.git|ghe.example.com
 C:/src/repo|github.com
 /srv/git/a@b:c/r.git|github.com
 demo::some-address|github.com
+x+y::path|github.com
+demo::https://internal.example/o/r|github.com
++demo::path|+demo
+git@ghe.example.com:owner/repo::backup|ghe.example.com
+ghe-colons.example.com:owner::x/repo.git|ghe-colons.example.com
+[2001:db8::1]:owner/repo.git|[2001:db8::1]
+[2001:db8:0:0:0:0:0:1]:owner/repo.git|[2001:db8:0:0:0:0:0:1]
+git@[2001:db8::1]:owner/repo.git|[2001:db8::1]
+[2001:db8::1:owner/repo.git|github.com
+/srv/git/a@[2001:db8::1]:r.git|github.com
 https://ghe-port.example.com:8443/o/r.git|ghe-port.example.com:8443
 https://user@ghe-user.example.com:8443/o/r@v1.git|ghe-user.example.com:8443
 |github.com"
@@ -554,7 +564,8 @@ while IFS='|' read -r origin_url expected_host; do
         run_sut unauthenticated
     ) >/dev/null 2>&1 || true
     [ -f "${GIT_LOG}" ] || fail "expected git to be invoked for fallback (origin '${origin_url}')"
-    grep -q "clone.*https://${expected_host}/test-owner/test-repo.git" "${GIT_LOG}" ||
+    # Fixed-string match: an IPv6 authority's brackets are regex syntax.
+    grep -F "https://${expected_host}/test-owner/test-repo.git" "${GIT_LOG}" | grep -q clone ||
         fail "expected clone from origin host ${expected_host} (origin '${origin_url}'), got: $(cat "${GIT_LOG}")"
 done <<EOF
 ${origin_cases}
