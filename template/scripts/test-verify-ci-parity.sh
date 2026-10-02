@@ -2,65 +2,100 @@
 # `verify` and the required Build workflow run their `test:*` targets through
 # ONE aggregate Taskfile task (test:suite), so the two lists cannot drift
 # (harmon-init#962, #1461). This is the whole guard: it fails when the Build
-# workflow stops calling that task or when `verify` stops running it. Plain
-# text only — it never parses the workflow's YAML or its shell.
+# workflow's lint job stops calling that task, when `verify` stops calling it,
+# or when `verify` gains a `test:*` entry of its own that the workflow would
+# never run. Plain text only — a block is the lines from its key to the next
+# key at the same two-space indent; no YAML or shell is parsed, and `task`
+# itself is not needed.
 set -euo pipefail
 
 repo="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 workflow="${repo}/.github/workflows/build.yml"
+taskfile="${repo}/Taskfile.yml"
 
 fail() {
     echo "TEST FAIL: $*" >&2
     exit 1
 }
 
-# An uncommented `run: task test:suite` step (a comment starts with `#`, so it
-# can never satisfy the anchor).
-workflow_calls_suite() {
-    grep -Eq '^[[:space:]]*(-[[:space:]]+)?run:[[:space:]]+task test:suite[[:space:]]*$' "$1"
+# block FILE KEY — the two-space-indented `KEY:` entry's lines (a Taskfile task
+# or a workflow job): up to the next line indented exactly two spaces.
+block() {
+    awk -v key="$2" '
+        $0 ~ "^  " key ":[[:space:]]*$" { on = 1; next }
+        on && /^  [^ #]/ { exit }
+        on' "$1"
 }
 
-# `task --dry` flattens task calls, so `verify` reaching the suite shows as a
-# member only the suite lists — this guard's own task.
+# An uncommented `run: task test:suite` step inside the `lint` job (a comment
+# starts with `#`, so it can never satisfy the anchor; another job cannot
+# satisfy it either).
+workflow_calls_suite() {
+    block "$1" lint | grep -E '^[[:space:]]*(-[[:space:]]+)?run:[[:space:]]+task test:suite[[:space:]]*$' >/dev/null
+}
+
+# `verify` itself lists `task: test:suite` — calling a leaf the suite also
+# lists would pass a weaker check while the suite went unused.
 verify_runs_suite() {
-    # Captured first: `grep -q` closing the pipe early would SIGPIPE `task`,
-    # which pipefail turns into a false "not in the plan".
-    local plan
-    plan="$(cd "$1" && task --dry --color=false verify 2>&1)" || return 1
-    grep -qF 'task: [test:verify-ci-parity]' <<<"$plan"
+    block "$1" verify | grep -E '^[[:space:]]+-[[:space:]]+task:[[:space:]]+test:suite[[:space:]]*$' >/dev/null
+}
+
+# Every `test:*` entry in `verify` must be the suite, or test:template — which
+# runs as the template-test job's matrix, not in the lint job (generated repos
+# have no test:template; the allowance is harmless there). Anything else would
+# run locally and in no required Build step: the drift this guard exists for.
+verify_has_no_stray_tests() {
+    local stray
+    stray="$(block "$1" verify | grep -E '^[[:space:]]+-[[:space:]]+task:[[:space:]]+test:' |
+        grep -Ev 'task:[[:space:]]+test:(suite|template)[[:space:]]*$' || true)"
+    [ -z "$stray" ] || {
+        echo "$stray" >&2
+        return 1
+    }
 }
 
 [ -f "$workflow" ] || fail "${workflow} not found"
+[ -f "$taskfile" ] || fail "${taskfile} not found"
 workflow_calls_suite "$workflow" ||
-    fail "the Build workflow no longer runs \`task test:suite\` in a step — add it back rather than listing test:* targets in build.yml"
-verify_runs_suite "$repo" ||
-    fail "\`task verify\` no longer runs test:suite (its member test:verify-ci-parity is not in the plan)"
+    fail "the Build workflow's lint job no longer runs \`task test:suite\` in a step — add it back rather than listing test:* targets in build.yml"
+verify_runs_suite "$taskfile" ||
+    fail "\`verify\` no longer lists \`task: test:suite\` itself"
+verify_has_no_stray_tests "$taskfile" ||
+    fail "\`verify\` lists the test:* entries above directly — add them to test:suite instead, or the Build workflow never runs them"
 
-# Planted cases: the checks above must be able to fail.
+# Planted cases: every check above must be able to fail.
 scratch="$(mktemp -d)"
 trap 'rm -rf "$scratch"' EXIT
 
 grep -Ev 'run:[[:space:]]+task test:suite' "$workflow" >"${scratch}/removed.yml"
 ! workflow_calls_suite "${scratch}/removed.yml" ||
     fail "planted case: a workflow without the aggregate step still passed"
-printf '%s\n' '      # - run: task test:suite' >"${scratch}/commented.yml"
+printf '%s\n' 'jobs:' '  lint:' '    steps:' '      # - run: task test:suite' '  security:' '    steps:' >"${scratch}/commented.yml"
 ! workflow_calls_suite "${scratch}/commented.yml" ||
     fail "planted case: a commented-out aggregate step still passed"
+printf '%s\n' 'jobs:' '  lint:' '    steps:' '      - run: task check' \
+    '  security:' '    steps:' '      - run: task test:suite' >"${scratch}/moved.yml"
+! workflow_calls_suite "${scratch}/moved.yml" ||
+    fail "planted case: the aggregate step in another job still passed"
+printf '%s\n' 'jobs:' '  lint:' '    steps:' '      - run: task test:suite' '  security:' '    steps:' >"${scratch}/ok.yml"
+workflow_calls_suite "${scratch}/ok.yml" ||
+    fail "planted case: a lint job that runs the aggregate step was rejected"
 
-mkdir "${scratch}/ok" "${scratch}/drifted"
-printf '%s\n' \
-    "version: '3'" 'tasks:' \
-    '  verify:' '    cmds:' '      - task: test:suite' \
-    '  test:suite:' '    cmds:' '      - task: test:verify-ci-parity' \
-    '  test:verify-ci-parity:' '    cmds:' '      - echo parity' >"${scratch}/ok/Taskfile.yml"
-printf '%s\n' \
-    "version: '3'" 'tasks:' \
-    '  verify:' '    cmds:' '      - echo no suite here' \
-    '  test:suite:' '    cmds:' '      - task: test:verify-ci-parity' \
-    '  test:verify-ci-parity:' '    cmds:' '      - echo parity' >"${scratch}/drifted/Taskfile.yml"
-verify_runs_suite "${scratch}/ok" ||
-    fail "planted case: a verify that runs the suite was rejected"
-! verify_runs_suite "${scratch}/drifted" ||
+printf '%s\n' 'tasks:' '  verify:' '    cmds:' '      - task: check' '      - task: test:suite' '      - task: test:template' \
+    '  test:suite:' '    cmds:' '      - task: test:verify-ci-parity' >"${scratch}/ok.Taskfile"
+verify_runs_suite "${scratch}/ok.Taskfile" && verify_has_no_stray_tests "${scratch}/ok.Taskfile" ||
+    fail "planted case: a verify that runs the suite (+ test:template) was rejected"
+printf '%s\n' 'tasks:' '  verify:' '    cmds:' '      - task: check' '      - task: test:verify-ci-parity' \
+    '  test:suite:' '    cmds:' '      - task: test:verify-ci-parity' >"${scratch}/leaf.Taskfile"
+! verify_runs_suite "${scratch}/leaf.Taskfile" ||
+    fail "planted case: a verify calling a suite member instead of the suite still passed"
+printf '%s\n' 'tasks:' '  verify:' '    cmds:' '      - task: check' '      - echo no suite here' \
+    '  test:suite:' '    cmds:' '      - task: test:suite-ish' >"${scratch}/drifted.Taskfile"
+! verify_runs_suite "${scratch}/drifted.Taskfile" ||
     fail "planted case: a verify that does not run the suite still passed"
+printf '%s\n' 'tasks:' '  verify:' '    cmds:' '      - task: test:suite' '      - task: test:renovate-config' \
+    '  test:suite:' '    cmds:' '      - task: test:verify-ci-parity' >"${scratch}/stray.Taskfile"
+! verify_has_no_stray_tests "${scratch}/stray.Taskfile" 2>/dev/null ||
+    fail "planted case: a verify with a direct test:* entry still passed"
 
 echo "test-verify-ci-parity: PASS"

@@ -430,17 +430,21 @@ fi
 # ── 1-ci. verify <-> required CI parity holds in every render profile (#1461) ──
 # Both run their `test:*` targets through the one aggregate task, so a rendered
 # repo's required Build workflow runs every target its `verify` runs. Asserted
-# three ways: the workflow calls the aggregate, `verify` reaches it, and every
-# `test:*` target in verify's plan is in the aggregate's plan — then the
-# rendered guard (with its planted cases) runs.
+# three ways: the `lint` job calls the aggregate, `verify` lists it itself, and
+# every `test:*` target in verify's plan is in the aggregate's plan — then the
+# rendered guard (with its planted cases) runs. The first two are plain text
+# checks on the rendered files (a block runs from its two-space-indented key to
+# the next one), the third asks `task` for the plan.
 if [ -f .github/workflows/build.yml ]; then
-    grep -Eq '^[[:space:]]*(-[[:space:]]+)?run:[[:space:]]+task test:suite[[:space:]]*$' .github/workflows/build.yml ||
-        err "rendered build.yml does not call \`task test:suite\` in a step"
+    awk '/^  lint:[[:space:]]*$/ { on = 1; next } on && /^  [^ #]/ { exit } on' .github/workflows/build.yml |
+        grep -Eq '^[[:space:]]*(-[[:space:]]+)?run:[[:space:]]+task test:suite[[:space:]]*$' ||
+        err "rendered build.yml's lint job does not call \`task test:suite\` in a step"
+    awk '/^  verify:[[:space:]]*$/ { on = 1; next } on && /^  [^ #]/ { exit } on' Taskfile.yml |
+        grep -Eq '^[[:space:]]+-[[:space:]]+task:[[:space:]]+test:suite[[:space:]]*$' ||
+        err "rendered \`verify\` does not list \`task: test:suite\` itself"
     if have task; then
         parity_verify_plan="$(task --color=false --dry verify 2>&1 || true)"
         parity_suite_plan="$(task --color=false --dry test:suite 2>&1 || true)"
-        grep -qF 'task: [test:verify-ci-parity]' <<<"$parity_verify_plan" ||
-            err "rendered \`task verify\` does not run test:suite"
         for parity_target in $(grep -oE '^task: \[test:[^]]+\]' <<<"$parity_verify_plan" | sed -E 's/^task: \[(.*)\]$/\1/'); do
             grep -qF "task: [${parity_target}]" <<<"$parity_suite_plan" ||
                 err "rendered verify runs ${parity_target}, which the required Build workflow's test:suite does not"
