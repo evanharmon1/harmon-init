@@ -365,11 +365,14 @@ STUB
         echo '    orgs/*/issue-types\?*) echo "[]"; exit 0 ;;'
         # The preview documents its page in two shapes, and a read can also
         # simply fail. `empty` (the default) keeps every existing case on the
-        # wrapped-and-empty answer they were written against.
+        # wrapped-and-empty answer they were written against. `wrapped` and
+        # `bare` serve the org snapshot in GH_STUB_ISSUE_FIELDS_JSON (a bare
+        # JSON array) in that shape, so a case chooses the fields and the shape
+        # independently.
         echo '    orgs/*/issue-fields\?*)'
         echo '        case "${GH_STUB_ISSUE_FIELDS:-empty}" in'
-        echo '        wrapped) echo "{\"issue_fields\":[{\"name\":\"Product\",\"data_type\":\"text\"}]}" ;;'
-        echo '        bare) echo "[{\"name\":\"Product\",\"data_type\":\"text\"}]" ;;'
+        echo '        wrapped) printf "{\"issue_fields\":%s}\n" "${GH_STUB_ISSUE_FIELDS_JSON:-[]}" ;;'
+        echo '        bare) printf "%s\n" "${GH_STUB_ISSUE_FIELDS_JSON:-[]}" ;;'
         echo '        fail) exit 1 ;;'
         echo '        *) echo "{\"issue_fields\":[]}" ;;'
         echo '        esac'
@@ -1853,13 +1856,95 @@ echo "==> both documented issue-field page shapes render the same field list"
 # FAILED read — rendered `unknown`, which told an org that really does have the
 # field that nobody could see it (review r1). The shape is the only difference
 # between these two runs, so the verdict may not depend on it.
+#
+# The org below is FULLY PROVISIONED as the setup script leaves it: GitHub's
+# built-ins (Priority, the dates), Product, the four classification fields, and
+# Effort on the ladder. Options come back in no particular order — status.sh must
+# read them by name, not position — and Impact carries one option an owner added,
+# which is fine. There is no Agent, Domain, Layer, or Tier field, and Priority is
+# not wanted: it is GitHub's own human priority, so requiring any of them would
+# report a permanent false failure on every fresh org (#662, #875, #698).
+fields_complete='[
+ {"name":"Priority","data_type":"single_select","options":[{"name":"Low","priority":4},{"name":"Urgent","priority":1},{"name":"High","priority":2},{"name":"Medium","priority":3}]},
+ {"name":"Start date","data_type":"date"},
+ {"name":"Target date","data_type":"date"},
+ {"name":"Product","data_type":"text"},
+ {"name":"Impact","data_type":"single_select","options":[{"name":"massive","priority":5},{"name":"epic","priority":6},{"name":"minimal","priority":1},{"name":"high","priority":4},{"name":"low","priority":2},{"name":"medium","priority":3}]},
+ {"name":"Risk","data_type":"single_select","options":[{"name":"trivial","priority":1},{"name":"low","priority":2},{"name":"medium","priority":3},{"name":"high","priority":4},{"name":"critical","priority":5}]},
+ {"name":"Complexity","data_type":"single_select","options":[{"name":"xs","priority":1},{"name":"s","priority":2},{"name":"m","priority":3},{"name":"l","priority":4},{"name":"xl","priority":5}]},
+ {"name":"Priority (AI)","data_type":"single_select","options":[{"name":"p0","priority":1},{"name":"p1","priority":2},{"name":"p2","priority":3},{"name":"p3","priority":4},{"name":"p4","priority":5}]},
+ {"name":"Effort","data_type":"single_select","options":[{"name":"1","priority":1},{"name":"2","priority":2},{"name":"3","priority":3},{"name":"5","priority":4},{"name":"8","priority":5},{"name":"13","priority":6},{"name":"20","priority":7}]}
+]'
+issue_fields_ok="[x] Org issue fields - Product, Impact, Risk, Complexity, Priority (AI), Effort"
 for shape in wrapped bare; do
-    out="$(GH_STUB_ISSUE_FIELDS="$shape" run_inventory_section)"
+    out="$(GH_STUB_ISSUE_FIELDS="$shape" GH_STUB_ISSUE_FIELDS_JSON="$fields_complete" run_inventory_section)"
     case "$out" in
-    *"[x] Org issue fields - Product"*) ;;
-    *) fail "the ${shape} issue-field page shape did not render the field list: ${out}" ;;
+    *"$issue_fields_ok"*) ;;
+    *) fail "the ${shape} issue-field page shape did not render a fully provisioned org as ok: ${out}" ;;
     esac
 done
+
+echo "==> an org that is missing fields, options, or the right type is reported, with the remedy"
+# issue_fields_case LABEL JQ_EDIT EXPECTED — render the org after JQ_EDIT is applied
+# to the complete snapshot and require EXPECTED in the Org issue fields line.
+issue_fields_case() {
+    local label="$1" edit="$2" expected="$3" snapshot
+    snapshot="$(jq -c "$edit" <<<"$fields_complete")"
+    out="$(GH_STUB_ISSUE_FIELDS=bare GH_STUB_ISSUE_FIELDS_JSON="$snapshot" run_inventory_section)"
+    case "$out" in
+    *"$expected"*) ;;
+    *) fail "${label}: expected '${expected}' in: ${out}" ;;
+    esac
+    case "$out" in
+    *"$issue_fields_ok"*) fail "${label}: an incomplete org was reported ok: ${out}" ;;
+    esac
+}
+# The state of every org today: GitHub's built-ins and Product, nothing else.
+issue_fields_case "an org with only GitHub's built-ins" \
+    'map(select(.name == "Priority" or .name == "Start date" or .name == "Target date" or .name == "Product")) + [{"name":"Effort","data_type":"single_select","options":[{"name":"High","priority":1},{"name":"Medium","priority":2},{"name":"Low","priority":3}]}]' \
+    "[ ] Org issue fields - missing Impact, Risk, Complexity, Priority (AI); Effort lacks 1, 2, 3, 5, 8, 13, 20 — run task setup:github-issue-fields"
+issue_fields_case "a missing option" \
+    'map(if .name == "Impact" then .options |= map(select(.name != "massive")) else . end)' \
+    "[ ] Org issue fields - Impact lacks massive — run task setup:github-issue-fields"
+issue_fields_case "an Effort still on the shipped options" \
+    'map(if .name == "Effort" then .options = [{"name":"High","priority":1},{"name":"Low","priority":2}] else . end)' \
+    "[ ] Org issue fields - Effort lacks 1, 2, 3, 5, 8, 13, 20 — run task setup:github-issue-fields"
+issue_fields_case "a field of the wrong data type" \
+    'map(if .name == "Risk" then {name, data_type: "text"} else . end)' \
+    "[ ] Org issue fields - wrong type: Risk is text — rename/delete, then re-run task setup:github-issue-fields"
+issue_fields_case "a field with no options array" \
+    'map(if .name == "Complexity" then del(.options) else . end)' \
+    "[ ] Org issue fields - Complexity lacks xs, s, m, l, xl — run task setup:github-issue-fields"
+# A field that keeps its name and options but loses its data_type is a changed or
+# malformed preview response: the verdict is unknown, never ok (challenge r3, C3-F4).
+issue_fields_case "a field with no data_type" \
+    'map(if .name == "Impact" then del(.data_type) else . end)' \
+    "[?] Org issue fields - type unreadable for Impact — inventory unchecked"
+# An option is one option however its name is spelled: a name that merely lists
+# the wanted ones, joined by a comma or by the control character the renderer
+# itself joins with, must not satisfy them (challenge r1, C1-F4).
+issue_fields_case "one option named like the whole wanted scale" \
+    'map(if .name == "Impact" then .options = [{"name":"minimal,low,medium,high,massive","priority":1}] else . end)' \
+    "[ ] Org issue fields - Impact lacks minimal, low, medium, high, massive — run task setup:github-issue-fields"
+issue_fields_case "one option whose name hides the renderer's own separator" \
+    'map(if .name == "Impact" then .options = [{"name":"minimal\u001flow\u001fmedium\u001fhigh\u001fmassive","priority":1}] else . end)' \
+    "[ ] Org issue fields - Impact lacks minimal, low, medium, high, massive — run task setup:github-issue-fields"
+# Priority (AI) and Priority are two fields: the first being absent must read as
+# exactly that, never as the built-in Priority being absent or standing in for it.
+issue_fields_case "Priority (AI) missing while the built-in Priority exists" \
+    'map(select(.name != "Priority (AI)"))' \
+    "[ ] Org issue fields - missing Priority (AI) — run task setup:github-issue-fields"
+# Names are matched whole: a field that merely STARTS with a wanted name is a
+# different field and must not satisfy it.
+issue_fields_case "a field whose name only starts with a wanted name" \
+    'map(if .name == "Effort" then .name = "Effort estimate" else . end)' \
+    "[ ] Org issue fields - missing Effort — run task setup:github-issue-fields"
+echo "==> the human Priority is not wanted: an org without the built-in Priority is still ok"
+out="$(GH_STUB_ISSUE_FIELDS=bare GH_STUB_ISSUE_FIELDS_JSON="$(jq -c 'map(select(.name != "Priority"))' <<<"$fields_complete")" run_inventory_section)"
+case "$out" in
+*"$issue_fields_ok"*) ;;
+*) fail "the built-in Priority was required of a fully provisioned org: ${out}" ;;
+esac
 
 echo "==> a failed issue-field read still renders unknown, never an absence"
 # Completeness is what accepting a second shape must not cost. A read that FAILED

@@ -1241,12 +1241,14 @@ tasks:
 
   setup:github-issue-fields:
     desc: >-
-      Idempotently add the org's Product issue field (Priority/Effort are
-      GitHub built-ins, left at defaults; the numeric Size estimate is a
-      project field via setup:github-project; there is deliberately no Domain
-      or Layer field, #875 — see docs/project-management.md, "Label or
-      field?"). Creates the field if missing, never renaming or deleting.
-      Requires `gh` with the admin:org scope.
+      Idempotently add the org's Product field and the issue-classification
+      fields Impact, Risk, Complexity, and Priority (AI), and add the 1, 2, 3,
+      5, 8, 13, 20 ladder to the built-in Effort field (Priority and the dates
+      stay as GitHub ships them, the script never removes a field or an option,
+      and GitHub's shipped High/Medium/Low Effort options are left for the
+      operator to delete in the org's settings once no issue holds them — see
+      docs/project-management.md, "Label or field?"). Requires `gh` with the
+      admin:org scope.
     cmds:
       - ./scripts/setup-github-issue-fields.sh --org "[[ github_org ]]"
 [% endif %]
