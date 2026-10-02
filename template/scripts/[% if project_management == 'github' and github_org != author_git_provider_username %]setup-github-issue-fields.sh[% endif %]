@@ -13,33 +13,25 @@
 # GitHub already ships Priority, Effort, Start date, and Target date as built-in
 # issue fields. Priority is left exactly as GitHub ships it: it is the HUMAN
 # priority and overrides Priority (AI). Only Effort's options are changed: the
-# ladder above is added, and the shipped High/Medium/Low are removed only on an
-# explicit --remove-unused-shipped-options run (below); the field itself is never
-# recreated.
+# ladder above is added beside GitHub's shipped High/Medium/Low, which stay; the
+# field itself is never recreated.
 #
 # There is deliberately no Tier field: the Tier is a `tier:<value>` label on every
 # owner type (ADR 2026-10-01), and no Domain, Layer, or Agent field either (#875,
-# #662) — those are retired. An organization that still carries one keeps it: this
-# script only ever creates fields and options, and never deletes anything. The
-# retired Agent field is REPORTED when present; deleting an org-wide field is the
-# operator's decision, and every issue holding a value must be enumerated first
-# (#910).
+# #662) — those are retired. An organization that still carries one keeps it. The
+# invariant is that this script NEVER removes a field or an option; it only ever
+# creates them. The retired Agent field is REPORTED when present; deleting an
+# org-wide field is the operator's decision, and every issue holding a value must
+# be enumerated first (#910).
 #
 # Idempotent and additive. A re-run writes nothing when every wanted option is
 # present. When one is missing it is appended; options the owner added stay, and
-# so do GitHub's shipped Effort options: a default run keeps High/Medium/Low
-# beside the ladder and reports each with its issue-search count.
-#
-# Removing an option blanks the field on every issue that carries it, and the
-# search that counts those issues can come back empty for an option that IS held
-# (a private repository the token cannot read, an index that lags an edit). So
-# removal is a separate, explicit operator step, never part of a default run:
-#
-#   setup-github-issue-fields.sh --org <org> --remove-unused-shipped-options
-#
-# removes a shipped option only when the search shows no issue holds it. One that
-# is held, or whose usage cannot be read, is still kept and reported; move those
-# issues to a ladder value and run it again.
+# so do GitHub's shipped Effort options (High/Medium/Low). Removing an option
+# blanks the field on every issue that carries it, and no search can prove that
+# none does (a private repository the token cannot read, an index that lags an
+# edit), so removal is left to the operator. The run only REPORTS each shipped
+# option with its issue-search count, as information, to help that decision; delete
+# one in the org's issue-field settings once no issue holds it.
 #
 # Why REST and not the GraphQL `updateIssueField` mutation: a single-select
 # update REPLACES the whole option list, and an existing option re-sent without
@@ -60,7 +52,7 @@
 # Issue fields are an ORG-level feature (no per-user equivalent), so this is
 # org-only. Needs gh authed with the 'admin:org' scope + jq.
 #
-# Usage: setup-github-issue-fields.sh --org <org-login> [--remove-unused-shipped-options]
+# Usage: setup-github-issue-fields.sh --org <org-login>
 #
 # NOTE: issue fields are in GitHub PUBLIC PREVIEW — the API is subject to change.
 # The live API is never called by `task test:template` or the stubbed unit test
@@ -69,16 +61,11 @@
 set -euo pipefail
 
 org=""
-remove_shipped=0
 while [ "$#" -gt 0 ]; do
     case "$1" in
     --org)
         org="${2:-}"
         shift 2
-        ;;
-    --remove-unused-shipped-options)
-        remove_shipped=1
-        shift
         ;;
     *)
         echo "Unknown argument: $1" >&2
@@ -88,7 +75,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 if [ -z "$org" ]; then
-    echo "Usage: $0 --org <org-login> [--remove-unused-shipped-options]" >&2
+    echo "Usage: $0 --org <org-login>" >&2
     exit 2
 fi
 
@@ -154,8 +141,8 @@ effort_opts='[
   {"name":"13","color":"orange","description":"Effort: 13 on the modified Fibonacci ladder (human tasks only)","priority":6},
   {"name":"20","color":"red","description":"Effort: 20, the largest step on the modified Fibonacci ladder (human tasks only)","priority":7}
 ]'
-# The options GitHub ships on the built-in Effort field. They are the only
-# options this script ever removes, and only from Effort.
+# The options GitHub ships on the built-in Effort field. They are never removed:
+# the run only reports each one with its issue-search count (see reconcile_options).
 effort_shipped_defaults='["High","Medium","Low"]'
 
 # refresh_fields — (re-)read the org's issue fields into existing_json. Returns
@@ -198,24 +185,21 @@ incompatible=""
 # Existing fields whose option list could not be reconciled, for the summary.
 unreconciled=""
 
-# Shipped options that are kept for the summary: `leftover` those that need the
-# operator (an issue holds them, or their usage could not be read), `kept_unused`
-# those the search shows no issue holds, which only --remove-unused-shipped-options
-# removes.
-leftover=""
-kept_unused=""
+# What the run reports about the shipped options it keeps, for the summary: one
+# `Field: Option (count), …` entry per field. Information only — nothing acts on it.
+shipped_report=""
 
-# option_usage FIELD OPTION — whether any issue in the org still holds that option
-# of that field: prints `unused`, `used N`, or `unknown`.
+# option_usage FIELD OPTION — how many issues in the org still hold that option of
+# that field: prints `unused`, `used N`, or `unknown`.
 #
-# Removing an option blanks the field on every issue that carries it, and the
-# issue-fields API reports no usage, so this asks issue SEARCH: the
-# `field.<name>:"<value>"` qualifier, which only the advanced search honors.
-# Anything short of a clean zero is NOT `unused`: a failed or unparsable call, an
-# incomplete result, or a name this cannot quote safely all print `unknown`, and
-# the caller keeps the option. Search reads an index and sees only the repositories
-# the token can read, so an issue edited moments ago may be missing from it; that
-# narrows the window rather than closing it.
+# This is a REPORT for the operator who decides whether to delete a shipped option
+# in the org's settings (deleting one blanks it on every issue that holds it), and
+# no decision in this script depends on it. The issue-fields API reports no usage,
+# so it asks issue SEARCH: the `field.<name>:"<value>"` qualifier, which only the
+# advanced search honors. A failed or unparsable call, an incomplete result, or a
+# name this cannot quote safely all print `unknown`. Search reads an index and sees
+# only the repositories the token can read, so `unused` means "no issue the search
+# can see", not "no issue".
 option_usage() {
     local qname resp total
     qname="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
@@ -238,14 +222,13 @@ option_usage() {
     esac
 }
 
-# reconcile_options NAME WANT_JSON [RETIRE_JSON] — bring an existing single-select
+# reconcile_options NAME WANT_JSON [SHIPPED_JSON] — bring an existing single-select
 # field's options to WANT_JSON via PATCH /orgs/{org}/issue-fields/{id}.
 #
-# The result is: every wanted option, in wanted order, then every other existing
-# option the owner added. Options named in RETIRE_JSON (GitHub's shipped ones) are
-# left out ONLY on a --remove-unused-shipped-options run AND when option_usage
-# shows no issue holds them; otherwise each is kept like an owner-added option and
-# reported by name with its search count. Two hazards, both handled in the jq below:
+# The result is: every wanted option, in wanted order, then EVERY other existing
+# option, the owner's and GitHub's shipped ones (SHIPPED_JSON) alike — nothing is
+# ever left out. The shipped options are reported by name with their search count.
+# Two hazards, both handled in the jq below:
 #  1. `options` REPLACES the whole list, so every option to keep must be sent back
 #     or it is deleted. They are read from the field and merged first.
 #  2. An existing option must be sent WITH its `id`, or it is destroyed and
@@ -254,9 +237,9 @@ option_usage() {
 #     color and description; only new options take the wanted ones.
 # `priority` is renumbered 1..N over that order: it encodes display order only.
 #
-# Nothing is written unless a wanted option is missing or a retired one is
-# present, so a re-run on a reconciled field is a no-op, and an owner who has
-# reordered the options is not reverted on every run.
+# Nothing is written unless a wanted option is missing, so a re-run on a reconciled
+# field is a no-op, and an owner who has reordered the options is not reverted on
+# every run.
 #
 # The endpoint is PUBLIC PREVIEW and may change or vanish, so this fails safe in
 # both directions: an unreadable snapshot is never turned into replacement data
@@ -264,47 +247,25 @@ option_usage() {
 # than aborting the run part-way. Either way the operator learns exactly which
 # options to change by hand.
 reconcile_options() {
-    local fname="$1" want="$2" retire="${3:-[]}"
-    local fjson merged added removed blocked fid err retire_ok oname usage kept held idle
+    local fname="$1" want="$2" shipped="${3:-[]}"
+    local fjson merged added blocked fid err oname usage kept
     # Count the shipped options FIRST, from the startup snapshot: the probes are
     # searches (no writes), up to one per shipped option, and the read that feeds
     # the replacement has to come after them or the stale-snapshot window below
-    # would span all of them. A shipped option is retired only on a
-    # --remove-unused-shipped-options run and only when no issue holds it; every
-    # other one stays and is reported with its count, never silently dropped. An
-    # option that appears in the field later is simply never retired.
+    # would span all of them. The counts are information for the operator and gate
+    # nothing: every shipped option stays either way.
     fjson="$(field_json "$fname")"
-    retire_ok='[]'
     kept=""
-    held=""
-    idle=""
     while IFS= read -r oname; do
         [ -n "$oname" ] || continue
         usage="$(option_usage "$fname" "$oname")"
         case "$usage" in
-        unused)
-            if [ "$remove_shipped" = 1 ]; then
-                retire_ok="$(jq -cn --argjson a "$retire_ok" --arg n "$oname" '$a + [$n]')"
-            else
-                kept="${kept}${kept:+, }${oname} (search count 0)"
-                idle="${idle}${idle:+, }${oname}"
-            fi
-            ;;
-        used*)
-            kept="${kept}${kept:+, }${oname} (held by ${usage#used } issue(s))"
-            held="${held}${held:+, }${oname} (held by ${usage#used } issue(s))"
-            ;;
-        *)
-            kept="${kept}${kept:+, }${oname} (usage could not be read)"
-            held="${held}${held:+, }${oname} (usage could not be read)"
-            ;;
+        unused) kept="${kept}${kept:+, }${oname} (search count 0)" ;;
+        used*) kept="${kept}${kept:+, }${oname} (held by ${usage#used } issue(s))" ;;
+        *) kept="${kept}${kept:+, }${oname} (usage could not be read)" ;;
         esac
-    done < <(printf '%s' "$fjson" | jq -r --argjson r "$retire" '((.options // []) | sort_by(.priority // 0))[]? | select(.name as $n | ($r | index($n)) != null) | .name' 2>/dev/null)
-    if [ -n "$kept" ]; then
-        echo "    NOTE: kept GitHub's shipped option(s) on '$fname' beside the wanted ones: $kept" >&2
-        [ -z "$held" ] || leftover="${leftover}${leftover:+; }${fname}: ${held}"
-        [ -z "$idle" ] || kept_unused="${kept_unused}${kept_unused:+; }${fname}: ${idle}"
-    fi
+    done < <(printf '%s' "$fjson" | jq -r --argjson s "$shipped" '((.options // []) | sort_by(.priority // 0))[]? | select(.name as $n | ($s | index($n)) != null) | .name' 2>/dev/null)
+    [ -z "$kept" ] || shipped_report="${shipped_report}${shipped_report:+; }${fname}: ${kept}"
     # Re-read immediately before building the replacement, with nothing in
     # between. The PATCH replaces the ENTIRE option list, so an option added since
     # the startup read — a parallel run, or someone in the org settings UI — would
@@ -322,7 +283,7 @@ reconcile_options() {
         unreconciled="${unreconciled}${unreconciled:+; }${fname}: (disappeared while this script was running)"
         return 0
     fi
-    merged=$(jq -cn --argjson f "$fjson" --argjson want "$want" --argjson retire "$retire_ok" '
+    merged=$(jq -cn --argjson f "$fjson" --argjson want "$want" '
         (if ($f.options | type) == "array" then $f.options else [] end
             | sort_by(.priority // 0)) as $ex
         | (if ($f | has("options") | not) then "the response carried no options array for it"
@@ -332,22 +293,18 @@ reconcile_options() {
         | [ $want[].name ] as $wnames
         | [ $ex[].name ] as $names
         | [ $want[] | select( .name as $n | ($names | index($n)) == null ) ] as $new
-        | [ $ex[] | select( .name as $n | ($retire | index($n)) != null and ($wnames | index($n)) == null ) ] as $drop
         | ( [ $want[] | . as $w
               | ( [ $ex[] | select(.name == $w.name) ] | first ) as $e
               | if $e == null
                 then {name: $w.name, description: ($w.description // ""), color: ($w.color // "gray")}
                 else {id: $e.id, name: $e.name, description: ($e.description // ""), color: ($e.color // "gray")} end ]
-          + [ $ex[] | select( .name as $n
-                | ($wnames | index($n)) == null and ($retire | index($n)) == null )
+          + [ $ex[] | select( .name as $n | ($wnames | index($n)) == null )
               | {id, name, description: (.description // ""), color: (.color // "gray")} ] ) as $keep
         | { blocked: $blocked,
             added: [ $new[].name ],
-            removed: [ $drop[].name ],
             body: { options: ( $keep | to_entries | map(.value + {priority: (.key + 1)}) ) } }')
     added=$(printf '%s' "$merged" | jq -r '.added | join(", ")')
-    removed=$(printf '%s' "$merged" | jq -r '.removed | join(", ")')
-    if [ -z "$added" ] && [ -z "$removed" ]; then
+    if [ -z "$added" ]; then
         echo "    Issue field '$fname' already has every wanted option — leaving it as-is"
         return 0
     fi
@@ -359,28 +316,26 @@ reconcile_options() {
     # promised warning is the correct outcome, not a best-effort write.
     blocked=$(printf '%s' "$merged" | jq -r '.blocked')
     if [ -n "$blocked" ]; then
-        echo "    WARNING: issue field '$fname' needs option changes (add: ${added:-none}; remove: ${removed:-none}), but $blocked —" >&2
+        echo "    WARNING: issue field '$fname' needs options added ($added), but $blocked —" >&2
         echo "             not sending a replacement that could delete existing options." >&2
-        unreconciled="${unreconciled}${unreconciled:+; }${fname}: add ${added:-none}, remove ${removed:-none}"
+        unreconciled="${unreconciled}${unreconciled:+; }${fname}: add ${added}"
         return 0
     fi
     fid=$(printf '%s' "$fjson" | jq -r '.id')
     if err=$(printf '%s' "$merged" | jq -c '.body' |
         gh api --method PATCH "orgs/$org/issue-fields/$fid" \
             -H "X-GitHub-Api-Version: $api_version" --input - 2>&1 >/dev/null); then
-        echo "    Issue field '$fname' already exists — options updated (existing option ids kept)"
-        [ -z "$added" ] || echo "        added: $added"
-        [ -z "$removed" ] || echo "        removed GitHub's shipped option(s) that no issue holds (--remove-unused-shipped-options): $removed"
+        echo "    Issue field '$fname' already exists — options added (existing option ids kept): $added"
         return 0
     fi
-    echo "    WARNING: issue field '$fname' needs option changes (add: ${added:-none}; remove: ${removed:-none}), and the update was rejected:" >&2
+    echo "    WARNING: issue field '$fname' needs options added ($added), and the update was rejected:" >&2
     echo "             $(printf '%s' "$err" | tr '\n' ' ' | cut -c1-200)" >&2
-    unreconciled="${unreconciled}${unreconciled:+; }${fname}: add ${added:-none}, remove ${removed:-none}"
+    unreconciled="${unreconciled}${unreconciled:+; }${fname}: add ${added}"
 }
 
-# create_field NAME DATA_TYPE DESCRIPTION [OPTIONS_JSON [RETIRE_JSON]]
+# create_field NAME DATA_TYPE DESCRIPTION [OPTIONS_JSON [SHIPPED_JSON]]
 create_field() {
-    local fname="$1" dtype="$2" desc="$3" opts="${4:-}" retire="${5:-[]}"
+    local fname="$1" dtype="$2" desc="$3" opts="${4:-}" shipped="${5:-[]}"
     local etype body
     if field_present "$fname"; then
         etype="$(field_type "$fname")"
@@ -390,7 +345,7 @@ create_field() {
             echo "    WARNING: issue field '$fname' already exists as '$etype', not '$dtype'" >&2
             incompatible="${incompatible}${incompatible:+, }${fname} (is '$etype', wanted '$dtype')"
         elif [ -n "$opts" ]; then
-            reconcile_options "$fname" "$opts" "$retire"
+            reconcile_options "$fname" "$opts" "$shipped"
         else
             echo "    Issue field '$fname' already exists — leaving it as-is"
         fi
@@ -434,24 +389,21 @@ if field_present "Agent"; then
     echo "    before deleting it in the org's issue-field settings (harmon-init#910)." >&2
 fi
 
-# Shipped options the search shows no issue holds stay until the operator asks.
-if [ -n "$kept_unused" ]; then
-    checkline info "Shipped options kept" "$kept_unused — no issue holds them; remove with --remove-unused-shipped-options"
+# GitHub's shipped options are kept, and only reported (information, never a
+# warning: the org is provisioned either way). Deleting one is the operator's step.
+if [ -n "$shipped_report" ]; then
+    checkline info "Shipped options kept" "$shipped_report — delete each in the org's issue-field settings once no issue holds it"
 fi
 
-if [ -n "$incompatible" ] || [ -n "$unreconciled" ] || [ -n "$leftover" ]; then
+if [ -n "$incompatible" ] || [ -n "$unreconciled" ]; then
     checkline unknown "Done, WITH WARNINGS" "issue fields need attention"
-    if [ -n "$leftover" ]; then
-        echo "    These shipped options were kept because an issue may still hold them — $leftover" >&2
-        echo "    Move each of those issues to a wanted option, then re-run with --remove-unused-shipped-options to remove them." >&2
-    fi
     if [ -n "$incompatible" ]; then
         echo "    These fields already exist with a different data type: $incompatible" >&2
         echo "    GitHub cannot change an issue field's data type in place. Rename or delete each one in the org's" >&2
         echo "    issue-field settings and re-run this script to get the intended options." >&2
     fi
     if [ -n "$unreconciled" ]; then
-        echo "    These existing fields still need option changes or a re-run — $unreconciled" >&2
+        echo "    These existing fields still need options added, or a re-run — $unreconciled" >&2
         echo "    An update was refused or rejected, or a field changed under this run (the issue-fields API is in public preview and may have changed)." >&2
         echo "    Re-run, or make each change by hand in the org's issue-field settings (Settings -> Planning -> Issue fields)." >&2
     fi

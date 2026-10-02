@@ -12,10 +12,11 @@
 # organization while still passing `verify`.
 #
 # The stub applies the writes it receives to its own fixture, so "a re-run writes
-# nothing" is asserted against the org the first run actually produced. The shipped
-# Effort options (High/Medium/Low) are kept by default and removed only by the
-# explicit --remove-unused-shipped-options step, which still keeps any option the
-# issue search shows is held.
+# nothing" is asserted against the org the first run actually produced. The script
+# NEVER removes an option or a field: every run is checked for that (see
+# assert_nothing_removed), and GitHub's shipped Effort options (High/Medium/Low) are
+# kept and only reported, with their issue-search counts, for the operator to delete
+# by hand.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 script="$PWD/scripts/setup-github-issue-fields.sh"
@@ -151,16 +152,27 @@ reset_stub() {
     : >"$BADCALLS"
 }
 
-# The explicit operator step that lets the script remove GitHub's shipped options.
-flag=--remove-unused-shipped-options
+# assert_nothing_removed — the invariant of this script: every PATCH sends back
+# every option id its field held before the run (an option left out of the
+# replacement list is deleted, blanking it on every issue that held it).
+assert_nothing_removed() {
+    local fid body missing
+    while IFS="$(printf '\t')" read -r fid body; do
+        [ -n "$fid" ] || continue
+        missing="$(jq -nc --argjson b "$body" --argjson fid "$fid" --slurpfile before "$tmp/before.json" \
+            '[ $before[0][] | select(.id == $fid) | .options[]? | .id ] - [ $b.options[] | select(has("id")) | .id ]')"
+        [ "$missing" = "[]" ] || fail "a PATCH to field $fid left out existing option id(s) $missing — this script must never remove an option"
+    done <"$PATCHES"
+}
 
-# run_with FIELDS_JSON — run the script against that org snapshot. SCRIPT_ARGS
-# adds arguments (the flag above, for the removal cases).
+# run_with FIELDS_JSON — run the script against that org snapshot, then check it
+# removed nothing and used no method it must never use.
 run_with() {
     reset_stub "$1"
-    # shellcheck disable=SC2086  # SCRIPT_ARGS is one optional flag
-    "$script" --org testorg ${SCRIPT_ARGS:-} >"$tmp/out" 2>&1 || fail "script exited non-zero"
+    cp "$STUB_FIELDS_FILE" "$tmp/before.json"
+    "$script" --org testorg >"$tmp/out" 2>&1 || fail "script exited non-zero"
     [ ! -s "$BADCALLS" ] || fail "the script issued an API method it must never use: $(tr '\n' ' ' <"$BADCALLS")"
+    assert_nothing_removed
 }
 
 # patch_follows_read — every PATCH is the call right after a list read, and the
@@ -207,7 +219,7 @@ effort_id=43796668
 priority_id=25511146
 
 echo "==> an org with only GitHub's built-ins gets the new fields and Effort's ladder beside the shipped options"
-# The DEFAULT run: it adds, and never removes (challenge r1, C1-F1).
+# The run adds and never removes (challenge r1 C1-F1, replaced by deletion in r2).
 run_with "$builtin"
 [ "$(jq -sc 'map(.name)' "$POSTS")" = '["Impact","Risk","Complexity","Priority (AI)"]' ] ||
     fail "expected exactly Impact, Risk, Complexity, Priority (AI) to be created, got $(jq -sc 'map(.name)' "$POSTS")"
@@ -243,7 +255,7 @@ echo "==> Priority (AI) carries the maintainer's five descriptions verbatim"
 [ "$(post_body 'Priority (AI)' | jq -c '[ .options[].description ]')" = '["Priority (AI): blocks a merge or deploy — critical","Priority (AI): a real defect or must-do; next","Priority (AI): worth doing, not blocking","Priority (AI): cosmetic or informational","Priority (AI): negligible"]' ] ||
     fail "Priority (AI) option descriptions drifted from the maintainer decision"
 
-echo "==> the default run adds the ladder and keeps every shipped Effort option, with its id, reporting each count"
+echo "==> the run adds the ladder and keeps every shipped Effort option, with its id, reporting each count"
 body="$(patch_body "$effort_id")"
 [ "$(opt_names "$body")" = '["1","2","3","5","8","13","20","High","Medium","Low"]' ] ||
     fail "Effort options: want the ladder beside High, Medium, Low, got $(opt_names "$body")"
@@ -251,12 +263,12 @@ body="$(patch_body "$effort_id")"
     fail "Effort priorities must be 1..10 in order"
 [ "$(printf '%s' "$body" | jq -c '[ .options[] | select(has("id")) | .id ]')" = "[76647500,76647501,76647502]" ] ||
     fail "the shipped options must go back with their ids — only they exist yet"
-grep -q "kept GitHub's shipped option(s) on 'Effort' beside the wanted ones: High (search count 0), Medium (search count 0), Low (search count 0)" "$tmp/out" ||
+grep -q "Shipped options kept - Effort: High (search count 0), Medium (search count 0), Low (search count 0)" "$tmp/out" ||
     fail "each kept shipped option must be reported with its search count"
-grep -q "remove with --remove-unused-shipped-options" "$tmp/out" || fail "the output must name the explicit removal step"
-! grep -q "removed GitHub's shipped option" "$tmp/out" || fail "a default run must never remove an option"
+grep -q "delete each in the org's issue-field settings once no issue holds it" "$tmp/out" ||
+    fail "the report must say the deletion is the operator's"
 [ "$(opt_names "$(state_field Effort)")" = '["1","2","3","5","8","13","20","High","Medium","Low"]' ] ||
-    fail "the org's Effort should hold the ladder and the shipped options after a default run"
+    fail "the org's Effort should hold the ladder and the shipped options after the run"
 
 echo "==> usage is read for each shipped option, scoped to the org, through the advanced search"
 [ "$(cut -f1,2 "$SEARCHES")" = "$(printf 'org:testorg is:issue field.effort:"%s"\tadvanced=true\n' High Medium Low)" ] ||
@@ -272,38 +284,26 @@ for retired in Tier Agent Domain Layer; do
     [ "$(state_field "$retired")" = "" ] || fail "the retired/absent field $retired was created"
 done
 
-echo "==> a default re-run writes nothing and reports the kept options again"
+echo "==> a re-run writes nothing and reports the kept options again"
 run_with "$(cat "$tmp/default-run.json")"
-[ "$(posts)" = 0 ] && [ "$(patches)" = 0 ] || fail "a default re-run must write nothing"
-grep -q "High (search count 0), Medium (search count 0), Low (search count 0)" "$tmp/out" ||
+[ "$(posts)" = 0 ] && [ "$(patches)" = 0 ] || fail "a re-run must write nothing"
+grep -q "Shipped options kept - Effort: High (search count 0), Medium (search count 0), Low (search count 0)" "$tmp/out" ||
     fail "the kept shipped options must be reported on every run"
-grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "options no issue holds are a note, not a warning"
+grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "kept shipped options are information, not a warning"
+! grep -q "Done, WITH WARNINGS" "$tmp/out" || fail "kept shipped options must never end the run with warnings"
 
-echo "==> --remove-unused-shipped-options removes the shipped options no issue holds, and says so"
-SCRIPT_ARGS="$flag" run_with "$(cat "$tmp/default-run.json")"
-body="$(patch_body "$effort_id")"
-[ "$(patches)" = 1 ] || fail "expected exactly one PATCH (the removal), got $(patches)"
-[ "$(opt_names "$body")" = "$ladder" ] || fail "Effort options: want the ladder alone, got $(opt_names "$body")"
-[ "$(printf '%s' "$body" | jq -c '[ .options[] | select(has("id")) ] | length')" = 7 ] ||
-    fail "all seven ladder options exist by now, so each must be sent back with its id"
-grep -q "removed GitHub's shipped option(s) that no issue holds (--remove-unused-shipped-options): High, Medium, Low" "$tmp/out" ||
-    fail "the removal of the shipped Effort options must be named in the output"
-patch_follows_read || fail "the removal PATCH must directly follow a fresh read: $(tr '\n' ' ' <"$CALLS")"
-grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "expected a clean outcome after the removal"
-[ "$(opt_names "$(state_field Effort)")" = "$ladder" ] || fail "the org's Effort should hold only the ladder after the removal"
-cp "$STUB_FIELDS_FILE" "$tmp/provisioned.json"
-
-echo "==> the flag on a fresh org does both in one run: ladder only, no shipped option left"
-SCRIPT_ARGS="$flag" run_with "$builtin"
-[ "$(opt_names "$(patch_body "$effort_id")")" = "$ladder" ] || fail "expected the ladder alone from a flagged run on the built-in org"
-[ "$(patch_body "$effort_id" | jq -c '[ .options[] | select(has("id")) ] | length')" = 0 ] ||
-    fail "no option of the rewritten list exists yet, so none may carry an id"
-
-echo "==> a re-run against the org the removal run produced writes nothing"
+echo "==> once the operator has deleted the shipped options, a re-run writes nothing and searches nothing"
+# The operator's step, simulated: High/Medium/Low are gone from Effort. This is the
+# clean, fully provisioned org the later cases start from.
+jq -c 'map(if .name == "Effort" then .options |= map(select(.name != "High" and .name != "Medium" and .name != "Low")) else . end)' \
+    "$tmp/default-run.json" >"$tmp/provisioned.json"
+[ "$(opt_names "$(jq -c '.[] | select(.name == "Effort")' "$tmp/provisioned.json")")" = "$ladder" ] ||
+    fail "the cleaned org's Effort should hold only the ladder"
 run_with "$(cat "$tmp/provisioned.json")"
 [ "$(posts)" = 0 ] || fail "expected no field creation on a provisioned org"
 [ "$(patches)" = 0 ] || fail "expected no PATCH on a provisioned org"
-[ ! -s "$SEARCHES" ] || fail "a provisioned org has no shipped option to retire, so no usage search is owed: $(cat "$SEARCHES")"
+[ ! -s "$SEARCHES" ] || fail "a provisioned org has no shipped option to report, so no usage search is owed: $(cat "$SEARCHES")"
+! grep -q "Shipped options kept" "$tmp/out" || fail "nothing is kept once the shipped options are gone"
 [ "$(grep -c "already has every wanted option — leaving it as-is" "$tmp/out")" = 5 ] ||
     fail "expected all five single-select fields reported as already complete"
 grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "expected an explicit ready outcome"
@@ -318,7 +318,7 @@ run_with '[]'
 run_with "$(cat "$STUB_FIELDS_FILE")"
 [ "$(posts)" = 0 ] && [ "$(patches)" = 0 ] || fail "a re-run after creation must write nothing"
 
-echo "==> every existing option keeps its id through the Effort rewrite"
+echo "==> every existing option keeps its id when the ladder is added"
 # A partly rewritten ladder (2 and 5 exist, with the owner's own color and
 # description on 5), a shipped default still present, and an option the owner added.
 partial_effort=$(printf '%s' "$builtin" | jq -c '
@@ -336,12 +336,7 @@ body="$(patch_body "$effort_id")"
     fail "a default run keeps the shipped options too: expected the ladder, High, Low, XL, got $(opt_names "$body")"
 [ "$(printf '%s' "$body" | jq -c '[ .options[] | select(has("id")) | .id ] | sort')" = "[555,701,702,777,888]" ] ||
     fail "a default run must send every existing option back with its id"
-SCRIPT_ARGS="$flag" run_with "$partial_effort"
-body="$(patch_body "$effort_id")"
-[ "$(patches)" = 1 ] || fail "expected exactly one PATCH (Effort), got $(patches)"
-[ "$(opt_names "$body")" = '["1","2","3","5","8","13","20","XL"]' ] ||
-    fail "expected the ladder followed by the owner's XL, got $(opt_names "$body")"
-for pair in '2|555' '5|777' 'XL|888'; do
+for pair in '2|555' '5|777' 'High|701' 'Low|702' 'XL|888'; do
     oname="${pair%%|*}"
     oid="${pair#*|}"
     [ "$(printf '%s' "$body" | jq -r --arg n "$oname" '[ .options[] | select(.name == $n) ] | first | .id')" = "$oid" ] ||
@@ -351,64 +346,37 @@ for oname in 1 3 8 13 20; do
     [ "$(printf '%s' "$body" | jq -r --arg n "$oname" '[ .options[] | select(.name == $n) ] | first | has("id")')" = false ] ||
         fail "new option '$oname' must be sent without an id"
 done
-[ "$(printf '%s' "$body" | jq -c '[ .options[] | select(has("id")) | .id ] | sort')" = "[555,777,888]" ] ||
-    fail "the ids sent must be exactly the surviving options' ids"
-[ "$(printf '%s' "$body" | jq -r '[ .options[] | select(.name == "High" or .name == "Low") ] | length')" = 0 ] ||
-    fail "the shipped High/Low options must be removed"
+[ "$(printf '%s' "$body" | jq -c '[ .options[] | select(has("id")) | .id ] | sort')" = "[555,701,702,777,888]" ] ||
+    fail "the ids sent must be exactly the existing options' ids"
 [ "$(printf '%s' "$body" | jq -c '[ .options[] | select(.name == "5") ] | first | [.color, .description]')" = '["blue","mine"]' ] ||
     fail "an existing option must keep its own color and description"
-[ "$(printf '%s' "$body" | jq -c '[ .options[].priority ]')" = "[1,2,3,4,5,6,7,8]" ] || fail "priorities must be contiguous 1..N"
-[ "$(state_field Effort | jq -c '[ .options[] | select(.name == "5" or .name == "2" or .name == "XL") | .id ] | sort')" = "[555,777,888]" ] ||
-    fail "the surviving options lost their ids in the org"
+[ "$(printf '%s' "$body" | jq -c '[ .options[].priority ]')" = "[1,2,3,4,5,6,7,8,9,10]" ] || fail "priorities must be contiguous 1..N"
+[ "$(state_field Effort | jq -c '[ .options[] | select(.name == "5" or .name == "2" or .name == "High" or .name == "Low" or .name == "XL") | .id ] | sort')" = "[555,701,702,777,888]" ] ||
+    fail "the existing options lost their ids in the org"
 
-echo "==> a default run keeps a held shipped option, reports its count, and ends with a warning"
-# Two issues still carry `Low` (the state of a real org).
+echo "==> a held shipped option is reported with its count and the run still ends ready"
+# Two issues still carry `Low` (the state of a real org). Nothing is removed either
+# way, so the count is information for the operator, never a warning.
 USAGE='effort:Low=2' run_with "$builtin"
 body="$(patch_body "$effort_id")"
 [ "$(opt_names "$body")" = '["1","2","3","5","8","13","20","High","Medium","Low"]' ] ||
     fail "expected the ladder beside all three shipped options, got $(opt_names "$body")"
-grep -q "High (search count 0), Medium (search count 0), Low (held by 2 issue(s))" "$tmp/out" ||
+grep -q "Shipped options kept - Effort: High (search count 0), Medium (search count 0), Low (held by 2 issue(s))" "$tmp/out" ||
     fail "each shipped option must be reported with its own count"
-grep -q "Done, WITH WARNINGS" "$tmp/out" || fail "a held shipped option must end the run with a warning"
-
-echo "==> with the flag, a held shipped option is still kept; the ones no issue holds go"
-# High and Medium go, Low stays with its id, and the run ends with a warning that names it.
-SCRIPT_ARGS="$flag" USAGE='effort:Low=2' run_with "$builtin"
-body="$(patch_body "$effort_id")"
-[ "$(patches)" = 1 ] || fail "expected exactly one PATCH (Effort), got $(patches)"
-[ "$(opt_names "$body")" = '["1","2","3","5","8","13","20","Low"]' ] ||
-    fail "expected the ladder followed by the held Low, got $(opt_names "$body")"
-[ "$(printf '%s' "$body" | jq -c '[ .options[] | select(has("id")) | .id ]')" = "[76647502]" ] ||
-    fail "only the kept Low may carry an id (76647502) — it is the one option that exists"
-grep -q "removed GitHub's shipped option(s) that no issue holds (--remove-unused-shipped-options): High, Medium" "$tmp/out" ||
-    fail "expected High and Medium named as removed"
-grep -q "kept GitHub's shipped option(s) on 'Effort' beside the wanted ones: Low (held by 2 issue(s))" "$tmp/out" ||
-    fail "the kept option must be reported by name with its issue count"
-grep -q "Done, WITH WARNINGS" "$tmp/out" || fail "a kept shipped option must end the run with a warning"
-grep -q "re-run with --remove-unused-shipped-options to remove them" "$tmp/out" || fail "the warning must say how to finish the removal"
-! grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "a kept shipped option claimed readiness"
-[ "$(opt_names "$(state_field Effort)")" = '["1","2","3","5","8","13","20","Low"]' ] || fail "Effort should hold the ladder plus Low"
-cp "$STUB_FIELDS_FILE" "$tmp/effort-kept.json"
+grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "a held shipped option is information, not a warning"
+! grep -q "Done, WITH WARNINGS" "$tmp/out" || fail "a held shipped option must not end the run with warnings"
+cp "$STUB_FIELDS_FILE" "$tmp/effort-held.json"
 
 echo "==> a re-run while the option is still held writes nothing and reports it again"
-SCRIPT_ARGS="$flag" USAGE='effort:Low=2' run_with "$(cat "$tmp/effort-kept.json")"
+USAGE='effort:Low=2' run_with "$(cat "$tmp/effort-held.json")"
 [ "$(patches)" = 0 ] && [ "$(posts)" = 0 ] || fail "nothing is owed while Low is still held"
 grep -q "Low (held by 2 issue(s))" "$tmp/out" || fail "the held option must be reported on every run"
 
-echo "==> once no issue holds it, a re-run removes it and the field is clean"
-SCRIPT_ARGS="$flag" run_with "$(cat "$tmp/effort-kept.json")"
-[ "$(patches)" = 1 ] || fail "expected one PATCH removing the released option, got $(patches)"
-[ "$(opt_names "$(patch_body "$effort_id")")" = "$ladder" ] || fail "expected the ladder alone after the release"
-[ "$(patch_body "$effort_id" | jq -c '[ .options[] | select(has("id")) ] | length')" = 7 ] ||
-    fail "all seven ladder options exist by now, so each must be sent back with its id"
-grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "expected a clean outcome once nothing is held"
-[ "$(opt_names "$(state_field Effort)")" = "$ladder" ] || fail "the org's Effort should hold only the ladder"
-
-echo "==> when usage cannot be shown, nothing is removed and every shipped option is reported"
+echo "==> when usage cannot be shown, nothing is removed and every shipped option is reported as such"
 # A failed search, an incomplete result, and a non-answer are all "cannot show".
 for mode in "GH_FAIL_SEARCH=1" "GH_SEARCH_GARBAGE=1" "GH_SEARCH_INCOMPLETE=true"; do
     reset_stub "$builtin"
-    env "$mode" "$script" --org testorg "$flag" >"$tmp/out" 2>&1 || fail "[$mode] an unreadable usage must not abort the run"
+    env "$mode" "$script" --org testorg >"$tmp/out" 2>&1 || fail "[$mode] an unreadable usage must not abort the run"
     [ ! -s "$BADCALLS" ] || fail "[$mode] a forbidden API method was used"
     [ "$(patches)" = 1 ] || fail "[$mode] expected one PATCH (the ladder added), got $(patches)"
     body="$(patch_body "$effort_id")"
@@ -416,9 +384,10 @@ for mode in "GH_FAIL_SEARCH=1" "GH_SEARCH_GARBAGE=1" "GH_SEARCH_INCOMPLETE=true"
         fail "[$mode] expected the ladder beside the three shipped options, got $(opt_names "$body")"
     [ "$(printf '%s' "$body" | jq -c '[ .options[] | select(has("id")) | .id ]')" = "[76647500,76647501,76647502]" ] ||
         fail "[$mode] the shipped options must go back with their ids"
-    grep -q "High (usage could not be read), Medium (usage could not be read), Low (usage could not be read)" "$tmp/out" ||
+    grep -q "Shipped options kept - Effort: High (usage could not be read), Medium (usage could not be read), Low (usage could not be read)" "$tmp/out" ||
         fail "[$mode] every kept option must be named with the reason"
-    grep -q "Done, WITH WARNINGS" "$tmp/out" || fail "[$mode] expected a warning outcome"
+    grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "[$mode] unreadable usage is information, not a warning"
+    ! grep -q "Done, WITH WARNINGS" "$tmp/out" || fail "[$mode] unreadable usage must not end the run with warnings"
 done
 
 echo "==> a missing option is appended to an existing field without touching the owner's"
@@ -498,10 +467,10 @@ grep -q "without an id" "$tmp/out" || fail "expected a fail-closed warning for t
 
 echo "==> a rejected PATCH degrades to a warning naming the options"
 reset_stub "$builtin"
-GH_FAIL_PATCH=1 "$script" --org testorg "$flag" >"$tmp/out" 2>&1 || fail "a rejected PATCH must not abort the run"
+GH_FAIL_PATCH=1 "$script" --org testorg >"$tmp/out" 2>&1 || fail "a rejected PATCH must not abort the run"
 grep -q "update was rejected" "$tmp/out" || fail "expected the rejection to be reported"
-grep -q "add 1, 2, 3, 5, 8, 13, 20, remove High, Medium, Low" "$tmp/out" || fail "a rejected PATCH must name the options it could not apply"
-grep -q "still need option changes" "$tmp/out" || fail "expected the summary warning after a rejected PATCH"
+grep -q "Effort: add 1, 2, 3, 5, 8, 13, 20" "$tmp/out" || fail "a rejected PATCH must name the options it could not apply"
+grep -q "still need options added" "$tmp/out" || fail "expected the summary warning after a rejected PATCH"
 [ "$(posts)" = 4 ] || fail "the fields that can be created must still be created after a rejected PATCH"
 ! grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "a rejected PATCH claimed readiness"
 

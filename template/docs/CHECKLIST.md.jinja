@@ -306,17 +306,16 @@ the compatibility reason in the rule's `description`.
       issue-classification fields **Impact**, **Risk**, **Complexity**, and
       **Priority (AI)**, and to add the modified Fibonacci ladder
       `1, 2, 3, 5, 8, 13, 20` to the built-in **Effort** field beside GitHub's
-      shipped High/Medium/Low options. Removing those shipped options is a
-      separate, explicit operator step, because removing an option blanks it on
-      every issue that holds it: once the run reports that none is held, run
-      `./scripts/setup-github-issue-fields.sh --org [[ github_org ]]
-      --remove-unused-shipped-options`, which still keeps any option the issue
-      search shows is held. There is deliberately no Tier, Domain, or Layer
-      issue field — see [project-management.md](project-management.md), "Label
-      or field?". Priority (the human override of Priority (AI)) and the date
-      fields are GitHub built-in issue fields, left as shipped. Idempotent and
-      additive: a re-run creates only what is missing and never deletes a
-      field; an old `Agent` field is reported, not deleted — enumerate the
+      shipped High/Medium/Low options. Removing those shipped options is left
+      to you, because removing an option blanks it on every issue that holds
+      it: the run reports how many issues hold each, and once none does, delete
+      it in the org's issue-field settings (**Settings → Planning → Issue
+      fields**). There is deliberately no Tier, Domain, or Layer issue field —
+      see [project-management.md](project-management.md), "Label or field?".
+      Priority (the human override of Priority (AI)) and the date fields are
+      GitHub built-in issue fields, left as shipped. Idempotent and additive: a
+      re-run creates only what is missing and never removes a field or an
+      option; an old `Agent` field is reported, not deleted — enumerate the
       issues that hold a value before removing it yourself.
 [% else %]
       On a personal account it also creates Priority/Product/Size as project
