@@ -116,20 +116,20 @@ else
         esac
         ;;
     esac
-    case "${origin_url}" in
-    *://*) # scheme://[user@]host[:port]/path
-        origin_authority="${origin_url#*://}"
-        origin_authority="${origin_authority%%/*}" # the path first: it may contain '@'
-        origin_authority="${origin_authority##*@}" # then any userinfo
+    # A remote-helper origin (gitremote-helpers(7)) names no host in ANY arm below,
+    # whatever it carries after the '::' (even a scheme://), so it keeps github.com.
+    if [ -z "${origin_helper}" ]; then
         case "${origin_url}" in
-        http://* | https://*) ;;                         # the port is the web port: keep it
-        *) origin_authority="${origin_authority%%:*}" ;; # ssh:// etc: the port is not the https port
-        esac
-        ;;
-    *:*) # scp-like [user@]host:path (no port; the colon starts the path) — git's rule: no '/' before the first colon
-        if [ -n "${origin_helper}" ]; then
-            : # <transport>::<address> (gitremote-helpers(7)): a remote-helper URL names no host, so fall back
-        else
+        *://*) # scheme://[user@]host[:port]/path
+            origin_authority="${origin_url#*://}"
+            origin_authority="${origin_authority%%/*}" # the path first: it may contain '@'
+            origin_authority="${origin_authority##*@}" # then any userinfo
+            case "${origin_url}" in
+            http://* | https://*) ;;                         # the port is the web port: keep it
+            *) origin_authority="${origin_authority%%:*}" ;; # ssh:// etc: the port is not the https port
+            esac
+            ;;
+        *:*) # scp-like [user@]host:path (no port; the colon starts the path) — git's rule: no '/' before the first colon
             origin_authority="${origin_url%%:*}"
             case "${origin_authority}" in
             \[* | *@\[*)                              # a bracketed (IPv6) host: the first colon is inside the brackets, so take [host] whole
@@ -151,9 +151,9 @@ else
             */* | ?) origin_authority="" ;; # a local path, or a drive letter (C:/…)
             *) origin_authority="${origin_authority##*@}" ;;
             esac
-        fi
-        ;;
-    esac
+            ;;
+        esac
+    fi
     GIT_BASE_URL="https://${origin_authority:-github.com}/"
 fi
 
