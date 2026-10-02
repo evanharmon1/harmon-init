@@ -364,6 +364,20 @@ minted, though — missing `CI_APP_CLIENT_ID` / `CI_APP_PRIVATE_KEY`, or an App
 without **Projects: Read and write**, fails the token step, and
 `project-automation-verify` fails with it.
 
+### Classification reconciler
+
+The derived Tier (`tier:<value>`) and `needs-triage` have two automated writers
+and no others. The skills (triage, track-work, breakdown) set both in the same
+write that sets Risk or Complexity. `classification-reconcile.yml` and
+`classification-event.yml` repair everything else: a scheduled walk of open
+issues (monthly on an organization repository, daily on a personal-account
+one) and a per-issue job when a human changes an input in the GitHub UI. The
+workflows write nothing but those two labels. They never write over
+`tier:pinned` and never resolve a pin carrying two tier values; they report
+that case for a human. The minutes model, the event filter and the opt-in
+organization caller are in
+[the CI/CD architecture](architecture/ci-cd.md#issue-classification-reconciler).
+
 ## Fields
 
 `Status` is a **Project field** — the board pipeline above; it stays on the

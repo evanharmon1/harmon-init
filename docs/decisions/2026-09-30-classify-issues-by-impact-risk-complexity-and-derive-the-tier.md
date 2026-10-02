@@ -10,6 +10,8 @@ D2's storage of the Tier axis is amended by [ADR 2026-10-01 (Tier as a label)](2
 
 D2's scales and D3's writers are amended by [ADR 2026-10-01 (Priority AI axis)](2026-10-01-add-a-priority-ai-axis-suggested-by-agents.md): a second axis, Priority (AI), `p0`–`p4`, written by agents and humans; the human Priority overrides it.
 
+D4's "Reconcile drift" bullet is amended by [#1450](https://github.com/evanharmon1/harmon-init/issues/1450): the schedule runs per repository under `GITHUB_TOKEN` (monthly on organization repositories, daily on personal ones) because `GITHUB_TOKEN` is repository-scoped; the organization-level daily walk is an opt-in caller holding an App installation token ([#1463](https://github.com/evanharmon1/harmon-init/issues/1463)).
+
 Supersedes whatever an earlier record says that conflicts with the
 retirements in D8 — `suggest:*`, the `Size` project field, the
 personal-project `Priority` field, the ponderousdev `Agent` issue field, and
