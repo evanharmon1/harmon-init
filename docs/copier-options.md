@@ -66,6 +66,7 @@ In prompt order, as defined in `copier.yml`. "Asked when" is the question's
 | 30 | `use_antigravity_cli` | bool | no | `devcontainer` | Prompt-free Google Antigravity CLI in the bot profile — **validator** |
 | 31 | `use_copilot_cli` | bool | no | `devcontainer` | Prompt-free GitHub Copilot CLI in the **bot** profile only — `COPILOT_ALLOW_ALL` + the `~/.local/bin/copilot` wrapper; **validator**, **security-sensitive** |
 | 32 | `use_alternative_claude_providers` | bool | no | `devcontainer` | `claude-kimi`/`-deepseek`/`-glm` wrappers; routes **paid** keys into *both* profiles |
+| 32a | `use_fly_sprites` | bool | no | `devcontainer` | `sprites/network-policy.sh` (a Fly.io Sprite's egress policy, generated from the shared allowlist) + the human-only Sprites checklist item; **paid** Fly.io org — **validator** requires `devcontainer` |
 | 33 | `project_management` | choice `none`/`github`/`linear` | `none` | always | `docs/project-management.md`, `setup:github-project` / `-labels`, `close-milestone-on-release.yml` |
 | 34 | `git_init` | bool | **yes** | always | `_tasks`: `git init` + scaffold commit (copy only); also the fresh-scaffold signal for the other side effects |
 | 35 | `github_remote_create` | bool | no | always | `_tasks`: `gh repo create --private --push` (copy only) |
