@@ -129,6 +129,7 @@ tasks:
       - task: test:agent-profile
       - task: test:codex-review
       - task: test:remote-codex-policy
+      - task: test:sprites-policy
       - task: test:template-helpers
       - task: test:template
 
@@ -694,6 +695,11 @@ tasks:
     desc: Guard the remote second-model rule — no Codex credential vocabulary on a remote-environment surface (offline)
     cmds:
       - ./scripts/test-remote-codex-policy.sh
+
+  test:sprites-policy:
+    desc: Prove the Fly.io Sprite network policy is generated from the shared egress allowlist and cannot differ from it (offline)
+    cmds:
+      - ./scripts/test-sprites-policy.sh
 
   # ── Skills sync ────────────────────────────────────────────────
   # Vendor shared agent skills from harmon-devkit, pinned in .skills-sync.yaml.
