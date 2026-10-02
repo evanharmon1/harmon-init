@@ -1278,6 +1278,9 @@ Overlapping runs are safe: each repo is cloned into its own private temporary
 directory and moved into place atomically on success, so only one run can
 publish and a failed or interrupted clone never deletes a user's existing
 checkout.
+When a sibling does not appear after a start or a scope refresh, read the logs:
+`$HOME/.related-repos-bootstrap.log` holds the clone job (from container start
+and from `task setup:gh-scopes`) and `$HOME/.related-repos-fetch.log` the fetch job.
 The list is preserved across `copier update` (an empty list is a no-op).
 
 To let Claude read and search the cloned siblings, add them to

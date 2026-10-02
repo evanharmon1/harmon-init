@@ -426,7 +426,14 @@ echo "==> post-start-common.sh starts bootstrap-related-repos.sh detached"
 #   bash .devcontainer/scripts/fetch-related-repos.sh </dev/null >>log 2>&1 &
 #   trap - HUP
 # nohup and a HUP-ignoring subshell are the old, window-leaving forms and must not return.
-awk '
+# detach_form_ok FILE — the awk state machine that pins that form, as a function so the checks below
+# can run it over doctored copies. HUP is ignored only by the two quoted forms:
+# `trap -- HUP` RESETS the disposition, so a pattern that accepted "any two
+# characters" there would pass a script that no longer protects the job. The nohup
+# rule skips comment lines, like every other rule here, so a reworded comment
+# cannot fail the test.
+detach_form_ok() {
+    awk -v sq="'" '
     function joined(   line, next_line) {
         line = $0
         while (line ~ /\\$/) {
@@ -439,7 +446,7 @@ awk '
         }
         return line
     }
-    /^[[:space:]]*trap .. HUP[[:space:]]*$/ { state = 1; next }
+    $0 ~ ("^[[:space:]]*trap (" sq sq "|\"\") HUP[[:space:]]*$") { state = 1; next }
     state == 1 && /^[[:space:]]*bash \.devcontainer\/scripts\/bootstrap-related-repos\.sh/ {
         line = joined()
         if (line ~ /<[[:space:]]*\/dev\/null/ && line ~ /&[[:space:]]*$/) { state = 2; next }
@@ -454,11 +461,35 @@ awk '
     }
     state == 3 && /^[[:space:]]*trap - HUP[[:space:]]*$/ { matched = 1; state = 0; next }
     /[^[:space:]]/ && !/^[[:space:]]*#/ { state = 0 }
-    /nohup .*(bootstrap|fetch)-related-repos/ { nohup_seen = 1 }
+    !/^[[:space:]]*#/ && /nohup .*(bootstrap|fetch)-related-repos/ { nohup_seen = 1 }
     END {
         exit (!matched || nohup_seen)
-    }' .devcontainer/scripts/post-start-common.sh ||
+    }' "$1"
+}
+detach_form_ok .devcontainer/scripts/post-start-common.sh ||
     fail "expected post-start-common.sh to ignore SIGHUP in the parent (trap '' HUP), start bootstrap and fetch detached with </dev/null and a trailing &, then restore (trap - HUP), without nohup"
+
+# The checks above are only worth anything if the form can fail: doctor a copy of
+# the real file each way and require the verdict to follow. `trap -- HUP` must be
+# rejected (it resets, not ignores); a comment that merely mentions nohup must not be.
+sed 's/^trap '"''"' HUP$/trap -- HUP/' .devcontainer/scripts/post-start-common.sh >"${TMP}/start-reset.sh"
+grep -q '^trap -- HUP$' "${TMP}/start-reset.sh" || fail "test setup: the HUP-reset mutation did not apply"
+if detach_form_ok "${TMP}/start-reset.sh"; then
+    fail "Test 9 accepted 'trap -- HUP', which resets SIGHUP rather than ignoring it"
+fi
+{
+    echo "# nohup bootstrap-related-repos.sh was the old form"
+    cat .devcontainer/scripts/post-start-common.sh
+} >"${TMP}/start-comment.sh"
+detach_form_ok "${TMP}/start-comment.sh" ||
+    fail "Test 9 failed on a comment line that merely mentions nohup"
+{
+    cat .devcontainer/scripts/post-start-common.sh
+    echo "nohup bash .devcontainer/scripts/bootstrap-related-repos.sh &"
+} >"${TMP}/start-nohup.sh"
+if detach_form_ok "${TMP}/start-nohup.sh"; then
+    fail "Test 9 accepted a live nohup invocation of the bootstrap"
+fi
 
 # --- Test 10: mktemp failure does not abort script under set -e ---
 echo "==> mktemp failure does not abort script under set -e"
@@ -500,6 +531,11 @@ cp "${SUT}" "${ORIGIN_FIXTURE}/.devcontainer/scripts/bootstrap-related-repos.sh"
 origin_cases="https://ghe-https.example.com/o/r.git|ghe-https.example.com
 ssh://git@ghe-ssh.example.com:2222/o/r.git|ghe-ssh.example.com
 git@ghe-scp.example.com:o/r.git|ghe-scp.example.com
+ghe.example.com:owner/repo.git|ghe.example.com
+/srv/git/o:r.git|github.com
+C:/src/repo|github.com
+/srv/git/a@b:c/r.git|github.com
+demo::some-address|github.com
 https://ghe-port.example.com:8443/o/r.git|ghe-port.example.com:8443
 https://user@ghe-user.example.com:8443/o/r@v1.git|ghe-user.example.com:8443
 |github.com"
