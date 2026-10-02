@@ -42,8 +42,10 @@ fail() {
 # GH_FAIL_SEARCH / GH_SEARCH_INCOMPLETE / GH_SEARCH_GARBAGE make the usage probe
 # fail, report an incomplete result, or return a non-answer, GH_DROP_FIELD
 # names a field the list read stops returning from read number GH_DROP_FROM on
-# (a field that disappears while the script runs), and GH_LIST_BODY replaces what
-# every list read returns with that raw body (an error document, a wrapped page).
+# (a field that disappears while the script runs), GH_LIST_BODY replaces what
+# every list read returns with that raw body (an error document, a wrapped page),
+# and GH_LIST_PARTIAL makes list reads from number GH_PARTIAL_FROM on deliver their
+# page and then fail (a paginated read that breaks on a later page).
 mkdir -p "$tmp/bin"
 cat >"$tmp/bin/gh" <<'STUB'
 #!/usr/bin/env bash
@@ -89,6 +91,12 @@ GET)
     else
         cat "$STUB_FIELDS_FILE"
     fi
+    # A paginated read that delivers a valid page and then fails on a later one:
+    # the page above is already out, and the exit status is the only tell.
+    [ -z "${GH_LIST_PARTIAL:-}" ] || [ "$r" -lt "${GH_PARTIAL_FROM:-1}" ] || {
+        echo "gh: HTTP 502 on page 2" >&2
+        exit 1
+    }
     ;;
 POST)
     echo POST >>"$CALLS"
@@ -196,6 +204,15 @@ post_body() { jq -c --arg n "$1" 'select(.name == $n)' "$POSTS"; }
 state_field() { jq -c --arg n "$1" '[ .[] | select(.name == $n) ] | first // empty' "$STUB_FIELDS_FILE"; }
 # opt_names JSON — option names in display order, as a compact JSON array.
 opt_names() { printf '%s' "$1" | jq -c '[ .options | sort_by(.priority)[] | .name ]'; }
+# pin_descriptions NAME BODY FIELD_DESCRIPTION OPTION_DESCRIPTIONS_JSON — the POSTed
+# field carries exactly that wording: the field description, then every option's, in
+# order. Without it a typo or a placeholder in any of them would still pass.
+pin_descriptions() {
+    [ "$(printf '%s' "$2" | jq -r '.description')" = "$3" ] ||
+        fail "$1: the field description changed: $(printf '%s' "$2" | jq -r '.description')"
+    [ "$(printf '%s' "$2" | jq -c '[ .options[].description ]')" = "$4" ] ||
+        fail "$1: the option descriptions changed: $(printf '%s' "$2" | jq -c '[ .options[].description ]')"
+}
 
 ladder='["1","2","3","5","8","13","20"]'
 colors='["gray","blue","green","yellow","orange","red","pink","purple"]'
@@ -257,6 +274,20 @@ done
 echo "==> Priority (AI) carries the maintainer's five descriptions verbatim"
 [ "$(post_body 'Priority (AI)' | jq -c '[ .options[].description ]')" = '["Priority (AI): blocks a merge or deploy — critical","Priority (AI): a real defect or must-do; next","Priority (AI): worth doing, not blocking","Priority (AI): cosmetic or informational","Priority (AI): negligible"]' ] ||
     fail "Priority (AI) option descriptions drifted from the maintainer decision"
+
+echo "==> Impact, Risk and Complexity carry exactly the decision-record wording, field and options"
+# Review r1, RV1-F2: pinned literally, in option order. These are the label
+# registry's per-value descriptions (label-registry.json) — the wording a field and
+# its label twin share — but the test reads no file a consumer may customize.
+pin_descriptions Impact "$(post_body Impact)" \
+    'Expected significance of completing the issue: core versus marginal benefit, not common versus uncommon path' \
+    '["Impact: marginal benefit; most users would not notice it","Impact: small benefit to a few users or a narrow use case","Impact: clear benefit to a meaningful share of users or goals","Impact: core benefit, or severe harm prevented even if rarely triggered","Impact: transformative; current goals depend on it"]'
+pin_descriptions Risk "$(post_body Risk)" \
+    'How consequential a failure is if the change is implemented incorrectly; for a bug fix, the danger of the fix' \
+    '["Risk: a mistake is harmless and trivially reversible","Risk: a mistake is contained, caught quickly, and cheap to undo","Risk: a mistake breaks a feature or needs a careful rollback","Risk: a mistake reaches many users or their data; recovery is costly","Risk: a mistake risks data loss, security exposure, or an irreversible outage"]'
+pin_descriptions Complexity "$(post_body Complexity)" \
+    'How difficult the work is to understand, design, implement, and verify correctly; never a time estimate' \
+    '["Complexity: a tiny, well-understood change with obvious verification","Complexity: small and local; a clear approach across a few files","Complexity: moderate; several components and some design choices","Complexity: large; cross-cutting, with real design and wide verification","Complexity: very large or uncertain; likely to grow or need splitting"]'
 
 echo "==> the run adds the ladder and keeps every shipped Effort option, with its id, reporting each count"
 body="$(patch_body "$effort_id")"
@@ -322,6 +353,9 @@ run_with '[]'
 [ "$(patches)" = 0 ] || fail "a freshly created field must not be PATCHed"
 [ "$(post_body Product | jq -r '.data_type')" = text ] || fail "Product must be created as text"
 [ "$(opt_names "$(post_body Effort)")" = "$ladder" ] || fail "a created Effort must carry the ladder"
+pin_descriptions Effort "$(post_body Effort)" \
+    'The human time estimate for work a human will do, on a modified Fibonacci ladder' \
+    '["Effort: 1, the smallest step on the modified Fibonacci ladder (human tasks only)","Effort: 2 on the modified Fibonacci ladder (human tasks only)","Effort: 3 on the modified Fibonacci ladder (human tasks only)","Effort: 5 on the modified Fibonacci ladder (human tasks only)","Effort: 8 on the modified Fibonacci ladder (human tasks only)","Effort: 13 on the modified Fibonacci ladder (human tasks only)","Effort: 20, the largest step on the modified Fibonacci ladder (human tasks only)"]'
 run_with "$(cat "$STUB_FIELDS_FILE")"
 [ "$(posts)" = 0 ] && [ "$(patches)" = 0 ] || fail "a re-run after creation must write nothing"
 
@@ -498,6 +532,25 @@ if GH_LIST_BODY='{"message":"preview unavailable","documentation_url":"https://d
 fi
 grep -q "Could not read issue fields" "$tmp/out" || fail "expected the failed-read message for an error document"
 [ "$(posts)" = 0 ] && [ "$(patches)" = 0 ] || fail "an error document must not be followed by a write"
+
+echo "==> a paginated read that fails after a valid page is a failed read, never the whole inventory"
+# Review r1, RV1-F1: `gh api --paginate` prints the pages that arrived and exits
+# non-zero when a later one fails. Taken for the full list, the first page would
+# have the script creating fields it does not know are already there.
+reset_stub "$builtin"
+if GH_LIST_PARTIAL=1 "$script" --org testorg >"$tmp/out" 2>&1; then
+    fail "a partial inventory read at startup must fail the script"
+fi
+grep -q "Could not read issue fields" "$tmp/out" || fail "expected the failed-read message for a partial read"
+[ "$(posts)" = 0 ] && [ "$(patches)" = 0 ] || fail "a partial read must not be followed by a write"
+# The same break on the re-read a reconcile makes just before its PATCH: the field
+# is left untouched and the run is not ready. Read 1 is the inventory, so read 2 is
+# the first re-read.
+GH_LIST_PARTIAL=1 GH_PARTIAL_FROM=2 run_with "$builtin"
+grep -q "could not re-read issue field" "$tmp/out" || fail "expected a could-not-re-read warning for a partial re-read"
+[ "$(patches)" = 0 ] || fail "a field whose re-read was partial must not be PATCHed"
+grep -q "Done, WITH WARNINGS" "$tmp/out" || fail "a partial re-read must end the run with warnings"
+! grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "a partial re-read claimed readiness"
 
 echo "==> both documented inventory shapes are still accepted"
 # The bare array is covered by every case above; the {"issue_fields":[…]} wrapper

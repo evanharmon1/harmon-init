@@ -154,9 +154,11 @@ effort_shipped_defaults='["High","Medium","Low"]'
 # documents — `jq -s` slurps every document, so the pages become one array. Any
 # OTHER document — an error object such as {"message":"…"}, say — is a failed read,
 # never an empty organization: reading it as "no fields" would send the script off
-# creating fields from an inventory it never saw.
+# creating fields from an inventory it never saw. A read that fails PART-way — a
+# valid first page, then an error on a later one — is the same failure: `gh`'s exit
+# status is kept, so the pages that did arrive are never taken for the whole list.
 refresh_fields() {
-    _raw=$(gh api "orgs/$org/issue-fields" -H "X-GitHub-Api-Version: $api_version" --paginate 2>/dev/null || true)
+    _raw=$(gh api "orgs/$org/issue-fields" -H "X-GitHub-Api-Version: $api_version" --paginate 2>/dev/null) || return 1
     [ -n "$_raw" ] || return 1
     _json=$(printf '%s' "$_raw" |
         jq -s 'if all(.[]; type == "array" or (type == "object" and (.issue_fields | type) == "array"))
