@@ -69,3 +69,5 @@ one's status.
   — rename numbered decision records by date (Accepted).
 - [2026-10-01-store-the-tier-as-a-label-on-every-owner-type.md](2026-10-01-store-the-tier-as-a-label-on-every-owner-type.md)
   — store the Tier as a label on every owner type (Accepted; amends 2026-09-30 (issue classification) D2).
+- [2026-10-01-add-a-priority-ai-axis-suggested-by-agents.md](2026-10-01-add-a-priority-ai-axis-suggested-by-agents.md)
+  — add a Priority (AI) axis, p0–p4, suggested by agents (Accepted; amends 2026-09-30 (issue classification) D2 and D3).
