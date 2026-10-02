@@ -569,7 +569,8 @@ of its own. On an **ephemeral cloud** the orchestrator runs `task challenge` and
 `task review` against the lane's pushed branch from its own local pane, where
 Codex is already logged in, and the lane's PR body records that review in its
 stage ledger as `reviewed from <host> at <head>` — that orchestrator-side review
-is the lane's second model, in the sense § Second-Model Review requires.
+is the lane's second model, in the sense § Second-Model Review requires[% if use_codex_cloud_review %], and
+Codex cloud review of the PR covers the integration stage[% endif %].
 A **persistent environment** (the agent devcontainer, Sprites) gets its one
 Codex login when the **maintainer** provisions it: the maintainer runs
 `codex login` once on that environment, and an agent never does (§ Hard Rules:

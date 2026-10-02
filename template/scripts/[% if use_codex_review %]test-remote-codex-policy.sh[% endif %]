@@ -22,7 +22,14 @@
 # word `login`, on one normalised line — so `codex --no-alt-screen login` is
 # caught like `codex login`. The same shape split across two lines (a folded
 # YAML step) is caught too and reported as `file:L1-L2: <line 1> / <line 2>`; a
-# folded hit cannot be allowlisted, the source has to be rewritten.
+# folded hit cannot be allowlisted, the source has to be rewritten. Only a
+# command-shaped first line starts a fold: one inside a folded or literal scalar
+# under a command key (`run`, `cmd`, `command`, `script`, `entrypoint`, `args`),
+# inside a sh/bash fenced block, or that itself begins a `codex` invocation — so
+# consecutive YAML mapping lines such as `provider: codex` / `login: oauth` pass.
+#
+# `auth.json` is matched as a complete basename: `auth.json` and
+# `~/.codex/auth.json` hit, `oauth.json` and `myauth.json` do not.
 #
 # The one rule outside the strict tier: a line is reported only if it mentions
 # `codex` (any case) — every token, the login flags included. A generated project
@@ -95,9 +102,11 @@ TOKENS=(
 # page is covered the day it is added) except docs/research/, which assesses
 # rejected options rather than guiding anyone. scripts/ is excluded because its
 # Codex scripts are operator-machine tooling that legitimately logs in locally,
-# except every scripts/setup-*.sh (SURFACE_GLOBS): a new remote setup script that
-# follows the name is covered the day it is added; one that does not must be
-# added to SURFACE_FILES.
+# except every scripts/setup-*.sh (SURFACE_GLOBS): a new setup script is covered
+# the day it is added, under the Codex-scoped rule; one that is not named
+# setup-*.sh must be added to SURFACE_FILES. The Claude Code on the web session
+# settings are a surface too: a single-repository session loads them, so an `env`
+# block there is an ephemeral-cloud credential.
 SURFACE_DIRS=(
     'images/devcontainer'
     '.devcontainer'
@@ -113,6 +122,7 @@ SURFACE_GLOBS=(
 )
 SURFACE_FILES=(
     'AGENTS.md'
+    '.claude/settings.json'
 )
 # Strict tier — the remote-bootstrap entry points (a directory is matched
 # recursively, each entry only where it exists): nothing that provisions a remote
@@ -121,6 +131,8 @@ SURFACE_FILES=(
 STRICT_PATHS=(
     'images/devcontainer'
     '.github/workflows/remote-bootstrap.yml'
+    '.claude/settings.json'
+    '.devcontainer/scripts/bootstrap-related-repos.sh'
 )
 # The opt-in Fly.io Sprites provisioning surface (#1411) is a scanned surface AND
 # a strict path, but only in a tree holding SPRITES_MARKER — the generator
@@ -131,10 +143,13 @@ STRICT_PATHS=(
 # Codex login is the maintainer's, made by hand, so nothing there may handle one.
 SPRITES_DIR='sprites'
 SPRITES_MARKER='sprites/network-policy.sh'
-# Every discovered setup script is strict too (the glob is expanded where it
-# exists): a remote setup script follows the name, and it provisions.
+# The remote-setup entry points are strict too (the glob is expanded where it
+# exists): setup-remote.sh and any setup-remote*.sh that follows its name provision
+# a remote environment. Every other setup-*.sh stays Codex-scoped, because a
+# generated project's own setup script (a database, say) may legitimately name an
+# auth.json or an OPENAI_API_KEY of its own.
 STRICT_GLOBS=(
-    'scripts/setup-*.sh'
+    'scripts/setup-remote*.sh'
 )
 # Also strict: the environment examples a remote environment is provisioned from,
 # as "directory::file name" (the name is matched anywhere under the directory).
@@ -273,10 +288,52 @@ scan() {
         namestr="$(printf '%s\037' "${STRICT_NAMES[@]}")"
         rc=0
         hits="$(cd "$root" && awk -v tokens="$tokstr" -v strictlist="$strictstr" -v namelist="$namestr" '
-            function emit(f, s, t,   i, tt, hit) {
+            # has_tok(T, TOK) — a plain substring, except auth.json, which must be a
+            # complete basename: not `oauth.json` or `myauth.json`.
+            function has_tok(t, tok) {
+                if (tok == "auth.json") return (t ~ AUTHJSON)
+                return index(t, tok)
+            }
+            # track(RAW, TT) — set incmd for the line about to be examined: is it
+            # command-shaped context (inside a sh/bash fence, or inside a folded or
+            # literal scalar under a command key)? RAW is the first physical line,
+            # whose indentation and key column decide when a scalar ends.
+            function track(raw, tt,   kc) {
+                incmd = 0
+                if (tt ~ FENCE) {
+                    if (fence) fence = 0
+                    else {
+                        fence = 1
+                        fshell = (tt ~ FENCESH)
+                    }
+                    return
+                }
+                if (fence && fshell) {
+                    incmd = 1
+                    return
+                }
+                match(raw, /^[ \t]*/)
+                if (bs) {
+                    if (tt == "") return
+                    if (RLENGTH > bscol) {
+                        incmd = 1
+                        return
+                    }
+                    bs = 0
+                }
+                if (tt ~ BSHEAD) {
+                    match(raw, KEYRE)
+                    kc = RSTART
+                    if (substr(raw, kc, 1) !~ /[a-z]/) kc++
+                    bs = 1
+                    bscol = kc - 1
+                }
+            }
+            function emit(f, s, t, raw,   i, tt, hit) {
                 gsub(/[ \t]+/, " ", t)
                 tt = t
                 sub(/^ /, "", tt)
+                track(raw, tt)
                 # A Codex command folded across two lines (a YAML `>-` step):
                 # `codex` and options end one line, options and `login` open the
                 # next non-blank line. Reported with both real lines.
@@ -289,7 +346,7 @@ scan() {
                 hit = 0
                 if (strict || tolower(t) ~ /codex/) {
                     for (i = 1; i <= n; i++) {
-                        if (T[i] != "" && index(t, T[i])) {
+                        if (T[i] != "" && has_tok(t, T[i])) {
                             hit = 1
                             break
                         }
@@ -297,7 +354,7 @@ scan() {
                     if (!hit && t ~ LOGIN) hit = 1
                     if (hit) print substr(f, 3) ":" s ":" t
                 }
-                if (!hit && t ~ FOLDHEAD) {
+                if (!hit && t ~ FOLDHEAD && (incmd || tt ~ CMDHEAD)) {
                     pend = t
                     pfile = substr(f, 3)
                     pline = s
@@ -323,26 +380,44 @@ scan() {
                 LOGIN = W " login([^A-Za-z0-9_-]|$)"
                 FOLDHEAD = W " ?$"
                 FOLDTAIL = "^(-[^ ]+ ([^ -][^ ]* )?)*login([^A-Za-z0-9_-]|$)"
+                # auth.json as a complete basename: no name character before it
+                # (a `.` or `-` would make it part of a longer name), no word
+                # character after it.
+                AUTHJSON = "(^|[^A-Za-z0-9_.-])auth[.]json([^A-Za-z0-9_-]|$)"
+                # Command-shaped context: a fenced sh/bash block, or a folded or
+                # literal scalar under a command key; or a first line that itself
+                # begins a codex invocation (optionally a list item, a `$ ` prompt
+                # or a command key, then env assignments or a wrapper).
+                BT = sprintf("%c", 96)
+                FENCE = "^" BT BT BT
+                FENCESH = FENCE " ?(sh|bash|zsh|shell|console|shell-session)( |$)"
+                CMDKEY = "(run|cmd|command|script|entrypoint|args)"
+                BSHEAD = "(^|[ -])" CMDKEY ": *[>|][-+0-9]*$"
+                KEYRE = "(^|[^A-Za-z0-9_])" CMDKEY ":"
+                CMDHEAD = "^(- |[$] )?(" CMDKEY ": )?([A-Za-z_][A-Za-z0-9_]*=[^ ]* |sudo |exec |nohup |time )*codex( -[^ ]+( [^ -][^ ]*)?)* ?$"
             }
             FNR == 1 {
-                if (cont) { emit(pf, start, buf); buf = ""; cont = 0 }
+                if (cont) { emit(pf, start, buf, rawfirst); buf = ""; cont = 0 }
                 pf = FILENAME
                 pend = ""
+                fence = 0
+                fshell = 0
+                bs = 0
                 strict = is_strict(substr(FILENAME, 3))
             }
             {
                 line = $0
                 if (line ~ /\\$/) {
-                    if (!cont) start = FNR
+                    if (!cont) { start = FNR; rawfirst = $0 }
                     sub(/\\$/, "", line)
                     buf = buf line
                     cont = 1
                     next
                 }
-                if (cont) { emit(FILENAME, start, buf line); buf = ""; cont = 0 }
-                else emit(FILENAME, FNR, line)
+                if (cont) { emit(FILENAME, start, buf line, rawfirst); buf = ""; cont = 0 }
+                else emit(FILENAME, FNR, line, $0)
             }
-            END { if (cont) emit(pf, start, buf) }' "${textfiles[@]}" 2>/dev/null)" || rc=$?
+            END { if (cont) emit(pf, start, buf, rawfirst) }' "${textfiles[@]}" 2>/dev/null)" || rc=$?
         if [ "$rc" -ne 0 ]; then
             echo "GUARD-ERROR guard could not scan the surface files"
             return 0
@@ -433,6 +508,33 @@ expect_hit() {
     *) fail "$1: expected a violation in ${2}${3:+ at line ${3}}, got: ${SCAN_HITS:-<none>}" ;;
     esac
 }
+
+# plant PATH CONTENT — write CONTENT (printf %b escapes) at PATH in the fixture,
+# keeping any real file there aside for unplant. A case planted this way holds in
+# every profile, whether or not the repository under test ships that file.
+plant() {
+    # Planting the same path again overwrites the plant; the original is kept once.
+    if [ "$PLANT_PATH" != "${FIX}/$1" ]; then
+        PLANT_PATH="${FIX}/$1"
+        PLANT_KEPT=0
+        if [ -f "$PLANT_PATH" ]; then
+            cp "$PLANT_PATH" "${TMP}/plant-kept"
+            PLANT_KEPT=1
+        fi
+        mkdir -p "$(dirname "$PLANT_PATH")"
+    fi
+    printf '%b' "$2" >"$PLANT_PATH"
+}
+unplant() {
+    if [ "$PLANT_KEPT" -eq 1 ]; then
+        cp "${TMP}/plant-kept" "$PLANT_PATH"
+    else
+        rm -f "$PLANT_PATH"
+    fi
+    PLANT_PATH=""
+}
+PLANT_PATH=""
+PLANT_KEPT=0
 
 # Every token, planted in a file under a scanned directory, reported at its line.
 mkdir -p "${FIX}/.devcontainer/agent"
@@ -555,12 +657,60 @@ if [ -d .devcontainer ] && [ "$env_cases" -eq 0 ]; then
     fail "a .devcontainer exists but no environment example does; the env-example cases would pass vacuously"
 fi
 # A setup script is scanned whatever its name after setup-, with the Codex-scoped rule.
-printf '#!/usr/bin/env bash\ncodex login\n' >"${FIX}/scripts/setup-sprite.sh"
-expect_hit "a login in a new setup script" "scripts/setup-sprite.sh" "2:"
-# ... and it is strict: a bare key or flag there fails with no codex on the line.
-printf '#!/usr/bin/env bash\nexport OPENAI_API_KEY=x\n' >"${FIX}/scripts/setup-sprite.sh"
-expect_hit "a bare OPENAI_API_KEY in a new setup script" "scripts/setup-sprite.sh" "2:"
-rm -f "${FIX}/scripts/setup-sprite.sh"
+mkdir -p "${FIX}/scripts"
+printf '#!/usr/bin/env bash\ncodex login\n' >"${FIX}/scripts/setup-db.sh"
+expect_hit "a login in a new setup script" "scripts/setup-db.sh" "2:"
+# ... but only a remote-setup entry point is strict: a project's own setup script may
+# hold its own bare key or auth.json (no codex on the line) and still pass,
+printf '#!/usr/bin/env bash\nexport OPENAI_API_KEY=x\ncat auth.json\n' >"${FIX}/scripts/setup-db.sh"
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "a project's own setup script with a bare key or auth.json must pass, got: ${SCAN_HITS}"
+rm -f "${FIX}/scripts/setup-db.sh"
+# ... while the remote-setup entry point and any setup-remote*.sh fail on the same lines.
+for rs in scripts/setup-remote.sh scripts/setup-remote-sprite.sh; do
+    plant "$rs" '#!/usr/bin/env bash\nexport OPENAI_API_KEY=x\n'
+    expect_hit "a bare OPENAI_API_KEY in ${rs}" "$rs" "2:"
+    plant "$rs" '#!/usr/bin/env bash\ncat auth.json\n'
+    expect_hit "a bare auth.json in ${rs}" "$rs" "2:"
+    unplant
+done
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "restoring the remote-setup scripts must scan clean again, got: ${SCAN_HITS}"
+
+# auth.json is matched as a complete basename: on a strict surface `auth.json` and
+# `~/.codex/auth.json` fail, `oauth.json` and `myauth.json` pass.
+authf="scripts/setup-remote-auth.sh"
+plant "$authf" '#!/usr/bin/env bash\ncat oauth.json\ncat myauth.json\ncat ~/tokens/oauth.json\n'
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "oauth.json and myauth.json must not match auth.json, got: ${SCAN_HITS}"
+plant "$authf" '#!/usr/bin/env bash\ncat auth.json\n'
+expect_hit "a bare auth.json" "$authf" "2:"
+plant "$authf" '#!/usr/bin/env bash\nrm "$HOME/auth.json"\n'
+expect_hit "a quoted auth.json path" "$authf" "2:"
+plant "$authf" '#!/usr/bin/env bash\ncp ~/.codex/auth.json /tmp/x\n'
+expect_hit "~/.codex/auth.json" "$authf" "2:"
+unplant
+# ... and under the Codex-scoped rule: codex on the line plus a lookalike is not a hit.
+mkdir -p "${FIX}/docs/guides"
+printf '# App\n\nRun codex review, then read oauth.json and myauth.json.\n' >"${FIX}/docs/guides/planted-app.md"
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "a codex line naming only oauth.json or myauth.json must pass, got: ${SCAN_HITS}"
+rm -f "${FIX}/docs/guides/planted-app.md"
+
+# The Claude Code on the web settings and the bootstrap helper setup-remote.sh runs
+# are strict surfaces: a bare key fails, in either layer; a sibling script does not.
+plant .claude/settings.json '{\n  "env": {\n    "OPENAI_API_KEY": "x"\n  }\n}\n'
+expect_hit "a bare OPENAI_API_KEY in .claude/settings.json" ".claude/settings.json" "3:"
+unplant
+plant .devcontainer/scripts/bootstrap-related-repos.sh '#!/usr/bin/env bash\nexport OPENAI_API_KEY=x\n'
+expect_hit "a bare OPENAI_API_KEY in the bootstrap helper" ".devcontainer/scripts/bootstrap-related-repos.sh" "2:"
+unplant
+plant .devcontainer/scripts/planted-sibling.sh '#!/usr/bin/env bash\nexport OPENAI_API_KEY=x\n'
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "only the bootstrap helper is strict under .devcontainer/scripts, got: ${SCAN_HITS}"
+unplant
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "restoring the settings and bootstrap fixtures must scan clean again, got: ${SCAN_HITS}"
 # Outside the strict tier an app's own key or auth.json passes; the Codex one fails.
 mkdir -p "${FIX}/docs/guides"
 printf '# App\n\nOur app stores sessions in auth.json.\n' >"${FIX}/docs/guides/planted-app.md"
@@ -585,7 +735,42 @@ expect_hit "a folded codex, then an option and login" ".github/workflows/folded.
 printf 'jobs:\n  a:\n    steps:\n      - run: echo codex\n        login-check: x\n' >"${FIX}/.github/workflows/folded.yml"
 fixture_hits
 [ -z "$SCAN_HITS" ] || fail "codex followed by a login-prefixed word must not match, got: ${SCAN_HITS}"
+# Only a command-shaped line starts a fold: consecutive YAML mapping lines naming
+# codex and login are configuration, in a workflow or in a guide (fenced or not).
+printf 'jobs:\n  a:\n    steps:\n      - uses: x\n        with:\n          provider: codex\n          login: oauth\n' >"${FIX}/.github/workflows/folded.yml"
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "consecutive provider: codex / login: oauth mapping lines must pass, got: ${SCAN_HITS}"
+printf 'jobs:\n  a:\n    steps:\n      - run: >-\n          echo hi\n        env:\n          provider: codex\n          login: oauth\n' >"${FIX}/.github/workflows/folded.yml"
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "mapping lines after a folded run scalar has ended must pass, got: ${SCAN_HITS}"
+# Command context decides a head that does not itself begin with codex: inside a
+# run scalar, `echo hi && codex` / `login` is a folded login; as a mapping value
+# outside any command context it is not.
+printf 'jobs:\n  a:\n    steps:\n      - run: >-\n          echo hi && codex\n          login\n' >"${FIX}/.github/workflows/folded.yml"
+expect_hit "a folded codex after another command in a run scalar" ".github/workflows/folded.yml" "5-6: "
+printf 'jobs:\n  a:\n    steps:\n      - name: use codex\n        env:\n          note: echo hi && codex\n          login: oauth\n' >"${FIX}/.github/workflows/folded.yml"
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "a mapping value ending in codex outside a command scalar must pass, got: ${SCAN_HITS}"
+# A literal scalar under a command key is command context too.
+printf 'jobs:\n  a:\n    steps:\n      - run: |\n          codex\n          login\n' >"${FIX}/.github/workflows/folded.yml"
+expect_hit "a literal run scalar with codex / login" ".github/workflows/folded.yml" "5-6: "
 rm -f "${FIX}/.github/workflows/folded.yml"
+mkdir -p "${FIX}/docs/guides"
+printf '# Guide\n\nprovider: codex\nlogin: oauth\n\n```yaml\nprovider: codex\nlogin: oauth\n```\n' >"${FIX}/docs/guides/planted-app.md"
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "provider: codex / login: oauth in a guide must pass, got: ${SCAN_HITS}"
+printf '# Guide\n\n```sh\ncodex\nlogin\n```\n' >"${FIX}/docs/guides/planted-app.md"
+expect_hit "a codex / login pair in a fenced sh block" "docs/guides/planted-app.md" "4-5: "
+printf '# Guide\n\n```sh\necho hi && codex\nlogin\n```\n' >"${FIX}/docs/guides/planted-app.md"
+expect_hit "a codex after another command in a fenced sh block" "docs/guides/planted-app.md" "4-5: "
+printf '# Guide\n\nUse the tool, then codex\nlogin is not required.\n' >"${FIX}/docs/guides/planted-app.md"
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "prose wrapped across lines outside a command block must pass, got: ${SCAN_HITS}"
+printf '# Guide\n\n```yaml\nsteps:\n  - run: >-\n      codex\n      login\n```\n' >"${FIX}/docs/guides/planted-app.md"
+expect_hit "a folded run scalar in a fenced yaml block" "docs/guides/planted-app.md" "6-7: "
+printf '# Guide\n\n$ codex\nlogin\n' >"${FIX}/docs/guides/planted-app.md"
+expect_hit "a codex invocation line followed by login" "docs/guides/planted-app.md" "3-4: "
+rm -f "${FIX}/docs/guides/planted-app.md"
 
 # A surface line that merely contains the guard-error marker is a violation (it
 # carries a token), never mistaken for a guard error.
