@@ -95,8 +95,13 @@ pass
 
 # The offline automation suite is a required pre-merge check and runs before
 # either registry credentials or the App write token exist in publishing jobs.
-ci_automation_line="$(grep -n 'run: task test:devcontainer:image:automation' \
+# Required CI runs this suite through the one `task test:suite` step (#1461), so
+# the check is that step plus this suite's membership in the plan.
+ci_automation_line="$(grep -En '^[[:space:]]*(-[[:space:]]+)?run:[[:space:]]+task test:suite[[:space:]]*$' \
     .github/workflows/build.yml | cut -d: -f1)"
+suite_plan="$(task --color=false --dry test:suite 2>&1)"
+grep -qF 'task: [test:devcontainer:image:automation]' <<<"$suite_plan" ||
+    fail "test:suite does not run the image automation suite, so required CI does not"
 publish_automation_line="$(grep -n 'run: ./scripts/test-devcontainer-image-automation.sh' \
     .github/workflows/publish-harmon-devcontainer.yml | cut -d: -f1)"
 registry_token_line="$(grep -n 'docker/login-action@' \

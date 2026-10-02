@@ -63,10 +63,14 @@ jobs:
       - name: Generated code is current
         run: task guard:codegen
 [% endif %]
-      - run: task test:tasks
-      # These run in local `verify` and must run here too, or CI is strictly
-      # weaker than the local gate (harmon-init#962). Each is a unit test
-      # needing no container, network, or credential.
+      # Outside the suite: `audit:*` is not a `test:*` target, so `test:suite`
+      # does not carry it, and `verify` runs it between `check` and the suite.
+      - run: task audit:agent-instructions
+      # The ONE step for every `test:*` target `task verify` runs. The list
+      # lives in Taskfile.yml's `test:suite` and nowhere else, so a check added
+      # to `verify` can no longer be missed here (harmon-init#962, #1461) —
+      # each entry carries the same answer gate in both places.
+      # `test:verify-ci-parity` fails if this step is ever dropped.
       #
       # NOT here, deliberately: `validate` and `test`. Both are in `verify`
       # unconditionally, but CI only invokes them from the build-test job,
@@ -75,57 +79,17 @@ jobs:
       # terraform/ansible checks locally and none in CI. Adding them here is
       # not a one-liner — `terraform validate` needs an init step CI does not
       # have — so it is tracked as harmon-init#978 rather than fixed in the
-      # same breath as these.
-      - run: task audit:agent-instructions
-      - run: task test:agent-instructions-size
-      - run: task test:agent-skill-links
-[% if project_type == 'web-astro' %]
-      - run: task test:astro-compress-parity
-[% endif %]
-      - run: task test:output
-      - run: task test:meta-install
-      - run: task test:session-cleanup
-      - run: task test:setup-github
-      - run: task test:agent-registry
-      - run: task test:result-schemas
-      - run: task test:registry-drift
-      - run: task test:registry-docs
-      - run: task test:label-registry
-[% if use_codex_review %]
-      - run: task test:codex-review
-      - run: task test:remote-codex-policy
-[% endif %]
-      - run: task test:ci-results
-      - run: task test:status
-      - run: task test:gh-scopes
-      - run: task test:worktree
-      - run: task test:lint-hygiene
-[% if use_release_please %]
-      - run: task test:release-title
-[% endif %]
-[% if claim_release_available %]
-      - run: task test:claim-release-merged
-[% endif %]
-[% if project_management == 'github' %]
-      - run: task test:setup-github-project
-[% endif %]
-[% if project_management == 'github' and github_org != author_git_provider_username %]
-      - run: task test:setup-github-issue-fields
-[% endif %]
+      # same breath.
+      - name: Test suite (every test:* target verify runs)
+        run: task test:suite
 [% if use_skills_sync %]
-      - run: task test:sync-devkit-release
+      # Outside the suite, on purpose: a NETWORK check (`verify` stays offline).
       - name: Skills drift check (vendored skills vs pinned harmon-devkit ref)
         run: task verify:skills
 [% endif %]
 [% if devcontainer %]
-      - run: task test:hooks
-      - run: task test:statusline
+      # Outside the suite, on purpose: a `ci`-only unit check, not in `verify`.
       - run: task test:devcontainer:permissions
-      # Same devcontainer gate their `verify` entries carry (#962).
-      - run: task test:link-claude-json
-      - run: task test:image-staleness
-      - run: task test:open-devcontainer
-      - run: task test:devcontainer-changed
 [% endif %]
 
 [% if use_node %]

@@ -93,6 +93,15 @@ err() {
     fail=1
 }
 
+# Required CI runs every `test:*` target through ONE step, `task test:suite`
+# (#1461; the per-profile "verify <-> CI parity" section below asserts the call),
+# so "required CI runs X" means "X is in the suite's plan". Tolerates a missing
+# `task` because each caller's own `required task` already failed that profile.
+suite_runs() {
+    have task || return 0
+    grep -qF "task: [$1]" <<<"$(task --color=false --dry test:suite 2>&1 || true)"
+}
+
 # ── Quiet-but-not-silent command capture (#934) ─────────────────────────────
 #
 # A rendered-repo gate that can fail with no evidence turns an intermittent
@@ -418,6 +427,31 @@ else
     err "no Taskfile.yml generated"
 fi
 
+# ── 1-ci. verify <-> required CI parity holds in every render profile (#1461) ──
+# Both run their `test:*` targets through the one aggregate task, so a rendered
+# repo's required Build workflow runs every target its `verify` runs. Asserted
+# three ways: the workflow calls the aggregate, `verify` reaches it, and every
+# `test:*` target in verify's plan is in the aggregate's plan — then the
+# rendered guard (with its planted cases) runs.
+if [ -f .github/workflows/build.yml ]; then
+    grep -Eq '^[[:space:]]*(-[[:space:]]+)?run:[[:space:]]+task test:suite[[:space:]]*$' .github/workflows/build.yml ||
+        err "rendered build.yml does not call \`task test:suite\` in a step"
+    if have task; then
+        parity_verify_plan="$(task --color=false --dry verify 2>&1 || true)"
+        parity_suite_plan="$(task --color=false --dry test:suite 2>&1 || true)"
+        grep -qF 'task: [test:verify-ci-parity]' <<<"$parity_verify_plan" ||
+            err "rendered \`task verify\` does not run test:suite"
+        for parity_target in $(grep -oE '^task: \[test:[^]]+\]' <<<"$parity_verify_plan" | sed -E 's/^task: \[(.*)\]$/\1/'); do
+            grep -qF "task: [${parity_target}]" <<<"$parity_suite_plan" ||
+                err "rendered verify runs ${parity_target}, which the required Build workflow's test:suite does not"
+        done
+        run_quiet verify-ci-parity ./scripts/test-verify-ci-parity.sh ||
+            err "rendered test-verify-ci-parity.sh fails"
+    else
+        required task "verify <-> CI parity" || fail=1
+    fi
+fi
+
 # ── 1a. Machine-readable agent vocabulary survives every render profile ──
 if [ ! -x scripts/test-agent-registry.sh ]; then
     err "agent registry test is missing or not executable"
@@ -432,7 +466,7 @@ else
     required task "agent registry verify reachability" || fail=1
 fi
 if [ -f .github/workflows/build.yml ]; then
-    grep -qF 'task test:agent-registry' .github/workflows/build.yml ||
+    suite_runs test:agent-registry ||
         err "required CI does not run test:agent-registry"
 fi
 case "$profile" in
@@ -463,7 +497,7 @@ else
     required task "registry-drift verify reachability" || fail=1
 fi
 if [ -f .github/workflows/build.yml ]; then
-    grep -qF 'task test:registry-drift' .github/workflows/build.yml ||
+    suite_runs test:registry-drift ||
         err "required CI does not run test:registry-drift"
 fi
 
@@ -501,7 +535,7 @@ else
     required task "registry-docs verify reachability" || fail=1
 fi
 if [ -f .github/workflows/build.yml ]; then
-    grep -qF 'task test:registry-docs' .github/workflows/build.yml ||
+    suite_runs test:registry-docs ||
         err "required CI does not run test:registry-docs"
 fi
 
@@ -552,7 +586,7 @@ else
     required task "worktree entrypoint reachability" || fail=1
 fi
 if [ -f .github/workflows/build.yml ]; then
-    grep -qF 'task test:worktree' .github/workflows/build.yml ||
+    suite_runs test:worktree ||
         err "required CI does not run test:worktree"
 fi
 
@@ -604,7 +638,7 @@ else
     required task "label-registry verify reachability + execution" || fail=1
 fi
 if [ -f .github/workflows/build.yml ]; then
-    grep -qF 'task test:label-registry' .github/workflows/build.yml ||
+    suite_runs test:label-registry ||
         err "required CI does not run test:label-registry"
 fi
 
@@ -851,7 +885,7 @@ if [ "$validation_scope" = "renovate-config" ]; then
 fi
 grep -q '^use_codeql:' .copier-answers.yml || err "answers file does not persist explicit use_codeql intent"
 grep -q '^codeql_languages:' .copier-answers.yml || err "answers file does not persist explicit codeql_languages"
-grep -q 'task test:ci-results' .github/workflows/build.yml ||
+suite_runs test:ci-results ||
     err "rendered build workflow does not run the CI result helper regression (test:ci-results)"
 [ -x scripts/test-ci-results.sh ] || err "CI result helper regression missing or not executable"
 ./scripts/test-ci-results.sh >/dev/null || err "rendered CI result helper regression failed"
@@ -1731,7 +1765,7 @@ if [ "$profile" = "full" ] || [ "$profile" = "meta" ]; then
         required task "remote Codex policy verify reachability" || fail=1
     fi
     if [ -f .github/workflows/build.yml ]; then
-        grep -qF 'task test:remote-codex-policy' .github/workflows/build.yml ||
+        suite_runs test:remote-codex-policy ||
             err "required CI does not run test:remote-codex-policy (use_codex_review=true)"
     fi
 else

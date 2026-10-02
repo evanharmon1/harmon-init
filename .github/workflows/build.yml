@@ -56,88 +56,15 @@ jobs:
           lint-tools: "true"
       - name: Lint
         run: task check
-      - run: task test:tasks
-      - run: task test:agent-registry
-      - run: task test:result-schemas
-      - run: task test:registry-drift
-      - run: task test:registry-docs
-      - run: task test:label-registry
-      - run: task test:devflow-config
-      - run: task test:codex-review
-      - run: task test:remote-codex-policy
-      - run: task test:sprites-policy
-      - run: task test:ci-results
-      - run: task test:devcontainer-changed
-      - run: task test:status
-      - run: task test:gh-scopes
-      - run: task test:worktree
-      - run: task test:renovate-pins
-      - run: task test:tool-pin-pairs
-      - run: task test:oh-my-pi-pin
-      - run: task test:lint-hygiene
-      - run: task test:release-title
-      - run: task test:claim-release-merged
-      - run: task test:setup-github-project
-      - run: task test:sync-devkit-release
-      - run: task test:devcontainer:image:automation
-      # Root-only (the template ships no images/devcontainer/), and
-      # unconditional on purpose. This guard used to run only from
-      # remote-bootstrap.yml, behind a path filter that enumerated the guard's
-      # inputs by hand — and that list was wrong twice: first missing
-      # scripts/** and Taskfile.yml, then missing
-      # docs/architecture/remote-environments.md once the guard began deriving
-      # its allowed/denied host tables from that document, which left a PR
-      # editing only the allowlist running the guard nowhere in CI. A filter
-      # that must be re-derived whenever the guard grows an input, with nothing
-      # forcing that, is the defect; running the guard on every PR deletes the
-      # list rather than extending it. Section 13 of the guard asserts this
-      # step exists, so the wiring cannot be dropped silently either.
-      - run: task test:bootstrap-remote
-      - run: task test:skills-pin-parity
-      # Added under #962: each of these ran in local `verify` but in no CI
-      # job, so CI was strictly weaker than the local gate. This job
-      # enumerates its steps by hand, so a check added to `verify` alone never
-      # runs here and the drift is invisible (#614, same class). Every one is
-      # a unit test needing no container, network, or credential, each ~1-2s.
+      # Outside the suite: `audit:*` is not a `test:*` target, so `test:suite`
+      # does not carry it, and `verify` runs it between `check` and the suite.
       - run: task audit:agent-instructions
-      - run: task test:agent-instructions-size
-      - run: task test:agent-skill-links
-      - run: task test:image-staleness
-      - run: task test:link-claude-json
-      - run: task test:meta-install
-      - run: task test:open-devcontainer
-      - run: task test:output
-      - run: task test:session-cleanup
-      - run: task test:setup-github
-      - run: task test:starship-glyphs
-      - run: task test:template-helpers
-      # Meaningful only because this job checks out with fetch-depth: 0 above.
-      - name: Tag hygiene (no non-release tag where git describe would select it)
-        run: task test:tag-hygiene
-      - name: Template independence (no harmon-dotfiles/chezmoi in shipped output)
-        run: task test:template-independence
-      # Root-only, like the independence guard above: a generated repo has no
-      # template/ to scan, so this has no twin in build.yml.jinja. It must be
-      # listed HERE and not only in `verify` — this job enumerates its steps by
-      # hand, so a check added to `verify` alone never runs in CI and the
-      # invariant regresses under a green aggregate check (#614, same drift).
-      - name: Category gates (no template file gated on skill_categories)
-        run: task test:category-gates
-      - name: Dogfood parity (verbatim template files match their root twins)
-        run: task test:dogfood-parity
-      # Root-only for the same reason as the two guards above: it compares the
-      # root settings twin against template/.claude/settings.json.jinja, which
-      # a generated repo does not have. Listed HERE and not only in `verify`
-      # because this job enumerates its steps by hand — the #614/#962 drift:
-      # the grant could be deleted from both twins and required CI would stay
-      # green, which is precisely the silent removal the script exists to stop.
-      - name: Permission allowlist (narrowed/dropped/required grants, twin parity)
-        run: task test:permission-allowlist
-      # The structure check renders template/, so it needs copier. Installed
+      # The suite renders the template (test:dogfood-structure,
+      # test:copier-validators), so copier has to be installed first. Installed
       # explicitly rather than via scripts/install-copier.sh: that script no-ops
       # when brew is present, and GitHub's ubuntu images ship linuxbrew — it
       # would leave copier missing here. uv comes from the composite action.
-      - name: Install copier (dogfood structure check renders the template)
+      - name: Install copier (the suite's render-based checks need it)
         run: |
           # --force for the same reason scripts/install-copier.sh uses it: it
           # overwrites a foreign same-named entry point (e.g. a stale pipx shim)
@@ -145,21 +72,19 @@ jobs:
           # self-hosted CI_RUNS_ON runner.
           uv tool install --force copier
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      - name: Dogfood structure (template sections/tasks exist in the root layer)
-        run: task test:dogfood-structure
-      # Listed here for the same reason as the category/parity guards above:
-      # this job enumerates its steps by hand, so a check that lives only in
-      # `verify` never runs in CI. It renders the template, so it has to follow
-      # the copier install. It carries the copier pin-agreement gate, whose
-      # whole purpose is to catch a Renovate bump that moves one pin and not
-      # the other — precisely the case that arrives as a PR and must not pass
-      # required checks while drifted (#921).
-      - name: Copier answer validators (+ copier version pin agreement)
-        run: task test:copier-validators
+      # The ONE step for every `test:*` target `task verify` runs. The list lives
+      # in Taskfile.yml's `test:suite` and nowhere else, so a check added to
+      # `verify` can no longer be missed here (harmon-init#962, #614, #1461);
+      # test:verify-ci-parity fails if this step is ever dropped. Not in it:
+      # `test:template`, which runs as the template-test job's matrix below.
+      # This job checks out with fetch-depth: 0, which test:tag-hygiene needs
+      # to be a real assertion rather than a vacuous one.
+      - name: Test suite (every test:* target verify runs, except test:template)
+        run: task test:suite
+      # Outside the suite, on purpose: a NETWORK check (`verify` stays offline)
+      # and a `ci`-only unit check.
       - name: Skills drift check (vendored skills vs pinned harmon-devkit ref)
         run: task verify:skills
-      - run: task test:hooks
-      - run: task test:statusline
       - run: task test:devcontainer:permissions
 
   security:
