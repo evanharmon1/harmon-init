@@ -55,7 +55,7 @@ jobs:
           PR_BODY: ${{ github.event.pull_request.body }}
         run: |
           commits_file=$(mktemp)
-          trap 'rm -f "$commits_file" ./check-closing-keywords.sh' EXIT
+          trap 'rm -f "$commits_file" ./check-closing-keywords.sh ./lib/gh-rest.sh; rmdir ./lib 2>/dev/null || :' EXIT
           if [ "$PR_COMMITS" -gt 250 ]; then
             echo "::error::PR has ${PR_COMMITS} commits, exceeding the 250-commit API limit; closing-keyword result is indeterminate" >&2
             exit 1
@@ -63,10 +63,20 @@ jobs:
           gh api --paginate "repos/${GH_REPO}/pulls/${PR_NUMBER}/commits" \
             --jq '.[].commit.message' > "$commits_file"
           fetch_error=$(mktemp)
+          mkdir -p ./lib
+          # The guard SOURCES scripts/lib/gh-rest.sh, so the library is fetched
+          # with it, from the SAME ref and under the same trust rules below: a
+          # script paired with another ref's library is a program nobody
+          # reviewed. It lands at ./lib/ because that is where the guard's own
+          # "${script_dir}/lib/gh-rest.sh" resolves. Either fetch failing fails
+          # the pair, so the rules below decide about the pair, not one file.
           fetch_script() {
             gh api -H 'Accept: application/vnd.github.raw' \
               "repos/${GH_REPO}/contents/scripts/check-closing-keywords.sh?ref=$1" \
-              > ./check-closing-keywords.sh 2>"$fetch_error"
+              > ./check-closing-keywords.sh 2>"$fetch_error" || return 1
+            gh api -H 'Accept: application/vnd.github.raw' \
+              "repos/${GH_REPO}/contents/scripts/lib/gh-rest.sh?ref=$1" \
+              > ./lib/gh-rest.sh 2>"$fetch_error" || return 1
           }
           # Workflow definitions are taken from the default branch for PRs.
           # Prefer that trusted program even if this PR edits it. The one
@@ -75,11 +85,11 @@ jobs:
           # executes head-controlled code; network/auth errors never fall back.
           if ! fetch_script "$DEFAULT_BRANCH"; then
             if grep -q '(HTTP 404)' "$fetch_error" && [ "$HEAD_REPO" = "$GH_REPO" ]; then
-              echo '::notice::default-branch guard script is absent; using same-repo PR head for bootstrap'
+              echo '::notice::the default-branch guard program is incomplete; using same-repo PR head for bootstrap'
               fetch_script "$HEAD_SHA"
             else
               cat "$fetch_error" >&2
-              echo '::error::trusted default-branch guard script is unavailable; refusing to execute PR code' >&2
+              echo '::error::the trusted default-branch guard program is unavailable; refusing to execute PR code' >&2
               exit 1
             fi
           fi

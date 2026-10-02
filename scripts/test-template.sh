@@ -464,7 +464,7 @@ if [ -f .github/workflows/build.yml ]; then
 fi
 
 # The published family/harness tables are generated from the registry and gated
-# against it (ADR 0005 D10). Like the drift gate it ships unconditionally and
+# against it (ADR 2026-08-07 D10). Like the drift gate it ships unconditionally and
 # passes on every profile — it says so and skips where the profile's
 # project_management answer renders no GitHub Projects document. Called bare
 # here, so the answers-file DEFAULT path is exercised too.
@@ -827,7 +827,7 @@ jq -e '.vulnerabilityAlerts.enabled == true' renovate.json >/dev/null ||
 jq -e '.osvVulnerabilityAlerts == true' renovate.json >/dev/null ||
     err "Renovate OSV vulnerability alerts must be enabled"
 # renovate: datasource=npm depName=renovate
-RENOVATE_VALIDATOR_VERSION=44.110.0
+RENOVATE_VALIDATOR_VERSION=44.115.5
 if [ "$validation_scope" = "renovate-config" ]; then
     if have npx; then
         run_quiet renovate-config-validator \
@@ -1239,7 +1239,7 @@ if [ -d .devcontainer ]; then
     elif [ -z "$timeout_bin" ]; then
         required timeout "devcontainer config check" || fail=1
     else
-        for cfg in .devcontainer/devcontainer.json .devcontainer/dev/devcontainer.json; do
+        for cfg in .devcontainer/devcontainer.json .devcontainer/dev/devcontainer.json .devcontainer/agent/devcontainer.json; do
             [ -f "$cfg" ] || continue
             "$timeout_bin" -k 5 60 devcontainer read-configuration \
                 --docker-path true \
@@ -1333,7 +1333,7 @@ minimal) # project_management=github on a PERSONAL account, use_foreman=false
         err "project-management.md omits the area: solution-space label-family guidance"
     grep -qF 'At most one each of `area:`/`domain:`/`layer:` per issue' docs/project-management.md ||
         err "project-management.md omits the area/domain/layer cardinality guidance"
-    grep -qF '**Tier** — which model-routing stratum works a specific **role**' docs/project-management.md ||
+    grep -qF '**Tier** — the model-routing stratum an issue runs at.' docs/project-management.md ||
         err "project-management.md omits the tier: label-family guidance"
     grep -qF '**Strategy** — the primary topology/workflow axis' docs/project-management.md ||
         err "project-management.md omits the strategy: label-family guidance"
@@ -1605,7 +1605,7 @@ iac | full)
             err "CHECKLIST legacy-label migration can silently truncate a capped association sweep"
         ! grep -Fq '[project-management.md](project-management.md)' <<<"$checklist_flat" ||
             err "CHECKLIST links to the omitted GitHub project-management doc for project_management=none"
-        ! grep -Fq 'ADR 0005' <<<"$checklist_flat" ||
+        ! grep -Fq 'ADR 2026-08-07' <<<"$checklist_flat" ||
             err "CHECKLIST cites a repository-only ADR for project_management=none"
         grep -Fq 'Copilot is a broker, not a fixed family: `mai` is only the picker default' <<<"$checklist_flat" ||
             err "CHECKLIST loses the Copilot broker/default-family distinction"
@@ -1711,13 +1711,51 @@ if [ "$profile" = "full" ] || [ "$profile" = "meta" ]; then
     grep -q 'challenge:codex:' Taskfile.yml || err "challenge:codex task missing (use_codex_review=true)"
     grep -q 'codex:gate:enable:' Taskfile.yml || err "codex:gate:enable task missing (use_codex_review=true)"
     grep -q '"codex@openai-codex": true' .claude/settings.json || err ".claude/settings.json missing codex plugin enablement (use_codex_review=true)"
+    # The remote second-model guard ships with the rule it guards, and must pass
+    # against the RENDERED surfaces: the root copy scans harmon-init's own files,
+    # so a forbidden line added only under template/ first fails here.
+    if [ ! -x scripts/test-remote-codex-policy.sh ]; then
+        err "scripts/test-remote-codex-policy.sh missing or not executable (use_codex_review=true)"
+    elif ! ./scripts/test-remote-codex-policy.sh; then
+        err "rendered Codex policy guard fails"
+    fi
+    if have task; then
+        grep -qF './scripts/test-remote-codex-policy.sh' \
+            <<<"$(task --color=false --dry verify 2>&1 || true)" ||
+            err "task verify does not reach test:remote-codex-policy (use_codex_review=true)"
+    else
+        required task "remote Codex policy verify reachability" || fail=1
+    fi
+    if [ -f .github/workflows/build.yml ]; then
+        grep -qF 'task test:remote-codex-policy' .github/workflows/build.yml ||
+            err "required CI does not run test:remote-codex-policy (use_codex_review=true)"
+    fi
 else
     [ ! -f scripts/codex-review.sh ] || err "scripts/codex-review.sh rendered but use_codex_review is off"
     [ ! -f scripts/codex-gate.sh ] || err "scripts/codex-gate.sh rendered but use_codex_review is off"
     [ ! -f docs/guides/codex-review.md ] || err "docs/guides/codex-review.md rendered but use_codex_review is off"
     ! grep -q 'challenge:codex' Taskfile.yml || err "challenge:codex task rendered but use_codex_review is off"
     ! grep -q 'codex@openai-codex' .claude/settings.json || err "codex plugin enablement rendered but use_codex_review is off"
+    [ ! -f scripts/test-remote-codex-policy.sh ] || err "scripts/test-remote-codex-policy.sh rendered but use_codex_review is off"
+    ! grep -q 'test:remote-codex-policy:' Taskfile.yml || err "test:remote-codex-policy task rendered but use_codex_review is off"
+    if [ -f .github/workflows/build.yml ]; then
+        ! grep -qF 'task test:remote-codex-policy' .github/workflows/build.yml ||
+            err "CI runs test:remote-codex-policy but use_codex_review is off"
+    fi
 fi
+# git-merge-guard replaces the `git merge` ask rules in every profile: the hook
+# must be registered on Bash (fail-closed fallback included) and those rules gone.
+[ -x .claude/hooks/git-merge-guard.py ] || err ".claude/hooks/git-merge-guard.py missing or not executable"
+[ -x scripts/test-git-merge-guard.sh ] || err "scripts/test-git-merge-guard.sh missing or not executable"
+jq -e '[.hooks.PreToolUse[]? | select(.matcher == "Bash") | .hooks[]?
+    | select(.type == "command"
+        and (.command | contains("\"$CLAUDE_PROJECT_DIR/.claude/hooks/git-merge-guard.py\""))
+        and (.command | contains("|| printf")))] | length == 1' .claude/settings.json >/dev/null ||
+    err ".claude/settings.json does not register git-merge-guard.py as a PreToolUse Bash hook with the ask fallback"
+jq -e '[.permissions.ask[] | select(test("^Bash\\(git merge"))] | length == 0' .claude/settings.json >/dev/null ||
+    err ".claude/settings.json still asks on every git merge (the guard replaces those rules)"
+jq -e '.permissions.ask | (index("Bash(gh pr merge)") != null) and (index("Bash(git push origin main)") != null) and (index("Bash(git push --force:*)") != null)' .claude/settings.json >/dev/null ||
+    err ".claude/settings.json lost the gh pr merge / push-to-main / force-push ask rules"
 if [ "$profile" = "full" ]; then
     grep -Fq '@codex review' AGENTS.md || err "AGENTS missing explicit Codex shepherd trigger (use_codex_cloud_review=true)"
     grep -Fq 'headRefOid' AGENTS.md || err "AGENTS missing current-head Codex shepherd contract (use_codex_cloud_review=true)"
@@ -2018,6 +2056,30 @@ else
         err "test-bot-autonomy.sh missing from devcontainer output"
     grep -q -- '- task: test:bot-autonomy' Taskfile.yml ||
         err "verify task is missing the bot-autonomy registry-completeness test"
+    # The AGENT posture (#1408) renders with every devcontainer, and its own
+    # unit test — single source, Claude/Codex policy, env guard, Docker, and
+    # egress — must pass against the RENDERED tree, where the agent
+    # devcontainer.json is a jinja render rather than the root copy.
+    for agent_file in .devcontainer/agent/devcontainer.json .devcontainer/agent/post-create.sh \
+        .devcontainer/agent/post-start.sh .devcontainer/agent/agent-autonomy.sh \
+        .devcontainer/config/agent/claude-managed-settings.json \
+        .devcontainer/config/agent/codex-managed-config.toml .devcontainer/config/agent/harnesses.json \
+        .devcontainer/egress-allowlist.txt .devcontainer/scripts/egress-allowlist.sh; do
+        [ -f "$agent_file" ] || err "${agent_file} missing from devcontainer output (agent posture)"
+    done
+    [ -x scripts/test-agent-profile.sh ] ||
+        err "test-agent-profile.sh missing from devcontainer output"
+    grep -q -- '- task: test:agent-profile' Taskfile.yml ||
+        err "verify task is missing the agent-posture unit test"
+    grep -q '^  test:devcontainer:agent:' Taskfile.yml ||
+        err "Taskfile is missing the agent devcontainer smoke task"
+    if grep -Fq 'bot-autonomy.sh' < <(grep -Ev '^[[:space:]]*#' .devcontainer/agent/post-create.sh .devcontainer/agent/post-start.sh); then
+        err "the agent posture calls bot-autonomy.sh (bot-only)"
+    fi
+    if [ -d .git ]; then
+        agent_test_out="$(bash scripts/test-agent-profile.sh 2>&1)" ||
+            err "test-agent-profile.sh fails in the rendered repo: $(printf '%s' "$agent_test_out" | tail -n 3)"
+    fi
     [ ! -e .devcontainer/scripts/enable-claude-bypass.sh ] ||
         err "retired enable-claude-bypass.sh still rendered"
     [ ! -e .devcontainer/scripts/enable-codex-bypass.sh ] ||
@@ -2071,7 +2133,7 @@ else
     # byte-compare them, and template/ could reintroduce the Feature while the
     # root copy stays correct — shipping the flake to every consumer with
     # nothing here failing.
-    for dc_cfg in .devcontainer/devcontainer.json .devcontainer/dev/devcontainer.json; do
+    for dc_cfg in .devcontainer/devcontainer.json .devcontainer/dev/devcontainer.json .devcontainer/agent/devcontainer.json; do
         [ -f "$dc_cfg" ] || continue
         ! grep -q 'features/go-task' "$dc_cfg" ||
             err "rendered $dc_cfg installs task via a devcontainer Feature (harmon-init#427)"
@@ -2085,7 +2147,7 @@ else
     # the root copy stays correct. The providers wrapper renders only when
     # use_alternative_claude_providers is on, hence the existence guard.
     for dc_file in .devcontainer/devcontainer.json .devcontainer/dev/devcontainer.json \
-        .devcontainer/config/claude-providers.sh; do
+        .devcontainer/agent/devcontainer.json .devcontainer/config/claude-providers.sh; do
         [ -f "$dc_file" ] || continue
         ! grep -q 'CLAUDE_CODE_EFFORT_LEVEL' "$dc_file" ||
             err "rendered $dc_file forces CLAUDE_CODE_EFFORT_LEVEL — effort selection belongs to Claude Code settings"
@@ -2207,6 +2269,31 @@ if [ "$profile" = "full" ]; then
     fi
 fi
 
+# A generated repository with second-model review ON and the devcontainer OFF:
+# the pair the remote Codex policy guard's environment-example floor once broke,
+# because the examples it wants render only with the devcontainer. A third
+# surgical render (only on the "meta" pass, which already turns the review on)
+# rather than a new profile; it overrides the two answers under test and turns
+# Foreman off, which copier.yml requires without a devcontainer.
+if [ "$profile" = "meta" ]; then
+    nodc_dest="$job_tmp/render-codex-no-devcontainer"
+    if copier copy --trust --defaults --vcs-ref=HEAD \
+        "${copier_flags[@]+"${copier_flags[@]}"}" \
+        "${data_args[@]}" --data devcontainer=false --data use_foreman=false \
+        "$repo_root" "$nodc_dest"; then
+        [ ! -d "$nodc_dest/.devcontainer" ] ||
+            err "the Codex-on/devcontainer-off render still has a .devcontainer"
+        if [ ! -x "$nodc_dest/scripts/test-remote-codex-policy.sh" ]; then
+            err "the Codex-on/devcontainer-off render has no executable remote Codex policy guard"
+        else
+            (cd "$nodc_dest" && ./scripts/test-remote-codex-policy.sh) ||
+                err "the remote Codex policy guard fails in a Codex-on/devcontainer-off render"
+        fi
+    else
+        err "use_codex_review=true, devcontainer=false render failed to generate"
+    fi
+fi
+
 # ── 9e1b. Copilot CLI / pi / oh-my-pi bot-autonomy modules ────────────────
 # Same "module always present, policy Copier-gated" contract as 9e1, with two
 # differences this section exists to pin down: Copilot's marker AND its
@@ -2239,6 +2326,13 @@ if [ -d .devcontainer ]; then
     if grep -Fq '"COPILOT_ALLOW_ALL"' .devcontainer/dev/devcontainer.json; then
         err "dev devcontainer.json carries COPILOT_ALLOW_ALL — a human's interactive Copilot session must never be allow-all"
     fi
+    # The agent posture refuses Copilot outright and pins allow-all OFF,
+    # whatever use_copilot_cli answered.
+    if grep -Fq '"HARMON_BOT_AUTONOMY_COPILOT"' .devcontainer/agent/devcontainer.json; then
+        err "agent devcontainer.json carries the bot-only HARMON_BOT_AUTONOMY_COPILOT marker"
+    fi
+    grep -Fq '"COPILOT_ALLOW_ALL": "false"' .devcontainer/agent/devcontainer.json ||
+        err "agent devcontainer.json does not pin COPILOT_ALLOW_ALL to false"
     # Fixture-seeded state these modules' verify reads lives on named volumes,
     # so a smoke run must not contaminate (or be contaminated by) a real one.
     for volume in copilot-config pi-config omp-config; do
@@ -2278,7 +2372,7 @@ if [ -d .devcontainer ]; then
     if [ "$profile" = "full" ]; then
         [ -f .devcontainer/config/claude-providers.sh ] ||
             err ".devcontainer/config/claude-providers.sh missing (use_alternative_claude_providers=true)"
-        for dc_cfg in .devcontainer/devcontainer.json .devcontainer/dev/devcontainer.json; do
+        for dc_cfg in .devcontainer/devcontainer.json .devcontainer/dev/devcontainer.json .devcontainer/agent/devcontainer.json; do
             [ -f "$dc_cfg" ] || continue
             grep -q 'KIMI_API_KEY MOONSHOT_API_KEY DEEPSEEK_API_KEY ZAI_API_KEY QWEN_API_KEY' "$dc_cfg" ||
                 err "$dc_cfg initializeCommand omits the provider keys (use_alternative_claude_providers=true)"
@@ -2286,7 +2380,7 @@ if [ -d .devcontainer ]; then
     else
         [ ! -f .devcontainer/config/claude-providers.sh ] ||
             err ".devcontainer/config/claude-providers.sh rendered but use_alternative_claude_providers is off"
-        for dc_cfg in .devcontainer/devcontainer.json .devcontainer/dev/devcontainer.json; do
+        for dc_cfg in .devcontainer/devcontainer.json .devcontainer/dev/devcontainer.json .devcontainer/agent/devcontainer.json; do
             [ -f "$dc_cfg" ] || continue
             # Each key checked independently, not as one contiguous string: a
             # whole-sequence grep only catches all five keys leaking together,

@@ -100,6 +100,13 @@ rejects unknown-strategy-key replace_in_table strategy.oneshot '[strategy.onesho
 rejects constitutional-strategy-gate replace_in_table strategy.oneshot 'human_gates = []' 'human_gates = ["merge"]'
 rejects inverted-role-tier replace_in_table rigor.cursory 'implementer_tier  = "economy"' 'implementer_tier  = "apex"'
 rejects adaptive-role-tier replace_in_table rigor.standard 'reviewer_tier     = "standard"' 'reviewer_tier     = "adaptive"'
+# [tier.matrix] (ADR 2026-09-30 D4): a closed 5 x 5 grid of tier_order rungs.
+rejects adaptive-matrix-cell replace_in_table tier.matrix 'xs = { trivial = "local"' 'xs = { trivial = "adaptive"'
+rejects unknown-matrix-cell replace_in_table tier.matrix 'xs = { trivial = "local"' 'xs = { trivial = "ultra"'
+rejects missing-matrix-column replace_in_table tier.matrix 'xl = { trivial = "frontier", ' 'xl = { '
+rejects extra-matrix-column replace_in_table tier.matrix 'xs = { trivial' 'xs = { extreme = "apex", trivial'
+rejects unknown-matrix-row replace_in_table tier.matrix 'xl = {' 'xxl = {'
+rejects tier-table-without-matrix replace_once $'\n[tier.matrix]\n' $'\n[tier.grid]\n'
 
 # Exercise the shipped JS parser directly. Python's tomllib also rejects
 # these mutations in test-devflow-config.sh, but that would let a regression
@@ -148,6 +155,27 @@ rejects_reader non-string-default-strategy replace_once \
     'default_strategy = "plan"' \
     'default_strategy = 1'
 rejects_reader missing-dormant-rigor delete_table rigor.light
+rejects_reader adaptive-matrix-cell replace_in_table tier.matrix 'xs = { trivial = "local"' 'xs = { trivial = "adaptive"'
+rejects_reader unknown-matrix-cell replace_in_table tier.matrix 'xs = { trivial = "local"' 'xs = { trivial = "ultra"'
+rejects_reader missing-matrix-column replace_in_table tier.matrix 'xl = { trivial = "frontier", ' 'xl = { '
+rejects_reader extra-matrix-column replace_in_table tier.matrix 'xs = { trivial' 'xs = { extreme = "apex", trivial'
+rejects_reader unknown-matrix-row replace_in_table tier.matrix 'xl = {' 'xxl = {'
+rejects_reader tier-table-without-matrix replace_once $'\n[tier.matrix]\n' $'\n[tier.grid]\n'
+
+# The matrix is optional: a policy without it is valid, and only an issue
+# that carries a classification finds its derived-Tier rung indeterminate
+# (exit 3) — never a guessed Tier, never a silent pass.
+reset_policy
+delete_table tier.matrix
+resolve_reader
+set +e
+resolve_reader --risk high --complexity m 2>/dev/null
+matrixless_status=$?
+set -e
+if [ "$matrixless_status" -ne 3 ]; then
+    echo "FAIL: a classified issue under a matrix-less policy must be indeterminate (exit 3), got $matrixless_status" >&2
+    exit 1
+fi
 rejects_reader unknown-rigor-order-entry replace_once \
     'rigor_order = ["cursory", "light", "standard", "thorough", "deep", "forensic"]' \
     'rigor_order = ["cursory", "ghost", "standard", "thorough", "deep", "forensic"]'
@@ -184,7 +212,7 @@ if resolve_reader 2>/dev/null; then
 fi
 
 reset_policy
-replace_in_table rounds.standard 'wall_clock_min = 120' 'wall_clock_min = 0'
+replace_in_table rounds.standard 'wall_clock_min = 720' 'wall_clock_min = 0'
 if resolve_reader 2>/dev/null; then
     echo "FAIL: JS reader accepted zero wall-clock ceiling" >&2
     exit 1
@@ -527,4 +555,50 @@ if resolve_reader --strategy oneshot 2>/dev/null; then
     echo "FAIL: JS reader accepted a role with no executable family/harness/tier tuple" >&2
     exit 1
 fi
+# harmon-init#1449, review round 2 (R2-F1): every capability check in
+# crossValidate reads the AUTHORED role tier through authoredTierOf(). A site
+# reverted to the input-driven `.tier` turns an issue whose derived tier no
+# family can serve into a hard cross-validation error instead of the
+# tier-unachievable advisory. The v2 corpus must kill each reversion.
+reset_policy
+cp scripts/devflow-policy.mjs "$tmp/pristine.devflow-policy.mjs"
+reader_reversion_is_killed() {
+    name="$1"
+    case_name="$2"
+    python3 - "$3" "$4" <<'PY'
+import pathlib
+import sys
+
+path = pathlib.Path("scripts/devflow-policy.mjs")
+text = path.read_text()
+old, new = sys.argv[1:]
+if text.count(old) != 1:
+    raise SystemExit(f"expected exactly one occurrence of {old!r}, found {text.count(old)}")
+path.write_text(text.replace(old, new, 1))
+PY
+    if python3 scripts/test-devflow-conformance.py \
+        --fixture .devflow-conformance-v2.json \
+        --config .devflow.toml >"$tmp/$name.out" 2>&1; then
+        echo "FAIL: v2 corpus did not kill reader reversion: $name" >&2
+        exit 1
+    fi
+    if ! grep -q "$case_name" "$tmp/$name.out"; then
+        echo "FAIL: reader reversion $name was not killed by $case_name" >&2
+        cat "$tmp/$name.out" >&2
+        exit 1
+    fi
+    cp "$tmp/pristine.devflow-policy.mjs" scripts/devflow-policy.mjs
+}
+reader_reversion_is_killed council-input-tier \
+    unachievable-derived-tier-stays-advisory-under-council \
+    'model.tier === authoredTierOf(resolved.roles.implementer))' \
+    'model.tier === resolved.roles.implementer.tier)'
+reader_reversion_is_killed pool-input-tier \
+    unachievable-derived-tier-stays-advisory-with-a-stage-pool \
+    'model.tier === authoredTierOf(roleConfig))' \
+    'model.tier === roleConfig.tier)'
+reader_reversion_is_killed role-input-tier \
+    matrix-corner-xs-trivial-derives-local \
+    'const authoredTier = authoredTierOf(r)' \
+    'const authoredTier = r.tier'
 echo "devflow v2 mutation guards OK"

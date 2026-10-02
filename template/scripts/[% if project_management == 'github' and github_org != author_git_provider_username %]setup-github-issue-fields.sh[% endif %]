@@ -75,7 +75,7 @@ api_version="2026-03-10"
 
 # There is deliberately no Agent field: advisory agent routing is the
 # `suggest:*` label family plus the `Status: Agent Queue` lane, and the live
-# claim is a `claim:*` label (docs/project-management.md, ADR 0005 D4).
+# claim is a `claim:*` label (docs/project-management.md, ADR 2026-08-07 D4).
 
 # refresh_fields — (re-)read the org's issue fields into existing_json. Returns
 # non-zero when the read or the parse fails, leaving any previous snapshot in

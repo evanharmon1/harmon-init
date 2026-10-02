@@ -57,9 +57,10 @@ scripts/sync-devkit-release.sh
 scripts/test-sync-devkit-release.sh
 "
 
-# .devcontainer/post-create.sh and .devcontainer/dev/post-create.sh are NOT
-# in SKIP above because they already carry other real, reportable drift — the
-# per-profile git identity — so hiding them would lose that signal.
+# .devcontainer/post-create.sh, .devcontainer/dev/post-create.sh, and
+# .devcontainer/agent/post-create.sh are NOT in SKIP above because they
+# already carry other real, reportable drift — the per-profile git identity —
+# so hiding them would lose that signal.
 
 have() { command -v "$1" >/dev/null 2>&1; }
 if ! have copier; then

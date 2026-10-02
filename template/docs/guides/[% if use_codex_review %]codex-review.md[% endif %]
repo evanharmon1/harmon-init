@@ -60,6 +60,19 @@ primary agent to adjudicate — the protocol and the loop caps live in AGENTS.md
    one thing worth reporting later is an unsolicited Codex review, the
    signature of the knobs drifting back on.
 
+### Remote lanes
+
+Do this setup on the machine that drives the lanes, never inside an ephemeral
+remote environment (Claude Code on the web, Codex cloud): those never hold a
+Codex login, so no device login, copied auth file, or API key is part of a
+lane's setup. The orchestrator runs `task challenge` and `task review` against
+the lane's pushed branch from its own local pane, and the lane's PR body records
+that review in its stage ledger as `reviewed from <host> at <head>`. A
+persistent environment (the agent devcontainer, Sprites) gets one login of its
+own, made once by the maintainer when provisioning it (never by an agent), and
+runs Codex locally. The rule and its reasons are in AGENTS.md
+("Remote environments").
+
 ## Manual reviews
 
 | Command | What it does |
