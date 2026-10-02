@@ -586,6 +586,48 @@
       ]
     },
     {
+      "family": "priority-ai",
+      "prefix": "priority-ai",
+      "purpose": "The AI's suggested priority, p0–p4; the human Priority overrides it, and for a bug it reads as severity (how bad, and how important to fix before a merge or deploy). Advisory.",
+      "axis": "meta",
+      "source": "inline",
+      "writers": ["human", "agent"],
+      "writer_note": "agents or humans — the AI's suggestion, never required; a review finding filed as an issue carries its adjudicated badge (P0→p0, P1→p1, P2→p2, P3→p3; nothing from a review maps to p4)",
+      "readers": "humans, saved views; the effective priority, which is the human `priority` when set and else this suggestion",
+      "lifecycle": "durable",
+      "lifecycle_note": "written by an agent or human when classifying or filing the issue; changed as the AI learns more; the human `priority` overrides it without clearing it",
+      "trust_note": "provisioned; **advisory** — the AI's suggestion, overridden by the human `priority` family; arms nothing",
+      "exclusive": true,
+      "provision": true,
+      "values": [
+        {
+          "value": "p0",
+          "description": "Priority (AI): blocks a merge or deploy — critical",
+          "color": "B60205"
+        },
+        {
+          "value": "p1",
+          "description": "Priority (AI): a real defect or must-do; next",
+          "color": "FF7619"
+        },
+        {
+          "value": "p2",
+          "description": "Priority (AI): worth doing, not blocking",
+          "color": "FBCA04"
+        },
+        {
+          "value": "p3",
+          "description": "Priority (AI): cosmetic or informational",
+          "color": "1D76DB"
+        },
+        {
+          "value": "p4",
+          "description": "Priority (AI): negligible",
+          "color": "BFC5CB"
+        }
+      ]
+    },
+    {
       "family": "effort",
       "prefix": "effort",
       "purpose": "The human time estimate for work a human will do, on a modified Fibonacci ladder; human tasks only, never agent work.",
