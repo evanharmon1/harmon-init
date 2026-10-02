@@ -447,12 +447,25 @@ if [ -f .github/workflows/build.yml ]; then
         grep -Eq '^[[:space:]]+-[[:space:]]+task:[[:space:]]+test:suite[[:space:]]*$' ||
         err "rendered \`verify\` does not list \`task: test:suite\` itself"
     if have task; then
-        parity_verify_plan="$(task --color=false --dry verify 2>&1 || true)"
-        parity_suite_plan="$(task --color=false --dry test:suite 2>&1 || true)"
-        for parity_target in $(grep -oE '^task: \[test:[^]]+\]' <<<"$parity_verify_plan" | sed -E 's/^task: \[(.*)\]$/\1/'); do
-            grep -qF "task: [${parity_target}]" <<<"$parity_suite_plan" ||
-                err "rendered verify runs ${parity_target}, which the required Build workflow's test:suite does not"
-        done
+        # A plan that cannot be read (a broken rendered Taskfile) must fail the
+        # profile, not leave the loop below with no targets to compare.
+        parity_plans_ok=1
+        parity_verify_plan="$(task --color=false --dry verify 2>&1)" || {
+            echo "$parity_verify_plan" >&2
+            err "could not read the plan of rendered \`task verify\` (task --dry verify failed), so verify <-> CI parity was not compared"
+            parity_plans_ok=0
+        }
+        parity_suite_plan="$(task --color=false --dry test:suite 2>&1)" || {
+            echo "$parity_suite_plan" >&2
+            err "could not read the plan of rendered \`task test:suite\` (task --dry test:suite failed), so verify <-> CI parity was not compared"
+            parity_plans_ok=0
+        }
+        if [ "$parity_plans_ok" = 1 ]; then
+            for parity_target in $(grep -oE '^task: \[test:[^]]+\]' <<<"$parity_verify_plan" | sed -E 's/^task: \[(.*)\]$/\1/'); do
+                grep -qF "task: [${parity_target}]" <<<"$parity_suite_plan" ||
+                    err "rendered verify runs ${parity_target}, which the required Build workflow's test:suite does not"
+            done
+        fi
         run_quiet verify-ci-parity ./scripts/test-verify-ci-parity.sh ||
             err "rendered test-verify-ci-parity.sh fails"
     else
