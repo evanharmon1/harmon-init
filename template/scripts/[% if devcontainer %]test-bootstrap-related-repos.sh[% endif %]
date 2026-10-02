@@ -536,6 +536,8 @@ ghe.example.com:owner/repo.git|ghe.example.com
 C:/src/repo|github.com
 /srv/git/a@b:c/r.git|github.com
 demo::some-address|github.com
+x+y::path|github.com
++demo::path|+demo
 git@ghe.example.com:owner/repo::backup|ghe.example.com
 ghe-colons.example.com:owner::x/repo.git|ghe-colons.example.com
 [2001:db8::1]:owner/repo.git|[2001:db8::1]

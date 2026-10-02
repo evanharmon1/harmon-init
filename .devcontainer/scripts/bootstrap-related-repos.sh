@@ -104,13 +104,14 @@ else
     origin_url="$(git -C "${SCRIPT_DIR}/.." config --get remote.origin.url 2>/dev/null || true)"
     origin_authority=""
     # git's rule (transport_get): <transport>::<address> is remote-helper syntax only
-    # when what precedes the first '::' is non-empty and made of URL-scheme characters.
-    # Any other '::' (an scp-like path such as host:owner/repo::backup) is not one.
+    # when what precedes the first '::' is a URL scheme: an alphanumeric first
+    # character, then alphanumerics or '+', '-', '.'. Any other '::' (an scp-like
+    # path such as host:owner/repo::backup, or +demo::path) is not one.
     origin_helper=""
     case "${origin_url}" in
     *::*)
         case "${origin_url%%::*}" in
-        "" | *[!A-Za-z0-9+.-]*) ;;
+        "" | [!A-Za-z0-9]* | *[!A-Za-z0-9+.-]*) ;;
         *) origin_helper=1 ;;
         esac
         ;;
