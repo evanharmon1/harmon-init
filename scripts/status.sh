@@ -1366,8 +1366,14 @@ if [[ "${SECTION}" == "setup" ]]; then
                     else
                         # One `name<TAB>data_type<TAB>options` per line, not a joined
                         # string; options are the single-select's option names in
-                        # display order, comma-joined (empty for any other type).
-                        field_rows="$(jq -r '(if type == "object" then (.issue_fields // []) elif type == "array" then . else [] end) | .[] | "\(.name)\t\(.data_type // "")\t\([ (if (.options | type) == "array" then .options else [] end) | sort_by(.priority // 0)[] | .name | tostring ] | join(","))"' "${d}/issue-fields.json" 2>/dev/null || echo "")"
+                        # display order, joined with the ASCII unit separator (empty
+                        # for any other type). Every name is stripped of control
+                        # characters first, so no name — an owner may type
+                        # anything, a comma included — can hold a column, line, or
+                        # option boundary: one option named "minimal,low,medium"
+                        # is one option, not three.
+                        field_rows="$(jq -r '(if type == "object" then (.issue_fields // []) elif type == "array" then . else [] end) | .[] | "\(.name | tostring | gsub("[\u0001-\u001f]"; " "))\t\(.data_type // "")\t\([ (if (.options | type) == "array" then .options else [] end) | sort_by(.priority // 0)[] | .name | tostring | gsub("[\u0001-\u001f]"; " ") ] | join("\u001f"))"' "${d}/issue-fields.json" 2>/dev/null || echo "")"
+                        unit_sep="$(printf '\037')"
                         # The want-list: `name:data_type:options`, one per line, so a
                         # name may carry spaces. Each field must be present AND of
                         # the right type (GitHub cannot change a field's data type
@@ -1408,8 +1414,8 @@ Effort:single_select:1,2,3,5,8,13,20"
                             elif [ -n "${wopts}" ]; then
                                 lacking=""
                                 while IFS= read -r wopt; do
-                                    case ",${hopts}," in
-                                    *",${wopt},"*) ;;
+                                    case "${unit_sep}${hopts}${unit_sep}" in
+                                    *"${unit_sep}${wopt}${unit_sep}"*) ;;
                                     *) lacking="${lacking}${lacking:+, }${wopt}" ;;
                                     esac
                                 done < <(tr ',' '\n' <<<"${wopts}")

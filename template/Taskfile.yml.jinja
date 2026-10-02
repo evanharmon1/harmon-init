@@ -1224,12 +1224,13 @@ tasks:
   setup:github-issue-fields:
     desc: >-
       Idempotently add the org's Product field and the issue-classification
-      fields Impact, Risk, Complexity, and Priority (AI), and rewrite the
-      built-in Effort options to the 1, 2, 3, 5, 8, 13, 20 ladder (Priority and
-      the dates stay as GitHub ships them, a shipped Effort option an issue
-      still holds is kept, and no field is ever deleted — see
-      docs/project-management.md, "Label or field?"). Requires `gh` with the
-      admin:org scope.
+      fields Impact, Risk, Complexity, and Priority (AI), and add the 1, 2, 3,
+      5, 8, 13, 20 ladder to the built-in Effort field (Priority and the dates
+      stay as GitHub ships them, no field is ever deleted, and GitHub's shipped
+      High/Medium/Low Effort options are removed only when
+      scripts/setup-github-issue-fields.sh is run directly with
+      --remove-unused-shipped-options — see docs/project-management.md, "Label
+      or field?"). Requires `gh` with the admin:org scope.
     cmds:
       - ./scripts/setup-github-issue-fields.sh --org "[[ github_org ]]"
 [% endif %]

@@ -1915,6 +1915,15 @@ issue_fields_case "a field of the wrong data type" \
 issue_fields_case "a field with no options array" \
     'map(if .name == "Complexity" then del(.options) else . end)' \
     "[ ] Org issue fields - Complexity lacks xs, s, m, l, xl — run task setup:github-issue-fields"
+# An option is one option however its name is spelled: a name that merely lists
+# the wanted ones, joined by a comma or by the control character the renderer
+# itself joins with, must not satisfy them (challenge r1, C1-F4).
+issue_fields_case "one option named like the whole wanted scale" \
+    'map(if .name == "Impact" then .options = [{"name":"minimal,low,medium,high,massive","priority":1}] else . end)' \
+    "[ ] Org issue fields - Impact lacks minimal, low, medium, high, massive — run task setup:github-issue-fields"
+issue_fields_case "one option whose name hides the renderer's own separator" \
+    'map(if .name == "Impact" then .options = [{"name":"minimal\u001flow\u001fmedium\u001fhigh\u001fmassive","priority":1}] else . end)' \
+    "[ ] Org issue fields - Impact lacks minimal, low, medium, high, massive — run task setup:github-issue-fields"
 # Priority (AI) and Priority are two fields: the first being absent must read as
 # exactly that, never as the built-in Priority being absent or standing in for it.
 issue_fields_case "Priority (AI) missing while the built-in Priority exists" \
