@@ -183,6 +183,12 @@ The reconciler reports these cases and changes nothing for them:
 - An unpinned Tier whose Risk or Complexity is missing (`cache-unverifiable`).
   Derive-on-read ignores that label anyway.
 - A leftover `tier:adaptive`.
+- A conflicted axis (two values), or a retired or unknown value. That axis
+  does not count toward "triaged", so `needs-triage` stays. Recognized values
+  come from the repository's `label-registry.json`; when that file is
+  unreadable, every axis is unverifiable and `needs-triage` is left as it is.
+- An issue whose labels or field values span more than one page. It is
+  skipped rather than decided on a partial read.
 - A repository whose reader cannot derive. Either the reader has no
   `deriveTier`, which is every repository whose vendored `dev-flow-support`
   predates [harmon-devkit#1248](https://github.com/evanharmon1/harmon-devkit/issues/1248), or the reader throws on the policy. Such a
@@ -209,8 +215,10 @@ overwritten mid-pin.
 The remaining windows are narrow:
 
 - A pin made while an input-triggered job is already running. The job re-reads
-  the issue immediately before writing, which shrinks this window to one API
-  round trip.
+  the issue immediately before writing, and again after adding the derived
+  Tier; if `tier:pinned` has appeared it skips the stale-Tier deletes and
+  reports the issue. GitHub's label API has no compare-and-swap, so a pin
+  landing between that second read and the deletes is the remaining window.
 - A scheduled run landing between the two pin edits. With the pin added first,
   it sees two tier values and reports them. With the Tier set first, it
   re-derives once, and the human's pin then restores the intended value.
@@ -232,16 +240,19 @@ mints an installation token from the CI GitHub App that already exists
 (`actions/create-github-app-token` over `CI_APP_CLIENT_ID` /
 `CI_APP_PRIVATE_KEY`, the same App `claude-*.yml` and `release.yml` use, with
 Issues: write). It then calls `classification-reconcile.yml` with that token
-as the `CLASSIFICATION_TOKEN` secret and the organization's repository list as
-the `repositories` input. The caller's checkout supplies the script, the reader
-and the `.devflow.toml` whose matrix governs the walk. Without the secret, a
-walk covers only the calling repository.
+as the `CLASSIFICATION_TOKEN` secret, `use-token: true`, and the
+organization's repository list as the `repositories` input. The caller's
+checkout supplies the script, the reader and the `.devflow.toml` whose matrix
+governs the walk. Without them, a walk covers only the calling repository.
 
-The workflow reads the token as `secrets.CLASSIFICATION_TOKEN || github.token`.
-On `schedule` and `workflow_dispatch` that same expression reads a repository
-or organization secret named `CLASSIFICATION_TOKEN`. Setting one on a
-repository is therefore the documented opt-in for a wider walk on those
-triggers. Leave it unset to stay on `GITHUB_TOKEN`.
+The workflow reads the token as
+`inputs.use-token && secrets.CLASSIFICATION_TOKEN || github.token`, and
+`use-token` is declared only under `workflow_call`. On `schedule` and
+`workflow_dispatch` the input is empty, so those runs use `GITHUB_TOKEN`
+whatever secrets the repository or organization holds. The supported wide
+walk is the `<org>/.github` caller minting a one-hour App installation token
+per run; a stored, long-lived `CLASSIFICATION_TOKEN` secret is discouraged
+(no PAT, no stored secret).
 
 **Minutes model.** The organizations are on the Team plan with a shared pool,
 and most of their repositories are private. A job bills at least one full

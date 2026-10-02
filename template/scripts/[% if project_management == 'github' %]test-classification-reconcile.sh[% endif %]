@@ -33,7 +33,8 @@ import { pathToFileURL } from 'node:url'
 const [root, tmp] = process.argv.slice(2)
 const m = await import(pathToFileURL(join(root, 'scripts/classification-reconcile.mjs')).href)
 const registry = JSON.parse(readFileSync(join(root, 'label-registry.json'), 'utf8'))
-const workTypes = m.workTypeLabels(registry)
+const vocabulary = m.activeVocabulary(registry)
+const workTypes = vocabulary.workTypes
 
 let passed = 0
 function check(name, fn) {
@@ -52,7 +53,7 @@ const derive = (risk, complexity) => {
   if (risk === 'bogus') throw new Error('risk must be one of [...], got "bogus"')
   return `${risk}-${complexity}` === 'high-m' ? 'frontier' : 'standard'
 }
-const ctx = { workTypes, derive, underivable: null }
+const ctx = { vocabulary, derive, underivable: null }
 const triaged = ['feature', 'area:ci', 'layer:none', 'domain:none', 'impact:low']
 const issue = (labels, extra = {}) => ({ labels, issueType: null, fields: {}, ...extra })
 
@@ -97,12 +98,45 @@ check('missing inputs without a Tier: only needs-triage', () => {
 check('an off-scale input is reported, not guessed', () => {
   const d = m.decide(issue([...triaged, 'risk:bogus', 'complexity:m', 'tier:apex']), ctx)
   assert.deepEqual(d.remove, [])
-  assert.equal(d.reports[0].code, 'invalid-input')
+  assert.deepEqual(d.reports.map((r) => r.code), ['unrecognized-value', 'invalid-input'])
 })
-check('two exclusive input labels: no value read, reported', () => {
-  const d = m.decide(issue([...triaged, 'risk:high', 'risk:low', 'complexity:m']), ctx)
-  assert.deepEqual(d.add, [])
-  assert.equal(d.reports[0].code, 'ambiguous-input')
+check('a conflicted axis: no value read, not triaged, needs-triage kept (C1-F3)', () => {
+  const d = m.decide(issue([...triaged, 'risk:high', 'risk:low', 'complexity:m', 'needs-triage']), ctx)
+  assert.deepEqual([d.add, d.remove, d.triaged], [[], [], false])
+  assert.equal(d.reports[0].code, 'conflicted-axis')
+})
+check('an unknown value does not classify its axis (C1-F3)', () => {
+  const d = m.decide(issue(['feature', 'area:ci', 'layer:none', 'domain:none', 'impact:bogus', 'risk:high', 'complexity:m', 'needs-triage']), ctx)
+  assert.equal(d.triaged, false)
+  assert.ok(!d.remove.includes('needs-triage'))
+  assert.equal(d.reports[0].code, 'unrecognized-value')
+})
+check('a retired value does not classify its axis (C1-F3)', () => {
+  const synthetic = structuredClone(registry)
+  synthetic.families.find((f) => f.family === 'area').values.push({ value: 'old-area', retired: true })
+  const v = m.activeVocabulary(synthetic)
+  assert.ok(!v.recognized.area.includes('old-area'))
+  const d = m.decide(issue(['feature', 'area:old-area', 'layer:none', 'domain:none', 'impact:low', 'risk:high', 'complexity:m', 'needs-triage']), { ...ctx, vocabulary: v })
+  assert.equal(d.triaged, false)
+  assert.ok(!d.remove.includes('needs-triage'))
+  assert.match(d.reports[0].message, /retired or unknown/)
+})
+check('an absent registry: every axis unverifiable, needs-triage left as it is (C1-F3)', () => {
+  const noReg = { ...ctx, vocabulary: null }
+  const a = m.decide(issue([...triaged, 'risk:high', 'complexity:m', 'needs-triage']), noReg)
+  assert.deepEqual([a.add.includes('needs-triage'), a.remove.includes('needs-triage'), a.triaged], [false, false, null])
+  const b = m.decide(issue(['bug']), noReg)
+  assert.deepEqual([b.add, b.remove], [[], []])
+})
+check('a retired work type does not type an issue (C1-F4)', () => {
+  assert.ok(!workTypes.includes('enhancement'), 'enhancement is retired in label-registry.json')
+  const d = m.decide(issue(['enhancement', 'area:ci', 'layer:none', 'domain:none', 'impact:low', 'risk:high', 'complexity:m', 'needs-triage']), ctx)
+  assert.equal(d.triaged, false)
+  assert.ok(!d.remove.includes('needs-triage'))
+})
+check('a truncated read is skipped and reported (C1-F6)', () => {
+  const d = m.decide(issue([...triaged, 'risk:high', 'complexity:m', 'tier:local'], { truncated: 'labels' }), ctx)
+  assert.deepEqual([d.add, d.remove, d.reports[0].code], [[], [], 'truncated'])
 })
 check('organization shape: fields and the native Type count; a field wins over a label', () => {
   const org = issue(['area:ci', 'layer:none', 'domain:none', 'risk:low'], {
@@ -153,6 +187,12 @@ check('parseRepositories: list, fallback, and refusal', () => {
 // an operand; null, false, 0 and '' are falsy; string comparison ignores case;
 // a missing property is null; null coerces to '' in string functions.
 function evaluate(expr, context) {
+  return evaluateRaw(expr, context, true)
+}
+function evaluateValue(expr, context) {
+  return evaluateRaw(expr, context, false)
+}
+function evaluateRaw(expr, context, asBool) {
   const tokens = expr.match(/'(?:[^']|'')*'|&&|\|\||==|!=|[!(),]|[A-Za-z_][\w.-]*/g)
   let i = 0
   const peek = () => tokens[i]
@@ -222,7 +262,7 @@ function evaluate(expr, context) {
   }
   const v = or()
   if (i !== tokens.length) throw new Error(`trailing tokens from ${tokens[i]}`)
-  return truthy(v)
+  return asBool ? truthy(v) : v
 }
 
 const wf = readFileSync(join(root, '.github/workflows/classification-event.yml'), 'utf8')
@@ -283,6 +323,69 @@ check('the filter and the script name the same inputs and event types', () => {
   const types = wf.match(/^ {4}types: \[([^\]]*)\]/m)[1].split(',').map((s) => s.trim())
   assert.deepEqual(types, [...m.EVENT_TYPES])
   for (const absent of ['edited', 'field_added', 'field_removed']) assert.ok(!types.includes(absent), absent)
+})
+
+// --- applyPlan(): a pin that lands mid-write stops the Tier deletes (C1-F5) --
+
+function fakeClient(reads) {
+  const calls = []
+  let n = 0
+  const node = (labels) => ({
+    state: 'OPEN',
+    number: 7,
+    url: 'u',
+    issueType: null,
+    labels: { pageInfo: { hasNextPage: false }, nodes: labels.map((name) => ({ name })) },
+    issueFieldValues: { pageInfo: { hasNextPage: false }, nodes: [] }
+  })
+  return {
+    calls,
+    async graphql() {
+      const labels = reads[Math.min(n++, reads.length - 1)]
+      return { repository: { issue: node(labels) } }
+    },
+    async rest(method, path, payload) {
+      calls.push([method, path, payload ?? null])
+      return null
+    }
+  }
+}
+const stale = [...triaged, 'risk:high', 'complexity:m', 'tier:standard']
+{
+  const client = fakeClient([stale, [...stale, 'tier:frontier']])
+  const plan = await m.applyPlan(client, 'o', 'r', 7, ctx)
+  check('applyPlan: an unpinned drift adds the derived Tier, then deletes the stale one', () => {
+    assert.deepEqual(client.calls.map((c) => c[0]), ['POST', 'DELETE'])
+    assert.match(client.calls[1][1], /tier%3Astandard$/)
+    assert.deepEqual(plan.remove, ['tier:standard'])
+  })
+}
+{
+  const client = fakeClient([stale, [...stale, 'tier:frontier', 'tier:pinned']])
+  const plan = await m.applyPlan(client, 'o', 'r', 7, ctx)
+  check('applyPlan: a pin landing after the add stops the stale-Tier delete', () => {
+    assert.deepEqual(client.calls.map((c) => c[0]), ['POST'])
+    assert.deepEqual(plan.remove, [])
+    assert.equal(plan.reports.at(-1).code, 'pin-appeared')
+  })
+}
+
+// --- The reconcile workflow's token expression (C1-F1) ----------------------
+
+const rwf = readFileSync(join(root, '.github/workflows/classification-reconcile.yml'), 'utf8')
+check('the token: CLASSIFICATION_TOKEN only when a workflow_call caller sets use-token', () => {
+  const tokenExpr = rwf.match(/^ {10}GH_TOKEN: \$\{\{ (.*) \}\}$/m)?.[1]
+  assert.equal(tokenExpr, 'inputs.use-token && secrets.CLASSIFICATION_TOKEN || github.token')
+  const tok = (inputs, secrets) => evaluateValue(tokenExpr, { inputs, secrets, github: { token: 'GITHUB_TOKEN' } })
+  // schedule / workflow_dispatch: no use-token input, whatever secrets exist.
+  assert.equal(tok({}, { CLASSIFICATION_TOKEN: 'stored' }), 'GITHUB_TOKEN')
+  assert.equal(tok({ 'use-token': false }, { CLASSIFICATION_TOKEN: 'app' }), 'GITHUB_TOKEN')
+  assert.equal(tok({ 'use-token': true }, { CLASSIFICATION_TOKEN: 'app' }), 'app')
+  assert.equal(tok({ 'use-token': true }, {}), 'GITHUB_TOKEN')
+  const dispatch = rwf.slice(rwf.indexOf('  workflow_dispatch:'), rwf.indexOf('  workflow_call:'))
+  const call = rwf.slice(rwf.indexOf('  workflow_call:'), rwf.indexOf('\npermissions:'))
+  assert.ok(!dispatch.includes('use-token'), 'use-token is never a workflow_dispatch input')
+  assert.match(call, /^ {6}use-token:\n {8}description: .*\n {8}type: boolean\n {8}required: false\n {8}default: false$/m)
 })
 
 // --- loadDerivation() --------------------------------------------------------

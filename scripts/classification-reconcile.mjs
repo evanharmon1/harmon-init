@@ -16,6 +16,13 @@
 // `impact:*`/`risk:*`/`complexity:*` labels on personal-account ones; a field
 // wins over a label of the same axis, and a disagreement is reported.
 //
+// "Triaged" (D6) needs a Type (native, or a non-retired work-type label) and
+// exactly one recognized, non-retired value of each of impact, risk,
+// complexity, area, layer and domain, read from this repository's
+// label-registry.json. A conflicted axis, a retired value, or an unknown one
+// does not classify its axis. With the registry unreadable every axis is
+// unverifiable, and `needs-triage` is left as it is.
+//
 // The derivation is the policy reader's `deriveTier` over the governing
 // `.devflow.toml`'s [tier.matrix]. This script never re-implements the
 // matrix: a reader that is missing, lacks `deriveTier`, or throws while
@@ -59,6 +66,12 @@ export const FIELD_AXES = Object.freeze([
 ])
 // Label-only required families (D6): one each, or that family's `none`.
 export const LABEL_FAMILY_PREFIXES = Object.freeze(['area:', 'layer:', 'domain:'])
+// Every family "triaged" requires (D6). Each is exclusive in the registry, so
+// an axis counts only with exactly one recognized, non-retired value.
+export const REQUIRED_FAMILIES = Object.freeze([
+  ...FIELD_AXES.map((a) => a.axis),
+  ...LABEL_FAMILY_PREFIXES.map((p) => p.slice(0, -1))
+])
 
 // The label prefixes that are INPUTS to the Tier or to "triaged". The event
 // workflow's job-level `if` lists exactly these (plus the work-type labels);
@@ -76,19 +89,24 @@ export const INPUT_LABEL_PREFIXES = Object.freeze([
 // organization-repository field edit is repaired by the schedule.
 export const EVENT_TYPES = Object.freeze(['opened', 'labeled', 'unlabeled', 'typed', 'untyped'])
 
-/** Work-type label names from a parsed label-registry.json. */
-export function workTypeLabels(registry) {
-  const family = (registry?.families ?? []).find((f) => f.family === 'work-type')
-  if (!family) throw new Error('label-registry.json has no work-type family')
-  return (family.values ?? family.labels ?? []).map((v) =>
-    typeof v === 'string' ? v : (v.value ?? v.name)
-  )
-}
-
-/** Is `name` a label whose change can alter the Tier or "triaged"? */
-export function isInputLabel(name, workTypes) {
-  if (typeof name !== 'string') return false
-  return INPUT_LABEL_PREFIXES.some((p) => name.startsWith(p)) || workTypes.includes(name)
+/**
+ * The active vocabulary of a parsed label-registry.json: the non-retired work
+ * types and the recognized, non-retired values of every required family.
+ * Throws when the registry lacks one of them.
+ */
+export function activeVocabulary(registry) {
+  const families = registry?.families
+  if (!Array.isArray(families)) throw new Error('label-registry.json has no families array')
+  const active = (name) => {
+    const family = families.find((f) => f.family === name)
+    if (!family || !Array.isArray(family.values)) {
+      throw new Error(`label-registry.json has no ${name} family values`)
+    }
+    return family.values.filter((v) => !v.retired).map((v) => v.value)
+  }
+  const recognized = {}
+  for (const name of REQUIRED_FAMILIES) recognized[name] = active(name)
+  return { workTypes: active('work-type'), recognized }
 }
 
 /** The only labels this script may ever add or remove. */
@@ -101,36 +119,55 @@ export function assertWritable(label) {
   return label
 }
 
-function axisValue(issue, { axis, field, prefix }, reports) {
-  const fromField = (issue.fields ?? {})[field] ?? null
-  const fromLabels = [
-    ...new Set(issue.labels.filter((l) => l.startsWith(prefix)).map((l) => l.slice(prefix.length)))
-  ]
-  if (fromField !== null) {
-    if (fromLabels.some((v) => v !== fromField)) {
+// One required family's state. `value` is the single value read (a field wins
+// over a same-axis label), or null when absent or conflicted; `applied` is true
+// only when that value is in the active taxonomy. `recognized` null means the
+// registry is unreadable, so nothing can be applied.
+function axisState(issue, family, recognized, reports) {
+  const prefix = `${family}:`
+  const spec = FIELD_AXES.find((a) => a.axis === family)
+  const fieldValue = spec ? ((issue.fields ?? {})[spec.field] ?? null) : null
+  const labelValues = issue.labels
+    .filter((l) => l.startsWith(prefix))
+    .map((l) => l.slice(prefix.length))
+  let value
+  if (fieldValue !== null) {
+    if (labelValues.some((v) => v !== fieldValue)) {
       reports.push({
         code: 'field-label-conflict',
-        message: `${field} field is ${fromField} but labels say ${fromLabels.join(', ')}; the field wins`
+        message: `${spec.field} field is ${fieldValue} but labels say ${labelValues.join(', ')}; the field wins`
       })
     }
-    return { present: true, value: fromField }
-  }
-  if (fromLabels.length === 0) return { present: false, value: null }
-  if (fromLabels.length > 1) {
+    value = fieldValue
+  } else if (labelValues.length === 0) {
+    return { value: null, applied: false }
+  } else if (labelValues.length > 1) {
     reports.push({
-      code: 'ambiguous-input',
-      message: `${fromLabels.length} ${axis} labels (${fromLabels.join(', ')}); no ${axis} value is read`
+      code: 'conflicted-axis',
+      message: `${labelValues.length} ${family} labels (${labelValues.join(', ')}); ${family} is not classified`
     })
-    return { present: true, value: null }
+    return { value: null, applied: false }
+  } else {
+    value = labelValues[0]
   }
-  return { present: true, value: fromLabels[0] }
+  if (recognized === null) return { value, applied: false }
+  if (!recognized[family].includes(value)) {
+    reports.push({
+      code: 'unrecognized-value',
+      message: `${family} ${JSON.stringify(value)} is not in the active taxonomy (retired or unknown); ${family} is not classified`
+    })
+    return { value, applied: false }
+  }
+  return { value, applied: true }
 }
 
 /**
  * The decision function. Pure: no I/O.
  *
- * issue:  { labels: string[], issueType: string|null, fields: { Impact?, Risk?, Complexity? } }
- * ctx:    { workTypes: string[], derive: ((risk, complexity) => tier) | null, underivable: string|null }
+ * issue:  { labels: string[], issueType: string|null, fields: { Impact?, Risk?, Complexity? },
+ *           truncated?: string|null }
+ * ctx:    { vocabulary: activeVocabulary(...) | null (registry unreadable),
+ *           derive: ((risk, complexity) => tier) | null, underivable: string|null }
  *
  * Returns { add: string[], remove: string[], reports: {code, message}[], tier, triaged }.
  */
@@ -139,20 +176,30 @@ export function decide(issue, ctx) {
   const reports = []
   const add = []
   const remove = []
-  const values = {}
-  let inputsPresent = true
-  for (const spec of FIELD_AXES) {
-    const v = axisValue(issue, spec, reports)
-    values[spec.axis] = v.value
-    if (!v.present) inputsPresent = false
+  if (issue.truncated) {
+    // A partial read could hide tier:pinned or an input: decide nothing.
+    reports.push({
+      code: 'truncated',
+      message: `the issue's ${issue.truncated} exceed one page; skipped rather than decided on a partial read`
+    })
+    return { add, remove, reports, tier: null, triaged: null }
   }
-  const hasType = Boolean(issue.issueType) || labels.some((l) => ctx.workTypes.includes(l))
-  const familiesPresent = LABEL_FAMILY_PREFIXES.every((p) => labels.some((l) => l.startsWith(p)))
-  const triaged = hasType && familiesPresent && inputsPresent
+  const vocabulary = ctx.vocabulary
+  const states = {}
+  for (const family of REQUIRED_FAMILIES) {
+    states[family] = axisState(issue, family, vocabulary?.recognized ?? null, reports)
+  }
+  const values = { risk: states.risk.value, complexity: states.complexity.value }
 
-  // needs-triage is derived (D6), pinned or not.
-  if (triaged && labels.includes(NEEDS_TRIAGE)) remove.push(NEEDS_TRIAGE)
-  if (!triaged && !labels.includes(NEEDS_TRIAGE)) add.push(NEEDS_TRIAGE)
+  // needs-triage is derived (D6), pinned or not. With the registry unreadable
+  // every axis is unverifiable, so needs-triage is left as it is.
+  let triaged = null
+  if (vocabulary) {
+    const hasType = Boolean(issue.issueType) || labels.some((l) => vocabulary.workTypes.includes(l))
+    triaged = hasType && REQUIRED_FAMILIES.every((f) => states[f].applied)
+    if (triaged && labels.includes(NEEDS_TRIAGE)) remove.push(NEEDS_TRIAGE)
+    if (!triaged && !labels.includes(NEEDS_TRIAGE)) add.push(NEEDS_TRIAGE)
+  }
 
   const tierLabels = labels.filter((l) => TIER_VALUES.some((t) => l === `tier:${t}`))
   if (labels.includes(RETIRED_TIER_LABEL)) {
@@ -261,8 +308,9 @@ const ISSUE_FIELDS = `
   number
   url
   issueType { name }
-  labels(first: 100) { nodes { name } }
+  labels(first: 100) { pageInfo { hasNextPage } nodes { name } }
   issueFieldValues(first: 50) {
+    pageInfo { hasNextPage }
     nodes {
       ... on IssueFieldSingleSelectValue { name field { ... on IssueFieldSingleSelect { name } } }
     }
@@ -279,7 +327,16 @@ function normalizeIssue(node) {
     url: node.url,
     issueType: node.issueType?.name ?? null,
     labels: (node.labels?.nodes ?? []).map((l) => l.name),
-    fields
+    fields,
+    // decide() skips an issue whose labels or field values span more than one
+    // page: a partial read could hide tier:pinned or an input.
+    truncated:
+      [
+        node.labels?.pageInfo?.hasNextPage ? 'labels' : null,
+        node.issueFieldValues?.pageInfo?.hasNextPage ? 'issue field values' : null
+      ]
+        .filter(Boolean)
+        .join(' and ') || null
   }
 }
 
@@ -363,6 +420,37 @@ export function parseRepositories(raw, fallback) {
   return repos
 }
 
+// Apply one issue's plan. Re-reads before writing (a human may have pinned or
+// re-classified since the walk read the issue), and again after the add: the
+// labels API has no compare-and-swap, so a pin that lands between the add and
+// the deletes stops the Tier deletes instead of losing the pinned value.
+export async function applyPlan(client, owner, name, number, ctx) {
+  const fresh = await fetchIssue(client, owner, name, number)
+  if (!fresh) return { add: [], remove: [], reports: [] }
+  const plan = decide(fresh, ctx)
+  const path = `/repos/${owner}/${name}/issues/${number}/labels`
+  if (plan.add.length > 0) {
+    await client.rest('POST', path, { labels: plan.add.map(assertWritable) })
+  }
+  let removals = plan.remove
+  const tierRemovals = removals.filter((l) => l !== NEEDS_TRIAGE)
+  if (plan.add.length > 0 && tierRemovals.length > 0) {
+    const after = await fetchIssue(client, owner, name, number)
+    if (!after || after.labels.includes(PIN_LABEL)) {
+      removals = removals.filter((l) => l === NEEDS_TRIAGE)
+      plan.remove = removals
+      plan.reports.push({
+        code: 'pin-appeared',
+        message: `${PIN_LABEL} appeared during the write; ${tierRemovals.join(', ')} left for a human`
+      })
+    }
+  }
+  for (const l of removals) {
+    await client.rest('DELETE', `${path}/${encodeURIComponent(assertWritable(l))}`)
+  }
+  return plan
+}
+
 async function main() {
   const root = process.cwd()
   const dryRun = process.env.RECONCILE_DRY_RUN === 'true'
@@ -375,75 +463,88 @@ async function main() {
   const token = process.env.GH_TOKEN
   if (!token) throw new Error('GH_TOKEN is not set')
 
-  const workTypes = workTypeLabels(
-    JSON.parse(readFileSync(resolvePath(root, 'label-registry.json'), 'utf8'))
-  )
-  const derivation = await loadDerivation(root)
-  const ctx = { workTypes, derive: derivation.derive, underivable: derivation.underivable }
-  const client = makeClient(token)
   const summary = []
   const log = (line) => {
     console.log(line)
     summary.push(line)
   }
-  if (derivation.derive === null) {
-    console.log(
-      `::warning title=classification reconcile::tier not derivable: ${derivation.underivable}; maintaining ${NEEDS_TRIAGE} only`
+  const warnRun = (headline, detail) => {
+    console.log(`::warning title=classification reconcile::${headline}`)
+    summary.push(`> **${detail}**`, '')
+  }
+
+  let vocabulary = null
+  try {
+    vocabulary = activeVocabulary(
+      JSON.parse(readFileSync(resolvePath(root, 'label-registry.json'), 'utf8'))
     )
-    summary.push(
-      `> **Tier not derivable:** ${derivation.underivable}. \`${NEEDS_TRIAGE}\` is still maintained; no Tier is written.`,
-      ''
+  } catch (err) {
+    warnRun(
+      `label-registry.json is unreadable (${err.message}); every axis is unverifiable and ${NEEDS_TRIAGE} is left as it is`,
+      `label-registry.json is unreadable: ${err.message}. Every axis is unverifiable; \`${NEEDS_TRIAGE}\` is left as it is.`
     )
   }
+  const derivation = await loadDerivation(root)
+  if (derivation.derive === null) {
+    warnRun(
+      `tier not derivable: ${derivation.underivable}; no Tier is written`,
+      `Tier not derivable: ${derivation.underivable}. No Tier is written.`
+    )
+  }
+  const ctx = { vocabulary, derive: derivation.derive, underivable: derivation.underivable }
+  const client = makeClient(token)
   log(`| Issue | Added | Removed | Reports |`)
   log(`|---|---|---|---|`)
 
   let changed = 0
   let seen = 0
+  const failed = []
+  // One repository's failure (renamed, inaccessible, rate-limited) never
+  // stops the rest of the list; the run fails after the whole list.
   for (const repo of repos) {
     const [owner, name] = repo.split('/')
-    const issues =
-      issueNumber > 0
-        ? [await fetchIssue(client, owner, name, issueNumber)].filter(Boolean)
-        : openIssues(client, owner, name)
-    for await (const issue of issues) {
-      seen += 1
-      let plan = decide(issue, ctx)
-      if (!dryRun && (plan.add.length > 0 || plan.remove.length > 0)) {
-        // Re-read immediately before writing: a human may have pinned or
-        // re-classified since the walk read this issue.
-        const fresh = await fetchIssue(client, owner, name, issue.number)
-        plan = fresh ? decide(fresh, ctx) : { add: [], remove: [], reports: [] }
-        const path = `/repos/${owner}/${name}/issues/${issue.number}/labels`
-        if (plan.add.length > 0)
-          await client.rest('POST', path, { labels: plan.add.map(assertWritable) })
-        for (const l of plan.remove)
-          await client.rest('DELETE', `${path}/${encodeURIComponent(assertWritable(l))}`)
+    try {
+      const issues =
+        issueNumber > 0
+          ? [await fetchIssue(client, owner, name, issueNumber)].filter(Boolean)
+          : openIssues(client, owner, name)
+      for await (const issue of issues) {
+        seen += 1
+        let plan = decide(issue, ctx)
+        if (!dryRun && (plan.add.length > 0 || plan.remove.length > 0)) {
+          plan = await applyPlan(client, owner, name, issue.number, ctx)
+        }
+        // The run-wide "not derivable" reason is reported once above.
+        const reports = plan.reports.filter((r) => r.code !== 'tier-not-derivable')
+        for (const r of reports) {
+          console.log(`::warning title=${repo}#${issue.number} ${r.code}::${r.message}`)
+        }
+        if (plan.add.length > 0 || plan.remove.length > 0 || reports.length > 0) {
+          if (plan.add.length > 0 || plan.remove.length > 0) changed += 1
+          const cell = (xs) => xs.map((x) => `\`${x}\``).join(' ') || '—'
+          log(
+            `| ${repo}#${issue.number} | ${cell(plan.add)} | ${cell(plan.remove)} | ${reports.map((r) => `${r.code}: ${r.message}`).join('<br>') || '—'} |`
+          )
+        }
       }
-      // Ambiguity and pins are reported per issue; the run-wide "not
-      // derivable" reason is reported once above.
-      const reports = plan.reports.filter((r) => r.code !== 'tier-not-derivable')
-      for (const r of reports)
-        console.log(`::warning title=${repo}#${issue.number} ${r.code}::${r.message}`)
-      if (plan.add.length > 0 || plan.remove.length > 0 || reports.length > 0) {
-        if (plan.add.length > 0 || plan.remove.length > 0) changed += 1
-        const cell = (xs) => xs.map((x) => `\`${x}\``).join(' ') || '—'
-        log(
-          `| ${repo}#${issue.number} | ${cell(plan.add)} | ${cell(plan.remove)} | ${reports.map((r) => `${r.code}: ${r.message}`).join('<br>') || '—'} |`
-        )
-      }
+    } catch (err) {
+      failed.push(repo)
+      console.log(`::error title=classification reconcile ${repo}::${err.message}`)
+      summary.push(`> **${repo} failed:** ${err.message}`, '')
     }
   }
   log('')
   log(
     `${dryRun ? 'Dry run: would change' : 'Changed'} ${changed} of ${seen} open issue(s) in ${repos.join(', ')}.`
   )
+  if (failed.length > 0) log(`Failed: ${failed.join(', ')}.`)
   if (process.env.GITHUB_STEP_SUMMARY) {
     appendFileSync(
       process.env.GITHUB_STEP_SUMMARY,
       `## Classification reconcile\n\n${summary.join('\n')}\n`
     )
   }
+  if (failed.length > 0) process.exitCode = 1
 }
 
 const isMain = process.argv[1] && fileURLToPath(import.meta.url) === resolvePath(process.argv[1])
