@@ -103,6 +103,18 @@ else
     # github.com is the last resort when there is no origin to read.
     origin_url="$(git -C "${SCRIPT_DIR}/.." config --get remote.origin.url 2>/dev/null || true)"
     origin_authority=""
+    # git's rule (transport_get): <transport>::<address> is remote-helper syntax only
+    # when what precedes the first '::' is non-empty and made of URL-scheme characters.
+    # Any other '::' (an scp-like path such as host:owner/repo::backup) is not one.
+    origin_helper=""
+    case "${origin_url}" in
+    *::*)
+        case "${origin_url%%::*}" in
+        "" | *[!A-Za-z0-9+.-]*) ;;
+        *) origin_helper=1 ;;
+        esac
+        ;;
+    esac
     case "${origin_url}" in
     *://*) # scheme://[user@]host[:port]/path
         origin_authority="${origin_url#*://}"
@@ -113,14 +125,32 @@ else
         *) origin_authority="${origin_authority%%:*}" ;; # ssh:// etc: the port is not the https port
         esac
         ;;
-    *::*) # <transport>::<address> (gitremote-helpers(7)): a remote-helper URL names no host, so fall back
-        ;;
     *:*) # scp-like [user@]host:path (no port; the colon starts the path) — git's rule: no '/' before the first colon
-        origin_authority="${origin_url%%:*}"
-        case "${origin_authority}" in
-        */* | ?) origin_authority="" ;; # a local path, or a drive letter (C:/…)
-        *) origin_authority="${origin_authority##*@}" ;;
-        esac
+        if [ -n "${origin_helper}" ]; then
+            : # <transport>::<address> (gitremote-helpers(7)): a remote-helper URL names no host, so fall back
+        else
+            origin_authority="${origin_url%%:*}"
+            case "${origin_authority}" in
+            \[* | *@\[*)                              # a bracketed (IPv6) host: the first colon is inside the brackets, so take [host] whole
+                origin_authority="${origin_url%%\[*}" # '' or 'user@': the part before the bracket
+                case "${origin_authority}" in
+                */*) origin_authority="" ;; # a local path
+                *)
+                    origin_authority="${origin_url#"${origin_authority}"}"
+                    case "${origin_authority}" in
+                    \[?*\]:*) origin_authority="${origin_authority%%\]:*}]" ;; # the brackets stay in the HTTPS authority
+                    *) origin_authority="" ;;                                  # no matching ']:' — not a usable host
+                    esac
+                    case "${origin_authority}" in
+                    */*) origin_authority="" ;;
+                    esac
+                    ;;
+                esac
+                ;;
+            */* | ?) origin_authority="" ;; # a local path, or a drive letter (C:/…)
+            *) origin_authority="${origin_authority##*@}" ;;
+            esac
+        fi
         ;;
     esac
     GIT_BASE_URL="https://${origin_authority:-github.com}/"
