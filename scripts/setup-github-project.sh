@@ -550,7 +550,7 @@ create_text "Product"
 # `suggest:*` label family (registry-driven via setup-github-labels.sh) plus
 # the `Status: Agent Queue` lane; the live claim is a `claim:*` label written
 # by the agent itself. A single-select field could carry neither answer without
-# duplicating the label vocabulary (docs/project-management.md, ADR 0005 D4).
+# duplicating the label vocabulary (docs/project-management.md, ADR 2026-08-07 D4).
 # There is likewise deliberately no Domain or Layer field (#875) — same
 # reasoning as Agent: the `domain:`/`layer:` labels in setup-github-labels.sh
 # are the only surface now. See docs/project-management.md, "Label or field?".

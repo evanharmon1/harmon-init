@@ -125,7 +125,7 @@ if (errors.length === 0) {
 
     // Provider-rewired harnesses are named claude-code-<fixed-family>, optionally
     // with a -local suffix for a local-endpoint variant of the same family (ADR
-    // 0005 D9 amendment) — claude-code-qwen-local stays fixed to family "qwen",
+    // 2026-08-07 D9 amendment) — claude-code-qwen-local stays fixed to family "qwen",
     // not a separate "qwen-local" family.
     if (harness.provider_rewired) {
       const expected = constraint.kind === 'fixed' ? `claude-code-${constraint.family}` : null

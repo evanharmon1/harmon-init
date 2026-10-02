@@ -383,7 +383,7 @@ is the `suggest:*` label family plus the `Status: Agent Queue` lane; which agent
 neither answer without duplicating the label vocabulary, and on an organization
 the Projects V2 API could not even write it — see
 [Label or field?](#label-or-field) and
-[ADR 0005](decisions/0005-unified-agent-vocabulary.md).
+[ADR 2026-08-07](decisions/2026-08-07-unified-agent-vocabulary.md).
 
 There is likewise deliberately **no `Domain` or `Layer` field** (#875). Both
 used to exist as a field *and* a label — `domain:` / `layer:` below — with
@@ -500,10 +500,14 @@ the taxonomy table below is generated from) and the starter set is created by
   accessibility, performance, tech debt, internationalization
 - **Source** — where the work came from (a customer request, AI authorship) —
   durable provenance, never removed
-- **Initiative** — the horizon of a top-level parent issue: `epic` for a
-  time-bound deliverable, or `umbrella` for an enduring area, topic, or team.
-  These human-written labels describe the parent; sub-issues remain the source
-  of the parent/child relationship
+- **Initiative** — the horizon of a parent issue: `epic` for a time-bound
+  deliverable, or `umbrella` for an enduring area, topic, or team — or for a
+  `(HUMAN):`/`(QA):` collector (see **Human-task and QA collectors** below).
+  These labels describe the issue; sub-issues remain the source of the
+  parent/child relationship
+- **Human work** — `human` marks work only a human can do or verify. Agents
+  may file a `human` issue or append to one, but never claim, arm, or
+  implement it
 - **Workflow** — transient triage states; `blocked` is the non-issue-blocker
   flag described above
 - **Layer** — which stack slice the change lives in
@@ -537,15 +541,16 @@ the taxonomy table below is generated from) and the starter set is created by
   Two present are **ambiguous**, not resolved to either: unlike rigor's
   more-or-less continuum, topologies have no rank between them, so a
   conflict is a resolution error rather than a silent pick.
-- **Tier** — which model-routing stratum works a specific **role** —
-  orchestrator, implementer, reviewer, challenger, or integrator — advisory,
-  human-written, and inert
-  until a consumer resolves it under its own trust model. An unqualified
-  `tier:<value>` refines the **implementer** role only; a scoped
+- **Tier** — the model-routing stratum an issue runs at. An unqualified
+  `tier:<value>` label is the issue's stored Tier, a cache of the derived Tier,
+  or the pinned Tier with `tier:pinned`; it is not a role override, and only an
+  unqualified operator instruction targets the **implementer** role. A scoped
   `tier:orchestrator:<value>` / `tier:implementer:<value>` /
   `tier:reviewer:<value>` / `tier:challenger:<value>` /
-  `tier:integrator:<value>` targets exactly the role it names. Absent any
-  override, all five roles come from the resolved rigor level. All 25
+  `tier:integrator:<value>` is a role override — advisory, human-written, and
+  inert until a consumer resolves it under its own trust model — and targets
+  exactly the role it names. Absent any override, all five roles come from the
+  resolved rigor level. All 25
   scoped values (5 roles × 5 concrete tiers) are **provisioned** like every
   other tier value, not created on demand.
 
@@ -764,28 +769,37 @@ deliberately leaves it alone.
 |---|---|---|---|---|
 | `sec`, `a11y`, `perf`, `tech-debt`, `i18n`, `l10n` | humans, at triage | humans, saved views | provisioned; inert | applied when true, removed when not |
 | `customer-request`, `ai-generated` | whoever files or authors the work, human or agent | humans, saved views | provisioned; inert | durable provenance — never removed |
-| `epic`, `umbrella` | humans, at planning or grooming | humans, saved views | provisioned; inert | applied to a parent while its role is current; removed or changed when its horizon changes |
+| `epic`, `umbrella` | humans, at planning or grooming; agents when filing a (HUMAN)/(QA) collector or an approved breakdown | humans, saved views | provisioned; inert | applied to a parent while its role is current; removed or changed when its horizon changes |
+| `human` | whoever files the human-only issue, human or agent | humans, saved views; agents, to skip dispatch | provisioned; inert | applied while only a human can do the work; removed if it becomes dispatchable |
 | `needs-triage` | humans, the issue forms, and the triage skill | humans, the Triage view | provisioned; inert | added freely at filing; removed only when classification is complete |
 | `needs-requirements`, `blocked`, `waiting`, `needs-decision`, `needs-response`, `needs-communication` | humans, at triage | humans, the Triage view | provisioned; inert | transient — removed as soon as the state clears |
+| `needs-review` | the integration stage, at ready-for-review; humans | humans, the review list; the agent queue, which excludes it | provisioned; inert | added at ready-for-review, when `claim:*` is removed; removed if review pulls the work back into fix rounds |
 | `bug`, `feature`, `task`, `research` | the issue forms on personal-account repos; humans or agents at triage | humans, saved views | provisioned; inert | durable classification — org repos use native issue Type and no work-type label |
 | `documentation` | GitHub ships it at repo creation; humans or agents apply it at triage | humans, saved views | not provisioned — a GitHub repo-creation default adopted into the work-type vocabulary | durable classification — org repos use native issue Type and no work-type label |
 | `question` | GitHub ships it at repo creation; humans or agents apply it at triage | humans, saved views | not provisioned — a GitHub repo-creation default adopted into the work-type vocabulary | durable classification — org repos use native issue Type and no work-type label |
 | `dependencies` | Renovate, when it manages dependency updates | humans, saved views | not provisioned — Renovate creates it on demand; never deleted by setup | tool-managed by Renovate |
 | `enhancement` (**retired**) | nobody — replaced by `feature` | humans, saved views | retired — the GitHub repo-creation default this vocabulary replaces with `feature`; never provisioned | use guarded `--prune` with `--migrate enhancement=feature` |
-| `layer:{ui,logic,data,integration,infra}` | humans or agents, at triage | humans, `gh issue list --label` | provisioned; inert | durable classification; the label family is the only surface — there is no paired project field |
-| `domain:{template,standardization,dev-loop,agent-workflow,project-tracking,auth,delivery,environment}` | humans or agents, at triage | humans, `gh issue list --label` | provisioned; inert | durable classification; the label family is the only surface — there is no paired project field |
+| `layer:{ui,logic,data,integration,infra,none}` | humans or agents, at triage | humans, `gh issue list --label` | provisioned; inert | durable classification; the label family is the only surface — there is no paired project field; `layer:none` records that the axis does not apply |
+| `domain:{template,standardization,dev-loop,agent-workflow,project-tracking,auth,delivery,environment,none}` | humans or agents, at triage | humans, `gh issue list --label` | provisioned; inert | durable classification; the label family is the only surface — there is no paired project field; `domain:none` records that the axis does not apply |
 | `domain:platform` (**retired**) | nobody — retired at root | humans, `gh issue list --label` | retired — split across dev-loop/delivery/environment; never provisioned here | choose replacement domains per record, relabel each record, then use guarded `--prune` only after `domain:platform` reaches zero associations |
 | `domain:billing` (**retired**) | nobody — retired at root | humans, `gh issue list --label` | retired — a generic starter value this repo never needed | choose the replacement, then use guarded `--prune` with `--migrate OLD=NEW` |
-| `area:{copier,devcontainer,ci,tasks,tests,deps,skills,foreman,gauntlet,worktree,release,security,pm,docs}` | humans or agents, at triage | humans, `gh issue list --label` | provisioned; inert | durable classification; area = solution space, domain = problem space, layer = stack slice |
+| `area:{copier,devcontainer,ci,tasks,tests,deps,skills,foreman,gauntlet,worktree,release,security,pm,docs,none}` | humans or agents, at triage | humans, `gh issue list --label` | provisioned; inert | durable classification; area = solution space, domain = problem space, layer = stack slice; `area:none` records that the axis does not apply |
 | `area:template` (**retired**) | nobody — renamed | humans, `gh issue list --label` | retired — renamed to `area:copier` (the engine was what it labeled) | use guarded `--prune` with `--migrate area:template=area:copier` |
 | `area:codex` (**retired**) | nobody — renamed | humans, `gh issue list --label` | retired — renamed to `area:gauntlet`; codex is the current backend, not the stage | use guarded `--prune` with `--migrate area:codex=area:gauntlet` |
+| `impact:{minimal,low,medium,high,massive}` | humans or agents, at triage or filing — agent-authored issues arrive with it set | humans, saved views | provisioned; **advisory** — a required axis for triaged; arms nothing | durable classification; required for an issue to count as triaged |
+| `risk:{trivial,low,medium,high,critical}` | humans or agents, at triage or filing — agent-authored issues arrive with it set | humans, saved views; the Tier derivation (Risk × Complexity) | provisioned; **read by agents** — an input to the derived Tier (Risk × Complexity); arms nothing | durable classification; required for triaged; whoever changes it re-derives the Tier in the same write |
+| `complexity:{xs,s,m,l,xl}` | humans or agents, at triage or filing — agent-authored issues arrive with it set | humans, saved views; the Tier derivation (Risk × Complexity) | provisioned; **read by agents** — an input to the derived Tier (Risk × Complexity); arms nothing | durable classification; required for triaged; whoever changes it re-derives the Tier in the same write |
+| `priority:{urgent,high,medium,low}` | humans only — an agent never sets or changes it | humans, saved views; the agent queue (an issue with no Priority is not queued) | provisioned; **advisory** — orders the agent queue; arms nothing | set by a human when ranking the work; changed as priorities move |
+| `effort:{1,2,3,5,8,13,20}` | humans only, on a human task — agent work carries Complexity instead | humans, saved views | provisioned; **advisory** — a human estimate; arms nothing | set by a human when estimating a human task; agent issues never carry it |
 | `rigor:{cursory,light,standard,thorough,deep,forensic}` | humans, at triage — **never an agent on itself** | agents, when entering the Dev Loop | provisioned; **read by agents** — selects a rounds policy, five role tiers, and a breadth envelope; arms nothing | set when the default rigor is wrong for the change; survives the work |
-| `tier:{local,economy,standard,frontier,apex,adaptive}` | humans, at triage or planning — never an agent on itself | humans and agents — overrides the implementer tier; models are classified in `agent-registry.json` (ADR 0006/0007) | provisioned; **advisory** — resolved against `.devflow.toml`'s `tier_order`; arms nothing | set when the default tier would be wrong; strongest-wins resolution per ADR 0006 |
-| `tier:orchestrator:local`, `tier:orchestrator:economy`, `tier:orchestrator:standard`, `tier:orchestrator:frontier`, `tier:orchestrator:apex`, `tier:implementer:local`, `tier:implementer:economy`, `tier:implementer:standard`, `tier:implementer:frontier`, `tier:implementer:apex`, `tier:reviewer:local`, `tier:reviewer:economy`, `tier:reviewer:standard`, `tier:reviewer:frontier`, `tier:reviewer:apex`, `tier:challenger:local`, `tier:challenger:economy`, `tier:challenger:standard`, `tier:challenger:frontier`, `tier:challenger:apex`, `tier:integrator:local`, `tier:integrator:economy`, `tier:integrator:standard`, `tier:integrator:frontier`, `tier:integrator:apex` | humans, at triage or planning — never an agent on itself | humans and agents — targets exactly the role it names; models are classified in `agent-registry.json` (ADR 0006/0007), unlike the unqualified `tier:<value>` which targets the implementer only | provisioned; **advisory** — resolved against `.devflow.toml`'s `tier_order`; arms nothing | set when one role's tier should differ from the rigor's own profile; strongest-wins per role |
+| `tier:{local,economy,standard,frontier,apex}` | agents, in the write that sets Risk or Complexity, and the GitHub Actions reconciler; humans may set one, and pin it with `tier:pinned` | humans and agents — the issue's derived (or pinned) Tier, an input to the implementer tier; models are classified in `agent-registry.json` (ADR 2026-09-30) | provisioned; **read by agents** — a pin outranks the derived Tier and both rank below an operator instruction; resolved against `.devflow.toml`'s `tier_order`; arms nothing | a materialized cache — rewritten whenever Risk or Complexity changes and by the daily reconciler, recomputed by readers when absent; never rewritten while `tier:pinned` is present |
+| `tier:pinned` | humans only, from the GitHub UI, together with setting the Tier | agents and automation — a pinned Tier is never rewritten | provisioned; **provenance-checked** — an interactive session confirms a pin the operator has not authorized, and unattended automation honors one only after verifying who applied it (ADR 2026-09-30 D5) | added with the Tier value; removed to hand the Tier back to derivation; a human pinning a different tier replaces the existing Tier label first, since two tier values at once is a conflict for the reader to resolve, never one a writer creates |
+| `tier:adaptive` (**retired**) | nobody — retired 2026-10-01 | humans — retired, see the derived Tier (`tier:<value>`) | retired — no rung on the Tier scale (ADR 2026-09-30 D8); never provisioned | remove the label from each issue — it then resolves through its derived Tier — then use guarded `--prune` |
+| `tier:orchestrator:local`, `tier:orchestrator:economy`, `tier:orchestrator:standard`, `tier:orchestrator:frontier`, `tier:orchestrator:apex`, `tier:implementer:local`, `tier:implementer:economy`, `tier:implementer:standard`, `tier:implementer:frontier`, `tier:implementer:apex`, `tier:reviewer:local`, `tier:reviewer:economy`, `tier:reviewer:standard`, `tier:reviewer:frontier`, `tier:reviewer:apex`, `tier:challenger:local`, `tier:challenger:economy`, `tier:challenger:standard`, `tier:challenger:frontier`, `tier:challenger:apex`, `tier:integrator:local`, `tier:integrator:economy`, `tier:integrator:standard`, `tier:integrator:frontier`, `tier:integrator:apex` | humans, at triage or planning — never an agent on itself | humans and agents — targets exactly the role it names; models are classified in `agent-registry.json` (ADR 2026-08-16/2026-08-24), unlike the unqualified `tier:<value>`, which is the issue's stored Tier rather than a role override | provisioned; **advisory** — resolved against `.devflow.toml`'s `tier_order`; arms nothing | set when one role's tier should differ from the rigor's own profile; strongest-wins per role |
 | `method:{oneshot,plan,plan-approved,orchestrate,council,human-led}` (**retired**) | nobody — renamed to strategy:* | humans — retired, see `strategy:*` | retired — execution topology renamed to the `strategy` family; never provisioned | migrate each with guarded `--prune` and repeatable `--migrate method:<v>=strategy:<v>` |
 | `strategy:{oneshot,plan,plan-approved,orchestrate,council,human-led}` | humans, at triage or planning — never an agent on itself | agents, when entering the Dev Loop — Foreman does not consume it yet (out of scope here) | provisioned; **read by agents** — selects an execution topology, arms nothing | set when the default strategy is wrong for the change; survives the work |
-| `suggest:<family>` | humans or agents, at planning | humans, the Agent queue view | provisioned from the registry (family level only); advisory — arms nothing | set at planning; survives the work and is never rewritten by a claim |
-| `suggest:<family>:<model>` | humans or agents, at planning | humans | **tool-owned, created on demand** — seeding every model would be an unbounded roster | refines the family label; apply both |
+| `suggest:<family>` (**retired**) | nobody — superseded by the derived Tier | humans — retired, see `tier:*` | retired — superseded by the derived Tier; never provisioned and no longer rendered from the agent registry | remove the label from each issue — it then resolves through its derived Tier — then use guarded `--prune` (no `--migrate`: nothing replaces a family suggestion one-to-one) |
+| `suggest:<family>:<model>` (**retired**) | nobody — superseded by the derived Tier | humans — retired, see `tier:*` | retired — never provisioned; no tool creates it any more | remove the label from each issue, then use guarded `--prune` |
 | `claim:<family>` | the agent itself — a vendored claim skill, or a Claude Actions run | humans; the Claude Actions claim gate; `claim-release.yml` where the repo ships it | provisioned from the registry; a **gate**, never a trigger | added at claim, removed at release — by the workflow's `always()` step, or by `claim-release.yml` on close where the repo ships it |
 | `claim:<family>:<model>` | the agent itself | humans; the Claude Actions claim gate; `claim-release.yml` where the repo ships it | **tool-owned, created on demand** | refines the family label; added at claim, removed at release |
 | `agent:<harness>` (**retired**) | nobody — never seeded into a new repo | claim skills (and `claim-release.yml` where present), which still recognize it | legacy; inert | after choosing the actual claim family, use guarded `--prune` with repeatable `--migrate OLD=NEW` |
@@ -822,7 +836,7 @@ from one machine-readable source, `agent-registry.json`, validated against
 executable that runs it. `suggest:` and `claim:` name families;
 `foreman:<adapter>` names harness machinery. The reasoning, and the rules for
 naming a family or a harness slug, are in
-[ADR 0005](decisions/0005-unified-agent-vocabulary.md).
+[ADR 2026-08-07](decisions/2026-08-07-unified-agent-vocabulary.md).
 
 The tables below are **generated** from that file — `task test:registry-docs`
 regenerates them and fails on any difference, so they cannot drift from what
@@ -839,15 +853,15 @@ with no adapter behind it is a false capability that can strand armed work.
 | Family | Name | Models |
 | --- | --- | --- |
 | `claude` | Claude | `fable`, `opus`, `sonnet`, `haiku` |
-| `gpt` | GPT | `sol`, `terra`, `luna` |
-| `mai` | MAI | `code-1-flash`, `thinking-1` |
-| `qwen` | Qwen | `max`, `coder-plus`, `coder`, `coder-next`, `coder-30b` |
-| `deepseek` | DeepSeek | `v4-pro`, `v4-flash` |
-| `glm` | GLM | `5-2`, `4-7-flash` |
+| `gpt` | GPT | `astra`, `sol`, `terra`, `luna` |
+| `mai` | MAI | `code-1-1-flash`, `thinking-1` |
+| `qwen` | Qwen | `max`, `coder-plus`, `coder`, `flash`, `coder-next`, `coder-30b` |
+| `deepseek` | DeepSeek | `v4-1-flash`, `v4-pro`, `v4-flash` |
+| `glm` | GLM | `5-3`, `5-2`, `5-3-flash`, `4-7-flash` |
 | `kimi` | Kimi | `k3` |
 | `minimax` | MiniMax | `m3` |
-| `gemini` | Gemini | `3-1-pro`, `3-6-flash`, `3-5-flash-lite` |
-| `mistral` | Mistral | `devstral-small-2` |
+| `gemini` | Gemini | `3-1-pro`, `3-8-flash`, `3-7-flash`, `3-6-flash`, `3-5-flash-lite` |
+| `mistral` | Mistral | `medium-3-5`, `small-4`, `devstral-small-2` |
 
 `Model selected by` values:
 
@@ -1144,9 +1158,9 @@ Ready + priority*. Iteration is a human-cadence concept your agents don't have.
 ## Hierarchy (sub-issues with Epic and umbrella labels)
 
 There's **no Epic type, by design.** GitHub **sub-issues** are the authoritative
-*hierarchy* axis, and **milestones** are the *delivery-batch* axis. The durable,
-human-written `epic` and `umbrella` labels describe a top-level parent issue's
-horizon; they do not create membership, rollups, or inheritance. A
+*hierarchy* axis, and **milestones** are the *delivery-batch* axis. The durable
+`epic` and `umbrella` labels describe a parent issue's horizon; they do not
+create membership, rollups, or inheritance. A
 **sub-issue inherits its parent's Project and Milestone by default** (shipped
 2025-09). Assign them once on the parent and the child tree picks them up — no
 per-child bookkeeping.
@@ -1156,6 +1170,8 @@ to a milestone, whose completion bar and optional due date remain the source of
 delivery tracking. Use **`umbrella`** for a perennial parent that covers an
 enduring area, topic, or team and has no single delivery endpoint. An issue is
 one or the other, never both; both normally gain sub-issues over time.
+`umbrella` also marks the human-task and QA collectors described at the end of
+this section, which gather work rather than decompose it.
 
 So a parent issue "Scheduling v1" in milestone `v1.1.0` pulls its whole subtree
 into that release payload for free. Break big work down with **sub-issues** (up to
@@ -1215,6 +1231,76 @@ before."* If A must finish before B but B isn't part of A, that's a **dependency
 **Blocked is not a status** above) — not a parent-child link. Conflating them
 corrupts the tree; keep composition (sub-issues) and sequencing (dependencies) in
 separate mechanisms.
+
+**Human-task and QA collectors.** Long-running work — a milestone or an `epic`
+— usually needs things only a human can do: set a secret, flip a GitHub or
+vendor setting, approve an account, try the feature by hand. Written as
+required `[HUMAN]` criteria on the issue that surfaced them, each one parks
+that issue: a `Closes #N` fails the closing-keywords check while a box is
+unticked, and an orchestrated run stalls on a human who deliberately circles
+back later. Collect them instead on two kinds of dedicated issue, which differ
+in scope:
+
+| | `(HUMAN): <outcome>` | `(QA): <outcome>` |
+|---|---|---|
+| Collects | human **actions** — credentials, settings, accounts, approvals, purchases, decisions | human **verification** — hands-on, exploratory, or acceptance testing of what shipped |
+| Scope | one per milestone or `epic`, plus one repo-wide for unscoped work | **one per repository** — the standing QA role or team |
+| Placement | in its milestone, and a sub-issue of its `epic` | in no milestone and under no parent; milestones and epics link to it |
+| Lifecycle | closes when every item is ticked | stays open; its checklist is the running QA queue |
+| Labels | `human` + `umbrella`, plus the usual classification and provenance labels | same |
+| Type | `Task` — native Issue Type on org repos, the `task` label on personal repos | same |
+| Example | `(HUMAN): Complete manual setup for v1.2 remote environments` | `(QA): Verify shipped work by hand` |
+
+- **Find it before filing it.** Each collector's `## Provenance` carries one
+  stable scope line: `Collector scope: milestone <number>`,
+  `Collector scope: <owner/repo>#<epic>`, or `Collector scope: repository`
+  for a `(HUMAN):` collector, and always `Collector scope: repository` for
+  the `(QA):` issue. Search all states (`label:human label:umbrella`) and
+  match on the title prefix plus that scope line: append to the open one,
+  reopen a closed one, and never file a second. Whoever meets the first
+  human task files it **lazily**, human or agent. Two writers can still both
+  miss and both file, so whoever finds two open collectors for one scope
+  merges the newer's items into the older, repoints each moved item's
+  source line at the older, and closes the newer as a duplicate.
+- **`(HUMAN):` follows the work.** Its scope is the source issue's
+  milestone; failing that, its `epic`; failing both, the repository. Give it
+  that milestone, and under an `epic` also make it the epic's sub-issue so
+  the epic's rollup stays honest about the human work still owed. An epic's
+  `(HUMAN):` collector lives in the epic's repository, and sources in other
+  repositories cite it as `owner/repo#N`. An item stays on the collector it
+  was filed to even if its source later changes scope, and the collector
+  closes when every box is ticked.
+- **`(QA):` is a role, not a batch.** Each repository has exactly one,
+  standing for its QA role or team. It is never given a milestone, never
+  made a sub-issue, and stays open when its items are all ticked. Milestones
+  and epics reference it — a link in their body, or `Refs` — rather than
+  containing it, and an item can name the milestone or epic it verifies:
+  `- [ ] [HUMAN] Verify remote environments end to end (from #1412, v1.2)`.
+  A cross-repo epic's QA items go to each source repository's own `(QA):`
+  issue.
+- **Each task is one `- [ ] [HUMAN] …` acceptance criterion on its
+  collector**, naming its source:
+  `- [ ] [HUMAN] Add FLY_API_TOKEN to the repo secrets (from #1412)`, with
+  the source written `owner/repo#N` when it lives in another repository.
+  Agents append items; a human ticks them.
+- **The source issue mentions, never blocks.** Record the task on the source
+  issue as a plain line under `## Out of scope` —
+  `Human follow-up (tracked in #1420): add FLY_API_TOKEN` — not as an
+  acceptance criterion, so the issue closes as soon as its agent-verifiable
+  work merges. That line is the durable record and the collector item is its
+  index: an issue-body edit is last-write-wins, so two concurrent appends can
+  drop one item, and the source line is how a later pass finds it again.
+- **A precondition is a dependency, not a follow-up.** When the agent cannot
+  do the work until the human step happens (the secret must exist before the
+  deploy test can run), the step is not a collector item: file it as its own
+  `human` issue and give the source issue a blocked-by edge on it (see
+  **Hierarchy is not dependency**). Closing the human issue unblocks the work
+  through the same graph the dispatchers read.
+- **Never dispatched.** A `human` issue is never claimed, armed with
+  `foreman:*`, or implemented by an agent. Do not rely on tooling to stop
+  it — Foreman, for one, does not read the label — so never arm one. `human` alone marks a standalone
+  human-only issue such as a precondition; `human` + `umbrella` marks a
+  collector.
 
 ## Cross-repo work
 

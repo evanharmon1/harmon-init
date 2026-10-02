@@ -93,6 +93,7 @@ jobs:
       - run: task test:label-registry
 [% if use_codex_review %]
       - run: task test:codex-review
+      - run: task test:remote-codex-policy
 [% endif %]
       - run: task test:ci-results
       - run: task test:status

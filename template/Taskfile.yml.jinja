@@ -124,9 +124,14 @@ tasks:
       - task: test:output
       - task: test:status
       - task: test:gh-scopes
+[% if devcontainer %]
+      - task: test:related-repos
+[% endif %]
+      - task: test:setup-remote
       - task: test:meta-install
 [% if use_codex_review %]
       - task: test:codex-review
+      - task: test:remote-codex-policy
 [% endif %]
       - task: test:lint-hygiene
 [% if use_release_please %]
@@ -154,6 +159,7 @@ tasks:
       - task: test:image-staleness
       - task: test:open-devcontainer
       - task: test:bot-autonomy
+      - task: test:agent-profile
       - task: test:devcontainer-changed
 [% endif %]
       - task: test
@@ -801,6 +807,18 @@ tasks:
     desc: Unit-test the gh scope refresh task's refusals and post-refresh verification (stubbed gh, no network)
     cmds:
       - ./scripts/test-setup-gh-scopes.sh
+[% if devcontainer %]
+
+  test:related-repos:
+    desc: Unit-test the related-repo bootstrap fallback and idempotency (stubbed gh/git, no network)
+    cmds:
+      - ./scripts/test-bootstrap-related-repos.sh
+[% endif %]
+
+  test:setup-remote:
+    desc: Unit-test task setup:remote — idempotency, the lefthook shim, sibling clones into the checkout's parent (stubbed lefthook/gh, no network)
+    cmds:
+      - ./scripts/test-setup-remote.sh
 
   test:meta-install:
     desc: Unit-test the .meta sidecar installer's ~-expansion and refusals
@@ -812,6 +830,11 @@ tasks:
     desc: Unit-test codex-review.sh target selection (offline, stubbed codex)
     cmds:
       - ./scripts/test-codex-review.sh
+
+  test:remote-codex-policy:
+    desc: Guard the remote second-model rule — no Codex credential vocabulary on a remote-environment surface (offline)
+    cmds:
+      - ./scripts/test-remote-codex-policy.sh
 [% endif %]
 
   test:lint-hygiene:
@@ -871,6 +894,15 @@ tasks:
     cmds:
       - ./scripts/devcontainer-smoke.sh .devcontainer/dev/devcontainer.json
 
+  test:devcontainer:agent:
+    # Builds and starts the agent posture, then proves live what its unit test
+    # proves statically: the egress filter refuses an unlisted host and records
+    # it, refused harnesses stay refused, and no forbidden credential or Docker
+    # reached the container. Needs Docker, like the other smoke tasks.
+    desc: Smoke test the agent (unattended) devcontainer via the devcontainers CLI
+    cmds:
+      - ./scripts/devcontainer-smoke.sh .devcontainer/agent/devcontainer.json
+
   test:devcontainer:permissions:
     desc: Unit-assert devcontainer permission invariants (no container needed)
     cmds:
@@ -905,6 +937,14 @@ tasks:
     desc: Unit-test bot-autonomy.sh's registry coverage, Codex parity, and per-module fixtures (no container needed)
     cmds:
       - ./scripts/test-bot-autonomy.sh
+
+  test:agent-profile:
+    # Wired into `verify` with no devcontainer paths: filter, like
+    # test:bot-autonomy — the agent posture's single source, deny list, env
+    # guard, Docker rule, and egress list are checked on every PR.
+    desc: Unit-test the agent posture (single source, Claude/Codex policy, env guard, Docker, egress; no container needed)
+    cmds:
+      - ./scripts/test-agent-profile.sh
 
   test:devcontainer-changed:
     desc: Unit-test the devcontainer-build.yml change detector (devcontainer-changed.sh)
@@ -1123,6 +1163,11 @@ tasks:
     desc: Install git hooks via lefthook
     cmds:
       - lefthook install
+
+  setup:remote:
+    desc: Prepare this checkout for the dev loop on a remote platform (no devcontainer hooks) — git hooks, frozen dependencies, related repos beside it. Idempotent
+    cmds:
+      - ./scripts/setup-remote.sh
 
   # ── GitHub setup ───────────────────────────────────────────────
   # One-time, idempotent repo settings applied via gh (safe to re-run); run once

@@ -6,14 +6,14 @@ ARG IMAGE_REVISION
 
 # ---------- version pins ----------
 # The producer is the one canonical owner of shared devcontainer tool pins.
-# renovate: datasource=github-releases depName=go-task/task extractVersion=^v?(?<version>.+)$
-ARG TASK_VERSION=3.53.1
-# renovate: datasource=github-releases depName=mvdan/sh extractVersion=^v?(?<version>.+)$
-ARG SHFMT_VERSION=3.14.1
-# renovate: datasource=github-releases depName=hadolint/hadolint extractVersion=^v?(?<version>.+)$
-ARG HADOLINT_VERSION=2.15.1
-# renovate: datasource=github-releases depName=rhysd/actionlint extractVersion=^v?(?<version>.+)$
-ARG ACTIONLINT_VERSION=1.7.12
+#
+# IMAGE-ONLY pins live here. Every pin on the REMOTE path lives in
+# ./versions.env instead, because bootstrap-remote.sh installs those tools by
+# running the very scripts this Dockerfile runs (./install/), from that one
+# file — so the devcontainer and every remote environment move together and a
+# remote bootstrap cannot pin anything the image does not. Put a new pin here
+# only when the remote path will never install the tool;
+# scripts/test-bootstrap-remote.sh fails if the two sets ever overlap.
 # renovate: datasource=github-releases depName=terraform-docs/terraform-docs extractVersion=^v?(?<version>.+)$
 ARG TERRAFORM_DOCS_VERSION=0.24.0
 # renovate: datasource=github-releases depName=hashicorp/terraform extractVersion=^v?(?<version>.+)$
@@ -24,8 +24,6 @@ ARG TFLINT_VERSION=0.64.0
 # update these reviewed, architecture-specific digests with each release.
 ARG TFLINT_SHA256_AMD64=cca9d13e2e1d7a2c627af60ff899a3c9b74212899416aeb96ec764d2ef954537
 ARG TFLINT_SHA256_ARM64=560da89aacf59389d4eb029730dd5b109b7288096c32f2726a0d9e783a5ea8eb
-# renovate: datasource=github-releases depName=mikefarah/yq extractVersion=^v?(?<version>.+)$
-ARG YQ_VERSION=4.53.6
 # renovate: datasource=github-releases depName=zellij-org/zellij extractVersion=^v?(?<version>.+)$
 ARG ZELLIJ_VERSION=0.45.1
 # renovate: datasource=github-releases depName=raine/workmux extractVersion=^v?(?<version>.+)$
@@ -34,8 +32,6 @@ ARG WORKMUX_VERSION=0.1.263
 ARG AOE_VERSION=1.16.1
 # renovate: datasource=npm depName=@anthropic-ai/claude-code
 ARG CLAUDE_CODE_VERSION=2.1.278
-# renovate: datasource=npm depName=@openai/codex
-ARG CODEX_VERSION=0.155.1
 # renovate: datasource=npm depName=@github/copilot
 ARG COPILOT_VERSION=1.0.86
 # renovate: datasource=npm depName=@earendil-works/pi-coding-agent
@@ -67,14 +63,6 @@ ARG SESH_VERSION=2.29.0
 ARG HERDR_VERSION=0.8.2
 # renovate: datasource=npm depName=dmux
 ARG DMUX_VERSION=5.11.1
-# renovate: datasource=pypi depName=semgrep
-ARG SEMGREP_VERSION=1.177.0
-# renovate: datasource=pypi depName=copier
-ARG COPIER_VERSION=9.18.2
-# renovate: datasource=npm depName=@playwright/test
-ARG PLAYWRIGHT_VERSION=1.63.0
-# renovate: datasource=npm depName=@playwright/cli
-ARG PLAYWRIGHT_CLI_VERSION=0.1.21
 # renovate: datasource=github-releases depName=getsops/sops extractVersion=^v?(?<version>.+)$
 ARG SOPS_VERSION=3.13.3
 # renovate: datasource=github-releases depName=nektos/act extractVersion=^v?(?<version>.+)$
@@ -111,23 +99,10 @@ ARG ONEFETCH_VERSION=2.28.1
 ARG WTF_VERSION=0.50.0
 # renovate: datasource=github-releases depName=ducaale/xh extractVersion=^v?(?<version>.+)$
 ARG XH_VERSION=0.26.2
-# renovate: datasource=github-releases depName=evilmartians/lefthook extractVersion=^v?(?<version>.+)$
-ARG LEFTHOOK_VERSION=2.1.14
-# renovate: datasource=github-releases depName=gitleaks/gitleaks extractVersion=^v?(?<version>.+)$
-ARG GITLEAKS_VERSION=8.30.1
-# renovate: datasource=github-releases depName=lycheeverse/lychee extractVersion=^lychee-v(?<version>.+)$
-ARG LYCHEE_VERSION=0.24.2
 # renovate: datasource=github-releases depName=alexpasmantier/television extractVersion=^v?(?<version>.+)$
 ARG TV_VERSION=0.15.9
-# renovate: datasource=github-releases depName=astral-sh/uv extractVersion=^v?(?<version>.+)$
-ARG UV_VERSION=0.12.17
 # renovate: datasource=github-releases depName=starship/starship extractVersion=^v?(?<version>.+)$
 ARG STARSHIP_VERSION=1.26.0
-
-# NODE_MAJOR is intentionally unmanaged: major upgrades are a compatibility
-# decision. UV_INSTALL_DIR is installation configuration, not a version pin.
-ARG NODE_MAJOR=24
-ARG UV_INSTALL_DIR=/usr/local/bin
 
 LABEL org.opencontainers.image.source="https://github.com/evanharmon1/harmon-init" \
     org.opencontainers.image.revision="${IMAGE_REVISION}" \
@@ -137,9 +112,22 @@ LABEL org.opencontainers.image.source="https://github.com/evanharmon1/harmon-ini
 
 SHELL ["/bin/bash", "-o", "pipefail", "-c"]
 
+# ---------- shared install scripts ----------
+# The single copy of the toolchain installs. bootstrap-remote.sh runs these
+# same files on a stock Ubuntu VM, which is what makes "the image and the
+# remote environment install the same tools from the same pins" a property of
+# the code rather than a convention two copies are supposed to honour.
+COPY versions.env /usr/local/share/harmon-devcontainer/versions.env
+COPY install/ /usr/local/share/harmon-devcontainer/install/
+RUN chmod 0755 /usr/local/share/harmon-devcontainer/install/*.sh
+
 # ---------- apt packages ----------
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends \
+# The core distribution packages come from install/apt-core.sh (shared with the
+# remote path); the rest are this image's interactive extras, passed as
+# arguments so both sets land in ONE apt transaction. HARMON_IMAGE_BUILD=1 is
+# what lets the script wipe /var/lib/apt/lists afterwards — layer hygiene
+# here, a host's package index on a VM, where it is never wiped.
+RUN HARMON_IMAGE_BUILD=1 /usr/local/share/harmon-devcontainer/install/apt-core.sh \
         bat \
         btop \
         direnv \
@@ -147,7 +135,6 @@ RUN apt-get update \
         eza \
         fd-find \
         ffmpeg \
-        file \
         fzf \
         git-crypt \
         git-delta \
@@ -170,21 +157,17 @@ RUN apt-get update \
         pv \
         ripgrep \
         sd \
-        shellcheck \
         socat \
         strace \
         tealdeer \
         tmux \
         tree \
-        unzip \
         vim \
         w3m \
-        yamllint \
         zip \
         zoxide \
         zsh \
     && git lfs install --system \
-    && rm -rf /var/lib/apt/lists/* \
     && ln -sf /usr/bin/batcat /usr/local/bin/bat \
     && ln -sf /usr/bin/fdfind /usr/local/bin/fd \
     && chsh -s /usr/bin/zsh vscode
@@ -213,53 +196,15 @@ RUN git clone --single-branch https://github.com/gpakosz/.tmux.git "$HOME/.tmux"
 # nosemgrep: dockerfile.security.last-user-is-root.last-user-is-root
 USER root
 
-# ---------- Node.js ----------
-RUN install -d -m 0755 /etc/apt/keyrings \
-    && curl -fsSL https://deb.nodesource.com/gpgkey/nodesource-repo.gpg.key \
-        | gpg --dearmor -o /etc/apt/keyrings/nodesource.gpg \
-    && echo "deb [signed-by=/etc/apt/keyrings/nodesource.gpg] https://deb.nodesource.com/node_${NODE_MAJOR}.x nodistro main" \
-        >/etc/apt/sources.list.d/nodesource.list \
-    && apt-get update \
-    && apt-get install -y --no-install-recommends nodejs \
-    && corepack enable pnpm \
-    && rm -rf /var/lib/apt/lists/*
+# ---------- shared core tier ----------
+# Node, uv, task, lefthook, gh, yq, shfmt, actionlint, hadolint, gitleaks,
+# lychee, semgrep, copier and markdownlint-cli2 — the dev-loop gate, installed
+# by the same script bootstrap-remote.sh runs on a stock Ubuntu VM. Node comes
+# from the checksum-pinned nodejs.org tarball and uv from its checksum-pinned
+# GitHub release: deb.nodesource.com and astral.sh are both denied on the
+# remote VM, and an apt repo pinned only Node's MAJOR anyway.
+RUN /usr/local/share/harmon-devcontainer/install/install-core.sh
 ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
-
-# ---------- task runner ----------
-RUN case "${TARGETARCH}" in \
-        "amd64") export TASK_ARCH="amd64" ;; \
-        "arm64") export TASK_ARCH="arm64" ;; \
-        *) echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
-    esac \
-    && curl -fsSL "https://github.com/go-task/task/releases/download/v${TASK_VERSION}/task_linux_${TASK_ARCH}.tar.gz" \
-        | tar -xz -C /usr/local/bin task
-
-# ---------- code-quality linters ----------
-RUN case "${TARGETARCH}" in \
-        "amd64") export SHFMT_ARCH="amd64" HADOLINT_ARCH="x86_64" ACTIONLINT_ARCH="amd64" ;; \
-        "arm64") export SHFMT_ARCH="arm64" HADOLINT_ARCH="arm64" ACTIONLINT_ARCH="arm64" ;; \
-        *) echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
-    esac \
-    && curl -fsSL "https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}/shfmt_v${SHFMT_VERSION}_linux_${SHFMT_ARCH}" \
-        -o /usr/local/bin/shfmt \
-    && chmod +x /usr/local/bin/shfmt \
-    && curl -fsSL "https://github.com/hadolint/hadolint/releases/download/v${HADOLINT_VERSION}/hadolint-Linux-${HADOLINT_ARCH}" \
-        -o /usr/local/bin/hadolint \
-    && chmod +x /usr/local/bin/hadolint \
-    && curl -fsSL "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_${ACTIONLINT_ARCH}.tar.gz" \
-        | tar -xz -C /usr/local/bin actionlint
-
-# ---------- lefthook + gitleaks ----------
-RUN case "${TARGETARCH}" in \
-        "amd64") export LEFTHOOK_ARCH="x86_64" GITLEAKS_ARCH="x64" ;; \
-        "arm64") export LEFTHOOK_ARCH="arm64" GITLEAKS_ARCH="arm64" ;; \
-        *) echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
-    esac \
-    && curl -fsSL "https://github.com/evilmartians/lefthook/releases/download/v${LEFTHOOK_VERSION}/lefthook_${LEFTHOOK_VERSION}_Linux_${LEFTHOOK_ARCH}" \
-        -o /usr/local/bin/lefthook \
-    && chmod +x /usr/local/bin/lefthook \
-    && curl -fsSL "https://github.com/gitleaks/gitleaks/releases/download/v${GITLEAKS_VERSION}/gitleaks_${GITLEAKS_VERSION}_linux_${GITLEAKS_ARCH}.tar.gz" \
-        | tar -xz -C /usr/local/bin gitleaks
 
 # ---------- infrastructure and secrets tools ----------
 # Terraform and TFLint are standalone, cross-project IaC CLIs. Verify their
@@ -314,15 +259,12 @@ RUN case "${TARGETARCH}" in \
     && rm -f "/tmp/tflint_linux_${TFLINT_ARCH}.zip"
 
 RUN case "${TARGETARCH}" in \
-        "amd64") export TFDOCS_ARCH="amd64" YQ_ARCH="amd64" SOPS_ARCH="amd64" ACT_ARCH="x86_64" ;; \
-        "arm64") export TFDOCS_ARCH="arm64" YQ_ARCH="arm64" SOPS_ARCH="arm64" ACT_ARCH="arm64" ;; \
+        "amd64") export TFDOCS_ARCH="amd64" SOPS_ARCH="amd64" ACT_ARCH="x86_64" ;; \
+        "arm64") export TFDOCS_ARCH="arm64" SOPS_ARCH="arm64" ACT_ARCH="arm64" ;; \
         *) echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
     esac \
     && curl -fsSL "https://github.com/terraform-docs/terraform-docs/releases/download/v${TERRAFORM_DOCS_VERSION}/terraform-docs-v${TERRAFORM_DOCS_VERSION}-linux-${TFDOCS_ARCH}.tar.gz" \
         | tar -xz -C /usr/local/bin terraform-docs \
-    && curl -fsSL "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_${YQ_ARCH}" \
-        -o /usr/local/bin/yq \
-    && chmod +x /usr/local/bin/yq \
     && curl -fsSL "https://github.com/getsops/sops/releases/download/v${SOPS_VERSION}/sops-v${SOPS_VERSION}.linux.${SOPS_ARCH}" \
         -o /usr/local/bin/sops \
     && chmod +x /usr/local/bin/sops \
@@ -333,10 +275,10 @@ RUN case "${TARGETARCH}" in \
 RUN case "${TARGETARCH}" in \
         "amd64") export GLOW_ARCH="x86_64" GUM_ARCH="x86_64" XH_ARCH="x86_64" FX_ARCH="amd64" \
             LAZYGIT_ARCH="x86_64" TOKEI_ARCH="x86_64" DIVE_ARCH="amd64" \
-            GH_DASH_ARCH="amd64" WTF_ARCH="amd64" LYCHEE_ARCH="x86_64" TV_ARCH="x86_64" ;; \
+            GH_DASH_ARCH="amd64" WTF_ARCH="amd64" TV_ARCH="x86_64" ;; \
         "arm64") export GLOW_ARCH="arm64" GUM_ARCH="arm64" XH_ARCH="aarch64" FX_ARCH="arm64" \
             LAZYGIT_ARCH="arm64" TOKEI_ARCH="aarch64" DIVE_ARCH="arm64" \
-            GH_DASH_ARCH="arm64" WTF_ARCH="arm64" LYCHEE_ARCH="aarch64" TV_ARCH="aarch64" ;; \
+            GH_DASH_ARCH="arm64" WTF_ARCH="arm64" TV_ARCH="aarch64" ;; \
         *) echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
     esac \
     && curl -fsSL "https://github.com/wagoodman/dive/releases/download/v${DIVE_VERSION}/dive_${DIVE_VERSION}_linux_${DIVE_ARCH}.tar.gz" \
@@ -363,8 +305,6 @@ RUN case "${TARGETARCH}" in \
         curl -fsSL "https://github.com/o2sh/onefetch/releases/download/${ONEFETCH_VERSION}/onefetch-linux.tar.gz" \
             | tar -xz -C /usr/local/bin; \
     fi \
-    && curl -fsSL "https://github.com/lycheeverse/lychee/releases/download/lychee-v${LYCHEE_VERSION}/lychee-${LYCHEE_ARCH}-unknown-linux-gnu.tar.gz" \
-        | tar -xz --strip-components=1 -C /usr/local/bin "lychee-${LYCHEE_ARCH}-unknown-linux-gnu/lychee" \
     && curl -fsSL "https://github.com/alexpasmantier/television/releases/download/${TV_VERSION}/tv-${TV_VERSION}-${TV_ARCH}-unknown-linux-gnu.tar.gz" \
         | tar -xz --strip-components=1 -C /usr/local/bin "tv-${TV_VERSION}-${TV_ARCH}-unknown-linux-gnu/tv"
 
@@ -400,16 +340,18 @@ RUN case "${TARGETARCH}" in \
 # persist — harmless but not covered.)
 ENV HERDR_SOCKET_PATH=/tmp/herdr.sock
 
-# ---------- Python and prompt tooling ----------
-RUN curl -LsSf "https://astral.sh/uv/${UV_VERSION}/install.sh" | env UV_INSTALL_DIR="${UV_INSTALL_DIR}" sh
+# ---------- prompt tooling ----------
+# uv is installed by the shared core tier above, from its checksum-pinned
+# GitHub release rather than the astral.sh installer.
 RUN curl -fsSL https://starship.rs/install.sh | sh -s -- --yes --version "v${STARSHIP_VERSION}"
 
 # ---------- Node.js global packages ----------
+# markdownlint-cli2 is installed by the shared core tier above (the dev-loop
+# gate needs it on a remote VM too); commitlint is image-only.
 # hadolint ignore=DL3016
 RUN npm install -g \
         "@commitlint/cli" \
         "@commitlint/config-conventional" \
-        "markdownlint-cli2" \
     && npm cache clean --force
 
 # Antigravity ships native archives rather than an npm package. Verify Google's
@@ -435,25 +377,13 @@ RUN case "${TARGETARCH}" in \
     && rm -f "${AGY_TARBALL}" /tmp/antigravity
 
 ENV PLAYWRIGHT_BROWSERS_PATH=/ms-playwright
-RUN npm install -g \
-        "@playwright/test@${PLAYWRIGHT_VERSION}" \
-        "@playwright/cli@${PLAYWRIGHT_CLI_VERSION}" \
-    && npx playwright install --with-deps chromium \
-    && (playwright-cli install --with-deps chromium 2>/dev/null || true) \
-    && chmod -R o+rx "${PLAYWRIGHT_BROWSERS_PATH}" \
-    && rm -rf /var/lib/apt/lists/* \
-    && npm cache clean --force
+RUN /usr/local/share/harmon-devcontainer/install/install-browsers.sh \
+    && rm -rf /var/lib/apt/lists/*
 
+# semgrep and copier are installed by the shared core tier above, into the same
+# system-wide UV_TOOL_BIN_DIR/UV_TOOL_DIR. These two are image-only Python
+# dependencies of the devcontainer itself.
 RUN uv pip install --system --break-system-packages --no-cache toml aiogram
-# `export` rather than a command-prefix assignment: a `VAR=x cmd1 && cmd2`
-# prefix applies to cmd1 ONLY, so every tool after the first would silently
-# install under root's ~/.local instead of the system paths — invisible to the
-# `vscode` runtime user. Exporting covers the whole chain and keeps the next
-# tool added here correct by default.
-RUN export UV_TOOL_BIN_DIR=/usr/local/bin UV_TOOL_DIR=/opt/uv-tools \
-    && uv tool install "semgrep==${SEMGREP_VERSION}" \
-    && uv tool install "copier==${COPIER_VERSION}" \
-    && rm -rf /root/.cache/uv
 
 # Keep frequently updated agent CLIs in the final expensive-tool layer.
 # GitHub Copilot CLI's npm package ships no platform binary itself: it
@@ -467,11 +397,15 @@ RUN export UV_TOOL_BIN_DIR=/usr/local/bin UV_TOOL_DIR=/opt/uv-tools \
 RUN npm install -g \
         "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}" \
         "@github/copilot@${COPILOT_VERSION}" \
-        "@openai/codex@${CODEX_VERSION}" \
         "opencode-ai@${OPENCODE_VERSION}" \
         "dmux@${DMUX_VERSION}" \
     && npm cache clean --force \
     && copilot --version
+
+# ---------- shared agents tier ----------
+# The Codex CLI is the one agent CLI the remote path installs too, so it comes
+# from the shared script and the shared pin rather than the list above.
+RUN /usr/local/share/harmon-devcontainer/install/install-agents.sh
 
 # pi installs in its own layer, isolated from the combined install above.
 # --ignore-scripts is pure hardening for pi itself (its published package
@@ -531,7 +465,7 @@ RUN case "${TARGETARCH}" in \
 
 # Claude Code is installed globally as root above, but containers run as
 # `vscode`, so its in-place auto-updater can never write to
-# /usr/lib/node_modules/@anthropic-ai/claude-code and fails every attempt with
+# /usr/local/lib/node_modules/@anthropic-ai/claude-code and fails every attempt with
 # `no_permissions` -- surfacing a warning in `claude doctor` that no consumer
 # can act on. Self-update is also unwanted here: the version is pinned by
 # CLAUDE_CODE_VERSION above (Renovate-managed) and rolled out by rebuilding
@@ -559,12 +493,23 @@ ENV PI_SKIP_VERSION_CHECK=1
 # ---------- image/overlay contract ----------
 COPY generate-manifest.sh smoke.sh /usr/local/sbin/
 COPY install-repo-config.sh /usr/local/sbin/install-harmon-repo-config
-RUN chmod 0755 \
+# The pins the remote path shares live in versions.env rather than in ARGs, so
+# the manifest sources it. `set -a` exports every assignment for the
+# substitutions below; nothing else in this layer reads the environment.
+# hadolint ignore=SC2153
+RUN set -a \
+    && . /usr/local/share/harmon-devcontainer/versions.env \
+    && set +a \
+    && chmod 0755 \
         /usr/local/sbin/generate-manifest.sh \
         /usr/local/sbin/install-harmon-repo-config \
         /usr/local/sbin/smoke.sh \
     && /usr/local/sbin/generate-manifest.sh "${IMAGE_REVISION}" "${TARGETARCH}" \
         "task=${TASK_VERSION}" \
+        "node=${NODE_VERSION}" \
+        "gh=${GH_VERSION}" \
+        "lychee=${LYCHEE_VERSION}" \
+        "markdownlint-cli2=${MARKDOWNLINT_CLI2_VERSION}" \
         "shfmt=${SHFMT_VERSION}" \
         "hadolint=${HADOLINT_VERSION}" \
         "actionlint=${ACTIONLINT_VERSION}" \

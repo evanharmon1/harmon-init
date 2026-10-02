@@ -3,3 +3,9 @@
 !generate-manifest.sh
 !install-repo-config.sh
 !smoke.sh
+# The shared toolchain installs and the pins they read. bootstrap-remote.sh
+# itself is deliberately NOT in the build context: the image never runs it, and
+# the narrow allowlist is the primary control keeping unrelated repository
+# contents out of a layer.
+!versions.env
+!install
