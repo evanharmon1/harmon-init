@@ -25,7 +25,9 @@
 # be enumerated first (#910).
 #
 # Idempotent and additive. A re-run writes nothing when every wanted option is
-# present. When one is missing it is appended; options the owner added stay, and
+# present, and a final inventory read — after every field has been handled — must
+# show every wanted field with its type and options before the run reports ready.
+# When an option is missing it is appended; options the owner added stay, and
 # so do GitHub's shipped Effort options (High/Medium/Low). Removing an option
 # blanks the field on every issue that carries it, and no search can prove that
 # none does (a private repository the token cannot read, an index that lags an
@@ -340,13 +342,27 @@ reconcile_options() {
     unreconciled="${unreconciled}${unreconciled:+; }${fname}: add ${added}"
 }
 
+# Every field this run is meant to leave in place — name, data type, and the option
+# names it must carry — recorded by create_field and checked against a final read
+# (verify_inventory) before the run may report ready.
+wanted_specs='[]'
+
 # create_field NAME DATA_TYPE DESCRIPTION [OPTIONS_JSON [SHIPPED_JSON]]
 create_field() {
     local fname="$1" dtype="$2" desc="$3" opts="${4:-}" shipped="${5:-[]}"
     local etype body
+    wanted_specs="$(jq -cn --argjson a "$wanted_specs" --arg n "$fname" --arg t "$dtype" --argjson o "${opts:-[]}" \
+        '$a + [{name: $n, type: $t, options: [ $o[].name ]}]')"
     if field_present "$fname"; then
         etype="$(field_type "$fname")"
-        if [ -n "$etype" ] && [ "$etype" != "$dtype" ]; then
+        if [ -z "$etype" ]; then
+            # A field that comes back with no data_type is an unknown field: this
+            # cannot tell whether it can hold the intended options, so it neither
+            # reconciles nor PATCHes it (the status check reads the same shape as
+            # unknown).
+            echo "    WARNING: issue field '$fname' came back with no data_type — leaving it untouched" >&2
+            unreconciled="${unreconciled}${unreconciled:+; }${fname}: (type unreadable)"
+        elif [ "$etype" != "$dtype" ]; then
             # A wrong-typed field cannot hold the intended options at all, so this
             # takes precedence over the option check below.
             echo "    WARNING: issue field '$fname' already exists as '$etype', not '$dtype'" >&2
@@ -371,6 +387,36 @@ create_field() {
             -H "X-GitHub-Api-Version: $api_version" --input - >/dev/null
 }
 
+# verify_inventory — one final inventory read after every field has been handled,
+# checked against what create_field recorded: each wanted field must be present, of
+# the right type, and carry every wanted option. Anything else is recorded in
+# `unreconciled` so the run cannot report ready. Without it a field that another
+# actor deleted after the startup read, but before (or after) its own pass, would be
+# accepted from a stale snapshot. A failed final read is a failed read.
+verify_inventory() {
+    local gaps
+    if ! refresh_fields; then
+        echo "    WARNING: the final inventory read failed — cannot confirm the organization matches the wanted fields" >&2
+        unreconciled="${unreconciled}${unreconciled:+; }final read: (the inventory read failed)"
+        return 0
+    fi
+    gaps="$(printf '%s' "$existing_json" | jq -r --argjson w "$wanted_specs" '
+        . as $f
+        | [ $w[] | . as $s
+            | ( [ $f[] | select(.name == $s.name) ] | first ) as $e
+            | if $e == null then "\($s.name) is missing"
+              elif ($e.data_type // "") == "" then "\($s.name): type unreadable"
+              elif $e.data_type != $s.type then "\($s.name) is \($e.data_type), not \($s.type)"
+              else ( [ $s.options[] | select( . as $o | ([ ($e.options // [])[]? | .name ] | index($o)) == null ) ] ) as $miss
+                   | if ($miss | length) > 0 then "\($s.name) lacks \($miss | join(", "))" else empty end
+              end ]
+        | join("; ")' 2>/dev/null || echo "the final inventory could not be checked")"
+    if [ -n "$gaps" ]; then
+        echo "    WARNING: the final inventory read does not show the wanted fields: $gaps" >&2
+        unreconciled="${unreconciled}${unreconciled:+; }final read: ${gaps}"
+    fi
+}
+
 create_field "Product" "text" "Which product/area it belongs to"
 create_field "Impact" "single_select" \
     "Expected significance of completing the issue: core versus marginal benefit, not common versus uncommon path" \
@@ -387,6 +433,8 @@ create_field "Priority (AI)" "single_select" \
 create_field "Effort" "single_select" \
     "The human time estimate for work a human will do, on a modified Fibonacci ladder" \
     "$effort_opts" "$effort_shipped_defaults"
+
+verify_inventory
 
 # The retired Agent field is reported, never deleted. The REST list exposes no
 # per-field issue count, so say that rather than print a number nobody read.

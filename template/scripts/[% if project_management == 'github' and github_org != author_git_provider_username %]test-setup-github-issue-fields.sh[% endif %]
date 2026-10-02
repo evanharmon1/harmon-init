@@ -42,10 +42,12 @@ fail() {
 # GH_FAIL_SEARCH / GH_SEARCH_INCOMPLETE / GH_SEARCH_GARBAGE make the usage probe
 # fail, report an incomplete result, or return a non-answer, GH_DROP_FIELD
 # names a field the list read stops returning from read number GH_DROP_FROM on
-# (a field that disappears while the script runs), GH_LIST_BODY replaces what
-# every list read returns with that raw body (an error document, a wrapped page),
-# and GH_LIST_PARTIAL makes list reads from number GH_PARTIAL_FROM on deliver their
-# page and then fail (a paginated read that breaks on a later page).
+# (a field that disappears while the script runs), GH_LIST_FILTER (a jq program)
+# rewrites what the list reads from number GH_FILTER_FROM on return (a field that
+# changes under the run), GH_LIST_BODY replaces what every list read returns with
+# that raw body (an error document, a wrapped page), and GH_LIST_PARTIAL makes list
+# reads from number GH_PARTIAL_FROM on deliver their page and then fail (a paginated
+# read that breaks on a later page).
 mkdir -p "$tmp/bin"
 cat >"$tmp/bin/gh" <<'STUB'
 #!/usr/bin/env bash
@@ -88,6 +90,8 @@ GET)
         printf '%s' "$GH_LIST_BODY"
     elif [ -n "${GH_DROP_FIELD:-}" ] && [ "$r" -ge "${GH_DROP_FROM:-2}" ]; then
         jq -c --arg d "$GH_DROP_FIELD" 'map(select(.name != $d))' "$STUB_FIELDS_FILE"
+    elif [ -n "${GH_LIST_FILTER:-}" ] && [ "$r" -ge "${GH_FILTER_FROM:-1}" ]; then
+        jq -c "$GH_LIST_FILTER" "$STUB_FIELDS_FILE"
     else
         cat "$STUB_FIELDS_FILE"
     fi
@@ -168,7 +172,7 @@ reset_stub() {
 # replacement list is deleted, blanking it on every issue that held it).
 assert_nothing_removed() {
     local fid body missing
-    while IFS="$(printf '\t')" read -r fid body; do
+    while IFS=$'\t' read -r fid body; do
         [ -n "$fid" ] || continue
         missing="$(jq -nc --argjson b "$body" --argjson fid "$fid" --slurpfile before "$tmp/before.json" \
             '[ $before[0][] | select(.id == $fid) | .options[]? | .id ] - [ $b.options[] | select(has("id")) | .id ]')"
@@ -460,6 +464,22 @@ grep -q "Done, WITH WARNINGS" "$tmp/out" || fail "expected the run to end with w
 grep -q "WARN: GitHub issue fields need attention" "$tmp/out" || fail "expected a warning final outcome"
 ! grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "an incompatible field claimed readiness"
 
+echo "==> a field that comes back with no data_type is unknown: never reconciled, never PATCHed, never ready"
+# Remediation 1/4, Codex thread on the type check: an empty type used to fall
+# through to the option reconcile. Impact also lacks `massive` here, so a PATCH
+# would be owed if the type were taken on trust; Product has no options at all.
+untyped=$(jq -c '
+    map(if .name == "Impact" then del(.data_type) | .options |= map(select(.name != "massive"))
+        elif .name == "Product" then del(.data_type)
+        else . end)' "$tmp/provisioned.json")
+run_with "$untyped"
+[ "$(patches)" = 0 ] && [ "$(posts)" = 0 ] || fail "a field with no data_type must not be written to"
+grep -q "issue field 'Impact' came back with no data_type" "$tmp/out" || fail "expected a no-data_type warning for Impact"
+grep -q "issue field 'Product' came back with no data_type" "$tmp/out" || fail "an untyped Product must not read as 'leaving it as-is'"
+grep -q "Impact: (type unreadable)" "$tmp/out" || fail "the summary must name the untyped field"
+grep -q "Done, WITH WARNINGS" "$tmp/out" || fail "an untyped field must end the run with warnings"
+! grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "an untyped field claimed readiness"
+
 echo "==> Priority and Priority (AI) are separate fields, matched by exact name"
 # Only the AI field exists (complete); the human Priority is absent. Creating
 # `Priority` would fork the human override, so nothing may be written.
@@ -573,6 +593,39 @@ grep -q "Effort: (disappeared while this script was running)" "$tmp/out" ||
 grep -q "Done, WITH WARNINGS" "$tmp/out" || fail "a vanished field must end the run with warnings"
 ! grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "a vanished field claimed readiness"
 [ "$(patches)" = 0 ] && [ "$(posts)" = 0 ] || fail "a field that vanished must not be written to"
+
+echo "==> a field deleted after the startup read is caught by the final inventory read, never reported ready"
+# Remediation 1/4 (Codex, the same race as challenge r3's C3-F2): Product is in the
+# startup snapshot, so create_field accepts it ("leaving it as-is") — and it is gone
+# from every later read. Nothing but a final read can tell.
+GH_DROP_FIELD=Product GH_DROP_FROM=2 run_with "$(cat "$tmp/provisioned.json")"
+grep -q "the final inventory read does not show the wanted fields: Product is missing" "$tmp/out" ||
+    fail "expected the final read to name the missing Product"
+grep -q "Done, WITH WARNINGS" "$tmp/out" || fail "a field missing at the final read must end the run with warnings"
+! grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "a field missing at the final read claimed readiness"
+[ "$(patches)" = 0 ] && [ "$(posts)" = 0 ] || fail "the final read only reports; it must not write"
+# A final read that FAILS is a failed read. Read 1 is the inventory and each of the
+# five single-select reconciles re-reads once, so read 7 is the final one.
+GH_LIST_PARTIAL=1 GH_PARTIAL_FROM=7 run_with "$(cat "$tmp/provisioned.json")"
+grep -q "the final inventory read failed" "$tmp/out" || fail "expected a warning that the final read failed"
+grep -q "Done, WITH WARNINGS" "$tmp/out" || fail "a failed final read must end the run with warnings"
+! grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "a failed final read claimed readiness"
+# The final read checks the type and the option set too, not just presence: a field
+# that reads wrong, or short of an option, only at read 7 is not ready either.
+GH_LIST_FILTER='map(if .name == "Risk" then .data_type = "text" else . end)' GH_FILTER_FROM=7 run_with "$(cat "$tmp/provisioned.json")"
+grep -q "the final inventory read does not show the wanted fields: Risk is text, not single_select" "$tmp/out" ||
+    fail "expected the final read to name the type mismatch"
+! grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "a type mismatch at the final read claimed readiness"
+GH_LIST_FILTER='map(if .name == "Complexity" then .options |= map(select(.name != "xl")) else . end)' GH_FILTER_FROM=7 run_with "$(cat "$tmp/provisioned.json")"
+grep -q "the final inventory read does not show the wanted fields: Complexity lacks xl" "$tmp/out" ||
+    fail "expected the final read to name the missing option"
+! grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "a missing option at the final read claimed readiness"
+[ "$(patches)" = 0 ] || fail "the final read only reports; it must not PATCH"
+# And a complete org passes the final read cleanly (every case above that ends ready
+# already proves it; this names the property).
+run_with "$(cat "$tmp/provisioned.json")"
+! grep -q "final inventory" "$tmp/out" || fail "a complete org must not warn at the final read"
+grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "a complete org must end ready"
 
 echo "==> status.sh wants exactly the fields and options this script provisions"
 # The want-list in status.sh and the option sets here are two copies of one fact;
