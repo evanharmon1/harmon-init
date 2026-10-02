@@ -95,10 +95,14 @@ err() {
 
 # Required CI runs every `test:*` target through ONE step, `task test:suite`
 # (#1461; the per-profile "verify <-> CI parity" section below asserts the call),
-# so "required CI runs X" means "X is in the suite's plan". Tolerates a missing
-# `task` because each caller's own `required task` already failed that profile.
+# so "required CI runs X" means "X is in the suite's plan". Without go-task the
+# plan cannot be read: that fails in CI and is an explicit SKIP locally, via
+# `required` like every other missing tool here — never a silent pass.
 suite_runs() {
-    have task || return 0
+    have task || {
+        required task "suite membership of $1" || return 1
+        return 0
+    }
     grep -qF "task: [$1]" <<<"$(task --color=false --dry test:suite 2>&1 || true)"
 }
 

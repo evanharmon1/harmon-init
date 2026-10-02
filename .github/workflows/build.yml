@@ -72,10 +72,16 @@ jobs:
           # self-hosted CI_RUNS_ON runner.
           uv tool install --force copier
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      # Its own step, outside the suite it guards: it is also a suite member (so
+      # `verify` runs it), but deleting the suite step below would delete the
+      # only CI step that could notice — this one still fails then.
+      - name: Verify-CI parity guard (runs outside the suite it guards)
+        run: task test:verify-ci-parity
       # The ONE step for every `test:*` target `task verify` runs. The list lives
       # in Taskfile.yml's `test:suite` and nowhere else, so a check added to
       # `verify` can no longer be missed here (harmon-init#962, #614, #1461);
-      # test:verify-ci-parity fails if this step is ever dropped. Not in it:
+      # test:verify-ci-parity (the step above) fails if this step is ever
+      # dropped. Not in it:
       # `test:template`, which runs as the template-test job's matrix below.
       # This job checks out with fetch-depth: 0, which test:tag-hygiene needs
       # to be a real assertion rather than a vacuous one.

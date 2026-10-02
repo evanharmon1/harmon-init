@@ -66,11 +66,17 @@ jobs:
       # Outside the suite: `audit:*` is not a `test:*` target, so `test:suite`
       # does not carry it, and `verify` runs it between `check` and the suite.
       - run: task audit:agent-instructions
+      # Its own step, outside the suite it guards: it is also a suite member (so
+      # `verify` runs it), but deleting the suite step below would delete the
+      # only CI step that could notice — this one still fails then.
+      - name: Verify-CI parity guard (runs outside the suite it guards)
+        run: task test:verify-ci-parity
       # The ONE step for every `test:*` target `task verify` runs. The list
       # lives in Taskfile.yml's `test:suite` and nowhere else, so a check added
       # to `verify` can no longer be missed here (harmon-init#962, #1461) —
       # each entry carries the same answer gate in both places.
-      # `test:verify-ci-parity` fails if this step is ever dropped.
+      # `test:verify-ci-parity` (the step above) fails if this step is ever
+      # dropped.
       #
       # NOT here, deliberately: `validate` and `test`. Both are in `verify`
       # unconditionally, but CI only invokes them from the build-test job,
