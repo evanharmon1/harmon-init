@@ -140,9 +140,11 @@ policy equals `generate`'s output ([Network policy](#network-policy)).
 
 ## Credentials
 
-Three credentials, each delivered **once per Sprite, from outside**, on stdin:
-never committed, never logged, never on a command line (an argument is visible
-in a process listing, so `sprite exec --env` is not used for them). The
+Three credentials, each set up **once per Sprite**, never committed, never
+logged and never on a command line (an argument is visible in a process
+listing, so `sprite exec --env` is not used for them). The agent PAT and the
+Claude token are delivered from outside on stdin; the Codex sign-in is the
+exception, made interactively by the maintainer in `sprite console` (below). The
 examples read from 1Password with `op read`; any secret store works, and nothing
 here writes to one.
 

@@ -101,7 +101,6 @@ TOKENS=(
 SURFACE_DIRS=(
     'images/devcontainer'
     '.devcontainer'
-    'sprites'
     '.github/workflows'
     '.github/actions'
     'docs'
@@ -118,14 +117,20 @@ SURFACE_FILES=(
 # Strict tier — the remote-bootstrap entry points (a directory is matched
 # recursively, each entry only where it exists): nothing that provisions a remote
 # environment may carry Codex credentials or the API key at all, so every token is
-# reported bare here and needs a `codex` on the line elsewhere. `sprites` is the
-# opt-in Fly.io Sprites provisioning surface (#1411): a Sprite's one Codex login is
-# the maintainer's, made by hand, so nothing there may handle one.
+# reported bare here and needs a `codex` on the line elsewhere.
 STRICT_PATHS=(
     'images/devcontainer'
-    'sprites'
     '.github/workflows/remote-bootstrap.yml'
 )
+# The opt-in Fly.io Sprites provisioning surface (#1411) is a scanned surface AND
+# a strict path, but only in a tree holding SPRITES_MARKER — the generator
+# harmon-init ships with that opt-in. The marker is what makes the directory the
+# provisioning surface: this script is a verbatim twin and cannot be gated on the
+# Copier answer, so it checks for the asset at runtime, and a consumer's unrelated
+# sprites/ directory (graphics, say) is neither scanned nor strict. A Sprite's one
+# Codex login is the maintainer's, made by hand, so nothing there may handle one.
+SPRITES_DIR='sprites'
+SPRITES_MARKER='sprites/network-policy.sh'
 # Every discovered setup script is strict too (the glob is expanded where it
 # exists): a remote setup script follows the name, and it provisions.
 STRICT_GLOBS=(
@@ -203,11 +208,13 @@ done
 # file — the self-test runs it many times.
 scan() {
     local root="$1" file line text tokstr strictstr namestr rc hits allowed listing d f k scanned=0
-    local files=() textfiles=() prune_args=() stricts=() x g
+    local files=() textfiles=() prune_args=() stricts=() dirs=() x g
     for x in ${EXCLUDE_DIRS[@]+"${EXCLUDE_DIRS[@]}"}; do
         prune_args+=(-path "${root}/${x}" -prune -o)
     done
-    for d in "${SURFACE_DIRS[@]}"; do
+    dirs=("${SURFACE_DIRS[@]}")
+    [ ! -f "${root}/${SPRITES_MARKER}" ] || dirs+=("$SPRITES_DIR")
+    for d in "${dirs[@]}"; do
         if [ -d "${root}/${d}" ]; then
             # find's own exit status must be seen: a directory it cannot list
             # would otherwise drop out of the scan and still pass. The listing
@@ -256,6 +263,7 @@ scan() {
         done <<<"$hits"
         tokstr="$(printf '%s\037' "${TOKENS[@]}")"
         stricts=("${STRICT_PATHS[@]}")
+        [ ! -f "${root}/${SPRITES_MARKER}" ] || stricts+=("$SPRITES_DIR")
         for g in "${STRICT_GLOBS[@]}"; do
             for f in "${root}"/${g}; do
                 [ -f "$f" ] && stricts+=("${f#"${root}"/}")
@@ -384,7 +392,9 @@ echo "==> clean: ${scanned} surface files scanned, no unexplained Codex credenti
 # --- 2. Load-bearing: planted violations in a temporary copy must fail ---
 FIX="${TMP}/fixture"
 mkdir -p "$FIX"
-for d in "${SURFACE_DIRS[@]}"; do
+fixture_dirs=("${SURFACE_DIRS[@]}")
+[ ! -f "$SPRITES_MARKER" ] || fixture_dirs+=("$SPRITES_DIR")
+for d in "${fixture_dirs[@]}"; do
     if [ -d "$d" ]; then
         mkdir -p "${FIX}/$(dirname "$d")"
         cp -R "$d" "${FIX}/$d"
@@ -510,7 +520,7 @@ if [ -d "${FIX}/images/devcontainer" ]; then
     expect_hit "a bare auth.json under images/devcontainer" "images/devcontainer/planted.sh" "2:"
     rm -f "${FIX}/images/devcontainer/planted.sh"
 fi
-if [ -d "${FIX}/sprites" ]; then
+if [ -f "${FIX}/${SPRITES_MARKER}" ]; then
     strict_cases=$((strict_cases + 1))
     printf 'echo start\nexport OPENAI_API_KEY=x\n' >"${FIX}/sprites/planted.sh"
     expect_hit "a bare OPENAI_API_KEY under sprites" "sprites/planted.sh" "2:"
@@ -518,6 +528,15 @@ if [ -d "${FIX}/sprites" ]; then
     expect_hit "a bare auth.json under sprites" "sprites/planted.sh" "2:"
     rm -f "${FIX}/sprites/planted.sh"
 fi
+# Without the marker, a sprites/ directory is not the provisioning surface: a
+# consumer's unrelated sprites/ holding a bare key line is not reported.
+mkdir -p "${FIX}/sprites"
+[ ! -f "${FIX}/${SPRITES_MARKER}" ] || mv "${FIX}/${SPRITES_MARKER}" "${TMP}/sprites-marker"
+printf 'echo start\nexport OPENAI_API_KEY=x\n' >"${FIX}/sprites/planted.sh"
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "a sprites/ directory without ${SPRITES_MARKER} was scanned as the Sprites surface, got: ${SCAN_HITS}"
+rm -f "${FIX}/sprites/planted.sh"
+[ ! -f "${TMP}/sprites-marker" ] || mv "${TMP}/sprites-marker" "${FIX}/${SPRITES_MARKER}"
 [ "$strict_cases" -gt 0 ] || fail "no strict-tier surface exists in the fixture; the strict-tier cases would pass vacuously"
 # The environment examples are strict too, wherever they sit under .devcontainer.
 env_cases=0
