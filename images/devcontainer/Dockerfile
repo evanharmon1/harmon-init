@@ -88,7 +88,8 @@ ARG GLOW_VERSION=3.0.0
 # renovate: datasource=github-releases depName=jesseduffield/lazygit extractVersion=^v?(?<version>.+)$
 ARG LAZYGIT_VERSION=0.65.1
 # renovate: datasource=github-releases depName=XAMPPRocky/tokei extractVersion=^v?(?<version>.+)$
-ARG TOKEI_VERSION=15.0.0
+# Upstream v13.0.0+ publishes no prebuilt binary assets; stay on 13.0.0-alpha.0
+ARG TOKEI_VERSION=13.0.0-alpha.0
 # renovate: datasource=github-releases depName=dlvhdr/gh-dash extractVersion=^v?(?<version>.+)$
 ARG GH_DASH_VERSION=4.25.2
 # renovate: datasource=github-releases depName=charmbracelet/gum extractVersion=^v?(?<version>.+)$
