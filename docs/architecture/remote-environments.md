@@ -480,11 +480,12 @@ that needs a live session.
 | Self-hosted | The same bootstrap, once [#1410](https://github.com/evanharmon1/harmon-init/issues/1410) builds the adapter | The adapter does not exist yet. The same two gaps as every platform VM apply: harness refusal is not applied by the bootstrap, and a managed file already there is left in place unless `HARMON_AGENT_POSTURE_REPLACE=1`. Codex: a self-hosted machine holds at most one login of its own, made once at provisioning ([agents tier](#tiers)). No hooks | expected, not yet observed — pending, #1410 |
 | Agent devcontainer | Not the bootstrap: `.devcontainer/agent/post-create.sh` runs `agent-autonomy.sh apply` and `verify` against the image's baked copy of the same definition, and the image installs the hooks; `apply` there also refuses the harnesses the definition refuses | None recorded | the definition is tested by `scripts/test-agent-profile.sh`; in effect in a live session: pending, criterion 4 |
 
-**Pending observation (#1404 criterion 4):** on a Sprite, once #1411 exists, and
-in the agent devcontainer, start `claude` and run `/permissions`: the agent deny
-rules must be listed. Then ask it to run `gh pr merge 1`, which must be refused
-without a prompt. Run `codex` and check that `/status` shows `workspace-write`
-and approval `never`. On the Sprite, `sudo FOREMAN_DEVCONTAINER=agent
+**Pending observation (#1404 criterion 4):** on a Sprite
+([guide](../guides/sprites.md)) and in the agent devcontainer, start `claude` and
+run `/permissions`: the agent deny rules must be listed. Then ask it to run
+`gh pr merge 1`, which must be refused without a prompt. Run `codex` and check
+that `/status` shows `workspace-write` and approval `never`. On the Sprite,
+`sudo FOREMAN_DEVCONTAINER=agent
 AGENT_AUTONOMY_CONFIG_DIR=<checkout>/.devcontainer/config/agent bash
 <checkout>/.devcontainer/agent/agent-autonomy.sh verify --platform-vm` must pass,
 where `<checkout>` is a clean checkout at the tag the bootstrap ran; in the
