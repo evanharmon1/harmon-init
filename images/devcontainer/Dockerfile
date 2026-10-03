@@ -17,7 +17,7 @@ ARG IMAGE_REVISION
 # renovate: datasource=github-releases depName=terraform-docs/terraform-docs extractVersion=^v?(?<version>.+)$
 ARG TERRAFORM_DOCS_VERSION=0.24.0
 # renovate: datasource=github-releases depName=hashicorp/terraform extractVersion=^v?(?<version>.+)$
-ARG TERRAFORM_VERSION=1.16.3
+ARG TERRAFORM_VERSION=1.16.4
 # renovate: datasource=github-releases depName=terraform-linters/tflint extractVersion=^v?(?<version>.+)$
 ARG TFLINT_VERSION=0.64.0
 # TFLint release-archive SHA-256 values. The version pin is Renovate-managed;
@@ -27,17 +27,17 @@ ARG TFLINT_SHA256_ARM64=560da89aacf59389d4eb029730dd5b109b7288096c32f2726a0d9e78
 # renovate: datasource=github-releases depName=zellij-org/zellij extractVersion=^v?(?<version>.+)$
 ARG ZELLIJ_VERSION=0.45.1
 # renovate: datasource=github-releases depName=raine/workmux extractVersion=^v?(?<version>.+)$
-ARG WORKMUX_VERSION=0.1.263
+ARG WORKMUX_VERSION=0.1.268
 # renovate: datasource=github-releases depName=njbrake/agent-of-empires extractVersion=^v?(?<version>.+)$
-ARG AOE_VERSION=1.16.1
+ARG AOE_VERSION=1.17.2
 # renovate: datasource=npm depName=@anthropic-ai/claude-code
-ARG CLAUDE_CODE_VERSION=2.1.278
+ARG CLAUDE_CODE_VERSION=2.1.285
 # renovate: datasource=npm depName=@github/copilot
-ARG COPILOT_VERSION=1.0.86
+ARG COPILOT_VERSION=1.0.89
 # renovate: datasource=npm depName=@earendil-works/pi-coding-agent
-ARG PI_VERSION=0.85.1
+ARG PI_VERSION=0.99.1
 # renovate: datasource=github-releases depName=can1357/oh-my-pi extractVersion=^v?(?<version>.+)$
-ARG OH_MY_PI_VERSION=18.2.6
+ARG OH_MY_PI_VERSION=18.4.4
 # oh-my-pi ships unsigned release binaries: the version pin above is
 # Renovate-managed, but these architecture-specific digests are not. Before
 # moving them, a person must download the new release's omp-linux-x64 and
@@ -48,13 +48,13 @@ ARG OH_MY_PI_VERSION=18.2.6
 ARG OH_MY_PI_SHA256_AMD64=0f38598c91e823d8cce07f151ec3999d51f213fb2cc3e07d89f1af8eef9247a2
 ARG OH_MY_PI_SHA256_ARM64=07245cbe050c3999ab5cea9babfe84e7e8819d2f4d5e49bef47c0aacb6b957e4
 # renovate: datasource=npm depName=opencode-ai
-ARG OPENCODE_VERSION=1.18.31
+ARG OPENCODE_VERSION=1.18.33
 # Pinned from Google's per-platform release manifests. Keep the version, build,
 # URLs, and SHA-512 values here and in ensure-antigravity-cli.sh in one update.
 ARG ANTIGRAVITY_CLI_VERSION=1.1.11
 ARG ANTIGRAVITY_CLI_BUILD=4956531888881664
 # renovate: datasource=github-releases depName=asheshgoplani/agent-deck extractVersion=^v?(?<version>.+)$
-ARG AGENT_DECK_VERSION=1.16.10
+ARG AGENT_DECK_VERSION=1.16.22
 # renovate: datasource=github-releases depName=joshmedeski/sesh extractVersion=^v?(?<version>.+)$
 # Upstream v2.30.0 was published without release assets; stay on 2.29.0 until fixed
 ARG SESH_VERSION=2.29.0
@@ -72,13 +72,13 @@ ARG DIVE_VERSION=0.13.1
 # renovate: datasource=github-releases depName=antonmedv/fx extractVersion=^v?(?<version>.+)$
 ARG FX_VERSION=39.2.0
 # renovate: datasource=github-releases depName=sinelaw/fresh extractVersion=^v?(?<version>.+)$
-ARG FRESH_VERSION=0.5.1
+ARG FRESH_VERSION=0.5.2
 # Fresh release-archive SHA-256 values. The version pin is Renovate-managed;
 # update these reviewed, architecture-specific digests with each release.
 ARG FRESH_SHA256_AMD64=dd162ec4b367860d4235b4919be9dc3184211b663b5a81af34455c4b1d2c6ec2
 ARG FRESH_SHA256_ARM64=237bdb8c774fc402dc0dc13428215d5c63d70fe0e673aa99bf9897ed7ce3aac1
 # renovate: datasource=github-releases depName=eugenioenko/ttt extractVersion=^v?(?<version>.+)$
-ARG TTT_VERSION=1.5.0
+ARG TTT_VERSION=1.6.0
 # TTT release SHA-256 values. The version pin is Renovate-managed;
 # update these reviewed, architecture-specific digests with each release.
 ARG TTT_SHA256_AMD64=d5b5e3ef0c3c8c834360c7506628c23c2a61c00c006e402490ad4f336cacbe5f
@@ -90,13 +90,13 @@ ARG LAZYGIT_VERSION=0.65.1
 # renovate: datasource=github-releases depName=XAMPPRocky/tokei extractVersion=^v?(?<version>.+)$
 ARG TOKEI_VERSION=13.0.0-alpha.0
 # renovate: datasource=github-releases depName=dlvhdr/gh-dash extractVersion=^v?(?<version>.+)$
-ARG GH_DASH_VERSION=4.25.2
+ARG GH_DASH_VERSION=4.26.0
 # renovate: datasource=github-releases depName=charmbracelet/gum extractVersion=^v?(?<version>.+)$
 ARG GUM_VERSION=0.17.0
 # renovate: datasource=github-releases depName=o2sh/onefetch extractVersion=^v?(?<version>.+)$
 ARG ONEFETCH_VERSION=2.28.1
 # renovate: datasource=github-releases depName=wtfutil/wtf extractVersion=^v?(?<version>.+)$
-ARG WTF_VERSION=0.50.0
+ARG WTF_VERSION=0.51.0
 # renovate: datasource=github-releases depName=ducaale/xh extractVersion=^v?(?<version>.+)$
 ARG XH_VERSION=0.26.2
 # renovate: datasource=github-releases depName=alexpasmantier/television extractVersion=^v?(?<version>.+)$
