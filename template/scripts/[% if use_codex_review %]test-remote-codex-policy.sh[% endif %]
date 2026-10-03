@@ -25,11 +25,23 @@
 # folded hit cannot be allowlisted, the source has to be rewritten. Only a
 # command-shaped first line starts a fold: one inside a folded or literal scalar
 # under a command key (`run`, `cmd`, `command`, `script`, `entrypoint`, `args`),
-# inside a sh/bash fenced block, or that itself begins a `codex` invocation — so
+# inside a fenced shell block (sh, bash, zsh, shell, console or shell-session),
+# on a command-key line whose plain value ends in `codex` (YAML folds a plain
+# multi-line scalar like `>-`), or that itself begins a `codex` invocation — so
 # consecutive YAML mapping lines such as `provider: codex` / `login: oauth` pass.
+# The next line completes the fold only if it continues the same command: still
+# inside that scalar or fence, or indented deeper than the command key (or the
+# `- ` of a sequence item) that armed it.
 #
 # `auth.json` is matched as a complete basename: `auth.json` and
-# `~/.codex/auth.json` hit, `oauth.json` and `myauth.json` do not.
+# `~/.codex/auth.json` hit, `oauth.json`, `myauth.json` and `auth.json.example`
+# do not (a dot after it is sentence punctuation only before a blank or the end
+# of the line).
+#
+# `.claude/settings.json` is a strict surface with one exemption: a quoted
+# permission rule (`"Read(~/.codex/auth.json)"`, any `"Name(...)"` string) is not
+# matched against the tokens there, so a project can protect a credential file
+# with a deny rule. An `env` block, or any other line, is still matched.
 #
 # The one rule outside the strict tier: a line is reported only if it mentions
 # `codex` (any case) — every token, the login flags included. A generated project
@@ -62,6 +74,12 @@
 #     (`codex` / `--opt` / `login`) is not joined; only two-line folds are.
 #   - Outside the strict tier, a token with `codex` only on a neighbouring line
 #     is not caught. Inside the strict tier that does not apply.
+#   - Fences are matched by character and length (a run of the opener's
+#     character at least as long as its opener closes it); the info string and
+#     indentation rules of a full Markdown parser are not applied.
+#   - A literal scalar (`run: |`) and a shell fence are treated as fold contexts
+#     although a newline ends the command there, so `codex` then `login` on
+#     separate lines is reported although the shell would run them as two commands.
 # A full YAML or shell parser is out of scope.
 #
 # Self-proving: a planted violation in a temporary copy of the surfaces must
@@ -312,8 +330,15 @@ scan() {
             # fence at or left of that column opening or closing ends the scalar: a
             # snippet shows one, it does not continue past its fence. A fence indented
             # inside the scalar is its content (a heredoc writing Markdown, say).
-            # A fence is three or more backticks or tildes, closed by the same one.
-            function track(raw, tt,   isbt, istl) {
+            # A fence is three or more backticks or tildes, closed by a run of the
+            # same character at least as long as the opening run (CommonMark), so a
+            # shorter run inside a longer fence is content.
+            function runlen(s, c,   i) {
+                i = 1
+                while (substr(s, i, 1) == c) i++
+                return i - 1
+            }
+            function track(raw, tt,   isbt, istl, rl) {
                 incmd = 0
                 match(raw, /^[ \t]*/)
                 curind = RLENGTH
@@ -323,12 +348,14 @@ scan() {
                     incmd = 1
                     return
                 }
-                if (fence ? (fchar == BT ? isbt : istl) : (isbt || istl)) {
+                rl = isbt ? runlen(tt, BT) : (istl ? runlen(tt, "~") : 0)
+                if (fence ? (rl >= flen && (fchar == BT ? isbt : istl)) : (isbt || istl)) {
                     bs = 0
                     if (fence) fence = 0
                     else {
                         fence = 1
                         fchar = (isbt ? BT : "~")
+                        flen = rl
                         fshell = (tt ~ FENCESH)
                     }
                     return
@@ -355,13 +382,17 @@ scan() {
             # scalar or fence the head sat in (pmode 1), or indented deeper than the
             # command key whose plain scalar the head opened (pmode 2) — a line at or
             # left of that key is a sibling, never a continuation. A head that merely
-            # begins a codex invocation (pmode 3) has no key to measure against.
+            # begins a codex invocation (pmode 3) has no key to measure against, except
+            # a sequence item (`- codex`): its continuation is indented deeper than the
+            # dash, a sibling key at or left of the dash is not one. A `$ codex` or bare
+            # `codex` head keeps no such bound (pcol is -1).
             function continues() {
                 if (pmode == 1) return incmd
                 if (pmode == 2) return (curind > pcol)
+                if (pcol >= 0) return (curind > pcol)
                 return 1
             }
-            function emit(f, s, t, raw,   i, tt, hit) {
+            function emit(f, s, t, raw,   i, tt, hit, m) {
                 gsub(/[ \t]+/, " ", t)
                 tt = t
                 sub(/^ /, "", tt)
@@ -376,9 +407,15 @@ scan() {
                 # One rule: outside the strict tier a line counts only if it
                 # mentions codex (any case); inside it every token is bare.
                 hit = 0
+                # The Claude Code settings may carry permission rules that PROTECT a
+                # credential file (`"Read(~/.codex/auth.json)"`): in that one file a
+                # quoted `Name(...)` string is not matched against the tokens. An
+                # `env` block, or any other line, is.
+                m = t
+                if (permfile) gsub(PERMRULE, "\"\"", m)
                 if (strict || tolower(t) ~ /codex/) {
                     for (i = 1; i <= n; i++) {
-                        if (T[i] != "" && has_tok(t, T[i])) {
+                        if (T[i] != "" && has_tok(m, T[i])) {
                             hit = 1
                             break
                         }
@@ -388,11 +425,15 @@ scan() {
                 }
                 if (!hit && t ~ FOLDHEAD) {
                     pmode = 0
+                    pcol = -1
                     if (incmd) pmode = 1
                     else if (tt ~ CMDKEYLINE) {
                         pcol = keycol(raw)
                         if (pcol >= 0) pmode = 2
-                    } else if (tt ~ CMDHEAD) pmode = 3
+                    } else if (tt ~ CMDHEAD) {
+                        pmode = 3
+                        if (tt ~ /^- /) pcol = curind
+                    }
                     if (pmode) {
                         pend = t
                         pfile = substr(f, 3)
@@ -422,10 +463,14 @@ scan() {
                 FOLDTAIL = "^(-[^ ]+ ([^ -][^ ]* )?)*login([^A-Za-z0-9_-]|$)"
                 # auth.json as a complete basename: no name character before it
                 # (a `.` or `-` would make it part of a longer name), no word
-                # character after it; a trailing `.` counts only when nothing
-                # name-like follows it (sentence-final `auth.json.` hits,
-                # `auth.json.example` does not).
-                AUTHJSON = "(^|[^A-Za-z0-9_.-])auth[.]json([^A-Za-z0-9_.-]|[.]([^A-Za-z0-9_-]|$)|$)"
+                # character after it; a trailing `.` is sentence punctuation only
+                # when a blank or the end of the line follows it (sentence-final
+                # `auth.json.` hits; `auth.json.example` and `auth.json..schema` do
+                # not).
+                AUTHJSON = "(^|[^A-Za-z0-9_.-])auth[.]json([^A-Za-z0-9_.-]|[.]( |$)|$)"
+                # A quoted permission rule: a JSON string whose whole value is
+                # `Name(...)` for a tool name.
+                PERMRULE = "\"[A-Za-z]+[(][^\"]*[)]\""
                 # Command-shaped context: a fenced sh/bash block, or a folded or
                 # literal scalar under a command key; or a command-key line whose
                 # value ends in codex (a plain scalar, folded by YAML like `>-`); or
@@ -433,7 +478,8 @@ scan() {
                 # list item, a `$ ` prompt or a command key, then env assignments or
                 # a wrapper). A command key may be quoted, single or double (\047
                 # and \042 keep the quote characters out of the shell quoting), may
-                # follow a flow-mapping `{`, and may have a blank before its colon.
+                # follow a flow-mapping `{`, and may have a blank before its colon;
+                # a block scalar indicator may follow `&anchor` / `!tag` properties.
                 # A fence is three or more backticks or tildes.
                 BT = sprintf("%c", 96)
                 FENCEBT = "^" BT BT BT
@@ -441,7 +487,7 @@ scan() {
                 FENCESH = "^(" BT BT BT "|~~~)[" BT "~]* ?(sh|bash|zsh|shell|console|shell-session)( |$)"
                 QT = "[\042\047]?"
                 CMDKEY = QT "(run|cmd|command|script|entrypoint|args)" QT " ?:"
-                BSHEAD = "(^|[ {-])" CMDKEY " *[>|][-+0-9]*( #.*| )?$"
+                BSHEAD = "(^|[ {-])" CMDKEY " *([&!][^ ]+ +)*[>|][-+0-9]*( #.*| )?$"
                 KEYRE = "(^|[ {-])" CMDKEY
                 CMDKEYLINE = "^(- )?([{] ?)?" CMDKEY " "
                 CMDHEAD = "^(- |[$] )?([{] ?)?(" CMDKEY " )?([A-Za-z_][A-Za-z0-9_]*=[^ ]* |sudo |exec |nohup |time )*codex( -[^ ]+( [^ -][^ ]*)?)* ?$"
@@ -454,6 +500,7 @@ scan() {
                 fshell = 0
                 bs = 0
                 strict = is_strict(substr(FILENAME, 3))
+                permfile = (substr(FILENAME, 3) == ".claude/settings.json")
             }
             {
                 line = $0
@@ -738,8 +785,13 @@ fixture_hits
 plant "$authf" '#!/usr/bin/env bash\ncat auth.json.example\ncat auth.json.bak\n'
 fixture_hits
 [ -z "$SCAN_HITS" ] || fail "auth.json.example and auth.json.bak must not match auth.json, got: ${SCAN_HITS}"
+plant "$authf" '#!/usr/bin/env bash\ncat auth.json..schema\ncat auth.json.~1~\n'
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "auth.json..schema and auth.json.~1~ must not match auth.json, got: ${SCAN_HITS}"
 plant "$authf" '#!/usr/bin/env bash\n# Restore auth.json.\n'
 expect_hit "a sentence-final auth.json." "$authf" "2:"
+plant "$authf" '#!/usr/bin/env bash\n# Restore auth.json. Then retry.\n'
+expect_hit "an auth.json. before a blank" "$authf" "2:"
 plant "$authf" '#!/usr/bin/env bash\ncat auth.json\n'
 expect_hit "a bare auth.json" "$authf" "2:"
 plant "$authf" '#!/usr/bin/env bash\nrm "$HOME/auth.json"\n'
@@ -758,6 +810,22 @@ rm -f "${FIX}/docs/guides/planted-app.md"
 # are strict surfaces: a bare key fails, in either layer; a sibling script does not.
 plant .claude/settings.json '{\n  "env": {\n    "OPENAI_API_KEY": "x"\n  }\n}\n'
 expect_hit "a bare OPENAI_API_KEY in .claude/settings.json" ".claude/settings.json" "3:"
+# A permission rule that PROTECTS a credential file is not a credential: in that one
+# file a quoted Name(...) string is exempt, one per line or several on one line. An
+# env block in the same file, and the same rule line anywhere else, still fail.
+plant .claude/settings.json '{\n  "permissions": {\n    "deny": [\n      "Read(~/.codex/auth.json)",\n      "Read(**/auth.json)"\n    ]\n  }\n}\n'
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "permission deny rules naming auth.json must pass in .claude/settings.json, got: ${SCAN_HITS}"
+plant .claude/settings.json '{\n  "permissions": {\n    "deny": ["Read(~/.codex/auth.json)", "Read(**/auth.json)", "Bash(cat ~/.codex/*)"]\n  }\n}\n'
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "a one-line list of permission deny rules must pass in .claude/settings.json, got: ${SCAN_HITS}"
+plant .claude/settings.json '{\n  "permissions": {\n    "deny": ["Read(~/.codex/auth.json)"]\n  },\n  "env": {\n    "OPENAI_API_KEY": "x"\n  }\n}\n'
+expect_hit "an env OPENAI_API_KEY beside permission rules in .claude/settings.json" ".claude/settings.json" "6:"
+plant .claude/settings.json '{\n  "permissions": {\n    "deny": ["Read(~/.codex/auth.json)"],\n    "note": "~/.codex/auth.json"\n  }\n}\n'
+expect_hit "a non-rule string naming ~/.codex/auth.json in .claude/settings.json" ".claude/settings.json" "4:"
+unplant
+plant .devcontainer/scripts/bootstrap-related-repos.sh '#!/usr/bin/env bash\n"Read(~/.codex/auth.json)"\n'
+expect_hit "a permission-rule-shaped line outside .claude/settings.json" ".devcontainer/scripts/bootstrap-related-repos.sh" "2:"
 unplant
 plant .devcontainer/scripts/bootstrap-related-repos.sh '#!/usr/bin/env bash\nexport OPENAI_API_KEY=x\n'
 expect_hit "a bare OPENAI_API_KEY in the bootstrap helper" ".devcontainer/scripts/bootstrap-related-repos.sh" "2:"
@@ -820,6 +888,23 @@ printf 'jobs:\n  a:\n    steps:\n      - run: codex\n          login\n' >"${FIX}
 expect_hit "a plain multi-line run scalar of codex, then login" ".github/workflows/folded.yml" "4-5: "
 printf 'jobs:\n  a:\n    steps:\n      - run: codex login --device-auth\n' >"${FIX}/.github/workflows/folded.yml"
 expect_hit "the one-line codex login control" ".github/workflows/folded.yml" "4:"
+# A sequence item `- codex` is bounded by its dash: a sibling key at the dash's
+# column is not a continuation, a deeper line is. A `$ codex` prompt line has no bound.
+printf 'cmds:\n  - codex\n  login: oauth\n' >"${FIX}/.github/workflows/folded.yml"
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "a sibling login: key after a - codex item must pass, got: ${SCAN_HITS}"
+printf 'cmds:\n  - codex\nlogin: oauth\n' >"${FIX}/.github/workflows/folded.yml"
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "a shallower login: key after a - codex item must pass, got: ${SCAN_HITS}"
+printf 'cmds:\n  - codex\n    login\n' >"${FIX}/.github/workflows/folded.yml"
+expect_hit "a deeper login after a - codex item" ".github/workflows/folded.yml" "2-3: "
+# A block scalar indicator may follow node properties (an anchor or a tag).
+printf 'jobs:\n  a:\n    steps:\n      - run: &x >-\n          echo hi && codex\n          login\n' >"${FIX}/.github/workflows/folded.yml"
+expect_hit "an anchored block scalar" ".github/workflows/folded.yml" "5-6: "
+printf 'jobs:\n  a:\n    steps:\n      - run: !!str |\n          echo hi && codex\n          login\n' >"${FIX}/.github/workflows/folded.yml"
+expect_hit "a tagged block scalar" ".github/workflows/folded.yml" "5-6: "
+printf 'jobs:\n  a:\n    steps:\n      - run: &x !!str >-\n          echo hi && codex\n          login\n' >"${FIX}/.github/workflows/folded.yml"
+expect_hit "an anchored and tagged block scalar" ".github/workflows/folded.yml" "5-6: "
 # A command key may sit in a flow mapping or have a blank before its colon, plain
 # or as a block scalar.
 printf 'jobs:\n  a:\n    steps:\n      - {run: echo hi && codex\n          login}\n' >"${FIX}/.github/workflows/folded.yml"
@@ -893,6 +978,13 @@ printf '# Guide\n\n~~~sh\necho hi && codex\nlogin\n~~~\n' >"${FIX}/docs/guides/p
 expect_hit "a codex / login pair in a tilde-fenced sh block" "docs/guides/planted-app.md" "4-5: "
 printf '# Guide\n\n````sh\necho hi && codex\nlogin\n````\n' >"${FIX}/docs/guides/planted-app.md"
 expect_hit "a codex / login pair in a four-backtick sh fence" "docs/guides/planted-app.md" "4-5: "
+printf '# Guide\n\n````sh\n```\necho hi && codex\nlogin\n````\n' >"${FIX}/docs/guides/planted-app.md"
+expect_hit "a shorter backtick run inside a four-backtick fence does not close it" "docs/guides/planted-app.md" "5-6: "
+printf '# Guide\n\n~~~~sh\n~~~\necho hi && codex\nlogin\n~~~~\n' >"${FIX}/docs/guides/planted-app.md"
+expect_hit "a shorter tilde run inside a four-tilde fence does not close it" "docs/guides/planted-app.md" "5-6: "
+printf '# Guide\n\n```sh\necho hi\n````\nThen codex\nlogin is required.\n' >"${FIX}/docs/guides/planted-app.md"
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "a longer run closes a shorter fence, so prose after it must pass, got: ${SCAN_HITS}"
 printf '# Guide\n\n~~~sh\nx\n```\necho hi && codex\nlogin\n~~~\n' >"${FIX}/docs/guides/planted-app.md"
 expect_hit "a backtick line inside a tilde fence does not close it" "docs/guides/planted-app.md" "6-7: "
 printf '# Guide\n\n```yaml\nsteps:\n  - run: >-\n      codex\n      login\n```\n' >"${FIX}/docs/guides/planted-app.md"
