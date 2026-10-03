@@ -1,20 +1,45 @@
 #!/usr/bin/env bash
-# setup-github-issue-fields.sh — idempotently add the org ISSUE FIELDS that are
-# NOT GitHub built-ins: Product. GitHub already ships Priority, Effort, Start
-# date, and Target date as built-in issue fields, and we never recreate or
-# modify those (leave them at their defaults).
+# setup-github-issue-fields.sh — idempotently provision the org ISSUE FIELDS the
+# issue-classification model needs (ADR 2026-09-30, issue classification):
 #
-# There is deliberately no Domain or Layer issue field (#875): they used to
-# mirror the `domain:`/`layer:` label families in setup-github-labels.sh with
-# nothing syncing an issue's field value to its label, and only the label
-# surface is readable without project scope, writable with plain repo scope,
-# and available on personal repos — so it is the one that stays (see
-# docs/project-management.md, "Label or field?").
+#   Product       text            (as before)
+#   Impact        single_select   minimal, low, medium, high, massive
+#   Risk          single_select   trivial, low, medium, high, critical
+#   Complexity    single_select   xs, s, m, l, xl
+#   Priority (AI) single_select   p0, p1, p2, p3, p4   (an agent's suggestion)
+#   Effort        single_select   1, 2, 3, 5, 8, 13, 20 (modified Fibonacci, added
+#                                 beside the built-in High/Medium/Low)
 #
-# NB: the numeric, summable estimate is NOT an issue field — it is the Size
-# project NUMBER field (setup-github-project.sh), because only project number
-# fields sum in view group headers. The built-in single-select Effort issue
-# field stays as GitHub ships it (a coarse gut-check, not the estimate).
+# GitHub already ships Priority, Effort, Start date, and Target date as built-in
+# issue fields. Priority is left exactly as GitHub ships it: it is the HUMAN
+# priority and overrides Priority (AI). Only Effort's options are changed: the
+# ladder above is added beside GitHub's shipped High/Medium/Low, which stay; the
+# field itself is never recreated.
+#
+# There is deliberately no Tier field: the Tier is a `tier:<value>` label on every
+# owner type (ADR 2026-10-01), and no Domain, Layer, or Agent field either (#875,
+# #662) — those are retired. An organization that still carries one keeps it. The
+# invariant is that this script NEVER removes a field or an option; it only ever
+# creates them. The retired Agent field is REPORTED when present; deleting an
+# org-wide field is the operator's decision, and every issue holding a value must
+# be enumerated first (#910).
+#
+# Idempotent and additive. A re-run writes nothing when every wanted option is
+# present, and a final inventory read — after every field has been handled — must
+# show every wanted field with its type and options before the run reports ready.
+# When an option is missing it is appended; options the owner added stay, and
+# so do GitHub's shipped Effort options (High/Medium/Low). Removing an option
+# blanks the field on every issue that carries it, and no search can prove that
+# none does (a private repository the token cannot read, an index that lags an
+# edit), so removal is left to the operator. The run only REPORTS each shipped
+# option with its issue-search count, as information, to help that decision; delete
+# one in the org's issue-field settings once no issue holds it.
+#
+# Why REST and not the GraphQL `updateIssueField` mutation: a single-select
+# update REPLACES the whole option list, and an existing option re-sent without
+# its `id` is destroyed and recreated, blanking that field on every issue that
+# held it. GraphQL's `IssueFieldSingleSelectOptionInput` has no `id`, so it cannot
+# preserve one; `PATCH /orgs/{org}/issue-fields/{id}` takes the option `id`.
 #
 # Issue fields are org-level, durable metadata: the value lives on the *issue*
 # (not a project item), is the same across every project the issue belongs to,
@@ -22,15 +47,19 @@
 # deliberately stays a Project field (it's the board pipeline the built-in +
 # project-automation workflows drive), so it is NOT created here.
 #
+# NB: Effort is the human time estimate for work a human will do; Complexity is
+# the difficulty axis on every issue. The Size project number field that used to
+# carry an estimate is retired in their favor (ADR 2026-09-30 D8).
+#
 # Issue fields are an ORG-level feature (no per-user equivalent), so this is
 # org-only. Needs gh authed with the 'admin:org' scope + jq.
 #
 # Usage: setup-github-issue-fields.sh --org <org-login>
 #
-# NOTE: issue fields are in GitHub PUBLIC PREVIEW — the API is subject to change,
-# and this hits the live API so it is not exercised by `task test:template`
-# (guarded by shellcheck + shfmt only). Test it against a scratch org, and pin
-# api_version below if the endpoint moves.
+# NOTE: issue fields are in GitHub PUBLIC PREVIEW — the API is subject to change.
+# The live API is never called by `task test:template` or the stubbed unit test
+# (test-setup-github-issue-fields.sh); run this against a scratch org first, and
+# pin api_version below if the endpoint moves.
 set -euo pipefail
 
 org=""
@@ -73,9 +102,50 @@ kv "Organization" "$org"
 # Preview REST API version for issue fields; bump if GitHub moves the endpoint.
 api_version="2026-03-10"
 
-# There is deliberately no Agent field: advisory agent routing is the
-# `suggest:*` label family plus the `Status: Agent Queue` lane, and the live
-# claim is a `claim:*` label (docs/project-management.md, ADR 0005 D4).
+# The option sets. Each option is {name, color, description, priority}; `priority`
+# is display order (1..N) and `color` one of gray, blue, green, yellow, orange,
+# red, pink, purple. The descriptions are the label registry's per-value wording
+# (label-registry.json), so a field and its label twin read the same.
+impact_opts='[
+  {"name":"minimal","color":"gray","description":"Impact: marginal benefit; most users would not notice it","priority":1},
+  {"name":"low","color":"blue","description":"Impact: small benefit to a few users or a narrow use case","priority":2},
+  {"name":"medium","color":"green","description":"Impact: clear benefit to a meaningful share of users or goals","priority":3},
+  {"name":"high","color":"orange","description":"Impact: core benefit, or severe harm prevented even if rarely triggered","priority":4},
+  {"name":"massive","color":"purple","description":"Impact: transformative; current goals depend on it","priority":5}
+]'
+risk_opts='[
+  {"name":"trivial","color":"gray","description":"Risk: a mistake is harmless and trivially reversible","priority":1},
+  {"name":"low","color":"green","description":"Risk: a mistake is contained, caught quickly, and cheap to undo","priority":2},
+  {"name":"medium","color":"yellow","description":"Risk: a mistake breaks a feature or needs a careful rollback","priority":3},
+  {"name":"high","color":"orange","description":"Risk: a mistake reaches many users or their data; recovery is costly","priority":4},
+  {"name":"critical","color":"red","description":"Risk: a mistake risks data loss, security exposure, or an irreversible outage","priority":5}
+]'
+complexity_opts='[
+  {"name":"xs","color":"gray","description":"Complexity: a tiny, well-understood change with obvious verification","priority":1},
+  {"name":"s","color":"blue","description":"Complexity: small and local; a clear approach across a few files","priority":2},
+  {"name":"m","color":"yellow","description":"Complexity: moderate; several components and some design choices","priority":3},
+  {"name":"l","color":"orange","description":"Complexity: large; cross-cutting, with real design and wide verification","priority":4},
+  {"name":"xl","color":"red","description":"Complexity: very large or uncertain; likely to grow or need splitting","priority":5}
+]'
+priority_ai_opts='[
+  {"name":"p0","color":"red","description":"Priority (AI): blocks a merge or deploy — critical","priority":1},
+  {"name":"p1","color":"orange","description":"Priority (AI): a real defect or must-do; next","priority":2},
+  {"name":"p2","color":"yellow","description":"Priority (AI): worth doing, not blocking","priority":3},
+  {"name":"p3","color":"blue","description":"Priority (AI): cosmetic or informational","priority":4},
+  {"name":"p4","color":"gray","description":"Priority (AI): negligible","priority":5}
+]'
+effort_opts='[
+  {"name":"1","color":"green","description":"Effort: 1, the smallest step on the modified Fibonacci ladder (human tasks only)","priority":1},
+  {"name":"2","color":"green","description":"Effort: 2 on the modified Fibonacci ladder (human tasks only)","priority":2},
+  {"name":"3","color":"yellow","description":"Effort: 3 on the modified Fibonacci ladder (human tasks only)","priority":3},
+  {"name":"5","color":"yellow","description":"Effort: 5 on the modified Fibonacci ladder (human tasks only)","priority":4},
+  {"name":"8","color":"orange","description":"Effort: 8 on the modified Fibonacci ladder (human tasks only)","priority":5},
+  {"name":"13","color":"orange","description":"Effort: 13 on the modified Fibonacci ladder (human tasks only)","priority":6},
+  {"name":"20","color":"red","description":"Effort: 20, the largest step on the modified Fibonacci ladder (human tasks only)","priority":7}
+]'
+# The options GitHub ships on the built-in Effort field. They are never removed:
+# the run only reports each one with its issue-search count (see reconcile_options).
+effort_shipped_defaults='["High","Medium","Low"]'
 
 # refresh_fields — (re-)read the org's issue fields into existing_json. Returns
 # non-zero when the read or the parse fails, leaving any previous snapshot in
@@ -83,12 +153,19 @@ api_version="2026-03-10"
 #
 # Normalizing: the list endpoint returns a bare array; tolerate an
 # {"issue_fields":[...]} wrapper too, and `--paginate`'s multiple concatenated
-# documents — `jq -s` slurps every document, so the pages become one array.
+# documents — `jq -s` slurps every document, so the pages become one array. Any
+# OTHER document — an error object such as {"message":"…"}, say — is a failed read,
+# never an empty organization: reading it as "no fields" would send the script off
+# creating fields from an inventory it never saw. A read that fails PART-way — a
+# valid first page, then an error on a later one — is the same failure: `gh`'s exit
+# status is kept, so the pages that did arrive are never taken for the whole list.
 refresh_fields() {
-    _raw=$(gh api "orgs/$org/issue-fields" -H "X-GitHub-Api-Version: $api_version" --paginate 2>/dev/null || true)
+    _raw=$(gh api "orgs/$org/issue-fields" -H "X-GitHub-Api-Version: $api_version" --paginate 2>/dev/null) || return 1
     [ -n "$_raw" ] || return 1
     _json=$(printf '%s' "$_raw" |
-        jq -s '[ .[] | if type == "object" then (.issue_fields // []) else . end | .[] ]' 2>/dev/null || true)
+        jq -s 'if all(.[]; type == "array" or (type == "object" and (.issue_fields | type) == "array"))
+               then [ .[] | if type == "object" then .issue_fields else . end | .[] ]
+               else error("unrecognized issue-fields response") end' 2>/dev/null || true)
     [ -n "$_json" ] || return 1
     existing_json="$_json"
 }
@@ -101,6 +178,7 @@ if ! refresh_fields; then
 fi
 
 # field_json NAME — the whole field object, or empty when there is no such field.
+# Matching is on the EXACT name: `Priority` and `Priority (AI)` are two fields.
 field_json() { printf '%s' "$existing_json" | jq -c --arg n "$1" '[ .[] | select(.name==$n) ] | first // empty'; }
 field_present() { [ -n "$(field_json "$1")" ]; }
 field_type() { printf '%s' "$existing_json" | jq -r --arg n "$1" '[ .[] | select(.name==$n) ] | first | .data_type // ""'; }
@@ -109,44 +187,288 @@ field_type() { printf '%s' "$existing_json" | jq -r --arg n "$1" '[ .[] | select
 # the wrong data type. GitHub cannot change an issue field's data type in
 # place, so the intended field is simply unavailable until it is renamed or
 # deleted. Warn (loudly, and again in the summary) rather than exit non-zero:
-# this script only ever creates, and one pre-existing field the org owns is
-# not a reason to abort.
+# this script only ever creates or appends, and one pre-existing field the org
+# owns is not a reason to abort the fields that can still be reconciled.
 incompatible=""
 
-# create_field NAME DATA_TYPE DESCRIPTION
+# Existing fields whose option list could not be reconciled, for the summary.
+unreconciled=""
+
+# What the run reports about the shipped options it keeps, for the summary: one
+# `Field: Option (count), …` entry per field. Information only — nothing acts on it.
+shipped_report=""
+
+# option_usage FIELD OPTION — how many issues in the org still hold that option of
+# that field: prints `unused`, `used N`, or `unknown`.
+#
+# This is a REPORT for the operator who decides whether to delete a shipped option
+# in the org's settings (deleting one blanks it on every issue that holds it), and
+# no decision in this script depends on it. The issue-fields API reports no usage,
+# so it asks issue SEARCH: the `field.<name>:"<value>"` qualifier, which only the
+# advanced search honors. A failed or unparsable call, an incomplete result, or a
+# name this cannot quote safely all print `unknown`. Search reads an index and sees
+# only the repositories the token can read, so `unused` means "no issue the search
+# can see", not "no issue".
+option_usage() {
+    local qname resp total
+    qname="$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')"
+    case "$qname$2" in
+    *[!A-Za-z0-9_-]*)
+        echo unknown
+        return 0
+        ;;
+    esac
+    resp="$(gh api --method GET search/issues \
+        -f q="org:$org is:issue field.$qname:\"$2\"" -f per_page=1 -f advanced_search=true 2>/dev/null)" || {
+        echo unknown
+        return 0
+    }
+    total="$(printf '%s' "$resp" | jq -r 'if (.total_count | type) == "number" and .incomplete_results == false then .total_count else "unknown" end' 2>/dev/null || echo unknown)"
+    case "$total" in
+    0) echo unused ;;
+    "" | *[!0-9]*) echo unknown ;;
+    *) echo "used $total" ;;
+    esac
+}
+
+# reconcile_options NAME WANT_JSON [SHIPPED_JSON] — bring an existing single-select
+# field's options to WANT_JSON via PATCH /orgs/{org}/issue-fields/{id}.
+#
+# The result is: every wanted option, in wanted order, then EVERY other existing
+# option, the owner's and GitHub's shipped ones (SHIPPED_JSON) alike — nothing is
+# ever left out. The shipped options are reported by name with their search count.
+# Two hazards, both handled in the jq below:
+#  1. `options` REPLACES the whole list, so every option to keep must be sent back
+#     or it is deleted. They are read from the field and merged first.
+#  2. An existing option must be sent WITH its `id`, or it is destroyed and
+#     recreated — blanking the field on every issue already assigned to it. New
+#     options carry no id (GitHub assigns one). Existing options keep their own
+#     color and description; only new options take the wanted ones.
+# `priority` is renumbered 1..N over that order: it encodes display order only.
+#
+# Nothing is written unless a wanted option is missing, so a re-run on a reconciled
+# field is a no-op, and an owner who has reordered the options is not reverted on
+# every run.
+#
+# The endpoint is PUBLIC PREVIEW and may change or vanish, so this fails safe in
+# both directions: an unreadable snapshot is never turned into replacement data
+# (see the `blocked` guard), and a rejected PATCH degrades to a warning rather
+# than aborting the run part-way. Either way the operator learns exactly which
+# options to change by hand.
+reconcile_options() {
+    local fname="$1" want="$2" shipped="${3:-[]}"
+    local fjson merged added blocked fid err oname usage kept
+    # Count the shipped options FIRST, from the startup snapshot: the probes are
+    # searches (no writes), up to one per shipped option, and the read that feeds
+    # the replacement has to come after them or the stale-snapshot window below
+    # would span all of them. The counts are information for the operator and gate
+    # nothing: every shipped option stays either way.
+    fjson="$(field_json "$fname")"
+    kept=""
+    while IFS= read -r oname; do
+        [ -n "$oname" ] || continue
+        usage="$(option_usage "$fname" "$oname")"
+        case "$usage" in
+        unused) kept="${kept}${kept:+, }${oname} (search count 0)" ;;
+        used*) kept="${kept}${kept:+, }${oname} (held by ${usage#used } issue(s))" ;;
+        *) kept="${kept}${kept:+, }${oname} (usage could not be read)" ;;
+        esac
+    done < <(printf '%s' "$fjson" | jq -r --argjson s "$shipped" '((.options // []) | sort_by(.priority // 0))[]? | select(.name as $n | ($s | index($n)) != null) | .name' 2>/dev/null)
+    [ -z "$kept" ] || shipped_report="${shipped_report}${shipped_report:+; }${fname}: ${kept}"
+    # Re-read immediately before building the replacement, with nothing in
+    # between. The PATCH replaces the ENTIRE option list, so an option added since
+    # the startup read — a parallel run, or someone in the org settings UI — would
+    # otherwise be deleted. This narrows the lost-update window to a single
+    # round-trip; it cannot close it, as the endpoint accepts no expected-version
+    # token, so run this when nobody is editing the field.
+    if ! refresh_fields; then
+        echo "    WARNING: could not re-read issue field '$fname' before updating it — leaving it untouched" >&2
+        unreconciled="${unreconciled}${unreconciled:+; }${fname}: (could not re-read the field)"
+        return 0
+    fi
+    fjson="$(field_json "$fname")"
+    if [ -z "$fjson" ]; then
+        echo "    WARNING: issue field '$fname' disappeared while this script was running — skipping" >&2
+        unreconciled="${unreconciled}${unreconciled:+; }${fname}: (disappeared while this script was running)"
+        return 0
+    fi
+    merged=$(jq -cn --argjson f "$fjson" --argjson want "$want" '
+        (if ($f.options | type) == "array" then $f.options else [] end
+            | sort_by(.priority // 0)) as $ex
+        | (if ($f | has("options") | not) then "the response carried no options array for it"
+           elif ($f.options | type) != "array" then "its options came back as a \($f.options | type), not an array"
+           elif ([ $ex[] | select(.id == null) ] | length) > 0 then "an existing option came back without an id"
+           else "" end) as $blocked
+        | [ $want[].name ] as $wnames
+        | [ $ex[].name ] as $names
+        | [ $want[] | select( .name as $n | ($names | index($n)) == null ) ] as $new
+        | ( [ $want[] | . as $w
+              | ( [ $ex[] | select(.name == $w.name) ] | first ) as $e
+              | if $e == null
+                then {name: $w.name, description: ($w.description // ""), color: ($w.color // "gray")}
+                else {id: $e.id, name: $e.name, description: ($e.description // ""), color: ($e.color // "gray")} end ]
+          + [ $ex[] | select( .name as $n | ($wnames | index($n)) == null )
+              | {id, name, description: (.description // ""), color: (.color // "gray")} ] ) as $keep
+        | { blocked: $blocked,
+            added: [ $new[].name ],
+            body: { options: ( $keep | to_entries | map(.value + {priority: (.key + 1)}) ) } }')
+    added=$(printf '%s' "$merged" | jq -r '.added | join(", ")')
+    if [ -z "$added" ]; then
+        echo "    Issue field '$fname' already has every wanted option — leaving it as-is"
+        return 0
+    fi
+    # Fail CLOSED on an unreadable snapshot. A preview response that omits
+    # `options` would otherwise look like a field with none, and the PATCH — which
+    # replaces the whole list — would delete every option the org owns. An option
+    # without an id is equally unusable: re-sending it would destroy and recreate
+    # it, blanking that field on every issue assigned to it. In both cases the
+    # promised warning is the correct outcome, not a best-effort write.
+    blocked=$(printf '%s' "$merged" | jq -r '.blocked')
+    if [ -n "$blocked" ]; then
+        echo "    WARNING: issue field '$fname' needs options added ($added), but $blocked —" >&2
+        echo "             not sending a replacement that could delete existing options." >&2
+        unreconciled="${unreconciled}${unreconciled:+; }${fname}: add ${added}"
+        return 0
+    fi
+    fid=$(printf '%s' "$fjson" | jq -r '.id')
+    if err=$(printf '%s' "$merged" | jq -c '.body' |
+        gh api --method PATCH "orgs/$org/issue-fields/$fid" \
+            -H "X-GitHub-Api-Version: $api_version" --input - 2>&1 >/dev/null); then
+        echo "    Issue field '$fname' already exists — options added (existing option ids kept): $added"
+        return 0
+    fi
+    echo "    WARNING: issue field '$fname' needs options added ($added), and the update was rejected:" >&2
+    echo "             $(printf '%s' "$err" | tr '\n' ' ' | cut -c1-200)" >&2
+    unreconciled="${unreconciled}${unreconciled:+; }${fname}: add ${added}"
+}
+
+# Every field this run is meant to leave in place — name, data type, and the option
+# names it must carry — recorded by create_field and checked against a final read
+# (verify_inventory) before the run may report ready.
+wanted_specs='[]'
+
+# create_field NAME DATA_TYPE DESCRIPTION [OPTIONS_JSON [SHIPPED_JSON]]
 create_field() {
-    name="$1"
-    dtype="$2"
-    desc="$3"
-    if field_present "$name"; then
-        etype="$(field_type "$name")"
-        if [ -n "$etype" ] && [ "$etype" != "$dtype" ]; then
-            echo "    WARNING: issue field '$name' already exists as '$etype', not '$dtype'" >&2
-            incompatible="${incompatible}${incompatible:+, }${name} (is '$etype', wanted '$dtype')"
+    local fname="$1" dtype="$2" desc="$3" opts="${4:-}" shipped="${5:-[]}"
+    local etype body
+    wanted_specs="$(jq -cn --argjson a "$wanted_specs" --arg n "$fname" --arg t "$dtype" --argjson o "${opts:-[]}" \
+        '$a + [{name: $n, type: $t, options: [ $o[].name ]}]')"
+    if field_present "$fname"; then
+        etype="$(field_type "$fname")"
+        if [ -z "$etype" ]; then
+            # A field that comes back with no data_type is an unknown field: this
+            # cannot tell whether it can hold the intended options, so it neither
+            # reconciles nor PATCHes it (the status check reads the same shape as
+            # unknown).
+            echo "    WARNING: issue field '$fname' came back with no data_type — leaving it untouched" >&2
+            unreconciled="${unreconciled}${unreconciled:+; }${fname}: (type unreadable)"
+        elif [ "$etype" != "$dtype" ]; then
+            # A wrong-typed field cannot hold the intended options at all, so this
+            # takes precedence over the option check below.
+            echo "    WARNING: issue field '$fname' already exists as '$etype', not '$dtype'" >&2
+            incompatible="${incompatible}${incompatible:+, }${fname} (is '$etype', wanted '$dtype')"
+        elif [ -n "$opts" ]; then
+            reconcile_options "$fname" "$opts" "$shipped"
         else
-            echo "    Issue field '$name' already exists — leaving it as-is"
+            echo "    Issue field '$fname' already exists — leaving it as-is"
         fi
         return 0
     fi
-    echo "    Creating $dtype issue field '$name'"
-    body=$(jq -cn --arg n "$name" --arg d "$desc" --arg t "$dtype" \
-        '{name:$n,description:$d,data_type:$t}')
+    echo "    Creating $dtype issue field '$fname'"
+    if [ -n "$opts" ]; then
+        body=$(jq -cn --arg n "$fname" --arg d "$desc" --arg t "$dtype" --argjson o "$opts" \
+            '{name:$n,description:$d,data_type:$t,options:$o}')
+    else
+        body=$(jq -cn --arg n "$fname" --arg d "$desc" --arg t "$dtype" \
+            '{name:$n,description:$d,data_type:$t}')
+    fi
     printf '%s' "$body" |
         gh api --method POST "orgs/$org/issue-fields" \
             -H "X-GitHub-Api-Version: $api_version" --input - >/dev/null
 }
 
-create_field "Product" "text" "Which product/area it belongs to"
+# verify_inventory — one final inventory read after every field has been handled,
+# checked against what create_field recorded: each wanted field must be present, of
+# the right type, and carry every wanted option. Anything else is recorded in
+# `unreconciled` so the run cannot report ready. Without it a field that another
+# actor deleted after the startup read, but before (or after) its own pass, would be
+# accepted from a stale snapshot. A failed final read is a failed read.
+verify_inventory() {
+    local gaps
+    if ! refresh_fields; then
+        echo "    WARNING: the final inventory read failed — cannot confirm the organization matches the wanted fields" >&2
+        unreconciled="${unreconciled}${unreconciled:+; }final read: (the inventory read failed)"
+        return 0
+    fi
+    gaps="$(printf '%s' "$existing_json" | jq -r --argjson w "$wanted_specs" '
+        . as $f
+        | [ $w[] | . as $s
+            | ( [ $f[] | select(.name == $s.name) ] | first ) as $e
+            | if $e == null then "\($s.name) is missing"
+              elif ($e.data_type // "") == "" then "\($s.name): type unreadable"
+              elif $e.data_type != $s.type then "\($s.name) is \($e.data_type), not \($s.type)"
+              else ( [ $s.options[] | select( . as $o | ([ ($e.options // [])[]? | .name ] | index($o)) == null ) ] ) as $miss
+                   | if ($miss | length) > 0 then "\($s.name) lacks \($miss | join(", "))" else empty end
+              end ]
+        | join("; ")' 2>/dev/null || echo "the final inventory could not be checked")"
+    if [ -n "$gaps" ]; then
+        echo "    WARNING: the final inventory read does not show the wanted fields: $gaps" >&2
+        unreconciled="${unreconciled}${unreconciled:+; }final read: ${gaps}"
+    fi
+}
 
-if [ -n "$incompatible" ]; then
-    checkline unknown "Done, WITH WARNINGS" "issue fields have incompatible existing types"
-    echo "    These fields already exist with a different data type: $incompatible" >&2
-    echo "    GitHub cannot change an issue field's data type in place. Rename or delete each one in the org's" >&2
-    echo "    issue-field settings and re-run this script to get the intended options." >&2
+create_field "Product" "text" "Which product/area it belongs to"
+create_field "Impact" "single_select" \
+    "Expected significance of completing the issue: core versus marginal benefit, not common versus uncommon path" \
+    "$impact_opts"
+create_field "Risk" "single_select" \
+    "How consequential a failure is if the change is implemented incorrectly; for a bug fix, the danger of the fix" \
+    "$risk_opts"
+create_field "Complexity" "single_select" \
+    "How difficult the work is to understand, design, implement, and verify correctly; never a time estimate" \
+    "$complexity_opts"
+create_field "Priority (AI)" "single_select" \
+    "An agent's suggested priority; the human Priority field overrides it" \
+    "$priority_ai_opts"
+create_field "Effort" "single_select" \
+    "The human time estimate for work a human will do, on a modified Fibonacci ladder" \
+    "$effort_opts" "$effort_shipped_defaults"
+
+verify_inventory
+
+# The retired Agent field is reported, never deleted. The REST list exposes no
+# per-field issue count, so say that rather than print a number nobody read.
+if field_present "Agent"; then
+    checkline info "Retired issue field 'Agent'" "still present; issue count not exposed by the API"
+    echo "    This script never deletes a field. Enumerate every issue that holds an Agent value" >&2
+    echo "    before deleting it in the org's issue-field settings (harmon-init#910)." >&2
+fi
+
+# GitHub's shipped options are kept, and only reported (information, never a
+# warning: the org is provisioned either way). Deleting one is the operator's step.
+if [ -n "$shipped_report" ]; then
+    checkline info "Shipped options kept" "$shipped_report — delete each in the org's issue-field settings once no issue holds it"
+    echo "    A search count of 0 only means no issue this token's search can see: it cannot see repositories this" >&2
+    echo "    token cannot read, and its index can lag an edit. Enumerate the issues that hold a value before" >&2
+    echo "    deleting an option — deleting one blanks it on every issue (harmon-init#910)." >&2
+fi
+
+if [ -n "$incompatible" ] || [ -n "$unreconciled" ]; then
+    checkline unknown "Done, WITH WARNINGS" "issue fields need attention"
+    if [ -n "$incompatible" ]; then
+        echo "    These fields already exist with a different data type: $incompatible" >&2
+        echo "    GitHub cannot change an issue field's data type in place. Rename or delete each one in the org's" >&2
+        echo "    issue-field settings and re-run this script to get the intended options." >&2
+    fi
+    if [ -n "$unreconciled" ]; then
+        echo "    These existing fields still need options added, or a re-run — $unreconciled" >&2
+        echo "    An update was refused or rejected, or a field changed under this run (the issue-fields API is in public preview and may have changed)." >&2
+        echo "    Re-run, or make each change by hand in the org's issue-field settings (Settings -> Planning -> Issue fields)." >&2
+    fi
     output_summary "Issue field provisioning"
     output_warning "GitHub issue fields need attention; resolve the warnings above and re-run"
 else
-    checkline ok "Issue fields" "Product (Priority/Effort/dates are GitHub built-ins)"
+    checkline ok "Issue fields" "Product, Impact, Risk, Complexity, Priority (AI), Effort (Priority/dates are GitHub built-ins)"
     output_summary "Issue field provisioning"
     output_done "GitHub issue fields are ready on $org"
 fi

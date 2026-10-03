@@ -4,7 +4,7 @@
 - **Owner:** Evan Harmon
 - **Date:** 2026-08-13
 - **Related:** milestone [Issue strategy overhaul](https://github.com/evanharmon1/harmon-init/milestone/2)
-  (#849–#858) · [ADR 0005](../docs/decisions/0005-unified-agent-vocabulary.md) · #754 · #809 · #620 ·
+  (#849–#858) · [ADR 2026-08-07](../docs/decisions/2026-08-07-unified-agent-vocabulary.md) · #754 · #809 · #620 ·
   [ponderousdev/foreman#139](https://github.com/ponderousdev/foreman/issues/139) ·
   [ponderousdev/foreman#169](https://github.com/ponderousdev/foreman/issues/169) ·
   harmon-devkit [#449](https://github.com/evanharmon1/harmon-devkit/issues/449),
@@ -46,7 +46,7 @@ Issues become cheap to classify and route, for humans and agents alike:
   delegation, and human gates). `tier:*` becomes an advanced, role-scoped refinement of rigor's
   own per-role tiers rather than a peer axis with its own default; both `rigor:*` and
   `strategy:*` are consumable by foreman under its trust model. (#1047, superseding this spec's
-  original `method:*`; see [ADR 0007](../docs/decisions/0007-rigor-and-strategy-axes.md).)
+  original `method:*`; see [ADR 2026-08-24](../docs/decisions/2026-08-24-rigor-and-strategy-axes.md).)
 - One authoring standard (title rule, body skeleton, metadata checklist) enforced by a checker
   and mirrored by the issue forms.
 - A manifest-governed triage skill that classifies the backlog and reports what it cannot decide.
@@ -93,17 +93,24 @@ Issues become cheap to classify and route, for humans and agents alike:
 - [ ] `area:*` family — harmon-init values (template, devcontainer, ci, tasks, skills, foreman,
       codex, worktree, release, security, pm, docs); generic template starter (ci, docs, deps,
       build). Rule: area = solution space, domain = problem space, layer = stack slice. (#854)
-- [ ] `tier:*` ladder `local → economy → standard → frontier → apex` plus `adaptive`; `apex` =
-      mythos-class (fable, sol), `frontier` = opus-class. `.devflow.toml` gains
-      `[tier.<value>]` tables mapping families to `agent-registry.json` model slugs
-      (validated), `escalate_to` chains, and `endpoint = "local"` on the self-hosted tier.
+- [ ] `tier:*` ladder `local → economy → standard → frontier → apex` (`adaptive`, once a
+      sixth value, is retired — ADR 2026-09-30 D8; see the fallback item below); `apex` =
+      mythos-class (fable, sol), `frontier` = opus-class. `.devflow.toml` carries
+      `tier_order` and `[tier.matrix]` (Risk × Complexity → Tier, ADR 2026-09-30 D4); model
+      mapping is `agent-registry.json`'s (each model carries its `tier`), and escalation is
+      one rung up `tier_order` (#1047, schema v2 — the v1 `[tier.<value>]` tables,
+      `escalate_to` chains, and `endpoint = "local"` are gone).
       `tier:local` escalates to economy; privacy-pinning is a future separate concern label,
       not a tier semantic. (#855; re-scoped #1047 — there is no `default_tier`: each
       `[rigor.*]` level names `orchestrator_tier`/`implementer_tier`/`reviewer_tier`
       directly, and those three values are the default for every role absent an override.
-      An unqualified `tier:<value>` label or override refines the **implementer** tier only;
-      `tier:orchestrator:<value>` / `tier:implementer:<value>` / `tier:reviewer:<value>`
-      refine one named role. See [ADR 0007](../docs/decisions/0007-rigor-and-strategy-axes.md)
+      An unqualified `tier:<value>` label is the issue's stored Tier: a cache of the derived
+      Tier that the reader compares against, or with `tier:pinned` the pinned value — never a
+      role override (ADR 2026-09-30, #1449). Among labels only the role-scoped
+      `tier:orchestrator:<value>` / `tier:implementer:<value>` / `tier:reviewer:<value>` form
+      overrides, refining one named role; an unqualified *operator* tier instruction still
+      targets the implementer. The earlier reading — an unqualified `tier:<value>` label as an
+      implementer override — is retired by ADR 2026-09-30. See [ADR 2026-08-24](../docs/decisions/2026-08-24-rigor-and-strategy-axes.md)
       D2/D5.)
 - [ ] Tier tables are **inert routing preferences, never dependencies**: nothing in a
       generated repo invokes any model because the config exists, and an acting consumer may
@@ -111,11 +118,11 @@ Issues become cheap to classify and route, for humans and agents alike:
       authenticated — the shipped defaults therefore create no account, trial, or paid-SaaS
       dependency (Hard Rule preserved), and escalation can never switch a repo to a vendor it
       does not already use. The `local` tier's machinery binding is explicit: its entries
-      resolve to the registry's `-local` endpoint-variant harnesses (ADR 0005 D9), and
+      resolve to the registry's `-local` endpoint-variant harnesses (ADR 2026-08-07 D9), and
       validation fails a local entry whose family has no registered `-local` harness.
       `escalate_to` chains validate as referential, acyclic, and monotonic toward `apex`;
       *when* escalation fires (failure, refusal, operator policy — never cost alone) is
-      defined in ADR 0006. Candidate selection is deterministic, also in ADR 0006: the
+      defined in ADR 2026-08-16. Candidate selection is deterministic, also in ADR 2026-08-16: the
       resolved tier names the stratum; a `suggest:<family>[:<model>]` narrows within it only
       when that family is configured and eligible (otherwise it is ignored with a note) —
       and unattended consumption of a suggestion is subject to the same provenance
@@ -126,17 +133,19 @@ Issues become cheap to classify and route, for humans and agents alike:
 - [ ] Built-in fallbacks are defined: absent `.devflow.toml` entirely, resolution uses the
       built-in review policy equivalent to `standard` (3 / 3 / 4, `min_rounds` 1), strategy
       `plan`, and tiers **inert** — the labels still classify, and nothing resolves a role to a
-      concrete model. `adaptive` is never a terminal answer for a role tier: it is rejected
-      outright as a `[rigor.*]` role-tier value or an override target — a role always resolves
-      to a concrete ladder rung or not at all (inert), never to `adaptive` itself. (#855;
+      concrete model. `adaptive` is retired (ADR 2026-09-30 D8; #1449): it is rejected
+      outright as a `[rigor.*]` or `[role.*]` tier value, a `[tier.matrix]` cell, or an
+      operator override target, and a leftover `tier:adaptive` label resolves as if absent
+      with a warning naming the retirement — a role always resolves to a concrete ladder rung
+      or not at all (inert). (#855;
       restated #1047 without `default_tier`/`[method]`, which no longer exist — see
-      [ADR 0007](../docs/decisions/0007-rigor-and-strategy-axes.md) D5/D12.)
+      [ADR 2026-08-24](../docs/decisions/2026-08-24-rigor-and-strategy-axes.md) D5/D12.)
 - [ ] `strategy:*` values `oneshot | plan | plan-approved | orchestrate | council | human-led`
       (replacing `method:*`, retired via the existing retired-family pattern);
       `default_strategy` in `.devflow.toml`. Each value carries machine-readable `topology`,
       `planning`, `delegation`, optional `coordination`/`selection`/`synthesis`/`min_agents`,
       and `human_gates` fields (defined without relying on the value's name — see
-      [ADR 0007](../docs/decisions/0007-rigor-and-strategy-axes.md) and
+      [ADR 2026-08-24](../docs/decisions/2026-08-24-rigor-and-strategy-axes.md) and
       `docs/guides/devflow.md`). Unlike the `method:*` rank it replaces, **strategy conflicts
       are ambiguous, not ranked**: two `strategy:*` labels on one issue require resolution
       (an interactive session asks; unattended automation falls back to `default_strategy`
@@ -151,21 +160,23 @@ Issues become cheap to classify and route, for humans and agents alike:
       the resolved rigor's budget (`max_agent_runs` or `max_parallel_agents`) is a reported
       incompatibility, never a silent substitution. (#1047, superseding this spec's original
       `method:*` requirement from #855.)
-- [ ] Resolution and trust (ADR 0006, re-scoped by ADR 0007): explicit instruction > label >
+- [ ] Resolution and trust (ADR 2026-08-16, re-scoped by ADR 2026-08-24): explicit instruction > label >
       config default > built-in — where an **explicit instruction** is one arriving on the
       operator's attributable channel (the interactive session's human input, or the
       automation's own configuration) and never repository content: issue bodies, comments,
       and PR text are untrusted input and can never outrank labels or config. Merge-base copy
       applies when the change edits `.devflow.toml` — every parameter, not only defaults.
       **Rigor conflicts resolve strongest-wins by `rigor_order`** (a label only ever buys more
-      depth and budget); **role-tier conflicts resolve strongest-wins on the tier ladder**, and
-      a concrete tier always beats `adaptive`; **strategy conflicts are ambiguous** — there is
+      depth and budget); **role-tier conflicts resolve strongest-wins on the tier ladder**;
+      the implementer tier also takes a pinned Tier above labels and an issue's derived
+      Tier below them (ADR 2026-09-30 D5, `docs/guides/devflow.md` "Issue Tier");
+      **strategy conflicts are ambiguous** — there is
       no rank, because topologies are not orderable against each other the way rigor levels
       are, so an interactive session must ask and unattended automation falls back to
       `default_strategy` with a warning. Off-default resolutions — above or below, for rigor,
       strategy, or any individual role tier — are disclosed in the PR body (#809 doctrine
       extended). Consumer trust is stated as **invariants**; the concrete timeline-validation
-      algorithm is deliberately not specified here — it is ADR 0006 / foreman#139 design work
+      algorithm is deliberately not specified here — it is ADR 2026-08-16 / foreman#139 design work
       under #855, and the adversarial scenarios raised in this spec's review are carried there
       as required test cases:
       1. **Unattended automation** acts on a strategy or suggestion label only after
@@ -183,7 +194,7 @@ Issues become cheap to classify and route, for humans and agents alike:
       3. Advisory families fail open to the config default; arming stays fail-closed.
       Rigor's values are called **levels** in all prose from here on; "tier" belongs to the
       model axis. (#855)
-- [ ] ADR 0005 D6 amendment: suggestions become human- **or agent-**authored; `suggest:*` stays
+- [ ] ADR 2026-08-07 D6 amendment: suggestions become human- **or agent-**authored; `suggest:*` stays
       family[:model] (vendor preference), `tier:*` is the human-decided policy layer;
       `suggest:tier:<value>` is reserved, not built. `claim:*` stays on the family axis; the
       claim record gains `harness:`/`model:`/`session:` fields (harmon-devkit#450). (#855)
@@ -238,8 +249,10 @@ Issues become cheap to classify and route, for humans and agents alike:
 
 ### Scenario: tier conflict can only buy more
 
-- **Given** an issue carrying both `tier:economy` and `tier:standard`
-- **When** an agent (or foreman, later) resolves the (unqualified, implementer-scoped) tier
+- **Given** an issue carrying both `tier:implementer:economy` and `tier:implementer:standard`
+  (role-scoped overrides; an unqualified `tier:<value>` label is the stored Tier, not an
+  override — ADR 2026-09-30)
+- **When** an agent (or foreman, later) resolves the implementer tier
 - **Then** the resolution is `standard`, and any role tier that ends up below the resolved
   rigor's own profile for that role is disclosed in the PR body
 
@@ -253,13 +266,14 @@ Issues become cheap to classify and route, for humans and agents alike:
 
 ### Scenario: untrusted strategy labels are inert to automation
 
-- **Given** `tier:apex` applied by a login not in the automation's trusted-actor configuration
+- **Given** `tier:implementer:apex` applied by a login not in the automation's trusted-actor
+  configuration
 - **When** unattended automation resolves the tier from the label timeline immediately before
   acting
 - **Then** the label is ignored with a warning and the config default applies — and no
   sequence of untrusted applies **or removals** anywhere on the axis can move the outcome
   away from what trusted actors' surviving actions alone would produce (the provenance
-  invariant; the concrete algorithm lives with ADR 0006 / foreman#139)
+  invariant; the concrete algorithm lives with ADR 2026-08-16 / foreman#139)
 
 ### Scenario: two strategy labels are ambiguous, not ranked
 
@@ -341,7 +355,7 @@ Issues become cheap to classify and route, for humans and agents alike:
   harmon-init, harmon-devkit, and ponderousdev/foreman (colors: area `0E8A16`, tier `7057FF`,
   method `BF3989`, task `6E7781`, research `0E7C86`); #851 formalizes them — the manifest must
   adopt these exact names/colors so provisioning reconciles instead of fighting. `method:*` was
-  retired in favor of `strategy:*` under #1047 (ADR 0007); its color `BF3989` carries over to
+  retired in favor of `strategy:*` under #1047 (ADR 2026-08-24); its color `BF3989` carries over to
   `strategy` so provisioning reconciles the same way.
 - Design rails inherited from upstream foreman (v2.5.0 source, verified): unrecognized
   `foreman:*` labels arm as backend selectors; `type:<commit-type>` is parsed (two = error);

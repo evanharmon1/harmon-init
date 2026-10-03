@@ -213,8 +213,10 @@ for bad_coder_uri in \
 done
 
 # copier is installed from two places that cannot see each other: the shared
-# devcontainer image (images/devcontainer/Dockerfile, baked in) and
-# scripts/install-copier.sh (`task install` on every other brew-less host).
+# devcontainer image (from images/devcontainer/versions.env, baked in — that
+# file is also what images/devcontainer/bootstrap-remote.sh reads, so the pin
+# now covers remote environments too) and scripts/install-copier.sh
+# (`task install` on every other brew-less host).
 # Renovate bumps each independently, so nothing else catches them drifting
 # apart — a stale image pin would silently ship every devcontainer an older
 # copier than every other host installs. Both files sit in Renovate's
@@ -243,10 +245,10 @@ pin_from() {
     # stderr is deliberately NOT redirected, so a missing file still says so.
     grep -m1 -oE "$2" "$1" | cut -d= -f2 | tr -d '"' || true
 }
-image_pin="$(pin_from "$repo/images/devcontainer/Dockerfile" '^ARG COPIER_VERSION=[^[:space:]]+')"
+image_pin="$(pin_from "$repo/images/devcontainer/versions.env" '^COPIER_VERSION=[^[:space:]]+')"
 install_pin="$(pin_from "$repo/scripts/install-copier.sh" '^COPIER_VERSION=[^[:space:]]+')"
 
-[ -n "$image_pin" ] || fail "images/devcontainer/Dockerfile: no 'ARG COPIER_VERSION=' found"
+[ -n "$image_pin" ] || fail "images/devcontainer/versions.env: no 'COPIER_VERSION=' found"
 [ -n "$install_pin" ] || fail "scripts/install-copier.sh: no 'COPIER_VERSION=' found"
 
 if [ -n "$image_pin" ] && [ -n "$install_pin" ]; then

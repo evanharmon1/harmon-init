@@ -1,11 +1,13 @@
 # Related repos to work on alongside this one inside the devcontainer.
-# Cloned into /workspaces/ on container CREATE, and git-fetched (non-
-# destructively) on container START. Read by:
+# Cloned into /workspaces/ on container CREATE and on START, and git-fetched
+# (non-destructively) on container START. Read by:
 #   .devcontainer/scripts/bootstrap-related-repos.sh   (clone if missing)
 #   .devcontainer/scripts/fetch-related-repos.sh       (git fetch if present)
 #
 # One entry per line:
-#   owner/repo                       # default branch, cloned via gh CLI
+#   owner/repo                       # default branch; cloned via gh CLI when
+#                                    # logged in, falls back to git clone over
+#                                    # HTTPS otherwise
 #   owner/repo@branch                # specific branch
 #   https://github.com/owner/repo    # full URL (also supports .git suffix)
 #   git@github.com:owner/repo.git    # ssh URL — accepted, but rewritten to

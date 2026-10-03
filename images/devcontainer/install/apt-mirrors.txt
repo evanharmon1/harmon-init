@@ -1,0 +1,26 @@
+# apt-mirrors.txt — every Ubuntu archive host a stock Ubuntu 24.04 (noble) VM's
+# own apt sources configure, and therefore every host `apt-get update` and
+# `apt-get install` reach on apt-core.sh's behalf.
+#
+# This is DATA, not a tier script: nothing executes it, and neither the image
+# nor the VM reads it at runtime (apt reads the VM's own sources). It is written
+# once and consumed twice, so the two consumers cannot disagree:
+#   - scripts/test-bootstrap-remote.sh derives section 10b's apt implication
+#     from this file instead of naming mirrors itself;
+#   - the allowed-host table in docs/architecture/remote-environments.md is
+#     checked against the derived set in BOTH directions, so a host added here
+#     makes the doc owe a row and a row the doc invents with nothing reaching it
+#     fails too.
+#
+# Adding a mirror here is therefore the whole edit. The hand-maintained tuple
+# this file replaces missed a host three times, each time as an install that
+# fails only on a VM behind an allowlisted egress proxy.
+#
+# amd64 — the release, updates and backports pockets:
+archive.ubuntu.com
+# amd64 — the security pocket (`noble-security`). A separate HOST, not a path
+# under the archive, so a bare `apt-get update` fails without it:
+security.ubuntu.com
+# arm64 — every pocket, security included, is served from ports rather than
+# from archive/security:
+ports.ubuntu.com

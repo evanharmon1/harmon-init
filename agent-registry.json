@@ -33,7 +33,8 @@
       "display_name": "GPT",
       "legacy_claim_labels": ["agent:codex"],
       "models": [
-        { "slug": "sol", "display_name": "Sol", "tier": "apex" },
+        { "slug": "astra", "display_name": "Astra", "tier": "apex" },
+        { "slug": "sol", "display_name": "Sol", "tier": "frontier" },
         { "slug": "terra", "display_name": "Terra", "tier": "standard" },
         { "slug": "luna", "display_name": "Luna", "tier": "economy" }
       ]
@@ -43,8 +44,8 @@
       "display_name": "MAI",
       "models": [
         {
-          "slug": "code-1-flash",
-          "display_name": "Code-1-Flash",
+          "slug": "code-1-1-flash",
+          "display_name": "Code-1.1-Flash",
           "tier": "economy"
         },
         {
@@ -59,7 +60,7 @@
       "display_name": "Qwen",
       "legacy_claim_labels": ["agent:qwen-code"],
       "models": [
-        { "slug": "max", "display_name": "3.7 Max", "tier": "frontier" },
+        { "slug": "max", "display_name": "3.8 Max", "tier": "frontier" },
         {
           "slug": "coder-plus",
           "display_name": "3 Coder Plus",
@@ -67,6 +68,12 @@
           "default": true
         },
         { "slug": "coder", "display_name": "3 Coder", "tier": "economy" },
+        {
+          "slug": "flash",
+          "display_name": "3.8 Flash",
+          "tier": "economy",
+          "default": true
+        },
         {
           "slug": "coder-next",
           "display_name": "3 Coder Next",
@@ -79,6 +86,7 @@
       "slug": "deepseek",
       "display_name": "DeepSeek",
       "models": [
+        { "slug": "v4-1-flash", "display_name": "V4.1 Flash", "tier": "standard", "default": true },
         { "slug": "v4-pro", "display_name": "V4 Pro", "tier": "standard" },
         { "slug": "v4-flash", "display_name": "V4 Flash", "tier": "economy" }
       ]
@@ -87,7 +95,9 @@
       "slug": "glm",
       "display_name": "GLM",
       "models": [
+        { "slug": "5-3", "display_name": "5.3", "tier": "standard", "default": true },
         { "slug": "5-2", "display_name": "5.2", "tier": "standard" },
+        { "slug": "5-3-flash", "display_name": "5.3 Flash", "tier": "economy", "default": true },
         { "slug": "4-7-flash", "display_name": "4.7 Flash", "tier": "economy" }
       ]
     },
@@ -108,6 +118,8 @@
       "legacy_claim_labels": ["agent:gemini-cli"],
       "models": [
         { "slug": "3-1-pro", "display_name": "3.1 Pro", "tier": "frontier" },
+        { "slug": "3-8-flash", "display_name": "3.8 Flash", "tier": "frontier", "default": true },
+        { "slug": "3-7-flash", "display_name": "3.7 Flash", "tier": "standard", "default": true },
         {
           "slug": "3-6-flash",
           "display_name": "3.6 Flash",
@@ -124,6 +136,17 @@
       "slug": "mistral",
       "display_name": "Mistral",
       "models": [
+        {
+          "slug": "medium-3-5",
+          "display_name": "Medium 3.5",
+          "tier": "frontier"
+        },
+        {
+          "slug": "small-4",
+          "display_name": "Small 4",
+          "tier": "standard",
+          "default": true
+        },
         {
           "slug": "devstral-small-2",
           "display_name": "Devstral Small 2",

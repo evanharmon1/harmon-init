@@ -1,26 +1,27 @@
 #!/usr/bin/env node
 // agent-registry-labels.mjs — render the agent-vocabulary GitHub labels from the
 // machine-readable agent registry (agent-registry.json). This is the SINGLE
-// source of the `suggest:*`, `claim:*`, and `foreman:<adapter>` label lines:
+// source of the `claim:*` and `foreman:<adapter>` label lines:
 // setup-github-labels.sh provisions them and test-registry-drift.sh checks them,
 // both by calling this file, so the two can never disagree.
 //
 // Output: one `name|hex-color|description` line per label (the format
-// setup-github-labels.sh consumes). Only FAMILY-LEVEL suggest/claim labels are
-// emitted — model-level `suggest:<family>:<model>` / `claim:<family>:<model>`
-// are created on demand, never seeded (an unbounded roster otherwise). Foreman
+// setup-github-labels.sh consumes). Only FAMILY-LEVEL claim labels are
+// emitted — model-level `claim:<family>:<model>` labels are created on demand,
+// never seeded (an unbounded roster otherwise). `suggest:*` is retired
+// (superseded by the derived Tier) and is no longer rendered. Foreman
 // adapter selectors are emitted only for adapters the registry marks
 // `provision_label` (a selector without a production adapter can strand armed
-// work — ADR 0005 D11), so `mock` never yields a `foreman:mock` label.
+// work — ADR 2026-08-07 D11), so `mock` never yields a `foreman:mock` label.
 //
 // The same registry also drives the human-facing family and harness tables in
-// docs/project-management.md (ADR 0005 D10): `docs-tables` renders them as
+// docs/project-management.md (ADR 2026-08-07 D10): `docs-tables` renders them as
 // markdown, and test-registry-docs.sh fails when the committed doc no longer
 // matches. That mode emits documentation, not label records, so it is
 // deliberately NOT part of `all`.
 //
 // Usage: node agent-registry-labels.mjs <mode> [registry-path]
-//   mode = suggest-claim | foreman-adapters | all | docs-tables
+//   mode = claim | foreman-adapters | all | docs-tables
 // Registry defaults to ../agent-registry.json relative to this file.
 
 import fs from 'node:fs'
@@ -30,12 +31,11 @@ import { fileURLToPath } from 'node:url'
 
 // Colors mirror setup-github-labels.sh's family grouping: claim inherits the
 // retired agent:* teal (it answers the same "who is working this" question);
-// suggest is a softer advisory blue; foreman selectors share the arming blue.
-const COLOR_SUGGEST = 'BFD4F2'
+// foreman selectors share the arming blue.
 const COLOR_CLAIM = '006B75'
 const COLOR_FOREMAN = '1D76DB'
 
-const MODES = new Set(['suggest-claim', 'foreman-adapters', 'all', 'docs-tables'])
+const MODES = new Set(['claim', 'foreman-adapters', 'all', 'docs-tables'])
 
 const mode = process.argv[2]
 if (!MODES.has(mode)) {
@@ -106,17 +106,10 @@ const record = (name, color, description) => {
 
 const lines = []
 
-if (mode === 'suggest-claim' || mode === 'all') {
+if (mode === 'claim' || mode === 'all') {
   for (const family of registry.families ?? []) {
     const slug = field(family.slug, `family slug`)
     const name = field(family.display_name, `family '${slug}' display_name`)
-    lines.push(
-      record(
-        labelName('suggest', slug),
-        COLOR_SUGGEST,
-        `Suggested for the ${name} family (advisory)`
-      )
-    )
     lines.push(record(labelName('claim', slug), COLOR_CLAIM, `Claimed by ${name}`))
   }
 }
@@ -143,7 +136,7 @@ if (mode === 'docs-tables') {
   const cell = (value, where) => field(value, where)
   const code = (value) => '`' + value + '`'
   // Adapters ACCUMULATE per harness rather than overwriting. Nothing in the
-  // schema or in ADR 0005 D11 says one harness has at most one adapter — two
+  // schema or in ADR 2026-08-07 D11 says one harness has at most one adapter — two
   // backends can legitimately drive the same executable — so a `set()` here
   // would silently publish only the last one, and the doc would understate what
   // can dispatch that harness. Rejecting the second instead would fail a

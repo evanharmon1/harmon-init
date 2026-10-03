@@ -80,6 +80,12 @@ use_copilot_cli: true
 # in both devcontainer profiles. Keys come from 1Password Environments locally.
 use_alternative_claude_providers: true
 
+# Dogfoods the paid, opt-in Fly.io Sprites adapter: the root sprites/ directory
+# is the verbatim twin of the template's, and the root is where the maintainer
+# provisions a Sprite for harmon-init (docs/guides/sprites.md). Generated repos
+# default to no because Sprites need a paid Fly.io organization.
+use_fly_sprites: true
+
 # Root ships docs/project-management.md plus setup:github-project / -labels.
 project_management: github
 
