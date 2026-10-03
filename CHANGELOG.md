@@ -8,6 +8,43 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.48.0](https://github.com/evanharmon1/harmon-init/compare/v4.47.1...v4.48.0) (2026-10-03)
+
+
+### Features
+
+* add epic and umbrella labels ([#1397](https://github.com/evanharmon1/harmon-init/issues/1397)) ([421e493](https://github.com/evanharmon1/harmon-init/commit/421e493982eed76fa55cc5be93e84146c36c3d70))
+* **agent-registry:** add trusted-orchestrator allowlist question and schema support ([#1374](https://github.com/evanharmon1/harmon-init/issues/1374)) ([#1401](https://github.com/evanharmon1/harmon-init/issues/1401)) ([cc6a216](https://github.com/evanharmon1/harmon-init/commit/cc6a21600f703f4d28c148768d22cfc38acbc01b))
+* **agents:** allow agents to invoke /claim without confirmation ([#1420](https://github.com/evanharmon1/harmon-init/issues/1420)) ([b91df8b](https://github.com/evanharmon1/harmon-init/commit/b91df8bb9ac7b21168cf2beea70034a80bfa01aa))
+* **claude:** replace the git merge ask rules with a branch-aware merge guard ([#1455](https://github.com/evanharmon1/harmon-init/issues/1455)) ([c8903a0](https://github.com/evanharmon1/harmon-init/commit/c8903a00a667c76097de170bab1a740aff67cd7b))
+* **decisions:** record the issue-classification model and the derived tier in an ADR ([#1465](https://github.com/evanharmon1/harmon-init/issues/1465)) ([81073d4](https://github.com/evanharmon1/harmon-init/commit/81073d485cfa365a3b501e41f23e60e13f32a6e6))
+* **devcontainer:** add an agent posture and devcontainer, stricter than bot ([#1436](https://github.com/evanharmon1/harmon-init/issues/1436)) ([2838c6b](https://github.com/evanharmon1/harmon-init/commit/2838c6bfbc0f8c763b43faae2a3d7a80fb56d4ec))
+* **devcontainer:** bootstrap stock Ubuntu VMs from the shared image's pinned installs ([#1426](https://github.com/evanharmon1/harmon-init/issues/1426)) ([28839b8](https://github.com/evanharmon1/harmon-init/commit/28839b8bda69c8eba194fd358c917b5c076586bf))
+* **devflow:** 6x wall-clock limits and refresh agent registry ([#1428](https://github.com/evanharmon1/harmon-init/issues/1428)) ([dff0f0f](https://github.com/evanharmon1/harmon-init/commit/dff0f0f961d6ddfbc31198df772f7a7be3a9ca5c))
+* **devflow:** derive the issue tier from risk and complexity in the policy reader ([#1475](https://github.com/evanharmon1/harmon-init/issues/1475)) ([81bbe78](https://github.com/evanharmon1/harmon-init/commit/81bbe78784c0b146e754e80030274ff95e10cf51))
+* **labels:** add the classification label families and retire suggest:* and tier:adaptive ([#1477](https://github.com/evanharmon1/harmon-init/issues/1477)) ([6e46a7c](https://github.com/evanharmon1/harmon-init/commit/6e46a7c7783cafa69863f128dfcee0f6557a0a83))
+* **pm:** add (HUMAN)/(QA) human-task collector issues ([#1421](https://github.com/evanharmon1/harmon-init/issues/1421)) ([16a4905](https://github.com/evanharmon1/harmon-init/commit/16a49051ebb48d71bce3162698dd48272defaf1c))
+* **pm:** add the Priority (AI) axis — p0–p4 suggested by agents, overridden by the human Priority ([#1480](https://github.com/evanharmon1/harmon-init/issues/1480)) ([8de097a](https://github.com/evanharmon1/harmon-init/commit/8de097af38043d06858c709f9db0caf1e3220db6))
+* **pm:** provision the classification issue fields on organizations and rewrite the Effort ladder ([#1482](https://github.com/evanharmon1/harmon-init/issues/1482)) ([8a1e6e4](https://github.com/evanharmon1/harmon-init/commit/8a1e6e4da64ed44cd6b86c82f98d53acd8316562))
+* **remote-env:** add Fly.io Sprites as an opt-in platform for remote lanes ([#1476](https://github.com/evanharmon1/harmon-init/issues/1476)) ([818fc8c](https://github.com/evanharmon1/harmon-init/commit/818fc8c0bd466cd0e80184e6abe64b88df410ac9))
+* **remote-env:** deliver the agent posture through the shared bootstrap ([#1440](https://github.com/evanharmon1/harmon-init/issues/1440)) ([9dd7aea](https://github.com/evanharmon1/harmon-init/commit/9dd7aeab8f34ee56b15ef5ea7333c003122f0c65))
+* **remote-env:** prepare a remote checkout for the dev loop with task setup:remote ([#1443](https://github.com/evanharmon1/harmon-init/issues/1443)) ([b4a660c](https://github.com/evanharmon1/harmon-init/commit/b4a660c337a9078381ce54718f61aba13f5e6352))
+* **remote-env:** state the remote Codex second-model rule and guard clouds against its credentials ([#1459](https://github.com/evanharmon1/harmon-init/issues/1459)) ([b3e100c](https://github.com/evanharmon1/harmon-init/commit/b3e100ca1a1c27365220d7eee3cb4241544a7f01))
+
+
+### Bug Fixes
+
+* **ci:** run verify's test targets in the Build workflow through one aggregate task ([#1483](https://github.com/evanharmon1/harmon-init/issues/1483)) ([1cc3726](https://github.com/evanharmon1/harmon-init/commit/1cc37264608e0d7900aa20eb78149f94f86a28b3))
+* **decisions:** rename ADRs 0002–0009 to date names and repair the index ([#1458](https://github.com/evanharmon1/harmon-init/issues/1458)) ([a551aeb](https://github.com/evanharmon1/harmon-init/commit/a551aeb0617eca84eb29180e571e14dcdf47ec1c))
+* **devcontainer:** clone related repos without a gh login and after one ([#1439](https://github.com/evanharmon1/harmon-init/issues/1439)) ([3524d02](https://github.com/evanharmon1/harmon-init/commit/3524d02b110feeeb7c7b4b0dd60ce00fe5b5c150))
+* **devcontainer:** guard the scope-refresh bootstrap detach and pass it the checkout parent ([#1474](https://github.com/evanharmon1/harmon-init/issues/1474)) ([de3be7b](https://github.com/evanharmon1/harmon-init/commit/de3be7b649220d7b601de1e5e0ba46aedd636e7e))
+* **devcontainer:** narrow the helper-URL arm, keep IPv6 scp hosts, and never pick an ancestor store ([#1481](https://github.com/evanharmon1/harmon-init/issues/1481)) ([baf251a](https://github.com/evanharmon1/harmon-init/commit/baf251a0a258ede30dc0f061d90f7401c166fa71))
+* **devcontainer:** update shared image to 9dd7aeab ([#1396](https://github.com/evanharmon1/harmon-init/issues/1396)) ([421f1b2](https://github.com/evanharmon1/harmon-init/commit/421f1b2821b3819da66d8e6b0d72c98895fe7955))
+* **scripts:** make the gh-backed session scripts work behind a REST-only GitHub proxy ([#1430](https://github.com/evanharmon1/harmon-init/issues/1430)) ([51e8a78](https://github.com/evanharmon1/harmon-init/commit/51e8a78aada38158792be0c5f2b2b02d6c6938d5))
+* **status:** read the latest release over REST and report it unavailable when the read fails ([#1468](https://github.com/evanharmon1/harmon-init/issues/1468)) ([a10e2b8](https://github.com/evanharmon1/harmon-init/commit/a10e2b8d48516586f6a3e8349c2be290fbd056fc))
+* **template:** move Renovate weekly update schedule to Saturday with Sunday buffer ([#1423](https://github.com/evanharmon1/harmon-init/issues/1423)) ([c9a65af](https://github.com/evanharmon1/harmon-init/commit/c9a65af5580d7c60acf89e9f60f3cdc73eed53c8))
+* **template:** sync harmon-devkit skills to v0.49.0 ([#1422](https://github.com/evanharmon1/harmon-init/issues/1422)) ([f9c261e](https://github.com/evanharmon1/harmon-init/commit/f9c261ef1a7c08a129bba25b992ec3f2fa7c7e18))
+
 ## [4.47.1](https://github.com/evanharmon1/harmon-init/compare/v4.47.0...v4.47.1) (2026-09-24)
 
 
