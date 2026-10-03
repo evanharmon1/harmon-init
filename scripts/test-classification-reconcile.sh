@@ -691,7 +691,10 @@ if (canDerive) {
   })
   check('run(): a repository without a policy gets no Tier write, reported once', () => {
     assert.deepEqual(writes(r.gh, '/repos/d/five/').filter((w) => /tier:/.test(w)), [])
-    assert.equal(r.summary.match(/d\/five:\*\* tier not derivable: no \.devflow\.toml/g)?.length, 1)
+    // Without a deriving reader (a generated repo before harmon-devkit#1248),
+    // the reader is the reason reported; with one, the missing policy is.
+    const reason = canDerive ? 'no \\.devflow\\.toml' : '(no policy reader found|has no deriveTier)'
+    assert.equal(r.summary.match(new RegExp(`d/five:\\*\\* tier not derivable: ${reason}`, 'g'))?.length, 1)
     assert.ok(writes(r.gh, '/repos/d/five/').includes('DELETE needs-triage'))
   })
 }
