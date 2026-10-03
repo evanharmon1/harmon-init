@@ -16,12 +16,13 @@
 // `impact:*`/`risk:*`/`complexity:*` labels on personal-account ones; a field
 // wins over a label of the same axis, and a disagreement is reported.
 //
-// "Triaged" (D6) needs a Type (native, or a non-retired work-type label) and
-// exactly one recognized, non-retired value of each of impact, risk,
-// complexity, area, layer and domain, read from this repository's
-// label-registry.json. A conflicted axis, a retired value, or an unknown one
-// does not classify its axis. With the registry unreadable every axis is
-// unverifiable, and `needs-triage` is left as it is.
+// "Triaged" (D6) needs a Type (native, or exactly one non-retired work-type
+// label) and exactly one recognized, non-retired value of each of impact,
+// risk, complexity, area, layer and domain. A repository is judged by its own
+// label-registry.json and .devflow.toml: the calling repository's from the
+// checkout, any other's from its default branch. A conflicted axis, a retired
+// value, or an unknown one does not classify its axis. With the registry
+// unreadable every axis is unverifiable, and `needs-triage` is left as it is.
 //
 // The derivation is the policy reader's `deriveTier` over the governing
 // `.devflow.toml`'s [tier.matrix]. This script never re-implements the
@@ -195,7 +196,16 @@ export function decide(issue, ctx) {
   // every axis is unverifiable, so needs-triage is left as it is.
   let triaged = null
   if (vocabulary) {
-    const hasType = Boolean(issue.issueType) || labels.some((l) => vocabulary.workTypes.includes(l))
+    // Typed: a native Issue Type, or exactly one recognized work-type label;
+    // two or more is a conflicted axis, like any other.
+    const workTypes = labels.filter((l) => vocabulary.workTypes.includes(l))
+    if (!issue.issueType && workTypes.length > 1) {
+      reports.push({
+        code: 'conflicted-axis',
+        message: `${workTypes.length} work-type labels (${workTypes.join(', ')}); the issue is not typed`
+      })
+    }
+    const hasType = Boolean(issue.issueType) || workTypes.length === 1
     triaged = hasType && REQUIRED_FAMILIES.every((f) => states[f].applied)
     if (triaged && labels.includes(NEEDS_TRIAGE)) remove.push(NEEDS_TRIAGE)
     if (!triaged && !labels.includes(NEEDS_TRIAGE)) add.push(NEEDS_TRIAGE)
@@ -261,43 +271,59 @@ export const READER_CANDIDATES = Object.freeze([
 ])
 
 /**
- * Load `deriveTier` and the [tier.matrix] from the repository at `root`.
- * Never throws: returns { derive, underivable, reader }.
+ * Locate and load the policy reader in the checkout at `root`. The reader is
+ * the caller's code whichever repository's policy it then judges. Never
+ * throws: returns { reader, parseToml, path } or { underivable, path }.
  */
-export async function loadDerivation(root, candidates = READER_CANDIDATES) {
-  const readerPath = candidates.map((c) => resolvePath(root, c)).find((p) => existsSync(p))
-  if (!readerPath) return { derive: null, underivable: 'no policy reader found', reader: null }
-  const policyPath = resolvePath(root, '.devflow.toml')
-  if (!existsSync(policyPath))
-    return { derive: null, underivable: 'no .devflow.toml', reader: readerPath }
+export async function loadReader(root, candidates = READER_CANDIDATES) {
+  const path = candidates.map((c) => resolvePath(root, c)).find((p) => existsSync(p))
+  if (!path) return { underivable: 'no policy reader found', path: null }
   try {
-    const reader = await import(pathToFileURL(readerPath).href)
+    const reader = await import(pathToFileURL(path).href)
     if (typeof reader.deriveTier !== 'function' || typeof reader.resolvePolicy !== 'function') {
-      return {
-        derive: null,
-        underivable: `the reader at ${readerPath} has no deriveTier`,
-        reader: readerPath
-      }
+      return { underivable: `the reader at ${path} has no deriveTier`, path }
     }
-    const { parseToml } = await import(
-      new URL('./lib/toml-lite.mjs', pathToFileURL(readerPath)).href
-    )
-    const resolved = reader.resolvePolicy(parseToml(readFileSync(policyPath, 'utf8')))
+    // The parser ships beside every reader candidate, so it is imported
+    // relative to the reader, not to this script.
+    const { parseToml } = await import(new URL('./lib/toml-lite.mjs', pathToFileURL(path)).href)
+    return { reader, parseToml, path }
+  } catch (err) {
+    return { underivable: `the reader at ${path} could not be loaded: ${err.message}`, path }
+  }
+}
+
+/**
+ * Derive with a loaded reader over one repository's policy text (null when
+ * that repository has none). Never throws: returns { derive, underivable }.
+ */
+export function derivationFrom(bundle, policyText) {
+  if (bundle.underivable) return { derive: null, underivable: bundle.underivable }
+  if (policyText === null) return { derive: null, underivable: 'no .devflow.toml' }
+  try {
+    const resolved = bundle.reader.resolvePolicy(bundle.parseToml(policyText))
     const matrix = resolved?.tier_matrix ?? null
-    if (matrix === null)
-      return { derive: null, underivable: 'the policy has no [tier.matrix]', reader: readerPath }
+    if (matrix === null) return { derive: null, underivable: 'the policy has no [tier.matrix]' }
     return {
-      derive: (risk, complexity) => reader.deriveTier(matrix, { risk, complexity }),
-      underivable: null,
-      reader: readerPath
+      derive: (risk, complexity) => bundle.reader.deriveTier(matrix, { risk, complexity }),
+      underivable: null
     }
   } catch (err) {
     return {
       derive: null,
-      underivable: `the reader at ${readerPath} could not resolve the policy: ${err.message}`,
-      reader: readerPath
+      underivable: `the reader at ${bundle.path} could not resolve the policy: ${err.message}`
     }
   }
+}
+
+/**
+ * Load `deriveTier` and the [tier.matrix] of the checkout at `root`.
+ * Never throws: returns { derive, underivable, reader }.
+ */
+export async function loadDerivation(root, candidates = READER_CANDIDATES) {
+  const bundle = await loadReader(root, candidates)
+  const policyPath = resolvePath(root, '.devflow.toml')
+  const policyText = existsSync(policyPath) ? readFileSync(policyPath, 'utf8') : null
+  return { ...derivationFrom(bundle, policyText), reader: bundle.path }
 }
 
 // ---------------------------------------------------------------------------
@@ -372,7 +398,16 @@ function makeClient(token, fetch, env) {
     if (!res.ok) throw new Error(`${method} ${path}: ${res.status} ${await res.text()}`)
     return res.status === 204 ? null : res.json()
   }
-  return { graphql, rest }
+  // A file's raw text from a repository's default branch; null when absent.
+  async function raw(path) {
+    const res = await fetch(`${api}${path}`, {
+      headers: { ...headers, accept: 'application/vnd.github.raw' }
+    })
+    if (res.status === 404) return null
+    if (!res.ok) throw new Error(`GET ${path}: ${res.status} ${await res.text()}`)
+    return res.text()
+  }
+  return { graphql, rest, raw }
 }
 
 async function* openIssues(client, owner, name) {
@@ -437,14 +472,25 @@ export function parseRepositories(raw, fallback) {
 // last re-read; if the invariant still fails the issue is reported
 // (`tier-not-exclusive`) and the walk moves on.
 export async function applyPlan(client, owner, name, number, ctx) {
-  const fresh = await fetchIssue(client, owner, name, number)
+  // Every write, Tier or needs-triage, is decided from the most recent read:
+  // `last` is that read, and `stale` says a write has happened since it.
+  let last = null
+  let stale = false
+  const read = async () => {
+    last = await fetchIssue(client, owner, name, number)
+    stale = false
+    return last
+  }
+  const fresh = await read()
   if (!fresh) return { add: [], remove: [], reports: [] }
   const plan = decide(fresh, ctx)
   const path = `/repos/${owner}/${name}/issues/${number}/labels`
-  const write = (method, label) =>
-    method === 'POST'
+  const write = async (method, label) => {
+    stale = true
+    return method === 'POST'
       ? client.rest('POST', path, { labels: [assertWritable(label)] })
       : client.rest('DELETE', `${path}/${encodeURIComponent(assertWritable(label))}`)
+  }
   const isTier = (l) => l !== NEEDS_TRIAGE
   const tierOps = (p) => [
     ...p.add.filter(isTier).map((l) => ['POST', l]),
@@ -459,18 +505,18 @@ export async function applyPlan(client, owner, name, number, ctx) {
   // Returns 'done', 'stopped' (a pin, or a guard read that cannot rule one
   // out), 'failed' (a write errored), or 'closed'.
   async function guardedTierWrites(ops, firstRead) {
-    let read = firstRead
+    let guard = firstRead
     for (const [i, [method, label]] of ops.entries()) {
-      if (i > 0) read = await fetchIssue(client, owner, name, number)
-      if (!read) return 'closed'
-      if (read.truncated) {
+      if (i > 0) guard = await read()
+      if (!guard) return 'closed'
+      if (guard.truncated) {
         report(
           'pin-guard-indeterminate',
-          `the guard read's ${read.truncated} exceed one page; ${describe(ops.slice(i))} not applied`
+          `the guard read's ${guard.truncated} exceed one page; ${describe(ops.slice(i))} not applied`
         )
         return 'stopped'
       }
-      if (read.labels.includes(PIN_LABEL)) {
+      if (guard.labels.includes(PIN_LABEL)) {
         report(
           'pin-appeared',
           `${PIN_LABEL} appeared during the write; ${describe(ops.slice(i))} not applied, left for a human`
@@ -493,7 +539,7 @@ export async function applyPlan(client, owner, name, number, ctx) {
   if (outcome === 'closed') return { ...plan, ...applied }
   if (tierWrites.length > 0 && outcome !== 'stopped') {
     for (let pass = 0; pass < 2; pass++) {
-      const check = await fetchIssue(client, owner, name, number)
+      const check = await read()
       if (!check) return { ...plan, ...applied }
       // decide() plans no Tier write for a pinned or truncated read, so a pin
       // seen here ends the pass like a holding invariant does.
@@ -504,6 +550,7 @@ export async function applyPlan(client, owner, name, number, ctx) {
           'tier-not-exclusive',
           `the Tier is still not exclusive after one repair pass (${describe(fix)} outstanding)`
         )
+        plan.unrepaired = true
         break
       }
       outcome = await guardedTierWrites(fix, check)
@@ -511,11 +558,15 @@ export async function applyPlan(client, owner, name, number, ctx) {
       if (outcome === 'stopped') break
     }
   }
-  for (const label of plan.add.filter((l) => !isTier(l))) {
+  // needs-triage is decided from the most recent read, re-reading once only
+  // when a Tier write has happened since it.
+  if (stale && !(await read())) return { ...plan, ...applied }
+  const triage = decide(last, ctx)
+  for (const label of triage.add.filter((l) => !isTier(l))) {
     await write('POST', label)
     record('POST', label)
   }
-  for (const label of plan.remove.filter((l) => !isTier(l))) {
+  for (const label of triage.remove.filter((l) => !isTier(l))) {
     await write('DELETE', label)
     record('DELETE', label)
   }
@@ -546,31 +597,46 @@ export async function run(
     print(line)
     summary.push(line)
   }
-  const warnRun = (headline, detail) => {
-    print(`::warning title=classification reconcile::${headline}`)
-    summary.push(`> **${detail}**`, '')
+  const warnRepo = (repo, message) => {
+    print(`::warning title=classification reconcile ${repo}::${message}`)
+    summary.push(`> **${repo}:** ${message}`, '')
   }
 
-  let vocabulary = null
-  try {
-    vocabulary = activeVocabulary(
-      JSON.parse(readFileSync(resolvePath(root, 'label-registry.json'), 'utf8'))
-    )
-  } catch (err) {
-    warnRun(
-      `label-registry.json is unreadable (${err.message}); every axis is unverifiable and ${NEEDS_TRIAGE} is left as it is`,
-      `label-registry.json is unreadable: ${err.message}. Every axis is unverifiable; \`${NEEDS_TRIAGE}\` is left as it is.`
-    )
-  }
-  const derivation = await loadDerivation(root)
-  if (derivation.derive === null) {
-    warnRun(
-      `tier not derivable: ${derivation.underivable}; no Tier is written`,
-      `Tier not derivable: ${derivation.underivable}. No Tier is written.`
-    )
-  }
-  const ctx = { vocabulary, derive: derivation.derive, underivable: derivation.underivable }
   const client = makeClient(token, fetch, env)
+  const bundle = await loadReader(root)
+  const caller = String(env.GITHUB_REPOSITORY ?? '').toLowerCase()
+  const localText = (file) => {
+    const p = resolvePath(root, file)
+    return existsSync(p) ? readFileSync(p, 'utf8') : null
+  }
+  // A repository is only ever judged by its own registry and its own policy:
+  // the calling repository by its checkout, any other by the files on its
+  // default branch (the token then needs `contents: read` there). The reader
+  // is the caller's code either way.
+  async function contextFor(repo) {
+    const local = repo.toLowerCase() === caller
+    const fetchText = (file) =>
+      local ? localText(file) : client.raw(`/repos/${repo}/contents/${file}`)
+    const [registryText, policyText] = await Promise.all([
+      fetchText('label-registry.json'),
+      fetchText('.devflow.toml')
+    ])
+    let vocabulary = null
+    try {
+      if (registryText === null) throw new Error('not found')
+      vocabulary = activeVocabulary(JSON.parse(registryText))
+    } catch (err) {
+      warnRepo(
+        repo,
+        `label-registry.json is unreadable (${err.message}); every axis is unverifiable and ${NEEDS_TRIAGE} is left as it is`
+      )
+    }
+    const derivation = derivationFrom(bundle, policyText)
+    if (derivation.derive === null) {
+      warnRepo(repo, `tier not derivable: ${derivation.underivable}; no Tier is written`)
+    }
+    return { vocabulary, derive: derivation.derive, underivable: derivation.underivable }
+  }
   log(`| Issue | Added | Removed | Reports |`)
   log(`|---|---|---|---|`)
 
@@ -582,6 +648,7 @@ export async function run(
   for (const repo of repos) {
     const [owner, name] = repo.split('/')
     try {
+      const ctx = await contextFor(repo)
       const issues =
         issueNumber > 0
           ? [await fetchIssue(client, owner, name, issueNumber)].filter(Boolean)
@@ -602,7 +669,15 @@ export async function run(
           summary.push(`> **${repo}#${issue.number} failed:** ${err.message}`, '')
           continue
         }
-        // The run-wide "not derivable" reason is reported once above.
+        // An issue whose Tier the bounded repair could not make exclusive
+        // fails its repository; the walk goes on.
+        if (plan.unrepaired) {
+          if (!failed.includes(repo)) failed.push(repo)
+          print(
+            `::error title=classification reconcile ${repo}#${issue.number}::the Tier is not exclusive after one repair pass`
+          )
+        }
+        // The not-derivable reason is reported once per repository.
         const reports = plan.reports.filter((r) => r.code !== 'tier-not-derivable')
         for (const r of reports) {
           print(`::warning title=${repo}#${issue.number} ${r.code}::${r.message}`)

@@ -179,7 +179,8 @@ otherwise:
 - An unpinned Tier whose Risk or Complexity is missing (`cache-unverifiable`).
   Derive-on-read ignores that label anyway.
 - A leftover `tier:adaptive`.
-- A conflicted axis (two values), or a retired or unknown value. That axis
+- A conflicted axis (two values, or two work-type labels without a native
+  Type), or a retired or unknown value. That axis
   does not count toward "triaged", so `needs-triage` stays. Recognized values
   come from the repository's `label-registry.json`; when that file is
   unreadable, every axis is unverifiable and `needs-triage` is left as it is.
@@ -226,8 +227,15 @@ After its Tier writes the job re-reads the issue once. Unpinned, the issue
 must carry exactly one rung, the Tier derived from its inputs on that read.
 A failed delete or a concurrent run's write breaks that, so one bounded repair
 pass runs under the same pin guard; an issue still not exclusive after it is
-reported (`tier-not-exclusive`). An API error on one issue is reported and the
-walk moves on to the next issue; the run exits 1 after the whole list.
+reported (`tier-not-exclusive`) and fails the run. An API error on one issue
+is reported the same way. Either way the walk moves on to the next issue, and
+the run exits 1 after the whole list; a pin that stops the Tier writes is
+reported but is not a failure.
+
+Every write, Tier or `needs-triage`, is decided from the most recent read of
+the issue: `needs-triage` from the verify read when Tier writes happened,
+otherwise from the read taken just before writing. The same one round trip
+between that read and its write is the irreducible residual.
 
 Label writes made with `GITHUB_TOKEN` start no workflow runs, so the
 reconciler's own writes never re-trigger the event workflow. `edited` is
@@ -245,11 +253,20 @@ wants a daily organization-wide walk adds a caller in `<org>/.github` (opt-in;
 mints an installation token from the CI GitHub App that already exists
 (`actions/create-github-app-token` over `CI_APP_CLIENT_ID` /
 `CI_APP_PRIVATE_KEY`, the same App `claude-*.yml` and `release.yml` use, with
-Issues: write). It then calls `classification-reconcile.yml` with that token
-as the `CLASSIFICATION_TOKEN` secret, `use-token: true`, and the
-organization's repository list as the `repositories` input. The caller's
-checkout supplies the script, the reader and the `.devflow.toml` whose matrix
-governs the walk. Without them, a walk covers only the calling repository.
+Issues: write and Contents: read on the target repositories). It then calls
+`classification-reconcile.yml` with that token as the `CLASSIFICATION_TOKEN`
+secret, `use-token: true`, and the organization's repository list as the
+`repositories` input. Without them, a walk covers only the calling
+repository.
+
+A repository is only ever judged by its own registry and its own policy. The
+calling repository uses its checkout. Every other repository in the list has
+its `label-registry.json` and `.devflow.toml` read from its default branch
+through the contents API, which is why the token needs Contents: read there.
+A registry it cannot read makes every axis unverifiable there (no
+`needs-triage` change), and a policy or matrix it cannot read makes the Tier
+not derivable there (no Tier write); each is reported once per repository.
+The reader code is always the caller's: it is the function, not the policy.
 
 The workflow reads the token as
 `inputs.use-token && secrets.CLASSIFICATION_TOKEN || github.token`, and

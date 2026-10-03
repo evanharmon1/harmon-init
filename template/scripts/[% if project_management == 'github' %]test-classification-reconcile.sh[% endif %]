@@ -128,6 +128,16 @@ check('an absent registry: every axis unverifiable, needs-triage left as it is (
   const b = m.decide(issue(['bug']), noReg)
   assert.deepEqual([b.add, b.remove], [[], []])
 })
+check('exactly one work-type label types an issue; two are a conflicted axis', () => {
+  const rest = ['area:ci', 'layer:none', 'domain:none', 'impact:low', 'risk:high', 'complexity:m', 'needs-triage']
+  assert.equal(m.decide(issue(['feature', ...rest]), ctx).triaged, true)
+  const two = m.decide(issue(['feature', 'bug', ...rest]), ctx)
+  assert.equal(two.triaged, false)
+  assert.ok(!two.remove.includes('needs-triage'))
+  assert.ok(two.reports.some((r) => r.code === 'conflicted-axis' && /work-type/.test(r.message)))
+  // A native Issue Type types the issue whatever its labels say.
+  assert.equal(m.decide(issue(['feature', 'bug', ...rest], { issueType: 'Task' }), ctx).triaged, true)
+})
 check('a retired work type does not type an issue (C1-F4)', () => {
   assert.ok(!workTypes.includes('enhancement'), 'enhancement is retired in label-registry.json')
   const d = m.decide(issue(['enhancement', 'area:ci', 'layer:none', 'domain:none', 'impact:low', 'risk:high', 'complexity:m', 'needs-triage']), ctx)
@@ -350,6 +360,7 @@ function fakeClient(initial, { onRead = {}, failWrites = [] } = {}) {
   })
   return {
     calls,
+    reads: () => reads,
     labels: () => labels.filter((l) => l !== TRUNCATED),
     async graphql() {
       reads += 1
@@ -390,6 +401,7 @@ const addPin = (labels) => [...labels, 'tier:pinned']
     assert.deepEqual(client.calls, [['POST', 'tier:frontier']])
     assert.deepEqual([plan.add, plan.remove], [['tier:frontier'], []])
     assert.deepEqual(codes(plan), ['pin-appeared'])
+    assert.ok(!plan.unrepaired, 'a pin stop is not a failure')
   })
 }
 {
@@ -453,6 +465,29 @@ const addPin = (labels) => [...labels, 'tier:pinned']
     assert.deepEqual(client.calls.filter(([meth]) => meth === 'DELETE').length, 2)
     assert.deepEqual(tiers(client), ['tier:frontier', 'tier:standard'])
     assert.deepEqual(codes(plan), ['write-failed', 'write-failed', 'tier-not-exclusive'])
+    assert.equal(plan.unrepaired, true)
+  })
+}
+{
+  // Impact is missing on the decision read, so needs-triage would be added;
+  // a human completes the classification before the verify read (read 3).
+  // needs-triage is decided from that latest read, so it is not added.
+  const partial = ['feature', 'area:ci', 'layer:none', 'domain:none', 'risk:high', 'complexity:m', 'tier:standard']
+  const client = fakeClient(partial, { onRead: { 3: (l) => [...l, 'impact:low'] } })
+  const plan = await m.applyPlan(client, 'o', 'r', 7, ctx)
+  check('applyPlan: needs-triage is decided from the latest read, not the first', () => {
+    assert.deepEqual(client.calls, [['POST', 'tier:frontier'], ['DELETE', 'tier:standard']])
+    assert.deepEqual([plan.add, plan.remove], [['tier:frontier'], ['tier:standard']])
+    assert.equal(client.reads(), 3)
+  })
+}
+{
+  const client = fakeClient(['bug'])
+  const plan = await m.applyPlan(client, 'o', 'r', 7, ctx)
+  check('applyPlan: with no Tier write, needs-triage uses the decision read (no extra read)', () => {
+    assert.deepEqual(client.calls, [['POST', 'needs-triage']])
+    assert.equal(client.reads(), 1)
+    assert.deepEqual(plan.add, ['needs-triage'])
   })
 }
 {
@@ -465,124 +500,199 @@ const addPin = (labels) => [...labels, 'tier:pinned']
   })
 }
 
-// --- run(): the driver, against a stubbed fetch (R1-F1) ---------------------
+// --- run(): the driver, against a stubbed fetch (R1-F1; integration 1–2) -------
 
-// A fake GitHub: GraphQL by query shape and variables, REST recorded. Repo
-// `a/one` answers 502 to everything; `a/two` holds two open issues across two
-// pages, the second carrying organization issue-field values.
-function fakeGitHub({ failRestPath = null } = {}) {
+// A stateful fake GitHub. Each repository holds issues (labels really change
+// on POST/DELETE), the files its contents API serves (`null` → 404), an
+// optional `down` (every call 502s), `failPaths` (REST paths that always 502)
+// and `afterWrite(issue, method, label)` (a human or another run acting
+// between our calls).
+function fakeGitHub(repos) {
   const rest = []
-  const issueNode = (number, labels, extra = {}) => ({
-    state: 'OPEN',
-    number,
-    url: `https://github.test/a/two/issues/${number}`,
-    issueType: null,
-    labels: { pageInfo: { hasNextPage: false }, nodes: labels.map((name) => ({ name })) },
-    issueFieldValues: { pageInfo: { hasNextPage: false }, nodes: [] },
-    ...extra
-  })
-  const issues = {
-    1: issueNode(1, ['bug']),
-    2: issueNode(2, ['area:ci', 'layer:none', 'domain:none', 'needs-triage'], {
-      issueType: { name: 'Task' },
-      issueFieldValues: {
-        pageInfo: { hasNextPage: false },
-        nodes: [
-          { name: 'low', field: { name: 'Impact' } },
-          { name: 'high', field: { name: 'Risk' } },
-          { name: 'm', field: { name: 'Complexity' } },
-          { name: 'p1', field: { name: 'Priority (AI)' } },
-          {}
-        ]
-      }
-    })
-  }
   const json = (body, status = 200) =>
     new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
-  async function fetch(url, init) {
-    if (url.endsWith('/graphql')) {
+  const node = (number, issue) => ({
+    state: 'OPEN',
+    number,
+    url: `https://github.test/issues/${number}`,
+    issueType: issue.issueType ? { name: issue.issueType } : null,
+    labels: { pageInfo: { hasNextPage: false }, nodes: issue.labels.map((name) => ({ name })) },
+    issueFieldValues: {
+      pageInfo: { hasNextPage: false },
+      nodes: [
+        ...Object.entries(issue.fields ?? {}).map(([field, value]) => ({ name: value, field: { name: field } })),
+        { name: 'p1', field: { name: 'Priority (AI)' } },
+        {}
+      ]
+    }
+  })
+  async function fetch(url, init = {}) {
+    const { pathname } = new URL(url)
+    if (pathname === '/graphql') {
       const { query, variables } = JSON.parse(init.body)
-      if (variables.name === 'one') return json({ message: 'bad gateway' }, 502)
+      const repo = repos[`${variables.owner}/${variables.name}`]
+      if (!repo || repo.down) return json({ message: 'bad gateway' }, 502)
       if (query.includes('issue(number:')) {
-        return json({ data: { repository: { issue: issues[variables.number] ?? null } } })
+        const issue = repo.issues[variables.number]
+        return json({ data: { repository: { issue: issue ? node(variables.number, issue) : null } } })
       }
-      const page = variables.after === 'c1' ? [issues[2]] : [issues[1]]
+      // One issue per page, so pagination is always exercised.
+      const numbers = Object.keys(repo.issues).map(Number)
+      const at = variables.after ? Number(variables.after) : 0
       return json({
         data: {
           repository: {
             issues: {
-              pageInfo: { hasNextPage: variables.after !== 'c1', endCursor: 'c1' },
-              nodes: page
+              pageInfo: { hasNextPage: at + 1 < numbers.length, endCursor: String(at + 1) },
+              nodes: [node(numbers[at], repo.issues[numbers[at]])]
             }
           }
         }
       })
     }
-    rest.push([init.method, new URL(url).pathname, init.body ? JSON.parse(init.body) : null])
-    if (new URL(url).pathname === failRestPath) return json({ message: 'bad gateway' }, 502)
+    const [, , owner, name, kind, ...rest_] = pathname.split('/')
+    const repo = repos[`${owner}/${name}`]
+    if (!repo || repo.down) return json({ message: 'bad gateway' }, 502)
+    if (kind === 'contents') {
+      const text = repo.files?.[rest_.join('/')] ?? null
+      return text === null ? json({ message: 'Not Found' }, 404) : new Response(text, { status: 200 })
+    }
+    rest.push([init.method, pathname, init.body ? JSON.parse(init.body) : null])
+    if ((repo.failPaths ?? []).includes(pathname)) return json({ message: 'bad gateway' }, 502)
+    const issue = repo.issues[Number(rest_[0])]
+    const label = init.method === 'POST' ? JSON.parse(init.body).labels[0] : decodeURIComponent(rest_.at(-1))
+    if (init.method === 'POST' && !issue.labels.includes(label)) issue.labels.push(label)
+    if (init.method === 'DELETE') issue.labels = issue.labels.filter((l) => l !== label)
+    repo.afterWrite?.(issue, init.method, label)
     return init.method === 'DELETE' ? new Response(null, { status: 204 }) : json([])
   }
   return { fetch, rest }
 }
-{
-  const gh = fakeGitHub()
-  const summaryFile = join(tmp, 'summary-run.md')
+const ownText = (file) => readFileSync(join(root, file), 'utf8')
+const canDerive = (await m.loadDerivation(root)).derive !== null
+const classified = () => ({
+  issueType: 'Task',
+  labels: ['area:ci', 'layer:none', 'domain:none', 'needs-triage'],
+  fields: { Impact: 'low', Risk: 'high', Complexity: 'm' }
+})
+async function runWith(repos, env) {
+  const gh = fakeGitHub(repos)
+  const summaryFile = join(tmp, `summary-${Object.keys(repos).join('-').replaceAll('/', '_')}-${Math.random()}.md`)
   const printed = []
   const code = await m.run(
-    { GH_TOKEN: 't', RECONCILE_REPOSITORIES: 'a/one a/two', GITHUB_STEP_SUMMARY: summaryFile },
+    { GH_TOKEN: 't', GITHUB_REPOSITORY: 'a/two', GITHUB_STEP_SUMMARY: summaryFile, ...env },
     { fetch: gh.fetch, root, print: (l) => printed.push(l) }
   )
-  const summary = readFileSync(summaryFile, 'utf8')
+  return { code, gh, printed, summary: readFileSync(summaryFile, 'utf8') }
+}
+const writes = (gh, prefix) => gh.rest.filter(([, path]) => path.startsWith(prefix)).map(([meth, path, body]) => `${meth} ${body?.labels?.[0] ?? decodeURIComponent(path.split('/').at(-1))}`)
+{
+  const r = await runWith(
+    { 'a/one': { down: true, issues: {} }, 'a/two': { issues: { 1: { labels: ['bug'] }, 2: classified() } } },
+    { RECONCILE_REPOSITORIES: 'a/one a/two' }
+  )
   check('run(): a failing repository does not stop the next one; the run exits 1', () => {
-    assert.equal(code, 1)
-    assert.match(summary, /^Failed: a\/one\.$/m)
-    assert.match(summary, /\*\*a\/one failed:\*\* GraphQL 502/)
-    assert.ok(printed.some((l) => l.startsWith('::error title=classification reconcile a/one::')))
+    assert.equal(r.code, 1)
+    assert.match(r.summary, /^Failed: a\/one\.$/m)
+    assert.match(r.summary, /\*\*a\/one failed:\*\* /)
+    assert.ok(r.printed.some((l) => l.startsWith('::error title=classification reconcile a/one::')))
+    assert.deepEqual(writes(r.gh, '/repos/a/one/'), [])
   })
   check('run(): the issues connection is paginated and both pages are decided', () => {
-    assert.match(summary, /in a\/one, a\/two\.$/m)
-    assert.match(summary, /of 2 open issue\(s\)/)
+    assert.match(r.summary, /of 2 open issue\(s\) in a\/one, a\/two\.$/m)
   })
   check('run(): issue-field values are normalized (Impact/Risk/Complexity read, others ignored)', () => {
-    // #1 has no classification: needs-triage is added. #2 is classified by
-    // its fields plus labels and a native Type: needs-triage is removed.
-    const paths = gh.rest.map(([method, path, body]) => [method, path, body?.labels ?? null])
-    assert.ok(paths.some((c) => c[0] === 'POST' && c[1] === '/repos/a/two/issues/1/labels' && c[2][0] === 'needs-triage'))
-    assert.ok(paths.some((c) => c[0] === 'DELETE' && c[1] === '/repos/a/two/issues/2/labels/needs-triage'))
-    assert.ok(!gh.rest.some(([, path]) => path.startsWith('/repos/a/one/')))
+    assert.ok(writes(r.gh, '/repos/a/two/issues/1/').includes('POST needs-triage'))
+    assert.ok(writes(r.gh, '/repos/a/two/issues/2/').includes('DELETE needs-triage'))
   })
 }
 {
-  const gh = fakeGitHub()
-  const summaryFile = join(tmp, 'summary-dry.md')
-  const code = await m.run(
-    { GH_TOKEN: 't', RECONCILE_REPOSITORIES: 'a/two', RECONCILE_DRY_RUN: 'true', GITHUB_STEP_SUMMARY: summaryFile },
-    { fetch: gh.fetch, root, print: () => {} }
-  )
+  const r = await runWith({ 'a/two': { issues: { 1: { labels: ['bug'] }, 2: classified() } } }, { RECONCILE_DRY_RUN: 'true' })
   check('run(): a dry run makes no REST call and reports what it would change', () => {
-    assert.equal(code, 0)
-    assert.deepEqual(gh.rest, [])
-    assert.match(readFileSync(summaryFile, 'utf8'), /^Dry run: would change 2 of 2 open issue\(s\) in a\/two\.$/m)
+    assert.equal(r.code, 0)
+    assert.deepEqual(r.gh.rest, [])
+    assert.match(r.summary, /^Dry run: would change 2 of 2 open issue\(s\) in a\/two\.$/m)
   })
 }
-
 {
-  // Issue #1's needs-triage write fails; issue #2 (the next page) is still
-  // decided and written, and the run still exits 1.
-  const gh = fakeGitHub({ failRestPath: '/repos/a/two/issues/1/labels' })
-  const summaryFile = join(tmp, 'summary-issue-fail.md')
-  const printed = []
-  const code = await m.run(
-    { GH_TOKEN: 't', RECONCILE_REPOSITORIES: 'a/two', GITHUB_STEP_SUMMARY: summaryFile },
-    { fetch: gh.fetch, root, print: (l) => printed.push(l) }
-  )
-  const summary = readFileSync(summaryFile, 'utf8')
+  const r = await runWith({
+    'a/two': { issues: { 1: { labels: ['bug'] }, 2: classified() }, failPaths: ['/repos/a/two/issues/1/labels'] }
+  })
   check("run(): one issue's failure does not stop the next issue; the run exits 1", () => {
-    assert.equal(code, 1)
-    assert.match(summary, /\*\*a\/two#1 failed:\*\* POST \/repos\/a\/two\/issues\/1\/labels: 502/)
-    assert.match(summary, /^Failed: a\/two\.$/m)
-    assert.ok(printed.some((l) => l.startsWith('::error title=classification reconcile a/two#1::')))
-    assert.ok(gh.rest.some(([meth, path]) => meth === 'DELETE' && path === '/repos/a/two/issues/2/labels/needs-triage'))
+    assert.equal(r.code, 1)
+    assert.match(r.summary, /\*\*a\/two#1 failed:\*\* POST \/repos\/a\/two\/issues\/1\/labels: 502/)
+    assert.match(r.summary, /^Failed: a\/two\.$/m)
+    assert.ok(r.printed.some((l) => l.startsWith('::error title=classification reconcile a/two#1::')))
+    assert.ok(writes(r.gh, '/repos/a/two/issues/2/').includes('DELETE needs-triage'))
+  })
+}
+if (canDerive) {
+  const stuck = { ...classified(), labels: ['area:ci', 'layer:none', 'domain:none', 'tier:standard'] }
+  const r = await runWith({
+    'a/two': {
+      issues: { 1: stuck, 2: { labels: ['bug'] } },
+      failPaths: ['/repos/a/two/issues/1/labels/tier%3Astandard']
+    }
+  })
+  check('run(): a Tier still not exclusive after the repair fails the run, and the walk completes', () => {
+    assert.equal(r.code, 1)
+    assert.match(r.summary, /tier-not-exclusive/)
+    assert.match(r.summary, /^Failed: a\/two\.$/m)
+    assert.ok(writes(r.gh, '/repos/a/two/issues/2/').includes('POST needs-triage'))
+  })
+  const pinned = { ...classified(), labels: ['area:ci', 'layer:none', 'domain:none', 'tier:standard'] }
+  const p = await runWith({
+    'a/two': {
+      issues: { 1: pinned },
+      // A human pins right after our add, before the stale-Tier delete.
+      afterWrite: (issue, meth, label) => meth === 'POST' && label.startsWith('tier:') && issue.labels.push('tier:pinned')
+    }
+  })
+  check('run(): a pin that stops the Tier writes is reported, not a failure', () => {
+    assert.equal(p.code, 0)
+    assert.match(p.summary, /pin-appeared/)
+    assert.doesNotMatch(p.summary, /^Failed:/m)
+  })
+}
+{
+  // b/three's own registry knows area:zzz and its own matrix maps m × high to
+  // apex; the caller (a/two) knows neither. c/four has no registry; d/five
+  // has no policy.
+  const foreignRegistry = structuredClone(registry)
+  foreignRegistry.families.find((f) => f.family === 'area').values = [{ value: 'zzz' }]
+  const ownPolicy = ownText('.devflow.toml')
+  const foreignPolicy = ownPolicy.replace(/^(m\s*=\s*\{.*high = )"[a-z]+"/m, '$1"apex"')
+  assert.notEqual(foreignPolicy, ownPolicy, 'the foreign matrix differs')
+  const zzz = () => ({ labels: ['feature', 'area:zzz', 'layer:none', 'domain:none', 'impact:low', 'risk:high', 'complexity:m', 'needs-triage'] })
+  const r = await runWith(
+    {
+      'a/two': { issues: { 1: zzz() } },
+      'b/three': { issues: { 1: zzz() }, files: { 'label-registry.json': JSON.stringify(foreignRegistry), '.devflow.toml': foreignPolicy } },
+      'c/four': { issues: { 1: { labels: ['bug'] } }, files: { 'label-registry.json': null, '.devflow.toml': ownPolicy } },
+      'd/five': {
+        issues: { 1: { ...classified(), labels: ['area:ci', 'layer:none', 'domain:none', 'needs-triage', 'tier:local'] } },
+        files: { 'label-registry.json': JSON.stringify(registry), '.devflow.toml': null }
+      }
+    },
+    { RECONCILE_REPOSITORIES: 'a/two b/three c/four d/five' }
+  )
+  check("run(): another repository is judged by its own registry and its own matrix", () => {
+    assert.equal(r.code, 0)
+    assert.ok(!writes(r.gh, '/repos/a/two/').includes('DELETE needs-triage'), 'area:zzz is unknown to the caller')
+    assert.ok(writes(r.gh, '/repos/b/three/').includes('DELETE needs-triage'), 'area:zzz is known to b/three')
+    if (canDerive) {
+      assert.ok(writes(r.gh, '/repos/a/two/').includes('POST tier:frontier'))
+      assert.ok(writes(r.gh, '/repos/b/three/').includes('POST tier:apex'))
+    }
+  })
+  check('run(): a repository without a registry gets no needs-triage write, reported once', () => {
+    assert.deepEqual(writes(r.gh, '/repos/c/four/').filter((w) => w.endsWith('needs-triage')), [])
+    assert.equal(r.summary.match(/c\/four:\*\* label-registry\.json is unreadable/g)?.length, 1)
+  })
+  check('run(): a repository without a policy gets no Tier write, reported once', () => {
+    assert.deepEqual(writes(r.gh, '/repos/d/five/').filter((w) => /tier:/.test(w)), [])
+    assert.equal(r.summary.match(/d\/five:\*\* tier not derivable: no \.devflow\.toml/g)?.length, 1)
+    assert.ok(writes(r.gh, '/repos/d/five/').includes('DELETE needs-triage'))
   })
 }
 
@@ -616,7 +726,11 @@ function fakeRepo(name, readerSource, { policy = true } = {}) {
 }
 const cases = [
   ['no reader', fakeRepo('none', null), /no policy reader found/],
-  ['no policy file', fakeRepo('nopolicy', 'export const x = 1\n', { policy: false }), /no \.devflow\.toml/],
+  [
+    'no policy file',
+    fakeRepo('nopolicy', 'export function deriveTier() {}\nexport function resolvePolicy() { return {} }\n', { policy: false }),
+    /no \.devflow\.toml/
+  ],
   ['a reader without deriveTier', fakeRepo('old', 'export function resolvePolicy() { return {} }\n'), /has no deriveTier/],
   [
     'a reader that throws on the policy',
