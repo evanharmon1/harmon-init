@@ -7,18 +7,18 @@ Date: 2026-09-13
 Accepted (2026-09-13) — maintainer decision recorded on
 [harmon-devkit#910](https://github.com/evanharmon1/harmon-devkit/issues/910).
 
-**Amends [ADR 0009](0009-dev-flow-v2-orchestrator-and-results.md) D2** — D2
+**Amends [ADR 2026-08-29 (Dev flow v2)](2026-08-29-dev-flow-v2-orchestrator-and-results.md) D2** — D2
 where it states briefs are free-form: under this record the orchestrator →
 agent brief is a validated envelope plus an opaque body, not unstructured
 prose. The original rationale — nothing downstream parses the brief — is now
 half false: the monitor, the readiness gate, `dev-flow-exit.sh`, and retro
 all read specific brief facts, and every brief-drift incident in the
-slate-#2 run was a machine-read fact that existed only as prose. ADR 0009
+slate-#2 run was a machine-read fact that existed only as prose. ADR 2026-08-29 (Dev flow v2)
 carries the reciprocal notice.
 
 ## Context
 
-[ADR 0009](0009-dev-flow-v2-orchestrator-and-results.md) D2 decided that
+[ADR 2026-08-29 (Dev flow v2)](2026-08-29-dev-flow-v2-orchestrator-and-results.md) D2 decided that
 orchestrator → agent briefs are free-form prose and only results are
 schema-bound. The rationale: a brief carries judgement and context downward,
 which a schema flattens, and nothing downstream parses it.

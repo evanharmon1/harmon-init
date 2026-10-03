@@ -12,7 +12,7 @@
 #   1. An env token (GH_TOKEN / GITHUB_TOKEN and the enterprise variants) is
 #      set. That token OVERRIDES the stored one, so `gh auth refresh` would
 #      quietly repair a credential the current shell will never use — and in a
-#      bot container it is the credential-escalation ADR 0004 exists to
+#      bot container it is the credential-escalation ADR 2026-08-03 exists to
 #      prevent. The remedy there is to reissue the token at its source.
 #   2. There is no TTY. The refresh is a browser device-code flow; an agent or
 #      a CI job cannot complete it, and neither should re-mint the operator's
@@ -40,6 +40,44 @@ trigger_related_repos_bootstrap() {
     local bootstrap="${REPO_ROOT}/.devcontainer/scripts/bootstrap-related-repos.sh"
     if [ -f "${bootstrap}" ]; then
         local log_file="${HOME}/.related-repos-bootstrap.log"
+        # Name the target directory: the PHYSICAL checkout's parent, as
+        # setup-remote.sh computes it, so siblings land beside the checkout on any
+        # layout — except for a linked worktree (below), which takes its primary
+        # checkout's parent. In the devcontainer that is /workspaces, the
+        # bootstrap's default.
+        local checkout_parent checkout_root own_git primary_git primary_root
+        checkout_root="$(cd -- "${REPO_ROOT}" && pwd -P)"
+        checkout_parent="$(dirname -- "${checkout_root}")"
+        # A linked worktree that `task worktree:new` made lives at
+        # <main>/.worktrees/<name> (a Claude Code agent worktree at
+        # <main>/.claude/worktrees/<name>), INSIDE its primary checkout, so its own
+        # parent is the wrong place for siblings: use the primary working tree's
+        # parent. That override needs the primary ESTABLISHED, not inferred from a
+        # path shape: this checkout is a linked worktree (its git dir differs from the
+        # common dir), the common dir is <root>/.git, <root> is itself the top level
+        # of a working tree of that same repository, and this checkout sits at
+        # <root>/.worktrees/<name> or <root>/.claude/worktrees/<name>.
+        # The exact layout is what excludes an ancestor of the checkout that merely
+        # holds a --separate-git-dir store named .git: git treats that directory as a
+        # working tree, but a worktree anywhere else beneath it is not one of ours.
+        # Every other layout — a plain checkout, a --separate-git-dir primary, one
+        # nested in a larger repository, not in git, an old git without --path-format —
+        # keeps the value above.
+        if own_git="$(git -C "${REPO_ROOT}" rev-parse --path-format=absolute --git-dir 2>/dev/null)" &&
+            primary_git="$(git -C "${REPO_ROOT}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" &&
+            [ "${own_git}" != "${primary_git}" ]; then
+            case "${primary_git}" in
+            */.git)
+                if primary_root="$(cd -- "${primary_git%/.git}" 2>/dev/null && pwd -P)" &&
+                    [ "$(git -C "${primary_root}" rev-parse --path-format=absolute --git-common-dir 2>/dev/null)" = "${primary_git}" ] &&
+                    [ "$(cd -- "$(git -C "${primary_root}" rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null && pwd -P)" = "${primary_root}" ]; then
+                    case "${checkout_root}" in
+                    "${primary_root}"/.worktrees/* | "${primary_root}"/.claude/worktrees/*) checkout_parent="$(dirname -- "${primary_root}")" ;;
+                    esac
+                fi
+                ;;
+            esac
+        fi
         echo "==> Bootstrapping related repos in the background (log: ${log_file})..."
         # Ignore SIGHUP in THIS shell before the fork, then restore what it was.
         # An ignored signal stays ignored across fork and exec (POSIX), so the job
@@ -49,7 +87,7 @@ trigger_related_repos_bootstrap() {
         local prev_hup
         prev_hup="$(trap -p HUP)"
         trap '' HUP
-        bash "${bootstrap}" </dev/null >>"${log_file}" 2>&1 &
+        bash "${bootstrap}" "${checkout_parent}" </dev/null >>"${log_file}" 2>&1 &
         if [ -n "${prev_hup}" ]; then
             eval "${prev_hup}"
         else
@@ -72,7 +110,7 @@ command -v gh >/dev/null 2>&1 || die "gh is not installed (brew install gh)"
 #    Where the variable DOES apply, the refusal stands: an env token overrides
 #    the stored credential, so `gh auth refresh` would repair something this
 #    shell never uses — and in a bot container it is the credential escalation
-#    ADR 0004 exists to prevent.
+#    ADR 2026-08-03 exists to prevent.
 #
 #    Resolved before the TTY check because the host is needed either way, and
 #    named individually because the fix differs per variable.

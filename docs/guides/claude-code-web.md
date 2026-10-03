@@ -116,7 +116,7 @@ recorded so far, and the one that a session opening its own draft PR needs:
 | Host | Denied for | Added? | Reason |
 | --- | --- | --- | --- |
 | `semgrep.dev` | `task security`'s Semgrep step — observed 2026-09-27, under a network level presumed, but not recorded, to be Trusted | **Only where the session opens the draft PR itself**, which makes the level **Custom** | `task security` must pass before the draft PR (`AGENTS.md`), and this host is what its Semgrep step needs. A lane that stops at a pushed branch leaves the gate to the machine that opens the PR — see [Long-running gates](#long-running-gates). Never skip the gate instead |
-| `api.openai.com`, `auth.openai.com`, `chatgpt.com` | the Codex CLI (#1406) | No | Ephemeral clouds never hold a Codex login (#1408 decision 4): the orchestrator reviews the lane's pushed branch from its own pane |
+| `api.openai.com`, `auth.openai.com`, `chatgpt.com` | the Codex CLI (#1406) | No | Ephemeral clouds never hold a Codex login (#1408 decision 4): the orchestrator reviews the lane's pushed branch from its own pane, and the lane's PR records it (`AGENTS.md` § Remote environments) |
 | `deb.nodesource.com`, `astral.sh`, `keybase.io`, `ppa.launchpadcontent.net`, `cli.github.com`, `dl.google.com` | installer hosts (#1403) | No | The bootstrap no longer contacts them; the denied table in the architecture document is guarded so they cannot return |
 | `cafe.github.com` | `gh` telemetry | No | Harmless |
 | `cdn.playwright.dev` | Playwright Chromium | No | Browsers tier only, off by default; not on the Trusted list |
@@ -299,7 +299,7 @@ than one row, each row's **Result** records the calls that row names.
 | `round-push.sh`: `gh api --hostname …` | review skill (vendored) | expected, not yet observed | — |
 | `lane-watch.sh`: `gh pr list`, `gh api --paginate --slurp`, `gh pr ready --undo` | orchestrate skill (vendored) | expected to fail, not yet observed — GraphQL-backed subcommands | Orchestrator-side; not run in a cloud lane |
 | `scripts/status.sh`, `scripts/check-closing-keywords.sh`, `scripts/guard-closing-keywords.sh`, `scripts/audit-session-artifacts.sh` | harmon-init's own | **REST since #1430** for the calls that go through the bounded `gh_rest_*` helpers, with a page ceiling. `status.sh` also makes the calls in the next row, which do not | Run `task status` in the first live session and record it |
-| `status.sh` outside the `gh_rest_*` helpers: `gh auth status`, `gh run list`; raw `gh api` for `repos/{o}/{r}`, `…/rulesets`, `…/vulnerability-alerts`, `…/private-vulnerability-reporting`, the app installations (`orgs/{o}/installations` or `user/installations`) and the GHCR package; `gh secret list`, `gh variable list`, `gh variable get`; `gh release list`; `gh auth token` | harmon-init's own (`task status`) | `gh auth status`, `gh run list`: expected, not yet observed. Raw `gh api` reads: expected to work (plain REST), not yet observed. `gh secret list`, `gh variable list`/`get`: expected, not yet observed — REST-backed (the Actions secrets and variables endpoints). `gh release list`: expected to fail, not yet observed — GraphQL-backed (gh 2.98.0 sends it to `/graphql`, seen locally with `GH_DEBUG=api`, not through the proxy). `gh auth token`: local, no network call | `gh release list` is harmon-init's to fix; the REST route is `gh api 'repos/{o}/{r}/releases?per_page=1'`. `status.sh` does not abort on any of these — each call has a fallback — but a failed `gh release list` reads as **Release published: no** with the `task release:init` remedy, a false negative rather than an unavailable line |
+| `status.sh` outside the `gh_rest_*` helpers: `gh auth status`, `gh run list`; raw `gh api` for `repos/{o}/{r}`, `…/rulesets`, `…/vulnerability-alerts`, `…/private-vulnerability-reporting`, the app installations (`orgs/{o}/installations` or `user/installations`) and the GHCR package; `gh secret list`, `gh variable list`, `gh variable get`; `gh auth token` | harmon-init's own (`task status`) | `gh auth status`, `gh run list`: expected, not yet observed. Raw `gh api` reads: expected to work (plain REST), not yet observed. `gh secret list`, `gh variable list`/`get`: expected, not yet observed — REST-backed (the Actions secrets and variables endpoints). `gh auth token`: local, no network call | `status.sh` does not abort on any of these — each call has a fallback. The latest-release read moved off the GraphQL-backed `gh release list` onto `gh_rest_api` (`repos/{o}/{r}/releases?per_page=1`, the row above) in #1437, and a failed read now renders the **Release published** line as unavailable instead of a false *no* with the `task release:init` remedy |
 | `task foreman:plan`, `foreman:dispatch`, `foreman:watch` | the pinned Foreman CLI, run through `uvx` from a git URL | expected, not yet observed — the calls Foreman makes are in its own repository, not enumerated here. Dispatch refuses on the local runner for public repos by design | Orchestrator-side; not run in a cloud lane |
 | `gh api repos/{o}/{r}/…` (REST), `gh api user` | anything | **works** — observed 2026-09-27 | — |
 | `gh api search/issues` | ad hoc | **fail, 403** — observed 2026-09-27 | `repos/{o}/{r}/issues?state=all`, paged |
@@ -507,14 +507,41 @@ snapshot was taken before this session's clone. So the rule that holds regardles
 - **Setup script**: machine-level, repository-independent — the bootstrap, and
   nothing that reads a checkout.
 - **Per-checkout preparation** — installing the git hooks, and anything that reads
-  the clone — runs when the session starts, not in the setup script: a
-  `SessionStart` hook in the repository's `.claude/settings.json`, guarded on
-  `CLAUDE_CODE_REMOTE=true` so it does nothing locally (*docs, 2026-09-29*). That
-  hook runs only in a single-repository session.
+  the clone — runs when the session starts, not in the setup script. The
+  platform's mechanism for that is a `SessionStart` hook in the repository's
+  `.claude/settings.json`, guarded on `CLAUDE_CODE_REMOTE=true` so it does nothing
+  locally, and it runs only in a single-repository session (*docs, 2026-09-29*).
+  This repository has deliberately **not** adopted that hook (its
+  `.claude/settings.json` is unchanged), so nothing triggers the preparation by
+  itself: the agent runs the task below once.
 
-There is no `task setup:remote` in this repository today (checked 2026-09-29),
-so the preparation is either a `SessionStart` hook that calls existing tasks, or
-a task added in a follow-up once the observation below says what it must do.
+`task setup:remote` (`scripts/setup-remote.sh`,
+[#1405](https://github.com/evanharmon1/harmon-init/issues/1405)) is that
+preparation as one task, which the agent runs once on a fresh checkout —
+`AGENTS.md` tells it to, because the repository ships no hook that would. It runs `lefthook install` (when
+lefthook is on `PATH`), frozen `pnpm` / `uv` installs from the lockfiles that
+exist, and the same sibling clones the devcontainer makes
+(`.devcontainer/related-repos.txt`), into the checkout's **parent** directory:
+the layout observed on 2026-09-27 (`/home/user/<repo>`), so the `../harmon-devkit`
+entries in `additionalDirectories` and `sandbox.filesystem.allowRead` resolve. It
+is idempotent, never prompts (git terminal prompts are disabled, ssh runs with
+`BatchMode=yes` unless the caller already set `GIT_SSH_COMMAND`, in which case the
+caller's value governs, and pnpm runs with `CI=true`), skips a missing tool with a note, warns and continues past a
+repository it cannot clone, and exits non-zero only when a step that could run
+failed. It prints where it cloned, because a platform that does not clone one
+level below a writable directory would otherwise show only as a missing sibling.
+
+Siblings are **reference context**: a session may push only to its own repository
+and branch (the *Pushes* row above), so a change to a sibling cannot be pushed
+from here. The pre-push hook that `lefthook install` sets up is not a substitute
+for `task verify`, so run that yourself. Public siblings clone anonymously through the
+session's git proxy; a private sibling, or one that needs GitHub API calls, must
+be attached to the session (*observed 2026-09-27*,
+[evidence on #1405](https://github.com/evanharmon1/harmon-init/issues/1405#issuecomment-5860625784)).
+The task's behaviour is tested in a fixture repository
+(`scripts/test-setup-remote.sh`); that it leaves the siblings readable and
+`task verify` runnable in a live session on `ponderousdev/omator` is **pending**,
+criterion 6 of #1405.
 
 **Pending observation (criterion 11):** the guide records the answer here once a
 live session has given it. Probe: in a *new* copy of the environment, add one

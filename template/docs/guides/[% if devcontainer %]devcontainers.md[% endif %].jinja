@@ -293,6 +293,12 @@ evict a disallowed name; the agent profile refuses instead, because nobody is
 watching to notice a repaired misconfiguration. The Codex login, where an
 environment persists one (harmon-init#1406), lives in the `~/.codex` volume, not the
 env-file.
+[% if use_codex_review %]
+The maintainer runs `codex login` once on the environment when provisioning it
+(an agent never does: AGENTS.md § Hard Rules). Its
+`~/.codex/auth.json` is never copied to another machine (the refresh token is
+single-use, so a copy would invalidate both holders).
+[% endif %]
 
 ### Egress allowlist
 
@@ -1301,6 +1307,9 @@ Overlapping runs are safe: each repo is cloned into its own private temporary
 directory and moved into place atomically on success, so only one run can
 publish and a failed or interrupted clone never deletes a user's existing
 checkout.
+When a sibling does not appear after a start or a scope refresh, read the logs:
+`$HOME/.related-repos-bootstrap.log` holds the clone job (from container start
+and from `task setup:gh-scopes`) and `$HOME/.related-repos-fetch.log` the fetch job.
 The list is preserved across `copier update` (an empty list is a no-op).
 
 To let Claude read and search the cloned siblings, add them to

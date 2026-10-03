@@ -35,6 +35,13 @@ running in **{{harness}}**. An orchestrator session supervises you and reads
   rewrite pushed history, bypass a git hook, disable a stop-gate, or widen your
   own scope — are the base template's § "Hard rules", inherited below and
   deliberately not copied here.)
+- **Non-interactive git:** this lane was launched with `GIT_MERGE_AUTOEDIT=no`
+  and `GIT_EDITOR=true`. This lane never merges `{{default-branch}}` into
+  `{{branch}}`. Because no editor ever opens, always pass the message
+  (`-m`, `--body`) to anything that would ask for one. If any command leaves
+  you stuck in an editor, report BLOCKED so the orchestrator
+  escalates it to the maintainer — never recover by terminating a process
+  yourself.
 - Scratch directory: `{{scratch-dir}}` — write every temporary file under it,
   never at the scratchpad root (base contract § "Delegation contract", rule 4).
 - Stay inside this worktree for project files. The lane brief and
@@ -368,6 +375,13 @@ ledger denominators. Stop at **{{deadline}}** with a blocker report.
 - Write the plan to `{{report-path}}` before implementation. Append the
   `AGENTS.md` § Stage Ledger table at every stage transition and round boundary,
   plus a per-round adjudication table. Never delete history.
+- **Human steps are reported, not waited on.** When the work needs something
+  only a human can do — a secret, a setting, a hands-on check — and the change
+  can still be verified without it, keep going: list each one in
+  `{{report-path}}` under a `Human follow-ups:` line for the orchestrator to
+  record on its `(HUMAN):` or `(QA):` collector; hands-on verification of
+  the finished change is always one of these. Stop BLOCKED only when your
+  own work cannot proceed until the step happens.
 - Keep each report filename and terminal signal unique per attempt. Why:
   milestone entry 2 observed a sentinel in the pane but not in the report file,
   allowing stale output to masquerade as completion. The orchestrator must

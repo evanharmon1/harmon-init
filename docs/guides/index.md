@@ -47,5 +47,11 @@ Calm, repeatable how-tos read *in advance* (the crisis counterpart is
   pinned release tag, agent-phase network level, secrets, what a Codex mention
   starts, the `codex cloud exec` / `apply` implementer-lane bridge, and the
   observations still pending a provisioned environment.
+- [sprites.md](sprites.md) — Fly.io Sprites, the paid opt-in platform for
+  autonomous remote lanes (`use_fly_sprites`): cost and account, provisioning
+  from the shared bootstrap with a checkpoint, credentials on stdin, the
+  network policy generated from the shared egress allowlist and applied from
+  outside the VM, Herdr attachment, and the observations still pending a
+  provisioned Sprite.
 
 TODO: add more guides, e.g. "local development setup", "add a feature", "how X works".

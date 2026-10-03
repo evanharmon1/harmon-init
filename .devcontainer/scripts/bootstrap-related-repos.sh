@@ -2,9 +2,19 @@
 set -euo pipefail
 
 # Clone "related" repos listed in .devcontainer/related-repos.txt into
-# /workspaces/, adjacent to the main repo. Idempotent and NON-DESTRUCTIVE: if a
+# /workspaces/ (or the directory given as the first argument), adjacent to the
+# main repo. Idempotent and NON-DESTRUCTIVE: if a
 # target dir already exists it is left completely untouched (no fetch, no pull,
 # no checkout, no warning) — fetching is fetch-related-repos.sh's job at start.
+#
+# Usage: bootstrap-related-repos.sh [TARGET_DIR]
+#   TARGET_DIR (optional) is the directory the siblings are cloned into; an
+#   argument wins over WORKSPACES_DIR, which wins over the /workspaces default.
+#   `task setup:remote` passes the checkout's parent directory so a remote
+#   platform (which has no /workspaces) gets the same siblings the devcontainer
+#   does, and so does `task setup:gh-scopes` (its scope-refresh trigger). The
+#   devcontainer's lifecycle call sites (post-create, post-start) pass nothing
+#   and still target /workspaces.
 #
 # Runs on devcontainer create (post-create-common.sh), on devcontainer start
 # (post-start-common.sh in background), and upon scope verification in
@@ -19,6 +29,22 @@ set -euo pipefail
 #
 # Lines starting with # are comments. Blank lines are ignored.
 #
+# Every temporary clone directory lives in ONE dedicated subdirectory of the target
+# (<target>/.related-repos-bootstrap, mode 0700), and the orphan sweeps run only
+# inside it. The target is a general-purpose directory when `task setup:remote`
+# passes a checkout's parent ($HOME, /tmp, ...), so nothing outside that
+# subdirectory is ever removed. The (empty) subdirectory is left in place: removing
+# it would race a concurrent bootstrap between its mkdir and mktemp.
+# Trust boundary: the ownership/mode checks on that subdirectory are pathname-based,
+# so the TARGET directory must itself be private to the invoking user, or live in a
+# sandbox with no other principal that can write to it (a remote platform's session
+# is; the devcontainer's /workspaces is). In a shared, world-writable, non-sticky
+# parent another user could rename the subdirectory away after the checks or
+# pre-create a final target, which no check here can defend. The chmod 700 after the
+# mkdir follows a symlink, so a swap inside that window is the same undefendable
+# case (the mode check below refuses a swapped-in symlink whose own mode is
+# world-writable). The script refuses only a staging directory that is not private.
+#
 # Failures (missing config, bad URL, network errors) log a warning and
 # continue — a failure never produces a non-zero exit, so it never causes
 # post-create, post-start, or scope setup to fail. A signal (INT/TERM/HUP) is
@@ -27,7 +53,8 @@ set -euo pipefail
 #
 # Environment variable overrides (for tests and host customization):
 #   CONFIG_FILE                  Path to related-repos.txt (default: ../related-repos.txt)
-#   WORKSPACES_DIR               Destination parent directory (default: /workspaces)
+#   WORKSPACES_DIR               Destination parent directory (default: /workspaces;
+#                                the TARGET_DIR argument takes precedence)
 #   RELATED_REPOS_GIT_BASE_URL   Base URL for git clone fallback (default: https://${GH_HOST}/, else the host of
 #                                this repo's origin remote, else https://github.com/)
 #   RELATED_REPOS_MV_ATOMIC      Force atomic publish (1 = GNU mv -T, 0 = non-GNU detect-and-undo)
@@ -55,7 +82,13 @@ trap 'exit 129' HUP
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="${CONFIG_FILE:-${SCRIPT_DIR}/../related-repos.txt}"
-WORKSPACES_DIR="${WORKSPACES_DIR:-/workspaces}"
+WORKSPACES_DIR="${1:-${WORKSPACES_DIR:-/workspaces}}"
+# Normalize once (one trailing slash, unless the value is exactly "/") so the staging
+# directory, the clone targets and the /workspaces check all derive from one value.
+case "$WORKSPACES_DIR" in
+/) ;;
+*/) WORKSPACES_DIR="${WORKSPACES_DIR%/}" ;;
+esac
 
 if [ -n "${RELATED_REPOS_GIT_BASE_URL:-}" ]; then
     GIT_BASE_URL="${RELATED_REPOS_GIT_BASE_URL}"
@@ -70,21 +103,57 @@ else
     # github.com is the last resort when there is no origin to read.
     origin_url="$(git -C "${SCRIPT_DIR}/.." config --get remote.origin.url 2>/dev/null || true)"
     origin_authority=""
+    # git's rule (transport_get): <transport>::<address> is remote-helper syntax only
+    # when what precedes the first '::' is a URL scheme: an alphanumeric first
+    # character, then alphanumerics or '+', '-', '.'. Any other '::' (an scp-like
+    # path such as host:owner/repo::backup, or +demo::path) is not one.
+    origin_helper=""
     case "${origin_url}" in
-    *://*) # scheme://[user@]host[:port]/path
-        origin_authority="${origin_url#*://}"
-        origin_authority="${origin_authority%%/*}" # the path first: it may contain '@'
-        origin_authority="${origin_authority##*@}" # then any userinfo
-        case "${origin_url}" in
-        http://* | https://*) ;;                         # the port is the web port: keep it
-        *) origin_authority="${origin_authority%%:*}" ;; # ssh:// etc: the port is not the https port
+    *::*)
+        case "${origin_url%%::*}" in
+        "" | [!A-Za-z0-9]* | *[!A-Za-z0-9+.-]*) ;;
+        *) origin_helper=1 ;;
         esac
         ;;
-    *@*:*) # scp-like: user@host:owner/repo (no port; the colon starts the path)
-        origin_authority="${origin_url#*@}"
-        origin_authority="${origin_authority%%:*}"
-        ;;
     esac
+    # A remote-helper origin (gitremote-helpers(7)) names no host in ANY arm below,
+    # whatever it carries after the '::' (even a scheme://), so it keeps github.com.
+    if [ -z "${origin_helper}" ]; then
+        case "${origin_url}" in
+        *://*) # scheme://[user@]host[:port]/path
+            origin_authority="${origin_url#*://}"
+            origin_authority="${origin_authority%%/*}" # the path first: it may contain '@'
+            origin_authority="${origin_authority##*@}" # then any userinfo
+            case "${origin_url}" in
+            http://* | https://*) ;;                         # the port is the web port: keep it
+            *) origin_authority="${origin_authority%%:*}" ;; # ssh:// etc: the port is not the https port
+            esac
+            ;;
+        *:*) # scp-like [user@]host:path (no port; the colon starts the path) — git's rule: no '/' before the first colon
+            origin_authority="${origin_url%%:*}"
+            case "${origin_authority}" in
+            \[* | *@\[*)                              # a bracketed (IPv6) host: the first colon is inside the brackets, so take [host] whole
+                origin_authority="${origin_url%%\[*}" # '' or 'user@': the part before the bracket
+                case "${origin_authority}" in
+                */*) origin_authority="" ;; # a local path
+                *)
+                    origin_authority="${origin_url#"${origin_authority}"}"
+                    case "${origin_authority}" in
+                    \[?*\]:*) origin_authority="${origin_authority%%\]:*}]" ;; # the brackets stay in the HTTPS authority
+                    *) origin_authority="" ;;                                  # no matching ']:' — not a usable host
+                    esac
+                    case "${origin_authority}" in
+                    */*) origin_authority="" ;;
+                    esac
+                    ;;
+                esac
+                ;;
+            */* | ?) origin_authority="" ;; # a local path, or a drive letter (C:/…)
+            *) origin_authority="${origin_authority##*@}" ;;
+            esac
+            ;;
+        esac
+    fi
     GIT_BASE_URL="https://${origin_authority:-github.com}/"
 fi
 
@@ -130,14 +199,44 @@ if [ "$WORKSPACES_DIR" = "/workspaces" ] && [ ! -w "$WORKSPACES_DIR" ]; then
     fi
 fi
 
+# --- Dedicated staging directory ---
+# All temporary clone directories (and the sweeps below) live here and nowhere else
+# under the target. A symlink, a non-directory, a directory owned by someone else or
+# one that is group/world-writable is never used or replaced: skip rather than sweep
+# or clone through it.
+STAGE_DIR="${WORKSPACES_DIR}/.related-repos-bootstrap"
+if [ -L "$STAGE_DIR" ] || { [ -e "$STAGE_DIR" ] && [ ! -d "$STAGE_DIR" ]; }; then
+    echo "==> WARNING: ${STAGE_DIR} exists and is not a plain directory; skipping related-repo bootstrap." >&2
+    exit 0
+fi
+if [ ! -d "$STAGE_DIR" ]; then
+    # chmod as well as umask: a default ACL on the parent can override the umask.
+    if ! (umask 077 && mkdir -p "$STAGE_DIR" && chmod 700 "$STAGE_DIR") 2>/dev/null; then
+        echo "==> WARNING: could not create ${STAGE_DIR}; skipping related-repo bootstrap." >&2
+        exit 0
+    fi
+fi
+# Trust it only if it is ours and private: on a shared host with a world-writable
+# parent another user could pre-create it, then swap a finished clone before the
+# atomic publish. No fallback to another path: skip.
+if [ ! -O "$STAGE_DIR" ]; then
+    echo "==> WARNING: ${STAGE_DIR} is not owned by the current user; remove it and re-run, or run as its owner; skipping related-repo bootstrap." >&2
+    exit 0
+fi
+if [ -n "$(find "$STAGE_DIR" -maxdepth 0 \( -perm -g+w -o -perm -o+w \) -print 2>/dev/null)" ]; then
+    echo "==> WARNING: ${STAGE_DIR} is group- or world-writable; skipping related-repo bootstrap." >&2
+    exit 0
+fi
+
 # --- Clean up orphaned temporary directories ---
 # Unconditionally sweep temporary bootstrap directories older than 24 hours (1440 min)
 # regardless of PID, protecting persisted workspaces from accumulated orphans across restarts.
+# Only inside STAGE_DIR: a foreign .bootstrap-* directory in the target is not ours.
 while IFS= read -r stale_dir; do
     [ -n "$stale_dir" ] || continue
     echo "==> Removing stale temporary bootstrap directory: ${stale_dir} (older than 24h)"
     rm -rf "$stale_dir" || true
-done < <(find "$WORKSPACES_DIR" -maxdepth 1 -name '.bootstrap-*' -type d -mmin +1440 2>/dev/null || true)
+done < <(find "$STAGE_DIR" -maxdepth 1 -name '.bootstrap-*' -type d -mmin +1440 2>/dev/null || true)
 
 # Remove leftover .bootstrap-* directories older than 60 minutes from runs whose
 # process is no longer alive. Directories with an active PID or unparseable name
@@ -161,7 +260,7 @@ while IFS= read -r orphan_dir; do
         fi
         ;;
     esac
-done < <(find "$WORKSPACES_DIR" -maxdepth 1 -name '.bootstrap-*' -type d -mmin +60 2>/dev/null || true)
+done < <(find "$STAGE_DIR" -maxdepth 1 -name '.bootstrap-*' -type d -mmin +60 2>/dev/null || true)
 
 # --- Parse and clone ---
 
@@ -222,7 +321,7 @@ while IFS= read -r raw_line || [ -n "$raw_line" ]; do
     # directly: if a user or concurrent process creates $target in between,
     # cleaning up a failed clone must never remove the user's checkout.
     clone_tmp=""
-    if ! clone_tmp="$(mktemp -d "${WORKSPACES_DIR}/.bootstrap-${basename}.$$.XXXXXX" 2>&1)"; then
+    if ! clone_tmp="$(mktemp -d "${STAGE_DIR}/.bootstrap-${basename}.$$.XXXXXX" 2>&1)"; then
         echo "==> WARNING: failed to create temporary directory for ${target_spec}: ${clone_tmp}" >&2
         clone_tmp="" # mktemp's error text is not a path; keep the EXIT trap unarmed
         failed=$((failed + 1))
@@ -259,7 +358,7 @@ while IFS= read -r raw_line || [ -n "$raw_line" ]; do
                 echo "==> WARNING: gh repo clone failed for ${target_spec} (exit ${clone_rc}); falling back to git clone." >&2
                 rm -rf "$clone_tmp" || true
                 clone_tmp=""
-                if ! clone_tmp="$(mktemp -d "${WORKSPACES_DIR}/.bootstrap-${basename}.$$.XXXXXX" 2>&1)"; then
+                if ! clone_tmp="$(mktemp -d "${STAGE_DIR}/.bootstrap-${basename}.$$.XXXXXX" 2>&1)"; then
                     echo "==> WARNING: failed to create temporary directory for ${target_spec} fallback: ${clone_tmp}" >&2
                     clone_tmp="" # mktemp's error text is not a path; keep the EXIT trap unarmed
                     failed=$((failed + 1))

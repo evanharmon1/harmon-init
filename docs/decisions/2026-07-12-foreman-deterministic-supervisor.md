@@ -1,10 +1,10 @@
-# 2. Foreman: a deterministic supervisor for agent-driven delivery
+# Foreman: a deterministic supervisor for agent-driven delivery
 
 Date: 2026-07-12
 
 ## Status
 
-Accepted; distribution superseded; arming source amended by ADR 0005. The
+Accepted; distribution superseded; arming source amended by ADR 2026-08-07. The
 principles below stand, but foreman no longer lives in this repo: the source was
 extracted to
 [ponderousdev/foreman](https://github.com/ponderousdev/foreman) (its spec and

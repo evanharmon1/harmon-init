@@ -105,12 +105,25 @@ tasks:
 [% endif %]
       - task: check
       - task: audit:agent-instructions
-      - task: test:agent-instructions-size
-      - task: test:agent-skill-links
 [% if use_node %]
       - task: build
 [% endif %]
       - task: validate
+      - task: test:suite
+      - task: test
+
+  test:suite:
+    # The ONE list of `test:*` targets that both `verify` and the required Build
+    # workflow's `lint` job run (build.yml calls this task in a single step), so
+    # the two cannot drift and nothing parses the workflow to police them.
+    # A new `test:*` guard that belongs in the gate is added HERE and nowhere
+    # else; `test:verify-ci-parity` fails if either caller stops running it.
+    # Not in this list: `build`, `validate` and `test` (the project's own tiers
+    # — CI runs them in their own job) and the `ci`-only checks.
+    desc: The test:* targets verify and the Build workflow's lint job both run
+    cmds:
+      - task: test:agent-instructions-size
+      - task: test:agent-skill-links
 [% if project_type == 'web-astro' %]
       - task: test:astro-compress-parity
 [% endif %]
@@ -127,9 +140,11 @@ tasks:
 [% if devcontainer %]
       - task: test:related-repos
 [% endif %]
+      - task: test:setup-remote
       - task: test:meta-install
 [% if use_codex_review %]
       - task: test:codex-review
+      - task: test:remote-codex-policy
 [% endif %]
       - task: test:lint-hygiene
 [% if use_release_please %]
@@ -160,7 +175,7 @@ tasks:
       - task: test:agent-profile
       - task: test:devcontainer-changed
 [% endif %]
-      - task: test
+      - task: test:verify-ci-parity
 
   # ── Quality Checks ────────────────────────────────────────────
   check:
@@ -781,6 +796,11 @@ tasks:
     cmds:
       - ./scripts/test-tasks.sh
 
+  test:verify-ci-parity:
+    desc: Fail if the Build workflow stops calling test:suite or verify stops running it
+    cmds:
+      - ./scripts/test-verify-ci-parity.sh
+
   test:ci-results:
     desc: Unit-test CI aggregate and closing-keyword fail-closed truth tables
     cmds:
@@ -813,6 +833,11 @@ tasks:
       - ./scripts/test-bootstrap-related-repos.sh
 [% endif %]
 
+  test:setup-remote:
+    desc: Unit-test task setup:remote — idempotency, the lefthook shim, sibling clones into the checkout's parent (stubbed lefthook/gh, no network)
+    cmds:
+      - ./scripts/test-setup-remote.sh
+
   test:meta-install:
     desc: Unit-test the .meta sidecar installer's ~-expansion and refusals
     cmds:
@@ -823,6 +848,11 @@ tasks:
     desc: Unit-test codex-review.sh target selection (offline, stubbed codex)
     cmds:
       - ./scripts/test-codex-review.sh
+
+  test:remote-codex-policy:
+    desc: Guard the remote second-model rule — no Codex credential vocabulary on a remote-environment surface (offline)
+    cmds:
+      - ./scripts/test-remote-codex-policy.sh
 [% endif %]
 
   test:lint-hygiene:
@@ -1152,6 +1182,11 @@ tasks:
     cmds:
       - lefthook install
 
+  setup:remote:
+    desc: Prepare this checkout for the dev loop on a remote platform (no devcontainer hooks) — git hooks, frozen dependencies, related repos beside it. Idempotent
+    cmds:
+      - ./scripts/setup-remote.sh
+
   # ── GitHub setup ───────────────────────────────────────────────
   # One-time, idempotent repo settings applied via gh (safe to re-run); run once
   # the repo exists on GitHub. The remaining setup steps need a browser or a real
@@ -1206,12 +1241,14 @@ tasks:
 
   setup:github-issue-fields:
     desc: >-
-      Idempotently add the org's Product issue field (Priority/Effort are
-      GitHub built-ins, left at defaults; the numeric Size estimate is a
-      project field via setup:github-project; there is deliberately no Domain
-      or Layer field, #875 — see docs/project-management.md, "Label or
-      field?"). Creates the field if missing, never renaming or deleting.
-      Requires `gh` with the admin:org scope.
+      Idempotently add the org's Product field and the issue-classification
+      fields Impact, Risk, Complexity, and Priority (AI), and add the 1, 2, 3,
+      5, 8, 13, 20 ladder to the built-in Effort field (Priority and the dates
+      stay as GitHub ships them, the script never removes a field or an option,
+      and GitHub's shipped High/Medium/Low Effort options are left for the
+      operator to delete in the org's settings once no issue holds them — see
+      docs/project-management.md, "Label or field?"). Requires `gh` with the
+      admin:org scope.
     cmds:
       - ./scripts/setup-github-issue-fields.sh --org "[[ github_org ]]"
 [% endif %]

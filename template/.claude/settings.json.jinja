@@ -95,12 +95,23 @@
 [% endif %]
       "Bash(gh pr merge)",
       "Bash(gh pr merge:*)",
-      "Bash(git merge)",
-      "Bash(git merge:*)",
       "Bash(git push origin main)",
       "Bash(git push origin main:*)",
       "Bash(git push -f:*)",
       "Bash(git push --force:*)"
+    ]
+  },
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/git-merge-guard.py\" || printf '%s' '{\"hookSpecificOutput\":{\"hookEventName\":\"PreToolUse\",\"permissionDecision\":\"ask\",\"permissionDecisionReason\":\"git-merge-guard failed to run\"}}'"
+          }
+        ]
+      }
     ]
   }
 }

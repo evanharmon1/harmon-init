@@ -1,12 +1,18 @@
-# 5. Use one model-centric agent vocabulary and registry
+# Use one model-centric agent vocabulary and registry
 
 Date: 2026-08-07
 
 ## Status
 
-Accepted. Amends ADR 0002's issue-field-versus-label arming decision: Foreman
+Accepted. Amends ADR 2026-07-12's issue-field-versus-label arming decision: Foreman
 arming is label-only on every owner type because the label timeline records the
 actor and project-field changes do not.
+
+**Partly superseded** by
+[ADR 2026-09-30 (issue classification)](2026-09-30-classify-issues-by-impact-risk-complexity-and-derive-the-tier.md):
+D4's advisory-routing clause (`suggest:*`), D6's `suggest:*` half, D8's
+`suggest:*` migration guidance (its `claim:*` guidance stands), and D10's
+listing of `Size` as planning metadata.
 
 ## Context
 
@@ -53,7 +59,7 @@ The following decisions are adopted together:
    `suggest:<family>[:<model>]` and `claim:<family>[:<model>]`. Suggestions are
    human-authored advice; claims are live, agent-authored ownership and are
    released at wrap or shepherd completion. Neither arms automation.
-   **Amended 2026-08-16 ([ADR 0006](0006-method-and-tier-axes.md)):**
+   **Amended 2026-08-16 ([ADR 2026-08-16](2026-08-16-method-and-tier-axes.md)):**
    suggestions are now human- **or agent-**authored; `suggest:*` stays
    `family[:model]` (a vendor preference), `tier:*` is the human-decided policy
    layer of the model axis, and `suggest:tier:<value>` is reserved, not built.

@@ -269,6 +269,10 @@ evict a disallowed name; the agent profile refuses instead, because nobody is
 watching to notice a repaired misconfiguration. The Codex login, where an
 environment persists one (#1406), lives in the `~/.codex` volume, not the
 env-file.
+The maintainer runs `codex login` once on the environment when provisioning it
+(an agent never does: AGENTS.md § Hard Rules). Its
+`~/.codex/auth.json` is never copied to another machine (the refresh token is
+single-use, so a copy would invalidate both holders).
 
 ### Egress allowlist
 
@@ -794,7 +798,7 @@ If you find yourself logging in far more often than you rebuild, the problem is
 not the missing volume — it is that something is **recreating** the container
 behind your back. Chase that instead; see
 [Attach paths and container managers](#attach-paths-and-container-managers), and
-[decisions/0004](../decisions/0004-operator-gh-login-in-the-dev-devcontainer.md)
+[decisions/2026-08-03](../decisions/2026-08-03-operator-gh-login-in-the-dev-devcontainer.md)
 for why a `gh-config-*` volume is not the fix.
 
 Nothing fails hard before you log in. `post-create` prints the commands above,
@@ -1217,7 +1221,7 @@ data all sit on named volumes precisely so a recreation is survivable, and
 `~/.claude.json` is symlinked onto one for the same reason (below). What is
 lost is container-local scratch — and, in `dev/`, the `gh` login, which is on
 no volume by decision rather than by omission
-([decisions/0004](../decisions/0004-operator-gh-login-in-the-dev-devcontainer.md)).
+([decisions/2026-08-03](../decisions/2026-08-03-operator-gh-login-in-the-dev-devcontainer.md)).
 That makes the login a useful **canary**: a re-auth prompt you did not expect is
 the cheapest signal that a recreation happened. The fix for re-authenticating too
 often is to stop the silent recreations, not to persist a plaintext token.
@@ -1274,6 +1278,9 @@ Overlapping runs are safe: each repo is cloned into its own private temporary
 directory and moved into place atomically on success, so only one run can
 publish and a failed or interrupted clone never deletes a user's existing
 checkout.
+When a sibling does not appear after a start or a scope refresh, read the logs:
+`$HOME/.related-repos-bootstrap.log` holds the clone job (from container start
+and from `task setup:gh-scopes`) and `$HOME/.related-repos-fetch.log` the fetch job.
 The list is preserved across `copier update` (an empty list is a no-op).
 
 To let Claude read and search the cloned siblings, add them to
