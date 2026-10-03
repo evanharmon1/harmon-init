@@ -294,13 +294,26 @@ scan() {
                 if (tok == "auth.json") return (t ~ AUTHJSON)
                 return index(t, tok)
             }
-            # track(RAW, TT) — set incmd for the line about to be examined: is it
-            # command-shaped context (inside a sh/bash fence, or inside a folded or
-            # literal scalar under a command key)? RAW is the first physical line,
-            # whose indentation and key column decide when a scalar ends.
-            function track(raw, tt,   kc) {
+            # keycol(RAW) — the 0-based column of the command key on RAW (the first
+            # physical line), a quote around the key included; -1 if there is none.
+            function keycol(raw,   kc) {
+                if (!match(raw, KEYRE)) return -1
+                kc = RSTART
+                if (substr(raw, kc, 1) ~ /[ -]/) kc++
+                return kc - 1
+            }
+            # track(RAW, TT) — set curind (the indentation of RAW, the first physical
+            # line) and incmd for the line about to be examined: is it command-shaped
+            # context (inside a sh/bash fence, or inside a folded or literal scalar
+            # under a command key)? The key column decides when a scalar ends. A
+            # fence opening or closing ends any scalar: a snippet shows one, it does
+            # not continue past its fence.
+            function track(raw, tt) {
                 incmd = 0
+                match(raw, /^[ \t]*/)
+                curind = RLENGTH
                 if (tt ~ FENCE) {
+                    bs = 0
                     if (fence) fence = 0
                     else {
                         fence = 1
@@ -312,22 +325,29 @@ scan() {
                     incmd = 1
                     return
                 }
-                match(raw, /^[ \t]*/)
                 if (bs) {
                     if (tt == "") return
-                    if (RLENGTH > bscol) {
+                    if (curind > bscol) {
                         incmd = 1
                         return
                     }
                     bs = 0
                 }
                 if (tt ~ BSHEAD) {
-                    match(raw, KEYRE)
-                    kc = RSTART
-                    if (substr(raw, kc, 1) !~ /[a-z]/) kc++
                     bs = 1
-                    bscol = kc - 1
+                    bscol = keycol(raw)
                 }
+            }
+            # continues() — may the line just tracked complete the fold armed by a
+            # pending head? Only when it continues the same command: inside the same
+            # scalar or fence the head sat in (pmode 1), or indented deeper than the
+            # command key whose plain scalar the head opened (pmode 2) — a line at or
+            # left of that key is a sibling, never a continuation. A head that merely
+            # begins a codex invocation (pmode 3) has no key to measure against.
+            function continues() {
+                if (pmode == 1) return incmd
+                if (pmode == 2) return (curind > pcol)
+                return 1
             }
             function emit(f, s, t, raw,   i, tt, hit) {
                 gsub(/[ \t]+/, " ", t)
@@ -338,7 +358,7 @@ scan() {
                 # `codex` and options end one line, options and `login` open the
                 # next non-blank line. Reported with both real lines.
                 if (pend != "" && tt != "") {
-                    if (tt ~ FOLDTAIL) print pfile ":" pline "-" s ": " pend " / " tt
+                    if (tt ~ FOLDTAIL && continues()) print pfile ":" pline "-" s ": " pend " / " tt
                     pend = ""
                 }
                 # One rule: outside the strict tier a line counts only if it
@@ -354,10 +374,18 @@ scan() {
                     if (!hit && t ~ LOGIN) hit = 1
                     if (hit) print substr(f, 3) ":" s ":" t
                 }
-                if (!hit && t ~ FOLDHEAD && (incmd || tt ~ CMDHEAD)) {
-                    pend = t
-                    pfile = substr(f, 3)
-                    pline = s
+                if (!hit && t ~ FOLDHEAD) {
+                    pmode = 0
+                    if (incmd) pmode = 1
+                    else if (tt ~ CMDKEYLINE) {
+                        pmode = 2
+                        pcol = keycol(raw)
+                    } else if (tt ~ CMDHEAD) pmode = 3
+                    if (pmode) {
+                        pend = t
+                        pfile = substr(f, 3)
+                        pline = s
+                    }
                 }
             }
             function is_strict(path,   i, dir, name) {
@@ -385,15 +413,20 @@ scan() {
                 # character after it.
                 AUTHJSON = "(^|[^A-Za-z0-9_.-])auth[.]json([^A-Za-z0-9_-]|$)"
                 # Command-shaped context: a fenced sh/bash block, or a folded or
-                # literal scalar under a command key; or a first line that itself
-                # begins a codex invocation (optionally a list item, a `$ ` prompt
-                # or a command key, then env assignments or a wrapper).
+                # literal scalar under a command key; or a command-key line whose
+                # value ends in codex (a plain scalar, folded by YAML like `>-`); or
+                # a first line that itself begins a codex invocation (optionally a
+                # list item, a `$ ` prompt or a command key, then env assignments or
+                # a wrapper). A command key may be quoted, single or double (\047
+                # and \042 keep the quote characters out of the shell quoting).
                 BT = sprintf("%c", 96)
                 FENCE = "^" BT BT BT
                 FENCESH = FENCE " ?(sh|bash|zsh|shell|console|shell-session)( |$)"
-                CMDKEY = "(run|cmd|command|script|entrypoint|args)"
-                BSHEAD = "(^|[ -])" CMDKEY ": *[>|][-+0-9]*$"
-                KEYRE = "(^|[^A-Za-z0-9_])" CMDKEY ":"
+                QT = "[\042\047]?"
+                CMDKEY = QT "(run|cmd|command|script|entrypoint|args)" QT
+                BSHEAD = "(^|[ -])" CMDKEY ": *[>|][-+0-9]*( #.*| )?$"
+                KEYRE = "(^|[ -])" CMDKEY ":"
+                CMDKEYLINE = "^(- )?" CMDKEY ": "
                 CMDHEAD = "^(- |[$] )?(" CMDKEY ": )?([A-Za-z_][A-Za-z0-9_]*=[^ ]* |sudo |exec |nohup |time )*codex( -[^ ]+( [^ -][^ ]*)?)* ?$"
             }
             FNR == 1 {
@@ -740,9 +773,44 @@ fixture_hits
 printf 'jobs:\n  a:\n    steps:\n      - uses: x\n        with:\n          provider: codex\n          login: oauth\n' >"${FIX}/.github/workflows/folded.yml"
 fixture_hits
 [ -z "$SCAN_HITS" ] || fail "consecutive provider: codex / login: oauth mapping lines must pass, got: ${SCAN_HITS}"
-printf 'jobs:\n  a:\n    steps:\n      - run: >-\n          echo hi\n        env:\n          provider: codex\n          login: oauth\n' >"${FIX}/.github/workflows/folded.yml"
+# A tail completes a fold only when it continues the same command. A sibling key
+# on the very next line has left the scalar (or the plain scalar's key column), so
+# `codex` then `login: oauth` is configuration, not a folded login.
+printf 'jobs:\n  a:\n    steps:\n      - run: >-\n          codex\n        login: oauth\n' >"${FIX}/.github/workflows/folded.yml"
 fixture_hits
-[ -z "$SCAN_HITS" ] || fail "mapping lines after a folded run scalar has ended must pass, got: ${SCAN_HITS}"
+[ -z "$SCAN_HITS" ] || fail "a sibling login: key right after a folded run scalar must pass, got: ${SCAN_HITS}"
+printf 'jobs:\n  a:\n    steps:\n      - script: >-\n          echo hi && codex\n        login: oauth\n' >"${FIX}/.github/workflows/folded.yml"
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "a sibling login: key right after a folded script scalar must pass, got: ${SCAN_HITS}"
+printf 'jobs:\n  a:\n    steps:\n      - run: echo hi && codex\n        login: oauth\n' >"${FIX}/.github/workflows/folded.yml"
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "a sibling login: key right after a plain run value must pass, got: ${SCAN_HITS}"
+printf 'jobs:\n  a:\n    steps:\n      - run: codex\n        login: oauth\n' >"${FIX}/.github/workflows/folded.yml"
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "a sibling login: key right after a run: codex value must pass, got: ${SCAN_HITS}"
+# A plain (unindicated) multi-line scalar under a command key is folded by YAML like
+# `>-`: a value ending in codex, whatever precedes it, and a deeper continuation.
+printf 'jobs:\n  a:\n    steps:\n      - run: echo hi && codex\n          login\n' >"${FIX}/.github/workflows/folded.yml"
+expect_hit "a plain multi-line run scalar ending in codex, then login" ".github/workflows/folded.yml" "4-5: "
+printf 'jobs:\n  a:\n    steps:\n      - run: codex\n          login\n' >"${FIX}/.github/workflows/folded.yml"
+expect_hit "a plain multi-line run scalar of codex, then login" ".github/workflows/folded.yml" "4-5: "
+printf 'jobs:\n  a:\n    steps:\n      - run: codex login --device-auth\n' >"${FIX}/.github/workflows/folded.yml"
+expect_hit "the one-line codex login control" ".github/workflows/folded.yml" "4:"
+# A command key may be quoted, single or double, in a block scalar or a plain value.
+printf 'jobs:\n  a:\n    steps:\n      - "run": >-\n          codex\n          login\n' >"${FIX}/.github/workflows/folded.yml"
+expect_hit "a double-quoted run key with a folded scalar" ".github/workflows/folded.yml" "5-6: "
+printf "jobs:\n  a:\n    steps:\n      - 'run': |\n          echo hi && codex\n          login\n" >"${FIX}/.github/workflows/folded.yml"
+expect_hit "a single-quoted run key with a literal scalar" ".github/workflows/folded.yml" "5-6: "
+printf 'jobs:\n  a:\n    steps:\n      - "run": codex\n          login\n' >"${FIX}/.github/workflows/folded.yml"
+expect_hit "a double-quoted run key with a plain multi-line value" ".github/workflows/folded.yml" "4-5: "
+printf 'jobs:\n  a:\n    steps:\n      - "run": >-\n          codex\n        login: oauth\n' >"${FIX}/.github/workflows/folded.yml"
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "a sibling login: key after a quoted-key scalar must pass, got: ${SCAN_HITS}"
+# The block-scalar indicator may be followed by a comment or by blanks.
+printf 'jobs:\n  a:\n    steps:\n      - run: >- # install\n          echo hi && codex\n          login\n' >"${FIX}/.github/workflows/folded.yml"
+expect_hit "a block scalar indicator followed by a comment" ".github/workflows/folded.yml" "5-6: "
+printf 'jobs:\n  a:\n    steps:\n      - run: >-  \n          echo hi && codex\n          login\n' >"${FIX}/.github/workflows/folded.yml"
+expect_hit "a block scalar indicator followed by blanks" ".github/workflows/folded.yml" "5-6: "
 # Command context decides a head that does not itself begin with codex: inside a
 # run scalar, `echo hi && codex` / `login` is a folded login; as a mapping value
 # outside any command context it is not.
@@ -766,6 +834,12 @@ expect_hit "a codex after another command in a fenced sh block" "docs/guides/pla
 printf '# Guide\n\nUse the tool, then codex\nlogin is not required.\n' >"${FIX}/docs/guides/planted-app.md"
 fixture_hits
 [ -z "$SCAN_HITS" ] || fail "prose wrapped across lines outside a command block must pass, got: ${SCAN_HITS}"
+# A fence ends any block scalar a snippet opened: a shallow `run: |` inside a fenced
+# yaml snippet does not stay open past the closing fence, so indented prose after it
+# is prose.
+printf '# Guide\n\n```yaml\nrun: |\n  echo hi\n```\n\n    Then codex\n    login is required.\n' >"${FIX}/docs/guides/planted-app.md"
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "indented prose after a fenced snippet that opened a scalar must pass, got: ${SCAN_HITS}"
 printf '# Guide\n\n```yaml\nsteps:\n  - run: >-\n      codex\n      login\n```\n' >"${FIX}/docs/guides/planted-app.md"
 expect_hit "a folded run scalar in a fenced yaml block" "docs/guides/planted-app.md" "6-7: "
 printf '# Guide\n\n$ codex\nlogin\n' >"${FIX}/docs/guides/planted-app.md"
