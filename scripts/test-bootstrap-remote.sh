@@ -839,11 +839,16 @@ else:
             lint_steps.append(line)
     if not lint_steps:
         fail(f"{BUILD}: no `lint:` job found under `jobs:`, so this guard's CI wiring cannot be checked")
-    elif not re.search(r"^\s*(?:- )?run: task test:bootstrap-remote\s*$", "\n".join(lint_steps), re.M):
+    elif not re.search(r"^\s*(?:- )?run: task test:suite\s*$", "\n".join(lint_steps), re.M):
         fail(
-            f"{BUILD}: the lint job does not run `task test:bootstrap-remote`. That job is the only one with no "
-            "path filter, so without this step a pull request editing an input this guard reads runs it in no CI job"
+            f"{BUILD}: the lint job does not run `task test:suite`, which carries `task test:bootstrap-remote`. "
+            "That job is the only one with no path filter, so without this step a pull request editing an input "
+            "this guard reads runs it in no CI job"
         )
+    elif "task: [test:bootstrap-remote]" not in subprocess.run(
+        ["task", "--dry", "--color=false", "test:suite"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
+    ).stdout:
+        fail("`task test:suite` does not run test:bootstrap-remote, so the lint job's aggregate step never reaches this guard")
 
 # ── 14. the standalone trust root: only a release tag is accepted ───────────
 # The ref is validated before the tier check and before the sudo re-exec, so
