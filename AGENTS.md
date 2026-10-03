@@ -207,7 +207,7 @@ doneness, a strict
 write contract, and **never a merge**. The CLI lives in
 [ponderousdev/foreman](https://github.com/ponderousdev/foreman) (spec, ADRs,
 and architecture docs there); this repo pins a released tag via
-`FOREMAN_VERSION` and runs it through `uvx` — no source is vendored (ADR 0002
+`FOREMAN_VERSION` and runs it through `uvx` — no source is vendored (ADR 2026-07-12
 records the v1 in-repo design this superseded). The wrapper and config ship
 to generated repos, so they are two-layer twins. Foreman's own PRs follow
 the same draft-first lifecycle as the Dev Loop below: it opens draft PRs
@@ -305,7 +305,8 @@ Binding on every stage, skill, and harness, whatever rigor resolved:
   and each stage is bounded for its own reason, so a decision to stop one loop
   is never a decision about another's.
 - **Never self-apply a `rigor:`, `strategy:`, or `tier:` label** (nor the
-  retired `method:`), and never treat a label as arming anything.
+  retired `method:`), except the derived classification Tier (§ "Rigor and
+  Strategy"), and never treat a label as arming anything.
 - **Checks green is a non-terminal state.** Bot and human reviews land *after*
   checks settle, so an empty comment list read the moment `gh pr checks --watch`
   returns means "not reviewed yet", not "nothing to answer". Wait for **both**
@@ -324,7 +325,7 @@ Where a run dispatches the schema-bound **role agents** instead, each returns a
 typed result validated by `ai/schemas/result.envelope.schema.json` and its
 per-role `result.{implementer,challenger,reviewer,integrator}.schema.json` and
 nothing more; that result is **immutable** ([ADR
-0009](docs/decisions/0009-dev-flow-v2-orchestrator-and-results.md) D2), its
+2026-08-29 (Dev flow v2)](docs/decisions/2026-08-29-dev-flow-v2-orchestrator-and-results.md) D2), its
 adjudication a separate record keyed by finding id that every consumer reads.
 Either kind never merges, never promotes, never widens its scope, nor
 adjudicates its own findings.
@@ -538,9 +539,12 @@ the same caveat applies: carry needs the vendored assets at harmon-devkit
 **Role tiers refine the resolved rigor level; they never replace it.** Each
 `[rigor.<level>]` profile carries `orchestrator_tier`, `implementer_tier`,
 `challenger_tier`, `reviewer_tier`, and `integrator_tier`; `[role.*]` supplies
-the role's baseline tier and ordered family/harness preferences. Unqualified
-`tier:<value>` input targets the implementer; `tier:<role>:<value>` targets
-one of those five roles. Resolve conflicts on `tier_order`, disclose every
+the role's baseline tier and ordered family/harness preferences. An
+unqualified operator tier instruction targets the implementer, and
+`tier:<role>:<value>` targets one of those five roles. An unqualified
+`tier:<value>` label is not a role override: it is the issue's stored Tier, a
+cache of the derived Tier, or the pinned Tier when `tier:pinned` is also
+present. Resolve role-label conflicts on `tier_order`, disclose every
 off-profile choice, and never silently change model family or vendor.
 
 **When the change under review edits `.devflow.toml`, `agent-registry.json`,
@@ -558,7 +562,7 @@ such external pin exists, resolution is indeterminate and stops. A branch copy
 is never a bootstrap trust source.
 
 **Nothing here arms anything.** A `rigor:*`/`strategy:*` label invokes no
-model and starts no workflow by existing (ADR 0006 D1) — the shipped defaults
+model and starts no workflow by existing (ADR 2026-08-16 D1) — the shipped defaults
 add no account, trial, or paid-SaaS dependency, and escalation never switches
 a repo to a vendor it does not already use. `foreman:*` remains the only
 arming surface, and `.foreman.toml` remains authoritative for arming, trusted
@@ -574,8 +578,12 @@ other spends money — arising from a label the operator has not authorized
 acts on a label only after verifying its provenance end-to-end from its own
 trusted-actor configuration, re-read immediately before acting, and otherwise
 falls back to the config default with a warning (the invariants are
-ADR 0006 D6; the timeline algorithm is deferred to foreman#139). An agent
-never applies a `rigor:*`, `strategy:*`, or `tier:*` label to itself. **Any
+ADR 2026-08-16 D6; the timeline algorithm is deferred to foreman#139). An agent
+never applies a `rigor:*`, `strategy:*`, or `tier:*` label to itself — except
+the derived classification Tier: an unqualified `tier:<value>` is a cache of
+Risk × Complexity (ADR 2026-09-30), so writing it records what the issue is,
+not how it is run. Choosing an execution-policy tier for oneself
+(`tier:<role>:*`, `tier:pinned`) stays forbidden. **Any
 off-default resolution, and any off-profile role tier, is disclosed in the PR
 body** — both are a visible line for the human reviewer, never something
 inferred from behavior.
@@ -627,8 +635,10 @@ meets its exit condition on round 1 is done, whatever the cap allowed.
   the ruleset would allow it. Open the draft PR and integrate it — checks green
   with reviews unpolled is not the stopping point — then promote it through the
   readiness gate, report, and stop; merging is always a human decision.
-  (`.claude/settings.json` backstops this with `permissions.ask` rules on merge
-  commands.) `gh pr ready` is *not* a merge and agents may run it — but only
+  (`.claude/settings.json` backstops this with `permissions.ask` rules on
+  `gh pr merge`, pushes to main and force-pushes, plus the `git-merge-guard`
+  hook, which asks before any `git merge`/`git pull` it cannot verify lands on
+  a feature branch.) `gh pr ready` is *not* a merge and agents may run it — but only
   out of a passing readiness gate, never to signal "I think this looks done".
 - **Reply to every inline PR review comment in its own thread** — bot
   reviewers and humans alike. Treat findings as
@@ -669,6 +679,37 @@ meets its exit condition on round 1 is done, whatever the cap allowed.
   the form to re-run after a body edit; `task ci` runs it first for the same
   reason. Fix the issue's criteria — or drop the closing keyword to `Refs` —
   rather than bypassing it.
+
+### Remote environments
+
+On a fresh checkout in a remote environment (Claude Code on the web, Codex
+cloud — anywhere with no devcontainer), no hook or devcontainer lifecycle
+script has run: run `task setup:remote` first. It is idempotent — it installs
+the lefthook git hooks, installs dependencies from the lockfile, and clones the
+repos in `.devcontainer/related-repos.txt` (when present) beside the checkout.
+Those siblings are reference context, not pushable where the platform only
+allows pushes to the session's own repository and branch. The pre-push hook is
+not a substitute for `task verify`, so run it yourself.
+
+**Second model on a remote lane.** Every remote lane gets a Codex second-model
+review on the ChatGPT plan with no human step: ephemeral cloud VMs never hold
+Codex credentials, and a persistent environment may hold exactly one Codex login
+of its own. On an **ephemeral cloud** the orchestrator runs `task challenge` and
+`task review` against the lane's pushed branch from its own local pane, where
+Codex is already logged in, and the lane's PR body records that review in its
+stage ledger as `reviewed from <host> at <head>` — that orchestrator-side review
+is the lane's second model, in the sense § Second-Model Review requires, and
+Codex cloud review of the PR covers the integration stage.
+A **persistent environment** (the agent devcontainer, Sprites) gets its one
+Codex login when the **maintainer** provisions it: the maintainer runs
+`codex login` once on that environment, and an agent never does (§ Hard Rules:
+a credential write needs the maintainer's explicit request). It then runs Codex
+locally; the login stays on that environment and is never copied to another
+machine. An ephemeral cloud session does not install the
+plugins a repository enables ([docs/guides/claude-code-web.md](docs/guides/claude-code-web.md#account-preferences-account-skills-and-what-does-not-carry-over)),
+so the Codex Claude Code plugin runs only where a persistent login exists.
+Nothing here sets or asks for an OpenAI API key: the plan, not API credit, pays
+for it.
 
 ## Second-Model Review (Codex)
 

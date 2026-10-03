@@ -74,10 +74,27 @@ tasks:
     # Foreman v2 vocabulary: the definition-of-done gate — check + build +
     # test), it runs check, the quick guards, and its test tier — which here
     # renders the whole template via test:template, so it is inherently heavier.
-    desc: Local verification gate (check → guards → test:template)
+    desc: Local verification gate (check → audit → test:suite → test:template)
     cmds:
       - task: check
       - task: audit:agent-instructions
+      - task: test:suite
+      - task: test:template
+
+  test:suite:
+    # The ONE list of `test:*` targets that both `verify` and the required Build
+    # workflow's `lint` job run (build.yml calls this task in a single step), so
+    # the two cannot drift and nothing parses the workflow to police them
+    # (harmon-init#962, #1461). A new `test:*` guard that belongs in the gate is
+    # added HERE and nowhere else.
+    #
+    # Deliberately NOT in this list: `test:template` — it renders every profile
+    # and runs as the `template-test` job's matrix in CI, so `verify` runs it
+    # right after this suite instead. CI-only-infrastructure checks
+    # (`test:renovate-config` resolves Renovate from npm; `verify:skills` and
+    # `test:devcontainer:permissions` are `ci` steps) stay outside it too.
+    desc: The test:* targets verify and the Build workflow's lint job both run (everything but test:template)
+    cmds:
       - task: test:agent-instructions-size
       - task: test:agent-skill-links
       - task: test:agent-registry
@@ -93,6 +110,8 @@ tasks:
       - task: test:output
       - task: test:status
       - task: test:gh-scopes
+      - task: test:related-repos
+      - task: test:setup-remote
       - task: test:meta-install
       - task: test:copier-validators
       - task: test:renovate-pins
@@ -106,6 +125,7 @@ tasks:
       - task: test:setup-github-project
       - task: test:sync-devkit-release
       - task: test:devcontainer:image:automation
+      - task: test:bootstrap-remote
       - task: test:skills-pin-parity
       - task: test:tag-hygiene
       - task: test:dogfood-parity
@@ -123,9 +143,12 @@ tasks:
       - task: test:image-staleness
       - task: test:open-devcontainer
       - task: test:bot-autonomy
+      - task: test:agent-profile
       - task: test:codex-review
+      - task: test:remote-codex-policy
+      - task: test:sprites-policy
       - task: test:template-helpers
-      - task: test:template
+      - task: test:verify-ci-parity
 
   # ── Quality Checks ────────────────────────────────────────────
   check:
@@ -348,6 +371,15 @@ tasks:
     cmds:
       - ./scripts/devcontainer-smoke.sh .devcontainer/dev/devcontainer.json
 
+  test:devcontainer:agent:
+    # Builds and starts the agent posture, then proves live what its unit test
+    # proves statically: the egress filter refuses an unlisted host and records
+    # it, refused harnesses stay refused, and no forbidden credential or Docker
+    # reached the container. Needs Docker, like the other smoke tasks.
+    desc: Smoke test the agent (unattended) devcontainer via the devcontainers CLI
+    cmds:
+      - ./scripts/devcontainer-smoke.sh .devcontainer/agent/devcontainer.json
+
   test:devcontainer:permissions:
     desc: Unit-assert devcontainer permission invariants (no container needed)
     cmds:
@@ -383,6 +415,14 @@ tasks:
     cmds:
       - ./scripts/test-bot-autonomy.sh
 
+  test:agent-profile:
+    # Wired into `verify` with no devcontainer paths: filter, like
+    # test:bot-autonomy — the agent posture's single source, deny list, env
+    # guard, Docker rule, and egress list are checked on every PR.
+    desc: Unit-test the agent posture (single source, Claude/Codex policy, env guard, Docker, egress; no container needed)
+    cmds:
+      - ./scripts/test-agent-profile.sh
+
   test:devcontainer:image:
     desc: Build and smoke-test the canonical shared image and current repository overlay
     cmds:
@@ -392,6 +432,15 @@ tasks:
     desc: Unit-test shared-image manifest/publish/pin automation (offline, stubbed boundaries)
     cmds:
       - ./scripts/test-devcontainer-image-automation.sh
+
+  test:bootstrap-remote:
+    # The pin guard the remote-bootstrap invariant needs: every tool the
+    # bootstrap installs takes its version from the same file the Dockerfile
+    # reads, and the bootstrap declares no pin of its own. Offline and
+    # metadata-only; the runtime proof is .github/workflows/remote-bootstrap.yml.
+    desc: Guard the shared image/remote-bootstrap pin contract (offline)
+    cmds:
+      - ./scripts/test-bootstrap-remote.sh
 
   test:hooks:
     desc: Round-trip the Taskfile targets the Claude hooks delegate to
@@ -448,6 +497,11 @@ tasks:
     cmds:
       - ./scripts/test-tasks.sh
 
+  test:verify-ci-parity:
+    desc: Fail if the Build workflow stops calling test:suite or verify stops running it
+    cmds:
+      - ./scripts/test-verify-ci-parity.sh
+
   test:ci-results:
     desc: Unit-test CI aggregate and closing-keyword fail-closed truth tables
     cmds:
@@ -483,6 +537,16 @@ tasks:
     desc: Unit-test the gh scope refresh task's refusals and post-refresh verification (stubbed gh, no network)
     cmds:
       - ./scripts/test-setup-gh-scopes.sh
+
+  test:related-repos:
+    desc: Unit-test the related-repo bootstrap fallback and idempotency (stubbed gh/git, no network)
+    cmds:
+      - ./scripts/test-bootstrap-related-repos.sh
+
+  test:setup-remote:
+    desc: Unit-test task setup:remote — idempotency, the lefthook shim, sibling clones into the checkout's parent (stubbed lefthook/gh, no network)
+    cmds:
+      - ./scripts/test-setup-remote.sh
 
   test:meta-install:
     desc: Unit-test the .meta sidecar installer's ~-expansion and refusals
@@ -648,6 +712,16 @@ tasks:
     desc: Unit-test codex-review.sh target selection (offline, stubbed codex)
     cmds:
       - ./scripts/test-codex-review.sh
+
+  test:remote-codex-policy:
+    desc: Guard the remote second-model rule — no Codex credential vocabulary on a remote-environment surface (offline)
+    cmds:
+      - ./scripts/test-remote-codex-policy.sh
+
+  test:sprites-policy:
+    desc: Prove the Fly.io Sprite network policy is generated from the shared egress allowlist and cannot differ from it (offline)
+    cmds:
+      - ./scripts/test-sprites-policy.sh
 
   # ── Skills sync ────────────────────────────────────────────────
   # Vendor shared agent skills from harmon-devkit, pinned in .skills-sync.yaml.
@@ -825,6 +899,11 @@ tasks:
     desc: Install git hooks via lefthook
     cmds:
       - lefthook install
+
+  setup:remote:
+    desc: Prepare this checkout for the dev loop on a remote platform (no devcontainer hooks) — git hooks, frozen dependencies, related repos beside it. Idempotent
+    cmds:
+      - ./scripts/setup-remote.sh
 
   setup:github:
     desc: Apply idempotent GitHub repo settings via gh (Dependabot alerts, private vulnerability reporting, Actions runner routing)

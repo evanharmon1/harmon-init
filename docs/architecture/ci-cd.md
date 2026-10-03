@@ -29,6 +29,21 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
   base-**branch** change; losing that re-run is accepted, because retargeting a
   PR is rare and `strict_required_status_checks_policy` forces an up-to-date
   head before merge, which arrives as a `synchronize`.
+  **One list, not two** (#962, #1461): the `lint` job runs `check`, then a
+  single `task test:suite` step — the Taskfile's aggregate of every `test:*`
+  target `task verify` runs — so a guard added to `verify` is in CI by
+  construction instead of by someone remembering to list it in the workflow
+  too. The accepted cost is one Actions step for the whole suite rather than a
+  named step per test. Outside the suite, each with its reason beside it in
+  the workflow: `test:template` (it runs as the `template-test` matrix, one
+  profile per leg), `verify:skills` (network), `test:devcontainer:permissions`
+  (a `ci`-only unit check), and the `audit:*` step (not a `test:*` target).
+  `task test:verify-ci-parity` — in the suite, in both layers, and also its own
+  `lint` step so deleting the suite step cannot silence it — fails if
+  `build.yml`'s `lint` job stops calling `test:suite`, if `verify` stops running
+  it, or if `verify` lists a `test:*` target directly (`test:template` aside,
+  where the `template-test` job exists); `scripts/test-template.sh` asserts the
+  same for every rendered profile.
 - `closing-keywords.yml` — the metadata-only gate that refuses a same-repo
   `Closes #N` while `#N` has unchecked task-list items. It lives in its own
   workflow precisely so it can keep `pull_request.edited`: it reads the PR
@@ -116,14 +131,40 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
 - `close-milestone-on-release.yml` — closes the milestone matching the tag on release publish.
 - `sync-harmon-devkit.yml` — **root-only**: turns a published harmon-devkit
   release into a verified pin-and-sync PR (see below).
+- `remote-bootstrap.yml` — **root-only**: proves
+  `images/devcontainer/bootstrap-remote.sh` on a stock `ubuntu:24.04` container.
+  One job, because the offline half belongs everywhere. The pin contract
+  (`task test:bootstrap-remote`) runs unconditionally, inside `test:suite`,
+  in `build.yml`'s `lint` job and in `verify`, so a change to any input it reads — the install scripts,
+  the pins, or the allowlist tables in
+  [remote-environments.md](remote-environments.md) it derives its host sets
+  from — is checked on every pull request rather than behind a path filter that
+  had to be re-derived by hand whenever the guard grew an input. `bootstrap`
+  runs the thing: it seeds the two traps a real remote VM
+  has (a Python `yq` at `/usr/bin/yq`, a POSIX locale), installs the core and
+  agents tiers against a five-minute budget recorded in the job summary, runs
+  the bootstrap a second time and requires **zero new installs** and a
+  **byte-identical manifest** (no pinned version moved) — apt upgrades are
+  reported in the job summary, not gated, because the apt packages are
+  unpinned and converge on the archive by design —
+  asserts that the agent posture landed (both managed destinations
+  byte-identical to `.devcontainer/config/agent/`, and
+  `HARMON_BOOTSTRAP_POSTURE_GAPS=0` on the first run),
+  asserts that `op`, Homebrew and Tailscale are absent, and then runs
+  `task check` in the checkout using only what the bootstrap installed. Its
+  container job is fork-gated like the image publisher's, for the same reason:
+  it executes checked-out shell as root. The job runs on the runner's native
+  architecture, so `vars.CI_RUNS_ON` is what decides whether arm64 is
+  exercised. See [remote-environments.md](remote-environments.md).
 
 ## Root-only vs template-shipped workflows
 
 Most root workflows are the rendered form of a `template/` twin and must be
 edited in lockstep (AGENTS.md, "Dogfood parity"). A few are **root-only**: they
 exist because harmon-init sits inside harmon-platform, and a generated repo has
-no such edge. `close-milestone-on-release.yml`, `sync-harmon-devkit.yml`, and
-`publish-harmon-devcontainer.yml` are root-only; they have no `template/`
+no such edge. `close-milestone-on-release.yml`, `sync-harmon-devkit.yml`,
+`publish-harmon-devcontainer.yml`, and `remote-bootstrap.yml` are root-only;
+they have no `template/`
 counterpart, and the dogfood checks are
 twin-driven (they walk `template/`), so root-only files are correctly invisible
 to them. Do not add a twin to make them "consistent".
@@ -222,6 +263,16 @@ runs publish immutable source tags and validate anonymous pulls before the
 least-privilege CI App token is minted for pin propagation. The complete image,
 overlay, bootstrap, monotonic-update, and rollback contract is documented in
 [devcontainer-image.md](devcontainer-image.md).
+
+The same producer directory also owns the **remote** path: the install scripts
+under `images/devcontainer/install/` and the pins in
+`images/devcontainer/versions.env` are run both by that Dockerfile and by
+`bootstrap-remote.sh` on a cloud VM that cannot pull the image at all. That is
+why a change under `images/devcontainer/` triggers `remote-bootstrap.yml` as
+well as the publisher. The bootstrap also installs the agent posture from
+`.devcontainer/agent/agent-autonomy.sh` and `.devcontainer/config/agent/`, so a
+change under either triggers `remote-bootstrap.yml` too — see
+[remote-environments.md](remote-environments.md).
 
 ## Authentication
 

@@ -97,16 +97,22 @@ switch (mutation) {
     delete family('concern').values[0].description
     break
   case 'agent-registry-with-values':
-    family('suggest').values.push({ value: 'rogue', description: 'x', color: 'ABCDEF' })
+    family('claim').values.push({ value: 'rogue', description: 'x', color: 'ABCDEF' })
     break
   case 'tool-owned-provisioned':
-    family('suggest-model').provision = true
+    family('claim-model').provision = true
+    break
+  case 'live-suggest-family':
+    // suggest has no renderer mode any more: a live family naming it would
+    // provision nothing, silently.
+    family('suggest').retired = false
+    family('suggest').provision = true
     break
   case 'cross-family-collision':
     family('provenance').values.push({ value: 'sec', description: 'collides', color: 'ABCDEF' })
     break
   case 'registry-family-without-color':
-    delete family('suggest').color
+    delete family('claim').color
     break
   case 'overlong-description':
     family('concern').values[0].description = 'X'.repeat(101)
@@ -160,17 +166,20 @@ rejects "a closed inline family with no values" 'closed-family-without-values' \
     'closed inline family'
 rejects "a closed devflow-sourced family with no values" 'closed-devflow-family-without-values' \
     'closed devflow family'
+rejects "a live family on the retired suggest registry set" 'live-suggest-family' \
+    'registry_set suggest is retired'
 
 # Inventory authorization must not depend on documentation order. Put the
 # open model families before their agent-registry bases and require the same
-# precise family prefixes—never the overly broad `suggest:` or `claim:`.
+# precise family prefixes—never the overly broad `claim:`. suggest:* is retired,
+# so no suggest entry may be protected whatever the order.
 cp agent-registry.json "$mutation_tmp/agent-registry.json"
 node --input-type=module - label-registry.json "$mutated_manifest" <<'NODE'
 import { readFile, writeFile } from 'node:fs/promises'
 
 const [inputPath, outputPath] = process.argv.slice(2)
 const manifest = JSON.parse(await readFile(inputPath, 'utf8'))
-for (const [openId, baseId] of [['suggest-model', 'suggest'], ['claim-model', 'claim']]) {
+for (const [openId, baseId] of [['claim-model', 'claim']]) {
   const open = manifest.families.find((entry) => entry.family === openId)
   manifest.families = manifest.families.filter((entry) => entry.family !== openId)
   manifest.families.splice(manifest.families.findIndex((entry) => entry.family === baseId), 0, open)
@@ -179,13 +188,14 @@ await writeFile(outputPath, `${JSON.stringify(manifest, null, 2)}\n`)
 NODE
 reordered_inventory="$(node scripts/label-registry-render.mjs inventory "$mutated_manifest")" ||
     fail "inventory failed when open model families preceded their registry bases"
-if grep -Eq '^prefix\|(suggest|claim):$' <<<"$reordered_inventory"; then
+if grep -Eq '^prefix\|claim:$' <<<"$reordered_inventory"; then
     fail "inventory widened protection when families were reordered"
 fi
-grep -Fqx 'prefix|suggest:gpt:' <<<"$reordered_inventory" ||
-    fail "reordered inventory lost the suggest:gpt model prefix"
 grep -Fqx 'prefix|claim:gpt:' <<<"$reordered_inventory" ||
     fail "reordered inventory lost the claim:gpt model prefix"
+if grep -Eq '^(exact|prefix)\|suggest:' <<<"$reordered_inventory"; then
+    fail "inventory protects a retired suggest label — suggest:* must surface as unregistered so --prune can offer it"
+fi
 
 # ── 2. cross-file checks ───────────────────────────────────────────────────
 # rigor values ↔ .devflow.toml levels: the label selects a [rigor.*] table, so
@@ -215,6 +225,144 @@ check_rigor label-registry.json .devflow.toml
 # template label vocabulary is checked against the root catalog here; every
 # rendered profile checks its own concrete .devflow.toml above.
 [ "$template_mode" = 1 ] && check_rigor template/label-registry.json .devflow.toml
+
+# Vendored triage derives its REQUIRED axes from every exclusive non-retired
+# `classification` family whatever its writers, and refuses a classification
+# family on a reserved prefix such as `tier`. So priority/priority-ai/effort
+# (not required for "triaged") and tier must NOT be classification families.
+# This guards ANY manifest, generated repositories included.
+check_triage_axes() {
+    local manifest="$1" fam axis
+    for fam in priority priority-ai effort tier; do
+        axis="$(jq -r --arg f "$fam" '[.families[] | select(.family == $f) | .axis][0] // "absent"' "$manifest")"
+        [ "$axis" != classification ] ||
+            fail "$manifest family $fam uses the classification axis — triage tooling would make it a required axis for triaged (use meta or strategy)"
+    done
+}
+check_triage_axes label-registry.json
+
+# The issue-classification model (ADR 2026-09-30), pinned per layer so the AC
+# properties — families, scales, writers, retirements — cannot drift quietly.
+# TEMPLATE repository only: a generated repository owns its manifest values, so
+# these exact pins would turn a local customization into a verify failure. The
+# manifest keys are a closed vendored contract, so `none` is an ordinary value,
+# not a flagged one.
+check_classification_registry() {
+    local manifest="$1" got want
+    q() { jq -r "$1" "$manifest"; }
+
+    got="$(q '[.families[] | select(.axis == "classification" and .exclusive == true and .retired != true) | .family] | sort | join(",")')"
+    want="area,complexity,domain,impact,layer,risk"
+    [ "$got" = "$want" ] ||
+        fail "$manifest exclusive classification families [$got] != the triaged axes [$want] — triage tooling requires exactly these (priority, priority-ai, effort and tier are not required for triaged and must use another axis)"
+
+    local fam_values
+    for fam_values in \
+        'impact=minimal,low,medium,high,massive' \
+        'risk=trivial,low,medium,high,critical' \
+        'complexity=xs,s,m,l,xl' \
+        'priority=urgent,high,medium,low' \
+        'priority-ai=p0,p1,p2,p3,p4' \
+        'effort=1,2,3,5,8,13,20'; do
+        local fam="${fam_values%%=*}" values="${fam_values#*=}"
+        got="$(jq -r --arg f "$fam" '.families[] | select(.family == $f) | [.values[].value] | join(",")' "$manifest")"
+        [ "$got" = "$values" ] || fail "$manifest family $fam values [$got] != the accepted scale [$values] (ADR 2026-09-30 D2; priority-ai: ADR 2026-10-01, Priority AI axis)"
+        [ "$(jq -r --arg f "$fam" '.families[] | select(.family == $f) | "\(.exclusive) \(.provision) \(.prefix)"' "$manifest")" = "true true $fam" ] ||
+            fail "$manifest family $fam must be an exclusive, provisioned, $fam:-prefixed family"
+    done
+
+    for fam in impact risk complexity; do
+        [ "$(jq -c --arg f "$fam" '.families[] | select(.family == $f) | [.axis, .writers]' "$manifest")" = '["classification",["human","agent"]]' ] ||
+            fail "$manifest family $fam must be a classification family writable by human and agent (ADR 2026-09-30 D3)"
+    done
+    for fam in priority effort; do
+        [ "$(jq -c --arg f "$fam" '.families[] | select(.family == $f) | [.axis, .writers]' "$manifest")" = '["meta",["human"]]' ] ||
+            fail "$manifest family $fam must be a human-only meta family — a classification family would become a required triage axis"
+    done
+    # Priority (AI): the AI's suggested priority beside the human one. It is a
+    # meta family so it never becomes a required triage axis, writable by human
+    # and agent (the human `priority` family stays human-only above), and its
+    # notes must keep saying that the human Priority overrides it and that it
+    # arms nothing (ADR 2026-10-01, Priority AI axis).
+    [ "$(jq -c '.families[] | select(.family == "priority-ai") | [.axis, .writers]' "$manifest")" = '["meta",["human","agent"]]' ] ||
+        fail "$manifest family priority-ai must be a meta family writable by human and agent — a classification family would become a required triage axis, and the AI's suggestion is agent-written"
+    local note
+    for note in purpose trust_note; do
+        jq -r --arg k "$note" '.families[] | select(.family == "priority-ai") | .[$k]' "$manifest" | grep -Fq "AI's suggest" ||
+            fail "$manifest family priority-ai $note must say it is the AI's suggestion"
+    done
+    for note in purpose lifecycle_note trust_note; do
+        jq -r --arg k "$note" '.families[] | select(.family == "priority-ai") | .[$k]' "$manifest" | grep -Fq 'overrid' ||
+            fail "$manifest family priority-ai $note must state that the human priority family overrides it"
+    done
+    jq -r '.families[] | select(.family == "priority-ai") | .trust_note' "$manifest" | grep -Fq 'arms nothing' ||
+        fail "$manifest family priority-ai trust_note must state that it arms nothing"
+
+    # none = inapplicable, on exactly the three taxonomy families.
+    for fam in area layer domain; do
+        [ "$(jq -r --arg f "$fam" '.families[] | select(.family == $f) | [.values[] | select(.value == "none" and .retired != true and .provision != false)] | length' "$manifest")" = 1 ] ||
+            fail "$manifest family $fam has no live, provisioned none value (the explicit inapplicable answer)"
+    done
+    [ "$(jq -r '[.families[] | select(.family != "area" and .family != "layer" and .family != "domain") | .values[] | select(.value == "none")] | length' "$manifest")" = 0 ] ||
+        fail "$manifest carries a none value outside area/layer/domain"
+
+    # tier: agent- and reconciler-writable cache, human pin, adaptive retired.
+    [ "$(jq -c '.families[] | select(.family == "tier") | [.axis, .exclusive, .writers]' "$manifest")" = '["strategy",false,["human","agent","tool:github-actions"]]' ] ||
+        fail "$manifest tier must stay a non-exclusive strategy-axis family writable by human, agent and tool:github-actions"
+    got="$(jq -r '.families[] | select(.family == "tier") | [.values[] | select(.retired != true) | .value] | join(",")' "$manifest")"
+    [ "$got" = "local,economy,standard,frontier,apex,pinned" ] ||
+        fail "$manifest live tier values [$got] != local,economy,standard,frontier,apex,pinned"
+    [ "$(jq -c '.families[] | select(.family == "tier") | .values[] | select(.value == "pinned") | .writers' "$manifest")" = '["human"]' ] ||
+        fail "$manifest tier:pinned must be human-only"
+    [ "$(jq -r '.families[] | select(.family == "tier") | .values[] | select(.value == "adaptive") | "\(.retired) \(.lifecycle_note | length > 0)"' "$manifest")" = "true true" ] ||
+        fail "$manifest tier:adaptive must be retired with a migration note"
+    if jq -r '.families[] | select(.family == "tier") | [.writer_note, .readers, .lifecycle_note] | .[]' "$manifest" | grep -qi 'never an agent on itself'; then
+        fail "$manifest tier family still says agents never write it — the derived Tier cache is agent-written (ADR 2026-09-30 D4)"
+    fi
+    for fam in tier-role rigor strategy; do
+        [ "$(jq -c --arg f "$fam" '.families[] | select(.family == $f) | .writers' "$manifest")" = '["human"]' ] ||
+            fail "$manifest family $fam must stay human-only — only the derived Tier cache is agent-written"
+    done
+
+    # suggest is retired, with a migration note; claim is untouched.
+    for fam in suggest suggest-model; do
+        [ "$(jq -r --arg f "$fam" '.families[] | select(.family == $f) | "\(.retired) \(.provision) \(.writers | length) \(.lifecycle_note | length > 0)"' "$manifest")" = "true false 0 true" ] ||
+            fail "$manifest family $fam must be retired, unprovisioned, writerless, and carry a migration note"
+    done
+    [ "$(jq -r '.families[] | select(.family == "claim") | "\(.retired // false) \(.provision) \(.source) \(.registry_set)"' "$manifest")" = "false true agent-registry claim" ] ||
+        fail "$manifest family claim must be untouched: live, provisioned, rendered from the agent registry"
+
+    # workflow:needs-review — human and agent writable, transient hand-off marker.
+    [ "$(jq -c '.families[] | select(.family == "workflow") | .values[] | select(.value == "needs-review") | [.description, .writers, (.lifecycle_note | length > 0)]' "$manifest")" = '["PR ready for human review; out of the agent queue",["human","agent"],true]' ] ||
+        fail "$manifest workflow:needs-review is missing or does not match the maintainer decision (human+agent writers, lifecycle note, queue-exclusion description)"
+    [ "$(jq -r '.families[] | select(.family == "workflow") | .lifecycle' "$manifest")" = transient ] ||
+        fail "$manifest workflow family must stay transient (needs-review is added at ready-for-review and removed on pull-back)"
+}
+if [ "$template_mode" = 1 ]; then
+    check_classification_registry label-registry.json
+    check_classification_registry template/label-registry.json
+fi
+
+# The agent registry keeps DECLARING the retired suggest namespace until #1473
+# (the pinned breakdown label discovery requires labels.suggest). Declaring it
+# must provision and protect nothing: no suggest:* label is rendered for
+# provisioning, and the inventory leaves every suggest:* label unrecognized so
+# a live one is reported and offered for guarded --prune.
+check_suggest_provisions_nothing() {
+    local manifest="$1" rendered inventory
+    rendered="$(node scripts/label-registry-render.mjs labels --foreman --release-please "$manifest")" ||
+        fail "$manifest: label rendering failed"
+    inventory="$(node scripts/label-registry-render.mjs inventory "$manifest")" ||
+        fail "$manifest: inventory rendering failed"
+    if grep -q '^suggest:' <<<"$rendered"; then
+        fail "$manifest provisions a suggest:* label although the family is retired"
+    fi
+    if grep -Eq '^(exact|prefix)\|suggest:' <<<"$inventory"; then
+        fail "$manifest inventory recognizes a suggest label, so --prune could never offer it — keep suggest and suggest-model retired"
+    fi
+}
+check_suggest_provisions_nothing label-registry.json
+[ "$template_mode" = 1 ] && check_suggest_provisions_nothing template/label-registry.json
 
 # The four foreman protocol labels ship four different colors upstream
 # (ponderousdev/foreman); the per-value color overrides exist to reproduce
@@ -246,7 +394,8 @@ l10n|5319E7|Localization
 customer-request|EC4899|Requested by a customer
 ai-generated|EC4899|Created or authored by an AI agent
 epic|8250DF|Time-bound parent initiative with a defined future deliverable
-umbrella|8250DF|Open-ended parent issue for an enduring area, topic, or team
+umbrella|8250DF|Open-ended parent for an enduring area, topic, or team, or a (HUMAN)/(QA) collector
+human|FBCA04|Human-only work: actions or QA; never dispatched to an agent
 needs-triage|E36209|Awaiting triage
 needs-requirements|E36209|Requirements not yet defined
 blocked|E36209|Blocked by a non-issue dependency (reason in a comment)
@@ -254,6 +403,7 @@ waiting|E36209|Waiting on an external party
 needs-decision|E36209|Needs a decision before it can proceed
 needs-response|E36209|Awaiting a response
 needs-communication|E36209|An update needs to be communicated out
+needs-review|E36209|PR ready for human review; out of the agent queue
 bug|D73A4A|Something isn't working
 feature|A2EEEF|New feature or request
 task|6E7781|General work: maintenance, chores, cleanup
@@ -263,18 +413,50 @@ layer:logic|1D76DB|Business rules, handlers, calculation
 layer:data|1D76DB|Schema, indexes, validators, migrations
 layer:integration|1D76DB|External boundary: webhooks, API clients, credentials
 layer:infra|1D76DB|Hosts, networking, containers, provisioning — IaC and config rather than app code
+layer:none|1D76DB|Inapplicable: the work is not in a single stack slice
+impact:minimal|0052CC|Impact: marginal benefit; most users would not notice it
+impact:low|0052CC|Impact: small benefit to a few users or a narrow use case
+impact:medium|0052CC|Impact: clear benefit to a meaningful share of users or goals
+impact:high|0052CC|Impact: core benefit, or severe harm prevented even if rarely triggered
+impact:massive|0052CC|Impact: transformative; current goals depend on it
+risk:trivial|B60205|Risk: a mistake is harmless and trivially reversible
+risk:low|B60205|Risk: a mistake is contained, caught quickly, and cheap to undo
+risk:medium|B60205|Risk: a mistake breaks a feature or needs a careful rollback
+risk:high|B60205|Risk: a mistake reaches many users or their data; recovery is costly
+risk:critical|B60205|Risk: a mistake risks data loss, security exposure, or an irreversible outage
+complexity:xs|F9D0C4|Complexity: a tiny, well-understood change with obvious verification
+complexity:s|F9D0C4|Complexity: small and local; a clear approach across a few files
+complexity:m|F9D0C4|Complexity: moderate; several components and some design choices
+complexity:l|F9D0C4|Complexity: large; cross-cutting, with real design and wide verification
+complexity:xl|F9D0C4|Complexity: very large or uncertain; likely to grow or need splitting
+priority:urgent|FF7619|Priority: work on this now, ahead of everything else
+priority:high|FF7619|Priority: next up; schedule soon
+priority:medium|FF7619|Priority: normal queue order
+priority:low|FF7619|Priority: when nothing more pressing remains
+priority-ai:p0|B60205|Priority (AI): blocks a merge or deploy — critical
+priority-ai:p1|FF7619|Priority (AI): a real defect or must-do; next
+priority-ai:p2|FBCA04|Priority (AI): worth doing, not blocking
+priority-ai:p3|1D76DB|Priority (AI): cosmetic or informational
+priority-ai:p4|BFC5CB|Priority (AI): negligible
+effort:1|C5DEF5|Effort: 1, the smallest step on the modified Fibonacci ladder (human tasks only)
+effort:2|C5DEF5|Effort: 2 on the modified Fibonacci ladder (human tasks only)
+effort:3|C5DEF5|Effort: 3 on the modified Fibonacci ladder (human tasks only)
+effort:5|C5DEF5|Effort: 5 on the modified Fibonacci ladder (human tasks only)
+effort:8|C5DEF5|Effort: 8 on the modified Fibonacci ladder (human tasks only)
+effort:13|C5DEF5|Effort: 13 on the modified Fibonacci ladder (human tasks only)
+effort:20|C5DEF5|Effort: 20, the largest step on the modified Fibonacci ladder (human tasks only)
 rigor:cursory|D4C5F9|Rigor: one quick adversarial glance, economy elsewhere — near-zero-risk changes
 rigor:light|D4C5F9|Rigor: light rounds, frontier orchestrator/challenger, economy implementer
 rigor:standard|D4C5F9|Rigor: standard rounds and breadth, frontier challenger, standard implementer — the default
 rigor:thorough|D4C5F9|Rigor: thorough rounds, apex orchestrator/challenger, frontier reviewer
 rigor:deep|D4C5F9|Rigor: deep rounds, apex orchestrator/challenger, frontier implementer/reviewer
 rigor:forensic|D4C5F9|Rigor: maximum scrutiny at every role — irreversible failure modes, security, data paths
-tier:local|7057FF|Model tier: self-hosted endpoint first; may escalate to economy
+tier:local|7057FF|Model tier: work a small self-hosted model can do, possibly slowly
 tier:economy|7057FF|Model tier: cheapest qualified hosted model first; escalation allowed
 tier:standard|7057FF|Model tier: reliable general-purpose coding model first
 tier:frontier|7057FF|Model tier: opus-class heavyweights; no warm-up on weaker models
 tier:apex|7057FF|Model tier: mythos-class leading edge (fable, sol)
-tier:adaptive|7057FF|Model tier: cheap preflight classifies, then chooses or escalates
+tier:pinned|7057FF|Tier pin: a human fixed this issue's tier; nothing automated rewrites it
 tier:orchestrator:local|7057FF|Tier override: pin the orchestrator to local — self-hosted endpoint first
 tier:orchestrator:economy|7057FF|Tier override: pin the orchestrator to economy — cheapest qualified hosted model
 tier:orchestrator:standard|7057FF|Tier override: pin the orchestrator to standard — reliable general-purpose coding model
@@ -314,6 +496,8 @@ domain:project-tracking|FBCA04|Issues, labels, boards, and the PM strategy
 domain:auth|FBCA04|Toolchain credentials and auth: gh, Claude, Codex, 1Password, tokens
 domain:delivery|FBCA04|Releases and versioning: release-please, tags, release guards, consumer pickup
 domain:environment|FBCA04|The ready-to-code environment: devcontainer, images, codespaces, editor setup
+domain:none|FBCA04|Inapplicable: the work serves no single product capability
+area:none|0E8A16|Inapplicable: the work belongs to no single codebase subsystem
 area:copier|0E8A16|The templating engine: copier.yml, answers, validators, jinja, render matrix
 area:devcontainer|0E8A16|Dev containers, images, features
 area:ci|0E8A16|Repository-wide CI workflows and plumbing; subsystem workflows belong to that subsystem's area
@@ -337,9 +521,9 @@ check_lockfile() {
     local manifest="$1" registry="$2" inline="$3" label="$4"
     local base_expect foreman_expect got_base got_foreman
     base_expect="$( (printf '%s\n' "$inline" &&
-        node scripts/agent-registry-labels.mjs suggest-claim "$registry") | sort)"
+        node scripts/agent-registry-labels.mjs claim "$registry") | sort)"
     foreman_expect="$( (printf '%s\n' "$inline" && printf '%s\n' "$foreman_inline" &&
-        node scripts/agent-registry-labels.mjs suggest-claim "$registry" &&
+        node scripts/agent-registry-labels.mjs claim "$registry" &&
         node scripts/agent-registry-labels.mjs foreman-adapters "$registry") | sort)"
     got_base="$(node scripts/label-registry-render.mjs labels "$manifest" | sort)"
     got_foreman="$(node scripts/label-registry-render.mjs labels --foreman "$manifest" | sort)"
@@ -356,7 +540,9 @@ if [ "$template_mode" = 1 ]; then
     check_lockfile label-registry.json agent-registry.json \
         "$shared_inline
 $root_only_inline" "root layer"
-    template_only_inline="domain:auth|FBCA04|Authentication and authorization
+    template_only_inline="domain:none|FBCA04|Inapplicable: the work serves no single product capability
+area:none|0E8A16|Inapplicable: the work belongs to no single codebase subsystem
+domain:auth|FBCA04|Authentication and authorization
 domain:billing|FBCA04|Billing and payments
 domain:platform|FBCA04|CI, build, test infra, and tooling in this repo
 area:ci|0E8A16|Repository-wide CI workflows and plumbing; subsystem workflows belong to that subsystem's area
@@ -415,6 +601,13 @@ STUB
     emitted="$(sort "$emitted_file")"
     rm -rf "$stub_dir"
     want_names="$(node scripts/label-registry-render.mjs labels --foreman | sed 's/|.*//' | sort)"
+    if grep -Eq '^(suggest:|tier:adaptive$)' <<<"$emitted"; then
+        fail "setup-github-labels.sh provisioned a retired label (suggest:* or tier:adaptive) — retired labels are only ever reported and pruned"
+    fi
+    for expected_label in risk:high complexity:xl impact:massive priority:urgent priority-ai:p0 priority-ai:p4 effort:13 tier:pinned needs-review area:none layer:none domain:none; do
+        grep -Fqx "$expected_label" <<<"$emitted" ||
+            fail "setup-github-labels.sh did not provision $expected_label"
+    done
     [ "$emitted" = "$want_names" ] || {
         fail "setup-github-labels.sh --foreman provisions a different set than the renderer:"
         diff <(printf '%s\n' "$want_names") <(printf '%s\n' "$emitted") >&2 || true
@@ -474,6 +667,15 @@ labels_json() {
         jq -Rsc 'split("\n") | map(select(length > 0) | {name: .})' "$state_file"
     else
         case "${STUB_SCENARIO:-}" in
+        retired-associated)
+            # Everything is unassociated except issue 13, which still carries
+            # two retired labels (suggest:gpt, tier:adaptive).
+            if [ "$kind" = issue ] && [ "$number" -eq 13 ]; then
+                printf '%s\n' '[{"name":"suggest:gpt"},{"name":"tier:adaptive"}]'
+            else
+                printf '%s\n' '[]'
+            fi
+            ;;
         all-safe | appears-before-delete | completed-migration | completed-migration-missing-destination) printf '%s\n' '[]' ;;
         *) initial_labels "$number" | jq -Rsc 'split("\n") | map(select(length > 0) | {name: .})' ;;
         esac
@@ -595,7 +797,7 @@ api)
         if [ "${STUB_SCENARIO:-}" = broker-unresolved ]; then
             jq -cn '[
                 [{"name":"enhancement"},{"name":"legacy-empty"},{"name":"custom-associated"},{"name":"unknown-empty"},{"name":"--legacy"},{"name":"question"},{"name":"documentation"}],
-                [{"name":"dependencies"},{"name":"feature"},{"name":"suggest:gpt"},{"name":"suggest:gpt:sol"},{"name":"claim:gpt:sol"},{"name":"BUG"},{"name":"foreman:approved"},{"name":"autorelease: pending"},{"name":"claim:copilot"},{"name":"claim:copilot:sol"},{"name":"suggest:copilot"},{"name":"suggest:copilot:sol"},{"name":"agent:github-copilot"},{"name":"agent:github-copilot:sol"},{"name":"claim:mai"},{"name":"claim:mai:sol"},{"name":"suggest:mai"},{"name":"suggest:mai:sol"},{"name":"page-two-only"},{"name":"discussion-page-two"}]
+                [{"name":"dependencies"},{"name":"feature"},{"name":"suggest:gpt"},{"name":"suggest:gpt:sol"},{"name":"claim:gpt"},{"name":"claim:gpt:sol"},{"name":"tier:adaptive"},{"name":"risk:high"},{"name":"tier:pinned"},{"name":"needs-review"},{"name":"area:none"},{"name":"BUG"},{"name":"foreman:approved"},{"name":"autorelease: pending"},{"name":"claim:copilot"},{"name":"claim:copilot:sol"},{"name":"suggest:copilot"},{"name":"suggest:copilot:sol"},{"name":"agent:github-copilot"},{"name":"agent:github-copilot:sol"},{"name":"claim:mai"},{"name":"claim:mai:sol"},{"name":"suggest:mai"},{"name":"suggest:mai:sol"},{"name":"page-two-only"},{"name":"discussion-page-two"}]
             ]' | jq --arg created "$(test -f "${STUB_STATE}.created-label" && cat "${STUB_STATE}.created-label" || :)" --arg scenario "${STUB_SCENARIO:-}" '
                 map(map(. + {color:"abcdef",description:"fixture",node_id:(.name + "-id")})) |
                 (if $scenario == "comma-name" then .[0] += [{name:"legacy,comma",color:"abcdef",description:"fixture",node_id:"legacy,comma-id"}] else . end) |
@@ -606,7 +808,7 @@ api)
         else
             jq -cn '[
                 [{"name":"enhancement"},{"name":"legacy-empty"},{"name":"custom-associated"},{"name":"unknown-empty"},{"name":"--legacy"},{"name":"question"},{"name":"documentation"}],
-                [{"name":"dependencies"},{"name":"feature"},{"name":"type:feature"},{"name":"suggest:gpt"},{"name":"suggest:gpt:sol"},{"name":"claim:gpt:sol"},{"name":"BUG"},{"name":"foreman:approved"},{"name":"autorelease: pending"},{"name":"page-two-only"},{"name":"discussion-page-two"}]
+                [{"name":"dependencies"},{"name":"feature"},{"name":"type:feature"},{"name":"suggest:gpt"},{"name":"suggest:gpt:sol"},{"name":"claim:gpt"},{"name":"claim:gpt:sol"},{"name":"tier:adaptive"},{"name":"risk:high"},{"name":"tier:pinned"},{"name":"needs-review"},{"name":"area:none"},{"name":"BUG"},{"name":"foreman:approved"},{"name":"autorelease: pending"},{"name":"page-two-only"},{"name":"discussion-page-two"}]
             ]' | jq --arg created "$(test -f "${STUB_STATE}.created-label" && cat "${STUB_STATE}.created-label" || :)" --arg scenario "${STUB_SCENARIO:-}" '
                 map(map(. + {color:"abcdef",description:"fixture",node_id:(.name + "-id")})) |
                 (if $scenario == "comma-name" then .[0] += [{name:"legacy,comma",color:"abcdef",description:"fixture",node_id:"legacy,comma-id"}] else . end) |
@@ -765,10 +967,19 @@ STUB
         ;;
     esac
     case "$report_out" in
-    *"Unregistered label: suggest:gpt:sol"* | *"Unregistered label: claim:gpt:sol"* | *"Unregistered label: BUG"*)
+    *"Unregistered label: claim:gpt"* | *"Unregistered label: BUG"* | *"Unregistered label: risk:high"* | \
+        *"Unregistered label: tier:pinned"* | *"Unregistered label: needs-review"* | *"Unregistered label: area:none"*)
         fail "report flagged a recognized family or provisioned label: $report_out"
         ;;
     esac
+    # Retired vocabulary is the reverse: suggest:* and tier:adaptive stop being
+    # recognized, so the report offers them for removal (never deletes them).
+    for retired_label in suggest:gpt suggest:gpt:sol tier:adaptive; do
+        case "$report_out" in
+        *"Unregistered label: $retired_label (issues: 0, PRs: 0, discussions: 0)"*) ;;
+        *) fail "report did not offer retired label $retired_label as unregistered: $report_out" ;;
+        esac
+    done
     case "$report_out" in
     *"Unregistered label: foreman:approved"* | *"Unregistered label: autorelease:"*)
         fail "report exposed a gated tool label without its opt-in flag: $report_out"
@@ -824,15 +1035,50 @@ STUB
     *quiescen* | *concurrent* | *"label writer"* | *"label updates paused"*) ;;
     *) fail "destructive confirmation did not communicate the quiescence precondition: $safe_prune_out" ;;
     esac
-    for expected in 'delete enhancement' 'delete legacy-empty' 'delete custom-associated' 'delete unknown-empty' 'delete --legacy' 'delete page-two-only' 'delete discussion-page-two'; do
+    for expected in 'delete enhancement' 'delete legacy-empty' 'delete custom-associated' 'delete unknown-empty' 'delete --legacy' 'delete page-two-only' 'delete discussion-page-two' \
+        'delete suggest:gpt' 'delete suggest:gpt:sol' 'delete tier:adaptive'; do
         grep -Fqx "$expected" "$maintenance_log" ||
             fail "successful prune missed an unregistered zero-association label: $expected"
+    done
+    ! grep -Eq '^delete (risk:high|tier:pinned|needs-review|area:none|claim:gpt|claim:gpt:sol)$' "$maintenance_log" ||
+        fail "successful prune deleted a recognized classification or claim label"
+
+    # A retired label that still has associations is REFUSED by name: prune
+    # never strips associations itself, so nothing is deleted at all.
+    reset_maintenance
+    if retired_out="$(STUB_SCENARIO=retired-associated STUB_LOG="$maintenance_log" STUB_STATE="$maintenance_state" PATH="$maintenance_stub:$PATH" \
+        bash scripts/setup-github-labels.sh --repo drift/check --prune --yes 2>&1)"; then
+        fail "--prune succeeded while a retired label was still associated"
+    fi
+    for refused_label in suggest:gpt tier:adaptive; do
+        case "$retired_out" in
+        *"Refused: $refused_label (issues: 1, PRs: 0, discussions: 0)"*) ;;
+        *) fail "--prune did not refuse the still-associated retired label $refused_label: $retired_out" ;;
+        esac
+    done
+    ! grep -Eq '^(issue|pr|discussion|delete|create) ' "$maintenance_log" ||
+        fail "--prune mutated labels or associations while a retired label was still associated"
+
+    # Retired labels are not migration destinations: nothing may move onto them.
+    for retired_destination in suggest:gpt tier:adaptive; do
+        reset_maintenance
+        if retired_dest_out="$(STUB_SCENARIO=all-safe STUB_LOG="$maintenance_log" STUB_STATE="$maintenance_state" PATH="$maintenance_stub:$PATH" \
+            bash scripts/setup-github-labels.sh --repo drift/check --prune --yes \
+            --migrate "legacy-empty=$retired_destination" 2>&1)"; then
+            fail "a retired label was accepted as a migration destination: $retired_destination"
+        fi
+        case "$retired_dest_out" in
+        *"migration destination '$retired_destination' is not covered by the registry inventory"*) ;;
+        *) fail "retired destination $retired_destination was not refused by the inventory check: $retired_dest_out" ;;
+        esac
+        ! grep -Eq '^(issue|pr|discussion|delete|create) ' "$maintenance_log" ||
+            fail "retired migration destination $retired_destination reached a write path"
     done
 
     for fixed_case in \
         'agent:codex=claim:claude|claim:gpt' \
-        'claim:codex=suggest:gpt|claim:gpt' \
-        'Claim:Codex:Sol=suggest:gpt:sol|claim:gpt:Sol'; do
+        'claim:codex=claim:claude|claim:gpt' \
+        'Claim:Codex:Sol=claim:claude:sol|claim:gpt:Sol'; do
         fixed_spec="${fixed_case%%|*}"
         fixed_destination="${fixed_case#*|}"
         fixed_source="${fixed_spec%%=*}"
@@ -885,8 +1131,6 @@ STUB
     for broker_case in \
         'claim:copilot|claim:mai' \
         'claim:copilot:sol|claim:mai:sol' \
-        'suggest:copilot|suggest:mai' \
-        'suggest:copilot:sol|suggest:mai:sol' \
         'agent:github-copilot|claim:mai' \
         'agent:github-copilot:sol|claim:mai:sol'; do
         broker_old="${broker_case%%|*}"
@@ -910,6 +1154,45 @@ STUB
             fail "broker-source refusal reached an issue/PR mutation for $broker_old"
         ! grep -Eq '^gh label delete ' "$maintenance_log" ||
             fail "broker-source refusal reached label deletion for $broker_old"
+    done
+
+    # Retired labels with no one-to-one replacement are refused as migration
+    # SOURCES too (a migration would stamp an unrelated label on every record,
+    # e.g. suggest:* -> claim:* would mark issues as claimed). Each row is
+    # SPEC|NAME-IN-THE-REFUSAL: a present source is named as typed, a source
+    # differing only in case is named by its canonical live label, an absent
+    # source (mixed case included — the one row that reaches the helper's own
+    # case handling, since a live label is canonicalized first) and the bare
+    # prefix are named as typed.
+    for retired_row in \
+        'suggest:gpt=feature|suggest:gpt' \
+        'suggest:gpt:sol=feature|suggest:gpt:sol' \
+        'suggest:gpt=claim:gpt|suggest:gpt' \
+        'tier:adaptive=tier:standard|tier:adaptive' \
+        'suggest:never-existed=feature|suggest:never-existed' \
+        'Suggest:GPT=feature|suggest:gpt' \
+        'Tier:Adaptive=tier:standard|tier:adaptive' \
+        'Suggest:Never-Existed=feature|Suggest:Never-Existed' \
+        'suggest:=feature|suggest:'; do
+        retired_source="${retired_row%%|*}"
+        retired_old="${retired_row#*|}"
+        reset_maintenance
+        if retired_src_out="$(STUB_LOG="$maintenance_log" STUB_STATE="$maintenance_state" PATH="$maintenance_stub:$PATH" \
+            bash scripts/setup-github-labels.sh --repo drift/check --prune --yes \
+            --migrate "$retired_source" 2>&1)"; then
+            fail "a retired label was accepted as a migration source: $retired_source"
+        fi
+        case "$retired_src_out" in
+        *"migration source '$retired_old' is retired with no one-to-one replacement; remove it from every issue, pull request, and discussion that carries it"*) ;;
+        *) fail "retired migration source $retired_old was not refused with the removal guidance: $retired_src_out" ;;
+        esac
+        case "$retired_src_out" in
+        *"Prune confirmed by explicit --yes"*)
+            fail "retired-source validation reached destructive confirmation for $retired_old"
+            ;;
+        esac
+        ! grep -Eq '^(issue|pr|discussion|delete|create) ' "$maintenance_log" ||
+            fail "refusing retired migration source $retired_old still reached a write path"
     done
 
     reset_maintenance
@@ -1003,19 +1286,19 @@ STUB
     reset_maintenance
     if STUB_LOG="$maintenance_log" STUB_STATE="$maintenance_state" PATH="$maintenance_stub:$PATH" \
         bash scripts/setup-github-labels.sh --repo drift/check --prune --yes \
-        --migrate enhancement=suggest:gpt:new-model \
-        --migrate legacy-empty=suggest:gpt:new-model >/dev/null 2>&1; then
+        --migrate enhancement=claim:gpt:new-model \
+        --migrate legacy-empty=claim:gpt:new-model >/dev/null 2>&1; then
         fail "model-destination fixture unexpectedly completed"
     fi
-    grep -Fqx 'create suggest:gpt:new-model' "$maintenance_log" ||
+    grep -Fqx 'create claim:gpt:new-model' "$maintenance_log" ||
         fail "recognized missing model destination was not created after confirmation"
-    [ "$(grep -Fxc 'create suggest:gpt:new-model' "$maintenance_log")" -eq 1 ] ||
+    [ "$(grep -Fxc 'create claim:gpt:new-model' "$maintenance_log")" -eq 1 ] ||
         fail "shared missing model destination was created more than once"
-    grep -Fqx 'issue #1 add suggest:gpt' "$maintenance_log" ||
+    grep -Fqx 'issue #1 add claim:gpt' "$maintenance_log" ||
         fail "model migration did not preserve the family-level association"
-    grep -Fqx 'issue #1 add suggest:gpt:new-model' "$maintenance_log" ||
+    grep -Fqx 'issue #1 add claim:gpt:new-model' "$maintenance_log" ||
         fail "model migration did not add the qualified destination"
-    create_line="$(grep -nE '^create suggest:gpt:new-model$' "$maintenance_log" | cut -d: -f1)"
+    create_line="$(grep -nE '^create claim:gpt:new-model$' "$maintenance_log" | cut -d: -f1)"
     first_edit_line="$(grep -nE '^issue #1 add ' "$maintenance_log" | sed -n '1{s/:.*//;p;}')"
     [ -n "$first_edit_line" ] && [ "$create_line" -lt "$first_edit_line" ] ||
         fail "model destination was not created before association migration"

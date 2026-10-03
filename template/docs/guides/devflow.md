@@ -24,9 +24,14 @@ an already-authorized rigor/strategy request, resolves the selected profile,
 and cross-validates registry and Taskfile references. It deliberately does not
 authenticate GitHub actors, read labels, reconcile label conflicts, or arm a
 workflow; those are consumer trust boundaries. A consumer applies the
-precedence below and passes the resulting rigor/strategy request to the reader.
-Role-tier overrides remain consumer inputs applied to the resolved five-role
-profile, not raw label parsing performed by this config reader.
+precedence below and passes the resulting request to the reader: the rigor and
+strategy, who chose the rigor (`--rigor-source operator|label`, echoed back as
+`rigor.chosen_by`, which is null when no rigor is passed), role-tier
+overrides already split into operator instructions (`--tier-overrides`) and
+authorized `tier:<role>:*` labels (`--tier-labels`), the issue's classification
+and stored Tier (`--risk`, `--complexity`, `--stored-tier`), and any pin (`--pinned-tier` with
+`--pin-marker-trusted` / `--pin-value-trusted`). The reader owns the order those
+resolve in, not the trust decisions behind them.
 `scripts/test-devflow-config.sh` checks both dogfood copies and exercises the
 reader. Generated repositories receive the declarative policy and schema; the
 reader is distributed separately at a pinned harmon-devkit release.
@@ -39,6 +44,23 @@ Resolve rigor and strategy in this order:
 2. trusted `rigor:*` or `strategy:*` issue labels;
 3. `default_rigor` or `default_strategy`;
 4. the reader's built-in fallback, only if the policy file is absent.
+
+The **implementer** tier has two more rungs (ADR 2026-09-30 D5). Strongest
+first:
+
+1. an operator tier instruction;
+2. the pinned Tier;
+3. a `tier:implementer:*` label, or the profile of a rigor the operator or a
+   `rigor:*` label chose;
+4. the derived Tier (see "Issue Tier" below);
+5. the `default_rigor` profile.
+
+A tier input refines whatever profile resolved, so an operator *rigor*
+instruction selects the profile and a pin still sets its implementer tier; an
+operator who means to displace a pin gives a tier instruction. Pass a rigor to
+the reader only when the operator or a `rigor:*` label chose it — a rigor that
+is merely the default does not outrank the derived Tier. The other four roles
+resolve operator tier > label tier > profile.
 
 Rigor conflicts resolve to the strongest known label using `rigor_order`.
 Strategy conflicts are ambiguous: interactive runs ask, while unattended
@@ -66,9 +88,53 @@ Each `[rigor.<level>]` profile points to:
 
 `rigor_order` is the only ranking of rigor names. The five `*_tier` fields use
 `tier_order`; role floors and other cross-field invariants are enforced by the
-reader. An unqualified `tier:<value>` override targets the implementer. A
-scoped `tier:<role>:<value>` override targets exactly one of the five roles.
-Every off-profile role choice is visible in the PR body.
+reader. An unqualified operator tier instruction targets the implementer. Among
+labels, only a role-scoped `tier:<role>:<value>` label and the pin are
+overrides; a role-scoped label targets exactly one of the five roles. An
+unqualified `tier:<value>` label is not a role override: on every owner type it
+is the issue's stored Tier (maintainer decision 2026-10-01 — Tier is a label, not
+an organization issue field), which a consumer passes as `--stored-tier` — the
+cache the derived Tier is compared against — or, beside `tier:pinned`, as the
+pinned value. Every off-profile role choice is visible in the PR body.
+
+`adaptive` is retired as a tier value (ADR 2026-09-30 D8). A leftover
+`tier:adaptive` label — a stored-Tier value that names no rung — resolves as if
+absent, with a `tier-retired` warning;
+`adaptive` as a configured role tier, a matrix cell, or an operator tier
+instruction is rejected.
+
+## Issue Tier
+
+`[tier.matrix]` derives an issue's Tier from its Risk and Complexity
+(ADR 2026-09-30 D4). Rows are Complexity (`xs` … `xl`), columns Risk
+(`trivial` … `critical`), and every cell is a `tier_order` rung. The table is
+optional; when present the reader validates all 25 cells whether or not a run
+classifies an issue. `deriveTier(matrix, { risk, complexity })` is exported
+for consumers that need the Tier alone.
+
+- **Derive on read.** An unpinned issue's Tier is recomputed from Risk ×
+  Complexity on every read. A Tier stored on the issue is a cache the reader
+  compares against (`tier-cache-stale` when it disagrees), never an input — so
+  a write that updated Risk or Complexity but failed to update Tier cannot be
+  read as current, with or without a reconciler.
+- **Indeterminate, never guessed.** A partial classification, an off-scale
+  value, or a classified issue under a policy file that has no matrix leaves
+  the derived rung indeterminate: the reader exits 3 when that rung is the one
+  that decides the implementer tier. With no policy file at all, the built-in
+  fallback keeps tiers inert: the classification is recorded as `inert`
+  (`tier-inert-absent-policy`) and never applied.
+- **The pin.** A human pins a Tier by setting it and adding `tier:pinned`. The
+  pin is two independently mutable values, so it is honored only when the
+  consumer verified the provenance of both the marker and the current value;
+  otherwise the issue resolves as unpinned, with a `pin-untrusted` warning.
+- **Implementer only.** The derived or pinned Tier sets the implementer tier;
+  the other roles keep the resolved profile's tiers.
+- **Disclosed, never corrected.** The reader reports `disclosures`: every role
+  tier that differs from its profile (`off-profile-tier`), and every
+  orchestrator, challenger, or reviewer tier left below the implementer
+  (`role-tier-floor`). Both go in the PR body. An input-driven tier that no
+  declared family has a model for is a `tier-unachievable` warning rather than
+  a cross-validation error: the authored profile is still validated hard.
 
 ## Rounds and convergence
 

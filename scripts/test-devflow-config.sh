@@ -9,6 +9,9 @@ root = pathlib.Path.cwd()
 roles = {"orchestrator", "implementer", "challenger", "reviewer", "integrator"}
 stages = {"implement", "challenge", "review", "integration"}
 tiers = ["local", "economy", "standard", "frontier", "apex"]
+# ADR 2026-09-30 D2/D4: [tier.matrix] rows are Complexity, columns Risk.
+complexities = ["xs", "s", "m", "l", "xl"]
+risks = ["trivial", "low", "medium", "high", "critical"]
 
 def fail(message):
     print(f"FAIL: {message}", file=sys.stderr)
@@ -54,8 +57,16 @@ for rel, text in policy_text.items():
     if cfg.get("schema_version") != 2:
         fail(f"{rel}: schema_version=2 is required; migrate legacy v1 configuration")
     expected = {"schema_version", "default_rigor", "default_strategy", "rigor_order", "tier_order", "rigor", "rounds", "breadth", "gates", "convergence", "role", "stage", "strategy"}
-    extra = set(cfg) - expected - {"spend"}
+    extra = set(cfg) - expected - {"spend", "tier"}
     if extra: fail(f"{rel}: unsupported top-level keys: {sorted(extra)}")
+    if "tier" in cfg:
+        if set(cfg["tier"]) != {"matrix"}: fail(f"{rel}: [tier] may hold only [tier.matrix], got {sorted(cfg['tier'])}")
+        matrix = cfg["tier"]["matrix"]
+        if not isinstance(matrix, dict) or set(matrix) != set(complexities): fail(f"{rel}: [tier.matrix] rows must be exactly {complexities}")
+        for complexity, row in matrix.items():
+            if not isinstance(row, dict) or set(row) != set(risks): fail(f"{rel}: [tier.matrix].{complexity} columns must be exactly {risks}")
+            for risk, cell in row.items():
+                if cell not in tiers: fail(f"{rel}: [tier.matrix].{complexity}.{risk} must be a tier_order rung, got {cell!r}")
     if set(cfg["rigor_order"]) != set(cfg["rigor"]): fail(f"{rel}: rigor_order must permute rigor tables")
     if cfg["tier_order"] != tiers: fail(f"{rel}: tier_order must be {tiers}")
     if cfg["default_rigor"] not in cfg["rigor"] or cfg["default_strategy"] not in cfg["strategy"]: fail(f"{rel}: invalid defaults")
@@ -163,6 +174,14 @@ for key in ("finders", "finder_fallbacks", "pool"):
         fail(f"v2 schema must permit an explicit empty stage.{key} list")
 if "minItems" in schema["$defs"]["strings_allow_empty"]:
     fail("v2 schema's empty stage-list definition must not require minItems")
+if schema["$defs"]["tier"].get("enum") != tiers: fail("v2 schema's tier enum must be exactly tier_order (no retired adaptive)")
+tier_schema = schema["properties"].get("tier", {})
+if tier_schema.get("additionalProperties") is not False or tier_schema.get("required") != ["matrix"] or set(tier_schema.get("properties", {})) != {"matrix"}: fail("v2 schema must close [tier] to a required matrix")
+if "tier" in schema["required"]: fail("v2 schema must keep [tier.matrix] optional (an absent matrix is indeterminate, not invalid)")
+matrix_schema = schema["$defs"]["tier_matrix"]
+if matrix_schema.get("additionalProperties") is not False or set(matrix_schema.get("required", [])) != set(complexities) or set(matrix_schema.get("properties", {})) != set(complexities): fail("v2 schema must close [tier.matrix] to the five Complexity rows")
+row_schema = schema["$defs"]["tier_matrix_row"]
+if row_schema.get("additionalProperties") is not False or set(row_schema.get("required", [])) != set(risks) or {key: value.get("$ref") for key, value in row_schema.get("properties", {}).items()} != {risk: "#/$defs/tier" for risk in risks}: fail("v2 schema must close each [tier.matrix] row to the five Risk columns of tier values")
 print("devflow config v2 OK")
 PY
 
