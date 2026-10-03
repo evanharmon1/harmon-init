@@ -240,6 +240,11 @@
       "description": "Ignore sesh v2.30.0 — upstream release was published without binary assets",
       "matchPackageNames": ["joshmedeski/sesh"],
       "allowedVersions": "<2.30.0"
+    },
+    {
+      "description": "Ignore tokei >=13.0.0 — upstream releases after v13.0.0-alpha.0 publish no prebuilt binary assets",
+      "matchPackageNames": ["XAMPPRocky/tokei"],
+      "allowedVersions": "<=13.0.0-alpha.0"
     }
   ]
 }
