@@ -408,6 +408,106 @@ const stale = [...triaged, 'risk:high', 'complexity:m', 'tier:standard']
   })
 }
 
+// --- run(): the driver, against a stubbed fetch (R1-F1) ---------------------
+
+// A fake GitHub: GraphQL by query shape and variables, REST recorded. Repo
+// `a/one` answers 502 to everything; `a/two` holds two open issues across two
+// pages, the second carrying organization issue-field values.
+function fakeGitHub() {
+  const rest = []
+  const issueNode = (number, labels, extra = {}) => ({
+    state: 'OPEN',
+    number,
+    url: `https://github.test/a/two/issues/${number}`,
+    issueType: null,
+    labels: { pageInfo: { hasNextPage: false }, nodes: labels.map((name) => ({ name })) },
+    issueFieldValues: { pageInfo: { hasNextPage: false }, nodes: [] },
+    ...extra
+  })
+  const issues = {
+    1: issueNode(1, ['bug']),
+    2: issueNode(2, ['area:ci', 'layer:none', 'domain:none', 'needs-triage'], {
+      issueType: { name: 'Task' },
+      issueFieldValues: {
+        pageInfo: { hasNextPage: false },
+        nodes: [
+          { name: 'low', field: { name: 'Impact' } },
+          { name: 'high', field: { name: 'Risk' } },
+          { name: 'm', field: { name: 'Complexity' } },
+          { name: 'p1', field: { name: 'Priority (AI)' } },
+          {}
+        ]
+      }
+    })
+  }
+  const json = (body, status = 200) =>
+    new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
+  async function fetch(url, init) {
+    if (url.endsWith('/graphql')) {
+      const { query, variables } = JSON.parse(init.body)
+      if (variables.name === 'one') return json({ message: 'bad gateway' }, 502)
+      if (query.includes('issue(number:')) {
+        return json({ data: { repository: { issue: issues[variables.number] ?? null } } })
+      }
+      const page = variables.after === 'c1' ? [issues[2]] : [issues[1]]
+      return json({
+        data: {
+          repository: {
+            issues: {
+              pageInfo: { hasNextPage: variables.after !== 'c1', endCursor: 'c1' },
+              nodes: page
+            }
+          }
+        }
+      })
+    }
+    rest.push([init.method, new URL(url).pathname, init.body ? JSON.parse(init.body) : null])
+    return init.method === 'DELETE' ? new Response(null, { status: 204 }) : json([])
+  }
+  return { fetch, rest }
+}
+{
+  const gh = fakeGitHub()
+  const summaryFile = join(tmp, 'summary-run.md')
+  const printed = []
+  const code = await m.run(
+    { GH_TOKEN: 't', RECONCILE_REPOSITORIES: 'a/one a/two', GITHUB_STEP_SUMMARY: summaryFile },
+    { fetch: gh.fetch, root, print: (l) => printed.push(l) }
+  )
+  const summary = readFileSync(summaryFile, 'utf8')
+  check('run(): a failing repository does not stop the next one; the run exits 1', () => {
+    assert.equal(code, 1)
+    assert.match(summary, /^Failed: a\/one\.$/m)
+    assert.match(summary, /\*\*a\/one failed:\*\* GraphQL 502/)
+    assert.ok(printed.some((l) => l.startsWith('::error title=classification reconcile a/one::')))
+  })
+  check('run(): the issues connection is paginated and both pages are decided', () => {
+    assert.match(summary, /in a\/one, a\/two\.$/m)
+    assert.match(summary, /of 2 open issue\(s\)/)
+  })
+  check('run(): issue-field values are normalized (Impact/Risk/Complexity read, others ignored)', () => {
+    // #1 has no classification: needs-triage is added. #2 is classified by
+    // its fields plus labels and a native Type: needs-triage is removed.
+    const paths = gh.rest.map(([method, path, body]) => [method, path, body?.labels ?? null])
+    assert.ok(paths.some((c) => c[0] === 'POST' && c[1] === '/repos/a/two/issues/1/labels' && c[2][0] === 'needs-triage'))
+    assert.ok(paths.some((c) => c[0] === 'DELETE' && c[1] === '/repos/a/two/issues/2/labels/needs-triage'))
+    assert.ok(!gh.rest.some(([, path]) => path.startsWith('/repos/a/one/')))
+  })
+}
+{
+  const gh = fakeGitHub()
+  const summaryFile = join(tmp, 'summary-dry.md')
+  const code = await m.run(
+    { GH_TOKEN: 't', RECONCILE_REPOSITORIES: 'a/two', RECONCILE_DRY_RUN: 'true', GITHUB_STEP_SUMMARY: summaryFile },
+    { fetch: gh.fetch, root, print: () => {} }
+  )
+  check('run(): a dry run makes no REST call and reports what it would change', () => {
+    assert.equal(code, 0)
+    assert.deepEqual(gh.rest, [])
+    assert.match(readFileSync(summaryFile, 'utf8'), /^Dry run: would change 2 of 2 open issue\(s\) in a\/two\.$/m)
+  })
+}
+
 // --- The reconcile workflow's token expression (C1-F1) ----------------------
 
 const rwf = readFileSync(join(root, '.github/workflows/classification-reconcile.yml'), 'utf8')

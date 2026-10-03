@@ -665,7 +665,7 @@
       "writer_note": "agents, in the write that sets Risk or Complexity, and the GitHub Actions reconciler; humans may set one, and pin it with `tier:pinned`",
       "readers": "humans and agents — the issue's derived (or pinned) Tier, an input to the implementer tier; models are classified in `agent-registry.json` (ADR 2026-09-30)",
       "lifecycle": "durable",
-      "lifecycle_note": "a materialized cache — rewritten whenever Risk or Complexity changes and by the daily reconciler, recomputed by readers when absent; never rewritten while `tier:pinned` is present",
+      "lifecycle_note": "a materialized cache — rewritten whenever Risk or Complexity changes and by the scheduled reconciler (daily on personal-account repositories, monthly on organization ones), recomputed by readers when absent; never rewritten while `tier:pinned` is present",
       "trust_note": "provisioned; **read by agents** — a pin outranks the derived Tier and both rank below an operator instruction; resolved against `.devflow.toml`'s `tier_order`; arms nothing",
       "exclusive": false,
       "provision": true,

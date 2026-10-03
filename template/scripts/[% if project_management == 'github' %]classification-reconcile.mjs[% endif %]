@@ -340,9 +340,9 @@ function normalizeIssue(node) {
   }
 }
 
-function makeClient(token) {
-  const api = process.env.GITHUB_API_URL || 'https://api.github.com'
-  const graphqlUrl = process.env.GITHUB_GRAPHQL_URL || `${api}/graphql`
+function makeClient(token, fetch, env) {
+  const api = env.GITHUB_API_URL || 'https://api.github.com'
+  const graphqlUrl = env.GITHUB_GRAPHQL_URL || `${api}/graphql`
   const headers = {
     authorization: `Bearer ${token}`,
     accept: 'application/vnd.github+json',
@@ -480,25 +480,32 @@ export async function applyPlan(client, owner, name, number, ctx) {
   return { ...plan, ...applied }
 }
 
-async function main() {
-  const root = process.cwd()
-  const dryRun = process.env.RECONCILE_DRY_RUN === 'true'
-  const issueNumber = Number.parseInt(process.env.RECONCILE_ISSUE || '0', 10) || 0
-  const repos = parseRepositories(process.env.RECONCILE_REPOSITORIES, process.env.GITHUB_REPOSITORY)
+/**
+ * Run the reconciler as the workflow does, from an environment (see the
+ * header). Returns the exit code: 1 when any repository failed, else 0.
+ * `fetch`, `root` and `print` are injectable so the driver can be tested.
+ */
+export async function run(
+  env,
+  { fetch = globalThis.fetch, root = process.cwd(), print = console.log } = {}
+) {
+  const dryRun = env.RECONCILE_DRY_RUN === 'true'
+  const issueNumber = Number.parseInt(env.RECONCILE_ISSUE || '0', 10) || 0
+  const repos = parseRepositories(env.RECONCILE_REPOSITORIES, env.GITHUB_REPOSITORY)
   if (repos.length === 0)
     throw new Error('no repository: set RECONCILE_REPOSITORIES or GITHUB_REPOSITORY')
   if (issueNumber > 0 && repos.length !== 1)
     throw new Error('RECONCILE_ISSUE needs exactly one repository')
-  const token = process.env.GH_TOKEN
+  const token = env.GH_TOKEN
   if (!token) throw new Error('GH_TOKEN is not set')
 
   const summary = []
   const log = (line) => {
-    console.log(line)
+    print(line)
     summary.push(line)
   }
   const warnRun = (headline, detail) => {
-    console.log(`::warning title=classification reconcile::${headline}`)
+    print(`::warning title=classification reconcile::${headline}`)
     summary.push(`> **${detail}**`, '')
   }
 
@@ -521,7 +528,7 @@ async function main() {
     )
   }
   const ctx = { vocabulary, derive: derivation.derive, underivable: derivation.underivable }
-  const client = makeClient(token)
+  const client = makeClient(token, fetch, env)
   log(`| Issue | Added | Removed | Reports |`)
   log(`|---|---|---|---|`)
 
@@ -546,7 +553,7 @@ async function main() {
         // The run-wide "not derivable" reason is reported once above.
         const reports = plan.reports.filter((r) => r.code !== 'tier-not-derivable')
         for (const r of reports) {
-          console.log(`::warning title=${repo}#${issue.number} ${r.code}::${r.message}`)
+          print(`::warning title=${repo}#${issue.number} ${r.code}::${r.message}`)
         }
         if (plan.add.length > 0 || plan.remove.length > 0 || reports.length > 0) {
           if (plan.add.length > 0 || plan.remove.length > 0) changed += 1
@@ -558,7 +565,7 @@ async function main() {
       }
     } catch (err) {
       failed.push(repo)
-      console.log(`::error title=classification reconcile ${repo}::${err.message}`)
+      print(`::error title=classification reconcile ${repo}::${err.message}`)
       summary.push(`> **${repo} failed:** ${err.message}`, '')
     }
   }
@@ -567,19 +574,24 @@ async function main() {
     `${dryRun ? 'Dry run: would change' : 'Changed'} ${changed} of ${seen} open issue(s) in ${repos.join(', ')}.`
   )
   if (failed.length > 0) log(`Failed: ${failed.join(', ')}.`)
-  if (process.env.GITHUB_STEP_SUMMARY) {
+  if (env.GITHUB_STEP_SUMMARY) {
     appendFileSync(
-      process.env.GITHUB_STEP_SUMMARY,
+      env.GITHUB_STEP_SUMMARY,
       `## Classification reconcile\n\n${summary.join('\n')}\n`
     )
   }
-  if (failed.length > 0) process.exitCode = 1
+  return failed.length > 0 ? 1 : 0
 }
 
 const isMain = process.argv[1] && fileURLToPath(import.meta.url) === resolvePath(process.argv[1])
 if (isMain) {
-  main().catch((err) => {
-    console.error(`classification-reconcile: ${err.message}`)
-    process.exitCode = 1
-  })
+  run(process.env).then(
+    (code) => {
+      process.exitCode = code
+    },
+    (err) => {
+      console.error(`classification-reconcile: ${err.message}`)
+      process.exitCode = 1
+    }
+  )
 }
