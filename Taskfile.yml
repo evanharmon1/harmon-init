@@ -74,10 +74,27 @@ tasks:
     # Foreman v2 vocabulary: the definition-of-done gate — check + build +
     # test), it runs check, the quick guards, and its test tier — which here
     # renders the whole template via test:template, so it is inherently heavier.
-    desc: Local verification gate (check → guards → test:template)
+    desc: Local verification gate (check → audit → test:suite → test:template)
     cmds:
       - task: check
       - task: audit:agent-instructions
+      - task: test:suite
+      - task: test:template
+
+  test:suite:
+    # The ONE list of `test:*` targets that both `verify` and the required Build
+    # workflow's `lint` job run (build.yml calls this task in a single step), so
+    # the two cannot drift and nothing parses the workflow to police them
+    # (harmon-init#962, #1461). A new `test:*` guard that belongs in the gate is
+    # added HERE and nowhere else.
+    #
+    # Deliberately NOT in this list: `test:template` — it renders every profile
+    # and runs as the `template-test` job's matrix in CI, so `verify` runs it
+    # right after this suite instead. CI-only-infrastructure checks
+    # (`test:renovate-config` resolves Renovate from npm; `verify:skills` and
+    # `test:devcontainer:permissions` are `ci` steps) stay outside it too.
+    desc: The test:* targets verify and the Build workflow's lint job both run (everything but test:template)
+    cmds:
       - task: test:agent-instructions-size
       - task: test:agent-skill-links
       - task: test:agent-registry
@@ -129,8 +146,9 @@ tasks:
       - task: test:agent-profile
       - task: test:codex-review
       - task: test:remote-codex-policy
+      - task: test:sprites-policy
       - task: test:template-helpers
-      - task: test:template
+      - task: test:verify-ci-parity
 
   # ── Quality Checks ────────────────────────────────────────────
   check:
@@ -479,6 +497,11 @@ tasks:
     cmds:
       - ./scripts/test-tasks.sh
 
+  test:verify-ci-parity:
+    desc: Fail if the Build workflow stops calling test:suite or verify stops running it
+    cmds:
+      - ./scripts/test-verify-ci-parity.sh
+
   test:ci-results:
     desc: Unit-test CI aggregate and closing-keyword fail-closed truth tables
     cmds:
@@ -694,6 +717,11 @@ tasks:
     desc: Guard the remote second-model rule — no Codex credential vocabulary on a remote-environment surface (offline)
     cmds:
       - ./scripts/test-remote-codex-policy.sh
+
+  test:sprites-policy:
+    desc: Prove the Fly.io Sprite network policy is generated from the shared egress allowlist and cannot differ from it (offline)
+    cmds:
+      - ./scripts/test-sprites-policy.sh
 
   # ── Skills sync ────────────────────────────────────────────────
   # Vendor shared agent skills from harmon-devkit, pinned in .skills-sync.yaml.

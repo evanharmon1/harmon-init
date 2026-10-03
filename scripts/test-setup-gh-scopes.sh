@@ -462,6 +462,16 @@ EOF
     want_primary="$(cd "${TMP}/layout/base" && pwd -P)"
     assert_bootstrap_target "${TMP}/layout/base/primary/.worktrees/linked/scripts/setup-gh-scopes.sh" "${want_primary}" \
         "a linked worktree"
+    # ...and the other root this repository uses, a Claude Code agent worktree at
+    # <primary>/.claude/worktrees/<name>, which also belongs beside the PRIMARY.
+    (
+        cd "${TMP}/layout/base/primary"
+        git worktree add -q .claude/worktrees/agent -b agent
+    ) >/dev/null 2>&1 || fail "test setup: could not add a .claude/worktrees linked worktree"
+    [ -f "${TMP}/layout/base/primary/.claude/worktrees/agent/scripts/setup-gh-scopes.sh" ] ||
+        fail "test setup: the .claude/worktrees linked worktree has no copy of the script"
+    assert_bootstrap_target "${TMP}/layout/base/primary/.claude/worktrees/agent/scripts/setup-gh-scopes.sh" "${want_primary}" \
+        "a linked worktree under .claude/worktrees"
     # ...but ONLY a linked worktree gets that treatment. A --separate-git-dir
     # checkout whose git directory happens to be named .git elsewhere is still an
     # ordinary checkout: it keeps its own parent, not the git directory's.
@@ -495,6 +505,26 @@ EOF
     want_sepwt="$(cd "${TMP}/layout/sepprimary/work/primary/.worktrees" && pwd -P)"
     assert_bootstrap_target "${TMP}/layout/sepprimary/work/primary/.worktrees/linked/scripts/setup-gh-scopes.sh" "${want_sepwt}" \
         "a linked worktree of a --separate-git-dir primary"
+    # ...and one whose --separate-git-dir store is an ANCESTOR of the checkout:
+    # <work>/.git holds the metadata, the primary is <work>/primary, and git treats
+    # <work> as a working tree of that repository, so every "is it a primary"
+    # predicate except the exact <primary>/.worktrees/<name> layout holds for it.
+    # The target must be the linked worktree's own physical parent, never <work>'s.
+    mkdir -p "${TMP}/layout/ancestor/work"
+    cp -R "${TMP}/repo" "${TMP}/layout/ancestor/work/primary"
+    (
+        cd "${TMP}/layout/ancestor/work/primary"
+        git init -q --separate-git-dir "${TMP}/layout/ancestor/work/.git"
+        git add -A
+        git -c user.name=test -c user.email=test@example.invalid -c commit.gpgsign=false \
+            -c core.hooksPath=/dev/null commit -q -m fixture
+        git worktree add -q .worktrees/linked -b linked
+    ) >/dev/null 2>&1 || fail "test setup: could not build a linked worktree of a primary whose git directory is an ancestor"
+    [ -f "${TMP}/layout/ancestor/work/primary/.worktrees/linked/scripts/setup-gh-scopes.sh" ] ||
+        fail "test setup: the ancestor-store linked worktree has no copy of the script"
+    want_ancwt="$(cd "${TMP}/layout/ancestor/work/primary/.worktrees" && pwd -P)"
+    assert_bootstrap_target "${TMP}/layout/ancestor/work/primary/.worktrees/linked/scripts/setup-gh-scopes.sh" "${want_ancwt}" \
+        "a linked worktree of a primary whose --separate-git-dir store is an ancestor"
     rm -rf "${TMP}/layout"
 
     echo "==> bootstrap-related-repos.sh failure does not change exit status of setup-gh-scopes"

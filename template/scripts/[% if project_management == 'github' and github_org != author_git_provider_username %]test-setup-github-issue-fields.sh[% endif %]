@@ -1,15 +1,26 @@
 #!/usr/bin/env bash
-# test-setup-github-issue-fields.sh — unit-test setup-github-issue-fields.sh's
-# field creation against a stubbed `gh`; no live API calls, so it is safe in CI.
+# test-setup-github-issue-fields.sh — unit-test setup-github-issue-fields.sh
+# against a stubbed, STATEFUL `gh`; no live API calls, so it is safe in CI.
 # Run via `task test:setup-github-issue-fields`.
 #
 # What makes a test worth having here: this hits a public-preview REST API, so
-# nothing else exercises it — a regression that recreated a retired field
-# (Agent, Domain, Layer — #662, #875) or warned on the wrong condition would
-# still pass `verify`.
+# nothing else exercises it, and a single-select PATCH replaces an ORG-WIDE option
+# list in which an existing option survives only while it goes back with its `id`.
+# A regression that dropped the ids, turned a malformed snapshot into replacement
+# data, recreated a retired field (Agent, Domain, Layer, Tier — #662, #875), or
+# touched the built-in Priority would clear or fork values across every repo in the
+# organization while still passing `verify`.
+#
+# The stub applies the writes it receives to its own fixture, so "a re-run writes
+# nothing" is asserted against the org the first run actually produced. The script
+# NEVER removes an option or a field: every run is checked for that (see
+# assert_nothing_removed), and GitHub's shipped Effort options (High/Medium/Low) are
+# kept and only reported, with their issue-search counts, for the operator to delete
+# by hand.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 script="$PWD/scripts/setup-github-issue-fields.sh"
+status_script="$PWD/scripts/status.sh"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
@@ -20,23 +31,108 @@ fail() {
     exit 1
 }
 
-# Fake `gh`: serves $STUB_FIELDS_FILE for reads, records write bodies.
+# Fake `gh`: serves $STUB_FIELDS_FILE for reads; POST adds a field and PATCH
+# replaces a field's options in that file (new options get ids, exactly as GitHub
+# assigns them); both record the body they received. `GET search/issues` answers
+# the option-usage probe from $STUB_USAGE (`field:Option=count` lines, default 0)
+# and records the query. Every call is logged in order to $CALLS (READ, SEARCH,
+# POST, PATCH) so a case can assert what happens between a read and a write. Any
+# other method — DELETE above all — is recorded as a bad call and refused.
+# GH_FAIL_PATCH makes the PATCH reject, GH_FAIL_READ makes the list read fail,
+# GH_FAIL_SEARCH / GH_SEARCH_INCOMPLETE / GH_SEARCH_GARBAGE make the usage probe
+# fail, report an incomplete result, or return a non-answer, GH_DROP_FIELD
+# names a field the list read stops returning from read number GH_DROP_FROM on
+# (a field that disappears while the script runs), GH_LIST_FILTER (a jq program)
+# rewrites what the list reads from number GH_FILTER_FROM on return (a field that
+# changes under the run), GH_LIST_BODY replaces what every list read returns with
+# that raw body (an error document, a wrapped page), and GH_LIST_PARTIAL makes list
+# reads from number GH_PARTIAL_FROM on deliver their page and then fail (a paginated
+# read that breaks on a later page).
 mkdir -p "$tmp/bin"
 cat >"$tmp/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 method=""
+endpoint=""
+query=""
+advanced=""
 prev=""
 for a in "$@"; do
     [ "$prev" = "--method" ] && method="$a"
+    case "$a" in orgs/* | search/*) endpoint="$a" ;; esac
+    case "$a" in
+    q=*) query="${a#q=}" ;;
+    advanced_search=*) advanced="${a#advanced_search=}" ;;
+    esac
     prev="$a"
 done
 case "$method" in
-"") cat "$STUB_FIELDS_FILE" ;;
+GET)
+    echo SEARCH >>"$CALLS"
+    printf '%s\tadvanced=%s\t%s\n' "$query" "$advanced" "$endpoint" >>"$SEARCHES"
+    [ -z "${GH_FAIL_SEARCH:-}" ] || {
+        echo "gh: HTTP 422: search failed" >&2
+        exit 1
+    }
+    [ -z "${GH_SEARCH_GARBAGE:-}" ] || {
+        echo "<html>proxy error</html>"
+        exit 0
+    }
+    key="$(printf '%s' "$query" | sed -n 's/.*field\.\([a-z0-9_-]*\):"\([^"]*\)".*/\1:\2/p')"
+    count="$(awk -F= -v k="$key" '$1 == k { print $2; exit }' "$STUB_USAGE")"
+    printf '{"total_count":%s,"incomplete_results":%s,"items":[]}\n' "${count:-0}" "${GH_SEARCH_INCOMPLETE:-false}"
+    ;;
+"")
+    [ -z "${GH_FAIL_READ:-}" ] || exit 1
+    echo READ >>"$CALLS"
+    r=$(($(cat "$STUB_READS") + 1))
+    echo "$r" >"$STUB_READS"
+    if [ -n "${GH_LIST_BODY:-}" ]; then
+        printf '%s' "$GH_LIST_BODY"
+    elif [ -n "${GH_DROP_FIELD:-}" ] && [ "$r" -ge "${GH_DROP_FROM:-2}" ]; then
+        jq -c --arg d "$GH_DROP_FIELD" 'map(select(.name != $d))' "$STUB_FIELDS_FILE"
+    elif [ -n "${GH_LIST_FILTER:-}" ] && [ "$r" -ge "${GH_FILTER_FROM:-1}" ]; then
+        jq -c "$GH_LIST_FILTER" "$STUB_FIELDS_FILE"
+    else
+        cat "$STUB_FIELDS_FILE"
+    fi
+    # A paginated read that delivers a valid page and then fails on a later one:
+    # the page above is already out, and the exit status is the only tell.
+    [ -z "${GH_LIST_PARTIAL:-}" ] || [ "$r" -lt "${GH_PARTIAL_FROM:-1}" ] || {
+        echo "gh: HTTP 502 on page 2" >&2
+        exit 1
+    }
+    ;;
 POST)
-    cat >>"$POSTS"
-    printf '\n' >>"$POSTS"
+    echo POST >>"$CALLS"
+    body="$(cat)"
+    printf '%s\n' "$body" >>"$POSTS"
+    n=$(($(cat "$STUB_COUNTER") + 1))
+    echo "$n" >"$STUB_COUNTER"
+    jq --argjson b "$body" --argjson id "$((1000 + n))" '
+        . + [ ($b + {id: $id})
+              | if has("options")
+                then .options |= (to_entries | map(.value + {id: ($id * 100 + .key + 1)}))
+                else . end ]' "$STUB_FIELDS_FILE" >"$STUB_FIELDS_FILE.new"
+    mv "$STUB_FIELDS_FILE.new" "$STUB_FIELDS_FILE"
+    ;;
+PATCH)
+    echo PATCH >>"$CALLS"
+    body="$(cat)"
+    fid="${endpoint##*/}"
+    printf '%s\t%s\n' "$fid" "$body" >>"$PATCHES"
+    if [ -n "${GH_FAIL_PATCH:-}" ]; then
+        echo "gh: HTTP 422: option list rejected" >&2
+        exit 1
+    fi
+    jq --argjson b "$body" --argjson fid "$fid" '
+        map(if .id == $fid
+            then .options = [ $b.options | to_entries[] | .key as $k | .value
+                              | if has("id") then . else . + {id: (9000000 + $fid * 100 + $k)} end ]
+            else . end)' "$STUB_FIELDS_FILE" >"$STUB_FIELDS_FILE.new"
+    mv "$STUB_FIELDS_FILE.new" "$STUB_FIELDS_FILE"
     ;;
 *)
+    echo "$method" >>"$BADCALLS"
     echo "fake gh: unexpected method $method" >&2
     exit 1
     ;;
@@ -47,55 +143,510 @@ PATH="$tmp/bin:$PATH"
 export PATH
 
 STUB_FIELDS_FILE="$tmp/fields.json"
+STUB_COUNTER="$tmp/counter"
+STUB_READS="$tmp/reads"
+STUB_USAGE="$tmp/usage"
 POSTS="$tmp/posts"
-export STUB_FIELDS_FILE POSTS
+PATCHES="$tmp/patches"
+SEARCHES="$tmp/searches"
+CALLS="$tmp/calls"
+BADCALLS="$tmp/badcalls"
+export STUB_FIELDS_FILE STUB_COUNTER STUB_READS STUB_USAGE POSTS PATCHES SEARCHES CALLS BADCALLS
 
-# run_with FIELDS_JSON — run the script against that org snapshot.
-run_with() {
+# reset_stub FIELDS_JSON — load that org snapshot and clear every record. USAGE
+# (`field:Option=count`, newline-separated) says which options issues still hold.
+reset_stub() {
     printf '%s' "$1" >"$STUB_FIELDS_FILE"
+    echo 0 >"$STUB_COUNTER"
+    echo 0 >"$STUB_READS"
+    printf '%s' "${USAGE:-}" >"$STUB_USAGE"
     : >"$POSTS"
-    "$script" --org testorg >"$tmp/out" 2>&1 || fail "script exited non-zero"
+    : >"$PATCHES"
+    : >"$SEARCHES"
+    : >"$CALLS"
+    : >"$BADCALLS"
 }
 
-# Every field present. Deliberately no Agent, Domain, or Layer field: all
-# three are retired (advisory routing is suggest:*/claim:* labels + Status:
-# Agent Queue for Agent, ADR 2026-08-07 D4; Domain/Layer's only surface is the
-# domain:/layer: labels, #875).
-complete='[
- {"id":1,"name":"Product","data_type":"text"}
-]'
+# assert_nothing_removed — the invariant of this script: every PATCH sends back
+# every option id its field held before the run (an option left out of the
+# replacement list is deleted, blanking it on every issue that held it).
+assert_nothing_removed() {
+    local fid body missing
+    while IFS=$'\t' read -r fid body; do
+        [ -n "$fid" ] || continue
+        missing="$(jq -nc --argjson b "$body" --argjson fid "$fid" --slurpfile before "$tmp/before.json" \
+            '[ $before[0][] | select(.id == $fid) | .options[]? | .id ] - [ $b.options[] | select(has("id")) | .id ]')"
+        [ "$missing" = "[]" ] || fail "a PATCH to field $fid left out existing option id(s) $missing — this script must never remove an option"
+    done <"$PATCHES"
+}
 
-echo "==> a re-run against an already-synced org writes nothing"
-run_with "$complete"
-[ ! -s "$POSTS" ] || fail "expected no field creation on an unchanged org"
-grep -q "already exists — leaving it as-is" "$tmp/out" || fail "expected 'leaving it as-is' output for Product"
+# run_with FIELDS_JSON — run the script against that org snapshot, then check it
+# removed nothing and used no method it must never use.
+run_with() {
+    reset_stub "$1"
+    cp "$STUB_FIELDS_FILE" "$tmp/before.json"
+    "$script" --org testorg >"$tmp/out" 2>&1 || fail "script exited non-zero"
+    [ ! -s "$BADCALLS" ] || fail "the script issued an API method it must never use: $(tr '\n' ' ' <"$BADCALLS")"
+    assert_nothing_removed
+}
+
+# patch_follows_read — every PATCH is the call right after a list read, and the
+# last read comes after the last usage search: nothing can age the snapshot that
+# feeds the replacement (challenge r1, C1-F2).
+patch_follows_read() {
+    awk 'prev != "READ" && $0 == "PATCH" { bad = 1 } { prev = $0 } END { exit bad }' "$CALLS" &&
+        awk '$0 == "SEARCH" { s = NR } $0 == "READ" { r = NR } END { exit !(r > s) }' "$CALLS"
+}
+
+patches() { grep -c . "$PATCHES" || true; }
+posts() { grep -c . "$POSTS" || true; }
+# patch_body FIELD_ID — the PATCH body sent to that field.
+patch_body() { awk -F'\t' -v f="$1" '$1 == f { print $2 }' "$PATCHES"; }
+# post_body FIELD_NAME — the POST body that created that field.
+post_body() { jq -c --arg n "$1" 'select(.name == $n)' "$POSTS"; }
+# state_field FIELD_NAME — that field as the stubbed org now holds it.
+state_field() { jq -c --arg n "$1" '[ .[] | select(.name == $n) ] | first // empty' "$STUB_FIELDS_FILE"; }
+# opt_names JSON — option names in display order, as a compact JSON array.
+opt_names() { printf '%s' "$1" | jq -c '[ .options | sort_by(.priority)[] | .name ]'; }
+# pin_descriptions NAME BODY FIELD_DESCRIPTION OPTION_DESCRIPTIONS_JSON — the POSTed
+# field carries exactly that wording: the field description, then every option's, in
+# order. Without it a typo or a placeholder in any of them would still pass.
+pin_descriptions() {
+    [ "$(printf '%s' "$2" | jq -r '.description')" = "$3" ] ||
+        fail "$1: the field description changed: $(printf '%s' "$2" | jq -r '.description')"
+    [ "$(printf '%s' "$2" | jq -c '[ .options[].description ]')" = "$4" ] ||
+        fail "$1: the option descriptions changed: $(printf '%s' "$2" | jq -c '[ .options[].description ]')"
+}
+
+ladder='["1","2","3","5","8","13","20"]'
+colors='["gray","blue","green","yellow","orange","red","pink","purple"]'
+
+# What a fresh organization carries: GitHub's built-ins plus Product, exactly as
+# `GET orgs/<org>/issue-fields` returned them (a bare array, integer ids,
+# `description: null`, options in no particular order). Effort is the field this
+# script rewrites; Priority is the human priority it must leave alone.
+builtin='[
+ {"id":25511146,"name":"Priority","description":"Current importance level assigned to this issue","data_type":"single_select","visibility":"organization_members_only","options":[
+   {"id":44638502,"name":"High","description":null,"color":"red","priority":2},
+   {"id":44638504,"name":"Low","description":null,"color":"green","priority":4},
+   {"id":44638503,"name":"Medium","description":null,"color":"yellow","priority":3},
+   {"id":44638501,"name":"Urgent","description":null,"color":"pink","priority":1}]},
+ {"id":25511147,"name":"Start date","description":"Date when work on issue will begin","data_type":"date","visibility":"organization_members_only"},
+ {"id":25511148,"name":"Target date","description":"Expected completion date for this issue","data_type":"date","visibility":"organization_members_only"},
+ {"id":43791280,"name":"Product","description":"Which product/area it belongs to","data_type":"text","visibility":"organization_members_only"},
+ {"id":43796668,"name":"Effort","description":"Relative level of effort for completing this issue","data_type":"single_select","visibility":"organization_members_only","options":[
+   {"id":76647500,"name":"High","description":null,"color":"red","priority":1},
+   {"id":76647502,"name":"Low","description":null,"color":"green","priority":3},
+   {"id":76647501,"name":"Medium","description":null,"color":"yellow","priority":2}]}
+]'
+effort_id=43796668
+priority_id=25511146
+
+echo "==> an org with only GitHub's built-ins gets the new fields and Effort's ladder beside the shipped options"
+# The run adds and never removes (challenge r1 C1-F1, replaced by deletion in r2).
+run_with "$builtin"
+[ "$(jq -sc 'map(.name)' "$POSTS")" = '["Impact","Risk","Complexity","Priority (AI)"]' ] ||
+    fail "expected exactly Impact, Risk, Complexity, Priority (AI) to be created, got $(jq -sc 'map(.name)' "$POSTS")"
+[ "$(patches)" = 1 ] || fail "expected exactly 1 PATCH (the Effort ladder), got $(patches)"
+grep -q "Issue field 'Product' already exists — leaving it as-is" "$tmp/out" || fail "expected Product to be left as-is"
+grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "expected an explicit ready outcome"
+patch_follows_read || fail "the PATCH must directly follow a fresh read, after every usage search: $(tr '\n' ' ' <"$CALLS")"
+cp "$STUB_FIELDS_FILE" "$tmp/default-run.json"
+
+echo "==> every created field is a single-select with its full, ordered option set"
+for spec in \
+    'Impact|["minimal","low","medium","high","massive"]' \
+    'Risk|["trivial","low","medium","high","critical"]' \
+    'Complexity|["xs","s","m","l","xl"]' \
+    'Priority (AI)|["p0","p1","p2","p3","p4"]'; do
+    fname="${spec%%|*}"
+    want="${spec#*|}"
+    body="$(post_body "$fname")"
+    [ "$(printf '%s' "$body" | jq -r '.data_type')" = single_select ] || fail "$fname was not created as single_select"
+    [ "$(printf '%s' "$body" | jq -r '.description | length > 0')" = true ] || fail "$fname was created without a field description"
+    [ "$(opt_names "$body")" = "$want" ] || fail "$fname options: want $want, got $(opt_names "$body")"
+    [ "$(printf '%s' "$body" | jq -c '[ .options[].priority ]')" = "[1,2,3,4,5]" ] ||
+        fail "$fname option priorities must be 1..5 in order"
+    [ "$(printf '%s' "$body" | jq -r --argjson c "$colors" '[ .options[] | select(.color as $x | $c | index($x) == null) ] | length')" = 0 ] ||
+        fail "$fname carries a color outside the REST enum"
+    [ "$(printf '%s' "$body" | jq -r --arg p "${fname}: " '[ .options[] | select((.description | startswith($p)) | not) ] | length')" = 0 ] ||
+        fail "$fname has an option description missing its '${fname}: ' prefix"
+    [ "$(printf '%s' "$body" | jq -r '[ .options[] | select(has("id")) ] | length')" = 0 ] ||
+        fail "$fname was created with option ids — GitHub assigns them"
+done
+
+echo "==> Priority (AI) carries the maintainer's five descriptions verbatim"
+[ "$(post_body 'Priority (AI)' | jq -c '[ .options[].description ]')" = '["Priority (AI): blocks a merge or deploy — critical","Priority (AI): a real defect or must-do; next","Priority (AI): worth doing, not blocking","Priority (AI): cosmetic or informational","Priority (AI): negligible"]' ] ||
+    fail "Priority (AI) option descriptions drifted from the maintainer decision"
+
+echo "==> Impact, Risk and Complexity carry exactly the decision-record wording, field and options"
+# Review r1, RV1-F2: pinned literally, in option order. These are the label
+# registry's per-value descriptions (label-registry.json) — the wording a field and
+# its label twin share — but the test reads no file a consumer may customize.
+pin_descriptions Impact "$(post_body Impact)" \
+    'Expected significance of completing the issue: core versus marginal benefit, not common versus uncommon path' \
+    '["Impact: marginal benefit; most users would not notice it","Impact: small benefit to a few users or a narrow use case","Impact: clear benefit to a meaningful share of users or goals","Impact: core benefit, or severe harm prevented even if rarely triggered","Impact: transformative; current goals depend on it"]'
+pin_descriptions Risk "$(post_body Risk)" \
+    'How consequential a failure is if the change is implemented incorrectly; for a bug fix, the danger of the fix' \
+    '["Risk: a mistake is harmless and trivially reversible","Risk: a mistake is contained, caught quickly, and cheap to undo","Risk: a mistake breaks a feature or needs a careful rollback","Risk: a mistake reaches many users or their data; recovery is costly","Risk: a mistake risks data loss, security exposure, or an irreversible outage"]'
+pin_descriptions Complexity "$(post_body Complexity)" \
+    'How difficult the work is to understand, design, implement, and verify correctly; never a time estimate' \
+    '["Complexity: a tiny, well-understood change with obvious verification","Complexity: small and local; a clear approach across a few files","Complexity: moderate; several components and some design choices","Complexity: large; cross-cutting, with real design and wide verification","Complexity: very large or uncertain; likely to grow or need splitting"]'
+
+echo "==> the run adds the ladder and keeps every shipped Effort option, with its id, reporting each count"
+body="$(patch_body "$effort_id")"
+[ "$(opt_names "$body")" = '["1","2","3","5","8","13","20","High","Medium","Low"]' ] ||
+    fail "Effort options: want the ladder beside High, Medium, Low, got $(opt_names "$body")"
+[ "$(printf '%s' "$body" | jq -c '[ .options[].priority ]')" = "[1,2,3,4,5,6,7,8,9,10]" ] ||
+    fail "Effort priorities must be 1..10 in order"
+[ "$(printf '%s' "$body" | jq -c '[ .options[] | select(has("id")) | .id ]')" = "[76647500,76647501,76647502]" ] ||
+    fail "the shipped options must go back with their ids — only they exist yet"
+grep -q "Shipped options kept - Effort: High (search count 0), Medium (search count 0), Low (search count 0)" "$tmp/out" ||
+    fail "each kept shipped option must be reported with its search count"
+grep -q "delete each in the org's issue-field settings once no issue holds it" "$tmp/out" ||
+    fail "the report must say the deletion is the operator's"
+grep -q "A search count of 0 only means no issue this token's search can see" "$tmp/out" ||
+    fail "the report must say what a count of 0 does and does not cover (challenge r3, C3-F1)"
+grep -q "Enumerate the issues that hold a value before" "$tmp/out" || fail "the report must tell the operator to enumerate first"
+grep -q "harmon-init#910" "$tmp/out" || fail "the report must point at #910"
+[ "$(opt_names "$(state_field Effort)")" = '["1","2","3","5","8","13","20","High","Medium","Low"]' ] ||
+    fail "the org's Effort should hold the ladder and the shipped options after the run"
+
+echo "==> usage is read for each shipped option, scoped to the org, through the advanced search"
+[ "$(cut -f1,2 "$SEARCHES")" = "$(printf 'org:testorg is:issue field.effort:"%s"\tadvanced=true\n' High Medium Low)" ] ||
+    fail "expected one advanced issue search per shipped Effort option, got: $(cat "$SEARCHES")"
+[ "$(cut -f3 "$SEARCHES" | sort -u)" = "search/issues" ] || fail "the usage probe must use the issue search endpoint"
+
+echo "==> the built-in Priority, the dates, and Product are never created or modified"
+[ "$(patch_body "$priority_id" | wc -l | tr -d ' ')" = 0 ] || fail "the built-in Priority was PATCHed"
+[ "$(post_body Priority | wc -l | tr -d ' ')" = 0 ] || fail "Priority was created — it is a GitHub built-in"
+[ "$(state_field Priority)" = "$(printf '%s' "$builtin" | jq -c '.[] | select(.name == "Priority")')" ] ||
+    fail "the built-in Priority changed"
+for retired in Tier Agent Domain Layer; do
+    [ "$(state_field "$retired")" = "" ] || fail "the retired/absent field $retired was created"
+done
+
+echo "==> a re-run writes nothing and reports the kept options again"
+run_with "$(cat "$tmp/default-run.json")"
+[ "$(posts)" = 0 ] && [ "$(patches)" = 0 ] || fail "a re-run must write nothing"
+grep -q "Shipped options kept - Effort: High (search count 0), Medium (search count 0), Low (search count 0)" "$tmp/out" ||
+    fail "the kept shipped options must be reported on every run"
+grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "kept shipped options are information, not a warning"
+! grep -q "Done, WITH WARNINGS" "$tmp/out" || fail "kept shipped options must never end the run with warnings"
+
+echo "==> once the operator has deleted the shipped options, a re-run writes nothing and searches nothing"
+# The operator's step, simulated: High/Medium/Low are gone from Effort. This is the
+# clean, fully provisioned org the later cases start from.
+jq -c 'map(if .name == "Effort" then .options |= map(select(.name != "High" and .name != "Medium" and .name != "Low")) else . end)' \
+    "$tmp/default-run.json" >"$tmp/provisioned.json"
+[ "$(opt_names "$(jq -c '.[] | select(.name == "Effort")' "$tmp/provisioned.json")")" = "$ladder" ] ||
+    fail "the cleaned org's Effort should hold only the ladder"
+run_with "$(cat "$tmp/provisioned.json")"
+[ "$(posts)" = 0 ] || fail "expected no field creation on a provisioned org"
+[ "$(patches)" = 0 ] || fail "expected no PATCH on a provisioned org"
+[ ! -s "$SEARCHES" ] || fail "a provisioned org has no shipped option to report, so no usage search is owed: $(cat "$SEARCHES")"
+! grep -q "Shipped options kept" "$tmp/out" || fail "nothing is kept once the shipped options are gone"
+[ "$(grep -c "already has every wanted option — leaving it as-is" "$tmp/out")" = 5 ] ||
+    fail "expected all five single-select fields reported as already complete"
 grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "expected an explicit ready outcome"
 
-echo "==> the retired Agent field is never created"
-grep -q '"name":"Agent"' "$POSTS" &&
-    fail "the retired Agent field was created — routing lives in suggest:*/claim:* labels"
-
-echo "==> Domain and Layer are never created"
-case "$(cat "$POSTS")" in
-*'"name":"Domain"'* | *'"name":"Layer"'*)
-    fail "a retired Domain/Layer issue field was created — their only surface is domain:/layer: labels (#875)"
-    ;;
-esac
-
-echo "==> a missing Product field is created"
+echo "==> an empty org gets every field created, with options, and no PATCH"
 run_with '[]'
-[ -s "$POSTS" ] || fail "expected a field creation when Product is missing"
-grep -q '"name":"Product"' "$POSTS" || fail "expected the POST body to name Product"
-grep -q '"data_type":"text"' "$POSTS" || fail "expected Product to be created as text"
+[ "$(jq -sc 'map(.name)' "$POSTS")" = '["Product","Impact","Risk","Complexity","Priority (AI)","Effort"]' ] ||
+    fail "expected Product, Impact, Risk, Complexity, Priority (AI), Effort created in order, got $(jq -sc 'map(.name)' "$POSTS")"
+[ "$(patches)" = 0 ] || fail "a freshly created field must not be PATCHed"
+[ "$(post_body Product | jq -r '.data_type')" = text ] || fail "Product must be created as text"
+[ "$(opt_names "$(post_body Effort)")" = "$ladder" ] || fail "a created Effort must carry the ladder"
+pin_descriptions Effort "$(post_body Effort)" \
+    'The human time estimate for work a human will do, on a modified Fibonacci ladder' \
+    '["Effort: 1, the smallest step on the modified Fibonacci ladder (human tasks only)","Effort: 2 on the modified Fibonacci ladder (human tasks only)","Effort: 3 on the modified Fibonacci ladder (human tasks only)","Effort: 5 on the modified Fibonacci ladder (human tasks only)","Effort: 8 on the modified Fibonacci ladder (human tasks only)","Effort: 13 on the modified Fibonacci ladder (human tasks only)","Effort: 20, the largest step on the modified Fibonacci ladder (human tasks only)"]'
+run_with "$(cat "$STUB_FIELDS_FILE")"
+[ "$(posts)" = 0 ] && [ "$(patches)" = 0 ] || fail "a re-run after creation must write nothing"
 
-echo "==> a field of the wrong data type is warned about, never recreated"
-wrong='[{"id":1,"name":"Product","data_type":"single_select"}]'
-run_with "$wrong"
-[ ! -s "$POSTS" ] || fail "a wrong-typed field must not be recreated"
-grep -q "already exists as 'single_select', not 'text'" "$tmp/out" ||
-    fail "expected a data-type warning for Product"
+echo "==> every existing option keeps its id when the ladder is added"
+# A partly rewritten ladder (2 and 5 exist, with the owner's own color and
+# description on 5), a shipped default still present, and an option the owner added.
+partial_effort=$(printf '%s' "$builtin" | jq -c '
+    map(if .name == "Effort" then .options = [
+            {"id":555,"name":"2","description":"two","color":"pink","priority":1},
+            {"id":777,"name":"5","description":"mine","color":"blue","priority":2},
+            {"id":701,"name":"High","description":null,"color":"red","priority":3},
+            {"id":702,"name":"Low","description":null,"color":"green","priority":4},
+            {"id":888,"name":"XL","description":"owner added","color":"purple","priority":5}]
+        else . end)')
+run_with "$partial_effort"
+body="$(patch_body "$effort_id")"
+[ "$(patches)" = 1 ] || fail "expected exactly one PATCH (Effort), got $(patches)"
+[ "$(opt_names "$body")" = '["1","2","3","5","8","13","20","High","Low","XL"]' ] ||
+    fail "a default run keeps the shipped options too: expected the ladder, High, Low, XL, got $(opt_names "$body")"
+[ "$(printf '%s' "$body" | jq -c '[ .options[] | select(has("id")) | .id ] | sort')" = "[555,701,702,777,888]" ] ||
+    fail "a default run must send every existing option back with its id"
+for pair in '2|555' '5|777' 'High|701' 'Low|702' 'XL|888'; do
+    oname="${pair%%|*}"
+    oid="${pair#*|}"
+    [ "$(printf '%s' "$body" | jq -r --arg n "$oname" '[ .options[] | select(.name == $n) ] | first | .id')" = "$oid" ] ||
+        fail "existing option '$oname' was not sent back with its id $oid — its issues would be cleared"
+done
+for oname in 1 3 8 13 20; do
+    [ "$(printf '%s' "$body" | jq -r --arg n "$oname" '[ .options[] | select(.name == $n) ] | first | has("id")')" = false ] ||
+        fail "new option '$oname' must be sent without an id"
+done
+[ "$(printf '%s' "$body" | jq -c '[ .options[] | select(has("id")) | .id ] | sort')" = "[555,701,702,777,888]" ] ||
+    fail "the ids sent must be exactly the existing options' ids"
+[ "$(printf '%s' "$body" | jq -c '[ .options[] | select(.name == "5") ] | first | [.color, .description]')" = '["blue","mine"]' ] ||
+    fail "an existing option must keep its own color and description"
+[ "$(printf '%s' "$body" | jq -c '[ .options[].priority ]')" = "[1,2,3,4,5,6,7,8,9,10]" ] || fail "priorities must be contiguous 1..N"
+[ "$(state_field Effort | jq -c '[ .options[] | select(.name == "5" or .name == "2" or .name == "High" or .name == "Low" or .name == "XL") | .id ] | sort')" = "[555,701,702,777,888]" ] ||
+    fail "the existing options lost their ids in the org"
+
+echo "==> a held shipped option is reported with its count and the run still ends ready"
+# Two issues still carry `Low` (the state of a real org). Nothing is removed either
+# way, so the count is information for the operator, never a warning.
+USAGE='effort:Low=2' run_with "$builtin"
+body="$(patch_body "$effort_id")"
+[ "$(opt_names "$body")" = '["1","2","3","5","8","13","20","High","Medium","Low"]' ] ||
+    fail "expected the ladder beside all three shipped options, got $(opt_names "$body")"
+grep -q "Shipped options kept - Effort: High (search count 0), Medium (search count 0), Low (held by 2 issue(s))" "$tmp/out" ||
+    fail "each shipped option must be reported with its own count"
+grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "a held shipped option is information, not a warning"
+! grep -q "Done, WITH WARNINGS" "$tmp/out" || fail "a held shipped option must not end the run with warnings"
+cp "$STUB_FIELDS_FILE" "$tmp/effort-held.json"
+
+echo "==> a re-run while the option is still held writes nothing and reports it again"
+USAGE='effort:Low=2' run_with "$(cat "$tmp/effort-held.json")"
+[ "$(patches)" = 0 ] && [ "$(posts)" = 0 ] || fail "nothing is owed while Low is still held"
+grep -q "Low (held by 2 issue(s))" "$tmp/out" || fail "the held option must be reported on every run"
+
+echo "==> when usage cannot be shown, nothing is removed and every shipped option is reported as such"
+# A failed search, an incomplete result, and a non-answer are all "cannot show".
+for mode in "GH_FAIL_SEARCH=1" "GH_SEARCH_GARBAGE=1" "GH_SEARCH_INCOMPLETE=true"; do
+    reset_stub "$builtin"
+    env "$mode" "$script" --org testorg >"$tmp/out" 2>&1 || fail "[$mode] an unreadable usage must not abort the run"
+    [ ! -s "$BADCALLS" ] || fail "[$mode] a forbidden API method was used"
+    [ "$(patches)" = 1 ] || fail "[$mode] expected one PATCH (the ladder added), got $(patches)"
+    body="$(patch_body "$effort_id")"
+    [ "$(opt_names "$body")" = '["1","2","3","5","8","13","20","High","Medium","Low"]' ] ||
+        fail "[$mode] expected the ladder beside the three shipped options, got $(opt_names "$body")"
+    [ "$(printf '%s' "$body" | jq -c '[ .options[] | select(has("id")) | .id ]')" = "[76647500,76647501,76647502]" ] ||
+        fail "[$mode] the shipped options must go back with their ids"
+    grep -q "Shipped options kept - Effort: High (usage could not be read), Medium (usage could not be read), Low (usage could not be read)" "$tmp/out" ||
+        fail "[$mode] every kept option must be named with the reason"
+    grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "[$mode] unreadable usage is information, not a warning"
+    ! grep -q "Done, WITH WARNINGS" "$tmp/out" || fail "[$mode] unreadable usage must not end the run with warnings"
+done
+
+echo "==> a missing option is appended to an existing field without touching the owner's"
+# Impact lacks `medium` and `massive` and carries an owner-added `epic`.
+short_impact=$(jq -c '
+    map(if .name == "Impact" then .options = [
+            {"id":11,"name":"minimal","description":"m","color":"gray","priority":1},
+            {"id":12,"name":"low","description":"l","color":"blue","priority":2},
+            {"id":14,"name":"high","description":"h","color":"orange","priority":3},
+            {"id":99,"name":"epic","description":"owner added","color":"pink","priority":4}]
+        else . end)' "$tmp/provisioned.json")
+run_with "$short_impact"
+impact_id="$(printf '%s' "$short_impact" | jq -r '.[] | select(.name == "Impact") | .id')"
+[ "$(patches)" = 1 ] || fail "expected exactly one PATCH (Impact), got $(patches)"
+body="$(patch_body "$impact_id")"
+[ "$(opt_names "$body")" = '["minimal","low","medium","high","massive","epic"]' ] ||
+    fail "expected the scale in order with the owner's option after it, got $(opt_names "$body")"
+[ "$(printf '%s' "$body" | jq -c '[ .options[] | select(has("id")) | .id ] | sort')" = "[11,12,14,99]" ] ||
+    fail "existing Impact options must keep ids 11, 12, 14, 99"
+[ "$(posts)" = 0 ] || fail "an existing field must not be recreated"
+
+echo "==> a field of the wrong data type is warned about, never recreated or PATCHed"
+wrong_type=$(jq -c 'map(if .name == "Impact" then {id, name, description, data_type: "text"} else . end)' "$tmp/provisioned.json")
+run_with "$wrong_type"
+[ "$(posts)" = 0 ] && [ "$(patches)" = 0 ] || fail "a wrong-typed field must not be written to"
+grep -q "issue field 'Impact' already exists as 'text', not 'single_select'" "$tmp/out" ||
+    fail "expected a data-type warning for Impact"
 grep -q "Done, WITH WARNINGS" "$tmp/out" || fail "expected the run to end with warnings"
 grep -q "WARN: GitHub issue fields need attention" "$tmp/out" || fail "expected a warning final outcome"
-! grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "incompatible fields claimed readiness"
+! grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "an incompatible field claimed readiness"
 
-echo "PASS: setup-github-issue-fields.sh field creation"
+echo "==> a field that comes back with no data_type is unknown: never reconciled, never PATCHed, never ready"
+# Remediation 1/4, Codex thread on the type check: an empty type used to fall
+# through to the option reconcile. Impact also lacks `massive` here, so a PATCH
+# would be owed if the type were taken on trust; Product has no options at all.
+untyped=$(jq -c '
+    map(if .name == "Impact" then del(.data_type) | .options |= map(select(.name != "massive"))
+        elif .name == "Product" then del(.data_type)
+        else . end)' "$tmp/provisioned.json")
+run_with "$untyped"
+[ "$(patches)" = 0 ] && [ "$(posts)" = 0 ] || fail "a field with no data_type must not be written to"
+grep -q "issue field 'Impact' came back with no data_type" "$tmp/out" || fail "expected a no-data_type warning for Impact"
+grep -q "issue field 'Product' came back with no data_type" "$tmp/out" || fail "an untyped Product must not read as 'leaving it as-is'"
+grep -q "Impact: (type unreadable)" "$tmp/out" || fail "the summary must name the untyped field"
+grep -q "Done, WITH WARNINGS" "$tmp/out" || fail "an untyped field must end the run with warnings"
+! grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "an untyped field claimed readiness"
+
+echo "==> Priority and Priority (AI) are separate fields, matched by exact name"
+# Only the AI field exists (complete); the human Priority is absent. Creating
+# `Priority` would fork the human override, so nothing may be written.
+no_human_priority=$(jq -c 'map(select(.name != "Priority"))' "$tmp/provisioned.json")
+run_with "$no_human_priority"
+[ "$(posts)" = 0 ] && [ "$(patches)" = 0 ] ||
+    fail "Priority (AI) was mistaken for (or confused with) the built-in Priority: $(cat "$POSTS" "$PATCHES")"
+
+echo "==> Tier, Agent, Domain, and Layer are never created, modified, or deleted"
+# A Tier field (the Tier is a label), the retired Agent, Domain, and Layer.
+legacy=$(jq -c '. + [
+    {"id":501,"name":"Tier","data_type":"single_select","options":[{"id":5011,"name":"local","description":null,"color":"gray","priority":1}]},
+    {"id":502,"name":"Agent","data_type":"single_select","options":[{"id":5021,"name":"claude","description":null,"color":"gray","priority":1}]},
+    {"id":503,"name":"Domain","data_type":"single_select","options":[{"id":5031,"name":"auth","description":null,"color":"gray","priority":1}]},
+    {"id":504,"name":"Layer","data_type":"single_select","options":[{"id":5041,"name":"ui","description":null,"color":"gray","priority":1}]}]' "$tmp/provisioned.json")
+run_with "$legacy"
+[ "$(posts)" = 0 ] && [ "$(patches)" = 0 ] || fail "a legacy field was written to"
+[ "$(jq -c 'map(select(.id >= 501 and .id <= 504))' "$STUB_FIELDS_FILE")" = "$(printf '%s' "$legacy" | jq -c 'map(select(.id >= 501 and .id <= 504))')" ] ||
+    fail "a legacy field changed"
+grep -q "Retired issue field 'Agent'" "$tmp/out" || fail "the retired Agent field must be reported when present"
+grep -q "never deletes a field" "$tmp/out" || fail "the Agent report must say deletion is the operator's"
+grep -q "harmon-init#910" "$tmp/out" || fail "the Agent report must point at #910 (enumerate before deleting)"
+grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "a present Agent field is a report, not a failure"
+
+echo "==> the Agent report is absent when the field is absent"
+run_with "$(cat "$tmp/provisioned.json")"
+! grep -q "Retired issue field" "$tmp/out" || fail "the Agent report printed without an Agent field"
+
+echo "==> a snapshot with no options array is refused, not turned into a replacement"
+malformed=$(jq -c 'map(if .name == "Impact" then del(.options) else . end)' "$tmp/provisioned.json")
+run_with "$malformed"
+[ "$(patches)" = 0 ] || fail "a field with no options array must not be PATCHed"
+grep -q "carried no options array" "$tmp/out" || fail "expected a fail-closed warning for the malformed snapshot"
+grep -q "Done, WITH WARNINGS" "$tmp/out" || fail "a refused field must end the run with warnings"
+
+echo "==> an existing option with no id is refused"
+# The field must also be missing a wanted option, or there is no write to guard:
+# when nothing needs changing the script returns before validating the snapshot,
+# which is correct — an untouched field cannot lose anything.
+noid=$(jq -c 'map(if .name == "Impact"
+        then .options = [ .options[] | select(.name != "medium") | del(.id) ]
+        else . end)' "$tmp/provisioned.json")
+run_with "$noid"
+[ "$(patches)" = 0 ] || fail "options without ids must not be PATCHed"
+grep -q "without an id" "$tmp/out" || fail "expected a fail-closed warning for the id-less option"
+
+echo "==> a rejected PATCH degrades to a warning naming the options"
+reset_stub "$builtin"
+GH_FAIL_PATCH=1 "$script" --org testorg >"$tmp/out" 2>&1 || fail "a rejected PATCH must not abort the run"
+grep -q "update was rejected" "$tmp/out" || fail "expected the rejection to be reported"
+grep -q "Effort: add 1, 2, 3, 5, 8, 13, 20" "$tmp/out" || fail "a rejected PATCH must name the options it could not apply"
+grep -q "still need options added" "$tmp/out" || fail "expected the summary warning after a rejected PATCH"
+[ "$(posts)" = 4 ] || fail "the fields that can be created must still be created after a rejected PATCH"
+! grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "a rejected PATCH claimed readiness"
+
+echo "==> a failed read exits non-zero and writes nothing"
+reset_stub "$builtin"
+if GH_FAIL_READ=1 "$script" --org testorg >"$tmp/out" 2>&1; then
+    fail "a failed read must fail the script"
+fi
+[ "$(posts)" = 0 ] && [ "$(patches)" = 0 ] || fail "a failed read must not be followed by a write"
+
+echo "==> an error document in place of the inventory is a failed read, never an empty organization"
+# {"message":…} is what the API answers when the preview is unavailable (challenge
+# r3, C3-F3): reading it as "no fields" would start creating fields from an
+# inventory the script never saw.
+reset_stub "$builtin"
+if GH_LIST_BODY='{"message":"preview unavailable","documentation_url":"https://docs.github.com"}' "$script" --org testorg >"$tmp/out" 2>&1; then
+    fail "an unrecognized inventory document must fail the script"
+fi
+grep -q "Could not read issue fields" "$tmp/out" || fail "expected the failed-read message for an error document"
+[ "$(posts)" = 0 ] && [ "$(patches)" = 0 ] || fail "an error document must not be followed by a write"
+
+echo "==> a paginated read that fails after a valid page is a failed read, never the whole inventory"
+# Review r1, RV1-F1: `gh api --paginate` prints the pages that arrived and exits
+# non-zero when a later one fails. Taken for the full list, the first page would
+# have the script creating fields it does not know are already there.
+reset_stub "$builtin"
+if GH_LIST_PARTIAL=1 "$script" --org testorg >"$tmp/out" 2>&1; then
+    fail "a partial inventory read at startup must fail the script"
+fi
+grep -q "Could not read issue fields" "$tmp/out" || fail "expected the failed-read message for a partial read"
+[ "$(posts)" = 0 ] && [ "$(patches)" = 0 ] || fail "a partial read must not be followed by a write"
+# The same break on the re-read a reconcile makes just before its PATCH: the field
+# is left untouched and the run is not ready. Read 1 is the inventory, so read 2 is
+# the first re-read.
+GH_LIST_PARTIAL=1 GH_PARTIAL_FROM=2 run_with "$builtin"
+grep -q "could not re-read issue field" "$tmp/out" || fail "expected a could-not-re-read warning for a partial re-read"
+[ "$(patches)" = 0 ] || fail "a field whose re-read was partial must not be PATCHed"
+grep -q "Done, WITH WARNINGS" "$tmp/out" || fail "a partial re-read must end the run with warnings"
+! grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "a partial re-read claimed readiness"
+
+echo "==> both documented inventory shapes are still accepted"
+# The bare array is covered by every case above; the {"issue_fields":[…]} wrapper
+# the preview also documents is read the same way, and a complete org writes nothing.
+GH_LIST_BODY="$(jq -c '{issue_fields: .}' "$tmp/provisioned.json")" run_with "$(cat "$tmp/provisioned.json")"
+[ "$(posts)" = 0 ] && [ "$(patches)" = 0 ] || fail "a complete org read through the wrapper shape must write nothing"
+grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "the wrapper shape must read as a complete org"
+
+echo "==> a field that disappears while the script runs is a warning, never a ready outcome"
+# Present in the inventory, gone from the re-read its own reconcile makes
+# (challenge r1, C1-F3): the run must not end by claiming the org is ready. Read 1
+# is the inventory and each earlier single-select (Impact, Risk, Complexity,
+# Priority (AI)) re-reads once, so read 6 is Effort's own; dropping it earlier would
+# just make the script see Effort as absent and create it.
+GH_DROP_FIELD=Effort GH_DROP_FROM=6 run_with "$(cat "$tmp/provisioned.json")"
+grep -q "issue field 'Effort' disappeared while this script was running" "$tmp/out" ||
+    fail "expected a warning that Effort disappeared"
+grep -q "Effort: (disappeared while this script was running)" "$tmp/out" ||
+    fail "the summary must name the field that disappeared"
+grep -q "Done, WITH WARNINGS" "$tmp/out" || fail "a vanished field must end the run with warnings"
+! grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "a vanished field claimed readiness"
+[ "$(patches)" = 0 ] && [ "$(posts)" = 0 ] || fail "a field that vanished must not be written to"
+
+echo "==> a field deleted after the startup read is caught by the final inventory read, never reported ready"
+# Remediation 1/4 (Codex, the same race as challenge r3's C3-F2): Product is in the
+# startup snapshot, so create_field accepts it ("leaving it as-is") — and it is gone
+# from every later read. Nothing but a final read can tell.
+GH_DROP_FIELD=Product GH_DROP_FROM=2 run_with "$(cat "$tmp/provisioned.json")"
+grep -q "the final inventory read does not show the wanted fields: Product is missing" "$tmp/out" ||
+    fail "expected the final read to name the missing Product"
+grep -q "Done, WITH WARNINGS" "$tmp/out" || fail "a field missing at the final read must end the run with warnings"
+! grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "a field missing at the final read claimed readiness"
+[ "$(patches)" = 0 ] && [ "$(posts)" = 0 ] || fail "the final read only reports; it must not write"
+# A final read that FAILS is a failed read. Read 1 is the inventory and each of the
+# five single-select reconciles re-reads once, so read 7 is the final one.
+GH_LIST_PARTIAL=1 GH_PARTIAL_FROM=7 run_with "$(cat "$tmp/provisioned.json")"
+grep -q "the final inventory read failed" "$tmp/out" || fail "expected a warning that the final read failed"
+grep -q "Done, WITH WARNINGS" "$tmp/out" || fail "a failed final read must end the run with warnings"
+! grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "a failed final read claimed readiness"
+# The final read checks the type and the option set too, not just presence: a field
+# that reads wrong, or short of an option, only at read 7 is not ready either.
+GH_LIST_FILTER='map(if .name == "Risk" then .data_type = "text" else . end)' GH_FILTER_FROM=7 run_with "$(cat "$tmp/provisioned.json")"
+grep -q "the final inventory read does not show the wanted fields: Risk is text, not single_select" "$tmp/out" ||
+    fail "expected the final read to name the type mismatch"
+! grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "a type mismatch at the final read claimed readiness"
+GH_LIST_FILTER='map(if .name == "Complexity" then .options |= map(select(.name != "xl")) else . end)' GH_FILTER_FROM=7 run_with "$(cat "$tmp/provisioned.json")"
+grep -q "the final inventory read does not show the wanted fields: Complexity lacks xl" "$tmp/out" ||
+    fail "expected the final read to name the missing option"
+! grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "a missing option at the final read claimed readiness"
+[ "$(patches)" = 0 ] || fail "the final read only reports; it must not PATCH"
+# And a complete org passes the final read cleanly (every case above that ends ready
+# already proves it; this names the property).
+run_with "$(cat "$tmp/provisioned.json")"
+! grep -q "final inventory" "$tmp/out" || fail "a complete org must not warn at the final read"
+grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "a complete org must end ready"
+
+echo "==> status.sh wants exactly the fields and options this script provisions"
+# The want-list in status.sh and the option sets here are two copies of one fact;
+# a scale that changes in only one would report every correctly provisioned org
+# as incomplete (or hide a missing option). Derive the expected rows from the org
+# the first run produced and compare them to the want-list as written.
+[ -f "$status_script" ] || fail "scripts/status.sh is missing — the want-list cannot be compared"
+want_rows="$(awk '
+    /^[[:space:]]*want_fields="/ { inblock = 1; sub(/^[[:space:]]*want_fields="/, "") }
+    inblock { line = $0; closed = (line ~ /"[[:space:]]*$/); sub(/"[[:space:]]*$/, "", line); print line; if (closed) exit }
+' "$status_script")"
+[ -n "$want_rows" ] || fail "could not read the issue-field want-list (want_fields) from scripts/status.sh"
+have_rows="$(jq -r '
+    .[] | select(.name == "Product" or .name == "Impact" or .name == "Risk" or .name == "Complexity"
+                 or .name == "Priority (AI)" or .name == "Effort")
+    | "\(.name):\(.data_type):\([ (.options // []) | sort_by(.priority)[] | .name ] | join(","))"' "$tmp/provisioned.json")"
+[ "$(printf '%s\n' "$want_rows" | sort)" = "$(printf '%s\n' "$have_rows" | sort)" ] ||
+    fail "status.sh's want-list differs from what provisioning creates:
+want-list:
+$(printf '%s\n' "$want_rows" | sort)
+provisioned:
+$(printf '%s\n' "$have_rows" | sort)"
+
+echo "PASS: setup-github-issue-fields.sh field creation and option reconciliation"

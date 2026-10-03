@@ -93,6 +93,19 @@ err() {
     fail=1
 }
 
+# Required CI runs every `test:*` target through ONE step, `task test:suite`
+# (#1461; the per-profile "verify <-> CI parity" section below asserts the call),
+# so "required CI runs X" means "X is in the suite's plan". Without go-task the
+# plan cannot be read: that fails in CI and is an explicit SKIP locally, via
+# `required` like every other missing tool here — never a silent pass.
+suite_runs() {
+    have task || {
+        required task "suite membership of $1" || return 1
+        return 0
+    }
+    grep -qF "task: [$1]" <<<"$(task --color=false --dry test:suite 2>&1 || true)"
+}
+
 # ── Quiet-but-not-silent command capture (#934) ─────────────────────────────
 #
 # A rendered-repo gate that can fail with no evidence turns an intermittent
@@ -236,6 +249,10 @@ full)
         --data use_antigravity_cli=true
         --data use_copilot_cli=true
         --data use_alternative_claude_providers=true
+        # use_fly_sprites defaults OFF (Sprites need a paid Fly.io org), so this
+        # is the only profile that renders sprites/; every other one proves the
+        # default renders none of it (#1411).
+        --data use_fly_sprites=true
         --data devcontainer_coder_folder_uri="vscode-remote://dev-container+7b22686f737450617468223a222f7372762f636f6465722f736d6f6b652d74657374222c22636f6e66696746696c65223a7b2270617468223a222f7372762f636f6465722f736d6f6b652d746573742f2e646576636f6e7461696e65722f6465762f646576636f6e7461696e65722e6a736f6e227d7d@ssh-remote+coder.dev/workspaces/smoke-test"
         --data use_foreman=true
         --data foreman_additional_trusted_actors="AdmiralFraggle,review-app[bot]"
@@ -414,6 +431,48 @@ else
     err "no Taskfile.yml generated"
 fi
 
+# ── 1-ci. verify <-> required CI parity holds in every render profile (#1461) ──
+# Both run their `test:*` targets through the one aggregate task, so a rendered
+# repo's required Build workflow runs every target its `verify` runs. Asserted
+# three ways: the `lint` job calls the aggregate, `verify` lists it itself, and
+# every `test:*` target in verify's plan is in the aggregate's plan — then the
+# rendered guard (with its planted cases) runs. The first two are plain text
+# checks on the rendered files (a block runs from its two-space-indented key to
+# the next one), the third asks `task` for the plan.
+if [ -f .github/workflows/build.yml ]; then
+    awk '/^  lint:[[:space:]]*$/ { on = 1; next } on && /^  [^ #]/ { exit } on' .github/workflows/build.yml |
+        grep -Eq '^[[:space:]]*(-[[:space:]]+)?run:[[:space:]]+task test:suite[[:space:]]*$' ||
+        err "rendered build.yml's lint job does not call \`task test:suite\` in a step"
+    awk '/^  verify:[[:space:]]*$/ { on = 1; next } on && /^  [^ #]/ { exit } on' Taskfile.yml |
+        grep -Eq '^[[:space:]]+-[[:space:]]+task:[[:space:]]+test:suite[[:space:]]*$' ||
+        err "rendered \`verify\` does not list \`task: test:suite\` itself"
+    if have task; then
+        # A plan that cannot be read (a broken rendered Taskfile) must fail the
+        # profile, not leave the loop below with no targets to compare.
+        parity_plans_ok=1
+        parity_verify_plan="$(task --color=false --dry verify 2>&1)" || {
+            echo "$parity_verify_plan" >&2
+            err "could not read the plan of rendered \`task verify\` (task --dry verify failed), so verify <-> CI parity was not compared"
+            parity_plans_ok=0
+        }
+        parity_suite_plan="$(task --color=false --dry test:suite 2>&1)" || {
+            echo "$parity_suite_plan" >&2
+            err "could not read the plan of rendered \`task test:suite\` (task --dry test:suite failed), so verify <-> CI parity was not compared"
+            parity_plans_ok=0
+        }
+        if [ "$parity_plans_ok" = 1 ]; then
+            for parity_target in $(grep -oE '^task: \[test:[^]]+\]' <<<"$parity_verify_plan" | sed -E 's/^task: \[(.*)\]$/\1/'); do
+                grep -qF "task: [${parity_target}]" <<<"$parity_suite_plan" ||
+                    err "rendered verify runs ${parity_target}, which the required Build workflow's test:suite does not"
+            done
+        fi
+        run_quiet verify-ci-parity ./scripts/test-verify-ci-parity.sh ||
+            err "rendered test-verify-ci-parity.sh fails"
+    else
+        required task "verify <-> CI parity" || fail=1
+    fi
+fi
+
 # ── 1a. Machine-readable agent vocabulary survives every render profile ──
 if [ ! -x scripts/test-agent-registry.sh ]; then
     err "agent registry test is missing or not executable"
@@ -428,7 +487,7 @@ else
     required task "agent registry verify reachability" || fail=1
 fi
 if [ -f .github/workflows/build.yml ]; then
-    grep -qF 'task test:agent-registry' .github/workflows/build.yml ||
+    suite_runs test:agent-registry ||
         err "required CI does not run test:agent-registry"
 fi
 case "$profile" in
@@ -459,7 +518,7 @@ else
     required task "registry-drift verify reachability" || fail=1
 fi
 if [ -f .github/workflows/build.yml ]; then
-    grep -qF 'task test:registry-drift' .github/workflows/build.yml ||
+    suite_runs test:registry-drift ||
         err "required CI does not run test:registry-drift"
 fi
 
@@ -497,7 +556,7 @@ else
     required task "registry-docs verify reachability" || fail=1
 fi
 if [ -f .github/workflows/build.yml ]; then
-    grep -qF 'task test:registry-docs' .github/workflows/build.yml ||
+    suite_runs test:registry-docs ||
         err "required CI does not run test:registry-docs"
 fi
 
@@ -548,7 +607,7 @@ else
     required task "worktree entrypoint reachability" || fail=1
 fi
 if [ -f .github/workflows/build.yml ]; then
-    grep -qF 'task test:worktree' .github/workflows/build.yml ||
+    suite_runs test:worktree ||
         err "required CI does not run test:worktree"
 fi
 
@@ -600,7 +659,7 @@ else
     required task "label-registry verify reachability + execution" || fail=1
 fi
 if [ -f .github/workflows/build.yml ]; then
-    grep -qF 'task test:label-registry' .github/workflows/build.yml ||
+    suite_runs test:label-registry ||
         err "required CI does not run test:label-registry"
 fi
 
@@ -847,7 +906,7 @@ if [ "$validation_scope" = "renovate-config" ]; then
 fi
 grep -q '^use_codeql:' .copier-answers.yml || err "answers file does not persist explicit use_codeql intent"
 grep -q '^codeql_languages:' .copier-answers.yml || err "answers file does not persist explicit codeql_languages"
-grep -q 'task test:ci-results' .github/workflows/build.yml ||
+suite_runs test:ci-results ||
     err "rendered build workflow does not run the CI result helper regression (test:ci-results)"
 [ -x scripts/test-ci-results.sh ] || err "CI result helper regression missing or not executable"
 ./scripts/test-ci-results.sh >/dev/null || err "rendered CI result helper regression failed"
@@ -1727,7 +1786,7 @@ if [ "$profile" = "full" ] || [ "$profile" = "meta" ]; then
         required task "remote Codex policy verify reachability" || fail=1
     fi
     if [ -f .github/workflows/build.yml ]; then
-        grep -qF 'task test:remote-codex-policy' .github/workflows/build.yml ||
+        suite_runs test:remote-codex-policy ||
             err "required CI does not run test:remote-codex-policy (use_codex_review=true)"
     fi
 else
@@ -2291,6 +2350,36 @@ if [ "$profile" = "meta" ]; then
         fi
     else
         err "use_codex_review=true, devcontainer=false render failed to generate"
+    fi
+fi
+
+# ── Fly.io Sprites opt-in (#1411) ─────────────────────────────────────
+# Paid SaaS defaults off: only `full` answers use_fly_sprites=true, and there the
+# rendered generator must pass the same derivation test the root runs, against
+# the RENDERED project's own allowlist. Every other profile renders with the
+# default and must contain nothing for Sprites.
+if [ "$profile" = "full" ]; then
+    if [ ! -x "$dest/sprites/network-policy.sh" ]; then
+        err "use_fly_sprites=true did not render an executable sprites/network-policy.sh"
+    else
+        "$repo_root/scripts/test-sprites-policy.sh" "$dest/sprites" >"$job_tmp/sprites-policy.log" 2>&1 ||
+            err "the rendered Sprites network-policy generator fails test-sprites-policy: $(tail -3 "$job_tmp/sprites-policy.log")"
+    fi
+else
+    [ ! -e "$dest/sprites" ] || err "profile '$profile' rendered sprites/ without opting in to use_fly_sprites"
+fi
+# The allowlist the policy is generated from ships only with the devcontainer,
+# so the opt-in must be refused without it rather than render a generator with
+# nothing to read. `minimal` already turns the devcontainer off.
+if [ "$profile" = "minimal" ]; then
+    sprites_nodc_dest="$job_tmp/render-sprites-no-devcontainer"
+    if copier copy --trust --defaults --vcs-ref=HEAD \
+        "${copier_flags[@]+"${copier_flags[@]}"}" \
+        "${data_args[@]}" --data use_fly_sprites=true \
+        "$repo_root" "$sprites_nodc_dest" >"$job_tmp/sprites-nodc.log" 2>&1; then
+        err "use_fly_sprites=true was accepted with devcontainer=false"
+    elif ! grep -q 'Enable DEVCONTAINER before FLY.IO SPRITES' "$job_tmp/sprites-nodc.log"; then
+        err "use_fly_sprites=true, devcontainer=false failed for a reason other than the opt-in validator: $(tail -3 "$job_tmp/sprites-nodc.log")"
     fi
 fi
 
