@@ -28,8 +28,7 @@
 # with option words and then `login`. The one exception: a `login` that is a
 # mapping key (`login:` or `login :`) is never the subcommand, so consecutive
 # mapping lines such as `provider: codex` / `login: oauth`, or `- codex` /
-# `login: [oauth]`, pass. When the head ends in an option (`codex --config`), the
-# tail may open with that option's value (`model=foo login`), as YAML folds them.
+# `login: [oauth]`, pass.
 #
 # `auth.json` is matched as a complete basename: `auth.json` and
 # `~/.codex/auth.json` hit, `oauth.json`, `myauth.json` and `auth.json.example`
@@ -64,6 +63,9 @@
 #     `$HOME/.codex` or `/home/vscode/.codex` without a slash is not. A bare
 #     `.codex` token is deliberately not used: the agent devcontainer mounts that
 #     directory legitimately, and the persistent login lives in it.
+#   - An option whose value opens the next line (`codex --config` / `model=foo
+#     login`) is not joined, as before this change (tracked as
+#     evanharmon1/harmon-init#1488).
 #   - A command folded across THREE lines whose middle line holds only options
 #     (`codex` / `--opt` / `login`) is not joined; only two-line folds are.
 #   - Outside the strict tier, a token with `codex` only on a neighbouring line
@@ -314,12 +316,11 @@ scan() {
                 sub(/^ /, "", tt)
                 # A Codex command folded across two lines (a YAML `>-` step): a line
                 # ends in `codex` and options (FOLDHEAD); the next non-blank line
-                # opens with options and `login` (FOLDTAIL) — or, when the head ended
-                # in an option, with that option value first (FOLDTAILV). A `login`
-                # that is a mapping key (KEYLOGIN) is not the subcommand. Reported
-                # with both real lines.
+                # opens with options and `login` (FOLDTAIL). A `login` that is a
+                # mapping key (KEYLOGIN) is not the subcommand. Reported with both
+                # real lines.
                 if (pend != "" && tt != "") {
-                    if ((tt ~ FOLDTAIL || (pendopt && tt ~ FOLDTAILV)) && tt !~ KEYLOGIN) print pfile ":" pline "-" s ": " pend " / " tt
+                    if (tt ~ FOLDTAIL && tt !~ KEYLOGIN) print pfile ":" pline "-" s ": " pend " / " tt
                     pend = ""
                 }
                 # One rule: outside the strict tier a line counts only if it
@@ -337,7 +338,6 @@ scan() {
                 }
                 if (!hit && t ~ FOLDHEAD) {
                     pend = t
-                    pendopt = (t ~ OPTEND)
                     pfile = substr(f, 3)
                     pline = s
                 }
@@ -362,9 +362,6 @@ scan() {
                 LOGIN = W " login([^A-Za-z0-9_-]|$)"
                 FOLDHEAD = W " ?$"
                 FOLDTAIL = "^(-[^ ]+ ([^ -][^ ]* )?)*login([^A-Za-z0-9_-]|$)"
-                # The head ended in an option word, so its value may open the tail.
-                OPTEND = " -[^ ]+ ?$"
-                FOLDTAILV = "^[^ -][^ ]* (-[^ ]+ ([^ -][^ ]* )?)*login([^A-Za-z0-9_-]|$)"
                 # A tail whose `login` is a mapping key: `login:` or `login :`. A key is
                 # always the first word of the tail, so a later `login:` word does not count.
                 KEYLOGIN = "^login ?:"
@@ -683,8 +680,10 @@ plant "$authf" '#!/usr/bin/env bash\necho "Never copy auth.json."\n'
 expect_hit "a quoted sentence-final auth.json." "$authf" "2:"
 plant "$authf" '#!/usr/bin/env bash\n# (see auth.json.)\n'
 expect_hit "a parenthesised sentence-final auth.json." "$authf" "2:"
-plant "$authf" '#!/usr/bin/env bash\n# the `auth.json.` file, [auth.json.] too\n'
+plant "$authf" '#!/usr/bin/env bash\n# the `auth.json.` file\n'
 expect_hit "a backtick-closed sentence-final auth.json." "$authf" "2:"
+plant "$authf" '#!/usr/bin/env bash\nauth.json is restored here\n'
+expect_hit "a line that begins with auth.json" "$authf" "2:"
 plant "$authf" '#!/usr/bin/env bash\n# [auth.json.]\n'
 expect_hit "a bracket-closed sentence-final auth.json." "$authf" "2:"
 plant "$authf" "#!/usr/bin/env bash\necho 'Never copy auth.json.'\n"
@@ -796,14 +795,11 @@ expect_hit "a codex / login pair after a three-backtick line in a four-backtick 
 printf '# Guide\n\n$ codex\nlogin\n' >"${FIX}/docs/guides/planted-app.md"
 expect_hit "a codex invocation line followed by login" "docs/guides/planted-app.md" "3-4: "
 rm -f "${FIX}/docs/guides/planted-app.md"
-# A head that ends in an option may have that option's value open the tail, as YAML
-# folds `codex --config` and `model=foo login` into one command; a head that does not
-# end in an option takes no such value.
-printf 'jobs:\n  a:\n    steps:\n      - run: >-\n          codex --config\n          model=foo login\n' >"${FIX}/.github/workflows/folded.yml"
-expect_hit "a folded codex --config, then its value and login" ".github/workflows/folded.yml" "5-6: "
-printf 'jobs:\n  a:\n    steps:\n      - run: >-\n          codex\n          model=foo login\n' >"${FIX}/.github/workflows/folded.yml"
+# A head ending in an option is not a login: another tool login on the next line is not
+# folded into it, so codex --version then docker login must pass.
+printf 'jobs:\n  a:\n    steps:\n      - run: |\n          codex --version\n          docker login ghcr.io -u user --password-stdin\n' >"${FIX}/.github/workflows/folded.yml"
 fixture_hits
-[ -z "$SCAN_HITS" ] || fail "a head that does not end in an option takes no value word before login, got: ${SCAN_HITS}"
+[ -z "$SCAN_HITS" ] || fail "codex --version then another tool login must not be reported, got: ${SCAN_HITS}"
 rm -f "${FIX}/.github/workflows/folded.yml" "${FIX}/docs/guides/planted-app.md"
 
 # A surface line that merely contains the guard-error marker is a violation (it
