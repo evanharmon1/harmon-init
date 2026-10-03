@@ -177,7 +177,9 @@ writes only `tier:<value>` and `needs-triage`, under `GITHUB_TOKEN` with
 still maintains `needs-triage` there). It never writes `tier:pinned`,
 `priority:*`, `priority-ai:*`, `rigor:*`, `strategy:*` or `claim:*`.
 
-The reconciler reports these cases and changes nothing for them:
+The reconciler reports these cases and leaves the Tier, and the offending
+input, as it is. `needs-triage` is still maintained unless an item says
+otherwise:
 
 - A pinned issue with two or more tier values: it never picks one.
 - An unpinned Tier whose Risk or Complexity is missing (`cache-unverifiable`).
@@ -188,7 +190,8 @@ The reconciler reports these cases and changes nothing for them:
   come from the repository's `label-registry.json`; when that file is
   unreadable, every axis is unverifiable and `needs-triage` is left as it is.
 - An issue whose labels or field values span more than one page. It is
-  skipped rather than decided on a partial read.
+  skipped entirely, `needs-triage` included, rather than decided on a partial
+  read.
 - A repository whose reader cannot derive. Either the reader has no
   `deriveTier`, which is every repository whose vendored `dev-flow-support`
   predates [harmon-devkit#1248](https://github.com/evanharmon1/harmon-devkit/issues/1248), or the reader throws on the policy. Such a
@@ -214,11 +217,13 @@ overwritten mid-pin.
 
 The remaining windows are narrow:
 
-- A pin made while an input-triggered job is already running. The job re-reads
-  the issue immediately before writing, and again after adding the derived
-  Tier; if `tier:pinned` has appeared it skips the stale-Tier deletes and
-  reports the issue. GitHub's label API has no compare-and-swap, so a pin
-  landing between that second read and the deletes is the remaining window.
+- A pin made while a job is already writing. Every Tier write is preceded by
+  a read, made after the previous write, that shows no `tier:pinned`. On a pin
+  the job stops its remaining Tier writes and reports the issue
+  (`pin-appeared`). GitHub's label API has no compare-and-swap, so one round
+  trip between that read and its write is the irreducible residual.
+  `needs-triage` writes are not guarded, since it is maintained on pinned
+  issues too.
 - A scheduled run landing between the two pin edits. With the pin added first,
   it sees two tier values and reports them. With the Tier set first, it
   re-derives once, and the human's pin then restores the intended value.

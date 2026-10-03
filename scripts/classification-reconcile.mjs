@@ -420,35 +420,55 @@ export function parseRepositories(raw, fallback) {
   return repos
 }
 
-// Apply one issue's plan. Re-reads before writing (a human may have pinned or
-// re-classified since the walk read the issue), and again after the add: the
-// labels API has no compare-and-swap, so a pin that lands between the add and
-// the deletes stops the Tier deletes instead of losing the pinned value.
+// Apply one issue's plan, re-read first (a human may have pinned or
+// re-classified since the walk read the issue).
+//
+// Invariant: every Tier mutation is preceded by a read, made after the
+// previous mutation, that shows no tier:pinned. On a pin, every remaining
+// Tier write stops and the issue is reported. GitHub's label API has no
+// compare-and-swap, so one round trip between that read and its write is the
+// irreducible residual. `needs-triage` is maintained on pinned issues too, so
+// its writes are unguarded and run after the Tier writes.
 export async function applyPlan(client, owner, name, number, ctx) {
   const fresh = await fetchIssue(client, owner, name, number)
   if (!fresh) return { add: [], remove: [], reports: [] }
   const plan = decide(fresh, ctx)
   const path = `/repos/${owner}/${name}/issues/${number}/labels`
-  if (plan.add.length > 0) {
-    await client.rest('POST', path, { labels: plan.add.map(assertWritable) })
-  }
-  let removals = plan.remove
-  const tierRemovals = removals.filter((l) => l !== NEEDS_TRIAGE)
-  if (plan.add.length > 0 && tierRemovals.length > 0) {
-    const after = await fetchIssue(client, owner, name, number)
-    if (!after || after.labels.includes(PIN_LABEL)) {
-      removals = removals.filter((l) => l === NEEDS_TRIAGE)
-      plan.remove = removals
+  const write = (method, label) =>
+    method === 'POST'
+      ? client.rest('POST', path, { labels: [assertWritable(label)] })
+      : client.rest('DELETE', `${path}/${encodeURIComponent(assertWritable(label))}`)
+  const isTier = (l) => l !== NEEDS_TRIAGE
+  const tierWrites = [
+    ...plan.add.filter(isTier).map((l) => ['POST', l]),
+    ...plan.remove.filter(isTier).map((l) => ['DELETE', l])
+  ]
+  const applied = { add: [], remove: [] }
+  const record = (method, label) => (method === 'POST' ? applied.add : applied.remove).push(label)
+  let read = fresh // the decision read guards the first Tier write
+  for (const [i, [method, label]] of tierWrites.entries()) {
+    if (i > 0) read = await fetchIssue(client, owner, name, number)
+    if (!read) return { ...plan, ...applied } // closed mid-write: stop everything
+    if (read.labels.includes(PIN_LABEL)) {
+      const skipped = tierWrites.slice(i).map(([m, l]) => `${m === 'POST' ? 'add' : 'remove'} ${l}`)
       plan.reports.push({
         code: 'pin-appeared',
-        message: `${PIN_LABEL} appeared during the write; ${tierRemovals.join(', ')} left for a human`
+        message: `${PIN_LABEL} appeared during the write; ${skipped.join(', ')} not applied, left for a human`
       })
+      break
     }
+    await write(method, label)
+    record(method, label)
   }
-  for (const l of removals) {
-    await client.rest('DELETE', `${path}/${encodeURIComponent(assertWritable(l))}`)
+  for (const label of plan.add.filter((l) => !isTier(l))) {
+    await write('POST', label)
+    record('POST', label)
   }
-  return plan
+  for (const label of plan.remove.filter((l) => !isTier(l))) {
+    await write('DELETE', label)
+    record('DELETE', label)
+  }
+  return { ...plan, ...applied }
 }
 
 async function main() {

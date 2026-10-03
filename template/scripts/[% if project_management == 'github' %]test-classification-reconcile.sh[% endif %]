@@ -325,7 +325,7 @@ check('the filter and the script name the same inputs and event types', () => {
   for (const absent of ['edited', 'field_added', 'field_removed']) assert.ok(!types.includes(absent), absent)
 })
 
-// --- applyPlan(): a pin that lands mid-write stops the Tier deletes (C1-F5) --
+// --- applyPlan(): every Tier write is guarded by a pin-free read (C1-F5, C2-F1)
 
 function fakeClient(reads) {
   const calls = []
@@ -365,8 +365,31 @@ const stale = [...triaged, 'risk:high', 'complexity:m', 'tier:standard']
   const plan = await m.applyPlan(client, 'o', 'r', 7, ctx)
   check('applyPlan: a pin landing after the add stops the stale-Tier delete', () => {
     assert.deepEqual(client.calls.map((c) => c[0]), ['POST'])
-    assert.deepEqual(plan.remove, [])
+    assert.deepEqual([plan.add, plan.remove], [['tier:frontier'], []])
     assert.equal(plan.reports.at(-1).code, 'pin-appeared')
+  })
+}
+{
+  // The pin is already on the decision read: no Tier write at all, and
+  // needs-triage is still maintained (it is never guarded).
+  const pinned = ['risk:high', 'complexity:m', 'tier:standard', 'tier:pinned']
+  const client = fakeClient([pinned])
+  const plan = await m.applyPlan(client, 'o', 'r', 7, ctx)
+  check('applyPlan: a pin before the add means no Tier write; needs-triage still written', () => {
+    assert.deepEqual(client.calls.map((c) => [c[0], c[2]?.labels ?? c[1]]), [['POST', ['needs-triage']]])
+    assert.deepEqual([plan.add, plan.remove], [['needs-triage'], []])
+  })
+}
+{
+  // A delete-only plan (two stale tiers beside the derived one, as a failed
+  // earlier delete leaves): the second delete re-reads and sees the pin.
+  const twoStale = [...triaged, 'risk:high', 'complexity:m', 'tier:frontier', 'tier:standard', 'tier:local']
+  const client = fakeClient([twoStale, [...twoStale.filter((l) => l !== 'tier:standard'), 'tier:pinned']])
+  const plan = await m.applyPlan(client, 'o', 'r', 7, ctx)
+  check('applyPlan: a delete-only plan stops at the first read that shows a pin', () => {
+    assert.deepEqual(client.calls.map((c) => c[0]), ['DELETE'])
+    assert.deepEqual([plan.add, plan.remove], [[], ['tier:standard']])
+    assert.match(plan.reports.at(-1).message, /remove tier:local not applied/)
   })
 }
 
