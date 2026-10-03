@@ -9,8 +9,9 @@ set -euo pipefail
 # STRICTLY NON-DESTRUCTIVE: runs `git fetch` only (updates remote-tracking refs
 # and prunes deleted ones). It NEVER pulls, merges, checks out, or resets — so
 # uncommitted changes, local commits, and the checked-out branch are left
-# exactly as they are. Repos not yet cloned are skipped (bootstrap clones those
-# at create time). Failures log a warning and continue; this never blocks start.
+# exactly as they are. Repos not yet cloned are skipped (bootstrap-related-repos.sh
+# clones missing ones at create, start, and scope grant). Failures log a warning
+# and continue; this never blocks start.
 
 # Prevent VS Code's JS debug bootloader from breaking child Node processes.
 unset NODE_OPTIONS

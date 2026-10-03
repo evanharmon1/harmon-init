@@ -1,4 +1,4 @@
-# 6. Method and tier strategy axes
+# Method and tier strategy axes
 
 Date: 2026-08-16
 
@@ -7,19 +7,26 @@ Date: 2026-08-16
 Accepted
 
 D4 (the method rank and its `[method]` table) is **superseded** by
-[ADR 0007](0007-rigor-and-strategy-axes.md), which retires `method:*` in
+[ADR 2026-08-24](2026-08-24-rigor-and-strategy-axes.md), which retires `method:*` in
 favor of `strategy:*`; D5 (resolution order and conflict handling) is
-**amended** by ADR 0007 to cover `rigor:*`/`strategy:*` as the primary
+**amended** by ADR 2026-08-24 to cover `rigor:*`/`strategy:*` as the primary
 label inputs rather than `tier:*`/`method:*`. D1–D3 and D6–D8 (the tier
 ladder, escalation, consumer-trust invariants, and no-auto-merge) stand
-unchanged; ADR 0007 re-scopes tier resolution to per-role tiers but the
+unchanged; ADR 2026-08-24 re-scopes tier resolution to per-role tiers but the
 `[tier.*]` model itself is untouched.
 
-Amends [ADR 0005](0005-unified-agent-vocabulary.md) D6 (see Decision § D6
+Amends [ADR 2026-08-07](2026-08-07-unified-agent-vocabulary.md) D6 (see Decision § D6
 amendment). Authoritative requirements live in
 [`specs/issue-strategy.md`](../../specs/issue-strategy.md); on any conflict the
 spec wins. Planned under evanharmon1/harmon-init#855 (milestone "Issue strategy
 overhaul").
+
+**Amended** by
+[ADR 2026-09-30 (issue classification)](2026-09-30-classify-issues-by-impact-risk-complexity-and-derive-the-tier.md):
+D5's resolution order gains the pinned and derived Tier. **Superseded** by it:
+D3's suggestion narrowing, D6's suggestion provenance, the § D6 amendment to
+ADR 2026-08-07, and the `adaptive` tier (D2's `adaptive` rung, D5's
+concrete-tier-beats-`adaptive` rule, and D7's `adaptive` rules).
 
 ## Context
 
@@ -59,7 +66,7 @@ opus-class; `apex` is mythos-class (`fable`, `sol`). `.devflow.toml` gains
 Privacy-pinning is a **future, separate concern label**, not a tier semantic.
 
 The `local` tier's machinery binding is explicit: its entries resolve to the
-registry's `-local` endpoint-variant harnesses (ADR 0005 D9), and validation
+registry's `-local` endpoint-variant harnesses (ADR 2026-08-07 D9), and validation
 fails a `local` entry whose family has no registered `-local` harness. Today
 `claude-code-qwen-local` (family `qwen`) is the only such harness, so `local` is
 opt-in per family until more are registered.
@@ -152,14 +159,14 @@ tier value under the axes-inert fallback.
 No label, tier, or method arms auto-merge. Merging is always a human decision;
 there is no `merge:*` family and no configuration that promotes a PR to merged.
 
-### § D6 amendment to ADR 0005
+### § D6 amendment to ADR 2026-08-07
 
-ADR 0005 D6 recorded suggestions as human-authored advice. **Amended here:**
+ADR 2026-08-07 D6 recorded suggestions as human-authored advice. **Amended here:**
 suggestions become human- **or agent-**authored. `suggest:*` stays
 `family[:model]` (a vendor preference); `tier:*` is the human-decided **policy**
 layer of the model axis. **`suggest:tier:<value>` is reserved, not built.**
 `claim:*` stays on the family axis; the claim record gains `harness:` / `model:`
-/ `session:` fields (harmon-devkit#450). ADR 0005 D6 carries a pointer to this
+/ `session:` fields (harmon-devkit#450). ADR 2026-08-07 D6 carries a pointer to this
 amendment.
 
 ## Consequences

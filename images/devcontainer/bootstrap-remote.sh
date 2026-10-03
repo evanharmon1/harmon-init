@@ -60,7 +60,13 @@
 #     (~/.local/bin from a stock ~/.profile) is reported, never fatal. Forces
 #     a UTF-8 locale, because a POSIX one makes NBSP stop reading as whitespace;
 #   - records what the tiers installed in a manifest of the same shape the
-#     image writes, so image and VM can be compared for the same release tag.
+#     image writes, so image and VM can be compared for the same release tag;
+#   - installs the agent posture (#1408) from the single checked-in definition
+#     in .devcontainer/config/agent/ — read from the same checkout or fetched
+#     from the same tag as the tiers, never carried as a copy — and fails the
+#     run unless agent-autonomy.sh verify then passes for every destination
+#     the run wrote. A destination left in place is not verified; it is
+#     counted in HARMON_BOOTSTRAP_POSTURE_GAPS.
 set -euo pipefail
 
 readonly HARMON_REPO_RAW="https://raw.githubusercontent.com/evanharmon1/harmon-init"
@@ -83,6 +89,25 @@ install/install-core.sh
 install/install-agents.sh
 install/install-browsers.sh
 "
+
+# The agent posture (#1408, docs/decisions/2026-09-29-agent-posture-three-posture-model.md)
+# and the one script that installs it, relative to the REPOSITORY ROOT rather
+# than to images/devcontainer/: the definition lives only in
+# .devcontainer/config/agent/, and this script carries no copy of it. From a
+# checkout they are read in place; with --ref they are fetched from the same
+# tag as everything else. scripts/test-bootstrap-remote.sh holds this list equal
+# to what agent-autonomy.sh reads and fails if any file under images/devcontainer/
+# carries a copy of the definition.
+readonly HARMON_AGENT_POSTURE_ASSETS="
+.devcontainer/agent/agent-autonomy.sh
+.devcontainer/config/agent/claude-managed-settings.json
+.devcontainer/config/agent/codex-managed-config.toml
+.devcontainer/config/agent/harnesses.json
+"
+# Where the posture is installed: the paths the agent devcontainer installs it
+# to, and the ones Claude Code and Codex read as managed (unoverridable) policy.
+readonly HARMON_AGENT_CLAUDE_MANAGED=/etc/claude-code/managed-settings.json
+readonly HARMON_AGENT_CODEX_MANAGED=/etc/codex/managed_config.toml
 
 # Tiers in dependency order. core installs Node, uv and npm, which agents and
 # browsers both need, so the order is canonical here rather than taken from the
@@ -162,8 +187,19 @@ usage: bootstrap-remote.sh [--tiers core,agents,browsers] [--ref vX.Y.Z] [--help
             a release tag is refused unless HARMON_ALLOW_UNPINNED_REF=1 (CI
             and development).
 
+Every run, whatever the tiers, installs the agent posture from the same
+checkout or tag: .devcontainer/config/agent/ to
+/etc/claude-code/managed-settings.json and /etc/codex/managed_config.toml,
+through .devcontainer/agent/agent-autonomy.sh. Anything already at either
+path that is not the definition — a file, or a symlink, dangling or not — is
+left in place, reported, and counted in HARMON_BOOTSTRAP_POSTURE_GAPS (the
+posture is then not applied for it) unless HARMON_AGENT_POSTURE_REPLACE=1,
+which replaces it and keeps the previous entry beside it. Harness executables
+are never modified.
+
 Environment: HARMON_PREFIX (default /usr/local), HARMON_BOOTSTRAP_TIERS,
-             HARMON_INIT_REF, HARMON_ALLOW_UNPINNED_REF.
+             HARMON_INIT_REF, HARMON_ALLOW_UNPINNED_REF,
+             HARMON_AGENT_POSTURE_REPLACE.
 USAGE
 }
 
@@ -318,6 +354,7 @@ if [ "$(id -u)" -ne 0 ]; then
         exec sudo -- env \
             ${HARMON_PREFIX+"HARMON_PREFIX=${HARMON_PREFIX}"} \
             ${HARMON_ALLOW_UNPINNED_REF+"HARMON_ALLOW_UNPINNED_REF=${HARMON_ALLOW_UNPINNED_REF}"} \
+            ${HARMON_AGENT_POSTURE_REPLACE+"HARMON_AGENT_POSTURE_REPLACE=${HARMON_AGENT_POSTURE_REPLACE}"} \
             bash "${BASH_SOURCE[0]}" --tiers "$tiers" ${ref:+--ref "$ref"}
     fi
     die "must run as root; pipe into 'sudo bash' or re-run under sudo"
@@ -365,7 +402,12 @@ export HOME="${HOME:-/root}"
 # `sudo ./images/devcontainer/bootstrap-remote.sh` form, and the one the
 # remote-bootstrap CI job uses to exercise the working tree's own scripts. The
 # assets beside this file are then the only thing there is to run: there is no
-# pinned source to fall back to, and the operator chose the path they ran.
+# pinned source to fall back to, and the operator chose the path they ran. That
+# checkout is also where the agent posture comes from, and it reaches OUTSIDE
+# this directory: .devcontainer/agent/agent-autonomy.sh, two levels up, is run
+# as root, and the definition beside it is installed as managed policy. The
+# same choice covers both: the operator ran this checkout, so its tree is what
+# runs.
 self_dir=""
 if [ -r "${BASH_SOURCE[0]}" ]; then
     self_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -378,8 +420,14 @@ fi
 assets_local=0
 
 fetched_dir=""
+posture_scratch=""
+# The agent posture's run state, file-scope like the rest: the managed paths
+# left in place as found, and their count for HARMON_BOOTSTRAP_POSTURE_GAPS.
+posture_left_in_place=""
+posture_gaps=0
 cleanup() {
     [ -n "$fetched_dir" ] && rm -rf "$fetched_dir"
+    [ -n "$posture_scratch" ] && rm -rf "$posture_scratch"
     return 0
 }
 trap cleanup EXIT
@@ -420,6 +468,30 @@ export HARMON_VERSIONS_FILE="${asset_dir}/versions.env"
 change_log="$(mktemp)"
 export HARMON_CHANGE_LOG="$change_log"
 tab="$(printf '\t')"
+
+# ---------- locate the agent posture ----------
+# From the SAME source as the install scripts, decided by the same flag: the
+# checkout the tiers came from, or the tag they were fetched from. Never a mix,
+# and never a copy carried here. Fetched before any tier runs, so a tag that
+# lacks the definition stops the run before it has installed anything; and
+# installed before any tier too (below, right after apt-core), so a failing
+# tier cannot leave a harness on this machine without its managed policy.
+if [ "$assets_local" = 1 ]; then
+    posture_root="$(cd "${self_dir}/../.." && pwd)"
+    for asset in $HARMON_AGENT_POSTURE_ASSETS; do
+        [ -r "${posture_root}/${asset}" ] ||
+            die "the agent posture is not in this checkout (${posture_root}/${asset} is missing); run the bootstrap from a harmon-init checkout, or pass --ref <harmon-init release tag>"
+    done
+else
+    posture_root="${fetched_dir}/posture"
+    for asset in $HARMON_AGENT_POSTURE_ASSETS; do
+        mkdir -p "$(dirname "${posture_root}/${asset}")"
+        curl -fsSL --retry 3 --retry-delay 2 \
+            "${HARMON_REPO_RAW}/${ref}/${asset}" \
+            -o "${posture_root}/${asset}" ||
+            die "could not fetch ${asset} at ref ${ref}"
+    done
+fi
 
 # ---------- locale and PATH ----------
 # The remote VM's locale is POSIX with LANG unset (observed 2026-09-27), and a
@@ -536,6 +608,201 @@ done
 
 # ---------- install ----------
 "${asset_dir}/install/apt-core.sh"
+
+# ---------- the agent posture ----------
+# Installed HERE, right after apt-core (which provides jq, its one dependency)
+# and before any tier: a tier that fails must never leave a harness installed
+# on this machine without its managed policy.
+#
+# Every remote environment runs under the agent posture (#1408): the agent
+# Claude Code managed settings and the agent Codex managed config, located
+# above. They are installed and verified by the definition's own installer,
+# agent-autonomy.sh — the script the agent devcontainer runs — so there is one
+# install path rather than two that agree today. It is told four things, for
+# this one child process only — three in its environment, one as an argument:
+#   FOREMAN_DEVCONTAINER=agent  the posture this machine runs under. The script
+#                               refuses to touch managed policy without it,
+#                               which is what keeps it off the bot and dev
+#                               profiles; a remote environment is agent by
+#                               decision (#1404, 2026-09-27), so that is the
+#                               true value rather than a way past the check.
+#   AGENT_AUTONOMY_CONFIG_DIR   the definition located above. Unset, the script
+#                               prefers an image-baked copy, and a machine that
+#                               happened to carry one would install bytes other
+#                               than this ref's.
+#   AGENT_AUTONOMY_*_MANAGED    the destinations, stated rather than defaulted
+#                               so this file and that one cannot disagree.
+#   --platform-vm               install and verify the two files only. In the
+#                               agent devcontainer apply also makes every harness
+#                               the definition refuses non-executable; on a
+#                               platform's VM those executables are the
+#                               platform's, and changing their modes as root is
+#                               not this script's to do. Harness refusal on a
+#                               platform VM is a recorded delivery gap, with the
+#                               platform's own controls named per platform in
+#                               docs/architecture/remote-environments.md.
+#                               An argument, never an environment variable, so
+#                               no repository setting can switch it on in the
+#                               agent devcontainer, whose lifecycle never
+#                               passes it.
+#
+# A file already at a destination that is NOT the definition is left in place:
+# a platform may supply managed policy of its own, and replacing it could
+# remove a stronger control than ours. The run reports the file and its digest,
+# records the posture as not applied for it, and completes. Replacing it is an
+# operator's explicit choice, HARMON_AGENT_POSTURE_REPLACE=1, which keeps the
+# previous file beside it under a name never used before.
+
+# posture_digest <file> — SHA-256, from GNU sha256sum or the shasum macOS ships.
+posture_digest() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$1" | cut -d' ' -f1
+    else
+        shasum -a 256 "$1" | cut -d' ' -f1
+    fi
+}
+
+# posture_describe <path> — what was found there: its SHA-256, or, for a
+# symlink, where it points and whether that target exists. Only a regular file
+# has a digest; anything else (a directory, a device) says so rather than
+# printing an empty one.
+posture_describe() {
+    if [ -L "$1" ] && [ ! -e "$1" ]; then
+        printf 'a dangling symlink to %s' "$(readlink "$1")"
+    elif [ -L "$1" ] && [ -f "$1" ]; then
+        printf 'a symlink to %s, sha256 %s' "$(readlink "$1")" "$(posture_digest "$1")"
+    elif [ -L "$1" ]; then
+        printf 'a symlink to %s, not a regular file' "$(readlink "$1")"
+    elif [ -f "$1" ]; then
+        printf 'sha256 %s' "$(posture_digest "$1")"
+    else
+        printf 'not a regular file'
+    fi
+}
+
+# prepare_posture_dest <definition file> <destination> — decide what happens to
+# one destination, and print the path agent-autonomy.sh is to use for it: the
+# destination itself, or, when a platform's file is left in place, the scratch
+# path $3, so the installer cannot replace it. Creates the
+# destination's directory when it is missing (Claude Code on the web has no
+# /etc/claude-code/, observed 2026-09-27). Every destination written is
+# recorded as an install, so a second run reports none. It runs in a command
+# substitution, so it sets no variable of the caller's.
+prepare_posture_dest() {
+    local src="$1" dest="$2" scratch="$3" kept
+    if [ ! -d "$(dirname "$dest")" ]; then
+        install -d -m 0755 "$(dirname "$dest")"
+        printf '    created %s\n' "$(dirname "$dest")" >&2
+    fi
+    # Absent means NOTHING at the path. `-e` alone follows a symlink, so a
+    # dangling one — a platform's link to a target it has not populated yet —
+    # would read as absent and be replaced without a word.
+    if [ ! -e "$dest" ] && [ ! -L "$dest" ]; then
+        harmon_changed "agent posture ${dest}" >&2
+    elif cmp -s "$src" "$dest"; then
+        printf '    (already the agent posture) %s\n' "$dest" >&2
+    elif [ "${HARMON_AGENT_POSTURE_REPLACE:-}" = "1" ]; then
+        # mktemp, never a timestamp alone: two runs in one second would
+        # otherwise overwrite the first kept copy with the posture itself.
+        # -P keeps a symlink as the link itself, dangling or not.
+        kept="$(mktemp "${dest}.replaced-XXXXXX")" &&
+            cp -pP -- "$dest" "$kept" ||
+            die "could not keep the existing ${dest} before replacing it"
+        if [ -L "$dest" ]; then
+            rm -f -- "$dest" || die "could not remove the symlink at ${dest} before replacing it"
+        fi
+        warn "found ${dest} ($(posture_describe "$kept")) that is not the agent posture — replacing it because HARMON_AGENT_POSTURE_REPLACE=1; the previous file is kept at ${kept}"
+        harmon_changed "agent posture ${dest} (replaced; the previous file is ${kept})" >&2
+    else
+        warn "found ${dest} ($(posture_describe "$dest")) that is not the agent posture — left in place, so the agent posture is NOT applied for this file. A platform may supply managed policy of its own; set HARMON_AGENT_POSTURE_REPLACE=1 to replace it (the previous file is kept)."
+        printf '%s\n' "$scratch"
+        return 0
+    fi
+    printf '%s\n' "$dest"
+}
+
+# posture_missing_hooks — the files the installed posture's hook commands name
+# that do not exist on this machine, one per line: EVERY absolute path in a
+# command, not only its first word, because a Codex hook is a wrapper whose
+# argument is the hook script. The definition's hooks are the
+# agent IMAGE's files (/etc/claude-code/hooks/, /etc/codex/hooks/), and this
+# bootstrap installs none: hook guards in remote sessions are deferred by
+# #1402. Reported so the gap is visible where it happens, never "fixed" by
+# editing the definition, and recorded per platform in
+# docs/architecture/remote-environments.md § Adapters. A file left in place is
+# not the posture, so it is not read.
+posture_missing_hooks() {
+    local cmd
+    {
+        case " ${posture_left_in_place} " in
+        *" ${HARMON_AGENT_CLAUDE_MANAGED} "*) ;;
+        *) jq -r '.. | objects | .command? | select(type == "string") | split("\\s+"; "")[] | select(startswith("/"))' "$HARMON_AGENT_CLAUDE_MANAGED" ;;
+        esac
+        case " ${posture_left_in_place} " in
+        *" ${HARMON_AGENT_CODEX_MANAGED} "*) ;;
+        *) sed -n 's/^[[:space:]]*command[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' "$HARMON_AGENT_CODEX_MANAGED" | tr ' \t' '\n\n' | sed -n '/^\//p' ;;
+        esac
+    } | sort -u | while IFS= read -r cmd; do
+        [ -n "$cmd" ] && [ ! -x "$cmd" ] && printf '%s\n' "$cmd"
+        true
+    done
+}
+
+install_agent_posture() {
+    local config_dir="${posture_root}/.devcontainer/config/agent"
+    local autonomy="${posture_root}/.devcontainer/agent/agent-autonomy.sh"
+    local missing step dest claude_target codex_target covered=""
+    printf '\n==> agent posture (from %s)\n' "${ref:-the checkout at ${posture_root}}"
+    # Global, so cleanup() removes it on every exit, a die in the loop included.
+    posture_scratch="$(mktemp -d)"
+    # Stated rather than inherited, as for fetched_dir: root's installer writes
+    # the decoy destinations here.
+    chmod 0700 "$posture_scratch"
+    claude_target="$(prepare_posture_dest "${config_dir}/claude-managed-settings.json" \
+        "$HARMON_AGENT_CLAUDE_MANAGED" "${posture_scratch}/managed-settings.json")"
+    codex_target="$(prepare_posture_dest "${config_dir}/codex-managed-config.toml" \
+        "$HARMON_AGENT_CODEX_MANAGED" "${posture_scratch}/managed_config.toml")"
+    # The substitutions above ran in subshells; which destinations were left in
+    # place is recovered from where they now point.
+    posture_left_in_place=""
+    [ "$claude_target" = "$HARMON_AGENT_CLAUDE_MANAGED" ] ||
+        posture_left_in_place="${posture_left_in_place} ${HARMON_AGENT_CLAUDE_MANAGED}"
+    [ "$codex_target" = "$HARMON_AGENT_CODEX_MANAGED" ] ||
+        posture_left_in_place="${posture_left_in_place} ${HARMON_AGENT_CODEX_MANAGED}"
+    # The count the run reports beside its install counters, so a run that left
+    # every destination in place cannot read like a clean re-run.
+    posture_gaps="$(printf '%s' "$posture_left_in_place" | wc -w | tr -d ' ')"
+    for dest in "$HARMON_AGENT_CLAUDE_MANAGED" "$HARMON_AGENT_CODEX_MANAGED"; do
+        case " ${posture_left_in_place} " in
+        *" ${dest} "*) ;;
+        *) covered="${covered} ${dest}" ;;
+        esac
+    done
+    for step in apply verify; do
+        FOREMAN_DEVCONTAINER=agent \
+            AGENT_AUTONOMY_CONFIG_DIR="$config_dir" \
+            AGENT_AUTONOMY_CLAUDE_MANAGED="$claude_target" \
+            AGENT_AUTONOMY_CODEX_MANAGED="$codex_target" \
+            bash "$autonomy" "$step" --platform-vm ||
+            die "agent-autonomy.sh ${step} failed — the agent posture is not in effect on this machine"
+    done
+    rm -rf "$posture_scratch"
+    posture_scratch=""
+    # verify ran against a scratch path for a destination left in place, so its
+    # "verify passed" is about the files named here and nothing else.
+    printf '==> agent posture: verify covered%s%s\n' "${covered:- nothing}" \
+        "${posture_left_in_place:+ (not verified, left in place:${posture_left_in_place})}"
+    if [ -n "$posture_left_in_place" ]; then
+        warn "the agent posture is NOT applied for:${posture_left_in_place} — each was left in place as found (see above). That is a delivery gap for this machine, not a failed run."
+    fi
+    # A report, so it can never fail the run: a scan that errors says so.
+    missing="$(posture_missing_hooks)" ||
+        warn "could not scan the installed agent posture's hook commands — the hook-gap report below is incomplete"
+    [ -z "$missing" ] ||
+        warn "the agent posture names hook commands this machine does not have: $(printf '%s' "$missing" | tr '\n' ' ' | sed 's/ $//') — the bootstrap installs no hooks (hook guards in remote sessions are deferred by #1402), so each is a failing command whenever its hook fires. The permission rules do not depend on them."
+}
+install_agent_posture
+
 for tier in $HARMON_TIER_ORDER; do
     case ",${tiers}," in
     *",${tier},"*)
@@ -544,8 +811,6 @@ for tier in $HARMON_TIER_ORDER; do
         ;;
     esac
 done
-# The agent posture (managed Claude Code settings, Codex configuration) is
-# #1404's unit, which adds it to the image and to this bootstrap in one change.
 
 # ---------- verify what the tiers promised ----------
 printf '\n==> verifying\n'
@@ -727,3 +992,8 @@ printf '\n==> bootstrap complete: tiers %s, %s new install(s), %s apt upgrade(s)
 printf 'HARMON_BOOTSTRAP_NEW_INSTALLS=%s\n' "$new_installs"
 printf 'HARMON_BOOTSTRAP_UPGRADES=%s\n' "$upgrades"
 printf 'HARMON_BOOTSTRAP_CHANGES=%s\n' "$((new_installs + upgrades))"
+# Managed files left in place, so the agent posture is NOT applied for them. A
+# gap, not a change: a second run reports the same gaps and still installs 0.
+# Printed here with the other counters, so a run that fails in a tier AFTER the
+# posture step prints none of them; its nonzero exit status is what says so.
+printf 'HARMON_BOOTSTRAP_POSTURE_GAPS=%s\n' "$posture_gaps"

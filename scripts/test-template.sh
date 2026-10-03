@@ -93,6 +93,19 @@ err() {
     fail=1
 }
 
+# Required CI runs every `test:*` target through ONE step, `task test:suite`
+# (#1461; the per-profile "verify <-> CI parity" section below asserts the call),
+# so "required CI runs X" means "X is in the suite's plan". Without go-task the
+# plan cannot be read: that fails in CI and is an explicit SKIP locally, via
+# `required` like every other missing tool here — never a silent pass.
+suite_runs() {
+    have task || {
+        required task "suite membership of $1" || return 1
+        return 0
+    }
+    grep -qF "task: [$1]" <<<"$(task --color=false --dry test:suite 2>&1 || true)"
+}
+
 # ── Quiet-but-not-silent command capture (#934) ─────────────────────────────
 #
 # A rendered-repo gate that can fail with no evidence turns an intermittent
@@ -236,6 +249,10 @@ full)
         --data use_antigravity_cli=true
         --data use_copilot_cli=true
         --data use_alternative_claude_providers=true
+        # use_fly_sprites defaults OFF (Sprites need a paid Fly.io org), so this
+        # is the only profile that renders sprites/; every other one proves the
+        # default renders none of it (#1411).
+        --data use_fly_sprites=true
         --data devcontainer_coder_folder_uri="vscode-remote://dev-container+7b22686f737450617468223a222f7372762f636f6465722f736d6f6b652d74657374222c22636f6e66696746696c65223a7b2270617468223a222f7372762f636f6465722f736d6f6b652d746573742f2e646576636f6e7461696e65722f6465762f646576636f6e7461696e65722e6a736f6e227d7d@ssh-remote+coder.dev/workspaces/smoke-test"
         --data use_foreman=true
         --data foreman_additional_trusted_actors="AdmiralFraggle,review-app[bot]"
@@ -414,6 +431,48 @@ else
     err "no Taskfile.yml generated"
 fi
 
+# ── 1-ci. verify <-> required CI parity holds in every render profile (#1461) ──
+# Both run their `test:*` targets through the one aggregate task, so a rendered
+# repo's required Build workflow runs every target its `verify` runs. Asserted
+# three ways: the `lint` job calls the aggregate, `verify` lists it itself, and
+# every `test:*` target in verify's plan is in the aggregate's plan — then the
+# rendered guard (with its planted cases) runs. The first two are plain text
+# checks on the rendered files (a block runs from its two-space-indented key to
+# the next one), the third asks `task` for the plan.
+if [ -f .github/workflows/build.yml ]; then
+    awk '/^  lint:[[:space:]]*$/ { on = 1; next } on && /^  [^ #]/ { exit } on' .github/workflows/build.yml |
+        grep -Eq '^[[:space:]]*(-[[:space:]]+)?run:[[:space:]]+task test:suite[[:space:]]*$' ||
+        err "rendered build.yml's lint job does not call \`task test:suite\` in a step"
+    awk '/^  verify:[[:space:]]*$/ { on = 1; next } on && /^  [^ #]/ { exit } on' Taskfile.yml |
+        grep -Eq '^[[:space:]]+-[[:space:]]+task:[[:space:]]+test:suite[[:space:]]*$' ||
+        err "rendered \`verify\` does not list \`task: test:suite\` itself"
+    if have task; then
+        # A plan that cannot be read (a broken rendered Taskfile) must fail the
+        # profile, not leave the loop below with no targets to compare.
+        parity_plans_ok=1
+        parity_verify_plan="$(task --color=false --dry verify 2>&1)" || {
+            echo "$parity_verify_plan" >&2
+            err "could not read the plan of rendered \`task verify\` (task --dry verify failed), so verify <-> CI parity was not compared"
+            parity_plans_ok=0
+        }
+        parity_suite_plan="$(task --color=false --dry test:suite 2>&1)" || {
+            echo "$parity_suite_plan" >&2
+            err "could not read the plan of rendered \`task test:suite\` (task --dry test:suite failed), so verify <-> CI parity was not compared"
+            parity_plans_ok=0
+        }
+        if [ "$parity_plans_ok" = 1 ]; then
+            for parity_target in $(grep -oE '^task: \[test:[^]]+\]' <<<"$parity_verify_plan" | sed -E 's/^task: \[(.*)\]$/\1/'); do
+                grep -qF "task: [${parity_target}]" <<<"$parity_suite_plan" ||
+                    err "rendered verify runs ${parity_target}, which the required Build workflow's test:suite does not"
+            done
+        fi
+        run_quiet verify-ci-parity ./scripts/test-verify-ci-parity.sh ||
+            err "rendered test-verify-ci-parity.sh fails"
+    else
+        required task "verify <-> CI parity" || fail=1
+    fi
+fi
+
 # ── 1a. Machine-readable agent vocabulary survives every render profile ──
 if [ ! -x scripts/test-agent-registry.sh ]; then
     err "agent registry test is missing or not executable"
@@ -428,7 +487,7 @@ else
     required task "agent registry verify reachability" || fail=1
 fi
 if [ -f .github/workflows/build.yml ]; then
-    grep -qF 'task test:agent-registry' .github/workflows/build.yml ||
+    suite_runs test:agent-registry ||
         err "required CI does not run test:agent-registry"
 fi
 case "$profile" in
@@ -459,12 +518,12 @@ else
     required task "registry-drift verify reachability" || fail=1
 fi
 if [ -f .github/workflows/build.yml ]; then
-    grep -qF 'task test:registry-drift' .github/workflows/build.yml ||
+    suite_runs test:registry-drift ||
         err "required CI does not run test:registry-drift"
 fi
 
 # The published family/harness tables are generated from the registry and gated
-# against it (ADR 0005 D10). Like the drift gate it ships unconditionally and
+# against it (ADR 2026-08-07 D10). Like the drift gate it ships unconditionally and
 # passes on every profile — it says so and skips where the profile's
 # project_management answer renders no GitHub Projects document. Called bare
 # here, so the answers-file DEFAULT path is exercised too.
@@ -497,7 +556,7 @@ else
     required task "registry-docs verify reachability" || fail=1
 fi
 if [ -f .github/workflows/build.yml ]; then
-    grep -qF 'task test:registry-docs' .github/workflows/build.yml ||
+    suite_runs test:registry-docs ||
         err "required CI does not run test:registry-docs"
 fi
 
@@ -548,7 +607,7 @@ else
     required task "worktree entrypoint reachability" || fail=1
 fi
 if [ -f .github/workflows/build.yml ]; then
-    grep -qF 'task test:worktree' .github/workflows/build.yml ||
+    suite_runs test:worktree ||
         err "required CI does not run test:worktree"
 fi
 
@@ -600,7 +659,7 @@ else
     required task "label-registry verify reachability + execution" || fail=1
 fi
 if [ -f .github/workflows/build.yml ]; then
-    grep -qF 'task test:label-registry' .github/workflows/build.yml ||
+    suite_runs test:label-registry ||
         err "required CI does not run test:label-registry"
 fi
 
@@ -847,7 +906,7 @@ if [ "$validation_scope" = "renovate-config" ]; then
 fi
 grep -q '^use_codeql:' .copier-answers.yml || err "answers file does not persist explicit use_codeql intent"
 grep -q '^codeql_languages:' .copier-answers.yml || err "answers file does not persist explicit codeql_languages"
-grep -q 'task test:ci-results' .github/workflows/build.yml ||
+suite_runs test:ci-results ||
     err "rendered build workflow does not run the CI result helper regression (test:ci-results)"
 [ -x scripts/test-ci-results.sh ] || err "CI result helper regression missing or not executable"
 ./scripts/test-ci-results.sh >/dev/null || err "rendered CI result helper regression failed"
@@ -1333,7 +1392,7 @@ minimal) # project_management=github on a PERSONAL account, use_foreman=false
         err "project-management.md omits the area: solution-space label-family guidance"
     grep -qF 'At most one each of `area:`/`domain:`/`layer:` per issue' docs/project-management.md ||
         err "project-management.md omits the area/domain/layer cardinality guidance"
-    grep -qF '**Tier** — which model-routing stratum works a specific **role**' docs/project-management.md ||
+    grep -qF '**Tier** — the model-routing stratum an issue runs at.' docs/project-management.md ||
         err "project-management.md omits the tier: label-family guidance"
     grep -qF '**Strategy** — the primary topology/workflow axis' docs/project-management.md ||
         err "project-management.md omits the strategy: label-family guidance"
@@ -1605,7 +1664,7 @@ iac | full)
             err "CHECKLIST legacy-label migration can silently truncate a capped association sweep"
         ! grep -Fq '[project-management.md](project-management.md)' <<<"$checklist_flat" ||
             err "CHECKLIST links to the omitted GitHub project-management doc for project_management=none"
-        ! grep -Fq 'ADR 0005' <<<"$checklist_flat" ||
+        ! grep -Fq 'ADR 2026-08-07' <<<"$checklist_flat" ||
             err "CHECKLIST cites a repository-only ADR for project_management=none"
         grep -Fq 'Copilot is a broker, not a fixed family: `mai` is only the picker default' <<<"$checklist_flat" ||
             err "CHECKLIST loses the Copilot broker/default-family distinction"
@@ -1711,13 +1770,51 @@ if [ "$profile" = "full" ] || [ "$profile" = "meta" ]; then
     grep -q 'challenge:codex:' Taskfile.yml || err "challenge:codex task missing (use_codex_review=true)"
     grep -q 'codex:gate:enable:' Taskfile.yml || err "codex:gate:enable task missing (use_codex_review=true)"
     grep -q '"codex@openai-codex": true' .claude/settings.json || err ".claude/settings.json missing codex plugin enablement (use_codex_review=true)"
+    # The remote second-model guard ships with the rule it guards, and must pass
+    # against the RENDERED surfaces: the root copy scans harmon-init's own files,
+    # so a forbidden line added only under template/ first fails here.
+    if [ ! -x scripts/test-remote-codex-policy.sh ]; then
+        err "scripts/test-remote-codex-policy.sh missing or not executable (use_codex_review=true)"
+    elif ! ./scripts/test-remote-codex-policy.sh; then
+        err "rendered Codex policy guard fails"
+    fi
+    if have task; then
+        grep -qF './scripts/test-remote-codex-policy.sh' \
+            <<<"$(task --color=false --dry verify 2>&1 || true)" ||
+            err "task verify does not reach test:remote-codex-policy (use_codex_review=true)"
+    else
+        required task "remote Codex policy verify reachability" || fail=1
+    fi
+    if [ -f .github/workflows/build.yml ]; then
+        suite_runs test:remote-codex-policy ||
+            err "required CI does not run test:remote-codex-policy (use_codex_review=true)"
+    fi
 else
     [ ! -f scripts/codex-review.sh ] || err "scripts/codex-review.sh rendered but use_codex_review is off"
     [ ! -f scripts/codex-gate.sh ] || err "scripts/codex-gate.sh rendered but use_codex_review is off"
     [ ! -f docs/guides/codex-review.md ] || err "docs/guides/codex-review.md rendered but use_codex_review is off"
     ! grep -q 'challenge:codex' Taskfile.yml || err "challenge:codex task rendered but use_codex_review is off"
     ! grep -q 'codex@openai-codex' .claude/settings.json || err "codex plugin enablement rendered but use_codex_review is off"
+    [ ! -f scripts/test-remote-codex-policy.sh ] || err "scripts/test-remote-codex-policy.sh rendered but use_codex_review is off"
+    ! grep -q 'test:remote-codex-policy:' Taskfile.yml || err "test:remote-codex-policy task rendered but use_codex_review is off"
+    if [ -f .github/workflows/build.yml ]; then
+        ! grep -qF 'task test:remote-codex-policy' .github/workflows/build.yml ||
+            err "CI runs test:remote-codex-policy but use_codex_review is off"
+    fi
 fi
+# git-merge-guard replaces the `git merge` ask rules in every profile: the hook
+# must be registered on Bash (fail-closed fallback included) and those rules gone.
+[ -x .claude/hooks/git-merge-guard.py ] || err ".claude/hooks/git-merge-guard.py missing or not executable"
+[ -x scripts/test-git-merge-guard.sh ] || err "scripts/test-git-merge-guard.sh missing or not executable"
+jq -e '[.hooks.PreToolUse[]? | select(.matcher == "Bash") | .hooks[]?
+    | select(.type == "command"
+        and (.command | contains("\"$CLAUDE_PROJECT_DIR/.claude/hooks/git-merge-guard.py\""))
+        and (.command | contains("|| printf")))] | length == 1' .claude/settings.json >/dev/null ||
+    err ".claude/settings.json does not register git-merge-guard.py as a PreToolUse Bash hook with the ask fallback"
+jq -e '[.permissions.ask[] | select(test("^Bash\\(git merge"))] | length == 0' .claude/settings.json >/dev/null ||
+    err ".claude/settings.json still asks on every git merge (the guard replaces those rules)"
+jq -e '.permissions.ask | (index("Bash(gh pr merge)") != null) and (index("Bash(git push origin main)") != null) and (index("Bash(git push --force:*)") != null)' .claude/settings.json >/dev/null ||
+    err ".claude/settings.json lost the gh pr merge / push-to-main / force-push ask rules"
 if [ "$profile" = "full" ]; then
     grep -Fq '@codex review' AGENTS.md || err "AGENTS missing explicit Codex shepherd trigger (use_codex_cloud_review=true)"
     grep -Fq 'headRefOid' AGENTS.md || err "AGENTS missing current-head Codex shepherd contract (use_codex_cloud_review=true)"
@@ -2228,6 +2325,61 @@ if [ "$profile" = "full" ]; then
         ) || err "devcontainer=true, use_antigravity_cli=false render failed task test:devcontainer:permissions"
     else
         err "devcontainer=true, use_antigravity_cli=false render failed to generate"
+    fi
+fi
+
+# A generated repository with second-model review ON and the devcontainer OFF:
+# the pair the remote Codex policy guard's environment-example floor once broke,
+# because the examples it wants render only with the devcontainer. A third
+# surgical render (only on the "meta" pass, which already turns the review on)
+# rather than a new profile; it overrides the two answers under test and turns
+# Foreman off, which copier.yml requires without a devcontainer.
+if [ "$profile" = "meta" ]; then
+    nodc_dest="$job_tmp/render-codex-no-devcontainer"
+    if copier copy --trust --defaults --vcs-ref=HEAD \
+        "${copier_flags[@]+"${copier_flags[@]}"}" \
+        "${data_args[@]}" --data devcontainer=false --data use_foreman=false \
+        "$repo_root" "$nodc_dest"; then
+        [ ! -d "$nodc_dest/.devcontainer" ] ||
+            err "the Codex-on/devcontainer-off render still has a .devcontainer"
+        if [ ! -x "$nodc_dest/scripts/test-remote-codex-policy.sh" ]; then
+            err "the Codex-on/devcontainer-off render has no executable remote Codex policy guard"
+        else
+            (cd "$nodc_dest" && ./scripts/test-remote-codex-policy.sh) ||
+                err "the remote Codex policy guard fails in a Codex-on/devcontainer-off render"
+        fi
+    else
+        err "use_codex_review=true, devcontainer=false render failed to generate"
+    fi
+fi
+
+# ── Fly.io Sprites opt-in (#1411) ─────────────────────────────────────
+# Paid SaaS defaults off: only `full` answers use_fly_sprites=true, and there the
+# rendered generator must pass the same derivation test the root runs, against
+# the RENDERED project's own allowlist. Every other profile renders with the
+# default and must contain nothing for Sprites.
+if [ "$profile" = "full" ]; then
+    if [ ! -x "$dest/sprites/network-policy.sh" ]; then
+        err "use_fly_sprites=true did not render an executable sprites/network-policy.sh"
+    else
+        "$repo_root/scripts/test-sprites-policy.sh" "$dest/sprites" >"$job_tmp/sprites-policy.log" 2>&1 ||
+            err "the rendered Sprites network-policy generator fails test-sprites-policy: $(tail -3 "$job_tmp/sprites-policy.log")"
+    fi
+else
+    [ ! -e "$dest/sprites" ] || err "profile '$profile' rendered sprites/ without opting in to use_fly_sprites"
+fi
+# The allowlist the policy is generated from ships only with the devcontainer,
+# so the opt-in must be refused without it rather than render a generator with
+# nothing to read. `minimal` already turns the devcontainer off.
+if [ "$profile" = "minimal" ]; then
+    sprites_nodc_dest="$job_tmp/render-sprites-no-devcontainer"
+    if copier copy --trust --defaults --vcs-ref=HEAD \
+        "${copier_flags[@]+"${copier_flags[@]}"}" \
+        "${data_args[@]}" --data use_fly_sprites=true \
+        "$repo_root" "$sprites_nodc_dest" >"$job_tmp/sprites-nodc.log" 2>&1; then
+        err "use_fly_sprites=true was accepted with devcontainer=false"
+    elif ! grep -q 'Enable DEVCONTAINER before FLY.IO SPRITES' "$job_tmp/sprites-nodc.log"; then
+        err "use_fly_sprites=true, devcontainer=false failed for a reason other than the opt-in validator: $(tail -3 "$job_tmp/sprites-nodc.log")"
     fi
 fi
 

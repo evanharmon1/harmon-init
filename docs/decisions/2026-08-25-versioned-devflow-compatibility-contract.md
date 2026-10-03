@@ -1,4 +1,4 @@
-# 8. Version the devflow compatibility contract
+# Version the devflow compatibility contract
 
 Date: 2026-08-25
 

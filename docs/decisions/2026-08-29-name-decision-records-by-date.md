@@ -4,7 +4,7 @@ Date: 2026-08-29
 
 ## Status
 
-Accepted
+Accepted; amended by [2026-09-30-rename-numbered-decision-records-by-date.md](2026-09-30-rename-numbered-decision-records-by-date.md) (numbered records are renamed)
 
 Amends two clauses of [the seed record](2026-06-19-record-architecture-decisions.md)
 (formerly `0001-record-architecture-decisions.md`): the naming rule
@@ -21,7 +21,7 @@ v2", 2026-08-28) surfaced the cost of sequential numbering: an agent filing a
 new ADR must first look up the last number in use, and two branches that each
 add a record race for the same next number. That race is not hypothetical —
 PR #1114 and this repo's own
-[0008-versioned-devflow-compatibility-contract.md](0008-versioned-devflow-compatibility-contract.md)
+[0008-versioned-devflow-compatibility-contract.md](2026-08-25-versioned-devflow-compatibility-contract.md)
 collided on `0008-` exactly this way. The number itself carries no
 information a reader can use before opening the file.
 
