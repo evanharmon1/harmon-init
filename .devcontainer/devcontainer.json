@@ -47,6 +47,7 @@
     // No 1Password CLI in the bot profile — this container must hold no path
     // to production secrets (docs/guides/devcontainers.md). The human dev
     // profile (.devcontainer/dev/) keeps its own op feature.
+    // Keep until the Dockerfile's image pin ships /usr/local/bin/gh in its core tier; that pin-bump PR deletes this.
     "ghcr.io/devcontainers/features/github-cli:1": {}
   },
   "mounts": [

@@ -37,5 +37,21 @@ Calm, repeatable how-tos read *in advance* (the crisis counterpart is
   fanning out many worker sessions from one orchestrator (subagents vs pane
   workers, lifecycle, cleanup); and running several harnesses — Claude Code,
   Codex, Antigravity, OpenCode — side by side on their own subscriptions.
+- [claude-code-web.md](claude-code-web.md) — the one Claude Code on the web
+  environment for all repos: setup script at a pinned release tag, network
+  level, secrets and identity, what the platform's GitHub proxy does to the
+  `gh` calls in the dev loop (with a call inventory), the `--cloud` /
+  `--teleport` bridges, and the observations still pending a live session.
+- [codex-cloud.md](codex-cloud.md) — the Codex cloud environment: the two
+  documented generations and which surfaces use which, the setup script at a
+  pinned release tag, agent-phase network level, secrets, what a Codex mention
+  starts, the `codex cloud exec` / `apply` implementer-lane bridge, and the
+  observations still pending a provisioned environment.
+- [sprites.md](sprites.md) — Fly.io Sprites, the paid opt-in platform for
+  autonomous remote lanes (`use_fly_sprites`): cost and account, provisioning
+  from the shared bootstrap with a checkpoint, credentials on stdin, the
+  network policy generated from the shared egress allowlist and applied from
+  outside the VM, Herdr attachment, and the observations still pending a
+  provisioned Sprite.
 
 TODO: add more guides, e.g. "local development setup", "add a feature", "how X works".

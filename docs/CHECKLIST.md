@@ -99,6 +99,22 @@ the compatibility reason in the rule's `description`.
       scoped to one resource owner, so a **new owner needs a new PAT**. Both layers
       are required — the collaborator grant sets the ceiling, the PAT's repo list
       reaches it. Procedure: [guides/bot-account.md](guides/bot-account.md).
+- [ ] **[human-only] Agent PAT** — only if this repo allows unattended remote
+      lanes (the agent devcontainer, `.devcontainer/agent/`). A **separate**
+      fine-grained PAT on the bot account, same permissions as the bot's, expiry
+      of 180 days at most, its own repository list, one per resource owner;
+      supplied as `AGENT_GH_TOKEN`, never as `GH_TOKEN`. Procedure:
+      [guides/bot-account.md](guides/bot-account.md#the-agent-pat-the-agent-postures-own-token).
+- [ ] **[human-only] Fly.io Sprites (paid, opt-in)** — only if this repo runs
+      remote agent lanes on Sprites (`use_fly_sprites`). A Fly.io organization
+      with a credit card on file (new organizations get a one-time trial
+      credit; a Sprite is billed for compute while running and for storage
+      while idle), and a Sprites API token for that organization kept in your
+      secret store — the `sprite` CLI and `sprites/network-policy.sh apply`
+      read it, nothing commits it. Then, once per Sprite, the maintainer signs
+      its Codex CLI in by hand through `sprite console`; an agent never does,
+      and that login is never copied to another machine. Procedure:
+      [guides/sprites.md](guides/sprites.md).
 - [ ] Import the branch ruleset (see [architecture/branch-protection.md](architecture/branch-protection.md)) — do this once `build.yml` and `devcontainer-build.yml` are on `main` so the required `verify`/`security`/`devcontainer-verify` checks resolve. **Use the UI import:** Settings → Rules → Rulesets → **New ruleset ▸ Import a ruleset** → select `.github/Branch Protection Ruleset - Protect Main.json`. (Prefer the UI over `gh api … rulesets`: the API `POST` is not idempotent — re-running creates a duplicate ruleset — and currently rejects the `merge_queue` rule. To later change the ruleset, edit the existing one in the UI rather than re-importing.)
 - [ ] **[human-only] Add `closing-keywords` to the live branch ruleset** —
       **required, not optional, and no longer deferrable.** Until
@@ -410,7 +426,10 @@ the compatibility reason in the rule's `description`.
       `GH_TOKEN` for the bot profile and `TS_AUTHKEY` for the dev one — the dev
       profile carries no `GH_TOKEN` and runs `gh auth login` instead.
       `init-env.sh` enforces the per-profile
-      allow-list; on Coder the values come from workspace parameters. See
+      allow-list; on Coder the values come from workspace parameters. The
+      agent posture's `.devcontainer/agent/devcontainer.env` takes only
+      `AGENT_GH_TOKEN` and `CLAUDE_CODE_OAUTH_TOKEN` (plus opted-in provider
+      keys) and refuses to build with anything else. See
       [guides/devcontainers.md](guides/devcontainers.md)
 
 ## 5. Docs & meta

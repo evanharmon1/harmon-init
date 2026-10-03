@@ -34,3 +34,4 @@ onward (diagrams and component deep-dives also live here):
 - [branch-protection.md](branch-protection.md) — in-repo (CODEOWNERS) + out-of-repo (ruleset, Actions toggles, bot model) stitched into one picture (grep can't see GitHub settings).
 - [tests.md](tests.md) — the testing strategy holistically (shape, layers, what's tested where); routes to the testing decision and the guides.
 - [devcontainer-image.md](devcontainer-image.md) — the canonical shared toolchain image, immutable consumer contract, publication, and pin propagation.
+- [remote-environments.md](remote-environments.md) — how a cloud VM that cannot pull that image gets the same toolchain from the same pins; the one bootstrap entrypoint and the per-platform adapters.
