@@ -98,7 +98,8 @@ check('missing inputs without a Tier: only needs-triage', () => {
 check('an off-scale input is reported, not guessed', () => {
   const d = m.decide(issue([...triaged, 'risk:bogus', 'complexity:m', 'tier:apex']), ctx)
   assert.deepEqual(d.remove, [])
-  assert.deepEqual(d.reports.map((r) => r.code), ['unrecognized-value', 'invalid-input'])
+  // Not applied, so not derived: reported, and the stale Tier left as it is.
+  assert.deepEqual(d.reports.map((r) => r.code), ['unrecognized-value', 'cache-unverifiable'])
 })
 check('a conflicted axis: no value read, not triaged, needs-triage kept (C1-F3)', () => {
   const d = m.decide(issue([...triaged, 'risk:high', 'risk:low', 'complexity:m', 'needs-triage']), ctx)
@@ -110,6 +111,15 @@ check('an unknown value does not classify its axis (C1-F3)', () => {
   assert.equal(d.triaged, false)
   assert.ok(!d.remove.includes('needs-triage'))
   assert.equal(d.reports[0].code, 'unrecognized-value')
+})
+check('the Tier is derived only from applied inputs: a retired Risk writes no Tier', () => {
+  const synthetic = structuredClone(registry)
+  const risk = synthetic.families.find((f) => f.family === 'risk').values.find((v) => v.value === 'high')
+  risk.retired = true
+  const v = m.activeVocabulary(synthetic)
+  const d = m.decide(issue([...triaged, 'risk:high', 'complexity:m', 'tier:standard']), { ...ctx, vocabulary: v })
+  assert.deepEqual([d.add.filter((l) => l.startsWith('tier:')), d.remove], [[], []])
+  assert.ok(d.reports.some((r) => r.code === 'unrecognized-value'))
 })
 check('a retired value does not classify its axis (C1-F3)', () => {
   const synthetic = structuredClone(registry)
@@ -137,6 +147,15 @@ check('exactly one work-type label types an issue; two are a conflicted axis', (
   assert.ok(two.reports.some((r) => r.code === 'conflicted-axis' && /work-type/.test(r.message)))
   // A native Issue Type types the issue whatever its labels say.
   assert.equal(m.decide(issue(['feature', 'bug', ...rest], { issueType: 'Task' }), ctx).triaged, true)
+})
+check('a tool-only work-type value is never a Type: dependencies alone is untyped, with task it is typed', () => {
+  assert.ok(!workTypes.includes('dependencies'), 'dependencies has writers [tool:renovate]')
+  const rest = ['area:ci', 'layer:none', 'domain:none', 'impact:low', 'risk:high', 'complexity:m', 'needs-triage']
+  const alone = m.decide(issue(['dependencies', ...rest]), ctx)
+  assert.equal(alone.triaged, false)
+  const withTask = m.decide(issue(['task', 'dependencies', ...rest]), ctx)
+  assert.equal(withTask.triaged, true)
+  assert.ok(!withTask.reports.some((r) => r.code === 'conflicted-axis'))
 })
 check('a retired work type does not type an issue (C1-F4)', () => {
   assert.ok(!workTypes.includes('enhancement'), 'enhancement is retired in label-registry.json')
@@ -375,8 +394,10 @@ function fakeClient(initial, { onRead = {}, failWrites = [] } = {}) {
         fails.splice(i, 1)
         throw new Error(`${method} ${path}: 502 bad gateway`)
       }
-      if (method === 'POST' && !labels.includes(label)) labels = [...labels, label]
-      if (method === 'DELETE') labels = labels.filter((l) => l !== label)
+      // GitHub matches label names case-insensitively; so does this fake.
+      const same = (l) => typeof l === 'string' && l.toLowerCase() === label.toLowerCase()
+      if (method === 'POST' && !labels.some(same)) labels = [...labels, label]
+      if (method === 'DELETE') labels = labels.filter((l) => !same(l))
       return null
     }
   }
@@ -436,6 +457,7 @@ const addPin = (labels) => [...labels, 'tier:pinned']
     assert.deepEqual(client.calls, [['POST', 'tier:frontier']])
     assert.deepEqual([plan.add, plan.remove], [['tier:frontier'], []])
     assert.deepEqual(codes(plan), ['pin-guard-indeterminate'])
+    assert.equal(plan.unrepaired, true, 'a Tier left half-written and unverified fails the run')
   })
 }
 {
@@ -465,6 +487,33 @@ const addPin = (labels) => [...labels, 'tier:pinned']
     assert.deepEqual(client.calls.filter(([meth]) => meth === 'DELETE').length, 2)
     assert.deepEqual(tiers(client), ['tier:frontier', 'tier:standard'])
     assert.deepEqual(codes(plan), ['write-failed', 'write-failed', 'tier-not-exclusive'])
+    assert.equal(plan.unrepaired, true)
+  })
+}
+{
+  // GitHub returns the stored case: a pin stored as `Tier:Pinned` is still a
+  // pin, and mixed-case inputs still classify (names are canonicalized once).
+  const client = fakeClient(['Feature', 'Area:CI', 'layer:none', 'domain:none', 'impact:low', 'Risk:High', 'complexity:m', 'Tier:Standard', 'Tier:Pinned'])
+  const plan = await m.applyPlan(client, 'o', 'r', 7, ctx)
+  check('applyPlan: label names are compared case-insensitively (a `Tier:Pinned` pin holds)', () => {
+    assert.deepEqual(client.calls, [])
+    assert.deepEqual([plan.add, plan.remove], [[], []])
+  })
+}
+{
+  const client = fakeClient(['Feature', 'Area:CI', 'layer:none', 'domain:none', 'impact:low', 'Risk:High', 'complexity:m', 'Tier:Standard', 'needs-triage'])
+  await m.applyPlan(client, 'o', 'r', 7, ctx)
+  check('applyPlan: mixed-case inputs classify, and writes use canonical names', () => {
+    assert.deepEqual(client.calls, [['POST', 'tier:frontier'], ['DELETE', 'tier:standard'], ['DELETE', 'needs-triage']])
+  })
+}
+{
+  // Reads: 1 decision, 2 guard, 3 verify — the verify read is truncated, so
+  // the invariant cannot be checked: reported, and the Tier left unverified.
+  const client = fakeClient(stale, { onRead: { 3: (l) => [...l, TRUNCATED] } })
+  const plan = await m.applyPlan(client, 'o', 'r', 7, ctx)
+  check('applyPlan: a truncated verify read leaves the Tier unverified, which fails the run', () => {
+    assert.ok(codes(plan).includes('pin-guard-indeterminate'))
     assert.equal(plan.unrepaired, true)
   })
 }
@@ -598,6 +647,14 @@ const writes = (gh, prefix) => gh.rest.filter(([, path]) => path.startsWith(pref
     assert.ok(r.printed.some((l) => l.startsWith('::error title=classification reconcile a/one::')))
     assert.deepEqual(writes(r.gh, '/repos/a/one/'), [])
   })
+  check('run(): failure and warning lines follow the summary table, never inside it', () => {
+    const lines = r.summary.split('\n')
+    const head = lines.indexOf('| Issue | Added | Removed | Reports |')
+    const end = lines.indexOf('', head)
+    assert.ok(lines.slice(head, end).every((l) => l.startsWith('|')), 'the table rows are contiguous')
+    const note = lines.findIndex((l) => l.startsWith('> **a/one failed:**'))
+    assert.ok(note > lines.findIndex((l) => l.startsWith('Changed ')), 'the failure note follows the totals')
+  })
   check('run(): the issues connection is paginated and both pages are decided', () => {
     assert.match(r.summary, /of 2 open issue\(s\) in a\/one, a\/two\.$/m)
   })
@@ -684,6 +741,13 @@ if (canDerive) {
       assert.ok(writes(r.gh, '/repos/a/two/').includes('POST tier:frontier'))
       assert.ok(writes(r.gh, '/repos/b/three/').includes('POST tier:apex'))
     }
+  })
+  check('run(): per-repository warnings follow the summary table, never inside it', () => {
+    const lines = r.summary.split('\n')
+    const head = lines.indexOf('| Issue | Added | Removed | Reports |')
+    const end = lines.indexOf('', head)
+    assert.ok(lines.slice(head, end).every((l) => l.startsWith('|')), 'the table rows are contiguous')
+    assert.ok(lines.slice(end).some((l) => l.startsWith('> **c/four:**')), 'the warning follows the table')
   })
   check('run(): a repository without a registry gets no needs-triage write, reported once', () => {
     assert.deepEqual(writes(r.gh, '/repos/c/four/').filter((w) => w.endsWith('needs-triage')), [])

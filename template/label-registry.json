@@ -223,6 +223,7 @@
         {
           "value": "dependencies",
           "provision": false,
+          "writers": ["tool:renovate"],
           "writer_note": "Renovate, when it manages dependency updates",
           "trust_note": "not provisioned — Renovate creates it on demand; never deleted by setup",
           "lifecycle_note": "tool-managed by Renovate"

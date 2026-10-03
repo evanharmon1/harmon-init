@@ -13,8 +13,9 @@ run-name: reconciling the classification of issue #${{ github.event.issue.number
 #   - the sender is not in CLASSIFICATION_AGENT_LOGINS, a repo or org variable
 #     holding a JSON array of agent logins (unset = empty list);
 #   - the event changed an input: an issue opened, its Type set or cleared, or
-#     a risk:/complexity:/impact:/area:/layer:/domain: or non-retired
-#     work-type label added or removed.
+#     a risk:/complexity:/impact:/area:/layer:/domain: or Type-bearing
+#     work-type label (a non-retired one with a human or agent writer) added
+#     or removed.
 # `tier:*` (including `tier:pinned`) and `needs-triage` are never inputs: a
 # Tier or pin edit never starts a job, so the two-step UI pin (set the Tier,
 # then add tier:pinned, in either order) cannot be overwritten mid-pin.
@@ -41,7 +42,7 @@ jobs:
        startsWith(github.event.label.name, 'area:') ||
        startsWith(github.event.label.name, 'layer:') ||
        startsWith(github.event.label.name, 'domain:') ||
-       contains(fromJSON('["bug","feature","task","research","documentation","question","dependencies"]'), github.event.label.name))
+       contains(fromJSON('["bug","feature","task","research","documentation","question"]'), github.event.label.name))
     # Job-level, so a skipped event never takes the slot: one run per issue at
     # a time, and a burst of label events collapses to one running job plus
     # the latest pending one, which reads the issue fresh.

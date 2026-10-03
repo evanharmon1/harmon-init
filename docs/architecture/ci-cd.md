@@ -196,15 +196,21 @@ The reconciler reports these cases and leaves the Tier, and the offending
 input, as it is. `needs-triage` is still maintained unless an item says
 otherwise:
 
-- A pinned issue with two or more tier values: it never picks one.
+- A pinned issue with two or more tier values (it never picks one), or with
+  none.
 - An unpinned Tier whose Risk or Complexity is missing (`cache-unverifiable`).
   Derive-on-read ignores that label anyway.
-- A leftover `tier:adaptive`.
-- A conflicted axis (two values, or two work-type labels without a native
-  Type), or a retired or unknown value. That axis
+- A leftover `tier:adaptive`. The label is left for its migration (#1447);
+  the derived Tier is still written beside it.
+- A conflicted axis (two values, or two Type-bearing work-type labels
+  without a native Type), or a retired or unknown value. A work-type label is
+  Type-bearing when it is non-retired and its registry writers (its own, else
+  its family's) include a human or agent writer; one written only by a tool,
+  such as Renovate's `dependencies`, is never a Type. That axis
   does not count toward "triaged", so `needs-triage` stays. Recognized values
   come from the repository's `label-registry.json`; when that file is
-  unreadable, every axis is unverifiable and `needs-triage` is left as it is.
+  unreadable, every axis is unverifiable: `needs-triage` is left as it is and
+  no Tier is written.
 - An issue whose labels or field values span more than one page. It is
   skipped entirely, `needs-triage` included, rather than decided on a partial
   read.
@@ -248,10 +254,13 @@ After its Tier writes the job re-reads the issue once. Unpinned, the issue
 must carry exactly one rung, the Tier derived from its inputs on that read.
 A failed delete or a concurrent run's write breaks that, so one bounded repair
 pass runs under the same pin guard; an issue still not exclusive after it is
-reported (`tier-not-exclusive`) and fails the run. An API error on one issue
-is reported the same way. Either way the walk moves on to the next issue, and
-the run exits 1 after the whole list; a pin that stops the Tier writes is
-reported but is not a failure.
+reported (`tier-not-exclusive`) and fails the run. So does a guard or verify
+read that spans more than one page (`pin-guard-indeterminate`), since it can
+rule out neither a pin nor a second rung, and so does an API error the repair
+does not heal, or any API error outside the Tier writes. A Tier write error
+the repair heals is reported (`write-failed`) but is not a failure, and nor is
+a pin that stops the Tier writes. Either way the walk moves on to the next
+issue, and the run exits 1 after the whole list.
 
 Every write, Tier or `needs-triage`, is decided from the most recent read of
 the issue: `needs-triage` from the verify read when Tier writes happened,

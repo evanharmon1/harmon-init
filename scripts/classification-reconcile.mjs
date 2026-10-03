@@ -98,16 +98,26 @@ export const EVENT_TYPES = Object.freeze(['opened', 'labeled', 'unlabeled', 'typ
 export function activeVocabulary(registry) {
   const families = registry?.families
   if (!Array.isArray(families)) throw new Error('label-registry.json has no families array')
-  const active = (name) => {
+  const values = (name) => {
     const family = families.find((f) => f.family === name)
     if (!family || !Array.isArray(family.values)) {
       throw new Error(`label-registry.json has no ${name} family values`)
     }
-    return family.values.filter((v) => !v.retired).map((v) => v.value)
+    return family.values.filter((v) => !v.retired).map((v) => ({ v, family }))
   }
+  const active = (name) => values(name).map(({ v }) => v.value.toLowerCase())
   const recognized = {}
   for (const name of REQUIRED_FAMILIES) recognized[name] = active(name)
-  return { workTypes: active('work-type'), recognized }
+  // The Type-bearing subset of the work-type family: a value whose effective
+  // writers (its own, else the family's) include a human or agent writer is a
+  // Type; one written only by a tool (`dependencies`, `tool:renovate`) is a
+  // facet the tool manages, never the issue's Type.
+  const workTypes = values('work-type')
+    .filter(({ v, family }) =>
+      (v.writers ?? family.writers ?? []).some((w) => !w.startsWith('tool:'))
+    )
+    .map(({ v }) => v.value.toLowerCase())
+  return { workTypes, recognized }
 }
 
 /** The only labels this script may ever add or remove. */
@@ -190,7 +200,10 @@ export function decide(issue, ctx) {
   for (const family of REQUIRED_FAMILIES) {
     states[family] = axisState(issue, family, vocabulary?.recognized ?? null, reports)
   }
-  const values = { risk: states.risk.value, complexity: states.complexity.value }
+  // The Tier is derived only from applied inputs: exactly one recognized,
+  // non-retired value each (an unrecognized one is reported by axisState).
+  const applied = (f) => (states[f].applied ? states[f].value : null)
+  const values = { risk: applied('risk'), complexity: applied('complexity') }
 
   // needs-triage is derived (D6), pinned or not. With the registry unreadable
   // every axis is unverifiable, so needs-triage is left as it is.
@@ -345,14 +358,18 @@ const ISSUE_FIELDS = `
 function normalizeIssue(node) {
   const fields = {}
   for (const v of node.issueFieldValues?.nodes ?? []) {
-    const name = v?.field?.name
-    if (name && FIELD_AXES.some((a) => a.field === name)) fields[name] = v.name
+    const spec = FIELD_AXES.find((a) => a.field.toLowerCase() === v?.field?.name?.toLowerCase())
+    if (spec && typeof v.name === 'string') fields[spec.field] = v.name.toLowerCase()
   }
   return {
     number: node.number,
     url: node.url,
     issueType: node.issueType?.name ?? null,
-    labels: (node.labels?.nodes ?? []).map((l) => l.name),
+    // GitHub label names are case-insensitive and the API returns the stored
+    // case, so every name is canonicalized (lower-cased) here, once, where an
+    // issue is read: decide(), the pin guard and the verify pass compare
+    // canonical names, and every write uses one.
+    labels: (node.labels?.nodes ?? []).map((l) => l.name.toLowerCase()),
     fields,
     // decide() skips an issue whose labels or field values span more than one
     // page: a partial read could hide tier:pinned or an input.
@@ -510,10 +527,13 @@ export async function applyPlan(client, owner, name, number, ctx) {
       if (i > 0) guard = await read()
       if (!guard) return 'closed'
       if (guard.truncated) {
+        // A partial read can rule out neither a pin nor a second rung, so the
+        // Tier is left unverified, and that fails the run.
         report(
           'pin-guard-indeterminate',
           `the guard read's ${guard.truncated} exceed one page; ${describe(ops.slice(i))} not applied`
         )
+        plan.unrepaired = true
         return 'stopped'
       }
       if (guard.labels.includes(PIN_LABEL)) {
@@ -541,6 +561,14 @@ export async function applyPlan(client, owner, name, number, ctx) {
     for (let pass = 0; pass < 2; pass++) {
       const check = await read()
       if (!check) return { ...plan, ...applied }
+      if (check.truncated) {
+        report(
+          'pin-guard-indeterminate',
+          `the verify read's ${check.truncated} exceed one page; the Tier could not be verified`
+        )
+        plan.unrepaired = true
+        break
+      }
       // decide() plans no Tier write for a pinned or truncated read, so a pin
       // seen here ends the pass like a holding invariant does.
       const fix = tierOps(decide(check, ctx))
@@ -597,9 +625,12 @@ export async function run(
     print(line)
     summary.push(line)
   }
+  // Repository warnings and failures are collected apart from the table and
+  // appended after it, so a blockquote never splits the Markdown table.
+  const notes = []
   const warnRepo = (repo, message) => {
     print(`::warning title=classification reconcile ${repo}::${message}`)
-    summary.push(`> **${repo}:** ${message}`, '')
+    notes.push(`> **${repo}:** ${message}`, '')
   }
 
   const client = makeClient(token, fetch, env)
@@ -666,7 +697,7 @@ export async function run(
         } catch (err) {
           if (!failed.includes(repo)) failed.push(repo)
           print(`::error title=classification reconcile ${repo}#${issue.number}::${err.message}`)
-          summary.push(`> **${repo}#${issue.number} failed:** ${err.message}`, '')
+          notes.push(`> **${repo}#${issue.number} failed:** ${err.message}`, '')
           continue
         }
         // An issue whose Tier the bounded repair could not make exclusive
@@ -674,7 +705,7 @@ export async function run(
         if (plan.unrepaired) {
           if (!failed.includes(repo)) failed.push(repo)
           print(
-            `::error title=classification reconcile ${repo}#${issue.number}::the Tier is not exclusive after one repair pass`
+            `::error title=classification reconcile ${repo}#${issue.number}::the Tier could not be made, or verified, exclusive`
           )
         }
         // The not-derivable reason is reported once per repository.
@@ -693,7 +724,7 @@ export async function run(
     } catch (err) {
       if (!failed.includes(repo)) failed.push(repo)
       print(`::error title=classification reconcile ${repo}::${err.message}`)
-      summary.push(`> **${repo} failed:** ${err.message}`, '')
+      notes.push(`> **${repo} failed:** ${err.message}`, '')
     }
   }
   log('')
@@ -701,6 +732,7 @@ export async function run(
     `${dryRun ? 'Dry run: would change' : 'Changed'} ${changed} of ${seen} open issue(s) in ${repos.join(', ')}.`
   )
   if (failed.length > 0) log(`Failed: ${failed.join(', ')}.`)
+  if (notes.length > 0) summary.push('', ...notes)
   if (env.GITHUB_STEP_SUMMARY) {
     appendFileSync(
       env.GITHUB_STEP_SUMMARY,
