@@ -44,9 +44,9 @@ ARG OH_MY_PI_VERSION=18.4.4
 # omp-linux-arm64 binaries (not the source archives), check the release notes
 # and provenance, and compute their sha256. scripts/test-oh-my-pi-pin.sh fails
 # fast until the marker below is moved to match OH_MY_PI_VERSION.
-# verified-for: 18.2.6
-ARG OH_MY_PI_SHA256_AMD64=0f38598c91e823d8cce07f151ec3999d51f213fb2cc3e07d89f1af8eef9247a2
-ARG OH_MY_PI_SHA256_ARM64=07245cbe050c3999ab5cea9babfe84e7e8819d2f4d5e49bef47c0aacb6b957e4
+# verified-for: 18.4.4
+ARG OH_MY_PI_SHA256_AMD64=24c830fceb0bd6884bf5bf2c7a2b7407bc23fafe655e924c695ef9be308e46f3
+ARG OH_MY_PI_SHA256_ARM64=602eefddc0fd87043f8f08d8628d72592e5802c003a05f203f1ecbc63a8fdd30
 # renovate: datasource=npm depName=opencode-ai
 ARG OPENCODE_VERSION=1.18.33
 # Pinned from Google's per-platform release manifests. Keep the version, build,
@@ -75,14 +75,14 @@ ARG FX_VERSION=39.2.0
 ARG FRESH_VERSION=0.5.2
 # Fresh release-archive SHA-256 values. The version pin is Renovate-managed;
 # update these reviewed, architecture-specific digests with each release.
-ARG FRESH_SHA256_AMD64=dd162ec4b367860d4235b4919be9dc3184211b663b5a81af34455c4b1d2c6ec2
-ARG FRESH_SHA256_ARM64=237bdb8c774fc402dc0dc13428215d5c63d70fe0e673aa99bf9897ed7ce3aac1
+ARG FRESH_SHA256_AMD64=d7c6600cdd5c813bcd118d84fbcc0559fe9396756a46fd0b7b0c1bf6c5cf8fd6
+ARG FRESH_SHA256_ARM64=12f15eff367c4a86b47afb939982e23e8bc92b8c62e7de3bdaf29d46d2872ba4
 # renovate: datasource=github-releases depName=eugenioenko/ttt extractVersion=^v?(?<version>.+)$
 ARG TTT_VERSION=1.6.0
 # TTT release SHA-256 values. The version pin is Renovate-managed;
 # update these reviewed, architecture-specific digests with each release.
-ARG TTT_SHA256_AMD64=d5b5e3ef0c3c8c834360c7506628c23c2a61c00c006e402490ad4f336cacbe5f
-ARG TTT_SHA256_ARM64=667ace6b7288ffbd7724a82335e68fe1dcb9c03fe526c9df8da77ab9f811a1c3
+ARG TTT_SHA256_AMD64=3dc9003fa91b6430480f42588c9027cf9f106d318e20d77a7f7b13a01eef98e3
+ARG TTT_SHA256_ARM64=7a2d93a70beb6c4f10e35d8ef708bee121912430417fcf0c3648c96084245c02
 # renovate: datasource=github-releases depName=charmbracelet/glow extractVersion=^v?(?<version>.+)$
 ARG GLOW_VERSION=2.1.2
 # renovate: datasource=github-releases depName=jesseduffield/lazygit extractVersion=^v?(?<version>.+)$
