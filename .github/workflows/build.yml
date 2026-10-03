@@ -158,7 +158,7 @@ jobs:
           # Must be mikefarah/yq: `pip install yq` is a different tool (a jq
           # wrapper) whose expression syntax this audit does not use.
           # renovate: datasource=github-releases depName=mikefarah/yq extractVersion=^v?(?<version>.+)$
-          YQ_VERSION=4.53.6
+          YQ_VERSION=4.54.1
           curl -fsSL --retry 3 -o /tmp/yq \
             "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_linux_amd64"
           sudo install -m 0755 /tmp/yq /usr/local/bin/yq
