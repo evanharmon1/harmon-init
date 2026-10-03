@@ -330,12 +330,16 @@ check('the filter and the script name the same inputs and event types', () => {
 function fakeClient(reads) {
   const calls = []
   let n = 0
+  // A read whose last label is the TRUNCATED marker reports a next page.
   const node = (labels) => ({
     state: 'OPEN',
     number: 7,
     url: 'u',
     issueType: null,
-    labels: { pageInfo: { hasNextPage: false }, nodes: labels.map((name) => ({ name })) },
+    labels: {
+      pageInfo: { hasNextPage: labels.at(-1) === TRUNCATED },
+      nodes: labels.filter((l) => l !== TRUNCATED).map((name) => ({ name }))
+    },
     issueFieldValues: { pageInfo: { hasNextPage: false }, nodes: [] }
   })
   return {
@@ -350,6 +354,7 @@ function fakeClient(reads) {
     }
   }
 }
+const TRUNCATED = Symbol('truncated')
 const stale = [...triaged, 'risk:high', 'complexity:m', 'tier:standard']
 {
   const client = fakeClient([stale, [...stale, 'tier:frontier']])
@@ -390,6 +395,16 @@ const stale = [...triaged, 'risk:high', 'complexity:m', 'tier:standard']
     assert.deepEqual(client.calls.map((c) => c[0]), ['DELETE'])
     assert.deepEqual([plan.add, plan.remove], [[], ['tier:standard']])
     assert.match(plan.reports.at(-1).message, /remove tier:local not applied/)
+  })
+}
+{
+  // A guard re-read that spans more than one page cannot prove "unpinned".
+  const client = fakeClient([stale, [...stale, 'tier:frontier', TRUNCATED]])
+  const plan = await m.applyPlan(client, 'o', 'r', 7, ctx)
+  check('applyPlan: a truncated guard read stops the remaining Tier writes (C3-F2)', () => {
+    assert.deepEqual(client.calls.map((c) => c[0]), ['POST'])
+    assert.deepEqual([plan.add, plan.remove], [['tier:frontier'], []])
+    assert.equal(plan.reports.at(-1).code, 'pin-guard-indeterminate')
   })
 }
 

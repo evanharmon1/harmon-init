@@ -449,6 +449,15 @@ export async function applyPlan(client, owner, name, number, ctx) {
   for (const [i, [method, label]] of tierWrites.entries()) {
     if (i > 0) read = await fetchIssue(client, owner, name, number)
     if (!read) return { ...plan, ...applied } // closed mid-write: stop everything
+    if (read.truncated) {
+      // A partial guard read cannot establish that the issue is unpinned.
+      const skipped = tierWrites.slice(i).map(([m, l]) => `${m === 'POST' ? 'add' : 'remove'} ${l}`)
+      plan.reports.push({
+        code: 'pin-guard-indeterminate',
+        message: `the guard read's ${read.truncated} exceed one page; ${skipped.join(', ')} not applied`
+      })
+      break
+    }
     if (read.labels.includes(PIN_LABEL)) {
       const skipped = tierWrites.slice(i).map(([m, l]) => `${m === 'POST' ? 'add' : 'remove'} ${l}`)
       plan.reports.push({
