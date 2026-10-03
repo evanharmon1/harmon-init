@@ -22,7 +22,19 @@
 # word `login`, on one normalised line — so `codex --no-alt-screen login` is
 # caught like `codex login`. The same shape split across two lines (a folded
 # YAML step) is caught too and reported as `file:L1-L2: <line 1> / <line 2>`; a
-# folded hit cannot be allowlisted, the source has to be rewritten.
+# folded hit cannot be allowlisted, the source has to be rewritten. One rule, in
+# every scanned file whatever its context: a line that ENDS in `codex` plus option
+# words arms the fold, and the next non-blank line completes it when it begins
+# with option words and then `login`. The one exception: a `login` that is a
+# mapping key (`login:` or `login :`) is never the subcommand, so consecutive
+# mapping lines such as `provider: codex` / `login: oauth`, or `- codex` /
+# `login: [oauth]`, pass.
+#
+# `auth.json` is matched as a complete basename: `auth.json` and
+# `~/.codex/auth.json` hit, `oauth.json`, `myauth.json` and `auth.json.example`
+# do not. A dot after it is sentence punctuation before a blank, the end of the
+# line, or a closing quote, parenthesis, bracket or backtick (`"Restore
+# auth.json."` hits); `auth.json..schema` and `auth.json.bak` pass.
 #
 # The one rule outside the strict tier: a line is reported only if it mentions
 # `codex` (any case) — every token, the login flags included. A generated project
@@ -51,10 +63,21 @@
 #     `$HOME/.codex` or `/home/vscode/.codex` without a slash is not. A bare
 #     `.codex` token is deliberately not used: the agent devcontainer mounts that
 #     directory legitimately, and the persistent login lives in it.
+#   - An option whose value opens the next line (`codex --config` / `model=foo
+#     login`) is not joined, as before this change (tracked as
+#     evanharmon1/harmon-init#1488).
 #   - A command folded across THREE lines whose middle line holds only options
 #     (`codex` / `--opt` / `login`) is not joined; only two-line folds are.
 #   - Outside the strict tier, a token with `codex` only on a neighbouring line
 #     is not caught. Inside the strict tier that does not apply.
+#   - Hard-wrapped prose that ends a line in `codex` with `login` opening the next
+#     is reported, as is a literal or fenced shell block whose lines are two
+#     commands: the fold rule has no notion of context.
+#   - `.claude/settings.json` is a strict surface with no exemption: a consumer's
+#     own protective rule naming these tokens (a deny rule for a credential file)
+#     is reported too, and an allow rule that grants access must keep failing,
+#     which telling apart needs JSON structure this scanner does not have. A
+#     repository-owned allowlist is tracked as evanharmon1/harmon-init#1493.
 # A full YAML or shell parser is out of scope.
 #
 # Self-proving: a planted violation in a temporary copy of the surfaces must
@@ -95,9 +118,11 @@ TOKENS=(
 # page is covered the day it is added) except docs/research/, which assesses
 # rejected options rather than guiding anyone. scripts/ is excluded because its
 # Codex scripts are operator-machine tooling that legitimately logs in locally,
-# except every scripts/setup-*.sh (SURFACE_GLOBS): a new remote setup script that
-# follows the name is covered the day it is added; one that does not must be
-# added to SURFACE_FILES.
+# except every scripts/setup-*.sh (SURFACE_GLOBS): a new setup script is covered
+# the day it is added, under the Codex-scoped rule; one that is not named
+# setup-*.sh must be added to SURFACE_FILES. The Claude Code on the web session
+# settings are a surface too: a single-repository session loads them, so an `env`
+# block there is an ephemeral-cloud credential.
 SURFACE_DIRS=(
     'images/devcontainer'
     '.devcontainer'
@@ -113,6 +138,7 @@ SURFACE_GLOBS=(
 )
 SURFACE_FILES=(
     'AGENTS.md'
+    '.claude/settings.json'
 )
 # Strict tier — the remote-bootstrap entry points (a directory is matched
 # recursively, each entry only where it exists): nothing that provisions a remote
@@ -121,6 +147,8 @@ SURFACE_FILES=(
 STRICT_PATHS=(
     'images/devcontainer'
     '.github/workflows/remote-bootstrap.yml'
+    '.claude/settings.json'
+    '.devcontainer/scripts/bootstrap-related-repos.sh'
 )
 # The opt-in Fly.io Sprites provisioning surface (#1411) is a scanned surface AND
 # a strict path, but only in a tree holding SPRITES_MARKER — the generator
@@ -131,10 +159,13 @@ STRICT_PATHS=(
 # Codex login is the maintainer's, made by hand, so nothing there may handle one.
 SPRITES_DIR='sprites'
 SPRITES_MARKER='sprites/network-policy.sh'
-# Every discovered setup script is strict too (the glob is expanded where it
-# exists): a remote setup script follows the name, and it provisions.
+# The remote-setup entry points are strict too (the glob is expanded where it
+# exists): setup-remote.sh and any setup-remote*.sh that follows its name provision
+# a remote environment. Every other setup-*.sh stays Codex-scoped, because a
+# generated project's own setup script (a database, say) may legitimately name an
+# auth.json or an OPENAI_API_KEY of its own.
 STRICT_GLOBS=(
-    'scripts/setup-*.sh'
+    'scripts/setup-remote*.sh'
 )
 # Also strict: the environment examples a remote environment is provisioned from,
 # as "directory::file name" (the name is matched anywhere under the directory).
@@ -273,15 +304,23 @@ scan() {
         namestr="$(printf '%s\037' "${STRICT_NAMES[@]}")"
         rc=0
         hits="$(cd "$root" && awk -v tokens="$tokstr" -v strictlist="$strictstr" -v namelist="$namestr" '
+            # has_tok(T, TOK) — a plain substring, except auth.json, which must be a
+            # complete basename: not `oauth.json` or `myauth.json`.
+            function has_tok(t, tok) {
+                if (tok == "auth.json") return (t ~ AUTHJSON)
+                return index(t, tok)
+            }
             function emit(f, s, t,   i, tt, hit) {
                 gsub(/[ \t]+/, " ", t)
                 tt = t
                 sub(/^ /, "", tt)
-                # A Codex command folded across two lines (a YAML `>-` step):
-                # `codex` and options end one line, options and `login` open the
-                # next non-blank line. Reported with both real lines.
+                # A Codex command folded across two lines (a YAML `>-` step): a line
+                # ends in `codex` and options (FOLDHEAD); the next non-blank line
+                # opens with options and `login` (FOLDTAIL). A `login` that is a
+                # mapping key (KEYLOGIN) is not the subcommand. Reported with both
+                # real lines.
                 if (pend != "" && tt != "") {
-                    if (tt ~ FOLDTAIL) print pfile ":" pline "-" s ": " pend " / " tt
+                    if (tt ~ FOLDTAIL && tt !~ KEYLOGIN) print pfile ":" pline "-" s ": " pend " / " tt
                     pend = ""
                 }
                 # One rule: outside the strict tier a line counts only if it
@@ -289,7 +328,7 @@ scan() {
                 hit = 0
                 if (strict || tolower(t) ~ /codex/) {
                     for (i = 1; i <= n; i++) {
-                        if (T[i] != "" && index(t, T[i])) {
+                        if (T[i] != "" && has_tok(t, T[i])) {
                             hit = 1
                             break
                         }
@@ -323,6 +362,17 @@ scan() {
                 LOGIN = W " login([^A-Za-z0-9_-]|$)"
                 FOLDHEAD = W " ?$"
                 FOLDTAIL = "^(-[^ ]+ ([^ -][^ ]* )?)*login([^A-Za-z0-9_-]|$)"
+                # A tail whose `login` is a mapping key: `login:` or `login :`. A key is
+                # always the first word of the tail, so a later `login:` word does not count.
+                KEYLOGIN = "^login ?:"
+                # auth.json as a complete basename: no name character before it
+                # (a `.` or `-` would make it part of a longer name), no word
+                # character after it. A trailing `.` is sentence punctuation before
+                # a blank, the end of the line, or a closing quote, parenthesis,
+                # bracket or backtick (`"Restore auth.json."` hits); a longer name
+                # (`auth.json.example`, `auth.json..schema`) is not the file.
+                BT = sprintf("%c", 96)
+                AUTHJSON = "(^|[^A-Za-z0-9_.-])auth[.]json([^A-Za-z0-9_.-]|[.]( |$|[]\042\047)]|" BT ")|$)"
             }
             FNR == 1 {
                 if (cont) { emit(pf, start, buf); buf = ""; cont = 0 }
@@ -433,6 +483,39 @@ expect_hit() {
     *) fail "$1: expected a violation in ${2}${3:+ at line ${3}}, got: ${SCAN_HITS:-<none>}" ;;
     esac
 }
+
+# plant PATH CONTENT — write CONTENT (printf %b escapes) at PATH in the fixture,
+# keeping any real file there aside for unplant. A case planted this way holds in
+# every profile, whether or not the repository under test ships that file.
+plant() {
+    # Planting the same path again overwrites the plant; the original is kept once.
+    # Planting a different path first restores the one still planted.
+    if [ -n "$PLANT_PATH" ] && [ "$PLANT_PATH" != "${FIX}/$1" ]; then
+        unplant
+    fi
+    if [ "$PLANT_PATH" != "${FIX}/$1" ]; then
+        PLANT_PATH="${FIX}/$1"
+        PLANT_KEPT=0
+        if [ -f "$PLANT_PATH" ]; then
+            cp "$PLANT_PATH" "${TMP}/plant-kept"
+            PLANT_KEPT=1
+        fi
+        mkdir -p "$(dirname "$PLANT_PATH")"
+    fi
+    printf '%b' "$2" >"$PLANT_PATH"
+}
+unplant() {
+    [ -n "$PLANT_PATH" ] || return 0
+    if [ "$PLANT_KEPT" -eq 1 ]; then
+        cp "${TMP}/plant-kept" "$PLANT_PATH"
+    else
+        rm -f "$PLANT_PATH"
+    fi
+    PLANT_PATH=""
+    PLANT_KEPT=0
+}
+PLANT_PATH=""
+PLANT_KEPT=0
 
 # Every token, planted in a file under a scanned directory, reported at its line.
 mkdir -p "${FIX}/.devcontainer/agent"
@@ -555,12 +638,84 @@ if [ -d .devcontainer ] && [ "$env_cases" -eq 0 ]; then
     fail "a .devcontainer exists but no environment example does; the env-example cases would pass vacuously"
 fi
 # A setup script is scanned whatever its name after setup-, with the Codex-scoped rule.
-printf '#!/usr/bin/env bash\ncodex login\n' >"${FIX}/scripts/setup-sprite.sh"
-expect_hit "a login in a new setup script" "scripts/setup-sprite.sh" "2:"
-# ... and it is strict: a bare key or flag there fails with no codex on the line.
-printf '#!/usr/bin/env bash\nexport OPENAI_API_KEY=x\n' >"${FIX}/scripts/setup-sprite.sh"
-expect_hit "a bare OPENAI_API_KEY in a new setup script" "scripts/setup-sprite.sh" "2:"
-rm -f "${FIX}/scripts/setup-sprite.sh"
+mkdir -p "${FIX}/scripts"
+printf '#!/usr/bin/env bash\ncodex login\n' >"${FIX}/scripts/setup-db.sh"
+expect_hit "a login in a new setup script" "scripts/setup-db.sh" "2:"
+# ... but only a remote-setup entry point is strict: a project's own setup script may
+# hold its own bare key or auth.json (no codex on the line) and still pass,
+printf '#!/usr/bin/env bash\nexport OPENAI_API_KEY=x\ncat auth.json\n' >"${FIX}/scripts/setup-db.sh"
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "a project's own setup script with a bare key or auth.json must pass, got: ${SCAN_HITS}"
+rm -f "${FIX}/scripts/setup-db.sh"
+# ... while the remote-setup entry point and any setup-remote*.sh fail on the same lines.
+for rs in scripts/setup-remote.sh scripts/setup-remote-sprite.sh; do
+    plant "$rs" '#!/usr/bin/env bash\nexport OPENAI_API_KEY=x\n'
+    expect_hit "a bare OPENAI_API_KEY in ${rs}" "$rs" "2:"
+    plant "$rs" '#!/usr/bin/env bash\ncat auth.json\n'
+    expect_hit "a bare auth.json in ${rs}" "$rs" "2:"
+    unplant
+done
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "restoring the remote-setup scripts must scan clean again, got: ${SCAN_HITS}"
+
+# auth.json is matched as a complete basename: on a strict surface `auth.json` and
+# `~/.codex/auth.json` fail, `oauth.json` and `myauth.json` pass.
+authf="scripts/setup-remote-auth.sh"
+plant "$authf" '#!/usr/bin/env bash\ncat oauth.json\ncat myauth.json\ncat ~/tokens/oauth.json\n'
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "oauth.json and myauth.json must not match auth.json, got: ${SCAN_HITS}"
+# A longer name that merely starts with auth.json is not the credential file, but a
+# sentence-final dot after it still is.
+plant "$authf" '#!/usr/bin/env bash\ncat auth.json.example\ncat auth.json.bak\n'
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "auth.json.example and auth.json.bak must not match auth.json, got: ${SCAN_HITS}"
+plant "$authf" '#!/usr/bin/env bash\ncat auth.json..schema\ncat auth.json.~1~\n'
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "auth.json..schema and auth.json.~1~ must not match auth.json, got: ${SCAN_HITS}"
+plant "$authf" '#!/usr/bin/env bash\n# Restore auth.json.\n'
+expect_hit "a sentence-final auth.json." "$authf" "2:"
+plant "$authf" '#!/usr/bin/env bash\n# Restore auth.json. Then retry.\n'
+expect_hit "an auth.json. before a blank" "$authf" "2:"
+plant "$authf" '#!/usr/bin/env bash\necho "Never copy auth.json."\n'
+expect_hit "a quoted sentence-final auth.json." "$authf" "2:"
+plant "$authf" '#!/usr/bin/env bash\n# (see auth.json.)\n'
+expect_hit "a parenthesised sentence-final auth.json." "$authf" "2:"
+plant "$authf" '#!/usr/bin/env bash\n# the `auth.json.` file\n'
+expect_hit "a backtick-closed sentence-final auth.json." "$authf" "2:"
+plant "$authf" '#!/usr/bin/env bash\nauth.json is restored here\n'
+expect_hit "a line that begins with auth.json" "$authf" "2:"
+plant "$authf" '#!/usr/bin/env bash\n# [auth.json.]\n'
+expect_hit "a bracket-closed sentence-final auth.json." "$authf" "2:"
+plant "$authf" "#!/usr/bin/env bash\necho 'Never copy auth.json.'\n"
+expect_hit "a single-quote-closed sentence-final auth.json." "$authf" "2:"
+plant "$authf" '#!/usr/bin/env bash\ncat auth.json\n'
+expect_hit "a bare auth.json" "$authf" "2:"
+plant "$authf" '#!/usr/bin/env bash\nrm "$HOME/auth.json"\n'
+expect_hit "a quoted auth.json path" "$authf" "2:"
+plant "$authf" '#!/usr/bin/env bash\ncp ~/.codex/auth.json /tmp/x\n'
+expect_hit "~/.codex/auth.json" "$authf" "2:"
+unplant
+# ... and under the Codex-scoped rule: codex on the line plus a lookalike is not a hit.
+mkdir -p "${FIX}/docs/guides"
+printf '# App\n\nRun codex review, then read oauth.json and myauth.json.\n' >"${FIX}/docs/guides/planted-app.md"
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "a codex line naming only oauth.json or myauth.json must pass, got: ${SCAN_HITS}"
+rm -f "${FIX}/docs/guides/planted-app.md"
+
+# The Claude Code on the web settings and the bootstrap helper setup-remote.sh runs
+# are strict surfaces: a bare key fails, in either layer; a sibling script does not.
+plant .claude/settings.json '{\n  "env": {\n    "OPENAI_API_KEY": "x"\n  }\n}\n'
+expect_hit "a bare OPENAI_API_KEY in .claude/settings.json" ".claude/settings.json" "3:"
+unplant
+plant .devcontainer/scripts/bootstrap-related-repos.sh '#!/usr/bin/env bash\nexport OPENAI_API_KEY=x\n'
+expect_hit "a bare OPENAI_API_KEY in the bootstrap helper" ".devcontainer/scripts/bootstrap-related-repos.sh" "2:"
+unplant
+plant .devcontainer/scripts/planted-sibling.sh '#!/usr/bin/env bash\nexport OPENAI_API_KEY=x\n'
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "only the bootstrap helper is strict under .devcontainer/scripts, got: ${SCAN_HITS}"
+unplant
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "restoring the settings and bootstrap fixtures must scan clean again, got: ${SCAN_HITS}"
 # Outside the strict tier an app's own key or auth.json passes; the Codex one fails.
 mkdir -p "${FIX}/docs/guides"
 printf '# App\n\nOur app stores sessions in auth.json.\n' >"${FIX}/docs/guides/planted-app.md"
@@ -585,7 +740,67 @@ expect_hit "a folded codex, then an option and login" ".github/workflows/folded.
 printf 'jobs:\n  a:\n    steps:\n      - run: echo codex\n        login-check: x\n' >"${FIX}/.github/workflows/folded.yml"
 fixture_hits
 [ -z "$SCAN_HITS" ] || fail "codex followed by a login-prefixed word must not match, got: ${SCAN_HITS}"
+# One rule decides every fold below, in any file and whatever surrounds the lines: a
+# line ending in `codex` plus options arms it, the next non-blank line completes it
+# with options and `login`, unless that `login` is a mapping key (`login:`).
+# Mapping lines pass: a key named login is never the subcommand.
+printf 'jobs:\n  a:\n    steps:\n      - uses: x\n        with:\n          provider: codex\n          login: oauth\n' >"${FIX}/.github/workflows/folded.yml"
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "consecutive provider: codex / login: oauth mapping lines must pass, got: ${SCAN_HITS}"
+printf 'cmds:\n  - codex\n  login: [oauth]\n' >"${FIX}/.github/workflows/folded.yml"
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "a sequence item codex then a login: key must pass, got: ${SCAN_HITS}"
+printf 'jobs:\n  a:\n    steps:\n      - run: >-\n          codex\n        login: oauth\n' >"${FIX}/.github/workflows/folded.yml"
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "a run scalar ending in codex then a sibling login: key must pass, got: ${SCAN_HITS}"
+printf 'provider: codex\nlogin : oauth\n' >"${FIX}/.github/workflows/folded.yml"
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "a login key with a blank before its colon must pass, got: ${SCAN_HITS}"
+mkdir -p "${FIX}/docs/guides"
+printf '# Guide\n\nprovider: codex\nlogin: oauth\n\n```yaml\nprovider: codex\nlogin: oauth\n```\n' >"${FIX}/docs/guides/planted-app.md"
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "provider: codex / login: oauth in a guide must pass, got: ${SCAN_HITS}"
+# The same rule completes a fold wherever the lines sit, and reports both of them:
+# a quoted command key, a flow mapping, a bare key with the scalar on the next lines,
+# a literal scalar, and a fenced block in a guide are all just a line ending in codex.
+printf 'jobs:\n  a:\n    steps:\n      - "run": >-\n          echo hi && codex\n          login\n' >"${FIX}/.github/workflows/folded.yml"
+expect_hit "a quoted run key with an echo hi && codex body, then login" ".github/workflows/folded.yml" "5-6: "
+printf 'jobs:\n  a:\n    steps:\n      - {run: echo hi && codex\n          login}\n' >"${FIX}/.github/workflows/folded.yml"
+expect_hit "a flow-mapping run value ending in codex, then login" ".github/workflows/folded.yml" "4-5: "
+printf 'jobs:\n  a:\n    steps:\n      - run:\n          codex\n          login\n' >"${FIX}/.github/workflows/folded.yml"
+expect_hit "a bare run key with the plain scalar on the lines below" ".github/workflows/folded.yml" "5-6: "
+printf 'jobs:\n  a:\n    steps:\n      - run: |\n          codex\n          login\n' >"${FIX}/.github/workflows/folded.yml"
+expect_hit "a literal run scalar with codex / login" ".github/workflows/folded.yml" "5-6: "
+# The key exception is exact: only a tail whose FIRST word is login: is a mapping key,
+# so a later login: word in a real login tail does not excuse it.
+printf 'jobs:\n  a:\n    steps:\n      - run: >-\n          codex\n          login --device-auth # login: device code\n' >"${FIX}/.github/workflows/folded.yml"
+expect_hit "a folded login tail with a later login: word in a comment" ".github/workflows/folded.yml" "5-6: "
+printf 'jobs:\n  a:\n    steps:\n      - run: >-\n          codex\n          login && echo login: ok\n' >"${FIX}/.github/workflows/folded.yml"
+expect_hit "a folded login tail with a later login: word after &&" ".github/workflows/folded.yml" "5-6: "
+# An anchored step, and a sequence item with a deeper login: a line ending in codex
+# arms the fold whatever the YAML around it, so the single rule reports both.
+printf 'jobs:\n  a:\n    steps:\n      - run: &x >-\n          echo hi && codex\n          login\n' >"${FIX}/.github/workflows/folded.yml"
+expect_hit "an anchored run: &x >- step with echo hi && codex, then login" ".github/workflows/folded.yml" "5-6: "
+printf 'cmds:\n  - codex\n    login\n' >"${FIX}/.github/workflows/folded.yml"
+expect_hit "a - codex item followed by a deeper-indented login" ".github/workflows/folded.yml" "2-3: "
+printf 'jobs:\n  a:\n    steps:\n      - run: codex login --device-auth\n' >"${FIX}/.github/workflows/folded.yml"
+expect_hit "the one-line codex login control" ".github/workflows/folded.yml" "4:"
 rm -f "${FIX}/.github/workflows/folded.yml"
+printf '# Guide\n\n~~~sh\necho hi && codex\nlogin\n~~~\n' >"${FIX}/docs/guides/planted-app.md"
+expect_hit "a codex / login pair in a tilde-fenced sh block" "docs/guides/planted-app.md" "4-5: "
+# A four-backtick sh fence holding a three-backtick line: fence lengths do not matter
+# to the single rule, which reports the pair inside it either way.
+printf '# Guide\n\n````sh\n```\necho hi && codex\nlogin\n````\n' >"${FIX}/docs/guides/planted-app.md"
+expect_hit "a codex / login pair after a three-backtick line in a four-backtick sh fence" "docs/guides/planted-app.md" "5-6: "
+printf '# Guide\n\n$ codex\nlogin\n' >"${FIX}/docs/guides/planted-app.md"
+expect_hit "a codex invocation line followed by login" "docs/guides/planted-app.md" "3-4: "
+rm -f "${FIX}/docs/guides/planted-app.md"
+# A head ending in an option is not a login: another tool login on the next line is not
+# folded into it, so codex --version then docker login must pass.
+printf 'jobs:\n  a:\n    steps:\n      - run: |\n          codex --version\n          docker login ghcr.io -u user --password-stdin\n' >"${FIX}/.github/workflows/folded.yml"
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "codex --version then another tool login must not be reported, got: ${SCAN_HITS}"
+rm -f "${FIX}/.github/workflows/folded.yml" "${FIX}/docs/guides/planted-app.md"
 
 # A surface line that merely contains the guard-error marker is a violation (it
 # carries a token), never mistaken for a guard error.
