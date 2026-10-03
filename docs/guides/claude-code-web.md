@@ -584,12 +584,15 @@ says where it lands.
 
 ## Reusing this structure
 
-The Codex cloud (#750) and Sprites (#1411) adapters need the same sections in the
-same order, so the shape is the reusable part: **the environment** (name, setup
-script at a pinned tag, network level and each added domain's reason, variables),
-**identity and secrets**, **what the platform's GitHub path does to `gh`** with a
-call inventory, **bridges** to and from a local terminal, **memory**, **long
-gates**, **when per-checkout preparation runs**, and a **pending observations**
-register that ties every unobserved fact to the criterion that will prove it.
+The [Codex cloud](codex-cloud.md) and [Fly.io Sprites](sprites.md) guides are
+this guide's siblings: each opens by saying how to read its evidence and closes
+with a pending-observations register. A new adapter guide should cover: **how to
+read the evidence**, **the environment** (name, setup script at a pinned tag,
+network level and each added domain's reason, variables), **identity and
+secrets**, **what the platform's GitHub path does to `gh`** with a call
+inventory, **bridges** to and from a local terminal, **the agent posture**,
+**memory**, **long gates**, **when per-checkout preparation runs**, and a
+**pending observations** register that ties every unobserved fact to the
+criterion that will prove it.
 The contract and the shared network tables stay in
 [architecture/remote-environments.md](../architecture/remote-environments.md).
