@@ -382,14 +382,18 @@ organization caller are in
 
 `Status` is a **Project field** — the board pipeline above; it stays on the
 project because the built-in workflows (and `project-automation.yml`, on an org)
-drive it.
+drive it. It is also the only project field a workflow or an agent ever writes.
 
-The work-metadata fields:
+The work-metadata field:
 
-- **Priority** — Urgent / High / Medium / Low
-- **Size** — estimation points on the Fibonacci ladder (1 / 2 / 3 / 5 / 8 / 13 / 21),
-  a project **number** field so a view can sum it per group
 - **Product** — which product/area it belongs to (free text)
+
+There is deliberately **no `Priority` or `Size` field** (#1451). Priority is an
+issue field on an organization (GitHub's built-in) and a `priority:*` label on
+a personal account, with `Priority (AI)` / `priority-ai:*` beside it as the
+AI's suggestion; Size is retired in favour of Effort (human tasks) and
+Complexity (every issue), per
+[ADR 2026-09-30](decisions/2026-09-30-classify-issues-by-impact-risk-complexity-and-derive-the-tier.md).
 
 There is deliberately **no `Agent` field**. Which agent *should* take an issue
 is the `suggest:*` label family plus the `Status: Agent Queue` lane; which agent
@@ -468,9 +472,34 @@ destroys every value on it, unrecoverably.
   4. Only then delete the field(s) — Project settings → the field → *Delete
      field* on a personal project; **Settings → Planning → Issue fields** on an
      organization, org-wide as above.
+- **Priority / Size** (retired by #1451): on a **personal account** both were
+  project fields; on an **organization** only `Size` was — `Priority` there is
+  GitHub's built-in issue field and stays. Priority's replacement is the
+  `priority:*` / `priority-ai:*` labels (personal account) or the `Priority` /
+  `Priority (AI)` issue fields (organization); `Size` has none, and its values
+  go with the field.
+  1. Provision the replacement first (personal account): run
+     `task setup:github-labels` in every repository whose issues carry a
+     `Priority` value — a `priority:*` label must exist in a repo before a value
+     can be copied onto its issues.
+  2. **Enumerate every board and view that references each field before
+     deleting it** (#910): every Project that has the field, and every saved
+     view in each that filters, sorts, groups, or sums by it (the Triage, Agent
+     queue, Planning, and Mine views as they were specified before #1451 all
+     did) — not just the board being migrated. Then list the items that hold a
+     value, filtering the Project's own view rather than a capped CLI listing,
+     **draft items** included.
+  3. Carry each `Priority` value you still want onto the matching `priority:*`
+     label. `Size` values have no destination: keep a record of any you need
+     now, because deleting the field destroys them unrecoverably.
+  4. Re-point or rebuild every view from step 2 as the **Views** section below
+     specifies it. A view still filtered, sorted, or summed by a deleted field
+     loses that predicate the moment the field is gone.
+  5. Only then delete each field — Project settings → the field → *Delete
+     field* — on a personal account both, on an organization `Size` only.
 
 On a personal account there are no issue fields, so `task setup:github-project`
-creates **Priority, Product, and Size** as project fields.
+creates **Product** as a project field.
 
 ### The provisioned field values
 
@@ -482,17 +511,13 @@ release lands on the next run.
 | Field | Type | Values | Provisioned by |
 |---|---|---|---|
 | **Status** | project single-select | Inbox, Icebox, Next, Todo, Shaping, Ready, Agent Queue, In Progress, Verifying, In Review, Ready to Merge, Done, Deployed, Accepted | `setup:github-project` |
-| **Size** | project number | free numeric entry; the Fibonacci ladder (1, 2, 3, 5, 8, 13, 21) is a convention, not an option list | `setup:github-project` |
-| **Priority** | single-select | Urgent, High, Medium, Low | `setup:github-project`, personal accounts only |
 | **Product** | text | free text | `setup:github-project` (personal) / `setup:github-issue-fields` (org) |
 
-Two org-only notes. GitHub ships **Priority** and **Effort** (plus **Start
-date** and **Target date**) as built-in *issue* fields, and both setup scripts
-leave them at their defaults — so on an organization `Priority` is GitHub's own
-field with GitHub's own options, and the Urgent/High/Medium/Low list above is
-the personal-account project field. And `Effort` cannot hold the estimate:
-an issue field's type is fixed at creation, and only project **number** fields
-can be summed in a view's group header, which is `Size`'s whole job.
+One org-only note. GitHub ships **Priority** and **Effort** (plus **Start
+date** and **Target date**) as built-in *issue* fields, and the setup scripts
+leave `Priority` and the dates as shipped — so on an organization `Priority` is
+GitHub's own field with GitHub's own options, and on a personal account it is
+the `priority:*` label family. It is never a project field.
 
 ## Labels
 
@@ -754,7 +779,7 @@ mechanics, not taste. Use a **label** when the datum must be any of:
 - **available on personal repos** — org issue fields do not exist there.
 
 Use a **field** when it is **single-valued planning metadata you slice the
-board by**: `Status`, `Priority`, `Size`, `Product`.
+board by**: `Status`, `Product`.
 
 The consequences are not stylistic. Foreman arming is labels because only the
 label timeline names an arming actor. Claims are labels because a claim must be
@@ -1221,10 +1246,7 @@ milestone and project once on the parent and the tree inherits; move the parent
 to `v1.1.0` and the whole tree moves with it. Keep the initiative label on the
 parent; never set the milestone per child.
 
-The **leaves** hold execution: the `Task` type and the **`Size` points**. Put
-the estimate on the mergeable one-PR slices, not the parent — estimating a slice is
-reliable, estimating a big parent isn't — and a view's field sums total the leaves
-for you.
+The **leaves** hold execution: the `Task` type.
 It's route-not-duplicate applied to hierarchy: a child references the parent's spec
 rather than restating it, and reads up for context.
 
@@ -1351,24 +1373,53 @@ view mutations, only reads — so create these once in the UI (**Project → New
 view**). Keep the saved set small; **slice the one board** (below) for the rest.
 
 - **Board** — board, `is:open`, grouped by `Status`. The day-to-day working board.
-- **Triage** — table, filtered to items **missing a `Priority`** or carrying
-  **`needs-triage`**, grouped by **Type** (Bug / Feature / Task / Research) so you
-  see the shape of the inbox. This is your grooming session — it exists so
+- **Triage** — table, filtered to the **`needs-triage`** label, grouped by
+  **Type** (Bug / Feature / Task / Research) so you see the shape of the inbox.
+  `needs-triage` is derived — present while any required axis is unset — so one
+  label filter selects every untriaged issue; there is no "missing a field"
+  clause to OR beside it, which Projects cannot express (#444). `Type` is an
+  organization issue field; a personal account has no `Type` to group by (its
+  work-type is a label, which a view can filter on but not group by), so leave
+  the view ungrouped there. This is your grooming session — it exists so
   untriaged work can't hide; empty it regularly and it stays useful.
-- **Agent queue** — board, filtered to issues carrying a **`suggest:*`** label
-  (Projects label filters match **concrete** values, not prefixes — enumerate
-  the seeded family labels in the filter, and extend it when the registry
-  gains a family), showing only the in-flight `Status` columns (**Ready, Agent
-  Queue, In Progress, Verifying, In Review, Ready to Merge**), sorted by
-  `Priority`.
+- **Agent queue** — the issues an agent may start, as one predicate: **open**,
+  **triaged** (no `needs-triage`), no **`claim:*`**, not **`human`**, not
+  **`needs-review`**, not blocked, and an **effective priority** set — `Priority`
+  or `Priority (AI)`. Ordered by `Priority`, then `Priority (AI)`. `Status` plays
+  no part in it. **The human `Priority` overrides `Priority (AI)`**: an issue's
+  effective priority is `Priority` when set, else `Priority (AI)`, and the
+  override never clears the AI value
+  ([ADR 2026-10-01](decisions/2026-10-01-add-a-priority-ai-axis-suggested-by-agents.md)
+  D2). Projects label filters match **concrete** values, not prefixes — exclude
+  each registered `claim:<family>` label by name, and extend the filter when the
+  registry gains a family. Where the two priorities live decides how the view is
+  built:
+  - **Organization** — both are issue fields, so the view can sort by them, but
+    "either one is set" is an OR across two different qualifiers, which Projects
+    does not express (distinct qualifiers AND; the comma ORs the values of one
+    qualifier, #444). Build two views that together select the queue with no
+    overlap: **Agent queue** requires `Priority` set and sorts by `Priority`,
+    then `Priority (AI)`; **Agent queue (AI-ranked)** requires `Priority` empty
+    and `Priority (AI)` set and sorts by `Priority (AI)`. Read the first, then
+    the second.
+  - **Personal account** — both are labels (`priority:*`, `priority-ai:*`), so
+    one view filters on all nine concrete values in one `label:` qualifier (the
+    comma ORs them). A view cannot sort by a label, so it lists the queue
+    unordered; read it in order with `gh issue list --label priority:urgent`,
+    then each remaining `priority:*` rung, then each `priority-ai:*` rung.
+- **Needs review** — table, `is:open` and the **`needs-review`** label, showing
+  both priority columns (`Priority` and `Priority (AI)` on an organization; the
+  `priority:*` and `priority-ai:*` labels on a personal account). It lists what
+  awaits the maintainer: the integration stage adds `needs-review` at
+  ready-for-review and removes it if review pulls the work back into fix rounds.
 - **Planning** — table, grouped by **`Product`** (or `Type`), sorted by
-  `Priority`, with the **`Size` field summed in each group header**. The "how
-  big is the pile, and what's the plan" view, and a **dates-free roadmap
-  substitute**: the per-group sum shows the weight behind each product without
-  maintaining a timeline. (`Size` is a **number** field — GitHub sums number
-  fields in group headers, so this totals the points behind each group; a
-  single-select can't be summed.)
-- **Mine** — table, `is:open assignee:@me`, sorted by `Priority`.
+  `Priority` (organization only, as above). The "what's the plan" view, and a
+  **dates-free roadmap substitute**: grouping by product shows the pile behind
+  each one without maintaining a timeline. There is no `Size` sum — the field is
+  retired (it was a project **number** field, the one kind GitHub sums in a
+  group header) and nothing replaces it here.
+- **Mine** — table, `is:open assignee:@me`, sorted by `Priority` (organization
+  only, as above).
 
 ### Two toggles, not more views
 

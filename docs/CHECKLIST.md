@@ -265,23 +265,34 @@ the compatibility reason in the rule's `description`.
       devcontainer prebuild populates `ghcr.io/evanharmon1/harmon-init-devcontainer` on merge to main
 - [ ] GitHub Project: run `task setup:github-project` (needs
       `gh auth refresh -s project`) to create the owner's default project (titled
-      `evanharmon1 Project`) and idempotently sync its `Status` pipeline and
-      `Size` number field — see
+      `evanharmon1 Project`) and idempotently sync its `Status` pipeline — see
       [project-management.md](project-management.md).
-      On a personal account it also creates Priority/Product/Size as project
-      fields (issue fields are org-only; there is deliberately no Domain or
-      Layer field — see project-management.md, "Label or field?"); status
-      automation is a separate follow-up — the board is set up, but issue/PR
-      status isn't auto-synced yet. Re-runs **append** any starter option a
-      single-select field is missing (so a value added by a later harmon-init
-      release lands on the next run) and never touch, reorder, or delete the
-      options you added.
+      On a personal account it also creates Product as a project field (issue
+      fields are org-only; there is deliberately no Priority, Size, Domain, or
+      Layer field — see project-management.md, "Fields" and "Label or
+      field?"); status automation is a separate follow-up — the board is set
+      up, but issue/PR status isn't auto-synced yet. Re-runs **append** any
+      starter option the Status field is missing (so a value added by a later
+      harmon-init release lands on the next run) and never touch, reorder, or
+      delete the options you added.
 - [ ] **Upgrading from a release before #875?** If this repo's board still
       carries `Domain`/`Layer` fields from an earlier harmon-init release, they
       are not deleted automatically — retiring them is a deliberate,
       irreversible operator step. See
       [project-management.md](project-management.md), "Migrating a board that
       still has one."
+- [ ] **[human-only] Delete the `Priority` and `Size` project fields on an
+      existing board** — only if this repo's board was set up by a release
+      before harmon-init#1451; they are not deleted automatically, and
+      deleting a field destroys every value on it, unrecoverably. Do it after
+      the classification labels exist (`task setup:github-labels` provisions the
+      `priority:*` and `priority-ai:*` families that replace `Priority`) and
+      after enumerating every board and view that references each field
+      (harmon-init#910), as [project-management.md](project-management.md),
+      "Migrating a board that still has one" (the Priority / Size entry) lays
+      out. On a personal account both fields go; on an organization only `Size`
+      was ever a project field — its `Priority` is GitHub's built-in issue
+      field and stays.
 - [ ] **Upgrading from a release before harmon-init#1047
       (`method:*` → `strategy:*`)?** Run `task setup:github-labels` first so
       the `strategy:*` destinations exist, then use the read-only report and
