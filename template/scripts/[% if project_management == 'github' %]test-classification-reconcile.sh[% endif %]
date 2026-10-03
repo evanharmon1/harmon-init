@@ -325,13 +325,19 @@ check('the filter and the script name the same inputs and event types', () => {
   for (const absent of ['edited', 'field_added', 'field_removed']) assert.ok(!types.includes(absent), absent)
 })
 
-// --- applyPlan(): every Tier write is guarded by a pin-free read (C1-F5, C2-F1)
+// --- applyPlan(): every Tier write is guarded by a pin-free read (C1-F5, C2-F1),
+// and the result is verified and repaired once (C1-F7, C3-F1) --------------------
 
-function fakeClient(reads) {
+// A stateful fake issue: writes really change its labels. `onRead[n]` edits
+// the labels just before the n-th read (a human pinning, a concurrent run
+// writing); `failWrites` lists `METHOD label` writes that error once each.
+const TRUNCATED = Symbol('truncated')
+function fakeClient(initial, { onRead = {}, failWrites = [] } = {}) {
+  let labels = [...initial]
+  let reads = 0
+  const fails = [...failWrites]
   const calls = []
-  let n = 0
-  // A read whose last label is the TRUNCATED marker reports a next page.
-  const node = (labels) => ({
+  const node = () => ({
     state: 'OPEN',
     number: 7,
     url: 'u',
@@ -344,67 +350,118 @@ function fakeClient(reads) {
   })
   return {
     calls,
+    labels: () => labels.filter((l) => l !== TRUNCATED),
     async graphql() {
-      const labels = reads[Math.min(n++, reads.length - 1)]
-      return { repository: { issue: node(labels) } }
+      reads += 1
+      if (onRead[reads]) labels = onRead[reads](labels)
+      return { repository: { issue: node() } }
     },
     async rest(method, path, payload) {
-      calls.push([method, path, payload ?? null])
+      const label = method === 'POST' ? payload.labels[0] : decodeURIComponent(path.split('/').at(-1))
+      calls.push([method, label])
+      const i = fails.indexOf(`${method} ${label}`)
+      if (i >= 0) {
+        fails.splice(i, 1)
+        throw new Error(`${method} ${path}: 502 bad gateway`)
+      }
+      if (method === 'POST' && !labels.includes(label)) labels = [...labels, label]
+      if (method === 'DELETE') labels = labels.filter((l) => l !== label)
       return null
     }
   }
 }
-const TRUNCATED = Symbol('truncated')
+const tiers = (c) => c.labels().filter((l) => /^tier:/.test(l)).sort()
+const codes = (plan) => plan.reports.map((r) => r.code)
 const stale = [...triaged, 'risk:high', 'complexity:m', 'tier:standard']
+const addPin = (labels) => [...labels, 'tier:pinned']
 {
-  const client = fakeClient([stale, [...stale, 'tier:frontier']])
+  const client = fakeClient(stale)
   const plan = await m.applyPlan(client, 'o', 'r', 7, ctx)
-  check('applyPlan: an unpinned drift adds the derived Tier, then deletes the stale one', () => {
-    assert.deepEqual(client.calls.map((c) => c[0]), ['POST', 'DELETE'])
-    assert.match(client.calls[1][1], /tier%3Astandard$/)
-    assert.deepEqual(plan.remove, ['tier:standard'])
+  check('applyPlan: an unpinned drift adds the derived Tier, deletes the stale one, and verifies', () => {
+    assert.deepEqual(client.calls, [['POST', 'tier:frontier'], ['DELETE', 'tier:standard']])
+    assert.deepEqual(tiers(client), ['tier:frontier'])
+    assert.deepEqual(codes(plan), [])
   })
 }
 {
-  const client = fakeClient([stale, [...stale, 'tier:frontier', 'tier:pinned']])
+  const client = fakeClient(stale, { onRead: { 2: addPin } })
   const plan = await m.applyPlan(client, 'o', 'r', 7, ctx)
   check('applyPlan: a pin landing after the add stops the stale-Tier delete', () => {
-    assert.deepEqual(client.calls.map((c) => c[0]), ['POST'])
+    assert.deepEqual(client.calls, [['POST', 'tier:frontier']])
     assert.deepEqual([plan.add, plan.remove], [['tier:frontier'], []])
-    assert.equal(plan.reports.at(-1).code, 'pin-appeared')
+    assert.deepEqual(codes(plan), ['pin-appeared'])
   })
 }
 {
   // The pin is already on the decision read: no Tier write at all, and
   // needs-triage is still maintained (it is never guarded).
-  const pinned = ['risk:high', 'complexity:m', 'tier:standard', 'tier:pinned']
-  const client = fakeClient([pinned])
+  const client = fakeClient(['risk:high', 'complexity:m', 'tier:standard', 'tier:pinned'])
   const plan = await m.applyPlan(client, 'o', 'r', 7, ctx)
   check('applyPlan: a pin before the add means no Tier write; needs-triage still written', () => {
-    assert.deepEqual(client.calls.map((c) => [c[0], c[2]?.labels ?? c[1]]), [['POST', ['needs-triage']]])
+    assert.deepEqual(client.calls, [['POST', 'needs-triage']])
     assert.deepEqual([plan.add, plan.remove], [['needs-triage'], []])
   })
 }
 {
-  // A delete-only plan (two stale tiers beside the derived one, as a failed
-  // earlier delete leaves): the second delete re-reads and sees the pin.
+  // A delete-only plan (two stale tiers beside the derived one): the second
+  // delete re-reads and sees the pin.
   const twoStale = [...triaged, 'risk:high', 'complexity:m', 'tier:frontier', 'tier:standard', 'tier:local']
-  const client = fakeClient([twoStale, [...twoStale.filter((l) => l !== 'tier:standard'), 'tier:pinned']])
+  const client = fakeClient(twoStale, {
+    onRead: { 2: (l) => addPin(l.filter((x) => x !== 'tier:standard')) }
+  })
   const plan = await m.applyPlan(client, 'o', 'r', 7, ctx)
   check('applyPlan: a delete-only plan stops at the first read that shows a pin', () => {
-    assert.deepEqual(client.calls.map((c) => c[0]), ['DELETE'])
+    assert.deepEqual(client.calls, [['DELETE', 'tier:standard']])
     assert.deepEqual([plan.add, plan.remove], [[], ['tier:standard']])
     assert.match(plan.reports.at(-1).message, /remove tier:local not applied/)
   })
 }
 {
   // A guard re-read that spans more than one page cannot prove "unpinned".
-  const client = fakeClient([stale, [...stale, 'tier:frontier', TRUNCATED]])
+  const client = fakeClient(stale, { onRead: { 2: (l) => [...l, TRUNCATED] } })
   const plan = await m.applyPlan(client, 'o', 'r', 7, ctx)
   check('applyPlan: a truncated guard read stops the remaining Tier writes (C3-F2)', () => {
-    assert.deepEqual(client.calls.map((c) => c[0]), ['POST'])
+    assert.deepEqual(client.calls, [['POST', 'tier:frontier']])
     assert.deepEqual([plan.add, plan.remove], [['tier:frontier'], []])
-    assert.equal(plan.reports.at(-1).code, 'pin-guard-indeterminate')
+    assert.deepEqual(codes(plan), ['pin-guard-indeterminate'])
+  })
+}
+{
+  const client = fakeClient(stale, { failWrites: ['DELETE tier:standard'] })
+  const plan = await m.applyPlan(client, 'o', 'r', 7, ctx)
+  check('applyPlan: a failed delete is healed by the one repair pass (C1-F7)', () => {
+    assert.deepEqual(client.calls, [['POST', 'tier:frontier'], ['DELETE', 'tier:standard'], ['DELETE', 'tier:standard']])
+    assert.deepEqual(tiers(client), ['tier:frontier'])
+    assert.deepEqual(codes(plan), ['write-failed'])
+  })
+}
+{
+  // Reads: 1 decision, 2 guard before the delete, 3 verify — a concurrent run
+  // has added another rung by then.
+  const client = fakeClient(stale, { onRead: { 3: (l) => [...l, 'tier:apex'] } })
+  const plan = await m.applyPlan(client, 'o', 'r', 7, ctx)
+  check("applyPlan: a concurrent run's extra rung is healed by the repair pass (C3-F1)", () => {
+    assert.deepEqual(client.calls, [['POST', 'tier:frontier'], ['DELETE', 'tier:standard'], ['DELETE', 'tier:apex']])
+    assert.deepEqual(tiers(client), ['tier:frontier'])
+    assert.deepEqual(codes(plan), [])
+  })
+}
+{
+  const client = fakeClient(stale, { failWrites: ['DELETE tier:standard', 'DELETE tier:standard'] })
+  const plan = await m.applyPlan(client, 'o', 'r', 7, ctx)
+  check('applyPlan: a repair that also fails is reported as tier-not-exclusive, with no further pass', () => {
+    assert.deepEqual(client.calls.filter(([meth]) => meth === 'DELETE').length, 2)
+    assert.deepEqual(tiers(client), ['tier:frontier', 'tier:standard'])
+    assert.deepEqual(codes(plan), ['write-failed', 'write-failed', 'tier-not-exclusive'])
+  })
+}
+{
+  // The delete fails; by the verify read (read 3) a human has pinned.
+  const client = fakeClient(stale, { failWrites: ['DELETE tier:standard'], onRead: { 3: addPin } })
+  const plan = await m.applyPlan(client, 'o', 'r', 7, ctx)
+  check('applyPlan: a pin seen on the verify read stops the repair', () => {
+    assert.deepEqual(client.calls, [['POST', 'tier:frontier'], ['DELETE', 'tier:standard']])
+    assert.deepEqual(codes(plan), ['write-failed'])
   })
 }
 
@@ -413,7 +470,7 @@ const stale = [...triaged, 'risk:high', 'complexity:m', 'tier:standard']
 // A fake GitHub: GraphQL by query shape and variables, REST recorded. Repo
 // `a/one` answers 502 to everything; `a/two` holds two open issues across two
 // pages, the second carrying organization issue-field values.
-function fakeGitHub() {
+function fakeGitHub({ failRestPath = null } = {}) {
   const rest = []
   const issueNode = (number, labels, extra = {}) => ({
     state: 'OPEN',
@@ -462,6 +519,7 @@ function fakeGitHub() {
       })
     }
     rest.push([init.method, new URL(url).pathname, init.body ? JSON.parse(init.body) : null])
+    if (new URL(url).pathname === failRestPath) return json({ message: 'bad gateway' }, 502)
     return init.method === 'DELETE' ? new Response(null, { status: 204 }) : json([])
   }
   return { fetch, rest }
@@ -505,6 +563,26 @@ function fakeGitHub() {
     assert.equal(code, 0)
     assert.deepEqual(gh.rest, [])
     assert.match(readFileSync(summaryFile, 'utf8'), /^Dry run: would change 2 of 2 open issue\(s\) in a\/two\.$/m)
+  })
+}
+
+{
+  // Issue #1's needs-triage write fails; issue #2 (the next page) is still
+  // decided and written, and the run still exits 1.
+  const gh = fakeGitHub({ failRestPath: '/repos/a/two/issues/1/labels' })
+  const summaryFile = join(tmp, 'summary-issue-fail.md')
+  const printed = []
+  const code = await m.run(
+    { GH_TOKEN: 't', RECONCILE_REPOSITORIES: 'a/two', GITHUB_STEP_SUMMARY: summaryFile },
+    { fetch: gh.fetch, root, print: (l) => printed.push(l) }
+  )
+  const summary = readFileSync(summaryFile, 'utf8')
+  check("run(): one issue's failure does not stop the next issue; the run exits 1", () => {
+    assert.equal(code, 1)
+    assert.match(summary, /\*\*a\/two#1 failed:\*\* POST \/repos\/a\/two\/issues\/1\/labels: 502/)
+    assert.match(summary, /^Failed: a\/two\.$/m)
+    assert.ok(printed.some((l) => l.startsWith('::error title=classification reconcile a/two#1::')))
+    assert.ok(gh.rest.some(([meth, path]) => meth === 'DELETE' && path === '/repos/a/two/issues/2/labels/needs-triage'))
   })
 }
 

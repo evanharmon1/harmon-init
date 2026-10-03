@@ -132,8 +132,8 @@
         {
           "value": "needs-triage",
           "description": "Awaiting triage",
-          "writers": ["human", "agent"],
-          "writer_note": "humans, the issue forms, and the triage skill",
+          "writers": ["human", "agent", "tool:github-actions"],
+          "writer_note": "humans, the issue forms, the triage skill, and the GitHub Actions classification reconciler (derived: added while classification is incomplete, removed once it is complete)",
           "lifecycle_note": "added freely at filing; removed only when classification is complete"
         },
         {

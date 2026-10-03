@@ -429,6 +429,13 @@ export function parseRepositories(raw, fallback) {
 // compare-and-swap, so one round trip between that read and its write is the
 // irreducible residual. `needs-triage` is maintained on pinned issues too, so
 // its writes are unguarded and run after the Tier writes.
+//
+// Verify and repair (C1-F7, C3-F1): after the Tier writes, the issue is
+// re-read once. Unpinned, it must carry exactly one rung, the Tier derived
+// from the inputs on that read; a failed delete or a concurrent run's write
+// breaks that. One bounded repair pass runs under the same guard, then a
+// last re-read; if the invariant still fails the issue is reported
+// (`tier-not-exclusive`) and the walk moves on.
 export async function applyPlan(client, owner, name, number, ctx) {
   const fresh = await fetchIssue(client, owner, name, number)
   if (!fresh) return { add: [], remove: [], reports: [] }
@@ -439,35 +446,70 @@ export async function applyPlan(client, owner, name, number, ctx) {
       ? client.rest('POST', path, { labels: [assertWritable(label)] })
       : client.rest('DELETE', `${path}/${encodeURIComponent(assertWritable(label))}`)
   const isTier = (l) => l !== NEEDS_TRIAGE
-  const tierWrites = [
-    ...plan.add.filter(isTier).map((l) => ['POST', l]),
-    ...plan.remove.filter(isTier).map((l) => ['DELETE', l])
+  const tierOps = (p) => [
+    ...p.add.filter(isTier).map((l) => ['POST', l]),
+    ...p.remove.filter(isTier).map((l) => ['DELETE', l])
   ]
   const applied = { add: [], remove: [] }
   const record = (method, label) => (method === 'POST' ? applied.add : applied.remove).push(label)
-  let read = fresh // the decision read guards the first Tier write
-  for (const [i, [method, label]] of tierWrites.entries()) {
-    if (i > 0) read = await fetchIssue(client, owner, name, number)
-    if (!read) return { ...plan, ...applied } // closed mid-write: stop everything
-    if (read.truncated) {
-      // A partial guard read cannot establish that the issue is unpinned.
-      const skipped = tierWrites.slice(i).map(([m, l]) => `${m === 'POST' ? 'add' : 'remove'} ${l}`)
-      plan.reports.push({
-        code: 'pin-guard-indeterminate',
-        message: `the guard read's ${read.truncated} exceed one page; ${skipped.join(', ')} not applied`
-      })
-      break
+  const report = (code, message) => plan.reports.push({ code, message })
+  const describe = (ops) =>
+    ops.map(([m, l]) => `${m === 'POST' ? 'add' : 'remove'} ${l}`).join(', ')
+
+  // Returns 'done', 'stopped' (a pin, or a guard read that cannot rule one
+  // out), 'failed' (a write errored), or 'closed'.
+  async function guardedTierWrites(ops, firstRead) {
+    let read = firstRead
+    for (const [i, [method, label]] of ops.entries()) {
+      if (i > 0) read = await fetchIssue(client, owner, name, number)
+      if (!read) return 'closed'
+      if (read.truncated) {
+        report(
+          'pin-guard-indeterminate',
+          `the guard read's ${read.truncated} exceed one page; ${describe(ops.slice(i))} not applied`
+        )
+        return 'stopped'
+      }
+      if (read.labels.includes(PIN_LABEL)) {
+        report(
+          'pin-appeared',
+          `${PIN_LABEL} appeared during the write; ${describe(ops.slice(i))} not applied, left for a human`
+        )
+        return 'stopped'
+      }
+      try {
+        await write(method, label)
+      } catch (err) {
+        report('write-failed', `${describe([[method, label]])} failed: ${err.message}`)
+        return 'failed'
+      }
+      record(method, label)
     }
-    if (read.labels.includes(PIN_LABEL)) {
-      const skipped = tierWrites.slice(i).map(([m, l]) => `${m === 'POST' ? 'add' : 'remove'} ${l}`)
-      plan.reports.push({
-        code: 'pin-appeared',
-        message: `${PIN_LABEL} appeared during the write; ${skipped.join(', ')} not applied, left for a human`
-      })
-      break
+    return 'done'
+  }
+
+  const tierWrites = tierOps(plan)
+  let outcome = await guardedTierWrites(tierWrites, fresh)
+  if (outcome === 'closed') return { ...plan, ...applied }
+  if (tierWrites.length > 0 && outcome !== 'stopped') {
+    for (let pass = 0; pass < 2; pass++) {
+      const check = await fetchIssue(client, owner, name, number)
+      if (!check) return { ...plan, ...applied }
+      // decide() plans no Tier write for a pinned or truncated read, so a pin
+      // seen here ends the pass like a holding invariant does.
+      const fix = tierOps(decide(check, ctx))
+      if (fix.length === 0) break
+      if (pass === 1) {
+        report(
+          'tier-not-exclusive',
+          `the Tier is still not exclusive after one repair pass (${describe(fix)} outstanding)`
+        )
+        break
+      }
+      outcome = await guardedTierWrites(fix, check)
+      if (outcome === 'closed') return { ...plan, ...applied }
+      if (outcome === 'stopped') break
     }
-    await write(method, label)
-    record(method, label)
   }
   for (const label of plan.add.filter((l) => !isTier(l))) {
     await write('POST', label)
@@ -546,9 +588,19 @@ export async function run(
           : openIssues(client, owner, name)
       for await (const issue of issues) {
         seen += 1
-        let plan = decide(issue, ctx)
-        if (!dryRun && (plan.add.length > 0 || plan.remove.length > 0)) {
-          plan = await applyPlan(client, owner, name, issue.number, ctx)
+        let plan
+        // One issue's failure (an API error mid-write) never stops the rest
+        // of the repository's walk; the repository still counts as failed.
+        try {
+          plan = decide(issue, ctx)
+          if (!dryRun && (plan.add.length > 0 || plan.remove.length > 0)) {
+            plan = await applyPlan(client, owner, name, issue.number, ctx)
+          }
+        } catch (err) {
+          if (!failed.includes(repo)) failed.push(repo)
+          print(`::error title=classification reconcile ${repo}#${issue.number}::${err.message}`)
+          summary.push(`> **${repo}#${issue.number} failed:** ${err.message}`, '')
+          continue
         }
         // The run-wide "not derivable" reason is reported once above.
         const reports = plan.reports.filter((r) => r.code !== 'tier-not-derivable')
@@ -564,7 +616,7 @@ export async function run(
         }
       }
     } catch (err) {
-      failed.push(repo)
+      if (!failed.includes(repo)) failed.push(repo)
       print(`::error title=classification reconcile ${repo}::${err.message}`)
       summary.push(`> **${repo} failed:** ${err.message}`, '')
     }

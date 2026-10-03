@@ -222,6 +222,13 @@ The remaining windows are narrow:
   it sees two tier values and reports them. With the Tier set first, it
   re-derives once, and the human's pin then restores the intended value.
 
+After its Tier writes the job re-reads the issue once. Unpinned, the issue
+must carry exactly one rung, the Tier derived from its inputs on that read.
+A failed delete or a concurrent run's write breaks that, so one bounded repair
+pass runs under the same pin guard; an issue still not exclusive after it is
+reported (`tier-not-exclusive`). An API error on one issue is reported and the
+walk moves on to the next issue; the run exits 1 after the whole list.
+
 Label writes made with `GITHUB_TOKEN` start no workflow runs, so the
 reconciler's own writes never re-trigger the event workflow. `edited` is
 deliberately absent. `field_added`/`field_removed` are absent until actionlint
