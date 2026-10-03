@@ -584,8 +584,10 @@ says where it lands.
 
 ## Reusing this structure
 
-The Codex cloud (#750) and Sprites (#1411) adapters need the same sections in the
-same order, so the shape is the reusable part: **the environment** (name, setup
+The [Codex cloud](codex-cloud.md) and [Fly.io Sprites](sprites.md) guides follow
+this shape, each adapted to its platform: both open by saying how to read the
+evidence and close with a pending-observations register. A future adapter guide
+should take the same shape: **the environment** (name, setup
 script at a pinned tag, network level and each added domain's reason, variables),
 **identity and secrets**, **what the platform's GitHub path does to `gh`** with a
 call inventory, **bridges** to and from a local terminal, **memory**, **long
