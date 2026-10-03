@@ -8,6 +8,18 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [4.49.0](https://github.com/evanharmon1/harmon-init/compare/v4.48.0...v4.49.0) (2026-10-03)
+
+
+### Features
+
+* **ci:** ship the classification reconciler as a reusable workflow with a human-edit trigger ([#1495](https://github.com/evanharmon1/harmon-init/issues/1495)) ([40e612b](https://github.com/evanharmon1/harmon-init/commit/40e612ba9fa9660678303f93ce19a35a16eadee5))
+
+
+### Bug Fixes
+
+* **codex:** narrow the remote Codex policy guard's false positives and close its coverage gaps ([#1492](https://github.com/evanharmon1/harmon-init/issues/1492)) ([eaeab33](https://github.com/evanharmon1/harmon-init/commit/eaeab334ae93850a19d5206e9ef417885f3d2ff4))
+
 ## [4.48.0](https://github.com/evanharmon1/harmon-init/compare/v4.47.1...v4.48.0) (2026-10-03)
 
 
