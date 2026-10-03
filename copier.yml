@@ -285,8 +285,9 @@ use_codex_review:
     offered automatically on folder trust via .claude/settings.json. The review
     tasks are local and advisory: nothing runs them in CI and the gate defaults
     off. Answering yes also adds a blocking credential-policy check to verify and
-    CI that fails on Codex credentials, or on any OpenAI API key or auth.json, in
-    a file that provisions a remote environment.
+    CI that fails on a Codex login or Codex credentials in remote-environment
+    configuration and docs, or on any OpenAI API key or auth.json in a file that
+    provisions a remote environment.
   default: no
 
 use_codex_cloud_review:

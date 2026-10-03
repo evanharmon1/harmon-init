@@ -22,26 +22,20 @@
 # word `login`, on one normalised line — so `codex --no-alt-screen login` is
 # caught like `codex login`. The same shape split across two lines (a folded
 # YAML step) is caught too and reported as `file:L1-L2: <line 1> / <line 2>`; a
-# folded hit cannot be allowlisted, the source has to be rewritten. Only a
-# command-shaped first line starts a fold: one inside a folded or literal scalar
-# under a command key (`run`, `cmd`, `command`, `script`, `entrypoint`, `args`),
-# inside a fenced shell block (sh, bash, zsh, shell, console or shell-session),
-# on a command-key line whose plain value ends in `codex` (YAML folds a plain
-# multi-line scalar like `>-`), or that itself begins a `codex` invocation — so
-# consecutive YAML mapping lines such as `provider: codex` / `login: oauth` pass.
-# The next line completes the fold only if it continues the same command: still
-# inside that scalar or fence, or indented deeper than the command key (or the
-# `- ` of a sequence item) that armed it.
+# folded hit cannot be allowlisted, the source has to be rewritten. One rule, in
+# every scanned file whatever its context: a line that ENDS in `codex` plus option
+# words arms the fold, and the next non-blank line completes it when it begins
+# with option words and then `login`. The one exception: a `login` that is a
+# mapping key (`login:` or `login :`) is never the subcommand, so consecutive
+# mapping lines such as `provider: codex` / `login: oauth`, or `- codex` /
+# `login: [oauth]`, pass. When the head ends in an option (`codex --config`), the
+# tail may open with that option's value (`model=foo login`), as YAML folds them.
 #
 # `auth.json` is matched as a complete basename: `auth.json` and
 # `~/.codex/auth.json` hit, `oauth.json`, `myauth.json` and `auth.json.example`
-# do not (a dot after it is sentence punctuation only before a blank or the end
-# of the line).
-#
-# `.claude/settings.json` is a strict surface with one exemption: a quoted
-# permission rule (`"Read(~/.codex/auth.json)"`, any `"Name(...)"` string) is not
-# matched against the tokens there, so a project can protect a credential file
-# with a deny rule. An `env` block, or any other line, is still matched.
+# do not. A dot after it is sentence punctuation before a blank, the end of the
+# line, or a closing quote, parenthesis, bracket or backtick (`"Restore
+# auth.json."` hits); `auth.json..schema` and `auth.json.bak` pass.
 #
 # The one rule outside the strict tier: a line is reported only if it mentions
 # `codex` (any case) — every token, the login flags included. A generated project
@@ -74,12 +68,14 @@
 #     (`codex` / `--opt` / `login`) is not joined; only two-line folds are.
 #   - Outside the strict tier, a token with `codex` only on a neighbouring line
 #     is not caught. Inside the strict tier that does not apply.
-#   - Fences are matched by character and length (a run of the opener's
-#     character at least as long as its opener closes it); the info string and
-#     indentation rules of a full Markdown parser are not applied.
-#   - A literal scalar (`run: |`) and a shell fence are treated as fold contexts
-#     although a newline ends the command there, so `codex` then `login` on
-#     separate lines is reported although the shell would run them as two commands.
+#   - Hard-wrapped prose that ends a line in `codex` with `login` opening the next
+#     is reported, as is a literal or fenced shell block whose lines are two
+#     commands: the fold rule has no notion of context.
+#   - `.claude/settings.json` is a strict surface with no exemption: a consumer's
+#     own protective rule naming these tokens (a deny rule for a credential file)
+#     is reported too, and an allow rule that grants access must keep failing,
+#     which telling apart needs JSON structure this scanner does not have. A
+#     repository-owned allowlist is tracked as evanharmon1/harmon-init#1493.
 # A full YAML or shell parser is out of scope.
 #
 # Self-proving: a planted violation in a temporary copy of the surfaces must
@@ -312,110 +308,26 @@ scan() {
                 if (tok == "auth.json") return (t ~ AUTHJSON)
                 return index(t, tok)
             }
-            # keycol(RAW) — the 0-based column of the command key on RAW (the first
-            # physical line), a quote around the key included; -1 if there is none.
-            # Tabs are read as blanks, as the collapsed text is, so a tab-indented key
-            # is found at the column curind measures.
-            function keycol(raw,   kc) {
-                gsub(/\t/, " ", raw)
-                if (!match(raw, KEYRE)) return -1
-                kc = RSTART
-                if (substr(raw, kc, 1) ~ /[ {-]/) kc++
-                return kc - 1
-            }
-            # track(RAW, TT) — set curind (the indentation of RAW, the first physical
-            # line) and incmd for the line about to be examined: is it command-shaped
-            # context (inside a sh/bash fence, or inside a folded or literal scalar
-            # under a command key)? The key column decides when a scalar ends. A
-            # fence at or left of that column opening or closing ends the scalar: a
-            # snippet shows one, it does not continue past its fence. A fence indented
-            # inside the scalar is its content (a heredoc writing Markdown, say).
-            # A fence is three or more backticks or tildes, closed by a run of the
-            # same character at least as long as the opening run (CommonMark), so a
-            # shorter run inside a longer fence is content.
-            function runlen(s, c,   i) {
-                i = 1
-                while (substr(s, i, 1) == c) i++
-                return i - 1
-            }
-            function track(raw, tt,   isbt, istl, rl) {
-                incmd = 0
-                match(raw, /^[ \t]*/)
-                curind = RLENGTH
-                isbt = (tt ~ FENCEBT)
-                istl = (tt ~ FENCETL)
-                if (bs && curind > bscol && (isbt || istl)) {
-                    incmd = 1
-                    return
-                }
-                rl = isbt ? runlen(tt, BT) : (istl ? runlen(tt, "~") : 0)
-                if (fence ? (rl >= flen && (fchar == BT ? isbt : istl)) : (isbt || istl)) {
-                    bs = 0
-                    if (fence) fence = 0
-                    else {
-                        fence = 1
-                        fchar = (isbt ? BT : "~")
-                        flen = rl
-                        fshell = (tt ~ FENCESH)
-                    }
-                    return
-                }
-                if (fence && fshell) {
-                    incmd = 1
-                    return
-                }
-                if (bs) {
-                    if (tt == "") return
-                    if (curind > bscol) {
-                        incmd = 1
-                        return
-                    }
-                    bs = 0
-                }
-                if (tt ~ BSHEAD) {
-                    bscol = keycol(raw)
-                    bs = (bscol >= 0)
-                }
-            }
-            # continues() — may the line just tracked complete the fold armed by a
-            # pending head? Only when it continues the same command: inside the same
-            # scalar or fence the head sat in (pmode 1), or indented deeper than the
-            # command key whose plain scalar the head opened (pmode 2) — a line at or
-            # left of that key is a sibling, never a continuation. A head that merely
-            # begins a codex invocation (pmode 3) has no key to measure against, except
-            # a sequence item (`- codex`): its continuation is indented deeper than the
-            # dash, a sibling key at or left of the dash is not one. A `$ codex` or bare
-            # `codex` head keeps no such bound (pcol is -1).
-            function continues() {
-                if (pmode == 1) return incmd
-                if (pmode == 2) return (curind > pcol)
-                if (pcol >= 0) return (curind > pcol)
-                return 1
-            }
-            function emit(f, s, t, raw,   i, tt, hit, m) {
+            function emit(f, s, t,   i, tt, hit) {
                 gsub(/[ \t]+/, " ", t)
                 tt = t
                 sub(/^ /, "", tt)
-                track(raw, tt)
-                # A Codex command folded across two lines (a YAML `>-` step):
-                # `codex` and options end one line, options and `login` open the
-                # next non-blank line. Reported with both real lines.
+                # A Codex command folded across two lines (a YAML `>-` step): a line
+                # ends in `codex` and options (FOLDHEAD); the next non-blank line
+                # opens with options and `login` (FOLDTAIL) — or, when the head ended
+                # in an option, with that option value first (FOLDTAILV). A `login`
+                # that is a mapping key (KEYLOGIN) is not the subcommand. Reported
+                # with both real lines.
                 if (pend != "" && tt != "") {
-                    if (tt ~ FOLDTAIL && continues()) print pfile ":" pline "-" s ": " pend " / " tt
+                    if ((tt ~ FOLDTAIL || (pendopt && tt ~ FOLDTAILV)) && tt !~ KEYLOGIN) print pfile ":" pline "-" s ": " pend " / " tt
                     pend = ""
                 }
                 # One rule: outside the strict tier a line counts only if it
                 # mentions codex (any case); inside it every token is bare.
                 hit = 0
-                # The Claude Code settings may carry permission rules that PROTECT a
-                # credential file (`"Read(~/.codex/auth.json)"`): in that one file a
-                # quoted `Name(...)` string is not matched against the tokens. An
-                # `env` block, or any other line, is.
-                m = t
-                if (permfile) gsub(PERMRULE, "\"\"", m)
                 if (strict || tolower(t) ~ /codex/) {
                     for (i = 1; i <= n; i++) {
-                        if (T[i] != "" && has_tok(m, T[i])) {
+                        if (T[i] != "" && has_tok(t, T[i])) {
                             hit = 1
                             break
                         }
@@ -424,21 +336,10 @@ scan() {
                     if (hit) print substr(f, 3) ":" s ":" t
                 }
                 if (!hit && t ~ FOLDHEAD) {
-                    pmode = 0
-                    pcol = -1
-                    if (incmd) pmode = 1
-                    else if (tt ~ CMDKEYLINE) {
-                        pcol = keycol(raw)
-                        if (pcol >= 0) pmode = 2
-                    } else if (tt ~ CMDHEAD) {
-                        pmode = 3
-                        if (tt ~ /^- /) pcol = curind
-                    }
-                    if (pmode) {
-                        pend = t
-                        pfile = substr(f, 3)
-                        pline = s
-                    }
+                    pend = t
+                    pendopt = (t ~ OPTEND)
+                    pfile = substr(f, 3)
+                    pline = s
                 }
             }
             function is_strict(path,   i, dir, name) {
@@ -461,60 +362,39 @@ scan() {
                 LOGIN = W " login([^A-Za-z0-9_-]|$)"
                 FOLDHEAD = W " ?$"
                 FOLDTAIL = "^(-[^ ]+ ([^ -][^ ]* )?)*login([^A-Za-z0-9_-]|$)"
+                # The head ended in an option word, so its value may open the tail.
+                OPTEND = " -[^ ]+ ?$"
+                FOLDTAILV = "^[^ -][^ ]* (-[^ ]+ ([^ -][^ ]* )?)*login([^A-Za-z0-9_-]|$)"
+                # A tail whose `login` is a mapping key: `login:` or `login :`.
+                KEYLOGIN = "^([^ ]+ )*login ?:"
                 # auth.json as a complete basename: no name character before it
                 # (a `.` or `-` would make it part of a longer name), no word
-                # character after it; a trailing `.` is sentence punctuation only
-                # when a blank or the end of the line follows it (sentence-final
-                # `auth.json.` hits; `auth.json.example` and `auth.json..schema` do
-                # not).
-                AUTHJSON = "(^|[^A-Za-z0-9_.-])auth[.]json([^A-Za-z0-9_.-]|[.]( |$)|$)"
-                # A quoted permission rule: a JSON string whose whole value is
-                # `Name(...)` for a tool name.
-                PERMRULE = "\"[A-Za-z]+[(][^\"]*[)]\""
-                # Command-shaped context: a fenced sh/bash block, or a folded or
-                # literal scalar under a command key; or a command-key line whose
-                # value ends in codex (a plain scalar, folded by YAML like `>-`); or
-                # a first line that itself begins a codex invocation (optionally a
-                # list item, a `$ ` prompt or a command key, then env assignments or
-                # a wrapper). A command key may be quoted, single or double (\047
-                # and \042 keep the quote characters out of the shell quoting), may
-                # follow a flow-mapping `{`, and may have a blank before its colon;
-                # a block scalar indicator may follow `&anchor` / `!tag` properties.
-                # A fence is three or more backticks or tildes.
+                # character after it. A trailing `.` is sentence punctuation before
+                # a blank, the end of the line, or a closing quote, parenthesis,
+                # bracket or backtick (`"Restore auth.json."` hits); a longer name
+                # (`auth.json.example`, `auth.json..schema`) is not the file.
                 BT = sprintf("%c", 96)
-                FENCEBT = "^" BT BT BT
-                FENCETL = "^~~~"
-                FENCESH = "^(" BT BT BT "|~~~)[" BT "~]* ?(sh|bash|zsh|shell|console|shell-session)( |$)"
-                QT = "[\042\047]?"
-                CMDKEY = QT "(run|cmd|command|script|entrypoint|args)" QT " ?:"
-                BSHEAD = "(^|[ {-])" CMDKEY " *([&!][^ ]+ +)*[>|][-+0-9]*( #.*| )?$"
-                KEYRE = "(^|[ {-])" CMDKEY
-                CMDKEYLINE = "^(- )?([{] ?)?" CMDKEY " "
-                CMDHEAD = "^(- |[$] )?([{] ?)?(" CMDKEY " )?([A-Za-z_][A-Za-z0-9_]*=[^ ]* |sudo |exec |nohup |time )*codex( -[^ ]+( [^ -][^ ]*)?)* ?$"
+                AUTHJSON = "(^|[^A-Za-z0-9_.-])auth[.]json([^A-Za-z0-9_.-]|[.]( |$|[\042\047)]|\\]|" BT ")|$)"
             }
             FNR == 1 {
-                if (cont) { emit(pf, start, buf, rawfirst); buf = ""; cont = 0 }
+                if (cont) { emit(pf, start, buf); buf = ""; cont = 0 }
                 pf = FILENAME
                 pend = ""
-                fence = 0
-                fshell = 0
-                bs = 0
                 strict = is_strict(substr(FILENAME, 3))
-                permfile = (substr(FILENAME, 3) == ".claude/settings.json")
             }
             {
                 line = $0
                 if (line ~ /\\$/) {
-                    if (!cont) { start = FNR; rawfirst = $0 }
+                    if (!cont) start = FNR
                     sub(/\\$/, "", line)
                     buf = buf line
                     cont = 1
                     next
                 }
-                if (cont) { emit(FILENAME, start, buf line, rawfirst); buf = ""; cont = 0 }
-                else emit(FILENAME, FNR, line, $0)
+                if (cont) { emit(FILENAME, start, buf line); buf = ""; cont = 0 }
+                else emit(FILENAME, FNR, line)
             }
-            END { if (cont) emit(pf, start, buf, rawfirst) }' "${textfiles[@]}" 2>/dev/null)" || rc=$?
+            END { if (cont) emit(pf, start, buf) }' "${textfiles[@]}" 2>/dev/null)" || rc=$?
         if [ "$rc" -ne 0 ]; then
             echo "GUARD-ERROR guard could not scan the surface files"
             return 0
@@ -792,6 +672,12 @@ plant "$authf" '#!/usr/bin/env bash\n# Restore auth.json.\n'
 expect_hit "a sentence-final auth.json." "$authf" "2:"
 plant "$authf" '#!/usr/bin/env bash\n# Restore auth.json. Then retry.\n'
 expect_hit "an auth.json. before a blank" "$authf" "2:"
+plant "$authf" '#!/usr/bin/env bash\necho "Never copy auth.json."\n'
+expect_hit "a quoted sentence-final auth.json." "$authf" "2:"
+plant "$authf" '#!/usr/bin/env bash\n# (see auth.json.)\n'
+expect_hit "a parenthesised sentence-final auth.json." "$authf" "2:"
+plant "$authf" '#!/usr/bin/env bash\n# the `auth.json.` file, [auth.json.] too\n'
+expect_hit "a backtick-closed sentence-final auth.json." "$authf" "2:"
 plant "$authf" '#!/usr/bin/env bash\ncat auth.json\n'
 expect_hit "a bare auth.json" "$authf" "2:"
 plant "$authf" '#!/usr/bin/env bash\nrm "$HOME/auth.json"\n'
@@ -810,22 +696,6 @@ rm -f "${FIX}/docs/guides/planted-app.md"
 # are strict surfaces: a bare key fails, in either layer; a sibling script does not.
 plant .claude/settings.json '{\n  "env": {\n    "OPENAI_API_KEY": "x"\n  }\n}\n'
 expect_hit "a bare OPENAI_API_KEY in .claude/settings.json" ".claude/settings.json" "3:"
-# A permission rule that PROTECTS a credential file is not a credential: in that one
-# file a quoted Name(...) string is exempt, one per line or several on one line. An
-# env block in the same file, and the same rule line anywhere else, still fail.
-plant .claude/settings.json '{\n  "permissions": {\n    "deny": [\n      "Read(~/.codex/auth.json)",\n      "Read(**/auth.json)"\n    ]\n  }\n}\n'
-fixture_hits
-[ -z "$SCAN_HITS" ] || fail "permission deny rules naming auth.json must pass in .claude/settings.json, got: ${SCAN_HITS}"
-plant .claude/settings.json '{\n  "permissions": {\n    "deny": ["Read(~/.codex/auth.json)", "Read(**/auth.json)", "Bash(cat ~/.codex/*)"]\n  }\n}\n'
-fixture_hits
-[ -z "$SCAN_HITS" ] || fail "a one-line list of permission deny rules must pass in .claude/settings.json, got: ${SCAN_HITS}"
-plant .claude/settings.json '{\n  "permissions": {\n    "deny": ["Read(~/.codex/auth.json)"]\n  },\n  "env": {\n    "OPENAI_API_KEY": "x"\n  }\n}\n'
-expect_hit "an env OPENAI_API_KEY beside permission rules in .claude/settings.json" ".claude/settings.json" "6:"
-plant .claude/settings.json '{\n  "permissions": {\n    "deny": ["Read(~/.codex/auth.json)"],\n    "note": "~/.codex/auth.json"\n  }\n}\n'
-expect_hit "a non-rule string naming ~/.codex/auth.json in .claude/settings.json" ".claude/settings.json" "4:"
-unplant
-plant .devcontainer/scripts/bootstrap-related-repos.sh '#!/usr/bin/env bash\n"Read(~/.codex/auth.json)"\n'
-expect_hit "a permission-rule-shaped line outside .claude/settings.json" ".devcontainer/scripts/bootstrap-related-repos.sh" "2:"
 unplant
 plant .devcontainer/scripts/bootstrap-related-repos.sh '#!/usr/bin/env bash\nexport OPENAI_API_KEY=x\n'
 expect_hit "a bare OPENAI_API_KEY in the bootstrap helper" ".devcontainer/scripts/bootstrap-related-repos.sh" "2:"
@@ -860,138 +730,54 @@ expect_hit "a folded codex, then an option and login" ".github/workflows/folded.
 printf 'jobs:\n  a:\n    steps:\n      - run: echo codex\n        login-check: x\n' >"${FIX}/.github/workflows/folded.yml"
 fixture_hits
 [ -z "$SCAN_HITS" ] || fail "codex followed by a login-prefixed word must not match, got: ${SCAN_HITS}"
-# Only a command-shaped line starts a fold: consecutive YAML mapping lines naming
-# codex and login are configuration, in a workflow or in a guide (fenced or not).
+# One rule decides every fold below, in any file and whatever surrounds the lines: a
+# line ending in `codex` plus options arms it, the next non-blank line completes it
+# with options and `login`, unless that `login` is a mapping key (`login:`).
+# Mapping lines pass: a key named login is never the subcommand.
 printf 'jobs:\n  a:\n    steps:\n      - uses: x\n        with:\n          provider: codex\n          login: oauth\n' >"${FIX}/.github/workflows/folded.yml"
 fixture_hits
 [ -z "$SCAN_HITS" ] || fail "consecutive provider: codex / login: oauth mapping lines must pass, got: ${SCAN_HITS}"
-# A tail completes a fold only when it continues the same command. A sibling key
-# on the very next line has left the scalar (or the plain scalar's key column), so
-# `codex` then `login: oauth` is configuration, not a folded login.
+printf 'cmds:\n  - codex\n  login: [oauth]\n' >"${FIX}/.github/workflows/folded.yml"
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "a sequence item codex then a login: key must pass, got: ${SCAN_HITS}"
 printf 'jobs:\n  a:\n    steps:\n      - run: >-\n          codex\n        login: oauth\n' >"${FIX}/.github/workflows/folded.yml"
 fixture_hits
-[ -z "$SCAN_HITS" ] || fail "a sibling login: key right after a folded run scalar must pass, got: ${SCAN_HITS}"
-printf 'jobs:\n  a:\n    steps:\n      - script: >-\n          echo hi && codex\n        login: oauth\n' >"${FIX}/.github/workflows/folded.yml"
+[ -z "$SCAN_HITS" ] || fail "a run scalar ending in codex then a sibling login: key must pass, got: ${SCAN_HITS}"
+printf 'provider: codex\nlogin : oauth\n' >"${FIX}/.github/workflows/folded.yml"
 fixture_hits
-[ -z "$SCAN_HITS" ] || fail "a sibling login: key right after a folded script scalar must pass, got: ${SCAN_HITS}"
-printf 'jobs:\n  a:\n    steps:\n      - run: echo hi && codex\n        login: oauth\n' >"${FIX}/.github/workflows/folded.yml"
-fixture_hits
-[ -z "$SCAN_HITS" ] || fail "a sibling login: key right after a plain run value must pass, got: ${SCAN_HITS}"
-printf 'jobs:\n  a:\n    steps:\n      - run: codex\n        login: oauth\n' >"${FIX}/.github/workflows/folded.yml"
-fixture_hits
-[ -z "$SCAN_HITS" ] || fail "a sibling login: key right after a run: codex value must pass, got: ${SCAN_HITS}"
-# A plain (unindicated) multi-line scalar under a command key is folded by YAML like
-# `>-`: a value ending in codex, whatever precedes it, and a deeper continuation.
-printf 'jobs:\n  a:\n    steps:\n      - run: echo hi && codex\n          login\n' >"${FIX}/.github/workflows/folded.yml"
-expect_hit "a plain multi-line run scalar ending in codex, then login" ".github/workflows/folded.yml" "4-5: "
-printf 'jobs:\n  a:\n    steps:\n      - run: codex\n          login\n' >"${FIX}/.github/workflows/folded.yml"
-expect_hit "a plain multi-line run scalar of codex, then login" ".github/workflows/folded.yml" "4-5: "
-printf 'jobs:\n  a:\n    steps:\n      - run: codex login --device-auth\n' >"${FIX}/.github/workflows/folded.yml"
-expect_hit "the one-line codex login control" ".github/workflows/folded.yml" "4:"
-# A sequence item `- codex` is bounded by its dash: a sibling key at the dash's
-# column is not a continuation, a deeper line is. A `$ codex` prompt line has no bound.
-printf 'cmds:\n  - codex\n  login: oauth\n' >"${FIX}/.github/workflows/folded.yml"
-fixture_hits
-[ -z "$SCAN_HITS" ] || fail "a sibling login: key after a - codex item must pass, got: ${SCAN_HITS}"
-printf 'cmds:\n  - codex\nlogin: oauth\n' >"${FIX}/.github/workflows/folded.yml"
-fixture_hits
-[ -z "$SCAN_HITS" ] || fail "a shallower login: key after a - codex item must pass, got: ${SCAN_HITS}"
-printf 'cmds:\n  - codex\n    login\n' >"${FIX}/.github/workflows/folded.yml"
-expect_hit "a deeper login after a - codex item" ".github/workflows/folded.yml" "2-3: "
-# A block scalar indicator may follow node properties (an anchor or a tag).
-printf 'jobs:\n  a:\n    steps:\n      - run: &x >-\n          echo hi && codex\n          login\n' >"${FIX}/.github/workflows/folded.yml"
-expect_hit "an anchored block scalar" ".github/workflows/folded.yml" "5-6: "
-printf 'jobs:\n  a:\n    steps:\n      - run: !!str |\n          echo hi && codex\n          login\n' >"${FIX}/.github/workflows/folded.yml"
-expect_hit "a tagged block scalar" ".github/workflows/folded.yml" "5-6: "
-printf 'jobs:\n  a:\n    steps:\n      - run: &x !!str >-\n          echo hi && codex\n          login\n' >"${FIX}/.github/workflows/folded.yml"
-expect_hit "an anchored and tagged block scalar" ".github/workflows/folded.yml" "5-6: "
-# A command key may sit in a flow mapping or have a blank before its colon, plain
-# or as a block scalar.
-printf 'jobs:\n  a:\n    steps:\n      - {run: echo hi && codex\n          login}\n' >"${FIX}/.github/workflows/folded.yml"
-expect_hit "a flow-mapping run value ending in codex, then login" ".github/workflows/folded.yml" "4-5: "
-printf 'jobs:\n  a:\n    steps:\n      - run : echo hi && codex\n          login\n' >"${FIX}/.github/workflows/folded.yml"
-expect_hit "a run key with a blank before its colon, plain value" ".github/workflows/folded.yml" "4-5: "
-printf 'jobs:\n  a:\n    steps:\n      - "run" : >-\n          echo hi && codex\n          login\n' >"${FIX}/.github/workflows/folded.yml"
-expect_hit "a quoted run key with a blank before its colon, block scalar" ".github/workflows/folded.yml" "5-6: "
-printf 'jobs:\n  a:\n    steps:\n      - run : |\n          echo hi && codex\n          login\n' >"${FIX}/.github/workflows/folded.yml"
-expect_hit "a run key with a blank before its colon, literal scalar" ".github/workflows/folded.yml" "5-6: "
-printf 'jobs:\n  a:\n    steps:\n      - {run: echo hi && codex}\n      - login: oauth\n' >"${FIX}/.github/workflows/folded.yml"
-fixture_hits
-[ -z "$SCAN_HITS" ] || fail "a sibling login: item after a flow mapping must pass, got: ${SCAN_HITS}"
-# A fence inside a literal scalar is its content: a heredoc writing Markdown does not
-# end the command context for the lines after it.
-printf 'jobs:\n  a:\n    steps:\n      - run: |\n          cat > x.md <<EOF\n          ```\n          text\n          ```\n          EOF\n          echo hi && codex\n          login\n' >"${FIX}/.github/workflows/folded.yml"
-expect_hit "a command after a fenced heredoc inside a run scalar" ".github/workflows/folded.yml" "10-11: "
-# Tab-indented keys are read as blanks: a scalar opens at the key's column and ends
-# when the indentation returns to it, never running on through the rest of a page.
-printf '\trun: >-\n\t\t  echo hi && codex\n\t\t  login\n' >"${FIX}/.github/workflows/folded.yml"
-expect_hit "a tab-indented run scalar" ".github/workflows/folded.yml" "2-3: "
-# A command key may be quoted, single or double, in a block scalar or a plain value.
-printf 'jobs:\n  a:\n    steps:\n      - "run": >-\n          echo hi && codex\n          login\n' >"${FIX}/.github/workflows/folded.yml"
-expect_hit "a double-quoted run key with a folded scalar" ".github/workflows/folded.yml" "5-6: "
-printf "jobs:\n  a:\n    steps:\n      - 'run': |\n          echo hi && codex\n          login\n" >"${FIX}/.github/workflows/folded.yml"
-expect_hit "a single-quoted run key with a literal scalar" ".github/workflows/folded.yml" "5-6: "
-printf 'jobs:\n  a:\n    steps:\n      - "run": codex\n          login\n' >"${FIX}/.github/workflows/folded.yml"
-expect_hit "a double-quoted run key with a plain multi-line value" ".github/workflows/folded.yml" "4-5: "
-printf 'jobs:\n  a:\n    steps:\n      - "run": >-\n          codex\n        login: oauth\n' >"${FIX}/.github/workflows/folded.yml"
-fixture_hits
-[ -z "$SCAN_HITS" ] || fail "a sibling login: key after a quoted-key scalar must pass, got: ${SCAN_HITS}"
-# The block-scalar indicator may be followed by a comment or by blanks.
-printf 'jobs:\n  a:\n    steps:\n      - run: >- # install\n          echo hi && codex\n          login\n' >"${FIX}/.github/workflows/folded.yml"
-expect_hit "a block scalar indicator followed by a comment" ".github/workflows/folded.yml" "5-6: "
-printf 'jobs:\n  a:\n    steps:\n      - run: >-  \n          echo hi && codex\n          login\n' >"${FIX}/.github/workflows/folded.yml"
-expect_hit "a block scalar indicator followed by blanks" ".github/workflows/folded.yml" "5-6: "
-# Command context decides a head that does not itself begin with codex: inside a
-# run scalar, `echo hi && codex` / `login` is a folded login; as a mapping value
-# outside any command context it is not.
-printf 'jobs:\n  a:\n    steps:\n      - run: >-\n          echo hi && codex\n          login\n' >"${FIX}/.github/workflows/folded.yml"
-expect_hit "a folded codex after another command in a run scalar" ".github/workflows/folded.yml" "5-6: "
-printf 'jobs:\n  a:\n    steps:\n      - name: use codex\n        env:\n          note: echo hi && codex\n          login: oauth\n' >"${FIX}/.github/workflows/folded.yml"
-fixture_hits
-[ -z "$SCAN_HITS" ] || fail "a mapping value ending in codex outside a command scalar must pass, got: ${SCAN_HITS}"
-# A literal scalar under a command key is command context too.
-printf 'jobs:\n  a:\n    steps:\n      - run: |\n          codex\n          login\n' >"${FIX}/.github/workflows/folded.yml"
-expect_hit "a literal run scalar with codex / login" ".github/workflows/folded.yml" "5-6: "
-rm -f "${FIX}/.github/workflows/folded.yml"
+[ -z "$SCAN_HITS" ] || fail "a login key with a blank before its colon must pass, got: ${SCAN_HITS}"
 mkdir -p "${FIX}/docs/guides"
 printf '# Guide\n\nprovider: codex\nlogin: oauth\n\n```yaml\nprovider: codex\nlogin: oauth\n```\n' >"${FIX}/docs/guides/planted-app.md"
 fixture_hits
 [ -z "$SCAN_HITS" ] || fail "provider: codex / login: oauth in a guide must pass, got: ${SCAN_HITS}"
-printf '# Guide\n\n```sh\ncodex\nlogin\n```\n' >"${FIX}/docs/guides/planted-app.md"
-expect_hit "a codex / login pair in a fenced sh block" "docs/guides/planted-app.md" "4-5: "
-printf '# Guide\n\n```sh\necho hi && codex\nlogin\n```\n' >"${FIX}/docs/guides/planted-app.md"
-expect_hit "a codex after another command in a fenced sh block" "docs/guides/planted-app.md" "4-5: "
-printf '# Guide\n\nUse the tool, then codex\nlogin is not required.\n' >"${FIX}/docs/guides/planted-app.md"
-fixture_hits
-[ -z "$SCAN_HITS" ] || fail "prose wrapped across lines outside a command block must pass, got: ${SCAN_HITS}"
-# A fence ends any block scalar a snippet opened: a shallow `run: |` inside a fenced
-# yaml snippet does not stay open past the closing fence, so indented prose after it
-# is prose.
-printf '# Guide\n\n```yaml\nrun: |\n  echo hi\n```\n\n    Then codex\n    login is required.\n' >"${FIX}/docs/guides/planted-app.md"
-fixture_hits
-[ -z "$SCAN_HITS" ] || fail "indented prose after a fenced snippet that opened a scalar must pass, got: ${SCAN_HITS}"
-printf '# Guide\n\n\trun: |\n\t  echo hi\n\nThen codex\nlogin is required.\n' >"${FIX}/docs/guides/planted-app.md"
-fixture_hits
-[ -z "$SCAN_HITS" ] || fail "prose after a tab-indented scalar must pass, got: ${SCAN_HITS}"
-# A fence is three or more backticks or tildes, closed by the same character.
+# The same rule completes a fold wherever the lines sit, and reports both of them:
+# a quoted command key, a flow mapping, a bare key with the scalar on the next lines,
+# a literal scalar, and a fenced block in a guide are all just a line ending in codex.
+printf 'jobs:\n  a:\n    steps:\n      - "run": >-\n          echo hi && codex\n          login\n' >"${FIX}/.github/workflows/folded.yml"
+expect_hit "a quoted run key with an echo hi && codex body, then login" ".github/workflows/folded.yml" "5-6: "
+printf 'jobs:\n  a:\n    steps:\n      - {run: echo hi && codex\n          login}\n' >"${FIX}/.github/workflows/folded.yml"
+expect_hit "a flow-mapping run value ending in codex, then login" ".github/workflows/folded.yml" "4-5: "
+printf 'jobs:\n  a:\n    steps:\n      - run:\n          codex\n          login\n' >"${FIX}/.github/workflows/folded.yml"
+expect_hit "a bare run key with the plain scalar on the lines below" ".github/workflows/folded.yml" "5-6: "
+printf 'jobs:\n  a:\n    steps:\n      - run: |\n          codex\n          login\n' >"${FIX}/.github/workflows/folded.yml"
+expect_hit "a literal run scalar with codex / login" ".github/workflows/folded.yml" "5-6: "
+printf 'jobs:\n  a:\n    steps:\n      - run: codex login --device-auth\n' >"${FIX}/.github/workflows/folded.yml"
+expect_hit "the one-line codex login control" ".github/workflows/folded.yml" "4:"
+rm -f "${FIX}/.github/workflows/folded.yml"
 printf '# Guide\n\n~~~sh\necho hi && codex\nlogin\n~~~\n' >"${FIX}/docs/guides/planted-app.md"
 expect_hit "a codex / login pair in a tilde-fenced sh block" "docs/guides/planted-app.md" "4-5: "
-printf '# Guide\n\n````sh\necho hi && codex\nlogin\n````\n' >"${FIX}/docs/guides/planted-app.md"
-expect_hit "a codex / login pair in a four-backtick sh fence" "docs/guides/planted-app.md" "4-5: "
-printf '# Guide\n\n````sh\n```\necho hi && codex\nlogin\n````\n' >"${FIX}/docs/guides/planted-app.md"
-expect_hit "a shorter backtick run inside a four-backtick fence does not close it" "docs/guides/planted-app.md" "5-6: "
-printf '# Guide\n\n~~~~sh\n~~~\necho hi && codex\nlogin\n~~~~\n' >"${FIX}/docs/guides/planted-app.md"
-expect_hit "a shorter tilde run inside a four-tilde fence does not close it" "docs/guides/planted-app.md" "5-6: "
-printf '# Guide\n\n```sh\necho hi\n````\nThen codex\nlogin is required.\n' >"${FIX}/docs/guides/planted-app.md"
-fixture_hits
-[ -z "$SCAN_HITS" ] || fail "a longer run closes a shorter fence, so prose after it must pass, got: ${SCAN_HITS}"
-printf '# Guide\n\n~~~sh\nx\n```\necho hi && codex\nlogin\n~~~\n' >"${FIX}/docs/guides/planted-app.md"
-expect_hit "a backtick line inside a tilde fence does not close it" "docs/guides/planted-app.md" "6-7: "
-printf '# Guide\n\n```yaml\nsteps:\n  - run: >-\n      codex\n      login\n```\n' >"${FIX}/docs/guides/planted-app.md"
-expect_hit "a folded run scalar in a fenced yaml block" "docs/guides/planted-app.md" "6-7: "
 printf '# Guide\n\n$ codex\nlogin\n' >"${FIX}/docs/guides/planted-app.md"
 expect_hit "a codex invocation line followed by login" "docs/guides/planted-app.md" "3-4: "
 rm -f "${FIX}/docs/guides/planted-app.md"
+# A head that ends in an option may have that option's value open the tail, as YAML
+# folds `codex --config` and `model=foo login` into one command; a head that does not
+# end in an option takes no such value.
+printf 'jobs:\n  a:\n    steps:\n      - run: >-\n          codex --config\n          model=foo login\n' >"${FIX}/.github/workflows/folded.yml"
+expect_hit "a folded codex --config, then its value and login" ".github/workflows/folded.yml" "5-6: "
+printf 'jobs:\n  a:\n    steps:\n      - run: >-\n          codex\n          model=foo login\n' >"${FIX}/.github/workflows/folded.yml"
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "a head that does not end in an option takes no value word before login, got: ${SCAN_HITS}"
+rm -f "${FIX}/.github/workflows/folded.yml" "${FIX}/docs/guides/planted-app.md"
 
 # A surface line that merely contains the guard-error marker is a violation (it
 # carries a token), never mistaken for a guard error.
