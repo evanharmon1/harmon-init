@@ -1384,6 +1384,16 @@ full) # project_management=github; github_org=test-org (an org repo)
         err "rendered setup-github-project.sh recreates the retired Domain field (#875)"
     ! grep -q 'create_single_select "Layer"' scripts/setup-github-project.sh ||
         err "rendered setup-github-project.sh recreates the retired Layer field (#875)"
+    # project_management=github → the classification workflows render, and an
+    # organization repository reconciles MONTHLY (#1450): the cadence lives only
+    # in the template's owner-type branch, so assert the org side renders it.
+    for wf in classification-reconcile classification-event; do
+        [ -f ".github/workflows/$wf.yml" ] || err "$wf.yml did not render for project_management=github"
+    done
+    grep -qxF '    - cron: "37 6 1 * *"' .github/workflows/classification-reconcile.yml ||
+        err "classification-reconcile.yml does not reconcile monthly on an organization repository"
+    ! grep -qxF '    - cron: "37 6 * * *"' .github/workflows/classification-reconcile.yml ||
+        err "classification-reconcile.yml reconciles daily on an organization repository"
     ;;
 minimal) # project_management=github on a PERSONAL account, use_foreman=false
     [ -f docs/project-management.md ] || err "GitHub project-management.md missing from docs/"
@@ -1412,6 +1422,15 @@ minimal) # project_management=github on a PERSONAL account, use_foreman=false
     # use_release_please=false -> no autorelease:* row either.
     ! grep -q '^| `autorelease: ' docs/project-management.md ||
         err "project-management.md documents autorelease:* labels with use_release_please=false"
+    # Personal account → the classification workflows render and reconcile
+    # DAILY (the mirror image of the `full` assertion, #1450).
+    for wf in classification-reconcile classification-event; do
+        [ -f ".github/workflows/$wf.yml" ] || err "$wf.yml did not render for project_management=github"
+    done
+    grep -qxF '    - cron: "37 6 * * *"' .github/workflows/classification-reconcile.yml ||
+        err "classification-reconcile.yml does not reconcile daily on a personal-account repository"
+    ! grep -qxF '    - cron: "37 6 1 * *"' .github/workflows/classification-reconcile.yml ||
+        err "classification-reconcile.yml reconciles monthly on a personal-account repository"
     ;;
 meta) # project_management=linear
     [ -f docs/project-management.md ] || err "Linear project-management.md missing from docs/"
@@ -1419,6 +1438,9 @@ meta) # project_management=linear
     grep -q 'TODO' docs/project-management.md || err "Linear project-management.md missing TODO marker"
     [ ! -f scripts/setup-github-labels.sh ] || err "setup-github-labels.sh rendered but project_management!=github for profile '$profile'"
     [ ! -f scripts/setup-github-issue-fields.sh ] || err "setup-github-issue-fields.sh rendered but project_management!=github for profile '$profile'"
+    for wf in classification-reconcile classification-event; do
+        [ ! -f ".github/workflows/$wf.yml" ] || err "$wf.yml rendered but project_management!=github for profile '$profile'"
+    done
     ;;
 *) # project_management=none — neither the doc nor the project-setup scripts render
     [ ! -f docs/project-management.md ] || err "docs/project-management.md present but project_management=none for profile '$profile'"
@@ -1434,6 +1456,9 @@ meta) # project_management=linear
     fi
     [ ! -f scripts/setup-github-issue-fields.sh ] || err "setup-github-issue-fields.sh rendered but project_management=none for profile '$profile'"
     [ ! -f scripts/setup-github-issue-types.sh ] || err "org-gated setup-github-issue-types.sh rendered for personal-repo profile '$profile'"
+    for wf in classification-reconcile classification-event; do
+        [ ! -f ".github/workflows/$wf.yml" ] || err "$wf.yml rendered but project_management!=github for profile '$profile'"
+    done
     ;;
 esac
 

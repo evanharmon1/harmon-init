@@ -410,6 +410,10 @@ change under either triggers `remote-bootstrap.yml` too — see
 
 CI workflows authenticate as the **`evanharmon1-ci` GitHub App** (short-lived
 tokens minted at runtime), not a PAT — see [security.md](security.md).
+The classification reconciler is the exception: it runs on the
+repository-scoped `GITHUB_TOKEN` with `issues: write` (see
+[Issue classification reconciler](#issue-classification-reconciler)), and an
+organization-wide walk receives an App installation token from its caller.
 Third-party actions are pinned by commit SHA and bumped by Renovate.
 
 ## Releases
