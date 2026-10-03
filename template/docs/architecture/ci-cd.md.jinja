@@ -132,11 +132,187 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
 [% if use_release_please and project_management == 'github' %]
 - `close-milestone-on-release.yml` — closes the milestone matching the tag on release publish.
 [% endif %]
+[% if project_management == 'github' %]
+- `classification-reconcile.yml` / `classification-event.yml` — keep each open
+  issue's derived Tier and `needs-triage` current: a schedule plus a per-issue
+  job for human edits (see [Issue classification reconciler](#issue-classification-reconciler)).
+[% endif %]
 
+[% if project_management == 'github' %]
+## Issue classification reconciler
+
+Two workflows keep each open issue's derived Tier (`tier:<value>`) and
+`needs-triage` current. They implement the "Reconcile drift" half of
+[ADR 2026-09-30](https://github.com/evanharmon1/harmon-init/blob/main/docs/decisions/2026-09-30-classify-issues-by-impact-risk-complexity-and-derive-the-tier.md)
+D4 and D6, as amended by
+[ADR 2026-10-01](https://github.com/evanharmon1/harmon-init/blob/main/docs/decisions/2026-10-01-store-the-tier-as-a-label-on-every-owner-type.md),
+under which the Tier is a label on every owner type. The logic lives in
+`scripts/classification-reconcile.mjs`, and `task test:classification-reconcile`
+tests it hermetically. Both workflows are generated when
+`project_management == 'github'`.
+
+- **`classification-reconcile.yml`** walks open issues, reads Impact, Risk and
+  Complexity in both storage shapes, and writes the Tier and `needs-triage`.
+  Impact, Risk and Complexity are organization issue fields (a field wins over
+  a same-axis label) or `impact:*`/`risk:*`/`complexity:*` labels. It derives
+  the Tier with the policy reader's `deriveTier` over the repository's own
+  `.devflow.toml` `[tier.matrix]` and never re-implements the matrix. Its
+  triggers are `schedule`, `workflow_dispatch` (optionally a dry run), and
+  `workflow_call`.
+- **`classification-event.yml`** re-derives one issue when a human changes an
+  input in the GitHub UI. It triggers on `issues` `opened, labeled, unlabeled,
+  typed, untyped` and calls the reconcile workflow for that issue.
+
+**Ownership.** This workflow pair is the only automated writer of the Tier
+besides the skills (triage, track-work, breakdown), which set the Tier and
+`needs-triage` in the same write that sets Risk or Complexity. The reconciler
+writes only `tier:<value>` and `needs-triage`, under `GITHUB_TOKEN` with
+`issues: write`. It never writes over an issue carrying `tier:pinned` (it
+still maintains `needs-triage` there). It never writes `tier:pinned`,
+`priority:*`, `priority-ai:*`, `rigor:*`, `strategy:*` or `claim:*`.
+
+The reconciler reports these cases and leaves the Tier, and the offending
+input, as it is. `needs-triage` is still maintained unless an item says
+otherwise:
+
+- A pinned issue with two or more tier values (it never picks one), or with
+  none.
+- An unpinned Tier whose Risk or Complexity is missing (`cache-unverifiable`).
+  Derive-on-read ignores that label anyway.
+- A leftover `tier:adaptive`. The label is left for its migration (#1447);
+  the derived Tier is still written beside it.
+- A conflicted axis (two values, or two Type-bearing work-type labels
+  without a native Type), or a retired or unknown value. A work-type label is
+  Type-bearing when it is non-retired and its registry writers (its own, else
+  its family's) include a human or agent writer; one written only by a tool,
+  such as Renovate's `dependencies`, is never a Type. That axis
+  does not count toward "triaged", so `needs-triage` stays. Recognized values
+  come from the repository's `label-registry.json`; when that file is
+  unreadable, every axis is unverifiable: `needs-triage` is left as it is and
+  no Tier is written.
+- An issue whose labels or field values span more than one page. It is
+  skipped entirely, `needs-triage` included, rather than decided on a partial
+  read.
+- A repository whose reader cannot derive. Either the reader has no
+  `deriveTier`, which is every repository whose vendored `dev-flow-support`
+  predates [harmon-devkit#1248](https://github.com/evanharmon1/harmon-devkit/issues/1248), or the reader throws on the policy. Such a
+  repository still gets `needs-triage` maintained, and the job never fails on
+  an old reader.
+
+**Event filter and the pin race.** Every `issues` event creates a run, but a
+job whose `if` is false is skipped before a runner is assigned, and a skipped
+job bills nothing. The event job starts only when all three hold:
+
+- the sender is not a `Bot`;
+- the sender is not listed in **`CLASSIFICATION_AGENT_LOGINS`**, a repository
+  or organization variable holding a JSON array of agent logins (unset reads
+  as an empty list);
+- the event changed an input: an issue was opened, typed or untyped, or a
+  `risk:`, `complexity:`, `impact:`, `area:`, `layer:`, `domain:` or
+  work-type label was added or removed.
+
+`tier:*` (including `tier:pinned`) and `needs-triage` are never inputs. A
+human pins with two UI edits in either order (set the Tier label, add
+`tier:pinned`), so a Tier or pin edit never starts a job and cannot be
+overwritten mid-pin.
+
+The remaining windows are narrow:
+
+- A pin made while a job is already writing. Every Tier write is preceded by
+  a read, made after the previous write, that shows no `tier:pinned`. On a pin
+  the job stops its remaining Tier writes and reports the issue
+  (`pin-appeared`). GitHub's label API has no compare-and-swap, so one round
+  trip between that read and its write is the irreducible residual.
+  `needs-triage` writes are not guarded, since it is maintained on pinned
+  issues too.
+- A scheduled run landing between the two pin edits. With the pin added first,
+  it sees two tier values and reports them. With the Tier set first, it
+  re-derives once, and the human's pin then restores the intended value.
+
+After its Tier writes the job re-reads the issue once. Unpinned, the issue
+must carry exactly one rung, the Tier derived from its inputs on that read.
+A failed delete or a concurrent run's write breaks that, so one bounded repair
+pass runs under the same pin guard; an issue still not exclusive after it is
+reported (`tier-not-exclusive`) and fails the run. So does a guard or verify
+read that spans more than one page (`pin-guard-indeterminate`), since it can
+rule out neither a pin nor a second rung, and so does an API error the repair
+does not heal, or any API error outside the Tier writes. A Tier write error
+the repair heals is reported (`write-failed`) but is not a failure, and nor is
+a pin that stops the Tier writes. Either way the walk moves on to the next
+issue, and the run exits 1 after the whole list.
+
+Every write, Tier or `needs-triage`, is decided from the most recent read of
+the issue: `needs-triage` from the verify read when Tier writes happened,
+otherwise from the read taken just before writing. The same one round trip
+between that read and its write is the irreducible residual.
+
+Label writes made with `GITHUB_TOKEN` start no workflow runs, so the
+reconciler's own writes never re-trigger the event workflow. `edited` is
+deliberately absent. `field_added`/`field_removed` are absent until actionlint
+recognizes them ([harmon-init#1485](https://github.com/evanharmon1/harmon-init/issues/1485)),
+so an organization repository's field edits are repaired by the schedule, not
+instantly.
+
+**Caller wiring.** `GITHUB_TOKEN` is repository-scoped, so each repository
+runs the reconcile on its own schedule and walks only its own issues. The
+schedule is **monthly** on an organization repository and **daily** on a
+personal-account one, rendered from the owner type. An organization that
+wants a daily organization-wide walk adds a caller in `<org>/.github` (opt-in;
+[harmon-init#1463](https://github.com/evanharmon1/harmon-init/issues/1463)). That caller
+mints an installation token from the CI GitHub App that already exists
+(`actions/create-github-app-token` over `CI_APP_CLIENT_ID` /
+`CI_APP_PRIVATE_KEY`, the same App `claude-*.yml` and `release.yml` use, with
+Issues: write and Contents: read on the target repositories). It then calls
+`classification-reconcile.yml` with that token as the `CLASSIFICATION_TOKEN`
+secret, `use-token: true`, and the organization's repository list as the
+`repositories` input. Without them, a walk covers only the calling
+repository.
+
+A repository is only ever judged by its own registry and its own policy. The
+calling repository uses its checkout. Every other repository in the list has
+its `label-registry.json` and `.devflow.toml` read from its default branch
+through the contents API, which is why the token needs Contents: read there.
+A registry it cannot read makes every axis unverifiable there (no
+`needs-triage` change), and a policy or matrix it cannot read makes the Tier
+not derivable there (no Tier write); each is reported once per repository.
+The reader code is always the caller's: it is the function, not the policy.
+
+The workflow reads the token as
+`inputs.use-token && secrets.CLASSIFICATION_TOKEN || github.token`, and
+`use-token` is declared only under `workflow_call`. On `schedule` and
+`workflow_dispatch` the input is empty, so those runs use `GITHUB_TOKEN`
+whatever secrets the repository or organization holds. The supported wide
+walk is the `<org>/.github` caller minting a one-hour App installation token
+per run; a stored, long-lived `CLASSIFICATION_TOKEN` secret is discouraged
+(no PAT, no stored secret).
+
+**Minutes model.** On a paid organization plan the Actions minutes are a
+shared pool and private repositories bill them; public repositories run free.
+A job bills at least one full minute, and GitHub emits one `labeled` event per
+label. Expected monthly cost:
+
+| Source | Estimate |
+|---|---|
+| Monthly schedule, organization repository | ≈ 1 min per private repository |
+| Daily schedule, personal-account repository | ≈ 30 min per private repository, from the account's own quota |
+| Event jobs | ≈ 2 min per issue whose inputs a human or an unlisted agent changes (a burst of label events on one issue collapses to at most two jobs through the per-issue concurrency group) |
+| Opt-in daily organization caller | ≈ 30 min per organization |
+
+Agent sessions that write under a human's own login look human to the filter,
+which is the main event cost. Agents with a login of their own belong in
+`CLASSIFICATION_AGENT_LOGINS`.
+
+[% endif %]
 ## Authentication
 
 CI workflows authenticate as the **`[[ github_org ]]-ci` GitHub App** (short-lived
 tokens minted at runtime), not a PAT — see [security.md](security.md).
+[% if project_management == 'github' %]
+The classification reconciler is the exception: it runs on the
+repository-scoped `GITHUB_TOKEN` with `issues: write` (see
+[Issue classification reconciler](#issue-classification-reconciler)), and an
+organization-wide walk receives an App installation token from its caller.
+[% endif %]
 Third-party actions are pinned by commit SHA and bumped by Renovate.
 
 ## Releases
