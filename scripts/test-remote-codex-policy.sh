@@ -365,8 +365,9 @@ scan() {
                 # The head ended in an option word, so its value may open the tail.
                 OPTEND = " -[^ ]+ ?$"
                 FOLDTAILV = "^[^ -][^ ]* (-[^ ]+ ([^ -][^ ]* )?)*login([^A-Za-z0-9_-]|$)"
-                # A tail whose `login` is a mapping key: `login:` or `login :`.
-                KEYLOGIN = "^([^ ]+ )*login ?:"
+                # A tail whose `login` is a mapping key: `login:` or `login :`. A key is
+                # always the first word of the tail, so a later `login:` word does not count.
+                KEYLOGIN = "^login ?:"
                 # auth.json as a complete basename: no name character before it
                 # (a `.` or `-` would make it part of a longer name), no word
                 # character after it. A trailing `.` is sentence punctuation before
@@ -374,7 +375,7 @@ scan() {
                 # bracket or backtick (`"Restore auth.json."` hits); a longer name
                 # (`auth.json.example`, `auth.json..schema`) is not the file.
                 BT = sprintf("%c", 96)
-                AUTHJSON = "(^|[^A-Za-z0-9_.-])auth[.]json([^A-Za-z0-9_.-]|[.]( |$|[\042\047)]|\\]|" BT ")|$)"
+                AUTHJSON = "(^|[^A-Za-z0-9_.-])auth[.]json([^A-Za-z0-9_.-]|[.]( |$|[]\042\047)]|" BT ")|$)"
             }
             FNR == 1 {
                 if (cont) { emit(pf, start, buf); buf = ""; cont = 0 }
@@ -491,6 +492,10 @@ expect_hit() {
 # every profile, whether or not the repository under test ships that file.
 plant() {
     # Planting the same path again overwrites the plant; the original is kept once.
+    # Planting a different path first restores the one still planted.
+    if [ -n "$PLANT_PATH" ] && [ "$PLANT_PATH" != "${FIX}/$1" ]; then
+        unplant
+    fi
     if [ "$PLANT_PATH" != "${FIX}/$1" ]; then
         PLANT_PATH="${FIX}/$1"
         PLANT_KEPT=0
@@ -503,12 +508,14 @@ plant() {
     printf '%b' "$2" >"$PLANT_PATH"
 }
 unplant() {
+    [ -n "$PLANT_PATH" ] || return 0
     if [ "$PLANT_KEPT" -eq 1 ]; then
         cp "${TMP}/plant-kept" "$PLANT_PATH"
     else
         rm -f "$PLANT_PATH"
     fi
     PLANT_PATH=""
+    PLANT_KEPT=0
 }
 PLANT_PATH=""
 PLANT_KEPT=0
@@ -678,6 +685,10 @@ plant "$authf" '#!/usr/bin/env bash\n# (see auth.json.)\n'
 expect_hit "a parenthesised sentence-final auth.json." "$authf" "2:"
 plant "$authf" '#!/usr/bin/env bash\n# the `auth.json.` file, [auth.json.] too\n'
 expect_hit "a backtick-closed sentence-final auth.json." "$authf" "2:"
+plant "$authf" '#!/usr/bin/env bash\n# [auth.json.]\n'
+expect_hit "a bracket-closed sentence-final auth.json." "$authf" "2:"
+plant "$authf" "#!/usr/bin/env bash\necho 'Never copy auth.json.'\n"
+expect_hit "a single-quote-closed sentence-final auth.json." "$authf" "2:"
 plant "$authf" '#!/usr/bin/env bash\ncat auth.json\n'
 expect_hit "a bare auth.json" "$authf" "2:"
 plant "$authf" '#!/usr/bin/env bash\nrm "$HOME/auth.json"\n'
@@ -761,11 +772,27 @@ printf 'jobs:\n  a:\n    steps:\n      - run:\n          codex\n          login\
 expect_hit "a bare run key with the plain scalar on the lines below" ".github/workflows/folded.yml" "5-6: "
 printf 'jobs:\n  a:\n    steps:\n      - run: |\n          codex\n          login\n' >"${FIX}/.github/workflows/folded.yml"
 expect_hit "a literal run scalar with codex / login" ".github/workflows/folded.yml" "5-6: "
+# The key exception is exact: only a tail whose FIRST word is login: is a mapping key,
+# so a later login: word in a real login tail does not excuse it.
+printf 'jobs:\n  a:\n    steps:\n      - run: >-\n          codex\n          login --device-auth # login: device code\n' >"${FIX}/.github/workflows/folded.yml"
+expect_hit "a folded login tail with a later login: word in a comment" ".github/workflows/folded.yml" "5-6: "
+printf 'jobs:\n  a:\n    steps:\n      - run: >-\n          codex\n          login && echo login: ok\n' >"${FIX}/.github/workflows/folded.yml"
+expect_hit "a folded login tail with a later login: word after &&" ".github/workflows/folded.yml" "5-6: "
+# An anchored step, and a sequence item with a deeper login: a line ending in codex
+# arms the fold whatever the YAML around it, so the single rule reports both.
+printf 'jobs:\n  a:\n    steps:\n      - run: &x >-\n          echo hi && codex\n          login\n' >"${FIX}/.github/workflows/folded.yml"
+expect_hit "an anchored run: &x >- step with echo hi && codex, then login" ".github/workflows/folded.yml" "5-6: "
+printf 'cmds:\n  - codex\n    login\n' >"${FIX}/.github/workflows/folded.yml"
+expect_hit "a - codex item followed by a deeper-indented login" ".github/workflows/folded.yml" "2-3: "
 printf 'jobs:\n  a:\n    steps:\n      - run: codex login --device-auth\n' >"${FIX}/.github/workflows/folded.yml"
 expect_hit "the one-line codex login control" ".github/workflows/folded.yml" "4:"
 rm -f "${FIX}/.github/workflows/folded.yml"
 printf '# Guide\n\n~~~sh\necho hi && codex\nlogin\n~~~\n' >"${FIX}/docs/guides/planted-app.md"
 expect_hit "a codex / login pair in a tilde-fenced sh block" "docs/guides/planted-app.md" "4-5: "
+# A four-backtick sh fence holding a three-backtick line: fence lengths do not matter
+# to the single rule, which reports the pair inside it either way.
+printf '# Guide\n\n````sh\n```\necho hi && codex\nlogin\n````\n' >"${FIX}/docs/guides/planted-app.md"
+expect_hit "a codex / login pair after a three-backtick line in a four-backtick sh fence" "docs/guides/planted-app.md" "5-6: "
 printf '# Guide\n\n$ codex\nlogin\n' >"${FIX}/docs/guides/planted-app.md"
 expect_hit "a codex invocation line followed by login" "docs/guides/planted-app.md" "3-4: "
 rm -f "${FIX}/docs/guides/planted-app.md"
