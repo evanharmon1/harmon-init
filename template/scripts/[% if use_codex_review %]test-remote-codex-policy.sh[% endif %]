@@ -296,27 +296,39 @@ scan() {
             }
             # keycol(RAW) — the 0-based column of the command key on RAW (the first
             # physical line), a quote around the key included; -1 if there is none.
+            # Tabs are read as blanks, as the collapsed text is, so a tab-indented key
+            # is found at the column curind measures.
             function keycol(raw,   kc) {
+                gsub(/\t/, " ", raw)
                 if (!match(raw, KEYRE)) return -1
                 kc = RSTART
-                if (substr(raw, kc, 1) ~ /[ -]/) kc++
+                if (substr(raw, kc, 1) ~ /[ {-]/) kc++
                 return kc - 1
             }
             # track(RAW, TT) — set curind (the indentation of RAW, the first physical
             # line) and incmd for the line about to be examined: is it command-shaped
             # context (inside a sh/bash fence, or inside a folded or literal scalar
             # under a command key)? The key column decides when a scalar ends. A
-            # fence opening or closing ends any scalar: a snippet shows one, it does
-            # not continue past its fence.
-            function track(raw, tt) {
+            # fence at or left of that column opening or closing ends the scalar: a
+            # snippet shows one, it does not continue past its fence. A fence indented
+            # inside the scalar is its content (a heredoc writing Markdown, say).
+            # A fence is three or more backticks or tildes, closed by the same one.
+            function track(raw, tt,   isbt, istl) {
                 incmd = 0
                 match(raw, /^[ \t]*/)
                 curind = RLENGTH
-                if (tt ~ FENCE) {
+                isbt = (tt ~ FENCEBT)
+                istl = (tt ~ FENCETL)
+                if (bs && curind > bscol && (isbt || istl)) {
+                    incmd = 1
+                    return
+                }
+                if (fence ? (fchar == BT ? isbt : istl) : (isbt || istl)) {
                     bs = 0
                     if (fence) fence = 0
                     else {
                         fence = 1
+                        fchar = (isbt ? BT : "~")
                         fshell = (tt ~ FENCESH)
                     }
                     return
@@ -334,8 +346,8 @@ scan() {
                     bs = 0
                 }
                 if (tt ~ BSHEAD) {
-                    bs = 1
                     bscol = keycol(raw)
+                    bs = (bscol >= 0)
                 }
             }
             # continues() — may the line just tracked complete the fold armed by a
@@ -378,8 +390,8 @@ scan() {
                     pmode = 0
                     if (incmd) pmode = 1
                     else if (tt ~ CMDKEYLINE) {
-                        pmode = 2
                         pcol = keycol(raw)
+                        if (pcol >= 0) pmode = 2
                     } else if (tt ~ CMDHEAD) pmode = 3
                     if (pmode) {
                         pend = t
@@ -410,24 +422,29 @@ scan() {
                 FOLDTAIL = "^(-[^ ]+ ([^ -][^ ]* )?)*login([^A-Za-z0-9_-]|$)"
                 # auth.json as a complete basename: no name character before it
                 # (a `.` or `-` would make it part of a longer name), no word
-                # character after it.
-                AUTHJSON = "(^|[^A-Za-z0-9_.-])auth[.]json([^A-Za-z0-9_-]|$)"
+                # character after it; a trailing `.` counts only when nothing
+                # name-like follows it (sentence-final `auth.json.` hits,
+                # `auth.json.example` does not).
+                AUTHJSON = "(^|[^A-Za-z0-9_.-])auth[.]json([^A-Za-z0-9_.-]|[.]([^A-Za-z0-9_-]|$)|$)"
                 # Command-shaped context: a fenced sh/bash block, or a folded or
                 # literal scalar under a command key; or a command-key line whose
                 # value ends in codex (a plain scalar, folded by YAML like `>-`); or
                 # a first line that itself begins a codex invocation (optionally a
                 # list item, a `$ ` prompt or a command key, then env assignments or
                 # a wrapper). A command key may be quoted, single or double (\047
-                # and \042 keep the quote characters out of the shell quoting).
+                # and \042 keep the quote characters out of the shell quoting), may
+                # follow a flow-mapping `{`, and may have a blank before its colon.
+                # A fence is three or more backticks or tildes.
                 BT = sprintf("%c", 96)
-                FENCE = "^" BT BT BT
-                FENCESH = FENCE " ?(sh|bash|zsh|shell|console|shell-session)( |$)"
+                FENCEBT = "^" BT BT BT
+                FENCETL = "^~~~"
+                FENCESH = "^(" BT BT BT "|~~~)[" BT "~]* ?(sh|bash|zsh|shell|console|shell-session)( |$)"
                 QT = "[\042\047]?"
-                CMDKEY = QT "(run|cmd|command|script|entrypoint|args)" QT
-                BSHEAD = "(^|[ -])" CMDKEY ": *[>|][-+0-9]*( #.*| )?$"
-                KEYRE = "(^|[ -])" CMDKEY ":"
-                CMDKEYLINE = "^(- )?" CMDKEY ": "
-                CMDHEAD = "^(- |[$] )?(" CMDKEY ": )?([A-Za-z_][A-Za-z0-9_]*=[^ ]* |sudo |exec |nohup |time )*codex( -[^ ]+( [^ -][^ ]*)?)* ?$"
+                CMDKEY = QT "(run|cmd|command|script|entrypoint|args)" QT " ?:"
+                BSHEAD = "(^|[ {-])" CMDKEY " *[>|][-+0-9]*( #.*| )?$"
+                KEYRE = "(^|[ {-])" CMDKEY
+                CMDKEYLINE = "^(- )?([{] ?)?" CMDKEY " "
+                CMDHEAD = "^(- |[$] )?([{] ?)?(" CMDKEY " )?([A-Za-z_][A-Za-z0-9_]*=[^ ]* |sudo |exec |nohup |time )*codex( -[^ ]+( [^ -][^ ]*)?)* ?$"
             }
             FNR == 1 {
                 if (cont) { emit(pf, start, buf, rawfirst); buf = ""; cont = 0 }
@@ -716,6 +733,13 @@ authf="scripts/setup-remote-auth.sh"
 plant "$authf" '#!/usr/bin/env bash\ncat oauth.json\ncat myauth.json\ncat ~/tokens/oauth.json\n'
 fixture_hits
 [ -z "$SCAN_HITS" ] || fail "oauth.json and myauth.json must not match auth.json, got: ${SCAN_HITS}"
+# A longer name that merely starts with auth.json is not the credential file, but a
+# sentence-final dot after it still is.
+plant "$authf" '#!/usr/bin/env bash\ncat auth.json.example\ncat auth.json.bak\n'
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "auth.json.example and auth.json.bak must not match auth.json, got: ${SCAN_HITS}"
+plant "$authf" '#!/usr/bin/env bash\n# Restore auth.json.\n'
+expect_hit "a sentence-final auth.json." "$authf" "2:"
 plant "$authf" '#!/usr/bin/env bash\ncat auth.json\n'
 expect_hit "a bare auth.json" "$authf" "2:"
 plant "$authf" '#!/usr/bin/env bash\nrm "$HOME/auth.json"\n'
@@ -796,8 +820,29 @@ printf 'jobs:\n  a:\n    steps:\n      - run: codex\n          login\n' >"${FIX}
 expect_hit "a plain multi-line run scalar of codex, then login" ".github/workflows/folded.yml" "4-5: "
 printf 'jobs:\n  a:\n    steps:\n      - run: codex login --device-auth\n' >"${FIX}/.github/workflows/folded.yml"
 expect_hit "the one-line codex login control" ".github/workflows/folded.yml" "4:"
+# A command key may sit in a flow mapping or have a blank before its colon, plain
+# or as a block scalar.
+printf 'jobs:\n  a:\n    steps:\n      - {run: echo hi && codex\n          login}\n' >"${FIX}/.github/workflows/folded.yml"
+expect_hit "a flow-mapping run value ending in codex, then login" ".github/workflows/folded.yml" "4-5: "
+printf 'jobs:\n  a:\n    steps:\n      - run : echo hi && codex\n          login\n' >"${FIX}/.github/workflows/folded.yml"
+expect_hit "a run key with a blank before its colon, plain value" ".github/workflows/folded.yml" "4-5: "
+printf 'jobs:\n  a:\n    steps:\n      - "run" : >-\n          echo hi && codex\n          login\n' >"${FIX}/.github/workflows/folded.yml"
+expect_hit "a quoted run key with a blank before its colon, block scalar" ".github/workflows/folded.yml" "5-6: "
+printf 'jobs:\n  a:\n    steps:\n      - run : |\n          echo hi && codex\n          login\n' >"${FIX}/.github/workflows/folded.yml"
+expect_hit "a run key with a blank before its colon, literal scalar" ".github/workflows/folded.yml" "5-6: "
+printf 'jobs:\n  a:\n    steps:\n      - {run: echo hi && codex}\n      - login: oauth\n' >"${FIX}/.github/workflows/folded.yml"
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "a sibling login: item after a flow mapping must pass, got: ${SCAN_HITS}"
+# A fence inside a literal scalar is its content: a heredoc writing Markdown does not
+# end the command context for the lines after it.
+printf 'jobs:\n  a:\n    steps:\n      - run: |\n          cat > x.md <<EOF\n          ```\n          text\n          ```\n          EOF\n          echo hi && codex\n          login\n' >"${FIX}/.github/workflows/folded.yml"
+expect_hit "a command after a fenced heredoc inside a run scalar" ".github/workflows/folded.yml" "10-11: "
+# Tab-indented keys are read as blanks: a scalar opens at the key's column and ends
+# when the indentation returns to it, never running on through the rest of a page.
+printf '\trun: >-\n\t\t  echo hi && codex\n\t\t  login\n' >"${FIX}/.github/workflows/folded.yml"
+expect_hit "a tab-indented run scalar" ".github/workflows/folded.yml" "2-3: "
 # A command key may be quoted, single or double, in a block scalar or a plain value.
-printf 'jobs:\n  a:\n    steps:\n      - "run": >-\n          codex\n          login\n' >"${FIX}/.github/workflows/folded.yml"
+printf 'jobs:\n  a:\n    steps:\n      - "run": >-\n          echo hi && codex\n          login\n' >"${FIX}/.github/workflows/folded.yml"
 expect_hit "a double-quoted run key with a folded scalar" ".github/workflows/folded.yml" "5-6: "
 printf "jobs:\n  a:\n    steps:\n      - 'run': |\n          echo hi && codex\n          login\n" >"${FIX}/.github/workflows/folded.yml"
 expect_hit "a single-quoted run key with a literal scalar" ".github/workflows/folded.yml" "5-6: "
@@ -840,6 +885,16 @@ fixture_hits
 printf '# Guide\n\n```yaml\nrun: |\n  echo hi\n```\n\n    Then codex\n    login is required.\n' >"${FIX}/docs/guides/planted-app.md"
 fixture_hits
 [ -z "$SCAN_HITS" ] || fail "indented prose after a fenced snippet that opened a scalar must pass, got: ${SCAN_HITS}"
+printf '# Guide\n\n\trun: |\n\t  echo hi\n\nThen codex\nlogin is required.\n' >"${FIX}/docs/guides/planted-app.md"
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "prose after a tab-indented scalar must pass, got: ${SCAN_HITS}"
+# A fence is three or more backticks or tildes, closed by the same character.
+printf '# Guide\n\n~~~sh\necho hi && codex\nlogin\n~~~\n' >"${FIX}/docs/guides/planted-app.md"
+expect_hit "a codex / login pair in a tilde-fenced sh block" "docs/guides/planted-app.md" "4-5: "
+printf '# Guide\n\n````sh\necho hi && codex\nlogin\n````\n' >"${FIX}/docs/guides/planted-app.md"
+expect_hit "a codex / login pair in a four-backtick sh fence" "docs/guides/planted-app.md" "4-5: "
+printf '# Guide\n\n~~~sh\nx\n```\necho hi && codex\nlogin\n~~~\n' >"${FIX}/docs/guides/planted-app.md"
+expect_hit "a backtick line inside a tilde fence does not close it" "docs/guides/planted-app.md" "6-7: "
 printf '# Guide\n\n```yaml\nsteps:\n  - run: >-\n      codex\n      login\n```\n' >"${FIX}/docs/guides/planted-app.md"
 expect_hit "a folded run scalar in a fenced yaml block" "docs/guides/planted-app.md" "6-7: "
 printf '# Guide\n\n$ codex\nlogin\n' >"${FIX}/docs/guides/planted-app.md"
