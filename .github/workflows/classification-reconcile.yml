@@ -22,10 +22,30 @@ run-name: >-
 #     secrets the repository or organization holds (ruling 9: no stored token).
 #   - workflow_dispatch: by hand, with an optional dry run.
 #
-# The checked-out repository supplies the script and the reader. Each walked
-# repository is judged by its own label-registry.json and .devflow.toml: the
-# calling repository's from the checkout, any other's read from its default
-# branch (so a wide walk's token also needs contents: read on the targets).
+# Where the code comes from. A run of this repository's own copy (schedule,
+# workflow_dispatch, or its own classification-event.yml) checks out this
+# repository as it always has, and the script, the reader and this
+# repository's registry and policy all come from that checkout. A call from
+# ANOTHER repository (an `<org>/.github` caller, which carries no script)
+# checks out the repository and commit that own this workflow file instead:
+# GitHub sets them as job.workflow_repository and job.workflow_sha from the
+# caller's `uses:` reference, where github.repository and github.sha describe
+# the caller (docs.github.com/en/actions/reference/workflows-and-actions/contexts#job-context;
+# changelog 2026-09-03). No input or secret can point them anywhere else, so
+# the code that runs with CLASSIFICATION_TOKEN is the code the caller chose to
+# call. That checkout passes no token (the run's own GITHUB_TOKEN, so the
+# owning repository must be one it can read, a public one) and persists none.
+# Where GitHub leaves them empty (GHES) the run takes the own-copy path.
+# They are read through fromJSON(toJSON(job)) only because actionlint does not
+# know them yet (rhysd/actionlint#705); the values are the same.
+#
+# Each walked repository is judged by its own label-registry.json and
+# .devflow.toml: the calling repository's from its own-copy checkout, any
+# other's read from its default branch (so a wide walk's token also needs
+# contents: read on the targets). In a cross-repository call the checkout is
+# not the caller's, so RECONCILE_CALLER_CHECKOUT=false sends the caller, when
+# walked, through the contents API too, and the script refuses such a call
+# that passes no `repositories`: the caller is walked only when it is listed.
 #
 # Writers: only `tier:<value>` and `needs-triage`, never over `tier:pinned`.
 # Loop safety: label writes made with GITHUB_TOKEN start no workflow runs, and
@@ -55,7 +75,7 @@ on:
   workflow_call:
     inputs:
       repositories:
-        description: "owner/name list to walk (default: the calling repository); needs the CLASSIFICATION_TOKEN secret beyond it"
+        description: "owner/name list to walk (default: the calling repository; required when called from another repository); needs the CLASSIFICATION_TOKEN secret beyond it"
         type: string
         required: false
         default: ""
@@ -90,8 +110,19 @@ jobs:
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     timeout-minutes: 10
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      # The two checkouts are exclusive: own copy, or called from another
+      # repository (see "Where the code comes from" above).
+      - name: Check out this repository
+        if: ${{ !(fromJSON(toJSON(job)).workflow_repository && fromJSON(toJSON(job)).workflow_sha && fromJSON(toJSON(job)).workflow_repository != github.repository) }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          persist-credentials: false
+      - name: Check out the repository that owns this workflow
+        if: ${{ fromJSON(toJSON(job)).workflow_repository && fromJSON(toJSON(job)).workflow_sha && fromJSON(toJSON(job)).workflow_repository != github.repository }}
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: ${{ fromJSON(toJSON(job)).workflow_repository }}
+          ref: ${{ fromJSON(toJSON(job)).workflow_sha }}
           persist-credentials: false
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
@@ -103,4 +134,5 @@ jobs:
           RECONCILE_REPOSITORIES: ${{ inputs.repositories }}
           RECONCILE_ISSUE: ${{ inputs.issue }}
           RECONCILE_DRY_RUN: ${{ inputs.dry-run }}
+          RECONCILE_CALLER_CHECKOUT: ${{ !(fromJSON(toJSON(job)).workflow_repository && fromJSON(toJSON(job)).workflow_sha && fromJSON(toJSON(job)).workflow_repository != github.repository) }}
         run: node scripts/classification-reconcile.mjs

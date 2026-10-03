@@ -18,6 +18,12 @@
 #     events — including CLASSIFICATION_AGENT_LOGINS unset (an unset vars.*
 #     reads as the empty string) — and its input lists held equal to the
 #     script's and to label-registry.json's.
+#   - The reconcile workflow's checkouts: an own-copy run checks out its own
+#     repository as before, a cross-repository workflow_call checks out the
+#     repository and commit that own the workflow (job.workflow_*), neither
+#     selectable by an input or secret; and run() reads a cross-repository
+#     caller's own files through the contents API, never from the checkout,
+#     and refuses a cross-repository call that passes no repositories list.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -211,8 +217,9 @@ check('parseRepositories: list, fallback, and refusal', () => {
 // --- The event workflow's job-level `if` -------------------------------------
 
 // A small evaluator for the subset of GitHub expressions the filter uses:
-// && || ! == != ( ) , string literals, context paths, and contains /
-// startsWith / fromJSON. Semantics as GitHub documents them: && and || return
+// && || ! == != ( ) , string literals, context paths, property access on a
+// call's result, and contains / startsWith / fromJSON / toJSON. Semantics as
+// GitHub documents them: && and || return
 // an operand; null, false, 0 and '' are falsy; string comparison ignores case;
 // a missing property is null; null coerces to '' in string functions.
 function evaluate(expr, context) {
@@ -222,7 +229,7 @@ function evaluateValue(expr, context) {
   return evaluateRaw(expr, context, false)
 }
 function evaluateRaw(expr, context, asBool) {
-  const tokens = expr.match(/'(?:[^']|'')*'|&&|\|\||==|!=|[!(),]|[A-Za-z_][\w.-]*/g)
+  const tokens = expr.match(/'(?:[^']|'')*'|&&|\|\||==|!=|[!(),]|\.[A-Za-z_][\w-]*|[A-Za-z_][\w.-]*/g)
   let i = 0
   const peek = () => tokens[i]
   const take = (t) => {
@@ -235,14 +242,23 @@ function evaluateRaw(expr, context, asBool) {
     contains: (hay, needle) =>
       Array.isArray(hay) ? hay.some((h) => str(h) === str(needle)) : str(hay).includes(str(needle)),
     startsWith: (s, p) => str(s).startsWith(str(p)),
-    fromJSON: (s) => JSON.parse(s)
+    fromJSON: (s) => JSON.parse(s),
+    toJSON: (v) => JSON.stringify(v)
+  }
+  // `(…).name` and `f(…).name`: a missing property is null.
+  function property(v) {
+    while (peek()?.startsWith('.')) {
+      const k = take().slice(1)
+      v = v === null || v === undefined ? null : (v[k] ?? null)
+    }
+    return v
   }
   function primary() {
     const t = take()
     if (t === '(') {
       const v = or()
       take(')')
-      return v
+      return property(v)
     }
     if (t === '!') return !truthy(primary())
     if (t.startsWith("'")) return t.slice(1, -1).replaceAll("''", "'")
@@ -257,7 +273,7 @@ function evaluateRaw(expr, context, asBool) {
       }
       take(')')
       if (!fns[t]) throw new Error(`unsupported function ${t}`)
-      return fns[t](...args)
+      return property(fns[t](...args))
     }
     return t.split('.').reduce((o, k) => (o === null || o === undefined ? null : (o[k] ?? null)), context)
   }
@@ -558,6 +574,9 @@ const addPin = (labels) => [...labels, 'tier:pinned']
 // between our calls).
 function fakeGitHub(repos) {
   const rest = []
+  // Every repository a call named, and every contents path read.
+  const touched = new Set()
+  const contents = []
   const json = (body, status = 200) =>
     new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
   const node = (number, issue) => ({
@@ -579,6 +598,7 @@ function fakeGitHub(repos) {
     const { pathname } = new URL(url)
     if (pathname === '/graphql') {
       const { query, variables } = JSON.parse(init.body)
+      touched.add(`${variables.owner}/${variables.name}`)
       const repo = repos[`${variables.owner}/${variables.name}`]
       if (!repo || repo.down) return json({ message: 'bad gateway' }, 502)
       if (query.includes('issue(number:')) {
@@ -600,9 +620,11 @@ function fakeGitHub(repos) {
       })
     }
     const [, , owner, name, kind, ...rest_] = pathname.split('/')
+    touched.add(`${owner}/${name}`)
     const repo = repos[`${owner}/${name}`]
     if (!repo || repo.down) return json({ message: 'bad gateway' }, 502)
     if (kind === 'contents') {
+      contents.push(pathname)
       const text = repo.files?.[rest_.join('/')] ?? null
       return text === null ? json({ message: 'Not Found' }, 404) : new Response(text, { status: 200 })
     }
@@ -615,7 +637,7 @@ function fakeGitHub(repos) {
     repo.afterWrite?.(issue, init.method, label)
     return init.method === 'DELETE' ? new Response(null, { status: 204 }) : json([])
   }
-  return { fetch, rest }
+  return { fetch, rest, touched, contents }
 }
 const ownText = (file) => readFileSync(join(root, file), 'utf8')
 const canDerive = (await m.loadDerivation(root)).derive !== null
@@ -761,6 +783,61 @@ if (canDerive) {
     assert.equal(r.summary.match(new RegExp(`d/five:\\*\\* tier not derivable: ${reason}`, 'g'))?.length, 1)
     assert.ok(writes(r.gh, '/repos/d/five/').includes('DELETE needs-triage'))
   })
+  check("run(): an own-copy run judges the caller by its checkout and never reads the caller's contents", () => {
+    assert.deepEqual(r.gh.contents.filter((p) => p.startsWith('/repos/a/two/')), [])
+  })
+  // A cross-repository workflow_call: the checkout is the workflow owner's,
+  // so RECONCILE_CALLER_CHECKOUT=false. The caller, when walked, is judged by
+  // the files on its own default branch; a listed repository is read as before.
+  const foreignFiles = { 'label-registry.json': JSON.stringify(foreignRegistry), '.devflow.toml': foreignPolicy }
+  const cross = await runWith(
+    {
+      'a/two': { issues: { 1: zzz() }, files: foreignFiles },
+      'b/three': { issues: { 1: zzz() }, files: foreignFiles }
+    },
+    { RECONCILE_REPOSITORIES: 'a/two b/three', RECONCILE_CALLER_CHECKOUT: 'false' }
+  )
+  check("run(): a cross-repository caller is judged by its own files, read through the contents API", () => {
+    assert.equal(cross.code, 0)
+    assert.deepEqual(
+      cross.gh.contents.filter((p) => p.startsWith('/repos/a/two/')).sort(),
+      ['/repos/a/two/contents/.devflow.toml', '/repos/a/two/contents/label-registry.json']
+    )
+    assert.ok(writes(cross.gh, '/repos/a/two/').includes('DELETE needs-triage'), "area:zzz is known to the caller's own registry")
+    for (const repo of ['a/two', 'b/three']) {
+      assert.deepEqual(writes(cross.gh, `/repos/${repo}/`), writes(r.gh, '/repos/b/three/'), `${repo} is judged as b/three was`)
+    }
+  })
+  const unlisted = await runWith(
+    { 'b/three': { issues: { 1: zzz() }, files: foreignFiles } },
+    { RECONCILE_REPOSITORIES: 'b/three', RECONCILE_CALLER_CHECKOUT: 'false' }
+  )
+  check('run(): a cross-repository caller that is not on the list is never walked or read', () => {
+    assert.equal(unlisted.code, 0)
+    assert.deepEqual([...unlisted.gh.touched], ['b/three'])
+  })
+  // An empty list from another repository fails fast rather than walking the
+  // caller; an own-copy run keeps defaulting to itself.
+  const empty = fakeGitHub({ 'a/two': { issues: { 1: zzz() }, files: foreignFiles } })
+  let refusal = null
+  try {
+    await m.run(
+      { GH_TOKEN: 't', GITHUB_REPOSITORY: 'a/two', RECONCILE_REPOSITORIES: '', RECONCILE_CALLER_CHECKOUT: 'false' },
+      { fetch: empty.fetch, root, print: () => {} }
+    )
+  } catch (err) {
+    refusal = err
+  }
+  check('run(): a cross-repository call with no repositories list is refused before any call', () => {
+    assert.match(refusal?.message ?? '', /^a caller from another repository must pass the repositories to walk/)
+    assert.deepEqual([...empty.touched], [])
+  })
+  const ownDefault = await runWith({ 'a/two': { issues: { 1: zzz() } } }, { RECONCILE_REPOSITORIES: '' })
+  check('run(): an own-copy run with no repositories list still walks the caller', () => {
+    assert.equal(ownDefault.code, 0)
+    assert.deepEqual([...ownDefault.gh.touched], ['a/two'])
+    assert.deepEqual(ownDefault.gh.contents, [])
+  })
 }
 
 // --- The reconcile workflow's token expression (C1-F1) ----------------------
@@ -779,6 +856,51 @@ check('the token: CLASSIFICATION_TOKEN only when a workflow_call caller sets use
   const call = rwf.slice(rwf.indexOf('  workflow_call:'), rwf.indexOf('\npermissions:'))
   assert.ok(!dispatch.includes('use-token'), 'use-token is never a workflow_dispatch input')
   assert.match(call, /^ {6}use-token:\n {8}description: .*\n {8}type: boolean\n {8}required: false\n {8}default: false$/m)
+})
+
+// --- The reconcile workflow's checkouts (#1500) ------------------------------
+
+// GitHub sets job.workflow_* from the caller's `uses:`; github.repository is
+// the caller. Read through fromJSON(toJSON(job)) until actionlint knows them.
+const CROSS =
+  'fromJSON(toJSON(job)).workflow_repository && fromJSON(toJSON(job)).workflow_sha && fromJSON(toJSON(job)).workflow_repository != github.repository'
+const steps = rwf.slice(rwf.indexOf('\n    steps:\n')).split(/\n {6}- /).slice(1)
+const checkouts = steps.filter((s) => /^(?:.*\n)*? {8}uses: actions\/checkout@/.test(s))
+const [ownCheckout, crossCheckout] = checkouts
+check('the checkouts: exactly two, pinned by SHA with the version, persisting no credentials, passing no token', () => {
+  assert.equal(checkouts.length, 2)
+  for (const s of checkouts) {
+    assert.match(s, /^ {8}uses: actions\/checkout@[0-9a-f]{40} # v\d+\.\d+\.\d+$/m)
+    assert.match(s, /^ {10}persist-credentials: false$/m)
+    assert.doesNotMatch(s, /^ {10}token:/m)
+    assert.doesNotMatch(s, /\b(?:inputs|secrets|vars)\./, 'no caller input, secret or variable selects what is checked out')
+  }
+})
+check('the checkouts: the own copy is checked out exactly as before', () => {
+  assert.ok(ownCheckout.includes(`\n        if: \${{ !(${CROSS}) }}\n`))
+  assert.doesNotMatch(ownCheckout, /^ {10}(?:repository|ref):/m)
+})
+check('the checkouts: a cross-repository call checks out the repository and commit that own the workflow', () => {
+  assert.ok(crossCheckout.includes(`\n        if: \${{ ${CROSS} }}\n`))
+  assert.match(crossCheckout, /^ {10}repository: \$\{\{ fromJSON\(toJSON\(job\)\)\.workflow_repository \}\}$/m)
+  assert.match(crossCheckout, /^ {10}ref: \$\{\{ fromJSON\(toJSON\(job\)\)\.workflow_sha \}\}$/m)
+  assert.ok(rwf.includes(`\n          RECONCILE_CALLER_CHECKOUT: \${{ !(${CROSS}) }}\n`), 'the script is told whose checkout it holds')
+})
+check('the checkouts: own copy and cross-repository call, evaluated as GitHub would', () => {
+  const cross = (job, repository) => evaluate(CROSS, { job, github: { repository } })
+  const self = { workflow_repository: 'o/r', workflow_sha: 'c0ffee' }
+  // schedule, workflow_dispatch, and classification-event.yml's `./` call.
+  assert.equal(cross(self, 'o/r'), false)
+  assert.equal(cross(self, 'O/R'), false, 'string comparison ignores case')
+  // An `<org>/.github` caller.
+  assert.equal(cross(self, 'org/.github'), true)
+  // Where GitHub sets neither (GHES), or only the repository: the own copy.
+  assert.equal(cross({}, 'org/.github'), false)
+  assert.equal(cross({ workflow_repository: 'o/r' }, 'org/.github'), false)
+  // The repository and ref checked out are the job's own, whatever the caller.
+  const ctx = { job: self, github: { repository: 'org/.github' } }
+  assert.equal(evaluateValue('fromJSON(toJSON(job)).workflow_repository', ctx), 'o/r')
+  assert.equal(evaluateValue('fromJSON(toJSON(job)).workflow_sha', ctx), 'c0ffee')
 })
 
 // --- loadDerivation() --------------------------------------------------------

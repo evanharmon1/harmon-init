@@ -1461,6 +1461,16 @@ meta) # project_management=linear
     done
     ;;
 esac
+# Wherever the reconcile workflow renders, a call from another repository
+# checks out the repository that owns the workflow, as GitHub reports it,
+# never a fixed one: a generated repository hosts its own copy (#1500).
+if [ -f .github/workflows/classification-reconcile.yml ]; then
+    # shellcheck disable=SC2016 # a literal GitHub expression
+    grep -qxF '          repository: ${{ fromJSON(toJSON(job)).workflow_repository }}' .github/workflows/classification-reconcile.yml ||
+        err "classification-reconcile.yml does not check out its own repository on a cross-repository call"
+    ! grep -qE '^ +repository: [^$ ]' .github/workflows/classification-reconcile.yml ||
+        err "classification-reconcile.yml checks out a fixed repository"
+fi
 
 # ── 9c. Conditional prose and generated workflow layout ────────────
 # Inline block tags at the end of Markdown lines can consume the following
