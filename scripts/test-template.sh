@@ -1815,7 +1815,11 @@ jq -e '[.permissions.ask[] | select(test("^Bash\\(git merge"))] | length == 0' .
     err ".claude/settings.json still asks on every git merge (the guard replaces those rules)"
 jq -e '.permissions.ask | (index("Bash(gh pr merge)") != null) and (index("Bash(git push origin main)") != null) and (index("Bash(git push --force:*)") != null)' .claude/settings.json >/dev/null ||
     err ".claude/settings.json lost the gh pr merge / push-to-main / force-push ask rules"
+grep -Fq 'blocking credential-policy check' "${repo_root}/copier.yml" ||
+    err "copier.yml use_codex_review help does not name the blocking credential-policy check"
 if [ "$profile" = "full" ]; then
+    grep -Fq 'Codex cloud review of the PR covers the integration stage.' AGENTS.md ||
+        err "AGENTS remote-lane paragraph missing the cloud-review clause (use_codex_cloud_review=true)"
     grep -Fq '@codex review' AGENTS.md || err "AGENTS missing explicit Codex shepherd trigger (use_codex_cloud_review=true)"
     grep -Fq 'headRefOid' AGENTS.md || err "AGENTS missing current-head Codex shepherd contract (use_codex_cloud_review=true)"
     grep -Fq 'exact trigger comment' AGENTS.md || err "AGENTS permits unbound Codex reactions (use_codex_cloud_review=true)"
@@ -1833,6 +1837,8 @@ if [ "$profile" = "full" ]; then
     grep -Fq 'Disable Codex Automatic reviews' docs/CHECKLIST.md ||
         err "CHECKLIST missing the human-configured Codex Automatic-reviews prerequisite"
 else
+    ! grep -Fq 'Codex cloud review of the PR covers the integration stage.' AGENTS.md ||
+        err "AGENTS rendered the cloud-review clause but use_codex_cloud_review is off"
     ! grep -Fq '@codex review' AGENTS.md || err "AGENTS rendered Codex shepherd trigger but use_codex_cloud_review is off"
     ! grep -Fq 'Connect Codex cloud review' docs/CHECKLIST.md ||
         err "CHECKLIST rendered Codex cloud connector setup without explicit opt-in"
