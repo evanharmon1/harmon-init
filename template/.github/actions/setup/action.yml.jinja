@@ -119,7 +119,7 @@ runs:
         YAMLLINT_VERSION=1.38.0
 [% if use_skills_sync %]
         # renovate: datasource=github-releases depName=mikefarah/yq extractVersion=^v?(?<version>.+)$
-        YQ_VERSION=4.53.6 # pin-pair: yq
+        YQ_VERSION=4.54.1 # pin-pair: yq
 [% endif %]
 
         # Each `*_sha256` is Renovate-managed with its `*_VERSION`: the
@@ -138,8 +138,8 @@ runs:
             actionlint_arch=amd64
 [% if use_skills_sync %]
             yq_arch=amd64
-            # renovate: datasource=github-release-attachments depName=mikefarah/yq digestVersion=v4.53.6
-            yq_sha256=c5f056448f973ae7d39b5401949648a78f2dc1947d6a8eb65be60d5c504b9385 # pin-pair: yq
+            # renovate: datasource=github-release-attachments depName=mikefarah/yq digestVersion=v4.54.1
+            yq_sha256=8e34fc298390875de416e6a4afcb8cabeceb25d9aa8506c1a2f9353cf702ea5f # pin-pair: yq
 [% endif %]
             ;;
           ARM64|arm64|aarch64)
@@ -150,8 +150,8 @@ runs:
             actionlint_arch=arm64
 [% if use_skills_sync %]
             yq_arch=arm64
-            # renovate: datasource=github-release-attachments depName=mikefarah/yq digestVersion=v4.53.6
-            yq_sha256=88a1016bc1d657375a35864e4f44b6f333df8ff97b559f51bba0adcb2169df09 # pin-pair: yq
+            # renovate: datasource=github-release-attachments depName=mikefarah/yq digestVersion=v4.54.1
+            yq_sha256=189088da0c6429ec5178dfaab1a114805f6cab0b61b165ab236efedf1d57a71b # pin-pair: yq
 [% endif %]
             ;;
           *)
