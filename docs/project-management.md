@@ -447,7 +447,9 @@ destroys every value on it, unrecoverably.
      **draft items**, which can carry the project field but can never carry a
      label. Convert any draft whose value you want to keep into an issue
      first — a draft left as-is loses the value outright once the field is
-     gone. For each item, add the matching `domain:*`/`layer:*` label —
+     gone. List **archived items** too (the project's Archived items page),
+     which keep their field values but are hidden from views. For each item,
+     add the matching `domain:*`/`layer:*` label —
      **creating it first** if the field carries a custom option (e.g.
      `Domain: crm`) that has no label counterpart yet, since the starter set
      `setup:github-labels` provisioned is only a floor. Nothing kept the two
@@ -1398,11 +1400,12 @@ view**). Keep the saved set small; **slice the one board** (below) for the rest.
   (auto-add puts pull requests on the board too). Projects label filters match
   **concrete** values, not prefixes, so it excludes `blocked`, each registered
   `claim:<family>` label, each `claim:<family>:<model>` refinement label in use
-  (a model-level label on its own is still a live claim), and each legacy alias
-  the registry lists (`legacy_claim_labels` in `agent-registry.json`, such as
-  `agent:claude-code`) by name (extend the filter when the registry gains a
-  family). It cannot
-  express the native blocked-by relationship, so with respect to native blocks
+  (a model-level label on its own is still a live claim, one an older claim left
+  behind, since current claims always apply the family label too), and each
+  legacy alias the registry lists (`legacy_claim_labels` in
+  `agent-registry.json`, such as `agent:claude-code`) by name (extend the filter
+  when the registry gains a family). It cannot express the native blocked-by
+  relationship, so with respect to native blocks
   the view is a superset of the predicate: whoever takes an item first confirms
   it has no open blocked-by (the issue's `blockedBy` data, see
   [Blocked is not a status](#blocked-is-not-a-status)); making the claim step
@@ -1427,8 +1430,9 @@ view**). Keep the saved set small; **slice the one board** (below) for the rest.
   maintainer: the integration stage adds `needs-review` at ready-for-review and
   removes it if review pulls the work back into fix rounds. Until that writer
   ships (harmon-devkit#1255, with a skills-pin bump), add `needs-review` by hand
-  at hand-off, or a handed-off issue (its claim released) shows in the Agent
-  queue again.
+  at hand-off (and remove it by hand if review sends the work back into fix
+  rounds), or a handed-off issue (its claim released) shows in the Agent queue
+  again.
 - **Planning** — table, grouped by **`Product`** (or `Type`), sorted by
   `Priority` (organization only, as above). The "what's the plan" view, and a
   **dates-free roadmap substitute**: grouping by product shows the pile behind
