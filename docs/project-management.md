@@ -417,34 +417,26 @@ the setup scripts are additive-only by design, so deleting a live field is an
 explicit operator step, and reviewing its values comes first — deleting a field
 destroys every value on it, unrecoverably.
 
-- **Agent** (retired earlier):
-  1. Provision the replacement vocabulary first: run `task setup:github-labels`
-     in every repository whose issues carry the field — a `suggest:*` label must
-     exist in a repo before an assignment can be copied onto its issues.
-  2. List what the field holds — filter the Project's own board/table view by
-     the field, not a capped CLI listing (`gh project item-list` defaults to a
-     page size well under a typical board, and `gh issue list` won't show
-     draft items at all): every issue or board item with `Agent` set,
-     including **draft items**, which can carry the project field but can
-     never carry a label. Convert any draft whose assignment you want to keep
-     into an issue first; a draft you leave as-is loses its assignment with
-     the field.
-  3. No value carries over: which agent should take an issue is its derived Tier
-     (`tier:*`).
-  4. Re-point the saved **Agent queue** view at its current definition in
+- **Agent** (retired earlier): no value carries over — which agent should take
+  an issue is its derived Tier (`tier:*`).
+  1. **Enumerate every board and view that references the field before deleting
+     it** (#910): every Project that has it, and every saved view in each that
+     filters on it (the **Agent queue** view as it was specified before the
+     field was retired did) — not just the board being migrated.
+  2. Re-point the saved **Agent queue** view at its current definition in
      [Views](#views). A view still filtered on the field loses its routing
      predicate the moment the field is deleted.
-  5. Only then delete the field — Project settings → the field → *Delete field*
+  3. Only then delete the field — Project settings → the field → *Delete field*
      on a personal project. On an organization the field is **org-wide**:
      deleting it under **Settings → Planning → Issue fields** removes the value
      from every issue in every repository and project the org owns, not just
-     this board — repeat steps 2–4 across the whole organization before
-     deleting, including step 4 for **every** Project whose saved views filter
+     this board — repeat steps 1–2 across the whole organization before
+     deleting, including step 2 for **every** Project whose saved views filter
      on the field, not just the board being migrated.
 - **Domain / Layer** (retired by #875): `domain:*`/`layer:*` are provisioned
   by default, so most repos already carry them — but don't skip the
   provisioning step on that assumption; confirm it.
-  1. Provision the replacement vocabulary first, the same as Agent: run
+  1. Provision the replacement vocabulary first: run
      `task setup:github-labels` in every repository whose issues carry the
      field. An org-wide issue field is shared by every repo in the org, and
      labels are not — a repo that never ran the script has neither label
