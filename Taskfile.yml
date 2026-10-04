@@ -919,7 +919,7 @@ tasks:
       - >-
         ./scripts/setup-github.sh --repo "{{.REPO}}" --ci-runs-on '"ubuntu-latest"'
   setup:github-project:
-    desc: Idempotently create/sync the owner's GitHub Project V2 board + Status pipeline (on a personal account also its metadata fields). Requires the Projects scopes — `task setup:gh-scopes`.
+    desc: Idempotently create/sync the owner's GitHub Project V2 board + Status pipeline (on a personal account also its Product field). Requires the Projects scopes — `task setup:gh-scopes`.
     cmds:
       - ./scripts/setup-github-project.sh --owner "evanharmon1" --title "evanharmon1 Project"
 

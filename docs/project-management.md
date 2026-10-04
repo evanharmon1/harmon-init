@@ -183,15 +183,13 @@ Archived-items view), so aged `Done` items leave the board automatically instead
 of sitting in an "Archived" column.
 
 **Agent Queue is the hand-off lane to AI coding agents.** An item lands there once
-it's shaped and ready for an *agent* rather than a human to implement — a
-**`suggest:*`** label says which family (and optionally model) should take it.
-The hand-off itself is manual: suggest the agent, then trigger it — an
-`@claude` mention naming `implement` (see
+it's shaped and ready for an *agent* rather than a human to implement — its
+derived Tier (`tier:*`) says which tier of agent should take it. The hand-off
+itself is manual: trigger the agent — an `@claude` mention naming `implement` (see
 [The Claude Actions workflows](#the-claude-actions-workflows)), or point Claude
-Code at the item. The lane is built for automation, though — an agent can watch
-*Agent Queue + suggest-labelled + priority* (the Agent-queue view below) and
-pull the top item on its own — and either way the item moves to **In Progress**
-once work starts.
+Code at the item. The lane is only a hand-off column, not the queue — the
+**Agent queue** is defined in [Views](#views) — and either way the item moves to
+**In Progress** once work starts.
 
 > **Foreman is that automation** for issue-driven delivery: arm the issue with
 > a `foreman:*` label — label arming is the only supported mode, because
@@ -382,18 +380,23 @@ organization caller are in
 
 `Status` is a **Project field** — the board pipeline above; it stays on the
 project because the built-in workflows (and `project-automation.yml`, on an org)
-drive it.
+drive it. It is also the only project field a workflow or an agent ever writes.
 
-The work-metadata fields:
+The work-metadata field:
 
-- **Priority** — Urgent / High / Medium / Low
-- **Size** — estimation points on the Fibonacci ladder (1 / 2 / 3 / 5 / 8 / 13 / 21),
-  a project **number** field so a view can sum it per group
 - **Product** — which product/area it belongs to (free text)
 
-There is deliberately **no `Agent` field**. Which agent *should* take an issue
-is the `suggest:*` label family plus the `Status: Agent Queue` lane; which agent
-*is* working it is the claim label (see **Claiming** below). A field could carry
+There is deliberately **no `Priority` or `Size` field** (#1451). Priority is an
+issue field on an organization (GitHub's built-in) and a `priority:*` label on
+a personal account, with `Priority (AI)` / `priority-ai:*` beside it as the
+AI's suggestion; Size is retired in favour of Effort (human tasks) and
+Complexity (every issue), per
+[ADR 2026-09-30](decisions/2026-09-30-classify-issues-by-impact-risk-complexity-and-derive-the-tier.md).
+
+There is deliberately **no `Agent` field**. Whether an agent may take an issue
+is decided by the **Agent queue** in [Views](#views), and which agent *should* is
+its derived Tier (`tier:*`); which agent *is* working it is the claim label (see
+**Claiming** below). A field could carry
 neither answer without duplicating the label vocabulary, and on an organization
 the Projects V2 API could not even write it — see
 [Label or field?](#label-or-field) and
@@ -413,35 +416,26 @@ the setup scripts are additive-only by design, so deleting a live field is an
 explicit operator step, and reviewing its values comes first — deleting a field
 destroys every value on it, unrecoverably.
 
-- **Agent** (retired earlier):
-  1. Provision the replacement vocabulary first: run `task setup:github-labels`
-     in every repository whose issues carry the field — a `suggest:*` label must
-     exist in a repo before an assignment can be copied onto its issues.
-  2. List what the field holds — filter the Project's own board/table view by
-     the field, not a capped CLI listing (`gh project item-list` defaults to a
-     page size well under a typical board, and `gh issue list` won't show
-     draft items at all): every issue or board item with `Agent` set,
-     including **draft items**, which can carry the project field but can
-     never carry a label. Convert any draft whose assignment you want to keep
-     into an issue first; a draft you leave as-is loses its assignment with
-     the field.
-  3. Carry each assignment you still want over as the matching `suggest:*` label
-     on the issue (e.g. `Agent: Claude Code` → `suggest:claude`).
-  4. Re-point the saved **Agent queue** view (below) at the new predicate —
-     filter on the `suggest:*` labels instead of the `Agent` field. A view still
-     filtered on the field loses its routing predicate the moment the field is
-     deleted.
-  5. Only then delete the field — Project settings → the field → *Delete field*
+- **Agent** (retired earlier): no value carries over — which agent should take
+  an issue is its derived Tier (`tier:*`).
+  1. **Enumerate every board and view that references the field before deleting
+     it** (#910): every Project that has it, and every saved view in each that
+     filters on it (the **Agent queue** view as it was specified before the
+     field was retired did) — not just the board being migrated.
+  2. Re-point the saved **Agent queue** view at its current definition in
+     [Views](#views). A view still filtered on the field loses its routing
+     predicate the moment the field is deleted.
+  3. Only then delete the field — Project settings → the field → *Delete field*
      on a personal project. On an organization the field is **org-wide**:
      deleting it under **Settings → Planning → Issue fields** removes the value
      from every issue in every repository and project the org owns, not just
-     this board — repeat steps 2–4 across the whole organization before
-     deleting, including step 4 for **every** Project whose saved views filter
+     this board — repeat steps 1–2 across the whole organization before
+     deleting, including step 2 for **every** Project whose saved views filter
      on the field, not just the board being migrated.
 - **Domain / Layer** (retired by #875): `domain:*`/`layer:*` are provisioned
   by default, so most repos already carry them — but don't skip the
   provisioning step on that assumption; confirm it.
-  1. Provision the replacement vocabulary first, the same as Agent: run
+  1. Provision the replacement vocabulary first: run
      `task setup:github-labels` in every repository whose issues carry the
      field. An org-wide issue field is shared by every repo in the org, and
      labels are not — a repo that never ran the script has neither label
@@ -453,7 +447,9 @@ destroys every value on it, unrecoverably.
      **draft items**, which can carry the project field but can never carry a
      label. Convert any draft whose value you want to keep into an issue
      first — a draft left as-is loses the value outright once the field is
-     gone. For each item, add the matching `domain:*`/`layer:*` label —
+     gone. List **archived items** too (the project's Archived items page),
+     which keep their field values but are hidden from views. For each item,
+     add the matching `domain:*`/`layer:*` label —
      **creating it first** if the field carries a custom option (e.g.
      `Domain: crm`) that has no label counterpart yet, since the starter set
      `setup:github-labels` provisioned is only a floor. Nothing kept the two
@@ -468,9 +464,41 @@ destroys every value on it, unrecoverably.
   4. Only then delete the field(s) — Project settings → the field → *Delete
      field* on a personal project; **Settings → Planning → Issue fields** on an
      organization, org-wide as above.
+- **Priority / Size** (retired by #1451): on a **personal account** both were
+  project fields; on an **organization** only `Size` was — `Priority` there is
+  GitHub's built-in issue field and stays. On a personal account Priority's
+  replacement is the `priority:*` labels; `priority-ai:*` (on an organization,
+  the `Priority (AI)` issue field) is a separate AI suggestion beside it, not a
+  replacement. `Size` has none, and its values go with the field.
+  1. Provision the replacement first (personal account): run
+     `task setup:github-labels` in every repository whose issues carry a
+     `Priority` value — a `priority:*` label must exist in a repo before a value
+     can be copied onto its issues.
+  2. **Enumerate every board and view that references each field before
+     deleting it** (#910): every Project that has the field, and every saved
+     view in each that filters, sorts, groups, or sums by it (the Triage, Agent
+     queue, Planning, and Mine views as they were specified before #1451 all
+     did) — not just the board being migrated. Then list the items that hold a
+     value, filtering the Project's own view rather than a capped CLI listing,
+     **draft items** included, which can carry the project field but can never
+     carry a label, and **archived items** (the project's Archived items page),
+     which keep their field values but are hidden from views.
+  3. On a personal account, convert any draft whose `Priority` you want to keep
+     into an issue first (a label cannot go on a draft; a draft you leave as-is
+     loses its value with the field), then carry each `Priority` value you still
+     want onto the matching `priority:*` label. A value with no `priority:*`
+     label — an option you added beyond Urgent / High / Medium / Low — has no
+     counterpart to carry it to: map it to the nearest rung, or record it before
+     deleting the field. `Size` values have no destination: keep a record of any
+     you need now, because deleting the field destroys them unrecoverably.
+  4. Re-point or rebuild every view from step 2 as the **Views** section below
+     specifies it. A view still filtered, sorted, or summed by a deleted field
+     loses that predicate the moment the field is gone.
+  5. Only then delete each field — Project settings → the field → *Delete
+     field* — on a personal account both, on an organization `Size` only.
 
 On a personal account there are no issue fields, so `task setup:github-project`
-creates **Priority, Product, and Size** as project fields.
+creates **Product** as a project field.
 
 ### The provisioned field values
 
@@ -482,17 +510,13 @@ release lands on the next run.
 | Field | Type | Values | Provisioned by |
 |---|---|---|---|
 | **Status** | project single-select | Inbox, Icebox, Next, Todo, Shaping, Ready, Agent Queue, In Progress, Verifying, In Review, Ready to Merge, Done, Deployed, Accepted | `setup:github-project` |
-| **Size** | project number | free numeric entry; the Fibonacci ladder (1, 2, 3, 5, 8, 13, 21) is a convention, not an option list | `setup:github-project` |
-| **Priority** | single-select | Urgent, High, Medium, Low | `setup:github-project`, personal accounts only |
 | **Product** | text | free text | `setup:github-project` (personal) / `setup:github-issue-fields` (org) |
 
-Two org-only notes. GitHub ships **Priority** and **Effort** (plus **Start
-date** and **Target date**) as built-in *issue* fields, and both setup scripts
-leave them at their defaults — so on an organization `Priority` is GitHub's own
-field with GitHub's own options, and the Urgent/High/Medium/Low list above is
-the personal-account project field. And `Effort` cannot hold the estimate:
-an issue field's type is fixed at creation, and only project **number** fields
-can be summed in a view's group header, which is `Size`'s whole job.
+One org-only note. GitHub ships **Priority** and **Effort** (plus **Start
+date** and **Target date**) as built-in *issue* fields, and the setup scripts
+leave `Priority` and the dates as shipped — so on an organization `Priority` is
+GitHub's own field with GitHub's own options, and on a personal account it is
+the `priority:*` label family. It is never a project field.
 
 ## Labels
 
@@ -754,7 +778,7 @@ mechanics, not taste. Use a **label** when the datum must be any of:
 - **available on personal repos** — org issue fields do not exist there.
 
 Use a **field** when it is **single-valued planning metadata you slice the
-board by**: `Status`, `Priority`, `Size`, `Product`.
+board by**: `Status`, `Product`.
 
 The consequences are not stylistic. Foreman arming is labels because only the
 label timeline names an arming actor. Claims are labels because a claim must be
@@ -804,7 +828,7 @@ deliberately leaves it alone.
 | `risk:{trivial,low,medium,high,critical}` | humans or agents, at triage or filing — agent-authored issues arrive with it set | humans, saved views; the Tier derivation (Risk × Complexity) | provisioned; **read by agents** — an input to the derived Tier (Risk × Complexity); arms nothing | durable classification; required for triaged; whoever changes it re-derives the Tier in the same write |
 | `complexity:{xs,s,m,l,xl}` | humans or agents, at triage or filing — agent-authored issues arrive with it set | humans, saved views; the Tier derivation (Risk × Complexity) | provisioned; **read by agents** — an input to the derived Tier (Risk × Complexity); arms nothing | durable classification; required for triaged; whoever changes it re-derives the Tier in the same write |
 | `priority:{urgent,high,medium,low}` | humans only — an agent never sets or changes it | humans, saved views; the agent queue (an issue with no Priority is not queued) | provisioned; **advisory** — orders the agent queue; arms nothing | set by a human when ranking the work; changed as priorities move |
-| `priority-ai:{p0,p1,p2,p3,p4}` | agents or humans — the AI's suggestion, never required; a review finding filed as an issue carries its adjudicated badge (P0→p0, P1→p1, P2→p2, P3→p3; nothing from a review maps to p4) | humans, saved views; the effective priority, which is the human `priority` when set and else this suggestion | provisioned; **advisory** — the AI's suggestion, overridden by the human `priority` family; arms nothing | written by an agent or human when classifying or filing the issue; changed as the AI learns more; the human `priority` overrides it without clearing it |
+| `priority-ai:{p0,p1,p2,p3,p4}` | agents or humans — the AI's suggestion, never required; a review finding filed as an issue carries its adjudicated badge (P0→p0, P1→p1, P2→p2, P3→p3; nothing from a review maps to p4) | humans, saved views; the effective priority, which is the human `priority` when set and else this suggestion; in the agent queue it only orders issues within a `priority` rung and admits nothing | provisioned; **advisory** — the AI's suggestion, overridden by the human `priority` family; arms nothing | written by an agent or human when classifying or filing the issue; changed as the AI learns more; the human `priority` overrides it without clearing it |
 | `effort:{1,2,3,5,8,13,20}` | humans only, on a human task — agent work carries Complexity instead | humans, saved views | provisioned; **advisory** — a human estimate; arms nothing | set by a human when estimating a human task; agent issues never carry it |
 | `rigor:{cursory,light,standard,thorough,deep,forensic}` | humans, at triage — **never an agent on itself** | agents, when entering the Dev Loop | provisioned; **read by agents** — selects a rounds policy, five role tiers, and a breadth envelope; arms nothing | set when the default rigor is wrong for the change; survives the work |
 | `tier:{local,economy,standard,frontier,apex}` | agents, in the write that sets Risk or Complexity, and the GitHub Actions reconciler; humans may set one, and pin it with `tier:pinned` | humans and agents — the issue's derived (or pinned) Tier, an input to the implementer tier; models are classified in `agent-registry.json` (ADR 2026-09-30) | provisioned; **read by agents** — a pin outranks the derived Tier and both rank below an operator instruction; resolved against `.devflow.toml`'s `tier_order`; arms nothing | a materialized cache — rewritten whenever Risk or Complexity changes and by the scheduled reconciler (daily on personal-account repositories, monthly on organization ones), recomputed by readers when absent; never rewritten while `tier:pinned` is present |
@@ -935,9 +959,8 @@ look like the same fact and are not:
 
 They share one vocabulary — the agent-registry families — but they answer
 different questions. Rewriting the suggestion at claim time would destroy the
-planning assignment the **Agent queue** view is built on (that view lists
-issues *carrying a `suggest:*` label*), and would silently reassign work
-planned for one agent to whichever agent happened to pick it up.
+planning assignment, and would silently reassign work planned for one agent to
+whichever agent happened to pick it up.
 
 So a claim writes the **claim label only**. If the claim and the suggestion
 disagree, that is information, not drift: it means a different agent picked up
@@ -1166,8 +1189,9 @@ build-measure-learn, get it in front of a user fast, for which the clock is your
 it at the work level more directly. You already have those.)
 
 **Iterations also don't fit the agent queue.** Agents run when triggered, not "this
-week"; scoping the queue to `iteration:@current` adds nothing over *agent-set +
-Ready + priority*. Iteration is a human-cadence concept your agents don't have.
+week"; scoping the queue to `iteration:@current` adds nothing over its own
+predicate in [Views](#views). Iteration is a human-cadence concept your agents
+don't have.
 (The native Iteration field stays available if you reach steady-state and want it.)
 
 ## Hierarchy (sub-issues with Epic and umbrella labels)
@@ -1221,10 +1245,7 @@ milestone and project once on the parent and the tree inherits; move the parent
 to `v1.1.0` and the whole tree moves with it. Keep the initiative label on the
 parent; never set the milestone per child.
 
-The **leaves** hold execution: the `Task` type and the **`Size` points**. Put
-the estimate on the mergeable one-PR slices, not the parent — estimating a slice is
-reliable, estimating a big parent isn't — and a view's field sums total the leaves
-for you.
+The **leaves** hold execution: the `Task` type.
 It's route-not-duplicate applied to hierarchy: a child references the parent's spec
 rather than restating it, and reads up for context.
 
@@ -1351,24 +1372,75 @@ view mutations, only reads — so create these once in the UI (**Project → New
 view**). Keep the saved set small; **slice the one board** (below) for the rest.
 
 - **Board** — board, `is:open`, grouped by `Status`. The day-to-day working board.
-- **Triage** — table, filtered to items **missing a `Priority`** or carrying
-  **`needs-triage`**, grouped by **Type** (Bug / Feature / Task / Research) so you
-  see the shape of the inbox. This is your grooming session — it exists so
+- **Triage** — table, filtered to `is:issue is:open` and the **`needs-triage`**
+  label, grouped by **Type** (Bug / Feature / Task / Research) so you see the
+  shape of the inbox.
+  `needs-triage` is derived — present while any required axis is unset — so one
+  label filter selects every untriaged issue; there is no "missing a field"
+  clause to OR beside it, which Projects cannot express (#444). `Type` is an
+  organization issue field; a personal account has no `Type` to group by (its
+  work-type is a label, which a view can filter on but not group by), so leave
+  the view ungrouped there. This is your grooming session — it exists so
   untriaged work can't hide; empty it regularly and it stays useful.
-- **Agent queue** — board, filtered to issues carrying a **`suggest:*`** label
-  (Projects label filters match **concrete** values, not prefixes — enumerate
-  the seeded family labels in the filter, and extend it when the registry
-  gains a family), showing only the in-flight `Status` columns (**Ready, Agent
-  Queue, In Progress, Verifying, In Review, Ready to Merge**), sorted by
-  `Priority`.
+- **Agent queue** — the issues an agent may start. The **predicate** is
+  authoritative: **open**, **triaged** (no `needs-triage`), no **`claim:*`**, not
+  **`human`**, not **`needs-review`**, not blocked, and **`Priority` set** — an
+  issue with only a `Priority (AI)` is not startable, an agent asks first
+  ([ADR 2026-09-30](decisions/2026-09-30-classify-issues-by-impact-risk-complexity-and-derive-the-tier.md)
+  D7). `Status` plays no part in it. **Not blocked** means neither an open
+  blocked-by relationship nor the `blocked` label. **Order** is by `Priority`,
+  highest rung first (`urgent`, `high`, `medium`, `low`), then by
+  `Priority (AI)` (`p0` to `p4`) within a rung. **The human `Priority` overrides
+  `Priority (AI)`**: an issue's effective priority is `Priority` when set, else
+  `Priority (AI)`, and the override never clears the AI value
+  ([ADR 2026-10-01](decisions/2026-10-01-add-a-priority-ai-axis-suggested-by-agents.md)
+  D2). In the queue `Priority` is always set, so `Priority (AI)` only breaks ties
+  within a `Priority` rung; it admits nothing, and the view shows it. A saved
+  view only approximates the predicate. It filters on `is:issue` and `is:open`
+  (auto-add puts pull requests on the board too). Projects label filters match
+  **concrete** values, not prefixes, so it excludes `blocked`, each registered
+  `claim:<family>` label, each `claim:<family>:<model>` refinement label in use
+  (a model-level label on its own is still a live claim, one an older claim left
+  behind, since current claims always apply the family label too), and each
+  legacy alias the registry lists (`legacy_claim_labels` in
+  `agent-registry.json`, such as `agent:claude-code`) by name (extend the filter
+  when the registry gains a family). It cannot express the native blocked-by
+  relationship, so with respect to native blocks
+  the view is a superset of the predicate: whoever takes an item first confirms
+  it has no open blocked-by (the issue's `blockedBy` data, see
+  [Blocked is not a status](#blocked-is-not-a-status)); making the claim step
+  refuse such an issue is tracked as harmon-devkit#1232. Where the priorities
+  live decides how the view is built and how the order is applied:
+  - **Organization** — both are issue fields, so the one view requires
+    `Priority` set and sorts by `Priority`, then `Priority (AI)`.
+  - **Personal account** — both are labels (`priority:*`, `priority-ai:*`), and a
+    view cannot sort by a label, so the human order is applied by narrowing the
+    queue view itself to one rung at a time. The view filters on the four
+    concrete `priority:*` labels in one `label:` qualifier (the comma ORs them);
+    narrowing replaces that qualifier with one concrete label, walking
+    `priority:urgent`, `priority:high`, `priority:medium`, `priority:low`. Within
+    a rung, order by the `priority-ai:*` label read from the Labels column. Every
+    other exclusion is the view's own filter, so it is kept by construction.
+- **Needs review** — table, `is:issue is:open` and the **`needs-review`**
+  label. On an organization it shows the `Priority` and `Priority (AI)` columns
+  and sorts by `Priority`, then `Priority (AI)`. On a personal account both
+  priority families are labels and share the single Labels column, where both
+  priority labels appear, so it shows that column and is read by effective
+  priority (a view cannot sort by a label). It lists what awaits the
+  maintainer: the integration stage adds `needs-review` at ready-for-review and
+  removes it if review pulls the work back into fix rounds. Until that writer
+  ships (harmon-devkit#1255, with a skills-pin bump), add `needs-review` by hand
+  at hand-off (and remove it by hand if review sends the work back into fix
+  rounds), or a handed-off issue (its claim released) shows in the Agent queue
+  again.
 - **Planning** — table, grouped by **`Product`** (or `Type`), sorted by
-  `Priority`, with the **`Size` field summed in each group header**. The "how
-  big is the pile, and what's the plan" view, and a **dates-free roadmap
-  substitute**: the per-group sum shows the weight behind each product without
-  maintaining a timeline. (`Size` is a **number** field — GitHub sums number
-  fields in group headers, so this totals the points behind each group; a
-  single-select can't be summed.)
-- **Mine** — table, `is:open assignee:@me`, sorted by `Priority`.
+  `Priority` (organization only, as above). The "what's the plan" view, and a
+  **dates-free roadmap substitute**: grouping by product shows the pile behind
+  each one without maintaining a timeline. There is no `Size` sum — the field is
+  retired (it was a project **number** field, the one kind GitHub sums in a
+  group header) and nothing replaces it here.
+- **Mine** — table, `is:open assignee:@me`, sorted by `Priority` (organization
+  only, as above).
 
 ### Two toggles, not more views
 

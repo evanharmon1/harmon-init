@@ -265,23 +265,36 @@ the compatibility reason in the rule's `description`.
       devcontainer prebuild populates `ghcr.io/evanharmon1/harmon-init-devcontainer` on merge to main
 - [ ] GitHub Project: run `task setup:github-project` (needs
       `gh auth refresh -s project`) to create the owner's default project (titled
-      `evanharmon1 Project`) and idempotently sync its `Status` pipeline and
-      `Size` number field — see
+      `evanharmon1 Project`) and idempotently sync its `Status` pipeline — see
       [project-management.md](project-management.md).
-      On a personal account it also creates Priority/Product/Size as project
-      fields (issue fields are org-only; there is deliberately no Domain or
-      Layer field — see project-management.md, "Label or field?"); status
-      automation is a separate follow-up — the board is set up, but issue/PR
-      status isn't auto-synced yet. Re-runs **append** any starter option a
-      single-select field is missing (so a value added by a later harmon-init
-      release lands on the next run) and never touch, reorder, or delete the
-      options you added.
+      On a personal account it also creates Product as a project field (issue
+      fields are org-only; there is deliberately no Priority, Size, Domain, or
+      Layer field — see project-management.md, "Fields" and "Label or
+      field?"); status automation is a separate follow-up — the board is set
+      up, but issue/PR status isn't auto-synced yet. Re-runs **append** any
+      starter option the Status field is missing (so a value added by a later
+      harmon-init release lands on the next run) and never touch, reorder, or
+      delete the options you added.
 - [ ] **Upgrading from a release before #875?** If this repo's board still
       carries `Domain`/`Layer` fields from an earlier harmon-init release, they
       are not deleted automatically — retiring them is a deliberate,
       irreversible operator step. See
       [project-management.md](project-management.md), "Migrating a board that
       still has one."
+- [ ] **[human-only] Delete the `Priority` and `Size` project fields on an
+      existing board** — only if this repo's board was set up by a release
+      before harmon-init#1451; they are not deleted automatically, and
+      deleting a field destroys every value on it, unrecoverably. Do it after
+      the classification labels exist (on a personal account,
+      `task setup:github-labels` provisions the `priority:*` labels that
+      replace `Priority`, plus `priority-ai:*` for the AI's separate
+      suggestion beside it) and
+      after enumerating every board and view that references each field
+      (harmon-init#910), as [project-management.md](project-management.md),
+      "Migrating a board that still has one" (the Priority / Size entry) lays
+      out. On a personal account both fields go; on an organization only `Size`
+      was ever a project field — its `Priority` is GitHub's built-in issue
+      field and stays.
 - [ ] **Upgrading from a release before harmon-init#1047
       (`method:*` → `strategy:*`)?** Run `task setup:github-labels` first so
       the `strategy:*` destinations exist, then use the read-only report and
@@ -398,10 +411,10 @@ the compatibility reason in the rule's `description`.
       the operation as incomplete, reconcile live associations, and rerun in a
       new quiet window; do not infer association preservation from a successful
       exit alone; this is a guarded best-effort operation at that API boundary.
-- [ ] Project views: create the starter views (Board / Triage / Agent queue /
-      Planning / Mine) in the Project UI — Projects V2 has no view API,
-      so this is a one-time manual step. Filters/layouts are in
-      [project-management.md](project-management.md).
+- [ ] Project views: create the starter views that the Views section of
+      [project-management.md](project-management.md) specifies — including
+      Needs review — in the Project UI. Projects V2 has no view API, so this is
+      a one-time manual step; the filters and layouts are in that section.
 - [ ] GitHub Project auto-add (**adds every issue to the board**): in the
       Project's **Settings → Workflows**, turn on **"Auto-add to project"** and
       point it at this repo (filter `is:issue`, `is:pr`) so *every* new issue and

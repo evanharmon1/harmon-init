@@ -886,7 +886,7 @@ jq -e '.vulnerabilityAlerts.enabled == true' renovate.json >/dev/null ||
 jq -e '.osvVulnerabilityAlerts == true' renovate.json >/dev/null ||
     err "Renovate OSV vulnerability alerts must be enabled"
 # renovate: datasource=npm depName=renovate
-RENOVATE_VALIDATOR_VERSION=44.126.1
+RENOVATE_VALIDATOR_VERSION=44.127.0
 if [ "$validation_scope" = "renovate-config" ]; then
     if have npx; then
         run_quiet renovate-config-validator \
@@ -1461,6 +1461,26 @@ meta) # project_management=linear
     done
     ;;
 esac
+# Wherever the reconcile workflow renders, it checks out the repository it
+# runs in, once, and names no fixed owner repository; the organization
+# workflow its ci-cd.md documents is one a repository can actually run
+# (#1500).
+if [ -f .github/workflows/classification-reconcile.yml ]; then
+    [ "$(grep -c 'uses: actions/checkout@' .github/workflows/classification-reconcile.yml)" = 1 ] ||
+        err "classification-reconcile.yml does not have exactly one checkout"
+    ! grep -qE '^ +repository:' .github/workflows/classification-reconcile.yml ||
+        err "classification-reconcile.yml checks out a fixed repository"
+    org_example="$(mktemp -d)"
+    mkdir -p "$org_example/.github/workflows"
+    awk '/^\*\*Organization-wide walk\./ { f = 1 } f && /^```yaml$/ { y = 1; next } y && /^```$/ { exit } y' \
+        docs/architecture/ci-cd.md >"$org_example/.github/workflows/organization.yml"
+    if [ ! -s "$org_example/.github/workflows/organization.yml" ]; then
+        err "docs/architecture/ci-cd.md has no organization workflow example"
+    elif have actionlint && ! (cd "$org_example" && actionlint .github/workflows/organization.yml); then
+        err "the organization workflow in docs/architecture/ci-cd.md does not pass actionlint"
+    fi
+    rm -rf "$org_example"
+fi
 
 # ── 9c. Conditional prose and generated workflow layout ────────────
 # Inline block tags at the end of Markdown lines can consume the following
