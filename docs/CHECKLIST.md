@@ -409,10 +409,11 @@ the compatibility reason in the rule's `description`.
       the operation as incomplete, reconcile live associations, and rerun in a
       new quiet window; do not infer association preservation from a successful
       exit alone; this is a guarded best-effort operation at that API boundary.
-- [ ] Project views: create the starter views (Board / Triage / Agent queue /
-      Planning / Mine) in the Project UI — Projects V2 has no view API,
-      so this is a one-time manual step. Filters/layouts are in
-      [project-management.md](project-management.md).
+- [ ] Project views: create the starter views that the Views section of
+      [project-management.md](project-management.md) specifies — including
+      Needs review and, on an organization, Agent queue (AI-ranked) — in the
+      Project UI. Projects V2 has no view API, so this is a one-time manual
+      step; the filters and layouts are in that section.
 - [ ] GitHub Project auto-add (**adds every issue to the board**): in the
       Project's **Settings → Workflows**, turn on **"Auto-add to project"** and
       point it at this repo (filter `is:issue`, `is:pr`) so *every* new issue and

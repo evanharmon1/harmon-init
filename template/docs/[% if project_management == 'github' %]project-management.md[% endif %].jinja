@@ -184,9 +184,9 @@ it's shaped and ready for an *agent* rather than a human to implement — a
 The hand-off itself is manual: suggest the agent, then trigger it — an
 `@claude` mention naming `implement` (see
 [The Claude Actions workflows](#the-claude-actions-workflows)), or point Claude
-Code at the item. The lane is only a hand-off column: what an agent may pull on
-its own is the **Agent queue** predicate in [Views](#views), which does not read
-`Status` — and either way the item moves to **In Progress** once work starts.
+Code at the item. The lane is only a hand-off column, not the queue — the
+**Agent queue** is defined in [Views](#views) — and either way the item moves to
+**In Progress** once work starts.
 [% if use_foreman %]
 
 > **Foreman is that automation** for issue-driven delivery: arm the issue with
@@ -405,7 +405,7 @@ Priority is an issue field on an organization (GitHub's built-in) and a
 Effort (human tasks) and Complexity (every issue), per ADR 2026-09-30.
 
 There is deliberately **no `Agent` field**. Whether an agent may take an issue
-is the **Agent queue** predicate in [Views](#views), and which agent *should* is
+is decided by the **Agent queue** in [Views](#views), and which agent *should* is
 its derived Tier (`tier:*`); which agent *is* working it is the claim label (see
 **Claiming** below). A field could carry
 neither answer without duplicating the label vocabulary, and on an organization
@@ -440,10 +440,9 @@ destroys every value on it, unrecoverably.
      the field.
   3. Carry each assignment you still want over as the matching `suggest:*` label
      on the issue (e.g. `Agent: Claude Code` → `suggest:claude`).
-  4. Re-point the saved **Agent queue** view (below) at the new predicate —
-     filter on the `suggest:*` labels instead of the `Agent` field. A view still
-     filtered on the field loses its routing predicate the moment the field is
-     deleted.
+  4. Re-point the saved **Agent queue** view at its current definition in
+     [Views](#views). A view still filtered on the field loses its routing
+     predicate the moment the field is deleted.
   5. Only then delete the field — Project settings → the field → *Delete field*
      on a personal project. On an organization the field is **org-wide**:
      deleting it under **Settings → Planning → Issue fields** removes the value
@@ -1043,9 +1042,8 @@ look like the same fact and are not:
 
 They share one vocabulary — the agent-registry families — but they answer
 different questions. Rewriting the suggestion at claim time would destroy the
-planning assignment the **Agent queue** view is built on (that view lists
-issues *carrying a `suggest:*` label*), and would silently reassign work
-planned for one agent to whichever agent happened to pick it up.
+planning assignment, and would silently reassign work planned for one agent to
+whichever agent happened to pick it up.
 
 So a claim writes the **claim label only**. If the claim and the suggestion
 disagree, that is information, not drift: it means a different agent picked up
@@ -1286,8 +1284,9 @@ build-measure-learn, get it in front of a user fast, for which the clock is your
 it at the work level more directly. You already have those.)
 
 **Iterations also don't fit the agent queue.** Agents run when triggered, not "this
-week"; scoping the queue to `iteration:@current` adds nothing over *agent-set +
-Ready + priority*. Iteration is a human-cadence concept your agents don't have.
+week"; scoping the queue to `iteration:@current` adds nothing over its own
+predicate in [Views](#views). Iteration is a human-cadence concept your agents
+don't have.
 (The native Iteration field stays available if you reach steady-state and want it.)
 
 ## Hierarchy (sub-issues with Epic and umbrella labels)
@@ -1477,21 +1476,27 @@ view**). Keep the saved set small; **slice the one board** (below) for the rest.
   group by (its work-type is a label, which a view can filter on but not group
   by), so leave the view ungrouped there. This is your grooming session — it
   exists so untriaged work can't hide; empty it regularly and it stays useful.
-- **Agent queue** — the issues an agent may start, as one predicate: **open**,
-  **triaged** (no `needs-triage`), no **`claim:*`**, not **`human`**, not
-  **`needs-review`**, not blocked, and an **effective priority** set — `Priority`
-  or `Priority (AI)`. Ordered by `Priority`, then `Priority (AI)`. `Status` plays
-  no part in it. **Not blocked** means neither an open blocked-by relationship
-  nor the `blocked` label: the view excludes the `blocked` label by name, and the
-  native relationship shows as the **Blocked** icon on the board, which you
-  check when picking the item. **The human `Priority` overrides
-  `Priority (AI)`**: an issue's effective priority is `Priority` when set, else
-  `Priority (AI)`, and the override never clears the AI value (ADR 2026-10-01
-  D2). Projects label filters match **concrete** values, not prefixes — exclude
-  `blocked` and each registered `claim:<family>` label by name, and extend the
-  filter when the registry gains a family. Where the two priorities live
-  decides how the view is built:
-  - **Organization** — both are issue fields, so the view can sort by them, but
+- **Agent queue** — the issues an agent may start. This bullet is the only
+  place the queue is defined; every other mention in this document names it and
+  points here. The **predicate** is authoritative: **open**, **triaged** (no
+  `needs-triage`), no **`claim:*`**, not **`human`**, not **`needs-review`**, not
+  blocked, and an **effective priority** set — `Priority` or `Priority (AI)`.
+  `Status` plays no part in it. **Not blocked** means neither an open blocked-by
+  relationship nor the `blocked` label. **Order** is by `Priority`, then
+  `Priority (AI)`: highest effective-priority rung first, the human `Priority`
+  rungs (`urgent`, `high`, `medium`, `low`) before the `Priority (AI)` rungs
+  (`p0` to `p4`). **The human `Priority` overrides `Priority (AI)`**: an issue's
+  effective priority is `Priority` when set, else `Priority (AI)`, and the
+  override never clears the AI value (ADR 2026-10-01 D2). A saved view only
+  approximates the predicate. Projects label filters match **concrete** values,
+  not prefixes, so a view excludes `blocked` and each registered
+  `claim:<family>` label by name (extend the filter when the registry gains a
+  family). It cannot express the native blocked-by relationship, so with respect
+  to native blocks the view is a superset of the predicate: whoever takes an item
+  first confirms it has no open blocked-by (the issue's `blockedBy` data, see
+  [Blocked is not a status](#blocked-is-not-a-status)). Where the two priorities
+  live decides how the view is built and how the order is applied:
+  - **Organization** — both are issue fields, so the view sorts by them, but
     "either one is set" is an OR across two different qualifiers, which Projects
     does not express (distinct qualifiers AND; the comma ORs the values of one
     qualifier, harmon-init#444). Build two views that together select the queue
@@ -1499,10 +1504,15 @@ view**). Keep the saved set small; **slice the one board** (below) for the rest.
     `Priority`, then `Priority (AI)`; **Agent queue (AI-ranked)** requires
     `Priority` empty and `Priority (AI)` set and sorts by `Priority (AI)`. Read
     the first, then the second.
-  - **Personal account** — both are labels (`priority:*`, `priority-ai:*`), so
-    one view filters on all nine concrete values in one `label:` qualifier (the
-    comma ORs them). A view cannot sort by a label, so it lists the queue
-    unordered; read each issue's priority from the view's Labels column.
+  - **Personal account** — both are labels (`priority:*`, `priority-ai:*`), and a
+    view cannot sort by a label, so the order is applied by narrowing the queue
+    view itself to one rung at a time. The view filters on all nine concrete
+    priority labels in one `label:` qualifier (the comma ORs them); narrowing
+    replaces that qualifier with one concrete label, walking `priority:urgent`,
+    `priority:high`, `priority:medium`, `priority:low`, then `priority-ai:p0` to
+    `priority-ai:p4`, and at each `priority-ai:*` rung also excluding the four
+    `priority:*` labels. Every other exclusion is the view's own filter, so it is
+    kept by construction.
 - **Needs review** — table, `is:open` and the **`needs-review`** label, showing
   both priority columns (`Priority` and `Priority (AI)` on an organization; the
   `priority:*` and `priority-ai:*` labels on a personal account). It lists what
