@@ -547,9 +547,10 @@ the taxonomy table below is generated from) and the starter set is created by
   human's (actions, decisions, QA, purchases, credentials, physical work),
   whether or not an agent can assist with parts of it. Agents may file, append
   to, or prepare for a `human` issue, but never claim, arm, or implement one.
-  A part an agent can do is filed as its own issue (linked to the human one),
-  and that issue goes through the Agent queue; "prepare for" means comments,
-  drafts or research on the human issue itself, never a claim.
+  A part an agent can do is filed as its own issue, marked blocked by the human
+  issue when it cannot start before the human step, so the Agent queue does not
+  admit it early, and that issue goes through the Agent queue; "prepare for"
+  means comments, drafts or research on the human issue itself, never a claim.
   `human` + `umbrella` marks a `(HUMAN):`/`(QA):` collector (see **Human-task and
   QA collectors** below) as the special case
 - **Workflow** — transient triage states; `blocked` is the non-issue-blocker
@@ -814,7 +815,7 @@ deliberately leaves it alone.
 | `sec`, `a11y`, `perf`, `tech-debt`, `i18n`, `l10n` | humans, at triage | humans, saved views | provisioned; inert | applied when true, removed when not |
 | `customer-request`, `ai-generated` | whoever files or authors the work, human or agent | humans, saved views | provisioned; inert | durable provenance — never removed |
 | `epic`, `umbrella` | humans, at planning or grooming; agents when filing a (HUMAN)/(QA) collector or an approved breakdown | humans, saved views | provisioned; inert | applied to a parent while its role is current; removed or changed when its horizon changes |
-| `human` | whoever files or triages the issue, human or agent | humans, saved views; agents, to skip dispatch | provisioned; inert | applied while completion is primarily a human's; removed by triage or a human when the issue's remaining completion is no longer primarily a human's (for example the decision is made, or the purchase is done, and the rest is agent work); only then can it enter the Agent queue |
+| `human` | whoever files or triages the issue, human or agent | humans, saved views; agents, to skip dispatch | provisioned; inert | applied while completion is primarily a human's; removed once the issue's remaining completion is no longer primarily a human's |
 | `needs-triage` | humans, the issue forms, the triage skill, and the GitHub Actions classification reconciler (derived: added while classification is incomplete, removed once it is complete) | humans, the Triage view | provisioned; inert | added freely at filing; removed only when classification is complete |
 | `needs-requirements`, `blocked`, `waiting`, `needs-decision`, `needs-response`, `needs-communication` | humans, at triage | humans, the Triage view | provisioned; inert | transient — removed as soon as the state clears |
 | `needs-review` | the integration stage, at ready-for-review; humans | humans, the review list; the agent queue, which excludes it | provisioned; inert | added at ready-for-review, when `claim:*` is removed; removed if review pulls the work back into fix rounds |
@@ -1432,7 +1433,8 @@ view**). Keep the saved set small; **slice the one board** (below) for the rest.
   `Priority (AI)` columns and sorts by `Priority`, then `Priority (AI)`. On a
   personal account both priority families are labels, so apply the order the way
   the Agent queue does: narrow the view to one `priority:*` label at a time, then
-  to issues with no `priority:*` label, and within each step order by the
+  to issues with no `priority:*` label (the view's own filter excluding the four
+  `priority:*` labels by name), and within each step order by the
   `priority-ai:*` label read from the Labels column (see the Agent queue's
   narrowing walk above). It cannot express the native blocked-by relationship,
   so with respect to native blocks the view is a superset of startable human
