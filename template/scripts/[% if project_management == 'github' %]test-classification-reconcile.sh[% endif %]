@@ -847,6 +847,16 @@ if (canDerive) {
     assert.deepEqual([...ownDefault.gh.touched], ['a/two'])
     assert.deepEqual(ownDefault.gh.contents, [])
   })
+  const ownExplicit = await runWith(
+    { 'a/two': { issues: { 1: zzz() } } },
+    { RECONCILE_REPOSITORIES: '', RECONCILE_CALLER_CHECKOUT: 'true' }
+  )
+  check('run(): RECONCILE_CALLER_CHECKOUT=true behaves as the unset default', () => {
+    assert.equal(ownExplicit.code, 0)
+    assert.deepEqual([...ownExplicit.gh.touched], ['a/two'])
+    assert.deepEqual(ownExplicit.gh.contents, [])
+    assert.deepEqual(writes(ownExplicit.gh, '/repos/a/two/'), writes(ownDefault.gh, '/repos/a/two/'))
+  })
 }
 
 // --- The reconcile workflow: its own repository, its own token (C1-F1) -------
@@ -879,9 +889,12 @@ const orgWorkflow =
   doc.slice(doc.indexOf('**Organization-wide walk.**')).match(/^```yaml\n([\s\S]*?)^```$/m)?.[1] ?? ''
 const orgSteps = orgWorkflow.slice(orgWorkflow.indexOf('\n    steps:\n')).split(/\n {6}- /).slice(1)
 const [mint, source, setupNode, reconcile] = orgSteps
-check('the organization workflow: a schedule and workflow_dispatch, contents: read, one job, no reusable-workflow call', () => {
+check('the organization workflow: a schedule only, contents: read, one job, no reusable-workflow call', () => {
   assert.ok(orgWorkflow, 'ci-cd.md carries the organization workflow example')
-  assert.match(orgWorkflow, /^on:\n {2}schedule:\n {4}- cron: "[^"]+"\n {2}workflow_dispatch:\n/m)
+  assert.match(orgWorkflow, /^on:\n {2}schedule:\n {4}- cron: "[^"]+"\n\n/m)
+  // A dispatch would run the selected ref's definition, token-minting step
+  // included, so an App-token workflow never offers one.
+  assert.doesNotMatch(orgWorkflow, /workflow_dispatch/)
   assert.match(orgWorkflow, /^permissions:\n {2}contents: read\n\n/m)
   assert.equal(orgWorkflow.match(/^ {2}[\w-]+:\n {4}runs-on:/gm)?.length, 1, 'one job')
   assert.doesNotMatch(orgWorkflow, /workflow_call|^ {4}uses:|\.ya?ml@/m)

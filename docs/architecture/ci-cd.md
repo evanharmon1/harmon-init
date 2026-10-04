@@ -294,13 +294,17 @@ and no secret, so no stored, long-lived token reaches it, whatever secrets the
 repository or organization holds (no PAT, no stored secret).
 
 **Organization-wide walk.** An organization that wants a daily walk of all its
-repositories adds one standalone workflow to `<org>/.github` (opt-in;
+repositories adds one standalone workflow to a private repository of the
+organization (opt-in;
 [harmon-init#1463](https://github.com/evanharmon1/harmon-init/issues/1463)).
+Host it in a private repository, because a public repository's run logs and
+job summaries would publish each walked private repository's issue numbers
+and label changes; that is `<org>/.github` only when it is private.
 It is an ordinary workflow that runs in the organization, not a call into
 another repository's reusable workflow: a job that calls a reusable workflow
 runs no steps, and GitHub redacts a job output that carries a secret, so a
 token minted beside such a call could never reach the called workflow. The
-`.github` repository holds this one file and nothing else: no script, no
+hosting repository needs this one file and nothing else: no script, no
 policy reader, no `label-registry.json` and no `.devflow.toml`. Its one job
 mints an installation token from the CI GitHub App that already exists (the
 same App `claude-*.yml` and `release.yml` use), checks out the repository that
@@ -308,13 +312,12 @@ carries the reconciler script, and runs the script, so the token is minted and
 used in the same job:
 
 ```yaml
-# <org>/.github: .github/workflows/org-classification-reconcile.yml
+# A private repository of <org>: .github/workflows/org-classification-reconcile.yml
 name: Classification Reconcile (organization)
 
 on:
   schedule:
     - cron: "17 6 * * *"
-  workflow_dispatch:
 
 permissions:
   contents: read
@@ -353,13 +356,15 @@ jobs:
         run: node scripts/classification-reconcile.mjs
 ```
 
+- **The trigger.** A schedule only, with no `workflow_dispatch`, for the
+  reason "Token scope" gives under "harmon-devkit skills propagation" below.
 - **The token.** The App needs Issues: write and Contents: read on every
   listed repository. `repositories:` limits where the token reaches, to the
   listed repositories (bare names under `owner`, the same ones
   `RECONCILE_REPOSITORIES` names as `owner/name`), and the `permission-*`
   inputs limit what it may do there. It is used only by the reconcile step.
   `vars.CI_APP_CLIENT_ID` and `secrets.CI_APP_PRIVATE_KEY` must be visible to
-  the `.github` repository (an organization variable and secret whose access
+  the hosting repository (an organization variable and secret whose access
   list includes it, or repository-level copies); `repositories:` and the
   `permission-*` inputs limit the minted token, not the key.
 - **The script's source.** `<owner>/<repo>` is the repository that carries
@@ -379,7 +384,7 @@ jobs:
   no walked repository as the checkout, reads every listed repository's
   `label-registry.json` and `.devflow.toml` through the contents API, and
   refuses an empty `RECONCILE_REPOSITORIES` with one error before any API
-  call, so the `.github` repository is walked only when it is listed. Run it
+  call, so the hosting repository is walked only when it is listed. Run it
   from the root of its checkout (no `path:` on the checkout step): it finds
   its policy reader relative to the working directory, and run from
   elsewhere it derives no Tier and still exits 0.
