@@ -8,6 +8,17 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [5.0.0](https://github.com/evanharmon1/harmon-init/compare/v4.49.0...v5.0.0) (2026-10-04)
+
+
+### ⚠ BREAKING CHANGES
+
+* **ci:** classification-reconcile.yml no longer declares the workflow_call inputs `use-token` and `repositories` or the `CLASSIFICATION_TOKEN` secret. An organization-wide walk is the standalone organization workflow in docs/architecture/ci-cd.md.
+
+### Bug Fixes
+
+* **ci:** let the classification reconciler run from an organization workflow that lacks the script ([#1505](https://github.com/evanharmon1/harmon-init/issues/1505)) ([216dbf9](https://github.com/evanharmon1/harmon-init/commit/216dbf9cc85c65c868c366313dff199f4c6cdbf4))
+
 ## [4.49.0](https://github.com/evanharmon1/harmon-init/compare/v4.48.0...v4.49.0) (2026-10-03)
 
 
