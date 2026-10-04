@@ -27,28 +27,28 @@ ARG TFLINT_SHA256_ARM64=560da89aacf59389d4eb029730dd5b109b7288096c32f2726a0d9e78
 # renovate: datasource=github-releases depName=zellij-org/zellij extractVersion=^v?(?<version>.+)$
 ARG ZELLIJ_VERSION=0.45.1
 # renovate: datasource=github-releases depName=raine/workmux extractVersion=^v?(?<version>.+)$
-ARG WORKMUX_VERSION=0.1.268
+ARG WORKMUX_VERSION=0.1.269
 # renovate: datasource=github-releases depName=njbrake/agent-of-empires extractVersion=^v?(?<version>.+)$
-ARG AOE_VERSION=1.17.2
+ARG AOE_VERSION=1.18.0
 # renovate: datasource=npm depName=@anthropic-ai/claude-code
-ARG CLAUDE_CODE_VERSION=2.1.285
+ARG CLAUDE_CODE_VERSION=2.1.286
 # renovate: datasource=npm depName=@github/copilot
-ARG COPILOT_VERSION=1.0.89
+ARG COPILOT_VERSION=1.0.90
 # renovate: datasource=npm depName=@earendil-works/pi-coding-agent
-ARG PI_VERSION=0.99.1
+ARG PI_VERSION=0.99.2
 # renovate: datasource=github-releases depName=can1357/oh-my-pi extractVersion=^v?(?<version>.+)$
-ARG OH_MY_PI_VERSION=18.4.4
+ARG OH_MY_PI_VERSION=18.4.5
 # oh-my-pi ships unsigned release binaries: the version pin above is
 # Renovate-managed, but these architecture-specific digests are not. Before
 # moving them, a person must download the new release's omp-linux-x64 and
 # omp-linux-arm64 binaries (not the source archives), check the release notes
 # and provenance, and compute their sha256. scripts/test-oh-my-pi-pin.sh fails
 # fast until the marker below is moved to match OH_MY_PI_VERSION.
-# verified-for: 18.4.4
-ARG OH_MY_PI_SHA256_AMD64=24c830fceb0bd6884bf5bf2c7a2b7407bc23fafe655e924c695ef9be308e46f3
-ARG OH_MY_PI_SHA256_ARM64=602eefddc0fd87043f8f08d8628d72592e5802c003a05f203f1ecbc63a8fdd30
+# verified-for: 18.4.5
+ARG OH_MY_PI_SHA256_AMD64=42c710239b3fc30b9759424f973c6c143709935d5752be7eec8d7b011f40d864
+ARG OH_MY_PI_SHA256_ARM64=3dcf6a7f847b8c2f7bc5294c52a09151e858578ae3610655b82bf97ffa120a72
 # renovate: datasource=npm depName=opencode-ai
-ARG OPENCODE_VERSION=1.18.33
+ARG OPENCODE_VERSION=1.18.34
 # Pinned from Google's per-platform release manifests. Keep the version, build,
 # URLs, and SHA-512 values here and in ensure-antigravity-cli.sh in one update.
 ARG ANTIGRAVITY_CLI_VERSION=1.1.11

@@ -248,7 +248,7 @@ jobs:
             }' -F p="$PROJECT_ID" -F i="$ITEM_ID" -F f="$FIELD_ID" -F v="$OPTION_ID"
           echo "Set issue #$ISSUE_NUMBER to Shaping"
 [% endif %]
-      - uses: anthropics/claude-code-action@ed670b4cf9de2a5a570d130d2f6197b9e543cd64 # v1.0.240
+      - uses: anthropics/claude-code-action@cab360f6565aa35a51d6ce9e43f1f4287c0a32ea # v1.0.241
         # Step-level cap. A JOB timeout kills the runner outright and the
         # always() release below never runs; a STEP timeout fails only this
         # step and lets the cleanup run, so the claim is still released. The
