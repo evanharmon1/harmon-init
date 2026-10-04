@@ -96,21 +96,21 @@
     {
       "family": "human-work",
       "prefix": null,
-      "purpose": "Work only a human can do or verify, kept off the agent dispatch path.",
+      "purpose": "Work whose completion is primarily a human's, kept off the agent dispatch path.",
       "axis": "meta",
       "source": "inline",
       "writers": ["human", "agent"],
-      "writer_note": "whoever files the human-only issue, human or agent",
+      "writer_note": "whoever files the issue, human or agent",
       "readers": "humans, saved views; agents, to skip dispatch",
       "lifecycle": "durable",
-      "lifecycle_note": "applied while only a human can do the work; removed if it becomes dispatchable",
+      "lifecycle_note": "applied while completion is primarily a human's; removed when the work becomes dispatchable",
       "exclusive": false,
       "provision": true,
       "color": "FBCA04",
       "values": [
         {
           "value": "human",
-          "description": "Human-only work: actions or QA; never dispatched to an agent"
+          "description": "Work whose completion is primarily a human's; never dispatched to an agent"
         }
       ]
     },
