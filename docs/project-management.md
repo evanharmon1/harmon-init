@@ -1424,11 +1424,14 @@ view**). Keep the saved set small; **slice the one board** (below) for the rest.
     `priority-ai:p4`, and at each `priority-ai:*` rung also excluding the four
     `priority:*` labels. Every other exclusion is the view's own filter, so it is
     kept by construction.
-- **Needs review** — table, `is:open` and the **`needs-review`** label, showing
-  both priority columns (`Priority` and `Priority (AI)` on an organization; the
-  `priority:*` and `priority-ai:*` labels on a personal account). It lists what
-  awaits the maintainer: the integration stage adds `needs-review` at
-  ready-for-review and removes it if review pulls the work back into fix rounds.
+- **Needs review** — table, `is:open` and the **`needs-review`** label. On an
+  organization it shows the `Priority` and `Priority (AI)` columns and sorts by
+  `Priority`, then `Priority (AI)`. On a personal account both priority families
+  are labels and share the single Labels column, where both priority labels
+  appear, so it shows that column and is read by effective priority (a view
+  cannot sort by a label). It lists what awaits the maintainer: the integration
+  stage adds `needs-review` at ready-for-review and removes it if review pulls
+  the work back into fix rounds.
 - **Planning** — table, grouped by **`Product`** (or `Type`), sorted by
   `Priority` (organization only, as above). The "what's the plan" view, and a
   **dates-free roadmap substitute**: grouping by product shows the pile behind
