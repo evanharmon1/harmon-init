@@ -534,7 +534,7 @@
       "source": "inline",
       "writers": ["human", "agent"],
       "writer_note": "agents or humans — the AI's suggestion, never required; a review finding filed as an issue carries its adjudicated badge (P0→p0, P1→p1, P2→p2, P3→p3; nothing from a review maps to p4)",
-      "readers": "humans, saved views; the effective priority, which is the human `priority` when set and else this suggestion",
+      "readers": "humans, saved views; the effective priority, which is the human `priority` when set and else this suggestion; in the agent queue it only orders issues within a `priority` rung and admits nothing",
       "lifecycle": "durable",
       "lifecycle_note": "written by an agent or human when classifying or filing the issue; changed as the AI learns more; the human `priority` overrides it without clearing it",
       "trust_note": "provisioned; **advisory** — the AI's suggestion, overridden by the human `priority` family; arms nothing",

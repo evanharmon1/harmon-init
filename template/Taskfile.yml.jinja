@@ -1212,8 +1212,8 @@ tasks:
   setup:github-project:
     desc: >-
       Idempotently create/sync the owner's GitHub Project V2 board + Status
-      pipeline + Size number field (on a personal account also the other
-      metadata fields). Requires the Projects scopes — `task setup:gh-scopes`.
+      pipeline (on a personal account also its Product field). Requires the
+      Projects scopes — `task setup:gh-scopes`.
     cmds:
       - ./scripts/setup-github-project.sh --owner "[[ github_org ]]" --title "[[ github_org ]] Project"
 [% endif %]
