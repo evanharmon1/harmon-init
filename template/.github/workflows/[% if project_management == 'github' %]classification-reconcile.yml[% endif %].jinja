@@ -32,8 +32,9 @@ run-name: >-
 # caller's `uses:` reference, where github.repository and github.sha describe
 # the caller (docs.github.com/en/actions/reference/workflows-and-actions/contexts#job-context;
 # changelog 2026-09-03). No input or secret can point them anywhere else, so
-# the code that runs with CLASSIFICATION_TOKEN is the code the caller chose to
-# call. That checkout passes no token (the run's own GITHUB_TOKEN, so the
+# the code that runs with CLASSIFICATION_TOKEN is the commit the caller's
+# `uses:` resolves to; only a full commit SHA there pins it, since a tag can
+# be moved. That checkout passes no token (the run's own GITHUB_TOKEN, so the
 # owning repository must be one it can read, a public one) and persists none.
 # Where GitHub leaves them empty (GHES) the run takes the own-copy path.
 # They are read through fromJSON(toJSON(job)) only because actionlint does not

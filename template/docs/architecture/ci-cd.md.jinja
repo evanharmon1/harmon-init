@@ -272,25 +272,33 @@ repository.
 else: no script, no policy reader, no `label-registry.json` and no
 `.devflow.toml`. Its job grants `contents: read` and `issues: write` (a called
 workflow cannot hold more than its caller grants), mints the token, and calls
-`<owner>/<repo>/.github/workflows/classification-reconcile.yml@<tag>` with the
-three values above. It must pass `repositories`: a call from another
-repository with an empty list fails at once, with an error saying so, rather
-than walking the caller, and the caller is walked only when it is on the
-list. A repository running its own copy keeps defaulting to itself.
+the reconcile workflow by full commit SHA, with the release tag as a trailing
+comment (the convention for every third-party reference here):
+
+```yaml
+uses: <owner>/<repo>/.github/workflows/classification-reconcile.yml@<full-commit-sha> # <release-tag>
+```
+
+It passes the three values above, and it must pass `repositories`: a call
+from another repository with an empty list fails at once, with an error
+saying so, rather than walking the caller, and the caller is walked only when
+it is on the list. A repository running its own copy keeps defaulting to
+itself.
 
 Called that way, the reconcile job checks out the repository and commit that
 own the called workflow, which GitHub reports as `job.workflow_repository`
 and `job.workflow_sha` (`github.repository` names the caller), and runs the
 script and the reader from there. Neither is an input, so the code that runs
-with the token is the code the caller's `uses:` line names, and a tag or
-commit SHA there pins it. That checkout uses the run's own `GITHUB_TOKEN`,
-never `CLASSIFICATION_TOKEN`, and persists no credentials, so the called
-workflow's repository must be one that token can read: a public one. A
-repository running its own copy (its schedule, `workflow_dispatch`, or its own
-`classification-event.yml`) still checks out itself and runs the script it
-carries. Where GitHub does not report `job.workflow_*` (GitHub Enterprise
-Server), every run takes the own-copy path, so a caller there needs the script
-of its own.
+with the token is the commit the caller's `uses:` line resolves to. Only a
+full commit SHA there pins that code: a tag follows wherever it is moved, so a
+caller that uses one is trusting whoever can move it. That checkout uses the
+run's own `GITHUB_TOKEN`, never `CLASSIFICATION_TOKEN`, and persists no
+credentials, so the called workflow's repository must be one that token can
+read: a public one. A repository running its own copy (its schedule,
+`workflow_dispatch`, or its own `classification-event.yml`) still checks out
+itself and runs the script it carries. Where GitHub does not report
+`job.workflow_*` (GitHub Enterprise Server), every run takes the own-copy
+path, so a caller there needs the script of its own.
 
 A repository is only ever judged by its own registry and its own policy. A
 repository running its own copy uses its checkout. Every other repository in
