@@ -8,6 +8,15 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [5.0.1](https://github.com/evanharmon1/harmon-init/compare/v5.0.0...v5.0.1) (2026-10-04)
+
+
+### Bug Fixes
+
+* **ci:** keep node reachable for an npm lefthook in the setup-remote test ([#1514](https://github.com/evanharmon1/harmon-init/issues/1514)) ([d7c779f](https://github.com/evanharmon1/harmon-init/commit/d7c779fff1e785af57b2de327c8af6e61d895aa9))
+* **pm:** stop provisioning the Priority and Size project fields and respecify the views ([#1507](https://github.com/evanharmon1/harmon-init/issues/1507)) ([ba4c3e3](https://github.com/evanharmon1/harmon-init/commit/ba4c3e38516d078d2c53de64fb5fe148d04220f5))
+* **template:** sync harmon-devkit skills to v0.51.0 ([#1515](https://github.com/evanharmon1/harmon-init/issues/1515)) ([a584606](https://github.com/evanharmon1/harmon-init/commit/a584606606a412a4f587882426e657f9b01d095f))
+
 ## [5.0.0](https://github.com/evanharmon1/harmon-init/compare/v4.49.0...v5.0.0) (2026-10-04)
 
 
