@@ -5,7 +5,9 @@
 // owner type).
 //
 // Run by .github/workflows/classification-reconcile.yml, on its schedule, on
-// workflow_dispatch, and per issue from classification-event.yml. Agent
+// workflow_dispatch, and per issue from classification-event.yml; an
+// organization-wide walk runs it from the standalone organization workflow in
+// docs/architecture/ci-cd.md, from a foreign checkout. Agent
 // writers (triage, track-work, breakdown) set the Tier and `needs-triage` in
 // the same write that sets Risk or Complexity; this script repairs what they
 // did not cover: a human editing an input in the GitHub UI, or drift from any
@@ -20,7 +22,8 @@
 // label) and exactly one recognized, non-retired value of each of impact,
 // risk, complexity, area, layer and domain. A repository is judged by its own
 // label-registry.json and .devflow.toml: the calling repository's from the
-// checkout, any other's from its default branch. A conflicted axis, a retired
+// checkout when it runs its own copy, any other's (every one, from a foreign
+// checkout) from its default branch. A conflicted axis, a retired
 // value, or an unknown one does not classify its axis. With the registry
 // unreadable every axis is unverifiable, and `needs-triage` is left as it is.
 //
@@ -38,12 +41,21 @@
 // `priority-ai:*`, `rigor:*`, `strategy:*` or `claim:*`.
 //
 // Environment:
-//   GH_TOKEN                   token for the GitHub API (required unless dry run)
+//   GH_TOKEN                   token for the GitHub API (required, a dry run
+//                              included: it still reads)
 //   RECONCILE_REPOSITORIES     newline/comma/space list of owner/name
 //                              (default: GITHUB_REPOSITORY)
 //   RECONCILE_ISSUE            one issue number (single-repository mode); 0 or
 //                              empty walks every open issue
 //   RECONCILE_DRY_RUN          "true" to report the plan and write nothing
+//   RECONCILE_CALLER_CHECKOUT  unset, empty or "true": the checkout is
+//                              GITHUB_REPOSITORY's own. "false": the checkout
+//                              is not the repository this runs in (a foreign
+//                              checkout, such as the organization workflow in
+//                              ci-cd.md): every walked repository's files are
+//                              then read through the contents API, and
+//                              RECONCILE_REPOSITORIES is required. Any other
+//                              value is refused before any API call
 //   GITHUB_API_URL, GITHUB_GRAPHQL_URL, GITHUB_STEP_SUMMARY (Actions-provided)
 
 import { existsSync, readFileSync, appendFileSync } from 'node:fs'
@@ -612,7 +624,24 @@ export async function run(
 ) {
   const dryRun = env.RECONCILE_DRY_RUN === 'true'
   const issueNumber = Number.parseInt(env.RECONCILE_ISSUE || '0', 10) || 0
-  const repos = parseRepositories(env.RECONCILE_REPOSITORIES, env.GITHUB_REPOSITORY)
+  // A foreign checkout holds no file of the repository this runs in, so that
+  // repository is walked only when it is on the list, which such a run must
+  // therefore pass. The switch is the safety for that case, so a value it
+  // does not know is refused rather than read as the default.
+  const callerCheckoutValue = env.RECONCILE_CALLER_CHECKOUT ?? ''
+  if (!['', 'true', 'false'].includes(callerCheckoutValue))
+    throw new Error(
+      `RECONCILE_CALLER_CHECKOUT must be unset, "true" or "false", not ${JSON.stringify(callerCheckoutValue)}`
+    )
+  const callerCheckout = callerCheckoutValue !== 'false'
+  const repos = parseRepositories(
+    env.RECONCILE_REPOSITORIES,
+    callerCheckout ? env.GITHUB_REPOSITORY : null
+  )
+  if (repos.length === 0 && !callerCheckout)
+    throw new Error(
+      'RECONCILE_CALLER_CHECKOUT=false needs RECONCILE_REPOSITORIES: a run from a foreign checkout walks only the repositories it lists'
+    )
   if (repos.length === 0)
     throw new Error('no repository: set RECONCILE_REPOSITORIES or GITHUB_REPOSITORY')
   if (issueNumber > 0 && repos.length !== 1)
@@ -635,15 +664,17 @@ export async function run(
 
   const client = makeClient(token, fetch, env)
   const bundle = await loadReader(root)
-  const caller = String(env.GITHUB_REPOSITORY ?? '').toLowerCase()
+  // The repository whose files the checkout holds: the one this runs in, or
+  // none at all from a foreign checkout.
+  const caller = callerCheckout ? String(env.GITHUB_REPOSITORY ?? '').toLowerCase() : null
   const localText = (file) => {
     const p = resolvePath(root, file)
     return existsSync(p) ? readFileSync(p, 'utf8') : null
   }
   // A repository is only ever judged by its own registry and its own policy:
-  // the calling repository by its checkout, any other by the files on its
-  // default branch (the token then needs `contents: read` there). The reader
-  // is the caller's code either way.
+  // the calling repository by its checkout when it runs its own copy, any
+  // other by the files on its default branch (the token then needs
+  // `contents: read` there). The reader is the checkout's code either way.
   async function contextFor(repo) {
     const local = repo.toLowerCase() === caller
     const fetchText = (file) =>
