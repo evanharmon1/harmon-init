@@ -209,7 +209,7 @@ rejs="$(find "$gen" -name '*.rej' -not -path '*/.git/*' || true)"
 
 if [ "$validation_scope" = "renovate-config" ]; then
     # renovate: datasource=npm depName=renovate
-    RENOVATE_VALIDATOR_VERSION=44.126.0
+    RENOVATE_VALIDATOR_VERSION=44.127.0
     if have npx; then
         (cd "$gen" && npx --yes --package "renovate@${RENOVATE_VALIDATOR_VERSION}" -- renovate-config-validator --strict) ||
             err "updated project renovate.json failed strict validation"

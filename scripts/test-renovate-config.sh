@@ -27,7 +27,7 @@ fi
 
 # Validate the dogfood layer once before rendering the template profiles.
 # renovate: datasource=npm depName=renovate
-RENOVATE_VALIDATOR_VERSION=44.126.0
+RENOVATE_VALIDATOR_VERSION=44.127.0
 npx --yes --package "renovate@${RENOVATE_VALIDATOR_VERSION}" -- \
     renovate-config-validator --strict renovate.json
 
