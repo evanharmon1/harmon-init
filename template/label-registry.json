@@ -500,7 +500,7 @@
       "source": "inline",
       "writers": ["human"],
       "writer_note": "humans only — an agent never sets or changes it",
-      "readers": "humans, saved views; the agent queue (an issue with no Priority is not queued)",
+      "readers": "humans, saved views; the agent queue (an issue with no effective priority — neither Priority nor Priority (AI) — is not queued)",
       "lifecycle": "durable",
       "lifecycle_note": "set by a human when ranking the work; changed as priorities move",
       "trust_note": "provisioned; **advisory** — orders the agent queue; arms nothing",
