@@ -259,7 +259,10 @@ schedule is **monthly** on an organization repository and **daily** on a
 personal-account one, rendered from the owner type. The reconcile workflow's
 `workflow_call` is for the repository's own `classification-event.yml`; a
 call from another repository is not supported, because the job checks out
-the calling repository and runs the script from there.
+the calling repository and runs the script from there. The `use-token` and
+`repositories` inputs and the `CLASSIFICATION_TOKEN` secret that v4.49.0
+shipped for such calls are removed; an organization-wide walk is the
+standalone workflow below.
 
 The reconcile workflow always uses `GITHUB_TOKEN`. It declares no token input
 and no secret, so no stored, long-lived token reaches it, whatever secrets the
