@@ -5,7 +5,9 @@
 // owner type).
 //
 // Run by .github/workflows/classification-reconcile.yml, on its schedule, on
-// workflow_dispatch, and per issue from classification-event.yml. Agent
+// workflow_dispatch, and per issue from classification-event.yml; an
+// organization-wide walk runs it from the standalone organization workflow in
+// docs/architecture/ci-cd.md, from a foreign checkout. Agent
 // writers (triage, track-work, breakdown) set the Tier and `needs-triage` in
 // the same write that sets Risk or Complexity; this script repairs what they
 // did not cover: a human editing an input in the GitHub UI, or drift from any
@@ -20,8 +22,8 @@
 // label) and exactly one recognized, non-retired value of each of impact,
 // risk, complexity, area, layer and domain. A repository is judged by its own
 // label-registry.json and .devflow.toml: the calling repository's from the
-// checkout when it runs its own copy, any other's (and a cross-repository
-// caller's) from its default branch. A conflicted axis, a retired
+// checkout when it runs its own copy, any other's (every one, from a foreign
+// checkout) from its default branch. A conflicted axis, a retired
 // value, or an unknown one does not classify its axis. With the registry
 // unreadable every axis is unverifiable, and `needs-triage` is left as it is.
 //
@@ -45,13 +47,13 @@
 //   RECONCILE_ISSUE            one issue number (single-repository mode); 0 or
 //                              empty walks every open issue
 //   RECONCILE_DRY_RUN          "true" to report the plan and write nothing
-//   RECONCILE_CALLER_CHECKOUT  "false" when the checkout is not the calling
-//                              repository's but the one that owns the called
-//                              workflow (a cross-repository workflow_call):
-//                              every walked repository's files are then read
-//                              through the contents API, and
-//                              RECONCILE_REPOSITORIES is required. Unset or
-//                              anything else: the checkout is the caller's
+//   RECONCILE_CALLER_CHECKOUT  "false" when the checkout is not the repository
+//                              this runs in (a foreign checkout, such as the
+//                              organization workflow in ci-cd.md): every
+//                              walked repository's files are then read through
+//                              the contents API, and RECONCILE_REPOSITORIES is
+//                              required. Unset or anything else: the checkout
+//                              is GITHUB_REPOSITORY's own
 //   GITHUB_API_URL, GITHUB_GRAPHQL_URL, GITHUB_STEP_SUMMARY (Actions-provided)
 
 import { existsSync, readFileSync, appendFileSync } from 'node:fs'
@@ -620,9 +622,9 @@ export async function run(
 ) {
   const dryRun = env.RECONCILE_DRY_RUN === 'true'
   const issueNumber = Number.parseInt(env.RECONCILE_ISSUE || '0', 10) || 0
-  // A cross-repository call checks out the called workflow's repository, so
-  // the caller's files are not in it; such a caller is walked only when it is
-  // on the list, which it must therefore pass.
+  // A foreign checkout holds no file of the repository this runs in, so that
+  // repository is walked only when it is on the list, which such a run must
+  // therefore pass.
   const callerCheckout = env.RECONCILE_CALLER_CHECKOUT !== 'false'
   const repos = parseRepositories(
     env.RECONCILE_REPOSITORIES,
@@ -630,7 +632,7 @@ export async function run(
   )
   if (repos.length === 0 && !callerCheckout)
     throw new Error(
-      'a caller from another repository must pass the repositories to walk (RECONCILE_REPOSITORIES)'
+      'RECONCILE_CALLER_CHECKOUT=false needs RECONCILE_REPOSITORIES: a run from a foreign checkout walks only the repositories it lists'
     )
   if (repos.length === 0)
     throw new Error('no repository: set RECONCILE_REPOSITORIES or GITHUB_REPOSITORY')
@@ -654,8 +656,8 @@ export async function run(
 
   const client = makeClient(token, fetch, env)
   const bundle = await loadReader(root)
-  // The repository whose files the checkout holds: the caller running its own
-  // copy, or none at all in a cross-repository call.
+  // The repository whose files the checkout holds: the one this runs in, or
+  // none at all from a foreign checkout.
   const caller = callerCheckout ? String(env.GITHUB_REPOSITORY ?? '').toLowerCase() : null
   const localText = (file) => {
     const p = resolvePath(root, file)

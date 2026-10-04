@@ -256,69 +256,100 @@ instantly.
 **Caller wiring.** `GITHUB_TOKEN` is repository-scoped, so each repository
 runs the reconcile on its own schedule and walks only its own issues. The
 schedule is **monthly** on an organization repository and **daily** on a
-personal-account one, rendered from the owner type. An organization that
-wants a daily organization-wide walk adds a caller in `<org>/.github` (opt-in;
-[harmon-init#1463](https://github.com/evanharmon1/harmon-init/issues/1463)). That caller
-mints an installation token from the CI GitHub App that already exists
-(`actions/create-github-app-token` over `CI_APP_CLIENT_ID` /
-`CI_APP_PRIVATE_KEY`, the same App `claude-*.yml` and `release.yml` use, with
-Issues: write and Contents: read on the target repositories). It then calls
-`classification-reconcile.yml` with that token as the `CLASSIFICATION_TOKEN`
-secret, `use-token: true`, and the organization's repository list as the
-`repositories` input. Without them, a walk covers only the calling
-repository.
+personal-account one, rendered from the owner type. The reconcile workflow's
+`workflow_call` is for the repository's own `classification-event.yml`; a
+call from another repository is not supported, because the job checks out
+the calling repository and runs the script from there.
 
-**What a `<org>/.github` caller contains.** One workflow file and nothing
-else: no script, no policy reader, no `label-registry.json` and no
-`.devflow.toml`. Its job grants `contents: read` and `issues: write` (a called
-workflow cannot hold more than its caller grants), mints the token, and calls
-the reconcile workflow by full commit SHA, with the release tag as a trailing
-comment (the convention for every third-party reference here):
+The reconcile workflow always uses `GITHUB_TOKEN`. It declares no token input
+and no secret, so no stored, long-lived token reaches it, whatever secrets the
+repository or organization holds (no PAT, no stored secret).
+
+**Organization-wide walk.** An organization that wants a daily walk of all its
+repositories adds one standalone workflow to `<org>/.github` (opt-in;
+[harmon-init#1463](https://github.com/evanharmon1/harmon-init/issues/1463)).
+It is an ordinary workflow that runs in the organization, not a call into
+another repository's reusable workflow: a job that calls a reusable workflow
+runs no steps, and GitHub redacts a job output that carries a secret, so a
+token minted beside such a call could never reach the called workflow. The
+`.github` repository holds this one file and nothing else: no script, no
+policy reader, no `label-registry.json` and no `.devflow.toml`. Its one job
+mints an installation token from the CI GitHub App that already exists (the
+same App `claude-*.yml` and `release.yml` use), checks out the repository that
+carries the reconciler script, and runs the script, so the token is minted and
+used in the same job:
 
 ```yaml
-uses: <owner>/<repo>/.github/workflows/classification-reconcile.yml@<full-commit-sha> # <release-tag>
+# <org>/.github: .github/workflows/classification-reconcile.yml
+name: Classification Reconcile (organization)
+
+on:
+  schedule:
+    - cron: "37 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  reconcile:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ vars.CI_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
+          owner: ${{ github.repository_owner }}
+          permission-contents: read
+          permission-issues: write
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: <owner>/<repo>
+          ref: <full-commit-sha> # <release-tag>
+          persist-credentials: false
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: "24"
+      - name: Reconcile Tier and needs-triage
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          RECONCILE_REPOSITORIES: >-
+            <org>/<repository-a>
+            <org>/<repository-b>
+          RECONCILE_CALLER_CHECKOUT: "false"
+        run: node scripts/classification-reconcile.mjs
 ```
 
-It passes the three values above, and it must pass `repositories`: a call
-from another repository with an empty list fails at once, with an error
-saying so, rather than walking the caller, and the caller is walked only when
-it is on the list. A repository running its own copy keeps defaulting to
-itself.
-
-Called that way, the reconcile job checks out the repository and commit that
-own the called workflow, which GitHub reports as `job.workflow_repository`
-and `job.workflow_sha` (`github.repository` names the caller), and runs the
-script and the reader from there. Neither is an input, so the code that runs
-with the token is the commit the caller's `uses:` line resolves to. Only a
-full commit SHA there pins that code: a tag follows wherever it is moved, so a
-caller that uses one is trusting whoever can move it. That checkout uses the
-run's own `GITHUB_TOKEN`, never `CLASSIFICATION_TOKEN`, and persists no
-credentials, so the called workflow's repository must be one that token can
-read: a public one. A repository running its own copy (its schedule,
-`workflow_dispatch`, or its own `classification-event.yml`) still checks out
-itself and runs the script it carries. Where GitHub does not report
-`job.workflow_*` (GitHub Enterprise Server), every run takes the own-copy
-path, so a caller there needs the script of its own.
+- **The token.** The App needs Issues: write and Contents: read on every
+  listed repository, and the `permission-*` inputs limit the token to those
+  two. It is used only by the reconcile step.
+- **The script's source.** `<owner>/<repo>` is the repository that carries
+  `scripts/classification-reconcile.mjs` and its policy reader. It is checked
+  out with the run's own `GITHUB_TOKEN`, no secret and no persisted
+  credentials, so it must be public or otherwise readable without one. Pin it
+  by full commit SHA with the release tag as a trailing comment: a tag follows
+  wherever it is moved, so a workflow that uses one trusts whoever can move it.
+- **The foreign checkout.** `RECONCILE_CALLER_CHECKOUT: "false"` tells the
+  script that the checkout is not the repository it runs in. It then treats
+  no walked repository as the checkout, reads every listed repository's
+  `label-registry.json` and `.devflow.toml` through the contents API, and
+  refuses an empty `RECONCILE_REPOSITORIES` with one error before any API
+  call, so the `.github` repository is walked only when it is listed.
+- **Loops.** Label writes made with the App token do start workflow runs,
+  unlike `GITHUB_TOKEN`'s, but their sender is a `Bot`, so each repository's
+  event job is skipped (see "Event filter and the pin race").
 
 A repository is only ever judged by its own registry and its own policy. A
-repository running its own copy uses its checkout. Every other repository in
-the list, and a cross-repository caller whenever it is walked, has its
+repository running its own copy uses its checkout; every repository of the
+organization walk, and any other repository in a list, has its
 `label-registry.json` and `.devflow.toml` read from its default branch
 through the contents API, which is why the token needs Contents: read there.
 A registry it cannot read makes every axis unverifiable there (no
 `needs-triage` change), and a policy or matrix it cannot read makes the Tier
 not derivable there (no Tier write); each is reported once per repository.
-The reader code is always the checkout's, the caller's own copy or the called
-workflow's repository: it is the function, not the policy.
-
-The workflow reads the token as
-`inputs.use-token && secrets.CLASSIFICATION_TOKEN || github.token`, and
-`use-token` is declared only under `workflow_call`. On `schedule` and
-`workflow_dispatch` the input is empty, so those runs use `GITHUB_TOKEN`
-whatever secrets the repository or organization holds. The supported wide
-walk is the `<org>/.github` caller minting a one-hour App installation token
-per run; a stored, long-lived `CLASSIFICATION_TOKEN` secret is discouraged
-(no PAT, no stored secret).
+The reader code is always the checkout's: it is the function, not the policy.
 
 **Minutes model.** On a paid organization plan the Actions minutes are a
 shared pool and private repositories bill them; public repositories run free.
@@ -330,7 +361,7 @@ label. Expected monthly cost:
 | Monthly schedule, organization repository | ≈ 1 min per private repository |
 | Daily schedule, personal-account repository | ≈ 30 min per private repository, from the account's own quota |
 | Event jobs | ≈ 2 min per issue whose inputs a human or an unlisted agent changes (a burst of label events on one issue collapses to at most two jobs through the per-issue concurrency group) |
-| Opt-in daily organization caller | ≈ 30 min per organization |
+| Opt-in daily organization workflow | ≈ 30 min per organization |
 
 Agent sessions that write under a human's own login look human to the filter,
 which is the main event cost. Agents with a login of their own belong in
@@ -345,7 +376,7 @@ tokens minted at runtime), not a PAT — see [security.md](security.md).
 The classification reconciler is the exception: it runs on the
 repository-scoped `GITHUB_TOKEN` with `issues: write` (see
 [Issue classification reconciler](#issue-classification-reconciler)), and an
-organization-wide walk receives an App installation token from its caller.
+organization-wide walk mints an App installation token in its own job.
 [% endif %]
 Third-party actions are pinned by commit SHA and bumped by Renovate.
 
