@@ -464,10 +464,10 @@ destroys every value on it, unrecoverably.
      organization, org-wide as above.
 - **Priority / Size** (retired by #1451): on a **personal account** both were
   project fields; on an **organization** only `Size` was — `Priority` there is
-  GitHub's built-in issue field and stays. Priority's replacement is the
-  `priority:*` / `priority-ai:*` labels (personal account) or the `Priority` /
-  `Priority (AI)` issue fields (organization); `Size` has none, and its values
-  go with the field.
+  GitHub's built-in issue field and stays. On a personal account Priority's
+  replacement is the `priority:*` labels; `priority-ai:*` (on an organization,
+  the `Priority (AI)` issue field) is a separate AI suggestion beside it, not a
+  replacement. `Size` has none, and its values go with the field.
   1. Provision the replacement first (personal account): run
      `task setup:github-labels` in every repository whose issues carry a
      `Priority` value — a `priority:*` label must exist in a repo before a value
@@ -479,7 +479,8 @@ destroys every value on it, unrecoverably.
      did) — not just the board being migrated. Then list the items that hold a
      value, filtering the Project's own view rather than a capped CLI listing,
      **draft items** included, which can carry the project field but can never
-     carry a label.
+     carry a label, and **archived items** (the project's Archived items page),
+     which keep their field values but are hidden from views.
   3. On a personal account, convert any draft whose `Priority` you want to keep
      into an issue first (a label cannot go on a draft; a draft you leave as-is
      loses its value with the field), then carry each `Priority` value you still
@@ -1396,9 +1397,11 @@ view**). Keep the saved set small; **slice the one board** (below) for the rest.
   view only approximates the predicate. It filters on `is:issue` and `is:open`
   (auto-add puts pull requests on the board too). Projects label filters match
   **concrete** values, not prefixes, so it excludes `blocked`, each registered
-  `claim:<family>` label, and each legacy alias the registry lists
-  (`legacy_claim_labels` in `agent-registry.json`, such as `agent:claude-code`)
-  by name (extend the filter when the registry gains a family). It cannot
+  `claim:<family>` label, each `claim:<family>:<model>` refinement label in use
+  (a model-level label on its own is still a live claim), and each legacy alias
+  the registry lists (`legacy_claim_labels` in `agent-registry.json`, such as
+  `agent:claude-code`) by name (extend the filter when the registry gains a
+  family). It cannot
   express the native blocked-by relationship, so with respect to native blocks
   the view is a superset of the predicate: whoever takes an item first confirms
   it has no open blocked-by (the issue's `blockedBy` data, see
@@ -1422,7 +1425,10 @@ view**). Keep the saved set small; **slice the one board** (below) for the rest.
   priority labels appear, so it shows that column and is read by effective
   priority (a view cannot sort by a label). It lists what awaits the
   maintainer: the integration stage adds `needs-review` at ready-for-review and
-  removes it if review pulls the work back into fix rounds.
+  removes it if review pulls the work back into fix rounds. Until that writer
+  ships (harmon-devkit#1255, with a skills-pin bump), add `needs-review` by hand
+  at hand-off, or a handed-off issue (its claim released) shows in the Agent
+  queue again.
 - **Planning** — table, grouped by **`Product`** (or `Type`), sorted by
   `Priority` (organization only, as above). The "what's the plan" view, and a
   **dates-free roadmap substitute**: grouping by product shows the pile behind

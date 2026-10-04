@@ -7,7 +7,7 @@
 # (setup-github-issue-fields.sh adds Product and the classification fields);
 # on a personal account (no org issue fields) this script creates Product as a
 # project field too. There is deliberately no Priority or Size project field on
-# either owner type (#1451): Priority is an issue field on an organization and
+# either owner type (harmon-init#1451): Priority is an issue field on an organization and
 # a `priority:*` label on a personal account, and Size is retired in favour of
 # Effort and Complexity. Domain and Layer are deliberately NOT fields — the
 # `domain:`/`layer:` labels (setup-github-labels.sh) are their only surface
@@ -503,7 +503,7 @@ fi
 
 echo "==> Custom project fields (personal account; re-runs never clobber yours)"
 create_text "Product"
-# There is deliberately no Priority or Size field, on either owner type (#1451,
+# There is deliberately no Priority or Size field, on either owner type (harmon-init#1451,
 # ADR 2026-09-30 D8). Priority is an issue field on an organization and a
 # `priority:*` label on a personal account, with Priority (AI) beside it; Size
 # is retired in favour of Effort and Complexity. A board that still carries

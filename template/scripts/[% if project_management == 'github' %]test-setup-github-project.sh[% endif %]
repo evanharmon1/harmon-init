@@ -101,7 +101,7 @@ complete='{"data":{"node":{"fields":{"nodes":[
  {"id":"F_prod","name":"Product","dataType":"TEXT"}
 ]}}}}'
 
-# The same board as it looked before #1451: Priority and Size were project fields
+# The same board as it looked before harmon-init#1451: Priority and Size were project fields
 # then, and a board set up by an older release still carries them. Priority lacks
 # options its old starter set had and carries an owner-added `Critical`.
 legacy=$(printf '%s' "$complete" | jq -c '
@@ -171,7 +171,7 @@ STUB_VARIABLE_RC=0
 
 echo "==> a run creates none of the retired Agent, Priority, or Size fields, on either owner type"
 # Priority is an issue field on an organization and a priority:* label on a
-# personal account; Size is retired (#1451); Agent is retired too — the live
+# personal account; Size is retired (harmon-init#1451); Agent is retired too — the live
 # claim is a claim:* label (ADR 2026-08-07 D4). The board below is missing
 # Product as well, so a personal-account run provably does write — it creates
 # Product, the one field it still owns — and the assertions are about everything
