@@ -272,7 +272,7 @@ grep -q "Product (is NUMBER, wanted TEXT)" "$tmp/out" ||
     fail "expected Product in the end-of-run incompatible summary"
 
 echo "==> a non-single-select Status warns and is skipped, never aborting the run"
-# Status is reconciled by its own call site rather than create_single_select, so
+# Status is reconciled at its own call site, so
 # it needs its own coverage: without the field_exists guard there, existing_options
 # runs `.options[]` over a field that has none, jq exits 5, and `set -euo pipefail`
 # kills the whole run — a stack trace instead of the warning this script promises,

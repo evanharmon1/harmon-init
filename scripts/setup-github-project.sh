@@ -2,8 +2,8 @@
 # setup-github-project.sh — idempotently create and sync a GitHub Project V2 for a
 # repo owner (an organization OR a personal user account): the board and its
 # Status pipeline (docs/project-management.md). Status is the only field this
-# script manages on an ORGANIZATION and the only one any agent or workflow
-# writes. The other metadata on an ORGANIZATION are org-level ISSUE fields
+# script manages on an ORGANIZATION and the only project field any agent or
+# workflow writes. The other metadata on an ORGANIZATION are org-level ISSUE fields
 # (setup-github-issue-fields.sh adds Product and the classification fields);
 # on a personal account (no org issue fields) this script creates Product as a
 # project field too. There is deliberately no Priority or Size project field on
