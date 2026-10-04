@@ -490,12 +490,12 @@ create_text() {
 
 # Other metadata: on an ORGANIZATION these are org-level ISSUE fields (durable —
 # the value is on the issue, shared across every project; see
-# docs/project-management.md). Priority is a GitHub built-in;
-# setup-github-issue-fields.sh adds Product and the classification fields. A
-# personal account has no org issue fields, so Product falls back to a project
-# field here.
+# docs/project-management.md). Priority is a GitHub built-in, left as shipped;
+# setup-github-issue-fields.sh adds Product and the classification fields, and
+# the Effort ladder beside GitHub's own Effort options. A personal account has no
+# org issue fields, so Product falls back to a project field here.
 if [ "$owner_type" = "Organization" ]; then
-    echo "==> Other metadata are org issue fields (Priority/Effort built-ins, left at their defaults; run setup-github-issue-fields.sh for Product and the classification fields)"
+    echo "==> Other metadata are org issue fields (Priority is a GitHub built-in, left as shipped; run setup-github-issue-fields.sh for Product, the classification fields and the Effort ladder)"
     report_incompatible
     finish_project
     exit 0

@@ -183,10 +183,9 @@ Archived-items view), so aged `Done` items leave the board automatically instead
 of sitting in an "Archived" column.
 
 **Agent Queue is the hand-off lane to AI coding agents.** An item lands there once
-it's shaped and ready for an *agent* rather than a human to implement — a
-**`suggest:*`** label says which family (and optionally model) should take it.
-The hand-off itself is manual: suggest the agent, then trigger it — an
-`@claude` mention naming `implement` (see
+it's shaped and ready for an *agent* rather than a human to implement — its
+derived Tier (`tier:*`) says which tier of agent should take it. The hand-off
+itself is manual: trigger the agent — an `@claude` mention naming `implement` (see
 [The Claude Actions workflows](#the-claude-actions-workflows)), or point Claude
 Code at the item. The lane is only a hand-off column, not the queue — the
 **Agent queue** is defined in [Views](#views) — and either way the item moves to
