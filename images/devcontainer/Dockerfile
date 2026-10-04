@@ -48,7 +48,7 @@ ARG OH_MY_PI_VERSION=18.4.5
 ARG OH_MY_PI_SHA256_AMD64=42c710239b3fc30b9759424f973c6c143709935d5752be7eec8d7b011f40d864
 ARG OH_MY_PI_SHA256_ARM64=3dcf6a7f847b8c2f7bc5294c52a09151e858578ae3610655b82bf97ffa120a72
 # renovate: datasource=npm depName=opencode-ai
-ARG OPENCODE_VERSION=1.18.33
+ARG OPENCODE_VERSION=1.18.34
 # Pinned from Google's per-platform release manifests. Keep the version, build,
 # URLs, and SHA-512 values here and in ensure-antigravity-cli.sh in one update.
 ARG ANTIGRAVITY_CLI_VERSION=1.1.11
