@@ -18,6 +18,12 @@
 #     events — including CLASSIFICATION_AGENT_LOGINS unset (an unset vars.*
 #     reads as the empty string) — and its input lists held equal to the
 #     script's and to label-registry.json's.
+#   - The reconcile workflow: one checkout of its own repository, the token
+#     always GITHUB_TOKEN, no input or secret for a call from another
+#     repository. run() from a foreign checkout (RECONCILE_CALLER_CHECKOUT=
+#     false) reads every listed repository's files through the contents API
+#     and refuses an empty list. The organization workflow documented in
+#     docs/architecture/ci-cd.md has the properties that document states.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -558,6 +564,9 @@ const addPin = (labels) => [...labels, 'tier:pinned']
 // between our calls).
 function fakeGitHub(repos) {
   const rest = []
+  // Every repository a call named, and every contents path read.
+  const touched = new Set()
+  const contents = []
   const json = (body, status = 200) =>
     new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } })
   const node = (number, issue) => ({
@@ -579,6 +588,7 @@ function fakeGitHub(repos) {
     const { pathname } = new URL(url)
     if (pathname === '/graphql') {
       const { query, variables } = JSON.parse(init.body)
+      touched.add(`${variables.owner}/${variables.name}`)
       const repo = repos[`${variables.owner}/${variables.name}`]
       if (!repo || repo.down) return json({ message: 'bad gateway' }, 502)
       if (query.includes('issue(number:')) {
@@ -600,9 +610,11 @@ function fakeGitHub(repos) {
       })
     }
     const [, , owner, name, kind, ...rest_] = pathname.split('/')
+    touched.add(`${owner}/${name}`)
     const repo = repos[`${owner}/${name}`]
     if (!repo || repo.down) return json({ message: 'bad gateway' }, 502)
     if (kind === 'contents') {
+      contents.push(pathname)
       const text = repo.files?.[rest_.join('/')] ?? null
       return text === null ? json({ message: 'Not Found' }, 404) : new Response(text, { status: 200 })
     }
@@ -615,7 +627,7 @@ function fakeGitHub(repos) {
     repo.afterWrite?.(issue, init.method, label)
     return init.method === 'DELETE' ? new Response(null, { status: 204 }) : json([])
   }
-  return { fetch, rest }
+  return { fetch, rest, touched, contents }
 }
 const ownText = (file) => readFileSync(join(root, file), 'utf8')
 const canDerive = (await m.loadDerivation(root)).derive !== null
@@ -761,24 +773,176 @@ if (canDerive) {
     assert.equal(r.summary.match(new RegExp(`d/five:\\*\\* tier not derivable: ${reason}`, 'g'))?.length, 1)
     assert.ok(writes(r.gh, '/repos/d/five/').includes('DELETE needs-triage'))
   })
+  check("run(): an own-copy run judges the caller by its checkout and never reads the caller's contents", () => {
+    assert.deepEqual(r.gh.contents.filter((p) => p.startsWith('/repos/a/two/')), [])
+  })
+  // A foreign checkout (the organization workflow in ci-cd.md): the checkout
+  // is not the repository the run is in, so RECONCILE_CALLER_CHECKOUT=false.
+  // That repository, when listed, is judged by the files on its own default
+  // branch; any other listed repository is read as before.
+  const foreignFiles = { 'label-registry.json': JSON.stringify(foreignRegistry), '.devflow.toml': foreignPolicy }
+  const foreign = await runWith(
+    {
+      'a/two': { issues: { 1: zzz() }, files: foreignFiles },
+      'b/three': { issues: { 1: zzz() }, files: foreignFiles }
+    },
+    { RECONCILE_REPOSITORIES: 'a/two b/three', RECONCILE_CALLER_CHECKOUT: 'false' }
+  )
+  check('run(): from a foreign checkout, the running repository is judged by its own files, read through the contents API', () => {
+    assert.equal(foreign.code, 0)
+    assert.deepEqual(
+      foreign.gh.contents.filter((p) => p.startsWith('/repos/a/two/')).sort(),
+      ['/repos/a/two/contents/.devflow.toml', '/repos/a/two/contents/label-registry.json']
+    )
+    assert.ok(writes(foreign.gh, '/repos/a/two/').includes('DELETE needs-triage'), "area:zzz is known to a/two's own registry")
+    for (const repo of ['a/two', 'b/three']) {
+      assert.deepEqual(writes(foreign.gh, `/repos/${repo}/`), writes(r.gh, '/repos/b/three/'), `${repo} is judged as b/three was`)
+    }
+  })
+  const unlisted = await runWith(
+    { 'b/three': { issues: { 1: zzz() }, files: foreignFiles } },
+    { RECONCILE_REPOSITORIES: 'b/three', RECONCILE_CALLER_CHECKOUT: 'false' }
+  )
+  check('run(): from a foreign checkout, the running repository is never walked or read unless listed', () => {
+    assert.equal(unlisted.code, 0)
+    assert.deepEqual([...unlisted.gh.touched], ['b/three'])
+  })
+  // An empty list from a foreign checkout fails fast rather than walking the
+  // running repository; an own-copy run keeps defaulting to itself.
+  const empty = fakeGitHub({ 'a/two': { issues: { 1: zzz() }, files: foreignFiles } })
+  let refusal = null
+  try {
+    await m.run(
+      { GH_TOKEN: 't', GITHUB_REPOSITORY: 'a/two', RECONCILE_REPOSITORIES: '', RECONCILE_CALLER_CHECKOUT: 'false' },
+      { fetch: empty.fetch, root, print: () => {} }
+    )
+  } catch (err) {
+    refusal = err
+  }
+  check('run(): a foreign checkout with no repositories list is refused before any call', () => {
+    assert.match(refusal?.message ?? '', /^RECONCILE_CALLER_CHECKOUT=false needs RECONCILE_REPOSITORIES: /)
+    assert.deepEqual([...empty.touched], [])
+  })
+  // The switch is the safety for that case: a value it does not know is
+  // refused, never read as the own-checkout default.
+  for (const value of ['False', '0', 'no']) {
+    const gh = fakeGitHub({ 'a/two': { issues: { 1: zzz() }, files: foreignFiles } })
+    let err = null
+    try {
+      await m.run(
+        { GH_TOKEN: 't', GITHUB_REPOSITORY: 'a/two', RECONCILE_REPOSITORIES: 'a/two', RECONCILE_CALLER_CHECKOUT: value },
+        { fetch: gh.fetch, root, print: () => {} }
+      )
+    } catch (e) {
+      err = e
+    }
+    check(`run(): RECONCILE_CALLER_CHECKOUT=${value} is refused before any call`, () => {
+      assert.equal(err?.message, `RECONCILE_CALLER_CHECKOUT must be unset, "true" or "false", not ${JSON.stringify(value)}`)
+      assert.deepEqual([...gh.touched], [])
+    })
+  }
+  const ownDefault = await runWith({ 'a/two': { issues: { 1: zzz() } } }, { RECONCILE_REPOSITORIES: '' })
+  check('run(): an own-copy run with no repositories list still walks the caller', () => {
+    assert.equal(ownDefault.code, 0)
+    assert.deepEqual([...ownDefault.gh.touched], ['a/two'])
+    assert.deepEqual(ownDefault.gh.contents, [])
+  })
+  const ownExplicit = await runWith(
+    { 'a/two': { issues: { 1: zzz() } } },
+    { RECONCILE_REPOSITORIES: '', RECONCILE_CALLER_CHECKOUT: 'true' }
+  )
+  check('run(): RECONCILE_CALLER_CHECKOUT=true behaves as the unset default', () => {
+    assert.equal(ownExplicit.code, 0)
+    assert.deepEqual([...ownExplicit.gh.touched], ['a/two'])
+    assert.deepEqual(ownExplicit.gh.contents, [])
+    assert.deepEqual(writes(ownExplicit.gh, '/repos/a/two/'), writes(ownDefault.gh, '/repos/a/two/'))
+  })
 }
 
-// --- The reconcile workflow's token expression (C1-F1) ----------------------
+// --- The reconcile workflow: its own repository, its own token (C1-F1) -------
 
 const rwf = readFileSync(join(root, '.github/workflows/classification-reconcile.yml'), 'utf8')
-check('the token: CLASSIFICATION_TOKEN only when a workflow_call caller sets use-token', () => {
+const pinOf = (text, action) =>
+  text.match(new RegExp(`uses: ${action}@([0-9a-f]{40}) # v\\d+\\.\\d+\\.\\d+$`, 'm'))?.[1]
+check('the workflow: the token is always GITHUB_TOKEN, and no input or secret could carry another', () => {
   const tokenExpr = rwf.match(/^ {10}GH_TOKEN: \$\{\{ (.*) \}\}$/m)?.[1]
-  assert.equal(tokenExpr, 'inputs.use-token && secrets.CLASSIFICATION_TOKEN || github.token')
-  const tok = (inputs, secrets) => evaluateValue(tokenExpr, { inputs, secrets, github: { token: 'GITHUB_TOKEN' } })
-  // schedule / workflow_dispatch: no use-token input, whatever secrets exist.
-  assert.equal(tok({}, { CLASSIFICATION_TOKEN: 'stored' }), 'GITHUB_TOKEN')
-  assert.equal(tok({ 'use-token': false }, { CLASSIFICATION_TOKEN: 'app' }), 'GITHUB_TOKEN')
-  assert.equal(tok({ 'use-token': true }, { CLASSIFICATION_TOKEN: 'app' }), 'app')
-  assert.equal(tok({ 'use-token': true }, {}), 'GITHUB_TOKEN')
-  const dispatch = rwf.slice(rwf.indexOf('  workflow_dispatch:'), rwf.indexOf('  workflow_call:'))
+  assert.equal(tokenExpr, 'github.token')
+  const ctx = { secrets: { CLASSIFICATION_TOKEN: 'stored' }, github: { token: 'GITHUB_TOKEN' } }
+  assert.equal(evaluateValue(tokenExpr, ctx), 'GITHUB_TOKEN', 'whatever secrets exist')
+  assert.doesNotMatch(rwf, /\bsecrets[.:]|use-token|CLASSIFICATION_TOKEN/)
+  // workflow_call is for this repository's own classification-event.yml.
   const call = rwf.slice(rwf.indexOf('  workflow_call:'), rwf.indexOf('\npermissions:'))
-  assert.ok(!dispatch.includes('use-token'), 'use-token is never a workflow_dispatch input')
-  assert.match(call, /^ {6}use-token:\n {8}description: .*\n {8}type: boolean\n {8}required: false\n {8}default: false$/m)
+  assert.deepEqual([...call.matchAll(/^ {6}([\w-]+):$/gm)].map((x) => x[1]), ['issue', 'dry-run'])
+})
+check('the workflow: one checkout, of the repository it runs in, persisting no credentials', () => {
+  assert.equal(rwf.match(/^ {6}- uses: actions\/checkout@/gm)?.length, 1)
+  assert.ok(pinOf(rwf, 'actions/checkout'), 'pinned by SHA with the version')
+  assert.doesNotMatch(rwf, /^ +(?:repository|ref|token):/m)
+  assert.match(rwf, /^ {10}persist-credentials: false$/m)
+})
+
+// --- The organization workflow documented in ci-cd.md (#1500) ---------------
+
+const esc = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
+const doc = readFileSync(join(root, 'docs/architecture/ci-cd.md'), 'utf8')
+const orgWorkflow =
+  doc.slice(doc.indexOf('**Organization-wide walk.**')).match(/^```yaml\n([\s\S]*?)^```$/m)?.[1] ?? ''
+const orgSteps = orgWorkflow.slice(orgWorkflow.indexOf('\n    steps:\n')).split(/\n {6}- /).slice(1)
+const [mint, source, setupNode, reconcile] = orgSteps
+check('the organization workflow: a schedule only, contents: read, one job, no reusable-workflow call', () => {
+  assert.ok(orgWorkflow, 'ci-cd.md carries the organization workflow example')
+  assert.match(orgWorkflow, /^on:\n {2}schedule:\n {4}- cron: "[^"]+"\n\n/m)
+  // A dispatch would run the selected ref's definition, token-minting step
+  // included, so an App-token workflow never offers one.
+  assert.doesNotMatch(orgWorkflow, /workflow_dispatch/)
+  assert.match(orgWorkflow, /^permissions:\n {2}contents: read\n\n/m)
+  assert.equal(orgWorkflow.match(/^ {2}[\w-]+:\n {4}runs-on:/gm)?.length, 1, 'one job')
+  assert.doesNotMatch(orgWorkflow, /workflow_call|^ {4}uses:|\.ya?ml@/m)
+  assert.deepEqual(
+    orgSteps.map((s) => s.match(/uses: ([\w-]+\/[\w-]+)@/)?.[1] ?? 'run'),
+    ['actions/create-github-app-token', 'actions/checkout', 'actions/setup-node', 'run']
+  )
+})
+check('the organization workflow: the token is minted in the job that uses it, and used only for the walk', () => {
+  assert.match(mint, /^id: app-token\n/)
+  for (const line of [
+    'client-id: ${{ vars.CI_APP_CLIENT_ID }}',
+    'private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}',
+    'owner: ${{ github.repository_owner }}',
+    'repositories: |',
+    'permission-contents: read',
+    'permission-issues: write'
+  ]) {
+    assert.match(mint, new RegExp(`^ {10}${esc(line)}$`, 'm'), line)
+  }
+  // The token reaches exactly the repositories the walk lists: bare names
+  // under `owner`, the same ones RECONCILE_REPOSITORIES names as owner/name.
+  const block = (text, key) => text.match(new RegExp(`^ {10}${key}: [|>]-?\\n((?: {12}\\S+\\n?)+)`, 'm'))?.[1].split(/\s+/).filter(Boolean)
+  const scoped = block(mint, 'repositories')
+  assert.ok(scoped?.length > 0 && scoped.every((n) => !n.includes('/')), 'bare repository names')
+  assert.deepEqual(block(reconcile, 'RECONCILE_REPOSITORIES')?.map((r) => r.split('/')[1]), scoped)
+  // The App key is the only secret and only the mint step reads it; the
+  // token reaches only the reconcile step.
+  assert.deepEqual(orgSteps.filter((s) => /secrets\./.test(s)), [mint])
+  assert.deepEqual(orgSteps.filter((s) => s.includes('steps.app-token.outputs.token')), [reconcile])
+  assert.match(reconcile, /^ {10}GH_TOKEN: \$\{\{ steps\.app-token\.outputs\.token \}\}$/m)
+  // Pinned by full SHA with the version. Not held equal to the live
+  // workflows' pins: Renovate does not update Markdown, and the copy in
+  // <org>/.github is maintained by that repository's own Renovate.
+  assert.ok(pinOf(mint, 'actions/create-github-app-token'), 'pinned by SHA with the version')
+})
+check('the organization workflow: the script source is checked out at a full commit SHA, with no secret and no persisted credentials', () => {
+  assert.ok(pinOf(source, 'actions/checkout'), 'pinned by SHA with the version')
+  assert.match(source, /^ {10}repository: <[\w-]+>\/<[\w-]+>$/m, 'a placeholder, never a fixed owner repository')
+  assert.match(source, /^ {10}ref: <full-commit-sha> # <release-tag>$/m)
+  assert.match(source, /^ {10}persist-credentials: false$/m)
+  assert.doesNotMatch(source, /^ {10}token:|secrets\.|steps\./m)
+  assert.ok(pinOf(setupNode, 'actions/setup-node'), 'pinned by SHA with the version')
+})
+check('the organization workflow: the script runs from the foreign checkout over an explicit repository list', () => {
+  assert.match(reconcile, /^ {8}run: node scripts\/classification-reconcile\.mjs$/m)
+  assert.match(reconcile, /^ {10}RECONCILE_CALLER_CHECKOUT: "false"$/m)
+  assert.match(reconcile, /^ {10}RECONCILE_REPOSITORIES: >-\n {12}\S+/m)
 })
 
 // --- loadDerivation() --------------------------------------------------------

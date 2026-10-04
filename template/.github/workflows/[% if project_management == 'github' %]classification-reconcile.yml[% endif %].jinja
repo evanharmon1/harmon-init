@@ -11,21 +11,21 @@ run-name: >-
 #   - schedule: daily on a personal-account repository, monthly on an
 #     organization repository (Team-plan minutes are shared and most org
 #     repositories are private). Walks this repository's open issues.
-#   - workflow_call: classification-event.yml calls it for one issue. An
-#     organization-level caller may also pass `repositories`, the
-#     CLASSIFICATION_TOKEN secret (a one-hour CI GitHub App installation token)
-#     and `use-token: true` to walk every repository in the organization daily
-#     — the opt-in path in docs/architecture/ci-cd.md. Without them the walk is
-#     limited to the calling repository, because GITHUB_TOKEN is
-#     repository-scoped. `use-token` exists only under workflow_call, so on
-#     schedule and workflow_dispatch the token is always GITHUB_TOKEN, whatever
-#     secrets the repository or organization holds (ruling 9: no stored token).
+#   - workflow_call: this repository's own classification-event.yml calls it
+#     for one issue. A call from another repository is not supported: the job
+#     checks out the calling repository, which must carry the script. An
+#     organization-wide walk is the standalone organization workflow in
+#     docs/architecture/ci-cd.md, which mints its own token in its own job.
 #   - workflow_dispatch: by hand, with an optional dry run.
+#
+# The token is always GITHUB_TOKEN, whatever secrets the repository or
+# organization holds (ruling 9: no stored token). It is repository-scoped, so
+# a run walks this repository's issues.
 #
 # The checked-out repository supplies the script and the reader. Each walked
 # repository is judged by its own label-registry.json and .devflow.toml: the
 # calling repository's from the checkout, any other's read from its default
-# branch (so a wide walk's token also needs contents: read on the targets).
+# branch (so the token also needs contents: read there).
 #
 # Writers: only `tier:<value>` and `needs-triage`, never over `tier:pinned`.
 # Loop safety: label writes made with GITHUB_TOKEN start no workflow runs, and
@@ -61,11 +61,6 @@ on:
         default: false
   workflow_call:
     inputs:
-      repositories:
-        description: "owner/name list to walk (default: the calling repository); needs the CLASSIFICATION_TOKEN secret beyond it"
-        type: string
-        required: false
-        default: ""
       issue:
         description: "One issue number to reconcile (0 = every open issue)"
         type: number
@@ -76,15 +71,6 @@ on:
         type: boolean
         required: false
         default: false
-      use-token:
-        description: "Use the CLASSIFICATION_TOKEN secret instead of GITHUB_TOKEN (workflow_call only)"
-        type: boolean
-        required: false
-        default: false
-    secrets:
-      CLASSIFICATION_TOKEN:
-        description: "Optional cross-repository token (a CI GitHub App installation token with Issues: write); defaults to GITHUB_TOKEN"
-        required: false
 
 permissions:
   contents: read
@@ -106,7 +92,7 @@ jobs:
           node-version: "24"
       - name: Reconcile Tier and needs-triage
         env:
-          GH_TOKEN: ${{ inputs.use-token && secrets.CLASSIFICATION_TOKEN || github.token }}
+          GH_TOKEN: ${{ github.token }}
           RECONCILE_REPOSITORIES: ${{ inputs.repositories }}
           RECONCILE_ISSUE: ${{ inputs.issue }}
           RECONCILE_DRY_RUN: ${{ inputs.dry-run }}
