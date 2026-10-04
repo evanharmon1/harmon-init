@@ -489,14 +489,14 @@ destroys every value on it, unrecoverably.
      value, filtering the Project's own view rather than a capped CLI listing,
      **draft items** included, which can carry the project field but can never
      carry a label.
-  3. Convert any draft whose `Priority` you want to keep into an issue first (a
-     label cannot go on a draft; a draft you leave as-is loses its value with
-     the field), then carry each `Priority` value you still want onto the
-     matching `priority:*` label. A value with no `priority:*` label — an
-     option you added beyond Urgent / High / Medium / Low — has no counterpart
-     to carry it to: map it to the nearest rung, or record it before deleting
-     the field. `Size` values have no destination: keep a record of any you
-     need now, because deleting the field destroys them unrecoverably.
+  3. On a personal account, convert any draft whose `Priority` you want to keep
+     into an issue first (a label cannot go on a draft; a draft you leave as-is
+     loses its value with the field), then carry each `Priority` value you still
+     want onto the matching `priority:*` label. A value with no `priority:*`
+     label — an option you added beyond Urgent / High / Medium / Low — has no
+     counterpart to carry it to: map it to the nearest rung, or record it before
+     deleting the field. `Size` values have no destination: keep a record of any
+     you need now, because deleting the field destroys them unrecoverably.
   4. Re-point or rebuild every view from step 2 as the **Views** section below
      specifies it. A view still filtered, sorted, or summed by a deleted field
      loses that predicate the moment the field is gone.
@@ -1387,11 +1387,10 @@ view**). Keep the saved set small; **slice the one board** (below) for the rest.
   work-type is a label, which a view can filter on but not group by), so leave
   the view ungrouped there. This is your grooming session — it exists so
   untriaged work can't hide; empty it regularly and it stays useful.
-- **Agent queue** — the issues an agent may start. This bullet is the only
-  place the queue is defined; every other mention in this document names it and
-  points here. The **predicate** is authoritative: **open**, **triaged** (no
-  `needs-triage`), no **`claim:*`**, not **`human`**, not **`needs-review`**, not
-  blocked, and an **effective priority** set — `Priority` or `Priority (AI)`.
+- **Agent queue** — the issues an agent may start. The **predicate** is
+  authoritative: **open**, **triaged** (no `needs-triage`), no **`claim:*`**, not
+  **`human`**, not **`needs-review`**, not blocked, and an **effective priority**
+  set — `Priority` or `Priority (AI)`.
   `Status` plays no part in it. **Not blocked** means neither an open blocked-by
   relationship nor the `blocked` label. **Order** is by `Priority`, then
   `Priority (AI)`: highest effective-priority rung first, the human `Priority`
