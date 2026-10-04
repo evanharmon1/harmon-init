@@ -339,8 +339,14 @@ check_classification_registry() {
         fail "$manifest workflow family must stay transient (needs-review is added at ready-for-review and removed on pull-back)"
 
     # human-work:human — human and agent writers, primarily a human's completion
-    [ "$(jq -c '.families[] | select(.family == "human-work") | [.writers, (.lifecycle_note | length > 0), (.values[] | select(.value == "human") | .description)]' "$manifest")" = '[["human","agent"],true,"Work whose completion is primarily a human'\''s; never dispatched to an agent"]' ] ||
-        fail "$manifest human-work:human is missing or does not match the maintainer decision (human+agent writers, lifecycle note, primarily-human description)"
+    [ "$(jq -r '.families[] | select(.family == "human-work") | .purpose' "$manifest")" = "Work whose completion is primarily a human's, kept off the agent dispatch path." ] ||
+        fail "$manifest human-work purpose does not match maintainer definition"
+    [ "$(jq -r '.families[] | select(.family == "human-work") | .lifecycle_note' "$manifest")" = "applied while completion is primarily a human's; removed by triage or a human when the issue's remaining completion is no longer primarily a human's (for example the decision is made, or the purchase is done, and the rest is agent work); only then can it enter the Agent queue" ] ||
+        fail "$manifest human-work lifecycle_note does not match maintainer definition"
+    [ "$(jq -r '.families[] | select(.family == "human-work") | .values[] | select(.value == "human") | .description' "$manifest")" = "Work whose completion is primarily a human's; never dispatched to an agent" ] ||
+        fail "$manifest human-work:human description does not match maintainer definition"
+    [ "$(jq -c '.families[] | select(.family == "human-work") | .writers' "$manifest")" = '["human","agent"]' ] ||
+        fail "$manifest human-work writers must be human and agent"
     [ "$(jq -r '.families[] | select(.family == "human-work") | .lifecycle' "$manifest")" = durable ] ||
         fail "$manifest human-work family must stay durable"
 }
