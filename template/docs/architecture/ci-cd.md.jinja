@@ -165,11 +165,15 @@ tests it hermetically. Both workflows are generated when
 
 **Ownership.** This workflow pair is the only automated writer of the Tier
 besides the skills (triage, track-work, breakdown), which set the Tier and
-`needs-triage` in the same write that sets Risk or Complexity. The reconciler
-writes only `tier:<value>` and `needs-triage`, under `GITHUB_TOKEN` with
-`issues: write`. It never writes over an issue carrying `tier:pinned` (it
-still maintains `needs-triage` there). It never writes `tier:pinned`,
-`priority:*`, `priority-ai:*`, `rigor:*`, `strategy:*` or `claim:*`.
+`needs-triage` in the same write that sets Risk or Complexity, and the opt-in
+organization workflow ("Organization-wide walk" below), which runs the same
+script with the CI App installation token and writes the same two labels
+under the same rules. The reconciler writes only `tier:<value>` and
+`needs-triage`, under `GITHUB_TOKEN` with `issues: write` (the organization
+workflow under the App token). It never writes over an issue carrying
+`tier:pinned` (it still maintains `needs-triage` there). It never writes
+`tier:pinned`, `priority:*`, `priority-ai:*`, `rigor:*`, `strategy:*` or
+`claim:*`.
 
 The reconciler reports these cases and leaves the Tier, and the offending
 input, as it is. `needs-triage` is still maintained unless an item says
@@ -283,7 +287,7 @@ carries the reconciler script, and runs the script, so the token is minted and
 used in the same job:
 
 ```yaml
-# <org>/.github: .github/workflows/classification-reconcile.yml
+# <org>/.github: .github/workflows/org-classification-reconcile.yml
 name: Classification Reconcile (organization)
 
 on:
@@ -333,12 +337,22 @@ jobs:
   listed repositories (bare names under `owner`, the same ones
   `RECONCILE_REPOSITORIES` names as `owner/name`), and the `permission-*`
   inputs limit what it may do there. It is used only by the reconcile step.
+  `vars.CI_APP_CLIENT_ID` and `secrets.CI_APP_PRIVATE_KEY` must be visible to
+  the `.github` repository (an organization variable and secret whose access
+  list includes it, or repository-level copies); `repositories:` and the
+  `permission-*` inputs limit the minted token, not the key.
 - **The script's source.** `<owner>/<repo>` is the repository that carries
   `scripts/classification-reconcile.mjs` and its policy reader. It is checked
   out with the run's own `GITHUB_TOKEN`, no secret and no persisted
   credentials, so it must be public or otherwise readable without one. Pin it
   by full commit SHA with the release tag as a trailing comment: a tag follows
   wherever it is moved, so a workflow that uses one trusts whoever can move it.
+  Nothing bumps that `ref:` automatically, because Renovate updates `uses:`
+  lines, not a `with: ref:`. Move it whenever the organization takes a new
+  release of `<owner>/<repo>`, so the daily walk and each repository's own
+  runs use the same reader, and take the SHA from the tag itself, for example
+  `git ls-remote https://github.com/<owner>/<repo> 'refs/tags/vX.Y.Z^{}'`: a
+  SHA copied from elsewhere can name a commit that exists only in a fork.
 - **The foreign checkout.** `RECONCILE_CALLER_CHECKOUT: "false"` tells the
   script that the checkout is not the repository it runs in. It then treats
   no walked repository as the checkout, reads every listed repository's
@@ -384,7 +398,8 @@ tokens minted at runtime), not a PAT — see [security.md](security.md).
 The classification reconciler is the exception: it runs on the
 repository-scoped `GITHUB_TOKEN` with `issues: write` (see
 [Issue classification reconciler](#issue-classification-reconciler)), and an
-organization-wide walk mints an App installation token in its own job.
+organization-wide walk mints an App installation token in its own job and
+pins its script's source by a `ref:` that Renovate does not bump.
 [% endif %]
 Third-party actions are pinned by commit SHA and bumped by Renovate.
 
