@@ -350,15 +350,18 @@ jobs:
   Nothing bumps that `ref:` automatically, because Renovate updates `uses:`
   lines, not a `with: ref:`. Move it whenever the organization takes a new
   release of `<owner>/<repo>`, so the daily walk and each repository's own
-  runs use the same reader, and take the SHA from the tag itself, for example
-  `git ls-remote https://github.com/<owner>/<repo> 'refs/tags/vX.Y.Z^{}'`: a
-  SHA copied from elsewhere can name a commit that exists only in a fork.
+  runs use the same script, and take the SHA from the tag in that repository,
+  for example `gh api repos/<owner>/<repo>/commits/vX.Y.Z --jq .sha`: a SHA
+  copied from elsewhere can name a commit that exists only in a fork.
 - **The foreign checkout.** `RECONCILE_CALLER_CHECKOUT: "false"` tells the
   script that the checkout is not the repository it runs in. It then treats
   no walked repository as the checkout, reads every listed repository's
   `label-registry.json` and `.devflow.toml` through the contents API, and
   refuses an empty `RECONCILE_REPOSITORIES` with one error before any API
-  call, so the `.github` repository is walked only when it is listed.
+  call, so the `.github` repository is walked only when it is listed. Run it
+  from the root of its checkout (no `path:` on the checkout step): it finds
+  its policy reader relative to the working directory, and run from
+  elsewhere it derives no Tier and still exits 0.
 - **Loops.** Label writes made with the App token do start workflow runs,
   unlike `GITHUB_TOKEN`'s, but their sender is a `Bot`, so each repository's
   event job is skipped (see "Event filter and the pin race").
