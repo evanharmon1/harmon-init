@@ -22,9 +22,11 @@
 # Usage:   setup-github-project.sh --owner <org-or-user-login> --title "<Project Title>"
 # Needs:   gh authed with the 'project' scope (gh auth refresh -s project) + jq.
 #
-# NOTE: this hits the live GitHub API, so it is not exercised by `task
-# test:template` (which never touches GitHub) — it is guarded by shellcheck +
-# shfmt only. Test it against a scratch project when changing it.
+# NOTE: this hits the live GitHub API, so `task test:template` (which never
+# touches GitHub) does not run it. It is guarded by shellcheck + shfmt and by
+# scripts/test-setup-github-project.sh, which runs it against a stubbed `gh`; no
+# test runs it against a live project, so test it against a scratch project when
+# changing it.
 set -euo pipefail
 
 owner=""
@@ -333,12 +335,12 @@ set_options() {
         >/dev/null
 }
 
-# A reused project may already carry a field with one of these names — of the
-# wrong data type. GitHub cannot change a project field's data type in place, so
-# its intended options are unavailable until it is renamed or deleted. Warn (and
-# repeat it in the summary) rather than exit non-zero: appending options to a
-# `text` field named `Domain` is impossible, and one pre-existing field is no
-# reason to abort the rest.
+# A reused project may already carry Status or Product — the only fields this
+# script reconciles — with the wrong data type. GitHub cannot change a project
+# field's data type in place, so the field stays unusable until it is renamed or
+# deleted. Warn (and repeat it in the summary) rather than exit non-zero:
+# appending options to a `text` field named `Status` is impossible, and one
+# pre-existing field is no reason to abort the rest.
 incompatible=""
 
 # Fields that are missing a starter option but have no room left for it.

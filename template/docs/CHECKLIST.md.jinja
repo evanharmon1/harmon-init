@@ -362,8 +362,9 @@ the compatibility reason in the rule's `description`.
       existing board** — only if this repo's board was set up by a release
       before harmon-init#1451; they are not deleted automatically, and
       deleting a field destroys every value on it, unrecoverably. Do it after
-      the classification labels exist (`task setup:github-labels` provisions the
-      `priority:*` and `priority-ai:*` families that replace `Priority`) and
+      the classification labels exist (on a personal account,
+      `task setup:github-labels` provisions the `priority:*` and
+      `priority-ai:*` families that replace `Priority`) and
       after enumerating every board and view that references each field
       (harmon-init#910), as [project-management.md](project-management.md),
       "Migrating a board that still has one" (the Priority / Size entry) lays
@@ -493,9 +494,8 @@ the compatibility reason in the rule's `description`.
 [% if project_management == 'github' %]
 - [ ] Project views: create the starter views that the Views section of
       [project-management.md](project-management.md) specifies — including
-      Needs review and, on an organization, Agent queue (AI-ranked) — in the
-      Project UI. Projects V2 has no view API, so this is a one-time manual
-      step; the filters and layouts are in that section.
+      Needs review — in the Project UI. Projects V2 has no view API, so this is
+      a one-time manual step; the filters and layouts are in that section.
 - [ ] GitHub Project auto-add (**adds every issue to the board**): in the
       Project's **Settings → Workflows**, turn on **"Auto-add to project"** and
       point it at this repo (filter `is:issue`, `is:pr`) so *every* new issue and

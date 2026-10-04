@@ -429,8 +429,8 @@ destroys every value on it, unrecoverably.
      never carry a label. Convert any draft whose assignment you want to keep
      into an issue first; a draft you leave as-is loses its assignment with
      the field.
-  3. Carry each assignment you still want over as the matching `suggest:*` label
-     on the issue (e.g. `Agent: Claude Code` → `suggest:claude`).
+  3. No value carries over: which agent should take an issue is its derived Tier
+     (`tier:*`).
   4. Re-point the saved **Agent queue** view at its current definition in
      [Views](#views). A view still filtered on the field loses its routing
      predicate the moment the field is deleted.
@@ -833,8 +833,8 @@ deliberately leaves it alone.
 | `impact:{minimal,low,medium,high,massive}` | humans or agents, at triage or filing — agent-authored issues arrive with it set | humans, saved views | provisioned; **advisory** — a required axis for triaged; arms nothing | durable classification; required for an issue to count as triaged |
 | `risk:{trivial,low,medium,high,critical}` | humans or agents, at triage or filing — agent-authored issues arrive with it set | humans, saved views; the Tier derivation (Risk × Complexity) | provisioned; **read by agents** — an input to the derived Tier (Risk × Complexity); arms nothing | durable classification; required for triaged; whoever changes it re-derives the Tier in the same write |
 | `complexity:{xs,s,m,l,xl}` | humans or agents, at triage or filing — agent-authored issues arrive with it set | humans, saved views; the Tier derivation (Risk × Complexity) | provisioned; **read by agents** — an input to the derived Tier (Risk × Complexity); arms nothing | durable classification; required for triaged; whoever changes it re-derives the Tier in the same write |
-| `priority:{urgent,high,medium,low}` | humans only — an agent never sets or changes it | humans, saved views; the agent queue (an issue with no effective priority — neither Priority nor Priority (AI) — is not queued) | provisioned; **advisory** — orders the agent queue; arms nothing | set by a human when ranking the work; changed as priorities move |
-| `priority-ai:{p0,p1,p2,p3,p4}` | agents or humans — the AI's suggestion, never required; a review finding filed as an issue carries its adjudicated badge (P0→p0, P1→p1, P2→p2, P3→p3; nothing from a review maps to p4) | humans, saved views; the effective priority, which is the human `priority` when set and else this suggestion | provisioned; **advisory** — the AI's suggestion, overridden by the human `priority` family; arms nothing | written by an agent or human when classifying or filing the issue; changed as the AI learns more; the human `priority` overrides it without clearing it |
+| `priority:{urgent,high,medium,low}` | humans only — an agent never sets or changes it | humans, saved views; the agent queue (an issue with no Priority is not queued) | provisioned; **advisory** — orders the agent queue; arms nothing | set by a human when ranking the work; changed as priorities move |
+| `priority-ai:{p0,p1,p2,p3,p4}` | agents or humans — the AI's suggestion, never required; a review finding filed as an issue carries its adjudicated badge (P0→p0, P1→p1, P2→p2, P3→p3; nothing from a review maps to p4) | humans, saved views; the effective priority, which is the human `priority` when set and else this suggestion; in the agent queue it only orders issues within a `priority` rung and admits nothing | provisioned; **advisory** — the AI's suggestion, overridden by the human `priority` family; arms nothing | written by an agent or human when classifying or filing the issue; changed as the AI learns more; the human `priority` overrides it without clearing it |
 | `effort:{1,2,3,5,8,13,20}` | humans only, on a human task — agent work carries Complexity instead | humans, saved views | provisioned; **advisory** — a human estimate; arms nothing | set by a human when estimating a human task; agent issues never carry it |
 | `rigor:{cursory,light,standard,thorough,deep,forensic}` | humans, at triage — **never an agent on itself** | agents, when entering the Dev Loop | provisioned; **read by agents** — selects a rounds policy, five role tiers, and a breadth envelope; arms nothing | set when the default rigor is wrong for the change; survives the work |
 | `tier:{local,economy,standard,frontier,apex}` | agents, in the write that sets Risk or Complexity, and the GitHub Actions reconciler; humans may set one, and pin it with `tier:pinned` | humans and agents — the issue's derived (or pinned) Tier, an input to the implementer tier; models are classified in `agent-registry.json` (ADR 2026-09-30) | provisioned; **read by agents** — a pin outranks the derived Tier and both rank below an operator instruction; resolved against `.devflow.toml`'s `tier_order`; arms nothing | a materialized cache — rewritten whenever Risk or Complexity changes and by the scheduled reconciler (daily on personal-account repositories, monthly on organization ones), recomputed by readers when absent; never rewritten while `tier:pinned` is present |
@@ -1378,8 +1378,9 @@ view mutations, only reads — so create these once in the UI (**Project → New
 view**). Keep the saved set small; **slice the one board** (below) for the rest.
 
 - **Board** — board, `is:open`, grouped by `Status`. The day-to-day working board.
-- **Triage** — table, filtered to the **`needs-triage`** label, grouped by
-  **Type** (Bug / Feature / Task / Research) so you see the shape of the inbox.
+- **Triage** — table, filtered to `is:issue is:open` and the **`needs-triage`**
+  label, grouped by **Type** (Bug / Feature / Task / Research) so you see the
+  shape of the inbox.
   `needs-triage` is derived — present while any required axis is unset — so one
   label filter selects every untriaged issue; there is no "missing a field"
   clause to OR beside it, which Projects cannot express (#444). `Type` is an
@@ -1389,49 +1390,48 @@ view**). Keep the saved set small; **slice the one board** (below) for the rest.
   untriaged work can't hide; empty it regularly and it stays useful.
 - **Agent queue** — the issues an agent may start. The **predicate** is
   authoritative: **open**, **triaged** (no `needs-triage`), no **`claim:*`**, not
-  **`human`**, not **`needs-review`**, not blocked, and an **effective priority**
-  set — `Priority` or `Priority (AI)`.
-  `Status` plays no part in it. **Not blocked** means neither an open blocked-by
-  relationship nor the `blocked` label. **Order** is by `Priority`, then
-  `Priority (AI)`: highest effective-priority rung first, the human `Priority`
-  rungs (`urgent`, `high`, `medium`, `low`) before the `Priority (AI)` rungs
-  (`p0` to `p4`). **The human `Priority` overrides `Priority (AI)`**: an issue's
-  effective priority is `Priority` when set, else `Priority (AI)`, and the
-  override never clears the AI value
+  **`human`**, not **`needs-review`**, not blocked, and **`Priority` set** — an
+  issue with only a `Priority (AI)` is not startable, an agent asks first
+  ([ADR 2026-09-30](decisions/2026-09-30-classify-issues-by-impact-risk-complexity-and-derive-the-tier.md)
+  D7). `Status` plays no part in it. **Not blocked** means neither an open
+  blocked-by relationship nor the `blocked` label. **Order** is by `Priority`,
+  highest rung first (`urgent`, `high`, `medium`, `low`), then by
+  `Priority (AI)` (`p0` to `p4`) within a rung. **The human `Priority` overrides
+  `Priority (AI)`**: an issue's effective priority is `Priority` when set, else
+  `Priority (AI)`, and the override never clears the AI value
   ([ADR 2026-10-01](decisions/2026-10-01-add-a-priority-ai-axis-suggested-by-agents.md)
-  D2). A saved view only approximates the predicate. Projects label filters match
-  **concrete** values, not prefixes, so a view excludes `blocked` and each
-  registered `claim:<family>` label by name (extend the filter when the registry
-  gains a family). It cannot express the native blocked-by relationship, so with
-  respect to native blocks the view is a superset of the predicate: whoever takes
-  an item first confirms it has no open blocked-by (the issue's `blockedBy` data,
-  see [Blocked is not a status](#blocked-is-not-a-status)). Where the two
-  priorities live decides how the view is built and how the order is applied:
-  - **Organization** — both are issue fields, so the view sorts by them, but
-    "either one is set" is an OR across two different qualifiers, which Projects
-    does not express (distinct qualifiers AND; the comma ORs the values of one
-    qualifier, #444). Build two views that together select the queue with no
-    overlap: **Agent queue** requires `Priority` set and sorts by `Priority`,
-    then `Priority (AI)`; **Agent queue (AI-ranked)** requires `Priority` empty
-    and `Priority (AI)` set and sorts by `Priority (AI)`. Read the first, then
-    the second.
+  D2). In the queue `Priority` is always set, so `Priority (AI)` only breaks ties
+  within a `Priority` rung; it admits nothing, and the view shows it. A saved
+  view only approximates the predicate. It filters on `is:issue` and `is:open`
+  (auto-add puts pull requests on the board too). Projects label filters match
+  **concrete** values, not prefixes, so it excludes `blocked`, each registered
+  `claim:<family>` label, and each legacy alias the registry lists
+  (`legacy_claim_labels` in `agent-registry.json`, such as `agent:claude-code`)
+  by name (extend the filter when the registry gains a family). It cannot
+  express the native blocked-by relationship, so with respect to native blocks
+  the view is a superset of the predicate: whoever takes an item first confirms
+  it has no open blocked-by (the issue's `blockedBy` data, see
+  [Blocked is not a status](#blocked-is-not-a-status)); making the claim step
+  refuse such an issue is tracked as harmon-devkit#1232. Where the priorities
+  live decides how the view is built and how the order is applied:
+  - **Organization** — both are issue fields, so the one view requires
+    `Priority` set and sorts by `Priority`, then `Priority (AI)`.
   - **Personal account** — both are labels (`priority:*`, `priority-ai:*`), and a
-    view cannot sort by a label, so the order is applied by narrowing the queue
-    view itself to one rung at a time. The view filters on all nine concrete
-    priority labels in one `label:` qualifier (the comma ORs them); narrowing
-    replaces that qualifier with one concrete label, walking `priority:urgent`,
-    `priority:high`, `priority:medium`, `priority:low`, then `priority-ai:p0` to
-    `priority-ai:p4`, and at each `priority-ai:*` rung also excluding the four
-    `priority:*` labels. Every other exclusion is the view's own filter, so it is
-    kept by construction.
-- **Needs review** — table, `is:open` and the **`needs-review`** label. On an
-  organization it shows the `Priority` and `Priority (AI)` columns and sorts by
-  `Priority`, then `Priority (AI)`. On a personal account both priority families
-  are labels and share the single Labels column, where both priority labels
-  appear, so it shows that column and is read by effective priority (a view
-  cannot sort by a label). It lists what awaits the maintainer: the integration
-  stage adds `needs-review` at ready-for-review and removes it if review pulls
-  the work back into fix rounds.
+    view cannot sort by a label, so the human order is applied by narrowing the
+    queue view itself to one rung at a time. The view filters on the four
+    concrete `priority:*` labels in one `label:` qualifier (the comma ORs them);
+    narrowing replaces that qualifier with one concrete label, walking
+    `priority:urgent`, `priority:high`, `priority:medium`, `priority:low`. Within
+    a rung, order by the `priority-ai:*` label read from the Labels column. Every
+    other exclusion is the view's own filter, so it is kept by construction.
+- **Needs review** — table, `is:issue is:open` and the **`needs-review`**
+  label. On an organization it shows the `Priority` and `Priority (AI)` columns
+  and sorts by `Priority`, then `Priority (AI)`. On a personal account both
+  priority families are labels and share the single Labels column, where both
+  priority labels appear, so it shows that column and is read by effective
+  priority (a view cannot sort by a label). It lists what awaits the
+  maintainer: the integration stage adds `needs-review` at ready-for-review and
+  removes it if review pulls the work back into fix rounds.
 - **Planning** — table, grouped by **`Product`** (or `Type`), sorted by
   `Priority` (organization only, as above). The "what's the plan" view, and a
   **dates-free roadmap substitute**: grouping by product shows the pile behind
