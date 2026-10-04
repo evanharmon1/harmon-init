@@ -41,19 +41,21 @@
 // `priority-ai:*`, `rigor:*`, `strategy:*` or `claim:*`.
 //
 // Environment:
-//   GH_TOKEN                   token for the GitHub API (required unless dry run)
+//   GH_TOKEN                   token for the GitHub API (required, a dry run
+//                              included: it still reads)
 //   RECONCILE_REPOSITORIES     newline/comma/space list of owner/name
 //                              (default: GITHUB_REPOSITORY)
 //   RECONCILE_ISSUE            one issue number (single-repository mode); 0 or
 //                              empty walks every open issue
 //   RECONCILE_DRY_RUN          "true" to report the plan and write nothing
-//   RECONCILE_CALLER_CHECKOUT  "false" when the checkout is not the repository
-//                              this runs in (a foreign checkout, such as the
-//                              organization workflow in ci-cd.md): every
-//                              walked repository's files are then read through
-//                              the contents API, and RECONCILE_REPOSITORIES is
-//                              required. Unset or anything else: the checkout
-//                              is GITHUB_REPOSITORY's own
+//   RECONCILE_CALLER_CHECKOUT  unset, empty or "true": the checkout is
+//                              GITHUB_REPOSITORY's own. "false": the checkout
+//                              is not the repository this runs in (a foreign
+//                              checkout, such as the organization workflow in
+//                              ci-cd.md): every walked repository's files are
+//                              then read through the contents API, and
+//                              RECONCILE_REPOSITORIES is required. Any other
+//                              value is refused before any API call
 //   GITHUB_API_URL, GITHUB_GRAPHQL_URL, GITHUB_STEP_SUMMARY (Actions-provided)
 
 import { existsSync, readFileSync, appendFileSync } from 'node:fs'
@@ -624,8 +626,14 @@ export async function run(
   const issueNumber = Number.parseInt(env.RECONCILE_ISSUE || '0', 10) || 0
   // A foreign checkout holds no file of the repository this runs in, so that
   // repository is walked only when it is on the list, which such a run must
-  // therefore pass.
-  const callerCheckout = env.RECONCILE_CALLER_CHECKOUT !== 'false'
+  // therefore pass. The switch is the safety for that case, so a value it
+  // does not know is refused rather than read as the default.
+  const callerCheckoutValue = env.RECONCILE_CALLER_CHECKOUT ?? ''
+  if (!['', 'true', 'false'].includes(callerCheckoutValue))
+    throw new Error(
+      `RECONCILE_CALLER_CHECKOUT must be unset, "true" or "false", not ${JSON.stringify(callerCheckoutValue)}`
+    )
+  const callerCheckout = callerCheckoutValue !== 'false'
   const repos = parseRepositories(
     env.RECONCILE_REPOSITORIES,
     callerCheckout ? env.GITHUB_REPOSITORY : null

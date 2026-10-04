@@ -32,7 +32,7 @@ trap 'rm -rf "$tmp"' EXIT
 
 node --input-type=module - "$PWD" "$tmp" <<'EOF'
 import assert from 'node:assert/strict'
-import { mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
 
@@ -823,6 +823,24 @@ if (canDerive) {
     assert.match(refusal?.message ?? '', /^RECONCILE_CALLER_CHECKOUT=false needs RECONCILE_REPOSITORIES: /)
     assert.deepEqual([...empty.touched], [])
   })
+  // The switch is the safety for that case: a value it does not know is
+  // refused, never read as the own-checkout default.
+  for (const value of ['False', '0', 'no']) {
+    const gh = fakeGitHub({ 'a/two': { issues: { 1: zzz() }, files: foreignFiles } })
+    let err = null
+    try {
+      await m.run(
+        { GH_TOKEN: 't', GITHUB_REPOSITORY: 'a/two', RECONCILE_REPOSITORIES: 'a/two', RECONCILE_CALLER_CHECKOUT: value },
+        { fetch: gh.fetch, root, print: () => {} }
+      )
+    } catch (e) {
+      err = e
+    }
+    check(`run(): RECONCILE_CALLER_CHECKOUT=${value} is refused before any call`, () => {
+      assert.equal(err?.message, `RECONCILE_CALLER_CHECKOUT must be unset, "true" or "false", not ${JSON.stringify(value)}`)
+      assert.deepEqual([...gh.touched], [])
+    })
+  }
   const ownDefault = await runWith({ 'a/two': { issues: { 1: zzz() } } }, { RECONCILE_REPOSITORIES: '' })
   check('run(): an own-copy run with no repositories list still walks the caller', () => {
     assert.equal(ownDefault.code, 0)
@@ -878,32 +896,35 @@ check('the organization workflow: the token is minted in the job that uses it, a
     'client-id: ${{ vars.CI_APP_CLIENT_ID }}',
     'private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}',
     'owner: ${{ github.repository_owner }}',
+    'repositories: |',
     'permission-contents: read',
     'permission-issues: write'
   ]) {
     assert.match(mint, new RegExp(`^ {10}${esc(line)}$`, 'm'), line)
   }
+  // The token reaches exactly the repositories the walk lists: bare names
+  // under `owner`, the same ones RECONCILE_REPOSITORIES names as owner/name.
+  const block = (text, key) => text.match(new RegExp(`^ {10}${key}: [|>]-?\\n((?: {12}\\S+\\n?)+)`, 'm'))?.[1].split(/\s+/).filter(Boolean)
+  const scoped = block(mint, 'repositories')
+  assert.ok(scoped?.length > 0 && scoped.every((n) => !n.includes('/')), 'bare repository names')
+  assert.deepEqual(block(reconcile, 'RECONCILE_REPOSITORIES')?.map((r) => r.split('/')[1]), scoped)
   // The App key is the only secret and only the mint step reads it; the
   // token reaches only the reconcile step.
   assert.deepEqual(orgSteps.filter((s) => /secrets\./.test(s)), [mint])
   assert.deepEqual(orgSteps.filter((s) => s.includes('steps.app-token.outputs.token')), [reconcile])
   assert.match(reconcile, /^ {10}GH_TOKEN: \$\{\{ steps\.app-token\.outputs\.token \}\}$/m)
-  // Pinned by SHA with the version, and to the same App pin as this
-  // repository's own workflows, where any use one.
-  const pin = pinOf(mint, 'actions/create-github-app-token')
-  assert.ok(pin)
-  for (const f of readdirSync(join(root, '.github/workflows'))) {
-    const own = pinOf(readFileSync(join(root, '.github/workflows', f), 'utf8'), 'actions/create-github-app-token')
-    if (own) assert.equal(pin, own, f)
-  }
+  // Pinned by full SHA with the version. Not held equal to the live
+  // workflows' pins: Renovate does not update Markdown, and the copy in
+  // <org>/.github is maintained by that repository's own Renovate.
+  assert.ok(pinOf(mint, 'actions/create-github-app-token'), 'pinned by SHA with the version')
 })
 check('the organization workflow: the script source is checked out at a full commit SHA, with no secret and no persisted credentials', () => {
-  assert.equal(pinOf(source, 'actions/checkout'), pinOf(rwf, 'actions/checkout'), "the reconcile workflow's checkout pin")
+  assert.ok(pinOf(source, 'actions/checkout'), 'pinned by SHA with the version')
   assert.match(source, /^ {10}repository: <[\w-]+>\/<[\w-]+>$/m, 'a placeholder, never a fixed owner repository')
   assert.match(source, /^ {10}ref: <full-commit-sha> # <release-tag>$/m)
   assert.match(source, /^ {10}persist-credentials: false$/m)
   assert.doesNotMatch(source, /^ {10}token:|secrets\.|steps\./m)
-  assert.equal(pinOf(setupNode, 'actions/setup-node'), pinOf(rwf, 'actions/setup-node'), "the reconcile workflow's setup-node pin")
+  assert.ok(pinOf(setupNode, 'actions/setup-node'), 'pinned by SHA with the version')
 })
 check('the organization workflow: the script runs from the foreign checkout over an explicit repository list', () => {
   assert.match(reconcile, /^ {8}run: node scripts\/classification-reconcile\.mjs$/m)

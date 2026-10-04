@@ -309,7 +309,7 @@ name: Classification Reconcile (organization)
 
 on:
   schedule:
-    - cron: "37 6 * * *"
+    - cron: "17 6 * * *"
   workflow_dispatch:
 
 permissions:
@@ -326,6 +326,9 @@ jobs:
           client-id: ${{ vars.CI_APP_CLIENT_ID }}
           private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
           owner: ${{ github.repository_owner }}
+          repositories: |
+            <repository-a>
+            <repository-b>
           permission-contents: read
           permission-issues: write
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -347,8 +350,10 @@ jobs:
 ```
 
 - **The token.** The App needs Issues: write and Contents: read on every
-  listed repository, and the `permission-*` inputs limit the token to those
-  two. It is used only by the reconcile step.
+  listed repository. `repositories:` limits where the token reaches, to the
+  listed repositories (bare names under `owner`, the same ones
+  `RECONCILE_REPOSITORIES` names as `owner/name`), and the `permission-*`
+  inputs limit what it may do there. It is used only by the reconcile step.
 - **The script's source.** `<owner>/<repo>` is the repository that carries
   `scripts/classification-reconcile.mjs` and its policy reader. It is checked
   out with the run's own `GITHUB_TOKEN`, no secret and no persisted
@@ -390,6 +395,7 @@ Agent sessions that write under the maintainer's own login look human to the
 filter, which is the main event cost. Agents with a login of their own belong
 in `CLASSIFICATION_AGENT_LOGINS`. An opt-in daily organization workflow
 would add about 30 min/month per organization.
+
 ## Root-only vs template-shipped workflows
 
 Most root workflows are the rendered form of a `template/` twin and must be
