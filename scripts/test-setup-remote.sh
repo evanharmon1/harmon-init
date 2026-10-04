@@ -307,6 +307,12 @@ if [ -n "${REAL_LEFTHOOK}" ]; then
     make_fixture reallefthook -
     mkdir -p "${TMP}/real-bin"
     ln -sf "${REAL_LEFTHOOK}" "${TMP}/real-bin/lefthook"
+    # npm's lefthook is a Node entry point (#!/usr/bin/env node), unlike the
+    # Homebrew or Go binary, so the minimal PATH must still reach node. Without
+    # it this case fails wherever lefthook comes from npm, as in the
+    # sync-harmon-devkit job.
+    node_bin="$(command -v node 2>/dev/null || true)"
+    [ -n "${node_bin}" ] && ln -sf "${node_bin}" "${TMP}/real-bin/node"
     run_setup "${MIN_BIN}:${TMP}/real-bin"
     [ "$rc" -eq 0 ] || fail "real lefthook run must succeed (rc=$rc): $(all_output)"
     grep -qi 'lefthook' "${FIX}/.git/hooks/pre-push" || fail "real lefthook must install its pre-push shim"
