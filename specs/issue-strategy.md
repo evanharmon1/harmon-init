@@ -320,6 +320,9 @@ Issues become cheap to classify and route, for humans and agents alike:
 - **When** it classifies an issue it is confident about
 - **Then** it writes only labels whose manifest `writers` include `agent`, and everything else —
   including every tier/strategy/suggest proposal — appears only in the rolling report
+- **Superseded (v1 allowlist):** the axes are AI-settable, the Tier and `needs-triage` are
+  derived (ADR 2026-09-30 D3, D4 and D6), and harmon-devkit#1250 covers the skill. The scenario
+  above stays as history.
 
 ### Scenario: a form-filed bug arrives classified
 

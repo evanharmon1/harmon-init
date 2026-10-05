@@ -1715,8 +1715,20 @@ iac | full)
             err "CHECKLIST loses the Copilot broker/default-family distinction"
         grep -Fq 'and is never a guessed destination' <<<"$checklist_flat" ||
             err "CHECKLIST permits treating the Copilot broker default as migration evidence"
-        grep -Fq 'have no `--migrate` destination' <<<"$checklist_flat" ||
-            err "CHECKLIST loses the retired-label handling (suggest:* has no --migrate destination)"
+        grep -Fq '`suggest:*` (superseded by the derived Tier) and `tier:adaptive` (no rung on the Tier scale) have no `--migrate` destination' <<<"$checklist_flat" ||
+            err "CHECKLIST loses the retired-label handling (suggest:* and tier:adaptive have no --migrate destination)"
+        # The Tier-pin step renders wherever the classification labels are provisioned,
+        # and names only the writers present: the reconciler ships with
+        # project_management=github only, so this render must not mention it.
+        grep -Fq 'Pin any hand-applied Tier before the first classification write' <<<"$checklist_flat" ||
+            err "CHECKLIST omits the Tier-pin step for project_management=none + use_foreman=true"
+        ! grep -Fq 'classification reconciler' <<<"$checklist_flat" ||
+            err "CHECKLIST names the classification reconciler where no reconciler ships (project_management=none)"
+        # item 6: the glossary must not promise a reconciler either, and says who removes the label
+        ! grep -Fq 'never cleared by hand' docs/glossary.md ||
+            err "glossary says needs-triage is never cleared by hand where no reconciler ships (project_management=none)"
+        grep -Fq 'removed by the triage skill once the issue is fully classified' docs/glossary.md ||
+            err "glossary omits who removes needs-triage for project_management=none + use_foreman=true"
         grep -Fq 'For `claim:copilot`,' <<<"$checklist_flat" ||
             err "CHECKLIST loses the per-record Copilot claim handling"
         grep -Fq 'use `claim:mai` only when the record confirms' <<<"$checklist_flat" ||

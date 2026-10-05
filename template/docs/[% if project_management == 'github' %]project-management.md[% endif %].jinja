@@ -375,17 +375,19 @@ built-ins plus the claim lifecycle are the whole story.
 
 ### Classification reconciler
 
-The derived Tier (`tier:<value>`) and `needs-triage` have two automated writers
-and no others; what they derive from is under [Classification](#classification)
-below. The skills (triage, track-work, breakdown) are meant to set both in the
+After filing, the derived Tier (`tier:<value>`) and `needs-triage` have two
+automated writers and no others; what they derive from is under
+[Classification](#classification) below. The skills (triage, track-work, breakdown) are meant to set both in the
 same write that sets Risk or Complexity, but the pinned skills do not yet
 (harmon-devkit#1250, #1251 and #1252, plus a skills-pin bump), so until then
 the reconciler is what sets them. `classification-reconcile.yml` and
 `classification-event.yml` repair everything else: a scheduled walk of open
 issues (monthly on an organization repository, daily on a personal-account
 one) and a per-issue job when a human opens an issue or changes a label or the
-Type in the GitHub UI. An edit to an organization issue field waits for the
-scheduled walk. The workflows write nothing but those two labels. They never write over
+Type in the GitHub UI. An edit to an organization issue field starts no event
+run, so after classifying with fields, run `classification-reconcile.yml` by
+hand (`workflow_dispatch`), or the Agent queue view lags until the schedule.
+The workflows write nothing but those two labels. They never write over
 `tier:pinned` and never resolve a pin carrying two tier values; they report
 that case for a human. The minutes model, the event filter and the opt-in
 standalone organization workflow (the "Organization-wide walk": one file in a
@@ -401,11 +403,10 @@ policy** (`.devflow.toml`: rigor, strategy, role tiers, budgets) is the other
 layer. It decides how an issue is run and may override any default the
 classification implies ([the devflow guide](guides/devflow.md)). The
 [glossary](glossary.md#issue-classification) defines each term. The design is
-ADR 2026-09-30,
-as amended by
-ADR 2026-10-01 (Tier as a label)
-and
-ADR 2026-10-01 (Priority AI).
+harmon-init's ADR 2026-09-30,
+as amended by its ADR 2026-10-01 (Tier as a label),
+its ADR 2026-10-01 (Priority AI)
+and its ADR 2026-10-05 (filing rule and organization walk).
 This section is the working summary; the writers that keep the derived parts
 current are under [Classification reconciler](#classification-reconciler)
 above.
@@ -438,8 +439,10 @@ type:
   The labels exist on **every** repository, because the label registry
   provisions the same set everywhere, but on an organization they are
   **inert** while the field is set: the field is the source of truth, and a
-  same-axis label never overrides it. The reconciler falls back to a same-axis
-  label only when the field is unset.
+  same-axis label never overrides it. For Impact, Risk and Complexity the
+  reconciler falls back to a same-axis label only when the field is unset.
+  Priority, Priority (AI) and Effort labels on an organization are inert, and
+  nothing reads them as a fallback.
 - **Type** is the native issue Type on an organization and a work-type label
   on a personal account. The same holds: the provisioned work-type labels exist
   on every repository (`documentation` and `question` are GitHub's
@@ -509,9 +512,9 @@ Three notes come with the scales:
 An issue is **triaged** when every required classification is present: Type
 (or the work-type label), one label from each of the `area:*`, `layer:*` and
 `domain:*` families (or that family's explicit `none` value), Risk, Complexity
-and Impact. That is the glossary's `triaged` entry and
-ADR 2026-09-30
-D6.
+and Impact. That is the glossary's `triaged` entry and harmon-init's ADR
+2026-09-30 D6, as amended for the filing rule by harmon-init's ADR 2026-10-05
+D2.
 
 `needs-triage` is **derived** from that: present while any of those is
 missing, absent once all are present. Whoever files an issue that is not fully
@@ -524,7 +527,8 @@ What counts is the value the reconciler reads: an organization field
 that is set wins, and a disagreeing same-axis label is reported, not
 decisive. Any native issue Type counts as the Type. A retired or unknown label
 or field value does not count as present, and neither does an axis carrying
-two labels with no field to decide between them.
+two labels with no field to decide between them: a second `area:*`, `layer:*`
+or `domain:*` label is a conflict that keeps the issue in `needs-triage`.
 Priority is not part of the predicate: an issue is triaged without it, though
 it is not startable by an agent until a human sets one.
 
@@ -542,8 +546,10 @@ behaviour is in [the devflow guide](guides/devflow.md#issue-tier). The stored
   pin bump carries them, set Risk and Complexity by hand and leave the Tier to
   the reconciler);
 - the reconciler repairs drift, on a schedule and when a human opens an issue
-  or changes a label or the Type; an edit to an organization issue field waits
-  for the scheduled walk;
+  or changes a label or the Type; an edit to an organization issue field starts
+  no event run, so after classifying with fields run
+  `classification-reconcile.yml` by hand (`workflow_dispatch`), or the Agent
+  queue view lags until the schedule;
 - a reader recomputes the Tier from the inputs whenever the label is absent.
 
 **The pin.** A human who disagrees with the derived Tier sets the Tier label
@@ -570,15 +576,13 @@ only; the other role tiers come from the resolved rigor profile. A
 
 ### The Agent queue
 
-The Agent queue is the set of issues an agent may start: **open**,
-**triaged**, with a human **Priority** set, carrying no ownership label (`claim:*` or a legacy `agent:*` alias), not
-`human`, not `needs-review`, and not blocked. The human Priority is required:
-an issue with only a Priority (AI) is not startable, and an agent asks first.
-Priority (AI) only orders issues within a Priority rung and admits nothing
-(ADR 2026-09-30
-D7). The authoritative predicate, the order, and how the saved view
-approximates it on each owner type are the **Agent queue** entry in
-[Views](#views); this section does not restate them.
+The Agent queue is the set of issues an agent may start. It requires a human
+**Priority**: an issue with only a Priority (AI) is not startable, and an agent
+asks first. Priority (AI) only orders issues within a Priority rung and admits
+nothing (harmon-init's ADR 2026-09-30
+D7). The authoritative predicate (every other exclusion), the order, and how
+the saved view approximates it on each owner type are the **Agent queue** entry
+in [Views](#views).
 
 An agent that files an issue classifies it fully, so that it arrives triaged
 except for Priority. The rule is in [conventions.md](conventions.md#issues).
@@ -634,7 +638,8 @@ There is deliberately **no `Priority` or `Size` field** (harmon-init#1451).
 Priority is an issue field on an organization (GitHub's built-in) and a
 `priority:*` label on a personal account, with `Priority (AI)` /
 `priority-ai:*` beside it as the AI's suggestion; Size is retired in favour of
-Effort (human tasks) and Complexity (every issue), per ADR 2026-09-30.
+Effort (human tasks) and Complexity (every issue), per harmon-init's ADR
+2026-09-30.
 
 There is deliberately **no `Agent` field**. Whether an agent may take an issue
 is decided by the **Agent queue** in [Views](#views); the derived Tier
@@ -1019,16 +1024,14 @@ path itself uses `gh api --paginate` and refuses an indeterminate read.
 
 For a fixed mapping, do not use `gh label edit` or a hand-written
 create-then-delete sequence. Use `--migrate`: it accepts a live registered
-destination or creates a recognized on-demand model destination as described
-above,
-mapping: it validates the live registry destination, attempts the association
-move for each matching issue, PR, and discussion found in the paginated snapshots, then
-permits guarded `--prune` only when a fresh snapshot shows the source has zero
-associations. For
-per-record broker handling, add and
-verify the destination on each record before removing the old association;
-after all records are handled, a fresh zero-association snapshot may permit
-guarded `--prune` to attempt retiring the old label.
+destination (or creates a recognized on-demand model destination, as described
+above), validates the live registry destination, attempts the association move
+for each matching issue, PR, and discussion found in the paginated snapshots,
+and permits guarded `--prune` only when a fresh snapshot shows the source has
+zero associations. For per-record broker handling, add and verify the
+destination on each record before removing the old association; after all
+records are handled, a fresh zero-association snapshot may permit guarded
+`--prune` to attempt retiring the old label.
 
 **Copilot labels need a per-record family decision, not a default-based rename.**
 `copilot-cli` is a broker, not a model family: its picker defaults to `mai`,
@@ -1102,7 +1105,9 @@ and they are not interchangeable. The choice is made on mechanics, not taste.
 **A label** is per-repository and works on every owner type. Use one when the
 datum must be any of:
 
-- **multi-valued** — an issue can legitimately carry two at once;
+- **multi-valued** — an issue can legitimately carry two at once, for the
+  families the registry marks non-exclusive (a second `area:*`, `layer:*` or
+  `domain:*` label is a conflict that keeps the issue in `needs-triage`);
 - **visible without project scope** — readable from `gh issue list` and the
   issue page, with no Projects API token;
 - **writable with plain repo scope** — no `project` scope, no org permission;
@@ -1112,12 +1117,13 @@ datum must be any of:
 
 **An issue field** is organization-only. It holds single-valued classification
 metadata that lives on the **issue** itself: the value is the same in every
-project the issue belongs to, it does not depend on project membership, and its
-changes show in the issue's own timeline. On an organization it is where
-Impact, Risk, Complexity, Priority, Priority (AI) and Effort are stored (see
+project the issue belongs to, it does not depend on project membership, and a
+change is visible in the issue's timeline in the UI, but the API exposes no
+actor for it. On an organization it is where Impact, Risk, Complexity,
+Priority, Priority (AI) and Effort are stored (see
 [Classification](#issue-fields-on-an-organization-labels-on-a-personal-account)).
-It is never an arming signal: GitHub exposes no actor for an issue-field change
-that a consumer could verify, so nothing is armed or gated from one.
+It is never an arming signal: with no actor a consumer could verify, nothing is
+armed or gated from one.
 
 **A project field** lives on the board item, in one project, and is for
 **views only**: it is how a board is grouped, sorted and filtered. It needs the
@@ -1164,7 +1170,7 @@ deliberately leaves it alone.
 | `customer-request`, `ai-generated` | whoever files or authors the work, human or agent | humans, saved views | provisioned; inert | durable provenance — never removed |
 | `epic`, `umbrella` | humans, at planning or grooming; agents when filing a (HUMAN)/(QA) collector or an approved breakdown | humans, saved views | provisioned; inert | applied to a parent while its role is current; removed or changed when its horizon changes |
 | `human` | whoever files or triages the issue, human or agent; only a human removes it | humans, saved views; agents, to skip dispatch | provisioned; inert | applied while completion is primarily a human's; removed once the issue's remaining completion is no longer primarily a human's |
-| `needs-triage` | humans, the issue forms, the triage skill, and the GitHub Actions classification reconciler (derived: added while classification is incomplete, removed once it is complete) | humans, the Triage view | provisioned; inert | added freely at filing; removed only when classification is complete |
+| `needs-triage` | people, agents and the issue forms add it at filing; after that the triage skill and the GitHub Actions classification reconciler maintain it (derived: added while classification is incomplete, removed once it is complete) | humans, the Triage view | provisioned; inert | a new issue that is not fully classified starts with it (people, agents and the issue forms add it at filing); after that it is derived and never cleared by hand |
 | `needs-requirements`, `blocked`, `waiting`, `needs-decision`, `needs-response`, `needs-communication` | humans, at triage | humans, the Triage view | provisioned; inert | transient — removed as soon as the state clears |
 | `needs-review` | the integration stage, at ready-for-review; humans | humans, the review list; the agent queue, which excludes it | provisioned; inert | added at ready-for-review, when `claim:*` is removed; removed if review pulls the work back into fix rounds |
 | `bug`, `feature`, `task`, `research` | the issue forms on personal-account repos; humans or agents at triage | humans, saved views | provisioned; inert | durable classification — org repos use native issue Type and no work-type label |
@@ -1764,14 +1770,14 @@ view**). Keep the saved set small; **slice the one board** (below) for the rest.
 - **Agent queue** — the issues an agent may start. The **predicate** is
   authoritative: **open**, **triaged** (no `needs-triage`), no ownership label (**`claim:*`** or a legacy **`agent:*`** alias), not
   **`human`**, not **`needs-review`**, not blocked, and **`Priority` set** — an
-  issue with only a `Priority (AI)` is not startable, an agent asks first (ADR
-  2026-09-30 D7). `Status` plays no part in it. **Not blocked** means neither an
+  issue with only a `Priority (AI)` is not startable, an agent asks first
+  (harmon-init's ADR 2026-09-30 D7). `Status` plays no part in it. **Not blocked** means neither an
   open blocked-by relationship nor the `blocked` label. **Order** is by
   `Priority`, highest rung first (`urgent`, `high`, `medium`, `low`), then by
   `Priority (AI)` (`p0` to `p4`) within a rung. **The human `Priority` overrides
   `Priority (AI)`**: an issue's effective priority is `Priority` when set, else
-  `Priority (AI)`, and the override never clears the AI value (ADR 2026-10-01
-  D2). In the queue `Priority` is always set, so `Priority (AI)` only breaks ties
+  `Priority (AI)`, and the override never clears the AI value
+  (harmon-init's ADR 2026-10-01 D2). In the queue `Priority` is always set, so `Priority (AI)` only breaks ties
   within a `Priority` rung; it admits nothing, and the view shows it. A saved
   view only approximates the predicate. It filters on `is:issue` and `is:open`
   (auto-add puts pull requests on the board too). Projects label filters match
