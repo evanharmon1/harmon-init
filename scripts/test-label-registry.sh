@@ -337,6 +337,20 @@ check_classification_registry() {
         fail "$manifest workflow:needs-review is missing or does not match the maintainer decision (human+agent writers, lifecycle note, queue-exclusion description)"
     [ "$(jq -r '.families[] | select(.family == "workflow") | .lifecycle' "$manifest")" = transient ] ||
         fail "$manifest workflow family must stay transient (needs-review is added at ready-for-review and removed on pull-back)"
+
+    # human-work:human — human and agent writers, primarily a human's completion
+    [ "$(jq -r '.families[] | select(.family == "human-work") | .purpose' "$manifest")" = "Work whose completion is primarily a human's, kept off the agent dispatch path." ] ||
+        fail "$manifest human-work purpose does not match maintainer definition"
+    [ "$(jq -r '.families[] | select(.family == "human-work") | .lifecycle_note' "$manifest")" = "applied while completion is primarily a human's; removed once the issue's remaining completion is no longer primarily a human's" ] ||
+        fail "$manifest human-work lifecycle_note does not match maintainer definition"
+    [ "$(jq -r '.families[] | select(.family == "human-work") | .writer_note' "$manifest")" = "whoever files or triages the issue, human or agent; only a human removes it" ] ||
+        fail "$manifest human-work writer_note does not match maintainer definition"
+    [ "$(jq -r '.families[] | select(.family == "human-work") | .values[] | select(.value == "human") | .description' "$manifest")" = "Work whose completion is primarily a human's; never dispatched to an agent" ] ||
+        fail "$manifest human-work:human description does not match maintainer definition"
+    [ "$(jq -c '.families[] | select(.family == "human-work") | .writers' "$manifest")" = '["human","agent"]' ] ||
+        fail "$manifest human-work writers must be human and agent"
+    [ "$(jq -r '.families[] | select(.family == "human-work") | .lifecycle' "$manifest")" = durable ] ||
+        fail "$manifest human-work family must stay durable"
 }
 if [ "$template_mode" = 1 ]; then
     check_classification_registry label-registry.json
@@ -395,7 +409,7 @@ customer-request|EC4899|Requested by a customer
 ai-generated|EC4899|Created or authored by an AI agent
 epic|8250DF|Time-bound parent initiative with a defined future deliverable
 umbrella|8250DF|Open-ended parent for an enduring area, topic, or team, or a (HUMAN)/(QA) collector
-human|FBCA04|Human-only work: actions or QA; never dispatched to an agent
+human|FBCA04|Work whose completion is primarily a human's; never dispatched to an agent
 needs-triage|E36209|Awaiting triage
 needs-requirements|E36209|Requirements not yet defined
 blocked|E36209|Blocked by a non-issue dependency (reason in a comment)
