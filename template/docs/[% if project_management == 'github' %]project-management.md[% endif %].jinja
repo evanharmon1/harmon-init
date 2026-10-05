@@ -377,12 +377,15 @@ built-ins plus the claim lifecycle are the whole story.
 
 The derived Tier (`tier:<value>`) and `needs-triage` have two automated writers
 and no others; what they derive from is under [Classification](#classification)
-below. The skills (triage, track-work, breakdown) set both in the same
-write that sets Risk or Complexity. `classification-reconcile.yml` and
+below. The skills (triage, track-work, breakdown) are meant to set both in the
+same write that sets Risk or Complexity, but the pinned skills do not yet
+(harmon-devkit#1250, #1251 and #1252, plus a skills-pin bump), so until then
+the reconciler is what sets them. `classification-reconcile.yml` and
 `classification-event.yml` repair everything else: a scheduled walk of open
 issues (monthly on an organization repository, daily on a personal-account
-one) and a per-issue job when a human changes an input in the GitHub UI. The
-workflows write nothing but those two labels. They never write over
+one) and a per-issue job when a human opens an issue or changes a label or the
+Type in the GitHub UI. An edit to an organization issue field waits for the
+scheduled walk. The workflows write nothing but those two labels. They never write over
 `tier:pinned` and never resolve a pin carrying two tier values; they report
 that case for a human. The minutes model, the event filter and the opt-in
 standalone organization workflow (the "Organization-wide walk": one file in a
@@ -434,11 +437,13 @@ type:
   `priority:*`, `priority-ai:*` and `effort:*` labels on a personal account.
   The labels exist on **every** repository, because the label registry
   provisions the same set everywhere, but on an organization they are
-  **inert**: the field is the source of truth, and a same-axis label never
-  overrides it.
+  **inert** while the field is set: the field is the source of truth, and a
+  same-axis label never overrides it. The reconciler falls back to a same-axis
+  label only when the field is unset.
 - **Type** is the native issue Type on an organization and a work-type label
   on a personal account. The same holds: the work-type labels exist on every
-  repository, and an organization never applies one.
+  repository, an organization never applies one, and the reconciler counts a
+  single work-type label as the Type only when no native Type is set.
 - **The Tier is a label on both owner types**, `tier:<value>`, and there is no
   `Tier` issue field. It is the one axis whose storage does not follow the
   owner type, so a reader, the reconciler and a writer all treat it the same
@@ -507,13 +512,18 @@ ADR 2026-09-30
 D6.
 
 `needs-triage` is **derived** from that: present while any of those is
-missing, absent once all are present. Nobody sets or clears it by hand. The
-skills (triage, track-work, breakdown) write it in the same call that writes
-Risk or Complexity, and the reconciler repairs the rest (see
-[Classification reconciler](#classification-reconciler)). An axis carrying two
-values, or a retired or unknown one, does not count as present. Priority is
-not part of the predicate: an issue is triaged without it, though it is not
-startable by an agent until a human sets one.
+missing, absent once all are present. Nobody sets or clears it by hand. A new
+issue starts untriaged, so the issue forms adding it at filing agrees with the
+derivation; after that the reconciler maintains it (see
+[Classification reconciler](#classification-reconciler)), and so do the skills
+(triage, track-work, breakdown) in the same call that writes Risk or
+Complexity, once a skills-pin bump carries harmon-devkit#1250, #1251 and #1252.
+What counts is the value the reconciler reads: an organization field
+that is set wins, and a disagreeing same-axis label is reported, not
+decisive. A retired or unknown value does not count as present, and neither
+does an axis carrying two labels with no field to decide between them.
+Priority is not part of the predicate: an issue is triaged without it, though
+it is not startable by an agent until a human sets one.
 
 ### The Tier: derivation and pin
 
@@ -524,8 +534,13 @@ behaviour is in [the devflow guide](guides/devflow.md#issue-tier). The stored
 `tier:<value>` label is a **materialized cache**:
 
 - whoever writes Risk or Complexity writes the Tier in the same call, so an
-  agent's write never waits on GitHub Actions;
-- the reconciler repairs drift, on a schedule and when a human edits an input;
+  agent's write never waits on GitHub Actions (the skills that do this are
+  harmon-devkit#1250, #1251 and #1252, not yet in the pinned skills: until a
+  pin bump carries them, set Risk and Complexity by hand and leave the Tier to
+  the reconciler);
+- the reconciler repairs drift, on a schedule and when a human opens an issue
+  or changes a label or the Type; an edit to an organization issue field waits
+  for the scheduled walk;
 - a reader recomputes the Tier from the inputs whenever the label is absent.
 
 **The pin.** A human who disagrees with the derived Tier sets the Tier label
@@ -535,6 +550,13 @@ different tier replaces the existing Tier label first. A pin is a label input
 like any other, so the provenance rule applies: an interactive session
 confirms a pin the operator has not authorized, and unattended automation
 honors one only after verifying who applied it.
+
+**Pin first on an existing repository.** An unqualified `tier:<value>` label
+used to be a human's implementer override; it is now the cache automation
+rewrites. On an unpinned issue with Risk and Complexity set, the reconciler
+(and any writer of those axes) adds the derived Tier and removes every other
+tier label. Before that first write, add `tier:pinned` to each open issue
+whose hand-set tier label you want to keep.
 
 In execution-policy resolution the order is: an operator instruction, then the
 pinned Tier, then `rigor:*` and `tier:<role>:*`, then the derived Tier, then
@@ -567,24 +589,30 @@ says where the operator steps are.
   superseded by the derived Tier. It is **retired, not removed from the agent
   registry**: `agent-registry.json` keeps its `suggest` namespace until
   harmon-init#1473, and nothing
-  provisions or renders it. To migrate, remove the label from each issue (it
-  then resolves through its derived Tier), then use guarded `--prune`. There is
+  provisions or renders it. To migrate, remove the label from every issue, pull request and
+  discussion that carries it (an issue then resolves through its derived
+  Tier), then use guarded `--prune`. There is
   no `--migrate` destination, and the script refuses one. See
   [Migrating retired and renamed labels](#migrating-retired-and-renamed-labels).
 - **The `Size` project field** is superseded by Effort (human tasks) and
-  Complexity (every issue). Its values have no destination.
+  Complexity (every issue). Its values have no destination, and deleting the
+  field destroys every value on it, unrecoverably: record any you need first.
 - **The personal-project `Priority` field** is replaced by the `priority:*`
   labels. On an organization `Priority` was always GitHub's built-in issue
   field, and it stays.
 - **The `Agent` issue field** is gone: which agent should take an issue is its
   derived Tier, and which agent is working it is the claim label.
-- **`tier:adaptive`** has no rung on the Tier scale. Remove the label from each
-  issue, and it then resolves through its derived Tier.
+- **`tier:adaptive`** has no rung on the Tier scale. Remove the label from every
+  issue, pull request and discussion that carries it, and an issue then
+  resolves through its derived Tier.
 - **A hand-set `needs-triage` or Tier.** Both are derived now. A human who
-  wants a different Tier pins it.
+  wants a different Tier pins it, and an existing repository pins any
+  hand-set Tier it wants to keep before the reconciler's first write (see
+  [The Tier](#the-tier-derivation-and-pin)).
 
-The steps for the three field retirements, and the order they must run in, are
-under **Migrating a board that still has one** in [Fields](#fields).
+The steps for these field retirements (the Agent entry, and the Priority /
+Size entry), and the order they must run in, are under **Migrating a board
+that still has one** in [Fields](#fields).
 
 ## Fields
 
@@ -1085,10 +1113,10 @@ that a consumer could verify, so nothing is armed or gated from one.
 
 **A project field** lives on the board item, in one project, and is for
 **views only**: it is how a board is grouped, sorted and filtered. It needs the
-Projects scope to read or write, its changes record no actor, and it is
-invisible to anyone without that scope. `Status` is the project field, and
-`Product` is one on a personal account (on an organization it is an issue
-field). Nothing is classified in a project field.
+Projects scope for API reads and writes, and its changes are not a
+`labeled`-style timeline event that an actor check can read. `Status` is the
+project field, and `Product` is one on a personal account (on an organization
+it is an issue field). Nothing is classified in a project field.
 
 In practice, a **label** is the default; an **issue field** is for an axis that
 is single-valued, on an organization, and that every project should agree on; a
@@ -1413,9 +1441,9 @@ is minted, the run acquires `claim:claude` on the target:
 | The label list cannot be read | **refuses** — it cannot prove the target is free |
 | The label will not apply | **refuses** — it would work the target unmarked |
 
-Only claim labels count: the Tier (`tier:*`) and the other classification labels
-are advice about who *should* do the work, never ownership of it, so they are
-deliberately not matched. The `claim:claude` label is created if the repository
+Only ownership labels count (`claim:*` and the legacy `agent:*`): the Tier
+(`tier:*`) and the other classification labels are advice about who *should* do
+the work, never ownership of it, so they are deliberately not matched. The `claim:claude` label is created if the repository
 does not have it, with the registry's own color and description, so a later
 `task setup:github-labels` reconciles that label instead of fighting it.
 

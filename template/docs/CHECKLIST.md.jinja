@@ -399,6 +399,17 @@ the compatibility reason in the rule's `description`.
       added families. A RENAMED family (like `method:*` → `strategy:*` above)
       is not a pure addition — provision the new destinations first, then
       migrate the old associations before retiring their labels.
+[% if project_management == 'github' %]
+- [ ] **[human-only] Pin any hand-applied Tier before the first classification
+      write** — on an existing repository an unqualified `tier:<value>` label
+      used to be a human's implementer override; it is now the cache the
+      reconciler rewrites. On an unpinned issue with Risk and Complexity set it
+      adds the derived Tier and removes every other tier label (daily on a
+      personal-account repository, monthly on an organization one, and in the
+      same write by any writer of Risk or Complexity). Before that first write,
+      add `tier:pinned` to each open issue whose hand-set tier label you want to
+      keep.
+[% endif %]
 - [ ] **[human-only] Inspect live label drift before retiring anything** — keep
       the default setup path additive, then run
       `./scripts/setup-github-labels.sh --repo <owner/repo> --report-unregistered`

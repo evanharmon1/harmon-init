@@ -233,6 +233,9 @@ Issues become cheap to classify and route, for humans and agents alike:
       issue keeps the label and appears in the report; never
       `foreman:*`/`rigor:*`/`tier:*`/`strategy:*`/`claim:*`, the retired `suggest:*`, milestones, closes,
       assignees, or body/title edits; everything else lands in one rolling report issue.
+      **Superseded (v1 allowlist):** by ADR 2026-09-30 D3, D4 and D6 (the axes are
+      AI-settable, the Tier is derived, `needs-triage` is derived) and, for the skill
+      itself, harmon-devkit#1250.
 - [ ] Foreman alignment: pin bump to 2.5.0 (#849), AdmiralFraggle in `trusted_actors` (#850),
       claim contract at dispatch proposed upstream (foreman#169, engaging foreman#82), tier
       vocabulary contributed to foreman#139. Foreman consumption of `tier:*`/`strategy:*` follows
