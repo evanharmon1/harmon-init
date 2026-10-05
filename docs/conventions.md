@@ -250,6 +250,24 @@ leaving the whole group blocked.
   `docs/guides/` (build it) · `docs/runbooks/` (operate it). Folder landing
   pages within `docs/` are `index.md`.
 
+## Issues
+
+- **Agent-authored issues arrive fully classified, except Priority.** An agent
+  that files an issue sets Impact, Risk and Complexity, the Type (or work-type
+  label), and one `area:*`, `layer:*` and `domain:*` label (or that family's
+  `none`) in the same write that creates it, plus the Tier derived from Risk
+  and Complexity, so the issue is **triaged** from the start. It never sets
+  Priority: that is the human's ranking, and an issue without one is not
+  startable by an agent. Priority (AI) is a separate, optional suggestion an
+  agent may add.
+- **`needs-triage` is derived, never set by hand.** It is present while any
+  required classification is missing and absent once all are present. The
+  skills and the classification reconciler maintain it, so do not add or
+  remove it yourself, and do not hand-edit a derived Tier either: a human who
+  disagrees with it pins one with `tier:pinned`. The axes, the triaged
+  predicate and the Tier derivation are in
+  [project-management.md](project-management.md#classification).
+
 ## Template authoring
 
 Root-only — these rules govern files under `template/`, which no generated repo

@@ -376,7 +376,8 @@ built-ins plus the claim lifecycle are the whole story.
 ### Classification reconciler
 
 The derived Tier (`tier:<value>`) and `needs-triage` have two automated writers
-and no others. The skills (triage, track-work, breakdown) set both in the same
+and no others; what they derive from is under [Classification](#classification)
+below. The skills (triage, track-work, breakdown) set both in the same
 write that sets Risk or Complexity. `classification-reconcile.yml` and
 `classification-event.yml` repair everything else: a scheduled walk of open
 issues (monthly on an organization repository, daily on a personal-account
@@ -384,8 +385,206 @@ one) and a per-issue job when a human changes an input in the GitHub UI. The
 workflows write nothing but those two labels. They never write over
 `tier:pinned` and never resolve a pin carrying two tier values; they report
 that case for a human. The minutes model, the event filter and the opt-in
-organization caller are in
+standalone organization workflow (the "Organization-wide walk": one file in a
+private repository of the organization, not a call into a reusable workflow)
+are in
 [the CI/CD architecture](architecture/ci-cd.md#issue-classification-reconciler).
+
+## Classification
+
+Every issue carries a few **inherent attributes**: what it *is*, as opposed to
+how the factory runs it. That is its **classification**. The **execution
+policy** (`.devflow.toml`: rigor, strategy, role tiers, budgets) is the other
+layer. It decides how an issue is run and may override any default the
+classification implies ([the devflow guide](guides/devflow.md)). The
+[glossary](glossary.md#issue-classification) defines each term. The design is
+ADR 2026-09-30,
+as amended by
+ADR 2026-10-01 (Tier as a label)
+and
+ADR 2026-10-01 (Priority AI).
+This section is the working summary; the writers that keep the derived parts
+current are under [Classification reconciler](#classification-reconciler)
+above.
+
+### The axes
+
+| Axis | Scale | Set by | Required for triaged | Organization | Personal account |
+|---|---|---|---|---|---|
+| **Impact** | minimal, low, medium, high, massive | AI or human | yes | issue field | `impact:*` label |
+| **Risk** | trivial, low, medium, high, critical | AI or human | yes | issue field | `risk:*` label |
+| **Complexity** | xs, s, m, l, xl | AI or human | yes | issue field | `complexity:*` label |
+| **Tier** | local, economy, standard, frontier, apex | derived from Risk × Complexity; a human may pin it | no — a cache | `tier:*` label | `tier:*` label |
+| **Priority** | urgent, high, medium, low | human only | no, but the Agent queue requires it | issue field (GitHub's built-in) | `priority:*` label |
+| **Priority (AI)** | p0, p1, p2, p3, p4 | agent or human, as a suggestion | no | issue field | `priority-ai:*` label |
+| **Effort** | 1, 2, 3, 5, 8, 13, 20 | human only, and only on a human task | no | issue field | `effort:*` label |
+| **Type** | bug, feature, task, research (a personal account also has `documentation` and `question`) | AI or human | yes | native issue Type | work-type label |
+| **Area**, **Layer**, **Domain** | the values of `area:*`, `layer:*` and `domain:*`, each family with a `none` value | AI or human | yes: one from each family, or that family's `none` | labels | labels |
+
+Start date and Target date are organization issue fields a human sets; nothing
+here requires them.
+
+### Issue fields on an organization, labels on a personal account
+
+A personal account has no issue fields, so the same axes are stored by owner
+type:
+
+- **Impact, Risk, Complexity, Priority, Priority (AI) and Effort** are issue
+  fields on an organization and `impact:*`, `risk:*`, `complexity:*`,
+  `priority:*`, `priority-ai:*` and `effort:*` labels on a personal account.
+  The labels exist on **every** repository, because the label registry
+  provisions the same set everywhere, but on an organization they are
+  **inert**: the field is the source of truth, and a same-axis label never
+  overrides it.
+- **Type** is the native issue Type on an organization and a work-type label
+  on a personal account. The same holds: the work-type labels exist on every
+  repository, and an organization never applies one.
+- **The Tier is a label on both owner types**, `tier:<value>`, and there is no
+  `Tier` issue field. It is the one axis whose storage does not follow the
+  owner type, so a reader, the reconciler and a writer all treat it the same
+  way everywhere.
+- **`area:*`, `layer:*` and `domain:*`** are labels on both. Each family has a
+  `none` value that records "this axis does not apply".
+
+Which surface suits a datum is the question [Label or field?](#label-or-field)
+answers.
+
+### The rubric, in short
+
+The short form below is copied from the descriptions in
+[`label-registry.json`](../label-registry.json), which is authoritative. The
+long form of the rubric lives in harmon-devkit's `triage` skill. Do not invent
+a reading that is not in one of them.
+
+| Axis | Value | Short form |
+|---|---|---|
+| **Impact** | `minimal` | marginal benefit; most users would not notice it |
+| | `low` | small benefit to a few users or a narrow use case |
+| | `medium` | clear benefit to a meaningful share of users or goals |
+| | `high` | core benefit, or severe harm prevented even if rarely triggered |
+| | `massive` | transformative; current goals depend on it |
+| **Risk** | `trivial` | a mistake is harmless and trivially reversible |
+| | `low` | a mistake is contained, caught quickly, and cheap to undo |
+| | `medium` | a mistake breaks a feature or needs a careful rollback |
+| | `high` | a mistake reaches many users or their data; recovery is costly |
+| | `critical` | a mistake risks data loss, security exposure, or an irreversible outage |
+| **Complexity** | `xs` | a tiny, well-understood change with obvious verification |
+| | `s` | small and local; a clear approach across a few files |
+| | `m` | moderate; several components and some design choices |
+| | `l` | large; cross-cutting, with real design and wide verification |
+| | `xl` | very large or uncertain; likely to grow or need splitting |
+| **Tier** | `local` | work a small self-hosted model can do, possibly slowly |
+| | `economy` | cheapest qualified hosted model first; escalation allowed |
+| | `standard` | reliable general-purpose coding model first |
+| | `frontier` | opus-class heavyweights; no warm-up on weaker models |
+| | `apex` | mythos-class leading edge (fable, sol) |
+| **Priority** | `urgent` | work on this now, ahead of everything else |
+| | `high` | next up; schedule soon |
+| | `medium` | normal queue order |
+| | `low` | when nothing more pressing remains |
+| **Priority (AI)** | `p0` | blocks a merge or deploy — critical |
+| | `p1` | a real defect or must-do; next |
+| | `p2` | worth doing, not blocking |
+| | `p3` | cosmetic or informational |
+| | `p4` | negligible |
+
+Three notes come with the scales:
+
+- **Impact is core versus marginal benefit**, not common versus uncommon path:
+  a rarely triggered bug with severe consequences can be high impact.
+- **For a bug fix, the harm it prevents belongs in Impact** and the danger of
+  the fix belongs in Risk.
+- **Complexity is on every issue and is never a time estimate.** The human
+  time estimate is Effort, and only for a human task.
+
+### Triaged, and the derived `needs-triage`
+
+An issue is **triaged** when every required classification is present: Type
+(or the work-type label), one label from each of the `area:*`, `layer:*` and
+`domain:*` families (or that family's explicit `none` value), Risk, Complexity
+and Impact. That is the glossary's `triaged` entry and
+ADR 2026-09-30
+D6.
+
+`needs-triage` is **derived** from that: present while any of those is
+missing, absent once all are present. Nobody sets or clears it by hand. The
+skills (triage, track-work, breakdown) write it in the same call that writes
+Risk or Complexity, and the reconciler repairs the rest (see
+[Classification reconciler](#classification-reconciler)). An axis carrying two
+values, or a retired or unknown one, does not count as present. Priority is
+not part of the predicate: an issue is triaged without it, though it is not
+startable by an agent until a human sets one.
+
+### The Tier: derivation and pin
+
+The Tier is the model stratum an issue is suggested to run at. It is a **pure
+function of Risk × Complexity**, a risk-dominant matrix in `.devflow.toml`
+(`[tier.matrix]`), implemented once in `devflow-policy.mjs`. The reader's
+behaviour is in [the devflow guide](guides/devflow.md#issue-tier). The stored
+`tier:<value>` label is a **materialized cache**:
+
+- whoever writes Risk or Complexity writes the Tier in the same call, so an
+  agent's write never waits on GitHub Actions;
+- the reconciler repairs drift, on a schedule and when a human edits an input;
+- a reader recomputes the Tier from the inputs whenever the label is absent.
+
+**The pin.** A human who disagrees with the derived Tier sets the Tier label
+from the GitHub UI and adds `tier:pinned`. Nothing automated writes over a
+pinned Tier. An issue carries at most one tier value, so a human pinning a
+different tier replaces the existing Tier label first. A pin is a label input
+like any other, so the provenance rule applies: an interactive session
+confirms a pin the operator has not authorized, and unattended automation
+honors one only after verifying who applied it.
+
+In execution-policy resolution the order is: an operator instruction, then the
+pinned Tier, then `rigor:*` and `tier:<role>:*`, then the derived Tier, then
+`default_rigor`. The pinned and the derived Tier set the **implementer** tier
+only; the other role tiers come from the resolved rigor profile. A
+`tier:<role>:*` label is a role override, not the issue's Tier (see
+[Labels](#labels)).
+
+### The Agent queue
+
+The Agent queue is the set of issues an agent may start: **open**,
+**triaged**, with a human **Priority** set, carrying no `claim:*` label, not
+`human`, not `needs-review`, and not blocked. The human Priority is required:
+an issue with only a Priority (AI) is not startable, and an agent asks first.
+Priority (AI) only orders issues within a Priority rung and admits nothing
+(ADR 2026-09-30
+D7). The authoritative predicate, the order, and how the saved view
+approximates it on each owner type are the **Agent queue** entry in
+[Views](#views); this section does not restate them.
+
+An agent that files an issue classifies it fully, so that it arrives triaged
+except for Priority. The rule is in [conventions.md](conventions.md#issues).
+
+### Migration: what the classification retired
+
+Everything below is retired, and none of it is a live vocabulary. Each entry
+says where the operator steps are.
+
+- **The `suggest:*` family**, including `suggest:<family>:<model>`, is
+  superseded by the derived Tier. It is **retired, not removed from the agent
+  registry**: `agent-registry.json` keeps its `suggest` namespace until
+  harmon-init#1473, and nothing
+  provisions or renders it. To migrate, remove the label from each issue (it
+  then resolves through its derived Tier), then use guarded `--prune`. There is
+  no `--migrate` destination, and the script refuses one. See
+  [Migrating retired and renamed labels](#migrating-retired-and-renamed-labels).
+- **The `Size` project field** is superseded by Effort (human tasks) and
+  Complexity (every issue). Its values have no destination.
+- **The personal-project `Priority` field** is replaced by the `priority:*`
+  labels. On an organization `Priority` was always GitHub's built-in issue
+  field, and it stays.
+- **The `Agent` issue field** is gone: which agent should take an issue is its
+  derived Tier, and which agent is working it is the claim label.
+- **`tier:adaptive`** has no rung on the Tier scale. Remove the label from each
+  issue, and it then resolves through its derived Tier.
+- **A hand-set `needs-triage` or Tier.** Both are derived now. A human who
+  wants a different Tier pins it.
+
+The steps for the three field retirements, and the order they must run in, are
+under **Migrating a board that still has one** in [Fields](#fields).
 
 ## Fields
 
@@ -619,9 +818,10 @@ the taxonomy table below is generated from) and the starter set is created by
   Agent queue. When that part cannot start before the human step, give it a
   native blocked-by link to a standalone `human` issue for that step, never to
   a collector, which can stay open by design (see **A precondition is a
-  dependency, not a follow-up** below), so it is not startable until that issue
-  closes. `human` + `umbrella` marks a `(HUMAN):`/`(QA):` collector (see
-  **Human-task and QA collectors** below) as the special case
+  dependency, not a follow-up** below). The agent issue is then not startable
+  until that standalone issue closes. `human` + `umbrella` marks a
+  `(HUMAN):`/`(QA):` collector (see **Human-task and QA collectors** below) as
+  the special case
 - **Workflow** — transient triage states; `blocked` is the non-issue-blocker
   flag described above
 - **Layer** — which stack slice the change lives in
@@ -672,20 +872,19 @@ The prose above describes what each family *means*; the actual values — names,
 colors, writers, lifecycle — live in `label-registry.json` and appear in the
 generated taxonomy table below, so vocabulary is never restated here.
 
-Two more families name **model intelligence** rather than a facet of the work,
-and their vocabulary is not hand-listed anywhere: it is rendered from
+One more family names **model intelligence** rather than a facet of the work,
+and its vocabulary is not hand-listed anywhere: it is rendered from
 `agent-registry.json` (see [Agent families and harnesses](#agent-families-and-harnesses)),
 so provisioning and documentation cannot fork from each other.
 
-- **Suggest** — `suggest:<family>` — which agent family
-  *should* implement the issue, set at triage. Advisory only: it routes
-  nothing by itself[% if use_foreman %] and must never be read as Foreman arming (that is the
-  `foreman:*` family)[% endif %]. A model-level label (`suggest:<family>:<model>`, created on
-  demand) **refines** the family label, never replaces it — apply both, so
-  views filtered on the family labels keep seeing the issue
 - **Claim** — `claim:<family>` — which agent family is working
   the issue *right now*, written by the agent itself (see **Claiming** below).
   Model-level (`claim:<family>:<model>`) refines it the same way
+
+Which model stratum an issue *should* run at is not a label family of its own
+any more: it is the derived [Tier](#the-tier-derivation-and-pin) (`tier:*`,
+above). The retired family-suggestion labels are covered under
+[Migration](#migration-what-the-classification-retired).
 
 > **Transition — the retired `agent:*` family.** Repos seeded before the
 > registry-driven vocabulary carry `agent:claude-code`-style labels instead of
@@ -704,10 +903,10 @@ in step with, so extend the label lists alone as the product grows. `domain:`
 vocabulary whose starter values are a floor; `layer:` is product-independent
 and normally needs no edits.
 
-The `claim:` and `suggest:` families share a vocabulary and *nothing else*.
-`suggest:` is the planned implementer, `claim:` is the active one — see
-**Claiming** below. Never treat one as a copy of the other: rewriting the
-suggestion to match the claim overwrites a planning decision.
+A `claim:` label and the Tier answer different questions. `claim:` is the
+family working the issue now; the Tier is the stratum the issue should run at.
+Never treat one as a copy of the other: a claim never rewrites the Tier, and
+the Tier never implies a claim — see **Claiming** below.
 
 GitHub labels live per-repository (there's no shared org label pool).
 `setup-github-labels` seeds the set into one repo — run it in each, or set the
@@ -747,24 +946,36 @@ verification drifts, treat the operation as incomplete, reconcile live
 associations, and rerun in a new quiet window; a successful exit alone is not a
 claim of association preservation.
 
+### Migrating retired and renamed labels
+
+Retiring a label is a guarded migration, never a direct `gh label delete`. The
+mechanics are the ones above; what differs per label is its destination.
+
+**A retired label with no one-to-one replacement has no destination.**
+`suggest:*` (including `suggest:<family>:<model>`, superseded by the derived
+Tier) and `tier:adaptive` (no rung on the Tier scale) are refused as `--migrate`
+sources, because a migration would stamp an unrelated label on every associated
+record. Remove the label from every issue, pull request and discussion that
+carries it (an issue then resolves through its derived Tier), then rerun
+`--prune`, which offers the now-unassociated label for deletion.
+
 **Fixed legacy mappings are authoritative.** Use the association-migration path
 for these fixed sources: `agent:claude-code` → `claim:claude`,
 `agent:codex` → `claim:gpt`, `agent:gemini-cli` → `claim:gemini`, `agent:kimi-k2` → `claim:kimi`,
-`agent:qwen-code` → `claim:qwen`, `suggest:codex` → `suggest:gpt`, and
-`claim:codex` → `claim:gpt`. Pass one repeatable `--migrate OLD=NEW` per exact
+`agent:qwen-code` → `claim:qwen`, and `claim:codex` → `claim:gpt`. Pass one
+repeatable `--migrate OLD=NEW` per exact
 live source; `--migrate` does not match prefixes. The `OLD=NEW` form contains
 exactly one `=`; labels containing `=` must be relabeled per record instead of
 passed to bulk migration. For a model-level fixed
 source, move only the family segment and preserve the recorded suffix, for
-example `suggest:codex:sol` → `suggest:gpt:sol` and
-`claim:codex:sol` → `claim:gpt:sol`. Model-level labels refine rather than
+example `claim:codex:sol` → `claim:gpt:sol`. Model-level labels refine rather than
 replace their family-level label, so the guarded command retains or adds both
 associations. When a recognized model-level destination is absent, the guarded
 command creates it only after confirmation by copying the live family label's
 color and description; if that family label is absent, setup must run first and
 maintenance stops. Enumerate model-level names explicitly with
 `gh label list --repo <owner/repo> --limit 1000 --json name --jq '.[].name' |
-grep -E '^(suggest|claim):(codex|copilot):'`; for each source, inspect all-state
+grep -E '^claim:(codex|copilot):'`; for each source, inspect all-state
 `gh issue list --label <old> --state all --limit 1000` and
 `gh pr list --label <old> --state all --limit 1000`. An exactly-full manual
 result is capped; increase the limit and rerun before writes. The maintenance
@@ -786,16 +997,13 @@ guarded `--prune` to attempt retiring the old label.
 **Copilot labels need a per-record family decision, not a default-based rename.**
 `copilot-cli` is a broker, not a model family: its picker defaults to `mai`,
 but MAI is only that default and never evidence for a migration. Do not pass
-`agent:github-copilot*`, `suggest:copilot*`, or `claim:copilot*` to bulk
+`agent:github-copilot*` or `claim:copilot*` to bulk
 `--migrate`; the command rejects broker-derived sources because one destination
-cannot represent mixed runtime records. `suggest:copilot` has no claim/session
-record: re-express each issue/PR's planning intent as
-`suggest:<actual-family>` or drop the old association, never mechanically
-rename it to `suggest:mai`. `claim:copilot` is different: inspect each
+cannot represent mixed runtime records. For `claim:copilot`, inspect each
 issue/PR's claim/session record and handle that record individually as
 `claim:<actual-family>`; use `claim:mai` only when the record confirms MAI.
 Apply the same distinction to model-level
-`suggest:copilot:<model>`/`claim:copilot:<model>` labels and preserve a model
+`claim:copilot:<model>` labels and preserve a model
 suffix only after the actual family is known. Include Discussions in the
 per-record inventory: the read-only report gives their association count, and
 the Discussions UI or GraphQL API identifies the records to relabel. If a live
@@ -852,29 +1060,54 @@ then map and retire them with guarded `--migrate`/`--prune` maintenance.
 
 ### Label or field?
 
-Both surfaces can hold the same-looking datum, so the choice is made on
-mechanics, not taste. Use a **label** when the datum must be any of:
+An axis can live in three places, a label, an issue field or a project field,
+and they are not interchangeable. The choice is made on mechanics, not taste.
+
+**A label** is per-repository and works on every owner type. Use one when the
+datum must be any of:
 
 - **multi-valued** — an issue can legitimately carry two at once;
 - **visible without project scope** — readable from `gh issue list` and the
   issue page, with no Projects API token;
 - **writable with plain repo scope** — no `project` scope, no org permission;
 - **timeline-attributable** — the `labeled` event records who applied it and
-  when;
-- **available on personal repos** — org issue fields do not exist there.
+  when, which is the one signal a consumer can verify an actor from;
+- **available on personal repos** — issue fields do not exist there.
 
-Use a **field** when it is **single-valued planning metadata you slice the
-board by**: `Status`, `Product`.
+**An issue field** is organization-only. It holds single-valued classification
+metadata that lives on the **issue** itself: the value is the same in every
+project the issue belongs to, it does not depend on project membership, and its
+changes show in the issue's own timeline. On an organization it is where
+Impact, Risk, Complexity, Priority, Priority (AI) and Effort are stored (see
+[Classification](#issue-fields-on-an-organization-labels-on-a-personal-account)).
+It is never an arming signal: GitHub exposes no actor for an issue-field change
+that a consumer could verify, so nothing is armed or gated from one.
 
-The consequences are not stylistic.[% if use_foreman %] Foreman arming is labels because only
-the label timeline names an arming actor.[% endif %] Claims are labels because a claim
+**A project field** lives on the board item, in one project, and is for
+**views only**: it is how a board is grouped, sorted and filtered. It needs the
+Projects scope to read or write, its changes record no actor, and it is
+invisible to anyone without that scope. `Status` is the project field, and
+`Product` is one on a personal account (on an organization it is an issue
+field). Nothing is classified in a project field.
+
+In practice, a **label** is the default; an **issue field** is for an axis that
+is single-valued, on an organization, and that every project should agree on; a
+**project field** is for pure board metadata that nothing decides work from
+(`Status` plays no part in the Agent queue).
+
+The consequences are not stylistic.[% if use_foreman %] Foreman arming is labels because only the label timeline names an arming
+actor.[% endif %] Claims are labels because a claim
 must be writable and visible to an agent holding nothing but repo scope, on
-personal and org repos alike. And there is deliberately no `Agent` field:
-advisory routing and live ownership are two different facts, a single-select
-could carry neither without duplicating the label vocabulary, and on an
-organization the Projects V2 API could not write it at all. `Domain` and `Layer` were fields once
-too, and were retired for the same reason: a label already covered every one of
-the bullets above and nothing kept the two surfaces in sync (harmon-init#875).
+personal and org repos alike. The Tier is a label on both owner types even
+where issue fields exist: a reader, the reconciler and a writer then share one
+storage path, and the pin needs a marker (`tier:pinned`) that works where
+issue fields cannot, since they have no boolean type and a personal account has
+none at all. And there is deliberately no `Agent` field: advisory routing and
+live ownership are two different facts, a single-select could carry neither
+without duplicating the label vocabulary, and on an organization the Projects
+V2 API could not write it at all. `Domain` and `Layer` were fields once too,
+and were retired for the same reason: a label already covered every one of the
+bullets above and nothing kept the two surfaces in sync (harmon-init#875).
 
 ### The complete label taxonomy
 
@@ -959,8 +1192,11 @@ and merging stays human-only.
 Every agent-vocabulary label comes from one machine-readable source,
 `agent-registry.json`, validated against `agent-registry.schema.json`. Its two
 axes are deliberately distinct: a **family** is the model intelligence doing
-the reasoning, a **harness** is the executable that runs it. `suggest:` and
-`claim:` name families[% if use_foreman %]; `foreman:<adapter>` names harness machinery[% endif %].
+the reasoning, a **harness** is the executable that runs it. `claim:` names
+families[% if use_foreman %]; `foreman:<adapter>` names harness machinery[% endif %]. The
+registry still carries the retired `suggest` namespace until harmon-init#1473;
+nothing provisions or renders it (see
+[Migration](#migration-what-the-classification-retired)).
 
 The tables below are **generated** from that file — `task test:registry-docs`
 regenerates them and fails on any difference, so they cannot drift from what
@@ -1043,22 +1279,21 @@ each is blind where the others see:
 | claim label (`claim:*`; `agent:*` pre-migration) | which agent is working it **right now** | the issue page, `gh issue list --label` |
 | assignee | that *someone* has it | notifications, `gh issue list --assignee` |
 
-**`suggest:*` is not on that list, and a claim must not write it.** The two
+**The Tier is not on that list, and a claim must not write it.** The two
 look like the same fact and are not:
 
 | | Means | Set by | When |
 |---|---|---|---|
-| **`suggest:*`** label | which agent *should* implement it | whoever plans/triages | at planning, before the work starts |
-| **`claim:*`** label | which agent *is* implementing it | the agent itself | at claim, released at hand-off |
+| **`tier:*`** label | which stratum of agent the issue *should* run at | whoever writes its Risk and Complexity, or a human who pins it | at classification, before the work starts |
+| **`claim:*`** label | which agent family *is* implementing it | the agent itself | at claim, released at hand-off |
 
-They share one vocabulary — the agent-registry families — but they answer
-different questions. Rewriting the suggestion at claim time would destroy the
-planning assignment, and would silently reassign work planned for one agent to
-whichever agent happened to pick it up.
+They answer different questions. Rewriting the Tier at claim time would
+destroy the classification, and would silently reassign work classed for one
+stratum to whichever agent happened to pick it up.
 
-So a claim writes the **claim label only**. If the claim and the suggestion
+So a claim writes the **claim label only**. If the claim and the Tier
 disagree, that is information, not drift: it means a different agent picked up
-work planned for another one. Worth noticing, not worth auto-correcting.
+work classed for another stratum. Worth noticing, not worth auto-correcting.
 
 Both being labels, the model works identically on both owner types — there is
 no org issue field in the claim path for the Projects V2 API to be unable to
@@ -1178,9 +1413,10 @@ is minted, the run acquires `claim:claude` on the target:
 | The label list cannot be read | **refuses** — it cannot prove the target is free |
 | The label will not apply | **refuses** — it would work the target unmarked |
 
-`suggest:*` is deliberately not matched: it is advice about who *should* do the
-work, never ownership of it. The label is created if the repository does not
-have it, with the registry's own color and description, so a later
+Only claim labels count: the Tier (`tier:*`) and the other classification labels
+are advice about who *should* do the work, never ownership of it, so they are
+deliberately not matched. The `claim:claude` label is created if the repository
+does not have it, with the registry's own color and description, so a later
 `task setup:github-labels` reconciles that label instead of fighting it.
 
 Release is loud, and bounded. An `always()` step releases the claim — but only
@@ -1439,8 +1675,9 @@ in scope:
   **Hierarchy is not dependency**). Closing the human issue unblocks the work
   through the same graph the dispatchers read.
 - **Never dispatched.** A `human` issue is never claimed, armed with
-  `foreman:*`, or implemented by an agent. Do not rely on tooling to stop
-  it — Foreman, for one, does not read the label — so never arm one. `human` alone marks a standalone
+  `foreman:*`, or implemented by an agent, and only a human removes the
+  label. Do not rely on tooling to stop it — Foreman, for one, does not
+  read the label — so never arm one. `human` alone marks a standalone
   issue whose completion is primarily a human's, such as a precondition;
   `human` + `umbrella` marks a collector.
 
@@ -1550,7 +1787,7 @@ view**). Keep the saved set small; **slice the one board** (below) for the rest.
   at hand-off (and remove it by hand if review sends the work back into fix
   rounds), or a handed-off issue (its claim released) shows in the Agent queue
   again.
-- **Planning** — table, grouped by **`Product`** (or `Type`), sorted by
+- **Planning** — table, grouped by **`Product`** (or `Type`, on an organization), sorted by
   `Priority` (organization only, as above). The "what's the plan" view, and a
   **dates-free roadmap substitute**: grouping by product shows the pile behind
   each one without maintaining a timeline. There is no `Size` sum — the field is
@@ -1574,7 +1811,7 @@ view**). Keep the saved set small; **slice the one board** (below) for the rest.
   and Layer are labels only (harmon-init#875): a view can still **filter** on
   `domain:*`/`layer:*` (add the label to the view's filter), it just cannot
   **group** by them the way a field allows — same as the agent split, which is
-  a label question too (`suggest:*`/`claim:*` — filter, don't slice).
+  a label question too (`tier:*`/`claim:*` — filter, don't slice).
 
 ## Notes
 

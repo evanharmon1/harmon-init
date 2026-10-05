@@ -1715,8 +1715,8 @@ iac | full)
             err "CHECKLIST loses the Copilot broker/default-family distinction"
         grep -Fq 'and is never a guessed destination' <<<"$checklist_flat" ||
             err "CHECKLIST permits treating the Copilot broker default as migration evidence"
-        grep -Fq 'For `suggest:copilot`, there is no claim/session record: re-express each' <<<"$checklist_flat" ||
-            err "CHECKLIST loses the suggestion-specific Copilot handling"
+        grep -Fq 'have no `--migrate` destination' <<<"$checklist_flat" ||
+            err "CHECKLIST loses the retired-label handling (suggest:* has no --migrate destination)"
         grep -Fq 'For `claim:copilot`,' <<<"$checklist_flat" ||
             err "CHECKLIST loses the per-record Copilot claim handling"
         grep -Fq 'use `claim:mai` only when the record confirms' <<<"$checklist_flat" ||

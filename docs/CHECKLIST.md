@@ -337,11 +337,17 @@ the compatibility reason in the rule's `description`.
       run. `--report-unregistered` is read-only, but its counts are a snapshot;
       run it again immediately before `--prune`.
 
+      `suggest:*` (superseded by the derived Tier) and `tier:adaptive` (no rung
+      on the Tier scale) have no `--migrate` destination, and the command
+      refuses one: remove the label from every issue, pull request and
+      discussion that carries it (an issue then resolves through its derived
+      Tier), then run `--prune`.
+
       For fixed-family sources, these mappings are authoritative:
       `agent:claude-code` → `claim:claude`, `agent:codex` → `claim:gpt`,
       `agent:gemini-cli` → `claim:gemini`, `agent:kimi-k2` → `claim:kimi`, `agent:qwen-code` →
-      `claim:qwen`, `suggest:codex` → `suggest:gpt`, and `claim:codex` →
-      `claim:gpt`. Pass one repeatable `--migrate OLD=NEW` per exact live
+      `claim:qwen`, and `claim:codex` → `claim:gpt`. Pass one repeatable
+      `--migrate OLD=NEW` per exact live
       source, together with `--prune`; for example,
       `./scripts/setup-github-labels.sh --repo <owner/repo> --prune
       --migrate agent:gemini-cli=claim:gemini`. `--migrate` does not match a
@@ -349,8 +355,8 @@ the compatibility reason in the rule's `description`.
       `OLD=NEW` form contains exactly one `=`; a label name containing `=` must
       be relabeled per record instead of passed to bulk migration. Move only
       the family segment for fixed mappings and preserve the recorded model
-      suffix, e.g. `suggest:codex:sol` → `suggest:gpt:sol` and
-      `claim:codex:sol` → `claim:gpt:sol`; model-level labels refine rather
+      suffix, e.g. `claim:codex:sol` → `claim:gpt:sol`; model-level labels
+      refine rather
       than replace their family-level label, and the command retains or adds
       both associations. If a recognized model-level
       destination is absent, the command creates it after confirmation by
@@ -366,7 +372,7 @@ the compatibility reason in the rule's `description`.
       shows the source has zero associations. Enumerate
       model-level names explicitly with `gh label list --repo <owner/repo>
       --limit 1000 --json name --jq '.[].name' | grep -E
-      '^(suggest|claim):(codex|copilot):'`; for each source, inspect all-state
+      '^claim:(codex|copilot):'`; for each source, inspect all-state
       `gh issue list --label <old> --state all --limit 1000` **and**
       `gh pr list --label <old> --state all --limit 1000`. An exactly-full
       manual result is capped; increase the limit and rerun before writes. The
@@ -375,16 +381,13 @@ the compatibility reason in the rule's `description`.
 
       Copilot is a broker, not a fixed family: `mai` is only the picker default
       and is never a guessed destination. Do **not** pass
-      `agent:github-copilot*`, `suggest:copilot*`, or `claim:copilot*` to bulk
+      `agent:github-copilot*` or `claim:copilot*` to bulk
       `--migrate` — the command rejects broker-derived sources because one
-      destination cannot represent mixed runtime records. For
-      `suggest:copilot`, there is no claim/session record: re-express each
-      issue/PR's planning intent as `suggest:<actual-family>` or drop the old
-      association; do not rename it to `suggest:mai`. For `claim:copilot`,
+      destination cannot represent mixed runtime records. For `claim:copilot`,
       inspect each issue/PR's claim/session record and relabel that record to
       `claim:<actual-family>`; use `claim:mai` only when the record confirms
       MAI. Apply the same per-record distinction to
-      `suggest:copilot:<model>`/`claim:copilot:<model>` and preserve a model
+      `claim:copilot:<model>` and preserve a model
       suffix only after the actual family is known. Include Discussions in that
       per-record inventory: the read-only report gives their association count,
       and the Discussions UI or GraphQL API identifies the records to relabel.
@@ -413,8 +416,9 @@ the compatibility reason in the rule's `description`.
       exit alone; this is a guarded best-effort operation at that API boundary.
 - [ ] Project views: create the starter views that the Views section of
       [project-management.md](project-management.md) specifies — including
-      Needs review — in the Project UI. Projects V2 has no view API, so this is
-      a one-time manual step; the filters and layouts are in that section.
+      Needs review and Human queue — in the Project UI. Projects V2 has no view
+      API, so this is a one-time manual step; the filters and layouts are in
+      that section.
 - [ ] GitHub Project auto-add (**adds every issue to the board**): in the
       Project's **Settings → Workflows**, turn on **"Auto-add to project"** and
       point it at this repo (filter `is:issue`, `is:pr`) so *every* new issue and

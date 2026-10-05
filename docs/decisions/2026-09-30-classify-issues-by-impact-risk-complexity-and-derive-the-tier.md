@@ -12,6 +12,8 @@ D2's scales and D3's writers are amended by [ADR 2026-10-01 (Priority AI axis)](
 
 D4's "Reconcile drift" bullet is amended by [#1450](https://github.com/evanharmon1/harmon-init/issues/1450): the schedule runs per repository under `GITHUB_TOKEN` (monthly on organization repositories, daily on personal ones) because `GITHUB_TOKEN` is repository-scoped; the organization-level daily walk is an opt-in caller holding an App installation token ([#1463](https://github.com/evanharmon1/harmon-init/issues/1463)).
 
+Amended 2026-10-04 by [#1500](https://github.com/evanharmon1/harmon-init/issues/1500) (maintainer decision of 2026-10-04, recorded there): the organization-wide walk is a **standalone organization workflow**, an ordinary workflow in one private repository of the organization that mints the CI App installation token and runs the reconciler script in the same job. It is not a "caller" and not a reusable workflow "called from each organization's `.github` repository", because a token minted beside a reusable-workflow call cannot reach the called workflow. Two passages record the design as first decided and are left as history: the "opt-in caller" sentence above and D4's "Reconcile drift" bullet below; [the CI/CD architecture](../architecture/ci-cd.md#issue-classification-reconciler) ("Organization-wide walk") describes what ships.
+
 Supersedes whatever an earlier record says that conflicts with the
 retirements in D8 — `suggest:*`, the `Size` project field, the
 personal-project `Priority` field, the ponderousdev `Agent` issue field, and
@@ -26,7 +28,7 @@ and its `adaptive` tier. The Tier derived below replaces `suggest:*`. The
 Amends [ADR 2026-08-16](2026-08-16-method-and-tier-axes.md) D5 (the resolution
 order) by inserting the pinned and derived Tier (D5 below), and
 [ADR 2026-08-24](2026-08-24-rigor-and-strategy-axes.md) D5 (which role a tier input
-targets) by adding the pinned Tier as another implementer-only input.
+targets) by adding the pinned and derived Tier as further implementer-only inputs.
 Everything else in those two records stands, apart from the rules
 superseded above.
 
