@@ -625,10 +625,11 @@ Complexity (every issue), per
 [ADR 2026-09-30](decisions/2026-09-30-classify-issues-by-impact-risk-complexity-and-derive-the-tier.md).
 
 There is deliberately **no `Agent` field**. Whether an agent may take an issue
-is decided by the **Agent queue** in [Views](#views), and which agent *should* is
-its derived Tier (`tier:*`); which agent *is* working it is the claim label (see
+is decided by the **Agent queue** in [Views](#views); the derived Tier
+(`tier:*`) sets the tier an agent runs at, and the configured backend or harness
+picks the family within it; which agent *is* working it is the claim label (see
 **Claiming** below). A field could carry
-neither answer without duplicating the label vocabulary, and on an organization
+none of these answers without duplicating the label vocabulary, and on an organization
 the Projects V2 API could not even write it — see
 [Label or field?](#label-or-field) and
 [ADR 2026-08-07](decisions/2026-08-07-unified-agent-vocabulary.md).
@@ -647,8 +648,9 @@ the setup scripts are additive-only by design, so deleting a live field is an
 explicit operator step, and reviewing its values comes first — deleting a field
 destroys every value on it, unrecoverably.
 
-- **Agent** (retired earlier): no value carries over — which agent should take
-  an issue is its derived Tier (`tier:*`).
+- **Agent** (retired earlier): no value carries over — the derived Tier
+  (`tier:*`) sets the tier an agent runs at, and the configured backend or
+  harness picks the family within it.
   1. **Enumerate every board and view that references the field before deleting
      it** (#910): every Project that has it, and every saved view in each that
      filters on it (the **Agent queue** view as it was specified before the
