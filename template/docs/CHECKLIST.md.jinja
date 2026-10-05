@@ -392,13 +392,6 @@ the compatibility reason in the rule's `description`.
       is product-independent and normally needs no edits. Labels are per-repo,
       so run it in each repo; org default labels (org Settings → Repository,
       UI-only) only seed new repos.
-- [ ] **After a `copier update` that adds label families** (e.g. `tier:*` — a
-      pure addition), re-run `task setup:github-labels` to provision the new
-      labels here — it is additive and never deletes, so existing labels and
-      the issues they sit on are untouched — then classify open issues with the
-      added families. A RENAMED family (like `method:*` → `strategy:*` above)
-      is not a pure addition — provision the new destinations first, then
-      migrate the old associations before retiring their labels.
 [% if project_management == 'github' %]
 - [ ] **[human-only] Pin any hand-applied Tier before the first classification
       write** — on an existing repository an unqualified `tier:<value>` label
@@ -410,6 +403,13 @@ the compatibility reason in the rule's `description`.
       add `tier:pinned` to each open issue whose hand-set tier label you want to
       keep.
 [% endif %]
+- [ ] **After a `copier update` that adds label families** (e.g. `impact:*` — a
+      pure addition), re-run `task setup:github-labels` to provision the new
+      labels here — it is additive and never deletes, so existing labels and
+      the issues they sit on are untouched — then classify open issues with the
+      added families. A RENAMED family (like `method:*` → `strategy:*` above)
+      is not a pure addition — provision the new destinations first, then
+      migrate the old associations before retiring their labels.
 - [ ] **[human-only] Inspect live label drift before retiring anything** — keep
       the default setup path additive, then run
       `./scripts/setup-github-labels.sh --repo <owner/repo> --report-unregistered`

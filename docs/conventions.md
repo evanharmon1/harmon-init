@@ -264,13 +264,13 @@ leaving the whole group blocked.
   (track-work) and #1252 (breakdown) reach a skills-pin bump, set Impact, Risk
   and Complexity by hand and do not write a derived Tier label, which the
   reconciler derives.
-- **`needs-triage` is derived, never set by hand.** It is present while any
-  required classification is missing and absent once all are present. A new
-  issue starts untriaged, so the issue forms adding it at filing agrees with
-  that derivation; after that the classification reconciler maintains it, and
-  so do the skills once their pin carries the writers above. Do not add or
-  remove it yourself, and do not hand-edit a derived Tier either: a human who
-  disagrees with it pins one with `tier:pinned`. The axes, the triaged
+- **`needs-triage` is added at filing, then derived.** Whoever files an issue
+  that is not fully classified adds it at filing: the issue forms, people and
+  agents alike. It is present while any required classification is missing and
+  absent once all are present. After filing it is derived and nobody clears it
+  by hand: the classification reconciler maintains it, and so do the skills once
+  their pin carries the writers above. Do not hand-edit a derived Tier either: a
+  human who disagrees with it pins one with `tier:pinned`. The axes, the triaged
   predicate and the Tier derivation are in
   [project-management.md](project-management.md#classification).
 

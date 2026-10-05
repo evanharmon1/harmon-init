@@ -501,16 +501,17 @@ and Impact. That is the glossary's `triaged` entry and
 D6.
 
 `needs-triage` is **derived** from that: present while any of those is
-missing, absent once all are present. Nobody sets or clears it by hand. A new
-issue starts untriaged, so the issue forms adding it at filing agrees with the
-derivation; after that the reconciler maintains it (see
-[Classification reconciler](#classification-reconciler)), and so do the skills
-(triage, track-work, breakdown) in the same call that writes Risk or
+missing, absent once all are present. Whoever files an issue that is not fully
+classified adds it at filing: the issue forms, people and agents alike. After
+that it is derived, and nobody clears it by hand: the reconciler maintains it
+(see [Classification reconciler](#classification-reconciler)), and so do the
+skills (triage, track-work, breakdown) in the same call that writes Risk or
 Complexity, once a skills-pin bump carries harmon-devkit#1250, #1251 and #1252.
 What counts is the value the reconciler reads: an organization field
 that is set wins, and a disagreeing same-axis label is reported, not
-decisive. A retired or unknown value does not count as present, and neither
-does an axis carrying two labels with no field to decide between them.
+decisive. Any native issue Type counts as the Type. A retired or unknown label
+or field value does not count as present, and neither does an axis carrying
+two labels with no field to decide between them.
 Priority is not part of the predicate: an issue is triaged without it, though
 it is not startable by an agent until a human sets one.
 
@@ -557,7 +558,7 @@ only; the other role tiers come from the resolved rigor profile. A
 ### The Agent queue
 
 The Agent queue is the set of issues an agent may start: **open**,
-**triaged**, with a human **Priority** set, carrying no `claim:*` label, not
+**triaged**, with a human **Priority** set, carrying no ownership label (`claim:*` or a legacy `agent:*` alias), not
 `human`, not `needs-review`, and not blocked. The human Priority is required:
 an issue with only a Priority (AI) is not startable, and an agent asks first.
 Priority (AI) only orders issues within a Priority rung and admits nothing
@@ -594,8 +595,9 @@ says where the operator steps are.
 - **`tier:adaptive`** has no rung on the Tier scale. Remove the label from every
   issue, pull request and discussion that carries it, and an issue then
   resolves through its derived Tier.
-- **A hand-set `needs-triage` or Tier.** Both are derived now. A human who
-  wants a different Tier pins it, and an existing repository pins any
+- **A hand-managed `needs-triage` or Tier.** Both are derived now (`needs-triage`
+  is added at filing, then maintained). A human who wants a different Tier pins
+  it, and an existing repository pins any
   hand-set Tier it wants to keep before the reconciler's first write (see
   [The Tier](#the-tier-derivation-and-pin)).
 
@@ -1659,7 +1661,7 @@ view**). Keep the saved set small; **slice the one board** (below) for the rest.
   the view ungrouped there. This is your grooming session — it exists so
   untriaged work can't hide; empty it regularly and it stays useful.
 - **Agent queue** — the issues an agent may start. The **predicate** is
-  authoritative: **open**, **triaged** (no `needs-triage`), no **`claim:*`**, not
+  authoritative: **open**, **triaged** (no `needs-triage`), no ownership label (**`claim:*`** or a legacy **`agent:*`** alias), not
   **`human`**, not **`needs-review`**, not blocked, and **`Priority` set** — an
   issue with only a `Priority (AI)` is not startable, an agent asks first
   ([ADR 2026-09-30](decisions/2026-09-30-classify-issues-by-impact-risk-complexity-and-derive-the-tier.md)
