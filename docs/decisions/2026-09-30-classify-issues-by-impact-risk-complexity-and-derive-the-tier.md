@@ -14,6 +14,8 @@ D4's "Reconcile drift" bullet is amended by [#1450](https://github.com/evanharmo
 
 Amended 2026-10-04 by [#1500](https://github.com/evanharmon1/harmon-init/issues/1500) (maintainer decision of 2026-10-04, recorded there): the organization-wide walk is a **standalone organization workflow**, an ordinary workflow in one private repository of the organization that mints the CI App installation token and runs the reconciler script in the same job. It is not a "caller" and not a reusable workflow "called from each organization's `.github` repository", because a token minted beside a reusable-workflow call cannot reach the called workflow. The passages that record the design as first decided are left as history, among them the "opt-in caller" sentence above, D4's "Reconcile drift" bullet below, and the two Consequences bullets that speak of a daily organization-level reconciler; [the CI/CD architecture](../architecture/ci-cd.md#issue-classification-reconciler) ("Organization-wide walk" and the per-repository schedule) describes what ships.
 
+Amended 2026-10-05 by [#1452](https://github.com/evanharmon1/harmon-init/issues/1452) (the filing rule in [conventions](../conventions.md#issues)): D6's "`needs-triage` is derived from that and never set by hand" holds only after filing. People and agents add `needs-triage` at filing when an issue is not fully classified; after that the label is derived and never cleared by hand. D6 is left as written.
+
 Supersedes whatever an earlier record says that conflicts with the
 retirements in D8 — `suggest:*`, the `Size` project field, the
 personal-project `Priority` field, the ponderousdev `Agent` issue field, and

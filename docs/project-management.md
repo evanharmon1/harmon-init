@@ -430,9 +430,11 @@ type:
   same-axis label never overrides it. The reconciler falls back to a same-axis
   label only when the field is unset.
 - **Type** is the native issue Type on an organization and a work-type label
-  on a personal account. The same holds: the work-type labels exist on every
-  repository, an organization never applies one, and the reconciler counts a
-  single work-type label as the Type only when no native Type is set.
+  on a personal account. The same holds: the provisioned work-type labels exist
+  on every repository (`documentation` and `question` are GitHub's
+  repository-creation defaults, which setup does not re-create), an
+  organization never applies one, and the reconciler counts a single work-type
+  label as the Type only when no native Type is set.
 - **The Tier is a label on both owner types**, `tier:<value>`, and there is no
   `Tier` issue field. It is the one axis whose storage does not follow the
   owner type, so a reader, the reconciler and a writer all treat it the same
