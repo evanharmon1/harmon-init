@@ -551,9 +551,11 @@ the taxonomy table below is generated from) and the starter set is created by
   for" means comments, drafts or research on the human issue itself, never a
   claim. A part an agent can do is filed as its own issue and goes through the
   Agent queue. When that part cannot start before the human step, give it a
-  native blocked-by link to the human issue, so it is not startable until the
-  human issue closes. `human` + `umbrella` marks a `(HUMAN):`/`(QA):` collector
-  (see **Human-task and QA collectors** below) as the special case
+  native blocked-by link to a standalone `human` issue for that step, never to
+  a collector, which can stay open by design (see **A precondition is a
+  dependency, not a follow-up** below), so it is not startable until that issue
+  closes. `human` + `umbrella` marks a `(HUMAN):`/`(QA):` collector (see
+  **Human-task and QA collectors** below) as the special case
 - **Workflow** — transient triage states; `blocked` is the non-issue-blocker
   flag described above
 - **Layer** — which stack slice the change lives in
@@ -816,7 +818,7 @@ deliberately leaves it alone.
 | `sec`, `a11y`, `perf`, `tech-debt`, `i18n`, `l10n` | humans, at triage | humans, saved views | provisioned; inert | applied when true, removed when not |
 | `customer-request`, `ai-generated` | whoever files or authors the work, human or agent | humans, saved views | provisioned; inert | durable provenance — never removed |
 | `epic`, `umbrella` | humans, at planning or grooming; agents when filing a (HUMAN)/(QA) collector or an approved breakdown | humans, saved views | provisioned; inert | applied to a parent while its role is current; removed or changed when its horizon changes |
-| `human` | whoever files or triages the issue, human or agent | humans, saved views; agents, to skip dispatch | provisioned; inert | applied while completion is primarily a human's; removed once the issue's remaining completion is no longer primarily a human's |
+| `human` | whoever files or triages the issue, human or agent; only a human removes it | humans, saved views; agents, to skip dispatch | provisioned; inert | applied while completion is primarily a human's; removed once the issue's remaining completion is no longer primarily a human's |
 | `needs-triage` | humans, the issue forms, the triage skill, and the GitHub Actions classification reconciler (derived: added while classification is incomplete, removed once it is complete) | humans, the Triage view | provisioned; inert | added freely at filing; removed only when classification is complete |
 | `needs-requirements`, `blocked`, `waiting`, `needs-decision`, `needs-response`, `needs-communication` | humans, at triage | humans, the Triage view | provisioned; inert | transient — removed as soon as the state clears |
 | `needs-review` | the integration stage, at ready-for-review; humans | humans, the review list; the agent queue, which excludes it | provisioned; inert | added at ready-for-review, when `claim:*` is removed; removed if review pulls the work back into fix rounds |

@@ -100,7 +100,7 @@
       "axis": "meta",
       "source": "inline",
       "writers": ["human", "agent"],
-      "writer_note": "whoever files or triages the issue, human or agent",
+      "writer_note": "whoever files or triages the issue, human or agent; only a human removes it",
       "readers": "humans, saved views; agents, to skip dispatch",
       "lifecycle": "durable",
       "lifecycle_note": "applied while completion is primarily a human's; removed once the issue's remaining completion is no longer primarily a human's",
