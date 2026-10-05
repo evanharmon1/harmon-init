@@ -8,6 +8,18 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [5.1.0](https://github.com/evanharmon1/harmon-init/compare/v5.0.1...v5.1.0) (2026-10-05)
+
+
+### Features
+
+* **labels:** make human the top-level label for issues a human primarily completes ([#1518](https://github.com/evanharmon1/harmon-init/issues/1518)) ([d7dbfa5](https://github.com/evanharmon1/harmon-init/commit/d7dbfa59ac8841d04bb3bcd3ba0611201f654eee))
+
+
+### Bug Fixes
+
+* **devcontainer:** update shared image to 38ee5b13 ([#1519](https://github.com/evanharmon1/harmon-init/issues/1519)) ([2c035ac](https://github.com/evanharmon1/harmon-init/commit/2c035ac23f08e62ea1ef3e6772c32e2c4aafc1a4))
+
 ## [5.0.1](https://github.com/evanharmon1/harmon-init/compare/v5.0.0...v5.0.1) (2026-10-04)
 
 
