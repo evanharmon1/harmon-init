@@ -590,8 +590,10 @@ says where the operator steps are.
 - **The personal-project `Priority` field** is replaced by the `priority:*`
   labels. On an organization `Priority` was always GitHub's built-in issue
   field, and it stays.
-- **The `Agent` issue field** is gone: which agent should take an issue is its
-  derived Tier, and which agent is working it is the claim label.
+- **The `Agent` issue field** is gone, and no `Agent` value carries over. The
+  derived Tier sets the tier an agent runs at, the configured backend or
+  harness picks the family within it, and which agent is working an issue is
+  the claim label.
 - **`tier:adaptive`** has no rung on the Tier scale. Remove the label from every
   issue, pull request and discussion that carries it, and an issue then
   resolves through its derived Tier.
