@@ -612,13 +612,14 @@ the taxonomy table below is generated from) and the starter set is created by
 - **Human work** — `human` is applied when the issue's completion is primarily a
   human's (actions, decisions, QA, purchases, credentials, physical work),
   whether or not an agent can assist with parts of it. Agents may file, append
-  to, or prepare for a `human` issue, but never claim, arm, or implement one.
-  A part an agent can do is filed as its own issue, marked blocked by the human
-  issue when it cannot start before the human step, so the Agent queue does not
-  admit it early, and that issue goes through the Agent queue; "prepare for"
-  means comments, drafts or research on the human issue itself, never a claim.
-  `human` + `umbrella` marks a `(HUMAN):`/`(QA):` collector (see **Human-task and
-  QA collectors** below) as the special case
+  to, or prepare for a `human` issue, but never claim, arm, or implement one,
+  and never remove `human` from it: only a human takes the label off. "Prepare
+  for" means comments, drafts or research on the human issue itself, never a
+  claim. A part an agent can do is filed as its own issue and goes through the
+  Agent queue. When that part cannot start before the human step, give it a
+  native blocked-by link to the human issue, so it is not startable until the
+  human issue closes. `human` + `umbrella` marks a `(HUMAN):`/`(QA):` collector
+  (see **Human-task and QA collectors** below) as the special case
 - **Workflow** — transient triage states; `blocked` is the non-issue-blocker
   flag described above
 - **Layer** — which stack slice the change lives in
@@ -1527,7 +1528,7 @@ view**). Keep the saved set small; **slice the one board** (below) for the rest.
   `Priority (AI)` columns and sorts by `Priority`, then `Priority (AI)`. On a
   personal account both priority families are labels, so apply the order the way
   the Agent queue does: narrow the view to one `priority:*` label at a time, then
-  to issues with no `priority:*` label (the view's own filter excluding the four
+  to issues with no `priority:*` label (a filter that excludes the four
   `priority:*` labels by name), and within each step order by the
   `priority-ai:*` label read from the Labels column (see the Agent queue's
   narrowing walk above). It cannot express the native blocked-by relationship,
