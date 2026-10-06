@@ -178,8 +178,9 @@ Issues become cheap to classify and route, for humans and agents alike:
       algorithm is deliberately not specified here — it is ADR 2026-08-16 / foreman#139 design work
       under #855, and the adversarial scenarios raised in this spec's review are carried there
       as required test cases:
-      1. **Unattended automation** acts on a strategy or suggestion label only after
-         verifying its provenance end-to-end from its own trusted-actor configuration,
+      1. **Unattended automation** acts on a strategy label (the retired `suggest:*`
+         labels are no longer an input, ADR 2026-09-30 D8) only after verifying its
+         provenance end-to-end from its own trusted-actor configuration,
          re-read immediately before acting — and no sequence of untrusted mutations,
          applies **or removals**, on any label of the axis, may move the resolved outcome
          away from what trusted actors' surviving actions alone would produce. Anything

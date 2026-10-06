@@ -1729,6 +1729,18 @@ iac | full)
             err "glossary says needs-triage is never cleared by hand where no reconciler ships (project_management=none)"
         grep -Fq 'removed by the triage skill once the issue is fully classified' docs/glossary.md ||
             err "glossary omits who removes needs-triage for project_management=none + use_foreman=true"
+        # The filing contract also renders here: this render provisions the classification labels and
+        # ships the issue forms that add needs-triage, so conventions.md must state it, name the
+        # triage skill as the remover, and not point at a project-management.md or reconciler it lacks.
+        conventions_flat="$(tr -s '[:space:]' ' ' <docs/conventions.md)"
+        grep -Fq 'Agent-authored issues arrive fully classified' <<<"$conventions_flat" ||
+            err "conventions.md omits the issue filing contract for project_management=none + use_foreman=true"
+        grep -Fq 'the triage skill removes it once the issue is fully classified' <<<"$conventions_flat" ||
+            err "conventions.md omits who removes needs-triage for project_management=none + use_foreman=true"
+        ! grep -Fq 'classification reconciler' <<<"$conventions_flat" ||
+            err "conventions.md names the classification reconciler where no reconciler ships (project_management=none)"
+        ! grep -Fq 'project-management.md' <<<"$conventions_flat" ||
+            err "conventions.md links to the omitted GitHub project-management doc for project_management=none"
         grep -Fq 'For `claim:copilot`,' <<<"$checklist_flat" ||
             err "CHECKLIST loses the per-record Copilot claim handling"
         grep -Fq 'use `claim:mai` only when the record confirms' <<<"$checklist_flat" ||

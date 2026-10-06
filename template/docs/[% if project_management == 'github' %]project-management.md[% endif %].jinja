@@ -1112,18 +1112,21 @@ datum must be any of:
   issue page, with no Projects API token;
 - **writable with plain repo scope** — no `project` scope, no org permission;
 - **timeline-attributable** — the `labeled` event records who applied it and
-  when, which is the one signal a consumer can verify an actor from;
+  when, and it is the one actor signal the checks here read;
 - **available on personal repos** — issue fields do not exist there.
 
 **An issue field** is organization-only. It holds single-valued classification
 metadata that lives on the **issue** itself: the value is the same in every
-project the issue belongs to, it does not depend on project membership, and a
-change is visible in the issue's timeline in the UI, but the API exposes no
-actor for it. On an organization it is where Impact, Risk, Complexity,
-Priority, Priority (AI) and Effort are stored (see
+project the issue belongs to, and it does not depend on project membership. On
+an organization it is where Impact, Risk, Complexity, Priority, Priority (AI)
+and Effort are stored (see
 [Classification](#issue-fields-on-an-organization-labels-on-a-personal-account)).
-It is never an arming signal: with no actor a consumer could verify, nothing is
-armed or gated from one.
+A field change is recorded in the issue's timeline with its actor (the GraphQL
+`IssueFieldAddedEvent` and `IssueFieldChangedEvent` timeline items, a preview
+API). No workflow here runs on a field edit, so the scheduled walk, or a run you
+start by hand, is the only reconciler path. Fields are not an arming surface:
+nothing in this repository reads or verifies a field's actor before acting, and
+arming stays with `foreman:*` labels.
 
 **A project field** lives on the board item, in one project, and is for
 **views only**: it is how a board is grouped, sorted and filtered. It needs the

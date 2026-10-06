@@ -292,7 +292,7 @@ leaving the whole group blocked.
   `docs/guides/` (build it) · `docs/runbooks/` (operate it). Folder landing
   pages within `docs/` are `index.md`.
 
-[% if project_management == 'github' %]
+[% if project_management == 'github' or use_foreman %]
 ## Issues
 
 - **Agent-authored issues arrive fully classified, except Priority.** This is
@@ -305,8 +305,9 @@ leaving the whole group blocked.
   optional suggestion an agent may add. The skills that write these axes at
   filing are not all shipped: until harmon-devkit#1250 (triage), #1251
   (track-work) and #1252 (breakdown) reach a skills-pin bump, set Impact, Risk
-  and Complexity by hand and do not write a derived Tier label, which the
-  reconciler derives.
+  and Complexity by hand and do not write a derived Tier label[% if project_management == 'github' %], which the
+  reconciler derives[% endif %].
+[% if project_management == 'github' %]
 - **`needs-triage` is added at filing, then derived.** Whoever files an issue
   that is not fully classified adds it at filing: the issue forms, people and
   agents alike. It is present while any required classification is missing and
@@ -316,6 +317,16 @@ leaving the whole group blocked.
   human who disagrees with it pins one with `tier:pinned`. The axes, the triaged
   predicate and the Tier derivation are in
   [project-management.md](project-management.md#classification).
+[% else %]
+- **`needs-triage` is added at filing, then derived.** Whoever files an issue
+  that is not fully classified adds it at filing: the issue forms, people and
+  agents alike. It is present while any required classification is missing and
+  absent once all are present. After filing it is derived and nobody clears it
+  by hand: the triage skill removes it once the issue is fully classified. Do
+  not hand-edit a derived Tier either: a human who disagrees with it pins one
+  with `tier:pinned`. The axes and the triaged predicate are in the
+  [glossary](glossary.md#issue-classification).
+[% endif %]
 
 [% endif %]
 ## Releases
