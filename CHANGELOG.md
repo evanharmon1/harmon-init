@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [5.2.0](https://github.com/evanharmon1/harmon-init/compare/v5.1.0...v5.2.0) (2026-10-06)
+
+
+### Features
+
+* **docs:** document the classification axes, the triaged predicate and the agent queue ([#1525](https://github.com/evanharmon1/harmon-init/issues/1525)) ([e3df5ee](https://github.com/evanharmon1/harmon-init/commit/e3df5eec8d548ad01a4e38e0e6868c98f532d38f))
+
 ## [5.1.0](https://github.com/evanharmon1/harmon-init/compare/v5.0.1...v5.1.0) (2026-10-05)
 
 
