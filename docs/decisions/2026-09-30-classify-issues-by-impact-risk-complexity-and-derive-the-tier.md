@@ -12,6 +12,8 @@ D2's scales and D3's writers are amended by [ADR 2026-10-01 (Priority AI axis)](
 
 D4's "Reconcile drift" bullet is amended by [#1450](https://github.com/evanharmon1/harmon-init/issues/1450): the schedule runs per repository under `GITHUB_TOKEN` (monthly on organization repositories, daily on personal ones) because `GITHUB_TOKEN` is repository-scoped; the organization-level daily walk is an opt-in caller holding an App installation token ([#1463](https://github.com/evanharmon1/harmon-init/issues/1463)).
 
+D4's organization-wide walk and D6's rule that `needs-triage` is never set by hand are amended by [ADR 2026-10-05 (file unclassified issues with needs-triage; walk organizations standalone)](2026-10-05-file-unclassified-issues-with-needs-triage-and-walk-organizations-standalone.md): the walk is a standalone organization workflow, and `needs-triage` is added at filing and derived after that.
+
 Supersedes whatever an earlier record says that conflicts with the
 retirements in D8 — `suggest:*`, the `Size` project field, the
 personal-project `Priority` field, the ponderousdev `Agent` issue field, and

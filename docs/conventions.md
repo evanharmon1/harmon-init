@@ -250,6 +250,30 @@ leaving the whole group blocked.
   `docs/guides/` (build it) · `docs/runbooks/` (operate it). Folder landing
   pages within `docs/` are `index.md`.
 
+## Issues
+
+- **Agent-authored issues arrive fully classified, except Priority.** This is
+  the contract. An agent that files an issue sets Impact, Risk and Complexity,
+  the Type (or work-type label), and one `area:*`, `layer:*` and `domain:*`
+  label (or that family's `none`) in the same write that creates it, plus the
+  Tier derived from Risk and Complexity, so the issue is **triaged** from the
+  start. It never sets Priority: that is the human's ranking, and an issue
+  without one is not startable by an agent. Priority (AI) is a separate,
+  optional suggestion an agent may add. The skills that write these axes at
+  filing are not all shipped: until harmon-devkit#1250 (triage), #1251
+  (track-work) and #1252 (breakdown) reach a skills-pin bump, set Impact, Risk
+  and Complexity by hand and do not write a derived Tier label, which the
+  reconciler derives.
+- **`needs-triage` is added at filing, then derived.** Whoever files an issue
+  that is not fully classified adds it at filing: the issue forms, people and
+  agents alike. It is present while any required classification is missing and
+  absent once all are present. After filing it is derived and nobody clears it
+  by hand: the classification reconciler maintains it, and so do the skills once
+  their pin carries the writers above. Do not hand-edit a derived Tier either: a
+  human who disagrees with it pins one with `tier:pinned`. The axes, the triaged
+  predicate and the Tier derivation are in
+  [project-management.md](project-management.md#classification).
+
 ## Template authoring
 
 Root-only — these rules govern files under `template/`, which no generated repo

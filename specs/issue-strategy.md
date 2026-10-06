@@ -16,7 +16,7 @@
 
 The label taxonomy is well-designed and near-unused. At audit (2026-08-13): 230 open issues,
 104 (45%) with no labels, 4 carrying `needs-triage`, 14 carrying any `domain:*`/`layer:*`, and
-zero open issues carrying the `suggest:*`/`claim:*`/`foreman:*`/`rigor:*` machinery. Titles follow
+zero open issues carrying the `suggest:*`/`claim:*`/`foreman:*`/`rigor:*` machinery (`suggest:*` is since retired, ADR 2026-09-30 D8). Titles follow
 four dialects; the issue forms prefix titles and apply no labels; native issue Types do not exist
 on personal accounts. Classification depends on humans remembering at filing time, and every
 filing surface skips it.
@@ -123,11 +123,10 @@ Issues become cheap to classify and route, for humans and agents alike:
       `escalate_to` chains validate as referential, acyclic, and monotonic toward `apex`;
       *when* escalation fires (failure, refusal, operator policy — never cost alone) is
       defined in ADR 2026-08-16. Candidate selection is deterministic, also in ADR 2026-08-16: the
-      resolved tier names the stratum; a `suggest:<family>[:<model>]` narrows within it only
-      when that family is configured and eligible (otherwise it is ignored with a note) —
-      and unattended consumption of a suggestion is subject to the same provenance
-      invariant as the strategy axes below;
-      absent a suggestion, the consumer's own configured backend or harness picks; a tier
+      resolved tier names the stratum, and the consumer's own configured backend or harness
+      picks within it. (The former narrowing by a `suggest:<family>[:<model>]` label, and its
+      provenance clause, are retired — superseded by the derived Tier, ADR 2026-09-30 D8 —
+      so no label narrows within a stratum.) A tier
       with no eligible configured candidate escalates along the chain, and an exhausted
       chain **stops with a report** — never a silent vendor switch or downgrade. (#855)
 - [ ] Built-in fallbacks are defined: absent `.devflow.toml` entirely, resolution uses the
@@ -179,8 +178,9 @@ Issues become cheap to classify and route, for humans and agents alike:
       algorithm is deliberately not specified here — it is ADR 2026-08-16 / foreman#139 design work
       under #855, and the adversarial scenarios raised in this spec's review are carried there
       as required test cases:
-      1. **Unattended automation** acts on a strategy or suggestion label only after
-         verifying its provenance end-to-end from its own trusted-actor configuration,
+      1. **Unattended automation** acts on a strategy label (the retired `suggest:*`
+         labels are no longer an input, ADR 2026-09-30 D8) only after verifying its
+         provenance end-to-end from its own trusted-actor configuration,
          re-read immediately before acting — and no sequence of untrusted mutations,
          applies **or removals**, on any label of the axis, may move the resolved outcome
          away from what trusted actors' surviving actions alone would produce. Anything
@@ -198,6 +198,9 @@ Issues become cheap to classify and route, for humans and agents alike:
       family[:model] (vendor preference), `tier:*` is the human-decided policy layer;
       `suggest:tier:<value>` is reserved, not built. `claim:*` stays on the family axis; the
       claim record gains `harness:`/`model:`/`session:` fields (harmon-devkit#450). (#855)
+      **Superseded (ADR 2026-09-30 D8):** `suggest:*`, including the reserved
+      `suggest:tier:<value>`, is retired and replaced by the derived Tier; the `claim:*`
+      half stands.
 - [ ] Authoring standard (canonical in harmon-devkit#449): titles are imperative
       problem/outcome statements, ≤ ~70 chars, no prefixes; body skeleton `## Problem` →
       optional `## Current violation (observed YYYY-MM-DD)` → `## Acceptance criteria` with
@@ -229,8 +232,11 @@ Issues become cheap to classify and route, for humans and agents alike:
       is complete** (work type present in the owner-appropriate form, and each of
       area/layer/domain either applied or genuinely inapplicable); a partially classified
       issue keeps the label and appears in the report; never
-      `foreman:*`/`rigor:*`/`tier:*`/`strategy:*`/`claim:*`/`suggest:*`, milestones, closes,
+      `foreman:*`/`rigor:*`/`tier:*`/`strategy:*`/`claim:*`, the retired `suggest:*`, milestones, closes,
       assignees, or body/title edits; everything else lands in one rolling report issue.
+      **Superseded (v1 allowlist):** by ADR 2026-09-30 D3, D4 and D6 (the axes are
+      AI-settable, the Tier is derived, `needs-triage` is derived) and, for the skill
+      itself, harmon-devkit#1250.
 - [ ] Foreman alignment: pin bump to 2.5.0 (#849), AdmiralFraggle in `trusted_actors` (#850),
       claim contract at dispatch proposed upstream (foreman#169, engaging foreman#82), tier
       vocabulary contributed to foreman#139. Foreman consumption of `tier:*`/`strategy:*` follows
@@ -315,6 +321,9 @@ Issues become cheap to classify and route, for humans and agents alike:
 - **When** it classifies an issue it is confident about
 - **Then** it writes only labels whose manifest `writers` include `agent`, and everything else —
   including every tier/strategy/suggest proposal — appears only in the rolling report
+- **Superseded (v1 allowlist):** the axes are AI-settable, the Tier and `needs-triage` are
+  derived (ADR 2026-09-30 D3, D4 and D6), and harmon-devkit#1250 covers the skill. The scenario
+  above stays as history.
 
 ### Scenario: a form-filed bug arrives classified
 
@@ -342,9 +351,11 @@ Issues become cheap to classify and route, for humans and agents alike:
 
 - Triage Phase B: whether/where to schedule (Actions cron vs devcontainer cron) — decided after
   v1 precision is observed on the live backlog.
-- Whether a `premium` stratum between `standard` and `frontier` ever becomes necessary, or
-  `suggest:<family>:<model>` covers within-family precision indefinitely.
-- `suggest:tier:<value>` stays reserved until a board view needs labeled tier proposals.
+- Whether a `premium` stratum between `standard` and `frontier` ever becomes necessary. (This
+  question was once paired with `suggest:<family>:<model>` as a within-family alternative;
+  `suggest:*` is retired by ADR 2026-09-30 D8, so only the stratum question remains.)
+- ~~`suggest:tier:<value>` stays reserved until a board view needs labeled tier proposals.~~
+  Moot: `suggest:*` is retired (ADR 2026-09-30 D8), including the reserved form.
 
 ## Notes
 

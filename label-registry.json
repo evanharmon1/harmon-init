@@ -133,8 +133,8 @@
           "value": "needs-triage",
           "description": "Awaiting triage",
           "writers": ["human", "agent", "tool:github-actions"],
-          "writer_note": "humans, the issue forms, the triage skill, and the GitHub Actions classification reconciler (derived: added while classification is incomplete, removed once it is complete)",
-          "lifecycle_note": "added freely at filing; removed only when classification is complete"
+          "writer_note": "people, agents and the issue forms add it at filing; after that the triage skill and the GitHub Actions classification reconciler maintain it (derived: added while classification is incomplete, removed once it is complete)",
+          "lifecycle_note": "a new issue that is not fully classified starts with it (people, agents and the issue forms add it at filing); after that it is derived and never cleared by hand"
         },
         {
           "value": "needs-requirements",
