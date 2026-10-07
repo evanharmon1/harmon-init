@@ -263,8 +263,16 @@ cloud sessions ran under, so the token was stored on the other account and the
 sessions kept acting as the operator (`gh api user` returned `evanharmon1`, with
 `admin: true` on `evanharmon1/harmon-init` and `ponderousdev/foreman`). That was
 first misread as an App authorization overriding the `/web-setup` token; it was
-not. Whether an App authorization and a `/web-setup` token on the **same**
-account coexist, and which one wins, is **not observed**.
+not. With both on the **same** account — the PAT stored by `/web-setup` first,
+then the App connection added from the connectors page, both as the bot —
+git pushes still went out on the PAT: a workflow-file push was refused with the
+same `refusing to allow a Personal Access Token … without workflow scope`
+error, and an ordinary push succeeded as `evanharmon1-bot` (observed
+2026-10-07). So adding the App connection afterwards, including through
+claude.ai's "Two steps to work in your repository" prompt, does not reopen
+workflow pushes. Because both credentials were the bot, which one served the
+session's API calls is not distinguishable, and the reverse order (App first,
+then `/web-setup`) is not observed.
 
 **The procedure** (observed 2026-10-07, on the main account, Claude Code
 2.1.292):
@@ -288,9 +296,11 @@ account coexist, and which one wins, is **not observed**.
    to very large repositories can be rejected while GitHub checks for them."
    Continue past it: that is the boundary this route is for. Expect `Connected as
    evanharmon1-bot`.
-3. `/exit`. If the browser then shows "Two steps to work in your repository —
-   Connect your GitHub account / Install the Claude GitHub App", do not follow
-   it: that re-creates the App connection.
+3. `/exit`. The browser may then show "Two steps to work in your repository —
+   Connect your GitHub account / Install the Claude GitHub App". It is not
+   needed for this route; following it afterwards adds an App connection
+   beside the PAT, which was observed not to reopen workflow pushes (see the
+   account pitfall above), but there is no reason to add it.
 4. Start a new session and verify it, for one repository of each owner (attach
    the second to the session first): `gh api user` must return
    `evanharmon1-bot`, and `gh api repos/{owner}/{repo}` must show a
@@ -794,8 +804,8 @@ VM) settled criteria 1 (in part), 3, 4, 8 and 11, and the read half of 7, of
 posture) and the unnumbered row. **Four items are still open**, marked *Open*
 in the table: the unchanged recipe at the first release after `v5.2.0`, the
 setup-script cache, the session's built-in GitHub tools under the agent
-posture, and whether an App connection and a `/web-setup` token on the same
-account coexist. The `gh` inventory rows still tagged *expected, not yet
+posture, and the reverse credential order (an App connection first, then a
+`/web-setup` token). The `gh` inventory rows still tagged *expected, not yet
 observed* are open too (row 7). A settled row stays as the record of what was seen and where it landed.
 Each result goes in the section named, with the date and the Claude Code
 version.
@@ -805,7 +815,7 @@ version.
 | 1 | *Open:* the unchanged recipe, with `sudo bash` and no interim `env`, at the first release after `v5.2.0`. Seen 2026-10-06: `v4.48.0` is the first release carrying the bootstrap; at `v5.2.0` the setup script fails at `semgrep`, and with the interim `sudo env …` line it completes in 86 s (48 s on a second VM) | [Setup script](#setup-script) |
 | — | *Open:* whether a session starts from the cached snapshot. Not observed in two consecutive sessions (2026-10-06, 2026-10-07); whether a GitHub-connection change invalidates it, or it is simply not reused, is not established | [Setup script](#setup-script) |
 | — | *Open:* the session's built-in GitHub tools under the agent posture. Not tried, so whether they can open a PR where `gh` cannot is unknown | [The `gh` call inventory](#the-gh-call-inventory) |
-| — | *Open:* an App connection and a `/web-setup` token on the **same** account — whether they coexist, and which wins. Not observed: both earlier `/web-setup` runs were on a different account than the sessions | [Whose identity GitHub sees](#whose-identity-github-sees) |
+| — | Seen 2026-10-07: with a `/web-setup` PAT stored first and an App connection added afterwards on the same account, git pushes still use the PAT (workflow push refused). *Open:* the reverse order, and which credential serves API calls | [Whose identity GitHub sees](#whose-identity-github-sees) |
 | 3 | Seen 2026-10-07, both routes: the PAT-only route gives `gh api user` → `evanharmon1-bot`, push-only permissions, the bot as push actor, the commit author Claude, and a refused workflow push; the App-as-bot route gives the same identity but accepts a workflow push. PR authorship through a session is not reachable under the posture | [Whose identity GitHub sees](#whose-identity-github-sees) |
 | 4 | Seen 2026-10-07: `claude --cloud "<task>"` needs a TTY, ran prompt-free and returned a pushed branch with no human step | [Bridges between the terminal and the cloud](#bridges-between-the-terminal-and-the-cloud) |
 | 7 | Seen 2026-10-06/07: the read half is run and tagged per row; the write half is not reachable under the posture. *Open:* the inventory rows still tagged *expected, not yet observed* (for example `gh issue create` and `close`, `gh run view` and `rerun`, `trusted-registry.sh`, `release-claim.sh`, `check-issue-metadata.sh`, `round-push.sh`, `lane-watch.sh`, Foreman) | [The `gh` call inventory](#the-gh-call-inventory) |
