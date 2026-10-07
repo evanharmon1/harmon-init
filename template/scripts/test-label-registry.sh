@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # test-label-registry.sh — the OFFLINE gate that binds label provisioning, the
-# docs taxonomy table, and the status inventory to the machine-readable label
+# docs taxonomy and rubric tables, and the status inventory to the machine-readable label
 # registry (label-registry.json). Runs in `task verify` / `task ci`, next to
 # test-registry-drift.sh (which owns the agent-registry bindings).
 #
@@ -22,6 +22,7 @@
 #                    the same renderer (no stale heredoc parse).
 #   6. docs        — the taxonomy table between the label-taxonomy markers in
 #                    docs/project-management.md is exactly `docs-table` output,
+#                    and the classification-rubric block is `rubric-table` output,
 #                    per layer (the manifests legitimately diverge, so each
 #                    layer renders its own expectation).
 #
@@ -1389,24 +1390,210 @@ fi
 # dropped those rows from the rendered doc on profiles without the opt-in.
 # The template twin is compared against the --jinja render, whose copier
 # conditionals are what produced those per-profile documents.
-extract_taxonomy() {
-    awk '/<!-- label-taxonomy:begin -->/{found=1; next} /<!-- label-taxonomy:end -->/{exit} found' "$1"
+extract_docs_block() {
+    local doc="$1" marker="$2"
+    awk -v begin="<!-- $marker:begin -->" -v end="<!-- $marker:end -->" '
+        $0 == begin { starts++; if (starts != 1 || ends) invalid=1; inside=1; next }
+        $0 == end { ends++; if (!inside || ends != 1) invalid=1; inside=0; next }
+        inside { print }
+        END { if (starts != 1 || ends != 1 || inside || invalid) exit 1 }
+    ' "$doc"
+}
+check_docs_block() {
+    local doc="$1" manifest="$2" mode="$3" marker="$4"
+    shift 4
+    local want got
+    if ! want="$(node scripts/label-registry-render.mjs "$mode" "$@" "$manifest")"; then
+        fail "$doc $marker expectation could not be rendered from $manifest"
+        return
+    fi
+    if ! got="$(extract_docs_block "$doc" "$marker")"; then
+        fail "$doc must have one ordered pair of $marker markers — the table must be generated"
+        return
+    fi
+    [ "$got" = "$want" ] || {
+        fail "$doc $marker table drifted from $manifest — regenerate with: node scripts/label-registry-render.mjs $mode $* $manifest"
+        diff <(printf '%s\n' "$want") <(printf '%s\n' "$got") >&2 || true
+    }
 }
 check_docs() {
     local doc="$1" manifest="$2"
     shift 2
-    if ! grep -q 'label-taxonomy:begin' "$doc"; then
-        fail "$doc has no label-taxonomy markers — the taxonomy table must be generated, not hand-edited"
-        return
-    fi
-    local want got
-    want="$(node scripts/label-registry-render.mjs docs-table "$@" "$manifest")"
-    got="$(extract_taxonomy "$doc")"
-    [ "$got" = "$want" ] || {
-        fail "$doc taxonomy table drifted from $manifest — regenerate with: node scripts/label-registry-render.mjs docs-table $* $manifest"
-        diff <(printf '%s\n' "$want") <(printf '%s\n' "$got") >&2 || true
-    }
+    check_docs_block "$doc" "$manifest" docs-table label-taxonomy "$@"
+    check_docs_block "$doc" "$manifest" rubric-table classification-rubric
 }
+# Prove the same comparison used for root, template and rendered GitHub docs
+# rejects a hand edit and either missing marker, using temporary copies only.
+rubric_fixture="$mutation_tmp/rubric-doc.md"
+check_rubric_mutations() {
+    local manifest="$1" mutation
+    node scripts/label-registry-render.mjs rubric-table "$manifest" >"$mutation_tmp/rubric-table.md"
+    for mutation in description begin end; do
+        {
+            [ "$mutation" = begin ] || echo '<!-- classification-rubric:begin -->'
+            if [ "$mutation" = description ]; then
+                sed '5s/ |$/ (mutation) |/' "$mutation_tmp/rubric-table.md"
+            else
+                cat "$mutation_tmp/rubric-table.md"
+            fi
+            [ "$mutation" = end ] || echo '<!-- classification-rubric:end -->'
+        } >"$rubric_fixture"
+        if (
+            fails=0
+            check_docs_block "$rubric_fixture" "$manifest" rubric-table classification-rubric
+            [ "$fails" -eq 0 ]
+        ) >"$mutation_tmp/rubric-$mutation.log" 2>&1; then
+            fail "rubric docs gate accepted mutation: $mutation"
+        else
+            echo "PASS: rubric docs gate rejects mutation: $mutation ($manifest)"
+        fi
+    done
+}
+check_rubric_order() {
+    node --input-type=module - "$1" "$2" <<'NODE'
+import fs from 'node:fs'
+
+const [manifestPath, tablePath] = process.argv.slice(2)
+const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+const axes = new Map([
+  ['Impact', 'impact'], ['Risk', 'risk'], ['Complexity', 'complexity'],
+  ['Tier', 'tier'], ['Priority', 'priority'], ['Priority (AI)', 'priority-ai']
+])
+const actual = new Map([...axes.values()].map((id) => [id, []]))
+let current
+for (const line of fs.readFileSync(tablePath, 'utf8').split('\n')) {
+  const cells = line.split('|').map((cell) => cell.trim())
+  const value = /^`([^`]+)`$/.exec(cells[2] ?? '')
+  if (!value) continue
+  if (cells[1]) current = axes.get(cells[1].replaceAll('**', ''))
+  if (!actual.has(current)) {
+    console.error('rubric order: value outside a recognized axis')
+    process.exit(1)
+  }
+  actual.get(current).push(value[1])
+}
+for (const id of axes.values()) {
+  const family = manifest.families.find((entry) => entry.family === id)
+  const expected = family?.retired === true ? [] : (family?.values ?? [])
+    .filter((value) => value.retired !== true && !(id === 'tier' && value.value === 'pinned'))
+    .map((value) => value.value)
+  if (JSON.stringify(actual.get(id)) !== JSON.stringify(expected)) {
+    console.error(`rubric order: ${id} values differ from active registry values in registry order`)
+    process.exit(1)
+  }
+}
+NODE
+}
+check_rubric_self_tests() {
+    local base_manifest="$1" initial_fails="$fails" mutation rubric_output fixture_value
+    check_rubric_mutations "$base_manifest"
+    node scripts/label-registry-render.mjs rubric-table "$base_manifest" >"$mutation_tmp/rubric-table.md"
+    check_rubric_order "$base_manifest" "$mutation_tmp/rubric-table.md" ||
+        fail "rubric value columns do not match the registry's complete ordered scales"
+    # A newly registered scale value must change the generated table, while exact
+    # prefix stripping must preserve a colon inside the actual short form.
+    {
+        echo '<!-- classification-rubric:begin -->'
+        cat "$mutation_tmp/rubric-table.md"
+        echo '<!-- classification-rubric:end -->'
+    } >"$rubric_fixture"
+    for mutation in extra-active missing-prefix internal-colon; do
+        fixture_value="$(
+            node --input-type=module - "$base_manifest" "$mutated_manifest" "$mutation" <<'NODE'
+import fs from 'node:fs'
+
+const [input, output, mutation] = process.argv.slice(2)
+const manifest = JSON.parse(fs.readFileSync(input, 'utf8'))
+const impact = manifest.families.find((family) => family.family === 'impact')
+const target = impact.values.find((value) => value.retired !== true)
+if (!target) throw new Error('rubric fixture requires an active impact value')
+let fixtureValue = target.value
+if (mutation === 'extra-active') {
+  const existing = new Set(impact.values.map((value) => value.value))
+  let suffix = 0
+  while (existing.has(`rubric-test-${suffix}`)) suffix++
+  fixtureValue = `rubric-test-${suffix}`
+  impact.values.push({ value: fixtureValue, description: 'Impact: additional active scale value' })
+} else if (mutation === 'missing-prefix') {
+  target.description = 'Expected impact: a consumer-specific description'
+} else {
+  target.description = 'Impact: benefit: preserve this internal colon'
+}
+fs.writeFileSync(output, JSON.stringify(manifest))
+console.log(fixtureValue)
+NODE
+        )"
+        rubric_output="$mutation_tmp/rubric-$mutation.out"
+        case "$mutation" in
+        extra-active)
+            if ! node scripts/label-registry-render.mjs rubric-table "$mutated_manifest" >"$rubric_output"; then
+                fail "rubric renderer rejected an extra active scale value"
+            elif ! check_rubric_order "$mutated_manifest" "$rubric_output"; then
+                fail "rubric extra-active fixture does not match every ordered registry scale"
+            elif ! grep -qF "$(printf '| `%s` | additional active scale value |' "$fixture_value")" "$rubric_output"; then
+                fail "rubric renderer silently omitted an extra active scale value"
+            elif (
+                fails=0
+                check_docs_block "$rubric_fixture" "$mutated_manifest" rubric-table classification-rubric
+                [ "$fails" -eq 0 ]
+            ) >"$mutation_tmp/rubric-extra-active.log" 2>&1; then
+                fail "rubric docs gate accepted a stale table after an active scale value was added"
+            else
+                echo "PASS: rubric includes an extra active value and rejects the stale doc"
+            fi
+            ;;
+        missing-prefix)
+            if ! node scripts/label-registry-render.mjs rubric-table "$mutated_manifest" >"$rubric_output"; then
+                fail "rubric renderer rejected a description without the exact axis prefix"
+            elif ! grep -qF "$(printf '| `%s` | Expected impact: a consumer-specific description |' "$fixture_value")" "$rubric_output"; then
+                fail "rubric renderer did not preserve a description without the exact axis prefix verbatim"
+            else
+                {
+                    echo '<!-- classification-rubric:begin -->'
+                    cat "$rubric_output"
+                    echo '<!-- classification-rubric:end -->'
+                } >"$mutation_tmp/rubric-reworded-doc.md"
+                if (
+                    fails=0
+                    check_docs_block "$mutation_tmp/rubric-reworded-doc.md" "$mutated_manifest" rubric-table classification-rubric
+                    [ "$fails" -eq 0 ]
+                ); then
+                    echo "PASS: rubric preserves an unprefixed description verbatim and accepts its regenerated doc"
+                else
+                    fail "rubric drift gate rejected a regenerated doc with an unprefixed description"
+                fi
+            fi
+            ;;
+        internal-colon)
+            if ! node scripts/label-registry-render.mjs rubric-table "$mutated_manifest" >"$rubric_output"; then
+                fail "rubric renderer rejected a valid description with an internal colon"
+            elif ! grep -qF "$(printf '| `%s` | benefit: preserve this internal colon |' "$fixture_value")" "$rubric_output"; then
+                fail "rubric renderer stripped the internal colon instead of only the axis prefix"
+            else
+                echo "PASS: rubric preserves an internal colon after stripping the exact prefix"
+            fi
+            ;;
+        esac
+    done
+    if [ "$fails" -eq "$initial_fails" ]; then
+        echo "PASS: whole rubric self-test block ($base_manifest)"
+    fi
+}
+check_rubric_self_tests label-registry.json
+# Consumers own the descriptions, including whether they use the English axis
+# prefixes. Run every rubric test again against a valid alternative wording.
+reworded_manifest="$mutation_tmp/reworded-registry.json"
+node --input-type=module - label-registry.json "$reworded_manifest" <<'NODE'
+import fs from 'node:fs'
+
+const [input, output] = process.argv.slice(2)
+const manifest = JSON.parse(fs.readFileSync(input, 'utf8'))
+manifest.families.find((family) => family.family === 'impact').values
+  .find((value) => value.retired !== true).description =
+  'Expected impact: a consumer-specific description'
+fs.writeFileSync(output, JSON.stringify(manifest))
+NODE
+check_rubric_self_tests "$reworded_manifest"
 profile_flags=""
 [ -f taskfiles/foreman.yml ] && profile_flags="--foreman"
 [ -f release-please-config.json ] && profile_flags="$profile_flags --release-please"
@@ -1461,4 +1648,4 @@ if [ "$fails" -ne 0 ]; then
     echo "test-label-registry: $fails failure(s) above." >&2
     exit 1
 fi
-echo "test-label-registry: manifest, provisioning, status inventory, and docs table agree."
+echo "test-label-registry: manifest, provisioning, status inventory, and docs taxonomy and rubric tables agree."
