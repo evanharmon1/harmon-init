@@ -52,7 +52,17 @@ case "$q" in
     fi
     ;;
 *repositoryOwner*__typename*) printf '{"data":{"repositoryOwner":{"__typename":"%s","id":"U_1"}}}\n' "${STUB_OWNER_TYPE:-User}" ;;
-*projectsV2*) echo '{"data":{"repositoryOwner":{"projectsV2":{"pageInfo":{"hasNextPage":false},"nodes":[{"id":"P_1","number":7,"title":"Test Project"}]}}}}' ;;
+*projectsV2*)
+    if [ "${STUB_NEW_PROJECT:-0}" = 1 ]; then
+        echo '{"data":{"repositoryOwner":{"projectsV2":{"pageInfo":{"hasNextPage":false},"nodes":[]}}}}'
+    else
+        echo '{"data":{"repositoryOwner":{"projectsV2":{"pageInfo":{"hasNextPage":false},"nodes":[{"id":"P_1","number":7,"title":"Test Project"}]}}}}'
+    fi
+    ;;
+*createProjectV2\(*)
+    printf '%s\n' "$q" >>"$MUTATIONS"
+    echo '{"data":{"createProjectV2":{"projectV2":{"id":"P_1","number":7}}}}'
+    ;;
 *ProjectV2Field*) printf '%s\n' "$q" >>"$MUTATIONS"; echo '{"data":{}}' ;;
 *) echo "fake gh: unexpected query: $q" >&2; exit 1 ;;
 esac
@@ -68,6 +78,8 @@ STUB_FIELDS_FILE="$tmp/fields.json"
 STUB_FIELDS_FILE2="$tmp/fields2.json"
 export MUTATIONS STUB_FIELDS_FILE STUB_FIELDS_FILE2
 export STUB_OWNER_TYPE STUB_VARIABLE_RC
+STUB_NEW_PROJECT=0
+export STUB_NEW_PROJECT
 
 # run_with FIELDS_JSON — run the script against that project snapshot.
 run_with() {
@@ -206,6 +218,27 @@ for owner_type in User Organization; do
     fi
 done
 STUB_OWNER_TYPE=User
+
+echo "==> a new personal-account project creates none of the retired fields"
+STUB_NEW_PROJECT=1
+run_with "$bare"
+STUB_NEW_PROJECT=0
+mut=$(cat "$MUTATIONS")
+grep -q 'Created project #7' "$tmp/out" || fail "expected the new-project path"
+case "$mut" in
+*'name:"Agent"'*) fail "a new personal-account project created the retired Agent project field" ;;
+*'name:"Domain"'*) fail "a new personal-account project created the retired Domain project field" ;;
+*'name:"Layer"'*) fail "a new personal-account project created the retired Layer project field" ;;
+*'name:"Priority"'*) fail "a new personal-account project created the retired Priority project field" ;;
+*'name:"Size"'*) fail "a new personal-account project created the retired Size project field" ;;
+*'dataType:NUMBER'*) fail "a new personal-account project created a number field — Size was the only one" ;;
+esac
+case "$mut" in
+*'dataType:TEXT,name:"Product"'*) : ;;
+*) fail "a new personal-account project should create the Product text field" ;;
+esac
+[ "$(grep -c createProjectV2Field "$MUTATIONS")" = 1 ] ||
+    fail "a new personal-account project should create exactly 1 field (Product), got $(grep -c createProjectV2Field "$MUTATIONS")"
 
 echo "==> a board that still carries Priority and Size is left exactly as it is"
 # Reconciling is additive and the script never deletes: an existing Priority is no
