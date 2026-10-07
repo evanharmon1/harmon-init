@@ -84,18 +84,18 @@ TLS-intercepting proxy: the platform seeds the system store
 (`/etc/ssl/certs/ca-certificates.crt`) with the proxy's CA and exports variables
 such as `SSL_CERT_FILE` and `NODE_EXTRA_CA_CERTS` into the *session* — but the
 setup script runs the bootstrap under `sudo bash`, which resets the environment,
-so nothing but the store itself survives. `curl` reads the store, so every
-download from the allowed hosts above passes; `uv` and Node ship their own roots
-and would reject the proxy's certificate (`invalid peer certificate:
-UnknownIssuer`, observed 2026-10-06 at the first `uv tool install`). The shared
-helpers therefore name the store themselves: `harmon_uv_tool` passes
-`--system-certs`, and `harmon_npm_global` runs `npm install -g` with
-`NODE_EXTRA_CA_CERTS` pointing at the bundle when that file exists and the caller
-set none (a caller's own value wins). Where no proxy intercepts TLS the store
+so nothing but the store itself survives. `curl` reads the store; `uv` and Node
+ship their own roots and would reject the proxy's certificate (`invalid peer
+certificate: UnknownIssuer`, observed 2026-10-06 at the first `uv tool
+install`), so the shared scripts tell them to. `lib.sh` — sourced by every tier
+script — exports `NODE_EXTRA_CA_CERTS` pointing at the bundle when that file
+exists and the caller set none (a caller's own value wins), which covers npm and
+every Node process a tier starts, Playwright's browser download included;
+`harmon_uv_tool` passes `--system-certs`. Where no proxy intercepts TLS the store
 holds the public roots too, so both are no-ops there, and the hosts in the tables
-are unchanged. `scripts/test-bootstrap-remote.sh` executes both helpers against
-stubs, so dropping either setting fails the guard — CI's `remote-bootstrap` job
-has no intercepting proxy and could not notice.
+are unchanged. `scripts/test-bootstrap-remote.sh` sources `lib.sh` and runs both
+helpers against stubs, so dropping either setting fails the guard — CI's
+`remote-bootstrap` job has no intercepting proxy and could not notice.
 
 `scripts/test-bootstrap-remote.sh` keeps both tables honest in both directions:
 every host the install scripts and the bootstrap contact — literally in a URL,
