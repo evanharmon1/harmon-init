@@ -342,6 +342,86 @@ matrix() { # guard
     case_ "$g" ask "$r" "git -c alias.merge=log merge feat"
     case_ "$g" ask "$r" ". /dev/stdin <<< 'git pull'"
     case_ "$g" ask "$r" "source /dev/stdin <<< 'git merge feat'"
+    # Follow-up #128: every shape below asked under the old word-matching guard.
+    # A non-literal command name puts the line under the merge/pull word test.
+    case_ "$g" ask "$r" "\$(printf 'git merge main')"
+    case_ "$g" ask "$r" "\$(printf %s 'git merge main')"
+    case_ "$g" ask "$r" "git\${IFS}merge\${IFS}main"
+    case_ "$g" ask "$r" "printf 'git merge main\\n' | \"\$SHELL\""
+    case_ "$g" ask "$r" "\"\$SHELL\" <<'EOF'${nl}git pull${nl}EOF"
+    case_ "$g" ask "$r" "printf 'git-merge\\n' | xargs -I{} {} feat"
+    # Command position: expanded assignments, nested wrappers, coproc.
+    case_ "$g" ask "$r" "FOO=\$BAR /usr/lib/git-core/git-merge main"
+    case_ "$g" ask "$r" "find . -exec env FOO=1 git-merge main \\;"
+    case_ "$g" ask "$r" "coproc git-merge feat"
+    case_ "$g" ask "$r" "coproc job /usr/libexec/git-core/git-pull origin main"
+    # Runners: parallel with no command, sudo -s/-i, herdr, cmd /c.
+    case_ "$g" ask "$r" "parallel 'git merge {}' ::: feat"
+    case_ "$g" ask "$r" "parallel ::: 'git merge main'"
+    case_ "$g" ask "$r" "printf 'git pull\\n' | parallel"
+    case_ "$g" ask "$r" "echo 'git merge main' | sudo -s"
+    case_ "$g" ask "$r" "sudo -i <<'EOF'${nl}git pull${nl}EOF"
+    case_ "$g" ask "$r" "herdr pane run 42 'git merge main'"
+    case_ "$g" ask "$r" "cmd.exe /c \"git merge main\""
+    # Locale quoting and env -S trailing arguments.
+    case_ "$g" ask "$r" "git \$\"merge\" feat"
+    case_ "$g" ask "$r" "\$\"git\" merge feat"
+    case_ "$g" ask "$r" "env -Sgit \$SUB main"
+    case_ "$g" ask "$r" "env --split-string=git \$SUB main"
+    # ...and the new rules leave ordinary commands alone.
+    case_ "$g" silent "$r" "\"\$EDITOR\" notes.md"
+    case_ "$g" silent "$r" "\$PAGER README.md"
+    case_ "$g" silent "$r" "herdr pane list"
+    case_ "$g" silent "$r" "sudo -u evan git status"
+    case_ "$g" silent "$r" "find . -name '*.md' -exec grep -l merge-base {} +"
+    case_ "$g" silent "$r" "git ls-files | parallel wc -l"
+    # Challenge round 1: a literal xargs replacement token is still dynamic;
+    # sudo's shell mode is read from sudo's own options; only `herdr pane run`
+    # runs text.
+    case_ "$g" ask "$r" "printf 'git\\n' | xargs -I X X merge feat"
+    # A delegated command's own -i now matches sudo's shell flag (see the
+    # cycle-2 case below): a prompt, accepted to close sudo's option grammar.
+    case_ "$g" ask "$r" "sudo grep -i 'git merge' README.md"
+    case_ "$g" silent "$r" "sudo grep -i 'todo' README.md"
+    case_ "$g" silent "$r" "herdr pane wait-output p1 --regex 'git merge'"
+    # Challenge round 2: herdr global options, cmd's attached payload, and
+    # sudo option values that contain s or i.
+    case_ "$g" ask "$r" "herdr --session foo pane run 42 'git merge main'"
+    case_ "$g" ask "$r" "cmd.exe /cgit \$SUB main"
+    case_ "$g" ask "$r" "cmd /kgit pull"
+    case_ "$g" silent "$r" "sudo -uadmin grep 'git merge' README.md"
+    case_ "$g" ask "$r" "echo 'git pull' | sudo -uadmin -s"
+    # Challenge round 3: /c is cmd's alone, and herdr needs the `pane run` pair.
+    case_ "$g" silent "$r" "echo /c 'git merge main'"
+    case_ "$g" silent "$r" "herdr agent read run | grep merge"
+    # Review round 1: a named coproc's brace body, and cmd's own expansions.
+    case_ "$g" ask "$r" "coproc job { /usr/libexec/git-core/git-pull origin main; }"
+    case_ "$g" ask "$r" "cmd /c git %SUB% main"
+    case_ "$g" ask "$r" "cmd /c git m^erge main"
+    case_ "$g" silent "$r" "cmd /c dir"
+    # Review round 2: Git Bash's doubled and stacked cmd switches.
+    case_ "$g" ask "$r" "cmd.exe //c git %SUB% main"
+    case_ "$g" ask "$r" "cmd.exe //c git merge main"
+    case_ "$g" ask "$r" "cmd /Q/Cgit pull"
+    case_ "$g" silent "$r" "cmd //c dir"
+    # Integration cycle 1: herdr dispatch words from expansions, and sudo's
+    # long-option prefixes.
+    case_ "$g" ask "$r" "GROUP=pane; herdr \"\$GROUP\" run 42 'git merge main'"
+    case_ "$g" ask "$r" "ACTION=run; herdr pane \"\$ACTION\" 42 'git pull'"
+    case_ "$g" ask "$r" "echo 'git merge main' | sudo --sh"
+    case_ "$g" ask "$r" "echo 'git pull' | sudo --lo"
+    case_ "$g" silent "$r" "sudo --list"
+    # Integration cycle 2: a value-taking option's abbreviation before -s.
+    case_ "$g" ask "$r" "echo 'git merge main' | sudo --chd /tmp -s"
+    # `--` can be an option's value (`-p -- -s`), so it does not end the scan.
+    case_ "$g" ask "$r" "echo 'git pull' | sudo -p -- -s"
+    case_ "$g" ask "$r" "sudo -- grep -i 'git merge' README.md"
+    # Integration cycle 4: wrapper and env long-option abbreviations.
+    case_ "$g" ask "$r" "G=git; sudo --chd /repo \"\$G\" merge feature"
+    case_ "$g" ask "$r" "env --spl='git merge feature'"
+    case_ "$g" ask "$r" "env --split 'git pull'"
+    case_ "$g" silent "$r" "sudo --chd /repo git status"
+    case_ "$g" silent "$r" "env --unset=FOO git status"
     case_ "$g" silent "$r" "git --help merge"
     case_ "$g" silent "$r" "git --version pull"
     case_ "$g" silent "$r" "echo \"\$SHELL\""
