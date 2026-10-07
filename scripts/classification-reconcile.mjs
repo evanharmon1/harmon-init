@@ -420,11 +420,12 @@ function makeClient(token, fetch, env) {
     } catch {
       throw new Error(`GraphQL ${res.status}: non-JSON response: ${diagnostic(text)}`)
     }
-    if (body === null || typeof body !== 'object' || Array.isArray(body))
+    if (!res.ok || body?.errors)
+      throw new Error(`GraphQL ${res.status}: ${diagnostic(JSON.stringify(body?.errors ?? body))}`)
+    const data = body?.data
+    if (data === null || typeof data !== 'object' || Array.isArray(data))
       throw new Error(`GraphQL ${res.status}: invalid response body: ${diagnostic(text)}`)
-    if (!res.ok || body.errors)
-      throw new Error(`GraphQL ${res.status}: ${diagnostic(JSON.stringify(body.errors ?? body))}`)
-    return body.data
+    return data
   }
   async function rest(method, path, payload) {
     const res = await fetch(`${api}${path}`, {

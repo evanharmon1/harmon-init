@@ -718,26 +718,29 @@ for (const responseText of ['<html><body>Bad Gateway</body></html>', '<html>' + 
     assert.ok(error.length < 2200)
   })
 }
-for (const status of [502, 200]) {
+for (const body of [null, [], {}, { data: null }, { data: [] }, { data: 1 }]) {
   const printed = []
+  const responseText = JSON.stringify(body)
   const code = await m.run(
     { GH_TOKEN: 't', GITHUB_REPOSITORY: 'a/two' },
-    { root, print: (line) => printed.push(line), fetch: async () => new Response('null', { status }) }
+    { root, print: (line) => printed.push(line), fetch: async () => new Response(responseText, { status: 200 }) }
   )
-  check(`run(): a JSON null GraphQL body retains status ${status}`, () => {
+  check(`run(): invalid GraphQL data envelope ${responseText} retains status and excerpt`, () => {
     assert.equal(code, 1)
-    assert.ok(printed.some((line) => line.startsWith('::error ') && line.includes(`GraphQL ${status}: invalid response body: null`)))
+    const error = printed.find((line) => line.startsWith('::error '))
+    assert.ok(error.includes(`GraphQL 200: invalid response body: ${responseText.slice(0, 2000)}`))
+    assert.ok(error.length < 2200)
   })
 }
 {
   const printed = []
   const code = await m.run(
     { GH_TOKEN: 't', GITHUB_REPOSITORY: 'a/two' },
-    { root, print: (line) => printed.push(line), fetch: async () => new Response('[]', { status: 200 }) }
+    { root, print: (line) => printed.push(line), fetch: async () => new Response('null', { status: 502 }) }
   )
-  check('run(): a JSON array GraphQL body retains status 200', () => {
+  check('run(): a JSON null GraphQL body retains status 502 and excerpt', () => {
     assert.equal(code, 1)
-    assert.ok(printed.some((line) => line.startsWith('::error ') && line.includes('GraphQL 200: invalid response body: []')))
+    assert.ok(printed.some((line) => line.startsWith('::error ') && line.includes('GraphQL 502:') && line.includes('null')))
   })
 }
 {
