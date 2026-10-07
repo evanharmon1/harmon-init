@@ -638,7 +638,11 @@ meets its exit condition on round 1 is done, whatever the cap allowed.
   (`.claude/settings.json` backstops this with `permissions.ask` rules on
   `gh pr merge`, pushes to main and force-pushes, plus the `git-merge-guard`
   hook, which asks before any `git merge`/`git pull` it cannot verify lands on
-  a feature branch.) `gh pr ready` is *not* a merge and agents may run it — but only
+  a feature branch. The hook parses each command, so quoted text, heredoc
+  bodies, search patterns and `git merge-base` are data and need no workaround.
+  It applies in the dev profile only; with `FOREMAN_DEVCONTAINER` set to `bot`
+  or `agent` it makes no merge checks, and the "Protect Main" ruleset is the
+  boundary there.) `gh pr ready` is *not* a merge and agents may run it — but only
   out of a passing readiness gate, never to signal "I think this looks done".
 - **Reply to every inline PR review comment in its own thread** — bot
   reviewers and humans alike. Treat findings as

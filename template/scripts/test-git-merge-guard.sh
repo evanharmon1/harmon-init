@@ -17,6 +17,8 @@ guard="${GUARD:-${repo_root}/.claude/hooks/git-merge-guard.py}"
 
 # Fixture commits must not trip a global signing config or core.hooksPath.
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS
+# The matrix tests the guarded (dev) profile; the profile section sets its own.
+unset FOREMAN_DEVCONTAINER
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_NOSYSTEM=1
 
 tmp="$(mktemp -d)"
@@ -144,6 +146,8 @@ matrix() { # guard
     case_ "$g" ask "$r" "git log --grep=#1 && git merge feat"
     case_ "$g" ask "$r" "git -c alias.m=merge m feat"
     case_ "$g" ask "$r" "git -c Alias.m=merge m feat"
+    case_ "$g" ask "$r" "git -calias.m=merge m feat"
+    case_ "$g" ask "$r" "git --config-env=alias.m=SUB m feat"
     case_ "$g" ask "$r" "git.exe merge feat"
     # A real comment holding a quote or a trailing backslash must not hide a
     # spliced subcommand on the same or the next line (bash-like reading).
@@ -186,8 +190,8 @@ matrix() { # guard
     case_ "$g" ask "$r" "git --shallow-file /dev/null \$'\\x6d\\x65\\x72\\x67\\x65' feat"
     case_ "$g" ask "$r" "git --config-env user.name=FOO \"\$SUB\" feat"
     case_ "$g" ask "$r" "git --super-prefix sub/ \$'\\x6d\\x65\\x72\\x67\\x65' feat"
-    # Scripts are not seen through: a bare path is silent (documented limit),
-    # but a shell name in front of it is indirection and asks.
+    # Scripts are not seen through (documented limit), but a shell name makes the
+    # command line an evaluator, so a mention of merge/pull asks.
     case_ "$g" silent "${r}/wt" "./scripts/merge-main.sh"
     case_ "$g" ask "${r}/wt" "sh ./scripts/merge-main.sh"
     case_ "$g" ask "${r}/wt" "sh ./merge-main.sh"
@@ -199,7 +203,8 @@ matrix() { # guard
     case_ "$g" silent "${r}/wt" "base=\"\$(git merge-base HEAD \"\$base_ref\")\""
     case_ "$g" silent "${r}/wt" "gh pr list --json number | xargs -n1 echo pull-requests"
     case_ "$g" ask "${r}/wt" "x=\$(git merge main)"
-    # The dashed executables, and the index-writing merge plumbing behind indirection.
+    # The dashed executables run as commands. Behind an evaluator the index-writing
+    # merge plumbing falls under the word test and asks.
     case_ "$g" ask "${r}/wt" "\$(git --exec-path)/git-merge main"
     case_ "$g" ask "${r}/wt" "git-pull origin main"
     case_ "$g" ask "$r" "eval \"git merge-ours feat\""
@@ -209,15 +214,15 @@ matrix() { # guard
     case_ "$g" ask "$r" "bash -c \"git \$SUB main\""
     case_ "$g" ask "$r" "eval \"git \${sub} feat\""
     case_ "$g" silent "${r}/wt" "bash -c \"git log --oneline\""
-    # A dashed name anywhere asks (documented limit).
-    case_ "$g" ask "${r}/wt" "grep -rn git-merge docs/"
-    case_ "$g" ask "${r}/wt" "git log -1 # check the merge commit"
-    case_ "$g" ask "${r}/wt" "gh pr comment 1 --body \"git \$(git rev-parse HEAD) is the head\""
-    case_ "$g" ask "${r}/wt" "git config --get alias.st"
+    # Data is data: a dashed name as an argument, a comment, quoted prose, and
+    # a non-merge git call inside a substitution (#123).
+    case_ "$g" silent "${r}/wt" "grep -rn git-merge docs/"
+    case_ "$g" silent "${r}/wt" "git log -1 # check the merge commit"
+    case_ "$g" silent "${r}/wt" "gh pr comment 1 --body \"git \$(git rev-parse HEAD) is the head\""
+    case_ "$g" silent "${r}/wt" "git config --get alias.st"
     case_ "$g" silent "${r}/wt" "gh pr comment 1 --body \"run git status with \$FLAGS\""
-    # Quoted prose that names both words asks (documented limit); the guard's own
-    # file name does not.
-    case_ "$g" ask "${r}/wt" "git commit -m 'docs: explain how git pull works'"
+    # Quoted prose that names both words is data, and so is the guard's own name.
+    case_ "$g" silent "${r}/wt" "git commit -m 'docs: explain how git pull works'"
     case_ "$g" silent "${r}/wt" "bash scripts/test-git-merge-guard.sh"
     case_ "$g" silent "${r}/wt" "python3 .claude/hooks/git-merge-guard.py --help"
     case_ "$g" silent "${r}/wt" "git log --merges --oneline"
@@ -233,6 +238,113 @@ matrix() { # guard
     case_ "$g" silent "${r}/wt" "git log -- '*.md'"
     case_ "$g" silent "${r}/wt" "git log --format='%h %s' -1"
     case_ "$g" silent "${r}/wt" "cat > body.md <<'EOF'${nl}this pull request adds a guard${nl}EOF"
+    # evanharmon1/harmon-dotfiles#123: the false prompts from one orchestrated
+    # session -- report appends, search patterns, the policy reader's flags,
+    # merge-base reads, and one-off scripts that mention them.
+    case_ "$g" silent "$r" "cat >> report.md <<'EOF'${nl}ran a catch-up merge of main; git pull next${nl}EOF"
+    case_ "$g" silent "$r" "cat >> report.md <<EOF${nl}merged \$(git rev-parse --short HEAD); then git pull${nl}EOF"
+    case_ "$g" silent "$r" "grep -n 'merge base' AGENTS.md"
+    case_ "$g" silent "$r" "grep -E 'commit|merge|stash' docs/conventions.md"
+    case_ "$g" silent "$r" "grep -n merge-base README.md"
+    case_ "$g" silent "$r" "node scripts/policy.mjs --merge-base-policy p.toml --merge-base-registry r.json"
+    case_ "$g" silent "$r" "git merge-base HEAD origin/main"
+    case_ "$g" silent "$r" "git diff \"\$(git merge-base HEAD origin/main)\" --stat"
+    case_ "$g" silent "$r" "python3 - <<'EOF'${nl}args = ['--merge-base-policy', 'git pull']${nl}EOF"
+    case_ "$g" silent "$r" "node -e \"console.log('--merge-base-policy', 'git merge')\""
+    case_ "$g" silent "$r" "git mergetool --tool-help"
+    case_ "$g" silent "$r" "echo 'git merge main' > notes.txt"
+    # Real and possible invocations still ask, wrapped or evaluated.
+    case_ "$g" ask "$r" "git pull --rebase"
+    case_ "$g" ask "$r" "bash -c \"git merge main\""
+    case_ "$g" ask "$r" "eval \"git pull\""
+    case_ "$g" ask "$r" "git-merge main"
+    case_ "$g" ask "$r" "/usr/libexec/git-core/git-pull origin main"
+    case_ "$g" ask "$r" "timeout 9 git merge feat"
+    case_ "$g" ask "$r" "sudo -u evan git pull"
+    case_ "$g" ask "$r" "echo main | xargs git merge"
+    case_ "$g" ask "$r" "echo merge | xargs git"
+    case_ "$g" ask "$r" "ssh host git pull"
+    case_ "$g" ask "$r" "ssh host 'cd repo && git merge main'"
+    case_ "$g" ask "$r" "watch git pull"
+    case_ "$g" ask "$r" "env -S 'git merge feat'"
+    case_ "$g" ask "$r" "echo \"\$(git merge feat)\""
+    case_ "$g" ask "$r" "echo \`git pull\`"
+    case_ "$g" ask "$r" "diff <(git merge feat) /dev/null"
+    case_ "$g" ask "$r" "cat <<EOF${nl}\$(git merge feat)${nl}EOF"
+    case_ "$g" ask "$r" "bash <<'EOF'${nl}git merge feat${nl}EOF"
+    case_ "$g" ask "$r" "sh <<< 'git pull'"
+    case_ "$g" ask "$r" "echo 'git merge feat' | sh"
+    case_ "$g" ask "$r" "sudo bash -lc 'git pull'"
+    # Challenge round 1: substitutions inside `${...}` and `((...))`, ANSI-C
+    # strings handed to an evaluator, stdin scripts with positional arguments,
+    # wrapper options that take a value, feeders that fill the subcommand, and
+    # unreadable commands that never spell merge.
+    case_ "$g" ask "$r" "echo \"\${x:-\$(git merge feat)}\""
+    case_ "$g" ask "$r" "echo \${x:-\`git pull\`}"
+    case_ "$g" ask "$r" "((git merge feat) )"
+    case_ "$g" ask "$r" "echo \$((git merge feat) )"
+    case_ "$g" ask "$r" "bash -c \$'git merge feat'"
+    case_ "$g" ask "$r" "eval \$'git \\x70ull'"
+    case_ "$g" ask "$r" "bash -s foo <<'EOF'${nl}git merge feat${nl}EOF"
+    case_ "$g" ask "$r" "sudo -u evan sh <<< 'git pull'"
+    case_ "$g" ask "$r" "sudo -u evan /usr/libexec/git-core/git-merge feat"
+    case_ "$g" ask "$r" "echo merge | xargs -I X git X feat"
+    case_ "$g" ask "$r" "echo merge | xargs -I{} git {} feat"
+    case_ "$g" ask "$r" "parallel git ::: merge"
+    case_ "$g" ask "$r" "git \$x feat${nl}echo 'unbalanced"
+    case_ "$g" ask "$r" "git m*rge feat 'x"
+    case_ "$g" silent "$r" "echo \$((1 + 2))"
+    case_ "$g" silent "$r" "echo \"\${x:-default}\" \"\${#arr[@]}\""
+    case_ "$g" silent "$r" "git ls-files | xargs git log --oneline"
+    case_ "$g" silent "$r" "sudo -u evan git status"
+    # Challenge round 2: an evaluator puts the whole command line under the
+    # word test, whatever its options or how its input arrives.
+    case_ "$g" ask "$r" "bash -C -c 'git merge feat'"
+    case_ "$g" ask "$r" "zsh -C -c 'git pull'"
+    case_ "$g" ask "$r" "env -S'git merge feat'"
+    case_ "$g" ask "$r" "printf 'git merge feat\\n' | if true; then sh; fi"
+    case_ "$g" ask "$r" "bash -C -c \$'git \\x70ull'"
+    case_ "$g" silent "$r" "bash -c 'git log --oneline' | head -5"
+    case_ "$g" silent "$r" "bash scripts/test-git-merge-guard.sh"
+    # Challenge round 3: the csh family ships on macOS.
+    case_ "$g" ask "$r" "csh -c 'git merge feat'"
+    case_ "$g" ask "$r" "/bin/tcsh -c 'git pull'"
+    # A -c payload is a script whatever program takes it.
+    case_ "$g" ask "$r" "rc -c 'git merge feat'"
+    case_ "$g" silent "$r" "git commit -m 'docs: explain how git pull works' -c 'x'"
+    # Review round 2: a search tool's -c is a count, and wrapper option values.
+    case_ "$g" silent "$r" "grep -c 'git merge' README.md"
+    case_ "$g" silent "$r" "rg -c 'git pull' ."
+    case_ "$g" ask "$r" "/usr/bin/time -f %E /usr/lib/git-core/git-merge main"
+    case_ "$g" ask "$r" "caffeinate -w 123 /usr/libexec/git-core/git-merge main"
+    # Review round 3: a trap action runs later; `git grep -c` counts.
+    case_ "$g" ask "$r" "trap 'git merge main' EXIT"
+    case_ "$g" silent "$r" "git grep -c 'git merge' -- docs"
+    # Integration cycle 1 (Codex cloud): only the invoked alias matters, and
+    # busybox runs the applet named next.
+    case_ "$g" silent "$r" "git -c alias.x=log status"
+    case_ "$g" silent "$r" "git -c alias.lg='log --oneline' lg"
+    case_ "$g" ask "$r" "git -c alias.m='!git merge' m feat"
+    case_ "$g" ask "$r" "git -c alias.M=merge m feat"
+    case_ "$g" ask "$r" "git -c \"\$X\" m feat"
+    case_ "$g" ask "$r" "git -c alias.a=b -c alias.b=merge a feat"
+    case_ "$g" ask "$r" "git -c alias.g='!git' g merge feat"
+    case_ "$g" ask "$r" "git -c alias.o='-C .' o merge feat"
+    case_ "$g" silent "$r" "git -c alias.a=b -c alias.b=log a --oneline"
+    case_ "$g" silent "$r" "busybox grep -c 'git merge' README.md"
+    case_ "$g" ask "$r" "busybox sh -c 'git pull'"
+    # Integration cycle 2: the evaluator word test reads decoded words.
+    case_ "$g" ask "$r" "printf \$'git \\x70ull\\n' | bash"
+    # Integration cycle 3: decoded evaluator names, built-ins over aliases,
+    # source builtins, and git's terminal options.
+    case_ "$g" ask "$r" "printf 'git pull\\n' | \$'bash'"
+    case_ "$g" ask "$r" "\$'/bin/bash' <<< 'git merge main'"
+    case_ "$g" ask "$r" "git -c alias.merge=log merge feat"
+    case_ "$g" ask "$r" ". /dev/stdin <<< 'git pull'"
+    case_ "$g" ask "$r" "source /dev/stdin <<< 'git merge feat'"
+    case_ "$g" silent "$r" "git --help merge"
+    case_ "$g" silent "$r" "git --version pull"
+    case_ "$g" silent "$r" "echo \"\$SHELL\""
 }
 
 echo "==> git-merge-guard decision matrix"
@@ -241,6 +353,25 @@ if [[ $failures -ne 0 ]]; then
     echo "TEST FAIL: git-merge-guard: ${failures} case(s) wrong" >&2
     exit 1
 fi
+
+echo "==> git-merge-guard applies only in the dev profile"
+profile_case() { # profile expected cwd command
+    local got
+    got="$(FOREMAN_DEVCONTAINER="$1" decide "$guard" "$3" "$4")"
+    if [[ $got != "$2" ]]; then
+        echo "TEST FAIL: FOREMAN_DEVCONTAINER='$1': expected=$2 got=${got} :: $4" >&2
+        exit 1
+    fi
+}
+for profile in bot agent Bot; do
+    profile_case "$profile" silent "$r" "git merge feat"
+    profile_case "$profile" silent "$r" "git -C ${r} pull"
+    profile_case "$profile" silent "$r" "bash -c 'git merge feat'"
+done
+for profile in "" dev; do
+    profile_case "$profile" ask "$r" "git merge feat"
+    profile_case "$profile" silent "${r}/wt" "git merge origin/main --no-edit"
+done
 
 echo "==> git-merge-guard matrix catches a guard that never checks the target branch"
 mutant="${tmp}/mutant.py"
