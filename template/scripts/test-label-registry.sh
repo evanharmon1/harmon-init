@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # test-label-registry.sh — the OFFLINE gate that binds label provisioning, the
-# docs taxonomy table, and the status inventory to the machine-readable label
+# docs taxonomy and rubric tables, and the status inventory to the machine-readable label
 # registry (label-registry.json). Runs in `task verify` / `task ci`, next to
 # test-registry-drift.sh (which owns the agent-registry bindings).
 #
@@ -22,6 +22,7 @@
 #                    the same renderer (no stale heredoc parse).
 #   6. docs        — the taxonomy table between the label-taxonomy markers in
 #                    docs/project-management.md is exactly `docs-table` output,
+#                    and the classification-rubric block is `rubric-table` output,
 #                    per layer (the manifests legitimately diverge, so each
 #                    layer renders its own expectation).
 #
@@ -1389,24 +1390,62 @@ fi
 # dropped those rows from the rendered doc on profiles without the opt-in.
 # The template twin is compared against the --jinja render, whose copier
 # conditionals are what produced those per-profile documents.
-extract_taxonomy() {
-    awk '/<!-- label-taxonomy:begin -->/{found=1; next} /<!-- label-taxonomy:end -->/{exit} found' "$1"
+extract_docs_block() {
+    local doc="$1" marker="$2"
+    awk -v begin="<!-- $marker:begin -->" -v end="<!-- $marker:end -->" '
+        $0 == begin { starts++; if (starts != 1 || ends) invalid=1; inside=1; next }
+        $0 == end { ends++; if (!inside || ends != 1) invalid=1; inside=0; next }
+        inside { print }
+        END { if (starts != 1 || ends != 1 || inside || invalid) exit 1 }
+    ' "$doc"
+}
+check_docs_block() {
+    local doc="$1" manifest="$2" mode="$3" marker="$4"
+    shift 4
+    local want got
+    if ! want="$(node scripts/label-registry-render.mjs "$mode" "$@" "$manifest")"; then
+        fail "$doc $marker expectation could not be rendered from $manifest"
+        return
+    fi
+    if ! got="$(extract_docs_block "$doc" "$marker")"; then
+        fail "$doc must have one ordered pair of $marker markers — the table must be generated"
+        return
+    fi
+    [ "$got" = "$want" ] || {
+        fail "$doc $marker table drifted from $manifest — regenerate with: node scripts/label-registry-render.mjs $mode $* $manifest"
+        diff <(printf '%s\n' "$want") <(printf '%s\n' "$got") >&2 || true
+    }
 }
 check_docs() {
     local doc="$1" manifest="$2"
     shift 2
-    if ! grep -q 'label-taxonomy:begin' "$doc"; then
-        fail "$doc has no label-taxonomy markers — the taxonomy table must be generated, not hand-edited"
-        return
-    fi
-    local want got
-    want="$(node scripts/label-registry-render.mjs docs-table "$@" "$manifest")"
-    got="$(extract_taxonomy "$doc")"
-    [ "$got" = "$want" ] || {
-        fail "$doc taxonomy table drifted from $manifest — regenerate with: node scripts/label-registry-render.mjs docs-table $* $manifest"
-        diff <(printf '%s\n' "$want") <(printf '%s\n' "$got") >&2 || true
-    }
+    check_docs_block "$doc" "$manifest" docs-table label-taxonomy "$@"
+    check_docs_block "$doc" "$manifest" rubric-table classification-rubric
 }
+# Prove the same comparison used for root, template and rendered GitHub docs
+# rejects a hand edit and either missing marker, using temporary copies only.
+rubric_fixture="$mutation_tmp/rubric-doc.md"
+node scripts/label-registry-render.mjs rubric-table label-registry.json >"$mutation_tmp/rubric-table.md"
+for mutation in description begin end; do
+    {
+        [ "$mutation" = begin ] || echo '<!-- classification-rubric:begin -->'
+        if [ "$mutation" = description ]; then
+            sed 's/marginal benefit/changed benefit/' "$mutation_tmp/rubric-table.md"
+        else
+            cat "$mutation_tmp/rubric-table.md"
+        fi
+        [ "$mutation" = end ] || echo '<!-- classification-rubric:end -->'
+    } >"$rubric_fixture"
+    if (
+        fails=0
+        check_docs_block "$rubric_fixture" label-registry.json rubric-table classification-rubric
+        [ "$fails" -eq 0 ]
+    ) >"$mutation_tmp/rubric-$mutation.log" 2>&1; then
+        fail "rubric docs gate accepted mutation: $mutation"
+    else
+        echo "PASS: rubric docs gate rejects mutation: $mutation"
+    fi
+done
 profile_flags=""
 [ -f taskfiles/foreman.yml ] && profile_flags="--foreman"
 [ -f release-please-config.json ] && profile_flags="$profile_flags --release-please"
@@ -1461,4 +1500,4 @@ if [ "$fails" -ne 0 ]; then
     echo "test-label-registry: $fails failure(s) above." >&2
     exit 1
 fi
-echo "test-label-registry: manifest, provisioning, status inventory, and docs table agree."
+echo "test-label-registry: manifest, provisioning, status inventory, and docs taxonomy and rubric tables agree."

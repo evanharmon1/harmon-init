@@ -43,6 +43,8 @@
 //                       the complete-label-taxonomy markdown table for
 //                       docs/project-management.md (between the
 //                       label-taxonomy:begin/end markers).
+//   rubric-table        the classification short-form table between the
+//                       classification-rubric:begin/end markers.
 //
 // Usage: node label-registry-render.mjs <mode> [flags] [manifest-path]
 // Manifest defaults to ../label-registry.json relative to this file;
@@ -54,7 +56,7 @@ import path from 'node:path'
 import process from 'node:process'
 import { fileURLToPath } from 'node:url'
 
-const MODES = new Set(['labels', 'inventory', 'docs-table'])
+const MODES = new Set(['labels', 'inventory', 'docs-table', 'rubric-table'])
 
 const args = process.argv.slice(2)
 const mode = args.shift()
@@ -210,6 +212,39 @@ const provisioned = (family) =>
   family.provision === true && family.retired !== true && gateOpen(family)
 
 const lines = []
+
+if (mode === 'rubric-table') {
+  // Explicit scales preserve documentation order and exclude Tier flags and
+  // retired values. Descriptions remain authoritative in the registry.
+  const axes = [
+    ['Impact', 'impact', ['minimal', 'low', 'medium', 'high', 'massive']],
+    ['Risk', 'risk', ['trivial', 'low', 'medium', 'high', 'critical']],
+    ['Complexity', 'complexity', ['xs', 's', 'm', 'l', 'xl']],
+    ['Tier', 'tier', ['local', 'economy', 'standard', 'frontier', 'apex']],
+    ['Priority', 'priority', ['urgent', 'high', 'medium', 'low']],
+    ['Priority (AI)', 'priority-ai', ['p0', 'p1', 'p2', 'p3', 'p4']]
+  ]
+  lines.push(
+    '<!-- Generated from label-registry.json by `node scripts/label-registry-render.mjs rubric-table`. Do not edit by hand — `task test:label-registry` fails on drift. -->',
+    '',
+    '| Axis | Value | Short form |',
+    '|---|---|---|'
+  )
+  for (const [axis, id, values] of axes) {
+    const family = manifest.families.find((entry) => entry.family === id)
+    for (const [index, name] of values.entries()) {
+      const value = family?.values.find((entry) => entry.value === name)
+      if (!value || family.retired === true || value.retired === true) {
+        console.error(`label-registry-render: rubric requires active value ${id}:${name}`)
+        process.exit(1)
+      }
+      const description = field(value.description, `rubric ${id}:${name}`)
+      const prefixEnd = description.indexOf(': ')
+      const shortForm = prefixEnd < 0 ? description : description.slice(prefixEnd + 2)
+      lines.push(`|${index === 0 ? ` **${axis}**` : ''} | \`${name}\` | ${shortForm} |`)
+    }
+  }
+}
 
 if (mode === 'labels') {
   for (const family of manifest.families ?? []) {
