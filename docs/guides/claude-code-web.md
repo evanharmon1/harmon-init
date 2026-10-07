@@ -105,8 +105,9 @@ seconds, and in 48 seconds on a second fresh VM — well inside the
 platform's five-minute cache budget. Without it, the same script fails at
 `semgrep`, as the release-tag rule above describes. CI's `remote-bootstrap` job
 cannot see that failure: its stock `ubuntu:24.04` container has a direct network
-and no intercepting proxy, which is also why the same recipe passes there in 43
-seconds. Both runs were the platform running the environment's setup script,
+and no intercepting proxy (in the same image, a local run of this recipe
+completed in 43 seconds), and it runs the checkout's own bootstrap rather than
+the recipe's download at a tag. Both runs were the platform running the environment's setup script,
 with the recipe's last line in the interim form; the recipe unchanged, at a
 release that carries the fix, is not yet observed, and neither is whether later
 sessions start from the cached snapshot.
@@ -576,7 +577,10 @@ Observed:  *pending*
 ## Pending observations
 
 Criterion 1 of [#1407](https://github.com/evanharmon1/harmon-init/issues/1407)
-was observed on 2026-10-06 (see [Setup script](#setup-script)). Five acceptance
+was observed on 2026-10-06 with the interim setup-script line (see
+[Setup script](#setup-script)); the unchanged recipe at a release that carries
+the trust-store fix, and whether later sessions start from the cached snapshot,
+are still open. Five acceptance
 criteria of it — 3, 4, 7, 8 and 11 — still need a live Claude Code on the web
 session run by the maintainer, as does criterion 2 of
 [#1404](https://github.com/evanharmon1/harmon-init/issues/1404) (the agent
@@ -588,7 +592,7 @@ says where it lands.
 
 | # | What has to be seen | Where the result lands |
 | --- | --- | --- |
-| 1 | Observed 2026-10-06: `v4.48.0` is the first release carrying the bootstrap; it completes in 86 s on the VM with the trust-store fix and fails at `semgrep` without it | [Setup script](#setup-script) |
+| 1 | Observed 2026-10-06: `v4.48.0` is the first release carrying the bootstrap; at `v5.2.0` the setup script fails at `semgrep`, and with the interim `sudo env …` line it completes in 86 s (48 s on a second VM). Still open: the unchanged recipe at a release carrying the fix, and caching | [Setup script](#setup-script) |
 | 3 | Session commit, push and PR attributed to `evanharmon1-bot`, on an evanharmon1 repo and a ponderousdev repo; or the platform's refusal and the fallback | [Whose identity GitHub sees](#whose-identity-github-sees) |
 | 4 | `claude --cloud "<task>"` runs prompt-free and returns a pushed branch with no human step | [Bridges between the terminal and the cloud](#bridges-between-the-terminal-and-the-cloud) |
 | 7 | Each row of the `gh` inventory run through the proxy; every failing row gets a follow-up or workaround | [The `gh` call inventory](#the-gh-call-inventory) |
