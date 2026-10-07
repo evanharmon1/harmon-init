@@ -281,9 +281,10 @@ what #1408 decision 3 decided on 2026-09-27, and it was proven on 2026-10-07 on
 ponderousdev); what the bot may touch is bounded by its per-repo collaborator
 grants, as in [bot-account.md](bot-account.md). A classic `repo` token reaches
 every repository the bot can, so the limit is the grants, not a
-selected-repository list. The token does not limit what `gh` may write: the
-agent posture's denies and the proxy refused the `gh` write forms tried, but the
-denies match argument patterns, so they are defence in depth (bundled short
+selected-repository list. Beyond the missing `workflow` scope, which refuses
+pushes that create or change a workflow file, the token does not limit what
+`gh` may write: the agent posture's denies and the proxy refused the `gh` write
+forms tried, but the denies match argument patterns, so they are defence in depth (bundled short
 flags are untested,
 [#1549](https://github.com/evanharmon1/harmon-init/issues/1549)), and the
 boundary is the bot's grants and the rulesets. The operator's own token was the
@@ -527,10 +528,12 @@ PATs — and that boundary covers merges, not draft promotion or auto-merge. The
 proxy offers REST routes for both (`POST …/ccr/ready_for_review`,
 `POST …/ccr/convert_to_draft`, `PUT|DELETE …/ccr/auto_merge`, quoted under
 [the `gh` call inventory](#the-gh-call-inventory)); a write grant permits them,
-and the rulesets gate only the merge. So a session can mark a draft ready
-without the readiness gate (it requests review; it cannot merge), and only the
-repository's own **Allow auto-merge** setting stops it enabling auto-merge —
-off on `evanharmon1/harmon-init` and `ponderousdev/foreman` (read 2026-10-07).
+and the rulesets gate only the merge. So a session is expected to be able to
+mark a draft ready without the readiness gate (that requests review and merges
+nothing by itself), and only the repository's own **Allow auto-merge** setting
+would stop it enabling auto-merge — off on `evanharmon1/harmon-init` and
+`ponderousdev/foreman` (read 2026-10-07). Expected from the routes the proxy
+names, not yet observed: no session has called either.
 A merge into a protected branch still needs code-owner approval and the
 required checks.
 
