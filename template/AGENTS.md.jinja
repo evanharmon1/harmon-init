@@ -507,7 +507,14 @@ cap allowed.
   green and the ruleset would allow it. Open the draft PR and integrate it —
   checks green with reviews unpolled is not the stopping point — then promote
   it through the readiness gate, report, and stop; merging is always a human
-  decision. `gh pr ready` is *not* a merge and you may run it — but only out of
+  decision. (The `git-merge-guard` hook in `.claude/settings.json` backstops
+  this: it parses each command and asks before any real or possible
+  `git merge`/`git pull` it cannot verify lands on a feature branch; quoted
+  text and heredoc bodies that no shell runs, search patterns and
+  `git merge-base` are data. It
+  applies in the dev profile only; with `FOREMAN_DEVCONTAINER` set to `bot` or
+  `agent` it makes no merge checks, and the "Protect Main" ruleset is the
+  boundary there.) `gh pr ready` is *not* a merge and you may run it — but only out of
   a passing readiness gate, never to signal "I think this looks done".
 - **Reply to every inline PR review comment in its own thread** — bot
   reviewers and humans alike. Treat findings as
