@@ -31,8 +31,10 @@ status checks, for every actor.
 
 1. **Bot and agent carry no merge guard.** Nothing in either profile asks on
    or denies a merge. The agent managed settings drop the
-   `Bash(gh pr merge *)` deny and add `Bash(gh pr merge *)` to the explicit
-   allow list, so auto mode never stalls an agent merge on a classifier
+   `Bash(gh pr merge *)` deny and add both `Bash(gh pr merge)` and
+   `Bash(gh pr merge *)` to the explicit allow list — the wildcard form needs
+   an argument, so the bare `gh pr merge` on the current branch's PR needs its
+   own rule — so auto mode never stalls an agent merge on a classifier
    judgement. This stays within the agent posture's "never looser than bot"
    invariant: bot already allows `Bash(gh:*)`. The "Protect Main" ruleset is
    the only boundary on what reaches `main` in these profiles.
