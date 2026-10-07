@@ -114,7 +114,7 @@ pane that switches the same checkout in between is not seen. Lanes merge in
 their own worktrees, which no other session checks out.
 
 Tests: scripts/test-git-merge-guard.sh (run by `task test:hooks`).
-Design and rationale: evanharmon1/harmon-init#1435, evanharmon1/harmon-dotfiles#123.
+Design and rationale: evanharmon1/harmon-init#1435, evanharmon1/harmon-init#1523.
 """
 
 import json

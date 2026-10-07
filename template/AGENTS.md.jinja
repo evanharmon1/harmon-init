@@ -510,7 +510,8 @@ cap allowed.
   decision. (The `git-merge-guard` hook in `.claude/settings.json` backstops
   this: it parses each command and asks before any real or possible
   `git merge`/`git pull` it cannot verify lands on a feature branch; quoted
-  text, heredoc bodies, search patterns and `git merge-base` are data. It
+  text, heredoc bodies no shell runs, search patterns and `git merge-base` are
+  data. It
   applies in the dev profile only; with `FOREMAN_DEVCONTAINER` set to `bot` or
   `agent` it makes no merge checks, and the "Protect Main" ruleset is the
   boundary there.) `gh pr ready` is *not* a merge and you may run it — but only out of

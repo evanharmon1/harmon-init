@@ -238,9 +238,9 @@ matrix() { # guard
     case_ "$g" silent "${r}/wt" "git log -- '*.md'"
     case_ "$g" silent "${r}/wt" "git log --format='%h %s' -1"
     case_ "$g" silent "${r}/wt" "cat > body.md <<'EOF'${nl}this pull request adds a guard${nl}EOF"
-    # evanharmon1/harmon-dotfiles#123: the false prompts from one orchestrated
-    # session -- report appends, search patterns, the policy reader's flags,
-    # merge-base reads, and one-off scripts that mention them.
+    # The false prompts from one orchestrated session -- report appends,
+    # search patterns, the policy reader's flags, merge-base reads, and one-off
+    # scripts that mention them.
     case_ "$g" silent "$r" "cat >> report.md <<'EOF'${nl}ran a catch-up merge of main; git pull next${nl}EOF"
     case_ "$g" silent "$r" "cat >> report.md <<EOF${nl}merged \$(git rev-parse --short HEAD); then git pull${nl}EOF"
     case_ "$g" silent "$r" "grep -n 'merge base' AGENTS.md"
