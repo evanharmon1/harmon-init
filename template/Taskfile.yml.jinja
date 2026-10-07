@@ -819,8 +819,11 @@ tasks:
 
   test:status:
     desc: Unit-test the status board-writes + local-credential checks (stubbed CLIs, no network)
+    # Run under a hostile ambient environment on purpose (#1395): the bot and agent
+    # profiles export FOREMAN_DEVCONTAINER and a GH_TOKEN, and Claude Code on the
+    # web presets GH_TOKEN/GITHUB_TOKEN, so the test must pass with them set.
     cmds:
-      - ./scripts/test-status.sh
+      - env FOREMAN_DEVCONTAINER=bot GH_TOKEN=dummy GITHUB_TOKEN=dummy ./scripts/test-status.sh
 
   test:gh-scopes:
     desc: Unit-test the gh scope refresh task's refusals and post-refresh verification (stubbed gh, no network)
@@ -896,8 +899,11 @@ tasks:
 
   test:sync-devkit-release:
     desc: "Unit-test the harmon-devkit release→sync-PR automation (offline, stubbed gh/task)"
+    # Run under a hostile ambient environment on purpose (#1395): the bot and agent
+    # profiles export FOREMAN_DEVCONTAINER and a GH_TOKEN, and Claude Code on the
+    # web presets GH_TOKEN/GITHUB_TOKEN, so the test must pass with them set.
     cmds:
-      - ./scripts/test-sync-devkit-release.sh
+      - env FOREMAN_DEVCONTAINER=bot GH_TOKEN=dummy GITHUB_TOKEN=dummy ./scripts/test-sync-devkit-release.sh
 [% endif %]
 [% if project_management == 'github' and github_org != author_git_provider_username %]
 
