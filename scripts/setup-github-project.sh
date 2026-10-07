@@ -22,11 +22,10 @@
 # Usage:   setup-github-project.sh --owner <org-or-user-login> --title "<Project Title>"
 # Needs:   gh authed with the 'project' scope (gh auth refresh -s project) + jq.
 #
-# NOTE: this hits the live GitHub API, so `task test:template` (which never
-# touches GitHub) does not run it. It is guarded by shellcheck + shfmt and by
-# scripts/test-setup-github-project.sh, which runs it against a stubbed `gh`; no
-# test runs it against a live project, so test it against a scratch project when
-# changing it.
+# NOTE: `task test:template` runs scripts/test-setup-github-project.sh for the
+# full and minimal profiles, exercising this script against a stubbed `gh`.
+# Shellcheck + shfmt also guard it. CI never exercises the live GitHub API run,
+# so test it against a scratch project when changing it.
 set -euo pipefail
 
 owner=""
