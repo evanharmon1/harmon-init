@@ -412,7 +412,14 @@ function makeClient(token, fetch, env) {
       headers,
       body: JSON.stringify({ query, variables })
     })
-    const body = await res.json().catch(() => ({}))
+    const text = await res.text()
+    let body
+    try {
+      body = JSON.parse(text)
+    } catch {
+      const excerpt = text.length > 2000 ? `${text.slice(0, 2000)}… (truncated)` : text
+      throw new Error(`GraphQL ${res.status}: non-JSON response: ${excerpt}`)
+    }
     if (!res.ok || body.errors)
       throw new Error(`GraphQL ${res.status}: ${JSON.stringify(body.errors ?? body)}`)
     return body.data
@@ -583,7 +590,9 @@ export async function applyPlan(client, owner, name, number, ctx) {
       }
       // decide() plans no Tier write for a pinned or truncated read, so a pin
       // seen here ends the pass like a holding invariant does.
-      const fix = tierOps(decide(check, ctx))
+      const verification = decide(check, ctx)
+      plan.reports.push(...verification.reports)
+      const fix = tierOps(verification)
       if (fix.length === 0) break
       if (pass === 1) {
         report(
@@ -623,7 +632,12 @@ export async function run(
   { fetch = globalThis.fetch, root = process.cwd(), print = console.log } = {}
 ) {
   const dryRun = env.RECONCILE_DRY_RUN === 'true'
-  const issueNumber = Number.parseInt(env.RECONCILE_ISSUE || '0', 10) || 0
+  const issueValue = env.RECONCILE_ISSUE || '0'
+  const issueNumber = Number(issueValue)
+  if (!/^\d+$/.test(issueValue) || !Number.isSafeInteger(issueNumber))
+    throw new Error(
+      `RECONCILE_ISSUE must be an integer greater than or equal to zero, not ${JSON.stringify(issueValue)}`
+    )
   // A foreign checkout holds no file of the repository this runs in, so that
   // repository is walked only when it is on the list, which such a run must
   // therefore pass. The switch is the safety for that case, so a value it

@@ -549,9 +549,20 @@ const addPin = (labels) => [...labels, 'tier:pinned']
   // The delete fails; by the verify read (read 3) a human has pinned.
   const client = fakeClient(stale, { failWrites: ['DELETE tier:standard'], onRead: { 3: addPin } })
   const plan = await m.applyPlan(client, 'o', 'r', 7, ctx)
-  check('applyPlan: a pin seen on the verify read stops the repair', () => {
+  check('applyPlan: a pin seen on the verify read stops the repair and reports ambiguity', () => {
     assert.deepEqual(client.calls, [['POST', 'tier:frontier'], ['DELETE', 'tier:standard']])
-    assert.deepEqual(codes(plan), ['write-failed'])
+    assert.deepEqual(codes(plan), ['write-failed', 'ambiguous-pin'])
+    assert.match(plan.reports.at(-1).message, /tier:pinned with tier:standard, tier:frontier/)
+  })
+}
+{
+  const client = fakeClient(stale, {
+    onRead: { 3: (labels) => addPin(labels.filter((l) => !l.startsWith('tier:'))) }
+  })
+  const plan = await m.applyPlan(client, 'o', 'r', 7, ctx)
+  check('applyPlan: a pin without a Tier on the verify read is reported', () => {
+    assert.deepEqual(codes(plan), ['pin-without-tier'])
+    assert.deepEqual(client.calls, [['POST', 'tier:frontier'], ['DELETE', 'tier:standard']])
   })
 }
 
@@ -647,6 +658,51 @@ async function runWith(repos, env) {
   return { code, gh, printed, summary: readFileSync(summaryFile, 'utf8') }
 }
 const writes = (gh, prefix) => gh.rest.filter(([, path]) => path.startsWith(prefix)).map(([meth, path, body]) => `${meth} ${body?.labels?.[0] ?? decodeURIComponent(path.split('/').at(-1))}`)
+// Invalid selectors must fail before even the first fetch, regardless of dry-run.
+for (const value of ['-1', '1.5', 'abc', '1junk', '9007199254740993']) {
+  for (const dryRun of ['true', 'false']) {
+    let calls = 0
+    let refusal = null
+    try {
+      await m.run(
+        { GH_TOKEN: 't', GITHUB_REPOSITORY: 'a/two', RECONCILE_ISSUE: value, RECONCILE_DRY_RUN: dryRun },
+        { root, print: () => {}, fetch: async () => { calls += 1; throw new Error('unexpected fetch') } }
+      )
+    } catch (err) {
+      refusal = err
+    }
+    check(`run(): issue ${value} is refused before any API call (dry-run ${dryRun})`, () => {
+      assert.match(refusal?.message ?? '', /^RECONCILE_ISSUE must be an integer greater than or equal to zero/)
+      assert.equal(calls, 0)
+    })
+  }
+}
+for (const value of ['', '0', '2']) {
+  const r = await runWith(
+    { 'a/two': { issues: { 1: { labels: ['bug'] }, 2: { labels: ['bug'] } } } },
+    { RECONCILE_ISSUE: value, RECONCILE_DRY_RUN: 'true' }
+  )
+  check(`run(): issue selector ${JSON.stringify(value)} walks the expected issues`, () => {
+    assert.equal(r.code, 0)
+    assert.match(r.summary, /a\/two#2/)
+    assert.equal(r.summary.includes('a/two#1'), value !== '2')
+    assert.deepEqual(r.gh.rest, [])
+  })
+}
+for (const responseText of ['<html><body>Bad Gateway</body></html>', '<html>' + 'x'.repeat(3000) + '</html>']) {
+  const printed = []
+  const code = await m.run(
+    { GH_TOKEN: 't', GITHUB_REPOSITORY: 'a/two', RECONCILE_DRY_RUN: 'true' },
+    { root, print: (line) => printed.push(line), fetch: async () => new Response(responseText, { status: 502 }) }
+  )
+  check(`run(): an HTML 502 includes status and bounded response text (${responseText.length} characters)`, () => {
+    assert.equal(code, 1)
+    const error = printed.find((line) => line.startsWith('::error '))
+    assert.ok(error.includes(`GraphQL 502: non-JSON response: ${responseText.slice(0, 2000)}`))
+    assert.equal(error.includes('(truncated)'), responseText.length > 2000)
+    assert.ok(error.length < 2200)
+  })
+}
 {
   const r = await runWith(
     { 'a/one': { down: true, issues: {} }, 'a/two': { issues: { 1: { labels: ['bug'] }, 2: classified() } } },
