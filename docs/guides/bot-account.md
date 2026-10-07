@@ -197,9 +197,9 @@ other. For Claude Code on the web, where `/web-setup` holds a single token
 across both owners, the agent identity is instead a **classic** PAT on the bot
 account with `repo` scope and no `workflow` scope, handed to `/web-setup` with
 the account's GitHub App connection removed. It is bounded by the bot's per-repo
-collaborator grants, and GitHub refuses a push that changes
-`.github/workflows/` (observed 2026-10-07), so the limits on this page hold for
-it. The one exception is the alternative of authorizing the Claude GitHub App as
+collaborator grants rather than by a selected-repository list (a classic token
+reaches every repository the bot can, across owners), and GitHub refuses a push
+that changes `.github/workflows/` (observed 2026-10-07). The one exception is the alternative of authorizing the Claude GitHub App as
 the bot, under which a web session **can** push workflow files; see [Whose
 identity GitHub sees](claude-code-web.md#whose-identity-github-sees) for the
 procedure, the account pitfall and the costs (#1407).
