@@ -270,6 +270,11 @@ done <<<"$required_deny"
 # `gh pr merge` on the current branch's PR needs its own rule.
 jq -e '.permissions.allow | (index("Bash(gh pr merge)") != null) and (index("Bash(gh pr merge *)") != null)' "$agent_settings" >/dev/null ||
     fail "agent Claude settings do not explicitly allow both Bash(gh pr merge) and Bash(gh pr merge *) — auto mode could stall an agent merge"
+# The posture marker travels with the managed settings, not only the
+# devcontainer's containerEnv: a remote or platform-VM agent session sets it
+# nowhere else, and git-merge-guard reads it to make no merge checks there.
+jq -e '.env.FOREMAN_DEVCONTAINER == "agent"' "$agent_settings" >/dev/null ||
+    fail "agent Claude settings do not set env.FOREMAN_DEVCONTAINER=agent — remote agent sessions would still get git-merge-guard prompts"
 
 # rule_prefix <rule> — the literal command prefix a Bash(...) rule matches:
 # `Bash(git:*)` (legacy) and `Bash(git status *)` both reduce to the words

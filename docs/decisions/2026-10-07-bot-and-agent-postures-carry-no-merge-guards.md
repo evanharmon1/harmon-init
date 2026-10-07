@@ -77,6 +77,17 @@ mechanical backstops exist where.
 
 ## Consequences
 
+- **The ruleset must exist before the bot or agent PAT does.** With no local
+  guard, an unprotected default branch is open to either PAT. The setup
+  checklist (root and template) therefore imports the "Protect Main" ruleset
+  *before* provisioning the bot and agent PATs. A ruleset deleted later is not
+  detected locally; nothing at container start checks the live ruleset, by
+  maintainer decision, to avoid a network check and a new failure mode on every
+  start.
+- **The posture marker travels with the agent's managed settings**
+  (`env.FOREMAN_DEVCONTAINER=agent`), not only the devcontainer's
+  `containerEnv`, so a remote or platform-VM agent session also gets no
+  `git-merge-guard` prompt.
 - **Residual risk, stated plainly.** In the bot and agent profiles, a PAT
   with `pull_requests: write` can merge any approved pull request whose
   required checks are green — at any time, without a further human step,
