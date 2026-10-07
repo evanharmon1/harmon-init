@@ -158,12 +158,12 @@ at a time, run in that worktree — `git pull --no-rebase origin main --no-edit`
 or `git fetch origin` and then `git merge origin/main --no-edit` as two Bash
 calls. Joined with `&&` they ask, as do `git merge --abort` and
 `git pull --rebase`. Both silent forms need a resolvable remote HEAD (usually
-`git remote set-head origin --auto`). The hook also asks on text about git: a
-heredoc commit message or PR body that mentions `merge` or `pull`, or that
-has the word `git` followed by a backtick, quote, glob or expansion, and in an
-unattended run an ask is a denial — so a worker always writes commit messages
-and PR bodies to a file with the Write tool (not a Bash heredoc) and passes
-them with `git commit -F <file>` and `gh pr create --body-file <file>`.
+`git remote set-head origin --auto`). The hook parses each command, so a
+heredoc commit message or PR body that merely mentions `merge` or `pull` is
+data and stays silent; text a shell runs (`bash -c`, `$(...)`, a heredoc fed
+to a shell) is checked like any other command. All of this applies in the dev
+profile: with `FOREMAN_DEVCONTAINER` set to `bot` or `agent` the hook makes no
+merge checks at all, and the "Protect Main" ruleset is the boundary there.
 
 ## Fan-out: orchestrating many workers from one session
 
