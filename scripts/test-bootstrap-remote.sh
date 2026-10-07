@@ -187,7 +187,7 @@ assert inlined_pin('harmon_verify_sha256 "$f" fa82fd8dde8e8eefdecada6aa088966655
 assert inlined_pin('    "https://github.com/go-task/task/releases/download/v${TASK_VERSION}/task_linux_${arch}.tar.gz" |') is None
 assert inlined_pin('    "https://nodejs.org/dist/v${NODE_VERSION}/${node_tarball}"') is None
 assert inlined_pin('        npm install -g "${1}@${2}"') is None
-assert inlined_pin('        uv tool install --force "${1}==${2}"') is None
+assert inlined_pin('        uv tool install --force --system-certs "${1}==${2}"') is None
 assert inlined_pin('    harmon_verify_sha256 "${tmp}/${node_tarball}" "$node_sha"') is None
 assert inlined_pin("# a comment may name v3.53.1: documentation, not a pin") is None
 assert inlined_pin("    ubuntu 24.04, bash 3.2, git 2.43: two-part numbers are not versions here") is None
@@ -2772,6 +2772,129 @@ HARMON_AGENT_CLAUDE_MANAGED="${root}/claude.json" HARMON_AGENT_CODEX_MANAGED="${
             f"(stderr: {'' if run is None else run.stderr.strip()[:300]!r})"
         )
 
+# ── 25. the package managers trust the SYSTEM CA store ──────────────────────
+# A platform VM sits behind a TLS-intercepting proxy: it seeds the system store
+# with the proxy's CA and exports SSL_CERT_FILE / NODE_EXTRA_CA_CERTS to the
+# session — and the recipe runs the bootstrap under `sudo bash`, which resets
+# the environment. curl reads the system store, so every release download
+# passes; uv and node ship their own roots, so the first `uv tool install`
+# died with `invalid peer certificate: UnknownIssuer` and a ubuntu:24.04
+# container with a direct network (CI's remote-bootstrap job) never saw it.
+# Three properties, each of which rots silently because CI cannot observe any:
+#   (a) harmon_uv_tool loads the platform's native roots (`--system-certs`; the
+#       older `--native-tls` is a deprecated alias), at the install line;
+#   (b) SOURCING lib.sh points NODE_EXTRA_CA_CERTS at the system bundle for
+#       every Node process a tier runs — npm and also the tools it installs,
+#       like Playwright's browser download — unless the caller named one;
+#   (c) the sudo re-exec forwards the bundle knob, or a caller's override would
+#       be dropped on the unprivileged entry (`./bootstrap-remote.sh` run as a
+#       normal user with sudo available). The recipe is a root entry — `sudo
+#       bash …` — and never reaches the re-exec.
+# (b) is EXECUTED, because a pattern match cannot tell whether a caller's value
+# wins, whether an empty one counts as set, or whether the export reaches a
+# process that is not inside harmon_npm_global.
+LIB_TEXT = (INSTALL / "lib.sh").read_text()
+uv_line = next((n for _, n in logical_lines(LIB_TEXT) if "uv tool install" in n), None)
+if uv_line is None or "--system-certs" not in uv_line.split() or "--native-tls" in uv_line:
+    fail(
+        f"{INSTALL}/lib.sh: the `uv tool install` line does not carry --system-certs ({uv_line!r}) — uv "
+        "falls back to its bundled roots and rejects the CA a platform's TLS-intercepting proxy seeded into "
+        "the system store, so the bootstrap dies at its first uv tool on a remote VM"
+    )
+bundle_default = re.search(r'^HARMON_SYSTEM_CA_BUNDLE="\$\{HARMON_SYSTEM_CA_BUNDLE:-([^}]*)\}"$', LIB_TEXT, re.M)
+if not bundle_default or bundle_default.group(1) != "/etc/ssl/certs/ca-certificates.crt":
+    fail(
+        f"{INSTALL}/lib.sh: HARMON_SYSTEM_CA_BUNDLE does not default to /etc/ssl/certs/ca-certificates.crt "
+        "— that is the bundle the apt tier's ca-certificates package maintains on Debian/Ubuntu, and the one "
+        "a platform adds its proxy's CA to"
+    )
+# Matched on the logical `exec sudo -- env … bash` command — comments dropped,
+# continuations joined — so moving the forward into a comment does not pass.
+reexec_line = next((n for _, n in logical_lines(BOOTSTRAP.read_text()) if "exec sudo" in n), "")
+if '"HARMON_SYSTEM_CA_BUNDLE=${HARMON_SYSTEM_CA_BUNDLE}"' not in reexec_line:
+    fail(
+        f"{BOOTSTRAP}: the sudo re-exec does not forward HARMON_SYSTEM_CA_BUNDLE — it hands root an explicit "
+        "environment, so a caller's override of the bundle would be silently dropped"
+    )
+
+trust = r"""
+set -euo pipefail
+root="$(mktemp -d)"
+trap 'rm -rf "$root"' EXIT
+export HARMON_PREFIX="$root"
+export HARMON_BIN="${root}/bin"
+mkdir -p "${HARMON_BIN}" "${root}/stubs"
+PATH="${root}/stubs:${HARMON_BIN}:${PATH}"
+
+# Stubs record what a process started AFTER sourcing lib.sh would have seen;
+# `<unset>` marks an unset variable.
+printf '#!/bin/sh\nprintf "NPM ca=%%s\\n" "${NODE_EXTRA_CA_CERTS-<unset>}"\n' >"${root}/stubs/npm"
+printf '#!/bin/sh\nprintf "NODE ca=%%s\\n" "${NODE_EXTRA_CA_CERTS-<unset>}"\n' >"${root}/stubs/node-outside-helper"
+printf '#!/bin/sh\nprintf "UV args=%%s\\n" "$*"\n' >"${root}/stubs/uv"
+chmod 0755 "${root}/stubs/npm" "${root}/stubs/node-outside-helper" "${root}/stubs/uv"
+: >"${root}/bundle.crt"
+
+# Each case sources lib.sh in its own subshell: the export happens at source
+# time, so a case must start from the environment it names.
+source_case() { # source_case <label> <bundle path> <caller's NODE_EXTRA_CA_CERTS or UNSET>
+    (
+        export HARMON_SYSTEM_CA_BUNDLE="$2"
+        if [ "$3" = UNSET ]; then unset NODE_EXTRA_CA_CERTS; else export NODE_EXTRA_CA_CERTS="$3"; fi
+        . '@LIB@'
+        printf '%s %s\n' "$1" "${NODE_EXTRA_CA_CERTS-<unset>}"
+    )
+}
+source_case SRC_BUNDLE_PRESENT "${root}/bundle.crt" UNSET
+source_case SRC_CALLER_WINS "${root}/bundle.crt" /caller/own.pem
+source_case SRC_EMPTY_IS_UNSET "${root}/bundle.crt" ""
+source_case SRC_NO_BUNDLE "${root}/missing.crt" UNSET
+source_case SRC_NO_BUNDLE_CALLER_KEPT "${root}/missing.crt" /caller/own.pem
+(
+    export HARMON_SYSTEM_CA_BUNDLE="${root}/bundle.crt"
+    unset NODE_EXTRA_CA_CERTS
+    . '@LIB@'
+    # A Node process that is NOT inside harmon_npm_global — Playwright's browser
+    # download is one — sees the bundle too.
+    printf 'SCOPE %s\n' "$(node-outside-helper)"
+    # …and so does npm, through the helper, with nothing set around it.
+    printf 'NPM %s\n' "$(harmon_npm_global somepkg 1.2.3 somepkg-cmd | grep '^NPM ')"
+    printf 'UV %s\n' "$(harmon_uv_tool somepkg 1.2.3 somepkg-cmd | grep '^UV ')"
+)
+"""
+run = run_lifted(trust.replace("@LIB@", str(INSTALL / "lib.sh")))
+seen = {} if run is None else {
+    line.split(" ", 1)[0]: line.split(" ", 1)[1] for line in run.stdout.splitlines() if " " in line
+}
+if run is None or run.returncode != 0 or len(seen) != 8:
+    fail(
+        f"{INSTALL}/lib.sh: the system-trust-store cases could not run "
+        f"({'timed out' if run is None else f'exit {run.returncode}'}) — "
+        f"stderr: {'' if run is None else run.stderr.strip()[:300]!r}"
+    )
+else:
+    checks = (
+        (seen["SRC_BUNDLE_PRESENT"].endswith("/bundle.crt"), "SRC_BUNDLE_PRESENT",
+         "with the system bundle present and no NODE_EXTRA_CA_CERTS, sourcing lib.sh must point Node at the "
+         "bundle — Node ships its own roots and rejects a TLS-intercepting proxy's CA"),
+        (seen["SRC_CALLER_WINS"] == "/caller/own.pem", "SRC_CALLER_WINS",
+         "a caller's own NODE_EXTRA_CA_CERTS names the bundle they chose and must not be replaced"),
+        (seen["SRC_EMPTY_IS_UNSET"].endswith("/bundle.crt"), "SRC_EMPTY_IS_UNSET",
+         "an exported-but-empty NODE_EXTRA_CA_CERTS names nothing, so it must not suppress the system bundle"),
+        (seen["SRC_NO_BUNDLE"] == "<unset>", "SRC_NO_BUNDLE",
+         "with no system bundle on the machine Node must run unchanged, not under a path that does not exist"),
+        (seen["SRC_NO_BUNDLE_CALLER_KEPT"] == "/caller/own.pem", "SRC_NO_BUNDLE_CALLER_KEPT",
+         "a caller's own value survives whether or not a system bundle exists"),
+        (seen["SCOPE"].endswith("/bundle.crt"), "SCOPE",
+         "the bundle must reach Node processes outside harmon_npm_global too — Playwright's browser download in "
+         "the browsers tier is one, and would fail UnknownIssuer behind the proxy"),
+        (seen["NPM"].endswith("/bundle.crt"), "NPM", "npm must see the bundle when installing through the helper"),
+        ("--system-certs" in seen["UV"].split() and "somepkg==1.2.3" in seen["UV"], "UV",
+         "uv must be invoked with --system-certs and the pinned package spec"),
+    )
+    for ok, case, why in checks:
+        if not ok:
+            fail(f"{INSTALL}/lib.sh: system-trust-store case {case} ({seen.get(case)!r}) — {why}")
+
 for e in errors:
     print(f"FAIL: {e}", file=sys.stderr)
 if errors:
@@ -2799,5 +2922,6 @@ print("bootstrap-remote OK: a staging file whose writer is gone is reaped, a liv
 print("bootstrap-remote OK: the manifest's own staged write reaps by liveness too, and a failed publish fails the run without leaving litter")
 print("bootstrap-remote OK: a version probe that prints the pin and exits nonzero is treated as needing the install")
 print("bootstrap-remote OK: the corepack step recreates the pnpm shim unless the file at its path really is corepack's launcher, at either edge of its bounded read, and reports a pnpm that shadows it on PATH")
+print("bootstrap-remote OK: uv installs with --system-certs, sourcing lib.sh points every Node process at the system CA bundle unless the caller named one, and the sudo re-exec forwards the knob")
 print("bootstrap-remote OK: the agent posture is fetched with the tiers' own source, carried as no copy under images/devcontainer/, installed byte-identical and idempotent, leaves a platform's file in place unless told to replace it, and changes no harness mode")
 PY

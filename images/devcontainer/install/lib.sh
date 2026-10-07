@@ -36,6 +36,24 @@ export UV_TOOL_DIR="${UV_TOOL_DIR:-/opt/uv-tools}"
 # shellcheck disable=SC2034  # read by the install scripts that source this file
 HARMON_CURL_OPTS=(-fsSL --retry 3 --retry-delay 2 --retry-connrefused)
 
+# Where this OS keeps the system CA bundle: Debian/Ubuntu's ca-certificates
+# maintains it, the apt tier installs that package, and a platform adds its
+# proxy's CA to it. Consumed by tools that take a file path — the Node export
+# below. uv's --system-certs finds the platform store itself, which on this OS
+# is the same bundle. The guard overrides this only to exercise the present and
+# absent cases; it is not a way to point the installers at a different store.
+HARMON_SYSTEM_CA_BUNDLE="${HARMON_SYSTEM_CA_BUNDLE:-/etc/ssl/certs/ca-certificates.crt}"
+
+# Node ships its own CA roots, so every Node process — npm, and the tools it
+# installs, like Playwright's browser download — trusts the system store only
+# when told to. Behind a platform's TLS-intercepting proxy that store holds the
+# proxy's CA and nothing else survives `sudo`. Node reads this at process start
+# and every tier script sources this file; a caller's own value wins, and an
+# empty one names nothing.
+if [ -z "${NODE_EXTRA_CA_CERTS:-}" ] && [ -f "$HARMON_SYSTEM_CA_BUNDLE" ]; then
+    export NODE_EXTRA_CA_CERTS="$HARMON_SYSTEM_CA_BUNDLE"
+fi
+
 harmon_log() { printf '==> %s\n' "$*"; }
 
 # The run record. One line per event, `<kind><TAB><text>`, appended to
@@ -381,7 +399,8 @@ harmon_tmpdir_init() {
 # harmon_npm_global <package> <version> <command>
 # npm's own idempotence is a network round-trip even when nothing changes, so
 # decide first — through harmon_needs, like every other pinned tool: a same
-# version under a pre-provisioned prefix is still not ours.
+# version under a pre-provisioned prefix is still not ours. Trusts the system CA
+# store through the NODE_EXTRA_CA_CERTS export near the top of this file.
 harmon_npm_global() {
     if harmon_needs "$3" "$2" "$3" --version; then
         npm install -g "${1}@${2}"
@@ -389,9 +408,13 @@ harmon_npm_global() {
 }
 
 # harmon_uv_tool <package> <version> <command>
+# uv bundles its own CA roots too: --system-certs makes it load the platform's
+# system store, as curl does, so a platform VM's TLS-intercepting proxy (whose CA
+# is seeded there, and nothing else survives `sudo`) does not fail the install
+# with UnknownIssuer. The older spelling --native-tls is a deprecated alias.
 harmon_uv_tool() {
     if harmon_needs "$3" "$2" "$3" --version; then
-        uv tool install --force "${1}==${2}"
+        uv tool install --force --system-certs "${1}==${2}"
     fi
 }
 
