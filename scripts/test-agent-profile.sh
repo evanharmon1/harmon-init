@@ -266,8 +266,10 @@ done <<<"$required_deny"
 # (code-owner approval + green checks) is the boundary.
 [ "$(jq '[.permissions.deny[] | select(test("^Bash\\(gh pr merge"))] | length' "$agent_settings")" = "0" ] ||
     fail "agent Claude settings deny gh pr merge — the agent posture carries no merge guard (the ruleset is the boundary)"
-jq -e '.permissions.allow | index("Bash(gh pr merge *)") != null' "$agent_settings" >/dev/null ||
-    fail "agent Claude settings do not explicitly allow Bash(gh pr merge *) — auto mode could stall an agent merge"
+# Both forms: `Bash(gh pr merge *)` needs an argument, so the bare
+# `gh pr merge` on the current branch's PR needs its own rule.
+jq -e '.permissions.allow | (index("Bash(gh pr merge)") != null) and (index("Bash(gh pr merge *)") != null)' "$agent_settings" >/dev/null ||
+    fail "agent Claude settings do not explicitly allow both Bash(gh pr merge) and Bash(gh pr merge *) — auto mode could stall an agent merge"
 
 # rule_prefix <rule> — the literal command prefix a Bash(...) rule matches:
 # `Bash(git:*)` (legacy) and `Bash(git status *)` both reduce to the words

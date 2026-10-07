@@ -20,6 +20,7 @@
       "Bash(gh pr comment *)",
       "Bash(gh pr checks *)",
       "Bash(gh pr ready *)",
+      "Bash(gh pr merge)",
       "Bash(gh pr merge *)",
       "Bash(gh issue view *)",
       "Bash(gh issue list *)",

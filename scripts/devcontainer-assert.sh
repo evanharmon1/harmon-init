@@ -2687,6 +2687,18 @@ assert_container() {
         [ -z "$gh_token" ] || fail "GH_TOKEN is set in the dev container"
     fi
 
+    # The `gh pr merge` ask is a dev-only managed-settings drop-in: installed
+    # with exactly its two rules in dev, absent in bot and agent, which carry
+    # no merge guard (the ruleset is the boundary).
+    local dev_merge_ask
+    dev_merge_ask="$(docker exec -u vscode "$container_id" cat /etc/claude-code/managed-settings.d/dev-gh-pr-merge-ask.json 2>/dev/null || true)"
+    if [ "$profile" = "dev" ]; then
+        jq -e '.permissions.ask == ["Bash(gh pr merge)","Bash(gh pr merge:*)"]' <<<"$dev_merge_ask" >/dev/null 2>&1 ||
+            fail "the dev container's managed-settings.d drop-in does not ask on exactly Bash(gh pr merge) and Bash(gh pr merge:*)"
+    elif [ -n "$dev_merge_ask" ]; then
+        fail "the ${profile} container has the dev-only gh pr merge ask drop-in; ${profile} carries no merge guard"
+    fi
+
     echo "==> devcontainer container assertions passed for ${config} (${profile})."
 }
 
