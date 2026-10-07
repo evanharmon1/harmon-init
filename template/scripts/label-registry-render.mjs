@@ -214,33 +214,45 @@ const provisioned = (family) =>
 const lines = []
 
 if (mode === 'rubric-table') {
-  // Explicit scales preserve documentation order and exclude Tier flags and
-  // retired values. Descriptions remain authoritative in the registry.
+  // Axis order is documentation order; row order and descriptions come from
+  // the registry. Tier pinning is a control flag, rather than a scale value.
   const axes = [
-    ['Impact', 'impact', ['minimal', 'low', 'medium', 'high', 'massive']],
-    ['Risk', 'risk', ['trivial', 'low', 'medium', 'high', 'critical']],
-    ['Complexity', 'complexity', ['xs', 's', 'm', 'l', 'xl']],
-    ['Tier', 'tier', ['local', 'economy', 'standard', 'frontier', 'apex']],
-    ['Priority', 'priority', ['urgent', 'high', 'medium', 'low']],
-    ['Priority (AI)', 'priority-ai', ['p0', 'p1', 'p2', 'p3', 'p4']]
+    ['Impact', 'impact', 'Impact: '],
+    ['Risk', 'risk', 'Risk: '],
+    ['Complexity', 'complexity', 'Complexity: '],
+    ['Tier', 'tier', 'Model tier: '],
+    ['Priority', 'priority', 'Priority: '],
+    ['Priority (AI)', 'priority-ai', 'Priority (AI): ']
   ]
+  const excludedValues = new Set(['tier:pinned'])
   lines.push(
     '<!-- Generated from label-registry.json by `node scripts/label-registry-render.mjs rubric-table`. Do not edit by hand — `task test:label-registry` fails on drift. -->',
     '',
     '| Axis | Value | Short form |',
     '|---|---|---|'
   )
-  for (const [axis, id, values] of axes) {
+  for (const [axis, id, prefix] of axes) {
     const family = manifest.families.find((entry) => entry.family === id)
-    for (const [index, name] of values.entries()) {
-      const value = family?.values.find((entry) => entry.value === name)
-      if (!value || family.retired === true || value.retired === true) {
-        console.error(`label-registry-render: rubric requires active value ${id}:${name}`)
+    const values =
+      family?.retired === true
+        ? []
+        : (family?.values ?? []).filter(
+            (value) => value.retired !== true && !excludedValues.has(`${id}:${value.value}`)
+          )
+    if (values.length === 0) {
+      console.error(`label-registry-render: rubric requires active values for axis ${id}`)
+      process.exit(1)
+    }
+    for (const [index, value] of values.entries()) {
+      const name = value.value
+      const description = field(value.description, `rubric ${id}:${name}`)
+      if (!description.startsWith(prefix)) {
+        console.error(
+          `label-registry-render: rubric ${id}:${name} description must start with ${JSON.stringify(prefix)}`
+        )
         process.exit(1)
       }
-      const description = field(value.description, `rubric ${id}:${name}`)
-      const prefixEnd = description.indexOf(': ')
-      const shortForm = prefixEnd < 0 ? description : description.slice(prefixEnd + 2)
+      const shortForm = field(description.slice(prefix.length), `rubric ${id}:${name} short form`)
       lines.push(`|${index === 0 ? ` **${axis}**` : ''} | \`${name}\` | ${shortForm} |`)
     }
   }

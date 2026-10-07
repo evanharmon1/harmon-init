@@ -1446,6 +1446,66 @@ for mutation in description begin end; do
         echo "PASS: rubric docs gate rejects mutation: $mutation"
     fi
 done
+# A newly registered scale value must change the generated table, while exact
+# prefix stripping must preserve a colon inside the actual short form.
+{
+    echo '<!-- classification-rubric:begin -->'
+    cat "$mutation_tmp/rubric-table.md"
+    echo '<!-- classification-rubric:end -->'
+} >"$rubric_fixture"
+for mutation in extra-active missing-prefix internal-colon; do
+    node --input-type=module - label-registry.json "$mutated_manifest" "$mutation" <<'NODE'
+import fs from 'node:fs'
+
+const [input, output, mutation] = process.argv.slice(2)
+const manifest = JSON.parse(fs.readFileSync(input, 'utf8'))
+const impact = manifest.families.find((family) => family.family === 'impact')
+if (mutation === 'extra-active') {
+  impact.values.push({ value: 'extreme', description: 'Impact: additional active scale value' })
+} else if (mutation === 'missing-prefix') {
+  impact.values[0].description = 'Benefit: an incorrect axis prefix'
+} else {
+  impact.values[0].description = 'Impact: benefit: preserve this internal colon'
+}
+fs.writeFileSync(output, JSON.stringify(manifest))
+NODE
+    rubric_output="$mutation_tmp/rubric-$mutation.out"
+    case "$mutation" in
+    extra-active)
+        if ! node scripts/label-registry-render.mjs rubric-table "$mutated_manifest" >"$rubric_output"; then
+            fail "rubric renderer rejected an extra active scale value"
+        elif ! grep -qF '| `extreme` | additional active scale value |' "$rubric_output"; then
+            fail "rubric renderer silently omitted an extra active scale value"
+        elif (
+            fails=0
+            check_docs_block "$rubric_fixture" "$mutated_manifest" rubric-table classification-rubric
+            [ "$fails" -eq 0 ]
+        ) >"$mutation_tmp/rubric-extra-active.log" 2>&1; then
+            fail "rubric docs gate accepted a stale table after an active scale value was added"
+        else
+            echo "PASS: rubric includes an extra active value and rejects the stale doc"
+        fi
+        ;;
+    missing-prefix)
+        if node scripts/label-registry-render.mjs rubric-table "$mutated_manifest" >"$rubric_output" 2>&1; then
+            fail "rubric renderer accepted a description with an incorrect axis prefix"
+        elif ! grep -qF 'rubric impact:minimal description must start with "Impact: "' "$rubric_output"; then
+            fail "rubric prefix rejection did not identify the value and expected prefix"
+        else
+            echo "PASS: rubric rejects a missing expected prefix and names the value"
+        fi
+        ;;
+    internal-colon)
+        if ! node scripts/label-registry-render.mjs rubric-table "$mutated_manifest" >"$rubric_output"; then
+            fail "rubric renderer rejected a valid description with an internal colon"
+        elif ! grep -qF '| `minimal` | benefit: preserve this internal colon |' "$rubric_output"; then
+            fail "rubric renderer stripped the internal colon instead of only the axis prefix"
+        else
+            echo "PASS: rubric preserves an internal colon after stripping the exact prefix"
+        fi
+        ;;
+    esac
+done
 profile_flags=""
 [ -f taskfiles/foreman.yml ] && profile_flags="--foreman"
 [ -f release-please-config.json ] && profile_flags="$profile_flags --release-please"
