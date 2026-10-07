@@ -1485,7 +1485,7 @@ for (const id of axes.values()) {
 NODE
 }
 check_rubric_self_tests() {
-    local base_manifest="$1" initial_fails="$fails" mutation rubric_output
+    local base_manifest="$1" initial_fails="$fails" mutation rubric_output fixture_value
     check_rubric_mutations "$base_manifest"
     node scripts/label-registry-render.mjs rubric-table "$base_manifest" >"$mutation_tmp/rubric-table.md"
     check_rubric_order "$base_manifest" "$mutation_tmp/rubric-table.md" ||
@@ -1498,21 +1498,31 @@ check_rubric_self_tests() {
         echo '<!-- classification-rubric:end -->'
     } >"$rubric_fixture"
     for mutation in extra-active missing-prefix internal-colon; do
-        node --input-type=module - "$base_manifest" "$mutated_manifest" "$mutation" <<'NODE'
+        fixture_value="$(
+            node --input-type=module - "$base_manifest" "$mutated_manifest" "$mutation" <<'NODE'
 import fs from 'node:fs'
 
 const [input, output, mutation] = process.argv.slice(2)
 const manifest = JSON.parse(fs.readFileSync(input, 'utf8'))
 const impact = manifest.families.find((family) => family.family === 'impact')
+const target = impact.values.find((value) => value.retired !== true)
+if (!target) throw new Error('rubric fixture requires an active impact value')
+let fixtureValue = target.value
 if (mutation === 'extra-active') {
-  impact.values.push({ value: 'extreme', description: 'Impact: additional active scale value' })
+  const existing = new Set(impact.values.map((value) => value.value))
+  let suffix = 0
+  while (existing.has(`rubric-test-${suffix}`)) suffix++
+  fixtureValue = `rubric-test-${suffix}`
+  impact.values.push({ value: fixtureValue, description: 'Impact: additional active scale value' })
 } else if (mutation === 'missing-prefix') {
-  impact.values[0].description = 'Expected impact: a consumer-specific description'
+  target.description = 'Expected impact: a consumer-specific description'
 } else {
-  impact.values[0].description = 'Impact: benefit: preserve this internal colon'
+  target.description = 'Impact: benefit: preserve this internal colon'
 }
 fs.writeFileSync(output, JSON.stringify(manifest))
+console.log(fixtureValue)
 NODE
+        )"
         rubric_output="$mutation_tmp/rubric-$mutation.out"
         case "$mutation" in
         extra-active)
@@ -1520,7 +1530,7 @@ NODE
                 fail "rubric renderer rejected an extra active scale value"
             elif ! check_rubric_order "$mutated_manifest" "$rubric_output"; then
                 fail "rubric extra-active fixture does not match every ordered registry scale"
-            elif ! grep -qF '| `extreme` | additional active scale value |' "$rubric_output"; then
+            elif ! grep -qF "$(printf '| `%s` | additional active scale value |' "$fixture_value")" "$rubric_output"; then
                 fail "rubric renderer silently omitted an extra active scale value"
             elif (
                 fails=0
@@ -1535,7 +1545,7 @@ NODE
         missing-prefix)
             if ! node scripts/label-registry-render.mjs rubric-table "$mutated_manifest" >"$rubric_output"; then
                 fail "rubric renderer rejected a description without the exact axis prefix"
-            elif ! grep -qF '| `minimal` | Expected impact: a consumer-specific description |' "$rubric_output"; then
+            elif ! grep -qF "$(printf '| `%s` | Expected impact: a consumer-specific description |' "$fixture_value")" "$rubric_output"; then
                 fail "rubric renderer did not preserve a description without the exact axis prefix verbatim"
             else
                 {
@@ -1557,7 +1567,7 @@ NODE
         internal-colon)
             if ! node scripts/label-registry-render.mjs rubric-table "$mutated_manifest" >"$rubric_output"; then
                 fail "rubric renderer rejected a valid description with an internal colon"
-            elif ! grep -qF '| `minimal` | benefit: preserve this internal colon |' "$rubric_output"; then
+            elif ! grep -qF "$(printf '| `%s` | benefit: preserve this internal colon |' "$fixture_value")" "$rubric_output"; then
                 fail "rubric renderer stripped the internal colon instead of only the axis prefix"
             else
                 echo "PASS: rubric preserves an internal colon after stripping the exact prefix"
@@ -1578,7 +1588,8 @@ import fs from 'node:fs'
 
 const [input, output] = process.argv.slice(2)
 const manifest = JSON.parse(fs.readFileSync(input, 'utf8'))
-manifest.families.find((family) => family.family === 'impact').values[0].description =
+manifest.families.find((family) => family.family === 'impact').values
+  .find((value) => value.retired !== true).description =
   'Expected impact: a consumer-specific description'
 fs.writeFileSync(output, JSON.stringify(manifest))
 NODE
