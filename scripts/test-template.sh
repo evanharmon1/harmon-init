@@ -1335,16 +1335,17 @@ if [ -n "$home_leaks" ]; then
     err "rendered output contains an absolute home path (see above) — use a ~-relative copier default"
 fi
 
-# ── 9b. docs/project-management.md rendered per project_management answer ──
-# Two mutually-exclusive conditional-named source files share the rendered name
-# docs/project-management.md; assert the right one lands (and none does when the
-# answer is 'none') so a broken filename condition can't ship silently.
 if [ "$profile" = "full" ] || [ "$profile" = "minimal" ]; then
     # Exercise the rendered field-creation guards against stubbed gh, including
     # a personal-account run that actually creates a field. No live API calls.
     bash scripts/test-setup-github-project.sh >/dev/null ||
         err "rendered project field reconciliation tests failed"
 fi
+
+# ── 9b. docs/project-management.md rendered per project_management answer ──
+# Two mutually-exclusive conditional-named source files share the rendered name
+# docs/project-management.md; assert the right one lands (and none does when the
+# answer is 'none') so a broken filename condition can't ship silently.
 case "$profile" in
 full) # project_management=github; github_org=test-org (an org repo)
     [ -f docs/project-management.md ] || err "GitHub project-management.md missing from docs/"
