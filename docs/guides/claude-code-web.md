@@ -276,7 +276,8 @@ session's API calls is not distinguishable, and the reverse order (App first,
 then `/web-setup`) is not observed.
 
 **The procedure** (observed 2026-10-07, on the main account, Claude Code
-2.1.292):
+2.1.292, verified on `evanharmon1/harmon-init` only; step 4's second owner is
+the open check named above):
 
 1. At [claude.ai/customize/connectors](https://claude.ai/customize/connectors),
    disconnect GitHub.
