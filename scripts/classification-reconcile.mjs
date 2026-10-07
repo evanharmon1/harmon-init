@@ -420,7 +420,7 @@ function makeClient(token, fetch, env) {
     } catch {
       throw new Error(`GraphQL ${res.status}: non-JSON response: ${diagnostic(text)}`)
     }
-    if (body === null || typeof body !== 'object')
+    if (body === null || typeof body !== 'object' || Array.isArray(body))
       throw new Error(`GraphQL ${res.status}: invalid response body: ${diagnostic(text)}`)
     if (!res.ok || body.errors)
       throw new Error(`GraphQL ${res.status}: ${diagnostic(JSON.stringify(body.errors ?? body))}`)
@@ -765,7 +765,7 @@ export async function run(
         // The not-derivable reason is reported once per repository.
         const reports = plan.reports.filter((r) => r.code !== 'tier-not-derivable')
         for (const r of reports) {
-          print(`::warning title=${repo}#${issue.number} ${r.code}::${r.message}`)
+          print(`::warning title=${repo}#${issue.number} ${r.code}::${commandData(r.message)}`)
         }
         if (plan.add.length > 0 || plan.remove.length > 0 || reports.length > 0) {
           if (plan.add.length > 0 || plan.remove.length > 0) changed += 1

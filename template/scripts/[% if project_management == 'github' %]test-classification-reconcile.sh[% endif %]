@@ -729,6 +729,42 @@ for (const status of [502, 200]) {
     assert.ok(printed.some((line) => line.startsWith('::error ') && line.includes(`GraphQL ${status}: invalid response body: null`)))
   })
 }
+{
+  const printed = []
+  const code = await m.run(
+    { GH_TOKEN: 't', GITHUB_REPOSITORY: 'a/two' },
+    { root, print: (line) => printed.push(line), fetch: async () => new Response('[]', { status: 200 }) }
+  )
+  check('run(): a JSON array GraphQL body retains status 200', () => {
+    assert.equal(code, 1)
+    assert.ok(printed.some((line) => line.startsWith('::error ') && line.includes('GraphQL 200: invalid response body: []')))
+  })
+}
+{
+  const printed = []
+  const responseText = '50% unavailable\r\n::warning::proxy detail'
+  const gh = fakeGitHub({ 'a/two': { issues: { 1: { labels: [...stale] } } } })
+  await m.run(
+    { GH_TOKEN: 't', GITHUB_REPOSITORY: 'a/two' },
+    {
+      root,
+      print: (line) => printed.push(line),
+      fetch: async (url, init) => {
+        if (init.method === 'POST' && new URL(url).pathname.endsWith('/labels'))
+          return new Response(responseText, { status: 502 })
+        return gh.fetch(url, init)
+      }
+    }
+  )
+  check('run(): failed Tier writes escape percent, CR and LF in report warnings', () => {
+    const warnings = printed.filter((line) => line.startsWith('::warning ') && line.includes('write-failed'))
+    assert.ok(warnings.length > 0, 'a failed Tier REST write produces a report')
+    for (const warning of warnings) {
+      assert.ok(warning.includes('502 50%25 unavailable%0D%0A::warning::proxy detail'))
+      assert.ok(!/[\r\n]/.test(warning))
+    }
+  })
+}
 for (const kind of ['rest', 'raw']) {
   const printed = []
   const responseText = '50% unavailable\r\n' + 'x'.repeat(3000)
@@ -1101,6 +1137,22 @@ function fakeRepo(name, readerSource, { policy = true } = {}) {
   writeFileSync(join(dir, 'scripts/lib/toml-lite.mjs'), 'export function parseToml() { return { tier: {} } }\n')
   if (policy) writeFileSync(join(dir, '.devflow.toml'), '[tier.matrix]\n')
   return dir
+}
+{
+  const message = '50% unavailable\r\n::warning::reader detail'
+  const dir = fakeRepo('multiline-reader', `export function deriveTier() {}\nexport function resolvePolicy() { throw new Error(${JSON.stringify(message)}) }\n`)
+  const printed = []
+  const gh = fakeGitHub({ 'a/two': { issues: { 1: { labels: ['bug'] } } } })
+  const code = await m.run(
+    { GH_TOKEN: 't', GITHUB_REPOSITORY: 'a/two' },
+    { root: dir, print: (line) => printed.push(line), fetch: gh.fetch }
+  )
+  check('run(): repository warnings escape a multiline policy-reader message', () => {
+    assert.equal(code, 0)
+    const warning = printed.find((line) => line.startsWith('::warning title=classification reconcile a/two::') && line.includes('tier not derivable'))
+    assert.ok(warning.includes('50%25 unavailable%0D%0A::warning::reader detail'))
+    assert.ok(!/[\r\n]/.test(warning))
+  })
 }
 const cases = [
   ['no reader', fakeRepo('none', null), /no policy reader found/],
