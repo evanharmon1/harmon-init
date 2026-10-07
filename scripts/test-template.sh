@@ -1339,6 +1339,12 @@ fi
 # Two mutually-exclusive conditional-named source files share the rendered name
 # docs/project-management.md; assert the right one lands (and none does when the
 # answer is 'none') so a broken filename condition can't ship silently.
+if [ "$profile" = "full" ] || [ "$profile" = "minimal" ]; then
+    # Exercise the rendered field-creation guards against stubbed gh, including
+    # a personal-account run that actually creates a field. No live API calls.
+    bash scripts/test-setup-github-project.sh >/dev/null ||
+        err "rendered project field reconciliation tests failed"
+fi
 case "$profile" in
 full) # project_management=github; github_org=test-org (an org repo)
     [ -f docs/project-management.md ] || err "GitHub project-management.md missing from docs/"
@@ -1371,19 +1377,15 @@ full) # project_management=github; github_org=test-org (an org repo)
     # likewise label-only now (#875) — both fields are retired, and the
     # `layer:`/`domain:` label families in setup-github-labels.sh are their
     # only surface, with no paired field vocabulary left to drift against.
-    # The rendered scripts must not recreate any of the three.
+    # The rendered issue-field script must not recreate any of the three.
+    # Project field-creation mutations are checked by the rendered
+    # test-setup-github-project.sh on a personal-account run that creates Product.
     ! grep -q 'create_field "Agent"' scripts/setup-github-issue-fields.sh ||
         err "rendered setup-github-issue-fields.sh recreates the retired Agent field (#662)"
-    ! grep -q 'create_single_select "Agent"' scripts/setup-github-project.sh ||
-        err "rendered setup-github-project.sh recreates the retired Agent field (#662)"
     ! grep -q 'create_field "Domain"' scripts/setup-github-issue-fields.sh ||
         err "rendered setup-github-issue-fields.sh recreates the retired Domain field (#875)"
     ! grep -q 'create_field "Layer"' scripts/setup-github-issue-fields.sh ||
         err "rendered setup-github-issue-fields.sh recreates the retired Layer field (#875)"
-    ! grep -q 'create_single_select "Domain"' scripts/setup-github-project.sh ||
-        err "rendered setup-github-project.sh recreates the retired Domain field (#875)"
-    ! grep -q 'create_single_select "Layer"' scripts/setup-github-project.sh ||
-        err "rendered setup-github-project.sh recreates the retired Layer field (#875)"
     # project_management=github → the classification workflows render, and an
     # organization repository reconciles MONTHLY (#1450): the cadence lives only
     # in the template's owner-type branch, so assert the org side renders it.

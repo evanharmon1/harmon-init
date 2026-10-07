@@ -169,13 +169,14 @@ grep -q "WARN: GitHub Project needs attention" "$tmp/out" ||
 STUB_OWNER_TYPE=User
 STUB_VARIABLE_RC=0
 
-echo "==> a run creates none of the retired Agent, Priority, or Size fields, on either owner type"
+echo "==> a run creates none of the retired Agent, Domain, Layer, Priority, or Size fields, on either owner type"
 # Priority is an issue field on an organization and a priority:* label on a
 # personal account; Size is retired (harmon-init#1451); Agent is retired too — the live
-# claim is a claim:* label (ADR 2026-08-07 D4). The board below is missing
+# claim is a claim:* label (ADR 2026-08-07 D4). Domain and Layer are label-only
+# taxonomies, not project fields (harmon-init#875). The board below is missing
 # Product as well, so a personal-account run provably does write — it creates
 # Product, the one field it still owns — and the assertions are about everything
-# else. The fixture deliberately has no Agent field, so any mutation naming one
+# else. The fixture has no Agent, Domain, or Layer field, so any mutation naming one
 # is the script recreating it; reading it from a personal-account run is what
 # makes the check able to fail (an organization run exits before any field is
 # created).
@@ -187,6 +188,8 @@ for owner_type in User Organization; do
     mut=$(cat "$MUTATIONS")
     case "$mut" in
     *'name:"Agent"'*) fail "a $owner_type run created the retired Agent project field" ;;
+    *'name:"Domain"'*) fail "a $owner_type run created the retired Domain project field" ;;
+    *'name:"Layer"'*) fail "a $owner_type run created the retired Layer project field" ;;
     *'name:"Priority"'*) fail "a $owner_type run created the retired Priority project field" ;;
     *'name:"Size"'*) fail "a $owner_type run created the retired Size project field" ;;
     *'dataType:NUMBER'*) fail "a $owner_type run created a number field — Size was the only one" ;;
