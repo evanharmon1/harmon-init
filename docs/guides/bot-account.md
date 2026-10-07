@@ -204,6 +204,15 @@ the bot, under which a web session **can** push workflow files; see [Whose
 identity GitHub sees](claude-code-web.md#whose-identity-github-sees) for the
 procedure, the account pitfall and the costs (#1407).
 
+That classic web PAT has its own lifecycle. Set an expiry (180 days at most, like
+the agent PAT), keep it in the bot's item in the secret store, and rotate it by
+minting a new token and re-running `/web-setup`. Retire it by revoking it on
+GitHub (Settings → Developer settings → Tokens (classic)): whether disconnecting
+GitHub on claude.ai's connectors page removes a stored token was not observed.
+Per-session repository scope does not limit this agent: a session can attach,
+when a human approves, any repository the bot can push to, and a classic `repo`
+token also carries `repo:invite`.
+
 ## What the bot cannot do — by construction
 
 - **Push to `main`, or merge into it unapproved** — the rulesets refuse a
@@ -212,8 +221,10 @@ procedure, the account pitfall and the costs (#1407).
   merge. A PAT with `pull_requests: write` — this one or the agent's — can
   perform a merge a human has already approved; merging stays the
   maintainer's decision.
-- **Edit `.github/workflows/`** — no Workflows permission, so it cannot rewrite
-  CI to run with Actions secrets.
+- **Edit `.github/workflows/`** through its PATs — no Workflows permission, so
+  it cannot rewrite CI to run with Actions secrets. The App-as-bot route on
+  Claude Code on the web is the exception (see [Whose identity GitHub
+  sees](claude-code-web.md#whose-identity-github-sees)).
 - **Change settings, rulesets, or bypass lists** — no Administration.
 - **Reach production secrets** — the bot devcontainer installs no 1Password CLI
   and no Tailscale.
