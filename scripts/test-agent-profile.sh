@@ -216,8 +216,7 @@ echo "==> 2. agent Claude settings: auto mode, no bypass, no ask, the agreed den
 [ "$(jq -r '.skipDangerousModePermissionPrompt // "unset"' "$agent_settings")" = "unset" ] ||
     fail "agent Claude settings carry the bot's skipDangerousModePermissionPrompt"
 
-required_deny='Bash(gh pr merge *)
-Bash(gh release *)
+required_deny='Bash(gh release *)
 Bash(gh repo delete *)
 Bash(gh repo edit *)
 Bash(gh repo rename *)
@@ -262,6 +261,13 @@ done <<<"$required_deny"
 # gitignore negation only carves out of rules listed BEFORE it.
 [ "$(jq -r '.permissions.deny | last' "$agent_settings")" = "Read(!**/.env.example)" ] ||
     fail "the .env.example carve-out must be the last deny rule (a negation only applies to rules before it)"
+# The agent posture carries no merge guard: `gh pr merge` is explicitly
+# allowed so auto mode never stalls a merge, and the "Protect Main" ruleset
+# (code-owner approval + green checks) is the boundary.
+[ "$(jq '[.permissions.deny[] | select(test("^Bash\\(gh pr merge"))] | length' "$agent_settings")" = "0" ] ||
+    fail "agent Claude settings deny gh pr merge — the agent posture carries no merge guard (the ruleset is the boundary)"
+jq -e '.permissions.allow | index("Bash(gh pr merge *)") != null' "$agent_settings" >/dev/null ||
+    fail "agent Claude settings do not explicitly allow Bash(gh pr merge *) — auto mode could stall an agent merge"
 
 # rule_prefix <rule> — the literal command prefix a Bash(...) rule matches:
 # `Bash(git:*)` (legacy) and `Bash(git status *)` both reduce to the words

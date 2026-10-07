@@ -1178,6 +1178,19 @@ s.listen(1)' "$ts_sock" 2>/dev/null && [ -S "$ts_sock" ]; then
         fail "human dev profile applies the bot-only always-proceed Antigravity policy"
     fi
 
+    # The `gh pr merge` ask drop-in (claude-settings-dev.json) is dev-only: the
+    # bot and agent profiles carry no merge guard, and the "Protect Main"
+    # ruleset is the boundary there. Comment lines are stripped so an
+    # explanatory comment naming the file is not a false match.
+    grep -Fq 'claude-settings-dev.json' < <(grep -Ev '^[[:space:]]*#' "${repo_root}/.devcontainer/dev/post-create.sh") ||
+        fail "human dev profile does not install the gh pr merge ask drop-in (claude-settings-dev.json)"
+    local merge_profile_script
+    for merge_profile_script in .devcontainer/post-create.sh .devcontainer/agent/post-create.sh; do
+        if grep -Eq 'claude-settings-dev\.json|managed-settings\.d' < <(grep -Ev '^[[:space:]]*#' "${repo_root}/${merge_profile_script}"); then
+            fail "${merge_profile_script} installs the dev-only gh pr merge ask drop-in"
+        fi
+    done
+
     # 9. The GitHub CLI browser bridge must use the VS Code host opener when it
     #    works, and print the exact URL when that command is absent or fails.
     #    Remote VS Code's `code --open-url` is a false friend: it can ignore the

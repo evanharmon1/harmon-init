@@ -1882,8 +1882,13 @@ jq -e '[.hooks.PreToolUse[]? | select(.matcher == "Bash") | .hooks[]?
     err ".claude/settings.json does not register git-merge-guard.py as a PreToolUse Bash hook with the ask fallback"
 jq -e '[.permissions.ask[] | select(test("^Bash\\(git merge"))] | length == 0' .claude/settings.json >/dev/null ||
     err ".claude/settings.json still asks on every git merge (the guard replaces those rules)"
-jq -e '.permissions.ask | (index("Bash(gh pr merge)") != null) and (index("Bash(git push origin main)") != null) and (index("Bash(git push --force:*)") != null)' .claude/settings.json >/dev/null ||
-    err ".claude/settings.json lost the gh pr merge / push-to-main / force-push ask rules"
+# No project-level `gh pr merge` prompt anywhere: a host relies on the user's
+# own settings, and the dev devcontainer adds its own managed drop-in (checked
+# under 9e1). Pushes to main and force-pushes keep their ask rules.
+jq -e '[.permissions.ask[] | select(test("^Bash\\(gh pr merge"))] | length == 0' .claude/settings.json >/dev/null ||
+    err ".claude/settings.json still asks on gh pr merge (only the dev devcontainer drop-in carries that prompt)"
+jq -e '.permissions.ask | (index("Bash(git push origin main)") != null) and (index("Bash(git push --force:*)") != null)' .claude/settings.json >/dev/null ||
+    err ".claude/settings.json lost the push-to-main / force-push ask rules"
 grep -Fq 'blocking credential-policy check' "${repo_root}/copier.yml" ||
     err "copier.yml use_codex_review help does not name the blocking credential-policy check"
 if [ "$profile" = "full" ]; then
@@ -2310,6 +2315,19 @@ if [ -d .devcontainer ]; then
         err "Antigravity compatibility installer missing from devcontainer output"
     [ -f .devcontainer/config/antigravity-settings.json ] ||
         err "Antigravity policy defaults missing from devcontainer output"
+    # The dev profile alone keeps a `gh pr merge` prompt, via a managed-settings
+    # drop-in; bot and agent carry no merge guard (the ruleset is the boundary).
+    jq -e '.permissions.ask == ["Bash(gh pr merge)", "Bash(gh pr merge:*)"]' \
+        .devcontainer/config/claude-settings-dev.json >/dev/null 2>&1 ||
+        err "dev Claude drop-in claude-settings-dev.json missing or does not ask exactly on gh pr merge"
+    grep -Fq 'claude-settings-dev.json' .devcontainer/dev/post-create.sh ||
+        err "dev post-create does not install the gh pr merge ask drop-in"
+    if grep -Fq 'claude-settings-dev.json' .devcontainer/post-create.sh; then
+        err "bot post-create installs the dev-only gh pr merge drop-in"
+    fi
+    if grep -Fq 'claude-settings-dev.json' .devcontainer/agent/post-create.sh; then
+        err "agent post-create installs the dev-only gh pr merge drop-in"
+    fi
     [ -f .devcontainer/config/antigravity-settings-dev.json ] ||
         err "balanced Antigravity dev policy defaults missing from devcontainer output"
     [ -x .devcontainer/config/bot-autonomy/antigravity.sh ] ||

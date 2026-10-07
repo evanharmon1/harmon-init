@@ -387,8 +387,8 @@ What that does and does not establish here:
 
 **Pending observation (#1404 criterion 2):** in a session in an environment whose
 setup script ran the bootstrap, run `/permissions` and record whether the agent
-deny rules (for example `Bash(gh pr merge *)`) are listed, and from which
-source. Then ask the session to run `gh pr merge 1` and record whether it is
+deny rules (for example `Bash(gh release *)`) are listed, and from which
+source. Then ask the session to run `gh release delete x` and record whether it is
 refused **without a prompt**, and whether the refusal came from the deny rule or
 from the platform's classifier. If the rules are absent, record that the
 platform ignores the file, pick the fallback above, and record the choice here.
@@ -598,7 +598,7 @@ says where it lands.
 | 7 | Each row of the `gh` inventory run through the proxy; every failing row gets a follow-up or workaround | [The `gh` call inventory](#the-gh-call-inventory) |
 | 8 | The bootstrap and `task verify` under **Trusted**; every denial recorded; each added domain justified by one | [Network](#network) |
 | 11 | Whether the setup script runs with the repository already cloned | [When per-checkout preparation runs](#when-per-checkout-preparation-runs) |
-| #1404-2 | `/permissions` lists the agent deny rules and `gh pr merge` is refused without a prompt; or the platform ignores the file and the fallback is chosen | [The agent posture](#the-agent-posture) |
+| #1404-2 | `/permissions` lists the agent deny rules and `gh release delete x` is refused without a prompt; or the platform ignores the file and the fallback is chosen | [The agent posture](#the-agent-posture) |
 | — | Whether release-asset downloads from repositories *not* attached to the session succeed, given the docs say they 403 | [Network](#network) |
 
 ## Reusing this structure
