@@ -2787,7 +2787,9 @@ HARMON_AGENT_CLAUDE_MANAGED="${root}/claude.json" HARMON_AGENT_CODEX_MANAGED="${
 #       every Node process a tier runs — npm and also the tools it installs,
 #       like Playwright's browser download — unless the caller named one;
 #   (c) the sudo re-exec forwards the bundle knob, or a caller's override would
-#       be dropped exactly where the recipe runs.
+#       be dropped on the unprivileged entry (`./bootstrap-remote.sh` run as a
+#       normal user with sudo available). The recipe is a root entry — `sudo
+#       bash …` — and never reaches the re-exec.
 # (b) is EXECUTED, because a pattern match cannot tell whether a caller's value
 # wins, whether an empty one counts as set, or whether the export reaches a
 # process that is not inside harmon_npm_global.

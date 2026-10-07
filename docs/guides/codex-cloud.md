@@ -113,14 +113,12 @@ Rules for this script, each with its reason:
   container cache (*docs (legacy), 2026-09-29*: cache invalidation happens when
   the setup or maintenance script, the variables or the secrets change), so the
   environment moves only when you edit the tag.
-- **`vX.Y.Z` must be the first release that carries the bootstrap.** The
-  bootstrap landed in #1426; the latest tag when this guide was written is
-  `v4.47.1`, which predates it, and the release PR
-  ([#1398](https://github.com/evanharmon1/harmon-init/pull/1398), proposing
-  `4.48.0`) is not merged. A proposal is not a tag: **replace `vX.Y.Z` with the
-  tag the release publishes, and only then use the environment.** Until that
-  happens this section is not runnable as written, and #750's first acceptance
-  criterion stays open for exactly that reason.
+- **`vX.Y.Z` is the release tag you want, `v4.48.0` or later.** `v4.48.0`
+  (published 2026-10-03) is the first release that carries the bootstrap. Whether
+  Codex cloud's VM intercepts TLS is not yet observed; a release carrying the
+  trust-store fix (#1538) removes the question, because the shared installers
+  then trust the system CA store themselves — see
+  [architecture/remote-environments.md § The network the bootstrap may use](../architecture/remote-environments.md#the-network-the-bootstrap-may-use).
 - **Do not append `|| true`.** A setup that leaves the pinned toolchain missing
   would run the gate against the platform's stock tools and pass or fail for the
   wrong reasons. Whether the platform fails a task's start on a non-zero exit is

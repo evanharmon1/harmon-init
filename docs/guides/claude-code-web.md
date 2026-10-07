@@ -79,7 +79,9 @@ Rules for this script, each with its reason:
   — `sudo env UV_SYSTEM_CERTS=1 NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt bash`
   and then the same script path and `--ref` arguments as before. With that, the
   unchanged `v5.2.0` bootstrap completed with `tiers core,agents, 20 new
-  install(s)` and exit 0. Why the fix is in the bootstrap rather than in the
+  install(s)` and exit 0. That line is verified at `v5.2.0` only: releases
+  `v4.48.0` through `v5.2.0` all need it, and the release that carries the fix
+  will not. Why the fix is in the bootstrap rather than in the
   recipe:
   [architecture/remote-environments.md § The network the bootstrap may use](../architecture/remote-environments.md#the-network-the-bootstrap-may-use).
 - **Do not append `|| true`.** The platform fails the session start when the
@@ -572,10 +574,10 @@ Observed:  *pending*
 
 ## Pending observations
 
-Six acceptance criteria of
-[#1407](https://github.com/evanharmon1/harmon-init/issues/1407) — 1 (its
-pinned-tag slot), 3, 4, 7, 8 and 11 — need a live Claude Code on the web session
-run by the maintainer, as does criterion 2 of
+Criterion 1 of [#1407](https://github.com/evanharmon1/harmon-init/issues/1407)
+was observed on 2026-10-06 (see [Setup script](#setup-script)). Five acceptance
+criteria of it — 3, 4, 7, 8 and 11 — still need a live Claude Code on the web
+session run by the maintainer, as does criterion 2 of
 [#1404](https://github.com/evanharmon1/harmon-init/issues/1404) (the agent
 posture), and one further item, the unnumbered row, comes out of
 writing this guide. Each result goes in the section named, with the date and the
@@ -585,7 +587,7 @@ says where it lands.
 
 | # | What has to be seen | Where the result lands |
 | --- | --- | --- |
-| 1 | The `vX.Y.Z` of the first release that carries the bootstrap, and that the setup script completes on the real VM inside the cache budget | [Setup script](#setup-script) |
+| 1 | Observed 2026-10-06: `v4.48.0` is the first release carrying the bootstrap; it completes in 86 s on the VM with the trust-store fix and fails at `semgrep` without it | [Setup script](#setup-script) |
 | 3 | Session commit, push and PR attributed to `evanharmon1-bot`, on an evanharmon1 repo and a ponderousdev repo; or the platform's refusal and the fallback | [Whose identity GitHub sees](#whose-identity-github-sees) |
 | 4 | `claude --cloud "<task>"` runs prompt-free and returns a pushed branch with no human step | [Bridges between the terminal and the cloud](#bridges-between-the-terminal-and-the-cloud) |
 | 7 | Each row of the `gh` inventory run through the proxy; every failing row gets a follow-up or workaround | [The `gh` call inventory](#the-gh-call-inventory) |
