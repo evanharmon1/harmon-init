@@ -147,8 +147,9 @@ The next session was ready about 4.5 s after it was created: the VM booted at
 20:18:06Z, the environment manager started in resume-cached mode, the repository
 was updated to the latest commit at 20:18:10Z, and the session's branch was
 checked out at 20:18:11.6Z. An uncached session took about three minutes (above).
-The cached snapshot therefore **includes the repository clone** and fetches it
-forward on resume rather than cloning again. What that means for where
+So a cached start resumes an existing checkout and fetches it forward rather
+than cloning again; that the checkout is stored in the setup-script snapshot
+is the likely reading, not something these timestamps show. What that means for where
 per-checkout preparation runs is an open design question,
 [#1548](https://github.com/evanharmon1/harmon-init/issues/1548) (see [When
 per-checkout preparation runs](#when-per-checkout-preparation-runs)).
@@ -522,12 +523,16 @@ not the write boundary: a bundled short flag such as `gh api -iX POST …` is
 expected to match none of them and only the `gh api *` allow rule (untested;
 [#1549](https://github.com/evanharmon1/harmon-init/issues/1549)). The boundary
 is the bot's collaborator grants and the repository rulesets, as for the bot's
-PATs. The same boundary bounds draft promotion and auto-merge, not only
-merges: the proxy offers REST routes for both (`POST …/ccr/ready_for_review`,
+PATs — and that boundary covers merges, not draft promotion or auto-merge. The
+proxy offers REST routes for both (`POST …/ccr/ready_for_review`,
 `POST …/ccr/convert_to_draft`, `PUT|DELETE …/ccr/auto_merge`, quoted under
-[the `gh` call inventory](#the-gh-call-inventory)), and they are `gh api`
-writes the denies are not relied on to stop. A merge into a protected branch
-still needs code-owner approval and the required checks.
+[the `gh` call inventory](#the-gh-call-inventory)); a write grant permits them,
+and the rulesets gate only the merge. So a session can mark a draft ready
+without the readiness gate (it requests review; it cannot merge), and only the
+repository's own **Allow auto-merge** setting stops it enabling auto-merge —
+off on `evanharmon1/harmon-init` and `ponderousdev/foreman` (read 2026-10-07).
+A merge into a protected branch still needs code-owner approval and the
+required checks.
 
 **The session's built-in GitHub tools are not covered by the posture** (observed
 2026-10-07, about 18:03Z, in a postured session). `mcp__github__create_pull_request`
@@ -585,7 +590,7 @@ quoted here once and referred to below as *the GraphQL 403*:
 
 | Call | Made by | Result through the proxy | Follow-up / workaround |
 | --- | --- | --- | --- |
-| `gh pr list`, `gh pr view`, `gh pr checks`, `gh pr ready`, `gh issue view`, `gh issue edit`, `gh issue comment`, `gh label list` | any of the scripts below, or by hand | **fail, 403** — observed 2026-09-27; `gh issue view`, `gh pr list`, `gh pr view`, `gh pr checks` and `gh label list` again 2026-10-06 (the GraphQL 403) | `gh api repos/{o}/{r}/…` over REST for reads; the REST writes and `POST …/ccr/ready_for_review` are denied under the agent posture (see above), so they serve only outside a postured session. The helper scripts: [harmon-devkit#1207](https://github.com/evanharmon1/harmon-devkit/issues/1207) |
+| `gh pr list`, `gh pr view`, `gh pr checks`, `gh pr ready`, `gh issue view`, `gh issue edit`, `gh issue comment`, `gh label list` | any of the scripts below, or by hand | **fail, 403** — observed 2026-09-27; `gh issue view`, `gh pr list`, `gh pr view`, `gh pr checks` and `gh label list` again 2026-10-06 (the GraphQL 403) | `gh api repos/{o}/{r}/…` over REST for reads; the REST writes and `POST …/ccr/ready_for_review` written with a separate write flag are denied under the agent posture, and those denies are defence in depth, not the boundary (see above; bundled flags untested, #1549), so the lifecycle uses them only outside a postured session. The helper scripts: [harmon-devkit#1207](https://github.com/evanharmon1/harmon-devkit/issues/1207) |
 | `claim-transaction.sh` (`/claim`): `gh issue view/edit/comment`, `gh api user`, `gh api --paginate --slurp` | claim skill (vendored) | **fail** on the GraphQL issue calls — observed 2026-09-27. The script aborts at its first `gh issue view`, so its paginated `comments` and `timeline` reads (page 1 expected to work, later pages to fail) are not reached | harmon-devkit#1207. The 2026-09-27 session used a session-local `gh` shim mapping the subcommands to REST — a stopgap, not a fix |
 | `tick-criteria-core.sh`: `gh issue view`, `gh issue edit`, `gh api user` | track-work skill (vendored) | **fail** — observed 2026-09-27 | harmon-devkit#1207. The write also gets the footer (above) |
 | `check-closing-keywords.sh` (the vendored copy): `gh issue view`, `gh pr view`; `gh repo view` when no `--repo` or `GH_REPO` is given | track-work skill (vendored) | **fail** — observed 2026-09-27; the `gh repo view` fallback expected to fail, not yet observed (GraphQL-backed) | harmon-devkit#1207. Pass `--repo` so the fallback never runs |
@@ -893,8 +898,10 @@ The docs do not say whether that clone exists when the setup script runs.
 script runs** — a probe line in the setup script wrote
 `/home/user/harmon-init/.git`. A script served from the cache still cannot
 depend on that session's own clone, because the snapshot was taken before it.
-The cache does keep a clone: the one made in the session that built the snapshot,
-fetched forward on resume ([Setup script](#setup-script), observed 2026-10-07).
+A cached start does resume an existing checkout and fetch it forward rather than
+clone afresh ([Setup script](#setup-script), observed 2026-10-07), which the
+docs' "fresh clone per session" does not describe; where that checkout is kept,
+and which run built it, is not established.
 Whether the setup script should therefore prepare the checkout is an open design
 question, [#1548](https://github.com/evanharmon1/harmon-init/issues/1548). Until
 it is decided, the rule that holds:
@@ -977,7 +984,7 @@ date and the Claude Code version.
 | # | What has to be seen | Where the result lands |
 | --- | --- | --- |
 | 1 | Seen 2026-10-06: `v4.48.0` is the first release carrying the bootstrap; at `v5.2.0` the setup script fails at `semgrep`, and with the interim `sudo env …` line it completes in 86 s (48 s on a second VM). Seen 2026-10-07: the recipe unchanged, with `sudo bash` and no interim `env`, at `v5.2.1` started a session; the manifest reports `harmon-remote-env` at revision `v5.2.1`, `semgrep 1.178.0` and `copier` are at `/usr/local/bin`, `markdownlint-cli2` and `codex` at `/opt/node22/bin`, and `task` is 3.53.1 | [Setup script](#setup-script) |
-| 1 (cache) | Seen 2026-10-07: the setup-script cache works; a session booted 13.5 h after the run it started from, across GitHub-connection changes. Two earlier sessions had re-run the script (why the second is not established). Seen 2026-10-07 after the script change to `v5.2.1`: the next session was ready about 4.5 s after creation in resume-cached mode, against about three minutes uncached, and the snapshot keeps the repository clone and fetches it forward. *Open:* what that means for where per-checkout preparation runs ([#1548](https://github.com/evanharmon1/harmon-init/issues/1548)) | [Setup script](#setup-script) |
+| 1 (cache) | Seen 2026-10-07: the setup-script cache works; a session booted 13.5 h after the run it started from, across GitHub-connection changes. Two earlier sessions had re-run the script (why the second is not established). Seen 2026-10-07 after the script change to `v5.2.1`: the next session was ready about 4.5 s after creation in resume-cached mode, against about three minutes uncached, and the cached start resumes an existing checkout and fetches it forward (where that checkout is kept is not established). *Open:* what that means for where per-checkout preparation runs ([#1548](https://github.com/evanharmon1/harmon-init/issues/1548)) | [Setup script](#setup-script) |
 | — | Seen 2026-10-07: the session's built-in GitHub tools are not covered by the agent posture; a draft PR was opened, commented on and closed as the bot (PR #1546). The `gh` write forms tried stay refused (defence in depth, not the boundary; [#1549](https://github.com/evanharmon1/harmon-init/issues/1549)). *Open:* which other built-in tools exist (merge, workflow runs, releases) was not asked; a merge into a protected branch still needs code-owner approval and the required checks | [What runs where](#what-runs-where) |
 | — | Seen 2026-10-07: with a `/web-setup` PAT stored first and an App connection added afterwards on the same account, git pushes still use the PAT (workflow push refused). *Open:* the reverse order, and which credential serves API calls | [Whose identity GitHub sees](#whose-identity-github-sees) |
 | 3 | Seen 2026-10-07, on `evanharmon1/harmon-init` and `ponderousdev/foreman`: the PAT-only route gives `gh api user` → `evanharmon1-bot`, the write role without admin or maintain (`push: true, admin: false, maintain: false`), the bot as push actor, the commit author Claude, and a refused workflow push; the App-as-bot route gives the same identity but accepts a workflow push. A PR opened through a session's built-in tools is authored by the bot (seen on `evanharmon1/harmon-init` only). *Open:* a PR through a session on a ponderousdev repository | [Whose identity GitHub sees](#whose-identity-github-sees) |
