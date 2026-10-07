@@ -99,16 +99,17 @@ Rules for this script, each with its reason:
 - **No `--tiers` flag, no other install lines.** Anything the loop needs belongs
   in the shared scripts, so the image and every other remote adapter get it too.
 
-**Observed (criterion 1, the caching claim), 2026-10-06, Claude Code 2.1.292
+**Observed (criterion 1), 2026-10-06, Claude Code 2.1.292
 on the VM:** with the trust store named as above, the bootstrap completed in 86
-seconds, and in 48 seconds on a second fresh VM — a fifth or less of the
+seconds, and in 48 seconds on a second fresh VM — well inside the
 platform's five-minute cache budget. Without it, the same script fails at
 `semgrep`, as the release-tag rule above describes. CI's `remote-bootstrap` job
 cannot see that failure: its stock `ubuntu:24.04` container has a direct network
 and no intercepting proxy, which is also why the same recipe passes there in 43
-seconds. The measurement was a manual run of the recipe's last line in the
-interim form; the setup script as the platform runs it, at a release that
-carries the fix, has not yet been observed.
+seconds. Both runs were the platform running the environment's setup script,
+with the recipe's last line in the interim form; the recipe unchanged, at a
+release that carries the fix, is not yet observed, and neither is whether later
+sessions start from the cached snapshot.
 
 ### Network
 

@@ -452,8 +452,9 @@ Observed:  *pending*
 
 Three acceptance criteria of
 [#750](https://github.com/evanharmon1/harmon-init/issues/750) — 2, 3 and 4 — need
-a provisioned environment and live tasks run by the maintainer, and criterion 1's
-pinned-tag slot needs a release. Criterion 3 of
+a provisioned environment and live tasks run by the maintainer, and criterion 1
+still needs its setup-script run (`v4.48.0`, the first release carrying the
+bootstrap, exists since 2026-10-03). Criterion 3 of
 [#1404](https://github.com/evanharmon1/harmon-init/issues/1404) (the agent
 posture) needs one too. The rest are questions this guide could not
 answer from the docs. Each result goes in the section named, with the date and the
@@ -461,7 +462,7 @@ answer from the docs. Each result goes in the section named, with the date and t
 
 | # | What has to be seen | Where the result lands |
 | --- | --- | --- |
-| 1 | The `vX.Y.Z` of the first release that carries the bootstrap, and that the setup script finishes, as which user and in how long | [Setup script](#setup-script) |
+| 1 | That the setup script, at `v4.48.0` or later, finishes, as which user and in how long | [Setup script](#setup-script) |
 | 2 | A Codex cloud task on harmon-init runs `task verify` to completion; every network denial recorded; whether a detached run survives, and whether a 15-minute gate exceeds a wall-clock limit | [Network](#network), [Long-running gates](#long-running-gates) |
 | 3 | A Codex cloud review on a harmon-init PR, run after provisioning, shows in its output that it executed at least one repo check | [What Codex cloud is used for](#what-codex-cloud-is-used-for) |
 | 4 | A task submitted with `codex cloud exec` runs the gate, and its diff applies cleanly to a local worktree with `codex cloud apply` and no human step | [Bridges](#bridges-between-the-terminal-and-codex-cloud) |
@@ -479,4 +480,4 @@ answer from the docs. Each result goes in the section named, with the date and t
 | — | Whether the reviewer's usage limit (reached on 2026-09-29) has reset, which can block criteria 3 and 4 | [Pending observations](#pending-observations) |
 
 Criteria 2, 3 and 4 are not met by this guide, and the guide does not claim
-them. Neither does criterion 1's final tag: a release must exist first.
+them. Neither does criterion 1: the release exists, but its setup-script run on Codex cloud has not been observed.
