@@ -584,6 +584,7 @@ const addPin = (labels) => [...labels, 'tier:pinned']
 // between our calls).
 function fakeGitHub(repos) {
   const rest = []
+  const queries = []
   // Every repository a call named, and every contents path read.
   const touched = new Set()
   const contents = []
@@ -608,6 +609,7 @@ function fakeGitHub(repos) {
     const { pathname } = new URL(url)
     if (pathname === '/graphql') {
       const { query, variables } = JSON.parse(init.body)
+      queries.push({ query, variables })
       touched.add(`${variables.owner}/${variables.name}`)
       const repo = repos[`${variables.owner}/${variables.name}`]
       if (!repo || repo.down) return json({ message: 'bad gateway' }, 502)
@@ -647,7 +649,7 @@ function fakeGitHub(repos) {
     repo.afterWrite?.(issue, init.method, label)
     return init.method === 'DELETE' ? new Response(null, { status: 204 }) : json([])
   }
-  return { fetch, rest, touched, contents }
+  return { fetch, rest, touched, contents, queries }
 }
 const ownText = (file) => readFileSync(join(root, file), 'utf8')
 const canDerive = (await m.loadDerivation(root)).derive !== null
@@ -668,7 +670,7 @@ async function runWith(repos, env) {
 }
 const writes = (gh, prefix) => gh.rest.filter(([, path]) => path.startsWith(prefix)).map(([meth, path, body]) => `${meth} ${body?.labels?.[0] ?? decodeURIComponent(path.split('/').at(-1))}`)
 // Invalid selectors must fail before even the first fetch, regardless of dry-run.
-for (const value of ['-1', '1.5', 'abc', '1junk', '2147483648', '9007199254740993']) {
+for (const value of ['-1', '1.5', 'abc', '1junk', '1e3', ' 1', '1 ', '+1', '0x1', '2147483648', '9007199254740993']) {
   for (const dryRun of ['true', 'false']) {
     let calls = 0
     let refusal = null
@@ -686,15 +688,19 @@ for (const value of ['-1', '1.5', 'abc', '1junk', '2147483648', '900719925474099
     })
   }
 }
-for (const value of ['', '0', '2']) {
+for (const [value, expected] of [['', 0], ['0', 0], ['2', 2], ['2147483647', 2147483647], ['007', 7]]) {
+  const numbers = [1, 2, 7, 2147483647]
   const r = await runWith(
-    { 'a/two': { issues: { 1: { labels: ['bug'] }, 2: { labels: ['bug'] } } } },
+    { 'a/two': { issues: Object.fromEntries(numbers.map((n) => [n, { labels: ['bug'] }])) } },
     { RECONCILE_ISSUE: value, RECONCILE_DRY_RUN: 'true' }
   )
   check(`run(): issue selector ${JSON.stringify(value)} walks the expected issues`, () => {
     assert.equal(r.code, 0)
-    assert.match(r.summary, /a\/two#2/)
-    assert.equal(r.summary.includes('a/two#1'), value !== '2')
+    for (const number of numbers) {
+      assert.equal(r.summary.includes(`a/two#${number} |`), expected === 0 || expected === number)
+    }
+    if (expected > 0) assert.deepEqual(r.gh.queries.map((q) => q.variables.number), [expected])
+    else assert.ok(r.gh.queries.every((q) => q.query.includes('issues(first:')))
     assert.deepEqual(r.gh.rest, [])
   })
 }
@@ -710,6 +716,41 @@ for (const responseText of ['<html><body>Bad Gateway</body></html>', '<html>' + 
     assert.ok(error.includes(`GraphQL 502: non-JSON response: ${responseText.slice(0, 2000)}`))
     assert.equal(error.includes('(truncated)'), responseText.length > 2000)
     assert.ok(error.length < 2200)
+  })
+}
+for (const status of [502, 200]) {
+  const printed = []
+  const code = await m.run(
+    { GH_TOKEN: 't', GITHUB_REPOSITORY: 'a/two' },
+    { root, print: (line) => printed.push(line), fetch: async () => new Response('null', { status }) }
+  )
+  check(`run(): a JSON null GraphQL body retains status ${status}`, () => {
+    assert.equal(code, 1)
+    assert.ok(printed.some((line) => line.startsWith('::error ') && line.includes(`GraphQL ${status}: invalid response body: null`)))
+  })
+}
+for (const kind of ['rest', 'raw']) {
+  const printed = []
+  const responseText = '50% unavailable\r\n' + 'x'.repeat(3000)
+  const gh = fakeGitHub({ 'a/two': { issues: { 1: { labels: ['bug'] } } } })
+  const code = await m.run(
+    { GH_TOKEN: 't', GITHUB_REPOSITORY: 'a/two', RECONCILE_CALLER_CHECKOUT: kind === 'raw' ? 'false' : 'true', RECONCILE_REPOSITORIES: 'a/two' },
+    {
+      root,
+      print: (line) => printed.push(line),
+      fetch: async (url, init) => {
+        if (new URL(url).pathname !== '/graphql') return new Response(responseText, { status: 502 })
+        return gh.fetch(url, init)
+      }
+    }
+  )
+  check(`run(): long multiline ${kind} errors are bounded and escaped`, () => {
+    assert.equal(code, 1)
+    const error = printed.find((line) => line.startsWith('::error '))
+    assert.ok(error.includes('502 50%25 unavailable%0D%0A'))
+    assert.ok(error.includes('… (truncated)'))
+    assert.ok(error.length < 2300)
+    assert.ok(!/[\r\n]/.test(error))
   })
 }
 {

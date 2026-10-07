@@ -406,13 +406,13 @@ function makeClient(token, fetch, env) {
     'graphql-features': 'issue_fields',
     'user-agent': 'classification-reconcile'
   }
+  const diagnostic = (text) => (text.length > 2000 ? `${text.slice(0, 2000)}… (truncated)` : text)
   async function graphql(query, variables) {
     const res = await fetch(graphqlUrl, {
       method: 'POST',
       headers,
       body: JSON.stringify({ query, variables })
     })
-    const diagnostic = (text) => (text.length > 2000 ? `${text.slice(0, 2000)}… (truncated)` : text)
     const text = await res.text()
     let body
     try {
@@ -420,6 +420,8 @@ function makeClient(token, fetch, env) {
     } catch {
       throw new Error(`GraphQL ${res.status}: non-JSON response: ${diagnostic(text)}`)
     }
+    if (body === null || typeof body !== 'object')
+      throw new Error(`GraphQL ${res.status}: invalid response body: ${diagnostic(text)}`)
     if (!res.ok || body.errors)
       throw new Error(`GraphQL ${res.status}: ${diagnostic(JSON.stringify(body.errors ?? body))}`)
     return body.data
@@ -431,7 +433,7 @@ function makeClient(token, fetch, env) {
       body: payload === undefined ? undefined : JSON.stringify(payload)
     })
     if (method === 'DELETE' && res.status === 404) return null // already gone
-    if (!res.ok) throw new Error(`${method} ${path}: ${res.status} ${await res.text()}`)
+    if (!res.ok) throw new Error(`${method} ${path}: ${res.status} ${diagnostic(await res.text())}`)
     return res.status === 204 ? null : res.json()
   }
   // A file's raw text from a repository's default branch; null when absent.
@@ -440,7 +442,7 @@ function makeClient(token, fetch, env) {
       headers: { ...headers, accept: 'application/vnd.github.raw' }
     })
     if (res.status === 404) return null
-    if (!res.ok) throw new Error(`GET ${path}: ${res.status} ${await res.text()}`)
+    if (!res.ok) throw new Error(`GET ${path}: ${res.status} ${diagnostic(await res.text())}`)
     return res.text()
   }
   return { graphql, rest, raw }
@@ -677,7 +679,7 @@ export async function run(
   // appended after it, so a blockquote never splits the Markdown table.
   const notes = []
   const warnRepo = (repo, message) => {
-    print(`::warning title=classification reconcile ${repo}::${message}`)
+    print(`::warning title=classification reconcile ${repo}::${commandData(message)}`)
     notes.push(`> **${repo}:** ${message}`, '')
   }
 
