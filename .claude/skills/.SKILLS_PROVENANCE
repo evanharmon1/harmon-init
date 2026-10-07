@@ -1,6 +1,6 @@
 # VENDORED from harmon-devkit — DO NOT EDIT the managed skills here.
 # source: https://github.com/evanharmon1/harmon-devkit.git
-# ref: v0.51.0 (c8daa1d6a60f18a185895ea7965f97ae36082faf)
+# ref: v0.52.0 (1f8668282124d57345adcb60dbfbe5c2ea700cc5)
 # path: ai/skills
 # categories: universal, repo, matt-pocock
 # agents-dest: .claude/agents
