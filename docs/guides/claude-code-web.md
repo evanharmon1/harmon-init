@@ -38,7 +38,7 @@ it. One environment serves every repository, because nothing in it is per-repo.
 | Field | Value |
 | --- | --- |
 | **Name** | `harmon-remote` |
-| **Network access** | **Trusted**; **Custom** with `semgrep.dev` added if sessions open their own draft PRs — see [Network](#network) |
+| **Network access** | **Trusted**; **Custom** with `semgrep.dev` added only if a session itself runs `task security` before its PR is opened — see [Network](#network) |
 | **Environment variables** | see [Environment variables](#environment-variables); none is a secret |
 | **Setup script** | the block below |
 
@@ -137,12 +137,15 @@ is on the list anyway.
 a cloud lane does ([What runs where](#what-runs-where)). That list is
 provisional, and it is empty on purpose: the rule is that a domain is added only
 after a *recorded denial* under Trusted while the bootstrap, `task verify`, or —
-in a session that opens its own draft PR — `task security` ran. The denials
-recorded so far, and the one that a session opening its own draft PR needs:
+in a session that runs the pre-PR gate itself — `task security` ran. No `gh`
+route opens a PR from a postured session ([What runs where](#what-runs-where)),
+so the PR comes from the orchestrator or the platform's **Create PR** button.
+The denials recorded so far, and the one that a session running the gate itself
+needs:
 
 | Host | Denied for | Added? | Reason |
 | --- | --- | --- | --- |
-| `semgrep.dev` | `task security`'s Semgrep step — observed 2026-09-27, under a network level presumed, but not recorded, to be Trusted | **Only where the session opens the draft PR itself**, which makes the level **Custom** | `task security` must pass before the draft PR (`AGENTS.md`), and this host is what its Semgrep step needs. A lane that stops at a pushed branch leaves the gate to the machine that opens the PR — see [Long-running gates](#long-running-gates). Never skip the gate instead |
+| `semgrep.dev` | `task security`'s Semgrep step — observed 2026-09-27, under a network level presumed, but not recorded, to be Trusted | **Only where the session runs the pre-PR gate itself**, which makes the level **Custom** | `task security` must pass before the draft PR (`AGENTS.md`), and this host is what its Semgrep step needs. A lane that stops at a pushed branch leaves the gate to the machine that opens the PR — see [Long-running gates](#long-running-gates). Never skip the gate instead |
 | `api.openai.com`, `auth.openai.com`, `chatgpt.com` | the Codex CLI (#1406) | No | Ephemeral clouds never hold a Codex login (#1408 decision 4): the orchestrator reviews the lane's pushed branch from its own pane, and the lane's PR records it (`AGENTS.md` § Remote environments) |
 | `deb.nodesource.com`, `astral.sh`, `keybase.io`, `ppa.launchpadcontent.net`, `cli.github.com`, `dl.google.com` | installer hosts (#1403) | No | The bootstrap no longer contacts them; the denied table in the architecture document is guarded so they cannot return |
 | `cafe.github.com` | `gh` telemetry | No | Harmless |
@@ -238,59 +241,56 @@ The policy, in order of precedence:
 
 ### Whose identity GitHub sees
 
-Cloud sessions act as the bot account, `evanharmon1-bot`, because **the Claude
-GitHub App is authorized as the bot**. That is the working route, observed
-2026-10-07; it amends the mechanism #1408 decided on 2026-09-27, which did not
-work.
+Cloud sessions act as the bot account, `evanharmon1-bot`, through **one classic
+personal access token** with the `repo` scope and **no** `workflow` scope,
+handed to the platform by running `/web-setup`, with the account's GitHub
+connection to the Claude GitHub App removed. That is the documented route. It is
+what #1408 decision 3 decided on 2026-09-27, and it was proven on 2026-10-07. It
+is one token because `/web-setup` holds a single token across both owners
+(evanharmon1 and ponderousdev); what the bot may touch is bounded by its per-repo
+collaborator grants, as in [bot-account.md](bot-account.md). The operator's own
+token was the fallback if the platform refused a token whose GitHub user differs
+from the claude.ai account. An alternative, with a real cost, is
+[authorizing the App as the bot](#the-alternative-authorize-the-app-as-the-bot).
 
-**What was decided on 2026-09-27 (#1408 decision 3).** Cloud sessions act as the
-bot through **one classic personal access token** with the `repo` scope and
-**no** `workflow` scope, handed to the platform by running `/web-setup` with
-`gh` authenticated as the bot. It is one token because `/web-setup` holds a
-single token across both owners (evanharmon1 and ponderousdev); what the bot may
-touch is bounded by its per-repo collaborator grants, as in
-[bot-account.md](bot-account.md). The operator's own token was the fallback if
-the platform refused a token whose GitHub user differs from the claude.ai
-account.
+**The account pitfall.** `/web-setup` stores the token on, and `claude --cloud`
+creates the session under, **whichever claude.ai account the local CLI is
+signed in to**. That is not necessarily the account you are looking at in the
+browser. Check it before either command: `/status` inside Claude Code, or
+`claude auth status` in a shell. On 2026-10-06 and 2026-10-07, two `/web-setup`
+runs were made from a CLI signed in to a different account than the one the
+cloud sessions ran under, so the token was stored on the other account and the
+sessions kept acting as the operator (`gh api user` returned `evanharmon1`, with
+`admin: true` on `evanharmon1/harmon-init` and `ponderousdev/foreman`). That was
+first misread as an App authorization overriding the `/web-setup` token; it was
+not. Whether an App authorization and a `/web-setup` token on the **same**
+account coexist, and which one wins, is **not observed**.
 
-**What was observed on 2026-10-06 and 2026-10-07, Claude Code 2.1.292.** Before
-the walkthrough, the account's GitHub connection was the Claude GitHub App (the
-`/web-setup` prompt said "You're already connected via the GitHub App"), and
-sessions acted as the operator: `gh api user` returned `evanharmon1`.
-
-- **The classic-PAT route does not change the identity while an App
-  authorization exists.** `gh auth login --with-token` refuses the bot's
-  `repo`-only classic token (`error validating token: missing required scope
-  'read:org'`), so it was handed to `/web-setup` by starting `claude` with
-  `GH_TOKEN=<the bot's token> claude`. `/web-setup` showed both documented
-  warnings verbatim — "You're already connected via the GitHub App. Continuing
-  replaces your authentication credential for cloud sessions. …" and "Your
-  GitHub CLI token doesn't have the workflow scope. Without it, GitHub rejects
-  pushes that change GitHub Actions workflow files, and pushes to very large
-  repositories can be rejected while GitHub checks for them." — and then printed
-  `Connected as evanharmon1-bot`. A new session still reported `gh api user` →
-  `evanharmon1` and `admin: true` on both `evanharmon1/harmon-init` and
-  `ponderousdev/foreman`, and GitHub showed the token last used "within the last
-  4 months", so it was not used that day. The claude.ai connectors page still
-  showed GitHub connected.
-- **Authorizing the Claude GitHub App as the bot works.** After the procedure
-  below, new sessions reported `gh api user` → `evanharmon1-bot`, and the
-  permissions on `evanharmon1/harmon-init` and, after attaching it to the
-  session, `ponderousdev/foreman` were `push: true, admin: false, maintain:
-  false` — exactly the bot's collaborator and member grants.
-
-**Amendment, 2026-10-07, of #1408 decision 3:** the identity comes from
-authorizing the Claude GitHub App as the bot, not from a classic PAT handed to
-`/web-setup`. The PAT route stays documented above for the one case it still
-serves: the App is not connected at all.
-
-**The procedure:**
+**The procedure** (observed 2026-10-07, on the main account, Claude Code
+2.1.292):
 
 1. At [claude.ai/customize/connectors](https://claude.ai/customize/connectors),
    disconnect GitHub.
-2. In the same browser, sign github.com in as `evanharmon1-bot`.
-3. On the connectors page, connect GitHub again. The page reported "Connected to
-   GitHub".
+2. Start the local CLI with the bot's classic PAT (scope `repo`, no `workflow`)
+   in `GH_TOKEN`, **read from your secret store by command substitution, never
+   typed**, and run `/web-setup`:
+
+   ```bash
+   GH_TOKEN="$(<your secret store's read command>)" claude
+   ```
+
+   Never paste a token on a command line: it lands in shell history. The token
+   goes to this one `claude` process through `GH_TOKEN`, not into `gh`'s store,
+   because `gh auth login --with-token` refuses a `repo`-only classic token
+   (`error validating token: missing required scope 'read:org'`). `/web-setup`
+   warns "Your GitHub CLI token doesn't have the workflow scope. Without it,
+   GitHub rejects pushes that change GitHub Actions workflow files, and pushes
+   to very large repositories can be rejected while GitHub checks for them."
+   Continue past it: that is the boundary this route is for. Expect `Connected as
+   evanharmon1-bot`.
+3. `/exit`. If the browser then shows "Two steps to work in your repository —
+   Connect your GitHub account / Install the Claude GitHub App", do not follow
+   it: that re-creates the App connection.
 4. Start a new session and verify it, for one repository of each owner (attach
    the second to the session first): `gh api user` must return
    `evanharmon1-bot`, and `gh api repos/{owner}/{repo}` must show a
@@ -298,37 +298,77 @@ serves: the App is not connected at all.
    trust `gh auth status` for this: see [the `gh` call
    inventory](#the-gh-call-inventory).
 
-**What it costs.** The first two costs are the platform's own statements on the
-connectors page:
+**Observed result, 2026-10-07** (session created 16:07:34Z, cloned normally,
+platform branch `claude/platform-probe-…`): `gh api user` returned
+`evanharmon1-bot`, and `permissions` on `evanharmon1/harmon-init` were
+`push: true, admin: false, maintain: false`. An ordinary branch push succeeded,
+and GitHub's activity log shows the pusher as `evanharmon1-bot`. A commit that
+edits `.github/workflows/remote-bootstrap.yml` was **refused by GitHub**:
 
+```text
+! [remote rejected] … (refusing to allow a Personal Access Token to create or update workflow `.github/workflows/remote-bootstrap.yml` without `workflow` scope)
+```
+
+There was no permission prompt or block in the session. So the
+2026-09-27 property holds: a cloud session cannot push workflow changes. Route a
+change that touches workflows to a local or bot-devcontainer lane.
+
+**With no GitHub connection at all, a session cannot push.** Observed
+2026-10-07, with the App connection removed and no `/web-setup` token on the
+account: a session reported `gh: No linked GitHub account. Connect your GitHub
+account at https://claude.ai/customize/connectors… (HTTP 403)`, and
+`claude --cloud` **uploaded a bundle of the local checkout** instead of cloning
+it (no `origin`, a `worktree/<name>` branch), so nothing could be pushed. That
+is the docs' "send local repositories without GitHub" path.
+
+**Authorship.** Observed 2026-10-07: the VM's git identity is
+`user.name = Claude` and `user.email = noreply@anthropic.com`, which GitHub links
+to its `claude` user, so commits are authored and committed as Claude. GitHub's
+activity log records the push actor as `evanharmon1-bot`, and, on an earlier
+probe branch (`ccweb-probe-2026-10-07b`, since deleted), the branch creation as
+well. The session opened no PR (see [The `gh` call
+inventory](#the-gh-call-inventory)), so PR authorship through a session is not
+reachable under the posture. The comment replies the platform posts on your
+behalf are posted under the connected account's username and labelled as coming
+from Claude Code (*docs, 2026-09-29*).
+
+#### The alternative: authorize the App as the bot
+
+Observed 2026-10-07, on the same main account: disconnect GitHub at the
+connectors page, then connect it again while github.com is signed in as
+`evanharmon1-bot`. The page reported "Connected to GitHub". New sessions then
+reported `gh api user` → `evanharmon1-bot`, and the permissions on
+`evanharmon1/harmon-init` and, after attaching it to the session,
+`ponderousdev/foreman` were `push: true, admin: false, maintain: false` —
+exactly the bot's collaborator and member grants. Authorship was as above.
+
+It costs:
+
+- **A session can push workflow files.** Observed 2026-10-07: a session pushed a
+  commit that edits `.github/workflows/remote-bootstrap.yml`, and GitHub
+  accepted it. By GitHub's documented behaviour, a workflow pushed to a branch
+  of the same repository runs on that repository's `push` and `pull_request`
+  triggers **with the repository's Actions secrets before any review**. That is
+  the escalation [branch-protection.md](../architecture/branch-protection.md)
+  names as the reason the bot never gets Workflows. This is documented
+  behaviour, not an observation: no secret-reading workflow was run. By
+  inference from how App permissions work, an App connection as the operator has
+  the same property; that is expected, not observed. A required review and
+  checks before `main` do not stop it, because the run comes first.
 - Linking the organizations `sommerlawn`, `harmonops` and `ponderousdev` failed
   ("You need to be an owner of this organization on GitHub to link it"), because
   the bot is not an owner.
 - "A few features, like automatic code review, aren't available for those
   repositories": Anthropic's automatic code review is unavailable on the
   `evanharmon1`-owned repositories, which the bot does not own.
-- **Workflow files are no longer protected by the token.** Observed 2026-10-07,
-  under this route the session pushed a commit that edits
-  `.github/workflows/remote-bootstrap.yml`, and GitHub accepted it. The
-  2026-09-27 property, "no `workflow` scope, so a cloud session cannot push
-  workflow changes", holds only for the PAT route. **Maintainer decision,
-  2026-10-07: accept and document.** A workflow change still needs code-owner
-  review and the required checks before it reaches `main`; route deliberate
-  workflow work to a local or bot-devcontainer lane as before.
 
-**Authorship.** Observed 2026-10-07, on a probe branch since deleted: the VM's
-git identity is `user.name = Claude` and `user.email = noreply@anthropic.com`,
-which GitHub links to its `claude` user, so commits are authored and committed
-as Claude. GitHub's activity log records the **branch creation and the push
-actor as `evanharmon1-bot`**. The session opened no PR (see [The `gh` call
-inventory](#the-gh-call-inventory)), so PR authorship through a session is not
-observed. The comment replies the platform posts on your behalf are posted
-under the connected account's username and labelled as coming from Claude Code
-(*docs, 2026-09-29*).
+The auto-fix and project-thread features depend on the App's *installation*,
+which the docs say disconnecting the user connection does not change. That was
+not exercised in the walkthrough, so it is not observed.
 
-**To revert**, reconnect GitHub at the same page while github.com is signed in
-as the operator. That is the connection the account had before the walkthrough,
-under which sessions acted as the operator.
+**To switch routes**, disconnect GitHub at the connectors page, then connect the
+other way: the procedure above for the PAT, or a reconnect with github.com
+signed in as the bot (or as the operator) for the App.
 
 ## What the GitHub proxy does to the loop
 
@@ -341,7 +381,7 @@ disagree in places. Where they do, this is the guide's position:
 | --- | --- | --- | --- |
 | GraphQL | The proxy serves "a pinned set of GraphQL operations for pull-request workflows" and 403s everything else with `This GraphQL query is not enabled for this session`; a `GH_TOKEN` you set gets the same 403 | **Every** GraphQL request refused, with `GitHub GraphQL is not available from Claude Code sessions; use the REST API` | Treat every GraphQL-backed `gh` subcommand as failing until a live session shows otherwise. The pinned set may have changed since 2026-09-27, or the operations tried were outside it. Projects v2 is GraphQL-only and documented as unreachable |
 | The failure looks like | a 403 naming the REST fallback `gh api repos/{owner}/{repo}/…` | a 403 that can read as an auth problem | A 403 from `gh pr …`, `gh issue …` or `gh label …` is the proxy, not a bad token; do not re-authenticate |
-| Pushes | `git push` works only against "the session's current working branch" | The assigned branch, **and** four new `claude/*` branches pushed successfully | Plan on the session's branch. A `claude/`-prefixed branch is observed to work but is not documented; do not depend on it without re-checking |
+| Pushes | `git push` works only against "the session's current working branch" | The assigned branch, **and** four new `claude/*` branches pushed successfully | Plan on the session's branch. Pushing a branch under another name was allowed in the 2026-09-27 session (`claude/*`) and again on 2026-10-07 (a probe branch with a non-platform name), but the docs do not promise it; do not depend on it without re-checking |
 | Repository scope | API and release-asset requests reach only repositories attached to the session | Release-asset downloads allowed; repository not named | API access is scoped per session: a read of a repository not attached returns `HTTP 403: GitHub access to this repository is not enabled for this session.` (observed 2026-10-06). Attaching it in the session (the agent's `add_repo`, access `push`) fixes that, and the platform then shallow-clones it to `/home/user/<repo>`. Release-asset downloads from unattached repositories succeeded for the setup script under Trusted (observed 2026-10-06; see [Network](#network)) |
 | Search | not stated | `gh api search/issues` 403 `sessions are bound to their configured repositories` | Page through `repos/{o}/{r}/issues?state=all` |
 | Pagination | not stated | `gh api --paginate` returns page 1, then fails on the next-page link with `Numeric-ID repository paths (repositories/{id}/...) are not supported`. Again 2026-10-06: GitHub's `Link: next` uses numeric-ID paths, which the proxy refuses | Loop `&page=N` explicitly; the REST helpers in `scripts/lib/gh-rest.sh` do, and bound the walk |
@@ -487,17 +527,23 @@ no human step.
   it returns at once, printing `Created cloud session: <title>`, a `View:` URL
   and `Resume with: claude --teleport <session-id>`. This version prints no live
   setup checklist.
-- **The account is whichever one `claude auth status` reports.** The session is
-  created in that account's environment and GitHub connection; a CLI signed in
-  to a second account sent the task there, and the browser then reported the
-  session "couldn't be found". Check `claude auth status` before using the
-  bridge.
+- **The account is whichever one the local CLI is signed in to.** The same holds
+  for `/web-setup`, which stores its token on that account ([Whose identity
+  GitHub sees](#whose-identity-github-sees)). A `--cloud` session is created in
+  that account's environment and GitHub connection; a CLI signed in to a second
+  account sent the task there, and the browser then reported the session
+  "couldn't be found". Check `/status` inside Claude Code, or `claude auth
+  status` in a shell, before `/web-setup` or `--cloud`.
+- **An account with no GitHub connection uploads the checkout.** Observed
+  2026-10-07: with the GitHub connection removed entirely, `claude --cloud`
+  uploaded a bundle of the local checkout instead of cloning (no `origin`, a
+  `worktree/<name>` branch), so nothing could be pushed.
 - **Following up works.** `claude -p "<message>" --cloud <session-id>` queued a
   follow-up (`Sent to cloud session.`).
 - **The probe task ran unattended.** The session created at 04:34:53Z on
   2026-10-07 did environment reads, made a new branch, two commits and two
-  pushes (`78d2be2`, `81acea1`, the second touching a workflow file — see
-  [Whose identity GitHub sees](#whose-identity-github-sees)), with no
+  pushes (`78d2be2`, `81acea1`, the second touching a workflow file, accepted because the account was on the
+  App-as-bot route — see [the alternative](#the-alternative-authorize-the-app-as-the-bot)), with no
   permission prompt and no human step. It stopped where the posture denied the
   REST PR create ([What runs where](#what-runs-where)). Criterion 4 is met as
   "returns a pushed branch with no human step".
@@ -520,7 +566,7 @@ What that does and does not establish here:
 
 | Axis | In Claude Code on the web | Status |
 | --- | --- | --- |
-| Permissions | The bootstrap writes the agent Claude Code settings to `/etc/claude-code/managed-settings.json`, creating the directory, which did not exist on the VM. A session **honours** a managed file written by the setup script (below). The platform also supplies its own settings overlay (`CCR_SETTINGS_JSON_OVERLAY`), and a server-side auto-mode classifier approves or denies each action on top of whatever loads — a second refusal layer. If a later platform change ignores the file, the fallback is the repository's `.claude/settings.json`, which a session reads only in a single-repository session, or the platform overlay. Should the platform ever supply its own `/etc/claude-code/managed-settings.json`, the bootstrap leaves it in place and reports the posture as not applied for it, unless the environment's setup script sets `HARMON_AGENT_POSTURE_REPLACE=1` | VM: observed 2026-09-27. Delivery: observed 2026-10-06, Claude Code 2.1.292 (#1404 criterion 2, below) |
+| Permissions | The bootstrap writes the agent Claude Code settings to `/etc/claude-code/managed-settings.json`, creating the directory, which did not exist on the VM. The refusals observed in a session are consistent with the managed deny rules being enforced (below), but a listing of the rules cannot be had on the web, so this is inferred from behaviour. The platform also supplies its own settings overlay (`CCR_SETTINGS_JSON_OVERLAY`), and a server-side auto-mode classifier approves or denies each action on top of whatever loads — a second refusal layer. If a later platform change ignores the file, the fallback is the repository's `.claude/settings.json`, which a session reads only in a single-repository session, or the platform overlay. Should the platform ever supply its own `/etc/claude-code/managed-settings.json`, the bootstrap leaves it in place and reports the posture as not applied for it, unless the environment's setup script sets `HARMON_AGENT_POSTURE_REPLACE=1` | VM: observed 2026-09-27. Delivery: observed 2026-10-06, Claude Code 2.1.292 (#1404 criterion 2, below) |
 | Refused harnesses | Not refused. The bootstrap never changes a harness executable's mode on a platform VM; the platform starts Claude Code and nothing else, and its classifier sits above the session | expected, not yet observed |
 | Hooks | Not delivered. The settings name the agent image's hook scripts under `/etc/claude-code/hooks/`, which the bootstrap does not install; it warns naming each one (observed 2026-10-06: it warned that the eight hook commands it names are not installed). A missing hook command is expected to surface as a non-blocking hook error each time the hook fires | warning observed 2026-10-06; the hook error expected, not yet observed |
 
@@ -530,16 +576,19 @@ in the environment whose setup script ran the bootstrap:
 - The bootstrap installed and verified `/etc/claude-code/managed-settings.json`
   and `/etc/codex/managed_config.toml` on the VM (`==> agent-autonomy: verify
   passed`).
-- **The managed deny rules are honoured.** `sudo …` was refused ("the session's
-  permission settings blocked"). `gh pr merge 1` was refused **without a
-  prompt**; the session attributed it to the repository's permission settings,
-  and that repository's `.claude/settings.json` has an *ask* rule for `gh pr
-  merge` while the managed file has a *deny* rule, so a refusal with no prompt is
-  consistent with the deny. The `gh api` write forms were refused too ([What runs
-  where](#what-runs-where)).
+- **The refusals are consistent with the managed deny rules being enforced.**
+  `sudo …` was refused ("the session's permission settings blocked"). `gh pr
+  merge 1` was refused **without a prompt**; the session attributed it to the
+  repository's permission settings, and that repository's `.claude/settings.json`
+  has an *ask* rule for `gh pr merge` while the managed file has a *deny* rule,
+  so a refusal with no prompt is consistent with the deny. The `gh api` write
+  forms were refused too ([What runs where](#what-runs-where)). The refusals
+  carried the permission-rule message form ("Permission to use Bash with command
+  … has been denied", "the session's permission settings blocked") and came
+  without a prompt, unlike the classifier's refusals below.
 - **`/permissions` cannot be used on the web.** Typing it opens the session's
   permission-mode menu (Auto, Accept edits, Plan) instead of listing rules, so
-  which source refused an action is established from behaviour, not from a
+  which source refused an action is inferred from behaviour, not shown by a
   listing.
 - **The auto-mode classifier is a second, separate refusal layer, and it is not
   consistent across sessions.** It refused to print `$GH_TOKEN` and the proxy
@@ -739,13 +788,15 @@ skipped because the repository has no lockfiles. This was observed on
 ## Pending observations
 
 The live walkthrough of 2026-10-06 and 2026-10-07 (Claude Code 2.1.292 on the
-VM) settled criteria 1 (in part), 3, 4, 7, 8 and 11 of
+VM) settled criteria 1 (in part), 3, 4, 8 and 11, and the read half of 7, of
 [#1407](https://github.com/evanharmon1/harmon-init/issues/1407), criterion 2 of
 [#1404](https://github.com/evanharmon1/harmon-init/issues/1404) (the agent
-posture) and the unnumbered row. **Three items are still open**, marked *Open*
+posture) and the unnumbered row. **Four items are still open**, marked *Open*
 in the table: the unchanged recipe at the first release after `v5.2.0`, the
-setup-script cache, and the session's built-in GitHub tools under the agent
-posture. A settled row stays as the record of what was seen and where it landed.
+setup-script cache, the session's built-in GitHub tools under the agent
+posture, and whether an App connection and a `/web-setup` token on the same
+account coexist. The `gh` inventory rows still tagged *expected, not yet
+observed* are open too (row 7). A settled row stays as the record of what was seen and where it landed.
 Each result goes in the section named, with the date and the Claude Code
 version.
 
@@ -754,12 +805,13 @@ version.
 | 1 | *Open:* the unchanged recipe, with `sudo bash` and no interim `env`, at the first release after `v5.2.0`. Seen 2026-10-06: `v4.48.0` is the first release carrying the bootstrap; at `v5.2.0` the setup script fails at `semgrep`, and with the interim `sudo env …` line it completes in 86 s (48 s on a second VM) | [Setup script](#setup-script) |
 | — | *Open:* whether a session starts from the cached snapshot. Not observed in two consecutive sessions (2026-10-06, 2026-10-07); whether a GitHub-connection change invalidates it, or it is simply not reused, is not established | [Setup script](#setup-script) |
 | — | *Open:* the session's built-in GitHub tools under the agent posture. Not tried, so whether they can open a PR where `gh` cannot is unknown | [The `gh` call inventory](#the-gh-call-inventory) |
-| 3 | Seen 2026-10-07: authorizing the Claude GitHub App as the bot gives `gh api user` → `evanharmon1-bot` and push-only permissions; the classic-PAT route does not change the identity; the push actor is the bot, the commit author Claude | [Whose identity GitHub sees](#whose-identity-github-sees) |
+| — | *Open:* an App connection and a `/web-setup` token on the **same** account — whether they coexist, and which wins. Not observed: both earlier `/web-setup` runs were on a different account than the sessions | [Whose identity GitHub sees](#whose-identity-github-sees) |
+| 3 | Seen 2026-10-07, both routes: the PAT-only route gives `gh api user` → `evanharmon1-bot`, push-only permissions, the bot as push actor, the commit author Claude, and a refused workflow push; the App-as-bot route gives the same identity but accepts a workflow push. PR authorship through a session is not reachable under the posture | [Whose identity GitHub sees](#whose-identity-github-sees) |
 | 4 | Seen 2026-10-07: `claude --cloud "<task>"` needs a TTY, ran prompt-free and returned a pushed branch with no human step | [Bridges between the terminal and the cloud](#bridges-between-the-terminal-and-the-cloud) |
-| 7 | Seen 2026-10-06/07: the read half is run and tagged per row; the write half is not reachable under the posture | [The `gh` call inventory](#the-gh-call-inventory) |
+| 7 | Seen 2026-10-06/07: the read half is run and tagged per row; the write half is not reachable under the posture. *Open:* the inventory rows still tagged *expected, not yet observed* (for example `gh issue create` and `close`, `gh run view` and `rerun`, `trusted-registry.sh`, `release-claim.sh`, `check-issue-metadata.sh`, `round-push.sh`, `lane-watch.sh`, Foreman) | [The `gh` call inventory](#the-gh-call-inventory) |
 | 8 | Seen 2026-10-06: the bootstrap and `task verify` under **Trusted** completed with no network denial; no domain added | [Network](#network) |
 | 11 | Seen 2026-10-06: the repository is cloned before the setup script runs | [When per-checkout preparation runs](#when-per-checkout-preparation-runs) |
-| #1404-2 | Seen 2026-10-06: the managed deny rules are honoured and `gh pr merge` is refused without a prompt; `/permissions` cannot list them on the web | [The agent posture](#the-agent-posture) |
+| #1404-2 | Seen 2026-10-06: `gh pr merge` was refused without a prompt, consistent with the managed deny rules being enforced; `/permissions` cannot list them on the web, so this is inferred from behaviour | [The agent posture](#the-agent-posture) |
 | — | Seen 2026-10-06: release-asset downloads from repositories not attached to the session succeed under **Trusted** | [Network](#network) |
 
 ## Reusing this structure
