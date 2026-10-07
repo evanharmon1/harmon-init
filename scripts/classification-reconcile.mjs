@@ -412,16 +412,16 @@ function makeClient(token, fetch, env) {
       headers,
       body: JSON.stringify({ query, variables })
     })
+    const diagnostic = (text) => (text.length > 2000 ? `${text.slice(0, 2000)}… (truncated)` : text)
     const text = await res.text()
     let body
     try {
       body = JSON.parse(text)
     } catch {
-      const excerpt = text.length > 2000 ? `${text.slice(0, 2000)}… (truncated)` : text
-      throw new Error(`GraphQL ${res.status}: non-JSON response: ${excerpt}`)
+      throw new Error(`GraphQL ${res.status}: non-JSON response: ${diagnostic(text)}`)
     }
     if (!res.ok || body.errors)
-      throw new Error(`GraphQL ${res.status}: ${JSON.stringify(body.errors ?? body)}`)
+      throw new Error(`GraphQL ${res.status}: ${diagnostic(JSON.stringify(body.errors ?? body))}`)
     return body.data
   }
   async function rest(method, path, payload) {
@@ -591,7 +591,10 @@ export async function applyPlan(client, owner, name, number, ctx) {
       // decide() plans no Tier write for a pinned or truncated read, so a pin
       // seen here ends the pass like a holding invariant does.
       const verification = decide(check, ctx)
-      plan.reports.push(...verification.reports)
+      for (const r of verification.reports) {
+        if (!plan.reports.some((p) => p.code === r.code && p.message === r.message))
+          plan.reports.push(r)
+      }
       const fix = tierOps(verification)
       if (fix.length === 0) break
       if (pass === 1) {
@@ -634,9 +637,9 @@ export async function run(
   const dryRun = env.RECONCILE_DRY_RUN === 'true'
   const issueValue = env.RECONCILE_ISSUE || '0'
   const issueNumber = Number(issueValue)
-  if (!/^\d+$/.test(issueValue) || !Number.isSafeInteger(issueNumber))
+  if (!/^\d+$/.test(issueValue) || !Number.isSafeInteger(issueNumber) || issueNumber > 2147483647)
     throw new Error(
-      `RECONCILE_ISSUE must be an integer greater than or equal to zero, not ${JSON.stringify(issueValue)}`
+      `RECONCILE_ISSUE must be an integer greater than or equal to zero and at most 2147483647, not ${JSON.stringify(issueValue)}`
     )
   // A foreign checkout holds no file of the repository this runs in, so that
   // repository is walked only when it is on the list, which such a run must
@@ -663,6 +666,8 @@ export async function run(
   const token = env.GH_TOKEN
   if (!token) throw new Error('GH_TOKEN is not set')
 
+  const commandData = (text) =>
+    text.replaceAll('%', '%25').replaceAll('\r', '%0D').replaceAll('\n', '%0A')
   const summary = []
   const log = (line) => {
     print(line)
@@ -741,7 +746,9 @@ export async function run(
           }
         } catch (err) {
           if (!failed.includes(repo)) failed.push(repo)
-          print(`::error title=classification reconcile ${repo}#${issue.number}::${err.message}`)
+          print(
+            `::error title=classification reconcile ${repo}#${issue.number}::${commandData(err.message)}`
+          )
           notes.push(`> **${repo}#${issue.number} failed:** ${err.message}`, '')
           continue
         }
@@ -768,7 +775,7 @@ export async function run(
       }
     } catch (err) {
       if (!failed.includes(repo)) failed.push(repo)
-      print(`::error title=classification reconcile ${repo}::${err.message}`)
+      print(`::error title=classification reconcile ${repo}::${commandData(err.message)}`)
       notes.push(`> **${repo} failed:** ${err.message}`, '')
     }
   }

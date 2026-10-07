@@ -566,6 +566,15 @@ const addPin = (labels) => [...labels, 'tier:pinned']
   })
 }
 
+{
+  const client = fakeClient([...stale, 'tier:adaptive'], { failWrites: ['DELETE tier:standard'] })
+  const plan = await m.applyPlan(client, 'o', 'r', 7, ctx)
+  check('applyPlan: a persistent condition is reported once across both verification passes', () => {
+    assert.deepEqual(codes(plan), ['tier-retired', 'write-failed'])
+    assert.equal(client.reads(), 4)
+  })
+}
+
 // --- run(): the driver, against a stubbed fetch (R1-F1; integration 1–2) -------
 
 // A stateful fake GitHub. Each repository holds issues (labels really change
@@ -659,7 +668,7 @@ async function runWith(repos, env) {
 }
 const writes = (gh, prefix) => gh.rest.filter(([, path]) => path.startsWith(prefix)).map(([meth, path, body]) => `${meth} ${body?.labels?.[0] ?? decodeURIComponent(path.split('/').at(-1))}`)
 // Invalid selectors must fail before even the first fetch, regardless of dry-run.
-for (const value of ['-1', '1.5', 'abc', '1junk', '9007199254740993']) {
+for (const value of ['-1', '1.5', 'abc', '1junk', '2147483648', '9007199254740993']) {
   for (const dryRun of ['true', 'false']) {
     let calls = 0
     let refusal = null
@@ -701,6 +710,47 @@ for (const responseText of ['<html><body>Bad Gateway</body></html>', '<html>' + 
     assert.ok(error.includes(`GraphQL 502: non-JSON response: ${responseText.slice(0, 2000)}`))
     assert.equal(error.includes('(truncated)'), responseText.length > 2000)
     assert.ok(error.length < 2200)
+  })
+}
+{
+  const persisted = classified()
+  persisted.labels.push('tier:adaptive')
+  const r = await runWith({ 'a/two': { issues: { 1: persisted } } })
+  check('run(): a persistent report occurs once in warnings and once in the summary', () => {
+    assert.equal(r.code, 0)
+    assert.equal(r.printed.filter((line) => line.startsWith('::warning ') && line.includes('tier-retired')).length, 1)
+    assert.equal(r.summary.match(/tier-retired:/g)?.length, 1)
+    assert.ok(r.gh.rest.length > 0, 'the report persists across a Tier write')
+  })
+}
+for (const [status, body] of [
+  [502, { message: 'x'.repeat(3000) }],
+  [200, { errors: [{ message: 'x'.repeat(3000) }] }]
+]) {
+  const printed = []
+  const code = await m.run(
+    { GH_TOKEN: 't', GITHUB_REPOSITORY: 'a/two', RECONCILE_DRY_RUN: 'true' },
+    { root, print: (line) => printed.push(line), fetch: async () => new Response(JSON.stringify(body), { status }) }
+  )
+  check(`run(): GraphQL ${status} JSON error diagnostics are bounded`, () => {
+    assert.equal(code, 1)
+    const error = printed.find((line) => line.startsWith('::error '))
+    assert.ok(error.includes(`GraphQL ${status}: ${JSON.stringify(body.errors ?? body).slice(0, 2000)}… (truncated)`))
+    assert.ok(error.length < 2200)
+  })
+}
+{
+  const printed = []
+  const responseText = '<html>50% unavailable\r\n::error::proxy detail\n</html>'
+  const code = await m.run(
+    { GH_TOKEN: 't', GITHUB_REPOSITORY: 'a/two', RECONCILE_DRY_RUN: 'true' },
+    { root, print: (line) => printed.push(line), fetch: async () => new Response(responseText, { status: 502 }) }
+  )
+  check('run(): a multiline response escapes percent, CR and LF in workflow error data', () => {
+    assert.equal(code, 1)
+    const error = printed.find((line) => line.startsWith('::error '))
+    assert.ok(error.includes('<html>50%25 unavailable%0D%0A::error::proxy detail%0A</html>'))
+    assert.ok(!/[\r\n]/.test(error))
   })
 }
 {
