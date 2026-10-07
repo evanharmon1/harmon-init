@@ -226,7 +226,7 @@ STUB
     cat >"$_ms_bin/task" <<'STUB'
 #!/usr/bin/env bash
 set -eu
-printf 'task %s GH_TOKEN=%s\n' "$*" "${GH_TOKEN:+set}${GH_TOKEN:-unset}" >>"$STUB_LOG"
+printf 'task %s GH_TOKEN=%s GITHUB_TOKEN=%s\n' "$*" "${GH_TOKEN:+set}${GH_TOKEN:-unset}" "${GITHUB_TOKEN:+set}${GITHUB_TOKEN:-unset}" >>"$STUB_LOG"
 target="${1:-}"
 case ",${STUB_FAIL_TASKS:-}," in
 *",$target,"*)
@@ -357,6 +357,7 @@ run_helper() {
             STUB_SYNC_OVERLAP_ROGUE="${STUB_SYNC_OVERLAP_ROGUE:-}" \
             GH_APP_SLUG="${GH_APP_SLUG:-}" \
             GH_TOKEN="${GH_TOKEN:-}" \
+            GITHUB_TOKEN="${GITHUB_TOKEN:-}" \
             SYNC_DEVKIT_TAG="${SYNC_DEVKIT_TAG:-}" \
             SYNC_DEVKIT_ALLOW_DOWNGRADE="${SYNC_DEVKIT_ALLOW_DOWNGRADE:-}" \
             AGENT_SKILLS_DIR="${AGENT_SKILLS_DIR:-}" \
@@ -400,6 +401,7 @@ v1.0.0 true false"
     STUB_SYNC_OVERLAP_ROGUE=""
     GH_APP_SLUG=""
     GH_TOKEN=""
+    GITHUB_TOKEN=""
     SYNC_DEVKIT_TAG=""
     SYNC_DEVKIT_ALLOW_DOWNGRADE=""
     AGENT_SKILLS_DIR=""
@@ -905,6 +907,7 @@ done
 start "the write token never reaches the sync or verification subprocesses"
 fix="$(new_fixture token_scope)"
 GH_TOKEN="s3cret-app-token"
+GITHUB_TOKEN="s3cret-actions-token"
 rc="$(run_helper "$fix" run v0.9.0)"
 [ "$rc" = 0 ] || fail "token-scope run exited $rc: $(cat "$LAST_OUT")"
 # The stubs record whether GH_TOKEN was visible to them. `gh` legitimately
@@ -913,6 +916,8 @@ rc="$(run_helper "$fix" run v0.9.0)"
 ! grep -q '^task .*GH_TOKEN=set' "$STUB_LOG" ||
     fail "a task subprocess inherited the repo-write token: $(grep -m1 '^task .*GH_TOKEN=set' "$STUB_LOG")"
 grep -q '^task .*GH_TOKEN=unset' "$STUB_LOG" || fail "no task invocation recorded its token visibility"
+! grep -q '^task .*GITHUB_TOKEN=set' "$STUB_LOG" ||
+    fail "a task subprocess inherited GITHUB_TOKEN: $(grep -m1 '^task .*GITHUB_TOKEN=set' "$STUB_LOG")"
 grep -q '^gh .*GH_TOKEN=set' "$STUB_LOG" || fail "gh lost the token it needs"
 
 start "a base branch that diverges from origin is refused"

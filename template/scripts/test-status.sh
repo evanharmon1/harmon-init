@@ -39,12 +39,18 @@ trap 'rm -rf "${TMP}"' EXIT
 
 # status.sh branches its remedy text on FOREMAN_DEVCONTAINER (unset = dev
 # posture, "bot", "agent"), and the bot and agent profiles export it — plus a
-# preset GH_TOKEN / GITHUB_TOKEN — into every process; gh also honours GH_HOST
-# and GH_REPO from the caller. A case that assumes the
-# dev posture must not inherit whichever posture the caller happens to be in
-# (#1395), so the ambient values are cleared here; the cases that exercise the
-# bot and agent branches set the marker themselves, per case.
-unset FOREMAN_DEVCONTAINER GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN GH_HOST GH_REPO
+# preset GH_TOKEN / GITHUB_TOKEN — into every process; gh and the REST helper
+# honour more GH_* variables (GH_HOST, GH_REPO, GH_REST_HOST), and status.sh
+# its own STATUS_* switches. A case must not inherit whichever environment the
+# caller happens to be in (#1395), so every variable in those families is
+# cleared here, by pattern rather than by a list that misses the next one; the
+# cases that exercise a branch set its variables themselves, per case.
+for _ambient in $(compgen -e); do
+    case "$_ambient" in
+    FOREMAN_DEVCONTAINER | GH_* | GITHUB_* | STATUS_*) unset "$_ambient" ;;
+    esac
+done
+unset _ambient
 
 # Four fixture roots, each holding a copy of the script under test:
 #   with-board  — has the board tooling, so the check applies
