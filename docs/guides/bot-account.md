@@ -193,10 +193,16 @@ never the bot's own `GH_TOKEN`:
   that exports the bot's `GH_TOKEN` can never feed it to an agent container.
 
 Revoke it independently of the bot's PAT: rotating one never touches the
-other. For Claude Code on the web, where `/web-setup` holds a single token
-across both owners, the agent identity is instead a **classic** PAT on the bot
-account with `repo` scope and no `workflow` scope, bounded by the bot's
-per-repo collaborator grants (#1407).
+other. For Claude Code on the web, the agent identity is not a PAT. As of
+2026-10-07 it comes from authorizing the Claude GitHub App as the bot, which
+overrides the earlier plan of a **classic** PAT handed to `/web-setup`: that
+route does not change the identity while an App authorization exists. The
+bot's per-repo collaborator grants still bound it, but the App's permissions
+replace the PAT's, so unlike the PATs on this page a web session **can** push
+changes under `.github/workflows/` (observed and accepted 2026-10-07; a merge
+still needs code-owner review and the required checks). See [Whose identity GitHub
+sees](claude-code-web.md#whose-identity-github-sees) for the procedure and its
+costs (#1407).
 
 ## What the bot cannot do — by construction
 
