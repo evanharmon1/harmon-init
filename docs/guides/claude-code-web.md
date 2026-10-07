@@ -116,10 +116,11 @@ with the recipe's last line in the interim form; the recipe unchanged, at
 created at 18:01:28Z booted at 18:01:31Z while its
 `/var/tmp/harmon-bootstrap.log` showed a run from 04:35:08Z to 04:36:04Z (file
 modification time 04:36:04Z): a snapshot about 13.5 hours old, reused across the
-GitHub-connection changes made in between. That run is close to, but not the
+GitHub-connection changes made in between ([Whose identity GitHub
+sees](#whose-identity-github-sees)). That run is close to, but not the
 same as, the 04:34Z session's own run (04:35:09Z to 04:36:08Z), so the snapshot
 appears to come from a separate build of the setup script at the same time;
-which run the platform snapshots is not established ([Whose identity GitHub sees](#whose-identity-github-sees)). An
+which run the platform snapshots is not established. An
 uncached session took about three minutes from VM boot to ready.
 
 Two earlier sessions had not shown it. The session started at 23:28Z on
@@ -293,13 +294,20 @@ then `/web-setup`) is not observed.
    typed**, and run `/web-setup`:
 
    ```bash
-   cd "$(mktemp -d)" && GH_TOKEN="$(<your secret store's read command>)" claude
+   ( t="$(<your secret store's read command>)" && [ -n "$t" ] && cd "$(mktemp -d)" && GH_TOKEN="$t" claude )
    ```
 
-   Start it from an **empty directory**, as above, never from a repository
-   checkout: that `claude` process holds the token in its environment, and a
-   checkout's own Claude Code settings (hooks, MCP servers, allowed commands)
-   would run inside it and could read it.
+   It **fails closed**: if the read fails or returns nothing, `claude` does not
+   start. Without that, an empty `GH_TOKEN` makes `gh` — and so `/web-setup` —
+   fall back to your own stored login, which would become the cloud identity.
+   The subshell keeps the token out of your interactive shell and leaves that
+   shell where it was. Start from an **empty directory**, as above, never from
+   a repository checkout: that `claude` process holds the token in its
+   environment, and a checkout's own Claude Code settings (hooks, MCP servers,
+   allowed commands) would run inside it and could read it. If `/web-setup`
+   reports anything other than `Connected as evanharmon1-bot`, disconnect
+   GitHub at the connectors page before starting any session, then repeat this
+   step.
 
    Mint the token with an expiry (180 days at most, as for the agent PAT), and
    rotate it by minting a new one and re-running `/web-setup`. Never paste a
@@ -469,11 +477,17 @@ expected to run inside the VM at all. They are listed because the acceptance
 criterion asks for every call the loop makes, and because a session that is
 asked to integrate anyway will hit them.
 
-**Under the agent posture, no `gh` route opens, edits, comments on or promotes
-a pull request or issue** (observed 2026-10-07). The posture's managed settings
-deny every `gh api` write form (`-X`, `--method`, `-f`, `-F`, `--field`,
-`--raw-field`, `--input`), and the proxy refuses GraphQL, so `gh pr create`,
-`edit`, `ready` and `comment` fail and their REST workarounds are denied.
+**Under the agent posture, the `gh` routes tried for PR and issue writes were
+refused** (observed 2026-10-07): the proxy refuses GraphQL, so `gh pr create`,
+`edit`, `ready` and `comment` fail, and the posture's managed settings deny
+`gh api` written with a separate write flag (`-X`, `--method`, `-f`, `-F`,
+`--field`, `--raw-field`, `--input`) — a `gh api -i -X POST …/pulls` was
+refused. Those denies match argument patterns, so they are defence in depth,
+not the write boundary: a bundled short flag such as `gh api -iX POST …` is
+expected to match none of them and only the `gh api *` allow rule (untested;
+[#1549](https://github.com/evanharmon1/harmon-init/issues/1549)). The boundary
+is the bot's collaborator grants and the repository rulesets, as for the bot's
+PATs.
 
 **The session's built-in GitHub tools are not covered by the posture** (observed
 2026-10-07, about 18:03Z, in a postured session). `mcp__github__create_pull_request`
@@ -497,7 +511,7 @@ recorded.
 
 One row per call the dev-loop skills and scripts make, found by searching the
 vendored `claim`, `implement`, `review`, `integrate`, `track-work`, `orchestrate`
-and `dev-flow-support` skills (harmon-devkit `v0.47.0`) and their `assets/` for
+and `dev-flow-support` skills (harmon-devkit `v0.47.0`, with the `settle-wait.sh` row added at `v0.51.0`, the pin now) and their `assets/` for
 `gh` subcommands. **Result** is the
 evidence tag from [the table at the top](#how-to-read-the-evidence-in-this-guide),
 never a guess. **Follow-up** names where a failure is tracked or the workaround
@@ -548,7 +562,7 @@ quoted here once and referred to below as *the GraphQL 403*:
 | `gh-ro.sh`, `gh-write-broker.sh`: `gh api` with a pinned method | integrate skill (vendored) | plain REST reads and writes work — observed 2026-09-27 for `gh api repos/…`, before the agent posture existed; under the posture the write forms are denied (see above); these two wrappers themselves not yet observed | GET refuses `graphql` by design |
 | `round-push.sh`: `gh api --hostname …` | review skill (vendored) | expected, not yet observed | — |
 | `lane-watch.sh`: `gh pr list`, `gh api --paginate --slurp`, `gh pr ready --undo` | orchestrate skill (vendored) | expected to fail, not yet observed — GraphQL-backed subcommands | Orchestrator-side; not run in a cloud lane |
-| `settle-wait.sh`: `gh api repos/{o}/{r}/actions/runs?head_sha=…&per_page=…&page=…` (its own explicit paging) and `gh api repos/{o}/{r}/actions/runs/{id}` | orchestrate skill (vendored) | expected to work, not yet observed — plain REST reads with explicit `page=N`, which the proxy serves (the Actions runs list worked, observed 2026-10-06) | Orchestrator-side; not run in a cloud lane |
+| `settle-wait.sh`: `gh api repos/{o}/{r}/pulls/{n}`, `gh api repos/{o}/{r}/actions/runs?head_sha=…&per_page=…&page=…` (its own explicit paging) and `gh api repos/{o}/{r}/actions/runs/{id}` | orchestrate skill (vendored) | expected to work, not yet observed — plain REST reads with explicit `page=N`, which the proxy serves (the Actions runs list worked, observed 2026-10-06) | Orchestrator-side; not run in a cloud lane |
 | `scripts/status.sh`, `scripts/check-closing-keywords.sh`, `scripts/guard-closing-keywords.sh`, `scripts/audit-session-artifacts.sh` | harmon-init's own | **REST since #1430** for the calls that go through the bounded `gh_rest_*` helpers, with a page ceiling. `status.sh` also makes the calls in the next row, which do not | `task status` itself has not been run in a cloud session; the next row records its `gh` calls individually. A script that probes `gh auth status` reports `gh` as broken there |
 | `status.sh` outside the `gh_rest_*` helpers: `gh auth status`, `gh run list`; raw `gh api` for `repos/{o}/{r}`, `…/rulesets`, `…/vulnerability-alerts`, `…/private-vulnerability-reporting`, the app installations (`orgs/{o}/installations` or `user/installations`) and the GHCR package; `gh secret list`, `gh variable list`, `gh variable get`; `gh auth token` | harmon-init's own (`task status`) | `gh auth status`: **exit 1** with `X Failed to log in to github.com using token (GH_TOKEN)` while `gh api` works — a **false negative** (`GH_TOKEN` is the placeholder `proxy-injected`; `GITHUB_TOKEN` is also set) — observed 2026-10-06. `gh run list`: works — observed 2026-10-06. `gh api repos/{o}/{r}`: works — observed 2026-10-06; the other raw `gh api` reads: expected to work (plain REST), not yet observed. `gh variable list`: **fail, 403** `Access to this GitHub Actions path is not permitted through this proxy.` (the Actions variables path is refused although runs are allowed) — observed 2026-10-06. `gh secret list`: not reached 2026-10-06, the auto-mode classifier blocked it; `gh variable get`: expected, not yet observed. `gh auth token`: local, no network call | Probe `gh` with `gh api user`, not `gh auth status`. `status.sh` does not abort on any of these — each call has a fallback. The latest-release read moved off the GraphQL-backed `gh release list` onto `gh_rest_api` (`repos/{o}/{r}/releases?per_page=1`, the row above) in #1437, and a failed read now renders the **Release published** line as unavailable instead of a false *no* with the `task release:init` remedy |
 | `task foreman:plan`, `foreman:dispatch`, `foreman:watch` | the pinned Foreman CLI, run through `uvx` from a git URL | expected, not yet observed — the calls Foreman makes are in its own repository, not enumerated here. Dispatch refuses on the local runner for public repos by design | Orchestrator-side; not run in a cloud lane |
@@ -561,10 +575,11 @@ quoted here once and referred to below as *the GraphQL 403*:
 **Observed (criterion 7), 2026-10-06 and 2026-10-07:** the read half is run
 through the proxy in a session with the bootstrap's posture, and the rows above
 carry the result. Every failing row has a follow-up or a workaround in its last
-column. The write half is observed in part: `gh`'s PR and issue writes are not
-reachable under the posture, and the session's built-in GitHub tools are not
-covered by it ([What runs where](#what-runs-where)); REST-backed writes outside
-the deny list, such as `gh run rerun`, were not run. The rows still tagged *expected* were not run;
+column. The write half is observed in part: the `gh` forms tried for PR and
+issue writes were refused, the session's built-in GitHub tools are not covered
+by the posture ([What runs where](#what-runs-where)), and REST-backed writes
+outside the deny list (`gh run rerun`, `gh run cancel`) and bundled-flag
+`gh api` writes were not run. The rows still tagged *expected* were not run;
 they stay unobserved rather than assumed.
 
 ## Bridges between the terminal and the cloud
@@ -891,8 +906,9 @@ siblings readable and `task verify` runnable in a live session are still
 
 The live walkthrough of 2026-10-06 and 2026-10-07 (Claude Code 2.1.292 on the
 VM) settled criteria 1 in part (the bootstrap with the interim line, and the
-cache; the unchanged recipe at `v5.2.1` is open), 3 (identity and pushes on both
-owners; a PR through a session was seen only on `evanharmon1/harmon-init`), 4, 8
+cache; the unchanged recipe at `v5.2.1` is open), 3 in part (identity and pushes
+on both owners; a PR through a session was seen only on
+`evanharmon1/harmon-init`), 4, 8
 and 11, and the read half of 7, of
 [#1407](https://github.com/evanharmon1/harmon-init/issues/1407), criterion 2 of
 [#1404](https://github.com/evanharmon1/harmon-init/issues/1404) in part (the
@@ -901,9 +917,10 @@ repositories not attached to the session). **Still open**, marked *Open* in the
 table: the unchanged recipe at `v5.2.1` (published 2026-10-07, the first
 release carrying the fix), criterion 6 of
 [#1405](https://github.com/evanharmon1/harmon-init/issues/1405) on
-`ponderousdev/omator`, the reverse credential order (an App connection first,
-then a `/web-setup` token), and the listing half of #1404 criterion 2, which
-cannot be done on the web. The `gh` inventory rows still tagged *expected, not
+`ponderousdev/omator`, a PR through a session on a ponderousdev repository,
+which other built-in GitHub tools a session has, the reverse credential order
+(an App connection first, then a `/web-setup` token), and the listing half
+of #1404 criterion 2, which cannot be done on the web. The `gh` inventory rows still tagged *expected, not
 yet observed* are open too (row 7). A settled row stays as the record of what
 was seen and where it landed. Each result goes in the section named, with the
 date and the Claude Code version.
@@ -916,7 +933,7 @@ date and the Claude Code version.
 | — | Seen 2026-10-07: with a `/web-setup` PAT stored first and an App connection added afterwards on the same account, git pushes still use the PAT (workflow push refused). *Open:* the reverse order, and which credential serves API calls | [Whose identity GitHub sees](#whose-identity-github-sees) |
 | 3 | Seen 2026-10-07, on `evanharmon1/harmon-init` and `ponderousdev/foreman`: the PAT-only route gives `gh api user` → `evanharmon1-bot`, the write role without admin or maintain (`push: true, admin: false, maintain: false`), the bot as push actor, the commit author Claude, and a refused workflow push; the App-as-bot route gives the same identity but accepts a workflow push. A PR opened through a session's built-in tools is authored by the bot (seen on `evanharmon1/harmon-init` only). *Open:* a PR through a session on a ponderousdev repository | [Whose identity GitHub sees](#whose-identity-github-sees) |
 | 4 | Seen 2026-10-07: `claude --cloud "<task>"` needs a TTY, ran prompt-free and returned a pushed branch with no human step. The permission mode was auto mode by the session's own context note, not shown by a tool | [Bridges between the terminal and the cloud](#bridges-between-the-terminal-and-the-cloud) |
-| 7 | Seen 2026-10-06/07: the read half is run and tagged per row; no `gh` write is reachable under the posture, and the built-in GitHub tools are not covered by it. *Open:* the inventory rows still tagged *expected, not yet observed* (for example `gh issue create` and `close`, `gh run view` and `rerun`, `trusted-registry.sh`, `release-claim.sh`, `check-issue-metadata.sh`, `round-push.sh`, `lane-watch.sh`, Foreman) | [The `gh` call inventory](#the-gh-call-inventory) |
+| 7 | Seen 2026-10-06/07: the read half is run and tagged per row; the write half in part — the `gh` forms tried for PR and issue writes were refused, and the built-in GitHub tools are not covered by the posture. *Open:* bundled-flag `gh api` writes ([#1549](https://github.com/evanharmon1/harmon-init/issues/1549)) and REST writes outside the deny list (`gh run rerun`, `cancel`), and the inventory rows still tagged *expected, not yet observed* (for example `gh issue create` and `close`, `gh run view` and `rerun`, `trusted-registry.sh`, `release-claim.sh`, `check-issue-metadata.sh`, `round-push.sh`, `lane-watch.sh`, Foreman) | [The `gh` call inventory](#the-gh-call-inventory) |
 | 8 | Seen 2026-10-06: the bootstrap and `task verify` under **Trusted** completed with no network denial; no domain added | [Network](#network) |
 | 11 | Seen 2026-10-06: the repository is cloned before the setup script runs | [When per-checkout preparation runs](#when-per-checkout-preparation-runs) |
 | #1405-6 | Seen 2026-10-06 on `evanharmon1/harmon-init`: `task setup:remote` exits 0 and clones the siblings. *Open:* siblings readable and `task verify` runnable in a live session on `ponderousdev/omator`, which the criterion names | [When per-checkout preparation runs](#when-per-checkout-preparation-runs) |
