@@ -246,13 +246,10 @@ if (mode === 'rubric-table') {
     for (const [index, value] of values.entries()) {
       const name = value.value
       const description = field(value.description, `rubric ${id}:${name}`)
-      if (!description.startsWith(prefix)) {
-        console.error(
-          `label-registry-render: rubric ${id}:${name} description must start with ${JSON.stringify(prefix)}`
-        )
-        process.exit(1)
-      }
-      const shortForm = field(description.slice(prefix.length), `rubric ${id}:${name} short form`)
+      const shortForm = field(
+        description.startsWith(prefix) ? description.slice(prefix.length) : description,
+        `rubric ${id}:${name} short form`
+      )
       lines.push(`|${index === 0 ? ` **${axis}**` : ''} | \`${name}\` | ${shortForm} |`)
     }
   }
