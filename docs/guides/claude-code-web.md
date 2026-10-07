@@ -306,6 +306,16 @@ then `/web-setup`) is not observed.
    `permissions` object of `push: true, admin: false, maintain: false`. Do not
    trust `gh auth status` for this: see [the `gh` call
    inventory](#the-gh-call-inventory).
+5. Verify the boundary itself, because the App-as-bot route below returns the
+   same identity and permissions: in that session, on a throwaway branch,
+   append a comment line to `.github/workflows/remote-bootstrap.yml`, commit,
+   and push the branch. GitHub must refuse it with `refusing to allow a
+   Personal Access Token to create or update workflow … without workflow
+   scope`. That workflow runs only on pull requests and on pushes to `main`, so
+   the branch push starts nothing even if it is accepted. If it is accepted,
+   the session is on an App connection rather than the PAT: delete the branch
+   from a local checkout (the session cannot — the proxy rejects branch
+   deletions), open no pull request from it, and redo this procedure.
 
 **Observed result, 2026-10-07** (session created 16:07:34Z, cloned normally,
 platform branch `claude/platform-probe-…`): `gh api user` returned
@@ -799,7 +809,9 @@ setup:remote` on the VM exited 0. `lefthook install` synced `commit-msg`,
 `pre-push` and `pre-commit`; the three related repositories cloned anonymously
 into `/home/user` (`3 cloned, 0 skipped, 0 failed`); the dependency steps were
 skipped because the repository has no lockfiles. This was observed on
-`evanharmon1/harmon-init`; the criterion names `ponderousdev/omator`.
+`evanharmon1/harmon-init`; the criterion names `ponderousdev/omator`, where
+siblings readable and `task verify` runnable in a live session are still
+**pending**, criterion 6 of #1405.
 
 ## Pending observations
 
@@ -810,7 +822,9 @@ VM) settled criteria 1 (in part), 3, 4, 8 and 11, and the read half of 7, of
 posture) and the unnumbered row. **Still open**, marked *Open* in the table:
 the unchanged recipe at the first release after `v5.2.0`, the setup-script
 cache, the session's built-in GitHub tools under the agent posture, the PAT
-route on a ponderousdev repository, and the reverse credential order (an App
+route on a ponderousdev repository, criterion 6 of
+[#1405](https://github.com/evanharmon1/harmon-init/issues/1405) on
+`ponderousdev/omator`, and the reverse credential order (an App
 connection first, then a `/web-setup` token). The `gh` inventory rows still tagged *expected, not yet
 observed* are open too (row 7). A settled row stays as the record of what was seen and where it landed.
 Each result goes in the section named, with the date and the Claude Code
@@ -827,6 +841,7 @@ version.
 | 7 | Seen 2026-10-06/07: the read half is run and tagged per row; the write half is not reachable under the posture. *Open:* the inventory rows still tagged *expected, not yet observed* (for example `gh issue create` and `close`, `gh run view` and `rerun`, `trusted-registry.sh`, `release-claim.sh`, `check-issue-metadata.sh`, `round-push.sh`, `lane-watch.sh`, Foreman) | [The `gh` call inventory](#the-gh-call-inventory) |
 | 8 | Seen 2026-10-06: the bootstrap and `task verify` under **Trusted** completed with no network denial; no domain added | [Network](#network) |
 | 11 | Seen 2026-10-06: the repository is cloned before the setup script runs | [When per-checkout preparation runs](#when-per-checkout-preparation-runs) |
+| #1405-6 | Seen 2026-10-06 on `evanharmon1/harmon-init`: `task setup:remote` exits 0 and clones the siblings. *Open:* siblings readable and `task verify` runnable in a live session on `ponderousdev/omator`, which the criterion names | [When per-checkout preparation runs](#when-per-checkout-preparation-runs) |
 | #1404-2 | Seen 2026-10-06/07: `gh pr merge` was refused without a prompt, consistent with the managed deny rules being enforced; `/permissions` cannot list them on the web, so this is inferred from behaviour | [The agent posture](#the-agent-posture) |
 | — | Seen 2026-10-06: release-asset downloads from repositories not attached to the session succeed under **Trusted** | [Network](#network) |
 
