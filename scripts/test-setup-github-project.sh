@@ -7,10 +7,10 @@
 # singleSelectOptions array, and per GitHub's schema an existing option re-sent
 # WITHOUT its `id` is destroyed and recreated — silently blanking that field on
 # every board item already assigned to it. Appending is therefore only safe while
-# every pre-existing option goes back with its id, and nothing else in `verify`
-# executes this path (the script talks to the live API, so lint is its only other
-# gate). A future edit that drops the ids would otherwise pass every check and
-# lose data on the next re-run.
+# every pre-existing option goes back with its id. This test, run directly and
+# through test-template.sh for the full and minimal profiles, guards that
+# option-id contract against a stubbed `gh`; the live-API path is not exercised.
+# A future edit that drops the ids would otherwise lose data on the next re-run.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 script="$PWD/scripts/setup-github-project.sh"
