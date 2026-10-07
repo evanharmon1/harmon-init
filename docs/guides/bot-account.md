@@ -196,7 +196,7 @@ Revoke it independently of the bot's PAT: rotating one never touches the
 other. For Claude Code on the web, where `/web-setup` holds a single token
 across both owners, the agent identity is instead a **classic** PAT on the bot
 account with `repo` scope and no `workflow` scope, handed to `/web-setup` with
-the account's GitHub App connection removed. It is bounded by the bot's per-repo
+the account's Claude GitHub App connection removed. It is bounded by the bot's per-repo
 collaborator grants rather than by a selected-repository list (a classic token
 reaches every repository the bot can, across owners), and GitHub refuses a push
 that changes `.github/workflows/` (observed 2026-10-07). The one exception is the alternative of authorizing the Claude GitHub App as
