@@ -21,7 +21,7 @@ some facts here have not been seen by a person yet:
 | --- | --- |
 | **docs, 2026-09-29** | Stated by the platform docs ([cloud environments](https://code.claude.com/docs/en/cloud-environments), [Claude Code on the web](https://code.claude.com/docs/en/claude-code-on-the-web)), re-read on that date. Where they differ from what was observed, the docs win as the *documented* behaviour and this guide says so |
 | **observed 2026-09-27** | Seen in a real Claude Code on the web session (a full dev loop on several harmon-devkit PRs), recorded in the [evidence comment on #1407](https://github.com/evanharmon1/harmon-init/issues/1407#issuecomment-5860625937) |
-| **observed 2026-10-06** / **2026-10-07** | Seen by the maintainer in a live walkthrough of the `harmon-remote` environment (network **Trusted**; setup script the recipe at `v5.2.0`, with the interim `sudo env …` line from 23:19Z on 2026-10-06). Claude Code on the VM was 2.1.292; the local CLI used for `--cloud` was 2.1.284 |
+| **observed 2026-10-06** / **2026-10-07** | Seen by the maintainer in a live walkthrough of the `harmon-remote` environment (network **Trusted**; setup script the recipe at `v5.2.0`, with the interim `sudo env …` line from 23:19Z on 2026-10-06, then the recipe unchanged at `v5.2.1` on 2026-10-07). Claude Code on the VM was 2.1.292; the local CLI used for `--cloud` was 2.1.284 |
 | **REST since #1430** | A harmon-init script moved off GraphQL-backed `gh` subcommands onto the bounded REST helpers in `scripts/lib/gh-rest.sh`. Tested hermetically; not yet run in a cloud session |
 | **expected, not yet observed** | Derived from the docs or from how a script is written. **Not** an observation |
 | **pending** | A `[HUMAN]` observation that still needs a live session run by the maintainer. Each has a row marked open in [Pending observations](#pending-observations) |
@@ -82,7 +82,8 @@ Rules for this script, each with its reason:
   unchanged `v5.2.0` bootstrap completed with `tiers core,agents, 20 new
   install(s)` and exit 0. That line is verified at `v5.2.0` only: releases
   `v4.48.0` through `v5.2.0` all need it, and the release that carries the fix
-  will not. Why the fix is in the bootstrap rather than in the
+  will not (observed 2026-10-07: the unchanged recipe at `v5.2.1` started a
+  session, below). Why the fix is in the bootstrap rather than in the
   recipe:
   [architecture/remote-environments.md § The network the bootstrap may use](../architecture/remote-environments.md#the-network-the-bootstrap-may-use).
 - **Do not append `|| true`.** The platform fails the session start when the
@@ -109,8 +110,18 @@ cannot see that failure: its stock `ubuntu:24.04` container has a direct network
 and no intercepting proxy (in the same image, a local run of this recipe
 completed in 43 seconds), and it runs the checkout's own bootstrap rather than
 the recipe's download at a tag. Both runs were the platform running the environment's setup script,
-with the recipe's last line in the interim form; the recipe unchanged, at
-`v5.2.1` (the first release that carries the fix), is not yet observed.
+with the recipe's last line in the interim form.
+
+**Observed (criterion 1, the unchanged recipe), 2026-10-07:** the environment's
+setup script was set to the recipe above **unchanged** at
+`HARMON_INIT_REF=v5.2.1` — no interim `sudo env` line and no diagnostic wrapper
+— and the session started. `/usr/local/share/harmon-remote-env/manifest.json`
+reports `harmon-remote-env` at revision `v5.2.1`. `semgrep 1.178.0` and `copier`
+are at `/usr/local/bin`; `markdownlint-cli2` and `codex` are at `/opt/node22/bin`
+(the platform's npm prefix, #1429; see [Other behaviour worth
+knowing](#other-behaviour-worth-knowing)); `task` is 3.53.1. So `v5.2.1`
+carries the trust-store fix: the unchanged recipe completes behind the
+platform's proxy.
 
 **Caching works (observed 2026-10-07, criterion 1's cache half).** A session
 created at 18:01:28Z booted at 18:01:31Z while its
@@ -129,6 +140,19 @@ Two earlier sessions had not shown it. The session started at 23:28Z on
 04:35:09Z to 04:36:08Z, 59 s), with no edit to the environment's variables,
 script or network level in between. Why that one re-ran is not established.
 
+**The cache after a script change (observed 2026-10-07, the same day).** After
+the setup script was changed to the unchanged recipe at `v5.2.1`, the first
+session ran the script and cloned the repository (cloned 20:07:37 to 20:07:40Z).
+The next session was ready about 4.5 s after it was created: the VM booted at
+20:18:06Z, the environment manager started in resume-cached mode, the repository
+was updated to the latest commit at 20:18:10Z, and the session's branch was
+checked out at 20:18:11.6Z. An uncached session took about three minutes (above).
+The cached snapshot therefore **includes the repository clone** and fetches it
+forward on resume rather than cloning again. What that means for where
+per-checkout preparation runs is an open design question,
+[#1548](https://github.com/evanharmon1/harmon-init/issues/1548) (see [When
+per-checkout preparation runs](#when-per-checkout-preparation-runs)).
+
 ### Network
 
 Choose **Trusted** (the platform default). The bootstrap's
@@ -144,8 +168,8 @@ a cloud lane does ([What runs where](#what-runs-where)). That list is
 provisional, and it is empty on purpose: the rule is that a domain is added only
 after a *recorded denial* under Trusted while the bootstrap, `task verify`, or —
 in a session that runs the pre-PR gate itself — `task security` ran. The PR is
-opened by the orchestrator after its gates ([What runs where](#what-runs-where)),
-so a lane does not normally run that gate. The denials recorded so far, and the
+opened by the orchestrator as a draft after that gate ([What runs where](#what-runs-where)),
+so a lane does not normally run it. The denials recorded so far, and the
 one that a session running the gate itself needs:
 
 | Host | Denied for | Added? | Reason |
@@ -256,8 +280,12 @@ what #1408 decision 3 decided on 2026-09-27, and it was proven on 2026-10-07 on
 ponderousdev); what the bot may touch is bounded by its per-repo collaborator
 grants, as in [bot-account.md](bot-account.md). A classic `repo` token reaches
 every repository the bot can, so the limit is the grants, not a
-selected-repository list; and it is the agent posture and the proxy, not the
-token, that block API writes through `gh`. The operator's own token was the
+selected-repository list. The token does not limit what `gh` may write: the
+agent posture's denies and the proxy refused the `gh` write forms tried, but the
+denies match argument patterns, so they are defence in depth (bundled short
+flags are untested,
+[#1549](https://github.com/evanharmon1/harmon-init/issues/1549)), and the
+boundary is the bot's grants and the rulesets. The operator's own token was the
 planned fallback if the platform refused a token whose GitHub user differs from
 the claude.ai account; it was not needed (the platform accepted the bot's token,
 2026-10-07). An alternative, with a real cost, is [authorizing the App as the
@@ -294,14 +322,21 @@ then `/web-setup`) is not observed.
    typed**, and run `/web-setup`:
 
    ```bash
-   ( t="$(<your secret store's read command>)" && [ -n "$t" ] && cd "$(mktemp -d)" && GH_TOKEN="$t" claude )
+   (
+     t="$(<your secret store's read command>)" && [ -n "$t" ] \
+       && d="$(mktemp -d)" && [ -n "$d" ] || exit 1
+     trap 'cd / && rm -rf -- "$d"' EXIT
+     cd "$d" && GH_TOKEN="$t" claude
+   )
    ```
 
-   It **fails closed**: if the read fails or returns nothing, `claude` does not
-   start. Without that, an empty `GH_TOKEN` makes `gh` — and so `/web-setup` —
-   fall back to your own stored login, which would become the cloud identity.
-   The subshell keeps the token out of your interactive shell and leaves that
-   shell where it was. Start from an **empty directory**, as above, never from
+   It **fails closed**: if the read fails or returns nothing, or `mktemp` fails,
+   the subshell exits before `claude` starts. Without that, an empty `GH_TOKEN`
+   makes `gh` — and so `/web-setup` — fall back to your own stored login, which
+   would become the cloud identity. The subshell keeps the token out of your
+   interactive shell and leaves that shell where it was, and its `EXIT` trap
+   removes the empty directory when `claude` exits. Start from an **empty
+   directory**, as above, never from
    a repository checkout: that `claude` process holds the token in its
    environment, and a checkout's own Claude Code settings (hooks, MCP servers,
    allowed commands) would run inside it and could read it. If `/web-setup`
@@ -487,7 +522,12 @@ not the write boundary: a bundled short flag such as `gh api -iX POST …` is
 expected to match none of them and only the `gh api *` allow rule (untested;
 [#1549](https://github.com/evanharmon1/harmon-init/issues/1549)). The boundary
 is the bot's collaborator grants and the repository rulesets, as for the bot's
-PATs.
+PATs. The same boundary bounds draft promotion and auto-merge, not only
+merges: the proxy offers REST routes for both (`POST …/ccr/ready_for_review`,
+`POST …/ccr/convert_to_draft`, `PUT|DELETE …/ccr/auto_merge`, quoted under
+[the `gh` call inventory](#the-gh-call-inventory)), and they are `gh api`
+writes the denies are not relied on to stop. A merge into a protected branch
+still needs code-owner approval and the required checks.
 
 **The session's built-in GitHub tools are not covered by the posture** (observed
 2026-10-07, about 18:03Z, in a postured session). `mcp__github__create_pull_request`
@@ -497,13 +537,16 @@ with `draft: true` opened draft PR #1546 as `evanharmon1-bot`;
 merged). There was no prompt and no block. The server appended a `Generated by
 Claude Code` footer to the body and to the comment, and the platform subscribed
 the session to the PR's activity automatically and unsubscribed it on close. So
-the posture blocks `gh`'s PR and issue writes but not these tools, and a session
-can technically open a draft PR itself.
+the posture's denies refused the `gh` write forms tried but do not reach these
+tools, and a session can technically open a draft PR itself. The denies are
+defence in depth, not the write boundary (see above): the boundary is the bot's
+grants and the rulesets.
 
-**The lifecycle does not change.** A cloud lane ends at a pushed branch. The PR
-is opened by the orchestrator after its gates (`task security`, the draft, the
-readiness gate); those gates are the orchestrator's, and a draft a session opens
-with its built-in tools skips them. The platform's **Create PR** button is not
+**The lifecycle does not change.** A cloud lane ends at a pushed branch. The
+orchestrator's order is `task security`, then open the draft PR and verify it,
+then the integration stage and its readiness gate, then promote (`AGENTS.md`
+§ Policy invariants, draft-first). Those gates are the orchestrator's, and a
+draft a session opens with its built-in tools skips them. The platform's **Create PR** button is not
 an alternative to that lifecycle, and what it does about drafts is not
 recorded.
 
@@ -849,8 +892,12 @@ The docs do not say whether that clone exists when the setup script runs.
 **Observed (criterion 11), 2026-10-06: the repository is cloned before the setup
 script runs** — a probe line in the setup script wrote
 `/home/user/harmon-init/.git`. A script served from the cache still cannot
-depend on it, because the snapshot was taken before this session's clone, and
-the cache applies to the machine only. So the rule that holds:
+depend on that session's own clone, because the snapshot was taken before it.
+The cache does keep a clone: the one made in the session that built the snapshot,
+fetched forward on resume ([Setup script](#setup-script), observed 2026-10-07).
+Whether the setup script should therefore prepare the checkout is an open design
+question, [#1548](https://github.com/evanharmon1/harmon-init/issues/1548). Until
+it is decided, the rule that holds:
 
 - **Setup script**: machine-level, repository-independent — the bootstrap, and
   nothing that reads a checkout.
@@ -905,8 +952,8 @@ siblings readable and `task verify` runnable in a live session are still
 ## Pending observations
 
 The live walkthrough of 2026-10-06 and 2026-10-07 (Claude Code 2.1.292 on the
-VM) settled criteria 1 in part (the bootstrap with the interim line, and the
-cache; the unchanged recipe at `v5.2.1` is open), 3 in part (identity and pushes
+VM) settled criterion 1 (the bootstrap with the interim line, the cache, and,
+on 2026-10-07, the unchanged recipe at `v5.2.1`), 3 in part (identity and pushes
 on both owners; a PR through a session was seen only on
 `evanharmon1/harmon-init`), 4, 8
 and 11, and the read half of 7, of
@@ -914,22 +961,24 @@ and 11, and the read half of 7, of
 [#1404](https://github.com/evanharmon1/harmon-init/issues/1404) in part (the
 agent posture), and the unnumbered row (release-asset downloads from
 repositories not attached to the session). **Still open**, marked *Open* in the
-table: the unchanged recipe at `v5.2.1` (published 2026-10-07, the first
-release carrying the fix), criterion 6 of
+table: criterion 6 of
 [#1405](https://github.com/evanharmon1/harmon-init/issues/1405) on
 `ponderousdev/omator`, a PR through a session on a ponderousdev repository,
 which other built-in GitHub tools a session has, the reverse credential order
-(an App connection first, then a `/web-setup` token), and the listing half
-of #1404 criterion 2, which cannot be done on the web. The `gh` inventory rows still tagged *expected, not
+(an App connection first, then a `/web-setup` token), bundled-flag `gh api`
+writes ([#1549](https://github.com/evanharmon1/harmon-init/issues/1549)), the
+design question of where per-checkout preparation runs
+([#1548](https://github.com/evanharmon1/harmon-init/issues/1548)), and the
+listing half of #1404 criterion 2, which cannot be done on the web. The `gh` inventory rows still tagged *expected, not
 yet observed* are open too (row 7). A settled row stays as the record of what
 was seen and where it landed. Each result goes in the section named, with the
 date and the Claude Code version.
 
 | # | What has to be seen | Where the result lands |
 | --- | --- | --- |
-| 1 | *Open:* the unchanged recipe, with `sudo bash` and no interim `env`, at `v5.2.1`, the first release carrying the fix. Seen 2026-10-06: `v4.48.0` is the first release carrying the bootstrap; at `v5.2.0` the setup script fails at `semgrep`, and with the interim `sudo env …` line it completes in 86 s (48 s on a second VM) | [Setup script](#setup-script) |
-| 1 (cache) | Seen 2026-10-07: the setup-script cache works; a session booted 13.5 h after the run it started from, across GitHub-connection changes. Two earlier sessions had re-run the script (why the second is not established) | [Setup script](#setup-script) |
-| — | Seen 2026-10-07: the session's built-in GitHub tools are not covered by the agent posture; a draft PR was opened, commented on and closed as the bot (PR #1546). The `gh` writes stay blocked. *Open:* which other built-in tools exist (merge, workflow runs, releases) was not asked; a merge into a protected branch still needs code-owner approval and the required checks | [What runs where](#what-runs-where) |
+| 1 | Seen 2026-10-06: `v4.48.0` is the first release carrying the bootstrap; at `v5.2.0` the setup script fails at `semgrep`, and with the interim `sudo env …` line it completes in 86 s (48 s on a second VM). Seen 2026-10-07: the recipe unchanged, with `sudo bash` and no interim `env`, at `v5.2.1` started a session; the manifest reports `harmon-remote-env` at revision `v5.2.1`, `semgrep 1.178.0` and `copier` are at `/usr/local/bin`, `markdownlint-cli2` and `codex` at `/opt/node22/bin`, and `task` is 3.53.1 | [Setup script](#setup-script) |
+| 1 (cache) | Seen 2026-10-07: the setup-script cache works; a session booted 13.5 h after the run it started from, across GitHub-connection changes. Two earlier sessions had re-run the script (why the second is not established). Seen 2026-10-07 after the script change to `v5.2.1`: the next session was ready about 4.5 s after creation in resume-cached mode, against about three minutes uncached, and the snapshot keeps the repository clone and fetches it forward. *Open:* what that means for where per-checkout preparation runs ([#1548](https://github.com/evanharmon1/harmon-init/issues/1548)) | [Setup script](#setup-script) |
+| — | Seen 2026-10-07: the session's built-in GitHub tools are not covered by the agent posture; a draft PR was opened, commented on and closed as the bot (PR #1546). The `gh` write forms tried stay refused (defence in depth, not the boundary; [#1549](https://github.com/evanharmon1/harmon-init/issues/1549)). *Open:* which other built-in tools exist (merge, workflow runs, releases) was not asked; a merge into a protected branch still needs code-owner approval and the required checks | [What runs where](#what-runs-where) |
 | — | Seen 2026-10-07: with a `/web-setup` PAT stored first and an App connection added afterwards on the same account, git pushes still use the PAT (workflow push refused). *Open:* the reverse order, and which credential serves API calls | [Whose identity GitHub sees](#whose-identity-github-sees) |
 | 3 | Seen 2026-10-07, on `evanharmon1/harmon-init` and `ponderousdev/foreman`: the PAT-only route gives `gh api user` → `evanharmon1-bot`, the write role without admin or maintain (`push: true, admin: false, maintain: false`), the bot as push actor, the commit author Claude, and a refused workflow push; the App-as-bot route gives the same identity but accepts a workflow push. A PR opened through a session's built-in tools is authored by the bot (seen on `evanharmon1/harmon-init` only). *Open:* a PR through a session on a ponderousdev repository | [Whose identity GitHub sees](#whose-identity-github-sees) |
 | 4 | Seen 2026-10-07: `claude --cloud "<task>"` needs a TTY, ran prompt-free and returned a pushed branch with no human step. The permission mode was auto mode by the session's own context note, not shown by a tool | [Bridges between the terminal and the cloud](#bridges-between-the-terminal-and-the-cloud) |
