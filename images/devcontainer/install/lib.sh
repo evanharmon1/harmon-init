@@ -36,10 +36,12 @@ export UV_TOOL_DIR="${UV_TOOL_DIR:-/opt/uv-tools}"
 # shellcheck disable=SC2034  # read by the install scripts that source this file
 HARMON_CURL_OPTS=(-fsSL --retry 3 --retry-delay 2 --retry-connrefused)
 
-# The system trust store the package managers are pointed at (harmon_npm_global,
-# harmon_uv_tool). Debian/Ubuntu's ca-certificates keeps it current, the apt
-# tier installs that package, and it is where a platform adds its proxy's CA.
-# Overridable so a test can exercise the present and absent cases.
+# Where this OS keeps the system CA bundle: Debian/Ubuntu's ca-certificates
+# maintains it, the apt tier installs that package, and a platform adds its
+# proxy's CA to it. Consumed by tools that take a file path — the Node export
+# below. uv's --system-certs finds the platform store itself, which on this OS
+# is the same bundle. The guard overrides this only to exercise the present and
+# absent cases; it is not a way to point the installers at a different store.
 HARMON_SYSTEM_CA_BUNDLE="${HARMON_SYSTEM_CA_BUNDLE:-/etc/ssl/certs/ca-certificates.crt}"
 
 # Node ships its own CA roots, so every Node process — npm, and the tools it
@@ -406,10 +408,10 @@ harmon_npm_global() {
 }
 
 # harmon_uv_tool <package> <version> <command>
-# uv bundles its own CA roots too: --system-certs loads the system store the way
-# curl already does, so a platform VM's TLS-intercepting proxy (whose CA is
-# seeded there, and nothing else survives `sudo`) does not fail the install with
-# UnknownIssuer. The older spelling --native-tls is a deprecated alias.
+# uv bundles its own CA roots too: --system-certs makes it load the platform's
+# system store, as curl does, so a platform VM's TLS-intercepting proxy (whose CA
+# is seeded there, and nothing else survives `sudo`) does not fail the install
+# with UnknownIssuer. The older spelling --native-tls is a deprecated alias.
 harmon_uv_tool() {
     if harmon_needs "$3" "$2" "$3" --version; then
         uv tool install --force --system-certs "${1}==${2}"

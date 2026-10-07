@@ -2806,7 +2806,10 @@ if not bundle_default or bundle_default.group(1) != "/etc/ssl/certs/ca-certifica
         "— that is the bundle the apt tier's ca-certificates package maintains on Debian/Ubuntu, and the one "
         "a platform adds its proxy's CA to"
     )
-if '"HARMON_SYSTEM_CA_BUNDLE=${HARMON_SYSTEM_CA_BUNDLE}"' not in BOOTSTRAP.read_text():
+# Matched on the logical `exec sudo -- env … bash` command — comments dropped,
+# continuations joined — so moving the forward into a comment does not pass.
+reexec_line = next((n for _, n in logical_lines(BOOTSTRAP.read_text()) if "exec sudo" in n), "")
+if '"HARMON_SYSTEM_CA_BUNDLE=${HARMON_SYSTEM_CA_BUNDLE}"' not in reexec_line:
     fail(
         f"{BOOTSTRAP}: the sudo re-exec does not forward HARMON_SYSTEM_CA_BUNDLE — it hands root an explicit "
         "environment, so a caller's override of the bundle would be silently dropped"
