@@ -355,6 +355,7 @@ if [ "$(id -u)" -ne 0 ]; then
             ${HARMON_PREFIX+"HARMON_PREFIX=${HARMON_PREFIX}"} \
             ${HARMON_ALLOW_UNPINNED_REF+"HARMON_ALLOW_UNPINNED_REF=${HARMON_ALLOW_UNPINNED_REF}"} \
             ${HARMON_AGENT_POSTURE_REPLACE+"HARMON_AGENT_POSTURE_REPLACE=${HARMON_AGENT_POSTURE_REPLACE}"} \
+            ${HARMON_SYSTEM_CA_BUNDLE+"HARMON_SYSTEM_CA_BUNDLE=${HARMON_SYSTEM_CA_BUNDLE}"} \
             bash "${BASH_SOURCE[0]}" --tiers "$tiers" ${ref:+--ref "$ref"}
     fi
     die "must run as root; pipe into 'sudo bash' or re-run under sudo"
