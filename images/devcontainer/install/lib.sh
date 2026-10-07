@@ -36,6 +36,12 @@ export UV_TOOL_DIR="${UV_TOOL_DIR:-/opt/uv-tools}"
 # shellcheck disable=SC2034  # read by the install scripts that source this file
 HARMON_CURL_OPTS=(-fsSL --retry 3 --retry-delay 2 --retry-connrefused)
 
+# The system trust store the package managers are pointed at (harmon_npm_global,
+# harmon_uv_tool). Debian/Ubuntu's ca-certificates keeps it current, the apt
+# tier installs that package, and it is where a platform adds its proxy's CA.
+# Overridable so a test can exercise the present and absent cases.
+HARMON_SYSTEM_CA_BUNDLE="${HARMON_SYSTEM_CA_BUNDLE:-/etc/ssl/certs/ca-certificates.crt}"
+
 harmon_log() { printf '==> %s\n' "$*"; }
 
 # The run record. One line per event, `<kind><TAB><text>`, appended to
@@ -382,16 +388,31 @@ harmon_tmpdir_init() {
 # npm's own idempotence is a network round-trip even when nothing changes, so
 # decide first — through harmon_needs, like every other pinned tool: a same
 # version under a pre-provisioned prefix is still not ours.
+#
+# Node ships its own CA roots, so npm trusts the system store only when told to.
+# A platform VM behind a TLS-intercepting proxy seeds that store with the
+# proxy's CA, and nothing else survives `sudo` — so name the bundle here, unless
+# the caller already named one (theirs wins; an empty value names nothing).
+# Scoped to the install in a subshell: the rest of the tier does not inherit it.
 harmon_npm_global() {
     if harmon_needs "$3" "$2" "$3" --version; then
-        npm install -g "${1}@${2}"
+        (
+            if [ -z "${NODE_EXTRA_CA_CERTS:-}" ] && [ -f "$HARMON_SYSTEM_CA_BUNDLE" ]; then
+                export NODE_EXTRA_CA_CERTS="$HARMON_SYSTEM_CA_BUNDLE"
+            fi
+            npm install -g "${1}@${2}"
+        )
     fi
 }
 
 # harmon_uv_tool <package> <version> <command>
+# uv bundles its own CA roots too: --system-certs loads the system store the way
+# curl already does, so a platform VM's TLS-intercepting proxy (whose CA is
+# seeded there, and nothing else survives `sudo`) does not fail the install with
+# UnknownIssuer. The older spelling --native-tls is a deprecated alias.
 harmon_uv_tool() {
     if harmon_needs "$3" "$2" "$3" --version; then
-        uv tool install --force "${1}==${2}"
+        uv tool install --force --system-certs "${1}==${2}"
     fi
 }
 

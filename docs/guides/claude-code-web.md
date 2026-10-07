@@ -67,14 +67,21 @@ Rules for this script, each with its reason:
   `vX.Y.Z`. The tag is the trust root, and the environment moves only when you
   edit the tag — which also rebuilds the cache (*docs, 2026-09-29*: a changed
   setup script re-runs it).
-- **`vX.Y.Z` must be the first release that carries the bootstrap.** The bootstrap
-  landed in #1426; the latest tag when this guide was written is `v4.47.1`,
-  which predates it, and the release PR
-  ([#1398](https://github.com/evanharmon1/harmon-init/pull/1398), proposing
-  `4.48.0`) is not merged. A proposal is not a tag: **replace `vX.Y.Z` with the
-  tag the release publishes, and only then use the environment.** Until that
-  happens this section is not runnable as written, and #1407's first acceptance
-  criterion stays open for exactly that reason.
+- **`vX.Y.Z` is the release tag you want, `v4.48.0` or later.** `v4.48.0`
+  (published 2026-10-03) is the first release that carries the bootstrap; the
+  latest when this was written is `v5.2.0`. **A release older than the one that
+  carries the trust-store fix fails behind the platform's TLS-intercepting
+  proxy** — observed 2026-10-06, Claude Code 2.1.292, network **Trusted**: at
+  `v5.2.0` the setup script exits 2 at `==> semgrep 1.178.0` with `invalid peer
+  certificate: UnknownIssuer`, because the VM's proxy CA is seeded into the
+  system trust store and `sudo` resets the environment that names it. Until you
+  pin a release that carries the fix, run the recipe's last line with `env` after `sudo`
+  — `sudo env UV_SYSTEM_CERTS=1 NODE_EXTRA_CA_CERTS=/etc/ssl/certs/ca-certificates.crt bash`
+  and then the same script path and `--ref` arguments as before. With that, the
+  unchanged `v5.2.0` bootstrap completed with `tiers core,agents, 20 new
+  install(s)` and exit 0. Why the fix is in the bootstrap rather than in the
+  recipe:
+  [architecture/remote-environments.md § The network the bootstrap may use](../architecture/remote-environments.md#the-network-the-bootstrap-may-use).
 - **Do not append `|| true`.** The platform fails the session start when the
   script exits non-zero (*docs, 2026-09-29*). Here that is the wanted outcome: a
   session that starts without the pinned toolchain would run the dev loop
@@ -90,11 +97,16 @@ Rules for this script, each with its reason:
 - **No `--tiers` flag, no other install lines.** Anything the loop needs belongs
   in the shared scripts, so the image and every other remote adapter get it too.
 
-**Pending observation (criterion 1, the caching claim):** the bootstrap has
-been proven only in CI on a stock `ubuntu:24.04` container on a GitHub-hosted
-runner. Whether it finishes inside the platform's cache budget **on the real VM**
-has not been measured. Record it under
-[Pending observations](#pending-observations).
+**Observed (criterion 1, the caching claim), 2026-10-06, Claude Code 2.1.292
+on the VM:** with the trust store named as above, the bootstrap completed in 86
+seconds, and in 48 seconds on a second fresh VM — a fifth or less of the
+platform's five-minute cache budget. Without it, the same script fails at
+`semgrep`, as the release-tag rule above describes. CI's `remote-bootstrap` job
+cannot see that failure: its stock `ubuntu:24.04` container has a direct network
+and no intercepting proxy, which is also why the same recipe passes there in 43
+seconds. The measurement was a manual run of the recipe's last line in the
+interim form; the setup script as the platform runs it, at a release that
+carries the fix, has not yet been observed.
 
 ### Network
 
