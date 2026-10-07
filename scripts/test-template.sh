@@ -1626,6 +1626,15 @@ minimal) # use_skills_sync=false -> none of the machinery renders
         err "Codex implementer is not registered"
     grep -q '^config_file = "agents/implementer.toml"$' .codex/config.toml ||
         err "Codex implementer registration does not point at its config"
+    # Run the rendered sync test, not just its task wiring, under the ambient
+    # environment the bot and agent profiles and Claude Code on the web create
+    # (#1395): its leak check once expanded at write time, so a preset token
+    # failed it and an absent one made it vacuous. One profile bounds the cost.
+    if [ "$profile" = "full" ]; then
+        env FOREMAN_DEVCONTAINER=bot GH_TOKEN=dummy GITHUB_TOKEN=dummy \
+            ./scripts/test-sync-devkit-release.sh >/dev/null ||
+            err "rendered test-sync-devkit-release.sh failed with GH_TOKEN/GITHUB_TOKEN preset"
+    fi
     ;;
 esac
 [ -d .claude/skills ] || err ".claude/skills managed skill directory is missing"

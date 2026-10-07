@@ -39,11 +39,12 @@ trap 'rm -rf "${TMP}"' EXIT
 
 # status.sh branches its remedy text on FOREMAN_DEVCONTAINER (unset = dev
 # posture, "bot", "agent"), and the bot and agent profiles export it — plus a
-# preset GH_TOKEN / GITHUB_TOKEN — into every process. A case that assumes the
+# preset GH_TOKEN / GITHUB_TOKEN — into every process; gh also honours GH_HOST
+# and GH_REPO from the caller. A case that assumes the
 # dev posture must not inherit whichever posture the caller happens to be in
 # (#1395), so the ambient values are cleared here; the cases that exercise the
 # bot and agent branches set the marker themselves, per case.
-unset FOREMAN_DEVCONTAINER GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN
+unset FOREMAN_DEVCONTAINER GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN GH_HOST GH_REPO
 
 # Four fixture roots, each holding a copy of the script under test:
 #   with-board  — has the board tooling, so the check applies
