@@ -1425,27 +1425,83 @@ check_docs() {
 # Prove the same comparison used for root, template and rendered GitHub docs
 # rejects a hand edit and either missing marker, using temporary copies only.
 rubric_fixture="$mutation_tmp/rubric-doc.md"
-node scripts/label-registry-render.mjs rubric-table label-registry.json >"$mutation_tmp/rubric-table.md"
-for mutation in description begin end; do
-    {
-        [ "$mutation" = begin ] || echo '<!-- classification-rubric:begin -->'
-        if [ "$mutation" = description ]; then
-            sed 's/marginal benefit/changed benefit/' "$mutation_tmp/rubric-table.md"
+check_rubric_mutations() {
+    local manifest="$1" mutation
+    node scripts/label-registry-render.mjs rubric-table "$manifest" >"$mutation_tmp/rubric-table.md"
+    for mutation in description begin end; do
+        {
+            [ "$mutation" = begin ] || echo '<!-- classification-rubric:begin -->'
+            if [ "$mutation" = description ]; then
+                sed '5s/ |$/ (mutation) |/' "$mutation_tmp/rubric-table.md"
+            else
+                cat "$mutation_tmp/rubric-table.md"
+            fi
+            [ "$mutation" = end ] || echo '<!-- classification-rubric:end -->'
+        } >"$rubric_fixture"
+        if (
+            fails=0
+            check_docs_block "$rubric_fixture" "$manifest" rubric-table classification-rubric
+            [ "$fails" -eq 0 ]
+        ) >"$mutation_tmp/rubric-$mutation.log" 2>&1; then
+            fail "rubric docs gate accepted mutation: $mutation"
         else
-            cat "$mutation_tmp/rubric-table.md"
+            echo "PASS: rubric docs gate rejects mutation: $mutation ($manifest)"
         fi
-        [ "$mutation" = end ] || echo '<!-- classification-rubric:end -->'
-    } >"$rubric_fixture"
-    if (
-        fails=0
-        check_docs_block "$rubric_fixture" label-registry.json rubric-table classification-rubric
-        [ "$fails" -eq 0 ]
-    ) >"$mutation_tmp/rubric-$mutation.log" 2>&1; then
-        fail "rubric docs gate accepted mutation: $mutation"
-    else
-        echo "PASS: rubric docs gate rejects mutation: $mutation"
-    fi
-done
+    done
+}
+check_rubric_mutations label-registry.json
+# Consumers own the wording. The structural mutation must still fail after a
+# valid rewording that contains none of the template's original description.
+node --input-type=module - label-registry.json "$mutated_manifest" <<'NODE'
+import fs from 'node:fs'
+
+const [input, output] = process.argv.slice(2)
+const manifest = JSON.parse(fs.readFileSync(input, 'utf8'))
+manifest.families.find((family) => family.family === 'impact').values[0].description =
+  'Impact: a consumer-specific description'
+fs.writeFileSync(output, JSON.stringify(manifest))
+NODE
+check_rubric_mutations "$mutated_manifest"
+# Restore the canonical rendered fixture used by subsequent manifest mutations.
+node scripts/label-registry-render.mjs rubric-table label-registry.json >"$mutation_tmp/rubric-table.md"
+
+check_rubric_order() {
+    node --input-type=module - "$1" "$2" <<'NODE'
+import fs from 'node:fs'
+
+const [manifestPath, tablePath] = process.argv.slice(2)
+const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'))
+const axes = new Map([
+  ['Impact', 'impact'], ['Risk', 'risk'], ['Complexity', 'complexity'],
+  ['Tier', 'tier'], ['Priority', 'priority'], ['Priority (AI)', 'priority-ai']
+])
+const actual = new Map([...axes.values()].map((id) => [id, []]))
+let current
+for (const line of fs.readFileSync(tablePath, 'utf8').split('\n')) {
+  const cells = line.split('|').map((cell) => cell.trim())
+  const value = /^`([^`]+)`$/.exec(cells[2] ?? '')
+  if (!value) continue
+  if (cells[1]) current = axes.get(cells[1].replaceAll('**', ''))
+  if (!actual.has(current)) {
+    console.error('rubric order: value outside a recognized axis')
+    process.exit(1)
+  }
+  actual.get(current).push(value[1])
+}
+for (const id of axes.values()) {
+  const family = manifest.families.find((entry) => entry.family === id)
+  const expected = family?.retired === true ? [] : (family?.values ?? [])
+    .filter((value) => value.retired !== true && !(id === 'tier' && value.value === 'pinned'))
+    .map((value) => value.value)
+  if (JSON.stringify(actual.get(id)) !== JSON.stringify(expected)) {
+    console.error(`rubric order: ${id} values differ from active registry values in registry order`)
+    process.exit(1)
+  }
+}
+NODE
+}
+check_rubric_order label-registry.json "$mutation_tmp/rubric-table.md" ||
+    fail "rubric value columns do not match the registry's complete ordered scales"
 # A newly registered scale value must change the generated table, while exact
 # prefix stripping must preserve a colon inside the actual short form.
 {
@@ -1474,6 +1530,8 @@ NODE
     extra-active)
         if ! node scripts/label-registry-render.mjs rubric-table "$mutated_manifest" >"$rubric_output"; then
             fail "rubric renderer rejected an extra active scale value"
+        elif ! check_rubric_order "$mutated_manifest" "$rubric_output"; then
+            fail "rubric extra-active fixture does not match every ordered registry scale"
         elif ! grep -qF '| `extreme` | additional active scale value |' "$rubric_output"; then
             fail "rubric renderer silently omitted an extra active scale value"
         elif (
