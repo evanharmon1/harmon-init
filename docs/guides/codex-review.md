@@ -261,6 +261,8 @@ task review     # verification checkpoint — same convergence rule, under its
 task security   # Semgrep CE + gitleaks + dependency audit — pre-publication gate
 # → open a DRAFT PR, then integrate it: watch CI + reviews, settle the deferred
 #   P2s, adjudicate → fix → push, under the integration and remediation caps
+#   stop fixing after two consecutive Codex cycles adjudicate to zero P0/P1;
+#   settle remaining findings without another fix push (AGENTS.md owns the exits)
 #   (independent of the loops above)
 # → readiness gate passes → gh pr ready (the handoff to a human)
 # → merging stays a human decision
@@ -378,6 +380,32 @@ deferred-P2 chain is a **precondition** of the exit, not a casualty of it:
 every P2 open at convergence must already be in the sidecar below, so
 `gh pr create` can move it into the PR body and the integration stage can settle it. An
 exit that drops a P2 is not an exit.
+
+Integration has a convergence exit too: **two consecutive Codex cycles
+adjudicating to zero P0/P1** end the stage. Settle findings still open then
+without a further fix push: decline with evidence or file them together as one
+follow-up issue, record the dispositions and thread replies, and tick the
+PR-body entries. The readiness gate accepts that settlement on the attested
+current head; every other readiness condition still applies. A P2-only cycle
+counts as clean for this exit; fixing a confirmed P0/P1 does not make its cycle
+clean. Exempt cycles count as completed cycles, carried heads do not, and an
+incomplete attempt or retry cannot supply the second clean cycle.
+
+From integration cycle 2 onward, record for each finding whether an earlier
+remediation push of the same stage added its subject, with a disposition on the
+table: delete, restructure to invariants, or keep with an explicit scope reason.
+A nonempty cycle whose findings are all about that added surface is the tell:
+delete, restructure, or stop and file together, never another hardening push.
+Escalation **leads with descoping**. On a second finding of the same kind, sweep
+every surface that states or feeds the rule before fixing either: rule copies
+across twins/docs, and input surfaces enumerated one member at a time.
+The ledger names the integration exit and qualifying cycles: two consecutive
+clean cycles (`converged`), the tell (`diverging`), or the cap (`capped`), while
+preserving independent integration/remediation and exempt/carried accounting.
+A tell or cap never substitutes for a passing readiness gate. AGENTS.md
+("Round 2 is the checkpoint", "Loop cap and exit", and "Readiness gate") owns
+the full policy; enforcement in the exit engine and integrate skill is
+[evanharmon1/harmon-devkit#1272](https://github.com/evanharmon1/harmon-devkit/issues/1272).
 
 ## Finding priorities
 

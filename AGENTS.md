@@ -401,7 +401,9 @@ review only when **all** of the following hold for its current `headRefOid`:
   taken moments after the push reports nothing having run rather than nothing
   to run.
 - The current-head Codex cycle above is terminal and clean — including clean
-  by way of dispositions recorded with `settle` (Codex review is
+  by way of dispositions recorded with `settle` and settlement after **two
+  consecutive clean Codex cycles** under § "Loop cap and exit", without a
+  further fix push (Codex review is
   enabled here; where it is off, **or where the resolved integration cap is
   0**, this condition drops out — a cap of 0 leaves no cloud-review cycle to
   trigger a fresh `@codex review` from. Every other condition on this list
@@ -462,6 +464,13 @@ body's `## Deferred findings` with the override recorded as the reason it was
 carried — not as a disposition, so the integration stage still owes it a normal
 fix / decline-with-evidence / file-as-follow-up. A one-step task that touches a
 single stage owes no ledger.
+
+At integration exit, the ledger also names **which exit fired** and the
+qualifying cycle numbers: **two consecutive clean cycles** (`converged`),
+**the tell** (`diverging`), or **the cap** (`capped`); where the existing
+terminal-clean current-head path passes first, name that path instead. Preserve
+the separate cycle/remediation counters and exempt/carried counts. A tell or cap
+with unresolved gating work is ⛔ blocked/escalating, never 🏁 converged.
 
 ## Rigor and Strategy
 
@@ -852,6 +861,33 @@ invariants** (deletion by abstraction — see below), or state that it is in
 scope and why the change genuinely needs it. What is not allowed is hardening
 round-1's scaffolding by reflex and letting round 3 attack the result.
 
+**Integration owes the same checkpoint from Codex cycle 2 onward.** Before
+any remediation push, record for every finding on the adjudication table whether
+its subject exists only because an earlier remediation push of this integration
+stage added it. For each such finding, write one of the three dispositions:
+**delete** the scaffolding, **restructure it to invariants**, or retain it with
+an explicit explanation of why it is in scope and the change needs it. This
+provenance checkpoint is owed at every cycle from cycle 2, not just once.
+
+A nonempty integration cycle whose findings are **all** about subjects added by
+an earlier remediation push is the **tell**: the stage is feeding on its own
+fixes. Answer it by deleting the added code, restructuring it to an invariant,
+or stopping and filing the unresolved findings together as one follow-up issue;
+never make another hardening push. A keep-with-reason disposition on an individual
+finding does not authorize another hardening push when the whole cycle meets the
+tell. Escalation for a self-feeding integration stage **leads with descoping**:
+recommend removing the added surface first, with the findings and provenance as
+evidence. A tell is `diverging`, not a clean verdict; stopping and filing leaves
+the PR draft unless every readiness condition is independently proved.
+
+**A second finding of the same kind calls for a surface sweep before either
+fix.** Find every surface that states or feeds the rule, then fix the confirmed
+cause across that set in one remediation round. Two recurring shapes require
+this check: copies of a rule across root/template twins and documentation, and
+an input surface being enumerated one member at a time (for example, local Git
+configuration inputs to canonical-diff identity). Fixing only the newly named
+copy or input invites the next cycle to rediscover the same defect elsewhere.
+
 **Deleting the added code is a legitimate way to converge.** When a
 round's findings are about scaffolding rather than the change, weigh removing
 that scaffolding against hardening it once more — a remediation can be correct
@@ -975,6 +1011,34 @@ P0/P1 disagreement persists at the cap, stop and surface it to Evan instead
 of iterating further — escalation at the cap is for P0/P1 that **persist**,
 nothing else. Evan may always ask for more rounds — convergence is a
 floor on when you may stop, not a ceiling on what he can order.
+
+**Integration convergence:** the integration stage ends when **two consecutive
+Codex cycles adjudicate to zero P0/P1** — `converged` through
+`no_gating_findings`, using adjudicated severity before settlement, not the
+reviewer's badge or the fact that a fix was pushed. A cycle with a confirmed
+P0/P1 breaks the streak even if its findings are fixed; a P2-only cycle counts
+as clean for this exit. Findings still open at convergence are settled **without
+a further fix push**: declined with evidence, or filed together as **one
+follow-up issue**. Record each disposition, reply in every affected thread,
+record non-inline dispositions with `settle` (or the recorded-comment equivalent
+where the checker is absent), and tick each deferred PR-body entry in that same
+round. The readiness gate accepts that settlement on the attested current head;
+convergence never waives CI, current-head authenticity, thread replies, or any
+other readiness condition.
+
+Count completed Codex cycles, including exempt cycles, separately from remediation
+pushes; a carried head adds no cycle and cannot supply a second clean cycle.
+An incomplete attempt or its retry is not another completed cycle. The existing
+terminal-clean current-head path and independent `integration`,
+`integration_exempt`, and `remediation` caps still apply. At a cap, persistent
+P0/P1 or an unreviewed head is an escalation and the PR stays draft; a cap never
+authorizes a further push or waives a verdict. The checkpoint's tell is the
+`diverging` exit; the ledger records that exit or `capped` with its unresolved
+work rather than claiming convergence. Enforcement of these integration exits
+in the exit engine and integrate skill is tracked in
+[evanharmon1/harmon-devkit#1272](https://github.com/evanharmon1/harmon-devkit/issues/1272);
+this policy adds no `.devflow.toml` key and never authorizes bypassing a failed
+or indeterminate readiness gate at an older skills pin.
 
 One caveat on the automatic stop-gate: the codex plugin's Stop hook applies
 its **own** notion of a material finding and may BLOCK on something you have
