@@ -542,8 +542,8 @@ would stop it enabling auto-merge — off on `evanharmon1/harmon-init` and
 names, not yet observed: no session has called either. The posture does not
 stop `gh pr ready` either, nor, from v5.3.0, `gh pr merge --auto`: its managed
 settings *allow* `gh pr create`, `edit`, `comment` and `ready`, and from v5.3.0
-(#1551) `merge` too, so in a session the `gh pr` subcommands are stopped only by the proxy's GraphQL refusal,
-which is the platform's to change. **Allow auto-merge** is a repository setting
+(#1551) `merge` too, so from v5.3.0 the `gh pr` subcommands in a session are
+stopped only by the proxy's GraphQL refusal, which is the platform's to change. **Allow auto-merge** is a repository setting
 an administrator can turn on, not a policy.
 A merge into a protected branch still needs code-owner approval and the
 required checks.
