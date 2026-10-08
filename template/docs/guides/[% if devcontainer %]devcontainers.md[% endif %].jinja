@@ -459,6 +459,7 @@ status line:
 | What | Lives at | Source | Overridable |
 |---|---|---|---|
 | Managed settings | `/etc/claude-code/managed-settings.json` (image) | `config/claude-settings.json` | no (policy) |
+| Managed drop-in: `gh pr merge` ask (**dev profile only**) | `/etc/claude-code/managed-settings.d/dev-gh-pr-merge-ask.json` (dev post-create) | `config/claude-settings-dev.json` | no (policy) |
 | Hook scripts (mandatory) | `/etc/claude-code/hooks/` (image) | `config/claude-hooks/` | no |
 | Hook scripts (optional) | `/usr/local/share/devcontainer-config/claude-hooks/` (**staged**) | `config/claude-hooks/` | no |
 | Status line | `/etc/claude-code/statusline.sh` (image) | `config/claude-statusline.sh` | yes |

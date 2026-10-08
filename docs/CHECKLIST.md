@@ -94,6 +94,7 @@ the compatibility reason in the rule's `description`.
       Copier answers or an existing variable select different routing. Do not
       add `dependabot.yml`: Renovate owns routine
       and vulnerability-remediation PRs; Dependabot owns advisory alerts.
+- [ ] Import the branch ruleset (see [architecture/branch-protection.md](architecture/branch-protection.md)) — do this once `build.yml` and `devcontainer-build.yml` are on `main` so the required `verify`/`security`/`devcontainer-verify` checks resolve. **Use the UI import:** Settings → Rules → Rulesets → **New ruleset ▸ Import a ruleset** → select `.github/Branch Protection Ruleset - Protect Main.json`. (Prefer the UI over `gh api … rulesets`: the API `POST` is not idempotent — re-running creates a duplicate ruleset — and currently rejects the `merge_queue` rule. To later change the ruleset, edit the existing one in the UI rather than re-importing.) **Import it before provisioning the bot and agent PATs below:** those postures carry no local merge guard ([decision](decisions/2026-10-07-bot-and-agent-postures-carry-no-merge-guards.md)), so this ruleset's code-owner approval and required checks are the only thing between their PAT and an unreviewed merge into `main`.
 - [ ] **Bot PAT** — the agent's `GH_TOKEN`. If a fine-grained PAT already covers
       `evanharmon1`, just add this repo to its **selected repositories**; a token is
       scoped to one resource owner, so a **new owner needs a new PAT**. Both layers
@@ -115,7 +116,6 @@ the compatibility reason in the rule's `description`.
       its Codex CLI in by hand through `sprite console`; an agent never does,
       and that login is never copied to another machine. Procedure:
       [guides/sprites.md](guides/sprites.md).
-- [ ] Import the branch ruleset (see [architecture/branch-protection.md](architecture/branch-protection.md)) — do this once `build.yml` and `devcontainer-build.yml` are on `main` so the required `verify`/`security`/`devcontainer-verify` checks resolve. **Use the UI import:** Settings → Rules → Rulesets → **New ruleset ▸ Import a ruleset** → select `.github/Branch Protection Ruleset - Protect Main.json`. (Prefer the UI over `gh api … rulesets`: the API `POST` is not idempotent — re-running creates a duplicate ruleset — and currently rejects the `merge_queue` rule. To later change the ruleset, edit the existing one in the UI rather than re-importing.)
 - [ ] **[human-only] Add `closing-keywords` to the live branch ruleset** —
       **required, not optional, and no longer deferrable.** Until
       harmon-init#1328 the guard was enforced *transitively*: the job sat in

@@ -86,6 +86,7 @@ the compatibility reason in the rule's `description`.
       `scripts/setup-github.sh` with `--replace-ci-runs-on`. Do not add
       `dependabot.yml`: Renovate owns routine
       and vulnerability-remediation PRs; Dependabot owns advisory alerts.
+- [ ] Import the branch ruleset (see [architecture/branch-protection.md](architecture/branch-protection.md)) — do this once `build.yml`[% if use_codeql %], `codeql.yml`[% endif %][% if include_terraform %], `terraform.yml`[% endif %][% if devcontainer %], `devcontainer-build.yml`[% endif %] are on `main` so the required `verify`/`security`[% if use_codeql %]/`codeql-verify`[% endif %][% if include_terraform %]/`terraform-verify`[% endif %][% if devcontainer %]/`devcontainer-verify`[% endif %] checks resolve. **Use the UI import:** Settings → Rules → Rulesets → **New ruleset ▸ Import a ruleset** → select `.github/Branch Protection Ruleset - Protect Main.json`. (Prefer the UI over `gh api … rulesets`: the API `POST` is not idempotent — re-running creates a duplicate ruleset — and currently rejects the `merge_queue` rule. To later change the ruleset, edit the existing one in the UI rather than re-importing.)[% if devcontainer %] **Import it before provisioning the bot and agent PATs below:** those postures carry no local merge guard, so this ruleset's code-owner approval and required checks are the only thing between their PAT and an unreviewed merge into `main`.[% endif %]
 [% if devcontainer %]
 - [ ] **Bot PAT** — the agent's `GH_TOKEN`. If a fine-grained PAT already covers
       [% if github_org != author_git_provider_username %]`[[ github_org ]]`[% else %]`[[ author_git_provider_username ]]`[% endif %],
@@ -118,7 +119,6 @@ the compatibility reason in the rule's `description`.
       [Sprites guide](https://github.com/evanharmon1/harmon-init/blob/main/docs/guides/sprites.md).
 [% endif %]
 [% endif %]
-- [ ] Import the branch ruleset (see [architecture/branch-protection.md](architecture/branch-protection.md)) — do this once `build.yml`[% if use_codeql %], `codeql.yml`[% endif %][% if include_terraform %], `terraform.yml`[% endif %][% if devcontainer %], `devcontainer-build.yml`[% endif %] are on `main` so the required `verify`/`security`[% if use_codeql %]/`codeql-verify`[% endif %][% if include_terraform %]/`terraform-verify`[% endif %][% if devcontainer %]/`devcontainer-verify`[% endif %] checks resolve. **Use the UI import:** Settings → Rules → Rulesets → **New ruleset ▸ Import a ruleset** → select `.github/Branch Protection Ruleset - Protect Main.json`. (Prefer the UI over `gh api … rulesets`: the API `POST` is not idempotent — re-running creates a duplicate ruleset — and currently rejects the `merge_queue` rule. To later change the ruleset, edit the existing one in the UI rather than re-importing.)
 - [ ] **[human-only] Add `closing-keywords` to the live branch ruleset** —
       **required, not optional, and no longer deferrable.** Until
       harmon-init#1328 the guard was enforced *transitively*: the job sat in
