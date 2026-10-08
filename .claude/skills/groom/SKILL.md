@@ -32,7 +32,14 @@ recommending a `/triage` run.
   comment`, `gh label`, or any other writing command yourself.
 - **`audit` mode (the default) writes nothing to GitHub.** Scan, fan out,
   consolidate, and report — every write-capable script runs without
-  `--execute` and prints `PLAN <exact command>` lines only.
+  `--execute` and prints `PLAN <exact command>` lines only. Under a label
+  row's `PLAN` line, the indented lines are `triage-apply.sh`'s own dry run:
+  the derived writes that row would make (issue fields, the Tier label, the
+  needs-triage change). At execute they are computed again from the live
+  issue, so they can differ from this dry run if the issue changed in
+  between; the call refuses (exit 4) only on a change during its own run. If
+  time has passed or the issue was edited, re-run the dry run before
+  executing.
 - **`--execute` is refused unless `GROOM_EXECUTE=1`** is in the environment —
   set only by the `task groom` wrapper for a supervised run. A model cannot
   promote itself to write mode by adding a flag.
@@ -90,13 +97,22 @@ recommending a `/triage` run.
 Read-only. Emits every open issue (with `age_days`, `days_since_update`,
 `bot_owned`, conformance block, and title health already computed), the milestone list, and
 whether the project board is readable (`board_access`) — note it rather than
-guessing when it is not.
+guessing when it is not. Every active classification axis requires one
+recognized label, including Layer; an explicit value such as `layer:none`
+counts as decided. An absent axis label is reported as `axis-missing:<axis>`.
 
 ### Pre-audit triage pass
 
 Before clustering and fanning out to subagents (Step 2), check whether the backlog requires a triage pass first:
 
-- **When to run**: Run a triage pass whenever `unclassified > 5` or `(unclassified / total_open) > 0.10` (where `unclassified` is the count of open issues carrying `missing-work-type` or `needs-triage` flags). Running a triage pass first ensures issues carry proper area/domain and work-type labels, which produces coherent domain clusters for Step 2.
+- **When to run**: Run a triage pass whenever `unclassified > 5` or
+  `(unclassified / total_open) > 0.10`. `unclassified` counts each open issue
+  once if its `conformance.flags` contains `missing-work-type`, any
+  `axis-missing:*`, `partially-classified`, or `missing-needs-triage`, or its
+  `labels` contains `needs-triage`. An issue matching several conditions
+  still counts once. Running a triage pass first ensures issues carry labels
+  for every active classification axis and a work type, which produces
+  coherent domain clusters for Step 2.
 - **Sharing `$SCRATCH`**: Both skills run in the same `$SCRATCH` workspace. Triage writes its scan to `$SCRATCH/triage-scan.json` and its report to `$SCRATCH/triage-report.md`. Both skills share the underlying scan projection (`ai/skills/universal/issue-title-support/assets/issue-conformance.jq`) and label vocabulary discovery (`ai/skills/universal/triage/assets/triage-apply.sh`).
 - **Reporting**: Groom's consolidation step records whether the pre-audit triage pass ran via `groom-verdicts.sh join ... --pre-audit-triage <ran|not run>`, and the generated report's `## Stats` summary block explicitly reports `- Pre-audit triage pass: <ran|not run>`.
 
@@ -291,7 +307,13 @@ Dry-run each command first by omitting the SCRIPT's own trailing `--execute`
 confirmation, `GROOM_EXECUTE=1`, then `exec`); without the script's own
 `--execute` in the forwarded arguments, the script itself still only prints
 `PLAN` lines and writes nothing. Review the `PLAN` lines against what the
-maintainer actually approved, then re-run with the script's own `--execute`
+maintainer actually approved — for a label row, including the indented
+`triage-apply.sh` dry-run lines beneath it, which show the derived writes
+(issue fields, the Tier label, the needs-triage change) the row would make.
+At execute those are computed again from the live issue, so they can differ
+from the dry run if the issue changed in between; the call refuses only on a
+change during its own run, so re-run the dry run first if time has passed or
+the issue was edited — then re-run with the script's own `--execute`
 appended — only when your runner's mode is APPLY. Run these, in order:
 
 1. `task groom -- --execute groom-apply.sh apply-plan --repo "$REPO" \
