@@ -31,10 +31,11 @@ sandbox=""
 setup() {
     # `pwd -P` because macOS mktemp hands back /var/... while git and readlink
     # report the resolved /private/var/..., which would break path comparisons.
-    # Two steps: in one, a failed mktemp is swallowed and `cd ""` makes the
-    # checkout the sandbox that teardown removes.
-    sandbox="$(mktemp -d)"
-    sandbox="$(cd "$sandbox" && pwd -P)"
+    # Two steps, each stopped by its own || exit 1 (not left to set -e): one
+    # command, cd "$(mktemp -d)", would swallow a failed mktemp and `cd ""` would
+    # resolve the checkout itself as the directory the teardown removes.
+    sandbox="$(mktemp -d)" || exit 1
+    sandbox="$(cd "$sandbox" && pwd -P)" || exit 1
     mkdir -p "$sandbox/fakehome" "$sandbox/repo/.meta"
     git -C "$sandbox/repo" init -q
 }

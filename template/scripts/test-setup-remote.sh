@@ -18,10 +18,11 @@ export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 # scripts/setup-remote.sh resolves the checkout with pwd -P (physical); a
 # symlinked TMPDIR such as macOS's /var would otherwise make the printed and
 # asserted paths differ (#1457).
-# Two steps: a failed mktemp must stop the test here (set -e), not leave
-# `cd ""` resolving the checkout itself as the directory the trap removes.
-TMP="$(mktemp -d)"
-TMP="$(cd "${TMP}" && pwd -P)"
+# Two steps, each stopped by its own || exit 1 (not left to set -e): one
+# command, cd "$(mktemp -d)", would swallow a failed mktemp and `cd ""` would
+# resolve the checkout itself as the directory the trap removes.
+TMP="$(mktemp -d)" || exit 1
+TMP="$(cd "${TMP}" && pwd -P)" || exit 1
 # A scenario may chmod a directory read-only; restore write access before removing it.
 trap 'chmod -R u+w "${TMP}" 2>/dev/null; rm -rf "${TMP}"' EXIT
 
@@ -159,8 +160,8 @@ run_setup() {
 # all_output — both streams: task's grouped output folds stderr into stdout.
 all_output() { cat "${OUT}" "${ERR}"; }
 
-# grep the captured output files directly: piping a writer into grep -q under
-# pipefail can fail on SIGPIPE although the text is present (#1508)
+# output_has <pattern> — grep the captured files directly: piping a writer into
+# grep -q under pipefail can fail on SIGPIPE although the text is present (#1508).
 output_has() { grep -q -- "$1" "${OUT}" "${ERR}"; }
 
 # digest <dir> — every path and every file's content, so "changes nothing" means it.
