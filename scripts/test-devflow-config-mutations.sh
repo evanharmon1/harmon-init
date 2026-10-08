@@ -595,8 +595,8 @@ reader_reversion_is_killed council-input-tier \
     'model.tier === resolved.roles.implementer.tier)'
 reader_reversion_is_killed pool-input-tier \
     unachievable-derived-tier-stays-advisory-with-a-stage-pool \
-    'model.tier === authoredTierOf(roleConfig))' \
-    'model.tier === roleConfig.tier)'
+    'tier: authoredTierOf(roleConfig),' \
+    'tier: roleConfig.tier,'
 reader_reversion_is_killed role-input-tier \
     matrix-corner-xs-trivial-derives-local \
     'const authoredTier = authoredTierOf(r)' \
