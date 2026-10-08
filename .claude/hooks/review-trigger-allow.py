@@ -4,14 +4,18 @@
 Active on the host and dev profile. Bot/agent profiles return no decision:
 those unattended postures use their managed permissions rather than this
 interactive prompt-reduction hook. Profile comes from the hook environment.
+Non-github.com GH_HOST settings also return no decision.
 
 Only literal gh pr comment calls with a positive PR number and one fixed
 review body, or the installed broker's trigger (optionally via bash), qualify.
 Flags may be reordered but never repeated or extended. The repository comes
 from CLAUDE_PROJECT_DIR's origin, never from the command. Broker realpaths
-must be inside that project or a registered worktree sharing its Git common
-directory. Unsupported syntax, missing metadata, and errors stay silent so
-normal permissions apply. This hook never executes the submitted command.
+must equal the installed broker path in that project, unresolved, so a symlink
+there cannot stand in for an outside file. The in-project broker's bytes are
+trusted the way the existing Bash(task:*) allow already trusts in-repo
+Taskfile content. Unsupported syntax, missing metadata, and errors stay
+silent so normal permissions apply. This hook never executes the submitted
+command.
 
 Use shlex for quoted words, after conservatively rejecting every shell
 expansion/operator/escape/comment character, even within quotes. This small
@@ -76,20 +80,9 @@ def broker_in_repository(word, cwd, project):
     resolved = (path if path.is_absolute() else cwd / path).resolve(strict=True)
     if not resolved.is_file():
         return False
-    common = Path(git(project, "rev-parse", "--path-format=absolute", "--git-common-dir").strip()).resolve()
-    worktrees = git(project, "worktree", "list", "--porcelain", "-z").split("\0")
-    for field in worktrees:
-        if not field.startswith("worktree "):
-            continue
-        root = Path(field[len("worktree "):]).resolve(strict=True)
-        # Compare against the un-resolved expected suffix too: a symlink in
-        # the installed broker path must not turn an outside file into it.
-        if resolved != root / BROKER:
-            continue
-        candidate_common = Path(git(root, "rev-parse", "--path-format=absolute", "--git-common-dir").strip()).resolve()
-        if candidate_common == common:
-            return True
-    return False
+    # Compare against the un-resolved expected path: a symlink at the installed
+    # broker location must not turn an outside file into the broker.
+    return resolved == project / BROKER
 
 
 def allows(command, cwd, project):
@@ -117,6 +110,9 @@ def allows(command, cwd, project):
 
 def main():
     if os.environ.get("FOREMAN_DEVCONTAINER", "").strip().lower() in {"bot", "agent"}:
+        return
+    host = os.environ.get("GH_HOST", "").strip().lower()
+    if host and host != "github.com":
         return
     try:
         payload = json.load(sys.stdin)

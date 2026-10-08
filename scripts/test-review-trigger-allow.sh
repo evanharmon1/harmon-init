@@ -16,6 +16,7 @@ source = Path.cwd()
 env = {k: v for k, v in os.environ.items() if not k.startswith("GIT_")}
 env.update(GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_SYSTEM="/dev/null",
            GIT_CONFIG_NOSYSTEM="1", FOREMAN_DEVCONTAINER="dev")
+env.pop("GH_HOST", None)
 claude_body = "@" + "claude" + " review"
 suffix = Path(".claude/skills/integrate/assets/gh-write-broker.sh")
 count = 0
@@ -39,12 +40,14 @@ def fixture(path):
     return broker
 
 
-def expect(hook, command, allow=False, project=None, cwd=None, profile="dev", payload=None):
+def expect(hook, command, allow=False, project=None, cwd=None, profile="dev", payload=None, gh_host=None):
     global count
     project = root if project is None else project
     cwd = root if cwd is None else cwd
     data = {"tool_name": "Bash", "cwd": str(cwd), "tool_input": {"command": command}}
     hook_env = dict(env, CLAUDE_PROJECT_DIR=str(project), FOREMAN_DEVCONTAINER=profile)
+    if gh_host is not None:
+        hook_env["GH_HOST"] = gh_host
     result = subprocess.run(["python3", str(hook)], env=hook_env, text=True,
                             input=json.dumps(data) if payload is None else payload,
                             capture_output=True, check=True, timeout=15)
@@ -86,13 +89,20 @@ with tempfile.TemporaryDirectory(prefix="review-trigger-test-") as directory:
                 for options in [f"--repo example/project --body {quote}{body}{quote}",
                                 f"--body {quote}{body}{quote} --repo 'example/project'"]:
                     expect(hook, "gh pr comment 7 " + options, True)
-        for path in [str(broker), str(wt_broker), ".claude/skills/integrate/assets/gh-write-broker.sh",
+        for path in [str(broker), ".claude/skills/integrate/assets/gh-write-broker.sh",
                      "./.claude/skills/integrate/assets/gh-write-broker.sh", str(inside_link)]:
             for prefix in ["", "bash "]:
                 for options in ["--repo example/project --pr 7", "--pr 7 --repo example/project"]:
                     expect(hook, prefix + shlex.quote(path) + " trigger " + options, True)
         expect(hook, "./.claude/skills/integrate/assets/gh-write-broker.sh trigger --pr 7 --repo example/project",
-               True, cwd=wt)
+               cwd=wt)
+        # A second worktree is not the active project, even with the same origin.
+        expect(hook, shlex.quote(str(wt_broker)) + " trigger --repo example/project --pr 7")
+        for gh_host in [None, "", "github.com", "GitHub.com"]:
+            expect(hook, comment, True, gh_host=gh_host)
+            expect(hook, trigger, True, gh_host=gh_host)
+        expect(hook, comment, gh_host="ghe.example.com")
+        expect(hook, trigger, gh_host="ghe.example.com")
         for profile in ["", "dev"]:
             expect(hook, comment, True, profile=profile)
         for profile in ["bot", "agent", "Agent"]:
