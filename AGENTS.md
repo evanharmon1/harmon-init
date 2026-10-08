@@ -636,14 +636,20 @@ meets its exit condition on round 1 is done, whatever the cap allowed.
   with reviews unpolled is not the stopping point — then promote it through the
   readiness gate, report, and stop; merging is always a human decision.
   (`.claude/settings.json` backstops this with `permissions.ask` rules on
-  `gh pr merge`, pushes to main and force-pushes, plus the `git-merge-guard`
-  hook, which asks before any `git merge`/`git pull` it cannot verify lands on
-  a feature branch. The hook parses each command, so quoted text and heredoc
-  bodies that no shell runs, search patterns and `git merge-base` are data and
-  need no workaround.
-  It applies in the dev profile only; with `FOREMAN_DEVCONTAINER` set to `bot`
-  or `agent` it makes no merge checks, and the "Protect Main" ruleset is the
-  boundary there.) `gh pr ready` is *not* a merge and agents may run it — but only
+  pushes to main and force-pushes, plus the `git-merge-guard` hook, which asks
+  before any `git merge`/`git pull` it cannot verify lands on a feature
+  branch. The hook parses each command, so quoted text and heredoc bodies that
+  no shell runs, search patterns and `git merge-base` are data and need no
+  workaround. The project settings carry no `gh pr merge` ask: that prompt
+  comes only from the user's own settings on a host and from the dev
+  devcontainer's managed-settings drop-in
+  (`.devcontainer/config/claude-settings-dev.json`). The hook, too, applies in
+  the dev profile only; with `FOREMAN_DEVCONTAINER` set to `bot` or `agent` it
+  makes no merge checks. The bot and agent profiles carry no merge guard at
+  all — the agent profile explicitly allows `gh pr merge` — and the "Protect
+  Main" ruleset (code-owner approval + green checks) is the boundary there; see
+  [docs/decisions/2026-10-07-bot-and-agent-postures-carry-no-merge-guards.md](docs/decisions/2026-10-07-bot-and-agent-postures-carry-no-merge-guards.md).)
+  `gh pr ready` is *not* a merge and agents may run it — but only
   out of a passing readiness gate, never to signal "I think this looks done".
 - **Reply to every inline PR review comment in its own thread** — bot
   reviewers and humans alike. Treat findings as

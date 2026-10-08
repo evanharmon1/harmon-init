@@ -224,7 +224,8 @@ Be precise about what the grant concedes, because it is not nothing. The
 launch line decides the *worker's* gate, and the lines this rule exists to
 permit start a child with no approval layer at all — so an orchestrator that
 can launch a worker can reach anything its own `ask` rules would have stopped
-(this repo asks on `gh pr merge`; on any `git merge`/`git pull` that the
+(this repo asks on `gh pr merge` in the dev devcontainer profile only, through
+its managed-settings drop-in; on any `git merge`/`git pull` that the
 `git-merge-guard` hook cannot verify lands on a feature branch; on
 `git push origin main`; and on force-pushes) simply by asking a child to do it. That is accepted here for two
 reasons, neither of which is "it is safe": the orchestrator already holds
