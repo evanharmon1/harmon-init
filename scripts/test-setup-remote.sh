@@ -15,7 +15,9 @@ unset NODE_OPTIONS GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_CONFIG_COUNT GIT_CON
 # Hermetic git: a platform may inject config (SSH->HTTPS rewrites, hooks paths).
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 
-TMP="$(mktemp -d)"
+# git rev-parse --show-toplevel is physical; a symlinked TMPDIR such as macOS's
+# /var would otherwise make the printed and asserted paths differ (#1457).
+TMP="$(cd "$(mktemp -d)" && pwd -P)"
 # A scenario may chmod a directory read-only; restore write access before removing it.
 trap 'chmod -R u+w "${TMP}" 2>/dev/null; rm -rf "${TMP}"' EXIT
 
@@ -153,6 +155,10 @@ run_setup() {
 # all_output — both streams: task's grouped output folds stderr into stdout.
 all_output() { cat "${OUT}" "${ERR}"; }
 
+# grep the captured output files directly: piping a writer into grep -q under
+# pipefail can fail on SIGPIPE although the text is present (#1508)
+output_has() { grep -q -- "$1" "${OUT}" "${ERR}"; }
+
 # digest <dir> — every path and every file's content, so "changes nothing" means it.
 digest() {
     (cd "$1" && find . | LC_ALL=C sort && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 cksum)
@@ -181,16 +187,16 @@ if [ "$HAVE_BOOTSTRAP" = 1 ]; then
     [ "$(cat "${FIX_PARENT}/existing-repo/marker.txt")" = "custom-content" ] || fail "an existing directory must not be modified"
     [ ! -d "${FIX_PARENT}/existing-repo/.git" ] || fail "an existing directory must not be cloned over"
     [ -z "$(find "${FIX_PARENT}" -name '.bootstrap-*' -print -quit)" ] || fail "no temporary bootstrap directory may survive"
-    all_output | grep -q 'WARNING: failed to clone test-owner/missing-repo' || fail "the uncloneable repository must produce a warning: $(all_output)"
-    all_output | grep -q "Skipping existing-repo" || fail "the existing directory must be reported as skipped"
-    all_output | grep -q "cloned into ${FIX_PARENT}" || fail "the task must print where it cloned"
-    all_output | grep -q 'reference context' || fail "the task must say siblings are reference context"
-    all_output | grep -q 'private to you' || fail "the task must state that the target directory must be private to the user"
+    output_has 'WARNING: failed to clone test-owner/missing-repo' || fail "the uncloneable repository must produce a warning: $(all_output)"
+    output_has "Skipping existing-repo" || fail "the existing directory must be reported as skipped"
+    output_has "cloned into ${FIX_PARENT}" || fail "the task must print where it cloned"
+    output_has 'reference context' || fail "the task must say siblings are reference context"
+    output_has 'private to you' || fail "the task must state that the target directory must be private to the user"
     [ -s "${LOG_DIR}/git-ssh.log" ] || fail "expected git to be invoked with GIT_SSH_COMMAND recorded"
     [ "$(sort -u "${LOG_DIR}/git-ssh.log")" = "ssh -oBatchMode=yes" ] || fail "git must run with GIT_SSH_COMMAND=\"ssh -oBatchMode=yes\" (so an ssh remote cannot prompt), got: $(sort -u "${LOG_DIR}/git-ssh.log")"
-    all_output | grep -q "session's own repository" || fail "the task must say siblings cannot be pushed from Claude Code on the web"
+    output_has "session's own repository" || fail "the task must say siblings cannot be pushed from Claude Code on the web"
 else
-    all_output | grep -q 'is not present in this repository' || fail "without the bootstrap script the task must report the related repos as skipped: $(all_output)"
+    output_has 'is not present in this repository' || fail "without the bootstrap script the task must report the related repos as skipped: $(all_output)"
     [ -z "$(find "${FIX_PARENT}" -mindepth 1 -maxdepth 1 ! -name checkout ! -name existing-repo -print -quit)" ] || fail "nothing may be cloned without the bootstrap script"
 fi
 
@@ -218,7 +224,7 @@ grep -qx 'install --frozen-lockfile' "${LOG_DIR}/pnpm.log" || fail "pnpm must in
 grep -qx 'sync --frozen' "${LOG_DIR}/uv.log" || fail "uv must sync --frozen"
 [ "$(cat "${LOG_DIR}/pnpm.ci")" = "true" ] || fail "pnpm must receive CI=true whatever was inherited, got: $(cat "${LOG_DIR}/pnpm.ci")"
 [ "$(cat "${LOG_DIR}/uv.ci")" = "true" ] || fail "uv must receive CI=true whatever was inherited, got: $(cat "${LOG_DIR}/uv.ci")"
-all_output | grep -q 'no .devcontainer/related-repos.txt' || fail "a missing related-repos.txt must be reported as skipped"
+output_has 'no .devcontainer/related-repos.txt' || fail "a missing related-repos.txt must be reported as skipped"
 
 echo "==> no lockfile means no dependency install"
 make_fixture nodeps -
@@ -259,8 +265,8 @@ if [ "$HAVE_BOOTSTRAP" = 1 ]; then
         run_setup "${STUBS_PATH}"
         chmod 755 "${FIX_PARENT}"
         [ "$rc" -eq 0 ] || fail "a non-writable parent is a skip, not a failure (rc=$rc): $(all_output)"
-        all_output | grep -q '^  - related repos: .*is not writable' || fail "the related repos must be listed under Skipped: $(all_output)"
-        ! all_output | grep -q '^  + related repos' || fail "a non-writable parent must not be reported as Ran: $(all_output)"
+        output_has '^  - related repos: .*is not writable' || fail "the related repos must be listed under Skipped: $(all_output)"
+        ! output_has '^  + related repos' || fail "a non-writable parent must not be reported as Ran: $(all_output)"
         [ ! -e "${LOG_DIR}/gh.log" ] || fail "the bootstrap must not run against a non-writable parent"
         [ ! -e "${FIX_PARENT}/sibling-a" ] || fail "nothing may be cloned into a non-writable parent"
     fi
@@ -271,7 +277,7 @@ echo "==> a missing lefthook is reported and the run continues"
 make_fixture nolefthook -
 run_setup "${MIN_BIN}" # no lefthook on PATH
 [ "$rc" -eq 0 ] || fail "a missing lefthook is a skip, not a failure (rc=$rc): $(all_output)"
-all_output | grep -q 'lefthook is not on PATH' || fail "a missing lefthook must be reported as skipped: $(all_output)"
+output_has 'lefthook is not on PATH' || fail "a missing lefthook must be reported as skipped: $(all_output)"
 [ ! -e "${FIX}/.git/hooks/pre-push" ] || fail "no pre-push shim can exist without lefthook"
 
 # --- Every config name lefthook itself searches for counts ---
@@ -289,14 +295,14 @@ make_fixture cfg-none -
 rm -f "${FIX}/lefthook.yml" "${LOG_DIR}/lefthook.log"
 run_setup "${STUBS_PATH}"
 [ ! -e "${LOG_DIR}/lefthook.log" ] || fail "without any lefthook config, lefthook install must not run"
-all_output | grep -q 'no lefthook config' || fail "a missing lefthook config must be reported as skipped"
+output_has 'no lefthook config' || fail "a missing lefthook config must be reported as skipped"
 
 # --- A step that could run and failed is a non-zero exit, and later steps still run ---
 echo "==> a failing lefthook fails the task but the related repos are still cloned"
 make_fixture failing "test-owner/sibling-a"
 run_setup "${STUBS_PATH}" STUB_LEFTHOOK=fail
 [ "$rc" -ne 0 ] || fail "a failed lefthook install must produce a non-zero exit"
-all_output | grep -q 'lefthook install failed' || fail "the failure must be named: $(all_output)"
+output_has 'lefthook install failed' || fail "the failure must be named: $(all_output)"
 if [ "$HAVE_BOOTSTRAP" = 1 ]; then
     [ -d "${FIX_PARENT}/sibling-a/.git" ] || fail "later steps must still run after a failed step"
 fi
