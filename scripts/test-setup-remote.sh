@@ -15,8 +15,9 @@ unset NODE_OPTIONS GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_CONFIG_COUNT GIT_CON
 # Hermetic git: a platform may inject config (SSH->HTTPS rewrites, hooks paths).
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 
-# git rev-parse --show-toplevel is physical; a symlinked TMPDIR such as macOS's
-# /var would otherwise make the printed and asserted paths differ (#1457).
+# scripts/setup-remote.sh resolves the checkout with pwd -P (physical); a
+# symlinked TMPDIR such as macOS's /var would otherwise make the printed and
+# asserted paths differ (#1457).
 # Two steps: a failed mktemp must stop the test here (set -e), not leave
 # `cd ""` resolving the checkout itself as the directory the trap removes.
 TMP="$(mktemp -d)"

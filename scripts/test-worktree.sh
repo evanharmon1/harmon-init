@@ -89,7 +89,7 @@ refute_exists() {
 # `pwd -P` because macOS mktemp hands back /var/... while git reports the
 # physical /private/var/... — the two must agree for the path assertions below.
 # Two steps: in one, a failed mktemp is swallowed and `cd ""` makes the
-# checkout the directory the cleanup below removes (#1508).
+# checkout the directory the cleanup below removes.
 test_tmp="$(mktemp -d -t harmon-init-worktree-XXXXXX)"
 test_tmp="$(cd "$test_tmp" && pwd -P)"
 # The sentinel lives OUTSIDE $test_tmp because the cleanup below removes that

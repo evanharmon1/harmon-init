@@ -32,7 +32,7 @@ setup() {
     # `pwd -P` because macOS mktemp hands back /var/... while git and readlink
     # report the resolved /private/var/..., which would break path comparisons.
     # Two steps: in one, a failed mktemp is swallowed and `cd ""` makes the
-    # checkout the sandbox that teardown removes (#1508).
+    # checkout the sandbox that teardown removes.
     sandbox="$(mktemp -d)"
     sandbox="$(cd "$sandbox" && pwd -P)"
     mkdir -p "$sandbox/fakehome" "$sandbox/repo/.meta"
