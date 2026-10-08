@@ -33,9 +33,13 @@ import sys
 
 BROKER = Path(".claude/skills/integrate/assets/gh-write-broker.sh")
 BODIES = {"/gemini review", "@" + "claude" + " review"}
-UNSAFE = re.compile(r"[\x00-\x1f\x7f$`\\;&|<>(){}*?\[\]#!~]")
+# ^ is a zsh EXTENDED_GLOB operator; adjacent quotes are where zsh RC_QUOTES
+# reads a literal quote that shlex would drop.
+UNSAFE = re.compile(r"[\x00-\x1f\x7f$`\\;&|<>(){}*?\[\]#!~^]|''|\"\"")
 NUMBER = re.compile(r"[1-9][0-9]*")
-REPOSITORY = re.compile(r"[A-Za-z0-9_-][A-Za-z0-9_.-]*/[A-Za-z0-9_-][A-Za-z0-9_.-]*")
+# A repository name may start with a dot (an organization's .github), but is
+# never . or .. alone.
+REPOSITORY = re.compile(r"[A-Za-z0-9_-][A-Za-z0-9_.-]*/(?!\.\.?$)[A-Za-z0-9_.-]+")
 
 
 def git(project, *args):
@@ -48,7 +52,8 @@ def git(project, *args):
 
 
 def repository(project):
-    remote = git(project, "remote", "get-url", "origin").strip()
+    # The configured URL, not get-url's: a url.insteadOf rewrite is transport.
+    remote = git(project, "config", "--get", "remote.origin.url").strip()
     # GitHub HTTPS and SSH transport spellings; local/file remotes and
     # ambiguous hosts/credentials do not establish a GitHub repository.
     match = re.fullmatch(
@@ -122,6 +127,11 @@ def main():
         payload = json.load(sys.stdin)
         if payload.get("tool_name") != "Bash":
             return
+        command = payload["tool_input"]["command"]
+        # Cheap shape check first: this hook sees every Bash call.
+        if not isinstance(command, str) or not (
+                command.startswith("gh pr comment ") or " trigger " in command):
+            return
         project = Path(os.environ["CLAUDE_PROJECT_DIR"])
         cwd = Path(payload["cwd"])
         if not project.is_absolute() or not cwd.is_absolute():
@@ -130,7 +140,7 @@ def main():
         # CLAUDE_PROJECT_DIR must actually identify a project root.
         if Path(git(project, "rev-parse", "--show-toplevel").strip()).resolve() != project:
             return
-        if not allows(payload["tool_input"]["command"], cwd, project):
+        if not allows(command, cwd, project):
             return
     except Exception:
         return  # no decision, never fail open

@@ -142,6 +142,12 @@ with tempfile.TemporaryDirectory(prefix="review-trigger-test-") as directory:
             "bash PATH=evil:z/../" + str(suffix) + " trigger --repo example/project --pr 7",
             "bash -o/../" + str(suffix) + " trigger --repo example/project --pr 7",
             "bash +o/../" + str(suffix) + " trigger --repo example/project --pr 7",
+            # zsh: RC_QUOTES reads '' as a literal quote; EXTENDED_GLOB reads ^.
+            "bash '.''" + str(suffix)[1:] + "' trigger --repo example/project --pr 7",
+            comment.replace("'/gemini review'", "'/gemini'' review'"),
+            comment.replace("'/gemini review'", '"/gemini"" review"'),
+            comment.replace("example/project", "example/proj^ect"),
+            " " + comment,
         ]
         for body in ["/gemini review", claude_body]:
             base = "gh pr comment 7 --repo example/project --body " + shlex.quote(body)
@@ -160,7 +166,17 @@ with tempfile.TemporaryDirectory(prefix="review-trigger-test-") as directory:
         for remote in [str(tmp / "local.git"), "https://evil.example/example/project.git"]:
             git(root, "remote", "set-url", "origin", remote)
             expect(hook, comment)
+        # A repository name may start with a dot, but is never . or .. alone.
+        git(root, "remote", "set-url", "origin", "https://github.com/example/.github.git")
+        expect(hook, comment.replace("example/project", "example/.github"), True)
+        for name in [".", ".."]:
+            git(root, "remote", "set-url", "origin", f"https://github.com/example/{name}.git")
+            expect(hook, comment.replace("example/project", f"example/{name}"))
+        # The configured URL counts, not an insteadOf rewrite of it.
         git(root, "remote", "set-url", "origin", "https://github.com/example/project.git")
+        git(root, "config", "url.https://github.com/another/.insteadOf", "https://github.com/example/")
+        expect(hook, comment, True)
+        git(root, "config", "--unset", "url.https://github.com/another/.insteadOf")
         expect(hook, comment, payload="not json")
         expect(hook, comment, payload='{"tool_name":"Bash","tool_input":null}')
         expect(hook, comment, payload=json.dumps({"tool_name": "Read"}))
