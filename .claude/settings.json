@@ -27,9 +27,6 @@
       "Bash(gh issue view *)",
       "Bash(gh label list)",
       "Bash(gh label list *)",
-      "Bash(*/.claude/skills/integrate/assets/gh-write-broker.sh trigger --repo evanharmon1/harmon-init --pr *)",
-      "Bash(gh pr comment * --repo evanharmon1/harmon-init --body '/gemini review')",
-      "Bash(gh pr comment * --repo evanharmon1/harmon-init --body '\u0040claude review')",
       "Bash(gh pr checks)",
       "Bash(gh pr checks *)",
       "Bash(gh pr diff)",
@@ -114,6 +111,15 @@
   },
   "hooks": {
     "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"$CLAUDE_PROJECT_DIR/.claude/hooks/review-trigger-allow.py\" || true"
+          }
+        ]
+      },
       {
         "matcher": "Bash",
         "hooks": [

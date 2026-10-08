@@ -991,6 +991,12 @@ tasks:
     desc: Round-trip the Taskfile targets the Claude hooks delegate to
     cmds:
       - ./scripts/test-hooks.sh
+      - task: test:review-trigger-allow
+
+  test:review-trigger-allow:
+    desc: Exact review-trigger hook command and repository scope
+    cmds:
+      - ./scripts/test-review-trigger-allow.sh
 
 [% if use_node %]
 
