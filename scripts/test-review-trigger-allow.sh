@@ -64,6 +64,8 @@ with tempfile.TemporaryDirectory(prefix="review-trigger-test-") as directory:
     tmp = Path(directory).resolve()
     root = tmp / "project"
     broker = fixture(root)
+    eq_root = tmp / "issue=1557"
+    fixture(eq_root)
     wt = tmp / "worktree with space"
     git(root, "worktree", "add", "-q", "-b", "lane", str(wt))
     wt_broker = wt / suffix
@@ -148,6 +150,7 @@ with tempfile.TemporaryDirectory(prefix="review-trigger-test-") as directory:
             comment.replace("'/gemini review'", '"/gemini"" review"'),
             comment.replace("example/project", "example/proj^ect"),
             " " + comment,
+            "=" + trigger,
         ]
         for body in ["/gemini review", claude_body]:
             base = "gh pr comment 7 --repo example/project --body " + shlex.quote(body)
@@ -160,6 +163,8 @@ with tempfile.TemporaryDirectory(prefix="review-trigger-test-") as directory:
         for command in attacks:
             expect(hook, command)
         for remote in ["git@github.com:example/project.git", "ssh://git@github.com/example/project.git",
+                       "ssh://git@ssh.github.com/example/project.git",
+                       "ssh://git@ssh.github.com:443/example/project.git",
                        "https://github.com/example/project"]:
             git(root, "remote", "set-url", "origin", remote)
             expect(hook, comment, True)
@@ -172,6 +177,19 @@ with tempfile.TemporaryDirectory(prefix="review-trigger-test-") as directory:
         for name in [".", ".."]:
             git(root, "remote", "set-url", "origin", f"https://github.com/example/{name}.git")
             expect(hook, comment.replace("example/project", f"example/{name}"))
+        git(root, "remote", "set-url", "origin", "https://github.com/example/project.git")
+        # GitHub names are case-insensitive.
+        for command in [comment, trigger]:
+            expect(hook, command.replace("example/project", "Example/Project"), True)
+        # Two origin URLs are ambiguous: neither is approved.
+        git(root, "remote", "set-url", "--add", "origin", "https://github.com/another/project.git")
+        expect(hook, comment)
+        expect(hook, comment.replace("example/project", "another/project"))
+        git(root, "remote", "set-url", "--delete", "origin", "another")
+        expect(hook, comment, True)
+        # A checkout whose path contains = is still the active project.
+        eq_broker = eq_root / suffix
+        expect(hook, f"{eq_broker} trigger --repo example/project --pr 7", True, project=eq_root, cwd=eq_root)
         # The configured URL counts, not an insteadOf rewrite of it.
         git(root, "remote", "set-url", "origin", "https://github.com/example/project.git")
         git(root, "config", "url.https://github.com/another/.insteadOf", "https://github.com/example/")
