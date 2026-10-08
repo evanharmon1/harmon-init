@@ -17,7 +17,10 @@ export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 
 # git rev-parse --show-toplevel is physical; a symlinked TMPDIR such as macOS's
 # /var would otherwise make the printed and asserted paths differ (#1457).
-TMP="$(cd "$(mktemp -d)" && pwd -P)"
+# Two steps: a failed mktemp must stop the test here (set -e), not leave
+# `cd ""` resolving the checkout itself as the directory the trap removes.
+TMP="$(mktemp -d)"
+TMP="$(cd "${TMP}" && pwd -P)"
 # A scenario may chmod a directory read-only; restore write access before removing it.
 trap 'chmod -R u+w "${TMP}" 2>/dev/null; rm -rf "${TMP}"' EXIT
 
