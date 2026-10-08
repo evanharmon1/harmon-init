@@ -2117,6 +2117,45 @@
           }
         }
       }
+    },
+    {
+      "name": "derived-tier-unachievable-when-pool-excludes-compatible-harness",
+      "basis": "branch",
+      "config_replacements": [
+        ["\"claude\", \"gpt\", \"gemini\"", "\"gpt\", \"claude\""],
+        [
+          "harnesses = [\"claude-code\", \"codex-cli\", \"antigravity\"]",
+          "harnesses = [\"claude-code\", \"codex-cli\"]"
+        ],
+        ["[stage.implement]", "[stage.implement]\npool = [\"claude-code\"]"]
+      ],
+      "registry_replacements": [
+        [
+          "{ \"slug\": \"fable\", \"display_name\": \"Fable\", \"tier\": \"apex\" }",
+          "{ \"slug\": \"fable\", \"display_name\": \"Fable\", \"tier\": \"frontier\" }"
+        ]
+      ],
+      "issue": {
+        "risk": "critical",
+        "complexity": "m"
+      },
+      "expect": {
+        "exit": 0,
+        "warning_diagnostics": [
+          {
+            "code": "tier-unachievable",
+            "subject": "implementer"
+          }
+        ],
+        "result": {
+          "tiers": {
+            "implementer": {
+              "value": "apex",
+              "source": "derived"
+            }
+          }
+        }
+      }
     }
   ]
 }

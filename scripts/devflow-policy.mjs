@@ -1277,6 +1277,53 @@ function authoredTierOf(roleEntry) {
   return roleEntry?.profile_tier ?? roleEntry?.tier
 }
 
+const STAGE_ROLES = {
+  implement: 'implementer',
+  challenge: 'challenger',
+  review: 'reviewer',
+  integration: 'integrator'
+}
+
+// Capability is one tuple, including the intersection of role preferences
+// and an optional stage pool. Historical registries can omit model metadata;
+// callers that need affirmative model evidence set requireModel.
+function hasExecutableTuple({
+  role,
+  roleConfig,
+  tier,
+  pool,
+  harnessBySlug,
+  familyBySlug,
+  requireModel = false
+}) {
+  if (!roleConfig) return false
+  const preferences = roleConfig.harnesses ?? []
+  const candidates =
+    pool ?? (preferences.length > 0 ? preferences : [...harnessBySlug.keys()])
+  return roleConfig.families.some((familySlug) => {
+    const family = familyBySlug.get(familySlug)
+    if (!family) return false
+    if (Array.isArray(family.models)) {
+      if (!family.models.some((model) => model.tier === tier)) return false
+    } else if (requireModel) {
+      return false
+    }
+    // The orchestrator is the driving session, not a registry-dispatched
+    // result-producing role (the existing exemption from eb199d03d).
+    if (role === 'orchestrator') return true
+    return candidates.some((slug) => {
+      const harness = harnessBySlug.get(slug)
+      if (!harness || (preferences.length > 0 && !preferences.includes(slug)))
+        return false
+      return (
+        (!Array.isArray(harness.roles) || harness.roles.includes(role)) &&
+        (harness.family_constraint?.kind !== 'fixed' ||
+          harness.family_constraint.family === familySlug)
+      )
+    })
+  })
+}
+
 export function crossValidate(resolved, registryDoc, taskTargets) {
   const errors = []
 
@@ -1511,16 +1558,16 @@ export function crossValidate(resolved, registryDoc, taskTargets) {
           ? knownHarnesses
           : [...harnessBySlug.entries()].map(([slug, harness]) => ({ slug, harness }))
       if (role !== 'orchestrator' && knownFamilies.length > 0) {
-        const hasExecutableTuple = tierEligibleFamilies.some(({ slug: familySlug }) =>
-          candidateHarnesses.some(({ harness }) => {
-            const roleAllowed = !Array.isArray(harness.roles) || harness.roles.includes(role)
-            const familyAllowed =
-              harness.family_constraint?.kind !== 'fixed' ||
-              harness.family_constraint.family === familySlug
-            return roleAllowed && familyAllowed
+        if (
+          !hasExecutableTuple({
+            role,
+            roleConfig: r,
+            tier: authoredTier,
+            harnessBySlug,
+            familyBySlug,
+            requireModel: tierAware
           })
-        )
-        if (!hasExecutableTuple) {
+        ) {
           errors.push(
             `[role.${role}] has no executable family/harness/tier tuple for tier "${authoredTier}": ` +
               `families (${r.families.join(', ') || 'none'}), harnesses (${candidateHarnesses.map(({ slug }) => slug).join(', ') || 'none'})`
@@ -1530,12 +1577,7 @@ export function crossValidate(resolved, registryDoc, taskTargets) {
     }
 
     for (const [stage, s] of Object.entries(resolved.stages)) {
-      const stageRole = {
-        implement: 'implementer',
-        challenge: 'challenger',
-        review: 'reviewer',
-        integration: 'integrator'
-      }[stage]
+      const stageRole = STAGE_ROLES[stage]
       const allFinders = [...s.finders, ...s.finder_fallbacks]
       for (const slug of allFinders) {
         const finder = finderBySlug.get(slug)
@@ -1596,30 +1638,13 @@ export function crossValidate(resolved, registryDoc, taskTargets) {
           }
         }
         const roleConfig = resolved.roles[stageRole]
-        const hasExecutablePoolTuple = s.pool.some((slug) => {
-          const harness = harnessBySlug.get(slug)
-          const preferredHarnesses = roleConfig?.harnesses ?? []
-          if (
-            !harness ||
-            (preferredHarnesses.length > 0 && !preferredHarnesses.includes(slug))
-          ) {
-            return false
-          }
-          if (Array.isArray(harness.roles) && !harness.roles.includes(stageRole)) return false
-          return roleConfig.families.some((familySlug) => {
-            const family = familyBySlug.get(familySlug)
-            if (!family) return false
-            if (
-              Array.isArray(family.models) &&
-              !family.models.some((model) => model.tier === authoredTierOf(roleConfig))
-            ) {
-              return false
-            }
-            return (
-              harness.family_constraint?.kind !== 'fixed' ||
-              harness.family_constraint.family === familySlug
-            )
-          })
+        const hasExecutablePoolTuple = hasExecutableTuple({
+          role: stageRole,
+          roleConfig,
+          tier: authoredTierOf(roleConfig),
+          pool: s.pool,
+          harnessBySlug,
+          familyBySlug
         })
         if (!hasExecutablePoolTuple) {
           errors.push(
@@ -2509,22 +2534,18 @@ export function tierAchievabilityWarnings(resolved, registryDoc) {
     if (r.profile_tier === undefined || r.tier === r.profile_tier) continue
     const families = r.families.map((slug) => familyBySlug.get(slug)).filter(Boolean)
     if (!families.some((family) => Array.isArray(family.models))) continue
-    const harnesses =
-      r.harnesses.length > 0
-        ? r.harnesses.map((slug) => harnessBySlug.get(slug)).filter(Boolean)
-        : [...harnessBySlug.values()]
-    const achievable = families.some(
-      (family) =>
-        Array.isArray(family.models) &&
-        family.models.some((m) => m.tier === r.tier) &&
-        (role === 'orchestrator' ||
-          harnesses.some(
-            (harness) =>
-              (!Array.isArray(harness.roles) || harness.roles.includes(role)) &&
-              (harness.family_constraint?.kind !== 'fixed' ||
-                harness.family_constraint.family === family.slug)
-          ))
+    const stage = Object.keys(STAGE_ROLES).find(
+      (name) => STAGE_ROLES[name] === role
     )
+    const achievable = hasExecutableTuple({
+      role,
+      roleConfig: r,
+      tier: r.tier,
+      pool: resolved.stages[stage]?.pool,
+      harnessBySlug,
+      familyBySlug,
+      requireModel: true
+    })
     if (!achievable) {
       warnings.push(
         tierWarning(
