@@ -262,8 +262,10 @@ task security   # Semgrep CE + gitleaks + dependency audit — pre-publication g
 # → open a DRAFT PR, then integrate it: watch CI + reviews, settle the deferred
 #   P2s, adjudicate → fix → push, under the integration and remediation caps
 #   (independent of the loops above)
-#   one terminal clean current-head cycle with all findings settled ends the stage;
-#   two consecutive clean cycles stop P2 fix pushes; P0/P1 still get fixed within cap
+#   where Codex cloud review is connected: one terminal clean current-head cycle
+#   with all findings settled ends the stage
+#   where Codex cloud review is connected: two consecutive clean cycles stop
+#   P2 fix pushes; P0/P1 still get fixed within cap
 #   every readiness gate still applies
 # → readiness gate passes → gh pr ready (the handoff to a human)
 # → merging stays a human decision
@@ -281,8 +283,9 @@ The caps are not written down here, or in AGENTS.md. They live in
 `min_rounds`, and **AGENTS.md alone defines how a change resolves
 one** — restating that chain here would only give it a second place to drift
 from, and which inputs are even available depends on how the repository is
-set up. Challenge and review bound confidence passes; `integration` bounds
-current-head Codex review cycles; `remediation` bounds integration-stage fix
+set up. Challenge and review bound confidence passes; where Codex cloud review
+is connected, `integration` bounds current-head Codex review cycles;
+`remediation` bounds integration-stage fix
 pushes. These numbers move together with the resolved policy, and a cap of 0
 disables only the work it names, never a deterministic gate, a security scan, or
 the other readiness-gate conditions — under an `integration` cap of 0 only the
@@ -403,8 +406,10 @@ tell), never make another hardening push. Deletion or restructure pushes are
 permitted within the `remediation` cap; otherwise settle P2s by filing.
 **Filing settles P2s only**: a tell holding confirmed P0/P1 keeps the PR draft,
 and escalation **leads with descoping**. On a second finding of the same kind,
-sweep every surface that states or feeds the rule before fixing either: rule
-copies across twins/docs, and input surfaces enumerated one member at a time.
+sweep every surface that states or feeds the rule before fixing it: rule copies
+across twins/docs, and input surfaces enumerated one member at a time. The earlier
+finding's fix counts as one already-covered surface; fix the confirmed cause
+across the rest of that set in one remediation round.
 
 Where Codex cloud review is connected (the `use_codex_cloud_review` answer),
 the ledger names which exit ended the stage — settled clean cycle, P2 fixing

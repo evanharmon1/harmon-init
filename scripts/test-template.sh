@@ -1950,6 +1950,9 @@ else
 fi
 if [ "$profile" = "meta" ]; then
     grep -Fq 'proceed on CI alone' AGENTS.md || err "AGENTS lost local-only Codex shepherd fallback"
+    grep -Fq '#   where Codex cloud review is connected: one terminal clean current-head cycle' docs/guides/codex-review.md &&
+        grep -Fq '#   where Codex cloud review is connected: two consecutive clean cycles stop' docs/guides/codex-review.md ||
+        err "Codex guide workflow cycles lack the cloud-review qualifier (use_codex_cloud_review=false)"
 fi
 
 # The generated execution policy must honor the same Codex opt-outs as the

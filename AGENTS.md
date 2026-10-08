@@ -890,9 +890,10 @@ stage **leads with descoping**: recommend removing the added surface first,
 with the findings and provenance as evidence. Filing a confirmed P0/P1 never
 authorizes promotion.
 
-**A second finding of the same kind calls for a surface sweep before either
-fix.** Find every surface that states or feeds the rule, then fix the confirmed
-cause across that set in one remediation round. Two recurring shapes require
+**A second finding of the same kind calls for a surface sweep before it is
+fixed.** Find every surface that states or feeds the rule — the earlier finding's
+fix counts as one already-covered surface — then fix the confirmed cause across
+the rest of that set in one remediation round. Two recurring shapes require
 this check: copies of a rule across root/template twins and documentation, and
 an input surface being enumerated one member at a time (for example, local Git
 configuration inputs to canonical-diff identity). Fixing only the newly named
