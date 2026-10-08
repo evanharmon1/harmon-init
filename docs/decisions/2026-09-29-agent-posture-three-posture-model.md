@@ -9,7 +9,8 @@ Proposed — awaiting the operator's ratification
 criterion 1). The permission-model ADR
 ([#1264](https://github.com/evanharmon1/harmon-init/issues/1264)) is to link
 this record once it is written; until then this record is the three-posture
-model's only statement.
+model's only statement. Superseded in part (the agent merge deny) by
+[2026-10-07-bot-and-agent-postures-carry-no-merge-guards.md](2026-10-07-bot-and-agent-postures-carry-no-merge-guards.md).
 
 ## Context
 
@@ -57,6 +58,13 @@ remote environment (the remote half is #1404).
 | **Secrets** | 1Password feature, `TS_AUTHKEY`, operator login, opt-in provider keys | bot `GH_TOKEN`, `FOREMAN_AGENT_GH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, opt-in provider keys; no `TS_AUTHKEY`, no 1Password | only `AGENT_GH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, where persisted the environment's own Codex login (#1406), and the disclosed opt-in provider keys; `ANTHROPIC_API_KEY` never; **the env guard fails closed on anything else** |
 | **Network** | open; tailnet | open | **default-deny egress allowlist, enforced at every start** from a root-owned snapshot taken at create; one shared list (#286) plus per-repo additions; refused destinations recorded for the lane report |
 | **Docker** | Docker-in-Docker | Docker-in-Docker | **none by default**; a per-repo, disclosed Docker-in-Docker opt-in; never the host socket |
+
+> **Superseded in part by
+> [2026-10-07-bot-and-agent-postures-carry-no-merge-guards.md](2026-10-07-bot-and-agent-postures-carry-no-merge-guards.md):**
+> the agent **Permissions** cell's deny for merge no longer holds — the agent
+> profile explicitly allows `gh pr merge`, and neither bot nor agent carries a
+> merge guard; the "Protect Main" ruleset is the boundary. The rest of this
+> record stands as written.
 
 Mechanically:
 

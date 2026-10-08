@@ -300,7 +300,7 @@ Two roles, decided on 2026-09-27
 
 The agent posture ([#1408](https://github.com/evanharmon1/harmon-init/issues/1408),
 in review at the time of writing) is decided as: no 1Password, no bot or operator
-token, an enforced egress allowlist, a permission deny list for merge, release
+token, an enforced egress allowlist, a permission deny list for release
 and secrets, and Codex under `-a never -s workspace-write`. What each axis maps
 to here:
 

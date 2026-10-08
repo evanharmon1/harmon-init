@@ -755,7 +755,11 @@ worded; the enforcement half is inferred from the refusals:
   forms were refused too ([What runs where](#what-runs-where)). The refusals
   carried the permission-rule message form ("Permission to use Bash with command
   … has been denied", "the session's permission settings blocked") and came
-  without a prompt, unlike the classifier's refusals below.
+  without a prompt, unlike the classifier's refusals below. These were observed
+  before the agent posture dropped its merge guard
+  ([ADR](../decisions/2026-10-07-bot-and-agent-postures-carry-no-merge-guards.md)):
+  the agent managed settings now *allow* `gh pr merge`, so a repeat of this probe
+  uses `gh release delete x`, which they still deny.
 - **`/permissions` cannot be used on the web.** Typing it opens the session's
   permission-mode menu (Auto, Accept edits, Plan) instead of listing rules, so
   which source refused an action is inferred from behaviour, not shown by a
@@ -1003,7 +1007,7 @@ date and the Claude Code version.
 | 8 | Seen 2026-10-06: the bootstrap and `task verify` under **Trusted** completed with no network denial; no domain added | [Network](#network) |
 | 11 | Seen 2026-10-06: the repository is cloned before the setup script runs | [When per-checkout preparation runs](#when-per-checkout-preparation-runs) |
 | #1405-6 | Seen 2026-10-06 on `evanharmon1/harmon-init`: `task setup:remote` exits 0 and clones the siblings. *Open:* siblings readable and `task verify` runnable in a live session on `ponderousdev/omator`, which the criterion names | [When per-checkout preparation runs](#when-per-checkout-preparation-runs) |
-| #1404-2 | In part, 2026-10-06/07: `gh pr merge` was refused without a prompt, consistent with the managed deny rules being enforced, inferred from the refusals. *Open:* the listing half, which cannot be done on the web because `/permissions` opens the permission-mode menu instead | [The agent posture](#the-agent-posture) |
+| #1404-2 | In part, 2026-10-06/07: `gh pr merge` was refused without a prompt, consistent with the managed deny rules being enforced, inferred from the refusals (before the agent posture dropped its merge guard; repeat with `gh release delete x`, which is still denied). *Open:* the listing half, which cannot be done on the web because `/permissions` opens the permission-mode menu instead | [The agent posture](#the-agent-posture) |
 | — (the unnumbered row) | Seen 2026-10-06: release-asset downloads from repositories not attached to the session succeed under **Trusted** | [Network](#network) |
 
 ## Reusing this structure

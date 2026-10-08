@@ -20,6 +20,8 @@
       "Bash(gh pr comment *)",
       "Bash(gh pr checks *)",
       "Bash(gh pr ready *)",
+      "Bash(gh pr merge)",
+      "Bash(gh pr merge *)",
       "Bash(gh issue view *)",
       "Bash(gh issue list *)",
       "Bash(gh issue comment *)",
@@ -27,7 +29,6 @@
       "Bash(gh api *)"
     ],
     "deny": [
-      "Bash(gh pr merge *)",
       "Bash(gh release *)",
       "Bash(gh repo delete *)",
       "Bash(gh repo edit *)",
@@ -150,5 +151,8 @@
         ]
       }
     ]
+  },
+  "env": {
+    "FOREMAN_DEVCONTAINER": "agent"
   }
 }

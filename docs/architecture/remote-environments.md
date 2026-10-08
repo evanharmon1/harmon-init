@@ -501,7 +501,7 @@ that needs a live session.
 **Pending observation (#1404 criterion 4):** on a Sprite
 ([guide](../guides/sprites.md)) and in the agent devcontainer, start `claude` and
 run `/permissions`: the agent deny rules must be listed. Then ask it to run
-`gh pr merge 1`, which must be refused without a prompt. Run `codex` and check
+`gh release delete x`, which must be refused without a prompt. Run `codex` and check
 that `/status` shows `workspace-write` and approval `never`. On the Sprite,
 `sudo FOREMAN_DEVCONTAINER=agent
 AGENT_AUTONOMY_CONFIG_DIR=<checkout>/.devcontainer/config/agent bash
