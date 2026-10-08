@@ -282,13 +282,13 @@ what #1408 decision 3 decided on 2026-09-27, and it was proven on 2026-10-07 on
 ponderousdev); what the bot may touch is bounded by its per-repo collaborator
 grants, as in [bot-account.md](bot-account.md). A classic `repo` token reaches
 every repository the bot can, so the limit is the grants, not a
-selected-repository list. Beyond the missing `workflow` scope, which refuses
-pushes that create or change a workflow file, the token does not limit what
-`gh` may write: the agent posture's denies and the proxy refused the `gh` write
-forms tried, but the denies match argument patterns, so they are defence in depth (bundled short
-flags are untested,
-[#1549](https://github.com/evanharmon1/harmon-init/issues/1549)), and the
-boundary is the bot's grants and the rulesets. The operator's own token was the
+selected-repository list. Among the repository writes this guide covers
+(pushes, pull requests, issues and comments), the token refuses only
+workflow-file changes, because it has no `workflow` scope; writes outside them
+need scopes it does not carry (`gist`, `delete_repo`, `admin:org`, the package
+scopes). The agent posture's denies and the proxy refused the `gh` write forms
+tried, but the denies are defence in depth, not the write boundary
+([why](#the-gh-call-inventory)): the boundary is the bot's grants and the rulesets. The operator's own token was the
 planned fallback if the platform refused a token whose GitHub user differs from
 the claude.ai account; it was not needed (the platform accepted the bot's token,
 2026-10-07). An alternative, with a real cost, is [authorizing the App as the
@@ -515,16 +515,14 @@ expected to run inside the VM at all. They are listed because the acceptance
 criterion asks for every call the loop makes, and because a session that is
 asked to integrate anyway will hit them.
 
-**Under the agent posture, the `gh` routes tried for PR and issue writes were
-refused** (observed 2026-10-07): the proxy refuses GraphQL, so `gh pr create`,
-`edit`, `ready` and `comment` fail, and the posture's managed settings deny
-`gh api` written with a separate write flag (`-X`, `--method`, `-f`, `-F`,
-`--field`, `--raw-field`, `--input`) — a `gh api -i -X POST …/pulls` was
-refused. Those denies match argument patterns, so they are defence in depth,
-not the write boundary: a bundled short flag such as `gh api -iX POST …` is
-expected to match none of them and only the `gh api *` allow rule (untested;
-[#1549](https://github.com/evanharmon1/harmon-init/issues/1549)). The boundary
-is the bot's collaborator grants and the repository rulesets, as for the bot's
+**Under the agent posture, the `gh` write form tried for a PR was refused**
+(observed 2026-10-07): the posture's managed settings deny `gh api` written
+with a separate write flag (`-X`, `--method`, `-f`, `-F`, `--field`,
+`--raw-field`, `--input`), and a `gh api -i -X POST …/pulls` was refused.
+`gh pr create`, `edit`, `ready` and `comment` are GraphQL-backed and expected to
+fail through the proxy's GraphQL refusal; not yet observed under the posture.
+Those denies are defence in depth, not the write boundary ([why](#the-gh-call-inventory)). The
+boundary is the bot's collaborator grants and the repository rulesets, as for the bot's
 PATs — and that boundary covers merges, not draft promotion or auto-merge. The
 proxy offers REST routes for both (`POST …/ccr/ready_for_review` and
 `PUT|DELETE …/ccr/auto_merge`, among the CCR routes quoted under
@@ -535,7 +533,7 @@ nothing by itself), and only the repository's own **Allow auto-merge** setting
 would stop it enabling auto-merge — off on `evanharmon1/harmon-init` and
 `ponderousdev/foreman` (read 2026-10-07). Expected from the routes the proxy
 names, not yet observed: no session has called either. The posture does not
-stop them either: its managed settings *allow* `gh pr create`, `edit`, `comment`,
+stop `gh pr ready` or `gh pr merge --auto` either: its managed settings *allow* `gh pr create`, `edit`, `comment`,
 `ready` and `merge`, so in a session the `gh pr` subcommands are stopped only by
 the proxy's GraphQL refusal, which is the platform's to change. **Allow
 auto-merge** is a repository setting an administrator can turn on, not a policy.
@@ -552,8 +550,8 @@ Claude Code` footer to the body and to the comment, and the platform subscribed
 the session to the PR's activity automatically and unsubscribed it on close. So
 the posture's denies refused the `gh` write forms tried but do not reach these
 tools, and a session can technically open a draft PR itself. The denies are
-defence in depth, not the write boundary (see above): the boundary is the bot's
-grants and the rulesets.
+defence in depth, not the write boundary ([why](#the-gh-call-inventory)): the boundary is the
+bot's grants and the rulesets.
 
 **The lifecycle does not change.** A cloud lane ends at a pushed branch. The
 orchestrator's order is `task challenge` and `task review` against the lane's
@@ -599,11 +597,16 @@ quoted here once and referred to below as *the GraphQL 403*:
 > /repos/{owner}/{repo}/pulls/{n}/ccr/convert_to_draft.`
 
 Where a row says a write is **denied** or **refused under the posture**, it
-means the form written with a separate write flag, matched by the agent
-posture's argument-pattern denies. Those denies are defence in depth, not the
-write boundary — a bundled short flag is expected to slip past them (untested,
-[#1549](https://github.com/evanharmon1/harmon-init/issues/1549)) — and the
-boundary is the bot's grants and the rulesets ([The agent posture](#the-agent-posture)).
+means a `gh api` call written with a separate write flag and run by the session
+itself, which the agent posture's argument-pattern denies match. Those denies
+are defence in depth, not the write boundary, for two reasons. They are not
+transitive: they match the command the session runs, not what an allowed
+`task` target, script or git hook runs inside it
+([ADR](../decisions/2026-09-29-agent-posture-three-posture-model.md)). And a
+bundled short flag such as `gh api -iX POST …` or `gh api -iF …` is expected to
+match none of them (untested,
+[#1549](https://github.com/evanharmon1/harmon-init/issues/1549)). The boundary
+is the bot's grants and the rulesets ([The agent posture](#the-agent-posture)).
 
 | Call | Made by | Result through the proxy | Follow-up / workaround |
 | --- | --- | --- | --- |
@@ -611,7 +614,7 @@ boundary is the bot's grants and the rulesets ([The agent posture](#the-agent-po
 | `claim-transaction.sh` (`/claim`): `gh issue view/edit/comment`, `gh api user`, `gh api --paginate --slurp` | claim skill (vendored) | **fail** on the GraphQL issue calls — observed 2026-09-27. The script aborts at its first `gh issue view`, so its paginated `comments` and `timeline` reads (page 1 expected to work, later pages to fail) are not reached | harmon-devkit#1207. The 2026-09-27 session used a session-local `gh` shim mapping the subcommands to REST — a stopgap, not a fix |
 | `tick-criteria-core.sh`: `gh issue view`, `gh issue edit`, `gh api user` | track-work skill (vendored) | **fail** — observed 2026-09-27 | harmon-devkit#1207. The write also gets the footer (above) |
 | `check-closing-keywords.sh` (the vendored copy): `gh issue view`, `gh pr view`; `gh repo view` when no `--repo` or `GH_REPO` is given | track-work skill (vendored) | **fail** — observed 2026-09-27; the `gh repo view` fallback expected to fail, not yet observed (GraphQL-backed) | harmon-devkit#1207. Pass `--repo` so the fallback never runs |
-| `gh pr create --draft`, then `gh pr view --json headRefOid,isDraft` to confirm it | implement skill (vendored), the draft-first step `AGENTS.md` requires; the orchestrate skill's lane brief | **fails in a postured session** — the posture allows `gh pr create`, but it is GraphQL-backed and the proxy refuses it; the REST `POST …/pulls` was refused under the posture 2026-10-07: `Permission to use Bash with command … gh api -i -X POST repos/evanharmon1/harmon-init/pulls … has been denied.` | The built-in GitHub create-PR tool opened a draft under the posture (`draft: true`, draft PR #1546 as the bot, observed 2026-10-07; [What runs where](#what-runs-where)). harmon-devkit#1207. A cloud lane still leaves the PR to the orchestrator, after its gates |
+| `gh pr create --draft`, then `gh pr view --json headRefOid,isDraft` to confirm it | implement skill (vendored), the draft-first step `AGENTS.md` requires; the orchestrate skill's lane brief | `gh pr create`: expected to fail, not yet observed — GraphQL-backed (the posture allows it; the proxy refuses GraphQL). The REST `POST …/pulls` was refused under the posture 2026-10-07: `Permission to use Bash with command … gh api -i -X POST repos/evanharmon1/harmon-init/pulls … has been denied.` | The built-in GitHub create-PR tool opened a draft under the posture (`draft: true`, draft PR #1546 as the bot, observed 2026-10-07; [What runs where](#what-runs-where)). harmon-devkit#1207. A cloud lane still leaves the PR to the orchestrator, after its gates |
 | `gh pr edit --body-file` (ticking `## Deferred findings`, and `render-dev-flow.mjs publish`, which then re-reads the body with `gh pr view`) | integrate skill; dev-flow-support package (vendored) | expected to fail, not yet observed — GraphQL-backed; under the posture `gh pr edit` fails, and the REST `PATCH` is denied as a `gh api` write form (observed 2026-10-07 for the REST `POST …/pulls`) | REST `PATCH repos/{o}/{r}/pulls/{n}` with `body` is denied under the posture (see the note above the table), and `mcp__github__update_pull_request` is not covered by the posture (observed 2026-10-07, closing a PR); the orchestrator edits the body. `publish` also compares the re-read body's fingerprint with what it wrote, which the footer (below) would break — expected, not yet observed. harmon-devkit#1207 |
 | `gh repo view <remote-url> --json nameWithOwner` | implement and review skills (vendored), resolving the target repository; the claim skill's entry gate | **fail, 403** (the GraphQL 403) — observed 2026-10-06 | Derive `owner/repo` from `git remote get-url`, or read it from REST `repos/{o}/{r}` (plain REST works — observed 2026-09-27). harmon-devkit#1207 |
 | `gh issue list`, `gh issue create`, `gh issue close` | track-work skill (duplicate search, filing and closing issues); integrate skill (filing follow-ups); claim skill (open-issue scan) | `gh issue list`: **fail, 403** (the GraphQL 403) — observed 2026-10-06. `gh issue create` and `gh issue close`: expected to fail, not yet observed — GraphQL-backed, like the `gh issue` calls in the first row | REST `repos/{o}/{r}/issues`: `GET` with `state=all`, paged (see Search, above); `POST` to create; `PATCH` with `state` and `state_reason` to close — the two writes denied under the agent posture (see above). harmon-devkit#1207 |
@@ -624,7 +627,7 @@ boundary is the bot's grants and the rulesets ([The agent posture](#the-agent-po
 | `set-issue-status.sh`: `gh api graphql` (Projects v2) | track-work skill (vendored) | expected to fail, not yet observed — Projects v2 is GraphQL-only and documented as unreachable. A direct `gh api graphql …` probe was not reached 2026-10-06: the session's auto-mode classifier blocked it before it ran | No REST route is known. The skills treat Project status as a non-authoritative view, so the loop does not need it. Tracked in [harmon-devkit#1207](https://github.com/evanharmon1/harmon-devkit/issues/1207), which either finds a REST route or makes the helper refuse with its exit 2; until then it can only fail behind the proxy |
 | `readiness-gate.sh`: `gh pr view`, `gh api graphql --paginate --slurp` (review threads), `gh api repos/…`, `gh api user`, `gh pr ready` | integrate skill (vendored) | **fail** on `gh pr view` — observed 2026-09-27 | Conditions were checked by hand over REST (`…/ccr/review_threads`, `…/ccr/ready_for_review`). harmon-devkit#1207; orchestrator-side, see [What runs where](#what-runs-where) |
 | `check-codex-cloud-review.sh`: `gh pr view`, `gh api --paginate --slurp` | integrate skill (vendored) | **fail** on `gh pr view` — observed 2026-09-27; the pagination fails past page 1 — observed 2026-09-27 | The current-head cycle was checked by hand over REST. harmon-devkit#1207 |
-| `gh-ro.sh`, `gh-write-broker.sh`: `gh api` with a pinned method | integrate skill (vendored) | plain REST reads and writes work — observed 2026-09-27 for `gh api repos/…`, before the agent posture existed; under the posture the write forms are denied (see above); these two wrappers themselves not yet observed | GET refuses `graphql` by design |
+| `gh-ro.sh`, `gh-write-broker.sh`: `gh api` with a pinned method | integrate skill (vendored) | plain REST reads and writes work — observed 2026-09-27 for `gh api repos/…`, before the agent posture existed; the posture's denies do not see the `gh api` writes these wrappers make inside themselves (the denies are not transitive; see the note above the table), so under the posture they are expected to work; these two wrappers themselves not yet observed | GET refuses `graphql` by design |
 | `round-push.sh`: `gh api --hostname …` | review skill (vendored) | expected, not yet observed | — |
 | `lane-watch.sh`: `gh pr list`, `gh api --paginate --slurp`, `gh pr ready --undo` | orchestrate skill (vendored) | expected to fail, not yet observed — GraphQL-backed subcommands | Orchestrator-side; not run in a cloud lane |
 | `settle-wait.sh`: `gh api repos/{o}/{r}/pulls/{n}`, `gh api repos/{o}/{r}/actions/runs?head_sha=…&per_page=…&page=…` (its own explicit paging) and `gh api repos/{o}/{r}/actions/runs/{id}` | orchestrate skill (vendored) | expected to work, not yet observed — plain REST reads with explicit `page=N`, which the proxy serves (the Actions runs list worked, observed 2026-10-06) | Orchestrator-side; not run in a cloud lane |
