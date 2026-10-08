@@ -286,10 +286,12 @@ selected-repository list. Among the repository writes this guide covers
 (pushes, pull requests, issues and comments), the token refuses only
 workflow-file changes, because it has no `workflow` scope. It does not carry
 `gist`, `delete_repo`, `admin:org` or the package scopes, so those writes are
-refused; `repo` does cover most other repository writes (releases, labels,
-Actions re-runs and cancels, per [GitHub's classic token scope documentation](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps#available-scopes);
-statuses and deployments, see [bot-account.md](bot-account.md)), so there too
-the limit is the bot's grants and the rulesets. The agent posture's denies and the proxy refused the `gh`
+refused. `repo` grants full access to the repositories the token reaches,
+naming commit statuses and deployment statuses among them
+([GitHub's classic token scope documentation](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps#available-scopes);
+see also [bot-account.md](bot-account.md)), so it covers most other repository
+writes too (releases, labels, Actions re-runs and cancels), and there the limit
+is the bot's grants and the rulesets. The agent posture's denies and the proxy refused the `gh`
 write forms tried, but the denies are defence in depth, not the write boundary
 ([why](#the-gh-call-inventory)): the boundary is the bot's grants, the token's
 missing `workflow` scope and the rulesets. The operator's own token was the
@@ -538,9 +540,9 @@ nothing by itself), and only the repository's own **Allow auto-merge** setting
 would stop it enabling auto-merge — off on `evanharmon1/harmon-init` and
 `ponderousdev/foreman` (read 2026-10-07). Expected from the routes the proxy
 names, not yet observed: no session has called either. The posture does not
-stop `gh pr ready` or `gh pr merge --auto` either: from v5.3.0 its managed
-settings *allow* `gh pr create`, `edit`, `comment`, `ready` and `merge`, so in a
-session the `gh pr` subcommands are stopped only by the proxy's GraphQL refusal,
+stop `gh pr ready` either, nor, from v5.3.0, `gh pr merge --auto`: its managed
+settings *allow* `gh pr create`, `edit`, `comment` and `ready`, and from v5.3.0
+(#1551) `merge` too, so in a session the `gh pr` subcommands are stopped only by the proxy's GraphQL refusal,
 which is the platform's to change. **Allow auto-merge** is a repository setting
 an administrator can turn on, not a policy.
 A merge into a protected branch still needs code-owner approval and the
