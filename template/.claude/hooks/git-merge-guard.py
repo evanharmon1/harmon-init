@@ -31,20 +31,27 @@ command substitutions -- and a merge is:
     slot, a replacement string such as `xargs -I X git X`, `:::` arguments),
     or is a one-off alias whose expansion could merge (`git -c alias.m=merge m`,
     a `!` shell alias, or one whose `-c` value or source is not literal);
-  * a command whose name is not a literal followed by `merge`/`pull`
-    (`$G merge feat`);
-  * the dashed `git-merge`/`git-pull` executables run as a command;
+  * a command whose name is not a literal -- an expansion, substitution or
+    field-split word (`$(printf 'git merge main')`, `git${IFS}merge`,
+    `"$SHELL" <<< ...`, `xargs -I{} {}`) -- when the line mentions merge/pull,
+    or when `merge`/`pull` follows it (`$G merge feat`);
+  * the dashed `git-merge`/`git-pull` executables run as a command, after any
+    depth of wrappers (`find -exec env X=1 git-merge`, `coproc`, an
+    assignment whose value expands);
   * any of the above inside text that runs: `$(...)` (and `$((...))`, which
     bash also reads as one), backticks, `<(...)`, substitutions inside
     `${...}` or an unquoted heredoc, the string after a `-c` or `-Command`
     option of any program but a search tool, whose `-c` counts (`bash -c`,
     `csh -c`, `su -c`, `pwsh -Command`;
     `$'...'` strings decoded first), the arguments of `eval`, `ssh`,
-    `watch` or `env -S`, or a heredoc or here-string fed to a shell
-    (whatever its arguments); `${...}` operators are not modelled, so a
+    `watch`, `herdr` (`pane run`) or `env -S` (with its trailing arguments),
+    `cmd /c`, a heredoc, here-string or pipe fed to a shell, `sudo -s`/`-i`
+    or `parallel` (whatever their arguments); `$"..."` locale strings are not
+    literal; `${...}` operators are not modelled, so a
     `${...}` that mentions merge/pull asks; a `trap` action counts too;
   * any mention of merge/pull anywhere in a command line that also runs an
-    evaluator (a shell, `eval`, `ssh`, `trap`, `watch`, `env -S`): their option and
+    evaluator (a shell, `eval`, `ssh`, `trap`, `watch`, `herdr pane run`, `parallel`,
+    `sudo -s`/`-i`, `env -S`): their option and
     input shapes (`bash -C -c`, `env -S'...'`, a pipe into `if ...; then sh`)
     are open-ended, so the word test covers what the parser does not.
 
@@ -171,7 +178,7 @@ GIT_VALUE_OPTIONS = {
 # the applet named next, and `busybox sh` is caught by `sh`. `.` and `source`
 # run a file in the current shell (`. /dev/stdin <<< ...`), so they count.
 SHELLS = {
-    ".", "ash", "bash", "csh", "dash", "elvish", "fish", "ksh", "mksh",
+    ".", "ash", "bash", "cmd", "csh", "dash", "elvish", "fish", "ksh", "mksh",
     "nu", "oksh", "osh", "powershell", "pwsh", "script", "sh", "su", "tcsh",
     "source", "xonsh", "yash", "zsh",
 }
@@ -184,7 +191,7 @@ JOINERS = {"eval", "ssh", "trap", "watch"}
 # Programs that take a command in their arguments; what follows them is at
 # command position for the dashed-executable and stdin-shell checks.
 WRAPPERS = {
-    "builtin", "busybox", "caffeinate", "chronic", "command", "doas", "env", "exec",
+    "builtin", "busybox", "caffeinate", "chronic", "coproc", "command", "doas", "env", "exec",
     "ionice", "nice", "nocorrect", "noglob", "nohup", "parallel", "setsid",
     "stdbuf", "sudo", "time", "timeout", "unbuffer", "xargs",
     "-exec", "-execdir", "-ok", "-okdir",
@@ -390,6 +397,11 @@ class Parser:
                     raise ParseError("unterminated '")
                 word.value += s[self.i + 1 : end]
                 self.i = end + 1
+            elif s.startswith('$"', self.i):
+                # Locale-translated quoting: the text is a translation lookup.
+                self.i += 2
+                self.read_double_quoted(word, closing='"')
+                word.literal = False
             elif s.startswith("$'", self.i):
                 j = self.i + 2
                 while j < len(s) and s[j] != "'":
@@ -496,7 +508,8 @@ def command_index(words):
     i = 0
     while i < len(words):
         w = words[i]
-        if w.literal and ASSIGNMENT.match(w.value):
+        if ASSIGNMENT.match(w.value):
+            # `FOO=$BAR cmd`: an assignment is one whatever its value expands to.
             i += 1
         elif w.literal and base(w) in WRAPPERS:
             takes_value = WRAPPER_VALUE_OPTIONS.get(base(w), set())
@@ -506,6 +519,21 @@ def command_index(words):
         else:
             return i
     return i
+
+
+def command_positions(words):
+    """Every index that may be run as a command: the command word, and every
+    word after a wrapper. A wrapper's option grammar (value-taking options,
+    unambiguous long-option prefixes such as `sudo --chd /repo` or
+    `env --chd /repo -i`, `coproc NAME`) is open-ended, so the reader does not
+    try to find where its options end. Only a non-literal word, a dashed
+    `git-merge`/`git-pull` helper or an evaluator at one of these positions
+    triggers anything, so ordinary arguments stay silent."""
+    positions = {command_index(words)}
+    for i, w in enumerate(words):
+        if w.literal and base(w) in WRAPPERS:
+            positions.update(range(i + 1, len(words)))
+    return positions
 
 
 def feeder_tokens(words, i):
@@ -597,30 +625,89 @@ def git_might_merge(words, i, depth=0):
     return False
 
 
+def sudo_shell_flag(opt):
+    """True when one of sudo's own options asks for a shell (`-s`, `-i`,
+    `--shell`, `--login`). Short clusters are read the way getopt reads them:
+    a value-taking letter ends the cluster (`-uadmin` is `-u admin`)."""
+    # sudo takes any unambiguous long-option prefix (`--sh`, `--lo`).
+    if len(opt) >= 4 and ("--shell".startswith(opt) or "--login".startswith(opt)):
+        return True
+    if not opt.startswith("-") or opt.startswith("--"):
+        return False
+    for ch in opt[1:]:
+        if ch in "si":
+            return True
+        if "-" + ch in WRAPPER_VALUE_OPTIONS["sudo"]:
+            return False
+    return False
+
+
+def herdr_runs(words, i):
+    """`herdr [global options] pane run <pane> '...'` types its text into
+    another pane's shell; other herdr subcommands only read or manage panes.
+    The `pane run` pair is found wherever it sits, so global options cannot
+    hide it, while a lone `run` argument (`herdr agent read run`) is data."""
+    # A non-literal word can be either half (`herdr "$GROUP" run`).
+    rest = words[i + 1 :]
+    return any(
+        (a.value == "pane" or not a.literal) and (b.value == "run" or not b.literal)
+        for a, b in zip(rest, rest[1:])
+    )
+
+
+def split_string_option(v):
+    """`env -S`, `--split-string` or any unambiguous prefix: `--s` is the
+    shortest, since no other env long option starts with `s`."""
+    name = v.split("=", 1)[0]
+    return v.startswith("-S") or (len(name) >= 3 and "--split-string".startswith(name))
+
+
 def is_evaluator(words, i):
     """True when words[i] runs text it is given as a script."""
     name = base(words[i])
+    if name == "herdr":
+        return herdr_runs(words, i)
     if name in SOURCE_BUILTINS:
         # As an argument (`rg -c x .`) a dot is a path, not the builtin.
         return i == command_index(words)
-    if name in SHELLS or name in JOINERS:
+    if name in SHELLS or name in JOINERS or name in ("parallel", "coproc"):
+        # `parallel ::: 'git merge main'` runs each input as a command;
+        # `coproc NAME { ...; }` runs a compound body the reader does not split.
         return True
+    if name == "sudo":
+        # sudo's option grammar is open-ended (unambiguous long-option prefixes,
+        # including for value-taking options: `--chd /tmp -s`; even `--` can be
+        # an option's value: `-p -- -s`), so a shell flag anywhere after sudo
+        # counts. A delegated command's own flag (`sudo grep -i ...`) can then
+        # match; that costs a prompt only when the line mentions merge/pull,
+        # never a silent merge.
+        return any(sudo_shell_flag(x.value) for x in words[i + 1 :])
     return name == "env" and any(
-        w.value.startswith(("-S", "--split-string")) for w in words[i + 1 :]
+        split_string_option(w.value) for w in words[i + 1 :]
     )
 
 
 def command_might_merge(cmd, text, depth):
     words = cmd.words
     ci = command_index(words)
-    if ci < len(words) and not words[ci].literal:
-        if any(w.value.lower() in MERGE_WORDS for w in words[ci + 1 : ci + 2]):
-            return True
+    positions = command_positions(words)
+    for p in positions:
+        tokens = feeder_tokens(words, p) if p < len(words) else None
+        # A feeder's replacement string is filled at run time (`xargs -I X X`).
+        fed = bool(tokens) and any(t and t in words[p].value for t in tokens)
+        if p < len(words) and (not words[p].literal or fed):
+            # The command itself comes from an expansion (`$(printf 'git merge')`,
+            # `git${IFS}merge`, `"$SHELL" <<< ...`, `xargs -I X X merge`): what runs is
+            # unknown, so the line goes under the merge/pull word test.
+            if MENTION.search(text) or any(
+                w.value.lower() in MERGE_WORDS for w in words[p + 1 : p + 2]
+            ):
+                return True
     for i, w in enumerate(words):
         name = base(w)
         if name == "git" and git_might_merge(words, i):
             return True
-        at_command = i == ci or (i > 0 and words[i - 1].literal and base(words[i - 1]) in WRAPPERS)
+        at_command = i in positions
         if name in DASHED and at_command:
             return True
         # A non-literal word counts when its decoded text names an evaluator
@@ -640,23 +727,43 @@ def command_might_merge(cmd, text, depth):
         if SCRIPT_OPTION.match(w.value) and i + 1 < len(words) and not searching:
             if script_might_merge(words[i + 1].value, depth + 1):
                 return True
-        if name in SHELLS and is_evaluator(words, i):
-            # Without -c a shell may read its script from stdin (`bash -s x`).
+        if name == "cmd":
+            # `cmd.exe /c` and `/k` (Windows Git Bash, WSL interop) run what
+            # follows. cmd's switch spellings are open-ended (`/c`, `//c` to dodge
+            # MSYS path conversion, `/Q/C`, attached `/cgit pull`), and its own
+            # expansions and escapes (`%SUB%`, `!SUB!`, `m^erge`) are not bash's.
+            # So a cmd line that names git and uses any of them asks, and the text
+            # after the first /c or /k switch is also read as a script.
+            line = " ".join(x.value for x in words[i + 1 :])
+            if GIT_MENTION.search(line) and re.search(r"[%!^]", line):
+                return True
+            switch = re.search(r"(?i)/+[ck]", line)
+            if switch and script_might_merge(line[switch.end() :], depth + 1):
+                return True
+        if (name in SHELLS or name in ("sudo", "parallel")) and is_evaluator(words, i):
+            # Without -c a shell may read its script from stdin (`bash -s x`,
+            # `sudo -s`), and `parallel` runs stdin lines as commands.
             if any(script_might_merge(p, depth + 1) for p in cmd.stdin):
                 return True
-        elif name in JOINERS:
+        elif name in JOINERS or (name == "herdr" and herdr_runs(words, i)):
             if script_might_merge(" ".join(x.value for x in words[i + 1 :]), depth + 1):
                 return True
         elif name == "env":
-            for k in range(i + 1, len(words) - 1):
-                if words[k].value in ("-S", "--split-string"):
-                    if script_might_merge(words[k + 1].value, depth + 1):
-                        return True
+            # The split string is followed by the remaining arguments
+            # (`env -Sgit $SUB main` runs `git $SUB main`).
             for k in range(i + 1, len(words)):
                 v = words[k].value
-                attached = v.split("=", 1)[1] if v.startswith("--split-string=") else (
-                    v[2:] if v.startswith("-S") and len(v) > 2 else None)
-                if attached is not None and script_might_merge(attached, depth + 1):
+                if not split_string_option(v):
+                    continue
+                if "=" in v and v.startswith("--"):
+                    payload, rest = v.split("=", 1)[1], words[k + 1 :]
+                elif v.startswith("-S") and len(v) > 2:
+                    payload, rest = v[2:], words[k + 1 :]
+                elif k + 1 < len(words):
+                    payload, rest = words[k + 1].value, words[k + 2 :]
+                else:
+                    continue
+                if script_might_merge(" ".join([payload] + [x.value for x in rest]), depth + 1):
                     return True
     return False
 

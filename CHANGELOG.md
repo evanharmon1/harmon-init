@@ -8,6 +8,15 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [5.2.1](https://github.com/evanharmon1/harmon-init/compare/v5.2.0...v5.2.1) (2026-10-07)
+
+
+### Bug Fixes
+
+* **ci:** harden three classification reconciler edge cases ([#1540](https://github.com/evanharmon1/harmon-init/issues/1540)) ([a971fd1](https://github.com/evanharmon1/harmon-init/commit/a971fd1202752a95e349e8563ac55eba898a9342))
+* **claude:** sync git-merge-guard with the parser-based host copy ([#1542](https://github.com/evanharmon1/harmon-init/issues/1542)) ([b9670cc](https://github.com/evanharmon1/harmon-init/commit/b9670ccf8086f1423491bfa4e6812b8b0589eb36))
+* **devcontainer:** make the bootstrap's uv and npm installers trust the system CA store ([#1539](https://github.com/evanharmon1/harmon-init/issues/1539)) ([50e46da](https://github.com/evanharmon1/harmon-init/commit/50e46da45934baed7277fab15129327be45e879f))
+
 ## [5.2.0](https://github.com/evanharmon1/harmon-init/compare/v5.1.0...v5.2.0) (2026-10-06)
 
 

@@ -1335,6 +1335,13 @@ if [ -n "$home_leaks" ]; then
     err "rendered output contains an absolute home path (see above) — use a ~-relative copier default"
 fi
 
+if [ "$profile" = "full" ] || [ "$profile" = "minimal" ]; then
+    # Exercise the rendered field-creation guards against stubbed gh, including
+    # a personal-account run that actually creates a field. No live API calls.
+    bash scripts/test-setup-github-project.sh >/dev/null ||
+        err "rendered project field reconciliation tests failed"
+fi
+
 # ── 9b. docs/project-management.md rendered per project_management answer ──
 # Two mutually-exclusive conditional-named source files share the rendered name
 # docs/project-management.md; assert the right one lands (and none does when the
@@ -1371,19 +1378,15 @@ full) # project_management=github; github_org=test-org (an org repo)
     # likewise label-only now (#875) — both fields are retired, and the
     # `layer:`/`domain:` label families in setup-github-labels.sh are their
     # only surface, with no paired field vocabulary left to drift against.
-    # The rendered scripts must not recreate any of the three.
+    # The rendered issue-field script must not recreate any of the three.
+    # Project field-creation mutations are checked by the rendered
+    # test-setup-github-project.sh on a personal-account run that creates Product.
     ! grep -q 'create_field "Agent"' scripts/setup-github-issue-fields.sh ||
         err "rendered setup-github-issue-fields.sh recreates the retired Agent field (#662)"
-    ! grep -q 'create_single_select "Agent"' scripts/setup-github-project.sh ||
-        err "rendered setup-github-project.sh recreates the retired Agent field (#662)"
     ! grep -q 'create_field "Domain"' scripts/setup-github-issue-fields.sh ||
         err "rendered setup-github-issue-fields.sh recreates the retired Domain field (#875)"
     ! grep -q 'create_field "Layer"' scripts/setup-github-issue-fields.sh ||
         err "rendered setup-github-issue-fields.sh recreates the retired Layer field (#875)"
-    ! grep -q 'create_single_select "Domain"' scripts/setup-github-project.sh ||
-        err "rendered setup-github-project.sh recreates the retired Domain field (#875)"
-    ! grep -q 'create_single_select "Layer"' scripts/setup-github-project.sh ||
-        err "rendered setup-github-project.sh recreates the retired Layer field (#875)"
     # project_management=github → the classification workflows render, and an
     # organization repository reconciles MONTHLY (#1450): the cadence lives only
     # in the template's owner-type branch, so assert the org side renders it.
@@ -1626,6 +1629,20 @@ minimal) # use_skills_sync=false -> none of the machinery renders
         err "Codex implementer is not registered"
     grep -q '^config_file = "agents/implementer.toml"$' .codex/config.toml ||
         err "Codex implementer registration does not point at its config"
+    # Run the rendered sync test, not just its task wiring, under the ambient
+    # environment the bot and agent profiles, Claude Code on the web and a
+    # `task sync:devkit-release` run create (#1395): its leak check once expanded
+    # at write time, so a preset token failed it and an absent one made it
+    # vacuous, and an inherited SYNC_DEVKIT_TAG, SYNC_DEVKIT_ALLOW_DOWNGRADE or
+    # AGENT_SKILLS_DIR changes what it resolves. One profile bounds the cost; the
+    # output is kept and replayed only on failure.
+    if [ "$profile" = "full" ]; then
+        run_quiet rendered-sync-devkit-release \
+            env FOREMAN_DEVCONTAINER=bot GH_TOKEN=dummy GITHUB_TOKEN=dummy \
+            SYNC_DEVKIT_TAG=v0.48.0 SYNC_DEVKIT_ALLOW_DOWNGRADE=true AGENT_SKILLS_DIR=.agents/elsewhere \
+            ./scripts/test-sync-devkit-release.sh ||
+            err "rendered test-sync-devkit-release.sh failed under a preset token and release environment"
+    fi
     ;;
 esac
 [ -d .claude/skills ] || err ".claude/skills managed skill directory is missing"
@@ -1882,8 +1899,13 @@ jq -e '[.hooks.PreToolUse[]? | select(.matcher == "Bash") | .hooks[]?
     err ".claude/settings.json does not register git-merge-guard.py as a PreToolUse Bash hook with the ask fallback"
 jq -e '[.permissions.ask[] | select(test("^Bash\\(git merge"))] | length == 0' .claude/settings.json >/dev/null ||
     err ".claude/settings.json still asks on every git merge (the guard replaces those rules)"
-jq -e '.permissions.ask | (index("Bash(gh pr merge)") != null) and (index("Bash(git push origin main)") != null) and (index("Bash(git push --force:*)") != null)' .claude/settings.json >/dev/null ||
-    err ".claude/settings.json lost the gh pr merge / push-to-main / force-push ask rules"
+# No project-level `gh pr merge` prompt anywhere: a host relies on the user's
+# own settings, and the dev devcontainer adds its own managed drop-in (checked
+# under 9e1). Pushes to main and force-pushes keep their ask rules.
+jq -e '[.permissions.ask[] | select(test("^Bash\\(gh pr merge"))] | length == 0' .claude/settings.json >/dev/null ||
+    err ".claude/settings.json still asks on gh pr merge (only the dev devcontainer drop-in carries that prompt)"
+jq -e '.permissions.ask | (index("Bash(git push origin main)") != null) and (index("Bash(git push --force:*)") != null)' .claude/settings.json >/dev/null ||
+    err ".claude/settings.json lost the push-to-main / force-push ask rules"
 grep -Fq 'blocking credential-policy check' "${repo_root}/copier.yml" ||
     err "copier.yml use_codex_review help does not name the blocking credential-policy check"
 if [ "$profile" = "full" ]; then
@@ -2310,6 +2332,19 @@ if [ -d .devcontainer ]; then
         err "Antigravity compatibility installer missing from devcontainer output"
     [ -f .devcontainer/config/antigravity-settings.json ] ||
         err "Antigravity policy defaults missing from devcontainer output"
+    # The dev profile alone keeps a `gh pr merge` prompt, via a managed-settings
+    # drop-in; bot and agent carry no merge guard (the ruleset is the boundary).
+    jq -e '.permissions.ask == ["Bash(gh pr merge)", "Bash(gh pr merge:*)"]' \
+        .devcontainer/config/claude-settings-dev.json >/dev/null 2>&1 ||
+        err "dev Claude drop-in claude-settings-dev.json missing or does not ask exactly on gh pr merge"
+    grep -Fq 'claude-settings-dev.json' .devcontainer/dev/post-create.sh ||
+        err "dev post-create does not install the gh pr merge ask drop-in"
+    if grep -Fq 'claude-settings-dev.json' .devcontainer/post-create.sh; then
+        err "bot post-create installs the dev-only gh pr merge drop-in"
+    fi
+    if grep -Fq 'claude-settings-dev.json' .devcontainer/agent/post-create.sh; then
+        err "agent post-create installs the dev-only gh pr merge drop-in"
+    fi
     [ -f .devcontainer/config/antigravity-settings-dev.json ] ||
         err "balanced Antigravity dev policy defaults missing from devcontainer output"
     [ -x .devcontainer/config/bot-autonomy/antigravity.sh ] ||

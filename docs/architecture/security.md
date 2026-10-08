@@ -330,11 +330,18 @@ The security contract, by layer:
 - **Harness policy — one source.** `.devcontainer/config/agent/` holds the
   agent Claude managed settings (auto mode, `disableBypassPermissionsMode:
   "disable"`, `allowManagedPermissionRulesOnly`, an explicit dev-loop allow
-  list, deny rules for merge/release/admin/secrets/workflows/force-push/pushes
-  to `main`/`op`/`.env*`/the egress-tamper commands, and no `ask` rule) and
+  list that includes `gh pr merge`, deny rules for
+  release/admin/secrets/workflows/force-push/pushes to
+  `main`/`op`/`.env*`/the egress-tamper commands, and no `ask` rule) and
   the agent Codex managed config (`workspace-write`, never
   `danger-full-access`, approval `never` — its sandbox is the criterion, and
   it carries no command-level deny list).
+  Neither the bot nor the agent posture carries a merge guard: in either
+  profile, a PAT with `pull_requests: write` can merge any approved PR whose
+  required checks are green. The "Protect Main" ruleset — code-owner
+  approval plus the required status checks — is the only boundary on what
+  reaches `main`; see
+  [../decisions/2026-10-07-bot-and-agent-postures-carry-no-merge-guards.md](../decisions/2026-10-07-bot-and-agent-postures-carry-no-merge-guards.md).
   In the agent devcontainer, `.devcontainer/agent/agent-autonomy.sh apply`
   installs both at create and refuses every other harness, and `verify`
   re-checks at every start. The remote bootstrap runs both with

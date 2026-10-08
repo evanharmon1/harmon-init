@@ -511,10 +511,16 @@ cap allowed.
   this: it parses each command and asks before any real or possible
   `git merge`/`git pull` it cannot verify lands on a feature branch; quoted
   text and heredoc bodies that no shell runs, search patterns and
-  `git merge-base` are data. It
+  `git merge-base` are data. The project settings ask on pushes to main and
+  force-pushes but carry no `gh pr merge` ask: that prompt comes only from
+  your own settings on a host[% if devcontainer %] and from the dev
+  devcontainer's managed-settings drop-in
+  (`.devcontainer/config/claude-settings-dev.json`)[% endif %]. The hook
   applies in the dev profile only; with `FOREMAN_DEVCONTAINER` set to `bot` or
-  `agent` it makes no merge checks, and the "Protect Main" ruleset is the
-  boundary there.) `gh pr ready` is *not* a merge and you may run it — but only out of
+  `agent` it makes no merge checks. The bot and agent profiles carry no merge
+  guard at all — the agent profile explicitly allows `gh pr merge` — and the
+  "Protect Main" ruleset (code-owner approval + green checks) is the boundary
+  there.) `gh pr ready` is *not* a merge and you may run it — but only out of
   a passing readiness gate, never to signal "I think this looks done".
 - **Reply to every inline PR review comment in its own thread** — bot
   reviewers and humans alike. Treat findings as

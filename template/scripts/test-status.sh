@@ -37,6 +37,21 @@ rest_lib="./scripts/lib/gh-rest.sh"
 TMP="$(mktemp -d)"
 trap 'rm -rf "${TMP}"' EXIT
 
+# status.sh branches its remedy text on FOREMAN_DEVCONTAINER (unset = dev
+# posture, "bot", "agent"), and the bot and agent profiles export it — plus a
+# preset GH_TOKEN / GITHUB_TOKEN — into every process; gh and the REST helper
+# honour more GH_* variables (GH_HOST, GH_REPO, GH_REST_HOST), and status.sh
+# its own STATUS_* switches. A case must not inherit whichever environment the
+# caller happens to be in (#1395), so every variable in those families is
+# cleared here, by pattern rather than by a list that misses the next one; the
+# cases that exercise a branch set its variables themselves, per case.
+for _ambient in $(compgen -e); do
+    case "$_ambient" in
+    FOREMAN_DEVCONTAINER | GH_* | GITHUB_* | STATUS_*) unset "$_ambient" ;;
+    esac
+done
+unset _ambient
+
 # Four fixture roots, each holding a copy of the script under test:
 #   with-board  — has the board tooling, so the check applies
 #   no-board    — has none of it, so the check must not render at all
@@ -777,6 +792,26 @@ case "$out" in
 *) fail "expected a read-only warning naming the remedy, got: ${out}" ;;
 esac
 
+echo "==> the bot profile's scope remedy re-provisions GH_TOKEN, never widens the login"
+out="$(FOREMAN_DEVCONTAINER=bot run_gh_section read-only)"
+case "$out" in
+*"bot profile: re-provision GH_TOKEN"*) ;;
+*) fail "expected the bot-profile scope remedy, got: ${out}" ;;
+esac
+case "$out" in
+*"task setup:gh-scopes"* | *"gh auth refresh"*) fail "the bot profile must not be told to widen its login: ${out}" ;;
+esac
+
+echo "==> the agent posture's scope remedy names AGENT_GH_TOKEN, not GH_TOKEN"
+out="$(FOREMAN_DEVCONTAINER=agent run_gh_section read-only)"
+case "$out" in
+*"agent posture: re-provision AGENT_GH_TOKEN"*) ;;
+*) fail "expected the agent-posture scope remedy, got: ${out}" ;;
+esac
+case "$out" in
+*"task setup:gh-scopes"* | *"gh auth refresh"* | *"bot profile"*) fail "the agent posture must get its own remedy: ${out}" ;;
+esac
+
 echo "==> a token with neither scope warns and names the remedy"
 out="$(run_gh_section none)"
 case "$out" in
@@ -1418,6 +1453,25 @@ out="$(run_creds_section unauthenticated)"
 case "$out" in
 *"[ ] GitHub CLI (gh) - gh auth login"*) ;;
 *) fail "expected a missing-login line from status:creds, got: ${out}" ;;
+esac
+
+echo "==> status:creds names the profile's own provisioning remedy, never an interactive login"
+make_codex_stub in
+out="$(FOREMAN_DEVCONTAINER=bot run_creds_section unauthenticated)"
+case "$out" in
+*"GitHub CLI (gh) - bot profile: provision GH_TOKEN"*) ;;
+*) fail "expected the bot-profile login remedy from status:creds, got: ${out}" ;;
+esac
+case "$out" in
+*"GitHub CLI (gh) - gh auth login"*) fail "the bot profile must not be told to log in interactively: ${out}" ;;
+esac
+out="$(FOREMAN_DEVCONTAINER=agent run_creds_section unauthenticated)"
+case "$out" in
+*"GitHub CLI (gh) - agent posture: provision AGENT_GH_TOKEN"*) ;;
+*) fail "expected the agent-posture login remedy from status:creds, got: ${out}" ;;
+esac
+case "$out" in
+*"GitHub CLI (gh) - gh auth login"* | *"bot profile"*) fail "the agent posture must get its own login remedy: ${out}" ;;
 esac
 
 echo "==> a local token read that fails for another reason reads unknown"
