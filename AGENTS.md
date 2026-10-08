@@ -400,12 +400,18 @@ review only when **all** of the following hold for its current `headRefOid`:
   *indeterminate*, not a pass — GitHub populates it asynchronously, so a read
   taken moments after the push reports nothing having run rather than nothing
   to run.
-- The current-head Codex cycle above is terminal and clean — including clean
-  by way of dispositions recorded with `settle` (Codex review is
+- One terminal clean current-head Codex cycle with every finding settled
+  satisfies the Codex condition, including dispositions recorded with `settle` (Codex review is
   enabled here; where it is off, **or where the resolved integration cap is
   0**, this condition drops out — a cap of 0 leaves no cloud-review cycle to
   trigger a fresh `@codex review` from. Every other condition on this list
   still applies unchanged).
+  A P2-only cycle 1 whose findings are declined or filed needs no second cycle.
+  Once two consecutive cycles adjudicate clean, no further remediation push is
+  made for P2s; settle them without a push, declined with evidence or filed
+  together as one follow-up. A confirmed P0/P1 from any reviewer, including a
+  late human review, breaks the streak and is fixed within the remaining
+  `remediation` cap.
 - Every review finding is fixed, declined with evidence, or filed as follow-up
   work.
 - Every inline review comment has its required per-thread reply.
@@ -462,6 +468,11 @@ body's `## Deferred findings` with the override recorded as the reason it was
 carried — not as a disposition, so the integration stage still owes it a normal
 fix / decline-with-evidence / file-as-follow-up. A one-step task that touches a
 single stage owes no ledger.
+
+At integration exit, the ledger names which exit ended the stage — settled clean cycle, P2 fixing
+ceiling, tell, or cap — and its qualifying cycles. Preserve separate cycle/remediation counters
+and exempt/carried counts; unresolved gating work is ⛔ blocked/escalating,
+never 🏁 converged.
 
 ## Rigor and Strategy
 
@@ -852,6 +863,43 @@ invariants** (deletion by abstraction — see below), or state that it is in
 scope and why the change genuinely needs it. What is not allowed is hardening
 round-1's scaffolding by reflex and letting round 3 attack the result.
 
+**Integration owes the same checkpoint from Codex cycle 2 onward.** Before
+any remediation push, record for every finding on the adjudication table whether
+its subject exists only because an earlier remediation push of this integration
+stage added it. For each such finding, write one of the three dispositions:
+**delete** the scaffolding, **restructure it to invariants**, or retain it with
+an explicit explanation of why it is in scope and the change needs it. This
+provenance checkpoint is owed at every cycle from cycle 2, not just once.
+
+A nonempty integration cycle whose findings are **all** about subjects added by
+an earlier remediation push is the unmistakable **tell**: the stage is feeding
+on its own fixes. Answer it by deleting the added code, restructuring it to an
+invariant, or stopping and filing the unresolved P2s together as one follow-up
+issue; never make another hardening push. Record the delete / restructure /
+stop-and-file disposition on the adjudication table. A keep-with-reason
+disposition on an individual finding does not authorize another hardening push
+when the whole cycle meets the tell.
+
+The tell forbids another hardening push. A push that deletes or restructures
+the self-feeding surface is permitted within the `remediation` cap; otherwise
+settle its P2s by filing. Record the remedy on the table.
+
+**Filing settles P2s only.** A tell cycle holding a confirmed P0/P1 is an
+escalation that **keeps the PR draft**. Escalation for a self-feeding integration
+stage **leads with descoping**: recommend removing the added surface first,
+with the findings and provenance as evidence. Filing a confirmed P0/P1 never
+authorizes promotion.
+
+**A second finding of the same kind calls for a surface sweep before it is
+fixed.** Find every surface that states or feeds the rule — the earlier finding's
+fix counts as one already-covered surface — then fix the confirmed cause across
+the rest of that set in one remediation round. The sweep never overrides the
+checkpoint above: on a cycle that meets the tell it licenses no hardening push.
+Two recurring shapes require this check: copies of a rule across root/template twins and documentation, and
+an input surface being enumerated one member at a time (for example, local Git
+configuration inputs to canonical-diff identity). Fixing only the newly named
+copy or input invites the next cycle to rediscover the same defect elsewhere.
+
 **Deleting the added code is a legitimate way to converge.** When a
 round's findings are about scaffolding rather than the change, weigh removing
 that scaffolding against hardening it once more — a remediation can be correct
@@ -975,6 +1023,31 @@ P0/P1 disagreement persists at the cap, stop and surface it to Evan instead
 of iterating further — escalation at the cap is for P0/P1 that **persist**,
 nothing else. Evan may always ask for more rounds — convergence is a
 floor on when you may stop, not a ceiling on what he can order.
+
+**Integration convergence:** a Codex cycle is **clean** when it adjudicates to
+zero P0/P1; P2-only counts as clean. One terminal clean current-head cycle with
+every finding settled ends the stage; a P2-only cycle 1 whose findings are
+all declined or filed needs no second cycle on that unchanged head.
+
+Enforcement in the exit engine and integrate skill is
+[evanharmon1/harmon-devkit#1272](https://github.com/evanharmon1/harmon-devkit/issues/1272).
+
+**Integration fixing ceiling: two consecutive clean Codex cycles.** Once two
+consecutive cycles adjudicate clean, no further remediation push is made for
+P2 findings; settle them without a push, declined with evidence or filed
+together as one follow-up issue. A confirmed P0/P1 from any reviewer, including
+a late human review, breaks the clean streak and is fixed within the remaining
+`remediation` cap as before. Record each disposition, reply in affected threads,
+record non-inline dispositions with `settle` (or the recorded-comment equivalent
+where the checker is absent), and tick deferred PR-body entries. The readiness
+gate accepts that settlement; every other readiness condition still applies.
+
+Count completed Codex cycles, including exempt cycles, separately from remediation
+pushes; a carry adds no cycle, and an incomplete attempt or retry is not another
+completed cycle. Independent `integration`, `integration_exempt`, and
+`remediation` caps still apply. At a cap, persistent P0/P1 or an unreviewed head
+is an escalation and the PR stays draft; no cap waives a verdict. This policy
+adds no `.devflow.toml` key and never bypasses a failed or indeterminate gate.
 
 One caveat on the automatic stop-gate: the codex plugin's Stop hook applies
 its **own** notion of a material finding and may BLOCK on something you have

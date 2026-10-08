@@ -1909,6 +1909,12 @@ jq -e '.permissions.ask | (index("Bash(git push origin main)") != null) and (ind
 grep -Fq 'blocking credential-policy check' "${repo_root}/copier.yml" ||
     err "copier.yml use_codex_review help does not name the blocking credential-policy check"
 if [ "$profile" = "full" ]; then
+    grep -Fq 'At integration exit, the ledger names' AGENTS.md ||
+        err "AGENTS missing At integration exit, the ledger names (use_codex_cloud_review=true)"
+    grep -Fq 'Integration owes the same checkpoint from Codex cycle 2' AGENTS.md ||
+        err "AGENTS missing Integration owes the same checkpoint from Codex cycle 2 (use_codex_cloud_review=true)"
+    grep -Fq 'Integration convergence:' AGENTS.md ||
+        err "AGENTS missing Integration convergence: (use_codex_cloud_review=true)"
     grep -Fq 'Codex cloud review of the PR covers the integration stage.' AGENTS.md ||
         err "AGENTS remote-lane paragraph missing the cloud-review clause (use_codex_cloud_review=true)"
     grep -Fq '@codex review' AGENTS.md || err "AGENTS missing explicit Codex shepherd trigger (use_codex_cloud_review=true)"
@@ -1928,6 +1934,12 @@ if [ "$profile" = "full" ]; then
     grep -Fq 'Disable Codex Automatic reviews' docs/CHECKLIST.md ||
         err "CHECKLIST missing the human-configured Codex Automatic-reviews prerequisite"
 else
+    ! grep -Fq 'At integration exit, the ledger names' AGENTS.md ||
+        err "AGENTS rendered At integration exit, the ledger names but use_codex_cloud_review is off"
+    ! grep -Fq 'Integration owes the same checkpoint from Codex cycle 2' AGENTS.md ||
+        err "AGENTS rendered Integration owes the same checkpoint from Codex cycle 2 but use_codex_cloud_review is off"
+    ! grep -Fq 'Integration convergence:' AGENTS.md ||
+        err "AGENTS rendered Integration convergence: but use_codex_cloud_review is off"
     ! grep -Fq 'Codex cloud review of the PR covers the integration stage.' AGENTS.md ||
         err "AGENTS rendered the cloud-review clause but use_codex_cloud_review is off"
     ! grep -Fq '@codex review' AGENTS.md || err "AGENTS rendered Codex shepherd trigger but use_codex_cloud_review is off"
@@ -1938,6 +1950,9 @@ else
 fi
 if [ "$profile" = "meta" ]; then
     grep -Fq 'proceed on CI alone' AGENTS.md || err "AGENTS lost local-only Codex shepherd fallback"
+    grep -Fq '#   where Codex cloud review is connected: one terminal clean current-head cycle' docs/guides/codex-review.md &&
+        grep -Fq '#   where Codex cloud review is connected: two consecutive clean cycles stop' docs/guides/codex-review.md ||
+        err "Codex guide workflow cycles lack the cloud-review qualifier (use_codex_cloud_review=false)"
 fi
 
 # The generated execution policy must honor the same Codex opt-outs as the
