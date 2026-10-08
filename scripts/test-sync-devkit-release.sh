@@ -117,7 +117,8 @@ make_stubs() {
     cat >"$_ms_bin/gh" <<'STUB'
 #!/usr/bin/env bash
 set -eu
-printf 'gh %s GH_TOKEN=%s\n' "$*" "${GH_TOKEN:+set}${GH_TOKEN:-unset}" >>"$STUB_LOG"
+_gh_tok=${GH_TOKEN:+set}
+printf 'gh %s GH_TOKEN=%s\n' "$*" "${_gh_tok:-unset}" >>"$STUB_LOG"
 # Snapshot a --body-file's CONTENT here: the helper's EXIT trap removes the
 # file, so a test that recorded only the path would find it already gone.
 _prev=""
@@ -226,7 +227,9 @@ STUB
     cat >"$_ms_bin/task" <<'STUB'
 #!/usr/bin/env bash
 set -eu
-printf 'task %s GH_TOKEN=%s GITHUB_TOKEN=%s\n' "$*" "${GH_TOKEN:+set}${GH_TOKEN:-unset}" "${GITHUB_TOKEN:+set}${GITHUB_TOKEN:-unset}" >>"$STUB_LOG"
+_gh_tok=${GH_TOKEN:+set}
+_github_tok=${GITHUB_TOKEN:+set}
+printf 'task %s GH_TOKEN=%s GITHUB_TOKEN=%s\n' "$*" "${_gh_tok:-unset}" "${_github_tok:-unset}" >>"$STUB_LOG"
 target="${1:-}"
 case ",${STUB_FAIL_TASKS:-}," in
 *",$target,"*)

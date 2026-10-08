@@ -1630,13 +1630,17 @@ minimal) # use_skills_sync=false -> none of the machinery renders
     grep -q '^config_file = "agents/implementer.toml"$' .codex/config.toml ||
         err "Codex implementer registration does not point at its config"
     # Run the rendered sync test, not just its task wiring, under the ambient
-    # environment the bot and agent profiles and Claude Code on the web create
-    # (#1395): its leak check once expanded at write time, so a preset token
-    # failed it and an absent one made it vacuous. One profile bounds the cost.
+    # environment the bot and agent profiles, Claude Code on the web and the
+    # devkit-sync workflow create (#1395): its leak check once expanded at write
+    # time, so a preset token failed it and an absent one made it vacuous, and an
+    # inherited SYNC_DEVKIT_TAG changes what it resolves. One profile bounds the
+    # cost; the output is kept and replayed only on failure.
     if [ "$profile" = "full" ]; then
-        env FOREMAN_DEVCONTAINER=bot GH_TOKEN=dummy GITHUB_TOKEN=dummy \
-            ./scripts/test-sync-devkit-release.sh >/dev/null ||
-            err "rendered test-sync-devkit-release.sh failed with GH_TOKEN/GITHUB_TOKEN preset"
+        run_quiet rendered-sync-devkit-release \
+            env FOREMAN_DEVCONTAINER=bot GH_TOKEN=dummy GITHUB_TOKEN=dummy \
+            SYNC_DEVKIT_TAG=v0.48.0 SYNC_DEVKIT_ALLOW_DOWNGRADE=true \
+            ./scripts/test-sync-devkit-release.sh ||
+            err "rendered test-sync-devkit-release.sh failed under a preset token and release environment"
     fi
     ;;
 esac
