@@ -210,8 +210,11 @@ minting a new token and re-running `/web-setup`. Retire it by revoking it on
 GitHub (Settings → Developer settings → Tokens (classic)): whether disconnecting
 GitHub on claude.ai's connectors page removes a stored token was not observed.
 Per-session repository scope does not limit this agent: a session can attach,
-when a human approves, any repository the bot can push to, and a classic `repo`
-token also carries `repo:status`, `repo_deployment`, `repo:invite` and `security_events`.
+when a human approves, any repository the bot can push to. Beyond writes to
+those repositories, a classic `repo` token also carries `repo:status`,
+`repo_deployment`, `repo:invite` and `security_events`; `repo:invite` lets it
+accept a pending collaborator invitation to the bot, which someone with admin
+access still has to send.
 
 ## What the bot cannot do — by construction
 
