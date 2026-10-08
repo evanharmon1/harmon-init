@@ -8,6 +8,25 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [5.3.0](https://github.com/evanharmon1/harmon-init/compare/v5.2.1...v5.3.0) (2026-10-08)
+
+
+### Features
+
+* **devcontainer:** drop the merge guards from the bot and agent postures ([#1551](https://github.com/evanharmon1/harmon-init/issues/1551)) ([1b4d9f7](https://github.com/evanharmon1/harmon-init/commit/1b4d9f74c7b3ef30a63ad6cdd2eddd2e82e49260))
+
+
+### Bug Fixes
+
+* **claude:** re-sync git-merge-guard with the host's wrapper-position invariant ([#1559](https://github.com/evanharmon1/harmon-init/issues/1559)) ([4f66d24](https://github.com/evanharmon1/harmon-init/commit/4f66d248d0a4d6abfb97b91d81e64d7a8dcf3307))
+* **devcontainer:** record the Claude Code on the web walkthrough and the PAT-only identity route ([#1544](https://github.com/evanharmon1/harmon-init/issues/1544)) ([b3c2321](https://github.com/evanharmon1/harmon-init/commit/b3c232141b3e736062022ce2f7aff6774d9bf2a9))
+* **devcontainer:** settle the Claude Code on the web walkthrough follow-ups ([#1555](https://github.com/evanharmon1/harmon-init/issues/1555)) ([c5f8384](https://github.com/evanharmon1/harmon-init/commit/c5f8384760dfeba5bb5c90da466a73559dfd0f76))
+* **devcontainer:** update shared image to 50e46da4 ([#1543](https://github.com/evanharmon1/harmon-init/issues/1543)) ([0f0e654](https://github.com/evanharmon1/harmon-init/commit/0f0e654ff1853a3a022484375a41f5249fa82b92))
+* **docs:** generate the classification rubric short form from label-registry.json ([#1545](https://github.com/evanharmon1/harmon-init/issues/1545)) ([9d987ad](https://github.com/evanharmon1/harmon-init/commit/9d987ad7ce71cd92c524e6a0bda3fcd6c929c4d8))
+* **template:** sync harmon-devkit skills to v0.52.0 ([#1554](https://github.com/evanharmon1/harmon-init/issues/1554)) ([7fbc3a2](https://github.com/evanharmon1/harmon-init/commit/7fbc3a20df08799fd7790186f7e9c8b6d6178774))
+* **tests:** isolate the status and devkit-sync tests from the ambient environment ([#1556](https://github.com/evanharmon1/harmon-init/issues/1556)) ([0edd24b](https://github.com/evanharmon1/harmon-init/commit/0edd24bab14b4c021b51872b5887d925477a80ca))
+* **tests:** make the retired-field guards able to fail again ([#1553](https://github.com/evanharmon1/harmon-init/issues/1553)) ([6ed0df2](https://github.com/evanharmon1/harmon-init/commit/6ed0df2dfcdd3427e385d07b2b8873ff37c37263))
+
 ## [5.2.1](https://github.com/evanharmon1/harmon-init/compare/v5.2.0...v5.2.1) (2026-10-07)
 
 
