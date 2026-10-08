@@ -14,7 +14,7 @@
 // or as a library (`import { resolvePolicy, detectShape } from
 // "./devflow-policy.mjs"`), notably by scripts/dev-flow-exit.mjs.
 
-import { readFileSync } from 'node:fs'
+import { lstatSync, readFileSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { parseToml, TomlError } from './lib/toml-lite.mjs'
@@ -2296,11 +2296,11 @@ function resolvePinInput(input, ladder, warnings) {
 // the stored Tier can never be read as current. The stored Tier is a cache
 // to compare against, never an input — not even when the inputs are absent.
 function resolveIssueTierInput(input, matrix, pin, warnings) {
-  // An honored pin is the issue's Tier whatever the classification says, so
-  // its cache state is `pinned` on every path — classified or not.
+  // The pin suppresses cache warnings; applyTierInputs records its cache
+  // state after the classification status has been decided.
   const pinned = pin.status === 'honored'
   if (input === undefined || input === null) {
-    return { status: 'absent', cache: pinned ? 'pinned' : 'absent' }
+    return { status: 'absent', cache: 'absent' }
   }
   if (typeof input !== 'object' || Array.isArray(input)) {
     throw new PolicyError('issueTier must be { risk, complexity, tier }')
@@ -2337,8 +2337,7 @@ function resolveIssueTierInput(input, matrix, pin, warnings) {
       )
     }
     let cache = 'unverifiable'
-    if (pinned) cache = 'pinned'
-    else if (storedTier === null) cache = 'absent'
+    if (storedTier === null) cache = 'absent'
     return { status: 'absent', ...base, cache }
   }
   let reason = null
@@ -2354,9 +2353,7 @@ function resolveIssueTierInput(input, matrix, pin, warnings) {
   if (reason !== null) return { status: 'indeterminate', ...base, reason }
   const tier = deriveTier(matrix, { risk, complexity })
   let cache = 'absent'
-  if (pinned) {
-    cache = 'pinned'
-  } else if (storedTier !== null) {
+  if (storedTier !== null && !pinned) {
     cache = storedTier === tier ? 'match' : 'stale'
     if (cache === 'stale') {
       warnings.push(
@@ -2408,8 +2405,7 @@ function applyTierInputs(resolved, opts = {}) {
     const reason =
       'no .devflow.toml: the built-in fallback derives no Tier (ADR 2026-08-16 D5); the classification is recorded, not applied'
     let cache = 'unverifiable'
-    if (pin.status === 'honored') cache = 'pinned'
-    else if (issue.stored_tier === null) cache = 'absent'
+    if (issue.stored_tier === null) cache = 'absent'
     issue = {
       status: 'inert',
       risk: issue.risk,
@@ -2421,6 +2417,8 @@ function applyTierInputs(resolved, opts = {}) {
     }
     warnings.push(tierWarning('tier-inert-absent-policy', 'issue_tier', reason))
   }
+  // An honored pin is the issue's Tier on every classification path.
+  if (pin.status === 'honored') issue.cache = 'pinned'
   const rigorChosen = requestedRigor !== undefined
 
   const roles = {}
@@ -2505,20 +2503,34 @@ function applyTierInputs(resolved, opts = {}) {
 export function tierAchievabilityWarnings(resolved, registryDoc) {
   if (!registryDoc) return []
   const familyBySlug = new Map((registryDoc.families || []).map((f) => [f.slug, f]))
+  const harnessBySlug = new Map((registryDoc.harnesses || []).map((h) => [h.slug, h]))
   const warnings = []
   for (const [role, r] of Object.entries(resolved.roles)) {
     if (r.profile_tier === undefined || r.tier === r.profile_tier) continue
     const families = r.families.map((slug) => familyBySlug.get(slug)).filter(Boolean)
     if (!families.some((family) => Array.isArray(family.models))) continue
+    const harnesses =
+      r.harnesses.length > 0
+        ? r.harnesses.map((slug) => harnessBySlug.get(slug)).filter(Boolean)
+        : [...harnessBySlug.values()]
     const achievable = families.some(
-      (family) => Array.isArray(family.models) && family.models.some((m) => m.tier === r.tier)
+      (family) =>
+        Array.isArray(family.models) &&
+        family.models.some((m) => m.tier === r.tier) &&
+        (role === 'orchestrator' ||
+          harnesses.some(
+            (harness) =>
+              (!Array.isArray(harness.roles) || harness.roles.includes(role)) &&
+              (harness.family_constraint?.kind !== 'fixed' ||
+                harness.family_constraint.family === family.slug)
+          ))
     )
     if (!achievable) {
       warnings.push(
         tierWarning(
           'tier-unachievable',
           role,
-          `${role} tier "${r.tier}" (${r.source}) has no model in its declared families (${r.families.join(', ')})`
+          `${role} tier "${r.tier}" (${r.source}) has no executable family/harness/model-tier tuple in its declared families (${r.families.join(', ')})`
         )
       )
     }
@@ -2833,8 +2845,18 @@ function cliResolve(args) {
     doc = loadTomlFile(args.policy)
   } catch (err) {
     if (err?.code === 'ENOENT') {
-      doc = null
-    } else {
+      try {
+        lstatSync(args.policy)
+      } catch (statErr) {
+        if (statErr?.code === 'ENOENT') {
+          doc = null
+        } else {
+          console.error(`devflow-policy: could not inspect --policy: ${statErr.message}`)
+          return 2
+        }
+      }
+    }
+    if (doc !== null) {
       console.error(`devflow-policy: could not read/parse --policy: ${err.message}`)
       return 2
     }
