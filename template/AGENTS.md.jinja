@@ -357,11 +357,13 @@ body's deferred findings with the override recorded as the reason it was carried
 decline-with-evidence / file-as-follow-up. A one-step task that touches a single
 stage owes no ledger.
 
+[% if use_codex_cloud_review %]
 At integration exit, the ledger names which exit ended the stage — settled clean cycle, P2 fixing
 ceiling, tell, or cap — and its qualifying cycles. Preserve separate cycle/remediation counters
 and exempt/carried counts; unresolved gating work is ⛔ blocked/escalating,
 never 🏁 converged.
 
+[% endif %]
 ## Rigor and Strategy
 
 **Rigor and strategy are resolved from `.devflow.toml`, not restated here.**
@@ -743,6 +745,7 @@ invariants** (deletion by abstraction — see below), or state that it is in
 scope and why the change genuinely needs it. What is not allowed is hardening
 round-1's scaffolding by reflex and letting round 3 attack the result.
 
+[% if use_codex_cloud_review %]
 **Integration owes the same checkpoint from Codex cycle 2 onward.** Before
 any remediation push, record for every finding on the adjudication table whether
 its subject exists only because an earlier remediation push of this integration
@@ -778,6 +781,7 @@ an input surface being enumerated one member at a time (for example, local Git
 configuration inputs to canonical-diff identity). Fixing only the newly named
 copy or input invites the next cycle to rediscover the same defect elsewhere.
 
+[% endif %]
 **Deleting the added code is a legitimate way to converge.** When a
 round's findings are about scaffolding rather than the change, weigh removing
 that scaffolding against hardening it once more — a remediation can be correct
@@ -902,6 +906,7 @@ instead of iterating further — escalation at the cap is for P0/P1 that
 convergence is a floor on when you may stop, not a ceiling on what they can
 order.
 
+[% if use_codex_cloud_review %]
 **Integration convergence:** a Codex cycle is **clean** when it adjudicates to
 zero P0/P1; P2-only counts as clean. One terminal clean current-head cycle with
 every finding settled ends the stage; a P2-only cycle 1 whose findings are
@@ -927,6 +932,7 @@ completed cycle. Independent `integration`, `integration_exempt`, and
 is an escalation and the PR stays draft; no cap waives a verdict. This policy
 adds no `.devflow.toml` key and never bypasses a failed or indeterminate gate.
 
+[% endif %]
 One caveat on the automatic stop-gate: the codex plugin's Stop hook applies
 its **own** notion of a material finding and may BLOCK on something you have
 classified P2. Adjudicate it (fix it, or state the reasoning) — **never**
