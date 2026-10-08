@@ -905,8 +905,8 @@ tasks:
     # profiles export FOREMAN_DEVCONTAINER and a GH_TOKEN, Claude Code on the web
     # presets GH_TOKEN/GITHUB_TOKEN, and the sync helper reads SYNC_DEVKIT_TAG,
     # SYNC_DEVKIT_ALLOW_DOWNGRADE and AGENT_SKILLS_DIR from its caller. The test
-    # clears those three itself and strips both tokens around every helper run;
-    # this run presets all six to prove it passes with them set.
+    # clears those three itself; this run presets all six to prove it passes with
+    # them set.
     cmds:
       - env FOREMAN_DEVCONTAINER=bot GH_TOKEN=dummy GITHUB_TOKEN=dummy SYNC_DEVKIT_TAG=v0.48.0 SYNC_DEVKIT_ALLOW_DOWNGRADE=true AGENT_SKILLS_DIR=.agents/elsewhere ./scripts/test-sync-devkit-release.sh
 [% endif %]
