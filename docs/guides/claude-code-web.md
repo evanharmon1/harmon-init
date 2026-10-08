@@ -290,9 +290,10 @@ refused. `repo` grants full access to the repositories the token reaches,
 naming commit statuses and deployment statuses among them
 ([GitHub's classic token scope documentation](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps#available-scopes);
 see also [bot-account.md](bot-account.md)), so it covers most other repository
-writes too (releases, labels, Actions re-runs and cancels), and there the limit
-is the bot's grants and the rulesets. The agent posture's denies and the proxy refused the `gh`
-write forms tried, but the denies are defence in depth, not the write boundary
+writes too (releases, labels, Actions re-runs and cancels). None of those touch
+a workflow file, so the missing `workflow` scope plays no part in them: the
+bot's grants and the rulesets are what limit them. The agent posture's denies
+and the proxy refused the `gh` write forms tried, but the denies are defence in depth, not the write boundary
 ([why](#the-gh-call-inventory)): the boundary is the bot's grants, the token's
 missing `workflow` scope and the rulesets. The operator's own token was the
 planned fallback if the platform refused a token whose GitHub user differs from
