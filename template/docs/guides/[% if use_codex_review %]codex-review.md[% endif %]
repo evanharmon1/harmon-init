@@ -263,7 +263,7 @@ task security   # Semgrep CE + gitleaks + dependency audit — pre-publication g
 #   P2s, adjudicate → fix → push, under the integration and remediation caps
 #   one terminal clean current-head cycle with all findings settled ends the stage;
 #   two consecutive clean cycles stop P2 fix pushes; P0/P1 still get fixed within cap
-#   use the integration exit (AGENTS.md "Loop cap and exit") and every readiness gate
+#   every readiness gate still applies
 #   (independent of the loops above)
 # → readiness gate passes → gh pr ready (the handoff to a human)
 # → merging stays a human decision
@@ -404,9 +404,9 @@ and escalation **leads with descoping**. On a second finding of the same kind,
 sweep every surface that states or feeds the rule before fixing either: rule
 copies across twins/docs, and input surfaces enumerated one member at a time.
 
-Use the integration exit (§ "Loop cap and exit" in AGENTS.md); the ledger names
-that exit and its qualifying cycles, preserving separate integration/remediation
-and exempt/carried accounting. Every readiness condition still applies.
+The ledger names which exit ended the stage — settled clean cycle, P2 fixing
+ceiling, tell, or cap — and its qualifying cycles, preserving separate
+integration/remediation and exempt/carried accounting.
 
 ## Finding priorities
 

@@ -401,17 +401,17 @@ review only when **all** of the following hold for its current `headRefOid`:
   taken moments after the push reports nothing having run rather than nothing
   to run.
 - One terminal clean current-head Codex cycle with every finding settled
-  satisfies the Codex condition, including dispositions recorded with `settle`.
+  satisfies the Codex condition, including dispositions recorded with `settle` (Codex review is
+  enabled here; where it is off, **or where the resolved integration cap is
+  0**, this condition drops out — a cap of 0 leaves no cloud-review cycle to
+  trigger a fresh `@codex review` from. Every other condition on this list
+  still applies unchanged).
   A P2-only cycle 1 whose findings are declined or filed needs no second cycle.
   Once two consecutive cycles adjudicate clean, no further remediation push is
   made for P2s; settle them without a push, declined with evidence or filed
   together as one follow-up. A confirmed P0/P1 from any reviewer, including a
   late human review, breaks the streak and is fixed within the remaining
-  `remediation` cap. Use the integration exit (§ "Loop cap and exit") (Codex review is
-  enabled here; where it is off, **or where the resolved integration cap is
-  0**, this condition drops out — a cap of 0 leaves no cloud-review cycle to
-  trigger a fresh `@codex review` from. Every other condition on this list
-  still applies unchanged).
+  `remediation` cap.
 - Every review finding is fixed, declined with evidence, or filed as follow-up
   work.
 - Every inline review comment has its required per-thread reply.
@@ -469,8 +469,8 @@ carried — not as a disposition, so the integration stage still owes it a norma
 fix / decline-with-evidence / file-as-follow-up. A one-step task that touches a
 single stage owes no ledger.
 
-At integration exit, the ledger names the integration exit (§ "Loop cap and
-exit") and its qualifying cycles. Preserve separate cycle/remediation counters
+The ledger names which exit ended the stage — settled clean cycle, P2 fixing
+ceiling, tell, or cap — and its qualifying cycles. Preserve separate cycle/remediation counters
 and exempt/carried counts; unresolved gating work is ⛔ blocked/escalating,
 never 🏁 converged.
 
@@ -882,8 +882,7 @@ when the whole cycle meets the tell.
 
 The tell forbids another hardening push. A push that deletes or restructures
 the self-feeding surface is permitted within the `remediation` cap; otherwise
-settle its P2s by filing. Record the remedy on the table and use the integration
-exit (§ "Loop cap and exit").
+settle its P2s by filing. Record the remedy on the table.
 
 **Filing settles P2s only.** A tell cycle holding a confirmed P0/P1 is an
 escalation that **keeps the PR draft**. Escalation for a self-feeding integration
@@ -1028,12 +1027,7 @@ zero P0/P1; P2-only counts as clean. One terminal clean current-head cycle with
 every finding settled ends the stage; a P2-only cycle 1 whose findings are
 all declined or filed needs no second cycle on that unchanged head.
 
-The integration exit is the outcome the configured `.devflow.toml`
-`[convergence]` composition computes over the cycle's adjudicated findings:
-`capped`, then `diverging`, then `converged`, otherwise `continue`. A cycle whose
-findings all concern surface an earlier remediation push added (the tell) is
-the clearest case of `diverging`; it does not define it. Enforcement in the
-exit engine is
+Enforcement in the exit engine and integrate skill is
 [evanharmon1/harmon-devkit#1272](https://github.com/evanharmon1/harmon-devkit/issues/1272).
 
 **Integration fixing ceiling: two consecutive clean Codex cycles.** Once two
