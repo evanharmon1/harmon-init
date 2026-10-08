@@ -26,6 +26,75 @@ trap 'rm -rf "$test_tmp"' EXIT
 mutated="${test_tmp}/agent-registry.json"
 mutated_schema="${test_tmp}/agent-registry.schema.json"
 
+# Exercise the pinned breakdown module itself, with transport responses supplied
+# from this checkout. Consumers without synced breakdown assets skip at runtime.
+breakdown_asset=".agents/skills/breakdown/assets/discover-label-vocabulary.mjs"
+if [ ! -f "$breakdown_asset" ]; then
+    breakdown_asset=".claude/skills/breakdown/assets/discover-label-vocabulary.mjs"
+fi
+if [ -f "$breakdown_asset" ]; then
+    node --input-type=module - "$breakdown_asset" "$registry" "$schema" \
+        >"${test_tmp}/breakdown.json" <<'NODE' || fail "pinned breakdown rejected this checkout's registries"
+import assert from 'node:assert/strict'
+import childProcess from 'node:child_process'
+import { readFileSync } from 'node:fs'
+import { syncBuiltinESMExports } from 'node:module'
+import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
+
+const [asset, registry, schema] = process.argv.slice(2)
+const files = new Map([
+  ['agent-registry.json', registry],
+  ['agent-registry.schema.json', schema],
+  ['label-registry.json', 'label-registry.json'],
+  ['label-registry.schema.json', 'label-registry.schema.json']
+])
+const fetched = new Set()
+const commit = '1'.repeat(40)
+const api = 'repos/fixture/registry'
+const originalExecFileSync = childProcess.execFileSync
+childProcess.execFileSync = (command, args) => {
+  if (command.endsWith('/triage-apply.sh')) {
+    assert.deepEqual(args, ['classification-axes', '--repo', 'fixture/registry'])
+    return JSON.stringify({
+      owner_type: 'User', storage: 'label', required: [],
+      axes: Object.fromEntries(['impact', 'risk', 'complexity'].map(
+        (axis) => [axis, { provisioned: false, values: [] }]
+      ))
+    })
+  }
+  assert.equal(command, 'gh', 'unexpected subprocess in pinned discovery')
+  assert.equal(args[0], 'api')
+  const endpoint = args.find((argument) => argument.startsWith(`${api}/`) || argument === api)
+  if (endpoint === api) return JSON.stringify({ default_branch: 'main', owner: { type: 'User' } })
+  if (endpoint === `${api}/branches/main`) return JSON.stringify({ commit: { sha: commit } })
+  if (endpoint === `${api}/git/trees/${commit}`) {
+    return JSON.stringify({ truncated: false, tree: [...files.keys()].map((path) => ({ path })) })
+  }
+  if (endpoint === `${api}/labels`) return '[[]]'
+  const file = endpoint?.slice(`${api}/contents/`.length)
+  assert.equal(endpoint, `${api}/contents/${file}`)
+  assert.ok(files.has(file), `unexpected file fetch: ${file}`)
+  assert.ok(args.includes(`ref=${commit}`), 'registry fetch must use the captured commit')
+  fetched.add(file)
+  return JSON.stringify({ type: 'file', encoding: 'base64',
+    content: readFileSync(files.get(file)).toString('base64') })
+}
+syncBuiltinESMExports()
+process.argv = [process.execPath, resolve(asset), '--repo', 'fixture/registry']
+try {
+  await import(pathToFileURL(resolve(asset)).href)
+  assert.deepEqual(fetched, new Set(files.keys()), 'discovery must validate both local registries')
+} finally {
+  childProcess.execFileSync = originalExecFileSync
+  syncBuiltinESMExports()
+}
+NODE
+    echo "PASS: pinned breakdown accepts this checkout's registries without labels.suggest"
+else
+    echo "SKIP: pinned breakdown asset is not vendored"
+fi
+
 rejects() {
     local description="$1"
     local mutation="$2"
@@ -86,7 +155,13 @@ switch (mutation) {
     adapter('claude').harness = null
     break
   case 'harness-axis':
-    registry.labels.suggest.axis = 'harness'
+    registry.labels.claim.axis = 'harness'
+    break
+  case 'retired-suggest-namespace':
+    registry.labels.suggest = { ...registry.labels.claim, prefix: 'suggest' }
+    break
+  case 'retired-suggest-prefix':
+    registry.labels.claim.prefix = 'suggest'
     break
   case 'public-mock':
     adapter('mock').provision_label = true
@@ -412,9 +487,15 @@ rejects "a provider-rewired harness slug with an unsanctioned suffix" \
 rejects "production adapters without a harness mapping" \
     'production-without-harness' \
     'needs a production harness mapping'
-rejects "harness-centric suggestion labels" \
+rejects "harness-centric claim labels" \
     'harness-axis' \
     'must equal "model"'
+rejects "the retired suggest namespace" \
+    'retired-suggest-namespace' \
+    'unexpected property suggest'
+rejects "the retired suggest prefix in the claim contract" \
+    'retired-suggest-prefix' \
+    'must be one of'
 rejects "public labels for the test-only mock adapter" \
     'public-mock' \
     'test-only Foreman adapter mock cannot dispatch or provision a public label'

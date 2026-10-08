@@ -358,9 +358,9 @@ if [ "$template_mode" = 1 ]; then
     check_classification_registry template/label-registry.json
 fi
 
-# The agent registry keeps DECLARING the retired suggest namespace until #1473
-# (the pinned breakdown label discovery requires labels.suggest). Declaring it
-# must provision and protect nothing: no suggest:* label is rendered for
+# The agent registry no longer declares the retired suggest namespace. The
+# retired label-manifest records must provision and protect nothing: no
+# suggest:* label is rendered for
 # provisioning, and the inventory leaves every suggest:* label unrecognized so
 # a live one is reported and offered for guarded --prune.
 check_suggest_provisions_nothing() {
