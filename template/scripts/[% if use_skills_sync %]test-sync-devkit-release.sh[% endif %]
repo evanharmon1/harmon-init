@@ -12,11 +12,11 @@ set -euo pipefail
 # The helper reads its release inputs from the environment, and harmon-init's
 # devkit-sync workflow runs `task verify` with them exported, so an inherited
 # SYNC_DEVKIT_TAG or SYNC_DEVKIT_ALLOW_DOWNGRADE would change what the cases
-# resolve (#1395). Clear the family and GH_APP_SLUG; the cases that need one
-# set it per call.
+# resolve (#1395). Clear the family and the helper's other inputs
+# (GH_APP_SLUG, AGENT_SKILLS_DIR); the cases that need one set it per call.
 for _ambient in $(compgen -e); do
     case "$_ambient" in
-    SYNC_DEVKIT_* | GH_APP_SLUG) unset "$_ambient" ;;
+    SYNC_DEVKIT_* | GH_APP_SLUG | AGENT_SKILLS_DIR) unset "$_ambient" ;;
     esac
 done
 unset _ambient
@@ -270,8 +270,8 @@ assert_commit_title() {
 
 # ── run_helper ────────────────────────────────────────────────────────
 # Copies the helper into the fixture's scripts/ directory and runs the copy
-# from the fixture root. Scrubs GH_TOKEN so a stale env value cannot leak
-# into the helper — the test stubs gh, so the token must never reach git.
+# from the fixture root. Scrubs GH_TOKEN and GITHUB_TOKEN so a stale env value
+# cannot leak into the helper — the test stubs gh, so a token must never reach git.
 # The helper calls cd "$(dirname "$0")/.." to reach the repo root from its
 # scripts/ location; we replicate that layout so it resolves to the fixture.
 run_helper() {

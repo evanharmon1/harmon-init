@@ -821,8 +821,9 @@ tasks:
     desc: Unit-test the status board-writes + local-credential checks (stubbed CLIs, no network)
     # Run under a hostile ambient environment on purpose (#1395): the bot and agent
     # profiles export FOREMAN_DEVCONTAINER and a GH_TOKEN, and Claude Code on the
-    # web presets GH_TOKEN/GITHUB_TOKEN, and the devkit-sync workflow exports its
-    # release inputs, so the test must pass with them set.
+    # web presets GH_TOKEN/GITHUB_TOKEN, so the test must pass with them set. The
+    # GH_HOST, GH_REPO, GH_REST_HOST and STATUS_NO_NETWORK canaries make the test's
+    # family clear (GH_*, GITHUB_*, STATUS_*) fail if it narrows to a name list.
     cmds:
       - env FOREMAN_DEVCONTAINER=bot GH_TOKEN=dummy GITHUB_TOKEN=dummy GH_HOST=ambient.invalid GH_REPO=ambient/repo GH_REST_HOST=ambient.invalid STATUS_NO_NETWORK=1 ./scripts/test-status.sh
 
@@ -905,7 +906,7 @@ tasks:
     # web presets GH_TOKEN/GITHUB_TOKEN, and the devkit-sync workflow exports its
     # release inputs, so the test must pass with them set.
     cmds:
-      - env FOREMAN_DEVCONTAINER=bot GH_TOKEN=dummy GITHUB_TOKEN=dummy SYNC_DEVKIT_TAG=v0.48.0 SYNC_DEVKIT_ALLOW_DOWNGRADE=true ./scripts/test-sync-devkit-release.sh
+      - env FOREMAN_DEVCONTAINER=bot GH_TOKEN=dummy GITHUB_TOKEN=dummy SYNC_DEVKIT_TAG=v0.48.0 SYNC_DEVKIT_ALLOW_DOWNGRADE=true AGENT_SKILLS_DIR=.agents/elsewhere ./scripts/test-sync-devkit-release.sh
 [% endif %]
 [% if project_management == 'github' and github_org != author_git_provider_username %]
 

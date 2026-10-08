@@ -1638,7 +1638,7 @@ minimal) # use_skills_sync=false -> none of the machinery renders
     if [ "$profile" = "full" ]; then
         run_quiet rendered-sync-devkit-release \
             env FOREMAN_DEVCONTAINER=bot GH_TOKEN=dummy GITHUB_TOKEN=dummy \
-            SYNC_DEVKIT_TAG=v0.48.0 SYNC_DEVKIT_ALLOW_DOWNGRADE=true \
+            SYNC_DEVKIT_TAG=v0.48.0 SYNC_DEVKIT_ALLOW_DOWNGRADE=true AGENT_SKILLS_DIR=.agents/elsewhere \
             ./scripts/test-sync-devkit-release.sh ||
             err "rendered test-sync-devkit-release.sh failed under a preset token and release environment"
     fi
