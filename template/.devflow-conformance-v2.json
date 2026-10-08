@@ -2069,10 +2069,7 @@
           "families  = [\"claude\", \"gpt\", \"gemini\"]",
           "families  = [\"gpt\", \"claude\"]"
         ],
-        [
-          "harnesses = [\"claude-code\", \"codex-cli\", \"antigravity\"]",
-          ""
-        ]
+        ["harnesses = [\"claude-code\", \"codex-cli\", \"antigravity\"]", ""]
       ],
       "registry_replacements": [
         [
