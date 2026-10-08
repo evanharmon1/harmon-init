@@ -287,9 +287,9 @@ selected-repository list. Among the repository writes this guide covers
 workflow-file changes, because it has no `workflow` scope. It does not carry
 `gist`, `delete_repo`, `admin:org` or the package scopes, so those writes are
 refused; `repo` does cover most other repository writes (releases, labels,
-Actions re-runs and cancels, statuses, deployments; see
-[bot-account.md](bot-account.md)), so there too the limit is the bot's grants
-and the rulesets. The agent posture's denies and the proxy refused the `gh`
+Actions re-runs and cancels, per [GitHub's classic token scope documentation](https://docs.github.com/en/apps/oauth-apps/building-oauth-apps/scopes-for-oauth-apps#available-scopes);
+statuses and deployments, see [bot-account.md](bot-account.md)), so there too
+the limit is the bot's grants and the rulesets. The agent posture's denies and the proxy refused the `gh`
 write forms tried, but the denies are defence in depth, not the write boundary
 ([why](#the-gh-call-inventory)): the boundary is the bot's grants, the token's
 missing `workflow` scope and the rulesets. The operator's own token was the
@@ -526,8 +526,9 @@ with a separate write flag (`-X`, `--method`, `-f`, `-F`, `--field`,
 `gh pr create`, `edit`, `ready` and `comment` are GraphQL-backed and expected to
 fail through the proxy's GraphQL refusal; not yet observed under the posture.
 Those denies are defence in depth, not the write boundary ([why](#the-gh-call-inventory)). The
-boundary is the bot's collaborator grants and the repository rulesets, as for the bot's
-PATs — and that boundary covers merges, not draft promotion or auto-merge. The
+boundary is the bot's grants, the token's missing `workflow` scope and the
+rulesets, as for the bot's PATs — and that boundary covers merges, not draft
+promotion or auto-merge. The
 proxy offers REST routes for both (`POST …/ccr/ready_for_review` and
 `PUT|DELETE …/ccr/auto_merge`, among the CCR routes quoted under
 [the `gh` call inventory](#the-gh-call-inventory)); a write grant permits them,
@@ -537,10 +538,11 @@ nothing by itself), and only the repository's own **Allow auto-merge** setting
 would stop it enabling auto-merge — off on `evanharmon1/harmon-init` and
 `ponderousdev/foreman` (read 2026-10-07). Expected from the routes the proxy
 names, not yet observed: no session has called either. The posture does not
-stop `gh pr ready` or `gh pr merge --auto` either: its managed settings *allow* `gh pr create`, `edit`, `comment`,
-`ready` and `merge`, so in a session the `gh pr` subcommands are stopped only by
-the proxy's GraphQL refusal, which is the platform's to change. **Allow
-auto-merge** is a repository setting an administrator can turn on, not a policy.
+stop `gh pr ready` or `gh pr merge --auto` either: from v5.3.0 its managed
+settings *allow* `gh pr create`, `edit`, `comment`, `ready` and `merge`, so in a
+session the `gh pr` subcommands are stopped only by the proxy's GraphQL refusal,
+which is the platform's to change. **Allow auto-merge** is a repository setting
+an administrator can turn on, not a policy.
 A merge into a protected branch still needs code-owner approval and the
 required checks.
 
@@ -554,8 +556,9 @@ Claude Code` footer to the body and to the comment, and the platform subscribed
 the session to the PR's activity automatically and unsubscribed it on close. So
 the posture's denies refused the `gh` write forms tried but do not reach these
 tools, and a session can technically open a draft PR itself. The denies are
-defence in depth, not the write boundary ([why](#the-gh-call-inventory)): the boundary is the
-bot's grants and the rulesets.
+defence in depth, not the write boundary ([why](#the-gh-call-inventory)): the
+boundary is the bot's grants, the token's missing `workflow` scope and the
+rulesets.
 
 **The lifecycle does not change.** A cloud lane ends at a pushed branch. The
 orchestrator's order is `task challenge` and `task review` against the lane's
@@ -610,7 +613,8 @@ transitive: they match the command the session runs, not what an allowed
 bundled short flag such as `gh api -iX POST …` or `gh api -iF …` is expected to
 match none of them (untested,
 [#1549](https://github.com/evanharmon1/harmon-init/issues/1549)). The boundary
-is the bot's grants and the rulesets ([What runs where](#what-runs-where)).
+is the bot's grants, the token's missing `workflow` scope and the rulesets
+([What runs where](#what-runs-where)).
 
 | Call | Made by | Result through the proxy | Follow-up / workaround |
 | --- | --- | --- | --- |
@@ -774,8 +778,8 @@ worded; the enforcement half is inferred from the refusals:
   without a prompt, unlike the classifier's refusals below. These were observed
   before the agent posture dropped its merge guard
   ([ADR](../decisions/2026-10-07-bot-and-agent-postures-carry-no-merge-guards.md)):
-  the agent managed settings now *allow* `gh pr merge`, so a repeat of this probe
-  uses `gh release delete x`, which they still deny.
+  from v5.3.0 the agent managed settings *allow* `gh pr merge`, so a repeat of
+  this probe uses `gh release delete x`, which they still deny.
 - **`/permissions` cannot be used on the web.** Typing it opens the session's
   permission-mode menu (Auto, Accept edits, Plan) instead of listing rules, so
   which source refused an action is inferred from behaviour, not shown by a

@@ -903,9 +903,9 @@ tasks:
     desc: "Unit-test the harmon-devkit release→sync-PR automation (offline, stubbed gh/task)"
     # Run under a hostile ambient environment on purpose (#1395): the bot and agent
     # profiles export FOREMAN_DEVCONTAINER and a GH_TOKEN, Claude Code on the web
-    # presets GH_TOKEN/GITHUB_TOKEN, and `task sync:devkit-release` runs
-    # `task verify` with whatever SYNC_DEVKIT_TAG, SYNC_DEVKIT_ALLOW_DOWNGRADE and
-    # AGENT_SKILLS_DIR its caller set, so the test must pass with all of them set.
+    # presets GH_TOKEN/GITHUB_TOKEN, and the sync helper reads SYNC_DEVKIT_TAG,
+    # SYNC_DEVKIT_ALLOW_DOWNGRADE and AGENT_SKILLS_DIR from its caller, so the test
+    # clears them and this run presets them to prove it does.
     cmds:
       - env FOREMAN_DEVCONTAINER=bot GH_TOKEN=dummy GITHUB_TOKEN=dummy SYNC_DEVKIT_TAG=v0.48.0 SYNC_DEVKIT_ALLOW_DOWNGRADE=true AGENT_SKILLS_DIR=.agents/elsewhere ./scripts/test-sync-devkit-release.sh
 [% endif %]
