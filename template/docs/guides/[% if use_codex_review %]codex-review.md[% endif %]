@@ -261,10 +261,10 @@ task review     # verification checkpoint — same convergence rule, under its
 task security   # Semgrep CE + gitleaks + dependency audit — pre-publication gate
 # → open a DRAFT PR, then integrate it: watch CI + reviews, settle the deferred
 #   P2s, adjudicate → fix → push, under the integration and remediation caps
+#   (independent of the loops above)
 #   one terminal clean current-head cycle with all findings settled ends the stage;
 #   two consecutive clean cycles stop P2 fix pushes; P0/P1 still get fixed within cap
 #   every readiness gate still applies
-#   (independent of the loops above)
 # → readiness gate passes → gh pr ready (the handoff to a human)
 # → merging stays a human decision
 ```
@@ -382,7 +382,8 @@ every P2 open at convergence must already be in the sidecar below, so
 `gh pr create` can move it into the PR body and the integration stage can settle it. An
 exit that drops a P2 is not an exit.
 
-Integration retains its ordinary exit: one terminal clean current-head Codex
+Where Codex cloud review is connected (the `use_codex_cloud_review` answer),
+integration retains its ordinary exit: one terminal clean current-head Codex
 cycle with every finding settled ends the stage. Clean means zero adjudicated
 P0/P1; P2-only counts as clean, so a P2-only cycle 1 whose findings are declined
 or filed needs no second cycle on that unchanged head. Two consecutive clean
@@ -394,7 +395,8 @@ Record dispositions, thread replies and ticked PR-body entries; every readiness
 condition still applies. Exempt cycles count, carries do not, and incomplete
 attempts or retries cannot supply another completed cycle.
 
-From integration cycle 2 onward, record each finding's origin in earlier
+Where Codex cloud review is connected (the `use_codex_cloud_review` answer),
+from integration cycle 2 onward, record each finding's origin in earlier
 remediation pushes and its delete / restructure / keep-with-scope-reason
 disposition on the table. When every finding concerns that added surface (the
 tell), never make another hardening push. Deletion or restructure pushes are
@@ -404,7 +406,8 @@ and escalation **leads with descoping**. On a second finding of the same kind,
 sweep every surface that states or feeds the rule before fixing either: rule
 copies across twins/docs, and input surfaces enumerated one member at a time.
 
-The ledger names which exit ended the stage — settled clean cycle, P2 fixing
+Where Codex cloud review is connected (the `use_codex_cloud_review` answer),
+the ledger names which exit ended the stage — settled clean cycle, P2 fixing
 ceiling, tell, or cap — and its qualifying cycles, preserving separate
 integration/remediation and exempt/carried accounting.
 
