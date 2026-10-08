@@ -262,8 +262,8 @@ task security   # Semgrep CE + gitleaks + dependency audit — pre-publication g
 # → open a DRAFT PR, then integrate it: watch CI + reviews, settle the deferred
 #   P2s, adjudicate → fix → push, under the integration and remediation caps
 #   one terminal clean current-head cycle with all findings settled ends the stage;
-#   two consecutive clean cycles prohibit another remediation push — settle without
-#   a push instead (AGENTS.md owns the exits and every readiness condition)
+#   two consecutive clean cycles stop P2 fix pushes; P0/P1 still get fixed within cap
+#   use the integration exit (AGENTS.md "Loop cap and exit") and every readiness gate
 #   (independent of the loops above)
 # → readiness gate passes → gh pr ready (the handoff to a human)
 # → merging stays a human decision
@@ -382,46 +382,31 @@ every P2 open at convergence must already be in the sidecar below, so
 `gh pr create` can move it into the PR body and the integration stage can settle it. An
 exit that drops a P2 is not an exit.
 
-Integration retains its ordinary exit: **one terminal clean current-head
-Codex cycle with every finding settled** (fixed in an earlier push, declined
-with evidence, or filed) ends the stage. A cycle is clean when it adjudicates
-to zero P0/P1; P2-only counts as clean, and a confirmed P0/P1 breaks the streak
-whatever was fixed. A P2-only cycle 1 with all findings declined or filed ends
-the stage; no second cycle is required or triggerable on that unchanged head.
-**Two consecutive clean cycles bound fixing**: once they have adjudicated
-clean, **no further remediation push is permitted**. Settle remaining findings
-without a push: decline with evidence or file them together as one follow-up
-issue, record the dispositions and thread replies, and tick the PR-body entries.
-The readiness gate accepts that settlement on the attested current head; every
-other readiness condition still applies. Exempt cycles count as completed
-cycles, carried heads do not, and an incomplete attempt or retry cannot supply
-the second clean cycle.
+Integration retains its ordinary exit: one terminal clean current-head Codex
+cycle with every finding settled ends the stage. Clean means zero adjudicated
+P0/P1; P2-only counts as clean, so a P2-only cycle 1 whose findings are declined
+or filed needs no second cycle on that unchanged head. Two consecutive clean
+cycles bound **fixing P2s**: no further remediation push is made for P2 findings;
+settle them without a push, declined with evidence or filed together as one
+follow-up issue. A confirmed P0/P1 from any reviewer, including a late human
+review, breaks the streak and is fixed within the remaining `remediation` cap.
+Record dispositions, thread replies and ticked PR-body entries; every readiness
+condition still applies. Exempt cycles count, carries do not, and incomplete
+attempts or retries cannot supply another completed cycle.
 
-From integration cycle 2 onward, record for each finding whether an earlier
-remediation push of the same stage added its subject, with a disposition on the
-table: delete, restructure to invariants, or keep with an explicit scope reason.
-A nonempty cycle whose findings are all about that added surface is the
-unmistakable tell: delete, restructure, or stop and file together, never another
-hardening push. The tell is `diverging` only with adjudicated P0/P1 whose round
-provenance meets the configured `provenance_share` predicate (half or more in
-the shipped policy, excluding design findings). A P2-only tell is `converged`
-and settled without a push, with its delete / restructure / stop-and-file
-disposition recorded on the table and any code change left to the follow-up.
-**Filing settles P2s only**: a tell holding confirmed P0/P1 escalates and keeps
-the PR draft, with **descoping as the leading recommendation**. On a second
-finding of the same kind, sweep every surface that states or feeds the rule
-before fixing either: rule copies across twins/docs, and input surfaces
-enumerated one member at a time.
+From integration cycle 2 onward, record each finding's origin in earlier
+remediation pushes and its delete / restructure / keep-with-scope-reason
+disposition on the table. When every finding concerns that added surface (the
+tell), never make another hardening push. Deletion or restructure pushes are
+permitted within the `remediation` cap; otherwise settle P2s by filing.
+**Filing settles P2s only**: a tell holding confirmed P0/P1 keeps the PR draft,
+and escalation **leads with descoping**. On a second finding of the same kind,
+sweep every surface that states or feeds the rule before fixing either: rule
+copies across twins/docs, and input surfaces enumerated one member at a time.
 
-Exit precedence is cap, then gating tell, then convergence. The ledger names
-`clean cycle N (settled)`, or, once the fixing ceiling is reached,
-`two consecutive clean cycles N-1,N (no further push)`, the tell, or the cap,
-as one ordered exit description, preserving independent integration/remediation
-and exempt/carried accounting. A tell or cap never substitutes for a passing
-readiness gate. AGENTS.md ("Round 2 is the checkpoint", "Loop cap and exit",
-and "Readiness gate") owns the full policy; enforcement in the exit engine
-and integrate skill is
-[evanharmon1/harmon-devkit#1272](https://github.com/evanharmon1/harmon-devkit/issues/1272).
+Use the integration exit (§ "Loop cap and exit" in AGENTS.md); the ledger names
+that exit and its qualifying cycles, preserving separate integration/remediation
+and exempt/carried accounting. Every readiness condition still applies.
 
 ## Finding priorities
 

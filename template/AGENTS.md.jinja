@@ -292,8 +292,10 @@ only when **all** of the following hold for its current `headRefOid`:
   satisfies the Codex condition, including dispositions recorded with `settle`.
   A P2-only cycle 1 whose findings are declined or filed needs no second cycle.
   Once two consecutive cycles adjudicate clean, no further remediation push is
-  permitted; settlement without a push satisfies this condition under § "Loop
-  cap and exit", or the recorded-comment
+  made for P2s; settle them without a push, declined with evidence or filed
+  together as one follow-up. A confirmed P0/P1 from any reviewer, including a
+  late human review, breaks the streak and is fixed within the remaining
+  `remediation` cap. Use the integration exit (§ "Loop cap and exit"), or the recorded-comment
   equivalent where the checker is absent (**or where the resolved integration
   cap is 0** — a cap of 0 leaves no cloud-review cycle to trigger a fresh
   `@codex review` from, so this one condition drops out; every other
@@ -355,14 +357,9 @@ body's deferred findings with the override recorded as the reason it was carried
 decline-with-evidence / file-as-follow-up. A one-step task that touches a single
 stage owes no ledger.
 
-At integration exit, the ledger names **which exit ended the stage** and its
-qualifying cycles: `clean cycle N (settled)`, or, once the fixing ceiling is
-reached, `two consecutive clean cycles N-1,N (no further push)`, **the tell**,
-or **the cap**. Apply exit precedence: cap (`capped`), then a gating tell
-(`diverging`), then convergence (`converged`). A P2-only tell is settled under
-convergence. This is one ordered description of the exit, not competing paths.
-Preserve separate cycle/remediation counters and exempt/carried counts. A tell
-or cap with confirmed P0/P1 or an unreviewed head is ⛔ blocked/escalating,
+At integration exit, the ledger names the integration exit (§ "Loop cap and
+exit") and its qualifying cycles. Preserve separate cycle/remediation counters
+and exempt/carried counts; unresolved gating work is ⛔ blocked/escalating,
 never 🏁 converged.
 
 ## Rigor and Strategy
@@ -763,14 +760,10 @@ stop-and-file disposition on the adjudication table. A keep-with-reason
 disposition on an individual finding does not authorize another hardening push
 when the whole cycle meets the tell.
 
-The tell is `diverging` only when the cycle holds adjudicated P0/P1 whose round
-provenance meets the configured `provenance_share` predicate (half or more in
-the shipped policy, excluding design findings). Every finding being
-remediation-added is the unmistakable case, not the predicate's threshold.
-A P2-only tell cycle is `converged` and settled without a push; record its
-chosen delete / restructure / stop-and-file disposition on the table, with any
-code change left to the follow-up issue. Exit precedence is cap, then gating
-tell, then convergence.
+The tell forbids another hardening push. A push that deletes or restructures
+the self-feeding surface is permitted within the `remediation` cap; otherwise
+settle its P2s by filing. Record the remedy on the table and use the integration
+exit (§ "Loop cap and exit").
 
 **Filing settles P2s only.** A tell cycle holding a confirmed P0/P1 is an
 escalation that **keeps the PR draft**. Escalation for a self-feeding integration
@@ -911,38 +904,34 @@ convergence is a floor on when you may stop, not a ceiling on what they can
 order.
 
 **Integration convergence:** a Codex cycle is **clean** when it adjudicates to
-zero P0/P1 (`no_gating_findings`); P2-only counts as clean. A confirmed P0/P1
-breaks the streak whatever was fixed. The ordinary exit is unchanged: **one
-terminal clean current-head cycle with every finding settled** (fixed in an
-earlier push, declined with evidence, or filed) ends the stage. A P2-only
-cycle 1 with every finding declined or filed therefore ends the stage; no
-second cycle is required or triggerable on that unchanged head.
+zero P0/P1; P2-only counts as clean. One terminal clean current-head cycle with
+every finding settled ends the stage; a P2-only cycle 1 whose findings are
+all declined or filed needs no second cycle on that unchanged head.
 
-**Integration fixing ceiling: two consecutive clean Codex cycles.** Once two consecutive
-cycles adjudicate clean, **no further remediation push is permitted**. Settle
-findings still open **without a further fix push**: decline with evidence, or
-file them together as **one follow-up issue**. Record each disposition, reply
-in every affected thread, record non-inline dispositions with `settle` (or the
-recorded-comment equivalent where the checker is absent), and tick each deferred
-PR-body entry in that same round. The readiness gate accepts that settlement on
-the attested current head; convergence never waives CI, current-head
-authenticity, thread replies, or any other readiness condition.
+The integration exit is the outcome the configured `.devflow.toml`
+`[convergence]` composition computes over the cycle's adjudicated findings:
+`capped`, then `diverging`, then `converged`, otherwise `continue`. A cycle whose
+findings all concern surface an earlier remediation push added (the tell) is
+the clearest case of `diverging`; it does not define it. Enforcement in the
+exit engine is
+[evanharmon1/harmon-devkit#1272](https://github.com/evanharmon1/harmon-devkit/issues/1272).
+
+**Integration fixing ceiling: two consecutive clean Codex cycles.** Once two
+consecutive cycles adjudicate clean, no further remediation push is made for
+P2 findings; settle them without a push, declined with evidence or filed
+together as one follow-up issue. A confirmed P0/P1 from any reviewer, including
+a late human review, breaks the clean streak and is fixed within the remaining
+`remediation` cap as before. Record each disposition, reply in affected threads,
+record non-inline dispositions with `settle` (or the recorded-comment equivalent
+where the checker is absent), and tick deferred PR-body entries. The readiness
+gate accepts that settlement; every other readiness condition still applies.
 
 Count completed Codex cycles, including exempt cycles, separately from remediation
-pushes; a carried head adds no cycle and cannot supply a second clean cycle.
-An incomplete attempt or its retry is not another completed cycle. Independent
-`integration`, `integration_exempt`, and `remediation` caps still apply. At a cap,
-persistent P0/P1 or an unreviewed head is an escalation and the PR stays draft;
-a cap never authorizes a further push or waives a verdict. Apply exit precedence:
-cap (`capped`), then a tell meeting the configured gating-provenance predicate
-(`diverging`), then convergence (`converged`). A P2-only tell is `converged`,
-settled without a push with its disposition recorded on the table. The ledger
-names the exit and unresolved work rather than claiming a gating tell is clean.
-Enforcement of these integration exits in the exit engine and integrate skill
-is tracked in
-[evanharmon1/harmon-devkit#1272](https://github.com/evanharmon1/harmon-devkit/issues/1272);
-this policy adds no `.devflow.toml` key and never authorizes bypassing a failed
-or indeterminate readiness gate at an older skills pin.
+pushes; a carry adds no cycle, and an incomplete attempt or retry is not another
+completed cycle. Independent `integration`, `integration_exempt`, and
+`remediation` caps still apply. At a cap, persistent P0/P1 or an unreviewed head
+is an escalation and the PR stays draft; no cap waives a verdict. This policy
+adds no `.devflow.toml` key and never bypasses a failed or indeterminate gate.
 
 One caveat on the automatic stop-gate: the codex plugin's Stop hook applies
 its **own** notion of a material finding and may BLOCK on something you have
