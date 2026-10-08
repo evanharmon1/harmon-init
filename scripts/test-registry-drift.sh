@@ -77,8 +77,8 @@ if grep -q '^agent:' <<<"$names"; then
 fi
 
 # 2a'. suggest:* is retired (superseded by the derived Tier, ADR 2026-09-30).
-# The registry may keep DECLARING the namespace (the pinned breakdown label
-# discovery requires it until #1473), but nothing may render or seed it.
+# The agent registry no longer declares the namespace; nothing may render
+# or seed it.
 if grep -q '^suggest:' <<<"$names"; then
     fail "rendered labels still contain a retired suggest:* label — suggest was superseded by the derived Tier and must not be seeded (ADR 2026-09-30 D8)"
 fi

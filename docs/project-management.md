@@ -588,10 +588,9 @@ Everything below is retired, and none of it is a live vocabulary. Each entry
 says where the operator steps are.
 
 - **The `suggest:*` family**, including `suggest:<family>:<model>`, is
-  superseded by the derived Tier. It is **retired, not removed from the agent
-  registry**: `agent-registry.json` keeps its `suggest` namespace until
-  [#1473](https://github.com/evanharmon1/harmon-init/issues/1473), and nothing
-  provisions or renders it. To migrate, remove the label from every issue, pull request and
+  superseded by the derived Tier. It is **retired**, and its namespace has
+  been removed from `agent-registry.json`. Nothing provisions or renders it.
+  To migrate, remove the label from every issue, pull request and
   discussion that carries it (an issue then resolves through its derived
   Tier), then use guarded `--prune`. There is
   no `--migrate` destination, and the script refuses one. See
@@ -1166,10 +1165,8 @@ from one machine-readable source, `agent-registry.json`, validated against
 `agent-registry.schema.json`. The two axes are deliberately distinct: a
 **family** is the model intelligence doing the reasoning, a **harness** is the
 executable that runs it. `claim:` names families;
-`foreman:<adapter>` names harness machinery. The registry still carries the
-retired `suggest` namespace until
-[#1473](https://github.com/evanharmon1/harmon-init/issues/1473); nothing
-provisions or renders it (see
+`foreman:<adapter>` names harness machinery. The registry no longer declares the
+retired `suggest` namespace; nothing provisions or renders it (see
 [Migration](#migration-what-the-classification-retired)). The reasoning, and
 the rules for naming a family or a harness slug, are in
 [ADR 2026-08-07](decisions/2026-08-07-unified-agent-vocabulary.md).

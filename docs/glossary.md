@@ -44,6 +44,6 @@ storage.
 | Claim | The marker recording which model family took the work: `claim:<family>[:<model>]`. A signal, not a lock; the harness and runtime are in the claim comment. |
 | triaged | Every required classification is present: Type (or work-type label), one label from each of the `area:*`, `layer:*`, and `domain:*` families (or that family's explicit `none` value), Risk, Complexity, Impact. `needs-triage` is added at filing by whoever files an issue that is not fully classified, then derived from this and never cleared by hand. |
 | Size | Retired: superseded by Effort (human tasks) and Complexity (every issue). |
-| `suggest:*` | Retired: the family suggestion, superseded by Tier. |
+| `suggest:*` | Retired: the family suggestion, superseded by Tier; its namespace is removed from the agent registry. |
 | `tier:adaptive` | Retired 2026-10-01: no rung on the Tier scale. The label is removed and the issue resolves through its derived Tier. |
 | `needs-review` | The issue's PR is waiting for human review; it keeps the issue out of the agent queue. The integration stage adds it at ready-for-review, when it removes `claim:*`, and removes it if review sends the work back, once harmon-devkit#1255 ships with a skills-pin bump. Until then a human adds it, and removes it on pull-back, by hand, as the Views section of [project-management.md](project-management.md#views) describes. |
