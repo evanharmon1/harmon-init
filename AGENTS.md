@@ -469,7 +469,7 @@ carried — not as a disposition, so the integration stage still owes it a norma
 fix / decline-with-evidence / file-as-follow-up. A one-step task that touches a
 single stage owes no ledger.
 
-The ledger names which exit ended the stage — settled clean cycle, P2 fixing
+At integration exit, the ledger names which exit ended the stage — settled clean cycle, P2 fixing
 ceiling, tell, or cap — and its qualifying cycles. Preserve separate cycle/remediation counters
 and exempt/carried counts; unresolved gating work is ⛔ blocked/escalating,
 never 🏁 converged.
