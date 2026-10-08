@@ -192,9 +192,10 @@ Code at the item. The lane is only a hand-off column, not the queue — the
 **In Progress** once work starts.
 
 > **Foreman is that automation** for issue-driven delivery: arm the issue with
-> a `foreman:*` label — label arming is the only supported mode: issue-field
-> events carry an actor only under a preview GraphQL API, field edits fire no
-> Actions event, and the timeline algorithm is specified for labels
+> a `foreman:*` label — label arming is the only supported mode: while
+> `issues.field_added` / `issues.field_removed` events exist, Foreman reads the
+> label timeline, where field events carry an actor only under a preview
+> GraphQL API and the timeline algorithm is specified for labels
 > (ponderousdev/foreman#139) — and `task foreman:dispatch` /
 > `foreman:watch` pulls ready items and delivers them **draft-first**: it opens
 > a **draft** PR labelled `foreman:dispatched`, runs its own verify gate,
@@ -1012,7 +1013,7 @@ that can only stop work:
 
 | Family | Triggers execution? | How the consumer establishes trust |
 |---|---|---|
-| `foreman:<adapter>`, `foreman:approved` | **yes** — arms an issue for dispatch | Foreman reads the `labeled` **timeline event**, takes the actor from it, and requires that login in `trusted_actors` (`.foreman.toml`). Unattributable arming is a fail-closed refusal, never a dispatch — which is also why issue-field arming is refused outright: field events carry an actor only under a preview GraphQL API, edits fire no Actions event, and the timeline algorithm is specified for labels (ponderousdev/foreman#139) |
+| `foreman:<adapter>`, `foreman:approved` | **yes** — arms an issue for dispatch | Foreman reads the `labeled` **timeline event**, takes the actor from it, and requires that login in `trusted_actors` (`.foreman.toml`). Unattributable arming is a fail-closed refusal, never a dispatch — which is also why issue-field arming is refused outright: field events carry an actor only under a preview GraphQL API, and the timeline algorithm is specified for labels (ponderousdev/foreman#139) |
 | the Claude Actions workflows | **no** — labels trigger nothing at all | Execution starts only on an explicit `@claude` mention naming `plan`, `implement`, or `review`, from a login on the workflow's sender allowlist. The allowlist is enforced in the job `if:` and re-asserted in a token-free step *before* any credential is minted |
 | `claim:*` (and legacy `agent:*`) | **no** — read as a gate, not a trigger | Those workflows refuse to start on a target that already carries one. No actor check is needed for a signal that can only *withhold* execution: the worst outcome is a visible, reversible refusal |
 | `autorelease: *` | **no** | release-please writes them on its own release PRs and reads only what it wrote; nothing dispatches from one |
@@ -1069,7 +1070,7 @@ is single-valued, on an organization, and that every project should agree on; a
 **project field** is for pure board metadata that nothing decides work from
 (`Status` plays no part in the Agent queue).
 
-The consequences are not stylistic. Foreman arming is labels because field events carry an actor only under a preview API, field edits fire no Actions event, and the timeline algorithm is specified for labels (ponderousdev/foreman#139). Claims are labels because a claim
+The consequences are not stylistic. Foreman arming is labels because field events carry an actor only under a preview API, and the timeline algorithm is specified for labels (ponderousdev/foreman#139). Claims are labels because a claim
 must be writable and visible to an agent holding nothing but repo scope, on
 personal and org repos alike. The Tier is a label on both owner types even
 where issue fields exist: a reader, the reconciler and a writer then share one

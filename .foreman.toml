@@ -3,10 +3,10 @@
 #
 # Arming is label mode (`foreman:claude`, `foreman:hold`, ...): D13 needs a
 # trusted, timeline-attributable arming actor. Issue-field events carry an
-# actor only under a preview GraphQL API, edits fire no Actions event, and
-# the timeline algorithm is specified for labels — fields mode fails closed by
-# design, so it is never selected here. Explicit approval is required before
-# any issue is dispatchable.
+# actor only under a preview GraphQL API, and the timeline algorithm is
+# specified for labels — fields mode fails closed by design, so it is never
+# selected here. Explicit approval is required before any issue is
+# dispatchable.
 #
 # NOTE (D4): this repository is PUBLIC, so foreman classifies every unit as
 # requiring the `untrusted-input` boundary, which the local runner never
