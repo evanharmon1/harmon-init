@@ -1988,10 +1988,7 @@
       "name": "derived-tier-requires-compatible-harness",
       "basis": "branch",
       "config_replacements": [
-        [
-          "families  = [\"claude\", \"gpt\", \"gemini\"]",
-          "families  = [\"gpt\", \"claude\"]"
-        ],
+        ["\"claude\", \"gpt\", \"gemini\"", "\"gpt\", \"claude\""],
         [
           "harnesses = [\"claude-code\", \"codex-cli\", \"antigravity\"]",
           "harnesses = [\"claude-code\"]"
@@ -2029,10 +2026,7 @@
       "name": "derived-tier-achievable-with-later-compatible-harness",
       "basis": "branch",
       "config_replacements": [
-        [
-          "families  = [\"claude\", \"gpt\", \"gemini\"]",
-          "families  = [\"gpt\", \"claude\"]"
-        ],
+        ["\"claude\", \"gpt\", \"gemini\"", "\"gpt\", \"claude\""],
         [
           "harnesses = [\"claude-code\", \"codex-cli\", \"antigravity\"]",
           "harnesses = [\"claude-code\", \"codex-cli\"]"
@@ -2065,10 +2059,7 @@
       "name": "derived-tier-achievable-with-unrestricted-harnesses",
       "basis": "branch",
       "config_replacements": [
-        [
-          "families  = [\"claude\", \"gpt\", \"gemini\"]",
-          "families  = [\"gpt\", \"claude\"]"
-        ],
+        ["\"claude\", \"gpt\", \"gemini\"", "\"gpt\", \"claude\""],
         ["harnesses = [\"claude-code\", \"codex-cli\", \"antigravity\"]", ""]
       ],
       "registry_replacements": [
@@ -2098,10 +2089,7 @@
       "name": "derived-tier-achievable-with-broker-harness",
       "basis": "branch",
       "config_replacements": [
-        [
-          "families  = [\"claude\", \"gpt\", \"gemini\"]",
-          "families  = [\"gpt\", \"claude\"]"
-        ],
+        ["\"claude\", \"gpt\", \"gemini\"", "\"gpt\", \"claude\""],
         [
           "harnesses = [\"claude-code\", \"codex-cli\", \"antigravity\"]",
           "harnesses = [\"opencode\"]"
