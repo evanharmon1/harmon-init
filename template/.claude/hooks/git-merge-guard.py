@@ -522,23 +522,17 @@ def command_index(words):
 
 
 def command_positions(words):
-    """Every index bash or a wrapper runs as a command: the command word and
-    the command after each wrapper, however deep (`find -exec env X=1 cmd`).
-    `coproc NAME cmd` is ambiguous to a reader, so both words count."""
+    """Every index that may be run as a command: the command word, and every
+    word after a wrapper. A wrapper's option grammar (value-taking options,
+    unambiguous long-option prefixes such as `sudo --chd /repo` or
+    `env --chd /repo -i`, `coproc NAME`) is open-ended, so the reader does not
+    try to find where its options end. Only a non-literal word, a dashed
+    `git-merge`/`git-pull` helper or an evaluator at one of these positions
+    triggers anything, so ordinary arguments stay silent."""
     positions = {command_index(words)}
     for i, w in enumerate(words):
         if w.literal and base(w) in WRAPPERS:
-            positions.add(i + 1 + command_index(words[i + 1 :]))
-            if base(w) == "coproc":
-                positions.add(i + 2)
-            # Wrappers take unambiguous long-option prefixes (`sudo --chd /repo`
-            # for `--chdir`), so after any option without `=`, both the next
-            # word and the one after it may be the command.
-            j = i + 1
-            while j < len(words) and WRAPPER_ARG.match(words[j].value):
-                if words[j].value.startswith("-") and "=" not in words[j].value:
-                    positions.update((j + 1, j + 2))
-                j += 1
+            positions.update(range(i + 1, len(words)))
     return positions
 
 
@@ -662,9 +656,10 @@ def herdr_runs(words, i):
 
 
 def split_string_option(v):
-    """`env -S`, `--split-string` or any unambiguous prefix (`--spl`)."""
+    """`env -S`, `--split-string` or any unambiguous prefix: `--s` is the
+    shortest, since no other env long option starts with `s`."""
     name = v.split("=", 1)[0]
-    return v.startswith("-S") or (len(name) >= 4 and "--split-string".startswith(name))
+    return v.startswith("-S") or (len(name) >= 3 and "--split-string".startswith(name))
 
 
 def is_evaluator(words, i):
