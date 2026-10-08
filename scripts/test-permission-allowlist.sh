@@ -20,10 +20,11 @@
 #   2. Each "dropped entirely" command has no allow entry at all, and each
 #      grant a *fix* depends on is still present — deleting one would silently
 #      restore the denial the fix removed, which nothing else catches.
-#   3. The two files' permissions.allow arrays are byte-identical — the
+#   3. The two files' permissions.allow arrays match after rendering the
+#      template repository variables from .dogfood-answers.yml — the
 #      documented invariant for this dogfood pair (unlike most jinja twins,
-#      neither file has a conditional inside the allow array itself, so nothing
-#      excuses a divergence here; test:dogfood-parity does not cover this file
+#      neither file has a conditional inside the allow array itself;
+#      test:dogfood-parity does not cover this file
 #      because it IS a jinja twin for the rest of its content).
 #
 # Run via `task test:permission-allowlist`.
@@ -42,7 +43,8 @@ note_fail() {
 
 # ---------------------------------------------------------------------------
 # Extract each file's permissions.allow array in isolation. Both files hold
-# it as a plain, non-conditional JSON list — no jinja markers appear between
+# it as a non-conditional JSON list — repository expressions are JSON strings,
+# and no jinja control blocks appear between
 # "allow": [ and its closing "],". Extracting that span verbatim (including
 # the bracket lines) lets 1/2 below scope their checks to allow alone
 # (never ask/deny), and lets 3 byte-diff the two arrays directly, including
@@ -56,6 +58,20 @@ extract_allow_block() {
 
 root_block="$(extract_allow_block "$root_settings")"
 template_block="$(extract_allow_block "$template_settings")"
+# Only these repository variables occur inside the allow array. Render them
+# with the checked-in dogfood answers, rather than masking arbitrary drift.
+template_block="$(printf '%s' "$template_block" | python3 -c '
+import sys, re
+from pathlib import Path
+answers = Path(".dogfood-answers.yml").read_text()
+text = sys.stdin.read()
+for key in ["github_org", "project_slug"]:
+    value = re.search(r"^" + key + r": ([A-Za-z0-9_.-]+)$", answers, re.MULTILINE)
+    if value is None:
+        sys.exit("Expected a plain repository answer for " + key)
+    text = text.replace("[[ " + key + " ]]", value[1])
+sys.stdout.write(text)
+')"
 
 [ -n "$root_block" ] || note_fail "$root_settings: could not locate permissions.allow array"
 [ -n "$template_block" ] || note_fail "$template_settings: could not locate permissions.allow array"
@@ -142,6 +158,116 @@ check_allow_block "$template_settings" "$template_block"
 if [ "$root_block" != "$template_block" ]; then
     note_fail "permissions.allow arrays differ between $root_settings and $template_settings"
     diff <(printf '%s\n' "$root_block") <(printf '%s\n' "$template_block") >&2 || true
+fi
+
+# ---------------------------------------------------------------------------
+# 4: trigger grants preserve fixed bodies. Accepted residuals: --edit-last
+# may edit the last comment; broker --finder may choose a trusted registry
+# body; the leading broker-path wildcard may match an unrelated executable.
+# These are maintainer-approved residuals, not a general write boundary.
+# JSON settings cannot carry comments, so their scope note lives here.
+# Match command text: '*' includes spaces, ':*' is the trailing legacy form.
+# Quotes are literal. Cases have no compound commands or stripped wrappers.
+# https://code.claude.com/docs/en/permissions#wildcard-patterns
+if ! python3 - "$root_settings" "$template_settings" <<'PYTEST'
+import json
+import os
+import re
+import shlex
+import subprocess
+import sys
+from pathlib import Path
+
+
+def matches(rule, command):
+    if not rule.startswith("Bash(") or not rule.endswith(")"):
+        return False
+    pattern = rule[5:-1]
+    if pattern.endswith(":*"):
+        pattern = pattern[:-2] + " *"
+    if pattern.endswith(" *") and pattern.count("*") == 1:
+        if command == pattern[:-2]:
+            return True
+    regex = ".*".join(re.escape(part) for part in pattern.split("*"))
+    return re.fullmatch(regex, command, re.DOTALL) is not None
+
+
+def require(condition, message):
+    if not condition:
+        raise AssertionError(message)
+
+
+# CLI conflict checks must never reach GitHub, even if validation regresses.
+# GitHub uses HTTPS; force every proxy route to a closed loopback port.
+env = dict(os.environ, GH_TOKEN="permission-test-placeholder",
+           GH_HOST="github.com", GH_PROMPT_DISABLED="1",
+           HTTPS_PROXY="http://127.0.0.1:1", HTTP_PROXY="http://127.0.0.1:1",
+           ALL_PROXY="http://127.0.0.1:1", NO_PROXY="",
+           https_proxy="http://127.0.0.1:1", http_proxy="http://127.0.0.1:1",
+           all_proxy="http://127.0.0.1:1", no_proxy="")
+for filename in sys.argv[1:]:
+    text = Path(filename).read_text()
+    if filename.endswith(".jinja"):
+        text = text.replace("[[ github_org ]]", "example")
+        text = text.replace("[[ project_slug ]]", "consumer")
+        repo = "example/consumer"
+    else:
+        repo = "evanharmon1/harmon-init"
+    # Extract the non-conditional JSON block, including template expressions.
+    block = re.search(r'"allow":\s*(\[.*?^\s*\])', text, re.DOTALL | re.MULTILINE)
+    rules = json.loads(block[1])
+    allowed = lambda command: any(matches(rule, command) for rule in rules)
+    broker = str(Path.cwd() / ".claude/skills/integrate/assets/gh-write-broker.sh")
+    trigger = broker + " trigger --repo " + repo + " --pr 1555"
+    require(allowed(trigger), filename + ": missing broker grant")
+    for extra in [" --body arbitrary", " --body-file x", " --comment-id 1"]:
+        command = trigger + extra
+        if allowed(command):
+            result = subprocess.run(shlex.split(command), capture_output=True, text=True,
+                                    env=env, timeout=10)
+            require(result.returncode != 0 and
+                    ("Usage:" in result.stderr or "refused:" in result.stderr),
+                    filename + ": broker did not reject " + extra)
+            print(filename + ": broker rejects " + extra)
+    require(not allowed(broker + " reply --repo " + repo
+                        + " --pr 1555 --comment-id 1 --body-file x"),
+            filename + ": reply matched")
+    for residual in [trigger + " --finder other", "bash /tmp/unrelated.sh " + trigger]:
+        require(allowed(residual), filename + ": residual shape changed")
+    print(filename + ": accepted residuals: broker finder and leading path wildcard")
+    for body in ["/gemini review", "@" + "claude" + " review"]:
+        prefix = "gh pr comment 1555 --repo " + repo
+        comment = prefix + " --body '" + body + "'"
+        require(allowed(comment), filename + ": missing fixed-body grant")
+        for variant in [prefix + " --body arbitrary",
+                        prefix + " --body '" + body + " extra'",
+                        prefix + " --body-file x",
+                        comment + " --delete-last",
+                        comment.replace("gh pr comment", "gh pr review"),
+                        "gh api repos/" + repo + "/issues/1555/comments -f body=x",
+                        comment.replace(repo, "other/repository")]:
+            require(not allowed(variant), filename + ": unexpected match: " + variant)
+        print(filename + ": rules reject changed bodies, subcommands and trailing deletion")
+        # Interior '*' can absorb these flags. Check actual gh conflict errors,
+        # rather than pretending '*' matches only a PR-number argv token.
+        for flag in ["--body-file x", "-F x", "--editor", "--web", "--delete-last"]:
+            variant = "gh pr comment 1555 " + flag + " --repo " + repo
+            variant += " --body '" + body + "'"
+            require(allowed(variant), filename + ": conflict case did not match")
+            result = subprocess.run(shlex.split(variant), capture_output=True, text=True,
+                                    env=env, timeout=10)
+            expected = ("should not provide comment body" if flag == "--delete-last"
+                        else "specify only one of")
+            require(result.returncode != 0 and expected in result.stderr.lower(),
+                    filename + ": gh did not reject " + flag + ": " + result.stderr)
+            print(filename + ": gh flag conflict rejects " + flag)
+        residual = "gh pr comment 1555 --edit-last --repo " + repo
+        require(allowed(residual + " --body '" + body + "'"),
+                filename + ": edit-last residual shape changed")
+        print(filename + ": accepted residual: --edit-last (not executed)")
+PYTEST
+then
+    fail=1
 fi
 
 if [ "$fail" -eq 0 ]; then
