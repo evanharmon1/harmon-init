@@ -77,6 +77,9 @@ with tempfile.TemporaryDirectory(prefix="review-trigger-test-") as directory:
     symlink.symlink_to(outside)
     inside_link = root / "broker-link.sh"
     inside_link.symlink_to(broker)
+    # Directories whose names a shell reads as an assignment or an option.
+    for name in ["PATH=evil:z", "-o", "+o"]:
+        (root / name).mkdir()
     comment = "gh pr comment 7 --repo example/project --body '/gemini review'"
     trigger = f"{broker} trigger --repo example/project --pr 7"
     hooks = [source / ".claude/hooks/review-trigger-allow.py",
@@ -135,6 +138,10 @@ with tempfile.TemporaryDirectory(prefix="review-trigger-test-") as directory:
             f"{symlink} trigger --repo example/project --pr 7",
             f"{foreign_broker} trigger --repo example/project --pr 7",
             "gh-write-broker.sh trigger --repo example/project --pr 7",
+            "PATH=evil:z/../" + str(suffix) + " trigger --repo example/project --pr 7",
+            "bash PATH=evil:z/../" + str(suffix) + " trigger --repo example/project --pr 7",
+            "bash -o/../" + str(suffix) + " trigger --repo example/project --pr 7",
+            "bash +o/../" + str(suffix) + " trigger --repo example/project --pr 7",
         ]
         for body in ["/gemini review", claude_body]:
             base = "gh pr comment 7 --repo example/project --body " + shlex.quote(body)

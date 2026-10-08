@@ -100,6 +100,10 @@ def allows(command, cwd, project):
                     and values["--repo"] == repository(project))
     if words[:1] == ["bash"]:
         words = words[1:]
+    # A shell reads a leading NAME=value word as an assignment, and bash reads a
+    # leading -/+ word as an option: neither runs the path the hook resolved.
+    if not words or "=" in words[0] or words[0][:1] in ("-", "+"):
+        return False
     if len(words) < 2 or words[1] != "trigger":
         return False
     values = flags(words[2:], {"--repo", "--pr"})
