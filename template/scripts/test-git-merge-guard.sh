@@ -215,7 +215,7 @@ matrix() { # guard
     case_ "$g" ask "$r" "eval \"git \${sub} feat\""
     case_ "$g" silent "${r}/wt" "bash -c \"git log --oneline\""
     # Data is data: a dashed name as an argument, a comment, quoted prose, and
-    # a non-merge git call inside a substitution (#123).
+    # a non-merge git call inside a substitution.
     case_ "$g" silent "${r}/wt" "grep -rn git-merge docs/"
     case_ "$g" silent "${r}/wt" "git log -1 # check the merge commit"
     case_ "$g" silent "${r}/wt" "gh pr comment 1 --body \"git \$(git rev-parse HEAD) is the head\""
@@ -342,7 +342,7 @@ matrix() { # guard
     case_ "$g" ask "$r" "git -c alias.merge=log merge feat"
     case_ "$g" ask "$r" ". /dev/stdin <<< 'git pull'"
     case_ "$g" ask "$r" "source /dev/stdin <<< 'git merge feat'"
-    # Follow-up #128: every shape below asked under the old word-matching guard.
+    # Every shape below asked under the old word-matching guard.
     # A non-literal command name puts the line under the merge/pull word test.
     case_ "$g" ask "$r" "\$(printf 'git merge main')"
     case_ "$g" ask "$r" "\$(printf %s 'git merge main')"
@@ -422,6 +422,13 @@ matrix() { # guard
     case_ "$g" ask "$r" "env --split 'git pull'"
     case_ "$g" silent "$r" "sudo --chd /repo git status"
     case_ "$g" silent "$r" "env --unset=FOO git status"
+    # Every word after a wrapper may be the command, and `--s` is the
+    # shortest env split-string prefix.
+    case_ "$g" ask "$r" "env --s='git merge feature'"
+    case_ "$g" ask "$r" "G=/usr/bin/git; env --chd /repo -i \"\$G\" merge feature"
+    case_ "$g" ask "$r" "sudo --chd /repo -u evan --pres /usr/libexec/git-core/git-pull origin main"
+    case_ "$g" silent "$r" "env --chd /repo -i git status"
+    case_ "$g" silent "$r" "sudo cp notes.md /tmp/notes.md"
     case_ "$g" silent "$r" "git --help merge"
     case_ "$g" silent "$r" "git --version pull"
     case_ "$g" silent "$r" "echo \"\$SHELL\""
