@@ -1178,6 +1178,19 @@ s.listen(1)' "$ts_sock" 2>/dev/null && [ -S "$ts_sock" ]; then
         fail "human dev profile applies the bot-only always-proceed Antigravity policy"
     fi
 
+    # The `gh pr merge` ask drop-in (claude-settings-dev.json) is dev-only: the
+    # bot and agent profiles carry no merge guard, and the "Protect Main"
+    # ruleset is the boundary there. Comment lines are stripped so an
+    # explanatory comment naming the file is not a false match.
+    grep -Fq 'claude-settings-dev.json' < <(grep -Ev '^[[:space:]]*#' "${repo_root}/.devcontainer/dev/post-create.sh") ||
+        fail "human dev profile does not install the gh pr merge ask drop-in (claude-settings-dev.json)"
+    local merge_profile_script
+    for merge_profile_script in .devcontainer/post-create.sh .devcontainer/agent/post-create.sh; do
+        if grep -Eq 'claude-settings-dev\.json|managed-settings\.d' < <(grep -Ev '^[[:space:]]*#' "${repo_root}/${merge_profile_script}"); then
+            fail "${merge_profile_script} installs the dev-only gh pr merge ask drop-in"
+        fi
+    done
+
     # 9. The GitHub CLI browser bridge must use the VS Code host opener when it
     #    works, and print the exact URL when that command is absent or fails.
     #    Remote VS Code's `code --open-url` is a false friend: it can ignore the
@@ -2672,6 +2685,18 @@ assert_container() {
         local gh_token
         gh_token="$(docker exec -u vscode "$container_id" printenv GH_TOKEN 2>/dev/null || true)"
         [ -z "$gh_token" ] || fail "GH_TOKEN is set in the dev container"
+    fi
+
+    # The `gh pr merge` ask is a dev-only managed-settings drop-in: installed
+    # with exactly its two rules in dev, absent in bot and agent, which carry
+    # no merge guard (the ruleset is the boundary).
+    local dev_merge_ask
+    dev_merge_ask="$(docker exec -u vscode "$container_id" cat /etc/claude-code/managed-settings.d/dev-gh-pr-merge-ask.json 2>/dev/null || true)"
+    if [ "$profile" = "dev" ]; then
+        jq -e '.permissions.ask == ["Bash(gh pr merge)","Bash(gh pr merge:*)"]' <<<"$dev_merge_ask" >/dev/null 2>&1 ||
+            fail "the dev container's managed-settings.d drop-in does not ask on exactly Bash(gh pr merge) and Bash(gh pr merge:*)"
+    elif [ -n "$dev_merge_ask" ]; then
+        fail "the ${profile} container has the dev-only gh pr merge ask drop-in; ${profile} carries no merge guard"
     fi
 
     echo "==> devcontainer container assertions passed for ${config} (${profile})."
