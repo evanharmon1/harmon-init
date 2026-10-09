@@ -656,17 +656,17 @@ meets its exit condition on round 1 is done, whatever the cap allowed.
   workaround. The project settings carry no `gh pr merge` ask: that prompt
   comes only from the user's own settings on a host and from the dev
   devcontainer's managed-settings drop-in
-  (`.devcontainer/config/claude-settings-dev.json`). The hook, too, applies in
-  the dev profile only; with `FOREMAN_DEVCONTAINER` set to `bot` or `agent` it
-  makes no merge checks. Beside it,
+  (`.devcontainer/config/claude-settings-dev.json`). The hook, too, applies on
+  the host and in the dev profile only; with `FOREMAN_DEVCONTAINER` set to
+  `bot` or `agent` it makes no merge checks. Beside it,
   `.claude/hooks/review-trigger-allow.py` is a PreToolUse(Bash) hook that
   approves without a prompt exactly three review-trigger commands: the
   integrate broker's Codex trigger, and `gh pr comment` with the fixed Gemini
   or Claude review body, each for the origin repository and a numeric PR (see
   the hook's docstring for the exact accepted forms). It gives no decision for
-  anything else, so the normal permissions apply; it is active in the host and
-  dev profiles only, and with `FOREMAN_DEVCONTAINER` set to `bot` or `agent` it
-  makes no decision. The bot and agent profiles carry no merge guard at all —
+  anything else, so the normal permissions apply. It too is active on the host
+  and in the dev profile only, and also makes no decision when `GH_HOST` names
+  a host other than github.com. The bot and agent profiles carry no merge guard at all —
   the agent profile explicitly allows `gh pr merge` — and the "Protect Main"
   ruleset (code-owner approval + green checks) is the boundary there; see
   [docs/decisions/2026-10-07-bot-and-agent-postures-carry-no-merge-guards.md](docs/decisions/2026-10-07-bot-and-agent-postures-carry-no-merge-guards.md).)
