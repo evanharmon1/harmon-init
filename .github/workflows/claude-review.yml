@@ -201,9 +201,9 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
         run: |
-          git rev-parse HEAD > "$RUNNER_TEMP/claude-start-commit"
+          echo "start_commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
           if gh api -X GET "repos/$GH_REPO/contents/scripts/claude-workflow-result.sh" \
-             -H 'Accept: application/vnd.github.raw' -f ref="$DEFAULT_BRANCH" > "$RUNNER_TEMP/claude-workflow-result.sh"; then
+             -H 'Accept: application/vnd.github.raw' -f ref="$DEFAULT_BRANCH" > /dev/null; then
             echo "available=true" >> "$GITHUB_OUTPUT"
           else
             echo "available=false" >> "$GITHUB_OUTPUT"
@@ -242,18 +242,26 @@ jobs:
         id: claude-primary-result
         if: always() && steps.claude-helper.outputs.available == 'true' && steps.claude-primary.outcome != 'skipped' && steps.claude-primary.outcome != ''
         env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           EXECUTION_FILE: ${{ steps.claude-primary.outputs.execution_file }}
           ACTION_OUTCOME: ${{ steps.claude-primary.outcome }}
           HAS_ALT: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN_2 != '' }}
           ARCHIVE_EXECUTION: 'true'
           REDACT_PRIMARY: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
-          REDACT_ALT: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN_2 }}
           REDACT_APP_TOKEN: ${{ steps.app-token.outputs.token }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           TARGET: ${{ github.event.issue.number || github.event.pull_request.number }}
         timeout-minutes: 2
-        run: bash "$RUNNER_TEMP/claude-workflow-result.sh"
+        run: |
+          if gh api -X GET "repos/$GH_REPO/contents/scripts/claude-workflow-result.sh" \
+             -H 'Accept: application/vnd.github.raw' -f ref="$DEFAULT_BRANCH" > "$RUNNER_TEMP/claude-workflow-result.sh"; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            bash "$RUNNER_TEMP/claude-workflow-result.sh"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Default-branch helper unavailable for this step."
+          fi
       - uses: anthropics/claude-code-action@cab360f6565aa35a51d6ce9e43f1f4287c0a32ea # v1.0.241
         id: claude-alternate
         if: ${{ !cancelled() && steps.claude-helper.outputs.available == 'true' && steps.claude-primary-result.outputs.retry == 'true' }}
@@ -280,6 +288,7 @@ jobs:
         id: claude-alternate-result
         if: always() && steps.claude-helper.outputs.available == 'true' && steps.claude-alternate.outcome != 'skipped' && steps.claude-alternate.outcome != ''
         env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           EXECUTION_FILE: ${{ steps.claude-alternate.outputs.execution_file }}
           ACTION_OUTCOME: ${{ steps.claude-alternate.outcome }}
           HAS_ALT: 'false'
@@ -290,7 +299,15 @@ jobs:
           GH_REPO: ${{ github.repository }}
           TARGET: ${{ github.event.issue.number || github.event.pull_request.number }}
         timeout-minutes: 2
-        run: bash "$RUNNER_TEMP/claude-workflow-result.sh"
+        run: |
+          if gh api -X GET "repos/$GH_REPO/contents/scripts/claude-workflow-result.sh" \
+             -H 'Accept: application/vnd.github.raw' -f ref="$DEFAULT_BRANCH" > "$RUNNER_TEMP/claude-workflow-result.sh"; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+            bash "$RUNNER_TEMP/claude-workflow-result.sh"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Default-branch helper unavailable for this step."
+          fi
       - name: Require the last Claude attempt to succeed
         if: always() && steps.claude-primary.outcome != 'skipped' && steps.claude-primary.outcome != ''
         env:
@@ -299,7 +316,10 @@ jobs:
             steps.claude-alternate.outcome != '' &&
             steps.claude-alternate.outcome ||
             steps.claude-primary.outcome) == 'success' &&
-            (steps.claude-helper.outputs.available != 'true' ||
+            ((steps.claude-alternate.outcome != 'skipped' &&
+            steps.claude-alternate.outcome != '' &&
+            steps.claude-alternate-result.outputs.available ||
+            steps.claude-primary-result.outputs.available) != 'true' ||
             (steps.claude-alternate.outcome != 'skipped' &&
             steps.claude-alternate.outcome != '' &&
             steps.claude-alternate-result.outputs.failed ||

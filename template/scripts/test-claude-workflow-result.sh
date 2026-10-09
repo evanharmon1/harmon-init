@@ -1,6 +1,27 @@
 #!/usr/bin/env bash
 # Offline fixtures; GH writes are captured by a stub.
 set -euo pipefail
+
+# Hooks export GIT_DIR/GIT_WORK_TREE; left set, every `git` below would
+# retarget the CALLING repository instead of the fixture.
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
+
+# Neutralize every out-of-tree source of git config so the fixture is hermetic
+# (same sanitation as test-worktree.sh).
+export GIT_CONFIG_GLOBAL=/dev/null
+export GIT_CONFIG_SYSTEM=/dev/null
+export GIT_CONFIG_NOSYSTEM=1
+git_config_count="${GIT_CONFIG_COUNT:-0}"
+case "$git_config_count" in
+'' | *[!0-9]*) git_config_count=0 ;;
+esac
+i=0
+while [ "$i" -lt "$git_config_count" ]; do
+    unset "GIT_CONFIG_KEY_$i" "GIT_CONFIG_VALUE_$i"
+    i=$((i + 1))
+done
+unset GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS GIT_ALTERNATE_OBJECT_DIRECTORIES
+
 cd "$(dirname "$0")/.."
 guard=${CLAUDE_RESULT_SCRIPT:-"$PWD/scripts/claude-workflow-result.sh"}
 scratch=$(mktemp -d)
@@ -104,7 +125,7 @@ run false true failure true
 grep -q 'Execution file missing' "$scratch/log" || fail 'alternate reported stale primary result'
 
 # Local branch cleanup returns to the starting commit, never a remote branch.
-export RUNNER_TEMP="$scratch" DEFAULT_BRANCH=main
+export DEFAULT_BRANCH=main
 mkdir "$scratch/repo"
 (
     cd "$scratch/repo"
@@ -113,14 +134,15 @@ mkdir "$scratch/repo"
     git config user.email 'fixture@example.invalid'
     git checkout -q -b main
     git commit -q --allow-empty -m initial
-    git rev-parse HEAD >"$RUNNER_TEMP/claude-start-commit"
+    START_COMMIT=$(git rev-parse HEAD)
+    export START_COMMIT
     git checkout -q -b claude/fixture
     git update-ref refs/remotes/origin/claude/fixture HEAD
     PRIMARY_BRANCH=claude/fixture "$guard" cleanup >/dev/null 2>&1
     if git show-ref --verify --quiet refs/heads/claude/fixture; then
         fail 'local Claude branch survived'
     fi
-    [ "$(git rev-parse HEAD)" = "$(cat "$RUNNER_TEMP/claude-start-commit")" ] || fail 'starting commit not restored'
+    [ "$(git rev-parse HEAD)" = "$START_COMMIT" ] || fail 'starting commit not restored'
     git show-ref --verify --quiet refs/remotes/origin/claude/fixture || fail 'remote ref was changed'
     PRIMARY_BRANCH=claude/absent "$guard" cleanup || fail 'absent branch should be inert'
     git checkout -q -b unrelated
@@ -136,5 +158,5 @@ mkdir "$scratch/repo"
     PRIMARY_BRANCH='' "$guard" cleanup || fail 'empty branch output should be inert'
     git show-ref --verify --quiet refs/heads/claude/default || fail 'empty output removed the current branch'
     [ "$(git branch --show-current)" = claude/default ] || fail 'empty output changed checkout'
-) || fail 'cleanup fixture failed'
+)
 echo 'Claude workflow result: all cases passed'

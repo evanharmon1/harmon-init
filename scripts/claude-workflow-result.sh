@@ -17,8 +17,7 @@ if [ "${1:-inspect}" = cleanup ]; then
         exit 1
     fi
     git show-ref --verify --quiet "refs/heads/$branch" || exit 0
-    start_commit=$(cat "${RUNNER_TEMP:?}/claude-start-commit")
-    git checkout --detach "$start_commit"
+    git checkout --detach "${START_COMMIT:?}"
     git branch -D -- "$branch"
     exit 0
 fi
