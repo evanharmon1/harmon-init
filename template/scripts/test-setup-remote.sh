@@ -104,6 +104,10 @@ cat >"${STUB_BIN}/git" <<EOF
 #!/usr/bin/env bash
 [ -z "\${STUB_LOG_DIR:-}" ] || echo "\${GIT_SSH_COMMAND-unset}" >>"\${STUB_LOG_DIR}/git-ssh.log"
 for arg in "\$@"; do
+    if [ "\$arg" = fetch ] && [ "\${STUB_FETCH_FAIL_DIR:-}" = "\${2:-}" ]; then
+        echo "simulated fetch failure" >&2
+        exit 1
+    fi
     case "\$arg" in
     http://* | https://* | ssh://* | git@*)
         echo "ERROR: network URL attempted in offline test: \$arg" >&2
@@ -242,12 +246,79 @@ if [ "$HAVE_BOOTSTRAP" = 1 ]; then
     output_has 'Related-repo fetch: 2 fetched' || fail "fetch summary must report both siblings: $(all_output)"
 
     echo "==> a sibling fetch failure warns and does not fail preparation"
-    git -C "$sibling" remote set-url origin "${TMP}/missing-upstream.git"
-    run_setup "${STUBS_PATH}"
+    run_setup "${STUBS_PATH}" "STUB_FETCH_FAIL_DIR=${sibling}"
     [ "$rc" -eq 0 ] || fail "fetch failure must not fail setup: $(all_output)"
     output_has '^  + related-repo fetch -> .* (warn-only)' || fail "failed fetch must remain a warn-only summary step: $(all_output)"
     output_has 'WARNING: fetch failed for sibling-a; continuing.' || fail "fetch failure must warn: $(all_output)"
     output_has 'Related-repo fetch: 1 fetched, 2 not-yet-cloned, 1 failed' || fail "fetch must continue to sibling-b: $(all_output)"
+
+    echo "==> an unrelated same-name sibling is skipped without any ref changes"
+    git -C "$sibling" remote set-url origin "${BARE_BASE}/test-owner/sibling-b.git"
+    before="$(digest "$sibling")"
+    run_setup "${STUBS_PATH}"
+    [ "$rc" -eq 0 ] || fail "identity mismatch must not fail setup: $(all_output)"
+    output_has 'WARNING: skipping sibling-a: origin does not match' || fail "identity mismatch must warn"
+    [ "$before" = "$(digest "$sibling")" ] || fail "an unrelated sibling must remain untouched"
+    output_has '1 identity mismatches' || fail "identity skips must be reported"
+    git -C "$sibling" remote set-url origin "${BARE_BASE}/test-owner/sibling-a.git"
+
+    echo "==> a mirror fetch refspec cannot update or prune local branches or tags"
+    git -C "$sibling" branch protected-local HEAD
+    git -C "$sibling" branch upstream-only HEAD
+    git -C "$sibling" tag protected-tag HEAD
+    git -C "$sibling" config remote.origin.fetch '+refs/*:refs/*'
+    git -C "$sibling" config remote.origin.pruneTags true
+    protected="$(git -C "$sibling" rev-parse protected-local)"
+    git -C "${TMP}/seed-sibling-a" push -q origin HEAD:protected-local
+    git -C "$sibling" update-ref refs/remotes/origin/deleted "$old_head"
+    run_setup "${STUBS_PATH}"
+    [ "$rc" -eq 0 ] || fail "mirror-configured fetch must succeed: $(all_output)"
+    [ "$(git -C "$sibling" rev-parse protected-local)" = "$protected" ] || fail "fetch must not update a local branch"
+    [ "$(git -C "$sibling" rev-parse upstream-only)" = "$protected" ] || fail "fetch must not prune a local branch"
+    [ "$(git -C "$sibling" rev-parse protected-tag)" = "$protected" ] || fail "fetch must not prune a local tag"
+    [ "$(git -C "$sibling" rev-parse origin/protected-local)" = "$new_head" ] || fail "explicit remote-tracking destination must update"
+    ! git -C "$sibling" show-ref --verify --quiet refs/remotes/origin/deleted || fail "deleted remote-tracking branches must be pruned"
+    [ "$(git -C "$sibling" rev-parse HEAD)" = "$old_head" ] || fail "mirror fetch must preserve HEAD"
+    [ "$(cat "${sibling}/local-work.txt")" = 'local work' ] || fail "mirror fetch must preserve local work"
+
+    echo "==> HTTPS and SSH identity spellings match without fetching another remote"
+    make_fixture identities 'git@example.test:test-owner/sibling-a.git@main'
+    sibling="${FIX_PARENT}/sibling-a"
+    git clone -q "${BARE_BASE}/test-owner/sibling-a.git" "$sibling"
+    # Real git rewrites the matching network URL to our local bare repository.
+    git -C "$sibling" remote set-url origin 'https://example.test/test-owner/sibling-a'
+    git -C "$sibling" config "url.file://${BARE_BASE}/.insteadOf" 'https://example.test/'
+    git -C "$sibling" remote add unrelated "${TMP}/absent-other-remote"
+    run_setup "${STUBS_PATH}"
+    [ "$rc" -eq 0 ] || fail "normalized identity fetch must succeed: $(all_output)"
+    output_has 'Related-repo fetch: 1 fetched' || fail "HTTPS/SSH identity must match and only origin must be fetched"
+    printf '%s\n' 'ssh://git@example.test/test-owner/sibling-a.git' >"${FIX}/.devcontainer/related-repos.txt"
+    run_setup "${STUBS_PATH}"
+    output_has 'Related-repo fetch: 1 fetched' || fail "ssh:// identity must match HTTPS"
+
+    echo "==> linked-worktree and separate-git-dir siblings are fetched"
+    for layout in worktree separate; do
+        make_fixture "layout-${layout}" 'test-owner/sibling-a'
+        sibling="${FIX_PARENT}/sibling-a"
+        if [ "$layout" = worktree ]; then
+            git clone -q "${BARE_BASE}/test-owner/sibling-a.git" "${TMP}/worktree-source"
+            git -C "${TMP}/worktree-source" worktree add -q --detach "$sibling" HEAD
+        else
+            git clone -q --separate-git-dir="${TMP}/separate-git-dir" "${BARE_BASE}/test-owner/sibling-a.git" "$sibling"
+        fi
+        [ -f "${sibling}/.git" ] || fail "fixture must have a .git file"
+        old_head="$(git -C "$sibling" rev-parse HEAD)"
+        git -C "${TMP}/seed-sibling-a" -c user.name=Test -c user.email=test@example.com \
+            commit -q --allow-empty -m "upstream for ${layout}"
+        git -C "${TMP}/seed-sibling-a" push -q origin HEAD:main
+        new_head="$(git -C "${TMP}/seed-sibling-a" rev-parse HEAD)"
+        # Fetch is also independent of the bootstrap script being available.
+        rm "${FIX}/.devcontainer/scripts/bootstrap-related-repos.sh"
+        run_setup "${STUBS_PATH}"
+        [ "$rc" -eq 0 ] || fail "${layout} fetch must succeed: $(all_output)"
+        [ "$(git -C "$sibling" rev-parse origin/main)" = "$new_head" ] || fail "${layout} remote refs must update"
+        [ "$(git -C "$sibling" rev-parse HEAD)" = "$old_head" ] || fail "${layout} HEAD must not move"
+    done
 fi
 
 if [ "$HAVE_BOOTSTRAP" = 1 ]; then
@@ -307,7 +378,13 @@ if [ "$HAVE_BOOTSTRAP" = 1 ]; then
 
     # --- A non-writable parent is skipped, not reported as a clone ---
     echo "==> a non-writable parent is reported as skipped and nothing is cloned"
-    make_fixture readonly "test-owner/sibling-a"
+    make_fixture readonly $'test-owner/sibling-a\ntest-owner/sibling-b'
+    git clone -q "${BARE_BASE}/test-owner/sibling-a.git" "${FIX_PARENT}/sibling-a"
+    readonly_head="$(git -C "${FIX_PARENT}/sibling-a" rev-parse HEAD)"
+    git -C "${TMP}/seed-sibling-a" -c user.name=Test -c user.email=test@example.com \
+        commit -q --allow-empty -m 'upstream for read-only parent'
+    git -C "${TMP}/seed-sibling-a" push -q origin HEAD:main
+    expected_head="$(git -C "${TMP}/seed-sibling-a" rev-parse HEAD)"
     chmod 555 "${FIX_PARENT}"
     if [ -w "${FIX_PARENT}" ]; then
         chmod 755 "${FIX_PARENT}"
@@ -320,7 +397,9 @@ if [ "$HAVE_BOOTSTRAP" = 1 ]; then
         output_has '^  - related repos: .*is not writable' || fail "the related repos must be listed under Skipped: $(all_output)"
         ! output_has '^  + related repos' || fail "a non-writable parent must not be reported as Ran: $(all_output)"
         [ ! -e "${LOG_DIR}/gh.log" ] || fail "the bootstrap must not run against a non-writable parent"
-        [ ! -e "${FIX_PARENT}/sibling-a" ] || fail "nothing may be cloned into a non-writable parent"
+        [ ! -e "${FIX_PARENT}/sibling-b" ] || fail "nothing may be cloned into a non-writable parent"
+        [ "$(git -C "${FIX_PARENT}/sibling-a" rev-parse origin/main)" = "$expected_head" ] || fail "a read-only parent must still allow fetching an existing sibling"
+        [ "$(git -C "${FIX_PARENT}/sibling-a" rev-parse HEAD)" = "$readonly_head" ] || fail "read-only-parent fetch must not move HEAD"
     fi
 fi
 
@@ -411,6 +490,56 @@ PYSETTINGS
 echo "==> SessionStart is a no-op locally and prepares remote sessions"
 make_fixture hook -
 mkdir -p "${TMP}/hook-bin"
+cat >"${TMP}/hook-bin/timeout" <<'EOF'
+#!/usr/bin/env bash
+[ "$1" = '--kill-after=5s' ] && [ "$2" = '90s' ] || exit 99
+shift 2
+exec "$@"
+EOF
+cat >"${TMP}/hook-bin/task" <<'EOF'
+#!/usr/bin/env bash
+[ "$1" = --dir ] && [ "$3" = setup:remote ] || exit 99
+exec bash "$2/scripts/setup-remote.sh"
+EOF
+chmod +x "${TMP}/hook-bin/task" "${TMP}/hook-bin/timeout"
+echo "==> SessionStart distinguishes complete preparation from skipped and warning steps"
+for scenario in complete skipped clone-warning fetch-warning; do
+    make_fixture "hook-${scenario}" ''
+    touch "${FIX}/pnpm-lock.yaml" "${FIX}/uv.lock"
+    scenario_path="${TMP}/hook-bin:${STUBS_PATH}"
+    fetch_fail_dir=""
+    case "$scenario" in
+    skipped) scenario_path="${TMP}/hook-bin:${MIN_BIN}" ;;
+    clone-warning)
+        [ "$HAVE_BOOTSTRAP" = 1 ] || continue
+        echo 'test-owner/missing-repo' >"${FIX}/.devcontainer/related-repos.txt"
+        ;;
+    fetch-warning)
+        [ "$HAVE_BOOTSTRAP" = 1 ] || continue
+        echo 'test-owner/sibling-a' >"${FIX}/.devcontainer/related-repos.txt"
+        git clone -q "${BARE_BASE}/test-owner/sibling-a.git" "${FIX_PARENT}/sibling-a"
+        fetch_fail_dir="${FIX_PARENT}/sibling-a"
+        ;;
+    esac
+    rc=0
+    CLAUDE_CODE_REMOTE=true STUB_LOG_DIR="${LOG_DIR}" STUB_FETCH_FAIL_DIR="$fetch_fail_dir" \
+        RELATED_REPOS_GIT_BASE_URL="file://${BARE_BASE}/" PATH="$scenario_path" \
+        bash "${FIX}/scripts/session-start-remote.sh" >"${OUT}" 2>"${ERR}" || rc=$?
+    [ "$rc" -eq 0 ] || fail "${scenario} SessionStart must exit 0"
+    if [ "$scenario" = complete ] && [ "$HAVE_BOOTSTRAP" = 1 ]; then
+        grep -qx '==> SessionStart remote preparation: setup:remote completed.' "$OUT" || fail "complete run needs a complete summary: $(all_output)"
+    else
+        grep -q '^==> SessionStart remote preparation: setup:remote completed with warnings:' "$OUT" || fail "${scenario} needs a degraded summary: $(all_output)"
+    fi
+    [ "$(wc -l <"$OUT" | tr -d ' ')" -eq 1 ] || fail "only the compact summary belongs on stdout"
+    grep -q 'setup:remote summary' "$ERR" || fail "step details must remain on stderr"
+    case "$scenario" in
+    skipped) grep -q 'skipped steps' "$OUT" && grep -q 'lefthook is not on PATH' "$ERR" || fail "missing tools need a summary and stderr detail" ;;
+    clone-warning) grep -q 'with warnings: related repos' "$OUT" || fail "bootstrap warnings must reach the summary" ;;
+    fetch-warning) grep -q 'with warnings: related-repo fetch' "$OUT" || fail "fetch warnings must reach the summary" ;;
+    esac
+done
+make_fixture hook -
 cat >"${TMP}/hook-bin/task" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"${HOOK_TASK_LOG}"

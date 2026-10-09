@@ -14,9 +14,17 @@ if ! command -v timeout >/dev/null 2>&1; then
     exit 0
 fi
 
-if timeout --kill-after=5s 90s task --dir "$ROOT" setup:remote >&2; then
-    echo "==> SessionStart remote preparation: setup:remote completed."
+if output="$(timeout --kill-after=5s 90s task --dir "$ROOT" setup:remote)"; then
+    printf '%s\n' "$output" >&2
+    summary="setup:remote completed."
+    while IFS= read -r line; do
+        case "$line" in
+        '==> setup:remote completed with warnings:'*) summary="${line#==> }" ;;
+        esac
+    done <<<"$output"
+    echo "==> SessionStart remote preparation: ${summary}"
 else
+    printf '%s\n' "$output" >&2
     echo "==> WARNING: SessionStart remote preparation: setup:remote failed; run task setup:remote again."
 fi
 # Preparation failures must never prevent a session from starting.

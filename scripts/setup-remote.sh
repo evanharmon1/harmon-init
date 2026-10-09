@@ -37,10 +37,32 @@ unset NODE_OPTIONS
 did=""
 skipped=""
 failed=""
+warnings=""
 
 note_did() { did="${did}  + $1"$'\n'; }
 note_skipped() { skipped="${skipped}  - $1"$'\n'; }
 note_failed() { failed="${failed}  ! $1"$'\n'; }
+note_warning() { warnings="${warnings}${warnings:+, }$1"; }
+
+# The sibling scripts intentionally return 0 after warning. Preserve their
+# details on stderr and retain a short step label for the hook's stdout summary.
+run_sibling_step() {
+    local label="$1" output
+    shift
+    if output="$("$@" 2>&1)"; then
+        note_did "$label (warn-only)"
+    else
+        echo "==> WARNING: ${label} could not run; continuing." >&2
+        note_warning "${label%% ->*}"
+        case "$label" in
+        'related repos ->'*) note_failed "$label" ;;
+        esac
+    fi
+    printf '%s\n' "$output" >&2
+    case "$output" in
+    *WARNING:*) note_warning "${label%% ->*}" ;;
+    esac
+}
 
 # run_step <label> <command...> — run it, record the outcome, never abort.
 run_step() {
@@ -79,14 +101,14 @@ fi
 BOOTSTRAP=".devcontainer/scripts/bootstrap-related-repos.sh"
 if [ ! -f .devcontainer/related-repos.txt ]; then
     note_skipped "related repos: no .devcontainer/related-repos.txt"
-elif [ ! -f "$BOOTSTRAP" ]; then
-    note_skipped "related repos: ${BOOTSTRAP} is not present in this repository"
 else
     PARENT="$(dirname "$ROOT")"
     # Skipping is deliberate, in preference to the bootstrap's /workspaces sudo chown
     # repair path: setup:remote never takes ownership of a directory it did not
     # create, so that branch is unreachable from here by design.
-    if [ ! -w "$PARENT" ]; then
+    if [ ! -f "$BOOTSTRAP" ]; then
+        note_skipped "related repos: ${BOOTSTRAP} is not present in this repository"
+    elif [ ! -w "$PARENT" ]; then
         echo "==> WARNING: ${PARENT} is not writable; related repos cannot be cloned there." >&2
         note_skipped "related repos: ${PARENT} is not writable"
     else
@@ -96,20 +118,17 @@ else
         echo "    only a staging directory inside it that is not)"
         # The bootstrap exits 0 whatever it could not clone (it warns on stderr), so a
         # missing sibling never fails setup; only a crash of the script itself does.
-        run_step "related repos -> ${PARENT}" bash "$BOOTSTRAP" "$PARENT"
-        FETCH=".devcontainer/scripts/fetch-related-repos.sh"
-        if [ -f "$FETCH" ]; then
-            # Fetch only: never move a sibling's checkout or discard local work.
-            if ! bash "$FETCH" "$PARENT"; then
-                echo "==> WARNING: related-repo fetch could not run; continuing." >&2
-            fi
-            note_did "related-repo fetch -> ${PARENT} (warn-only)"
-        else
-            note_skipped "related-repo fetch: ${FETCH} is not present in this repository"
-        fi
-        echo "==> Sibling repos are reference context. Claude Code on the web only allows pushes to"
-        echo "    the session's own repository and branch, so changes to a sibling cannot be pushed from here."
+        run_sibling_step "related repos -> ${PARENT}" bash "$BOOTSTRAP" "$PARENT"
     fi
+    # Fetch writes inside each sibling, so a read-only parent only blocks clones.
+    FETCH=".devcontainer/scripts/fetch-related-repos.sh"
+    if [ -f "$FETCH" ]; then
+        run_sibling_step "related-repo fetch -> ${PARENT}" bash "$FETCH" "$PARENT"
+    else
+        note_skipped "related-repo fetch: ${FETCH} is not present in this repository"
+    fi
+    echo "==> Sibling repos are reference context. Claude Code on the web only allows pushes to"
+    echo "    the session's own repository and branch, so changes to a sibling cannot be pushed from here."
 fi
 
 # --- 3. dependencies, frozen to the lockfile ---
@@ -150,4 +169,12 @@ if [ -n "$failed" ]; then
     printf '%s' "$failed" >&2
     exit 1
 fi
-echo "==> setup:remote complete. Run 'task verify' to check the checkout."
+if [ -n "$skipped" ]; then
+    note_warning "skipped steps (see stderr details)"
+fi
+if [ -n "$warnings" ]; then
+    echo "==> setup:remote completed with warnings: ${warnings}"
+else
+    echo "==> setup:remote completed."
+fi
+echo "Run 'task verify' to check the checkout."

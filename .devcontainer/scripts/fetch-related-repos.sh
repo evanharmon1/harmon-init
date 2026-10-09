@@ -28,6 +28,45 @@ WORKSPACES_DIR="${1:-/workspaces}"
 fetched=0
 skipped=0
 failed=0
+unrelated=0
+
+# Compare repository identities, not transport spellings. Local paths/file URLs
+# are also supported (the bootstrap's base override uses them in offline tests).
+repo_identity() {
+    local url="${1%/}" authority path
+    url="${url%.git}"
+    case "$url" in
+    file://*) printf '%s\n' "${url#file://}" ;;
+    *://*)
+        authority="${url#*://}"
+        path="${authority#*/}"
+        authority="${authority%%/*}"
+        authority="${authority##*@}"
+        case "$url" in
+        ssh://*) authority="${authority%:22}" ;;
+        https://*) authority="${authority%:443}" ;;
+        esac
+        printf '%s/%s\n' "$(printf '%s' "$authority" | tr '[:upper:]' '[:lower:]')" "$path"
+        ;;
+    /* | ./* | ../*) printf '%s\n' "$url" ;;
+    *:*) repo_identity "ssh://${url%%:*}/${url#*:}" ;;
+    *) printf '%s\n' "$url" ;;
+    esac
+}
+
+# Shorthand owner/repo entries use the same host/base as bootstrap.
+if [ -n "${RELATED_REPOS_GIT_BASE_URL:-}" ]; then
+    GIT_BASE_URL="${RELATED_REPOS_GIT_BASE_URL%/}/"
+elif [ -n "${GH_HOST:-}" ]; then
+    GIT_BASE_URL="https://${GH_HOST}/"
+else
+    checkout_origin="$(git -C "${SCRIPT_DIR}/.." config --get remote.origin.url 2>/dev/null || true)"
+    checkout_identity="$(repo_identity "$checkout_origin")"
+    case "$checkout_origin" in
+    http://* | https://* | ssh://* | git@*) GIT_BASE_URL="https://${checkout_identity%%/*}/" ;;
+    *) GIT_BASE_URL="https://github.com/" ;;
+    esac
+fi
 
 while IFS= read -r raw_line || [ -n "$raw_line" ]; do
     # Strip inline comments, then trim leading/trailing whitespace.
@@ -54,12 +93,28 @@ while IFS= read -r raw_line || [ -n "$raw_line" ]; do
     dir="${WORKSPACES_DIR}/${basename}"
 
     # Only fetch repos that are already cloned; bootstrap handles the rest.
-    if [ ! -d "${dir}/.git" ]; then
+    if [ ! -d "$dir" ] || ! git -C "$dir" rev-parse --git-dir >/dev/null 2>&1; then
         skipped=$((skipped + 1))
         continue
     fi
 
-    if git -C "$dir" fetch --all --prune --quiet 2>/dev/null; then
+    expected_url="$target_spec"
+    case "$target_spec" in
+    *://* | *:* | /* | ./* | ../*) ;;
+    *) expected_url="${GIT_BASE_URL}${target_spec}" ;;
+    esac
+    origin_url="$(git -C "$dir" config --get remote.origin.url 2>/dev/null || true)"
+    if [ -z "$origin_url" ] || [ "$(repo_identity "$origin_url")" != "$(repo_identity "$expected_url")" ]; then
+        echo "==> WARNING: skipping ${basename}: origin does not match the related-repos entry." >&2
+        unrelated=$((unrelated + 1))
+        continue
+    fi
+
+    # Empty refmap prevents configured fetch mappings from adding destinations.
+    # Disable tag pruning/following and submodule recursion as well: this fetch
+    # owns only origin's remote-tracking branch refs, even in a mirror clone.
+    if git -C "$dir" fetch --prune --no-prune-tags --no-tags --recurse-submodules=no \
+        --refmap= --quiet origin '+refs/heads/*:refs/remotes/origin/*' 2>/dev/null; then
         fetched=$((fetched + 1))
     else
         echo "==> WARNING: fetch failed for ${basename}; continuing." >&2
@@ -67,9 +122,9 @@ while IFS= read -r raw_line || [ -n "$raw_line" ]; do
     fi
 done <"$CONFIG_FILE"
 
-total=$((fetched + skipped + failed))
+total=$((fetched + skipped + failed + unrelated))
 if [ "$total" -gt 0 ]; then
-    echo "==> Related-repo fetch: ${fetched} fetched, ${skipped} not-yet-cloned, ${failed} failed"
+    echo "==> Related-repo fetch: ${fetched} fetched, ${skipped} not-yet-cloned, ${failed} failed, ${unrelated} identity mismatches"
 fi
 
 # Always exit 0 — never block container start.
