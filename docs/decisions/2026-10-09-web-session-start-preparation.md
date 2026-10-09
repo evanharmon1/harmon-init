@@ -36,10 +36,12 @@ retains the observed evidence separately from this decision.
    prints a one-line completion or failure summary. The hook timeout is 120 s;
    when `timeout` is available, preparation has a 90 s deadline and a 5 s kill
    grace so the wrapper can warn and exit before the hook expires. Without
-   `timeout`, it notes that preparation runs unbounded inside the hook.
-3. `task setup:remote` installs current lefthook shims, installs frozen
-   dependencies where lockfiles exist, bootstraps missing siblings and fetches
-   existing siblings into the checkout's parent directory. The shared fetch
+   `timeout`, it skips preparation, warns to run `task setup:remote` manually,
+   and exits 0.
+3. `task setup:remote` installs current lefthook shims, bootstraps missing siblings
+   and fetches existing siblings into the checkout's parent directory, then
+   installs frozen dependencies where lockfiles exist. Slow installs run last,
+   so a deadline does not prevent the preceding hook and sibling preparation. The shared fetch
    script accepts that directory, defaulting to `/workspaces` for devcontainers.
    Fetch updates remote-tracking refs and prunes deleted refs; it never pulls,
    checks out or resets. A sibling's working revision and local changes remain
@@ -48,6 +50,9 @@ retains the observed evidence separately from this decision.
    2026-09-29). `AGENTS.md` retains the fallback: if preparation did not run,
    including in a multi-repository session or a platform without the hook, run
    `task setup:remote` once before work.
+
+The hook runs the checkout's Taskfile and its dependency installs at session
+start in a web session. Open only checkouts you would run `task setup:remote` on.
 
 ## Cost and failure
 

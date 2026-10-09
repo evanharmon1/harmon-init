@@ -78,6 +78,10 @@ for tool in pnpm uv; do
 #!/usr/bin/env bash
 echo "\$*" >>"\${STUB_LOG_DIR}/${tool}.log"
 echo "\${CI-unset}" >>"\${STUB_LOG_DIR}/${tool}.ci"
+if [ -n "\${EXPECTED_SIBLING:-}" ]; then
+    [ -d "\${EXPECTED_SIBLING}/.git" ] || exit 98
+    [ "\$(git -C "\$EXPECTED_SIBLING" rev-parse origin/main)" = "\$EXPECTED_SIBLING_HEAD" ] || exit 97
+fi
 exit 0
 EOF
 done
@@ -246,6 +250,21 @@ if [ "$HAVE_BOOTSTRAP" = 1 ]; then
     output_has 'Related-repo fetch: 1 fetched, 2 not-yet-cloned, 1 failed' || fail "fetch must continue to sibling-b: $(all_output)"
 fi
 
+if [ "$HAVE_BOOTSTRAP" = 1 ]; then
+    echo "==> sibling cloning and fetching finish before dependency installs"
+    make_fixture ordering "test-owner/sibling-a"
+    touch "${FIX}/pnpm-lock.yaml" "${FIX}/uv.lock"
+    expected_head="$(git -C "${TMP}/seed-sibling-a" rev-parse HEAD)"
+    run_setup "${STUBS_PATH}" "EXPECTED_SIBLING=${FIX_PARENT}/sibling-a" "EXPECTED_SIBLING_HEAD=${expected_head}"
+    [ "$rc" -eq 0 ] || fail "sibling clone must precede both installers: $(all_output)"
+    git -C "${TMP}/seed-sibling-a" -c user.name=Test -c user.email=test@example.com \
+        commit -q --allow-empty -m 'upstream for dependency ordering'
+    git -C "${TMP}/seed-sibling-a" push -q origin HEAD:main
+    expected_head="$(git -C "${TMP}/seed-sibling-a" rev-parse HEAD)"
+    run_setup "${STUBS_PATH}" "EXPECTED_SIBLING=${FIX_PARENT}/sibling-a" "EXPECTED_SIBLING_HEAD=${expected_head}"
+    [ "$rc" -eq 0 ] || fail "sibling fetch must precede both installers: $(all_output)"
+fi
+
 # --- Frozen dependency installs, only for lockfiles that exist ---
 echo "==> dependencies install frozen from the lockfiles that exist"
 make_fixture deps -
@@ -372,7 +391,13 @@ cat >"${TMP}/hook-bin/task" <<'EOF'
 printf '%s\n' "$*" >>"${HOOK_TASK_LOG}"
 exit "${HOOK_TASK_RC:-0}"
 EOF
-chmod +x "${TMP}/hook-bin/task"
+cat >"${TMP}/hook-bin/timeout" <<'EOF'
+#!/usr/bin/env bash
+[ "$1" = '--kill-after=5s' ] && [ "$2" = '90s' ] || exit 99
+shift 2
+exec "$@"
+EOF
+chmod +x "${TMP}/hook-bin/task" "${TMP}/hook-bin/timeout"
 HOOK_TASK_LOG="${TMP}/hook-task.log"
 export HOOK_TASK_LOG
 for remote in unset false true; do
@@ -400,6 +425,15 @@ CLAUDE_CODE_REMOTE=true HOOK_TASK_RC=1 PATH="${TMP}/hook-bin:${MIN_BIN}" \
     bash "${FIX}/scripts/session-start-remote.sh" >"${OUT}" 2>"${ERR}" || rc=$?
 [ "$rc" -eq 0 ] || fail "preparation failure must not fail SessionStart"
 output_has 'WARNING: SessionStart remote preparation: setup:remote failed' || fail "preparation failure must warn"
+
+echo "==> SessionStart skips preparation when timeout is missing"
+rm -f "${TMP}/hook-bin/timeout" "$HOOK_TASK_LOG"
+rc=0
+CLAUDE_CODE_REMOTE=true PATH="${TMP}/hook-bin:${MIN_BIN}" \
+    bash "${FIX}/scripts/session-start-remote.sh" >"${OUT}" 2>"${ERR}" || rc=$?
+[ "$rc" -eq 0 ] || fail "missing timeout must not fail SessionStart"
+[ ! -e "$HOOK_TASK_LOG" ] || fail "missing timeout must skip preparation"
+output_has 'WARNING: SessionStart remote preparation: setup:remote failed' || fail "missing timeout must warn to run setup manually"
 
 echo "==> SessionStart bounds a slow preparation task and still exits 0"
 REAL_TIMEOUT="$(command -v timeout 2>/dev/null || true)"

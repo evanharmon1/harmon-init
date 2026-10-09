@@ -956,7 +956,7 @@ which runs `task setup:remote` only when `CLAUDE_CODE_REMOTE=true`; it is a
 silent no-op locally and in devcontainers. The hook has an explicit 120 s
 timeout. When `timeout` is available, preparation has a 90 s deadline and a 5 s
 kill grace, leaving time for the wrapper to warn and exit 0 on failure or expiry.
-Without `timeout`, it notes that preparation runs unbounded inside the hook.
+Without `timeout`, it skips preparation and warns to run `task setup:remote` manually.
 Its one-line
 `SessionStart remote preparation:` summary distinguishes completion from a
 failure requiring a retry. Repository hooks run only in a single-repository
@@ -966,11 +966,12 @@ or a platform without it), the `AGENTS.md` fallback still tells the agent to run
 
 `task setup:remote` (`scripts/setup-remote.sh`,
 [#1405](https://github.com/evanharmon1/harmon-init/issues/1405)) runs
-`lefthook install` (when lefthook is on `PATH`), frozen `pnpm` / `uv` installs
-from the lockfiles that exist, and the same sibling clones the devcontainer
-makes (`.devcontainer/related-repos.txt`), into the checkout's **parent**
+`lefthook install` (when lefthook is on `PATH`), then the same sibling clones
+the devcontainer makes (`.devcontainer/related-repos.txt`), into the checkout's **parent**
 directory. It then fetches existing siblings with
 `.devcontainer/scripts/fetch-related-repos.sh`, using that same parent directory.
+Frozen `pnpm` / `uv` installs from the lockfiles that exist run last, so a slow
+install cannot prevent the preceding hook and sibling preparation.
 Fetching updates remote-tracking refs and prunes deleted refs; it never checks
 out, resets or pulls, so local branches and uncommitted changes stay in place.
 A snapshot can be about seven days old, and fetching on every start makes new

@@ -7,11 +7,11 @@
 # a safe no-op when already done:
 #
 #   1. lefthook install     so the pre-commit / commit-msg / pre-push gates run
-#   2. frozen dependencies  pnpm-lock.yaml -> pnpm, uv.lock -> uv (only for a
-#                           lockfile that exists; none is a no-op)
-#   3. related repos        .devcontainer/related-repos.txt cloned beside this
+#   2. related repos        .devcontainer/related-repos.txt cloned beside this
 #                           checkout (its PARENT directory), then fetched forward
 #                           by the same scripts the devcontainer uses
+#   3. frozen dependencies  pnpm-lock.yaml -> pnpm, uv.lock -> uv (only for a
+#                           lockfile that exists; none is a no-op)
 #
 # Never prompts (git: GIT_TERMINAL_PROMPT=0 and, unless GIT_SSH_COMMAND is already set,
 # ssh BatchMode; pnpm: CI=true). A step whose tool is missing is reported as skipped; the exit
@@ -75,29 +75,7 @@ else
     run_step "lefthook install" lefthook install
 fi
 
-# --- 2. dependencies, frozen to the lockfile ---
-if [ -f pnpm-lock.yaml ]; then
-    if command -v pnpm >/dev/null 2>&1; then
-        # CI=true is forced, whatever was inherited (CI=false would let pnpm prompt, e.g.
-        # before purging node_modules): with it pnpm fails instead of prompting.
-        run_step "pnpm install --frozen-lockfile" env CI=true pnpm install --frozen-lockfile
-    else
-        note_skipped "dependencies: pnpm-lock.yaml present but pnpm is not on PATH"
-    fi
-else
-    note_skipped "dependencies: no pnpm-lock.yaml"
-fi
-if [ -f uv.lock ]; then
-    if command -v uv >/dev/null 2>&1; then
-        run_step "uv sync --frozen" env CI=true uv sync --frozen
-    else
-        note_skipped "dependencies: uv.lock present but uv is not on PATH"
-    fi
-else
-    note_skipped "dependencies: no uv.lock"
-fi
-
-# --- 3. related repositories, beside this checkout ---
+# --- 2. related repositories, beside this checkout ---
 BOOTSTRAP=".devcontainer/scripts/bootstrap-related-repos.sh"
 if [ ! -f .devcontainer/related-repos.txt ]; then
     note_skipped "related repos: no .devcontainer/related-repos.txt"
@@ -122,16 +100,38 @@ else
         FETCH=".devcontainer/scripts/fetch-related-repos.sh"
         if [ -f "$FETCH" ]; then
             # Fetch only: never move a sibling's checkout or discard local work.
-            note_did "related-repo fetch -> ${PARENT} (warn-only)"
             if ! bash "$FETCH" "$PARENT"; then
                 echo "==> WARNING: related-repo fetch could not run; continuing." >&2
             fi
+            note_did "related-repo fetch -> ${PARENT} (warn-only)"
         else
             note_skipped "related-repo fetch: ${FETCH} is not present in this repository"
         fi
         echo "==> Sibling repos are reference context. Claude Code on the web only allows pushes to"
         echo "    the session's own repository and branch, so changes to a sibling cannot be pushed from here."
     fi
+fi
+
+# --- 3. dependencies, frozen to the lockfile ---
+if [ -f pnpm-lock.yaml ]; then
+    if command -v pnpm >/dev/null 2>&1; then
+        # CI=true is forced, whatever was inherited (CI=false would let pnpm prompt, e.g.
+        # before purging node_modules): with it pnpm fails instead of prompting.
+        run_step "pnpm install --frozen-lockfile" env CI=true pnpm install --frozen-lockfile
+    else
+        note_skipped "dependencies: pnpm-lock.yaml present but pnpm is not on PATH"
+    fi
+else
+    note_skipped "dependencies: no pnpm-lock.yaml"
+fi
+if [ -f uv.lock ]; then
+    if command -v uv >/dev/null 2>&1; then
+        run_step "uv sync --frozen" env CI=true uv sync --frozen
+    else
+        note_skipped "dependencies: uv.lock present but uv is not on PATH"
+    fi
+else
+    note_skipped "dependencies: no uv.lock"
 fi
 
 # --- summary ---

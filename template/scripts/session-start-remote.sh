@@ -9,16 +9,8 @@ if ! ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"; then
 fi
 
 # Leave time to report a failure before the hook's 120-second timeout.
-prepare() {
-    if command -v timeout >/dev/null 2>&1; then
-        timeout --kill-after=5s 90s task --dir "$ROOT" setup:remote
-    else
-        echo "==> NOTE: timeout is unavailable; SessionStart preparation runs unbounded." >&2
-        task --dir "$ROOT" setup:remote
-    fi
-}
-
-if prepare; then
+if command -v timeout >/dev/null 2>&1 &&
+    timeout --kill-after=5s 90s task --dir "$ROOT" setup:remote; then
     echo "==> SessionStart remote preparation: setup:remote completed."
 else
     echo "==> WARNING: SessionStart remote preparation: setup:remote failed; run task setup:remote again." >&2
