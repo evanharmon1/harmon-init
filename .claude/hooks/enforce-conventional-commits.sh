@@ -42,7 +42,7 @@ try:
                     if (line.lstrip("\t") if strip_tabs else line).rstrip("\n") == delimiter:
                         break
             heredocs = []
-        elif set(token) <= set(";&|()"):
+        elif token and set(token) <= set(";&|()"):
             # Operators written together (;( |( )&&) are one token; all end a command.
             segments.append(segment)
             segment = []
@@ -64,7 +64,7 @@ for segment in segments:
         if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", word):
             index += 1
         elif word in ("command", "builtin", "exec", "nohup", "time", "-p",
-                      "(", "{", "!", "if", "then", "do", "else", "elif", "while", "until"):
+                      "{", "!", "if", "then", "do", "else", "elif", "while", "until"):
             index += 1
         elif word == "env":
             index += 1
