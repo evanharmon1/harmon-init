@@ -3,6 +3,17 @@
 # update/check behavior. A fake Terraform binary avoids registry access.
 set -euo pipefail
 
+# Hooks and other callers must not retarget Git commands into their repository.
+while IFS= read -r git_var; do
+    case "$git_var" in
+    GIT_*) unset "$git_var" ;;
+    esac
+done < <(compgen -v)
+# Keep the scratch repositories independent of the caller's Git configuration.
+export GIT_CONFIG_GLOBAL=/dev/null
+export GIT_CONFIG_SYSTEM=/dev/null
+export GIT_CONFIG_NOSYSTEM=1
+
 fail() {
     echo "TEST FAIL: $*" >&2
     exit 1
@@ -152,5 +163,37 @@ git -C "$untracked_repo" rm --cached -q terraform/.terraform.lock.hcl
 if TERRAFORM_BIN="$fake_terraform" "$helper" check "$untracked_root" >/dev/null 2>&1; then
     fail "lock removed from the index passed the check"
 fi
+
+# Recreate Git's pre-commit environment in a linked worktree, with no
+# GIT_WORK_TREE. An alternate index also proves the helper preserves the index
+# selected by the hook rather than silently checking the default index.
+git -C "$module_repo" -c user.name="Provider Lock Test" \
+    -c user.email=test@example.invalid -c core.hooksPath=/dev/null \
+    commit -qm "provider-lock fixture"
+linked_repo="$tmp/linked worktree"
+git -C "$module_repo" worktree add -q -b linked-lock-test "$linked_repo"
+linked_root="$linked_repo/terraform/hook env"
+mkdir "$linked_root"
+cp -R "$complete_root/." "$linked_root/"
+printf '%s\n' 'terraform {}' >"$linked_root/main.tf"
+linked_gitdir="$(git -C "$linked_repo" rev-parse --absolute-git-dir)"
+hook_index="$tmp/hook-index"
+cp "$linked_gitdir/index" "$hook_index"
+printf '%s\n' '# staged change' >>"$linked_root/main.tf"
+GIT_INDEX_FILE="$hook_index" git -C "$linked_repo" add .
+if ! linked_output="$(GIT_DIR="$linked_gitdir" GIT_INDEX_FILE="$hook_index" \
+    TERRAFORM_BIN="$fake_terraform" "$helper" check "$linked_root" 2>&1)"; then
+    fail "staged linked-worktree lock failed under hook environment: $linked_output"
+fi
+GIT_INDEX_FILE="$hook_index" git -C "$linked_repo" rm --cached -q \
+    "terraform/hook env/.terraform.lock.hcl"
+if linked_output="$(GIT_DIR="$linked_gitdir" GIT_INDEX_FILE="$hook_index" \
+    TERRAFORM_BIN="$fake_terraform" "$helper" check "$linked_root" 2>&1)"; then
+    fail "linked-worktree lock missing from the hook index passed"
+fi
+case "$linked_output" in
+*"Terraform provider lock will not be part of the commit: $linked_root/.terraform.lock.hcl"*) ;;
+*) fail "missing linked-worktree lock gave the wrong diagnostic: $linked_output" ;;
+esac
 
 echo "Terraform provider-lock regression: PASS"
