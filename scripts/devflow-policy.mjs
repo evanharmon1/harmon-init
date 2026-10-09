@@ -14,9 +14,10 @@
 // or as a library (`import { resolvePolicy, detectShape } from
 // "./devflow-policy.mjs"`), notably by scripts/dev-flow-exit.mjs.
 
-import { lstatSync, readFileSync } from 'node:fs'
+import { lstatSync, readFileSync, realpathSync, statSync } from 'node:fs'
 import { execFileSync } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
+import { dirname } from 'node:path'
 import { parseToml, TomlError } from './lib/toml-lite.mjs'
 
 export class PolicyError extends Error {}
@@ -2870,6 +2871,17 @@ function cliResolve(args) {
         lstatSync(args.policy)
       } catch (statErr) {
         if (statErr?.code === 'ENOENT') {
+          try {
+            // Fallback requires an absent final entry in a resolvable parent directory.
+            if (!statSync(realpathSync(dirname(args.policy))).isDirectory()) {
+              throw new PolicyError('parent is not a directory')
+            }
+          } catch (parentErr) {
+            console.error(
+              `devflow-policy: could not read/parse --policy: parent directory cannot be resolved: ${parentErr.message}`
+            )
+            return 2
+          }
           doc = null
         } else {
           console.error(`devflow-policy: could not inspect --policy: ${statErr.message}`)
