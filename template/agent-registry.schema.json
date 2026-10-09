@@ -140,7 +140,7 @@
         },
         "display_name": { "type": "string", "minLength": 1 },
         "retired": {
-          "description": "true once the version is no longer offered for new work. At most one version per line is current (retired false).",
+          "description": "true once the version is no longer offered for new work. Exactly one version per line is current (retired false).",
           "type": "boolean"
         },
         "tier": {
