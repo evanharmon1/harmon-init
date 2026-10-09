@@ -353,12 +353,26 @@ grep -qx 'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/b
 # The interpreter itself must not be looked up on the caller's PATH.
 [ "$(head -n 1 "$shipped_wrapper")" = '#!/bin/bash' ] ||
     fail "GET wrapper resolves its interpreter through PATH"
-sed 's/exec gh api --method GET "$@" "$endpoint"/exec gh --version/' "$shipped_wrapper" >"${work_dir}/wrapper-path-probe"
-rm -f "$wrapper_log"
-run_wrapper "${work_dir}/wrapper-path-probe" repos/example/repo >"${work_dir}/wrapper-path.out" ||
-    fail "system gh PATH probe failed"
-[ ! -e "$wrapper_log" ] || fail "GET wrapper ran the fake gh first on the caller PATH"
-grep -q '^gh version ' "${work_dir}/wrapper-path.out" || fail "GET wrapper did not run the system gh"
+# The live probe needs a gh in one of the pinned directories, as the agent
+# posture's images have. A host without one (no gh, or Homebrew's
+# /opt/homebrew/bin on macOS) skips it; the static assertions above still run.
+system_gh=
+for dir in /usr/local/sbin /usr/local/bin /usr/sbin /usr/bin /sbin /bin; do
+    if [ -x "${dir}/gh" ]; then
+        system_gh="${dir}/gh"
+        break
+    fi
+done
+if [ -n "$system_gh" ]; then
+    sed 's/exec gh api --method GET "$@" "$endpoint"/exec gh --version/' "$shipped_wrapper" >"${work_dir}/wrapper-path-probe"
+    rm -f "$wrapper_log"
+    run_wrapper "${work_dir}/wrapper-path-probe" repos/example/repo >"${work_dir}/wrapper-path.out" ||
+        fail "system gh PATH probe failed"
+    [ ! -e "$wrapper_log" ] || fail "GET wrapper ran the fake gh first on the caller PATH"
+    grep -q '^gh version ' "${work_dir}/wrapper-path.out" || fail "GET wrapper did not run the system gh"
+else
+    echo "NOTE: no gh in the wrapper's pinned PATH on this host; skipping the live PATH probe"
+fi
 # Only the argument-contract fixture replaces the PATH pin with the recording
 # stub's directory. No production file or system executable is changed.
 wrapper="${work_dir}/wrapper-with-stub"
