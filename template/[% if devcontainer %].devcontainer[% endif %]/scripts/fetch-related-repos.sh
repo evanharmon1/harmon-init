@@ -30,7 +30,7 @@ skipped=0
 failed=0
 unrelated=0
 
-# Compare repository identities, not transport spellings. Local paths/file URLs
+# Compare repository identities case-insensitively, not transport spellings. Local paths/file URLs
 # are also supported (the bootstrap's base override uses them in offline tests).
 repo_identity() {
     local url="${1%/}" authority path
@@ -92,8 +92,18 @@ while IFS= read -r raw_line || [ -n "$raw_line" ]; do
 
     dir="${WORKSPACES_DIR}/${basename}"
 
-    # Only fetch repos that are already cloned; bootstrap handles the rest.
-    if [ ! -d "$dir" ] || ! git -C "$dir" rev-parse --git-dir >/dev/null 2>&1; then
+    # Git can discover an enclosing repository from a plain subdirectory. Only
+    # accept this directory's own worktree root (or its own bare repository).
+    sibling_root=""
+    if [ -d "$dir" ]; then
+        dir="$(cd "$dir" && pwd -P)"
+        if [ "$(git -C "$dir" rev-parse --is-bare-repository 2>/dev/null || true)" = true ]; then
+            sibling_root="$(git -C "$dir" rev-parse --absolute-git-dir 2>/dev/null || true)"
+        else
+            sibling_root="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null || true)"
+        fi
+    fi
+    if [ -z "$sibling_root" ] || [ "$sibling_root" != "$dir" ]; then
         skipped=$((skipped + 1))
         continue
     fi
@@ -103,8 +113,10 @@ while IFS= read -r raw_line || [ -n "$raw_line" ]; do
     *://* | *:* | /* | ./* | ../*) ;;
     *) expected_url="${GIT_BASE_URL}${target_spec}" ;;
     esac
-    origin_url="$(git -C "$dir" config --get remote.origin.url 2>/dev/null || true)"
-    if [ -z "$origin_url" ] || [ "$(repo_identity "$origin_url")" != "$(repo_identity "$expected_url")" ]; then
+    # --get-url resolves insteadOf aliases locally, without contacting a remote.
+    origin_url="$(git -C "$dir" ls-remote --get-url origin 2>/dev/null || true)"
+    if [ -z "$origin_url" ] ||
+        [ "$(repo_identity "$origin_url" | tr '[:upper:]' '[:lower:]')" != "$(repo_identity "$expected_url" | tr '[:upper:]' '[:lower:]')" ]; then
         echo "==> WARNING: skipping ${basename}: origin does not match the related-repos entry." >&2
         unrelated=$((unrelated + 1))
         continue

@@ -40,7 +40,15 @@ failed=""
 warnings=""
 
 note_did() { did="${did}  + $1"$'\n'; }
-note_skipped() { skipped="${skipped}  - $1"$'\n'; }
+# Routine no-op steps are listed for context without degrading preparation.
+note_not_applicable() { skipped="${skipped}  - $1"$'\n'; }
+note_skipped() {
+    note_not_applicable "$1"
+    case "$warnings" in
+    *'skipped steps'*) ;;
+    *) note_warning "skipped steps (see stderr details)" ;;
+    esac
+}
 note_failed() { failed="${failed}  ! $1"$'\n'; }
 note_warning() { warnings="${warnings}${warnings:+, }$1"; }
 
@@ -53,10 +61,7 @@ run_sibling_step() {
         note_did "$label (warn-only)"
     else
         echo "==> WARNING: ${label} could not run; continuing." >&2
-        note_warning "${label%% ->*}"
-        case "$label" in
-        'related repos ->'*) note_failed "$label" ;;
-        esac
+        note_failed "$label"
     fi
     printf '%s\n' "$output" >&2
     case "$output" in
@@ -90,7 +95,7 @@ for cfg in lefthook.yml lefthook.yaml lefthook.toml lefthook.json \
     fi
 done
 if [ "$has_lefthook_config" = false ]; then
-    note_skipped "git hooks: no lefthook config in this repository"
+    note_not_applicable "git hooks: no lefthook config in this repository"
 elif ! command -v lefthook >/dev/null 2>&1; then
     note_skipped "git hooks: lefthook is not on PATH (no pre-commit/pre-push gate will run; install lefthook, then re-run)"
 else
@@ -100,7 +105,7 @@ fi
 # --- 2. related repositories, beside this checkout ---
 BOOTSTRAP=".devcontainer/scripts/bootstrap-related-repos.sh"
 if [ ! -f .devcontainer/related-repos.txt ]; then
-    note_skipped "related repos: no .devcontainer/related-repos.txt"
+    note_not_applicable "related repos: no .devcontainer/related-repos.txt"
 else
     PARENT="$(dirname "$ROOT")"
     # Skipping is deliberate, in preference to the bootstrap's /workspaces sudo chown
@@ -141,7 +146,7 @@ if [ -f pnpm-lock.yaml ]; then
         note_skipped "dependencies: pnpm-lock.yaml present but pnpm is not on PATH"
     fi
 else
-    note_skipped "dependencies: no pnpm-lock.yaml"
+    note_not_applicable "dependencies: no pnpm-lock.yaml"
 fi
 if [ -f uv.lock ]; then
     if command -v uv >/dev/null 2>&1; then
@@ -150,7 +155,7 @@ if [ -f uv.lock ]; then
         note_skipped "dependencies: uv.lock present but uv is not on PATH"
     fi
 else
-    note_skipped "dependencies: no uv.lock"
+    note_not_applicable "dependencies: no uv.lock"
 fi
 
 # --- summary ---
@@ -168,9 +173,6 @@ if [ -n "$failed" ]; then
     echo "Failed:" >&2
     printf '%s' "$failed" >&2
     exit 1
-fi
-if [ -n "$skipped" ]; then
-    note_warning "skipped steps (see stderr details)"
 fi
 if [ -n "$warnings" ]; then
     echo "==> setup:remote completed with warnings: ${warnings}"

@@ -115,6 +115,14 @@ for arg in "\$@"; do
         ;;
     esac
 done
+# Transport-only fixture rewrite: identity queries still see the network URL,
+# while fetch itself stays offline. Real insteadOf identity tests are separate.
+if [ "\${3:-}" = fetch ] && [ -n "\${STUB_NETWORK_FETCH_BASE:-}" ]; then
+    exec "${REAL_GIT}" \
+        -c "url.file://\${STUB_NETWORK_FETCH_BASE}/test-owner/sibling-a.git.insteadOf=https://example.test/test-owner/SIBLING-a" \
+        -c "url.file://\${STUB_NETWORK_FETCH_BASE}/test-owner/.insteadOf=https://example.test/TEST-owner/" \
+        -c "url.file://\${STUB_NETWORK_FETCH_BASE}/.insteadOf=https://example.test/" "\$@"
+fi
 exec "${REAL_GIT}" "\$@"
 EOF
 chmod +x "${STUB_BIN}"/*
@@ -285,16 +293,55 @@ if [ "$HAVE_BOOTSTRAP" = 1 ]; then
     make_fixture identities 'git@example.test:test-owner/sibling-a.git@main'
     sibling="${FIX_PARENT}/sibling-a"
     git clone -q "${BARE_BASE}/test-owner/sibling-a.git" "$sibling"
-    # Real git rewrites the matching network URL to our local bare repository.
+    # The git shim redirects only fetch transport; the identity URL stays real.
     git -C "$sibling" remote set-url origin 'https://example.test/test-owner/sibling-a'
-    git -C "$sibling" config "url.file://${BARE_BASE}/.insteadOf" 'https://example.test/'
     git -C "$sibling" remote add unrelated "${TMP}/absent-other-remote"
-    run_setup "${STUBS_PATH}"
+    run_setup "${STUBS_PATH}" "STUB_NETWORK_FETCH_BASE=${BARE_BASE}"
     [ "$rc" -eq 0 ] || fail "normalized identity fetch must succeed: $(all_output)"
     output_has 'Related-repo fetch: 1 fetched' || fail "HTTPS/SSH identity must match and only origin must be fetched"
     printf '%s\n' 'ssh://git@example.test/test-owner/sibling-a.git' >"${FIX}/.devcontainer/related-repos.txt"
-    run_setup "${STUBS_PATH}"
+    run_setup "${STUBS_PATH}" "STUB_NETWORK_FETCH_BASE=${BARE_BASE}"
     output_has 'Related-repo fetch: 1 fetched' || fail "ssh:// identity must match HTTPS"
+
+    echo "==> owner/repository identity paths match case-insensitively"
+    git -C "$sibling" remote set-url origin 'https://example.test/TEST-owner/sibling-a'
+    printf '%s\n' 'git@example.test:test-OWNER/sibling-a.git' >"${FIX}/.devcontainer/related-repos.txt"
+    run_setup "${STUBS_PATH}" "STUB_NETWORK_FETCH_BASE=${BARE_BASE}"
+    output_has 'Related-repo fetch: 1 fetched' || fail "owner path casing must not reject the sibling"
+    # Keep the directory basename fixed while changing repository casing in origin.
+    git -C "$sibling" remote set-url origin 'https://example.test/test-owner/SIBLING-a'
+    printf '%s\n' 'git@example.test:test-owner/sibling-a.git' >"${FIX}/.devcontainer/related-repos.txt"
+    run_setup "${STUBS_PATH}" "STUB_NETWORK_FETCH_BASE=${BARE_BASE}"
+    output_has 'Related-repo fetch: 1 fetched' || fail "repository path casing must not reject the sibling"
+
+    echo "==> an insteadOf alias is verified through its effective fetch URL"
+    printf '%s\n' 'test-owner/sibling-a' >"${FIX}/.devcontainer/related-repos.txt"
+    git -C "$sibling" remote set-url origin 'sibling-alias:repo'
+    git -C "$sibling" config "url.file://${BARE_BASE}/test-owner/sibling-a.git.insteadOf" 'sibling-alias:repo'
+    run_setup "${STUBS_PATH}"
+    output_has 'Related-repo fetch: 1 fetched' || fail "insteadOf alias must resolve before comparison"
+    git -C "$sibling" config "url.file://${BARE_BASE}/test-owner/sibling-b.git.insteadOf" 'sibling-alias:repo'
+    git -C "$sibling" config --unset "url.file://${BARE_BASE}/test-owner/sibling-a.git.insteadOf"
+    before="$(digest "$sibling")"
+    run_setup "${STUBS_PATH}"
+    output_has 'WARNING: skipping sibling-a: origin does not match' || fail "effective unrelated URL must be refused"
+    [ "$before" = "$(digest "$sibling")" ] || fail "a mismatching effective URL must not mutate the sibling"
+
+    echo "==> a plain directory inside an enclosing repository is not a sibling clone"
+    make_fixture enclosing 'test-owner/sibling-a'
+    git init -q "${FIX_PARENT}"
+    git -C "${FIX_PARENT}" remote add origin "${BARE_BASE}/test-owner/sibling-a.git"
+    mkdir "${FIX_PARENT}/sibling-a"
+    before="$(digest "${FIX_PARENT}/.git")"
+    run_setup "${STUBS_PATH}"
+    output_has '0 fetched, 1 not-yet-cloned' || fail "plain nested directory must be not-yet-cloned"
+    [ "$before" = "$(digest "${FIX_PARENT}/.git")" ] || fail "fetch must not mutate the enclosing repository"
+
+    echo "==> a bare sibling root is fetched"
+    make_fixture bare 'test-owner/sibling-a'
+    git clone -q --bare "${BARE_BASE}/test-owner/sibling-a.git" "${FIX_PARENT}/sibling-a"
+    run_setup "${STUBS_PATH}"
+    output_has 'Related-repo fetch: 1 fetched' || fail "a bare sibling root must be recognized"
 
     echo "==> linked-worktree and separate-git-dir siblings are fetched"
     for layout in worktree separate; do
@@ -319,6 +366,19 @@ if [ "$HAVE_BOOTSTRAP" = 1 ]; then
         [ "$(git -C "$sibling" rev-parse origin/main)" = "$new_head" ] || fail "${layout} remote refs must update"
         [ "$(git -C "$sibling" rev-parse HEAD)" = "$old_head" ] || fail "${layout} HEAD must not move"
     done
+fi
+
+if [ "$HAVE_BOOTSTRAP" = 1 ]; then
+    echo "==> a crashed fetch helper fails setup but later dependency steps still run"
+    make_fixture fetch-crash ''
+    printf '#!/usr/bin/env bash\nexit 7\n' >"${FIX}/.devcontainer/scripts/fetch-related-repos.sh"
+    touch "${FIX}/pnpm-lock.yaml" "${FIX}/uv.lock"
+    rm -f "${LOG_DIR}/pnpm.log" "${LOG_DIR}/uv.log"
+    run_setup "${STUBS_PATH}"
+    [ "$rc" -ne 0 ] || fail "a crashed fetch helper must fail setup"
+    output_has 'Failed:' && output_has 'related-repo fetch ->' || fail "fetch helper crash must be named as failure"
+    [ -s "${LOG_DIR}/pnpm.log" ] && [ -s "${LOG_DIR}/uv.log" ] || fail "dependency installs must continue after helper crash"
+    ! output_has 'setup:remote completed' || fail "a helper crash must not report completion"
 fi
 
 if [ "$HAVE_BOOTSTRAP" = 1 ]; then
@@ -503,12 +563,15 @@ exec bash "$2/scripts/setup-remote.sh"
 EOF
 chmod +x "${TMP}/hook-bin/task" "${TMP}/hook-bin/timeout"
 echo "==> SessionStart distinguishes complete preparation from skipped and warning steps"
-for scenario in complete skipped clone-warning fetch-warning; do
+for scenario in complete complete-no-lockfiles skipped clone-warning fetch-warning; do
     make_fixture "hook-${scenario}" ''
     touch "${FIX}/pnpm-lock.yaml" "${FIX}/uv.lock"
     scenario_path="${TMP}/hook-bin:${STUBS_PATH}"
     fetch_fail_dir=""
     case "$scenario" in
+    complete-no-lockfiles)
+        rm "${FIX}/pnpm-lock.yaml" "${FIX}/uv.lock" "${FIX}/lefthook.yml" "${FIX}/.devcontainer/related-repos.txt"
+        ;;
     skipped) scenario_path="${TMP}/hook-bin:${MIN_BIN}" ;;
     clone-warning)
         [ "$HAVE_BOOTSTRAP" = 1 ] || continue
@@ -526,7 +589,7 @@ for scenario in complete skipped clone-warning fetch-warning; do
         RELATED_REPOS_GIT_BASE_URL="file://${BARE_BASE}/" PATH="$scenario_path" \
         bash "${FIX}/scripts/session-start-remote.sh" >"${OUT}" 2>"${ERR}" || rc=$?
     [ "$rc" -eq 0 ] || fail "${scenario} SessionStart must exit 0"
-    if [ "$scenario" = complete ] && [ "$HAVE_BOOTSTRAP" = 1 ]; then
+    if [ "$scenario" = complete-no-lockfiles ] || { [ "$scenario" = complete ] && [ "$HAVE_BOOTSTRAP" = 1 ]; }; then
         grep -qx '==> SessionStart remote preparation: setup:remote completed.' "$OUT" || fail "complete run needs a complete summary: $(all_output)"
     else
         grep -q '^==> SessionStart remote preparation: setup:remote completed with warnings:' "$OUT" || fail "${scenario} needs a degraded summary: $(all_output)"
