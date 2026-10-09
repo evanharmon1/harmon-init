@@ -33,7 +33,7 @@ jobs:
     # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
     # default; set it to a JSON runner spec to override without a commit.
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
-    timeout-minutes: 80
+    timeout-minutes: 130
     # Serialize every claim-bearing run on one target. Acquiring a claim is a
     # read-then-add, so two runs that read "unclaimed" in the same instant
     # would both proceed; this group makes the second wait for the first.
@@ -191,10 +191,12 @@ jobs:
         with:
           token: ${{ steps.app-token.outputs.token }}
       - uses: anthropics/claude-code-action@cab360f6565aa35a51d6ce9e43f1f4287c0a32ea # v1.0.241
+        id: claude-primary
+        continue-on-error: true
         # Step-level cap. A JOB timeout kills the runner outright and the
         # always() release below never runs; a STEP timeout fails only this
         # step and lets the cleanup run, so the claim is still released. The
-        # arithmetic keeps it that way: job cap 80 = this step's 50 + 30
+        # arithmetic keeps it that way: job cap 130 = two steps of 50 + 30
         # minutes of headroom for the sender gate, claim, token mint, checkout
         # and setup, so the step timeout always fires first however slow the
         # preamble is. Losing the runner itself (or a force-cancel) can still
@@ -218,6 +220,70 @@ jobs:
             Review the PR diff and post a code review comment. Flag security,
             correctness, and convention concerns (see AGENTS.md). Do not write
             code or modify files.
+      - name: Inspect Claude primary result
+        id: claude-primary-result
+        if: always() && steps.claude-primary.outcome != 'skipped' && steps.claude-primary.outcome != ''
+        env:
+          EXECUTION_FILE: ${{ steps.claude-primary.outputs.execution_file }}
+          ACTION_OUTCOME: ${{ steps.claude-primary.outcome }}
+          HAS_ALT: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN_2 != '' }}
+          REDACT_PRIMARY: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          REDACT_ALT: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN_2 }}
+          REDACT_APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TARGET: ${{ github.event.issue.number || github.event.pull_request.number }}
+        run: ./scripts/claude-workflow-result.sh
+      - uses: anthropics/claude-code-action@cab360f6565aa35a51d6ce9e43f1f4287c0a32ea # v1.0.241
+        id: claude-alternate
+        if: ${{ !cancelled() && steps.claude-primary-result.outputs.retry == 'true' }}
+        continue-on-error: true
+        timeout-minutes: 50
+        with:
+          claude_code_oauth_token: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN_2 }}
+          github_token: ${{ steps.app-token.outputs.token }}
+          trigger_phrase: "@claude review"
+          track_progress: true
+          use_sticky_comment: true
+          allowed_bots: "renovate[bot],dependabot[bot]"
+          base_branch: main
+          branch_prefix: claude/
+          # --max-budget-usd caps API-key spend; likely a no-op under
+          # CLAUDE_CODE_OAUTH_TOKEN (subscription) billing. Real runaway guards
+          # are timeout-minutes (job- and step-level) and --max-turns.
+          claude_args: "--model opus --effort max --max-budget-usd 6 --disallowedTools Edit Write Bash --max-turns 60"
+          prompt: |
+            Review the PR diff and post a code review comment. Flag security,
+            correctness, and convention concerns (see AGENTS.md). Do not write
+            code or modify files.
+      - name: Inspect Claude alternate result
+        id: claude-alternate-result
+        if: always() && steps.claude-alternate.outcome != 'skipped' && steps.claude-alternate.outcome != ''
+        env:
+          EXECUTION_FILE: ${{ steps.claude-alternate.outputs.execution_file }}
+          ACTION_OUTCOME: ${{ steps.claude-alternate.outcome }}
+          HAS_ALT: 'false'
+          REDACT_PRIMARY: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
+          REDACT_ALT: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN_2 }}
+          REDACT_APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          TARGET: ${{ github.event.issue.number || github.event.pull_request.number }}
+        run: ./scripts/claude-workflow-result.sh
+      - name: Require the last Claude attempt to succeed
+        if: always() && steps.claude-primary.outcome != 'skipped' && steps.claude-primary.outcome != ''
+        env:
+          LAST_OUTCOME: >-
+            ${{ steps.claude-alternate.outcome != 'skipped' &&
+            steps.claude-alternate.outcome != '' &&
+            steps.claude-alternate.outcome ||
+            steps.claude-primary.outcome }}
+          LAST_FAILED: >-
+            ${{ steps.claude-alternate.outcome != 'skipped' &&
+            steps.claude-alternate.outcome != '' &&
+            steps.claude-alternate-result.outputs.failed ||
+            steps.claude-primary-result.outputs.failed }}
+        run: ./scripts/claude-workflow-result.sh finish
       # Release the claim on EVERY terminal path — success, failure, step
       # timeout, and cancellation alike — so a spent run never leaves a stale
       # claim behind. Gated on this run having ACQUIRED the claim: a claim that
