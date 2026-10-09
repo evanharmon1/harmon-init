@@ -228,3 +228,38 @@ Mechanically:
   the posture's acceptance test (#1408, criteria 1 and 7).
 - #1404 installs this posture into each remote platform; #1407 documents the
   hosted platforms' network levels from the same shared list.
+
+## Amendment: 2026-10-09 — GET-only REST wrapper
+
+Accepted — maintainer decision for
+[harmon-init#1549](https://github.com/evanharmon1/harmon-init/issues/1549).
+The safe read probe `gh api -iXGET repos/evanharmon1/harmon-init` returned
+HTTP 200 in the postured session. Bundled short flags evade argument matching:
+`-iXPOST` contains neither a word starting with `-X` nor any of the denied
+field or method patterns. An allow for raw `gh api` therefore also admits
+spellings of writes denied by command name, including releases and workflow
+dispatch. No write probe is needed to establish the parsing gap.
+
+The agent managed settings now deny both bare `gh api` and `gh api *`, remove
+the superseded argument-pattern API denies, and allow only the REST read
+front door `/usr/local/bin/gh-api-read`. The wrapper has one source under
+`.devcontainer/config/agent/` and its template twin; it depends on no skill.
+Both the agent devcontainer and web bootstrap install and verify that source
+as an executable at the same absolute path.
+
+The wrapper accepts exactly one relative REST endpoint, pagination and
+client-side output flags. Every method, field, input, header (including
+`X-HTTP-Method-Override`), bundled flag, unknown flag, absolute URL and GraphQL
+endpoint is refused. Accepted requests execute `gh api --method GET` with
+only vetted arguments. Recording-stub tests cover the write spellings and
+verify the pinned method; a scratch mutation removing the pin must fail the
+outgoing-request contract.
+
+This supersedes the earlier description of API argument-pattern denies in
+Consequences. Argument-pattern denies are defence in depth, not the write
+boundary: allowed scripts and Taskfile targets still run beyond those rules,
+and Codex carries no command-level deny list. The boundary remains the bot's
+collaborator grants, the agent PAT's scopes and the repository branch rulesets,
+with the residual release and approved-merge permissions already disclosed
+above. The blanket API deny closes this direct Claude command path; it does
+not change that boundary.

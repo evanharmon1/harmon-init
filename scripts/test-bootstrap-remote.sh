@@ -2545,6 +2545,7 @@ warn() { printf 'bootstrap-remote: WARNING: %s\n' "$*" >&2; }
 harmon_changed() { printf '==> %s\n' "$*"; printf 'install\t%s\n' "$*" >>"$HARNESS_LOG"; }
 HARMON_AGENT_CLAUDE_MANAGED="${HARNESS_DEST}/etc/claude-code/managed-settings.json"
 HARMON_AGENT_CODEX_MANAGED="${HARNESS_DEST}/etc/codex/managed_config.toml"
+HARMON_AGENT_GH_API_READ="${HARNESS_DEST}/usr/local/bin/gh-api-read"
 posture_root='@REPO@'
 ref=''
 posture_scratch=''
@@ -2596,15 +2597,21 @@ same() { cmp -s "$1" "$2" && echo same || echo differs; }
 kept_count() { ls "${claude}".replaced-* 2>/dev/null | wc -l | tr -d ' '; }
 claude="${root}/dest/etc/claude-code/managed-settings.json"
 codex="${root}/dest/etc/codex/managed_config.toml"
+wrapper="${root}/dest/usr/local/bin/gh-api-read"
+wrapper_def='@REPO@/.devcontainer/config/agent/gh-api-read'
 claude_def='@REPO@/.devcontainer/config/agent/claude-managed-settings.json'
 
 run FRESH
 printf 'FRESH_CLAUDE %s\n' "$(same "$claude" "$claude_def")"
 printf 'FRESH_CODEX %s\n' "$(same "$codex" '@REPO@/.devcontainer/config/agent/codex-managed-config.toml')"
+printf 'FRESH_WRAPPER %s\n' "$(same "$wrapper" "$wrapper_def")"
+printf 'FRESH_WRAPPER_MODE %s\n' "$([ -x "$wrapper" ] && echo executable || echo refused)"
 printf 'FRESH_HARNESS %s\n' "$([ -x "${root}/harness/copilot" ] && echo untouched || echo modified)"
 printf 'FRESH_SKIP_SAID %s\n' "$(grep -q 'harness refusal skipped' "${root}/FRESH.out" && echo said || echo silent)"
 
 run RERUN
+printf 'RERUN_WRAPPER %s\n' "$(same "$wrapper" "$wrapper_def")"
+printf 'RERUN_WRAPPER_MODE %s\n' "$([ -x "$wrapper" ] && echo executable || echo refused)"
 
 # A platform put its own managed settings there first: left in place.
 printf '{"platform": 1}\n' >"$claude"
@@ -2612,7 +2619,7 @@ run PLATFORM
 printf 'PLATFORM_CLAUDE %s\n' "$(grep -q '"platform": 1' "$claude" && echo left || echo replaced)"
 printf 'PLATFORM_KEPT %s\n' "$(kept_count)"
 printf 'PLATFORM_WARNED %s\n' "$(grep -q "WARNING: found ${claude} (sha256 [0-9a-f]\{64\}) that is not the agent posture — left in place" "${root}/PLATFORM.err" && echo named || echo silent)"
-printf 'PLATFORM_COVERED %s\n' "$(grep -qF "==> agent posture: verify covered ${codex} (not verified, left in place: ${claude})" "${root}/PLATFORM.out" && echo named || echo silent)"
+printf 'PLATFORM_COVERED %s\n' "$(grep -qF "==> agent posture: verify covered ${codex} ${wrapper} (not verified, left in place: ${claude})" "${root}/PLATFORM.out" && echo named || echo silent)"
 
 # The operator's explicit opt-in: replaced, the platform's bytes kept.
 run REPLACE HARMON_AGENT_POSTURE_REPLACE=1
@@ -2641,6 +2648,22 @@ for kept in "${claude}".replaced-*; do
 done
 printf 'DANGLING_REPLACE_KEPT_LINK %s\n' "$kept_links"
 
+# A platform wrapper alone is preserved while both managed files verify.
+printf '#!/bin/sh\necho platform-wrapper\n' >"$wrapper"
+chmod 0755 "$wrapper"
+cp -p "$wrapper" "${root}/platform-wrapper"
+run WRAPPER_PLATFORM
+printf 'WRAPPER_PLATFORM_BYTES %s\n' "$(same "$wrapper" "${root}/platform-wrapper")"
+printf 'WRAPPER_PLATFORM_MODE %s\n' "$([ -x "$wrapper" ] && echo executable || echo changed)"
+printf 'WRAPPER_PLATFORM_CLAUDE %s\n' "$(same "$claude" "$claude_def")"
+printf 'WRAPPER_PLATFORM_CODEX %s\n' "$(same "$codex" '@REPO@/.devcontainer/config/agent/codex-managed-config.toml')"
+printf 'WRAPPER_PLATFORM_WARNED %s\n' "$(grep -qF "WARNING: found ${wrapper}" "${root}/WRAPPER_PLATFORM.err" && echo named || echo silent)"
+printf 'WRAPPER_PLATFORM_COVERED %s\n' "$(grep -qF "==> agent posture: verify covered ${claude} ${codex} (not verified, left in place: ${wrapper})" "${root}/WRAPPER_PLATFORM.out" && echo named || echo silent)"
+run WRAPPER_REPLACE HARMON_AGENT_POSTURE_REPLACE=1
+printf 'WRAPPER_REPLACE_BYTES %s\n' "$(same "$wrapper" "$wrapper_def")"
+printf 'WRAPPER_REPLACE_MODE %s\n' "$([ -x "$wrapper" ] && echo executable || echo refused)"
+printf 'WRAPPER_REPLACE_KEPT %s\n' "$(same "${wrapper}".replaced-* "${root}/platform-wrapper")"
+
 modes >"${root}/modes.after"
 printf 'MODES %s\n' "$(cmp -s "${root}/modes.before" "${root}/modes.after" && echo unchanged || echo changed)"
 """.replace("@WORKER_B64@", base64.b64encode(install_worker.encode()).decode()).replace("@REPO@", repo_root)
@@ -2648,15 +2671,19 @@ printf 'MODES %s\n' "$(cmp -s "${root}/modes.before" "${root}/modes.after" && ec
     got = {} if run is None else dict(line.split(" ", 1) for line in run.stdout.splitlines() if " " in line)
     expected = {
         "FRESH_EXIT": "0",
-        "FRESH_INSTALLS": "2",
+        "FRESH_INSTALLS": "3",
         "FRESH_GAPS": "0",
         "FRESH_CLAUDE": "same",
         "FRESH_CODEX": "same",
+        "FRESH_WRAPPER": "same",
+        "FRESH_WRAPPER_MODE": "executable",
         "FRESH_HARNESS": "untouched",
         "FRESH_SKIP_SAID": "said",
         "RERUN_EXIT": "0",
         "RERUN_INSTALLS": "0",
         "RERUN_GAPS": "0",
+        "RERUN_WRAPPER": "same",
+        "RERUN_WRAPPER_MODE": "executable",
         "PLATFORM_EXIT": "0",
         "PLATFORM_INSTALLS": "0",
         "PLATFORM_GAPS": "1",
@@ -2682,6 +2709,21 @@ printf 'MODES %s\n' "$(cmp -s "${root}/modes.before" "${root}/modes.after" && ec
         "DANGLING_REPLACE_GAPS": "0",
         "DANGLING_REPLACE_CLAUDE": "same",
         "DANGLING_REPLACE_KEPT_LINK": "1",
+        "WRAPPER_PLATFORM_EXIT": "0",
+        "WRAPPER_PLATFORM_INSTALLS": "0",
+        "WRAPPER_PLATFORM_GAPS": "1",
+        "WRAPPER_PLATFORM_BYTES": "same",
+        "WRAPPER_PLATFORM_MODE": "executable",
+        "WRAPPER_PLATFORM_CLAUDE": "same",
+        "WRAPPER_PLATFORM_CODEX": "same",
+        "WRAPPER_PLATFORM_WARNED": "named",
+        "WRAPPER_PLATFORM_COVERED": "named",
+        "WRAPPER_REPLACE_EXIT": "0",
+        "WRAPPER_REPLACE_INSTALLS": "1",
+        "WRAPPER_REPLACE_GAPS": "0",
+        "WRAPPER_REPLACE_BYTES": "same",
+        "WRAPPER_REPLACE_MODE": "executable",
+        "WRAPPER_REPLACE_KEPT": "same",
         "MODES": "unchanged",
     }
     why = {
@@ -2690,11 +2732,15 @@ printf 'MODES %s\n' "$(cmp -s "${root}/modes.before" "${root}/modes.after" && ec
         "FRESH_GAPS": "a run that wrote every destination reports no posture gap",
         "FRESH_CLAUDE": "the installed Claude settings must be the checked-in definition, byte for byte",
         "FRESH_CODEX": "the installed Codex config must be the checked-in definition, byte for byte",
+        "FRESH_WRAPPER": "the installed GET wrapper matches its checked-in definition byte for byte",
+        "FRESH_WRAPPER_MODE": "the installed GET wrapper is executable",
         "FRESH_HARNESS": "on a platform VM the harness executables are the platform's: the bootstrap never changes their modes",
         "FRESH_SKIP_SAID": "skipping harness refusal is said out loud, so the gap is visible in the log",
         "RERUN_EXIT": "a second run must succeed",
         "RERUN_INSTALLS": "a second run installs nothing — the bootstrap's idempotence claim covers the posture too",
         "RERUN_GAPS": "a clean re-run reports no posture gap",
+        "RERUN_WRAPPER": "a second run leaves the GET wrapper byte-identical",
+        "RERUN_WRAPPER_MODE": "a second run keeps the GET wrapper executable",
         "PLATFORM_EXIT": "a platform-supplied file is a delivery gap, not a failed run",
         "PLATFORM_INSTALLS": "a file left in place is not an install",
         "PLATFORM_GAPS": "a file left in place is COUNTED — HARMON_BOOTSTRAP_POSTURE_GAPS is what tells this run from a clean re-run",
@@ -2720,6 +2766,21 @@ printf 'MODES %s\n' "$(cmp -s "${root}/modes.before" "${root}/modes.after" && ec
         "DANGLING_REPLACE_GAPS": "a replaced symlink is no longer a gap",
         "DANGLING_REPLACE_CLAUDE": "the symlink is replaced by a regular file holding the definition",
         "DANGLING_REPLACE_KEPT_LINK": "the kept copy is the symlink itself, not a failed copy of its missing target",
+        "WRAPPER_PLATFORM_EXIT": "a platform wrapper alone is a delivery gap, not a failed run",
+        "WRAPPER_PLATFORM_INSTALLS": "a platform wrapper left in place counts as no install",
+        "WRAPPER_PLATFORM_GAPS": "the preserved wrapper counts as exactly one delivery gap",
+        "WRAPPER_PLATFORM_BYTES": "the platform wrapper is preserved byte for byte",
+        "WRAPPER_PLATFORM_MODE": "preservation leaves the platform wrapper executable",
+        "WRAPPER_PLATFORM_CLAUDE": "preserving the wrapper leaves the Claude settings delivered",
+        "WRAPPER_PLATFORM_CODEX": "preserving the wrapper leaves the Codex config delivered",
+        "WRAPPER_PLATFORM_WARNED": "the preserved wrapper is named in the delivery warning",
+        "WRAPPER_PLATFORM_COVERED": "verification covers only the two managed files when the wrapper is preserved",
+        "WRAPPER_REPLACE_EXIT": "explicit replacement of a platform wrapper succeeds",
+        "WRAPPER_REPLACE_INSTALLS": "only the replaced wrapper counts as an install",
+        "WRAPPER_REPLACE_GAPS": "explicit replacement settles the wrapper delivery gap",
+        "WRAPPER_REPLACE_BYTES": "the replacement wrapper matches its checked-in definition",
+        "WRAPPER_REPLACE_MODE": "the replacement wrapper is executable",
+        "WRAPPER_REPLACE_KEPT": "the platform wrapper bytes are kept beside the replacement",
         "MODES": "the posture step changes no file mode outside its temporary destinations",
     }
     if run is None or run.returncode != 0 or any(k.startswith("MISSING_TOOL") for k in got):
