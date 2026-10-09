@@ -150,10 +150,10 @@ checked out at 20:18:11.6Z. An uncached session took about three minutes, also
 measured from VM boot (above).
 So a cached start resumes an existing checkout and fetches it forward rather
 than cloning again; that the checkout is stored in the setup-script snapshot
-is the likely reading, not something these timestamps show. What that means for where
-per-checkout preparation runs is an open design question,
-[#1548](https://github.com/evanharmon1/harmon-init/issues/1548) (see [When
-per-checkout preparation runs](#when-per-checkout-preparation-runs)).
+is the likely reading, not something these timestamps show. The [2026-10-09
+decision](../decisions/2026-10-09-web-session-start-preparation.md) keeps the setup
+script bootstrap-only; a repository `SessionStart` hook prepares the checkout
+(see [When per-checkout preparation runs](#when-per-checkout-preparation-runs)).
 
 ### Network
 
