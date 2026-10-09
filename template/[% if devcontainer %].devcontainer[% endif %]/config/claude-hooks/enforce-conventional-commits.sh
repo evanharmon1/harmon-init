@@ -21,7 +21,9 @@ import sys
 
 try:
     command = sys.argv[1]
-    if chr(92) + "\n" in command:
+    # A continuation, or a # that starts a word (a shell comment, which can
+    # hide or invent command boundaries), is left to the real commit hook.
+    if chr(92) + "\n" in command or re.search(r"(^|[\s;&|()])#", command):
         sys.exit(0)
     lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
     # Keep newlines as command boundaries, rather than ordinary whitespace.
@@ -40,7 +42,7 @@ try:
                     if (line.lstrip("\t") if strip_tabs else line).rstrip("\n") == delimiter:
                         break
             heredocs = []
-        elif token in (";", "&&", "||", "|", "&"):
+        elif token in (";", "&&", "||", "|", "|&", "&"):
             segments.append(segment)
             segment = []
         else:
@@ -114,7 +116,7 @@ for segment in segments:
             messages.append(arg[2:])
         elif arg.startswith("-") and "m" in arg:
             sys.exit(0)  # Ambiguous clusters are left to the real commit hook.
-        elif arg in ("-C", "-c", "-t", "-u"):
+        elif arg in ("-C", "-c", "-t"):
             index += 1  # These operands are not messages.
         index += 1
     parsed = []
@@ -126,11 +128,11 @@ for segment in segments:
                 r"\$\(cat\s+<<([\"\x27]?)([A-Za-z0-9_]+)\1[ \t]*\n(.*?)\n\2\n?\)",
                 message, re.DOTALL,
             )
-            if not match:
-                sys.exit(0)
+            if not match or (not match[1] and re.search("[$`]", match[3])):
+                sys.exit(0)  # An unquoted delimiter lets the shell expand the body.
             message = match[3]
-        elif message.startswith("$"):
-            sys.exit(0)
+        elif "$" in message or "`" in message:
+            sys.exit(0)  # Shell expansions are left to the real commit hook.
         parsed.append(message)
     if parsed:
         all_messages.append("\n\n".join(parsed))
