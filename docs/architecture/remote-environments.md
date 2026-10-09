@@ -521,8 +521,8 @@ pinned release tag and whose network level is **Trusted**. The platform takes no
 custom image and ignores `devcontainer.json`. The setup script provisions the
 machine only. A repository `SessionStart` hook runs `task setup:remote` when
 `CLAUDE_CODE_REMOTE=true`, including cached resumes, to reinstall checkout hooks,
-install from lockfiles and clone then fetch siblings without moving their
-checkouts. Preparation warns rather than failing session start; the `AGENTS.md`
+clone then fetch siblings without moving their checkouts, and install from
+lockfiles. Preparation warns rather than failing session start; the `AGENTS.md`
 instruction is the fallback when the hook did not run, including multi-repository
 sessions. See the [decision](../decisions/2026-10-09-web-session-start-preparation.md).
 Everything specific to the platform — the environment's configuration,

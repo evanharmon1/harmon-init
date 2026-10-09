@@ -433,7 +433,7 @@ CLAUDE_CODE_REMOTE=true PATH="${TMP}/hook-bin:${MIN_BIN}" \
     bash "${FIX}/scripts/session-start-remote.sh" >"${OUT}" 2>"${ERR}" || rc=$?
 [ "$rc" -eq 0 ] || fail "missing timeout must not fail SessionStart"
 [ ! -e "$HOOK_TASK_LOG" ] || fail "missing timeout must skip preparation"
-output_has 'WARNING: SessionStart remote preparation: setup:remote failed' || fail "missing timeout must warn to run setup manually"
+output_has 'preparation skipped because timeout is unavailable; run task setup:remote.' || fail "missing timeout must report a skip and manual setup instruction"
 
 echo "==> SessionStart bounds a slow preparation task and still exits 0"
 REAL_TIMEOUT="$(command -v timeout 2>/dev/null || true)"
