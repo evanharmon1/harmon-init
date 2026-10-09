@@ -150,10 +150,10 @@ checked out at 20:18:11.6Z. An uncached session took about three minutes, also
 measured from VM boot (above).
 So a cached start resumes an existing checkout and fetches it forward rather
 than cloning again; that the checkout is stored in the setup-script snapshot
-is the likely reading, not something these timestamps show. What that means for where
-per-checkout preparation runs is an open design question,
-[#1548](https://github.com/evanharmon1/harmon-init/issues/1548) (see [When
-per-checkout preparation runs](#when-per-checkout-preparation-runs)).
+is the likely reading, not something these timestamps show. The [2026-10-09
+decision](../decisions/2026-10-09-web-session-start-preparation.md) keeps the setup
+script bootstrap-only; a repository `SessionStart` hook prepares the checkout
+(see [When per-checkout preparation runs](#when-per-checkout-preparation-runs)).
 
 ### Network
 
@@ -368,8 +368,8 @@ then `/web-setup`) is not observed.
 3. `/exit`. The browser may then show "Two steps to work in your repository —
    Connect your GitHub account / Install the Claude GitHub App". It is not
    needed for this route; skip it.
-4. Start a new session, have it run `task setup:remote` first (`AGENTS.md`
-   requires that on any fresh checkout; it installs the git hooks), and verify the
+4. Start a new session, check the hook’s `SessionStart remote preparation:`
+   summary, and run `task setup:remote` only if preparation did not run. Verify the
    identity, for one repository of each owner (start a ponderousdev session
    from the browser, see [Bridges](#bridges-between-the-terminal-and-the-cloud)):
    `gh api user` must return `evanharmon1-bot`, and `gh api repos/{owner}/{repo}`
@@ -936,42 +936,66 @@ already had it at `/home/user/harmon-devkit` when it started.
 The docs do not say whether that clone exists when the setup script runs.
 **Observed (criterion 11), 2026-10-06: the repository is cloned before the setup
 script runs** — a probe line in the setup script wrote
-`/home/user/harmon-init/.git`. A script served from the cache still cannot
-depend on that session's own clone, because the snapshot was taken before it.
-A cached start does resume an existing checkout and fetch it forward rather than
+`/home/user/harmon-init/.git`.
+A cached start resumes an existing checkout and fetches it forward rather than
 clone afresh ([Setup script](#setup-script), observed 2026-10-07), which the
 docs' "fresh clone per session" does not describe; where that checkout is kept,
 and which run built it, is not established.
-Whether the setup script should therefore prepare the checkout is an open design
-question, [#1548](https://github.com/evanharmon1/harmon-init/issues/1548). Until
-it is decided, the rule that holds:
 
-- **Setup script**: machine-level, repository-independent — the bootstrap, and
-  nothing that reads a checkout.
-- **Per-checkout preparation** — installing the git hooks, and anything that reads
-  the clone — runs when the session starts, not in the setup script. The
-  platform's mechanism for that is a `SessionStart` hook in the repository's
-  `.claude/settings.json`, guarded on `CLAUDE_CODE_REMOTE=true` so it does nothing
-  locally, and it runs only in a single-repository session (*docs, 2026-09-29*).
-  This repository has deliberately **not** adopted that hook (its
-  `.claude/settings.json` is unchanged), so nothing triggers the preparation by
-  itself: the agent runs the task below once.
+**Decision (maintainer, 2026-10-09):** the environment setup script remains
+machine-level and repository-independent (the bootstrap only). A repository
+`SessionStart` hook runs per-checkout preparation on startup and resume,
+including a cached resume; it does not run on clear or compact. The [ADR](../decisions/2026-10-09-web-session-start-preparation.md)
+records the reasons and alternatives for
+[#1548](https://github.com/evanharmon1/harmon-init/issues/1548): one environment
+serves every repository, while each start needs the checkout's current hooks,
+lockfiles and sibling remote refs.
+
+The hook in `.claude/settings.json` calls `scripts/session-start-remote.sh`,
+which runs `task setup:remote` only when `CLAUDE_CODE_REMOTE=true`; it is a
+silent no-op locally and in devcontainers. The hook has an explicit 120 s
+timeout. When `timeout` is available, preparation has a 90 s deadline and a 5 s
+kill grace, leaving time for the wrapper to warn and exit 0 on failure or expiry.
+Without `timeout`, it skips preparation and warns to run `task setup:remote` manually.
+Its one-line
+`SessionStart remote preparation:` summary distinguishes completion from a
+failure requiring a retry. Repository hooks run only in a single-repository
+session (*docs, 2026-09-29*). If the hook did not run (a multi-repository session,
+or a platform without it), the `AGENTS.md` fallback still tells the agent to run
+`task setup:remote` once before work.
 
 `task setup:remote` (`scripts/setup-remote.sh`,
-[#1405](https://github.com/evanharmon1/harmon-init/issues/1405)) is that
-preparation as one task, which the agent runs once on a fresh checkout —
-`AGENTS.md` tells it to, because the repository ships no hook that would. It runs `lefthook install` (when
-lefthook is on `PATH`), frozen `pnpm` / `uv` installs from the lockfiles that
-exist, and the same sibling clones the devcontainer makes
-(`.devcontainer/related-repos.txt`), into the checkout's **parent** directory:
-the layout observed on 2026-09-27 (`/home/user/<repo>`), so the `../harmon-devkit`
-entries in `additionalDirectories` and `sandbox.filesystem.allowRead` resolve. It
-is idempotent, never prompts (git terminal prompts are disabled, ssh runs with
-`BatchMode=yes` unless the caller already set `GIT_SSH_COMMAND`, in which case the
-caller's value governs, and pnpm runs with `CI=true`), skips a missing tool with a note, warns and continues past a
-repository it cannot clone, and exits non-zero only when a step that could run
-failed. It prints where it cloned, because a platform that does not clone one
-level below a writable directory would otherwise show only as a missing sibling.
+[#1405](https://github.com/evanharmon1/harmon-init/issues/1405)) runs
+`lefthook install` (when lefthook is on `PATH`), then the same sibling clones
+the devcontainer makes (`.devcontainer/related-repos.txt`), into the checkout's **parent**
+directory. It then fetches existing siblings with
+`.devcontainer/scripts/fetch-related-repos.sh`, using that same parent directory.
+Frozen `pnpm` / `uv` installs from the lockfiles that exist run last, so a slow
+install cannot prevent the preceding hook and sibling preparation.
+Fetching updates remote-tracking refs and prunes deleted refs; it never checks
+out, resets or pulls, so local branches and uncommitted changes stay in place.
+A snapshot can be about seven days old, and fetching on every start makes new
+remote revisions visible without replacing a sibling's working tree.
+
+The parent-directory layout was observed on 2026-09-27 (`/home/user/<repo>`), so
+the `../harmon-devkit` entries in `additionalDirectories` and
+`sandbox.filesystem.allowRead` resolve. Preparation is idempotent and never
+prompts (git terminal prompts are disabled; ssh runs with `BatchMode=yes` unless
+the caller already set `GIT_SSH_COMMAND`, in which case the caller's value
+governs; pnpm runs with `CI=true`). It skips missing tools with a note and warns
+and continues past a repository it cannot clone or fetch. The task exits
+non-zero when another step that could run failed; the SessionStart wrapper
+turns that into a warning and exit 0. The task prints the target directory,
+what ran and what was skipped; installed lefthook shims provide another check
+that preparation ran.
+
+Measured in this devcontainer on 2026-10-09, a cold run with three sibling clones
+took 7.7 s and a warm run with siblings present took well under 1 s.
+Harmon-init has no pnpm/uv lockfile; a consumer with lockfiles also pays its
+install cost on a cold start. These are local measurements, not a web-session
+timing guarantee. Preparation runs after the machine setup, so it does not
+spend the setup script's five-minute cache budget. The setup-script recipe above
+remains the bootstrap only, guarded by `scripts/test-bootstrap-remote.sh`.
 
 Siblings are **reference context**: a session may push only to its own repository
 and branch (the *Pushes* row above), so a change to a sibling cannot be pushed
@@ -1015,7 +1039,7 @@ which other built-in GitHub tools a session has, the reverse credential order
 (an App connection first, then a `/web-setup` token), which credential serves
 API calls when both are present, REST writes outside the deny list (`gh run
 rerun`, `cancel`), bundled-flag `gh api` writes ([#1549](https://github.com/evanharmon1/harmon-init/issues/1549)), the
-design question of where per-checkout preparation runs
+live cached-session verification of the SessionStart preparation decision
 ([#1548](https://github.com/evanharmon1/harmon-init/issues/1548)), and the
 listing half of #1404 criterion 2, which cannot be done on the web. The `gh` inventory rows still tagged *expected, not
 yet observed* are open too (row 7). A settled row stays as the record of what
@@ -1025,7 +1049,7 @@ date and the Claude Code version.
 | # | What has to be seen | Where the result lands |
 | --- | --- | --- |
 | 1 | Seen 2026-10-06: `v4.48.0` is the first release carrying the bootstrap; at `v5.2.0` the setup script fails at `semgrep`, and with the interim `sudo env …` line it completes in 86 s (48 s on a second VM). Seen 2026-10-07: the recipe unchanged, with `sudo bash` and no interim `env`, at `v5.2.1` started a session; the manifest reports `harmon-remote-env` at revision `v5.2.1`, `semgrep 1.178.0` and `copier` are at `/usr/local/bin`, `markdownlint-cli2` and `codex` at `/opt/node22/bin`, and `task` is 3.53.1 | [Setup script](#setup-script) |
-| 1 (cache) | Seen 2026-10-07: the setup-script cache works; a session booted 13.5 h after the run it started from, across GitHub-connection changes. Two earlier sessions had re-run the script (why the second is not established). Seen 2026-10-07 after the script change to `v5.2.1`: the next session was ready about 5.6 s after VM boot in resume-cached mode, against about three minutes uncached (also from VM boot), and the cached start resumes an existing checkout and fetches it forward (where that checkout is kept is not established). *Open:* what that means for where per-checkout preparation runs ([#1548](https://github.com/evanharmon1/harmon-init/issues/1548)) | [Setup script](#setup-script) |
+| 1 (cache) | Seen 2026-10-07: the setup-script cache works; a session booted 13.5 h after the run it started from, across GitHub-connection changes. Two earlier sessions had re-run the script (why the second is not established). Seen 2026-10-07 after the script change to `v5.2.1`: the next session was ready about 5.6 s after VM boot in resume-cached mode, against about three minutes uncached (also from VM boot), and the cached start resumes an existing checkout and fetches it forward (where that checkout is kept is not established). Decision 2026-10-09: a repository SessionStart hook prepares each web checkout ([ADR](../decisions/2026-10-09-web-session-start-preparation.md)). *Open:* a cached live session shows prepared hooks and fresh sibling remote refs without a manual task run ([#1548](https://github.com/evanharmon1/harmon-init/issues/1548)) | [Setup script](#setup-script) |
 | — | Seen 2026-10-07: the session's built-in GitHub tools are not covered by the agent posture; a draft PR was opened, commented on and closed as the bot (PR #1546). The `gh` write forms tried stay refused (defence in depth, not the boundary; [why](#the-gh-call-inventory)). *Open:* which other built-in tools exist (merge, workflow runs, releases) was not asked; a merge into a protected branch still needs code-owner approval and the required checks | [What runs where](#what-runs-where) |
 | — | Seen 2026-10-07: with a `/web-setup` PAT stored first and an App connection added afterwards on the same account, git pushes still use the PAT (workflow push refused). *Open:* the reverse order, and which credential serves API calls | [Whose identity GitHub sees](#whose-identity-github-sees) |
 | 3 | Seen 2026-10-07, on `evanharmon1/harmon-init` and `ponderousdev/foreman`: the PAT-only route gives `gh api user` → `evanharmon1-bot`, the write role without admin or maintain (`push: true, admin: false, maintain: false`), the bot as push actor, the commit author Claude, and a refused workflow push; the App-as-bot route gives the same identity but accepts a workflow push. A PR opened through a session's built-in tools is authored by the bot (seen on `evanharmon1/harmon-init` only). *Open:* a PR through a session on a ponderousdev repository | [Whose identity GitHub sees](#whose-identity-github-sees) |

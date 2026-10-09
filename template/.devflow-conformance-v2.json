@@ -2009,10 +2009,8 @@
         ]
       ],
       "registry_replacements": [
-        [
-          "{ \"slug\": \"fable\", \"display_name\": \"Fable\", \"tier\": \"apex\" }",
-          "{ \"slug\": \"fable\", \"display_name\": \"Fable\", \"tier\": \"frontier\" }"
-        ]
+        ["\"display_name\": \"Fable\",", "\"display_name\": \"Fable\","],
+        ["\"tier\": \"apex\"", "\"tier\": \"frontier\""]
       ],
       "issue": {
         "risk": "critical",
@@ -2047,10 +2045,8 @@
         ]
       ],
       "registry_replacements": [
-        [
-          "{ \"slug\": \"fable\", \"display_name\": \"Fable\", \"tier\": \"apex\" }",
-          "{ \"slug\": \"fable\", \"display_name\": \"Fable\", \"tier\": \"frontier\" }"
-        ]
+        ["\"display_name\": \"Fable\",", "\"display_name\": \"Fable\","],
+        ["\"tier\": \"apex\"", "\"tier\": \"frontier\""]
       ],
       "issue": {
         "risk": "critical",
@@ -2077,10 +2073,8 @@
         ["harnesses = [\"claude-code\", \"codex-cli\", \"antigravity\"]", ""]
       ],
       "registry_replacements": [
-        [
-          "{ \"slug\": \"fable\", \"display_name\": \"Fable\", \"tier\": \"apex\" }",
-          "{ \"slug\": \"fable\", \"display_name\": \"Fable\", \"tier\": \"frontier\" }"
-        ]
+        ["\"display_name\": \"Fable\",", "\"display_name\": \"Fable\","],
+        ["\"tier\": \"apex\"", "\"tier\": \"frontier\""]
       ],
       "issue": {
         "risk": "critical",
@@ -2110,10 +2104,8 @@
         ]
       ],
       "registry_replacements": [
-        [
-          "{ \"slug\": \"fable\", \"display_name\": \"Fable\", \"tier\": \"apex\" }",
-          "{ \"slug\": \"fable\", \"display_name\": \"Fable\", \"tier\": \"frontier\" }"
-        ]
+        ["\"display_name\": \"Fable\",", "\"display_name\": \"Fable\","],
+        ["\"tier\": \"apex\"", "\"tier\": \"frontier\""]
       ],
       "issue": {
         "risk": "critical",
@@ -2144,10 +2136,8 @@
         ["[stage.implement]", "[stage.implement]\npool = [\"claude-code\"]"]
       ],
       "registry_replacements": [
-        [
-          "{ \"slug\": \"fable\", \"display_name\": \"Fable\", \"tier\": \"apex\" }",
-          "{ \"slug\": \"fable\", \"display_name\": \"Fable\", \"tier\": \"frontier\" }"
-        ]
+        ["\"display_name\": \"Fable\",", "\"display_name\": \"Fable\","],
+        ["\"tier\": \"apex\"", "\"tier\": \"frontier\""]
       ],
       "issue": {
         "risk": "critical",

@@ -330,7 +330,7 @@ fi
 echo "==> worktree:rm removes the tree and prunes the registry"
 rm_wt scratch >/dev/null || fail "worktree-rm.sh failed on a clean tree"
 refute_exists "$fixture/.worktrees/scratch" "worktree-rm.sh left the directory behind"
-if grep -q "scratch" < <(git -C "$fixture" worktree list --porcelain); then
+if grep -qxF "worktree $fixture/.worktrees/scratch" < <(git -C "$fixture" worktree list --porcelain); then
     fail "worktree-rm.sh left a stale registry record"
 fi
 

@@ -8,6 +8,38 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [5.5.0](https://github.com/evanharmon1/harmon-init/compare/v5.4.0...v5.5.0) (2026-10-09)
+
+
+### Features
+
+* **agent-registry:** record model lines with versions and per-harness effort levels ([#1579](https://github.com/evanharmon1/harmon-init/issues/1579)) ([d361a51](https://github.com/evanharmon1/harmon-init/commit/d361a514acef49b59887f8030c4662ec89e393cf))
+
+
+### Bug Fixes
+
+* **template:** sync harmon-devkit skills to v0.53.0 ([#1580](https://github.com/evanharmon1/harmon-init/issues/1580)) ([37d64aa](https://github.com/evanharmon1/harmon-init/commit/37d64aa0f60f19883a109a7c4ccd9f45c7d0d86c))
+
+## [5.4.0](https://github.com/evanharmon1/harmon-init/compare/v5.3.0...v5.4.0) (2026-10-09)
+
+
+### Features
+
+* **dev-loop:** apply the convergence rules to the integration stage ([#1563](https://github.com/evanharmon1/harmon-init/issues/1563)) ([30909ed](https://github.com/evanharmon1/harmon-init/commit/30909edf63b5d4853a82050cf76a37ea4b10ae92))
+* **remote-env:** prepare web checkouts from a SessionStart hook and fetch existing siblings ([#1575](https://github.com/evanharmon1/harmon-init/issues/1575)) ([62e28af](https://github.com/evanharmon1/harmon-init/commit/62e28afd4ffb12f0df2b0d20a9dd8c013cd9a202))
+
+
+### Bug Fixes
+
+* **devcontainer:** state the web write boundary one way and date the gh pr merge claims ([#1565](https://github.com/evanharmon1/harmon-init/issues/1565)) ([ec0fa2d](https://github.com/evanharmon1/harmon-init/commit/ec0fa2d9a5e3ae0591bb29ee0e1a8ce758d442bb))
+* **devflow:** refuse a dangling policy symlink and keep tier evidence honest ([#1566](https://github.com/evanharmon1/harmon-init/issues/1566)) ([6b1be25](https://github.com/evanharmon1/harmon-init/commit/6b1be256448ff3ad2bd6aaf918ea0d4d49008c0e))
+* **devflow:** refuse a policy path through a dangling directory symlink ([#1573](https://github.com/evanharmon1/harmon-init/issues/1573)) ([dd28801](https://github.com/evanharmon1/harmon-init/commit/dd28801038c66b855284a975ebbbd4a9f2f16c00))
+* **docs:** name the review-trigger approval hook beside the merge guard ([#1574](https://github.com/evanharmon1/harmon-init/issues/1574)) ([d9415db](https://github.com/evanharmon1/harmon-init/commit/d9415db1a99d9a7bb1d26c3521acd6e50a87011b))
+* **docs:** say issue-field events carry an actor, and why Foreman still arms only from labels ([#1567](https://github.com/evanharmon1/harmon-init/issues/1567)) ([11ee0b3](https://github.com/evanharmon1/harmon-init/commit/11ee0b32c1e3ca2a231458d2d75f1a0ceb16d282))
+* **labels:** drop the retired suggest namespace from the agent registry ([#1562](https://github.com/evanharmon1/harmon-init/issues/1562)) ([3b83d2d](https://github.com/evanharmon1/harmon-init/commit/3b83d2dc55911622329c2f85fc13e21c40f8bfa3))
+* **settings:** approve exact review-trigger commands through a hook ([#1568](https://github.com/evanharmon1/harmon-init/issues/1568)) ([f9f4b1b](https://github.com/evanharmon1/harmon-init/commit/f9f4b1bd99922c5a6973cc88f31fc809694208f7))
+* **tests:** make test-setup-remote immune to SIGPIPE and symlinked temp dirs ([#1569](https://github.com/evanharmon1/harmon-init/issues/1569)) ([e2ee1de](https://github.com/evanharmon1/harmon-init/commit/e2ee1de318ebca2515ef789f8f006c900ed5afbf))
+
 ## [5.3.0](https://github.com/evanharmon1/harmon-init/compare/v5.2.1...v5.3.0) (2026-10-08)
 
 

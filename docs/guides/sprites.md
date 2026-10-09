@@ -115,8 +115,8 @@ sprite exec -s "$SPRITE" -- bash -lc \
   'gh repo clone OWNER/REPO "$HOME/REPO" && cd "$HOME/REPO" && task setup:remote'
 ```
 
-`task setup:remote` installs the git hooks and the lockfile's dependencies and
-clones the related repositories beside the checkout.
+`task setup:remote` installs the git hooks, clones the related repositories beside
+the checkout, then fetches existing siblings before installing lockfile dependencies.
 
 **6. Checkpoint**, so the bootstrap and the preparation run once per Sprite, not
 once per lane (*docs, 2026-10-01*):

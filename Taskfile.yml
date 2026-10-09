@@ -556,7 +556,7 @@ tasks:
       - ./scripts/test-bootstrap-related-repos.sh
 
   test:setup-remote:
-    desc: Unit-test task setup:remote — idempotency, the lefthook shim, sibling clones into the checkout's parent (stubbed lefthook/gh, no network)
+    desc: Unit-test task setup:remote — idempotency, the lefthook shim, sibling clone/fetch cases, and the SessionStart wrapper (stubbed tools, no network)
     cmds:
       - ./scripts/test-setup-remote.sh
 
@@ -923,7 +923,7 @@ tasks:
       - lefthook install
 
   setup:remote:
-    desc: Prepare this checkout for the dev loop on a remote platform (no devcontainer hooks) — git hooks, frozen dependencies, related repos beside it. Idempotent
+    desc: Prepare this checkout for the dev loop on a remote platform (no devcontainer hooks) — git hooks, related repos cloned then fetched beside it, frozen dependencies. Idempotent
     cmds:
       - ./scripts/setup-remote.sh
 
