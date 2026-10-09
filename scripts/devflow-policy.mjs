@@ -2604,10 +2604,13 @@ function resolveGoverningPolicy(doc, opts) {
     throw new PolicyError('an absent merge-base policy cannot also supply mergeBaseDoc')
   }
   if (opts.mergeBasePolicyAbsent) {
-    if (doc !== null && doc !== undefined) {
-      requireOperatingV2(doc)
-      resolveV2(doc, {})
+    // The absent-base state exists only for a branch that adds a policy, so
+    // every caller (CLI and library) must supply that branch policy.
+    if (doc === null || doc === undefined) {
+      throw new PolicyError('an absent merge-base policy requires a branch policy (a branch that adds it)')
     }
+    requireOperatingV2(doc)
+    resolveV2(doc, {})
     return resolveAbsentPolicy(opts)
   }
   if (doc === null || doc === undefined) {
