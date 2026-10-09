@@ -976,11 +976,13 @@ install cannot prevent the preceding hook and sibling preparation. The reverse
 tradeoff is accepted in the [ADR](../decisions/2026-10-09-web-session-start-preparation.md#cost-and-failure):
 a slow sibling can consume the hook deadline before installs run. On expiry,
 the summary asks for a manual `task setup:remote` retry without that wrapper deadline.
-Before fetching, the sibling origin must match the configured repository
-(HTTPS/SSH forms and a trailing `.git` are normalized); unrelated same-name
-repositories are skipped with a warning. Linked worktrees are supported. An
-explicit refspec confines fetching and pruning to `origin` remote-tracking branch
-refs even if the sibling has mirror-style fetch configuration. A read-only
+Before fetching, one sibling remote must name the configured owner/repository
+in its final two path components (case-insensitive, with `.git` stripped),
+independent of host, scheme, port or leading path. Rewritten URLs and forks with
+an upstream remote are supported; unrelated same-name repositories are skipped
+with a warning. Linked worktrees are supported. An explicit refspec confines
+fetching and pruning to the matching remote's own remote-tracking branch refs,
+even if the sibling has mirror-style fetch configuration. A read-only
 parent skips cloning but still fetches existing siblings. Fetching never checks
 out, resets or pulls, so local branches and uncommitted changes stay in place.
 A snapshot can be about seven days old, and fetching on every start makes new

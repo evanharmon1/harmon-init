@@ -30,43 +30,23 @@ skipped=0
 failed=0
 unrelated=0
 
-# Compare repository identities case-insensitively, not transport spellings. Local paths/file URLs
-# are also supported (the bootstrap's base override uses them in offline tests).
+# Identity is only the final owner/repository pair, independent of transport,
+# host, port and leading path. Fold only that pair, not the whole URL.
 repo_identity() {
-    local url="${1%/}" authority path
-    url="${url%.git}"
-    case "$url" in
-    file://*) printf '%s\n' "${url#file://}" ;;
+    local path="${1%/}" owner repo
+    case "$path" in
     *://*)
-        authority="${url#*://}"
-        path="${authority#*/}"
-        authority="${authority%%/*}"
-        authority="${authority##*@}"
-        case "$url" in
-        ssh://*) authority="${authority%:22}" ;;
-        https://*) authority="${authority%:443}" ;;
-        esac
-        printf '%s/%s\n' "$(printf '%s' "$authority" | tr '[:upper:]' '[:lower:]')" "$path"
+        path="${path#*://}"
+        path="${path#*/}"
         ;;
-    /* | ./* | ../*) printf '%s\n' "$url" ;;
-    *:*) repo_identity "ssh://${url%%:*}/${url#*:}" ;;
-    *) printf '%s\n' "$url" ;;
+    *:*) path="${path#*:}" ;;
     esac
+    [ "$path" != "${path%/*}" ] || return 1
+    owner="${path%/*}"
+    owner="${owner##*/}"
+    repo="${path##*/}"
+    printf '%s/%s\n' "$owner" "$repo" | tr '[:upper:]' '[:lower:]' | sed 's/\.git$//'
 }
-
-# Shorthand owner/repo entries use the same host/base as bootstrap.
-if [ -n "${RELATED_REPOS_GIT_BASE_URL:-}" ]; then
-    GIT_BASE_URL="${RELATED_REPOS_GIT_BASE_URL%/}/"
-elif [ -n "${GH_HOST:-}" ]; then
-    GIT_BASE_URL="https://${GH_HOST}/"
-else
-    checkout_origin="$(git -C "${SCRIPT_DIR}/.." config --get remote.origin.url 2>/dev/null || true)"
-    checkout_identity="$(repo_identity "$checkout_origin")"
-    case "$checkout_origin" in
-    http://* | https://* | ssh://* | git@*) GIT_BASE_URL="https://${checkout_identity%%/*}/" ;;
-    *) GIT_BASE_URL="https://github.com/" ;;
-    esac
-fi
 
 while IFS= read -r raw_line || [ -n "$raw_line" ]; do
     # Strip inline comments, then trim leading/trailing whitespace.
@@ -96,7 +76,11 @@ while IFS= read -r raw_line || [ -n "$raw_line" ]; do
     # accept this directory's own worktree root (or its own bare repository).
     sibling_root=""
     if [ -d "$dir" ]; then
-        dir="$(cd "$dir" && pwd -P)"
+        if ! dir="$(cd "$dir" 2>/dev/null && pwd -P)"; then
+            echo "==> WARNING: cannot enter ${basename}; continuing." >&2
+            failed=$((failed + 1))
+            continue
+        fi
         if [ "$(git -C "$dir" rev-parse --is-bare-repository 2>/dev/null || true)" = true ]; then
             sibling_root="$(git -C "$dir" rev-parse --absolute-git-dir 2>/dev/null || true)"
         else
@@ -104,29 +88,38 @@ while IFS= read -r raw_line || [ -n "$raw_line" ]; do
         fi
     fi
     if [ -z "$sibling_root" ] || [ "$sibling_root" != "$dir" ]; then
-        skipped=$((skipped + 1))
+        if [ -e "${dir}/.git" ] || [ -L "${dir}/.git" ]; then
+            echo "==> WARNING: cannot open repository ${basename}; continuing." >&2
+            failed=$((failed + 1))
+        else
+            skipped=$((skipped + 1))
+        fi
         continue
     fi
 
-    expected_url="$target_spec"
-    case "$target_spec" in
-    *://* | *:* | /* | ./* | ../*) ;;
-    *) expected_url="${GIT_BASE_URL}${target_spec}" ;;
-    esac
-    # --get-url resolves insteadOf aliases locally, without contacting a remote.
-    origin_url="$(git -C "$dir" ls-remote --get-url origin 2>/dev/null || true)"
-    if [ -z "$origin_url" ] ||
-        [ "$(repo_identity "$origin_url" | tr '[:upper:]' '[:lower:]')" != "$(repo_identity "$expected_url" | tr '[:upper:]' '[:lower:]')" ]; then
-        echo "==> WARNING: skipping ${basename}: origin does not match the related-repos entry." >&2
+    expected_identity="$(repo_identity "$target_spec" || true)"
+    matching_remote=""
+    while IFS= read -r remote; do
+        [ -n "$remote" ] || continue
+        # Resolve aliases without network access; only owner/repo identifies it.
+        remote_url="$(git -C "$dir" ls-remote --get-url "$remote" 2>/dev/null || true)"
+        if [ -n "$expected_identity" ] &&
+            [ "$(repo_identity "$remote_url" || true)" = "$expected_identity" ]; then
+            matching_remote="$remote"
+            break
+        fi
+    done < <(git -C "$dir" remote 2>/dev/null || true)
+    if [ -z "$matching_remote" ]; then
+        echo "==> WARNING: skipping ${basename}: no remote matches the related-repos entry." >&2
         unrelated=$((unrelated + 1))
         continue
     fi
 
     # Empty refmap prevents configured fetch mappings from adding destinations.
     # Disable tag pruning/following and submodule recursion as well: this fetch
-    # owns only origin's remote-tracking branch refs, even in a mirror clone.
+    # owns only the matching remote's branch refs, even in a mirror clone.
     if git -C "$dir" fetch --prune --no-prune-tags --no-tags --recurse-submodules=no \
-        --refmap= --quiet origin '+refs/heads/*:refs/remotes/origin/*' 2>/dev/null; then
+        --refmap= --quiet "$matching_remote" "+refs/heads/*:refs/remotes/${matching_remote}/*" 2>/dev/null; then
         fetched=$((fetched + 1))
     else
         echo "==> WARNING: fetch failed for ${basename}; continuing." >&2

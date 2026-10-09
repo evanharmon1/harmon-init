@@ -44,11 +44,13 @@ retains the observed evidence separately from this decision.
    installs frozen dependencies where lockfiles exist. Slow installs run last,
    so a deadline does not prevent the preceding hook and sibling preparation. The shared fetch
    script accepts that directory, defaulting to `/workspaces` for devcontainers.
-   Fetch first verifies the sibling origin matches its configured repository
-   (HTTPS/SSH spellings and trailing `.git` are equivalent), including linked
-   worktrees. It fetches only `origin` branch refs into `refs/remotes/origin/*`
-   with an explicit refspec, ignoring configured mirror destinations and tag
-   pruning. A read-only parent prevents cloning but still permits existing
+   Fetch identifies the sibling by a remote whose final owner/repository path
+   matches the configured entry case-insensitively, with `.git` stripped;
+   host, scheme, port and leading path do not define identity. This supports
+   rewritten URLs, forks with an upstream remote, and linked worktrees.
+   It fetches only that matching remote's branch refs into its own
+   `refs/remotes/<remote>/*` namespace with an explicit refspec, ignoring
+   configured mirror destinations and tag pruning. A read-only parent prevents cloning but still permits existing
    siblings to be fetched. Fetch updates remote-tracking refs and prunes deleted refs; it never pulls,
    checks out or resets. A sibling's working revision and local changes remain
    intact. Fetch failures warn and continue without failing preparation.

@@ -125,7 +125,8 @@ else
         # missing sibling never fails setup; only a crash of the script itself does.
         run_sibling_step "related repos -> ${PARENT}" bash "$BOOTSTRAP" "$PARENT"
     fi
-    # Fetch writes inside each sibling, so a read-only parent only blocks clones.
+    # Fetch writes to the sibling's Git storage (which may be outside a linked
+    # worktree), so the clone destination parent's writability does not govern it.
     FETCH=".devcontainer/scripts/fetch-related-repos.sh"
     if [ -f "$FETCH" ]; then
         run_sibling_step "related-repo fetch -> ${PARENT}" bash "$FETCH" "$PARENT"

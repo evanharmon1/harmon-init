@@ -265,7 +265,7 @@ if [ "$HAVE_BOOTSTRAP" = 1 ]; then
     before="$(digest "$sibling")"
     run_setup "${STUBS_PATH}"
     [ "$rc" -eq 0 ] || fail "identity mismatch must not fail setup: $(all_output)"
-    output_has 'WARNING: skipping sibling-a: origin does not match' || fail "identity mismatch must warn"
+    output_has 'WARNING: skipping sibling-a: no remote matches' || fail "identity mismatch must warn"
     [ "$before" = "$(digest "$sibling")" ] || fail "an unrelated sibling must remain untouched"
     output_has '1 identity mismatches' || fail "identity skips must be reported"
     git -C "$sibling" remote set-url origin "${BARE_BASE}/test-owner/sibling-a.git"
@@ -324,8 +324,57 @@ if [ "$HAVE_BOOTSTRAP" = 1 ]; then
     git -C "$sibling" config --unset "url.file://${BARE_BASE}/test-owner/sibling-a.git.insteadOf"
     before="$(digest "$sibling")"
     run_setup "${STUBS_PATH}"
-    output_has 'WARNING: skipping sibling-a: origin does not match' || fail "effective unrelated URL must be refused"
+    output_has 'WARNING: skipping sibling-a: no remote matches' || fail "effective unrelated URL must be refused"
     [ "$before" = "$(digest "$sibling")" ] || fail "a mismatching effective URL must not mutate the sibling"
+
+    echo "==> checkout SSH host/port does not govern shorthand sibling identity"
+    make_fixture ssh-checkout 'test-owner/sibling-a'
+    git -C "$FIX" remote add origin 'ssh://git@ssh.github.com:443/checkout-owner/checkout.git'
+    git clone -q "${BARE_BASE}/test-owner/sibling-a.git" "${FIX_PARENT}/sibling-a"
+    PATH="${STUBS_PATH}" STUB_LOG_DIR="${LOG_DIR}" \
+        bash "${FIX}/.devcontainer/scripts/fetch-related-repos.sh" "$FIX_PARENT" >"$OUT" 2>"$ERR"
+    output_has 'Related-repo fetch: 1 fetched' || fail "checkout host/port must not affect owner/repo identity"
+
+    echo "==> a fork is fetched only through the matching upstream remote"
+    make_fixture fork 'test-owner/sibling-a'
+    sibling="${FIX_PARENT}/sibling-a"
+    git clone -q "${BARE_BASE}/test-owner/sibling-a.git" "$sibling"
+    fork_head="$(git -C "$sibling" rev-parse origin/main)"
+    git -C "$sibling" remote set-url origin "${BARE_BASE}/fork-owner/sibling-a.git"
+    git -C "$sibling" remote add upstream "${BARE_BASE}/test-owner/sibling-a.git"
+    git -C "$sibling" config remote.upstream.fetch '+refs/*:refs/*'
+    git -C "$sibling" branch protected-local HEAD
+    git -C "${TMP}/seed-sibling-a" -c user.name=Test -c user.email=test@example.com \
+        commit -q --allow-empty -m 'new upstream for fork'
+    git -C "${TMP}/seed-sibling-a" push -q origin HEAD:main
+    upstream_head="$(git -C "${TMP}/seed-sibling-a" rev-parse HEAD)"
+    run_setup "${STUBS_PATH}"
+    output_has 'Related-repo fetch: 1 fetched' || fail "a fork with matching upstream must be fetched"
+    [ "$(git -C "$sibling" rev-parse upstream/main)" = "$upstream_head" ] || fail "matching upstream namespace must update"
+    [ "$(git -C "$sibling" rev-parse origin/main)" = "$fork_head" ] || fail "unmatched origin refs must stay unchanged"
+    [ "$(git -C "$sibling" rev-parse protected-local)" = "$fork_head" ] || fail "upstream mirror refspec must not prune local branches"
+
+    echo "==> an untraversable sibling warns and the next sibling is fetched"
+    make_fixture inaccessible $'test-owner/sibling-a\ntest-owner/sibling-b'
+    mkdir "${FIX_PARENT}/sibling-a"
+    git clone -q "${BARE_BASE}/test-owner/sibling-b.git" "${FIX_PARENT}/sibling-b"
+    chmod 000 "${FIX_PARENT}/sibling-a"
+    if (cd "${FIX_PARENT}/sibling-a") 2>/dev/null; then
+        echo "skip: sibling remains traversable despite chmod 000 (root)"
+    else
+        run_setup "${STUBS_PATH}"
+        [ "$rc" -eq 0 ] || fail "one inaccessible sibling must not abort setup"
+        output_has 'WARNING: cannot enter sibling-a; continuing.' || fail "inaccessible sibling must warn"
+        output_has '1 fetched, 0 not-yet-cloned, 1 failed' || fail "next sibling must still be fetched"
+    fi
+    chmod 755 "${FIX_PARENT}/sibling-a"
+
+    echo "==> an existing unreadable Git entry warns and the loop continues"
+    printf 'gitdir: %s/missing-git-dir\n' "$TMP" >"${FIX_PARENT}/sibling-a/.git"
+    run_setup "${STUBS_PATH}"
+    [ "$rc" -eq 0 ] || fail "an unreadable Git entry must warn without failing setup"
+    output_has 'WARNING: cannot open repository sibling-a; continuing.' || fail "unopenable .git must warn"
+    output_has '1 fetched, 0 not-yet-cloned, 1 failed' || fail "unopenable .git must not count as not-yet-cloned or stop later fetches"
 
     echo "==> a plain directory inside an enclosing repository is not a sibling clone"
     make_fixture enclosing 'test-owner/sibling-a'
