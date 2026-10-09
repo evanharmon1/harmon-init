@@ -279,12 +279,15 @@ if [ "$HAVE_BOOTSTRAP" = 1 ]; then
     git -C "$sibling" config remote.origin.pruneTags true
     protected="$(git -C "$sibling" rev-parse protected-local)"
     git -C "${TMP}/seed-sibling-a" push -q origin HEAD:protected-local
+    git -C "${TMP}/seed-sibling-a" tag upstream-only-tag HEAD
+    git -C "${TMP}/seed-sibling-a" push -q origin refs/tags/upstream-only-tag
     git -C "$sibling" update-ref refs/remotes/origin/deleted "$old_head"
     run_setup "${STUBS_PATH}"
     [ "$rc" -eq 0 ] || fail "mirror-configured fetch must succeed: $(all_output)"
     [ "$(git -C "$sibling" rev-parse protected-local)" = "$protected" ] || fail "fetch must not update a local branch"
     [ "$(git -C "$sibling" rev-parse upstream-only)" = "$protected" ] || fail "fetch must not prune a local branch"
     [ "$(git -C "$sibling" rev-parse protected-tag)" = "$protected" ] || fail "fetch must not prune a local tag"
+    ! git -C "$sibling" show-ref --verify --quiet refs/tags/upstream-only-tag || fail "fetch must not import an upstream tag"
     [ "$(git -C "$sibling" rev-parse origin/protected-local)" = "$new_head" ] || fail "explicit remote-tracking destination must update"
     ! git -C "$sibling" show-ref --verify --quiet refs/remotes/origin/deleted || fail "deleted remote-tracking branches must be pruned"
     [ "$(git -C "$sibling" rev-parse HEAD)" = "$old_head" ] || fail "mirror fetch must preserve HEAD"
