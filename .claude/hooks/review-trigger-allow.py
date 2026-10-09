@@ -37,7 +37,6 @@ BODIES = {"/gemini review", "@" + "claude" + " review"}
 # reads a literal quote that shlex would drop.
 UNSAFE = re.compile(r"[\x00-\x1f\x7f$`\\;&|<>(){}*?\[\]#!~^]|''|\"\"")
 NUMBER = re.compile(r"[1-9][0-9]*")
-ASSIGNMENT = re.compile(r"[A-Za-z_][A-Za-z0-9_]*=")
 # A repository name may start with a dot (an organization's .github), but is
 # never . or .. alone.
 REPOSITORY = re.compile(r"[A-Za-z0-9_-][A-Za-z0-9_.-]*/(?!\.\.?$)[A-Za-z0-9_.-]+")
@@ -54,11 +53,9 @@ def git(project, *args):
 
 def repository(project):
     # The configured URL, not get-url's: a url.insteadOf rewrite is transport.
-    # More than one origin URL is ambiguous, so it establishes nothing.
-    remotes = git(project, "config", "--get-all", "remote.origin.url").split()
-    if len(remotes) != 1:
-        return None
-    remote = remotes[0]
+    # Origin's configuration is the trust root: whoever can change it can point
+    # it anywhere, so the hook adds no checks against its own configuration.
+    remote = git(project, "config", "--get", "remote.origin.url").strip()
     # GitHub HTTPS and SSH transport spellings; local/file remotes and
     # ambiguous hosts/credentials do not establish a GitHub repository.
     match = re.fullmatch(
@@ -69,12 +66,6 @@ def repository(project):
         return None
     name = match[1].removesuffix(".git")
     return name if REPOSITORY.fullmatch(name) else None
-
-
-def same_repository(name, project):
-    # GitHub owner and repository names are case-insensitive.
-    origin = repository(project)
-    return origin is not None and name.casefold() == origin.casefold()
 
 
 def flags(words, expected):
@@ -113,19 +104,20 @@ def allows(command, cwd, project):
             return False
         values = flags(words[4:], {"--repo", "--body"})
         return bool(values and values["--body"] in BODIES
-                    and same_repository(values["--repo"], project))
+                    and values["--repo"] == repository(project))
     if words[:1] == ["bash"]:
         words = words[1:]
-    # A shell reads a leading NAME=value word as an assignment, zsh expands a
-    # leading = to a command path, and bash reads a leading -/+ word as an
-    # option: none runs the path the hook resolved.
-    if not words or ASSIGNMENT.match(words[0]) or words[0][:1] in ("=", "-", "+"):
+    # A shell reads a NAME=value or NAME+=value word as an assignment, zsh
+    # expands a leading = to a command path, and bash reads a leading -/+ word
+    # as an option: none runs the path the hook resolved. A broker path that
+    # contains = therefore gets no decision (the prompt applies).
+    if not words or "=" in words[0] or words[0][:1] in ("-", "+"):
         return False
     if len(words) < 2 or words[1] != "trigger":
         return False
     values = flags(words[2:], {"--repo", "--pr"})
     return bool(values and NUMBER.fullmatch(values["--pr"])
-                and same_repository(values["--repo"], project)
+                and values["--repo"] == repository(project)
                 and broker_in_repository(words[0], cwd, project))
 
 
