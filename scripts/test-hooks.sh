@@ -65,6 +65,84 @@ fi
 
 echo "==> hook-delegation targets OK (commit-msg accept/reject, format:file)"
 
+# Commit messages must come from the git invocation, never adjacent commands.
+assert_commit_status() {
+    local hook="$1" expected="$2" command_text="$3"
+    local status=0 output
+    output="$(jq -n --arg command "$command_text" --arg cwd "$tmpdir" \
+        '{cwd: $cwd, tool_input: {command: $command}}' |
+        CLAUDE_PROJECT_DIR="$repo" bash "$hook" 2>&1)" || status=$?
+    [ "$status" -eq "$expected" ] ||
+        fail "$hook: expected exit $expected, got $status for $command_text: $output"
+}
+
+python_before_commit="$(
+    cat <<'COMMAND'
+python3 - <<'EOF'
+import pathlib
+print('git commit -m bad message')
+EOF
+git commit -F msg.txt
+COMMAND
+)"
+heredoc_message="$(
+    cat <<'COMMAND'
+git commit -m "$(cat <<'EOF'
+fix: multiline message
+
+A body with 'quotes' and a second paragraph.
+EOF
+)"
+COMMAND
+)"
+bad_heredoc_message="$(
+    cat <<'COMMAND'
+git commit -m "$(cat <<'EOF'
+bad message
+
+A body that must not hide the invalid subject.
+EOF
+)"
+COMMAND
+)"
+
+for commit_hook in \
+    "$repo/.claude/hooks/enforce-conventional-commits.sh" \
+    "$repo/.devcontainer/config/claude-hooks/enforce-conventional-commits.sh" \
+    "$repo/template/.claude/hooks/enforce-conventional-commits.sh" \
+    "$repo/template/[% if devcontainer %].devcontainer[% endif %]/config/claude-hooks/enforce-conventional-commits.sh"; do
+    [ -f "$commit_hook" ] || continue
+    echo "==> conventional commit extraction: $commit_hook"
+    printf 'fix: file message\n' >"$tmpdir/msg.txt"
+    assert_commit_status "$commit_hook" 0 "$python_before_commit"
+    printf 'bad file message\n' >"$tmpdir/msg.txt"
+    # -F/--file deliberately delegate to lefthook, even for an invalid file.
+    assert_commit_status "$commit_hook" 0 "$python_before_commit"
+    assert_commit_status "$commit_hook" 0 'git commit --file msg.txt'
+    assert_commit_status "$commit_hook" 0 'git commit --file=msg.txt'
+    assert_commit_status "$commit_hook" 0 "$heredoc_message"
+    assert_commit_status "$commit_hook" 2 "$bad_heredoc_message"
+    assert_commit_status "$commit_hook" 0 "echo 'git commit -m bad'"
+    assert_commit_status "$commit_hook" 2 'git commit -m "bad message"'
+    assert_commit_status "$commit_hook" 0 'git commit -m "fix: ok"'
+    assert_commit_status "$commit_hook" 0 'echo -m "bad message"; git commit --amend --no-edit'
+    assert_commit_status "$commit_hook" 0 'git commit -C HEAD'
+    assert_commit_status "$commit_hook" 0 'git commit'
+    assert_commit_status "$commit_hook" 0 'git commit -m "unterminated'
+    assert_commit_status "$commit_hook" 0 'echo -m "bad message"; git commit --message "fix: ok"'
+    assert_commit_status "$commit_hook" 2 'git commit --message="bad message"'
+    assert_commit_status "$commit_hook" 0 'git commit --message="fix: ok"'
+    assert_commit_status "$commit_hook" 2 'git commit -m"bad message"'
+    assert_commit_status "$commit_hook" 0 'git commit -m"fix: ok"'
+    assert_commit_status "$commit_hook" 2 'git -C /tmp commit -m "bad message"'
+    assert_commit_status "$commit_hook" 0 'git log -m "bad message" commit'
+    assert_commit_status "$commit_hook" 0 'git commit -- path -m "bad message"'
+    assert_commit_status "$commit_hook" 0 "${python_before_commit/-F msg.txt/-m \"fix: ok\"}"
+    assert_commit_status "$commit_hook" 2 "${python_before_commit/-F msg.txt/-m \"bad message\"}"
+done
+
+echo "==> conventional commit extraction OK"
+
 codex_hooks_dir="$repo/.devcontainer/config/codex-hooks"
 if [ -x "$codex_hooks_dir/file-payload.sh" ] && [ -x "$codex_hooks_dir/claude-compat.sh" ]; then
     echo "==> Codex apply_patch adapter emits one Claude-style payload per file"

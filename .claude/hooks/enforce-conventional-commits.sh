@@ -11,65 +11,95 @@ input="$(cat)"
 command="$(printf '%s' "$input" | jq -r '.tool_input.command // ""')"
 [[ -n "$command" ]] || exit 0
 
-# Only police `git commit` invocations.
-grep -E 'git[[:space:]]+commit\b' <<<"$command" >/dev/null || exit 0
+# Python is required for safe shell tokenization. If parsing is unavailable or
+# fails, let lefthook validate the actual commit message instead.
+command -v python3 >/dev/null 2>&1 || exit 0
+msg="$(python3 -c '
+import re
+import shlex
+import sys
 
-msg=""
-
-if command -v python3 >/dev/null 2>&1; then
-    msg="$(python3 -c '
-import sys, shlex
 try:
     lexer = shlex.shlex(sys.argv[1], posix=True, punctuation_chars=True)
-    args = list(lexer)
+    # Keep newlines as command boundaries, rather than ordinary whitespace.
+    lexer.whitespace = " \t\r"
+    segments = []
+    segment = []
+    heredocs = []
+    for token in lexer:
+        if token == "\n":
+            segments.append(segment)
+            segment = []
+            # Heredoc bodies are data, never shell command segments. Consume
+            # them directly so their quotes and command-like text stay inert.
+            for delimiter, strip_tabs in heredocs:
+                for line in lexer.instream:
+                    if (line.lstrip("\t") if strip_tabs else line).rstrip("\n") == delimiter:
+                        break
+            heredocs = []
+        elif token in (";", "&&", "||", "|", "&"):
+            segments.append(segment)
+            segment = []
+        else:
+            if segment and segment[-1] == "<<":
+                strip_tabs = token.startswith("-")
+                heredocs.append((token[1:] if strip_tabs else token, strip_tabs))
+            segment.append(token)
+    segments.append(segment)
 except ValueError:
     sys.exit(0)
-segments = []
-current = []
-for a in args:
-    if a in (";", "&&", "||", "|", "&"):
-        segments.append(current)
-        current = []
-    else:
-        current.append(a)
-if current: segments.append(current)
-for seg in segments:
-    if not seg or seg[0] != "git": continue
-    is_commit = "commit" in seg
+
+for segment in segments:
+    if not segment or segment[0] != "git":
+        continue
+    # Skip known global options without mistaking their values for commands.
+    index = 1
+    while index < len(segment):
+        arg = segment[index]
+        if arg in ("-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env"):
+            index += 2
+        elif arg.startswith(("--git-dir=", "--work-tree=", "--namespace=", "--config-env=", "-C", "-c")):
+            index += 1
+        else:
+            break
+    if index >= len(segment) or segment[index] != "commit":
+        continue
+    args = segment[index + 1:]
     messages = []
-    for i, a in enumerate(seg):
-        if is_commit and (a == "-m" or a == "--message") and i + 1 < len(seg):
-            messages.append(seg[i+1])
-        elif is_commit and (a.startswith("-m") and len(a) > 2):
-            messages.append(a[2:])
-        elif is_commit and a.startswith("--message="):
-            messages.append(a[10:])
-    if messages:
-        import re
-        parsed_messages = []
-        for m in messages:
-            if m.startswith("$(cat <<"):
-                m = re.sub(r"^\$\(cat\s+<<['"'"'\\\"]?[A-Za-z0-9_]+['"'"'\\\"]?\s*\n", "", m)
-                m = re.sub(r"\n[A-Za-z0-9_]+\s*\)$", "", m)
-            parsed_messages.append(m)
-        print("\n\n".join(parsed_messages))
+    index = 0
+    while index < len(args):
+        arg = args[index]
+        if arg == "--":
+            break
+        # File messages belong to the real commit-msg hook, not this parser.
+        if arg in ("-F", "--file") or arg.startswith(("--file=", "-F")):
+            messages = []
+            break
+        if arg in ("-m", "--message") and index + 1 < len(args):
+            index += 1
+            messages.append(args[index])
+        elif arg.startswith("--message="):
+            messages.append(arg[10:])
+        elif arg.startswith("-m") and len(arg) > 2:
+            messages.append(arg[2:])
+        index += 1
+    parsed = []
+    for message in messages:
+        if message.startswith("$("):
+            # Recognize only a literal cat heredoc owned by this -m argument.
+            # Never evaluate shell substitutions or search the whole command.
+            match = re.fullmatch(
+                r"\$\(cat\s+<<([\"\x27]?)([A-Za-z0-9_]+)\1[ \t]*\n(.*?)\n\2\n?\)",
+                message, re.DOTALL,
+            )
+            if not match:
+                sys.exit(0)
+            message = match[3]
+        parsed.append(message)
+    if parsed:
+        print("\n\n".join(parsed))
         sys.exit(0)
 ' "$command")"
-else
-    # Fallback if Python is unavailable
-    if grep "<<'EOF'" <<<"$command" >/dev/null; then
-        msg="$(printf '%s' "$command" | awk "/<<'\''?EOF'\''?/{flag=1; next} /^EOF\$/{flag=0} flag" | head -n1)"
-    fi
-    if [[ -z "$msg" ]]; then
-        msg="$(printf '%s' "$command" | grep -oE -- "-m[[:space:]]+\"[^\"]+\"" | head -n1 | sed -E 's/^-m[[:space:]]+"(.*)"$/\1/' || true)"
-    fi
-    if [[ -z "$msg" ]]; then
-        msg="$(printf '%s' "$command" | grep -oE -- "-m[[:space:]]+'[^']+'" | head -n1 | sed -E "s/^-m[[:space:]]+'(.*)'\$/\1/" || true)"
-    fi
-    if [[ -z "$msg" ]]; then
-        msg="$(printf '%s' "$command" | grep -oE -- "-m[[:space:]]+[^[:space:]'\"]+" | head -n1 | sed -E 's/^-m[[:space:]]+(.*)$/\1/' || true)"
-    fi
-fi
 
 # If we couldn't parse a message, don't block — let git itself error out.
 [[ -n "$msg" ]] || exit 0
