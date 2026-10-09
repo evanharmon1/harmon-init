@@ -35,7 +35,7 @@ vendored Python), so it has no CodeQL workflow.
 | Axis | Root status | Default for generated repos |
 |---|---|---|
 | **SAST** — flaws in first-party code | Semgrep CE in CI and via `task security:sast` (no CodeQL workflow — no first-party CodeQL-supported language) | Public Node/Python: CodeQL; free private Node/Python: Semgrep CE; other profiles: Semgrep CE |
-| **SCA** — dependency CVEs | Dependabot alerts + `task security:audit` (no root manifests today) | Dependabot alerts + `pnpm audit` / `pip-audit` |
+| **SCA** — dependency CVEs | Dependabot alerts + `task security:audit` (no root manifests today); CI audits the Astro fixture against the shipped floors so new advisories are fixed upstream first | Dependabot alerts + `pnpm audit` / `pip-audit`; Node security floors are template-owned, arrive via `copier update`, and are bounded to their target major; add local floors below the end marker inside `overrides` |
 | **Secrets** | gitleaks in pre-push and CI | gitleaks in pre-push and CI |
 | **IaC** | N/A at the root | checkov for Terraform profiles |
 | **Freshness/remediation** | Renovate, including Dependabot-alert remediation | Renovate, including Dependabot-alert remediation |

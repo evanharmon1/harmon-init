@@ -559,9 +559,13 @@ the compatibility reason in the rule's `description`.
 - [ ] Build-script approvals + version pins already ship in
       **`pnpm-workspace.yaml`** — the template pre-approves `esbuild` + `sharp`
       (and **`workerd`** when deploying to Cloudflare Workers, so `wrangler deploy`
-      doesn't fail `ERR_PNPM_IGNORED_BUILDS`) under `allowBuilds`, and floors
-      `esbuild` at the patched `>=0.28.1` under `overrides` (pnpm 10+ blocks
-      dependency build scripts by default). Add any other packages whose build
+      doesn't fail `ERR_PNPM_IGNORED_BUILDS`) under `allowBuilds` (pnpm 10+
+      blocks dependency build scripts by default). The `overrides` security-floor
+      block is template-owned and arrives via `copier update`; every floor is
+      bounded to its target major. Add repository-local floors below its end
+      marker, inside `overrides`. Harmon Init's CI audits the real Astro fixture
+      against the shipped block so new advisories are fixed upstream first.
+      Add any other packages whose build
       scripts your deps need to `allowBuilds` (or run `pnpm approve-builds`); keep
       all pnpm `overrides` / `auditConfig` there too, **not** in the `package.json`
       `pnpm` field — pnpm 10+ silently ignores that field, so entries there vanish
@@ -644,7 +648,11 @@ the compatibility reason in the rule's `description`.
       ignores that field. Approve blocked build scripts (e.g. vite's `esbuild`,
       and `workerd` if deploying to Cloudflare Workers — else `wrangler deploy`
       fails `ERR_PNPM_IGNORED_BUILDS`) via `allowBuilds` (pnpm 11+; the shipped
-      `pnpm-workspace.yaml` uses it) or `pnpm approve-builds`
+      `pnpm-workspace.yaml` uses it) or `pnpm approve-builds`. The `overrides`
+      security-floor block is template-owned and arrives via `copier update`;
+      add repository-local floors below its end marker, inside `overrides`,
+      bounded to their target major. Harmon Init's CI audits the Astro fixture
+      against the shipped block so new advisories are fixed upstream first
 - [ ] When adding Playwright e2e: configure `scripts/e2e-env-guard.sh` with this
       app's auth providers, deploy credentials, and production domains —
       `task test:e2e` runs it first and it **fails until configured** (fail

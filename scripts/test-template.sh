@@ -3316,6 +3316,8 @@ if [ "$profile" = "web" ] && [ -f eslint.config.js ]; then
     if ! have pnpm; then
         required pnpm "web-astro toolchain validation" || fail=1
     else
+        grep -qF '# --- harmon-init security floors (template-owned; updated by copier update) ---' pnpm-workspace.yaml ||
+            err "web-astro fixture: rendered pnpm-workspace.yaml is missing the template-owned security floors"
         cp -R "$repo_root/tests/fixtures/web-astro/." .
         # cloudflare/wrangler-action needs a pre-installed wrangler now that
         # wranglerVersion is no longer pinned in the workflow (harmon-init#1347).
@@ -3349,7 +3351,22 @@ if [ "$profile" = "web" ] && [ -f eslint.config.js ]; then
             "$bin/wrangler" --version || true
             err "web-astro fixture: wrangler --version failed — a binary can be linked but unusable (e.g. workerd's own install failed) while pnpm install still exits 0, which is exactly what cloudflare/wrangler-action's pre-installed-copy fallback needs to not be true"
         else
-            echo "web-astro: shipped toolchain (ESLint + Prettier/astro + astro check + build + wrangler) clean on a real app"
+            # Audit the rendered workspace's floors, never a fixture-owned copy.
+            # pnpm exits nonzero for both advisories and registry failures; only
+            # a high/critical findings table proves an advisory failure.
+            audit_log="$job_tmp/web-astro-audit.log"
+            if pnpm audit --audit-level=high >"$audit_log" 2>&1; then
+                echo "web-astro fixture: pnpm audit clean at high severity"
+                echo "web-astro: shipped toolchain (ESLint + Prettier/astro + astro check + build + wrangler) clean on a real app"
+            else
+                cat "$audit_log"
+                if grep -Eq 'ERR_PNPM_(AUDIT|FETCH)|ENOTFOUND|EAI_AGAIN|ECONN|ETIMEDOUT' "$audit_log" ||
+                    ! grep -Eiq '[│┃][[:space:]]*(high|critical)[[:space:]]*[│┃]' "$audit_log"; then
+                    err "web-astro fixture: pnpm audit indeterminate (registry unreachable)"
+                else
+                    err "web-astro fixture: pnpm audit found high-severity advisories — raise the template-owned floor in pnpm-workspace.yaml.jinja"
+                fi
+            fi
         fi
     fi
 fi
