@@ -2772,6 +2772,9 @@ function tierInputsFromArgs(args) {
     if (!['operator', 'label'].includes(args['rigor-source'])) {
       throw new PolicyError('--rigor-source must be "operator" or "label"')
     }
+    if (args.rigor === undefined) {
+      throw new PolicyError('--rigor-source requires --rigor')
+    }
     inputs.rigorSource = args['rigor-source']
   }
   if (args['tier-overrides'] !== undefined) {

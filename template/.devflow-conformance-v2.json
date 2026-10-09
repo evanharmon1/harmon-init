@@ -2247,6 +2247,34 @@
       }
     },
     {
+      "name": "rigor-source-without-rigor-is-usage",
+      "basis": "branch",
+      "cli_options": ["--rigor-source", "operator"],
+      "expect": {
+        "exit": 2,
+        "error_diagnostics": [
+          {
+            "code": "usage",
+            "subject": "rigor-source"
+          }
+        ]
+      }
+    },
+    {
+      "name": "absent-merge-base-still-validates-branch-candidate",
+      "basis": "merge-base-absent",
+      "config_replacements": [["schema_version = 2", "schema_version = 1"]],
+      "expect": {
+        "exit": 1,
+        "error_diagnostics": [
+          {
+            "code": "migration_required",
+            "subject": "schema_version"
+          }
+        ]
+      }
+    },
+    {
       "name": "absent-merge-base-requires-existing-branch-policy",
       "basis": "absent",
       "cli_options": ["--merge-base-policy-absent"],
