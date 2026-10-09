@@ -411,6 +411,10 @@ def run_v2(repo: Path, fixture: dict, config: Path) -> int:
             errors.append({"code": "policy_unreadable", "subject": "policy"})
         elif result.returncode == 2 and "could not read/parse --merge-base-policy:" in result.stderr:
             errors.append({"code": "policy_unreadable", "subject": "merge-base-policy"})
+        elif result.returncode == 2 and "--merge-base-policy-absent cannot be combined with --merge-base-policy" in result.stderr:
+            errors.append({"code": "merge_base_conflict", "subject": "merge-base-policy-absent"})
+        elif result.returncode == 2 and "--merge-base-policy-absent requires an existing --policy file" in result.stderr:
+            errors.append({"code": "branch_policy_required", "subject": "merge-base-policy-absent"})
         elif result.returncode == 2 and "operator tier instruction" in result.stderr and "must be one of" in result.stderr:
             errors.append({"code": "usage", "subject": "tier-overrides"})
         elif result.returncode == 2 and (option := re.search(r"--([a-z-]+)", result.stderr)):

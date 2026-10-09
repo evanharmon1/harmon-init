@@ -2212,7 +2212,7 @@
         "exit": 2,
         "error_diagnostics": [
           {
-            "code": "usage",
+            "code": "merge_base_conflict",
             "subject": "merge-base-policy-absent"
           }
         ]
@@ -2254,7 +2254,7 @@
         "exit": 2,
         "error_diagnostics": [
           {
-            "code": "usage",
+            "code": "branch_policy_required",
             "subject": "merge-base-policy-absent"
           }
         ]
