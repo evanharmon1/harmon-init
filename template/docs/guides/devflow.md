@@ -51,8 +51,9 @@ It requires an existing `--policy` file and cannot be combined with
 `--merge-base-policy`. The candidate is validated independently; built-in
 values govern the run. Invalid flag combinations or malformed operator
 `--tier-overrides` / `--rigor-source` values exit with usage status 2.
-Successful resolution exits 0; invalid policy exits 1. An indeterminate derived
-Tier exits 3 when that rung decides the implementer tier.
+Successful resolution exits 0; invalid policy exits 1. Exit 3 means resolved
+but indeterminate: registry cross-validation could not finish, or the derived
+Tier could not be computed where it decides the implementer tier.
 
 The **implementer** tier has two more rungs (ADR 2026-09-30 D5). Strongest
 first:
