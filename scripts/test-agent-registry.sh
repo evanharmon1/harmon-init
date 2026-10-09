@@ -321,6 +321,62 @@ switch (mutation) {
   case 'tier-rung-multi-default':
     modelOf('qwen', 'coder-next').default = true
     break
+  // ── model lines and versions (#1516) ──────────────────────────────────
+  case 'line-missing-versions':
+    delete modelOf('claude', 'opus').versions
+    break
+  case 'line-slug-embeds-version':
+    modelOf('claude', 'opus').slug = 'opus-5'
+    break
+  case 'line-slug-embeds-prefixed-version':
+    modelOf('deepseek', 'pro').slug = 'v4-pro'
+    break
+  case 'version-slug-bad-shape':
+    modelOf('claude', 'opus').versions[0].slug = '5_5'
+    break
+  case 'duplicate-version-slug':
+    modelOf('gemini', 'flash').versions[2].slug = '3.7'
+    break
+  case 'two-current-versions':
+    modelOf('glm', 'glm').versions[1].retired = false
+    break
+  case 'no-current-version':
+    modelOf('claude', 'opus').versions[0].retired = true
+    break
+  case 'current-version-not-first':
+    modelOf('gemini', 'flash').versions.reverse()
+    break
+  case 'versions-not-newest-first': {
+    // 3.8, 3.6, 3.7 — current first, but the retired tail is out of order.
+    const versions = modelOf('gemini', 'flash').versions
+    versions.splice(1, 2, versions[2], versions[1])
+    break
+  }
+  case 'current-version-tier-override':
+    modelOf('claude', 'opus').versions[0].tier = 'apex'
+    break
+  // ── reasoning efforts (#1516) ──────────────────────────────────────────
+  case 'effort-ladder-missing':
+    delete registry.effort_ladder
+    break
+  case 'effort-ladder-out-of-order':
+    registry.effort_ladder = ['low', 'minimal', 'medium', 'high', 'xhigh', 'max']
+    break
+  case 'effort-ladder-unknown-level':
+    registry.effort_ladder.push('turbo')
+    break
+  case 'harness-missing-efforts':
+    delete harness('codex-cli').efforts
+    break
+  case 'harness-effort-off-ladder':
+    registry.effort_ladder = registry.effort_ladder.filter((effort) => effort !== 'max')
+    break
+  case 'harness-efforts-out-of-order':
+    harness('codex-cli').efforts.reverse()
+    break
+  case 'harness-duplicate-effort':
+    harness('codex-cli').efforts.push('high')
+    break
   // ── harness write-restriction (#635) ────────────────────────────────────
   case 'harness-write-restricted-without-capability':
     harness('codex-cli').can_restrict_writes = false
@@ -354,10 +410,37 @@ import { readFile, writeFile } from 'node:fs/promises'
 
 const [inputPath, outputPath, mutation] = process.argv.slice(2)
 const registry = JSON.parse(await readFile(inputPath, 'utf8'))
+const harness = (slug) => registry.harnesses.find((entry) => entry.slug === slug)
 
 switch (mutation) {
   case 'allowlist-missing':
     delete registry.trusted_orchestrator_actor_ids
+    break
+  case 'versions-newest-first': {
+    // 3.8, 3.7, 3.6 — stated explicitly so the case does not lean on the data.
+    const flash = registry.families
+      .find((entry) => entry.slug === 'gemini')
+      .models.find((entry) => entry.slug === 'flash')
+    const bySlug = new Map(flash.versions.map((version) => [version.slug, version]))
+    flash.versions = ['3.8', '3.7', '3.6'].map((slug) => bySlug.get(slug))
+    break
+  }
+  case 'versions-numeric-order': {
+    // 3.10 is newer than 3.9: components compare as numbers, not strings.
+    const opus = registry.families
+      .find((entry) => entry.slug === 'claude')
+      .models.find((entry) => entry.slug === 'opus')
+    opus.versions = [
+      { slug: '3.10', display_name: 'Opus 3.10', retired: false },
+      { slug: '3.9', display_name: 'Opus 3.9', retired: true }
+    ]
+    break
+  }
+  case 'effort-ladder-subset':
+    registry.effort_ladder = registry.effort_ladder.filter((effort) => effort !== 'minimal')
+    harness('codex-cli').efforts = harness('codex-cli').efforts.filter(
+      (effort) => effort !== 'minimal'
+    )
     break
   default:
     throw new Error(`unknown accepted mutation: ${mutation}`)
@@ -586,6 +669,57 @@ rejects "a multi-model family-tier rung with no default" \
 rejects "a multi-model family-tier rung with two defaults" \
     'tier-rung-multi-default' \
     'at most one may be default'
+rejects "a model line without a versions list" \
+    'line-missing-versions' \
+    'missing required property versions'
+rejects "a line slug with a bare version segment" \
+    'line-slug-embeds-version' \
+    'embeds a version in its slug (segment 5)'
+rejects "a line slug with a prefixed version segment" \
+    'line-slug-embeds-prefixed-version' \
+    'embeds a version in its slug (segment v4)'
+rejects "a version slug outside the dotted-segment shape" \
+    'version-slug-bad-shape' \
+    'must be lowercase alphanumeric segments separated by . or -'
+rejects "duplicate version slugs within one line" \
+    'duplicate-version-slug' \
+    'has duplicate version slug: 3.7'
+rejects "two current versions on one line" \
+    'two-current-versions' \
+    'has 2 current (non-retired) versions'
+rejects "a line with no current version" \
+    'no-current-version' \
+    'has 0 current (non-retired) versions'
+rejects "a current version listed after a retired one" \
+    'current-version-not-first' \
+    'the current one leads'
+rejects "versions that are not newest first (3.8, 3.6, 3.7)" \
+    'versions-not-newest-first' \
+    'lists version 3.7 after 3.6 — versions must be newest first'
+rejects "a tier override on a current version" \
+    'current-version-tier-override' \
+    'only a retired version may carry its own tier'
+rejects "a registry with no effort_ladder" \
+    'effort-ladder-missing' \
+    'missing required property effort_ladder'
+rejects "an effort_ladder out of canonical order" \
+    'effort-ladder-out-of-order' \
+    'effort_ladder ["low","minimal","medium","high","xhigh","max"] is out of order'
+rejects "an effort_ladder level outside the closed vocabulary" \
+    'effort-ladder-unknown-level' \
+    'must be one of'
+rejects "a harness with no efforts list" \
+    'harness-missing-efforts' \
+    'missing required property efforts'
+rejects "a harness effort that is not on the ladder" \
+    'harness-effort-off-ladder' \
+    'harness claude-code declares effort(s) max that are not on effort_ladder'
+rejects "harness efforts out of ladder order" \
+    'harness-efforts-out-of-order' \
+    'harness codex-cli efforts ["xhigh","high","medium","low","minimal"] are out of ladder order'
+rejects "a repeated harness effort" \
+    'harness-duplicate-effort' \
+    'items must be unique'
 rejects "a write-restricted role on a harness that cannot restrict writes" \
     'harness-write-restricted-without-capability' \
     'must not dispatch a write-restricted role'
@@ -612,6 +746,12 @@ NODE
 fi
 accepts "a registry with no trusted_orchestrator_actor_ids at all (schema-legal; consumers fail closed at the revision in effect)" \
     'allowlist-missing'
+accepts "versions listed newest first (3.8, 3.7, 3.6)" \
+    'versions-newest-first'
+accepts "numeric version components compared as numbers (3.10 before 3.9)" \
+    'versions-numeric-order'
+accepts "an effort_ladder that omits a level but keeps canonical order" \
+    'effort-ladder-subset'
 rejects "an empty trusted_orchestrator_actor_ids allowlist" \
     'allowlist-empty' \
     'trusted_orchestrator_actor_ids: must contain at least 1 item(s)'
