@@ -33,7 +33,7 @@ retains the observed evidence separately from this decision.
    and compact. Only `CLAUDE_CODE_REMOTE=true` runs
    `task setup:remote`; local sessions and devcontainers do nothing. The wrapper
    warns and exits 0 on preparation failure, preserving session start, and
-   prints a one-line complete, degraded (skipped steps or sibling warnings),
+   prints a one-line complete, degraded (skipped required steps or warnings),
    or failure summary; details stay on stderr. The hook timeout is 120 s;
    when `timeout` is available, preparation has a 90 s deadline and a 5 s kill
    grace so the wrapper can warn and exit before the hook expires. Without
@@ -82,10 +82,13 @@ cost on cold starts; these local measurements do not predict all web sessions.
 Preparation runs after machine setup and does not consume its five-minute cache
 budget (the observed bootstrap took 48–86 s).
 
+Only skipped required steps degrade the summary: a missing tool for an applicable
+step, a missing bootstrap helper, or an unwritable clone parent. Routine
+not-applicable skips (no lockfile, hook config, or related-repository list) do not.
 Missing tools are reported as skipped. Clone and fetch failures are warnings;
 other preparation failures produce a non-zero task result, which the hook wraps
 in a warning and exit 0. The stdout summary distinguishes a complete run from one completed with
-warnings (skipped steps or clone/fetch warnings), and tells the session to retry
+warnings (skipped required steps or clone/fetch warnings), and tells the session to retry
 manually on failure. Detailed step output stays on stderr. The task's step summary and installed lefthook shims show what ran;
 remote-tracking refs show which sibling revisions are available. A fetch makes
 new revisions available without moving the checked-out revision.

@@ -959,7 +959,10 @@ kill grace, leaving time for the wrapper to warn and exit 0 on failure or expiry
 Without `timeout`, it skips preparation and warns to run `task setup:remote` manually.
 Its one-line
 `SessionStart remote preparation:` summary distinguishes complete preparation, preparation completed with warnings
-(skipped steps or clone/fetch warnings), and a failure requiring a retry. Details
+(skipped required steps or warnings), and a failure requiring a retry. Missing
+tools for applicable steps, a missing bootstrap helper, or an unwritable clone
+parent degrade the summary; routine not-applicable skips (no lockfiles, hook
+config, or related-repository list) do not. Details
 stay on stderr. Repository hooks run only in a single-repository
 session (*docs, 2026-09-29*). If the hook did not run (a multi-repository session,
 or a platform without it), the `AGENTS.md` fallback still tells the agent to run

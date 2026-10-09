@@ -763,6 +763,41 @@ EOF
     grep -qx -- "--dir ${FIX} setup:remote" "$HOOK_TASK_LOG" || fail "deadline must actually start preparation"
     ! grep -q 'slow task completed' "$HOOK_TASK_LOG" || fail "deadline must interrupt slow preparation"
     grep -q 'WARNING: SessionStart remote preparation: setup:remote failed' "${OUT}" || fail "deadline must warn"
+
+    echo "==> an escaped descendant holding stdout cannot keep SessionStart past its deadline"
+    cat >"${TMP}/hook-bin/task" <<EOF
+#!/usr/bin/env bash
+"$(command -v python3)" - <<'PYDAEMON'
+import subprocess
+import sys
+
+# Escape timeout's process group and retain stdout, then exit naturally.
+subprocess.Popen([sys.executable, "-c", "import time; time.sleep(3)"],
+                 start_new_session=True, stdin=subprocess.DEVNULL,
+                 stderr=subprocess.DEVNULL)
+print("daemon holding stdout started", flush=True)
+PYDAEMON
+sleep 5
+EOF
+    chmod +x "${TMP}/hook-bin/task"
+    python3 - "${FIX}/scripts/session-start-remote.sh" "${TMP}/hook-bin:${MIN_BIN}" "${TMP}" <<'PYDEADLINE'
+import os
+import pathlib
+import subprocess
+import sys
+import time
+
+script, path, fixture_tmp = sys.argv[1:]
+env = dict(os.environ, CLAUDE_CODE_REMOTE="true", PATH=path, TMPDIR=fixture_tmp)
+started = time.monotonic()
+result = subprocess.run(["bash", script], env=env, capture_output=True, text=True)
+elapsed = time.monotonic() - started
+assert result.returncode == 0, result
+assert "daemon holding stdout started" in result.stderr, result
+assert "setup:remote failed; run task setup:remote again." in result.stdout, result
+assert elapsed < 1.1, f"wrapper waited {elapsed:.2f}s past the 0.1s deadline + 1s grace"
+print(f"stdout-holder wrapper returned in {elapsed:.2f}s (deadline + grace: 1.1s)")
+PYDEADLINE
 else
     echo "skip: timeout is unavailable; the real deadline scenario cannot run"
 fi
