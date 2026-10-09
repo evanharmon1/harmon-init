@@ -8,6 +8,18 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [5.5.0](https://github.com/evanharmon1/harmon-init/compare/v5.4.0...v5.5.0) (2026-10-09)
+
+
+### Features
+
+* **agent-registry:** record model lines with versions and per-harness effort levels ([#1579](https://github.com/evanharmon1/harmon-init/issues/1579)) ([d361a51](https://github.com/evanharmon1/harmon-init/commit/d361a514acef49b59887f8030c4662ec89e393cf))
+
+
+### Bug Fixes
+
+* **template:** sync harmon-devkit skills to v0.53.0 ([#1580](https://github.com/evanharmon1/harmon-init/issues/1580)) ([37d64aa](https://github.com/evanharmon1/harmon-init/commit/37d64aa0f60f19883a109a7c4ccd9f45c7d0d86c))
+
 ## [5.4.0](https://github.com/evanharmon1/harmon-init/compare/v5.3.0...v5.4.0) (2026-10-09)
 
 
