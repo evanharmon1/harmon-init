@@ -4,20 +4,20 @@
 [ "${CLAUDE_CODE_REMOTE:-}" = true ] || exit 0
 
 if ! ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"; then
-    echo "==> WARNING: SessionStart remote preparation could not locate the checkout." >&2
+    echo "==> WARNING: SessionStart remote preparation: could not locate the checkout; run task setup:remote."
     exit 0
 fi
 
 # Leave time to report a failure before the hook's 120-second timeout.
 if ! command -v timeout >/dev/null 2>&1; then
-    echo "==> WARNING: SessionStart remote preparation: preparation skipped because timeout is unavailable; run task setup:remote." >&2
+    echo "==> WARNING: SessionStart remote preparation: preparation skipped because timeout is unavailable; run task setup:remote."
     exit 0
 fi
 
-if timeout --kill-after=5s 90s task --dir "$ROOT" setup:remote; then
+if timeout --kill-after=5s 90s task --dir "$ROOT" setup:remote >&2; then
     echo "==> SessionStart remote preparation: setup:remote completed."
 else
-    echo "==> WARNING: SessionStart remote preparation: setup:remote failed; run task setup:remote again." >&2
+    echo "==> WARNING: SessionStart remote preparation: setup:remote failed; run task setup:remote again."
 fi
 # Preparation failures must never prevent a session from starting.
 exit 0

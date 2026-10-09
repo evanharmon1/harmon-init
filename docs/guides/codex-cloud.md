@@ -424,9 +424,10 @@ repository-independent, and reads no checkout.
 per-checkout preparation as one task, which the agent runs once on a fresh
 checkout — `AGENTS.md` tells it to, because the repository ships no hook that
 would, and the setup script stays machine-level. It runs `lefthook install` (when lefthook is on `PATH`),
-frozen `pnpm` / `uv` installs from the lockfiles that exist, and the same sibling
-clones the devcontainer makes (`.devcontainer/related-repos.txt`), into the
-checkout's **parent** directory. It is idempotent, never prompts (git terminal
+the same sibling clones the devcontainer makes (`.devcontainer/related-repos.txt`)
+into the checkout's **parent** directory, then fetches existing siblings before
+frozen `pnpm` / `uv` installs from the lockfiles that exist. It is idempotent, never
+prompts (git terminal
 prompts are disabled, ssh runs with `BatchMode=yes` unless the caller already set
 `GIT_SSH_COMMAND`, in which case the caller's value governs, and pnpm runs with
 `CI=true`), skips a missing tool with a note, warns and continues past a repository it cannot clone, and exits

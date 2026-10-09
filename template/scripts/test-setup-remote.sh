@@ -382,6 +382,31 @@ else
     echo "==> (lefthook is not installed on this host; the real-shim check is skipped)"
 fi
 
+# Settings must leave room for the wrapper's deadline and kill grace.
+python3 - "${REPO_ROOT}" <<'PYSETTINGS'
+import json
+import pathlib
+import re
+import subprocess
+import sys
+
+root = pathlib.Path(sys.argv[1])
+script = (root / "scripts/session-start-remote.sh").read_text()
+grace, deadline = map(int, re.search(r"timeout --kill-after=(\d+)s (\d+)s task", script).groups())
+for name in (".claude/settings.json", "template/.claude/settings.json.jinja"):
+    path = root / name
+    if not path.exists():  # Generated repos have only the root settings.
+        continue
+    entries = json.loads(re.search(r'"SessionStart": (\[.*?\]),\s*"PreToolUse"', path.read_text(), re.S).group(1))
+    assert len(entries) == 1 and entries[0]["matcher"] == "startup|resume", name
+    hook = entries[0]["hooks"][0]
+    assert 'scripts/session-start-remote.sh' in hook["command"], name
+    assert hook["timeout"] > deadline + grace, name
+    # A missing wrapper must still report its fallback summary to the agent.
+    result = subprocess.run(hook["command"], shell=True, env={"CLAUDE_PROJECT_DIR": "/nonexistent-session-checkout"}, capture_output=True, text=True)
+    assert result.returncode == 0 and "SessionStart remote preparation:" in result.stdout, name
+PYSETTINGS
+
 # --- The SessionStart wrapper is remote-only and always succeeds ---
 echo "==> SessionStart is a no-op locally and prepares remote sessions"
 make_fixture hook -
@@ -389,6 +414,7 @@ mkdir -p "${TMP}/hook-bin"
 cat >"${TMP}/hook-bin/task" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"${HOOK_TASK_LOG}"
+echo "preparation detail"
 exit "${HOOK_TASK_RC:-0}"
 EOF
 cat >"${TMP}/hook-bin/timeout" <<'EOF'
@@ -417,14 +443,29 @@ for remote in unset false true; do
         [ ! -s "$OUT" ] && [ ! -s "$ERR" ] || fail "local SessionStart must be silent"
     else
         grep -qx -- "--dir ${FIX} setup:remote" "$HOOK_TASK_LOG" || fail "remote SessionStart must prepare its checkout"
-        output_has 'SessionStart remote preparation: setup:remote completed.' || fail "remote SessionStart must print a summary"
+        grep -q 'SessionStart remote preparation: setup:remote completed.' "${OUT}" || fail "remote SessionStart must print a summary"
+        ! grep -q 'preparation detail' "${OUT}" || fail "preparation details must stay off stdout"
+        grep -q 'preparation detail' "${ERR}" || fail "preparation details must reach stderr"
     fi
 done
 rc=0
 CLAUDE_CODE_REMOTE=true HOOK_TASK_RC=1 PATH="${TMP}/hook-bin:${MIN_BIN}" \
     bash "${FIX}/scripts/session-start-remote.sh" >"${OUT}" 2>"${ERR}" || rc=$?
 [ "$rc" -eq 0 ] || fail "preparation failure must not fail SessionStart"
-output_has 'WARNING: SessionStart remote preparation: setup:remote failed' || fail "preparation failure must warn"
+grep -q 'WARNING: SessionStart remote preparation: setup:remote failed' "${OUT}" || fail "preparation failure must warn"
+
+echo "==> SessionStart reports checkout resolution failures on stdout"
+cat >"${TMP}/hook-bin/dirname" <<'EOF'
+#!/usr/bin/env bash
+echo /nonexistent-session-checkout/scripts
+EOF
+chmod +x "${TMP}/hook-bin/dirname"
+rc=0
+CLAUDE_CODE_REMOTE=true PATH="${TMP}/hook-bin:${MIN_BIN}" \
+    bash "${FIX}/scripts/session-start-remote.sh" >"${OUT}" 2>"${ERR}" || rc=$?
+[ "$rc" -eq 0 ] || fail "checkout resolution failure must not fail SessionStart"
+grep -q 'SessionStart remote preparation: could not locate the checkout' "${OUT}" || fail "checkout resolution failure must report its summary on stdout"
+rm -f "${TMP}/hook-bin/dirname"
 
 echo "==> SessionStart skips preparation when timeout is missing"
 rm -f "${TMP}/hook-bin/timeout" "$HOOK_TASK_LOG"
@@ -433,7 +474,7 @@ CLAUDE_CODE_REMOTE=true PATH="${TMP}/hook-bin:${MIN_BIN}" \
     bash "${FIX}/scripts/session-start-remote.sh" >"${OUT}" 2>"${ERR}" || rc=$?
 [ "$rc" -eq 0 ] || fail "missing timeout must not fail SessionStart"
 [ ! -e "$HOOK_TASK_LOG" ] || fail "missing timeout must skip preparation"
-output_has 'preparation skipped because timeout is unavailable; run task setup:remote.' || fail "missing timeout must report a skip and manual setup instruction"
+grep -q 'SessionStart remote preparation: preparation skipped because timeout is unavailable; run task setup:remote.' "${OUT}" || fail "missing timeout must report a skip and manual setup instruction"
 
 echo "==> SessionStart bounds a slow preparation task and still exits 0"
 REAL_TIMEOUT="$(command -v timeout 2>/dev/null || true)"
@@ -459,7 +500,7 @@ EOF
     [ "$rc" -eq 0 ] || fail "deadline must not fail SessionStart"
     grep -qx -- "--dir ${FIX} setup:remote" "$HOOK_TASK_LOG" || fail "deadline must actually start preparation"
     ! grep -q 'slow task completed' "$HOOK_TASK_LOG" || fail "deadline must interrupt slow preparation"
-    output_has 'WARNING: SessionStart remote preparation: setup:remote failed' || fail "deadline must warn"
+    grep -q 'WARNING: SessionStart remote preparation: setup:remote failed' "${OUT}" || fail "deadline must warn"
 else
     echo "skip: timeout is unavailable; the real deadline scenario cannot run"
 fi

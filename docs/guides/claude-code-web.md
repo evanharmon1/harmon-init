@@ -368,8 +368,8 @@ then `/web-setup`) is not observed.
 3. `/exit`. The browser may then show "Two steps to work in your repository —
    Connect your GitHub account / Install the Claude GitHub App". It is not
    needed for this route; skip it.
-4. Start a new session, have it run `task setup:remote` first (`AGENTS.md`
-   requires that on any fresh checkout; it installs the git hooks), and verify the
+4. Start a new session, check the hook’s `SessionStart remote preparation:`
+   summary, and run `task setup:remote` only if preparation did not run. Verify the
    identity, for one repository of each owner (start a ponderousdev session
    from the browser, see [Bridges](#bridges-between-the-terminal-and-the-cloud)):
    `gh api user` must return `evanharmon1-bot`, and `gh api repos/{owner}/{repo}`
