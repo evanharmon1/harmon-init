@@ -147,6 +147,7 @@ tasks:
       - task: test:remote-codex-policy
 [% endif %]
       - task: test:lint-hygiene
+      - task: test:claude-workflow-result
 [% if use_release_please %]
       - task: test:release-title
 [% endif %]
@@ -860,6 +861,11 @@ tasks:
     cmds:
       - ./scripts/test-remote-codex-policy.sh
 [% endif %]
+
+  test:claude-workflow-result:
+    desc: Test Claude failure reporting and the optional zero-usage retry
+    cmds:
+      - ./scripts/test-claude-workflow-result.sh
 
   test:lint-hygiene:
     desc: Behavioral fixtures for lint-hygiene's trigger-phrase adjacency scan
