@@ -350,6 +350,9 @@ shipped_wrapper="${agent_config_dir}/gh-api-read"
 # to --version so the system gh is exercised without a request or credentials.
 grep -qx 'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' "$shipped_wrapper" ||
     fail "GET wrapper does not pin the system PATH"
+# The interpreter itself must not be looked up on the caller's PATH.
+[ "$(head -n 1 "$shipped_wrapper")" = '#!/bin/bash' ] ||
+    fail "GET wrapper resolves its interpreter through PATH"
 sed 's/exec gh api --method GET "$@" "$endpoint"/exec gh --version/' "$shipped_wrapper" >"${work_dir}/wrapper-path-probe"
 rm -f "$wrapper_log"
 run_wrapper "${work_dir}/wrapper-path-probe" repos/example/repo >"${work_dir}/wrapper-path.out" ||

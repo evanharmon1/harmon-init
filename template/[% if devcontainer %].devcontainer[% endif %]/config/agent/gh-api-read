@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/bin/bash
 # GET-only front door for the agent posture. Independent of skills sync.
 # Allow detached output flags only; never forward unknown flags or bodies.
 # Headers (including method overrides), bundled flags and GraphQL are refused.
