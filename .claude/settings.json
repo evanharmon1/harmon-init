@@ -110,6 +110,16 @@
     }
   },
   "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/session-start-remote.sh\" || printf '%s\\n' 'WARNING: SessionStart remote preparation could not run; run task setup:remote.' >&2"
+          }
+        ]
+      }
+    ],
     "PreToolUse": [
       {
         "matcher": "Bash",

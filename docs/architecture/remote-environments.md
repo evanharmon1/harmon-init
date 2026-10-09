@@ -518,8 +518,14 @@ Observed (agent devcontainer):  *pending*
 
 One environment for all repos, whose setup script is the entrypoint above at a
 pinned release tag and whose network level is **Trusted**. The platform takes no
-custom image and ignores `devcontainer.json`, so the setup script is the whole
-adapter. Everything specific to the platform — the environment's configuration,
+custom image and ignores `devcontainer.json`. The setup script provisions the
+machine only. A repository `SessionStart` hook runs `task setup:remote` when
+`CLAUDE_CODE_REMOTE=true`, including cached resumes, to reinstall checkout hooks,
+install from lockfiles and clone then fetch siblings without moving their
+checkouts. Preparation warns rather than failing session start; the `AGENTS.md`
+instruction is the fallback when the hook did not run, including multi-repository
+sessions. See the [decision](../decisions/2026-10-09-web-session-start-preparation.md).
+Everything specific to the platform — the environment's configuration,
 the secrets policy, how its GitHub proxy changes the `gh` calls the dev loop
 makes, the terminal-to-cloud bridges, and the observations still owed by a live
 session — is in

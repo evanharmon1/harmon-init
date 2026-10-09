@@ -131,8 +131,10 @@ make_fixture() {
     mkdir -p "${FIX}/scripts" "${FIX}/.devcontainer/scripts"
     git init -q "${FIX}"
     cp "${REPO_ROOT}/scripts/setup-remote.sh" "${FIX}/scripts/setup-remote.sh"
+    cp "${REPO_ROOT}/scripts/session-start-remote.sh" "${FIX}/scripts/session-start-remote.sh"
     if [ "$HAVE_BOOTSTRAP" = 1 ]; then
         cp "${REPO_ROOT}/.devcontainer/scripts/bootstrap-related-repos.sh" "${FIX}/.devcontainer/scripts/"
+        cp "${REPO_ROOT}/.devcontainer/scripts/fetch-related-repos.sh" "${FIX}/.devcontainer/scripts/"
     fi
     printf 'pre-push:\n  commands:\n    noop:\n      run: "true"\n' >"${FIX}/lefthook.yml"
     if [ "$related" != "-" ]; then
@@ -217,6 +219,30 @@ after="$(digest "${FIX_PARENT}")"
 [ "$before" = "$after" ] || fail "the second run changed the tree:
 $(diff <(printf '%s\n' "$before") <(printf '%s\n' "$after") || true)"
 [ "$(wc -l <"${LOG_DIR}/lefthook.log" | tr -d ' ')" -eq 2 ] || fail "lefthook install must run on each invocation (idempotent, not skipped)"
+
+if [ "$HAVE_BOOTSTRAP" = 1 ]; then
+    echo "==> a cached sibling is fetched forward without changing its checkout"
+    sibling="${FIX_PARENT}/sibling-a"
+    old_head="$(git -C "$sibling" rev-parse HEAD)"
+    echo 'local work' >"${sibling}/local-work.txt"
+    git -C "${TMP}/seed-sibling-a" -c user.name=Test -c user.email=test@example.com \
+        commit -q --allow-empty -m 'new upstream commit'
+    git -C "${TMP}/seed-sibling-a" push -q origin HEAD:main
+    new_head="$(git -C "${TMP}/seed-sibling-a" rev-parse HEAD)"
+    run_setup "${STUBS_PATH}"
+    [ "$rc" -eq 0 ] || fail "fetch-forward run must succeed: $(all_output)"
+    [ "$(git -C "$sibling" rev-parse origin/main)" = "$new_head" ] || fail "existing sibling must see new upstream commit"
+    [ "$(git -C "$sibling" rev-parse HEAD)" = "$old_head" ] || fail "fetch must not move the checkout"
+    [ "$(cat "${sibling}/local-work.txt")" = 'local work' ] || fail "fetch must preserve local work"
+    output_has 'Related-repo fetch: 2 fetched' || fail "fetch summary must report both siblings: $(all_output)"
+
+    echo "==> a sibling fetch failure warns and does not fail preparation"
+    git -C "$sibling" remote set-url origin "${TMP}/missing-upstream.git"
+    run_setup "${STUBS_PATH}"
+    [ "$rc" -eq 0 ] || fail "fetch failure must not fail setup: $(all_output)"
+    output_has 'WARNING: fetch failed for sibling-a; continuing.' || fail "fetch failure must warn: $(all_output)"
+    output_has 'Related-repo fetch: 1 fetched, 2 not-yet-cloned, 1 failed' || fail "fetch must continue to sibling-b: $(all_output)"
+fi
 
 # --- Frozen dependency installs, only for lockfiles that exist ---
 echo "==> dependencies install frozen from the lockfiles that exist"
@@ -334,5 +360,43 @@ if [ -n "${REAL_LEFTHOOK}" ]; then
 else
     echo "==> (lefthook is not installed on this host; the real-shim check is skipped)"
 fi
+
+# --- The SessionStart wrapper is remote-only and always succeeds ---
+echo "==> SessionStart is a no-op locally and prepares remote sessions"
+make_fixture hook -
+mkdir -p "${TMP}/hook-bin"
+cat >"${TMP}/hook-bin/task" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${HOOK_TASK_LOG}"
+exit "${HOOK_TASK_RC:-0}"
+EOF
+chmod +x "${TMP}/hook-bin/task"
+HOOK_TASK_LOG="${TMP}/hook-task.log"
+export HOOK_TASK_LOG
+for remote in unset false true; do
+    rc=0
+    (
+        export PATH="${TMP}/hook-bin:${MIN_BIN}"
+        if [ "$remote" = unset ]; then
+            unset CLAUDE_CODE_REMOTE
+        else
+            export CLAUDE_CODE_REMOTE="$remote"
+        fi
+        bash "${FIX}/scripts/session-start-remote.sh"
+    ) >"${OUT}" 2>"${ERR}" || rc=$?
+    [ "$rc" -eq 0 ] || fail "SessionStart $remote must exit 0"
+    if [ "$remote" != true ]; then
+        [ ! -e "$HOOK_TASK_LOG" ] || fail "local SessionStart must not prepare"
+        [ ! -s "$OUT" ] && [ ! -s "$ERR" ] || fail "local SessionStart must be silent"
+    else
+        grep -qx -- "--dir ${FIX} setup:remote" "$HOOK_TASK_LOG" || fail "remote SessionStart must prepare its checkout"
+        output_has 'SessionStart remote preparation: setup:remote completed.' || fail "remote SessionStart must print a summary"
+    fi
+done
+rc=0
+CLAUDE_CODE_REMOTE=true HOOK_TASK_RC=1 PATH="${TMP}/hook-bin:${MIN_BIN}" \
+    bash "${FIX}/scripts/session-start-remote.sh" >"${OUT}" 2>"${ERR}" || rc=$?
+[ "$rc" -eq 0 ] || fail "preparation failure must not fail SessionStart"
+output_has 'WARNING: SessionStart remote preparation: setup:remote failed' || fail "preparation failure must warn"
 
 echo "test-setup-remote.sh passed"

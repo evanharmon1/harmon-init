@@ -2,21 +2,21 @@
 # setup-remote.sh — prepare THIS checkout for the dev loop on a remote platform.
 #
 # A devcontainer does this in post-create/post-start; remote platforms (Claude
-# Code on the web, Codex cloud, ...) run neither and no hook fires, so an agent
-# runs `task setup:remote` once on a fresh checkout. Every step is idempotent and
+# Code on the web, Codex cloud, ...) run neither. A remote-only SessionStart
+# hook runs this task on the web; other sessions run `task setup:remote` once. Every step is idempotent and
 # a safe no-op when already done:
 #
 #   1. lefthook install     so the pre-commit / commit-msg / pre-push gates run
 #   2. frozen dependencies  pnpm-lock.yaml -> pnpm, uv.lock -> uv (only for a
 #                           lockfile that exists; none is a no-op)
 #   3. related repos        .devcontainer/related-repos.txt cloned beside this
-#                           checkout (its PARENT directory), by the same script
-#                           the devcontainer uses
+#                           checkout (its PARENT directory), then fetched forward
+#                           by the same scripts the devcontainer uses
 #
 # Never prompts (git: GIT_TERMINAL_PROMPT=0 and, unless GIT_SSH_COMMAND is already set,
 # ssh BatchMode; pnpm: CI=true). A step whose tool is missing is reported as skipped; the exit
 # status is non-zero only when a step that could run failed. A related repo that
-# cannot be cloned is a warning from the bootstrap script, not a failure.
+# cannot be cloned or fetched is a warning, not a failure.
 set -euo pipefail
 
 # -P: the PHYSICAL path, so a checkout entered through a symlink still clones its
@@ -119,6 +119,15 @@ else
         # The bootstrap exits 0 whatever it could not clone (it warns on stderr), so a
         # missing sibling never fails setup; only a crash of the script itself does.
         run_step "related repos -> ${PARENT}" bash "$BOOTSTRAP" "$PARENT"
+        FETCH=".devcontainer/scripts/fetch-related-repos.sh"
+        if [ -f "$FETCH" ]; then
+            # Fetch only: never move a sibling's checkout or discard local work.
+            if ! bash "$FETCH" "$PARENT"; then
+                echo "==> WARNING: related-repo fetch could not run; continuing." >&2
+            fi
+        else
+            note_skipped "related-repo fetch: ${FETCH} is not present in this repository"
+        fi
         echo "==> Sibling repos are reference context. Claude Code on the web only allows pushes to"
         echo "    the session's own repository and branch, so changes to a sibling cannot be pushed from here."
     fi

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-# Freshen already-cloned related repos in /workspaces/ on devcontainer START
+# Freshen already-cloned related repos in the target directory on devcontainer START
 # (post-start-common.sh), so siblings track their remotes without a manual
 # fetch. Reads the same config as bootstrap-related-repos.sh:
 # .devcontainer/related-repos.txt.
@@ -18,7 +18,9 @@ unset NODE_OPTIONS
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 CONFIG_FILE="${SCRIPT_DIR}/../related-repos.txt"
-WORKSPACES_DIR="/workspaces"
+# setup:remote passes the checkout's parent; existing devcontainer callers keep
+# /workspaces as their default.
+WORKSPACES_DIR="${1:-/workspaces}"
 
 [ -f "$CONFIG_FILE" ] || exit 0
 [ -d "$WORKSPACES_DIR" ] || exit 0
