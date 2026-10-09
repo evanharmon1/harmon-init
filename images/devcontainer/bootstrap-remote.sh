@@ -196,8 +196,10 @@ through .devcontainer/agent/agent-autonomy.sh. Anything already at either
 path that is not the definition — a file, or a symlink, dangling or not — is
 left in place, reported, and counted in HARMON_BOOTSTRAP_POSTURE_GAPS (the
 posture is then not applied for it) unless HARMON_AGENT_POSTURE_REPLACE=1,
-which replaces it and keeps the previous entry beside it. Harness executables
-are never modified.
+which replaces it and keeps the previous entry beside it. The agent
+posture's GET-only read wrapper, /usr/local/bin/gh-api-read, is ours rather
+than admin-owned, so it is always written with the shipped bytes at mode
+0755, without that gate. Harness executables are never modified.
 
 Environment: HARMON_PREFIX (default /usr/local), HARMON_BOOTSTRAP_TIERS,
              HARMON_INIT_REF, HARMON_ALLOW_UNPINNED_REF,
