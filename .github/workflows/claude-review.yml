@@ -33,7 +33,7 @@ jobs:
     # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
     # default; set it to a JSON runner spec to override without a commit.
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
-    timeout-minutes: 130
+    timeout-minutes: 138
     # Serialize every claim-bearing run on one target. Acquiring a claim is a
     # read-then-add, so two runs that read "unclaimed" in the same instant
     # would both proceed; this group makes the second wait for the first.
@@ -190,16 +190,22 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           token: ${{ steps.app-token.outputs.token }}
+      # Claude switches to the PR head; retain the trusted default-branch
+      # helper before that switch so a fork cannot replace the result script.
+      - name: Preserve the trusted Claude result helper
+        timeout-minutes: 2
+        run: |
+          cp scripts/claude-workflow-result.sh "$RUNNER_TEMP/claude-workflow-result.sh"
+          git rev-parse HEAD > "$RUNNER_TEMP/claude-start-commit"
       - uses: anthropics/claude-code-action@cab360f6565aa35a51d6ce9e43f1f4287c0a32ea # v1.0.241
         id: claude-primary
         continue-on-error: true
         # Step-level cap. A JOB timeout kills the runner outright and the
         # always() release below never runs; a STEP timeout fails only this
         # step and lets the cleanup run, so the claim is still released. The
-        # arithmetic keeps it that way: job cap 130 = two steps of 50 + 30
-        # minutes of headroom for the sender gate, claim, token mint, checkout
-        # and setup, so the step timeout always fires first however slow the
-        # preamble is. Losing the runner itself (or a force-cancel) can still
+        # arithmetic keeps it that way: job cap 138 = 2 × 50 + 8 + 30
+        # (8 minutes for helper steps, 30 for setup and claim release).
+        # Each step timeout fires before the job cap, leaving cleanup time. Losing the runner itself (or a force-cancel) can still
         # strand the advisory label — accepted, rather than a reconciliation
         # workflow of its own.
         timeout-minutes: 50
@@ -227,13 +233,15 @@ jobs:
           EXECUTION_FILE: ${{ steps.claude-primary.outputs.execution_file }}
           ACTION_OUTCOME: ${{ steps.claude-primary.outcome }}
           HAS_ALT: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN_2 != '' }}
+          ARCHIVE_EXECUTION: 'true'
           REDACT_PRIMARY: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           REDACT_ALT: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN_2 }}
           REDACT_APP_TOKEN: ${{ steps.app-token.outputs.token }}
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           TARGET: ${{ github.event.issue.number || github.event.pull_request.number }}
-        run: ./scripts/claude-workflow-result.sh
+        timeout-minutes: 2
+        run: bash "$RUNNER_TEMP/claude-workflow-result.sh"
       - uses: anthropics/claude-code-action@cab360f6565aa35a51d6ce9e43f1f4287c0a32ea # v1.0.241
         id: claude-alternate
         if: ${{ !cancelled() && steps.claude-primary-result.outputs.retry == 'true' }}
@@ -269,7 +277,8 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
           TARGET: ${{ github.event.issue.number || github.event.pull_request.number }}
-        run: ./scripts/claude-workflow-result.sh
+        timeout-minutes: 2
+        run: bash "$RUNNER_TEMP/claude-workflow-result.sh"
       - name: Require the last Claude attempt to succeed
         if: always() && steps.claude-primary.outcome != 'skipped' && steps.claude-primary.outcome != ''
         env:
@@ -283,7 +292,8 @@ jobs:
             steps.claude-alternate.outcome != '' &&
             steps.claude-alternate-result.outputs.failed ||
             steps.claude-primary-result.outputs.failed }}
-        run: ./scripts/claude-workflow-result.sh finish
+        timeout-minutes: 2
+        run: bash "$RUNNER_TEMP/claude-workflow-result.sh" finish
       # Release the claim on EVERY terminal path — success, failure, step
       # timeout, and cancellation alike — so a spent run never leaves a stale
       # claim behind. Gated on this run having ACQUIRED the claim: a claim that

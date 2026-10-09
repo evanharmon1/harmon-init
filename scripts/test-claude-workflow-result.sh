@@ -2,7 +2,7 @@
 # Offline fixtures; GH writes are captured by a stub.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-guard=${CLAUDE_RESULT_SCRIPT:-./scripts/claude-workflow-result.sh}
+guard=${CLAUDE_RESULT_SCRIPT:-"$PWD/scripts/claude-workflow-result.sh"}
 scratch=$(mktemp -d)
 trap 'rm -rf "$scratch"' EXIT
 mkdir "$scratch/bin"
@@ -47,9 +47,9 @@ fixture() {
 
 fixture success true 0 '{}'
 run true true failure true
-rg -q 'OAuth token expired' "$scratch/log" || fail 'result text missing'
+grep -q 'OAuth token expired' "$scratch/log" || fail 'result text missing'
 for field in subtype is_error total_cost_usd modelUsage; do
-    rg -q "$field" "$COMMENT_CAPTURE" || fail "$field missing from comment"
+    grep -q "$field" "$COMMENT_CAPTURE" || fail "$field missing from comment"
 done
 run false true failure false
 fixture success false 0 '{}'
@@ -84,10 +84,12 @@ jq '.[0].result = "sk-ant-primary sk-ant-alternate ghp_testcredential ghp_testgi
     "$EXECUTION_FILE" >"$scratch/redacted.json"
 mv "$scratch/redacted.json" "$EXECUTION_FILE"
 run true true failure true
-if rg -qi 'sk-ant-|ghp_|@co[d]ex' "$scratch/log" "$COMMENT_CAPTURE"; then
-    fail 'credential or review mention leaked'
-fi
-rg -q '\[REDACTED\]' "$COMMENT_CAPTURE" || fail 'redaction absent'
+# Prove the detector matches the raw input, and require grep's no-match status.
+grep -qiE 'sk-ant-|ghp_|@co[d]ex' "$EXECUTION_FILE" || fail 'leak detector did not match fixture'
+leak_status=0
+grep -qiE 'sk-ant-|ghp_|@co[d]ex' "$scratch/log" "$COMMENT_CAPTURE" || leak_status=$?
+[ "$leak_status" = 1 ] || fail 'credential or review mention leaked, or grep failed'
+grep -q '\[REDACTED\]' "$COMMENT_CAPTURE" || fail 'redaction absent'
 # Finalization restores the red job after continue-on-error, including missing data.
 LAST_OUTCOME=success LAST_FAILED=false "$guard" finish || fail 'successful final attempt failed'
 for outcome in failure cancelled skipped ''; do
@@ -101,4 +103,47 @@ fi
 if LAST_OUTCOME=success LAST_FAILED='' "$guard" finish; then
     fail 'missing inspection passed finalization'
 fi
+# Retiring the primary output leaves the next inspection with no stale result.
+fixture success true 0 '{}'
+ARCHIVE_EXECUTION=true run true true failure true
+[ ! -f "$EXECUTION_FILE" ] || fail 'primary execution file was not retired'
+[ -f "$EXECUTION_FILE.primary" ] || fail 'archived primary file missing'
+run false true failure true
+grep -q 'Execution file missing' "$scratch/log" || fail 'alternate reported stale primary result'
+
+# Local branch cleanup returns to the starting commit, never a remote branch.
+export RUNNER_TEMP="$scratch" DEFAULT_BRANCH=main
+mkdir "$scratch/repo"
+(
+    cd "$scratch/repo"
+    git init -q
+    git config user.name 'Fixture'
+    git config user.email 'fixture@example.invalid'
+    git checkout -q -b main
+    git commit -q --allow-empty -m initial
+    git rev-parse HEAD >"$RUNNER_TEMP/claude-start-commit"
+    git checkout -q -b claude/fixture
+    git update-ref refs/remotes/origin/claude/fixture HEAD
+    PRIMARY_BRANCH=claude/fixture "$guard" cleanup >/dev/null 2>&1
+    if git show-ref --verify --quiet refs/heads/claude/fixture; then
+        fail 'local Claude branch survived'
+    fi
+    [ "$(git rev-parse HEAD)" = "$(cat "$RUNNER_TEMP/claude-start-commit")" ] || fail 'starting commit not restored'
+    git show-ref --verify --quiet refs/remotes/origin/claude/fixture || fail 'remote ref was changed'
+    PRIMARY_BRANCH=claude/absent "$guard" cleanup || fail 'absent branch should be inert'
+    git checkout -q -b unrelated
+    if PRIMARY_BRANCH=unrelated "$guard" cleanup >/dev/null 2>&1; then
+        fail 'unrelated branch accepted for cleanup'
+    fi
+    git show-ref --verify --quiet refs/heads/unrelated || fail 'unrelated branch removed'
+    git checkout -q -b claude/default
+    if DEFAULT_BRANCH=claude/default PRIMARY_BRANCH=claude/default "$guard" cleanup >/dev/null 2>&1; then
+        fail 'default branch accepted for cleanup'
+    fi
+    # The fallback to the current branch is safe when no action output exists.
+    PRIMARY_BRANCH='' "$guard" cleanup >/dev/null 2>&1
+    if git show-ref --verify --quiet refs/heads/claude/default; then
+        fail 'current Claude branch survived fallback cleanup'
+    fi
+) || fail 'cleanup fixture failed'
 echo 'Claude workflow result: all cases passed'

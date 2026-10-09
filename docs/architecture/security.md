@@ -670,13 +670,13 @@ TODO: enumerate the tokens/secrets this repo depends on and where each lives:
 |---|---|---|---|
 | `CI_APP_CLIENT_ID` (var) + `CI_APP_PRIVATE_KEY` (secret) | release-please, claude-*, sync-harmon-devkit | repo or org Actions variable + secret | rotate App key per policy |
 | `CLAUDE_CODE_OAUTH_TOKEN` | claude-* workflows | repo Actions secret | TODO |
-
-The optional `CLAUDE_CODE_OAUTH_TOKEN_2` enables one zero-usage failure fallback in Claude workflows; the fallback is skipped when absent.
 | `SNYK_TOKEN` | optional Snyk CLI scans; also the weekly `snyk-scheduled.yml` | local env / 1Password locally; repo Actions secret for the weekly schedule | manual |
 | `GH_TOKEN` (the bot's PAT) | the **bot** devcontainer's `gh`/git operations — never the `dev/` profile | 1Password Environment → devcontainer `--env-file` | manual; re-issue before expiry ([guides/bot-account.md](../guides/bot-account.md)) |
 | `FOREMAN_AGENT_GH_TOKEN` (read-only PAT) | handed by foreman to dispatched agents as their `GH_TOKEN`; bot profile only, required before any dispatch | 1Password Environment → devcontainer `--env-file` | manual; rotate with the bot PAT |
 | `AGENT_GH_TOKEN` (the agent PAT) | the **agent** devcontainer's `gh`/git operations (stored as gh's login at create); never the bot or dev profile | host environment → `init-env.sh --profile agent` → `.devcontainer/agent/devcontainer.env` | manual; ≤180-day expiry, one per resource owner ([guides/bot-account.md](../guides/bot-account.md)) |
 | TODO | TODO | TODO | TODO |
+
+The optional `CLAUDE_CODE_OAUTH_TOKEN_2` enables one zero-usage failure fallback in Claude workflows; the fallback is skipped when absent.
 
 ## Rotation & incident notes
 

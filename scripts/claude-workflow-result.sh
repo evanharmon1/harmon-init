@@ -7,6 +7,27 @@ if [ "${1:-inspect}" = finish ]; then
     exit $?
 fi
 
+if [ "${1:-inspect}" = cleanup ]; then
+    branch=${PRIMARY_BRANCH:-$(git branch --show-current)}
+    [ -n "$branch" ] || exit 0
+    case "$branch" in
+    claude/*) ;;
+    *)
+        echo "Refusing cleanup of a branch outside claude/" >&2
+        exit 1
+        ;;
+    esac
+    if [ "$branch" = "${DEFAULT_BRANCH:?}" ]; then
+        echo "Refusing cleanup of the default branch" >&2
+        exit 1
+    fi
+    git show-ref --verify --quiet "refs/heads/$branch" || exit 0
+    start_commit=$(cat "${RUNNER_TEMP:?}/claude-start-commit")
+    git checkout --detach "$start_commit"
+    git branch -D -- "$branch"
+    exit 0
+fi
+
 retry=false
 failed=true
 result=''
@@ -15,6 +36,12 @@ if [ -n "${EXECUTION_FILE:-}" ] && [ -f "$EXECUTION_FILE" ]; then
         [.[0][] | select(type == "object" and .type == "result")] | last
         | select(type == "object") else empty end' "$EXECUTION_FILE" 2>/dev/null) || result=''
 fi
+# Retire the primary file before a retry can fail without writing a new one.
+if [ "${ARCHIVE_EXECUTION:-false}" = true ] &&
+    [ -n "${EXECUTION_FILE:-}" ] && [ -f "$EXECUTION_FILE" ]; then
+    mv "$EXECUTION_FILE" "$EXECUTION_FILE.primary"
+fi
+
 if [ -n "$result" ]; then
     if [ "${ACTION_OUTCOME:-}" = success ] &&
         jq -e '.is_error == false and .subtype == "success"' <<<"$result" >/dev/null; then
