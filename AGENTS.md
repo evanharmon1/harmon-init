@@ -666,9 +666,10 @@ meets its exit condition on round 1 is done, whatever the cap allowed.
   the hook's docstring for the exact accepted forms). It gives no decision for
   anything else, so the normal permissions apply. It too is active on the host
   and in the dev profile only, and also makes no decision when `GH_HOST` names
-  a host other than github.com. The bot and agent profiles carry no merge guard at all —
-  the agent profile explicitly allows `gh pr merge` — and the "Protect Main"
-  ruleset (code-owner approval + green checks) is the boundary there; see
+  a host other than github.com. The bot and agent profiles carry no merge
+  guard at all — the agent profile explicitly allows `gh pr merge` — and the
+  "Protect Main" ruleset (code-owner approval + green checks) is the boundary
+  there; see
   [docs/decisions/2026-10-07-bot-and-agent-postures-carry-no-merge-guards.md](docs/decisions/2026-10-07-bot-and-agent-postures-carry-no-merge-guards.md).)
   `gh pr ready` is *not* a merge and agents may run it — but only
   out of a passing readiness gate, never to signal "I think this looks done".
