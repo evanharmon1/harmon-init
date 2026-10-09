@@ -1189,7 +1189,11 @@ line's `versions` list, newest first. Each version has its own `slug` (`5.5`,
 `3.8`), a `display_name`, and a `retired` flag. A line has exactly one current
 (non-retired) version, and it is listed first. Exactly one, not "at most one":
 a line with no current version would still lend its tier to the policy
-readers. Older releases stay as retired entries, for the record. Model-level claim labels derive from the line slug, so
+readers. Older releases stay as retired entries, for the record. "Newest
+first" is checked: slugs are split into components on `.` and `-` and compared
+left to right, numerically when both components are numbers (`3.10` is newer
+than `3.9`), and otherwise as strings. A slug that runs out of components first
+is the older one (`3` before `3.1`). Model-level claim labels derive from the line slug, so
 `claim:gemini:flash` keeps its meaning as Flash moves from 3.8 to its next
 release.
 

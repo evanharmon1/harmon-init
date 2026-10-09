@@ -346,6 +346,12 @@ switch (mutation) {
   case 'current-version-not-first':
     modelOf('gemini', 'flash').versions.reverse()
     break
+  case 'versions-not-newest-first': {
+    // 3.8, 3.6, 3.7 — current first, but the retired tail is out of order.
+    const versions = modelOf('gemini', 'flash').versions
+    versions.splice(1, 2, versions[2], versions[1])
+    break
+  }
   case 'current-version-tier-override':
     modelOf('claude', 'opus').versions[0].tier = 'apex'
     break
@@ -410,6 +416,26 @@ switch (mutation) {
   case 'allowlist-missing':
     delete registry.trusted_orchestrator_actor_ids
     break
+  case 'versions-newest-first': {
+    // 3.8, 3.7, 3.6 — stated explicitly so the case does not lean on the data.
+    const flash = registry.families
+      .find((entry) => entry.slug === 'gemini')
+      .models.find((entry) => entry.slug === 'flash')
+    const bySlug = new Map(flash.versions.map((version) => [version.slug, version]))
+    flash.versions = ['3.8', '3.7', '3.6'].map((slug) => bySlug.get(slug))
+    break
+  }
+  case 'versions-numeric-order': {
+    // 3.10 is newer than 3.9: components compare as numbers, not strings.
+    const opus = registry.families
+      .find((entry) => entry.slug === 'claude')
+      .models.find((entry) => entry.slug === 'opus')
+    opus.versions = [
+      { slug: '3.10', display_name: 'Opus 3.10', retired: false },
+      { slug: '3.9', display_name: 'Opus 3.9', retired: true }
+    ]
+    break
+  }
   case 'effort-ladder-subset':
     registry.effort_ladder = registry.effort_ladder.filter((effort) => effort !== 'minimal')
     harness('codex-cli').efforts = harness('codex-cli').efforts.filter(
@@ -667,6 +693,9 @@ rejects "a line with no current version" \
 rejects "a current version listed after a retired one" \
     'current-version-not-first' \
     'the current one leads'
+rejects "versions that are not newest first (3.8, 3.6, 3.7)" \
+    'versions-not-newest-first' \
+    'lists version 3.7 after 3.6 — versions must be newest first'
 rejects "a tier override on a current version" \
     'current-version-tier-override' \
     'only a retired version may carry its own tier'
@@ -717,6 +746,10 @@ NODE
 fi
 accepts "a registry with no trusted_orchestrator_actor_ids at all (schema-legal; consumers fail closed at the revision in effect)" \
     'allowlist-missing'
+accepts "versions listed newest first (3.8, 3.7, 3.6)" \
+    'versions-newest-first'
+accepts "numeric version components compared as numbers (3.10 before 3.9)" \
+    'versions-numeric-order'
 accepts "an effort_ladder that omits a level but keeps canonical order" \
     'effort-ladder-subset'
 rejects "an empty trusted_orchestrator_actor_ids allowlist" \

@@ -498,6 +498,26 @@ if (errors.length === 0) {
   // A segment that is a bare number, or a single letter plus a number
   // (`5`, `v4`, `k3`), is a version, not a product word.
   const VERSION_SEGMENT = /^[a-z]?[0-9]+$/
+  // Version order (newest first): split each slug into components on `.`
+  // and `-` and compare them left to right. Two numeric components compare
+  // as numbers (`3.10` is newer than `3.9`); any other pair compares as
+  // strings by code point. A slug that runs out of components first is the
+  // older one (`3` before `3.1`). Returns > 0 when `a` is newer than `b`.
+  const compareVersions = (a, b) => {
+    const left = a.split(/[.-]/)
+    const right = b.split(/[.-]/)
+    for (let index = 0; index < Math.max(left.length, right.length); index++) {
+      if (index >= left.length) return -1
+      if (index >= right.length) return 1
+      const [x, y] = [left[index], right[index]]
+      if (/^[0-9]+$/.test(x) && /^[0-9]+$/.test(y)) {
+        if (Number(x) !== Number(y)) return Number(x) - Number(y)
+      } else if (x !== y) {
+        return x < y ? -1 : 1
+      }
+    }
+    return 0
+  }
   for (const family of registry.families) {
     for (const model of family.models) {
       const where = `family ${family.slug} model line ${model.slug}`
@@ -519,6 +539,16 @@ if (errors.length === 0) {
         if (seen.has(version.slug))
           semanticError(`${where} has duplicate version slug: ${version.slug}`)
         seen.add(version.slug)
+      }
+      if (model.versions.every((version) => VERSION_SLUG.test(version.slug))) {
+        for (let index = 1; index < model.versions.length; index++) {
+          const [newer, older] = [model.versions[index - 1].slug, model.versions[index].slug]
+          if (compareVersions(newer, older) <= 0) {
+            semanticError(
+              `${where} lists version ${older} after ${newer} — versions must be newest first`
+            )
+          }
+        }
       }
       const current = model.versions.filter((version) => version.retired === false)
       if (current.length !== 1) {
