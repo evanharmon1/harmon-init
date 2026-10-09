@@ -78,6 +78,7 @@ for tool in pnpm uv; do
 #!/usr/bin/env bash
 echo "\$*" >>"\${STUB_LOG_DIR}/${tool}.log"
 echo "\${CI-unset}" >>"\${STUB_LOG_DIR}/${tool}.ci"
+[ "\${STUB_STRAY_STATUS:-}" != 1 ] || echo '==> setup:remote completed with warnings: stray tool output'
 if [ -n "\${EXPECTED_SIBLING:-}" ]; then
     [ -d "\${EXPECTED_SIBLING}/.git" ] || exit 98
     [ "\$(git -C "\$EXPECTED_SIBLING" rev-parse origin/main)" = "\$EXPECTED_SIBLING_HEAD" ] || exit 97
@@ -288,6 +289,20 @@ if [ "$HAVE_BOOTSTRAP" = 1 ]; then
     ! git -C "$sibling" show-ref --verify --quiet refs/remotes/origin/deleted || fail "deleted remote-tracking branches must be pruned"
     [ "$(git -C "$sibling" rev-parse HEAD)" = "$old_head" ] || fail "mirror fetch must preserve HEAD"
     [ "$(cat "${sibling}/local-work.txt")" = 'local work' ] || fail "mirror fetch must preserve local work"
+
+    echo "==> matching origin is preferred over an earlier-sorting matching remote"
+    make_fixture prefer-origin 'test-owner/sibling-a'
+    sibling="${FIX_PARENT}/sibling-a"
+    git clone -q "${BARE_BASE}/test-owner/sibling-a.git" "$sibling"
+    git -C "$sibling" remote add aaa "${BARE_BASE}/test-owner/sibling-a.git"
+    git -C "${TMP}/seed-sibling-a" -c user.name=Test -c user.email=test@example.com \
+        commit -q --allow-empty -m 'upstream for origin preference'
+    git -C "${TMP}/seed-sibling-a" push -q origin HEAD:main
+    expected_head="$(git -C "${TMP}/seed-sibling-a" rev-parse HEAD)"
+    run_setup "${STUBS_PATH}"
+    [ "$rc" -eq 0 ] || fail "origin preference run must succeed"
+    [ "$(git -C "$sibling" rev-parse origin/main)" = "$expected_head" ] || fail "matching origin must be refreshed before aaa"
+    ! git -C "$sibling" show-ref --verify --quiet refs/remotes/aaa/main || fail "only preferred origin must be fetched"
 
     echo "==> HTTPS and SSH identity spellings match without fetching another remote"
     make_fixture identities 'git@example.test:test-owner/sibling-a.git@main'
@@ -612,12 +627,14 @@ exec bash "$2/scripts/setup-remote.sh"
 EOF
 chmod +x "${TMP}/hook-bin/task" "${TMP}/hook-bin/timeout"
 echo "==> SessionStart distinguishes complete preparation from skipped and warning steps"
-for scenario in complete complete-no-lockfiles skipped clone-warning fetch-warning; do
+for scenario in complete complete-no-lockfiles complete-stray-marker skipped clone-warning fetch-warning; do
     make_fixture "hook-${scenario}" ''
     touch "${FIX}/pnpm-lock.yaml" "${FIX}/uv.lock"
     scenario_path="${TMP}/hook-bin:${STUBS_PATH}"
     fetch_fail_dir=""
+    stray_status=""
     case "$scenario" in
+    complete-stray-marker) stray_status=1 ;;
     complete-no-lockfiles)
         rm "${FIX}/pnpm-lock.yaml" "${FIX}/uv.lock" "${FIX}/lefthook.yml" "${FIX}/.devcontainer/related-repos.txt"
         ;;
@@ -634,11 +651,11 @@ for scenario in complete complete-no-lockfiles skipped clone-warning fetch-warni
         ;;
     esac
     rc=0
-    CLAUDE_CODE_REMOTE=true STUB_LOG_DIR="${LOG_DIR}" STUB_FETCH_FAIL_DIR="$fetch_fail_dir" \
+    CLAUDE_CODE_REMOTE=true STUB_LOG_DIR="${LOG_DIR}" STUB_FETCH_FAIL_DIR="$fetch_fail_dir" STUB_STRAY_STATUS="$stray_status" \
         RELATED_REPOS_GIT_BASE_URL="file://${BARE_BASE}/" PATH="$scenario_path" \
         bash "${FIX}/scripts/session-start-remote.sh" >"${OUT}" 2>"${ERR}" || rc=$?
     [ "$rc" -eq 0 ] || fail "${scenario} SessionStart must exit 0"
-    if [ "$scenario" = complete-no-lockfiles ] || { [ "$scenario" = complete ] && [ "$HAVE_BOOTSTRAP" = 1 ]; }; then
+    if [ "$scenario" = complete-no-lockfiles ] || { [[ "$scenario" = complete* ]] && [ "$HAVE_BOOTSTRAP" = 1 ]; }; then
         grep -qx '==> SessionStart remote preparation: setup:remote completed.' "$OUT" || fail "complete run needs a complete summary: $(all_output)"
     else
         grep -q '^==> SessionStart remote preparation: setup:remote completed with warnings:' "$OUT" || fail "${scenario} needs a degraded summary: $(all_output)"
@@ -646,6 +663,7 @@ for scenario in complete complete-no-lockfiles skipped clone-warning fetch-warni
     [ "$(wc -l <"$OUT" | tr -d ' ')" -eq 1 ] || fail "only the compact summary belongs on stdout"
     grep -q 'setup:remote summary' "$ERR" || fail "step details must remain on stderr"
     case "$scenario" in
+    complete-stray-marker) grep -q 'completed with warnings: stray tool output' "$ERR" || fail "fixture must emit the stray marker before the final status" ;;
     skipped) grep -q 'skipped steps' "$OUT" && grep -q 'lefthook is not on PATH' "$ERR" || fail "missing tools need a summary and stderr detail" ;;
     clone-warning) grep -q 'with warnings: related repos' "$OUT" || fail "bootstrap warnings must reach the summary" ;;
     fetch-warning) grep -q 'with warnings: related-repo fetch' "$OUT" || fail "fetch warnings must reach the summary" ;;

@@ -19,7 +19,9 @@ if output="$(timeout --kill-after=5s 90s task --dir "$ROOT" setup:remote)"; then
     summary="setup:remote completed."
     while IFS= read -r line; do
         case "$line" in
-        '==> setup:remote completed with warnings:'*) summary="${line#==> }" ;;
+        # The last status marker wins, including a final clean status that
+        # supersedes a tool's earlier marker-shaped output.
+        '==> setup:remote completed.' | '==> setup:remote completed with warnings:'*) summary="${line#==> }" ;;
         esac
     done <<<"$output"
     echo "==> SessionStart remote preparation: ${summary}"

@@ -105,8 +105,11 @@ while IFS= read -r raw_line || [ -n "$raw_line" ]; do
         remote_url="$(git -C "$dir" ls-remote --get-url "$remote" 2>/dev/null || true)"
         if [ -n "$expected_identity" ] &&
             [ "$(repo_identity "$remote_url" || true)" = "$expected_identity" ]; then
-            matching_remote="$remote"
-            break
+            matching_remote="${matching_remote:-$remote}"
+            if [ "$remote" = origin ]; then
+                matching_remote="$remote"
+                break
+            fi
         fi
     done < <(git -C "$dir" remote 2>/dev/null || true)
     if [ -z "$matching_remote" ]; then
