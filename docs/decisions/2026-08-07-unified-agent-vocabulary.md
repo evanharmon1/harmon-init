@@ -166,7 +166,17 @@ The following decisions are adopted together:
     vendor does not offer that abstraction (`glm`'s `5-2`, `kimi`'s `k3`).
     A provider-rewired local-endpoint variant's harness slug may append
     `-local` per the D9 amendment above; it stays a harness-slug suffix, and
-    is never folded into a model or family slug.
+    is never folded into a model or family slug. **Amended 2026-10-09 —
+    model slugs name version-free lines
+    ([harmon-init#1516](https://github.com/evanharmon1/harmon-init/issues/1516))**:
+    a model slug now always names a *line* that stays stable across
+    releases, never a version. Versions live in each line's `versions` list
+    with dotted slugs (`5.5`, `3.8`), so the version examples above became
+    lines: `glm`'s `5-2` is now a retired version `5.2` of the line `glm`,
+    and `kimi`'s `k3` is version `3` of the line `k`. The label-syntax
+    rationale above still holds: version slugs never feed a `claim:` or
+    `suggest:` label segment, only line slugs do, so the dots stay out of
+    label names.
 
 Foreman's legacy production adapter `claude.sh` maps to harness `claude-code`.
 Its `mock.sh` adapter is a hermetic test seam only: it has no harness mapping,
