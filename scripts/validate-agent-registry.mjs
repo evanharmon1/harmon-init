@@ -488,6 +488,84 @@ if (errors.length === 0) {
     }
   }
 
+  // ── model lines and versions (#1516) — a model entry is a LINE whose slug
+  // never embeds a version; its releases live in `versions`, newest first.
+  // The policy readers reason about `models[].tier` per line, so the line
+  // tier must be its one current version's tier: a line needs exactly one
+  // current version (one with none would still lend its tier to the readers),
+  // and a version may override the tier only once it is retired. ──────────
+  const VERSION_SLUG = /^[a-z0-9]+(?:[.-][a-z0-9]+)*$/
+  // A segment that is a bare number, or a single letter plus a number
+  // (`5`, `v4`, `k3`), is a version, not a product word.
+  const VERSION_SEGMENT = /^[a-z]?[0-9]+$/
+  for (const family of registry.families) {
+    for (const model of family.models) {
+      const where = `family ${family.slug} model line ${model.slug}`
+      const embedded = model.slug.split('-').find((segment) => VERSION_SEGMENT.test(segment))
+      if (embedded) {
+        semanticError(
+          `${where} embeds a version in its slug (segment ${embedded}) — name the line, and record the version in versions[]`
+        )
+      }
+      for (const version of model.versions) {
+        if (!VERSION_SLUG.test(version.slug)) {
+          semanticError(
+            `${where} version slug ${JSON.stringify(version.slug)} must be lowercase alphanumeric segments separated by . or -`
+          )
+        }
+      }
+      const seen = new Set()
+      for (const version of model.versions) {
+        if (seen.has(version.slug))
+          semanticError(`${where} has duplicate version slug: ${version.slug}`)
+        seen.add(version.slug)
+      }
+      const current = model.versions.filter((version) => version.retired === false)
+      if (current.length !== 1) {
+        semanticError(
+          `${where} has ${current.length} current (non-retired) versions — exactly one is required (${current.map((version) => version.slug).join(', ') || 'none'})`
+        )
+      } else if (model.versions[0] !== current[0]) {
+        semanticError(
+          `${where} lists current version ${current[0].slug} after ${model.versions[0].slug} — versions are newest first and the current one leads`
+        )
+      }
+      for (const version of current) {
+        if (Object.hasOwn(version, 'tier')) {
+          semanticError(
+            `${where} current version ${version.slug} overrides the line tier — only a retired version may carry its own tier; the line tier is the current version's`
+          )
+        }
+      }
+    }
+  }
+
+  // ── reasoning efforts (#1516) — one registry-wide ladder in canonical
+  // order; each harness draws its accepted efforts from it, in ladder order.
+  const EFFORT_ORDER = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+  const ladderRank = (ladder) => ladder.map((effort) => EFFORT_ORDER.indexOf(effort))
+  const ascending = (ranks) => ranks.every((rank, index) => index === 0 || rank > ranks[index - 1])
+  if (!ascending(ladderRank(registry.effort_ladder))) {
+    semanticError(
+      `effort_ladder ${JSON.stringify(registry.effort_ladder)} is out of order — it must follow ${EFFORT_ORDER.join(' < ')}`
+    )
+  }
+  const ladder = new Set(registry.effort_ladder)
+  for (const harness of registry.harnesses) {
+    const outside = harness.efforts.filter((effort) => !ladder.has(effort))
+    if (outside.length > 0) {
+      semanticError(
+        `harness ${harness.slug} declares effort(s) ${outside.join(', ')} that are not on effort_ladder`
+      )
+    } else if (
+      !ascending(harness.efforts.map((effort) => registry.effort_ladder.indexOf(effort)))
+    ) {
+      semanticError(
+        `harness ${harness.slug} efforts ${JSON.stringify(harness.efforts)} are out of ladder order`
+      )
+    }
+  }
+
   // ── harness write-restriction (specs/dev-flow-v2.md 'Write boundaries are
   // enforced capabilities', #635): a harness cannot be trusted to dispatch a
   // write-restricted role unless it can deny ambient writes. ──────────────
