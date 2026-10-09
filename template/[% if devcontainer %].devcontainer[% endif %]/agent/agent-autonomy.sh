@@ -212,7 +212,7 @@ cmd_apply() {
     [ -f "$GH_API_READ_SRC" ] || fail "GET wrapper not found at ${GH_API_READ_SRC}"
     require_digest_tool
 
-    if [ ! -x "$GH_API_READ" ] || ! same_digest "$GH_API_READ" "$GH_API_READ_SRC"; then
+    if [ -L "$GH_API_READ" ] || [ ! -x "$GH_API_READ" ] || ! same_digest "$GH_API_READ" "$GH_API_READ_SRC"; then
         install_as_root "$GH_API_READ_SRC" "$GH_API_READ" 0755
         echo "==> agent-autonomy: GET wrapper installed at ${GH_API_READ}"
     fi

@@ -761,8 +761,14 @@ install_agent_posture() {
     # Stated rather than inherited, as for fetched_dir: root's installer writes
     # the decoy destinations here.
     chmod 0700 "$posture_scratch"
-    wrapper_target="$(prepare_posture_dest "${config_dir}/gh-api-read" \
-        "$HARMON_AGENT_GH_API_READ" "${posture_scratch}/gh-api-read")"
+    # The wrapper is ours, not platform-managed policy. Never preserve stale
+    # or different executable bytes behind the managed allow rule.
+    wrapper_target="$HARMON_AGENT_GH_API_READ"
+    install -d -m 0755 "$(dirname "$wrapper_target")"
+    if [ -L "$wrapper_target" ] || [ ! -x "$wrapper_target" ] || ! cmp -s "${config_dir}/gh-api-read" "$wrapper_target"; then
+        harmon_changed "agent posture ${wrapper_target}"
+        install -m 0755 "${config_dir}/gh-api-read" "$wrapper_target"
+    fi
     claude_target="$(prepare_posture_dest "${config_dir}/claude-managed-settings.json" \
         "$HARMON_AGENT_CLAUDE_MANAGED" "${posture_scratch}/managed-settings.json")"
     codex_target="$(prepare_posture_dest "${config_dir}/codex-managed-config.toml" \
@@ -770,8 +776,6 @@ install_agent_posture() {
     # The substitutions above ran in subshells; which destinations were left in
     # place is recovered from where they now point.
     posture_left_in_place=""
-    [ "$wrapper_target" = "$HARMON_AGENT_GH_API_READ" ] ||
-        posture_left_in_place="${posture_left_in_place} ${HARMON_AGENT_GH_API_READ}"
     [ "$claude_target" = "$HARMON_AGENT_CLAUDE_MANAGED" ] ||
         posture_left_in_place="${posture_left_in_place} ${HARMON_AGENT_CLAUDE_MANAGED}"
     [ "$codex_target" = "$HARMON_AGENT_CODEX_MANAGED" ] ||

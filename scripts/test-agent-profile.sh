@@ -345,7 +345,21 @@ run_wrapper() {
     shift
     PATH="${wrapper_bin}:$PATH" GH_API_READ_LOG="$wrapper_log" bash "$wrapper" "$@"
 }
-wrapper="${agent_config_dir}/gh-api-read"
+shipped_wrapper="${agent_config_dir}/gh-api-read"
+# Keep the production PATH pin in the probe; change only the API invocation
+# to --version so the system gh is exercised without a request or credentials.
+grep -qx 'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' "$shipped_wrapper" ||
+    fail "GET wrapper does not pin the system PATH"
+sed 's/exec gh api --method GET "$@" "$endpoint"/exec gh --version/' "$shipped_wrapper" >"${work_dir}/wrapper-path-probe"
+rm -f "$wrapper_log"
+run_wrapper "${work_dir}/wrapper-path-probe" repos/example/repo >"${work_dir}/wrapper-path.out" ||
+    fail "system gh PATH probe failed"
+[ ! -e "$wrapper_log" ] || fail "GET wrapper ran the fake gh first on the caller PATH"
+grep -q '^gh version ' "${work_dir}/wrapper-path.out" || fail "GET wrapper did not run the system gh"
+# Only the argument-contract fixture replaces the PATH pin with the recording
+# stub's directory. No production file or system executable is changed.
+wrapper="${work_dir}/wrapper-with-stub"
+sed "s|^export PATH=.*|export PATH=${wrapper_bin}:$PATH|" "$shipped_wrapper" >"$wrapper"
 # This contract refuses any implementation that does not pin the outgoing GET.
 wrapper_contract() {
     run_wrapper "$1" 'repos/example/repo?per_page=100' --paginate --jq '.items[]' || return 1
@@ -482,7 +496,7 @@ fi
 FOREMAN_DEVCONTAINER=agent run_autonomy apply >/dev/null || fail "agent-autonomy.sh apply failed under the agent marker"
 cmp -s "$agent_settings" "${fake_etc}/claude-code/managed-settings.json" || fail "apply did not install the agent Claude settings"
 cmp -s "$agent_codex" "${fake_etc}/codex/managed_config.toml" || fail "apply did not install the agent Codex config"
-cmp -s "$wrapper" "${fake_etc}/gh-api-read" && [ -x "${fake_etc}/gh-api-read" ] || fail "apply did not install the executable GET wrapper"
+cmp -s "$shipped_wrapper" "${fake_etc}/gh-api-read" && [ -x "${fake_etc}/gh-api-read" ] || fail "apply did not install the executable GET wrapper"
 [ ! -x "${fake_bin}/opencode" ] || fail "apply did not refuse opencode (no agent-capable configuration)"
 [ ! -x "${fake_bin}/agy" ] || fail "apply did not refuse agy (no agent-capable configuration)"
 [ -x "${fake_bin}/claude" ] && [ -x "${fake_bin}/codex" ] || fail "apply refused an agent-capable harness"

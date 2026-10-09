@@ -678,7 +678,9 @@ meets its exit condition on round 1 is done, whatever the cap allowed.
   hypotheses: verify each against the code, fix what's confirmed, and post the
   rejection reasoning with evidence otherwise. Post replies with
   `gh api repos/{owner}/{repo}/pulls/<n>/comments/<comment-id>/replies -f body=…`
-  (comment IDs from `gh api …/pulls/<n>/comments`). A rollup summary comment
+  (comment IDs from `gh api …/pulls/<n>/comments`; the agent posture uses
+  `/usr/local/bin/gh-api-read …/pulls/<n>/comments` for this read and denies
+  raw `gh api`). A rollup summary comment
   on the PR is optional in addition, never a substitute for per-thread
   replies.
 - Git hooks are managed by **lefthook** (`task install:hooks`); every hook delegates

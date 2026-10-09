@@ -354,8 +354,12 @@ leave a harness installed on the machine without its managed policy.
   they do not follow commands into scripts or Taskfile targets. The boundary
   is the bot's collaborator grants, the agent PAT's scopes and the repository
   branch rulesets.
-- **A file already there is left in place.** `/etc/claude-code/` and
-  `/etc/codex/` are created when missing. Anything already at any of the three destinations that
+- **The wrapper is always ours.** A stale or differing
+  `/usr/local/bin/gh-api-read` is replaced at mode 0755 without a policy
+  replacement opt-in. Matching executable bytes need no reinstall. Its
+  system PATH prevents a caller from selecting a user-installed `gh`.
+- **A managed-policy file already there is left in place.** `/etc/claude-code/` and
+  `/etc/codex/` are created when missing. Anything already at either managed-policy destination that
   is not the definition — a file, or a symlink, dangling or not — may be the
   platform's own managed policy, possibly a stronger control than ours, so by
   default it is **not replaced**: the run reports its path and what it is (its

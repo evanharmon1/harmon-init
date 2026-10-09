@@ -2648,21 +2648,18 @@ for kept in "${claude}".replaced-*; do
 done
 printf 'DANGLING_REPLACE_KEPT_LINK %s\n' "$kept_links"
 
-# A platform wrapper alone is preserved while both managed files verify.
-printf '#!/bin/sh\necho platform-wrapper\n' >"$wrapper"
+# Our wrapper replaces a stale executable without replacing managed policy.
+printf '#!/bin/sh\necho stale-wrapper\n' >"$wrapper"
 chmod 0755 "$wrapper"
-cp -p "$wrapper" "${root}/platform-wrapper"
-run WRAPPER_PLATFORM
-printf 'WRAPPER_PLATFORM_BYTES %s\n' "$(same "$wrapper" "${root}/platform-wrapper")"
-printf 'WRAPPER_PLATFORM_MODE %s\n' "$([ -x "$wrapper" ] && echo executable || echo changed)"
-printf 'WRAPPER_PLATFORM_CLAUDE %s\n' "$(same "$claude" "$claude_def")"
-printf 'WRAPPER_PLATFORM_CODEX %s\n' "$(same "$codex" '@REPO@/.devcontainer/config/agent/codex-managed-config.toml')"
-printf 'WRAPPER_PLATFORM_WARNED %s\n' "$(grep -qF "WARNING: found ${wrapper}" "${root}/WRAPPER_PLATFORM.err" && echo named || echo silent)"
-printf 'WRAPPER_PLATFORM_COVERED %s\n' "$(grep -qF "==> agent posture: verify covered ${claude} ${codex} (not verified, left in place: ${wrapper})" "${root}/WRAPPER_PLATFORM.out" && echo named || echo silent)"
-run WRAPPER_REPLACE HARMON_AGENT_POSTURE_REPLACE=1
-printf 'WRAPPER_REPLACE_BYTES %s\n' "$(same "$wrapper" "$wrapper_def")"
-printf 'WRAPPER_REPLACE_MODE %s\n' "$([ -x "$wrapper" ] && echo executable || echo refused)"
-printf 'WRAPPER_REPLACE_KEPT %s\n' "$(same "${wrapper}".replaced-* "${root}/platform-wrapper")"
+run WRAPPER_STALE
+printf 'WRAPPER_STALE_BYTES %s\n' "$(same "$wrapper" "$wrapper_def")"
+printf 'WRAPPER_STALE_MODE %s\n' "$([ -x "$wrapper" ] && echo executable || echo refused)"
+printf 'WRAPPER_STALE_CLAUDE %s\n' "$(same "$claude" "$claude_def")"
+printf 'WRAPPER_STALE_CODEX %s\n' "$(same "$codex" '@REPO@/.devcontainer/config/agent/codex-managed-config.toml')"
+printf 'WRAPPER_STALE_COVERED %s\n' "$(grep -qF "==> agent posture: verify covered ${claude} ${codex} ${wrapper}" "${root}/WRAPPER_STALE.out" && echo named || echo silent)"
+run WRAPPER_RERUN
+printf 'WRAPPER_RERUN_BYTES %s\n' "$(same "$wrapper" "$wrapper_def")"
+printf 'WRAPPER_RERUN_MODE %s\n' "$([ -x "$wrapper" ] && echo executable || echo refused)"
 
 modes >"${root}/modes.after"
 printf 'MODES %s\n' "$(cmp -s "${root}/modes.before" "${root}/modes.after" && echo unchanged || echo changed)"
@@ -2709,21 +2706,19 @@ printf 'MODES %s\n' "$(cmp -s "${root}/modes.before" "${root}/modes.after" && ec
         "DANGLING_REPLACE_GAPS": "0",
         "DANGLING_REPLACE_CLAUDE": "same",
         "DANGLING_REPLACE_KEPT_LINK": "1",
-        "WRAPPER_PLATFORM_EXIT": "0",
-        "WRAPPER_PLATFORM_INSTALLS": "0",
-        "WRAPPER_PLATFORM_GAPS": "1",
-        "WRAPPER_PLATFORM_BYTES": "same",
-        "WRAPPER_PLATFORM_MODE": "executable",
-        "WRAPPER_PLATFORM_CLAUDE": "same",
-        "WRAPPER_PLATFORM_CODEX": "same",
-        "WRAPPER_PLATFORM_WARNED": "named",
-        "WRAPPER_PLATFORM_COVERED": "named",
-        "WRAPPER_REPLACE_EXIT": "0",
-        "WRAPPER_REPLACE_INSTALLS": "1",
-        "WRAPPER_REPLACE_GAPS": "0",
-        "WRAPPER_REPLACE_BYTES": "same",
-        "WRAPPER_REPLACE_MODE": "executable",
-        "WRAPPER_REPLACE_KEPT": "same",
+        "WRAPPER_STALE_EXIT": "0",
+        "WRAPPER_STALE_INSTALLS": "1",
+        "WRAPPER_STALE_GAPS": "0",
+        "WRAPPER_STALE_BYTES": "same",
+        "WRAPPER_STALE_MODE": "executable",
+        "WRAPPER_STALE_CLAUDE": "same",
+        "WRAPPER_STALE_CODEX": "same",
+        "WRAPPER_STALE_COVERED": "named",
+        "WRAPPER_RERUN_EXIT": "0",
+        "WRAPPER_RERUN_INSTALLS": "0",
+        "WRAPPER_RERUN_GAPS": "0",
+        "WRAPPER_RERUN_BYTES": "same",
+        "WRAPPER_RERUN_MODE": "executable",
         "MODES": "unchanged",
     }
     why = {
@@ -2766,21 +2761,19 @@ printf 'MODES %s\n' "$(cmp -s "${root}/modes.before" "${root}/modes.after" && ec
         "DANGLING_REPLACE_GAPS": "a replaced symlink is no longer a gap",
         "DANGLING_REPLACE_CLAUDE": "the symlink is replaced by a regular file holding the definition",
         "DANGLING_REPLACE_KEPT_LINK": "the kept copy is the symlink itself, not a failed copy of its missing target",
-        "WRAPPER_PLATFORM_EXIT": "a platform wrapper alone is a delivery gap, not a failed run",
-        "WRAPPER_PLATFORM_INSTALLS": "a platform wrapper left in place counts as no install",
-        "WRAPPER_PLATFORM_GAPS": "the preserved wrapper counts as exactly one delivery gap",
-        "WRAPPER_PLATFORM_BYTES": "the platform wrapper is preserved byte for byte",
-        "WRAPPER_PLATFORM_MODE": "preservation leaves the platform wrapper executable",
-        "WRAPPER_PLATFORM_CLAUDE": "preserving the wrapper leaves the Claude settings delivered",
-        "WRAPPER_PLATFORM_CODEX": "preserving the wrapper leaves the Codex config delivered",
-        "WRAPPER_PLATFORM_WARNED": "the preserved wrapper is named in the delivery warning",
-        "WRAPPER_PLATFORM_COVERED": "verification covers only the two managed files when the wrapper is preserved",
-        "WRAPPER_REPLACE_EXIT": "explicit replacement of a platform wrapper succeeds",
-        "WRAPPER_REPLACE_INSTALLS": "only the replaced wrapper counts as an install",
-        "WRAPPER_REPLACE_GAPS": "explicit replacement settles the wrapper delivery gap",
-        "WRAPPER_REPLACE_BYTES": "the replacement wrapper matches its checked-in definition",
-        "WRAPPER_REPLACE_MODE": "the replacement wrapper is executable",
-        "WRAPPER_REPLACE_KEPT": "the platform wrapper bytes are kept beside the replacement",
+        "WRAPPER_STALE_EXIT": "a stale wrapper is replaced without requiring the managed-policy replacement opt-in",
+        "WRAPPER_STALE_INSTALLS": "only the stale wrapper counts as an install",
+        "WRAPPER_STALE_GAPS": "our wrapper is never preserved as a delivery gap",
+        "WRAPPER_STALE_BYTES": "a stale wrapper is replaced by the checked-in wrapper bytes",
+        "WRAPPER_STALE_MODE": "the replaced wrapper is executable",
+        "WRAPPER_STALE_CLAUDE": "replacing the wrapper leaves the Claude settings delivered",
+        "WRAPPER_STALE_CODEX": "replacing the wrapper leaves the Codex config delivered",
+        "WRAPPER_STALE_COVERED": "verification covers all three delivered destinations",
+        "WRAPPER_RERUN_EXIT": "a rerun after wrapper replacement succeeds",
+        "WRAPPER_RERUN_INSTALLS": "a rerun after wrapper replacement installs nothing",
+        "WRAPPER_RERUN_GAPS": "a rerun after wrapper replacement reports no delivery gap",
+        "WRAPPER_RERUN_BYTES": "a rerun keeps the delivered wrapper bytes",
+        "WRAPPER_RERUN_MODE": "a rerun keeps the delivered wrapper executable",
         "MODES": "the posture step changes no file mode outside its temporary destinations",
     }
     if run is None or run.returncode != 0 or any(k.startswith("MISSING_TOOL") for k in got):

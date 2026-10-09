@@ -4,6 +4,10 @@
 # Headers (including method overrides), bundled flags and GraphQL are refused.
 set -euo pipefail
 
+# Ignore caller-controlled search directories: the allowed wrapper must run
+# the system gh, never an executable planted in a user-writable directory.
+export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
 refuse() {
     printf 'gh-api-read: refused: %s\n' "$*" >&2
     exit 2

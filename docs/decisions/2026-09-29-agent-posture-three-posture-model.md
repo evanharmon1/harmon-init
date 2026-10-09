@@ -234,7 +234,8 @@ Mechanically:
 Accepted — maintainer decision for
 [harmon-init#1549](https://github.com/evanharmon1/harmon-init/issues/1549).
 The safe read probe `gh api -iXGET repos/evanharmon1/harmon-init` returned
-HTTP 200 in the postured session. Bundled short flags evade argument matching:
+HTTP 200 outside the posture, verifying the bundled-flag spelling offline.
+The postured-session probe remains #1549's pending human check. Bundled short flags evade argument matching:
 `-iXPOST` contains neither a word starting with `-X` nor any of the denied
 field or method patterns. An allow for raw `gh api` therefore also admits
 spellings of writes denied by command name, including releases and workflow
@@ -245,7 +246,11 @@ the superseded argument-pattern API denies, and allow only the REST read
 front door `/usr/local/bin/gh-api-read`. The wrapper has one source under
 `.devcontainer/config/agent/` and its template twin; it depends on no skill.
 Both the agent devcontainer and web bootstrap install and verify that source
-as an executable at the same absolute path.
+as an executable at the same absolute path. The wrapper always replaces a
+stale or differing copy at mode 0755; unlike platform-owned managed policy,
+it is ours and is named by the managed allow rule. Identical executable bytes
+need no reinstall. The wrapper pins a system PATH before running `gh`, so a
+caller cannot substitute a binary from a user-writable search directory.
 
 The wrapper accepts exactly one relative REST endpoint, pagination and
 client-side output flags. Every method, field, input, header (including
