@@ -30,7 +30,7 @@ check_taskfile_paths() {
     local taskfile matches
     for taskfile in "$@"; do
         [ -f "$taskfile" ] || continue
-        matches="$(grep -nHE '\{\{[[:space:]]*\.PWD[[:space:]]*\}\}' "$taskfile" || true)"
+        matches="$(grep -nHE '\{\{[^}]*\.PWD[^A-Za-z0-9_]' "$taskfile" || true)"
         [ -z "$matches" ] ||
             fail "$matches — derive paths from ROOT_DIR or TASKFILE_DIR, never PWD"
     done
@@ -43,14 +43,14 @@ taskfile_jinja_open='[%'
 template_taskfiles="template/${taskfile_jinja_open} if use_foreman %]taskfiles${taskfile_jinja_open} endif %]"
 check_taskfile_paths Taskfile.yml taskfiles/*.yml template/Taskfile.yml.jinja "$template_taskfiles"/*.yml
 
-echo "==> Taskfile PWD guard rejects compact and spaced references (negative controls)"
+echo "==> Taskfile PWD guard rejects bare, trimmed and piped references (negative controls)"
 pwd_taskfile="${test_tmp}/Taskfile.yml"
-for pwd_reference in '{{.PWD}}' '{{ .PWD }}'; do
+for pwd_reference in '{{.PWD}}' '{{ .PWD }}' '{{- .PWD -}}' '{{.PWD | dir}}'; do
     printf '%s\n' 'version: "3"' "# $pwd_reference" >"$pwd_taskfile"
     out=$(check_taskfile_paths "$pwd_taskfile" 2>&1) && rc=0 || rc=$?
     [ "$rc" -ne 0 ] || fail "Taskfile PWD guard accepted $pwd_reference"
     case "$out" in
-    *"${pwd_taskfile}:2:# ${pwd_reference}"*'never PWD'*) ;;
+    *"${pwd_taskfile}:2:"*"${pwd_reference}"*'never PWD'*) ;;
     *) fail "Taskfile PWD guard failed for the wrong reason: $out" ;;
     esac
 done
