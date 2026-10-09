@@ -15,12 +15,14 @@ command="$(printf '%s' "$input" | jq -r '.tool_input.command // ""')"
 # fails, let lefthook validate the actual commit message instead.
 command -v python3 >/dev/null 2>&1 || exit 0
 msg="$(python3 -c '
+import os
 import re
 import shlex
 import sys
 
 try:
-    lexer = shlex.shlex(sys.argv[1], posix=True, punctuation_chars=True)
+    command = sys.argv[1].replace(chr(92) + "\n", "")
+    lexer = shlex.shlex(command, posix=True, punctuation_chars=True)
     # Keep newlines as command boundaries, rather than ordinary whitespace.
     lexer.whitespace = " \t\r"
     segments = []
@@ -50,18 +52,37 @@ except ValueError:
     sys.exit(0)
 
 for segment in segments:
-    if not segment or segment[0] != "git":
-        continue
-    # Skip known global options without mistaking their values for commands.
-    index = 1
+    # Locate the executable after shell assignments, wrappers and control words.
+    index = 0
     while index < len(segment):
-        arg = segment[index]
-        if arg in ("-C", "-c", "--git-dir", "--work-tree", "--namespace", "--config-env"):
-            index += 2
-        elif arg.startswith(("--git-dir=", "--work-tree=", "--namespace=", "--config-env=", "-C", "-c")):
+        word = segment[index]
+        if re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", word):
             index += 1
+        elif word in ("command", "builtin", "exec", "nohup", "time", "-p",
+                      "(", "{", "!", "if", "then", "do", "else", "elif", "while", "until"):
+            index += 1
+        elif word == "env":
+            index += 1
+            while index < len(segment) and segment[index].startswith("-"):
+                option = segment[index]
+                index += 1
+                if option in ("-u", "--unset", "-C", "--chdir"):
+                    index += 1
+                elif option == "--":
+                    break
         else:
             break
+    if index >= len(segment) or os.path.basename(segment[index]) != "git":
+        continue
+    index += 1
+    # All leading Git options precede the subcommand; only these consume a
+    # separate value. Bare --exec-path consumes none; = forms are one token.
+    while index < len(segment) and segment[index].startswith("-"):
+        option = segment[index]
+        index += 1
+        if option in ("-C", "-c", "--git-dir", "--work-tree", "--namespace",
+                      "--super-prefix", "--config-env"):
+            index += 1
     if index >= len(segment) or segment[index] != "commit":
         continue
     args = segment[index + 1:]
@@ -71,17 +92,36 @@ for segment in segments:
         arg = args[index]
         if arg == "--":
             break
-        # File messages belong to the real commit-msg hook, not this parser.
-        if arg in ("-F", "--file") or arg.startswith(("--file=", "-F")):
-            messages = []
-            break
-        if arg in ("-m", "--message") and index + 1 < len(args):
-            index += 1
-            messages.append(args[index])
-        elif arg.startswith("--message="):
-            messages.append(arg[10:])
-        elif arg.startswith("-m") and len(arg) > 2:
-            messages.append(arg[2:])
+        name, equals, value = arg.partition("=")
+        is_file = len(name) >= 5 and "--file".startswith(name)
+        is_message = len(name) >= 5 and "--message".startswith(name)
+        if arg.startswith("--"):
+            if is_file:
+                messages = []
+                break
+            if is_message:
+                if equals:
+                    messages.append(value)
+                elif index + 1 < len(args):
+                    index += 1
+                    messages.append(args[index])
+        elif arg.startswith("-"):
+            # In short clusters, m/F own the remaining characters or next arg.
+            for offset, letter in enumerate(arg[1:], start=1):
+                if letter == "F":
+                    messages = []
+                    break
+                if letter == "m":
+                    if offset + 1 < len(arg):
+                        messages.append(arg[offset + 1:])
+                    elif index + 1 < len(args):
+                        index += 1
+                        messages.append(args[index])
+                    break
+            else:
+                letter = ""
+            if letter == "F":
+                break
         index += 1
     parsed = []
     for message in messages:

@@ -106,6 +106,13 @@ EOF
 COMMAND
 )"
 
+continued_commit="$(
+    cat <<'COMMAND'
+git commit \
+-m "bad message"
+COMMAND
+)"
+
 for commit_hook in \
     "$repo/.claude/hooks/enforce-conventional-commits.sh" \
     "$repo/.devcontainer/config/claude-hooks/enforce-conventional-commits.sh" \
@@ -139,6 +146,44 @@ for commit_hook in \
     assert_commit_status "$commit_hook" 0 'git commit -- path -m "bad message"'
     assert_commit_status "$commit_hook" 0 "${python_before_commit/-F msg.txt/-m \"fix: ok\"}"
     assert_commit_status "$commit_hook" 2 "${python_before_commit/-F msg.txt/-m \"bad message\"}"
+    # Shell command words, Git global options, and clustered message options.
+    assert_commit_status "$commit_hook" 2 'git --no-pager commit -m "bad message"'
+    assert_commit_status "$commit_hook" 2 'git -P commit -m "bad"'
+    assert_commit_status "$commit_hook" 2 'git --bare commit -m "bad"'
+    assert_commit_status "$commit_hook" 2 'git -C . commit -m "bad"'
+    assert_commit_status "$commit_hook" 2 'git -c user.name=x commit -m "bad"'
+    assert_commit_status "$commit_hook" 2 'git --super-prefix prefix commit -m "bad"'
+    assert_commit_status "$commit_hook" 2 'git --exec-path commit -m "bad"'
+    assert_commit_status "$commit_hook" 2 'git --exec-path=/tmp commit -m "bad"'
+    assert_commit_status "$commit_hook" 2 "$continued_commit"
+    assert_commit_status "$commit_hook" 2 'FOO=1 git commit -m "bad"'
+    assert_commit_status "$commit_hook" 2 'env GIT_X=1 git commit -m "bad"'
+    assert_commit_status "$commit_hook" 2 'env -i -u HOME GIT_X=1 git commit -m "bad"'
+    assert_commit_status "$commit_hook" 2 'command git commit -m "bad"'
+    assert_commit_status "$commit_hook" 2 'builtin git commit -m "bad"'
+    assert_commit_status "$commit_hook" 2 'exec git commit -m "bad"'
+    assert_commit_status "$commit_hook" 2 'nohup git commit -m "bad"'
+    assert_commit_status "$commit_hook" 2 'time git commit -m "bad"'
+    assert_commit_status "$commit_hook" 2 'time -p git commit -m "bad"'
+    assert_commit_status "$commit_hook" 2 '/usr/bin/git commit -m "bad"'
+    assert_commit_status "$commit_hook" 2 '( git commit -m "bad" )'
+    assert_commit_status "$commit_hook" 2 '{ git commit -m "bad"; }'
+    assert_commit_status "$commit_hook" 2 'if git commit -m "bad"; then :; fi'
+    assert_commit_status "$commit_hook" 2 '! git commit -m "bad"'
+    assert_commit_status "$commit_hook" 2 'while git commit -m "bad"; do :; done'
+    assert_commit_status "$commit_hook" 2 'until git commit -m "bad"; do :; done'
+    assert_commit_status "$commit_hook" 2 'git commit -am "bad message"'
+    assert_commit_status "$commit_hook" 2 'git commit -sm "bad"'
+    assert_commit_status "$commit_hook" 2 'git commit -vam "bad"'
+    assert_commit_status "$commit_hook" 2 'git commit -ambad'
+    assert_commit_status "$commit_hook" 2 'git commit --mess "bad"'
+    assert_commit_status "$commit_hook" 2 'git commit --messa=bad'
+    assert_commit_status "$commit_hook" 0 'git commit -am "fix: ok"'
+    assert_commit_status "$commit_hook" 0 'git commit "-amfix: ok"'
+    assert_commit_status "$commit_hook" 0 'git commit -aF msg.txt'
+    assert_commit_status "$commit_hook" 0 'git commit --fil msg.txt'
+    assert_commit_status "$commit_hook" 0 'git commit --fil=msg.txt'
+
 done
 
 echo "==> conventional commit extraction OK"
