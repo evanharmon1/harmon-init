@@ -715,11 +715,15 @@ meets its exit condition on round 1 is done, whatever the cap allowed.
 
 ### Remote environments
 
-On a fresh checkout in a remote environment (Claude Code on the web, Codex
-cloud — anywhere with no devcontainer), no hook or devcontainer lifecycle
-script has run: run `task setup:remote` first. It is idempotent — it installs
-the lefthook git hooks, installs dependencies from the lockfile, and clones the
-repos in `.devcontainer/related-repos.txt` (when present) beside the checkout.
+On a remote checkout (Claude Code on the web, Codex cloud — anywhere with
+no devcontainer), run `task setup:remote` first if preparation has not run.
+In a single-repository web session, the repository's remote-only `SessionStart`
+hook runs it automatically and prints a summary; if the hook did not run (a
+multi-repository session or a platform without the hook), run it once yourself.
+It is idempotent — it installs the lefthook git hooks, clones then fetches the
+repos in `.devcontainer/related-repos.txt` (when present) beside the checkout,
+and installs dependencies from the lockfile. Fetching
+updates remote-tracking refs without moving a sibling's checkout or local work.
 Those siblings are reference context, not pushable where the platform only
 allows pushes to the session's own repository and branch. The pre-push hook is
 not a substitute for `task verify`, so run it yourself.
