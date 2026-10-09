@@ -676,6 +676,8 @@ TODO: enumerate the tokens/secrets this repo depends on and where each lives:
 | `AGENT_GH_TOKEN` (the agent PAT) | the **agent** devcontainer's `gh`/git operations (stored as gh's login at create); never the bot or dev profile | host environment → `init-env.sh --profile agent` → `.devcontainer/agent/devcontainer.env` | manual; ≤180-day expiry, one per resource owner ([guides/bot-account.md](../guides/bot-account.md)) |
 | TODO | TODO | TODO | TODO |
 
+The optional `CLAUDE_CODE_OAUTH_TOKEN_2` enables one zero-usage failure fallback in Claude workflows; the fallback is skipped when absent.
+
 ## Rotation & incident notes
 
 TODO: how and how often each secret rotates; what to do if one leaks (revoke,
