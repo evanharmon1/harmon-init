@@ -2245,6 +2245,20 @@
           }
         ]
       }
+    },
+    {
+      "name": "absent-merge-base-requires-existing-branch-policy",
+      "basis": "absent",
+      "cli_options": ["--merge-base-policy-absent"],
+      "expect": {
+        "exit": 2,
+        "error_diagnostics": [
+          {
+            "code": "usage",
+            "subject": "merge-base-policy-absent"
+          }
+        ]
+      }
     }
   ]
 }

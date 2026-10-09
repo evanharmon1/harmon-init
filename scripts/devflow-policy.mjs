@@ -2922,6 +2922,12 @@ function cliResolve(args) {
 
   let mergeBaseDoc = null
   const mergeBasePolicyAbsent = args['merge-base-policy-absent'] === true
+  if (mergeBasePolicyAbsent && doc === null) {
+    console.error(
+      'devflow-policy: --merge-base-policy-absent requires an existing --policy file (a branch that adds .devflow.toml)'
+    )
+    return 2
+  }
   if (args['merge-base-policy']) {
     try {
       mergeBaseDoc = loadTomlFile(args['merge-base-policy'])
