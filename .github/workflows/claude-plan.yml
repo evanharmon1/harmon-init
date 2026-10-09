@@ -178,13 +178,23 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           token: ${{ steps.app-token.outputs.token }}
-      # Claude switches to the PR head; retain the trusted default-branch
-      # helper before that switch so a fork cannot replace the result script.
-      - name: Preserve the trusted Claude result helper
+      # Review events can check out a PR merge commit. Read the helper only
+      # from the default branch tip; until it exists there, use primary-only
+      # behavior without inspection or fallback.
+      - name: Read the trusted Claude result helper
+        id: claude-helper
         timeout-minutes: 2
+        env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
         run: |
-          cp scripts/claude-workflow-result.sh "$RUNNER_TEMP/claude-workflow-result.sh"
           git rev-parse HEAD > "$RUNNER_TEMP/claude-start-commit"
+          if git fetch --no-tags --depth=1 origin "refs/heads/$DEFAULT_BRANCH" &&
+             git show FETCH_HEAD:scripts/claude-workflow-result.sh > "$RUNNER_TEMP/claude-workflow-result.sh"; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Default-branch helper unavailable; running only the primary Claude action."
+          fi
       - uses: anthropics/claude-code-action@cab360f6565aa35a51d6ce9e43f1f4287c0a32ea # v1.0.241
         id: claude-primary
         continue-on-error: true
@@ -214,7 +224,7 @@ jobs:
             issue. Cite relevant files and existing patterns in the repo.
       - name: Inspect Claude primary result
         id: claude-primary-result
-        if: always() && steps.claude-primary.outcome != 'skipped' && steps.claude-primary.outcome != ''
+        if: always() && steps.claude-helper.outputs.available == 'true' && steps.claude-primary.outcome != 'skipped' && steps.claude-primary.outcome != ''
         env:
           EXECUTION_FILE: ${{ steps.claude-primary.outputs.execution_file }}
           ACTION_OUTCOME: ${{ steps.claude-primary.outcome }}
@@ -229,7 +239,7 @@ jobs:
         timeout-minutes: 2
         run: bash "$RUNNER_TEMP/claude-workflow-result.sh"
       - name: Remove the primary local branch before retry
-        if: ${{ !cancelled() && steps.claude-primary-result.outputs.retry == 'true' }}
+        if: ${{ !cancelled() && steps.claude-helper.outputs.available == 'true' && steps.claude-primary-result.outputs.retry == 'true' }}
         timeout-minutes: 2
         env:
           PRIMARY_BRANCH: ${{ steps.claude-primary.outputs.branch_name }}
@@ -237,7 +247,7 @@ jobs:
         run: bash "$RUNNER_TEMP/claude-workflow-result.sh" cleanup
       - uses: anthropics/claude-code-action@cab360f6565aa35a51d6ce9e43f1f4287c0a32ea # v1.0.241
         id: claude-alternate
-        if: ${{ !cancelled() && success() && steps.claude-primary-result.outputs.retry == 'true' }}
+        if: ${{ !cancelled() && success() && steps.claude-helper.outputs.available == 'true' && steps.claude-primary-result.outputs.retry == 'true' }}
         continue-on-error: true
         timeout-minutes: 110
         with:
@@ -257,7 +267,7 @@ jobs:
             issue. Cite relevant files and existing patterns in the repo.
       - name: Inspect Claude alternate result
         id: claude-alternate-result
-        if: always() && steps.claude-alternate.outcome != 'skipped' && steps.claude-alternate.outcome != ''
+        if: always() && steps.claude-helper.outputs.available == 'true' && steps.claude-alternate.outcome != 'skipped' && steps.claude-alternate.outcome != ''
         env:
           EXECUTION_FILE: ${{ steps.claude-alternate.outputs.execution_file }}
           ACTION_OUTCOME: ${{ steps.claude-alternate.outcome }}
@@ -273,18 +283,18 @@ jobs:
       - name: Require the last Claude attempt to succeed
         if: always() && steps.claude-primary.outcome != 'skipped' && steps.claude-primary.outcome != ''
         env:
-          LAST_OUTCOME: >-
-            ${{ steps.claude-alternate.outcome != 'skipped' &&
+          LAST_SUCCESS: >-
+            ${{ (steps.claude-alternate.outcome != 'skipped' &&
             steps.claude-alternate.outcome != '' &&
             steps.claude-alternate.outcome ||
-            steps.claude-primary.outcome }}
-          LAST_FAILED: >-
-            ${{ steps.claude-alternate.outcome != 'skipped' &&
+            steps.claude-primary.outcome) == 'success' &&
+            (steps.claude-helper.outputs.available != 'true' ||
+            (steps.claude-alternate.outcome != 'skipped' &&
             steps.claude-alternate.outcome != '' &&
             steps.claude-alternate-result.outputs.failed ||
-            steps.claude-primary-result.outputs.failed }}
+            steps.claude-primary-result.outputs.failed) == 'false') }}
         timeout-minutes: 2
-        run: bash "$RUNNER_TEMP/claude-workflow-result.sh" finish
+        run: test "$LAST_SUCCESS" = true
       # Release the claim on EVERY terminal path — success, failure, step
       # timeout, and cancellation alike — so a spent run never leaves a stale
       # claim behind. Gated on this run having ACQUIRED the claim: a claim that

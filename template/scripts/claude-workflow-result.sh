@@ -2,13 +2,8 @@
 # Inspect only the final result; never dump the execution transcript.
 set -euo pipefail
 
-if [ "${1:-inspect}" = finish ]; then
-    [ "${LAST_OUTCOME:-}" = success ] && [ "${LAST_FAILED:-true}" = false ]
-    exit $?
-fi
-
 if [ "${1:-inspect}" = cleanup ]; then
-    branch=${PRIMARY_BRANCH:-$(git branch --show-current)}
+    branch=${PRIMARY_BRANCH:-}
     [ -n "$branch" ] || exit 0
     case "$branch" in
     claude/*) ;;
@@ -74,6 +69,8 @@ if [ "$failed" = true ]; then
     printf 'Claude failure: %s\n' "$diagnostic"
     if [ -n "${TARGET:-}" ]; then
         body=$(printf 'Claude workflow attempt failed.\n\n```json\n%s\n```\n' "$diagnostic")
-        gh api "repos/${GH_REPO:?}/issues/$TARGET/comments" -f body="$body" >/dev/null
+        if ! gh api "repos/${GH_REPO:?}/issues/$TARGET/comments" -f body="$body" >/dev/null 2>&1; then
+            echo "::warning::Could not post the Claude failure comment; result decisions are unchanged."
+        fi
     fi
 fi

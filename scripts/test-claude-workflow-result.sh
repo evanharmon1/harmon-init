@@ -9,6 +9,7 @@ mkdir "$scratch/bin"
 cat >"$scratch/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$@" >"$COMMENT_CAPTURE"
+exit "${COMMENT_EXIT:-0}"
 STUB
 chmod +x "$scratch/bin/gh"
 export PATH="$scratch/bin:$PATH"
@@ -90,19 +91,10 @@ leak_status=0
 grep -qiE 'sk-ant-|ghp_|@co[d]ex' "$scratch/log" "$COMMENT_CAPTURE" || leak_status=$?
 [ "$leak_status" = 1 ] || fail 'credential or review mention leaked, or grep failed'
 grep -q '\[REDACTED\]' "$COMMENT_CAPTURE" || fail 'redaction absent'
-# Finalization restores the red job after continue-on-error, including missing data.
-LAST_OUTCOME=success LAST_FAILED=false "$guard" finish || fail 'successful final attempt failed'
-for outcome in failure cancelled skipped ''; do
-    if LAST_OUTCOME="$outcome" LAST_FAILED=false "$guard" finish; then
-        fail 'failed final action passed'
-    fi
-done
-if LAST_OUTCOME=success LAST_FAILED=true "$guard" finish; then
-    fail 'error result passed finalization'
-fi
-if LAST_OUTCOME=success LAST_FAILED='' "$guard" finish; then
-    fail 'missing inspection passed finalization'
-fi
+# Comment delivery must never change a zero-usage failure decision.
+fixture success true 0 '{}'
+COMMENT_EXIT=1 run true true failure true
+grep -q '::warning::Could not post' "$scratch/log" || fail 'comment failure warning missing'
 # Retiring the primary output leaves the next inspection with no stale result.
 fixture success true 0 '{}'
 ARCHIVE_EXECUTION=true run true true failure true
@@ -140,10 +132,9 @@ mkdir "$scratch/repo"
     if DEFAULT_BRANCH=claude/default PRIMARY_BRANCH=claude/default "$guard" cleanup >/dev/null 2>&1; then
         fail 'default branch accepted for cleanup'
     fi
-    # The fallback to the current branch is safe when no action output exists.
-    PRIMARY_BRANCH='' "$guard" cleanup >/dev/null 2>&1
-    if git show-ref --verify --quiet refs/heads/claude/default; then
-        fail 'current Claude branch survived fallback cleanup'
-    fi
+    # Without a reported branch, cleanup leaves the current branch alone.
+    PRIMARY_BRANCH='' "$guard" cleanup || fail 'empty branch output should be inert'
+    git show-ref --verify --quiet refs/heads/claude/default || fail 'empty output removed the current branch'
+    [ "$(git branch --show-current)" = claude/default ] || fail 'empty output changed checkout'
 ) || fail 'cleanup fixture failed'
 echo 'Claude workflow result: all cases passed'
