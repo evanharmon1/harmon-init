@@ -78,6 +78,10 @@ for tool in pnpm uv; do
 #!/usr/bin/env bash
 echo "\$*" >>"\${STUB_LOG_DIR}/${tool}.log"
 echo "\${CI-unset}" >>"\${STUB_LOG_DIR}/${tool}.ci"
+if [ -n "\${EXPECTED_SIBLING:-}" ]; then
+    [ -d "\${EXPECTED_SIBLING}/.git" ] || exit 98
+    [ "\$(git -C "\$EXPECTED_SIBLING" rev-parse origin/main)" = "\$EXPECTED_SIBLING_HEAD" ] || exit 97
+fi
 exit 0
 EOF
 done
@@ -131,8 +135,10 @@ make_fixture() {
     mkdir -p "${FIX}/scripts" "${FIX}/.devcontainer/scripts"
     git init -q "${FIX}"
     cp "${REPO_ROOT}/scripts/setup-remote.sh" "${FIX}/scripts/setup-remote.sh"
+    cp "${REPO_ROOT}/scripts/session-start-remote.sh" "${FIX}/scripts/session-start-remote.sh"
     if [ "$HAVE_BOOTSTRAP" = 1 ]; then
         cp "${REPO_ROOT}/.devcontainer/scripts/bootstrap-related-repos.sh" "${FIX}/.devcontainer/scripts/"
+        cp "${REPO_ROOT}/.devcontainer/scripts/fetch-related-repos.sh" "${FIX}/.devcontainer/scripts/"
     fi
     printf 'pre-push:\n  commands:\n    noop:\n      run: "true"\n' >"${FIX}/lefthook.yml"
     if [ "$related" != "-" ]; then
@@ -217,6 +223,47 @@ after="$(digest "${FIX_PARENT}")"
 [ "$before" = "$after" ] || fail "the second run changed the tree:
 $(diff <(printf '%s\n' "$before") <(printf '%s\n' "$after") || true)"
 [ "$(wc -l <"${LOG_DIR}/lefthook.log" | tr -d ' ')" -eq 2 ] || fail "lefthook install must run on each invocation (idempotent, not skipped)"
+
+if [ "$HAVE_BOOTSTRAP" = 1 ]; then
+    echo "==> a cached sibling is fetched forward without changing its checkout"
+    sibling="${FIX_PARENT}/sibling-a"
+    old_head="$(git -C "$sibling" rev-parse HEAD)"
+    echo 'local work' >"${sibling}/local-work.txt"
+    git -C "${TMP}/seed-sibling-a" -c user.name=Test -c user.email=test@example.com \
+        commit -q --allow-empty -m 'new upstream commit'
+    git -C "${TMP}/seed-sibling-a" push -q origin HEAD:main
+    new_head="$(git -C "${TMP}/seed-sibling-a" rev-parse HEAD)"
+    run_setup "${STUBS_PATH}"
+    [ "$rc" -eq 0 ] || fail "fetch-forward run must succeed: $(all_output)"
+    [ "$(git -C "$sibling" rev-parse origin/main)" = "$new_head" ] || fail "existing sibling must see new upstream commit"
+    [ "$(git -C "$sibling" rev-parse HEAD)" = "$old_head" ] || fail "fetch must not move the checkout"
+    [ "$(cat "${sibling}/local-work.txt")" = 'local work' ] || fail "fetch must preserve local work"
+    output_has '^  + related-repo fetch -> .* (warn-only)' || fail "fetch must appear in the setup summary: $(all_output)"
+    output_has 'Related-repo fetch: 2 fetched' || fail "fetch summary must report both siblings: $(all_output)"
+
+    echo "==> a sibling fetch failure warns and does not fail preparation"
+    git -C "$sibling" remote set-url origin "${TMP}/missing-upstream.git"
+    run_setup "${STUBS_PATH}"
+    [ "$rc" -eq 0 ] || fail "fetch failure must not fail setup: $(all_output)"
+    output_has '^  + related-repo fetch -> .* (warn-only)' || fail "failed fetch must remain a warn-only summary step: $(all_output)"
+    output_has 'WARNING: fetch failed for sibling-a; continuing.' || fail "fetch failure must warn: $(all_output)"
+    output_has 'Related-repo fetch: 1 fetched, 2 not-yet-cloned, 1 failed' || fail "fetch must continue to sibling-b: $(all_output)"
+fi
+
+if [ "$HAVE_BOOTSTRAP" = 1 ]; then
+    echo "==> sibling cloning and fetching finish before dependency installs"
+    make_fixture ordering "test-owner/sibling-a"
+    touch "${FIX}/pnpm-lock.yaml" "${FIX}/uv.lock"
+    expected_head="$(git -C "${TMP}/seed-sibling-a" rev-parse HEAD)"
+    run_setup "${STUBS_PATH}" "EXPECTED_SIBLING=${FIX_PARENT}/sibling-a" "EXPECTED_SIBLING_HEAD=${expected_head}"
+    [ "$rc" -eq 0 ] || fail "sibling clone must precede both installers: $(all_output)"
+    git -C "${TMP}/seed-sibling-a" -c user.name=Test -c user.email=test@example.com \
+        commit -q --allow-empty -m 'upstream for dependency ordering'
+    git -C "${TMP}/seed-sibling-a" push -q origin HEAD:main
+    expected_head="$(git -C "${TMP}/seed-sibling-a" rev-parse HEAD)"
+    run_setup "${STUBS_PATH}" "EXPECTED_SIBLING=${FIX_PARENT}/sibling-a" "EXPECTED_SIBLING_HEAD=${expected_head}"
+    [ "$rc" -eq 0 ] || fail "sibling fetch must precede both installers: $(all_output)"
+fi
 
 # --- Frozen dependency installs, only for lockfiles that exist ---
 echo "==> dependencies install frozen from the lockfiles that exist"
@@ -333,6 +380,129 @@ if [ -n "${REAL_LEFTHOOK}" ]; then
     [ "$before" = "$(digest "${FIX}/.git/hooks")" ] || fail "the second real lefthook run changed the hooks"
 else
     echo "==> (lefthook is not installed on this host; the real-shim check is skipped)"
+fi
+
+# Settings must leave room for the wrapper's deadline and kill grace.
+python3 - "${REPO_ROOT}" <<'PYSETTINGS'
+import json
+import pathlib
+import re
+import subprocess
+import sys
+
+root = pathlib.Path(sys.argv[1])
+script = (root / "scripts/session-start-remote.sh").read_text()
+grace, deadline = map(int, re.search(r"timeout --kill-after=(\d+)s (\d+)s task", script).groups())
+for name in (".claude/settings.json", "template/.claude/settings.json.jinja"):
+    path = root / name
+    if not path.exists():  # Generated repos have only the root settings.
+        continue
+    entries = json.loads(re.search(r'"SessionStart": (\[.*?\]),\s*"PreToolUse"', path.read_text(), re.S).group(1))
+    assert len(entries) == 1 and entries[0]["matcher"] == "startup|resume", name
+    hook = entries[0]["hooks"][0]
+    assert 'scripts/session-start-remote.sh' in hook["command"], name
+    assert hook["timeout"] > deadline + grace, name
+    # A missing wrapper must still report its fallback summary to the agent.
+    result = subprocess.run(hook["command"], shell=True, env={"CLAUDE_PROJECT_DIR": "/nonexistent-session-checkout"}, capture_output=True, text=True)
+    assert result.returncode == 0 and "SessionStart remote preparation:" in result.stdout, name
+PYSETTINGS
+
+# --- The SessionStart wrapper is remote-only and always succeeds ---
+echo "==> SessionStart is a no-op locally and prepares remote sessions"
+make_fixture hook -
+mkdir -p "${TMP}/hook-bin"
+cat >"${TMP}/hook-bin/task" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${HOOK_TASK_LOG}"
+echo "preparation detail"
+exit "${HOOK_TASK_RC:-0}"
+EOF
+cat >"${TMP}/hook-bin/timeout" <<'EOF'
+#!/usr/bin/env bash
+[ "$1" = '--kill-after=5s' ] && [ "$2" = '90s' ] || exit 99
+shift 2
+exec "$@"
+EOF
+chmod +x "${TMP}/hook-bin/task" "${TMP}/hook-bin/timeout"
+HOOK_TASK_LOG="${TMP}/hook-task.log"
+export HOOK_TASK_LOG
+for remote in unset false true; do
+    rc=0
+    (
+        export PATH="${TMP}/hook-bin:${MIN_BIN}"
+        if [ "$remote" = unset ]; then
+            unset CLAUDE_CODE_REMOTE
+        else
+            export CLAUDE_CODE_REMOTE="$remote"
+        fi
+        bash "${FIX}/scripts/session-start-remote.sh"
+    ) >"${OUT}" 2>"${ERR}" || rc=$?
+    [ "$rc" -eq 0 ] || fail "SessionStart $remote must exit 0"
+    if [ "$remote" != true ]; then
+        [ ! -e "$HOOK_TASK_LOG" ] || fail "local SessionStart must not prepare"
+        [ ! -s "$OUT" ] && [ ! -s "$ERR" ] || fail "local SessionStart must be silent"
+    else
+        grep -qx -- "--dir ${FIX} setup:remote" "$HOOK_TASK_LOG" || fail "remote SessionStart must prepare its checkout"
+        grep -q 'SessionStart remote preparation: setup:remote completed.' "${OUT}" || fail "remote SessionStart must print a summary"
+        ! grep -q 'preparation detail' "${OUT}" || fail "preparation details must stay off stdout"
+        grep -q 'preparation detail' "${ERR}" || fail "preparation details must reach stderr"
+    fi
+done
+rc=0
+CLAUDE_CODE_REMOTE=true HOOK_TASK_RC=1 PATH="${TMP}/hook-bin:${MIN_BIN}" \
+    bash "${FIX}/scripts/session-start-remote.sh" >"${OUT}" 2>"${ERR}" || rc=$?
+[ "$rc" -eq 0 ] || fail "preparation failure must not fail SessionStart"
+grep -q 'WARNING: SessionStart remote preparation: setup:remote failed' "${OUT}" || fail "preparation failure must warn"
+
+echo "==> SessionStart reports checkout resolution failures on stdout"
+cat >"${TMP}/hook-bin/dirname" <<'EOF'
+#!/usr/bin/env bash
+echo /nonexistent-session-checkout/scripts
+EOF
+chmod +x "${TMP}/hook-bin/dirname"
+rc=0
+CLAUDE_CODE_REMOTE=true PATH="${TMP}/hook-bin:${MIN_BIN}" \
+    bash "${FIX}/scripts/session-start-remote.sh" >"${OUT}" 2>"${ERR}" || rc=$?
+[ "$rc" -eq 0 ] || fail "checkout resolution failure must not fail SessionStart"
+grep -q 'SessionStart remote preparation: could not locate the checkout' "${OUT}" || fail "checkout resolution failure must report its summary on stdout"
+rm -f "${TMP}/hook-bin/dirname"
+
+echo "==> SessionStart skips preparation when timeout is missing"
+rm -f "${TMP}/hook-bin/timeout" "$HOOK_TASK_LOG"
+rc=0
+CLAUDE_CODE_REMOTE=true PATH="${TMP}/hook-bin:${MIN_BIN}" \
+    bash "${FIX}/scripts/session-start-remote.sh" >"${OUT}" 2>"${ERR}" || rc=$?
+[ "$rc" -eq 0 ] || fail "missing timeout must not fail SessionStart"
+[ ! -e "$HOOK_TASK_LOG" ] || fail "missing timeout must skip preparation"
+grep -q 'SessionStart remote preparation: preparation skipped because timeout is unavailable; run task setup:remote.' "${OUT}" || fail "missing timeout must report a skip and manual setup instruction"
+
+echo "==> SessionStart bounds a slow preparation task and still exits 0"
+REAL_TIMEOUT="$(command -v timeout 2>/dev/null || true)"
+if [ -n "$REAL_TIMEOUT" ]; then
+    cat >"${TMP}/hook-bin/task" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${HOOK_TASK_LOG}"
+sleep 5
+echo 'slow task completed' >>"${HOOK_TASK_LOG}"
+EOF
+    cat >"${TMP}/hook-bin/timeout" <<EOF
+#!/usr/bin/env bash
+[ "\$1" = '--kill-after=5s' ] && [ "\$2" = '90s' ] || exit 99
+shift 2
+# Exercise a real deadline without making the suite wait 90 seconds.
+exec "${REAL_TIMEOUT}" --kill-after=1s 0.1s "\$@"
+EOF
+    chmod +x "${TMP}/hook-bin/task" "${TMP}/hook-bin/timeout"
+    rm -f "$HOOK_TASK_LOG"
+    rc=0
+    CLAUDE_CODE_REMOTE=true PATH="${TMP}/hook-bin:${MIN_BIN}" \
+        bash "${FIX}/scripts/session-start-remote.sh" >"${OUT}" 2>"${ERR}" || rc=$?
+    [ "$rc" -eq 0 ] || fail "deadline must not fail SessionStart"
+    grep -qx -- "--dir ${FIX} setup:remote" "$HOOK_TASK_LOG" || fail "deadline must actually start preparation"
+    ! grep -q 'slow task completed' "$HOOK_TASK_LOG" || fail "deadline must interrupt slow preparation"
+    grep -q 'WARNING: SessionStart remote preparation: setup:remote failed' "${OUT}" || fail "deadline must warn"
+else
+    echo "skip: timeout is unavailable; the real deadline scenario cannot run"
 fi
 
 echo "test-setup-remote.sh passed"
