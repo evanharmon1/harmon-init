@@ -2592,12 +2592,24 @@ export function tierAchievabilityWarnings(resolved, registryDoc) {
  *     via decodeHistoricalPolicy(). `doc` is still required to be v2 (the
  *     operating-path gate applies regardless of whether the merge-base
  *     rule also applies).
+ *   - mergeBasePolicyAbsent: explicit absent merge-base policy; validate
+ *     the candidate independently, then govern with the built-in fallback.
  */
 export function resolvePolicy(doc, opts = {}) {
   return applyTierInputs(resolveGoverningPolicy(doc, opts), opts)
 }
 
 function resolveGoverningPolicy(doc, opts) {
+  if (opts.mergeBasePolicyAbsent && opts.mergeBaseDoc) {
+    throw new PolicyError('an absent merge-base policy cannot also supply mergeBaseDoc')
+  }
+  if (opts.mergeBasePolicyAbsent) {
+    if (doc !== null && doc !== undefined) {
+      requireOperatingV2(doc)
+      resolveV2(doc, {})
+    }
+    return resolveAbsentPolicy(opts)
+  }
   if (doc === null || doc === undefined) {
     if (!opts.mergeBaseDoc) return resolveAbsentPolicy(opts)
 
@@ -2698,6 +2710,7 @@ const DETECT_OPTIONS = new Set(['policy', 'json'])
 const RESOLVE_OPTIONS = new Set([
   'policy',
   'merge-base-policy',
+  'merge-base-policy-absent',
   'registry',
   'merge-base-registry',
   'task-targets',
@@ -2715,11 +2728,16 @@ const RESOLVE_OPTIONS = new Set([
   'pin-value-trusted',
   'json'
 ])
-const BOOLEAN_OPTIONS = new Set(['json', 'pin-marker-trusted', 'pin-value-trusted'])
+const BOOLEAN_OPTIONS = new Set([
+  'json',
+  'merge-base-policy-absent',
+  'pin-marker-trusted',
+  'pin-value-trusted'
+])
 
 // `--tier-overrides implementer=frontier,reviewer=apex` → { implementer:
-// 'frontier', reviewer: 'apex' }. Values are validated by applyTierInputs;
-// only the map's own syntax is checked here.
+// 'frontier', reviewer: 'apex' }. Operator values are checked here so malformed
+// instructions report usage status 2; label values retain library diagnostics.
 function parseTierMapOption(value, option) {
   const result = {}
   for (const entry of value.split(',')) {
@@ -2740,12 +2758,19 @@ function parseTierMapOption(value, option) {
     }
     result[role] = tier
   }
-  return result
+  return option === 'tier-overrides'
+    ? normalizeTierMap(result, 'operator', BUILTIN_TIER_ORDER, [])
+    : result
 }
 
 function tierInputsFromArgs(args) {
   const inputs = {}
-  if (args['rigor-source'] !== undefined) inputs.rigorSource = args['rigor-source']
+  if (args['rigor-source'] !== undefined) {
+    if (!['operator', 'label'].includes(args['rigor-source'])) {
+      throw new PolicyError('--rigor-source must be "operator" or "label"')
+    }
+    inputs.rigorSource = args['rigor-source']
+  }
   if (args['tier-overrides'] !== undefined) {
     inputs.tierOverrides = parseTierMapOption(args['tier-overrides'], 'tier-overrides')
   }
@@ -2896,6 +2921,7 @@ function cliResolve(args) {
   }
 
   let mergeBaseDoc = null
+  const mergeBasePolicyAbsent = args['merge-base-policy-absent'] === true
   if (args['merge-base-policy']) {
     try {
       mergeBaseDoc = loadTomlFile(args['merge-base-policy'])
@@ -2911,6 +2937,7 @@ function cliResolve(args) {
       rigor: args.rigor,
       strategy: args.strategy,
       mergeBaseDoc,
+      mergeBasePolicyAbsent,
       ...tierInputsFromArgs(args)
     })
   } catch (err) {
@@ -2934,7 +2961,8 @@ function cliResolve(args) {
   // merge-base policy's own finder references, even though the merge-base
   // rule's whole point is that branch-controlled data must never affect
   // what a self-modifying diff resolves to.
-  const registryPath = mergeBaseDoc ? args['merge-base-registry'] : args.registry
+  const usesMergeBase = mergeBaseDoc !== null || mergeBasePolicyAbsent
+  const registryPath = usesMergeBase ? args['merge-base-registry'] : args.registry
   let registryDoc = null
   if (registryPath) {
     try {
@@ -2974,7 +3002,7 @@ function cliResolve(args) {
   // fixtures exist to prove safe. A caller that wants this to gate CI can
   // check branch_cross_validation.errors itself.
   let branchCrossValidation = null
-  if (mergeBaseDoc && doc && args.registry) {
+  if (usesMergeBase && doc && args.registry) {
     let branchRegistryDoc
     try {
       branchRegistryDoc = JSON.parse(readFileSync(args.registry, 'utf8'))
@@ -3082,7 +3110,14 @@ function main() {
   let args
   try {
     args = parseArgs(argv.slice(1), cmd === 'detect' ? DETECT_OPTIONS : RESOLVE_OPTIONS)
-    if (cmd === 'resolve') tierInputsFromArgs(args)
+    if (cmd === 'resolve') {
+      if (args['merge-base-policy'] && args['merge-base-policy-absent']) {
+        throw new PolicyError(
+          '--merge-base-policy-absent cannot be combined with --merge-base-policy'
+        )
+      }
+      tierInputsFromArgs(args)
+    }
   } catch (err) {
     if (err instanceof PolicyError) {
       console.error(`devflow-policy: ${err.message}`)
