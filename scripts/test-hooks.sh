@@ -155,7 +155,7 @@ for commit_hook in \
     assert_commit_status "$commit_hook" 2 'git --super-prefix prefix commit -m "bad"'
     assert_commit_status "$commit_hook" 2 'git --exec-path commit -m "bad"'
     assert_commit_status "$commit_hook" 2 'git --exec-path=/tmp commit -m "bad"'
-    assert_commit_status "$commit_hook" 2 "$continued_commit"
+    assert_commit_status "$commit_hook" 0 "$continued_commit"
     assert_commit_status "$commit_hook" 2 'FOO=1 git commit -m "bad"'
     assert_commit_status "$commit_hook" 2 'env GIT_X=1 git commit -m "bad"'
     assert_commit_status "$commit_hook" 2 'env -i -u HOME GIT_X=1 git commit -m "bad"'
@@ -172,10 +172,10 @@ for commit_hook in \
     assert_commit_status "$commit_hook" 2 '! git commit -m "bad"'
     assert_commit_status "$commit_hook" 2 'while git commit -m "bad"; do :; done'
     assert_commit_status "$commit_hook" 2 'until git commit -m "bad"; do :; done'
-    assert_commit_status "$commit_hook" 2 'git commit -am "bad message"'
-    assert_commit_status "$commit_hook" 2 'git commit -sm "bad"'
-    assert_commit_status "$commit_hook" 2 'git commit -vam "bad"'
-    assert_commit_status "$commit_hook" 2 'git commit -ambad'
+    assert_commit_status "$commit_hook" 0 'git commit -am "bad message"'
+    assert_commit_status "$commit_hook" 0 'git commit -sm "bad"'
+    assert_commit_status "$commit_hook" 0 'git commit -vam "bad"'
+    assert_commit_status "$commit_hook" 0 'git commit -ambad'
     assert_commit_status "$commit_hook" 2 'git commit --mess "bad"'
     assert_commit_status "$commit_hook" 2 'git commit --messa=bad'
     assert_commit_status "$commit_hook" 0 'git commit -am "fix: ok"'
@@ -183,6 +183,20 @@ for commit_hook in \
     assert_commit_status "$commit_hook" 0 'git commit -aF msg.txt'
     assert_commit_status "$commit_hook" 0 'git commit --fil msg.txt'
     assert_commit_status "$commit_hook" 0 'git commit --fil=msg.txt'
+
+    # Certain message forms only: ambiguous syntax belongs to lefthook.
+    assert_commit_status "$commit_hook" 2 'git commit -m "bad message" -SABCDEF12'
+    assert_commit_status "$commit_hook" 0 'git commit -Cmain -m "fix: ok"'
+    assert_commit_status "$commit_hook" 2 'git commit --m "bad message"'
+    assert_commit_status "$commit_hook" 2 'git commit --me=bad'
+    assert_commit_status "$commit_hook" 2 'curl http://x/#frag && git commit -m "bad message"'
+    assert_commit_status "$commit_hook" 2 'git commit -m "feat: ok" && git commit -m "bad message"'
+    assert_commit_status "$commit_hook" 2 'git --attr-source HEAD commit -m "bad message"'
+    assert_commit_status "$commit_hook" 0 "git commit -m \$'feat: ok'"
+    assert_commit_status "$commit_hook" 0 'git commit -m "$MESSAGE"'
+    assert_commit_status "$commit_hook" 0 "printf x; $continued_commit"
+    assert_commit_status "$commit_hook" 0 'git commit -m "bad message" && git commit -am "bad"'
+    assert_commit_status "$commit_hook" 2 'git commit -C main -m "bad message"'
 
 done
 
