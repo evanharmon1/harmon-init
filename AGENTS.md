@@ -658,9 +658,17 @@ meets its exit condition on round 1 is done, whatever the cap allowed.
   devcontainer's managed-settings drop-in
   (`.devcontainer/config/claude-settings-dev.json`). The hook, too, applies in
   the dev profile only; with `FOREMAN_DEVCONTAINER` set to `bot` or `agent` it
-  makes no merge checks. The bot and agent profiles carry no merge guard at
-  all — the agent profile explicitly allows `gh pr merge` — and the "Protect
-  Main" ruleset (code-owner approval + green checks) is the boundary there; see
+  makes no merge checks. Beside it,
+  `.claude/hooks/review-trigger-allow.py` is a PreToolUse(Bash) hook that
+  approves without a prompt exactly three review-trigger commands: the
+  integrate broker's Codex trigger, and `gh pr comment` with the fixed Gemini
+  or Claude review body, each for the origin repository and a numeric PR (see
+  the hook's docstring for the exact accepted forms). It gives no decision for
+  anything else, so the normal permissions apply; it is active in the host and
+  dev profiles only, and with `FOREMAN_DEVCONTAINER` set to `bot` or `agent` it
+  makes no decision. The bot and agent profiles carry no merge guard at all —
+  the agent profile explicitly allows `gh pr merge` — and the "Protect Main"
+  ruleset (code-owner approval + green checks) is the boundary there; see
   [docs/decisions/2026-10-07-bot-and-agent-postures-carry-no-merge-guards.md](docs/decisions/2026-10-07-bot-and-agent-postures-carry-no-merge-guards.md).)
   `gh pr ready` is *not* a merge and agents may run it — but only
   out of a passing readiness gate, never to signal "I think this looks done".
