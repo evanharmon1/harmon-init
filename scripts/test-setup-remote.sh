@@ -234,12 +234,14 @@ if [ "$HAVE_BOOTSTRAP" = 1 ]; then
     [ "$(git -C "$sibling" rev-parse origin/main)" = "$new_head" ] || fail "existing sibling must see new upstream commit"
     [ "$(git -C "$sibling" rev-parse HEAD)" = "$old_head" ] || fail "fetch must not move the checkout"
     [ "$(cat "${sibling}/local-work.txt")" = 'local work' ] || fail "fetch must preserve local work"
+    output_has '^  + related-repo fetch -> .* (warn-only)' || fail "fetch must appear in the setup summary: $(all_output)"
     output_has 'Related-repo fetch: 2 fetched' || fail "fetch summary must report both siblings: $(all_output)"
 
     echo "==> a sibling fetch failure warns and does not fail preparation"
     git -C "$sibling" remote set-url origin "${TMP}/missing-upstream.git"
     run_setup "${STUBS_PATH}"
     [ "$rc" -eq 0 ] || fail "fetch failure must not fail setup: $(all_output)"
+    output_has '^  + related-repo fetch -> .* (warn-only)' || fail "failed fetch must remain a warn-only summary step: $(all_output)"
     output_has 'WARNING: fetch failed for sibling-a; continuing.' || fail "fetch failure must warn: $(all_output)"
     output_has 'Related-repo fetch: 1 fetched, 2 not-yet-cloned, 1 failed' || fail "fetch must continue to sibling-b: $(all_output)"
 fi
@@ -398,5 +400,34 @@ CLAUDE_CODE_REMOTE=true HOOK_TASK_RC=1 PATH="${TMP}/hook-bin:${MIN_BIN}" \
     bash "${FIX}/scripts/session-start-remote.sh" >"${OUT}" 2>"${ERR}" || rc=$?
 [ "$rc" -eq 0 ] || fail "preparation failure must not fail SessionStart"
 output_has 'WARNING: SessionStart remote preparation: setup:remote failed' || fail "preparation failure must warn"
+
+echo "==> SessionStart bounds a slow preparation task and still exits 0"
+REAL_TIMEOUT="$(command -v timeout 2>/dev/null || true)"
+if [ -n "$REAL_TIMEOUT" ]; then
+    cat >"${TMP}/hook-bin/task" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${HOOK_TASK_LOG}"
+sleep 5
+echo 'slow task completed' >>"${HOOK_TASK_LOG}"
+EOF
+    cat >"${TMP}/hook-bin/timeout" <<EOF
+#!/usr/bin/env bash
+[ "\$1" = '--kill-after=5s' ] && [ "\$2" = '90s' ] || exit 99
+shift 2
+# Exercise a real deadline without making the suite wait 90 seconds.
+exec "${REAL_TIMEOUT}" --kill-after=1s 0.1s "\$@"
+EOF
+    chmod +x "${TMP}/hook-bin/task" "${TMP}/hook-bin/timeout"
+    rm -f "$HOOK_TASK_LOG"
+    rc=0
+    CLAUDE_CODE_REMOTE=true PATH="${TMP}/hook-bin:${MIN_BIN}" \
+        bash "${FIX}/scripts/session-start-remote.sh" >"${OUT}" 2>"${ERR}" || rc=$?
+    [ "$rc" -eq 0 ] || fail "deadline must not fail SessionStart"
+    grep -qx -- "--dir ${FIX} setup:remote" "$HOOK_TASK_LOG" || fail "deadline must actually start preparation"
+    ! grep -q 'slow task completed' "$HOOK_TASK_LOG" || fail "deadline must interrupt slow preparation"
+    output_has 'WARNING: SessionStart remote preparation: setup:remote failed' || fail "deadline must warn"
+else
+    echo "skip: timeout is unavailable; the real deadline scenario cannot run"
+fi
 
 echo "test-setup-remote.sh passed"

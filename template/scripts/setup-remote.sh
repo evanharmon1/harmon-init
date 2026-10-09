@@ -122,6 +122,7 @@ else
         FETCH=".devcontainer/scripts/fetch-related-repos.sh"
         if [ -f "$FETCH" ]; then
             # Fetch only: never move a sibling's checkout or discard local work.
+            note_did "related-repo fetch -> ${PARENT} (warn-only)"
             if ! bash "$FETCH" "$PARENT"; then
                 echo "==> WARNING: related-repo fetch could not run; continuing." >&2
             fi

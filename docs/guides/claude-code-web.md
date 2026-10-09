@@ -944,8 +944,8 @@ and which run built it, is not established.
 
 **Decision (maintainer, 2026-10-09):** the environment setup script remains
 machine-level and repository-independent (the bootstrap only). A repository
-`SessionStart` hook runs per-checkout preparation on every web session start,
-including a cached resume. The [ADR](../decisions/2026-10-09-web-session-start-preparation.md)
+`SessionStart` hook runs per-checkout preparation on startup and resume,
+including a cached resume; it does not run on clear or compact. The [ADR](../decisions/2026-10-09-web-session-start-preparation.md)
 records the reasons and alternatives for
 [#1548](https://github.com/evanharmon1/harmon-init/issues/1548): one environment
 serves every repository, while each start needs the checkout's current hooks,
@@ -953,8 +953,11 @@ lockfiles and sibling remote refs.
 
 The hook in `.claude/settings.json` calls `scripts/session-start-remote.sh`,
 which runs `task setup:remote` only when `CLAUDE_CODE_REMOTE=true`; it is a
-silent no-op locally and in devcontainers. It warns and exits 0 if preparation
-fails, so a failure cannot prevent session start. Its one-line
+silent no-op locally and in devcontainers. The hook has an explicit 120 s
+timeout. When `timeout` is available, preparation has a 90 s deadline and a 5 s
+kill grace, leaving time for the wrapper to warn and exit 0 on failure or expiry.
+Without `timeout`, it notes that preparation runs unbounded inside the hook.
+Its one-line
 `SessionStart remote preparation:` summary distinguishes completion from a
 failure requiring a retry. Repository hooks run only in a single-repository
 session (*docs, 2026-09-29*). If the hook did not run (a multi-repository session,

@@ -29,10 +29,14 @@ retains the observed evidence separately from this decision.
 1. The environment setup script remains repository-independent: the machine
    bootstrap only. Its recipe does not change.
 2. The repository's `.claude/settings.json` installs a `SessionStart` hook that
-   calls `scripts/session-start-remote.sh`. Only `CLAUDE_CODE_REMOTE=true` runs
+   calls `scripts/session-start-remote.sh` on `startup|resume`, excluding clear
+   and compact. Only `CLAUDE_CODE_REMOTE=true` runs
    `task setup:remote`; local sessions and devcontainers do nothing. The wrapper
    warns and exits 0 on preparation failure, preserving session start, and
-   prints a one-line completion or failure summary.
+   prints a one-line completion or failure summary. The hook timeout is 120 s;
+   when `timeout` is available, preparation has a 90 s deadline and a 5 s kill
+   grace so the wrapper can warn and exit before the hook expires. Without
+   `timeout`, it notes that preparation runs unbounded inside the hook.
 3. `task setup:remote` installs current lefthook shims, installs frozen
    dependencies where lockfiles exist, bootstraps missing siblings and fetches
    existing siblings into the checkout's parent directory. The shared fetch

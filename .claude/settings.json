@@ -112,9 +112,11 @@
   "hooks": {
     "SessionStart": [
       {
+        "matcher": "startup|resume",
         "hooks": [
           {
             "type": "command",
+            "timeout": 120,
             "command": "bash \"$CLAUDE_PROJECT_DIR/scripts/session-start-remote.sh\" || printf '%s\\n' 'WARNING: SessionStart remote preparation could not run; run task setup:remote.' >&2"
           }
         ]
