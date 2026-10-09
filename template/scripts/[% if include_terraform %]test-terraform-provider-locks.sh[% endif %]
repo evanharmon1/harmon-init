@@ -196,4 +196,29 @@ case "$linked_output" in
 *) fail "missing linked-worktree lock gave the wrong diagnostic: $linked_output" ;;
 esac
 
+# An explicit GIT_DIR plus GIT_WORK_TREE (a bare repository with an external
+# work tree) must keep its meaning: a lock missing from that index still fails.
+bare_repo="$tmp/bare repo.git"
+git clone -q --bare "$module_repo" "$bare_repo"
+external_tree="$tmp/external tree"
+external_root="$external_tree/terraform/external"
+mkdir -p "$external_root"
+cp -R "$complete_root/." "$external_root/"
+printf '%s\n' 'terraform {}' >"$external_root/main.tf"
+GIT_DIR="$bare_repo" GIT_WORK_TREE="$external_tree" git add terraform
+if ! external_output="$(GIT_DIR="$bare_repo" GIT_WORK_TREE="$external_tree" \
+    TERRAFORM_BIN="$fake_terraform" "$helper" check "$external_root" 2>&1)"; then
+    fail "staged lock failed with an explicit GIT_DIR and GIT_WORK_TREE: $external_output"
+fi
+GIT_DIR="$bare_repo" GIT_WORK_TREE="$external_tree" git rm --cached -q \
+    "terraform/external/.terraform.lock.hcl"
+if external_output="$(GIT_DIR="$bare_repo" GIT_WORK_TREE="$external_tree" \
+    TERRAFORM_BIN="$fake_terraform" "$helper" check "$external_root" 2>&1)"; then
+    fail "lock missing from an explicit GIT_DIR and GIT_WORK_TREE index passed"
+fi
+case "$external_output" in
+*"Terraform provider lock will not be part of the commit: $external_root/.terraform.lock.hcl"*) ;;
+*) fail "missing external-tree lock gave the wrong diagnostic: $external_output" ;;
+esac
+
 echo "Terraform provider-lock regression: PASS"

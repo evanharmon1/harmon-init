@@ -3,9 +3,14 @@
 # the developer (darwin_arm64) and CI (linux_amd64) platforms.
 set -euo pipefail
 
-# Discover the checkout from each root, even in linked-worktree hooks. Keep
-# GIT_INDEX_FILE so the staged-lock check reads what the commit will contain.
-unset GIT_DIR GIT_WORK_TREE
+# Git exports GIT_DIR but no GIT_WORK_TREE to a linked worktree's hooks, which
+# makes each root its own top level. Drop GIT_DIR only in that shape, so an
+# explicit GIT_DIR plus GIT_WORK_TREE (a bare repository with an external work
+# tree) keeps its meaning. Keep GIT_INDEX_FILE: the staged-lock check reads
+# what the commit will contain.
+if [ -z "${GIT_WORK_TREE:-}" ]; then
+    unset GIT_DIR
+fi
 
 usage() {
     echo "Usage: $0 <check|update> <terraform-root> [terraform-root ...]" >&2
