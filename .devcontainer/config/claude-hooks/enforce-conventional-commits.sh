@@ -42,7 +42,8 @@ try:
                     if (line.lstrip("\t") if strip_tabs else line).rstrip("\n") == delimiter:
                         break
             heredocs = []
-        elif token in (";", "&&", "||", "|", "|&", "&"):
+        elif set(token) <= set(";&|()"):
+            # Operators written together (;( |( )&&) are one token; all end a command.
             segments.append(segment)
             segment = []
         else:

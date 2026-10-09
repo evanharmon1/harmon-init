@@ -222,6 +222,9 @@ for commit_hook in \
     assert_commit_status "$commit_hook" 0 'true # note ; git commit -m "bad message"'
     assert_commit_status "$commit_hook" 2 'git commit -u -m "bad message"'
     assert_commit_status "$commit_hook" 2 'true |& git commit -m "bad message"'
+    assert_commit_status "$commit_hook" 0 'git commit --amend --no-edit;(echo -m "not a message")'
+    assert_commit_status "$commit_hook" 0 '(git commit --no-edit)|grep -m1 x'
+    assert_commit_status "$commit_hook" 2 'true;(git commit -m "bad message")'
 
 done
 
