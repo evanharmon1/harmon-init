@@ -268,3 +268,22 @@ collaborator grants, the agent PAT's scopes and the repository branch rulesets,
 with the residual release and approved-merge permissions already disclosed
 above. The blanket API deny closes this direct Claude command path; it does
 not change that boundary.
+
+## Amendment: 2026-10-10 — force pushes outside `main`
+
+The same bundled-short-flag gap that the 2026-10-09 amendment closed for
+`gh api` exists for `git push`. The force denies (`git push --force*`,
+`git push -f*`, `git push * +*` and their anywhere-after-a-word forms) match
+only a flag that starts a word, so `git push -uf origin <branch>` matches
+none of them and is allowed by `Bash(git push *)` (verified on 2026-10-09
+against a local bare repository: the push reported a forced update).
+
+The maintainer chose to accept and document this rather than add another
+spelling-based deny or a push wrapper (#1586). Pushes are routine in the
+agent posture, and a wrapper would change every push the skills prescribe.
+The "Protect Main" ruleset blocks non-fast-forward updates only on `main`,
+so a force push to any other branch is bounded only by the bot's
+collaborator grants and the rulesets. That is the boundary this record
+already names for every write. The force denies stay as defence in depth.
+A ruleset blocking force pushes on every branch is the structural fix, and
+adopting it is a separate maintainer decision.
