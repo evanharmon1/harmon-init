@@ -43,7 +43,19 @@ Resolve rigor and strategy in this order:
 1. explicit, attributable operator instruction;
 2. trusted `rigor:*` or `strategy:*` issue labels;
 3. `default_rigor` or `default_strategy`;
-4. the reader's built-in fallback, only if the policy file is absent.
+4. the reader's built-in fallback when the policy file is absent, or when
+   `--merge-base-policy-absent` explicitly declares an absent merge-base policy.
+
+Use `--merge-base-policy-absent` for a branch that adds `.devflow.toml`.
+It requires an existing `--policy` file and cannot be combined with
+`--merge-base-policy`. The candidate is validated independently; built-in
+values govern the run. Invalid flag combinations (including `--rigor-source`
+without `--rigor`) or malformed operator `--tier-overrides` /
+`--rigor-source` values exit with usage status 2. Successful resolution exits
+0; invalid policy exits 1. Exit 3 means resolved but indeterminate:
+cross-validation could not finish (no registry was supplied, or no gate-target
+list from `--task-targets` / `--taskfile-dir`), or the derived Tier could not
+be computed where it decides the implementer tier.
 
 The **implementer** tier has two more rungs (ADR 2026-09-30 D5). Strongest
 first:
@@ -120,8 +132,9 @@ for consumers that need the Tier alone.
 - **Indeterminate, never guessed.** A partial classification, an off-scale
   value, or a classified issue under a policy file that has no matrix leaves
   the derived rung indeterminate: the reader exits 3 when that rung is the one
-  that decides the implementer tier. With no policy file at all, the built-in
-  fallback keeps tiers inert: the classification is recorded as `inert`
+  that decides the implementer tier. With no governing policy, including an
+  explicitly absent merge base, the built-in fallback keeps tiers inert:
+  the classification is recorded as `inert`
   (`tier-inert-absent-policy`) and never applied.
 - **The pin.** A human pins a Tier by setting it and adding `tier:pinned`. The
   pin is two independently mutable values, so it is honored only when the

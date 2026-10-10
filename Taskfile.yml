@@ -119,6 +119,7 @@ tasks:
       - task: test:oh-my-pi-pin
       - task: test:render-parity-cases
       - task: test:lint-hygiene
+      - task: test:claude-workflow-result
       - task: test:release-title
       - task: test:claim-release-merged
       - task: test:setup-github
@@ -594,6 +595,11 @@ tasks:
     desc: Behavioural fixtures for the template's web-astro render-parity guard
     cmds:
       - ./scripts/test-render-parity-cases.sh
+
+  test:claude-workflow-result:
+    desc: Test Claude failure reporting and the optional zero-usage retry
+    cmds:
+      - ./scripts/test-claude-workflow-result.sh
 
   test:lint-hygiene:
     desc: Behavioral fixtures for lint-hygiene's trigger-phrase adjacency scan

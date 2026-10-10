@@ -1168,6 +1168,8 @@ the workflow rules above:
   Actions. They (and `release.yml`) authenticate as the CI **GitHub App**
   (`CI_APP_CLIENT_ID` variable + `CI_APP_PRIVATE_KEY` secret) and need the
   `CLAUDE_CODE_OAUTH_TOKEN` secret. See `docs/architecture/security.md`.
+  The optional `CLAUDE_CODE_OAUTH_TOKEN_2` enables one zero-usage failure
+  fallback and is skipped when absent.
 - Dependency updates via Renovate (`renovate.json`); second-model reviews use
   Codex.
 - `release.yml` runs release-please: releases stay intentional (merge the rolling
