@@ -878,11 +878,14 @@ only because an **earlier round of this same stage** added it. A finding that
 does gets adjudicated with one of four dispositions written out: **delete**
 the scaffolding (which moots the finding — see below), **restructure it to
 invariants** (deletion by abstraction — see below), **split the mechanism out**
-(the mechanism is still wanted, so it leaves the change as its own follow-up
-with its own budget — see harmon-devkit's `specs/dev-flow-v2.md` § "The split
-strategy"), or state that it is in scope and why the change genuinely needs it.
-What is not allowed is hardening round-1's scaffolding by reflex and letting
-round 3 attack the result.
+(the mechanism is still wanted, so it gets a budget of its own: remove it from
+the change, file it as its own issue on the current milestone with the
+constraints the rounds established, file the finding it was addressing as a
+follow-up so the defect is not dropped, and let one more permitted round
+confirm the removal — harmon-devkit's `specs/dev-flow-v2.md` § "The split
+strategy" is the full contract), or state that it is in scope and why the
+change genuinely needs it. What is not allowed is hardening round-1's
+scaffolding by reflex and letting round 3 attack the result.
 
 **Integration owes the same checkpoint from Codex cycle 2 onward.** Before
 any remediation push, record for every finding on the adjudication table whether
