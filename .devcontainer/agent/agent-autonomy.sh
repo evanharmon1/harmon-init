@@ -44,7 +44,7 @@ fail() {
 # agent session from a checkout or tag it fetched itself.
 #
 # `apply --platform-vm` / `verify --platform-vm` — the remote bootstrap's
-# other seam: apply and verify handle the two managed files only, and leave
+# other seam: apply and verify handle the managed files and GET wrapper only, and leave
 # every harness executable's mode alone. On a platform's VM those executables
 # are the platform's; refusing them there is a recorded delivery gap, not this
 # script's to do. It is an ARGUMENT, never an environment variable, so nothing
@@ -68,6 +68,8 @@ fi
 HARNESSES="${CONFIG_DIR}/harnesses.json"
 CLAUDE_SRC="${CONFIG_DIR}/claude-managed-settings.json"
 CODEX_SRC="${CONFIG_DIR}/codex-managed-config.toml"
+GH_API_READ_SRC="${CONFIG_DIR}/gh-api-read"
+GH_API_READ="${AGENT_AUTONOMY_GH_API_READ:-/usr/local/bin/gh-api-read}"
 CLAUDE_MANAGED="${AGENT_AUTONOMY_CLAUDE_MANAGED:-/etc/claude-code/managed-settings.json}"
 CODEX_MANAGED="${AGENT_AUTONOMY_CODEX_MANAGED:-/etc/codex/managed_config.toml}"
 
@@ -134,12 +136,12 @@ same_digest() {
 # install_as_root <src> <dest> — install with sudo only when the destination
 # (or, for a new file, its directory) is not writable by the caller.
 install_as_root() {
-    local src="$1" dest="$2"
+    local src="$1" dest="$2" mode="${3:-0644}"
     if [ -w "$dest" ] || { [ ! -e "$dest" ] && [ -w "$(dirname "$dest")" ]; }; then
-        install -m 0644 "$src" "$dest"
+        install -m "$mode" "$src" "$dest"
     else
         sudo -n install -d -m 0755 "$(dirname "$dest")"
-        sudo -n install -m 0644 "$src" "$dest"
+        sudo -n install -m "$mode" "$src" "$dest"
     fi
 }
 
@@ -207,8 +209,13 @@ cmd_apply() {
     [ -f "$CLAUDE_SRC" ] || fail "agent Claude settings not found at ${CLAUDE_SRC}"
     [ -f "$CODEX_SRC" ] || fail "agent Codex config not found at ${CODEX_SRC}"
     [ -f "$HARNESSES" ] || fail "harness table not found at ${HARNESSES}"
+    [ -f "$GH_API_READ_SRC" ] || fail "GET wrapper not found at ${GH_API_READ_SRC}"
     require_digest_tool
 
+    if [ -L "$GH_API_READ" ] || [ ! -x "$GH_API_READ" ] || ! same_digest "$GH_API_READ" "$GH_API_READ_SRC"; then
+        install_as_root "$GH_API_READ_SRC" "$GH_API_READ" 0755
+        echo "==> agent-autonomy: GET wrapper installed at ${GH_API_READ}"
+    fi
     if [ ! -f "$CLAUDE_MANAGED" ] || ! same_digest "$CLAUDE_MANAGED" "$CLAUDE_SRC"; then
         install_as_root "$CLAUDE_SRC" "$CLAUDE_MANAGED"
         echo "==> agent-autonomy: agent Claude managed settings installed at ${CLAUDE_MANAGED}"
@@ -235,6 +242,7 @@ cmd_verify() {
     local failed=0 exe path
     [ -f "$CLAUDE_SRC" ] || fail "agent Claude settings not found at ${CLAUDE_SRC}"
     [ -f "$CODEX_SRC" ] || fail "agent Codex config not found at ${CODEX_SRC}"
+    [ -f "$GH_API_READ_SRC" ] || fail "GET wrapper not found at ${GH_API_READ_SRC}"
     require_digest_tool
     [ -f "$CLAUDE_MANAGED" ] && same_digest "$CLAUDE_MANAGED" "$CLAUDE_SRC" || {
         echo "agent-autonomy: verify failed — ${CLAUDE_MANAGED} does not match the shipped agent settings ${CLAUDE_SRC}" >&2
@@ -242,6 +250,10 @@ cmd_verify() {
     }
     [ -f "$CODEX_MANAGED" ] && same_digest "$CODEX_MANAGED" "$CODEX_SRC" || {
         echo "agent-autonomy: verify failed — ${CODEX_MANAGED} does not match the shipped agent config ${CODEX_SRC}" >&2
+        failed=1
+    }
+    [ -x "$GH_API_READ" ] && same_digest "$GH_API_READ" "$GH_API_READ_SRC" || {
+        echo "agent-autonomy: verify failed — ${GH_API_READ} is not the executable shipped GET wrapper" >&2
         failed=1
     }
     if [ "$PLATFORM_VM" = 1 ]; then

@@ -226,20 +226,8 @@ Bash(gh variable delete *)
 Bash(gh workflow run *)
 Bash(gh workflow enable *)
 Bash(gh workflow disable *)
-Bash(gh api -X*)
-Bash(gh api * -X*)
-Bash(gh api --method*)
-Bash(gh api * --method*)
-Bash(gh api --input*)
-Bash(gh api * --input*)
-Bash(gh api -f*)
-Bash(gh api * -f*)
-Bash(gh api -F*)
-Bash(gh api * -F*)
-Bash(gh api --field*)
-Bash(gh api * --field*)
-Bash(gh api --raw-field*)
-Bash(gh api * --raw-field*)
+Bash(gh api)
+Bash(gh api *)
 Bash(git push --force*)
 Bash(git push * --force*)
 Bash(git push -f*)
@@ -306,6 +294,8 @@ check_never_looser() {
     local a b ap bp covered
     while IFS= read -r a; do
         ap="$(rule_prefix "$a")"
+        # The pinned GET wrapper only performs a subset of bot's gh api grant.
+        [ "$ap" != "/usr/local/bin/gh-api-read" ] || ap="gh api"
         [ -n "$ap" ] || {
             printf 'non-Bash allow rule %s (bot allows no such tool rule)\n' "$a"
             continue
@@ -324,6 +314,112 @@ check_never_looser() {
         [ "$covered" -eq 1 ] || printf 'agent allows %s, which bot does not allow\n' "$a"
     done < <(jq -r '.permissions.allow[]' "$1")
 }
+
+# Both settings twins must refuse raw API commands, including bundled flags.
+for settings in "$agent_settings" 'template/[% if devcontainer %].devcontainer[% endif %]/config/agent/claude-managed-settings.json'; do
+    # Generated repositories have only their root copy.
+    [ -f "$settings" ] || continue
+    jq -e '.permissions.deny | (index("Bash(gh api)") != null) and (index("Bash(gh api *)") != null)' "$settings" >/dev/null ||
+        fail "$settings does not blanket-deny raw gh api"
+    jq -e '.permissions.allow | index("Bash(/usr/local/bin/gh-api-read *)") != null' "$settings" >/dev/null ||
+        fail "$settings does not allow the installed GET wrapper"
+    while IFS= read -r rule; do
+        prefix="$(rule_prefix "$rule")"
+        if prefix_covers "$prefix" 'gh api' || prefix_covers 'gh api' "$prefix"; then
+            fail "$settings allows raw gh api through $rule"
+        fi
+    done < <(jq -r '.permissions.allow[]' "$settings")
+done
+
+# Run only a recording stub; no network request or real GitHub mutation.
+wrapper_bin="${work_dir}/wrapper-bin"
+mkdir -p "$wrapper_bin"
+cat >"${wrapper_bin}/gh" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$@" >"$GH_API_READ_LOG"
+STUB
+chmod +x "${wrapper_bin}/gh"
+wrapper_log="${work_dir}/wrapper.args"
+run_wrapper() {
+    local wrapper="$1"
+    shift
+    PATH="${wrapper_bin}:$PATH" GH_API_READ_LOG="$wrapper_log" bash "$wrapper" "$@"
+}
+shipped_wrapper="${agent_config_dir}/gh-api-read"
+# Keep the production PATH pin in the probe; change only the API invocation
+# to --version so the system gh is exercised without a request or credentials.
+grep -qx 'export PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin' "$shipped_wrapper" ||
+    fail "GET wrapper does not pin the system PATH"
+# The interpreter itself must not be looked up on the caller's PATH.
+[ "$(head -n 1 "$shipped_wrapper")" = '#!/bin/bash' ] ||
+    fail "GET wrapper resolves its interpreter through PATH"
+# The live probe needs a gh in one of the pinned directories, as the agent
+# posture's images have. A host without one (no gh, or Homebrew's
+# /opt/homebrew/bin on macOS) skips it; the static assertions above still run.
+system_gh=
+for dir in /usr/local/sbin /usr/local/bin /usr/sbin /usr/bin /sbin /bin; do
+    if [ -x "${dir}/gh" ]; then
+        system_gh="${dir}/gh"
+        break
+    fi
+done
+if [ -n "$system_gh" ]; then
+    sed 's/exec gh api --method GET "$@" "$endpoint"/exec gh --version/' "$shipped_wrapper" >"${work_dir}/wrapper-path-probe"
+    rm -f "$wrapper_log"
+    run_wrapper "${work_dir}/wrapper-path-probe" repos/example/repo >"${work_dir}/wrapper-path.out" ||
+        fail "system gh PATH probe failed"
+    [ ! -e "$wrapper_log" ] || fail "GET wrapper ran the fake gh first on the caller PATH"
+    grep -q '^gh version ' "${work_dir}/wrapper-path.out" || fail "GET wrapper did not run the system gh"
+else
+    echo "NOTE: no gh in the wrapper's pinned PATH on this host; skipping the live PATH probe"
+fi
+# Only the argument-contract fixture replaces the PATH pin with the recording
+# stub's directory. No production file or system executable is changed.
+wrapper="${work_dir}/wrapper-with-stub"
+sed "s|^export PATH=.*|export PATH=${wrapper_bin}:$PATH|" "$shipped_wrapper" >"$wrapper"
+# This contract refuses any implementation that does not pin the outgoing GET.
+wrapper_contract() {
+    run_wrapper "$1" 'repos/example/repo?per_page=100' --paginate --jq '.items[]' || return 1
+    printf '%s\n' api --method GET --paginate --jq '.items[]' 'repos/example/repo?per_page=100' >"${work_dir}/wrapper.expected"
+    cmp -s "$wrapper_log" "${work_dir}/wrapper.expected"
+}
+wrapper_contract "$wrapper" || fail "GET wrapper did not forward exactly the vetted arguments with GET pinned"
+run_wrapper "$wrapper" repos/example/repo --slurp -i --silent -q '.id' || fail "GET wrapper refused allowed output flags"
+run_wrapper "$wrapper" repos/example/repo --include --jq=.id || fail "GET wrapper refused include/jq equals flags"
+refuses_wrapper() {
+    rm -f "$wrapper_log"
+    local status=0
+    run_wrapper "$wrapper" "$@" >"${work_dir}/wrapper.out" 2>&1 || status=$?
+    [ "$status" -eq 2 ] || fail "GET wrapper did not refuse: $* (exit $status)"
+    [ ! -e "$wrapper_log" ] || fail "GET wrapper invoked gh for refused arguments: $*"
+}
+refuses_wrapper repos/example/repo -X POST
+refuses_wrapper repos/example/repo -XPOST
+refuses_wrapper repos/example/repo -iXPOST
+refuses_wrapper repos/example/repo --method=PATCH
+refuses_wrapper repos/example/repo --method GET
+refuses_wrapper repos/example/repo -f a=b
+refuses_wrapper repos/example/repo -if a=b
+refuses_wrapper repos/example/repo -F a=b
+refuses_wrapper repos/example/repo --field a=b
+refuses_wrapper repos/example/repo --raw-field=a=b
+refuses_wrapper repos/example/repo --input payload.json
+refuses_wrapper graphql
+refuses_wrapper /GraphQL?query=x
+refuses_wrapper repos/example/repo -H 'X-HTTP-Method-Override: POST'
+refuses_wrapper repos/example/repo --header='X-HTTP-Method-Override: POST'
+refuses_wrapper repos/example/repo --unknown
+refuses_wrapper repos/example/repo repos/example/other
+refuses_wrapper https://example.invalid/path
+refuses_wrapper repos/example/repo --jq
+refuses_wrapper
+# Mutation proof uses a scratch copy only: the outgoing-method contract must
+# reject it. Argument refusals are independently checked above.
+sed 's/exec gh api --method GET/exec gh api/' "$wrapper" >"${work_dir}/wrapper-unpinned"
+if wrapper_contract "${work_dir}/wrapper-unpinned"; then
+    fail "GET wrapper contract accepted the mutation with the method pin removed"
+fi
+echo "==> GET wrapper mutation rejected: method pin removed (scratch copy)"
 
 looser="$(check_never_looser "$agent_settings" "$bot_settings")"
 [ -z "$looser" ] || fail "agent Claude settings are looser than bot: ${looser}"
@@ -402,6 +498,7 @@ run_autonomy() {
         AGENT_AUTONOMY_REGISTRY="${repo_root}/agent-registry.json" \
         AGENT_AUTONOMY_CLAUDE_MANAGED="${fake_etc}/claude-code/managed-settings.json" \
         AGENT_AUTONOMY_CODEX_MANAGED="${fake_etc}/codex/managed_config.toml" \
+        AGENT_AUTONOMY_GH_API_READ="${fake_etc}/gh-api-read" \
         PATH="$autonomy_path" "$BASH" "$agent_autonomy" "$@"
 }
 
@@ -416,10 +513,21 @@ fi
 FOREMAN_DEVCONTAINER=agent run_autonomy apply >/dev/null || fail "agent-autonomy.sh apply failed under the agent marker"
 cmp -s "$agent_settings" "${fake_etc}/claude-code/managed-settings.json" || fail "apply did not install the agent Claude settings"
 cmp -s "$agent_codex" "${fake_etc}/codex/managed_config.toml" || fail "apply did not install the agent Codex config"
+cmp -s "$shipped_wrapper" "${fake_etc}/gh-api-read" && [ -x "${fake_etc}/gh-api-read" ] || fail "apply did not install the executable GET wrapper"
 [ ! -x "${fake_bin}/opencode" ] || fail "apply did not refuse opencode (no agent-capable configuration)"
 [ ! -x "${fake_bin}/agy" ] || fail "apply did not refuse agy (no agent-capable configuration)"
 [ -x "${fake_bin}/claude" ] && [ -x "${fake_bin}/codex" ] || fail "apply refused an agent-capable harness"
 FOREMAN_DEVCONTAINER=agent run_autonomy verify >/dev/null || fail "verify failed right after apply"
+chmod -x "${fake_etc}/gh-api-read"
+if FOREMAN_DEVCONTAINER=agent run_autonomy verify >/dev/null 2>&1; then
+    fail "verify passed with a non-executable GET wrapper"
+fi
+FOREMAN_DEVCONTAINER=agent run_autonomy apply >/dev/null || fail "apply did not repair GET wrapper mode"
+printf "# drift\n" >>"${fake_etc}/gh-api-read"
+if FOREMAN_DEVCONTAINER=agent run_autonomy verify >/dev/null 2>&1; then
+    fail "verify passed with a drifted GET wrapper"
+fi
+FOREMAN_DEVCONTAINER=agent run_autonomy apply >/dev/null || fail "apply did not repair GET wrapper bytes"
 
 # The platform-VM seam (`--platform-vm`, passed only by the remote bootstrap) is
 # an ARGUMENT: an environment variable of the same meaning — the variable this
@@ -518,6 +626,7 @@ run_baked() {
     AGENT_AUTONOMY_REGISTRY="${repo_root}/agent-registry.json" \
         AGENT_AUTONOMY_CLAUDE_MANAGED="${fake_etc}/claude-code/managed-settings.json" \
         AGENT_AUTONOMY_CODEX_MANAGED="${fake_etc}/codex/managed_config.toml" \
+        AGENT_AUTONOMY_GH_API_READ="${fake_etc}/gh-api-read" \
         PATH="${fake_bin}:${safe_bin}" "$BASH" "${baked_tree}/.devcontainer/agent/agent-autonomy.sh" "$@"
 }
 echo '{}' >"${fake_etc}/claude-code/managed-settings.json"

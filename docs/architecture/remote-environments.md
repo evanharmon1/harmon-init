@@ -58,7 +58,7 @@ agents tiers download only from the allowed column.
 | --- | --- |
 | `github.com` | the origin of every GitHub release download: `github.com/<owner>/<repo>/releases/download/…` answers **302**, so it is contacted for task, gh, uv, gitleaks and the rest even though the bytes come from the next host |
 | `release-assets.githubusercontent.com` | the 302 target that actually serves GitHub release assets |
-| `raw.githubusercontent.com` | the standalone entry fetches `versions.env`, `lib.sh` and the tier scripts from the release tag, and the agent posture from the same tag: `.devcontainer/agent/agent-autonomy.sh`, `.devcontainer/config/agent/claude-managed-settings.json`, `.devcontainer/config/agent/codex-managed-config.toml` and `.devcontainer/config/agent/harnesses.json` |
+| `raw.githubusercontent.com` | the standalone entry fetches `versions.env`, `lib.sh` and the tier scripts from the release tag, and the agent posture from the same tag: `.devcontainer/agent/agent-autonomy.sh`, `.devcontainer/config/agent/claude-managed-settings.json`, `.devcontainer/config/agent/codex-managed-config.toml` and `.devcontainer/config/agent/harnesses.json` and `.devcontainer/config/agent/gh-api-read` |
 | `nodejs.org` | the checksum-pinned Node tarball |
 | `archive.ubuntu.com` | the apt packages of the core tier. One of the three Ubuntu archive mirrors the VM's **own** apt sources configure, so `apt-get update` alone contacts them whether or not a package is installed; the set is written once in `images/devcontainer/install/apt-mirrors.txt` and both this table and the guard's apt implication are derived from it. amd64: the release, updates and backports pockets |
 | `security.ubuntu.com` | the same apt run's **security** pocket on amd64 (`noble-security`) — a separate host, not a path under the archive, so an allowlist holding only the line above blocks a stock `apt-get update` |
@@ -316,7 +316,8 @@ put `/usr/local/bin` first on `PATH` themselves.
 Every run, whatever the tiers, installs the **agent posture**
 ([#1408](https://github.com/evanharmon1/harmon-init/issues/1408)): the agent
 Claude Code settings to `/etc/claude-code/managed-settings.json` and the agent
-Codex configuration to `/etc/codex/managed_config.toml`, the paths both
+Codex configuration to `/etc/codex/managed_config.toml`, plus the GET-only
+wrapper to `/usr/local/bin/gh-api-read`. The managed files use the paths both
 harnesses read as managed policy and the ones the agent devcontainer installs
 to. It is installed **immediately after `apt-core.sh`** (which provides `jq`,
 its one dependency) **and before any tier**, so a tier that fails can never
@@ -332,20 +333,33 @@ leave a harness installed on the machine without its managed policy.
 - **One installer.** The install is the definition's own
   `.devcontainer/agent/agent-autonomy.sh`, `apply` and then `verify` — the
   script the agent devcontainer runs — told the posture
-  (`FOREMAN_DEVCONTAINER=agent`), the definition's location, and the two
-  destinations. `verify` fails the run unless each file the bootstrap wrote
+  (`FOREMAN_DEVCONTAINER=agent`), the definition's location, and the three
+  destinations. The wrapper is installed executable and verified against the
+  same source as the managed settings. `verify` fails the run unless each file the bootstrap wrote
   matches the definition byte for byte. A second run installs nothing.
 - **Harness executables are never modified.** In the agent devcontainer
   `apply` also makes every harness the definition refuses non-executable. On a
   platform's VM those executables are the platform's, so the bootstrap runs
-  `apply --platform-vm` and `verify --platform-vm`, which handle the two files
-  only and say so in the log. It is an argument rather than an environment
+  `apply --platform-vm` and `verify --platform-vm`, which handle the managed files
+  and GET wrapper only and say so in the log. It is an argument rather than an environment
   variable so that nothing a repository sets can switch it on in the agent
   devcontainer, whose lifecycle never passes it. Harness refusal on a platform VM is a
   recorded delivery gap, and the platform's own controls are named per
   platform [below](#how-each-platform-receives-the-agent-posture).
-- **A file already there is left in place.** `/etc/claude-code/` and
-  `/etc/codex/` are created when missing. Anything already at either path that
+- **REST reads use `gh-api-read`.** Raw `gh api` is explicitly denied in
+  auto mode; reads use `/usr/local/bin/gh-api-read`. Its argument allowlist
+  refuses methods, fields, bodies, headers (including method overrides),
+  bundled flags, unknown flags and GraphQL, then pins `gh api --method GET`.
+  Argument-pattern denies remain defence in depth, not the write boundary:
+  they do not follow commands into scripts or Taskfile targets. The boundary
+  is the bot's collaborator grants, the agent PAT's scopes and the repository
+  branch rulesets.
+- **The wrapper is always ours.** A stale or differing
+  `/usr/local/bin/gh-api-read` is replaced at mode 0755 without a policy
+  replacement opt-in. Matching executable bytes need no reinstall. Its
+  system PATH prevents a caller from selecting a user-installed `gh`.
+- **A managed-policy file already there is left in place.** `/etc/claude-code/` and
+  `/etc/codex/` are created when missing. Anything already at either managed-policy destination that
   is not the definition — a file, or a symlink, dangling or not — may be the
   platform's own managed policy, possibly a stronger control than ours, so by
   default it is **not replaced**: the run reports its path and what it is (its
@@ -492,7 +506,7 @@ that needs a live session.
 
 | Platform | Delivery | Recorded gap | Evidence |
 | --- | --- | --- | --- |
-| Claude Code on the web | The setup script's bootstrap writes `/etc/claude-code/managed-settings.json`, creating the directory | The refusals observed in a session (`sudo`, `gh pr merge`, and a `gh api -i -X POST` write) are consistent with the managed file's deny rules being enforced: they carried the permission-rule message form and came without a prompt, unlike the classifier's refusals. The `gh pr merge` refusal predates the agent posture dropping its merge guard ([ADR](../decisions/2026-10-07-bot-and-agent-postures-carry-no-merge-guards.md)): from v5.3.0 the managed file allows `gh pr merge`, so a repeat uses `gh release delete x`, which it still denies. `/permissions` cannot list rules on the web, so this is inferred from behaviour, not shown by a listing. The deny rules are defence in depth, not the write boundary: they match argument patterns (bundled short flags in `gh api` are untested, [#1549](https://github.com/evanharmon1/harmon-init/issues/1549)) and are not transitive, so they do not see what an allowed `task` target or script runs ([ADR](../decisions/2026-09-29-agent-posture-three-posture-model.md)); the boundary is the bot's grants, the token's missing `workflow` scope and the rulesets. They do not cover the session's built-in GitHub tools, which opened, commented on and closed a draft PR as the bot (observed 2026-10-07). The platform's server-side auto-mode classifier is a second, separate layer above it. Harness refusal is not applied; what bounds the session instead is the managed file, the classifier, and that the platform starts Claude Code, not another harness. No hooks | observed 2026-09-27 ([evidence](https://github.com/evanharmon1/harmon-init/issues/1404#issuecomment-5860625696)) for the VM; delivery (the file written and verified) observed 2026-10-06; enforcement inferred from the refusals 2026-10-06/07, criterion 2 ([guide](../guides/claude-code-web.md#the-agent-posture)) |
+| Claude Code on the web | The setup script's bootstrap writes `/etc/claude-code/managed-settings.json`, creating the directory | The refusals observed in a session (`sudo`, `gh pr merge`, and a `gh api -i -X POST` write) are consistent with the managed file's deny rules being enforced: they carried the permission-rule message form and came without a prompt, unlike the classifier's refusals. The `gh pr merge` refusal predates the agent posture dropping its merge guard ([ADR](../decisions/2026-10-07-bot-and-agent-postures-carry-no-merge-guards.md)): from v5.3.0 the managed file allows `gh pr merge`, so a repeat uses `gh release delete x`, which it still denies. `/permissions` cannot list rules on the web, so this is inferred from behaviour, not shown by a listing. The deny rules are defence in depth, not the write boundary: they match argument patterns (bundled short flags evade that matching, [#1549](https://github.com/evanharmon1/harmon-init/issues/1549)) and are not transitive, so they do not see what an allowed `task` target or script runs ([ADR](../decisions/2026-09-29-agent-posture-three-posture-model.md)); the boundary is the bot's collaborator grants, the token's missing `workflow` scope and the branch rulesets. Raw `gh api` is now denied; REST reads use `/usr/local/bin/gh-api-read`. They do not cover the session's built-in GitHub tools, which opened, commented on and closed a draft PR as the bot (observed 2026-10-07). The platform's server-side auto-mode classifier is a second, separate layer above it. Harness refusal is not applied; what bounds the session instead is the managed file, the classifier, and that the platform starts Claude Code, not another harness. No hooks | observed 2026-09-27 ([evidence](https://github.com/evanharmon1/harmon-init/issues/1404#issuecomment-5860625696)) for the VM; delivery (the file written and verified) observed 2026-10-06; enforcement inferred from the refusals 2026-10-06/07, criterion 2 ([guide](../guides/claude-code-web.md#the-agent-posture)) |
 | Codex cloud | The setup script's bootstrap writes `/etc/codex/managed_config.toml`, creating the directory | Whether the cloud agent reads a managed config written in the setup phase is **unproven**, and no page gives an environment a permission or approval configuration. The Codex configuration has no deny list to lose: it pins `workspace-write` and approval `never`, and the Claude deny list has no Codex equivalent. Harness refusal is not applied; the platform runs Codex and nothing else, inside its per-task isolation. No hooks | docs (legacy), 2026-09-29; delivery expected, not yet observed — pending, criterion 3 ([guide](../guides/codex-cloud.md#the-agent-posture-as-far-as-codex-cloud-can-express-it)) |
 | Sprites | The bootstrap, run once per Sprite from `sprite console` at a pinned release tag, then checkpointed ([guide](../guides/sprites.md#provisioning)); the machine is ours, so the files install as they do on any platform VM | The same two gaps as every platform VM apply: the adapter adds no harness refusal and installs nothing beyond the bootstrap, and a managed file already there is left in place unless `HARMON_AGENT_POSTURE_REPLACE=1`. Egress is bounded from outside the VM by the network policy generated from the shared allowlist, which the agent cannot change from inside; that it is still in force is confirmed before each lane by comparing the stored policy with a fresh generation ([guide](../guides/sprites.md#network-policy)), because whether a checkpoint restore reverts it is pending. Codex: the Sprite is persistent, so it holds one login of its own, made once by the maintainer ([agents tier](#tiers)). No hooks | expected, not yet observed — pending, criterion 4 |
 | Self-hosted | The same bootstrap, once [#1410](https://github.com/evanharmon1/harmon-init/issues/1410) builds the adapter | The adapter does not exist yet. The same two gaps as every platform VM apply: harness refusal is not applied by the bootstrap, and a managed file already there is left in place unless `HARMON_AGENT_POSTURE_REPLACE=1`. Codex: a self-hosted machine holds at most one login of its own, made once at provisioning ([agents tier](#tiers)). No hooks | expected, not yet observed — pending, #1410 |
