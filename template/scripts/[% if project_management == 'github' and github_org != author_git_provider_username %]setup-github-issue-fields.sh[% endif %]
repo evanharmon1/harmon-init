@@ -67,7 +67,8 @@
 # carry an estimate is retired in their favor (ADR 2026-09-30 D8).
 #
 # Issue fields are an ORG-level feature (no per-user equivalent), so this is
-# org-only. Needs gh authed with the 'admin:org' scope + jq.
+# org-only. Needs gh authed with the 'admin:org' scope, jq, and node (the agent
+# registry the Model fields come from is validated first).
 #
 # Usage: setup-github-issue-fields.sh --org <org-login>
 #
@@ -96,7 +97,7 @@ if [ -z "$org" ]; then
     exit 2
 fi
 
-for tool in gh jq; do
+for tool in gh jq node; do
     if ! command -v "$tool" >/dev/null 2>&1; then
         echo "Required tool not found: $tool" >&2
         exit 1
@@ -117,10 +118,19 @@ kv "Organization" "$org"
 # Preview REST API version for issue fields; bump if GitHub moves the endpoint.
 api_version="2026-03-10"
 
-# The agent registry the Model fields' options come from. Read up front and fail
-# closed before any GitHub call: an unreadable registry must never become an
-# empty option set.
+# The agent registry the Model fields' options come from. Validated up front and
+# fail closed before any GitHub call: an unreadable registry must never become an
+# empty option set, and one that parses but is only partly filled (a family with
+# no model lines, a line with no versions) must never become a partial one. The
+# validator is the one place registry invariants live, so run it rather than
+# re-check a subset in jq.
 agent_registry="$script_dir/../agent-registry.json"
+if ! registry_errors="$(node "$script_dir/validate-agent-registry.mjs" "$agent_registry" \
+    "$script_dir/../agent-registry.schema.json" 2>&1 >/dev/null)"; then
+    printf '%s\n' "$registry_errors" >&2
+    echo "Could not derive the Model field options from $agent_registry — it is not a valid agent registry" >&2
+    exit 1
+fi
 
 # model_opts KIND — the option set for one Model field, derived from the registry:
 # each value once (first occurrence wins, in registry order — `flash` is a line of

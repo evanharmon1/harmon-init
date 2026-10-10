@@ -77,6 +77,12 @@ if (errors.length === 0) {
   }
 
   for (const family of registry.families) {
+    // A family with no model line has nothing to claim, dispatch, or record:
+    // the implementer-record labels and org fields (#1517) would provision a
+    // family whose `model:*` / `model-version:*` values never exist.
+    if (family.models.length === 0) {
+      semanticError(`family ${family.slug} has no model lines — models[] needs at least one`)
+    }
     for (const slug of duplicateSlugs(family.models)) {
       semanticError(`family ${family.slug} has duplicate model slug: ${slug}`)
     }

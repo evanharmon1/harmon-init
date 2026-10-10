@@ -451,6 +451,27 @@ check_model_families label-registry.json agent-registry.json
 # template's own copy is a .jinja source until copier renders it).
 [ "$template_mode" = 1 ] && check_model_families template/label-registry.json agent-registry.json
 
+# A registry that parses but is only partly filled — a family with no model
+# lines, a line with no versions — must fail closed rather than render a
+# partial implementer record (challenge-r1-codex-adversarial-1): the renderer
+# runs validate-agent-registry.mjs first and emits nothing on a failure.
+partial_tmp="$(mktemp -d)"
+for partial in empty-versions empty-models; do
+    case "$partial" in
+    empty-versions) partial_edit='.families[0].models[0].versions = []' ;;
+    empty-models) partial_edit='.families[0].models = []' ;;
+    esac
+    jq "$partial_edit" agent-registry.json >"$partial_tmp/agent-registry.json"
+    if partial_out="$(node scripts/agent-registry-labels.mjs all "$partial_tmp/agent-registry.json" 2>"$partial_tmp/err")"; then
+        fail "agent-registry-labels.mjs rendered a registry with $partial — it must fail closed"
+    fi
+    [ -z "$partial_out" ] ||
+        fail "agent-registry-labels.mjs emitted label records for a registry with $partial"
+    grep -q "not a valid agent registry" "$partial_tmp/err" ||
+        fail "agent-registry-labels.mjs did not report the validator failure for $partial: $(cat "$partial_tmp/err")"
+done
+rm -rf "$partial_tmp"
+
 # ── 3. migration lockfile (template repo only) ─────────────────────────────
 # The reviewed provisioned set per layer: the pre-manifest inline vocabulary,
 # plus (root) the families hand-seeded on 2026-08-13 with their exact
@@ -695,6 +716,32 @@ STUB
         fail "setup-github-labels.sh --foreman provisions a different set than the renderer:"
         diff <(printf '%s\n' "$want_names") <(printf '%s\n' "$emitted") >&2 || true
     }
+    # ...and a partly filled agent registry provisions NOTHING: run the script
+    # from a staged copy whose agent-registry.json has a line with no versions,
+    # with a `gh` that records every call, and require a failure before any
+    # call (challenge-r1-codex-adversarial-1).
+    stage="$(mktemp -d)"
+    cp -R scripts "$stage/scripts"
+    [ -d ai ] && cp -R ai "$stage/ai"
+    cp label-registry.json label-registry.schema.json agent-registry.schema.json "$stage/"
+    jq '.families[0].models[0].versions = []' agent-registry.json >"$stage/agent-registry.json"
+    mkdir "$stage/bin"
+    cat >"$stage/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_CALLS"
+exit 0
+STUB
+    chmod +x "$stage/bin/gh"
+    : >"$stage/calls"
+    if STUB_CALLS="$stage/calls" PATH="$stage/bin:$PATH" \
+        bash "$stage/scripts/setup-github-labels.sh" --repo drift/check --foreman >"$stage/out" 2>&1; then
+        fail "setup-github-labels.sh succeeded on an agent registry with an empty versions list"
+    fi
+    [ ! -s "$stage/calls" ] ||
+        fail "setup-github-labels.sh called gh on an invalid agent registry: $(tr '\n' ' ' <"$stage/calls")"
+    grep -q "must contain at least 1 item" "$stage/out" ||
+        fail "setup-github-labels.sh did not surface the validator's message: $(cat "$stage/out")"
+    rm -rf "$stage"
 else
     echo "note: scripts/setup-github-labels.sh not present in this profile — skipping the provisioning binding" >&2
 fi

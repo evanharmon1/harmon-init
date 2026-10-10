@@ -35,6 +35,7 @@
 //          model-effort | all | docs-tables
 // Registry defaults to ../agent-registry.json relative to this file.
 
+import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
@@ -69,6 +70,29 @@ try {
 } catch (error) {
   console.error(
     `agent-registry-labels: cannot read valid JSON from ${registryPath}: ${error.message}`
+  )
+  process.exit(1)
+}
+
+// Validate the registry before rendering anything from it. Parsing is not
+// enough: a registry that parses but holds a family with no model lines, or a
+// line with no versions, would otherwise render a partial label set that
+// setup-github-labels.sh provisions as if it were complete (#1517). The
+// validator is the one place registry invariants live, so run it rather than
+// re-check a subset here, against the schema shipped beside this script.
+const validation = spawnSync(
+  process.execPath,
+  [
+    path.join(here, 'validate-agent-registry.mjs'),
+    registryPath,
+    path.join(here, '..', 'agent-registry.schema.json')
+  ],
+  { encoding: 'utf8' }
+)
+if (validation.status !== 0) {
+  process.stderr.write(validation.stderr || validation.error?.message || '')
+  console.error(
+    `agent-registry-labels: ${registryPath} is not a valid agent registry — refusing to render a partial label set`
   )
   process.exit(1)
 }

@@ -355,6 +355,9 @@ run_with '[]'
 [ "$(jq -sc 'map(.name)' "$POSTS")" = '["Product","Impact","Risk","Complexity","Priority (AI)","Effort","Model family","Model","Model version","Model effort"]' ] ||
     fail "expected Product, Impact, Risk, Complexity, Priority (AI), Effort and the four Model fields created in order, got $(jq -sc 'map(.name)' "$POSTS")"
 [ "$(patches)" = 0 ] || fail "a freshly created field must not be PATCHed"
+# Everything the script provisions, as created: the status want-list is compared
+# against this full set at the end.
+cp "$POSTS" "$tmp/created-posts"
 [ "$(post_body Product | jq -r '.data_type')" = text ] || fail "Product must be created as text"
 [ "$(opt_names "$(post_body Effort)")" = "$ladder" ] || fail "a created Effort must carry the ladder"
 pin_descriptions Effort "$(post_body Effort)" \
@@ -692,15 +695,24 @@ body="$(patch_body "$model_version_id")"
     fail "the org lost an existing Model version option id"
 grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "appending a version must end ready"
 
-echo "==> an unreadable agent registry fails closed before any GitHub call"
+echo "==> an unreadable or partly filled agent registry fails closed before any GitHub call"
+# The script validates the registry with validate-agent-registry.mjs first, so a
+# registry that parses but has a line with no versions or a family with no model
+# lines never becomes a partial option set (challenge-r1-codex-adversarial-1).
 mkdir -p "$tmp/noreg/scripts/lib"
 cp "$script" "$tmp/noreg/scripts/setup-github-issue-fields.sh"
 cp "$PWD/scripts/lib/output.sh" "$tmp/noreg/scripts/lib/output.sh"
-for reg in missing invalid empty; do
+cp "$PWD/scripts/validate-agent-registry.mjs" "$tmp/noreg/scripts/"
+cp "$PWD/scripts/lib/json-schema-subset.mjs" "$tmp/noreg/scripts/lib/"
+cp "$PWD/agent-registry.schema.json" "$tmp/noreg/"
+[ ! -d "$PWD/ai" ] || cp -R "$PWD/ai" "$tmp/noreg/ai"
+for reg in missing invalid empty empty-versions empty-models; do
     rm -f "$tmp/noreg/agent-registry.json"
     case "$reg" in
     invalid) printf '{not json' >"$tmp/noreg/agent-registry.json" ;;
     empty) printf '{"families":[],"effort_ladder":[]}' >"$tmp/noreg/agent-registry.json" ;;
+    empty-versions) jq '.families[0].models[0].versions = []' "$registry" >"$tmp/noreg/agent-registry.json" ;;
+    empty-models) jq '.families[0].models = []' "$registry" >"$tmp/noreg/agent-registry.json" ;;
     esac
     reset_stub "$builtin"
     if bash "$tmp/noreg/scripts/setup-github-issue-fields.sh" --org testorg >"$tmp/out" 2>&1; then
@@ -709,21 +721,33 @@ for reg in missing invalid empty; do
     [ ! -s "$CALLS" ] || fail "[$reg registry] the run reached GitHub: $(tr '\n' ' ' <"$CALLS")"
     grep -q "Could not derive the Model field options" "$tmp/out" || fail "[$reg registry] expected the registry error"
 done
+grep -q "has no model lines" "$tmp/out" || fail "the validator's own message must be shown: $(cat "$tmp/out")"
 
-# The want-list in status.sh and the option sets here are two copies of one fact;
-# a scale that changes in only one would report every correctly provisioned org
-# as incomplete (or hide a missing option). Derive the expected rows from the org
-# the first run produced and compare them to the want-list as written.
+# The want-list in status.sh and what this script provisions are two copies of one
+# fact; a field or scale that changes in only one would report every correctly
+# provisioned org as incomplete (or hide a missing field). Compare the FULL set
+# the script created on the empty org above — every field, so a future field
+# cannot drift silently — with status.sh's want-list: its static rows as written,
+# plus the four Model rows it derives from agent-registry.json by the same rule
+# the expected sets above use (each value once, registry order, retired included).
 [ -f "$status_script" ] || fail "scripts/status.sh is missing — the want-list cannot be compared"
 want_rows="$(awk '
     /^[[:space:]]*want_fields="/ { inblock = 1; sub(/^[[:space:]]*want_fields="/, "") }
     inblock { line = $0; closed = (line ~ /"[[:space:]]*$/); sub(/"[[:space:]]*$/, "", line); print line; if (closed) exit }
 ' "$status_script")"
 [ -n "$want_rows" ] || fail "could not read the issue-field want-list (want_fields) from scripts/status.sh"
-have_rows="$(jq -r '
-    .[] | select(.name == "Product" or .name == "Impact" or .name == "Risk" or .name == "Complexity"
-                 or .name == "Priority (AI)" or .name == "Effort")
-    | "\(.name):\(.data_type):\([ (.options // []) | sort_by(.priority)[] | .name ] | join(","))"' "$tmp/provisioned.json")"
+! grep -q '^Model' <<<"$want_rows" ||
+    fail "status.sh lists a Model field statically — its options must come from agent-registry.json"
+for model_field in "Model family" "Model" "Model version" "Model effort"; do
+    grep -Fq "\"${model_field}:single_select:\\(opts(" "$status_script" ||
+        fail "status.sh does not derive the '${model_field}' want row from agent-registry.json"
+done
+want_rows="$want_rows
+Model family:single_select:$(jq -r 'join(",")' <<<"$model_want_family")
+Model:single_select:$(jq -r 'join(",")' <<<"$model_want_line")
+Model version:single_select:$(jq -r 'join(",")' <<<"$model_want_version")
+Model effort:single_select:$(jq -r 'join(",")' <<<"$model_want_effort")"
+have_rows="$(jq -r '"\(.name):\(.data_type):\([ (.options // []) | sort_by(.priority)[] | .name ] | join(","))"' "$tmp/created-posts")"
 [ "$(printf '%s\n' "$want_rows" | sort)" = "$(printf '%s\n' "$have_rows" | sort)" ] ||
     fail "status.sh's want-list differs from what provisioning creates:
 want-list:

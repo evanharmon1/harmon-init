@@ -1395,6 +1395,26 @@ Risk:single_select:trivial,low,medium,high,critical
 Complexity:single_select:xs,s,m,l,xl
 Priority (AI):single_select:p0,p1,p2,p3,p4
 Effort:single_select:1,2,3,5,8,13,20"
+                        # The four Model fields (the implementer record, #1517)
+                        # take their options from agent-registry.json, exactly as
+                        # the setup script derives them: each value once, in
+                        # registry order, retired versions included — so an org
+                        # that has not been re-provisioned since a registry bump
+                        # reports the version it lacks. Without a readable
+                        # registry only presence and type are checked.
+                        model_rows="$(jq -r '
+                            def opts(f): reduce f as $v ([]; if any(.[]; . == $v) then . else . + [$v] end) | join(",");
+                            "Model family:single_select:\(opts(.families[].slug))",
+                            "Model:single_select:\(opts(.families[].models[].slug))",
+                            "Model version:single_select:\(opts(.families[].models[].versions[].slug))",
+                            "Model effort:single_select:\(opts(.effort_ladder[]))"' agent-registry.json 2>/dev/null)" ||
+                            model_rows=""
+                        [ -n "${model_rows}" ] || model_rows="Model family:single_select:
+Model:single_select:
+Model version:single_select:
+Model effort:single_select:"
+                        want_fields="${want_fields}
+${model_rows}"
                         missing_fields=""
                         wrong_fields=""
                         short_fields=""
@@ -1440,7 +1460,7 @@ Effort:single_select:1,2,3,5,8,13,20"
                         elif [ -n "${untyped_fields}" ]; then
                             checkline unknown "Org issue fields" "type unreadable for ${untyped_fields} — inventory unchecked"
                         else
-                            checkline ok "Org issue fields" "Product, Impact, Risk, Complexity, Priority (AI), Effort"
+                            checkline ok "Org issue fields" "Product, Impact, Risk, Complexity, Priority (AI), Effort, Model family, Model, Model version, Model effort"
                         fi
                     fi
                 fi
