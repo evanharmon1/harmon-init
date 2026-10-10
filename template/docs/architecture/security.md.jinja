@@ -715,6 +715,8 @@ even the in-org radius small:
 [% endif %]| `SNYK_TOKEN` | optional Snyk CLI scans[% if snyk_scan_schedule != 'off' %] + `snyk-scheduled.yml`[% endif %] | local env / 1Password by default[% if snyk_scan_schedule != 'off' %]; Actions secret for the generated schedule[% endif %] | manual |
 | TODO | TODO | TODO | TODO |
 
+The optional `CLAUDE_CODE_OAUTH_TOKEN_2` enables one zero-usage failure fallback in Claude workflows; the fallback is skipped when absent.
+
 > **`CLAUDE_CODE_OAUTH_TOKEN` must be an OAuth token, not an API key.** Generate
 > it with `claude setup-token`; the value starts **`sk-ant-oat01-`** and bills the
 > claude-* workflows to your Claude **subscription**. A raw API key
