@@ -26,6 +26,47 @@ if ! task --list-all >/dev/null 2>&1; then
     fail "task --list-all failed — the Taskfile does not compile"
 fi
 
+check_taskfile_paths() {
+    local taskfile matches
+    for taskfile in "$@"; do
+        [ -f "$taskfile" ] || continue
+        matches="$(grep -nHE '\{\{[^}]*\.PWD[^A-Za-z0-9_]' "$taskfile" || true)"
+        [ -z "$matches" ] ||
+            fail "$matches — derive paths from ROOT_DIR or TASKFILE_DIR, never PWD"
+    done
+}
+
+echo "==> Taskfile paths derive from ROOT_DIR or TASKFILE_DIR, never PWD"
+# Assemble the copier marker so this verbatim script ships without an
+# unrendered marker, just like the path-safe formatter fixture below.
+taskfile_jinja_open='[%'
+template_taskfiles="template/${taskfile_jinja_open} if use_foreman %]taskfiles${taskfile_jinja_open} endif %]"
+check_taskfile_paths Taskfile.yml taskfiles/*.yml template/Taskfile.yml.jinja "$template_taskfiles"/*.yml
+
+echo "==> Taskfile PWD guard rejects bare, trimmed and piped references (negative controls)"
+pwd_taskfile="${test_tmp}/Taskfile.yml"
+for pwd_reference in '{{.PWD}}' '{{ .PWD }}' '{{- .PWD -}}' '{{.PWD | dir}}'; do
+    printf '%s\n' 'version: "3"' 'tasks:' '  probe:' '    cmds:' \
+        "      - echo \"$pwd_reference\"" >"$pwd_taskfile"
+    out=$(check_taskfile_paths "$pwd_taskfile" 2>&1) && rc=0 || rc=$?
+    [ "$rc" -ne 0 ] || fail "Taskfile PWD guard accepted $pwd_reference"
+    case "$out" in
+    *"${pwd_taskfile}:5:"*"${pwd_reference}"*'never PWD'*) ;;
+    *) fail "Taskfile PWD guard failed for the wrong reason: $out" ;;
+    esac
+done
+
+echo "==> Taskfile PWD guard accepts PWD_ROOT and shell PWD references"
+cat >"$pwd_taskfile" <<'EOF'
+version: "3"
+tasks:
+  probe:
+    cmds:
+      - echo "{{.PWD_ROOT}} $PWD"
+EOF
+out=$(check_taskfile_paths "$pwd_taskfile" 2>&1) && rc=0 || rc=$?
+[ "$rc" -eq 0 ] || fail "Taskfile PWD guard rejected PWD_ROOT or shell PWD: $out"
+
 echo "==> closing-keyword preflight delegates to a linted script, not inline Taskfile bash"
 # The logic lives in scripts/guard-closing-keywords.sh so shellcheck/shfmt see
 # it (harmon-init#1196); inline `cmds:` strings are invisible to lint:shell.
