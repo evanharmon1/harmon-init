@@ -344,7 +344,7 @@ check_classification_registry() {
         fail "$manifest human-work purpose does not match maintainer definition"
     [ "$(jq -r '.families[] | select(.family == "human-work") | .lifecycle_note' "$manifest")" = "applied while completion is primarily a human's; removed once the issue's remaining completion is no longer primarily a human's" ] ||
         fail "$manifest human-work lifecycle_note does not match maintainer definition"
-    [ "$(jq -r '.families[] | select(.family == "human-work") | .writer_note' "$manifest")" = "whoever files or triages the issue, human or agent; only a human removes it" ] ||
+    [ "$(jq -r '.families[] | select(.family == "human-work") | .writer_note' "$manifest")" = "whoever files or triages the issue, human or agent; triage may remove it only when the issue no longer qualifies (non-collector, no [HUMAN] majority, agent-completable)" ] ||
         fail "$manifest human-work writer_note does not match maintainer definition"
     [ "$(jq -r '.families[] | select(.family == "human-work") | .values[] | select(.value == "human") | .description' "$manifest")" = "Work whose completion is primarily a human's; never dispatched to an agent" ] ||
         fail "$manifest human-work:human description does not match maintainer definition"

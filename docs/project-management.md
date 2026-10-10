@@ -792,15 +792,19 @@ the taxonomy table below is generated from) and the starter set is created by
 - **Human work** — `human` is applied when the issue's completion is primarily a
   human's (actions, decisions, QA, purchases, credentials, physical work),
   whether or not an agent can assist with parts of it. Agents may file, append
-  to, or prepare for a `human` issue, but never claim, arm, or implement one,
-  and never remove `human` from it: only a human takes the label off. "Prepare
-  for" means comments, drafts or research on the human issue itself, never a
-  claim. A part an agent can do is filed as its own issue and goes through the
-  Agent queue. When that part cannot start before the human step, give it a
-  native blocked-by link to a standalone `human` issue for that step, never to
-  a collector, which can stay open by design (see **A precondition is a
-  dependency, not a follow-up** below). The agent issue is then not startable
-  until that standalone issue closes. `human` + `umbrella` marks a
+  to, or prepare for a `human` issue, but never claim, arm, or implement one
+  while it carries the label. Filing never removes `human`. Triage may remove
+  `human` only when the issue no longer qualifies for it, and all of these hold:
+  the issue is not a `(HUMAN):` or `(QA):` collector, `[HUMAN]` criteria are not
+  a majority of its acceptance criteria, and the classifier judges the remaining
+  work agent-completable. Every removal is listed in the triage report for a
+  person to see. "Prepare for" means comments, drafts or research on the human
+  issue itself, never a claim. A part an agent can do is filed as its own issue
+  and goes through the Agent queue. When that part cannot start before the human
+  step, give it a native blocked-by link to a standalone `human` issue for that
+  step, never to a collector, which can stay open by design (see **A precondition
+  is a dependency, not a follow-up** below). The agent issue is then not
+  startable until that standalone issue closes. `human` + `umbrella` marks a
   `(HUMAN):`/`(QA):` collector (see **Human-task and QA collectors** below) as
   the special case
 - **Workflow** — transient triage states; `blocked` is the non-issue-blocker
@@ -1101,7 +1105,7 @@ deliberately leaves it alone.
 | `sec`, `a11y`, `perf`, `tech-debt`, `i18n`, `l10n` | humans, at triage | humans, saved views | provisioned; inert | applied when true, removed when not |
 | `customer-request`, `ai-generated` | whoever files or authors the work, human or agent | humans, saved views | provisioned; inert | durable provenance — never removed |
 | `epic`, `umbrella` | humans, at planning or grooming; agents when filing a (HUMAN)/(QA) collector or an approved breakdown | humans, saved views | provisioned; inert | applied to a parent while its role is current; removed or changed when its horizon changes |
-| `human` | whoever files or triages the issue, human or agent; only a human removes it | humans, saved views; agents, to skip dispatch | provisioned; inert | applied while completion is primarily a human's; removed once the issue's remaining completion is no longer primarily a human's |
+| `human` | whoever files or triages the issue, human or agent; triage may remove it only when the issue no longer qualifies (non-collector, no [HUMAN] majority, agent-completable) | humans, saved views; agents, to skip dispatch | provisioned; inert | applied while completion is primarily a human's; removed once the issue's remaining completion is no longer primarily a human's |
 | `needs-triage` | people, agents and the issue forms add it at filing; after that the triage skill and the GitHub Actions classification reconciler maintain it (derived: added while classification is incomplete, removed once it is complete) | humans, the Triage view | provisioned; inert | a new issue that is not fully classified starts with it (people, agents and the issue forms add it at filing); after that it is derived and never cleared by hand |
 | `needs-requirements`, `blocked`, `waiting`, `needs-decision`, `needs-response`, `needs-communication` | humans, at triage | humans, the Triage view | provisioned; inert | transient — removed as soon as the state clears |
 | `needs-review` | the integration stage, at ready-for-review; humans | humans, the review list; the agent queue, which excludes it | provisioned; inert | added at ready-for-review, when `claim:*` is removed; removed if review pulls the work back into fix rounds |
@@ -1703,9 +1707,11 @@ in scope:
   **Hierarchy is not dependency**). Closing the human issue unblocks the work
   through the same graph the dispatchers read.
 - **Never dispatched.** A `human` issue is never claimed, armed with
-  `foreman:*`, or implemented by an agent, and only a human removes the
-  label. Do not rely on tooling to stop it — Foreman, for one, does not
-  read the label — so never arm one. `human` alone marks a standalone
+  `foreman:*`, or implemented by an agent while it carries the label. Triage
+  may remove `human` only when the issue no longer qualifies (non-collector,
+  no `[HUMAN]` majority, agent-completable; every removal is reported — see
+  **Human work** above). Do not rely on tooling to stop it — Foreman, for one,
+  does not read the label — so never arm one. `human` alone marks a standalone
   issue whose completion is primarily a human's, such as a precondition;
   `human` + `umbrella` marks a collector.
 
