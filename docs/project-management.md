@@ -1214,20 +1214,82 @@ tracked in
 
 Each harness declares the reasoning `efforts` it accepts. The list is drawn
 from the registry-wide `effort_ladder` and kept in ladder order. Effort belongs
-to the harness, not the model. An empty list means the registry records no
-effort control for that harness. Only three lists are verified: `claude-code`
-and `claude-code-action` (Claude Code's effort setting) and `codex-cli`
-(`model_reasoning_effort`). Every other harness is recorded as empty
-**pending verification**, not because it is known to lack a control:
+to the harness, not the model. The list holds the levels the harness is verified
+to accept — for a provider-rewired wrapper, for the models its launcher resolves.
+A level documented only
+for a model the harness does not resolve is not recorded. An empty list means
+no separate, verified effort
+setting is recorded. Numeric token budgets and on/off switches are not mapped
+onto the ladder, and aliases that collapse onto another level add no rung.
 
-- **The provider-rewired `claude-code-*` variants** run Claude Code against
-  another vendor's endpoint. Claude Code sends effort as an Anthropic API
-  parameter, and no evidence yet shows that those backends honour it.
-- **`antigravity`** selects effort through the model name (for example
-  `gemini-3.8-flash-high`) rather than a separate harness setting, so it has no
-  effort list of its own.
-- **`copilot-cli`, `qwen-code`, `opencode`, `pi`, `oh-my-pi`, `goose` and
-  `cline`** have not been checked for an effort flag.
+The following documentation was checked on **2026-10-10**. The existing
+`claude-code`, `claude-code-action` and `codex-cli` lists remain as previously
+verified; the checks below establish the other entries' status. GLM remains
+unverified for Anthropic effort pass-through; hosted Qwen and MiniMax remain
+unverified for the models their wrappers resolve:
+
+- **`claude-code-deepseek`**: DeepSeek's [thinking-mode reference](https://api-docs.deepseek.com/guides/thinking_mode/)
+  documents Anthropic `output_config.effort` with distinct `low`, `high` and
+  `max` levels, covering the launcher's configured `deepseek-v4-pro` /
+  `deepseek-v4-flash` models. Other accepted names map onto those levels.
+- **`claude-code-kimi`**: Kimi's [Claude Code integration](https://platform.kimi.ai/docs/guide/claude-code-kimi)
+  documents `CLAUDE_CODE_EFFORT_LEVEL`; its [reasoning-effort reference](https://platform.kimi.ai/docs/guide/use-reasoning-effort)
+  lists K3's `low`, `high` and `max`, covering the K line this wrapper resolves.
+  These lists describe K3, not older K2 models.
+- **`claude-code-minimax`**: MiniMax's [Anthropic compatibility reference](https://platform.minimax.io/docs/api-reference/text-anthropic-api)
+  documents `output_config.effort`: `low`, `medium`, `high`, `xhigh`, `max`.
+  This control is documented only for `MiniMax-M3.1-Flash-Preview`.
+  This repository provisions no `claude-minimax` launcher yet, and the registry's
+  minimax family carries M3. The list stays `[]` until a launcher exists and
+  the provider documents effort for the model it resolves.
+- **`claude-code-qwen`**: Alibaba's [Anthropic Messages reference](https://www.alibabacloud.com/help/en/model-studio/anthropic-api-messages)
+  documents `output_config.effort` for Qwen3.8 Max/Flash: `low`, `medium`,
+  `xhigh`. `high` and `max` map to `xhigh`. This wrapper resolves Qwen3.7 Max
+  / Coder Plus, so its list stays `[]` (unverified for the configured models)
+  until the wrapper moves to supported models or Alibaba documents effort
+  support for its configured models.
+- **`claude-code-glm` — still unverified**: Z.ai's [deep-thinking reference](https://docs.z.ai/guides/capabilities/thinking)
+  documents `reasoning_effort`, and its [Claude Code integration](https://docs.z.ai/devpack/tool/claude)
+  documents the Anthropic endpoint. Neither establishes the endpoint's
+  handling of Claude Code's `output_config.effort`; keep `[]` until that
+  pass-through is documented or verified.
+- **`claude-code-qwen-local`**: no reasoning-effort setting was established
+  for the configured `qwen3-coder:30b`. Qwen's [30B Coder model card](https://huggingface.co/Qwen/Qwen3-Coder-30B-A3B-Instruct)
+  documents non-thinking mode only. [Ollama](https://docs.ollama.com/api/anthropic-compatibility)
+  supports model-defined `output_config.effort` names, but that does not add
+  reasoning to this model; [LM Studio's Messages documentation](https://lmstudio.ai/docs/developer/anthropic-compat)
+  establishes no effort levels for it. Keep `[]` for this configuration.
+- **`antigravity`**: Google's [models page](https://www.antigravity.google/docs/models/)
+  places the thinking choice in model selection (for example, a Flash Medium
+  or Pro High selection). Its [CLI reference](https://www.antigravity.google/docs/cli/reference/)
+  exposes `/model` but no separate effort setting, so keep `[]`.
+- **`copilot-cli`**: GitHub's [CLI command reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference)
+  documents `--effort` / `--reasoning-effort`: `low`, `medium`, `high`,
+  `xhigh`, `max`, subject to the selected model.
+- **`qwen-code`**: the official [model-provider configuration reference](https://github.com/QwenLM/qwen-code/blob/main/docs/users/configuration/model-providers.md)
+  documents `generationConfig.reasoning.effort` and configurable capability
+  tiers: `low`, `medium`, `high`, `xhigh`, `max`. Endpoint/model profiles can
+  restrict or normalize these values; token budgets alone add no levels.
+- **`opencode`**: the [model configuration reference](https://opencode.ai/docs/models/)
+  documents `reasoningEffort` and named variants covering `minimal`, `low`,
+  `medium`, `high`, `xhigh`, `max` across providers. The [v2 reference](https://opencode.ai/v2/docs/models)
+  uses model `settings.reasoningEffort`; available variants and accepted
+  settings depend on the provider/model.
+- **`pi` and `oh-my-pi`**: their official CLI references
+  ([Pi](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/cli.md),
+  [Oh My Pi](https://github.com/can1357/oh-my-pi/blob/main/docs/cli-reference.md))
+  document `--thinking`: `minimal`, `low`, `medium`, `high`, `xhigh`, `max`.
+  `off` (and Oh My Pi's `auto`) are not effort-ladder levels; model capability
+  limits still apply.
+- **`goose`**: the official [provider configuration reference](https://github.com/block/goose/blob/main/documentation/docs/getting-started/providers.md)
+  documents `GOOSE_THINKING_EFFORT` / `goose configure` for Muse Spark.
+  The recorded list is `GOOSE_THINKING_EFFORT`'s own values: `low`, `medium`,
+  `high`, `max`. Per-provider variables such as `GEMINI3_THINKING_LEVEL`
+  (which accepts `low` and `high`) are separate controls, not part of this list;
+  `off` and numeric budgets add no ladder levels.
+- **`cline`**: the official [CLI reference](https://github.com/cline/cline/blob/main/docs/cli/cli-reference.mdx)
+  documents `--thinking`: `low`, `medium`, `high`, `xhigh` (`none` is excluded).
+  These are the CLI's levels, not every value accepted by Cline's shared SDK.
 
 Introducing lines renamed the slugs that embedded a version. Model-level claim
 labels are created on demand, so the renames change only the names of future
@@ -1289,21 +1351,21 @@ Effort ladder: `minimal` < `low` < `medium` < `high` < `xhigh` < `max`.
 | --- | --- | --- | --- | --- | --- |
 | `claude-code` | Claude Code CLI | `claude` | `foreman:claude` — production, dispatchable | `runner-config` | `low`, `medium`, `high`, `xhigh`, `max` |
 | `claude-code-action` | claude-code-action | `claude` | — | `workflow-config` | `low`, `medium`, `high`, `xhigh`, `max` |
-| `claude-code-deepseek` | Claude Code provider wrapper | `deepseek` | `claude-code-deepseek` — production, not dispatchable, no label | `provider-wrapper` | — |
+| `claude-code-deepseek` | Claude Code provider wrapper | `deepseek` | `claude-code-deepseek` — production, not dispatchable, no label | `provider-wrapper` | `low`, `high`, `max` |
 | `claude-code-glm` | Claude Code provider wrapper | `glm` | `claude-code-glm` — production, not dispatchable, no label | `provider-wrapper` | — |
-| `claude-code-kimi` | Claude Code provider wrapper | `kimi` | `claude-code-kimi` — production, not dispatchable, no label | `provider-wrapper` | — |
+| `claude-code-kimi` | Claude Code provider wrapper | `kimi` | `claude-code-kimi` — production, not dispatchable, no label | `provider-wrapper` | `low`, `high`, `max` |
 | `claude-code-minimax` | Claude Code provider wrapper | `minimax` | — | `provider-wrapper` | — |
 | `claude-code-qwen` | Claude Code provider wrapper | `qwen` | — | `provider-wrapper` | — |
 | `claude-code-qwen-local` | Claude Code provider wrapper | `qwen` | — | `provider-wrapper` | — |
 | `codex-cli` | OpenAI Codex CLI | `gpt` | `codex-cli` — production, not dispatchable, no label | `runner-config` | `minimal`, `low`, `medium`, `high`, `xhigh` |
-| `copilot-cli` | GitHub Copilot CLI | any (multi-provider; default `mai`) | — | `harness-runtime` | — |
-| `qwen-code` | Qwen Code CLI | `qwen` | — | `runner-config` | — |
+| `copilot-cli` | GitHub Copilot CLI | any (multi-provider; default `mai`) | — | `harness-runtime` | `low`, `medium`, `high`, `xhigh`, `max` |
+| `qwen-code` | Qwen Code CLI | `qwen` | — | `runner-config` | `low`, `medium`, `high`, `xhigh`, `max` |
 | `antigravity` | Google Antigravity | `gemini` | — | `harness-runtime` | — |
-| `opencode` | OpenCode | any (multi-provider) | — | `harness-runtime` | — |
-| `pi` | Pi | any (multi-provider) | — | `harness-runtime` | — |
-| `oh-my-pi` | Oh My Pi | any (multi-provider) | — | `harness-runtime` | — |
-| `goose` | Block Goose | any (multi-provider) | — | `harness-runtime` | — |
-| `cline` | Cline | any (multi-provider) | — | `harness-runtime` | — |
+| `opencode` | OpenCode | any (multi-provider) | — | `harness-runtime` | `minimal`, `low`, `medium`, `high`, `xhigh`, `max` |
+| `pi` | Pi | any (multi-provider) | — | `harness-runtime` | `minimal`, `low`, `medium`, `high`, `xhigh`, `max` |
+| `oh-my-pi` | Oh My Pi | any (multi-provider) | — | `harness-runtime` | `minimal`, `low`, `medium`, `high`, `xhigh`, `max` |
+| `goose` | Block Goose | any (multi-provider) | — | `harness-runtime` | `low`, `medium`, `high`, `max` |
+| `cline` | Cline | any (multi-provider) | — | `harness-runtime` | `low`, `medium`, `high`, `xhigh` |
 <!-- registry-tables:end -->
 
 ## Claiming — making an agent's work visible while it happens

@@ -307,7 +307,7 @@
       "provider_rewired": true,
       "roles": ["implementer", "challenger", "reviewer", "integrator"],
       "can_restrict_writes": true,
-      "efforts": []
+      "efforts": ["low", "high", "max"]
     },
     {
       "slug": "claude-code-glm",
@@ -335,7 +335,7 @@
       "provider_rewired": true,
       "roles": ["implementer", "challenger", "reviewer", "integrator"],
       "can_restrict_writes": true,
-      "efforts": []
+      "efforts": ["low", "high", "max"]
     },
     {
       "slug": "claude-code-minimax",
@@ -405,7 +405,7 @@
       "provider_rewired": false,
       "roles": ["implementer"],
       "can_restrict_writes": false,
-      "efforts": []
+      "efforts": ["low", "medium", "high", "xhigh", "max"]
     },
     {
       "slug": "qwen-code",
@@ -419,7 +419,7 @@
       "provider_rewired": false,
       "roles": ["implementer"],
       "can_restrict_writes": false,
-      "efforts": []
+      "efforts": ["low", "medium", "high", "xhigh", "max"]
     },
     {
       "slug": "antigravity",
@@ -447,7 +447,7 @@
       "provider_rewired": false,
       "roles": ["implementer"],
       "can_restrict_writes": false,
-      "efforts": []
+      "efforts": ["minimal", "low", "medium", "high", "xhigh", "max"]
     },
     {
       "slug": "pi",
@@ -461,7 +461,7 @@
       "provider_rewired": false,
       "roles": ["implementer"],
       "can_restrict_writes": false,
-      "efforts": []
+      "efforts": ["minimal", "low", "medium", "high", "xhigh", "max"]
     },
     {
       "slug": "oh-my-pi",
@@ -475,7 +475,7 @@
       "provider_rewired": false,
       "roles": ["implementer"],
       "can_restrict_writes": false,
-      "efforts": []
+      "efforts": ["minimal", "low", "medium", "high", "xhigh", "max"]
     },
     {
       "slug": "goose",
@@ -489,7 +489,7 @@
       "provider_rewired": false,
       "roles": ["implementer"],
       "can_restrict_writes": false,
-      "efforts": []
+      "efforts": ["low", "medium", "high", "max"]
     },
     {
       "slug": "cline",
@@ -503,7 +503,7 @@
       "provider_rewired": false,
       "roles": ["implementer"],
       "can_restrict_writes": false,
-      "efforts": []
+      "efforts": ["low", "medium", "high", "xhigh"]
     }
   ],
   "foreman_adapters": [
