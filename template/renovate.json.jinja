@@ -200,9 +200,9 @@
       "groupName": "Astro"
     },
     {
-      "description": "Disable auto-update for npm overrides used as security pins — Renovate runs npm install <pkg>@<version> to update overrides, which causes EOVERRIDE when the package also appears as a transitive dep",
+      "description": "Disable auto-update for npm overrides used as security pins — Renovate runs npm install <pkg>@<version> to update overrides, which causes EOVERRIDE when the package also appears as a transitive dep. The template-owned security floors in pnpm-workspace.yaml are major-bounded on purpose, and Renovate reads that file under its own depType (pnpm-workspace.overrides), so without this rule it proposes widening a floor across the major the block forbids",
       "matchManagers": ["npm"],
-      "matchDepTypes": ["overrides"],
+      "matchDepTypes": ["overrides", "pnpm.overrides", "pnpm-workspace.overrides"],
       "enabled": false
     }[% endif %],
     {
