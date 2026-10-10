@@ -126,6 +126,12 @@ it points here.
   is the leaf: `lint:shell`, `lint:typescript`, `test:e2e`, `security:secrets`,
   `install:hooks`, `status:git`. **Never action-first** (`typescript:lint`,
   `yaml:lint`).
+- Use `{{.ROOT_DIR}}` for repository paths, including inside included taskfiles;
+  `{{.TASKFILE_DIR}}` for paths relative to the taskfile's own directory; and
+  `{{.USER_WORKING_DIR}}` when deliberately using the caller's directory.
+  Never `{{.PWD}}` — the caller's working directory is not the repository when
+  a task runs through `task -d`, a worktree tool, or an agent.
+  `test:tasks` rejects `{{.PWD}}` references in Taskfiles.
 - Pipeline order is **`check → build → validate → test → security`**, with
   `verify` and `ci` as the aggregates. `check` is the fast inner-loop/hook gate
   (lint only). `verify` is the definition-of-done gate — `check` + the

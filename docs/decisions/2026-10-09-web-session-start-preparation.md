@@ -33,7 +33,8 @@ retains the observed evidence separately from this decision.
    and compact. Only `CLAUDE_CODE_REMOTE=true` runs
    `task setup:remote`; local sessions and devcontainers do nothing. The wrapper
    warns and exits 0 on preparation failure, preserving session start, and
-   prints a one-line completion or failure summary. The hook timeout is 120 s;
+   prints a one-line complete, degraded (skipped required steps or warnings),
+   or failure summary; details stay on stderr. The hook timeout is 120 s;
    when `timeout` is available, preparation has a 90 s deadline and a 5 s kill
    grace so the wrapper can warn and exit before the hook expires. Without
    `timeout`, it skips preparation, warns to run `task setup:remote` manually,
@@ -43,7 +44,14 @@ retains the observed evidence separately from this decision.
    installs frozen dependencies where lockfiles exist. Slow installs run last,
    so a deadline does not prevent the preceding hook and sibling preparation. The shared fetch
    script accepts that directory, defaulting to `/workspaces` for devcontainers.
-   Fetch updates remote-tracking refs and prunes deleted refs; it never pulls,
+   Fetch identifies the sibling by a remote whose final owner/repository path
+   matches the configured entry case-insensitively, with `.git` stripped;
+   host, scheme, port and leading path do not define identity. This supports
+   rewritten URLs, forks with an upstream remote, and linked worktrees.
+   It fetches only that matching remote's branch refs into its own
+   `refs/remotes/<remote>/*` namespace with an explicit refspec, ignoring
+   configured mirror destinations and tag pruning. A read-only parent prevents cloning but still permits existing
+   siblings to be fetched. Fetch updates remote-tracking refs and prunes deleted refs; it never pulls,
    checks out or resets. A sibling's working revision and local changes remain
    intact. Fetch failures warn and continue without failing preparation.
 4. Repository hooks run only in single-repository web sessions (platform docs,
@@ -56,6 +64,17 @@ start in a web session. Open only checkouts you would run `task setup:remote` on
 
 ## Cost and failure
 
+Ordering tradeoff accepted for [#1576](https://github.com/evanharmon1/harmon-init/issues/1576):
+sibling network work remains before dependency installs under the single 90 s
+hook deadline. A slow or unreachable sibling can consume that deadline before
+pnpm or uv runs. Keeping one deadline and the existing order is the smaller
+change: it avoids a second timeout/supervision mechanism, preserves sibling
+availability before installers run, and keeps the tested preparation order.
+The hook reports expiry as failure and asks the session to retry
+`task setup:remote` manually; that invocation has no wrapper deadline. This is
+an accepted availability tradeoff, not a guarantee that installs run on every
+hook invocation.
+
 Measured in this devcontainer on 2026-10-09: cold `task setup:remote` with three
 sibling clones took 7.7 s; a warm run with siblings present took well under 1 s.
 Harmon-init has no pnpm/uv lockfile. Consumers with lockfiles pay their install
@@ -63,10 +82,14 @@ cost on cold starts; these local measurements do not predict all web sessions.
 Preparation runs after machine setup and does not consume its five-minute cache
 budget (the observed bootstrap took 48–86 s).
 
+Only skipped required steps degrade the summary: a missing tool for an applicable
+step, a missing bootstrap helper, or an unwritable clone parent. Routine
+not-applicable skips (no lockfile, hook config, or related-repository list) do not.
 Missing tools are reported as skipped. Clone and fetch failures are warnings;
 other preparation failures produce a non-zero task result, which the hook wraps
-in a warning and exit 0. The summary tells the session to retry manually when
-needed. The task's step summary and installed lefthook shims show what ran;
+in a warning and exit 0. The stdout summary distinguishes a complete run from one completed with
+warnings (skipped required steps or clone/fetch warnings), and tells the session to retry
+manually on failure. Detailed step output stays on stderr. The task's step summary and installed lefthook shims show what ran;
 remote-tracking refs show which sibling revisions are available. A fetch makes
 new revisions available without moving the checked-out revision.
 
@@ -83,7 +106,9 @@ new revisions available without moving the checked-out revision.
 ## Verification
 
 The existing setup-remote fixture suite proves fetch-forward without moving HEAD
-or local work, warning-only fetch failure, remote-only hook execution and exit 0
+or local work, unrelated-origin refusal, mirror-refspec branch preservation,
+linked-worktree/separate-git-dir fetches, read-only-parent fetching, complete
+and degraded summaries, warning-only fetch failure, remote-only hook execution and exit 0
 on preparation failure. Root/template twins ship the same behavior. The
 bootstrap recipe guard still tests the unchanged machine-only recipe.
 A live session from a cached snapshot must still confirm hooks and expected
