@@ -1325,7 +1325,12 @@ function hasExecutableTuple({
   })
 }
 
-export function crossValidate(resolved, registryDoc, taskTargets) {
+export function crossValidate(
+  resolved,
+  registryDoc,
+  taskTargets,
+  { registryRequired = true } = {}
+) {
   const errors = []
 
   for (const key of GATE_KEYS) {
@@ -1702,7 +1707,7 @@ export function crossValidate(resolved, registryDoc, taskTargets) {
         )
       }
     }
-  } else {
+  } else if (registryRequired) {
     errors.push(
       'indeterminate: no registry was supplied — finders/pools/families/harnesses could not be checked'
     )
@@ -2985,7 +2990,15 @@ function cliResolve(args) {
     }
   }
   const taskTargets = readTaskTargets(args['task-targets'], args['taskfile-dir'])
-  const crossErrors = crossValidate(resolved, registryDoc, taskTargets)
+  // An absent branch policy with no requested registry is wholly defined by
+  // the built-ins. Keep every other cross-validation check, and do not extend
+  // this exception to merge-base governance or an explicitly requested file.
+  const registryRequired =
+    doc !== null ||
+    usesMergeBase ||
+    args.registry !== undefined ||
+    args['merge-base-registry'] !== undefined
+  const crossErrors = crossValidate(resolved, registryDoc, taskTargets, { registryRequired })
 
   const indeterminate = [
     ...crossErrors.filter((e) => e.startsWith('indeterminate:')),
