@@ -28,6 +28,11 @@ check | update) ;;
 esac
 
 terraform_bin="${TERRAFORM_BIN:-terraform}"
+# The caller's Git context is for this script's own git calls. Terraform
+# clones git-sourced modules, and git clone refuses an exported work tree.
+run_terraform() {
+    env -u GIT_DIR -u GIT_WORK_TREE -u GIT_INDEX_FILE "$terraform_bin" "$@"
+}
 if ! command -v "$terraform_bin" >/dev/null 2>&1; then
     echo "Terraform executable not found: $terraform_bin" >&2
     exit 1
@@ -94,13 +99,13 @@ for root in "$@"; do
         # must keep selecting from the committed lock and remain read-only.
         init_args+=(-upgrade)
     fi
-    if ! "$terraform_bin" "-chdir=$scratch_root" init "${init_args[@]}" >/dev/null; then
+    if ! run_terraform "-chdir=$scratch_root" init "${init_args[@]}" >/dev/null; then
         echo "Could not initialize Terraform modules/providers in $root" >&2
         exit 1
     fi
 
     lock_file="$root/.terraform.lock.hcl"
-    if ! "$terraform_bin" "-chdir=$scratch_root" providers lock \
+    if ! run_terraform "-chdir=$scratch_root" providers lock \
         -platform=darwin_arm64 \
         -platform=linux_amd64 >/dev/null; then
         echo "Could not verify Terraform provider locks in $root" >&2

@@ -30,6 +30,12 @@ cat >"$fake_terraform" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Terraform's own git clones must not inherit the caller's Git context.
+if [ -n "${GIT_DIR:-}${GIT_WORK_TREE:-}${GIT_INDEX_FILE:-}" ]; then
+    echo "fake terraform: Git context leaked into Terraform" >&2
+    exit 97
+fi
+
 case "${1:-}" in
 -chdir=*) root="${1#-chdir=}" ;;
 *) exit 2 ;;
