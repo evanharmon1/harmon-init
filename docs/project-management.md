@@ -1238,10 +1238,10 @@ unverified for the models their wrappers resolve:
   These lists describe K3, not older K2 models.
 - **`claude-code-minimax`**: MiniMax's [Anthropic compatibility reference](https://platform.minimax.io/docs/api-reference/text-anthropic-api)
   documents `output_config.effort`: `low`, `medium`, `high`, `xhigh`, `max`.
-  This control is documented only for `MiniMax-M3.1-Flash-Preview`, currently
-  available through M Plan/MiniMax Code. This wrapper resolves M3, so its list
-  stays `[]` (unverified for the configured model) until support is documented
-  for M3.
+  This control is documented only for `MiniMax-M3.1-Flash-Preview`.
+  This repository provisions no `claude-minimax` launcher yet, and the registry's
+  minimax family carries M3. The list stays `[]` until a launcher exists and
+  the provider documents effort for the model it resolves.
 - **`claude-code-qwen`**: Alibaba's [Anthropic Messages reference](https://www.alibabacloud.com/help/en/model-studio/anthropic-api-messages)
   documents `output_config.effort` for Qwen3.8 Max/Flash: `low`, `medium`,
   `xhigh`. `high` and `max` map to `xhigh`. This wrapper resolves Qwen3.7 Max
