@@ -56,12 +56,20 @@ PR_TITLE="fix(deps): raise security floors for high-severity advisories"
 TAB="$(printf '\t')"
 WORK=""
 GT_TMP=""
+SNAPSHOT_TAKEN=0
+# cleanup — on ANY non-zero exit (a die, an unexpected command failure under
+# set -e, an interrupt) put the pre-run bytes back before the snapshot is
+# deleted; only a successful run keeps what it wrote.
 cleanup() {
+    _cl_rc=$?
+    [ "$_cl_rc" -eq 0 ] || restore
     [ -n "$WORK" ] && rm -rf "$WORK"
     [ -n "$GT_TMP" ] && rm -f "$GT_TMP"
     return 0
 }
 trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
 
 die() {
     echo "security-audit-fix: $*" >&2
@@ -78,10 +86,11 @@ need_bin() {
 
 # ── Version helpers ─────────────────────────────────────────────────
 
-# plain_version V — x.y.z from a version or a one-sided floor (^, ~, >=, =, v),
-# or empty when V is anything else (a range, a tag, a prerelease-only value).
+# plain_version V — the x.y.z lower bound of a version, a one-sided floor
+# (^, ~, >=, =, v), or this script's bounded floor ('>=x.y.z <N'); empty when
+# V is anything else (a tag, a prerelease-only value).
 plain_version() {
-    printf '%s\n' "$1" | sed -E 's/^[[:space:]]*(\^|~|>=|=|v)?[[:space:]]*//; s/[-+].*$//' |
+    printf '%s\n' "$1" | sed -E 's/^[[:space:]]*(\^|~|>=|=|v)?[[:space:]]*//; s/[[:space:]].*$//; s/[-+].*$//' |
         awk '/^[0-9]+\.[0-9]+\.[0-9]+$/ { print; exit }'
 }
 
@@ -117,7 +126,9 @@ override_entries() {
             return s
         }
         /^overrides:[[:space:]]*$/ { inmap = 1; zone = "local"; next }
-        inmap && /^[^[:space:]]/ { inmap = 0 }
+        # Only a column-zero KEY ends the map; comments and blank lines at any
+        # indentation are transparent.
+        inmap && /^[^[:space:]#]/ { inmap = 0 }
         !inmap { next }
         {
             line = $0; sub(/^[[:space:]]+/, "", line); sub(/[[:space:]]+$/, "", line)
@@ -152,15 +163,16 @@ yaml_key() {
 }
 
 # write_floor FILE KEY FLOOR BOUND IDS — set KEY to '>=FLOOR <BOUND' in the
-# overrides map: replace a local entry (and its comment), or append one at the
-# end of the map, which is below the template block's end marker.
+# overrides map: replace a local entry (and its comment), or append one after
+# the map's last indented line — which is never above the template block's end
+# marker. Comments and blank lines (any column) do not end the map; only a
+# column-zero key does. New lines reuse the indentation of the map's first key.
 write_floor() {
     _wf_file="$1" _wf_key="$2" _wf_floor="$3" _wf_bound="$4" _wf_ids="$5"
-    _wf_yk="$(yaml_key "$_wf_key")"
-    _wf_entry="  $_wf_yk: '>=$_wf_floor <$_wf_bound'"
-    _wf_comment="  # $_wf_key: $_wf_ids."
     _wf_out="$WORK/write-floor.yaml"
-    awk -v key="$_wf_key" -v entry="$_wf_entry" -v comment="$_wf_comment" -v be="$BLOCK_END" '
+    _wf_rc=0
+    awk -v key="$_wf_key" -v yk="$(yaml_key "$_wf_key")" -v val="'>=$_wf_floor <$_wf_bound'" \
+        -v ids="$_wf_ids" -v bs="$BLOCK_START" -v be="$BLOCK_END" '
         function keyof(s,   q, rest, end) {
             sub(/^[[:space:]]+/, "", s)
             q = substr(s, 1, 1)
@@ -171,21 +183,28 @@ write_floor() {
             end = index(s, ": ")
             return end ? substr(s, 1, end - 1) : ""
         }
-        function trim(s) { sub(/^[[:space:]]+/, "", s); return s }
+        function trim(s) { sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
         { lines[NR] = $0 }
         END {
-            inmap = 0; loc = 1; start = 0; last = 0; hit = 0
+            inmap = 0; loc = 1; start = 0; last = 0; hit = 0; bsl = 0; bel = 0; ind = ""
             for (i = 1; i <= NR; i++) {
                 l = lines[i]
                 if (l ~ /^overrides:[[:space:]]*$/) { inmap = 1; start = i; last = i; continue }
-                if (inmap && l ~ /^[^[:space:]]/) inmap = 0
+                if (inmap && l ~ /^[^[:space:]#]/) inmap = 0
                 if (!inmap) continue
-                t = l; sub(/^[[:space:]]+/, "", t); sub(/[[:space:]]+$/, "", t)
-                if (t ~ /^# --- harmon-init security floors/) loc = 0
-                if (t == be) loc = 1
-                if (l ~ /^[[:space:]]+[^[:space:]]/) last = i
-                if (loc && t !~ /^#/ && keyof(l) == key) hit = i
+                t = trim(l)
+                if (t == bs) { loc = 0; bsl = i }
+                if (t == be) { loc = 1; bel = i }
+                if (l ~ /^[[:space:]]+[^[:space:]]/) {
+                    last = i
+                    if (ind == "" && t !~ /^#/) { ind = l; sub(/[^[:space:]].*$/, "", ind) }
+                }
+                if (loc && t != "" && t !~ /^#/ && keyof(l) == key) hit = i
             }
+            if (bsl && (!bel || bel < bsl)) exit 2
+            if (ind == "") ind = "  "
+            comment = ind "# " key ": " ids "."
+            entry = ind yk ": " val
             for (i = 1; i <= NR; i++) {
                 if (hit && i == hit - 1 && index(trim(lines[i]), "# " key ":") == 1) continue
                 if (hit && i == hit) { print comment; print entry; continue }
@@ -194,13 +213,17 @@ write_floor() {
             }
             if (!start) { print ""; print "overrides:"; print comment; print entry }
         }
-    ' "$_wf_file" >"$_wf_out" || die "could not rewrite $_wf_file"
+    ' "$_wf_file" >"$_wf_out" || _wf_rc=$?
+    case "$_wf_rc" in
+    0) ;;
+    2) die "$_wf_file has the template floor block's start marker but no end marker after it — refusing to guess where local floors go" ;;
+    *) die "could not rewrite $_wf_file" ;;
+    esac
     cat "$_wf_out" >"$_wf_file"
 }
 
 # ── fix ─────────────────────────────────────────────────────────────
 
-SNAPSHOT_TAKEN=0
 snapshot() {
     for _sn in "$WORKSPACE" "$LOCKFILE" "$MANIFEST"; do
         cp -p "$_sn" "$WORK/orig.$_sn"
@@ -241,6 +264,15 @@ audit_rows() {
             ((.paths[0] // ".") | split(">") | .[1] // $a.module_name) ]
         | @tsv
     ' "$_ar_json" | sort -u >"$1"
+}
+
+# major_rows ID_COL PKG_COL VERSION_COL — "id pkg@major" for each TSV row on
+# stdin, sorted unique (major as in major_key).
+major_rows() {
+    awk -F '\t' -v ic="$1" -v pc="$2" -v vc="$3" '{
+        v = $vc; sub(/[-+].*$/, "", v); split(v, p, ".")
+        print $ic " " $pc "@" (p[1] == 0 ? "0." p[2] : p[1])
+    }' | sort -u
 }
 
 # add_refusal ID PKG SEV VERSION REASON
@@ -317,7 +349,7 @@ cmd_fix() {
 
     # One floor per key: the highest patched version any advisory needs.
     sort -t "$TAB" -k1,1 "$WORK/candidates.tsv" | cut -f1 | uniq >"$WORK/keys.txt"
-    _changed=0
+    _changed=0 _relock=0
     while IFS= read -r _key; do
         [ -n "$_key" ] || continue
         _floor="" _ids=""
@@ -337,13 +369,24 @@ cmd_fix() {
         fi
         _bound="$(next_bound "${_key##*@}")"
         _old="$(plain_version "$_existing")"
-        if [ -n "$_old" ] && version_ge "$_old" "$_floor"; then
-            note "$_key already floored at $_existing"
+        # An advisory is still reported against this key, so the lockfile is
+        # out of step with the floor either way: always re-resolve.
+        _relock=1
+        if [ -n "$_old" ] && version_ge "$_old" "$_floor" &&
+            printf '%s\n' "$_existing" | grep -Eq '^>=[0-9]+\.[0-9]+\.[0-9]+ <[0-9.]+$'; then
+            # Never lower (or reshape) a bounded floor that is already at least
+            # as strict as the proposal.
+            note "$_key already floored at '$_existing'"
+            _outcome="already floored \`$_key: '$_existing'\`"
         else
+            # Never lower an existing floor; a higher one in another shape (^, a
+            # bare version) is normalized to the bounded shape at its own floor.
+            if [ -n "$_old" ] && version_ge "$_old" "$_floor"; then _floor="$_old"; fi
             write_floor "$WORKSPACE" "$_key" "$_floor" "$_bound" "$_ids"
             _changed=1
+            _outcome="floor \`$_key: '>=$_floor <$_bound'\`"
         fi
-        awk -F '\t' -v k="$_key" -v f="'>=$_floor <$_bound'" '$1 == k { print $3 "\t" $4 "\t" $5 "\t" $6 "\t" k ": " f }' \
+        awk -F '\t' -v k="$_key" -v o="$_outcome" '$1 == k { print $3 "\t" $4 "\t" $5 "\t" $6 "\t" o }' \
             "$WORK/candidates.tsv" >>"$WORK/applied.tsv"
     done <"$WORK/keys.txt"
 
@@ -361,22 +404,26 @@ cmd_fix() {
         fi
     fi
 
-    if [ "$_changed" -eq 1 ]; then
+    if [ "$_relock" -eq 1 ]; then
         note "re-resolving $LOCKFILE"
         pnpm install --lockfile-only --ignore-scripts >"$WORK/install.log" 2>&1 || {
             cat "$WORK/install.log" >&2
             fail "pnpm install --lockfile-only failed with the new floors — nothing kept"
         }
         audit_rows "$WORK/after-rows.tsv"
-        cut -f1 "$WORK/applied.tsv" | sort -u >"$WORK/applied-ids.txt"
-        cut -f1 "$WORK/after-rows.tsv" | sort -u | comm -12 - "$WORK/applied-ids.txt" >"$WORK/still.txt"
+        # Cleared is judged per (advisory, package, major): one advisory can
+        # span two installed majors, and a row left standing on a REFUSED major
+        # says nothing about the floor written for the other one.
+        major_rows 1 2 4 <"$WORK/applied.tsv" >"$WORK/applied-pairs.txt"
+        major_rows 1 2 5 <"$WORK/after-rows.tsv" | comm -12 - "$WORK/applied-pairs.txt" >"$WORK/still.txt"
         [ ! -s "$WORK/still.txt" ] ||
             fail "the new floors did not clear: $(tr '\n' ' ' <"$WORK/still.txt")— nothing kept"
-        note "floors written to $WORKSPACE and $LOCKFILE re-resolved"
+        note "$WORKSPACE floors in place and $LOCKFILE re-resolved"
     else
         note "no floor to change"
     fi
     [ -z "$_report" ] || write_report "$_report" "$WORK/rows.tsv"
+    return 0
 }
 
 # write_report FILE ROWS — the remediation PR body: every advisory with the
@@ -399,7 +446,7 @@ write_report() {
         echo "|---|---|---|---|---|"
         while IFS="$TAB" read -r _id _pkg _sev _range _ver _direct; do
             _out="$(awk -F '\t' -v i="$_id" -v p="$_pkg" -v v="$_ver" \
-                '$1 == i && $2 == p && $4 == v { print "floor `" $5 "`"; exit }' "$WORK/applied.tsv")"
+                '$1 == i && $2 == p && $4 == v { print $5; exit }' "$WORK/applied.tsv")"
             [ -n "$_out" ] || _out="$(awk -F '\t' -v i="$_id" -v p="$_pkg" -v v="$_ver" \
                 '$1 == i && $2 == p && $4 == v { print "**refused:** " $5; exit }' "$WORK/refused.tsv")"
             [ -n "$_out" ] || _out="not applied (another fix in this run was refused)"

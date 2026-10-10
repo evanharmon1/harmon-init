@@ -45,14 +45,21 @@ cat >"$TMPROOT/bin/pnpm" <<'STUB'
 # pnpm stub. State lives in $STUB_DIR:
 #   audit.json      the report `audit --json` returns while unremediated
 #   cleared-by      a line whose presence in pnpm-workspace.yaml means remediated
+#   needs-relock    when present, remediated also needs a re-resolved lockfile
+#   audit-after.json  the report once remediated (default: no advisories)
 #   fixed.yaml      the workspace file `audit --fix` writes
 #   calls           every invocation, one per line
 set -euo pipefail
 echo "pnpm $*" >>"$STUB_DIR/calls"
 case "$*" in
 "audit --audit-level=high --json")
-    if [ -f "$STUB_DIR/cleared-by" ] && grep -qF -f "$STUB_DIR/cleared-by" pnpm-workspace.yaml; then
-        echo '{"advisories":{},"metadata":{}}'
+    if [ -f "$STUB_DIR/cleared-by" ] && grep -qF -f "$STUB_DIR/cleared-by" pnpm-workspace.yaml &&
+        { [ ! -f "$STUB_DIR/needs-relock" ] || grep -qx '# relocked' pnpm-lock.yaml; }; then
+        if [ -f "$STUB_DIR/audit-after.json" ]; then
+            cat "$STUB_DIR/audit-after.json"
+        else
+            echo '{"advisories":{},"metadata":{}}'
+        fi
     else
         cat "$STUB_DIR/audit.json"
     fi
@@ -282,7 +289,118 @@ run_fix "$p" >"$p/out.log" 2>&1 || rc=$?
 [ "$(snapshot_of "$p")" = "$before" ] || fail "not-cleared: a floor that does not clear must be rolled back"
 pass "not-cleared: a floor that leaves its advisory standing is rolled back"
 
-# ── 8. publish: one rolling draft PR, scope-checked patch ─────────────
+# ── 8. challenge round 1 shapes ───────────────────────────────────────
+
+# One advisory spanning two installed majors (r1 finding 1): the 2.x floor is
+# written, the 1.x row is refused, and the 1.x row still standing after the
+# re-resolve must not roll the 2.x floor back.
+p="$(new_project mixed-major)"
+mixed_advisory() {
+    jq -n --argjson findings "$1" '{advisories: {"GHSA-mmmm-mmmm-mmmm": {
+        github_advisory_id: "GHSA-mmmm-mmmm-mmmm", module_name: "mm", severity: "high",
+        vulnerable_versions: "<2.5.0", findings: $findings}}}'
+}
+mixed_advisory '[{"version":"1.9.0","paths":[".>old-dep>mm"]},{"version":"2.4.0","paths":[".>new-dep>mm"]}]' >"$p/.stub/audit.json"
+mixed_advisory '[{"version":"1.9.0","paths":[".>old-dep>mm"]}]' >"$p/.stub/audit-after.json"
+fix_writes "$p" '  mm@<2.5.0: ^2.5.0'
+echo "mm@2: '>=2.5.0 <3'" >"$p/.stub/cleared-by"
+rc=0
+run_fix "$p" --skip-refused --report "$p/report.md" >"$p/out.log" 2>&1 || rc=$?
+[ "$rc" -eq 0 ] || {
+    cat "$p/out.log"
+    fail "mixed-major: expected exit 0, got $rc"
+}
+grep -qF "  mm@2: '>=2.5.0 <3'" "$p/pnpm-workspace.yaml" || fail "mixed-major: the 2.x floor was not kept"
+grep -qF '| 1.9.0 | **refused:** the fix (2.5.0) crosses from major 1 to major 2' "$p/report.md" ||
+    fail "mixed-major: the 1.x refusal is missing from the report"
+pass "mixed-major: clearance is judged per major — a refused 1.x row does not roll back the 2.x floor"
+
+# Any failure after a write restores the snapshot (r1 finding 2): here the
+# post-install audit is malformed, so jq itself fails under set -e.
+p="$(new_project trap-restore)"
+advisory GHSA-0000-0000-0004 lodash high '<4.17.21' 4.17.20 lodash | jq '{advisories: .}' >"$p/.stub/audit.json"
+echo '{"advisories":{"x":{"severity":"high","findings":5}}}' >"$p/.stub/audit-after.json"
+fix_writes "$p" '  lodash@<4.17.21: ^4.17.21'
+echo "lodash@4: '>=4.17.21 <5'" >"$p/.stub/cleared-by"
+before="$(snapshot_of "$p")"
+rc=0
+run_fix "$p" >"$p/out.log" 2>&1 || rc=$?
+[ "$rc" -ne 0 ] || fail "trap-restore: a malformed post-install audit must fail"
+[ "$(snapshot_of "$p")" = "$before" ] ||
+    fail "trap-restore: an unexpected failure after the write left the workspace file or lockfile changed"
+pass "trap-restore: an unexpected failure after the write restores every byte"
+
+# An existing bounded floor stricter than pnpm's proposal is never lowered (r1
+# finding 3); the stale lockfile is still re-resolved and the report names the
+# floor that is actually in the file.
+p="$(new_project bounded-higher)"
+sed -i.bak "s/left-pad@1: '>=1.3.0 <2'/left-pad@1: '>=1.3.8 <2'/" "$p/pnpm-workspace.yaml" && rm -f "$p/pnpm-workspace.yaml.bak"
+advisory GHSA-0000-0000-0005 left-pad high '<1.3.4' 1.3.1 left-pad | jq '{advisories: .}' >"$p/.stub/audit.json"
+fix_writes "$p" '  left-pad@<1.3.4: ^1.3.4'
+echo "left-pad@1: '>=1.3.8 <2'" >"$p/.stub/cleared-by"
+: >"$p/.stub/needs-relock"
+cp "$p/pnpm-workspace.yaml" "$p/ws.before"
+run_fix "$p" --report "$p/report.md" >"$p/out.log" 2>&1 || {
+    cat "$p/out.log"
+    fail "bounded-higher: exited non-zero"
+}
+cmp -s "$p/ws.before" "$p/pnpm-workspace.yaml" || fail "bounded-higher: a stricter existing floor was rewritten"
+grep -qx '# relocked' "$p/pnpm-lock.yaml" || fail "bounded-higher: the stale lockfile was not re-resolved"
+grep -qF "already floored \`left-pad@1: '>=1.3.8 <2'\`" "$p/report.md" || fail "bounded-higher: report must name the floor in the file"
+! grep -qF '1.3.4' "$p/report.md" || fail "bounded-higher: report names a floor that was not written"
+pass "bounded-higher: a stricter bounded floor is kept, reported as already floored, lockfile re-resolved"
+
+p="$(new_project caret-higher)"
+sed -i.bak "s/left-pad@1: '>=1.3.0 <2'/left-pad@1: ^1.3.8/" "$p/pnpm-workspace.yaml" && rm -f "$p/pnpm-workspace.yaml.bak"
+advisory GHSA-0000-0000-0006 left-pad high '<1.3.4' 1.3.1 left-pad | jq '{advisories: .}' >"$p/.stub/audit.json"
+fix_writes "$p" '  left-pad@<1.3.4: ^1.3.4'
+echo "left-pad@1: '>=1.3.8 <2'" >"$p/.stub/cleared-by"
+: >"$p/.stub/needs-relock"
+run_fix "$p" --report "$p/report.md" >"$p/out.log" 2>&1 || {
+    cat "$p/out.log"
+    fail "caret-higher: exited non-zero"
+}
+grep -qF "  left-pad@1: '>=1.3.8 <2'" "$p/pnpm-workspace.yaml" || fail "caret-higher: the caret floor was lowered or not normalized"
+[ "$(grep -c '^  left-pad@1:' "$p/pnpm-workspace.yaml")" -eq 1 ] || fail "caret-higher: duplicate left-pad@1 entries"
+grep -qx '# relocked' "$p/pnpm-lock.yaml" || fail "caret-higher: lockfile was not re-resolved"
+pass "caret-higher: an existing caret floor is kept at its own version in the bounded shape and re-resolved"
+
+# A column-zero comment inside the overrides map does not end the map (r1
+# finding 4): the fix is still read, and the floor lands after the local entries.
+p="$(new_project col0-comment)"
+awk -v be="$BLOCK_END" '{ print } $0 == be { print "# a column-zero note inside the map" }' "$p/pnpm-workspace.yaml" >"$p/ws.tmp" &&
+    mv "$p/ws.tmp" "$p/pnpm-workspace.yaml"
+advisory GHSA-0000-0000-0007 lodash high '<4.17.21' 4.17.20 lodash | jq '{advisories: .}' >"$p/.stub/audit.json"
+fix_writes "$p" '  lodash@<4.17.21: ^4.17.21'
+echo "lodash@4: '>=4.17.21 <5'" >"$p/.stub/cleared-by"
+run_fix "$p" >"$p/out.log" 2>&1 || {
+    cat "$p/out.log"
+    fail "col0-comment: exited non-zero"
+}
+grep -q 'no patched version' "$p/out.log" && fail "col0-comment: the column-zero comment hid the fix (false refusal)"
+grep -qF "$BLOCK_END" "$p/pnpm-workspace.yaml" || fail "col0-comment: end marker lost"
+awk -v be="$BLOCK_END" '$0 == be { m = NR } /lodash@4:/ { f = NR } END { exit !(m && f > m) }' "$p/pnpm-workspace.yaml" ||
+    fail "col0-comment: the floor did not land below the end marker"
+[ "$(awk '/^overrides:/ { s = 1 } s && /^  lodash@4:/ { print NR; exit }' "$p/pnpm-workspace.yaml")" -gt \
+    "$(grep -n '^  left-pad@1:' "$p/pnpm-workspace.yaml" | cut -d: -f1)" ] || fail "col0-comment: floor not appended after the local entries"
+pass "col0-comment: a column-zero comment inside the map is transparent"
+
+# A four-space map gets four-space lines (r1 finding 5).
+p="$(new_project four-space)"
+sed -i.bak 's/^  /    /' "$p/pnpm-workspace.yaml" && rm -f "$p/pnpm-workspace.yaml.bak"
+advisory GHSA-0000-0000-0008 lodash high '<4.17.21' 4.17.20 lodash | jq '{advisories: .}' >"$p/.stub/audit.json"
+fix_writes "$p" '    lodash@<4.17.21: ^4.17.21'
+echo "lodash@4: '>=4.17.21 <5'" >"$p/.stub/cleared-by"
+run_fix "$p" >"$p/out.log" 2>&1 || {
+    cat "$p/out.log"
+    fail "four-space: exited non-zero"
+}
+grep -qx "    lodash@4: '>=4.17.21 <5'" "$p/pnpm-workspace.yaml" || fail "four-space: entry not indented like the map"
+grep -qx '    # lodash@4: GHSA-0000-0000-0008.' "$p/pnpm-workspace.yaml" || fail "four-space: comment not indented like the map"
+! grep -q '^  [^ ]' "$p/pnpm-workspace.yaml" || fail "four-space: mixed indentation"
+pass "four-space: new floors reuse the map's indentation"
+
+# ── 9. publish: one rolling draft PR, scope-checked patch ─────────────
 p="$(new_project publish)"
 ORIGIN="$TMPROOT/origin.git"
 export ORIGIN

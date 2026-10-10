@@ -100,9 +100,10 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
     no CI churn. The body lists each advisory, package, severity, the floor
     applied, and the refusal reason for anything refused.
   - **Outcomes:** a clean audit changes nothing and the run stays green; a
-    refused fix is reported in the PR body and the job summary, never a red
-    run; only an operational failure (registry, pnpm, push, API) fails it. The
-    PR `security` job's `task security:audit` gate is unchanged. See
+    refused fix is reported in the PR body when a PR is opened, and otherwise
+    (every fix refused, so no diff and no PR) in the run's job summary — never
+    a red run; only an operational failure (registry, pnpm, push, API) fails
+    it. The PR `security` job's `task security:audit` gate is unchanged. See
     [security.md](security.md#scheduled-audit-remediation).
 [% endif %]
 [% if devcontainer %]
