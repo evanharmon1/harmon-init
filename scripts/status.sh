@@ -1386,35 +1386,23 @@ if [[ "${SECTION}" == "setup" ]]; then
                         # Agent, Domain, Layer, and Tier fields are NOT wanted
                         # either: the setup script creates none of them, so
                         # requiring one would report a permanent false failure on
-                        # every fresh org (#662, #875, ADR 2026-10-01). The rows
-                        # must stay equal to what setup-github-issue-fields.sh
-                        # provisions; its test compares the two.
+                        # every fresh org (#662, #875, ADR 2026-10-01). The four
+                        # Model fields (the implementer record, #1517) are wanted by
+                        # name and type only: their options come from
+                        # agent-registry.json, which the setup script validates and
+                        # appends from on every run. The rows must stay equal to
+                        # what setup-github-issue-fields.sh provisions; its test
+                        # compares the two.
                         want_fields="Product:text:
 Impact:single_select:minimal,low,medium,high,massive
 Risk:single_select:trivial,low,medium,high,critical
 Complexity:single_select:xs,s,m,l,xl
 Priority (AI):single_select:p0,p1,p2,p3,p4
-Effort:single_select:1,2,3,5,8,13,20"
-                        # The four Model fields (the implementer record, #1517)
-                        # take their options from agent-registry.json, exactly as
-                        # the setup script derives them: each value once, in
-                        # registry order, retired versions included — so an org
-                        # that has not been re-provisioned since a registry bump
-                        # reports the version it lacks. Without a readable
-                        # registry only presence and type are checked.
-                        model_rows="$(jq -r '
-                            def opts(f): reduce f as $v ([]; if any(.[]; . == $v) then . else . + [$v] end) | join(",");
-                            "Model family:single_select:\(opts(.families[].slug))",
-                            "Model:single_select:\(opts(.families[].models[].slug))",
-                            "Model version:single_select:\(opts(.families[].models[].versions[].slug))",
-                            "Model effort:single_select:\(opts(.effort_ladder[]))"' agent-registry.json 2>/dev/null)" ||
-                            model_rows=""
-                        [ -n "${model_rows}" ] || model_rows="Model family:single_select:
+Effort:single_select:1,2,3,5,8,13,20
+Model family:single_select:
 Model:single_select:
 Model version:single_select:
 Model effort:single_select:"
-                        want_fields="${want_fields}
-${model_rows}"
                         missing_fields=""
                         wrong_fields=""
                         short_fields=""

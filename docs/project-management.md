@@ -1284,7 +1284,8 @@ Which model implemented an issue is recorded as four values, all drawn from
 - **Pull requests carry the labels on every owner type.** Issue fields do not
   exist on pull requests, so a pull request always records its implementer as
   the four labels. That is why `task setup:github-labels` provisions the four
-  label families on every repository, organizations included.
+  label families on every repository that provisions labels, on both owner
+  types (personal and organization). The issue fields stay organization-only.
 - **Last implementer wins.** Each value is exclusive. When a second
   implementer takes over an issue, its values *replace* the first one's, so the
   issue answers "who implemented this most recently". The pull request is the

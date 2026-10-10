@@ -725,34 +725,30 @@ grep -q "has no model lines" "$tmp/out" || fail "the validator's own message mus
 
 # The want-list in status.sh and what this script provisions are two copies of one
 # fact; a field or scale that changes in only one would report every correctly
-# provisioned org as incomplete (or hide a missing field). Compare the FULL set
-# the script created on the empty org above — every field, so a future field
-# cannot drift silently — with status.sh's want-list: its static rows as written,
-# plus the four Model rows it derives from agent-registry.json by the same rule
-# the expected sets above use (each value once, registry order, retired included).
+# provisioned org as incomplete (or hide a missing field). Compare every field the
+# script created on the empty org above — so a future field cannot drift silently —
+# by name and type, and by option scale wherever the want-list names one. The four
+# Model fields are wanted by name and type only: their options come from the
+# registry, which this script validates (the cases above).
 [ -f "$status_script" ] || fail "scripts/status.sh is missing — the want-list cannot be compared"
 want_rows="$(awk '
     /^[[:space:]]*want_fields="/ { inblock = 1; sub(/^[[:space:]]*want_fields="/, "") }
     inblock { line = $0; closed = (line ~ /"[[:space:]]*$/); sub(/"[[:space:]]*$/, "", line); print line; if (closed) exit }
 ' "$status_script")"
 [ -n "$want_rows" ] || fail "could not read the issue-field want-list (want_fields) from scripts/status.sh"
-! grep -q '^Model' <<<"$want_rows" ||
-    fail "status.sh lists a Model field statically — its options must come from agent-registry.json"
-for model_field in "Model family" "Model" "Model version" "Model effort"; do
-    grep -Fq "\"${model_field}:single_select:\\(opts(" "$status_script" ||
-        fail "status.sh does not derive the '${model_field}' want row from agent-registry.json"
-done
-want_rows="$want_rows
-Model family:single_select:$(jq -r 'join(",")' <<<"$model_want_family")
-Model:single_select:$(jq -r 'join(",")' <<<"$model_want_line")
-Model version:single_select:$(jq -r 'join(",")' <<<"$model_want_version")
-Model effort:single_select:$(jq -r 'join(",")' <<<"$model_want_effort")"
 have_rows="$(jq -r '"\(.name):\(.data_type):\([ (.options // []) | sort_by(.priority)[] | .name ] | join(","))"' "$tmp/created-posts")"
-[ "$(printf '%s\n' "$want_rows" | sort)" = "$(printf '%s\n' "$have_rows" | sort)" ] ||
-    fail "status.sh's want-list differs from what provisioning creates:
+want_types="$(printf '%s\n' "$want_rows" | awk -F: '{ print $1 ":" $2 }' | sort)"
+have_types="$(printf '%s\n' "$have_rows" | awk -F: '{ print $1 ":" $2 }' | sort)"
+[ "$want_types" = "$have_types" ] ||
+    fail "status.sh's want-list names different fields than provisioning creates:
 want-list:
-$(printf '%s\n' "$want_rows" | sort)
+$want_types
 provisioned:
-$(printf '%s\n' "$have_rows" | sort)"
+$have_types"
+while IFS= read -r want; do
+    case "$want" in *:) continue ;; esac
+    grep -Fqx "$want" <<<"$have_rows" ||
+        fail "status.sh wants '$want' but provisioning creates $(grep -F "${want%%:*}:" <<<"$have_rows" | head -1)"
+done <<<"$want_rows"
 
 echo "PASS: setup-github-issue-fields.sh field creation and option reconciliation"

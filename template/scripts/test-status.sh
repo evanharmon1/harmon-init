@@ -1836,16 +1836,6 @@ cp "${rest_lib}" "${TMP}/inventories/scripts/lib/gh-rest.sh"
 # than on whatever label-registry.json happens to hold today.
 : >"${TMP}/inventories/label-registry.json"
 : >"${TMP}/inventories/scripts/label-registry-render.mjs"
-# The Model fields' want rows are derived from agent-registry.json (#1517). A
-# small fixture registry keeps those rows stable: `flash` is a line of two
-# families and `5.5` a version of two lines (each wanted once), and 5.1 is
-# retired (still wanted).
-cat >"${TMP}/inventories/agent-registry.json" <<'JSON'
-{"families":[
- {"slug":"claude","models":[{"slug":"opus","versions":[{"slug":"5.5"},{"slug":"5.1","retired":true}]},{"slug":"flash","versions":[{"slug":"5.5"}]}]},
- {"slug":"gemini","models":[{"slug":"flash","versions":[{"slug":"3.8"}]}]}],
- "effort_ladder":["low","high"]}
-JSON
 {
     echo '#!/usr/bin/env bash'
     echo '[ "${1:-}" != --version ] || { echo v20.0.0; exit 0; }'
@@ -2007,31 +1997,21 @@ issue_fields_case "Priority (AI) missing while the built-in Priority exists" \
 issue_fields_case "a field whose name only starts with a wanted name" \
     'map(if .name == "Effort" then .name = "Effort estimate" else . end)' \
     "[ ] Org issue fields - missing Effort — run task setup:github-issue-fields"
-# The Model fields' options come from the registry: an org provisioned before a
-# registry bump lacks the new version and must say so; an option the registry
-# no longer lists (4.0 above) is kept and fine.
-issue_fields_case "a registry version the org has not been provisioned with" \
-    'map(if .name == "Model version" then .options |= map(select(.name != "3.8")) else . end)' \
-    "[ ] Org issue fields - Model version lacks 3.8 — run task setup:github-issue-fields"
+# The four Model fields (#1517) are wanted by name and type only: their options
+# come from agent-registry.json and belong to the setup script, which validates
+# the registry. A Model field with no options at all is still ok here.
 issue_fields_case "a missing Model field" \
     'map(select(.name != "Model effort"))' \
     "[ ] Org issue fields - missing Model effort — run task setup:github-issue-fields"
 issue_fields_case "a Model field of the wrong data type" \
     'map(if .name == "Model" then {name, data_type: "text"} else . end)' \
     "[ ] Org issue fields - wrong type: Model is text — rename/delete, then re-run task setup:github-issue-fields"
-echo "==> without a readable agent registry the Model fields are checked for presence and type only"
-mv "${TMP}/inventories/agent-registry.json" "${TMP}/agent-registry.json.held"
+echo "==> the Model fields' options are not checked"
 out="$(GH_STUB_ISSUE_FIELDS=bare GH_STUB_ISSUE_FIELDS_JSON="$(jq -c 'map(if (.name | startswith("Model")) then .options = [] else . end)' <<<"$fields_complete")" run_inventory_section)"
 case "$out" in
 *"$issue_fields_ok"*) ;;
-*) fail "present, correctly typed Model fields were not ok without a registry: ${out}" ;;
+*) fail "present, correctly typed Model fields were not ok without options: ${out}" ;;
 esac
-out="$(GH_STUB_ISSUE_FIELDS=bare GH_STUB_ISSUE_FIELDS_JSON="$(jq -c 'map(select(.name != "Model version"))' <<<"$fields_complete")" run_inventory_section)"
-case "$out" in
-*"[ ] Org issue fields - missing Model version — run task setup:github-issue-fields"*) ;;
-*) fail "a missing Model field was not reported without a registry: ${out}" ;;
-esac
-mv "${TMP}/agent-registry.json.held" "${TMP}/inventories/agent-registry.json"
 
 echo "==> the human Priority is not wanted: an org without the built-in Priority is still ok"
 out="$(GH_STUB_ISSUE_FIELDS=bare GH_STUB_ISSUE_FIELDS_JSON="$(jq -c 'map(select(.name != "Priority"))' <<<"$fields_complete")" run_inventory_section)"
