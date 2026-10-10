@@ -330,40 +330,58 @@ run_fix "$p" >"$p/out.log" 2>&1 || rc=$?
     fail "trap-restore: an unexpected failure after the write left the workspace file or lockfile changed"
 pass "trap-restore: an unexpected failure after the write restores every byte"
 
-# An existing bounded floor stricter than pnpm's proposal is never lowered (r1
-# finding 3); the stale lockfile is still re-resolved and the report names the
-# floor that is actually in the file.
-p="$(new_project bounded-higher)"
-sed -i.bak "s/left-pad@1: '>=1.3.0 <2'/left-pad@1: '>=1.3.8 <2'/" "$p/pnpm-workspace.yaml" && rm -f "$p/pnpm-workspace.yaml.bak"
-advisory GHSA-0000-0000-0005 left-pad high '<1.3.4' 1.3.1 left-pad | jq '{advisories: .}' >"$p/.stub/audit.json"
-fix_writes "$p" '  left-pad@<1.3.4: ^1.3.4'
-echo "left-pad@1: '>=1.3.8 <2'" >"$p/.stub/cleared-by"
-: >"$p/.stub/needs-relock"
-cp "$p/pnpm-workspace.yaml" "$p/ws.before"
-run_fix "$p" --report "$p/report.md" >"$p/out.log" 2>&1 || {
-    cat "$p/out.log"
-    fail "bounded-higher: exited non-zero"
+# No keep-as-is branch (r1 finding 3, restructured in r2 finding 2): every
+# floor the script touches is rewritten in the canonical shape
+# '>=max(existing lower, proposal) <next-major'. A stricter existing lower
+# bound survives as the lower bound; the upper bound is always canonical; the
+# stale lockfile is re-resolved; the report names the floor in the file.
+# existing_floor NAME VALUE — a project whose local left-pad@1 entry is VALUE
+# and whose stale lockfile still reports a left-pad 1.3.1 advisory.
+existing_floor() {
+    _ef="$(new_project "$1")"
+    awk -v v="$2" '/^  left-pad@1: / { print "  left-pad@1: " v; next } { print }' "$_ef/pnpm-workspace.yaml" >"$_ef/ws.tmp" &&
+        mv "$_ef/ws.tmp" "$_ef/pnpm-workspace.yaml"
+    advisory GHSA-0000-0000-0005 left-pad high '<1.3.4' 1.3.1 left-pad | jq '{advisories: .}' >"$_ef/.stub/audit.json"
+    fix_writes "$_ef" '  left-pad@<1.3.4: ^1.3.4'
+    : >"$_ef/.stub/needs-relock"
+    echo "$_ef"
 }
-cmp -s "$p/ws.before" "$p/pnpm-workspace.yaml" || fail "bounded-higher: a stricter existing floor was rewritten"
-grep -qx '# relocked' "$p/pnpm-lock.yaml" || fail "bounded-higher: the stale lockfile was not re-resolved"
-grep -qF "already floored \`left-pad@1: '>=1.3.8 <2'\`" "$p/report.md" || fail "bounded-higher: report must name the floor in the file"
-! grep -qF '1.3.4' "$p/report.md" || fail "bounded-higher: report names a floor that was not written"
-pass "bounded-higher: a stricter bounded floor is kept, reported as already floored, lockfile re-resolved"
 
-p="$(new_project caret-higher)"
-sed -i.bak "s/left-pad@1: '>=1.3.0 <2'/left-pad@1: ^1.3.8/" "$p/pnpm-workspace.yaml" && rm -f "$p/pnpm-workspace.yaml.bak"
-advisory GHSA-0000-0000-0006 left-pad high '<1.3.4' 1.3.1 left-pad | jq '{advisories: .}' >"$p/.stub/audit.json"
-fix_writes "$p" '  left-pad@<1.3.4: ^1.3.4'
-echo "left-pad@1: '>=1.3.8 <2'" >"$p/.stub/cleared-by"
-: >"$p/.stub/needs-relock"
-run_fix "$p" --report "$p/report.md" >"$p/out.log" 2>&1 || {
-    cat "$p/out.log"
-    fail "caret-higher: exited non-zero"
+# expect_floor PROJECT LABEL FLOOR — exactly one left-pad@1 entry, canonical,
+# at FLOOR; lockfile re-resolved; the report names that floor and no other.
+expect_floor() {
+    echo "left-pad@1: '>=$3 <2'" >"$1/.stub/cleared-by"
+    run_fix "$1" --report "$1/report.md" >"$1/out.log" 2>&1 || {
+        cat "$1/out.log"
+        fail "$2: exited non-zero"
+    }
+    [ "$(grep -c '^  left-pad@1:' "$1/pnpm-workspace.yaml")" -eq 1 ] || fail "$2: expected exactly one left-pad@1 entry"
+    grep -qx "  left-pad@1: '>=$3 <2'" "$1/pnpm-workspace.yaml" ||
+        fail "$2: expected the canonical floor '>=$3 <2', got: $(grep '^  left-pad@1:' "$1/pnpm-workspace.yaml")"
+    grep -qx '# relocked' "$1/pnpm-lock.yaml" || fail "$2: the stale lockfile was not re-resolved"
+    grep -qF "floor \`left-pad@1: '>=$3 <2'\`" "$1/report.md" || fail "$2: report must name the floor in the file"
+    [ "$3" = 1.3.4 ] || ! grep -qF "'>=1.3.4" "$1/report.md" || fail "$2: report names a floor that was not written"
 }
-grep -qF "  left-pad@1: '>=1.3.8 <2'" "$p/pnpm-workspace.yaml" || fail "caret-higher: the caret floor was lowered or not normalized"
-[ "$(grep -c '^  left-pad@1:' "$p/pnpm-workspace.yaml")" -eq 1 ] || fail "caret-higher: duplicate left-pad@1 entries"
-grep -qx '# relocked' "$p/pnpm-lock.yaml" || fail "caret-higher: lockfile was not re-resolved"
-pass "caret-higher: an existing caret floor is kept at its own version in the bounded shape and re-resolved"
+
+p="$(existing_floor bounded-higher "'>=1.3.8 <2'")"
+expect_floor "$p" bounded-higher 1.3.8
+pass "bounded-higher: a stricter bounded floor keeps its lower bound in the canonical shape, lockfile re-resolved"
+
+# A consumer-written upper bound past the major ('<3') is never kept: it could
+# let the re-resolve cross into 2.x while the 1.x row reads as cleared.
+p="$(existing_floor wide-bound "'>=1.3.8 <3'")"
+expect_floor "$p" wide-bound 1.3.8
+pass "wide-bound: an upper bound past the next major is replaced by the canonical one"
+
+# An inline comment after the value does not hide the existing floor (r2
+# finding 1): the stricter lower bound is still never lowered.
+p="$(existing_floor inline-comment "'>=1.3.8 <2' # pinned for the CVE backport")"
+expect_floor "$p" inline-comment 1.3.8
+pass "inline-comment: a trailing comment after a quoted floor is parsed, the floor is not lowered"
+
+p="$(existing_floor caret-higher '^1.3.8')"
+expect_floor "$p" caret-higher 1.3.8
+pass "caret-higher: an existing caret floor keeps its lower bound in the canonical shape and is re-resolved"
 
 # A column-zero comment inside the overrides map does not end the map (r1
 # finding 4): the fix is still read, and the floor lands after the local entries.
@@ -384,6 +402,40 @@ awk -v be="$BLOCK_END" '$0 == be { m = NR } /lodash@4:/ { f = NR } END { exit !(
 [ "$(awk '/^overrides:/ { s = 1 } s && /^  lodash@4:/ { print NR; exit }' "$p/pnpm-workspace.yaml")" -gt \
     "$(grep -n '^  left-pad@1:' "$p/pnpm-workspace.yaml" | cut -d: -f1)" ] || fail "col0-comment: floor not appended after the local entries"
 pass "col0-comment: a column-zero comment inside the map is transparent"
+
+# A column-zero end marker with no local entry after it (r2 finding 3): the
+# floor goes immediately after the marker, never inside the template block.
+p="$(new_project col0-marker)"
+awk -v be="$BLOCK_END" '$0 == be { print substr(be, 3); next } /left-pad@1/ { next } { print }' \
+    "$p/pnpm-workspace.yaml" >"$p/ws.tmp" && mv "$p/ws.tmp" "$p/pnpm-workspace.yaml"
+advisory GHSA-0000-0000-0009 lodash high '<4.17.21' 4.17.20 lodash | jq '{advisories: .}' >"$p/.stub/audit.json"
+fix_writes "$p" '  lodash@<4.17.21: ^4.17.21'
+echo "lodash@4: '>=4.17.21 <5'" >"$p/.stub/cleared-by"
+run_fix "$p" >"$p/out.log" 2>&1 || {
+    cat "$p/out.log"
+    fail "col0-marker: exited non-zero"
+}
+marker_line="$(grep -nxF "${BLOCK_END#  }" "$p/pnpm-workspace.yaml" | cut -d: -f1)"
+[ -n "$marker_line" ] || fail "col0-marker: end marker lost"
+[ "$(sed -n "$((marker_line + 1))p" "$p/pnpm-workspace.yaml")" = '  # lodash@4: GHSA-0000-0000-0009.' ] &&
+    [ "$(sed -n "$((marker_line + 2))p" "$p/pnpm-workspace.yaml")" = "  lodash@4: '>=4.17.21 <5'" ] ||
+    fail "col0-marker: the floor is not immediately after the column-zero end marker"
+pass "col0-marker: with nothing local after a column-zero end marker, the floor goes right after it"
+
+# An advisory that appears only after the re-resolve (r2 observation 4) is
+# listed in the report, never hidden behind a passing clearance check.
+p="$(new_project new-after-relock)"
+advisory GHSA-0000-0000-0010 lodash high '<4.17.21' 4.17.20 lodash | jq '{advisories: .}' >"$p/.stub/audit.json"
+advisory GHSA-0000-0000-0011 undici high '<7.30.0' 7.29.0 astro | jq '{advisories: .}' >"$p/.stub/audit-after.json"
+fix_writes "$p" '  lodash@<4.17.21: ^4.17.21'
+echo "lodash@4: '>=4.17.21 <5'" >"$p/.stub/cleared-by"
+run_fix "$p" --report "$p/report.md" >"$p/out.log" 2>&1 || {
+    cat "$p/out.log"
+    fail "new-after-relock: exited non-zero"
+}
+grep -qF -- '- GHSA-0000-0000-0011 — `undici` 7.29.0 (high): new, not fixed by this run' "$p/report.md" ||
+    fail "new-after-relock: the post-relock advisory is missing from the report"
+pass "new-after-relock: an advisory first seen after the re-resolve is listed as new, not fixed"
 
 # A four-space map gets four-space lines (r1 finding 5).
 p="$(new_project four-space)"

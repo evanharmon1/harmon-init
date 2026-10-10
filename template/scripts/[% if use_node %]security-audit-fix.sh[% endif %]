@@ -86,12 +86,41 @@ need_bin() {
 
 # ── Version helpers ─────────────────────────────────────────────────
 
-# plain_version V — the x.y.z lower bound of a version, a one-sided floor
-# (^, ~, >=, =, v), or this script's bounded floor ('>=x.y.z <N'); empty when
-# V is anything else (a tag, a prerelease-only value).
-plain_version() {
-    printf '%s\n' "$1" | sed -E 's/^[[:space:]]*(\^|~|>=|=|v)?[[:space:]]*//; s/[[:space:]].*$//; s/[-+].*$//' |
-        awk '/^[0-9]+\.[0-9]+\.[0-9]+$/ { print; exit }'
+# floor_bounds V — THE one reader of a version or override value; nothing else
+# in this script parses one. V is raw YAML value text or a bare version:
+# quoted ('…' or "…") or plain, with or without a trailing `# comment`; a
+# version, a one-sided floor (^, ~, >=, =, v), or a bounded floor
+# ('>=x.y.z <N'). Prints "lower<TAB>upper" — the x.y.z lower bound and the
+# text after `<` (empty when there is none) — or nothing when V has no
+# readable x.y.z lower bound (a tag, a range like '1 - 2', a prerelease only).
+floor_bounds() {
+    printf '%s\n' "$1" | awk '
+        {
+            s = $0; sub(/^[[:space:]]+/, "", s)
+            q = substr(s, 1, 1)
+            if (q == "'"'"'" || q == "\"") {
+                rest = substr(s, 2); e = index(rest, q)
+                if (!e) exit
+                s = substr(rest, 1, e - 1)
+            } else {
+                sub(/[[:space:]]+#.*$/, "", s)
+            }
+            gsub(/>=[[:space:]]+/, ">=", s); gsub(/<[[:space:]]+/, "<", s)
+            gsub(/\^[[:space:]]+/, "^", s); gsub(/~[[:space:]]+/, "~", s)
+            sub(/[[:space:]]+$/, "", s)
+            n = split(s, part, /[[:space:]]+/)
+            if (n < 1 || n > 2) exit
+            lo = part[1]; sub(/^(>=|\^|~|=|v)/, "", lo); sub(/[-+].*$/, "", lo)
+            if (lo !~ /^[0-9]+\.[0-9]+\.[0-9]+$/) exit
+            hi = ""
+            if (n == 2) { if (part[2] !~ /^<[0-9]/) exit; hi = substr(part[2], 2) }
+            print lo "\t" hi
+        }'
+}
+
+# floor_lower V — just the lower bound from floor_bounds.
+floor_lower() {
+    floor_bounds "$1" | cut -f1
 }
 
 # major_key V — the semver-breaking line V belongs to: "4" for 4.17.21,
@@ -116,15 +145,12 @@ version_ge() {
 
 # ── pnpm-workspace.yaml overrides ────────────────────────────────────
 
-# override_entries FILE — one "zone<TAB>key<TAB>value" line per entry of the
-# top-level `overrides:` map, quotes stripped. zone is "template" between the
-# template-owned markers and "local" everywhere else.
+# override_entries FILE — one "zone<TAB>key<TAB>raw value" line per entry of
+# the top-level `overrides:` map. The value is the text after the key's colon,
+# untouched (quotes, trailing comment): floor_bounds is its only reader. zone
+# is "template" between the template-owned markers and "local" elsewhere.
 override_entries() {
     awk -v bs="$BLOCK_START" -v be="$BLOCK_END" '
-        function unquote(s) {
-            if (s ~ /^'"'"'.*'"'"'$/ || s ~ /^".*"$/) return substr(s, 2, length(s) - 2)
-            return s
-        }
         /^overrides:[[:space:]]*$/ { inmap = 1; zone = "local"; next }
         # Only a column-zero KEY ends the map; comments and blank lines at any
         # indentation are transparent.
@@ -147,8 +173,7 @@ override_entries() {
                 key = substr(line, 1, sep - 1); val = substr(line, sep + 2)
             }
             sub(/^[[:space:]]+/, "", val)
-            if (val !~ /^['"'"'"]/) sub(/[[:space:]]+#.*$/, "", val)
-            print zone "\t" key "\t" unquote(val)
+            print zone "\t" key "\t" val
         }
     ' "$1"
 }
@@ -163,10 +188,12 @@ yaml_key() {
 }
 
 # write_floor FILE KEY FLOOR BOUND IDS — set KEY to '>=FLOOR <BOUND' in the
-# overrides map: replace a local entry (and its comment), or append one after
-# the map's last indented line — which is never above the template block's end
-# marker. Comments and blank lines (any column) do not end the map; only a
-# column-zero key does. New lines reuse the indentation of the map's first key.
+# overrides map: replace a local entry (and its comment), or append one —
+# after the last indented line that follows the template block's end marker,
+# or immediately after the end marker when nothing local follows it (without
+# markers: after the map's last indented line). Comments and blank lines (any
+# column) do not end the map; only a column-zero key does. New lines reuse the
+# indentation of the map's first key.
 write_floor() {
     _wf_file="$1" _wf_key="$2" _wf_floor="$3" _wf_bound="$4" _wf_ids="$5"
     _wf_out="$WORK/write-floor.yaml"
@@ -186,7 +213,7 @@ write_floor() {
         function trim(s) { sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s); return s }
         { lines[NR] = $0 }
         END {
-            inmap = 0; loc = 1; start = 0; last = 0; hit = 0; bsl = 0; bel = 0; ind = ""
+            inmap = 0; loc = 1; start = 0; last = 0; hit = 0; bsl = 0; bel = 0; ind = ""; lastloc = 0
             for (i = 1; i <= NR; i++) {
                 l = lines[i]
                 if (l ~ /^overrides:[[:space:]]*$/) { inmap = 1; start = i; last = i; continue }
@@ -197,11 +224,13 @@ write_floor() {
                 if (t == be) { loc = 1; bel = i }
                 if (l ~ /^[[:space:]]+[^[:space:]]/) {
                     last = i
+                    if (bel && i > bel) lastloc = i
                     if (ind == "" && t !~ /^#/) { ind = l; sub(/[^[:space:]].*$/, "", ind) }
                 }
                 if (loc && t != "" && t !~ /^#/ && keyof(l) == key) hit = i
             }
             if (bsl && (!bel || bel < bsl)) exit 2
+            at = bel ? (lastloc ? lastloc : bel) : last
             if (ind == "") ind = "  "
             comment = ind "# " key ": " ids "."
             entry = ind yk ": " val
@@ -209,7 +238,7 @@ write_floor() {
                 if (hit && i == hit - 1 && index(trim(lines[i]), "# " key ":") == 1) continue
                 if (hit && i == hit) { print comment; print entry; continue }
                 print lines[i]
-                if (!hit && start && i == last) { print comment; print entry }
+                if (!hit && start && i == at) { print comment; print entry }
             }
             if (!start) { print ""; print "overrides:"; print comment; print entry }
         }
@@ -302,6 +331,7 @@ cmd_fix() {
     WORK="$(mktemp -d)"
     : >"$WORK/refused.tsv"
     : >"$WORK/applied.tsv"
+    : >"$WORK/new-rows.tsv"
     snapshot
 
     audit_rows "$WORK/rows.tsv"
@@ -332,8 +362,8 @@ cmd_fix() {
             add_refusal "$_id" "$_pkg" "$_sev" "$_ver" "pnpm audit --fix proposed no override (no patched version published for $_range)"
             continue
         fi
-        _floor="$(plain_version "$_value")"
-        _have="$(plain_version "$_ver")"
+        _floor="$(floor_lower "$_value")"
+        _have="$(floor_lower "$_ver")"
         if [ -z "$_floor" ] || [ -z "$_have" ]; then
             add_refusal "$_id" "$_pkg" "$_sev" "$_ver" "could not read a version from --fix's '$_value' for installed $_ver"
             continue
@@ -349,7 +379,7 @@ cmd_fix() {
 
     # One floor per key: the highest patched version any advisory needs.
     sort -t "$TAB" -k1,1 "$WORK/candidates.tsv" | cut -f1 | uniq >"$WORK/keys.txt"
-    _changed=0 _relock=0
+    _relock=0
     while IFS= read -r _key; do
         [ -n "$_key" ] || continue
         _floor="" _ids=""
@@ -368,24 +398,21 @@ cmd_fix() {
             continue
         fi
         _bound="$(next_bound "${_key##*@}")"
-        _old="$(plain_version "$_existing")"
+        # There is no keep-as-is branch: every floor this script touches is
+        # written in the one canonical shape '>=max(existing lower, proposal)
+        # <next-major' for its own major, whatever was there before, so a
+        # floor can never express a crossing. An existing lower bound is never
+        # lowered — unless it lies in another major, where it was itself a
+        # crossing and the proposal replaces it.
+        _old="$(floor_lower "$_existing")"
+        if [ -n "$_old" ] && [ "$(major_key "$_old")" = "${_key##*@}" ] && version_ge "$_old" "$_floor"; then
+            _floor="$_old"
+        fi
+        write_floor "$WORKSPACE" "$_key" "$_floor" "$_bound" "$_ids"
         # An advisory is still reported against this key, so the lockfile is
         # out of step with the floor either way: always re-resolve.
         _relock=1
-        if [ -n "$_old" ] && version_ge "$_old" "$_floor" &&
-            printf '%s\n' "$_existing" | grep -Eq '^>=[0-9]+\.[0-9]+\.[0-9]+ <[0-9.]+$'; then
-            # Never lower (or reshape) a bounded floor that is already at least
-            # as strict as the proposal.
-            note "$_key already floored at '$_existing'"
-            _outcome="already floored \`$_key: '$_existing'\`"
-        else
-            # Never lower an existing floor; a higher one in another shape (^, a
-            # bare version) is normalized to the bounded shape at its own floor.
-            if [ -n "$_old" ] && version_ge "$_old" "$_floor"; then _floor="$_old"; fi
-            write_floor "$WORKSPACE" "$_key" "$_floor" "$_bound" "$_ids"
-            _changed=1
-            _outcome="floor \`$_key: '>=$_floor <$_bound'\`"
-        fi
+        _outcome="floor \`$_key: '>=$_floor <$_bound'\`"
         awk -F '\t' -v k="$_key" -v o="$_outcome" '$1 == k { print $3 "\t" $4 "\t" $5 "\t" $6 "\t" o }' \
             "$WORK/candidates.tsv" >>"$WORK/applied.tsv"
     done <"$WORK/keys.txt"
@@ -418,9 +445,15 @@ cmd_fix() {
         major_rows 1 2 5 <"$WORK/after-rows.tsv" | comm -12 - "$WORK/applied-pairs.txt" >"$WORK/still.txt"
         [ ! -s "$WORK/still.txt" ] ||
             fail "the new floors did not clear: $(tr '\n' ' ' <"$WORK/still.txt")— nothing kept"
+        # An advisory that appears only after the re-resolve is not this run's
+        # to fix, but the PR body must not hide it.
+        major_rows 1 2 5 <"$WORK/rows.tsv" >"$WORK/before-pairs.txt"
+        while IFS="$TAB" read -r _id _pkg _sev _range _ver _direct; do
+            _pair="$(printf '%s\t%s\t%s\n' "$_id" "$_pkg" "$_ver" | major_rows 1 2 3)"
+            grep -qxF "$_pair" "$WORK/before-pairs.txt" ||
+                printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$_id" "$_pkg" "$_sev" "$_range" "$_ver" "$_direct" >>"$WORK/new-rows.tsv"
+        done <"$WORK/after-rows.tsv"
         note "$WORKSPACE floors in place and $LOCKFILE re-resolved"
-    else
-        note "no floor to change"
     fi
     [ -z "$_report" ] || write_report "$_report" "$WORK/rows.tsv"
     return 0
@@ -452,6 +485,14 @@ write_report() {
             [ -n "$_out" ] || _out="not applied (another fix in this run was refused)"
             printf '| %s | `%s` | %s | %s | %s |\n' "$_id" "$_pkg" "$_sev" "$_ver" "$_out"
         done <"$_wr_rows"
+        if [ -s "$WORK/new-rows.tsv" ]; then
+            echo
+            echo "Advisories that appeared only after the lockfile re-resolve:"
+            echo
+            while IFS="$TAB" read -r _id _pkg _sev _range _ver _direct; do
+                printf -- '- %s — `%s` %s (%s): new, not fixed by this run\n' "$_id" "$_pkg" "$_ver" "$_sev"
+            done <"$WORK/new-rows.tsv"
+        fi
         if [ -s "$WORK/refused.tsv" ]; then
             echo
             echo "Refused fixes were not applied: they need a deliberate upgrade or an upstream"
