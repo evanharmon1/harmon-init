@@ -46,14 +46,26 @@ check_taskfile_paths Taskfile.yml taskfiles/*.yml template/Taskfile.yml.jinja "$
 echo "==> Taskfile PWD guard rejects bare, trimmed and piped references (negative controls)"
 pwd_taskfile="${test_tmp}/Taskfile.yml"
 for pwd_reference in '{{.PWD}}' '{{ .PWD }}' '{{- .PWD -}}' '{{.PWD | dir}}'; do
-    printf '%s\n' 'version: "3"' "# $pwd_reference" >"$pwd_taskfile"
+    printf '%s\n' 'version: "3"' 'tasks:' '  probe:' '    cmds:' \
+        "      - echo \"$pwd_reference\"" >"$pwd_taskfile"
     out=$(check_taskfile_paths "$pwd_taskfile" 2>&1) && rc=0 || rc=$?
     [ "$rc" -ne 0 ] || fail "Taskfile PWD guard accepted $pwd_reference"
     case "$out" in
-    *"${pwd_taskfile}:2:"*"${pwd_reference}"*'never PWD'*) ;;
+    *"${pwd_taskfile}:5:"*"${pwd_reference}"*'never PWD'*) ;;
     *) fail "Taskfile PWD guard failed for the wrong reason: $out" ;;
     esac
 done
+
+echo "==> Taskfile PWD guard accepts PWD_ROOT and shell PWD references"
+cat >"$pwd_taskfile" <<'EOF'
+version: "3"
+tasks:
+  probe:
+    cmds:
+      - echo "{{.PWD_ROOT}} $PWD"
+EOF
+out=$(check_taskfile_paths "$pwd_taskfile" 2>&1) && rc=0 || rc=$?
+[ "$rc" -eq 0 ] || fail "Taskfile PWD guard rejected PWD_ROOT or shell PWD: $out"
 
 echo "==> closing-keyword preflight delegates to a linted script, not inline Taskfile bash"
 # The logic lives in scripts/guard-closing-keywords.sh so shellcheck/shfmt see
