@@ -331,8 +331,8 @@ The security contract, by layer:
   agent Claude managed settings (auto mode, `disableBypassPermissionsMode:
   "disable"`, `allowManagedPermissionRulesOnly`, an explicit dev-loop allow
   list that includes `gh pr merge`, deny rules for
-  release/admin/secrets/workflows/force-push (argument patterns, not every
-  spelling; see `remote-environments.md`)/pushes to
+  release/admin/secrets/workflows/force-push (argument patterns, defence in
+  depth; see `remote-environments.md` § The agent posture)/pushes to
   `main`/`op`/`.env*`/the egress-tamper commands, and no `ask` rule) and
   the agent Codex managed config (`workspace-write`, never
   `danger-full-access`, approval `never` — its sandbox is the criterion, and

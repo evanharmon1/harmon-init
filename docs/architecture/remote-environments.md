@@ -359,12 +359,13 @@ leave a harness installed on the machine without its managed policy.
   that match only a word starting with those characters, so other force
   spellings are allowed by `Bash(git push *)`: a bundled short flag such as
   `git push -uf`, and `git push --mirror`, which force-updates and can delete
-  remote branches. "Protect Main" blocks non-fast-forward updates only on
-  `main`, so a force push to any other branch is bounded only by the bot's
+  remote branches. "Protect Main" blocks non-fast-forward updates and
+  deletion only on the default branch (`main`), so a force push to any other
+  branch is bounded only by the bot's
   collaborator grants, the agent PAT's scopes and the rulesets.
   This is accepted and documented rather than closed with another deny
-  pattern or a push wrapper (#1586). A ruleset that blocks force pushes on
-  every branch is the structural fix, and adopting it is the maintainer's
+  pattern or a push wrapper (#1586). A ruleset that blocks force pushes and
+  deletion on every branch is the structural fix, and adopting it is the maintainer's
   decision.
 - **The wrapper is always ours.** A stale or differing
   `/usr/local/bin/gh-api-read` is replaced at mode 0755 without a policy

@@ -283,9 +283,11 @@ and can delete remote branches.
 The maintainer chose to accept and document this rather than add another
 spelling-based deny or a push wrapper (#1586). Pushes are routine in the
 agent posture, and a wrapper would change every push the skills prescribe.
-The "Protect Main" ruleset blocks non-fast-forward updates only on `main`,
+The "Protect Main" ruleset blocks non-fast-forward updates and deletion only
+on the default branch (`main`),
 so a force push to any other branch is bounded only by the bot's
 collaborator grants, the agent PAT's scopes and the rulesets. That is the
 boundary this record already names for every write. The force denies stay as defence in depth.
-A ruleset blocking force pushes on every branch is the structural fix, and
+A ruleset blocking force pushes and deletion on every branch is the
+structural fix, and
 adopting it is a separate maintainer decision.
