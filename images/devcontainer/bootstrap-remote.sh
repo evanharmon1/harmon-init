@@ -103,11 +103,13 @@ readonly HARMON_AGENT_POSTURE_ASSETS="
 .devcontainer/config/agent/claude-managed-settings.json
 .devcontainer/config/agent/codex-managed-config.toml
 .devcontainer/config/agent/harnesses.json
+.devcontainer/config/agent/gh-api-read
 "
 # Where the posture is installed: the paths the agent devcontainer installs it
 # to, and the ones Claude Code and Codex read as managed (unoverridable) policy.
 readonly HARMON_AGENT_CLAUDE_MANAGED=/etc/claude-code/managed-settings.json
 readonly HARMON_AGENT_CODEX_MANAGED=/etc/codex/managed_config.toml
+readonly HARMON_AGENT_GH_API_READ=/usr/local/bin/gh-api-read
 
 # Tiers in dependency order. core installs Node, uv and npm, which agents and
 # browsers both need, so the order is canonical here rather than taken from the
@@ -194,8 +196,10 @@ through .devcontainer/agent/agent-autonomy.sh. Anything already at either
 path that is not the definition — a file, or a symlink, dangling or not — is
 left in place, reported, and counted in HARMON_BOOTSTRAP_POSTURE_GAPS (the
 posture is then not applied for it) unless HARMON_AGENT_POSTURE_REPLACE=1,
-which replaces it and keeps the previous entry beside it. Harness executables
-are never modified.
+which replaces it and keeps the previous entry beside it. The agent
+posture's GET-only read wrapper, /usr/local/bin/gh-api-read, is ours rather
+than admin-owned, so it is always written with the shipped bytes at mode
+0755, without that gate. Harness executables are never modified.
 
 Environment: HARMON_PREFIX (default /usr/local), HARMON_BOOTSTRAP_TIERS,
              HARMON_INIT_REF, HARMON_ALLOW_UNPINNED_REF,
@@ -752,13 +756,21 @@ posture_missing_hooks() {
 install_agent_posture() {
     local config_dir="${posture_root}/.devcontainer/config/agent"
     local autonomy="${posture_root}/.devcontainer/agent/agent-autonomy.sh"
-    local missing step dest claude_target codex_target covered=""
+    local missing step dest claude_target codex_target wrapper_target covered=""
     printf '\n==> agent posture (from %s)\n' "${ref:-the checkout at ${posture_root}}"
     # Global, so cleanup() removes it on every exit, a die in the loop included.
     posture_scratch="$(mktemp -d)"
     # Stated rather than inherited, as for fetched_dir: root's installer writes
     # the decoy destinations here.
     chmod 0700 "$posture_scratch"
+    # The wrapper is ours, not platform-managed policy. Never preserve stale
+    # or different executable bytes behind the managed allow rule.
+    wrapper_target="$HARMON_AGENT_GH_API_READ"
+    install -d -m 0755 "$(dirname "$wrapper_target")"
+    if [ -L "$wrapper_target" ] || [ ! -x "$wrapper_target" ] || ! cmp -s "${config_dir}/gh-api-read" "$wrapper_target"; then
+        harmon_changed "agent posture ${wrapper_target}"
+        install -m 0755 "${config_dir}/gh-api-read" "$wrapper_target"
+    fi
     claude_target="$(prepare_posture_dest "${config_dir}/claude-managed-settings.json" \
         "$HARMON_AGENT_CLAUDE_MANAGED" "${posture_scratch}/managed-settings.json")"
     codex_target="$(prepare_posture_dest "${config_dir}/codex-managed-config.toml" \
@@ -773,7 +785,7 @@ install_agent_posture() {
     # The count the run reports beside its install counters, so a run that left
     # every destination in place cannot read like a clean re-run.
     posture_gaps="$(printf '%s' "$posture_left_in_place" | wc -w | tr -d ' ')"
-    for dest in "$HARMON_AGENT_CLAUDE_MANAGED" "$HARMON_AGENT_CODEX_MANAGED"; do
+    for dest in "$HARMON_AGENT_CLAUDE_MANAGED" "$HARMON_AGENT_CODEX_MANAGED" "$HARMON_AGENT_GH_API_READ"; do
         case " ${posture_left_in_place} " in
         *" ${dest} "*) ;;
         *) covered="${covered} ${dest}" ;;
@@ -784,6 +796,7 @@ install_agent_posture() {
             AGENT_AUTONOMY_CONFIG_DIR="$config_dir" \
             AGENT_AUTONOMY_CLAUDE_MANAGED="$claude_target" \
             AGENT_AUTONOMY_CODEX_MANAGED="$codex_target" \
+            AGENT_AUTONOMY_GH_API_READ="$wrapper_target" \
             bash "$autonomy" "$step" --platform-vm ||
             die "agent-autonomy.sh ${step} failed — the agent posture is not in effect on this machine"
     done

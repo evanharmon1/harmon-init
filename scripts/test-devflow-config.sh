@@ -213,3 +213,20 @@ grep -q 'v2 reader does not support case input(s): labels' "$unsupported_v2_outp
     echo "FAIL: v2 conformance runner did not diagnose its unsupported input" >&2
     exit 1
 }
+
+# The absent-merge-base guard lives in the library, not only the CLI: a library
+# caller (dev-flow-exit.mjs) must not get the built-in fallback without a branch
+# policy. The conformance corpus drives the CLI, whose own pre-check exits first.
+if ! node --input-type=module -e '
+import { resolvePolicy, PolicyError } from "./scripts/devflow-policy.mjs"
+try {
+  resolvePolicy(null, { mergeBasePolicyAbsent: true })
+} catch (err) {
+  if (err instanceof PolicyError) process.exit(0)
+  throw err
+}
+process.exit(1)
+'; then
+    echo "FAIL: resolvePolicy accepted an absent merge-base policy without a branch policy" >&2
+    exit 1
+fi
