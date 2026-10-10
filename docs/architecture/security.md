@@ -377,10 +377,11 @@ The security contract, by layer:
   Codex has none): they are not transitive through repository code —
   Taskfile targets and git hooks, which the agent runs through `task` and
   commits — and pattern matching can miss flag spellings such as bundled
-  short flags, so the `gh api` denies keep a cooperating harness to reads
-  without guaranteeing `gh api` is read-only. The boundary for **GitHub
-  writes** is the agent PAT's scopes (no administration, secrets, or
-  workflow) plus the repository rulesets (no direct or force push to `main`;
+  short flags. Argument-pattern denies are defence in depth. In the agent
+  posture, REST reads use `/usr/local/bin/gh-api-read`, which pins the system
+  PATH and GET method; raw `gh api` is denied. The boundary for **GitHub
+  writes** is the bot's collaborator grants, the agent PAT's scopes (no
+  administration, secrets, or workflow) and the branch rulesets (no direct or force push to `main`;
   a merge to `main` needs code-owner approval and green required checks). The
   rulesets do not stop the PAT from merging: once a human has approved and
   the checks pass, its `pull_requests: write` can perform that merge. Its
