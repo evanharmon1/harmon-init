@@ -1214,8 +1214,9 @@ tracked in
 
 Each harness declares the reasoning `efforts` it accepts. The list is drawn
 from the registry-wide `effort_ladder` and kept in ladder order. Effort belongs
-to the harness, not the model. The list holds levels the harness is verified
-to accept for the models the registry resolves for it. A level documented only
+to the harness, not the model. The list holds the levels the harness is verified
+to accept — for a provider-rewired wrapper, for the models its launcher resolves.
+A level documented only
 for a model the harness does not resolve is not recorded. An empty list means
 no separate, verified effort
 setting is recorded. Numeric token budgets and on/off switches are not mapped
@@ -1229,7 +1230,8 @@ unverified for the models their wrappers resolve:
 
 - **`claude-code-deepseek`**: DeepSeek's [thinking-mode reference](https://api-docs.deepseek.com/guides/thinking_mode/)
   documents Anthropic `output_config.effort` with distinct `low`, `high` and
-  `max` levels. Other accepted names map onto those levels.
+  `max` levels, covering the launcher's configured `deepseek-v4-pro` /
+  `deepseek-v4-flash` models. Other accepted names map onto those levels.
 - **`claude-code-kimi`**: Kimi's [Claude Code integration](https://platform.kimi.ai/docs/guide/claude-code-kimi)
   documents `CLAUDE_CODE_EFFORT_LEVEL`; its [reasoning-effort reference](https://platform.kimi.ai/docs/guide/use-reasoning-effort)
   lists K3's `low`, `high` and `max`, covering the K line this wrapper resolves.
@@ -1280,9 +1282,11 @@ unverified for the models their wrappers resolve:
   `off` (and Oh My Pi's `auto`) are not effort-ladder levels; model capability
   limits still apply.
 - **`goose`**: the official [provider configuration reference](https://github.com/block/goose/blob/main/documentation/docs/getting-started/providers.md)
-  documents `GOOSE_THINKING_EFFORT` / `goose configure` for Muse Spark:
-  `low`, `medium`, `high`, `max`. Gemini's separate `GEMINI3_THINKING_LEVEL`
-  accepts `low` and `high`; `off` and numeric budgets add no ladder levels.
+  documents `GOOSE_THINKING_EFFORT` / `goose configure` for Muse Spark.
+  The recorded list is `GOOSE_THINKING_EFFORT`'s own values: `low`, `medium`,
+  `high`, `max`. Per-provider variables such as `GEMINI3_THINKING_LEVEL`
+  (which accepts `low` and `high`) are separate controls, not part of this list;
+  `off` and numeric budgets add no ladder levels.
 - **`cline`**: the official [CLI reference](https://github.com/cline/cline/blob/main/docs/cli/cli-reference.mdx)
   documents `--thinking`: `low`, `medium`, `high`, `xhigh` (`none` is excluded).
   These are the CLI's levels, not every value accepted by Cline's shared SDK.
