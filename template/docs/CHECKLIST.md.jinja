@@ -563,7 +563,9 @@ the compatibility reason in the rule's `description`.
       blocks dependency build scripts by default). The `overrides` security-floor
       block is template-owned and arrives via `copier update`; every floor is
       scoped to the major it floors (`pkg@<major>` key) and bounded below the
-      next major; the block never crosses a major. Add repository-local floors
+      next major; the block never crosses a major. A 0.x floor may move a minor
+      only when upstream publishes no in-minor patch, and the entry says so.
+      Add repository-local floors
       below its end marker, inside `overrides`, using the same shape.
       Harmon Init's CI audits the real Astro fixture
       against the shipped block so new advisories are fixed upstream first.
@@ -655,7 +657,8 @@ the compatibility reason in the rule's `description`.
       add repository-local floors below its end marker, inside `overrides`,
       scoped to the major they floor (`pkg@<major>` key) and bounded below the
       next major. Every template floor follows this shape; the block never
-      crosses a major. Harmon Init's CI audits the Astro fixture
+      crosses a major. A 0.x floor may move a minor only when upstream publishes
+      no in-minor patch, and the entry says so. Harmon Init's CI audits the Astro fixture
       against the shipped block so new advisories are fixed upstream first
 - [ ] When adding Playwright e2e: configure `scripts/e2e-env-guard.sh` with this
       app's auth providers, deploy credentials, and production domains —

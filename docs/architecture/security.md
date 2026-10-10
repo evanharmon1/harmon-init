@@ -35,7 +35,7 @@ vendored Python), so it has no CodeQL workflow.
 | Axis | Root status | Default for generated repos |
 |---|---|---|
 | **SAST** — flaws in first-party code | Semgrep CE in CI and via `task security:sast` (no CodeQL workflow — no first-party CodeQL-supported language) | Public Node/Python: CodeQL; free private Node/Python: Semgrep CE; other profiles: Semgrep CE |
-| **SCA** — dependency CVEs | Dependabot alerts + `task security:audit` (no root manifests today); CI audits the Astro fixture against the shipped floors so new advisories are fixed upstream first | Dependabot alerts + `pnpm audit` / `pip-audit`; Node security floors are template-owned, arrive via `copier update`, and each uses a `pkg@<major>` key with a floor bounded below the next major; the block never crosses a major; add local floors below the end marker inside `overrides` using the same shape |
+| **SCA** — dependency CVEs | Dependabot alerts + `task security:audit` (no root manifests today); CI audits the Astro fixture against the shipped floors so new advisories are fixed upstream first | Dependabot alerts + `pnpm audit` / `pip-audit`; Node security floors are template-owned, arrive via `copier update`, and each uses a `pkg@<major>` key with a floor bounded below the next major; the block never crosses a major; a 0.x floor may move a minor only when upstream publishes no in-minor patch, and the entry says so; add local floors below the end marker inside `overrides` using the same shape |
 | **Secrets** | gitleaks in pre-push and CI | gitleaks in pre-push and CI |
 | **IaC** | N/A at the root | checkov for Terraform profiles |
 | **Freshness/remediation** | Renovate, including Dependabot-alert remediation | Renovate, including Dependabot-alert remediation |
