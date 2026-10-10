@@ -1214,31 +1214,38 @@ tracked in
 
 Each harness declares the reasoning `efforts` it accepts. The list is drawn
 from the registry-wide `effort_ladder` and kept in ladder order. Effort belongs
-to the harness, not the model. The list records supported named levels across
-its documented provider/model configurations; it does not promise that every
-model accepts every level. An empty list means no separate, verified effort
+to the harness, not the model. The list holds levels the harness is verified
+to accept for the models the registry resolves for it. A level documented only
+for a model the harness does not resolve is not recorded. An empty list means
+no separate, verified effort
 setting is recorded. Numeric token budgets and on/off switches are not mapped
 onto the ladder, and aliases that collapse onto another level add no rung.
 
 The following documentation was checked on **2026-10-10**. The existing
 `claude-code`, `claude-code-action` and `codex-cli` lists remain as previously
-verified; the checks below replace the other entries' pending-verification
-status, except where explicitly noted:
+verified; the checks below establish the other entries' status. GLM remains
+unverified for Anthropic effort pass-through; hosted Qwen and MiniMax remain
+unverified for the models their wrappers resolve:
 
 - **`claude-code-deepseek`**: DeepSeek's [thinking-mode reference](https://api-docs.deepseek.com/guides/thinking_mode/)
   documents Anthropic `output_config.effort` with distinct `low`, `high` and
   `max` levels. Other accepted names map onto those levels.
 - **`claude-code-kimi`**: Kimi's [Claude Code integration](https://platform.kimi.ai/docs/guide/claude-code-kimi)
   documents `CLAUDE_CODE_EFFORT_LEVEL`; its [reasoning-effort reference](https://platform.kimi.ai/docs/guide/use-reasoning-effort)
-  lists K3's `low`, `high` and `max`. These lists describe K3, not older K2 models.
+  lists K3's `low`, `high` and `max`, covering the K line this wrapper resolves.
+  These lists describe K3, not older K2 models.
 - **`claude-code-minimax`**: MiniMax's [Anthropic compatibility reference](https://platform.minimax.io/docs/api-reference/text-anthropic-api)
   documents `output_config.effort`: `low`, `medium`, `high`, `xhigh`, `max`.
   This control is documented only for `MiniMax-M3.1-Flash-Preview`, currently
-  available through M Plan/MiniMax Code; it is not established for M3 or M2.x.
+  available through M Plan/MiniMax Code. This wrapper resolves M3, so its list
+  stays `[]` (unverified for the configured model) until support is documented
+  for M3.
 - **`claude-code-qwen`**: Alibaba's [Anthropic Messages reference](https://www.alibabacloud.com/help/en/model-studio/anthropic-api-messages)
   documents `output_config.effort` for Qwen3.8 Max/Flash: `low`, `medium`,
-  `xhigh`. `high` and `max` map to `xhigh`. This evidence does not establish
-  effort support for the wrapper's Qwen3.7 Max or Coder Plus configurations.
+  `xhigh`. `high` and `max` map to `xhigh`. This wrapper resolves Qwen3.7 Max
+  / Coder Plus, so its list stays `[]` (unverified for the configured models)
+  until the wrapper moves to supported models or Alibaba documents effort
+  support for its configured models.
 - **`claude-code-glm` — still unverified**: Z.ai's [deep-thinking reference](https://docs.z.ai/guides/capabilities/thinking)
   documents `reasoning_effort`, and its [Claude Code integration](https://docs.z.ai/devpack/tool/claude)
   documents the Anthropic endpoint. Neither establishes the endpoint's
@@ -1343,8 +1350,8 @@ Effort ladder: `minimal` < `low` < `medium` < `high` < `xhigh` < `max`.
 | `claude-code-deepseek` | Claude Code provider wrapper | `deepseek` | `claude-code-deepseek` — production, not dispatchable, no label | `provider-wrapper` | `low`, `high`, `max` |
 | `claude-code-glm` | Claude Code provider wrapper | `glm` | `claude-code-glm` — production, not dispatchable, no label | `provider-wrapper` | — |
 | `claude-code-kimi` | Claude Code provider wrapper | `kimi` | `claude-code-kimi` — production, not dispatchable, no label | `provider-wrapper` | `low`, `high`, `max` |
-| `claude-code-minimax` | Claude Code provider wrapper | `minimax` | — | `provider-wrapper` | `low`, `medium`, `high`, `xhigh`, `max` |
-| `claude-code-qwen` | Claude Code provider wrapper | `qwen` | — | `provider-wrapper` | `low`, `medium`, `xhigh` |
+| `claude-code-minimax` | Claude Code provider wrapper | `minimax` | — | `provider-wrapper` | — |
+| `claude-code-qwen` | Claude Code provider wrapper | `qwen` | — | `provider-wrapper` | — |
 | `claude-code-qwen-local` | Claude Code provider wrapper | `qwen` | — | `provider-wrapper` | — |
 | `codex-cli` | OpenAI Codex CLI | `gpt` | `codex-cli` — production, not dispatchable, no label | `runner-config` | `minimal`, `low`, `medium`, `high`, `xhigh` |
 | `copilot-cli` | GitHub Copilot CLI | any (multi-provider; default `mai`) | — | `harness-runtime` | `low`, `medium`, `high`, `xhigh`, `max` |
