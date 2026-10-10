@@ -1,0 +1,121 @@
+name: Security audit fix
+run-name: security-audit-fix remediating high-severity dependency advisories
+
+# Advisories are published on the ecosystem's clock, not this repo's: a new
+# transitive `high` turns the PR `security` check red on every open PR at once.
+# This workflow runs the same audit daily and, when it fails, raises bounded
+# security floors (`task security:audit:fix`) and opens or updates ONE rolling
+# draft PR on the bot branch. All logic lives in
+# scripts/security-audit-fix.sh. It never merges anything, and the PR
+# `security` gate (`task security:audit`) is unchanged.
+#
+# DELIBERATELY no workflow_dispatch: the publish job mints the CI App token,
+# and for workflow_dispatch GitHub runs the definition from whichever ref the
+# operator picks — an unreviewed branch could rewrite this file and use the
+# credential. The manual trigger is repository_dispatch, which always runs the
+# default branch's definition:
+#   gh api repos/<owner>/<repo>/dispatches -f event_type=security-audit-fix
+# See docs/architecture/security.md.
+
+on:
+  # Daily, off the hour to avoid GitHub's scheduling pile-up.
+  schedule:
+    - cron: "41 5 * * *"
+  repository_dispatch:
+    types: [security-audit-fix]
+
+# Serialize runs: they all rewrite the same bot branch and maintain the same
+# rolling PR.
+concurrency:
+  group: security-audit-fix
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  # No credentials here: this job runs package tooling (pnpm audit --fix and a
+  # lockfile re-resolve). It hands the publish job a patch, never a token.
+  audit:
+    # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
+    # default; set it to a JSON runner spec to override without a commit.
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
+    timeout-minutes: 20
+    outputs:
+      patch: ${{ steps.fix.outputs.patch }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+        with:
+          # pnpm audit and a --lockfile-only re-resolve read the lockfile; no
+          # dependency code needs to be installed, let alone run.
+          install-deps: "false"
+      - name: Dependency audit
+        id: audit
+        # A finding is this workflow's input, not its failure.
+        continue-on-error: true
+        run: task security:audit
+      - name: Raise bounded security floors
+        id: fix
+        if: steps.audit.outcome == 'failure'
+        # A refused fix is reported in the PR body and the job summary; only an
+        # operational failure (registry, pnpm, an unclearable floor) fails here.
+        run: |
+          out="${RUNNER_TEMP}/security-audit-fix"
+          mkdir -p "$out"
+          task security:audit:fix -- --skip-refused --report "$out/report.md"
+          git diff --binary -- pnpm-workspace.yaml pnpm-lock.yaml >"$out/changes.patch"
+          cat "$out/report.md" >>"$GITHUB_STEP_SUMMARY"
+          if [ -s "$out/changes.patch" ]; then
+            echo "patch=true" >>"$GITHUB_OUTPUT"
+          else
+            echo "::warning::The audit failed but no bounded floor could be applied; see the job summary."
+            echo "patch=false" >>"$GITHUB_OUTPUT"
+          fi
+      - name: Log publish status
+        if: steps.fix.outputs.patch == 'true' && vars.CI_APP_CLIENT_ID == ''
+        run: |
+          echo "::notice::CI_APP_CLIENT_ID is not set — floors were computed but no PR is opened." \
+            "Set CI_APP_CLIENT_ID and CI_APP_PRIVATE_KEY (repo or org variables) to enable" \
+            "the remediation PR. See docs/CHECKLIST.md."
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        if: steps.fix.outputs.patch == 'true'
+        with:
+          name: security-audit-fix
+          path: ${{ runner.temp }}/security-audit-fix
+          retention-days: 3
+          if-no-files-found: error
+
+  publish:
+    needs: audit
+    if: needs.audit.outputs.patch == 'true' && vars.CI_APP_CLIENT_ID != ''
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
+    timeout-minutes: 15
+    steps:
+      # CI GitHub App token, not GITHUB_TOKEN: a PR opened by GITHUB_TOKEN
+      # never triggers CI, and branch protection requires those checks before
+      # the remediation PR can merge.
+      - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        id: app-token
+        with:
+          client-id: ${{ vars.CI_APP_CLIENT_ID }}
+          private-key: ${{ secrets.CI_APP_PRIVATE_KEY }}
+          permission-contents: write
+          permission-pull-requests: write
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          # The helper authenticates each origin operation with a one-shot
+          # credential helper; nothing is persisted into .git/config.
+          persist-credentials: false
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: security-audit-fix
+          path: ${{ runner.temp }}/security-audit-fix
+      - name: Open or update the remediation PR
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_APP_SLUG: ${{ steps.app-token.outputs.app-slug }}
+        run: ./scripts/security-audit-fix.sh publish "${RUNNER_TEMP}/security-audit-fix"

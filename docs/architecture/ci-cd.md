@@ -430,6 +430,21 @@ counterpart, and the dogfood checks are
 twin-driven (they walk `template/`), so root-only files are correctly invisible
 to them. Do not add a twin to make them "consistent".
 
+The reverse case exists too: `security-audit-fix.yml` is **template-only**. It
+renders for `use_node` profiles, and harmon-init's root has no Node manifest
+(`use_node` is off in `.dogfood-answers.yml`), so it has no root twin and
+nothing to remediate. In a generated Node repo it runs daily (`schedule`) and on
+`repository_dispatch` (`event_type=security-audit-fix`) — deliberately never
+`workflow_dispatch`, because it mints the CI App token
+(`CI_APP_CLIENT_ID` + `CI_APP_PRIVATE_KEY`). A credential-free `audit` job runs
+`task security:audit` and, when it fails, `task security:audit:fix --
+--skip-refused`; a `publish` job applies the resulting two-file patch and opens
+or updates **one** rolling draft PR on `bot/security-audit-fix` listing each
+advisory, its floor or refusal reason. It never merges, and the PR `security`
+gate is unchanged. `task test:security-audit-fix` unit-tests the shipped
+helper from the root; the rendered workflow and task are validated by
+`task test:template`.
+
 ## harmon-devkit skills propagation
 
 harmon-init vendors harmon-devkit's shared agent skills at a released tag

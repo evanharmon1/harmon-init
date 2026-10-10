@@ -74,6 +74,37 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
   PR checks, and is not part of branch protection. See
   [security.md](security.md) for quota guidance.
 [% endif %]
+[% if use_node %]
+- `security-audit-fix.yml` — turns a failing dependency audit into ONE
+  rolling remediation PR, so a newly published transitive `high` is cleared by
+  merging a PR rather than by hand-editing floors.
+  - **Trigger:** a daily `schedule`, plus `repository_dispatch` (event type
+    `security-audit-fix`) for a manual run:
+    `gh api repos/<owner>/<repo>/dispatches -f event_type=security-audit-fix`.
+    It deliberately has **no `workflow_dispatch`**, because that trigger runs
+    the definition from any selected branch and this workflow mints the App
+    token (see [security.md](security.md)). One `concurrency` group serializes
+    runs.
+  - **Jobs:** `audit` holds no credentials. It runs `task security:audit`, and
+    only when that fails runs `task security:audit:fix -- --skip-refused`, then
+    hands a patch (`pnpm-workspace.yaml` + `pnpm-lock.yaml` only) and the
+    report to `publish` as an artifact. `publish` mints the CI App token
+    (`CI_APP_CLIENT_ID` + `CI_APP_PRIVATE_KEY`, not `GITHUB_TOKEN`, so CI runs
+    on the PR), refuses a patch touching any other file, and runs
+    `scripts/security-audit-fix.sh publish`. Without the App configured,
+    `publish` is skipped with a notice.
+  - **One rolling PR:** the `bot/security-audit-fix` branch is rebuilt from
+    `main` each run and force-pushed; the single open PR is updated in place
+    (title, body, head), kept a **draft**, and never merged. When the pushed
+    branch already holds the same floors, only the body is refreshed — no push,
+    no CI churn. The body lists each advisory, package, severity, the floor
+    applied, and the refusal reason for anything refused.
+  - **Outcomes:** a clean audit changes nothing and the run stays green; a
+    refused fix is reported in the PR body and the job summary, never a red
+    run; only an operational failure (registry, pnpm, push, API) fails it. The
+    PR `security` job's `task security:audit` gate is unchanged. See
+    [security.md](security.md#scheduled-audit-remediation).
+[% endif %]
 [% if devcontainer %]
 - `devcontainer-build.yml` — prebuilds the devcontainer images to GHCR and
   aggregates into the **required** `devcontainer-verify` status check. Like

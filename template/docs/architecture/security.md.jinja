@@ -38,7 +38,7 @@ repositories and for profiles without a CodeQL workflow.
 [% else %]
 | **SAST** — flaws in *your own code* | injection, XSS, SSRF, path traversal, crypto/auth misuse | **Semgrep CE** | CI and `task security:sast`; this profile has no generated CodeQL workflow |
 [% endif %]
-| **SCA** — CVEs in *dependencies* | vulnerable third-party packages | **Dependabot alerts** + **`task security:audit`**[% if use_node or use_python %] ([% if use_node %]`pnpm audit`[% endif %][% if use_node and use_python %] / [% endif %][% if use_python %]`pip-audit`[% endif %])[% endif %] | Dependabot continuous; audit in the CI `security` job + `task security` locally[% if use_node %]; the security-floor block is template-owned and arrives via `copier update`; each floor uses a `pkg@<major>` key and is bounded below the next major; the block never crosses a major; 0.x floors select only the fixture graph's tested minors and are bounded below the next minor of the moved version; a minor move requires no upstream in-minor patch and the entry says so; the fixture toolchain builds with those moved versions; other 0.x minor edges are left for consumer audit and a local floor after validation; local floors below the end marker inside `overrides` follow the same shape (quote a scoped package key: `'@scope/pkg@7'`); when a later template release floors a package you floored locally, delete your local entry; Harmon Init CI audits the Astro fixture so a new advisory surfaces in harmon-init's next CI run and is fixed in the template[% endif %] |
+| **SCA** — CVEs in *dependencies* | vulnerable third-party packages | **Dependabot alerts** + **`task security:audit`**[% if use_node or use_python %] ([% if use_node %]`pnpm audit`[% endif %][% if use_node and use_python %] / [% endif %][% if use_python %]`pip-audit`[% endif %])[% endif %] | Dependabot continuous; audit in the CI `security` job + `task security` locally[% if use_node %]; the security-floor block is template-owned and arrives via `copier update`; each floor uses a `pkg@<major>` key and is bounded below the next major; the block never crosses a major; 0.x floors select only the fixture graph's tested minors and are bounded below the next minor of the moved version; a minor move requires no upstream in-minor patch and the entry says so; the fixture toolchain builds with those moved versions; other 0.x minor edges are left for consumer audit and a local floor after validation; local floors below the end marker inside `overrides` follow the same shape (quote a scoped package key: `'@scope/pkg@7'`); when a later template release floors a package you floored locally, delete your local entry; raise a local floor with `task security:audit:fix`, never raw `pnpm audit --fix` (see [Scheduled audit remediation](#scheduled-audit-remediation)); Harmon Init CI audits the Astro fixture so a new advisory surfaces in harmon-init's next CI run and is fixed in the template[% endif %] |
 | **Secrets** — committed credentials | keys, tokens, certs, `.env` | **gitleaks** (`task security:secrets`) | pre-push git hook + CI `security` job |
 | **IaC** — insecure infrastructure | open security groups, public buckets, … | **checkov** (`task lint:terraform:security`) | CI `lint` job + `task check` locally (Terraform repos) |
 | **Freshness/remediation** — stale or vulnerable dependencies | a widening exposure window | **Renovate** (`minimumReleaseAge: 3 days`, Dependabot-alert remediation enabled) | continuous update and vulnerability-fix PRs |
@@ -168,6 +168,41 @@ enabled, so a Python project on the free posture gets far less than the setting
 implies). Establish the real depth for the stack you actually ship, per tool,
 and treat a green run as evidence only for what you confirmed it inspects.
 
+[% if use_node %]
+### Scheduled audit remediation
+
+The PR audit reacts to the world changing, not to your diff, so a newly
+published transitive `high` turns `security` red on every open PR at once. The
+remediation is mechanical, and the template does it for you:
+
+- **`task security:audit:fix`** runs `pnpm audit --fix --audit-level=high` only
+  to learn which patched version each advisory needs, restores
+  `pnpm-workspace.yaml` byte-for-byte, and writes its own floor for each
+  one below the template-owned block's end marker: `pkg@<major>: '>=x.y.z
+  <next-major'` (0.x: `pkg@0.m: '>=0.m.p <0.(m+1)'`) with a comment naming the
+  advisories. It then re-resolves the lockfile without running lifecycle
+  scripts and re-audits; a floor that does not clear its advisory is rolled
+  back. A second run on a remediated tree changes nothing.
+- It **refuses** — exits 3 and writes nothing — when a fix would cross a major
+  (it names the package, both majors, and the direct dependency that pulls the
+  old line in: upgrade that dependency deliberately), when no patched version
+  exists, or when the floor belongs to the template-owned block (raise that
+  upstream in harmon-init instead).
+- **Never run raw `pnpm audit --fix`.** pnpm 11 writes it into
+  `pnpm-workspace.yaml`, but each override is keyed by the advisory's vulnerable
+  range (`pkg@<1.2.3: ^1.2.3`): an **unbounded** selector that spans every
+  earlier major rather than a floor on the major you resolve, and a **forced
+  major** whenever the patch only exists there (`pkg@<=8.5.1: ^9.0.0`). It can
+  also drop comments in the `overrides` map, the template markers included.
+- **`security-audit-fix.yml`** runs `task security:audit` daily; when it fails,
+  it runs `task security:audit:fix -- --skip-refused` (apply what is safe,
+  report what is refused) and opens or updates **one** rolling draft PR on
+  `bot/security-audit-fix` listing each advisory, package, floor, and refusal
+  reason. The PR `security` gate is unchanged, so it stays red until that PR (or
+  a deliberate upgrade for a refused fix) merges. See
+  [ci-cd.md](ci-cd.md#workflows) for the trigger and token.
+
+[% endif %]
 ### Snyk second opinion and scheduling
 
 Snyk is not installed by default and is not part of `task security` or required
@@ -572,7 +607,7 @@ variable, not forever.
 ## CI automation identity (GitHub App)
 
 CI workflows that act on the repo as a bot — [% if use_release_please %]release-please, [% endif %]the
-`claude-*` workflows[% if github_org != author_git_provider_username %], and project-automation[% endif %] — authenticate as a
+`claude-*` workflows[% if use_node %], `security-audit-fix.yml`[% endif %][% if github_org != author_git_provider_username %], and project-automation[% endif %] — authenticate as a
 **GitHub App dedicated to this owner**, not a personal access token. **Each
 GitHub org (and personal account) gets its own App**, named **`<owner>-ci`** —
 for this repo, **`[[ github_org ]]-ci`**. One App per org keeps a leaked key
@@ -701,6 +736,13 @@ even the in-org radius small:
   it from workflows that untrusted code can influence (fork `pull_request`,
   `pull_request_target`, `workflow_run`) — the provided workflows gate on
   sender / same-repo checks.
+- **Never put `workflow_dispatch` on a workflow that mints an App token.** For
+  that trigger GitHub runs the workflow definition from whichever ref the
+  operator selects, so any branch — reviewed or not — could rewrite the
+  token-minting step and use the credential. Pinning the *checkout* to `main`
+  does not help: the token already exists. Use `repository_dispatch` when a
+  manual trigger is needed; it takes the same repository write access and
+  always runs the default branch's definition.
 - **Rotate the key** periodically; GitHub Apps allow multiple keys for
   zero-downtime rotation.
 
@@ -708,7 +750,7 @@ even the in-org radius small:
 
 | Secret / variable | Used by | Stored in | Rotation |
 |---|---|---|---|
-| `CI_APP_CLIENT_ID` (var) + `CI_APP_PRIVATE_KEY` (secret) | [% if use_release_please %]release-please, [% endif %]claude-*[% if github_org != author_git_provider_username %], project-automation[% endif %] | repo or org Actions variable + secret | rotate App key per policy |
+| `CI_APP_CLIENT_ID` (var) + `CI_APP_PRIVATE_KEY` (secret) | [% if use_release_please %]release-please, [% endif %]claude-*[% if use_node %], security-audit-fix[% endif %][% if github_org != author_git_provider_username %], project-automation[% endif %] | repo or org Actions variable + secret | rotate App key per policy |
 | `CLAUDE_CODE_OAUTH_TOKEN` | claude-* workflows | repo Actions secret | re-run `claude setup-token` |
 [% if devcontainer %]| `GH_TOKEN` (the bot's PAT) | the **bot** devcontainer's `gh`/git operations — never the `dev/` profile | 1Password Environment → devcontainer `--env-file` | manual; re-issue before expiry ([guides/bot-account.md](../guides/bot-account.md)) |
 [% if use_foreman %]| `FOREMAN_AGENT_GH_TOKEN` (read-only PAT) | handed by foreman to dispatched agents as their `GH_TOKEN`; bot profile only, required before any dispatch | 1Password Environment → devcontainer `--env-file` | manual; rotate with the bot PAT |

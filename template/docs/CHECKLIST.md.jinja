@@ -301,7 +301,7 @@ the compatibility reason in the rule's `description`.
       Personal account: use `--repo [[ github_org ]]/[[ project_slug ]]` instead of
       `--org`/`--visibility`/`--repos`. Re-running `--repos` **replaces** the list —
       re-run with the full list to add a repo. Drives release-please, the claude-*
-      workflows, and project-automation; blast-radius + rotation in
+      workflows, [% if use_node %]the daily `security-audit-fix.yml` remediation PR, [% endif %]and project-automation; blast-radius + rotation in
       docs/architecture/security.md.
 [% if devcontainer %]
 - [ ] GHCR: ensure the org/user allows publishing packages; the first
@@ -664,7 +664,10 @@ the compatibility reason in the rule's `description`.
       scoped to the major they floor (`pkg@<major>` key, quoted for a scoped
       package: `'@scope/pkg@7': '>=7.0.1 <8'`) and bounded below the next
       major. Every template floor follows this shape; the block never
-      crosses a major. For 0.x, selectors cover only the fixture graph's tested
+      crosses a major. Write local floors with `task security:audit:fix`
+      (the daily `security-audit-fix.yml` opens them as one rolling PR), never
+      raw `pnpm audit --fix`: its selectors are unbounded across majors and it
+      forces a major when the patch only exists there. For 0.x, selectors cover only the fixture graph's tested
       minors and bounds stop below the next minor of the moved version. A minor
       move requires no upstream in-minor patch and the entry says so; the
       fixture toolchain builds with the moved versions. Other 0.x minor edges

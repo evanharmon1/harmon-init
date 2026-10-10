@@ -1014,6 +1014,28 @@ if [ -f .github/workflows/snyk-scheduled.yml ]; then
     grep -q 'matrix.scan' .github/workflows/snyk-scheduled.yml || err "scheduled Snyk workflow must run SAST and SCA"
 fi
 
+# Scheduled audit remediation (harmon-init#392): the workflow, its task, and its
+# helper render for Node profiles (pnpm-workspace.yaml present) and nowhere
+# else. The workflow mints the CI App token, so it must never carry
+# workflow_dispatch (see docs/architecture/security.md).
+sa_workflow=".github/workflows/security-audit-fix.yml"
+if [ -f pnpm-workspace.yaml ]; then
+    [ -f "$sa_workflow" ] || err "$sa_workflow did not render for a Node profile"
+    [ -x scripts/security-audit-fix.sh ] || err "scripts/security-audit-fix.sh missing or not executable (Node profile)"
+    grep -qE '^  security:audit:fix:' Taskfile.yml || err "security:audit:fix task did not render for a Node profile"
+    grep -q 'pnpm audit --audit-level=high' Taskfile.yml || err "security:audit must keep gating on pnpm audit --audit-level=high"
+    grep -qF 'task security:audit:fix' pnpm-workspace.yaml || err "pnpm-workspace.yaml must point at task security:audit:fix, not raw pnpm audit --fix"
+    if [ -f "$sa_workflow" ]; then
+        ! grep -qE '^[[:space:]]+workflow_dispatch:' "$sa_workflow" || err "$sa_workflow mints an App token and must not have workflow_dispatch"
+        grep -q 'repository_dispatch:' "$sa_workflow" || err "$sa_workflow has no manual (repository_dispatch) trigger"
+        grep -q '^concurrency:' "$sa_workflow" || err "$sa_workflow needs one concurrency group"
+    fi
+else
+    [ ! -f "$sa_workflow" ] || err "$sa_workflow rendered for a profile without Node"
+    [ ! -e scripts/security-audit-fix.sh ] || err "scripts/security-audit-fix.sh rendered for a profile without Node"
+    ! grep -qE '^  security:audit:fix:' Taskfile.yml || err "security:audit:fix task rendered for a profile without Node"
+fi
+
 # ── 1c. CODEOWNERS names a principal GitHub will actually accept ────
 # `code_owner` defaults to the human author, NOT github_org: GitHub rejects a
 # bare org ("Unknown owner"), which silently makes require-code-owner-review

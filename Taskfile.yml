@@ -126,6 +126,7 @@ tasks:
       - task: test:setup-github-project
       - task: test:classification-reconcile
       - task: test:sync-devkit-release
+      - task: test:security-audit-fix
       - task: test:devcontainer:image:automation
       - task: test:bootstrap-remote
       - task: test:skills-pin-parity
@@ -640,6 +641,11 @@ tasks:
     # AGENT_SKILLS_DIR its caller set, so the test must pass with all of them set.
     cmds:
       - env FOREMAN_DEVCONTAINER=bot GH_TOKEN=dummy GITHUB_TOKEN=dummy SYNC_DEVKIT_TAG=v0.48.0 SYNC_DEVKIT_ALLOW_DOWNGRADE=true AGENT_SKILLS_DIR=.agents/elsewhere ./scripts/test-sync-devkit-release.sh
+
+  test:security-audit-fix:
+    desc: Unit-test the template's security:audit:fix floor post-processor and remediation-PR publisher (offline, stubbed pnpm/gh)
+    cmds:
+      - ./scripts/test-security-audit-fix.sh
 
   sync:devcontainer-image:prepare:
     desc: Prepare and verify a rolling shared-image consumer pin without write credentials

@@ -1,0 +1,578 @@
+#!/usr/bin/env bash
+# security-audit-fix.sh — turn high/critical `pnpm audit` advisories into
+# bounded security floors, and (in CI) into ONE rolling remediation PR.
+#
+# Raw `pnpm audit --fix` is not safe to commit as-is. Under pnpm 11 it writes
+# one override per advisory into pnpm-workspace.yaml, keyed by the advisory's
+# vulnerable range (`pkg@<1.2.3: ^1.2.3`):
+#   - the selector spans every major below the patch, so it is not a floor
+#     bounded to the major you resolve, and
+#   - when the patch exists only in the next major it forces that major
+#     (`pkg@<=8.5.1: ^9.0.0`) onto every dependent that asked for the old one.
+# It can also re-indent or drop comments in the overrides map — including the
+# template-owned floor markers.
+#
+# So this script runs `--fix` only to learn which patched version pnpm picked,
+# restores the workspace file byte-for-byte, and writes its own entries:
+#
+#   pkg@<major>: '>=x.y.z <next-major'      (0.x: pkg@0.m: '>=0.m.p <0.(m+1)')
+#
+# with a `# pkg@<major>: GHSA-….` comment, below the template-owned floor block
+# (never inside it), then re-resolves the lockfile and re-audits. A fix it
+# cannot express that way is REFUSED: crossing a major, an advisory with no
+# patched version, or a floor the template block owns (raise that upstream).
+#
+# Usage:
+#   security-audit-fix.sh fix [--skip-refused] [--report FILE]
+#       Strict by default: any refusal writes nothing (the workspace file and
+#       lockfile keep their exact bytes) and exits 3. --skip-refused applies
+#       every fix that is not refused and lists the refusals in the report
+#       (the scheduled workflow's mode). A clean or already-remediated tree is
+#       a no-op that exits 0.
+#   security-audit-fix.sh publish DIR
+#       CI only: apply DIR/changes.patch to the base branch, then force-push the
+#       bot branch and open or update exactly ONE draft PR with DIR/report.md as
+#       its body. Never merges, never writes the base branch.
+#
+# Exit codes: 0 done (clean, no-op, or applied), 1 operational failure,
+# 3 refused (strict fix only).
+# Depends on: pnpm 11+, jq; publish also needs git and gh.
+# Unit-tested by harmon-init's scripts/test-security-audit-fix.sh.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+# Byte-order sorting: comm and the floor order must not depend on the locale.
+export LC_ALL=C
+
+WORKSPACE="pnpm-workspace.yaml"
+LOCKFILE="pnpm-lock.yaml"
+MANIFEST="package.json"
+BLOCK_START='# --- harmon-init security floors (template-owned; updated by copier update) ---'
+BLOCK_END='# --- end harmon-init security floors; repository-local floors go below this line ---'
+BASE_BRANCH="main"
+# One deterministic branch -> one rolling PR (see the force-push in cmd_publish).
+FIX_BRANCH="bot/security-audit-fix"
+PR_TITLE="fix(deps): raise security floors for high-severity advisories"
+
+TAB="$(printf '\t')"
+WORK=""
+GT_TMP=""
+cleanup() {
+    [ -n "$WORK" ] && rm -rf "$WORK"
+    [ -n "$GT_TMP" ] && rm -f "$GT_TMP"
+    return 0
+}
+trap cleanup EXIT
+
+die() {
+    echo "security-audit-fix: $*" >&2
+    exit 1
+}
+
+note() {
+    echo "security-audit-fix: $*"
+}
+
+need_bin() {
+    command -v "$1" >/dev/null 2>&1 || die "$1 is required"
+}
+
+# ── Version helpers ─────────────────────────────────────────────────
+
+# plain_version V — x.y.z from a version or a one-sided floor (^, ~, >=, =, v),
+# or empty when V is anything else (a range, a tag, a prerelease-only value).
+plain_version() {
+    printf '%s\n' "$1" | sed -E 's/^[[:space:]]*(\^|~|>=|=|v)?[[:space:]]*//; s/[-+].*$//' |
+        awk '/^[0-9]+\.[0-9]+\.[0-9]+$/ { print; exit }'
+}
+
+# major_key V — the semver-breaking line V belongs to: "4" for 4.17.21,
+# "0.27" for 0.27.3 (a 0.x minor is a breaking boundary).
+major_key() {
+    awk -v v="$1" 'BEGIN { split(v, p, "."); if (p[1] == 0) print "0." p[2]; else print p[1] }'
+}
+
+# next_bound KEY — the exclusive upper bound of a major key: 4 -> 5, 0.27 -> 0.28.
+next_bound() {
+    awk -v k="$1" 'BEGIN { n = split(k, p, "."); if (n == 2) print "0." p[2] + 1; else print p[1] + 1 }'
+}
+
+# version_ge A B — true when x.y.z A >= x.y.z B.
+version_ge() {
+    awk -v a="$1" -v b="$2" 'BEGIN {
+        split(a, x, "."); split(b, y, ".")
+        for (i = 1; i <= 3; i++) { if (x[i] + 0 > y[i] + 0) exit 0; if (x[i] + 0 < y[i] + 0) exit 1 }
+        exit 0
+    }'
+}
+
+# ── pnpm-workspace.yaml overrides ────────────────────────────────────
+
+# override_entries FILE — one "zone<TAB>key<TAB>value" line per entry of the
+# top-level `overrides:` map, quotes stripped. zone is "template" between the
+# template-owned markers and "local" everywhere else.
+override_entries() {
+    awk -v bs="$BLOCK_START" -v be="$BLOCK_END" '
+        function unquote(s) {
+            if (s ~ /^'"'"'.*'"'"'$/ || s ~ /^".*"$/) return substr(s, 2, length(s) - 2)
+            return s
+        }
+        /^overrides:[[:space:]]*$/ { inmap = 1; zone = "local"; next }
+        inmap && /^[^[:space:]]/ { inmap = 0 }
+        !inmap { next }
+        {
+            line = $0; sub(/^[[:space:]]+/, "", line); sub(/[[:space:]]+$/, "", line)
+            if (line == bs) { zone = "template"; next }
+            if (line == be) { zone = "local"; next }
+            if (line == "" || substr(line, 1, 1) == "#") next
+            if (substr(line, 1, 1) == "'"'"'" || substr(line, 1, 1) == "\"") {
+                q = substr(line, 1, 1); rest = substr(line, 2); end = index(rest, q)
+                if (end == 0) next
+                key = substr(rest, 1, end - 1); rest = substr(rest, end + 1)
+                if (substr(rest, 1, 1) != ":") next
+                val = substr(rest, 2)
+            } else {
+                sep = index(line, ": ")
+                if (sep == 0) next
+                key = substr(line, 1, sep - 1); val = substr(line, sep + 2)
+            }
+            sub(/^[[:space:]]+/, "", val)
+            if (val !~ /^['"'"'"]/) sub(/[[:space:]]+#.*$/, "", val)
+            print zone "\t" key "\t" unquote(val)
+        }
+    ' "$1"
+}
+
+# yaml_key KEY — KEY as a plain or single-quoted YAML scalar (a scoped
+# package name starts with @, which YAML reserves).
+yaml_key() {
+    case "$1" in
+    @*) printf "'%s'" "$1" ;;
+    *) printf '%s' "$1" ;;
+    esac
+}
+
+# write_floor FILE KEY FLOOR BOUND IDS — set KEY to '>=FLOOR <BOUND' in the
+# overrides map: replace a local entry (and its comment), or append one at the
+# end of the map, which is below the template block's end marker.
+write_floor() {
+    _wf_file="$1" _wf_key="$2" _wf_floor="$3" _wf_bound="$4" _wf_ids="$5"
+    _wf_yk="$(yaml_key "$_wf_key")"
+    _wf_entry="  $_wf_yk: '>=$_wf_floor <$_wf_bound'"
+    _wf_comment="  # $_wf_key: $_wf_ids."
+    _wf_out="$WORK/write-floor.yaml"
+    awk -v key="$_wf_key" -v entry="$_wf_entry" -v comment="$_wf_comment" -v be="$BLOCK_END" '
+        function keyof(s,   q, rest, end) {
+            sub(/^[[:space:]]+/, "", s)
+            q = substr(s, 1, 1)
+            if (q == "'"'"'" || q == "\"") {
+                rest = substr(s, 2); end = index(rest, q)
+                return end ? substr(rest, 1, end - 1) : ""
+            }
+            end = index(s, ": ")
+            return end ? substr(s, 1, end - 1) : ""
+        }
+        function trim(s) { sub(/^[[:space:]]+/, "", s); return s }
+        { lines[NR] = $0 }
+        END {
+            inmap = 0; loc = 1; start = 0; last = 0; hit = 0
+            for (i = 1; i <= NR; i++) {
+                l = lines[i]
+                if (l ~ /^overrides:[[:space:]]*$/) { inmap = 1; start = i; last = i; continue }
+                if (inmap && l ~ /^[^[:space:]]/) inmap = 0
+                if (!inmap) continue
+                t = l; sub(/^[[:space:]]+/, "", t); sub(/[[:space:]]+$/, "", t)
+                if (t ~ /^# --- harmon-init security floors/) loc = 0
+                if (t == be) loc = 1
+                if (l ~ /^[[:space:]]+[^[:space:]]/) last = i
+                if (loc && t !~ /^#/ && keyof(l) == key) hit = i
+            }
+            for (i = 1; i <= NR; i++) {
+                if (hit && i == hit - 1 && index(trim(lines[i]), "# " key ":") == 1) continue
+                if (hit && i == hit) { print comment; print entry; continue }
+                print lines[i]
+                if (!hit && start && i == last) { print comment; print entry }
+            }
+            if (!start) { print ""; print "overrides:"; print comment; print entry }
+        }
+    ' "$_wf_file" >"$_wf_out" || die "could not rewrite $_wf_file"
+    cat "$_wf_out" >"$_wf_file"
+}
+
+# ── fix ─────────────────────────────────────────────────────────────
+
+SNAPSHOT_TAKEN=0
+snapshot() {
+    for _sn in "$WORKSPACE" "$LOCKFILE" "$MANIFEST"; do
+        cp -p "$_sn" "$WORK/orig.$_sn"
+    done
+    SNAPSHOT_TAKEN=1
+}
+
+restore() {
+    [ "$SNAPSHOT_TAKEN" -eq 1 ] || return 0
+    for _rs in "$WORKSPACE" "$LOCKFILE" "$MANIFEST"; do
+        cmp -s "$WORK/orig.$_rs" "$_rs" || cat "$WORK/orig.$_rs" >"$_rs"
+    done
+}
+
+# fail MESSAGE — restore the pre-run bytes, then die.
+fail() {
+    restore
+    die "$*"
+}
+
+# audit_rows OUT — one row per vulnerable installed version of every
+# high/critical advisory: id, package, severity, vulnerable range, installed
+# version, and the direct dependency that pulls it in.
+audit_rows() {
+    _ar_json="$WORK/audit.json"
+    pnpm audit --audit-level=high --json >"$_ar_json" 2>"$WORK/audit.err" || true
+    jq -e '.advisories | type == "object"' "$_ar_json" >/dev/null 2>&1 || {
+        cat "$WORK/audit.err" >&2
+        fail "pnpm audit did not return an advisory report (registry or network failure?)"
+    }
+    jq -r '
+        .advisories[]
+        | select(.severity == "high" or .severity == "critical")
+        | . as $a
+        | .findings[]
+        | [ ($a.github_advisory_id // ("npm-" + ($a.id | tostring))),
+            $a.module_name, $a.severity, $a.vulnerable_versions, .version,
+            ((.paths[0] // ".") | split(">") | .[1] // $a.module_name) ]
+        | @tsv
+    ' "$_ar_json" | sort -u >"$1"
+}
+
+# add_refusal ID PKG SEV VERSION REASON
+add_refusal() {
+    printf '%s\t%s\t%s\t%s\t%s\n' "$@" >>"$WORK/refused.tsv"
+}
+
+cmd_fix() {
+    _skip_refused=0 _report=""
+    while [ $# -gt 0 ]; do
+        case "$1" in
+        --skip-refused) _skip_refused=1 ;;
+        --report)
+            [ $# -ge 2 ] || die "--report needs a file"
+            _report="$2"
+            shift
+            ;;
+        *) die "unknown fix option '$1'" ;;
+        esac
+        shift
+    done
+    need_bin pnpm
+    need_bin jq
+    for _f in "$WORKSPACE" "$LOCKFILE" "$MANIFEST"; do
+        [ -f "$_f" ] || die "$_f not found — run from a pnpm project with a committed lockfile"
+    done
+    WORK="$(mktemp -d)"
+    : >"$WORK/refused.tsv"
+    : >"$WORK/applied.tsv"
+    snapshot
+
+    audit_rows "$WORK/rows.tsv"
+    if [ ! -s "$WORK/rows.tsv" ]; then
+        note "no high or critical advisories — nothing to fix"
+        [ -z "$_report" ] || write_report "$_report" "$WORK/rows.tsv"
+        return 0
+    fi
+
+    note "running pnpm audit --fix to learn the patched versions"
+    pnpm audit --fix --audit-level=high >"$WORK/fix.log" 2>&1 || {
+        cat "$WORK/fix.log" >&2
+        fail "pnpm audit --fix failed"
+    }
+    override_entries "$WORK/orig.$WORKSPACE" | cut -f2- | sort -u >"$WORK/before.tsv"
+    override_entries "$WORKSPACE" | cut -f2- | sort -u >"$WORK/after.tsv"
+    comm -13 "$WORK/before.tsv" "$WORK/after.tsv" >"$WORK/added.tsv"
+    # --fix's own edit is never kept: it can reformat or drop comments,
+    # including the template-owned markers.
+    restore
+    override_entries "$WORKSPACE" >"$WORK/current.tsv"
+
+    # Each advisory row -> a candidate floor "key<TAB>floor<TAB>id", or a refusal.
+    : >"$WORK/candidates.tsv"
+    while IFS="$TAB" read -r _id _pkg _sev _range _ver _direct; do
+        _value="$(awk -F '\t' -v k="$_pkg@$_range" '$1 == k { print $2; exit }' "$WORK/added.tsv")"
+        if [ -z "$_value" ]; then
+            add_refusal "$_id" "$_pkg" "$_sev" "$_ver" "pnpm audit --fix proposed no override (no patched version published for $_range)"
+            continue
+        fi
+        _floor="$(plain_version "$_value")"
+        _have="$(plain_version "$_ver")"
+        if [ -z "$_floor" ] || [ -z "$_have" ]; then
+            add_refusal "$_id" "$_pkg" "$_sev" "$_ver" "could not read a version from --fix's '$_value' for installed $_ver"
+            continue
+        fi
+        _from="$(major_key "$_have")"
+        _to="$(major_key "$_floor")"
+        if [ "$_from" != "$_to" ]; then
+            add_refusal "$_id" "$_pkg" "$_sev" "$_ver" "the fix ($_floor) crosses from major $_from to major $_to; direct dependency \`$_direct\` resolves the $_from line — upgrade it deliberately"
+            continue
+        fi
+        printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$_pkg@$_from" "$_floor" "$_id" "$_pkg" "$_sev" "$_ver" >>"$WORK/candidates.tsv"
+    done <"$WORK/rows.tsv"
+
+    # One floor per key: the highest patched version any advisory needs.
+    sort -t "$TAB" -k1,1 "$WORK/candidates.tsv" | cut -f1 | uniq >"$WORK/keys.txt"
+    _changed=0
+    while IFS= read -r _key; do
+        [ -n "$_key" ] || continue
+        _floor="" _ids=""
+        while IFS="$TAB" read -r _k _f _id _rest; do
+            [ "$_k" = "$_key" ] || continue
+            if [ -z "$_floor" ] || ! version_ge "$_floor" "$_f"; then _floor="$_f"; fi
+            case ", $_ids," in *", $_id,"*) ;; *) _ids="${_ids:+$_ids, }$_id" ;; esac
+        done <"$WORK/candidates.tsv"
+        _zone="$(awk -F '\t' -v k="$_key" '$2 == k { print $1; exit }' "$WORK/current.tsv")"
+        _existing="$(awk -F '\t' -v k="$_key" '$2 == k { print $3; exit }' "$WORK/current.tsv")"
+        if [ "$_zone" = "template" ]; then
+            awk -F '\t' -v k="$_key" '$1 == k { print $3 "\t" $4 "\t" $5 "\t" $6 }' "$WORK/candidates.tsv" |
+                while IFS="$TAB" read -r _id _pkg _sev _ver; do
+                    add_refusal "$_id" "$_pkg" "$_sev" "$_ver" "\`$_key\` is a template-owned floor — raise it upstream in harmon-init, not locally"
+                done
+            continue
+        fi
+        _bound="$(next_bound "${_key##*@}")"
+        _old="$(plain_version "$_existing")"
+        if [ -n "$_old" ] && version_ge "$_old" "$_floor"; then
+            note "$_key already floored at $_existing"
+        else
+            write_floor "$WORKSPACE" "$_key" "$_floor" "$_bound" "$_ids"
+            _changed=1
+        fi
+        awk -F '\t' -v k="$_key" -v f="'>=$_floor <$_bound'" '$1 == k { print $3 "\t" $4 "\t" $5 "\t" $6 "\t" k ": " f }' \
+            "$WORK/candidates.tsv" >>"$WORK/applied.tsv"
+    done <"$WORK/keys.txt"
+
+    if [ -s "$WORK/refused.tsv" ]; then
+        sort -u -o "$WORK/refused.tsv" "$WORK/refused.tsv"
+        while IFS="$TAB" read -r _id _pkg _sev _ver _why; do
+            echo "security-audit-fix: refused $_id ($_pkg $_ver, $_sev): $_why" >&2
+        done <"$WORK/refused.tsv"
+        if [ "$_skip_refused" -eq 0 ]; then
+            restore
+            : >"$WORK/applied.tsv"
+            [ -z "$_report" ] || write_report "$_report" "$WORK/rows.tsv"
+            echo "security-audit-fix: refused — nothing written (rerun with --skip-refused to apply the rest)" >&2
+            exit 3
+        fi
+    fi
+
+    if [ "$_changed" -eq 1 ]; then
+        note "re-resolving $LOCKFILE"
+        pnpm install --lockfile-only --ignore-scripts >"$WORK/install.log" 2>&1 || {
+            cat "$WORK/install.log" >&2
+            fail "pnpm install --lockfile-only failed with the new floors — nothing kept"
+        }
+        audit_rows "$WORK/after-rows.tsv"
+        cut -f1 "$WORK/applied.tsv" | sort -u >"$WORK/applied-ids.txt"
+        cut -f1 "$WORK/after-rows.tsv" | sort -u | comm -12 - "$WORK/applied-ids.txt" >"$WORK/still.txt"
+        [ ! -s "$WORK/still.txt" ] ||
+            fail "the new floors did not clear: $(tr '\n' ' ' <"$WORK/still.txt")— nothing kept"
+        note "floors written to $WORKSPACE and $LOCKFILE re-resolved"
+    else
+        note "no floor to change"
+    fi
+    [ -z "$_report" ] || write_report "$_report" "$WORK/rows.tsv"
+}
+
+# write_report FILE ROWS — the remediation PR body: every advisory with the
+# floor applied or the reason it was refused. Package names are code spans so
+# a scoped name (@scope/pkg) never renders as a mention.
+write_report() {
+    _wr_file="$1" _wr_rows="$2"
+    {
+        echo "## Dependency audit remediation"
+        echo
+        echo "Opened by the scheduled \`security-audit-fix\` workflow from \`task security:audit:fix\`."
+        echo "Each floor is bounded to the major the lockfile already resolves, and sits below the"
+        echo "template-owned floor block in \`$WORKSPACE\`. This PR is never merged automatically."
+        echo
+        if [ ! -s "$_wr_rows" ]; then
+            echo "No high or critical advisories."
+            return 0
+        fi
+        echo "| Advisory | Package | Severity | Installed | Outcome |"
+        echo "|---|---|---|---|---|"
+        while IFS="$TAB" read -r _id _pkg _sev _range _ver _direct; do
+            _out="$(awk -F '\t' -v i="$_id" -v p="$_pkg" -v v="$_ver" \
+                '$1 == i && $2 == p && $4 == v { print "floor `" $5 "`"; exit }' "$WORK/applied.tsv")"
+            [ -n "$_out" ] || _out="$(awk -F '\t' -v i="$_id" -v p="$_pkg" -v v="$_ver" \
+                '$1 == i && $2 == p && $4 == v { print "**refused:** " $5; exit }' "$WORK/refused.tsv")"
+            [ -n "$_out" ] || _out="not applied (another fix in this run was refused)"
+            printf '| %s | `%s` | %s | %s | %s |\n' "$_id" "$_pkg" "$_sev" "$_ver" "$_out"
+        done <"$_wr_rows"
+        if [ -s "$WORK/refused.tsv" ]; then
+            echo
+            echo "Refused fixes were not applied: they need a deliberate upgrade or an upstream"
+            echo "template fix, and \`task security:audit\` keeps failing until they land."
+        fi
+    } >"$_wr_file"
+}
+
+# ── publish (CI only) ──────────────────────────────────────────────
+
+# git_remote ARGS… — a git command that talks to origin, authenticated with
+# GH_TOKEN through a mode-600 file read by a one-shot credential helper, so the
+# token reaches neither argv nor .git/config.
+git_remote() {
+    if [ -n "${GH_TOKEN:-}" ]; then
+        GT_TMP="$(mktemp)"
+        chmod 600 "$GT_TMP"
+        printf 'username=x-access-token\npassword=%s\n' "$GH_TOKEN" >"$GT_TMP"
+        _gr_rc=0
+        env -u GH_TOKEN -u GITHUB_TOKEN \
+            git -c credential.helper= -c credential.helper="!f() { cat \"$GT_TMP\"; }; f" "$@" || _gr_rc=$?
+        rm -f "$GT_TMP"
+        GT_TMP=""
+        return $_gr_rc
+    fi
+    git "$@"
+}
+
+# configure_identity — commit as the CI GitHub App (no-op without GH_APP_SLUG).
+configure_identity() {
+    _ci_slug="${GH_APP_SLUG:-}"
+    [ -n "$_ci_slug" ] || return 0
+    case "$_ci_slug" in
+    *[!a-zA-Z0-9-]*) die "refusing unexpected GitHub App slug '$_ci_slug'" ;;
+    esac
+    _ci_uid="$(gh api "/users/${_ci_slug}[bot]" --jq '.id')" ||
+        die "could not resolve the user id for '${_ci_slug}[bot]'"
+    case "$_ci_uid" in
+    "" | *[!0-9]*) die "unexpected user id '$_ci_uid' for '${_ci_slug}[bot]'" ;;
+    esac
+    git config user.name "${_ci_slug}[bot]"
+    git config user.email "${_ci_uid}+${_ci_slug}[bot]@users.noreply.github.com"
+}
+
+open_pr_number() {
+    _pn="$(gh pr list --head "$FIX_BRANCH" --base "$BASE_BRANCH" --state open \
+        --json number,isCrossRepository \
+        --jq 'map(select(.isCrossRepository == false)) | .[0].number // empty')" ||
+        die "could not list open PRs for $FIX_BRANCH"
+    case "$_pn" in
+    *[!0-9]*) die "unexpected PR number '$_pn' for $FIX_BRANCH" ;;
+    esac
+    printf '%s\n' "$_pn"
+}
+
+# pr_state N — "<headRefOid> <isDraft>" for PR N.
+pr_state() {
+    gh pr view "$1" --json headRefOid,isDraft \
+        --jq '[.headRefOid, (.isDraft | tostring)] | join(" ")' 2>/dev/null
+}
+
+# ensure_pr_draft N [HEAD] — fail closed unless PR N is draft (converting it
+# back when a human had promoted an older head) and, when HEAD is given,
+# points at exactly that commit.
+ensure_pr_draft() {
+    _ed_pr="$1" _ed_expected="${2:-}"
+    _ed_state="$(pr_state "$_ed_pr")" || die "could not read the state of PR #$_ed_pr"
+    if [ "${_ed_state#* }" = "false" ]; then
+        note "returning PR #$_ed_pr to draft"
+        gh pr ready --undo "$_ed_pr" || die "could not return PR #$_ed_pr to draft"
+        _ed_state="$(pr_state "$_ed_pr")" || die "could not confirm PR #$_ed_pr became draft"
+    fi
+    [ "${_ed_state#* }" = "true" ] || die "PR #$_ed_pr is not a draft (state '$_ed_state')"
+    if [ -n "$_ed_expected" ] && [ "${_ed_state%% *}" != "$_ed_expected" ]; then
+        die "PR #$_ed_pr points at ${_ed_state%% *}, not the pushed head $_ed_expected"
+    fi
+}
+
+# remote_fix_tree — the tree the pushed bot branch holds, or empty when the
+# branch does not exist. ls-remote tells "absent" (2) from "unreachable".
+remote_fix_tree() {
+    _rt_rc=0
+    git_remote ls-remote --exit-code --heads origin "$FIX_BRANCH" >/dev/null 2>&1 || _rt_rc=$?
+    case "$_rt_rc" in
+    0) ;;
+    2) return 0 ;;
+    *) die "could not reach origin to look for $FIX_BRANCH (git exit $_rt_rc)" ;;
+    esac
+    git_remote fetch --quiet origin "+refs/heads/$FIX_BRANCH:refs/remotes/origin/$FIX_BRANCH" ||
+        die "could not fetch $FIX_BRANCH"
+    git rev-parse --verify --quiet "refs/remotes/origin/$FIX_BRANCH^{tree}"
+}
+
+cmd_publish() {
+    _dir="${1:-}"
+    [ -n "$_dir" ] || die "usage: security-audit-fix.sh publish DIR"
+    need_bin git
+    need_bin gh
+    [ -s "$_dir/changes.patch" ] || die "$_dir/changes.patch is missing or empty — nothing to publish"
+    [ -s "$_dir/report.md" ] || die "$_dir/report.md is missing — refusing to open a PR without its advisory list"
+    [ -z "$(git status --porcelain)" ] || die "working tree is not clean"
+    _head="$(git rev-parse --abbrev-ref HEAD)"
+    [ "$_head" = "$BASE_BRANCH" ] || die "HEAD is '$_head', not '$BASE_BRANCH'"
+
+    # The patch was produced by a job that ran package tooling; accept it only
+    # when it touches exactly the two files a floor change may touch.
+    _paths="$(git apply --numstat "$_dir/changes.patch" | cut -f3 | sort -u)" ||
+        die "changes.patch is not a valid patch"
+    while IFS= read -r _p; do
+        case "$_p" in
+        "$WORKSPACE" | "$LOCKFILE") ;;
+        *) die "changes.patch touches '$_p' — only $WORKSPACE and $LOCKFILE may change" ;;
+        esac
+    done <<EOF
+$_paths
+EOF
+
+    configure_identity
+    env -u GH_TOKEN -u GITHUB_TOKEN git checkout -B "$FIX_BRANCH" "$BASE_BRANCH" >/dev/null
+    git apply --index "$_dir/changes.patch" || die "changes.patch does not apply to $BASE_BRANCH"
+    env -u GH_TOKEN -u GITHUB_TOKEN git commit -m "$PR_TITLE" >/dev/null
+
+    _open="$(open_pr_number)"
+    _tree="$(git rev-parse 'HEAD^{tree}')"
+    if [ -n "$_open" ] && [ "$(remote_fix_tree)" = "$_tree" ]; then
+        # Same floors already on the open PR: refresh its body (advisory list),
+        # but do not push — that would reset review and re-run CI for nothing.
+        note "PR #$_open already carries these floors — refreshing its body only"
+        gh pr edit "$_open" --title "$PR_TITLE" --body-file "$_dir/report.md" ||
+            die "could not update PR #$_open"
+        return 0
+    fi
+
+    # Demote before replacing the head so an unreviewed revision is never
+    # exposed as ready-for-review during the push.
+    [ -z "$_open" ] || ensure_pr_draft "$_open"
+    # Force-push: the bot branch is rebuilt from the base every run and owned
+    # solely by this workflow. Only $FIX_BRANCH is written — never the base.
+    git_remote push --force origin "HEAD:refs/heads/$FIX_BRANCH" || die "could not push $FIX_BRANCH"
+    _pushed="$(git rev-parse HEAD)"
+    if [ -n "$_open" ]; then
+        note "updating PR #$_open"
+        gh pr edit "$_open" --title "$PR_TITLE" --body-file "$_dir/report.md" ||
+            die "could not update PR #$_open"
+        ensure_pr_draft "$_open" "$_pushed"
+    else
+        note "opening the remediation PR"
+        gh pr create --draft --base "$BASE_BRANCH" --head "$FIX_BRANCH" \
+            --title "$PR_TITLE" --body-file "$_dir/report.md" ||
+            die "could not open the remediation PR"
+        _new="$(open_pr_number)"
+        [ -n "$_new" ] || die "could not resolve the newly created PR"
+        ensure_pr_draft "$_new" "$_pushed"
+    fi
+    note "done — merging $FIX_BRANCH stays a human decision"
+}
+
+case "${1:-}" in
+fix)
+    shift
+    cmd_fix "$@"
+    ;;
+publish)
+    shift
+    cmd_publish "$@"
+    ;;
+*)
+    echo "usage: security-audit-fix.sh fix [--skip-refused] [--report FILE] | publish DIR" >&2
+    exit 1
+    ;;
+esac
