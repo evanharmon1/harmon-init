@@ -209,6 +209,19 @@ therefore allow it outright:
 "Bash(herdr agent start:*)"
 ```
 
+The grant applies only when `herdr agent start …` is the whole command: Claude
+Code resolves allow rules segment by segment, so a compound command (a leading
+variable assignment, `cd … &&`, `;`, or pipe) leaves an unmatched segment that
+sends the entire line to the classifier, which denies a skip-permissions launch.
+Resolve paths or variables in their own command first (the pane's working
+directory is already set at creation, so there is nothing to `cd` into on the
+launch line), then launch bare:
+
+```bash
+SP=/tmp/scratch
+herdr agent start lane-1 --kind agy --pane w1:p2 -- --dangerously-skip-permissions
+```
+
 The prefix form is deliberate: the flags after `--` vary per harness and per
 policy, and a rule that has to be re-edited per flag defeats its purpose. It
 reaches named sessions too: `--session` is accepted **after** the subcommand as
