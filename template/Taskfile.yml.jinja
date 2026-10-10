@@ -1270,8 +1270,10 @@ tasks:
 
   setup:github-issue-fields:
     desc: >-
-      Idempotently add the org's Product field and the issue-classification
-      fields Impact, Risk, Complexity, and Priority (AI), and add the 1, 2, 3,
+      Idempotently add the org's Product field, the issue-classification
+      fields Impact, Risk, Complexity, and Priority (AI), and the
+      implementing-model fields Model family, Model, Model version, and Model
+      effort (options from agent-registry.json), and add the 1, 2, 3,
       5, 8, 13, 20 ladder to the built-in Effort field (Priority and the dates
       stay as GitHub ships them, the script never removes a field or an option,
       and GitHub's shipped High/Medium/Low Effort options are left for the
