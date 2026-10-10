@@ -3,18 +3,38 @@
 # update/check behavior. A fake Terraform binary avoids registry access.
 set -euo pipefail
 
+# Hooks and other callers must not retarget Git commands into their repository.
+while IFS= read -r git_var; do
+    case "$git_var" in
+    GIT_*) unset "$git_var" ;;
+    esac
+done < <(compgen -v)
+# Keep the scratch repositories independent of the caller's Git configuration.
+export GIT_CONFIG_GLOBAL=/dev/null
+export GIT_CONFIG_SYSTEM=/dev/null
+export GIT_CONFIG_NOSYSTEM=1
+
 fail() {
     echo "TEST FAIL: $*" >&2
     exit 1
 }
 
-tmp="$(mktemp -d -t test-terraform-provider-locks-XXXXXX)"
+tmp="$(mktemp -d -t test-terraform-provider-locks-XXXXXX)" || exit 1
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
+# Hooks report their physical $PWD, so compare against physical paths: the
+# temp directory can sit behind a symlink (macOS /var -> /private/var).
+tmp="$(cd "$tmp" && pwd -P)" || exit 1
 fake_terraform="$tmp/terraform"
 
 cat >"$fake_terraform" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
+
+# Terraform's own git clones must not inherit the caller's Git context.
+if [ -n "${GIT_DIR:-}${GIT_WORK_TREE:-}${GIT_INDEX_FILE:-}" ]; then
+    echo "fake terraform: Git context leaked into Terraform" >&2
+    exit 97
+fi
 
 case "${1:-}" in
 -chdir=*) root="${1#-chdir=}" ;;
@@ -152,5 +172,72 @@ git -C "$untracked_repo" rm --cached -q terraform/.terraform.lock.hcl
 if TERRAFORM_BIN="$fake_terraform" "$helper" check "$untracked_root" >/dev/null 2>&1; then
     fail "lock removed from the index passed the check"
 fi
+
+# Exercise Git's actual pre-commit environment in each supported layout.
+# The hook uses the caller's checkout root, and each repository owns its hook.
+export PROVIDER_LOCK_TEST_HELPER="$(cd scripts && pwd -P)/terraform-provider-locks.sh"
+export TERRAFORM_BIN="$fake_terraform"
+layout_git() {
+    case "$layout" in
+    ordinary | linked) git -C "$hook_tree" "$@" ;;
+    external)
+        (cd "$hook_tree" && GIT_DIR="$hook_gitdir" GIT_WORK_TREE="$hook_tree" git "$@")
+        ;;
+    core-worktree)
+        (cd "$hook_tree" && GIT_DIR="$hook_gitdir" git "$@")
+        ;;
+    esac
+}
+
+for layout in ordinary linked external core-worktree; do
+    hook_tree="$tmp/$layout tree"
+    hook_gitdir="$tmp/$layout.git"
+    mkdir "$hook_tree"
+    case "$layout" in
+    ordinary) git -C "$hook_tree" init -q ;;
+    linked)
+        parent_repo="$tmp/linked parent"
+        git init -q "$parent_repo"
+        git -C "$parent_repo" -c user.name="Provider Lock Test" \
+            -c user.email=test@example.invalid -c core.hooksPath=/dev/null \
+            commit -qm "worktree fixture" --allow-empty
+        git -C "$parent_repo" worktree add -q -b linked-lock-test "$hook_tree"
+        ;;
+    external) git init -q --bare "$hook_gitdir" ;;
+    core-worktree)
+        git init -q --bare "$hook_gitdir"
+        git --git-dir="$hook_gitdir" config core.bare false
+        git --git-dir="$hook_gitdir" config core.worktree "$hook_tree"
+        ;;
+    esac
+    layout_git config user.name "Provider Lock Test"
+    layout_git config user.email test@example.invalid
+    hook_dir="$tmp/$layout hooks"
+    mkdir "$hook_dir"
+    layout_git config core.hooksPath "$hook_dir"
+    cat >"$hook_dir/pre-commit" <<'HOOK'
+#!/usr/bin/env bash
+set -euo pipefail
+exec "$PROVIDER_LOCK_TEST_HELPER" check "$PWD/terraform"
+HOOK
+    chmod +x "$hook_dir/pre-commit"
+    hook_root="$hook_tree/terraform"
+    mkdir "$hook_root"
+    cp -R "$complete_root/." "$hook_root/"
+    printf '%s\n' 'terraform {}' >"$hook_root/main.tf"
+    layout_git add terraform
+    if ! hook_output="$(layout_git commit -qm "staged provider lock" 2>&1)"; then
+        fail "$layout: staged lock failed in the pre-commit hook: $hook_output"
+    fi
+    layout_git rm --cached -q terraform/.terraform.lock.hcl
+    if hook_output="$(layout_git commit -qm "missing provider lock" 2>&1)"; then
+        fail "$layout: lock missing from the index passed the pre-commit hook"
+    fi
+    case "$hook_output" in
+    *"Terraform provider lock will not be part of the commit: $hook_root/.terraform.lock.hcl"*) ;;
+    *) fail "$layout: missing lock gave the wrong diagnostic: $hook_output" ;;
+    esac
+    echo "Terraform provider-lock hooks: $layout PASS (staged accepted, missing rejected)"
+done
 
 echo "Terraform provider-lock regression: PASS"
