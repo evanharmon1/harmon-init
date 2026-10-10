@@ -364,7 +364,8 @@ leave a harness installed on the machine without its managed policy.
   branch is bounded only by the bot's
   collaborator grants, the agent PAT's scopes and the rulesets.
   This is accepted and documented rather than closed with another deny
-  pattern or a push wrapper (#1586). A ruleset that blocks force pushes and
+  pattern or a push wrapper
+  ([ADR 2026-10-10](../decisions/2026-10-10-accept-force-pushes-outside-the-default-branch-in-the-agent-posture.md)). A ruleset that blocks force pushes and
   deletion on every branch is the structural fix, and adopting it is the maintainer's
   decision.
 - **The wrapper is always ours.** A stale or differing

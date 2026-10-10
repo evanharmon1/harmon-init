@@ -53,7 +53,7 @@ remote environment (the remote half is #1404).
 |---|---|---|---|
 | **Marker** (`FOREMAN_DEVCONTAINER`) | unset | `bot` | `agent` |
 | **Identity** | operator's `gh auth login` | bot fine-grained PAT (`GH_TOKEN`) | agent fine-grained PAT on the bot account (`AGENT_GH_TOKEN`), one per resource owner, ≤180 days, own repository list (remote-lane repos only); commits as the bot |
-| **Permissions** | Claude prompts (managed allow list, no default mode) | blanket `Bash(git:*)`/`Bash(gh:*)` + gate tools, bypass mode | explicit dev-loop allow list; deny (not ask) for merge, release, repo admin, secrets, variables, workflow runs, `gh api` writes, force-push (argument patterns; see the 2026-10-10 amendment), pushes to `main`, `task release/secret`, disabling the Codex gate, `op`, `.env*` reads, and the egress-tamper commands (`sudo`, `iptables`, `nft`, `ipset`); **no `ask` rules**; only managed rules apply |
+| **Permissions** | Claude prompts (managed allow list, no default mode) | blanket `Bash(git:*)`/`Bash(gh:*)` + gate tools, bypass mode | explicit dev-loop allow list; deny (not ask) for merge, release, repo admin, secrets, variables, workflow runs, `gh api` writes, force-push, pushes to `main`, `task release/secret`, disabling the Codex gate, `op`, `.env*` reads, and the egress-tamper commands (`sudo`, `iptables`, `nft`, `ipset`); **no `ask` rules**; only managed rules apply |
 | **Harness autonomy** | per-harness defaults; Codex `workspace-write` + `on-request` | every installed harness fully autonomous (`bot-autonomy.sh`); Codex `danger-full-access` + `never` | Claude Code **auto mode** with `disableBypassPermissionsMode: "disable"`; Codex `workspace-write` + `never` (network on inside the sandbox); **every other harness refused** |
 | **Secrets** | 1Password feature, `TS_AUTHKEY`, operator login, opt-in provider keys | bot `GH_TOKEN`, `FOREMAN_AGENT_GH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, opt-in provider keys; no `TS_AUTHKEY`, no 1Password | only `AGENT_GH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, where persisted the environment's own Codex login (#1406), and the disclosed opt-in provider keys; `ANTHROPIC_API_KEY` never; **the env guard fails closed on anything else** |
 | **Network** | open; tailnet | open | **default-deny egress allowlist, enforced at every start** from a root-owned snapshot taken at create; one shared list (#286) plus per-repo additions; refused destinations recorded for the lane report |
@@ -268,26 +268,3 @@ collaborator grants, the agent PAT's scopes and the repository branch rulesets,
 with the residual release and approved-merge permissions already disclosed
 above. The blanket API deny closes this direct Claude command path; it does
 not change that boundary.
-
-## Amendment: 2026-10-10 — force pushes outside `main`
-
-The same bundled-short-flag gap that the 2026-10-09 amendment closed for
-`gh api` exists for `git push`. The force denies (`git push --force*`,
-`git push -f*`, `git push * +*` and their anywhere-after-a-word forms) match
-only a word that starts with those characters, so `git push -uf origin
-<branch>` matches none of them and is allowed by `Bash(git push *)`
-(verified on 2026-10-09 against a local bare repository: the push reported a
-forced update). `git push --mirror` is likewise allowed, and it force-updates
-and can delete remote branches.
-
-The maintainer chose to accept and document this rather than add another
-spelling-based deny or a push wrapper (#1586). Pushes are routine in the
-agent posture, and a wrapper would change every push the skills prescribe.
-The "Protect Main" ruleset blocks non-fast-forward updates and deletion only
-on the default branch (`main`),
-so a force push to any other branch is bounded only by the bot's
-collaborator grants, the agent PAT's scopes and the rulesets. That is the
-boundary this record already names for every write. The force denies stay as defence in depth.
-A ruleset blocking force pushes and deletion on every branch is the
-structural fix, and
-adopting it is a separate maintainer decision.

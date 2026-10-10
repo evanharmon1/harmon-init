@@ -103,12 +103,3 @@ mechanical backstops exist where.
   alongside `managed-settings.json`. If a Claude Code version does not, the
   dev devcontainer silently loses its merge prompt; the tests check that the
   file is shipped and installed only by dev, not that a session honours it.
-
-## Amendment: 2026-10-10 — the force-push rules are a backstop
-
-The "Unchanged" list above names the project `ask` rules and the agent
-denies on force-pushes. Both are argument patterns or prefix rules, so they
-do not catch every force spelling (a bundled `-uf`, `--mirror`). They are a
-backstop, not a boundary. The full statement, and the boundary that does
-hold, is in `docs/architecture/remote-environments.md` § The agent posture
-(#1586). The rest of this record stands as written.
