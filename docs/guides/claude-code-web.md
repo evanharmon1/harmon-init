@@ -292,10 +292,10 @@ GitHub's page names commit statuses and deployment statuses as part of it
 see also [bot-account.md](bot-account.md)), so it covers most other repository
 writes too (releases, labels, Actions re-runs and cancels). None of those touch
 a workflow file, so the missing `workflow` scope plays no part in them: the
-bot's grants and the rulesets are what limit them. The agent posture's denies
+bot's collaborator grants and the branch rulesets are what limit them. The agent posture's denies
 and the proxy refused the `gh` write forms tried, but the denies are defence in
-depth, not the write boundary ([why](#the-gh-call-inventory)): the boundary is the bot's grants, the token's
-missing `workflow` scope and the rulesets. The operator's own token was the
+depth, not the write boundary ([why](#the-gh-call-inventory)): the boundary is the bot's collaborator grants and the branch rulesets,
+with the token's missing `workflow` scope limiting workflow writes. The operator's own token was the
 planned fallback if the platform refused a token whose GitHub user differs from
 the claude.ai account; it was not needed (the platform accepted the bot's token,
 2026-10-07). An alternative, with a real cost, is [authorizing the App as the
@@ -372,7 +372,8 @@ then `/web-setup`) is not observed.
    summary, and run `task setup:remote` only if preparation did not run. Verify the
    identity, for one repository of each owner (start a ponderousdev session
    from the browser, see [Bridges](#bridges-between-the-terminal-and-the-cloud)):
-   `gh api user` must return `evanharmon1-bot`, and `gh api repos/{owner}/{repo}`
+   `/usr/local/bin/gh-api-read user` must return `evanharmon1-bot`, and
+   `/usr/local/bin/gh-api-read repos/{owner}/{repo}`
    must show a `permissions` object of `push: true, admin: false, maintain:
    false` — the write role, without admin or maintain. Do not trust `gh auth
    status` for this: see [the `gh` call inventory](#the-gh-call-inventory).
@@ -523,15 +524,16 @@ criterion asks for every call the loop makes, and because a session that is
 asked to integrate anyway will hit them.
 
 **Under the agent posture, the `gh` write form tried for a PR was refused**
-(observed 2026-10-07): the posture's managed settings deny `gh api` written
-with a separate write flag (`-X`, `--method`, `-f`, `-F`, `--field`,
-`--raw-field`, `--input`), and a `gh api -i -X POST …/pulls` was refused.
+(observed 2026-10-07): `gh api -i -X POST …/pulls` was refused by the
+then-current argument-pattern denies. In the current agent posture, raw
+`gh api` is denied and REST reads use `/usr/local/bin/gh-api-read`.
 `gh pr create`, `edit`, `ready` and `comment` are GraphQL-backed and expected to
 fail through the proxy's GraphQL refusal; not yet observed under the posture.
-Those denies are defence in depth, not the write boundary ([why](#the-gh-call-inventory)). The
-boundary is the bot's grants, the token's missing `workflow` scope and the
-rulesets, as for the bot's PATs — and that boundary covers merges, not draft
-promotion or auto-merge. The
+Argument-pattern denies are defence in depth, not the write boundary
+([why](#the-gh-call-inventory)). The write boundary is the bot's collaborator
+grants and the branch rulesets, with the token's missing `workflow` scope
+limiting workflow writes. That boundary covers merges, not draft promotion
+or auto-merge. The
 proxy offers REST routes for both (`POST …/ccr/ready_for_review` and
 `PUT|DELETE …/ccr/auto_merge`, among the CCR routes quoted under
 [the `gh` call inventory](#the-gh-call-inventory)); a write grant permits them,
@@ -563,8 +565,8 @@ the session to the PR's activity automatically and unsubscribed it on close. So
 the posture's denies refused the `gh` write forms tried but do not reach these
 tools, and a session can technically open a draft PR itself. The denies are
 defence in depth, not the write boundary ([why](#the-gh-call-inventory)): the
-boundary is the bot's grants, the token's missing `workflow` scope and the
-rulesets.
+boundary is the bot's collaborator grants and the branch rulesets, with the
+token's missing `workflow` scope limiting workflow writes.
 
 **The lifecycle does not change.** A cloud lane ends at a pushed branch. The
 orchestrator's order is `task challenge` and `task review` against the lane's
@@ -609,22 +611,25 @@ quoted here once and referred to below as *the GraphQL 403*:
 > POST /repos/{owner}/{repo}/pulls/{n}/ccr/ready_for_review, POST
 > /repos/{owner}/{repo}/pulls/{n}/ccr/convert_to_draft.`
 
-Where a row says a write is **denied** or **refused under the posture**, it
-means a `gh api` call written with a separate write flag and run by the session
-itself, which the agent posture's argument-pattern denies match. Those denies
-are defence in depth, not the write boundary, for two reasons. They are not
-transitive: they match the command the session runs, not what an allowed
-`task` target, script or git hook runs inside it
-([ADR](../decisions/2026-09-29-agent-posture-three-posture-model.md)). And a
-bundled short flag such as `gh api -iX POST …` or `gh api -iF …` is expected to
-match none of them (untested,
-[#1549](https://github.com/evanharmon1/harmon-init/issues/1549)). The boundary
-is the bot's grants, the token's missing `workflow` scope and the rulesets
-([What runs where](#what-runs-where)).
+Where a row records a write as **denied** or **refused under the posture**
+on 2026-10-07, it describes the separate write-flag form matched by the
+argument-pattern denies in effect then. In the current agent posture, raw
+`gh api` is denied; REST reads go through `/usr/local/bin/gh-api-read`.
+Argument-pattern denies are defence in depth, not the write boundary: they
+match the command the session runs, not what an allowed `task` target, script
+or git hook runs inside it
+([ADR](../decisions/2026-09-29-agent-posture-three-posture-model.md)). Bundled
+short flags evade that matching; the parsing spelling was verified offline,
+while the postured-session probe remains
+[#1549](https://github.com/evanharmon1/harmon-init/issues/1549)'s pending human
+check. The write boundary is the bot's collaborator grants and the branch
+rulesets, with the token's missing `workflow` scope limiting workflow writes
+([What runs where](#what-runs-where)). Vendored skills' raw API calls need an
+upstream harmon-devkit update; their inventory below describes those calls.
 
 | Call | Made by | Result through the proxy | Follow-up / workaround |
 | --- | --- | --- | --- |
-| `gh pr list`, `gh pr view`, `gh pr checks`, `gh pr ready`, `gh issue view`, `gh issue edit`, `gh issue comment`, `gh label list` | any of the scripts below, or by hand | **fail, 403** — observed 2026-09-27; `gh issue view`, `gh pr list`, `gh pr view`, `gh pr checks` and `gh label list` again 2026-10-06 (the GraphQL 403) | `gh api repos/{o}/{r}/…` over REST for reads; the REST writes and `POST …/ccr/ready_for_review` written with a separate write flag are denied under the agent posture, and those denies are defence in depth, not the boundary (see above; bundled flags untested, #1549), so the lifecycle uses them only outside a postured session. The helper scripts: [harmon-devkit#1207](https://github.com/evanharmon1/harmon-devkit/issues/1207) |
+| `gh pr list`, `gh pr view`, `gh pr checks`, `gh pr ready`, `gh issue view`, `gh issue edit`, `gh issue comment`, `gh label list` | any of the scripts below, or by hand | **fail, 403** — observed 2026-09-27; `gh issue view`, `gh pr list`, `gh pr view`, `gh pr checks` and `gh label list` again 2026-10-06 (the GraphQL 403) | `/usr/local/bin/gh-api-read repos/{o}/{r}/…` over REST for reads in the agent posture; raw `gh api` is denied. REST writes and `POST …/ccr/ready_for_review` belong to the orchestrator outside the postured session. Argument-pattern denies are defence in depth; the bot's collaborator grants and the branch rulesets are the write boundary (see above). The helper scripts: [harmon-devkit#1207](https://github.com/evanharmon1/harmon-devkit/issues/1207) |
 | `claim-transaction.sh` (`/claim`): `gh issue view/edit/comment`, `gh api user`, `gh api --paginate --slurp` | claim skill (vendored) | **fail** on the GraphQL issue calls — observed 2026-09-27. The script aborts at its first `gh issue view`, so its paginated `comments` and `timeline` reads (page 1 expected to work, later pages to fail) are not reached | harmon-devkit#1207. The 2026-09-27 session used a session-local `gh` shim mapping the subcommands to REST — a stopgap, not a fix |
 | `tick-criteria-core.sh`: `gh issue view`, `gh issue edit`, `gh api user` | track-work skill (vendored) | **fail** — observed 2026-09-27 | harmon-devkit#1207. The write also gets the footer (above) |
 | `check-closing-keywords.sh` (the vendored copy): `gh issue view`, `gh pr view`; `gh repo view` when no `--repo` or `GH_REPO` is given | track-work skill (vendored) | **fail** — observed 2026-09-27; the `gh repo view` fallback expected to fail, not yet observed (GraphQL-backed) | harmon-devkit#1207. Pass `--repo` so the fallback never runs |
@@ -646,7 +651,7 @@ is the bot's grants, the token's missing `workflow` scope and the rulesets
 | `lane-watch.sh`: `gh pr list`, `gh api --paginate --slurp`, `gh pr ready --undo` | orchestrate skill (vendored) | expected to fail, not yet observed — GraphQL-backed subcommands | Orchestrator-side; not run in a cloud lane |
 | `settle-wait.sh`: `gh api repos/{o}/{r}/pulls/{n}`, `gh api repos/{o}/{r}/actions/runs?head_sha=…&per_page=…&page=…` (its own explicit paging) and `gh api repos/{o}/{r}/actions/runs/{id}` | orchestrate skill (vendored) | expected to work, not yet observed — plain REST reads with explicit `page=N`, which the proxy serves (the Actions runs list worked, observed 2026-10-06) | Orchestrator-side; not run in a cloud lane |
 | `scripts/status.sh`, `scripts/check-closing-keywords.sh`, `scripts/guard-closing-keywords.sh`, `scripts/audit-session-artifacts.sh` | harmon-init's own | **REST since #1430** for the calls that go through the bounded `gh_rest_*` helpers, with a page ceiling. `status.sh` also makes the calls in the next row, which do not | `task status` itself has not been run in a cloud session; the next row records its `gh` calls individually. A script that probes `gh auth status` reports `gh` as broken there |
-| `status.sh` outside the `gh_rest_*` helpers: `gh auth status`, `gh run list`; raw `gh api` for `repos/{o}/{r}`, `…/rulesets`, `…/vulnerability-alerts`, `…/private-vulnerability-reporting`, the app installations (`orgs/{o}/installations` or `user/installations`) and the GHCR package; `gh secret list`, `gh variable list`, `gh variable get`; `gh auth token` | harmon-init's own (`task status`) | `gh auth status`: **exit 1** with `X Failed to log in to github.com using token (GH_TOKEN)` while `gh api` works — a **false negative** (`GH_TOKEN` is the placeholder `proxy-injected`; `GITHUB_TOKEN` is also set) — observed 2026-10-06. `gh run list`: works — observed 2026-10-06. `gh api repos/{o}/{r}`: works — observed 2026-10-06; the other raw `gh api` reads: expected to work (plain REST), not yet observed. `gh variable list`: **fail, 403** `Access to this GitHub Actions path is not permitted through this proxy.` (the Actions variables path is refused although runs are allowed) — observed 2026-10-06. `gh secret list`: not reached 2026-10-06, the auto-mode classifier blocked it; `gh variable get`: expected, not yet observed. `gh auth token`: local, no network call | Probe `gh` with `gh api user`, not `gh auth status`. `status.sh` does not abort on any of these — each call has a fallback. The latest-release read moved off the GraphQL-backed `gh release list` onto `gh_rest_api` (`repos/{o}/{r}/releases?per_page=1`, the row above) in #1437, and a failed read now renders the **Release published** line as unavailable instead of a false *no* with the `task release:init` remedy |
+| `status.sh` outside the `gh_rest_*` helpers: `gh auth status`, `gh run list`; raw `gh api` for `repos/{o}/{r}`, `…/rulesets`, `…/vulnerability-alerts`, `…/private-vulnerability-reporting`, the app installations (`orgs/{o}/installations` or `user/installations`) and the GHCR package; `gh secret list`, `gh variable list`, `gh variable get`; `gh auth token` | harmon-init's own (`task status`) | `gh auth status`: **exit 1** with `X Failed to log in to github.com using token (GH_TOKEN)` while `gh api` works — a **false negative** (`GH_TOKEN` is the placeholder `proxy-injected`; `GITHUB_TOKEN` is also set) — observed 2026-10-06. `gh run list`: works — observed 2026-10-06. `gh api repos/{o}/{r}`: works — observed 2026-10-06; the other raw `gh api` reads: expected to work (plain REST), not yet observed. `gh variable list`: **fail, 403** `Access to this GitHub Actions path is not permitted through this proxy.` (the Actions variables path is refused although runs are allowed) — observed 2026-10-06. `gh secret list`: not reached 2026-10-06, the auto-mode classifier blocked it; `gh variable get`: expected, not yet observed. `gh auth token`: local, no network call | In the agent posture, probe with `/usr/local/bin/gh-api-read user`; raw `gh api` is denied and `gh auth status` is unreliable. `status.sh` does not abort on any of these — each call has a fallback. The latest-release read moved off the GraphQL-backed `gh release list` onto `gh_rest_api` (`repos/{o}/{r}/releases?per_page=1`, the row above) in #1437, and a failed read now renders the **Release published** line as unavailable instead of a false *no* with the `task release:init` remedy |
 | `task foreman:plan`, `foreman:dispatch`, `foreman:watch` | the pinned Foreman CLI, run through `uvx` from a git URL | expected, not yet observed — the calls Foreman makes are in its own repository, not enumerated here. Dispatch refuses on the local runner for public repos by design | Orchestrator-side; not run in a cloud lane |
 | `gh api repos/{o}/{r}/…` (REST), `gh api user`, an explicit `…?per_page=2&page=2` read | anything | **works** — observed 2026-09-27 and 2026-10-06. For a repository not attached to the session: **fail, 403** `GitHub access to this repository is not enabled for this session.` — observed 2026-10-06 | Attach the repository in the session (the agent's `add_repo`, access `push`); an unattended `--cloud` session's attach was refused by the auto-mode classifier (observed 2026-10-07) |
 | `gh api search/issues` | ad hoc | **fail, 403** — observed 2026-09-27; not reached 2026-10-06, the auto-mode classifier blocked it before it ran | `repos/{o}/{r}/issues?state=all`, paged |
