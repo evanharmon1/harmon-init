@@ -480,7 +480,7 @@ tasks:
     cmds:
       # --root-dir is required to resolve root-relative links (/about, /rss.xml)
       # against dist/ instead of failing with "provide a root dir".
-      - lychee --offline --no-progress --root-dir "{{.PWD}}/dist" ./dist
+      - lychee --offline --no-progress --root-dir "{{.ROOT_DIR}}/dist" ./dist
 
   test:astro-compress-parity:
     # Static config check (no build needed) — fast enough for `verify`, unlike
