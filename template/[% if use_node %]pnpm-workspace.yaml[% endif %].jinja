@@ -22,13 +22,15 @@ allowBuilds:
 
 overrides:
   # --- harmon-init security floors (template-owned; updated by copier update) ---
-  # A 0.x minor is the semver breaking boundary. These entries move only the
-  # Astro/Vite/wrangler graph's esbuild 0.27→0.28 and sharp 0.34→0.35 minors
-  # because upstream published no in-minor patch. Vite 8.3.4 declares
-  # ^0.27.0 || ^0.28.0 for esbuild; miniflare pins sharp 0.34.
-  # The fixture toolchain builds with the moved versions. Other 0.x minor
-  # edges are left alone and show up in the consumer's audit for a local floor
-  # after validating. Esbuild's advisory covers dev-server file reads on Windows.
+  # A 0.x minor is the semver breaking boundary. Selectors are version-scoped,
+  # not parent-scoped: every esbuild 0.27/0.28 edge and every sharp 0.34/0.35
+  # edge in the graph moves to the patched minor, whichever package declares
+  # it, because upstream published no in-minor patch. The minors chosen are
+  # the ones the Astro fixture graph resolves (Vite 8.3.4 declares
+  # ^0.27.0 || ^0.28.0 for esbuild; miniflare pins sharp 0.34), and the fixture
+  # toolchain builds with the moved versions. Other 0.x minors are left alone
+  # and show up in the consumer's audit for a local floor after validating.
+  # Esbuild's advisory covers dev-server file reads on Windows.
   # esbuild@0.27: GHSA-gv7w-rqvm-qjhr.
   esbuild@0.27: '>=0.28.1 <0.29'
   # esbuild@0.28: GHSA-gv7w-rqvm-qjhr.

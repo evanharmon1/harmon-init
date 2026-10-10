@@ -3318,6 +3318,8 @@ if [ "$profile" = "web" ] && [ -f eslint.config.js ]; then
     else
         grep -qF '# --- harmon-init security floors (template-owned; updated by copier update) ---' pnpm-workspace.yaml ||
             err "web-astro fixture: rendered pnpm-workspace.yaml is missing the template-owned security floors"
+        grep -qF '# --- end harmon-init security floors; repository-local floors go below this line ---' pnpm-workspace.yaml ||
+            err "web-astro fixture: rendered pnpm-workspace.yaml is missing the security-floor end marker (the copier-update boundary consumers add local floors below)"
         cp -R "$repo_root/tests/fixtures/web-astro/." .
         # cloudflare/wrangler-action needs a pre-installed wrangler now that
         # wranglerVersion is no longer pinned in the workflow (harmon-init#1347).
@@ -3360,11 +3362,12 @@ if [ "$profile" = "web" ] && [ -f eslint.config.js ]; then
                 echo "web-astro: shipped toolchain (ESLint + Prettier/astro + astro check + build + wrangler) clean on a real app"
             else
                 cat "$audit_log"
-                if grep -Eq 'ERR_PNPM_(AUDIT|FETCH)|ENOTFOUND|EAI_AGAIN|ECONN|ETIMEDOUT' "$audit_log" ||
-                    ! grep -Eiq '[│┃|][[:space:]]*(high|critical)[[:space:]]*[│┃|]' "$audit_log"; then
+                if grep -Eq 'ERR_PNPM_(AUDIT|FETCH)|ENOTFOUND|EAI_AGAIN|ECONN|ETIMEDOUT' "$audit_log"; then
                     err "web-astro fixture: pnpm audit indeterminate (registry unreachable)"
-                else
+                elif grep -Eiq '[│┃|][[:space:]]*(high|critical)[[:space:]]*[│┃|]' "$audit_log"; then
                     err "web-astro fixture: pnpm audit found high-severity advisories — raise the template-owned floor in pnpm-workspace.yaml.jinja"
+                else
+                    err "web-astro fixture: pnpm audit indeterminate (exited nonzero without a high/critical findings table or a registry error; read the log above)"
                 fi
             fi
         fi

@@ -569,7 +569,9 @@ the compatibility reason in the rule's `description`.
       the entry says so; the fixture toolchain builds with the moved versions.
       Other 0.x minor edges are left for consumer audit and a local floor after
       validation. Add repository-local floors below its end marker, inside
-      `overrides`, using the same shape. When a later template release floors a
+      `overrides`, using the same shape; quote a scoped package's key
+      (`'@scope/pkg@7': '>=7.0.1 <8'`) because YAML rejects a bare `@`. When a
+      later template release floors a
       package you floored locally, delete your local entry. Harmon Init's CI
       audits the real Astro fixture against the shipped block so a new advisory
       surfaces in harmon-init's next CI run and is fixed in the template.
@@ -659,17 +661,19 @@ the compatibility reason in the rule's `description`.
       `pnpm-workspace.yaml` uses it) or `pnpm approve-builds`. The `overrides`
       security-floor block is template-owned and arrives via `copier update`;
       add repository-local floors below its end marker, inside `overrides`,
-      scoped to the major they floor (`pkg@<major>` key) and bounded below the
-      next major. Every template floor follows this shape; the block never
+      scoped to the major they floor (`pkg@<major>` key, quoted for a scoped
+      package: `'@scope/pkg@7': '>=7.0.1 <8'`) and bounded below the next
+      major. Every template floor follows this shape; the block never
       crosses a major. For 0.x, selectors cover only the fixture graph's tested
       minors and bounds stop below the next minor of the moved version. A minor
       move requires no upstream in-minor patch and the entry says so; the
       fixture toolchain builds with the moved versions. Other 0.x minor edges
       are left for consumer audit and a local floor after validation. When a
       later template release floors a package you floored locally, delete your
-      local entry. Harmon Init's CI audits the Astro fixture against the shipped
-      block so a new advisory surfaces in harmon-init's next CI run and is fixed
-      in the template
+      local entry. Harmon Init's CI audits only its Astro fixture against the
+      shipped block, not this app's graph: an advisory that exists only in the
+      TanStack/Convex graph surfaces in this repository's own `pnpm audit`, so
+      floor it locally and report it upstream
 - [ ] When adding Playwright e2e: configure `scripts/e2e-env-guard.sh` with this
       app's auth providers, deploy credentials, and production domains —
       `task test:e2e` runs it first and it **fails until configured** (fail
