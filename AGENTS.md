@@ -649,7 +649,8 @@ meets its exit condition on round 1 is done, whatever the cap allowed.
   with reviews unpolled is not the stopping point — then promote it through the
   readiness gate, report, and stop; merging is always a human decision.
   (`.claude/settings.json` backstops this with `permissions.ask` rules on
-  pushes to main and force-pushes, plus the `git-merge-guard` hook, which asks
+  pushes to main and force-pushes (prefix rules, so a bundled `-uf` is not
+  asked about), plus the `git-merge-guard` hook, which asks
   before any `git merge`/`git pull` it cannot verify lands on a feature
   branch. The hook parses each command, so quoted text and heredoc bodies that
   no shell runs, search patterns and `git merge-base` are data and need no
