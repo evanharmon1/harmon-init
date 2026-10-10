@@ -383,7 +383,14 @@ Report **every** removal, using the apply output as evidence and your judgement
 as its reason: category `human removed` after `APPLIED remove 'human'`, or `human
 removal planned` after `DRY-RUN would remove 'human'`. After `INDETERMINATE remove
 'human'`, report `human removal unconfirmed`, preserving the unknown outcome and
-its evidence; do not count it as confirmed removal. If the helper refuses,
+its evidence; do not count it as confirmed removal. After the label edit the
+helper re-checks the guards; a `RESTORED 'human'` line supersedes any earlier
+`APPLIED remove 'human'` or `INDETERMINATE remove 'human'` for that issue (the
+guards stopped holding, or the re-check could not be read, so `human` was put
+back): report `human kept` with the helper's message and both lines as
+evidence, never a removal, confirmed or unconfirmed. `human removal unconfirmed`
+is for an `INDETERMINATE` with no `RESTORED` (the re-add itself failed). If the
+helper refuses,
 report `human kept` with the refusal. If inspection shows the work still needs a
 human, keep the label and report why; never turn a scan candidate straight into a
 removal. If it no longer carries the label at apply time, do not claim a removal.
@@ -532,7 +539,10 @@ the entries file, no entry keys):
 
 Put all removal records, including unconfirmed outcomes, under `## Human removals`
 first in the entries file. The renderer preserves that section in full and budgets
-only the remaining sections for truncation, even when removals alone exceed the budget.
+only the remaining sections for truncation. When removals alone exceed the budget,
+it posts them as comments on the report issue, each marked so a re-run never
+posts a part twice, and the body points at them. More than 10 such parts is
+refused before any write, with the records printed.
 Removal records are required entries even when no unresolved findings remain.
 If there are no findings or removal records at all, create the file empty (`: > entries.md`).
 

@@ -963,8 +963,12 @@ timeout. When `timeout` is available, preparation has a 90 s deadline and a 5 s
 kill grace, leaving time for the wrapper to warn and exit 0 on failure or expiry.
 Without `timeout`, it skips preparation and warns to run `task setup:remote` manually.
 Its one-line
-`SessionStart remote preparation:` summary distinguishes completion from a
-failure requiring a retry. Repository hooks run only in a single-repository
+`SessionStart remote preparation:` summary distinguishes complete preparation, preparation completed with warnings
+(skipped required steps or warnings), and a failure requiring a retry. Missing
+tools for applicable steps, a missing bootstrap helper, or an unwritable clone
+parent degrade the summary; routine not-applicable skips (no lockfiles, hook
+config, or related-repository list) do not. Details
+stay on stderr. Repository hooks run only in a single-repository
 session (*docs, 2026-09-29*). If the hook did not run (a multi-repository session,
 or a platform without it), the `AGENTS.md` fallback still tells the agent to run
 `task setup:remote` once before work.
@@ -976,8 +980,18 @@ the devcontainer makes (`.devcontainer/related-repos.txt`), into the checkout's 
 directory. It then fetches existing siblings with
 `.devcontainer/scripts/fetch-related-repos.sh`, using that same parent directory.
 Frozen `pnpm` / `uv` installs from the lockfiles that exist run last, so a slow
-install cannot prevent the preceding hook and sibling preparation.
-Fetching updates remote-tracking refs and prunes deleted refs; it never checks
+install cannot prevent the preceding hook and sibling preparation. The reverse
+tradeoff is accepted in the [ADR](../decisions/2026-10-09-web-session-start-preparation.md#cost-and-failure):
+a slow sibling can consume the hook deadline before installs run. On expiry,
+the summary asks for a manual `task setup:remote` retry without that wrapper deadline.
+Before fetching, one sibling remote must name the configured owner/repository
+in its final two path components (case-insensitive, with `.git` stripped),
+independent of host, scheme, port or leading path. Rewritten URLs and forks with
+an upstream remote are supported; unrelated same-name repositories are skipped
+with a warning. Linked worktrees are supported. An explicit refspec confines
+fetching and pruning to the matching remote's own remote-tracking branch refs,
+even if the sibling has mirror-style fetch configuration. A read-only
+parent skips cloning but still fetches existing siblings. Fetching never checks
 out, resets or pulls, so local branches and uncommitted changes stay in place.
 A snapshot can be about seven days old, and fetching on every start makes new
 remote revisions visible without replacing a sibling's working tree.
