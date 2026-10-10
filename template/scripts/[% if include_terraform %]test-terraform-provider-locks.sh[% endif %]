@@ -19,8 +19,11 @@ fail() {
     exit 1
 }
 
-tmp="$(mktemp -d -t test-terraform-provider-locks-XXXXXX)"
+tmp="$(mktemp -d -t test-terraform-provider-locks-XXXXXX)" || exit 1
 trap 'rm -rf "$tmp"' EXIT HUP INT TERM
+# Hooks report their physical $PWD, so compare against physical paths: the
+# temp directory can sit behind a symlink (macOS /var -> /private/var).
+tmp="$(cd "$tmp" && pwd -P)" || exit 1
 fake_terraform="$tmp/terraform"
 
 cat >"$fake_terraform" <<'EOF'
