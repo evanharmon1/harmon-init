@@ -182,11 +182,11 @@ Mechanically:
     repository code: an agent allowed `task` and commits runs Taskfile
     targets and git hooks, and no deny rule follows a command into either.
     Pattern matching can also miss another spelling of the same flags —
-    bundled short flags, for one. As first recorded here, the `gh api` denies
-    were this layer: the method, input, and every form-field flag (`-f`,
-    `-F`, `--field`, `--raw-field`) were denied in any position. Bundled short
-    flags evaded them, so the 2026-10-09 amendment below replaced them with a
-    blanket `gh api` deny and the GET-only `gh-api-read` wrapper.
+    bundled short flags, for one. The `gh api` denies are this layer: the
+    method, input, and every form-field flag (`-f`, `-F`, `--field`,
+    `--raw-field`) are denied in any position, which also denies GraphQL
+    queries sent through `-f query=` (REST is the documented read path). They
+    keep a cooperating harness to reads; they do not make `gh api` read-only.
   - **The boundary for GitHub writes is the agent PAT's scopes plus the
     repository rulesets.** The PAT has no administration, secrets, or workflow
     permission, so no route reaches those. The rulesets refuse a direct or
@@ -228,43 +228,3 @@ Mechanically:
   the posture's acceptance test (#1408, criteria 1 and 7).
 - #1404 installs this posture into each remote platform; #1407 documents the
   hosted platforms' network levels from the same shared list.
-
-## Amendment: 2026-10-09 — GET-only REST wrapper
-
-Accepted — maintainer decision for
-[harmon-init#1549](https://github.com/evanharmon1/harmon-init/issues/1549).
-The safe read probe `gh api -iXGET repos/evanharmon1/harmon-init` returned
-HTTP 200 outside the posture, verifying the bundled-flag spelling offline.
-The postured-session probe remains #1549's pending human check. Bundled short flags evade argument matching:
-`-iXPOST` contains neither a word starting with `-X` nor any of the denied
-field or method patterns. An allow for raw `gh api` therefore also admits
-spellings of writes denied by command name, including releases and workflow
-dispatch. No write probe is needed to establish the parsing gap.
-
-The agent managed settings now deny both bare `gh api` and `gh api *`, remove
-the superseded argument-pattern API denies, and allow only the REST read
-front door `/usr/local/bin/gh-api-read`. The wrapper has one source under
-`.devcontainer/config/agent/` and its template twin; it depends on no skill.
-Both the agent devcontainer and web bootstrap install and verify that source
-as an executable at the same absolute path. The wrapper always replaces a
-stale or differing copy at mode 0755; unlike platform-owned managed policy,
-it is ours and is named by the managed allow rule. Identical executable bytes
-need no reinstall. The wrapper pins a system PATH before running `gh`, so a
-caller cannot substitute a binary from a user-writable search directory.
-
-The wrapper accepts exactly one relative REST endpoint, pagination and
-client-side output flags. Every method, field, input, header (including
-`X-HTTP-Method-Override`), bundled flag, unknown flag, absolute URL and GraphQL
-endpoint is refused. Accepted requests execute `gh api --method GET` with
-only vetted arguments. Recording-stub tests cover the write spellings and
-verify the pinned method; a scratch mutation removing the pin must fail the
-outgoing-request contract.
-
-This supersedes the earlier description of API argument-pattern denies in
-Consequences. Argument-pattern denies are defence in depth, not the write
-boundary: allowed scripts and Taskfile targets still run beyond those rules,
-and Codex carries no command-level deny list. The boundary remains the bot's
-collaborator grants, the agent PAT's scopes and the repository branch rulesets,
-with the residual release and approved-merge permissions already disclosed
-above. The blanket API deny closes this direct Claude command path; it does
-not change that boundary.
