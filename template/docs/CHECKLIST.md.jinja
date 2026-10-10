@@ -563,12 +563,16 @@ the compatibility reason in the rule's `description`.
       blocks dependency build scripts by default). The `overrides` security-floor
       block is template-owned and arrives via `copier update`; every floor is
       scoped to the major it floors (`pkg@<major>` key) and bounded below the
-      next major; the block never crosses a major. A 0.x floor may move a minor
-      only when upstream publishes no in-minor patch, and the entry says so.
-      Add repository-local floors
-      below its end marker, inside `overrides`, using the same shape.
-      Harmon Init's CI audits the real Astro fixture
-      against the shipped block so new advisories are fixed upstream first.
+      next major; the block never crosses a major. For 0.x, selectors cover only
+      the fixture graph's tested minors and bounds stop below the next minor of
+      the moved version. A minor move requires no upstream in-minor patch and
+      the entry says so; the fixture toolchain builds with the moved versions.
+      Other 0.x minor edges are left for consumer audit and a local floor after
+      validation. Add repository-local floors below its end marker, inside
+      `overrides`, using the same shape. When a later template release floors a
+      package you floored locally, delete your local entry. Harmon Init's CI
+      audits the real Astro fixture against the shipped block so a new advisory
+      surfaces in harmon-init's next CI run and is fixed in the template.
       Add any other packages whose build
       scripts your deps need to `allowBuilds` (or run `pnpm approve-builds`); keep
       all pnpm `overrides` / `auditConfig` there too, **not** in the `package.json`
@@ -657,9 +661,15 @@ the compatibility reason in the rule's `description`.
       add repository-local floors below its end marker, inside `overrides`,
       scoped to the major they floor (`pkg@<major>` key) and bounded below the
       next major. Every template floor follows this shape; the block never
-      crosses a major. A 0.x floor may move a minor only when upstream publishes
-      no in-minor patch, and the entry says so. Harmon Init's CI audits the Astro fixture
-      against the shipped block so new advisories are fixed upstream first
+      crosses a major. For 0.x, selectors cover only the fixture graph's tested
+      minors and bounds stop below the next minor of the moved version. A minor
+      move requires no upstream in-minor patch and the entry says so; the
+      fixture toolchain builds with the moved versions. Other 0.x minor edges
+      are left for consumer audit and a local floor after validation. When a
+      later template release floors a package you floored locally, delete your
+      local entry. Harmon Init's CI audits the Astro fixture against the shipped
+      block so a new advisory surfaces in harmon-init's next CI run and is fixed
+      in the template
 - [ ] When adding Playwright e2e: configure `scripts/e2e-env-guard.sh` with this
       app's auth providers, deploy credentials, and production domains —
       `task test:e2e` runs it first and it **fails until configured** (fail

@@ -22,19 +22,26 @@ allowBuilds:
 
 overrides:
   # --- harmon-init security floors (template-owned; updated by copier update) ---
-  # A 0.x minor is the semver breaking boundary. These two floors deliberately
-  # move esbuild 0.27→0.28 and sharp 0.34→0.35 because no in-minor patch exists;
-  # the fixture toolchain validated these moves.
-  # esbuild: GHSA-gv7w-rqvm-qjhr; dev-server arbitrary file reads on Windows.
-  # Vite 8.3.4 declares ^0.27.0 || ^0.28.0.
-  esbuild@0: '>=0.28.1 <1'
-  # sharp: GHSA-wq5f-xc86-pv6w, GHSA-rgj7-g3m4-5g8c, GHSA-f88m-g3jw-g9cj.
-  sharp@0: '>=0.35.5 <1'
-  # source-map-js: GHSA-68fv-2mgg-jv7q.
+  # A 0.x minor is the semver breaking boundary. These entries move only the
+  # Astro/Vite/wrangler graph's esbuild 0.27→0.28 and sharp 0.34→0.35 minors
+  # because upstream published no in-minor patch. Vite 8.3.4 declares
+  # ^0.27.0 || ^0.28.0 for esbuild; miniflare pins sharp 0.34.
+  # The fixture toolchain builds with the moved versions. Other 0.x minor
+  # edges are left alone and show up in the consumer's audit for a local floor
+  # after validating. Esbuild's advisory covers dev-server file reads on Windows.
+  # esbuild@0.27: GHSA-gv7w-rqvm-qjhr.
+  esbuild@0.27: '>=0.28.1 <0.29'
+  # esbuild@0.28: GHSA-gv7w-rqvm-qjhr.
+  esbuild@0.28: '>=0.28.1 <0.29'
+  # sharp@0.34: GHSA-wq5f-xc86-pv6w, GHSA-rgj7-g3m4-5g8c, GHSA-f88m-g3jw-g9cj.
+  sharp@0.34: '>=0.35.5 <0.36'
+  # sharp@0.35: GHSA-wq5f-xc86-pv6w, GHSA-rgj7-g3m4-5g8c, GHSA-f88m-g3jw-g9cj.
+  sharp@0.35: '>=0.35.5 <0.36'
+  # source-map-js@1: GHSA-68fv-2mgg-jv7q.
   source-map-js@1: '>=1.2.2 <2'
-  # devalue: GHSA-j22f-vq7h-c4qm, GHSA-mcm9-63f2-9j32.
+  # devalue@5: GHSA-j22f-vq7h-c4qm, GHSA-mcm9-63f2-9j32.
   devalue@5: '>=5.9.3 <6'
-  # http-cache-semantics: GHSA-ch52-4w7c-c8xp.
+  # http-cache-semantics@4: GHSA-ch52-4w7c-c8xp.
   http-cache-semantics@4: '>=4.3.0 <5'
   # brace-expansion@1: GHSA-qhr7-859c-m2p7, GHSA-6j4f-fj2g-mc7p, GHSA-rgw5-rvv9-x895, GHSA-mh99-v99m-4gvg, GHSA-3jxr-9vmj-r5cp, GHSA-q2hr-2g5m-vwhr.
   brace-expansion@1: '>=1.1.21 <2'
@@ -50,7 +57,7 @@ overrides:
   minimatch@10: '>=10.2.3 <11'
   # postcss@8: GHSA-r28c-9q8g-f849.
   postcss@8: '>=8.5.18 <9'
-  # js-yaml: GHSA-2883-xcg3-v3hh.
+  # js-yaml@4: GHSA-2883-xcg3-v3hh.
   js-yaml@4: '>=4.3.2 <5'
   # nanoid@3: GHSA-2v37-7h3g-55p8.
   nanoid@3: '>=3.3.18 <4'
@@ -60,9 +67,9 @@ overrides:
   fast-uri@4: '>=4.1.4 <5'
   # smol-toml@1: GHSA-7w5x-hrqm-74c2.
   smol-toml@1: '>=1.7.1 <2'
-  # svgo: GHSA-w27v-7q3p-w38r.
+  # svgo@4: GHSA-w27v-7q3p-w38r.
   svgo@4: '>=4.1.0 <5'
-  # undici: GHSA-4cwx-7wf7-3272, GHSA-rfgv-xxqx-mfg5, GHSA-w293-vg96-wgc3.
+  # undici@7: GHSA-4cwx-7wf7-3272, GHSA-rfgv-xxqx-mfg5, GHSA-w293-vg96-wgc3.
   undici@7: '>=7.29.1 <8'
   # undici@8: GHSA-rfgv-xxqx-mfg5, GHSA-w293-vg96-wgc3, GHSA-vp8m-p9jh-q5pm, GHSA-4cwx-7wf7-3272.
   undici@8: '>=8.10.2 <9'

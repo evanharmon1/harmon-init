@@ -3361,7 +3361,7 @@ if [ "$profile" = "web" ] && [ -f eslint.config.js ]; then
             else
                 cat "$audit_log"
                 if grep -Eq 'ERR_PNPM_(AUDIT|FETCH)|ENOTFOUND|EAI_AGAIN|ECONN|ETIMEDOUT' "$audit_log" ||
-                    ! grep -Eiq '[│┃][[:space:]]*(high|critical)[[:space:]]*[│┃]' "$audit_log"; then
+                    ! grep -Eiq '[│┃|][[:space:]]*(high|critical)[[:space:]]*[│┃|]' "$audit_log"; then
                     err "web-astro fixture: pnpm audit indeterminate (registry unreachable)"
                 else
                     err "web-astro fixture: pnpm audit found high-severity advisories — raise the template-owned floor in pnpm-workspace.yaml.jinja"
