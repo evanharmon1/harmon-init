@@ -11,6 +11,11 @@ criterion 1). The permission-model ADR
 this record once it is written; until then this record is the three-posture
 model's only statement. Superseded in part (the agent merge deny) by
 [2026-10-07-bot-and-agent-postures-carry-no-merge-guards.md](2026-10-07-bot-and-agent-postures-carry-no-merge-guards.md).
+Amended by
+[2026-10-10-accept-force-pushes-outside-the-default-branch-in-the-agent-posture.md](2026-10-10-accept-force-pushes-outside-the-default-branch-in-the-agent-posture.md)
+(force pushes outside the default branch) and
+[2026-10-10-route-agent-posture-api-reads-through-a-get-only-wrapper.md](2026-10-10-route-agent-posture-api-reads-through-a-get-only-wrapper.md)
+(GET-only API reads).
 
 ## Context
 
