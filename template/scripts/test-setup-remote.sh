@@ -767,19 +767,41 @@ EOF
     echo "==> an escaped descendant holding stdout cannot keep SessionStart past its deadline"
     cat >"${TMP}/hook-bin/task" <<EOF
 #!/usr/bin/env bash
+# Simulate a slow launcher: readiness, not this startup latency, starts the clock.
+sleep 0.3
 "$(command -v python3)" - <<'PYDAEMON'
 import subprocess
 import sys
 
-# Escape timeout's process group and retain stdout, then exit naturally.
-subprocess.Popen([sys.executable, "-c", "import time; time.sleep(3)"],
-                 start_new_session=True, stdin=subprocess.DEVNULL,
-                 stderr=subprocess.DEVNULL)
+# The detached child signals only after it starts with stdout inherited.
+subprocess.Popen([sys.executable, "-c", """
+import os
+import pathlib
+import time
 print("daemon holding stdout started", flush=True)
+pathlib.Path(os.environ["HOOK_DAEMON_READY"]).write_text(str(time.monotonic()))
+time.sleep(3)
+"""], start_new_session=True, stdin=subprocess.DEVNULL,
+                 stderr=subprocess.DEVNULL)
 PYDAEMON
-sleep 5
 EOF
-    chmod +x "${TMP}/hook-bin/task"
+    cat >"${TMP}/hook-bin/timeout" <<'EOF'
+#!/usr/bin/env bash
+[ "$1" = '--kill-after=5s' ] && [ "$2" = '90s' ] || exit 99
+shift 2
+# The preceding scenario tests real GNU timeout. This shim isolates pipe EOF:
+# start the task, wait for explicit daemon readiness, then model deadline expiry.
+"$@" &
+attempts=0
+while [ ! -s "$HOOK_DAEMON_READY" ] && [ "$attempts" -lt 1000 ]; do
+    sleep 0.01
+    attempts=$((attempts + 1))
+done
+[ -s "$HOOK_DAEMON_READY" ] || exit 99
+sleep 0.1
+exit 124
+EOF
+    chmod +x "${TMP}/hook-bin/task" "${TMP}/hook-bin/timeout"
     python3 - "${FIX}/scripts/session-start-remote.sh" "${TMP}/hook-bin:${MIN_BIN}" "${TMP}" <<'PYDEADLINE'
 import os
 import pathlib
@@ -788,15 +810,18 @@ import sys
 import time
 
 script, path, fixture_tmp = sys.argv[1:]
-env = dict(os.environ, CLAUDE_CODE_REMOTE="true", PATH=path, TMPDIR=fixture_tmp)
-started = time.monotonic()
+ready = pathlib.Path(fixture_tmp) / "daemon.ready"
+env = dict(os.environ, CLAUDE_CODE_REMOTE="true", PATH=path, TMPDIR=fixture_tmp,
+           HOOK_DAEMON_READY=str(ready))
 result = subprocess.run(["bash", script], env=env, capture_output=True, text=True)
-elapsed = time.monotonic() - started
+finished = time.monotonic()
 assert result.returncode == 0, result
+assert ready.exists(), "daemon never signaled readiness within the bounded startup wait"
+elapsed = finished - float(ready.read_text())
 assert "daemon holding stdout started" in result.stderr, result
 assert "setup:remote failed; run task setup:remote again." in result.stdout, result
 assert elapsed < 1.1, f"wrapper waited {elapsed:.2f}s past the 0.1s deadline + 1s grace"
-print(f"stdout-holder wrapper returned in {elapsed:.2f}s (deadline + grace: 1.1s)")
+print(f"stdout-holder wrapper returned {elapsed:.2f}s after readiness (deadline + grace: 1.1s)")
 PYDEADLINE
 else
     echo "skip: timeout is unavailable; the real deadline scenario cannot run"
