@@ -14,9 +14,27 @@ if ! command -v timeout >/dev/null 2>&1; then
     exit 0
 fi
 
-if timeout --kill-after=5s 90s task --dir "$ROOT" setup:remote >&2; then
-    echo "==> SessionStart remote preparation: setup:remote completed."
+# A regular file does not wait for descendants to close inherited stdout, as a
+# command-substitution pipe would after timeout has already returned.
+if ! output_file="$(mktemp)"; then
+    echo "==> WARNING: SessionStart remote preparation: could not capture preparation output; run task setup:remote."
+    exit 0
+fi
+trap 'rm -f "$output_file"' EXIT
+
+if timeout --kill-after=5s 90s task --dir "$ROOT" setup:remote >"$output_file"; then
+    cat "$output_file" >&2
+    summary="setup:remote completed."
+    while IFS= read -r line; do
+        case "$line" in
+        # The last status marker wins, including a final clean status that
+        # supersedes a tool's earlier marker-shaped output.
+        '==> setup:remote completed.' | '==> setup:remote completed with warnings:'*) summary="${line#==> }" ;;
+        esac
+    done <"$output_file"
+    echo "==> SessionStart remote preparation: ${summary}"
 else
+    cat "$output_file" >&2
     echo "==> WARNING: SessionStart remote preparation: setup:remote failed; run task setup:remote again."
 fi
 # Preparation failures must never prevent a session from starting.
