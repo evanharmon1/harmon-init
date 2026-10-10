@@ -127,6 +127,14 @@ switch (mutation) {
   case 'closed-devflow-family-without-values':
     family('rigor').values = []
     break
+  case 'unknown-registry-set':
+    // No renderer mode answers it, so a family naming it would provision nothing.
+    family('model').registry_set = 'model-line'
+    break
+  case 'model-set-wrong-prefix':
+    // A model set feeding another set's prefix would provision the wrong vocabulary.
+    family('model-version').registry_set = 'model'
+    break
   default:
     throw new Error(`unknown mutation: ${mutation}`)
 }
@@ -169,6 +177,10 @@ rejects "a closed devflow-sourced family with no values" 'closed-devflow-family-
     'closed devflow family'
 rejects "a live family on the retired suggest registry set" 'live-suggest-family' \
     'registry_set suggest is retired'
+rejects "an agent-registry family on an unknown registry set" 'unknown-registry-set' \
+    'registry_set: must be one of'
+rejects "an implementer-record family fed by another set" 'model-set-wrong-prefix' \
+    'registry_set model renders model:* labels but the prefix is model-version'
 
 # Inventory authorization must not depend on documentation order. Put the
 # open model families before their agent-registry bases and require the same
@@ -393,6 +405,73 @@ check_foreman_colors() {
 check_foreman_colors label-registry.json
 [ "$template_mode" = 1 ] && check_foreman_colors template/label-registry.json
 
+# The four implementer-record families (#1517): a record of fact rendered from
+# the agent registry — exclusive, agent-written, durable (never claim-release, so
+# claim release cannot strip them), never a routing input. Their rendered values
+# are derived from agent-registry.json here rather than restated: every family
+# slug, every line slug and every version slug once (retired versions
+# included, so history keeps its labels), and the effort ladder in order.
+check_model_families() {
+    local manifest="$1" registry="$2" fam got want rendered
+    for fam in model-family model model-version model-effort; do
+        got="$(jq -r --arg f "$fam" '.families[] | select(.family == $f) |
+            "\(.prefix) \(.source) \(.registry_set) \(.axis) \(.exclusive) \(.provision) \(.lifecycle) \(.writers | join(",")) \(.retired // false) \(.gate // "none")"' "$manifest")"
+        want="$fam agent-registry $fam model true true durable agent false none"
+        [ "$got" = "$want" ] ||
+            fail "$manifest: family $fam is [$got], want [$want] — the implementer record is an ungated, exclusive, agent-written, durable registry family"
+        jq -e --arg f "$fam" '.families[] | select(.family == $f) |
+            (.lifecycle_note | test("never removed by claim release")) and (.trust_note | test("never a routing input"))' \
+            "$manifest" >/dev/null ||
+            fail "$manifest: family $fam must say it is never removed by claim release and never a routing input"
+    done
+    rendered="$(node scripts/label-registry-render.mjs labels "$manifest" | sed -n 's/|.*//p')" ||
+        fail "$manifest: label rendering failed"
+    for fam in model-family model model-version model-effort; do
+        case "$fam" in
+        model-family) want="$(jq -r '.families[].slug' "$registry")" ;;
+        model) want="$(jq -r '.families[].models[].slug' "$registry")" ;;
+        model-version) want="$(jq -r '.families[].models[].versions[].slug' "$registry")" ;;
+        model-effort) want="$(jq -r '.effort_ladder[]' "$registry")" ;;
+        esac
+        want="$(printf '%s\n' "$want" | awk -v p="$fam" '!seen[$0]++ { print p ":" $0 }')"
+        got="$(printf '%s\n' "$rendered" | grep "^${fam}:" || true)"
+        [ "$got" = "$want" ] ||
+            fail "$manifest: rendered ${fam}:* labels differ from agent-registry.json (each value once, registry order, retired included):
+$(diff <(printf '%s\n' "$want") <(printf '%s\n' "$got") || true)"
+    done
+    # The retired versions are the history half of the contract: name one.
+    want="$(jq -r '[.families[].models[].versions[] | select(.retired == true) | .slug][0] // empty' "$registry")"
+    if [ -n "$want" ]; then
+        grep -Fqx "model-version:$want" <<<"$rendered" ||
+            fail "$manifest: retired version $want is not provisioned — history would lose its label"
+    fi
+}
+check_model_families label-registry.json agent-registry.json
+# The template manifest renders against the root agent registry here (the
+# template's own copy is a .jinja source until copier renders it).
+[ "$template_mode" = 1 ] && check_model_families template/label-registry.json agent-registry.json
+
+# A registry that parses but is only partly filled — a family with no model
+# lines, a line with no versions — must fail closed rather than render a
+# partial implementer record (challenge-r1-codex-adversarial-1): the renderer
+# runs validate-agent-registry.mjs first and emits nothing on a failure.
+partial_tmp="$(mktemp -d)"
+for partial in empty-versions empty-models; do
+    case "$partial" in
+    empty-versions) partial_edit='.families[0].models[0].versions = []' ;;
+    empty-models) partial_edit='.families[0].models = []' ;;
+    esac
+    jq "$partial_edit" agent-registry.json >"$partial_tmp/agent-registry.json"
+    if partial_out="$(node scripts/agent-registry-labels.mjs all "$partial_tmp/agent-registry.json" 2>"$partial_tmp/err")"; then
+        fail "agent-registry-labels.mjs rendered a registry with $partial — it must fail closed"
+    fi
+    [ -z "$partial_out" ] ||
+        fail "agent-registry-labels.mjs emitted label records for a registry with $partial"
+    grep -q "not a valid agent registry" "$partial_tmp/err" ||
+        fail "agent-registry-labels.mjs did not report the validator failure for $partial: $(cat "$partial_tmp/err")"
+done
+rm -rf "$partial_tmp"
+
 # ── 3. migration lockfile (template repo only) ─────────────────────────────
 # The reviewed provisioned set per layer: the pre-manifest inline vocabulary,
 # plus (root) the families hand-seeded on 2026-08-13 with their exact
@@ -532,13 +611,23 @@ foreman:hold|D93F0B|Exclude from foreman dispatch (always wins)
 foreman:satisfied|0E8A16|Human override: treat this dependency as satisfied
 foreman:external|BFDADC|External dependency: satisfied when closed as completed"
 
+model_records() {
+    local mode
+    for mode in model-family model model-version model-effort; do
+        node scripts/agent-registry-labels.mjs "$mode" "$1"
+    done
+}
+
 check_lockfile() {
     local manifest="$1" registry="$2" inline="$3" label="$4"
     local base_expect foreman_expect got_base got_foreman
+    # The four implementer-record families (#1517) provision on every profile.
     base_expect="$( (printf '%s\n' "$inline" &&
-        node scripts/agent-registry-labels.mjs claim "$registry") | sort)"
+        node scripts/agent-registry-labels.mjs claim "$registry" &&
+        model_records "$registry") | sort)"
     foreman_expect="$( (printf '%s\n' "$inline" && printf '%s\n' "$foreman_inline" &&
         node scripts/agent-registry-labels.mjs claim "$registry" &&
+        model_records "$registry" &&
         node scripts/agent-registry-labels.mjs foreman-adapters "$registry") | sort)"
     got_base="$(node scripts/label-registry-render.mjs labels "$manifest" | sort)"
     got_foreman="$(node scripts/label-registry-render.mjs labels --foreman "$manifest" | sort)"
@@ -627,6 +716,32 @@ STUB
         fail "setup-github-labels.sh --foreman provisions a different set than the renderer:"
         diff <(printf '%s\n' "$want_names") <(printf '%s\n' "$emitted") >&2 || true
     }
+    # ...and a partly filled agent registry provisions NOTHING: run the script
+    # from a staged copy whose agent-registry.json has a line with no versions,
+    # with a `gh` that records every call, and require a failure before any
+    # call (challenge-r1-codex-adversarial-1).
+    stage="$(mktemp -d)"
+    cp -R scripts "$stage/scripts"
+    [ -d ai ] && cp -R ai "$stage/ai"
+    cp label-registry.json label-registry.schema.json agent-registry.schema.json "$stage/"
+    jq '.families[0].models[0].versions = []' agent-registry.json >"$stage/agent-registry.json"
+    mkdir "$stage/bin"
+    cat >"$stage/bin/gh" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"$STUB_CALLS"
+exit 0
+STUB
+    chmod +x "$stage/bin/gh"
+    : >"$stage/calls"
+    if STUB_CALLS="$stage/calls" PATH="$stage/bin:$PATH" \
+        bash "$stage/scripts/setup-github-labels.sh" --repo drift/check --foreman >"$stage/out" 2>&1; then
+        fail "setup-github-labels.sh succeeded on an agent registry with an empty versions list"
+    fi
+    [ ! -s "$stage/calls" ] ||
+        fail "setup-github-labels.sh called gh on an invalid agent registry: $(tr '\n' ' ' <"$stage/calls")"
+    grep -q "must contain at least 1 item" "$stage/out" ||
+        fail "setup-github-labels.sh did not surface the validator's message: $(cat "$stage/out")"
+    rm -rf "$stage"
 else
     echo "note: scripts/setup-github-labels.sh not present in this profile — skipping the provisioning binding" >&2
 fi
