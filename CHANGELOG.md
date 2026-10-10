@@ -8,6 +8,25 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [5.5.1](https://github.com/evanharmon1/harmon-init/compare/v5.5.0...v5.5.1) (2026-10-10)
+
+
+### Bug Fixes
+
+* **ci:** report why Claude workflows fail and retry once with an alternate token ([#1585](https://github.com/evanharmon1/harmon-init/issues/1585)) ([bd5c09d](https://github.com/evanharmon1/harmon-init/commit/bd5c09d8bd66161f0affe563a2dd7567feb033ad))
+* **devcontainer:** route agent-posture API reads through a GET-only wrapper ([#1594](https://github.com/evanharmon1/harmon-init/issues/1594)) ([42ee716](https://github.com/evanharmon1/harmon-init/commit/42ee71684d605a5a0dd4b2438a60c3b5ef5b681e))
+* **devcontainer:** update shared image to 42ee7168 ([#1605](https://github.com/evanharmon1/harmon-init/issues/1605)) ([de9fdba](https://github.com/evanharmon1/harmon-init/commit/de9fdbab4221cf71ce52f1349b593bb0e7887941))
+* **devflow:** add an absent merge-base policy flag and usage exits for bad tier options ([#1588](https://github.com/evanharmon1/harmon-init/issues/1588)) ([3fd05eb](https://github.com/evanharmon1/harmon-init/commit/3fd05eb6a2740c818e2c5a56bd46491505e889b6))
+* **docs:** record that the agent posture does not block force pushes outside main ([#1607](https://github.com/evanharmon1/harmon-init/issues/1607)) ([f327702](https://github.com/evanharmon1/harmon-init/commit/f327702760ff4dc9ef12f77aa1378392d6961ed8))
+* **hooks:** lint only the git commit segment's own message ([#1583](https://github.com/evanharmon1/harmon-init/issues/1583)) ([89f6a26](https://github.com/evanharmon1/harmon-init/commit/89f6a26310ccee47c9e2e54777ab117a481726ba))
+* **labels:** let triage remove human when the work no longer qualifies ([#1587](https://github.com/evanharmon1/harmon-init/issues/1587)) ([eaed739](https://github.com/evanharmon1/harmon-init/commit/eaed7396b4f9d9d654bab3aed0b3f718ec535328))
+* **registry:** record verified reasoning-effort support per harness ([#1610](https://github.com/evanharmon1/harmon-init/issues/1610)) ([9c9c887](https://github.com/evanharmon1/harmon-init/commit/9c9c8879bdeee22f6b23ca3635b9f3616b2253af))
+* **remote-env:** verify sibling identity, fetch only remote-tracking refs, and report degraded preparation ([#1593](https://github.com/evanharmon1/harmon-init/issues/1593)) ([a1527a6](https://github.com/evanharmon1/harmon-init/commit/a1527a682972a5183fdaab8e070143d8ed571a45))
+* **taskfile:** resolve validate:links against ROOT_DIR and forbid PWD in Taskfiles ([#1600](https://github.com/evanharmon1/harmon-init/issues/1600)) ([e8624e3](https://github.com/evanharmon1/harmon-init/commit/e8624e34371e0196c8b374cca08b207bee7c3318))
+* **template:** check provider locks correctly from linked-worktree hooks ([#1606](https://github.com/evanharmon1/harmon-init/issues/1606)) ([5133557](https://github.com/evanharmon1/harmon-init/commit/5133557a0bf50769df454cb142d206142771d122))
+* **template:** ship template-owned pnpm security floors and audit the web-astro fixture ([#1604](https://github.com/evanharmon1/harmon-init/issues/1604)) ([97084c9](https://github.com/evanharmon1/harmon-init/commit/97084c9a21cf47ade4292c1b1fd0da3653039cdb))
+* **template:** sync harmon-devkit skills to v0.54.0 ([#1609](https://github.com/evanharmon1/harmon-init/issues/1609)) ([0c43fa1](https://github.com/evanharmon1/harmon-init/commit/0c43fa1220f3d2eee1c5129e5164db06e9fafb1d))
+
 ## [5.5.0](https://github.com/evanharmon1/harmon-init/compare/v5.4.0...v5.5.0) (2026-10-09)
 
 
