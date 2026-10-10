@@ -1264,8 +1264,11 @@ function resolveStrategy(doc, requestedStrategy) {
 /**
  * Cross-file validation against the registry and the Taskfile's known
  * target names. `registryDoc` may be null (skip registry-dependent checks —
- * only legitimate when the caller has no registry to check against at all,
- * which is itself reported by the CLI as reduced-confidence, never silent).
+ * only legitimate when the caller has no registry to check against at all).
+ * A null registry is reported as an indeterminate entry unless the caller
+ * passes `{ registryRequired: false }`, which the CLI does only when there is
+ * no policy file and no registry was requested: the built-in fallback is then
+ * the whole policy and there is nothing to cross-validate against.
  * `taskTargets` is a Set<string> of bare target names, or null.
  */
 // The tier a role's AUTHORED configuration resolves to, before any issue,
