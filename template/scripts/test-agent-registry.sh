@@ -438,9 +438,9 @@ switch (mutation) {
   }
   case 'effort-ladder-subset':
     registry.effort_ladder = registry.effort_ladder.filter((effort) => effort !== 'minimal')
-    harness('codex-cli').efforts = harness('codex-cli').efforts.filter(
-      (effort) => effort !== 'minimal'
-    )
+    for (const entry of registry.harnesses) {
+      entry.efforts = entry.efforts.filter((effort) => effort !== 'minimal')
+    }
     break
   default:
     throw new Error(`unknown accepted mutation: ${mutation}`)
