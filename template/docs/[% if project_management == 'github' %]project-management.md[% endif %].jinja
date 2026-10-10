@@ -457,6 +457,12 @@ type:
   way everywhere.
 - **`area:*`, `layer:*` and `domain:*`** are labels on both. Each family has a
   `none` value that records "this axis does not apply".
+- **The implementer record** (model family, model, model version and model
+  effort) follows the same split on issues: single-select issue fields on an
+  organization, `model-family:*`, `model:*`, `model-version:*` and
+  `model-effort:*` labels on a personal account. Pull requests carry the labels
+  on both owner types, because issue fields do not exist on pull requests. See
+  [The implementer record](#the-implementer-record).
 
 Which surface suits a datum is the question [Label or field?](#label-or-field)
 answers.
@@ -799,6 +805,10 @@ lands on the next run.
 | **Complexity** | org issue field, single-select | xs, s, m, l, xl | `setup:github-issue-fields` |
 | **Priority (AI)** | org issue field, single-select | p0, p1, p2, p3, p4 | `setup:github-issue-fields` |
 | **Effort** | org issue field, single-select | GitHub's own High, Medium, Low, plus the ladder 1, 2, 3, 5, 8, 13, 20 | GitHub (built-in); `setup:github-issue-fields` adds the ladder |
+| **Model family** | org issue field, single-select | every family slug in `agent-registry.json` | `setup:github-issue-fields` |
+| **Model** | org issue field, single-select | every model line slug in `agent-registry.json` | `setup:github-issue-fields` |
+| **Model version** | org issue field, single-select | every version slug in `agent-registry.json`, retired ones included | `setup:github-issue-fields` |
+| **Model effort** | org issue field, single-select | the registry's `effort_ladder` | `setup:github-issue-fields` |
 
 GitHub also ships **Start date** and **Target date** as built-in issue fields.
 [% else %]
@@ -1209,6 +1219,10 @@ deliberately leaves it alone.
 | `suggest:<family>:<model>` (**retired**) | nobody — superseded by the derived Tier | humans — retired, see `tier:*` | retired — never provisioned; no tool creates it any more | remove the label from each issue, then use guarded `--prune` |
 | `claim:<family>` | the agent itself — a vendored claim skill, or a Claude Actions run | humans; the Claude Actions claim gate; `claim-release.yml` where the repo ships it | provisioned from the registry; a **gate**, never a trigger | added at claim, removed at release — by the workflow's `always()` step, or by `claim-release.yml` on close where the repo ships it |
 | `claim:<family>:<model>` | the agent itself | humans; the Claude Actions claim gate; `claim-release.yml` where the repo ships it | **tool-owned, created on demand** | refines the family label; added at claim, removed at release |
+| `model-family:<family>` | the implementing agent, as a record of fact — personal-account repos on issues and PRs; organization repos on PRs only (issues carry the issue field instead) | humans, saved views — never read to select a model | provisioned from the registry (every owner type); a **record of fact**, never a routing input | kept; replaced by the next implementer, never removed by claim release |
+| `model:<line>` | the implementing agent, as a record of fact — personal-account repos on issues and PRs; organization repos on PRs only (issues carry the issue field instead) | humans, saved views — never read to select a model | provisioned from the registry (every owner type); a **record of fact**, never a routing input | kept; replaced by the next implementer, never removed by claim release |
+| `model-version:<version>` | the implementing agent, as a record of fact — personal-account repos on issues and PRs; organization repos on PRs only (issues carry the issue field instead) | humans, saved views — never read to select a model | provisioned from the registry (retired versions included, so history keeps its labels; every owner type); a **record of fact**, never a routing input | kept; replaced by the next implementer, never removed by claim release |
+| `model-effort:<effort>` | the implementing agent, as a record of fact — personal-account repos on issues and PRs; organization repos on PRs only (issues carry the issue field instead) | humans, saved views — never read to select a model | provisioned from the registry (every owner type); a **record of fact**, never a routing input | kept; replaced by the next implementer, never removed by claim release |
 | `agent:<harness>` (**retired**) | nobody — never seeded into a new repo | claim skills (and `claim-release.yml` where present), which still recognize it | legacy; inert | after choosing the actual claim family, use guarded `--prune` with repeatable `--migrate OLD=NEW` |
 [% if use_foreman %]
 | `foreman:<adapter>` | a trusted human, to arm an issue | Foreman | provisioned from the registry where the repo uses foreman (`--foreman`), for production-dispatchable adapters only; **actor-verified arming** | applied to arm; stays on the issue |
@@ -1339,6 +1353,54 @@ already exists fails.
 | `claim:mistral:devstral-small-2` | `claim:mistral:devstral-small` |
 
 The Claude, GPT and Qwen line slugs did not change.
+
+#### The implementer record
+
+Which model implemented an issue is recorded as four values, all drawn from
+`agent-registry.json` (harmon-devkit#1262, decided 2026-10-04):
+
+| Value | Label | Issue field (organization) | Source in the registry | Example |
+| --- | --- | --- | --- | --- |
+| Model family | `model-family:<family>` | Model family | a family `slug` | `claude` |
+| Model | `model:<line>` | Model | a model line `slug` | `opus` |
+| Model version | `model-version:<version>` | Model version | a version `slug`, retired ones included | `5.5` |
+| Model effort | `model-effort:<effort>` | Model effort | the `effort_ladder` | `high` |
+
+- **Owner-type split.** On a **personal-account** repository the four values
+  are labels on the issue. On an **organization** they are single-select issue
+  fields on the issue, provisioned by `task setup:github-issue-fields`.
+- **Pull requests carry the labels on every owner type.** Issue fields do not
+  exist on pull requests, so a pull request always records its implementer as
+  the four labels. That is why `task setup:github-labels` provisions the four
+  label families on every repository, organizations included.
+- **Last implementer wins.** Each value is exclusive. When a second
+  implementer takes over an issue, its values *replace* the first one's, so the
+  issue answers "who implemented this most recently". The pull request is the
+  exact per-change record: each pull request keeps the values of the
+  implementer that produced it.
+- **A record of fact, never a routing input.** The implementing agent writes
+  the values after the fact, and nothing reads them to select a model. Choosing
+  a model is the Tier's and the harness's job (see
+  [The Tier](#the-tier-derivation-and-pin)). This is also why they are not the
+  retired `Agent` field: that field tried to say who *may* take the work, and
+  these values say who *did*.
+- **Kept, never removed by claim release.** The values are not claim markers.
+  `claim:*` comes off when the claim is released, but the implementer record
+  stays until the next implementer replaces it. `claim-release.yml` never
+  touches these labels or fields.
+- **Provisioned from the registry, history included.** Every family slug,
+  every model line slug and every version slug is provisioned once. A slug
+  shared by several families or lines (the `flash` line, the `5.5` version)
+  becomes a single label or option. Retired versions stay provisioned, so an
+  issue implemented by a model that has since been retired keeps a value that
+  still exists. On an organization a new version is appended as an option.
+  Every existing option is sent back with its id, because GitHub clears the
+  value on every issue holding an option that is re-sent without one. So
+  assigned values survive, and no option is ever removed.
+
+The code that *writes* these values at implement or claim time belongs to the
+vendored skills (harmon-devkit#1269 and #1262). This repository only
+provisions the vocabulary.
 
 <!-- registry-tables:begin -->
 <!-- Generated from agent-registry.json by `node scripts/agent-registry-labels.mjs docs-tables`. Do not edit by hand — `task test:registry-docs` fails on drift. -->

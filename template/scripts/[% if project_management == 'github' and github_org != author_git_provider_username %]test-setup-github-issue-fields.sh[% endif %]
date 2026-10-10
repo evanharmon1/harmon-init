@@ -245,8 +245,8 @@ priority_id=25511146
 echo "==> an org with only GitHub's built-ins gets the new fields and Effort's ladder beside the shipped options"
 # The run adds and never removes (challenge r1 C1-F1, replaced by deletion in r2).
 run_with "$builtin"
-[ "$(jq -sc 'map(.name)' "$POSTS")" = '["Impact","Risk","Complexity","Priority (AI)"]' ] ||
-    fail "expected exactly Impact, Risk, Complexity, Priority (AI) to be created, got $(jq -sc 'map(.name)' "$POSTS")"
+[ "$(jq -sc 'map(.name)' "$POSTS")" = '["Impact","Risk","Complexity","Priority (AI)","Model family","Model","Model version","Model effort"]' ] ||
+    fail "expected exactly Impact, Risk, Complexity, Priority (AI) and the four Model fields to be created, got $(jq -sc 'map(.name)' "$POSTS")"
 [ "$(patches)" = 1 ] || fail "expected exactly 1 PATCH (the Effort ladder), got $(patches)"
 grep -q "Issue field 'Product' already exists — leaving it as-is" "$tmp/out" || fail "expected Product to be left as-is"
 grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "expected an explicit ready outcome"
@@ -346,14 +346,14 @@ run_with "$(cat "$tmp/provisioned.json")"
 [ "$(patches)" = 0 ] || fail "expected no PATCH on a provisioned org"
 [ ! -s "$SEARCHES" ] || fail "a provisioned org has no shipped option to report, so no usage search is owed: $(cat "$SEARCHES")"
 ! grep -q "Shipped options kept" "$tmp/out" || fail "nothing is kept once the shipped options are gone"
-[ "$(grep -c "already has every wanted option — leaving it as-is" "$tmp/out")" = 5 ] ||
-    fail "expected all five single-select fields reported as already complete"
+[ "$(grep -c "already has every wanted option — leaving it as-is" "$tmp/out")" = 9 ] ||
+    fail "expected all nine single-select fields reported as already complete"
 grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "expected an explicit ready outcome"
 
 echo "==> an empty org gets every field created, with options, and no PATCH"
 run_with '[]'
-[ "$(jq -sc 'map(.name)' "$POSTS")" = '["Product","Impact","Risk","Complexity","Priority (AI)","Effort"]' ] ||
-    fail "expected Product, Impact, Risk, Complexity, Priority (AI), Effort created in order, got $(jq -sc 'map(.name)' "$POSTS")"
+[ "$(jq -sc 'map(.name)' "$POSTS")" = '["Product","Impact","Risk","Complexity","Priority (AI)","Effort","Model family","Model","Model version","Model effort"]' ] ||
+    fail "expected Product, Impact, Risk, Complexity, Priority (AI), Effort and the four Model fields created in order, got $(jq -sc 'map(.name)' "$POSTS")"
 [ "$(patches)" = 0 ] || fail "a freshly created field must not be PATCHed"
 [ "$(post_body Product | jq -r '.data_type')" = text ] || fail "Product must be created as text"
 [ "$(opt_names "$(post_body Effort)")" = "$ladder" ] || fail "a created Effort must carry the ladder"
@@ -532,7 +532,7 @@ GH_FAIL_PATCH=1 "$script" --org testorg >"$tmp/out" 2>&1 || fail "a rejected PAT
 grep -q "update was rejected" "$tmp/out" || fail "expected the rejection to be reported"
 grep -q "Effort: add 1, 2, 3, 5, 8, 13, 20" "$tmp/out" || fail "a rejected PATCH must name the options it could not apply"
 grep -q "still need options added" "$tmp/out" || fail "expected the summary warning after a rejected PATCH"
-[ "$(posts)" = 4 ] || fail "the fields that can be created must still be created after a rejected PATCH"
+[ "$(posts)" = 8 ] || fail "the fields that can be created (four classification, four Model) must still be created after a rejected PATCH"
 ! grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "a rejected PATCH claimed readiness"
 
 echo "==> a failed read exits non-zero and writes nothing"
@@ -627,7 +627,89 @@ run_with "$(cat "$tmp/provisioned.json")"
 ! grep -q "final inventory" "$tmp/out" || fail "a complete org must not warn at the final read"
 grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "a complete org must end ready"
 
-echo "==> status.sh wants exactly the fields and options this script provisions"
+echo "==> the four Model fields are created with their options derived from agent-registry.json"
+# The implementer record (#1517). The expected sets are derived from the registry
+# here, independently of the script: each value once, registry order, retired
+# versions included.
+registry="$PWD/agent-registry.json"
+[ -f "$registry" ] || fail "agent-registry.json is missing — the Model field options cannot be derived"
+uniq_names() { awk '!seen[$0]++' | jq -Rsc 'split("\n") | map(select(length > 0))'; }
+model_want_family="$(jq -r '.families[].slug' "$registry" | uniq_names)"
+model_want_line="$(jq -r '.families[].models[].slug' "$registry" | uniq_names)"
+model_want_version="$(jq -r '.families[].models[].versions[].slug' "$registry" | uniq_names)"
+model_want_effort="$(jq -r '.effort_ladder[]' "$registry" | uniq_names)"
+run_with "$builtin"
+for spec in "Model family|$model_want_family" "Model|$model_want_line" "Model version|$model_want_version" "Model effort|$model_want_effort"; do
+    fname="${spec%%|*}"
+    want="${spec#*|}"
+    body="$(post_body "$fname")"
+    [ -n "$body" ] || fail "$fname was not created"
+    [ "$(printf '%s' "$body" | jq -r '.data_type')" = single_select ] || fail "$fname was not created as single_select"
+    [ "$(printf '%s' "$body" | jq -r '.description | test("never a routing input")')" = true ] ||
+        fail "$fname must describe itself as a record of fact, never a routing input"
+    [ "$(opt_names "$body")" = "$want" ] || fail "$fname options: want $want, got $(opt_names "$body")"
+    [ "$(printf '%s' "$body" | jq -c '[ .options[].priority ] == [ range(1; (.options | length) + 1) ]')" = true ] ||
+        fail "$fname option priorities must be 1..N in order"
+    [ "$(printf '%s' "$body" | jq -r --argjson c "$colors" '[ .options[] | select(.color as $x | $c | index($x) == null) ] | length')" = 0 ] ||
+        fail "$fname carries a color outside the REST enum"
+    [ "$(printf '%s' "$body" | jq -r '[ .options[] | select(has("id")) ] | length')" = 0 ] ||
+        fail "$fname was created with option ids — GitHub assigns them"
+done
+retired_version="$(jq -r '[ .families[].models[].versions[] | select(.retired == true) | .slug ][0] // empty' "$registry")"
+if [ -n "$retired_version" ]; then
+    [ "$(post_body "Model version" | jq -r --arg v "$retired_version" '[ .options[].name ] | index($v) != null')" = true ] ||
+        fail "retired version $retired_version is not an option — history would lose its value"
+fi
+cp "$STUB_FIELDS_FILE" "$tmp/model-run.json"
+run_with "$(cat "$tmp/model-run.json")"
+[ "$(posts)" = 0 ] && [ "$(patches)" = 0 ] || fail "a re-run after creating the Model fields must write nothing"
+
+echo "==> a new model version is appended with every existing option id kept, so assigned values survive"
+# The org already holds Model version with two registry versions (ids 501, 502)
+# and one version the registry no longer lists (id 509, as if dropped upstream).
+# Issues assigned to any of them must keep their value: every one goes back with
+# its id, the missing registry versions are appended without one.
+first_version="$(printf '%s' "$model_want_version" | jq -r '.[0]')"
+second_version="$(printf '%s' "$model_want_version" | jq -r '.[1]')"
+stale_versions=$(jq -c --arg a "$first_version" --arg b "$second_version" '
+    map(if .name == "Model version" then .options = [
+            {"id":501,"name":$a,"description":"held","color":"blue","priority":1},
+            {"id":509,"name":"0.9","description":"dropped upstream","color":"gray","priority":2},
+            {"id":502,"name":$b,"description":"held","color":"blue","priority":3}]
+        else . end)' "$tmp/model-run.json")
+model_version_id="$(printf '%s' "$stale_versions" | jq -r '.[] | select(.name == "Model version") | .id')"
+run_with "$stale_versions"
+[ "$(patches)" = 1 ] || fail "expected exactly one PATCH (Model version), got $(patches)"
+[ "$(posts)" = 0 ] || fail "an existing Model field must not be recreated"
+body="$(patch_body "$model_version_id")"
+[ "$(opt_names "$body")" = "$(printf '%s' "$model_want_version" | jq -c '. + ["0.9"]')" ] ||
+    fail "expected every registry version in order, then the kept stale one, got $(opt_names "$body")"
+[ "$(printf '%s' "$body" | jq -c '[ .options[] | select(has("id")) | .id ] | sort')" = "[501,502,509]" ] ||
+    fail "every existing Model version option must go back with its id — its issues would otherwise be cleared"
+[ "$(printf '%s' "$body" | jq -c --arg a "$first_version" '[ .options[] | select(.name == $a) ] | first | [.id, .description]')" = '[501,"held"]' ] ||
+    fail "an existing Model version option must keep its id and its own description"
+[ "$(state_field "Model version" | jq -c '[ .options[] | select(.id == 501 or .id == 502 or .id == 509) | .id ] | sort')" = "[501,502,509]" ] ||
+    fail "the org lost an existing Model version option id"
+grep -q "DONE: GitHub issue fields are ready" "$tmp/out" || fail "appending a version must end ready"
+
+echo "==> an unreadable agent registry fails closed before any GitHub call"
+mkdir -p "$tmp/noreg/scripts/lib"
+cp "$script" "$tmp/noreg/scripts/setup-github-issue-fields.sh"
+cp "$PWD/scripts/lib/output.sh" "$tmp/noreg/scripts/lib/output.sh"
+for reg in missing invalid empty; do
+    rm -f "$tmp/noreg/agent-registry.json"
+    case "$reg" in
+    invalid) printf '{not json' >"$tmp/noreg/agent-registry.json" ;;
+    empty) printf '{"families":[],"effort_ladder":[]}' >"$tmp/noreg/agent-registry.json" ;;
+    esac
+    reset_stub "$builtin"
+    if bash "$tmp/noreg/scripts/setup-github-issue-fields.sh" --org testorg >"$tmp/out" 2>&1; then
+        fail "[$reg registry] the run must exit non-zero"
+    fi
+    [ ! -s "$CALLS" ] || fail "[$reg registry] the run reached GitHub: $(tr '\n' ' ' <"$CALLS")"
+    grep -q "Could not derive the Model field options" "$tmp/out" || fail "[$reg registry] expected the registry error"
+done
+
 # The want-list in status.sh and the option sets here are two copies of one fact;
 # a scale that changes in only one would report every correctly provisioned org
 # as incomplete (or hide a missing option). Derive the expected rows from the org
