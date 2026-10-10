@@ -164,61 +164,71 @@ if TERRAFORM_BIN="$fake_terraform" "$helper" check "$untracked_root" >/dev/null 
     fail "lock removed from the index passed the check"
 fi
 
-# Recreate Git's pre-commit environment in a linked worktree, with no
-# GIT_WORK_TREE. An alternate index also proves the helper preserves the index
-# selected by the hook rather than silently checking the default index.
-git -C "$module_repo" -c user.name="Provider Lock Test" \
-    -c user.email=test@example.invalid -c core.hooksPath=/dev/null \
-    commit -qm "provider-lock fixture"
-linked_repo="$tmp/linked worktree"
-git -C "$module_repo" worktree add -q -b linked-lock-test "$linked_repo"
-linked_root="$linked_repo/terraform/hook env"
-mkdir "$linked_root"
-cp -R "$complete_root/." "$linked_root/"
-printf '%s\n' 'terraform {}' >"$linked_root/main.tf"
-linked_gitdir="$(git -C "$linked_repo" rev-parse --absolute-git-dir)"
-hook_index="$tmp/hook-index"
-cp "$linked_gitdir/index" "$hook_index"
-printf '%s\n' '# staged change' >>"$linked_root/main.tf"
-GIT_INDEX_FILE="$hook_index" git -C "$linked_repo" add .
-if ! linked_output="$(GIT_DIR="$linked_gitdir" GIT_INDEX_FILE="$hook_index" \
-    TERRAFORM_BIN="$fake_terraform" "$helper" check "$linked_root" 2>&1)"; then
-    fail "staged linked-worktree lock failed under hook environment: $linked_output"
-fi
-GIT_INDEX_FILE="$hook_index" git -C "$linked_repo" rm --cached -q \
-    "terraform/hook env/.terraform.lock.hcl"
-if linked_output="$(GIT_DIR="$linked_gitdir" GIT_INDEX_FILE="$hook_index" \
-    TERRAFORM_BIN="$fake_terraform" "$helper" check "$linked_root" 2>&1)"; then
-    fail "linked-worktree lock missing from the hook index passed"
-fi
-case "$linked_output" in
-*"Terraform provider lock will not be part of the commit: $linked_root/.terraform.lock.hcl"*) ;;
-*) fail "missing linked-worktree lock gave the wrong diagnostic: $linked_output" ;;
-esac
+# Exercise Git's actual pre-commit environment in each supported layout.
+# The hook uses the caller's checkout root, and each repository owns its hook.
+export PROVIDER_LOCK_TEST_HELPER="$(cd scripts && pwd -P)/terraform-provider-locks.sh"
+export TERRAFORM_BIN="$fake_terraform"
+layout_git() {
+    case "$layout" in
+    ordinary | linked) git -C "$hook_tree" "$@" ;;
+    external)
+        (cd "$hook_tree" && GIT_DIR="$hook_gitdir" GIT_WORK_TREE="$hook_tree" git "$@")
+        ;;
+    core-worktree)
+        (cd "$hook_tree" && GIT_DIR="$hook_gitdir" git "$@")
+        ;;
+    esac
+}
 
-# An explicit GIT_DIR plus GIT_WORK_TREE (a bare repository with an external
-# work tree) must keep its meaning: a lock missing from that index still fails.
-bare_repo="$tmp/bare repo.git"
-git clone -q --bare "$module_repo" "$bare_repo"
-external_tree="$tmp/external tree"
-external_root="$external_tree/terraform/external"
-mkdir -p "$external_root"
-cp -R "$complete_root/." "$external_root/"
-printf '%s\n' 'terraform {}' >"$external_root/main.tf"
-GIT_DIR="$bare_repo" GIT_WORK_TREE="$external_tree" git add terraform
-if ! external_output="$(GIT_DIR="$bare_repo" GIT_WORK_TREE="$external_tree" \
-    TERRAFORM_BIN="$fake_terraform" "$helper" check "$external_root" 2>&1)"; then
-    fail "staged lock failed with an explicit GIT_DIR and GIT_WORK_TREE: $external_output"
-fi
-GIT_DIR="$bare_repo" GIT_WORK_TREE="$external_tree" git rm --cached -q \
-    "terraform/external/.terraform.lock.hcl"
-if external_output="$(GIT_DIR="$bare_repo" GIT_WORK_TREE="$external_tree" \
-    TERRAFORM_BIN="$fake_terraform" "$helper" check "$external_root" 2>&1)"; then
-    fail "lock missing from an explicit GIT_DIR and GIT_WORK_TREE index passed"
-fi
-case "$external_output" in
-*"Terraform provider lock will not be part of the commit: $external_root/.terraform.lock.hcl"*) ;;
-*) fail "missing external-tree lock gave the wrong diagnostic: $external_output" ;;
-esac
+for layout in ordinary linked external core-worktree; do
+    hook_tree="$tmp/$layout tree"
+    hook_gitdir="$tmp/$layout.git"
+    mkdir "$hook_tree"
+    case "$layout" in
+    ordinary) git -C "$hook_tree" init -q ;;
+    linked)
+        parent_repo="$tmp/linked parent"
+        git init -q "$parent_repo"
+        git -C "$parent_repo" -c user.name="Provider Lock Test" \
+            -c user.email=test@example.invalid -c core.hooksPath=/dev/null \
+            commit -qm "worktree fixture" --allow-empty
+        git -C "$parent_repo" worktree add -q -b linked-lock-test "$hook_tree"
+        ;;
+    external) git init -q --bare "$hook_gitdir" ;;
+    core-worktree)
+        git init -q --bare "$hook_gitdir"
+        git --git-dir="$hook_gitdir" config core.bare false
+        git --git-dir="$hook_gitdir" config core.worktree "$hook_tree"
+        ;;
+    esac
+    layout_git config user.name "Provider Lock Test"
+    layout_git config user.email test@example.invalid
+    hook_dir="$tmp/$layout hooks"
+    mkdir "$hook_dir"
+    layout_git config core.hooksPath "$hook_dir"
+    cat >"$hook_dir/pre-commit" <<'HOOK'
+#!/usr/bin/env bash
+set -euo pipefail
+exec "$PROVIDER_LOCK_TEST_HELPER" check "$PWD/terraform"
+HOOK
+    chmod +x "$hook_dir/pre-commit"
+    hook_root="$hook_tree/terraform"
+    mkdir "$hook_root"
+    cp -R "$complete_root/." "$hook_root/"
+    printf '%s\n' 'terraform {}' >"$hook_root/main.tf"
+    layout_git add terraform
+    if ! hook_output="$(layout_git commit -qm "staged provider lock" 2>&1)"; then
+        fail "$layout: staged lock failed in the pre-commit hook: $hook_output"
+    fi
+    layout_git rm --cached -q terraform/.terraform.lock.hcl
+    if hook_output="$(layout_git commit -qm "missing provider lock" 2>&1)"; then
+        fail "$layout: lock missing from the index passed the pre-commit hook"
+    fi
+    case "$hook_output" in
+    *"Terraform provider lock will not be part of the commit: $hook_root/.terraform.lock.hcl"*) ;;
+    *) fail "$layout: missing lock gave the wrong diagnostic: $hook_output" ;;
+    esac
+    echo "Terraform provider-lock hooks: $layout PASS (staged accepted, missing rejected)"
+done
 
 echo "Terraform provider-lock regression: PASS"
