@@ -47,10 +47,13 @@ merged tree. No local tree is built and the agent pushes nothing.
 1. **A conflict-free catch-up runs on the server, without a local round gate or
    secret scan. CI on the merge head is the gate.** The standard path is:
    re-read `baseRefName` against the base the gate captured, then update-branch
-   in merge mode. The endpoint answers `202 Accepted` and merges
-   asynchronously, so the agent polls until `headRefOid` moves off the captured
-   SHA and records the new SHA. A bounded poll that never sees the move is
-   indeterminate: the agent stops and reports. Then it fast-forwards every
+   in merge mode. The resulting head is the catch-up only if it is a merge
+   commit whose first parent is the captured head and whose other parent is
+   the base tip the gate read. The endpoint merges asynchronously, but the
+   agent does not need a polling procedure: any other head, whether a
+   concurrent push or one still unmoved when a bounded wait ends, is a newer
+   push under the readiness gate's existing "no newer push invalidated any
+   result" condition, and the gate re-reads the PR and starts again. Then it fast-forwards every
    local checkout of the branch (`git pull --ff-only`) before any further local
    commit, lets CI run on the new head, and, where Codex cloud review is
    enabled, asks `carry` (#752). A merge can still break
@@ -82,18 +85,19 @@ merged tree. No local tree is built and the agent pushes nothing.
    reviewed commits that a carry and the review cycle are keyed to. The REST
    call takes the head the agent captured as `expected_head_sha`. If a
    concurrent push has moved the branch, the call refuses instead of merging
-   onto a head nobody gated. `gh pr update-branch` has no flag for this, so the
+   onto a head nobody gated. That refusal is the moved-head case of decision
+   1, never a reason to fall back to a local merge. `gh pr update-branch` has no flag for this, so the
    guarded form is the REST call, or a helper that compares the head it reads
    against the captured one. That helper is part of harmon-devkit#1360.
 5. **The local merge stays as the fallback.** An agent uses it when:
-   - update-branch refuses because of a conflict;
+   - update-branch genuinely refuses the merge: a conflict, a ruleset that
+     rejects GitHub-made merge commits, or a fork PR without "allow edits by
+     maintainers";
    - the base merge must ship in the same push as a fix (the integrate skill's
-     rule for the last remediation push);
-   - the API refuses for any other reason, such as a fork PR without "allow
-     edits by maintainers" or a ruleset that rejects GitHub-made merge commits.
+     rule for the last remediation push).
 
-   The agent detects every case from the API's refusal. It does not predict
-   them. A conflict resolution is authored work: the agent chooses the bytes
+   The agent detects each refusal from the API's response. It does not predict
+   them. An `expected_head_sha` refusal is not one of them (decision 4). A conflict resolution is authored work: the agent chooses the bytes
    that resolve it. So the fallback is an ordinary remediation round. It runs
    the full round gate and secret scan, pushes once, spends remediation budget,
    and owes a fresh Codex cycle charged as usual.
@@ -123,6 +127,14 @@ unchanged. The only change is who creates the merge commit.
   makes the invariant in decision 3 ambiguous. The server-side path removes the
   push instead.
 - **`--rebase`.** It rewrites pushed history (decision 4).
+- **A step-by-step poll for the asynchronous merge.** An earlier draft told the
+  agent to poll until `headRefOid` left the captured SHA, to treat a poll that
+  timed out as indeterminate, and to fall back to a local merge on any API
+  refusal. Each step had its own edge cases, and none of them said what made
+  the new head trustworthy. Decision 1 defines the catch-up head by its parents
+  instead. That one rule covers a concurrent push, a head that never moved and
+  an expected-head refusal, through the readiness gate's existing newer-push
+  condition.
 - **Charging the catch-up to `remediation`** (the recommended alternative to
   decision 2). The cap would then bound a busy base's merge rate rather than
   the agent's fixes. A PR could run out of remediation budget without one fix
