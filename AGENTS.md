@@ -544,7 +544,7 @@ wall-clock ceiling. Challenge and review bound confidence passes;
 `integration` bounds current-head Codex review cycles; `remediation` bounds
 integration-stage fix pushes. A server-side catch-up (update-branch) is not a
 fix push and spends no `remediation` round, though it still owes `carry` or a
-cycle like any head move; a local catch-up merge is a remediation round. A zero
+cycle (where the `integration` cap is positive) like any head move; a local catch-up merge is a remediation round. A zero
 cap disables only the work it names, never a deterministic gate, security scan,
 branch rule, or human approval.
 `integration` charges only cycles that review something new: one whose head
