@@ -591,9 +591,10 @@ recorded.
 **A lane may run `task security` itself, but the PR stays the orchestrator's.**
 Since 2026-10-11 `harmon-remote` can run the full gate ([Network](#network)), so a
 lane can run it as an early check before it pushes. The draft PR is still opened
-by the orchestrator after its own `task security` run, because the record a draft
-carries lives there: the deferred-findings sidecar and the
-`reviewed from <host> at <head>` ledger line.
+by the orchestrator after its own `task security` run. The deferred-findings
+sidecar stays in the orchestrator's git directory and is never pushed, so only
+the orchestrator can copy its entries into the PR body's `## Deferred findings`,
+beside the `reviewed from <host> at <head>` ledger line.
 
 ### The `gh` call inventory
 
@@ -982,8 +983,9 @@ listed under [Pending observations](#pending-observations).
   ordinary brief tries `gh issue view` first, which fails on the proxy's GraphQL
   refusal (HTTP 403), and under the agent posture raw `gh api` is denied as well.
   The 2026-10-11 probe session stopped there without reading its issue. Name the
-  read path in the brief: `/usr/local/bin/gh-api-read
-  repos/<owner>/<repo>/issues/<n>` (and `…/comments`). See
+  read path in the brief:
+  `/usr/local/bin/gh-api-read repos/<owner>/<repo>/issues/<n>`
+  (and `…/comments`). See
   [the `gh` call inventory](#the-gh-call-inventory).
 - **The platform's Stop hook** (`stop-hook-git-check.sh`) blocks when any linked
   worktree has uncommitted changes, including a subagent's in-progress edits
