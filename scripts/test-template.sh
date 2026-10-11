@@ -2287,7 +2287,8 @@ else
         err "the agent posture calls bot-autonomy.sh (bot-only)"
     fi
     if [ -d .git ]; then
-        agent_test_out="$(bash scripts/test-agent-profile.sh 2>&1)" ||
+        # Under an exported agent marker, as Claude Code on the web runs (#1624).
+        agent_test_out="$(env FOREMAN_DEVCONTAINER=agent bash scripts/test-agent-profile.sh 2>&1)" ||
             err "test-agent-profile.sh fails in the rendered repo: $(printf '%s' "$agent_test_out" | tail -n 3)"
     fi
     [ ! -e .devcontainer/scripts/enable-claude-bypass.sh ] ||

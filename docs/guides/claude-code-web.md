@@ -148,8 +148,8 @@ The next session was ready about 5.6 s after its VM booted: the VM booted at
 was updated to the latest commit at 20:18:10Z, and the session's branch was
 checked out at 20:18:11.6Z. An uncached session took about three minutes, also
 measured from VM boot (above).
-So a cached start resumes an existing checkout and fetches it forward rather
-than cloning again; that the checkout is stored in the setup-script snapshot
+So a cached start resumes an existing checkout and moves its `HEAD` forward
+(not `origin/main`, [below](#other-behaviour-worth-knowing)) rather than cloning again; that the checkout is stored in the setup-script snapshot
 is the likely reading, not something these timestamps show. The [2026-10-09
 decision](../decisions/2026-10-09-web-session-start-preparation.md) keeps the setup
 script bootstrap-only; a repository `SessionStart` hook prepares the checkout
@@ -918,8 +918,18 @@ for the pre-PR gate.
 - **One repository per session** if the session should read the repo's
   `.claude/settings.json`, `.mcp.json` and hooks.
 - **Resources:** about 4 vCPUs, 16 GB RAM and 30 GB disk (*docs, 2026-09-29*).
-- **Session link:** commits carry a `Claude-Session:` trailer and PR bodies carry
-  the session URL; `CLAUDE_CODE_REMOTE_SESSION_ID` holds the ID.
+- **Session link:** PR bodies carry the session URL, and
+  `CLAUDE_CODE_REMOTE_SESSION_ID` holds the ID. **Commits do not reliably carry a
+  `Claude-Session:` trailer.** Observed 2026-10-11 on Claude Code 2.1.296: the
+  web session of 2026-10-10 (`413a685`, `7c00e3a`) produced commits with none,
+  and a commit made in a 2026-10-11 session carried only the trailers its
+  author wrote. Treat the trailer as something the session's instructions ask
+  for, not something the platform adds.
+- **A cached start leaves `origin/main` stale.** Observed 2026-10-11 on Claude
+  Code 2.1.296: the cached start fast-forwards the primary checkout's `HEAD` but
+  leaves its `origin/main` at the snapshot's commit (`HEAD` `28ded9f`,
+  `origin/main` `d530e8d`). Run `git fetch origin main` before diffing or
+  comparing against `origin/main`.
 - **npm-installed tools resolve from the platform's prefix.** Observed
   2026-10-06: `markdownlint-cli2` and `codex`, which the bootstrap installs with
   npm, resolve from `/opt/node22/bin`, the platform's npm prefix. It precedes
@@ -943,8 +953,10 @@ The docs do not say whether that clone exists when the setup script runs.
 **Observed (criterion 11), 2026-10-06: the repository is cloned before the setup
 script runs** — a probe line in the setup script wrote
 `/home/user/harmon-init/.git`.
-A cached start resumes an existing checkout and fetches it forward rather than
-clone afresh ([Setup script](#setup-script), observed 2026-10-07), which the
+A cached start resumes an existing checkout and moves its `HEAD` forward rather
+than clone afresh ([Setup script](#setup-script), observed 2026-10-07; that
+`origin/main` is left at the snapshot's commit was seen 2026-10-11, under
+[Other behaviour worth knowing](#other-behaviour-worth-knowing)), which the
 docs' "fresh clone per session" does not describe; where that checkout is kept,
 and which run built it, is not established.
 
@@ -1069,7 +1081,7 @@ date and the Claude Code version.
 | # | What has to be seen | Where the result lands |
 | --- | --- | --- |
 | 1 | Seen 2026-10-06: `v4.48.0` is the first release carrying the bootstrap; at `v5.2.0` the setup script fails at `semgrep`, and with the interim `sudo env …` line it completes in 86 s (48 s on a second VM). Seen 2026-10-07: the recipe unchanged, with `sudo bash` and no interim `env`, at `v5.2.1` started a session; the manifest reports `harmon-remote-env` at revision `v5.2.1`, `semgrep 1.178.0` and `copier` are at `/usr/local/bin`, `markdownlint-cli2` and `codex` at `/opt/node22/bin`, and `task` is 3.53.1 | [Setup script](#setup-script) |
-| 1 (cache) | Seen 2026-10-07: the setup-script cache works; a session booted 13.5 h after the run it started from, across GitHub-connection changes. Two earlier sessions had re-run the script (why the second is not established). Seen 2026-10-07 after the script change to `v5.2.1`: the next session was ready about 5.6 s after VM boot in resume-cached mode, against about three minutes uncached (also from VM boot), and the cached start resumes an existing checkout and fetches it forward (where that checkout is kept is not established). Decision 2026-10-09: a repository SessionStart hook prepares each web checkout ([ADR](../decisions/2026-10-09-web-session-start-preparation.md)). *Open:* a cached live session shows prepared hooks and fresh sibling remote refs without a manual task run ([#1548](https://github.com/evanharmon1/harmon-init/issues/1548)) | [Setup script](#setup-script) |
+| 1 (cache) | Seen 2026-10-07: the setup-script cache works; a session booted 13.5 h after the run it started from, across GitHub-connection changes. Two earlier sessions had re-run the script (why the second is not established). Seen 2026-10-07 after the script change to `v5.2.1`: the next session was ready about 5.6 s after VM boot in resume-cached mode, against about three minutes uncached (also from VM boot), and the cached start resumes an existing checkout and moves its `HEAD` forward (`origin/main` staying at the snapshot was seen 2026-10-11, see [Other behaviour](#other-behaviour-worth-knowing); where that checkout is kept is not established). Decision 2026-10-09: a repository SessionStart hook prepares each web checkout ([ADR](../decisions/2026-10-09-web-session-start-preparation.md)). *Open:* a cached live session shows prepared hooks and fresh sibling remote refs without a manual task run ([#1548](https://github.com/evanharmon1/harmon-init/issues/1548)) | [Setup script](#setup-script) |
 | — | Seen 2026-10-07: the session's built-in GitHub tools are not covered by the agent posture; a draft PR was opened, commented on and closed as the bot (PR #1546). The `gh` write forms tried stay refused (defence in depth, not the boundary; [why](#the-gh-call-inventory)). *Open:* which other built-in tools exist (merge, workflow runs, releases) was not asked; a merge into a protected branch still needs code-owner approval and the required checks | [What runs where](#what-runs-where) |
 | — | Seen 2026-10-07: with a `/web-setup` PAT stored first and an App connection added afterwards on the same account, git pushes still use the PAT (workflow push refused). *Open:* the reverse order, and which credential serves API calls | [Whose identity GitHub sees](#whose-identity-github-sees) |
 | 3 | Seen 2026-10-07, on `evanharmon1/harmon-init` and `ponderousdev/foreman`: the PAT-only route gives `gh api user` → `evanharmon1-bot`, the write role without admin or maintain (`push: true, admin: false, maintain: false`), the bot as push actor, the commit author Claude, and a refused workflow push; the App-as-bot route gives the same identity but accepts a workflow push. A PR opened through a session's built-in tools is authored by the bot (seen on `evanharmon1/harmon-init` only). *Open:* a PR through a session on a ponderousdev repository | [Whose identity GitHub sees](#whose-identity-github-sees) |

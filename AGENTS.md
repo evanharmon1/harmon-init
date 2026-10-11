@@ -280,11 +280,37 @@ Binding on every stage, skill, and harness, whatever rigor resolved:
   rebased, or force-pushed, at any stage.
 - **Never bypass a gate** — not the git hooks, not a stop-gate BLOCK, not a
   failed *or indeterminate* readiness condition. Fix the cause, or escalate.
-- **Every push passes its round gate, then a secret scan** — `.devflow.toml`'s
+- **Every push you author passes its round gate, then a secret scan** — `.devflow.toml`'s
   `[gates]` names them (`verify` for a code push, `check` for a docs-only one,
   `security:secrets` always, `security` before the draft PR); the `pre-push`
   hook (`task install:hooks`) runs what it can, otherwise run them yourself.
-  `task ci` stays on demand.
+  `task ci` stays on demand. A head move GitHub makes at your request (the
+  catch-up below) authors no bytes; the readiness gate's CI condition on the
+  new head governs it instead.
+- **Catch a behind PR up on the server, at the gate.** When the base merges
+  without conflicts, first re-read `baseRefName`: if it no longer matches the
+  base the gate captured, stop, because `base-retargeted` applies and no call is
+  made. Otherwise request GitHub update-branch in merge mode with the captured
+  head as `expected_head_sha` (REST `PUT …/pulls/<n>/update-branch`;
+  `gh pr update-branch` takes no such flag), never `--rebase`, which rewrites
+  pushed history. The new head is the catch-up only if it is a merge commit
+  whose first parent is the captured head and whose other parent is the base
+  tip the gate read. Any other head (a concurrent push, an `expected_head_sha`
+  refusal) is not a catch-up but a newer push under the readiness gate's "no
+  newer push" condition; a head still unmoved when a bounded wait ends is
+  indeterminate, so stop and report rather than request again. Then
+  fast-forward every local checkout (`git pull --ff-only`) before committing again and let CI run on the
+  new head. Then ask `carry`
+  whether the clean verdict attests it, or run the ordinary current-head cycle. It spends no remediation
+  round. Only a genuine merge refusal (a conflict, a ruleset that rejects the
+  merge commit), or a base merge that must ship with a fix, falls back to a
+  local merge under the full round gate, as an ordinary remediation round. A
+  fork without maintainer edits cannot take a local merge either: stop and ask
+  for maintainer edits. A promoted PR is caught up only when the
+  maintainer asks, in place and without undoing the promotion; otherwise its
+  drift is reported, never acted on. Reconcile once, base into branch only;
+  the ledger names it a catch-up, not a remediation push
+  ([ADR 2026-10-11](docs/decisions/2026-10-11-server-side-base-catch-up.md)).
 - **One conventional commit per adjudicated round, pushed** to the branch's own
   writable remote (`git push -u <remote> <branch>` on the first push). Per *round*,
   not per finding: five fixes are one commit, a round with nothing to fix pushes
@@ -420,7 +446,8 @@ review only when **all** of the following hold for its current `headRefOid`:
 - Every `## Deferred findings` entry in the PR body is ticked with its
   disposition.
 - `reviewDecision` is not `CHANGES_REQUESTED`.
-- `mergeStateStatus` is none of `DIRTY`, `BEHIND`, `UNKNOWN`.
+- `mergeStateStatus` is none of `DIRTY`, `BEHIND`, `UNKNOWN`. Clear `BEHIND`
+  with update-branch (§ "Policy invariants"), never a rebase.
 - No newer push invalidated any result the gate relied on — re-read
   `headRefOid` immediately before promoting and compare.
 
@@ -516,8 +543,11 @@ The selected `[rounds.*]` table supplies independent `challenge`, `review`,
 `integration`, and `remediation` ceilings plus `min_rounds` and the run's
 wall-clock ceiling. Challenge and review bound confidence passes;
 `integration` bounds current-head Codex review cycles; `remediation` bounds
-integration-stage fix pushes. A zero cap disables only the work it names,
-never a deterministic gate, security scan, branch rule, or human approval.
+integration-stage fix pushes. A server-side catch-up (update-branch) is not a
+fix push and spends no `remediation` round, though it still owes `carry` or a
+cycle (where the `integration` cap is positive) like any head move; a local catch-up merge is a remediation round. A zero
+cap disables only the work it names, never a deterministic gate, security scan,
+branch rule, or human approval.
 `integration` charges only cycles that review something new: one whose head
 differs from the last reviewed head **only** by a base merge that changed
 nothing under review re-reads identical code, so it spends the separate,
