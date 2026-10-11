@@ -590,19 +590,10 @@ recorded.
 
 **A lane may run `task security` itself, but the PR stays the orchestrator's.**
 Since 2026-10-11 `harmon-remote` can run the full gate ([Network](#network)), so a
-lane can run it before it pushes. Opening the draft is still the orchestrator's,
-for three reasons:
-
-- **No permitted way to open it.** `gh pr create` is GraphQL-backed, and the
-  REST form was refused under the posture. The built-in GitHub tools work but
-  skip every gate.
-- **No way to confirm it.** The lane could not confirm the PR's head and draft
-  state, because `gh pr view` is GraphQL too.
-- **No way to hand over the record.** The deferred-findings sidecar and the
-  `reviewed from <host> at <head>` ledger line live with the orchestrator.
-
-A lane that runs the gate only means the orchestrator's own `task security`
-run is a confirmation.
+lane can run it as an early check before it pushes. The draft PR is still opened
+by the orchestrator after its own `task security` run, because the record a draft
+carries lives there: the deferred-findings sidecar and the
+`reviewed from <host> at <head>` ledger line.
 
 ### The `gh` call inventory
 
@@ -941,15 +932,10 @@ the log is the result.
 (`AGENTS.md`), and it is never skipped. Its Semgrep step contacts `semgrep.dev`,
 which Trusted denies. `harmon-remote` now allows that host under **Custom**
 ([Network](#network)), and a session there ran the full gate to exit 0 on
-2026-10-11. So the gate can be met either way:
-
-- **In the session:** run the full `task security`. An environment still on
-  Trusted cannot; it fails at Semgrep.
-- **Outside it:** the session stops at a pushed branch, and the draft PR is opened
-  only after `task security` has passed on a machine that can run it. That is
-  the shape of a cloud lane ([What runs where](#what-runs-where)), where the
-  orchestrator runs the gate before it opens the PR, whether or not the lane
-  ran it too ([What runs where](#what-runs-where)).
+2026-10-11. A lane may run it as an early check; an environment still on
+Trusted fails at Semgrep. The gate the draft PR depends on is the orchestrator's
+own run, after its review rounds and before it opens the PR
+([What runs where](#what-runs-where)).
 
 `task security:secrets` on its own is the per-push secret scan, not a substitute
 for the pre-PR gate.
@@ -983,8 +969,7 @@ listed under [Pending observations](#pending-observations).
 - **agent-browser works with the preinstalled Chromium.** `npm install` of the
   package works, and it found the image's Chromium, so `open`, `snapshot` and
   `screenshot` all worked. Its own `agent-browser install` download is denied
-  and not needed. Run those commands in one live session: a screenshot taken
-  after a close came back blank.
+  and not needed. Run those commands in one live session.
 - **Background servers outlive the tool call.** A server started with
   `nohup … & disown` answered on `localhost` from a later tool call and again
   more than three minutes later. The probe used a static server as a
