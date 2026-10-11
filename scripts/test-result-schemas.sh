@@ -204,6 +204,15 @@ jq '
     }]
 ' "$oneshot" >"$tmp2"
 accepts run "$tmp2" --adjudication "$adjudication" --receipt
+jq '
+    .settlements = [{
+        finding_id: "challenge-r1-contract-1",
+        disposition: "file",
+        settled_at: "2026-09-03T00:07:00Z",
+        reference: {type: "issue_number", value: "evanharmon1/harmon-devkit#1617"}
+    }]
+' "$tmp2" >"$tmp"
+accepts run "$tmp"
 jq '.evidence_comments = []' "$tmp2" >"$tmp"
 rejects run-missing-adjudication-evidence run "$tmp" --adjudication "$adjudication" --receipt
 jq '.adjudications[0].finding_id = "integration-r1-human-2"' "$adjudication" >"$tmp3"

@@ -1021,9 +1021,10 @@ decisions):
   shape (above) but validated it only structurally — `checkAdjudicationEntries`
   now applies the same per-type rule `run.schema.json`'s settlement
   reference already enforces: `type: "sha"` requires a 40-hex value,
-  `type: "issue_number"` requires a positive-integer string, `type:
-  "comment_id"` requires a non-empty-after-trim value. Without this, a
-  `reference` claiming to be a commit SHA could carry any string at all,
+  `type: "issue_number"` requires a bare positive-integer string or a
+  qualified `owner/repo#<n>` string, `type: "comment_id"` requires a
+  non-empty-after-trim value. Without this, a `reference` claiming to be a
+  commit SHA could carry any string at all,
   silently breaking any consumer that dereferences it. Covered by
   `adjudication.schema/invalid/reference-bad-sha-value.json`,
   `reference-bad-issue-number-value.json`, and
@@ -1035,16 +1036,15 @@ decisions):
   whatever `type` it happened to declare left the type itself unconstrained —
   `{disposition: "file", reference: {type: "sha", ...}}` passed despite the
   SHA never confirming a filed issue. `checkAdjudicationEntries` now applies
-  the same total mapping `run.schema.json`'s settlement reference already
-  enforces for the three dispositions a reference can meaningfully evidence
-  at adjudication time (the field's own description: "declined or filed
-  directly"): `fix` requires `sha`, `decline` requires `comment_id`, `file`
-  requires `issue_number`. Round 2 left `restructure`/`delete`/`defer`
-  unconstrained on the theory that no mapping applied to them; round 3
+  the settlement mapping from `run.schema.json`, extended to four
+  reference-bearing adjudication dispositions: `fix` requires `sha`,
+  `decline` requires `comment_id`, `file` requires `issue_number`, and
+  `split` requires an `issue_number` reference. Round 2 left
+  `restructure`/`delete`/`defer` unconstrained on the theory that no mapping applied to them; round 3
   pointed out that permissive default let `defer` silently accept a
   reference the field's own description already promises it never carries
   ("never deferred" — that evidence belongs on the eventual settlement
-  instead). Any disposition outside the three-way mapping now rejects a
+  instead). Any disposition outside the four-way mapping now rejects a
   reference outright rather than leaving it unconstrained. Covered by
   `adjudication.schema/invalid/reference-type-disposition-mismatch.json`
   (round 2), `reference-on-defer-disposition.json` (round 3), and — closing
