@@ -1643,13 +1643,6 @@ minimal) # use_skills_sync=false -> none of the machinery renders
             ./scripts/test-sync-devkit-release.sh ||
             err "rendered test-sync-devkit-release.sh failed under a preset token and release environment"
     fi
-    # The rendered agent-posture test must not depend on an inherited marker:
-    # Claude Code on the web exports FOREMAN_DEVCONTAINER=agent (#1624).
-    if [ "$profile" = "full" ] && [ -f scripts/test-agent-profile.sh ]; then
-        run_quiet rendered-agent-profile-marker \
-            env FOREMAN_DEVCONTAINER=agent ./scripts/test-agent-profile.sh ||
-            err "rendered test-agent-profile.sh failed under an exported FOREMAN_DEVCONTAINER=agent"
-    fi
     ;;
 esac
 [ -d .claude/skills ] || err ".claude/skills managed skill directory is missing"
@@ -2255,7 +2248,8 @@ else
         err "the agent posture calls bot-autonomy.sh (bot-only)"
     fi
     if [ -d .git ]; then
-        agent_test_out="$(bash scripts/test-agent-profile.sh 2>&1)" ||
+        # Under an exported agent marker, as Claude Code on the web runs (#1624).
+        agent_test_out="$(env FOREMAN_DEVCONTAINER=agent bash scripts/test-agent-profile.sh 2>&1)" ||
             err "test-agent-profile.sh fails in the rendered repo: $(printf '%s' "$agent_test_out" | tail -n 3)"
     fi
     [ ! -e .devcontainer/scripts/enable-claude-bypass.sh ] ||
