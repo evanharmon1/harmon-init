@@ -35,7 +35,7 @@ ARG CLAUDE_CODE_VERSION=2.1.286
 # renovate: datasource=npm depName=@github/copilot
 ARG COPILOT_VERSION=1.0.90
 # renovate: datasource=npm depName=@earendil-works/pi-coding-agent
-ARG PI_VERSION=0.99.2
+ARG PI_VERSION=1.1.0
 # renovate: datasource=github-releases depName=can1357/oh-my-pi extractVersion=^v?(?<version>.+)$
 ARG OH_MY_PI_VERSION=18.4.6
 # oh-my-pi ships unsigned release binaries: the version pin above is
@@ -70,7 +70,7 @@ ARG ACT_VERSION=0.2.89
 # renovate: datasource=github-releases depName=wagoodman/dive extractVersion=^v?(?<version>.+)$
 ARG DIVE_VERSION=0.13.1
 # renovate: datasource=github-releases depName=antonmedv/fx extractVersion=^v?(?<version>.+)$
-ARG FX_VERSION=39.2.0
+ARG FX_VERSION=40.0.0
 # renovate: datasource=github-releases depName=sinelaw/fresh extractVersion=^v?(?<version>.+)$
 ARG FRESH_VERSION=0.5.2
 # Fresh release-archive SHA-256 values. The version pin is Renovate-managed;
@@ -95,7 +95,7 @@ ARG GH_DASH_VERSION=4.26.0
 # renovate: datasource=github-releases depName=charmbracelet/gum extractVersion=^v?(?<version>.+)$
 ARG GUM_VERSION=2.0.2
 # renovate: datasource=github-releases depName=o2sh/onefetch extractVersion=^v?(?<version>.+)$
-ARG ONEFETCH_VERSION=2.28.1
+ARG ONEFETCH_VERSION=3.0.0
 # renovate: datasource=github-releases depName=wtfutil/wtf extractVersion=^v?(?<version>.+)$
 ARG WTF_VERSION=0.51.0
 # renovate: datasource=github-releases depName=ducaale/xh extractVersion=^v?(?<version>.+)$
