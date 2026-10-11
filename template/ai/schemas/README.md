@@ -826,6 +826,21 @@ decisions):
   `defer` forever in its own document; the settlement that later resolves it
   to `fix | decline | file` is a new entry in the run record instead, so
   neither document is edited to reflect the other).
+- **Split records live in `run.schema.json`'s optional `splits[]`.** Each
+  record names the mechanism removed from the change, its filed issue and
+  milestone, and the `finding_ids` it answers, together with `stage`, `round`,
+  and `split_at`. This is the run-level half of a split; the per-finding half
+  is an adjudication entry with `disposition: split` and a required
+  `issue_number` reference. Both halves allow only the confidence stages
+  `challenge` and `review`, never `integration`.
+  The validator requires non-blank mechanism, issue, and milestone strings;
+  a finding may appear in only one split, and a mechanism only once per stage.
+  Finding ids must match the split's stage and round. `split_at` cannot
+  predate `started_at` or postdate `promotion.promoted_at` when promoted.
+  With `--adjudication` (or `--no-adjudications`), every recorded finding must
+  be adjudicated exactly once as `split`, with the same issue reference in
+  the same notation. Once the run reaches any terminal outcome, every
+  supplied split adjudication must also appear in `splits[]`.
 - **`interventions[].kind` is `asked | other`.** The spec's own success
   metric draws exactly this one distinction — "any human action... except
   answering an implementer's `blocked_question`, counted separately as
