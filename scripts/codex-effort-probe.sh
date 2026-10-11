@@ -63,7 +63,7 @@ readonly DEFAULT_EFFORT="${CODEX_PROBE_DEFAULT_EFFORT:-medium}"
 # Probing only the default model would let a combination pass where the default
 # accepts xhigh but a dispatched worker model quietly falls back, which is the
 # failure #1186 was actually about. Probe the models workers are dispatched as.
-readonly PROBE_MODELS="${CODEX_PROBE_MODELS:-gpt-6.1-sol gpt-5.6-luna gpt-5.6-terra}"
+readonly PROBE_MODELS="${CODEX_PROBE_MODELS:-gpt-6.1-sol gpt-6-luna gpt-5.6-terra}"
 
 fail() {
     echo "codex-effort-probe: $*" >&2
