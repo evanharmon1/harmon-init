@@ -57,7 +57,9 @@ cat >"$TMPROOT/bin/pnpm" <<'STUB'
 # Overrides resolve as pnpm 11's do (probed on 11.28.5): in map order, the last
 # matching entry wins, so any later key for the same package (bare `pkg`, or
 # a `pkg@<selector>`) outranks a cleared-by `pkg@<major>` key and the
-# advisory stays open.
+# advisory stays open — except another line's exact `pkg@<major-key>`, whose
+# versions are disjoint. A parent-scoped `parent>pkg…` key outranks it in
+# either order (pnpm prefers the parent-scoped key), so it keeps it open too.
 set -euo pipefail
 echo "pnpm $*" >>"$STUB_DIR/calls"
 outranked() {
@@ -65,7 +67,13 @@ outranked() {
     yq -r '.overrides // {} | keys | .[]' pnpm-workspace.yaml >"$STUB_DIR/keys.order"
     while IFS= read -r line; do
         k="${line%%: *}"
-        awk -v k="$k" -v b="${k%@*}" '$0 == k { seen = 1; next } seen && ($0 == b || index($0, b "@") == 1) { found = 1 } END { exit !found }' \
+        awk -v k="$k" -v b="${k%@*}" '
+            function disjoint(x,   m) { m = substr(x, length(b) + 2); return m ~ /^[1-9][0-9]*$/ || m ~ /^0\.[0-9]+$/ }
+            $0 == k { seen = 1; next }
+            seen && ($0 == b || (index($0, b "@") == 1 && !disjoint($0))) { found = 1 }
+            { p = index($0, ">" b); r = substr($0, p + 1 + length(b)) }
+            p && (r == "" || substr(r, 1, 1) == "@") { found = 1 }
+            END { exit !found }' \
             "$STUB_DIR/keys.order" && return 0
     done <"$STUB_DIR/cleared-by"
     return 1
@@ -1056,10 +1064,36 @@ p="$(existing_floor sel-unreadable "'>=1.3.0 <2'")"
 add_entry "$p" 'left-pad@<1.5.0' "1.4.2"
 expect_refused "$p" sel-unreadable "the local override \`left-pad@<1.5.0: '1.4.2'\` has a cap the script cannot read"
 pass "sel-unreadable: a selector override pinning the package is refused, bytes unchanged"
-p="$(existing_floor parent-unreadable "'>=1.3.0 <2'")"
-add_entry "$p" 'some-parent>left-pad' "1.3.2"
-expect_refused "$p" parent-unreadable "the local override \`some-parent>left-pad: '1.3.2'\` has a cap the script cannot read"
-pass "parent-unreadable: a parent-scoped override pinning the package is refused, bytes unchanged"
+
+# A parent-scoped override outranks `pkg@<major>` for that parent's
+# dependency in EITHER map order (probed on pnpm 11.28.5: `make-dir>semver`
+# beat `semver@7` both ways), so the written floor is not provably effective:
+# refused wherever the entry sits, even with a readable cap…
+p="$(existing_floor parent-before "'>=1.3.0 <2'")"
+add_entry "$p" 'some-parent>left-pad' "'>=1.3.0 <2'"
+expect_refused "$p" parent-before "a parent-scoped \`some-parent>left-pad\` override for \`left-pad\` outranks \`left-pad@1\` — remove or raise it deliberately"
+pass "parent-before: an earlier parent-scoped override is refused, bytes unchanged"
+p="$(existing_floor parent-after "'>=1.3.0 <2'")"
+add_entry "$p" 'some-parent>left-pad' "'>=1.3.0 <2'" after
+echo "left-pad@1: '>=1.3.0 <2'" >"$p/.stub/cleared-by"
+rm -f "$p/.stub/needs-relock" # so only the parent-scoped key can keep it open
+(cd "$p" && STUB_DIR="$p/.stub" pnpm audit --audit-level=high --json || true) >"$p/stub-audit.json"
+cmp -s "$p/stub-audit.json" "$p/.stub/audit.json" || fail "parent-after: the stub cleared an advisory a parent-scoped key outranks"
+expect_refused "$p" parent-after "a parent-scoped \`some-parent>left-pad\` override for \`left-pad\` outranks \`left-pad@1\`"
+pass "parent-after: a later parent-scoped override is refused, bytes unchanged"
+
+# … and listed, not applied, under --skip-refused.
+p="$(existing_floor parent-skip "'>=1.3.0 <2'")"
+add_entry "$p" 'some-parent>left-pad' "'>=1.3.0 <2'"
+before="$(snapshot_of "$p")"
+run_fix "$p" --skip-refused --report "$p/report.md" >"$p/out.log" 2>&1 || {
+    cat "$p/out.log"
+    fail "parent-skip: exited non-zero"
+}
+[ "$(snapshot_of "$p")" = "$before" ] || fail "parent-skip: the refused key was written"
+grep -qF "**refused:** a parent-scoped \`some-parent>left-pad\` override for \`left-pad\` outranks" "$p/report.md" ||
+    fail "parent-skip: the refusal is not listed in the report"
+pass "parent-skip: --skip-refused lists the parent-scoped refusal and writes nothing for it"
 
 # … and one placed after the key outranks the rewrite: refused. The stub's
 # last-match-wins resolution sees it too: with the floor in place and the
@@ -1072,6 +1106,52 @@ rm -f "$p/.stub/needs-relock" # so only the ordering can keep it open
 cmp -s "$p/stub-audit.json" "$p/.stub/audit.json" || fail "sel-after: the stub cleared an advisory a later selector key outranks"
 expect_refused "$p" sel-after "a later \`left-pad@^1.2.0\` override for \`left-pad\` takes precedence over \`left-pad@1\` — reorder or remove it deliberately"
 pass "sel-after: a selector override after the keyed one is refused, bytes unchanged"
+
+# Another line's exact `pkg@<major-key>` key is provably disjoint (Claude
+# 6114558857): a package the script floored on two lines raises either line,
+# in either map order…
+p="$(existing_floor two-lines-1 "'>=1.3.0 <2'")"
+add_entry "$p" left-pad@2 "'>=2.0.5 <3'" after
+echo "left-pad@1: '>=1.3.4 <2'" >"$p/.stub/cleared-by"
+run_fix "$p" >"$p/out.log" 2>&1 || {
+    cat "$p/out.log"
+    fail "two-lines-1: a later left-pad@2 key blocked the left-pad@1 raise"
+}
+expect_keys "$p" two-lines-1 'left-pad@1=>=1.3.4 <2'
+pass "two-lines-1: left-pad@1 is raised past a later left-pad@2 key"
+
+p="$(existing_floor two-lines-2 "'>=1.3.0 <2'")"
+add_entry "$p" left-pad@2 "'>=2.0.0 <3'"
+advisory GHSA-0000-0000-0050 left-pad high '<2.0.5' 2.0.1 left-pad | jq '{advisories: .}' >"$p/.stub/audit.json"
+fix_writes "$p" '  left-pad@<2.0.5: ^2.0.5'
+echo "left-pad@2: '>=2.0.5 <3'" >"$p/.stub/cleared-by"
+run_fix "$p" >"$p/out.log" 2>&1 || {
+    cat "$p/out.log"
+    fail "two-lines-2: a later left-pad@1 key blocked the left-pad@2 raise"
+}
+expect_keys "$p" two-lines-2 'left-pad@2=>=2.0.5 <3'
+pass "two-lines-2: left-pad@2 is raised past a later left-pad@1 key"
+
+# … while a selector that can reach the line, placed after the key, still
+# outranks it.
+p="$(existing_floor sel-after-ge "'>=1.3.0 <2'")"
+add_entry "$p" 'left-pad@>=1' "'>=1.3.0 <2'" after
+expect_refused "$p" sel-after-ge "a later \`left-pad@>=1\` override for \`left-pad\` takes precedence over \`left-pad@1\`"
+pass "sel-after-ge: a later left-pad@>=1 key still refuses the left-pad@1 rewrite"
+
+# targets_of, the reader every rule above runs on: which keys target a
+# package (Codex 4243577341, Gemini 4243510179 — digit-led names).
+# shellcheck source=/dev/null
+. <(sed -n '/^targets_of() {/,/^}/p' "$REPO_ROOT/$HELPER")
+got="$(printf '%s\tv\n' pkg pkg@1 'pkg@>=1.2.0' 'parent>pkg' 'a>b>pkg' 'pkg@<1||>2' 'pkg-other' 'pkg>child' '@s/p@1' | targets_of pkg | cut -f2 | tr '\n' ' ')"
+[ "$got" = 'pkg pkg@1 pkg@>=1.2.0 parent>pkg a>b>pkg pkg@<1||>2 ' ] || fail "targets-table: pkg: got '$got'"
+got="$(printf '%s\tv\n' 7zip-bin 'parent>7zip-bin' 'parent@1>7zip-bin@2' 'x7zip-bin' | targets_of 7zip-bin | cut -f2 | tr '\n' ' ')"
+[ "$got" = '7zip-bin parent>7zip-bin parent@1>7zip-bin@2 ' ] || fail "targets-table: 7zip-bin: got '$got'"
+got="$(printf '%s\tv\n' '@s/p' '@s/p@1' 'x>@s/p' '@s/p>q' 'p' | targets_of @s/p | cut -f2 | tr '\n' ' ')"
+[ "$got" = '@s/p @s/p@1 x>@s/p ' ] || fail "targets-table: @s/p: got '$got'"
+got="$(printf '%s\tv\n' pkg@1 pkg@2 pkg@0.4 pkg@0 'pkg@>=1' pkg@1.x | targets_of pkg pkg@1 | cut -f2 | tr '\n' ' ')"
+[ "$got" = 'pkg@1 pkg@0 pkg@>=1 pkg@1.x ' ] || fail "targets-table: disjoint lines: got '$got'"
+pass "targets-table: bare, @major, selectors, parent-scoped (digit-led too), scoped names, disjoint major keys"
 
 # Table-safe report cells (Claude #4): a refusal reason carrying a `||`
 # patched range must not split its row.

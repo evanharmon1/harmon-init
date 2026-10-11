@@ -25,10 +25,11 @@
 # is REFUSED: crossing a major, an advisory with no patched version, a floor
 # the template block owns (raise that upstream), a patched version at or above
 # a kept local cap, an existing override for the package (bare `pkg`,
-# `pkg@<major>`, any `pkg@<selector>`, `parent>pkg`) whose cap the script
-# cannot read — an exact pin, `~`, an x-range, a hyphen range, `||`, `^0.x`, a
-# prerelease or build suffix, a `v` prefix — or one placed after the key the
-# script would rewrite (pnpm applies the last matching override).
+# `pkg@<major>`, any `pkg@<selector>`) whose cap the script cannot read — an
+# exact pin, `~`, an x-range, a hyphen range, `||`, `^0.x`, a prerelease or
+# build suffix, a `v` prefix — one placed after the key the script would
+# rewrite (pnpm applies the last matching override), or any parent-scoped
+# `parent>pkg` override (pnpm prefers it to `pkg@<major>` in either order).
 #
 # Usage:
 #   security-audit-fix.sh fix [--skip-refused] [--report FILE]
@@ -550,25 +551,34 @@ add_refusal() {
     printf '%s\t%s\t%s\t%s\t%s\n' "$@" >>"$WORK/refused.tsv"
 }
 
-# targets_of PKG — "row<TAB>key<TAB>value" (row = map order, from
-# overrides_tsv rows on stdin) for every override whose target package is
-# PKG: `pkg`, `pkg@<anything>`, and the last segment of a parent-scoped
-# `parent>pkg…`. A `>` is a parent separator only when a package name follows
-# it directly (a letter, `@` or `_`) and it does not follow `@` or a space, so
-# `pkg@>=1.2.0` and `pkg@<2 >1` stay selectors. Scoped names keep their
-# leading `@`.
+# targets_of PKG [KEY] — "row<TAB>key<TAB>parent<TAB>value" (row = map
+# order, from overrides_tsv rows on stdin; parent = 1 for a parent-scoped
+# key) for every override whose target package is PKG: `pkg`,
+# `pkg@<anything>`, and the last segment of a parent-scoped `parent>pkg…`.
+# A `>` is a parent separator only when a package name follows it directly
+# (a letter, digit, `@` or `_`) and it does not follow `@`, `|` or a space,
+# so `pkg@>=1.2.0`, `pkg@<2 >1` and `pkg@<1||>2` stay selectors.
+# Scoped names keep their leading `@`. With KEY (the `pkg@<major-key>` being
+# written), a key of exactly that form for ANOTHER major key (`pkg@N`, or
+# `pkg@0.M` on 0.x) is left out: its line is provably disjoint from KEY's, so
+# it can neither cap KEY's line nor outrank KEY. Every other form stays in.
 targets_of() {
-    awk -F '\t' -v pkg="$1" '
+    awk -F '\t' -v pkg="$1" -v key="${2:-}" '
         function target(k,   i, c, prev, next_c, t, j) {
-            t = k
+            t = k; parent = 0
             for (i = length(k); i > 1; i--) {
                 c = substr(k, i, 1); prev = substr(k, i - 1, 1); next_c = substr(k, i + 1, 1)
-                if (c == ">" && prev != "@" && prev != " " && next_c ~ /[A-Za-z@_]/) { t = substr(k, i + 1); break }
+                if (c == ">" && prev != "@" && prev != "|" && prev != " " && next_c ~ /[A-Za-z0-9@_]/) { t = substr(k, i + 1); parent = 1; break }
             }
             if (substr(t, 1, 1) == "@") { j = index(substr(t, 2), "@"); return j ? substr(t, 1, j) : t }
             j = index(t, "@"); return j ? substr(t, 1, j - 1) : t
         }
-        target($1) == pkg { print NR "\t" $1 "\t" $2 }'
+        function disjoint(k,   m) {
+            if (key == "" || k == key || index(k, pkg "@") != 1) return 0
+            m = substr(k, length(pkg) + 2)
+            return m ~ /^[1-9][0-9]*$/ || m ~ /^0\.[0-9]+$/
+        }
+        target($1) == pkg && !disjoint($1) { print NR "\t" $1 "\t" parent "\t" $2 }'
 }
 
 # refuse_key KEY REASON — refuse every candidate advisory row for KEY.
@@ -699,10 +709,24 @@ cmd_fix() {
         #     patched version is at or above it;
         #   - one placed AFTER an existing key outranks the rewrite, which is
         #     refused. (A new key is appended at the end of the map by yq.)
+        #   - a parent-scoped `parent>pkg…` entry outranks `pkg@<major>` for
+        #     that parent's dependency in EITHER map order (probed on pnpm
+        #     11.28.5: `make-dir>semver` beat `semver@7` both ways), so the
+        #     written floor is not provably effective: refused, wherever the
+        #     entry sits, before any of the checks above.
         # Selectors are not matched against versions: an entry is judged as if
-        # it applied to the whole line, which can only refuse more, never less.
+        # it applied to the whole line, which can only refuse more, never less
+        # — so an earlier entry's narrower cap is honoured even when its
+        # selector does not reach this line (`pkg@<1.2.0: '>=1.0.0 <1.2.0'`
+        # caps a pkg@1 floor). The one exception is provable: another line's
+        # exact `pkg@<major-key>` key is disjoint and left out (targets_of).
         _upper="<$_bound" _cap_v="" _cap_span="" _blocked=""
-        targets_of "${_key%@*}" <"$WORK/current.tsv" >"$WORK/targets.tsv"
+        targets_of "${_key%@*}" "$_key" <"$WORK/current.tsv" >"$WORK/targets.tsv"
+        _parent="$(awk -F '\t' '$3 == 1 { print $2; exit }' "$WORK/targets.tsv")"
+        if [ -n "$_parent" ]; then
+            refuse_key "$_key" "a parent-scoped \`$_parent\` override for \`${_key%@*}\` outranks \`$_key\` — remove or raise it deliberately"
+            continue
+        fi
         _key_row="$(awk -F '\t' -v k="$_key" '$2 == k { print $1; exit }' "$WORK/targets.tsv")"
         if [ -n "$_key_row" ]; then
             _later="$(awk -F '\t' -v r="$_key_row" '$1 + 0 > r + 0 { print $2; exit }' "$WORK/targets.tsv")"
@@ -711,7 +735,7 @@ cmd_fix() {
                 continue
             fi
         fi
-        while IFS="$TAB" read -r _ _ek _existing; do
+        while IFS="$TAB" read -r _ _ek _ _existing; do
             _span="\`$_ek: '$_existing'\`"
             _cap="$(floor_upper "$_existing")"
             if [ -z "$_cap" ]; then
