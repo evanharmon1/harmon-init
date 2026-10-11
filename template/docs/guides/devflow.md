@@ -191,6 +191,18 @@ accounts for it — until then its single cycle counter governs, no cycle is
 exempt, and a cycle ordinal above `integration` is rejected by the readiness
 gate as `codex-cap-mismatch`.
 
+A PR that falls behind its base is caught up at the gate in a fixed order:
+GitHub **update-branch** first (merge mode, pinned to the captured head with
+`expected_head_sha`, never `--rebase`, after re-reading `baseRefName`), then
+**CI** on the new head, then, where Codex cloud review is enabled, **`carry`**.
+A server-side catch-up authors no bytes, so it runs no local round gate or
+secret scan and spends no `remediation` round; the readiness gate's CI
+condition gates it. That head counts only if it is the merge of the captured
+head and the base tip; any other head is a newer push, which restarts the gate.
+A genuine merge refusal, or a base merge that must ship with a fix, falls back
+to a local merge, which is an ordinary remediation round.
+`AGENTS.md` § "Policy invariants" states the standard path and fallback.
+
 A base catch-up merge is tried for a **carry** before the exemption. When the
 change's canonical diff digest against the new base is identical to the one a
 clean verdict already covered, that verdict attests the new head too: no review

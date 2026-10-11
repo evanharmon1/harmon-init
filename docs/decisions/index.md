@@ -88,3 +88,6 @@ record is still open to edits.
 - [2026-10-10-route-agent-posture-api-reads-through-a-get-only-wrapper.md](2026-10-10-route-agent-posture-api-reads-through-a-get-only-wrapper.md)
   — route the agent posture's API reads through a GET-only wrapper and deny raw `gh api`
   (Accepted; amends 2026-09-29 (three postures)).
+- [2026-10-11-server-side-base-catch-up.md](2026-10-11-server-side-base-catch-up.md)
+  — catch a PR up to its base with GitHub update-branch; a local merge is the fallback,
+  and a server-side catch-up spends no remediation round (Accepted).
