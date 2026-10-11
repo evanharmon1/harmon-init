@@ -417,7 +417,8 @@ instance being validated:
   below `Z`).
 - **`run.schema.json`'s `settlements[].reference.type` must match
   `disposition`** — `fix → sha` (a 40-hex value), `file → issue_number`
-  (`^[1-9][0-9]*$`), `decline → comment_id` (non-empty) — the evidence a
+  (a bare `^[1-9][0-9]*$` or a qualified `owner/repo#<n>`),
+  `decline → comment_id` (non-empty) — the evidence a
   human or CI can actually follow has to be shaped for what it claims to be
   (`checkSettlementReferenceType`).
 - **`marker.destination` and `marker.round`** — spec § Evidence describes
