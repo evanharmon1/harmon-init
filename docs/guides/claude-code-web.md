@@ -918,8 +918,18 @@ for the pre-PR gate.
 - **One repository per session** if the session should read the repo's
   `.claude/settings.json`, `.mcp.json` and hooks.
 - **Resources:** about 4 vCPUs, 16 GB RAM and 30 GB disk (*docs, 2026-09-29*).
-- **Session link:** commits carry a `Claude-Session:` trailer and PR bodies carry
-  the session URL; `CLAUDE_CODE_REMOTE_SESSION_ID` holds the ID.
+- **Session link:** PR bodies carry the session URL, and
+  `CLAUDE_CODE_REMOTE_SESSION_ID` holds the ID. **Commits do not reliably carry a
+  `Claude-Session:` trailer.** Observed 2026-10-11 on Claude Code 2.1.296: the
+  web session of 2026-10-10 (`413a685`, `7c00e3a`) produced commits with none,
+  and a commit made in a 2026-10-11 session carried only the trailers its
+  author wrote. Treat the trailer as something the session's instructions ask
+  for, not something the platform adds.
+- **A cached start leaves `origin/main` stale.** Observed 2026-10-11 on Claude
+  Code 2.1.296: the cached start fast-forwards the primary checkout's `HEAD` but
+  leaves its `origin/main` at the snapshot's commit (`HEAD` `28ded9f`,
+  `origin/main` `d530e8d`). Run `git fetch origin main` before diffing or
+  comparing against `origin/main`.
 - **npm-installed tools resolve from the platform's prefix.** Observed
   2026-10-06: `markdownlint-cli2` and `codex`, which the bootstrap installs with
   npm, resolve from `/opt/node22/bin`, the platform's npm prefix. It precedes

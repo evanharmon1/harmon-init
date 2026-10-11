@@ -460,7 +460,12 @@ fi
 # ── 4. Harness refusal ──────────────────────────────────────────────────
 echo "==> 4. harness coverage and refusal under the agent marker"
 
-bash "$agent_autonomy" coverage >/dev/null || fail "agent-autonomy.sh coverage failed (run it for the details)"
+FOREMAN_DEVCONTAINER= bash "$agent_autonomy" coverage >/dev/null || fail "agent-autonomy.sh coverage failed (run it for the details)"
+# Regression guard: the marker is inherited from the environment (every Claude
+# Code on the web session runs with FOREMAN_DEVCONTAINER=agent), so a call that
+# does not set it explicitly changes result with where the test runs.
+unpinned="$(grep -nE '(^|[^_[:alnum:]])(run_autonomy|run_baked) +[a-z"$]|bash "\$agent_autonomy"|bash "\$\{baked_tree\}/' "${BASH_SOURCE[0]}" | grep -v -e 'FOREMAN_DEVCONTAINER=' -e 'unpinned=' || true)"
+[ -z "$unpinned" ] || fail "agent-autonomy.sh invoked without an explicit FOREMAN_DEVCONTAINER: ${unpinned}"
 
 # The dispatcher needs only these tools; a curated PATH keeps the real
 # harness binaries this environment may have installed out of the fixture.
@@ -639,7 +644,7 @@ for sub in apply verify; do
 done
 grep -qx '{}' "${fake_etc}/claude-code/managed-settings.json" ||
     fail "apply installed the checkout's profile when the baked copy was missing"
-AGENT_AUTONOMY_REGISTRY="${repo_root}/agent-registry.json" bash "${baked_tree}/.devcontainer/agent/agent-autonomy.sh" coverage >/dev/null ||
+FOREMAN_DEVCONTAINER= AGENT_AUTONOMY_REGISTRY="${repo_root}/agent-registry.json" bash "${baked_tree}/.devcontainer/agent/agent-autonomy.sh" coverage >/dev/null ||
     fail "coverage without the agent marker no longer reads the checkout's profile"
 mkdir -p "${work_dir}/baked-image"
 cp "${agent_config_dir}/"* "${work_dir}/baked-image/"
@@ -650,7 +655,7 @@ FOREMAN_DEVCONTAINER=agent run_baked verify >/dev/null || fail "verify under the
 
 # A registry slug with no bucket fails coverage.
 jq '.harnesses += [{slug: "brand-new-harness"}]' agent-registry.json >"${work_dir}/registry-new.json"
-if AGENT_AUTONOMY_REGISTRY="${work_dir}/registry-new.json" bash "$agent_autonomy" coverage >/dev/null 2>&1; then
+if FOREMAN_DEVCONTAINER= AGENT_AUTONOMY_REGISTRY="${work_dir}/registry-new.json" bash "$agent_autonomy" coverage >/dev/null 2>&1; then
     fail "coverage passed with a registry slug that is neither supported, aliased, nor refused"
 fi
 
