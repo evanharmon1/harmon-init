@@ -1029,6 +1029,17 @@ if [ -f pnpm-workspace.yaml ]; then
         ! grep -qE '^[[:space:]]+workflow_dispatch:' "$sa_workflow" || err "$sa_workflow mints an App token and must not have workflow_dispatch"
         grep -q 'repository_dispatch:' "$sa_workflow" || err "$sa_workflow has no manual (repository_dispatch) trigger"
         grep -q '^concurrency:' "$sa_workflow" || err "$sa_workflow needs one concurrency group"
+        grep -qE '^[[:space:]]+lint-tools: "true"' "$sa_workflow" ||
+            err "$sa_workflow's audit job must pass lint-tools: \"true\" so the setup action installs yq"
+    fi
+    sa_setup=".github/actions/setup/action.yml"
+    if [ -f "$sa_setup" ]; then
+        grep -qE '^[[:space:]]+YQ_VERSION=' "$sa_setup" ||
+            err "$sa_setup does not install the pinned yq for a Node profile (security-audit-fix needs it)"
+        grep -q 'yq_sha256=' "$sa_setup" ||
+            err "$sa_setup installs yq without its pinned checksum for a Node profile"
+    else
+        err "$sa_setup missing — security-audit-fix's audit job uses it to install yq"
     fi
 else
     [ ! -f "$sa_workflow" ] || err "$sa_workflow rendered for a profile without Node"

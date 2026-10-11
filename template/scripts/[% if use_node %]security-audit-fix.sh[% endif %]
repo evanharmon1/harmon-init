@@ -313,7 +313,13 @@ cmd_fix() {
     done
     need_bin pnpm
     need_bin jq
-    need_bin yq
+    # Every pnpm-workspace.yaml read and write goes through yq; without it the
+    # script cannot touch the file safely, so it refuses before doing anything.
+    command -v yq >/dev/null 2>&1 || {
+        echo "security-audit-fix: refused — yq (mikefarah v4) is required to edit $WORKSPACE; in CI the" \
+            ".github/actions/setup action installs the pinned yq with lint-tools: \"true\"" >&2
+        exit 3
+    }
     for _f in "$WORKSPACE" "$LOCKFILE" "$MANIFEST"; do
         [ -f "$_f" ] || die "$_f not found — run from a pnpm project with a committed lockfile"
     done

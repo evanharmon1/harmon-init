@@ -54,7 +54,7 @@ root_segment = installer_segment(root)
 template_segment = "\n".join(
     line
     for line in installer_segment(template).splitlines()
-    if line not in ("[% if use_skills_sync %]", "[% endif %]")
+    if line not in ("[% if use_skills_sync or use_node %]", "[% endif %]")
 ) + "\n"
 if root_segment != template_segment:
     raise SystemExit("root/template pinned lint-tool installer segments differ")

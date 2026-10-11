@@ -547,6 +547,30 @@ expect_overrides "$p" four-space '{"source-map-js@1": ">=1.2.2 <2", "left-pad@1"
 expect_below_marker "$p" four-space lodash@4
 pass "four-space: yq normalizes the indentation; the floor parses and sits below the end marker"
 
+# Without yq the script refuses before touching anything (r4 prep). The case
+# runs on a PATH of links to just the tools the script needs, so a yq anywhere
+# on the host PATH (e.g. /usr/bin on a hosted runner) cannot leak in.
+p="$(new_project no-yq)"
+advisory GHSA-0000-0000-0016 lodash high '<4.17.21' 4.17.20 lodash | jq '{advisories: .}' >"$p/.stub/audit.json"
+fix_writes "$p" '  lodash@<4.17.21: ^4.17.21'
+mkdir -p "$p/.nobin"
+for tool in bash env jq awk sed grep cut sort uniq comm cat cp cmp mktemp rm head tail tr dirname; do
+    ln -s "$(command -v "$tool")" "$p/.nobin/$tool"
+done
+ln -s "$TMPROOT/bin/pnpm" "$p/.nobin/pnpm"
+before="$(snapshot_of "$p")"
+rc=0
+(cd "$p" && PATH="$p/.nobin" STUB_DIR="$p/.stub" ./scripts/security-audit-fix.sh fix) >"$p/out.log" 2>&1 || rc=$?
+[ "$rc" -eq 3 ] || {
+    cat "$p/out.log"
+    fail "no-yq: expected exit 3, got $rc"
+}
+[ "$(snapshot_of "$p")" = "$before" ] || fail "no-yq: a run without yq changed bytes"
+grep -q 'yq (mikefarah v4) is required' "$p/out.log" || fail "no-yq: refusal does not name yq"
+grep -q 'setup action' "$p/out.log" || fail "no-yq: refusal does not point at the setup action"
+! grep -q -- '--fix' "$p/.stub/calls" || fail "no-yq: ran pnpm audit --fix before refusing"
+pass "no-yq: a missing yq is a refusal before anything is touched"
+
 # ── 10. publish: one rolling draft PR, scope-checked patch ─────────────
 p="$(new_project publish)"
 ORIGIN="$TMPROOT/origin.git"
