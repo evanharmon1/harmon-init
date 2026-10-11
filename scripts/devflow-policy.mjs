@@ -53,6 +53,13 @@ const ROLES = ['orchestrator', 'implementer', 'challenger', 'reviewer', 'integra
 const CONFIDENCE_STAGES = ['challenge', 'review']
 const STAGES = ['implement', 'challenge', 'review', 'integration']
 const PRE_PR_STAGES = new Set(['implement', 'challenge', 'review'])
+// [stage.integration].review_trigger (harmon-init#1571): WHEN the integration
+// stage requests its PR-side reviews relative to CI on the head. Timing only —
+// it never adds or removes a finder, and never suppresses or adds a cycle the
+// resolved [rounds.*] policy decides. Absent resolves to the first value, the
+// serial order (wait for CI green, then request).
+const REVIEW_TRIGGERS = ['after-ci', 'with-push', 'after-ci-first']
+const DEFAULT_REVIEW_TRIGGER = REVIEW_TRIGGERS[0]
 const PREDICATES = new Set([
   'no_gating_findings',
   'provenance_share',
@@ -244,6 +251,7 @@ const BUILTIN_ROLE_TIER_DEFAULTS = Object.freeze({
 function builtinStagesDefault() {
   const result = {}
   for (const stage of STAGES) result[stage] = { finders: [], finder_fallbacks: [], pool: null }
+  result.integration.review_trigger = DEFAULT_REVIEW_TRIGGER
   return result
 }
 function builtinRolesDefault() {
@@ -1040,7 +1048,11 @@ function resolveStages(doc) {
   const result = {}
   for (const stage of STAGES) {
     const table = doc.stage?.[stage]
-    requireClosedTable(table, [], ['finders', 'finder_fallbacks', 'pool'], `[stage.${stage}]`)
+    // review_trigger is integration's alone: no other stage requests a review
+    // on a PR, so the key anywhere else is a misplaced setting, not a no-op.
+    const keys = ['finders', 'finder_fallbacks', 'pool']
+    if (stage === 'integration') keys.push('review_trigger')
+    requireClosedTable(table, [], keys, `[stage.${stage}]`)
     const finders = resolveStageArray(table?.finders, `[stage.${stage}].finders`, [])
     // Each entry in `finders` is its own all-of primary slot (dev-flow-exit.mjs
     // keys logical-round assembly by slot name) — a duplicate slug collapses
@@ -1097,8 +1109,23 @@ function resolveStages(doc) {
       finder_fallbacks: finderFallbacks,
       pool
     }
+    if (stage === 'integration') {
+      result[stage].review_trigger = resolveReviewTrigger(table?.review_trigger)
+    }
   }
   return result
+}
+
+// Absent is the documented default; present-but-invalid is refused, never
+// widened to the default — the same rule resolveStageArray applies.
+function resolveReviewTrigger(value) {
+  if (value === undefined) return DEFAULT_REVIEW_TRIGGER
+  if (!REVIEW_TRIGGERS.includes(value)) {
+    throw new PolicyError(
+      `[stage.integration].review_trigger must be one of [${REVIEW_TRIGGERS.join(', ')}], got ${JSON.stringify(value)}`
+    )
+  }
+  return value
 }
 
 function resolveStrategy(doc, requestedStrategy) {
@@ -3074,6 +3101,10 @@ function cliResolve(args) {
     )
     console.log(
       `gates[${resolved.gates.source}]: round_code=${resolved.gates.round_code} round_docs=${resolved.gates.round_docs} secret_scan=${resolved.gates.secret_scan} pre_pr=${resolved.gates.pre_pr}`
+    )
+    const integration = resolved.stages.integration
+    console.log(
+      `stage[integration]: finders=[${integration.finders.join(', ')}] review_trigger=${integration.review_trigger}`
     )
     const implementer = resolved.roles.implementer
     console.log(
