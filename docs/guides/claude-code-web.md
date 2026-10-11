@@ -856,8 +856,9 @@ nothing in this repository writes to the account.
 
 ## Long-running gates
 
-A full `task verify` takes about **10–12 minutes on the 4-core VM** (observed
-2026-09-27), which is over the Bash tool's ceiling: it waits two minutes by
+A full `task verify` took about **10–12 minutes on the 4-core VM** on
+2026-09-27 and about **30 minutes** on 2026-10-11 (observed below).
+Either is over the Bash tool's ceiling: it waits two minutes by
 default and can be asked for at most ten (*docs, 2026-09-29*). The platform does
 not kill a command at that limit; Claude Code moves it to the background instead
 (*docs, 2026-09-29*), so the risk is a session that treats "moved to the
@@ -888,6 +889,27 @@ background" as "finished". The supported ways to run it:
    the ten-minute wait is honoured was not exercised: the long gate ran
    detached, as in the first form, and `task verify` completed with
    `GATE-EXIT=0`.
+
+**Observed 2026-10-11, Claude Code 2.1.296**, in
+a single-repository session on `evanharmon1/harmon-init` (`harmon-remote`,
+setup script at `v5.6.0`, the checkout at a `main` that carries the #1624 fix;
+[evidence](https://github.com/evanharmon1/harmon-init/issues/1624#issuecomment-6112722450)):
+
+- **The first form passed.** `task verify` completed with `GATE-EXIT=0` in about
+  30 minutes.
+- **A background job with its own timeout ended at that timeout.** An earlier
+  attempt in the same session started `task verify` as a background job through
+  the Bash tool, with a timeout the session set to one hour (it reported a
+  two-hour maximum). That job timeout is separate from the ten-minute
+  foreground ceiling above. The harness ended the job at the limit with
+  SIGTERM (exit 143) while `test:output` was running, before any `GATE-EXIT`
+  line. `test:output` on its own passed within a two-minute timeout and left no stray
+  processes. Why that attempt was slower, and whether the suite would have
+  finished, is not established.
+
+So give the gate the detached `nohup` form above rather than a background job
+with a timeout: that timeout ends the job, and only the `GATE-EXIT=` line in
+the log is the result.
 
 **`task security` is owed before the draft PR, in the cloud as anywhere else**
 (`AGENTS.md`), and it is never skipped. Its Semgrep step contacts `semgrep.dev`,
