@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // agent-registry-labels.mjs — render the agent-vocabulary GitHub labels from the
 // machine-readable agent registry (agent-registry.json). This is the SINGLE
-// source of the `claim:*` and `foreman:<adapter>` label lines:
+// source of the `claim:*`, `foreman:<adapter>`, and implementer-record
+// (`model-family:*`, `model:*`, `model-version:*`, `model-effort:*`) label lines:
 // setup-github-labels.sh provisions them and test-registry-drift.sh checks them,
 // both by calling this file, so the two can never disagree.
 //
@@ -14,6 +15,15 @@
 // `provision_label` (a selector without a production adapter can strand armed
 // work — ADR 2026-08-07 D11), so `mock` never yields a `foreman:mock` label.
 //
+// The four implementer-record families (#1517) record WHICH model implemented
+// the work: the family slug, the model line slug, the version slug, and the
+// reasoning effort. They are a record of fact written after the work, never a
+// routing input — nothing reads them to select a model. Line and version slugs
+// are shared across families (`flash` is a line of four families, `5.5` a
+// version of three lines), so each label is emitted ONCE, in registry order.
+// Retired versions are emitted too: an issue implemented by a model that has
+// since been retired keeps a label that still exists.
+//
 // The same registry also drives the human-facing family and harness tables in
 // docs/project-management.md (ADR 2026-08-07 D10): `docs-tables` renders them as
 // markdown, and test-registry-docs.sh fails when the committed doc no longer
@@ -21,9 +31,11 @@
 // deliberately NOT part of `all`.
 //
 // Usage: node agent-registry-labels.mjs <mode> [registry-path]
-//   mode = claim | foreman-adapters | all | docs-tables
+//   mode = claim | foreman-adapters | model-family | model | model-version |
+//          model-effort | all | docs-tables
 // Registry defaults to ../agent-registry.json relative to this file.
 
+import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
@@ -34,8 +46,12 @@ import { fileURLToPath } from 'node:url'
 // foreman selectors share the arming blue.
 const COLOR_CLAIM = '006B75'
 const COLOR_FOREMAN = '1D76DB'
+// The four implementer-record families share one color: together they answer
+// one question ("which model implemented this").
+const COLOR_MODEL = 'C2E0C6'
 
-const MODES = new Set(['claim', 'foreman-adapters', 'all', 'docs-tables'])
+const MODEL_MODES = ['model-family', 'model', 'model-version', 'model-effort']
+const MODES = new Set(['claim', 'foreman-adapters', ...MODEL_MODES, 'all', 'docs-tables'])
 
 const mode = process.argv[2]
 if (!MODES.has(mode)) {
@@ -54,6 +70,29 @@ try {
 } catch (error) {
   console.error(
     `agent-registry-labels: cannot read valid JSON from ${registryPath}: ${error.message}`
+  )
+  process.exit(1)
+}
+
+// Validate the registry before rendering anything from it. Parsing is not
+// enough: a registry that parses but holds a family with no model lines, or a
+// line with no versions, would otherwise render a partial label set that
+// setup-github-labels.sh provisions as if it were complete (#1517). The
+// validator is the one place registry invariants live, so run it rather than
+// re-check a subset here, against the schema shipped beside this script.
+const validation = spawnSync(
+  process.execPath,
+  [
+    path.join(here, 'validate-agent-registry.mjs'),
+    registryPath,
+    path.join(here, '..', 'agent-registry.schema.json')
+  ],
+  { encoding: 'utf8' }
+)
+if (validation.status !== 0) {
+  process.stderr.write(validation.stderr || validation.error?.message || '')
+  console.error(
+    `agent-registry-labels: ${registryPath} is not a valid agent registry — refusing to render a partial label set`
   )
   process.exit(1)
 }
@@ -127,6 +166,69 @@ if (mode === 'foreman-adapters' || mode === 'all') {
       )
     )
   }
+}
+
+// The implementer-record families. A value shared across families or lines is
+// emitted once (first occurrence wins, in registry order), so a label name is
+// never rendered twice — the label-registry renderer fails closed on duplicates.
+const RECORD_NOTE = 'a record of fact, never a routing input'
+const modelRecords = (prefix, entries) => {
+  const seen = new Set()
+  for (const [slug, text] of entries) {
+    if (seen.has(slug)) continue
+    seen.add(slug)
+    lines.push(record(labelName(prefix, slug), COLOR_MODEL, `${text} — ${RECORD_NOTE}`))
+  }
+}
+const familyEntries = () => registry.families ?? []
+const lineEntries = () =>
+  familyEntries().flatMap((family) =>
+    (family.models ?? []).map((line) => ({ family: field(family.slug, 'family slug'), line }))
+  )
+
+if (mode === 'model-family' || mode === 'all') {
+  modelRecords(
+    'model-family',
+    familyEntries().map((family) => {
+      const slug = field(family.slug, 'family slug')
+      const name = field(family.display_name, `family '${slug}' display_name`)
+      return [slug, `Implementing model family: ${name}`]
+    })
+  )
+}
+
+if (mode === 'model' || mode === 'all') {
+  modelRecords(
+    'model',
+    lineEntries().map(({ family, line }) => {
+      const slug = field(line.slug, `family '${family}' model slug`)
+      const name = field(line.display_name, `family '${family}' line '${slug}' display_name`)
+      return [slug, `Implementing model line: ${name}`]
+    })
+  )
+}
+
+if (mode === 'model-version' || mode === 'all') {
+  // Every version, retired included, so history keeps its labels.
+  modelRecords(
+    'model-version',
+    lineEntries().flatMap(({ family, line }) =>
+      (line.versions ?? []).map((version) => {
+        const slug = field(version.slug, `family '${family}' line '${line.slug}' version slug`)
+        return [slug, `Implementing model version: ${slug}`]
+      })
+    )
+  )
+}
+
+if (mode === 'model-effort' || mode === 'all') {
+  modelRecords(
+    'model-effort',
+    (registry.effort_ladder ?? []).map((effort) => {
+      const slug = field(effort, 'effort_ladder entry')
+      return [slug, `Implementing reasoning effort: ${slug}`]
+    })
+  )
 }
 
 if (mode === 'docs-tables') {

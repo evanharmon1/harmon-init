@@ -1254,12 +1254,22 @@ cannot be combined with `--merge-base-policy`. The candidate is validated
 independently; the built-in fallback governs, with only `--merge-base-registry`
 supplying any governing registry. A missing file supplied to
 `--merge-base-policy` still exits 2; it never means explicit absence.
+An empty `--merge-base-policy ""` is a usage error (exit 2), never permission
+for the branch policy to govern.
 Invalid flag combinations (including `--rigor-source` without `--rigor`) and
 malformed operator `--tier-overrides` / `--rigor-source` values also exit with
 usage status 2, distinct from invalid policy status 1. Successful resolution
 exits 0; exit 3 means resolved but indeterminate (cross-validation could not
 finish because no registry or no gate-target list was supplied, or the derived
 Tier could not be computed where it decides the implementer tier).
+
+With no policy file and no requested registry, the built-in fallback is
+determinate: resolution exits 0 with no registry indeterminate, provided
+the other cross-validation checks complete. A present policy without a
+supplied registry still exits 3. An explicitly requested registry file
+that cannot be read (`--registry <missing>`) still exits 2. Merge-base
+governance is unchanged: `--merge-base-policy-absent` without a governing
+`--merge-base-registry` still exits 3.
 
 **The decoder's scope is an invariant, not a field list.** On a migration
 diff, *every* merge-base-protected value — defaults, rounds, breadth,

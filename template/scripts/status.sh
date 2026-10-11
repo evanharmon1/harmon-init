@@ -1386,15 +1386,23 @@ if [[ "${SECTION}" == "setup" ]]; then
                         # Agent, Domain, Layer, and Tier fields are NOT wanted
                         # either: the setup script creates none of them, so
                         # requiring one would report a permanent false failure on
-                        # every fresh org (#662, #875, ADR 2026-10-01). The rows
-                        # must stay equal to what setup-github-issue-fields.sh
-                        # provisions; its test compares the two.
+                        # every fresh org (#662, #875, ADR 2026-10-01). The four
+                        # Model fields (the implementer record, #1517) are wanted by
+                        # name and type only: their options come from
+                        # agent-registry.json, which the setup script validates and
+                        # appends from on every run. The rows must stay equal to
+                        # what setup-github-issue-fields.sh provisions; its test
+                        # compares the two.
                         want_fields="Product:text:
 Impact:single_select:minimal,low,medium,high,massive
 Risk:single_select:trivial,low,medium,high,critical
 Complexity:single_select:xs,s,m,l,xl
 Priority (AI):single_select:p0,p1,p2,p3,p4
-Effort:single_select:1,2,3,5,8,13,20"
+Effort:single_select:1,2,3,5,8,13,20
+Model family:single_select:
+Model:single_select:
+Model version:single_select:
+Model effort:single_select:"
                         missing_fields=""
                         wrong_fields=""
                         short_fields=""
@@ -1440,7 +1448,7 @@ Effort:single_select:1,2,3,5,8,13,20"
                         elif [ -n "${untyped_fields}" ]; then
                             checkline unknown "Org issue fields" "type unreadable for ${untyped_fields} — inventory unchecked"
                         else
-                            checkline ok "Org issue fields" "Product, Impact, Risk, Complexity, Priority (AI), Effort"
+                            checkline ok "Org issue fields" "Product, Impact, Risk, Complexity, Priority (AI), Effort, Model family, Model, Model version, Model effort"
                         fi
                     fi
                 fi

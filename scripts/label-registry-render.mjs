@@ -188,7 +188,10 @@ function agentRecords(rendererMode) {
 }
 
 function registryFamilyRecords(family) {
-  const rendererMode = family.registry_set === 'foreman-adapters' ? 'foreman-adapters' : 'claim'
+  // agent-registry-labels.mjs names each mode after the registry_set it feeds
+  // (the validator pins every live set to its prefix). The retired `suggest`
+  // set never reaches here: provisioning and the inventory skip retired families.
+  const rendererMode = family.registry_set
   const lines = agentRecords(rendererMode).filter((line) => line.startsWith(`${family.prefix}:`))
   for (const line of lines) {
     const color = line.split('|')[1]

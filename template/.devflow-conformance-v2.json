@@ -2219,6 +2219,34 @@
       }
     },
     {
+      "name": "empty-merge-base-policy-is-usage",
+      "basis": "branch",
+      "cli_options": ["--merge-base-policy", ""],
+      "expect": {
+        "exit": 2,
+        "error_diagnostics": [
+          {
+            "code": "usage",
+            "subject": "merge-base-policy"
+          }
+        ]
+      }
+    },
+    {
+      "name": "empty-merge-base-policy-conflicts-with-absent-flag",
+      "basis": "branch",
+      "cli_options": ["--merge-base-policy", "", "--merge-base-policy-absent"],
+      "expect": {
+        "exit": 2,
+        "error_diagnostics": [
+          {
+            "code": "merge_base_conflict",
+            "subject": "merge-base-policy-absent"
+          }
+        ]
+      }
+    },
+    {
       "name": "malformed-tier-overrides-is-usage",
       "basis": "branch",
       "cli_options": ["--tier-overrides", "implementer=bogus"],
@@ -2235,7 +2263,7 @@
     {
       "name": "malformed-rigor-source-is-usage",
       "basis": "branch",
-      "cli_options": ["--rigor-source", "bogus"],
+      "cli_options": ["--rigor", "standard", "--rigor-source", "bogus"],
       "expect": {
         "exit": 2,
         "error_diagnostics": [
@@ -2284,6 +2312,103 @@
           {
             "code": "branch_policy_required",
             "subject": "merge-base-policy-absent"
+          }
+        ]
+      }
+    },
+    {
+      "name": "absent-policy-and-omitted-registry-is-determinate",
+      "basis": "absent",
+      "expect": {
+        "exit": 0,
+        "result": {
+          "config_schema_version": 2,
+          "config_source": "built-in-fallback",
+          "selections": {
+            "rigor": {
+              "value": "standard",
+              "source": "builtin"
+            },
+            "strategy": {
+              "value": "plan",
+              "source": "builtin"
+            }
+          },
+          "cross_validation": {
+            "errors": [],
+            "indeterminate": []
+          }
+        }
+      },
+      "registry_entry": "omitted"
+    },
+    {
+      "name": "present-policy-and-omitted-registry-is-indeterminate",
+      "basis": "branch",
+      "registry_entry": "omitted",
+      "expect": {
+        "exit": 3,
+        "error_diagnostics": [
+          {
+            "code": "indeterminate",
+            "subject": "registry"
+          }
+        ]
+      }
+    },
+    {
+      "name": "absent-policy-and-requested-missing-registry-is-unreadable",
+      "basis": "absent",
+      "registry_entry": "missing",
+      "expect": {
+        "exit": 2,
+        "error_diagnostics": [
+          {
+            "code": "registry_unreadable",
+            "subject": "registry"
+          }
+        ]
+      }
+    },
+    {
+      "name": "present-policy-and-requested-missing-registry-is-unreadable",
+      "basis": "branch",
+      "registry_entry": "missing",
+      "expect": {
+        "exit": 2,
+        "error_diagnostics": [
+          {
+            "code": "registry_unreadable",
+            "subject": "registry"
+          }
+        ]
+      }
+    },
+    {
+      "name": "deleted-branch-policy-and-omitted-merge-base-registry-is-indeterminate",
+      "basis": "merge-base",
+      "policy_entry": "missing",
+      "registry_entry": "omitted",
+      "expect": {
+        "exit": 3,
+        "error_diagnostics": [
+          {
+            "code": "indeterminate",
+            "subject": "registry"
+          }
+        ]
+      }
+    },
+    {
+      "name": "absent-merge-base-and-omitted-registry-is-indeterminate",
+      "basis": "merge-base-absent",
+      "registry_entry": "omitted",
+      "expect": {
+        "exit": 3,
+        "error_diagnostics": [
+          {
+            "code": "indeterminate",
+            "subject": "registry"
           }
         ]
       }

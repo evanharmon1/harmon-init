@@ -114,7 +114,15 @@
         },
         "registry_set": {
           "description": "Which agent-registry render feeds a source: agent-registry family.",
-          "enum": ["suggest", "claim", "foreman-adapters"]
+          "enum": [
+            "suggest",
+            "claim",
+            "foreman-adapters",
+            "model-family",
+            "model",
+            "model-version",
+            "model-effort"
+          ]
         },
         "writers": { "$ref": "#/$defs/writers" },
         "writer_note": { "type": "string", "minLength": 1 },
