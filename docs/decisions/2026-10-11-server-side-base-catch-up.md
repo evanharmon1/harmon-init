@@ -92,11 +92,14 @@ merged tree. No local tree is built and the agent pushes nothing.
    guarded form is the REST call, or a helper that compares the head it reads
    against the captured one. That helper is part of harmon-devkit#1360.
 5. **The local merge stays as the fallback.** An agent uses it when:
-   - update-branch genuinely refuses the merge: a conflict, a ruleset that
-     rejects GitHub-made merge commits, or a fork PR without "allow edits by
-     maintainers";
+   - update-branch genuinely refuses the merge: a conflict, or a ruleset that
+     rejects GitHub-made merge commits;
    - the base merge must ship in the same push as a fix (the integrate skill's
      rule for the last remediation push).
+
+   A fork PR without "allow edits by maintainers" is not a fallback case: the
+   integration identity cannot push a local merge to that branch either, so the
+   agent stops and asks for maintainer edits rather than spending a round.
 
    The agent detects each refusal from the API's response. It does not predict
    them. An `expected_head_sha` refusal is not one of them (decision 4). A conflict resolution is authored work: the agent chooses the bytes

@@ -190,9 +190,10 @@ Binding on every stage, skill, and harness, whatever rigor resolved:
   new head.[% if use_codex_cloud_review %] Then ask `carry`
   whether the clean verdict attests it, or run the ordinary current-head cycle.[% endif %] It spends no remediation
   round. Only a genuine merge refusal (a conflict, a ruleset that rejects the
-  merge commit, a fork without maintainer edits), or a base merge that must
-  ship with a fix, falls back to a local merge under the full round gate, as an
-  ordinary remediation round. A promoted PR is caught up only when the
+  merge commit), or a base merge that must ship with a fix, falls back to a
+  local merge under the full round gate, as an ordinary remediation round. A
+  fork without maintainer edits cannot take a local merge either: stop and ask
+  for maintainer edits. A promoted PR is caught up only when the
   maintainer asks, in place and without undoing the promotion; otherwise its
   drift is reported, never acted on. Reconcile once, base into branch only;
   the ledger names it a catch-up, not a remediation push.
