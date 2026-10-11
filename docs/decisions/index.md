@@ -6,8 +6,10 @@ practice**.
 
 Each record captures one choice: its context, the decision, and the **explicit
 "not" reasoning** (what was rejected and why). **Supersede, don't edit:** to
-change a decision, add a new ADR that supersedes the old one and mark the old
-one's status.
+change an accepted decision, add a new ADR that supersedes or amends it and mark
+the old one's status. Immutability applies once a record is accepted, as the
+[meta-ADR](2026-06-19-record-architecture-decisions.md) says; a `Proposed`
+record is still open to edits.
 
 - One ADR per file, named `YYYY-MM-DD-<kebab-title>.md` — the date the
   record was filed, fixed at creation and never changed by a later status
@@ -62,7 +64,8 @@ one's status.
   — OpenSpec is retired in favor of the existing issue, ADR, and plain-spec workflow (Accepted).
 - [2026-09-29-agent-posture-three-posture-model.md](2026-09-29-agent-posture-three-posture-model.md)
   — three postures: dev, bot, and agent (Proposed; agent merge deny superseded by 2026-10-07;
-  amended by 2026-10-10 (force pushes outside the default branch)).
+  amended by 2026-10-10 (force pushes outside the default branch) and 2026-10-10
+  (GET-only API reads)).
 - [2026-09-30-classify-issues-by-impact-risk-complexity-and-derive-the-tier.md](2026-09-30-classify-issues-by-impact-risk-complexity-and-derive-the-tier.md)
   — classify issues by impact, risk, and complexity, and derive the tier
   (Accepted; amended by 2026-10-01 (Tier as a label), 2026-10-01 (Priority AI axis) and
@@ -82,3 +85,6 @@ one's status.
 - [2026-10-10-accept-force-pushes-outside-the-default-branch-in-the-agent-posture.md](2026-10-10-accept-force-pushes-outside-the-default-branch-in-the-agent-posture.md)
   — accept and document that the agent posture's force-push denies do not stop force pushes
   outside the default branch (Accepted; amends 2026-09-29 (three postures)).
+- [2026-10-10-route-agent-posture-api-reads-through-a-get-only-wrapper.md](2026-10-10-route-agent-posture-api-reads-through-a-get-only-wrapper.md)
+  — route the agent posture's API reads through a GET-only wrapper and deny raw `gh api`
+  (Accepted; amends 2026-09-29 (three postures)).
