@@ -48,18 +48,25 @@ merged tree. No local tree is built and the agent pushes nothing.
    secret scan. CI on the merge head is the gate.** The standard path is:
    re-read `baseRefName` against the base the gate captured, then update-branch
    in merge mode. The resulting head is the catch-up only if it is a merge
-   commit whose first parent is the captured head and whose other parent is
-   the base tip the gate read. The endpoint merges asynchronously, but the
-   agent does not need a polling procedure: any other head, such as a
+   commit whose parents are exactly the captured head, then the base tip the
+   gate read, whose committer is `GitHub <noreply@github.com>`, and whose
+   web-flow signature verifies. Only GitHub can produce that signature, and
+   it covers the tree: a writer with push access can forge the same parents
+   over a different tree, so parents alone do not prove provenance. Where
+   available, use the integrate skill's `assets/update-branch.sh` helper.
+   The endpoint merges asynchronously, but the agent does not need a polling
+   procedure: any other head, such as a
    concurrent push, is a newer push under the readiness gate's existing "no
    newer push invalidated any result" condition, and the gate re-reads the PR
    and starts again. A head still unmoved when a bounded wait ends is
    indeterminate: the agent stops and reports rather than requesting again,
    since the first request may still be pending. Then it fast-forwards every
-   local checkout of the branch (`git pull --ff-only`) before any further local
-   commit, lets CI run on the new head, and, where Codex cloud review is
-   enabled, asks `carry` (#752). A merge can still break
-   semantically: two changes that are each correct can combine into a tree that
+   local checkout of the branch to the recorded catch-up OID after explicitly
+   fetching the PR's head repository and branch, and confirms `HEAD` equals
+   that OID before any further local commit. It lets CI run on the new head
+   and, where Codex cloud review is enabled and the `integration` cap is
+   positive, asks `carry` (#752) or runs the ordinary current-head cycle.
+   A merge can still break semantically: two changes that are each correct can combine into a tree that
    fails. That combined tree is untested until something builds it. A local
    `task verify` would test it once on one machine. CI tests it on the head that
    will be promoted, and the readiness gate's CI condition already requires
@@ -70,7 +77,8 @@ merged tree. No local tree is built and the agent pushes nothing.
 2. **A server-side catch-up spends no remediation round** (maintainer decision,
    2026-10-11). It adds no agent-authored code. The `remediation` cap bounds the
    integration stage's fix pushes, and a catch-up is not a fix. It is still a
-   head move. It owes the `carry` check or a fresh current-head Codex cycle like
+   head move. Where Codex cloud review is enabled and the `integration` cap is
+   positive, it owes the `carry` check or a fresh current-head Codex cycle like
    any other head move. A carry spends nothing. A fresh cycle is charged to
    `integration` or `integration_exempt` exactly as today. CI must be green on
    the new head before the readiness gate can pass.
@@ -81,8 +89,11 @@ merged tree. No local tree is built and the agent pushes nothing.
    the new `headRefOid` governs it instead. `AGENTS.md` states both halves in
    the invariant, so a catch-up cannot be read as a push that skipped its gate,
    and a local merge cannot be read as exempt.
-4. **Merge mode only, guarded by the expected head.** `--rebase` (REST
-   `update_method: rebase`) is excluded because it rewrites the pushed branch.
+4. **Merge mode only, guarded by the expected head.** The REST
+   `PUT …/pulls/<n>/update-branch` takes only `expected_head_sha` and always
+   merges; it has no `update_method`. Rebase (GraphQL `updateMethod` or
+   `gh pr update-branch --rebase`) is excluded because it rewrites the pushed
+   branch.
    The Dev Loop forbids that at every stage, and it would also invalidate the
    reviewed commits that a carry and the review cycle are keyed to. The REST
    call takes the head the agent captured as `expected_head_sha`. If a
@@ -136,9 +147,9 @@ unchanged. The only change is who creates the merge commit.
   agent to poll until `headRefOid` left the captured SHA, to treat a poll that
   timed out as indeterminate, and to fall back to a local merge on any API
   refusal. Each step had its own edge cases, and none of them said what made
-  the new head trustworthy. Decision 1 defines the catch-up head by its parents
-  instead. That one rule covers a concurrent push, a head that never moved and
-  an expected-head refusal, through the readiness gate's existing newer-push
+  the new head trustworthy. Decision 1 defines the catch-up head by its exact
+  parents, GitHub committer and verified web-flow signature instead. That one
+  rule covers a concurrent push, a head that never moved and an expected-head refusal, through the readiness gate's existing newer-push
   condition.
 - **Charging the catch-up to `remediation`** (the recommended alternative to
   decision 2). The cap would then bound a busy base's merge rate rather than
