@@ -205,7 +205,7 @@ jobs:
             echo "available=false" >> "$GITHUB_OUTPUT"
             echo "::notice::Default-branch helper unavailable; running only the primary Claude action."
           fi
-      - uses: anthropics/claude-code-action@cab360f6565aa35a51d6ce9e43f1f4287c0a32ea # v1.0.241
+      - uses: anthropics/claude-code-action@1d6de8cb0c237e7c15e9e1bdf973826ebae490cc # v1.0.248
         id: claude-primary
         continue-on-error: true
         # Step-level cap. A JOB timeout kills the runner outright and the
@@ -258,7 +258,7 @@ jobs:
             echo "available=false" >> "$GITHUB_OUTPUT"
             echo "::notice::Default-branch helper unavailable for this step."
           fi
-      - uses: anthropics/claude-code-action@cab360f6565aa35a51d6ce9e43f1f4287c0a32ea # v1.0.241
+      - uses: anthropics/claude-code-action@1d6de8cb0c237e7c15e9e1bdf973826ebae490cc # v1.0.248
         id: claude-alternate
         if: ${{ !cancelled() && steps.claude-helper.outputs.available == 'true' && steps.claude-primary-result.outputs.retry == 'true' }}
         continue-on-error: true
