@@ -61,9 +61,18 @@ jobs:
         # A finding is this workflow's input, not its failure.
         continue-on-error: true
         run: task security:audit
+      # task security:audit also runs every other ecosystem's audit (pip-audit
+      # on a Node + Python profile); only a pnpm finding is this workflow's to
+      # fix, so the fix keys on the Node audit alone and a Python-only finding
+      # leaves the run quiet.
+      - name: Node dependency audit
+        id: node-audit
+        if: steps.audit.outcome == 'failure'
+        continue-on-error: true
+        run: pnpm audit --audit-level=high
       - name: Raise bounded security floors
         id: fix
-        if: steps.audit.outcome == 'failure'
+        if: steps.node-audit.outcome == 'failure'
         # A refused fix is reported in the PR body and the job summary; only an
         # operational failure (registry, pnpm, an unclearable floor) fails here.
         run: |

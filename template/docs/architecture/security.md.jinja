@@ -194,8 +194,12 @@ remediation is mechanical, and the template does it for you:
   earlier major rather than a floor on the major you resolve, and a **forced
   major** whenever the patch only exists there (`pkg@<=8.5.1: ^9.0.0`). It can
   also drop comments in the `overrides` map, the template markers included.
-- **`security-audit-fix.yml`** runs `task security:audit` daily; when it fails,
-  it runs `task security:audit:fix -- --skip-refused` (apply what is safe,
+- Keep `pnpm-workspace.yaml` in the template's two-space indentation, with both
+  floor markers indented inside `overrides`: the task edits the file with yq,
+  which writes two-space YAML, and it refuses any write that would change the
+  template-owned block.
+- **`security-audit-fix.yml`** runs `task security:audit` daily; when the pnpm
+  audit in it fails, it runs `task security:audit:fix -- --skip-refused` (apply what is safe,
   report what is refused) and opens or updates **one** rolling draft PR on
   `bot/security-audit-fix` listing each advisory, package, floor, and refusal
   reason. The PR `security` gate is unchanged, so it stays red until that PR (or

@@ -86,7 +86,9 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
     token (see [security.md](security.md)). One `concurrency` group serializes
     runs.
   - **Jobs:** `audit` holds no credentials. It runs `task security:audit`, and
-    only when that fails runs `task security:audit:fix -- --skip-refused`, then
+    only when that fails *and* a Node-only `pnpm audit --audit-level=high`
+    fails too (a Python-only finding stays quiet) runs
+    `task security:audit:fix -- --skip-refused`, then
     hands a patch (`pnpm-workspace.yaml` + `pnpm-lock.yaml` only) and the
     report to `publish` as an artifact. `publish` mints the CI App token
     (`CI_APP_CLIENT_ID` + `CI_APP_PRIVATE_KEY`, not `GITHUB_TOKEN`, so CI runs

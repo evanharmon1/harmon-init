@@ -274,14 +274,50 @@ write_floor() {
         | .overrides[strenv(K)] style = "single"
         | with(.overrides[strenv(K)] | key; . head_comment = strenv(C))
     ' "$WORKSPACE" 2>"$WORK/yq.err" || refuse "yq could not write $_wf_key to $WORKSPACE: $(head -n 1 "$WORK/yq.err")"
-    _wf_had="$HAVE_MARKERS"
-    check_markers
-    [ "$HAVE_MARKERS" = "$_wf_had" ] || refuse "writing $_wf_key removed the template floor markers from $WORKSPACE"
-    marker_region >"$WORK/region.after"
-    cmp -s "$WORK/region.before" "$WORK/region.after" ||
-        refuse "writing $_wf_key changed the template floor block in $WORKSPACE (yq placed it inside the block or moved a marker — keep the end marker indented inside overrides, as the template renders it)"
+    check_region "writing $_wf_key"
     [ "$(K="$_wf_key" yq '.overrides[strenv(K)]' "$WORKSPACE" 2>/dev/null)" = "$_wf_val" ] ||
         refuse "$WORKSPACE does not read back '$_wf_val' for $_wf_key"
+}
+
+# check_region WHAT — the region-identity invariant after a yq edit, against
+# $WORK/region.before: markers still present (once each, in order) when they
+# were before, and the marker-to-marker text byte-identical. A difference in
+# indentation only means yq re-indented the whole file (it writes two-space
+# YAML), which would rewrite the template block — said as such.
+check_region() {
+    _cr_had="$HAVE_MARKERS"
+    check_markers
+    [ "$HAVE_MARKERS" = "$_cr_had" ] || refuse "$1 removed the template floor markers from $WORKSPACE"
+    marker_region >"$WORK/region.after"
+    cmp -s "$WORK/region.before" "$WORK/region.after" && return 0
+    if [ "$(sed 's/^[[:space:]]*//' "$WORK/region.before")" = "$(sed 's/^[[:space:]]*//' "$WORK/region.after")" ]; then
+        refuse "$1: $WORKSPACE is not two-space indented; yq would rewrite the template block — keep the template's two-space indentation with the markers indented inside overrides"
+    fi
+    refuse "$1 changed the template floor block in $WORKSPACE (yq placed it inside the block or moved a marker — keep the end marker indented inside overrides, as the template renders it)"
+}
+
+# release_age_excludes FILE — the minimumReleaseAgeExclude entries, one per
+# line, read by yq (nothing when the key is absent or not a list).
+release_age_excludes() {
+    yq -o=json -I=0 '.minimumReleaseAgeExclude // []' "$1" 2>/dev/null |
+        jq -r 'if type == "array" then .[] | tostring else empty end' || true
+}
+
+# carry_release_age_excludes — when a patched release is younger than pnpm's
+# minimumReleaseAge, `--fix` also adds it to minimumReleaseAgeExclude, and the
+# re-resolve needs that entry. The byte restore dropped it, so write each
+# addition back with yq (outside the marker region; the invariant checks it).
+carry_release_age_excludes() {
+    release_age_excludes "$WORK/orig.$WORKSPACE" | sort -u >"$WORK/rae.before"
+    release_age_excludes "$WORK/postfix.yaml" | sort -u | comm -13 "$WORK/rae.before" - >"$WORK/rae.added"
+    [ -s "$WORK/rae.added" ] || return 0
+    while IFS= read -r _ra; do
+        marker_region >"$WORK/region.before"
+        X="$_ra" yq -i '.minimumReleaseAgeExclude = ((.minimumReleaseAgeExclude // []) + [strenv(X)])' "$WORKSPACE" 2>"$WORK/yq.err" ||
+            refuse "yq could not add $_ra to minimumReleaseAgeExclude in $WORKSPACE: $(head -n 1 "$WORK/yq.err")"
+        check_region "adding $_ra to minimumReleaseAgeExclude"
+        note "kept pnpm's minimumReleaseAgeExclude entry $_ra (a patched release younger than the cooldown)"
+    done <"$WORK/rae.added"
 }
 
 # ── fix ─────────────────────────────────────────────────────────────
@@ -308,7 +344,8 @@ fail() {
 
 # audit_rows OUT — one row per vulnerable installed version of every
 # high/critical advisory: id, package, severity, vulnerable range, installed
-# version, and the direct dependency that pulls it in.
+# version, the direct dependency that pulls it in, and the patched range. An
+# advisory without a GHSA id (pnpm emits "") gets the synthetic npm-<number>.
 audit_rows() {
     _ar_json="$WORK/audit.json"
     pnpm audit --audit-level=high --json >"$_ar_json" 2>"$WORK/audit.err" || true
@@ -321,9 +358,11 @@ audit_rows() {
         | select(.severity == "high" or .severity == "critical")
         | . as $a
         | .findings[]
-        | [ ($a.github_advisory_id // ("npm-" + ($a.id | tostring))),
+        | [ (if ($a.github_advisory_id // "") == "" then "npm-" + ($a.id | tostring)
+             else $a.github_advisory_id end),
             $a.module_name, $a.severity, $a.vulnerable_versions, .version,
-            ((.paths[0] // ".") | split(">") | .[1] // $a.module_name) ]
+            ((.paths[0] // ".") | split(">") | .[1] // $a.module_name),
+            ($a.patched_versions // "") ]
         | @tsv
     ' "$_ar_json" | sort -u >"$1"
 }
@@ -335,6 +374,53 @@ major_rows() {
         v = $vc; sub(/[-+].*$/, "", v); split(v, p, ".")
         print $ic " " $pc "@" (p[1] == 0 ? "0." p[2] : p[1])
     }' | sort -u
+}
+
+# advisory_need RANGE PATCHED — the lowest version that fixes an advisory: the
+# lower bound of its patched range, else the version its vulnerable range
+# stops at (`<x.y.z` -> x.y.z, `<=x.y.z` -> the next patch); empty if neither
+# says.
+advisory_need() {
+    _an="$(floor_lower "$2")"
+    if [ -n "$_an" ] && [ "$_an" != 0.0.0 ]; then
+        echo "$_an"
+        return 0
+    fi
+    printf '%s\n' "$1" | awk '{
+        n = split($0, t, /[[:space:]]+/)
+        for (i = n; i >= 1; i--) {
+            if (t[i] ~ /^<=[0-9]/) { split(substr(t[i], 3), p, "."); print (p[1] + 0) "." (p[2] + 0) "." (p[3] + 1); exit }
+            if (t[i] ~ /^<[0-9]/) { split(substr(t[i], 2), p, "."); print (p[1] + 0) "." (p[2] + 0) "." (p[3] + 0); exit }
+        }
+    }'
+}
+
+# covering_floor PKG RANGE PATCHED FROM — the floor of a pnpm proposal that
+# fixes this advisory row, matched by package and coverage rather than by
+# pnpm's selector key: pnpm prunes an advisory whose range another advisory on
+# the same package already covers, so one proposal can fix several. A
+# proposal covers the row when its floor is at least what the advisory needs.
+# Among covering proposals the lowest in the installed major FROM wins, else
+# the lowest at all (a crossing the caller refuses); empty when none covers.
+covering_floor() {
+    _cf_need="$(advisory_need "$2" "$3")"
+    _cf_in="" _cf_out=""
+    while IFS="$TAB" read -r _cf_key _cf_val; do
+        [ "${_cf_key%@*}" = "$1" ] || continue
+        _cf_f="$(floor_lower "$_cf_val")"
+        [ -n "$_cf_f" ] || continue
+        if [ -n "$_cf_need" ]; then
+            version_ge "$_cf_f" "$_cf_need" || continue
+        elif [ "$_cf_key" != "$1@$2" ]; then
+            continue
+        fi
+        if [ "$(major_key "$_cf_f")" = "$4" ]; then
+            if [ -z "$_cf_in" ] || version_ge "$_cf_in" "$_cf_f"; then _cf_in="$_cf_f"; fi
+        elif [ -z "$_cf_out" ] || version_ge "$_cf_out" "$_cf_f"; then
+            _cf_out="$_cf_f"
+        fi
+    done <"$WORK/added.tsv"
+    echo "${_cf_in:-$_cf_out}"
 }
 
 # add_refusal ID PKG SEV VERSION REASON
@@ -372,6 +458,7 @@ cmd_fix() {
     : >"$WORK/refused.tsv"
     : >"$WORK/applied.tsv"
     : >"$WORK/new-rows.tsv"
+    : >"$WORK/rae.added"
     snapshot
 
     audit_rows "$WORK/rows.tsv"
@@ -392,27 +479,28 @@ cmd_fix() {
     # What pnpm proposed = the entries whose value differs from the original
     # map, both read by yq.
     overrides_tsv "$WORKSPACE" | sort -u >"$WORK/after.tsv"
+    cp "$WORKSPACE" "$WORK/postfix.yaml"
     # --fix's own edit is never kept: it can reformat or drop comments,
     # including the template-owned markers.
     restore
+    : >"$WORK/rae.added"
     overrides_tsv "$WORKSPACE" >"$WORK/current.tsv"
     sort -u "$WORK/current.tsv" | comm -13 - "$WORK/after.tsv" >"$WORK/added.tsv"
 
     # Each advisory row -> a candidate floor "key<TAB>floor<TAB>id", or a refusal.
     : >"$WORK/candidates.tsv"
-    while IFS="$TAB" read -r _id _pkg _sev _range _ver _direct; do
-        _value="$(awk -F '\t' -v k="$_pkg@$_range" '$1 == k { print $2; exit }' "$WORK/added.tsv")"
-        if [ -z "$_value" ]; then
-            add_refusal "$_id" "$_pkg" "$_sev" "$_ver" "pnpm audit --fix proposed no override (no patched version published for $_range)"
-            continue
-        fi
-        _floor="$(floor_lower "$_value")"
+    while IFS="$TAB" read -r _id _pkg _sev _range _ver _direct _patched; do
         _have="$(floor_lower "$_ver")"
-        if [ -z "$_floor" ] || [ -z "$_have" ]; then
-            add_refusal "$_id" "$_pkg" "$_sev" "$_ver" "could not read a version from --fix's '$_value' for installed $_ver"
+        if [ -z "$_have" ]; then
+            add_refusal "$_id" "$_pkg" "$_sev" "$_ver" "could not read the installed version $_ver"
             continue
         fi
         _from="$(major_key "$_have")"
+        _floor="$(covering_floor "$_pkg" "$_range" "$_patched" "$_from")"
+        if [ -z "$_floor" ]; then
+            add_refusal "$_id" "$_pkg" "$_sev" "$_ver" "pnpm audit --fix proposed no override that covers it (no patched version published for $_range)"
+            continue
+        fi
         _to="$(major_key "$_floor")"
         if [ "$_from" != "$_to" ]; then
             add_refusal "$_id" "$_pkg" "$_sev" "$_ver" "the fix ($_floor) crosses from major $_from to major $_to; direct dependency \`$_direct\` resolves the $_from line — upgrade it deliberately"
@@ -475,6 +563,7 @@ cmd_fix() {
     fi
 
     if [ "$_relock" -eq 1 ]; then
+        carry_release_age_excludes
         note "re-resolving $LOCKFILE"
         pnpm install --lockfile-only --ignore-scripts >"$WORK/install.log" 2>&1 || {
             cat "$WORK/install.log" >&2
@@ -491,7 +580,7 @@ cmd_fix() {
         # An advisory that appears only after the re-resolve is not this run's
         # to fix, but the PR body must not hide it.
         major_rows 1 2 5 <"$WORK/rows.tsv" >"$WORK/before-pairs.txt"
-        while IFS="$TAB" read -r _id _pkg _sev _range _ver _direct; do
+        while IFS="$TAB" read -r _id _pkg _sev _range _ver _direct _patched; do
             _pair="$(printf '%s\t%s\t%s\n' "$_id" "$_pkg" "$_ver" | major_rows 1 2 3)"
             grep -qxF "$_pair" "$WORK/before-pairs.txt" ||
                 printf '%s\t%s\t%s\t%s\t%s\t%s\n' "$_id" "$_pkg" "$_sev" "$_range" "$_ver" "$_direct" >>"$WORK/new-rows.tsv"
@@ -520,7 +609,7 @@ write_report() {
         fi
         echo "| Advisory | Package | Severity | Installed | Outcome |"
         echo "|---|---|---|---|---|"
-        while IFS="$TAB" read -r _id _pkg _sev _range _ver _direct; do
+        while IFS="$TAB" read -r _id _pkg _sev _range _ver _direct _patched; do
             _out="$(awk -F '\t' -v i="$_id" -v p="$_pkg" -v v="$_ver" \
                 '$1 == i && $2 == p && $4 == v { print $5; exit }' "$WORK/applied.tsv")"
             [ -n "$_out" ] || _out="$(awk -F '\t' -v i="$_id" -v p="$_pkg" -v v="$_ver" \
@@ -528,6 +617,15 @@ write_report() {
             [ -n "$_out" ] || _out="not applied (another fix in this run was refused)"
             printf '| %s | `%s` | %s | %s | %s |\n' "$_id" "$_pkg" "$_sev" "$_ver" "$_out"
         done <"$_wr_rows"
+        if [ -s "$WORK/rae.added" ]; then
+            echo
+            echo "Kept from \`pnpm audit --fix\` in \`minimumReleaseAgeExclude\` (patched releases younger than"
+            echo "pnpm's release-age cooldown, needed to resolve the floors):"
+            echo
+            while IFS= read -r _ra; do
+                printf -- '- `%s`\n' "$_ra"
+            done <"$WORK/rae.added"
+        fi
         if [ -s "$WORK/new-rows.tsv" ]; then
             echo
             echo "Advisories that appeared only after the lockfile re-resolve:"

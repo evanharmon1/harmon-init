@@ -667,7 +667,9 @@ the compatibility reason in the rule's `description`.
       crosses a major. Write local floors with `task security:audit:fix`
       (the daily `security-audit-fix.yml` opens them as one rolling PR), never
       raw `pnpm audit --fix`: its selectors are unbounded across majors and it
-      forces a major when the patch only exists there. For 0.x, selectors cover only the fixture graph's tested
+      forces a major when the patch only exists there. Keep the file in the
+      template's two-space indentation with both floor markers indented inside
+      `overrides`; the task refuses a write that would reformat the block. For 0.x, selectors cover only the fixture graph's tested
       minors and bounds stop below the next minor of the moved version. A minor
       move requires no upstream in-minor patch and the entry says so; the
       fixture toolchain builds with the moved versions. Other 0.x minor edges

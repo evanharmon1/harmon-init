@@ -1029,6 +1029,12 @@ if [ -f pnpm-workspace.yaml ]; then
         ! grep -qE '^[[:space:]]+workflow_dispatch:' "$sa_workflow" || err "$sa_workflow mints an App token and must not have workflow_dispatch"
         grep -q 'repository_dispatch:' "$sa_workflow" || err "$sa_workflow has no manual (repository_dispatch) trigger"
         grep -q '^concurrency:' "$sa_workflow" || err "$sa_workflow needs one concurrency group"
+        # Only a pnpm finding may run the fix: on a Node + Python profile
+        # task security:audit also fails for a Python-only finding.
+        grep -q "if: steps.node-audit.outcome == 'failure'" "$sa_workflow" ||
+            err "$sa_workflow's fix step must key on the Node-only audit step, not task security:audit"
+        grep -q 'run: pnpm audit --audit-level=high' "$sa_workflow" ||
+            err "$sa_workflow has no Node-only audit step for the fix to key on"
         grep -qE '^[[:space:]]+lint-tools: "true"' "$sa_workflow" ||
             err "$sa_workflow's audit job must pass lint-tools: \"true\" so the setup action installs yq"
     fi

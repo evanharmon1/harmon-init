@@ -75,6 +75,13 @@ case "$*" in
     echo "overrides were added to pnpm-workspace.yaml"
     ;;
 "install --lockfile-only --ignore-scripts")
+    # requires-exclude: an entry the re-resolve needs in minimumReleaseAgeExclude
+    # (a patched release younger than the cooldown), as real pnpm would.
+    if [ -f "$STUB_DIR/requires-exclude" ] &&
+        ! yq -e ".minimumReleaseAgeExclude // [] | contains([\"$(cat "$STUB_DIR/requires-exclude")\"])" pnpm-workspace.yaml >/dev/null 2>&1; then
+        echo "ERR_PNPM_NO_MATCHING_VERSION: the patched release is younger than minimumReleaseAge" >&2
+        exit 1
+    fi
     echo "# relocked" >>pnpm-lock.yaml
     ;;
 *)
@@ -106,12 +113,14 @@ unset GH_TOKEN GITHUB_TOKEN GH_APP_SLUG
 
 # ── Fixtures ─────────────────────────────────────────────────────────
 
-# advisory ID PKG SEVERITY RANGE VERSION DIRECT — one audit.json advisory entry.
+# advisory ID PKG SEVERITY RANGE VERSION DIRECT [PATCHED] — one audit.json
+# advisory entry (PATCHED absent: no patched_versions field).
 advisory() {
-    jq -n --arg id "$1" --arg pkg "$2" --arg sev "$3" --arg range "$4" --arg ver "$5" --arg direct "$6" '
-        {($id): {github_advisory_id: $id, module_name: $pkg, severity: $sev,
+    jq -n --arg id "$1" --arg pkg "$2" --arg sev "$3" --arg range "$4" --arg ver "$5" --arg direct "$6" --arg patched "${7:-}" '
+        {($id): ({github_advisory_id: $id, module_name: $pkg, severity: $sev,
                  vulnerable_versions: $range,
-                 findings: [{version: $ver, paths: [".>" + $direct + (if $direct == $pkg then "" else ">" + $pkg end)]}]}}'
+                 findings: [{version: $ver, paths: [".>" + $direct + (if $direct == $pkg then "" else ">" + $pkg end)]}]}
+                + (if $patched == "" then {} else {patched_versions: $patched} end))}'
 }
 
 # new_project NAME — a project whose workspace file carries the template block
@@ -560,7 +569,7 @@ sed -i.bak 's/^  /    /' "$p/pnpm-workspace.yaml" && rm -f "$p/pnpm-workspace.ya
 advisory GHSA-0000-0000-0008 lodash high '<4.17.21' 4.17.20 lodash | jq '{advisories: .}' >"$p/.stub/audit.json"
 fix_adds "$p" 'lodash@<4.17.21' '^4.17.21'
 echo "lodash@4: '>=4.17.21 <5'" >"$p/.stub/cleared-by"
-expect_refused "$p" four-space 'changed the template floor block'
+expect_refused "$p" four-space 'is not two-space indented; yq would rewrite the template block'
 pass "four-space: a write that would re-indent the template block is refused, nothing written"
 
 # ── 10. challenge round 4 shapes: placement by region identity ────────
@@ -698,7 +707,70 @@ grep -q 'setup action' "$p/out.log" || fail "no-yq: refusal does not point at th
 ! grep -q -- '--fix' "$p/.stub/calls" || fail "no-yq: ran pnpm audit --fix before refusing"
 pass "no-yq: a missing yq is a refusal before anything is touched"
 
-# ── 11. publish: one rolling draft PR, scope-checked patch ─────────────
+# ── 11. challenge round 5 shapes ──────────────────────────────────────
+
+# Nested advisories (r5 finding 1): pnpm prunes the advisory another one on
+# the same package already covers, so --fix emits ONE override for two.
+# Matching by package and coverage fixes both with one canonical floor.
+p="$(new_project nested)"
+{
+    advisory GHSA-35jh-r3h4-6jhm lodash high '<4.17.21' 4.17.20 lodash '>=4.17.21'
+    advisory GHSA-r5fr-rjxr-66jc lodash high '>=4.0.0 <=4.17.23' 4.17.20 lodash '>=4.18.1'
+} | jq -s 'add | {advisories: .}' >"$p/.stub/audit.json"
+fix_adds "$p" 'lodash@>=4.0.0 <=4.17.23' '^4.18.1'
+echo "lodash@4: '>=4.18.1 <5'" >"$p/.stub/cleared-by"
+run_fix "$p" --report "$p/report.md" >"$p/out.log" 2>&1 || {
+    cat "$p/out.log"
+    fail "nested: exited non-zero (a covered advisory must not be refused)"
+}
+expect_keys "$p" nested 'lodash@4=>=4.18.1 <5'
+for id in GHSA-35jh-r3h4-6jhm GHSA-r5fr-rjxr-66jc; do
+    grep -qF "| $id | \`lodash\` | high | 4.17.20 | floor \`lodash@4: '>=4.18.1 <5'\` |" "$p/report.md" ||
+        fail "nested: $id is not reported as fixed by the one floor"
+done
+[ "$(head_comment_of "$p" lodash@4)" = 'security-audit-fix: lodash@4 — GHSA-35jh-r3h4-6jhm, GHSA-r5fr-rjxr-66jc' ] ||
+    fail "nested: the floor's comment does not name both advisories"
+pass "nested: one pruned proposal covers two nested advisories — one canonical floor, both fixed"
+
+# A patched release younger than pnpm's cooldown (r5 finding 2): --fix also
+# adds it to minimumReleaseAgeExclude, and the re-resolve needs it, so the
+# entry is carried through the byte restore with yq and reported.
+p="$(new_project cooldown)"
+advisory GHSA-0000-0000-0022 lodash high '<4.17.21' 4.17.20 lodash '>=4.17.21' | jq '{advisories: .}' >"$p/.stub/audit.json"
+fix_adds "$p" 'lodash@<4.17.21' '^4.17.21'
+yq -i '.minimumReleaseAgeExclude = ["lodash@4.17.21"]' "$p/.stub/fixed.yaml"
+echo 'lodash@4.17.21' >"$p/.stub/requires-exclude"
+echo "lodash@4: '>=4.17.21 <5'" >"$p/.stub/cleared-by"
+run_fix "$p" --report "$p/report.md" >"$p/out.log" 2>&1 || {
+    cat "$p/out.log"
+    fail "cooldown: exited non-zero (the exclusion pnpm added was dropped)"
+}
+[ "$(yq -o=json -I=0 '.minimumReleaseAgeExclude' "$p/pnpm-workspace.yaml")" = '["lodash@4.17.21"]' ] ||
+    fail "cooldown: minimumReleaseAgeExclude was not carried through"
+expect_keys "$p" cooldown 'lodash@4=>=4.17.21 <5'
+expect_below_marker "$p" cooldown lodash@4
+grep -qF -- '- `lodash@4.17.21`' "$p/report.md" || fail "cooldown: the carried exclusion is not reported"
+pass "cooldown: pnpm's minimumReleaseAgeExclude addition survives the restore and is reported"
+
+# An advisory with an empty github_advisory_id (r5 finding 3) gets the
+# synthetic npm-<number>; the row keeps its columns.
+p="$(new_project empty-id)"
+jq -n '{advisories: {"1097678": {id: 1097678, github_advisory_id: "", module_name: "lodash",
+    severity: "high", vulnerable_versions: "<4.17.21", patched_versions: ">=4.17.21",
+    findings: [{version: "4.17.20", paths: [".>lodash"]}]}}}' >"$p/.stub/audit.json"
+fix_adds "$p" 'lodash@<4.17.21' '^4.17.21'
+echo "lodash@4: '>=4.17.21 <5'" >"$p/.stub/cleared-by"
+run_fix "$p" --report "$p/report.md" >"$p/out.log" 2>&1 || {
+    cat "$p/out.log"
+    fail "empty-id: exited non-zero"
+}
+expect_keys "$p" empty-id 'lodash@4=>=4.17.21 <5'
+[ "$(head_comment_of "$p" lodash@4)" = 'security-audit-fix: lodash@4 — npm-1097678' ] || fail "empty-id: comment lacks the synthetic id"
+grep -qF "| npm-1097678 | \`lodash\` | high | 4.17.20 | floor \`lodash@4: '>=4.17.21 <5'\` |" "$p/report.md" ||
+    fail "empty-id: the report row is missing or misaligned"
+pass "empty-id: an advisory without a GHSA id is reported and commented as npm-<number>"
+
+# ── 12. publish: one rolling draft PR, scope-checked patch ─────────────
 p="$(new_project publish)"
 ORIGIN="$TMPROOT/origin.git"
 export ORIGIN
