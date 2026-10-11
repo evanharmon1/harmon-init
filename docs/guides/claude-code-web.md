@@ -190,7 +190,8 @@ denials were recorded under Trusted
 ([probe results](https://github.com/evanharmon1/harmon-init/issues/1618#issuecomment-6113307590)).
 
 **Observed 2026-10-11, Claude Code 2.1.296, after the change to Custom** with the
-three hosts added: `task security` completed with exit 0 (Semgrep: 173 rules,
+three hosts added
+([verification](https://github.com/evanharmon1/harmon-init/issues/1618#issuecomment-6113784543)): `task security` completed with exit 0 (Semgrep: 173 rules,
 0 findings; gitleaks: no leaks), and `npx playwright install --with-deps
 chromium firefox webkit` completed in 60 seconds. A screenshot rendered in
 each of Firefox, WebKit and Chromium. No host was denied.
@@ -587,13 +588,21 @@ with its built-in tools skips them, the second-model review included. The platfo
 an alternative to that lifecycle, and what it does about drafts is not
 recorded.
 
-**A lane may run the pre-PR gate and open its own draft PR** where its
-environment can run `task security`, as `harmon-remote` can since 2026-10-11
-([Network](#network)). The order does not change. The lane opens the draft only
-after the orchestrator's `task challenge` and `task review` rounds on its pushed
-branch have converged and `task security` has passed in the session. The
-orchestrator decides which side opens it, and the integration stage, the
-readiness gate and promotion stay the orchestrator's either way.
+**A lane may run `task security` itself, but the PR stays the orchestrator's.**
+Since 2026-10-11 `harmon-remote` can run the full gate ([Network](#network)), so a
+lane can run it before it pushes. Opening the draft is still the orchestrator's,
+for three reasons:
+
+- **No permitted way to open it.** `gh pr create` is GraphQL-backed, and the
+  REST form was refused under the posture. The built-in GitHub tools work but
+  skip every gate.
+- **No way to confirm it.** The lane could not confirm the PR's head and draft
+  state, because `gh pr view` is GraphQL too.
+- **No way to hand over the record.** The deferred-findings sidecar and the
+  `reviewed from <host> at <head>` ledger line live with the orchestrator.
+
+A lane that runs the gate only means the orchestrator's own `task security`
+run is a confirmation.
 
 ### The `gh` call inventory
 
@@ -939,9 +948,8 @@ which Trusted denies. `harmon-remote` now allows that host under **Custom**
 - **Outside it:** the session stops at a pushed branch, and the draft PR is opened
   only after `task security` has passed on a machine that can run it. That is
   the shape of a cloud lane ([What runs where](#what-runs-where)), where the
-  orchestrator runs the gate before it opens the PR. Where the session can run
-  the gate, the orchestrator may instead let the lane open its own draft PR,
-  with the same order as § What runs where.
+  orchestrator runs the gate before it opens the PR, whether or not the lane
+  ran it too ([What runs where](#what-runs-where)).
 
 `task security:secrets` on its own is the per-push secret scan, not a substitute
 for the pre-PR gate.
@@ -949,11 +957,15 @@ for the pre-PR gate.
 ## Containers, browsers and background servers
 
 Probed 2026-10-11 in `harmon-remote` (Claude Code 2.1.296, setup script at
-`v5.6.0`; 4 CPUs, 15 GB RAM, 29 GB free disk), under Trusted, then re-checked
-after the network change. Results and denials are recorded on
-[#1618](https://github.com/evanharmon1/harmon-init/issues/1618#issuecomment-6113307590).
+`v5.6.0`; 4 CPUs, 15 GB RAM, 29 GB free disk) under Trusted
+([probes](https://github.com/evanharmon1/harmon-init/issues/1618#issuecomment-6113307590)).
+After the network change, only the Playwright install and `task security` were
+re-run
+([verification](https://github.com/evanharmon1/harmon-init/issues/1618#issuecomment-6113784543)).
+These are capability checks, not a repository's gate. What is still open is
+listed under [Pending observations](#pending-observations).
 
-- **Docker works, but nothing starts it.** The image has the `docker` client and
+- **Docker runs, but nothing starts it.** The image has the `docker` client and
   `dockerd`, and no daemon runs at session start. Start one in the background
   (`dockerd > <log> 2>&1 &`); it was up in under 20 seconds. Anonymous Docker
   Hub pulls returned `429 Too Many Requests` about two thirds of the time, so
@@ -1173,6 +1185,7 @@ date and the Claude Code version.
 | #1405-6 | Seen 2026-10-06 on `evanharmon1/harmon-init`: `task setup:remote` exits 0 and clones the siblings. *Open:* siblings readable and `task verify` runnable in a live session on `ponderousdev/omator`, which the criterion names | [When per-checkout preparation runs](#when-per-checkout-preparation-runs) |
 | #1404-2 | In part, 2026-10-06/07: `gh pr merge` was refused without a prompt, consistent with the managed deny rules being enforced, inferred from the refusals (before the agent posture dropped its merge guard; repeat with `gh release delete x`, which is still denied). *Open:* the listing half, which cannot be done on the web because `/permissions` opens the permission-mode menu instead | [The agent posture](#the-agent-posture) |
 | — (the unnumbered row) | Seen 2026-10-06: release-asset downloads from repositories not attached to the session succeed under **Trusted** | [Network](#network) |
+| #1618 | Seen 2026-10-11: Docker runs once `dockerd` is started, with Docker Hub `429`s; Playwright installs three engines after the network change; agent-browser works with the preinstalled Chromium; a `nohup` server outlives the tool call; `task security` passes with `semgrep.dev` allowed. *Open:* a gate that starts containers (for example harmonops/harmon-infra's `task verify`), a real app's `task test:e2e` on a port (the rendered `web` profile ships no app), a dependency audit with manifests to check (harmon-init has none), and whether the Bash tool's automatic backgrounding of a long command interferes with a server | [Containers, browsers and background servers](#containers-browsers-and-background-servers) |
 
 ## Reusing this structure
 
