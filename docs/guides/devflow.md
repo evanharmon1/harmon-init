@@ -49,8 +49,9 @@ Resolve rigor and strategy in this order:
 Use `--merge-base-policy-absent` for a branch that adds `.devflow.toml`.
 It requires an existing `--policy` file and cannot be combined with
 `--merge-base-policy`. The candidate is validated independently; built-in
-values govern the run. Invalid flag combinations (including `--rigor-source`
-without `--rigor`) or malformed operator `--tier-overrides` /
+values govern the run. An empty `--merge-base-policy ""` is a usage error
+(exit 2), never permission for the branch policy to govern. Invalid flag
+combinations (including `--rigor-source` without `--rigor`) or malformed operator `--tier-overrides` /
 `--rigor-source` values exit with usage status 2. Successful resolution exits
 0; invalid policy exits 1. Exit 3 means resolved but indeterminate:
 cross-validation could not finish (no registry was supplied, or no gate-target
