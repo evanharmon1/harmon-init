@@ -903,7 +903,7 @@ setup script at `v5.6.0`, the checkout at a `main` that carries the #1624 fix;
   two-hour maximum). That job timeout is separate from the ten-minute
   foreground ceiling above. The harness ended the job at the limit with
   SIGTERM (exit 143) while `test:output` was running, before any `GATE-EXIT`
-  line. `test:output` on its own passed in seconds and left no stray
+  line. `test:output` on its own passed within a two-minute timeout and left no stray
   processes. Why that attempt was slower, and whether the suite would have
   finished, is not established.
 
