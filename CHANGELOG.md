@@ -8,6 +8,21 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [5.6.0](https://github.com/evanharmon1/harmon-init/compare/v5.5.1...v5.6.0) (2026-10-11)
+
+
+### Features
+
+* **labels:** provision implementer model labels and organization issue fields from the registry ([#1613](https://github.com/evanharmon1/harmon-init/issues/1613)) ([37e590b](https://github.com/evanharmon1/harmon-init/commit/37e590b9e5697cfaea81b8b5df474a23992a056b))
+
+
+### Bug Fixes
+
+* **agents:** name the split disposition in the round-2 checkpoint ([#1615](https://github.com/evanharmon1/harmon-init/issues/1615)) ([28ded9f](https://github.com/evanharmon1/harmon-init/commit/28ded9f556ff449d48c9cd1c3c9e098cd6d7213e))
+* **codex:** move GPT model pins to the 6.1 Sol and 6 Astra and Luna lines ([#1622](https://github.com/evanharmon1/harmon-init/issues/1622)) ([a4c1697](https://github.com/evanharmon1/harmon-init/commit/a4c16972c9d45fbdfbf5959d0a00a32d1f742c35))
+* **decisions:** move the GET-only wrapper decision into its own ADR ([#1620](https://github.com/evanharmon1/harmon-init/issues/1620)) ([0d9fea3](https://github.com/evanharmon1/harmon-init/commit/0d9fea35367a638b3e44b593d7a7c23bd4dc04a0))
+* **devflow:** treat an absent policy and absent registry as a determinate built-in fallback ([#1619](https://github.com/evanharmon1/harmon-init/issues/1619)) ([bf2f31b](https://github.com/evanharmon1/harmon-init/commit/bf2f31bdc4eef3a3f2abb62b11f50723c2ac1530))
+
 ## [5.5.1](https://github.com/evanharmon1/harmon-init/compare/v5.5.0...v5.5.1) (2026-10-10)
 
 
