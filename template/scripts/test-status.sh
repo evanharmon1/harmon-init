@@ -1927,9 +1927,13 @@ fields_complete='[
  {"name":"Risk","data_type":"single_select","options":[{"name":"trivial","priority":1},{"name":"low","priority":2},{"name":"medium","priority":3},{"name":"high","priority":4},{"name":"critical","priority":5}]},
  {"name":"Complexity","data_type":"single_select","options":[{"name":"xs","priority":1},{"name":"s","priority":2},{"name":"m","priority":3},{"name":"l","priority":4},{"name":"xl","priority":5}]},
  {"name":"Priority (AI)","data_type":"single_select","options":[{"name":"p0","priority":1},{"name":"p1","priority":2},{"name":"p2","priority":3},{"name":"p3","priority":4},{"name":"p4","priority":5}]},
- {"name":"Effort","data_type":"single_select","options":[{"name":"1","priority":1},{"name":"2","priority":2},{"name":"3","priority":3},{"name":"5","priority":4},{"name":"8","priority":5},{"name":"13","priority":6},{"name":"20","priority":7}]}
+ {"name":"Effort","data_type":"single_select","options":[{"name":"1","priority":1},{"name":"2","priority":2},{"name":"3","priority":3},{"name":"5","priority":4},{"name":"8","priority":5},{"name":"13","priority":6},{"name":"20","priority":7}]},
+ {"name":"Model family","data_type":"single_select","options":[{"name":"gemini","priority":2},{"name":"claude","priority":1}]},
+ {"name":"Model","data_type":"single_select","options":[{"name":"opus","priority":1},{"name":"flash","priority":2}]},
+ {"name":"Model version","data_type":"single_select","options":[{"name":"3.8","priority":3},{"name":"5.5","priority":1},{"name":"5.1","priority":2},{"name":"4.0","priority":4}]},
+ {"name":"Model effort","data_type":"single_select","options":[{"name":"low","priority":1},{"name":"high","priority":2}]}
 ]'
-issue_fields_ok="[x] Org issue fields - Product, Impact, Risk, Complexity, Priority (AI), Effort"
+issue_fields_ok="[x] Org issue fields - Product, Impact, Risk, Complexity, Priority (AI), Effort, Model family, Model, Model version, Model effort"
 for shape in wrapped bare; do
     out="$(GH_STUB_ISSUE_FIELDS="$shape" GH_STUB_ISSUE_FIELDS_JSON="$fields_complete" run_inventory_section)"
     case "$out" in
@@ -1956,7 +1960,7 @@ issue_fields_case() {
 # The state of every org today: GitHub's built-ins and Product, nothing else.
 issue_fields_case "an org with only GitHub's built-ins" \
     'map(select(.name == "Priority" or .name == "Start date" or .name == "Target date" or .name == "Product")) + [{"name":"Effort","data_type":"single_select","options":[{"name":"High","priority":1},{"name":"Medium","priority":2},{"name":"Low","priority":3}]}]' \
-    "[ ] Org issue fields - missing Impact, Risk, Complexity, Priority (AI); Effort lacks 1, 2, 3, 5, 8, 13, 20 — run task setup:github-issue-fields"
+    "[ ] Org issue fields - missing Impact, Risk, Complexity, Priority (AI), Model family, Model, Model version, Model effort; Effort lacks 1, 2, 3, 5, 8, 13, 20 — run task setup:github-issue-fields"
 issue_fields_case "a missing option" \
     'map(if .name == "Impact" then .options |= map(select(.name != "massive")) else . end)' \
     "[ ] Org issue fields - Impact lacks massive — run task setup:github-issue-fields"
@@ -1993,6 +1997,22 @@ issue_fields_case "Priority (AI) missing while the built-in Priority exists" \
 issue_fields_case "a field whose name only starts with a wanted name" \
     'map(if .name == "Effort" then .name = "Effort estimate" else . end)' \
     "[ ] Org issue fields - missing Effort — run task setup:github-issue-fields"
+# The four Model fields (#1517) are wanted by name and type only: their options
+# come from agent-registry.json and belong to the setup script, which validates
+# the registry. A Model field with no options at all is still ok here.
+issue_fields_case "a missing Model field" \
+    'map(select(.name != "Model effort"))' \
+    "[ ] Org issue fields - missing Model effort — run task setup:github-issue-fields"
+issue_fields_case "a Model field of the wrong data type" \
+    'map(if .name == "Model" then {name, data_type: "text"} else . end)' \
+    "[ ] Org issue fields - wrong type: Model is text — rename/delete, then re-run task setup:github-issue-fields"
+echo "==> the Model fields' options are not checked"
+out="$(GH_STUB_ISSUE_FIELDS=bare GH_STUB_ISSUE_FIELDS_JSON="$(jq -c 'map(if (.name | startswith("Model")) then .options = [] else . end)' <<<"$fields_complete")" run_inventory_section)"
+case "$out" in
+*"$issue_fields_ok"*) ;;
+*) fail "present, correctly typed Model fields were not ok without options: ${out}" ;;
+esac
+
 echo "==> the human Priority is not wanted: an org without the built-in Priority is still ok"
 out="$(GH_STUB_ISSUE_FIELDS=bare GH_STUB_ISSUE_FIELDS_JSON="$(jq -c 'map(select(.name != "Priority"))' <<<"$fields_complete")" run_inventory_section)"
 case "$out" in

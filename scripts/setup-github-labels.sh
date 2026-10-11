@@ -6,9 +6,15 @@
 # docs/project-management.md for the human-facing table, which is generated from
 # the same file), and this script provisions whatever
 # scripts/label-registry-render.mjs renders from it. The agent families
-# (claim:/foreman:<adapter>) come from agent-registry.json via the same
+# (claim:/foreman:<adapter>, and the implementer record model-family:/model:/
+# model-version:/model-effort:) come from agent-registry.json via the same
 # renderer, so provisioning, inventory, docs, and both registries cannot fork
 # (test-label-registry.sh and test-registry-drift.sh gate them together).
+# The implementer-record labels are provisioned on every repository that
+# provisions labels, on BOTH owner types (personal and organization), retired
+# model versions included: organization repositories record the implementer in
+# issue fields on issues (organization-only), but pull requests have no issue
+# fields, so they carry the labels on both.
 #
 # Labels are REPO-level in GitHub — there's no shared org label pool. Run this in
 # each repo; org "default labels" (Settings → Repository, UI-only, no API) only

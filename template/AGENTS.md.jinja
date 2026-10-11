@@ -525,7 +525,7 @@ cap allowed.
   `git merge`/`git pull` it cannot verify lands on a feature branch; quoted
   text and heredoc bodies that no shell runs, search patterns and
   `git merge-base` are data. The project settings ask on pushes to main and
-  force-pushes but carry no `gh pr merge` ask: that prompt comes only from
+  force-pushes (prefix rules: a backstop, not a boundary) but carry no `gh pr merge` ask: that prompt comes only from
   your own settings on a host[% if devcontainer %] and from the dev
   devcontainer's managed-settings drop-in
   (`.devcontainer/config/claude-settings-dev.json`)[% endif %]. The hook

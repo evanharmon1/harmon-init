@@ -448,6 +448,12 @@ type:
   way everywhere.
 - **`area:*`, `layer:*` and `domain:*`** are labels on both. Each family has a
   `none` value that records "this axis does not apply".
+- **The implementer record** (model family, model, model version and model
+  effort) follows the same split on issues: single-select issue fields on an
+  organization, `model-family:*`, `model:*`, `model-version:*` and
+  `model-effort:*` labels on a personal account. Pull requests carry the labels
+  on both owner types, because issue fields do not exist on pull requests. See
+  [The implementer record](#the-implementer-record).
 
 Which surface suits a datum is the question [Label or field?](#label-or-field)
 answers.
@@ -1138,6 +1144,10 @@ deliberately leaves it alone.
 | `suggest:<family>:<model>` (**retired**) | nobody — superseded by the derived Tier | humans — retired, see `tier:*` | retired — never provisioned; no tool creates it any more | remove the label from each issue, then use guarded `--prune` |
 | `claim:<family>` | the agent itself — a vendored claim skill, or a Claude Actions run | humans; the Claude Actions claim gate; `claim-release.yml` where the repo ships it | provisioned from the registry; a **gate**, never a trigger | added at claim, removed at release — by the workflow's `always()` step, or by `claim-release.yml` on close where the repo ships it |
 | `claim:<family>:<model>` | the agent itself | humans; the Claude Actions claim gate; `claim-release.yml` where the repo ships it | **tool-owned, created on demand** | refines the family label; added at claim, removed at release |
+| `model-family:<family>` | the implementing agent, as a record of fact — personal-account repos on issues and PRs; organization repos on PRs only (issues carry the issue field instead) | humans, saved views — never read to select a model | provisioned from the registry (every owner type); a **record of fact**, never a routing input | kept; replaced by the next implementer, never removed by claim release |
+| `model:<line>` | the implementing agent, as a record of fact — personal-account repos on issues and PRs; organization repos on PRs only (issues carry the issue field instead) | humans, saved views — never read to select a model | provisioned from the registry (every owner type); a **record of fact**, never a routing input | kept; replaced by the next implementer, never removed by claim release |
+| `model-version:<version>` | the implementing agent, as a record of fact — personal-account repos on issues and PRs; organization repos on PRs only (issues carry the issue field instead) | humans, saved views — never read to select a model | provisioned from the registry (retired versions included, so history keeps its labels; every owner type); a **record of fact**, never a routing input | kept; replaced by the next implementer, never removed by claim release |
+| `model-effort:<effort>` | the implementing agent, as a record of fact — personal-account repos on issues and PRs; organization repos on PRs only (issues carry the issue field instead) | humans, saved views — never read to select a model | provisioned from the registry (every owner type); a **record of fact**, never a routing input | kept; replaced by the next implementer, never removed by claim release |
 | `agent:<harness>` (**retired**) | nobody — never seeded into a new repo | claim skills (and `claim-release.yml` where present), which still recognize it | legacy; inert | after choosing the actual claim family, use guarded `--prune` with repeatable `--migrate OLD=NEW` |
 | `foreman:<adapter>` | a trusted human, to arm an issue | Foreman | provisioned from the registry where the repo uses foreman (`--foreman`), for production-dispatchable adapters only; **actor-verified arming** | applied to arm; stays on the issue |
 | `foreman:approved` | a trusted human | Foreman | provisioned (`--foreman`); **actor-verified arming** with the repo default backend | applied to arm; stays on the issue |
@@ -1214,20 +1224,82 @@ tracked in
 
 Each harness declares the reasoning `efforts` it accepts. The list is drawn
 from the registry-wide `effort_ladder` and kept in ladder order. Effort belongs
-to the harness, not the model. An empty list means the registry records no
-effort control for that harness. Only three lists are verified: `claude-code`
-and `claude-code-action` (Claude Code's effort setting) and `codex-cli`
-(`model_reasoning_effort`). Every other harness is recorded as empty
-**pending verification**, not because it is known to lack a control:
+to the harness, not the model. The list holds the levels the harness is verified
+to accept — for a provider-rewired wrapper, for the models its launcher resolves.
+A level documented only
+for a model the harness does not resolve is not recorded. An empty list means
+no separate, verified effort
+setting is recorded. Numeric token budgets and on/off switches are not mapped
+onto the ladder, and aliases that collapse onto another level add no rung.
 
-- **The provider-rewired `claude-code-*` variants** run Claude Code against
-  another vendor's endpoint. Claude Code sends effort as an Anthropic API
-  parameter, and no evidence yet shows that those backends honour it.
-- **`antigravity`** selects effort through the model name (for example
-  `gemini-3.8-flash-high`) rather than a separate harness setting, so it has no
-  effort list of its own.
-- **`copilot-cli`, `qwen-code`, `opencode`, `pi`, `oh-my-pi`, `goose` and
-  `cline`** have not been checked for an effort flag.
+The following documentation was checked on **2026-10-10**. The existing
+`claude-code`, `claude-code-action` and `codex-cli` lists remain as previously
+verified; the checks below establish the other entries' status. GLM remains
+unverified for Anthropic effort pass-through; hosted Qwen and MiniMax remain
+unverified for the models their wrappers resolve:
+
+- **`claude-code-deepseek`**: DeepSeek's [thinking-mode reference](https://api-docs.deepseek.com/guides/thinking_mode/)
+  documents Anthropic `output_config.effort` with distinct `low`, `high` and
+  `max` levels, covering the launcher's configured `deepseek-v4-pro` /
+  `deepseek-v4-flash` models. Other accepted names map onto those levels.
+- **`claude-code-kimi`**: Kimi's [Claude Code integration](https://platform.kimi.ai/docs/guide/claude-code-kimi)
+  documents `CLAUDE_CODE_EFFORT_LEVEL`; its [reasoning-effort reference](https://platform.kimi.ai/docs/guide/use-reasoning-effort)
+  lists K3's `low`, `high` and `max`, covering the K line this wrapper resolves.
+  These lists describe K3, not older K2 models.
+- **`claude-code-minimax`**: MiniMax's [Anthropic compatibility reference](https://platform.minimax.io/docs/api-reference/text-anthropic-api)
+  documents `output_config.effort`: `low`, `medium`, `high`, `xhigh`, `max`.
+  This control is documented only for `MiniMax-M3.1-Flash-Preview`.
+  This repository provisions no `claude-minimax` launcher yet, and the registry's
+  minimax family carries M3. The list stays `[]` until a launcher exists and
+  the provider documents effort for the model it resolves.
+- **`claude-code-qwen`**: Alibaba's [Anthropic Messages reference](https://www.alibabacloud.com/help/en/model-studio/anthropic-api-messages)
+  documents `output_config.effort` for Qwen3.8 Max/Flash: `low`, `medium`,
+  `xhigh`. `high` and `max` map to `xhigh`. This wrapper resolves Qwen3.7 Max
+  / Coder Plus, so its list stays `[]` (unverified for the configured models)
+  until the wrapper moves to supported models or Alibaba documents effort
+  support for its configured models.
+- **`claude-code-glm` — still unverified**: Z.ai's [deep-thinking reference](https://docs.z.ai/guides/capabilities/thinking)
+  documents `reasoning_effort`, and its [Claude Code integration](https://docs.z.ai/devpack/tool/claude)
+  documents the Anthropic endpoint. Neither establishes the endpoint's
+  handling of Claude Code's `output_config.effort`; keep `[]` until that
+  pass-through is documented or verified.
+- **`claude-code-qwen-local`**: no reasoning-effort setting was established
+  for the configured `qwen3-coder:30b`. Qwen's [30B Coder model card](https://huggingface.co/Qwen/Qwen3-Coder-30B-A3B-Instruct)
+  documents non-thinking mode only. [Ollama](https://docs.ollama.com/api/anthropic-compatibility)
+  supports model-defined `output_config.effort` names, but that does not add
+  reasoning to this model; [LM Studio's Messages documentation](https://lmstudio.ai/docs/developer/anthropic-compat)
+  establishes no effort levels for it. Keep `[]` for this configuration.
+- **`antigravity`**: Google's [models page](https://www.antigravity.google/docs/models/)
+  places the thinking choice in model selection (for example, a Flash Medium
+  or Pro High selection). Its [CLI reference](https://www.antigravity.google/docs/cli/reference/)
+  exposes `/model` but no separate effort setting, so keep `[]`.
+- **`copilot-cli`**: GitHub's [CLI command reference](https://docs.github.com/en/copilot/reference/copilot-cli-reference/cli-command-reference)
+  documents `--effort` / `--reasoning-effort`: `low`, `medium`, `high`,
+  `xhigh`, `max`, subject to the selected model.
+- **`qwen-code`**: the official [model-provider configuration reference](https://github.com/QwenLM/qwen-code/blob/main/docs/users/configuration/model-providers.md)
+  documents `generationConfig.reasoning.effort` and configurable capability
+  tiers: `low`, `medium`, `high`, `xhigh`, `max`. Endpoint/model profiles can
+  restrict or normalize these values; token budgets alone add no levels.
+- **`opencode`**: the [model configuration reference](https://opencode.ai/docs/models/)
+  documents `reasoningEffort` and named variants covering `minimal`, `low`,
+  `medium`, `high`, `xhigh`, `max` across providers. The [v2 reference](https://opencode.ai/v2/docs/models)
+  uses model `settings.reasoningEffort`; available variants and accepted
+  settings depend on the provider/model.
+- **`pi` and `oh-my-pi`**: their official CLI references
+  ([Pi](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/cli.md),
+  [Oh My Pi](https://github.com/can1357/oh-my-pi/blob/main/docs/cli-reference.md))
+  document `--thinking`: `minimal`, `low`, `medium`, `high`, `xhigh`, `max`.
+  `off` (and Oh My Pi's `auto`) are not effort-ladder levels; model capability
+  limits still apply.
+- **`goose`**: the official [provider configuration reference](https://github.com/block/goose/blob/main/documentation/docs/getting-started/providers.md)
+  documents `GOOSE_THINKING_EFFORT` / `goose configure` for Muse Spark.
+  The recorded list is `GOOSE_THINKING_EFFORT`'s own values: `low`, `medium`,
+  `high`, `max`. Per-provider variables such as `GEMINI3_THINKING_LEVEL`
+  (which accepts `low` and `high`) are separate controls, not part of this list;
+  `off` and numeric budgets add no ladder levels.
+- **`cline`**: the official [CLI reference](https://github.com/cline/cline/blob/main/docs/cli/cli-reference.mdx)
+  documents `--thinking`: `low`, `medium`, `high`, `xhigh` (`none` is excluded).
+  These are the CLI's levels, not every value accepted by Cline's shared SDK.
 
 Introducing lines renamed the slugs that embedded a version. Model-level claim
 labels are created on demand, so the renames change only the names of future
@@ -1255,6 +1327,55 @@ already exists fails.
 | `claim:mistral:devstral-small-2` | `claim:mistral:devstral-small` |
 
 The Claude, GPT and Qwen line slugs did not change.
+
+#### The implementer record
+
+Which model implemented an issue is recorded as four values, all drawn from
+`agent-registry.json` (harmon-devkit#1262, decided 2026-10-04):
+
+| Value | Label | Issue field (organization) | Source in the registry | Example |
+| --- | --- | --- | --- | --- |
+| Model family | `model-family:<family>` | Model family | a family `slug` | `claude` |
+| Model | `model:<line>` | Model | a model line `slug` | `opus` |
+| Model version | `model-version:<version>` | Model version | a version `slug`, retired ones included | `5.5` |
+| Model effort | `model-effort:<effort>` | Model effort | the `effort_ladder` | `high` |
+
+- **Owner-type split.** On a **personal-account** repository the four values
+  are labels on the issue. On an **organization** they are single-select issue
+  fields on the issue, provisioned by `task setup:github-issue-fields`.
+- **Pull requests carry the labels on every owner type.** Issue fields do not
+  exist on pull requests, so a pull request always records its implementer as
+  the four labels. That is why `task setup:github-labels` provisions the four
+  label families on every repository that provisions labels, on both owner
+  types (personal and organization). The issue fields stay organization-only.
+- **Last implementer wins.** Each value is exclusive. When a second
+  implementer takes over an issue, its values *replace* the first one's, so the
+  issue answers "who implemented this most recently". The pull request is the
+  exact per-change record: each pull request keeps the values of the
+  implementer that produced it.
+- **A record of fact, never a routing input.** The implementing agent writes
+  the values after the fact, and nothing reads them to select a model. Choosing
+  a model is the Tier's and the harness's job (see
+  [The Tier](#the-tier-derivation-and-pin)). This is also why they are not the
+  retired `Agent` field: that field tried to say who *may* take the work, and
+  these values say who *did*.
+- **Kept, never removed by claim release.** The values are not claim markers.
+  `claim:*` comes off when the claim is released, but the implementer record
+  stays until the next implementer replaces it. `claim-release.yml` never
+  touches these labels or fields.
+- **Provisioned from the registry, history included.** Every family slug,
+  every model line slug and every version slug is provisioned once. A slug
+  shared by several families or lines (the `flash` line, the `5.5` version)
+  becomes a single label or option. Retired versions stay provisioned, so an
+  issue implemented by a model that has since been retired keeps a value that
+  still exists. On an organization a new version is appended as an option.
+  Every existing option is sent back with its id, because GitHub clears the
+  value on every issue holding an option that is re-sent without one. So
+  assigned values survive, and no option is ever removed.
+
+The code that *writes* these values at implement or claim time belongs to the
+vendored skills (harmon-devkit#1269 and #1262). This repository only
+provisions the vocabulary.
 
 <!-- registry-tables:begin -->
 <!-- Generated from agent-registry.json by `node scripts/agent-registry-labels.mjs docs-tables`. Do not edit by hand — `task test:registry-docs` fails on drift. -->
@@ -1289,21 +1410,21 @@ Effort ladder: `minimal` < `low` < `medium` < `high` < `xhigh` < `max`.
 | --- | --- | --- | --- | --- | --- |
 | `claude-code` | Claude Code CLI | `claude` | `foreman:claude` — production, dispatchable | `runner-config` | `low`, `medium`, `high`, `xhigh`, `max` |
 | `claude-code-action` | claude-code-action | `claude` | — | `workflow-config` | `low`, `medium`, `high`, `xhigh`, `max` |
-| `claude-code-deepseek` | Claude Code provider wrapper | `deepseek` | `claude-code-deepseek` — production, not dispatchable, no label | `provider-wrapper` | — |
+| `claude-code-deepseek` | Claude Code provider wrapper | `deepseek` | `claude-code-deepseek` — production, not dispatchable, no label | `provider-wrapper` | `low`, `high`, `max` |
 | `claude-code-glm` | Claude Code provider wrapper | `glm` | `claude-code-glm` — production, not dispatchable, no label | `provider-wrapper` | — |
-| `claude-code-kimi` | Claude Code provider wrapper | `kimi` | `claude-code-kimi` — production, not dispatchable, no label | `provider-wrapper` | — |
+| `claude-code-kimi` | Claude Code provider wrapper | `kimi` | `claude-code-kimi` — production, not dispatchable, no label | `provider-wrapper` | `low`, `high`, `max` |
 | `claude-code-minimax` | Claude Code provider wrapper | `minimax` | — | `provider-wrapper` | — |
 | `claude-code-qwen` | Claude Code provider wrapper | `qwen` | — | `provider-wrapper` | — |
 | `claude-code-qwen-local` | Claude Code provider wrapper | `qwen` | — | `provider-wrapper` | — |
 | `codex-cli` | OpenAI Codex CLI | `gpt` | `codex-cli` — production, not dispatchable, no label | `runner-config` | `minimal`, `low`, `medium`, `high`, `xhigh` |
-| `copilot-cli` | GitHub Copilot CLI | any (multi-provider; default `mai`) | — | `harness-runtime` | — |
-| `qwen-code` | Qwen Code CLI | `qwen` | — | `runner-config` | — |
+| `copilot-cli` | GitHub Copilot CLI | any (multi-provider; default `mai`) | — | `harness-runtime` | `low`, `medium`, `high`, `xhigh`, `max` |
+| `qwen-code` | Qwen Code CLI | `qwen` | — | `runner-config` | `low`, `medium`, `high`, `xhigh`, `max` |
 | `antigravity` | Google Antigravity | `gemini` | — | `harness-runtime` | — |
-| `opencode` | OpenCode | any (multi-provider) | — | `harness-runtime` | — |
-| `pi` | Pi | any (multi-provider) | — | `harness-runtime` | — |
-| `oh-my-pi` | Oh My Pi | any (multi-provider) | — | `harness-runtime` | — |
-| `goose` | Block Goose | any (multi-provider) | — | `harness-runtime` | — |
-| `cline` | Cline | any (multi-provider) | — | `harness-runtime` | — |
+| `opencode` | OpenCode | any (multi-provider) | — | `harness-runtime` | `minimal`, `low`, `medium`, `high`, `xhigh`, `max` |
+| `pi` | Pi | any (multi-provider) | — | `harness-runtime` | `minimal`, `low`, `medium`, `high`, `xhigh`, `max` |
+| `oh-my-pi` | Oh My Pi | any (multi-provider) | — | `harness-runtime` | `minimal`, `low`, `medium`, `high`, `xhigh`, `max` |
+| `goose` | Block Goose | any (multi-provider) | — | `harness-runtime` | `low`, `medium`, `high`, `max` |
+| `cline` | Cline | any (multi-provider) | — | `harness-runtime` | `low`, `medium`, `high`, `xhigh` |
 <!-- registry-tables:end -->
 
 ## Claiming — making an agent's work visible while it happens
