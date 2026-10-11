@@ -55,8 +55,9 @@ cat >"$TMPROOT/bin/pnpm" <<'STUB'
 #   fixed.yaml      the workspace file `audit --fix` writes
 #   calls           every invocation, one per line
 # Overrides resolve as pnpm 11's do (probed on 11.28.5): in map order, the last
-# matching entry wins, so a bare `pkg` after a cleared-by `pkg@<major>` key
-# outranks it and the advisory stays open.
+# matching entry wins, so any later key for the same package (bare `pkg`, or
+# a `pkg@<selector>`) outranks a cleared-by `pkg@<major>` key and the
+# advisory stays open.
 set -euo pipefail
 echo "pnpm $*" >>"$STUB_DIR/calls"
 outranked() {
@@ -64,7 +65,7 @@ outranked() {
     yq -r '.overrides // {} | keys | .[]' pnpm-workspace.yaml >"$STUB_DIR/keys.order"
     while IFS= read -r line; do
         k="${line%%: *}"
-        awk -v k="$k" -v b="${k%@*}" '$0 == k { seen = 1 } seen && $0 == b { found = 1 } END { exit !found }' \
+        awk -v k="$k" -v b="${k%@*}" '$0 == k { seen = 1; next } seen && ($0 == b || index($0, b "@") == 1) { found = 1 } END { exit !found }' \
             "$STUB_DIR/keys.order" && return 0
     done <"$STUB_DIR/cleared-by"
     return 1
@@ -135,7 +136,7 @@ export PATH="$TMPROOT/bin:$PATH"
 unset GH_TOKEN GITHUB_TOKEN GH_APP_SLUG
 # A local run: no audited commit, so publish skips the moved-base check unless
 # a case sets GITHUB_SHA itself (CI exports it for this test's own job).
-unset GITHUB_SHA
+unset GITHUB_SHA GITHUB_ACTIONS
 
 # ── Fixtures ─────────────────────────────────────────────────────────
 
@@ -801,8 +802,11 @@ pass "empty-id: an advisory without a GHSA id is reported and commented as npm-<
 # file (a raw `--fix` entry from before, with a stale lockfile). The proposal
 # is the post-fix map, not its difference from the original, so the advisory
 # is still fixed and the floor is written in the canonical shape.
+# The stale entry sits BEFORE left-pad@1: one after it would outrank the
+# rewritten key (last match wins) and is refused instead — see sel-after.
 p="$(new_project identical)"
-K='left-pad@<1.3.4' V='^1.3.4' yq -i '.overrides[strenv(K)] = strenv(V)' "$p/pnpm-workspace.yaml"
+awk '/^  # left-pad@1: / { print "  left-pad@<1.3.4: ^1.3.4" } { print }' "$p/pnpm-workspace.yaml" >"$p/ws.tmp" &&
+    mv "$p/ws.tmp" "$p/pnpm-workspace.yaml"
 advisory GHSA-0000-0000-0023 left-pad high '<1.3.4' 1.3.1 left-pad '>=1.3.4' | jq '{advisories: .}' >"$p/.stub/audit.json"
 fix_adds "$p" 'left-pad@<1.3.4' '^1.3.4'
 echo "left-pad@1: '>=1.3.4 <2'" >"$p/.stub/cleared-by"
@@ -958,14 +962,14 @@ fix_writes "$p" '  tiny@<0.4.3: ^0.4.3'
 expect_refused "$p" unreadable-caret-zero "the local override \`tiny@0.4: '^0.4.0'\` has a cap the script cannot read"
 pass "unreadable-caret-zero: a ^0.x override is refused, bytes unchanged"
 
-# add_bare PROJECT VALUE [after] — a bare `left-pad: VALUE` entry before
+# add_entry PROJECT KEY VALUE [after] — a `KEY: VALUE` override before
 # left-pad@1 (its head comment), or after it with `after`, and the `--fix`
 # result recomputed over it.
-add_bare() {
-    awk -v v="$2" -v after="${3:-}" '
-        after == "" && /^  # left-pad@1: / { print "  left-pad: " v }
+add_entry() {
+    awk -v e="  $2: $3" -v after="${4:-}" '
+        after == "" && /^  # left-pad@1: / { print e }
         { print }
-        after != "" && /^  left-pad@1: / { print "  left-pad: " v }' "$1/pnpm-workspace.yaml" >"$1/ws.tmp" &&
+        after != "" && /^  left-pad@1: / { print e }' "$1/pnpm-workspace.yaml" >"$1/ws.tmp" &&
         mv "$1/ws.tmp" "$1/pnpm-workspace.yaml"
     fix_writes "$1" '  left-pad@<1.3.4: ^1.3.4'
 }
@@ -974,13 +978,13 @@ add_bare() {
 # 11.28.5 with `semver` and `semver@7` in both orders), so a bare `pkg` entry
 # caps the line as well: an unreadable one is refused…
 p="$(existing_floor bare-unreadable "'>=1.3.0 <2'")"
-add_bare "$p" "'1.3.2'"
+add_entry "$p" left-pad "'1.3.2'"
 expect_refused "$p" bare-unreadable "the local override \`left-pad: '1.3.2'\` has a cap the script cannot read"
 pass "bare-unreadable: a bare override with an implicit cap is refused, bytes unchanged"
 
 # … and a readable narrow one is kept on the floor this script writes.
 p="$(existing_floor bare-narrow "'>=1.3.0 <2'")"
-add_bare "$p" "'>=1.0.0 <1.8.0'"
+add_entry "$p" left-pad "'>=1.0.0 <1.8.0'"
 echo "left-pad@1: '>=1.3.4 <1.8.0'" >"$p/.stub/cleared-by"
 run_fix "$p" --report "$p/report.md" >"$p/out.log" 2>&1 || {
     cat "$p/out.log"
@@ -994,10 +998,80 @@ pass "bare-narrow: a bare override's narrower cap is kept on the written floor"
 # A bare entry AFTER the existing key outranks it (last match wins), so the
 # rewrite would not be what pnpm applies: refused, even when its cap is readable.
 p="$(existing_floor bare-after-keyed "'>=1.3.0 <2'")"
-add_bare "$p" "'>=1.0.0 <1.8.0'" after
+add_entry "$p" left-pad "'>=1.0.0 <1.8.0'" after
 echo "left-pad@1: '>=1.3.4 <1.8.0'" >"$p/.stub/cleared-by"
-expect_refused "$p" bare-after-keyed "a later bare \`left-pad\` override takes precedence over \`left-pad@1\` — reorder or remove it deliberately"
+expect_refused "$p" bare-after-keyed "a later \`left-pad\` override for \`left-pad\` takes precedence over \`left-pad@1\` — reorder or remove it deliberately"
 pass "bare-after-keyed: a bare override after the keyed one is refused, bytes unchanged"
+
+# A bare entry with no `pkg@<major>` key yet: the key is appended after it, and
+# the bare entry's cap is honoured on the written floor…
+# no_key PROJECT BARE — drop the fixture's left-pad@1 entry (and its comment)
+# for a bare `left-pad: BARE`.
+no_key() {
+    awk -v e="  left-pad: $2" '/^  # left-pad@1: / { print e; next } /^  left-pad@1: / { next } { print }' \
+        "$1/pnpm-workspace.yaml" >"$1/ws.tmp" && mv "$1/ws.tmp" "$1/pnpm-workspace.yaml"
+    fix_writes "$1" '  left-pad@<1.3.4: ^1.3.4'
+}
+p="$(existing_floor bare-no-key "'>=1.3.0 <2'")"
+no_key "$p" "'>=1.0.0 <1.8.0'"
+echo "left-pad@1: '>=1.3.4 <1.8.0'" >"$p/.stub/cleared-by"
+run_fix "$p" --report "$p/report.md" >"$p/out.log" 2>&1 || {
+    cat "$p/out.log"
+    fail "bare-no-key: exited non-zero"
+}
+expect_keys "$p" bare-no-key 'left-pad@1=>=1.3.4 <1.8.0'
+[ "$(yq -r '.overrides | keys | .[]' "$p/pnpm-workspace.yaml" | grep -n '^left-pad' | tr '\n' ' ')" = '2:left-pad 3:left-pad@1 ' ] ||
+    fail "bare-no-key: the new key is not appended after the bare entry"
+pass "bare-no-key: with no keyed entry, the floor is appended after the bare one and keeps its cap"
+
+# … or the row refused when that cap sits at or below the patched version.
+p="$(existing_floor bare-no-key-low "'>=1.3.0 <2'")"
+no_key "$p" "'>=1.0.0 <1.3.2'"
+expect_refused "$p" bare-no-key-low "the local override \`left-pad: '>=1.0.0 <1.3.2'\` caps \`left-pad\` below the patched version 1.3.4"
+pass "bare-no-key-low: a bare cap below the patched version is refused with no keyed entry, bytes unchanged"
+
+# Every override that targets the package counts, not just bare and major
+# keys (Claude 6113822819): pnpm applies the last match in map order to
+# selector keys too (probed: `semver@<7.6.0` after `semver@7` wins, before it
+# loses). A selector before the key caps the floor…
+p="$(existing_floor sel-before "'>=1.3.0 <2'")"
+add_entry "$p" 'left-pad@<1.9.0' "'>=1.0.0 <1.8.0'"
+echo "left-pad@1: '>=1.3.4 <1.8.0'" >"$p/.stub/cleared-by"
+run_fix "$p" --report "$p/report.md" >"$p/out.log" 2>&1 || {
+    cat "$p/out.log"
+    fail "sel-before: exited non-zero"
+}
+expect_keys "$p" sel-before 'left-pad@1=>=1.3.4 <1.8.0'
+pass "sel-before: a selector override's narrower cap is kept on the written floor"
+
+# … or refuses it when the cap sits at or below the patched version…
+p="$(existing_floor sel-before-low "'>=1.3.0 <2'")"
+add_entry "$p" 'left-pad@<1.5.0' "'>=1.0.0 <1.3.2'"
+expect_refused "$p" sel-before-low "the local override \`left-pad@<1.5.0: '>=1.0.0 <1.3.2'\` caps \`left-pad\` below the patched version 1.3.4"
+pass "sel-before-low: a selector cap below the patched version is refused, bytes unchanged"
+
+# … an unreadable selector-scoped value (a pin) is refused, as is a
+# parent-scoped one…
+p="$(existing_floor sel-unreadable "'>=1.3.0 <2'")"
+add_entry "$p" 'left-pad@<1.5.0' "1.4.2"
+expect_refused "$p" sel-unreadable "the local override \`left-pad@<1.5.0: '1.4.2'\` has a cap the script cannot read"
+pass "sel-unreadable: a selector override pinning the package is refused, bytes unchanged"
+p="$(existing_floor parent-unreadable "'>=1.3.0 <2'")"
+add_entry "$p" 'some-parent>left-pad' "1.3.2"
+expect_refused "$p" parent-unreadable "the local override \`some-parent>left-pad: '1.3.2'\` has a cap the script cannot read"
+pass "parent-unreadable: a parent-scoped override pinning the package is refused, bytes unchanged"
+
+# … and one placed after the key outranks the rewrite: refused. The stub's
+# last-match-wins resolution sees it too: with the floor in place and the
+# selector after it, the advisory stays open.
+p="$(existing_floor sel-after "'>=1.3.0 <2'")"
+add_entry "$p" 'left-pad@^1.2.0' "'>=1.3.0 <2'" after
+echo "left-pad@1: '>=1.3.0 <2'" >"$p/.stub/cleared-by"
+rm -f "$p/.stub/needs-relock" # so only the ordering can keep it open
+(cd "$p" && STUB_DIR="$p/.stub" pnpm audit --audit-level=high --json || true) >"$p/stub-audit.json"
+cmp -s "$p/stub-audit.json" "$p/.stub/audit.json" || fail "sel-after: the stub cleared an advisory a later selector key outranks"
+expect_refused "$p" sel-after "a later \`left-pad@^1.2.0\` override for \`left-pad\` takes precedence over \`left-pad@1\` — reorder or remove it deliberately"
+pass "sel-after: a selector override after the keyed one is refused, bytes unchanged"
 
 # Table-safe report cells (Claude #4): a refusal reason carrying a `||`
 # patched range must not split its row.
@@ -1130,11 +1204,25 @@ rc=0
     fail "publish-moved: a moved base must exit 0, got $rc"
 }
 grep -q 'main moved since the audit' "$p/out/7.log" || fail "publish-moved: no notice that main moved"
+! grep -q '^::notice::' "$p/out/7.log" || fail "publish-moved: an Actions annotation outside Actions"
 [ "$(git --git-dir="$ORIGIN" rev-parse "refs/heads/$FIX_BRANCH")" = "$before_head" ] || fail "publish-moved: the bot branch was pushed"
 [ "$(wc -l <"$p/.stub/calls")" -eq "$before_calls" ] || fail "publish-moved: gh was called"
 [ "$(cd "$p" && git rev-parse --abbrev-ref HEAD)" = main ] && [ -z "$(cd "$p" && git status --porcelain)" ] ||
     fail "publish-moved: the checkout was left changed"
 pass "publish-moved: a base that moved past GITHUB_SHA publishes nothing and exits 0"
+
+# Under Actions the skip is also a run annotation.
+rc=0
+(cd "$p" && GITHUB_ACTIONS=true GITHUB_SHA=0123456789abcdef0123456789abcdef01234567 STUB_DIR="$p/.stub" \
+    ./scripts/security-audit-fix.sh publish "$p/out") >"$p/out/7b.log" 2>&1 || rc=$?
+[ "$rc" -eq 0 ] || {
+    cat "$p/out/7b.log"
+    fail "publish-moved-actions: exited $rc"
+}
+grep -q '^::notice::security-audit-fix: main moved since the audit' "$p/out/7b.log" ||
+    fail "publish-moved-actions: no ::notice:: annotation"
+[ "$(git --git-dir="$ORIGIN" rev-parse "refs/heads/$FIX_BRANCH")" = "$before_head" ] || fail "publish-moved-actions: the bot branch was pushed"
+pass "publish-moved-actions: under GITHUB_ACTIONS the moved-base skip is a ::notice:: annotation"
 
 audited="$(cd "$p" && git rev-parse HEAD)"
 rc=0

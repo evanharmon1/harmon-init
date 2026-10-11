@@ -20,12 +20,15 @@
 #
 # with a `# pkg@<major>: GHSA-….` comment, below the template-owned floor block
 # (never inside it), then re-resolves the lockfile and re-audits. A narrower
-# explicit cap on an existing local override (`'>=1.5.0 <1.8.0'`) is kept in
-# place of <next-major. A fix it cannot express that way is REFUSED: crossing
-# a major, an advisory with no patched version, a floor the template block
-# owns (raise that upstream), a patched version at or above a kept local cap,
-# or an existing override (`pkg@<major>` or bare `pkg`) whose cap the script
-# cannot read — an exact pin, `~`, an x-range, a hyphen range, `||`.
+# explicit cap on an existing local override for the package (`'>=1.5.0
+# <1.8.0'`) is kept in place of <next-major. A fix it cannot express that way
+# is REFUSED: crossing a major, an advisory with no patched version, a floor
+# the template block owns (raise that upstream), a patched version at or above
+# a kept local cap, an existing override for the package (bare `pkg`,
+# `pkg@<major>`, any `pkg@<selector>`, `parent>pkg`) whose cap the script
+# cannot read — an exact pin, `~`, an x-range, a hyphen range, `||`, `^0.x`, a
+# prerelease or build suffix, a `v` prefix — or one placed after the key the
+# script would rewrite (pnpm applies the last matching override).
 #
 # Usage:
 #   security-audit-fix.sh fix [--skip-refused] [--report FILE]
@@ -547,6 +550,27 @@ add_refusal() {
     printf '%s\t%s\t%s\t%s\t%s\n' "$@" >>"$WORK/refused.tsv"
 }
 
+# targets_of PKG — "row<TAB>key<TAB>value" (row = map order, from
+# overrides_tsv rows on stdin) for every override whose target package is
+# PKG: `pkg`, `pkg@<anything>`, and the last segment of a parent-scoped
+# `parent>pkg…`. A `>` is a parent separator only when a package name follows
+# it directly (a letter, `@` or `_`) and it does not follow `@` or a space, so
+# `pkg@>=1.2.0` and `pkg@<2 >1` stay selectors. Scoped names keep their
+# leading `@`.
+targets_of() {
+    awk -F '\t' -v pkg="$1" '
+        function target(k,   i, c, prev, next_c, t, j) {
+            t = k
+            for (i = length(k); i > 1; i--) {
+                c = substr(k, i, 1); prev = substr(k, i - 1, 1); next_c = substr(k, i + 1, 1)
+                if (c == ">" && prev != "@" && prev != " " && next_c ~ /[A-Za-z@_]/) { t = substr(k, i + 1); break }
+            }
+            if (substr(t, 1, 1) == "@") { j = index(substr(t, 2), "@"); return j ? substr(t, 1, j) : t }
+            j = index(t, "@"); return j ? substr(t, 1, j - 1) : t
+        }
+        target($1) == pkg { print NR "\t" $1 "\t" $2 }'
+}
+
 # refuse_key KEY REASON — refuse every candidate advisory row for KEY.
 refuse_key() {
     awk -F '\t' -v k="$1" '$1 == k { print $3 "\t" $4 "\t" $5 "\t" $6 }' "$WORK/candidates.tsv" |
@@ -660,31 +684,34 @@ cmd_fix() {
         _next_start="$(next_bound_start "$_bound")"
         # There is no keep-as-is branch: every floor this script touches is
         # written as '>=LOWER UPPER' for its own major, so a floor can never
-        # express a crossing. LOWER is max(proposal, an existing lower bound
-        # on this major) — never lowered; one in another major was itself a
-        # crossing and the proposal replaces it. UPPER is <next-major, unless
-        # an existing override provably caps this line lower: that deliberate
-        # narrowing is kept, and the fix refused when the patched version is
-        # at or above it. An existing override whose cap floor_upper cannot
-        # read (an exact pin, `~1.4.0`, `1.4.x`, a hyphen range, `||`, ...) is
-        # refused, never rewritten: <next-major would widen its implicit cap.
-        # Both the `pkg@<major>` key and a bare `pkg` key are read, because
-        # pnpm 11 applies the LAST matching override in map order (probed on
-        # pnpm 11.28.5): a bare entry can cap this line as well, and one that
-        # comes AFTER an existing key outranks it, so rewriting that key would
-        # not change what pnpm applies — refused. (A new key is appended at
-        # the end of the map by yq, after any bare entry.)
+        # express a crossing. One rule covers every existing override whose
+        # target package is this one — bare `pkg`, `pkg@<major>`, any
+        # `pkg@<selector>`, or a parent-scoped `parent>pkg…` — because pnpm 11
+        # applies the LAST matching override in map order, selector keys
+        # included (probed on pnpm 11.28.5), so any of them can cap this line:
+        #   - each value must be readable by floor_upper (an exact pin, `~`, an
+        #     x-range, a hyphen range, `||`, `^0.x`, a suffixed version… are
+        #     not), or the key is refused: <next-major would widen its cap;
+        #   - LOWER is max(proposal, their lower bounds on this major) — never
+        #     lowered; one in another major was itself a crossing;
+        #   - UPPER is <next-major unless one provably caps this line lower:
+        #     the narrowest such cap is kept, and the fix refused when the
+        #     patched version is at or above it;
+        #   - one placed AFTER an existing key outranks the rewrite, which is
+        #     refused. (A new key is appended at the end of the map by yq.)
+        # Selectors are not matched against versions: an entry is judged as if
+        # it applied to the whole line, which can only refuse more, never less.
         _upper="<$_bound" _cap_v="" _cap_span="" _blocked=""
-        _key_row="$(awk -F '\t' -v k="$_key" '$1 == k { print NR; exit }' "$WORK/current.tsv")"
-        _bare_row="$(awk -F '\t' -v k="${_key%@*}" '$1 == k { print NR; exit }' "$WORK/current.tsv")"
-        if [ -n "$_key_row" ] && [ -n "$_bare_row" ] && [ "$_bare_row" -gt "$_key_row" ]; then
-            refuse_key "$_key" "a later bare \`${_key%@*}\` override takes precedence over \`$_key\` — reorder or remove it deliberately"
-            continue
+        targets_of "${_key%@*}" <"$WORK/current.tsv" >"$WORK/targets.tsv"
+        _key_row="$(awk -F '\t' -v k="$_key" '$2 == k { print $1; exit }' "$WORK/targets.tsv")"
+        if [ -n "$_key_row" ]; then
+            _later="$(awk -F '\t' -v r="$_key_row" '$1 + 0 > r + 0 { print $2; exit }' "$WORK/targets.tsv")"
+            if [ -n "$_later" ]; then
+                refuse_key "$_key" "a later \`$_later\` override for \`${_key%@*}\` takes precedence over \`$_key\` — reorder or remove it deliberately"
+                continue
+            fi
         fi
-        for _ek in "$_key" "${_key%@*}"; do
-            awk -F '\t' -v k="$_ek" '$1 == k { found = 1; print $2; exit } END { exit !found }' \
-                "$WORK/current.tsv" >"$WORK/existing.txt" || continue
-            _existing="$(cat "$WORK/existing.txt")"
+        while IFS="$TAB" read -r _ _ek _existing; do
             _span="\`$_ek: '$_existing'\`"
             _cap="$(floor_upper "$_existing")"
             if [ -z "$_cap" ]; then
@@ -706,7 +733,7 @@ cmd_fix() {
             if [ -z "$_cap_v" ] || ! version_ge "$_v" "$_cap_v"; then
                 _cap_v="$_v" _upper="${_cap#*"$TAB"}" _cap_span="$_span"
             fi
-        done
+        done <"$WORK/targets.tsv"
         if [ -z "$_blocked" ] && [ -n "$_cap_v" ] && version_ge "$_floor" "$_cap_v"; then
             _blocked="the local override $_cap_span caps \`${_key%@*}\` below the patched version $_floor — widen it deliberately"
         fi
@@ -942,7 +969,10 @@ cmd_publish() {
     if [ -n "${GITHUB_SHA:-}" ]; then
         _base_sha="$(git rev-parse HEAD)"
         if [ "$_base_sha" != "$GITHUB_SHA" ]; then
-            note "$BASE_BRANCH moved since the audit ($GITHUB_SHA -> $_base_sha) — nothing published; the next run re-audits"
+            _moved="$BASE_BRANCH moved since the audit ($GITHUB_SHA -> $_base_sha) — nothing published; the next run re-audits"
+            note "$_moved"
+            # Under Actions, also an annotation, so the skip shows on the run.
+            [ "${GITHUB_ACTIONS:-}" != true ] || echo "::notice::security-audit-fix: $_moved"
             return 0
         fi
     fi
