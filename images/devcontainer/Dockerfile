@@ -17,7 +17,7 @@ ARG IMAGE_REVISION
 # renovate: datasource=github-releases depName=terraform-docs/terraform-docs extractVersion=^v?(?<version>.+)$
 ARG TERRAFORM_DOCS_VERSION=0.24.0
 # renovate: datasource=github-releases depName=hashicorp/terraform extractVersion=^v?(?<version>.+)$
-ARG TERRAFORM_VERSION=1.16.4
+ARG TERRAFORM_VERSION=1.16.5
 # renovate: datasource=github-releases depName=terraform-linters/tflint extractVersion=^v?(?<version>.+)$
 ARG TFLINT_VERSION=0.64.0
 # TFLint release-archive SHA-256 values. The version pin is Renovate-managed;
@@ -27,17 +27,17 @@ ARG TFLINT_SHA256_ARM64=560da89aacf59389d4eb029730dd5b109b7288096c32f2726a0d9e78
 # renovate: datasource=github-releases depName=zellij-org/zellij extractVersion=^v?(?<version>.+)$
 ARG ZELLIJ_VERSION=0.45.1
 # renovate: datasource=github-releases depName=raine/workmux extractVersion=^v?(?<version>.+)$
-ARG WORKMUX_VERSION=0.1.269
+ARG WORKMUX_VERSION=0.1.271
 # renovate: datasource=github-releases depName=njbrake/agent-of-empires extractVersion=^v?(?<version>.+)$
 ARG AOE_VERSION=1.18.0
 # renovate: datasource=npm depName=@anthropic-ai/claude-code
-ARG CLAUDE_CODE_VERSION=2.1.286
+ARG CLAUDE_CODE_VERSION=2.1.294
 # renovate: datasource=npm depName=@github/copilot
-ARG COPILOT_VERSION=1.0.90
+ARG COPILOT_VERSION=1.0.93
 # renovate: datasource=npm depName=@earendil-works/pi-coding-agent
 ARG PI_VERSION=0.99.2
 # renovate: datasource=github-releases depName=can1357/oh-my-pi extractVersion=^v?(?<version>.+)$
-ARG OH_MY_PI_VERSION=18.4.6
+ARG OH_MY_PI_VERSION=18.8.4
 # oh-my-pi ships unsigned release binaries: the version pin above is
 # Renovate-managed, but these architecture-specific digests are not. Before
 # moving them, a person must download the new release's omp-linux-x64 and
@@ -48,13 +48,13 @@ ARG OH_MY_PI_VERSION=18.4.6
 ARG OH_MY_PI_SHA256_AMD64=9eb0668d3ccab78c39598b7717461f8621136114618387da22b3ddd454fb163b
 ARG OH_MY_PI_SHA256_ARM64=c32567aa42c166432db79ec1e75dbc3bfe236b0bc32d729fe0c21bd344aed995
 # renovate: datasource=npm depName=opencode-ai
-ARG OPENCODE_VERSION=1.18.34
+ARG OPENCODE_VERSION=1.18.35
 # Pinned from Google's per-platform release manifests. Keep the version, build,
 # URLs, and SHA-512 values here and in ensure-antigravity-cli.sh in one update.
 ARG ANTIGRAVITY_CLI_VERSION=1.1.11
 ARG ANTIGRAVITY_CLI_BUILD=4956531888881664
 # renovate: datasource=github-releases depName=asheshgoplani/agent-deck extractVersion=^v?(?<version>.+)$
-ARG AGENT_DECK_VERSION=1.16.22
+ARG AGENT_DECK_VERSION=1.16.26
 # renovate: datasource=github-releases depName=joshmedeski/sesh extractVersion=^v?(?<version>.+)$
 # Upstream v2.30.0 was published without release assets; stay on 2.29.0 until fixed
 ARG SESH_VERSION=2.29.0
@@ -86,7 +86,7 @@ ARG TTT_SHA256_ARM64=7a2d93a70beb6c4f10e35d8ef708bee121912430417fcf0c3648c960842
 # renovate: datasource=github-releases depName=charmbracelet/glow extractVersion=^v?(?<version>.+)$
 ARG GLOW_VERSION=3.0.0
 # renovate: datasource=github-releases depName=jesseduffield/lazygit extractVersion=^v?(?<version>.+)$
-ARG LAZYGIT_VERSION=0.65.1
+ARG LAZYGIT_VERSION=0.66.0
 # renovate: datasource=github-releases depName=XAMPPRocky/tokei extractVersion=^v?(?<version>.+)$
 # Upstream v13.0.0+ publishes no prebuilt binary assets; stay on 13.0.0-alpha.0
 ARG TOKEI_VERSION=13.0.0-alpha.0
