@@ -857,7 +857,7 @@ nothing in this repository writes to the account.
 ## Long-running gates
 
 A full `task verify` takes about **10–12 minutes on the 4-core VM** (observed
-2026-09-27), which is over the Bash tool's ceiling: it waits two minutes by
+2026-09-27; about **30 minutes** on 2026-10-11, below), which is over the Bash tool's ceiling: it waits two minutes by
 default and can be asked for at most ten (*docs, 2026-09-29*). The platform does
 not kill a command at that limit; Claude Code moves it to the background instead
 (*docs, 2026-09-29*), so the risk is a session that treats "moved to the
@@ -888,6 +888,24 @@ background" as "finished". The supported ways to run it:
    the ten-minute wait is honoured was not exercised: the long gate ran
    detached, as in the first form, and `task verify` completed with
    `GATE-EXIT=0`.
+
+**Observed 2026-10-11, Claude Code 2.1.296**, in a single-repository session on
+`evanharmon1/harmon-init` (`harmon-remote`, setup script at `v5.6.0`, the
+checkout at a `main` that carries the #1624 fix):
+
+- **The first form passed.** `task verify` completed with `GATE-EXIT=0` in about
+  30 minutes ([#1624](https://github.com/evanharmon1/harmon-init/issues/1624)).
+- **A tool-managed background job was killed instead.** An earlier attempt in the
+  same session ran `task verify` as the Bash tool's own background job with a
+  one-hour timeout. The harness killed it at that limit with SIGTERM (exit
+  143), while `test:output` was running. That test passed in seconds when run
+  on its own and left no stray processes, so the kill was the timeout, not a
+  hang. Why that attempt was so much slower than the detached run is not
+  established.
+
+So give the gate the detached `nohup` form above rather than a tool background
+job: a tool timeout ends the job, and only the `GATE-EXIT=` line in the log is
+the result.
 
 **`task security` is owed before the draft PR, in the cloud as anywhere else**
 (`AGENTS.md`), and it is never skipped. Its Semgrep step contacts `semgrep.dev`,
