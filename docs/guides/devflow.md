@@ -57,6 +57,14 @@ cross-validation could not finish (no registry was supplied, or no gate-target
 list from `--task-targets` / `--taskfile-dir`), or the derived Tier could not
 be computed where it decides the implementer tier.
 
+With no policy file and no requested registry, the built-in fallback is
+determinate: resolution exits 0 with no registry indeterminate, provided
+the other cross-validation checks complete. A present policy without a
+supplied registry still exits 3. An explicitly requested registry file
+that cannot be read (`--registry <missing>`) still exits 2. Merge-base
+governance is unchanged: `--merge-base-policy-absent` without a governing
+`--merge-base-registry` still exits 3.
+
 The **implementer** tier has two more rungs (ADR 2026-09-30 D5). Strongest
 first:
 
