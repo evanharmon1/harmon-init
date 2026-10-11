@@ -157,6 +157,7 @@ fix_writes() {
 run_fix() {
     _rf="$1"
     shift
+    cp "$_rf/pnpm-workspace.yaml" "$_rf/.stub/ws.before"
     (cd "$_rf" && STUB_DIR="$_rf/.stub" ./scripts/security-audit-fix.sh fix "$@")
 }
 
@@ -186,14 +187,25 @@ expect_overrides() {
         fail "$2: overrides are $_eo_got, expected $3"
 }
 
-# expect_below_marker PROJECT LABEL KEY — both markers are still present, in
-# order, and KEY sits below the end marker.
+# region_of FILE — the text from the start-marker line through the end-marker
+# line, inclusive (fixed-string match, as the helper extracts it).
+region_of() {
+    awk -v bs="${BLOCK_START#  }" -v be="${BLOCK_END#  }" '
+        index($0, bs) { on = 1 } on { print } on && index($0, be) { exit }' "$1"
+}
+
+# expect_below_marker PROJECT LABEL KEY — both markers present once each, the
+# marker-to-marker text byte-identical to before the run, and KEY's line
+# (found as text, like the markers) below the end marker.
 expect_below_marker() {
-    _eb_s="$(grep -nF -- "${BLOCK_START#  }" "$1/pnpm-workspace.yaml" | cut -d: -f1)"
+    [ "$(grep -cF -- "${BLOCK_START#  }" "$1/pnpm-workspace.yaml")" -eq 1 ] &&
+        [ "$(grep -cF -- "${BLOCK_END#  }" "$1/pnpm-workspace.yaml")" -eq 1 ] || fail "$2: a template marker was lost or repeated"
+    [ "$(region_of "$1/pnpm-workspace.yaml")" = "$(region_of "$1/.stub/ws.before")" ] ||
+        fail "$2: the template floor block changed"
     _eb_e="$(grep -nF -- "${BLOCK_END#  }" "$1/pnpm-workspace.yaml" | cut -d: -f1)"
-    [ -n "$_eb_s" ] && [ -n "$_eb_e" ] && [ "$_eb_s" -lt "$_eb_e" ] || fail "$2: a template marker was lost or reordered"
-    _eb_k="$(K="$3" yq '.overrides[strenv(K)] | key | line' "$1/pnpm-workspace.yaml")"
-    [ "$_eb_k" -gt "$_eb_e" ] || fail "$2: $3 (line $_eb_k) is not below the end marker (line $_eb_e)"
+    _eb_k="$(awk -v a="$3:" -v b="'$3':" '{ t = $0; sub(/^[[:space:]]+/, "", t) }
+        index(t, a) == 1 || index(t, b) == 1 { print NR; exit }' "$1/pnpm-workspace.yaml")"
+    [ -n "$_eb_k" ] && [ "$_eb_k" -gt "$_eb_e" ] || fail "$2: $3 is not below the end marker"
 }
 
 # head_comment_of PROJECT KEY — the comment yq attaches above KEY.
@@ -238,7 +250,7 @@ run_fix "$p" --report "$p/report.md" >"$p/out.log" 2>&1 || {
 expect_overrides "$p" bounded '{"source-map-js@1": ">=1.2.2 <2", "left-pad@1": ">=1.3.0 <2",
     "@babel/traverse@7": ">=7.23.2 <8", "lodash@4": ">=4.18.1 <5", "tiny-zero@0.4": ">=0.4.9 <0.5"}'
 for k in @babel/traverse@7 lodash@4 tiny-zero@0.4; do expect_below_marker "$p" bounded "$k"; done
-[ "$(head_comment_of "$p" lodash@4)" = 'lodash@4: GHSA-35jh-r3h4-6jhm, GHSA-r5fr-rjxr-66jc.' ] ||
+[ "$(head_comment_of "$p" lodash@4)" = 'security-audit-fix: lodash@4 — GHSA-35jh-r3h4-6jhm, GHSA-r5fr-rjxr-66jc' ] ||
     fail "bounded: lodash@4 does not carry its advisory comment"
 grep -qF "'@babel/traverse@7': '>=7.23.2 <8'" "$p/pnpm-workspace.yaml" || fail "bounded: floors must be single-quoted"
 grep -qx '# relocked' "$p/pnpm-lock.yaml" || fail "bounded: lockfile was not re-resolved"
@@ -311,8 +323,11 @@ expect_overrides "$p" raise-local '{"source-map-js@1": ">=1.2.2 <2", "left-pad@1
 # yq attaches the end marker to the first key below it, so the head comment
 # being rewritten here also carries the marker: it must survive.
 expect_below_marker "$p" raise-local left-pad@1
-[ "$(head_comment_of "$p" left-pad@1 | tail -n 1)" = 'left-pad@1: GHSA-0000-0000-0002.' ] || fail "raise-local: comment not refreshed"
-! grep -qF 'GHSA-0000-0000-0001' "$p/pnpm-workspace.yaml" || fail "raise-local: the previous advisory comment was kept"
+[ "$(head_comment_of "$p" left-pad@1 | tail -n 1)" = 'security-audit-fix: left-pad@1 — GHSA-0000-0000-0002' ] ||
+    fail "raise-local: the tagged advisory comment was not written"
+# The fixture's own `# left-pad@1: …` line is a consumer comment (untagged):
+# it starts with the key, and it must survive (r4 finding 5).
+grep -qF '# left-pad@1: GHSA-0000-0000-0001.' "$p/pnpm-workspace.yaml" || fail "raise-local: a consumer comment was dropped"
 pass "raise-local: an existing lower floor is raised in place; the end marker in its head comment survives"
 
 # ── 7. operational failures restore every byte and exit 1 ─────────────
@@ -448,15 +463,16 @@ pass "col0-comment: a column-zero comment inside the map is transparent"
 
 # A column-zero end marker (r2 finding 3) lies outside the overrides map, so
 # yq cannot append below it: the script refuses instead of moving YAML lines.
-# (An indented marker — the rendered shape — holds by construction: see
-# bounded and raise-local.)
+# The region-identity invariant catches it: the key lands between the
+# markers. (An indented marker — the rendered shape — holds: see bounded,
+# raise-local and the rendered fixture below.)
 p="$(new_project col0-marker)"
 awk -v be="$BLOCK_END" '$0 == be { print substr(be, 3); next } /left-pad@1/ { next } { print }' \
     "$p/pnpm-workspace.yaml" >"$p/ws.tmp" && mv "$p/ws.tmp" "$p/pnpm-workspace.yaml"
 advisory GHSA-0000-0000-0009 lodash high '<4.17.21' 4.17.20 lodash | jq '{advisories: .}' >"$p/.stub/audit.json"
 fix_writes "$p" '  lodash@<4.17.21: ^4.17.21'
 echo "lodash@4: '>=4.17.21 <5'" >"$p/.stub/cleared-by"
-expect_refused "$p" col0-marker 'indent the marker into the overrides map'
+expect_refused "$p" col0-marker 'changed the template floor block'
 pass "col0-marker: a column-zero end marker is refused, never written above"
 
 # An advisory that appears only after the re-resolve (r2 observation 4) is
@@ -484,7 +500,11 @@ for spec in \
     "strict-gt|'>1.3.8'|1.3.9" \
     "hyphen|'1.3.8 - 1.9.0'|1.3.8" \
     "or-range|'>=1.5.0 <2 || >=1.3.8 <1.4.0'|1.3.8" \
-    "folded|>-\\n    >=1.3.8\\n    <2|1.3.8"; do
+    "folded|>-\\n    >=1.3.8\\n    <2|1.3.8" \
+    "strict-minor|'>1.3'|1.4.0" \
+    "strict-major|'>1'|1.3.4" \
+    "conjunction|'>=1.2.0 >=1.3.8 <2'|1.3.8" \
+    "conjunction-strict|'>=1.3.8 >1.2'|1.3.8"; do
     name="${spec%%|*}" rest="${spec#*|}"
     p="$(existing_floor "$name" "${rest%|*}")"
     expect_floor "$p" "$name" "${rest##*|}"
@@ -532,20 +552,127 @@ sed -i.bak "$(printf 's/^  /\t/')" "$p/pnpm-workspace.yaml" && rm -f "$p/pnpm-wo
 expect_refused "$p" tab-indent 'yq cannot parse'
 pass "tab-indent: a workspace file yq cannot parse is refused, nothing written"
 
-# A four-space map (r1 finding 5): yq owns indentation; the file re-parses and
-# the floor sits below the end marker.
+# A four-space map (r1 finding 5): yq re-indents the whole file to two spaces,
+# which rewrites the template block too, so the region-identity invariant
+# refuses rather than reformat lines the template owns.
 p="$(new_project four-space)"
 sed -i.bak 's/^  /    /' "$p/pnpm-workspace.yaml" && rm -f "$p/pnpm-workspace.yaml.bak"
 advisory GHSA-0000-0000-0008 lodash high '<4.17.21' 4.17.20 lodash | jq '{advisories: .}' >"$p/.stub/audit.json"
 fix_adds "$p" 'lodash@<4.17.21' '^4.17.21'
 echo "lodash@4: '>=4.17.21 <5'" >"$p/.stub/cleared-by"
+expect_refused "$p" four-space 'changed the template floor block'
+pass "four-space: a write that would re-indent the template block is refused, nothing written"
+
+# ── 10. challenge round 4 shapes: placement by region identity ────────
+
+# The template's rendered pnpm-workspace.yaml, byte-for-byte: its five-line
+# header comment, the shipped floor block, no local keys (r4 finding 1 — yq
+# numbers lines from the first node after a leading comment, so line
+# arithmetic refused every write on this file). Derived from the template
+# source for the default web-astro answers (deploy_cloudflare_workers on);
+# any other template tag fails the derivation loudly.
+TEMPLATE_WS="$REPO_ROOT/template/[% if use_node %]pnpm-workspace.yaml[% endif %].jinja"
+rendered_workspace() {
+    awk '
+        /^\[% if project_type == .web-app. %\]$/ { skip = 1; next }
+        /^\[% else %\]$/ { skip = 0; next }
+        /^\[% if deploy_cloudflare_workers %\]$/ { next }
+        /^\[% endif %\]$/ { skip = 0; next }
+        !skip { print }
+    ' "$TEMPLATE_WS" >"$1"
+    ! grep -q '\[%\|\[\[' "$1" || fail "rendered fixture: the template grew a tag this derivation does not render"
+    yq '.' "$1" >/dev/null || fail "rendered fixture: the derived workspace file does not parse"
+}
+
+# new_variant NAME KIND — a project whose workspace file is KIND: base (the
+# suite's fixture, one local key), rendered (the template's own file), or
+# zero-local (base without its local key).
+new_variant() {
+    _nv="$(new_project "$1")"
+    case "$2" in
+    rendered) rendered_workspace "$_nv/pnpm-workspace.yaml" ;;
+    zero-local)
+        grep -v 'left-pad@1' "$_nv/pnpm-workspace.yaml" >"$_nv/ws.tmp" && mv "$_nv/ws.tmp" "$_nv/pnpm-workspace.yaml"
+        ;;
+    esac
+    echo "$_nv"
+}
+
+# expect_keys PROJECT LABEL KEY=VALUE… — the map holds every KEY at VALUE, and
+# every key it held before the run unchanged.
+expect_keys() {
+    _ek="$1" _ek_label="$2"
+    shift 2
+    _ek_want="$(yq -o=json -I=0 '.overrides // {}' "$_ek/.stub/ws.before")"
+    for _kv in "$@"; do
+        _ek_want="$(jq -c --arg k "${_kv%%=*}" --arg v "${_kv#*=}" '. + {($k): $v}' <<<"$_ek_want")"
+    done
+    expect_overrides "$_ek" "$_ek_label" "$_ek_want"
+}
+
+for kind in base rendered zero-local; do
+    # One write.
+    p="$(new_variant "one-$kind" "$kind")"
+    advisory GHSA-0000-0000-0017 lodash high '<4.17.21' 4.17.20 lodash | jq '{advisories: .}' >"$p/.stub/audit.json"
+    fix_adds "$p" 'lodash@<4.17.21' '^4.17.21'
+    echo "lodash@4: '>=4.17.21 <5'" >"$p/.stub/cleared-by"
+    run_fix "$p" >"$p/out.log" 2>&1 || {
+        cat "$p/out.log"
+        fail "one-$kind: exited non-zero"
+    }
+    expect_keys "$p" "one-$kind" 'lodash@4=>=4.17.21 <5'
+    expect_below_marker "$p" "one-$kind" lodash@4
+    pass "one-$kind: a single floor is written below the marker; the block is byte-identical"
+
+    # Two writes in one run (where stale line numbers bit): the second write
+    # sees the file the first one produced.
+    p="$(new_variant "two-$kind" "$kind")"
+    {
+        advisory GHSA-0000-0000-0018 lodash high '<4.17.21' 4.17.20 lodash
+        advisory GHSA-0000-0000-0019 @babel/traverse critical '<7.23.2' 7.22.0 vite
+    } | jq -s 'add | {advisories: .}' >"$p/.stub/audit.json"
+    fix_adds "$p" 'lodash@<4.17.21' '^4.17.21' '@babel/traverse@<7.23.2' '^7.23.2'
+    echo "lodash@4: '>=4.17.21 <5'" >"$p/.stub/cleared-by"
+    run_fix "$p" >"$p/out.log" 2>&1 || {
+        cat "$p/out.log"
+        fail "two-$kind: exited non-zero"
+    }
+    expect_keys "$p" "two-$kind" 'lodash@4=>=4.17.21 <5' '@babel/traverse@7=>=7.23.2 <8'
+    expect_below_marker "$p" "two-$kind" lodash@4
+    expect_below_marker "$p" "two-$kind" @babel/traverse@7
+    pass "two-$kind: two floors in one run both land below the marker; the block is byte-identical"
+
+    # Idempotent: a second run on the remediated file changes nothing.
+    before="$(snapshot_of "$p")"
+    run_fix "$p" >"$p/out2.log" 2>&1 || fail "two-$kind: second run exited non-zero"
+    [ "$(snapshot_of "$p")" = "$before" ] || fail "two-$kind: second run changed bytes"
+    pass "idempotent-$kind: a second run is a byte-identical no-op"
+
+    # A template-owned key is refused, never edited.
+    p="$(new_variant "owned-$kind" "$kind")"
+    advisory GHSA-0000-0000-0020 source-map-js high '<1.2.3' 1.2.2 postcss | jq '{advisories: .}' >"$p/.stub/audit.json"
+    fix_adds "$p" 'source-map-js@<1.2.3' '^1.2.3'
+    expect_refused "$p" "owned-$kind" 'template-owned floor'
+    pass "owned-$kind: a key between the markers is template-owned and refused"
+done
+
+# The script's own advisory comment is tagged, so a rewrite replaces only it
+# (r4 finding 5): an older tagged line goes, a consumer line stays.
+p="$(new_project tagged-replace)"
+awk '/^  # left-pad@1: GHSA-0000-0000-0001\.$/ { print; print "  # security-audit-fix: left-pad@1 — GHSA-0000-0000-0099"; next } { print }' \
+    "$p/pnpm-workspace.yaml" >"$p/ws.tmp" && mv "$p/ws.tmp" "$p/pnpm-workspace.yaml"
+advisory GHSA-0000-0000-0021 left-pad high '<1.3.4' 1.3.1 left-pad | jq '{advisories: .}' >"$p/.stub/audit.json"
+fix_adds "$p" 'left-pad@<1.3.4' '^1.3.4'
+echo "left-pad@1: '>=1.3.4 <2'" >"$p/.stub/cleared-by"
 run_fix "$p" >"$p/out.log" 2>&1 || {
     cat "$p/out.log"
-    fail "four-space: exited non-zero"
+    fail "tagged-replace: exited non-zero"
 }
-expect_overrides "$p" four-space '{"source-map-js@1": ">=1.2.2 <2", "left-pad@1": ">=1.3.0 <2", "lodash@4": ">=4.17.21 <5"}'
-expect_below_marker "$p" four-space lodash@4
-pass "four-space: yq normalizes the indentation; the floor parses and sits below the end marker"
+! grep -qF 'GHSA-0000-0000-0099' "$p/pnpm-workspace.yaml" || fail "tagged-replace: the old tagged comment was kept"
+grep -qF '# left-pad@1: GHSA-0000-0000-0001.' "$p/pnpm-workspace.yaml" || fail "tagged-replace: the consumer comment was dropped"
+grep -qF '# security-audit-fix: left-pad@1 — GHSA-0000-0000-0021' "$p/pnpm-workspace.yaml" || fail "tagged-replace: new tagged comment missing"
+expect_below_marker "$p" tagged-replace left-pad@1
+pass "tagged-replace: only the script's own tagged comment is replaced"
 
 # Without yq the script refuses before touching anything (r4 prep). The case
 # runs on a PATH of links to just the tools the script needs, so a yq anywhere
@@ -571,7 +698,7 @@ grep -q 'setup action' "$p/out.log" || fail "no-yq: refusal does not point at th
 ! grep -q -- '--fix' "$p/.stub/calls" || fail "no-yq: ran pnpm audit --fix before refusing"
 pass "no-yq: a missing yq is a refusal before anything is touched"
 
-# ── 10. publish: one rolling draft PR, scope-checked patch ─────────────
+# ── 11. publish: one rolling draft PR, scope-checked patch ─────────────
 p="$(new_project publish)"
 ORIGIN="$TMPROOT/origin.git"
 export ORIGIN

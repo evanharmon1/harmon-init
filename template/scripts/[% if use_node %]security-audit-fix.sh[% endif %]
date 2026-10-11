@@ -93,38 +93,50 @@ need_bin() {
 
 # floor_lower V — the x.y.z lower bound V admits, or nothing when V is not a
 # readable range. V is a version or a range: `^`, `~`, `=`, `v`, `>=`, strict
-# `>` (the next patch), an x-range, a hyphen range (`a - b`), and `||`
-# alternatives (the lowest lower bound across them); whitespace after an
-# operator is allowed. An upper bound alone admits everything (0.0.0).
+# `>` (completed as semver does: `>1.3.8` -> 1.3.9, `>1.3` -> 1.4.0, `>1` ->
+# 2.0.0), an x-range, a hyphen range (`a - b`), a conjunction (the highest of
+# its lower bounds), and `||` alternatives (the lowest lower bound across
+# them); whitespace after an operator is allowed. An upper bound alone admits
+# everything (0.0.0).
 floor_lower() {
     printf '%s\n' "$1" | awk '
-        function norm(v, strict,   n, p, i, out) {
+        # norm V STRICT — x.y.z from a full or partial version (x-range parts
+        # count as omitted). STRICT bumps the last GIVEN part and zeroes the
+        # rest, as semver completes `>1.3` (>=1.4.0) and `>1` (>=2.0.0).
+        function norm(v, strict,   n, p, i, given) {
             sub(/[-+].*$/, "", v)
             n = split(v, p, ".")
             if (n < 1 || n > 3) return ""
+            given = 0
             for (i = 1; i <= 3; i++) {
-                if (i > n || p[i] ~ /^[xX*]$/) p[i] = 0
-                else if (p[i] !~ /^[0-9]+$/) return ""
+                if (i > n || p[i] ~ /^[xX*]$/) { p[i] = 0; continue }
+                if (p[i] !~ /^[0-9]+$/) return ""
+                if (given == i - 1) given = i
             }
-            if (strict) p[3] = p[3] + 1
+            if (strict) {
+                if (given == 0) return ""
+                p[given] = p[given] + 1
+                for (i = given + 1; i <= 3; i++) p[i] = 0
+            }
             return (p[1] + 0) "." (p[2] + 0) "." (p[3] + 0)
         }
-        function lower(alt,   n, t, i, tok) {
+        function lower(alt,   n, t, i, tok, v, best) {
             gsub(/>=[[:space:]]+/, ">=", alt); gsub(/<=[[:space:]]+/, "<=", alt)
             gsub(/>[[:space:]]+/, ">", alt); gsub(/<[[:space:]]+/, "<", alt)
             gsub(/\^[[:space:]]+/, "^", alt); gsub(/~[[:space:]]+/, "~", alt)
             gsub(/=[[:space:]]+/, "=", alt)
             if (index(alt, " - ")) alt = substr(alt, 1, index(alt, " - ") - 1)
-            n = split(alt, t, /[[:space:]]+/)
+            n = split(alt, t, /[[:space:]]+/); best = "0.0.0"
             for (i = 1; i <= n; i++) {
                 tok = t[i]
                 if (tok == "" || tok ~ /^</) continue
-                if (tok ~ /^>=/) return norm(substr(tok, 3), 0)
-                if (tok ~ /^>/) return norm(substr(tok, 2), 1)
-                sub(/^(\^|~|=|v)/, "", tok)
-                return norm(tok, 0)
+                if (tok ~ /^>=/) v = norm(substr(tok, 3), 0)
+                else if (tok ~ /^>/) v = norm(substr(tok, 2), 1)
+                else { sub(/^(\^|~|=|v)/, "", tok); v = norm(tok, 0) }
+                if (v == "") return ""
+                if (less(best, v)) best = v
             }
-            return "0.0.0"
+            return best
         }
         function less(a, b,   x, y, i) {
             split(a, x, "."); split(b, y, ".")
@@ -132,15 +144,15 @@ floor_lower() {
             return 0
         }
         {
-            n = split($0, alts, /\|\|/); best = ""
-            for (i = 1; i <= n; i++) {
-                a = alts[i]; sub(/^[[:space:]]+/, "", a); sub(/[[:space:]]+$/, "", a)
+            n = split($0, alts, /\|\|/); low = ""
+            for (j = 1; j <= n; j++) {
+                a = alts[j]; sub(/^[[:space:]]+/, "", a); sub(/[[:space:]]+$/, "", a)
                 if (a == "") exit
                 l = lower(a)
                 if (l == "") exit
-                if (best == "" || less(l, best)) best = l
+                if (low == "" || less(l, low)) low = l
             }
-            if (best != "") print best
+            if (low != "") print low
         }'
 }
 
@@ -173,9 +185,9 @@ refuse() {
     exit 3
 }
 
-# overrides_tsv FILE — one "key<TAB>key line<TAB>value" row per entry of the
-# `overrides` map, read by yq. A file yq cannot parse, or an `overrides` that
-# is not a map, is a refusal.
+# overrides_tsv FILE — one "key<TAB>value" row per entry of the `overrides`
+# map, read by yq. A file yq cannot parse, or an `overrides` that is not a
+# map, is a refusal.
 overrides_tsv() {
     _ot_type="$(yq '.overrides | type' "$1" 2>"$WORK/yq.err")" ||
         refuse "yq cannot parse $1: $(head -n 1 "$WORK/yq.err")"
@@ -183,60 +195,93 @@ overrides_tsv() {
     '!!map' | '!!null') ;;
     *) refuse "$1: overrides is $_ot_type, not a map" ;;
     esac
-    yq -o=json -I=0 '[(.overrides // {}) | .[] | {"k": key, "l": (key | line), "v": .}]' "$1" 2>"$WORK/yq.err" |
-        jq -r '.[] | [.k, (.l | tostring), (.v | tostring)] | @tsv' ||
+    yq -o=json -I=0 '.overrides // {}' "$1" 2>"$WORK/yq.err" |
+        jq -r 'to_entries[] | [.key, (.value | tostring)] | @tsv' ||
         refuse "yq cannot read the overrides of $1: $(head -n 1 "$WORK/yq.err")"
 }
 
-# locate_markers — set MARK_START/MARK_END to the line numbers of the
-# template-owned block's two marker lines (a fixed-string line search, not
-# YAML parsing), or empty when the file has no block. One marker without the
-# other, a repeated marker, or the end above the start is a refusal: without
+# check_markers — HAVE_MARKERS=1 when the workspace file carries the
+# template-owned block's two marker lines exactly once each, start before end
+# (the two fixed-string searches are the only place this script looks at line
+# numbers); 0 when it carries neither. Anything else is a refusal: without
 # both there is no telling where template floors end.
-locate_markers() {
-    _lm_s="$(grep -cF -- "$BLOCK_START" "$WORKSPACE" || true)"
-    _lm_e="$(grep -cF -- "$BLOCK_END" "$WORKSPACE" || true)"
-    MARK_START="" MARK_END=""
-    [ "$_lm_s" -eq 0 ] && [ "$_lm_e" -eq 0 ] && return 0
-    [ "$_lm_s" -eq 1 ] && [ "$_lm_e" -eq 1 ] ||
-        refuse "$WORKSPACE must carry both template floor markers exactly once (start: $_lm_s, end: $_lm_e)"
-    MARK_START="$(grep -nF -- "$BLOCK_START" "$WORKSPACE" | cut -d: -f1)"
-    MARK_END="$(grep -nF -- "$BLOCK_END" "$WORKSPACE" | cut -d: -f1)"
-    [ "$MARK_START" -lt "$MARK_END" ] || refuse "$WORKSPACE has the template floor end marker above its start marker"
+check_markers() {
+    _cm_s="$(grep -cF -- "$BLOCK_START" "$WORKSPACE" || true)"
+    _cm_e="$(grep -cF -- "$BLOCK_END" "$WORKSPACE" || true)"
+    HAVE_MARKERS=0
+    [ "$_cm_s" -eq 0 ] && [ "$_cm_e" -eq 0 ] && return 0
+    [ "$_cm_s" -eq 1 ] && [ "$_cm_e" -eq 1 ] ||
+        refuse "$WORKSPACE must carry both template floor markers exactly once (start: $_cm_s, end: $_cm_e)"
+    [ "$(grep -nF -- "$BLOCK_START" "$WORKSPACE" | cut -d: -f1)" -lt \
+        "$(grep -nF -- "$BLOCK_END" "$WORKSPACE" | cut -d: -f1)" ] ||
+        refuse "$WORKSPACE has the template floor end marker above its start marker"
+    HAVE_MARKERS=1
+}
+
+# marker_region — the exact text from the start-marker line through the
+# end-marker line, inclusive (fixed-string matches; empty without markers).
+marker_region() {
+    awk -v bs="$BLOCK_START" -v be="$BLOCK_END" '
+        index($0, bs) { on = 1 }
+        on { print }
+        on && index($0, be) { exit }
+    ' "$WORKSPACE"
+}
+
+# template_keys — the keys the template-owned block holds: the text strictly
+# between the two marker lines, comments dropped and the common indentation
+# stripped, read by yq. No line numbers involved.
+template_keys() {
+    [ "$HAVE_MARKERS" -eq 1 ] || return 0
+    marker_region | sed '1d;$d' | grep -v '^[[:space:]]*#' | grep -v '^[[:space:]]*$' >"$WORK/block.txt" || true
+    [ -s "$WORK/block.txt" ] || return 0
+    _tk_ind="$(awk '{ match($0, /^[[:space:]]*/); if (min == "" || RLENGTH < min) min = RLENGTH } END { print min + 0 }' "$WORK/block.txt")"
+    cut -c "$((_tk_ind + 1))-" "$WORK/block.txt" >"$WORK/block.yaml"
+    yq -e 'type == "!!map"' "$WORK/block.yaml" >/dev/null 2>&1 ||
+        refuse "yq cannot read the template floor block in $WORKSPACE as a map of floors"
+    yq -o=json -I=0 'keys' "$WORK/block.yaml" | jq -r '.[]'
+}
+
+# own_tag KEY — the prefix of this script's advisory comment on KEY. The tag
+# is what lets a rewrite drop only the script's own previous comment and keep
+# every consumer comment, including one that happens to start with the key.
+own_tag() {
+    printf 'security-audit-fix: %s —' "$1"
 }
 
 # write_floor KEY FLOOR BOUND IDS — yq sets overrides[KEY] to
-# '>=FLOOR <BOUND' (single-quoted) with an advisory head comment on the key.
-# yq owns quoting, indentation, scalar style and every other comment. The
-# key's existing head comment is kept except for this script's own previous
-# advisory line — it can carry the template end marker, which yq attaches to
-# the first key below it. The result must re-parse, read back, and leave the
-# key below the end marker.
+# '>=FLOOR <BOUND' (single-quoted) with a tagged advisory head comment on the
+# key. yq owns quoting, indentation, scalar style and every other comment. The
+# key's existing head comment is kept except for this script's own tagged
+# line: yq attaches the template end marker to the first key below it, so the
+# marker can live there.
+#
+# Region-identity invariant, checked on every write: both marker lines still
+# present once each and in order, the marker-to-marker text byte-identical to
+# what it was before the write, and the written value readable back by yq.
+# A key yq placed inside the block, a marker it moved or dropped, or a template
+# floor it touched all break the identity — refusal, never a repair.
 write_floor() {
     _wf_key="$1" _wf_val=">=$2 <$3"
+    _wf_tag="$(own_tag "$_wf_key")"
     _wf_head="$(K="$_wf_key" yq '.overrides[strenv(K)] | key | head_comment' "$WORKSPACE" 2>/dev/null || true)"
-    _wf_comment="$(printf '%s\n' "$_wf_head" | awk -v own="$_wf_key: " 'index($0, own) != 1' | sed '/./,$!d')"
+    _wf_comment="$(printf '%s\n' "$_wf_head" | awk -v own="$_wf_tag" 'index($0, own) != 1' | sed '/./,$!d')"
     _wf_comment="${_wf_comment:+$_wf_comment
-}$_wf_key: $4."
+}$_wf_tag $4"
+    marker_region >"$WORK/region.before"
     K="$_wf_key" V="$_wf_val" C="$_wf_comment" yq -i '
         .overrides[strenv(K)] = strenv(V)
         | .overrides[strenv(K)] style = "single"
         | with(.overrides[strenv(K)] | key; . head_comment = strenv(C))
     ' "$WORKSPACE" 2>"$WORK/yq.err" || refuse "yq could not write $_wf_key to $WORKSPACE: $(head -n 1 "$WORK/yq.err")"
-    yq '.' "$WORKSPACE" >/dev/null 2>&1 || refuse "$WORKSPACE no longer parses after writing $_wf_key"
-    [ "$(K="$_wf_key" yq '.overrides[strenv(K)]' "$WORKSPACE")" = "$_wf_val" ] ||
+    _wf_had="$HAVE_MARKERS"
+    check_markers
+    [ "$HAVE_MARKERS" = "$_wf_had" ] || refuse "writing $_wf_key removed the template floor markers from $WORKSPACE"
+    marker_region >"$WORK/region.after"
+    cmp -s "$WORK/region.before" "$WORK/region.after" ||
+        refuse "writing $_wf_key changed the template floor block in $WORKSPACE (yq placed it inside the block or moved a marker — keep the end marker indented inside overrides, as the template renders it)"
+    [ "$(K="$_wf_key" yq '.overrides[strenv(K)]' "$WORKSPACE" 2>/dev/null)" = "$_wf_val" ] ||
         refuse "$WORKSPACE does not read back '$_wf_val' for $_wf_key"
-    locate_markers
-    if [ -n "$MARK_END" ]; then
-        _wf_line="$(K="$_wf_key" yq '.overrides[strenv(K)] | key | line' "$WORKSPACE")"
-        # Holds by construction while the end marker is a comment INSIDE the
-        # map (indented, as the template renders it): yq keeps it attached to
-        # the last template key or the first local one and appends after it.
-        # A marker moved to column zero is outside the map, so yq appends above
-        # it — refuse rather than move YAML lines by hand.
-        [ "$_wf_line" -gt "$MARK_END" ] ||
-            refuse "yq placed $_wf_key above the template floor end marker — indent the marker into the overrides map, as the template renders it"
-    fi
 }
 
 # ── fix ─────────────────────────────────────────────────────────────
@@ -335,8 +380,9 @@ cmd_fix() {
         [ -z "$_report" ] || write_report "$_report" "$WORK/rows.tsv"
         return 0
     fi
-    locate_markers
+    check_markers
     overrides_tsv "$WORKSPACE" >/dev/null
+    template_keys | sort -u >"$WORK/template-keys.txt"
 
     note "running pnpm audit --fix to learn the patched versions"
     pnpm audit --fix --audit-level=high >"$WORK/fix.log" 2>&1 || {
@@ -345,12 +391,12 @@ cmd_fix() {
     }
     # What pnpm proposed = the entries whose value differs from the original
     # map, both read by yq.
-    overrides_tsv "$WORKSPACE" | cut -f1,3 | sort -u >"$WORK/after.tsv"
+    overrides_tsv "$WORKSPACE" | sort -u >"$WORK/after.tsv"
     # --fix's own edit is never kept: it can reformat or drop comments,
     # including the template-owned markers.
     restore
     overrides_tsv "$WORKSPACE" >"$WORK/current.tsv"
-    cut -f1,3 "$WORK/current.tsv" | sort -u | comm -13 - "$WORK/after.tsv" >"$WORK/added.tsv"
+    sort -u "$WORK/current.tsv" | comm -13 - "$WORK/after.tsv" >"$WORK/added.tsv"
 
     # Each advisory row -> a candidate floor "key<TAB>floor<TAB>id", or a refusal.
     : >"$WORK/candidates.tsv"
@@ -386,9 +432,8 @@ cmd_fix() {
             if [ -z "$_floor" ] || ! version_ge "$_floor" "$_f"; then _floor="$_f"; fi
             case ", $_ids," in *", $_id,"*) ;; *) _ids="${_ids:+$_ids, }$_id" ;; esac
         done <"$WORK/candidates.tsv"
-        _line="$(awk -F '\t' -v k="$_key" '$1 == k { print $2; exit }' "$WORK/current.tsv")"
-        _existing="$(awk -F '\t' -v k="$_key" '$1 == k { print $3; exit }' "$WORK/current.tsv")"
-        if [ -n "$_line" ] && [ -n "$MARK_START" ] && [ "$_line" -gt "$MARK_START" ] && [ "$_line" -lt "$MARK_END" ]; then
+        _existing="$(awk -F '\t' -v k="$_key" '$1 == k { print $2; exit }' "$WORK/current.tsv")"
+        if grep -qxF -- "$_key" "$WORK/template-keys.txt"; then
             awk -F '\t' -v k="$_key" '$1 == k { print $3 "\t" $4 "\t" $5 "\t" $6 }' "$WORK/candidates.tsv" |
                 while IFS="$TAB" read -r _id _pkg _sev _ver; do
                     add_refusal "$_id" "$_pkg" "$_sev" "$_ver" "\`$_key\` is a template-owned floor — raise it upstream in harmon-init, not locally"
