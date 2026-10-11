@@ -101,7 +101,17 @@ case "$1 $2" in
 "pr list") cat "$STUB_DIR/pr" 2>/dev/null || true ;;
 "pr create") echo 7 >"$STUB_DIR/pr"; echo true >"$STUB_DIR/draft" ;;
 "pr edit") ;;
-"pr view") echo "$(head_sha) $(cat "$STUB_DIR/draft")" ;;
+"pr view")
+    # lag-at N: the Nth view reports a stale head, as GitHub can for a few
+    # seconds after a push.
+    views=$(($(cat "$STUB_DIR/views" 2>/dev/null || echo 0) + 1))
+    echo "$views" >"$STUB_DIR/views"
+    if [ -f "$STUB_DIR/lag-at" ] && [ "$views" -eq "$(cat "$STUB_DIR/lag-at")" ]; then
+        echo "0000000000000000000000000000000000000000 $(cat "$STUB_DIR/draft")"
+    else
+        echo "$(head_sha) $(cat "$STUB_DIR/draft")"
+    fi
+    ;;
 "pr ready") echo true >"$STUB_DIR/draft" ;;
 *) echo "gh stub: unexpected: $*" >&2; exit 64 ;;
 esac
@@ -865,7 +875,43 @@ grep -qF -- '- `mm@1.9.9`' "$p/report.md" && grep -qF 'Dropped from' "$p/report.
 expect_keys "$p" exclusion-lines 'mm@2=>=2.5.0 <3'
 pass "exclusion-lines: a cooldown exclusion is carried only for the release line that was floored"
 
-# ── 13. publish: one rolling draft PR, scope-checked patch ─────────────
+# ── 13. integration cycle 1 shapes ────────────────────────────────────
+
+# A local cap below the next major (Codex 4242265056) is kept when the new
+# floor still fits under it…
+p="$(existing_floor narrow-cap "'>=1.3.0 <1.8.0'")"
+echo "left-pad@1: '>=1.3.4 <1.8.0'" >"$p/.stub/cleared-by"
+run_fix "$p" --report "$p/report.md" >"$p/out.log" 2>&1 || {
+    cat "$p/out.log"
+    fail "narrow-cap: exited non-zero"
+}
+expect_keys "$p" narrow-cap 'left-pad@1=>=1.3.4 <1.8.0'
+expect_below_marker "$p" narrow-cap left-pad@1
+grep -qF "floor \`left-pad@1: '>=1.3.4 <1.8.0'\`" "$p/report.md" || fail "narrow-cap: report does not name the kept cap"
+pass "narrow-cap: a local upper bound below the next major is kept above the raised floor"
+
+# … and refused when the patched version is at or above it.
+p="$(existing_floor cap-below-patch "'>=1.3.0 <1.3.4'")"
+expect_refused "$p" cap-below-patch 'caps left-pad below the patched version 1.3.4'
+pass "cap-below-patch: a local cap at or below the patched version is refused, nothing written"
+
+# Table-safe report cells (Claude #4): a refusal reason carrying a `||`
+# patched range must not split its row.
+p="$(new_project table-cells)"
+advisory GHSA-zzzz-zzzz-zzzz pkgz high '<1.3.4 || >=2.0.0 <2.1.5' 0.9.0 direct '>=1.3.4 <2.0.0 || >=2.1.5' |
+    jq '{advisories: .}' >"$p/.stub/audit.json"
+fix_adds "$p" 'pkgz@<1.3.4 || >=2.0.0 <2.1.5' '^1.3.4'
+run_fix "$p" --skip-refused --report "$p/report.md" >"$p/out.log" 2>&1 || {
+    cat "$p/out.log"
+    fail "table-cells: exited non-zero"
+}
+row="$(grep -F '| GHSA-zzzz-zzzz-zzzz |' "$p/report.md")" || fail "table-cells: the refusal row is missing"
+[ "$(printf '%s' "$row" | sed 's/\\|//g' | tr -cd '|' | wc -c | tr -d ' ')" -eq 6 ] ||
+    fail "table-cells: the row does not have exactly 5 cells: $row"
+printf '%s' "$row" | grep -qF '>=1.3.4 <2.0.0 \|\| >=2.1.5' || fail "table-cells: the || range was not escaped: $row"
+pass "table-cells: a || range in a refusal reason is escaped and the row keeps 5 cells"
+
+# ── 14. publish: one rolling draft PR, scope-checked patch ─────────────
 p="$(new_project publish)"
 ORIGIN="$TMPROOT/origin.git"
 export ORIGIN
@@ -915,5 +961,49 @@ if [ "$rc" -eq 0 ] || ! grep -q "touches 'package.json'" "$p/out/3.log"; then
     fail "publish: a patch outside the two floor files must be refused"
 fi
 pass "publish: a patch touching anything but the workspace file and lockfile is refused"
+
+# The staged result is checked too (Claude #1): a rename of the workspace
+# file, and a mode change the numstat cannot see, are both refused.
+(cd "$p" && git checkout -q main && git mv pnpm-workspace.yaml elsewhere.yaml &&
+    git diff --cached -M >out/changes.patch && git reset -q --hard)
+rc=0
+publish >"$p/out/4.log" 2>&1 || rc=$?
+[ "$rc" -ne 0 ] || fail "publish: a patch renaming the workspace file was accepted"
+pass "publish: a patch renaming the workspace file is refused"
+
+(cd "$p" && git checkout -q main && chmod +x pnpm-workspace.yaml && git diff >out/changes.patch && chmod -x pnpm-workspace.yaml)
+grep -q '^new mode 100755' "$p/out/changes.patch" || fail "publish: fixture did not produce a mode-change patch"
+rc=0
+publish >"$p/out/5.log" 2>&1 || rc=$?
+if [ "$rc" -eq 0 ] || ! grep -q 'only in-place modifications' "$p/out/5.log"; then
+    cat "$p/out/5.log"
+    fail "publish: a mode change staged on the workspace file was accepted"
+fi
+pass "publish: the staged result is checked — a mode change on the workspace file is refused"
+
+# Head replication lag (Gemini 4242195103 / Claude #3): the PR reports the old
+# head once after the push; the check polls instead of failing.
+(
+    cd "$p" && git reset -q --hard && git checkout -q main
+    printf "  # minimist@1: GHSA-y.\n  minimist@1: '>=1.2.6 <2'\n" >>pnpm-workspace.yaml
+    echo '# relocked again' >>pnpm-lock.yaml
+    git diff --binary >out/changes.patch
+    git checkout -q -- .
+)
+mkdir -p "$p/.stub/fastbin"
+printf '#!/bin/sh\necho "sleep $*" >>"$STUB_DIR/calls"\n' >"$p/.stub/fastbin/sleep"
+chmod +x "$p/.stub/fastbin/sleep"
+rm -f "$p/.stub/views"
+echo 2 >"$p/.stub/lag-at"
+rc=0
+(cd "$p" && PATH="$p/.stub/fastbin:$PATH" STUB_DIR="$p/.stub" GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid \
+    GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid \
+    ./scripts/security-audit-fix.sh publish "$p/out") >"$p/out/6.log" 2>&1 || rc=$?
+[ "$rc" -eq 0 ] || {
+    cat "$p/out/6.log"
+    fail "publish: a one-read head lag after the push failed the run"
+}
+grep -q '^sleep 5$' "$p/.stub/calls" || fail "publish: the head check did not poll"
+pass "publish: a head that lags the push for one read is polled, not failed"
 
 echo "test-security-audit-fix: $cases cases passed"
