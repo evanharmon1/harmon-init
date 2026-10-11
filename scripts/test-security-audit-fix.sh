@@ -770,7 +770,76 @@ grep -qF "| npm-1097678 | \`lodash\` | high | 4.17.20 | floor \`lodash@4: '>=4.1
     fail "empty-id: the report row is missing or misaligned"
 pass "empty-id: an advisory without a GHSA id is reported and commented as npm-<number>"
 
-# ── 12. publish: one rolling draft PR, scope-checked patch ─────────────
+# ── 12. challenge round 6 shapes ──────────────────────────────────────
+
+# A (r6 finding 2): pnpm re-emits an override identical to one already in the
+# file (a raw `--fix` entry from before, with a stale lockfile). The proposal
+# is the post-fix map, not its difference from the original, so the advisory
+# is still fixed and the floor is written in the canonical shape.
+p="$(new_project identical)"
+K='left-pad@<1.3.4' V='^1.3.4' yq -i '.overrides[strenv(K)] = strenv(V)' "$p/pnpm-workspace.yaml"
+advisory GHSA-0000-0000-0023 left-pad high '<1.3.4' 1.3.1 left-pad '>=1.3.4' | jq '{advisories: .}' >"$p/.stub/audit.json"
+fix_adds "$p" 'left-pad@<1.3.4' '^1.3.4'
+echo "left-pad@1: '>=1.3.4 <2'" >"$p/.stub/cleared-by"
+run_fix "$p" >"$p/out.log" 2>&1 || {
+    cat "$p/out.log"
+    fail "identical: exited non-zero (an identical re-emitted proposal was ignored)"
+}
+expect_keys "$p" identical 'left-pad@1=>=1.3.4 <2'
+expect_below_marker "$p" identical left-pad@1
+pass "identical: a proposal identical to an existing entry still fixes the advisory, in the canonical shape"
+
+# B (r6 finding 1): under --skip-refused, pnpm's cooldown exclusion for a
+# REFUSED fix is dropped and reported; the applied fix's exclusion is carried.
+p="$(new_project exclusion-refused)"
+{
+    advisory GHSA-0000-0000-0024 lodash high '<4.17.21' 4.17.20 lodash '>=4.17.21'
+    advisory GHSA-8cf7-32gw-wr33 jsonwebtoken high '<=8.5.1' 8.5.1 jsonwebtoken '>=9.0.0'
+} | jq -s 'add | {advisories: .}' >"$p/.stub/audit.json"
+fix_adds "$p" 'lodash@<4.17.21' '^4.17.21' 'jsonwebtoken@<=8.5.1' '^9.0.0'
+yq -i '.minimumReleaseAgeExclude = ["lodash@4.17.21", "jsonwebtoken@9.0.0"]' "$p/.stub/fixed.yaml"
+echo 'lodash@4.17.21' >"$p/.stub/requires-exclude"
+echo "lodash@4: '>=4.17.21 <5'" >"$p/.stub/cleared-by"
+run_fix "$p" --skip-refused --report "$p/report.md" >"$p/out.log" 2>&1 || {
+    cat "$p/out.log"
+    fail "exclusion-refused: exited non-zero"
+}
+[ "$(yq -o=json -I=0 '.minimumReleaseAgeExclude' "$p/pnpm-workspace.yaml")" = '["lodash@4.17.21"]' ] ||
+    fail "exclusion-refused: carried $(yq -o=json -I=0 '.minimumReleaseAgeExclude' "$p/pnpm-workspace.yaml"), expected only the applied fix's entry"
+grep -qF -- '- `jsonwebtoken@9.0.0`' "$p/report.md" && grep -qF 'Dropped from' "$p/report.md" ||
+    fail "exclusion-refused: the dropped exclusion is not reported"
+grep -qF '**refused:** the fix (9.0.0) crosses from major 8 to major 9' "$p/report.md" ||
+    fail "exclusion-refused: the refusal behind the dropped exclusion is not reported"
+pass "exclusion-refused: only the applied fix's cooldown exclusion is carried; the refused one is reported as dropped"
+
+# C (r6 finding 3): a patched range with one alternative per release line uses
+# the alternative on the installed major — 2.0.1 needs 2.1.5, so a ^2.0.3
+# proposal (another advisory's) does not count as fixing it.
+p="$(new_project multi-range)"
+{
+    advisory GHSA-xxxx-xxxx-xxxx pkgz high '<1.3.4 || >=2.0.0 <2.1.5' 2.0.1 direct '>=1.3.4 <2.0.0 || >=2.1.5'
+    advisory GHSA-yyyy-yyyy-yyyy pkgz high '<2.0.3' 2.0.1 direct '>=2.0.3'
+} | jq -s 'add | {advisories: .}' >"$p/.stub/audit.json"
+fix_adds "$p" 'pkgz@<1.3.4 || >=2.0.0 <2.1.5' '^2.1.5' 'pkgz@<2.0.3' '^2.0.3'
+echo "pkgz@2: '>=2.1.5 <3'" >"$p/.stub/cleared-by"
+run_fix "$p" --report "$p/report.md" >"$p/out.log" 2>&1 || {
+    cat "$p/out.log"
+    fail "multi-range: exited non-zero"
+}
+expect_keys "$p" multi-range 'pkgz@2=>=2.1.5 <3'
+grep -qF "| GHSA-xxxx-xxxx-xxxx | \`pkgz\` | high | 2.0.1 | floor \`pkgz@2: '>=2.1.5 <3'\` |" "$p/report.md" ||
+    fail "multi-range: the multi-range advisory is not fixed by the in-major floor"
+pass "multi-range: the patched alternative on the installed major sets the need (2.1.5, not 1.3.4)"
+
+# ... and an install on a line no alternative covers is refused.
+p="$(new_project multi-range-none)"
+advisory GHSA-zzzz-zzzz-zzzz pkgz high '<1.3.4 || >=2.0.0 <2.1.5' 0.9.0 direct '>=1.3.4 <2.0.0 || >=2.1.5' |
+    jq '{advisories: .}' >"$p/.stub/audit.json"
+fix_adds "$p" 'pkgz@<1.3.4 || >=2.0.0 <2.1.5' '^1.3.4'
+expect_refused "$p" multi-range-none 'no patched range on major 0.9'
+pass "multi-range-none: no patched alternative on the installed line is a refusal"
+
+# ── 13. publish: one rolling draft PR, scope-checked patch ─────────────
 p="$(new_project publish)"
 ORIGIN="$TMPROOT/origin.git"
 export ORIGIN

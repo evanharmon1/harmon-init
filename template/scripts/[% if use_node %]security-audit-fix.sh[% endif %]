@@ -311,13 +311,26 @@ carry_release_age_excludes() {
     release_age_excludes "$WORK/orig.$WORKSPACE" | sort -u >"$WORK/rae.before"
     release_age_excludes "$WORK/postfix.yaml" | sort -u | comm -13 "$WORK/rae.before" - >"$WORK/rae.added"
     [ -s "$WORK/rae.added" ] || return 0
+    cut -f2 "$WORK/applied.tsv" | sort -u >"$WORK/applied-pkgs.txt"
+    mv "$WORK/rae.added" "$WORK/rae.proposed"
+    : >"$WORK/rae.added"
     while IFS= read -r _ra; do
+        # An entry is `pkg@version` (or a bare name); only a package this run
+        # floors needs its young release — one for a refused fix is dropped.
+        _ra_pkg="$_ra"
+        case "$_ra" in ?*@*) _ra_pkg="${_ra%@*}" ;; esac
+        if ! grep -qxF -- "$_ra_pkg" "$WORK/applied-pkgs.txt"; then
+            echo "$_ra" >>"$WORK/rae.dropped"
+            note "dropped pnpm's minimumReleaseAgeExclude entry $_ra (no floor applied for $_ra_pkg)"
+            continue
+        fi
+        echo "$_ra" >>"$WORK/rae.added"
         marker_region >"$WORK/region.before"
         X="$_ra" yq -i '.minimumReleaseAgeExclude = ((.minimumReleaseAgeExclude // []) + [strenv(X)])' "$WORKSPACE" 2>"$WORK/yq.err" ||
             refuse "yq could not add $_ra to minimumReleaseAgeExclude in $WORKSPACE: $(head -n 1 "$WORK/yq.err")"
         check_region "adding $_ra to minimumReleaseAgeExclude"
         note "kept pnpm's minimumReleaseAgeExclude entry $_ra (a patched release younger than the cooldown)"
-    done <"$WORK/rae.added"
+    done <"$WORK/rae.proposed"
 }
 
 # ── fix ─────────────────────────────────────────────────────────────
@@ -376,11 +389,31 @@ major_rows() {
     }' | sort -u
 }
 
-# advisory_need RANGE PATCHED — the lowest version that fixes an advisory: the
-# lower bound of its patched range, else the version its vulnerable range
-# stops at (`<x.y.z` -> x.y.z, `<=x.y.z` -> the next patch); empty if neither
-# says.
+# advisory_need RANGE PATCHED FROM — the lowest version that fixes an
+# advisory for an install on major FROM. A patched range with `||`
+# alternatives (one per release line) contributes only the alternative whose
+# lower bound is on FROM, and prints `none` when no alternative is: the
+# advisory has no fix on that line. Otherwise it is the patched range's lower
+# bound, else the version the vulnerable range stops at (`<x.y.z` -> x.y.z,
+# `<=x.y.z` -> the next patch); empty if neither says.
 advisory_need() {
+    case "$2" in
+    *"||"*)
+        _an_pick="none"
+        _an_rest="$2||"
+        while [ -n "$_an_rest" ]; do
+            _an_alt="${_an_rest%%||*}"
+            _an_rest="${_an_rest#*||}"
+            _an_l="$(floor_lower "$_an_alt")"
+            if [ -n "$_an_l" ] && [ "$_an_l" != 0.0.0 ] && [ "$(major_key "$_an_l")" = "$3" ]; then
+                _an_pick="$_an_l"
+                break
+            fi
+        done
+        echo "$_an_pick"
+        return 0
+        ;;
+    esac
     _an="$(floor_lower "$2")"
     if [ -n "$_an" ] && [ "$_an" != 0.0.0 ]; then
         echo "$_an"
@@ -398,12 +431,19 @@ advisory_need() {
 # covering_floor PKG RANGE PATCHED FROM — the floor of a pnpm proposal that
 # fixes this advisory row, matched by package and coverage rather than by
 # pnpm's selector key: pnpm prunes an advisory whose range another advisory on
-# the same package already covers, so one proposal can fix several. A
-# proposal covers the row when its floor is at least what the advisory needs.
-# Among covering proposals the lowest in the installed major FROM wins, else
-# the lowest at all (a crossing the caller refuses); empty when none covers.
+# the same package already covers, so one proposal can fix several. The
+# proposals are pnpm's whole post-fix map, so an entry pnpm re-emitted
+# identical to an existing one still counts. A proposal covers the row when
+# its floor is at least what the advisory needs. Among covering proposals the
+# lowest in the installed major FROM wins, else the lowest at all (a crossing
+# the caller refuses); empty when none covers; `none` when the advisory has
+# no patched alternative on FROM.
 covering_floor() {
-    _cf_need="$(advisory_need "$2" "$3")"
+    _cf_need="$(advisory_need "$2" "$3" "$4")"
+    if [ "$_cf_need" = none ]; then
+        echo none
+        return 0
+    fi
     _cf_in="" _cf_out=""
     while IFS="$TAB" read -r _cf_key _cf_val; do
         [ "${_cf_key%@*}" = "$1" ] || continue
@@ -419,7 +459,7 @@ covering_floor() {
         elif [ -z "$_cf_out" ] || version_ge "$_cf_out" "$_cf_f"; then
             _cf_out="$_cf_f"
         fi
-    done <"$WORK/added.tsv"
+    done <"$WORK/after.tsv"
     echo "${_cf_in:-$_cf_out}"
 }
 
@@ -459,6 +499,7 @@ cmd_fix() {
     : >"$WORK/applied.tsv"
     : >"$WORK/new-rows.tsv"
     : >"$WORK/rae.added"
+    : >"$WORK/rae.dropped"
     snapshot
 
     audit_rows "$WORK/rows.tsv"
@@ -485,7 +526,6 @@ cmd_fix() {
     restore
     : >"$WORK/rae.added"
     overrides_tsv "$WORKSPACE" >"$WORK/current.tsv"
-    sort -u "$WORK/current.tsv" | comm -13 - "$WORK/after.tsv" >"$WORK/added.tsv"
 
     # Each advisory row -> a candidate floor "key<TAB>floor<TAB>id", or a refusal.
     : >"$WORK/candidates.tsv"
@@ -497,6 +537,10 @@ cmd_fix() {
         fi
         _from="$(major_key "$_have")"
         _floor="$(covering_floor "$_pkg" "$_range" "$_patched" "$_from")"
+        if [ "$_floor" = none ]; then
+            add_refusal "$_id" "$_pkg" "$_sev" "$_ver" "no patched range on major $_from (patched: $_patched) — upgrade \`$_direct\` deliberately"
+            continue
+        fi
         if [ -z "$_floor" ]; then
             add_refusal "$_id" "$_pkg" "$_sev" "$_ver" "pnpm audit --fix proposed no override that covers it (no patched version published for $_range)"
             continue
@@ -625,6 +669,15 @@ write_report() {
             while IFS= read -r _ra; do
                 printf -- '- `%s`\n' "$_ra"
             done <"$WORK/rae.added"
+        fi
+        if [ -s "$WORK/rae.dropped" ]; then
+            echo
+            echo "Dropped from \`pnpm audit --fix\`'s \`minimumReleaseAgeExclude\` additions (their fix was refused,"
+            echo "so nothing here needs the young release):"
+            echo
+            while IFS= read -r _ra; do
+                printf -- '- `%s`\n' "$_ra"
+            done <"$WORK/rae.dropped"
         fi
         if [ -s "$WORK/new-rows.tsv" ]; then
             echo
