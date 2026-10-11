@@ -44,6 +44,9 @@ fail() {
     exit 1
 }
 
+# The marker is ambient (Claude Code on the web exports FOREMAN_DEVCONTAINER=agent);
+# clear it once so no case depends on where it runs. Cases set it themselves.
+unset FOREMAN_DEVCONTAINER
 script_dir="$(cd "$(dirname "$0")" && pwd)"
 repo_root="$(git -C "$script_dir" rev-parse --show-toplevel)"
 cd "$repo_root"
@@ -458,9 +461,9 @@ if diff <(strip_agent_overrides "$codex_baseline") <(strip_agent_overrides "${wo
 fi
 
 # ── 4. Harness refusal ──────────────────────────────────────────────────
-echo "==> 4. harness coverage and refusal under the agent marker"
+echo "==> 4. harness coverage, and refusal outside and under the agent marker"
 
-bash "$agent_autonomy" coverage >/dev/null || fail "agent-autonomy.sh coverage failed (run it for the details)"
+AGENT_AUTONOMY_CONFIG_DIR="${repo_root}/${agent_config_dir}" bash "$agent_autonomy" coverage >/dev/null || fail "agent-autonomy.sh coverage failed (run it for the details)"
 
 # The dispatcher needs only these tools; a curated PATH keeps the real
 # harness binaries this environment may have installed out of the fixture.
@@ -650,7 +653,7 @@ FOREMAN_DEVCONTAINER=agent run_baked verify >/dev/null || fail "verify under the
 
 # A registry slug with no bucket fails coverage.
 jq '.harnesses += [{slug: "brand-new-harness"}]' agent-registry.json >"${work_dir}/registry-new.json"
-if AGENT_AUTONOMY_REGISTRY="${work_dir}/registry-new.json" bash "$agent_autonomy" coverage >/dev/null 2>&1; then
+if AGENT_AUTONOMY_CONFIG_DIR="${repo_root}/${agent_config_dir}" AGENT_AUTONOMY_REGISTRY="${work_dir}/registry-new.json" bash "$agent_autonomy" coverage >/dev/null 2>&1; then
     fail "coverage passed with a registry slug that is neither supported, aliased, nor refused"
 fi
 
