@@ -351,8 +351,10 @@ The **scaffolding damper** is what replaces the cap as the first line of
 defense. At round 2 — the earliest round that can show the pattern — say on
 the table, for each finding, whether its subject exists only because an earlier
 round of the same stage added it. Where it does, adjudicate it with one of
-three dispositions written down: delete the scaffolding, restructure it to
-invariants, or state that the code is in scope and why the change needs it.
+four dispositions written down: delete the scaffolding, restructure it to
+invariants, split the mechanism out (only when and exactly as harmon-devkit's
+`specs/dev-flow-v2.md` § "The split strategy" allows), or state that the code
+is in scope and why the change needs it.
 
 **Restructuring to invariants** is deletion by abstraction, and it is the
 disposition to reach for when plain deletion is unavailable. Some artifacts —
