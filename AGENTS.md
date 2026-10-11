@@ -280,11 +280,27 @@ Binding on every stage, skill, and harness, whatever rigor resolved:
   rebased, or force-pushed, at any stage.
 - **Never bypass a gate** — not the git hooks, not a stop-gate BLOCK, not a
   failed *or indeterminate* readiness condition. Fix the cause, or escalate.
-- **Every push passes its round gate, then a secret scan** — `.devflow.toml`'s
+- **Every push you author passes its round gate, then a secret scan** — `.devflow.toml`'s
   `[gates]` names them (`verify` for a code push, `check` for a docs-only one,
   `security:secrets` always, `security` before the draft PR); the `pre-push`
   hook (`task install:hooks`) runs what it can, otherwise run them yourself.
-  `task ci` stays on demand.
+  `task ci` stays on demand. A head move GitHub makes at your request (the
+  catch-up below) authors no bytes; the readiness gate's CI condition on the
+  new head governs it instead.
+- **Catch a behind PR up on the server, at the gate.** When the base merges
+  without conflicts, update the branch with GitHub update-branch in merge mode:
+  REST `PUT …/pulls/<n>/update-branch` with the captured head as
+  `expected_head_sha`, so a concurrent push makes it refuse
+  (`gh pr update-branch` takes no such flag). Never `--rebase`: it rewrites
+  pushed history. Then fast-forward every local checkout (`git pull --ff-only`) before
+  committing again and let CI run on the new head. Then ask `carry`
+  whether the clean verdict attests it, or run the ordinary current-head cycle. It spends no remediation
+  round. Fall back to a local merge under the full round gate, as an ordinary
+  remediation round, when update-branch refuses (a conflict, a fork without
+  maintainer edits, a ruleset that rejects the merge commit) or the base merge
+  must ship in the same push as a fix. Reconcile once, base into branch only;
+  the ledger names it a catch-up, not a remediation push
+  ([ADR 2026-10-11](docs/decisions/2026-10-11-server-side-base-catch-up.md)).
 - **One conventional commit per adjudicated round, pushed** to the branch's own
   writable remote (`git push -u <remote> <branch>` on the first push). Per *round*,
   not per finding: five fixes are one commit, a round with nothing to fix pushes
@@ -420,7 +436,8 @@ review only when **all** of the following hold for its current `headRefOid`:
 - Every `## Deferred findings` entry in the PR body is ticked with its
   disposition.
 - `reviewDecision` is not `CHANGES_REQUESTED`.
-- `mergeStateStatus` is none of `DIRTY`, `BEHIND`, `UNKNOWN`.
+- `mergeStateStatus` is none of `DIRTY`, `BEHIND`, `UNKNOWN`. Clear `BEHIND`
+  with update-branch (§ "Policy invariants"), never a rebase.
 - No newer push invalidated any result the gate relied on — re-read
   `headRefOid` immediately before promoting and compare.
 
@@ -516,8 +533,11 @@ The selected `[rounds.*]` table supplies independent `challenge`, `review`,
 `integration`, and `remediation` ceilings plus `min_rounds` and the run's
 wall-clock ceiling. Challenge and review bound confidence passes;
 `integration` bounds current-head Codex review cycles; `remediation` bounds
-integration-stage fix pushes. A zero cap disables only the work it names,
-never a deterministic gate, security scan, branch rule, or human approval.
+integration-stage fix pushes. A server-side catch-up (update-branch) is not a
+fix push and spends no `remediation` round, though it still owes `carry` or a
+cycle like any head move; a local catch-up merge is a remediation round. A zero
+cap disables only the work it names, never a deterministic gate, security scan,
+branch rule, or human approval.
 `integration` charges only cycles that review something new: one whose head
 differs from the last reviewed head **only** by a base merge that changed
 nothing under review re-reads identical code, so it spends the separate,

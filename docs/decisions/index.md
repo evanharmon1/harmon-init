@@ -82,3 +82,6 @@ one's status.
 - [2026-10-10-accept-force-pushes-outside-the-default-branch-in-the-agent-posture.md](2026-10-10-accept-force-pushes-outside-the-default-branch-in-the-agent-posture.md)
   — accept and document that the agent posture's force-push denies do not stop force pushes
   outside the default branch (Accepted; amends 2026-09-29 (three postures)).
+- [2026-10-11-server-side-base-catch-up.md](2026-10-11-server-side-base-catch-up.md)
+  — catch a PR up to its base with GitHub update-branch; a local merge is the fallback,
+  and a server-side catch-up spends no remediation round (Accepted).
