@@ -170,19 +170,18 @@ floor_lower() {
 # comparator (`>=`, `>`, `<`, `<=`) or a `^` on major 1+, each on a plain
 # numeric version — any other shape (an exact or `=` pin, `~`, an x-range, a
 # hyphen range, `||`, `^0.x`, a tag) carries an implicit cap this reader does
-# not compute, so the caller refuses rather than widen it.
+# not compute, so the caller refuses rather than widen it. Acceptance is
+# positive: a version with a prerelease or build suffix, a `v` prefix or any
+# trailing text is unreadable too, and so is any `||` — even unspaced, where
+# it would otherwise glue two alternatives into one comparator token.
 floor_upper() {
     printf '%s\n' "$1" | awk '
-        # excl V INCL — x.y.z of a plain numeric version (1-3 parts, any
-        # -pre/+build dropped), bumped past V when INCL; nothing otherwise.
+        # excl V INCL — x.y.z of a plain numeric version (1-3 parts and
+        # nothing else), bumped past V when INCL; nothing otherwise.
         function excl(v, incl,   n, p, i) {
-            sub(/[-+].*$/, "", v)
+            if (v !~ /^[0-9]+$/ && v !~ /^[0-9]+\.[0-9]+$/ && v !~ /^[0-9]+\.[0-9]+\.[0-9]+$/) return ""
             n = split(v, p, ".")
-            if (n < 1 || n > 3) return ""
-            for (i = 1; i <= 3; i++) {
-                if (i > n) { p[i] = 0; continue }
-                if (p[i] !~ /^[0-9]+$/) return ""
-            }
+            for (i = n + 1; i <= 3; i++) p[i] = 0
             if (incl) { p[n] = p[n] + 1; for (i = n + 1; i <= 3; i++) p[i] = 0 }
             return (p[1] + 0) "." (p[2] + 0) "." (p[3] + 0)
         }
@@ -191,6 +190,7 @@ floor_upper() {
             for (i = 1; i <= 3; i++) { if (x[i] + 0 != y[i] + 0) return x[i] + 0 < y[i] + 0 }
             return 0
         }
+        index($0, "||") { exit }
         {
             s = $0
             gsub(/>=[[:space:]]+/, ">=", s); gsub(/<=[[:space:]]+/, "<=", s)
@@ -670,8 +670,17 @@ cmd_fix() {
         # refused, never rewritten: <next-major would widen its implicit cap.
         # Both the `pkg@<major>` key and a bare `pkg` key are read, because
         # pnpm 11 applies the LAST matching override in map order (probed on
-        # pnpm 11.28.5): a bare entry can cap this line as well.
+        # pnpm 11.28.5): a bare entry can cap this line as well, and one that
+        # comes AFTER an existing key outranks it, so rewriting that key would
+        # not change what pnpm applies — refused. (A new key is appended at
+        # the end of the map by yq, after any bare entry.)
         _upper="<$_bound" _cap_v="" _cap_span="" _blocked=""
+        _key_row="$(awk -F '\t' -v k="$_key" '$1 == k { print NR; exit }' "$WORK/current.tsv")"
+        _bare_row="$(awk -F '\t' -v k="${_key%@*}" '$1 == k { print NR; exit }' "$WORK/current.tsv")"
+        if [ -n "$_key_row" ] && [ -n "$_bare_row" ] && [ "$_bare_row" -gt "$_key_row" ]; then
+            refuse_key "$_key" "a later bare \`${_key%@*}\` override takes precedence over \`$_key\` — reorder or remove it deliberately"
+            continue
+        fi
         for _ek in "$_key" "${_key%@*}"; do
             awk -F '\t' -v k="$_ek" '$1 == k { found = 1; print $2; exit } END { exit !found }' \
                 "$WORK/current.tsv" >"$WORK/existing.txt" || continue

@@ -54,11 +54,24 @@ cat >"$TMPROOT/bin/pnpm" <<'STUB'
 #   audit-after.json  the report once remediated (default: no advisories)
 #   fixed.yaml      the workspace file `audit --fix` writes
 #   calls           every invocation, one per line
+# Overrides resolve as pnpm 11's do (probed on 11.28.5): in map order, the last
+# matching entry wins, so a bare `pkg` after a cleared-by `pkg@<major>` key
+# outranks it and the advisory stays open.
 set -euo pipefail
 echo "pnpm $*" >>"$STUB_DIR/calls"
+outranked() {
+    [ -f "$STUB_DIR/cleared-by" ] || return 1
+    yq -r '.overrides // {} | keys | .[]' pnpm-workspace.yaml >"$STUB_DIR/keys.order"
+    while IFS= read -r line; do
+        k="${line%%: *}"
+        awk -v k="$k" -v b="${k%@*}" '$0 == k { seen = 1 } seen && $0 == b { found = 1 } END { exit !found }' \
+            "$STUB_DIR/keys.order" && return 0
+    done <"$STUB_DIR/cleared-by"
+    return 1
+}
 case "$*" in
 "audit --audit-level=high --json")
-    if [ -f "$STUB_DIR/cleared-by" ] && grep -qF -f "$STUB_DIR/cleared-by" pnpm-workspace.yaml &&
+    if [ -f "$STUB_DIR/cleared-by" ] && grep -qF -f "$STUB_DIR/cleared-by" pnpm-workspace.yaml && ! outranked &&
         { [ ! -f "$STUB_DIR/needs-relock" ] || grep -qx '# relocked' pnpm-lock.yaml; }; then
         if [ -f "$STUB_DIR/audit-after.json" ]; then
             cat "$STUB_DIR/audit-after.json"
@@ -912,7 +925,11 @@ for spec in \
     "partial|'1.3'" \
     "hyphen|'1.3.8 - 1.9.0'" \
     "or-range|'>=1.5.0 <2 || >=1.3.8 <1.4.0'" \
-    "x-comparator|'>=1.3.x <2'"; do
+    "x-comparator|'>=1.3.x <2'" \
+    "or-unspaced|'>=1.3.0 <1.8.0-beta.1||>=2.0.0 <3'" \
+    "prerelease-cap|'<1.8.0-beta.1'" \
+    "build-suffix|'>=1.3.0+build'" \
+    "v-prefix|v1.3.0"; do
     name="${spec%%|*}" val="${spec#*|}"
     p="$(existing_floor "unreadable-$name" "$val")"
     shown="$(yq '.overrides["left-pad@1"]' "$p/pnpm-workspace.yaml")"
@@ -941,10 +958,14 @@ fix_writes "$p" '  tiny@<0.4.3: ^0.4.3'
 expect_refused "$p" unreadable-caret-zero "the local override \`tiny@0.4: '^0.4.0'\` has a cap the script cannot read"
 pass "unreadable-caret-zero: a ^0.x override is refused, bytes unchanged"
 
-# add_bare PROJECT VALUE — a bare `left-pad: VALUE` entry after left-pad@1,
-# and the `--fix` result recomputed over it.
+# add_bare PROJECT VALUE [after] — a bare `left-pad: VALUE` entry before
+# left-pad@1 (its head comment), or after it with `after`, and the `--fix`
+# result recomputed over it.
 add_bare() {
-    awk -v v="$2" '/^  left-pad@1: / { print; print "  left-pad: " v; next } { print }' "$1/pnpm-workspace.yaml" >"$1/ws.tmp" &&
+    awk -v v="$2" -v after="${3:-}" '
+        after == "" && /^  # left-pad@1: / { print "  left-pad: " v }
+        { print }
+        after != "" && /^  left-pad@1: / { print "  left-pad: " v }' "$1/pnpm-workspace.yaml" >"$1/ws.tmp" &&
         mv "$1/ws.tmp" "$1/pnpm-workspace.yaml"
     fix_writes "$1" '  left-pad@<1.3.4: ^1.3.4'
 }
@@ -966,7 +987,17 @@ run_fix "$p" --report "$p/report.md" >"$p/out.log" 2>&1 || {
     fail "bare-narrow: exited non-zero"
 }
 expect_keys "$p" bare-narrow 'left-pad@1=>=1.3.4 <1.8.0'
+[ "$(yq -r '.overrides | keys | .[]' "$p/pnpm-workspace.yaml" | grep -n '^left-pad' | tr '\n' ' ')" = '2:left-pad 3:left-pad@1 ' ] ||
+    fail "bare-narrow: the bare entry no longer precedes the rewritten key"
 pass "bare-narrow: a bare override's narrower cap is kept on the written floor"
+
+# A bare entry AFTER the existing key outranks it (last match wins), so the
+# rewrite would not be what pnpm applies: refused, even when its cap is readable.
+p="$(existing_floor bare-after-keyed "'>=1.3.0 <2'")"
+add_bare "$p" "'>=1.0.0 <1.8.0'" after
+echo "left-pad@1: '>=1.3.4 <1.8.0'" >"$p/.stub/cleared-by"
+expect_refused "$p" bare-after-keyed "a later bare \`left-pad\` override takes precedence over \`left-pad@1\` — reorder or remove it deliberately"
+pass "bare-after-keyed: a bare override after the keyed one is refused, bytes unchanged"
 
 # Table-safe report cells (Claude #4): a refusal reason carrying a `||`
 # patched range must not split its row.
