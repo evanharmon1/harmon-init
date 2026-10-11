@@ -288,17 +288,24 @@ Binding on every stage, skill, and harness, whatever rigor resolved:
   catch-up below) authors no bytes; the readiness gate's CI condition on the
   new head governs it instead.
 - **Catch a behind PR up on the server, at the gate.** When the base merges
-  without conflicts, update the branch with GitHub update-branch in merge mode:
+  without conflicts, first re-read `baseRefName`: if it no longer matches the
+  base the gate captured, stop, because `base-retargeted` applies and no call is
+  made. Otherwise update the branch with GitHub update-branch in merge mode:
   REST `PUT …/pulls/<n>/update-branch` with the captured head as
   `expected_head_sha`, so a concurrent push makes it refuse
   (`gh pr update-branch` takes no such flag). Never `--rebase`: it rewrites
-  pushed history. Then fast-forward every local checkout (`git pull --ff-only`) before
-  committing again and let CI run on the new head. Then ask `carry`
+  pushed history. The call returns `202 Accepted`, so poll until `headRefOid`
+  moves off the captured SHA and record the new SHA. A bounded poll that never
+  sees the move is indeterminate: stop and report. Then fast-forward every local
+  checkout (`git pull --ff-only`) before committing again and let CI run on the
+  new head. Then ask `carry`
   whether the clean verdict attests it, or run the ordinary current-head cycle. It spends no remediation
   round. Fall back to a local merge under the full round gate, as an ordinary
   remediation round, when update-branch refuses (a conflict, a fork without
   maintainer edits, a ruleset that rejects the merge commit) or the base merge
-  must ship in the same push as a fix. Reconcile once, base into branch only;
+  must ship in the same push as a fix. A promoted PR is caught up only when the
+  maintainer asks, in place and without undoing the promotion; otherwise its
+  drift is reported, never acted on. Reconcile once, base into branch only;
   the ledger names it a catch-up, not a remediation push
   ([ADR 2026-10-11](docs/decisions/2026-10-11-server-side-base-catch-up.md)).
 - **One conventional commit per adjudicated round, pushed** to the branch's own

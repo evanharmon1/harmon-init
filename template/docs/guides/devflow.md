@@ -192,8 +192,10 @@ gate as `codex-cap-mismatch`.
 
 A PR that falls behind its base is caught up at the gate in a fixed order:
 GitHub **update-branch** first (merge mode, pinned to the captured head with
-`expected_head_sha`, never `--rebase`), then **CI** on the new head, then
-**`carry`**. A server-side catch-up authors no bytes, so it runs no local round
+`expected_head_sha`, never `--rebase`, after re-reading `baseRefName`), then a
+wait until `headRefOid` moves off the captured SHA (the call returns
+`202 Accepted`), then **CI** on the new head, then, where Codex cloud review is
+enabled, **`carry`**. A server-side catch-up authors no bytes, so it runs no local round
 gate or secret scan and spends no `remediation` round; the readiness gate's CI
 condition gates it. A conflict, a refusal, or a base merge that must ship with a
 fix falls back to a local merge, which is an ordinary remediation round.

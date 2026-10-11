@@ -46,9 +46,14 @@ merged tree. No local tree is built and the agent pushes nothing.
 
 1. **A conflict-free catch-up runs on the server, without a local round gate or
    secret scan. CI on the merge head is the gate.** The standard path is:
-   update-branch in merge mode, then fast-forward every local checkout of the
-   branch (`git pull --ff-only`) before any further local commit, then let CI
-   run on the new head, then ask `carry` (#752). A merge can still break
+   re-read `baseRefName` against the base the gate captured, then update-branch
+   in merge mode. The endpoint answers `202 Accepted` and merges
+   asynchronously, so the agent polls until `headRefOid` moves off the captured
+   SHA and records the new SHA. A bounded poll that never sees the move is
+   indeterminate: the agent stops and reports. Then it fast-forwards every
+   local checkout of the branch (`git pull --ff-only`) before any further local
+   commit, lets CI run on the new head, and, where Codex cloud review is
+   enabled, asks `carry` (#752). A merge can still break
    semantically: two changes that are each correct can combine into a tree that
    fails. That combined tree is untested until something builds it. A local
    `task verify` would test it once on one machine. CI tests it on the head that
@@ -101,8 +106,10 @@ merged tree. No local tree is built and the agent pushes nothing.
 
 What stays the same: catch-up goes from base to branch only, against the PR's
 own `baseRefName`. It happens once, at the gate, never as soon as the branch is
-seen to be behind. A ready PR is updated in place and its promotion is never
-undone. Cap and escalation rules do not change. When a carry applies is also
+seen to be behind. A promoted (ready-for-review) PR is caught up only when the
+maintainer asks. Otherwise its drift is reported, never acted on, which matches
+the integrate skill's post-promotion audit. When the maintainer does ask, the PR
+is updated in place and its promotion is never undone. Cap and escalation rules do not change. When a carry applies is also
 unchanged. The only change is who creates the merge commit.
 
 ## Not
@@ -131,6 +138,10 @@ unchanged. The only change is who creates the merge commit.
   and readiness gate still describe the local merge. An agent following this
   file uses update-branch anyway. This file wins where a lagging skill states a
   different budget or procedure.
+- The agent re-reads `baseRefName` before the call and stops if it changed,
+  because the `base-retargeted` rule applies. A retarget between that re-read
+  and GitHub processing the merge is still possible. A local merge has the same
+  race, and the readiness gate's base check catches it.
 - Every head move from update-branch costs a full CI run. That cost is the gate
   itself.
 - A repository whose rulesets reject GitHub-made merge commits always takes
