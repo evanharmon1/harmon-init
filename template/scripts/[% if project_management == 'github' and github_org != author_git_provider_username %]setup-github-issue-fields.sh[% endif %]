@@ -9,6 +9,21 @@
 #   Priority (AI) single_select   p0, p1, p2, p3, p4   (an agent's suggestion)
 #   Effort        single_select   1, 2, 3, 5, 8, 13, 20 (modified Fibonacci, added
 #                                 beside the built-in High/Medium/Low)
+#   Model family  single_select   } the implementer record (#1517): options come
+#   Model         single_select   } from agent-registry.json — family slugs, model
+#   Model version single_select   } line slugs, version slugs (retired included),
+#   Model effort  single_select   } and the effort ladder
+#
+# The four Model fields record WHICH model last implemented the issue — a record
+# of fact written by the implementing agent, never a routing input: nothing reads
+# them to select a model. Each holds one value and the last implementer wins; the
+# pull request, which carries the same four values as `model-family:*`,
+# `model:*`, `model-version:*`, and `model-effort:*` LABELS (issue fields do not
+# exist on pull requests), is the exact per-change record. Claim release never
+# touches them. Their options are derived from the registry on every run, so a
+# new model version is appended as an option (existing option ids kept, so every
+# assigned value survives) and a retired one stays an option, so history keeps
+# its value.
 #
 # GitHub already ships Priority, Effort, Start date, and Target date as built-in
 # issue fields. Priority is left exactly as GitHub ships it: it is the HUMAN
@@ -52,7 +67,8 @@
 # carry an estimate is retired in their favor (ADR 2026-09-30 D8).
 #
 # Issue fields are an ORG-level feature (no per-user equivalent), so this is
-# org-only. Needs gh authed with the 'admin:org' scope + jq.
+# org-only. Needs gh authed with the 'admin:org' scope, jq, and node (the agent
+# registry the Model fields come from is validated first).
 #
 # Usage: setup-github-issue-fields.sh --org <org-login>
 #
@@ -81,7 +97,7 @@ if [ -z "$org" ]; then
     exit 2
 fi
 
-for tool in gh jq; do
+for tool in gh jq node; do
     if ! command -v "$tool" >/dev/null 2>&1; then
         echo "Required tool not found: $tool" >&2
         exit 1
@@ -101,6 +117,46 @@ kv "Organization" "$org"
 
 # Preview REST API version for issue fields; bump if GitHub moves the endpoint.
 api_version="2026-03-10"
+
+# The agent registry the Model fields' options come from. Validated up front and
+# fail closed before any GitHub call: an unreadable registry must never become an
+# empty option set, and one that parses but is only partly filled (a family with
+# no model lines, a line with no versions) must never become a partial one. The
+# validator is the one place registry invariants live, so run it rather than
+# re-check a subset in jq.
+agent_registry="$script_dir/../agent-registry.json"
+if ! registry_errors="$(node "$script_dir/validate-agent-registry.mjs" "$agent_registry" \
+    "$script_dir/../agent-registry.schema.json" 2>&1 >/dev/null)"; then
+    printf '%s\n' "$registry_errors" >&2
+    echo "Could not derive the Model field options from $agent_registry — it is not a valid agent registry" >&2
+    exit 1
+fi
+
+# model_opts KIND — the option set for one Model field, derived from the registry:
+# each value once (first occurrence wins, in registry order — `flash` is a line of
+# several families and `5.5` a version of several lines), retired versions
+# included. Descriptions match the label twins rendered by agent-registry-labels.mjs.
+model_opts() {
+    jq -ce --arg kind "$1" '
+        (if $kind == "family" then [ .families[] | {slug, text: "Implementing model family: \(.display_name)"} ]
+         elif $kind == "line" then [ .families[].models[] | {slug, text: "Implementing model line: \(.display_name)"} ]
+         elif $kind == "version" then [ .families[].models[].versions[] | {slug, text: "Implementing model version: \(.slug)"} ]
+         elif $kind == "effort" then [ .effort_ladder[] | {slug: ., text: "Implementing reasoning effort: \(.)"} ]
+         else error("unknown kind") end)
+        | reduce .[] as $v ([]; if any(.[]; .slug == $v.slug) then . else . + [$v] end)
+        | if length == 0 or any(.[]; (.slug | type) != "string" or .slug == "") then error("empty option set") else . end
+        | to_entries
+        | map({name: .value.slug, color: "gray",
+               description: "\(.value.text) — a record of fact, never a routing input",
+               priority: (.key + 1)})' "$agent_registry" 2>/dev/null
+}
+if ! model_family_opts="$(model_opts family)" ||
+    ! model_line_opts="$(model_opts line)" ||
+    ! model_version_opts="$(model_opts version)" ||
+    ! model_effort_opts="$(model_opts effort)"; then
+    echo "Could not derive the Model field options from $agent_registry — is it present and valid?" >&2
+    exit 1
+fi
 
 # The option sets. Each option is {name, color, description, priority}; `priority`
 # is display order (1..N) and `color` one of gray, blue, green, yellow, orange,
@@ -433,6 +489,18 @@ create_field "Priority (AI)" "single_select" \
 create_field "Effort" "single_select" \
     "The human time estimate for work a human will do, on a modified Fibonacci ladder" \
     "$effort_opts" "$effort_shipped_defaults"
+create_field "Model family" "single_select" \
+    "Implementer record: the model family that last implemented the issue; a record of fact, never a routing input" \
+    "$model_family_opts"
+create_field "Model" "single_select" \
+    "Implementer record: the model line that last implemented the issue; a record of fact, never a routing input" \
+    "$model_line_opts"
+create_field "Model version" "single_select" \
+    "Implementer record: the model version that last implemented the issue; a record of fact, never a routing input" \
+    "$model_version_opts"
+create_field "Model effort" "single_select" \
+    "Implementer record: the reasoning effort the last implementer ran at; a record of fact, never a routing input" \
+    "$model_effort_opts"
 
 verify_inventory
 
@@ -468,7 +536,7 @@ if [ -n "$incompatible" ] || [ -n "$unreconciled" ]; then
     output_summary "Issue field provisioning"
     output_warning "GitHub issue fields need attention; resolve the warnings above and re-run"
 else
-    checkline ok "Issue fields" "Product, Impact, Risk, Complexity, Priority (AI), Effort (Priority/dates are GitHub built-ins)"
+    checkline ok "Issue fields" "Product, Impact, Risk, Complexity, Priority (AI), Effort, Model family, Model, Model version, Model effort (Priority/dates are GitHub built-ins)"
     output_summary "Issue field provisioning"
     output_done "GitHub issue fields are ready on $org"
 fi

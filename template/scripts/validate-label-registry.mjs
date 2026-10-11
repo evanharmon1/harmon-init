@@ -335,11 +335,16 @@ const GH_LABEL_NAME_MAX = 50
 // Which agent-registry render feeds which prefix — a family rendering another
 // family's labels would provision the wrong vocabulary silently. `suggest` is
 // retired: agent-registry-labels.mjs no longer renders it, so only a retired
-// family may still name it (checked below).
+// family may still name it (checked below). The four implementer-record sets
+// (#1517) each render exactly their own prefix.
 const REGISTRY_SET_PREFIX = {
   suggest: 'suggest',
   claim: 'claim',
-  'foreman-adapters': 'foreman'
+  'foreman-adapters': 'foreman',
+  'model-family': 'model-family',
+  model: 'model',
+  'model-version': 'model-version',
+  'model-effort': 'model-effort'
 }
 const VALUE_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
 
