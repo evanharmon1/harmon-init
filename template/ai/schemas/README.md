@@ -1211,6 +1211,18 @@ restriction, every implementer-capable harness eligible — turning a
 mistaken *narrow* allowlist into the *widest possible* one instead of
 failing closed.
 
+**`[stage.integration].review_trigger` is a closed scalar, refused rather
+than defaulted when wrong.** The one non-array stage key (harmon-init#1571)
+takes exactly `after-ci`, `with-push`, or `after-ci-first`. An absent key
+resolves to `after-ci`, the serial order; any other value — a typo, a
+non-string — is a `PolicyError` (exit 1), the same present-but-wrong rule as
+the arrays above. Any other `[stage.*]` table refuses the key as unsupported,
+because no other stage requests a PR review. Every resolution path reports
+`stages.integration.review_trigger`, the built-in fallback and the historical
+decode included. The value is timing only: the readiness gate, the finders,
+and the cycles `[rounds.*]` requires are untouched, and charging a CI-failed
+head's cycle to `integration_exempt` is the integration stage's to apply.
+
 **A strategy's own requirements are cross-checked against breadth, not just
 resolved and left unchecked.** `[strategy.orchestrate]` and
 `[strategy.council]` declare `min_agents`; `crossValidate()` enforces the

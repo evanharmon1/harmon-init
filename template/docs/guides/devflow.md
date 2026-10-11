@@ -269,6 +269,15 @@ harness preference; it is not an empty allowlist.
 - `finders` and `finder_fallbacks` reference registry finder slugs;
 - `pool` references harness slugs;
 - every array is monomorphic and has the semantics documented beside it in
+  `.devflow.toml`;
+- `[stage.integration].review_trigger`, the one scalar, sets when the
+  integration stage requests its PR-side reviews relative to CI on the head:
+  `after-ci` (the value when the key is absent), `with-push`, or
+  `after-ci-first`. Any other value, or the key on another stage, is refused.
+  The reader reports it as `stages.integration.review_trigger` in its JSON and
+  on the `stage[integration]` line of its text output. It changes timing only
+  — never the readiness gate, which finders run, or the cycles the rounds
+  policy requires — and its trade-off and cap note sit beside it in
   `.devflow.toml`.
 
 The registry is authoritative for role result schemas and permitted writes,

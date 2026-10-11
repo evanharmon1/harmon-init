@@ -559,7 +559,9 @@ nothing under review re-reads identical code, so it spends the separate,
 equal `integration_exempt` ceiling the reader derives instead. A merge that
 resolves a conflict, or that touches any file under review, charges normally,
 and the ledger names which counter each cycle spent so `round n/cap` stays
-honest. The accounting belongs to the integration stage, so the exemption
+honest. A cycle requested before CI concluded, on a head that CI then fails,
+is the other exempt case (§ "Second-Model Review"). The accounting belongs to
+the integration stage, so the exemption
 takes effect only where that stage implements it. Until the vendored pin in
 `.claude/skills/` carries it, that skill's single cycle counter governs and no
 cycle is exempt. This is the one case where a lagging skill is **not**
@@ -861,6 +863,37 @@ hand-rolled pollers forget, and a clean verdict often lands there rather than
 as a review, so missing it reports a finished cycle as incomplete. A non-inline
 finding is then answered and its disposition recorded on the PR in the ordinary
 way; there is no `settle` call to make and none is owed.
+
+**When each of those triggers is posted is a resolved policy value, not this
+prose.** `[stage.integration].review_trigger` in `.devflow.toml` — the policy
+reader's `stages.integration.review_trigger`, `after-ci` when the key is
+absent — times every review the integration stage requests, each
+`[stage.integration].finders` entry alike. `after-ci` waits for CI on the head
+to conclude green, then posts; `with-push` posts with the push while CI runs
+alongside; `after-ci-first` waits for CI on the PR's first head, then posts
+with the push after each remediation push. It decides only **when** a review
+is requested: it never suppresses a cycle the resolved rounds policy requires
+and never adds a request beyond what that policy requires, so the one
+legitimate second review cycle on an unchanged head is the one forensic
+rigor's `min_rounds = 2` requires. Under every value:
+
+- the readiness gate is unchanged — every check concluded green and a terminal
+  clean current-head review are both still required;
+- under `with-push` or `after-ci-first`, a cycle whose head's CI then concludes
+  failed spends `integration_exempt`, not `integration`. Evidence decides the
+  charge — the CI conclusion on that exact head, read when the cycle is
+  classified — and an indeterminate CI result charges `integration` normally.
+  Its findings are adjudicated as usual, and the fix push still spends a
+  `remediation` round;
+- when CI fails while a review requested alongside it is pending, the cycle
+  still waits for that review's terminal result, or is reported incomplete;
+- carry and the base-merge exemption apply exactly as § "Dev Loop" and
+  § "Rigor and Strategy" state, whatever the timing;
+- re-running a CI-only infrastructure failure never re-requests a review.
+
+Like carry, the timing takes effect only where the vendored integration stage
+implements it; at a pin that does not, every request waits for CI, which is
+`after-ci`.
 
 **Codex Automatic reviews must stay disabled.** Codex triggers a cloud review
 on three events: opening a PR for review, marking a draft ready, and an
