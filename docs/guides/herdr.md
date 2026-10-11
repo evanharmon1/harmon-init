@@ -208,17 +208,16 @@ therefore allow it outright:
 "Bash(herdr agent start:*)"
 ```
 
-The grant applies only when `herdr agent start …` is the whole command: Claude
-Code resolves allow rules segment by segment, so a compound command (a leading
-variable assignment, `cd … &&`, `;`, or pipe) leaves an unmatched segment that
-sends the entire line to the classifier, which denies a skip-permissions launch.
-Resolve paths or variables in their own command first (the pane's working
-directory is already set at creation, so there is nothing to `cd` into on the
-launch line), then launch bare:
+The grant resolves only when **every segment** of the Bash command matches an
+allow rule: a compound command (a leading variable assignment, `cd … &&`, `;`,
+or a pipe) adds a segment that nothing matches, and the whole line then goes to
+the auto-mode classifier, which denies a skip-permissions launch. Resolve paths
+and values in their own earlier commands and paste the results into the launch
+line as literals; do not reference shell variables on it (the pane's working
+directory was set at tab creation, so there is nothing to `cd` into):
 
 ```bash
-SP=/tmp/scratch
-herdr agent start lane-1 --kind agy --pane w1:p2 -- --dangerously-skip-permissions
+herdr agent start lane-1 --kind agy --pane w1:p2 -- --dangerously-skip-permissions --model gemini-3.8-flash-high
 ```
 
 The prefix form is deliberate: the flags after `--` vary per harness and per
