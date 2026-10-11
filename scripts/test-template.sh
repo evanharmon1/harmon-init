@@ -1837,8 +1837,8 @@ grep -q '^\[agents\.reviewer\]$' .codex/config.toml ||
 grep -q '^config_file = "agents/reviewer.toml"$' .codex/config.toml ||
     err "Codex reviewer registration does not point at its config"
 [ -f .codex/agents/reviewer.toml ] || err "Codex reviewer agent is missing"
-grep -q '^model = "gpt-5.6-sol"$' .codex/agents/reviewer.toml ||
-    err "Codex reviewer is not pinned to gpt-5.6-sol"
+grep -q '^model = "gpt-6.1-sol"$' .codex/agents/reviewer.toml ||
+    err "Codex reviewer is not pinned to gpt-6.1-sol"
 grep -q '^model_reasoning_effort = "high"$' .codex/agents/reviewer.toml ||
     err "Codex reviewer is not pinned to high reasoning"
 grep -q '^sandbox_mode = "read-only"$' .codex/agents/reviewer.toml ||
@@ -2262,8 +2262,8 @@ else
     # them in the managed layer, where Codex makes every key an unoverridable
     # requirement that silently downgrades `-c` (harmon-init#1186). An explicit
     # `-m` still worked; `-c model=` did not.
-    grep -q '^model = "gpt-5.6-sol"$' .devcontainer/config/codex-system-config.toml ||
-        err "Codex devcontainer default is not pinned to gpt-5.6-sol"
+    grep -q '^model = "gpt-6.1-sol"$' .devcontainer/config/codex-system-config.toml ||
+        err "Codex devcontainer default is not pinned to gpt-6.1-sol"
     grep -q '^model_reasoning_effort = "medium"$' .devcontainer/config/codex-system-config.toml ||
         err "Codex devcontainer default is not pinned to medium reasoning"
     for codex_boundary in codex-managed-config.toml codex-managed-config.bot.toml; do
