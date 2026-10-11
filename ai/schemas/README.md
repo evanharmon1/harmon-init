@@ -1084,8 +1084,11 @@ focused shipped suite in one mechanically checked contract.
 
 <!-- BEGIN GENERATED FIXTURE INVENTORY -->
 - `adjudication.schema/invalid/duplicate-finding-id.json`
+- `adjudication.schema/invalid/integration-split.json`
+- `adjudication.schema/invalid/split-without-reference.json`
 - `adjudication.schema/valid/integration-adjudication.json`
 - `adjudication.schema/valid/integration-adjudication.pass.json`
+- `adjudication.schema/valid/split.json`
 - `result.challenger.schema/invalid/completed-with-empty-attack-scenarios.json`
 - `result.challenger.schema/valid/empty-findings.json`
 - `result.implementer.schema/invalid/empty-summary-when-completed.json`
@@ -1096,6 +1099,7 @@ focused shipped suite in one mechanically checked contract.
 - `result.reviewer.schema/valid/empty-findings.json`
 - `run.schema/valid/challenge-to-security-when-review-disabled.json`
 - `run.schema/valid/oneshot.json`
+- `run.schema/valid/split.json`
 <!-- END GENERATED FIXTURE INVENTORY -->
 
 ## Running the validator
