@@ -208,16 +208,17 @@ therefore allow it outright:
 "Bash(herdr agent start:*)"
 ```
 
-The grant resolves only when **every segment** of the Bash command matches an
-allow rule; a compound command (a leading variable assignment, `cd … &&`, `;`,
-or a pipe into something not allowed) usually adds a segment that no rule
-matches, and **any** unmatched segment sends the whole line to the auto-mode
-classifier, which denies a skip-permissions launch. Resolve values in their own
-earlier commands; variable references inside the launch's arguments are fine,
-but the launch must be the only segment — no leading assignment, `cd … &&`, `;`,
-or pipe on the line (the pane's working directory was set when the tab or pane
-was created (`tab create --cwd` / `pane split --cwd`), so there is nothing to
-`cd` into):
+The grant resolves only when every segment of the Bash command matches an allow
+rule. A compound command — a leading variable assignment, `cd … &&`, `;`, or a
+pipe into something no rule allows — adds a segment that nothing matches, and
+any unmatched segment sends the whole line to the auto-mode classifier, which
+denies a skip-permissions launch. In practice, launch bare and literal:
+`herdr agent start …` as the whole command, with the lane name, pane id, model
+and paths written out. A variable set in an earlier Bash call does not exist in a
+later one (each call is its own shell), and setting it on the launch line is
+exactly the leading segment that breaks the match. The pane's working directory
+was set when the tab or pane was created (`tab create --cwd` /
+`pane split --cwd`), so there is nothing to `cd` into:
 
 ```bash
 herdr agent start lane-1 --kind agy --pane w1:p2 -- --dangerously-skip-permissions --model gemini-3.8-flash-high
