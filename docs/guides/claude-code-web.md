@@ -1151,7 +1151,11 @@ API calls when both are present, REST writes outside the deny list (`gh run
 rerun`, `cancel`), bundled-flag `gh api` writes ([#1549](https://github.com/evanharmon1/harmon-init/issues/1549)), the
 live cached-session verification of the SessionStart preparation decision
 ([#1548](https://github.com/evanharmon1/harmon-init/issues/1548)), and the
-listing half of #1404 criterion 2, which cannot be done on the web. The `gh` inventory rows still tagged *expected, not
+listing half of #1404 criterion 2, which cannot be done on the web; and from
+[#1618](https://github.com/evanharmon1/harmon-init/issues/1618), a gate that
+starts containers, a real app's `task test:e2e` on a port, a dependency audit
+with manifests to check, whether the Bash tool's automatic backgrounding
+interferes with a server, and image pulls inside Docker-in-Docker. The `gh` inventory rows still tagged *expected, not
 yet observed* are open too (row 7). A settled row stays as the record of what
 was seen and where it landed. Each result goes in the section named, with the
 date and the Claude Code version.
@@ -1170,7 +1174,7 @@ date and the Claude Code version.
 | #1405-6 | Seen 2026-10-06 on `evanharmon1/harmon-init`: `task setup:remote` exits 0 and clones the siblings. *Open:* siblings readable and `task verify` runnable in a live session on `ponderousdev/omator`, which the criterion names | [When per-checkout preparation runs](#when-per-checkout-preparation-runs) |
 | #1404-2 | In part, 2026-10-06/07: `gh pr merge` was refused without a prompt, consistent with the managed deny rules being enforced, inferred from the refusals (before the agent posture dropped its merge guard; repeat with `gh release delete x`, which is still denied). *Open:* the listing half, which cannot be done on the web because `/permissions` opens the permission-mode menu instead | [The agent posture](#the-agent-posture) |
 | — (the unnumbered row) | Seen 2026-10-06: release-asset downloads from repositories not attached to the session succeed under **Trusted** | [Network](#network) |
-| #1618 | Seen 2026-10-11: Docker runs once `dockerd` is started, with Docker Hub `429`s; Playwright installs three engines after the network change; agent-browser works with the preinstalled Chromium; a `nohup` server outlives the tool call; `task security` passes with `semgrep.dev` allowed. *Open:* a gate that starts containers (for example harmonops/harmon-infra's `task verify`), a real app's `task test:e2e` on a port (the rendered `web` profile ships no app), a dependency audit with manifests to check (harmon-init has none), and whether the Bash tool's automatic backgrounding of a long command interferes with a server | [Containers, browsers and background servers](#containers-browsers-and-background-servers) |
+| #1618 | Seen 2026-10-11: Docker runs once `dockerd` is started, with Docker Hub `429`s; Playwright installs three engines after the network change; agent-browser works with the preinstalled Chromium; a `nohup` server outlives the tool call; `task security` passes with `semgrep.dev` allowed. *Open:* a gate that starts containers (for example harmonops/harmon-infra's `task verify`), a real app's `task test:e2e` on a port (the rendered `web` profile ships no app), a dependency audit with manifests to check (harmon-init has none), whether the Bash tool's automatic backgrounding of a long command interferes with a server, and image pulls inside Docker-in-Docker | [Containers, browsers and background servers](#containers-browsers-and-background-servers) |
 
 ## Reusing this structure
 
