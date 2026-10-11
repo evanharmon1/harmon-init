@@ -1254,6 +1254,8 @@ cannot be combined with `--merge-base-policy`. The candidate is validated
 independently; the built-in fallback governs, with only `--merge-base-registry`
 supplying any governing registry. A missing file supplied to
 `--merge-base-policy` still exits 2; it never means explicit absence.
+An empty `--merge-base-policy ""` is a usage error (exit 2), never permission
+for the branch policy to govern.
 Invalid flag combinations (including `--rigor-source` without `--rigor`) and
 malformed operator `--tier-overrides` / `--rigor-source` values also exit with
 usage status 2, distinct from invalid policy status 1. Successful resolution
