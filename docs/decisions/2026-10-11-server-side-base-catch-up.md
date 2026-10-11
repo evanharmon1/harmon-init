@@ -50,10 +50,12 @@ merged tree. No local tree is built and the agent pushes nothing.
    in merge mode. The resulting head is the catch-up only if it is a merge
    commit whose first parent is the captured head and whose other parent is
    the base tip the gate read. The endpoint merges asynchronously, but the
-   agent does not need a polling procedure: any other head, whether a
-   concurrent push or one still unmoved when a bounded wait ends, is a newer
-   push under the readiness gate's existing "no newer push invalidated any
-   result" condition, and the gate re-reads the PR and starts again. Then it fast-forwards every
+   agent does not need a polling procedure: any other head, such as a
+   concurrent push, is a newer push under the readiness gate's existing "no
+   newer push invalidated any result" condition, and the gate re-reads the PR
+   and starts again. A head still unmoved when a bounded wait ends is
+   indeterminate: the agent stops and reports rather than requesting again,
+   since the first request may still be pending. Then it fast-forwards every
    local checkout of the branch (`git pull --ff-only`) before any further local
    commit, lets CI run on the new head, and, where Codex cloud review is
    enabled, asks `carry` (#752). A merge can still break

@@ -295,9 +295,10 @@ Binding on every stage, skill, and harness, whatever rigor resolved:
   `gh pr update-branch` takes no such flag), never `--rebase`, which rewrites
   pushed history. The new head is the catch-up only if it is a merge commit
   whose first parent is the captured head and whose other parent is the base
-  tip the gate read. Any other head (a concurrent push, a head still unmoved
-  when a bounded wait ends, an `expected_head_sha` refusal) is not a catch-up
-  but a newer push under the readiness gate's "no newer push" condition. Then
+  tip the gate read. Any other head (a concurrent push, an `expected_head_sha`
+  refusal) is not a catch-up but a newer push under the readiness gate's "no
+  newer push" condition; a head still unmoved when a bounded wait ends is
+  indeterminate, so stop and report rather than request again. Then
   fast-forward every local checkout (`git pull --ff-only`) before committing again and let CI run on the
   new head. Then ask `carry`
   whether the clean verdict attests it, or run the ordinary current-head cycle. It spends no remediation
