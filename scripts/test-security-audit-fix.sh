@@ -9,7 +9,10 @@
 # report until the expected floors are present, and `audit --fix` rewrites
 # pnpm-workspace.yaml the way pnpm does — one `<pkg>@<vulnerable range>:
 # ^<patch>` entry per advisory, appended to the overrides map, with a comment
-# dropped. Nothing here touches the network, this repository, or GitHub.
+# dropped. Assertions read the result through the REAL yq (mikefarah v4), the
+# tool the helper itself edits with, so a case passes only when the written
+# file parses and its overrides map holds exactly the expected entries.
+# Nothing here touches the network, this repository, or GitHub.
 # Run via `task test:security-audit-fix`.
 set -euo pipefail
 cd "$(dirname "$0")/.."
@@ -20,10 +23,12 @@ FIX_BRANCH="bot/security-audit-fix"
 BLOCK_START='  # --- harmon-init security floors (template-owned; updated by copier update) ---'
 BLOCK_END='  # --- end harmon-init security floors; repository-local floors go below this line ---'
 
-command -v jq >/dev/null 2>&1 || {
-    echo "test-security-audit-fix: jq is required" >&2
-    exit 1
-}
+for _bin in jq yq; do
+    command -v "$_bin" >/dev/null 2>&1 || {
+        echo "test-security-audit-fix: $_bin is required" >&2
+        exit 1
+    }
+done
 
 TMPROOT="$(mktemp -d)"
 trap 'rm -rf "$TMPROOT"' EXIT
@@ -159,6 +164,59 @@ snapshot_of() {
     cat "$1/pnpm-workspace.yaml" "$1/pnpm-lock.yaml" "$1/package.json" | cksum
 }
 
+# fix_adds PROJECT KEY VALUE… — what `pnpm audit --fix` leaves behind, for
+# fixtures fix_writes' line edits cannot model: the same file with each KEY set
+# to VALUE in its overrides map (written by yq).
+fix_adds() {
+    _fa="$1"
+    shift
+    cp "$_fa/pnpm-workspace.yaml" "$_fa/.stub/fixed.yaml"
+    while [ $# -ge 2 ]; do
+        K="$1" V="$2" yq -i '.overrides[strenv(K)] = strenv(V)' "$_fa/.stub/fixed.yaml"
+        shift 2
+    done
+}
+
+# expect_overrides PROJECT LABEL JSON — the written file parses and its
+# overrides map is exactly JSON (keys and values, order-insensitive).
+expect_overrides() {
+    _eo_got="$(yq -o=json -I=0 '.overrides // {}' "$1/pnpm-workspace.yaml" 2>&1)" ||
+        fail "$2: the written pnpm-workspace.yaml does not parse: $_eo_got"
+    [ "$(jq -S . <<<"$_eo_got")" = "$(jq -S . <<<"$3")" ] ||
+        fail "$2: overrides are $_eo_got, expected $3"
+}
+
+# expect_below_marker PROJECT LABEL KEY — both markers are still present, in
+# order, and KEY sits below the end marker.
+expect_below_marker() {
+    _eb_s="$(grep -nF -- "${BLOCK_START#  }" "$1/pnpm-workspace.yaml" | cut -d: -f1)"
+    _eb_e="$(grep -nF -- "${BLOCK_END#  }" "$1/pnpm-workspace.yaml" | cut -d: -f1)"
+    [ -n "$_eb_s" ] && [ -n "$_eb_e" ] && [ "$_eb_s" -lt "$_eb_e" ] || fail "$2: a template marker was lost or reordered"
+    _eb_k="$(K="$3" yq '.overrides[strenv(K)] | key | line' "$1/pnpm-workspace.yaml")"
+    [ "$_eb_k" -gt "$_eb_e" ] || fail "$2: $3 (line $_eb_k) is not below the end marker (line $_eb_e)"
+}
+
+# head_comment_of PROJECT KEY — the comment yq attaches above KEY.
+head_comment_of() {
+    K="$2" yq '.overrides[strenv(K)] | key | head_comment' "$1/pnpm-workspace.yaml"
+}
+
+# expect_refused PROJECT LABEL PATTERN [ARGS…] — exit 3, every byte unchanged,
+# PATTERN in the output.
+expect_refused() {
+    _er="$1" _er_label="$2" _er_pat="$3"
+    shift 3
+    _er_before="$(snapshot_of "$_er")"
+    _er_rc=0
+    run_fix "$_er" "$@" >"$_er/out.log" 2>&1 || _er_rc=$?
+    [ "$_er_rc" -eq 3 ] || {
+        cat "$_er/out.log"
+        fail "$_er_label: expected exit 3, got $_er_rc"
+    }
+    [ "$(snapshot_of "$_er")" = "$_er_before" ] || fail "$_er_label: a refused run changed bytes"
+    grep -q -- "$_er_pat" "$_er/out.log" || fail "$_er_label: refusal does not say '$_er_pat'"
+}
+
 # ── 1. bounded floors below the end marker, merged per major ─────────
 p="$(new_project bounded)"
 {
@@ -177,27 +235,12 @@ run_fix "$p" --report "$p/report.md" >"$p/out.log" 2>&1 || {
     cat "$p/out.log"
     fail "bounded: fix exited non-zero"
 }
-cat >"$p/expected.yaml" <<EOF
-allowBuilds:
-  esbuild: true
-
-overrides:
-$BLOCK_START
-  # source-map-js@1: GHSA-68fv-2mgg-jv7q.
-  source-map-js@1: '>=1.2.2 <2'
-$BLOCK_END
-  # left-pad@1: GHSA-0000-0000-0001.
-  left-pad@1: '>=1.3.0 <2'
-  # @babel/traverse@7: GHSA-67hx-6x53-jw92.
-  '@babel/traverse@7': '>=7.23.2 <8'
-  # lodash@4: GHSA-35jh-r3h4-6jhm, GHSA-r5fr-rjxr-66jc.
-  lodash@4: '>=4.18.1 <5'
-  # tiny-zero@0.4: GHSA-aaaa-bbbb-cccc.
-  tiny-zero@0.4: '>=0.4.9 <0.5'
-
-# pnpm 11 defaults minimumReleaseAge to 1440
-EOF
-diff -u "$p/expected.yaml" "$p/pnpm-workspace.yaml" || fail "bounded: workspace file differs from the expected bounded floors"
+expect_overrides "$p" bounded '{"source-map-js@1": ">=1.2.2 <2", "left-pad@1": ">=1.3.0 <2",
+    "@babel/traverse@7": ">=7.23.2 <8", "lodash@4": ">=4.18.1 <5", "tiny-zero@0.4": ">=0.4.9 <0.5"}'
+for k in @babel/traverse@7 lodash@4 tiny-zero@0.4; do expect_below_marker "$p" bounded "$k"; done
+[ "$(head_comment_of "$p" lodash@4)" = 'lodash@4: GHSA-35jh-r3h4-6jhm, GHSA-r5fr-rjxr-66jc.' ] ||
+    fail "bounded: lodash@4 does not carry its advisory comment"
+grep -qF "'@babel/traverse@7': '>=7.23.2 <8'" "$p/pnpm-workspace.yaml" || fail "bounded: floors must be single-quoted"
 grep -qx '# relocked' "$p/pnpm-lock.yaml" || fail "bounded: lockfile was not re-resolved"
 grep -qx 'pnpm install --lockfile-only --ignore-scripts' "$p/.stub/calls" || fail "bounded: re-resolve must not run lifecycle scripts"
 grep -qF "| GHSA-r5fr-rjxr-66jc | \`lodash\` | high | 4.17.20 | floor \`lodash@4: '>=4.18.1 <5'\` |" "$p/report.md" ||
@@ -241,8 +284,7 @@ run_fix "$p" --skip-refused --report "$p/report.md" >"$p/out.log" 2>&1 || {
     cat "$p/out.log"
     fail "skip-refused: exited non-zero"
 }
-grep -qF "  minimist@1: '>=1.2.6 <2'" "$p/pnpm-workspace.yaml" || fail "skip-refused: fixable floor not applied"
-! grep -q jsonwebtoken "$p/pnpm-workspace.yaml" || fail "skip-refused: refused fix leaked into the workspace file"
+expect_overrides "$p" skip-refused '{"source-map-js@1": ">=1.2.2 <2", "left-pad@1": ">=1.3.0 <2", "minimist@1": ">=1.2.6 <2"}'
 grep -qF '**refused:**' "$p/report.md" || fail "skip-refused: report lost the refusal"
 grep -qF "floor \`minimist@1: '>=1.2.6 <2'\`" "$p/report.md" || fail "skip-refused: report lost the applied floor"
 pass "skip-refused: applies the bounded floors, reports the refused crossing"
@@ -265,9 +307,13 @@ advisory GHSA-0000-0000-0002 left-pad high '<1.3.4' 1.3.1 left-pad | jq '{adviso
 fix_writes "$p" '  left-pad@<1.3.4: ^1.3.4'
 echo "left-pad@1: '>=1.3.4 <2'" >"$p/.stub/cleared-by"
 run_fix "$p" >"$p/out.log" 2>&1 || fail "raise-local: exited non-zero"
-[ "$(grep -c 'left-pad@1' "$p/pnpm-workspace.yaml")" -eq 2 ] || fail "raise-local: expected exactly one comment + one entry for left-pad@1"
-grep -qF '  # left-pad@1: GHSA-0000-0000-0002.' "$p/pnpm-workspace.yaml" || fail "raise-local: comment not refreshed"
-pass "raise-local: an existing lower local floor is raised in place, not duplicated"
+expect_overrides "$p" raise-local '{"source-map-js@1": ">=1.2.2 <2", "left-pad@1": ">=1.3.4 <2"}'
+# yq attaches the end marker to the first key below it, so the head comment
+# being rewritten here also carries the marker: it must survive.
+expect_below_marker "$p" raise-local left-pad@1
+[ "$(head_comment_of "$p" left-pad@1 | tail -n 1)" = 'left-pad@1: GHSA-0000-0000-0002.' ] || fail "raise-local: comment not refreshed"
+! grep -qF 'GHSA-0000-0000-0001' "$p/pnpm-workspace.yaml" || fail "raise-local: the previous advisory comment was kept"
+pass "raise-local: an existing lower floor is raised in place; the end marker in its head comment survives"
 
 # ── 7. operational failures restore every byte and exit 1 ─────────────
 p="$(new_project registry-down)"
@@ -310,7 +356,7 @@ run_fix "$p" --skip-refused --report "$p/report.md" >"$p/out.log" 2>&1 || rc=$?
     cat "$p/out.log"
     fail "mixed-major: expected exit 0, got $rc"
 }
-grep -qF "  mm@2: '>=2.5.0 <3'" "$p/pnpm-workspace.yaml" || fail "mixed-major: the 2.x floor was not kept"
+expect_overrides "$p" mixed-major '{"source-map-js@1": ">=1.2.2 <2", "left-pad@1": ">=1.3.0 <2", "mm@2": ">=2.5.0 <3"}'
 grep -qF '| 1.9.0 | **refused:** the fix (2.5.0) crosses from major 1 to major 2' "$p/report.md" ||
     fail "mixed-major: the 1.x refusal is missing from the report"
 pass "mixed-major: clearance is judged per major — a refused 1.x row does not roll back the 2.x floor"
@@ -355,9 +401,9 @@ expect_floor() {
         cat "$1/out.log"
         fail "$2: exited non-zero"
     }
-    [ "$(grep -c '^  left-pad@1:' "$1/pnpm-workspace.yaml")" -eq 1 ] || fail "$2: expected exactly one left-pad@1 entry"
-    grep -qx "  left-pad@1: '>=$3 <2'" "$1/pnpm-workspace.yaml" ||
-        fail "$2: expected the canonical floor '>=$3 <2', got: $(grep '^  left-pad@1:' "$1/pnpm-workspace.yaml")"
+    expect_overrides "$1" "$2" "{\"source-map-js@1\": \">=1.2.2 <2\", \"left-pad@1\": \">=$3 <2\"}"
+    grep -qF "left-pad@1: '>=$3 <2'" "$1/pnpm-workspace.yaml" || fail "$2: the floor is not written in the single-quoted canonical form"
+    expect_below_marker "$1" "$2" left-pad@1
     grep -qx '# relocked' "$1/pnpm-lock.yaml" || fail "$2: the stale lockfile was not re-resolved"
     grep -qF "floor \`left-pad@1: '>=$3 <2'\`" "$1/report.md" || fail "$2: report must name the floor in the file"
     [ "$3" = 1.3.4 ] || ! grep -qF "'>=1.3.4" "$1/report.md" || fail "$2: report names a floor that was not written"
@@ -396,31 +442,22 @@ run_fix "$p" >"$p/out.log" 2>&1 || {
     fail "col0-comment: exited non-zero"
 }
 grep -q 'no patched version' "$p/out.log" && fail "col0-comment: the column-zero comment hid the fix (false refusal)"
-grep -qF "$BLOCK_END" "$p/pnpm-workspace.yaml" || fail "col0-comment: end marker lost"
-awk -v be="$BLOCK_END" '$0 == be { m = NR } /lodash@4:/ { f = NR } END { exit !(m && f > m) }' "$p/pnpm-workspace.yaml" ||
-    fail "col0-comment: the floor did not land below the end marker"
-[ "$(awk '/^overrides:/ { s = 1 } s && /^  lodash@4:/ { print NR; exit }' "$p/pnpm-workspace.yaml")" -gt \
-    "$(grep -n '^  left-pad@1:' "$p/pnpm-workspace.yaml" | cut -d: -f1)" ] || fail "col0-comment: floor not appended after the local entries"
+expect_overrides "$p" col0-comment '{"source-map-js@1": ">=1.2.2 <2", "left-pad@1": ">=1.3.0 <2", "lodash@4": ">=4.17.21 <5"}'
+expect_below_marker "$p" col0-comment lodash@4
 pass "col0-comment: a column-zero comment inside the map is transparent"
 
-# A column-zero end marker with no local entry after it (r2 finding 3): the
-# floor goes immediately after the marker, never inside the template block.
+# A column-zero end marker (r2 finding 3) lies outside the overrides map, so
+# yq cannot append below it: the script refuses instead of moving YAML lines.
+# (An indented marker — the rendered shape — holds by construction: see
+# bounded and raise-local.)
 p="$(new_project col0-marker)"
 awk -v be="$BLOCK_END" '$0 == be { print substr(be, 3); next } /left-pad@1/ { next } { print }' \
     "$p/pnpm-workspace.yaml" >"$p/ws.tmp" && mv "$p/ws.tmp" "$p/pnpm-workspace.yaml"
 advisory GHSA-0000-0000-0009 lodash high '<4.17.21' 4.17.20 lodash | jq '{advisories: .}' >"$p/.stub/audit.json"
 fix_writes "$p" '  lodash@<4.17.21: ^4.17.21'
 echo "lodash@4: '>=4.17.21 <5'" >"$p/.stub/cleared-by"
-run_fix "$p" >"$p/out.log" 2>&1 || {
-    cat "$p/out.log"
-    fail "col0-marker: exited non-zero"
-}
-marker_line="$(grep -nxF "${BLOCK_END#  }" "$p/pnpm-workspace.yaml" | cut -d: -f1)"
-[ -n "$marker_line" ] || fail "col0-marker: end marker lost"
-[ "$(sed -n "$((marker_line + 1))p" "$p/pnpm-workspace.yaml")" = '  # lodash@4: GHSA-0000-0000-0009.' ] &&
-    [ "$(sed -n "$((marker_line + 2))p" "$p/pnpm-workspace.yaml")" = "  lodash@4: '>=4.17.21 <5'" ] ||
-    fail "col0-marker: the floor is not immediately after the column-zero end marker"
-pass "col0-marker: with nothing local after a column-zero end marker, the floor goes right after it"
+expect_refused "$p" col0-marker 'indent the marker into the overrides map'
+pass "col0-marker: a column-zero end marker is refused, never written above"
 
 # An advisory that appears only after the re-resolve (r2 observation 4) is
 # listed in the report, never hidden behind a passing clearance check.
@@ -437,22 +474,80 @@ grep -qF -- '- GHSA-0000-0000-0011 — `undici` 7.29.0 (high): new, not fixed by
     fail "new-after-relock: the post-relock advisory is missing from the report"
 pass "new-after-relock: an advisory first seen after the re-resolve is listed as new, not fixed"
 
-# A four-space map gets four-space lines (r1 finding 5).
+# ── 9. challenge round 3 shapes: yq reads and writes the map ──────────
+
+# Existing floors whose lower bound only a real range reader gets right (r3
+# finding 1): yq hands back a clean scalar, floor_lower reads it once.
+for spec in \
+    "ws-quotes|' >= 1.3.8 < 2 '|1.3.8" \
+    "eq-space|'= 1.3.8'|1.3.8" \
+    "strict-gt|'>1.3.8'|1.3.9" \
+    "hyphen|'1.3.8 - 1.9.0'|1.3.8" \
+    "or-range|'>=1.5.0 <2 || >=1.3.8 <1.4.0'|1.3.8" \
+    "folded|>-\\n    >=1.3.8\\n    <2|1.3.8"; do
+    name="${spec%%|*}" rest="${spec#*|}"
+    p="$(existing_floor "$name" "${rest%|*}")"
+    expect_floor "$p" "$name" "${rest##*|}"
+    pass "$name: the existing floor's lower bound is read from yq's scalar and never lowered"
+done
+
+# `overrides: # comment` and `overrides: {}` are just the map (r3 finding 2):
+# no second map is appended.
+for spec in "header-comment|overrides: # local floors" "empty-flow|overrides: {}"; do
+    name="${spec%%|*}"
+    p="$(new_project "$name")"
+    printf 'allowBuilds:\n  esbuild: true\n%s\n\n# trailer\n' "${spec#*|}" >"$p/pnpm-workspace.yaml"
+    advisory GHSA-0000-0000-0012 lodash high '<4.17.21' 4.17.20 lodash | jq '{advisories: .}' >"$p/.stub/audit.json"
+    fix_adds "$p" 'lodash@<4.17.21' '^4.17.21'
+    echo "lodash@4: '>=4.17.21 <5'" >"$p/.stub/cleared-by"
+    run_fix "$p" >"$p/out.log" 2>&1 || {
+        cat "$p/out.log"
+        fail "$name: exited non-zero"
+    }
+    expect_overrides "$p" "$name" '{"lodash@4": ">=4.17.21 <5"}'
+    [ "$(grep -c '^overrides:' "$p/pnpm-workspace.yaml")" -eq 1 ] || fail "$name: a second overrides map was written"
+    pass "$name: the floor goes into the one existing overrides map"
+done
+
+# One marker without the other (r3 finding 3) is a refusal, not a guess.
+p="$(new_project end-only)"
+grep -vF -- "$BLOCK_START" "$p/pnpm-workspace.yaml" >"$p/ws.tmp" && mv "$p/ws.tmp" "$p/pnpm-workspace.yaml"
+advisory GHSA-0000-0000-0013 lodash high '<4.17.21' 4.17.20 lodash | jq '{advisories: .}' >"$p/.stub/audit.json"
+fix_adds "$p" 'lodash@<4.17.21' '^4.17.21'
+expect_refused "$p" end-only 'both template floor markers'
+pass "end-only: an end marker without its start marker is refused, nothing written"
+
+p="$(new_project start-only)"
+grep -vF -- "$BLOCK_END" "$p/pnpm-workspace.yaml" >"$p/ws.tmp" && mv "$p/ws.tmp" "$p/pnpm-workspace.yaml"
+advisory GHSA-0000-0000-0014 lodash high '<4.17.21' 4.17.20 lodash | jq '{advisories: .}' >"$p/.stub/audit.json"
+fix_adds "$p" 'lodash@<4.17.21' '^4.17.21'
+expect_refused "$p" start-only 'both template floor markers'
+pass "start-only: a start marker without its end marker is refused, nothing written"
+
+# Tabs cannot indent YAML: yq refuses to parse it, and so does the script.
+p="$(new_project tab-indent)"
+advisory GHSA-0000-0000-0015 lodash high '<4.17.21' 4.17.20 lodash | jq '{advisories: .}' >"$p/.stub/audit.json"
+fix_writes "$p" '  lodash@<4.17.21: ^4.17.21'
+sed -i.bak "$(printf 's/^  /\t/')" "$p/pnpm-workspace.yaml" && rm -f "$p/pnpm-workspace.yaml.bak"
+expect_refused "$p" tab-indent 'yq cannot parse'
+pass "tab-indent: a workspace file yq cannot parse is refused, nothing written"
+
+# A four-space map (r1 finding 5): yq owns indentation; the file re-parses and
+# the floor sits below the end marker.
 p="$(new_project four-space)"
 sed -i.bak 's/^  /    /' "$p/pnpm-workspace.yaml" && rm -f "$p/pnpm-workspace.yaml.bak"
 advisory GHSA-0000-0000-0008 lodash high '<4.17.21' 4.17.20 lodash | jq '{advisories: .}' >"$p/.stub/audit.json"
-fix_writes "$p" '    lodash@<4.17.21: ^4.17.21'
+fix_adds "$p" 'lodash@<4.17.21' '^4.17.21'
 echo "lodash@4: '>=4.17.21 <5'" >"$p/.stub/cleared-by"
 run_fix "$p" >"$p/out.log" 2>&1 || {
     cat "$p/out.log"
     fail "four-space: exited non-zero"
 }
-grep -qx "    lodash@4: '>=4.17.21 <5'" "$p/pnpm-workspace.yaml" || fail "four-space: entry not indented like the map"
-grep -qx '    # lodash@4: GHSA-0000-0000-0008.' "$p/pnpm-workspace.yaml" || fail "four-space: comment not indented like the map"
-! grep -q '^  [^ ]' "$p/pnpm-workspace.yaml" || fail "four-space: mixed indentation"
-pass "four-space: new floors reuse the map's indentation"
+expect_overrides "$p" four-space '{"source-map-js@1": ">=1.2.2 <2", "left-pad@1": ">=1.3.0 <2", "lodash@4": ">=4.17.21 <5"}'
+expect_below_marker "$p" four-space lodash@4
+pass "four-space: yq normalizes the indentation; the floor parses and sits below the end marker"
 
-# ── 9. publish: one rolling draft PR, scope-checked patch ─────────────
+# ── 10. publish: one rolling draft PR, scope-checked patch ─────────────
 p="$(new_project publish)"
 ORIGIN="$TMPROOT/origin.git"
 export ORIGIN
