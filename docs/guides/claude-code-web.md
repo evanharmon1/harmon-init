@@ -614,7 +614,8 @@ quoted here once and referred to below as *the GraphQL 403*:
 Where a row records a write as **denied** or **refused under the posture**
 on 2026-10-07, it describes the separate write-flag form matched by the
 argument-pattern denies in effect then. In the current agent posture, raw
-`gh api` is denied; REST reads go through `/usr/local/bin/gh-api-read`.
+`gh api` is denied; REST reads go through `/usr/local/bin/gh-api-read`
+([ADR](../decisions/2026-10-10-route-agent-posture-api-reads-through-a-get-only-wrapper.md)).
 Argument-pattern denies are defence in depth, not the write boundary: they
 match the command the session runs, not what an allowed `task` target, script
 or git hook runs inside it
