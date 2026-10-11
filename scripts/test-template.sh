@@ -886,7 +886,7 @@ jq -e '.vulnerabilityAlerts.enabled == true' renovate.json >/dev/null ||
 jq -e '.osvVulnerabilityAlerts == true' renovate.json >/dev/null ||
     err "Renovate OSV vulnerability alerts must be enabled"
 # renovate: datasource=npm depName=renovate
-RENOVATE_VALIDATOR_VERSION=44.127.0
+RENOVATE_VALIDATOR_VERSION=44.145.1
 if [ "$validation_scope" = "renovate-config" ]; then
     if have npx; then
         run_quiet renovate-config-validator \
