@@ -146,7 +146,13 @@ const KINDS = [
 ]
 const FINDING_ID = /^(challenge|review|integration)-r([1-9][0-9]*)-(.+)-([1-9][0-9]*)$/
 const SHA_PATTERN = /^[0-9a-f]{40}$/
-const ISSUE_NUMBER_PATTERN = /^[1-9][0-9]*$/
+// A bare positive integer (same-repo follow-up) or an owner/repo#N qualified
+// form (a cross-repository follow-up) -- the same qualification track-work's
+// own convention already requires for a bare #<n> anywhere it could mean two
+// different trackers (harmon-devkit#639 gauntlet challenge round 3: the
+// bare-only pattern made a schema-valid settlement impossible for the
+// cross-repo case the integrate skill's own text documents).
+const ISSUE_NUMBER_PATTERN = /^(?:[1-9][0-9]*|[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+#[1-9][0-9]*)$/
 
 function usage() {
   console.error(
@@ -1103,7 +1109,7 @@ function checkAdjudicationEntries(document, errors) {
         !ISSUE_NUMBER_PATTERN.test(reference.value)
       ) {
         errors.push(
-          `$adjudication.adjudications[finding_id=${entry.finding_id}].reference.value: type issue_number requires a positive integer string`
+          `$adjudication.adjudications[finding_id=${entry.finding_id}].reference.value: type issue_number requires a positive integer string or an owner/repo#<n> qualified string`
         )
       } else if (
         reference.type === 'comment_id' &&
@@ -1460,7 +1466,7 @@ function checkSettlementReferenceType(document, errors) {
       !ISSUE_NUMBER_PATTERN.test(reference.value)
     ) {
       errors.push(
-        `$run.settlements[${index}].reference.value: type issue_number requires a positive integer string`
+        `$run.settlements[${index}].reference.value: type issue_number requires a positive integer string or an owner/repo#<n> qualified string`
       )
     } else if (
       reference.type === 'comment_id' &&

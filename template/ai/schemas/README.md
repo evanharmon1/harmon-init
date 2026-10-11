@@ -1086,6 +1086,7 @@ focused shipped suite in one mechanically checked contract.
 - `adjudication.schema/invalid/duplicate-finding-id.json`
 - `adjudication.schema/invalid/integration-split.json`
 - `adjudication.schema/invalid/split-without-reference.json`
+- `adjudication.schema/valid/cross-repository-split.json`
 - `adjudication.schema/valid/integration-adjudication.json`
 - `adjudication.schema/valid/integration-adjudication.pass.json`
 - `adjudication.schema/valid/split.json`
@@ -1098,6 +1099,7 @@ focused shipped suite in one mechanically checked contract.
 - `result.reviewer.schema/invalid/counts-mismatch-tally.json`
 - `result.reviewer.schema/valid/empty-findings.json`
 - `run.schema/valid/challenge-to-security-when-review-disabled.json`
+- `run.schema/valid/cross-repository-split.json`
 - `run.schema/valid/oneshot.json`
 - `run.schema/valid/split.json`
 <!-- END GENERATED FIXTURE INVENTORY -->

@@ -98,6 +98,14 @@ rejects adjudication-p1-defer adjudication "$tmp"
 
 split_adjudication="$fixtures/adjudication.schema/valid/split.json"
 split_run="$fixtures/run.schema/valid/split.json"
+cross_split_adjudication="$fixtures/adjudication.schema/valid/cross-repository-split.json"
+cross_split_run="$fixtures/run.schema/valid/cross-repository-split.json"
+accepts adjudication "$cross_split_adjudication"
+accepts run "$cross_split_run" --adjudication "$cross_split_adjudication" --receipt
+rejects split-same-number-different-notation run "$split_run" \
+    --adjudication "$cross_split_adjudication" --receipt
+rejects split-same-number-different-notation-reverse run "$cross_split_run" \
+    --adjudication "$split_adjudication" --receipt
 accepts adjudication "$split_adjudication"
 rejects split-without-reference adjudication \
     "$fixtures/adjudication.schema/invalid/split-without-reference.json"
