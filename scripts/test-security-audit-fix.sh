@@ -120,6 +120,9 @@ chmod +x "$TMPROOT/bin/pnpm" "$TMPROOT/bin/gh"
 export PATH="$TMPROOT/bin:$PATH"
 # A credential-free run: git_remote must fall back to plain git.
 unset GH_TOKEN GITHUB_TOKEN GH_APP_SLUG
+# A local run: no audited commit, so publish skips the moved-base check unless
+# a case sets GITHUB_SHA itself (CI exports it for this test's own job).
+unset GITHUB_SHA
 
 # ── Fixtures ─────────────────────────────────────────────────────────
 
@@ -411,10 +414,12 @@ run_fix "$p" >"$p/out.log" 2>&1 || rc=$?
 pass "trap-restore: an unexpected failure after the write restores every byte"
 
 # No keep-as-is branch (r1 finding 3, restructured in r2 finding 2): every
-# floor the script touches is rewritten in the canonical shape
-# '>=max(existing lower, proposal) <next-major'. A stricter existing lower
-# bound survives as the lower bound; the upper bound is always canonical; the
-# stale lockfile is re-resolved; the report names the floor in the file.
+# floor the script touches is rewritten as '>=max(existing lower, proposal)
+# UPPER'. A stricter existing lower bound survives as the lower bound; UPPER
+# is <next-major unless the existing override provably caps the line lower
+# (kept: see narrow-cap), and an override whose cap the script cannot read is
+# refused (see unreadable-cap); the stale lockfile is re-resolved; the report
+# names the floor in the file.
 # existing_floor NAME VALUE — a project whose local left-pad@1 entry is VALUE
 # and whose stale lockfile still reports a left-pad 1.3.1 advisory.
 existing_floor() {
@@ -515,10 +520,7 @@ pass "new-after-relock: an advisory first seen after the re-resolve is listed as
 # finding 1): yq hands back a clean scalar, floor_lower reads it once.
 for spec in \
     "ws-quotes|' >= 1.3.8 < 2 '|1.3.8" \
-    "eq-space|'= 1.3.8'|1.3.8" \
     "strict-gt|'>1.3.8'|1.3.9" \
-    "hyphen|'1.3.8 - 1.9.0'|1.3.8" \
-    "or-range|'>=1.5.0 <2 || >=1.3.8 <1.4.0'|1.3.8" \
     "folded|>-\\n    >=1.3.8\\n    <2|1.3.8" \
     "strict-minor|'>1.3'|1.4.0" \
     "strict-major|'>1'|1.3.4" \
@@ -890,10 +892,81 @@ expect_below_marker "$p" narrow-cap left-pad@1
 grep -qF "floor \`left-pad@1: '>=1.3.4 <1.8.0'\`" "$p/report.md" || fail "narrow-cap: report does not name the kept cap"
 pass "narrow-cap: a local upper bound below the next major is kept above the raised floor"
 
-# … and refused when the patched version is at or above it.
+# … and refused when the patched version is at or above it, with the package
+# and the override in code spans so a scoped name is not a mention (#1635).
 p="$(existing_floor cap-below-patch "'>=1.3.0 <1.3.4'")"
-expect_refused "$p" cap-below-patch 'caps left-pad below the patched version 1.3.4'
+expect_refused "$p" cap-below-patch "the local override \`left-pad@1: '>=1.3.0 <1.3.4'\` caps \`left-pad\` below the patched version 1.3.4"
 pass "cap-below-patch: a local cap at or below the patched version is refused, nothing written"
+
+# ── 14. #1635: prove the cap or refuse ────────────────────────────────
+
+# An existing override whose cap is implicit is never widened to <next-major:
+# the script reads only comparators and `^` on major 1+, and refuses every
+# other shape, naming the override and writing nothing.
+for spec in \
+    "pin-exact|1.3.9" \
+    "pin-eq|'=1.3.9'" \
+    "pin-eq-space|'= 1.3.8'" \
+    "tilde|'~1.3.0'" \
+    "x-range|1.3.x" \
+    "partial|'1.3'" \
+    "hyphen|'1.3.8 - 1.9.0'" \
+    "or-range|'>=1.5.0 <2 || >=1.3.8 <1.4.0'" \
+    "x-comparator|'>=1.3.x <2'"; do
+    name="${spec%%|*}" val="${spec#*|}"
+    p="$(existing_floor "unreadable-$name" "$val")"
+    shown="$(yq '.overrides["left-pad@1"]' "$p/pnpm-workspace.yaml")"
+    expect_refused "$p" "unreadable-$name" "the local override \`left-pad@1: '$shown'\` has a cap the script cannot read"
+    pass "unreadable-$name: an override with an implicit cap ($shown) is refused, bytes unchanged"
+done
+
+# … and listed, not applied, under --skip-refused.
+p="$(existing_floor unreadable-skip "'~1.3.0'")"
+before="$(snapshot_of "$p")"
+run_fix "$p" --skip-refused --report "$p/report.md" >"$p/out.log" 2>&1 || {
+    cat "$p/out.log"
+    fail "unreadable-skip: exited non-zero"
+}
+[ "$(snapshot_of "$p")" = "$before" ] || fail "unreadable-skip: the refused key was written"
+grep -qF "| GHSA-0000-0000-0005 | \`left-pad\` | high | 1.3.1 | **refused:** the local override \`left-pad@1: '~1.3.0'\` has a cap" "$p/report.md" ||
+    fail "unreadable-skip: the refusal is not listed in the report"
+pass "unreadable-skip: --skip-refused lists the unreadable-cap refusal and writes nothing for it"
+
+# A 0.x caret caps at the next minor or patch: not read, refused.
+p="$(new_project unreadable-caret-zero)"
+awk '/^  left-pad@1: / { print; print "  tiny@0.4: '"'"'^0.4.0'"'"'"; next } { print }' "$p/pnpm-workspace.yaml" >"$p/ws.tmp" &&
+    mv "$p/ws.tmp" "$p/pnpm-workspace.yaml"
+advisory GHSA-0000-0000-0040 tiny high '<0.4.3' 0.4.1 tiny | jq '{advisories: .}' >"$p/.stub/audit.json"
+fix_writes "$p" '  tiny@<0.4.3: ^0.4.3'
+expect_refused "$p" unreadable-caret-zero "the local override \`tiny@0.4: '^0.4.0'\` has a cap the script cannot read"
+pass "unreadable-caret-zero: a ^0.x override is refused, bytes unchanged"
+
+# add_bare PROJECT VALUE — a bare `left-pad: VALUE` entry after left-pad@1,
+# and the `--fix` result recomputed over it.
+add_bare() {
+    awk -v v="$2" '/^  left-pad@1: / { print; print "  left-pad: " v; next } { print }' "$1/pnpm-workspace.yaml" >"$1/ws.tmp" &&
+        mv "$1/ws.tmp" "$1/pnpm-workspace.yaml"
+    fix_writes "$1" '  left-pad@<1.3.4: ^1.3.4'
+}
+
+# pnpm 11 applies the LAST matching override in map order (probed on pnpm
+# 11.28.5 with `semver` and `semver@7` in both orders), so a bare `pkg` entry
+# caps the line as well: an unreadable one is refused…
+p="$(existing_floor bare-unreadable "'>=1.3.0 <2'")"
+add_bare "$p" "'1.3.2'"
+expect_refused "$p" bare-unreadable "the local override \`left-pad: '1.3.2'\` has a cap the script cannot read"
+pass "bare-unreadable: a bare override with an implicit cap is refused, bytes unchanged"
+
+# … and a readable narrow one is kept on the floor this script writes.
+p="$(existing_floor bare-narrow "'>=1.3.0 <2'")"
+add_bare "$p" "'>=1.0.0 <1.8.0'"
+echo "left-pad@1: '>=1.3.4 <1.8.0'" >"$p/.stub/cleared-by"
+run_fix "$p" --report "$p/report.md" >"$p/out.log" 2>&1 || {
+    cat "$p/out.log"
+    fail "bare-narrow: exited non-zero"
+}
+expect_keys "$p" bare-narrow 'left-pad@1=>=1.3.4 <1.8.0'
+pass "bare-narrow: a bare override's narrower cap is kept on the written floor"
 
 # Table-safe report cells (Claude #4): a refusal reason carrying a `||`
 # patched range must not split its row.
@@ -911,7 +984,7 @@ row="$(grep -F '| GHSA-zzzz-zzzz-zzzz |' "$p/report.md")" || fail "table-cells: 
 printf '%s' "$row" | grep -qF '>=1.3.4 <2.0.0 \|\| >=2.1.5' || fail "table-cells: the || range was not escaped: $row"
 pass "table-cells: a || range in a refusal reason is escaped and the row keeps 5 cells"
 
-# ── 14. publish: one rolling draft PR, scope-checked patch ─────────────
+# ── 15. publish: one rolling draft PR, scope-checked patch ─────────────
 p="$(new_project publish)"
 ORIGIN="$TMPROOT/origin.git"
 export ORIGIN
@@ -1005,5 +1078,44 @@ rc=0
 }
 grep -q '^sleep 5$' "$p/.stub/calls" || fail "publish: the head check did not poll"
 pass "publish: a head that lags the push for one read is polled, not failed"
+
+# Publish only the audited commit (#1635): when the base moved past
+# GITHUB_SHA between the audit and publish jobs, nothing is pushed and the run
+# exits 0; on the audited commit itself the publish proceeds.
+(
+    cd "$p" && git reset -q --hard && git checkout -q main
+    printf "  # qs@6: GHSA-z.\n  qs@6: '>=6.14.1 <7'\n" >>pnpm-workspace.yaml
+    echo '# relocked for qs' >>pnpm-lock.yaml
+    git diff --binary >out/changes.patch
+    git checkout -q -- .
+)
+before_head="$(git --git-dir="$ORIGIN" rev-parse "refs/heads/$FIX_BRANCH")"
+before_calls="$(wc -l <"$p/.stub/calls")"
+rc=0
+(cd "$p" && GITHUB_SHA=0123456789abcdef0123456789abcdef01234567 STUB_DIR="$p/.stub" \
+    ./scripts/security-audit-fix.sh publish "$p/out") >"$p/out/7.log" 2>&1 || rc=$?
+[ "$rc" -eq 0 ] || {
+    cat "$p/out/7.log"
+    fail "publish-moved: a moved base must exit 0, got $rc"
+}
+grep -q 'main moved since the audit' "$p/out/7.log" || fail "publish-moved: no notice that main moved"
+[ "$(git --git-dir="$ORIGIN" rev-parse "refs/heads/$FIX_BRANCH")" = "$before_head" ] || fail "publish-moved: the bot branch was pushed"
+[ "$(wc -l <"$p/.stub/calls")" -eq "$before_calls" ] || fail "publish-moved: gh was called"
+[ "$(cd "$p" && git rev-parse --abbrev-ref HEAD)" = main ] && [ -z "$(cd "$p" && git status --porcelain)" ] ||
+    fail "publish-moved: the checkout was left changed"
+pass "publish-moved: a base that moved past GITHUB_SHA publishes nothing and exits 0"
+
+audited="$(cd "$p" && git rev-parse HEAD)"
+rc=0
+(cd "$p" && GITHUB_SHA="$audited" STUB_DIR="$p/.stub" GIT_AUTHOR_NAME=t GIT_AUTHOR_EMAIL=t@example.invalid \
+    GIT_COMMITTER_NAME=t GIT_COMMITTER_EMAIL=t@example.invalid \
+    ./scripts/security-audit-fix.sh publish "$p/out") >"$p/out/8.log" 2>&1 || rc=$?
+[ "$rc" -eq 0 ] || {
+    cat "$p/out/8.log"
+    fail "publish-audited: publishing on the audited commit failed"
+}
+git --git-dir="$ORIGIN" show "refs/heads/$FIX_BRANCH:pnpm-workspace.yaml" | grep -qF "qs@6: '>=6.14.1 <7'" ||
+    fail "publish-audited: the bot branch lacks the floors"
+pass "publish-audited: on the audited commit (HEAD = GITHUB_SHA) the floors are published"
 
 echo "test-security-audit-fix: $cases cases passed"

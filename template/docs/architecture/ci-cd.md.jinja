@@ -103,7 +103,9 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
     refreshed — no push, no CI churn — and a PR a maintainer has marked ready
     for review stays ready, since its floors are the ones already reviewed. The
     body lists each advisory, package, severity, the floor applied, and the
-    refusal reason for anything refused.
+    refusal reason for anything refused. `publish` checks out the current
+    `main`; when it has moved past the commit `audit` ran on (`GITHUB_SHA`),
+    nothing is published and the run stays green — the next run re-audits.
   - **Outcomes:** a clean audit changes nothing and the run stays green; a
     refused fix is reported in the PR body when a PR is opened, and otherwise
     (every fix refused, so no diff and no PR) in the run's job summary — never

@@ -440,8 +440,10 @@ nothing to remediate. In a generated Node repo it runs daily (`schedule`) and on
 `task security:audit` and, when it fails and a Node-only `pnpm audit` fails too,
 `task security:audit:fix -- --skip-refused`; a `publish` job applies the resulting two-file patch and opens
 or updates **one** rolling draft PR on `bot/security-audit-fix` listing each
-advisory, its floor or refusal reason. It never merges, and the PR `security`
-gate is unchanged. `task test:security-audit-fix` unit-tests the shipped
+advisory, its floor or refusal reason — publishing only onto the commit the
+`audit` job ran on (`GITHUB_SHA`); when `main` has moved, it publishes nothing
+and the next run re-audits. It never merges, and the PR `security` gate is
+unchanged. `task test:security-audit-fix` unit-tests the shipped
 helper from the root; the rendered workflow and task are validated by
 `task test:template`.
 
