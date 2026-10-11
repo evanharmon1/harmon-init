@@ -312,16 +312,27 @@ carry_release_age_excludes() {
     release_age_excludes "$WORK/postfix.yaml" | sort -u | comm -13 "$WORK/rae.before" - >"$WORK/rae.added"
     [ -s "$WORK/rae.added" ] || return 0
     cut -f2 "$WORK/applied.tsv" | sort -u >"$WORK/applied-pkgs.txt"
+    # The release lines floored this run: pkg@<major key of the installed
+    # version> (a package can be floored on one line and refused on another).
+    awk -F '\t' '{ v = $4; sub(/[-+].*$/, "", v); split(v, p, ".")
+        print $2 "@" (p[1] == 0 ? "0." p[2] : p[1]) }' "$WORK/applied.tsv" | sort -u >"$WORK/applied-lines.txt"
     mv "$WORK/rae.added" "$WORK/rae.proposed"
     : >"$WORK/rae.added"
     while IFS= read -r _ra; do
-        # An entry is `pkg@version` (or a bare name); only a package this run
-        # floors needs its young release — one for a refused fix is dropped.
-        _ra_pkg="$_ra"
-        case "$_ra" in ?*@*) _ra_pkg="${_ra%@*}" ;; esac
-        if ! grep -qxF -- "$_ra_pkg" "$WORK/applied-pkgs.txt"; then
+        # An entry is `pkg@version` (or a bare name); only a release line this
+        # run floors needs its young release — one for a refused fix is
+        # dropped. A plain x.y.z version is joined on its release line; a bare
+        # name or any other version form falls back to the package.
+        _ra_pkg="$_ra" _ra_ver=""
+        case "$_ra" in ?*@*) _ra_pkg="${_ra%@*}" _ra_ver="${_ra##*@}" ;; esac
+        if printf '%s\n' "$_ra_ver" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            _ra_set="$WORK/applied-lines.txt" _ra_want="$_ra_pkg@$(major_key "$_ra_ver")"
+        else
+            _ra_set="$WORK/applied-pkgs.txt" _ra_want="$_ra_pkg"
+        fi
+        if ! grep -qxF -- "$_ra_want" "$_ra_set"; then
             echo "$_ra" >>"$WORK/rae.dropped"
-            note "dropped pnpm's minimumReleaseAgeExclude entry $_ra (no floor applied for $_ra_pkg)"
+            note "dropped pnpm's minimumReleaseAgeExclude entry $_ra (no floor applied for $_ra_want)"
             continue
         fi
         echo "$_ra" >>"$WORK/rae.added"

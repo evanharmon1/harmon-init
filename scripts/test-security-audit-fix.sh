@@ -839,6 +839,32 @@ fix_adds "$p" 'pkgz@<1.3.4 || >=2.0.0 <2.1.5' '^1.3.4'
 expect_refused "$p" multi-range-none 'no patched range on major 0.9'
 pass "multi-range-none: no patched alternative on the installed line is a refusal"
 
+# Review r1: the exclusion join is per release line, not per package. mm is
+# installed on 1.x (the fix crosses to 2.x: refused) and 2.x (floored); pnpm
+# adds a young-release exclusion for each line's patched release, and only
+# the floored line's survives.
+p="$(new_project exclusion-lines)"
+jq -n '{advisories: {"GHSA-llll-llll-llll": {github_advisory_id: "GHSA-llll-llll-llll", module_name: "mm",
+    severity: "high", vulnerable_versions: "<2.5.0", patched_versions: ">=2.5.0",
+    findings: [{version: "1.9.0", paths: [".>old-dep>mm"]}, {version: "2.4.0", paths: [".>new-dep>mm"]}]}}}' >"$p/.stub/audit.json"
+jq -n '{advisories: {"GHSA-llll-llll-llll": {github_advisory_id: "GHSA-llll-llll-llll", module_name: "mm",
+    severity: "high", vulnerable_versions: "<2.5.0", patched_versions: ">=2.5.0",
+    findings: [{version: "1.9.0", paths: [".>old-dep>mm"]}]}}}' >"$p/.stub/audit-after.json"
+fix_adds "$p" 'mm@<2.5.0' '^2.5.0'
+yq -i '.minimumReleaseAgeExclude = ["mm@1.9.9", "mm@2.5.0"]' "$p/.stub/fixed.yaml"
+echo 'mm@2.5.0' >"$p/.stub/requires-exclude"
+echo "mm@2: '>=2.5.0 <3'" >"$p/.stub/cleared-by"
+run_fix "$p" --skip-refused --report "$p/report.md" >"$p/out.log" 2>&1 || {
+    cat "$p/out.log"
+    fail "exclusion-lines: exited non-zero"
+}
+[ "$(yq -o=json -I=0 '.minimumReleaseAgeExclude' "$p/pnpm-workspace.yaml")" = '["mm@2.5.0"]' ] ||
+    fail "exclusion-lines: carried $(yq -o=json -I=0 '.minimumReleaseAgeExclude' "$p/pnpm-workspace.yaml"), expected only the floored line's entry"
+grep -qF -- '- `mm@1.9.9`' "$p/report.md" && grep -qF 'Dropped from' "$p/report.md" ||
+    fail "exclusion-lines: the refused line's exclusion is not reported as dropped"
+expect_keys "$p" exclusion-lines 'mm@2=>=2.5.0 <3'
+pass "exclusion-lines: a cooldown exclusion is carried only for the release line that was floored"
+
 # ── 13. publish: one rolling draft PR, scope-checked patch ─────────────
 p="$(new_project publish)"
 ORIGIN="$TMPROOT/origin.git"
