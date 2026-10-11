@@ -52,7 +52,7 @@
           "slug": "astra",
           "display_name": "Astra",
           "tier": "apex",
-          "versions": [{ "slug": "6.1", "display_name": "Astra 6.1", "retired": false }]
+          "versions": [{ "slug": "5.6", "display_name": "Astra 5.6", "retired": false }]
         },
         {
           "slug": "sol",
@@ -64,13 +64,13 @@
           "slug": "terra",
           "display_name": "Terra",
           "tier": "standard",
-          "versions": [{ "slug": "6.1", "display_name": "Terra 6.1", "retired": false }]
+          "versions": [{ "slug": "5.6", "display_name": "Terra 5.6", "retired": false }]
         },
         {
           "slug": "luna",
           "display_name": "Luna",
           "tier": "economy",
-          "versions": [{ "slug": "6.1", "display_name": "Luna 6.1", "retired": false }]
+          "versions": [{ "slug": "5.6", "display_name": "Luna 5.6", "retired": false }]
         }
       ]
     },

@@ -221,8 +221,8 @@ assert_unit() {
     # `-m` still overrode a pinned model; `-c model=` did not) (harmon-init#1186). The guard below is the durable half of that fix: it
     # fails if a preference ever drifts back into the boundary layer, in either
     # profile, which is how the bug arrived in the first place.
-    [ "$(toml_root_scalar model "$codex_system_config")" = "gpt-5.6-sol" ] ||
-        fail "Codex devcontainer default model is not gpt-5.6-sol"
+    [ "$(toml_root_scalar model "$codex_system_config")" = "gpt-6.1-sol" ] ||
+        fail "Codex devcontainer default model is not gpt-6.1-sol"
     [ "$(toml_root_scalar model_reasoning_effort "$codex_system_config")" = "medium" ] ||
         fail "Codex devcontainer default reasoning is not medium"
     [ "$(toml_root_scalar project_doc_max_bytes "$codex_system_config")" = "65536" ] ||
@@ -2414,7 +2414,7 @@ assert_container() {
         fail "could not read the managed Codex sandbox mode"
     codex_approval="$(docker exec -u vscode "$container_id" cat /etc/codex/managed_config.toml | toml_root_scalar approval_policy -)" ||
         fail "could not read the managed Codex approval policy"
-    [ "$codex_model" = "gpt-5.6-sol" ] || fail "Codex default model is '${codex_model}', expected gpt-5.6-sol"
+    [ "$codex_model" = "gpt-6.1-sol" ] || fail "Codex default model is '${codex_model}', expected gpt-6.1-sol"
     [ "$codex_effort" = "medium" ] || fail "Codex default reasoning is '${codex_effort}', expected medium"
     # The running container must keep the two layers separate, not just the
     # repo copies: a preference in the managed layer is unoverridable.

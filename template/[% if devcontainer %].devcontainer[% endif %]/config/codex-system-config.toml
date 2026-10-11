@@ -21,7 +21,7 @@
 # belongs in the managed layer. Override precedence above this file, weakest
 # first: ~/.codex/config.toml, a trusted project .codex/config.toml, then `-c`
 # and `-m` on the command line.
-model = "gpt-5.6-sol"
+model = "gpt-6.1-sol"
 model_reasoning_effort = "medium"
 project_doc_max_bytes = 65536
 

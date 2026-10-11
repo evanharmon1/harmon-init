@@ -19,7 +19,7 @@ primary agent to adjudicate — the protocol and the loop caps live in AGENTS.md
    Confirm with `codex login status`.
 3. **Trust the repo in Codex** when prompted on first run. The committed
    `.codex/config.toml` raises the project-instruction budget to 64 KiB. Review
-   tasks explicitly select `gpt-5.6-sol` with high reasoning, independently of
+   tasks explicitly select `gpt-6.1-sol` with high reasoning, independently of
    the interactive default.
 4. **For the automatic stop-gate only — the Claude Code codex plugin.** This
    repo's `.claude/settings.json` declares the `openai-codex` marketplace and
