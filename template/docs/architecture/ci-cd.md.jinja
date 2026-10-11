@@ -97,10 +97,13 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
     `publish` is skipped with a notice.
   - **One rolling PR:** the `bot/security-audit-fix` branch is rebuilt from
     `main` each run and force-pushed; the single open PR is updated in place
-    (title, body, head), kept a **draft**, and never merged. When the pushed
-    branch already holds the same floors, only the body is refreshed — no push,
-    no CI churn. The body lists each advisory, package, severity, the floor
-    applied, and the refusal reason for anything refused.
+    (title, body, head) and never merged. Every revision the bot pushes is a
+    **draft**: an open PR is returned to draft before its head is replaced.
+    When the pushed branch already holds the same floors, only the body is
+    refreshed — no push, no CI churn — and a PR a maintainer has marked ready
+    for review stays ready, since its floors are the ones already reviewed. The
+    body lists each advisory, package, severity, the floor applied, and the
+    refusal reason for anything refused.
   - **Outcomes:** a clean audit changes nothing and the run stays green; a
     refused fix is reported in the PR body when a PR is opened, and otherwise
     (every fix refused, so no diff and no PR) in the run's job summary — never
