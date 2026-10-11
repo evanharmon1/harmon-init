@@ -2942,7 +2942,7 @@ function cliResolve(args) {
     )
     return 2
   }
-  if (args['merge-base-policy']) {
+  if (args['merge-base-policy'] !== undefined) {
     try {
       mergeBaseDoc = loadTomlFile(args['merge-base-policy'])
     } catch (err) {
@@ -3139,10 +3139,13 @@ function main() {
   try {
     args = parseArgs(argv.slice(1), cmd === 'detect' ? DETECT_OPTIONS : RESOLVE_OPTIONS)
     if (cmd === 'resolve') {
-      if (args['merge-base-policy'] && args['merge-base-policy-absent']) {
+      if (args['merge-base-policy'] !== undefined && args['merge-base-policy-absent']) {
         throw new PolicyError(
           '--merge-base-policy-absent cannot be combined with --merge-base-policy'
         )
+      }
+      if (args['merge-base-policy'] === '') {
+        throw new PolicyError('--merge-base-policy must be a non-empty file path')
       }
       tierInputsFromArgs(args)
     }
