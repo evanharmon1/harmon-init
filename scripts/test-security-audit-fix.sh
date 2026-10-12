@@ -1066,6 +1066,22 @@ run_fix "$p" --report "$p/report.md" >"$p/out.log" 2>&1 || {
 expect_keys "$p" sel-lower 'left-pad@1=>=1.3.4 <2'
 pass "sel-lower: a selector's lower bound does not raise the written floor"
 
+# … nor with no `left-pad@1` key: the floor is appended at the patched
+# version, last in the map, so it supersedes the selector's lower bound.
+p="$(existing_floor sel-lower-no-key "'>=1.3.0 <2'")"
+awk '/^  # left-pad@1: / { next } /^  left-pad@1: / { print "  left-pad@>=1.0.0: '"'"'>=1.8.0'"'"'"; next } { print }' \
+    "$p/pnpm-workspace.yaml" >"$p/ws.tmp" && mv "$p/ws.tmp" "$p/pnpm-workspace.yaml"
+fix_writes "$p" '  left-pad@<1.3.4: ^1.3.4'
+echo "left-pad@1: '>=1.3.4 <2'" >"$p/.stub/cleared-by"
+run_fix "$p" --report "$p/report.md" >"$p/out.log" 2>&1 || {
+    cat "$p/out.log"
+    fail "sel-lower-no-key: exited non-zero"
+}
+expect_keys "$p" sel-lower-no-key 'left-pad@1=>=1.3.4 <2'
+[ "$(yq -r '.overrides | keys | .[-1]' "$p/pnpm-workspace.yaml")" = left-pad@1 ] ||
+    fail "sel-lower-no-key: the appended left-pad@1 key is not last"
+pass "sel-lower-no-key: with no keyed entry, the floor is appended last at the patched version"
+
 # … or refuses it when the cap sits at or below the patched version…
 p="$(existing_floor sel-before-low "'>=1.3.0 <2'")"
 add_entry "$p" 'left-pad@<1.5.0' "'>=1.0.0 <1.3.2'"
