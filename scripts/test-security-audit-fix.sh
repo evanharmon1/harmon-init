@@ -869,6 +869,152 @@ grep -qF "| GHSA-xxxx-xxxx-xxxx | \`pkgz\` | high | 2.0.1 | floor \`pkgz@2: '>=2
     fail "multi-range: the multi-range advisory is not fixed by the in-major floor"
 pass "multi-range: the patched alternative on the installed major sets the need (2.1.5, not 1.3.4)"
 
+# pnpm may propose only another patched line. The advisory's concrete patch
+# on the installed line supplies the floor; it still needs lockfile and audit
+# proof, and the report must associate it with the advisory it cleared.
+p="$(new_project multi-range-other)"
+advisory GHSA-xxxx-xxxx-xxxx pkgz high '<1.3.4 || >=2.0.0 <2.1.5' 2.0.1 direct '>=1.3.4 <2.0.0 || >=2.1.5' |
+    jq '{advisories: .}' >"$p/.stub/audit.json"
+fix_adds "$p" 'pkgz@<1.3.4 || >=2.0.0 <2.1.5' '^1.3.4'
+echo "pkgz@2: '>=2.1.5 <3'" >"$p/.stub/cleared-by"
+: >"$p/.stub/needs-relock"
+run_fix "$p" --report "$p/report.md" >"$p/out.log" 2>&1 || {
+    cat "$p/out.log"
+    fail "multi-range-other: exited non-zero"
+}
+expect_keys "$p" multi-range-other 'pkgz@2=>=2.1.5 <3'
+expect_below_marker "$p" multi-range-other pkgz@2
+grep -qF "| GHSA-xxxx-xxxx-xxxx | \`pkgz\` | high | 2.0.1 | floor \`pkgz@2: '>=2.1.5 <3'\` |" "$p/report.md" ||
+    fail "multi-range-other: the fallback floor is not reported"
+grep -qx 'pnpm install --lockfile-only --ignore-scripts' "$p/.stub/calls" ||
+    fail "multi-range-other: fallback skipped lockfile re-resolve"
+[ "$(grep -c 'pnpm audit --audit-level=high --json' "$p/.stub/calls")" -eq 2 ] ||
+    fail "multi-range-other: fallback skipped re-audit"
+pass "multi-range-other: another-line proposal falls back to the installed patch, re-resolved and re-audited"
+
+# An unaffected older line contributes only an upper bound to the union.
+# Publication must be proved by the selected 2.x alternative, not by the
+# whole range's lowest bound (0.0.0).
+p="$(new_project multi-range-upper-only)"
+advisory GHSA-xxxx-xxxx-xxxx pkgz high '>=2.0.0 <2.1.5' 2.0.1 direct '<2.0.0 || >=2.1.5' |
+    jq '{advisories: .}' >"$p/.stub/audit.json"
+fix_adds "$p" 'pkgz@>=2.0.0 <2.1.5' '^1.3.4'
+echo "pkgz@2: '>=2.1.5 <3'" >"$p/.stub/cleared-by"
+: >"$p/.stub/needs-relock"
+run_fix "$p" --report "$p/report.md" >"$p/out.log" 2>&1 || {
+    cat "$p/out.log"
+    fail "multi-range-upper-only: exited non-zero"
+}
+expect_keys "$p" multi-range-upper-only 'pkgz@2=>=2.1.5 <3'
+expect_below_marker "$p" multi-range-upper-only pkgz@2
+grep -qx 'pnpm install --lockfile-only --ignore-scripts' "$p/.stub/calls" ||
+    fail "multi-range-upper-only: fallback skipped lockfile re-resolve"
+[ "$(grep -c 'pnpm audit --audit-level=high --json' "$p/.stub/calls")" -eq 2 ] ||
+    fail "multi-range-upper-only: fallback skipped re-audit"
+pass "multi-range-upper-only: the selected alternative supplies a published patch despite another line's zero lower bound"
+
+# Integration cycle 1: choose the lowest plain patch strictly ABOVE the
+# installed version. Old patched intervals and too-low in-major proposals
+# must not hide a later fix; alternative order must not decide the floor.
+for patch_case in gap-on-line gap-after-second lowest-unordered single-line-crossing; do
+    case "$patch_case" in
+    gap-on-line)
+        installed=2.1.5 patched='>=2.0.0 <2.1.0 || >=2.2.0' proposal='^2.0.0' patch_floor=2.2.0
+        ;;
+    gap-after-second)
+        installed=2.3.0 patched='>=1.9.0 <2.0.0 || >=2.1.0 <2.2.0 || >=2.4.0' proposal='^2.1.0' patch_floor=2.4.0
+        ;;
+    lowest-unordered)
+        installed=2.1.5 patched='>=2.4.0 || >=2.2.0 || >=2.0.0 <2.1.0' proposal='^2.0.0' patch_floor=2.2.0
+        ;;
+    single-line-crossing)
+        installed=2.0.1 patched='>=2.1.5' proposal='^3.0.0' patch_floor=2.1.5
+        ;;
+    esac
+    p="$(new_project "$patch_case")"
+    advisory GHSA-xxxx-xxxx-xxxx pkgz high "<$patch_floor" "$installed" direct "$patched" |
+        jq '{advisories: .}' >"$p/.stub/audit.json"
+    fix_adds "$p" "pkgz@<$patch_floor" "$proposal"
+    echo "pkgz@2: '>=${patch_floor} <3'" >"$p/.stub/cleared-by"
+    : >"$p/.stub/needs-relock"
+    run_fix "$p" --report "$p/report.md" >"$p/out.log" 2>&1 || {
+        cat "$p/out.log"
+        fail "$patch_case: exited non-zero"
+    }
+    expect_keys "$p" "$patch_case" "pkgz@2=>=${patch_floor} <3"
+    expect_below_marker "$p" "$patch_case" pkgz@2
+    grep -qx 'pnpm install --lockfile-only --ignore-scripts' "$p/.stub/calls" ||
+        fail "$patch_case: skipped lockfile re-resolve"
+    [ "$(grep -c 'pnpm audit --audit-level=high --json' "$p/.stub/calls")" -eq 2 ] ||
+        fail "$patch_case: skipped re-audit"
+    pass "$patch_case: installed $installed gets published floor $patch_floor, relocked and re-audited"
+done
+
+# A suffix is not proof that its normalized release was published. Neither
+# a prerelease nor a build-suffixed lower bound authorizes the union fallback.
+suffix_iteration=0
+for suffix_patch in '>=2.1.5-beta.1 <2.1.5' '>=2.1.5+build'; do
+    suffix_iteration=$((suffix_iteration + 1))
+    p="$(new_project "suffix-patch-$suffix_iteration")"
+    advisory GHSA-xxxx-xxxx-xxxx pkgz high '<2.1.5' 2.0.1 direct "$suffix_patch || >=3.0.0" |
+        jq '{advisories: .}' >"$p/.stub/audit.json"
+    fix_adds "$p" 'pkgz@<2.1.5' '^2.1.5'
+    expect_refused "$p" suffix-patch 'no patched range on major 2'
+    if grep -q 'install' "$p/.stub/calls"; then
+        fail "suffix-patch: an unpublished plain release authorized a relock"
+    fi
+    pass "suffix-patch: $suffix_patch is not a published plain patch on major 2"
+done
+
+# A fallback that fails its audit proof rolls back all project bytes.
+p="$(new_project multi-range-not-cleared)"
+advisory GHSA-xxxx-xxxx-xxxx pkgz high '<1.3.4 || >=2.0.0 <2.1.5' 2.0.1 direct '>=1.3.4 <2.0.0 || >=2.1.5' |
+    jq '{advisories: .}' >"$p/.stub/audit.json"
+fix_adds "$p" 'pkgz@<1.3.4 || >=2.0.0 <2.1.5' '^1.3.4'
+before="$(snapshot_of "$p")"
+rc=0
+run_fix "$p" >"$p/out.log" 2>&1 || rc=$?
+[ "$rc" -eq 1 ] || fail "multi-range-not-cleared: expected exit 1, got $rc"
+[ "$(snapshot_of "$p")" = "$before" ] || fail "multi-range-not-cleared: fallback did not roll back"
+grep -qx 'pnpm install --lockfile-only --ignore-scripts' "$p/.stub/calls" ||
+    fail "multi-range-not-cleared: fallback never reached lockfile re-resolve"
+pass "multi-range-not-cleared: an uncleared fallback rolls back every byte"
+
+# A concrete patch on a different major is not an installed-line fallback.
+# With no covering proposal, distinguish that from no patch being published.
+p="$(new_project no-proposal-on-major)"
+advisory GHSA-xxxx-xxxx-xxxx pkgz high '<3.1.5' 2.0.1 direct '>=3.1.5' |
+    jq '{advisories: .}' >"$p/.stub/audit.json"
+fix_adds "$p" 'pkgz@<3.1.5' '^1.3.4'
+expect_refused "$p" no-proposal-on-major 'no proposal on major 2'
+pass "no-proposal-on-major: a published patch without a covering proposal names the installed line"
+
+p="$(new_project no-patch-published)"
+advisory GHSA-xxxx-xxxx-xxxx pkgz high '*' 2.0.1 direct '<0.0.0' |
+    jq '{advisories: .}' >"$p/.stub/audit.json"
+fix_adds "$p" 'unrelated@<1.3.4' '^1.3.4'
+expect_refused "$p" no-patch-published 'no patched version published'
+pass "no-patch-published: an advisory with no concrete patch remains refused"
+
+# An inferred vulnerable-range boundary is not a published patch, even
+# when it is concrete and belongs to the installed line.
+inferred_iteration=0
+for unpublished in '<0.0.0' ''; do
+    inferred_iteration=$((inferred_iteration + 1))
+    p="$(new_project "inferred-only-$inferred_iteration")"
+    advisory GHSA-xxxx-xxxx-xxxx pkgz high '<2.1.5' 2.0.1 direct "$unpublished" |
+        jq '{advisories: .}' >"$p/.stub/audit.json"
+    fix_adds "$p" 'unrelated@<1.3.4' '^1.3.4'
+    expect_refused "$p" inferred-only 'no patched version published'
+    if grep -qF '(patched: )' "$p/out.log"; then
+        fail "inferred-only: an absent patch printed empty patched metadata"
+    fi
+    if grep -q 'install' "$p/.stub/calls"; then
+        fail "inferred-only: an inferred boundary authorized a floor"
+    fi
+    pass "inferred-only: patched '$unpublished' refuses with the no-published-patch reason"
+done
+
 # ... and an install on a line no alternative covers is refused.
 p="$(new_project multi-range-none)"
 advisory GHSA-zzzz-zzzz-zzzz pkgz high '<1.3.4 || >=2.0.0 <2.1.5' 0.9.0 direct '>=1.3.4 <2.0.0 || >=2.1.5' |
