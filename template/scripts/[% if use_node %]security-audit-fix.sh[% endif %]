@@ -12,9 +12,10 @@
 # It can also re-indent or drop comments in the overrides map — including the
 # template-owned floor markers.
 #
-# So this script runs `--fix` only to learn which patched version pnpm picked,
-# restores the workspace file byte-for-byte, and writes its own entries
-# through yq — it never parses or edits YAML text itself:
+# So this script runs `--fix` to learn which patched version pnpm picked; a
+# floor can also come from the advisory's own published patched_versions on
+# the installed line. It restores the workspace file byte-for-byte and writes
+# its own entries through yq — it never parses or edits YAML text itself:
 #
 #   pkg@<major>: '>=x.y.z <next-major'      (0.x: pkg@0.m: '>=0.m.p <0.(m+1)')
 #
@@ -104,19 +105,20 @@ need_bin() {
 # These work on clean scalars only — a value yq returned, a version pnpm
 # reported — never on YAML text.
 
-# floor_lower V — the x.y.z lower bound V admits, or nothing when V is not a
+# floor_lower V [PLAIN] — the x.y.z lower bound V admits, or nothing when V is not a
 # readable range. V is a version or a range: `^`, `~`, `=`, `v`, `>=`, strict
 # `>` (completed as semver does: `>1.3.8` -> 1.3.9, `>1.3` -> 1.4.0, `>1` ->
 # 2.0.0), an x-range, a hyphen range (`a - b`), a conjunction (the highest of
 # its lower bounds), and `||` alternatives (the lowest lower bound across
 # them); whitespace after an operator is allowed. An upper bound alone admits
-# everything (0.0.0).
+# everything (0.0.0). PLAIN=1 rejects prerelease/build suffixes on lower bounds.
 floor_lower() {
-    printf '%s\n' "$1" | awk '
+    printf '%s\n' "$1" | awk -v plain="${2:-0}" '
         # norm V STRICT — x.y.z from a full or partial version (x-range parts
         # count as omitted). STRICT bumps the last GIVEN part and zeroes the
         # rest, as semver completes `>1.3` (>=1.4.0) and `>1` (>=2.0.0).
         function norm(v, strict,   n, p, i, given) {
+            if (plain && v ~ /[-+]/) return ""
             sub(/[-+].*$/, "", v)
             n = split(v, p, ".")
             if (n < 1 || n > 3) return ""
@@ -475,11 +477,11 @@ major_rows() {
     }' | sort -u
 }
 
-# advisory_need RANGE PATCHED FROM — the lowest version that fixes an
-# advisory for an install on major FROM. A patched range with `||`
-# alternatives (one per release line) contributes only the alternative whose
-# lower bound is on FROM, and prints `none` when no alternative is: the
-# advisory has no fix on that line. Otherwise it is the patched range's lower
+# advisory_need RANGE PATCHED INSTALLED — the lowest version that fixes an
+# advisory for INSTALLED. A patched range with `||` contributes the lowest
+# plain-release lower bound on the installed line strictly above INSTALLED;
+# no such alternative prints `none`: the advisory has no patch on that line.
+# Otherwise it is the patched range's lower
 # bound, else the version the vulnerable range stops at (`<x.y.z` -> x.y.z,
 # `<=x.y.z` -> the next patch); empty if neither says.
 advisory_need() {
@@ -490,10 +492,12 @@ advisory_need() {
         while [ -n "$_an_rest" ]; do
             _an_alt="${_an_rest%%||*}"
             _an_rest="${_an_rest#*||}"
-            _an_l="$(floor_lower "$_an_alt")"
-            if [ -n "$_an_l" ] && [ "$_an_l" != 0.0.0 ] && [ "$(major_key "$_an_l")" = "$3" ]; then
-                _an_pick="$_an_l"
-                break
+            _an_l="$(floor_lower "$_an_alt" 1)"
+            if [ -n "$_an_l" ] && [ "$(major_key "$_an_l")" = "$(major_key "$3")" ] &&
+                ! version_ge "$3" "$_an_l"; then
+                if [ "$_an_pick" = none ] || version_ge "$_an_pick" "$_an_l"; then
+                    _an_pick="$_an_l"
+                fi
             fi
         done
         echo "$_an_pick"
@@ -514,17 +518,32 @@ advisory_need() {
     }'
 }
 
-# covering_floor PKG RANGE PATCHED FROM — the floor of a pnpm proposal that
+# published_patch PATCHED INSTALLED — print the concrete published patch selected
+# by advisory_need, or fail when there is none. With no vulnerable range to
+# infer from, an upper-bound-only alternative cannot masquerade as a patch;
+# a union still selects the installed line's own alternative.
+published_patch() {
+    _pp="$(advisory_need "" "$1" "$2")"
+    case "$_pp" in
+    "" | none | 0.0.0) return 1 ;;
+    esac
+    printf '%s\n' "$_pp"
+}
+
+# covering_floor PKG RANGE PATCHED INSTALLED — the floor of a pnpm proposal that
 # fixes this advisory row, matched by package and coverage rather than by
 # pnpm's selector key: pnpm prunes an advisory whose range another advisory on
 # the same package already covers, so one proposal can fix several. The
 # proposals are pnpm's whole post-fix map, so an entry pnpm re-emitted
 # identical to an existing one still counts. A proposal covers the row when
 # its floor is at least what the advisory needs. Among covering proposals the
-# lowest in the installed major FROM wins, else the lowest at all (a crossing
-# the caller refuses); empty when none covers; `none` when the advisory has
-# no patched alternative on FROM.
+# lowest on the installed line wins. If none covers there but the advisory
+# gives a concrete patched version on that line, use that as the floor;
+# the lockfile re-resolve and re-audit must still prove it clears the row.
+# Otherwise use the lowest proposal at all (a crossing the caller refuses);
+# empty when none covers; `none` when no patched alternative is on that line.
 covering_floor() {
+    _cf_from="$(major_key "$4")"
     _cf_need="$(advisory_need "$2" "$3" "$4")"
     if [ "$_cf_need" = none ]; then
         echo none
@@ -540,12 +559,18 @@ covering_floor() {
         elif [ "$_cf_key" != "$1@$2" ]; then
             continue
         fi
-        if [ "$(major_key "$_cf_f")" = "$4" ]; then
+        if [ "$(major_key "$_cf_f")" = "$_cf_from" ]; then
             if [ -z "$_cf_in" ] || version_ge "$_cf_in" "$_cf_f"; then _cf_in="$_cf_f"; fi
         elif [ -z "$_cf_out" ] || version_ge "$_cf_out" "$_cf_f"; then
             _cf_out="$_cf_f"
         fi
     done <"$WORK/after.tsv"
+    # A boundary inferred from the vulnerable range is not a published patch:
+    # e.g. <=8.5.1 can need 8.5.2 while pnpm correctly proposes 9.0.0.
+    _cf_published="$(published_patch "$3" "$4" || true)"
+    if [ -z "$_cf_in" ] && [ -n "$_cf_published" ] && [ "$(major_key "$_cf_published")" = "$_cf_from" ]; then
+        _cf_in="$_cf_published"
+    fi
     echo "${_cf_in:-$_cf_out}"
 }
 
@@ -661,13 +686,17 @@ cmd_fix() {
             continue
         fi
         _from="$(major_key "$_have")"
-        _floor="$(covering_floor "$_pkg" "$_range" "$_patched" "$_from")"
+        _floor="$(covering_floor "$_pkg" "$_range" "$_patched" "$_have")"
         if [ "$_floor" = none ]; then
             add_refusal "$_id" "$_pkg" "$_sev" "$_ver" "no patched range on major $_from (patched: $_patched) — upgrade \`$_direct\` deliberately"
             continue
         fi
         if [ -z "$_floor" ]; then
-            add_refusal "$_id" "$_pkg" "$_sev" "$_ver" "pnpm audit --fix proposed no override that covers it (no patched version published for $_range)"
+            if published_patch "$_patched" "$_have" >/dev/null; then
+                add_refusal "$_id" "$_pkg" "$_sev" "$_ver" "pnpm audit --fix made no proposal on major $_from that covers it (patched: $_patched) — upgrade \`$_direct\` deliberately"
+            else
+                add_refusal "$_id" "$_pkg" "$_sev" "$_ver" "pnpm audit --fix proposed no override that covers it (no patched version published for $_range)"
+            fi
             continue
         fi
         _to="$(major_key "$_floor")"
