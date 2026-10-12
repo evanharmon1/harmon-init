@@ -301,7 +301,8 @@ after both the current head was pushed and its review request was created —
 with one exception: where the integration stage implements **carry**, a clean
 verdict on an earlier head (a 👍 included) also attests a head that moved only
 by a base catch-up merge leaving the change's canonical diff byte-identical, so
-no new request is made for that head. `AGENTS.md` § "Dev Loop" (the
+no new request is made for that head. That catch-up is normally GitHub's
+update-branch, and `carry` runs only after CI settles on the new head. `AGENTS.md` § "Dev Loop" (the
 current-head Codex contract) states the condition and when carry is active.
 Those requests are explicit and made while the PR is draft — which is why
 Automatic reviews must be off (setup step 6): an automatic review triggered by

@@ -215,6 +215,17 @@
         "pool": { "$ref": "#/$defs/strings_allow_empty" }
       }
     },
+    "review_trigger": { "type": "string", "enum": ["after-ci", "with-push", "after-ci-first"] },
+    "integration_stage_profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "finders": { "$ref": "#/$defs/strings_allow_empty" },
+        "finder_fallbacks": { "$ref": "#/$defs/strings_allow_empty" },
+        "pool": { "$ref": "#/$defs/strings_allow_empty" },
+        "review_trigger": { "$ref": "#/$defs/review_trigger" }
+      }
+    },
     "stage_profiles": {
       "type": "object",
       "additionalProperties": false,
@@ -223,7 +234,7 @@
         "implement": { "$ref": "#/$defs/stage_profile" },
         "challenge": { "$ref": "#/$defs/stage_profile" },
         "review": { "$ref": "#/$defs/stage_profile" },
-        "integration": { "$ref": "#/$defs/stage_profile" }
+        "integration": { "$ref": "#/$defs/integration_stage_profile" }
       }
     },
     "strategy_profile": {
