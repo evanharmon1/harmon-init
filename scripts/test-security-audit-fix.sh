@@ -57,9 +57,10 @@ cat >"$TMPROOT/bin/pnpm" <<'STUB'
 # Overrides resolve as pnpm 11's do (probed on 11.28.5): in map order, the last
 # matching entry wins, so any later key for the same package (bare `pkg`, or
 # a `pkg@<selector>`) outranks a cleared-by `pkg@<major>` key and the
-# advisory stays open — except another line's exact `pkg@<major-key>`, whose
-# versions are disjoint. A parent-scoped `parent>pkg…` key outranks it in
-# either order (pnpm prefers the parent-scoped key), so it keeps it open too.
+# advisory stays open — except a key that is another line's exact
+# `pkg@<major-key>`, exempt by its key alone (that key selects a disjoint
+# line). A parent-scoped `parent>pkg…` key outranks it in either order (pnpm
+# prefers the parent-scoped key), so it keeps it open too.
 set -euo pipefail
 echo "pnpm $*" >>"$STUB_DIR/calls"
 outranked() {
@@ -1052,6 +1053,35 @@ run_fix "$p" --report "$p/report.md" >"$p/out.log" 2>&1 || {
 expect_keys "$p" sel-before 'left-pad@1=>=1.3.4 <1.8.0'
 pass "sel-before: a selector override's narrower cap is kept on the written floor"
 
+# Only the written key's own entry raises the lower bound (Codex 4243949546):
+# a selector's lower bound need not apply to the installed version, so
+# `left-pad@>=1.8.0` with 1.3.1 installed leaves the floor at 1.3.4.
+p="$(existing_floor sel-lower "'>=1.3.0 <2'")"
+add_entry "$p" 'left-pad@>=1.8.0' "'>=1.8.0 <2'"
+echo "left-pad@1: '>=1.3.4 <2'" >"$p/.stub/cleared-by"
+run_fix "$p" --report "$p/report.md" >"$p/out.log" 2>&1 || {
+    cat "$p/out.log"
+    fail "sel-lower: exited non-zero"
+}
+expect_keys "$p" sel-lower 'left-pad@1=>=1.3.4 <2'
+pass "sel-lower: a selector's lower bound does not raise the written floor"
+
+# … nor with no `left-pad@1` key: the floor is appended at the patched
+# version, last in the map, so it supersedes the selector's lower bound.
+p="$(existing_floor sel-lower-no-key "'>=1.3.0 <2'")"
+awk '/^  # left-pad@1: / { next } /^  left-pad@1: / { print "  left-pad@>=1.0.0: '"'"'>=1.8.0'"'"'"; next } { print }' \
+    "$p/pnpm-workspace.yaml" >"$p/ws.tmp" && mv "$p/ws.tmp" "$p/pnpm-workspace.yaml"
+fix_writes "$p" '  left-pad@<1.3.4: ^1.3.4'
+echo "left-pad@1: '>=1.3.4 <2'" >"$p/.stub/cleared-by"
+run_fix "$p" --report "$p/report.md" >"$p/out.log" 2>&1 || {
+    cat "$p/out.log"
+    fail "sel-lower-no-key: exited non-zero"
+}
+expect_keys "$p" sel-lower-no-key 'left-pad@1=>=1.3.4 <2'
+[ "$(yq -r '.overrides | keys | .[-1]' "$p/pnpm-workspace.yaml")" = left-pad@1 ] ||
+    fail "sel-lower-no-key: the appended left-pad@1 key is not last"
+pass "sel-lower-no-key: with no keyed entry, the floor is appended last at the patched version"
+
 # … or refuses it when the cap sits at or below the patched version…
 p="$(existing_floor sel-before-low "'>=1.3.0 <2'")"
 add_entry "$p" 'left-pad@<1.5.0' "'>=1.0.0 <1.3.2'"
@@ -1071,7 +1101,7 @@ pass "sel-unreadable: a selector override pinning the package is refused, bytes 
 # refused wherever the entry sits, even with a readable cap…
 p="$(existing_floor parent-before "'>=1.3.0 <2'")"
 add_entry "$p" 'some-parent>left-pad' "'>=1.3.0 <2'"
-expect_refused "$p" parent-before "a parent-scoped \`some-parent>left-pad\` override for \`left-pad\` outranks \`left-pad@1\` — remove or raise it deliberately"
+expect_refused "$p" parent-before "a parent-scoped \`some-parent>left-pad\` override for \`left-pad\` outranks \`left-pad@1\` — remove it deliberately"
 pass "parent-before: an earlier parent-scoped override is refused, bytes unchanged"
 p="$(existing_floor parent-after "'>=1.3.0 <2'")"
 add_entry "$p" 'some-parent>left-pad' "'>=1.3.0 <2'" after
@@ -1107,7 +1137,8 @@ cmp -s "$p/stub-audit.json" "$p/.stub/audit.json" || fail "sel-after: the stub c
 expect_refused "$p" sel-after "a later \`left-pad@^1.2.0\` override for \`left-pad\` takes precedence over \`left-pad@1\` — reorder or remove it deliberately"
 pass "sel-after: a selector override after the keyed one is refused, bytes unchanged"
 
-# Another line's exact `pkg@<major-key>` key is provably disjoint (Claude
+# An entry keyed by another line's exact `pkg@<major-key>` is exempt by its
+# key (Claude
 # 6114558857): a package the script floored on two lines raises either line,
 # in either map order…
 p="$(existing_floor two-lines-1 "'>=1.3.0 <2'")"
@@ -1141,8 +1172,8 @@ pass "sel-after-ge: a later left-pad@>=1 key still refuses the left-pad@1 rewrit
 
 # targets_of, the reader every rule above runs on: which keys target a
 # package (Codex 4243577341, Gemini 4243510179 — digit-led names).
-# shellcheck source=/dev/null
-. <(sed -n '/^targets_of() {/,/^}/p' "$REPO_ROOT/$HELPER")
+# eval, not `. <(…)`: bash 3.2 reads a sourced process substitution as empty.
+eval "$(sed -n '/^targets_of() {/,/^}/p' "$REPO_ROOT/$HELPER")"
 got="$(printf '%s\tv\n' pkg pkg@1 'pkg@>=1.2.0' 'parent>pkg' 'a>b>pkg' 'pkg@<1||>2' 'pkg-other' 'pkg>child' '@s/p@1' | targets_of pkg | cut -f2 | tr '\n' ' ')"
 [ "$got" = 'pkg pkg@1 pkg@>=1.2.0 parent>pkg a>b>pkg pkg@<1||>2 ' ] || fail "targets-table: pkg: got '$got'"
 got="$(printf '%s\tv\n' 7zip-bin 'parent>7zip-bin' 'parent@1>7zip-bin@2' 'x7zip-bin' | targets_of 7zip-bin | cut -f2 | tr '\n' ' ')"

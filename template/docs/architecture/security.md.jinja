@@ -194,8 +194,12 @@ remediation is mechanical, and the template does it for you:
   pin, `~`, an x-range, a hyphen range, `^0.x`, a prerelease or build suffix,
   `||`) or that caps the package at or below the patched version, one placed
   after the key it would rewrite (pnpm applies the last matching override), or
-  any parent-scoped `parent>pkg` override (pnpm prefers it in either order).
-  The refusal names the entry, so you raise or remove it deliberately.
+  any parent-scoped `parent>pkg` override, whatever its value (pnpm prefers it
+  over the written key in either order, so the floor would not apply: remove
+  it). An exact `pkg@N` (N ≥ 1) or `pkg@0.M` key on another line is exempt by
+  its key alone from every per-entry rule (the unreadable cap, the narrowest
+  cap, the ordering). The refusal names the entry, so you raise or remove it
+  deliberately.
 - **Never run raw `pnpm audit --fix`.** pnpm 11 writes it into
   `pnpm-workspace.yaml`, but each override is keyed by the advisory's vulnerable
   range (`pkg@<1.2.3: ^1.2.3`): an **unbounded** selector that spans every
