@@ -293,15 +293,20 @@ Binding on every stage, skill, and harness, whatever rigor resolved:
   made. Otherwise request GitHub update-branch in merge mode with the captured
   head as `expected_head_sha` (REST `PUT …/pulls/<n>/update-branch`;
   `gh pr update-branch` takes no such flag), never `--rebase`, which rewrites
-  pushed history. The new head is the catch-up only if it is a merge commit
-  whose first parent is the captured head and whose other parent is the base
-  tip the gate read. Any other head (a concurrent push, an `expected_head_sha`
+  pushed history. Where available, use the integrate skill's
+  `assets/update-branch.sh` helper. The new head is the catch-up only if its
+  parents are exactly the captured head, then the base tip the gate read,
+  its committer is `GitHub <noreply@github.com>`, and its web-flow signature
+  verifies. Any other head (a concurrent push, an `expected_head_sha`
   refusal) is not a catch-up but a newer push under the readiness gate's "no
   newer push" condition; a head still unmoved when a bounded wait ends is
   indeterminate, so stop and report rather than request again. Then
-  fast-forward every local checkout (`git pull --ff-only`) before committing again and let CI run on the
-  new head. Then ask `carry`
-  whether the clean verdict attests it, or run the ordinary current-head cycle. It spends no remediation
+  fetch the PR's head repository and branch explicitly in every local checkout,
+  fast-forward to the recorded catch-up OID (`git merge --ff-only <catch-up OID>`),
+  and confirm `HEAD` equals it before committing again. Let CI run on the
+  new head. Where Codex cloud review is on and the `integration` cap is
+  positive, ask `carry` whether the clean verdict attests it, or run the
+  ordinary current-head cycle. It spends no remediation
   round. Only a genuine merge refusal (a conflict, a ruleset that rejects the
   merge commit), or a base merge that must ship with a fix, falls back to a
   local merge under the full round gate, as an ordinary remediation round. A
