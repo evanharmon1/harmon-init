@@ -208,15 +208,16 @@ therefore allow it outright:
 "Bash(herdr agent start:*)"
 ```
 
-The grant resolves only when every segment of the Bash command matches an allow
-rule; when any segment of a compound command matches none, the whole line goes
-to the auto-mode classifier, which denies a skip-permissions launch. In
-practice, launch bare and literal: `herdr agent start …` as the whole command,
-with the lane name, pane id, model and paths written out. A variable set in an
-earlier Bash call does not exist in a later one (each call is its own shell), so
-there is nothing to reference, and the pane's working directory was set when the
-tab or pane was created (`tab create --cwd` / `pane split --cwd`), so there is
-nothing to `cd` into:
+The grant resolves only when every segment of the Bash command is approved on
+its own — by an allow rule, or by Claude Code's read-only auto-approval — and
+the grant approves only the launch; any unapproved segment of a compound command
+sends the whole line to the auto-mode classifier, which denies a
+skip-permissions launch. In practice, launch bare and literal:
+`herdr agent start …` as the whole command, with the lane name, pane ID, model
+and paths written out. A variable set in an earlier Bash call does not exist in
+a later one (each call is its own shell), so there is nothing to reference, and
+the pane's working directory was set when the tab or pane was created
+(`tab create --cwd` / `pane split --cwd`), so there is nothing to `cd` into:
 
 ```bash
 herdr agent start lane-1 --kind agy --pane w1:p2 -- --dangerously-skip-permissions --model gemini-3.8-flash-high
