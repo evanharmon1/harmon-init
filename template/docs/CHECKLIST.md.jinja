@@ -562,29 +562,30 @@ the compatibility reason in the rule's `description`.
       doesn't fail `ERR_PNPM_IGNORED_BUILDS`) under `allowBuilds` (pnpm 10+
       blocks dependency build scripts by default). The `overrides` security-floor
       block is template-owned and arrives via `copier update`; every floor is
-      scoped to the major it floors (`pkg@<major>` key, `pkg@0.<minor>` for 0.x)
-      and bounded below the next major; the block never crosses a major. For 0.x,
-      selectors cover only the fixture graph's tested minors and bounds stop
-      below the next minor of the moved version. A 0.x minor is moved only where
-      upstream published no in-minor patch and the entry says so; the fixture
-      toolchain builds with the moved versions. Other 0.x minor edges are left
-      for consumer audit and a local floor after validation. Add
-      repository-local floors below its end marker, inside `overrides`, using
-      the same shape; quote a scoped package's key (`'@scope/pkg@7': '>=7.0.1 <8'`)
-      because YAML rejects a bare `@`. When a later template release floors a
-      release line you floored locally, delete your local entry. After a template
-      update changes the block, run `pnpm install --no-frozen-lockfile` and commit
-      `pnpm-lock.yaml` — pnpm records the `overrides` in the lockfile, so a frozen
-      install (for example, the CI setup action, `scripts/setup-remote.sh`,
-      `task worktree:new`, or any shell with `CI` set) fails with
-      `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH` until the lockfile matches the block.
-      Harmon Init's CI audits only the Astro fixture graph against the shipped
-      block, not the rest of a real site's graph: an advisory in an adapter, MDX,
-      sitemap, or Tailwind surfaces in this repository's own `pnpm audit`, so
-      floor it locally with `task security:audit:fix`. An advisory on a release
-      line the block already floors (its `pkg@<major>` or `pkg@0.<minor>` key)
-      is refused there; raise that one upstream, and report the advisory
-      upstream.
+      scoped to the line it floors (`pkg@<major>` bounded below the next major,
+      or `pkg@0.<minor>` bounded below the next minor for 0.x); the block never
+      crosses a major. For 0.x, selectors cover only the fixture graph's tested
+      minors and bounds stop below the next minor of the moved version. A 0.x
+      minor is moved only where upstream published no in-minor patch and the
+      entry says so; the fixture toolchain builds with the moved versions. Other
+      0.x minor edges are left for consumer audit and a local floor after
+      validation. Add repository-local floors below its end marker, inside
+      `overrides`, using the same shape; quote a scoped package's key
+      (`'@scope/pkg@7': '>=7.0.1 <8'`) because YAML rejects a bare `@`. When a
+      later template version floors a release line you floored locally, delete
+      your local entry. After a template update changes the block, run
+      `pnpm install --no-frozen-lockfile` and commit `pnpm-lock.yaml` — pnpm
+      records the `overrides` in the lockfile, so a frozen install (for example,
+      the CI setup action, `scripts/setup-remote.sh`, `task worktree:new`, or
+      any shell with `CI` set) fails with `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH`
+      until the lockfile matches the block. Harmon Init's CI audits only the
+      Astro fixture graph against the shipped block, not the rest of a real
+      site's graph: an advisory in an adapter, MDX, sitemap, or Tailwind surfaces
+      in this repository's own `pnpm audit`, so floor it locally with
+      `task security:audit:fix` and report it upstream; an advisory on a
+      release line the block already floors (its `pkg@<major>` or
+      `pkg@0.<minor>` key) is refused there, so raise that one upstream
+      instead.
       Add any other packages whose build
       scripts your deps need to `allowBuilds` (or run `pnpm approve-builds`); keep
       all pnpm `overrides` / `auditConfig` there too, **not** in the `package.json`
@@ -671,33 +672,34 @@ the compatibility reason in the rule's `description`.
       `pnpm-workspace.yaml` uses it) or `pnpm approve-builds`. The `overrides`
       security-floor block is template-owned and arrives via `copier update`;
       add repository-local floors below its end marker, inside `overrides`,
-      scoped to the major they floor (`pkg@<major>` key, `pkg@0.<minor>` for
-      0.x, quoted for a scoped package: `'@scope/pkg@7': '>=7.0.1 <8'`) and
-      bounded below the next major. Every template floor follows this shape; the
-      block never crosses a major. Write local floors with `task security:audit:fix`
-      (the daily `security-audit-fix.yml` opens them as one rolling PR), never
-      raw `pnpm audit --fix`: its selectors are unbounded across majors and it
-      forces a major when the patch only exists there. Keep the file in the
-      template's two-space indentation with both floor markers indented inside
-      `overrides`; the task refuses a write that would reformat the block. For 0.x,
-      selectors cover only the fixture graph's tested minors and bounds stop
-      below the next minor of the moved version. A 0.x minor is moved only where
-      upstream published no in-minor patch and the entry says so; the fixture
-      toolchain builds with the moved versions. Other 0.x minor edges are left
-      for consumer audit and a local floor after validation. When a later
-      template release floors a release line you floored locally, delete your
-      local entry. After a template update changes the block, run
-      `pnpm install --no-frozen-lockfile` and commit `pnpm-lock.yaml` — pnpm
-      records the `overrides` in the lockfile, so a frozen install (for example,
-      the CI setup action, `scripts/setup-remote.sh`, `task worktree:new`, or
-      any shell with `CI` set) fails with `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH`
-      until the lockfile matches the block. Harmon Init's CI audits only its
-      Astro fixture against the shipped block, not this app's graph: an advisory
-      that exists only in the TanStack/Convex graph surfaces in this repository's
-      own `pnpm audit`, so floor it locally with `task security:audit:fix`. An
-      advisory on a release line the block already floors (its `pkg@<major>` or
-      `pkg@0.<minor>` key) is refused there; raise that one upstream, and
-      report the advisory upstream.
+      scoped to the line they floor (`pkg@<major>` bounded below the next major,
+      or `pkg@0.<minor>` bounded below the next minor for 0.x, quoted for a
+      scoped package: `'@scope/pkg@7': '>=7.0.1 <8'`). Every template floor
+      follows this shape; the block never crosses a major. Write local floors
+      with `task security:audit:fix` (the daily `security-audit-fix.yml` opens
+      them as one rolling PR), never raw `pnpm audit --fix`: its selectors are
+      unbounded across majors and it forces a major when the patch only exists
+      there. Keep the file in the template's two-space indentation with both
+      floor markers indented inside `overrides`; the task refuses a write that
+      would reformat the block. For 0.x, selectors cover only the fixture
+      graph's tested minors and bounds stop below the next minor of the moved
+      version. A 0.x minor is moved only where upstream published no in-minor
+      patch and the entry says so; the fixture toolchain builds with the moved
+      versions. Other 0.x minor edges are left for consumer audit and a local
+      floor after validation. When a later template version floors a release
+      line you floored locally, delete your local entry. After a template update
+      changes the block, run `pnpm install --no-frozen-lockfile` and commit
+      `pnpm-lock.yaml` — pnpm records the `overrides` in the lockfile, so a
+      frozen install (for example, the CI setup action, `scripts/setup-remote.sh`,
+      `task worktree:new`, or any shell with `CI` set) fails with
+      `ERR_PNPM_LOCKFILE_CONFIG_MISMATCH` until the lockfile matches the block.
+      Harmon Init's CI audits only its Astro fixture against the shipped block,
+      not this app's graph: an advisory that exists only in the
+      TanStack/Convex graph surfaces in this repository's own `pnpm audit`,
+      so floor it locally with `task security:audit:fix` and report it
+      upstream; an advisory on a release line the block already floors
+      (its `pkg@<major>` or `pkg@0.<minor>` key) is refused there, so raise
+      that one upstream instead.
 - [ ] When adding Playwright e2e: configure `scripts/e2e-env-guard.sh` with this
       app's auth providers, deploy credentials, and production domains —
       `task test:e2e` runs it first and it **fails until configured** (fail
