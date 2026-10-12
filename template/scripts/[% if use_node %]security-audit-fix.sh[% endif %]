@@ -521,9 +521,11 @@ advisory_need() {
 # proposals are pnpm's whole post-fix map, so an entry pnpm re-emitted
 # identical to an existing one still counts. A proposal covers the row when
 # its floor is at least what the advisory needs. Among covering proposals the
-# lowest in the installed major FROM wins, else the lowest at all (a crossing
-# the caller refuses); empty when none covers; `none` when the advisory has
-# no patched alternative on FROM.
+# lowest in the installed major FROM wins. If none covers on FROM but the
+# advisory gives a concrete patched version on FROM, use that as the floor;
+# the lockfile re-resolve and re-audit must still prove it clears the row.
+# Otherwise use the lowest proposal at all (a crossing the caller refuses);
+# empty when none covers; `none` when no patched alternative is on FROM.
 covering_floor() {
     _cf_need="$(advisory_need "$2" "$3" "$4")"
     if [ "$_cf_need" = none ]; then
@@ -546,6 +548,13 @@ covering_floor() {
             _cf_out="$_cf_f"
         fi
     done <"$WORK/after.tsv"
+    # A boundary inferred from the vulnerable range is not a published patch:
+    # e.g. <=8.5.1 can need 8.5.2 while pnpm correctly proposes 9.0.0.
+    _cf_published="$(floor_lower "$3")"
+    if [ -z "$_cf_in" ] && [ -n "$_cf_published" ] && [ "$_cf_published" != 0.0.0 ] &&
+        [ -n "$_cf_need" ] && [ "$(major_key "$_cf_need")" = "$4" ]; then
+        _cf_in="$_cf_need"
+    fi
     echo "${_cf_in:-$_cf_out}"
 }
 
@@ -667,7 +676,12 @@ cmd_fix() {
             continue
         fi
         if [ -z "$_floor" ]; then
-            add_refusal "$_id" "$_pkg" "$_sev" "$_ver" "pnpm audit --fix proposed no override that covers it (no patched version published for $_range)"
+            _need="$(advisory_need "$_range" "$_patched" "$_from")"
+            if [ -n "$_need" ]; then
+                add_refusal "$_id" "$_pkg" "$_sev" "$_ver" "pnpm audit --fix made no proposal on major $_from that covers it (patched: $_patched) — upgrade \`$_direct\` deliberately"
+            else
+                add_refusal "$_id" "$_pkg" "$_sev" "$_ver" "pnpm audit --fix proposed no override that covers it (no patched version published for $_range)"
+            fi
             continue
         fi
         _to="$(major_key "$_floor")"
