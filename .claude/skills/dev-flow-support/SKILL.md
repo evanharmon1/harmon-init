@@ -30,6 +30,8 @@ share lives here. Nothing is shipped through the harmon-init template.
 | `assets/tier-inputs.mjs` | orchestrate, implement | The consumer half of tier resolution: translate an issue's labels (and, on an organization repository, its Risk/Complexity fields in place of rating labels) into `devflow-policy.mjs resolve` flags, reconciling label conflicts and refusing an ambiguous pin; `disclose` renders the PR-body tier disclosure from the reader's output. |
 | `assets/.devflow-conformance-v2.json` | `scripts/test-devflow-conformance.sh` (source tree only) | harmon-init's portable v2 policy corpus, byte-identical and blob-pinned, so the vendored reader is held to harmon-init's answers. |
 | `assets/validate-result-schemas.mjs` | review, integrate, orchestrate | Schema-check one brief, result, adjudication, run, or plan document, plus the receipt checks a raw schema cannot express. |
+| `assets/run-record.mjs` | orchestrate | The run-record writer: stage transitions, interventions (with a ruling file's SHA-256), PR bindings, the promotion record (written by whichever session owns integration and decides promotion), and `close` (outcome plus archiving the run's orchestrator files), each through candidate → `validate-result-schemas.mjs run` → rename → readback; also the slate lock both writers take. |
+| `assets/plan-revise.mjs` | orchestrate | The mechanical half of a plan recompute for a base move (bump `base_sha`, retire done issues and their lanes, extend the digest chain), refusing with the paths named whenever the move needs orchestrator judgment. |
 | `assets/render-dev-flow.sh` → `assets/render-dev-flow.mjs` | review, integrate, retro | Render a run record into its PR-body and comment projections. |
 | `assets/dev-flow-exit.sh` → `assets/dev-flow-exit.mjs` | review, retro | Compute a confidence stage's exit verdict from the run record. |
 | `assets/lib/toml-lite.mjs` | the readers above | Restricted TOML parser. |
@@ -185,13 +187,10 @@ stored Tier, a cache of the derived Tier, or the pinned Tier when
    cross-validation is indeterminate and `resolve` always exits 3, which
    would hide the one exit 3 that matters: the derived Tier's. On the step-0
    path, `--taskfile-dir` is the merge-base closure instead.
-   **Fallback invariant:** when resolution succeeds without `agent-registry.json`,
-   registry cross-validation leaves `resolve` at exit 3. The caller accepts that
-   status as the absent-policy fallback only when `source` is `built-in-fallback`,
-   `cross_validation.errors` is empty, and `cross_validation.indeterminate` holds
-   exactly one entry: `indeterminate: no registry was supplied — finders/pools/families/harnesses could not be checked`.
-   Any other indeterminate entry, especially the derived Tier's, still stops
-   resolution exactly as before. Exit 3 alone is never fallback evidence.
+   With neither a policy file nor a requested registry, the built-in fallback
+   is determinate and `resolve` exits 0 when the other checks complete.
+   Any indeterminate entry, especially the derived Tier's, still stops
+   resolution exactly as before. Exit 3 always stops this recipe.
    Translation and argument extraction must both succeed before `resolve`
    runs. Either failure prints a message and stops the recipe; the file-backed
    extraction preserves its exit status instead of losing it in process
