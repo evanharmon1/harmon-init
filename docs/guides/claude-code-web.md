@@ -38,7 +38,7 @@ it. One environment serves every repository, because nothing in it is per-repo.
 | Field | Value |
 | --- | --- |
 | **Name** | `harmon-remote` |
-| **Network access** | **Trusted**; **Custom** with `semgrep.dev` added only if a session itself runs `task security` before its PR is opened — see [Network](#network) |
+| **Network access** | **Custom**, with the default list of common package managers kept and three hosts added: `semgrep.dev`, `cdn.playwright.dev`, `playwright.download.prss.microsoft.com` — see [Network](#network) |
 | **Environment variables** | see [Environment variables](#environment-variables); none is a secret |
 | **Setup script** | the block below |
 
@@ -148,8 +148,8 @@ The next session was ready about 5.6 s after its VM booted: the VM booted at
 was updated to the latest commit at 20:18:10Z, and the session's branch was
 checked out at 20:18:11.6Z. An uncached session took about three minutes, also
 measured from VM boot (above).
-So a cached start resumes an existing checkout and fetches it forward rather
-than cloning again; that the checkout is stored in the setup-script snapshot
+So a cached start resumes an existing checkout and moves its `HEAD` forward
+(not `origin/main`, [below](#other-behaviour-worth-knowing)) rather than cloning again; that the checkout is stored in the setup-script snapshot
 is the likely reading, not something these timestamps show. The [2026-10-09
 decision](../decisions/2026-10-09-web-session-start-preparation.md) keeps the setup
 script bootstrap-only; a repository `SessionStart` hook prepares the checkout
@@ -157,33 +157,44 @@ script bootstrap-only; a repository `SessionStart` hook prepares the checkout
 
 ### Network
 
-Choose **Trusted** (the platform default). The bootstrap's
+Choose **Custom**, check **Also include default list of common package
+managers**, and add three hosts: `semgrep.dev`, `cdn.playwright.dev` and
+`playwright.download.prss.microsoft.com` (maintainer decision 2026-10-11,
+[#1618](https://github.com/evanharmon1/harmon-init/issues/1618)). The default
+list is the Trusted list, so everything below that held under Trusted still
+holds. The bootstrap's
 [allowed hosts](../architecture/remote-environments.md#the-network-the-bootstrap-may-use)
-were probed on 2026-09-27 and every one of them is on the platform's Trusted list
-(*docs, 2026-09-29*) except `cdn.playwright.dev`, which only the opt-in browsers
-tier contacts and which this guide does not enable. `ports.ubuntu.com` is the
-arm64 archive; the cloud VM is x86-64, so it is never contacted, and `*.ubuntu.com`
-is on the list anyway.
+were probed on 2026-09-27 and every one of them is on that list
+(*docs, 2026-09-29*) except `cdn.playwright.dev`, which the bootstrap contacts
+only for the opt-in browsers tier this guide does not enable. `ports.ubuntu.com`
+is the arm64 archive; the cloud VM is x86-64, so it is never contacted, and
+`*.ubuntu.com` is on the list anyway.
 
-**Added domains: none**, for sessions that end at a pushed branch, which is what
-a cloud lane does ([What runs where](#what-runs-where)). That list is
-provisional, and it is empty on purpose: the rule is that a domain is added only
-after a *recorded denial* under Trusted while the bootstrap, `task verify`, or —
-in a session that runs the pre-PR gate itself — `task security` ran. The PR is
-opened by the orchestrator as a draft after that gate ([What runs where](#what-runs-where)),
-so a lane does not normally run it. The denials recorded so far, and the
-one that a session running the gate itself needs:
+**Added domains: the three above, and each one is backed by a recorded denial
+under Trusted.** The rule is that a domain is added only after a recorded denial,
+during the bootstrap, a gate the session runs, or a capability probe. The denials
+recorded so far, and what was done about each:
 
 | Host | Denied for | Added? | Reason |
 | --- | --- | --- | --- |
-| `semgrep.dev` | `task security`'s Semgrep step — observed 2026-09-27, under a network level presumed, but not recorded, to be Trusted | **Only where the session runs the pre-PR gate itself**, which makes the level **Custom** | `task security` must pass before the draft PR (`AGENTS.md`), and this host is what its Semgrep step needs. A lane that stops at a pushed branch leaves the gate to the machine that opens the PR — see [Long-running gates](#long-running-gates). Never skip the gate instead |
+| `semgrep.dev` | `task security`'s Semgrep step: observed 2026-09-27, and again 2026-10-11 under Trusted (`Tunnel connection failed: 403 Forbidden`) | **Yes**, 2026-10-11 | A session can then run the full pre-PR gate itself ([Long-running gates](#long-running-gates)). Never skip the gate instead |
+| `cdn.playwright.dev`, `playwright.download.prss.microsoft.com` | Playwright's Firefox and WebKit downloads: 2026-10-11 under Trusted (`request blocked: no rule or allowlist entry allows host "cdn.playwright.dev"`) | **Yes**, 2026-10-11 | A session that needs the cross-engine pass installs the engines itself; see [Containers, browsers and background servers](#containers-browsers-and-background-servers) |
+| `googlechromelabs.github.io` | agent-browser's own browser download: 2026-10-11 (`CONNECT tunnel failed, response 403`) | No | agent-browser finds the image's preinstalled Chromium and works without it |
 | `api.openai.com`, `auth.openai.com`, `chatgpt.com` | the Codex CLI (#1406) | No | Ephemeral clouds never hold a Codex login (#1408 decision 4): the orchestrator reviews the lane's pushed branch from its own pane, and the lane's PR records it (`AGENTS.md` § Remote environments) |
 | `deb.nodesource.com`, `astral.sh`, `keybase.io`, `ppa.launchpadcontent.net`, `cli.github.com`, `dl.google.com` | installer hosts (#1403) | No | The bootstrap no longer contacts them; the denied table in the architecture document is guarded so they cannot return |
 | `cafe.github.com` | `gh` telemetry | No | Harmless |
-| `cdn.playwright.dev` | Playwright Chromium | No | Browsers tier only, off by default; not on the Trusted list |
 
-The session that recorded these denials did not record which network level it
-ran under; it is presumed to be the default, Trusted.
+The session that recorded the 2026-09-27 denials did not record which network
+level it ran under; it is presumed to be the default, Trusted. The 2026-10-11
+denials were recorded under Trusted
+([probe results](https://github.com/evanharmon1/harmon-init/issues/1618#issuecomment-6113307590)).
+
+**Observed 2026-10-11, Claude Code 2.1.296, after the change to Custom** with the
+three hosts added
+([verification](https://github.com/evanharmon1/harmon-init/issues/1618#issuecomment-6113784543)): `task security` completed with exit 0 (Semgrep: 173 rules,
+0 findings; gitleaks: no leaks), and `npx playwright install --with-deps
+chromium firefox webkit` completed in 60 seconds. A screenshot rendered in
+each of Firefox, WebKit and Chromium. No host was denied.
 
 **Observed (criterion 8), 2026-10-06, Claude Code 2.1.292, network Trusted:**
 the bootstrap, with the interim `sudo env …` line, completed, and `task verify`
@@ -191,10 +202,9 @@ completed with `GATE-EXIT=0`, run detached in the form under [Long-running
 gates](#long-running-gates). A case-insensitive scan of the verify log for
 `403|denied|blocked|Could not resolve|Connection refused|CONNECT|proxy|certificate|UnknownIssuer|ENOTFOUND|ECONNREFUSED`
 found no network denial; the only hits were test names. No domain had to be
-added for the bootstrap and `task verify`, so the table above stands unchanged.
-`task security` was not run in that session, so the `semgrep.dev` row still
-rests on the 2026-09-27 observation. Two things the docs say could have
-failed, and what was seen:
+added for the bootstrap and `task verify`. `task security` was not run in that
+session; its `semgrep.dev` denial was confirmed on 2026-10-11 (above). Two things
+the docs say could have failed, and what was seen:
 
 - *Release-asset scope.* The GitHub proxy limits "GitHub API and release-asset
   requests" to repositories attached to the session, and says a setup script
@@ -205,9 +215,9 @@ failed, and what was seen:
   bootstrap installed all of them. The documented 403 did not apply to the
   setup script, so the shared-script contract needs no decision.
 - *Custom instead of Trusted.* The list is per environment and there is no
-  organization-wide allowlist (*docs, 2026-09-29*); if a domain does have to be
-  added, the level becomes **Custom** with **Also include default list of common
-  package managers** checked.
+  organization-wide allowlist (*docs, 2026-09-29*), so adding a domain makes the
+  level **Custom** with **Also include default list of common package
+  managers** checked. That is how the three hosts above were added.
 
 Other levels: **None** breaks every install, and **Full** gives up the
 allowlist the platform's proxy audit trail is meant to give you.
@@ -578,6 +588,14 @@ with its built-in tools skips them, the second-model review included. The platfo
 an alternative to that lifecycle, and what it does about drafts is not
 recorded.
 
+**A lane may run `task security` itself, but the PR stays the orchestrator's.**
+Since 2026-10-11 `harmon-remote` can run the full gate ([Network](#network)), so a
+lane can run it as an early check before it pushes. The draft PR is still opened
+by the orchestrator after its own `task security` run. The deferred-findings
+sidecar stays in the orchestrator's git directory and is never pushed, so only
+the orchestrator can copy its entries into the PR body's `## Deferred findings`,
+beside the `reviewed from <host> at <head>` ledger line.
+
 ### The `gh` call inventory
 
 One row per call the dev-loop skills and scripts make, found by searching the
@@ -856,8 +874,9 @@ nothing in this repository writes to the account.
 
 ## Long-running gates
 
-A full `task verify` takes about **10–12 minutes on the 4-core VM** (observed
-2026-09-27), which is over the Bash tool's ceiling: it waits two minutes by
+A full `task verify` took about **10–12 minutes on the 4-core VM** on
+2026-09-27 and about **30 minutes** on 2026-10-11 (observed below).
+Either is over the Bash tool's ceiling: it waits two minutes by
 default and can be asked for at most ten (*docs, 2026-09-29*). The platform does
 not kill a command at that limit; Claude Code moves it to the background instead
 (*docs, 2026-09-29*), so the risk is a session that treats "moved to the
@@ -889,24 +908,85 @@ background" as "finished". The supported ways to run it:
    detached, as in the first form, and `task verify` completed with
    `GATE-EXIT=0`.
 
+**Observed 2026-10-11, Claude Code 2.1.296**, in
+a single-repository session on `evanharmon1/harmon-init` (`harmon-remote`,
+setup script at `v5.6.0`, the checkout at a `main` that carries the #1624 fix;
+[evidence](https://github.com/evanharmon1/harmon-init/issues/1624#issuecomment-6112722450)):
+
+- **The first form passed.** `task verify` completed with `GATE-EXIT=0` in about
+  30 minutes.
+- **A background job with its own timeout ended at that timeout.** An earlier
+  attempt in the same session started `task verify` as a background job through
+  the Bash tool, with a timeout the session set to one hour (it reported a
+  two-hour maximum). That job timeout is separate from the ten-minute
+  foreground ceiling above. The harness ended the job at the limit with
+  SIGTERM (exit 143) while `test:output` was running, before any `GATE-EXIT`
+  line. `test:output` on its own passed within a two-minute timeout and left no stray
+  processes. Why that attempt was slower, and whether the suite would have
+  finished, is not established.
+
+So give the gate the detached `nohup` form above rather than a background job
+with a timeout: that timeout ends the job, and only the `GATE-EXIT=` line in
+the log is the result.
+
 **`task security` is owed before the draft PR, in the cloud as anywhere else**
 (`AGENTS.md`), and it is never skipped. Its Semgrep step contacts `semgrep.dev`,
-which was denied on 2026-09-27 under a network level presumed, but not
-recorded, to be Trusted (see [Network](#network)). Meet the gate one of two ways:
-
-- **In the session:** add `semgrep.dev` under **Custom** network access, with the
-  default package-manager list kept, so the full `task security` runs there.
-- **Outside it**, where the environment cannot be changed: the session stops at
-  a pushed branch, and the draft PR is opened only after `task security` has
-  passed on a machine that can run it. That is already the shape of a cloud lane
-  ([What runs where](#what-runs-where)): the orchestrator runs the gate before it
-  opens the PR.
+which Trusted denies. `harmon-remote` now allows that host under **Custom**
+([Network](#network)), and a session there ran the full gate to exit 0 on
+2026-10-11. A lane may run it as an early check; an environment still on
+Trusted fails at Semgrep. The gate the draft PR depends on is the orchestrator's
+own run, after its review rounds and before it opens the PR
+([What runs where](#what-runs-where)).
 
 `task security:secrets` on its own is the per-push secret scan, not a substitute
 for the pre-PR gate.
 
+## Containers, browsers and background servers
+
+Probed 2026-10-11 in `harmon-remote` (Claude Code 2.1.296, setup script at
+`v5.6.0`; 4 CPUs, 15 GB RAM, 29 GB free disk) under Trusted
+([probes](https://github.com/evanharmon1/harmon-init/issues/1618#issuecomment-6113307590)).
+After the network change, only the Playwright install and `task security` were
+re-run
+([verification](https://github.com/evanharmon1/harmon-init/issues/1618#issuecomment-6113784543)).
+These are capability checks, not a repository's gate. What is still open is
+listed under [Pending observations](#pending-observations).
+
+- **Docker runs, but nothing starts it.** The image has the `docker` client and
+  `dockerd`, and no daemon runs at session start. Start one in the background
+  (`dockerd > <log> 2>&1 &`); it was up in under 20 seconds. Anonymous Docker
+  Hub pulls returned `429 Too Many Requests` about two thirds of the time, so
+  retry pulls with a backoff; no account or mirror is configured. A database
+  container (`postgres:16-alpine`) answered on `localhost`.
+  Docker-in-Docker works too (`docker:dind --privileged`), with inner pulls
+  untested.
+- **Playwright: Chromium is preinstalled; install Firefox and WebKit per
+  session.** A Chromium (1194) in the image runs headless, and
+  `task test:e2e:screenshot` rendered a local page with it. For a cross-engine
+  pass, a session runs `npx playwright install --with-deps chromium firefox
+  webkit`, which took 60 seconds once the two Playwright hosts were allowed.
+  The setup script does not install them, which keeps it inside the cache
+  budget.
+- **agent-browser works with the preinstalled Chromium.** `npm install` of the
+  package works, and it found the image's Chromium, so `open`, `snapshot` and
+  `screenshot` all worked. Its own `agent-browser install` download is denied
+  and not needed. Run those commands in one live session.
+- **Background servers outlive the tool call.** A server started with
+  `nohup … & disown` answered on `localhost` from a later tool call and again
+  more than three minutes later. The probe used a static server as a
+  stand-in: the rendered `web` profile ships no app, so `task dev` had nothing
+  to serve and `task test:e2e` only skips.
+
 ## Other behaviour worth knowing
 
+- **Read issues and PRs with `gh-api-read` in a brief.** A session following an
+  ordinary brief tries `gh issue view` first, which fails on the proxy's GraphQL
+  refusal (HTTP 403), and under the agent posture raw `gh api` is denied as well.
+  The 2026-10-11 probe session stopped there without reading its issue. Name the
+  read path in the brief:
+  `/usr/local/bin/gh-api-read repos/<owner>/<repo>/issues/<n>`
+  (and `…/comments`). See
+  [the `gh` call inventory](#the-gh-call-inventory).
 - **The platform's Stop hook** (`stop-hook-git-check.sh`) blocks when any linked
   worktree has uncommitted changes, including a subagent's in-progress edits
   (observed 2026-09-27). Commit before finishing.
@@ -918,8 +998,18 @@ for the pre-PR gate.
 - **One repository per session** if the session should read the repo's
   `.claude/settings.json`, `.mcp.json` and hooks.
 - **Resources:** about 4 vCPUs, 16 GB RAM and 30 GB disk (*docs, 2026-09-29*).
-- **Session link:** commits carry a `Claude-Session:` trailer and PR bodies carry
-  the session URL; `CLAUDE_CODE_REMOTE_SESSION_ID` holds the ID.
+- **Session link:** PR bodies carry the session URL, and
+  `CLAUDE_CODE_REMOTE_SESSION_ID` holds the ID. **Commits do not reliably carry a
+  `Claude-Session:` trailer.** Observed 2026-10-11 on Claude Code 2.1.296: the
+  web session of 2026-10-10 (`413a685`, `7c00e3a`) produced commits with none,
+  and a commit made in a 2026-10-11 session carried only the trailers its
+  author wrote. Treat the trailer as something the session's instructions ask
+  for, not something the platform adds.
+- **A cached start leaves `origin/main` stale.** Observed 2026-10-11 on Claude
+  Code 2.1.296: the cached start fast-forwards the primary checkout's `HEAD` but
+  leaves its `origin/main` at the snapshot's commit (`HEAD` `28ded9f`,
+  `origin/main` `d530e8d`). Run `git fetch origin main` before diffing or
+  comparing against `origin/main`.
 - **npm-installed tools resolve from the platform's prefix.** Observed
   2026-10-06: `markdownlint-cli2` and `codex`, which the bootstrap installs with
   npm, resolve from `/opt/node22/bin`, the platform's npm prefix. It precedes
@@ -943,8 +1033,10 @@ The docs do not say whether that clone exists when the setup script runs.
 **Observed (criterion 11), 2026-10-06: the repository is cloned before the setup
 script runs** — a probe line in the setup script wrote
 `/home/user/harmon-init/.git`.
-A cached start resumes an existing checkout and fetches it forward rather than
-clone afresh ([Setup script](#setup-script), observed 2026-10-07), which the
+A cached start resumes an existing checkout and moves its `HEAD` forward rather
+than clone afresh ([Setup script](#setup-script), observed 2026-10-07; that
+`origin/main` is left at the snapshot's commit was seen 2026-10-11, under
+[Other behaviour worth knowing](#other-behaviour-worth-knowing)), which the
 docs' "fresh clone per session" does not describe; where that checkout is kept,
 and which run built it, is not established.
 
@@ -1061,7 +1153,11 @@ API calls when both are present, REST writes outside the deny list (`gh run
 rerun`, `cancel`), bundled-flag `gh api` writes ([#1549](https://github.com/evanharmon1/harmon-init/issues/1549)), the
 live cached-session verification of the SessionStart preparation decision
 ([#1548](https://github.com/evanharmon1/harmon-init/issues/1548)), and the
-listing half of #1404 criterion 2, which cannot be done on the web. The `gh` inventory rows still tagged *expected, not
+listing half of #1404 criterion 2, which cannot be done on the web; and from
+[#1618](https://github.com/evanharmon1/harmon-init/issues/1618), a gate that
+starts containers, a real app's `task test:e2e` on a port, a dependency audit
+with manifests to check, whether the Bash tool's automatic backgrounding
+interferes with a server, and image pulls inside Docker-in-Docker. The `gh` inventory rows still tagged *expected, not
 yet observed* are open too (row 7). A settled row stays as the record of what
 was seen and where it landed. Each result goes in the section named, with the
 date and the Claude Code version.
@@ -1069,7 +1165,7 @@ date and the Claude Code version.
 | # | What has to be seen | Where the result lands |
 | --- | --- | --- |
 | 1 | Seen 2026-10-06: `v4.48.0` is the first release carrying the bootstrap; at `v5.2.0` the setup script fails at `semgrep`, and with the interim `sudo env …` line it completes in 86 s (48 s on a second VM). Seen 2026-10-07: the recipe unchanged, with `sudo bash` and no interim `env`, at `v5.2.1` started a session; the manifest reports `harmon-remote-env` at revision `v5.2.1`, `semgrep 1.178.0` and `copier` are at `/usr/local/bin`, `markdownlint-cli2` and `codex` at `/opt/node22/bin`, and `task` is 3.53.1 | [Setup script](#setup-script) |
-| 1 (cache) | Seen 2026-10-07: the setup-script cache works; a session booted 13.5 h after the run it started from, across GitHub-connection changes. Two earlier sessions had re-run the script (why the second is not established). Seen 2026-10-07 after the script change to `v5.2.1`: the next session was ready about 5.6 s after VM boot in resume-cached mode, against about three minutes uncached (also from VM boot), and the cached start resumes an existing checkout and fetches it forward (where that checkout is kept is not established). Decision 2026-10-09: a repository SessionStart hook prepares each web checkout ([ADR](../decisions/2026-10-09-web-session-start-preparation.md)). *Open:* a cached live session shows prepared hooks and fresh sibling remote refs without a manual task run ([#1548](https://github.com/evanharmon1/harmon-init/issues/1548)) | [Setup script](#setup-script) |
+| 1 (cache) | Seen 2026-10-07: the setup-script cache works; a session booted 13.5 h after the run it started from, across GitHub-connection changes. Two earlier sessions had re-run the script (why the second is not established). Seen 2026-10-07 after the script change to `v5.2.1`: the next session was ready about 5.6 s after VM boot in resume-cached mode, against about three minutes uncached (also from VM boot), and the cached start resumes an existing checkout and moves its `HEAD` forward (`origin/main` staying at the snapshot was seen 2026-10-11, see [Other behaviour](#other-behaviour-worth-knowing); where that checkout is kept is not established). Decision 2026-10-09: a repository SessionStart hook prepares each web checkout ([ADR](../decisions/2026-10-09-web-session-start-preparation.md)). *Open:* a cached live session shows prepared hooks and fresh sibling remote refs without a manual task run ([#1548](https://github.com/evanharmon1/harmon-init/issues/1548)) | [Setup script](#setup-script) |
 | — | Seen 2026-10-07: the session's built-in GitHub tools are not covered by the agent posture; a draft PR was opened, commented on and closed as the bot (PR #1546). The `gh` write forms tried stay refused (defence in depth, not the boundary; [why](#the-gh-call-inventory)). *Open:* which other built-in tools exist (merge, workflow runs, releases) was not asked; a merge into a protected branch still needs code-owner approval and the required checks | [What runs where](#what-runs-where) |
 | — | Seen 2026-10-07: with a `/web-setup` PAT stored first and an App connection added afterwards on the same account, git pushes still use the PAT (workflow push refused). *Open:* the reverse order, and which credential serves API calls | [Whose identity GitHub sees](#whose-identity-github-sees) |
 | 3 | Seen 2026-10-07, on `evanharmon1/harmon-init` and `ponderousdev/foreman`: the PAT-only route gives `gh api user` → `evanharmon1-bot`, the write role without admin or maintain (`push: true, admin: false, maintain: false`), the bot as push actor, the commit author Claude, and a refused workflow push; the App-as-bot route gives the same identity but accepts a workflow push. A PR opened through a session's built-in tools is authored by the bot (seen on `evanharmon1/harmon-init` only). *Open:* a PR through a session on a ponderousdev repository | [Whose identity GitHub sees](#whose-identity-github-sees) |
@@ -1080,6 +1176,7 @@ date and the Claude Code version.
 | #1405-6 | Seen 2026-10-06 on `evanharmon1/harmon-init`: `task setup:remote` exits 0 and clones the siblings. *Open:* siblings readable and `task verify` runnable in a live session on `ponderousdev/omator`, which the criterion names | [When per-checkout preparation runs](#when-per-checkout-preparation-runs) |
 | #1404-2 | In part, 2026-10-06/07: `gh pr merge` was refused without a prompt, consistent with the managed deny rules being enforced, inferred from the refusals (before the agent posture dropped its merge guard; repeat with `gh release delete x`, which is still denied). *Open:* the listing half, which cannot be done on the web because `/permissions` opens the permission-mode menu instead | [The agent posture](#the-agent-posture) |
 | — (the unnumbered row) | Seen 2026-10-06: release-asset downloads from repositories not attached to the session succeed under **Trusted** | [Network](#network) |
+| #1618 | Seen 2026-10-11: Docker runs once `dockerd` is started, with Docker Hub `429`s; Playwright installs three engines after the network change; agent-browser works with the preinstalled Chromium; a `nohup` server outlives the tool call; `task security` passes with `semgrep.dev` allowed. *Open:* a gate that starts containers (for example harmonops/harmon-infra's `task verify`), a real app's `task test:e2e` on a port (the rendered `web` profile ships no app), a dependency audit with manifests to check (harmon-init has none), whether the Bash tool's automatic backgrounding of a long command interferes with a server, and image pulls inside Docker-in-Docker | [Containers, browsers and background servers](#containers-browsers-and-background-servers) |
 
 ## Reusing this structure
 

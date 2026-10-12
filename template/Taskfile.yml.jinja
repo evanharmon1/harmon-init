@@ -1134,6 +1134,13 @@ tasks:
 [% if not use_node and not use_python %]
       - echo "No package manifests to audit yet."
 [% endif %]
+[% if use_node %]
+
+  security:audit:fix:
+    desc: "Raise bounded security floors for high/critical pnpm advisories (never run raw pnpm audit --fix)"
+    cmds:
+      - ./scripts/security-audit-fix.sh fix {{.CLI_ARGS}}
+[% endif %]
 
   security:sast:
     desc: Static application security testing (Semgrep Community Edition)
