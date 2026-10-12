@@ -19,9 +19,17 @@
 #   pkg@<major>: '>=x.y.z <next-major'      (0.x: pkg@0.m: '>=0.m.p <0.(m+1)')
 #
 # with a `# pkg@<major>: GHSA-….` comment, below the template-owned floor block
-# (never inside it), then re-resolves the lockfile and re-audits. A fix it
-# cannot express that way is REFUSED: crossing a major, an advisory with no
-# patched version, or a floor the template block owns (raise that upstream).
+# (never inside it), then re-resolves the lockfile and re-audits. A narrower
+# explicit cap on an existing local override for the package (`'>=1.5.0
+# <1.8.0'`) is kept in place of <next-major. A fix it cannot express that way
+# is REFUSED: crossing a major, an advisory with no patched version, a floor
+# the template block owns (raise that upstream), a patched version at or above
+# a kept local cap, an existing override for the package (bare `pkg`,
+# `pkg@<major>`, any `pkg@<selector>`) whose cap the script cannot read — an
+# exact pin, `~`, an x-range, a hyphen range, `||`, `^0.x`, a prerelease or
+# build suffix, a `v` prefix — one placed after the key the script would
+# rewrite (pnpm applies the last matching override), or any parent-scoped
+# `parent>pkg` override (pnpm prefers it to `pkg@<major>` in either order).
 #
 # Usage:
 #   security-audit-fix.sh fix [--skip-refused] [--report FILE]
@@ -33,7 +41,9 @@
 #   security-audit-fix.sh publish DIR
 #       CI only: apply DIR/changes.patch to the base branch, then force-push the
 #       bot branch and open or update exactly ONE draft PR with DIR/report.md as
-#       its body. Never merges, never writes the base branch.
+#       its body. Never merges, never writes the base branch. When GITHUB_SHA
+#       (the commit the audit ran on) is set and the base has moved past it,
+#       publishes nothing and exits 0: the next run re-audits.
 #
 # Exit codes: 0 done (clean, no-op, or applied), 1 operational failure,
 # 3 refused (strict fix only).
@@ -156,24 +166,27 @@ floor_lower() {
         }'
 }
 
-# floor_upper V — "exclusive-x.y.z<TAB>token" for the tightest upper bound of
-# a single-alternative range V (`<1.8.0`, `<1.8` -> 1.8.0, `<=1.8.0` ->
-# 1.8.1, `<=1.8` -> 1.9.0), keeping the original token for writing back;
-# nothing when V has no upper bound, has `||` alternatives, or is unreadable.
+# floor_upper V — what the script can PROVE about the upper bound of an
+# existing override V: "exclusive-x.y.z<TAB>token" for its tightest cap
+# (`<1.8.0`, `<1.8` -> 1.8.0, `<=1.8.0` -> 1.8.1, `<=1.8` -> 1.9.0, `^1.4.0`
+# -> 2.0.0), keeping the token for writing back; `-` when V provably has no
+# cap; nothing when V is unreadable. V is read only when every token is a
+# comparator (`>=`, `>`, `<`, `<=`) or a `^` on major 1+, each on a plain
+# numeric version — any other shape (an exact or `=` pin, `~`, an x-range, a
+# hyphen range, `||`, `^0.x`, a tag) carries an implicit cap this reader does
+# not compute, so the caller refuses rather than widen it. Acceptance is
+# positive: a version with a prerelease or build suffix, a `v` prefix or any
+# trailing text is unreadable too, and so is any `||` — even unspaced, where
+# it would otherwise glue two alternatives into one comparator token.
 floor_upper() {
     printf '%s\n' "$1" | awk '
-        function excl(v, incl,   n, p, i, given) {
-            sub(/[-+].*$/, "", v)
+        # excl V INCL — x.y.z of a plain numeric version (1-3 parts and
+        # nothing else), bumped past V when INCL; nothing otherwise.
+        function excl(v, incl,   n, p, i) {
+            if (v !~ /^[0-9]+$/ && v !~ /^[0-9]+\.[0-9]+$/ && v !~ /^[0-9]+\.[0-9]+\.[0-9]+$/) return ""
             n = split(v, p, ".")
-            if (n < 1 || n > 3) return ""
-            given = 0
-            for (i = 1; i <= 3; i++) {
-                if (i > n || p[i] ~ /^[xX*]$/) { p[i] = 0; continue }
-                if (p[i] !~ /^[0-9]+$/) return ""
-                if (given == i - 1) given = i
-            }
-            if (given == 0) return ""
-            if (incl) { p[given] = p[given] + 1; for (i = given + 1; i <= 3; i++) p[i] = 0 }
+            for (i = n + 1; i <= 3; i++) p[i] = 0
+            if (incl) { p[n] = p[n] + 1; for (i = n + 1; i <= 3; i++) p[i] = 0 }
             return (p[1] + 0) "." (p[2] + 0) "." (p[3] + 0)
         }
         function less(a, b,   x, y, i) {
@@ -184,16 +197,27 @@ floor_upper() {
         index($0, "||") { exit }
         {
             s = $0
-            gsub(/<=[[:space:]]+/, "<=", s); gsub(/<[[:space:]]+/, "<", s)
+            gsub(/>=[[:space:]]+/, ">=", s); gsub(/<=[[:space:]]+/, "<=", s)
+            gsub(/>[[:space:]]+/, ">", s); gsub(/<[[:space:]]+/, "<", s)
+            gsub(/\^[[:space:]]+/, "^", s)
+            sub(/^[[:space:]]+/, "", s); sub(/[[:space:]]+$/, "", s)
+            if (s == "") exit
             n = split(s, t, /[[:space:]]+/); best = ""; tok = ""
             for (i = 1; i <= n; i++) {
+                if (t[i] ~ /^>=/) { if (excl(substr(t[i], 3), 0) == "") exit; continue }
+                if (t[i] ~ /^>/) { if (excl(substr(t[i], 2), 0) == "") exit; continue }
                 if (t[i] ~ /^<=/) v = excl(substr(t[i], 3), 1)
                 else if (t[i] ~ /^</) v = excl(substr(t[i], 2), 0)
-                else continue
+                else if (t[i] ~ /^\^/) {
+                    v = excl(substr(t[i], 2), 0)
+                    if (v == "" || v ~ /^0\./) exit
+                    split(v, p, "."); v = (p[1] + 1) ".0.0"
+                } else exit
                 if (v == "") exit
                 if (best == "" || less(v, best)) { best = v; tok = t[i] }
             }
             if (best != "") print best "\t" tok
+            else print "-"
         }'
 }
 
@@ -527,6 +551,44 @@ add_refusal() {
     printf '%s\t%s\t%s\t%s\t%s\n' "$@" >>"$WORK/refused.tsv"
 }
 
+# targets_of PKG [KEY] — "row<TAB>key<TAB>parent<TAB>value" (row = map
+# order, from overrides_tsv rows on stdin; parent = 1 for a parent-scoped
+# key) for every override whose target package is PKG: `pkg`,
+# `pkg@<anything>`, and the last segment of a parent-scoped `parent>pkg…`.
+# A `>` is a parent separator only when a package name follows it directly
+# (a letter, digit, `@` or `_`) and it does not follow `@`, `|` or a space,
+# so `pkg@>=1.2.0`, `pkg@<2 >1` and `pkg@<1||>2` stay selectors.
+# Scoped names keep their leading `@`. With KEY (the `pkg@<major-key>` being
+# written), a key of exactly that form for ANOTHER major key (`pkg@N`, or
+# `pkg@0.M` on 0.x) is left out: its line is provably disjoint from KEY's, so
+# it can neither cap KEY's line nor outrank KEY. Every other form stays in.
+targets_of() {
+    awk -F '\t' -v pkg="$1" -v key="${2:-}" '
+        function target(k,   i, c, prev, next_c, t, j) {
+            t = k; parent = 0
+            for (i = length(k); i > 1; i--) {
+                c = substr(k, i, 1); prev = substr(k, i - 1, 1); next_c = substr(k, i + 1, 1)
+                if (c == ">" && prev != "@" && prev != "|" && prev != " " && next_c ~ /[A-Za-z0-9@_]/) { t = substr(k, i + 1); parent = 1; break }
+            }
+            if (substr(t, 1, 1) == "@") { j = index(substr(t, 2), "@"); return j ? substr(t, 1, j) : t }
+            j = index(t, "@"); return j ? substr(t, 1, j - 1) : t
+        }
+        function disjoint(k,   m) {
+            if (key == "" || k == key || index(k, pkg "@") != 1) return 0
+            m = substr(k, length(pkg) + 2)
+            return m ~ /^[1-9][0-9]*$/ || m ~ /^0\.[0-9]+$/
+        }
+        target($1) == pkg && !disjoint($1) { print NR "\t" $1 "\t" parent "\t" $2 }'
+}
+
+# refuse_key KEY REASON — refuse every candidate advisory row for KEY.
+refuse_key() {
+    awk -F '\t' -v k="$1" '$1 == k { print $3 "\t" $4 "\t" $5 "\t" $6 }' "$WORK/candidates.tsv" |
+        while IFS="$TAB" read -r _rk_id _rk_pkg _rk_sev _rk_ver; do
+            add_refusal "$_rk_id" "$_rk_pkg" "$_rk_sev" "$_rk_ver" "$2"
+        done
+}
+
 cmd_fix() {
     _skip_refused=0 _report=""
     while [ $# -gt 0 ]; do
@@ -623,43 +685,85 @@ cmd_fix() {
             if [ -z "$_floor" ] || ! version_ge "$_floor" "$_f"; then _floor="$_f"; fi
             case ", $_ids," in *", $_id,"*) ;; *) _ids="${_ids:+$_ids, }$_id" ;; esac
         done <"$WORK/candidates.tsv"
-        _existing="$(awk -F '\t' -v k="$_key" '$1 == k { print $2; exit }' "$WORK/current.tsv")"
         if grep -qxF -- "$_key" "$WORK/template-keys.txt"; then
-            awk -F '\t' -v k="$_key" '$1 == k { print $3 "\t" $4 "\t" $5 "\t" $6 }' "$WORK/candidates.tsv" |
-                while IFS="$TAB" read -r _id _pkg _sev _ver; do
-                    add_refusal "$_id" "$_pkg" "$_sev" "$_ver" "\`$_key\` is a template-owned floor — raise it upstream in harmon-init, not locally"
-                done
+            refuse_key "$_key" "\`$_key\` is a template-owned floor — raise it upstream in harmon-init, not locally"
             continue
         fi
         _bound="$(next_bound "${_key##*@}")"
+        _line_start="$(next_bound_start "${_key##*@}")"
+        _next_start="$(next_bound_start "$_bound")"
         # There is no keep-as-is branch: every floor this script touches is
-        # written in the one canonical shape '>=max(existing lower, proposal)
-        # <next-major' for its own major, whatever was there before, so a
-        # floor can never express a crossing. An existing lower bound is never
-        # lowered — unless it lies in another major, where it was itself a
-        # crossing and the proposal replaces it.
-        _old="$(floor_lower "$_existing")"
-        if [ -n "$_old" ] && [ "$(major_key "$_old")" = "${_key##*@}" ] && version_ge "$_old" "$_floor"; then
-            _floor="$_old"
+        # written as '>=LOWER UPPER' for its own major, so a floor can never
+        # express a crossing. One rule covers every existing override whose
+        # target package is this one — bare `pkg`, `pkg@<major>`, any
+        # `pkg@<selector>`, or a parent-scoped `parent>pkg…` — because pnpm 11
+        # applies the LAST matching override in map order, selector keys
+        # included (probed on pnpm 11.28.5), so any of them can cap this line:
+        #   - each value must be readable by floor_upper (an exact pin, `~`, an
+        #     x-range, a hyphen range, `||`, `^0.x`, a suffixed version… are
+        #     not), or the key is refused: <next-major would widen its cap;
+        #   - LOWER is max(proposal, their lower bounds on this major) — never
+        #     lowered; one in another major was itself a crossing;
+        #   - UPPER is <next-major unless one provably caps this line lower:
+        #     the narrowest such cap is kept, and the fix refused when the
+        #     patched version is at or above it;
+        #   - one placed AFTER an existing key outranks the rewrite, which is
+        #     refused. (A new key is appended at the end of the map by yq.)
+        #   - a parent-scoped `parent>pkg…` entry outranks `pkg@<major>` for
+        #     that parent's dependency in EITHER map order (probed on pnpm
+        #     11.28.5: `make-dir>semver` beat `semver@7` both ways), so the
+        #     written floor is not provably effective: refused, wherever the
+        #     entry sits, before any of the checks above.
+        # Selectors are not matched against versions: an entry is judged as if
+        # it applied to the whole line, which can only refuse more, never less
+        # — so an earlier entry's narrower cap is honoured even when its
+        # selector does not reach this line (`pkg@<1.2.0: '>=1.0.0 <1.2.0'`
+        # caps a pkg@1 floor). The one exception is provable: another line's
+        # exact `pkg@<major-key>` key is disjoint and left out (targets_of).
+        _upper="<$_bound" _cap_v="" _cap_span="" _blocked=""
+        targets_of "${_key%@*}" "$_key" <"$WORK/current.tsv" >"$WORK/targets.tsv"
+        _parent="$(awk -F '\t' '$3 == 1 { print $2; exit }' "$WORK/targets.tsv")"
+        if [ -n "$_parent" ]; then
+            refuse_key "$_key" "a parent-scoped \`$_parent\` override for \`${_key%@*}\` outranks \`$_key\` — remove or raise it deliberately"
+            continue
         fi
-        # A local cap below the next major (`'>=1.5.0 <1.8.0'`) is a deliberate
-        # narrowing on this line: keep it when the floor still fits under it,
-        # and refuse when the patched version is at or above it.
-        _upper="<$_bound"
-        _cap="$(floor_upper "$_existing")"
-        if [ -n "$_cap" ]; then
-            _cap_v="${_cap%%"$TAB"*}" _cap_t="${_cap#*"$TAB"}"
-            _line_start="$(next_bound_start "${_key##*@}")"
-            if ! version_ge "$_cap_v" "$(next_bound_start "$_bound")" && ! version_ge "$_line_start" "$_cap_v"; then
-                if version_ge "$_floor" "$_cap_v"; then
-                    awk -F '\t' -v k="$_key" '$1 == k { print $3 "\t" $4 "\t" $5 "\t" $6 }' "$WORK/candidates.tsv" |
-                        while IFS="$TAB" read -r _id _pkg _sev _ver; do
-                            add_refusal "$_id" "$_pkg" "$_sev" "$_ver" "the local override caps $_pkg below the patched version $_floor ($_key: '$_existing') — widen it deliberately"
-                        done
-                    continue
-                fi
-                _upper="$_cap_t"
+        _key_row="$(awk -F '\t' -v k="$_key" '$2 == k { print $1; exit }' "$WORK/targets.tsv")"
+        if [ -n "$_key_row" ]; then
+            _later="$(awk -F '\t' -v r="$_key_row" '$1 + 0 > r + 0 { print $2; exit }' "$WORK/targets.tsv")"
+            if [ -n "$_later" ]; then
+                refuse_key "$_key" "a later \`$_later\` override for \`${_key%@*}\` takes precedence over \`$_key\` — reorder or remove it deliberately"
+                continue
             fi
+        fi
+        while IFS="$TAB" read -r _ _ek _ _existing; do
+            _span="\`$_ek: '$_existing'\`"
+            _cap="$(floor_upper "$_existing")"
+            if [ -z "$_cap" ]; then
+                _blocked="the local override $_span has a cap the script cannot read — raise it deliberately"
+                break
+            fi
+            _old="$(floor_lower "$_existing")"
+            if [ -n "$_old" ] && [ "$(major_key "$_old")" = "${_key##*@}" ] && version_ge "$_old" "$_floor"; then
+                _floor="$_old"
+            fi
+            [ "$_cap" != - ] || continue
+            _v="${_cap%%"$TAB"*}"
+            # Only a cap inside this line narrows it: one at or past the next
+            # major is the canonical bound, one at or below the line's start
+            # lies in another major.
+            if version_ge "$_v" "$_next_start" || version_ge "$_line_start" "$_v"; then
+                continue
+            fi
+            if [ -z "$_cap_v" ] || ! version_ge "$_v" "$_cap_v"; then
+                _cap_v="$_v" _upper="${_cap#*"$TAB"}" _cap_span="$_span"
+            fi
+        done <"$WORK/targets.tsv"
+        if [ -z "$_blocked" ] && [ -n "$_cap_v" ] && version_ge "$_floor" "$_cap_v"; then
+            _blocked="the local override $_cap_span caps \`${_key%@*}\` below the patched version $_floor — widen it deliberately"
+        fi
+        if [ -n "$_blocked" ]; then
+            refuse_key "$_key" "$_blocked"
+            continue
         fi
         write_floor "$_key" "$_floor" "$_upper" "$_ids"
         # An advisory is still reported against this key, so the lockfile is
@@ -883,6 +987,19 @@ cmd_publish() {
     [ -z "$(git status --porcelain)" ] || die "working tree is not clean"
     _head="$(git rev-parse --abbrev-ref HEAD)"
     [ "$_head" = "$BASE_BRANCH" ] || die "HEAD is '$_head', not '$BASE_BRANCH'"
+    # Publish only onto the commit the audit job ran on: the patch was
+    # verified against GITHUB_SHA, not against whatever the base holds now.
+    # Unset (a local run): no audited commit to compare against.
+    if [ -n "${GITHUB_SHA:-}" ]; then
+        _base_sha="$(git rev-parse HEAD)"
+        if [ "$_base_sha" != "$GITHUB_SHA" ]; then
+            _moved="$BASE_BRANCH moved since the audit ($GITHUB_SHA -> $_base_sha) — nothing published; the next run re-audits"
+            note "$_moved"
+            # Under Actions, also an annotation, so the skip shows on the run.
+            [ "${GITHUB_ACTIONS:-}" != true ] || echo "::notice::security-audit-fix: $_moved"
+            return 0
+        fi
+    fi
 
     # The patch was produced by a job that ran package tooling; accept it only
     # when it touches exactly the two files a floor change may touch.
