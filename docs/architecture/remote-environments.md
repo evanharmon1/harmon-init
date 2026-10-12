@@ -545,7 +545,11 @@ Observed (agent devcontainer):  *pending*
 ### Claude Code on the web
 
 One environment for all repos, whose setup script is the entrypoint above at a
-pinned release tag and whose network level is **Trusted**. The platform takes no
+pinned release tag and whose network level is **Custom**: the default list plus
+three hosts sessions need beyond the bootstrap (`semgrep.dev` for `task security`,
+and Playwright's two browser download hosts; the
+[guide](../guides/claude-code-web.md#network) records the denial behind each).
+The platform takes no
 custom image and ignores `devcontainer.json`. The setup script provisions the
 machine only. A repository `SessionStart` hook runs `task setup:remote` when
 `CLAUDE_CODE_REMOTE=true`, including cached resumes, to reinstall checkout hooks,

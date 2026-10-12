@@ -8,6 +8,42 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [5.7.0](https://github.com/evanharmon1/harmon-init/compare/v5.6.0...v5.7.0) (2026-10-12)
+
+
+### Features
+
+* **devflow:** let .devflow.toml choose when the integration stage requests PR review ([#1641](https://github.com/evanharmon1/harmon-init/issues/1641)) ([1529af2](https://github.com/evanharmon1/harmon-init/commit/1529af2ef3b8bb2957ca454fac0502cebaee1bff))
+* **template:** open a scheduled remediation PR when the dependency audit finds high advisories ([#1632](https://github.com/evanharmon1/harmon-init/issues/1632)) ([413fd7b](https://github.com/evanharmon1/harmon-init/commit/413fd7bef606b4e604d0a75cbc90ad80978371e5))
+
+
+### Bug Fixes
+
+* **dev-flow:** accept the split disposition in the repo's adjudication schema and validator ([#1627](https://github.com/evanharmon1/harmon-init/issues/1627)) ([93a8ee0](https://github.com/evanharmon1/harmon-init/commit/93a8ee03693627a6f7377901ec12bb42866df33b))
+* **dev-loop:** tighten the update-branch catch-up wording ([#1642](https://github.com/evanharmon1/harmon-init/issues/1642)) ([67aa007](https://github.com/evanharmon1/harmon-init/commit/67aa007d81feb8236944e6cc96babc21aa68369d))
+* **docs:** say to re-lock after a floor-block update and narrow the upstream-audit claim ([#1637](https://github.com/evanharmon1/harmon-init/issues/1637)) ([8e790b3](https://github.com/evanharmon1/harmon-init/commit/8e790b3fa02f966c75a5cb130860b9f2a0aa37d2))
+* **docs:** state that the herdr launch grant matches only a bare agent start command ([#1623](https://github.com/evanharmon1/harmon-init/issues/1623)) ([dd31c1d](https://github.com/evanharmon1/harmon-init/commit/dd31c1d436c427caed8ec245d2a6cf3d62c78796))
+* **template:** refuse unreadable caps and publish only the audited commit in security-audit-fix ([#1638](https://github.com/evanharmon1/harmon-init/issues/1638)) ([0bce672](https://github.com/evanharmon1/harmon-init/commit/0bce6722a123ce04b66ba4aab5a1edfc9f707b37))
+* **template:** sync harmon-devkit skills to v0.56.0 ([#1625](https://github.com/evanharmon1/harmon-init/issues/1625)) ([d2fd4d5](https://github.com/evanharmon1/harmon-init/commit/d2fd4d5fc56efd8901d978abe48ee90555ecdc05))
+
+## [5.6.0](https://github.com/evanharmon1/harmon-init/compare/v5.5.1...v5.6.0) (2026-10-11)
+
+
+### Features
+
+* **dev-loop:** catch a PR up to its base with GitHub update-branch ([#1626](https://github.com/evanharmon1/harmon-init/issues/1626)) ([ac070e2](https://github.com/evanharmon1/harmon-init/commit/ac070e2cee0af95a7940999dd226892def439a94))
+* **labels:** provision implementer model labels and organization issue fields from the registry ([#1613](https://github.com/evanharmon1/harmon-init/issues/1613)) ([37e590b](https://github.com/evanharmon1/harmon-init/commit/37e590b9e5697cfaea81b8b5df474a23992a056b))
+
+
+### Bug Fixes
+
+* **agents:** name the split disposition in the round-2 checkpoint ([#1615](https://github.com/evanharmon1/harmon-init/issues/1615)) ([28ded9f](https://github.com/evanharmon1/harmon-init/commit/28ded9f556ff449d48c9cd1c3c9e098cd6d7213e))
+* **codex:** move GPT model pins to the 6.1 Sol and 6 Astra and Luna lines ([#1622](https://github.com/evanharmon1/harmon-init/issues/1622)) ([a4c1697](https://github.com/evanharmon1/harmon-init/commit/a4c16972c9d45fbdfbf5959d0a00a32d1f742c35))
+* **decisions:** move the GET-only wrapper decision into its own ADR ([#1620](https://github.com/evanharmon1/harmon-init/issues/1620)) ([0d9fea3](https://github.com/evanharmon1/harmon-init/commit/0d9fea35367a638b3e44b593d7a7c23bd4dc04a0))
+* **devflow:** reject an empty merge-base policy path ([#1629](https://github.com/evanharmon1/harmon-init/issues/1629)) ([f93e0c2](https://github.com/evanharmon1/harmon-init/commit/f93e0c2614f9e59c5031d5ac0f3c05bb989d5ca4))
+* **devflow:** treat an absent policy and absent registry as a determinate built-in fallback ([#1619](https://github.com/evanharmon1/harmon-init/issues/1619)) ([bf2f31b](https://github.com/evanharmon1/harmon-init/commit/bf2f31bdc4eef3a3f2abb62b11f50723c2ac1530))
+* **tests:** stop test-agent-profile inheriting the web session's agent marker ([#1631](https://github.com/evanharmon1/harmon-init/issues/1631)) ([fad24be](https://github.com/evanharmon1/harmon-init/commit/fad24befe5c71cdf60f3cb40ceee227e7d9b35c6))
+
 ## [5.5.1](https://github.com/evanharmon1/harmon-init/compare/v5.5.0...v5.5.1) (2026-10-10)
 
 

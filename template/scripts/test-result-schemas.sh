@@ -96,6 +96,55 @@ jq '
 ' "$fixtures/adjudication.schema/invalid/duplicate-finding-id.json" >"$tmp"
 rejects adjudication-p1-defer adjudication "$tmp"
 
+split_adjudication="$fixtures/adjudication.schema/valid/split.json"
+split_run="$fixtures/run.schema/valid/split.json"
+cross_split_adjudication="$fixtures/adjudication.schema/valid/cross-repository-split.json"
+cross_split_run="$fixtures/run.schema/valid/cross-repository-split.json"
+accepts adjudication "$cross_split_adjudication"
+accepts run "$cross_split_run" --adjudication "$cross_split_adjudication" --receipt
+rejects split-same-number-different-notation run "$split_run" \
+    --adjudication "$cross_split_adjudication" --receipt
+rejects split-same-number-different-notation-reverse run "$cross_split_run" \
+    --adjudication "$split_adjudication" --receipt
+accepts adjudication "$split_adjudication"
+rejects split-without-reference adjudication \
+    "$fixtures/adjudication.schema/invalid/split-without-reference.json"
+rejects integration-split adjudication \
+    "$fixtures/adjudication.schema/invalid/integration-split.json"
+for mutation in '.adjudications[0].reference.type = "sha"' \
+    '.adjudications[0].reference.value = "0"'; do
+    jq "$mutation" "$split_adjudication" >"$tmp"
+    rejects split-invalid-reference adjudication "$tmp"
+done
+accepts run "$split_run" --adjudication "$split_adjudication" --receipt
+rejects split-without-adjudication run "$split_run" --no-adjudications --receipt
+for mutation in '.splits += .splits' \
+    '.splits[0].milestone = " "' \
+    '.splits[0].round = 2' \
+    '.splits[0].issue = "1618"' \
+    '.splits[0].split_at = "2026-09-04T00:00:00Z"'; do
+    jq "$mutation" "$split_run" >"$tmp"
+    rejects split-inconsistent-run run "$tmp" --adjudication "$split_adjudication" --receipt
+done
+jq '.splits = []' "$split_run" >"$tmp"
+accepts run "$tmp" --adjudication "$split_adjudication" --receipt
+for outcome in capped escalated abandoned; do
+    jq --arg outcome "$outcome" '.outcome = $outcome | .stage_transitions[-1].exit = $outcome' "$tmp" >"$tmp2"
+    rejects split-unrecorded-terminal-run run "$tmp2" --adjudication "$split_adjudication" --receipt
+done
+jq '
+    .stage_transitions[-1].exit = "green"
+    | .stage_transitions += [{stage: "integration", entered_at: "2026-09-05T00:06:00Z", exit: "ready"}]
+    | .outcome = "ready-for-review"
+    | .pr = {number: 1, url: "https://example.invalid/pr/1"}
+    | .promotion = {head: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", promoted_at: "2026-09-05T00:07:00Z", gate_fingerprint: "split-test"}
+' "$split_run" >"$tmp2"
+accepts run "$tmp2" --adjudication "$split_adjudication" --receipt
+jq '.splits[0].split_at = "2026-09-05T00:08:00Z"' "$tmp2" >"$tmp"
+rejects split-after-promotion run "$tmp" --adjudication "$split_adjudication" --receipt
+jq '.adjudications[0].disposition = "file"' "$split_adjudication" >"$tmp"
+rejects split-with-file-adjudication run "$split_run" --adjudication "$tmp" --receipt
+
 accepts run "$oneshot" --no-adjudications --receipt
 accepts run "$fixtures/run.schema/valid/challenge-to-security-when-review-disabled.json" \
     --no-adjudications --receipt
@@ -155,6 +204,15 @@ jq '
     }]
 ' "$oneshot" >"$tmp2"
 accepts run "$tmp2" --adjudication "$adjudication" --receipt
+jq '
+    .settlements = [{
+        finding_id: "challenge-r1-contract-1",
+        disposition: "file",
+        settled_at: "2026-09-03T00:07:00Z",
+        reference: {type: "issue_number", value: "evanharmon1/harmon-devkit#1617"}
+    }]
+' "$tmp2" >"$tmp"
+accepts run "$tmp"
 jq '.evidence_comments = []' "$tmp2" >"$tmp"
 rejects run-missing-adjudication-evidence run "$tmp" --adjudication "$adjudication" --receipt
 jq '.adjudications[0].finding_id = "integration-r1-human-2"' "$adjudication" >"$tmp3"
