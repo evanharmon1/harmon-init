@@ -29,7 +29,10 @@
 # exact pin, `~`, an x-range, a hyphen range, `||`, `^0.x`, a prerelease or
 # build suffix, a `v` prefix — one placed after the key the script would
 # rewrite (pnpm applies the last matching override), or any parent-scoped
-# `parent>pkg` override (pnpm prefers it to `pkg@<major>` in either order).
+# `parent>pkg` override, whatever its value (pnpm prefers it to `pkg@<major>`
+# in either order; remove it). An exact `pkg@N` (N >= 1) or `pkg@0.M` key on
+# another line is exempt by its key alone from every per-entry rule (the
+# unreadable-cap refusal, the narrowest cap, the later-override refusal).
 #
 # Usage:
 #   security-audit-fix.sh fix [--skip-refused] [--report FILE]
@@ -560,8 +563,9 @@ add_refusal() {
 # so `pkg@>=1.2.0`, `pkg@<2 >1` and `pkg@<1||>2` stay selectors.
 # Scoped names keep their leading `@`. With KEY (the `pkg@<major-key>` being
 # written), a key of exactly that form for ANOTHER major key (`pkg@N`, or
-# `pkg@0.M` on 0.x) is left out: its line is provably disjoint from KEY's, so
-# it can neither cap KEY's line nor outrank KEY. Every other form stays in.
+# `pkg@0.M` on 0.x) is left out by its key alone, whatever its value: the key
+# selects a line disjoint from KEY's, so it can neither cap KEY's line nor
+# outrank KEY. Every other form stays in.
 targets_of() {
     awk -F '\t' -v pkg="$1" -v key="${2:-}" '
         function target(k,   i, c, prev, next_c, t, j) {
@@ -702,8 +706,9 @@ cmd_fix() {
         #   - each value must be readable by floor_upper (an exact pin, `~`, an
         #     x-range, a hyphen range, `||`, `^0.x`, a suffixed version… are
         #     not), or the key is refused: <next-major would widen its cap;
-        #   - LOWER is max(proposal, their lower bounds on this major) — never
-        #     lowered; one in another major was itself a crossing;
+        #   - LOWER is max(proposal, KEY's own entry's lower bound on this
+        #     major) — never lowered. No other entry's lower bound raises it
+        #     (see below);
         #   - UPPER is <next-major unless one provably caps this line lower:
         #     the narrowest such cap is kept, and the fix refused when the
         #     patched version is at or above it;
@@ -714,17 +719,24 @@ cmd_fix() {
         #     11.28.5: `make-dir>semver` beat `semver@7` both ways), so the
         #     written floor is not provably effective: refused, wherever the
         #     entry sits, before any of the checks above.
-        # Selectors are not matched against versions: an entry is judged as if
-        # it applied to the whole line, which can only refuse more, never less
-        # — so an earlier entry's narrower cap is honoured even when its
-        # selector does not reach this line (`pkg@<1.2.0: '>=1.0.0 <1.2.0'`
-        # caps a pkg@1 floor). The one exception is provable: another line's
-        # exact `pkg@<major-key>` key is disjoint and left out (targets_of).
+        # Selectors are not matched against versions. For CAPS and refusals an
+        # entry is judged as if it applied to the whole line, which can only
+        # refuse more, never less — so an earlier entry's narrower cap is
+        # honoured even when its selector does not reach this line
+        # (`pkg@<1.2.0: '>=1.0.0 <1.2.0'` caps a pkg@1 floor). For the LOWER
+        # bound only KEY's own entry counts: a selector need not apply to the
+        # installed version. KEY never sits before a non-exempt entry for the
+        # package (a later one is refused, a new KEY is appended last), so
+        # it wins under last-match and supersedes an earlier selector's lower
+        # bound on this line — deliberately: the floor is still at or above
+        # the patched version, which the re-audit verifies. The one exception
+        # is by key: an entry whose key is another line's exact
+        # `pkg@<major-key>` is left out (targets_of), whatever its value.
         _upper="<$_bound" _cap_v="" _cap_span="" _blocked=""
         targets_of "${_key%@*}" "$_key" <"$WORK/current.tsv" >"$WORK/targets.tsv"
         _parent="$(awk -F '\t' '$3 == 1 { print $2; exit }' "$WORK/targets.tsv")"
         if [ -n "$_parent" ]; then
-            refuse_key "$_key" "a parent-scoped \`$_parent\` override for \`${_key%@*}\` outranks \`$_key\` — remove or raise it deliberately"
+            refuse_key "$_key" "a parent-scoped \`$_parent\` override for \`${_key%@*}\` outranks \`$_key\` — remove it deliberately"
             continue
         fi
         _key_row="$(awk -F '\t' -v k="$_key" '$2 == k { print $1; exit }' "$WORK/targets.tsv")"
@@ -742,7 +754,8 @@ cmd_fix() {
                 _blocked="the local override $_span has a cap the script cannot read — raise it deliberately"
                 break
             fi
-            _old="$(floor_lower "$_existing")"
+            _old=""
+            [ "$_ek" != "$_key" ] || _old="$(floor_lower "$_existing")"
             if [ -n "$_old" ] && [ "$(major_key "$_old")" = "${_key##*@}" ] && version_ge "$_old" "$_floor"; then
                 _floor="$_old"
             fi
