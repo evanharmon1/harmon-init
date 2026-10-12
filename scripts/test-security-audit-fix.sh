@@ -892,6 +892,27 @@ grep -qx 'pnpm install --lockfile-only --ignore-scripts' "$p/.stub/calls" ||
     fail "multi-range-other: fallback skipped re-audit"
 pass "multi-range-other: another-line proposal falls back to the installed patch, re-resolved and re-audited"
 
+# An unaffected older line contributes only an upper bound to the union.
+# Publication must be proved by the selected 2.x alternative, not by the
+# whole range's lowest bound (0.0.0).
+p="$(new_project multi-range-upper-only)"
+advisory GHSA-xxxx-xxxx-xxxx pkgz high '>=2.0.0 <2.1.5' 2.0.1 direct '<2.0.0 || >=2.1.5' |
+    jq '{advisories: .}' >"$p/.stub/audit.json"
+fix_adds "$p" 'pkgz@>=2.0.0 <2.1.5' '^1.3.4'
+echo "pkgz@2: '>=2.1.5 <3'" >"$p/.stub/cleared-by"
+: >"$p/.stub/needs-relock"
+run_fix "$p" --report "$p/report.md" >"$p/out.log" 2>&1 || {
+    cat "$p/out.log"
+    fail "multi-range-upper-only: exited non-zero"
+}
+expect_keys "$p" multi-range-upper-only 'pkgz@2=>=2.1.5 <3'
+expect_below_marker "$p" multi-range-upper-only pkgz@2
+grep -qx 'pnpm install --lockfile-only --ignore-scripts' "$p/.stub/calls" ||
+    fail "multi-range-upper-only: fallback skipped lockfile re-resolve"
+[ "$(grep -c 'pnpm audit --audit-level=high --json' "$p/.stub/calls")" -eq 2 ] ||
+    fail "multi-range-upper-only: fallback skipped re-audit"
+pass "multi-range-upper-only: the selected alternative supplies a published patch despite another line's zero lower bound"
+
 # A fallback that fails its audit proof rolls back all project bytes.
 p="$(new_project multi-range-not-cleared)"
 advisory GHSA-xxxx-xxxx-xxxx pkgz high '<1.3.4 || >=2.0.0 <2.1.5' 2.0.1 direct '>=1.3.4 <2.0.0 || >=2.1.5' |
@@ -921,6 +942,23 @@ advisory GHSA-xxxx-xxxx-xxxx pkgz high '*' 2.0.1 direct '<0.0.0' |
 fix_adds "$p" 'unrelated@<1.3.4' '^1.3.4'
 expect_refused "$p" no-patch-published 'no patched version published'
 pass "no-patch-published: an advisory with no concrete patch remains refused"
+
+# An inferred vulnerable-range boundary is not a published patch, even
+# when it is concrete and belongs to the installed line.
+for unpublished in '<0.0.0' ''; do
+    p="$(new_project inferred-only)"
+    advisory GHSA-xxxx-xxxx-xxxx pkgz high '<2.1.5' 2.0.1 direct "$unpublished" |
+        jq '{advisories: .}' >"$p/.stub/audit.json"
+    fix_adds "$p" 'unrelated@<1.3.4' '^1.3.4'
+    expect_refused "$p" inferred-only 'no patched version published'
+    if grep -qF '(patched: )' "$p/out.log"; then
+        fail "inferred-only: an absent patch printed empty patched metadata"
+    fi
+    if grep -q 'install' "$p/.stub/calls"; then
+        fail "inferred-only: an inferred boundary authorized a floor"
+    fi
+    pass "inferred-only: patched '$unpublished' refuses with the no-published-patch reason"
+done
 
 # ... and an install on a line no alternative covers is refused.
 p="$(new_project multi-range-none)"

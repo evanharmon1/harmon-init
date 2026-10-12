@@ -514,6 +514,18 @@ advisory_need() {
     }'
 }
 
+# published_patch PATCHED FROM — print the concrete published patch selected
+# by advisory_need, or fail when there is none. With no vulnerable range to
+# infer from, an upper-bound-only alternative cannot masquerade as a patch;
+# a union still selects the installed line's own alternative.
+published_patch() {
+    _pp="$(advisory_need "" "$1" "$2")"
+    case "$_pp" in
+    "" | none | 0.0.0) return 1 ;;
+    esac
+    printf '%s\n' "$_pp"
+}
+
 # covering_floor PKG RANGE PATCHED FROM — the floor of a pnpm proposal that
 # fixes this advisory row, matched by package and coverage rather than by
 # pnpm's selector key: pnpm prunes an advisory whose range another advisory on
@@ -550,10 +562,9 @@ covering_floor() {
     done <"$WORK/after.tsv"
     # A boundary inferred from the vulnerable range is not a published patch:
     # e.g. <=8.5.1 can need 8.5.2 while pnpm correctly proposes 9.0.0.
-    _cf_published="$(floor_lower "$3")"
-    if [ -z "$_cf_in" ] && [ -n "$_cf_published" ] && [ "$_cf_published" != 0.0.0 ] &&
-        [ -n "$_cf_need" ] && [ "$(major_key "$_cf_need")" = "$4" ]; then
-        _cf_in="$_cf_need"
+    _cf_published="$(published_patch "$3" "$4" || true)"
+    if [ -z "$_cf_in" ] && [ -n "$_cf_published" ] && [ "$(major_key "$_cf_published")" = "$4" ]; then
+        _cf_in="$_cf_published"
     fi
     echo "${_cf_in:-$_cf_out}"
 }
@@ -676,8 +687,7 @@ cmd_fix() {
             continue
         fi
         if [ -z "$_floor" ]; then
-            _need="$(advisory_need "$_range" "$_patched" "$_from")"
-            if [ -n "$_need" ]; then
+            if published_patch "$_patched" "$_from" >/dev/null; then
                 add_refusal "$_id" "$_pkg" "$_sev" "$_ver" "pnpm audit --fix made no proposal on major $_from that covers it (patched: $_patched) — upgrade \`$_direct\` deliberately"
             else
                 add_refusal "$_id" "$_pkg" "$_sev" "$_ver" "pnpm audit --fix proposed no override that covers it (no patched version published for $_range)"
