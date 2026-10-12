@@ -14,7 +14,7 @@ inputs:
 [% endif %]
   lint-tools:
     description: >-
-      Install shellcheck, shfmt, actionlint, yamllint[% if use_skills_sync %], yq[% endif %] — required by
+      Install shellcheck, shfmt, actionlint, yamllint[% if use_skills_sync or use_node %], yq[% endif %] — required by
       `task check` / `task verify`.
     default: "false"
   gitleaks:
@@ -100,7 +100,7 @@ runs:
         # renovate: datasource=github-releases depName=go-task/task extractVersion=^v(?<version>.+)$
         version: 3.51.1
         repo-token: ${{ github.token }}
-    - name: Install lint tools (file, shellcheck, shfmt, actionlint, yamllint[% if use_skills_sync %], yq[% endif %])
+    - name: Install lint tools (file, shellcheck, shfmt, actionlint, yamllint[% if use_skills_sync or use_node %], yq[% endif %])
       if: inputs.lint-tools == 'true'
       shell: bash
       run: |
@@ -117,7 +117,7 @@ runs:
         ACTIONLINT_VERSION=1.7.12
         # renovate: datasource=pypi depName=yamllint
         YAMLLINT_VERSION=1.38.0
-[% if use_skills_sync %]
+[% if use_skills_sync or use_node %]
         # renovate: datasource=github-releases depName=mikefarah/yq extractVersion=^v?(?<version>.+)$
         YQ_VERSION=4.54.1 # pin-pair: yq
 [% endif %]
@@ -136,7 +136,7 @@ runs:
             # renovate: datasource=github-release-attachments depName=mvdan/sh digestVersion=v3.14.1
             shfmt_sha256=76e77641faa025814b77f153b29796b8e6fa2fca03e0c76a691608b86c7ea7bf # pin-pair: shfmt
             actionlint_arch=amd64
-[% if use_skills_sync %]
+[% if use_skills_sync or use_node %]
             yq_arch=amd64
             # renovate: datasource=github-release-attachments depName=mikefarah/yq digestVersion=v4.54.1
             yq_sha256=8e34fc298390875de416e6a4afcb8cabeceb25d9aa8506c1a2f9353cf702ea5f # pin-pair: yq
@@ -148,7 +148,7 @@ runs:
             # renovate: datasource=github-release-attachments depName=mvdan/sh digestVersion=v3.14.1
             shfmt_sha256=5f2db09dae91fca848f7adbdd014632e921a383863a2ad7e0450ad3aba0c6489 # pin-pair: shfmt
             actionlint_arch=arm64
-[% if use_skills_sync %]
+[% if use_skills_sync or use_node %]
             yq_arch=arm64
             # renovate: datasource=github-release-attachments depName=mikefarah/yq digestVersion=v4.54.1
             yq_sha256=189088da0c6429ec5178dfaab1a114805f6cab0b61b165ab236efedf1d57a71b # pin-pair: yq
@@ -203,7 +203,7 @@ runs:
           tar -xzf "${lint_tools_tmp}/actionlint.tar.gz" -C "$lint_tools_tmp" actionlint
           install -m 0755 "${lint_tools_tmp}/actionlint" "${lint_tools_bin}/actionlint"
         fi
-[% if use_skills_sync %]
+[% if use_skills_sync or use_node %]
         installed_yq_version=
         IFS= read -r installed_yq_version <<<"$(yq --version 2>/dev/null || true)"
         installed_yq_version="${installed_yq_version##* version v}"

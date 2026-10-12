@@ -93,6 +93,12 @@ rejects unknown-harness replace_in_table role.implementer '"codex-cli"' '"unknow
 rejects misspelled-tier-escalation replace_in_table rigor.cursory tier_escalation tier_escaltion
 rejects wrong-stage-finder replace_in_table stage.challenge 'finders = ["codex-adversarial"]' 'finders = ["codex-verification"]'
 rejects stage-pool-role-mismatch replace_in_table stage.integration '[stage.integration]' $'[stage.integration]\npool = ["codex-cli"]'
+# harmon-init#1571: review_trigger is a closed three-value scalar on
+# [stage.integration] alone, and the shipped value is after-ci.
+rejects unknown-review-trigger replace_in_table stage.integration 'review_trigger = "after-ci"' 'review_trigger = "parallel"'
+rejects non-string-review-trigger replace_in_table stage.integration 'review_trigger = "after-ci"' 'review_trigger = ["with-push"]'
+rejects review-trigger-outside-integration replace_in_table stage.review '[stage.review]' $'[stage.review]\nreview_trigger = "after-ci"'
+rejects non-default-shipped-review-trigger replace_in_table stage.integration 'review_trigger = "after-ci"' 'review_trigger = "with-push"'
 rejects invalid-strategy-topology replace_in_table strategy.oneshot 'topology    = "single-agent"' 'topology    = "nonsense"'
 rejects invalid-strategy-planning replace_in_table strategy.oneshot 'planning    = "inline"' 'planning    = "nonsense"'
 rejects invalid-strategy-delegation replace_in_table strategy.oneshot 'delegation  = "none"' 'delegation  = "nonsense"'
@@ -151,6 +157,15 @@ rejects_reader duplicate-fallback-finder replace_in_table stage.challenge \
 rejects_reader duplicate-stage-pool-harness replace_in_table stage.review \
     '[stage.review]' \
     $'[stage.review]\npool = ["codex-cli", "codex-cli"]'
+rejects_reader unknown-review-trigger replace_in_table stage.integration \
+    'review_trigger = "after-ci"' \
+    'review_trigger = "parallel"'
+rejects_reader non-string-review-trigger replace_in_table stage.integration \
+    'review_trigger = "after-ci"' \
+    'review_trigger = ["with-push"]'
+rejects_reader review-trigger-outside-integration replace_in_table stage.review \
+    '[stage.review]' \
+    $'[stage.review]\nreview_trigger = "after-ci"'
 rejects_reader non-string-default-strategy replace_once \
     'default_strategy = "plan"' \
     'default_strategy = 1'
@@ -601,4 +616,18 @@ reader_reversion_is_killed role-input-tier \
     matrix-corner-xs-trivial-derives-local \
     'const authoredTier = authoredTierOf(r)' \
     'const authoredTier = r.tier'
+# Each vector must isolate its intended guard, rather than be rejected by
+# an unrelated usage check or a present branch policy's registry requirement.
+reader_reversion_is_killed empty-merge-base-conflict \
+    empty-merge-base-policy-conflicts-with-absent-flag \
+    "args['merge-base-policy'] !== undefined && args['merge-base-policy-absent']" \
+    "args['merge-base-policy'] && args['merge-base-policy-absent']"
+reader_reversion_is_killed malformed-rigor-source \
+    malformed-rigor-source-is-usage \
+    "if (!['operator', 'label'].includes(args['rigor-source'])) {" \
+    'if (false) {'
+reader_reversion_is_killed merge-base-registry-required \
+    deleted-branch-policy-and-omitted-merge-base-registry-is-indeterminate \
+    $'    doc !== null ||\n    usesMergeBase ||' \
+    '    doc !== null ||'
 echo "devflow v2 mutation guards OK"
