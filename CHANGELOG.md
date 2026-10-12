@@ -8,6 +8,18 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [5.7.1](https://github.com/evanharmon1/harmon-init/compare/v5.7.0...v5.7.1) (2026-10-12)
+
+
+### Bug Fixes
+
+* **devcontainer:** update shared image to b75528a9 ([#1651](https://github.com/evanharmon1/harmon-init/issues/1651)) ([60c1116](https://github.com/evanharmon1/harmon-init/commit/60c11162efb3d0c62839dc22546c4d8a578aca74))
+* **docs:** count Claude Code's read-only auto-approval in the herdr launch-grant rule ([#1646](https://github.com/evanharmon1/harmon-init/issues/1646)) ([1d61916](https://github.com/evanharmon1/harmon-init/commit/1d61916741f90aef839da82070494dd2117a1ddd))
+* **docs:** state the template-owned floor refusal per release line ([#1645](https://github.com/evanharmon1/harmon-init/issues/1645)) ([80d18dd](https://github.com/evanharmon1/harmon-init/commit/80d18dd93d6fca93ed82e21b5c253a98687d16c7))
+* **template:** floor a multi-line advisory on the installed line ([#1648](https://github.com/evanharmon1/harmon-init/issues/1648)) ([6a640ea](https://github.com/evanharmon1/harmon-init/commit/6a640eabed3b9b7559958723d7302c72bcfdb2c9))
+* **template:** stop selector lower bounds from raising security-audit-fix floors ([#1644](https://github.com/evanharmon1/harmon-init/issues/1644)) ([7eb0c21](https://github.com/evanharmon1/harmon-init/commit/7eb0c21067090f63afc8604c8779061eb4894db0))
+* **template:** sync harmon-devkit skills to v0.57.0 ([#1649](https://github.com/evanharmon1/harmon-init/issues/1649)) ([bd698a7](https://github.com/evanharmon1/harmon-init/commit/bd698a7210019f014b8fec9ecc70a454d7cb2e68))
+
 ## [5.7.0](https://github.com/evanharmon1/harmon-init/compare/v5.6.0...v5.7.0) (2026-10-12)
 
 
