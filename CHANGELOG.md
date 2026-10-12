@@ -8,6 +8,24 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [5.7.0](https://github.com/evanharmon1/harmon-init/compare/v5.6.0...v5.7.0) (2026-10-12)
+
+
+### Features
+
+* **devflow:** let .devflow.toml choose when the integration stage requests PR review ([#1641](https://github.com/evanharmon1/harmon-init/issues/1641)) ([1529af2](https://github.com/evanharmon1/harmon-init/commit/1529af2ef3b8bb2957ca454fac0502cebaee1bff))
+* **template:** open a scheduled remediation PR when the dependency audit finds high advisories ([#1632](https://github.com/evanharmon1/harmon-init/issues/1632)) ([413fd7b](https://github.com/evanharmon1/harmon-init/commit/413fd7bef606b4e604d0a75cbc90ad80978371e5))
+
+
+### Bug Fixes
+
+* **dev-flow:** accept the split disposition in the repo's adjudication schema and validator ([#1627](https://github.com/evanharmon1/harmon-init/issues/1627)) ([93a8ee0](https://github.com/evanharmon1/harmon-init/commit/93a8ee03693627a6f7377901ec12bb42866df33b))
+* **dev-loop:** tighten the update-branch catch-up wording ([#1642](https://github.com/evanharmon1/harmon-init/issues/1642)) ([67aa007](https://github.com/evanharmon1/harmon-init/commit/67aa007d81feb8236944e6cc96babc21aa68369d))
+* **docs:** say to re-lock after a floor-block update and narrow the upstream-audit claim ([#1637](https://github.com/evanharmon1/harmon-init/issues/1637)) ([8e790b3](https://github.com/evanharmon1/harmon-init/commit/8e790b3fa02f966c75a5cb130860b9f2a0aa37d2))
+* **docs:** state that the herdr launch grant matches only a bare agent start command ([#1623](https://github.com/evanharmon1/harmon-init/issues/1623)) ([dd31c1d](https://github.com/evanharmon1/harmon-init/commit/dd31c1d436c427caed8ec245d2a6cf3d62c78796))
+* **template:** refuse unreadable caps and publish only the audited commit in security-audit-fix ([#1638](https://github.com/evanharmon1/harmon-init/issues/1638)) ([0bce672](https://github.com/evanharmon1/harmon-init/commit/0bce6722a123ce04b66ba4aab5a1edfc9f707b37))
+* **template:** sync harmon-devkit skills to v0.56.0 ([#1625](https://github.com/evanharmon1/harmon-init/issues/1625)) ([d2fd4d5](https://github.com/evanharmon1/harmon-init/commit/d2fd4d5fc56efd8901d978abe48ee90555ecdc05))
+
 ## [5.6.0](https://github.com/evanharmon1/harmon-init/compare/v5.5.1...v5.6.0) (2026-10-11)
 
 
