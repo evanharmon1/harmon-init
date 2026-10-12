@@ -49,8 +49,9 @@ Resolve rigor and strategy in this order:
 Use `--merge-base-policy-absent` for a branch that adds `.devflow.toml`.
 It requires an existing `--policy` file and cannot be combined with
 `--merge-base-policy`. The candidate is validated independently; built-in
-values govern the run. Invalid flag combinations (including `--rigor-source`
-without `--rigor`) or malformed operator `--tier-overrides` /
+values govern the run. An empty `--merge-base-policy ""` is a usage error
+(exit 2), never permission for the branch policy to govern. Invalid flag
+combinations (including `--rigor-source` without `--rigor`) or malformed operator `--tier-overrides` /
 `--rigor-source` values exit with usage status 2. Successful resolution exits
 0; invalid policy exits 1. Exit 3 means resolved but indeterminate:
 cross-validation could not finish (no registry was supplied, or no gate-target
@@ -190,6 +191,24 @@ accounts for it — until then its single cycle counter governs, no cycle is
 exempt, and a cycle ordinal above `integration` is rejected by the readiness
 gate as `codex-cap-mismatch`.
 
+A PR that falls behind its base is caught up at the gate in a fixed order:
+GitHub **update-branch** first (merge mode, pinned to the captured head with
+`expected_head_sha`, never `--rebase`, after re-reading `baseRefName`), then
+**CI** on the new head, then, where Codex cloud review is enabled and the
+`integration` cap is positive, **`carry`** or the ordinary current-head cycle.
+Where available, use the integrate skill's `assets/update-branch.sh` helper.
+Before any further local commit, explicitly fetch the PR's head repository and
+branch, fast-forward to the recorded catch-up OID, and confirm `HEAD` equals it.
+A server-side catch-up authors no bytes, so it runs no local round gate or
+secret scan and spends no `remediation` round; the readiness gate's CI
+condition gates it. That head counts only if its parents are exactly the
+captured head, then the base tip, its committer is `GitHub <noreply@github.com>`,
+and its web-flow signature verifies; any other head is a newer push, which
+restarts the gate.
+A genuine merge refusal, or a base merge that must ship with a fix, falls back
+to a local merge, which is an ordinary remediation round.
+`AGENTS.md` § "Policy invariants" states the standard path and fallback.
+
 A base catch-up merge is tried for a **carry** before the exemption. When the
 change's canonical diff digest against the new base is identical to the one a
 clean verdict already covered, that verdict attests the new head too: no review
@@ -250,6 +269,15 @@ harness preference; it is not an empty allowlist.
 - `finders` and `finder_fallbacks` reference registry finder slugs;
 - `pool` references harness slugs;
 - every array is monomorphic and has the semantics documented beside it in
+  `.devflow.toml`;
+- `[stage.integration].review_trigger`, the one scalar, sets when the
+  integration stage requests its PR-side reviews relative to CI on the head:
+  `after-ci` (the value when the key is absent), `with-push`, or
+  `after-ci-first`. Any other value, or the key on another stage, is refused.
+  The reader reports it as `stages.integration.review_trigger` in its JSON and
+  on the `stage[integration]` line of its text output. It changes timing only
+  — never the readiness gate, which finders run, or the cycles the rounds
+  policy requires — and its trade-off and cap note sit beside it in
   `.devflow.toml`.
 
 The registry is authoritative for role result schemas and permitted writes,

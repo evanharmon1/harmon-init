@@ -8,6 +8,8 @@ import json, pathlib, re, subprocess, sys, tempfile, tomllib
 root = pathlib.Path.cwd()
 roles = {"orchestrator", "implementer", "challenger", "reviewer", "integrator"}
 stages = {"implement", "challenge", "review", "integration"}
+# harmon-init#1571: [stage.integration].review_trigger, the one scalar stage key.
+review_triggers = ["after-ci", "with-push", "after-ci-first"]
 tiers = ["local", "economy", "standard", "frontier", "apex"]
 # ADR 2026-09-30 D2/D4: [tier.matrix] rows are Complexity, columns Risk.
 complexities = ["xs", "s", "m", "l", "xl"]
@@ -102,6 +104,9 @@ for rel, text in policy_text.items():
     if set(cfg["stage"]) != stages: fail(f"{rel}: stage tables are incomplete")
     for name, value in cfg["stage"].items():
         for key, entries in value.items():
+            if name == "integration" and key == "review_trigger":
+                if entries not in review_triggers: fail(f"{rel}: stage.integration.review_trigger must be one of {review_triggers}")
+                continue
             if key not in {"finders", "finder_fallbacks", "pool"} or not isinstance(entries, list): fail(f"{rel}: stage arrays must be monomorphic")
             universe = harnesses if key == "pool" else finders
             if not set(entries) <= universe: fail(f"{rel}: stage.{name}.{key} contains unknown slugs")
@@ -132,6 +137,9 @@ for label, local_review, cloud_review in (
     want = canonical["stage"]["integration"].get("finders", []) if cloud_review else []
     if cfg["stage"]["integration"].get("finders", []) != want:
         fail(f"{label}: stage.integration.finders does not honor use_codex_cloud_review")
+    # The shipped timing is today's serial order on every render.
+    if cfg["stage"]["integration"].get("review_trigger") != "after-ci":
+        fail(f"{label}: stage.integration.review_trigger must ship as after-ci")
 
 with tempfile.TemporaryDirectory() as tmp:
     for label, text in policy_text.items():
@@ -150,7 +158,10 @@ with tempfile.TemporaryDirectory() as tmp:
         # against, so a positive exempt ceiling there would conjure cycles the
         # operator disabled; a render is the only place that case is reachable,
         # since no shipped level sets integration = 0.
-        resolved_rounds = json.loads(run.stdout)["rounds"]
+        resolved_policy = json.loads(run.stdout)
+        if resolved_policy["stages"]["integration"].get("review_trigger") != "after-ci":
+            fail(f"{label}: resolved stages.integration.review_trigger must be after-ci")
+        resolved_rounds = resolved_policy["rounds"]
         if "integration_exempt" not in resolved_rounds:
             fail(f"{label}: resolved rounds must expose integration_exempt")
         if resolved_rounds["integration_exempt"] != resolved_rounds["integration"]:
@@ -164,14 +175,19 @@ if schema["properties"]["schema_version"]["const"] != 2: fail("v2 schema const m
 if schema["$defs"]["rigor_profile"]["properties"].get("convergence", {}).get("$ref") != "#/$defs/convergence_override": fail("v2 schema lacks per-rigor convergence overrides")
 if schema["$defs"]["rigor_profile"]["properties"].get("spend", {}).get("type") != "string": fail("v2 schema lacks per-rigor spend pointers")
 stage_schema = schema["$defs"]["stage_profiles"]
+if schema["$defs"].get("review_trigger", {}).get("enum") != review_triggers: fail("v2 schema's review_trigger enum must be exactly after-ci, with-push, after-ci-first")
+integration_schema = schema["$defs"].get("integration_stage_profile", {})
+if stage_schema.get("properties", {}).get("integration", {}).get("$ref") != "#/$defs/integration_stage_profile" or integration_schema.get("additionalProperties") is not False or set(integration_schema.get("properties", {})) != {"finders", "finder_fallbacks", "pool", "review_trigger"}: fail("v2 schema must admit review_trigger on [stage.integration] alone")
+if "review_trigger" in schema["$defs"]["stage_profile"].get("properties", {}): fail("v2 schema must not admit review_trigger outside [stage.integration]")
 if stage_schema.get("additionalProperties") is not False or set(stage_schema.get("required", [])) != stages or set(stage_schema.get("properties", {})) != stages: fail("v2 schema must close the exact four-stage catalog")
 role_schema = schema["$defs"]["role_profiles"]
 if role_schema.get("additionalProperties") is not False or set(role_schema.get("required", [])) != roles or set(role_schema.get("properties", {})) != roles: fail("v2 schema must close the exact five-role catalog")
 if {row.get("$ref") for row in schema["$defs"]["convergence_expression"].get("oneOf", [])} != {"#/$defs/convergence_all", "#/$defs/convergence_any"}: fail("v2 schema must make convergence roots an exclusive all/any union")
 if len(schema["$defs"]["convergence_item"].get("oneOf", [])) != 6: fail("v2 schema must make convergence items an exclusive predicate/all/any union")
-for key in ("finders", "finder_fallbacks", "pool"):
-    if schema["$defs"]["stage_profile"]["properties"][key].get("$ref") != "#/$defs/strings_allow_empty":
-        fail(f"v2 schema must permit an explicit empty stage.{key} list")
+for profile in ("stage_profile", "integration_stage_profile"):
+    for key in ("finders", "finder_fallbacks", "pool"):
+        if schema["$defs"][profile]["properties"][key].get("$ref") != "#/$defs/strings_allow_empty":
+            fail(f"v2 schema must permit an explicit empty stage.{key} list ({profile})")
 if "minItems" in schema["$defs"]["strings_allow_empty"]:
     fail("v2 schema's empty stage-list definition must not require minItems")
 if schema["$defs"]["tier"].get("enum") != tiers: fail("v2 schema's tier enum must be exactly tier_order (no retired adaptive)")
