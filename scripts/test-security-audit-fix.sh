@@ -913,6 +913,59 @@ grep -qx 'pnpm install --lockfile-only --ignore-scripts' "$p/.stub/calls" ||
     fail "multi-range-upper-only: fallback skipped re-audit"
 pass "multi-range-upper-only: the selected alternative supplies a published patch despite another line's zero lower bound"
 
+# Integration cycle 1: choose the lowest plain patch strictly ABOVE the
+# installed version. Old patched intervals and too-low in-major proposals
+# must not hide a later fix; alternative order must not decide the floor.
+for patch_case in gap-on-line gap-after-second lowest-unordered single-line-crossing; do
+    case "$patch_case" in
+    gap-on-line)
+        installed=2.1.5 patched='>=2.0.0 <2.1.0 || >=2.2.0' proposal='^2.0.0' patch_floor=2.2.0
+        ;;
+    gap-after-second)
+        installed=2.3.0 patched='>=1.9.0 <2.0.0 || >=2.1.0 <2.2.0 || >=2.4.0' proposal='^2.1.0' patch_floor=2.4.0
+        ;;
+    lowest-unordered)
+        installed=2.1.5 patched='>=2.4.0 || >=2.2.0 || >=2.0.0 <2.1.0' proposal='^2.0.0' patch_floor=2.2.0
+        ;;
+    single-line-crossing)
+        installed=2.0.1 patched='>=2.1.5' proposal='^3.0.0' patch_floor=2.1.5
+        ;;
+    esac
+    p="$(new_project "$patch_case")"
+    advisory GHSA-xxxx-xxxx-xxxx pkgz high "<$patch_floor" "$installed" direct "$patched" |
+        jq '{advisories: .}' >"$p/.stub/audit.json"
+    fix_adds "$p" "pkgz@<$patch_floor" "$proposal"
+    echo "pkgz@2: '>=${patch_floor} <3'" >"$p/.stub/cleared-by"
+    : >"$p/.stub/needs-relock"
+    run_fix "$p" --report "$p/report.md" >"$p/out.log" 2>&1 || {
+        cat "$p/out.log"
+        fail "$patch_case: exited non-zero"
+    }
+    expect_keys "$p" "$patch_case" "pkgz@2=>=${patch_floor} <3"
+    expect_below_marker "$p" "$patch_case" pkgz@2
+    grep -qx 'pnpm install --lockfile-only --ignore-scripts' "$p/.stub/calls" ||
+        fail "$patch_case: skipped lockfile re-resolve"
+    [ "$(grep -c 'pnpm audit --audit-level=high --json' "$p/.stub/calls")" -eq 2 ] ||
+        fail "$patch_case: skipped re-audit"
+    pass "$patch_case: installed $installed gets published floor $patch_floor, relocked and re-audited"
+done
+
+# A suffix is not proof that its normalized release was published. Neither
+# a prerelease nor a build-suffixed lower bound authorizes the union fallback.
+suffix_iteration=0
+for suffix_patch in '>=2.1.5-beta.1 <2.1.5' '>=2.1.5+build'; do
+    suffix_iteration=$((suffix_iteration + 1))
+    p="$(new_project "suffix-patch-$suffix_iteration")"
+    advisory GHSA-xxxx-xxxx-xxxx pkgz high '<2.1.5' 2.0.1 direct "$suffix_patch || >=3.0.0" |
+        jq '{advisories: .}' >"$p/.stub/audit.json"
+    fix_adds "$p" 'pkgz@<2.1.5' '^2.1.5'
+    expect_refused "$p" suffix-patch 'no patched range on major 2'
+    if grep -q 'install' "$p/.stub/calls"; then
+        fail "suffix-patch: an unpublished plain release authorized a relock"
+    fi
+    pass "suffix-patch: $suffix_patch is not a published plain patch on major 2"
+done
+
 # A fallback that fails its audit proof rolls back all project bytes.
 p="$(new_project multi-range-not-cleared)"
 advisory GHSA-xxxx-xxxx-xxxx pkgz high '<1.3.4 || >=2.0.0 <2.1.5' 2.0.1 direct '>=1.3.4 <2.0.0 || >=2.1.5' |
@@ -945,8 +998,10 @@ pass "no-patch-published: an advisory with no concrete patch remains refused"
 
 # An inferred vulnerable-range boundary is not a published patch, even
 # when it is concrete and belongs to the installed line.
+inferred_iteration=0
 for unpublished in '<0.0.0' ''; do
-    p="$(new_project inferred-only)"
+    inferred_iteration=$((inferred_iteration + 1))
+    p="$(new_project "inferred-only-$inferred_iteration")"
     advisory GHSA-xxxx-xxxx-xxxx pkgz high '<2.1.5' 2.0.1 direct "$unpublished" |
         jq '{advisories: .}' >"$p/.stub/audit.json"
     fix_adds "$p" 'unrelated@<1.3.4' '^1.3.4'
