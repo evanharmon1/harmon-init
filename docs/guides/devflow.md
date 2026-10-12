@@ -194,11 +194,17 @@ gate as `codex-cap-mismatch`.
 A PR that falls behind its base is caught up at the gate in a fixed order:
 GitHub **update-branch** first (merge mode, pinned to the captured head with
 `expected_head_sha`, never `--rebase`, after re-reading `baseRefName`), then
-**CI** on the new head, then, where Codex cloud review is enabled, **`carry`**.
+**CI** on the new head, then, where Codex cloud review is enabled and the
+`integration` cap is positive, **`carry`** or the ordinary current-head cycle.
+Where available, use the integrate skill's `assets/update-branch.sh` helper.
+Before any further local commit, explicitly fetch the PR's head repository and
+branch, fast-forward to the recorded catch-up OID, and confirm `HEAD` equals it.
 A server-side catch-up authors no bytes, so it runs no local round gate or
 secret scan and spends no `remediation` round; the readiness gate's CI
-condition gates it. That head counts only if it is the merge of the captured
-head and the base tip; any other head is a newer push, which restarts the gate.
+condition gates it. That head counts only if its parents are exactly the
+captured head, then the base tip, its committer is `GitHub <noreply@github.com>`,
+and its web-flow signature verifies; any other head is a newer push, which
+restarts the gate.
 A genuine merge refusal, or a base merge that must ship with a fix, falls back
 to a local merge, which is an ordinary remediation round.
 `AGENTS.md` § "Policy invariants" states the standard path and fallback.
