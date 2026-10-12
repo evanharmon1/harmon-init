@@ -180,7 +180,10 @@ remediation is mechanical, and the template does it for you:
   `pnpm-workspace.yaml` byte-for-byte, and writes its own floor for each
   one below the template-owned block's end marker: `pkg@<major>: '>=x.y.z
   <next-major'` (0.x: `pkg@0.m: '>=0.m.p <0.(m+1)'`) with a comment naming the
-  advisories. When an existing local override for the package has a narrower
+  advisories. When pnpm proposes no covering fix on the installed line, a
+  concrete patched version from the advisory on that line supplies the floor
+  instead; the same lockfile re-resolve and re-audit must prove it clears the
+  advisory. When an existing local override for the package has a narrower
   explicit cap above the new floor (`'>=1.5.0 <1.8.0'`), that cap is kept in
   place of `<next-major`. It then re-resolves the lockfile without running
   lifecycle scripts and re-audits; a floor that does not clear its advisory is
@@ -188,8 +191,10 @@ remediation is mechanical, and the template does it for you:
 - It **refuses** — exits 3 and writes nothing — when a fix would cross a major
   (it names the package, both majors, and the direct dependency that pulls the
   old line in: upgrade that dependency deliberately), when no patched version
-  exists, when the floor belongs to the template-owned block (raise that
-  upstream in harmon-init instead), or when an existing override for the
+  exists on the installed line (or no covering proposal exists and the advisory
+  gives no concrete patch there; the refusal names the major), when the floor
+  belongs to the template-owned block (raise that upstream in harmon-init
+  instead), or when an existing override for the
   package stands in the way: one whose cap the script cannot prove (an exact
   pin, `~`, an x-range, a hyphen range, `^0.x`, a prerelease or build suffix,
   `||`) or that caps the package at or below the patched version, one placed
