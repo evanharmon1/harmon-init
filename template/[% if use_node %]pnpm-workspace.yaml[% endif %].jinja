@@ -20,6 +20,14 @@ allowBuilds:
   workerd: true
 [% endif %]
 
+# Security floors: raise them with `task security:audit:fix`, never raw
+# `pnpm audit --fix`. Even under pnpm 11, raw --fix keys each override by the
+# advisory's vulnerable range (`pkg@<1.2.3: ^1.2.3`) — an unbounded selector
+# that spans every earlier major instead of flooring the one you resolve — and
+# forces a new major when the patch exists only there (`pkg@<=8.5.1:
+# ^9.0.0`); it can also drop comments here, including the markers below. The
+# task writes bounded `pkg@<major>` floors below the end marker, re-resolves
+# the lockfile, and refuses (writing nothing) a fix that would cross a major.
 overrides:
   # --- harmon-init security floors (template-owned; updated by copier update) ---
   # A 0.x minor is the semver breaking boundary. Selectors are version-scoped,
