@@ -2670,10 +2670,7 @@
       "name": "known-stage-tables-resolve",
       "basis": "branch",
       "config_replacements": [
-        [
-          "[stage.implement]",
-          "[stage.implement]\npool = [\"claude-code\", \"codex-cli\"]"
-        ]
+        ["[stage.implement]", "[stage.implement]\npool = [\"claude-code\", \"codex-cli\"]"]
       ],
       "expect": {
         "exit": 0,
