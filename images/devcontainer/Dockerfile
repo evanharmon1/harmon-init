@@ -44,9 +44,9 @@ ARG OH_MY_PI_VERSION=18.8.4
 # omp-linux-arm64 binaries (not the source archives), check the release notes
 # and provenance, and compute their sha256. scripts/test-oh-my-pi-pin.sh fails
 # fast until the marker below is moved to match OH_MY_PI_VERSION.
-# verified-for: 18.4.6
-ARG OH_MY_PI_SHA256_AMD64=9eb0668d3ccab78c39598b7717461f8621136114618387da22b3ddd454fb163b
-ARG OH_MY_PI_SHA256_ARM64=c32567aa42c166432db79ec1e75dbc3bfe236b0bc32d729fe0c21bd344aed995
+# verified-for: 18.8.4
+ARG OH_MY_PI_SHA256_AMD64=b2dba223fbdae27acbd99be2f3e76ba10baae1768f9c57cee30c440f308dea4e
+ARG OH_MY_PI_SHA256_ARM64=e12983d063a1946d7aa20b9fa402c0a4ac65eefa26c3168c502c4f28a04cd3bd
 # renovate: datasource=npm depName=opencode-ai
 ARG OPENCODE_VERSION=1.18.35
 # Pinned from Google's per-platform release manifests. Keep the version, build,
@@ -81,8 +81,8 @@ ARG FRESH_SHA256_ARM64=12f15eff367c4a86b47afb939982e23e8bc92b8c62e7de3bdaf29d46d
 ARG TTT_VERSION=1.7.0
 # TTT release SHA-256 values. The version pin is Renovate-managed;
 # update these reviewed, architecture-specific digests with each release.
-ARG TTT_SHA256_AMD64=3dc9003fa91b6430480f42588c9027cf9f106d318e20d77a7f7b13a01eef98e3
-ARG TTT_SHA256_ARM64=7a2d93a70beb6c4f10e35d8ef708bee121912430417fcf0c3648c96084245c02
+ARG TTT_SHA256_AMD64=67eeb244b8e8cc6a996d09715a91abaa370d883aae6b43ebc3707b9dec75e4fd
+ARG TTT_SHA256_ARM64=91b2520ce2089e5e4200d4c6b1979621001c3dfe78ba7a38a993ccf9d99b7c78
 # renovate: datasource=github-releases depName=charmbracelet/glow extractVersion=^v?(?<version>.+)$
 ARG GLOW_VERSION=3.0.0
 # renovate: datasource=github-releases depName=jesseduffield/lazygit extractVersion=^v?(?<version>.+)$
