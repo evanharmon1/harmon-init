@@ -1044,7 +1044,14 @@ function resolveStageArray(value, label, fallback) {
 }
 
 function resolveStages(doc) {
-  requireClosedTable(doc.stage, STAGES, [], '[stage]')
+  try {
+    requireClosedTable(doc.stage, STAGES, [], '[stage]')
+  } catch (err) {
+    if (err instanceof PolicyError && err.message.startsWith('[stage] has invalid keys')) {
+      throw new PolicyError(`${err.message} (known: ${STAGES.join(', ')})`)
+    }
+    throw err
+  }
   const result = {}
   for (const stage of STAGES) {
     const table = doc.stage?.[stage]
