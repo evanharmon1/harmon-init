@@ -33,9 +33,6 @@ set -euo pipefail
 [ -z "${token+x}" ] || exit 99
 [ "${GH_TOKEN:-}" = 'stub-web-identity-canary' ] || exit 99
 [ -z "$(ls -A)" ] || exit 99
-if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    exit 99
-fi
 pwd -P >"${TEST_LOG_DIR}/claude-directory"
 exit "${TEST_CLAUDE_RC:-0}"
 STUB
@@ -104,6 +101,11 @@ run_setup
 [ "$rc" -eq 0 ] || fail "an inherited token export reached Claude"
 [ -e "${test_tmp}/claude-started" ] || fail "exported-token run never started Claude"
 unset token
+
+echo "==> inherited allexport does not carry the secret in a token variable"
+run_setup env SHELLOPTS=allexport bash
+[ "$rc" -eq 0 ] || fail "inherited allexport exported the token to Claude"
+[ -e "${test_tmp}/claude-started" ] || fail "allexport run never started Claude"
 
 echo "==> TMPDIR inside a Git work tree does not determine Claude's directory"
 mkdir -p "${test_tmp}/checkout/tmp"

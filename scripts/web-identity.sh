@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Start /web-setup with the bot token, away from any checkout's settings/hooks.
-{ set +x; } 2>/dev/null
+{ set +xa; } 2>/dev/null
 set -euo pipefail
 
 if [ -z "${WEB_SETUP_TOKEN_REF:-}" ]; then
@@ -21,10 +21,6 @@ fi
 setup_dir="$(mktemp -d /tmp/web-identity.XXXXXX)"
 [ -n "$setup_dir" ] || exit 1
 trap 'cd / && rm -rf -- "$setup_dir"' EXIT
-if git -C "$setup_dir" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-    echo "ERROR: temporary directory is inside a Git work tree; Claude was not started." >&2
-    exit 1
-fi
 cd "$setup_dir"
 
 cat <<'GUIDANCE'

@@ -353,7 +353,7 @@ then `/web-setup`) is not observed.
    ```bash
    (
      t="$(<your secret store's read command>)" && [ -n "$t" ] \
-       && d="$(mktemp -d)" && [ -n "$d" ] || exit 1
+       && d="$(mktemp -d /tmp/web-identity.XXXXXX)" && [ -n "$d" ] || exit 1
      trap 'cd / && rm -rf -- "$d"' EXIT
      cd "$d" && GH_TOKEN="$t" claude
    )
