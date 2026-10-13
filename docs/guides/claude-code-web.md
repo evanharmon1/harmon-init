@@ -352,6 +352,7 @@ then `/web-setup`) is not observed.
 
    ```bash
    (
+     { set +xa; } 2>/dev/null
      t="$(<your secret store's read command>)" && [ -n "$t" ] \
        && d="$(mktemp -d /tmp/web-identity.XXXXXX)" && [ -n "$d" ] || exit 1
      trap 'cd / && rm -rf -- "$d"' EXIT

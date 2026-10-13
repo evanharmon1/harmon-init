@@ -114,8 +114,9 @@ run_setup env TMPDIR="${test_tmp}/checkout/tmp" bash
 [ "$rc" -eq 0 ] || fail "TMPDIR placed Claude inside a work tree"
 [ -e "${test_tmp}/claude-started" ] || fail "TMPDIR run never started Claude"
 setup_dir="$(cat "${test_tmp}/claude-directory")"
+tmp_real="$(cd /tmp && pwd -P)"
 case "$setup_dir" in
-/tmp/web-identity.*) ;;
+"$tmp_real"/web-identity.*) ;;
 *) fail "Claude's directory was not under the fixed absolute base" ;;
 esac
 [ ! -e "$setup_dir" ] || fail "TMPDIR run left Claude's directory behind"
