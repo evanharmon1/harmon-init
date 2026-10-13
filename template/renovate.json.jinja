@@ -137,6 +137,12 @@
       "description": "Batch all Docker image updates into one PR",
       "matchDatasources": ["docker"],
       "groupName": "Docker images"
+    },
+    {
+      "description": "Keep Ubuntu pinned to 24.04 LTS for remote-bootstrap environment parity; digest updates only",
+      "matchPackageNames": ["ubuntu"],
+      "matchUpdateTypes": ["major"],
+      "enabled": false
     }[% if use_skills_sync %],
     {
       "description": "Surface harmon-devkit releases for deliberate pin-and-sync updates",
