@@ -121,4 +121,18 @@ case "$setup_dir" in
 esac
 [ ! -e "$setup_dir" ] || fail "TMPDIR run left Claude's directory behind"
 
+echo "==> setup:web-identity stays interactive through Task's global output grouping"
+# The root Taskfile sets `output: group`, so Task pipes each task's stdout; without
+# `interactive: true` the claude TUI would be buffered. scripts/test-tasks.sh pins
+# the same key for tasks both twins share; this task is root-only, so it is pinned
+# here. A whole-line directive, never a substring of a comment.
+repo_root="$(cd "$(dirname "$0")/.." && pwd)"
+block="$(awk '$0 == "  setup:web-identity:" { inblock = 1; next }
+    inblock && /^  [a-zA-Z0-9]/ { inblock = 0 }
+    inblock { print }' "${repo_root}/Taskfile.yml")"
+[ -n "$block" ] || fail "Taskfile.yml: task setup:web-identity not found"
+printf '%s\n' "$block" | grep -vE '^[[:space:]]*#' |
+    grep -qE '^[[:space:]]*interactive:[[:space:]]*true[[:space:]]*$' ||
+    fail "Taskfile.yml: setup:web-identity lacks 'interactive: true'"
+
 echo "test-web-identity.sh passed"
