@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [5.7.2](https://github.com/evanharmon1/harmon-init/compare/v5.7.1...v5.7.2) (2026-10-13)
+
+
+### Bug Fixes
+
+* **devcontainer:** update shared image to 0bf80044 ([#1657](https://github.com/evanharmon1/harmon-init/issues/1657)) ([70f88f2](https://github.com/evanharmon1/harmon-init/commit/70f88f2c1d79501136d27815b7406dae8804801b))
+
 ## [5.7.1](https://github.com/evanharmon1/harmon-init/compare/v5.7.0...v5.7.1) (2026-10-12)
 
 
