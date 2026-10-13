@@ -339,7 +339,15 @@ then `/web-setup`) is not observed.
    disconnect GitHub.
 2. Start the local CLI with the bot's classic PAT (scope `repo`, no `workflow`)
    in `GH_TOKEN`, **read from your secret store by command substitution, never
-   typed**, and run `/web-setup`:
+   typed**. From a harmon-init checkout, run:
+
+   ```bash
+   WEB_SETUP_TOKEN_REF='op://<vault>/<item>/<field>' task setup:web-identity
+   ```
+
+   The task starts `claude` in a fresh empty directory, so its settings and hooks
+   come from that directory, not the checkout where you ran Task. Run `/web-setup`
+   inside it. On a host without the task, use the hand-run subshell instead:
 
    ```bash
    (
@@ -350,8 +358,8 @@ then `/web-setup`) is not observed.
    )
    ```
 
-   It **fails closed**: if the read fails or returns nothing, or `mktemp` fails,
-   the subshell exits before `claude` starts. Without that, an empty `GH_TOKEN`
+   Both **fail closed**: if the read fails or returns nothing, or `mktemp` fails,
+   they exit before `claude` starts. Without that, an empty `GH_TOKEN`
    makes `gh` — and so `/web-setup` — fall back to your own stored login, which
    would become the cloud identity. The subshell keeps the token out of your
    interactive shell and leaves that shell where it was, and its `EXIT` trap
