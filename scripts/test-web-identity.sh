@@ -30,8 +30,12 @@ set -euo pipefail
 : >"${TEST_LOG_DIR}/claude-started"
 [ "$#" -eq 0 ] || exit 99
 [ -z "${TEST_TOKEN+x}" ] || exit 99
+[ -z "${token+x}" ] || exit 99
 [ "${GH_TOKEN:-}" = 'stub-web-identity-canary' ] || exit 99
 [ -z "$(ls -A)" ] || exit 99
+if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    exit 99
+fi
 pwd -P >"${TEST_LOG_DIR}/claude-directory"
 exit "${TEST_CLAUDE_RC:-0}"
 STUB
@@ -44,7 +48,8 @@ TEST_TOKEN='stub-web-identity-canary'
 run_setup() {
     rm -f "${test_tmp}/op-started" "${test_tmp}/claude-started" "${test_tmp}/claude-directory"
     rc=0
-    bash "${repo}/scripts/web-identity.sh" >"${test_tmp}/output" 2>&1 || rc=$?
+    [ "$#" -gt 0 ] || set -- bash
+    "$@" "${repo}/scripts/web-identity.sh" >"${test_tmp}/output" 2>&1 || rc=$?
     if grep -Fq "$TEST_TOKEN" "${test_tmp}/output"; then
         fail "script output contains the token"
     fi
@@ -80,5 +85,37 @@ for TEST_CLAUDE_RC in 0 7; do
     [ ! -e "$setup_dir" ] || fail "Claude's directory still exists"
     grep -Fq 'Connected as evanharmon1-bot' "${test_tmp}/output" || fail "missing expected identity"
 done
+
+export TEST_CLAUDE_RC=0
+for trace_mode in inherited explicit; do
+    echo "==> $trace_mode tracing never prints the token"
+    if [ "$trace_mode" = inherited ]; then
+        run_setup env SHELLOPTS=xtrace bash
+    else
+        run_setup bash -x
+    fi
+    [ "$rc" -eq 0 ] || fail "$trace_mode traced run failed"
+    [ -e "${test_tmp}/claude-started" ] || fail "$trace_mode traced run never started Claude"
+done
+
+echo "==> an inherited token export does not carry the secret to Claude"
+export token=ambient-value
+run_setup
+[ "$rc" -eq 0 ] || fail "an inherited token export reached Claude"
+[ -e "${test_tmp}/claude-started" ] || fail "exported-token run never started Claude"
+unset token
+
+echo "==> TMPDIR inside a Git work tree does not determine Claude's directory"
+mkdir -p "${test_tmp}/checkout/tmp"
+git -c init.templateDir= init -q "${test_tmp}/checkout"
+run_setup env TMPDIR="${test_tmp}/checkout/tmp" bash
+[ "$rc" -eq 0 ] || fail "TMPDIR placed Claude inside a work tree"
+[ -e "${test_tmp}/claude-started" ] || fail "TMPDIR run never started Claude"
+setup_dir="$(cat "${test_tmp}/claude-directory")"
+case "$setup_dir" in
+/tmp/web-identity.*) ;;
+*) fail "Claude's directory was not under the fixed absolute base" ;;
+esac
+[ ! -e "$setup_dir" ] || fail "TMPDIR run left Claude's directory behind"
 
 echo "test-web-identity.sh passed"

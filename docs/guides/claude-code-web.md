@@ -345,8 +345,9 @@ then `/web-setup`) is not observed.
    WEB_SETUP_TOKEN_REF='op://<vault>/<item>/<field>' task setup:web-identity
    ```
 
-   The task starts `claude` in a fresh empty directory, so its settings and hooks
-   come from that directory, not the checkout where you ran Task. Run `/web-setup`
+   The task starts `claude` in a fresh empty directory, so the checkout's project
+   settings, hooks and MCP servers don't apply. Your user-level and managed Claude
+   Code settings still load, as they do for the hand-run subshell. Run `/web-setup`
    inside it. On a host without the task, use the hand-run subshell instead:
 
    ```bash
