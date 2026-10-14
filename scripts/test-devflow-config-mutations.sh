@@ -93,6 +93,7 @@ rejects unknown-harness replace_in_table role.implementer '"codex-cli"' '"unknow
 rejects misspelled-tier-escalation replace_in_table rigor.cursory tier_escalation tier_escaltion
 rejects wrong-stage-finder replace_in_table stage.challenge 'finders = ["codex-adversarial"]' 'finders = ["codex-verification"]'
 rejects stage-pool-role-mismatch replace_in_table stage.integration '[stage.integration]' $'[stage.integration]\npool = ["codex-cli"]'
+rejects extra-stage-table append_text $'\n[stage.integraton]\n'
 # harmon-init#1571: review_trigger is a closed three-value scalar on
 # [stage.integration] alone, and the shipped value is after-ci.
 rejects unknown-review-trigger replace_in_table stage.integration 'review_trigger = "after-ci"' 'review_trigger = "parallel"'
@@ -630,4 +631,20 @@ reader_reversion_is_killed merge-base-registry-required \
     deleted-branch-policy-and-omitted-merge-base-registry-is-indeterminate \
     $'    doc !== null ||\n    usesMergeBase ||' \
     '    doc !== null ||'
+reader_reversion_is_killed unknown-stage-table \
+    unknown-stage-table-is-refused \
+    "    requireClosedTable(doc.stage, STAGES, [], '[stage]')" \
+    '    if (false) requireClosedTable(doc.stage, STAGES, [], "[stage]")'
+
+reset_policy
+append_text $'\n[stage.integraton]\nreview_trigger = "with-push"\n'
+if resolve_reader 2>"$tmp/unknown-stage.err"; then
+    echo "FAIL: JS reader accepted an unknown [stage.*] table" >&2
+    exit 1
+fi
+grep -Fq 'devflow-policy: [stage] has invalid keys; unsupported: integraton (known: implement, challenge, review, integration)' "$tmp/unknown-stage.err" || {
+    echo "FAIL: [stage] refusal did not name the known stages" >&2
+    cat "$tmp/unknown-stage.err" >&2
+    exit 1
+}
 echo "devflow v2 mutation guards OK"
