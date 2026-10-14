@@ -18,13 +18,50 @@ if [ -z "$token" ]; then
     exit 1
 fi
 
-if ! login="$(GH_TOKEN="$token" "${GH_BIN:-gh}" api user --jq .login 2>/dev/null)"; then
-    echo "ERROR: token login lookup failed (received '${login:-<none>}'); Claude was not started." >&2
+if ! response="$(GH_TOKEN="$token" "${GH_BIN:-gh}" api --hostname github.com --include user 2>/dev/null)"; then
+    echo "ERROR: GitHub.com token lookup failed; Claude was not started." >&2
     exit 1
 fi
-expected_login="${WEB_SETUP_EXPECTED_LOGIN:-evanharmon1-bot}"
-if [ "$login" != "$expected_login" ]; then
-    echo "ERROR: token belongs to '$login', expected '$expected_login'; Claude was not started." >&2
+status="$(printf '%s\n' "$response" | awk 'NR == 1 { print $2; exit }')"
+if [ "$status" != 200 ]; then
+    echo "ERROR: GitHub.com returned HTTP '${status:-<none>}', expected 200; Claude was not started." >&2
+    exit 1
+fi
+if ! scopes="$(printf '%s\n' "$response" | awk '
+    /^\r?$/ { exit }
+    tolower($0) ~ /^x-oauth-scopes:/ {
+        sub(/^[^:]*:[[:space:]]*/, "")
+        sub(/\r$/, "")
+        print
+        found = 1
+        exit
+    }
+    END { if (!found) exit 1 }
+')"; then
+    echo "ERROR: X-OAuth-Scopes is missing; a classic token is required; Claude was not started." >&2
+    exit 1
+fi
+scope_list="${scopes//[[:space:]]/}"
+case ",$scope_list," in
+*,repo,*) ;;
+*)
+    echo "ERROR: scopes '$scopes' lack repo; Claude was not started." >&2
+    exit 1
+    ;;
+esac
+case ",$scope_list," in
+*,workflow,*)
+    echo "ERROR: scopes '$scopes' include workflow; Claude was not started." >&2
+    exit 1
+    ;;
+esac
+if ! login="$(printf '%s\n' "$response" | awk 'body { print } /^\r?$/ { body = 1 }' |
+    jq -er '.login | select(type == "string")' 2>/dev/null)"; then
+    echo "ERROR: GitHub.com response has no valid login; Claude was not started." >&2
+    exit 1
+fi
+if [ "$login" != evanharmon1-bot ]; then
+    echo "ERROR: token belongs to '$login', expected 'evanharmon1-bot'; Claude was not started." >&2
     exit 1
 fi
 

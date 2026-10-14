@@ -29,15 +29,27 @@ cat >"${test_tmp}/gh" <<'STUB'
 set -euo pipefail
 : >"${TEST_LOG_DIR}/gh-started"
 printf '%s\n' "$@" >"${TEST_LOG_DIR}/gh-args"
-[ "$#" -eq 4 ] && [ "$1" = api ] && [ "$2" = user ] && [ "$3" = --jq ] && [ "$4" = .login ] || exit 99
+[ "$#" -eq 5 ] && [ "$1" = api ] && [ "$2" = --hostname ] && [ "$3" = github.com ] && [ "$4" = --include ] && [ "$5" = user ] || exit 99
 [ "${GH_TOKEN:-}" = 'stub-web-identity-canary' ] || exit 99
 [ -z "${token+x}" ] || exit 99
+status=200
+scopes='repo, read:org'
+login=evanharmon1-bot
+header=X-OAuth-Scopes
 case "$TEST_LOGIN_MODE" in
-right) printf '%s\n' evanharmon1-bot ;;
-wrong) printf '%s\n' wrong-account ;;
+right) ;;
+lowercase) header=x-oauth-scopes ;;
+workflow) scopes='repo, workflow' ;;
+missing) header= ;;
+no-repo) scopes=read:org ;;
+wrong) login=wrong-account ;;
+non-200) status=403 ;;
 fail) exit 1 ;;
 *) exit 99 ;;
 esac
+printf 'HTTP/2.0 %s Status\r\n' "$status"
+[ -z "$header" ] || printf '%s: %s\r\n' "$header" "$scopes"
+printf 'Content-Type: application/json\r\n\r\n{"login":"%s"}\n' "$login"
 STUB
 cat >"${test_tmp}/claude" <<'STUB'
 #!/usr/bin/env bash
@@ -54,7 +66,6 @@ STUB
 chmod +x "${test_tmp}/op" "${test_tmp}/gh" "${test_tmp}/claude"
 export OP_BIN="${test_tmp}/op" GH_BIN="${test_tmp}/gh" CLAUDE_BIN="${test_tmp}/claude"
 export TEST_LOGIN_MODE=right
-unset WEB_SETUP_EXPECTED_LOGIN
 export TEST_LOG_DIR="$test_tmp"
 unset TEST_TOKEN
 TEST_TOKEN='stub-web-identity-canary'
@@ -92,12 +103,12 @@ for TEST_READ_MODE in fail empty; do
 done
 
 export TEST_READ_MODE=success
-for TEST_LOGIN_MODE in right wrong fail; do
-    echo "==> a $TEST_LOGIN_MODE login lookup gates Claude launch"
+for TEST_LOGIN_MODE in right lowercase workflow missing no-repo wrong non-200 fail; do
+    echo "==> a $TEST_LOGIN_MODE token response gates Claude launch"
     export TEST_LOGIN_MODE
     run_setup
     [ -e "${test_tmp}/gh-started" ] || fail "$TEST_LOGIN_MODE lookup never ran"
-    if [ "$TEST_LOGIN_MODE" = right ]; then
+    if [ "$TEST_LOGIN_MODE" = right ] || [ "$TEST_LOGIN_MODE" = lowercase ]; then
         [ "$rc" -eq 0 ] || fail "the expected login was refused"
         [ -e "${test_tmp}/claude-started" ] || fail "the expected login never started Claude"
     else
@@ -109,6 +120,10 @@ for TEST_LOGIN_MODE in right wrong fail; do
     fi
 done
 export TEST_LOGIN_MODE=right
+echo "==> the identity request pins github.com despite an inherited GH_HOST"
+run_setup env GH_HOST=example.invalid bash
+[ "$rc" -eq 0 ] || fail "the identity request did not pin github.com"
+[ -e "${test_tmp}/claude-started" ] || fail "the pinned-host run never started Claude"
 for TEST_CLAUDE_RC in 0 7; do
     echo "==> Claude receives GH_TOKEN without arguments; its empty directory is cleaned up"
     export TEST_CLAUDE_RC

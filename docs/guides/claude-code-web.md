@@ -345,7 +345,8 @@ then `/web-setup`) is not observed.
    WEB_SETUP_TOKEN_REF='op://<vault>/<item>/<field>' task setup:web-identity
    ```
 
-   The task refuses unless the token belongs to `evanharmon1-bot`.
+   The task refuses unless it is `evanharmon1-bot`'s classic token, with `repo`
+   and without `workflow`.
    The task starts `claude` in a fresh empty directory, so the checkout's project
    settings, hooks and MCP servers don't apply. Your user-level and managed Claude
    Code settings still load, as they do for the hand-run subshell. Run `/web-setup`
