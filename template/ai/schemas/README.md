@@ -145,8 +145,10 @@ already knows is active). The spec calls this layer **receipt validation**
 keyword, for every one of these:
 
 - **Head agreement** — a reviewer payload's `reviewed_head`, and an
-  integrator payload's `codex_cycle.head` / `codex_cycle.accepted.reviewed_commit`,
-  must equal the enclosing envelope's `head`. The payload schema validates
+  integrator payload's `codex_cycle.head`, must equal the enclosing envelope's
+  `head`. An accepted review normally names that head too; a carried cycle
+  instead names `carried.origin_head`, while `carried.attests_head` must match
+  the envelope head. The payload schema validates
   `payload` alone and has no visibility into the envelope; only the script,
   which has both, can compare them.
 - **Run matching** — the envelope's `run` must match the run the caller
@@ -380,15 +382,38 @@ instance being validated:
   count three different things.** `integration_round` is the run-wide
   ordinal of THIS integrator pass, independent of whether a Codex cycle
   ran (it is required even when `codex_cycle` is null). `cycle` is the
-  run-wide Codex cycle ordinal specifically, counted against the resolved
-  `[caps].integration` cap and incrementing with every new current-head
-  Codex cycle the run drives — null whenever `codex_cycle` itself is null,
+  run-wide Codex cycle ordinal specifically, incrementing with every new
+  current-head Codex cycle the run drives. `charged` counts cycles against
+  the integration cap; `exempt` counts cycles against the separate
+  `rounds.integration_exempt` ceiling. Producers may omit both for legacy
+  single-counter accounting. The readiness gate requires `exempt` whenever
+  `charged` is present and checks `charged + exempt == cycle`; the schema
+  types each counter as a non-negative integer. `cycle` is null whenever
+  `codex_cycle` itself is null,
   so it cannot stand in for the pass's own ordinal. `attempt` is the retry
   count (1-2) within ONE cycle's own captured head, per AGENTS.md's "two
   attempts per captured head" rule. Every place that reads "which pass is
   this" — an integration finding id's own round segment, an
   integration-stage adjudication's `round` — reads `integration_round`,
   never `cycle` or `attempt`.
+- **`codex_cycle.carried` discloses a base catch-up that spent no cycle.**
+  It records `origin_head` (the commit actually reviewed), `attests_head`
+  (the envelope head), `from_head`, `base_sha`, `change_id`, the pinned
+  `algorithm: "git-diff-digest/three-dot/v1"`, `generation`, and `carried_at`.
+  `cycle`, `charged`, and `exempt` retain their previous values; accepted
+  evidence still names `origin_head`. If `finder_cycles` includes
+  `codex-cloud`, its `carried` object must match `codex_cycle.carried`.
+  The validator checks head and mirror agreement; the readiness gate
+  re-derives the Git diff identity proof before accepting a carry.
+- **Registry-named schemas stay equal to the pinned shared contracts.**
+  `scripts/test-result-schemas.sh` compares each role/finder `result_schema`
+  as parsed JSON (`jq -S` then `cmp`) against
+  `.claude/skills/dev-flow-support/assets/schemas` when present,
+  and validates the charged/exempt and carried fixtures with both validators.
+  Formatting may differ; the repo validator and library are location-adapted
+  and formatted, so they are not byte-compared against the vendored copies.
+  Consumers without synced assets still run the repository validator and
+  receive a one-line skip note for drift and dual-validator checks.
 - **`run.schema.json`'s `promotion` ⇔ `outcome: "ready-for-review"`, both
   directions, and both additionally require a non-null `pr`** — a non-null
   `promotion` with any other outcome, or an outcome of
@@ -739,6 +764,11 @@ decisions):
   finding has (see the next bullet); `--pass` and the pass cross-check
   behave differently for it (see "Adjudication ↔ source pass agreement"
   above).
+  The pinned record validator accepts separate same-round documents when
+  their finding IDs are distinct; it rejects a finding adjudicated twice
+  within or across documents. The rendering workflow described below still
+  requires one combined document per round. Record validation alone does
+  not prove that the stricter projection requirements have been met.
 - **Integrator findings carry a grammar id AND a source_id, not one field
   doing both jobs.** `result.integrator.schema.json`'s `findings[].id` used
   to BE the GitHub-native identifier of whatever surfaced the finding (an
@@ -901,25 +931,15 @@ decisions):
   in the validator: `accepted` present alongside any exit_code other than
   0/10 is rejected, since its presence is itself a claim of a terminal
   result.
-- **`codex_cycle.exit_code` constrains `verdict` beyond the terminal-vs-
-  nonterminal split above.** `EXIT_CODE_VERDICT_CONSTRAINTS` is one table,
-  keyed by the exit codes documented on `check-codex-cloud-review.sh`'s
-  `check` subcommand (same doc as `codex_cycle.exit_code`'s own
-  description): `0` (clean), `10` (findings), `13` (escalate), and `2`
-  (indeterminate) each require the matching `verdict` exactly — `2` and
-  `13` share the SAME `escalate` requirement, since AGENTS.md's shepherd
-  stage escalates when both Codex-cycle attempts are incomplete, which is
-  exactly what an indeterminate result IS; `11` (pending) and `12` (retry)
-  require `verdict: "pending"` exactly; `14` (PR no longer open) forbids
-  `clean` and `pending`. `checkIntegratorCleanVerdict` separately requires
-  exit_code 0 (with `accepted` present) when verdict IS clean — that is the
-  OTHER direction of the same equivalence the `0` entry here closes the
-  other way, the same two-direction shape every other exit code in the
-  table already gets. `checkCodexCycleExitCodeVerdict` reads the table
-  rather than this being expressible as `if`/`then`: WHICH exit_code
-  selects WHICH kind of rule (an exact match for some codes, a small
-  exclusion set for others) is itself data the schema's single
-  conditional-per-node shape cannot encode as one rule.
+- **`codex_cycle.exit_code` constrains `verdict`.**
+  `0` permits `clean` or `findings` (a human finding or failed CI can coexist
+  with a clean Codex review); `10` requires `findings`; `2`, `13`, and `15`
+  require `escalate`; `11`, `12`, and `16` permit `pending` or `findings`;
+  `14` forbids `clean` and `pending`. Code `15` means quota exhausted, and
+  `16` means a transient evidence-read failure. Accepted evidence is present
+  only for terminal codes `0` and `10`. `EXIT_CODE_VERDICT_CONSTRAINTS` in
+  the validator applies these cross-field rules; a clean verdict also checks
+  CI, finding dispositions, and unanswered threads.
 - **A clean integrator verdict rejects `defer` anywhere in
   `applied_dispositions`, including entries that reference a `--known-ids`
   finding, not only this payload's own `findings[]` (#686).**
@@ -951,9 +971,9 @@ decisions):
   context-free check (like `checkEvidenceMarkerStageVisited` beside it): the
   marker's own description says the PR rollup comment is posted "once the
   draft PR exists," and `pr` is this run record's own sibling field for
-  whether that is true yet. The same check also requires `round: null` for a
-  PR marker: per-round evidence belongs on the issue, while PR evidence is a
-  per-stage rollup.
+  whether that is true yet. When adjudication context is supplied, a
+  PR-destination marker cannot substitute for the adjudicated round's
+  issue-destination marker (`checkAdjudicationEvidenceMarkers`).
 - **`evidence_comments[].digest` has a canonical format,
   `sha256:<64 lowercase hex>` (#686).** Enforced by `pattern`, not
   `minLength` alone: independent producers and harvesters must compute and
@@ -1111,6 +1131,8 @@ focused shipped suite in one mechanically checked contract.
 - `result.implementer.schema/invalid/empty-summary-when-completed.json`
 - `result.implementer.schema/valid/completed.json`
 - `result.integrator.schema/invalid/bad-verdict-enum.json`
+- `result.integrator.schema/valid/carried.json`
+- `result.integrator.schema/valid/charged-exempt.json`
 - `result.integrator.schema/valid/verdict-clean.json`
 - `result.reviewer.schema/invalid/counts-mismatch-tally.json`
 - `result.reviewer.schema/valid/empty-findings.json`
@@ -1922,9 +1944,10 @@ same pinned ref, without either implementation reading the other's source.
   `integration_round` (not `codex_cycle.cycle` or `.attempt` — see
   "Field-shape decisions" above), and its finder segment is the registry
   finder slug or `human`.
-- Every head-shaped field in a payload (`reviewed_head`, `codex_cycle.head`,
-  `codex_cycle.accepted.reviewed_commit`) must equal the enclosing envelope's
-  `head`.
+- Every gated head in a payload (`reviewed_head`, `codex_cycle.head`, and
+  `finder_cycles[].head`) must equal the enclosing envelope's `head`.
+  Accepted evidence names that head except for a carried cycle, where it
+  names `carried.origin_head`; `carried.attests_head` still equals `head`.
 - An envelope's `run` (`run_id` + `initiated_by`) must match the run the
   caller considers active; nothing in `run` is ever mutated after the fact.
 - A finding has exactly one adjudication (one `adjudications[]` entry, in

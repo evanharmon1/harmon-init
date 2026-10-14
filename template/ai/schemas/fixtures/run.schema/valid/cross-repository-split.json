@@ -64,5 +64,26 @@
       "finding_ids": ["challenge-r1-codex-1"],
       "split_at": "2026-09-05T00:04:30Z"
     }
-  ]
+  ],
+  "evidence_registrations": [
+    {
+      "id": "split-comment-1",
+      "author_actor_id": 1,
+      "login": "agent",
+      "payload_digest": "sha256:0000000000000000000000000000000000000000000000000000000000000000",
+      "marker": {
+        "run_id": "run-split",
+        "stage": "challenge",
+        "destination": "issue",
+        "round": 1,
+        "sequence": 1
+      },
+      "registered_at": "2026-09-05T00:04:00Z",
+      "seq": 0,
+      "prev_digest": "genesis",
+      "digest": "dca77ab5df21b5ab97b9bfc40e42d50ece7fcb0750f119333c5925b6fc5b8744"
+    }
+  ],
+  "pr_bindings": [],
+  "outcome_transitions": []
 }

@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/evanharmon1/harmon-devkit/ai/schemas/result.schema.json",
   "title": "Dev flow v2 result — native harness entry point",
-  "$comment": "A SELF-CONTAINED composition of result.envelope.schema.json plus the four result.<role>.schema.json payload shapes, for a harness with its own native JSON-Schema validator (Workflow/Agent `schema`) that cannot run scripts/validate-result-schemas.mjs's role dispatch. `payload` is dispatched by role via `allOf` (one {if, then} pair per role — `if` matches `role`, `then` points `payload` at that role's `$defs` entry). The envelope-level `properties` (every key but `payload`, which stays the untyped {type: object} both files already agree on) and `required` above are copied VERBATIM from result.envelope.schema.json, and `$defs.implementer` / `$defs.challenger` / `$defs.reviewer` / `$defs.integrator` are their standalone schema files' bodies inlined VERBATIM too (same type/additionalProperties/required/properties/$defs/if/then), minus only $schema/$id/title/$comment, which make no sense on a $defs entry — scripts/test-result-schemas.sh asserts both equalities directly so neither representation can silently drift apart from its source. The one necessary edit anywhere in this file is `$defs.reviewer`'s and `$defs.challenger`'s own internal references: each standalone file's `#/$defs/finding` (and, for challenger, `#/$defs/attackScenario`) becomes `#/$defs/reviewer/$defs/finding` or `#/$defs/challenger/$defs/finding` (`#/$defs/challenger/$defs/attackScenario`) here, since those definitions now live nested under this file's own `$defs.<role>` rather than at that file's own root — the equality test normalizes exactly this one rewrite before comparing, and nothing else. Four more `allOf` members enforce status-conditional payload shape: the implementer completed/blocked REQUIREDNESS AND non-emptiness (payload.summary/handoff/ac_test_map present AND minLength/minItems-non-empty when role=implementer and status=completed; payload.blocked_question present AND non-empty when blocked), and the challenger completed/blocked `attack_scenarios` cardinality (minItems:1 when role=challenger and status=completed; maxItems:0 when blocked) — this is expressible HERE, unlike in the standalone result.implementer.schema.json / result.challenger.schema.json, precisely because `role` and `status` are both envelope-level fields this composed document can see in the same `if` as the `payload` property its `then` reaches into; each standalone payload-only schema never sees `status` at all, so ITS OWN property definitions stay unconditional — Foreman v1 serializes implementer's summary as `\"\"` on a BLOCKED result, a shape the shared, unconditional property definition must still accept; only the status-conditional `then` branches here may narrow either role's fields further, and only for the completed/blocked case each actually applies to. Every OTHER receipt-validation semantic check (head agreement, run matching, id/pass/adjudication cross-checks, every integrator cross-field rule, challenger's attack_scenarios/findings cross-reference) still needs context or sibling fields no single schema-keyword condition can express; scripts/validate-result-schemas.mjs's checkImplementerStatus, checkChallengerAttackScenarios, and friends add all of it on top for any harness that can run them. See ai/schemas/README.md 'Native harness composition (result.schema.json)'. result.envelope.schema.json stays the deliberately envelope-only shape (payload: {type: object}, no dispatch) for whichever purpose only needs to validate the envelope fields themselves.",
+  "$comment": "A SELF-CONTAINED composition of result.envelope.schema.json plus the four result.<role>.schema.json payload shapes, for a harness with its own native JSON-Schema validator (Workflow/Agent `schema`) that cannot run ai/skills/universal/dev-flow-support/assets/validate-result-schemas.mjs's role dispatch. `payload` is dispatched by role via `allOf` (one {if, then} pair per role — `if` matches `role`, `then` points `payload` at that role's `$defs` entry). The envelope-level `properties` (every key but `payload`, which stays the untyped {type: object} both files already agree on) and `required` above are copied VERBATIM from result.envelope.schema.json, and `$defs.implementer` / `$defs.challenger` / `$defs.reviewer` / `$defs.integrator` are their standalone schema files' bodies inlined VERBATIM too (same type/additionalProperties/required/properties/$defs/if/then), minus only $schema/$id/title/$comment, which make no sense on a $defs entry — ai/skills/universal/dev-flow-support/assets/test-result-schemas.sh asserts both equalities directly so neither representation can silently drift apart from its source. The one necessary edit anywhere in this file is `$defs.reviewer`'s and `$defs.challenger`'s own internal references: each standalone file's `#/$defs/finding` (and, for challenger, `#/$defs/attackScenario`) becomes `#/$defs/reviewer/$defs/finding` or `#/$defs/challenger/$defs/finding` (`#/$defs/challenger/$defs/attackScenario`) here, since those definitions now live nested under this file's own `$defs.<role>` rather than at that file's own root — the equality test normalizes exactly this one rewrite before comparing, and nothing else. Four more `allOf` members enforce status-conditional payload shape: the implementer completed/blocked REQUIREDNESS AND non-emptiness (payload.summary/handoff/ac_test_map present AND minLength/minItems-non-empty when role=implementer and status=completed; payload.blocked_question present AND non-empty when blocked), and the challenger completed/blocked `attack_scenarios` cardinality (minItems:1 when role=challenger and status=completed; maxItems:0 when blocked) — this is expressible HERE, unlike in the standalone result.implementer.schema.json / result.challenger.schema.json, precisely because `role` and `status` are both envelope-level fields this composed document can see in the same `if` as the `payload` property its `then` reaches into; each standalone payload-only schema never sees `status` at all, so ITS OWN property definitions stay unconditional — Foreman v1 serializes implementer's summary as `\"\"` on a BLOCKED result, a shape the shared, unconditional property definition must still accept; only the status-conditional `then` branches here may narrow either role's fields further, and only for the completed/blocked case each actually applies to. Every OTHER receipt-validation semantic check (head agreement, run matching, id/pass/adjudication cross-checks, every integrator cross-field rule, challenger's attack_scenarios/findings cross-reference) still needs context or sibling fields no single schema-keyword condition can express; ai/skills/universal/dev-flow-support/assets/validate-result-schemas.mjs's checkImplementerStatus, checkChallengerAttackScenarios, and friends add all of it on top for any harness that can run them. See ai/schemas/README.md 'Native harness composition (result.schema.json)'. result.envelope.schema.json stays the deliberately envelope-only shape (payload: {type: object}, no dispatch) for whichever purpose only needs to validate the envelope fields themselves.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema", "role", "status", "head", "produced_at", "producer", "run", "payload"],
@@ -109,7 +109,7 @@
       }
     },
     {
-      "$comment": "Challenger's completed/blocked attack_scenarios conditional, expressible here for the same reason as implementer's completed/blocked pair above: role and status are both envelope-level fields this composed document can see in the same if as the payload property its then reaches into. The standalone result.challenger.schema.json never sees status at all, so scripts/validate-result-schemas.mjs's checkChallengerAttackScenarios still enforces the identical rule for the standalone challenger kind, which never sees this composed schema.",
+      "$comment": "Challenger's completed/blocked attack_scenarios conditional, expressible here for the same reason as implementer's completed/blocked pair above: role and status are both envelope-level fields this composed document can see in the same if as the payload property its then reaches into. The standalone result.challenger.schema.json never sees status at all, so ai/skills/universal/dev-flow-support/assets/validate-result-schemas.mjs's checkChallengerAttackScenarios still enforces the identical rule for the standalone challenger kind, which never sees this composed schema.",
       "if": {
         "properties": { "role": { "const": "challenger" }, "status": { "const": "completed" } },
         "required": ["role", "status"]
@@ -183,6 +183,12 @@
           "description": "Optional at every status, exactly as in v1.",
           "type": "string",
           "minLength": 1
+        },
+        "synthesis_of": {
+          "description": "Ordered source-proposal identities. Present only on the fresh implementer artifact produced when council strategy enables synthesis; optional so ordinary and pre-v2 implementer results remain valid.",
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string", "minLength": 1 }
         }
       }
     },
@@ -219,7 +225,7 @@
           "minLength": 1
         },
         "slot": {
-          "description": "The configured primary finder this pass fills (specs/dev-flow-v2.md § Configuration: 'each primary finder defines one round slot'). Equal to `finder` on a primary pass; on a fallback pass, `slot` stays the configured primary while `finder` names who actually ran (see `substitutes_for`). Optional here so existing envelope-only fixtures/producers remain valid — scripts/dev-flow-exit.mjs (#636), which assembles logical rounds from this field, requires it on every pass it consumes; this schema only bounds its shape when present.",
+          "description": "The configured primary finder this pass fills (specs/dev-flow-v2.md § Configuration: 'each primary finder defines one round slot'). Equal to `finder` on a primary pass; on a fallback pass, `slot` stays the configured primary while `finder` names who actually ran (see `substitutes_for`). Optional here so existing envelope-only fixtures/producers remain valid — ai/skills/universal/dev-flow-support/assets/dev-flow-exit.mjs (#636), which assembles logical rounds from this field, requires it on every pass it consumes; this schema only bounds its shape when present.",
           "type": "string",
           "minLength": 1
         },
@@ -246,7 +252,7 @@
           }
         },
         "attack_scenarios": {
-          "description": "Adversarial scenarios this pass attempted against the design or approach, independent of whether each one surfaced a finding — the record that the challenger actually attacked the change rather than only reporting what it happened to notice. Required non-empty when the envelope status is completed (a clean pass still records what it attempted) and required empty when blocked (scripts/validate-result-schemas.mjs's checkChallengerAttackScenarios). A scenario whose outcome is `surfaced-finding` names the finding it produced via `finding_id`; the validator cross-checks that id against this same pass's own `findings[]` (a same-document check, no external context needed).",
+          "description": "Adversarial scenarios this pass attempted against the design or approach, independent of whether each one surfaced a finding — the record that the challenger actually attacked the change rather than only reporting what it happened to notice. Required non-empty when the envelope status is completed (a clean pass still records what it attempted) and required empty when blocked (ai/skills/universal/dev-flow-support/assets/validate-result-schemas.mjs's checkChallengerAttackScenarios). A scenario whose outcome is `surfaced-finding` names the finding it produced via `finding_id`; the validator cross-checks that id against this same pass's own `findings[]` (a same-document check, no external context needed).",
           "type": "array",
           "items": { "$ref": "#/$defs/challenger/$defs/attackScenario" }
         }
@@ -371,7 +377,7 @@
           "minLength": 1
         },
         "slot": {
-          "description": "The configured primary finder this pass fills (specs/dev-flow-v2.md § Configuration: 'each primary finder defines one round slot'). Equal to `finder` on a primary pass; on a fallback pass, `slot` stays the configured primary while `finder` names who actually ran (see `substitutes_for`). Optional here so existing envelope-only fixtures/producers remain valid — scripts/dev-flow-exit.mjs (#636), which assembles logical rounds from this field, requires it on every pass it consumes; this schema only bounds its shape when present.",
+          "description": "The configured primary finder this pass fills (specs/dev-flow-v2.md § Configuration: 'each primary finder defines one round slot'). Equal to `finder` on a primary pass; on a fallback pass, `slot` stays the configured primary while `finder` names who actually ran (see `substitutes_for`). Optional here so existing envelope-only fixtures/producers remain valid — ai/skills/universal/dev-flow-support/assets/dev-flow-exit.mjs (#636), which assembles logical rounds from this field, requires it on every pass it consumes; this schema only bounds its shape when present.",
           "type": "string",
           "minLength": 1
         },
@@ -531,8 +537,18 @@
               "type": "integer",
               "minimum": 1
             },
+            "charged": {
+              "description": "How many of the run's cycles so far were CHARGED against the resolved [caps].integration cap (harmon-init#1326). Optional: a producer that does not classify its cycles omits both this and `exempt`, and the readiness gate then applies the original single-counter rule to `cycle` unchanged — every cycle it ran was charged. When present, `exempt` is required too, and `charged + exempt` must equal `cycle`.",
+              "type": "integer",
+              "minimum": 0
+            },
+            "exempt": {
+              "description": "How many of the run's cycles so far were EXEMPT from the integration cap (harmon-init#1326) — a cycle whose head differed from the last reviewed head only by a base merge that changed no file under review, which re-reads identical code by construction. Counted against the separate ceiling the resolver exposes as `rounds.integration_exempt`, never against [caps].integration. Required whenever `charged` is present.",
+              "type": "integer",
+              "minimum": 0
+            },
             "attempt": {
-              "description": "AGENTS.md's shepherd stage allows exactly two attempts per captured head before an incomplete cycle escalates. Distinct from `cycle` — see its description.",
+              "description": "AGENTS.md's integration stage allows exactly two attempts per captured head before an incomplete cycle escalates. Distinct from `cycle` — see its description.",
               "type": "integer",
               "minimum": 1,
               "maximum": 2
@@ -542,7 +558,7 @@
               "minLength": 1
             },
             "accepted": {
-              "description": "Present only when the cycle reached a terminal, non-escalated result (exit_code 0 or 10) — absent for exit codes 2/11/12/13/14, where no accepted evidence exists yet.",
+              "description": "Present only when the cycle reached a terminal, non-escalated result (exit_code 0 or 10) — absent for exit codes 2/11/12/13/14/15/16, where no accepted evidence exists yet.",
               "type": "object",
               "additionalProperties": false,
               "required": ["surface", "id", "reviewed_commit"],
@@ -552,15 +568,70 @@
                 },
                 "id": { "type": "string", "minLength": 1 },
                 "reviewed_commit": {
-                  "description": "Must equal the envelope's `head` — enforced by the validator's receipt-validation pass, exactly like `head` above (this is the second, GitHub-side stamp of the same invariant).",
+                  "description": "Must equal the envelope's `head` -- enforced by the validator's receipt-validation pass, exactly like `head` above (this is the second, GitHub-side stamp of the same invariant). The single exception is a CARRIED cycle (harmon-init#752), where no reviewer read the envelope head at all: the receipt then names `carried.origin_head`, the commit that was reviewed, and asserting `carried` is what licenses the difference.",
                   "type": "string",
                   "pattern": "^[0-9a-f]{40}$"
                 }
               }
             },
+            "carried": {
+              "description": "Present only when this cycle spent NOTHING on the gated head: a clean verdict this cycle already produced for an EARLIER head still attests it, because the head advanced by a base catch-up merge that left the PR's three-dot diff identical (harmon-init#752). The identity is a digest of that diff's own text, taken from immutable commit SHAs -- deliberately not `git patch-id`, which ignores hunk offsets and so returns one id for a reviewed edit relocated between two identically-surrounded regions. The checker re-derives it before reading any evidence, and the readiness gate compares THIS OBJECT byte for byte against the record the checker keeps, so it is the disclosure and the proof at once. A carried cycle advances no counter -- `cycle`, `charged` and `exempt` are whatever it left them at -- and it asked no reviewer anything about the gated head, so its `accepted` and `trigger_comment_id` name the cycle's own evidence: the real review, of the real commit a reviewer read. `accepted.reviewed_commit` is therefore `origin_head` rather than the envelope head -- the one place a receipt's reviewed_commit may differ, permitted by the validator's receipt pass only when this object is present.",
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "origin_head",
+                "attests_head",
+                "from_head",
+                "base_sha",
+                "change_id",
+                "algorithm",
+                "generation",
+                "carried_at"
+              ],
+              "properties": {
+                "origin_head": {
+                  "description": "The head this cycle reviewed, and whose clean verdict it carries to the envelope head. Equal to the checker state's own cycle head -- the gate checks it against exactly that.",
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40}$"
+                },
+                "attests_head": {
+                  "description": "The later head this cycle attests. Equal to the envelope head; a carry naming anything else would be attesting a commit nobody gated.",
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40}$"
+                },
+                "from_head": {
+                  "description": "The head this cycle attested immediately before, so a chain of catch-up merges is recoverable. Equal to origin_head on the first carry.",
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40}$"
+                },
+                "base_sha": {
+                  "description": "The base the attested head's identity was taken against.",
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40}$"
+                },
+                "change_id": {
+                  "description": "The identity both diffs hashed to. Equality of this one value IS the carry.",
+                  "type": "string",
+                  "pattern": "^[0-9a-f]{40}$"
+                },
+                "algorithm": {
+                  "description": "Pinned so a future identity change is a visible schema change rather than a silent re-interpretation of recorded proofs.",
+                  "const": "git-diff-digest/three-dot/v1"
+                },
+                "generation": {
+                  "description": "How many consecutive carries the attested head is away from the reviewed one. 1 is the first.",
+                  "type": "integer",
+                  "minimum": 1
+                },
+                "carried_at": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            },
             "exit_code": {
-              "description": "The verbatim exit code from ai/skills/universal/shepherd/assets/check-codex-cloud-review.sh's `check` subcommand: 0 clean, 10 findings, 11 pending, 12 retry, 13 escalate, 14 PR no longer open, 2 indeterminate.",
-              "enum": [0, 2, 10, 11, 12, 13, 14]
+              "description": "The verbatim exit code from ai/skills/universal/integrate/assets/check-codex-cloud-review.sh's `check` subcommand: 0 clean, 10 findings, 11 pending, 12 retry, 13 escalate, 14 PR no longer open, 15 quota exhausted (the finder answered that its code-review usage limit is spent \u2014 harmon-devkit#573), 16 transient read (an evidence read failed, which is NOT evidence the cycle is not clean \u2014 harmon-devkit#508), 2 indeterminate. 15 and 16 are additions: every older code keeps its exact meaning.",
+              "enum": [0, 2, 10, 11, 12, 13, 14, 15, 16]
             }
           },
           "if": {
@@ -569,6 +640,138 @@
           },
           "then": {
             "required": ["accepted"]
+          }
+        },
+        "finder_cycles": {
+          "description": "Per-finder cloud review cycles driven this pass (#804). One entry per configured PR-side finder (codex-cloud, coderabbit-cloud, copilot-cloud, etc.) that was driven. The codex-cloud entry here mirrors codex_cycle above; codex_cycle remains required for backward compatibility, and finder_cycles carries the same data plus the non-codex finders. When the resolved integration cap is 0, this array is empty (no cycles driven). Each entry's head must equal the envelope's head — enforced by the validator's receipt-validation pass.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["finder", "head", "cycle", "attempt", "exit_code"],
+            "properties": {
+              "finder": {
+                "description": "The registry finder slug (e.g. codex-cloud, coderabbit-cloud, copilot-cloud).",
+                "type": "string",
+                "pattern": "^[a-z0-9]([a-z0-9-]*[a-z0-9])?$"
+              },
+              "head": {
+                "description": "Must equal the envelope's head.",
+                "type": "string",
+                "pattern": "^[0-9a-f]{40}$"
+              },
+              "cycle": {
+                "type": "integer",
+                "minimum": 1
+              },
+              "charged": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "exempt": {
+                "type": "integer",
+                "minimum": 0
+              },
+              "attempt": {
+                "type": "integer",
+                "minimum": 1,
+                "maximum": 2
+              },
+              "trigger_comment_id": {
+                "description": "Present for review-comment finders; absent for requested-reviewer finders (no trigger comment exists).",
+                "type": "string",
+                "minLength": 1
+              },
+              "accepted": {
+                "description": "Present only when exit_code is 0 or 10.",
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["surface", "id", "reviewed_commit"],
+                "properties": {
+                  "surface": {
+                    "enum": ["review", "comment", "reaction"]
+                  },
+                  "id": { "type": "string", "minLength": 1 },
+                  "reviewed_commit": {
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{40}$"
+                  }
+                }
+              },
+              "carried": {
+                "description": "Present only when this cycle spent NOTHING on the gated head: a clean verdict this cycle already produced for an EARLIER head still attests it, because the head advanced by a base catch-up merge that left the PR's three-dot diff identical (harmon-init#752). The identity is a digest of that diff's own text, taken from immutable commit SHAs -- deliberately not `git patch-id`, which ignores hunk offsets and so returns one id for a reviewed edit relocated between two identically-surrounded regions. The checker re-derives it before reading any evidence, and the readiness gate compares THIS OBJECT byte for byte against the record the checker keeps, so it is the disclosure and the proof at once. A carried cycle advances no counter -- `cycle`, `charged` and `exempt` are whatever it left them at -- and it asked no reviewer anything about the gated head, so its `accepted` and `trigger_comment_id` name the cycle's own evidence: the real review, of the real commit a reviewer read. `accepted.reviewed_commit` is therefore `origin_head` rather than the envelope head -- the one place a receipt's reviewed_commit may differ, permitted by the validator's receipt pass only when this object is present.",
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "origin_head",
+                  "attests_head",
+                  "from_head",
+                  "base_sha",
+                  "change_id",
+                  "algorithm",
+                  "generation",
+                  "carried_at"
+                ],
+                "properties": {
+                  "origin_head": {
+                    "description": "The head this cycle reviewed, and whose clean verdict it carries to the envelope head. Equal to the checker state's own cycle head -- the gate checks it against exactly that.",
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{40}$"
+                  },
+                  "attests_head": {
+                    "description": "The later head this cycle attests. Equal to the envelope head; a carry naming anything else would be attesting a commit nobody gated.",
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{40}$"
+                  },
+                  "from_head": {
+                    "description": "The head this cycle attested immediately before, so a chain of catch-up merges is recoverable. Equal to origin_head on the first carry.",
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{40}$"
+                  },
+                  "base_sha": {
+                    "description": "The base the attested head's identity was taken against.",
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{40}$"
+                  },
+                  "change_id": {
+                    "description": "The identity both diffs hashed to. Equality of this one value IS the carry.",
+                    "type": "string",
+                    "pattern": "^[0-9a-f]{40}$"
+                  },
+                  "algorithm": {
+                    "description": "Pinned so a future identity change is a visible schema change rather than a silent re-interpretation of recorded proofs.",
+                    "const": "git-diff-digest/three-dot/v1"
+                  },
+                  "generation": {
+                    "description": "How many consecutive carries the attested head is away from the reviewed one. 1 is the first.",
+                    "type": "integer",
+                    "minimum": 1
+                  },
+                  "carried_at": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              },
+              "exit_code": {
+                "description": "Same contract as codex_cycle.exit_code above, including 15 (quota exhausted) and 16 (transient read).",
+                "enum": [0, 2, 10, 11, 12, 13, 14, 15, 16]
+              }
+            },
+            "if": {
+              "properties": { "exit_code": { "enum": [0, 10] } },
+              "required": ["exit_code"]
+            },
+            "then": {
+              "required": ["accepted"]
+            },
+            "allOf": [
+              {
+                "$comment": "harmon-init#752, integration cycle 3 finding integration-r3-codex-cloud-2: only the Codex checker can record a carry, so a carried block on any other finder is a stale receipt dressed as an attestation. A second, independent {if, then} member, since this engine's if/then is a single conditional per schema node.",
+                "if": { "required": ["carried"] },
+                "then": { "properties": { "finder": { "const": "codex-cloud" } } }
+              }
+            ]
           }
         },
         "integration_round": {
