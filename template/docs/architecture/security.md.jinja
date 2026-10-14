@@ -86,6 +86,14 @@ GitHub-hosted Actions runners are free there. CodeQL is preferred over Semgrep C
 for these stacks because its queries include deeper interprocedural and data-flow
 analysis and integrate directly with GitHub's Security tab.
 
+With the shipped advanced CodeQL workflow, GitHub's CodeQL **Default setup**
+must be off (**Settings → Code security → CodeQL analysis**, or
+`gh api --method PATCH repos/OWNER/REPO/code-scanning/default-setup -f state=not-configured`),
+because GitHub refuses advanced uploads while Default setup is on. Public
+repositories frequently have Default setup auto-enabled, which causes `analyze`
+and the required `codeql-verify` check to fail on SARIF upload until Default
+setup is disabled; keep it off after disabling it.
+
 For **private/internal** repositories, CodeQL code scanning requires an
 organization on GitHub Team or Enterprise with
 [GitHub Code Security enabled](https://docs.github.com/en/code-security/reference/code-scanning/troubleshoot-analysis-errors/private-repository-enablement).
@@ -103,8 +111,11 @@ CodeQL.
 CodeQL is deliberately omitted for this profile. The build workflow runs Semgrep
 CE for public and private repositories. If the repository later gains a
 CodeQL-supported application stack, set `use_codeql=true`, select its
-first-party `codeql_languages`, and re-apply the template for public coverage or
-for paid private GitHub Code Security coverage.
+first-party `codeql_languages`, turn off GitHub's CodeQL Default setup
+(**Settings → Code security → CodeQL analysis**, or
+`gh api --method PATCH repos/OWNER/REPO/code-scanning/default-setup -f state=not-configured`),
+and re-apply the template for public coverage or for paid private GitHub Code
+Security coverage.
 [% endif %]
 
 ### Dependency monitoring and update ownership

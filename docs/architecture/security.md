@@ -77,7 +77,10 @@ Node/Python repository. GitHub code scanning and standard GitHub-hosted
 Actions runners are free for public repositories. CodeQL is preferred over
 Semgrep CE there because its supported-language queries include deeper
 interprocedural and data-flow analysis and integrate directly with GitHub's
-Security tab.
+Security tab. With the shipped advanced CodeQL workflow, GitHub's CodeQL
+Default setup must be off (**Settings → Code security → CodeQL analysis**, or
+`gh api --method PATCH repos/OWNER/REPO/code-scanning/default-setup -f state=not-configured`),
+because GitHub refuses advanced uploads while Default setup is on.
 
 For private/internal repositories, CodeQL code scanning requires an organization
 on GitHub Team or Enterprise with

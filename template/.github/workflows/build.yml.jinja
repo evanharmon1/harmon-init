@@ -61,6 +61,8 @@ jobs:
       # was committed — the same target `task verify` runs locally, which is
       # what keeps `task ci` an honest mirror of this job.
       - name: Generated code is current
+        env:
+          CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}
         run: task guard:codegen
 [% endif %]
       # Outside the suite: `audit:*` is not a `test:*` target, so `test:suite`

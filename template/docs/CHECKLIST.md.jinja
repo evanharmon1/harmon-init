@@ -231,6 +231,13 @@ the compatibility reason in the rule's `description`.
 [% endif %]
 [% endif %]
 [% if use_codeql %]
+- [ ] **Disable GitHub CodeQL Default setup** — with the shipped advanced
+      `codeql.yml` workflow, GitHub's CodeQL Default setup must be off
+      (**Settings → Code security → CodeQL analysis**, or
+      `gh api --method PATCH repos/OWNER/REPO/code-scanning/default-setup -f state=not-configured`
+      — for this repo, `repos/[[ github_org ]]/[[ project_slug ]]/code-scanning/default-setup`),
+      because GitHub refuses advanced uploads while Default setup is on. Keep it
+      off (re-enabling it re-triggers the collision).
 - [ ] **SAST coverage** — public repositories run CodeQL automatically and for
       free for the selected `codeql_languages`; confirm a successful upload in
       the Security tab. Free private repos
@@ -242,8 +249,11 @@ the compatibility reason in the rule's `description`.
 - [ ] **SAST coverage** — this profile has no CodeQL workflow, so Semgrep CE runs
       in `build.yml` for public and private repositories. Add CodeQL later if the
       repo gains supported first-party source: set `use_codeql=true`, select its
-      `codeql_languages`, and ensure it is public (free) or has paid GitHub Code
-      Security (private/internal).
+      `codeql_languages`, turn off GitHub's CodeQL Default setup (**Settings →
+      Code security → CodeQL analysis**, or
+      `gh api --method PATCH repos/OWNER/REPO/code-scanning/default-setup -f state=not-configured`),
+      and ensure it is public (free) or has paid GitHub Code Security
+      (private/internal).
 [% endif %]
 - [ ] **Choose the Snyk posture** — the default is manual/local only via
       `task security:sast:snyk` and `task security:sca:snyk`; it is not part of
