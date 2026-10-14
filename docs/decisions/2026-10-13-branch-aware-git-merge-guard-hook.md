@@ -76,11 +76,17 @@ runs in a scratch repository
    or could invoke, a `git merge` or `git pull` — including `git -C <dir> merge`,
    non-literal subcommands, inline `-c alias.*` definitions, wrappers,
    evaluators, substitutions, `git pull` without `--ff-only` or `--no-rebase`,
-   a detached `HEAD`, an unresolvable remote `HEAD`, or any parse or internal
-   error. Commands that do not invoke `git merge` or `git pull` (such as
-   `git commit -m "catch-up merge"`, `git merge-base`, and search patterns)
-   stay silent. ([#1455](https://github.com/evanharmon1/harmon-init/pull/1455)
-   shipped the initial guard;
+   a detached `HEAD`, a checkout where no remote `HEAD` resolves, or any parse
+   or internal error. Quoted text and heredoc bodies not handed to an evaluator
+   (such as `git commit -m "catch-up merge"`), direct search patterns
+   (`grep -n 'merge base'`), and subcommands or flags that merely contain the
+   word (`git merge-base`, `git merge-tree`, `--merge-base-policy`) stay
+   silent, whereas unquoted `git merge`/`git pull` tokens in another command's
+   arguments (`echo git pull`) or `merge`/`pull` mentions on a line that runs
+   an evaluator or matches `sudo`'s shell flags (`bash -c 'echo merge'`,
+   `sudo grep -i 'git merge' README.md`) deliberately ask.
+   ([#1455](https://github.com/evanharmon1/harmon-init/pull/1455) shipped the
+   initial guard;
    [#1542](https://github.com/evanharmon1/harmon-init/pull/1542) and
    [#1559](https://github.com/evanharmon1/harmon-init/pull/1559) synced the
    bash-parser reader for
@@ -92,9 +98,12 @@ runs in a scratch repository
    unsafe, so its parser never converged and false positives on unrelated
    commands stalled unattended workers. `git-merge-guard` instead recognizes
    one small allowlisted shape and asks on everything else that might run a
-   merge or pull: a parser gap on a merge-ish command fails closed to a prompt
-   rather than permitting a silent merge into `main`, while non-merge commands
-   are untouched.
+   merge or pull: parser gaps and conservative heuristics (such as
+   `echo git pull`, `bash -c 'echo merge'`, or `sudo grep -i 'git merge'`) are
+   narrow false positives confined to commands that mention `merge` or `pull`
+   and always fail closed to a prompt rather than permitting a silent merge
+   into `main`, while commands that do not mention `merge` or `pull` do not
+   prompt.
 
 ## Not
 
@@ -116,10 +125,17 @@ runs in a scratch repository
 - Routine catch-up merges (`git merge origin/main --no-edit`,
   `git pull --ff-only`, `git pull --no-rebase`) in a verified feature-branch
   checkout run without a prompt on the host and in the `dev` devcontainer.
-- Merges and pulls targeting `main`, `master`, or a remote default branch —
-  including `git -C <dir> merge` — prompt in `default`, `auto`, and
+- Merges and pulls targeting `main`, `master`, or a resolved remote default
+  branch — including `git -C <dir> merge` — prompt in `default`, `auto`, and
   `bypassPermissions` modes, and fail closed as a permission denial in `-p`
   mode.
+- The guard requires at least one remote `HEAD` to resolve and trusts the local
+  `refs/remotes/<remote>/HEAD` cache: with multiple remotes, a branch that is
+  the default of a remote whose `HEAD` is unset (or whose cached
+  `refs/remotes/<remote>/HEAD` is stale after a remote default-branch rename)
+  stays silent if another remote's `HEAD` resolves to a different branch
+  (`main` and `master` remain protected regardless;
+  `git remote set-head <remote> --auto` refreshes the cache).
 - In the `bot` and `agent` postures (`FOREMAN_DEVCONTAINER` set to `bot` or
   `agent`), the hook stands down and the GitHub "Protect Main" ruleset is the
   boundary
