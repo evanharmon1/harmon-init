@@ -1,22 +1,17 @@
 #!/usr/bin/env bash
-# install-brewfile.sh — install this repo's Brewfile deps, but no-op gracefully
-# when Homebrew is absent.
-#
-# `task install` must work in two very different places: a Homebrew host (Evan's
-# Mac), and harmon-init's OWN devcontainer, which bakes its toolchain into the
-# image and ships no brew. Running `brew bundle` unconditionally hard-fails in
-# the latter before `task install` can reach the uv-based copier step the
-# template-render tests need. So skip the Brewfile when brew is missing rather
-# than aborting; on a brew host this behaves exactly like the previous inline
-# `brew bundle` call.
+# Install this repo's Brewfile, or use a positively marked harmon toolchain.
 set -euo pipefail
 
 # Absolute path to THIS repo's Brewfile (never a user/global one).
 root="$(cd "$(dirname "$0")/.." && pwd)"
 
 if ! command -v brew >/dev/null 2>&1; then
-    echo "install: Homebrew not found — skipping Brewfile (image-baked toolchain assumed; run 'task bootstrap' to install Homebrew)."
-    exit 0
+    if [ -f "${HARMON_TOOLCHAIN_MANIFEST:-/usr/local/share/harmon-devcontainer/manifest.json}" ]; then
+        echo "install: Homebrew not found — harmon toolchain manifest present; skipping Brewfile."
+        exit 0
+    fi
+    echo "Homebrew not found — install Homebrew (run 'task bootstrap') and retry." >&2
+    exit 1
 fi
 
 # HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: don't cascade-upgrade unrelated

@@ -37,6 +37,8 @@ default_globs=(
     '#**/.venv/**'
     '#**/.task/**'
     '#.foreman/**'
+    '#.lane/**'
+    '#**/.lane-report.md'
 )
 
 # renovate: datasource=npm depName=markdownlint-cli2

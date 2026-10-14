@@ -667,12 +667,22 @@ fi
 [ -x scripts/run-semgrep.sh ] || err "pinned Semgrep CE runner missing or not executable"
 grep -q 'brew "uv"' Brewfile || err "Brewfile must install uv for the Semgrep runner"
 ! grep -qi 'snyk' Brewfile || err "Brewfile must not install optional Snyk"
+[ -x scripts/install-brewfile.sh ] || err "Brewfile install helper missing or not executable"
+grep -q -- '- ./scripts/install-brewfile.sh' Taskfile.yml ||
+    err "install must delegate to the fail-closed Brewfile helper"
+if sed -n '/^  install:/,/^  install:hooks:/p' Taskfile.yml | grep -q 'brew bundle'; then
+    err "install must not inline brew bundle"
+fi
 if grep -q 'brew "pnpm"' Brewfile; then
     grep -q -- '- ./scripts/bootstrap-pnpm.sh' \
         < <(sed -n '/^  install:/,/^  install:hooks:/p' Taskfile.yml) ||
         err "Node install must invoke pnpm ownership migration"
     [ -x scripts/bootstrap-pnpm.sh ] ||
         err "Node bootstrap pnpm migration helper is missing or not executable"
+    grep -q 'command -v brew' scripts/bootstrap-pnpm.sh ||
+        err "Node bootstrap must guard Homebrew availability"
+    grep -q 'HARMON_TOOLCHAIN_MANIFEST' scripts/bootstrap-pnpm.sh ||
+        err "Node bootstrap must recognise the harmon toolchain manifest"
     grep -q 'brew install node' scripts/bootstrap-pnpm.sh ||
         err "Node bootstrap must install npm before migrating pnpm ownership"
     grep -q 'HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1' scripts/bootstrap-pnpm.sh ||
@@ -846,6 +856,12 @@ if [ -f prettier.config.cjs ] || [ -f pyproject.toml ]; then
 else
     ! grep -q '^  install-deps:' .github/actions/setup/action.yml ||
         err "dependency-free profiles must not expose an unused install-deps input"
+fi
+[ -x scripts/install-brewfile.sh ] || err "Brewfile install helper missing or not executable"
+grep -q -- '- ./scripts/install-brewfile.sh' Taskfile.yml ||
+    err "install must delegate to the fail-closed Brewfile helper"
+if sed -n '/^  install:/,/^  install:hooks:/p' Taskfile.yml | grep -q 'brew bundle'; then
+    err "install must not inline brew bundle"
 fi
 if grep -q 'brew "pnpm"' Brewfile; then
     grep -q 'PNPM_CONFIG_STORE_DIR=${store_dir}' .github/actions/setup/action.yml ||
