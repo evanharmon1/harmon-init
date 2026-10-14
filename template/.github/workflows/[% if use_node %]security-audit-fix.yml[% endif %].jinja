@@ -69,7 +69,7 @@ jobs:
         id: node-audit
         if: steps.audit.outcome == 'failure'
         continue-on-error: true
-        run: pnpm audit --audit-level=high
+        run: ./scripts/security-audit.sh
       - name: Raise bounded security floors
         id: fix
         if: steps.node-audit.outcome == 'failure'

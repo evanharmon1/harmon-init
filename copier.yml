@@ -799,6 +799,9 @@ _skip_if_exists:
   # as CHANGELOG.md above: freeze it — fresh scaffolds still get the seed; an
   # existing manifest is never clobbered.
   - .release-please-manifest.json
+  # Reviewed security exceptions belong to the consumer, including renewals.
+  # Seed empty once; updates must never overwrite their decisions.
+  - .security-audit-allowances.json
 
 # Keep CLAUDE.md/GEMINI.md as symlinks to AGENTS.md in generated projects
 # (without this, copier dereferences symlinks into duplicate files).

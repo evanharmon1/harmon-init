@@ -11,7 +11,7 @@ How testing works in Harmon Init.
 | Application security | Semgrep CE locally; CodeQL in public CI | `task security:sast` |
 | Optional second opinion | Snyk Code + Open Source, manual or weekly scheduled | `task security:sast:snyk` / `task security:sca:snyk` |
 | Secrets | gitleaks | `task security:secrets` |
-| Dependencies | package-manager audit | `task security:audit` |
+| Dependencies | package-manager audit; Node uses reviewed, expiring dev-only allowances ([security.md](security.md#unpatched-dev-only-advisory-allowances)) | `task security:audit` |
 
 ## Conventions
 
