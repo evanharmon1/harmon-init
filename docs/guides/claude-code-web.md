@@ -345,6 +345,7 @@ then `/web-setup`) is not observed.
    WEB_SETUP_TOKEN_REF='op://<vault>/<item>/<field>' task setup:web-identity
    ```
 
+   The task refuses unless the token belongs to `evanharmon1-bot`.
    The task starts `claude` in a fresh empty directory, so the checkout's project
    settings, hooks and MCP servers don't apply. Your user-level and managed Claude
    Code settings still load, as they do for the hand-run subshell. Run `/web-setup`
@@ -353,8 +354,10 @@ then `/web-setup`) is not observed.
    ```bash
    (
      { set +xa; } 2>/dev/null
+     unset t
      t="$(<your secret store's read command>)" && [ -n "$t" ] \
-       && d="$(mktemp -d /tmp/web-identity.XXXXXX)" && [ -n "$d" ] || exit 1
+       && mkdir -p "$HOME/.cache" && d="$(mktemp -d "$HOME/.cache/web-identity.XXXXXX")" \
+       && [ -n "$d" ] || exit 1
      trap 'cd / && rm -rf -- "$d"' EXIT
      cd "$d" && GH_TOKEN="$t" claude
    )

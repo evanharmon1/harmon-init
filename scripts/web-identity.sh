@@ -18,7 +18,17 @@ if [ -z "$token" ]; then
     exit 1
 fi
 
-setup_dir="$(mktemp -d /tmp/web-identity.XXXXXX)"
+if ! login="$(GH_TOKEN="$token" "${GH_BIN:-gh}" api user --jq .login 2>/dev/null)"; then
+    echo "ERROR: token login lookup failed (received '${login:-<none>}'); Claude was not started." >&2
+    exit 1
+fi
+expected_login="${WEB_SETUP_EXPECTED_LOGIN:-evanharmon1-bot}"
+if [ "$login" != "$expected_login" ]; then
+    echo "ERROR: token belongs to '$login', expected '$expected_login'; Claude was not started." >&2
+    exit 1
+fi
+
+setup_dir="$(mkdir -p "$HOME/.cache" && mktemp -d "$HOME/.cache/web-identity.XXXXXX")"
 [ -n "$setup_dir" ] || exit 1
 trap 'cd / && rm -rf -- "$setup_dir"' EXIT
 cd "$setup_dir"
