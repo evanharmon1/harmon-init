@@ -164,6 +164,7 @@ advisory() {
 new_project() {
     _np="$TMPROOT/$1"
     mkdir -p "$_np/scripts" "$_np/.stub"
+    cp "$REPO_ROOT/template/scripts/[% if use_node %]security-audit.sh[% endif %]" "$_np/scripts/security-audit.sh"
     cp "$REPO_ROOT/$HELPER" "$_np/scripts/security-audit-fix.sh"
     chmod +x "$_np/scripts/security-audit-fix.sh"
     printf '{"name":"fixture","private":true}\n' >"$_np/package.json"
