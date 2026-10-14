@@ -77,14 +77,16 @@ runs in a scratch repository
    non-literal subcommands, inline `-c alias.*` definitions, wrappers,
    evaluators, substitutions, `git pull` without `--ff-only` or `--no-rebase`,
    a detached `HEAD`, a checkout where no remote `HEAD` resolves, or any parse
-   or internal error. Every command the guard cannot prove is one of these
-   allowlisted shapes, or prove does not invoke `git merge`/`git pull`, fails
-   closed to `ask` — including non-literal subcommands, feeder-supplied
-   subcommands, and lines it cannot parse. It never permits a silent merge onto
-   a protected branch. The exact silent/ask boundary is defined by the hook's
-   docstring and pinned by `scripts/test-git-merge-guard.sh`; this record does
-   not restate it. ([#1455](https://github.com/evanharmon1/harmon-init/pull/1455)
-   shipped the initial guard;
+   or internal error. Every `git` invocation the guard can inspect that it
+   cannot prove is one of these allowlisted shapes, or prove does not invoke
+   `git merge`/`git pull`, fails closed to `ask` — including non-literal
+   subcommands, feeder-supplied subcommands, and lines it cannot parse; merges
+   hidden behind external git aliases, scripts, or commands that move `main`
+   without `merge`/`pull` are outside what the hook inspects (see Consequences).
+   The exact silent/ask boundary is defined by the hook's docstring and pinned
+   by `scripts/test-git-merge-guard.sh`; this record does not restate it.
+   ([#1455](https://github.com/evanharmon1/harmon-init/pull/1455) shipped the
+   initial guard;
    [#1542](https://github.com/evanharmon1/harmon-init/pull/1542) and
    [#1559](https://github.com/evanharmon1/harmon-init/pull/1559) synced the
    bash-parser reader for
@@ -95,10 +97,11 @@ runs in a scratch repository
    `guard-process-kill` had to classify arbitrary shell commands as safe or
    unsafe, so its parser never converged and false positives on unrelated
    commands stalled unattended workers. `git-merge-guard` instead recognizes
-   one small allowlisted shape and asks on everything else that might run a
-   merge or pull: its false positives fail closed to a prompt and never permit
-   a silent merge, unlike `guard-process-kill`, whose open-ended classifier
-   stalled unrelated commands in unattended runs.
+   one small allowlisted shape and asks on everything else within its
+   inspection scope that might run a merge or pull: its false positives fail
+   closed to a prompt rather than permitting a silent merge, unlike
+   `guard-process-kill`, whose open-ended classifier stalled unrelated commands
+   in unattended runs.
 
 ## Not
 
@@ -117,9 +120,11 @@ runs in a scratch repository
 
 ## Consequences
 
-- Routine catch-up merges (`git merge origin/main --no-edit`,
+- For routine catch-up merges (`git merge origin/main --no-edit`,
   `git pull --ff-only`, `git pull --no-rebase`) in a verified feature-branch
-  checkout run without a prompt on the host and in the `dev` devcontainer.
+  checkout on the host and in the `dev` devcontainer, the hook adds no prompt;
+  whether one appears still depends on the session's ordinary permission rules
+  (for example the devcontainer's `Bash(git:*)` allow).
 - Merges and pulls targeting `main`, `master`, or a resolved remote default
   branch — including `git -C <dir> merge` — prompt in `default`, `auto`, and
   `bypassPermissions` modes, and fail closed as a permission denial in `-p`
