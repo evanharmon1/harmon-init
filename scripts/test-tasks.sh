@@ -275,9 +275,13 @@ done
 if [ -x scripts/bootstrap-pnpm.sh ]; then
     printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"${brewless_bin}/node"
     chmod +x "${brewless_bin}/node"
-    PATH="$brewless_bin" HARMON_TOOLCHAIN_MANIFEST="${test_tmp}/absent-manifest" \
-        ./scripts/bootstrap-pnpm.sh >/dev/null ||
-        fail "brew-less Node bootstrap rejected existing Node"
+    out=$(PATH="$brewless_bin" HARMON_TOOLCHAIN_MANIFEST="${test_tmp}/absent-manifest" \
+        ./scripts/bootstrap-pnpm.sh 2>&1) && rc=0 || rc=$?
+    [ "$rc" -ne 0 ] || fail "Node alone allowed an unmarked brew-less bootstrap"
+    case "$out" in
+    *"Homebrew not found"*"task bootstrap"*) ;;
+    *) fail "Node-only bootstrap failed without setup instructions: $out" ;;
+    esac
 fi
 # Generated installs must reach dependency installation and hook setup. Stubs
 # prove task wiring; a real consumer devcontainer install remains a QA check.
@@ -463,6 +467,23 @@ case "$out" in
 *) fail "untracked Markdown failed for the wrong reason: $out" ;;
 esac
 rm "${markdown_repo}/bad file.md"
+
+echo "==> Markdown lint excludes MDX and deleted tracked files"
+cp "${markdown_repo}/.lane/x.md" "${markdown_repo}/outside.mdx"
+git -C "$markdown_repo" add outside.mdx
+(
+    cd "$markdown_repo"
+    "$repo/scripts/markdownlint.sh" check
+) || fail "Markdown lint checked MDX owned by Prettier"
+git -C "$markdown_repo" rm -q -f --cached outside.mdx
+rm "${markdown_repo}/outside.mdx"
+cp "${markdown_repo}/.lane/x.md" "${markdown_repo}/deleted.md"
+git -C "$markdown_repo" add deleted.md
+rm "${markdown_repo}/deleted.md"
+(
+    cd "$markdown_repo"
+    "$repo/scripts/markdownlint.sh" check
+) || fail "Markdown lint rejected an unstaged tracked deletion"
 
 prettier_ignore="$repo/.prettierignore"
 if [ ! -f "$prettier_ignore" ]; then

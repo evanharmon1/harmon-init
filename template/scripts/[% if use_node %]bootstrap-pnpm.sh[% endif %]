@@ -2,12 +2,11 @@
 # Ensure Homebrew owns the active pnpm links, including after legacy bootstraps.
 set -euo pipefail
 
-# Brew-less provisioned environments already supply Node and pnpm. On an
-# ordinary host, missing both Node and the manifest is a setup failure.
+# Only the harmon toolchain manifest proves this brew-less environment was
+# provisioned. Node alone does not establish that pnpm or the other tools exist.
 if ! command -v brew >/dev/null 2>&1; then
-    if command -v node >/dev/null 2>&1 ||
-        [ -f "${HARMON_TOOLCHAIN_MANIFEST:-/usr/local/share/harmon-devcontainer/manifest.json}" ]; then
-        echo "bootstrap-pnpm: Homebrew not found — existing Node or harmon toolchain; skipping Homebrew setup."
+    if [ -f "${HARMON_TOOLCHAIN_MANIFEST:-/usr/local/share/harmon-devcontainer/manifest.json}" ]; then
+        echo "bootstrap-pnpm: Homebrew not found — harmon toolchain manifest present; skipping Homebrew setup."
         exit 0
     fi
     echo "Homebrew not found — install Homebrew (run 'task bootstrap') and retry." >&2

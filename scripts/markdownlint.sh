@@ -108,9 +108,11 @@ if [ "$#" -eq 0 ]; then
         # while --cached keeps tracked files eligible even if ignored later.
         markdown_files="$(mktemp)"
         trap 'rm -f "$markdown_files"' EXIT
-        git ls-files -z --cached --others --exclude-standard -- '*.md' '*.mdx' >"$markdown_files"
+        git ls-files -z --cached --others --exclude-standard -- '*.md' >"$markdown_files"
         set --
         while IFS= read -r -d '' markdown_file; do
+            # The index still lists a tracked file deleted from the worktree.
+            [ -f "$markdown_file" ] || continue
             set -- "$@" "./${markdown_file}"
         done <"$markdown_files"
         # Passing only excludes (or no args) can enable cli2's default globs.
