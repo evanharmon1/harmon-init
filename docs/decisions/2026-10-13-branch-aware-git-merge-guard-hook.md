@@ -67,10 +67,13 @@ runs in a scratch repository
    run in the working directory reported in the hook payload, when that
    checkout is provably on a named branch other than `main`/`master` and
    distinct from every resolved remote default branch (with at least one
-   remote `HEAD` resolved):
-   - `git merge [--no-edit|--no-ff|--ff|--ff-only] <ref>`
-   - `git merge (--continue|--quit)`
-   - `git pull (--ff-only|--no-rebase) [--no-edit] [<remote> [<ref>]]`
+   remote `HEAD` resolved). Flags are a set: any combination of the listed
+   flags, in any order and position, is the same shape.
+   - `git merge` with exactly one `<ref>` and any of `--no-edit`, `--no-ff`,
+     `--ff`, `--ff-only`
+   - `git merge --continue` or `git merge --quit`, alone
+   - `git pull` with at most `<remote> <ref>`, at least one of `--ff-only` or
+     `--no-rebase`, and optionally `--no-edit`
 
    It returns `permissionDecision: "ask"` for every other command that invokes,
    or could invoke, a `git merge` or `git pull` — including `git -C <dir> merge`,
