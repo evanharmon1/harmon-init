@@ -27,13 +27,14 @@
 #   * PORT-FREE — never start a local server or bind a port (`check`/`build`/
 #     `test`/`verify` run concurrently across worktrees). Generators generate
 #     from local sources where the tool allows; Convex's `convex codegen` still
-#     contacts its configured deployment (`CONVEX_DEPLOYMENT`,
-#     `CONVEX_DEPLOY_KEY`, or `.env.local`), so it runs only when one is
-#     configured.
+#     contacts its configured deployment (`CONVEX_DEPLOYMENT` or
+#     `CONVEX_DEPLOY_KEY` in the environment, `.env.local`, or `.env`), so it
+#     runs only when one is configured.
 #   * SKIP CLEANLY when the generator or its required deployment (e.g. Convex
-#     without `CONVEX_DEPLOYMENT` / `CONVEX_DEPLOY_KEY` / `.env.local`) isn't
-#     configured yet, so a fresh scaffold or unconfigured checkout stays green
-#     (same rule as `task build` / `task lint:eslint`).
+#     without `CONVEX_DEPLOYMENT` or `CONVEX_DEPLOY_KEY` in the environment,
+#     `.env.local`, or `.env`) isn't configured yet, so a fresh scaffold or
+#     unconfigured checkout stays green (same rule as `task build` /
+#     `task lint:eslint`).
 #   * DECLARE its output paths in generated_paths, or the guard cannot see it.
 #   * COMMIT the output. Generated files are committed but tool-owned (excluded
 #     from Prettier and ESLint) — a codegen diff is expected output.
@@ -61,8 +62,14 @@ convex_deployment_configured() {
     if [ -n "${CONVEX_DEPLOYMENT:-}" ] || [ -n "${CONVEX_DEPLOY_KEY:-}" ]; then
         return 0
     fi
-    [ -f .env.local ] || return 1
-    grep -Eq '^[[:space:]]*(export[[:space:]]+)?CONVEX_DEPLOYMENT=[[:space:]]*("[^"#[:space:]][^"]*"|'\''[^'\''#[:space:]][^'\'']*'\''|[^"'\''#[:space:]]+)' .env.local
+    local env_file
+    for env_file in .env.local .env; do
+        [ -f "$env_file" ] || continue
+        if grep -Eq '^[[:space:]]*(export[[:space:]]+)?(CONVEX_DEPLOYMENT|CONVEX_DEPLOY_KEY)[[:space:]]*=[[:space:]]*("[^"#[:space:]][^"]*"|'\''[^'\''#[:space:]][^'\'']*'\''|[^"'\''#[:space:]]+)' "$env_file"; then
+            return 0
+        fi
+    done
+    return 1
 }
 
 generated_paths=()
@@ -76,7 +83,7 @@ if [ -d convex ] && [ -x node_modules/.bin/convex ]; then
         generated_paths+=(convex/_generated)
         source_paths+=(convex ':(exclude)convex/_generated')
     else
-        echo "codegen: no Convex deployment configured — skipping (set CONVEX_DEPLOY_KEY in CI to enable the staleness guard)"
+        echo "codegen: no Convex deployment configured — skipping (set CONVEX_DEPLOY_KEY in CI to enable the staleness guard) (checks CONVEX_DEPLOYMENT and CONVEX_DEPLOY_KEY in env, .env.local, and .env)"
         skipped_unconfigured=1
     fi
 fi
