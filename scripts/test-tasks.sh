@@ -431,7 +431,7 @@ if [ -n "${HARMON_TEST_PNPM_BOOTSTRAP_ONLY:-}" ]; then
     exit 0
 fi
 
-echo "==> Markdown lint honours git excludes while checking tracked files"
+echo "==> Markdown lint excludes lane artifact paths regardless of Git tracking"
 markdown_repo="${test_tmp}/markdown-repo"
 mkdir -p "${markdown_repo}/.lane"
 git -C "$markdown_repo" init -q
@@ -443,47 +443,24 @@ printf '%s\n' '{"unformatted":true}' >"${markdown_repo}/.lane/x.json"
 (
     cd "$markdown_repo"
     "$repo/scripts/markdownlint.sh" check
-) || fail "Markdown lint scanned git-excluded lane artifacts"
+) || fail "Markdown lint scanned untracked lane artifacts"
 git -C "$markdown_repo" add -f .lane/x.md
-out=$(
+(
     cd "$markdown_repo"
-    "$repo/scripts/markdownlint.sh" check 2>&1
-) && rc=0 || rc=$?
-[ "$rc" -ne 0 ] || fail "Markdown lint skipped tracked Markdown under an ignored directory"
-case "$out" in
-*'MD056'*) ;;
-*) fail "tracked Markdown failed for the wrong reason: $out" ;;
-esac
-# An untracked, nonignored file must also be checked, including spaces in paths.
-git -C "$markdown_repo" rm -q -f --cached .lane/x.md
+    "$repo/scripts/markdownlint.sh" check
+) || fail "Markdown lint scanned tracked files under .lane/"
+# A non-lane Markdown file must still be checked, including spaces in paths.
 cp "${markdown_repo}/.lane/x.md" "${markdown_repo}/bad file.md"
 out=$(
     cd "$markdown_repo"
     "$repo/scripts/markdownlint.sh" check 2>&1
 ) && rc=0 || rc=$?
-[ "$rc" -ne 0 ] || fail "Markdown lint skipped nonignored untracked Markdown"
+[ "$rc" -ne 0 ] || fail "Markdown lint skipped non-lane Markdown"
 case "$out" in
 *'MD056'*) ;;
-*) fail "untracked Markdown failed for the wrong reason: $out" ;;
+*) fail "non-lane Markdown failed for the wrong reason: $out" ;;
 esac
 rm "${markdown_repo}/bad file.md"
-
-echo "==> Markdown lint excludes MDX and deleted tracked files"
-cp "${markdown_repo}/.lane/x.md" "${markdown_repo}/outside.mdx"
-git -C "$markdown_repo" add outside.mdx
-(
-    cd "$markdown_repo"
-    "$repo/scripts/markdownlint.sh" check
-) || fail "Markdown lint checked MDX owned by Prettier"
-git -C "$markdown_repo" rm -q -f --cached outside.mdx
-rm "${markdown_repo}/outside.mdx"
-cp "${markdown_repo}/.lane/x.md" "${markdown_repo}/deleted.md"
-git -C "$markdown_repo" add deleted.md
-rm "${markdown_repo}/deleted.md"
-(
-    cd "$markdown_repo"
-    "$repo/scripts/markdownlint.sh" check
-) || fail "Markdown lint rejected an unstaged tracked deletion"
 
 prettier_ignore="$repo/.prettierignore"
 if [ ! -f "$prettier_ignore" ]; then

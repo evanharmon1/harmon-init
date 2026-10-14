@@ -13,8 +13,7 @@
 # Usage:
 #   markdownlint.sh check [glob-or-file ...]   # read-only gate
 #   markdownlint.sh fix   [glob-or-file ...]   # best-effort auto-fix
-# With no args, lint tracked and nonignored untracked Markdown in git repos;
-# outside git, use the canonical repo-wide globs.
+# With no glob/file args, a canonical repo-wide default set is used.
 set -euo pipefail
 
 mode="${1:-check}"
@@ -38,6 +37,8 @@ default_globs=(
     '#**/.venv/**'
     '#**/.task/**'
     '#.foreman/**'
+    '#.lane/**'
+    '#**/.lane-report.md'
 )
 
 # renovate: datasource=npm depName=markdownlint-cli2
@@ -103,24 +104,7 @@ else
 fi
 
 if [ "$#" -eq 0 ]; then
-    if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
-        # A file list preserves .git/info/exclude and global git ignore rules,
-        # while --cached keeps tracked files eligible even if ignored later.
-        markdown_files="$(mktemp)"
-        trap 'rm -f "$markdown_files"' EXIT
-        git ls-files -z --cached --others --exclude-standard -- '*.md' >"$markdown_files"
-        set --
-        while IFS= read -r -d '' markdown_file; do
-            # The index still lists a tracked file deleted from the worktree.
-            [ -f "$markdown_file" ] || continue
-            set -- "$@" "./${markdown_file}"
-        done <"$markdown_files"
-        # Passing only excludes (or no args) can enable cli2's default globs.
-        [ "$#" -gt 0 ] || exit 0
-        set -- "$@" "${default_globs[@]:1}"
-    else
-        set -- "${default_globs[@]}"
-    fi
+    set -- "${default_globs[@]}"
 fi
 
 case "$mode" in
