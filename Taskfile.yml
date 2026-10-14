@@ -112,6 +112,7 @@ tasks:
       - task: test:gh-scopes
       - task: test:related-repos
       - task: test:setup-remote
+      - task: test:web-identity
       - task: test:meta-install
       - task: test:copier-validators
       - task: test:renovate-pins
@@ -562,6 +563,11 @@ tasks:
     cmds:
       - ./scripts/test-setup-remote.sh
 
+  test:web-identity:
+    desc: Unit-test the web identity setup refusals, token handling, and empty-directory cleanup (stubbed tools, no secrets)
+    cmds:
+      - ./scripts/test-web-identity.sh
+
   test:meta-install:
     desc: Unit-test the .meta sidecar installer's ~-expansion and refusals
     cmds:
@@ -938,6 +944,12 @@ tasks:
     desc: Prepare this checkout for the dev loop on a remote platform (no devcontainer hooks) — git hooks, related repos cloned then fetched beside it, frozen dependencies. Idempotent
     cmds:
       - ./scripts/setup-remote.sh
+
+  setup:web-identity:
+    desc: Start Claude interactively with the bot token for /web-setup from an empty directory
+    interactive: true
+    cmds:
+      - ./scripts/web-identity.sh
 
   setup:github:
     desc: Apply idempotent GitHub repo settings via gh (Dependabot alerts, private vulnerability reporting, Actions runner routing)
