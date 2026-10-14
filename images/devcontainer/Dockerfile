@@ -168,6 +168,7 @@ RUN HARMON_IMAGE_BUILD=1 /usr/local/share/harmon-devcontainer/install/apt-core.s
         zip \
         zoxide \
         zsh \
+    && git --version \
     && git lfs install --system \
     && ln -sf /usr/bin/batcat /usr/local/bin/bat \
     && ln -sf /usr/bin/fdfind /usr/local/bin/fd \
@@ -198,7 +199,7 @@ RUN git clone --single-branch https://github.com/gpakosz/.tmux.git "$HOME/.tmux"
 USER root
 
 # ---------- shared core tier ----------
-# Node, uv, task, lefthook, gh, yq, shfmt, actionlint, hadolint, gitleaks,
+# Node, uv, task, lefthook, gh, yq, shellcheck, shfmt, actionlint, hadolint, gitleaks,
 # lychee, semgrep, copier and markdownlint-cli2 — the dev-loop gate, installed
 # by the same script bootstrap-remote.sh runs on a stock Ubuntu VM. Node comes
 # from the checksum-pinned nodejs.org tarball and uv from its checksum-pinned
@@ -511,6 +512,8 @@ RUN set -a \
         "gh=${GH_VERSION}" \
         "lychee=${LYCHEE_VERSION}" \
         "markdownlint-cli2=${MARKDOWNLINT_CLI2_VERSION}" \
+        "git=$(git --version | awk '{print $3}')" \
+        "shellcheck=${SHELLCHECK_VERSION}" \
         "shfmt=${SHFMT_VERSION}" \
         "hadolint=${HADOLINT_VERSION}" \
         "actionlint=${ACTIONLINT_VERSION}" \
