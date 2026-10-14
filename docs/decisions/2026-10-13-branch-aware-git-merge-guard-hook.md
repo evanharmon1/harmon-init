@@ -16,10 +16,11 @@ for unattended postures is recorded in
 The repository's merge invariant has two halves:
 
 1. Any `git merge` or `git pull` that would land on `main`, `master`, a
-   remote's default branch, a detached `HEAD`, or a checkout whose branch
-   cannot be verified must reach a human approval prompt.
-2. A plain catch-up merge of `main` into a verified feature branch must run
-   without a prompt.
+   resolved remote default branch, a detached `HEAD`, or a checkout whose
+   branch cannot be verified must reach a human approval prompt (the
+   remote-`HEAD` limits are under Consequences).
+2. A plain catch-up merge of `main` into a verified feature branch must not
+   be prompted by the guard; ordinary permission rules still decide.
 
 Previously, `.claude/settings.json` (root and template) guarded local merges
 with `Bash(git merge)` and `Bash(git merge:*)` in `permissions.ask`. Those
@@ -63,31 +64,16 @@ runs in a scratch repository
    [#1435](https://github.com/evanharmon1/harmon-init/issues/1435) and
    [#1456](https://github.com/evanharmon1/harmon-init/issues/1456)).
 2. **Make the guard allowlist-shaped and fail-closed.** The hook stays silent
-   (deferring to normal permission evaluation) for **one narrow literal shape**
-   run in the working directory reported in the hook payload, when that
-   checkout is provably on a named branch other than `main`/`master` and
-   distinct from every resolved remote default branch (with at least one
-   remote `HEAD` resolved). Flags are a set: any combination of the listed
-   flags, in any order and position, is the same shape.
-   - `git merge` with exactly one `<ref>` and any of `--no-edit`, `--no-ff`,
-     `--ff`, `--ff-only`
-   - `git merge --continue` or `git merge --quit`, alone
-   - `git pull` with at most `<remote> <ref>`, at least one of `--ff-only` or
-     `--no-rebase`, and optionally `--no-edit`
-
-   It returns `permissionDecision: "ask"` for every other command that invokes,
-   or could invoke, a `git merge` or `git pull` — including `git -C <dir> merge`,
-   non-literal subcommands, inline `-c alias.*` definitions, wrappers,
-   evaluators, substitutions, `git pull` without `--ff-only` or `--no-rebase`,
-   a detached `HEAD`, a checkout where no remote `HEAD` resolves, or any parse
-   or internal error. Every `git` invocation the guard can inspect that it
-   cannot prove is one of these allowlisted shapes, or prove does not invoke
-   `git merge`/`git pull`, fails closed to `ask` — including non-literal
-   subcommands, feeder-supplied subcommands, and lines it cannot parse; merges
-   hidden behind external git aliases, scripts, or commands that move `main`
-   without `merge`/`pull` are outside what the hook inspects (see Consequences).
-   The exact silent/ask boundary is defined by the hook's docstring and pinned
-   by `scripts/test-git-merge-guard.sh`; this record does not restate it.
+   (deferring to normal permission evaluation) only for a small set of fully
+   literal catch-up shapes — `git merge <ref>`, `git merge --continue`/`--quit`
+   and a non-rebasing `git pull` — run in the checkout the hook payload names,
+   when that checkout is provably on a feature branch. It returns
+   `permissionDecision: "ask"` for every other command it inspects that might
+   run a `git merge` or `git pull`, and for any parse or internal error. The
+   exact silent/ask boundary lives in `.claude/hooks/git-merge-guard.py` and is
+   pinned by `scripts/test-git-merge-guard.sh`; this record deliberately does
+   not restate it, so the two cannot drift apart. What the hook does not
+   inspect is listed under Consequences.
    ([#1455](https://github.com/evanharmon1/harmon-init/pull/1455) shipped the
    initial guard;
    [#1542](https://github.com/evanharmon1/harmon-init/pull/1542) and
@@ -99,12 +85,14 @@ runs in a scratch repository
    ([2026-09-02-remove-guard-process-kill-hook.md](2026-09-02-remove-guard-process-kill-hook.md)).
    `guard-process-kill` had to classify arbitrary shell commands as safe or
    unsafe, so its parser never converged and false positives on unrelated
-   commands stalled unattended workers. `git-merge-guard` instead recognizes
-   one small allowlisted shape and asks on everything else within its
-   inspection scope that might run a merge or pull: its false positives fail
-   closed to a prompt rather than permitting a silent merge, unlike
-   `guard-process-kill`, whose open-ended classifier stalled unrelated commands
-   in unattended runs.
+   commands stalled unattended workers. `git-merge-guard` also parses every
+   Bash command, but only to answer a narrower question — might this run a
+   merge or pull? — and that classifier has known blind spots (see
+   Consequences). Its errors land on the safe side: a false positive costs one
+   prompt on that command, and a command it flags runs silently only if it is
+   exactly an allowlisted shape on a verified feature branch. In the unattended
+   `bot` and `agent` postures the hook stands down entirely (see Consequences),
+   so it cannot stall unattended workers the way `guard-process-kill` did.
 
 ## Not
 
