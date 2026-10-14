@@ -492,25 +492,34 @@ fi
 if [ -f "$prettier_ignore" ]; then
     echo "==> Prettier excludes lane reports and envelopes"
     cp "$prettier_ignore" "${markdown_repo}/.prettierignore"
-    if command -v prettier >/dev/null 2>&1; then
-        prettier_run=(prettier)
-    else
-        prettier_run=(npx --yes prettier@3)
+    prettier_bin=""
+    if prettier_bin="$(command -v prettier)"; then
+        :
+    elif [ -x "$repo/node_modules/.bin/prettier" ]; then
+        prettier_bin="$repo/node_modules/.bin/prettier"
     fi
-    (
-        cd "$markdown_repo"
-        "${prettier_run[@]}" --check .
-    ) || fail "Prettier scanned lane artifacts"
-    cp "${markdown_repo}/.lane/x.json" "${markdown_repo}/bad.json"
-    out=$(
-        cd "$markdown_repo"
-        "${prettier_run[@]}" --check . 2>&1
-    ) && rc=0 || rc=$?
-    [ "$rc" -ne 0 ] || fail "Prettier fixture did not detect nonignored unformatted JSON"
-    case "$out" in
-    *'bad.json'*) ;;
-    *) fail "Prettier negative control failed for the wrong reason: $out" ;;
-    esac
+    if [ -n "$prettier_bin" ]; then
+        (
+            cd "$markdown_repo"
+            "$prettier_bin" --check .
+        ) || fail "Prettier scanned lane artifacts"
+        cp "${markdown_repo}/.lane/x.json" "${markdown_repo}/bad.json"
+        out=$(
+            cd "$markdown_repo"
+            "$prettier_bin" --check . 2>&1
+        ) && rc=0 || rc=$?
+        [ "$rc" -ne 0 ] || fail "Prettier fixture did not detect nonignored unformatted JSON"
+        case "$out" in
+        *'bad.json'*) ;;
+        *) fail "Prettier negative control failed for the wrong reason: $out" ;;
+        esac
+    else
+        grep -Fxq '.lane/' "${markdown_repo}/.prettierignore" ||
+            fail "Prettier ignore entries omit .lane/"
+        grep -Fxq '.lane-report.md' "${markdown_repo}/.prettierignore" ||
+            fail "Prettier ignore entries omit .lane-report.md"
+        echo "SKIP: live Prettier check — Prettier is not installed; ignore entries verified."
+    fi
 fi
 
 echo "==> Semgrep wrapper preserves explicit scan targets"
