@@ -69,6 +69,32 @@ instructions would answer by invoking this skill again makes that especially
 concrete — it recurses instead of stopping. Stopping is what makes the
 migration visible; a stage that finds another way to finish hides it.
 
+**Which path produced the record does not matter to this skill.** An
+orchestrated run's record comes from `/review` and its role agents; an
+ordinary interactive session's comes from `/implement` § 6a, which records the
+inline `task challenge` / `task review` stages in a real single-lane run
+(`run-record.mjs solo-init`, `receipt`, `adjudicate`, `transition`,
+`bind-pr`) with no orchestrator brief envelope. Both are the same `run.json`,
+`policy.json`, `passes/` and `adjudications/`, so `--record` takes either
+directory unchanged, and a solo session records promotion with
+`run-record.mjs promote --slate solo-<run-id> --session <its session>
+--run-id <run-id> --head <promoted headRefOid> --fingerprint <readiness-gate.sh
+fingerprint output>` — `<its session>` being the session name `/claim`
+recorded on its claim comment's `session:` line and `solo-init` persisted in
+the slate lock, the same value on every write — or a non-promotion ending with
+`close --slate solo-<run-id> --session <its session> --run-id <run-id>
+--outcome capped|escalated|abandoned --exit "<why>"`, then releases the slate
+lock with `run-record.mjs lock release --slate solo-<run-id> --session <its
+session>` (`/implement` § 6a step 6).
+
+**The scripted gate applies only when a record exists.** `assets/readiness-gate.sh`
+requires `--record`, so everything below that runs it — the checker fast path,
+the integrator pass, the gate itself — is for a run that has a record. Where no
+record exists because the confidence stages never ran (or could not be
+recorded), that is not an error and not grounds to fabricate one: use
+`AGENTS.md` § Readiness gate's hand-run procedure instead, evaluating every
+condition there by hand, and say in the PR body that the run has no record.
+
 A consumer that has not advanced its pin still has the retired single-stage
 skill at the pin it is on, which is exactly why the pin waits for the policy;
 `orchestrate/assets/consumer-pin-audit.sh` is the check that the two agree. harmon-devkit's
@@ -102,19 +128,22 @@ not call `gh pr ready` again. If new work or a blocker appears, convert it back
 to draft before posting fixes or starting another review cycle — but through
 [§2](#2-watch)'s unexplained-promotion procedure, not a bare `gh pr ready
 --undo`: entry is exactly where a promotion no session of yours made turns up,
-so the same timeline guard, the same prior-conversion escalation, and the same
-unknown-does-not-license-an-undo rule apply here. Verify `isDraft == true`. If
+so the same run-record/timeline guard, the same unaccounted-conversion
+escalation, and the same unknown-does-not-license-an-undo rule apply here. Verify `isDraft == true`. If
 that transition is unavailable, stop as blocked rather than doing active agent
 work on a ready PR.
 
-One case is not that: a promotion **this session itself made** through step 6's
-gate is a known handoff, not an unexplained one — its detection clause ("no
-`gh pr ready` issued by this session") is simply false. If a human then requests
-changes and the new work must be done on a draft, reverse your own promotion
-directly with a single `gh pr ready --undo`, confirm `isDraft == true`, and
-carry on; that is the own-mutation act §6 already carves out of §2's bound.
-The unexplained-promotion procedure governs only flips no session command
-accounts for.
+One case is not that: a promotion **the run record attributes to step 6's
+gate** is a known handoff, including after resume. Establish that attribution
+through §2's PR, head and timeline correlation, never session memory. If a
+human then requests changes and the new work must be done on a draft, reserve
+a **fresh run** (new run id and record directory) before any follow-up write,
+including reversing your own recorded promotion with a single
+`gh pr ready --undo`. Confirm `isDraft == true` and continue the follow-up work
+under that fresh run; the promoted run stays terminal as the record of the
+first handoff and accepts no later writes. This own-mutation act remains
+outside §2's automatic-undo bound, as §6 describes. The unexplained-promotion
+procedure governs flips the durable record does not account for.
 
 ## Stage ledger
 
@@ -203,10 +232,77 @@ the **remediation cap** bounds how many fix pushes it may make.
 ONLY by a base merge that changed no file under review re-reads identical code
 by construction — it cannot find anything the previous cycle did not — so
 charging it would measure the base branch's traffic rather than this change's
-difficulty. Such a cycle is **exempt**: it runs, and it spends the separate
+difficulty. Such a cycle is **exempt** — as is a `with-push` or
+`after-ci-first` review spent on a head whose CI then failed (below,
+harmon-devkit#1406): it runs, and it spends the separate
 `rounds.integration_exempt` ceiling instead. Exempt is not free, and that
 second ceiling is why: a busy base branch could otherwise spend a whole run
 re-reviewing code nobody changed.
+
+**When each review is requested is `stages.integration.review_trigger`**
+(harmon-devkit#1376; the setting is harmon-init#1571's). Read it from the same
+resolution that yields the caps, and hand it — with the number of remediation
+pushes this stage has made so far — to whatever drives the cycle. It takes one
+of three values, absent meaning `after-ci`:
+
+- `after-ci` — wait for CI on the head to conclude green, then request the
+  review; on the PR's first head and after every remediation push alike.
+  Today's serial order.
+- `with-push` — request the review with every push and settle CI alongside.
+- `after-ci-first` — wait for CI on the PR's first head, then request; after a
+  remediation push, request with the push.
+
+`check-codex-cloud-review.sh trigger-timing --review-trigger <value>
+--remediation <n>` is the one statement of that table — it prints the order
+for THIS cycle, `after-ci` or `with-push`. This skill runs it at the very start
+of §2, BEFORE the checks watch, because that is what decides when the cycle
+is dispatched; the integrator agent's §3 runs it again for the cycle it
+drives. Neither re-reads the list above. The value decides timing only. The
+readiness gate is unchanged under all three (every check concluded green AND a
+terminal clean current-head review); carry and the base-merge exemption apply
+exactly as stated here; it decides only WHEN a review is requested — it never
+suppresses a cycle the resolved rounds policy requires and never adds a
+request beyond what that policy requires. Whether the rounds policy requires a
+second cycle on an unchanged head (the maintainer's ruling names forensic's
+`min_rounds = 2` as the one case where it could) is decided by the rounds
+policy and the exit engine, never by this setting; and a CI-only
+infrastructure re-run is not a push, so it never re-requests a review —
+`reserve` refuses a second attempt-1 request for a head it already holds.
+When CI fails while a review requested alongside it is pending, the cycle
+still waits for that review's terminal result, or is reported incomplete.
+
+**A review requested with the push, on a head whose CI then fails, spends
+`integration_exempt`, not `integration`** (harmon-devkit#1406). That is every
+`with-push` cycle and every `after-ci-first` cycle after a remediation push —
+the cycles whose `trigger-timing` order is `with-push`. Requesting before CI
+concludes trades an occasional review of a head CI then rejects for
+wall-clock time; that review measured the head CI threw away rather than the
+change's difficulty, so it does not spend the cap that measures difficulty.
+Its findings are still adjudicated as usual, and the fix push still spends
+`remediation`. `reserve` reads no CI — it charges the cycle and records the
+declared exempt ceiling and the effective order (pass `--remediation <n>`
+with `--review-trigger`; an `after-ci-first` cycle reserved without it records
+`after-ci`) — and the checker's `check --run-id` settles the charge each time
+it reaches the cycle's terminal result, from the latest CI on that head: the
+cycle moves to `exempt_cycles` only when the newest run of some workflow of
+this PR concluded `failure` and no newest run is pending, and moves back when
+that stops holding (a flaky failure re-run to green). Only the PR's own runs
+count — a `pull_request` run naming exactly this PR (or, naming none, on its
+head branch **and** head repository), and any other event's run on its head
+branch **and** head repository; a run naming this PR among others keeps the
+head charged — and pending, cancelled, unreadable or any other non-`failure`
+result charges. A carried cycle, a base-merge exemption, and a spent, 0 or
+undeclared exempt ceiling leave the charge where `reserve` put it. Because CI
+often concludes after the review, run `check` once more after CI settles and
+before reporting the counters, so they reflect the final evidence. The
+readiness gate never settles a charge: after its final checks read it asks
+`ci-split` (read-only) what split the latest CI implies and is indeterminate
+(`codex-cap-mismatch`) when the state records another — run `check --run-id`
+to settle it. Never adjust a counter by your own reading of CI.
+`reserve --review-trigger <value>` records the value on the cycle and refuses
+an attempt 2 reserved under a different one. Under `after-ci` — and on
+`after-ci-first`'s first head — no review is requested before CI is green, and
+no such cycle is ever charged to `integration_exempt` for a CI failure.
 
 **Before either ceiling, ask whether the cycle is needed at all**
 (harmon-init#752). The exemption above still runs the review — it spends a
@@ -648,8 +744,9 @@ plus exactly two of this skill's asset scripts by skill-directory path:
 `assets/gh-ro.sh`, the GET-only front door for the raw `gh api` reads below,
 and `assets/readiness-gate.sh`, which reads GitHub and — beyond the transient
 advisory lock its own `--codex-recheck` path takes beside that flag's state
-file, by re-invoking `check-codex-cloud-review.sh`'s own `check` subcommand
-read-only to reconfirm a clean codex_cycle is not stale — writes nothing.
+file, by re-invoking `check-codex-cloud-review.sh`'s own `check --read-only`
+to reconfirm a clean codex_cycle is not stale, and its read-only `ci-split`
+to compare the cycle's CI-settled charge — writes nothing.
 `--integrator-result` itself is a plain file the gate only ever reads, never
 locks. Dispatching the integrator
 agent is not one of these grants either: it is a separate trust boundary with
@@ -722,11 +819,41 @@ and compare against the local branch and HEAD. Requirements, all hard:
   checkout at all: stop, report what the remote CI shows, and hand the fix
   decision to the maintainer.
 
-Once the PR is confirmed `OPEN` and the checkout matches, begin the checks
-watch. Leave Project fields unchanged; §7 records why they are manual.
+Once the PR is confirmed `OPEN` and the checkout matches, decide the review
+timing (§2's first bullet), then begin the checks watch. Leave Project fields unchanged; §7 records why they are manual.
 
 ## 2. Watch
 
+- **Decide when this head's review is requested BEFORE the checks watch**
+  (harmon-devkit#1376). The watch below waits for CI to settle; whatever is
+  dispatched after it inherits that wait, so a timing decided there makes
+  every value behave like `after-ci`. Resolve the order for this head from the
+  resolved `stages.integration.review_trigger` and this stage's remediation
+  pushes so far, captured and checked rather than piped:
+
+  ```sh
+  timing="$("$skill_dir/assets/check-codex-cloud-review.sh" trigger-timing \
+      --review-trigger "<review_trigger>" --remediation "<remediation pushes so far>")" || exit
+  order="$(jq -er '.order' <<<"$timing")" || exit
+  case "$order" in
+  after-ci | with-push) ;;
+  *)
+      echo "unknown review order '$order' — do not dispatch or trigger"
+      exit 1
+      ;;
+  esac
+  ```
+
+  - `order == after-ci` — today's sequence, unchanged: run the checks watch
+    to settled-green first, then dispatch the integrator (or drive the cycle
+    yourself on the clean-run fast path). This is `after-ci` on every head,
+    and `after-ci-first` on the PR's first head.
+  - `order == with-push` — dispatch the integrator for this head NOW,
+    alongside the checks watch, never after it: it reserves and triggers
+    with the push and settles CI itself (its §3/§4). The watch below still
+    runs, and readiness still needs both, but it gates nothing about when
+    the review is requested. This is `with-push` on every head, and
+    `after-ci-first` after a remediation push.
 - Start every watch round by re-fetching the PR head and draft state
   (`gh pr view <n> --repo "$repo" --json headRefOid,state,isDraft`) and
   confirming the head still matches local HEAD — after a push, run/log lookups
@@ -765,18 +892,47 @@ watch. Leave Project fields unchanged; §7 records why they are manual.
   merge moves the head and throws away the CI and review results the round was
   about to spend. The readiness gate resolves it, once, and the recipe is
   "Base reconciliation" at the end of step 5.
-- **Unexplained promotion — `isDraft` flips to false with no `gh pr ready`
-  issued by this session.** Read the `isDraft` from the round-start fetch every
-  poll, not only at the gate: a flip caught late looks exactly like a PR that
-  was never draft. Do not assume you forgot the call — check this session's
-  own command record first, then treat the flip as external. In this skill's
-  home platform the identified mechanism is the ChatGPT Codex Connector's
-  user-to-server authorization: its actions are attributed to the account
-  owner, and the observed signature is a flip minutes after Codex review
-  activity on an actively-worked PR (harmon-devkit#276) — the actor field
+- **Unexplained promotion — a `ready_for_review` event the run record does
+  not attribute to a readiness gate.** Read `isDraft` from every round-start
+  fetch and every poll; on non-draft entry or a flip to false, correlate the
+  timeline with the validated `run.json`, never this session's command memory.
+  Fetch the complete timeline through
+  `"${CLAUDE_SKILL_DIR}"/assets/gh-ro.sh --paginate repos/"$repo"/issues/<n>/timeline`
+  (the pre-approved GET-only wrapper), retaining both `ready_for_review` and
+  `convert_to_draft` events with their IDs, times and actors. A failed read or
+  invalid/missing run record is **unknown**, and unknown never licenses an undo.
+
+  **First attribute the ready event; then compare the current head.**
+  Gate-produced means the record names this PR, the head at promotion and this
+  transition, not necessarily the head observed now.
+  `run.json.pr` binds the canonical PR number/URL; `run.json.promotion.head`
+  names the head confirmed by step 6's gate at promotion. Correlate the
+  `ready_for_review` event's time and order with `promotion.promoted_at` and
+  that confirmed transition, comparing the head at promotion to the recorded
+  `promotion.head`, never requiring it to equal the current head.
+  Correlation must identify that exact transition, with no intervening
+  conversion/re-promotion; a historical promotion on the same head does not
+  account for a later flip. Only after event attribution compare the current
+  head to the recorded promotion head: a later head change on an attributed
+  promotion is **post-promotion drift — report, never undo**, even if the new
+  head fails the gate. A gate promotion of A followed by a contributor push of
+  B stays attributed to that promotion of A; B does not make its ready event
+  unexplained. Route it to the drift branch below before auditing the current
+  head for unexplained-promotion recovery. If attribution is ambiguous, report
+  unknown rather than guessing. A valid record with no matching promotion
+  leaves the observed draft-workbench PR's event unexplained. Record its event
+  ID, time, actor and observed head; the current head alone is not proof of the
+  head at event time.
+
+  In this skill's home platform the identified mechanism is the ChatGPT Codex
+  Connector's user-to-server authorization: its actions are attributed to the
+  account owner, and the observed signature is a flip minutes after Codex
+  review activity on an actively-worked PR (harmon-devkit#276). The actor field
   cannot separate that from the owner's own click. Elsewhere treat the writer
-  as unidentified; the recovery below is deliberately actor-agnostic. Branch
-  on the current head's gate status, freshly audited:
+  as unidentified; recovery remains actor-agnostic. A dispatched integrator
+  reports this evidence and stops its writes; only the session owning
+  integration (the orchestrator in a run) may audit, undo and record it.
+  Branch on the current head's gate status, freshly audited:
   - **The head independently passes the full readiness gate** — checks
     concluded green, current-head Codex terminal-clean, every thread answered,
     deferred findings settled, `mergeStateStatus` acceptable: **reconcile**.
@@ -825,54 +981,80 @@ watch. Leave Project fields unchanged; §7 records why they are manual.
     an unverified head or open findings: failing checks, a `CHANGES_REQUESTED`
     review, unanswered threads, unsettled deferred findings, a Codex cycle that
     is not clean. Only these.
-    **The undo is its own record, so read the PR's timeline before making
-    another one**:
-    `"${CLAUDE_SKILL_DIR}"/assets/gh-ro.sh --paginate repos/"$repo"/issues/<n>/timeline`
-    (the pre-approved GET-only wrapper) filtered to `convert_to_draft` —
-    unpaginated, an older conversion falls
-    off page one of a busy PR and the guard fail-opens. Any such event — a
-    prior session's undo or a human's own conversion, and there is no need to
-    tell which — means this PR was
-    already returned to draft once and promoted again: do not undo, stop the
-    stage, and escalate with the timeline. That stop is
-    **blocked-with-report and necessarily leaves the PR non-draft** — the one
-    sanctioned exception to a stop leaving the PR draft. Name the standing
-    unexplained promotion in the report: the timeline evidence, the head it
-    sits on, and what about that head is still unverified — posting it is the
-    one write exempt from the pre-write gate above. For this PR the
-    draft-means-workbench reading is suspended until a human intervenes, which
-    is why the stop is loud rather than quiet. That is deliberately
-    conservative,
-    and a legitimate earlier human conversion trips it too: a PR with draft
-    churn behind it is exactly one a human should look at rather than an agent
-    re-fight. If the read fails, that is **unknown**, and unknown does not
-    license an undo — escalate. Otherwise run
-    `gh pr ready --undo <n> --repo "$repo"` **once**, confirm
-    `isDraft == true`, and resume the stage; GitHub writes the
-    `convert_to_draft` event atomically with the mutation, so the next
-    session's guard is armed with no bookkeeping of yours to forget. The read
-    and the undo are adjacent by construction, so a concurrent conversion and
-    re-promotion can slip through the seconds between them at most once, and
-    the next guard read — any session, any entry path — catches it: bounded
-    drift, accepted rather than locked against. Where the repo has a tracking
-    issue (harmon-devkit#276 here), also record the event — timestamp,
-    nearest preceding Codex activity, head SHA — as evidence for that
-    investigation; it is not part of the bound, so a repo without one loses
-    nothing.
-  - **Never loop the undo — the bound is per PR, across sessions.** It counts
-    only undos of promotions this session did not make: reversing a
-    `gh pr ready` of your own — step 6's lost confirmation or changed
-    head/content snapshot, or a completed handoff a human has sent back for
-    more work (preamble) — is a different act, and stays under the
-    once-then-stop logic of the step that made it without spending this
-    budget. Those conversions still land on the timeline, which is a
-    further reason a tripped guard escalates rather than assuming who wrote
-    what. A session's own command record resets at every resume; the PR's
-    timeline is the memory that survives, which is why the guard reads it. An
-    undo war against a writer you cannot attribute has no bounded exit, and a
-    standing promotion is recoverable by a human in a way a corrupted audit
-    trail is not.
-- Checks: poll `gh pr checks <n> --repo "$repo"` on an interval (or run
+    **Guard against unaccounted conversions, using a per-PR undo ledger and the
+    complete timeline together.** Resolve the ledger in the common Git directory:
+    `$(git rev-parse --path-format=absolute --git-common-dir)/integrate-draft-undos/<owner>/<repo>/<pr>.json`.
+    Every linked worktree reads the same per-PR ledger, so a new run or worktree
+    cannot lose earlier undo evidence or reset the ceiling.
+    Its JSON object has `version: 1`, canonical `repo`, integer `pr` and an
+    `undos` array. Validate that shape and PR identity before using its entries.
+    A `convert_to_draft` event is accounted for only when its event ID matches
+    an automatic undo in this PR's ledger, including undos from earlier runs.
+    Correlate its time and actor, the ready event it reversed and recorded head;
+    actor identity alone never establishes ownership. Count only conversions
+    the ledger does not account for as guard violations. Any unaccounted
+    conversion — a human's or an undo whose durable ledger entry is missing —
+    stops the stage and escalates with the timeline. Never adopt an older
+    conversion just to clear this guard. A missing, unreadable or malformed
+    ledger leaves conversions unaccounted: **escalate, fail-safe**. A missing
+    ledger may be initialized only when the complete timeline has no conversions;
+    an unreadable or malformed ledger is unknown even then. A failed timeline
+    or run-record read is also **unknown**, never permission to undo.
+
+    **At most 12 automatic undos per PR across runs**, across every resume.
+    Count this PR's `undos` array before acting; at 12, stop and escalate rather
+    than performing a thirteenth. A fresh session or run does not reset the
+    counter. These are additional
+    bounds, independent of integration-cycle and remediation-push caps. A guard
+    violation or exhausted ceiling is **blocked-with-report and necessarily
+    leaves the PR non-draft** — the sanctioned exception to a stop leaving it
+    draft. Name the ready event ID/time/actor, observed head and unverified
+    conditions in the blocker report; that one report comment is the write
+    exempt from the pre-write gate above.
+
+    With a determinate failing audit, no unaccounted conversion and ceiling
+    remaining, re-read `state,isDraft,headRefOid` and the timeline immediately
+    before the undo. Require the same open PR, head and latest unexplained ready
+    event; changed or unknown evidence returns to detection, never a write.
+    Run `gh pr ready --undo <n> --repo "$repo"` **once for that event**, then
+    confirm `isDraft == true` on the same head and read back the timeline.
+    Attribution requires a unique new `convert_to_draft` event consistent with
+    the undo's time and actor, following the captured ready event, with no
+    intervening draft/ready transition. A concurrent conversion or re-promotion,
+    failed command, missing event, changed head or indeterminate confirmation
+    stops and reports; do not retry the mutation or claim an attributed undo.
+
+    **Every confirmed automatic undo appends to the per-PR ledger's `undos` array**.
+    Each entry carries the `ready_for_review` event ID, time and actor, observed
+    head, run id, undo time, and read-back `convert_to_draft` event ID, time and
+    actor, with confirmed `isDraft == true`. `run.json.interventions` remains
+    human touchpoints only; never append automatic undos there. Preserve every
+    earlier ledger entry; append once per ready/conversion event pair, never
+    duplicate it on resume. Write the complete candidate to a temporary file
+    beside the ledger, validate its version, repo, pr, array and complete event
+    entries (unique ready/conversion IDs), then atomically rename it over the
+    canonical ledger and validate the canonical readback. Any write,
+    validation, rename or readback failure stops the stage; never resume before
+    the entry is durable. An undo interrupted before persistence is unaccounted
+    on the next guard read and escalates rather than being repeated. After
+    successful persistence, resume integration. Where a tracking issue exists
+    (harmon-devkit#276 here), optionally also record the event, nearest preceding
+    Codex activity and head as investigation evidence; it never substitutes for
+    the per-PR ledger.
+  - **Never loop an undo for one event — the bound is per PR, across sessions
+    and runs.** Recorded automatic conversions do not trip the guard;
+    unaccounted conversions still escalate, and the finite per-PR ceiling
+    prevents an undo war even when every conversion is accounted for. Reversing
+    your own gate-produced promotion — §6's lost confirmation or changed
+    head/content snapshot, or a recorded handoff a human sends back for more
+    work (preamble) — remains under that step's once-then-stop rule, outside this
+    automatic-undo budget. Follow-up work after a recorded handoff uses a fresh
+    run, leaving the promoted run terminal. Without an automatic-undo entry,
+    such a conversion
+    still trips this procedure's guard on a later unexplained flip.
+- Checks (under a `with-push` order this runs alongside the dispatch the
+  first bullet already made, never ahead of it): poll
+  `gh pr checks <n> --repo "$repo"` on an interval (or run
   `--watch` only under an external timeout) so the wait has a real
   deadline — an unbounded `--watch` on a hung runner stalls the loop
   forever. After ~30 minutes of a check neither passing nor failing, treat
@@ -1029,7 +1211,9 @@ watch. Leave Project fields unchanged; §7 records why they are manual.
   existing live-checker and counter-validation errors remain explicit.
   The fast path does not detect badges, match replies or derive dispositions.
 - **For dispatched integration, retain the integrator agent
-  (`ai/agents/integrator.md`) and its validated result.** It settles checks and
+  (`ai/agents/integrator.md`) and its validated result.** Dispatch it when the
+  first bullet of this section says: after the checks watch settles under an
+  `after-ci` order, with the push under a `with-push` order. It settles checks and
   lists unanswered threads at every cap, and drives the current-head Codex
   cycle only where the cap is not 0 (at 0 its brief says so and it skips
   its §4, reporting `codex_cycle: null` — the result §6's gate still
@@ -1056,6 +1240,10 @@ watch. Leave Project fields unchanged; §7 records why they are manual.
     integration cap once base-merge-only cycles are exempt from it
     (harmon-init#1326) — what may not exceed the cap is the CHARGED count the
     reserve state keeps, which is the number the readiness gate checks;
+  - the resolved `stages.integration.review_trigger` and the number of
+    remediation pushes this stage has made so far — the two inputs the
+    agent's §3 hands to `trigger-timing` to order CI settlement against the
+    trigger, and the value it records on each reservation;
   - `run_id` and `initiated_by` — the active run's identity, read from
     `--record <dir>`'s own `run.json` (the same two values §6's gate binds
     the result to before trusting it);
@@ -1111,9 +1299,10 @@ watch. Leave Project fields unchanged; §7 records why they are manual.
   Branch on the validated result:
 
   - `verdict: "pending"` with `codex_cycle: null` — CI had not settled when
-    the agent read it, so it skipped the cycle without driving one
-    (`ai/agents/integrator.md` §4 skips on an unsettled `checks_ready`
-    exactly as it does on cap 0) — at **any** cap. This is not terminal and
+    the agent read it under an `after-ci` order, so it skipped the cycle
+    without driving one (`ai/agents/integrator.md` §4 skips on an unsettled
+    `checks_ready` under that order exactly as it does on cap 0) — at
+    **any** cap. A `with-push` order never skips for CI. This is not terminal and
     not a cap-0 signal: treat it exactly like exit `11` below — bounded
     wait, re-dispatch. Handing it to §6's gate under a positive cap is
     `codex-cap-mismatch` by design, and under cap 0 the gate now refuses any
@@ -1871,6 +2060,18 @@ evanharmon1/harmon-init#1311 the base moved five times in one session and the
 branch was merged three times; two were mid-stage reactions that re-reviewed
 source which had not changed and found nothing.
 
+**Settle before catching up.** When a cycle or carry attests the current head,
+run a final checker `check` after settling every finding, and require its clean
+result before the catch-up moves the head. Replies and `settle` alone do not refresh the recorded
+verdict; catching up while it still says `findings` makes both `check` and
+`carry` refuse the moved head (harmon-devkit#1390). Pass `--state` to the
+helper: it refuses a cycle or carry for the captured head without a recorded
+clean verdict (17), telling the caller to run a final `check` first. A cycle
+for a superseded head does not block reconciliation before the new head's
+review. Absent state means no open cycle and prints a one-line notice;
+omitting `--state` preserves legacy behaviour without this guard.
+The guard checks recorded state only, so the final live `check` remains owed.
+
 **Standard path — GitHub update-branch, on the server.** When the base merges
 cleanly, GitHub makes the merge commit and the agent pushes nothing. A
 catch-up adds no authored bytes, so it is not a push and owes no round gate
@@ -1880,13 +2081,28 @@ already refuses to promote without green checks on that exact `headRefOid`
 never `gh pr update-branch` or a raw call:
 
 ```sh
+state_file="$(git rev-parse --path-format=absolute --git-path \
+  integrate-codex/<owner>/<repo>/<pr>.json)"
 new_head="$("$skill_dir"/assets/update-branch.sh --repo <repo> --pr <n> \
-  --head <captured headRefOid> --base <captured baseRefName>)"
+  --head <captured headRefOid> --base <captured baseRefName> --state "$state_file")"
 ```
+
+Compute the path from the lane worktree. Pass one `--state` per configured
+PR-side finder, repeating the argument: Codex uses the path above, and other
+finders use `integrate-<finder slug>/<owner>/<repo>/<pr>.json` under the same
+`git rev-parse --path-format=absolute --git-path` lookup. Every named state
+must pass its guard; a missing file prints the no-cycle-state notice so a
+wrong path cannot skip the guard silently.
+
+Pass `--state` only once this run has reserved its own cycle (the state's
+`run_id` is this run's). At integration cap 0 or before this run's first
+reservation, omit `--state`: there is no cycle of this run to settle, and
+state left by an earlier run must not block reconciliation.
 
 The helper's exits are the invariant, stated once (0 caught up, printing the
 new OID; 10 refused; 11 conflict; 12 stale head; 13 indeterminate; 14
-retarget; 15 not a draft; 16 refused for any other reason):
+retarget; 15 not a draft; 16 refused for any other reason; 17 unsettled cycle,
+run final `check` before retrying, never a local-merge fallback):
 
 - **Merge mode, guarded by the expected head.** It re-reads `baseRefName`
   first and stops on a retarget (14): `base-retargeted` applies and nothing is
@@ -2280,6 +2496,12 @@ that loops indefinitely:
    session just attempted*, so it is governed by the once-then-stop logic here
    and not by §2's unexplained-promotion guard; a promotion somebody else made
    is that procedure's, not this one's.
+   A later human request to reverse a **recorded handoff**, including after
+   resume, is distinct from that failed-confirmation recovery. Reserve a
+   **fresh run** with a new run id and record directory before any follow-up
+   write, including the single own-mutation undo; confirm draft state and
+   continue the requested work under the fresh run. The promoted run stays
+   terminal as the record of the first handoff and accepts no later writes.
    This confirmation is the final lifecycle transition: ready-for-review is the
    human handoff, not another automated workbench. After it, perform only this
    stop condition's coordination cleanup (project-card state, guarded
