@@ -65,16 +65,24 @@ verify_runs_test() {
     block "$1" verify | grep -E '^[[:space:]]+-[[:space:]]+task:[[:space:]]+test[[:space:]]*$' >/dev/null
 }
 
+# unwired_non_node_scaffold TASKFILE — true only when `test` is still the
+# unchanged non-Node scaffold stub (harmon-init#978): its body has the exact
+# stub `echo` item and no other non-comment lines besides `desc:` and `cmds:`.
+unwired_non_node_scaffold() {
+    local stub='^[[:space:]]+-[[:space:]]+'\''echo "TODO: wire tests for this project \(see docs/architecture/tests\.md\); test files live in tests/"'\''[[:space:]]*$'
+    block "$1" test | grep -Eq "$stub" || return 1
+    ! block "$1" test | grep -Ev '^[[:space:]]*(#|$|desc:[[:space:]]|cmds:[[:space:]]*$)' | grep -Evq "$stub"
+}
+
 # project_test_tier_active TASKFILE WORKFLOW — true when the Build workflow
-# must carry a `run: task test` step: either the workflow already defines a
-# project test job (`build-test` in the template; `test` / `test-*` in a
-# consumer), or `verify` lists `task: test` and the `test` task is no longer
-# the unwired non-Node scaffold stub (harmon-init#978: fresh non-Node renders
-# ship that stub with no `build-test` job yet).
+# must carry a `run: task test` step: every consumer workflow (one without the
+# template repo's own `template-test:` job) except a fresh non-Node render that
+# has no project test job yet and whose `test` task is still the unchanged
+# scaffold stub.
 project_test_tier_active() {
+    grep -Eq '^  template-test:[[:space:]]*$' "$2" && return 1
     grep -Eq '^  (build-test|test(-[a-z0-9-]+)?):[[:space:]]*$' "$2" && return 0
-    verify_runs_test "$1" || return 1
-    ! block "$1" test | grep -Fq 'TODO: wire tests for this project'
+    ! unwired_non_node_scaffold "$1"
 }
 
 # verify_has_no_stray_tests TASKFILE WORKFLOW — every `test:*` entry in
@@ -103,6 +111,8 @@ workflow_calls_suite "$workflow" ||
 if project_test_tier_active "$taskfile" "$workflow"; then
     workflow_calls_test "$workflow" ||
         fail "the Build workflow no longer runs \`task test\` in a project test job — add an uncommented \`run: task test\` step rather than enumerating test:* targets in build.yml"
+fi
+if ! grep -Eq '^  template-test:[[:space:]]*$' "$workflow"; then
     verify_runs_test "$taskfile" ||
         fail "\`verify\` no longer lists \`task: test\` itself"
 fi
@@ -160,9 +170,15 @@ workflow_calls_test "${scratch}/test-consumer-ok.yml" ||
     fail "planted case: a consumer test-* job that runs task test was rejected"
 
 printf '%s\n' 'tasks:' '  verify:' '    cmds:' '      - task: check' '      - task: test:suite' '      - task: test' \
-    '  test:' '    cmds:' '      - ./scripts/test-unit.sh' >"${scratch}/wired-test.Taskfile"
+    '  test:' '    # TODO: wire tests for this project' '    cmds:' '      - ./scripts/test-unit.sh' >"${scratch}/wired-test.Taskfile"
 project_test_tier_active "${scratch}/wired-test.Taskfile" "${scratch}/ok.yml" ||
     fail "planted case: a Taskfile with a wired test task was not treated as active"
+verify_runs_test "${scratch}/wired-test.Taskfile" ||
+    fail "planted case: a verify block that runs task: test was rejected"
+printf '%s\n' 'tasks:' '  verify:' '    cmds:' '      - task: check' '      - task: test:suite' \
+    '  test:' '    cmds:' '      - ./scripts/test-unit.sh' >"${scratch}/verify-no-test.Taskfile"
+! verify_runs_test "${scratch}/verify-no-test.Taskfile" ||
+    fail "planted case: a verify block without task: test still passed"
 printf '%s\n' 'tasks:' '  verify:' '    cmds:' '      - task: check' '      - task: test:suite' '      - task: test' \
     '  test:' '    cmds:' '      - '\''echo "TODO: wire tests for this project (see docs/architecture/tests.md); test files live in tests/"'\''' >"${scratch}/unwired-test.Taskfile"
 ! project_test_tier_active "${scratch}/unwired-test.Taskfile" "${scratch}/ok.yml" ||
