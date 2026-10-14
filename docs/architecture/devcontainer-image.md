@@ -27,9 +27,9 @@ The image:
 - carries OCI source, revision, version, description, and license labels;
 - contains `/usr/local/share/harmon-devcontainer/manifest.json` with its source
   revision, architecture, and important tool versions;
-- uses Ubuntu's `/usr/bin/git`, removing the base feature's source-built Git
-  and its hard links from `/usr/local`. Per-platform smoke checks execute
-  `git --version` and reject empty regular files under `/usr/local/bin`;
+- retains the base image's Git. Per-platform smoke checks execute the Git on
+  PATH with `git --version`, validate its version against the manifest, and
+  reject empty regular files under `/usr/local/bin`;
 - installs ShellCheck from checksum-pinned GitHub release archives for each
   architecture, matching the setup action's version;
 - includes pinned Terraform CLI and TFLint releases, with their archives
@@ -252,5 +252,6 @@ instead of falling back to a floating image.
 contain a complete Git binary; an empty local copy can indicate a corrupt Docker
 Desktop snapshot or hard-link handling problem. Remove the affected local image,
 prune its unused builder cache, then re-pull the pinned image and rebuild the
-container. The new image selects Ubuntu's Git and checks it on both platforms;
-confirm `command -v git` is `/usr/bin/git` and `git --version` prints a version.
+container. Per-platform smoke checks reject empty files under `/usr/local/bin`
+and require the Git on PATH to print a valid version matching the manifest;
+confirm `git --version` prints a version after the rebuild.

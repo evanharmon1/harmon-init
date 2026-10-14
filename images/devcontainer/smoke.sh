@@ -28,7 +28,6 @@ fi
 # Catch truncated base snapshots even when an empty executable exits zero.
 empty_local_files="$(find /usr/local/bin -type f -size 0)"
 [ -z "$empty_local_files" ] || fail "empty regular files under /usr/local/bin: $empty_local_files"
-[ "$(command -v git)" = /usr/bin/git ] || fail "git does not resolve to Ubuntu's /usr/bin/git"
 git_version="$(git --version)" || fail "git --version failed"
 case "$git_version" in
 'git version '?*) ;;
