@@ -185,6 +185,36 @@ if ! (cd "$gen" && copier update --trust --defaults) >"$work/update.log" 2>&1; t
     sed 's/^/    /' "$work/update.log" >&2
 fi
 
+# Consumer-owned Node allowances survive a real update byte-for-byte.
+# Use the current source rather than extending the legacy migration fixture.
+node_gen="$work/node"
+if ! copier copy "$tmpl" "$node_gen" --vcs-ref=v0.0.2 --trust --defaults \
+    --data project_name="Allowance Update Test" --data project_slug=allowance-update-test \
+    --data project_type=web-app --data git_init=false --data run_task_install=false \
+    --data github_remote_create=false --data github_release_init=false \
+    --data bunch_add=false --data obsidian_project_add=false >"$work/node-copy.log" 2>&1; then
+    err "Node allowance preservation fixture failed to render"
+    cat "$work/node-copy.log" >&2
+else
+    jq -e '.allowances == []' "$node_gen/.security-audit-allowances.json" >/dev/null ||
+        err "Node allowances were not seeded empty"
+    printf '{"allowances":[],"consumer_note":"reviewed decisions stay here"}\n' >"$node_gen/.security-audit-allowances.json"
+    cp "$node_gen/.security-audit-allowances.json" "$work/consumer-allowances.json"
+    git -C "$node_gen" init -q
+    gitq "$node_gen" add -A
+    gitq "$node_gen" commit -qm "customize Node allowances"
+    printf '{"allowances":[],"template_note":"must not overwrite consumer"}\n' >"$tmpl/template/[% if use_node %].security-audit-allowances.json[% endif %]"
+    gitq "$tmpl" add -A
+    gitq "$tmpl" commit -qm "change allowance seed"
+    git -C "$tmpl" tag v0.0.3
+    if ! (cd "$node_gen" && copier update --trust --defaults) >"$work/node-update.log" 2>&1; then
+        err "Node allowance preservation update failed"
+        cat "$work/node-update.log" >&2
+    fi
+    cmp -s "$work/consumer-allowances.json" "$node_gen/.security-audit-allowances.json" ||
+        err "Copier update overwrote consumer-owned security allowances"
+fi
+
 # 6. Assertions.
 after="$(git -C "$gen" rev-list --count HEAD)"
 [ "$before" = "$after" ] || err "spurious commit on update (before=$before after=$after) — first-run _tasks re-ran"

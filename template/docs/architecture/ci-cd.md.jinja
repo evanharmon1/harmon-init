@@ -86,7 +86,7 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
     token (see [security.md](security.md)). One `concurrency` group serializes
     runs.
   - **Jobs:** `audit` holds no credentials. It runs `task security:audit`, and
-    only when that fails *and* a Node-only `pnpm audit --audit-level=high`
+    only when that fails *and* a Node-only `scripts/security-audit.sh`
     fails too (a Python-only finding stays quiet) runs
     `task security:audit:fix -- --skip-refused`, then
     hands a patch (`pnpm-workspace.yaml` + `pnpm-lock.yaml` only) and the
@@ -110,7 +110,8 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
     refused fix is reported in the PR body when a PR is opened, and otherwise
     (every fix refused, so no diff and no PR) in the run's job summary — never
     a red run; only an operational failure (registry, pnpm, push, API) fails
-    it. The PR `security` job's `task security:audit` gate is unchanged. See
+    it. The gate and fix share the reviewed, expiring dev-only allowances; an
+    allowed-only audit produces no PR. See
     [security.md](security.md#scheduled-audit-remediation).
 [% endif %]
 [% if devcontainer %]

@@ -1126,7 +1126,7 @@ tasks:
     desc: Dependency audit
     cmds:
 [% if use_node %]
-      - pnpm audit --audit-level=high
+      - ./scripts/security-audit.sh
 [% endif %]
 [% if use_python %]
       - ./scripts/python-audit.sh

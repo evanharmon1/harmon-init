@@ -19,7 +19,7 @@ How testing works in [[ project_name ]].
 | Application security | Semgrep CE locally[% if use_codeql %]; CodeQL in eligible CI[% endif %] | `task security:sast` |
 | Optional second opinion | Snyk Code + Open Source, manual[% if snyk_scan_schedule != 'off' %] or [[ snyk_scan_schedule ]] scheduled[% endif %] | `task security:sast:snyk` / `task security:sca:snyk` |
 | Secrets | gitleaks | `task security:secrets` |
-| Dependencies | package-manager audit | `task security:audit` |
+| Dependencies | package-manager audit; Node uses reviewed, expiring dev-only allowances ([security.md](security.md#unpatched-dev-only-advisory-allowances)) | `task security:audit` |
 [% if use_node %]
 
 ## The tier boundary: port-free vs. port-binding
