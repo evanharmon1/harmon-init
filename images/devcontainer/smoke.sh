@@ -25,7 +25,22 @@ if [ -n "${EXPECTED_ARCHITECTURE:-}" ]; then
         fail "manifest architecture does not match $EXPECTED_ARCHITECTURE"
 fi
 
-for tool in task node npm gh markdownlint-cli2 shfmt hadolint actionlint terraform-docs terraform tflint yq lefthook gitleaks sops act uv semgrep copier \
+# Catch truncated base snapshots even when an empty executable exits zero.
+empty_local_files="$(find /usr/local/bin -type f -size 0)"
+[ -z "$empty_local_files" ] || fail "empty regular files under /usr/local/bin: $empty_local_files"
+[ "$(command -v git)" = /usr/bin/git ] || fail "git does not resolve to Ubuntu's /usr/bin/git"
+git_version="$(git --version)" || fail "git --version failed"
+case "$git_version" in
+'git version '?*) ;;
+*) fail "git --version returned no valid version: $git_version" ;;
+esac
+[ "${git_version#git version }" = "$(jq -r '.tools.git' "$manifest")" ] ||
+    fail "git $git_version does not match the manifest"
+shellcheck_version="$(shellcheck --version | sed -n 's/^version: //p')"
+[ -n "$shellcheck_version" ] && [ "$shellcheck_version" = "$(jq -r '.tools.shellcheck' "$manifest")" ] ||
+    fail "shellcheck ${shellcheck_version:-unknown} does not match the manifest"
+
+for tool in git shellcheck task node npm gh markdownlint-cli2 shfmt hadolint actionlint terraform-docs terraform tflint yq lefthook gitleaks sops act uv semgrep copier \
     claude codex copilot pi omp opencode agy agent-deck playwright playwright-cli zellij workmux aoe sesh herdr dmux starship \
     dive fx glow lazygit tokei xh gum gh-dash wtfutil lychee tv fresh ttt mc nano; do
     command -v "$tool" >/dev/null 2>&1 || fail "$tool is not on PATH"
@@ -48,6 +63,8 @@ run_version() {
 # proving that an appropriately named path exists. workmux and dmux require a
 # live multiplexer session for a zero exit, so their safe help probes only need
 # to reject loader/command-not-found failures (126/127).
+run_version git git --version
+run_version shellcheck shellcheck --version
 run_version task task --version
 run_version node node --version
 run_version npm npm --version
