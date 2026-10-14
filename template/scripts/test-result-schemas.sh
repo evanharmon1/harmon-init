@@ -82,7 +82,7 @@ integrator_schema="$(jq -r '.roles[] | select(.slug == "integrator") | .result_s
     echo "FAIL: integrator registry schema path differs from shipped contract" >&2
     exit 1
 }
-for schema in $registry_schemas; do
+for schema in $registry_schemas "$schema_dir/brief.envelope.schema.json" "$schema_dir/plan.schema.json"; do
     [ -f "$schema" ] || {
         echo "FAIL: missing registry-named schema: $schema" >&2
         exit 1
@@ -96,6 +96,10 @@ for schema in $registry_schemas; do
         }
     fi
 done
+
+# Advertised standalone modes must work with the repository's shipped schemas.
+accepts brief "$fixtures/brief.envelope/valid/minimal.md" --schemas-dir "$schema_dir"
+accepts plan "$fixtures/plan/valid/interactive.json" --schemas-dir "$schema_dir"
 
 for fixture in charged-exempt carried; do
     accepts integrator "$fixtures/result.integrator.schema/valid/$fixture.json" \
@@ -127,7 +131,7 @@ for mutation in 'del(.payload.codex_cycle.carried)' \
 done
 
 expected_inventory="$({
-    find "$fixtures" -type f -name '*.json' |
+    find "$fixtures" -type f \( -name '*.json' -o -name '*.md' \) |
         sed "s#^${fixtures}/##" |
         LC_ALL=C sort |
         sed 's#^#- `#; s#$#`#'
