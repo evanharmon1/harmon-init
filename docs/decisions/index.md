@@ -91,3 +91,6 @@ record is still open to edits.
 - [2026-10-11-server-side-base-catch-up.md](2026-10-11-server-side-base-catch-up.md)
   — catch a PR up to its base with GitHub update-branch; a local merge is the fallback,
   and a server-side catch-up spends no remediation round (Accepted).
+- [2026-10-13-branch-aware-git-merge-guard-hook.md](2026-10-13-branch-aware-git-merge-guard-hook.md)
+  — replace the `git merge` ask rules with an allowlist-shaped, branch-aware merge guard
+  hook (Accepted).

@@ -339,19 +339,33 @@ then `/web-setup`) is not observed.
    disconnect GitHub.
 2. Start the local CLI with the bot's classic PAT (scope `repo`, no `workflow`)
    in `GH_TOKEN`, **read from your secret store by command substitution, never
-   typed**, and run `/web-setup`:
+   typed**. From a harmon-init checkout, run:
+
+   ```bash
+   WEB_SETUP_TOKEN_REF='op://<vault>/<item>/<field>' task setup:web-identity
+   ```
+
+   The task refuses unless it is `evanharmon1-bot`'s classic token, with `repo`
+   and without `workflow`.
+   The task starts `claude` in a fresh empty directory, so the checkout's project
+   settings, hooks and MCP servers don't apply. Your user-level and managed Claude
+   Code settings still load, as they do for the hand-run subshell. Run `/web-setup`
+   inside it. On a host without the task, use the hand-run subshell instead:
 
    ```bash
    (
+     { set +xa; } 2>/dev/null
+     unset t
      t="$(<your secret store's read command>)" && [ -n "$t" ] \
-       && d="$(mktemp -d)" && [ -n "$d" ] || exit 1
+       && mkdir -p "$HOME/.cache" && d="$(mktemp -d "$HOME/.cache/web-identity.XXXXXX")" \
+       && [ -n "$d" ] || exit 1
      trap 'cd / && rm -rf -- "$d"' EXIT
      cd "$d" && GH_TOKEN="$t" claude
    )
    ```
 
-   It **fails closed**: if the read fails or returns nothing, or `mktemp` fails,
-   the subshell exits before `claude` starts. Without that, an empty `GH_TOKEN`
+   Both **fail closed**: if the read fails or returns nothing, or `mktemp` fails,
+   they exit before `claude` starts. Without that, an empty `GH_TOKEN`
    makes `gh` — and so `/web-setup` — fall back to your own stored login, which
    would become the cloud identity. The subshell keeps the token out of your
    interactive shell and leaves that shell where it was, and its `EXIT` trap
