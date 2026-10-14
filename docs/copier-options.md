@@ -214,7 +214,7 @@ Not answers — copier's own configuration, all in `copier.yml`.
 | `_preserve_symlinks` | `true` — keeps `CLAUDE.md`/`GEMINI.md` as symlinks to `AGENTS.md` rather than dereferenced duplicates |
 | `_envops` | `[[ ]]` / `[% %]` / `[# #]`, `trim_blocks`, `lstrip_blocks` — so Actions `${{ }}`, go-task `{{.VAR}}`, and lefthook `{staged_files}` appear verbatim with zero escaping |
 | `_secret_questions` | `password`, `key` — excluded from the answers file. **Neither is a defined question today**; it is a pre-emptive filter |
-| `_skip_if_exists` | 5 entries — see [Consumer-owned files](#consumer-owned-files) |
+| `_skip_if_exists` | 6 entries — see [Consumer-owned files](#consumer-owned-files) |
 | `_tasks` | 7 post-generation commands |
 
 ### `_tasks` (7)
@@ -303,6 +303,7 @@ block introducing `_skip_if_exists` and beside each entry:
 | `.github/CODEOWNERS` | Encodes real access control; the template renders only `* @code_owner`, so an unfrozen copy would silently **drop** additional owners on adopt |
 | `.devcontainer/related-repos.txt` | The repo's curated sibling list; the scripts stay template-owned, the list does not |
 | `.release-please-manifest.json` | release-please state (current released version), not template content — an unfrozen copy conflicts on every update |
+| `.security-audit-allowances.json` | Reviewed, expiring Node audit exceptions belong to the consumer; seeded empty once |
 
 Also consumer-owned but *not* frozen: `.skills-sync.yaml` (the devkit pin +
 category list, editable post-generation — which is exactly why nothing may gate
