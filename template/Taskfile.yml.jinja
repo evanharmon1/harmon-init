@@ -1201,9 +1201,9 @@ tasks:
 [% if use_node %]
       - ./scripts/bootstrap-pnpm.sh
 [% endif %]
-      # Use THIS repo's Brewfile by absolute path (never a user/global one), and
-      # don't cascade-upgrade unrelated already-installed brew dependents.
-      - HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK=1 brew bundle --file={{.ROOT_DIR}}/Brewfile
+      # Brewfile deps; skip only when the harmon toolchain manifest is present.
+      # An ordinary host without Homebrew fails with setup instructions.
+      - ./scripts/install-brewfile.sh
 [% if use_python %]
       - uv sync
 [% endif %]

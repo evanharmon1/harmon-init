@@ -18,7 +18,7 @@ set -euo pipefail
 # interactive-terminal set that way, so both layers share ONE `apt-get update`
 # and the core list stays the thing the remote path is promised.
 #
-# jq, shellcheck, yamllint are dev-loop gate tools; the rest are what the
+# jq and yamllint are dev-loop gate tools; the rest are what the
 # download-and-verify path itself needs (xz-utils for the Node tarball).
 #
 # python3 is listed even though `yamllint` already pulls it in transitively
@@ -35,7 +35,6 @@ file
 git
 jq
 python3
-shellcheck
 unzip
 xz-utils
 yamllint

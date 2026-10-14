@@ -156,6 +156,13 @@
       ]
     },
     {
+      "description": "Keep shared image/remote ShellCheck and setup action pins in one CI lint tools PR; their version parity is gated by test-setup-action-tool-versions.sh.",
+      "matchManagers": ["custom.regex"],
+      "matchPackageNames": ["koalaman/shellcheck"],
+      "matchFileNames": ["images/devcontainer/versions.env"],
+      "groupName": "CI lint tools"
+    },
+    {
       "description": "Surface harmon-devkit releases for deliberate pin-and-sync updates",
       "matchManagers": ["custom.regex"],
       "matchPackageNames": ["evanharmon1/harmon-devkit"],

@@ -392,6 +392,20 @@ if producer_group != "Devcontainer":
         f"group {producer_group!r}, expected 'Devcontainer'"
     )
 
+# ShellCheck's shared-image and setup-action pins must bump together or the
+# version-parity guard rejects each separately generated Renovate PR.
+for datasource in ("github-releases", "github-release-attachments"):
+    groups = {
+        resolve_group(root_cfg, path, "koalaman/shellcheck", datasource)
+        for path in (
+            "images/devcontainer/versions.env",
+            ".github/actions/setup/action.yml",
+            "template/.github/actions/setup/action.yml.jinja",
+        )
+    }
+    if groups != {"CI lint tools"}:
+        errors.append(f"shellcheck {datasource} pins resolve to split groups: {groups!r}")
+
 # The root-only Renovate validator is CI tooling, not part of the devcontainer
 # toolchain. The broad scripts/** rule must explicitly leave it ungrouped.
 validator_group = resolve_group(

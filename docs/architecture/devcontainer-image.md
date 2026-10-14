@@ -27,6 +27,11 @@ The image:
 - carries OCI source, revision, version, description, and license labels;
 - contains `/usr/local/share/harmon-devcontainer/manifest.json` with its source
   revision, architecture, and important tool versions;
+- retains the base image's Git. Per-platform smoke checks execute the Git on
+  PATH with `git --version`, validate its version against the manifest, and
+  reject empty regular files under `/usr/local/bin`;
+- installs ShellCheck from checksum-pinned GitHub release archives for each
+  architecture, matching the setup action's version;
 - includes pinned Terraform CLI and TFLint releases, with their archives
   checksum-verified before installation. HashiCorp's Terraform checksum catalog
   is additionally verified with its pinned PGP fingerprint; TFLint uses reviewed
@@ -64,7 +69,7 @@ scripts under `images/devcontainer/install/`, reading their versions from
 the image at all. So the pins are split by audience:
 
 - **`versions.env`** — every pin on the remote path: Node, uv, go-task,
-  lefthook, gh, yq, shfmt, actionlint, hadolint, gitleaks, lychee, semgrep,
+  lefthook, gh, yq, shellcheck, shfmt, actionlint, hadolint, gitleaks, lychee, semgrep,
   copier, markdownlint-cli2, the Codex CLI, Playwright.
 - **Dockerfile `ARG`s** — everything the remote path never installs: Terraform,
   TFLint, the interactive-terminal tools, the other agent CLIs.
@@ -242,3 +247,11 @@ A consumer rollback restores the previous reviewed `tag@digest` line. Tags are
 never overwritten, so the old reference cannot silently change. Existing local
 and runner caches remain usable during a registry outage; clean builders fail
 instead of falling back to a floating image.
+
+**arm64: if git is empty after a pull.** The inspected published arm64 layers
+contain a complete Git binary; an empty local copy can indicate a corrupt Docker
+Desktop snapshot or hard-link handling problem. Remove the affected local image,
+prune its unused builder cache, then re-pull the pinned image and rebuild the
+container. Per-platform smoke checks reject empty files under `/usr/local/bin`
+and require the Git on PATH to print a valid version matching the manifest;
+confirm `git --version` prints a version after the rebuild.

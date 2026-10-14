@@ -100,6 +100,12 @@ for required in (
 ):
     if required not in pins:
         raise SystemExit(f"could not read {required} from {root_path}")
+# The shared image/remote core and CI must run the same ShellCheck release.
+image_pins = (pathlib.Path(root_path).parents[3] / "images/devcontainer/versions.env").read_text()
+image_shellcheck = re.search(r"^SHELLCHECK_VERSION=(\S+)", image_pins, re.M)
+if not image_shellcheck or image_shellcheck[1] != pins["PIN_SHELLCHECK"]:
+    raise SystemExit("shared image SHELLCHECK_VERSION differs from the setup action")
+
 pathlib.Path(pins_path).write_text(
     "".join(f"export {k}={v}\n" for k, v in sorted(pins.items()))
 )
