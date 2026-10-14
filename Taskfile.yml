@@ -918,8 +918,8 @@ tasks:
   install:
     desc: Install all project dependencies and tools
     cmds:
-      # Brewfile deps, but a graceful no-op when Homebrew is absent (this repo's
-      # own devcontainer bakes its toolchain into the image and ships no brew).
+      # Brewfile deps; skip only when the harmon toolchain manifest is present.
+      # An ordinary host without Homebrew fails with setup instructions.
       - ./scripts/install-brewfile.sh
       # copier (the template engine) is maintenance-only tooling for harmon-init
       # itself. On a Homebrew host it comes from the Brewfile above; this script

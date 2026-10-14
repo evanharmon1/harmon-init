@@ -3,11 +3,7 @@
 # run time: a Taskfile that no longer compiles, and setup tasks that fail when
 # they should be safe no-ops. Run via `task test:tasks`.
 #
-# Coverage note: the bootstrap assertion only exercises the "Homebrew already
-# installed" path, so it is skipped on runners without brew (e.g. the default
-# ubuntu-latest CI). It still guards the common local/macOS case — the exact
-# regression where `task bootstrap` aborted on a sudo precheck despite brew
-# already being installed.
+# Setup uses isolated stubs: tests never install a global toolchain.
 set -euo pipefail
 
 repo="$(git rev-parse --show-toplevel)"
@@ -254,6 +250,62 @@ case "$out" in
 *) fail "closing-keyword guard reported the wrong commit-cap failure: $out" ;;
 esac
 
+echo "==> brew-less setup requires a positive toolchain marker"
+brewless_bin="${test_tmp}/brewless-bin"
+toolchain_manifest="${test_tmp}/toolchain-manifest.json"
+mkdir -p "$brewless_bin"
+# Restrict PATH rather than assuming the runner has no Homebrew or Node.
+for tool in bash dirname; do
+    ln -s "$(command -v "$tool")" "${brewless_bin}/${tool}"
+done
+printf '%s\n' '{}' >"$toolchain_manifest"
+for helper in scripts/install-brewfile.sh scripts/bootstrap-pnpm.sh; do
+    [ -x "$helper" ] || continue
+    out=$(PATH="$brewless_bin" HARMON_TOOLCHAIN_MANIFEST="$toolchain_manifest" \
+        "$helper" 2>&1) && rc=0 || rc=$?
+    [ "$rc" -eq 0 ] || fail "$helper rejected the toolchain manifest: $out"
+    out=$(PATH="$brewless_bin" HARMON_TOOLCHAIN_MANIFEST="${test_tmp}/absent-manifest" \
+        "$helper" 2>&1) && rc=0 || rc=$?
+    [ "$rc" -ne 0 ] || fail "$helper silently skipped setup on a brew-less host"
+    case "$out" in
+    *"Homebrew not found"*"task bootstrap"*) ;;
+    *) fail "$helper failed without setup instructions: $out" ;;
+    esac
+done
+if [ -x scripts/bootstrap-pnpm.sh ]; then
+    printf '%s\n' '#!/usr/bin/env bash' 'exit 0' >"${brewless_bin}/node"
+    chmod +x "${brewless_bin}/node"
+    PATH="$brewless_bin" HARMON_TOOLCHAIN_MANIFEST="${test_tmp}/absent-manifest" \
+        ./scripts/bootstrap-pnpm.sh >/dev/null ||
+        fail "brew-less Node bootstrap rejected existing Node"
+fi
+# Generated installs must reach dependency installation and hook setup. Stubs
+# prove task wiring; a real consumer devcontainer install remains a QA check.
+if [ ! -f scripts/install-copier.sh ]; then
+    install_marker="${test_tmp}/dependencies-installed"
+    for tool in task; do
+        ln -s "$(command -v "$tool")" "${brewless_bin}/${tool}"
+    done
+    for stub in pnpm uv lefthook; do
+        printf '%s\n' '#!/usr/bin/env bash' 'echo "$0 $*" >>"${INSTALL_MARKER:?}"' >"${brewless_bin}/${stub}"
+        chmod +x "${brewless_bin}/${stub}"
+    done
+    PATH="$brewless_bin" HARMON_TOOLCHAIN_MANIFEST="$toolchain_manifest" \
+        INSTALL_MARKER="$install_marker" task install >/dev/null ||
+        fail "rendered task install failed with the toolchain manifest"
+    grep -q 'lefthook install' "$install_marker" || fail "rendered install never installed hooks"
+    if [ -f package.json ]; then
+        grep -q 'pnpm install' "$install_marker" || fail "rendered install never installed Node dependencies"
+    fi
+    if [ -f pyproject.toml ]; then
+        grep -q 'uv sync' "$install_marker" || fail "rendered install never installed Python dependencies"
+    fi
+    if PATH="$brewless_bin" HARMON_TOOLCHAIN_MANIFEST="${test_tmp}/absent-manifest" \
+        INSTALL_MARKER="$install_marker" task install >/dev/null 2>&1; then
+        fail "rendered task install succeeded on an unmarked brew-less host"
+    fi
+fi
+
 echo "==> bootstrap is a no-op when Homebrew is already installed"
 # Run against STUBS, never the real toolchain. `test:tasks` is part of `verify`,
 # and in a generated use_node repo `bootstrap` runs `brew install node` plus
@@ -373,6 +425,71 @@ fi
 
 if [ -n "${HARMON_TEST_PNPM_BOOTSTRAP_ONLY:-}" ]; then
     exit 0
+fi
+
+echo "==> Markdown lint honours git excludes while checking tracked files"
+markdown_repo="${test_tmp}/markdown-repo"
+mkdir -p "${markdown_repo}/.lane"
+git -C "$markdown_repo" init -q
+printf '%s\n' '.lane/' '.lane-report.md' >>"${markdown_repo}/.git/info/exclude"
+printf '%s\n' '# Fixture' >"${markdown_repo}/valid.md"
+printf '%s\n' '| A | B |' '| --- | --- |' '| one |' >"${markdown_repo}/.lane-report.md"
+cp "${markdown_repo}/.lane-report.md" "${markdown_repo}/.lane/x.md"
+printf '%s\n' '{"unformatted":true}' >"${markdown_repo}/.lane/x.json"
+(
+    cd "$markdown_repo"
+    "$repo/scripts/markdownlint.sh" check
+) || fail "Markdown lint scanned git-excluded lane artifacts"
+git -C "$markdown_repo" add -f .lane/x.md
+out=$(
+    cd "$markdown_repo"
+    "$repo/scripts/markdownlint.sh" check 2>&1
+) && rc=0 || rc=$?
+[ "$rc" -ne 0 ] || fail "Markdown lint skipped tracked Markdown under an ignored directory"
+case "$out" in
+*'MD056'*) ;;
+*) fail "tracked Markdown failed for the wrong reason: $out" ;;
+esac
+# An untracked, nonignored file must also be checked, including spaces in paths.
+git -C "$markdown_repo" rm -q -f --cached .lane/x.md
+cp "${markdown_repo}/.lane/x.md" "${markdown_repo}/bad file.md"
+out=$(
+    cd "$markdown_repo"
+    "$repo/scripts/markdownlint.sh" check 2>&1
+) && rc=0 || rc=$?
+[ "$rc" -ne 0 ] || fail "Markdown lint skipped nonignored untracked Markdown"
+case "$out" in
+*'MD056'*) ;;
+*) fail "untracked Markdown failed for the wrong reason: $out" ;;
+esac
+rm "${markdown_repo}/bad file.md"
+
+prettier_ignore="$repo/.prettierignore"
+if [ ! -f "$prettier_ignore" ]; then
+    prettier_ignore="$repo/template/${taskfile_jinja_open} if use_node %].prettierignore${taskfile_jinja_open} endif %].jinja"
+fi
+if [ -f "$prettier_ignore" ]; then
+    echo "==> Prettier excludes lane reports and envelopes"
+    cp "$prettier_ignore" "${markdown_repo}/.prettierignore"
+    if command -v prettier >/dev/null 2>&1; then
+        prettier_run=(prettier)
+    else
+        prettier_run=(npx --yes prettier@3)
+    fi
+    (
+        cd "$markdown_repo"
+        "${prettier_run[@]}" --check .
+    ) || fail "Prettier scanned lane artifacts"
+    cp "${markdown_repo}/.lane/x.json" "${markdown_repo}/bad.json"
+    out=$(
+        cd "$markdown_repo"
+        "${prettier_run[@]}" --check . 2>&1
+    ) && rc=0 || rc=$?
+    [ "$rc" -ne 0 ] || fail "Prettier fixture did not detect nonignored unformatted JSON"
+    case "$out" in
+    *'bad.json'*) ;;
+    *) fail "Prettier negative control failed for the wrong reason: $out" ;;
+    esac
 fi
 
 echo "==> Semgrep wrapper preserves explicit scan targets"
