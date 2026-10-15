@@ -158,9 +158,9 @@ jobs:
           acquired=true
           echo "acquired=$acquired" >>"$GITHUB_OUTPUT"
       # The narrow token Claude reaches via git/gh: push commits (contents), open
-      # PRs (pull-requests), comment (issues) — nothing more, and minted only
-      # AFTER the sender is authorized. It lacks workflows:write, so a push that
-      # edits .github/workflows/ is rejected by GitHub, keeping a prompt-injected
+      # PRs (pull-requests), comment (issues), and watch CI (checks/statuses read).
+      # Minted only AFTER the sender is authorized. It lacks workflows:write,
+      # so a push that edits .github/workflows/ is rejected by GitHub, keeping a prompt-injected
       # run from rewriting CI.
       - uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
         id: app-token
@@ -170,6 +170,8 @@ jobs:
           permission-contents: write
           permission-pull-requests: write
           permission-issues: write
+          permission-checks: read
+          permission-statuses: read
 [% if github_org != author_git_provider_username %]
       # Separate token for the project-board update only — organization-projects
       # to move the Status card plus issues:read to resolve it by issue number.

@@ -700,6 +700,8 @@ nothing more:
 | Contents | Read and write | commits, branches, tags, releases |
 | Pull requests | Read and write | open/update the release PR and claude PRs |
 | Issues | Read and write | claude comments/labels/updates issues |
+| Checks | Read-only | claude-implement watches CI with `gh pr checks`, including on private repos |
+| Commit statuses | Read-only | claude-implement reads the status rollup with `gh pr checks` |
 | Workflows | Read and write | claude may edit files under `.github/workflows/` |
 | Metadata | Read-only | required baseline |
 

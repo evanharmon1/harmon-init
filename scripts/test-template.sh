@@ -1195,6 +1195,25 @@ if [ -d .github/workflows ]; then
         fi
     done
 
+    # claude-implement watches the checks/status rollup with its narrow App
+    # token. Private repos need both read grants on that exact token and on
+    # the App itself, for personal and organisation installations alike.
+    if [ -f .github/workflows/claude-implement.yml ]; then
+        if have yq; then
+            yq -o=json '.' .github/workflows/claude-implement.yml |
+                jq -e '[.jobs[].steps[]? | select(.id == "app-token")] |
+                    length == 1 and
+                    .[0].with["permission-checks"] == "read" and
+                    .[0].with["permission-statuses"] == "read"' >/dev/null ||
+                err "claude-implement App token must request checks/statuses read"
+        else
+            required yq "claude-implement App token permission audit" || fail=1
+        fi
+        jq -e '.default_permissions.checks == "read" and
+            .default_permissions.statuses == "read"' .github/github-app-manifest.json >/dev/null ||
+            err "GitHub App manifest must grant checks/statuses read"
+    fi
+
     # Every checkout must set `persist-credentials: false`. Without it,
     # actions/checkout leaves the job's GITHUB_TOKEN in .git/config, where any
     # later step — including anything reachable from test code or a transitive
