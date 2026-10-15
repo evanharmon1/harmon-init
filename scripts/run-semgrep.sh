@@ -8,26 +8,38 @@ set -euo pipefail
 SEMGREP_VERSION=1.180.0
 
 default_uv_tool_dir() {
+    local resolved=""
+    if command -v uv >/dev/null 2>&1; then
+        resolved="$(env -u UV_TOOL_DIR -u UV_CACHE_DIR uv tool dir 2>/dev/null || true)"
+    fi
+    if [ -n "$resolved" ]; then
+        printf '%s\n' "$resolved"
+        return 0
+    fi
     case "${XDG_DATA_HOME:-}" in
     /*) printf '%s/uv/tools\n' "${XDG_DATA_HOME%/}" ;;
     *)
         if [ -n "${HOME:-}" ]; then
             printf '%s/.local/share/uv/tools\n' "${HOME%/}"
-        elif command -v uv >/dev/null 2>&1; then
-            uv tool dir 2>/dev/null || true
         fi
         ;;
     esac
 }
 
 default_uv_cache_dir() {
+    local resolved=""
+    if command -v uv >/dev/null 2>&1; then
+        resolved="$(env -u UV_TOOL_DIR -u UV_CACHE_DIR uv cache dir 2>/dev/null || true)"
+    fi
+    if [ -n "$resolved" ]; then
+        printf '%s\n' "$resolved"
+        return 0
+    fi
     case "${XDG_CACHE_HOME:-}" in
     /*) printf '%s/uv\n' "${XDG_CACHE_HOME%/}" ;;
     *)
         if [ -n "${HOME:-}" ]; then
             printf '%s/.cache/uv\n' "${HOME%/}"
-        elif command -v uv >/dev/null 2>&1; then
-            uv cache dir 2>/dev/null || true
         fi
         ;;
     esac
