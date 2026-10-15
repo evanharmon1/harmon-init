@@ -180,6 +180,55 @@ implies). Establish the real depth for the stack you actually ship, per tool,
 and treat a green run as evidence only for what you confirmed it inspects.
 
 [% if use_node %]
+### Unpatched dev-only advisory allowances
+
+`task security:audit` uses `scripts/security-audit.sh` for Node dependencies.
+The default remains `pnpm audit --audit-level=high`. A missing allowance file,
+or the empty seed, grants no exceptions. The repo owns
+`.security-audit-allowances.json`: Copier seeds `{ "allowances": [] }` once
+and never overwrites it on `copier update`.
+
+A maintainer may approve an entry through review when no fix exists:
+
+```json
+{
+  "allowances": [
+    {
+      "ghsa": "GHSA-vfj7-8cjw-p6xm",
+      "package": "braces",
+      "reason": "Unpatched lint dependency; reviewed exception",
+      "tracking_issue": "https://github.com/owner/repo/issues/123",
+      "added": "2026-10-14",
+      "expires": "2026-11-13"
+    }
+  ]
+}
+```
+
+Every run re-checks the live full and `--prod` audit reports before passing
+`--ignore <GHSA>` to pnpm. Because pnpm 11 persists that option and returns
+without auditing, the helper registers ignores in a private temporary copy of
+the full lockfile and project configuration, then runs the ordinary high audit
+there. Repository files remain untouched and no ignore survives the run. The entry must name a live advisory for the exact
+package, have no published patched version anywhere, and be absent from the production
+report. npm sometimes reports a patched range whose releases do not exist; the
+helper queries `pnpm view "package@patched-range" version --json` and accepts
+only an explicit no-matching-version response. A `<0.0.0` patched range has no
+possible patch. Dates use UTC `YYYY-MM-DD`; the expiry date
+is inclusive and may be at most 90 days after `added`. Future added dates,
+impossible dates, missing metadata, expired entries, longer windows, production
+reachability, available patches, and stale entries all fail with named reasons.
+Registry failures or unknown patch metadata cannot grant an exception. Remove
+stale entries; an expired entry requires a fresh, reviewed renewal, never a
+far-future expiry.
+
+This is a reviewed exception for **unpatched dev-only dependencies**. It never
+covers production dependencies or fixable advisories; use security floors,
+Renovate, or a deliberate dependency upgrade for those. `security:audit:fix`
+and the scheduled workflow use the same validation and exclude allowed
+advisories, so an allowed-only report produces no remediation PR. Unrelated
+advisories still gate and follow the usual fix path.
+
 ### Scheduled audit remediation
 
 The PR audit reacts to the world changing, not to your diff, so a newly
@@ -230,7 +279,8 @@ remediation is mechanical, and the template does it for you:
   audit in it fails, it runs `task security:audit:fix -- --skip-refused` (apply what is safe,
   report what is refused) and opens or updates **one** rolling draft PR on
   `bot/security-audit-fix` listing each advisory, package, floor, and refusal
-  reason. The PR `security` gate is unchanged, so it stays red until that PR (or
+  reason. The PR `security` gate applies the same reviewed allowances; other findings
+  stay red until that PR (or
   a deliberate upgrade for a refused fix) merges. See
   [ci-cd.md](ci-cd.md#workflows) for the trigger and token.
 

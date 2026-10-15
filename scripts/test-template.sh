@@ -1053,7 +1053,10 @@ if [ -f pnpm-workspace.yaml ]; then
     [ -f "$sa_workflow" ] || err "$sa_workflow did not render for a Node profile"
     [ -x scripts/security-audit-fix.sh ] || err "scripts/security-audit-fix.sh missing or not executable (Node profile)"
     grep -qE '^  security:audit:fix:' Taskfile.yml || err "security:audit:fix task did not render for a Node profile"
-    grep -q 'pnpm audit --audit-level=high' Taskfile.yml || err "security:audit must keep gating on pnpm audit --audit-level=high"
+    [ -x scripts/security-audit.sh ] || err "Node allowance-aware audit helper missing"
+    jq -e '.allowances == []' .security-audit-allowances.json >/dev/null || err "allowances must be seeded empty"
+    grep -qF './scripts/security-audit.sh' Taskfile.yml || err "security:audit must use the allowance-aware helper"
+    grep -q 'pnpm audit --audit-level=high' scripts/security-audit.sh || err "audit helper must preserve the high gate"
     grep -qF 'task security:audit:fix' pnpm-workspace.yaml || err "pnpm-workspace.yaml must point at task security:audit:fix, not raw pnpm audit --fix"
     if [ -f "$sa_workflow" ]; then
         ! grep -qE '^[[:space:]]+workflow_dispatch:' "$sa_workflow" || err "$sa_workflow mints an App token and must not have workflow_dispatch"
@@ -1063,7 +1066,7 @@ if [ -f pnpm-workspace.yaml ]; then
         # task security:audit also fails for a Python-only finding.
         grep -q "if: steps.node-audit.outcome == 'failure'" "$sa_workflow" ||
             err "$sa_workflow's fix step must key on the Node-only audit step, not task security:audit"
-        grep -q 'run: pnpm audit --audit-level=high' "$sa_workflow" ||
+        grep -q 'run: ./scripts/security-audit.sh' "$sa_workflow" ||
             err "$sa_workflow has no Node-only audit step for the fix to key on"
         grep -qE '^[[:space:]]+lint-tools: "true"' "$sa_workflow" ||
             err "$sa_workflow's audit job must pass lint-tools: \"true\" so the setup action installs yq"
@@ -1079,6 +1082,8 @@ if [ -f pnpm-workspace.yaml ]; then
     fi
 else
     [ ! -f "$sa_workflow" ] || err "$sa_workflow rendered for a profile without Node"
+    [ ! -e scripts/security-audit.sh ] || err "audit helper rendered without Node"
+    [ ! -e .security-audit-allowances.json ] || err "allowance seed rendered without Node"
     [ ! -e scripts/security-audit-fix.sh ] || err "scripts/security-audit-fix.sh rendered for a profile without Node"
     ! grep -qE '^  security:audit:fix:' Taskfile.yml || err "security:audit:fix task rendered for a profile without Node"
 fi

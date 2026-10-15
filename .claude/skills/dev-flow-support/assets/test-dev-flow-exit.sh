@@ -409,7 +409,10 @@ task devflow:exit -- --run ai/schemas/fixtures/exit/single-round-clean-converge/
     >"${scratch}/dfe-task-$$.out" 2>"${scratch}/dfe-task-$$.err" || true
 outcome="$(grep -v -e '^::group::' -e '^::endgroup::' "${scratch}/dfe-task-$$.out" | node -e '
   const body = require("node:fs").readFileSync(0, "utf8");
-  console.log(JSON.parse(body).outcome);
+  // Task annotates the expected exit 20 after the verdict in GitHub Actions.
+  const json = process.env.GITHUB_ACTIONS === "true"
+    ? body.replace(/\n::error title=Task \x27devflow:exit\x27 failed::exit status 20\n?$/, "\n") : body;
+  console.log(JSON.parse(json).outcome);
 ')" || {
     cat "${scratch}/dfe-task-$$.out" "${scratch}/dfe-task-$$.err" >&2
     rm -f "${scratch}/dfe-task-$$.out" "${scratch}/dfe-task-$$.err"
@@ -1001,6 +1004,101 @@ assert.equal(computeIntegrationExit(trajectory("delete"), 4, pushes).outcome, "c
 // The same head move with no push recorded is a catch-up, never judged as a fix push.
 assert.equal(computeIntegrationExit(trajectory("fix"), 4, { pushes: pushes.pushes.slice(0, 1), unrecorded: 0 }).outcome, "converged");
 console.log("tell-guard disposition check OK");
+'
+
+echo "== harmon-devkit#1406: a CI-failed exempt cycle neither hides a push nor spends the cap =="
+# A cycle whose head CI failed spends integration_exempt, so the charged count
+# can stand still across cycles (1, 1, 2 or 1, 1, 1). The push that follows it
+# is still the run record's remediation entry (#1401), never inferred from
+# the charged count, and `capped` reads only charged spend.
+node --input-type=module -e '
+import { computeIntegrationExit, ExitIndeterminate } from "./ai/skills/universal/dev-flow-support/assets/dev-flow-exit.mjs";
+import assert from "node:assert/strict";
+const head = (n) => String(n).repeat(40);
+const round = (n, h, cycle, charged, entries) => ({
+  round: n,
+  pass: { envelope: { head: head(h), payload: { settled_at: `2026-10-08T00:${String(n * 10).padStart(2, "0")}:00Z`, findings: entries.map((e) => ({ id: e.finding_id })), codex_cycle: { head: head(h), cycle, charged, exempt: cycle - charged, exit_code: entries.length ? 10 : 0 } } } },
+  adjudication: { doc: { adjudications: entries } },
+});
+const entry = (n, priority, disposition, checkpoint) => ({ finding_id: `integration-r${n}-codex-cloud-1`, adjudicated_priority: priority, disposition, ...(checkpoint ? { checkpoint } : {}) });
+const at = (m) => Date.parse(`2026-10-08T00:${m}:00Z`);
+const pushes = { pushes: [{ index: 2, head: head(2), findings: [entry(1).finding_id], at: at(15) }, { index: 4, head: head(3), findings: [entry(2).finding_id], at: at(25) }], unrecorded: 0 };
+// Cycle 2 is the CI-failed exempt tell cycle; the hardening push after it is refused
+// whether cycle 3 charges (1, 1, 2) or is exempt too (1, 1, 1).
+for (const lastCharged of [2, 1]) {
+  const trajectory = (disposition) => [
+    round(1, 1, 1, 1, [entry(1, "P1", "fix")]),
+    round(2, 2, 2, 1, [entry(2, "P2", disposition, { attacks_remediation: true, remedy: "delete" })]),
+    round(3, 3, 3, lastCharged, []),
+  ];
+  assert.throws(() => computeIntegrationExit(trajectory("fix"), 4, pushes), (err) => err instanceof ExitIndeterminate && err.code === "tell-remediation-unrecorded");
+  assert.equal(computeIntegrationExit(trajectory("delete"), 4, pushes).outcome, "converged");
+}
+// Gating findings on an exempt cycle: one charged cycle of a cap of 2 is not capped,
+// although two cycles ran; charging the same cycle reaches the cap.
+const gating = (charged) => [round(1, 1, 1, 1, [entry(1, "P1", "fix")]), round(2, 2, 2, charged, [entry(2, "P1", "fix", { attacks_remediation: false, remedy: "fix" })])];
+const onePush = { pushes: pushes.pushes.slice(0, 1), unrecorded: 0 };
+assert.equal(computeIntegrationExit(gating(1), 2, onePush).outcome, "continue");
+assert.equal(computeIntegrationExit(gating(2), 2, onePush).outcome, "capped");
+// harmon-devkit#1446: a later integration pass repeating the same cycle ordinal
+// updates the cycle charged/exempt counts — rising to the cap escalates, while
+// an unchanged count keeps the continue outcome.
+const repeated = (recharged) => [...gating(1), round(3, 2, 2, recharged, [])];
+const unchanged = computeIntegrationExit(repeated(1), 2, onePush);
+assert.equal(unchanged.outcome, "continue");
+assert.equal(unchanged.reason, "gating_findings");
+assert.equal(unchanged.action, "fix");
+const escalated = computeIntegrationExit(repeated(2), 2, onePush);
+assert.equal(escalated.outcome, "capped");
+assert.equal(escalated.reason, "cap_reached_with_gating_findings");
+assert.equal(escalated.action, "escalate");
+assert.deepEqual(escalated.cycles.map((c) => ({ cycle: c.cycle, rounds: c.rounds })), [
+  { cycle: 1, rounds: [1] },
+  { cycle: 2, rounds: [2, 3] },
+]);
+console.log("CI-failed exempt cycle check OK");
+'
+
+echo "== harmon-devkit#1239: the shared over-cap authorization predicate =="
+# The corpus covers the engine end to end (capped-clean-at-authorized-round,
+# over-cap-*-rejected, cross-stage-authorized-*);
+# these pin the predicate's own edges, which both engines inherit.
+node --input-type=module -e '
+import { authorizedCeiling, isAuthorizedOverCap } from "./ai/skills/universal/dev-flow-support/assets/lib/cap-authorizations.mjs";
+import assert from "node:assert/strict";
+const auth = (stage, round, extra = {}) => ({ stage, round, actor: "maintainer", instruction: "do 1 more round", at: "2026-10-12T00:00:00Z", ...extra });
+const run = (...entries) => ({ cap_authorizations: entries });
+// No record, no array, or nothing authorized: the ceiling is the resolved cap.
+assert.equal(authorizedCeiling(null, "challenge", 3), 3);
+assert.equal(authorizedCeiling({}, "challenge", 3), 3);
+// Contiguous authorizations lift it one round at a time.
+assert.equal(authorizedCeiling(run(auth("challenge", 4), auth("challenge", 5)), "challenge", 3), 5);
+// A gap stops it: round 6 alone admits nothing above 3, and 4 + 6 admits 4.
+assert.equal(authorizedCeiling(run(auth("challenge", 6)), "challenge", 3), 3);
+assert.equal(authorizedCeiling(run(auth("challenge", 4), auth("challenge", 6)), "challenge", 3), 4);
+// Stage-scoped: a challenge authorization admits no review round.
+assert.equal(authorizedCeiling(run(auth("challenge", 4)), "review", 3), 3);
+// A disabled stage (cap 0) is never lifted.
+assert.equal(authorizedCeiling(run(auth("review", 1)), "review", 0), 0);
+// A malformed entry authorizes nothing (fail closed: only ever a LOWER ceiling).
+// A malformed `at` is checked against run.schema.json'"'"'s instant pattern, not just for presence.
+for (const bad of [{ actor: "" }, { actor: "  " }, { instruction: "" }, { at: "" }, { at: "yesterday" }, { at: "2026-10-12" }, { at: "2026-10-12 00:00:00Z" }, { round: 0 }, { round: "4" }, { stage: "remediation" }, { stage: "integration" }]) {
+  assert.equal(authorizedCeiling(run(auth("challenge", 4, bad)), "challenge", 3), 3, JSON.stringify(bad));
+}
+for (const field of ["stage", "round", "actor", "instruction", "at"]) {
+  const entry = auth("challenge", 4);
+  delete entry[field];
+  assert.equal(authorizedCeiling(run(entry), "challenge", 3), 3, `missing ${field}`);
+}
+assert.equal(authorizedCeiling({ cap_authorizations: "not an array" }, "challenge", 3), 3);
+// isAuthorizedOverCap: only rounds above the cap are "authorized".
+const r = run(auth("review", 5));
+assert.equal(isAuthorizedOverCap(r, "review", 5, 4), true);
+assert.equal(isAuthorizedOverCap(r, "review", 4, 4), false);
+assert.equal(isAuthorizedOverCap(r, "review", 6, 4), false);
+// Integration authorizations are not supported: an integration entry admits nothing.
+assert.equal(authorizedCeiling(run(auth("integration", 5)), "integration", 4), 4);
+console.log("cap-authorization predicate OK");
 '
 
 echo "== conformance fixture corpus (ai/schemas/fixtures/exit/) =="

@@ -596,6 +596,11 @@ the compatibility reason in the rule's `description`.
       release line the block already floors (its `pkg@<major>` or
       `pkg@0.<minor>` key) is refused there, so raise that one upstream
       instead.
+      For a live, unpatched dev-only advisory, a reviewed entry in
+      `.security-audit-allowances.json` may last at most 90 days. Production
+      reachability, available patches, expiry, malformed or stale entries fail
+      the audit; Copier preserves this consumer-owned file on update. See
+      [security.md](architecture/security.md#unpatched-dev-only-advisory-allowances).
       Add any other packages whose build
       scripts your deps need to `allowBuilds` (or run `pnpm approve-builds`); keep
       all pnpm `overrides` / `auditConfig` there too, **not** in the `package.json`

@@ -212,6 +212,55 @@ capability rather than enabling everything reflexively:
   application-specific controls. A deployed web application should evaluate
   them; a library or docs repository usually should not.
 
+### Unpatched dev-only advisory allowances
+
+`task security:audit` uses `scripts/security-audit.sh` for Node dependencies.
+The default remains `pnpm audit --audit-level=high`. A missing allowance file,
+or the empty seed, grants no exceptions. The repo owns
+`.security-audit-allowances.json`: Copier seeds `{ "allowances": [] }` once
+and never overwrites it on `copier update`.
+
+A maintainer may approve an entry through review when no fix exists:
+
+```json
+{
+  "allowances": [
+    {
+      "ghsa": "GHSA-vfj7-8cjw-p6xm",
+      "package": "braces",
+      "reason": "Unpatched lint dependency; reviewed exception",
+      "tracking_issue": "https://github.com/owner/repo/issues/123",
+      "added": "2026-10-14",
+      "expires": "2026-11-13"
+    }
+  ]
+}
+```
+
+Every run re-checks the live full and `--prod` audit reports before passing
+`--ignore <GHSA>` to pnpm. Because pnpm 11 persists that option and returns
+without auditing, the helper registers ignores in a private temporary copy of
+the full lockfile and project configuration, then runs the ordinary high audit
+there. Repository files remain untouched and no ignore survives the run. The entry must name a live advisory for the exact
+package, have no published patched version anywhere, and be absent from the production
+report. npm sometimes reports a patched range whose releases do not exist; the
+helper queries `pnpm view "package@patched-range" version --json` and accepts
+only an explicit no-matching-version response. A `<0.0.0` patched range has no
+possible patch. Dates use UTC `YYYY-MM-DD`; the expiry date
+is inclusive and may be at most 90 days after `added`. Future added dates,
+impossible dates, missing metadata, expired entries, longer windows, production
+reachability, available patches, and stale entries all fail with named reasons.
+Registry failures or unknown patch metadata cannot grant an exception. Remove
+stale entries; an expired entry requires a fresh, reviewed renewal, never a
+far-future expiry.
+
+This is a reviewed exception for **unpatched dev-only dependencies**. It never
+covers production dependencies or fixable advisories; use security floors,
+Renovate, or a deliberate dependency upgrade for those. `security:audit:fix`
+and the scheduled workflow use the same validation and exclude allowed
+advisories, so an allowed-only report produces no remediation PR. Unrelated
+advisories still gate and follow the usual fix path.
+
 ## Bot devcontainer: fail-closed non-interactive policy
 
 The bot profile's Docker container is its isolation boundary, so every agent
