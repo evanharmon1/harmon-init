@@ -49,6 +49,44 @@ case "$*" in
 esac
 STUB
 chmod +x "$TMP/bin/pnpm"
+# Isolate package provisioning, not the helper's writer: execute its actual
+# stdin Python using a YAML adapter backed by the root suite's existing yq.
+# Real pnpm proofs exercise the pinned ruamel.yaml implementation separately.
+cat >"$TMP/bin/uv" <<'UV'
+#!/usr/bin/env bash
+set -euo pipefail
+exec python3 "$STUB/uv-runner.py" "$@"
+UV
+cat >"$TMP/uv-runner.py" <<'PYTHON'
+import json
+import subprocess
+import sys
+import types
+
+assert sys.argv[1:4] == ["run", "--no-project", "--with"]
+assert sys.argv[4].startswith("ruamel.yaml==")
+assert sys.argv[5:7] == ["python", "-"]
+
+class YAML:
+    def __init__(self, **kwargs):
+        pass
+
+    def load(self, text):
+        return json.loads(subprocess.check_output(["yq", "-o=json", "."], input=text, text=True))
+
+    def dump(self, data, path):
+        path.write_text(subprocess.check_output(["yq", "-P", "."], input=json.dumps(data), text=True))
+
+module = types.ModuleType("ruamel.yaml")
+module.YAML = YAML
+sys.modules["ruamel"] = types.ModuleType("ruamel")
+sys.modules["ruamel.yaml"] = module
+sys.argv = sys.argv[6:]
+exec(compile(sys.stdin.read(), "security-audit YAML writer", "exec"))
+PYTHON
+chmod +x "$TMP/bin/uv"
+# A cold, offline cache must not affect this offline test suite.
+export UV_CACHE_DIR="$TMP/cold-uv-cache" UV_OFFLINE=true
 export PATH="$TMP/bin:$PATH" STUB="$TMP" STUB_PNPM_MAJOR=10
 cd "$TMP/project"
 file=.security-audit-allowances.json
