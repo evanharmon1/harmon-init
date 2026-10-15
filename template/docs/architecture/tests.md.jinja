@@ -127,11 +127,11 @@ green local `ci` followed by a red PR, and `ci` would stop being a CI mirror.
 The Convex block in `task guard:codegen` runs only when a `CONVEX_*` setting
 has a non-empty value in the environment, `.env.local` or `.env`, and otherwise
 skips with a message; in CI, `.github/workflows/build.yml`'s `lint` job passes
-`CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}` to `task guard:codegen`,
-so setting the `CONVEX_DEPLOY_KEY` repository secret enables the staleness
-guard there too. When a deployment is configured, the guard also catches what
-`tsc` cannot — an additive schema change whose stale generated files still
-type-check.
+`CONVEX_DEPLOY_KEY` to `task guard:codegen` on pushes and same-repository pull
+requests, not in the merge queue, so setting the `CONVEX_DEPLOY_KEY` repository
+secret enables the staleness guard there too. When a deployment is configured,
+the guard also catches what `tsc` cannot — an additive schema change whose stale
+generated files still type-check.
 
 Other rules:
 

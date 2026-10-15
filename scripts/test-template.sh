@@ -957,12 +957,24 @@ if [ -f .github/workflows/codeql.yml ]; then
         err "CodeQL analyze job is missing the Default-setup collision diagnostic step"
     grep -q 'if: failure()' .github/workflows/codeql.yml ||
         err "CodeQL Default-setup collision diagnostic step is missing if: failure()"
+    grep -qF 'Settings -> Advanced Security -> CodeQL analysis' .github/workflows/codeql.yml ||
+        err "CodeQL Default-setup collision diagnostic step does not name Settings -> Advanced Security -> CodeQL analysis"
     grep -qF 'gh api --method PATCH repos/OWNER/REPO/code-scanning/default-setup -f state=not-configured' .github/workflows/codeql.yml ||
         err "CodeQL Default-setup collision diagnostic step is missing the gh api remediation command"
+    grep -qF 'gh workflow enable codeql.yml' .github/workflows/codeql.yml ||
+        err "CodeQL Default-setup collision diagnostic step does not mention re-enabling codeql.yml"
+    grep -qF 'Settings → Advanced Security → CodeQL analysis' docs/CHECKLIST.md ||
+        err "docs/CHECKLIST.md does not name Settings → Advanced Security → CodeQL analysis when use_codeql=true"
     grep -qF 'gh api --method PATCH repos/OWNER/REPO/code-scanning/default-setup -f state=not-configured' docs/CHECKLIST.md ||
         err "docs/CHECKLIST.md is missing the CodeQL Default setup note when use_codeql=true"
+    grep -qF 'gh workflow enable codeql.yml' docs/CHECKLIST.md ||
+        err "docs/CHECKLIST.md does not mention re-enabling codeql.yml when use_codeql=true"
+    grep -qF 'Settings → Advanced Security → CodeQL analysis' docs/architecture/security.md ||
+        err "docs/architecture/security.md does not name Settings → Advanced Security → CodeQL analysis when use_codeql=true"
     grep -qF 'gh api --method PATCH repos/OWNER/REPO/code-scanning/default-setup -f state=not-configured' docs/architecture/security.md ||
         err "docs/architecture/security.md is missing the CodeQL Default setup note when use_codeql=true"
+    grep -qF 'gh workflow enable codeql.yml' docs/architecture/security.md ||
+        err "docs/architecture/security.md does not mention re-enabling codeql.yml when use_codeql=true"
     # A `continue-on-error: true` on the analyze job or step makes
     # needs.analyze.result report `success`, which satisfies EXPECTED_RESULT and
     # turns `codeql-verify` — a REQUIRED check — green with no SAST having run.
@@ -992,10 +1004,18 @@ else
         err "README advertises CodeQL while use_codeql=false"
     grep -q 'CodeQL is deliberately omitted' docs/architecture/security.md ||
         err "security docs do not record the deliberate CodeQL omission"
+    grep -qF 'Settings → Advanced Security → CodeQL analysis' docs/CHECKLIST.md ||
+        err "docs/CHECKLIST.md does not name Settings → Advanced Security → CodeQL analysis when use_codeql=false"
     grep -qF 'gh api --method PATCH repos/OWNER/REPO/code-scanning/default-setup -f state=not-configured' docs/CHECKLIST.md ||
         err "docs/CHECKLIST.md is missing the CodeQL Default setup note when use_codeql=false"
+    grep -qF 'gh workflow enable codeql.yml' docs/CHECKLIST.md ||
+        err "docs/CHECKLIST.md does not mention re-enabling codeql.yml when use_codeql=false"
+    grep -qF 'Settings → Advanced Security → CodeQL analysis' docs/architecture/security.md ||
+        err "docs/architecture/security.md does not name Settings → Advanced Security → CodeQL analysis when use_codeql=false"
     grep -qF 'gh api --method PATCH repos/OWNER/REPO/code-scanning/default-setup -f state=not-configured' docs/architecture/security.md ||
         err "docs/architecture/security.md is missing the CodeQL Default setup note when use_codeql=false"
+    grep -qF 'gh workflow enable codeql.yml' docs/architecture/security.md ||
+        err "docs/architecture/security.md does not mention re-enabling codeql.yml when use_codeql=false"
     ! grep -q '"context": "codeql-verify"' '.github/Branch Protection Ruleset - Protect Main.json' ||
         err "ruleset requires codeql-verify but this profile has no CodeQL workflow"
 fi
@@ -3315,8 +3335,10 @@ if grep -Eq '^project_type:[[:space:]]+web-app$' .copier-answers.yml; then
     # and the PR disagree in the opposite direction.
     grep -q 'task guard:codegen' .github/workflows/build.yml ||
         err "build.yml never runs guard:codegen — CI would not catch stale generated files that local verify does"
-    grep -qF 'CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}' .github/workflows/build.yml ||
-        err "build.yml does not pass CONVEX_DEPLOY_KEY to guard:codegen — CI cannot run Convex codegen when configured"
+    grep -qF "CONVEX_DEPLOY_KEY: \${{ github.event_name != 'merge_group' && secrets.CONVEX_DEPLOY_KEY || '' }}" .github/workflows/build.yml ||
+        err "build.yml does not gate CONVEX_DEPLOY_KEY off merge_group for guard:codegen — merge_group would expose the secret to queued fork code"
+    ! grep -qF 'CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}' .github/workflows/build.yml ||
+        err "build.yml passes CONVEX_DEPLOY_KEY unconditionally without excluding merge_group"
     # Exercise codegen.sh with a stub `convex` binary in an isolated git tree:
     #   1. unconfigured (no CONVEX_* setting in the environment, .env.local or
     #      .env, or only empty/commented lines) -> skips cleanly with the

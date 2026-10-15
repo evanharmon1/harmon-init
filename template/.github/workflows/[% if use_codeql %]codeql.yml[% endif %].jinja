@@ -58,8 +58,10 @@ jobs:
         run: |
           echo "If CodeQL analysis failed because GitHub CodeQL Default setup is enabled"
           echo "(GitHub refuses advanced workflow uploads while Default setup is on),"
-          echo "disable Default setup in Settings -> Code security -> CodeQL analysis, or run:"
+          echo "disable Default setup in Settings -> Advanced Security -> CodeQL analysis, or run:"
           echo "  gh api --method PATCH repos/OWNER/REPO/code-scanning/default-setup -f state=not-configured"
+          echo "Then re-enable the CodeQL workflow (Actions -> CodeQL -> \"Enable workflow\","
+          echo "or: gh workflow enable codeql.yml)."
 
   # Stable aggregate status (the matrixed analyze jobs have dynamic names).
   # Named codeql-verify so it does not collide with the build workflow's

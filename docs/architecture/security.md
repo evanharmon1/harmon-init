@@ -78,9 +78,12 @@ Actions runners are free for public repositories. CodeQL is preferred over
 Semgrep CE there because its supported-language queries include deeper
 interprocedural and data-flow analysis and integrate directly with GitHub's
 Security tab. With the shipped advanced CodeQL workflow, GitHub's CodeQL
-Default setup must be off (**Settings → Code security → CodeQL analysis**, or
-`gh api --method PATCH repos/OWNER/REPO/code-scanning/default-setup -f state=not-configured`),
-because GitHub refuses advanced uploads while Default setup is on.
+Default setup must be off (**Settings → Advanced Security → CodeQL analysis**,
+or `gh api --method PATCH repos/OWNER/REPO/code-scanning/default-setup -f state=not-configured`),
+because GitHub refuses advanced uploads while Default setup is on; if Default
+setup was enabled after the advanced workflow existed, GitHub disabled that
+workflow, so then re-enable the CodeQL workflow (**Actions → CodeQL → "Enable
+workflow"**, or `gh workflow enable codeql.yml`).
 
 For private/internal repositories, CodeQL code scanning requires an organization
 on GitHub Team or Enterprise with
