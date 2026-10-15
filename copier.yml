@@ -258,7 +258,14 @@ use_codeql:
     Public repositories receive CodeQL for free. Private/internal repositories
     require GitHub Code Security (billed by active committer) plus an explicit
     FULL_SECURITY_SCAN=true repository variable; otherwise leave this off and
-    use the generated Semgrep CE baseline.
+    use the generated Semgrep CE baseline. With the shipped advanced CodeQL
+    workflow, GitHub's CodeQL Default setup must be off (Settings → Advanced
+    Security → CodeQL analysis, or `gh api --method PATCH
+    repos/OWNER/REPO/code-scanning/default-setup -f state=not-configured`),
+    because GitHub refuses advanced uploads while Default setup is on; if
+    Default setup was enabled after the workflow existed, GitHub disabled that
+    workflow, so then re-enable the CodeQL workflow (Actions → CodeQL →
+    "Enable workflow", or `gh workflow enable codeql.yml`).
   default: "[[ project_type in ['web-astro', 'web-app'] ]]"
 
 codeql_languages:

@@ -231,6 +231,16 @@ the compatibility reason in the rule's `description`.
 [% endif %]
 [% endif %]
 [% if use_codeql %]
+- [ ] **Disable GitHub CodeQL Default setup** — with the shipped advanced
+      `codeql.yml` workflow, GitHub's CodeQL Default setup must be off
+      (**Settings → Advanced Security → CodeQL analysis**, or
+      `gh api --method PATCH repos/OWNER/REPO/code-scanning/default-setup -f state=not-configured`
+      — for this repo, `repos/[[ github_org ]]/[[ project_slug ]]/code-scanning/default-setup`),
+      because GitHub refuses advanced uploads while Default setup is on. If
+      Default setup was enabled after the advanced workflow existed, GitHub
+      disabled that workflow — then re-enable the CodeQL workflow (**Actions →
+      CodeQL → "Enable workflow"**, or `gh workflow enable codeql.yml`). Keep it
+      off (re-enabling it re-triggers the collision).
 - [ ] **SAST coverage** — public repositories run CodeQL automatically and for
       free for the selected `codeql_languages`; confirm a successful upload in
       the Security tab. Free private repos
@@ -241,9 +251,14 @@ the compatibility reason in the rule's `description`.
 [% else %]
 - [ ] **SAST coverage** — this profile has no CodeQL workflow, so Semgrep CE runs
       in `build.yml` for public and private repositories. Add CodeQL later if the
-      repo gains supported first-party source: set `use_codeql=true`, select its
-      `codeql_languages`, and ensure it is public (free) or has paid GitHub Code
-      Security (private/internal).
+      repo gains supported first-party source: turn off GitHub's CodeQL Default
+      setup (**Settings → Advanced Security → CodeQL analysis**, or
+      `gh api --method PATCH repos/OWNER/REPO/code-scanning/default-setup -f state=not-configured`),
+      re-apply the template with `use_codeql=true` and the selected
+      `codeql_languages` (then, if Default setup had disabled an existing CodeQL
+      workflow, re-enable it via **Actions → CodeQL → "Enable workflow"** or
+      `gh workflow enable codeql.yml`), and ensure the repository is public
+      (free) or has paid GitHub Code Security (private/internal).
 [% endif %]
 - [ ] **Choose the Snyk posture** — the default is manual/local only via
       `task security:sast:snyk` and `task security:sca:snyk`; it is not part of
@@ -732,13 +747,19 @@ the compatibility reason in the rule's `description`.
 [% endif %]
 - [ ] `task codegen` runs Convex codegen; `task guard:codegen` (first in
       `task verify`, and a step in CI's lint job) regenerates and **fails** if
-      the output isn't what you staged. Both activate automatically once
-      `convex/` and the `convex` package exist — so **commit the regenerated
-      `convex/_generated/` files** with your change. `task check` deliberately
-      never regenerates; it type-checks what you committed. Add any other
-      generators (GraphQL, OpenAPI, ORM clients) to `scripts/codegen.sh` —
-      port-free, skip-cleanly, and listed in `generated_paths` so the guard can
-      see them.
+      the output isn't what you staged. Once `convex/` and the `convex` package
+      exist, the Convex block runs only when a Convex deployment selector
+      (`CONVEX_DEPLOY_KEY`, `CONVEX_DEPLOYMENT`, or both
+      `CONVEX_SELF_HOSTED_URL` and `CONVEX_SELF_HOSTED_ADMIN_KEY`) has a
+      non-empty effective value across the environment, `.env.local` and `.env`
+      (otherwise it skips with a message); in CI, set the `CONVEX_DEPLOY_KEY`
+      repository secret (the build workflow passes it to the guard on pushes and
+      same-repository pull requests, not in the merge queue) to enable it — and
+      **commit the regenerated `convex/_generated/` files** with your change.
+      `task check` deliberately never regenerates; it type-checks what you
+      committed. Add any other generators (GraphQL, OpenAPI, ORM clients) to
+      `scripts/codegen.sh` — port-free, skip-cleanly, and listed in
+      `generated_paths` so the guard can see them.
 - [ ] Accessibility (axe-core): `pnpm add -D @playwright/test
       @axe-core/playwright` — the shipped `tests/a11y.spec.ts` imports both, so
       `tsc` fails until they're installed (pair the spec with the dep install).
