@@ -33,7 +33,12 @@ repo_root="$(git rev-parse --show-toplevel 2>/dev/null || { cd "$(dirname "$0")/
 setup_action="${repo_root}/.github/actions/setup/action.yml"
 pinned_version=
 if [ -f "$setup_action" ]; then
-    pinned_version="$(sed -nE "s/^[[:space:]]*SHELLCHECK_VERSION=([\"']?)([0-9]+\.[0-9]+\.[0-9]+)\1([[:space:]]+#.*)?[[:space:]]*$/\2/p" "$setup_action")"
+    # Separate quote forms keep pattern backreferences out of POSIX ERE.
+    pinned_version="$(sed -nE \
+        -e 's/^[[:space:]]*SHELLCHECK_VERSION=([0-9]+\.[0-9]+\.[0-9]+)([[:space:]]+#.*)?[[:space:]]*$/\1/p' \
+        -e 's/^[[:space:]]*SHELLCHECK_VERSION="([0-9]+\.[0-9]+\.[0-9]+)"([[:space:]]+#.*)?[[:space:]]*$/\1/p' \
+        -e "s/^[[:space:]]*SHELLCHECK_VERSION='([0-9]+\.[0-9]+\.[0-9]+)'([[:space:]]+#.*)?[[:space:]]*$/\1/p" \
+        "$setup_action")"
 fi
 case "$pinned_version" in
 *$'\n'*)

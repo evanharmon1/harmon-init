@@ -616,6 +616,19 @@ esac
 chmod -R u+w "$semgrep_ro_home" "$semgrep_ro_xdg_data" "$semgrep_ro_xdg_cache" "$semgrep_ro_tmp" 2>/dev/null || true
 
 echo "==> shell lint enforces the CI ShellCheck pin before linting"
+# Use the same extraction as lint-shell.sh on the real source of truth, so
+# reshaping the action's pin cannot silently turn the version guard off.
+if [ -f .github/actions/setup/action.yml ]; then
+    actual_shellcheck_pin="$(sed -nE \
+        -e 's/^[[:space:]]*SHELLCHECK_VERSION=([0-9]+\.[0-9]+\.[0-9]+)([[:space:]]+#.*)?[[:space:]]*$/\1/p' \
+        -e 's/^[[:space:]]*SHELLCHECK_VERSION="([0-9]+\.[0-9]+\.[0-9]+)"([[:space:]]+#.*)?[[:space:]]*$/\1/p' \
+        -e "s/^[[:space:]]*SHELLCHECK_VERSION='([0-9]+\.[0-9]+\.[0-9]+)'([[:space:]]+#.*)?[[:space:]]*$/\1/p" \
+        .github/actions/setup/action.yml)"
+    [[ "$actual_shellcheck_pin" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] ||
+        fail "the setup action's SHELLCHECK_VERSION pin is not readable as a single x.y.z version"
+else
+    echo "SKIP: real ShellCheck pin check — setup action is absent."
+fi
 lint_repo="${test_tmp}/lint-repo"
 lint_bin="${test_tmp}/lint-bin"
 lint_calls="${test_tmp}/lint-calls"
@@ -641,19 +654,20 @@ for lint_script in scripts/lint-shell.sh template/scripts/lint-shell.sh; do
     [ -f "$lint_script" ] || continue
     # An arbitrary pin proves the guard reads the fixture rather than a copied
     # version constant. Exercise both explicit hook paths and tracked discovery.
-    for pin_case in match mismatch commented quoted single-quoted duplicate missing-pin missing-action; do
+    for pin_case in match mismatch commented quoted single-quoted crlf duplicate missing-pin missing-action; do
         printf '%s\n' '        SHELLCHECK_VERSION=7.8.9' >"${lint_repo}/.github/actions/setup/action.yml"
         case "$pin_case" in
         commented) printf '%s\n' '        SHELLCHECK_VERSION=7.8.9 # pin-pair: shellcheck' >"${lint_repo}/.github/actions/setup/action.yml" ;;
         quoted) printf '%s\n' '        SHELLCHECK_VERSION="7.8.9"' >"${lint_repo}/.github/actions/setup/action.yml" ;;
         single-quoted) printf '%s\n' "        SHELLCHECK_VERSION='7.8.9' # pin-pair: shellcheck" >"${lint_repo}/.github/actions/setup/action.yml" ;;
+        crlf) printf '%s\r\n' '        SHELLCHECK_VERSION="7.8.9" # CRLF pin' >"${lint_repo}/.github/actions/setup/action.yml" ;;
         duplicate) printf '%s\n' '        SHELLCHECK_VERSION="7.8.9" # duplicate' >>"${lint_repo}/.github/actions/setup/action.yml" ;;
         missing-pin) printf '%s\n' 'name: Setup without ShellCheck' >"${lint_repo}/.github/actions/setup/action.yml" ;;
         missing-action) rm "${lint_repo}/.github/actions/setup/action.yml" ;;
         esac
         lint_version=7.8.9
         case "$pin_case" in
-        mismatch | commented | quoted | single-quoted) lint_version=1.2.3 ;;
+        mismatch | commented | quoted | single-quoted | crlf) lint_version=1.2.3 ;;
         esac
         for lint_mode in explicit tracked subdirectory; do
             : >"$lint_calls"
