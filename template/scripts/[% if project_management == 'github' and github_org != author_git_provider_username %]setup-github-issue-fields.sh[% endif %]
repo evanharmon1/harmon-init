@@ -473,15 +473,18 @@ verify_inventory() {
     fi
 }
 
+# GitHub caps a field description at 100 characters and refuses a longer one with
+# HTTP 422 "Description is too long", which aborts the run before any later field
+# is created; test-setup-github-issue-fields.sh measures every description.
 create_field "Product" "text" "Which product/area it belongs to"
 create_field "Impact" "single_select" \
-    "Expected significance of completing the issue: core versus marginal benefit, not common versus uncommon path" \
+    "Expected significance of completing the issue: core vs marginal benefit, not common vs uncommon path" \
     "$impact_opts"
 create_field "Risk" "single_select" \
-    "How consequential a failure is if the change is implemented incorrectly; for a bug fix, the danger of the fix" \
+    "How consequential an incorrect implementation would be; for a bug fix, the danger of the fix itself" \
     "$risk_opts"
 create_field "Complexity" "single_select" \
-    "How difficult the work is to understand, design, implement, and verify correctly; never a time estimate" \
+    "How hard the work is to understand, design, implement, and verify correctly; never a time estimate" \
     "$complexity_opts"
 create_field "Priority (AI)" "single_select" \
     "An agent's suggested priority; the human Priority field overrides it" \
@@ -490,16 +493,16 @@ create_field "Effort" "single_select" \
     "The human time estimate for work a human will do, on a modified Fibonacci ladder" \
     "$effort_opts" "$effort_shipped_defaults"
 create_field "Model family" "single_select" \
-    "Implementer record: the model family that last implemented the issue; a record of fact, never a routing input" \
+    "Implementer record: the model family that last implemented the issue; a fact, never a routing input" \
     "$model_family_opts"
 create_field "Model" "single_select" \
-    "Implementer record: the model line that last implemented the issue; a record of fact, never a routing input" \
+    "Implementer record: the model line that last implemented the issue; a fact, never a routing input" \
     "$model_line_opts"
 create_field "Model version" "single_select" \
-    "Implementer record: the model version that last implemented the issue; a record of fact, never a routing input" \
+    "Implementer record: the model version that last implemented the issue; a fact, never a routing input" \
     "$model_version_opts"
 create_field "Model effort" "single_select" \
-    "Implementer record: the reasoning effort the last implementer ran at; a record of fact, never a routing input" \
+    "Implementer record: the reasoning effort of the last implementer; a fact, never a routing input" \
     "$model_effort_opts"
 
 verify_inventory
