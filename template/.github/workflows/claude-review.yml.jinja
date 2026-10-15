@@ -231,10 +231,11 @@ jobs:
           # spec-sized PR cached 771k input tokens on Opus in one turn
           # ($6.18) and stopped at the old review cap of 6
           # (ponderousdev/omator#1494, 2026-10-15). Budgets since then:
-          # review 40, plan 40, implement 50, all at --effort high.
+          # review 40, plan 40, implement 50; review and plan at --effort xhigh,
+          # implement at --effort medium.
           # timeout-minutes (job- and step-level) and --max-turns remain
           # the runaway guards.
-          claude_args: "--model opus --effort high --max-budget-usd 40 --disallowedTools Edit Write Bash --max-turns 60"
+          claude_args: "--model opus --effort xhigh --max-budget-usd 40 --disallowedTools Edit Write Bash --max-turns 60"
           prompt: |
             Review the PR diff and post a code review comment. Flag security,
             correctness, and convention concerns (see AGENTS.md). Do not write
@@ -282,10 +283,11 @@ jobs:
           # spec-sized PR cached 771k input tokens on Opus in one turn
           # ($6.18) and stopped at the old review cap of 6
           # (ponderousdev/omator#1494, 2026-10-15). Budgets since then:
-          # review 40, plan 40, implement 50, all at --effort high.
+          # review 40, plan 40, implement 50; review and plan at --effort xhigh,
+          # implement at --effort medium.
           # timeout-minutes (job- and step-level) and --max-turns remain
           # the runaway guards.
-          claude_args: "--model opus --effort high --max-budget-usd 40 --disallowedTools Edit Write Bash --max-turns 60"
+          claude_args: "--model opus --effort xhigh --max-budget-usd 40 --disallowedTools Edit Write Bash --max-turns 60"
           prompt: |
             Review the PR diff and post a code review comment. Flag security,
             correctness, and convention concerns (see AGENTS.md). Do not write
