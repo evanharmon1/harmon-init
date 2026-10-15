@@ -737,13 +737,16 @@ the compatibility reason in the rule's `description`.
 [% endif %]
 - [ ] `task codegen` runs Convex codegen; `task guard:codegen` (first in
       `task verify`, and a step in CI's lint job) regenerates and **fails** if
-      the output isn't what you staged. Both activate automatically once
-      `convex/` and the `convex` package exist — so **commit the regenerated
-      `convex/_generated/` files** with your change. `task check` deliberately
-      never regenerates; it type-checks what you committed. Add any other
-      generators (GraphQL, OpenAPI, ORM clients) to `scripts/codegen.sh` —
-      port-free, skip-cleanly, and listed in `generated_paths` so the guard can
-      see them.
+      the output isn't what you staged. Once `convex/` and the `convex` package
+      exist, the Convex block runs only when a `CONVEX_*` setting has a
+      non-empty value in the environment, `.env.local` or `.env` (otherwise it
+      skips with a message); in CI, set the `CONVEX_DEPLOY_KEY` repository
+      secret (the build workflow passes it to the guard) to enable it — and
+      **commit the regenerated `convex/_generated/` files** with your change.
+      `task check` deliberately never regenerates; it type-checks what you
+      committed. Add any other generators (GraphQL, OpenAPI, ORM clients) to
+      `scripts/codegen.sh` — port-free, skip-cleanly, and listed in
+      `generated_paths` so the guard can see them.
 - [ ] Accessibility (axe-core): `pnpm add -D @playwright/test
       @axe-core/playwright` — the shipped `tests/a11y.spec.ts` imports both, so
       `tsc` fails until they're installed (pair the spec with the dep install).

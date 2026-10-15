@@ -3410,7 +3410,8 @@ STUB
         ".env|CONVEX_DEPLOYMENT=dev:from-dotenv" \
         ".env|CONVEX_DEPLOY_KEY=prod:from-dotenv" \
         ".env|CONVEX_DEPLOYMENT: dev:example" \
-        ".env.local|export CONVEX_DEPLOYMENT = \"dev:example\" # comment"; do
+        ".env.local|export CONVEX_DEPLOYMENT = \"dev:example\" # comment" \
+        ".env.local|"$'\xef\xbb\xbf'"CONVEX_DEPLOYMENT=\"dev:example\""; do
         target_file="${env_case%%|*}"
         target_line="${env_case#*|}"
         rm -f "$codegen_box/.env.local" "$codegen_box/.env" "$codegen_box/.convex-stub-ran"

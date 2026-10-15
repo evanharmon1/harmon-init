@@ -60,10 +60,11 @@ convex_deployment_configured() {
     if grep -Eq '^CONVEX_[A-Za-z0-9_]*=.+' <<<"$(env)"; then
         return 0
     fi
+    local bom=$'\xef\xbb\xbf'
     local env_file
     for env_file in .env.local .env; do
         [ -f "$env_file" ] || continue
-        if grep -Eq '^[[:space:]]*(export[[:space:]]+)?CONVEX_[A-Za-z0-9_]*[[:space:]]*[=:][[:space:]]*("[^"#[:space:]][^"]*"|'\''[^'\''#[:space:]][^'\'']*'\''|[^"'\''#[:space:]]+)' "$env_file"; then
+        if grep -Eq "^(${bom})?[[:space:]]*(export[[:space:]]+)?CONVEX_[A-Za-z0-9_]*[[:space:]]*[=:][[:space:]]*(\"[^\"#[:space:]][^\"]*\"|'[^'#[:space:]][^']*'|[^\"'#[:space:]]+)" "$env_file"; then
             return 0
         fi
     done
