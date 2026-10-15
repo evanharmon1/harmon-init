@@ -175,8 +175,8 @@ if [ "$mode" = filter ]; then
     jq --slurpfile ids "$WORK/ids.json" '.advisories |= with_entries(select(.value.github_advisory_id as $id | $ids[0] | index($id) | not))' "$WORK/full.json" >"$3"
 else
     # Register GHSAs directly: pnpm 10's audit --ignore writes ignoreCves,
-    # which cannot match them. pnpm config owns YAML parsing/writing on all
-    # supported majors. Only this private copy receives the merged ignores.
+    # which cannot match them. Edit only the private copy. uv ships to every
+    # consumer; pin a YAML 1.2 parser rather than depend on the optional yq binary.
     mkdir "$WORK/project"
     for file in package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc; do
         [ ! -f "$file" ] || cp "$file" "$WORK/project/$file"
@@ -185,25 +185,41 @@ else
     while IFS= read -r id; do
         echo "security-audit: allowing $id (unpatched, dev-only, within expiry)" >&2
     done < <(jq -r '.[]' "$WORK/ids.json")
+    # renovate: datasource=pypi depName=ruamel.yaml
+    YAML_VERSION=0.18.16
+    uv run --no-project --with "ruamel.yaml==$YAML_VERSION" python - "$WORK/project/pnpm-workspace.yaml" "$WORK/ids.json" <<'PYTHON'
+import json
+import sys
+from pathlib import Path
+
+from ruamel.yaml import YAML
+
+path = Path(sys.argv[1])
+yaml = YAML(typ="safe", pure=True)
+config = yaml.load(path.read_text()) if path.exists() else None
+if config is None:
+    config = {}
+if not isinstance(config, dict):
+    raise ValueError("workspace configuration must be a mapping")
+ids = json.loads(Path(sys.argv[2]).read_text())
+# Keep the legacy key for pnpm 10/11. If the project already uses pnpm 12's
+# canonical audit.ignore, merge that too so it cannot shadow the legacy key.
+for key, field in [("auditConfig", "ignoreGhsas")] + ([("audit", "ignore")] if "audit" in config else []):
+    section = config.setdefault(key, {})
+    if section is None:
+        section = config[key] = {}
+    if not isinstance(section, dict):
+        raise ValueError("audit configuration must be a mapping")
+    existing = section.get(field)
+    if existing is None:
+        existing = []
+    if not isinstance(existing, list) or not all(isinstance(value, str) for value in existing):
+        raise ValueError("audit ignores must be a list of strings")
+    section[field] = list(dict.fromkeys(existing + ids))
+yaml.dump(config, path)
+PYTHON
     (
         cd "$WORK/project"
-        # pnpm 12 exposes the legacy auditConfig.ignoreGhsas setting as
-        # audit.ignore through its config CLI. Read/write its canonical name
-        # to retain existing ignores and the rest of the audit settings.
-        key=auditConfig
-        field=ignoreGhsas
-        case "$(pnpm --version)" in 12.*)
-            key=audit
-            field=ignore
-            ;;
-        esac
-        pnpm config get --json "$key" >"$WORK/config.json"
-        # pnpm 10 emits no JSON when the setting is absent.
-        [ -s "$WORK/config.json" ] || printf '{}\n' >"$WORK/config.json"
-        config="$(jq -c --arg field "$field" --slurpfile ids "$WORK/ids.json" '
-            (. // {}) | .[$field] = ((.[$field] // []) + $ids[0] | unique)
-        ' "$WORK/config.json")"
-        pnpm config set --location=project --json "$key" "$config"
         pnpm audit --audit-level=high
     )
 fi

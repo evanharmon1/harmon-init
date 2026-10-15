@@ -13,7 +13,6 @@ cat >"$TMP/bin/pnpm" <<'STUB'
 set -euo pipefail
 printf '%s\n' "$*" >>"$STUB/calls"
 case "$*" in
-'--version') printf '%s.0.0\n' "$STUB_PNPM_MAJOR" ;;
 'audit --audit-level=high --json') cat "$STUB/full.json"; exit 1 ;;
 'audit --audit-level=high --prod --json') cat "$STUB/prod.json"; exit 1 ;;
 'audit --audit-level=high --ignore GHSA-vfj7-8cjw-p6xm')
@@ -29,22 +28,7 @@ case "$*" in
     fi
     exit 1
     ;;
-  'config get --json audit')
-    yq -o=json '.audit' pnpm-workspace.yaml
-    ;;
-'config set --location=project --json audit '*)
-    CONFIG="$6" yq -i '.audit = (strenv(CONFIG) | from_json)' pnpm-workspace.yaml
-    ;;
-'config get --json auditConfig')
-    if [ "$STUB_PNPM_MAJOR" = 10 ] && yq -e '.auditConfig == null' pnpm-workspace.yaml >/dev/null; then
-        exit 0
-    fi
-    yq -o=json '.auditConfig' pnpm-workspace.yaml
-    ;;
-'config set --location=project --json auditConfig '*)
-    CONFIG="$6" yq -i '.auditConfig = (strenv(CONFIG) | from_json)' pnpm-workspace.yaml
-    ;;
- 'view braces versions --json')
+  'view braces versions --json')
     if [ -f "$STUB/view-failure" ]; then
         printf '{"error":{"code":"NETWORK"}}\n'; exit 1
     fi
@@ -118,7 +102,7 @@ for STUB_PNPM_MAJOR in 10 11 12; do
         jq '.advisories["1"].patched_versions=null | .advisories["1"].vulnerable_versions="<=3.0.3"' "$TMP/base.json" >"$TMP/full.json"
     fi
     expect 0 "valid allowance (pnpm $STUB_PNPM_MAJOR)"
-    ! grep -q -- '--ignore' "$TMP/calls"
+    ! grep -qE -- '--ignore|^config set ' "$TMP/calls"
     cmp pnpm-workspace.yaml "$TMP/pristine.workspace"
     printf '{"allowances":[]}\n' >"$file"
     rc=0
@@ -133,7 +117,7 @@ expect 0 'valid allowance'
 cmp pnpm-workspace.yaml "$TMP/pristine.workspace"
 echo 'ok - ignores stay in scratch; ordinary audit still gates; source is byte-identical'
 cat >pnpm-workspace.yaml <<'YAML'
-overrides: {other: '>=2.0.0'}
+overrides: {other: '>=2.0.0', on: '>=1.0.0'}
 auditConfig:
   ignoreGhsas: [GHSA-aaaa-bbbb-cccc, GHSA-vfj7-8cjw-p6xm]
   ignoreCves: [CVE-2026-4800]
@@ -146,7 +130,8 @@ yq -o=json '.' "$TMP/applied.workspace" | jq -e '
     .auditConfig.ignoreGhsas == ["GHSA-aaaa-bbbb-cccc", "GHSA-vfj7-8cjw-p6xm"]
     and .auditConfig.ignoreCves == ["CVE-2026-4800"]
     and .auditConfig.ignoreRegistryErrors == false
-    and .overrides.other == ">=2.0.0"' >/dev/null
+    and .overrides.other == ">=2.0.0"
+    and .overrides.on == ">=1.0.0"' >/dev/null
 cp "$TMP/pristine.workspace" pnpm-workspace.yaml
 echo 'ok - existing ignores and unrelated settings preserved without duplicate GHSAs'
 export STUB_PNPM_MAJOR=12

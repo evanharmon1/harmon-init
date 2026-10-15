@@ -197,10 +197,11 @@ A maintainer may approve an entry through review when no fix exists:
 Every run re-checks the live full and `--prod` audit reports before merging
 allowed IDs into `auditConfig.ignoreGhsas` in a private temporary copy of the
 full lockfile and project configuration, then runs the ordinary high audit
-there. This supports pnpm 10.x, 11.x and 12.x; the pnpm 12 config CLI names
-the setting `audit.ignore`, so the helper merges that canonical list on 12.x.
-The helper uses pnpm's JSON config commands to parse and write YAML, preserving existing audit settings
-and GHSA ignores without requiring the optional `yq` tool. Repository files remain untouched and no ignore survives the run. The entry must name a live advisory for the exact
+there. This supports pnpm 10.x, 11.x and 12.x. Existing pnpm 12
+`audit.ignore` lists are merged too, so they cannot shadow the legacy setting.
+The helper edits YAML through the already-shipped `uv` runner and pinned
+YAML 1.2 parser (`ruamel.yaml`),
+preserving other settings without requiring the optional `yq` binary. Repository files remain untouched and no ignore survives the run. The entry must name a live advisory for the exact
 package, have no published patched version anywhere, and be absent from the production
 report. npm sometimes reports a patched range whose releases do not exist; the
 helper queries `pnpm view "package@patched-range" version --json` and accepts
