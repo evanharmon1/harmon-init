@@ -16,14 +16,23 @@ case "$*" in
 'audit --audit-level=high --json') cat "$STUB/full.json"; exit 1 ;;
 'audit --audit-level=high --prod --json') cat "$STUB/prod.json"; exit 1 ;;
 'audit --audit-level=high --ignore GHSA-vfj7-8cjw-p6xm')
-    printf '\nauditConfig: {ignoreGhsas: [GHSA-vfj7-8cjw-p6xm]}\n' >>pnpm-workspace.yaml
+    # pnpm 10 files GHSA inputs under ignoreCves; 11/12 use ignoreGhsas.
+    if [ "$STUB_PNPM_MAJOR" = 10 ]; then key=ignoreCves; else key=ignoreGhsas; fi
+    KEY="$key" yq -i '.auditConfig[strenv(KEY)] = ["GHSA-vfj7-8cjw-p6xm"]' pnpm-workspace.yaml
     exit 0
     ;;
   'audit --audit-level=high')
-    if grep -q 'auditConfig:' pnpm-workspace.yaml && ! jq -e '.advisories[] | select(.github_advisory_id != "GHSA-vfj7-8cjw-p6xm" and (.severity == "high" or .severity == "critical"))' "$STUB/full.json" >/dev/null; then
+    cp pnpm-workspace.yaml "$STUB/applied.workspace"
+    if yq -e '(.audit.ignore // .auditConfig.ignoreGhsas) | contains(["GHSA-vfj7-8cjw-p6xm"])' pnpm-workspace.yaml >/dev/null 2>&1 && ! jq -e '.advisories[] | select(.github_advisory_id != "GHSA-vfj7-8cjw-p6xm" and (.severity == "high" or .severity == "critical"))' "$STUB/full.json" >/dev/null; then
         exit 0
     fi
     exit 1
+    ;;
+  'view braces versions --json')
+    if [ -f "$STUB/view-failure" ]; then
+        printf '{"error":{"code":"NETWORK"}}\n'; exit 1
+    fi
+    cat "$STUB/versions.json"
     ;;
 'view braces@>=3.0.4 version --json')
     if [ -f "$STUB/unpublished" ]; then
@@ -40,7 +49,45 @@ case "$*" in
 esac
 STUB
 chmod +x "$TMP/bin/pnpm"
-export PATH="$TMP/bin:$PATH" STUB="$TMP"
+# Isolate package provisioning, not the helper's writer: execute its actual
+# stdin Python using a YAML adapter backed by the root suite's existing yq.
+# Real pnpm proofs exercise the pinned ruamel.yaml implementation separately.
+cat >"$TMP/bin/uv" <<'UV'
+#!/usr/bin/env bash
+set -euo pipefail
+exec python3 "$STUB/uv-runner.py" "$@"
+UV
+cat >"$TMP/uv-runner.py" <<'PYTHON'
+import json
+import subprocess
+import sys
+import types
+
+assert sys.argv[1:4] == ["run", "--no-project", "--with"]
+assert sys.argv[4].startswith("ruamel.yaml==")
+assert sys.argv[5:7] == ["python", "-"]
+
+class YAML:
+    def __init__(self, **kwargs):
+        pass
+
+    def load(self, text):
+        return json.loads(subprocess.check_output(["yq", "-o=json", "."], input=text, text=True))
+
+    def dump(self, data, path):
+        path.write_text(subprocess.check_output(["yq", "-P", "."], input=json.dumps(data), text=True))
+
+module = types.ModuleType("ruamel.yaml")
+module.YAML = YAML
+sys.modules["ruamel"] = types.ModuleType("ruamel")
+sys.modules["ruamel.yaml"] = module
+sys.argv = sys.argv[6:]
+exec(compile(sys.stdin.read(), "security-audit YAML writer", "exec"))
+PYTHON
+chmod +x "$TMP/bin/uv"
+# A cold, offline cache must not affect this offline test suite.
+export UV_CACHE_DIR="$TMP/cold-uv-cache" UV_OFFLINE=true
+export PATH="$TMP/bin:$PATH" STUB="$TMP" STUB_PNPM_MAJOR=10
 cd "$TMP/project"
 file=.security-audit-allowances.json
 printf '{}\n' >package.json
@@ -58,6 +105,7 @@ reset() {
     printf '{"advisories":{}}\n' >"$TMP/prod.json"
     : >"$TMP/calls"
     rm -f "$TMP/unpublished" "$TMP/view-failure"
+    printf '["1.0.0","2.3.2","3.0.3"]\n' >"$TMP/versions.json"
     entry
 }
 edit() {
@@ -78,19 +126,61 @@ expect() {
             echo "missing failure: $2"
             exit 1
         }
-        ! grep -q -- '--ignore' "$TMP/calls" || {
-            echo 'invalid allowance ignored advisory'
+        ! grep -qE -- '--ignore|^config set ' "$TMP/calls" || {
+            echo 'invalid allowance registered an ignore'
             exit 1
         }
     fi
     echo "ok - $2"
 }
 reset
+for STUB_PNPM_MAJOR in 10 11 12; do
+    export STUB_PNPM_MAJOR
+    if [ "$STUB_PNPM_MAJOR" = 12 ]; then
+        jq '.advisories["1"].patched_versions=null | .advisories["1"].vulnerable_versions="<=3.0.3"' "$TMP/base.json" >"$TMP/full.json"
+    fi
+    expect 0 "valid allowance (pnpm $STUB_PNPM_MAJOR)"
+    ! grep -qE -- '--ignore|^config set ' "$TMP/calls"
+    cmp pnpm-workspace.yaml "$TMP/pristine.workspace"
+    printf '{"allowances":[]}\n' >"$file"
+    rc=0
+    ./scripts/security-audit.sh >"$TMP/out" 2>&1 || rc=$?
+    [ "$rc" -eq 1 ]
+    echo "ok - empty seed fails (pnpm $STUB_PNPM_MAJOR)"
+    reset
+done
+export STUB_PNPM_MAJOR=10
 expect 0 'valid allowance'
-grep -qx 'audit --audit-level=high --ignore GHSA-vfj7-8cjw-p6xm' "$TMP/calls"
 [ "$(tail -1 "$TMP/calls")" = 'audit --audit-level=high' ]
 cmp pnpm-workspace.yaml "$TMP/pristine.workspace"
-echo 'ok - ignore runs only in scratch; ordinary audit still gates; source is byte-identical'
+echo 'ok - ignores stay in scratch; ordinary audit still gates; source is byte-identical'
+cat >pnpm-workspace.yaml <<'YAML'
+overrides: {other: '>=2.0.0', on: '>=1.0.0'}
+auditConfig:
+  ignoreGhsas: [GHSA-aaaa-bbbb-cccc, GHSA-vfj7-8cjw-p6xm]
+  ignoreCves: [CVE-2026-4800]
+  ignoreRegistryErrors: false
+YAML
+cp pnpm-workspace.yaml "$TMP/merge.workspace"
+expect 0 'existing audit configuration merged'
+cmp pnpm-workspace.yaml "$TMP/merge.workspace"
+yq -o=json '.' "$TMP/applied.workspace" | jq -e '
+    .auditConfig.ignoreGhsas == ["GHSA-aaaa-bbbb-cccc", "GHSA-vfj7-8cjw-p6xm"]
+    and .auditConfig.ignoreCves == ["CVE-2026-4800"]
+    and .auditConfig.ignoreRegistryErrors == false
+    and .overrides.other == ">=2.0.0"
+    and .overrides.on == ">=1.0.0"' >/dev/null
+cp "$TMP/pristine.workspace" pnpm-workspace.yaml
+echo 'ok - existing ignores and unrelated settings preserved without duplicate GHSAs'
+export STUB_PNPM_MAJOR=12
+printf 'audit: {ignore: [GHSA-aaaa-bbbb-cccc], registryErrors: false}\n' >pnpm-workspace.yaml
+cp pnpm-workspace.yaml "$TMP/canonical.workspace"
+expect 0 'pnpm 12 canonical audit settings merged'
+cmp pnpm-workspace.yaml "$TMP/canonical.workspace"
+yq -o=json '.audit' "$TMP/applied.workspace" | jq -e '
+    .ignore == ["GHSA-aaaa-bbbb-cccc", "GHSA-vfj7-8cjw-p6xm"] and .registryErrors == false' >/dev/null
+cp "$TMP/pristine.workspace" pnpm-workspace.yaml
+export STUB_PNPM_MAJOR=10
 # Changing the production graph invalidates the same entry on the next run.
 cp "$TMP/base.json" "$TMP/prod.json"
 : >"$TMP/calls"
@@ -107,6 +197,39 @@ jq '.advisories["1"].patched_versions=">=3.0.4"' "$TMP/base.json" >"$TMP/full.js
 touch "$TMP/view-failure"
 expect 1 'patch lookup failed'
 
+# Explicit null needs an independent proof over all published releases.
+null_report() {
+    jq '.advisories["1"].patched_versions=null | .advisories["1"].vulnerable_versions="<=3.0.3"' "$TMP/base.json" >"$TMP/full.json"
+}
+reset
+null_report
+expect 0 'null patch with every published release vulnerable'
+jq '.advisories["1"].vulnerable_versions="<3.0.4"' "$TMP/full.json" >"$TMP/changed.json"
+cp "$TMP/changed.json" "$TMP/full.json"
+expect 0 'null patch with strict upper bound'
+: >"$TMP/calls"
+jq '.advisories["1"].vulnerable_versions="<3.0.3"' "$TMP/full.json" >"$TMP/changed.json"
+cp "$TMP/changed.json" "$TMP/full.json"
+expect 1 'patched version exists'
+reset
+null_report
+printf '["1.0.0","3.0.3","4.0.0"]\n' >"$TMP/versions.json"
+expect 1 'patched version exists'
+reset
+null_report
+touch "$TMP/view-failure"
+expect 1 'patch status is unknown'
+for response in '{broken' '{}' '[]' '[null]' '["3.0.3-beta.1"]' '["9007199254740992.0.0"]'; do
+    reset
+    null_report
+    printf '%s\n' "$response" >"$TMP/versions.json"
+    expect 1 'patch status is unknown'
+done
+reset
+null_report
+jq '.advisories["1"].vulnerable_versions="garbage"' "$TMP/full.json" >"$TMP/changed.json"
+cp "$TMP/changed.json" "$TMP/full.json"
+expect 1 'patch status is unknown'
 reset
 jq 'del(.advisories["1"].patched_versions)' "$TMP/base.json" >"$TMP/full.json"
 expect 1 'patch status is unknown'
