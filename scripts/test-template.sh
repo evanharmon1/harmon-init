@@ -3340,13 +3340,17 @@ if grep -Eq '^project_type:[[:space:]]+web-app$' .copier-answers.yml; then
     ! grep -qF 'CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}' .github/workflows/build.yml ||
         err "build.yml passes CONVEX_DEPLOY_KEY unconditionally without excluding merge_group"
     # Exercise codegen.sh with a stub `convex` binary in an isolated git tree:
-    #   1. unconfigured (no CONVEX_* setting in the environment, .env.local or
-    #      .env, or only empty/commented lines) -> skips cleanly with the
-    #      expected message, exit 0, and never invokes the stub;
-    #   2. configured (via any non-empty CONVEX_* in env, .env.local, or .env,
-    #      including CONVEX_SELF_HOSTED_URL, `NAME: value`, and spaced
-    #      `export KEY = "value" # comment`) -> invokes the stub, fails --guard
-    #      when convex/_generated/ is stale, and passes once staged.
+    #   1. unconfigured (no Convex deployment selector in env, .env.local or
+    #      .env, or only empty/commented lines, or a non-selector CONVEX_* var,
+    #      or self-hosted URL without admin key, or a higher-precedence empty
+    #      override in env / .env.local) -> skips cleanly with the expected
+    #      message, exit 0, and never invokes the stub;
+    #   2. configured (via CONVEX_DEPLOY_KEY, CONVEX_DEPLOYMENT, or both
+    #      CONVEX_SELF_HOSTED_URL + CONVEX_SELF_HOSTED_ADMIN_KEY across env,
+    #      .env.local, or .env, including `NAME: value`, spaced
+    #      `export KEY = "value" # comment`, and leading UTF-8 BOM) -> invokes
+    #      the stub, fails --guard when convex/_generated/ is stale, and passes
+    #      once staged.
     codegen_box="$job_tmp/codegen-convex"
     mkdir -p "$codegen_box/scripts" "$codegen_box/convex/_generated" "$codegen_box/node_modules/.bin"
     cp scripts/codegen.sh "$codegen_box/scripts/codegen.sh"
@@ -3376,8 +3380,8 @@ STUB
         for v in $(compgen -v CONVEX_ || true); do unset "$v"; done
         ./scripts/codegen.sh --guard 2>&1
     )" || err "codegen.sh --guard failed when Convex is present but no deployment is configured: $unconf_out"
-    grep -qF 'no CONVEX_* setting in the environment, .env.local or .env' <<<"$unconf_out" ||
-        err "codegen.sh did not print the unconfigured-Convex skip message (got: $unconf_out)"
+    grep -qF 'requires a Convex deployment selector: CONVEX_DEPLOY_KEY, CONVEX_DEPLOYMENT, or CONVEX_SELF_HOSTED_URL + CONVEX_SELF_HOSTED_ADMIN_KEY in the environment, .env.local, or .env' <<<"$unconf_out" ||
+        err "codegen.sh did not print the unconfigured-Convex selector skip message (got: $unconf_out)"
     ! grep -qF 'no generators configured yet' <<<"$unconf_out" ||
         err "codegen.sh printed contradictory 'no generators configured yet' after skipping an unconfigured Convex deployment"
     [ ! -e "$codegen_box/.convex-stub-ran" ] ||
@@ -3392,6 +3396,43 @@ STUB
     [ ! -e "$codegen_box/.convex-stub-ran" ] ||
         err "codegen.sh ran the convex binary when .env.local and .env had only empty/commented lines"
     rm -f "$codegen_box/.env.local" "$codegen_box/.env"
+    # Non-selector CONVEX_* variable alone must skip (not start a local backend).
+    non_sel_out="$(
+        cd "$codegen_box"
+        for v in $(compgen -v CONVEX_ || true); do unset "$v"; done
+        CONVEX_LOCAL_BACKEND_STARTUP_TIMEOUT_SECS=30 ./scripts/codegen.sh --guard 2>&1
+    )" || err "codegen.sh --guard failed when only CONVEX_LOCAL_BACKEND_STARTUP_TIMEOUT_SECS was set: $non_sel_out"
+    [ ! -e "$codegen_box/.convex-stub-ran" ] ||
+        err "codegen.sh ran the convex binary when only a non-selector CONVEX_* variable was set"
+    # Self-hosted URL without admin key must skip.
+    sh_url_only_out="$(
+        cd "$codegen_box"
+        for v in $(compgen -v CONVEX_ || true); do unset "$v"; done
+        CONVEX_SELF_HOSTED_URL="http://127.0.0.1:3210" ./scripts/codegen.sh --guard 2>&1
+    )" || err "codegen.sh --guard failed when only CONVEX_SELF_HOSTED_URL was set without admin key: $sh_url_only_out"
+    [ ! -e "$codegen_box/.convex-stub-ran" ] ||
+        err "codegen.sh ran the convex binary when CONVEX_SELF_HOSTED_URL was set without CONVEX_SELF_HOSTED_ADMIN_KEY"
+    # Precedence: empty CONVEX_DEPLOYMENT= in .env.local overrides non-empty in .env -> skips.
+    printf 'CONVEX_DEPLOYMENT=\n' >"$codegen_box/.env.local"
+    printf 'CONVEX_DEPLOYMENT=dev:from-dotenv\n' >"$codegen_box/.env"
+    prec_file_out="$(
+        cd "$codegen_box"
+        for v in $(compgen -v CONVEX_ || true); do unset "$v"; done
+        ./scripts/codegen.sh --guard 2>&1
+    )" || err "codegen.sh --guard failed when .env.local had empty CONVEX_DEPLOYMENT= overriding .env: $prec_file_out"
+    [ ! -e "$codegen_box/.convex-stub-ran" ] ||
+        err "codegen.sh ran the convex binary when .env.local had empty CONVEX_DEPLOYMENT= overriding .env"
+    rm -f "$codegen_box/.env.local" "$codegen_box/.env"
+    # Precedence: exported empty CONVEX_DEPLOY_KEY= overrides non-empty .env.local -> skips.
+    printf 'CONVEX_DEPLOY_KEY=prod:from-env-local\n' >"$codegen_box/.env.local"
+    prec_env_out="$(
+        cd "$codegen_box"
+        for v in $(compgen -v CONVEX_ || true); do unset "$v"; done
+        CONVEX_DEPLOY_KEY="" ./scripts/codegen.sh --guard 2>&1
+    )" || err "codegen.sh --guard failed when exported empty CONVEX_DEPLOY_KEY= overrode .env.local: $prec_env_out"
+    [ ! -e "$codegen_box/.convex-stub-ran" ] ||
+        err "codegen.sh ran the convex binary when exported empty CONVEX_DEPLOY_KEY= overrode .env.local"
+    rm -f "$codegen_box/.env.local"
     if (
         cd "$codegen_box"
         for v in $(compgen -v CONVEX_ || true); do unset "$v"; done
@@ -3422,18 +3463,18 @@ STUB
     if (
         cd "$codegen_box"
         for v in $(compgen -v CONVEX_ || true); do unset "$v"; done
-        CONVEX_SELF_HOSTED_URL="http://127.0.0.1:3210" ./scripts/codegen.sh --guard >"$job_tmp/codegen-selfhosted-env.log" 2>&1
+        CONVEX_SELF_HOSTED_URL="http://127.0.0.1:3210" CONVEX_SELF_HOSTED_ADMIN_KEY="admin-secret" ./scripts/codegen.sh --guard >"$job_tmp/codegen-selfhosted-env.log" 2>&1
     ); then
         dump_log codegen-selfhosted-env
-        err "codegen.sh --guard passed with a stale convex/_generated/ when CONVEX_SELF_HOSTED_URL was set in the environment"
+        err "codegen.sh --guard passed with a stale convex/_generated/ when both CONVEX_SELF_HOSTED_URL and CONVEX_SELF_HOSTED_ADMIN_KEY were set in the environment"
     fi
     [ -f "$codegen_box/.convex-stub-ran" ] ||
-        err "codegen.sh did not run the convex stub when CONVEX_SELF_HOSTED_URL was set in the environment"
+        err "codegen.sh did not run the convex stub when both CONVEX_SELF_HOSTED_URL and CONVEX_SELF_HOSTED_ADMIN_KEY were set in the environment"
     rm -f "$codegen_box/.convex-stub-ran"
     for env_case in \
         ".env.local|CONVEX_DEPLOYMENT=dev:from-env-local" \
         ".env.local|CONVEX_DEPLOY_KEY=prod:from-env-local" \
-        ".env.local|CONVEX_SELF_HOSTED_URL=http://127.0.0.1:3210" \
+        ".env.local|CONVEX_SELF_HOSTED_URL=http://127.0.0.1:3210"$'\n'"CONVEX_SELF_HOSTED_ADMIN_KEY=admin-secret" \
         ".env|CONVEX_DEPLOYMENT=dev:from-dotenv" \
         ".env|CONVEX_DEPLOY_KEY=prod:from-dotenv" \
         ".env|CONVEX_DEPLOYMENT: dev:example" \

@@ -124,8 +124,10 @@ The generators are deliberately **not** reachable from `task check` or
 And the gate **fails** on stale output rather than healing it, because `task ci`
 delegates to `verify`: a `verify` that silently regenerated would hand you a
 green local `ci` followed by a red PR, and `ci` would stop being a CI mirror.
-The Convex block in `task guard:codegen` runs only when a `CONVEX_*` setting
-has a non-empty value in the environment, `.env.local` or `.env`, and otherwise
+The Convex block in `task guard:codegen` runs only when a Convex deployment
+selector (`CONVEX_DEPLOY_KEY`, `CONVEX_DEPLOYMENT`, or both
+`CONVEX_SELF_HOSTED_URL` and `CONVEX_SELF_HOSTED_ADMIN_KEY`) has a non-empty
+effective value across the environment, `.env.local` and `.env`, and otherwise
 skips with a message; in CI, `.github/workflows/build.yml`'s `lint` job passes
 `CONVEX_DEPLOY_KEY` to `task guard:codegen` on pushes and same-repository pull
 requests, not in the merge queue, so setting the `CONVEX_DEPLOY_KEY` repository

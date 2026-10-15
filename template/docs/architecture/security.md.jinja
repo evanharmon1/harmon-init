@@ -117,10 +117,10 @@ CodeQL-supported application stack, set `use_codeql=true`, select its
 first-party `codeql_languages`, turn off GitHub's CodeQL Default setup
 (**Settings → Advanced Security → CodeQL analysis**, or
 `gh api --method PATCH repos/OWNER/REPO/code-scanning/default-setup -f state=not-configured`),
-then re-enable the CodeQL workflow if Default setup disabled it (**Actions →
-CodeQL → "Enable workflow"**, or `gh workflow enable codeql.yml`), and
-re-apply the template for public coverage or for paid private GitHub Code
-Security coverage.
+and re-apply the template for public coverage or for paid private GitHub Code
+Security coverage (then, if Default setup had disabled an existing CodeQL
+workflow, re-enable it via **Actions → CodeQL → "Enable workflow"** or
+`gh workflow enable codeql.yml`).
 [% endif %]
 
 ### Dependency monitoring and update ownership
