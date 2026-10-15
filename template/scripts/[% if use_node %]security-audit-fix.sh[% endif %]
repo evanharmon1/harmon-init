@@ -454,6 +454,8 @@ audit_rows() {
         cat "$WORK/audit.err" >&2
         fail "pnpm audit did not return an advisory report (registry or network failure?)"
     }
+    ./scripts/security-audit.sh filter "$_ar_json" "$WORK/filtered.json" ||
+        fail "security audit allowances could not be verified"
     jq -r '
         .advisories[]
         | select(.severity == "high" or .severity == "critical")
@@ -465,7 +467,7 @@ audit_rows() {
             ((.paths[0] // ".") | split(">") | .[1] // $a.module_name),
             ($a.patched_versions // "") ]
         | @tsv
-    ' "$_ar_json" | sort -u >"$1"
+    ' "$WORK/filtered.json" | sort -u >"$1"
 }
 
 # major_rows ID_COL PKG_COL VERSION_COL — "id pkg@major" for each TSV row on

@@ -8,6 +8,25 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [5.8.0](https://github.com/evanharmon1/harmon-init/compare/v5.7.2...v5.8.0) (2026-10-14)
+
+
+### Features
+
+* **remote-env:** add a task that runs /web-setup with the bot token, failing closed ([#1667](https://github.com/evanharmon1/harmon-init/issues/1667)) ([97daeca](https://github.com/evanharmon1/harmon-init/commit/97daeca7441747197c8945a29299e208a9bf6755))
+* **security:** add expiring allowances for unpatched dev-only advisories ([#1686](https://github.com/evanharmon1/harmon-init/issues/1686)) ([a773371](https://github.com/evanharmon1/harmon-init/commit/a773371f0cc93f3cd6713bad72df6642f7fead04))
+
+
+### Bug Fixes
+
+* **ci:** pin the project's task test step in the verify-ci-parity guard ([#1687](https://github.com/evanharmon1/harmon-init/issues/1687)) ([741da98](https://github.com/evanharmon1/harmon-init/commit/741da98cf67e97ca16e27ef39dcf233d3f6b522a))
+* **devcontainer:** guard the shared image per platform and pin shellcheck 0.11.0 ([#1675](https://github.com/evanharmon1/harmon-init/issues/1675)) ([090ae99](https://github.com/evanharmon1/harmon-init/commit/090ae994adff27404e92ace204399e0d35a41d91))
+* **devcontainer:** update shared image to 090ae994 ([#1682](https://github.com/evanharmon1/harmon-init/issues/1682)) ([ed8cb78](https://github.com/evanharmon1/harmon-init/commit/ed8cb78c2ae4c27ef170164ffbabba3e07585e0a))
+* **devflow:** pin the unknown [stage.*] table refusal in the shared conformance corpus ([#1663](https://github.com/evanharmon1/harmon-init/issues/1663)) ([ccdda7a](https://github.com/evanharmon1/harmon-init/commit/ccdda7afeff49d0185363512cd1e38505fa986da))
+* **hooks:** record why the git merge guard is allowlist-shaped and correct its docstring ([#1668](https://github.com/evanharmon1/harmon-init/issues/1668)) ([255fa0b](https://github.com/evanharmon1/harmon-init/commit/255fa0b1a6842237a36efd822ace40c2cbda2fac))
+* **template:** fail closed without Homebrew and keep lane artefacts out of the lint gates ([#1679](https://github.com/evanharmon1/harmon-init/issues/1679)) ([c513519](https://github.com/evanharmon1/harmon-init/commit/c51351907dc26c8a333d868fe4fb88d4a3f7d1c6))
+* **template:** sync harmon-devkit skills to v0.58.0 ([#1683](https://github.com/evanharmon1/harmon-init/issues/1683)) ([2c352c6](https://github.com/evanharmon1/harmon-init/commit/2c352c6653702fa32e2b55f3cf120f4c4ed6726a))
+
 ## [5.7.2](https://github.com/evanharmon1/harmon-init/compare/v5.7.1...v5.7.2) (2026-10-13)
 
 
