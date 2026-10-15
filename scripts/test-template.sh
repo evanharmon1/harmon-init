@@ -960,6 +960,28 @@ if [ -f .github/workflows/codeql.yml ]; then
         err "CodeQL aggregate does not use the shared trusted-event helper"
     grep -q 'name: Check deliberate fork skip' .github/workflows/codeql.yml ||
         err "CodeQL aggregate is missing its checkout-free fork diagnostic"
+    grep -q 'name: Explain CodeQL Default setup collision on failure' .github/workflows/codeql.yml ||
+        err "CodeQL analyze job is missing the Default-setup collision diagnostic step"
+    grep -q 'if: failure()' .github/workflows/codeql.yml ||
+        err "CodeQL Default-setup collision diagnostic step is missing if: failure()"
+    grep -qF 'Settings -> Advanced Security -> CodeQL analysis' .github/workflows/codeql.yml ||
+        err "CodeQL Default-setup collision diagnostic step does not name Settings -> Advanced Security -> CodeQL analysis"
+    grep -qF 'gh api --method PATCH repos/OWNER/REPO/code-scanning/default-setup -f state=not-configured' .github/workflows/codeql.yml ||
+        err "CodeQL Default-setup collision diagnostic step is missing the gh api remediation command"
+    grep -qF 'gh workflow enable codeql.yml' .github/workflows/codeql.yml ||
+        err "CodeQL Default-setup collision diagnostic step does not mention re-enabling codeql.yml"
+    grep -qF 'Settings → Advanced Security → CodeQL analysis' docs/CHECKLIST.md ||
+        err "docs/CHECKLIST.md does not name Settings → Advanced Security → CodeQL analysis when use_codeql=true"
+    grep -qF 'gh api --method PATCH repos/OWNER/REPO/code-scanning/default-setup -f state=not-configured' docs/CHECKLIST.md ||
+        err "docs/CHECKLIST.md is missing the CodeQL Default setup note when use_codeql=true"
+    grep -qF 'gh workflow enable codeql.yml' docs/CHECKLIST.md ||
+        err "docs/CHECKLIST.md does not mention re-enabling codeql.yml when use_codeql=true"
+    grep -qF 'Settings → Advanced Security → CodeQL analysis' docs/architecture/security.md ||
+        err "docs/architecture/security.md does not name Settings → Advanced Security → CodeQL analysis when use_codeql=true"
+    grep -qF 'gh api --method PATCH repos/OWNER/REPO/code-scanning/default-setup -f state=not-configured' docs/architecture/security.md ||
+        err "docs/architecture/security.md is missing the CodeQL Default setup note when use_codeql=true"
+    grep -qF 'gh workflow enable codeql.yml' docs/architecture/security.md ||
+        err "docs/architecture/security.md does not mention re-enabling codeql.yml when use_codeql=true"
     # A `continue-on-error: true` on the analyze job or step makes
     # needs.analyze.result report `success`, which satisfies EXPECTED_RESULT and
     # turns `codeql-verify` — a REQUIRED check — green with no SAST having run.
@@ -989,6 +1011,18 @@ else
         err "README advertises CodeQL while use_codeql=false"
     grep -q 'CodeQL is deliberately omitted' docs/architecture/security.md ||
         err "security docs do not record the deliberate CodeQL omission"
+    grep -qF 'Settings → Advanced Security → CodeQL analysis' docs/CHECKLIST.md ||
+        err "docs/CHECKLIST.md does not name Settings → Advanced Security → CodeQL analysis when use_codeql=false"
+    grep -qF 'gh api --method PATCH repos/OWNER/REPO/code-scanning/default-setup -f state=not-configured' docs/CHECKLIST.md ||
+        err "docs/CHECKLIST.md is missing the CodeQL Default setup note when use_codeql=false"
+    grep -qF 'gh workflow enable codeql.yml' docs/CHECKLIST.md ||
+        err "docs/CHECKLIST.md does not mention re-enabling codeql.yml when use_codeql=false"
+    grep -qF 'Settings → Advanced Security → CodeQL analysis' docs/architecture/security.md ||
+        err "docs/architecture/security.md does not name Settings → Advanced Security → CodeQL analysis when use_codeql=false"
+    grep -qF 'gh api --method PATCH repos/OWNER/REPO/code-scanning/default-setup -f state=not-configured' docs/architecture/security.md ||
+        err "docs/architecture/security.md is missing the CodeQL Default setup note when use_codeql=false"
+    grep -qF 'gh workflow enable codeql.yml' docs/architecture/security.md ||
+        err "docs/architecture/security.md does not mention re-enabling codeql.yml when use_codeql=false"
     ! grep -q '"context": "codeql-verify"' '.github/Branch Protection Ruleset - Protect Main.json' ||
         err "ruleset requires codeql-verify but this profile has no CodeQL workflow"
 fi
@@ -3308,6 +3342,169 @@ if grep -Eq '^project_type:[[:space:]]+web-app$' .copier-answers.yml; then
     # and the PR disagree in the opposite direction.
     grep -q 'task guard:codegen' .github/workflows/build.yml ||
         err "build.yml never runs guard:codegen — CI would not catch stale generated files that local verify does"
+    grep -qF "CONVEX_DEPLOY_KEY: \${{ github.event_name != 'merge_group' && secrets.CONVEX_DEPLOY_KEY || '' }}" .github/workflows/build.yml ||
+        err "build.yml does not gate CONVEX_DEPLOY_KEY off merge_group for guard:codegen — merge_group would expose the secret to queued fork code"
+    ! grep -qF 'CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}' .github/workflows/build.yml ||
+        err "build.yml passes CONVEX_DEPLOY_KEY unconditionally without excluding merge_group"
+    # Exercise codegen.sh with a stub `convex` binary in an isolated git tree:
+    #   1. unconfigured (no Convex deployment selector in env, .env.local or
+    #      .env, or only empty/commented lines, or a non-selector CONVEX_* var,
+    #      or self-hosted URL without admin key, or a higher-precedence empty
+    #      override in env / .env.local) -> skips cleanly with the expected
+    #      message, exit 0, and never invokes the stub;
+    #   2. configured (via CONVEX_DEPLOY_KEY, CONVEX_DEPLOYMENT, or both
+    #      CONVEX_SELF_HOSTED_URL + CONVEX_SELF_HOSTED_ADMIN_KEY across env,
+    #      .env.local, or .env, including `NAME: value`, spaced
+    #      `export KEY = "value" # comment`, and leading UTF-8 BOM) -> invokes
+    #      the stub, fails --guard when convex/_generated/ is stale, and passes
+    #      once staged.
+    codegen_box="$job_tmp/codegen-convex"
+    mkdir -p "$codegen_box/scripts" "$codegen_box/convex/_generated" "$codegen_box/node_modules/.bin"
+    cp scripts/codegen.sh "$codegen_box/scripts/codegen.sh"
+    chmod +x "$codegen_box/scripts/codegen.sh"
+    printf '{}\n' >"$codegen_box/package.json"
+    printf '// schema\n' >"$codegen_box/convex/schema.ts"
+    printf '// committed\n' >"$codegen_box/convex/_generated/api.d.ts"
+    cat >"$codegen_box/node_modules/.bin/convex" <<'STUB'
+#!/usr/bin/env bash
+set -euo pipefail
+[ "${1:-}" = "codegen" ] || exit 2
+echo "ran" >> .convex-stub-ran
+printf '// regenerated\n' > convex/_generated/api.d.ts
+STUB
+    chmod +x "$codegen_box/node_modules/.bin/convex"
+    (
+        cd "$codegen_box"
+        git init -q
+        git config user.email "test@example.com"
+        git config user.name "Test"
+        git config commit.gpgsign false
+        git add package.json convex/schema.ts convex/_generated/api.d.ts
+        git commit -qm "init"
+    )
+    unconf_out="$(
+        cd "$codegen_box"
+        for v in $(compgen -v CONVEX_ || true); do unset "$v"; done
+        ./scripts/codegen.sh --guard 2>&1
+    )" || err "codegen.sh --guard failed when Convex is present but no deployment is configured: $unconf_out"
+    grep -qF 'requires a Convex deployment selector: CONVEX_DEPLOY_KEY, CONVEX_DEPLOYMENT, or CONVEX_SELF_HOSTED_URL + CONVEX_SELF_HOSTED_ADMIN_KEY in the environment, .env.local, or .env' <<<"$unconf_out" ||
+        err "codegen.sh did not print the unconfigured-Convex selector skip message (got: $unconf_out)"
+    ! grep -qF 'no generators configured yet' <<<"$unconf_out" ||
+        err "codegen.sh printed contradictory 'no generators configured yet' after skipping an unconfigured Convex deployment"
+    [ ! -e "$codegen_box/.convex-stub-ran" ] ||
+        err "codegen.sh ran the convex binary with no deployment configured"
+    printf '# CONVEX_DEPLOYMENT=dev:commented\nCONVEX_DEPLOYMENT=\nCONVEX_SELF_HOSTED_URL=\nCONVEX_DEPLOYMENT=""\nCONVEX_DEPLOY_KEY='\'''\''\nexport CONVEX_DEPLOYMENT = # comment only\n' >"$codegen_box/.env.local"
+    printf '# CONVEX_DEPLOY_KEY=prod:commented\nCONVEX_DEPLOY_KEY = "" # empty\nCONVEX_DEPLOYMENT = '\'''\''\nCONVEX_DEPLOYMENT: # comment only\n' >"$codegen_box/.env"
+    unconf_env_out="$(
+        cd "$codegen_box"
+        for v in $(compgen -v CONVEX_ || true); do unset "$v"; done
+        ./scripts/codegen.sh --guard 2>&1
+    )" || err "codegen.sh --guard failed with empty/commented .env.local and .env: $unconf_env_out"
+    [ ! -e "$codegen_box/.convex-stub-ran" ] ||
+        err "codegen.sh ran the convex binary when .env.local and .env had only empty/commented lines"
+    rm -f "$codegen_box/.env.local" "$codegen_box/.env"
+    # Non-selector CONVEX_* variable alone must skip (not start a local backend).
+    non_sel_out="$(
+        cd "$codegen_box"
+        for v in $(compgen -v CONVEX_ || true); do unset "$v"; done
+        CONVEX_LOCAL_BACKEND_STARTUP_TIMEOUT_SECS=30 ./scripts/codegen.sh --guard 2>&1
+    )" || err "codegen.sh --guard failed when only CONVEX_LOCAL_BACKEND_STARTUP_TIMEOUT_SECS was set: $non_sel_out"
+    [ ! -e "$codegen_box/.convex-stub-ran" ] ||
+        err "codegen.sh ran the convex binary when only a non-selector CONVEX_* variable was set"
+    # Self-hosted URL without admin key must skip.
+    sh_url_only_out="$(
+        cd "$codegen_box"
+        for v in $(compgen -v CONVEX_ || true); do unset "$v"; done
+        CONVEX_SELF_HOSTED_URL="http://127.0.0.1:3210" ./scripts/codegen.sh --guard 2>&1
+    )" || err "codegen.sh --guard failed when only CONVEX_SELF_HOSTED_URL was set without admin key: $sh_url_only_out"
+    [ ! -e "$codegen_box/.convex-stub-ran" ] ||
+        err "codegen.sh ran the convex binary when CONVEX_SELF_HOSTED_URL was set without CONVEX_SELF_HOSTED_ADMIN_KEY"
+    # Precedence: empty CONVEX_DEPLOYMENT= in .env.local overrides non-empty in .env -> skips.
+    printf 'CONVEX_DEPLOYMENT=\n' >"$codegen_box/.env.local"
+    printf 'CONVEX_DEPLOYMENT=dev:from-dotenv\n' >"$codegen_box/.env"
+    prec_file_out="$(
+        cd "$codegen_box"
+        for v in $(compgen -v CONVEX_ || true); do unset "$v"; done
+        ./scripts/codegen.sh --guard 2>&1
+    )" || err "codegen.sh --guard failed when .env.local had empty CONVEX_DEPLOYMENT= overriding .env: $prec_file_out"
+    [ ! -e "$codegen_box/.convex-stub-ran" ] ||
+        err "codegen.sh ran the convex binary when .env.local had empty CONVEX_DEPLOYMENT= overriding .env"
+    rm -f "$codegen_box/.env.local" "$codegen_box/.env"
+    # Precedence: exported empty CONVEX_DEPLOY_KEY= overrides non-empty .env.local -> skips.
+    printf 'CONVEX_DEPLOY_KEY=prod:from-env-local\n' >"$codegen_box/.env.local"
+    prec_env_out="$(
+        cd "$codegen_box"
+        for v in $(compgen -v CONVEX_ || true); do unset "$v"; done
+        CONVEX_DEPLOY_KEY="" ./scripts/codegen.sh --guard 2>&1
+    )" || err "codegen.sh --guard failed when exported empty CONVEX_DEPLOY_KEY= overrode .env.local: $prec_env_out"
+    [ ! -e "$codegen_box/.convex-stub-ran" ] ||
+        err "codegen.sh ran the convex binary when exported empty CONVEX_DEPLOY_KEY= overrode .env.local"
+    rm -f "$codegen_box/.env.local"
+    if (
+        cd "$codegen_box"
+        for v in $(compgen -v CONVEX_ || true); do unset "$v"; done
+        CONVEX_DEPLOY_KEY="prod:stub-key" ./scripts/codegen.sh --guard >"$job_tmp/codegen-stale.log" 2>&1
+    ); then
+        dump_log codegen-stale
+        err "codegen.sh --guard passed with a stale convex/_generated/ when CONVEX_DEPLOY_KEY was set"
+    fi
+    [ -f "$codegen_box/.convex-stub-ran" ] ||
+        err "codegen.sh did not run the convex stub when CONVEX_DEPLOY_KEY was set"
+    grep -q 'generated files were STALE' "$job_tmp/codegen-stale.log" ||
+        err "codegen.sh --guard failed without reporting stale generated files"
+    rm -f "$codegen_box/.convex-stub-ran"
+    (cd "$codegen_box" && git add convex/_generated/api.d.ts)
+    (
+        cd "$codegen_box"
+        for v in $(compgen -v CONVEX_ || true); do unset "$v"; done
+        CONVEX_DEPLOYMENT="dev:stub-deploy" ./scripts/codegen.sh --guard >"$job_tmp/codegen-clean.log" 2>&1
+    ) || {
+        dump_log codegen-clean
+        err "codegen.sh --guard failed after staging regenerated convex/_generated/ with CONVEX_DEPLOYMENT set"
+    }
+    [ -f "$codegen_box/.convex-stub-ran" ] ||
+        err "codegen.sh did not run the convex stub when CONVEX_DEPLOYMENT was set"
+    rm -f "$codegen_box/.convex-stub-ran"
+    printf '// stale-self-hosted-env\n' >"$codegen_box/convex/_generated/api.d.ts"
+    (cd "$codegen_box" && git add convex/_generated/api.d.ts)
+    if (
+        cd "$codegen_box"
+        for v in $(compgen -v CONVEX_ || true); do unset "$v"; done
+        CONVEX_SELF_HOSTED_URL="http://127.0.0.1:3210" CONVEX_SELF_HOSTED_ADMIN_KEY="admin-secret" ./scripts/codegen.sh --guard >"$job_tmp/codegen-selfhosted-env.log" 2>&1
+    ); then
+        dump_log codegen-selfhosted-env
+        err "codegen.sh --guard passed with a stale convex/_generated/ when both CONVEX_SELF_HOSTED_URL and CONVEX_SELF_HOSTED_ADMIN_KEY were set in the environment"
+    fi
+    [ -f "$codegen_box/.convex-stub-ran" ] ||
+        err "codegen.sh did not run the convex stub when both CONVEX_SELF_HOSTED_URL and CONVEX_SELF_HOSTED_ADMIN_KEY were set in the environment"
+    rm -f "$codegen_box/.convex-stub-ran"
+    for env_case in \
+        ".env.local|CONVEX_DEPLOYMENT=dev:from-env-local" \
+        ".env.local|CONVEX_DEPLOY_KEY=prod:from-env-local" \
+        ".env.local|CONVEX_SELF_HOSTED_URL=http://127.0.0.1:3210"$'\n'"CONVEX_SELF_HOSTED_ADMIN_KEY=admin-secret" \
+        ".env|CONVEX_DEPLOYMENT=dev:from-dotenv" \
+        ".env|CONVEX_DEPLOY_KEY=prod:from-dotenv" \
+        ".env|CONVEX_DEPLOYMENT: dev:example" \
+        ".env.local|export CONVEX_DEPLOYMENT = \"dev:example\" # comment" \
+        ".env.local|"$'\xef\xbb\xbf'"CONVEX_DEPLOYMENT=\"dev:example\""; do
+        target_file="${env_case%%|*}"
+        target_line="${env_case#*|}"
+        rm -f "$codegen_box/.env.local" "$codegen_box/.env" "$codegen_box/.convex-stub-ran"
+        printf '// stale-for-%s\n' "$target_file" >"$codegen_box/convex/_generated/api.d.ts"
+        (cd "$codegen_box" && git add convex/_generated/api.d.ts)
+        printf '%s\n' "$target_line" >"$codegen_box/$target_file"
+        if (
+            cd "$codegen_box"
+            for v in $(compgen -v CONVEX_ || true); do unset "$v"; done
+            ./scripts/codegen.sh --guard >"$job_tmp/codegen-file-stale.log" 2>&1
+        ); then
+            dump_log codegen-file-stale
+            err "codegen.sh --guard passed with a stale convex/_generated/ when $target_file had '$target_line'"
+        fi
+        [ -f "$codegen_box/.convex-stub-ran" ] ||
+            err "codegen.sh did not run the convex stub when $target_file had '$target_line'"
+    done
+    rm -rf "$codegen_box"
 else
     [ ! -e scripts/codegen.sh ] || err "codegen.sh rendered outside project_type=web-app"
     ! grep -qE '^  codegen:' Taskfile.yml || err "codegen task rendered outside project_type=web-app"

@@ -24,10 +24,19 @@
 # generated files still type-check.
 #
 # CONTRACT for anything added here:
-#   * PORT-FREE — generate from local sources; never start a server or attach to
-#     a running deployment. `check`/`build`/`test`/`verify` are the port-free
-#     tier so parallel agents and worktrees can run them concurrently.
-#   * SKIP CLEANLY when the generator isn't set up yet, so a fresh scaffold
+#   * PORT-FREE — never start a local server or bind a port (`check`/`build`/
+#     `test`/`verify` run concurrently across worktrees). Generators generate
+#     from local sources where the tool allows; Convex's `convex codegen` still
+#     contacts its configured deployment, so it runs only when a Convex
+#     deployment selector (`CONVEX_DEPLOY_KEY`, `CONVEX_DEPLOYMENT`, or both
+#     `CONVEX_SELF_HOSTED_URL` and `CONVEX_SELF_HOSTED_ADMIN_KEY`) has a
+#     non-empty effective value across the environment, `.env.local`, and
+#     `.env`.
+#   * SKIP CLEANLY when the generator or its required deployment isn't
+#     configured yet (for Convex: no Convex deployment selector —
+#     `CONVEX_DEPLOY_KEY`, `CONVEX_DEPLOYMENT`, or `CONVEX_SELF_HOSTED_URL` +
+#     `CONVEX_SELF_HOSTED_ADMIN_KEY` — configured in the environment,
+#     `.env.local`, or `.env`), so a fresh scaffold or unconfigured checkout
 #     stays green (same rule as `task build` / `task lint:eslint`).
 #   * DECLARE its output paths in generated_paths, or the guard cannot see it.
 #   * COMMIT the output. Generated files are committed but tool-owned (excluded
@@ -52,18 +61,62 @@ if [ ! -f package.json ] || [ ! -d node_modules ]; then
     exit 0
 fi
 
+# Effective value per Convex selector, matching Convex's dotenv precedence:
+#   1. Process environment wins if the variable is set at all (even to empty).
+#   2. Otherwise the first of `.env.local`, then `.env` that defines the
+#      variable wins (a defined-but-empty value is final, not skipped).
+convex_effective_var_nonempty() {
+    local var="$1"
+    if [ -n "${!var+x}" ]; then
+        [ -n "${!var}" ]
+        return
+    fi
+    local bom=$'\xef\xbb\xbf'
+    local env_file content line
+    for env_file in .env.local .env; do
+        [ -f "$env_file" ] || continue
+        content="$(tr -d '\r' <"$env_file")"
+        line="$(grep -E "^(${bom})?[[:space:]]*(export[[:space:]]+)?${var}[[:space:]]*[=:]" <<<"$content" | tail -n 1 || true)"
+        if [ -n "$line" ]; then
+            grep -Eq "^(${bom})?[[:space:]]*(export[[:space:]]+)?${var}[[:space:]]*[=:][[:space:]]*(\"[^\"#[:space:]][^\"]*\"|'[^'#[:space:]][^']*'|[^\"'#[:space:]]+)" <<<"$line"
+            return
+        fi
+    done
+    return 1
+}
+
+convex_deployment_configured() {
+    if convex_effective_var_nonempty CONVEX_DEPLOY_KEY ||
+        convex_effective_var_nonempty CONVEX_DEPLOYMENT; then
+        return 0
+    fi
+    if convex_effective_var_nonempty CONVEX_SELF_HOSTED_URL &&
+        convex_effective_var_nonempty CONVEX_SELF_HOSTED_ADMIN_KEY; then
+        return 0
+    fi
+    return 1
+}
+
 generated_paths=()
 source_paths=()
+skipped_unconfigured=0
 
 # ── Convex: convex/_generated/ from convex/schema.ts + function files ─
 if [ -d convex ] && [ -x node_modules/.bin/convex ]; then
-    node_modules/.bin/convex codegen
-    generated_paths+=(convex/_generated)
-    source_paths+=(convex ':(exclude)convex/_generated')
+    if convex_deployment_configured; then
+        node_modules/.bin/convex codegen
+        generated_paths+=(convex/_generated)
+        source_paths+=(convex ':(exclude)convex/_generated')
+    else
+        echo "codegen: no Convex deployment configured — skipping (set CONVEX_DEPLOY_KEY in CI to enable the staleness guard; requires a Convex deployment selector: CONVEX_DEPLOY_KEY, CONVEX_DEPLOYMENT, or CONVEX_SELF_HOSTED_URL + CONVEX_SELF_HOSTED_ADMIN_KEY in the environment, .env.local, or .env)"
+        skipped_unconfigured=1
+    fi
 fi
 
 if [ "${#generated_paths[@]}" -eq 0 ]; then
-    echo "codegen: no generators configured yet -- skipping (Convex: add convex/ and the convex package)"
+    if [ "$skipped_unconfigured" -eq 0 ]; then
+        echo "codegen: no generators configured yet -- skipping (Convex: add convex/ and the convex package)"
+    fi
     exit 0
 fi
 
