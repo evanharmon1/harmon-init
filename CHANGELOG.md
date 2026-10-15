@@ -8,6 +8,14 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [5.8.1](https://github.com/evanharmon1/harmon-init/compare/v5.8.0...v5.8.1) (2026-10-15)
+
+
+### Bug Fixes
+
+* **schemas:** mirror the harmon-devkit v0.58.0 result schemas and validator ([#1678](https://github.com/evanharmon1/harmon-init/issues/1678)) ([4debdac](https://github.com/evanharmon1/harmon-init/commit/4debdaca991d03fdefa48db2dd152835dbc896f7))
+* **security:** apply audit allowances across pnpm 10, 11 and 12 ([#1694](https://github.com/evanharmon1/harmon-init/issues/1694)) ([054f5bb](https://github.com/evanharmon1/harmon-init/commit/054f5bbfe161132695f398efa4011f76ead9ef9d))
+
 ## [5.8.0](https://github.com/evanharmon1/harmon-init/compare/v5.7.2...v5.8.0) (2026-10-14)
 
 
