@@ -8,14 +8,6 @@ set -euo pipefail
 SEMGREP_VERSION=1.180.0
 
 default_uv_tool_dir() {
-    local resolved=""
-    if command -v uv >/dev/null 2>&1; then
-        resolved="$(env -u UV_TOOL_DIR -u UV_CACHE_DIR uv tool dir 2>/dev/null || true)"
-    fi
-    if [ -n "$resolved" ]; then
-        printf '%s\n' "$resolved"
-        return 0
-    fi
     case "${XDG_DATA_HOME:-}" in
     /*) printf '%s/uv/tools\n' "${XDG_DATA_HOME%/}" ;;
     *)
@@ -27,14 +19,6 @@ default_uv_tool_dir() {
 }
 
 default_uv_cache_dir() {
-    local resolved=""
-    if command -v uv >/dev/null 2>&1; then
-        resolved="$(env -u UV_TOOL_DIR -u UV_CACHE_DIR uv cache dir 2>/dev/null || true)"
-    fi
-    if [ -n "$resolved" ]; then
-        printf '%s\n' "$resolved"
-        return 0
-    fi
     case "${XDG_CACHE_HOME:-}" in
     /*) printf '%s/uv\n' "${XDG_CACHE_HOME%/}" ;;
     *)
@@ -73,7 +57,7 @@ ensure_fallback_uv_dir() {
     printf '%s\n' "$target"
 }
 
-resolve_uv_dir() {
+configure_uv_dir() {
     local var_name="$1"
     local current_val="$2"
     local default_dir="$3"
@@ -83,7 +67,7 @@ resolve_uv_dir() {
 
     if [ -n "$current_val" ]; then
         if ensure_writable_dir "$current_val"; then
-            printf '%s\n' "$current_val"
+            export "${var_name}=${current_val}"
             return 0
         fi
         echo "ERROR: ${var_name} directory '${current_val}' is not writable." >&2
@@ -91,14 +75,15 @@ resolve_uv_dir() {
         return 1
     fi
 
+    unset "$var_name"
+
     if [ -n "$default_dir" ] && ensure_writable_dir "$default_dir"; then
-        printf '%s\n' "$default_dir"
         return 0
     fi
 
     local resolved_fallback
     if resolved_fallback="$(ensure_fallback_uv_dir "$fallback_subdir")"; then
-        printf '%s\n' "$resolved_fallback"
+        export "${var_name}=${resolved_fallback}"
         return 0
     fi
 
@@ -107,9 +92,8 @@ resolve_uv_dir() {
     return 1
 }
 
-UV_TOOL_DIR="$(resolve_uv_dir "UV_TOOL_DIR" "${UV_TOOL_DIR:-}" "$(default_uv_tool_dir)" "tools")"
-UV_CACHE_DIR="$(resolve_uv_dir "UV_CACHE_DIR" "${UV_CACHE_DIR:-}" "$(default_uv_cache_dir)" "cache")"
-export UV_TOOL_DIR UV_CACHE_DIR
+configure_uv_dir "UV_TOOL_DIR" "${UV_TOOL_DIR:-}" "$(default_uv_tool_dir)" "tools"
+configure_uv_dir "UV_CACHE_DIR" "${UV_CACHE_DIR:-}" "$(default_uv_cache_dir)" "cache"
 
 # Semgrep defaults to the current directory when no target is provided. Do not
 # append one here: callers can scope local scans with `task security:sast -- <path>`.

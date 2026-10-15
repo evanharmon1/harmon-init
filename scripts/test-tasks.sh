@@ -589,15 +589,16 @@ case "$out" in
 esac
 
 rm -f "$semgrep_args" "$semgrep_env"
-semgrep_uv_config="${test_tmp}/semgrep-uv.toml"
-semgrep_configured_cache="${test_tmp}/semgrep-configured-cache"
-printf 'cache-dir = "%s"\n' "$semgrep_configured_cache" >"$semgrep_uv_config"
+semgrep_writable_home="${test_tmp}/semgrep-writable-home"
+mkdir -p "$semgrep_writable_home"
 env -u UV_TOOL_DIR -u UV_CACHE_DIR -u XDG_DATA_HOME -u XDG_CACHE_HOME \
-    UV_CONFIG_FILE="$semgrep_uv_config" HOME="$semgrep_ro_home" TMPDIR="$semgrep_tmp" \
+    HOME="$semgrep_writable_home" TMPDIR="$semgrep_tmp" \
     PATH="${semgrep_bin}:${PATH}" SEMGREP_ARGS="$semgrep_args" SEMGREP_ENV="$semgrep_env" \
     ./scripts/run-semgrep.sh scripts
-grep -Fxq "UV_CACHE_DIR=${semgrep_configured_cache}" "$semgrep_env" ||
-    fail "Semgrep wrapper did not preserve writable cache-dir from UV_CONFIG_FILE: $(cat "$semgrep_env")"
+grep -Fxq "UV_TOOL_DIR=" "$semgrep_env" ||
+    fail "Semgrep wrapper exported UV_TOOL_DIR when default tool dir was already writable: $(cat "$semgrep_env")"
+grep -Fxq "UV_CACHE_DIR=" "$semgrep_env" ||
+    fail "Semgrep wrapper exported UV_CACHE_DIR when default cache dir was already writable: $(cat "$semgrep_env")"
 
 rm -f "$semgrep_args" "$semgrep_env"
 out=$(HOME="$semgrep_ro_home" TMPDIR="$semgrep_tmp" \
