@@ -615,6 +615,73 @@ case "$out" in
 esac
 chmod -R u+w "$semgrep_ro_home" "$semgrep_ro_xdg_data" "$semgrep_ro_xdg_cache" "$semgrep_ro_tmp" 2>/dev/null || true
 
+echo "==> shell lint enforces the CI ShellCheck pin before linting"
+lint_repo="${test_tmp}/lint-repo"
+lint_bin="${test_tmp}/lint-bin"
+lint_calls="${test_tmp}/lint-calls"
+lint_stderr="${test_tmp}/lint-stderr"
+mkdir -p "${lint_repo}/.github/actions/setup" "$lint_bin"
+printf '%s\n' '#!/usr/bin/env bash' 'echo ok' >"${lint_repo}/script with spaces.sh"
+git -C "$lint_repo" init -q
+git -C "$lint_repo" add -- 'script with spaces.sh'
+cat >"${lint_bin}/shellcheck" <<'EOF'
+#!/usr/bin/env bash
+if [ "${1:-}" = --version ]; then
+    printf 'ShellCheck - shell script analysis tool\nversion: %s\n' "${LINT_TEST_VERSION:?}"
+else
+    printf '%s\n' shellcheck "$@" >>"${LINT_TEST_CALLS:?}"
+fi
+EOF
+cat >"${lint_bin}/shfmt" <<'EOF'
+#!/usr/bin/env bash
+printf '%s\n' shfmt "$@" >>"${LINT_TEST_CALLS:?}"
+EOF
+chmod +x "${lint_bin}/shellcheck" "${lint_bin}/shfmt"
+for lint_script in scripts/lint-shell.sh template/scripts/lint-shell.sh; do
+    [ -f "$lint_script" ] || continue
+    # An arbitrary pin proves the guard reads the fixture rather than a copied
+    # version constant. Exercise both explicit hook paths and tracked discovery.
+    printf '%s\n' '        SHELLCHECK_VERSION=7.8.9' >"${lint_repo}/.github/actions/setup/action.yml"
+    for pin_case in match mismatch missing-pin missing-action; do
+        case "$pin_case" in
+        missing-pin) printf '%s\n' 'name: Setup without ShellCheck' >"${lint_repo}/.github/actions/setup/action.yml" ;;
+        missing-action) rm "${lint_repo}/.github/actions/setup/action.yml" ;;
+        esac
+        lint_version=7.8.9
+        [ "$pin_case" != mismatch ] || lint_version=1.2.3
+        for lint_mode in explicit tracked; do
+            : >"$lint_calls"
+            out=$(
+                cd "$lint_repo"
+                lint_args=()
+                [ "$lint_mode" != explicit ] || lint_args=('script with spaces.sh')
+                PATH="${lint_bin}:${PATH}" LINT_TEST_VERSION="$lint_version" \
+                    LINT_TEST_CALLS="$lint_calls" bash "$repo/$lint_script" ${lint_args[@]+"${lint_args[@]}"} 2>"$lint_stderr"
+            ) && rc=0 || rc=$?
+            [ -z "$out" ] || fail "$lint_script ($pin_case): unexpected stdout: $out"
+            if [ "$pin_case" = mismatch ]; then
+                [ "$rc" -ne 0 ] || fail "$lint_script accepted a mismatched ShellCheck"
+                [ ! -s "$lint_calls" ] || fail "$lint_script linted before rejecting the mismatch"
+                grep -Fq '1.2.3' "$lint_stderr" && grep -Fq '7.8.9' "$lint_stderr" &&
+                    grep -Fq 'install shellcheck 7.8.9' "$lint_stderr" ||
+                    fail "$lint_script mismatch diagnostic omitted versions or installation advice: $(cat "$lint_stderr")"
+            else
+                [ "$rc" -eq 0 ] || fail "$lint_script ($pin_case) failed: $(cat "$lint_stderr")"
+                expected_calls=$(printf '%s\n' shellcheck --severity=error 'script with spaces.sh' shfmt -d 'script with spaces.sh')
+                [ "$(cat "$lint_calls")" = "$expected_calls" ] || fail "$lint_script ($pin_case) did not lint the intended path"
+                if [ "$pin_case" = match ]; then
+                    [ ! -s "$lint_stderr" ] || fail "$lint_script warned despite a matching pin"
+                else
+                    [ "$(wc -l <"$lint_stderr" | tr -d ' ')" -eq 1 ] &&
+                        grep -Fq 'WARNING: no SHELLCHECK_VERSION pin' "$lint_stderr" &&
+                        grep -Fq 'continuing' "$lint_stderr" ||
+                        fail "$lint_script ($pin_case) did not warn once on stderr: $(cat "$lint_stderr")"
+                fi
+            fi
+        done
+    done
+done
+
 echo "==> shell formatter preserves tracked paths and failures"
 format_repo="${test_tmp}/format-repo"
 # Assemble the jinja-style segment so this file never contains a literal

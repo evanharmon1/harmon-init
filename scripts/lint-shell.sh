@@ -27,5 +27,22 @@ if [ "${#files[@]}" -eq 0 ]; then
     exit 0
 fi
 
+# CI's setup action is the single source of truth for the ShellCheck version.
+# Some generated repos omit that action, so an absent pin is advisory only.
+setup_action=.github/actions/setup/action.yml
+pinned_version=
+if [ -f "$setup_action" ]; then
+    pinned_version="$(sed -n 's/^[[:space:]]*SHELLCHECK_VERSION=\([0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\)[[:space:]]*$/\1/p' "$setup_action")"
+fi
+if [ -z "$pinned_version" ]; then
+    echo "WARNING: no SHELLCHECK_VERSION pin found in $setup_action; continuing without a version check." >&2
+else
+    local_version="$(shellcheck --version | sed -n 's/^version: //p')"
+    if [ "$local_version" != "$pinned_version" ]; then
+        echo "ERROR: local shellcheck ${local_version:-unknown} differs from CI's pinned $pinned_version; rebuild the devcontainer, or install shellcheck $pinned_version." >&2
+        exit 1
+    fi
+fi
+
 shellcheck --severity=error "${files[@]}"
 shfmt -d "${files[@]}"
