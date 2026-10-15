@@ -620,7 +620,7 @@ lint_repo="${test_tmp}/lint-repo"
 lint_bin="${test_tmp}/lint-bin"
 lint_calls="${test_tmp}/lint-calls"
 lint_stderr="${test_tmp}/lint-stderr"
-mkdir -p "${lint_repo}/.github/actions/setup" "$lint_bin"
+mkdir -p "${lint_repo}/.github/actions/setup" "${lint_repo}/subdir" "$lint_bin"
 printf '%s\n' '#!/usr/bin/env bash' 'echo ok' >"${lint_repo}/script with spaces.sh"
 git -C "$lint_repo" init -q
 git -C "$lint_repo" add -- 'script with spaces.sh'
@@ -641,33 +641,51 @@ for lint_script in scripts/lint-shell.sh template/scripts/lint-shell.sh; do
     [ -f "$lint_script" ] || continue
     # An arbitrary pin proves the guard reads the fixture rather than a copied
     # version constant. Exercise both explicit hook paths and tracked discovery.
-    printf '%s\n' '        SHELLCHECK_VERSION=7.8.9' >"${lint_repo}/.github/actions/setup/action.yml"
-    for pin_case in match mismatch missing-pin missing-action; do
+    for pin_case in match mismatch commented quoted single-quoted duplicate missing-pin missing-action; do
+        printf '%s\n' '        SHELLCHECK_VERSION=7.8.9' >"${lint_repo}/.github/actions/setup/action.yml"
         case "$pin_case" in
+        commented) printf '%s\n' '        SHELLCHECK_VERSION=7.8.9 # pin-pair: shellcheck' >"${lint_repo}/.github/actions/setup/action.yml" ;;
+        quoted) printf '%s\n' '        SHELLCHECK_VERSION="7.8.9"' >"${lint_repo}/.github/actions/setup/action.yml" ;;
+        single-quoted) printf '%s\n' "        SHELLCHECK_VERSION='7.8.9' # pin-pair: shellcheck" >"${lint_repo}/.github/actions/setup/action.yml" ;;
+        duplicate) printf '%s\n' '        SHELLCHECK_VERSION="7.8.9" # duplicate' >>"${lint_repo}/.github/actions/setup/action.yml" ;;
         missing-pin) printf '%s\n' 'name: Setup without ShellCheck' >"${lint_repo}/.github/actions/setup/action.yml" ;;
         missing-action) rm "${lint_repo}/.github/actions/setup/action.yml" ;;
         esac
         lint_version=7.8.9
-        [ "$pin_case" != mismatch ] || lint_version=1.2.3
-        for lint_mode in explicit tracked; do
+        case "$pin_case" in
+        mismatch | commented | quoted | single-quoted) lint_version=1.2.3 ;;
+        esac
+        for lint_mode in explicit tracked subdirectory; do
             : >"$lint_calls"
             out=$(
                 cd "$lint_repo"
                 lint_args=()
                 [ "$lint_mode" != explicit ] || lint_args=('script with spaces.sh')
+                if [ "$lint_mode" = subdirectory ]; then
+                    cd subdir
+                    lint_args=('../script with spaces.sh')
+                fi
                 PATH="${lint_bin}:${PATH}" LINT_TEST_VERSION="$lint_version" \
                     LINT_TEST_CALLS="$lint_calls" bash "$repo/$lint_script" ${lint_args[@]+"${lint_args[@]}"} 2>"$lint_stderr"
             ) && rc=0 || rc=$?
             [ -z "$out" ] || fail "$lint_script ($pin_case): unexpected stdout: $out"
-            if [ "$pin_case" = mismatch ]; then
+            if [ "$lint_version" = 1.2.3 ]; then
                 [ "$rc" -ne 0 ] || fail "$lint_script accepted a mismatched ShellCheck"
                 [ ! -s "$lint_calls" ] || fail "$lint_script linted before rejecting the mismatch"
                 grep -Fq '1.2.3' "$lint_stderr" && grep -Fq '7.8.9' "$lint_stderr" &&
                     grep -Fq 'install shellcheck 7.8.9' "$lint_stderr" ||
                     fail "$lint_script mismatch diagnostic omitted versions or installation advice: $(cat "$lint_stderr")"
+            elif [ "$pin_case" = duplicate ]; then
+                [ "$rc" -ne 0 ] || fail "$lint_script accepted duplicate ShellCheck pins"
+                [ ! -s "$lint_calls" ] || fail "$lint_script linted despite duplicate pins"
+                [ "$(wc -l <"$lint_stderr" | tr -d ' ')" -eq 1 ] &&
+                    grep -Fq 'multiple SHELLCHECK_VERSION pins in ' "$lint_stderr" ||
+                    fail "$lint_script omitted a clear duplicate-pin diagnostic: $(cat "$lint_stderr")"
             else
                 [ "$rc" -eq 0 ] || fail "$lint_script ($pin_case) failed: $(cat "$lint_stderr")"
-                expected_calls=$(printf '%s\n' shellcheck --severity=error 'script with spaces.sh' shfmt -d 'script with spaces.sh')
+                lint_path='script with spaces.sh'
+                [ "$lint_mode" != subdirectory ] || lint_path='../script with spaces.sh'
+                expected_calls=$(printf '%s\n' shellcheck --severity=error "$lint_path" shfmt -d "$lint_path")
                 [ "$(cat "$lint_calls")" = "$expected_calls" ] || fail "$lint_script ($pin_case) did not lint the intended path"
                 if [ "$pin_case" = match ]; then
                     [ ! -s "$lint_stderr" ] || fail "$lint_script warned despite a matching pin"
