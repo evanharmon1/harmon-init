@@ -92,7 +92,10 @@ jq --arg today "$(date -u +%Y-%m-%d)" --slurpfile full "$WORK/full.json" --slurp
                 end,
                 if ($live | length) == 0 then "stale (no live advisory)" else
                     (if any($live[]; .module_name != $e.package) then "package does not match advisory" else empty end),
-                    (if any($live[]; ((.patched_versions | type) != "string") or .patched_versions == "") then "patch status is unknown" else empty end)
+                    (if any($live[];
+                        if has("patched_versions") and .patched_versions == null then (.vulnerable_versions | text | not)
+                        else ((.patched_versions | type) != "string") or .patched_versions == "" end
+                    ) then "patch status is unknown" else empty end)
                 end,
                 if any($prod[0].advisories[]; .github_advisory_id == $e.ghsa) then "production reachable (not dev-only)" else empty end
             ]}
@@ -108,11 +111,48 @@ jq '[.[].id] | unique' "$WORK/validated.json" >"$WORK/ids.json"
 # published versions matching each patched range, across all release lines.
 # Only pnpm's explicit, query-bound no-match response proves absence; a
 # network failure, unrecognized response, or unknown range cannot allow it.
-jq -r '.advisories[] | [.github_advisory_id, .module_name, .patched_versions] | @tsv' "$WORK/full.json" | sort -u >"$WORK/patches.tsv"
+jq -c '.advisories[] | {id: .github_advisory_id, package: .module_name, patched: .patched_versions, vulnerable: .vulnerable_versions}' "$WORK/full.json" | sort -u >"$WORK/patches.jsonl"
 patch_failed=0
-tab="$(printf '\t')"
-while IFS="$tab" read -r id package patched; do
+while IFS= read -r advisory; do
+    id="$(printf '%s' "$advisory" | jq -r '.id')"
+    package="$(printf '%s' "$advisory" | jq -r '.package')"
+    patched="$(printf '%s' "$advisory" | jq -r '.patched')"
     jq -e --arg id "$id" 'index($id) != null' "$WORK/ids.json" >/dev/null || continue
+    if printf '%s' "$advisory" | jq -e '.patched == null' >/dev/null; then
+        # pnpm 12 can report null for an unpublished OR deprecated patch.
+        # Independently prove every published release is vulnerable. Support
+        # only plain < / <= release bounds; richer ranges or prereleases are
+        # unknown, never guessed. jq compares numeric version triples.
+        vulnerable="$(printf '%s' "$advisory" | jq -r '.vulnerable')"
+        rc=0
+        : >"$WORK/proof.json"
+        pnpm view "$package" versions --json >"$WORK/versions.json" 2>"$WORK/view.err" || rc=$?
+        if [ "$rc" -eq 0 ]; then
+            jq -e --arg range "$vulnerable" '
+                def release:
+                    if type == "string" and test("^(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$") then
+                        split(".") | map(tonumber)
+                        | if all(.[]; . <= 9007199254740991) then . else error("unsafe version integer") end
+                    else error("unknown release version") end;
+                if type != "array" or length == 0 then error("unknown versions") else . end
+                | map(release) as $versions
+                | ($range | capture("^\\s*(?<op><=|<)\\s*(?<version>[0-9]+\\.[0-9]+\\.[0-9]+)\\s*$")) as $bound
+                | if $bound == null then error("unknown vulnerable range") else . end
+                | ($bound.version | release) as $upper
+                | all($versions[]; if $bound.op == "<=" then . <= $upper else . < $upper end)
+            ' "$WORK/versions.json" >"$WORK/proof.json" 2>/dev/null || rc=$?
+            # capture emits no value for a nonmatching range; require proof.
+            if [ "$rc" -eq 0 ] && [ "$(cat "$WORK/proof.json")" = true ]; then continue; fi
+        fi
+        if [ "$rc" -eq 1 ] && [ "$(cat "$WORK/proof.json" 2>/dev/null)" = false ]; then
+            echo "security-audit: $id: patched version exists outside $vulnerable" >&2
+        else
+            echo "security-audit: $id: patch status is unknown; registry proof failed" >&2
+            cat "$WORK/view.err" >&2
+        fi
+        patch_failed=1
+        continue
+    fi
     [ "$patched" != '<0.0.0' ] || continue
     query="$package@$patched"
     rc=0
@@ -128,28 +168,42 @@ while IFS="$tab" read -r id package patched; do
         cat "$WORK/view.err" >&2
     fi
     patch_failed=1
-done <"$WORK/patches.tsv"
+done <"$WORK/patches.jsonl"
 [ "$patch_failed" -eq 0 ] || die 'allowance validation failed; no advisories ignored'
 
 if [ "$mode" = filter ]; then
     jq --slurpfile ids "$WORK/ids.json" '.advisories |= with_entries(select(.value.github_advisory_id as $id | $ids[0] | index($id) | not))' "$WORK/full.json" >"$3"
 else
-    # pnpm 11 --ignore persists auditConfig and returns without auditing.
-    # Register ignores only in a private copy of the complete lockfile, then
-    # run the ordinary gate there. No ignore may outlive this invocation.
+    # Register GHSAs directly: pnpm 10's audit --ignore writes ignoreCves,
+    # which cannot match them. pnpm config owns YAML parsing/writing on all
+    # supported majors. Only this private copy receives the merged ignores.
     mkdir "$WORK/project"
     for file in package.json pnpm-lock.yaml pnpm-workspace.yaml .npmrc; do
         [ ! -f "$file" ] || cp "$file" "$WORK/project/$file"
     done
     [ -f "$WORK/project/pnpm-lock.yaml" ] || die 'pnpm-lock.yaml is required to apply allowances'
-    args=(--audit-level=high)
     while IFS= read -r id; do
-        args+=(--ignore "$id")
         echo "security-audit: allowing $id (unpatched, dev-only, within expiry)" >&2
     done < <(jq -r '.[]' "$WORK/ids.json")
     (
         cd "$WORK/project"
-        pnpm audit "${args[@]}"
+        # pnpm 12 exposes the legacy auditConfig.ignoreGhsas setting as
+        # audit.ignore through its config CLI. Read/write its canonical name
+        # to retain existing ignores and the rest of the audit settings.
+        key=auditConfig
+        field=ignoreGhsas
+        case "$(pnpm --version)" in 12.*)
+            key=audit
+            field=ignore
+            ;;
+        esac
+        pnpm config get --json "$key" >"$WORK/config.json"
+        # pnpm 10 emits no JSON when the setting is absent.
+        [ -s "$WORK/config.json" ] || printf '{}\n' >"$WORK/config.json"
+        config="$(jq -c --arg field "$field" --slurpfile ids "$WORK/ids.json" '
+            (. // {}) | .[$field] = ((.[$field] // []) + $ids[0] | unique)
+        ' "$WORK/config.json")"
+        pnpm config set --location=project --json "$key" "$config"
         pnpm audit --audit-level=high
     )
 fi

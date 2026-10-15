@@ -234,16 +234,25 @@ A maintainer may approve an entry through review when no fix exists:
 }
 ```
 
-Every run re-checks the live full and `--prod` audit reports before passing
-`--ignore <GHSA>` to pnpm. Because pnpm 11 persists that option and returns
-without auditing, the helper registers ignores in a private temporary copy of
-the full lockfile and project configuration, then runs the ordinary high audit
-there. Repository files remain untouched and no ignore survives the run. The entry must name a live advisory for the exact
+Every run re-checks the live full and `--prod` audit reports before merging
+allowed IDs into `auditConfig.ignoreGhsas` in a private temporary copy of the
+full lockfile and project configuration, then runs the ordinary high audit
+there. This supports pnpm 10.x, 11.x and 12.x; the pnpm 12 config CLI names
+the setting `audit.ignore`, so the helper merges that canonical list on 12.x.
+The helper uses pnpm's JSON config commands to parse and write YAML, preserving existing audit settings
+and GHSA ignores without requiring the optional `yq` tool. Repository files remain untouched and no ignore survives the run. The entry must name a live advisory for the exact
 package, have no published patched version anywhere, and be absent from the production
 report. npm sometimes reports a patched range whose releases do not exist; the
 helper queries `pnpm view "package@patched-range" version --json` and accepts
 only an explicit no-matching-version response. A `<0.0.0` patched range has no
-possible patch. Dates use UTC `YYYY-MM-DD`; the expiry date
+possible patch. pnpm 12 can instead report a null patch range when its inferred
+patch is unpublished or deprecated. Null alone proves nothing: the helper
+queries all published package versions and allows the entry only when every
+release falls within the advisory's vulnerable range. This independent proof
+handles plain numeric `<x.y.z` and `<=x.y.z` bounds; other ranges, prerelease or
+build versions, malformed results and registry failures remain unknown and fail
+closed. A published release outside the range refuses the allowance, even if
+pnpm reports null. Dates use UTC `YYYY-MM-DD`; the expiry date
 is inclusive and may be at most 90 days after `added`. Future added dates,
 impossible dates, missing metadata, expired entries, longer windows, production
 reachability, available patches, and stale entries all fail with named reasons.
