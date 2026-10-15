@@ -293,19 +293,6 @@ pin_descriptions Complexity "$(post_body Complexity)" \
     'How hard the work is to understand, design, implement, and verify correctly; never a time estimate' \
     '["Complexity: a tiny, well-understood change with obvious verification","Complexity: small and local; a clear approach across a few files","Complexity: moderate; several components and some design choices","Complexity: large; cross-cutting, with real design and wide verification","Complexity: very large or uncertain; likely to grow or need splitting"]'
 
-echo "==> every field description fits GitHub's 100-character limit"
-# GitHub refuses a field whose description is longer than 100 characters (HTTP 422,
-# "Description is too long"), and a refused Impact aborted the whole run on
-# 2026-10-15. Length is measured in characters, as GitHub measures it.
-# Product is part of the built-in fixture, so it is never POSTed here; the eight
-# fields this run creates are the ones measured.
-for fname in Impact Risk Complexity 'Priority (AI)' 'Model family' Model 'Model version' 'Model effort'; do
-    body="$(post_body "$fname")"
-    [ -n "$body" ] || fail "$fname was not created"
-    [ "$(printf '%s' "$body" | jq -r '.description | length <= 100')" = true ] ||
-        fail "$fname description is longer than GitHub's 100-character limit: $(printf '%s' "$body" | jq -r '.description')"
-done
-
 echo "==> the run adds the ladder and keeps every shipped Effort option, with its id, reporting each count"
 body="$(patch_body "$effort_id")"
 [ "$(opt_names "$body")" = '["1","2","3","5","8","13","20","High","Medium","Low"]' ] ||
@@ -371,6 +358,15 @@ run_with '[]'
 # Everything the script provisions, as created: the status want-list is compared
 # against this full set at the end.
 cp "$POSTS" "$tmp/created-posts"
+# GitHub refuses a field whose description is longer than 100 characters (HTTP 422,
+# "Description is too long"), and a refused Impact aborted the whole run on
+# 2026-10-15. The empty-org run POSTs every field the script can create, Product
+# and Effort included, so every created description is measured here; length is
+# in characters, as GitHub measures it.
+echo "==> every created field's description fits GitHub's 100-character limit"
+[ "$(jq -s 'length' "$POSTS")" = 10 ] || fail "expected all 10 field POSTs to measure, got $(jq -s 'length' "$POSTS")"
+[ "$(jq -s '[ .[] | select((.description | length) > 100) ] | length' "$POSTS")" = 0 ] ||
+    fail "a field description is longer than GitHub's 100-character limit: $(jq -sr '[ .[] | select((.description | length) > 100) | .name ] | join(", ")' "$POSTS")"
 [ "$(post_body Product | jq -r '.data_type')" = text ] || fail "Product must be created as text"
 [ "$(opt_names "$(post_body Effort)")" = "$ladder" ] || fail "a created Effort must carry the ladder"
 pin_descriptions Effort "$(post_body Effort)" \
