@@ -15,7 +15,7 @@ fail() {
 }
 
 test_tmp="$(mktemp -d)"
-trap 'rm -rf "$test_tmp"' EXIT
+trap 'chmod -R u+w "$test_tmp" 2>/dev/null || true; rm -rf "$test_tmp"' EXIT
 
 echo "==> Taskfile compiles (every task parses)"
 if ! task --list-all >/dev/null 2>&1; then
@@ -502,10 +502,14 @@ fi
 echo "==> Semgrep wrapper preserves explicit scan targets"
 semgrep_bin="${test_tmp}/semgrep-bin"
 semgrep_args="${test_tmp}/semgrep-args"
+semgrep_env="${test_tmp}/semgrep-env"
 mkdir -p "$semgrep_bin"
 cat >"${semgrep_bin}/uvx" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$@" >"${SEMGREP_ARGS:?}"
+if [ -n "${SEMGREP_ENV:-}" ]; then
+    printf 'UV_TOOL_DIR=%s\nUV_CACHE_DIR=%s\n' "${UV_TOOL_DIR:-}" "${UV_CACHE_DIR:-}" >"$SEMGREP_ENV"
+fi
 EOF
 chmod +x "${semgrep_bin}/uvx"
 PATH="${semgrep_bin}:${PATH}" SEMGREP_ARGS="$semgrep_args" \
@@ -515,6 +519,89 @@ PATH="${semgrep_bin}:${PATH}" SEMGREP_ARGS="$semgrep_args" \
 if grep -Fxq . "$semgrep_args"; then
     fail "Semgrep wrapper appended a repository-wide target"
 fi
+
+echo "==> Semgrep wrapper falls back when default uv dirs are read-only and fails clearly when none is writable"
+semgrep_ro_home="${test_tmp}/semgrep-ro-home"
+semgrep_ro_xdg_data="${test_tmp}/semgrep-ro-xdg-data"
+semgrep_ro_xdg_cache="${test_tmp}/semgrep-ro-xdg-cache"
+semgrep_ro_tmp="${test_tmp}/semgrep-ro-tmp"
+semgrep_tmp="${test_tmp}/semgrep-tmp"
+semgrep_custom_tools="${test_tmp}/semgrep-custom-tools"
+semgrep_custom_cache="${test_tmp}/semgrep-custom-cache"
+mkdir -p "$semgrep_ro_home" "$semgrep_ro_xdg_data" "$semgrep_ro_xdg_cache" "$semgrep_ro_tmp" "$semgrep_tmp"
+chmod 500 "$semgrep_ro_home" "$semgrep_ro_xdg_data" "$semgrep_ro_xdg_cache" "$semgrep_ro_tmp"
+if [ -w "$semgrep_ro_home" ]; then
+    # Root with CAP_DAC_OVERRIDE ignores 0500 on directories; regular files still block mkdir -p.
+    chmod 700 "$semgrep_ro_home" "$semgrep_ro_xdg_data" "$semgrep_ro_xdg_cache" "$semgrep_ro_tmp"
+    rm -rf "$semgrep_ro_home" "$semgrep_ro_xdg_data" "$semgrep_ro_xdg_cache" "$semgrep_ro_tmp"
+    : >"$semgrep_ro_home"
+    : >"$semgrep_ro_xdg_data"
+    : >"$semgrep_ro_xdg_cache"
+    : >"$semgrep_ro_tmp"
+fi
+
+rm -f "$semgrep_args" "$semgrep_env"
+env -u UV_TOOL_DIR -u UV_CACHE_DIR -u XDG_DATA_HOME -u XDG_CACHE_HOME \
+    HOME="$semgrep_ro_home" TMPDIR="$semgrep_tmp" \
+    PATH="${semgrep_bin}:${PATH}" SEMGREP_ARGS="$semgrep_args" SEMGREP_ENV="$semgrep_env" \
+    ./scripts/run-semgrep.sh scripts
+[ "$(tail -n 1 "$semgrep_args")" = "scripts" ] ||
+    fail "Semgrep wrapper lost explicit target under read-only HOME fallback"
+expected_fallback_tools="${semgrep_tmp}/uv-$(id -u)/tools"
+expected_fallback_cache="${semgrep_tmp}/uv-$(id -u)/cache"
+grep -Fxq "UV_TOOL_DIR=${expected_fallback_tools}" "$semgrep_env" ||
+    fail "Semgrep wrapper did not export fallback UV_TOOL_DIR under read-only HOME: $(cat "$semgrep_env")"
+grep -Fxq "UV_CACHE_DIR=${expected_fallback_cache}" "$semgrep_env" ||
+    fail "Semgrep wrapper did not export fallback UV_CACHE_DIR under read-only HOME: $(cat "$semgrep_env")"
+
+rm -f "$semgrep_args" "$semgrep_env"
+env -u UV_TOOL_DIR -u UV_CACHE_DIR \
+    XDG_DATA_HOME="$semgrep_ro_xdg_data" XDG_CACHE_HOME="$semgrep_ro_xdg_cache" TMPDIR="$semgrep_tmp" \
+    PATH="${semgrep_bin}:${PATH}" SEMGREP_ARGS="$semgrep_args" SEMGREP_ENV="$semgrep_env" \
+    ./scripts/run-semgrep.sh scripts
+grep -Fxq "UV_TOOL_DIR=${expected_fallback_tools}" "$semgrep_env" ||
+    fail "Semgrep wrapper did not export fallback UV_TOOL_DIR under read-only XDG_DATA_HOME: $(cat "$semgrep_env")"
+grep -Fxq "UV_CACHE_DIR=${expected_fallback_cache}" "$semgrep_env" ||
+    fail "Semgrep wrapper did not export fallback UV_CACHE_DIR under read-only XDG_CACHE_HOME: $(cat "$semgrep_env")"
+
+rm -f "$semgrep_args" "$semgrep_env"
+HOME="$semgrep_ro_home" TMPDIR="$semgrep_tmp" \
+    UV_TOOL_DIR="$semgrep_custom_tools" UV_CACHE_DIR="$semgrep_custom_cache" \
+    PATH="${semgrep_bin}:${PATH}" SEMGREP_ARGS="$semgrep_args" SEMGREP_ENV="$semgrep_env" \
+    ./scripts/run-semgrep.sh scripts
+grep -Fxq "UV_TOOL_DIR=${semgrep_custom_tools}" "$semgrep_env" ||
+    fail "Semgrep wrapper did not respect caller-exported UV_TOOL_DIR: $(cat "$semgrep_env")"
+grep -Fxq "UV_CACHE_DIR=${semgrep_custom_cache}" "$semgrep_env" ||
+    fail "Semgrep wrapper did not respect caller-exported UV_CACHE_DIR: $(cat "$semgrep_env")"
+
+rm -f "$semgrep_args" "$semgrep_env"
+out=$(env -u UV_TOOL_DIR -u UV_CACHE_DIR -u XDG_DATA_HOME -u XDG_CACHE_HOME \
+    HOME="$semgrep_ro_home" TMPDIR="$semgrep_ro_tmp" \
+    PATH="${semgrep_bin}:${PATH}" SEMGREP_ARGS="$semgrep_args" \
+    ./scripts/run-semgrep.sh scripts 2>&1) && rc=0 || rc=$?
+[ "$rc" -ne 0 ] ||
+    fail "Semgrep wrapper succeeded when neither default nor TMPDIR was writable"
+[ ! -e "$semgrep_args" ] ||
+    fail "Semgrep wrapper invoked uvx despite unwritable uv directories"
+case "$out" in
+*"${semgrep_ro_home}/.local/share/uv/tools"*UV_TOOL_DIR*UV_CACHE_DIR*) ;;
+*) fail "Semgrep wrapper did not report the unwritable directory and UV_TOOL_DIR/UV_CACHE_DIR: $out" ;;
+esac
+
+rm -f "$semgrep_args" "$semgrep_env"
+out=$(HOME="$semgrep_ro_home" TMPDIR="$semgrep_tmp" \
+    UV_TOOL_DIR="${semgrep_ro_home}/tools" UV_CACHE_DIR="$semgrep_custom_cache" \
+    PATH="${semgrep_bin}:${PATH}" SEMGREP_ARGS="$semgrep_args" \
+    ./scripts/run-semgrep.sh scripts 2>&1) && rc=0 || rc=$?
+[ "$rc" -ne 0 ] ||
+    fail "Semgrep wrapper succeeded with unwritable caller-exported UV_TOOL_DIR"
+[ ! -e "$semgrep_args" ] ||
+    fail "Semgrep wrapper invoked uvx despite unwritable caller-exported UV_TOOL_DIR"
+case "$out" in
+*"${semgrep_ro_home}/tools"*UV_TOOL_DIR*UV_CACHE_DIR*) ;;
+*) fail "Semgrep wrapper did not report unwritable caller-exported UV_TOOL_DIR: $out" ;;
+esac
+chmod -R u+w "$semgrep_ro_home" "$semgrep_ro_xdg_data" "$semgrep_ro_xdg_cache" "$semgrep_ro_tmp" 2>/dev/null || true
 
 echo "==> shell formatter preserves tracked paths and failures"
 format_repo="${test_tmp}/format-repo"
