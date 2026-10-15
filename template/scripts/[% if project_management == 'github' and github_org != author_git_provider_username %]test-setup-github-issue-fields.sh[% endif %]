@@ -284,13 +284,13 @@ echo "==> Impact, Risk and Complexity carry exactly the decision-record wording,
 # registry's per-value descriptions (label-registry.json) — the wording a field and
 # its label twin share — but the test reads no file a consumer may customize.
 pin_descriptions Impact "$(post_body Impact)" \
-    'Expected significance of completing the issue: core versus marginal benefit, not common versus uncommon path' \
+    'Expected significance of completing the issue: core vs marginal benefit, not common vs uncommon path' \
     '["Impact: marginal benefit; most users would not notice it","Impact: small benefit to a few users or a narrow use case","Impact: clear benefit to a meaningful share of users or goals","Impact: core benefit, or severe harm prevented even if rarely triggered","Impact: transformative; current goals depend on it"]'
 pin_descriptions Risk "$(post_body Risk)" \
-    'How consequential a failure is if the change is implemented incorrectly; for a bug fix, the danger of the fix' \
+    'How consequential an incorrect implementation would be; for a bug fix, the danger of the fix itself' \
     '["Risk: a mistake is harmless and trivially reversible","Risk: a mistake is contained, caught quickly, and cheap to undo","Risk: a mistake breaks a feature or needs a careful rollback","Risk: a mistake reaches many users or their data; recovery is costly","Risk: a mistake risks data loss, security exposure, or an irreversible outage"]'
 pin_descriptions Complexity "$(post_body Complexity)" \
-    'How difficult the work is to understand, design, implement, and verify correctly; never a time estimate' \
+    'How hard the work is to understand, design, implement, and verify correctly; never a time estimate' \
     '["Complexity: a tiny, well-understood change with obvious verification","Complexity: small and local; a clear approach across a few files","Complexity: moderate; several components and some design choices","Complexity: large; cross-cutting, with real design and wide verification","Complexity: very large or uncertain; likely to grow or need splitting"]'
 
 echo "==> the run adds the ladder and keeps every shipped Effort option, with its id, reporting each count"
@@ -358,6 +358,15 @@ run_with '[]'
 # Everything the script provisions, as created: the status want-list is compared
 # against this full set at the end.
 cp "$POSTS" "$tmp/created-posts"
+# GitHub refuses a field whose description is longer than 100 characters (HTTP 422,
+# "Description is too long"), and a refused Impact aborted the whole run on
+# 2026-10-15. The empty-org run POSTs every field the script can create, Product
+# and Effort included, so every created description is measured here; length is
+# in characters, as GitHub measures it.
+echo "==> every created field's description fits GitHub's 100-character limit"
+[ "$(jq -s 'length' "$POSTS")" = 10 ] || fail "expected all 10 field POSTs to measure, got $(jq -s 'length' "$POSTS")"
+[ "$(jq -s '[ .[] | select((.description | length) > 100) ] | length' "$POSTS")" = 0 ] ||
+    fail "a field description is longer than GitHub's 100-character limit: $(jq -sr '[ .[] | select((.description | length) > 100) | .name ] | join(", ")' "$POSTS")"
 [ "$(post_body Product | jq -r '.data_type')" = text ] || fail "Product must be created as text"
 [ "$(opt_names "$(post_body Effort)")" = "$ladder" ] || fail "a created Effort must carry the ladder"
 pin_descriptions Effort "$(post_body Effort)" \

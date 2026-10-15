@@ -214,8 +214,14 @@ the compatibility reason in the rule's `description`.
 - [ ] **Free SAST coverage** — Harmon Init has no CodeQL workflow (its
       first-party source is shell/config; foreman is a pinned external CLI), so
       Semgrep CE runs in `build.yml` at both visibilities. Generated supported
-      public stacks run CodeQL automatically; free private repos use Semgrep CE
-      unless paid private CodeQL is explicitly enabled.
+      public stacks run CodeQL automatically (with GitHub's CodeQL Default setup
+      turned off via Settings → Advanced Security → CodeQL analysis or
+      `gh api --method PATCH repos/OWNER/REPO/code-scanning/default-setup -f state=not-configured`,
+      because GitHub refuses advanced uploads while Default setup is on, and if
+      Default setup disabled the workflow, then re-enable the CodeQL workflow via
+      Actions → CodeQL → "Enable workflow" or `gh workflow enable codeql.yml`);
+      free private repos use Semgrep CE unless paid private CodeQL is explicitly
+      enabled.
 - [ ] **Choose the Snyk posture** — Harmon Init runs the free baseline
       (Semgrep CE + Dependabot alerts/Renovate + gitleaks) and adds Snyk as an
       advisory second opinion at `snyk_scan_schedule=weekly`. Free private repos
