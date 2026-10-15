@@ -241,15 +241,15 @@ the compatibility reason in the rule's `description`.
       generated from this template chooses `weekly` (conservative) or `daily`
       (public or accepted unlimited OSS); prefer weekly for any deliberately
       budgeted private repo and check Organization Usage before enabling it.
-- [ ] **[HUMAN] Update the CI GitHub App's permissions before adopting this
-      release** — set **Checks: Read-only** and **Commit statuses: Read-only**
-      in the App's **Permissions & events**, then accept the new permissions
-      on **every installation**. Until both the App and its installations have
-      these grants, `create-github-app-token` fails and claude-implement cannot
-      start. New Apps use the updated manifest; existing Apps require this
-      manual update. See [architecture/security.md](architecture/security.md#ci-automation-identity-github-app).
 - [ ] **Create** the CI GitHub App `evanharmon1-ci` by hand (one App per org;
       **Settings → Developer settings → GitHub Apps**), or reuse the org's existing one.
+- [ ] **[human-only] Confirm CI GitHub App permissions** — the App must grant
+      **Checks: Read-only** and **Commit statuses: Read-only** for
+      claude-implement's `gh pr checks`. For an existing App, update its
+      **Permissions & events** and accept the new permissions on **every
+      installation**; until then, `create-github-app-token` fails and
+      claude-implement cannot start. See
+      [architecture/security.md](architecture/security.md#ci-automation-identity-github-app).
 - [ ] **Install** the App on this repo — **Install App → Only select repositories**
       (the harmon-init repos that run release-please / claude-* / project-automation),
       **not "All"**. **Creating the App is not enough:** an App whose credentials are
