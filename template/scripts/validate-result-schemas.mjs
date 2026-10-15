@@ -9,7 +9,10 @@
 // Usage:
 //   validate-result-schemas.mjs <kind> <file> [options]
 //
-//   kind: envelope | implementer | challenger | reviewer | integrator | adjudication | run
+//   kind: brief | envelope | implementer | challenger | reviewer | integrator | adjudication | run | plan
+//   `brief` accepts rendered Markdown, extracts the fenced JSON fact block
+//   between the schema-bound-envelope delimiters, derives `body` from every
+//   byte outside that block, then validates brief.envelope.schema.json.
 //   `envelope` dispatches on the instance's own `role` field (after the
 //   envelope schema itself passes) and runs exactly the same payload +
 //   receipt checks as invoking the role's own kind name directly — it is
@@ -91,11 +94,14 @@
 //                                 with --adjudication (a usage error).
 //   --schemas-dir <dir>          Directory holding the *.schema.json family.
 //                                 Overrides RESULT_SCHEMAS_DIR, which
-//                                 overrides the default of `ai/schemas`
-//                                 resolved relative to THIS SCRIPT's own
-//                                 location (not the current working
-//                                 directory) — so the validator finds its
-//                                 schemas the same way regardless of the
+//                                 overrides the default of `schemas/`
+//                                 BESIDE THIS SCRIPT — the package's own
+//                                 vendored copy, not a repository-root
+//                                 `ai/schemas` (harmon-devkit#974; see
+//                                 DEFAULT_SCHEMAS_DIR below). Resolved from
+//                                 this script's own location, not the current
+//                                 working directory — so the validator finds
+//                                 its schemas the same way regardless of the
 //                                 caller's cwd.
 //   --receipt                    Require every context flag applicable to
 //                                 this invocation's <kind> (envelope kinds:
@@ -113,6 +119,23 @@
 //                                 uses --receipt; a bare invocation is for
 //                                 one-off schema/fixture work where the run
 //                                 context genuinely is not available.
+//   --receipts <run.json>         (run only) Strict mode: load the run
+//                                 record from this file and use its
+//                                 `receipts` array as the trusted event
+//                                 sequence. When supplied, every
+//                                 --adjudication document must correspond
+//                                 to entries in the receipt sequence — its
+//                                 stage must appear as a transition receipt
+//                                 — mirroring how dev-flow-exit.mjs
+//                                 validates passes against
+//                                 run.json.receipts. Without it, supplied
+//                                 context documents are trusted as-is (the
+//                                 default for authoring/fixture work where
+//                                 the receipt sequence is not available).
+//                                 Opt-in and independent of --receipt:
+//                                 --receipt requires applicable context
+//                                 FLAGS; --receipts binds the supplied
+//                                 documents to the trusted event log.
 //
 // The success message always names any applicable context flag that was
 // NOT given, e.g. "reviewer result OK (role=reviewer, status=completed,
@@ -126,26 +149,32 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import process from 'node:process'
+import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
-import { createSchemaValidator } from './lib/json-schema-subset.mjs'
+import { createSchemaValidator, canonicalJson } from './lib/json-schema-subset.mjs'
 
+// The repository's shipped schema copy, resolved from this script's location.
+// Generated projects ship ai/schemas even when skills sync is disabled.
 const DEFAULT_SCHEMAS_DIR = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
-  '..',
-  'ai',
-  'schemas'
+  '../ai/schemas'
 )
 const KINDS = [
+  'brief',
   'envelope',
   'implementer',
   'challenger',
   'reviewer',
   'integrator',
   'adjudication',
-  'run'
+  'run',
+  'plan'
 ]
 const FINDING_ID = /^(challenge|review|integration)-r([1-9][0-9]*)-(.+)-([1-9][0-9]*)$/
 const SHA_PATTERN = /^[0-9a-f]{40}$/
+const BRIEF_BEGIN = '<!-- BEGIN SCHEMA-BOUND ENVELOPE FACTS -->'
+const BRIEF_END = '<!-- END SCHEMA-BOUND ENVELOPE FACTS -->'
+const DOUBLE_BRACE_PLACEHOLDER = /\{\{[A-Za-z0-9_-]+\}\}/
 // A bare positive integer (same-repo follow-up) or an owner/repo#N qualified
 // form (a cross-repository follow-up) -- the same qualification track-work's
 // own convention already requires for a bare #<n> anywhere it could mean two
@@ -156,10 +185,10 @@ const ISSUE_NUMBER_PATTERN = /^(?:[1-9][0-9]*|[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+#[
 
 function usage() {
   console.error(
-    'usage: validate-result-schemas.mjs <envelope|implementer|challenger|reviewer|integrator|adjudication|run> <file> ' +
+    'usage: validate-result-schemas.mjs <brief|envelope|implementer|challenger|reviewer|integrator|adjudication|run|plan> <file> ' +
       '[--known-ids <file.json>] [--run-id <id> --initiated-by <human|foreman>] ' +
       '[--pass <file.json> ...] [--known-adjudicated <file.json>] [--adjudication <file.json> ...] ' +
-      '[--no-adjudications] [--schemas-dir <dir>] [--receipt]'
+      '[--no-adjudications] [--schemas-dir <dir>] [--receipt] [--receipts <run.json>]'
   )
 }
 
@@ -198,6 +227,129 @@ function loadJson(file) {
 
 function loadSchema(basename) {
   return loadJson(path.join(SCHEMAS_DIR, basename))
+}
+
+// loadBrief FILE — the Markdown wire format has one machine-readable JSON
+// object and one deliberately opaque body. The body is everything outside
+// the delimited block; it is attached only after parsing so the schema can
+// validate the complete envelope without forcing Markdown through JSON
+// escaping or content rules.
+function loadBrief(file) {
+  let source
+  try {
+    source = fs.readFileSync(file, 'utf8')
+  } catch (error) {
+    return { instance: null, errors: [`$brief: cannot read ${file}: ${error.message}`] }
+  }
+
+  const errors = []
+
+  const begin = source.indexOf(BRIEF_BEGIN)
+  if (begin === -1) {
+    errors.push('$brief: expected an ordered schema-bound envelope delimiter pair')
+    return { instance: null, errors }
+  }
+
+  const blockStart = begin + BRIEF_BEGIN.length
+  const openingFence = /^\s*```json\s*\n/.exec(source.slice(blockStart))
+  if (!openingFence) {
+    errors.push('$brief: envelope block must contain exactly one fenced ```json object')
+    return { instance: null, errors }
+  }
+
+  const jsonStart = blockStart + openingFence[0].length
+  const closingFence = /\n```[\t ]*(?=\r?\n|$)/.exec(source.slice(jsonStart))
+  if (!closingFence) {
+    errors.push('$brief: envelope block must contain exactly one fenced ```json object')
+    return { instance: null, errors }
+  }
+
+  const closingFenceEnd = jsonStart + closingFence.index + closingFence[0].length
+  const end = source.indexOf(BRIEF_END, closingFenceEnd)
+  if (end === -1) {
+    errors.push('$brief: expected an ordered schema-bound envelope delimiter pair')
+    return { instance: null, errors }
+  }
+
+  const block = source.slice(begin + BRIEF_BEGIN.length, end).trim()
+  if (DOUBLE_BRACE_PLACEHOLDER.test(block)) {
+    errors.push('$brief: unresolved double-brace placeholder remains in envelope block')
+  }
+
+  const match = /^```json\s*\n([\s\S]*)\n```$/.exec(block)
+  if (!match) {
+    errors.push('$brief: envelope block must contain exactly one fenced ```json object')
+    return { instance: null, errors }
+  }
+
+  let instance
+  try {
+    instance = JSON.parse(match[1])
+  } catch (error) {
+    errors.push(`$brief: envelope block is not valid JSON: ${error.message}`)
+    return { instance: null, errors }
+  }
+  if (instance === null || typeof instance !== 'object' || Array.isArray(instance)) {
+    errors.push('$brief: envelope block must parse to a JSON object')
+    return { instance: null, errors }
+  }
+  if (Object.hasOwn(instance, 'body')) {
+    errors.push('$brief.body: must be supplied as Markdown outside the envelope block')
+  }
+
+  const body = source.slice(0, begin) + source.slice(end + BRIEF_END.length)
+  if (body.trim() === '') {
+    errors.push('$brief.body: body is absent; Markdown must exist outside the envelope block')
+  } else {
+    instance.body = body
+  }
+  return { instance, errors }
+}
+
+function checkBriefFacts(instance, errors) {
+  if (instance.branch !== instance.claim_handoff.branch) {
+    errors.push(
+      `$brief.branch: ${JSON.stringify(instance.branch)} does not match claim_handoff.branch ${JSON.stringify(instance.claim_handoff.branch)}`
+    )
+  }
+
+  const nonce = instance.sentinels.attempt_nonce
+  const terminalFields = ['ready', 'handoff', 'blocked']
+  for (const field of terminalFields) {
+    if (!instance.sentinels[field].endsWith(`-${nonce}`)) {
+      errors.push(
+        `$brief.sentinels.${field}: sentinel ${JSON.stringify(instance.sentinels[field])} must end with -${nonce}`
+      )
+    }
+  }
+  const terminalValues = terminalFields.map((field) => instance.sentinels[field])
+  if (new Set(terminalValues).size !== terminalValues.length) {
+    errors.push('$brief.sentinels: ready, handoff, and blocked must be pairwise distinct')
+  }
+
+  if (!isRealInstant(instance.deadline)) {
+    errors.push(`$brief.deadline: ${JSON.stringify(instance.deadline)} is not a real instant`)
+    return
+  }
+
+  if (!fs.existsSync(instance.record_directory)) return
+  const runFile = path.join(instance.record_directory, 'run.json')
+  let run
+  try {
+    run = JSON.parse(fs.readFileSync(runFile, 'utf8'))
+  } catch (error) {
+    errors.push(
+      `$brief.record_directory: cannot read a valid run.json from ${instance.record_directory}: ${error.message}`
+    )
+    return
+  }
+  if (!run || typeof run.started_at !== 'string' || !isRealInstant(run.started_at)) {
+    errors.push(`$brief.record_directory: ${runFile} has no real started_at instant`)
+    return
+  }
+  if (Date.parse(instance.deadline) < Date.parse(run.started_at)) {
+    errors.push(`$brief.deadline: ${instance.deadline} is before run started_at ${run.started_at}`)
+  }
 }
 
 // loadIdArray FILE FLAG — a JSON array of strings, or exit 1 naming exactly
@@ -258,7 +410,8 @@ function parseArgs(argv) {
     knownAdjudicated: null,
     adjudications: [],
     receipt: false,
-    noAdjudications: false
+    noAdjudications: false,
+    receiptsRecord: null
   }
   for (let i = 0; i < rest.length; i += 1) {
     switch (rest[i]) {
@@ -348,6 +501,29 @@ function parseArgs(argv) {
       case '--no-adjudications':
         options.noAdjudications = true
         break
+      case '--receipts': {
+        const receiptsFile = rest[(i += 1)]
+        if (!receiptsFile) {
+          console.error('validate-result-schemas: --receipts requires a file argument')
+          usage()
+          process.exit(2)
+        }
+        const record = loadJson(receiptsFile)
+        if (record === null || typeof record !== 'object' || Array.isArray(record)) {
+          console.error(
+            `validate-result-schemas: --receipts file ${receiptsFile} must contain a JSON object`
+          )
+          process.exit(1)
+        }
+        if (record.receipts !== undefined && !Array.isArray(record.receipts)) {
+          console.error(
+            `validate-result-schemas: --receipts file ${receiptsFile} has a non-array receipts field`
+          )
+          process.exit(1)
+        }
+        options.receiptsRecord = record
+        break
+      }
       default:
         console.error(`validate-result-schemas: unknown option ${rest[i]}`)
         usage()
@@ -637,6 +813,51 @@ function checkChallengerAttackScenarios(envelope, errors) {
   }
 }
 
+// expectedReviewedCommit — which commit a cycle's accepted receipt must name.
+//
+// Normally the envelope head, because the receipt is the reviewer's own stamp
+// that it read THIS commit. harmon-init#752 adds the one exception: a CARRIED
+// cycle asked no reviewer anything. Its receipt is the original cycle's — a
+// real review of a real commit — re-presented for a head whose change was
+// proved byte-identical, so it names `carried.origin_head` and saying anything
+// else would forge the stamp. The exception is granted only by a
+// well-formed `carried` object naming a commit-shaped origin: a producer that
+// simply wants a mismatch accepted has to assert the carry, which the gate
+// then re-derives from the durable checker state rather than believes.
+function expectedReviewedCommit(cycle, head) {
+  const carried = cycle && cycle.carried
+  if (
+    carried &&
+    typeof carried === 'object' &&
+    typeof carried.origin_head === 'string' &&
+    /^[0-9a-f]{40}$/.test(carried.origin_head)
+  ) {
+    return carried.origin_head
+  }
+  return head
+}
+
+// checkCarriedAttestation — a carried receipt must attest THIS envelope's head.
+//
+// Challenge round 3, finding `challenge-r3-codex-adversarial-3` (confirmed
+// P2): the carve-out above changes which commit the receipt may name, and
+// nothing checked which commit the carry claims to be ABOUT. Mutating
+// `attests_head` to an unrelated SHA left the result validating cleanly, even
+// though the schema describes it as the gated head. The readiness gate
+// happened to catch it downstream, but this validator is published and read on
+// its own — Foreman's Python consumer re-implements the same contract — so a
+// cross-head receipt must be refused here, where the contract is stated.
+function checkCarriedAttestation(location, cycle, head, errors) {
+  const carried = cycle && cycle.carried
+  if (!carried || typeof carried !== 'object') return
+  if (typeof carried.attests_head !== 'string') return
+  if (carried.attests_head !== head) {
+    errors.push(
+      `${location}.carried.attests_head: ${carried.attests_head} does not match envelope head ${head}`
+    )
+  }
+}
+
 // checkHeadAgreement — every head-shaped field in a payload must equal the
 // envelope's head (specs/dev-flow-v2.md § Results, "Heads must agree").
 function checkHeadAgreement(kind, envelope, errors) {
@@ -656,12 +877,76 @@ function checkHeadAgreement(kind, envelope, errors) {
         `$result.payload.codex_cycle.head: ${payload.codex_cycle.head} does not match envelope head ${head}`
       )
     }
+    checkCarriedAttestation('$result.payload.codex_cycle', payload.codex_cycle, head, errors)
     const accepted = payload.codex_cycle.accepted
     if (accepted && typeof accepted === 'object' && typeof accepted.reviewed_commit === 'string') {
-      if (accepted.reviewed_commit !== head) {
+      const expected = expectedReviewedCommit(payload.codex_cycle, head)
+      if (accepted.reviewed_commit !== expected) {
         errors.push(
-          `$result.payload.codex_cycle.accepted.reviewed_commit: ${accepted.reviewed_commit} does not match envelope head ${head}`
+          `$result.payload.codex_cycle.accepted.reviewed_commit: ${accepted.reviewed_commit} does not match ${expected === head ? `envelope head ${head}` : `carried.origin_head ${expected}`}`
         )
+      }
+    }
+  }
+  // checkCodexMirrorCarry — the codex-cloud entry of finder_cycles[] describes
+  // the SAME cycle as codex_cycle, so the two cannot disagree about whether a
+  // reviewer read the gated head.
+  //
+  // Integration cycle 1, finding `integration-r1-codex-cloud-1` (confirmed
+  // P2): each entry was validated on its own, so dropping `carried` from the
+  // mirror and pointing its receipt at the envelope head still validated —
+  // while the readiness gate skips that entry precisely because codex_cycle
+  // covers it. The retained envelope then said both that no reviewer read the
+  // gated head and that one did, and a generalized consumer reading
+  // finder_cycles saw only the half that hides the carry.
+  //
+  // Scoped to `carried` rather than to whole-object equality on purpose. The
+  // reviewer offered "match the canonical cycle, or remove the mirror", and
+  // full equality is a WIDER contract change than this defect needs: the
+  // existing corpus has an honest mirror that omits `trigger_comment_id`,
+  // which the finder_cycles schema explicitly allows. Requiring the carry to
+  // agree closes the hole exactly, and closes the receipt with it — a mirror
+  // that keeps `carried` must then name `carried.origin_head`, which the
+  // receipt check above already enforces.
+  // Integration cycle 2, finding `integration-r2-claude-3` (confirmed P2): the
+  // guard required `codex_cycle` to be truthy, so with a null one — a resolved
+  // integration cap of 0 — a `codex-cloud` entry could still carry a `carried`
+  // object that nothing corroborates: this check did not run, the gate skips
+  // that entry, and its whole carried block sits inside the non-null branch.
+  // The same hole in the same shape as the one this function was added to
+  // close, and `?? null` already handles the absent case.
+  if (kind === 'integrator' && Array.isArray(payload.finder_cycles)) {
+    const cycleCarried = canonicalJson(payload.codex_cycle?.carried ?? null)
+    for (const fc of payload.finder_cycles) {
+      if (!fc || typeof fc !== 'object' || fc.finder !== 'codex-cloud') continue
+      if (canonicalJson(fc.carried ?? null) !== cycleCarried) {
+        errors.push(
+          '$result.payload.finder_cycles[codex-cloud].carried: disagrees with codex_cycle.carried — the two describe the same cycle, so one of them is claiming a reviewer read the gated head while the other says none did'
+        )
+      }
+    }
+  }
+  if (kind === 'integrator' && Array.isArray(payload.finder_cycles)) {
+    for (const [i, fc] of payload.finder_cycles.entries()) {
+      if (!fc || typeof fc !== 'object') continue
+      if (typeof fc.head === 'string' && fc.head !== head) {
+        errors.push(
+          `$result.payload.finder_cycles[${i}].head: ${fc.head} does not match envelope head ${head}`
+        )
+      }
+      checkCarriedAttestation(`$result.payload.finder_cycles[${i}]`, fc, head, errors)
+      const fcAccepted = fc.accepted
+      if (
+        fcAccepted &&
+        typeof fcAccepted === 'object' &&
+        typeof fcAccepted.reviewed_commit === 'string'
+      ) {
+        const fcExpected = expectedReviewedCommit(fc, head)
+        if (fcAccepted.reviewed_commit !== fcExpected) {
+          errors.push(
+            `$result.payload.finder_cycles[${i}].accepted.reviewed_commit: ${fcAccepted.reviewed_commit} does not match ${fcExpected === head ? `envelope head ${head}` : `carried.origin_head ${fcExpected}`}`
+          )
+        }
       }
     }
   }
@@ -707,7 +992,8 @@ function checkIntegratorBlockedStatus(envelope, errors) {
 // OTHER exit code, since "required when" is the only shape if/then can
 // express. `accepted` is evidence of a terminal result, so its presence
 // alongside a non-terminal exit_code (11 pending, 12 retry, 13 escalate,
-// 14 PR no longer open, 2 indeterminate) is contradictory and forbidden
+// 14 PR no longer open, 15 quota exhausted, 16 transient read,
+// 2 indeterminate) is contradictory and forbidden
 // here, in the validator, the same way "required when" and "forbidden
 // otherwise" are two separate assertions throughout this family.
 function checkCodexCycleAcceptedScope(payload, errors) {
@@ -720,35 +1006,108 @@ function checkCodexCycleAcceptedScope(payload, errors) {
   }
 }
 
+function checkFinderCyclesAcceptedScope(payload, errors) {
+  if (!Array.isArray(payload.finder_cycles)) return
+  for (const [i, fc] of payload.finder_cycles.entries()) {
+    if (!fc || typeof fc !== 'object') continue
+    if (![0, 10].includes(fc.exit_code) && Object.hasOwn(fc, 'accepted')) {
+      errors.push(
+        `$result.payload.finder_cycles[${i}].accepted: must be absent when exit_code is ${fc.exit_code} (only 0/10 are terminal)`
+      )
+    }
+  }
+}
+
 // EXIT_CODE_VERDICT_CONSTRAINTS — what codex_cycle.exit_code implies about
 // payload.verdict, per the SAME exit-code contract
 // result.integrator.schema.json's codex_cycle.exit_code description
-// documents, which is itself ai/skills/universal/shepherd/assets/
+// documents, which is itself integrate/assets/
 // check-codex-cloud-review.sh's `check` subcommand: 0 clean, 10 findings,
 // 11 pending, 12 retry, 13 escalate, 14 PR no longer open, 2
-// indeterminate. checkIntegratorCleanVerdict separately requires exit_code
-// 0 (with accepted present) when verdict IS clean — that is the OTHER
-// direction of this same equivalence (clean implies 0); the 0 entry here
-// is what closes the loop the other way (0 implies clean), the same
-// two-direction shape every other exit code in this table already gets.
-// 13 (escalate) and 2 (indeterminate) share the SAME equals rule: AGENTS.md's
-// shepherd stage escalates when both Codex-cycle attempts are incomplete,
-// which is exactly what an indeterminate result IS — there is no
-// meaningful difference between "explicitly escalate" and "couldn't tell,
-// so escalate" for what the orchestrator does next. Each entry is either
-// `equals` (verdict must be exactly this value) or `excludes` (a set
-// verdict must not be any member of).
+// indeterminate, plus 15 quota exhausted and 16 transient read.
+// checkIntegratorCleanVerdict separately requires exit_code
+// 0 (with accepted present) when verdict IS clean — clean implies 0 — but
+// 0 does NOT imply clean: ai/agents/integrator.md §7's own verdict rule
+// says a substantive human finding or CI failure surfacing in the SAME
+// pass as a Codex-clean cycle still makes the overall verdict `findings`
+// (the routine mixed-source case), so 0 only excludes the two verdicts
+// that are incoherent with a terminal, non-retriable exit code — pending
+// (nothing left to wait for) and escalate (nothing here needs the
+// remediation cap) — not `findings` (Codex cloud-review cycle on
+// harmon-devkit#758, gauntlet round 5: an earlier `equals: 'clean'` here
+// made 0 and a fresh same-pass finding jointly unsatisfiable, since
+// checkIntegratorCleanVerdict also requires every listed finding to
+// already carry a decline/file disposition the integrator itself never
+// assigns). 13 (escalate) and 2 (indeterminate) share the SAME equals
+// rule: AGENTS.md's integration stage escalates when both Codex-cycle
+// attempts are incomplete, which is exactly what an indeterminate result
+// IS — there is no meaningful difference between "explicitly escalate" and
+// "couldn't tell, so escalate" for what the orchestrator does next. Each
+// entry is either `equals` (verdict must be exactly this value) or
+// `excludes` (a set verdict must not be any member of).
+// 15 (quota exhausted, harmon-devkit#573) joins 13 and 2 on `escalate`: the
+// finder answered that it will not review this head, so the orchestrator's
+// next move is to stop and report the blocker — the same thing it does for a
+// timed-out or unreadable cycle, and never a re-dispatch. 16 (transient read,
+// harmon-devkit#508) joins 11 and 12 on `pending`: the read failed, which says
+// nothing about the reviewer, so the remedy is to repeat the READ — a bounded
+// wait and a fresh pass, exactly like a pending window. Pairing 16 with
+// `escalate` would spend a human on a flaky GitHub call, and pairing it with
+// `clean` or `findings` would assert a verdict over evidence nobody managed
+// to read.
+// Codex cloud-review cycle 3 on PR harmon-devkit#1125, finding 4067133478
+// (confirmed P2): 11, 12 and 16 used to be `equals: 'pending'`, which
+// contradicted ai/agents/integrator.md's own verdict rule — `pending` is for
+// "still waiting on CI or the Codex window WITH NOTHING ELSE OUTSTANDING",
+// and a CI failure or a human finding beside an unfinished Codex window is
+// exactly something else outstanding. The truthful verdict there is
+// `findings`, and the validator rejected it.
+//
+// They are a FLOOR of `pending` now, expressed the way exit 0 and 14 already
+// express theirs: `clean` and `escalate` stay rejected — nothing is clean
+// while a window is open or a read failed, and neither state needs the
+// remediation cap — while `findings` is permitted.
+//
+// The condition that `findings` be backed by evidence needs no check here:
+// the schema itself requires `findings` to have at least one item whenever
+// the verdict is `findings` (result.integrator.schema.json allOf[0]), so a
+// vacuous `findings` cannot validate in the first place. A pass with
+// unanswered threads but no findings[] is `pending`, which the floor allows.
 const EXIT_CODE_VERDICT_CONSTRAINTS = {
-  0: { equals: 'clean' },
+  0: { excludes: new Set(['pending', 'escalate']) },
   10: { equals: 'findings' },
-  11: { equals: 'pending' },
-  12: { equals: 'pending' },
+  11: { excludes: new Set(['clean', 'escalate']) },
+  12: { excludes: new Set(['clean', 'escalate']) },
   13: { equals: 'escalate' },
   14: { excludes: new Set(['clean', 'pending']) },
+  15: { equals: 'escalate' },
+  16: { excludes: new Set(['clean', 'escalate']) },
   2: { equals: 'escalate' }
 }
 
-// checkCodexCycleExitCodeVerdict — verdict and codex_cycle.exit_code are
+// VERDICT_RANK — the precedence ladder the aggregate verdict is resolved on.
+// A payload can carry MORE THAN ONE cycle (codex_cycle plus one
+// finder_cycles[] entry per configured PR-side finder), and they can disagree
+// about what the pass means: a clean Codex cycle beside a finder that exited
+// 15 is a real state, not a contradiction. The truthful verdict is the
+// STRONGEST thing any cycle demands, so the ladder is
+// clean < pending < findings < escalate.
+const VERDICT_RANK = { clean: 0, pending: 1, findings: 2, escalate: 3 }
+const VERDICT_BY_RANK = ['clean', 'pending', 'findings', 'escalate']
+
+// cycleVerdictDemand — the WEAKEST verdict a single cycle will accept. An
+// `equals` entry demands exactly its value; an `excludes` entry is permissive
+// and demands only the weakest verdict it does not forbid (exit 0 demands
+// `clean`, exit 14 demands `findings`, because 14 forbids both clean and
+// pending).
+function cycleVerdictDemand(exitCode) {
+  const constraint = EXIT_CODE_VERDICT_CONSTRAINTS[exitCode]
+  if (!constraint) return null
+  if (constraint.equals) return constraint.equals
+  return VERDICT_BY_RANK.find((verdict) => !constraint.excludes.has(verdict)) ?? null
+}
+
+// checkCodexCycleExitCodeVerdict — verdict and every cycle's exit_code are
 // sibling fields of one payload instance, but the CONDITION each
 // EXIT_CODE_VERDICT_CONSTRAINTS entry expresses is either "must equal
 // exactly this value" for a specific exit_code (a fixed value a JSON
@@ -757,19 +1116,90 @@ const EXIT_CODE_VERDICT_CONSTRAINTS = {
 // itself data-dependent, which if/then's single conditional-per-node
 // shape cannot encode as one schema-level rule the way
 // checkIntegratorCleanVerdict's fixed verdict:clean condition can.
+//
+// harmon-devkit#1050, integration cycle 1 finding 4064588966 (confirmed P2):
+// this used to read `payload.codex_cycle` and nothing else, so a pass whose
+// Codex cycle was clean while a finder cycle exited 15 or 16 could not state
+// the truth. Exit 0 excludes `pending` and `escalate`, so the honest
+// `escalate` was rejected; the only verdicts that validated were the two that
+// misdescribed the pass. The constraint is aggregated over codex_cycle AND
+// every finder_cycles[] entry now, resolved by precedence:
+//
+//   * every cycle contributes its own demand (see cycleVerdictDemand);
+//   * the REQUIRED verdict is the highest-ranked demand — the strongest cycle
+//     wins, which is why a clean Codex beside a finder 15 must say `escalate`;
+//   * a cycle may still forbid a value through `excludes`, but an explicit
+//     `equals` demand from another cycle OVERRIDES that exclusion. That is the
+//     whole of the fix: exit 0 forbids `pending` because a terminal Codex
+//     cycle has nothing left to wait for, and a finder at 16 is precisely the
+//     something-left-to-wait-for that makes `pending` true again.
+//
+// A verdict STRONGER than the requirement stays legal, as it was before: a
+// Codex-clean cycle beside a fresh human finding in the same pass is the
+// routine mixed-source `findings` case (ai/agents/integrator.md §7).
 function checkCodexCycleExitCodeVerdict(payload, errors) {
-  const cycle = payload.codex_cycle
-  if (!cycle || typeof cycle !== 'object') return
-  const constraint = EXIT_CODE_VERDICT_CONSTRAINTS[cycle.exit_code]
-  if (!constraint) return
-  if (constraint.equals && payload.verdict !== constraint.equals) {
-    errors.push(
-      `$result.payload.verdict: must be ${JSON.stringify(constraint.equals)} when codex_cycle.exit_code is ${cycle.exit_code}, found ${JSON.stringify(payload.verdict)}`
-    )
+  const cycles = []
+  if (payload.codex_cycle && typeof payload.codex_cycle === 'object') {
+    cycles.push({ label: 'codex_cycle', exitCode: payload.codex_cycle.exit_code })
   }
-  if (constraint.excludes && constraint.excludes.has(payload.verdict)) {
+  if (Array.isArray(payload.finder_cycles)) {
+    payload.finder_cycles.forEach((cycle, index) => {
+      if (!cycle || typeof cycle !== 'object') return
+      const slug = typeof cycle.finder === 'string' ? ` (${cycle.finder})` : ''
+      cycles.push({ label: `finder_cycles[${index}]${slug}`, exitCode: cycle.exit_code })
+    })
+  }
+  if (cycles.length === 0) return
+
+  let required = null
+  for (const cycle of cycles) {
+    const constraint = EXIT_CODE_VERDICT_CONSTRAINTS[cycle.exitCode]
+    if (!constraint) continue
+    const demand = cycleVerdictDemand(cycle.exitCode)
+    if (demand === null) continue
+    if (required === null || VERDICT_RANK[demand] > VERDICT_RANK[required.verdict]) {
+      required = { verdict: demand, cycle, exact: Boolean(constraint.equals) }
+    }
+  }
+  if (required === null) return
+
+  const actualRank = VERDICT_RANK[payload.verdict]
+  if (actualRank === undefined) return
+  // A cycle with an `equals` constraint pins the verdict exactly; a cycle with
+  // an `excludes` constraint is permissive and only sets a floor. The
+  // strongest demand of either kind is the one that governs, which is what
+  // lets a finder at 15 override a clean Codex cycle without letting a
+  // Codex-only 16 be reported as `escalate` (that pairing spends a human on a
+  // flaky GitHub call, and the constraint table says so at 16).
+  if (required.exact && payload.verdict !== required.verdict) {
     errors.push(
-      `$result.payload.verdict: must not be ${JSON.stringify(payload.verdict)} when codex_cycle.exit_code is ${cycle.exit_code}`
+      `$result.payload.verdict: must be ${JSON.stringify(required.verdict)} when ${required.cycle.label}.exit_code is ${required.cycle.exitCode}, found ${JSON.stringify(payload.verdict)}`
+    )
+    return
+  }
+  if (!required.exact && actualRank < VERDICT_RANK[required.verdict]) {
+    errors.push(
+      `$result.payload.verdict: must be at least ${JSON.stringify(required.verdict)} when ${required.cycle.label}.exit_code is ${required.cycle.exitCode}, found ${JSON.stringify(payload.verdict)}`
+    )
+    return
+  }
+  for (const cycle of cycles) {
+    const constraint = EXIT_CODE_VERDICT_CONSTRAINTS[cycle.exitCode]
+    if (!constraint?.excludes) continue
+    if (!constraint.excludes.has(payload.verdict)) continue
+    // An exclusion only binds if the excluding cycle is itself as strong as
+    // the governing requirement. This is the whole precedence rule: exit 0
+    // forbids `pending` and `escalate` because a terminal Codex cycle has
+    // nothing left to wait for and nothing needing the remediation cap — but
+    // a finder at 16 or 15 in the same pass is exactly that something, and it
+    // outranks a cycle whose own demand is only `clean`. Without this, the
+    // truthful verdict for a clean Codex beside a spent finder is
+    // unstateable, which is harmon-devkit#1050 integration cycle 1 finding
+    // 4064588966.
+    const demand = cycleVerdictDemand(cycle.exitCode)
+    if (demand !== null && VERDICT_RANK[demand] < VERDICT_RANK[required.verdict]) continue
+    errors.push(
+      `$result.payload.verdict: must not be ${JSON.stringify(payload.verdict)} when ${cycle.label}.exit_code is ${cycle.exitCode}`
     )
   }
 }
@@ -869,6 +1299,41 @@ function checkAppliedDispositionsKnownFindingIds(payload, knownIds, errors) {
   }
 }
 
+// checkAppliedDispositionsIntegrationRound — the part of the run's known
+// finding universe that needs NO run context at all
+// (harmon-devkit#685: "nested integrator passes' applied_dispositions ids
+// are validated against the run's known finding universe").
+// checkAppliedDispositionsKnownFindingIds above is the full check and is
+// gated on --known-ids for a good reason: without the run's finding set
+// there is no way to tell a legitimate reference to an older finding from
+// a typo. One case needs no such set, though — an `integration-r<N>-...`
+// id whose own round segment is LATER than this pass's own
+// `integration_round`. `integration_round` is the run-wide ordinal of THIS
+// integrator pass, so a finding from integration round N > this one has
+// not happened yet: no run, with any --known-ids, can contain it. Rejecting
+// it here means the impossible half of the check holds on the no-flag path
+// too, rather than the whole invariant going unchecked whenever the caller
+// omits --known-ids.
+//
+// Scoped to integration-stage ids only: a challenge/review finding id's
+// round segment counts rounds of a DIFFERENT stage, unrelated to this
+// pass's ordinal, and an integrator pass legitimately disposes of findings
+// from any challenge/review round.
+function checkAppliedDispositionsIntegrationRound(payload, errors) {
+  const expectedRound = payload.integration_round
+  if (typeof expectedRound !== 'number') return
+  for (const entry of payload.applied_dispositions ?? []) {
+    if (typeof entry.finding_id !== 'string') continue
+    const parsed = parseFindingId(entry.finding_id)
+    if (!parsed || parsed.stage !== 'integration') continue
+    if (parsed.round > expectedRound) {
+      errors.push(
+        `$result.payload.applied_dispositions: finding_id ${entry.finding_id} names integration round ${parsed.round}, later than this pass's own integration_round ${expectedRound} — no run can already know that finding`
+      )
+    }
+  }
+}
+
 // checkIntegratorCleanVerdict — a `clean` verdict is a claim about the
 // WHOLE payload, not just its own field: at least one check must actually
 // have run (AGENTS.md's readiness gate: an empty check list is
@@ -913,6 +1378,16 @@ function checkIntegratorCleanVerdict(payload, errors) {
       errors.push(
         '$result.payload.codex_cycle: must be null, or exit_code 0 with accepted present, when verdict is clean'
       )
+    }
+  }
+  if (Array.isArray(payload.finder_cycles)) {
+    for (const [i, fc] of payload.finder_cycles.entries()) {
+      if (!fc || typeof fc !== 'object') continue
+      if (fc.exit_code !== 0 || !fc.accepted) {
+        errors.push(
+          `$result.payload.finder_cycles[${i}] (${fc.finder ?? '?'}): must have exit_code 0 with accepted present when verdict is clean`
+        )
+      }
     }
   }
   const appliedTo = new Map(
@@ -995,8 +1470,10 @@ function validateEnvelopeInstance(instance, kind, options) {
           checkIntegratorBlockedStatus(instance, errors)
           checkCodexCycleAcceptedScope(instance.payload, errors)
           checkCodexCycleExitCodeVerdict(instance.payload, errors)
+          checkFinderCyclesAcceptedScope(instance.payload, errors)
           checkAppliedDispositionsUnique(instance.payload, errors)
           checkAppliedDispositionsKnownFindingIds(instance.payload, options.knownIds, errors)
+          checkAppliedDispositionsIntegrationRound(instance.payload, errors)
           checkIntegratorCleanVerdict(instance.payload, errors)
           checkIntegratorFindingIds(instance, options, errors)
           checkIntegratorSettledAtAgreement(instance, errors)
@@ -1132,16 +1609,44 @@ function checkAdjudicationEntries(document, errors) {
           `$adjudication.adjudications[finding_id=${entry.finding_id}].override: must be null for stage integration (there is no reviewer priority for adjudicated_priority to differ from)`
         )
       }
+      // `split` is excluded structurally instead — adjudication.schema.json
+      // carries a top-level if/then on the document's own `stage`, because
+      // the exit computation produces no `split_candidate` for integration.
+      // `defer` stays a SEMANTIC check: it already had one here and its own
+      // distinct message in the renderer's cross-document validation, and
+      // folding it into the schema enum would change that error surface for
+      // no gain. Narrow only what needed narrowing.
       if (entry.disposition === 'defer') {
         errors.push(
           `$adjudication.adjudications[finding_id=${entry.finding_id}].disposition: defer is not allowed for stage integration (an integration finding needs a terminal answer: fix, restructure, delete, decline, or file)`
         )
       }
+      // The checkpoint remedy is what the finding's disposition DOES, never a
+      // label beside it (harmon-devkit#1272 challenge round 1):
+      // a `fix` recorded with remedy `delete` would license a hardening push
+      // after the tell. delete/restructure require that same disposition;
+      // stop-and-file requires the finding to be filed or declined.
+      const remedy = entry.checkpoint?.remedy
+      const remedyDispositions = {
+        delete: ['delete'],
+        restructure: ['restructure'],
+        'stop-and-file': ['file', 'decline']
+      }
+      if (remedyDispositions[remedy] && !remedyDispositions[remedy].includes(entry.disposition)) {
+        errors.push(
+          `$adjudication.adjudications[finding_id=${entry.finding_id}].checkpoint.remedy: remedy ${remedy} requires disposition ${remedyDispositions[remedy].join(' or ')}, found ${entry.disposition}`
+        )
+      }
       continue
     }
-    if (entry.disposition === 'defer' && entry.adjudicated_priority !== 'P2') {
+    // The scaffolding checkpoint is the INTEGRATION stage's record
+    // (harmon-devkit#1272): the confidence stages carry their round-2
+    // checkpoint on the pass's own provenance, and nothing reads a
+    // checkpoint off a challenge/review entry, so one there is a field
+    // that looks like evidence and gates nothing.
+    if (entry.checkpoint !== undefined) {
       errors.push(
-        `$adjudication.adjudications[finding_id=${entry.finding_id}].disposition: defer is allowed only for adjudicated P2 findings (P0/P1 findings keep the local loop gating)`
+        `$adjudication.adjudications[finding_id=${entry.finding_id}].checkpoint: only stage integration records the scaffolding checkpoint`
       )
     }
     if (entry.reviewer_priority === null) {
@@ -1489,11 +1994,10 @@ function checkSettlementReferenceType(document, errors) {
 // run instead ends its last real transition's `exit` and sets
 // `outcome: "escalated"` (already enforced below, unrelated to this
 // table). This is an exact transcription, not a derived "any forward
-// index" approximation. A converged challenge can reach review, loop back
-// to implement, or proceed to security when review is disabled; whether the
-// security edge is valid for a particular run depends on resolved policy and
-// is enforced by the policy-aware exit consumer rather than this document-
-// local validator.
+// index" approximation: challenge, for instance, can reach review or loop
+// back to implement, but — unlike a plain monotonic-index rule would
+// allow — can never jump straight to security or integration, because the
+// diagram draws no such edge.
 const ALLOWED_EDGES = {
   kickoff: new Set(['claim']),
   claim: new Set(['explore', 'plan', 'implement']),
@@ -1574,7 +2078,7 @@ function checkStageTransitionsOrder(document, errors) {
     }
   }
   // Reaching ready-for-review always means the run got through integration
-  // (the readiness gate promotes a draft PR shepherded out of that stage —
+  // (the readiness gate promotes a draft PR integrated out of that stage —
   // AGENTS.md's Dev Loop), so the last stage_transitions entry must BE
   // integration, not merely have progressed at all.
   if (document.outcome === 'ready-for-review') {
@@ -1582,6 +2086,73 @@ function checkStageTransitionsOrder(document, errors) {
     if (transitions[lastIndex].stage !== 'integration') {
       errors.push(
         `$run.stage_transitions[${lastIndex}].stage: must be "integration" when outcome is "ready-for-review", found ${JSON.stringify(transitions[lastIndex].stage)}`
+      )
+    }
+  }
+}
+
+// checkLaneAssemblies — lane selection is authenticated lifecycle evidence,
+// not an unvalidated sidecar. Only an implement transition can produce an
+// assembled feature head, and a lane cannot be both selected and discarded.
+// JSON Schema checks the field shapes; these cross-field and uniqueness rules
+// need the semantic receipt layer.
+function checkLaneAssemblies(document, errors) {
+  for (const [index, transition] of (document.stage_transitions ?? []).entries()) {
+    const assembly = transition.assembly
+    if (assembly === undefined || assembly === null || typeof assembly !== 'object') continue
+    if (transition.stage !== 'implement') {
+      errors.push(
+        `$run.stage_transitions[${index}].assembly: is permitted only on an implement transition`
+      )
+    }
+    const integrated = Array.isArray(assembly.integrated_lanes) ? assembly.integrated_lanes : []
+    const discarded = Array.isArray(assembly.discarded_lanes) ? assembly.discarded_lanes : []
+    if (integrated.length + discarded.length === 0) {
+      errors.push(
+        `$run.stage_transitions[${index}].assembly: must account for at least one integrated or discarded lane`
+      )
+    }
+    if (new Set(integrated).size !== integrated.length) {
+      errors.push(
+        `$run.stage_transitions[${index}].assembly.integrated_lanes: lane names must be unique`
+      )
+    }
+    if (new Set(discarded).size !== discarded.length) {
+      errors.push(
+        `$run.stage_transitions[${index}].assembly.discarded_lanes: lane names must be unique`
+      )
+    }
+    const overlap = integrated.find((lane) => discarded.includes(lane))
+    if (overlap !== undefined) {
+      errors.push(
+        `$run.stage_transitions[${index}].assembly: lane ${JSON.stringify(overlap)} cannot be both integrated and discarded`
+      )
+    }
+  }
+}
+
+// checkRemediationPushes — a remediation push is recorded on the integration
+// transition that re-enters integration after it (harmon-devkit#1386): the
+// first integration entry follows no remediation loop, so it never carries
+// one, and no other stage does. Findings are unique so one push answers each
+// finding once.
+function checkRemediationPushes(document, errors) {
+  let integrationSeen = false
+  for (const [index, transition] of (document.stage_transitions ?? []).entries()) {
+    const remediation = transition.remediation
+    const reentry = transition.stage === 'integration' && integrationSeen
+    if (transition.stage === 'integration') integrationSeen = true
+    if (remediation === undefined || remediation === null || typeof remediation !== 'object')
+      continue
+    if (!reentry) {
+      errors.push(
+        `$run.stage_transitions[${index}].remediation: is permitted only on an integration transition that re-enters integration`
+      )
+    }
+    const findings = Array.isArray(remediation.findings) ? remediation.findings : []
+    if (new Set(findings).size !== findings.length) {
+      errors.push(
+        `$run.stage_transitions[${index}].remediation.findings: finding ids must be unique`
       )
     }
   }
@@ -1605,13 +2176,14 @@ function isChronologicallyBefore(a, b) {
 // field): started_at must be no later than the first stage_transitions
 // entry's entered_at; entered_at must be non-decreasing across entries;
 // promotion.promoted_at must be no earlier than the last entry's
-// entered_at; every intervention's `at` and every settlement's
-// `settled_at` and every split's `split_at` must be no earlier than started_at, and no later than
+// entered_at; every intervention's `at`, every settlement's
+// `settled_at`, and every split's `split_at` must be no earlier than
+// started_at, and no later than
 // promotion.promoted_at when the run has been promoted; and a
-// settlement requires an integration transition and its `settled_at` must
-// additionally be no earlier than that first transition's entered_at (a
-// deferred finding is settled during integration, never before the run has
-// reached it). Always runs — every value compared lives in this one
+// settlement's `settled_at` must additionally be no earlier than the
+// run's first `integration` transition's entered_at (a deferred finding
+// is settled during integration, never before the run has even reached
+// it). Always runs — every value compared lives in this one
 // run.schema.json document.
 function checkRunChronology(document, errors) {
   const startedAt = document.started_at
@@ -1686,6 +2258,33 @@ function checkRunChronology(document, errors) {
       }
     }
   }
+  // An occurrence is [entered_at, next entered_at): the instant of a
+  // transition belongs to the new stage. Repeated confidence stages each
+  // contribute their own interval. The final occurrence closes when the
+  // run ends: every non-null outcome in run.schema.json is terminal.
+  const terminalTime = document.promotion
+    ? Date.parse(document.promotion.promoted_at)
+    : document.outcome !== null && document.outcome_transitions.length > 0
+      ? document.outcome_transitions.reduce(
+          (latest, entry) => Math.max(latest, Date.parse(entry.at)),
+          -Infinity
+        )
+      : null
+  for (const [index, split] of (document.splits ?? []).entries()) {
+    const splitTime = Date.parse(split.split_at)
+    const inStage = transitions.some(
+      (transition, transitionIndex) =>
+        transition.stage === split.stage &&
+        splitTime >= Date.parse(transition.entered_at) &&
+        (transitionIndex === transitions.length - 1
+          ? terminalTime === null || splitTime <= terminalTime
+          : splitTime < Date.parse(transitions[transitionIndex + 1].entered_at))
+    )
+    if (!inStage)
+      errors.push(
+        `$run.splits[${index}].split_at: must fall within an occurrence of stage ${split.stage}`
+      )
+  }
   // Upper bound: a settlement resolves a finding BEFORE the run can be
   // promoted (the readiness gate requires every deferred finding settled
   // first — checkDeferredFindingsSettledBeforePromotion), so once promoted
@@ -1741,11 +2340,6 @@ function checkRunChronology(document, errors) {
   // promotion, and the readiness gate is what integration converges
   // toward), so no settlement should predate the run's first arrival there.
   const firstIntegrationEntry = transitions.find((transition) => transition.stage === 'integration')
-  if ((document.settlements ?? []).length > 0 && !firstIntegrationEntry) {
-    errors.push(
-      '$run.settlements: must be empty until stage_transitions records the integration stage'
-    )
-  }
   if (firstIntegrationEntry && typeof firstIntegrationEntry.entered_at === 'string') {
     const firstIntegrationAt = firstIntegrationEntry.entered_at
     for (const [index, settlement] of (document.settlements ?? []).entries()) {
@@ -1769,7 +2363,7 @@ function checkRunChronology(document, errors) {
 // promotion without one), so both of those states additionally require a
 // non-null `pr`. `pr` itself can go non-null earlier than either — AGENTS.md's
 // Dev Loop opens the draft PR and only then enters the `integration` stage
-// (that is what the draft PR's existence kicks off: shepherding, Codex
+// (that is what the draft PR's existence kicks off: integration, Codex
 // cloud review cycles) — so a non-null `pr`, on its own, always requires
 // stage_transitions to already record having reached `integration`; it is
 // never legitimate for the PR to exist ahead of the run's own record of
@@ -1797,6 +2391,750 @@ function checkRunPromotionOutcome(document, errors) {
   if (hasPr && !hasIntegrationEntry) {
     errors.push(
       '$run.pr: must be null unless stage_transitions records having reached "integration"'
+    )
+  }
+}
+
+// checkRunChainIntegrity — verifies the append-only chain over the three
+// chains run.schema.json requires (evidence_registrations[]/pr_bindings[]/
+// outcome_transitions[] — round 4 of #663): each entry's own `digest` must
+// equal sha256(canonical JSON of {this array's own content fields...,
+// prev_digest}), and each entry's `prev_digest` must equal the PRECEDING
+// entry's own `digest` (the literal string "genesis" for the first).
+// run.schema.json's own per-item shape checks (pattern-match `digest`/
+// `prev_digest` as 64-hex/genesis-or-64-hex strings) only prove the FIELDS
+// look right, never that their VALUES are actually consistent with the
+// content they claim to protect — shepherd round 5, Codex-confirmed (P1),
+// reproduced directly: corrupting `pr_bindings[0].digest` to 64 zeroes in
+// the valid further-along.json fixture still printed "run record OK" here,
+// while retro/assets/dev-flow-stats.mjs's own reconstructAsOf() correctly
+// rejected the identical document as a broken chain. Ports the same
+// digest verification into the shared validator so any writer relying on
+// it, not just the harvester, catches a corrupted chain before ever
+// publishing the record — not a shared import from dev-flow-stats.mjs
+// (a specific consumer of this schema, not a foundation this
+// general-purpose validator should depend on) and not a reuse of this
+// file's own canonicalJson (./lib/json-schema-subset.mjs — built for
+// schema-validation equality checks, which does not special-case an
+// undefined-valued object key or array element the way a content-hash
+// canonicalizer must to hash identically whether an optional field is
+// absent or present-but-undefined after a lookup); a small, purpose-built
+// duplicate of dev-flow-stats.mjs's own canonicalJson/entryDigest instead.
+const CHAIN_CONTENT_FIELDS = {
+  evidence_registrations: [
+    'id',
+    'author_actor_id',
+    'login',
+    'payload_digest',
+    'marker',
+    'registered_at'
+  ],
+  pr_bindings: ['number', 'url', 'bound_at'],
+  outcome_transitions: ['outcome', 'at']
+}
+
+function canonicalJsonForDigest(value) {
+  if (value === undefined) return undefined
+  if (value === null || typeof value !== 'object') return JSON.stringify(value)
+  if (Array.isArray(value)) {
+    return `[${value.map((v) => (v === undefined ? 'null' : canonicalJsonForDigest(v))).join(',')}]`
+  }
+  const keys = Object.keys(value)
+    .filter((k) => value[k] !== undefined)
+    .sort()
+  return `{${keys.map((k) => `${JSON.stringify(k)}:${canonicalJsonForDigest(value[k])}`).join(',')}}`
+}
+
+function entryDigestForCheck(contentFields, prevDigest) {
+  const text = canonicalJsonForDigest({ ...contentFields, prev_digest: prevDigest })
+  return createHash('sha256').update(text, 'utf8').digest('hex')
+}
+
+// checkPlanRevisionChain — plan recomputation appends one complete immutable
+// plan snapshot. This mirrors run.json's
+// chain convention: serialized zero-based contiguous seq, genesis first, and
+// each digest authenticating the entry's content plus prev_digest.
+function checkPlanRevisionChain(document, errors) {
+  const entries = document.revisions
+  if (!Array.isArray(entries)) return null
+  if (
+    !entries.every(
+      (entry) =>
+        entry &&
+        typeof entry === 'object' &&
+        typeof entry.seq === 'number' &&
+        typeof entry.digest === 'string' &&
+        entry.plan &&
+        typeof entry.plan === 'object' &&
+        typeof entry.prev_digest === 'string' &&
+        typeof entry.at === 'string' &&
+        typeof entry.reason === 'string'
+    )
+  ) {
+    return null
+  }
+
+  const revisions = entries
+
+  let prevDigest = 'genesis'
+  let previousTime = null
+  for (let index = 0; index < revisions.length; index += 1) {
+    const entry = revisions[index]
+    if (entry.seq !== index) {
+      errors.push(
+        `$plan.revisions: expected seq ${index}, got ${entry.seq} — chain not contiguous from 0`
+      )
+      return null
+    }
+    if (entry.prev_digest !== prevDigest) {
+      errors.push(
+        `$plan.revisions[${entry.seq}].prev_digest: ${JSON.stringify(entry.prev_digest)} does not match the preceding entry's own digest (${JSON.stringify(prevDigest)}) — chain broken`
+      )
+      return null
+    }
+    const expected = entryDigestForCheck(
+      { seq: entry.seq, plan: entry.plan, at: entry.at, reason: entry.reason },
+      prevDigest
+    )
+    if (entry.digest !== expected) {
+      errors.push(`$plan.revisions[${entry.seq}].digest: does not match its own content — tampered`)
+      return null
+    }
+    const entryTime = Date.parse(entry.at)
+    if (!Number.isFinite(entryTime)) {
+      errors.push(`$plan.revisions[${entry.seq}].at: must parse as a finite instant`)
+    } else if (previousTime !== null && entryTime < previousTime) {
+      errors.push(`$plan.revisions[${entry.seq}].at: must not precede revision ${entry.seq - 1}`)
+    }
+    if (Number.isFinite(entryTime)) previousTime = entryTime
+    prevDigest = entry.digest
+  }
+  return revisions
+}
+
+function duplicates(values) {
+  const seen = new Set()
+  return [...new Set(values.filter((value) => (seen.has(value) ? true : (seen.add(value), false))))]
+}
+
+// checkPlanCoherence — the schema closes each record; these checks close the
+// relationships between them so a structurally valid file is also a usable
+// dispatch plan rather than several disagreeing lists.
+function checkPlanCoherence(document, errors) {
+  const issues = Array.isArray(document.issues) ? document.issues : []
+  const overlaps = Array.isArray(document.overlaps) ? document.overlaps : []
+  const waves = Array.isArray(document.waves) ? document.waves : []
+  const lanes = Array.isArray(document.lanes) ? document.lanes : []
+
+  for (const number of duplicates(issues.map((issue) => issue.number))) {
+    errors.push(`$plan.issues: duplicate issue number ${number}`)
+  }
+  const issueByNumber = new Map(issues.map((issue) => [issue.number, issue]))
+  for (const [index, issue] of issues.entries()) {
+    for (const path of duplicates(issue.candidate_files || [])) {
+      errors.push(`$plan.issues[${index}].candidate_files: duplicate path ${JSON.stringify(path)}`)
+    }
+    for (const blocker of duplicates(issue.blocked_by || [])) {
+      errors.push(`$plan.issues[${index}].blocked_by: duplicate issue ${blocker}`)
+    }
+    for (const blocker of issue.blocked_by || []) {
+      if (!issueByNumber.has(blocker)) {
+        errors.push(`$plan.issues[${index}].blocked_by: unknown issue ${blocker}`)
+      } else if (blocker === issue.number) {
+        errors.push(`$plan.issues[${index}].blocked_by: issue cannot block itself`)
+      }
+    }
+  }
+
+  const expectedIssues = issues
+    .filter((issue) => issue.verdict !== 'done')
+    .map((issue) => issue.number)
+  const waveNumbers = waves.map((wave) => wave.number)
+  for (const number of duplicates(waveNumbers))
+    errors.push(`$plan.waves: duplicate wave number ${number}`)
+  const sortedWaveNumbers = [...new Set(waveNumbers)].sort((a, b) => a - b)
+  sortedWaveNumbers.forEach((number, index) => {
+    if (number !== index + 1)
+      errors.push(`$plan.waves: expected contiguous wave ${index + 1}, got ${number}`)
+  })
+  const waveByIssue = new Map()
+  for (const [index, wave] of waves.entries()) {
+    for (const issueNumber of duplicates(wave.issues || [])) {
+      errors.push(`$plan.waves[${index}].issues: duplicate issue ${issueNumber}`)
+    }
+    for (const issueNumber of wave.issues || []) {
+      const issue = issueByNumber.get(issueNumber)
+      if (!issue) errors.push(`$plan.waves[${index}].issues: unknown issue ${issueNumber}`)
+      else if (issue.verdict === 'done')
+        errors.push(
+          `$plan.waves[${index}].issues: done issue ${issueNumber} must not be dispatched`
+        )
+      if (waveByIssue.has(issueNumber))
+        errors.push(`$plan.waves: issue ${issueNumber} appears in more than one wave`)
+      waveByIssue.set(issueNumber, wave.number)
+    }
+  }
+  for (const issueNumber of expectedIssues) {
+    if (!waveByIssue.has(issueNumber))
+      errors.push(`$plan.waves: dispatchable issue ${issueNumber} is not assigned to a wave`)
+  }
+
+  const laneNames = lanes.map((lane) => lane.lane)
+  if (document.lane_profiles !== undefined) {
+    const profiles = document.lane_profiles
+    const profileNames = profiles.map((entry) => entry.lane)
+    for (const name of duplicates(profileNames))
+      errors.push(`$plan.lane_profiles: duplicate lane ${JSON.stringify(name)}`)
+    for (const name of profileNames) {
+      if (!laneNames.includes(name))
+        errors.push(`$plan.lane_profiles: unknown lane ${JSON.stringify(name)}`)
+    }
+    for (const name of laneNames) {
+      if (!profileNames.includes(name))
+        errors.push(`$plan.lane_profiles: missing profile for lane ${JSON.stringify(name)}`)
+    }
+  }
+  const laneBranches = lanes.map((lane) => lane.branch)
+  const laneRuns = lanes.map((lane) => lane.run_id)
+  for (const name of duplicates(laneNames))
+    errors.push(`$plan.lanes: duplicate lane ${JSON.stringify(name)}`)
+  for (const branch of duplicates(laneBranches))
+    errors.push(`$plan.lanes: duplicate branch ${JSON.stringify(branch)}`)
+  for (const runId of duplicates(laneRuns))
+    errors.push(`$plan.lanes: duplicate run_id ${JSON.stringify(runId)}`)
+  const laneByIssue = new Map()
+  for (const [index, lane] of lanes.entries()) {
+    const issue = issueByNumber.get(lane.issue)
+    if (!issue) errors.push(`$plan.lanes[${index}].issue: unknown issue ${lane.issue}`)
+    else if (issue.verdict === 'done')
+      errors.push(`$plan.lanes[${index}].issue: done issue ${lane.issue} must not have a lane`)
+    if (laneByIssue.has(lane.issue))
+      errors.push(`$plan.lanes: issue ${lane.issue} has more than one lane`)
+    laneByIssue.set(lane.issue, lane)
+    const plannedWave = waveByIssue.get(lane.issue)
+    if (plannedWave !== undefined && lane.wave !== plannedWave) {
+      errors.push(
+        `$plan.lanes[${index}].wave: ${lane.wave} does not match issue ${lane.issue}'s wave ${plannedWave}`
+      )
+    }
+  }
+  for (const issueNumber of expectedIssues) {
+    if (!laneByIssue.has(issueNumber))
+      errors.push(`$plan.lanes: dispatchable issue ${issueNumber} has no lane assignment`)
+  }
+  for (const [index, lane] of lanes.entries()) {
+    for (const path of duplicates((lane.expansions || []).map((entry) => entry.path))) {
+      errors.push(`$plan.lanes[${index}].expansions: duplicate path ${JSON.stringify(path)}`)
+    }
+  }
+
+  const policyCap = document.policy?.breadth?.max_parallel_agents
+  const agentRunCap = document.policy?.breadth?.max_agent_runs
+  const dispatcher = document.dispatcher
+  if (dispatcher && typeof policyCap === 'number') {
+    if (dispatcher.kind === 'interactive') {
+      if (dispatcher.foreman_max_parallel !== null) {
+        errors.push(
+          '$plan.dispatcher.foreman_max_parallel: must be null for the interactive dispatcher'
+        )
+      }
+      if (dispatcher.parallel_cap !== policyCap) {
+        errors.push(
+          `$plan.dispatcher.parallel_cap: interactive dispatcher must use policy max_parallel_agents ${policyCap}`
+        )
+      }
+    } else if (dispatcher.kind === 'foreman') {
+      if (typeof dispatcher.foreman_max_parallel !== 'number') {
+        errors.push('$plan.dispatcher.foreman_max_parallel: required for the Foreman dispatcher')
+      } else {
+        const expected = Math.min(policyCap, dispatcher.foreman_max_parallel)
+        if (dispatcher.parallel_cap !== expected) {
+          errors.push(
+            `$plan.dispatcher.parallel_cap: Foreman dispatcher must use min(policy, Foreman) = ${expected}`
+          )
+        }
+      }
+    }
+    for (const wave of waves) {
+      if ((wave.issues || []).length > dispatcher.parallel_cap) {
+        errors.push(
+          `$plan.waves: wave ${wave.number} has ${(wave.issues || []).length} issues, exceeding dispatcher cap ${dispatcher.parallel_cap}`
+        )
+      }
+    }
+  }
+  if (typeof agentRunCap === 'number' && lanes.length > agentRunCap) {
+    errors.push(
+      `$plan.lanes: active lane count ${lanes.length} exceeds policy max_agent_runs ${agentRunCap}`
+    )
+  }
+  for (const issue of issues) {
+    const issueWave = waveByIssue.get(issue.number)
+    for (const blocker of issue.blocked_by || []) {
+      const blockerIssue = issueByNumber.get(blocker)
+      const blockerWave = waveByIssue.get(blocker)
+      if (issueWave !== undefined && blockerIssue?.verdict !== 'done' && blockerWave >= issueWave) {
+        errors.push(
+          `$plan.issues: blocker ${blocker} must be in an earlier wave than issue ${issue.number}`
+        )
+      }
+    }
+  }
+
+  const activeIssues = issues.filter((issue) => issue.verdict !== 'done')
+  const expectedOverlaps = new Map()
+  for (let left = 0; left < activeIssues.length; left += 1) {
+    for (let right = left + 1; right < activeIssues.length; right += 1) {
+      const issueA = activeIssues[left]
+      const issueB = activeIssues[right]
+      const rightPaths = new Set(issueB.candidate_files || [])
+      const shared = [
+        ...new Set((issueA.candidate_files || []).filter((path) => rightPaths.has(path)))
+      ].sort()
+      if (shared.length > 0) {
+        const pair = [issueA.number, issueB.number].sort((a, b) => a - b)
+        expectedOverlaps.set(pair.join(':'), shared)
+      }
+    }
+  }
+  const seenOverlapPairs = new Set()
+  for (const [index, overlap] of overlaps.entries()) {
+    const pair = [overlap.issue_a, overlap.issue_b].sort((a, b) => a - b)
+    const key = pair.join(':')
+    if (overlap.issue_a >= overlap.issue_b)
+      errors.push(`$plan.overlaps[${index}]: issue_a must be less than issue_b`)
+    if (seenOverlapPairs.has(key)) errors.push(`$plan.overlaps: duplicate issue pair ${key}`)
+    seenOverlapPairs.add(key)
+    const expectedPaths = expectedOverlaps.get(key)
+    const actualPaths = [...new Set(overlap.paths || [])].sort()
+    if (!expectedPaths)
+      errors.push(`$plan.overlaps[${index}]: pair ${key} has no candidate-file overlap`)
+    else if (canonicalJsonForDigest(actualPaths) !== canonicalJsonForDigest(expectedPaths)) {
+      errors.push(
+        `$plan.overlaps[${index}].paths: must equal the pair's complete candidate-file intersection`
+      )
+    }
+    const dependency = overlap.merge_dependency
+    if (dependency && !pair.includes(dependency.before)) {
+      errors.push(
+        `$plan.overlaps[${index}].merge_dependency.before: must name one issue in pair ${key}`
+      )
+    }
+    if (dependency && !pair.includes(dependency.after)) {
+      errors.push(
+        `$plan.overlaps[${index}].merge_dependency.after: must name one issue in pair ${key}`
+      )
+    }
+    if (dependency && dependency.before === dependency.after) {
+      errors.push(`$plan.overlaps[${index}].merge_dependency: before and after must differ`)
+    }
+    if (dependency && (overlap.resolution === 'serialize' || overlap.resolution === 'split')) {
+      const beforeWave = waveByIssue.get(dependency.before)
+      const afterWave = waveByIssue.get(dependency.after)
+      if (beforeWave !== undefined && afterWave !== undefined && beforeWave >= afterWave) {
+        errors.push(`$plan.overlaps[${index}].merge_dependency: must use increasing waves`)
+      }
+    }
+  }
+  for (const key of expectedOverlaps.keys()) {
+    if (!seenOverlapPairs.has(key))
+      errors.push(`$plan.overlaps: missing candidate-file overlap pair ${key}`)
+  }
+
+  const mergeSuccessors = new Map(issues.map((issue) => [issue.number, []]))
+  const mergeInDegree = new Map(issues.map((issue) => [issue.number, 0]))
+  for (const overlap of overlaps) {
+    const dependency = overlap.merge_dependency
+    if (
+      !dependency ||
+      !mergeSuccessors.has(dependency.before) ||
+      !mergeInDegree.has(dependency.after)
+    )
+      continue
+    mergeSuccessors.get(dependency.before).push(dependency.after)
+    mergeInDegree.set(dependency.after, mergeInDegree.get(dependency.after) + 1)
+  }
+  const mergeReady = [...mergeInDegree].filter(([, degree]) => degree === 0).map(([issue]) => issue)
+  let mergeVisited = 0
+  while (mergeReady.length > 0) {
+    const issue = mergeReady.pop()
+    mergeVisited += 1
+    for (const successor of mergeSuccessors.get(issue) || []) {
+      const degree = mergeInDegree.get(successor) - 1
+      mergeInDegree.set(successor, degree)
+      if (degree === 0) mergeReady.push(successor)
+    }
+  }
+  if (mergeVisited !== mergeInDegree.size) {
+    errors.push('$plan.overlaps: merge-dependency graph must be acyclic')
+  }
+
+  const effectiveFenceByLane = new Map(
+    lanes.map((lane) => [
+      lane.lane,
+      [
+        ...(lane.fence || [])
+          .map((item) => (typeof item === 'string' ? item : item?.path))
+          .filter(Boolean),
+        ...(lane.expansions || []).map((entry) => entry.path).filter(Boolean)
+      ]
+    ])
+  )
+  const literalFenceOwnersByWave = new Map()
+  for (const lane of lanes) {
+    const literalFenceOwner = literalFenceOwnersByWave.get(lane.wave) || new Map()
+    literalFenceOwnersByWave.set(lane.wave, literalFenceOwner)
+    for (const path of effectiveFenceByLane.get(lane.lane) || []) {
+      const owner = literalFenceOwner.get(path)
+      if (owner) {
+        errors.push(
+          `$plan.lanes: byte-identical effective-fence path ${JSON.stringify(path)} must not belong to lanes ${JSON.stringify(owner)} and ${JSON.stringify(lane.lane)} in wave ${lane.wave}`
+        )
+      } else {
+        literalFenceOwner.set(path, lane.lane)
+      }
+    }
+  }
+}
+
+function checkDispatchPlan(document, errors) {
+  const revisions = checkPlanRevisionChain(document, errors)
+  if (!revisions) return
+  const runBindings = new Map()
+  const pinnedLaneProfiles = new Map()
+  let laneProfilesRecorded = false
+  // Tracks revisions[seq-1].at across the loop below (this whole document is
+  // one plan's revision history, so "the preceding revision" is unambiguous)
+  // and the first revision's canonical policy/dispatcher, so a newly
+  // appended expansion or a later revision's policy/dispatcher can be
+  // checked against them without re-deriving state already walked once.
+  let previousRevisionTime = null
+  let pinnedPolicyJson = null
+  let pinnedDispatcherJson = null
+  for (const revision of revisions) {
+    const revisionTime = Date.parse(revision.at)
+    const revisionErrors = []
+    checkPlanCoherence(revision.plan, revisionErrors)
+    errors.push(
+      ...revisionErrors.map((error) =>
+        error.replace('$plan', `$plan.revisions[${revision.seq}].plan`)
+      )
+    )
+    const policyJson = canonicalJsonForDigest(revision.plan.policy)
+    const dispatcherJson = canonicalJsonForDigest(revision.plan.dispatcher)
+    if (pinnedPolicyJson === null) {
+      pinnedPolicyJson = policyJson
+      pinnedDispatcherJson = dispatcherJson
+    } else {
+      if (policyJson !== pinnedPolicyJson) {
+        errors.push(
+          `$plan.revisions[${revision.seq}].plan.policy: must remain byte-identical to revision 0's policy across revision history`
+        )
+      }
+      if (dispatcherJson !== pinnedDispatcherJson) {
+        errors.push(
+          `$plan.revisions[${revision.seq}].plan.dispatcher: must remain byte-identical to revision 0's dispatcher across revision history`
+        )
+      }
+    }
+    if (revision.plan.lane_profiles !== undefined) {
+      laneProfilesRecorded = true
+      const profilesByLane = new Map(
+        revision.plan.lane_profiles.map((entry) => [entry.lane, entry.policy])
+      )
+      for (const lane of revision.plan.lanes || []) {
+        if (!profilesByLane.has(lane.lane)) continue
+        const profileJson = canonicalJsonForDigest(profilesByLane.get(lane.lane))
+        const recordedProfile = pinnedLaneProfiles.get(lane.run_id)
+        if (recordedProfile !== undefined && profileJson !== recordedProfile) {
+          errors.push(
+            `$plan.revisions[${revision.seq}].plan.lane_profiles: profile for run_id ${JSON.stringify(lane.run_id)} must remain byte-identical across revision history`
+          )
+        } else if (recordedProfile === undefined) {
+          pinnedLaneProfiles.set(lane.run_id, profileJson)
+        }
+      }
+    } else if (laneProfilesRecorded) {
+      errors.push(
+        `$plan.revisions[${revision.seq}].plan.lane_profiles: must remain present across revision history once recorded`
+      )
+    }
+    for (const [laneIndex, lane] of (revision.plan.lanes || []).entries()) {
+      if (lane.run_id === '.' || lane.run_id === '..') {
+        errors.push(
+          `$plan.revisions[${revision.seq}].plan.lanes[${laneIndex}].run_id: must not be ${JSON.stringify(lane.run_id)}`
+        )
+      }
+      const binding = runBindings.get(lane.run_id)
+      if (binding && (binding.issue !== lane.issue || binding.branch !== lane.branch)) {
+        errors.push(
+          `$plan.revisions[${revision.seq}].plan.lanes[${laneIndex}].run_id: ${JSON.stringify(lane.run_id)} must remain bound to issue ${binding.issue} and branch ${JSON.stringify(binding.branch)} across revision history`
+        )
+      } else if (!binding) {
+        runBindings.set(lane.run_id, {
+          issue: lane.issue,
+          branch: lane.branch,
+          fence: lane.fence || [],
+          expansions: lane.expansions || [],
+          firstTime: revisionTime
+        })
+      }
+      const stableBinding = binding || runBindings.get(lane.run_id)
+      if (
+        binding &&
+        canonicalJsonForDigest(lane.fence || []) !== canonicalJsonForDigest(binding.fence)
+      ) {
+        errors.push(
+          `$plan.revisions[${revision.seq}].plan.lanes[${laneIndex}].fence: must remain immutable for run_id ${JSON.stringify(lane.run_id)} across revision history`
+        )
+      }
+      // Captured before the append-only-prefix check below may advance
+      // binding.expansions to this revision's list, so it stays "how many
+      // of this revision's expansions already existed as of the previous
+      // revision" for the newly-appended lower bound further down.
+      const priorExpansionsLength = binding ? binding.expansions.length : 0
+      if (binding) {
+        const expansions = lane.expansions || []
+        const prefixIsUnchanged =
+          expansions.length >= binding.expansions.length &&
+          binding.expansions.every(
+            (expansion, index) =>
+              canonicalJsonForDigest(expansion) === canonicalJsonForDigest(expansions[index])
+          )
+        if (!prefixIsUnchanged) {
+          errors.push(
+            `$plan.revisions[${revision.seq}].plan.lanes[${laneIndex}].expansions: must append to the prior expansion list verbatim for run_id ${JSON.stringify(lane.run_id)}`
+          )
+        } else {
+          binding.expansions = expansions
+        }
+      } else if ((lane.expansions || []).length > 0) {
+        errors.push(
+          `$plan.revisions[${revision.seq}].plan.lanes[${laneIndex}].expansions: must be empty in run_id ${JSON.stringify(lane.run_id)}'s first revision`
+        )
+      }
+      const currentExpansions = lane.expansions || []
+      for (const [expansionIndex, expansion] of currentExpansions.entries()) {
+        const expansionTime = Date.parse(expansion.at)
+        if (!Number.isFinite(expansionTime)) {
+          errors.push(
+            `$plan.revisions[${revision.seq}].plan.lanes[${laneIndex}].expansions[${expansionIndex}].at: must parse as a finite instant`
+          )
+          continue
+        }
+        if (
+          Number.isFinite(stableBinding.firstTime) &&
+          Number.isFinite(revisionTime) &&
+          (expansionTime < stableBinding.firstTime || expansionTime > revisionTime)
+        ) {
+          errors.push(
+            `$plan.revisions[${revision.seq}].plan.lanes[${laneIndex}].expansions[${expansionIndex}].at: must fall between the first revision and its containing revision for run_id ${JSON.stringify(lane.run_id)}`
+          )
+        }
+        // The check above bounds every expansion by the lane's very first
+        // revision, which never advances — so a newly appended expansion can
+        // still be backdated to just after that first revision, well before
+        // the revision (or the previous expansion) it actually follows. Only
+        // apply this stricter pair to indices this revision actually added;
+        // an unchanged prefix already satisfied it when it was first added.
+        if (expansionIndex >= priorExpansionsLength) {
+          if (Number.isFinite(previousRevisionTime) && expansionTime < previousRevisionTime) {
+            errors.push(
+              `$plan.revisions[${revision.seq}].plan.lanes[${laneIndex}].expansions[${expansionIndex}].at: newly appended expansion must not precede revision ${revision.seq - 1} for run_id ${JSON.stringify(lane.run_id)}`
+            )
+          }
+          if (expansionIndex > 0) {
+            const priorExpansionTime = Date.parse(currentExpansions[expansionIndex - 1].at)
+            if (Number.isFinite(priorExpansionTime) && expansionTime < priorExpansionTime) {
+              errors.push(
+                `$plan.revisions[${revision.seq}].plan.lanes[${laneIndex}].expansions[${expansionIndex}].at: newly appended expansion must not precede the previous expansion for run_id ${JSON.stringify(lane.run_id)}`
+              )
+            }
+          }
+        }
+      }
+    }
+    previousRevisionTime = revisionTime
+  }
+}
+
+// Returns { evidence_registrations, pr_bindings, outcome_transitions },
+// each either the chain's own verified, deduped, seq-ordered entries or
+// `null` when that chain had ANY error (missing/wrong-shaped fields, a
+// fork, a contiguity gap, or a broken digest) — mirroring
+// dev-flow-stats.mjs's own verifyRunRecordChains, whose caller
+// (reconstructAsOf) only ever projects flat fields from chains it has
+// already confirmed clean. checkRunFlatProjections below reads this
+// return value rather than re-deriving trust from a chain this function
+// already found broken.
+function checkRunChainIntegrity(document, errors) {
+  const verified = {}
+  for (const [arrayName, contentKeys] of Object.entries(CHAIN_CONTENT_FIELDS)) {
+    const rawEntries = document[arrayName]
+    verified[arrayName] = null
+    if (!Array.isArray(rawEntries)) continue
+    // Schema-level checks already require seq/digest/prev_digest and their
+    // shape on every entry; skip silently (this function is not
+    // responsible for reporting that).
+    if (
+      !rawEntries.every(
+        (e) =>
+          typeof e === 'object' &&
+          e !== null &&
+          typeof e.seq === 'number' &&
+          typeof e.digest === 'string' &&
+          typeof e.prev_digest === 'string'
+      )
+    ) {
+      continue
+    }
+    // A resumed writer's own retry re-appends an entry that already
+    // landed — same seq, same content, same prev_digest, same digest —
+    // which must collapse to one logical entry before the sequential
+    // walk below, exactly as dev-flow-stats.mjs's own
+    // normalizeExactDuplicates does; two entries sharing a seq but
+    // disagreeing on canonical {content, prev_digest, digest} are a
+    // genuine FORK and must fail closed rather than have either one
+    // silently picked.
+    const bySeq = new Map()
+    for (const entry of rawEntries) {
+      const list = bySeq.get(entry.seq) || []
+      list.push(entry)
+      bySeq.set(entry.seq, list)
+    }
+    let forked = false
+    const deduped = []
+    for (const [seq, group] of bySeq) {
+      const canonicalOf = (e) => {
+        const content = Object.fromEntries(contentKeys.map((key) => [key, e[key]]))
+        return canonicalJsonForDigest({ content, prev_digest: e.prev_digest, digest: e.digest })
+      }
+      const firstKey = canonicalOf(group[0])
+      if (!group.every((e) => canonicalOf(e) === firstKey)) {
+        errors.push(
+          `$run.${arrayName}: two entries at seq ${seq} share a predecessor but carry different content — forked chain`
+        )
+        forked = true
+        break
+      }
+      deduped.push(group[0])
+    }
+    if (forked) continue
+    deduped.sort((a, b) => a.seq - b.seq)
+    let contiguous = true
+    for (let i = 0; i < deduped.length; i++) {
+      if (deduped[i].seq !== i) {
+        errors.push(
+          `$run.${arrayName}: expected seq ${i}, got ${deduped[i].seq} — chain not contiguous from 0`
+        )
+        contiguous = false
+        break
+      }
+    }
+    if (!contiguous) continue
+    let prevDigest = 'genesis'
+    let brokenDigest = false
+    for (const entry of deduped) {
+      if (entry.prev_digest !== prevDigest) {
+        errors.push(
+          `$run.${arrayName}[${entry.seq}].prev_digest: ${JSON.stringify(entry.prev_digest)} does not match the preceding entry's own digest (${JSON.stringify(prevDigest)}) — chain broken`
+        )
+        brokenDigest = true
+        break // one break invalidates every entry after it; no point compounding
+      }
+      const content = Object.fromEntries(contentKeys.map((key) => [key, entry[key]]))
+      const expected = entryDigestForCheck(content, prevDigest)
+      if (entry.digest !== expected) {
+        errors.push(
+          `$run.${arrayName}[${entry.seq}].digest: does not match its own content — tampered`
+        )
+        brokenDigest = true
+        break
+      }
+      prevDigest = entry.digest
+    }
+    if (!brokenDigest) verified[arrayName] = deduped
+  }
+  return verified
+}
+
+// checkRunFlatProjections — evidence_comments/pr/outcome are each
+// documented as "a derived projection" of their own chain (run.schema.
+// json's own field descriptions), so a chain that verifies clean is not
+// by itself proof the record is trustworthy: nothing before this point
+// checked that the FLAT field actually equals what its chain derives.
+// Fresh evidence beyond the earlier digest-chain finding (shepherd round
+// 6, Codex-confirmed P1): outcome_transitions-harmless-retry.json (round
+// 4's own fixture) still printed "run record OK" here even though its
+// chain derives outcome "ready-for-review" while its flat `outcome` field
+// is null — dev-flow-stats.mjs's own reconstructAsOf() rejects the
+// identical document as an out-of-band edit. Mirrors
+// dev-flow-stats.mjs's deriveProjections/verifyProjections exactly:
+// evidence_comments[] is evidence_registrations[] with its chain-only
+// fields (seq/digest/prev_digest/registered_at) stripped, in seq order;
+// pr/outcome are each the LAST entry of their own chain (or null if
+// empty). Only runs against a chain checkRunChainIntegrity already
+// verified clean — a chain it found broken already has its own error,
+// and deriving a projection from broken data would be checking
+// consistency against a value nothing establishes as trustworthy.
+function checkRunFlatProjections(document, verifiedChains, errors) {
+  if (verifiedChains.evidence_registrations !== null) {
+    const derived = verifiedChains.evidence_registrations.map((r) => ({
+      id: r.id,
+      author_actor_id: r.author_actor_id,
+      login: r.login,
+      digest: r.payload_digest,
+      marker: r.marker
+    }))
+    if (
+      canonicalJsonForDigest(document.evidence_comments || []) !== canonicalJsonForDigest(derived)
+    ) {
+      errors.push(
+        '$run.evidence_comments: does not match its evidence_registrations[] chain — out-of-band edit'
+      )
+    }
+  }
+  if (verifiedChains.pr_bindings !== null) {
+    const lastPr = verifiedChains.pr_bindings[verifiedChains.pr_bindings.length - 1]
+    const derivedPr = lastPr ? { number: lastPr.number, url: lastPr.url } : null
+    if (canonicalJsonForDigest(document.pr ?? null) !== canonicalJsonForDigest(derivedPr)) {
+      errors.push('$run.pr: does not match its pr_bindings[] chain — out-of-band edit')
+    }
+  }
+  if (verifiedChains.outcome_transitions !== null) {
+    const lastOutcome =
+      verifiedChains.outcome_transitions[verifiedChains.outcome_transitions.length - 1]
+    const derivedOutcome = lastOutcome ? lastOutcome.outcome : null
+    if (
+      canonicalJsonForDigest(document.outcome ?? null) !== canonicalJsonForDigest(derivedOutcome)
+    ) {
+      errors.push('$run.outcome: does not match its outcome_transitions[] chain — out-of-band edit')
+    }
+  }
+}
+
+// checkRunOutcomeTransitionsBound — a run reaches exactly one terminal
+// outcome. run.schema.json bounds each ENTRY's own shape but nothing
+// structural stops two chain- and digest-valid entries at different `seq`
+// values (e.g. "capped" then "ready-for-review") from both validating —
+// a downstream reader taking the LAST entry as authoritative (run.schema.
+// json's own field description: "a derived projection: the last entry's
+// outcome") would then launder a real failure into a success.
+// retro/assets/dev-flow-stats.mjs's own harvester already rejects this (shepherd
+// round 2 of #663, Codex-confirmed P1); this ports the same bound to the
+// shared validator so any other writer or consumer catches the mistake
+// before ever posting a broken record, not after. Counting distinct `seq`
+// values (rather than raw array length) is deliberate: a resumed writer's
+// own retry re-appending an already-landed entry shares that entry's seq
+// and must not trip this — the same harmless-duplicate case
+// normalizeExactDuplicates collapses on the harvester side.
+function checkRunOutcomeTransitionsBound(document, errors) {
+  const entries = document.outcome_transitions
+  if (!Array.isArray(entries)) return
+  const seqs = new Set(entries.map((entry) => entry.seq).filter((seq) => typeof seq === 'number'))
+  if (seqs.size > 1) {
+    errors.push(
+      `$run.outcome_transitions has ${seqs.size} distinct terminal entries — a run reaches exactly one terminal outcome`
     )
   }
 }
@@ -1889,20 +3227,12 @@ function checkEvidenceMarkerStageVisited(document, errors) {
 // checkEvidenceMarkerStageVisited above.
 function checkEvidenceMarkerPrDestinationRequiresPr(document, errors) {
   if (!Array.isArray(document.evidence_comments)) return
+  if (document.pr !== null && document.pr !== undefined) return
   for (const [index, comment] of document.evidence_comments.entries()) {
     const marker = comment.marker
-    if (
-      marker &&
-      marker.destination === 'pr' &&
-      (document.pr === null || document.pr === undefined)
-    ) {
+    if (marker && marker.destination === 'pr') {
       errors.push(
         `$run.evidence_comments[${index}].marker.destination: "pr" requires a non-null $run.pr — this run has no PR yet`
-      )
-    }
-    if (marker && marker.destination === 'pr' && marker.round !== null) {
-      errors.push(
-        `$run.evidence_comments[${index}].marker.round: must be null when destination is "pr" — PR evidence is a per-stage rollup, while per-round evidence belongs on the issue`
       )
     }
   }
@@ -1981,18 +3311,7 @@ function checkAdjudicationRunIdMatchesRun(document, adjudications, errors) {
 // with zero or one document, no cross-document collision is possible.
 function checkAdjudicationsUnionUnique(adjudications, errors) {
   const seenAt = new Map()
-  const seenRoundAt = new Map()
   for (const { file, data } of adjudications) {
-    if (typeof data.stage === 'string' && Number.isInteger(data.round)) {
-      const roundKey = JSON.stringify([data.stage, data.round])
-      if (seenRoundAt.has(roundKey)) {
-        errors.push(
-          `$run: stage ${data.stage}, round ${data.round} is represented by more than one supplied --adjudication document (${seenRoundAt.get(roundKey)}, ${file})`
-        )
-      } else {
-        seenRoundAt.set(roundKey, file)
-      }
-    }
     for (const entry of data.adjudications ?? []) {
       if (typeof entry.finding_id !== 'string') continue
       if (seenAt.has(entry.finding_id)) {
@@ -2027,17 +3346,136 @@ function checkAdjudicationStagesVisited(document, adjudications, errors) {
   }
 }
 
-function checkAdjudicationEvidenceMarkers(document, adjudications, errors) {
-  const markers = (document.evidence_comments ?? [])
-    .map((comment) => comment.marker)
-    .filter((marker) => marker && marker.destination === 'issue')
-  for (const { file, data } of adjudications) {
-    const hasMarker = markers.some(
-      (marker) => marker.stage === data.stage && marker.round === data.round
-    )
-    if (!hasMarker) {
+// checkReceiptVariants — oneOf deliberately reports only its stable indexed
+// summary, so validate the discriminated receipt branch as well. Besides a
+// useful field-level diagnostic, this keeps the negative-fixture coverage
+// audit capable of proving every variant requirement and enum constraint.
+function checkReceiptVariants(document, runSchema, location, errors) {
+  if (!Array.isArray(document.receipts)) return
+  const branches = runSchema.properties.receipts.items.oneOf
+  for (const [index, receipt] of document.receipts.entries()) {
+    if (receipt === null || typeof receipt !== 'object' || Array.isArray(receipt)) continue
+    const candidates = Object.hasOwn(receipt, 'kind')
+      ? branches.filter((branch) => branch.properties.kind.const === receipt.kind)
+      : branches
+    for (const branch of candidates) {
+      errors.push(...validateAgainst(branch, receipt, `${location}.receipts[${index}]`))
+    }
+  }
+}
+
+// checkEvidenceStagesVisited — receipts and slot failures are trusted stage
+// evidence, so neither may name a confidence stage absent from the run's
+// canonical stage history. Membership is deliberately the whole contract:
+// occurrence ordering and timestamp binding remain the exit engine's job.
+function checkEvidenceStagesVisited(document, receiptsRecord, receiptLocation, errors) {
+  const visitedStages = new Set(
+    (document.stage_transitions ?? []).map((transition) => transition.stage)
+  )
+  for (const [index, receipt] of (receiptsRecord.receipts ?? []).entries()) {
+    if (
+      receipt !== null &&
+      typeof receipt === 'object' &&
+      receipt.kind === 'transition' &&
+      typeof receipt.stage === 'string' &&
+      !visitedStages.has(receipt.stage)
+    ) {
       errors.push(
-        `$run.evidence_comments: --adjudication ${file} has no matching issue evidence marker for stage ${data.stage}, round ${data.round}`
+        `${receiptLocation}.receipts[${index}].stage: stage ${receipt.stage} never appears in this run's stage_transitions`
+      )
+    }
+  }
+  if (receiptsRecord !== document) return
+  for (const [index, failure] of (document.slot_failures ?? []).entries()) {
+    if (typeof failure.stage === 'string' && !visitedStages.has(failure.stage)) {
+      errors.push(
+        `$run.slot_failures[${index}].stage: stage ${failure.stage} never appears in this run's stage_transitions`
+      )
+    }
+  }
+}
+
+// checkSlotFailureKeys — a slot has at most one terminal failure record per
+// logical round. Conflicting records cannot be resolved by array order because
+// both reason and head feed the exit decision.
+function checkSlotFailureKeys(document, errors) {
+  const firstIndexByKey = new Map()
+  for (const [index, failure] of (document.slot_failures ?? []).entries()) {
+    const key = JSON.stringify([failure.stage, failure.round, failure.slot])
+    const firstIndex = firstIndexByKey.get(key)
+    if (firstIndex !== undefined) {
+      errors.push(
+        `$run.slot_failures[${index}]: duplicates slot_failures[${firstIndex}] key (${failure.stage}, ${failure.round}, ${failure.slot})`
+      )
+      continue
+    }
+    firstIndexByKey.set(key, index)
+  }
+}
+
+// checkCapAuthorizationKeys — one maintainer authorization per (stage, round)
+// over the resolved cap (harmon-devkit#1239). Two entries for the same round
+// cannot both be the instruction that admitted it, so the record names one.
+// Whether the round really lies above the cap is the exit engine's and the
+// renderer's check (lib/cap-authorizations.mjs): this document carries no
+// policy to compare against.
+function checkCapAuthorizationKeys(document, errors) {
+  const firstIndexByKey = new Map()
+  for (const [index, entry] of (document.cap_authorizations ?? []).entries()) {
+    const key = JSON.stringify([entry.stage, entry.round])
+    const firstIndex = firstIndexByKey.get(key)
+    if (firstIndex !== undefined) {
+      errors.push(
+        `$run.cap_authorizations[${index}]: duplicates cap_authorizations[${firstIndex}] key (${entry.stage}, ${entry.round})`
+      )
+      continue
+    }
+    firstIndexByKey.set(key, index)
+  }
+}
+
+// checkReceiptsRecord — an independent --receipts file is a run-directory
+// subset, not necessarily a complete persisted run record. Validate the two
+// fields strict mode trusts with the canonical run schema definitions before
+// using that file to authorize any adjudication stage.
+function checkReceiptsRecord(document, receiptsRecord, runSchema, errors) {
+  const contextSchema = {
+    type: 'object',
+    required: ['run_id', 'receipts'],
+    properties: {
+      run_id: runSchema.properties.run_id,
+      receipts: runSchema.properties.receipts
+    }
+  }
+  errors.push(...validateAgainst(contextSchema, receiptsRecord, '$receipts'))
+  checkReceiptVariants(receiptsRecord, runSchema, '$receipts', errors)
+  checkTimestampRealness(receiptsRecord, errors, '$receipts')
+  checkEvidenceStagesVisited(document, receiptsRecord, '$receipts', errors)
+  if (typeof receiptsRecord.run_id === 'string' && receiptsRecord.run_id !== document.run_id) {
+    errors.push(
+      `$run: --receipts record has run_id ${receiptsRecord.run_id}, not this run's own run_id ${document.run_id}`
+    )
+  }
+}
+
+// checkAdjudicationsAgainstReceipts — strict mode (--receipts): every supplied
+// --adjudication document's stage must have a corresponding transition receipt
+// in the run record's receipts array. This mirrors how dev-flow-exit.mjs
+// validates passes against run.json.receipts: the receipt sequence is the
+// trusted event log, and a document naming a stage with no transition receipt
+// is a document about an event the log never recorded. Without --receipts,
+// this check does not run and adjudications are trusted as-is.
+function checkAdjudicationsAgainstReceipts(document, receiptsRecord, adjudications, errors) {
+  const receipts = Array.isArray(receiptsRecord.receipts) ? receiptsRecord.receipts : []
+  const transitionStages = new Set(
+    receipts
+      .filter((r) => r !== null && typeof r === 'object' && r.kind === 'transition')
+      .map((r) => r.stage)
+  )
+  for (const { file, data } of adjudications) {
+    if (typeof data.stage === 'string' && !transitionStages.has(data.stage)) {
+      errors.push(
+        `$run: --adjudication ${file} has stage ${data.stage}, which has no transition receipt in the --receipts record`
       )
     }
   }
@@ -2258,6 +3696,80 @@ function checkSplitAdjudicationsRecordedBeforePromotion(document, adjudications,
   }
 }
 
+// checkAdjudicationEvidenceMarkers — harmon-devkit#685: "every adjudicated
+// round has a matching issue evidence marker (destination: issue, same
+// stage/round); a `pr`-destination marker does not substitute". The spec is
+// explicit that "each round's evidence is posted to the issue" with no
+// exception (run.schema.json's own marker.destination description says so),
+// and the `pr` destination is documented there as the per-stage ROLLUP
+// comment that links "back to the per-round issue comments" — so the rollup
+// is posted AFTER the comments it links to, and is never a substitute for
+// them.
+//
+// Nothing enforced this: checkAdjudicationStagesVisited only proves the
+// adjudicated STAGE was visited, and checkEvidenceMarker* only constrain
+// markers that happen to exist. A run could adjudicate every round, settle
+// every deferral, promote, and carry an entirely empty evidence_comments[]
+// — leaving the harvester (retro/assets/dev-flow-stats.mjs) nothing to read back
+// and authenticate for rounds that demonstrably happened.
+//
+// TWO rules, because they hold at different times. A run adjudicates a
+// round and THEN publishes its evidence comment, so between those two
+// writes a legitimate in-flight record has the adjudication and not yet the
+// marker — an unconditional "marker or error" would fault the normal
+// sequence rather than an attack:
+//
+//   - MISSING ENTIRELY is faulted once the run has ENDED — any non-null
+//     outcome, not `ready-for-review` alone. The in-flight window this
+//     relaxation exists for is exactly `outcome: null`; a `capped`,
+//     `escalated`, or `abandoned` run is just as finished as a promoted
+//     one, and its evidence is just as durable a thing to be missing.
+//     A capped run that never opened a PR is the sharpest case: its issue
+//     comments are the ONLY harvestable record it will ever have. Codex
+//     cloud-review cycle 1 on PR #800, confirmed — the first version of
+//     this check treated only `ready-for-review` as terminal.
+//   - A `pr` MARKER WITHOUT ITS `issue` SIBLING is faulted at any time. The
+//     ordering above is fixed by the schema's own description, so a rollup
+//     that exists while the per-round comment it links back to does not is
+//     an inconsistency at every point in a run, not a stage of one.
+//
+// Runs only alongside --adjudication/--no-adjudications, like every other
+// cross-document check here: the adjudicated (stage, round) pairs are the
+// input, and without them there is nothing to require a marker for. A
+// marker carrying round: null is a per-stage rollup, not a per-round
+// comment at all, so it never satisfies (and is never faulted by) this
+// whatever its destination — only a marker naming the same round matters.
+function checkAdjudicationEvidenceMarkers(document, adjudications, errors) {
+  const issueMarkers = new Set()
+  const prMarkers = new Set()
+  for (const comment of document.evidence_comments ?? []) {
+    const marker = comment.marker
+    if (!marker || typeof marker.stage !== 'string' || typeof marker.round !== 'number') continue
+    const key = `${marker.stage}/r${marker.round}`
+    if (marker.destination === 'issue') issueMarkers.add(key)
+    else if (marker.destination === 'pr') prMarkers.add(key)
+  }
+  const ended = document.outcome !== null && document.outcome !== undefined
+  const seen = new Set()
+  for (const { file, data } of adjudications) {
+    if (typeof data.stage !== 'string' || typeof data.round !== 'number') continue
+    const key = `${data.stage}/r${data.round}`
+    if (issueMarkers.has(key) || seen.has(key)) continue
+    if (prMarkers.has(key)) {
+      seen.add(key)
+      errors.push(
+        `$run.evidence_comments: --adjudication ${file} adjudicates ${data.stage} round ${data.round}, whose only evidence marker for it has destination "pr" — the per-round record belongs on the issue, and a pr comment never substitutes for it`
+      )
+      continue
+    }
+    if (!ended) continue
+    seen.add(key)
+    errors.push(
+      `$run.evidence_comments: --adjudication ${file} adjudicates ${data.stage} round ${data.round}, but no evidence marker with destination "issue" records it — required once the run has ended (outcome ${JSON.stringify(document.outcome)})`
+    )
+  }
+}
+
 // checkDeferredFindingsSettledBeforePromotion — the converse of
 // checkSettlementsAgainstAdjudications above (which forbids a settlement
 // of anything but a deferred finding): a run cannot claim
@@ -2335,6 +3847,18 @@ function checkTimestampRealness(value, errors, location) {
 
 function main() {
   const { kind, file, options } = parseArgs(process.argv.slice(2))
+  if (kind === 'brief') {
+    const loaded = loadBrief(file)
+    const errors = loaded.errors
+    if (loaded.instance && errors.length === 0) {
+      const schema = loadSchema('brief.envelope.schema.json')
+      errors.push(...validateAgainst(schema, loaded.instance, '$brief'))
+      if (errors.length === 0) checkBriefFacts(loaded.instance, errors)
+      checkTimestampRealness(loaded.instance, errors, '$brief')
+    }
+    report(errors, 'brief envelope OK')
+    return
+  }
   const instance = loadJson(file)
   const role = kind === 'envelope' ? instance.role : kind
   checkReceiptRequirements(kind, role, options)
@@ -2356,7 +3880,14 @@ function main() {
   if (kind === 'run') {
     const schema = loadSchema('run.schema.json')
     const errors = validateAgainst(schema, instance, '$run')
+    checkReceiptVariants(instance, schema, '$run', errors)
     if (errors.length === 0) {
+      checkEvidenceStagesVisited(instance, instance, '$run', errors)
+      checkSlotFailureKeys(instance, errors)
+      checkCapAuthorizationKeys(instance, errors)
+      if (options.receiptsRecord) {
+        checkReceiptsRecord(instance, options.receiptsRecord, schema, errors)
+      }
       checkSettlements(instance, errors)
       checkSplits(instance, errors)
       checkEvidenceMarkerRunId(instance, errors)
@@ -2365,8 +3896,12 @@ function main() {
       checkEvidenceMarkerSequenceContiguity(instance, errors)
       checkEvidenceCommentsUniqueness(instance, errors)
       checkRunPromotionOutcome(instance, errors)
+      checkRunOutcomeTransitionsBound(instance, errors)
+      checkRunFlatProjections(instance, checkRunChainIntegrity(instance, errors), errors)
       checkSettlementReferenceType(instance, errors)
       checkStageTransitionsOrder(instance, errors)
+      checkLaneAssemblies(instance, errors)
+      checkRemediationPushes(instance, errors)
       checkRunChronology(instance, errors)
       // --no-adjudications asserts "confirmed zero", which runs the SAME
       // checks as one-or-more --adjudication documents, just against the
@@ -2374,20 +3909,37 @@ function main() {
       // existing settlement (none of them can be adjudicated by nothing),
       // exactly the "any settlement -> error" contract this flag promises.
       if (options.adjudications.length > 0 || options.noAdjudications) {
+        if (options.receiptsRecord) {
+          checkAdjudicationsAgainstReceipts(
+            instance,
+            options.receiptsRecord,
+            options.adjudications,
+            errors
+          )
+        }
         checkAdjudicationRunIdMatchesRun(instance, options.adjudications, errors)
         checkAdjudicationsUnionUnique(options.adjudications, errors)
         checkAdjudicationStagesVisited(instance, options.adjudications, errors)
-        checkAdjudicationEvidenceMarkers(instance, options.adjudications, errors)
         checkSettlementsAgainstAdjudications(instance, options.adjudications, errors)
         checkSplitsAgainstAdjudications(instance, options.adjudications, errors)
         checkSplitAdjudicationsRecordedBeforePromotion(instance, options.adjudications, errors)
         checkDeferredFindingsSettledBeforePromotion(instance, options.adjudications, errors)
+        checkAdjudicationEvidenceMarkers(instance, options.adjudications, errors)
       }
     }
     checkTimestampRealness(instance, errors, '$run')
     const skipped = skippedContextFlags(kind, role, options)
     const suffix = skipped.length > 0 ? ` (context skipped: ${skipped.join(', ')})` : ''
     report(errors, `run record OK${suffix}`)
+    return
+  }
+
+  if (kind === 'plan') {
+    const schema = loadSchema('plan.schema.json')
+    const errors = validateAgainst(schema, instance, '$plan')
+    if (errors.length === 0) checkDispatchPlan(instance, errors)
+    checkTimestampRealness(instance, errors, '$plan')
+    report(errors, 'dispatch plan OK')
     return
   }
 
