@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://github.com/evanharmon1/harmon-devkit/ai/schemas/result.envelope.schema.json",
   "title": "Dev flow v2 result envelope",
-  "$comment": "Composition: `payload` is deliberately untyped here ({type: object}). scripts/validate-result-schemas.mjs reads `role`, resolves the matching result.<role>.schema.json, and validates `payload` against THAT schema's own root -- see ai/schemas/README.md 'Composition'. The hand-rolled subset validator (scripts/lib/json-schema-subset.mjs) has no cross-file $ref, so each schema file stays self-contained and the validator script performs the role dispatch instead of the schema itself.",
+  "$comment": "Composition: `payload` is deliberately untyped here ({type: object}). ai/skills/universal/dev-flow-support/assets/validate-result-schemas.mjs reads `role`, resolves the matching result.<role>.schema.json, and validates `payload` against THAT schema's own root -- see ai/schemas/README.md 'Composition'. The hand-rolled subset validator (ai/skills/universal/dev-flow-support/assets/lib/json-schema-subset.mjs) has no cross-file $ref, so each schema file stays self-contained and the validator script performs the role dispatch instead of the schema itself.",
   "type": "object",
   "additionalProperties": false,
   "required": ["schema", "role", "status", "head", "produced_at", "producer", "run", "payload"],
