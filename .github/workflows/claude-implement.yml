@@ -158,7 +158,7 @@ jobs:
           acquired=true
           echo "acquired=$acquired" >>"$GITHUB_OUTPUT"
       # The narrow token Claude reaches via git/gh: push commits (contents), open
-      # PRs (pull-requests), comment (issues), and watch CI (checks/statuses read).
+      # PRs (pull-requests), comment (issues), and watch CI (checks/statuses/actions read).
       # Minted only AFTER the sender is authorized. It lacks workflows:write,
       # so a push that edits .github/workflows/ is rejected by GitHub, keeping a prompt-injected
       # run from rewriting CI.
@@ -172,6 +172,7 @@ jobs:
           permission-issues: write
           permission-checks: read
           permission-statuses: read
+          permission-actions: read
       # Exception to the repo-wide `persist-credentials: false` hardening:
       # this checkout deliberately persists the short-lived narrow CI App token
       # for two reasons. Claude's `git push` of the working branch needs it to

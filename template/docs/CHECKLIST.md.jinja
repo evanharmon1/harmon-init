@@ -295,7 +295,8 @@ the compatibility reason in the rule's `description`.
 - [ ] **Create** the CI GitHub App `[[ github_org ]]-ci` by hand (one App per org;
       **Settings → Developer settings → GitHub Apps**), or reuse the org's existing one.
 - [ ] **[human-only] Confirm CI GitHub App permissions** — the App must grant
-      **Checks: Read-only** and **Commit statuses: Read-only** for
+      **Checks: Read-only**, **Commit statuses: Read-only**, and
+      **Actions: Read-only** for
       claude-implement's `gh pr checks`. For an existing App, update its
       **Permissions & events** and accept the new permissions on **every
       installation**; until then, `create-github-app-token` fails and

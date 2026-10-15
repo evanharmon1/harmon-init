@@ -702,6 +702,7 @@ nothing more:
 | Issues | Read and write | claude comments/labels/updates issues |
 | Checks | Read-only | claude-implement watches CI with `gh pr checks`, including on private repos |
 | Commit statuses | Read-only | claude-implement reads the status rollup with `gh pr checks` |
+| Actions | Read-only | claude-implement reads workflow-run metadata with `gh pr checks` |
 | Workflows | Read and write | claude may edit files under `.github/workflows/` |
 | Metadata | Read-only | required baseline |
 
