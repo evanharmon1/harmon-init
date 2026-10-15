@@ -8,6 +8,15 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [5.8.2](https://github.com/evanharmon1/harmon-init/compare/v5.8.1...v5.8.2) (2026-10-15)
+
+
+### Bug Fixes
+
+* **ci:** honor the job-private store on pnpm 10 ([#1703](https://github.com/evanharmon1/harmon-init/issues/1703)) ([9248f26](https://github.com/evanharmon1/harmon-init/commit/9248f2692b59da4c86ee37968eb1a47aa690923c))
+* **claude:** raise the Claude workflow budgets and run every workflow at effort high ([#1698](https://github.com/evanharmon1/harmon-init/issues/1698)) ([cb0d28d](https://github.com/evanharmon1/harmon-init/commit/cb0d28d24f537e9b105fd086234f8d05f7db865c))
+* **security:** let run-semgrep.sh run when uv's default tool/cache dirs are read-only ([#1699](https://github.com/evanharmon1/harmon-init/issues/1699)) ([2904549](https://github.com/evanharmon1/harmon-init/commit/290454907a41caea79de65d75016baac4acf964b))
+
 ## [5.8.1](https://github.com/evanharmon1/harmon-init/compare/v5.8.0...v5.8.1) (2026-10-15)
 
 
