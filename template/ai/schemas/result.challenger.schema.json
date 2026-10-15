@@ -35,7 +35,7 @@
       "minLength": 1
     },
     "slot": {
-      "description": "The configured primary finder this pass fills (specs/dev-flow-v2.md § Configuration: 'each primary finder defines one round slot'). Equal to `finder` on a primary pass; on a fallback pass, `slot` stays the configured primary while `finder` names who actually ran (see `substitutes_for`). Optional here so existing envelope-only fixtures/producers remain valid — scripts/dev-flow-exit.mjs (#636), which assembles logical rounds from this field, requires it on every pass it consumes; this schema only bounds its shape when present.",
+      "description": "The configured primary finder this pass fills (specs/dev-flow-v2.md § Configuration: 'each primary finder defines one round slot'). Equal to `finder` on a primary pass; on a fallback pass, `slot` stays the configured primary while `finder` names who actually ran (see `substitutes_for`). Optional here so existing envelope-only fixtures/producers remain valid — ai/skills/universal/dev-flow-support/assets/dev-flow-exit.mjs (#636), which assembles logical rounds from this field, requires it on every pass it consumes; this schema only bounds its shape when present.",
       "type": "string",
       "minLength": 1
     },
@@ -62,7 +62,7 @@
       }
     },
     "attack_scenarios": {
-      "description": "Adversarial scenarios this pass attempted against the design or approach, independent of whether each one surfaced a finding — the record that the challenger actually attacked the change rather than only reporting what it happened to notice. Required non-empty when the envelope status is completed (a clean pass still records what it attempted) and required empty when blocked (scripts/validate-result-schemas.mjs's checkChallengerAttackScenarios). A scenario whose outcome is `surfaced-finding` names the finding it produced via `finding_id`; the validator cross-checks that id against this same pass's own `findings[]` (a same-document check, no external context needed).",
+      "description": "Adversarial scenarios this pass attempted against the design or approach, independent of whether each one surfaced a finding — the record that the challenger actually attacked the change rather than only reporting what it happened to notice. Required non-empty when the envelope status is completed (a clean pass still records what it attempted) and required empty when blocked (ai/skills/universal/dev-flow-support/assets/validate-result-schemas.mjs's checkChallengerAttackScenarios). A scenario whose outcome is `surfaced-finding` names the finding it produced via `finding_id`; the validator cross-checks that id against this same pass's own `findings[]` (a same-document check, no external context needed).",
       "type": "array",
       "items": { "$ref": "#/$defs/attackScenario" }
     }
