@@ -10,6 +10,7 @@
 #   resolve + validate a stable upstream release
 #     -> rewrite BOTH pins
 #     -> `task sync:skills`
+#     -> mirror shipped and required registry schemas from vendored support assets
 #     -> assert the diff touched nothing but the expected paths
 #     -> verify
 #     -> commit, force-push the rolling bot branch, open/update exactly ONE PR
@@ -249,7 +250,8 @@ changed_paths_nl() {
 # post-sync `# managed:` lines: a skill the new pin dropped appears only in the
 # old list, one it added only in the new. Anything else — a local skill's
 # contents, an unrelated file — is an unexpected write and aborts the run before
-# anything is committed or pushed.
+# anything is committed or pushed. Shipped and registry-named schema mirrors are also
+# allowed, by exact destination path only.
 # managed_from_stamp PROV — the `# managed:` names recorded on a provenance
 # stamp, taken from BOTH the committed and working-tree copies so a name the
 # sync just added or just removed is allowed either way.
@@ -281,6 +283,94 @@ agents_dest_from_manifest() {
     sed -n '/^agents:/,$p' "$ROOT_MANIFEST" |
         sed -n 's/^[[:space:]]*dest:[[:space:]]*//p' | sed -n '1p' |
         sed 's/[[:space:]]*#.*//' | tr -d '"'"'"''
+}
+
+# Mirror every shipped flat schema also shipped by the pinned support assets,
+# plus every required registry schema, including ones not shipped locally yet.
+SCHEMA_DESTINATIONS=""
+SCHEMA_REPO_ROOT="$(pwd -P)"
+assert_schema_destination() {
+    [ ! -L "$1" ] || die "symlinked schema destination: $1 — nothing pushed"
+    _asd_parent="$(cd "$(dirname "$1")" && pwd -P)" ||
+        die "cannot resolve schema destination directory: $1 — nothing pushed"
+    case "$_asd_parent" in
+    "$SCHEMA_REPO_ROOT/ai/schemas" | "$SCHEMA_REPO_ROOT/template/ai/schemas") ;;
+    *) die "unexpected schema destination directory: $1 — nothing pushed" ;;
+    esac
+}
+
+# Root and template schema twins must receive identical, gate-formatted bytes.
+mirror_schema_destination() {
+    _msd_source="$1" _msd_root="$2"
+    _msd_destinations="$_msd_root"
+    if [ -f "template/$_msd_root" ] || [ -L "template/$_msd_root" ]; then
+        _msd_destinations="${_msd_destinations}${LF}template/$_msd_root"
+    fi
+    _msd_write=0
+    while IFS= read -r _msd_dest; do
+        assert_schema_destination "$_msd_dest"
+        if [ -f "$_msd_dest" ] &&
+            _msd_existing="$(jq -S . "$_msd_dest" 2>/dev/null)" &&
+            [ "$_msd_existing" = "$(jq -S . "$_msd_source")" ]; then
+            continue
+        fi
+        _msd_write=1
+    done <<EOF
+$_msd_destinations
+EOF
+    [ "$_msd_write" -eq 1 ] || return 0
+    command -v npx >/dev/null 2>&1 || die "cannot format $_msd_root: npx unavailable — nothing pushed"
+    # Format once via stdin; no temporary output can escape the checked paths.
+    _msd_formatted="$(run_untrusted npx --yes prettier@3 --no-config --single-quote --no-semi \
+        --trailing-comma none --print-width 100 --stdin-filepath "$_msd_root" <"$_msd_source")" ||
+        die "cannot format $_msd_root — nothing pushed"
+    while IFS= read -r _msd_dest; do
+        printf '%s\n' "$_msd_formatted" >"$_msd_dest"
+        SCHEMA_DESTINATIONS="${SCHEMA_DESTINATIONS}${LF}${_msd_dest}"
+    done <<EOF
+$_msd_destinations
+EOF
+}
+
+mirror_registry_schemas() {
+    _mrs_assets="$1/dev-flow-support/assets/schemas"
+    [ -d "$_mrs_assets" ] || return 0
+    need_bin jq
+    _mrs_schemas=""
+    if [ -f agent-registry.json ]; then
+        _mrs_registry="$(jq -r '.. | objects | .result_schema? // empty' agent-registry.json | LC_ALL=C sort -u)" ||
+            die "could not read registry-named schemas — nothing pushed"
+        _mrs_schemas="${_mrs_registry}${LF}ai/schemas/brief.envelope.schema.json${LF}ai/schemas/plan.schema.json"
+    fi
+    # Intersection, not a growing list of schema names: composed schemas and
+    # envelopes must travel with their standalone role definitions. Upstream-
+    # only schemas are not introduced unless the registry requires them.
+    for _mrs_shipped in ai/schemas/*.schema.json; do
+        [ -f "$_mrs_shipped" ] || [ -L "$_mrs_shipped" ] || continue
+        [ -f "$_mrs_assets/${_mrs_shipped##*/}" ] || continue
+        # A file introduced by the sync is not a schema the repository ships.
+        git cat-file -e "HEAD:$_mrs_shipped" 2>/dev/null || continue
+        _mrs_schemas="${_mrs_schemas}${LF}${_mrs_shipped}"
+    done
+    while IFS= read -r _mrs_path; do
+        [ -n "$_mrs_path" ] || continue
+        # Keep both writes and scope allowances confined to flat schema paths.
+        case "$_mrs_path" in
+        ai/schemas/*.schema.json) ;;
+        *) die "unsafe registry-named schema path '$_mrs_path' — nothing pushed" ;;
+        esac
+        _mrs_name="${_mrs_path#ai/schemas/}"
+        case "$_mrs_name" in
+        */* | *[!a-zA-Z0-9._-]*) die "unsafe registry-named schema path '$_mrs_path' — nothing pushed" ;;
+        esac
+        [ -f "$_mrs_assets/$_mrs_name" ] ||
+            die "missing vendored registry-named schema: $_mrs_assets/$_mrs_name — nothing pushed"
+        jq -se 'length == 1 and (.[0] | type == "object")' "$_mrs_assets/$_mrs_name" >/dev/null ||
+            die "malformed vendored schema $_mrs_assets/$_mrs_name — nothing pushed"
+        mirror_schema_destination "$_mrs_assets/$_mrs_name" "$_mrs_path"
+    done <<EOF
+$_mrs_schemas
+EOF
 }
 
 assert_expected_scope() {
@@ -362,6 +452,15 @@ assert_expected_scope() {
             continue
         fi
         _aes_ok=0
+        while IFS= read -r _aes_schema; do
+            if [ "$_aes_p" = "$_aes_schema" ]; then
+                _aes_ok=1
+                break
+            fi
+        done <<EOF
+$SCHEMA_DESTINATIONS
+EOF
+        [ "$_aes_ok" -eq 0 ] || continue
         case "$_aes_p" in
         "$_aes_dest"/*)
             _aes_name="${_aes_p#"$_aes_dest"/}"
@@ -433,7 +532,7 @@ assert_expected_scope() {
     if [ -n "$_aes_bad" ]; then
         echo "sync-devkit-release: the sync wrote paths it does not own:" >&2
         printf '%s' "$_aes_bad" >&2
-        die "expected only the two skills-sync manifests, the provenance stamps, managed skills under $_aes_dest/, managed agents under ${_aes_adest:-<none>}/, and portable skill links under ${_aes_pdir:-<none>}/ — inspect by hand"
+        die "expected only the two skills-sync manifests, the provenance stamps, shipped and registry-named schema mirrors, managed skills under $_aes_dest/, managed agents under ${_aes_adest:-<none>}/, and portable skill links under ${_aes_pdir:-<none>}/ — inspect by hand"
     fi
 }
 
@@ -788,6 +887,7 @@ cmd_run() {
     set_pin "$TEMPLATE_MANIFEST" "$_run_target"
     run_untrusted task sync:skills ||
         die "'task sync:skills' failed at $_run_target — nothing pushed"
+    mirror_registry_schemas "$_run_dest"
     assert_expected_scope "$_run_dest"
 
     _run_title="fix(template): sync harmon-devkit skills to $_run_target"

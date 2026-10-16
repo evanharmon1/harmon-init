@@ -483,6 +483,9 @@ human merges the sync PR, then harmon-init's release PR
   force-push can never publish unrelated local commits under a bot title. An
   origin that cannot be reached aborts rather than being read as "no sync PR is
   in flight".
+- **Schema parity:** after vendoring, mirror registry-named schemas from
+  `dev-flow-support/assets/schemas/` into `ai/schemas/` and existing template
+  twins before scope validation and verification; missing sources abort the sync.
 - **Pin parity:** `task test:skills-pin-parity` (in `verify` and CI) fails when
   the root and template manifests pin different tags. The `verify:skills*` drift
   checks cannot see this — both read only the root manifest — so a pin edited in
