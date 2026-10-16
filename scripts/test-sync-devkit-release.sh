@@ -107,8 +107,8 @@ EOF
 }
 ROOT_MANIFEST_NAME=".skills-sync.yaml"
 
-# Seed role and finder schema references, including a duplicate, plus files
-# outside the mirror set. A release updates only the vendored source copies.
+# Seed role/finder references, composed schemas and envelope, plus repo-only
+# and upstream-only controls. A release updates only vendored source copies.
 add_schema_fixture() {
     _asf_dir="$1"
     mkdir -p "$_asf_dir/ai/schemas" "$_asf_dir/template/ai/schemas" \
@@ -118,17 +118,35 @@ add_schema_fixture() {
  "finders":[{"result_schema":"ai/schemas/result.reviewer.schema.json"},
             {"result_schema":"ai/schemas/result.integrator.schema.json"}]}
 JSON
-    for _asf_name in result.integrator result.reviewer brief.envelope plan; do
-        printf '{"title":"old %s"}\n' "$_asf_name" >"$_asf_dir/ai/schemas/$_asf_name.schema.json"
+    for _asf_name in result.integrator result.reviewer brief.envelope plan result.envelope; do
+        printf '{"title":"old %s","properties":{"version":{"const":"old"}}}\n' "$_asf_name" >"$_asf_dir/ai/schemas/$_asf_name.schema.json"
         cp "$_asf_dir/ai/schemas/$_asf_name.schema.json" "$_asf_dir/template/ai/schemas/"
         cp "$_asf_dir/ai/schemas/$_asf_name.schema.json" "$_asf_dir/.claude/skills/dev-flow-support/assets/schemas/"
     done
     echo '{}' >"$_asf_dir/ai/schemas/unrelated.schema.json"
-    echo '{}' >"$_asf_dir/.claude/skills/dev-flow-support/assets/schemas/unrelated.schema.json"
+    echo '{}' >"$_asf_dir/.claude/skills/dev-flow-support/assets/schemas/upstream-only.schema.json"
+    jq -n --slurpfile integrator "$_asf_dir/ai/schemas/result.integrator.schema.json" \
+        --slurpfile reviewer "$_asf_dir/ai/schemas/result.reviewer.schema.json" \
+        --slurpfile envelope "$_asf_dir/ai/schemas/result.envelope.schema.json" \
+        '{title:"old composed", properties:$envelope[0].properties, "$defs":{integrator:$integrator[0], reviewer:$reviewer[0]}}' \
+        >"$_asf_dir/ai/schemas/result.schema.json"
+    cp "$_asf_dir/ai/schemas/result.schema.json" "$_asf_dir/template/ai/schemas/"
+    cp "$_asf_dir/ai/schemas/result.schema.json" "$_asf_dir/.claude/skills/dev-flow-support/assets/schemas/"
     echo 'not a schema' >"$_asf_dir/.claude/skills/dev-flow-support/assets/schemas/README.md"
     git -C "$_asf_dir" add -A
     git -C "$_asf_dir" commit --quiet -m "seed schema contract"
     git -C "$_asf_dir" push --quiet origin main
+}
+
+# The composed definitions and envelope must move with the standalone roles.
+assert_schema_composition() {
+    jq -e -n --slurpfile composed "$1/ai/schemas/result.schema.json" \
+        --slurpfile integrator "$1/ai/schemas/result.integrator.schema.json" \
+        --slurpfile reviewer "$1/ai/schemas/result.reviewer.schema.json" \
+        --slurpfile envelope "$1/ai/schemas/result.envelope.schema.json" \
+        '$composed[0]."$defs".integrator == $integrator[0] and
+         $composed[0]."$defs".reviewer == $reviewer[0] and
+         $composed[0].properties == $envelope[0].properties' >/dev/null
 }
 
 # ── Stubs ─────────────────────────────────────────────────────────────
@@ -315,10 +333,17 @@ sync:skills)
             ;;
         *)
             for schema in .claude/skills/dev-flow-support/assets/schemas/*.schema.json; do
-                printf '{"title":"new %s"}\n' "${schema##*/}" >"$schema"
+                printf '{"title":"new %s","properties":{"version":{"const":"new"}}}\n' "${schema##*/}" >"$schema"
             done
             ;;
         esac
+        if [ -d .claude/skills/dev-flow-support/assets/schemas ] && [ "${STUB_SCHEMA_MODE:-}" != equal ]; then
+            jq -n --slurpfile integrator ".claude/skills/dev-flow-support/assets/schemas/result.integrator.schema.json" \
+            --slurpfile reviewer ".claude/skills/dev-flow-support/assets/schemas/result.reviewer.schema.json" \
+            --slurpfile envelope ".claude/skills/dev-flow-support/assets/schemas/result.envelope.schema.json" \
+            '{title:"new composed", properties:$envelope[0].properties, "$defs":{integrator:$integrator[0], reviewer:$reviewer[0]}}' \
+            >".claude/skills/dev-flow-support/assets/schemas/result.schema.json"
+        fi
         if [ "${STUB_SCHEMA_MODE:-}" = malformed ]; then
             echo '{' >.claude/skills/dev-flow-support/assets/schemas/result.integrator.schema.json
         fi
@@ -365,6 +390,13 @@ verify)
         for schema in $schemas ai/schemas/brief.envelope.schema.json ai/schemas/plan.schema.json; do
             diff -u <(jq -S . "$schema") <(jq -S . ".claude/skills/dev-flow-support/assets/schemas/${schema##*/}") || exit 1
         done
+        jq -e -n --slurpfile composed ai/schemas/result.schema.json \
+            --slurpfile integrator ai/schemas/result.integrator.schema.json \
+            --slurpfile reviewer ai/schemas/result.reviewer.schema.json \
+            --slurpfile envelope ai/schemas/result.envelope.schema.json \
+            '$composed[0]."$defs".integrator == $integrator[0] and
+             $composed[0]."$defs".reviewer == $reviewer[0] and
+             $composed[0].properties == $envelope[0].properties' >/dev/null || exit 1
     fi
     ;;
 esac
@@ -1081,13 +1113,16 @@ fix="$(new_fixture schema_change)"
 add_schema_fixture "$fix"
 rc="$(run_helper "$fix" run v0.9.0)"
 [ "$rc" = 0 ] || fail "schema sync exited $rc: $(cat "$LAST_OUT")"
-for name in result.integrator result.reviewer brief.envelope plan; do
+for name in result.integrator result.reviewer brief.envelope plan result result.envelope; do
     diff -u <(jq -S . "$fix/ai/schemas/$name.schema.json") <(jq -S . "$fix/.claude/skills/dev-flow-support/assets/schemas/$name.schema.json") || fail "root schema drift: $name"
     cmp "$fix/ai/schemas/$name.schema.json" "$fix/template/ai/schemas/$name.schema.json" || fail "template schema drift: $name"
     grep -q 'new ' "$fix/ai/schemas/$name.schema.json" || fail "schema did not change: $name"
 done
 [ "$(cat "$fix/ai/schemas/unrelated.schema.json")" = '{}' ] || fail "non-registry schema was mirrored"
 [ ! -e "$fix/ai/schemas/README.md" ] || fail "README was mirrored"
+[ ! -e "$fix/ai/schemas/upstream-only.schema.json" ] || fail "upstream-only schema was introduced"
+[ ! -e "$fix/template/ai/schemas/upstream-only.schema.json" ] || fail "upstream-only template schema was introduced"
+assert_schema_composition "$fix" || fail "mirrored schema composition differs from standalone roles or envelope"
 logged "task verify" || fail "schema equality verification did not run"
 pushed "$fix" || fail "schema sync did not reach push"
 
@@ -1101,7 +1136,7 @@ grep -q 'missing vendored registry-named schema:' "$LAST_OUT" || fail "missing s
 ! logged "task verify" || fail "verify ran with missing source"
 ! pushed "$fix" || fail "missing source was pushed"
 
-for rogue in ai/schemas/unrelated.schema.json template/ai/schemas/rogue.schema.json $'ai/schemas/result.integrator.schema.json\ntemplate/ai/schemas/result.integrator.schema.json'; do
+for rogue in ai/schemas/unrelated.schema.json ai/schemas/upstream-only.schema.json template/ai/schemas/rogue.schema.json $'ai/schemas/result.integrator.schema.json\ntemplate/ai/schemas/result.integrator.schema.json'; do
     start "schema mirror scope still refuses $rogue"
     fix="$(new_fixture "schema_rogue_$cases")"
     add_schema_fixture "$fix"
@@ -1200,5 +1235,18 @@ for dir in ai/schemas template/ai/schemas; do
     [ "$(cksum "$external"/*)" = "$before" ] || fail "external schema directory was modified"
     ! pushed "$fix" || fail "directory escape was pushed"
 done
+
+start "a required registry schema not shipped locally is created"
+fix="$(new_fixture schema_new_registry)"
+add_schema_fixture "$fix"
+rm "$fix/ai/schemas/result.reviewer.schema.json" "$fix/template/ai/schemas/result.reviewer.schema.json"
+git -C "$fix" add -A
+git -C "$fix" commit --quiet -m "remove local registry schema fixture"
+git -C "$fix" push --quiet origin main
+rc="$(run_helper "$fix" run v0.9.0)"
+[ "$rc" = 0 ] || fail "new registry schema sync failed: $(cat "$LAST_OUT")"
+[ -f "$fix/ai/schemas/result.reviewer.schema.json" ] || fail "required schema was not created"
+[ ! -e "$fix/template/ai/schemas/result.reviewer.schema.json" ] || fail "absent optional template twin was introduced"
+assert_schema_composition "$fix" || fail "created registry schema differs from composition"
 
 echo "sync-devkit-release: all ${cases} cases passed"

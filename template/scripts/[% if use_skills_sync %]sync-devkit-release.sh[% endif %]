@@ -11,7 +11,7 @@
 #   resolve + validate a stable upstream release
 #     -> rewrite the pin
 #     -> `task sync:skills`
-#     -> mirror registry-named schemas from the newly vendored support assets
+#     -> mirror shipped and required registry schemas from vendored support assets
 #     -> assert the diff touched nothing but the expected paths
 #     -> verify (offline + secrets)
 #     -> commit, force-push the rolling bot branch, open/update exactly ONE PR
@@ -230,7 +230,7 @@ changed_paths_z() {
 # post-sync `# managed:` lines: a skill the new pin dropped appears only in the
 # old list, one it added only in the new. Anything else — a local skill's
 # contents, an unrelated file — is an unexpected write and aborts the run before
-# anything is committed or pushed. Registry-named schema mirrors are also
+# anything is committed or pushed. Shipped and registry-named schema mirrors are also
 # allowed, by exact destination path only.
 # managed_from_stamp PROV — the `# managed:` names recorded on a provenance
 # stamp, taken from BOTH the committed and working-tree copies so a name the
@@ -265,8 +265,8 @@ agents_dest_from_manifest() {
         sed 's/[[:space:]]*#.*//' | tr -d '"'"'"''
 }
 
-# Mirror exactly the schema set checked by test-result-schemas.sh. Repos
-# without an agent registry have no dev-flow schema contract to mirror.
+# Mirror every shipped flat schema also shipped by the pinned support assets,
+# plus every required registry schema, including ones not shipped locally yet.
 SCHEMA_DESTINATIONS=""
 SCHEMA_REPO_ROOT="$(pwd -P)"
 assert_schema_destination() {
@@ -298,13 +298,25 @@ mirror_schema_destination() {
 }
 
 mirror_registry_schemas() {
-    [ -f agent-registry.json ] || return 0
     _mrs_assets="$1/dev-flow-support/assets/schemas"
     [ -d "$_mrs_assets" ] || return 0
     need_bin jq
-    _mrs_registry="$(jq -r '.. | objects | .result_schema? // empty' agent-registry.json | LC_ALL=C sort -u)" ||
-        die "could not read registry-named schemas — nothing pushed"
-    _mrs_schemas="${_mrs_registry}${LF}ai/schemas/brief.envelope.schema.json${LF}ai/schemas/plan.schema.json"
+    _mrs_schemas=""
+    if [ -f agent-registry.json ]; then
+        _mrs_registry="$(jq -r '.. | objects | .result_schema? // empty' agent-registry.json | LC_ALL=C sort -u)" ||
+            die "could not read registry-named schemas — nothing pushed"
+        _mrs_schemas="${_mrs_registry}${LF}ai/schemas/brief.envelope.schema.json${LF}ai/schemas/plan.schema.json"
+    fi
+    # Intersection, not a growing list of schema names: composed schemas and
+    # envelopes must travel with their standalone role definitions. Upstream-
+    # only schemas are not introduced unless the registry requires them.
+    for _mrs_shipped in ai/schemas/*.schema.json; do
+        [ -f "$_mrs_shipped" ] || [ -L "$_mrs_shipped" ] || continue
+        [ -f "$_mrs_assets/${_mrs_shipped##*/}" ] || continue
+        # A file introduced by the sync is not a schema the repository ships.
+        git cat-file -e "HEAD:$_mrs_shipped" 2>/dev/null || continue
+        _mrs_schemas="${_mrs_schemas}${LF}${_mrs_shipped}"
+    done
     while IFS= read -r _mrs_path; do
         [ -n "$_mrs_path" ] || continue
         # Keep both writes and scope allowances confined to flat schema paths.
@@ -486,7 +498,7 @@ EOF
     if [ -n "$_aes_bad" ]; then
         echo "sync-devkit-release: the sync wrote paths it does not own:" >&2
         printf '%s' "$_aes_bad" >&2
-        die "expected only the skills-sync manifest, the provenance stamps, registry-named schema mirrors, managed skills under $_aes_dest/, managed agents under ${_aes_adest:-<none>}/, and portable skill links under ${_aes_pdir:-<none>}/ — inspect by hand"
+        die "expected only the skills-sync manifest, the provenance stamps, shipped and registry-named schema mirrors, managed skills under $_aes_dest/, managed agents under ${_aes_adest:-<none>}/, and portable skill links under ${_aes_pdir:-<none>}/ — inspect by hand"
     fi
 }
 
