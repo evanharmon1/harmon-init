@@ -107,6 +107,30 @@ EOF
 }
 ROOT_MANIFEST_NAME=".skills-sync.yaml"
 
+# Seed role and finder schema references, including a duplicate, plus files
+# outside the mirror set. A release updates only the vendored source copies.
+add_schema_fixture() {
+    _asf_dir="$1"
+    mkdir -p "$_asf_dir/ai/schemas" "$_asf_dir/template/ai/schemas" \
+        "$_asf_dir/.claude/skills/dev-flow-support/assets/schemas"
+    cat >"$_asf_dir/agent-registry.json" <<'JSON'
+{"roles":[{"result_schema":"ai/schemas/result.integrator.schema.json"}],
+ "finders":[{"result_schema":"ai/schemas/result.reviewer.schema.json"},
+            {"result_schema":"ai/schemas/result.integrator.schema.json"}]}
+JSON
+    for _asf_name in result.integrator result.reviewer brief.envelope plan; do
+        printf '{"title":"old %s"}\n' "$_asf_name" >"$_asf_dir/ai/schemas/$_asf_name.schema.json"
+        cp "$_asf_dir/ai/schemas/$_asf_name.schema.json" "$_asf_dir/template/ai/schemas/"
+        cp "$_asf_dir/ai/schemas/$_asf_name.schema.json" "$_asf_dir/.claude/skills/dev-flow-support/assets/schemas/"
+    done
+    echo '{}' >"$_asf_dir/ai/schemas/unrelated.schema.json"
+    echo '{}' >"$_asf_dir/.claude/skills/dev-flow-support/assets/schemas/unrelated.schema.json"
+    echo 'not a schema' >"$_asf_dir/.claude/skills/dev-flow-support/assets/schemas/README.md"
+    git -C "$_asf_dir" add -A
+    git -C "$_asf_dir" commit --quiet -m "seed schema contract"
+    git -C "$_asf_dir" push --quiet origin main
+}
+
 # ── Stubs ─────────────────────────────────────────────────────────────
 # STUB_RELEASES lines are "<tag> <draft> <prerelease>"; a tag that is absent
 # stands in for GitHub's 404. STUB_LATEST answers /releases/latest.
@@ -244,6 +268,7 @@ guard:release-title)
 sync:skills)
     ref=$(sed -n 's/^[[:space:]]*ref:[[:space:]]*\([^[:space:]#]*\).*/\1/p' .skills-sync.yaml)
     managed="standardize-repo"
+    [ ! -f agent-registry.json ] || managed="$managed, dev-flow-support"
     mkdir -p .claude/skills/standardize-repo
     printf 'vendored at %s\n' "$ref" >.claude/skills/standardize-repo/SKILL.md
     if [ -n "${STUB_SYNC_ADD_SKILL:-}" ]; then
@@ -280,6 +305,13 @@ sync:skills)
             echo "# managed: $amanaged"
         } >.claude/agents/.AGENTS_PROVENANCE
     fi
+    if [ -f agent-registry.json ]; then
+        for schema in .claude/skills/dev-flow-support/assets/schemas/*.schema.json; do
+            printf '{"title":"new %s"}\n' "${schema##*/}" >"$schema"
+        done
+        [ -z "${STUB_SCHEMA_MISSING:-}" ] || rm -f .claude/skills/dev-flow-support/assets/schemas/plan.schema.json
+        [ -z "${STUB_SCHEMA_ROGUE:-}" ] || echo rogue >"$STUB_SCHEMA_ROGUE"
+    fi
     [ -z "${STUB_SYNC_TOUCH_UNRELATED:-}" ] || echo "oops" >"${STUB_SYNC_TOUCH_UNRELATED}"
     [ -z "${STUB_SYNC_DELETE_LOCAL:-}" ] || rm -rf .claude/skills/local-only
     # The real `task sync:skills` runs scripts/link-agent-skills.sh sync as its
@@ -309,6 +341,14 @@ sync:skills)
         # blanks the pdir so the path reads as rogue (fail-closed).
         mkdir -p "$(dirname "${STUB_SYNC_OVERLAP_ROGUE}")"
         echo rogue >"${STUB_SYNC_OVERLAP_ROGUE}"
+    fi
+    ;;
+verify)
+    if [ -f agent-registry.json ]; then
+        schemas="$(jq -r '.. | objects | .result_schema? // empty' agent-registry.json | LC_ALL=C sort -u)"
+        for schema in $schemas ai/schemas/brief.envelope.schema.json ai/schemas/plan.schema.json; do
+            diff -u <(jq -S . "$schema") <(jq -S . ".claude/skills/dev-flow-support/assets/schemas/${schema##*/}") || exit 1
+        done
     fi
     ;;
 esac
@@ -349,6 +389,8 @@ run_helper() {
             STUB_EDIT_MAKES_READY="${STUB_EDIT_MAKES_READY:-}" \
             STUB_BOT_UID="${STUB_BOT_UID:-12345}" \
             STUB_FAIL_TASKS="${STUB_FAIL_TASKS:-}" \
+            STUB_SCHEMA_MISSING="${STUB_SCHEMA_MISSING:-}" \
+            STUB_SCHEMA_ROGUE="${STUB_SCHEMA_ROGUE:-}" \
             STUB_SYNC_TOUCH_UNRELATED="${STUB_SYNC_TOUCH_UNRELATED:-}" \
             STUB_SYNC_DELETE_LOCAL="${STUB_SYNC_DELETE_LOCAL:-}" \
             STUB_SYNC_ADD_SKILL="${STUB_SYNC_ADD_SKILL:-}" \
@@ -396,6 +438,8 @@ v1.0.0 true false"
     STUB_BODY_CAPTURE="$TMPROOT/pr-body-capture.txt"
     : >"$STUB_BODY_CAPTURE"
     FIXTURE_AGENTS=""
+    STUB_SCHEMA_MISSING=""
+    STUB_SCHEMA_ROGUE=""
     STUB_SYNC_TOUCH_UNRELATED=""
     STUB_SYNC_DELETE_LOCAL=""
     STUB_SYNC_ADD_SKILL=""
@@ -1000,5 +1044,41 @@ fix="$(new_fixture pin_parity_drift v0.9.0 v0.8.7)"
 rc="$(run_helper "$fix" pinned)"
 [ "$rc" != 0 ] || fail "the parity guard passed a template twin pinned to an older tag"
 grep -q "pin disagreement" "$LAST_OUT" || fail "drift was not reported: $(cat "$LAST_OUT")"
+
+start "a schema-changing release mirrors every registry-named schema and existing twin"
+fix="$(new_fixture schema_change)"
+add_schema_fixture "$fix"
+rc="$(run_helper "$fix" run v0.9.0)"
+[ "$rc" = 0 ] || fail "schema sync exited $rc: $(cat "$LAST_OUT")"
+for name in result.integrator result.reviewer brief.envelope plan; do
+    cmp "$fix/ai/schemas/$name.schema.json" "$fix/.claude/skills/dev-flow-support/assets/schemas/$name.schema.json" || fail "root schema drift: $name"
+    cmp "$fix/ai/schemas/$name.schema.json" "$fix/template/ai/schemas/$name.schema.json" || fail "template schema drift: $name"
+    grep -q 'new ' "$fix/ai/schemas/$name.schema.json" || fail "schema did not change: $name"
+done
+[ "$(cat "$fix/ai/schemas/unrelated.schema.json")" = '{}' ] || fail "non-registry schema was mirrored"
+[ ! -e "$fix/ai/schemas/README.md" ] || fail "README was mirrored"
+logged "task verify" || fail "schema equality verification did not run"
+pushed "$fix" || fail "schema sync did not reach push"
+
+start "a missing vendored registry-named schema fails before verify or push"
+fix="$(new_fixture schema_missing)"
+add_schema_fixture "$fix"
+STUB_SCHEMA_MISSING=true
+rc="$(run_helper "$fix" run v0.9.0)"
+[ "$rc" != 0 ] || fail "missing vendored schema was accepted"
+grep -q 'missing vendored registry-named schema:' "$LAST_OUT" || fail "missing schema not reported"
+! logged "task verify" || fail "verify ran with missing source"
+! pushed "$fix" || fail "missing source was pushed"
+
+for rogue in ai/schemas/unrelated.schema.json template/ai/schemas/rogue.schema.json; do
+    start "schema mirror scope still refuses $rogue"
+    fix="$(new_fixture "schema_rogue_$cases")"
+    add_schema_fixture "$fix"
+    STUB_SCHEMA_ROGUE="$rogue"
+    rc="$(run_helper "$fix" run v0.9.0)"
+    [ "$rc" != 0 ] || fail "rogue schema write was accepted"
+    grep -q 'the sync wrote paths it does not own' "$LAST_OUT" || fail "scope refusal missing"
+    ! pushed "$fix" || fail "rogue schema was pushed"
+done
 
 echo "sync-devkit-release: all ${cases} cases passed"

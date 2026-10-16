@@ -91,6 +91,30 @@ YAML
     git -C "$1" push origin main >/dev/null 2>&1
 }
 
+# Seed role and finder schema references, including a duplicate, plus files
+# outside the mirror set. A release updates only the vendored source copies.
+add_schema_fixture() {
+    _asf_dir="$1"
+    mkdir -p "$_asf_dir/ai/schemas" "$_asf_dir/template/ai/schemas" \
+        "$_asf_dir/.claude/skills/dev-flow-support/assets/schemas"
+    cat >"$_asf_dir/agent-registry.json" <<'JSON'
+{"roles":[{"result_schema":"ai/schemas/result.integrator.schema.json"}],
+ "finders":[{"result_schema":"ai/schemas/result.reviewer.schema.json"},
+            {"result_schema":"ai/schemas/result.integrator.schema.json"}]}
+JSON
+    for _asf_name in result.integrator result.reviewer brief.envelope plan; do
+        printf '{"title":"old %s"}\n' "$_asf_name" >"$_asf_dir/ai/schemas/$_asf_name.schema.json"
+        cp "$_asf_dir/ai/schemas/$_asf_name.schema.json" "$_asf_dir/template/ai/schemas/"
+        cp "$_asf_dir/ai/schemas/$_asf_name.schema.json" "$_asf_dir/.claude/skills/dev-flow-support/assets/schemas/"
+    done
+    echo '{}' >"$_asf_dir/ai/schemas/unrelated.schema.json"
+    echo '{}' >"$_asf_dir/.claude/skills/dev-flow-support/assets/schemas/unrelated.schema.json"
+    echo 'not a schema' >"$_asf_dir/.claude/skills/dev-flow-support/assets/schemas/README.md"
+    git -C "$_asf_dir" add -A
+    git -C "$_asf_dir" commit --quiet -m "seed schema contract"
+    git -C "$_asf_dir" push --quiet origin main
+}
+
 # ── Stubs ─────────────────────────────────────────────────────────────
 # Every test writes fresh stubs into BIN_DIR so concurrent cases are isolated.
 
@@ -112,6 +136,16 @@ sync:skills)
         echo "# ref: \$(awk '/^[[:space:]]*ref:/{sub(/^[[:space:]]*ref:[[:space:]]*/,""); print}' .skills-sync.yaml)" > .claude/skills/.SKILLS_PROVENANCE
         echo "# categories: universal" >> .claude/skills/.SKILLS_PROVENANCE
         echo "# managed: universal" >> .claude/skills/.SKILLS_PROVENANCE
+        if [ -f agent-registry.json ]; then
+            echo "# managed: universal, dev-flow-support" >> .claude/skills/.SKILLS_PROVENANCE
+        fi
+        if [ -f agent-registry.json ]; then
+            for schema in .claude/skills/dev-flow-support/assets/schemas/*.schema.json; do
+                printf '{"title":"new %s"}\n' "\${schema##*/}" >"\$schema"
+            done
+            [ -z "\${STUB_SCHEMA_MISSING:-}" ] || rm -f .claude/skills/dev-flow-support/assets/schemas/plan.schema.json
+            [ -z "\${STUB_SCHEMA_ROGUE:-}" ] || echo rogue >"\$STUB_SCHEMA_ROGUE"
+        fi
         # scripts/link-agent-skills.sh sync is the second command of
         # 'task sync:skills'; mirror it so the scope guard is exercised
         # against the .agents/skills/ compatibility symlink it writes.
@@ -122,7 +156,14 @@ sync:skills)
         exit 1
     fi
     ;;
-verify:skills:offline) ;;
+verify:skills:offline)
+    if [ -f agent-registry.json ]; then
+        schemas="\$(jq -r '.. | objects | .result_schema? // empty' agent-registry.json | LC_ALL=C sort -u)"
+        for schema in \$schemas ai/schemas/brief.envelope.schema.json ai/schemas/plan.schema.json; do
+            diff -u <(jq -S . "\$schema") <(jq -S . ".claude/skills/dev-flow-support/assets/schemas/\${schema##*/}") || exit 1
+        done
+    fi
+    ;;
 security:secrets) ;;
 *)
     echo "unexpected task target: \$*" >&2
@@ -225,6 +266,8 @@ clear_logs() {
     STUB_FAIL_PR_NUMBER_VIEW=""
     STUB_FAIL_PR_DRAFT_VIEW=""
     STUB_FAIL_READY_UNDO=""
+    export STUB_SCHEMA_MISSING=""
+    export STUB_SCHEMA_ROGUE=""
     STUB_EDIT_MAKES_READY=""
 }
 
@@ -673,6 +716,53 @@ test_usage_exit() {
     }
 }
 
+test_schema_mirror() {
+    note "schema-changing release mirrors registry schemas and existing twins"
+    FIXTURE="$(build_fixture v0.1.0)"
+    add_schema_fixture "$FIXTURE"
+    clear_logs
+    write_gh_stub
+    write_task_stub pass
+    run_helper_with_tag v0.9.0 || return 1
+    for name in result.integrator result.reviewer brief.envelope plan; do
+        cmp "$FIXTURE/ai/schemas/$name.schema.json" "$FIXTURE/.claude/skills/dev-flow-support/assets/schemas/$name.schema.json" || return 1
+        cmp "$FIXTURE/ai/schemas/$name.schema.json" "$FIXTURE/template/ai/schemas/$name.schema.json" || return 1
+        grep -q 'new ' "$FIXTURE/ai/schemas/$name.schema.json" || return 1
+    done
+    [ "$(cat "$FIXTURE/ai/schemas/unrelated.schema.json")" = '{}' ] || return 1
+    [ ! -e "$FIXTURE/ai/schemas/README.md" ] || return 1
+    assert_gh_logged "gh pr create --draft" || return 1
+}
+
+test_schema_missing() {
+    note "missing vendored schema fails before push"
+    FIXTURE="$(build_fixture v0.1.0)"
+    add_schema_fixture "$FIXTURE"
+    clear_logs
+    STUB_SCHEMA_MISSING=true
+    write_gh_stub
+    write_task_stub pass
+    if run_helper_with_tag v0.9.0 >"$TEST_ROOT/schema-out" 2>&1; then return 1; fi
+    grep -q 'missing vendored registry-named schema:' "$TEST_ROOT/schema-out" || return 1
+    assert_task_not_logged "task verify:skills:offline" || return 1
+    ! git --git-dir="$TEST_ROOT/origin.git" show-ref --verify --quiet refs/heads/bot/sync-harmon-devkit
+}
+
+test_schema_scope() {
+    for rogue in ai/schemas/unrelated.schema.json template/ai/schemas/rogue.schema.json; do
+        note "schema mirror scope refuses $rogue"
+        FIXTURE="$(build_fixture v0.1.0)"
+        add_schema_fixture "$FIXTURE"
+        clear_logs
+        STUB_SCHEMA_ROGUE="$rogue"
+        write_gh_stub
+        write_task_stub pass
+        if run_helper_with_tag v0.9.0 >"$TEST_ROOT/schema-out" 2>&1; then return 1; fi
+        grep -q 'the sync wrote paths it does not own' "$TEST_ROOT/schema-out" || return 1
+        ! git --git-dir="$TEST_ROOT/origin.git" show-ref --verify --quiet refs/heads/bot/sync-harmon-devkit || return 1
+    done
+}
+
 # ── Runner ────────────────────────────────────────────────────────────
 TESTS=(
     test_resolve_latest
@@ -681,6 +771,9 @@ TESTS=(
     test_reject_unknown_release
     test_pinned
     test_happy_path
+    test_schema_mirror
+    test_schema_missing
+    test_schema_scope
     test_ready_created_pr_is_reverted
     test_unresolvable_created_pr_fails
     test_created_pr_head_mismatch_fails

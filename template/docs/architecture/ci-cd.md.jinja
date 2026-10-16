@@ -150,6 +150,11 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
   see [branch-protection.md](branch-protection.md) for the fork-PR trusted-rerun
   runbook and the merge_group carve-out.
 [% endif %]
+[% if use_skills_sync %]
+- `sync-devkit-release.sh` mirrors registry-named schemas from newly vendored
+  `dev-flow-support/assets/schemas/` into `ai/schemas/` and existing template
+  twins before scope validation and verification; missing sources abort the sync.
+[% endif %]
 [% if claim_release_available %]
 - `claim-release.yml` — on `issues closed`, on `pull_request closed`
   **unmerged**, and on `pull_request` **merged into the default branch**
