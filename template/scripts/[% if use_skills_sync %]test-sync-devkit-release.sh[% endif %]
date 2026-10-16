@@ -178,9 +178,11 @@ sync:skills)
                 '{title:"new composed", properties:\$envelope[0].properties, "\$defs":{integrator:\$integrator[0], reviewer:\$reviewer[0]}}' \
                 >".claude/skills/dev-flow-support/assets/schemas/result.schema.json"
             fi
-            if [ "\${STUB_SCHEMA_MODE:-}" = malformed ]; then
-                echo '{' >.claude/skills/dev-flow-support/assets/schemas/result.integrator.schema.json
-            fi
+            case "\${STUB_SCHEMA_MODE:-}" in
+            malformed) echo '{' >.claude/skills/dev-flow-support/assets/schemas/result.integrator.schema.json ;;
+            multiple) printf '{}\n{}\n' >.claude/skills/dev-flow-support/assets/schemas/result.integrator.schema.json ;;
+            nonobject) echo '[]' >.claude/skills/dev-flow-support/assets/schemas/result.integrator.schema.json ;;
+            esac
             [ -z "\${STUB_SCHEMA_MISSING:-}" ] || rm -f .claude/skills/dev-flow-support/assets/schemas/plan.schema.json
             if [ -n "\${STUB_SCHEMA_ROGUE:-}" ]; then
                 mkdir -p "\$(dirname "\$STUB_SCHEMA_ROGUE")"
@@ -850,17 +852,19 @@ test_schema_formatted() {
 }
 
 test_schema_malformed() {
-    note "malformed source aborts before copying or pushing"
-    FIXTURE="$(build_fixture v0.1.0)"
-    add_schema_fixture "$FIXTURE"
-    clear_logs
-    STUB_SCHEMA_MODE=malformed
-    write_gh_stub
-    write_task_stub pass
-    if run_helper_with_tag v0.9.0 >"$TEST_ROOT/schema-out" 2>&1; then return 1; fi
-    grep -q 'malformed vendored schema .* — nothing pushed' "$TEST_ROOT/schema-out" || return 1
-    git -C "$FIXTURE" diff --quiet -- ai/schemas template/ai/schemas || return 1
-    ! git --git-dir="$TEST_ROOT/origin.git" show-ref --verify --quiet refs/heads/bot/sync-harmon-devkit
+    for mode in malformed multiple nonobject; do
+        note "$mode source aborts before copying or pushing"
+        FIXTURE="$(build_fixture v0.1.0)"
+        add_schema_fixture "$FIXTURE"
+        clear_logs
+        STUB_SCHEMA_MODE="$mode"
+        write_gh_stub
+        write_task_stub pass
+        if run_helper_with_tag v0.9.0 >"$TEST_ROOT/schema-out" 2>&1; then return 1; fi
+        grep -q 'malformed vendored schema .* — nothing pushed' "$TEST_ROOT/schema-out" || return 1
+        git -C "$FIXTURE" diff --quiet -- ai/schemas template/ai/schemas || return 1
+        ! git --git-dir="$TEST_ROOT/origin.git" show-ref --verify --quiet refs/heads/bot/sync-harmon-devkit || return 1
+    done
 }
 
 test_schema_symlink() {
@@ -887,24 +891,30 @@ test_schema_symlink() {
 
 test_schema_parent_symlink() {
     for dir in ai/schemas template/ai/schemas; do
-        note "schema directory $dir refuses an external physical path"
-        FIXTURE="$(build_fixture v0.1.0)"
-        add_schema_fixture "$FIXTURE"
-        external="$TEST_ROOT/external-dir"
-        rm -rf "$external"
-        mv "$FIXTURE/$dir" "$external"
-        ln -s "$external" "$FIXTURE/$dir"
-        before="$(cksum "$external"/*)"
-        git -C "$FIXTURE" add -A
-        git -C "$FIXTURE" commit --quiet -m "symlink schema directory fixture"
-        git -C "$FIXTURE" push --quiet origin main
-        clear_logs
-        write_gh_stub
-        write_task_stub pass
-        if run_helper_with_tag v0.9.0 >"$TEST_ROOT/schema-out" 2>&1; then return 1; fi
-        grep -q 'schema destination directory escapes repository:' "$TEST_ROOT/schema-out" || return 1
-        [ "$(cksum "$external"/*)" = "$before" ] || return 1
-        ! git --git-dir="$TEST_ROOT/origin.git" show-ref --verify --quiet refs/heads/bot/sync-harmon-devkit || return 1
+        for location in outside inside; do
+            note "schema directory $dir refuses a $location physical path"
+            FIXTURE="$(build_fixture v0.1.0)"
+            add_schema_fixture "$FIXTURE"
+            if [ "$location" = outside ]; then
+                external="$TEST_ROOT/external-dir"
+            else
+                external="$FIXTURE/other-schemas"
+            fi
+            rm -rf "$external"
+            mv "$FIXTURE/$dir" "$external"
+            ln -s "$external" "$FIXTURE/$dir"
+            before="$(cksum "$external"/*)"
+            git -C "$FIXTURE" add -A
+            git -C "$FIXTURE" commit --quiet -m "symlink schema directory fixture"
+            git -C "$FIXTURE" push --quiet origin main
+            clear_logs
+            write_gh_stub
+            write_task_stub pass
+            if run_helper_with_tag v0.9.0 >"$TEST_ROOT/schema-out" 2>&1; then return 1; fi
+            grep -q 'unexpected schema destination directory:' "$TEST_ROOT/schema-out" || return 1
+            [ "$(cksum "$external"/*)" = "$before" ] || return 1
+            ! git --git-dir="$TEST_ROOT/origin.git" show-ref --verify --quiet refs/heads/bot/sync-harmon-devkit || return 1
+        done
     done
 }
 

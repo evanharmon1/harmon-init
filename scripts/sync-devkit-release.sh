@@ -294,8 +294,8 @@ assert_schema_destination() {
     _asd_parent="$(cd "$(dirname "$1")" && pwd -P)" ||
         die "cannot resolve schema destination directory: $1 — nothing pushed"
     case "$_asd_parent" in
-    "$SCHEMA_REPO_ROOT" | "$SCHEMA_REPO_ROOT"/*) ;;
-    *) die "schema destination directory escapes repository: $1 — nothing pushed" ;;
+    "$SCHEMA_REPO_ROOT/ai/schemas" | "$SCHEMA_REPO_ROOT/template/ai/schemas") ;;
+    *) die "unexpected schema destination directory: $1 — nothing pushed" ;;
     esac
 }
 
@@ -365,7 +365,7 @@ mirror_registry_schemas() {
         esac
         [ -f "$_mrs_assets/$_mrs_name" ] ||
             die "missing vendored registry-named schema: $_mrs_assets/$_mrs_name — nothing pushed"
-        jq -e . "$_mrs_assets/$_mrs_name" >/dev/null ||
+        jq -se 'length == 1 and (.[0] | type == "object")' "$_mrs_assets/$_mrs_name" >/dev/null ||
             die "malformed vendored schema $_mrs_assets/$_mrs_name — nothing pushed"
         mirror_schema_destination "$_mrs_assets/$_mrs_name" "$_mrs_path"
     done <<EOF

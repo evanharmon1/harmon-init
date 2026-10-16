@@ -344,9 +344,11 @@ sync:skills)
             '{title:"new composed", properties:$envelope[0].properties, "$defs":{integrator:$integrator[0], reviewer:$reviewer[0]}}' \
             >".claude/skills/dev-flow-support/assets/schemas/result.schema.json"
         fi
-        if [ "${STUB_SCHEMA_MODE:-}" = malformed ]; then
-            echo '{' >.claude/skills/dev-flow-support/assets/schemas/result.integrator.schema.json
-        fi
+        case "${STUB_SCHEMA_MODE:-}" in
+        malformed) echo '{' >.claude/skills/dev-flow-support/assets/schemas/result.integrator.schema.json ;;
+        multiple) printf '{}\n{}\n' >.claude/skills/dev-flow-support/assets/schemas/result.integrator.schema.json ;;
+        nonobject) echo '[]' >.claude/skills/dev-flow-support/assets/schemas/result.integrator.schema.json ;;
+        esac
         [ -z "${STUB_SCHEMA_MISSING:-}" ] || rm -f .claude/skills/dev-flow-support/assets/schemas/plan.schema.json
         if [ -n "${STUB_SCHEMA_ROGUE:-}" ]; then
         mkdir -p "$(dirname "$STUB_SCHEMA_ROGUE")"
@@ -1173,15 +1175,18 @@ done
 [ "$(log_count 'npx --yes prettier@3 --no-config --single-quote --no-semi --trailing-comma none --print-width 100 --stdin-filepath ai/schemas/result.integrator.schema.json')" -eq 1 ] || fail "root schema not formatted exactly once"
 cmp "$fix/ai/schemas/result.integrator.schema.json" "$fix/template/ai/schemas/result.integrator.schema.json" || fail "twins not byte-identical"
 
-start "malformed vendored JSON aborts before copying or pushing"
-fix="$(new_fixture schema_malformed)"
-add_schema_fixture "$fix"
-STUB_SCHEMA_MODE=malformed
-rc="$(run_helper "$fix" run v0.9.0)"
-[ "$rc" != 0 ] || fail "malformed source accepted"
-grep -q 'malformed vendored schema .* — nothing pushed' "$LAST_OUT" || fail "malformed source refusal missing"
-git -C "$fix" diff --quiet -- ai/schemas template/ai/schemas || fail "malformed source wrote destinations"
-! pushed "$fix" || fail "malformed schema pushed"
+for mode in malformed multiple nonobject; do
+    start "$mode vendored JSON aborts before copying or pushing"
+    fix="$(new_fixture "schema_$mode")"
+    add_schema_fixture "$fix"
+    STUB_SCHEMA_MODE="$mode"
+    rc="$(run_helper "$fix" run v0.9.0)"
+    [ "$rc" != 0 ] || fail "malformed source accepted"
+    grep -q 'malformed vendored schema .* — nothing pushed' "$LAST_OUT" || fail "malformed source refusal missing"
+    git -C "$fix" diff --quiet -- ai/schemas template/ai/schemas || fail "malformed source wrote destinations"
+    ! pushed "$fix" || fail "malformed schema pushed"
+
+done
 
 for path in ai/schemas/result.integrator.schema.json template/ai/schemas/result.integrator.schema.json; do
     start "a symlinked destination $path never writes its external target"
@@ -1219,21 +1224,27 @@ git -C "$fix" diff --quiet -- ai/schemas template/ai/schemas || fail "missing-np
 ! pushed "$fix" || fail "schema pushed without formatting"
 
 for dir in ai/schemas template/ai/schemas; do
-    start "schema directory $dir cannot escape through a parent symlink"
-    fix="$(new_fixture "schema_parent_$cases")"
-    add_schema_fixture "$fix"
-    external="$TMPROOT/external-dir-$cases"
-    mv "$fix/$dir" "$external"
-    ln -s "$external" "$fix/$dir"
-    before="$(cksum "$external"/*)"
-    git -C "$fix" add -A
-    git -C "$fix" commit --quiet -m "symlink schema directory fixture"
-    git -C "$fix" push --quiet origin main
-    rc="$(run_helper "$fix" run v0.9.0)"
-    [ "$rc" != 0 ] || fail "escaped schema directory accepted"
-    grep -q 'schema destination directory escapes repository:' "$LAST_OUT" || fail "directory escape refusal missing"
-    [ "$(cksum "$external"/*)" = "$before" ] || fail "external schema directory was modified"
-    ! pushed "$fix" || fail "directory escape was pushed"
+    for location in outside inside; do
+        start "schema directory $dir refuses a $location parent symlink"
+        fix="$(new_fixture "schema_parent_$cases")"
+        add_schema_fixture "$fix"
+        if [ "$location" = outside ]; then
+            external="$TMPROOT/external-dir-$cases"
+        else
+            external="$fix/other-schemas"
+        fi
+        mv "$fix/$dir" "$external"
+        ln -s "$external" "$fix/$dir"
+        before="$(cksum "$external"/*)"
+        git -C "$fix" add -A
+        git -C "$fix" commit --quiet -m "symlink schema directory fixture"
+        git -C "$fix" push --quiet origin main
+        rc="$(run_helper "$fix" run v0.9.0)"
+        [ "$rc" != 0 ] || fail "escaped schema directory accepted"
+        grep -q 'unexpected schema destination directory:' "$LAST_OUT" || fail "directory escape refusal missing"
+        [ "$(cksum "$external"/*)" = "$before" ] || fail "external schema directory was modified"
+        ! pushed "$fix" || fail "directory escape was pushed"
+    done
 done
 
 start "a required registry schema not shipped locally is created"
