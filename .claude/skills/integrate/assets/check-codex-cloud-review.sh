@@ -71,9 +71,13 @@
 
 set -euo pipefail
 
+# One interval bounds delayed trigger writes and local/server clock skew.
+RELEASE_MARGIN_SEC=600
+
 usage() {
     cat >&2 <<'EOF'
 Usage:
+  check-codex-cloud-review.sh release --state FILE --note REASON
   check-codex-cloud-review.sh reserve --state FILE --repo OWNER/REPO --pr N --head SHA --attempt 1|2 [--finder SLUG]
                                      [--previous-head SHA] [--run-id ID]
                                      [--integration-cap N] [--integration-exempt-cap N]
@@ -153,6 +157,18 @@ with every push, and `after-ci-first` waits on the PR's first head (no
 remediation push yet) and requests with the push after that. It reads and
 writes nothing and prints `{review_trigger, remediation, order}` where order
 is `after-ci` or `with-push`.
+
+`release --state FILE --note REASON` recovers a reserved cycle whose trigger
+was never posted (including a failed broker POST or a moved PR head). It
+requires a reservation at least 10 minutes old by the local clock and a live,
+complete comment read proving no matching trigger exists at or after
+reserved_at minus 10 minutes, by any author. RELEASE_MARGIN_SEC=600 governs
+both the minimum age and fixed skew margin. Wait 10 minutes after a failed
+trigger before releasing. Attached triggers and indeterminate reads refuse.
+It records the old head, reserved_at and reason in superseded_reservations,
+leaves charged/exempt counters and the run-spend sidecar unchanged, and marks
+the reservation released. A following reserve begins at attempt 1 and charges
+normally; releasing does not refund spend. Never delete state to recover.
 
 `carry` (harmon-init#752) answers one question before a cycle is reserved:
 does the previously reviewed clean verdict still attest THIS head? It does
@@ -402,6 +418,8 @@ valid_slug() {
 }
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=gh-write-broker.sh
+. "$SCRIPT_DIR/gh-write-broker.sh"
 
 valid_time() {
     grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$' <<<"$1"
@@ -604,33 +622,15 @@ provider_head() {
 run_gh() {
     call_timeout=60
     window_anchor=${state_requested:-${state_reserved:-}}
-    if [ -n "$window_anchor" ] && valid_time "$window_anchor"; then
-        anchor_epoch=$(jq -nr \
-            --arg value "$window_anchor" '$value | fromdateiso8601') ||
-            return 1
+    # The review window bounds only an in-window attachment. Evidence reads
+    # and recovery (including release and late attach) always retain the normal
+    # per-call budget; elapsed reviewer time is not a network deadline.
+    if [ "$command_name" = attach ] && [ -n "$window_anchor" ] && valid_time "$window_anchor"; then
+        anchor_epoch=$(jq -nr --arg value "$window_anchor" '$value | fromdateiso8601') || return 1
         current_epoch=$(clock_epoch) || return 1
         remaining=$((anchor_epoch + timeout_min * 60 - current_epoch))
-        if [ "$remaining" -le 0 ]; then
-            # A post-window check still owes one terminal evidence sweep. Give
-            # that sweep an independent normal request budget; reducing every
-            # call to one second here makes a completed remote review look
-            # absent precisely when the checker is deciding its final result.
-            if [ "$command_name" != "check" ]; then
-                call_timeout=1
-            fi
-        elif [ "$remaining" -lt "$call_timeout" ]; then
-            # Challenge round 3, finding `challenge-r3-codex-adversarial-9`
-            # (confirmed P2): the carve-out above covered `remaining <= 0` but
-            # not the last minute before it, so a `check` landing inside the
-            # final 59 seconds of its window clamped every read to a
-            # sub-second budget and reported readable evidence absent — the
-            # same failure the carve-out exists to prevent, one minute
-            # earlier. `check` keeps its full budget on both sides of the
-            # boundary now; the clamp still applies to every other command,
-            # which has no terminal sweep to owe.
-            if [ "$command_name" != "check" ]; then
-                call_timeout=$remaining
-            fi
+        if [ "$remaining" -gt 0 ] && [ "$remaining" -lt "$call_timeout" ]; then
+            call_timeout=$remaining
         fi
     elif [ -n "${reap_deadline_epoch:-}" ]; then
         # A sweep has no reservation to budget against, so without this every
@@ -650,7 +650,7 @@ run_gh() {
         [ "$gh_call_timeout_cap" -lt "$call_timeout" ]; then
         call_timeout=$gh_call_timeout_cap
     fi
-    "$timeout_bin" -k 1 "$call_timeout" gh "$@"
+    bounded_gh_call "$timeout_bin" "$call_timeout" gh "$@"
 }
 
 # Sets the per-call cap for the next `reserve` head-wait read: the wait left,
@@ -948,7 +948,7 @@ read_state() {
       (.pr | type == "number") and
       (.head | type == "string") and
       (.attempt == 1 or .attempt == 2) and
-      (.phase == "reserved" or .phase == "attached") and
+      (.phase == "reserved" or .phase == "attached" or .phase == "released") and
       (.last_reviewed_verdict == null or .last_reviewed_verdict == "clean" or
         .last_reviewed_verdict == "findings") and
       (.carry == null or ((.carry | type == "object") and
@@ -971,7 +971,8 @@ read_state() {
       (.quota_comment_id == null or
         (.quota_comment_id | type == "number" and . > 0)) and
       (.boundary_source == null or
-        (.boundary_source == "check-suite" or .boundary_source == "commit-date")) and
+        (.boundary_source == "check-suite" or .boundary_source == "commit-date" or
+         .boundary_source == "unavailable")) and
       (.commit_date_boundary == null or (.commit_date_boundary | type == "string")) and
       (.check_suite_boundary == null or (.check_suite_boundary | type == "string")) and
       (.review_trigger == null or .review_trigger == "after-ci" or
@@ -1567,58 +1568,68 @@ codex_verdict_defs=$(
           def clean_sentence:
             "codex review: didn't find any major issues.";
           def body_text: (.body // "");
-          # `first // ""`, never `[0]`: jq's `"" | split("\n")` is `[]`, so an
+          # first // "", never [0]: jq's "" | split("\n") is [], so an
           # empty body would pipe null into gsub and crash the whole program
           # with jq's own exit 5 — outside the documented code set
           # (harmon-devkit#392, hit live on harmon-init#766).
+          # Only an exact leading v1 receipt line may wrap the clean verdict.
+          # Keep the original body for severity and head-binding checks.
+          def clean_body:
+            body_text as $body |
+            ($body | split("\n") |
+              map(gsub("^[[:space:]]+|[[:space:]]+$"; "")) |
+              until(length == 0 or .[0] != ""; .[1:])) as $lines |
+            if $lines[0] == "<!-- codex-review-receipt:v1 -->" then
+              ($lines[1:] | until(length == 0 or .[0] != ""; .[1:]) | join("\n"))
+            else $body end;
           def first_line:
-            (body_text | split("\n") | first // "" |
+            (clean_body | split("\n") | first // "" |
               gsub("^[[:space:]]+|[[:space:]]+$"; "") | ascii_downcase);
           def has_severity_marker:
             (body_text | ascii_downcase | test("\\bp[0-9]+\\b"));
           # Integration remediation 1 (2026-09-14, Codex cloud review on
-          # `a5bc99a`, confirmed finding `4010207997`): a bare `type ==
-          # "number"` check on a provider-supplied id admits `0`, a negative
-          # number, and a fraction like `1.5` — none of them a real GitHub
+          # a5bc99a, confirmed finding 4010207997): a bare type ==
+          # "number" check on a provider-supplied id admits 0, a negative
+          # number, and a fraction like 1.5 — none of them a real GitHub
           # object id, all of them silently usable as the accepted evidence's
-          # `accepted.id` once inside `newest_result_record`/
-          # `comment_candidates`. Mirrors `valid_uint`'s bash-level shape
-          # (positive, integral) inside jq. Deliberately not `% 1 == 0` as
-          # the fractional-part test: jq's `%` truncates BOTH operands to
-          # integers before dividing (`1.5 % 1` is `0`, not `0.5`), so it
+          # accepted.id once inside newest_result_record/
+          # comment_candidates. Mirrors valid_uint's bash-level shape
+          # (positive, integral) inside jq. Deliberately not % 1 == 0 as
+          # the fractional-part test: jq's % truncates BOTH operands to
+          # integers before dividing (1.5 % 1 is 0, not 0.5), so it
           # would silently accept 1.5 as "integral" — comparing against
-          # `floor` does not have that trap. `> 0` rejects zero and negative
-          # values the same way `valid_uint`'s `[1-9][0-9]*` anchor does.
+          # floor does not have that trap. > 0 rejects zero and negative
+          # values the same way valid_uint's [1-9][0-9]* anchor does.
           def is_positive_integer:
             (type == "number") and (. == (. | floor)) and (. > 0);
-          # Factored out of `rest_is_boilerplate` so the carrier defs below can
+          # Factored out of rest_is_boilerplate so the carrier defs below can
           # reuse the exact same removal and the exact same metadata pattern
           # instead of restating them. Same regexes, same flags, same order —
-          # `rest_is_boilerplate` behaves identically to before the split.
-          # Challenge round 3, finding `challenge-r3-codex-adversarial-1`
+          # rest_is_boilerplate behaves identically to before the split.
+          # Challenge round 3, finding challenge-r3-codex-adversarial-1
           # (confirmed P1, provenance ORIGINAL — this predates every round of
-          # this change): the removal used to start at `<details`, so with one
+          # this change): the removal used to start at <details, so with one
           # benign collapsed section anywhere above the About block the match
           # ran from THAT tag through the About block's closing tag and deleted
           # every line in between — including a concern. It defeated the
-          # clean-path safety net, `is_carrier_only`, and the round-2
+          # clean-path safety net, is_carrier_only, and the round-2
           # whole-body self-report test, all three of which read the stripped
           # body.
           #
-          # Anchored on the About SUMMARY instead, with `[^<]*` between the
-          # tags so the match cannot span an intervening `<details` at all.
+          # Anchored on the About SUMMARY instead, with [^<]* between the
+          # tags so the match cannot span an intervening <details at all.
           # Same intent the original comment states — "removal is anchored on
-          # the block's SUMMARY, not on `<details` alone" — now actually
+          # the block's SUMMARY, not on <details alone" — now actually
           # enforced by the pattern.
           def strip_about_block:
             gsub("<details[^<]*<summary>[^<]*about codex[^<]*</summary>.*?</details>";
                  ""; "im");
           def is_reviewed_commit_line:
             test(
-              "^\\*\\*reviewed commit:\\*\\*[[:space:]]*`[0-9a-f]{7,40}`[[:space:]]*$"
+              "^\\*\\*reviewed commit:\\*\\*[[:space:]]*\u0060[0-9a-f]{7,40}\u0060[[:space:]]*$"
             );
           def rest_is_boilerplate:
-            (body_text | split("\n") | .[1:] | join("\n") |
+            (clean_body | split("\n") | .[1:] | join("\n") |
               strip_about_block |
               ascii_downcase | split("\n") |
               map(gsub("^[[:space:]]+|[[:space:]]+$"; "")) |
@@ -1658,29 +1669,25 @@ codex_verdict_defs=$(
           # draft to ready-for-review rather than merging, so a human still
           # reads the PR. That is a better trade than a parser that has been
           # wrong three times.
-          # Used only by the review-settlement gate in `check`, but defined
-          # here so they share `body_text`, the About-block removal, and the
-          # Reviewed-commit pattern with `verdict_class` instead of growing a
+          # Used only by the review-settlement gate in check, but defined
+          # here so they share body_text, the About-block removal, and the
+          # Reviewed-commit pattern with verdict_class instead of growing a
           # parallel set of regexes that could drift apart. A findings review's
           # body is a CARRIER: a heading, one fixed sentence, and Codex's own
           # metadata, with the findings themselves in the inline comments.
           # Anything else in it is prose nobody has answered.
           #
-          # These defs work off `carrier_lines`, NOT `first_line`, because a
+          # These defs work off carrier_lines, NOT first_line, because a
           # real findings-review body begins with a BLANK LINE:
           # "\n### 💡 Codex Review\n\n…" is what #355 and #273 actually posted.
-          # `first_line` is therefore empty for every genuine findings review,
+          # first_line is therefore empty for every genuine findings review,
           # and a heading test built on it can never match one — the gate would
           # be permanently inert, re-blocking every PR and reproducing the #275
           # deadlock from the fail-closed side.
           #
-          # `first_line` itself is deliberately LEFT ALONE. It serves
-          # `verdict_class`'s clean-verdict prefix test, and clean results are
-          # top-level comments that open directly with the verdict sentence —
-          # a different payload shape from these review bodies, with no leading
-          # blank observed. Loosening the shared def to fix a review-body
-          # problem would change what counts as a clean verdict too, for no
-          # evidence that the clean path needs it.
+          # Clean verdicts use first_line after the optional leading receipt
+          # wrapper is removed. Carrier bodies continue to use the original
+          # body and cannot gain a clean verdict through their heading.
           #
           # The heading match is loose about what sits between the hashes and
           # the words — "### Codex Review" and "### 💡 Codex Review" have both
@@ -1716,12 +1723,12 @@ codex_verdict_defs=$(
           # instruction, runs a fix task of its own, and posts a report on what
           # IT did — as a thread follow-up, and (observed on harmon-devkit#710,
           # comment 5504087486) as a top-level comment that opens
-          # "### Summary" and happens to contain "Reviewed commit `<sha>`".
+          # "### Summary" and happens to contain "Reviewed commit <sha>".
           #
           # That top-level shape is the damaging one here: the Reviewed-commit
-          # phrase makes it candidate verdict evidence, `verdict_class` calls it
-          # `findings` because it does not open with the clean sentence, and
-          # `settle` then refuses it precisely because it carries no badge — so
+          # phrase makes it candidate verdict evidence, verdict_class calls it
+          # findings because it does not open with the clean sentence, and
+          # settle then refuses it precisely because it carries no badge — so
           # the cycle could never report clean for that head through this
           # checker whatever the real review said. It is neither: the bot is
           # describing work, not reporting a finding, so it is INFORMATIONAL
@@ -1730,13 +1737,13 @@ codex_verdict_defs=$(
           # The test is deliberately content-NEGATIVE on the part that decides
           # severity — no badge anywhere in the body, the same whole-body scan
           # everything else here uses — and structural on the part that
-          # identifies the shape: a `Summary` heading, or the bot naming a
+          # identifies the shape: a Summary heading, or the bot naming a
           # commit it made on a branch of its own. It reads no prose for
           # intent, so it does not reopen the failure family documented above
-          # `verdict_class`.
+          # verdict_class.
           #
           # Both failure directions are safe. An unrecognised self-report shape
-          # keeps today's behaviour exactly (`findings`, blocking) — that is a
+          # keeps today's behaviour exactly (findings, blocking) — that is a
           # false block, which is the direction this file always chooses. And
           # nothing badged can reach this class at all, so a real finding
           # stated in a self-report-shaped body still blocks.
@@ -1746,14 +1753,14 @@ codex_verdict_defs=$(
           def has_summary_heading:
             (trimmed_lines |
               any(.[]; test("^#{1,6}[[:space:]]*summary[[:space:]]*$")));
-          # Challenge round 1, finding `challenge-r1-codex-adversarial-1`
-          # (2026-09-20, confirmed P1): a `Summary` HEADING IS NOT EVIDENCE OF
+          # Challenge round 1, finding challenge-r1-codex-adversarial-1
+          # (2026-09-20, confirmed P1): a Summary HEADING IS NOT EVIDENCE OF
           # ANYTHING. The first version of this predicate was
-          # `(no badge) and (has_summary_heading or claims_own_commit)`, so the
-          # heading alone sufficed — and because `informational` is excluded
+          # (no badge) and (has_summary_heading or claims_own_commit), so the
+          # heading alone sufficed — and because informational is excluded
           # from all three blocking scans, an unbadged prose concern written
           # under that heading became invisible where it had previously been
-          # `findings`/exit 10. AGENTS.md § Severity gating is explicit that a
+          # findings/exit 10. AGENTS.md § Severity gating is explicit that a
           # finding "not badged at all, is adjudicated as at least a P2", so an
           # unbadged concern IS a finding; the original safety note here
           # ("nothing badged can reach this class") only ever covered the
@@ -1773,23 +1780,23 @@ codex_verdict_defs=$(
           #      meaning has to be read.
           #
           # This is an allowlist of observed phrasings, which the long comment
-          # above `verdict_class` warns against for the CLEAN path — and the
+          # above verdict_class warns against for the CLEAN path — and the
           # distinction is the failure direction. There, a non-match deadlocked
-          # genuinely clean PRs. Here a non-match is `findings`: the body
+          # genuinely clean PRs. Here a non-match is findings: the body
           # blocks and a human adjudicates it. Drift costs a false block, never
           # a false green, which is the trade this file takes everywhere.
           def self_work_marker:
             (body_text | ascii_downcase |
-              (test("committed .*on `[^`]+` as `[0-9a-f]{7,40}`") or
+              (test("committed .*on \u0060[^\u0060]+\u0060 as \u0060[0-9a-f]{7,40}\u0060") or
                test("a pull request could not be created") or
-               test("reviewed commit `[0-9a-f]{7,40}` and found no additional")));
+               test("reviewed commit \u0060[0-9a-f]{7,40}\u0060 and found no additional")));
           def has_finding_footer:
             (body_text | ascii_downcase | test("useful\\? react with"));
-          # Challenge round 2, findings `challenge-r2-codex-adversarial-1` and
-          # `-3` (confirmed P1, disposition RESTRUCTURE). Round 1 asked only
+          # Challenge round 2, findings challenge-r2-codex-adversarial-1 and
+          # -3 (confirmed P1, disposition RESTRUCTURE). Round 1 asked only
           # whether a self-work marker appeared ANYWHERE, so a body could
           # describe the bot's own work in one line and state an unanswered
-          # concern in the next and still classify `informational` — the
+          # concern in the next and still classify informational — the
           # concern then vanished from every blocking scan. The marker list
           # was simultaneously too tight: a self-report phrased outside the
           # three observed strings exited 10 with no way to answer it.
@@ -1797,7 +1804,7 @@ codex_verdict_defs=$(
           # The invariant, not the phrasing: **informational means the body
           # states nothing but the bot's own work.** So the test is now
           # whole-body and structural — every non-blank line outside the
-          # About block must be a heading, a bold-only label (`**Testing**`,
+          # About block must be a heading, a bold-only label (**Testing**,
           # which both observed reports use), or a list item. A free-standing
           # prose paragraph is exactly what a concern looks like and exactly
           # what a work report does not contain.
@@ -1808,12 +1815,12 @@ codex_verdict_defs=$(
           # Residual, stated rather than papered over: a concern written AS a
           # bullet inside an otherwise-genuine report still classifies
           # informational. That is why this predicate is only half the
-          # restructure — `settle` now accepts everything `check` blocks on,
+          # restructure — settle now accepts everything check blocks on,
           # so misreading in the other direction costs one recorded
           # disposition instead of a stranded head, and the classifier is free
           # to fail closed.
-          # `is_reviewed_commit_line` rides along because it is Codex's OWN
-          # whole-line metadata — the same line `rest_is_boilerplate` accepts
+          # is_reviewed_commit_line rides along because it is Codex's OWN
+          # whole-line metadata — the same line rest_is_boilerplate accepts
           # in a clean verdict — not prose a concern could hide in. Every other
           # shape here is structural: a heading, a bold-only label, a list
           # item.
@@ -1836,25 +1843,25 @@ codex_verdict_defs=$(
             states_only_own_work;
           # harmon-devkit#718's rolling "Codex Review Summary" table was
           # accepted here as a verdict surface in round 1 and SPLIT OUT in
-          # challenge round 3 (findings `challenge-r3-codex-adversarial-2`,
-          # `-3`, `-4`, `-5`; carried in #1117). Reading a verdict out of that
+          # challenge round 3 (findings challenge-r3-codex-adversarial-2,
+          # -3, -4, -5; carried in #1117). Reading a verdict out of that
           # table meant deriving a head from parsed markdown, and three
           # consecutive rounds reproduced a false-clean or stuck-head path
           # through it: the Completed-row arm, the header/column resolution,
           # the latest-row-per-commit keying, and the comment-level freshness
-          # stamp are all gone, with `settle`'s summary binding.
+          # stamp are all gone, with settle's summary binding.
           #
           # What replaces it is a REJECTION FORM rather than a parser: a
           # badged comment from the pinned actor, newer than the trigger, that
           # this checker cannot bind to a head BLOCKS until it is settled by
-          # comment id (see the unbound-badged scan in `check`). The trigger
+          # comment id (see the unbound-badged scan in check). The trigger
           # already scopes the cycle to one PR and head, so nothing has to be
           # derived from the body at all — which is what deletes the whole
           # unbindable class instead of hardening it a fourth time.
           # Restructured, not re-decided: a body that DOES open with the clean
           # sentence classifies exactly as before (badge -> findings, trailing
           # prose -> unrecognized, otherwise clean), and a body that does not
-          # is still `findings` unless it is the unbadged self-report shape
+          # is still findings unless it is the unbadged self-report shape
           # above. The clean-template branch is checked first so a self-report
           # heading can never reclassify a genuine clean verdict.
           def verdict_class:
@@ -2423,6 +2430,8 @@ reserve)
     fi
     gh_call_timeout_cap=
 
+    superseded_reservations='[]'
+    previous_head_trigger_comment_id=null
     replaced_trigger_comment_id=
     carried_first_trigger_comment_id=
     if [ -f "$state_file" ]; then
@@ -2432,6 +2441,14 @@ reserve)
         old_head=$(jq -r '.head' "$state_file")
         old_attempt=$(jq -r '.attempt' "$state_file")
         old_phase=$(jq -r '.phase' "$state_file")
+        previous_head_trigger_comment_id=$(jq -r '.previous_head_trigger_comment_id // null' "$state_file")
+        if [ "$old_head" != "$head" ]; then
+            previous_head_trigger_comment_id=$(jq -r '.trigger_comment_id // .previous_trigger_comment_id // .previous_head_trigger_comment_id // null' "$state_file")
+        fi
+        if [ "$previous_head_trigger_comment_id" != null ]; then
+            valid_uint "$previous_head_trigger_comment_id" || die "invalid previous-head trigger anchor"
+        fi
+        superseded_reservations=$(jq -c '.superseded_reservations // []' "$state_file")
         [ "$old_repo" = "$repo" ] && [ "$old_pr" = "$pr" ] ||
             die "state belongs to a different PR"
         # Review round 3, P1 (confirmed): `check` refuses to resume state owned
@@ -2493,6 +2510,15 @@ reserve)
         # push or an operator clear the state.
         if [ "$foreign_run_state" = "1" ]; then
             :
+        elif [ "$old_phase" = "released" ]; then
+            [ "$attempt" = "1" ] || die "a released reservation must restart at attempt 1"
+            if [ "$old_head" = "$head" ]; then
+                # Release removes an unposted attempt, never this head's
+                # trigger history (including a first trigger since deleted).
+                replaced_trigger_comment_id=$(jq -r '.previous_trigger_comment_id // empty' "$state_file")
+                carried_first_trigger_comment_id=$(jq -r \
+                    '.first_trigger_comment_id // .previous_trigger_comment_id // empty' "$state_file")
+            fi
         elif [ "$old_head" = "$head" ]; then
             [ "$old_attempt" = "1" ] && [ "$attempt" = "2" ] &&
                 [ "$old_phase" = "attached" ] ||
@@ -2919,7 +2945,9 @@ reserve)
         --arg reserved_at "$reserved_at" \
         --argjson timeout_min "$payload_timeout_min" \
         --argjson settled "$carried_settled" \
+        --argjson superseded_reservations "$superseded_reservations" \
         --argjson finder "$finder_payload" \
+        --argjson previous_head_trigger_comment_id "$previous_head_trigger_comment_id" \
         --argjson previous_trigger_comment_id "$payload_previous_trigger_comment_id" \
         --arg charge "$charge_class" \
         --arg charge_reason "$charge_reason" \
@@ -2936,11 +2964,13 @@ reserve)
           version:2,repo:$repo,pr:$pr,head:$head,attempt:$attempt,
           phase:"reserved",reserved_at:$reserved_at,
           trigger_comment_id:null,requested_at:null,
+          previous_head_trigger_comment_id:$previous_head_trigger_comment_id,
           previous_trigger_comment_id:$previous_trigger_comment_id,
           first_trigger_comment_id:$first_trigger_comment_id,
           requires_full_window:false,
           timeout_min:$timeout_min,
           settled:$settled,
+          superseded_reservations:$superseded_reservations,
           finder:$finder,
           charge:$charge,
           charge_reason:$charge_reason,
@@ -2967,6 +2997,48 @@ reserve)
             die "cannot record this run's spend in $spend_file; the reservation stands but its spend is not durable — re-run the reservation"
         }
     fi
+    release_state_lock
+    printf '%s\n' "$payload"
+    ;;
+
+release)
+    [ -n "$note" ] || die "release requires --note with a recovery reason"
+    acquire_state_lock
+    read_state
+    jq -e '.phase == "reserved" and .trigger_comment_id == null and
+        (.finder == null or ((.finder.trigger_mechanism // "review-comment") == "review-comment"
+          and (.finder.trigger_body // "@codex review") == "@codex review"))' \
+        "$state_file" >/dev/null || die "only an untriggered Codex reservation can be released"
+    state_repo=$(jq -r '.repo' "$state_file")
+    state_pr=$(jq -r '.pr' "$state_file")
+    release_reserved_at=$(jq -r '.reserved_at' "$state_file")
+    valid_repo "$state_repo" && valid_uint "$state_pr" && valid_time "$release_reserved_at" ||
+        die "reservation identity or time is invalid"
+    release_reserved_epoch=$(jq -nr --arg at "$release_reserved_at" '$at | fromdateiso8601') ||
+        die "reservation time cannot be parsed"
+    release_now_epoch=$(clock_epoch) || die "cannot read the local clock"
+    [ "$release_now_epoch" -ge "$((release_reserved_epoch + RELEASE_MARGIN_SEC))" ] ||
+        die "wait 10 minutes after the reservation (and a failed trigger) before releasing"
+    release_scan_since=$(jq -nr --argjson at "$release_reserved_epoch" \
+        --argjson margin "$RELEASE_MARGIN_SEC" '$at - $margin | todateiso8601') ||
+        die "cannot compute the release scan boundary"
+    # Use the broker's classifier, with no author filter: a trigger posted by
+    # another actor is also evidence that the reservation cannot be released.
+    # shellcheck source=gh-write-broker.sh
+    . "$SCRIPT_DIR/gh-write-broker.sh"
+    release_comments=$(run_gh api --paginate --slurp \
+        "repos/$state_repo/issues/$state_pr/comments?per_page=100") ||
+        die "cannot read live triggers; reservation remains reserved"
+    release_candidates=$(reservation_trigger_candidates "$release_scan_since" <<<"$release_comments") ||
+        die "cannot classify live triggers; reservation remains reserved"
+    [ "$(jq 'length' <<<"$release_candidates")" = 0 ] ||
+        die "a matching trigger exists; reconcile its attachment instead of releasing"
+    payload=$(jq --arg reason "$note" --arg at "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" '
+        .superseded_reservations = ((.superseded_reservations // []) +
+          [{head:.head,reserved_at:.reserved_at,reason:$reason,released_at:$at}]) |
+        .phase = "released"
+    ' "$state_file")
+    write_state "$state_file" "$payload"
     release_state_lock
     printf '%s\n' "$payload"
     ;;
@@ -3011,6 +3083,8 @@ attach)
     [ "$live_head" = "$state_head" ] ||
         die "PR head changed before trigger attachment"
     phase=$(jq -r '.phase' "$state_file")
+    [ "$phase" = reserved ] || [ "$phase" = attached ] ||
+        die "reservation was released; reserve a fresh cycle before attaching"
 
     if [ -n "$requested_at_arg" ]; then
         # Requested-reviewer finders: no trigger comment to verify; the
@@ -3140,16 +3214,28 @@ attach)
     if [ "$head_authored_at" \< "$commit_date_boundary" ]; then
         commit_date_boundary=$head_authored_at
     fi
-    check_suite_pages=$(run_gh api --paginate --slurp \
-        "repos/$state_repo/commits/$state_head/check-suites?per_page=100") ||
-        die "cannot fetch check suites for trigger reconstruction"
-    check_suite_boundary=$(printf '%s' "$check_suite_pages" | jq -r '
-          [.[] | (.check_suites // [])[] | .created_at |
-            select(type == "string")] | sort | first // empty
+    check_suite_boundary=
+    check_suite_boundary_reason=
+    check_suite_error=$(mktemp "${state_file}.suites-error.XXXXXX")
+    if check_suite_pages=$(run_gh api --paginate --slurp \
+        "repos/$state_repo/commits/$state_head/check-suites?per_page=100" 2>"$check_suite_error"); then
+        rm -f "$check_suite_error"
+        check_suite_boundary=$(printf '%s' "$check_suite_pages" | jq -er '
+            if type != "array" or length == 0 or
+              any(.[]; type != "object" or (.check_suites | type != "array"))
+            then error("invalid check-suite pages") else . end |
+            [.[] | .check_suites[] | .created_at |
+              if type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$")
+              then . else error("invalid check-suite creation time") end] |
+            sort | first // ""
         ') || die "cannot classify check-suite creation times"
-    if [ -n "$check_suite_boundary" ]; then
-        valid_time "$check_suite_boundary" ||
-            die "GitHub returned a malformed check-suite creation time"
+    else
+        check_suite_boundary_reason=$(sed -nE 's/^gh: .*\(HTTP (403|404)\).*$/HTTP \1/p' "$check_suite_error")
+        rm -f "$check_suite_error"
+        case "$check_suite_boundary_reason" in
+        "HTTP 403" | "HTTP 404") requires_full_window=true ;;
+        *) die "cannot fetch check suites for trigger reconstruction" ;;
+        esac
     fi
     head_trigger_boundary=$commit_date_boundary
     boundary_source=commit-date
@@ -3157,6 +3243,12 @@ attach)
         [ "$check_suite_boundary" \< "$head_trigger_boundary" ]; then
         head_trigger_boundary=$check_suite_boundary
         boundary_source=check-suite
+    fi
+    if [ -n "$check_suite_boundary_reason" ]; then
+        # No trusted server boundary: use the previous head's trigger id below,
+        # never potentially future-dated commit timestamps alone.
+        head_trigger_boundary=
+        boundary_source=unavailable
     fi
     issue_comments=$(run_gh api --paginate --slurp \
         "repos/$state_repo/issues/$state_pr/comments?per_page=100") ||
@@ -3187,6 +3279,14 @@ attach)
              ((.created_at == $before) and (.id < $attached)))
           )]
         ') || die "cannot classify prior review triggers"
+
+    if [ "$boundary_source" = unavailable ] &&
+        [ "$(jq 'length' <<<"$prior_trigger_candidates")" -gt 0 ]; then
+        previous_head_anchor=$(jq -r '.previous_head_trigger_comment_id // empty' "$state_file")
+        valid_uint "$previous_head_anchor" && [ "$previous_head_anchor" -lt "$trigger_id" ] ||
+            die "check-suite boundary unavailable and earlier triggers lack a previous-head anchor; restore verified previous-head state or grant Checks: read before retrying attach"
+        prior_trigger_candidates=$(jq -c --argjson anchor "$previous_head_anchor" 'map(select(.id > $anchor))' <<<"$prior_trigger_candidates")
+    fi
 
     # With no reconstruction evidence the only same-head trigger in view is the
     # one being attached, so it IS the minimum. The branch below lowers this
@@ -3269,6 +3369,7 @@ attach)
         --argjson requires_full_window "$requires_full_window" \
         --arg boundary_source "$boundary_source" \
         --arg commit_date_boundary "$commit_date_boundary" \
+        --arg check_suite_boundary_reason "$check_suite_boundary_reason" \
         --arg check_suite_boundary "$check_suite_boundary" '
           .version = 2 |
           .phase = "attached" |
@@ -3296,6 +3397,8 @@ attach)
           .requires_full_window = $requires_full_window |
           .boundary_source = $boundary_source |
           .commit_date_boundary = $commit_date_boundary |
+          .check_suite_boundary_reason = (if $check_suite_boundary_reason == ""
+            then null else $check_suite_boundary_reason end) |
           .check_suite_boundary = (if $check_suite_boundary == ""
             then null else $check_suite_boundary end)
         ' "$state_file")
