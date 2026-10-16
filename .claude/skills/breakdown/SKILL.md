@@ -14,6 +14,13 @@ allowed-tools: Read, Glob, Grep, Bash(gh issue view:*), Bash(gh issue list:*), B
 
 # Breakdown
 
+**Agent-posture REST reads:** For each REST read shown as `gh api` below,
+agent-posture sessions use `/usr/local/bin/gh-api-read` instead, keeping the
+endpoint, pagination and output flags. When a read names `--hostname "$host"`,
+remove that flag and set `GH_HOST="$host"` on the wrapper invocation. In dev
+and bot postures the shown command remains valid. This substitution is for
+GET reads only; do not route writes or GraphQL through the GET-only wrapper.
+
 **Arguments:** $ARGUMENTS
 
 Turn a lump of work into GitHub issues an agent can execute and a human can
@@ -262,7 +269,10 @@ judgment. The bar, concretely:
   is more load-bearing here than on a file-it-today issue.
 
 Each authored issue also carries a `## Surface` section listing the paths or
-areas it is expected to touch. Keep the list complete enough for dispatch-time
+areas it is expected to touch — the canonical optional heading
+[`track-work` §5](../track-work/SKILL.md#body-contract)'s pre-create checker
+accepts after `Problem` (and any dated `Current violation`) and before
+`Acceptance criteria`. Keep the list complete enough for dispatch-time
 pairwise overlap analysis while treating it as a starting hypothesis: the
 orchestrator re-verifies it against live code before assigning a lane.
 

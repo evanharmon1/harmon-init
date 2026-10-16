@@ -193,8 +193,8 @@ fails, an answer `jq` cannot read, or an order other than the two
   The attempt window
   starts when the trigger is created, so posting during CI would consume the
   reviewer's promised post-CI response window.
-- **`with-push`** — request the review with the push: reserve and trigger
-  without waiting for CI, and settle CI alongside the cycle. Both still have
+- **`with-push`** — after the primary rollup probe succeeds, request the
+  review with the push: reserve and trigger without waiting for CI, and settle CI alongside the cycle. Both still have
   to end green and terminal-clean before the orchestrator's readiness gate
   passes; only the ordering changed.
 
@@ -208,45 +208,50 @@ cycle this pass owes is requested — never a cycle the rounds policy does not
 require, and never a second request for a head beyond the one bounded
 attempt-2 retry §4 already describes.
 
-Under either order, read the checks for the exact head your brief named:
+**CI settlement invariants — probe first, fail closed:**
 
-```sh
-checks="$(gh pr checks <n> --repo "$repo" --json bucket,name,workflow,event,link 2>/dev/null)"
-jq -e 'type == "array"' <<<"$checks" >/dev/null 2>&1 || {
-    echo 'cannot read check status — do not reserve or trigger'
-    exit 1
-}
-required_checks="$(gh pr checks <n> --repo "$repo" --json name,link --required \
-    --jq '[.[] | {name, link}]' 2>/dev/null)"
-jq -e 'type == "array"' <<<"$required_checks" >/dev/null 2>&1 || required_checks='[]'
-checks_ready="$(jq -r 'length > 0 and all(.[]; .bucket == "pass" or .bucket == "skipping")' \
-    <<<"$checks" 2>/dev/null)"
-```
+- **Read path.** Before §4 reserves or triggers anything, under every
+  `review_trigger` value including `with-push`, probe the primary rollup with
+  `gh pr checks <n> --repo "$repo" --json bucket,name,workflow,event,link`;
+  capture stdout, exit status AND stderr separately, including for
+  `--required`, never discard stderr. A checks read is a recognised permission denial when its stderr contains
+  `Resource not accessible by` (any token kind) or it reports HTTP 403.
+  Only that permission denial selects
+  `"$DEV_FLOW_SUPPORT/settle-wait.sh" checks --repo "$repo" --pr <n>
+  --head <head> --timeout-seconds 1800 --interval-seconds 30 --format checks-json`.
+  Preserve the helper's exit status and use its JSON stdout as `checks[]`;
+  mapping and counted-run selection belong to that tested helper, never a
+  second listing or an agent-written jq program. Every other read failure,
+  including malformed output, stays indeterminate and returns a schema-valid
+  pending result without entering §4. Parseable rollup arrays accompanied by
+  ordinary pending/failing CLI statuses are check outcomes, not read failures.
+  Keep successfully read primary arrays as `$checks` and `$required_checks`
+  for the identity mapping below.
+- **Outcome.** On the primary path, settled green sets `checks_ready=true`;
+  settled failing signals `failed_required=true`. On the permission fallback,
+  exit 0 is settled green Actions evidence only; fallback exit 1 carries the
+  failing run IDs into §5/§7's findings/result flow. Exits 3/4 are indeterminate
+  or expired: preserve the diagnostic and use `checks[]=[]` when the helper
+  supplied no JSON, never fabricate settled evidence. A merged/closed PR
+  (exit 5) stops the whole stage.
+- **Timing.** Only a successful primary rollup probe permits the existing
+  `review_trigger` ordering: `with-push` reserves and triggers without waiting
+  for CI, `after-ci` waits for settled green, and `after-ci-first` resolves
+  through the existing timing helper. On a recognised permission error,
+  reserve nothing and trigger nothing; do not enter §4 or resume an old cycle.
+- **Evidence gap.** Every permission fallback result reports `pending` with
+  `status=blocked`, `codex_cycle:null` and `finder_cycles:[]`: no review ran
+  this pass, so never attach an earlier pass's cycle. Helper `checks[]` entries
+  have `required:false` because requiredness is unknown; preserve any failing
+  run findings even with this pending verdict. Report §9's prescribed blocker;
+  the readiness gate still needs its own complete check-run/status evidence.
 
-`required_checks` needs the same reading as `$checks` just above, for the
-identical reason: `gh pr checks --required` exits nonzero for the same
-ordinary pending/failing cases (harmon-devkit#639 gauntlet review, PR #758
-Codex cloud cycle 1) — the old `|| required_names='[]'` treated that
-exactly like ${checks}'s old bug did, discarding real required-check names
-whenever any one of them wasn't yet green and marking every check
-`required: false` in `$failed_required` below for the rest of this pass.
-Only output that fails to parse as a JSON array is genuinely unreadable;
-everything else is real data, read the same way regardless of the exit
-code that came with it.
+The following check-run/status identity mapping applies only to a successfully
+read primary rollup; the Actions fallback already supplies `checks[]` and
+bypasses this mapping. An unavailable identity read follows the pending-result
+invariant above; no partial array may stand in for missing evidence.
 
-`gh pr checks` exits nonzero for the two ordinary, expected cases this step
-exists to detect — 8 while any check is still pending, and nonzero again
-once a required check has failed — so a nonzero exit is not by itself
-evidence the read failed; only output that fails to parse as a JSON array (a
-network error, a bad PR reference, an authentication failure) is. `2>/dev/null`
-keeps a diagnostic on stderr from ever landing inside `$checks` and being
-mistaken for its data. `checks_ready` is not an early exit: a `false` here
-still flows through the rest of this section and on to §5–§7 to produce a
-schema-valid `pending` or `findings` result, exactly as one is owed whenever
-CI has not settled — §4 below is what actually reads `checks_ready` to decide
-whether reserving or triggering is safe.
-
-`$checks` decides pass/fail here, and **stays the source of `checks[]`'s own
+On the normal rollup path, `$checks` decides pass/fail here, and **stays the source of `checks[]`'s own
 `bucket` in your result too** — `gh pr checks` reads the same server-side
 rollup GitHub's Checks tab shows, already collapsed across reruns. The raw
 check-runs REST endpoint's `filter=latest` collapses only WITHIN one check
@@ -264,15 +269,9 @@ from data you already trust:
 
 ```sh
 check_runs_pages="$("$skill_dir"/assets/gh-ro.sh --paginate --slurp \
-    "repos/$repo/commits/<head>/check-runs?per_page=100&filter=latest")" || {
-    echo 'cannot fetch check-runs — do not reserve or trigger'
-    exit 1
-}
+    "repos/$repo/commits/<head>/check-runs?per_page=100&filter=latest")"
 statuses_pages="$("$skill_dir"/assets/gh-ro.sh --paginate --slurp \
-    "repos/$repo/commits/<head>/statuses?per_page=100")" || {
-    echo 'cannot fetch commit statuses — do not reserve or trigger'
-    exit 1
-}
+    "repos/$repo/commits/<head>/statuses?per_page=100")"
 checks_json="$(jq -c --argjson required "$required_checks" \
     --slurpfile runs_sf <(printf '%s' "$check_runs_pages") \
     --slurpfile statuses_sf <(printf '%s' "$statuses_pages") '
@@ -290,7 +289,7 @@ checks_json="$(jq -c --argjson required "$required_checks" \
         bucket: $c.bucket,
         run_id: ($run_ids[$c.link // ""] // $status_ids[$c.name] // "0"),
         required: (($required | map(select(.name == $c.name and .link == $c.link)) | length) > 0)
-    }]' <<<"$checks")" || checks_json='[]'
+    }]' <<<"$checks")"
 ```
 
 `run_id` is keyed by the row's own `link` — the check run's `details_url` /
@@ -321,10 +320,10 @@ confirmed absence), it will say so explicitly; do not infer that yourself
 from an empty or failed read. This step feeds `checks[]` in your result (§7)
 either way — capture the full array, not just the pass/fail verdict.
 
-```sh
-failed_required="$(jq -c '[.[] | select(.required and (.bucket == "fail" or .bucket == "cancel"))
-    | {name, run_id}]' <<<"$checks_json" 2>/dev/null)"
-```
+For §5, retain the `failed_required` list of `{name, run_id}` entries from
+failed/cancelled required rollup checks, or from failed/cancelled counted
+Actions runs when the fallback cannot establish requiredness; this list is
+the evidence behind the failure condition above.
 
 A non-empty `$failed_required` is exactly the "a CI failure needing
 adjudication" case §5 already asks you to carry into `findings[]` — one
@@ -336,7 +335,7 @@ merely `pending` (neither failed nor settled) belongs in `checks_ready`
 **Draft flips are report-only.** On entry, in every poll and immediately before
 any brokered write, re-read `state,isDraft,headRefOid`. If an open draft-workbench
 PR is now non-draft, stop writes and fetch its complete timeline through the
-resolved `gh-ro.sh --paginate repos/"$repo"/issues/<n>/timeline`. Report the
+resolved `gh-ro.sh --paginate --slurp repos/"$repo"/issues/<n>/timeline`. Report the
 latest `ready_for_review` event ID, time, actor and observed head to the
 orchestrator, who correlates it with `run.json.pr` and `run.json.promotion`
 under `/integrate` §2. You report a suspected unexplained flip; you never decide
@@ -344,9 +343,31 @@ whether it is gate-produced. A failed timeline read is unknown: name it in the
 blocker report rather than inventing event evidence. The observed head does
 not establish the historical head at event time.
 
-Carry the observation in the existing blocker report (§9), with
-`status: "blocked"` in the schema-valid envelope; do not add payload fields or
-manufacture a reviewer finding. Set `status=blocked` for §7's builder.
+Carry the observation in `payload.blocker`, with `status: "blocked"` in the
+schema-valid envelope; never manufacture a reviewer finding.
+Set `status=blocked` for §7's builder. After a successful complete timeline read,
+`timeline_json` holds the slurped array of timeline pages and `observed_head`
+the freshly observed head. Flatten the pages before selecting the latest ready
+event globally with this snippet; if it fails or the read
+failed, leave `blocker_json=null` and name the missing evidence in §9 instead
+of inventing it:
+
+```sh
+status=blocked
+blocker_json=null
+if ! blocker_json="$(jq -ce --arg observed_head "$observed_head" '
+    (add // []) | [.[] | select(.event == "ready_for_review")]
+    | sort_by(.created_at, .id) | last
+    | select(.id != null and .created_at != null
+             and .actor.id != null and .actor.login != null)
+    | {kind: "unexplained-promotion", ready_event_id: (.id | tostring),
+       ready_at: .created_at,
+       actor: {id: (.actor.id | tostring), login: .actor.login},
+       observed_head: $observed_head}' <<<"$timeline_json")"; then
+    blocker_json=null
+fi
+```
+
 Populate the existing payload from evidence
 already gathered (§7), leaving `codex_cycle: null` if no cycle ran. If missing
 evidence prevents a valid result, report that blocker to the orchestrator;
@@ -411,13 +432,29 @@ pr_now="$(gh pr view <n> --repo "$repo" --json state,isDraft,headRefOid)" || exi
 
 Require all three on that one read: `.state` is `OPEN`, `.isDraft` is `true`,
 and `.headRefOid` equals the head your brief named. Any mismatch means **post
-no trigger**: skip the rest of this section, report `codex_cycle: null`, and
-leave the reservation untouched. For an open PR whose `.isDraft` is not
-`true`, use §3's **Draft flips are report-only** blocker path: set
-`status=blocked`, report `status: "blocked"` through §7/§9, and never
-manufacture a reviewer finding for the promotion. A closed PR or moved head
-is still reported as a finding (§5), as before. The next
-dispatch's broker call runs this same read before it would post. Never substitute the head `pr_now` reports for the brief's. A head
+no trigger**: skip the rest of this section and report `codex_cycle: null`.
+For an open PR whose `.isDraft` is not `true`, use §3's **Draft flips are
+report-only** blocker path: set `status=blocked`, report `status: "blocked"`
+through §7/§9, never manufacture a reviewer finding for the promotion, and
+leave the reservation untouched (its head has not moved).
+A closed PR or moved head is still reported as a finding (§5), as before; for a
+moved head first report the mismatch, wait until `reserved_at + 600 s`, then run once
+`"$helper" release --state "$state" --note "PR changed before trigger"`.
+
+**Wait-then-release and resume:** report the mismatch and the old reserved head,
+then wait only until `reserved_at + 600 s` before running release once. Bound
+the wait to the remaining part of those 600 seconds; malformed/future times,
+an interrupted wait, or a refused release are blockers naming the old head.
+When `reserve` refuses an unresolved reservation for a different head, the next
+dispatch follows this same wait-then-release path with
+`"$helper" release --state "$state" --note "PR changed before trigger"`, then
+runs `reserve` once more for its dispatched head. A refused release stays a
+blocker; never retry reserve after that refusal or post a trigger.
+
+Release succeeds only for an untriggered Codex reservation after a live comment
+scan with the 10-minute skew margin proves no trigger exists; a refusal remains a blocker. The next
+dispatch reserves its own head with the retained counters and history, and its
+broker call runs this same read before it would post. Never substitute the head `pr_now` reports for the brief's. A head
 GitHub has not caught up to yet is `reserve`'s question, not this read's: its
 bounded head wait answers it (exit codes below) before this read runs, so do
 not read the PR ahead of `reserve` to second-guess it. A
@@ -457,12 +494,13 @@ blocked whoever owns it, because a trigger may already be out against it.
 
 **Inspect the state file yourself before calling `reserve` — do not call it
 unconditionally and branch on what it reports.** `reserve --attempt 1`
-**dies** (nonzero, no distinguishing message your `|| exit` could branch on)
-whenever state already exists for this exact head, and dies just as hard
-when existing state for *any* head is stuck at `phase:"reserved"` — it never
-returns a graceful "already attached" or "unresolved reservation" report for
-you to read. Resuming is therefore a decision you make by reading the file
-directly, before your first external write of this cycle:
+**dies** when this run already has `phase:"attached"` state for this exact
+head, or existing state for *any* head is `phase:"reserved"`, regardless of
+its owning run. The foreign attached-state exception above still applies.
+Same-head `phase:"released"` state permits a fresh `reserve --attempt 1`,
+carrying that head's trigger-history anchors. Inspect these states directly
+before your first external write of this cycle; a nonzero reservation never
+authorizes posting a trigger:
 
 ```sh
 repo="<owner/repo>"
@@ -516,7 +554,9 @@ nothing to carry otherwise, and `carry` will say so.
 
 Three cases, mutually exclusive:
 
-- **No state file, or state for a different head.** This is a fresh cycle.
+- **No state file, state for a different head, or same-head `released` state.**
+  This is a fresh `reserve --attempt 1` cycle. Same-head released state carries
+  its first and previous trigger-history anchors into the new reservation.
   Run these two steps, each as its own Bash tool call:
 
   **1. Reserve and re-read, posting nothing.** Use the same project-installed
@@ -531,6 +571,15 @@ Three cases, mutually exclusive:
       --head "<head>" --attempt 1 --run-id "<run id>" \
       --integration-cap "<cap>" --integration-exempt-cap "<exempt cap>" \
       --review-trigger "<review_trigger>" --remediation "<remediation pushes so far>")
+  release_after_margin() {
+      reserved_epoch=$(jq -er '.reserved_at | fromdateiso8601' "$state") || return
+      release_wait=$((reserved_epoch + 600 - $(date -u +%s)))
+      [ "$release_wait" -le 600 ] || return 2
+      if [ "$release_wait" -gt 0 ]; then
+          sleep "$release_wait" || return
+      fi
+      "$helper" release --state "$state" --note "PR changed before trigger"
+  }
   reserve_exit=0
   "$helper" reserve "${reserve_args[@]}" || reserve_exit=$?
   if [ "$reserve_exit" -eq 18 ]; then
@@ -538,14 +587,30 @@ Three cases, mutually exclusive:
       reserve_exit=0
       "$helper" reserve "${reserve_args[@]}" || reserve_exit=$?
   fi
+  if [ "$reserve_exit" -eq 2 ] && jq -e --arg head "<head>" \
+      '.phase == "reserved" and .head != $head and .trigger_comment_id == null' \
+      "$state" >/dev/null; then
+      # Report the old head before waiting; interrupted/refused release blocks.
+      jq -r '"Unresolved reservation for old head: " + .head' "$state" >&2
+      release_after_margin || exit
+      reserve_exit=0
+      "$helper" reserve "${reserve_args[@]}" || reserve_exit=$?
+  fi
   # A second 18 is a blocker; any other non-zero is a refusal. Either way:
   # post no trigger, codex_cycle null, report it (below).
   [ "$reserve_exit" -eq 0 ] || exit "$reserve_exit"
   pr_now="$(gh pr view <n> --repo "$repo" --json state,isDraft,headRefOid)" || exit
-  # Any mismatch: post no trigger, codex_cycle null, report it (above).
-  jq -e --arg head "<head>" \
+  # Any mismatch: post no trigger, report codex_cycle null.
+  if ! jq -e --arg head "<head>" \
       '.state == "OPEN" and .isDraft == true and .headRefOid == $head' \
-      <<<"$pr_now" >/dev/null || exit
+      <<<"$pr_now" >/dev/null; then
+      # A draft flip leaves the reservation untouched (report-only blocker).
+      if jq -e --arg head "<head>" '.headRefOid != $head' <<<"$pr_now" >/dev/null; then
+          jq -r '"PR changed; old reserved head: " + .head' "$state" >&2
+          release_after_margin || exit
+      fi
+      exit 2
+  fi
   echo "RESERVED <head>"
   ```
 
@@ -573,8 +638,21 @@ Three cases, mutually exclusive:
   call, and this call needs neither `$helper` nor `$state` from step 1.
   On exit 2, the broker refused before posting. On exit 3, report a blocker
   (§5) with the existing trigger's id; a re-run adopts it only while the
-  reservation and PR state still match. Report any other failure without
-  re-running blindly.
+  reservation and PR state still match. For a failed trigger write with no
+  returned id, run the same recovery command:
+  `"$helper" release --state "$state" --note "trigger POST failed"`.
+  Wait 10 minutes after a failed trigger before releasing: the reservation
+  must be at least 10 minutes old by the local clock, and the live scan must
+  find no matching trigger from any author at or after `reserved_at` minus
+  10 minutes. One `RELEASE_MARGIN_SEC=600` constant sets both boundaries;
+  broker adoption still uses the exact reservation time.
+  Its live scan refuses if the POST actually created a trigger despite a lost
+  response; report that blocker and reconcile the existing id. Never delete
+  state. Successful release preserves charged/exempt spend and records the
+  superseded head, reservation time and reason; the next dispatch may reserve
+  attempt 1 on its head, which charges normally (there is no refund).
+  A late retry of `attach --trigger-id` uses independent 60-second liveness
+  read budgets, even after the review window, so no state deletion is needed.
 
   **Any non-zero `reserve` means post no trigger.** Keep each call's exit
   status visible, exactly as above — captured in `reserve_exit`, never ended
@@ -1042,7 +1120,8 @@ and is rejected before your evidence is even looked at. Build it with
 `jq -n` rather than hand-typing JSON — this is a mechanical composition
 step, not a place to improvise the schema:
 
-Set `status=completed` when starting the pass. Every blocked path sets
+Set `status=completed` and `blocker_json=null` when starting the pass. Preserve
+§3's captured blocker object on the draft-flip path. Every blocked path sets
 `status=blocked` before assembly; preserve that outcome here rather than
 resetting it. A blocker reported under §9 also sets `status=blocked`.
 
@@ -1057,6 +1136,7 @@ jq -n \
     --arg tier "<producer.tier from your brief>" \
     --arg run_id "<run_id from your brief>" \
     --arg initiated_by "<initiated_by from your brief>" \
+    --argjson blocker "$blocker_json" \
     --argjson checks "$checks_json" \
     --argjson codex_cycle "$codex_cycle_json_or_null" \
     --argjson finder_cycles "$finder_cycles_json" \
@@ -1075,7 +1155,8 @@ jq -n \
                  integration_round: $integration_round, findings: $findings,
                  unanswered_thread_roots: $unanswered_thread_roots,
                  settled_at: $settled_at, verdict: $verdict}
-        + (if $verdict == "clean" then {applied_dispositions: $applied_dispositions} else {} end))}' \
+        + (if $verdict == "clean" then {applied_dispositions: $applied_dispositions} else {} end)
+        + (if $blocker != null then {blocker: $blocker} else {} end))}' \
     >"$out_file"
 ```
 
@@ -1094,7 +1175,15 @@ a CARRIED cycle (harmon-init#752), where `accepted.reviewed_commit` names
 `carried.origin_head` instead; every other field on that list still equals
 this head, including `codex_cycle.head` itself.
 
-Derive `$verdict` mechanically, never by feel: `clean` only when every
+For §3's permission fallback, set `status=blocked`, `verdict=pending`,
+`codex_cycle_json_or_null=null` and `finder_cycles_json='[]'` before assembly;
+keep `blocker_json=null` unless a separate draft-flip blocker was captured.
+The schema requires `codex_cycle` even when no cycle ran, so emit JSON null,
+not an omitted key; do not reuse any earlier cycle or invent a Codex exit code
+from the Actions helper's status. This no-cycle result validates even with a
+positive integration cap, but cannot pass readiness. The following verdict
+derivation applies to the primary rollup path. Derive `$verdict`
+mechanically, never by feel: `clean` only when every
 required check is `pass` (or non-required and `skipping`), the Codex cycle
 (when the cap is not 0) is terminal-clean or was skipped by a 0 cap, **every
 finder cycle** is terminal-clean (exit_code 0 with accepted present), and
@@ -1158,7 +1247,15 @@ your transcript. Cover:
 - **Posted** — the exact writes you made: the trigger comment (if any), and
   each reply you posted from §6, by comment ID.
 - **Blocked** — anything §1 stopped you on, or any read that failed and left
-  a field `unknown` rather than a real value.
+  a field `unknown` rather than a real value. Draft-flip evidence lives in the
+  validated envelope's `payload.blocker`; prose supplements missing reads and
+  never substitutes for the captured event object. For the permission fallback,
+  report: "the token cannot read the checks rollup; CI settled from Actions
+  runs (exit N); no Codex review was requested; the readiness gate needs a
+  token with checks read (see #1502)" — substitute the actual helper exit for
+  N, and identify exits 3/4 as indeterminate/expired rather than settled.
+  No Codex cycle was requested on this path; the §7 result carries null/empty
+  cycle fields, not an exit code for a review that never ran.
 
 The delegation contract that governs every dispatched agent here — exit plan
 mode before spawning, keep the core work in your own context, the shared

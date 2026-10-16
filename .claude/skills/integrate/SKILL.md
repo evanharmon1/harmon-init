@@ -10,7 +10,7 @@ description: >-
   .devflow.toml's review policy). Use when a draft PR exists and the dev loop
   calls for integrating it to ready-for-review. Invoke as /integrate [PR # or
   URL].
-allowed-tools: Read, Glob, Grep, Bash(git status:*), Bash(git branch --show-current), Bash(git remote), Bash(git remote get-url:*), Bash(gh pr view:*), Bash(gh pr checks:*), Bash(gh pr list:*), Bash(gh run view:*), Bash(gh run list:*), Bash(${CLAUDE_SKILL_DIR}/assets/gh-ro.sh:*), Bash(${CLAUDE_SKILL_DIR}/assets/readiness-gate.sh:*)
+allowed-tools: Read, Glob, Grep, Bash(git status:*), Bash(git branch --show-current), Bash(git remote), Bash(git remote get-url:*), Bash(gh pr view:*), Bash(gh pr checks:*), Bash(gh pr list:*), Bash(gh run view:*), Bash(gh run list:*), Bash(${CLAUDE_SKILL_DIR}/assets/gh-ro.sh:*), Bash(${CLAUDE_SKILL_DIR}/assets/readiness-gate.sh:*), Bash(${CLAUDE_SKILL_DIR}/../dev-flow-support/assets/settle-wait.sh checks:*), Bash(.claude/skills/dev-flow-support/assets/settle-wait.sh checks:*), Bash(ai/skills/universal/dev-flow-support/assets/settle-wait.sh checks:*)
 ---
 
 # Integrate
@@ -86,6 +86,15 @@ the slate lock, the same value on every write — or a non-promotion ending with
 --outcome capped|escalated|abandoned --exit "<why>"`, then releases the slate
 lock with `run-record.mjs lock release --slate solo-<run-id> --session <its
 session>` (`/implement` § 6a step 6).
+
+**One supervising writer per run.** The supervising orchestrator (or the
+owning solo session) performs run-record writes sequentially across `/review`
+and `/integrate`; polling delegates return evidence and never write the record.
+Use `run-record.mjs` for its supported operations. The existing settlement
+recipe below remains owned by that same session; do not run it concurrently
+with another record write. The writer's mutex cannot serialize a caller that
+does not take it. Parallel record writers require routing through the shared
+`run-record.mjs` mutex and validated writer first, never a second lock.
 
 **The scripted gate applies only when a record exists.** `assets/readiness-gate.sh`
 requires `--record`, so everything below that runs it — the checker fast path,
@@ -337,13 +346,29 @@ trigger, which posts or adopts and attaches; callers do not attach again.
 Check each call's exit status on its own — never
 `reserve … | jq`, whose status is the pipe's last command, so a refused
 reservation reads as success and the trigger is orphaned when `attach` fails.
-A resumed `reserved` cycle, whose reservation already exists, enters that
+A resumed same-head `reserved` cycle, whose reservation already exists, enters that
 same sequence at the broker call, which performs the read. `reserve` makes no GitHub write, so the read
 after it is the last thing before the post, exactly as §2 requires; it must
 show `OPEN`, a draft, and the dispatched head, and any mismatch there means no
-trigger (the reservation is left for the next dispatch to reconcile). The
+trigger. Report the mismatch, wait until `reserved_at + 600 s`, then run once
+`"$helper" release --state "$state" --note "PR changed before trigger"`
+before returning the mismatch. For a draft flip without a head change, leave
+the reservation untouched and report the draft-flip blocker. It releases only an untriggered Codex reservation
+after the age check and live comment scan with the 10-minute skew margin; attached
+triggers, matching live comments and unreadable evidence refuse recovery. The
 same order binds every per-finder trigger (#804) — its fresh cycle, its
 attempt-2 retry, and its reconcile path alike.
+
+**Wait-then-release and resume:** report the mismatch and the old reserved head,
+then wait only until `reserved_at + 600 s` before running release once. Bound
+the wait to the remaining part of those 600 seconds; malformed/future times,
+an interrupted wait, or a refused release are blockers naming the old head.
+When `reserve` refuses an unresolved reservation for a different head, the next
+dispatch follows this same wait-then-release path with
+`"$helper" release --state "$state" --note "PR changed before trigger"`, then
+runs `reserve` once more for its dispatched head. A refused release stays a
+blocker; never retry reserve after that refusal or post a trigger.
+
 `reserve` itself waits a bounded time (`CODEX_RESERVE_HEAD_WAIT_SEC`, default
 30s, at most 120s, never sleeping past it) for GitHub to report a just-pushed
 head, which is why the read comes after it rather than before. Exit
@@ -361,7 +386,38 @@ reserved head, posts, and attaches immediately. It prints a bare integer id;
 callers do not attach again. A failed attach names the posted id for the next
 dispatch's reconciliation or a re-run that adopts instead of posting; report
 a blocker on exit 3. Exit 2 refuses before posting; report other failures
-without blindly re-running. `<project-dir>` is Claude Code's `CLAUDE_PROJECT_DIR`; `<skills-dir>` is
+without blindly re-running. For a failed trigger POST with no returned id, run
+`"$helper" release --state "$state" --note "trigger POST failed"` too: a lost
+response may hide a successful POST, so only the live scan can permit release.
+Wait 10 minutes after a failed trigger before releasing: the reservation must
+be at least 10 minutes old by the local clock, and the scan must find no
+matching trigger from any author at or after `reserved_at` minus 10 minutes.
+One `RELEASE_MARGIN_SEC=600` constant sets both boundaries; broker adoption
+still uses the exact reservation time.
+Release records head, reservation time and reason in `superseded_reservations`,
+retains charged/exempt counters and the run-spend file, and permits the next
+`reserve --attempt 1` on either the same or a moved head. Route same-head
+`phase:"released"` state through the fresh-reservation recipe, carrying its
+first and previous trigger-history anchors; only same-head `attached` state
+resumes at `check`, and same-head `reserved` state resumes at the broker.
+It does not refund a charged cycle; the next reservation charges normally. A refused release is a
+blocker to reconcile, never permission to delete state. Late
+`attach --trigger-id` retries have independent 60-second read budgets, like
+`check`, including after the review window expires.
+
+The checker needs repository contents and pull-request/issue read access;
+posting the trigger additionally needs issue or pull-request comment write
+permission. A fine-grained token or GitHub App token needs **Checks: read** for
+check-suite reconstruction (a classic token needs repository access, `repo` for
+private repositories). A bot token denied check suites with HTTP 403/404 may
+still attach: the checker records `check_suite_boundary: null` and the denial
+reason, bounds earlier triggers by the recorded previous-head trigger id, and
+sets `requires_full_window: true`. Earlier triggers without that anchor make
+attachment indeterminate; grant Checks: read or restore verified previous-head
+state before retrying. A first cycle with no earlier triggers can still attach.
+Other read failures remain indeterminate.
+
+`<project-dir>` is Claude Code's `CLAUDE_PROJECT_DIR`; `<skills-dir>` is
 the skills sync install location. The hook approves only the unresolved
 `<project-dir>/.claude/skills/integrate/assets/gh-write-broker.sh` path; other
 locations or a symlink at `.claude/skills` still work but prompt. The same
@@ -930,8 +986,23 @@ timing (§2's first bullet), then begin the checks watch. Leave Project fields u
   review activity on an actively-worked PR (harmon-devkit#276). The actor field
   cannot separate that from the owner's own click. Elsewhere treat the writer
   as unidentified; recovery remains actor-agnostic. A dispatched integrator
-  reports this evidence and stops its writes; only the session owning
-  integration (the orchestrator in a run) may audit, undo and record it.
+  returns `status: "blocked"` and this evidence in the validated result's
+  `payload.blocker`, then stops its writes. Read the event from the envelope
+  alone, never parse the agent's prose blocker report:
+
+  ```sh
+  blocker_json="$(jq -ce 'select(.role == "integrator" and .status == "blocked")
+      | .payload.blocker | select(.kind == "unexplained-promotion")' \
+      "$integrator_result")" || exit 1
+  ```
+
+  Correlate `blocker_json.ready_event_id`, `.ready_at`, and `.actor.id` /
+  `.actor.login` with the complete timeline and the validated run record as
+  above; `.observed_head` identifies the observed head for the subsequent
+  drift check, never the historical head. Missing `payload.blocker` (for
+  example, a failed timeline read) leaves attribution unknown and cannot
+  license an undo. Only the session owning integration (the orchestrator in
+  a run) may audit, undo and record it.
   Branch on the current head's gate status, freshly audited:
   - **The head independently passes the full readiness gate** — checks
     concluded green, current-head Codex terminal-clean, every thread answered,
@@ -1072,8 +1143,27 @@ timing (§2's first bullet), then begin the checks watch. Leave Project fields u
   check suites register on the new head before concluding anything; and
   if the repo genuinely has no applicable CI, say so explicitly and judge
   on reviews alone rather than treating the absence as pass or fail.
+  **Permission fallback:** before reserving or triggering a review under any
+  `review_trigger` ordering, capture the primary rollup read's stdout, exit
+  status and stderr. A checks read is a recognised permission denial when its stderr contains
+  `Resource not accessible by` (any token kind) or it reports HTTP 403.
+  Only that denial selects the exact-head, fully paginated Actions helper
+  below, where skipped runs never count as pending; every other read failure
+  stays indeterminate.
+
+  ```sh
+  "$support_dir/settle-wait.sh" checks --repo "$repo" --pr <n> \
+      --head <headRefOid> --timeout-seconds 1800 --interval-seconds 30 \
+      --format checks-json
+  ```
+
+  Apply integrator §3: on permission fallback, reserve nothing and trigger
+  nothing, return `pending` with `status=blocked`, `codex_cycle:null` and
+  `finder_cycles:[]`, preserve failing run IDs, and report the checks-read
+  blocker (see #1502); promotion still requires the readiness gate's complete evidence.
   **CI has settled only when every required check has CONCLUDED; a pending
-  check, or an empty check list, is indeterminate and never a pass**
+  check, an empty check list, or a permission failure on the checks read is
+  indeterminate and never a pass**
   (`AGENTS.md` § Readiness gate — GitHub populates that list
   asynchronously, so a read taken moments after a push reports nothing
   *having run*, not nothing *to run*).
@@ -1173,7 +1263,13 @@ timing (§2's first bullet), then begin the checks watch. Leave Project fields u
   vendored checker, it may pass that state directly to §6's executable gate
   with `--codex-recheck`, without dispatching an integrator merely to record
   the same verdict. Use the checker and broker's reserve/trigger/check
-  protocol (§2), never a hand-rolled substitute. The gate reads live checks,
+  protocol (§2), never a hand-rolled substitute. Wherever the vendored checker and gate apply,
+  any session driving integration — the orchestrator or a lane told to drive its own integration —
+  uses `check-codex-cloud-review.sh` (`reserve`, broker trigger, `attach` where applicable, and `check`,
+  whenever the resolved integration cap is above 0; cap 0 runs no Codex cycle) and `readiness-gate.sh`
+  (whenever a run record exists; the no-record path keeps `AGENTS.md`'s hand-run readiness),
+  never a hand-rolled poll or hand-evaluated table,
+  because a clean verdict and its inline findings do not land atomically. The gate reads live checks,
   thread replies, deferred findings and record settlements itself; its verdict
   records the checker state as cycle evidence. This removes only the recording
   pass: the orchestrator still owes watch/adjudication, run evidence,
@@ -1298,6 +1394,12 @@ timing (§2's first bullet), then begin the checks watch. Leave Project fields u
 
   Branch on the validated result:
 
+  - **`status: "blocked"` is terminal for the stage**, regardless of verdict,
+    cycle presence or review timing. Surface the integrator's §9 blocker
+    report (for the permission fallback, the token cannot read the checks
+    rollup; see #1502), preserve any failing-run findings it carries, do not
+    re-dispatch, and leave the PR draft. This rule takes precedence over every
+    pending-result retry below.
   - `verdict: "pending"` with `codex_cycle: null` — CI had not settled when
     the agent read it under an `after-ci` order, so it skipped the cycle
     without driving one (`ai/agents/integrator.md` §4 skips on an unsettled
@@ -1987,7 +2089,7 @@ is optional in addition, never a substitute for per-thread replies.
     # before sending, over the comments you actually adjudicated:
     jq -c --arg me "$me" "$fingerprint" <<<"$comments" >"$snap"
     # after sending, over a fresh fetch — guarded, exactly like step 2's:
-    fresh="$(gh api --paginate --slurp repos/"$repo"/pulls/<n>/comments)" \
+    fresh="$("${CLAUDE_SKILL_DIR}"/assets/gh-ro.sh --paginate --slurp repos/"$repo"/pulls/<n>/comments)" \
       || { echo 'post-send fetch failed — reconcile UNKNOWN, not clean'; exit 1; }
     jq -c --arg me "$me" --slurpfile before "$snap" "$fingerprint"'
         | (INDEX($before[0][]; .root)) as $b
@@ -2473,10 +2575,35 @@ that loops indefinitely:
    and a fingerprint identical to the passing gate's.
 
    Once success is confirmed, record it in the run record (where one is kept
-   for this run — harmon-devkit#685's `promotion.head` invariant): append
-   `promotion: {head, promoted_at, gate_fingerprint}` to `run.json`, `head`
-   and `gate_fingerprint` copied verbatim from the confirmed reads above,
-   never re-derived. This is the write side of an invariant the readiness
+   for this run — harmon-devkit#685's `promotion.head` invariant) through
+   `run-record.mjs promote`. Bind `slate`, `session` and `run_id` to the
+   run's existing owner and session identity; copy `head` and
+   `gate_fingerprint` verbatim from the confirmed reads above, never
+   re-derive them. Set `promoted_at` to the UTC time of that confirmation,
+   no earlier than any PR binding or stage transition. With `support_dir`
+   resolved physically as at entry, run:
+
+   <!-- promotion-record-command -->
+
+   ```sh
+   node "$support_dir/run-record.mjs" promote \
+     --slate "$slate" --session "$session" --run-id "$run_id" \
+     --head "$head" --fingerprint "$gate_fingerprint" --at "$promoted_at"
+   ```
+
+   The helper writes `promotion`, the `ready-for-review` outcome and its
+   outcome-transition chain together, under the shared mutex, validating
+   the candidate and canonical readback with `run --receipts` and the run's
+   adjudications. On any writer error, re-read the canonical `run.json`.
+   Accept a lost-response success only if its `promotion.head` exactly matches
+   the confirmed head and its `promotion.gate_fingerprint` exactly matches
+   the confirmed gate fingerprint. Otherwise run
+   `gh pr ready --undo <n> --repo "$repo"` once, then bounded-fetch until
+   `isDraft == true` is confirmed and stop **blocked**, naming the writer
+   error and the confirmed draft state. If the remote state cannot be
+   re-established, stop indeterminate under the once-then-stop logic below;
+   do not attempt a second undo or claim a handoff or confirmed draft.
+   This is the write side of an invariant the readiness
    gate's `--head` check and evidence binding already enforce on the read side:
    a supplied `--integrator-result` binds its schema-valid envelope's `head`
    and `codex_cycle.accepted.reviewed_commit`; checker-only evidence binds the

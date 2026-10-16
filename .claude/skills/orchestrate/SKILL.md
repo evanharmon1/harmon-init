@@ -269,10 +269,19 @@ record keeps its existing writers:
   transitions — `/review`'s own write recipe;
 - settlements — `/integrate`.
 
-Each of those writers runs the same candidate, validate, rename and readback
-sequence. Point an intervention that rests on a ruling file at it with
-`--ruling FILE`: the note records the file's SHA-256. That digest identifies
-the bytes you relied on. It does not protect them: the note lives in a
+All writes for a run are performed sequentially by its one supervising
+orchestrator, including the `/review` and `/integrate` recipes above. Delegates
+return evidence; they never write the run record. Each of those writers runs
+the same candidate, validate, rename and readback sequence. Parallel writers
+must first use `run-record.mjs`'s shared mutex and validated writer; its lock
+does not protect a caller that bypasses it.
+
+Point an intervention that rests on a ruling file at it with
+`--ruling FILE`: the writer copies those bytes into the run's
+`rulings/<sha256>` file without overwriting an existing snapshot, and the
+note records that stable path and the file's SHA-256. The reference survives
+archiving and subsequent source edits. That digest identifies the bytes you
+relied on. It does not protect them: the note lives in a
 lane-writable record and nothing verifies it automatically, so an edit is
 caught only by someone who re-hashes the file and compares. `close` records a non-promotion outcome if
 the run is still open, then moves the run's orchestrator directory into
@@ -287,9 +296,26 @@ id — every write is refused. Take it before publishing the plan (§ Planning
 step 6), with `--issues` and, for a milestone-backed slate, `--milestone`: an
 implicit lock taken at a first write records no milestone, and a plan
 published before its reservation can overwrite another session's plan. Release it when the slate
-ends. `--force
---reason` breaking a dead session's lock is an operator decision; name it in
-the handoff.
+ends. `--session` is the `/kickoff` session name recorded by `/claim` on the
+claim comment's `session:` line. Reuse it after a restart; it is not a PID or
+a liveness signal. A different session is refused even on the same host.
+
+Recovery is an explicit operator decision, never an automatic timeout or a
+cross-host process probe. Inspect `lock status --slate <slate>`, have the
+operator confirm that the previous session and its writers have stopped, then
+run `lock release --slate <slate> --session <recovering-session> --force
+--reason "<operator attribution and why the old session is abandoned>"` once.
+The helper records that request, its session, reason, timestamp and complete
+previous lock in `locks/recoveries/<slate>/<id>.json` before removing the lock;
+failure to record it leaves the lock held. Re-read status after any failure:
+the audit records intent, so a crash may leave the lock still held. Acquire
+normally as the recovering session only after release; ordinary scope
+contention checks still apply. Once reacquisition succeeds, the completed
+recovery transfers the writer identity to the recovering session: every later
+write for that slate uses the recovering session's name, including after a
+restart, instead of the original kickoff/claim identity. The recovery audit's
+previous lock and recovering session identify the requested transfer; name both
+identities, the completed transfer and that audit in the handoff.
 
 Durable means *this clone*: the common directory survives restarts, `/clear`
 and worktree removal, but not a fresh clone, a rebuilt devcontainer without a
@@ -390,9 +416,9 @@ table before their intended sections.
 | `{{role-tiers}}` | Resolved five-role tier projection, including the implementer's tier source (pinned, rigor, derived, default, or operator) and every `dev-flow-support/assets/tier-inputs.mjs disclose` line — a pin-caused invariant break, an overridden role label, a rejected role label (with the reader's reason), a tier warning, or a derived Tier left indeterminate |
 | `{{operator-pins}}` | Attributed operator pins, or `None.` |
 | `{{pr-title}}` | Orchestrator's release-title-compliant proposal |
-| `{{ready-sentinel}}` | Orchestrator-generated per-lane sentinel prefix |
-| `{{handoff-sentinel}}` | Orchestrator-generated draft-handoff sentinel prefix |
-| `{{blocked-sentinel}}` | Orchestrator-generated per-lane sentinel prefix |
+| `{{ready-sentinel}}` | `READY-<lane-name>` using the brief lane label |
+| `{{handoff-sentinel}}` | `HANDOFF-<lane-name>` using the brief lane label |
+| `{{blocked-sentinel}}` | `BLOCKED-<lane-name>` using the brief lane label |
 | `{{attempt-nonce}}` | Fresh nonce for this dispatch attempt |
 
 Every local PR-owning lane brief MUST carry the active run identity so the lane worker can
@@ -413,7 +439,10 @@ orchestrator reserves its agent run. The inline fallback has no such dispatch
 surface, so the orchestrator instead authorizes the original lane to apply only
 the exact confirmed fixes in its recorded disposition and verifies the returned
 gate/publication evidence. The post-draft handoff remains separate and transfers
-integration to the supervising orchestrator.
+integration to the supervising orchestrator. When the maintainer overrides that handoff and
+tells a lane to drive its own integration, follow `integrate/SKILL.md` §2's rule for any session driving integration
+(`check-codex-cloud-review.sh` and `readiness-gate.sh` wherever the vendored checker and gate apply,
+never a hand-rolled poll or hand-evaluated table).
 
 Render `assets/lane-brief.md` for every local end-to-end, PR-owning implementation lane
 instead of hand-authoring a brief. Council proposal and synthesis implementers,
@@ -677,10 +706,24 @@ manual polling.
 Use `assets/lane-watch.sh` for that polling. Harness monitor primitives may run
 their command under a non-Bash shell, so always invoke the file as
 `bash <skill-dir>/assets/lane-watch.sh --state-file <run-dir>/lane-watch.state --registry
-<kickoff-registry-snapshot> <deadline> <lane:branch:nonce:owner/repo>...`;
-never paste its loop inline. Keep the state file across re-arms so reported
+<kickoff-registry-snapshot> <deadline> <agent:branch:nonce:owner/repo:report-path:lane-label>...`;
+never paste its loop inline. The first spec token is the **herdr agent name**;
+herdr requires lowercase names (for example `lane-d1220`), while the brief's
+lane label may be `L-d1220`. Pass the exact rendered `{{report-path}}` as an
+absolute path and `{{lane-name}}` as the separate lane-label field. Neither
+field may contain a colon. Four-field specs still default to
+`<checkout>/.worktrees/<agent>/.lane-report.md` with lane-label equal to agent;
+with `--workspace-root`, checkout is `<workspace-root>/<repo-name>`. A fifth
+field of `cloud` retains the GitHub-only spec and takes no report or label.
+The ready/handoff/blocked prefixes must be `READY-<lane-label>`,
+`HANDOFF-<lane-label>`, and `BLOCKED-<lane-label>`; labels and nonces contain
+only ASCII letters, digits, underscores and hyphens. Both report and pane
+observations match the whole final nonblank line `<kind>-<lane-label>-<nonce>`.
+A HANDOFF emits its own `HANDOFF <agent>: <sentinel>` transition alongside
+`SENTINEL`; pane observations carry `(pane only)` and need report confirmation.
+Keep the state file across re-arms so reported
 sentinels and post-promotion activity remain deduplicated. The watcher bounds
-every `herdr` and `gh` read, prefers each lane's `.lane-report.md` sentinel,
+every `herdr` and `gh` read, prefers each lane's explicit report-path sentinel,
 tags pane-only fallback results, and watches reviews plus top-level and inline
 comments for 15 minutes after a draft becomes ready. When a lane's
 post-promotion window's promotion event cannot be resolved before that

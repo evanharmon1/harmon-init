@@ -221,8 +221,12 @@ prompt; refer to the reporting contract indirectly.
 
 ### Codex CLI (read the skill)
 
-Read `.agents/skills/implement/SKILL.md` completely and follow it for
-`{{issue-url}}` through draft-PR publication. For a lane worker,
+Read the vendored `implement` skill completely — take the first readable path
+in this resolution order: `.agents/skills/implement/SKILL.md`, then
+`.claude/skills/implement/SKILL.md`, then the harness-specific skills location,
+then one bounded glob. If none is readable, report BLOCKED and stop; do not
+reconstruct the procedure from memory. Follow it for `{{issue-url}}` through
+draft-PR publication. For a lane worker,
 repository policy overrides `/implement` step 9: record the confirmed draft
 handoff in `{{report-path}}` and return control to the supervising orchestrator.
 Only that orchestrator may enter the vendored integrate procedure and own its
@@ -328,7 +332,10 @@ orchestrator. The lane may gather and report integration evidence requested by
 the brief, but it never adjudicates integration findings, edits the PR body,
 replies to review threads, or promotes the PR. Those actions and the readiness
 decision remain orchestrator-owned under `AGENTS.md` § Who decides, and what
-is delegated. Confidence-stage findings use the decision handshake above.
+is delegated. Confidence-stage findings use the decision handshake above. When
+the maintainer tells a lane to drive its own integration, follow `integrate/SKILL.md` §2's rule
+for any session driving integration (`check-codex-cloud-review.sh` and `readiness-gate.sh`
+wherever the vendored checker and gate apply, never a hand-rolled poll or hand-evaluated table).
 
 The orchestrator evaluates `AGENTS.md` § Readiness gate condition by condition
 using the vendored integrate procedure. A pending check row or an empty check
