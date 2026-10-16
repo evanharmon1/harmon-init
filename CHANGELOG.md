@@ -8,6 +8,23 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [5.9.0](https://github.com/evanharmon1/harmon-init/compare/v5.8.2...v5.9.0) (2026-10-16)
+
+
+### Features
+
+* **agent-registry:** add Gemini 4 Argon model line ([#1707](https://github.com/evanharmon1/harmon-init/issues/1707)) ([a7188ad](https://github.com/evanharmon1/harmon-init/commit/a7188ad9cfaa200c1777e0e7eb670eb27237af0e))
+
+
+### Bug Fixes
+
+* **github:** keep issue-field descriptions within GitHub's 100-character cap ([#1705](https://github.com/evanharmon1/harmon-init/issues/1705)) ([70df71d](https://github.com/evanharmon1/harmon-init/commit/70df71d5eaa6c2736262244d3bc45e0172064de5))
+* **template:** explain CodeQL default-setup clashes and skip Convex codegen without a deployment ([#1692](https://github.com/evanharmon1/harmon-init/issues/1692)) ([78829a2](https://github.com/evanharmon1/harmon-init/commit/78829a22308d4acdc8567df3561f1b7db58a256e))
+* **template:** fail lint-shell when the local shellcheck differs from the version CI pins ([#1712](https://github.com/evanharmon1/harmon-init/issues/1712)) ([572ec3f](https://github.com/evanharmon1/harmon-init/commit/572ec3f020b927199d00edb8e809b92995e98776))
+* **template:** let claude-implement read checks, statuses and Actions runs on private repos ([#1711](https://github.com/evanharmon1/harmon-init/issues/1711)) ([abff903](https://github.com/evanharmon1/harmon-init/commit/abff90339f237cb60af683b35611bc49f2b32893))
+* **template:** mirror the dev-flow schemas when the harmon-devkit pin moves ([#1717](https://github.com/evanharmon1/harmon-init/issues/1717)) ([bde21cc](https://github.com/evanharmon1/harmon-init/commit/bde21cc53d3377b1568fa5176774fee6e458f6e4))
+* **template:** sync harmon-devkit skills to v0.58.1 ([#1718](https://github.com/evanharmon1/harmon-init/issues/1718)) ([96472d1](https://github.com/evanharmon1/harmon-init/commit/96472d140d5fcbe14d00124c08a5df2c2c259ee9))
+
 ## [5.8.2](https://github.com/evanharmon1/harmon-init/compare/v5.8.1...v5.8.2) (2026-10-15)
 
 
