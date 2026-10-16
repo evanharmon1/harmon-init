@@ -288,10 +288,30 @@ agents_dest_from_manifest() {
 # Mirror exactly the schema set checked by test-result-schemas.sh. Repos
 # without an agent registry have no dev-flow schema contract to mirror.
 SCHEMA_DESTINATIONS=""
+# Preserve consumer formatting when the schema is semantically unchanged.
+mirror_schema_destination() {
+    _msd_source="$1" _msd_dest="$2"
+    [ ! -L "$_msd_dest" ] || die "symlinked schema destination: $_msd_dest — nothing pushed"
+    if [ -f "$_msd_dest" ] &&
+        _msd_existing="$(jq -S . "$_msd_dest" 2>/dev/null)" &&
+        [ "$_msd_existing" = "$(jq -S . "$_msd_source")" ]; then
+        return 0
+    fi
+    mkdir -p "$(dirname "$_msd_dest")"
+    cp "$_msd_source" "$_msd_dest"
+    if [ -f prettier.config.cjs ] && command -v npx >/dev/null 2>&1; then
+        run_untrusted npx --yes prettier@3 --no-config --single-quote --no-semi \
+            --trailing-comma none --print-width 100 --write "$_msd_dest" ||
+            die "could not format schema $_msd_dest — nothing pushed"
+    fi
+    SCHEMA_DESTINATIONS="${SCHEMA_DESTINATIONS}${LF}${_msd_dest}"
+}
+
 mirror_registry_schemas() {
     [ -f agent-registry.json ] || return 0
-    need_bin jq
     _mrs_assets="$1/dev-flow-support/assets/schemas"
+    [ -d "$_mrs_assets" ] || return 0
+    need_bin jq
     _mrs_registry="$(jq -r '.. | objects | .result_schema? // empty' agent-registry.json | LC_ALL=C sort -u)" ||
         die "could not read registry-named schemas — nothing pushed"
     _mrs_schemas="${_mrs_registry}${LF}ai/schemas/brief.envelope.schema.json${LF}ai/schemas/plan.schema.json"
@@ -308,12 +328,11 @@ mirror_registry_schemas() {
         esac
         [ -f "$_mrs_assets/$_mrs_name" ] ||
             die "missing vendored registry-named schema: $_mrs_assets/$_mrs_name — nothing pushed"
-        mkdir -p ai/schemas
-        cp "$_mrs_assets/$_mrs_name" "$_mrs_path"
-        SCHEMA_DESTINATIONS="${SCHEMA_DESTINATIONS}${LF}${_mrs_path}"
-        if [ -f "template/$_mrs_path" ]; then
-            cp "$_mrs_assets/$_mrs_name" "template/$_mrs_path"
-            SCHEMA_DESTINATIONS="${SCHEMA_DESTINATIONS}${LF}template/$_mrs_path"
+        jq -e . "$_mrs_assets/$_mrs_name" >/dev/null ||
+            die "malformed vendored schema $_mrs_assets/$_mrs_name — nothing pushed"
+        mirror_schema_destination "$_mrs_assets/$_mrs_name" "$_mrs_path"
+        if [ -f "template/$_mrs_path" ] || [ -L "template/$_mrs_path" ]; then
+            mirror_schema_destination "$_mrs_assets/$_mrs_name" "template/$_mrs_path"
         fi
     done <<EOF
 $_mrs_schemas

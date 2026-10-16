@@ -306,9 +306,22 @@ sync:skills)
         } >.claude/agents/.AGENTS_PROVENANCE
     fi
     if [ -f agent-registry.json ]; then
-        for schema in .claude/skills/dev-flow-support/assets/schemas/*.schema.json; do
-            printf '{"title":"new %s"}\n' "${schema##*/}" >"$schema"
-        done
+        case "${STUB_SCHEMA_MODE:-changed}" in
+        absent) rm -rf .claude/skills/dev-flow-support/assets/schemas ;;
+        equal)
+            for schema in .claude/skills/dev-flow-support/assets/schemas/*.schema.json; do
+                jq . "$schema" >"$schema.tmp" && mv "$schema.tmp" "$schema"
+            done
+            ;;
+        *)
+            for schema in .claude/skills/dev-flow-support/assets/schemas/*.schema.json; do
+                printf '{"title":"new %s"}\n' "${schema##*/}" >"$schema"
+            done
+            ;;
+        esac
+        if [ "${STUB_SCHEMA_MODE:-}" = malformed ]; then
+            echo '{' >.claude/skills/dev-flow-support/assets/schemas/result.integrator.schema.json
+        fi
         [ -z "${STUB_SCHEMA_MISSING:-}" ] || rm -f .claude/skills/dev-flow-support/assets/schemas/plan.schema.json
         [ -z "${STUB_SCHEMA_ROGUE:-}" ] || echo rogue >"$STUB_SCHEMA_ROGUE"
     fi
@@ -344,7 +357,7 @@ sync:skills)
     fi
     ;;
 verify)
-    if [ -f agent-registry.json ]; then
+    if [ -d .claude/skills/dev-flow-support/assets/schemas ]; then
         schemas="$(jq -r '.. | objects | .result_schema? // empty' agent-registry.json | LC_ALL=C sort -u)"
         for schema in $schemas ai/schemas/brief.envelope.schema.json ai/schemas/plan.schema.json; do
             diff -u <(jq -S . "$schema") <(jq -S . ".claude/skills/dev-flow-support/assets/schemas/${schema##*/}") || exit 1
@@ -355,7 +368,21 @@ esac
 exit 0
 STUB
 
-    chmod +x "$_ms_bin/gh" "$_ms_bin/task"
+    cat >"$_ms_bin/npx" <<'STUB'
+#!/usr/bin/env bash
+set -eu
+printf 'npx %s\n' "$*" >>"$STUB_LOG"
+[ "$#" = 11 ] || exit 1
+[ "$1 $2 $3 $4 $5 $6 $7 $8 $9" = '--yes prettier@3 --no-config --single-quote --no-semi --trailing-comma none --print-width 100' ] || exit 1
+shift 9
+[ "$1" = --write ] || exit 1
+# jq's multiline JSON is enough to distinguish formatted output from the
+# one-line vendored source. The test checks the exact Prettier invocation.
+jq . "$2" >"$2.tmp"
+mv "$2.tmp" "$2"
+STUB
+
+    chmod +x "$_ms_bin/gh" "$_ms_bin/task" "$_ms_bin/npx"
     printf '%s\n' "$_ms_bin"
 }
 
@@ -389,6 +416,7 @@ run_helper() {
             STUB_EDIT_MAKES_READY="${STUB_EDIT_MAKES_READY:-}" \
             STUB_BOT_UID="${STUB_BOT_UID:-12345}" \
             STUB_FAIL_TASKS="${STUB_FAIL_TASKS:-}" \
+            STUB_SCHEMA_MODE="${STUB_SCHEMA_MODE:-}" \
             STUB_SCHEMA_MISSING="${STUB_SCHEMA_MISSING:-}" \
             STUB_SCHEMA_ROGUE="${STUB_SCHEMA_ROGUE:-}" \
             STUB_SYNC_TOUCH_UNRELATED="${STUB_SYNC_TOUCH_UNRELATED:-}" \
@@ -438,6 +466,7 @@ v1.0.0 true false"
     STUB_BODY_CAPTURE="$TMPROOT/pr-body-capture.txt"
     : >"$STUB_BODY_CAPTURE"
     FIXTURE_AGENTS=""
+    STUB_SCHEMA_MODE=""
     STUB_SCHEMA_MISSING=""
     STUB_SCHEMA_ROGUE=""
     STUB_SYNC_TOUCH_UNRELATED=""
@@ -1079,6 +1108,61 @@ for rogue in ai/schemas/unrelated.schema.json template/ai/schemas/rogue.schema.j
     [ "$rc" != 0 ] || fail "rogue schema write was accepted"
     grep -q 'the sync wrote paths it does not own' "$LAST_OUT" || fail "scope refusal missing"
     ! pushed "$fix" || fail "rogue schema was pushed"
+done
+
+for mode in absent equal; do
+    start "schema mode $mode preserves destination bytes and grants no scope allowance"
+    fix="$(new_fixture "schema_$mode")"
+    add_schema_fixture "$fix"
+    STUB_SCHEMA_MODE="$mode"
+    rc="$(run_helper "$fix" run v0.9.0)"
+    [ "$rc" = 0 ] || fail "$mode schema sync failed: $(cat "$LAST_OUT")"
+    [ -z "$(git -C "$fix" diff main HEAD -- ai/schemas template/ai/schemas)" ] || fail "$mode rewrote consumer schema bytes"
+    (cd "$fix" && bash -c '. "$1" pinned >/dev/null; mirror_registry_schemas .claude/skills; [ -z "$SCHEMA_DESTINATIONS" ]' scripts/probe.sh ./scripts/sync-devkit-release.sh) || fail "$mode allowed unchanged schema paths"
+    pushed "$fix" || fail "$mode stopped the sync"
+done
+
+start "a changed schema is formatted with the consumer Prettier options"
+fix="$(new_fixture schema_formatted)"
+add_schema_fixture "$fix"
+echo 'module.exports = {}' >"$fix/prettier.config.cjs"
+git -C "$fix" add prettier.config.cjs
+git -C "$fix" commit --quiet -m "enable prettier"
+git -C "$fix" push --quiet origin main
+rc="$(run_helper "$fix" run v0.9.0)"
+[ "$rc" = 0 ] || fail "formatted sync failed: $(cat "$LAST_OUT")"
+for path in ai/schemas/result.integrator.schema.json template/ai/schemas/result.integrator.schema.json; do
+    logged "npx --yes prettier@3 --no-config --single-quote --no-semi --trailing-comma none --print-width 100 --write $path" || fail "format options or destination differ"
+    [ "$(wc -l <"$fix/$path")" -gt 1 ] || fail "destination not formatted"
+    diff -u <(jq -S . "$fix/$path") <(jq -S . "$fix/.claude/skills/dev-flow-support/assets/schemas/result.integrator.schema.json") || fail "formatted schema differs semantically"
+done
+
+start "malformed vendored JSON aborts before copying or pushing"
+fix="$(new_fixture schema_malformed)"
+add_schema_fixture "$fix"
+STUB_SCHEMA_MODE=malformed
+rc="$(run_helper "$fix" run v0.9.0)"
+[ "$rc" != 0 ] || fail "malformed source accepted"
+grep -q 'malformed vendored schema .* — nothing pushed' "$LAST_OUT" || fail "malformed source refusal missing"
+git -C "$fix" diff --quiet -- ai/schemas template/ai/schemas || fail "malformed source wrote destinations"
+! pushed "$fix" || fail "malformed schema pushed"
+
+for path in ai/schemas/result.integrator.schema.json template/ai/schemas/result.integrator.schema.json; do
+    start "a symlinked destination $path never writes its external target"
+    fix="$(new_fixture "schema_symlink_$cases")"
+    add_schema_fixture "$fix"
+    external="$TMPROOT/external-$cases.json"
+    echo '{"outside":true}' >"$external"
+    rm "$fix/$path"
+    ln -s "$external" "$fix/$path"
+    git -C "$fix" add "$path"
+    git -C "$fix" commit --quiet -m "symlink schema fixture"
+    git -C "$fix" push --quiet origin main
+    rc="$(run_helper "$fix" run v0.9.0)"
+    [ "$rc" != 0 ] || fail "symlink destination accepted"
+    grep -q 'symlinked schema destination:' "$LAST_OUT" || fail "symlink refusal missing"
+    [ "$(cat "$external")" = '{"outside":true}' ] || fail "external target overwritten"
+    ! pushed "$fix" || fail "symlink destination pushed"
 done
 
 echo "sync-devkit-release: all ${cases} cases passed"

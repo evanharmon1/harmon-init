@@ -140,9 +140,22 @@ sync:skills)
             echo "# managed: universal, dev-flow-support" >> .claude/skills/.SKILLS_PROVENANCE
         fi
         if [ -f agent-registry.json ]; then
-            for schema in .claude/skills/dev-flow-support/assets/schemas/*.schema.json; do
-                printf '{"title":"new %s"}\n' "\${schema##*/}" >"\$schema"
-            done
+            case "\${STUB_SCHEMA_MODE:-changed}" in
+            absent) rm -rf .claude/skills/dev-flow-support/assets/schemas ;;
+            equal)
+                for schema in .claude/skills/dev-flow-support/assets/schemas/*.schema.json; do
+                    jq . "\$schema" >"\$schema.tmp" && mv "\$schema.tmp" "\$schema"
+                done
+                ;;
+            *)
+                for schema in .claude/skills/dev-flow-support/assets/schemas/*.schema.json; do
+                    printf '{"title":"new %s"}\n' "\${schema##*/}" >"\$schema"
+                done
+                ;;
+            esac
+            if [ "\${STUB_SCHEMA_MODE:-}" = malformed ]; then
+                echo '{' >.claude/skills/dev-flow-support/assets/schemas/result.integrator.schema.json
+            fi
             [ -z "\${STUB_SCHEMA_MISSING:-}" ] || rm -f .claude/skills/dev-flow-support/assets/schemas/plan.schema.json
             [ -z "\${STUB_SCHEMA_ROGUE:-}" ] || echo rogue >"\$STUB_SCHEMA_ROGUE"
         fi
@@ -156,14 +169,7 @@ sync:skills)
         exit 1
     fi
     ;;
-verify:skills:offline)
-    if [ -f agent-registry.json ]; then
-        schemas="\$(jq -r '.. | objects | .result_schema? // empty' agent-registry.json | LC_ALL=C sort -u)"
-        for schema in \$schemas ai/schemas/brief.envelope.schema.json ai/schemas/plan.schema.json; do
-            diff -u <(jq -S . "\$schema") <(jq -S . ".claude/skills/dev-flow-support/assets/schemas/\${schema##*/}") || exit 1
-        done
-    fi
-    ;;
+verify:skills:offline) ;;
 security:secrets) ;;
 *)
     echo "unexpected task target: \$*" >&2
@@ -171,7 +177,20 @@ security:secrets) ;;
     ;;
 esac
 SCRIPT
-    chmod +x "$BIN_DIR/task"
+    cat >"$BIN_DIR/npx" <<'SCRIPT'
+#!/usr/bin/env bash
+set -eu
+printf 'npx %s\n' "$*" >>"$TASK_LOG"
+[ "$#" = 11 ] || exit 1
+[ "$1 $2 $3 $4 $5 $6 $7 $8 $9" = '--yes prettier@3 --no-config --single-quote --no-semi --trailing-comma none --print-width 100' ] || exit 1
+shift 9
+[ "$1" = --write ] || exit 1
+# jq's multiline JSON is enough to distinguish formatted output from the
+# one-line vendored source. The test checks the exact Prettier invocation.
+jq . "$2" >"$2.tmp"
+mv "$2.tmp" "$2"
+SCRIPT
+    chmod +x "$BIN_DIR/task" "$BIN_DIR/npx"
 }
 
 write_gh_stub() {
@@ -266,6 +285,7 @@ clear_logs() {
     STUB_FAIL_PR_NUMBER_VIEW=""
     STUB_FAIL_PR_DRAFT_VIEW=""
     STUB_FAIL_READY_UNDO=""
+    export STUB_SCHEMA_MODE=""
     export STUB_SCHEMA_MISSING=""
     export STUB_SCHEMA_ROGUE=""
     STUB_EDIT_MAKES_READY=""
@@ -763,6 +783,77 @@ test_schema_scope() {
     done
 }
 
+test_schema_preserved() {
+    for mode in absent equal; do
+        note "schema mode $mode preserves bytes and grants no scope allowance"
+        FIXTURE="$(build_fixture v0.1.0)"
+        add_schema_fixture "$FIXTURE"
+        clear_logs
+        STUB_SCHEMA_MODE="$mode"
+        write_gh_stub
+        write_task_stub pass
+        run_helper_with_tag v0.9.0 || return 1
+        [ -z "$(git -C "$FIXTURE" diff main HEAD -- ai/schemas template/ai/schemas)" ] || return 1
+        (cd "$FIXTURE" && bash -c '. "$1" pinned >/dev/null; mirror_registry_schemas .claude/skills; [ -z "$SCHEMA_DESTINATIONS" ]' scripts/probe.sh ./scripts/_sync-devkit-release.sh) || return 1
+        assert_gh_logged "gh pr create --draft" || return 1
+    done
+}
+
+test_schema_formatted() {
+    note "changed schemas are formatted with consumer Prettier options"
+    FIXTURE="$(build_fixture v0.1.0)"
+    add_schema_fixture "$FIXTURE"
+    echo 'module.exports = {}' >"$FIXTURE/prettier.config.cjs"
+    git -C "$FIXTURE" add prettier.config.cjs
+    git -C "$FIXTURE" commit --quiet -m "enable prettier"
+    git -C "$FIXTURE" push --quiet origin main
+    clear_logs
+    write_gh_stub
+    write_task_stub pass
+    run_helper_with_tag v0.9.0 || return 1
+    for path in ai/schemas/result.integrator.schema.json template/ai/schemas/result.integrator.schema.json; do
+        grep -qF "npx --yes prettier@3 --no-config --single-quote --no-semi --trailing-comma none --print-width 100 --write $path" "$TASK_LOG" || return 1
+        [ "$(wc -l <"$FIXTURE/$path")" -gt 1 ] || return 1
+        diff -u <(jq -S . "$FIXTURE/$path") <(jq -S . "$FIXTURE/.claude/skills/dev-flow-support/assets/schemas/result.integrator.schema.json") || return 1
+    done
+}
+
+test_schema_malformed() {
+    note "malformed source aborts before copying or pushing"
+    FIXTURE="$(build_fixture v0.1.0)"
+    add_schema_fixture "$FIXTURE"
+    clear_logs
+    STUB_SCHEMA_MODE=malformed
+    write_gh_stub
+    write_task_stub pass
+    if run_helper_with_tag v0.9.0 >"$TEST_ROOT/schema-out" 2>&1; then return 1; fi
+    grep -q 'malformed vendored schema .* — nothing pushed' "$TEST_ROOT/schema-out" || return 1
+    git -C "$FIXTURE" diff --quiet -- ai/schemas template/ai/schemas || return 1
+    ! git --git-dir="$TEST_ROOT/origin.git" show-ref --verify --quiet refs/heads/bot/sync-harmon-devkit
+}
+
+test_schema_symlink() {
+    for path in ai/schemas/result.integrator.schema.json template/ai/schemas/result.integrator.schema.json; do
+        note "symlinked destination $path preserves its external target"
+        FIXTURE="$(build_fixture v0.1.0)"
+        add_schema_fixture "$FIXTURE"
+        external="$TEST_ROOT/external.json"
+        echo '{"outside":true}' >"$external"
+        rm "$FIXTURE/$path"
+        ln -s "$external" "$FIXTURE/$path"
+        git -C "$FIXTURE" add "$path"
+        git -C "$FIXTURE" commit --quiet -m "symlink schema fixture"
+        git -C "$FIXTURE" push --quiet origin main
+        clear_logs
+        write_gh_stub
+        write_task_stub pass
+        if run_helper_with_tag v0.9.0 >"$TEST_ROOT/schema-out" 2>&1; then return 1; fi
+        grep -q 'symlinked schema destination:' "$TEST_ROOT/schema-out" || return 1
+        [ "$(cat "$external")" = '{"outside":true}' ] || return 1
+        ! git --git-dir="$TEST_ROOT/origin.git" show-ref --verify --quiet refs/heads/bot/sync-harmon-devkit || return 1
+    done
+}
+
 # ── Runner ────────────────────────────────────────────────────────────
 TESTS=(
     test_resolve_latest
@@ -772,6 +863,10 @@ TESTS=(
     test_pinned
     test_happy_path
     test_schema_mirror
+    test_schema_preserved
+    test_schema_formatted
+    test_schema_malformed
+    test_schema_symlink
     test_schema_missing
     test_schema_scope
     test_ready_created_pr_is_reverted
