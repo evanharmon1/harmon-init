@@ -157,7 +157,10 @@ sync:skills)
                 echo '{' >.claude/skills/dev-flow-support/assets/schemas/result.integrator.schema.json
             fi
             [ -z "\${STUB_SCHEMA_MISSING:-}" ] || rm -f .claude/skills/dev-flow-support/assets/schemas/plan.schema.json
-            [ -z "\${STUB_SCHEMA_ROGUE:-}" ] || echo rogue >"\$STUB_SCHEMA_ROGUE"
+            if [ -n "\${STUB_SCHEMA_ROGUE:-}" ]; then
+                mkdir -p "\$(dirname "\$STUB_SCHEMA_ROGUE")"
+                echo rogue >"\$STUB_SCHEMA_ROGUE"
+            fi
         fi
         # scripts/link-agent-skills.sh sync is the second command of
         # 'task sync:skills'; mirror it so the scope guard is exercised
@@ -769,7 +772,7 @@ test_schema_missing() {
 }
 
 test_schema_scope() {
-    for rogue in ai/schemas/unrelated.schema.json template/ai/schemas/rogue.schema.json; do
+    for rogue in ai/schemas/unrelated.schema.json template/ai/schemas/rogue.schema.json $'ai/schemas/result.integrator.schema.json\ntemplate/ai/schemas/result.integrator.schema.json'; do
         note "schema mirror scope refuses $rogue"
         FIXTURE="$(build_fixture v0.1.0)"
         add_schema_fixture "$FIXTURE"
@@ -854,6 +857,29 @@ test_schema_symlink() {
     done
 }
 
+test_schema_parent_symlink() {
+    for dir in ai/schemas template/ai/schemas; do
+        note "schema directory $dir refuses an external physical path"
+        FIXTURE="$(build_fixture v0.1.0)"
+        add_schema_fixture "$FIXTURE"
+        external="$TEST_ROOT/external-dir"
+        rm -rf "$external"
+        mv "$FIXTURE/$dir" "$external"
+        ln -s "$external" "$FIXTURE/$dir"
+        before="$(cksum "$external"/*)"
+        git -C "$FIXTURE" add -A
+        git -C "$FIXTURE" commit --quiet -m "symlink schema directory fixture"
+        git -C "$FIXTURE" push --quiet origin main
+        clear_logs
+        write_gh_stub
+        write_task_stub pass
+        if run_helper_with_tag v0.9.0 >"$TEST_ROOT/schema-out" 2>&1; then return 1; fi
+        grep -q 'schema destination directory escapes repository:' "$TEST_ROOT/schema-out" || return 1
+        [ "$(cksum "$external"/*)" = "$before" ] || return 1
+        ! git --git-dir="$TEST_ROOT/origin.git" show-ref --verify --quiet refs/heads/bot/sync-harmon-devkit || return 1
+    done
+}
+
 # ── Runner ────────────────────────────────────────────────────────────
 TESTS=(
     test_resolve_latest
@@ -867,6 +893,7 @@ TESTS=(
     test_schema_formatted
     test_schema_malformed
     test_schema_symlink
+    test_schema_parent_symlink
     test_schema_missing
     test_schema_scope
     test_ready_created_pr_is_reverted

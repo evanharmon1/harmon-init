@@ -323,7 +323,10 @@ sync:skills)
             echo '{' >.claude/skills/dev-flow-support/assets/schemas/result.integrator.schema.json
         fi
         [ -z "${STUB_SCHEMA_MISSING:-}" ] || rm -f .claude/skills/dev-flow-support/assets/schemas/plan.schema.json
-        [ -z "${STUB_SCHEMA_ROGUE:-}" ] || echo rogue >"$STUB_SCHEMA_ROGUE"
+        if [ -n "${STUB_SCHEMA_ROGUE:-}" ]; then
+        mkdir -p "$(dirname "$STUB_SCHEMA_ROGUE")"
+        echo rogue >"$STUB_SCHEMA_ROGUE"
+    fi
     fi
     [ -z "${STUB_SYNC_TOUCH_UNRELATED:-}" ] || echo "oops" >"${STUB_SYNC_TOUCH_UNRELATED}"
     [ -z "${STUB_SYNC_DELETE_LOCAL:-}" ] || rm -rf .claude/skills/local-only
@@ -375,11 +378,10 @@ printf 'npx %s\n' "$*" >>"$STUB_LOG"
 [ "$#" = 11 ] || exit 1
 [ "$1 $2 $3 $4 $5 $6 $7 $8 $9" = '--yes prettier@3 --no-config --single-quote --no-semi --trailing-comma none --print-width 100' ] || exit 1
 shift 9
-[ "$1" = --write ] || exit 1
+[ "$1" = --stdin-filepath ] || exit 1
 # jq's multiline JSON is enough to distinguish formatted output from the
 # one-line vendored source. The test checks the exact Prettier invocation.
-jq . "$2" >"$2.tmp"
-mv "$2.tmp" "$2"
+jq .
 STUB
 
     chmod +x "$_ms_bin/gh" "$_ms_bin/task" "$_ms_bin/npx"
@@ -1080,7 +1082,7 @@ add_schema_fixture "$fix"
 rc="$(run_helper "$fix" run v0.9.0)"
 [ "$rc" = 0 ] || fail "schema sync exited $rc: $(cat "$LAST_OUT")"
 for name in result.integrator result.reviewer brief.envelope plan; do
-    cmp "$fix/ai/schemas/$name.schema.json" "$fix/.claude/skills/dev-flow-support/assets/schemas/$name.schema.json" || fail "root schema drift: $name"
+    diff -u <(jq -S . "$fix/ai/schemas/$name.schema.json") <(jq -S . "$fix/.claude/skills/dev-flow-support/assets/schemas/$name.schema.json") || fail "root schema drift: $name"
     cmp "$fix/ai/schemas/$name.schema.json" "$fix/template/ai/schemas/$name.schema.json" || fail "template schema drift: $name"
     grep -q 'new ' "$fix/ai/schemas/$name.schema.json" || fail "schema did not change: $name"
 done
@@ -1099,7 +1101,7 @@ grep -q 'missing vendored registry-named schema:' "$LAST_OUT" || fail "missing s
 ! logged "task verify" || fail "verify ran with missing source"
 ! pushed "$fix" || fail "missing source was pushed"
 
-for rogue in ai/schemas/unrelated.schema.json template/ai/schemas/rogue.schema.json; do
+for rogue in ai/schemas/unrelated.schema.json template/ai/schemas/rogue.schema.json $'ai/schemas/result.integrator.schema.json\ntemplate/ai/schemas/result.integrator.schema.json'; do
     start "schema mirror scope still refuses $rogue"
     fix="$(new_fixture "schema_rogue_$cases")"
     add_schema_fixture "$fix"
@@ -1122,20 +1124,19 @@ for mode in absent equal; do
     pushed "$fix" || fail "$mode stopped the sync"
 done
 
-start "a changed schema is formatted with the consumer Prettier options"
+start "changed root/template twins are formatted once without a root config"
 fix="$(new_fixture schema_formatted)"
 add_schema_fixture "$fix"
-echo 'module.exports = {}' >"$fix/prettier.config.cjs"
-git -C "$fix" add prettier.config.cjs
-git -C "$fix" commit --quiet -m "enable prettier"
-git -C "$fix" push --quiet origin main
+[ ! -e "$fix/prettier.config.cjs" ] || fail "fixture requires no root config"
 rc="$(run_helper "$fix" run v0.9.0)"
 [ "$rc" = 0 ] || fail "formatted sync failed: $(cat "$LAST_OUT")"
 for path in ai/schemas/result.integrator.schema.json template/ai/schemas/result.integrator.schema.json; do
-    logged "npx --yes prettier@3 --no-config --single-quote --no-semi --trailing-comma none --print-width 100 --write $path" || fail "format options or destination differ"
     [ "$(wc -l <"$fix/$path")" -gt 1 ] || fail "destination not formatted"
     diff -u <(jq -S . "$fix/$path") <(jq -S . "$fix/.claude/skills/dev-flow-support/assets/schemas/result.integrator.schema.json") || fail "formatted schema differs semantically"
 done
+
+[ "$(log_count 'npx --yes prettier@3 --no-config --single-quote --no-semi --trailing-comma none --print-width 100 --stdin-filepath ai/schemas/result.integrator.schema.json')" -eq 1 ] || fail "root schema not formatted exactly once"
+cmp "$fix/ai/schemas/result.integrator.schema.json" "$fix/template/ai/schemas/result.integrator.schema.json" || fail "twins not byte-identical"
 
 start "malformed vendored JSON aborts before copying or pushing"
 fix="$(new_fixture schema_malformed)"
@@ -1163,6 +1164,41 @@ for path in ai/schemas/result.integrator.schema.json template/ai/schemas/result.
     grep -q 'symlinked schema destination:' "$LAST_OUT" || fail "symlink refusal missing"
     [ "$(cat "$external")" = '{"outside":true}' ] || fail "external target overwritten"
     ! pushed "$fix" || fail "symlink destination pushed"
+done
+
+start "a needed root schema write refuses unavailable npx before push"
+fix="$(new_fixture schema_no_npx)"
+add_schema_fixture "$fix"
+rc="$(
+    # Simulate command lookup on a host without npx, even if this host has it.
+    command() {
+        if [ "$#" = 2 ] && [ "$1" = -v ] && [ "$2" = npx ]; then return 1; fi
+        builtin command "$@"
+    }
+    export -f command
+    run_helper "$fix" run v0.9.0
+)"
+[ "$rc" != 0 ] || fail "needed schema write accepted without npx"
+grep -q 'cannot format .* — nothing pushed' "$LAST_OUT" || fail "missing-npx refusal missing"
+git -C "$fix" diff --quiet -- ai/schemas template/ai/schemas || fail "missing-npx refusal wrote schemas"
+! pushed "$fix" || fail "schema pushed without formatting"
+
+for dir in ai/schemas template/ai/schemas; do
+    start "schema directory $dir cannot escape through a parent symlink"
+    fix="$(new_fixture "schema_parent_$cases")"
+    add_schema_fixture "$fix"
+    external="$TMPROOT/external-dir-$cases"
+    mv "$fix/$dir" "$external"
+    ln -s "$external" "$fix/$dir"
+    before="$(cksum "$external"/*)"
+    git -C "$fix" add -A
+    git -C "$fix" commit --quiet -m "symlink schema directory fixture"
+    git -C "$fix" push --quiet origin main
+    rc="$(run_helper "$fix" run v0.9.0)"
+    [ "$rc" != 0 ] || fail "escaped schema directory accepted"
+    grep -q 'schema destination directory escapes repository:' "$LAST_OUT" || fail "directory escape refusal missing"
+    [ "$(cksum "$external"/*)" = "$before" ] || fail "external schema directory was modified"
+    ! pushed "$fix" || fail "directory escape was pushed"
 done
 
 echo "sync-devkit-release: all ${cases} cases passed"

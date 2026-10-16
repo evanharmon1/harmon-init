@@ -288,23 +288,48 @@ agents_dest_from_manifest() {
 # Mirror exactly the schema set checked by test-result-schemas.sh. Repos
 # without an agent registry have no dev-flow schema contract to mirror.
 SCHEMA_DESTINATIONS=""
-# Preserve consumer formatting when the schema is semantically unchanged.
+SCHEMA_REPO_ROOT="$(pwd -P)"
+assert_schema_destination() {
+    [ ! -L "$1" ] || die "symlinked schema destination: $1 — nothing pushed"
+    _asd_parent="$(cd "$(dirname "$1")" && pwd -P)" ||
+        die "cannot resolve schema destination directory: $1 — nothing pushed"
+    case "$_asd_parent" in
+    "$SCHEMA_REPO_ROOT" | "$SCHEMA_REPO_ROOT"/*) ;;
+    *) die "schema destination directory escapes repository: $1 — nothing pushed" ;;
+    esac
+}
+
+# Root and template schema twins must receive identical, gate-formatted bytes.
 mirror_schema_destination() {
-    _msd_source="$1" _msd_dest="$2"
-    [ ! -L "$_msd_dest" ] || die "symlinked schema destination: $_msd_dest — nothing pushed"
-    if [ -f "$_msd_dest" ] &&
-        _msd_existing="$(jq -S . "$_msd_dest" 2>/dev/null)" &&
-        [ "$_msd_existing" = "$(jq -S . "$_msd_source")" ]; then
-        return 0
+    _msd_source="$1" _msd_root="$2"
+    _msd_destinations="$_msd_root"
+    if [ -f "template/$_msd_root" ] || [ -L "template/$_msd_root" ]; then
+        _msd_destinations="${_msd_destinations}${LF}template/$_msd_root"
     fi
-    mkdir -p "$(dirname "$_msd_dest")"
-    cp "$_msd_source" "$_msd_dest"
-    if [ -f prettier.config.cjs ] && command -v npx >/dev/null 2>&1; then
-        run_untrusted npx --yes prettier@3 --no-config --single-quote --no-semi \
-            --trailing-comma none --print-width 100 --write "$_msd_dest" ||
-            die "could not format schema $_msd_dest — nothing pushed"
-    fi
-    SCHEMA_DESTINATIONS="${SCHEMA_DESTINATIONS}${LF}${_msd_dest}"
+    _msd_write=0
+    while IFS= read -r _msd_dest; do
+        assert_schema_destination "$_msd_dest"
+        if [ -f "$_msd_dest" ] &&
+            _msd_existing="$(jq -S . "$_msd_dest" 2>/dev/null)" &&
+            [ "$_msd_existing" = "$(jq -S . "$_msd_source")" ]; then
+            continue
+        fi
+        _msd_write=1
+    done <<EOF
+$_msd_destinations
+EOF
+    [ "$_msd_write" -eq 1 ] || return 0
+    command -v npx >/dev/null 2>&1 || die "cannot format $_msd_root: npx unavailable — nothing pushed"
+    # Format once via stdin; no temporary output can escape the checked paths.
+    _msd_formatted="$(run_untrusted npx --yes prettier@3 --no-config --single-quote --no-semi \
+        --trailing-comma none --print-width 100 --stdin-filepath "$_msd_root" <"$_msd_source")" ||
+        die "cannot format $_msd_root — nothing pushed"
+    while IFS= read -r _msd_dest; do
+        printf '%s\n' "$_msd_formatted" >"$_msd_dest"
+        SCHEMA_DESTINATIONS="${SCHEMA_DESTINATIONS}${LF}${_msd_dest}"
+    done <<EOF
+$_msd_destinations
+EOF
 }
 
 mirror_registry_schemas() {
@@ -331,9 +356,6 @@ mirror_registry_schemas() {
         jq -e . "$_mrs_assets/$_mrs_name" >/dev/null ||
             die "malformed vendored schema $_mrs_assets/$_mrs_name — nothing pushed"
         mirror_schema_destination "$_mrs_assets/$_mrs_name" "$_mrs_path"
-        if [ -f "template/$_mrs_path" ] || [ -L "template/$_mrs_path" ]; then
-            mirror_schema_destination "$_mrs_assets/$_mrs_name" "template/$_mrs_path"
-        fi
     done <<EOF
 $_mrs_schemas
 EOF
@@ -417,10 +439,16 @@ assert_expected_scope() {
         if [ -n "$_aes_aprov" ] && [ "$_aes_p" = "$_aes_aprov" ]; then
             continue
         fi
-        case "${SCHEMA_DESTINATIONS}${LF}" in
-        *"${LF}${_aes_p}${LF}"*) continue ;;
-        esac
         _aes_ok=0
+        while IFS= read -r _aes_schema; do
+            if [ "$_aes_p" = "$_aes_schema" ]; then
+                _aes_ok=1
+                break
+            fi
+        done <<EOF
+$SCHEMA_DESTINATIONS
+EOF
+        [ "$_aes_ok" -eq 0 ] || continue
         case "$_aes_p" in
         "$_aes_dest"/*)
             _aes_name="${_aes_p#"$_aes_dest"/}"

@@ -268,16 +268,26 @@ agents_dest_from_manifest() {
 # Mirror exactly the schema set checked by test-result-schemas.sh. Repos
 # without an agent registry have no dev-flow schema contract to mirror.
 SCHEMA_DESTINATIONS=""
+SCHEMA_REPO_ROOT="$(pwd -P)"
+assert_schema_destination() {
+    [ ! -L "$1" ] || die "symlinked schema destination: $1 — nothing pushed"
+    _asd_parent="$(cd "$(dirname "$1")" && pwd -P)" ||
+        die "cannot resolve schema destination directory: $1 — nothing pushed"
+    case "$_asd_parent" in
+    "$SCHEMA_REPO_ROOT" | "$SCHEMA_REPO_ROOT"/*) ;;
+    *) die "schema destination directory escapes repository: $1 — nothing pushed" ;;
+    esac
+}
+
 # Preserve consumer formatting when the schema is semantically unchanged.
 mirror_schema_destination() {
     _msd_source="$1" _msd_dest="$2"
-    [ ! -L "$_msd_dest" ] || die "symlinked schema destination: $_msd_dest — nothing pushed"
+    assert_schema_destination "$_msd_dest"
     if [ -f "$_msd_dest" ] &&
         _msd_existing="$(jq -S . "$_msd_dest" 2>/dev/null)" &&
         [ "$_msd_existing" = "$(jq -S . "$_msd_source")" ]; then
         return 0
     fi
-    mkdir -p "$(dirname "$_msd_dest")"
     cp "$_msd_source" "$_msd_dest"
     if [ -f prettier.config.cjs ] && command -v npx >/dev/null 2>&1; then
         run_untrusted npx --yes prettier@3 --no-config --single-quote --no-semi \
@@ -395,10 +405,16 @@ assert_expected_scope() {
         if [ -n "$_aes_aprov" ] && [ "$_aes_p" = "$_aes_aprov" ]; then
             continue
         fi
-        case "${SCHEMA_DESTINATIONS}${LF}" in
-        *"${LF}${_aes_p}${LF}"*) continue ;;
-        esac
         _aes_ok=0
+        while IFS= read -r _aes_schema; do
+            if [ "$_aes_p" = "$_aes_schema" ]; then
+                _aes_ok=1
+                break
+            fi
+        done <<EOF
+$SCHEMA_DESTINATIONS
+EOF
+        [ "$_aes_ok" -eq 0 ] || continue
         case "$_aes_p" in
         "$_aes_dest"/*)
             _aes_name="${_aes_p#"$_aes_dest"/}"
