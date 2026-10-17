@@ -8,6 +8,14 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [5.9.1](https://github.com/evanharmon1/harmon-init/compare/v5.9.0...v5.9.1) (2026-10-17)
+
+
+### Bug Fixes
+
+* **template:** ship a task groom target that runs the vendored groom wrapper ([#1722](https://github.com/evanharmon1/harmon-init/issues/1722)) ([9ef7a0a](https://github.com/evanharmon1/harmon-init/commit/9ef7a0aedc424f7d1d4225a669c20d617fc868ca))
+* **test:** isolate test-bot-autonomy fixtures from host HARMON_BOT_AUTONOMY_* variables ([#1724](https://github.com/evanharmon1/harmon-init/issues/1724)) ([9e4e368](https://github.com/evanharmon1/harmon-init/commit/9e4e368a1eac2133e6cf3b5267b31ede7fbc185c))
+
 ## [5.9.0](https://github.com/evanharmon1/harmon-init/compare/v5.8.2...v5.9.0) (2026-10-16)
 
 
