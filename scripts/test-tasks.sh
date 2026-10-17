@@ -885,7 +885,11 @@ checked_taskfiles=0
 for taskfile in Taskfile.yml template/Taskfile.yml.jinja; do
     [ -f "$taskfile" ] || continue
     checked_taskfiles=$((checked_taskfiles + 1))
-    for t in $tty_gated_tasks; do
+    taskfile_tty_tasks="$tty_gated_tasks"
+    if grep -q '^  sync:skills:' "$taskfile"; then
+        taskfile_tty_tasks="$taskfile_tty_tasks groom"
+    fi
+    for t in $taskfile_tty_tasks; do
         block="$(awk -v name="  ${t}:" '
             $0 == name { inblock = 1; next }
             inblock && /^  [a-zA-Z0-9]/ { inblock = 0 }
@@ -936,6 +940,78 @@ for taskfile in Taskfile.yml template/Taskfile.yml.jinja; do
     fi
 done
 [ "$checked_setup_tasks" -gt 0 ] || fail "no Taskfile setup:github wiring was checked"
+
+echo "==> groom delegates to the vendored skill wrapper with a precondition guard"
+checked_groom_tasks=0
+for taskfile in Taskfile.yml template/Taskfile.yml.jinja; do
+    [ -f "$taskfile" ] || continue
+    grep -q '^  sync:skills:' "$taskfile" || continue
+    checked_groom_tasks=$((checked_groom_tasks + 1))
+    block="$(awk '
+        $0 == "  groom:" { inblock = 1; next }
+        inblock && /^  [a-zA-Z0-9]/ { inblock = 0 }
+        inblock { print }
+    ' "$taskfile")"
+    [ -n "$block" ] || fail "${taskfile}: groom task not found alongside sync:skills"
+    grep -Fq './.claude/skills/groom/assets/groom.sh {{.CLI_ARGS}}' <<<"$block" ||
+        fail "${taskfile}: groom does not forward {{.CLI_ARGS}} to ./.claude/skills/groom/assets/groom.sh"
+    grep -Fq 'sh: test -x .claude/skills/groom/assets/groom.sh' <<<"$block" ||
+        fail "${taskfile}: groom lacks the executable precondition for .claude/skills/groom/assets/groom.sh"
+    grep -Fq '.skills-sync.yaml' <<<"$block" ||
+        fail "${taskfile}: groom precondition message does not name .skills-sync.yaml"
+    grep -Fq 'universal' <<<"$block" ||
+        fail "${taskfile}: groom precondition message does not name the universal category"
+    grep -Fq 'task sync:skills' <<<"$block" ||
+        fail "${taskfile}: groom precondition message does not name task sync:skills"
+    if grep -Eq '^[[:space:]]*-[[:space:]]*\|' <<<"$block"; then
+        fail "${taskfile}: groom contains inline multiline shell in cmds instead of a single wrapper invocation"
+    fi
+done
+if grep -q '^  sync:skills:' Taskfile.yml || [ -f template/Taskfile.yml.jinja ]; then
+    [ "$checked_groom_tasks" -gt 0 ] || fail "no Taskfile groom wiring was checked"
+fi
+
+if grep -q '^  groom:' Taskfile.yml; then
+    list_out="$(task --color=false --list-all 2>&1)"
+    grep -qE '^\* groom:' <<<"$list_out" ||
+        fail "task --list-all did not list groom"
+    groom_tmp="${test_tmp}/groom-fixture"
+    mkdir -p "$groom_tmp"
+    cp Taskfile.yml "$groom_tmp/Taskfile.yml"
+    if [ -d taskfiles ]; then
+        cp -R taskfiles "$groom_tmp/taskfiles"
+    fi
+    out="$(task --dir "$groom_tmp" --color=false groom 2>&1)" && rc=0 || rc=$?
+    [ "$rc" -ne 0 ] || fail "task groom succeeded when .claude/skills/groom/assets/groom.sh was missing"
+    for token in '.claude/skills/groom/assets/groom.sh' 'universal' '.skills-sync.yaml' 'task sync:skills'; do
+        grep -Fq "$token" <<<"$out" ||
+            fail "task groom missing-skill output did not mention '${token}': ${out}"
+    done
+    mkdir -p "$groom_tmp/.claude/skills/groom/assets"
+    cat >"$groom_tmp/.claude/skills/groom/assets/groom.sh" <<'EOF'
+#!/usr/bin/env bash
+echo "RAN_GROOM_STUB" >"$(dirname "$0")/ran"
+exit 99
+EOF
+    chmod 0644 "$groom_tmp/.claude/skills/groom/assets/groom.sh"
+    out="$(task --dir "$groom_tmp" --color=false groom 2>&1)" && rc=0 || rc=$?
+    [ "$rc" -ne 0 ] || fail "task groom succeeded when .claude/skills/groom/assets/groom.sh was not executable"
+    [ ! -e "$groom_tmp/.claude/skills/groom/assets/ran" ] ||
+        fail "task groom executed non-executable .claude/skills/groom/assets/groom.sh"
+    chmod +x "$groom_tmp/.claude/skills/groom/assets/groom.sh"
+    out="$(task --dir "$groom_tmp" --color=false --dry groom -- --execute groom-report.sh render 2>&1)" && rc=0 || rc=$?
+    [ "$rc" -eq 0 ] || fail "task --dry groom failed with executable stub: ${out}"
+    [ ! -e "$groom_tmp/.claude/skills/groom/assets/ran" ] ||
+        fail "task --dry groom executed .claude/skills/groom/assets/groom.sh instead of dry-running"
+    grep -Fq './.claude/skills/groom/assets/groom.sh --execute groom-report.sh render' <<<"$out" ||
+        fail "task --dry groom did not resolve to ./.claude/skills/groom/assets/groom.sh --execute groom-report.sh render: ${out}"
+    if [ -x .claude/skills/groom/assets/groom.sh ]; then
+        out="$(task --color=false --dry groom -- --execute groom-report.sh render 2>&1)" && rc=0 || rc=$?
+        [ "$rc" -eq 0 ] || fail "repo task --dry groom failed: ${out}"
+        grep -Fq './.claude/skills/groom/assets/groom.sh --execute groom-report.sh render' <<<"$out" ||
+            fail "repo task --dry groom did not resolve to ./.claude/skills/groom/assets/groom.sh --execute groom-report.sh render: ${out}"
+    fi
+fi
 
 if [ -x ./scripts/test-terraform-provider-locks.sh ]; then
     echo "==> Terraform provider locks cover developer and CI platforms"
