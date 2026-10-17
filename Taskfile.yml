@@ -817,7 +817,7 @@ tasks:
     interactive: true
     preconditions:
       - sh: test -x .claude/skills/groom/assets/groom.sh
-        msg: "groom skill is not vendored (.claude/skills/groom/assets/groom.sh missing) — add the 'universal' category in .skills-sync.yaml and run 'task sync:skills'; if .skills-sync.yaml sets a dest other than .claude/skills, point this task at <dest>/groom/assets/groom.sh"
+        msg: "groom skill is not vendored (.claude/skills/groom/assets/groom.sh missing) — add the 'universal' category in .skills-sync.yaml and run 'task sync:skills' (task groom expects the default skills dest, .claude/skills)"
     cmds:
       - ./.claude/skills/groom/assets/groom.sh {{.CLI_ARGS}}
 
