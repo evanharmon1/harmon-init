@@ -812,6 +812,15 @@ tasks:
     cmds:
       - ./scripts/sync-devkit-release.sh run {{.CLI_ARGS}}
 
+  groom:
+    desc: "Run the groom skill's backlog audit, or apply an approved plan (usage: task groom [-- [note] | -- --execute <script> [args...]])"
+    interactive: true
+    preconditions:
+      - sh: test -x .claude/skills/groom/assets/groom.sh
+        msg: "groom skill is not vendored (.claude/skills/groom/assets/groom.sh missing) — add the 'universal' category in .skills-sync.yaml and run 'task sync:skills'"
+    cmds:
+      - ./.claude/skills/groom/assets/groom.sh {{.CLI_ARGS}}
+
   # ── Second-model review (Codex) ───────────────────────────────
   # Optional second AI model (the OpenAI Codex CLI) reviewing the current
   # change — local and advisory only, never part of verify/ci. Findings are

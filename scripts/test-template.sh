@@ -1732,6 +1732,7 @@ minimal) # use_skills_sync=false -> none of the machinery renders
     [ ! -f .skills-sync.yaml ] || err ".skills-sync.yaml rendered but use_skills_sync=false"
     [ ! -f scripts/sync-skills.sh ] || err "scripts/sync-skills.sh rendered but use_skills_sync=false"
     ! grep -q 'sync:skills:' Taskfile.yml || err "sync:skills task rendered but use_skills_sync=false"
+    ! grep -q '^  groom:' Taskfile.yml || err "groom task rendered but use_skills_sync=false"
     ! grep -q 'harmon-devkit skills' renovate.json || err "skills-sync Renovate rule rendered but use_skills_sync=false"
     [ ! -f .codex/agents/implementer.toml ] || err "Codex implementer rendered without shared agents"
     ! grep -q '^\[agents\.implementer\]$' .codex/config.toml ||
@@ -1741,6 +1742,35 @@ minimal) # use_skills_sync=false -> none of the machinery renders
     [ -f .skills-sync.yaml ] || err ".skills-sync.yaml missing (use_skills_sync default on)"
     [ -x scripts/sync-skills.sh ] || err "scripts/sync-skills.sh missing or not executable"
     grep -q 'sync:skills:' Taskfile.yml || err "sync:skills task missing (use_skills_sync default on)"
+    grep -q '^  groom:' Taskfile.yml || err "groom task missing (use_skills_sync default on)"
+    if have task; then
+        groom_list_out=$(task --color=false --list-all 2>&1) && groom_list_rc=0 || groom_list_rc=$?
+        if [ "$groom_list_rc" -ne 0 ] || ! grep -qE '^\* groom:' <<<"$groom_list_out"; then
+            err "task --list-all did not list groom (use_skills_sync default on)"
+        fi
+        groom_missing_out=$(task --color=false groom 2>&1) && groom_missing_rc=0 || groom_missing_rc=$?
+        [ "$groom_missing_rc" -ne 0 ] ||
+            err "task groom succeeded before .claude/skills/groom/assets/groom.sh was vendored"
+        for groom_token in '.claude/skills/groom/assets/groom.sh' 'universal' '.skills-sync.yaml' 'task sync:skills'; do
+            grep -Fq "$groom_token" <<<"$groom_missing_out" ||
+                err "task groom missing-skill message did not mention '$groom_token': $groom_missing_out"
+        done
+        mkdir -p .claude/skills/groom/assets
+        cat >.claude/skills/groom/assets/groom.sh <<'EOF'
+#!/usr/bin/env bash
+echo "RAN_GROOM_STUB" >"$(dirname "$0")/ran"
+exit 99
+EOF
+        chmod +x .claude/skills/groom/assets/groom.sh
+        groom_dry_out=$(task --color=false --dry groom -- --execute groom-report.sh render 2>&1) && groom_dry_rc=0 || groom_dry_rc=$?
+        [ "$groom_dry_rc" -eq 0 ] ||
+            err "task --dry groom -- --execute groom-report.sh render failed: $groom_dry_out"
+        [ ! -e .claude/skills/groom/assets/ran ] ||
+            err "task --dry groom executed .claude/skills/groom/assets/groom.sh instead of dry-running"
+        grep -Fq './.claude/skills/groom/assets/groom.sh --execute groom-report.sh render' <<<"$groom_dry_out" ||
+            err "task --dry groom did not resolve to ./.claude/skills/groom/assets/groom.sh --execute groom-report.sh render: $groom_dry_out"
+        rm -rf .claude/skills/groom
+    fi
     grep -q '^  - universal$' .skills-sync.yaml || err ".skills-sync.yaml categories missing 'universal' (skill_categories default)"
     grep -q 'datasource=github-releases depName=evanharmon1/harmon-devkit' .skills-sync.yaml || err ".skills-sync.yaml missing Renovate annotation"
     grep -q 'harmon-devkit skills' renovate.json || err "skills-sync Renovate rule missing"
