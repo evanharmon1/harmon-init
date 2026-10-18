@@ -206,7 +206,11 @@ def applicable(note, project):
     return not note.startswith("Future ") and (not projects or project in projects[1].split("/"))
 
 
-covered_workflows = set()
+template_workflows = {
+    re.sub(r"\[%.*?%\]", "", path.name).removesuffix(".jinja")
+    for path in (repo / "template/.github/workflows").iterdir() if path.is_file()
+}
+require(template_workflows, "no template workflow files found")
 for directory in sorted(p for p in work.glob("*-web-*") if p.is_dir()):
     profile = re.fullmatch(r"(ubuntu-latest|self-hosted)-(web-astro|web-app)", directory.name)
     require(profile, f"unknown fixture profile: {directory.name}")
@@ -214,18 +218,13 @@ for directory in sorted(p for p in work.glob("*-web-*") if p.is_dir()):
                if profile[1] == "self-hosted" else '"ubuntu-latest"')
     seen = check_tree(directory, template_rows, default)
     workflows = {p.name for p in (directory / ".github/workflows").glob("*.y*ml")}
+    require(template_workflows <= workflows,
+            f"{directory.name}: template workflows missing from fixture: "
+            f"{sorted(template_workflows - workflows)}")
     required = {key for key, (_, note) in template_rows.items()
                 if key[0] in workflows and applicable(note, profile[2])}
     require(required <= seen,
             f"{directory.name}: spec jobs missing from rendered workflows: {sorted(required - seen)}")
-    covered_workflows |= workflows
-template_workflows = {
-    re.sub(r"\[%.*?%\]", "", path.name).removesuffix(".jinja")
-    for path in (repo / "template/.github/workflows").iterdir() if path.is_file()
-}
-require(template_workflows, "no template workflow files found")
-require(template_workflows <= covered_workflows,
-        f"template workflows never rendered: {sorted(template_workflows - covered_workflows)}")
 root_seen = check_tree(repo, template_rows | root_rows, '"ubuntu-latest"')
 require(root_rows.keys() <= root_seen, f"root-only rows not exercised: {root_rows.keys() - root_seen}")
 print(f"runner routing: per-fixture spec jobs and all {len(template_workflows)} template workflows covered; "
