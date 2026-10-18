@@ -12,29 +12,41 @@ OUTPUT_FD=2
 
 repo=""
 bot_collaborator=""
-ci_runs_on=""
-ci_runs_on_set=false
-replace_ci_runs_on=false
+routing_names=(CI_RUNS_ON BROWSER_RUNS_ON IMAGE_BUILD_RUNS_ON ISOLATED_RUNS_ON)
+routing_flags=(ci-runs-on browser-runs-on image-build-runs-on isolated-runs-on)
+routing_values=('' '' '' '')
+routing_set=(false false false false)
+routing_replace=(false false false false)
 bot_pending=false
 bot_unverified=false
 while [ "$#" -gt 0 ]; do
     case "$1" in
-    --repo)
-        repo="${2:-}"
+    --repo | --bot-collaborator)
+        if [ "$#" -lt 2 ]; then
+            echo "$1 requires a value" >&2
+            exit 2
+        fi
+        if [ "$1" = --repo ]; then repo="$2"; else bot_collaborator="$2"; fi
         shift 2
         ;;
-    --bot-collaborator)
-        bot_collaborator="${2:-}"
-        shift 2
-        ;;
-    --ci-runs-on)
-        ci_runs_on="${2:-}"
-        ci_runs_on_set=true
-        shift 2
-        ;;
-    --replace-ci-runs-on)
-        replace_ci_runs_on=true
-        shift
+    --ci-runs-on | --browser-runs-on | --image-build-runs-on | --isolated-runs-on | \
+        --replace-ci-runs-on | --replace-browser-runs-on | --replace-image-build-runs-on | --replace-isolated-runs-on)
+        for i in "${!routing_names[@]}"; do
+            if [ "$1" = "--${routing_flags[$i]}" ]; then
+                if [ "$#" -lt 2 ] || [ -z "$2" ]; then
+                    echo "$1 requires a non-empty value" >&2
+                    exit 2
+                fi
+                routing_values[$i]="$2"
+                routing_set[$i]=true
+                shift 2
+                break
+            elif [ "$1" = "--replace-${routing_flags[$i]}" ]; then
+                routing_replace[$i]=true
+                shift
+                break
+            fi
+        done
         ;;
     *)
         echo "Unknown argument: $1" >&2
@@ -44,36 +56,40 @@ while [ "$#" -gt 0 ]; do
 done
 
 if [ -z "$repo" ]; then
-    echo "Usage: $0 --repo <owner/repo> [--bot-collaborator <login>] [--ci-runs-on <json-array>] [--replace-ci-runs-on]" >&2
-    exit 2
-fi
-if $ci_runs_on_set && [ -z "$ci_runs_on" ]; then
-    echo "--ci-runs-on requires a non-empty value" >&2
-    exit 2
-fi
-if $replace_ci_runs_on && ! $ci_runs_on_set; then
-    echo "--replace-ci-runs-on requires --ci-runs-on" >&2
+    echo "Usage: $0 --repo <owner/repo> [--bot-collaborator <login>] [--{ci,browser,image-build,isolated}-runs-on <json>] [--replace-{ci,browser,image-build,isolated}-runs-on]" >&2
     exit 2
 fi
 if ! command -v gh >/dev/null 2>&1; then
     echo "Required tool not found: gh" >&2
     exit 1
 fi
-if $ci_runs_on_set; then
+# Validate every requested value before any API call or mutation.
+for i in "${!routing_names[@]}"; do
+    if ${routing_replace[$i]} && ! ${routing_set[$i]}; then
+        echo "--replace-${routing_flags[$i]} requires --${routing_flags[$i]}" >&2
+        exit 2
+    fi
+    ${routing_set[$i]} || continue
     if ! command -v jq >/dev/null 2>&1; then
         echo "Required tool not found: jq" >&2
         exit 1
     fi
-    if ! printf '%s\n' "$ci_runs_on" | jq -se '
-        length == 1 and (
-            (.[0] | type == "string" and . == "ubuntu-latest") or
-            (.[0] | type == "array" and length > 0 and all(.[]; type == "string" and length > 0) and index("self-hosted") != null)
-        )
+    if ! printf '%s\n' "${routing_values[$i]}" | jq -se '
+        length == 1 and (.[0] |
+            (type == "string" and length > 0) or
+            (type == "array" and length > 0 and all(.[]; type == "string" and length > 0)))
     ' >/dev/null; then
-        echo "--ci-runs-on must be \"ubuntu-latest\" or a JSON string array containing self-hosted" >&2
+        echo "--${routing_flags[$i]} must be a non-empty JSON string or non-empty array of non-empty strings" >&2
         exit 2
     fi
-fi
+    if [ "${routing_names[$i]}" = ISOLATED_RUNS_ON ] &&
+        printf '%s\n' "${routing_values[$i]}" | jq -e '
+            (if type == "array" then . else [.] end) | any(.[]; ascii_downcase == "self-hosted")
+        ' >/dev/null; then
+        echo "ISOLATED_RUNS_ON invariant: isolated routing must never contain the self-hosted label" >&2
+        exit 2
+    fi
+done
 
 fail_step() {
     local rc="$1" label="$2" detail="$3"
@@ -98,62 +114,65 @@ public | private | internal) ;;
     ;;
 esac
 
-if $ci_runs_on_set; then
-    if [ "$repo_visibility" = public ] && [ "$ci_runs_on" != '"ubuntu-latest"' ]; then
+for i in "${!routing_names[@]}"; do
+    ${routing_set[$i]} || continue
+    routing_name="${routing_names[$i]}"
+    routing_value="${routing_values[$i]}"
+    if [ "$repo_visibility" = public ] && [ "$routing_value" != '"ubuntu-latest"' ]; then
         checkline unknown "Actions runner routing" "public repository selected non-canonical routing; enforcing ubuntu-latest"
-        ci_runs_on='"ubuntu-latest"'
+        routing_value='"ubuntu-latest"'
     fi
-    current_ci_runs_on_records=""
-    current_ci_runs_on_present=false
-    current_ci_runs_on=""
-    if current_ci_runs_on_records="$(gh variable list --repo "$repo" --json name,value \
-        --jq '[.[] | select(.name == "CI_RUNS_ON")]')"; then
-        current_ci_runs_on_count="$(jq -r 'length' <<<"$current_ci_runs_on_records")"
-        case "$current_ci_runs_on_count" in
+    current_routing_records=""
+    current_routing_present=false
+    current_routing=""
+    if current_routing_records="$(gh variable list --repo "$repo" --json name,value \
+        --jq "[.[] | select(.name == \"$routing_name\")]")"; then
+        current_routing_count="$(jq -r 'length' <<<"$current_routing_records")"
+        case "$current_routing_count" in
         0) ;;
         1)
-            current_ci_runs_on_present=true
-            current_ci_runs_on="$(jq -r '.[0].value' <<<"$current_ci_runs_on_records")"
+            current_routing_present=true
+            current_routing="$(jq -r '.[0].value' <<<"$current_routing_records")"
             ;;
         *)
-            fail_step 1 "Actions runner routing" "GitHub returned multiple CI_RUNS_ON variables"
+            fail_step 1 "Actions runner routing" "GitHub returned multiple ${routing_name} variables"
             exit 1
             ;;
         esac
 
-        if ! $current_ci_runs_on_present; then
+        if ! $current_routing_present; then
             if output_run "Creating Actions runner routing" \
                 gh api "repos/$repo/actions/variables" --method POST \
-                -f name=CI_RUNS_ON -f value="$ci_runs_on"; then
-                checkline ok "Actions runner routing" "created CI_RUNS_ON"
+                -f name="$routing_name" -f value="$routing_value"; then
+                checkline ok "Actions runner routing" "created ${routing_name}"
             else
                 rc=$?
-                fail_step "$rc" "Actions runner routing" "could not create CI_RUNS_ON"
+                fail_step "$rc" "Actions runner routing" "could not create ${routing_name}"
                 exit "$rc"
             fi
-        elif [ "$current_ci_runs_on" = "$ci_runs_on" ]; then
-            checkline ok "Actions runner routing" "CI_RUNS_ON already matches the selected runner settings"
+        elif [ "$current_routing" = "$routing_value" ]; then
+            checkline ok "Actions runner routing" "${routing_name} already matches the selected runner settings"
         else
             if [ "$repo_visibility" = public ]; then
                 if output_run "Enforcing public repository runner safety" \
-                    gh variable set CI_RUNS_ON --repo "$repo" --body '"ubuntu-latest"'; then
-                    checkline ok "Actions runner routing" "standardized public CI_RUNS_ON to ubuntu-latest"
+                    gh variable set "$routing_name" --repo "$repo" --body '"ubuntu-latest"'; then
+                    checkline ok "Actions runner routing" "standardized public ${routing_name} to ubuntu-latest"
                 else
                     rc=$?
                     fail_step "$rc" "Actions runner routing" "could not enforce GitHub-hosted routing on a public repository"
                     exit "$rc"
                 fi
-            elif $replace_ci_runs_on; then
+            elif ${routing_replace[$i]}; then
                 if output_run "Replacing Actions runner routing" \
-                    gh variable set CI_RUNS_ON --repo "$repo" --body "$ci_runs_on"; then
-                    checkline ok "Actions runner routing" "replaced CI_RUNS_ON by explicit request"
+                    gh variable set "$routing_name" --repo "$repo" --body "$routing_value"; then
+                    checkline ok "Actions runner routing" "replaced ${routing_name} by explicit request"
                 else
                     rc=$?
-                    fail_step "$rc" "Actions runner routing" "could not update CI_RUNS_ON"
+                    fail_step "$rc" "Actions runner routing" "could not update ${routing_name}"
                     exit "$rc"
                 fi
             else
-                checkline na "Actions runner routing" "preserved existing ${repo_visibility} CI_RUNS_ON; pass --replace-ci-runs-on to replace it"
+                checkline na "Actions runner routing" "preserved existing ${repo_visibility} ${routing_name}; pass --replace-${routing_flags[$i]} to replace it"
             fi
         fi
     else
@@ -161,7 +180,7 @@ if $ci_runs_on_set; then
         fail_step "$rc" "Actions runner routing" "could not list repository variables"
         exit "$rc"
     fi
-fi
+done
 
 # Runner routing is the security-relevant mutation. Complete it before the
 # independent repository settings below so an unrelated API failure cannot

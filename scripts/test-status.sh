@@ -320,6 +320,12 @@ make_stub() {
         echo 'fi'
         echo 'if [ "$1" = "api" ]; then'
         echo '    endpoint="${2:-}"'
+        echo '    if [ "${3:-}" = "--jq" ] && [ "${4:-}" = ".owner.type" ]; then'
+        echo '        [ "${GH_OWNER_TYPE_FAIL:-0}" = 0 ] || exit 1'
+        echo '        [ -n "${GH_REPO_JSON:-}" ] || exit 1'
+        echo '        printf "%s\n" "$GH_REPO_JSON" | jq -r .owner.type'
+        echo '        exit 0'
+        echo '    fi'
         # GH_STUB_FULL_PAGES=1: answer the three completeness-required
         # inventories with a FULL page every time, exactly as GitHub answers a
         # list longer than per_page. Only a bound can end such a walk, so this
@@ -397,6 +403,16 @@ STUB
         echo '    esac'
         echo '    echo "stub: unexpected REST endpoint: $endpoint" >&2'
         echo '    exit 1'
+        echo 'fi'
+        echo 'if [ "$1" = "variable" ] && [ "$2" = "list" ] && [ "$3" = "--repo" ]; then'
+        echo '    [ -n "${GH_ROUTING_REPO_JSON:-}" ] || exit 1'
+        echo '    printf "%s\n" "$GH_ROUTING_REPO_JSON"'
+        echo '    exit 0'
+        echo 'fi'
+        echo 'if [ "$1" = "variable" ] && [ "$2" = "list" ] && [ "$3" = "--org" ]; then'
+        echo '    [ -n "${GH_ROUTING_ORG_JSON:-}" ] || exit 1'
+        echo '    printf "%s\n" "$GH_ROUTING_ORG_JSON"'
+        echo '    exit 0'
         echo 'fi'
         echo 'if [ "$1" = "variable" ] && [ "$2" = "list" ] && [ -n "${GH_VARIABLES_JSON:-}" ]; then'
         echo '    printf "%s\n" "$GH_VARIABLES_JSON"'
@@ -647,6 +663,38 @@ case "$out" in
 *"Actions runner routing"*) fail "internal repository routing was audited as public: ${out}" ;;
 *) ;;
 esac
+
+echo "==> routing readout distinguishes repository and organization values"
+routing_repo='[{"name":"CI_RUNS_ON","value":"[\"self-hosted\",\"linux\"]"},{"name":"BROWSER_RUNS_ON","value":"\"browser-provider\""}]'
+routing_org='[{"name":"CI_RUNS_ON","value":"\"org-provider\""},{"name":"IMAGE_BUILD_RUNS_ON","value":"[\"image-provider\"]"},{"name":"ISOLATED_RUNS_ON","value":"\"ubuntu-latest\""}]'
+out="$(GH_REPO_JSON="$internal_repo" GH_ROUTING_REPO_JSON="$routing_repo" GH_ROUTING_ORG_JSON="$routing_org" run_setup_section project)"
+for expected in 'CI_RUNS_ON (repo) - ["self-hosted","linux"]' 'CI_RUNS_ON (org) - "org-provider"' \
+    'BROWSER_RUNS_ON (repo) - "browser-provider"' 'BROWSER_RUNS_ON (org) - unset' \
+    'IMAGE_BUILD_RUNS_ON (repo) - unset' 'IMAGE_BUILD_RUNS_ON (org) - ["image-provider"]' \
+    'ISOLATED_RUNS_ON (repo) - unset' 'ISOLATED_RUNS_ON (org) - "ubuntu-latest"'; do
+    case "$out" in
+    *"$expected"*) ;;
+    *) fail "missing routing value $expected: $out" ;;
+    esac
+done
+for unreadable in '' 'not-json' '{}'; do
+    out="$(GH_REPO_JSON="$internal_repo" GH_ROUTING_REPO_JSON='[]' GH_ROUTING_ORG_JSON="$unreadable" run_setup_section project)"
+    for name in CI_RUNS_ON BROWSER_RUNS_ON IMAGE_BUILD_RUNS_ON ISOLATED_RUNS_ON; do
+        case "$out" in
+        *"$name (org) - unknown"*) ;;
+        *) fail "unreadable $name org value was not unknown: $out" ;;
+        esac
+    done
+done
+
+echo "==> failed owner-type reads leave all organization routing values unknown"
+out="$(GH_REPO_JSON="$internal_repo" GH_OWNER_TYPE_FAIL=1 GH_ROUTING_REPO_JSON='[]' GH_ROUTING_ORG_JSON="$routing_org" run_setup_section project)"
+for name in CI_RUNS_ON BROWSER_RUNS_ON IMAGE_BUILD_RUNS_ON ISOLATED_RUNS_ON; do
+    case "$out" in
+    *"$name (org) - unknown"*) ;;
+    *) fail "failed owner-type lookup hid unknown $name org value: $out" ;;
+    esac
+done
 
 echo "==> a token with 'project' reports the board as writable"
 out="$(run_gh_section project)"

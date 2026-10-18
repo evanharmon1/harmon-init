@@ -939,7 +939,7 @@ if [[ "${SECTION}" == "setup" ]]; then
             IS_PRIVATE="$(jq -r '.private // false' "${d}/repo.json")"
             DEFAULT_BRANCH="$(jq -r '.default_branch // "?"' "${d}/repo.json")"
             OWNER_TYPE="$(run_timeout "${NETWORK_TIMEOUT}" gh api "repos/${OWNER}/${REPO}" \
-                --jq '.owner.type' 2>/dev/null || echo "User")"
+                --jq '.owner.type' 2>/dev/null || echo "unknown")"
             if [[ "${OWNER_TYPE}" == "Organization" ]]; then
                 PKG_NS="orgs"
                 APPS_PATH="orgs/${OWNER}/installations"
@@ -975,6 +975,27 @@ if [[ "${SECTION}" == "setup" ]]; then
                 echo 'null' >"${d}/ci-runs-on.json"
                 echo no >"${d}/ci-runs-on-probe"
             fi) &
+            # Routing variables are non-secret. Keep their values separate from
+            # the names-only credential inventory, and read the org explicitly:
+            # repository listings do not include inherited organization values.
+            for routing_scope in repo org; do
+                (
+                    if [ "$routing_scope" = org ] && [ "$OWNER_TYPE" = User ]; then
+                        echo '[]' >"${d}/routing-${routing_scope}.json"
+                        echo na >"${d}/routing-${routing_scope}.state"
+                    elif { [ "$routing_scope" = repo ] || [ "$OWNER_TYPE" = Organization ]; } &&
+                        run_timeout "${NETWORK_TIMEOUT}" gh variable list \
+                            "--${routing_scope}" "$(if [ "$routing_scope" = repo ]; then printf '%s' "$NWO"; else printf '%s' "$OWNER"; fi)" \
+                            --json name,value --jq '[.[] | select(.name == "CI_RUNS_ON" or .name == "BROWSER_RUNS_ON" or .name == "IMAGE_BUILD_RUNS_ON" or .name == "ISOLATED_RUNS_ON")]' \
+                            >"${d}/routing-${routing_scope}.json" 2>/dev/null &&
+                        jq -se 'length == 1 and (.[0] | type == "array" and all(.[]; type == "object" and (.name | type == "string") and (.value | type == "string")))' \
+                            "${d}/routing-${routing_scope}.json" >/dev/null 2>&1; then
+                        echo ok >"${d}/routing-${routing_scope}.state"
+                    else
+                        echo unknown >"${d}/routing-${routing_scope}.state"
+                    fi
+                ) &
+            done
             # Latest release, over REST: `gh release list` is GraphQL-backed, and a
             # REST-only proxy refuses it. The read's OUTCOME is recorded beside its
             # body, because an empty result and a failed read look identical in the
@@ -1246,6 +1267,19 @@ if [[ "${SECTION}" == "setup" ]]; then
                 else
                     checkline no "Private vuln reporting" "Settings → Advanced Security"
                 fi
+                for routing_name in CI_RUNS_ON BROWSER_RUNS_ON IMAGE_BUILD_RUNS_ON ISOLATED_RUNS_ON; do
+                    for routing_scope in repo org; do
+                        routing_state="$(cat "${d}/routing-${routing_scope}.state" 2>/dev/null || echo unknown)"
+                        case "$routing_state" in
+                        ok)
+                            routing_display="$(jq -r --arg name "$routing_name" '[.[] | select(.name == $name)] | if length == 0 then "unset" else .[0].value end' "${d}/routing-${routing_scope}.json")"
+                            checkline info "$routing_name ($routing_scope)" "$routing_display"
+                            ;;
+                        na) checkline na "$routing_name ($routing_scope)" "not an organization" ;;
+                        *) checkline unknown "$routing_name ($routing_scope)" "unknown — variable inventory unreadable" ;;
+                        esac
+                    done
+                done
                 if [ "${VISIBILITY}" = "public" ]; then
                     if jq -e 'type == "object"' "${d}/ci-runs-on.json" >/dev/null 2>&1; then
                         current_ci_runs_on="$(jq -r '.value // empty' "${d}/ci-runs-on.json")"
