@@ -266,8 +266,8 @@ objects with a usable `labels` string or string array. On private/internal
 repositories, `scripts/setup-github.sh --repo <host/owner/repo>` creates a missing
 class only when its value flag is supplied and preserves existing safe values
 unless that class's replace flag accompanies the value. `task setup:github`
-supplies the rendered CI runner answer; pass the additional class flags directly
-to the script. Repository values shadow inherited organization values.
+supplies the rendered CI runner answer; pass additional class flags after `--`,
+for example `task setup:github -- --browser-runs-on '"ubuntu-latest"'`. Repository values shadow inherited organization values.
 
 Public repositories always receive all four repository overrides as exact
 `"ubuntu-latest"`, even without class or replace flags. This is mandatory safety

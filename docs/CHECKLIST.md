@@ -93,7 +93,8 @@ the compatibility reason in the rule's `description`.
       with `--ci-runs-on`, `--browser-runs-on`, `--image-build-runs-on` or
       `--isolated-runs-on`; intentional replacement also requires the matching
       `--replace-*` flag. `task setup:github` supplies the rendered CI answer;
-      pass other class flags to `scripts/setup-github.sh --repo <host/owner/repo>`.
+      pass other class flags after `--`, for example
+      `task setup:github -- --browser-runs-on '"ubuntu-latest"'`.
       Repository values shadow organization values. Isolated selectors may be
       strings, label arrays, or objects with usable `labels`; `self-hosted` is
       refused case-insensitively, and unsupported shapes fail closed. Requested

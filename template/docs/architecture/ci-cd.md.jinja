@@ -553,8 +553,8 @@ isolated-runner invariant below. No ownership is inferred from a JSON shape.
 | `ISOLATED_RUNS_ON` | `--isolated-runs-on` | `--replace-isolated-runs-on` |
 
 A replacement flag requires its corresponding value flag. `task setup:github`
-supplies the rendered CI runner answer; pass additional class flags directly to
-`scripts/setup-github.sh`.
+supplies the rendered CI runner answer; pass additional class flags after `--`,
+for example `task setup:github -- --browser-runs-on '"ubuntu-latest"'`.
 
 Public repositories always receive all four repository-level overrides as exact
 `"ubuntu-latest"`, even without value or replacement flags. Missing values are
