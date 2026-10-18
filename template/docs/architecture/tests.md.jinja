@@ -162,3 +162,15 @@ Other rules:
   rules axe can detect) — keyboard + screen-reader testing still required.
 [% endif %]
 - TODO: document coverage expectations and fixtures as the suite grows.
+
+## Parallel Task groups
+
+Task runs the dependencies of `check` and `test:suite` concurrently by default.
+Set Task's built-in `TASK_CONCURRENCY=1` environment variable to run dependencies
+one at a time, for example `TASK_CONCURRENCY=1 task verify` or
+`TASK_CONCURRENCY=1 task test:suite`.
+[% if use_node %]
+A Node profile can run ESLint (measured around 3.8 GB RSS) alongside TypeScript
+checking (around 1.5 GB RSS), so budget about 6 GB for parallel `task check` or
+use the serial setting on a smaller runner.
+[% endif %]
