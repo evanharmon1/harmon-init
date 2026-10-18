@@ -151,6 +151,7 @@ make_stub() {
         # section's contract is "no network call", and the only way to see a
         # network call that a stub happily answers is to look at the log.
         echo 'if [ -n "${STUB_CALLS:-}" ]; then echo "$*" >>"$STUB_CALLS"; fi'
+        echo 'if [ -n "${STUB_HOST_AUDIT:-}" ]; then printf "%s|%s|%s\n" "${GH_HOST:-}" "${GH_REPO:-}" "$*" >>"$STUB_HOST_AUDIT"; fi'
         echo 'if [ "$1" = "auth" ] && [ "$2" = "status" ]; then'
         case "$scenario" in
         project)
@@ -548,7 +549,7 @@ make_claude_stub in
 # alongside git, grep, and jq, so dropping the directory that holds it would take
 # the toolbox with it. `bash` is on the list because status.sh and the stubs both
 # start with `#!/usr/bin/env bash`, which resolves bash through the PATH set here.
-ISOLATED_TOOLS="bash awk basename cat cut dirname find git grep head jq mktemp rm sed sort tr uniq wc timeout gtimeout"
+ISOLATED_TOOLS="env bash awk basename cat cut dirname find git grep head jq mktemp rm sed sort tr uniq wc timeout gtimeout"
 
 # make_isolated_bin MISSING — a bin directory holding a symlink to each tool
 # above that exists here, plus the stubs written so far, minus MISSING. Whatever
@@ -768,6 +769,34 @@ case "$out" in
 *'harmonops/harmon-infra routing reconciler'*) ;;
 *) fail "organization isolated violation omitted owner: $out" ;;
 esac
+
+echo "==> full setup flow pins every GitHub call despite conflicting ambient hosts"
+for host in github.com ghe.example.com; do
+    ambient=github.com
+    [ "$host" != github.com ] || ambient=ghe.example.com
+    STUB_HOST_AUDIT="${TMP}/host-property"
+    export STUB_HOST_AUDIT
+    : >"$STUB_HOST_AUDIT"
+    out="$(GH_REPO="$host/owner/internal" GH_HOST="$ambient" GH_REST_HOST="$ambient" GH_REPO_JSON="$internal_repo" GH_ROUTING_REPO_JSON='[]' GH_ROUTING_ORG_JSON='[]' run_setup_section project)"
+    [ -s "$STUB_HOST_AUDIT" ] || fail "empty host property audit"
+    while IFS='|' read -r actual_host actual_repo request; do
+        [ "$actual_host" = "$host" ] && [ "$actual_repo" = "$host/owner/internal" ] || fail "ambient host redirected $request"
+        case "$request" in api\ *) case " $request " in *" --hostname $host "*) ;; *) fail "API request omitted target host: $request" ;; esac ;; esac
+    done <"$STUB_HOST_AUDIT"
+    unset STUB_HOST_AUDIT
+done
+
+echo "==> group labels and unsupported isolated shapes are violations in both scopes"
+for selector in '{"group":"pool","labels":"SELF-HOSTED"}' '{"group":"pool","labels":["linux","Self-Hosted"]}' '42' 'null' '{}' '{"group":"pool"}' '[["linux"]]'; do
+    isolated="$(jq -cn --arg value "$selector" '[{name:"ISOLATED_RUNS_ON",value:$value}]')"
+    out="$(GH_REPO_JSON="$internal_repo" GH_ROUTING_REPO_JSON="$isolated" GH_ROUTING_ORG_JSON="$isolated" run_setup_section project)"
+    for scope in repo org; do
+        case "$out" in *"[ ] ISOLATED_RUNS_ON ($scope) - ISOLATED_RUNS_ON invariant violated"*) ;; *) fail "unsupported/unsafe $scope selector accepted $selector: $out" ;; esac
+    done
+done
+isolated='[{"name":"ISOLATED_RUNS_ON","value":"{\"group\":\"pool\",\"labels\":[\"ubuntu-latest\"]}"}]'
+out="$(GH_REPO_JSON="$internal_repo" GH_ROUTING_REPO_JSON="$isolated" GH_ROUTING_ORG_JSON="$isolated" run_setup_section project)"
+case "$out" in *'ISOLATED_RUNS_ON invariant violated'*) fail "safe group selector reported as violation" ;; esac
 
 echo "==> failed owner-type reads leave all organization routing values unknown"
 out="$(GH_REPO_JSON="$internal_repo" GH_OWNER_TYPE_FAIL=1 GH_ROUTING_REPO_JSON='[]' GH_ROUTING_ORG_JSON="$routing_org" run_setup_section project)"
@@ -1065,7 +1094,7 @@ out="$(run_gh_section project "${HYPHENATED}")"
 case "$out" in
 *"not authenticated"*) fail "the hyphenated fixture's section did not render: ${out}" ;;
 esac
-grep -q '^api repos/my-org/harmon-init/pulls?state=open&sort=updated&direction=desc&per_page=10&page=1$' "${STUB_CALLS}" ||
+grep -q '^api repos/my-org/harmon-init/pulls?state=open&sort=updated&direction=desc&per_page=10&page=1 --hostname github.com$' "${STUB_CALLS}" ||
     fail "a hyphenated repository never reached the open-PR read: $(grep '^api ' "${STUB_CALLS}" | tr '\n' ';')"
 unset STUB_CALLS
 

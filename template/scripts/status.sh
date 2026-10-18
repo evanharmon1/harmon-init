@@ -28,6 +28,17 @@ NETWORK_TIMEOUT="${NETWORK_TIMEOUT:-5}"
 # shellcheck source=scripts/lib/gh-rest.sh
 . "${REPO_ROOT}/scripts/lib/gh-rest.sh"
 
+# Freeze host and repository before any GitHub probe. All children inherit this
+# identity; run_timeout also binds each gh invocation and every api flag.
+TARGET_HOST="$(gh_rest_host)"
+TARGET_HOST="${TARGET_HOST:-github.com}"
+TARGET_NWO="$(gh_rest_repo 2>/dev/null || true)"
+TARGET_REPO="${TARGET_NWO:+$TARGET_HOST/$TARGET_NWO}"
+export GH_HOST="$TARGET_HOST" GH_REPO="$TARGET_REPO"
+gh_rest_api() {
+    run_timeout "${GH_REST_TIMEOUT:-${NETWORK_TIMEOUT}}" gh api "$@"
+}
+
 # ── Tool detection ──────────────────────────────────────────────────────────
 
 # Network probes below are bounded so a hung `gh` call cannot wedge the board.
@@ -70,6 +81,11 @@ fi
 run_timeout() {
     local secs="$1"
     shift
+    if [ "${1:-}" = gh ]; then
+        shift
+        if [ "${1:-}" = api ]; then set -- "$@" --hostname "$TARGET_HOST"; fi
+        set -- env GH_HOST="$TARGET_HOST" GH_REPO="$TARGET_REPO" gh "$@"
+    fi
     if [ -z "${TIMEOUT_BIN}" ]; then
         "$@" </dev/null
     elif [ "${TIMEOUT_KILL_AFTER}" = yes ]; then
@@ -88,6 +104,19 @@ should_show() {
 # and this never prints the file — it only reports presence as ✓/✗.
 has_cred() {
     jq -e --arg n "$2" 'any(.[]; .name == $n)' "$1" >/dev/null 2>&1
+}
+
+# One classification for requested, repository, and organization selectors.
+isolated_selector_state() {
+    printf '%s\n' "$1" | jq -sr '
+        if length != 1 then "unsupported" else .[0] |
+            (if type == "object" then .labels else . end) |
+            if (type == "string" and length > 0) or
+                (type == "array" and length > 0 and all(.[]; type == "string" and length > 0))
+            then (if type == "array" then . else [.] end) |
+                if any(.[]; ascii_downcase == "self-hosted") then "unsafe" else "safe" end
+            else "unsupported" end
+        end' 2>/dev/null || printf 'unsupported\n'
 }
 
 # Organization-variable pages are repository-scoped and capped at 30 by the
@@ -177,7 +206,7 @@ if should_show "gh" || [[ "${SECTION}" == "setup" ]]; then
     # and --hostname (not an unrelated host's account, whose scopes say nothing
     # about the API calls this repo makes). The host comes from the repository,
     # not a github.com assumption — see gh_target_host.
-    gh_host="$(gh_target_host)"
+    gh_host="${TARGET_HOST}"
     run_timeout "${NETWORK_TIMEOUT}" gh auth status --active \
         --hostname "${gh_host}" >"${GH_AUTH_FILE}" 2>&1 ||
         gh_auth_rc=$?
@@ -629,7 +658,7 @@ render_gh_scope_check() {
         # the same reason there is no `--active`-unsupported retry here: on a
         # gh older than 2.40 the check simply does not run.
         run_timeout 3 gh auth status --active \
-            --hostname "$(gh_target_host)" >"${file}" 2>&1 || rc=$?
+            --hostname "${TARGET_HOST}" >"${file}" 2>&1 || rc=$?
         if [[ "${rc}" -ne 0 ]] || grep -i 'unknown flag' "${file}" 2>/dev/null >/dev/null; then
             # A failed probe is NOT a missing login (issues #774, #478) and is
             # not a missing scope either — say nothing rather than send a
@@ -716,7 +745,7 @@ render_local_credentials() {
             checkline unknown "GitHub CLI (gh)" \
                 "auth probe timed out after ${NETWORK_TIMEOUT}s, or was killed"
         elif [[ "${GH_AUTHED}" == true ]]; then
-            checkline ok "GitHub CLI (gh)" "authenticated to $(gh_target_host)"
+            checkline ok "GitHub CLI (gh)" "authenticated to ${TARGET_HOST}"
             render_gh_scope_check
         else
             checkline no "GitHub CLI (gh)" "$(gh_login_remedy)"
@@ -742,11 +771,11 @@ render_local_credentials() {
         # remedy; everything else is unknown.
         gh_token_rc=0
         gh_token_err="$(run_timeout 3 gh auth token \
-            --hostname "$(gh_target_host)" 2>&1 >/dev/null)" || gh_token_rc=$?
+            --hostname "${TARGET_HOST}" 2>&1 >/dev/null)" || gh_token_rc=$?
         case "${gh_token_rc}" in
         0)
             checkline ok "GitHub CLI (gh)" \
-                "credential stored for $(gh_target_host) (not validated)"
+                "credential stored for ${TARGET_HOST} (not validated)"
             # Only once a credential is known to exist: asking GitHub about the
             # scopes of a token that is not there would spend a round trip to
             # learn what the line above already said.
@@ -962,7 +991,7 @@ if [[ "${SECTION}" == "setup" ]]; then
         fi
 
         if ${HAS_REMOTE}; then
-            ROUTING_HOST="${GH_REST_HOST-$(gh_rest_host)}"
+            ROUTING_HOST="$TARGET_HOST"
             ROUTING_REPO="${ROUTING_HOST:+${ROUTING_HOST}/}${NWO}"
             OWNER="${NWO%%/*}"
             REPO="${NWO##*/}"
@@ -1311,14 +1340,12 @@ if [[ "${SECTION}" == "setup" ]]; then
                         ok)
                             routing_display="$(jq -r --arg name "$routing_name" '[.[] | select(.name == $name)] | if length == 0 then "unset" else .[0].value end' "${d}/routing-${routing_scope}.json")"
                             if [ "$routing_name" = ISOLATED_RUNS_ON ] &&
-                                printf '%s\n' "$routing_display" | jq -e '
-                                    (if type == "array" then . else [.] end) |
-                                    any(.[]; type == "string" and ascii_downcase == "self-hosted")
-                                ' >/dev/null 2>&1; then
+                                jq -e --arg name "$routing_name" 'any(.[]; .name == $name)' "${d}/routing-${routing_scope}.json" >/dev/null &&
+                                [ "$(isolated_selector_state "$routing_display")" != safe ]; then
                                 if [ "$routing_scope" = org ]; then
-                                    checkline no "$routing_name ($routing_scope)" "ISOLATED_RUNS_ON invariant violated: self-hosted; organization-level owner: harmonops/harmon-infra routing reconciler"
+                                    checkline no "$routing_name ($routing_scope)" "ISOLATED_RUNS_ON invariant violated: self-hosted or unsupported selector shape; organization-level owner: harmonops/harmon-infra routing reconciler"
                                 else
-                                    checkline no "$routing_name ($routing_scope)" "ISOLATED_RUNS_ON invariant violated: self-hosted; repair with a safe isolated value and --replace-isolated-runs-on"
+                                    checkline no "$routing_name ($routing_scope)" "ISOLATED_RUNS_ON invariant violated: self-hosted or unsupported selector shape; repair the repository selector"
                                 fi
                             else
                                 checkline info "$routing_name ($routing_scope)" "$routing_display"

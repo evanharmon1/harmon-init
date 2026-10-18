@@ -85,15 +85,28 @@ the compatibility reason in the rule's `description`.
 
 - [ ] **Automated settings** — run `task setup:github` (idempotent, safe to
       re-run): enables **Dependabot alerts** and **private vulnerability
-      reporting**. A self-hosted template creates a missing non-public
-      `CI_RUNS_ON` value from the selected runner settings, but preserves every
-      existing non-public value; the repository value is intentional and takes
-      precedence over an organization fallback. Replacing an existing non-public
-      value requires the setup script's explicit `--replace-ci-runs-on` flag.
-      Public repositories are standardized to `"ubuntu-latest"` even when the
-      Copier answers or an existing variable select different routing. Do not
-      add `dependabot.yml`: Renovate owns routine
-      and vulnerability-remediation PRs; Dependabot owns advisory alerts.
+      reporting** when public. Routing uses `CI_RUNS_ON`, `BROWSER_RUNS_ON`,
+      `IMAGE_BUILD_RUNS_ON` and `ISOLATED_RUNS_ON`. Public repositories always
+      create or replace all four repository overrides as `"ubuntu-latest"`,
+      even without flags, so inherited persistent runners cannot reach jobs.
+      On private/internal repositories, the script creates missing values only
+      with `--ci-runs-on`, `--browser-runs-on`, `--image-build-runs-on` or
+      `--isolated-runs-on`; intentional replacement also requires the matching
+      `--replace-*` flag. `task setup:github` supplies the rendered CI answer;
+      pass other class flags to `scripts/setup-github.sh --repo <host/owner/repo>`.
+      Repository values shadow organization values. Isolated selectors may be
+      strings, label arrays, or objects with usable `labels`; `self-hosted` is
+      refused case-insensitively, and unsupported shapes fail closed. Requested
+      invalid isolated values fail before any GitHub access or writes. Repair
+      an existing unsafe repository value with a safe `--isolated-runs-on` plus
+      `--replace-isolated-runs-on` (public repositories repair it automatically);
+      correct unsupported repository shapes before rerunning. For readable
+      unsafe or unsupported inherited organization values, ask the
+      organization-level owner, `harmonops/harmon-infra`'s routing reconciler,
+      to repair them. Unreadable organization values report unknown without
+      failing setup; `task status:setup` reports known violations. Do not add
+      `dependabot.yml`: Renovate owns routine and vulnerability-remediation PRs;
+      Dependabot owns advisory alerts.
 - [ ] Import the branch ruleset (see [architecture/branch-protection.md](architecture/branch-protection.md)) — do this once `build.yml` and `devcontainer-build.yml` are on `main` so the required `verify`/`security`/`devcontainer-verify` checks resolve. **Use the UI import:** Settings → Rules → Rulesets → **New ruleset ▸ Import a ruleset** → select `.github/Branch Protection Ruleset - Protect Main.json`. (Prefer the UI over `gh api … rulesets`: the API `POST` is not idempotent — re-running creates a duplicate ruleset — and currently rejects the `merge_queue` rule. To later change the ruleset, edit the existing one in the UI rather than re-importing.) **Import it before provisioning the bot and agent PATs below:** those postures carry no local merge guard ([decision](decisions/2026-10-07-bot-and-agent-postures-carry-no-merge-guards.md)), so this ruleset's code-owner approval and required checks are the only thing between their PAT and an unreviewed merge into `main`.
 - [ ] **Bot PAT** — the agent's `GH_TOKEN`. If a fine-grained PAT already covers
       `evanharmon1`, just add this repo to its **selected repositories**; a token is

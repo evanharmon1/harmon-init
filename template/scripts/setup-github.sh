@@ -65,6 +65,19 @@ if ! command -v gh >/dev/null 2>&1; then
     echo "Required tool not found: gh" >&2
     exit 1
 fi
+# One classification for requested, repository, and organization selectors.
+isolated_selector_state() {
+    printf '%s\n' "$1" | jq -sr '
+        if length != 1 then "unsupported" else .[0] |
+            (if type == "object" then .labels else . end) |
+            if (type == "string" and length > 0) or
+                (type == "array" and length > 0 and all(.[]; type == "string" and length > 0))
+            then (if type == "array" then . else [.] end) |
+                if any(.[]; ascii_downcase == "self-hosted") then "unsafe" else "safe" end
+            else "unsupported" end
+        end' 2>/dev/null || printf 'unsupported\n'
+}
+
 # Validate every requested value before any API call or mutation.
 for i in "${!routing_names[@]}"; do
     if ${routing_replace[$i]} && ! ${routing_set[$i]}; then
@@ -76,19 +89,24 @@ for i in "${!routing_names[@]}"; do
         echo "Required tool not found: jq" >&2
         exit 1
     fi
-    if ! printf '%s\n' "${routing_values[$i]}" | jq -se '
+    if [ "${routing_names[$i]}" = ISOLATED_RUNS_ON ]; then
+        case "$(isolated_selector_state "${routing_values[$i]}")" in
+        safe) ;;
+        unsafe)
+            echo "ISOLATED_RUNS_ON invariant: isolated routing must never contain the self-hosted label" >&2
+            exit 2
+            ;;
+        *)
+            echo "ISOLATED_RUNS_ON invariant: unsupported selector shape; use a string, label array, or object with usable labels" >&2
+            exit 2
+            ;;
+        esac
+    elif ! printf '%s\n' "${routing_values[$i]}" | jq -se '
         length == 1 and (.[0] |
             (type == "string" and length > 0) or
             (type == "array" and length > 0 and all(.[]; type == "string" and length > 0)))
     ' >/dev/null; then
         echo "--${routing_flags[$i]} must be a non-empty JSON string or non-empty array of non-empty strings" >&2
-        exit 2
-    fi
-    if [ "${routing_names[$i]}" = ISOLATED_RUNS_ON ] &&
-        printf '%s\n' "${routing_values[$i]}" | jq -e '
-            (if type == "array" then . else [.] end) | any(.[]; ascii_downcase == "self-hosted")
-        ' >/dev/null; then
-        echo "ISOLATED_RUNS_ON invariant: isolated routing must never contain the self-hosted label" >&2
         exit 2
     fi
 done
@@ -120,24 +138,31 @@ collect_org_routing() {
     return 4
 }
 
-# Runner selectors are JSON strings or arrays of labels.
-isolated_uses_self_hosted() {
-    printf '%s\n' "$1" | jq -e '
-        (if type == "array" then . else [.] end) |
-        any(.[]; type == "string" and ascii_downcase == "self-hosted")
-    ' >/dev/null 2>&1
-}
-
 fail_step() {
     local rc="$1" label="$2" detail="$3"
     checkline no "$label" "$detail (exit $rc)"
 }
 
-# Resolve the explicit target and its host together, before the first API call.
-GH_REST_HOST="${GH_REST_HOST-$(GH_REPO="$repo" gh_rest_host)}"
+# Freeze the target once. Ambient host/repository settings cannot redirect
+# later commands; api requests explicitly name even github.com.
+TARGET_HOST="$(GH_REPO="$repo" gh_rest_host)"
+TARGET_HOST="${TARGET_HOST:-github.com}"
 repo="$(GH_REPO="$repo" gh_rest_repo)"
-routing_repo="$repo"
-if [ -n "$GH_REST_HOST" ] && [ "$GH_REST_HOST" != github.com ]; then routing_repo="$GH_REST_HOST/$repo"; fi
+TARGET_REPO="$TARGET_HOST/$repo"
+export GH_HOST="$TARGET_HOST" GH_REPO="$TARGET_REPO"
+routing_repo="$TARGET_REPO"
+gh_rest_api() {
+    local timeout_bin=""
+    if command -v timeout >/dev/null 2>&1; then
+        timeout_bin=timeout
+    elif command -v gtimeout >/dev/null 2>&1; then timeout_bin=gtimeout; fi
+    if [ -n "$timeout_bin" ]; then
+        "$timeout_bin" -k 1 "${GH_REST_TIMEOUT:-5}" env GH_HOST="$TARGET_HOST" GH_REPO="$TARGET_REPO" \
+            gh api "$@" --hostname "$TARGET_HOST" </dev/null
+    else
+        env GH_HOST="$TARGET_HOST" GH_REPO="$TARGET_REPO" gh api "$@" --hostname "$TARGET_HOST" </dev/null
+    fi
+}
 
 if ! command -v jq >/dev/null 2>&1; then
     echo "Required tool not found: jq" >&2
@@ -166,9 +191,14 @@ esac
 # Unknown is explicit, but an unreadable organization inventory is not a refusal.
 if org_routing="$(collect_org_routing "$repo" 2>/dev/null)"; then
     org_isolated="$(jq -r '.[] | select(.name == "ISOLATED_RUNS_ON") | .value' <<<"$org_routing")"
-    if isolated_uses_self_hosted "$org_isolated"; then
-        fail_step 1 "ISOLATED_RUNS_ON invariant" "organization value contains self-hosted; organization-level owner: harmonops/harmon-infra routing reconciler"
-        exit 1
+    if [ -n "$org_isolated" ] || jq -e 'any(.[]; .name == "ISOLATED_RUNS_ON")' <<<"$org_routing" >/dev/null; then
+        case "$(isolated_selector_state "$org_isolated")" in
+        safe) ;;
+        *)
+            fail_step 1 "ISOLATED_RUNS_ON invariant" "organization value is self-hosted or has an unsupported selector shape; organization-level owner: harmonops/harmon-infra routing reconciler"
+            exit 1
+            ;;
+        esac
     fi
 else
     checkline unknown "ISOLATED_RUNS_ON (org)" "unknown — organization variable inventory unreadable"
@@ -202,11 +232,19 @@ for i in 3 0 1 2; do
             ;;
         esac
 
-        if [ "$routing_name" = ISOLATED_RUNS_ON ] && $current_routing_present &&
-            isolated_uses_self_hosted "$current_routing" && [ "$repo_visibility" != public ] &&
-            ! { ${routing_set[$i]} && ${routing_replace[$i]}; }; then
-            fail_step 1 "ISOLATED_RUNS_ON invariant" "existing repository value contains self-hosted; pass a safe --isolated-runs-on with --replace-isolated-runs-on to repair it"
-            exit 1
+        if [ "$routing_name" = ISOLATED_RUNS_ON ] && $current_routing_present; then
+            case "$(isolated_selector_state "$current_routing")" in
+            unsupported)
+                fail_step 1 "ISOLATED_RUNS_ON invariant" "unsupported repository selector shape; correct the repository value before re-running setup"
+                exit 1
+                ;;
+            unsafe)
+                if [ "$repo_visibility" != public ] && ! { ${routing_set[$i]} && ${routing_replace[$i]}; }; then
+                    fail_step 1 "ISOLATED_RUNS_ON invariant" "existing repository value contains self-hosted; pass a safe --isolated-runs-on with --replace-isolated-runs-on to repair it"
+                    exit 1
+                fi
+                ;;
+            esac
         fi
         if [ "$repo_visibility" != public ] && ! ${routing_set[$i]}; then continue; fi
 

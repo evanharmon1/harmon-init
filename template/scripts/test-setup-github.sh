@@ -18,6 +18,7 @@ stub_calls="$tmp/calls"
 cat >"$tmp/bin/gh" <<'STUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"${STUB_CALLS:?}"
+if [ -n "${STUB_HOST_AUDIT:-}" ]; then printf '%s|%s|%s\n' "${GH_HOST:-}" "${GH_REPO:-}" "$*" >>"$STUB_HOST_AUDIT"; fi
 case "$*" in
 *"${GH_FAIL_MATCH:-__never__}"*) exit "${GH_FAIL_RC:-1}" ;;
 esac
@@ -138,7 +139,7 @@ GH_PRIVATE=true GH_VARIABLE_VALUE='["self-hosted","linux"]' \
 [ "$run_rc" -eq 0 ] || fail "explicit replace path exited $run_rc"
 grep -Fq '[x] Actions runner routing - replaced CI_RUNS_ON by explicit request' "$tmp/out" ||
     fail "missing explicit replace outcome"
-grep -Fq "variable set CI_RUNS_ON --repo owner/private --body $desired" "$stub_calls" ||
+grep -Fq "variable set CI_RUNS_ON --repo github.com/owner/private --body $desired" "$stub_calls" ||
     fail "explicit replace did not update CI_RUNS_ON"
 
 echo "==> explicit private runner overrides are preserved"
@@ -185,7 +186,7 @@ echo "==> explicit replace can switch an existing private route to GitHub-hosted
 GH_PRIVATE=true GH_VARIABLE_VALUE="$desired" \
     run_case --repo owner/private --ci-runs-on '"ubuntu-latest"' --replace-ci-runs-on
 [ "$run_rc" -eq 0 ] || fail "explicit hosted transition exited $run_rc"
-grep -Fq 'variable set CI_RUNS_ON --repo owner/private --body "ubuntu-latest"' "$stub_calls" ||
+grep -Fq 'variable set CI_RUNS_ON --repo github.com/owner/private --body "ubuntu-latest"' "$stub_calls" ||
     fail "explicit hosted transition did not replace private routing"
 
 echo "==> unrecognized existing private JSON is preserved without ownership inference"
@@ -244,7 +245,7 @@ GH_PRIVATE=false GH_VARIABLE_PRESENT=true GH_VARIABLE_VALUE= \
 [ "$run_rc" -eq 0 ] || fail "empty existing public variable exited $run_rc"
 grep -Fq '[x] Actions runner routing - standardized public CI_RUNS_ON to ubuntu-latest' "$tmp/out" ||
     fail "empty existing public variable was not repaired"
-grep -Fq 'variable set CI_RUNS_ON --repo owner/public --body "ubuntu-latest"' "$stub_calls" ||
+grep -Fq 'variable set CI_RUNS_ON --repo github.com/owner/public --body "ubuntu-latest"' "$stub_calls" ||
     fail "empty existing public variable was not updated"
 if grep -q 'actions/variables --method POST -f name=CI_RUNS_ON ' "$stub_calls"; then
     fail "empty existing public variable was duplicate-created"
@@ -256,21 +257,21 @@ GH_PRIVATE=false GH_VARIABLE_VALUE='"self-hosted"' \
 [ "$run_rc" -eq 0 ] || fail "public ambiguous self-hosted path exited $run_rc"
 grep -Fq '[x] Actions runner routing - standardized public CI_RUNS_ON to ubuntu-latest' "$tmp/out" ||
     fail "public ambiguous self-hosted routing was not explained"
-grep -Fq 'variable set CI_RUNS_ON --repo owner/public --body "ubuntu-latest"' "$stub_calls" ||
+grep -Fq 'variable set CI_RUNS_ON --repo github.com/owner/public --body "ubuntu-latest"' "$stub_calls" ||
     fail "public ambiguous self-hosted routing was not replaced"
 
 echo "==> public repositories do not infer hosted ownership from a custom label prefix"
 GH_PRIVATE=false GH_VARIABLE_VALUE='"ubuntu-owner-runner"' \
     run_case --repo owner/public --ci-runs-on '"ubuntu-latest"'
 [ "$run_rc" -eq 0 ] || fail "public custom-label path exited $run_rc"
-grep -Fq 'variable set CI_RUNS_ON --repo owner/public --body "ubuntu-latest"' "$stub_calls" ||
+grep -Fq 'variable set CI_RUNS_ON --repo github.com/owner/public --body "ubuntu-latest"' "$stub_calls" ||
     fail "custom self-hosted-looking label was mistaken for GitHub-hosted"
 
 echo "==> public larger-runner labels are canonicalized without ownership inference"
 GH_PRIVATE=false GH_VARIABLE_VALUE='"ubuntu-24.04-16core"' \
     run_case --repo owner/public --ci-runs-on '"ubuntu-latest"'
 [ "$run_rc" -eq 0 ] || fail "public larger-runner path exited $run_rc"
-grep -Fq 'variable set CI_RUNS_ON --repo owner/public --body "ubuntu-latest"' "$stub_calls" ||
+grep -Fq 'variable set CI_RUNS_ON --repo github.com/owner/public --body "ubuntu-latest"' "$stub_calls" ||
     fail "public larger-runner label was not canonicalized"
 
 echo "==> public runner safety is written before unrelated settings can fail"
@@ -278,7 +279,7 @@ GH_PRIVATE=false GH_VARIABLE_VALUE='["self-hosted","linux"]' \
     GH_FAIL_MATCH=vulnerability-alerts GH_FAIL_RC=23 \
     run_case --repo owner/public --ci-runs-on '"ubuntu-latest"'
 [ "$run_rc" -eq 23 ] || fail "post-routing failure exited $run_rc"
-grep -Fq 'variable set CI_RUNS_ON --repo owner/public --body "ubuntu-latest"' "$stub_calls" ||
+grep -Fq 'variable set CI_RUNS_ON --repo github.com/owner/public --body "ubuntu-latest"' "$stub_calls" ||
     fail "public routing was not repaired before the unrelated failure"
 set_line="$(grep -n 'variable set CI_RUNS_ON' "$stub_calls" | cut -d: -f1)"
 fail_line="$(grep -n 'vulnerability-alerts' "$stub_calls" | cut -d: -f1)"
@@ -334,6 +335,8 @@ if grep -q 'private-vulnerability-reporting' "$stub_calls"; then
 fi
 
 echo "==> every routing class reconciles independently and accepts provider labels"
+# Every request includes an explicit host; default-host fixture expectations
+# below ignore that suffix while the property test audits the unmodified log.
 for routing_pair in CI_RUNS_ON:ci-runs-on BROWSER_RUNS_ON:browser-runs-on IMAGE_BUILD_RUNS_ON:image-build-runs-on ISOLATED_RUNS_ON:isolated-runs-on; do
     name="${routing_pair%%:*}"
     flag="${routing_pair#*:}"
@@ -347,20 +350,20 @@ for routing_pair in CI_RUNS_ON:ci-runs-on BROWSER_RUNS_ON:browser-runs-on IMAGE_
         grep -Fq "$name already matches" "$tmp/out" || fail "$name matching not reported"
         if grep -Eq 'actions/variables --method POST|variable set' "$stub_calls"; then fail "$name matching value mutated"; fi
     done
-    existing="$(jq -cn --arg name "$name" '[{name:$name,value:"old-route"}]')"
+    existing="$(jq -cn --arg name "$name" '[{name:$name,value:"\"old-route\""}]')"
     GH_ROUTING_VARIABLES_JSON="$existing" run_case --repo owner/private "--$flag" "$value"
     [ "$run_rc" -eq 0 ] || fail "$name preserve failed"
     grep -Fq "preserved existing private $name" "$tmp/out" || fail "$name not preserved"
     if grep -Eq 'actions/variables --method POST|variable set' "$stub_calls"; then fail "$name preserved value mutated"; fi
     GH_ROUTING_VARIABLES_JSON="$existing" run_case --repo owner/private "--$flag" "$value" "--replace-$flag"
     [ "$run_rc" -eq 0 ] || fail "$name replace failed"
-    grep -Fq "variable set $name --repo owner/private --body $value" "$stub_calls" || fail "$name not replaced"
+    grep -Fq "variable set $name --repo github.com/owner/private --body $value" "$stub_calls" || fail "$name not replaced"
     GH_PRIVATE=false GH_ROUTING_VARIABLES_JSON='[]' run_case --repo owner/public "--$flag" "$value"
     [ "$run_rc" -eq 0 ] || fail "$name public create failed"
     grep -Fq -- "-f name=$name -f value=\"ubuntu-latest\"" "$stub_calls" || fail "$name public create unsafe"
     GH_PRIVATE=false GH_ROUTING_VARIABLES_JSON="$existing" run_case --repo owner/public "--$flag" "$value"
     [ "$run_rc" -eq 0 ] || fail "$name public replace failed"
-    grep -Fq "variable set $name --repo owner/public --body \"ubuntu-latest\"" "$stub_calls" || fail "$name public replacement unsafe"
+    grep -Fq "variable set $name --repo github.com/owner/public --body \"ubuntu-latest\"" "$stub_calls" || fail "$name public replacement unsafe"
     for invalid in '' '""' '[]' '[""]' '[1]' '{}' 'null' 'false' '42' '"ok" "extra"' 'not-json'; do
         run_case --repo owner/private "--$flag" "$invalid"
         [ "$run_rc" -eq 2 ] || fail "$name accepted invalid value $invalid"
@@ -407,7 +410,7 @@ existing="$(jq -cn '["CI_RUNS_ON","BROWSER_RUNS_ON","IMAGE_BUILD_RUNS_ON","ISOLA
 GH_VISIBILITY=public GH_ROUTING_VARIABLES_JSON="$existing" run_case --repo owner/public
 [ "$run_rc" -eq 0 ] || fail "public safety replacement failed"
 for name in CI_RUNS_ON BROWSER_RUNS_ON IMAGE_BUILD_RUNS_ON ISOLATED_RUNS_ON; do
-    grep -Fq "variable set $name --repo owner/public --body \"ubuntu-latest\"" "$stub_calls" || fail "missing public replacement $name"
+    grep -Fq "variable set $name --repo github.com/owner/public --body \"ubuntu-latest\"" "$stub_calls" || fail "missing public replacement $name"
     grep -Fq "standardized public $name to ubuntu-latest (public repository safety enforcement)" "$tmp/out" || fail "missing public safety replacement report for $name"
 done
 if grep -q 'actions/variables --method POST' "$stub_calls"; then fail "existing public overrides were duplicate-created"; fi
@@ -447,11 +450,11 @@ for visibility in private internal; do
     done
     GH_VISIBILITY="$visibility" GH_ROUTING_VARIABLES_JSON="$unsafe_isolated" run_case --repo "owner/$visibility" --isolated-runs-on '"ubuntu-latest"' --replace-isolated-runs-on
     [ "$run_rc" -eq 0 ] || fail "safe isolated repair failed"
-    grep -Fq "variable set ISOLATED_RUNS_ON --repo owner/$visibility --body \"ubuntu-latest\"" "$stub_calls" || fail "safe isolated repair did not replace"
+    grep -Fq "variable set ISOLATED_RUNS_ON --repo github.com/owner/$visibility --body \"ubuntu-latest\"" "$stub_calls" || fail "safe isolated repair did not replace"
 done
 GH_VISIBILITY=public GH_ROUTING_VARIABLES_JSON="$unsafe_isolated" run_case --repo owner/public
 [ "$run_rc" -eq 0 ] || fail "public existing isolated repair failed"
-grep -Fq 'variable set ISOLATED_RUNS_ON --repo owner/public --body "ubuntu-latest"' "$stub_calls" || fail "public isolated route was not repaired automatically"
+grep -Fq 'variable set ISOLATED_RUNS_ON --repo github.com/owner/public --body "ubuntu-latest"' "$stub_calls" || fail "public isolated route was not repaired automatically"
 
 echo "==> readable unsafe inherited isolated routing fails with its organization owner"
 GH_ROUTING_ORG_JSON="$unsafe_isolated" run_case --repo owner/private
@@ -469,5 +472,39 @@ grep -Fq 'ISOLATED_RUNS_ON (org) - unknown' "$tmp/out" || fail "incomplete inher
 GH_ORG_VARIABLES_FAIL=1 run_case --repo owner/private
 [ "$run_rc" -eq 0 ] || fail "unreadable inherited route failed the run"
 grep -Fq 'ISOLATED_RUNS_ON (org) - unknown' "$tmp/out" || fail "unreadable inherited route was not unknown"
+
+echo "==> every GitHub request obeys one frozen target despite conflicting ambient settings"
+for host in github.com ghe.example.com; do
+    ambient=github.com
+    [ "$host" != github.com ] || ambient=ghe.example.com
+    STUB_HOST_AUDIT="$tmp/host-audit"
+    export STUB_HOST_AUDIT
+    : >"$STUB_HOST_AUDIT"
+    GH_HOST="$ambient" GH_REPO="$ambient/wrong/repo" GH_REST_HOST="$ambient" GH_VISIBILITY=public GH_ROUTING_VARIABLES_JSON='[]' run_case --repo "$host/owner/public" --bot-collaborator owner-bot
+    [ "$run_rc" -eq 0 ] || fail "conflicting-host flow failed"
+    [ -s "$STUB_HOST_AUDIT" ] || fail "empty host audit"
+    while IFS='|' read -r actual_host actual_repo request; do
+        [ "$actual_host" = "$host" ] && [ "$actual_repo" = "$host/owner/public" ] || fail "ambient identity redirected $request"
+        case "$request" in api\ *) case " $request " in *" --hostname $host "*) ;; *) fail "API request omitted explicit host: $request" ;; esac ;; esac
+    done <"$STUB_HOST_AUDIT"
+    unset STUB_HOST_AUDIT
+done
+
+echo "==> isolated group selectors and unsupported shapes fail closed in both scopes"
+for selector in '{"group":"pool","labels":"SELF-HOSTED"}' '{"group":"pool","labels":["linux","Self-Hosted"]}' '42' 'null' '{}' '{"group":"pool"}' '[["linux"]]'; do
+    run_case --repo owner/private --isolated-runs-on "$selector"
+    [ "$run_rc" -ne 0 ] || fail "requested isolated selector accepted $selector"
+    grep -Fq 'ISOLATED_RUNS_ON invariant' "$tmp/out" || fail "requested selector omitted invariant"
+    [ ! -s "$stub_calls" ] || fail "requested invalid selector reached GitHub"
+    existing="$(jq -cn --arg value "$selector" '[{name:"ISOLATED_RUNS_ON",value:$value}]')"
+    GH_ROUTING_VARIABLES_JSON="$existing" run_case --repo owner/private
+    [ "$run_rc" -ne 0 ] || fail "repository selector accepted $selector"
+    grep -Fq 'ISOLATED_RUNS_ON invariant' "$tmp/out" || fail "repository selector omitted invariant"
+    GH_ROUTING_ORG_JSON="$existing" run_case --repo owner/private
+    [ "$run_rc" -ne 0 ] || fail "organization selector accepted $selector"
+    grep -Fq 'harmonops/harmon-infra routing reconciler' "$tmp/out" || fail "organization selector omitted owner"
+done
+GH_ROUTING_VARIABLES_JSON='[]' run_case --repo owner/private --isolated-runs-on '{"group":"pool","labels":["ubuntu-latest"]}'
+[ "$run_rc" -eq 0 ] || fail "safe group selector rejected"
 
 echo "PASS: setup-github outcomes and failure propagation"
