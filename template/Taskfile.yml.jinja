@@ -120,10 +120,8 @@ tasks:
     # else; `test:verify-ci-parity` fails if either caller stops running it.
     # Not in this list: `build`, `validate` and `test` (the project's own tiers
     # — CI runs them in their own job) and the `ci`-only checks.
-    # Suite members were audited: filesystem and Git mutations are confined to
-    # per-run temporary fixtures; the suite has no shared checkout writes or
-    # port listeners. Use TASK_CONCURRENCY=1 for serial execution on smaller runners.
-    desc: The test:* targets verify and the Build workflow's lint job both run in parallel (set TASK_CONCURRENCY=1 for serial execution)
+    # Members run concurrently: each must confine filesystem and Git writes to its own mktemp fixture and bind no port.
+    desc: The test:* targets verify and the Build workflow's lint job both run (members run in parallel; set TASK_CONCURRENCY=1 for serial execution)
     deps:
       - task: test:agent-instructions-size
       - task: test:agent-skill-links

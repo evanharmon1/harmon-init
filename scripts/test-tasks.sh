@@ -70,10 +70,8 @@ if [ -f template/Taskfile.yml.jinja ]; then
     template_check="$(task_block template/Taskfile.yml.jinja check)"
     printf '%s\n' "$template_check" | grep -Fq 'lint:typescript' ||
         fail "template Taskfile check dropped its parallel typecheck dependency"
-    if printf '%s\n' "$template_check" | grep -Fq 'lint:typescript'; then
-        printf '%s\n' "$template_check" | grep -Fq '~6 GB' ||
-            fail "template Taskfile check does not document the parallel memory floor"
-    fi
+    printf '%s\n' "$template_check" | grep -Fq '~6 GB' ||
+        fail "template Taskfile check does not document the parallel memory floor"
 fi
 
 for doc in docs/architecture/tests.md template/docs/architecture/tests.md.jinja; do
@@ -159,7 +157,7 @@ chmod +x "$concurrency_fixture/member.sh"
 run_concurrency_case() {
     local concurrency=$1 task_name=$2 failing_task=$3 expected=$4 overlap=$5 run_name=$6 members=$7
     local delay_task=${8:-} delay_seconds=${9:-0.5}
-    local run_dir="${concurrency_fixture}/${run_name}" output rc member
+    local run_dir="${concurrency_fixture}/${run_name}" rc member
     mkdir -p "$run_dir"
     if TASK_CONCURRENCY="$concurrency" EXPECT_OVERLAP="$overlap" TASK_FAILFAST=0 \
         RUN_DIR="$run_dir" FAIL_TASK="$failing_task" DELAY_START_FOR="$delay_task" \
