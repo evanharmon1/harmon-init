@@ -143,26 +143,14 @@ fail_step() {
     checkline no "$label" "$detail (exit $rc)"
 }
 
-# Freeze the target once. Ambient host/repository settings cannot redirect
-# later commands; api requests explicitly name even github.com.
+# Resolve one target before any GitHub call. A hostless GH_REPO cannot
+# override GH_HOST; the shared helper owns ports and the explicit-empty escape.
 TARGET_HOST="$(GH_REPO="$repo" gh_rest_host)"
 TARGET_HOST="${TARGET_HOST:-github.com}"
 repo="$(GH_REPO="$repo" gh_rest_repo)"
-TARGET_REPO="$TARGET_HOST/$repo"
-export GH_HOST="$TARGET_HOST" GH_REPO="$TARGET_REPO"
-routing_repo="$TARGET_REPO"
-gh_rest_api() {
-    local timeout_bin=""
-    if command -v timeout >/dev/null 2>&1; then
-        timeout_bin=timeout
-    elif command -v gtimeout >/dev/null 2>&1; then timeout_bin=gtimeout; fi
-    if [ -n "$timeout_bin" ]; then
-        "$timeout_bin" -k 1 "${GH_REST_TIMEOUT:-5}" env GH_HOST="$TARGET_HOST" GH_REPO="$TARGET_REPO" \
-            gh api "$@" --hostname "$TARGET_HOST" </dev/null
-    else
-        env GH_HOST="$TARGET_HOST" GH_REPO="$TARGET_REPO" gh api "$@" --hostname "$TARGET_HOST" </dev/null
-    fi
-}
+export GH_HOST="$TARGET_HOST" GH_REPO="$repo"
+if [ -n "${GH_REST_HOST-unset}" ]; then export GH_REST_HOST="$TARGET_HOST"; fi
+routing_repo="$repo"
 
 if ! command -v jq >/dev/null 2>&1; then
     echo "Required tool not found: jq" >&2
@@ -187,24 +175,26 @@ public | private | internal) ;;
     ;;
 esac
 
-# An inherited unsafe isolated route belongs to the organization's reconciler.
-# Unknown is explicit, but an unreadable organization inventory is not a refusal.
-if org_routing="$(collect_org_routing "$repo" 2>/dev/null)"; then
-    org_isolated="$(jq -r '.[] | select(.name == "ISOLATED_RUNS_ON") | .value' <<<"$org_routing")"
-    if [ -n "$org_isolated" ] || jq -e 'any(.[]; .name == "ISOLATED_RUNS_ON")' <<<"$org_routing" >/dev/null; then
-        case "$(isolated_selector_state "$org_isolated")" in
-        safe) ;;
-        *)
-            fail_step 1 "ISOLATED_RUNS_ON invariant" "organization value is self-hosted or has an unsupported selector shape; organization-level owner: harmonops/harmon-infra routing reconciler"
-            exit 1
-            ;;
-        esac
-    fi
+# One complete repository inventory feeds every class; writes do not get a
+# locally imposed deadline. Public safety overrides precede inherited checks.
+if routing_inventory="$(gh variable list --repo "$routing_repo" --json name,value)"; then
+    :
 else
-    checkline unknown "ISOLATED_RUNS_ON (org)" "unknown — organization variable inventory unreadable"
+    rc=$?
+    fail_step "$rc" "Actions runner routing" "could not list repository variables"
+    exit "$rc"
 fi
+if ! jq -se 'length == 1 and (.[0] | type == "array" and all(.[];
+    type == "object" and (.name | type == "string") and (.value | type == "string")))' \
+    >/dev/null 2>&1 <<<"$routing_inventory"; then
+    fail_step 1 "Actions runner routing" "invalid repository variable inventory"
+    exit 1
+fi
+repo_isolated_present=false
+if jq -e 'any(.[]; .name == "ISOLATED_RUNS_ON")' <<<"$routing_inventory" >/dev/null; then repo_isolated_present=true; fi
 
-# Inspect isolated first, even without a flag, before any repository mutation.
+# Inspect private isolated values first, even without a flag. Public values
+# are repaired without interpreting their old shape.
 # Public repository overrides must shadow every organization routing value.
 for i in 3 0 1 2; do
     if [ "$i" != 3 ] && [ "$repo_visibility" != public ] && ! ${routing_set[$i]}; then continue; fi
@@ -217,8 +207,7 @@ for i in 3 0 1 2; do
     current_routing_records=""
     current_routing_present=false
     current_routing=""
-    if current_routing_records="$(gh variable list --repo "$routing_repo" --json name,value \
-        --jq "[.[] | select(.name == \"$routing_name\")]")"; then
+    if current_routing_records="$(jq --arg name "$routing_name" '[.[] | select(.name == $name)]' <<<"$routing_inventory")"; then
         current_routing_count="$(jq -r 'length' <<<"$current_routing_records")"
         case "$current_routing_count" in
         0) ;;
@@ -232,7 +221,7 @@ for i in 3 0 1 2; do
             ;;
         esac
 
-        if [ "$routing_name" = ISOLATED_RUNS_ON ] && $current_routing_present; then
+        if [ "$repo_visibility" != public ] && [ "$routing_name" = ISOLATED_RUNS_ON ] && $current_routing_present; then
             case "$(isolated_selector_state "$current_routing")" in
             unsupported)
                 fail_step 1 "ISOLATED_RUNS_ON invariant" "unsupported repository selector shape; correct the repository value before re-running setup"
@@ -287,12 +276,33 @@ for i in 3 0 1 2; do
                 checkline na "Actions runner routing" "preserved existing ${repo_visibility} ${routing_name}; pass --replace-${routing_flags[$i]} to replace it"
             fi
         fi
+        if [ "$routing_name" = ISOLATED_RUNS_ON ]; then repo_isolated_present=true; fi
     else
         rc=$?
         fail_step "$rc" "Actions runner routing" "could not list repository variables"
         exit "$rc"
     fi
 done
+
+# The repository override, including one just written, determines inheritance.
+owner_type="$(gh_rest_api "repos/$repo" --jq '.owner.type' 2>/dev/null || echo unknown)"
+if [ "$owner_type" = User ]; then
+    checkline na "ISOLATED_RUNS_ON (org)" "not an organization"
+elif org_routing="$(collect_org_routing "$repo" 2>/dev/null)"; then
+    if jq -e 'any(.[]; .name == "ISOLATED_RUNS_ON")' <<<"$org_routing" >/dev/null; then
+        org_isolated="$(jq -r '.[] | select(.name == "ISOLATED_RUNS_ON") | .value' <<<"$org_routing")"
+        if [ "$(isolated_selector_state "$org_isolated")" != safe ]; then
+            if $repo_isolated_present; then
+                checkline unknown "ISOLATED_RUNS_ON (org)" "warning: unsafe or unsupported value is shadowed by the repository override; contact the organization's routing owner (whoever manages organization Actions variables)"
+            else
+                fail_step 1 "ISOLATED_RUNS_ON invariant" "inherited organization value is self-hosted or unsupported; contact the organization's routing owner (whoever manages organization Actions variables), or create a safe repository override"
+                exit 1
+            fi
+        fi
+    fi
+else
+    checkline unknown "ISOLATED_RUNS_ON (org)" "unknown — organization variable inventory unreadable"
+fi
 
 # Runner routing is the security-relevant mutation. Complete it before the
 # independent repository settings below so an unrelated API failure cannot

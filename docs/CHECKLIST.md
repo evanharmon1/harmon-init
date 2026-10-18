@@ -99,12 +99,14 @@ the compatibility reason in the rule's `description`.
       refused case-insensitively, and unsupported shapes fail closed. Requested
       invalid isolated values fail before any GitHub access or writes. Repair
       an existing unsafe repository value with a safe `--isolated-runs-on` plus
-      `--replace-isolated-runs-on` (public repositories repair it automatically);
-      correct unsupported repository shapes before rerunning. For readable
-      unsafe or unsupported inherited organization values, ask the
-      organization-level owner, `harmonops/harmon-infra`'s routing reconciler,
-      to repair them. Unreadable organization values report unknown without
-      failing setup; `task status:setup` reports known violations. Do not add
+      `--replace-isolated-runs-on` (public repositories repair unsafe and
+      unsupported values automatically before organization checks). Private/internal unsupported shapes fail
+      closed. Unsafe or unsupported organization values fail only when inherited,
+      with no repository isolated override. A safe repository value or an explicit
+      safe isolated value plus replace flag shadows them and succeeds with a
+      warning. Otherwise ask the organization's routing owner (whoever manages
+      organization Actions variables) to repair them, or create a safe override.
+      Unreadable organization values report unknown without failing setup; `task status:setup` reports known violations. Do not add
       `dependabot.yml`: Renovate owns routine and vulnerability-remediation PRs;
       Dependabot owns advisory alerts.
 - [ ] Import the branch ruleset (see [architecture/branch-protection.md](architecture/branch-protection.md)) — do this once `build.yml` and `devcontainer-build.yml` are on `main` so the required `verify`/`security`/`devcontainer-verify` checks resolve. **Use the UI import:** Settings → Rules → Rulesets → **New ruleset ▸ Import a ruleset** → select `.github/Branch Protection Ruleset - Protect Main.json`. (Prefer the UI over `gh api … rulesets`: the API `POST` is not idempotent — re-running creates a duplicate ruleset — and currently rejects the `merge_queue` rule. To later change the ruleset, edit the existing one in the UI rather than re-importing.) **Import it before provisioning the bot and agent PATs below:** those postures carry no local merge guard ([decision](decisions/2026-10-07-bot-and-agent-postures-carry-no-merge-guards.md)), so this ruleset's code-owner approval and required checks are the only thing between their PAT and an unreviewed merge into `main`.

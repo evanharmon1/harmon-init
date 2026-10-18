@@ -432,10 +432,6 @@ STUB
         echo '    printf "%s\n" "$GH_VARIABLES_JSON"'
         echo '    exit 0'
         echo 'fi'
-        echo 'if [ "$1" = "variable" ] && [ "$2" = "get" ] && [ -n "${GH_CI_RUNS_ON_JSON:-}" ]; then'
-        echo '    printf "%s\n" "$GH_CI_RUNS_ON_JSON"'
-        echo '    exit 0'
-        echo 'fi'
         echo 'case "$*" in'
         echo '*"pr list"* | *"run list"*) echo "[]" ;;'
         echo '*) echo "stub: unexpected gh call: $*" >&2; exit 1 ;;'
@@ -641,42 +637,33 @@ summary_field() {
     sed -n -E "s#.*Summary:.*[^0-9]([0-9]+) $2.*#\1#p" <<<"$1" | sed -n '1p'
 }
 
-echo "==> public setup status audits the exact CI_RUNS_ON safety value"
+echo "==> public setup status requires exact safety overrides for all four classes"
 make_codex_stub in
 public_repo='{"full_name":"owner/public","visibility":"PUBLIC","private":false,"default_branch":"main","owner":{"type":"Organization"}}'
-out="$(GH_REPO_JSON="$public_repo" \
-    GH_VARIABLES_JSON='[{"name":"CI_RUNS_ON"}]' \
-    GH_CI_RUNS_ON_JSON='{"name":"CI_RUNS_ON","value":"\"ubuntu-latest\""}' \
-    run_setup_section project)"
-case "$out" in
-*"[x] Actions runner routing - public CI_RUNS_ON is ubuntu-latest"*) ;;
-*) fail "expected a safe public runner-routing status, got: ${out}" ;;
-esac
-
-out="$(GH_REPO_JSON="$public_repo" \
-    GH_VARIABLES_JSON='[{"name":"CI_RUNS_ON"}]' \
-    GH_CI_RUNS_ON_JSON='{"name":"CI_RUNS_ON","value":"[\"self-hosted\",\"linux\"]"}' \
-    run_setup_section project)"
-case "$out" in
-*"[ ] Actions runner routing"*"run task setup:github"*) ;;
-*) fail "expected an unsafe public runner-routing status, got: ${out}" ;;
-esac
-
-out="$(GH_REPO_JSON="$public_repo" run_setup_section project)"
-case "$out" in
-*"[?] Actions runner routing - could not determine whether public CI_RUNS_ON exists"*) ;;
-*) fail "failed public variable probes were reported as missing: ${out}" ;;
-esac
-
 internal_repo='{"full_name":"owner/internal","visibility":"INTERNAL","private":false,"default_branch":"main","owner":{"type":"Organization"}}'
-out="$(GH_REPO_JSON="$internal_repo" \
-    GH_VARIABLES_JSON='[{"name":"CI_RUNS_ON"}]' \
-    GH_CI_RUNS_ON_JSON='{"name":"CI_RUNS_ON","value":"[\"self-hosted\",\"linux\"]"}' \
-    run_setup_section project)"
-case "$out" in
-*"Actions runner routing"*) fail "internal repository routing was audited as public: ${out}" ;;
-*) ;;
-esac
+safe_public="$(jq -cn '["CI_RUNS_ON","BROWSER_RUNS_ON","IMAGE_BUILD_RUNS_ON","ISOLATED_RUNS_ON"] | map({name:.,value:"\"ubuntu-latest\""})')"
+STUB_CALLS="${TMP}/public-routing-calls"
+export STUB_CALLS
+: >"$STUB_CALLS"
+out="$(GH_REPO_JSON="$public_repo" GH_ROUTING_REPO_JSON="$safe_public" run_setup_section project)"
+baseline_missing="$(summary_field "$out" missing)"
+[ -n "$baseline_missing" ] || fail "safe public flow lacks failure tally"
+for name in CI_RUNS_ON BROWSER_RUNS_ON IMAGE_BUILD_RUNS_ON ISOLATED_RUNS_ON; do
+    case "$out" in *"[x] Actions runner routing ($name) - public override is ubuntu-latest"*) ;; *) fail "missing safe public check $name: $out" ;; esac
+    for mode in missing different; do
+        inventory="$(jq -c --arg name "$name" --arg mode "$mode" 'if $mode == "missing" then map(select(.name != $name)) else map(if .name == $name then .value="\"provider\"" else . end) end' <<<"$safe_public")"
+        bad="$(GH_REPO_JSON="$public_repo" GH_ROUTING_REPO_JSON="$inventory" run_setup_section project)"
+        case "$bad" in *"[ ] Actions runner routing ($name) - public override must be exact ubuntu-latest JSON"*) ;; *) fail "public $mode $name not a failure: $bad" ;; esac
+        bad_missing="$(summary_field "$bad" missing)"
+        [ "$bad_missing" -eq "$((baseline_missing + 1))" ] || fail "public $mode $name did not increment the failure tally"
+    done
+done
+if grep -q 'variable get CI_RUNS_ON' "$STUB_CALLS"; then fail "standalone CI_RUNS_ON probe remains"; fi
+unset STUB_CALLS
+out="$(GH_REPO_JSON="$public_repo" run_setup_section project)"
+case "$out" in *'[?] Actions runner routing (CI_RUNS_ON) - public override unreadable'*) ;; *) fail "unreadable inventory was not unknown: $out" ;; esac
+out="$(GH_REPO_JSON="$internal_repo" GH_ROUTING_REPO_JSON='[]' run_setup_section project)"
+case "$out" in *'Actions runner routing ('*) fail "internal repository audited as public: $out" ;; esac
 
 echo "==> routing readout distinguishes repository and organization values"
 routing_repo='[{"name":"CI_RUNS_ON","value":"[\"self-hosted\",\"linux\"]"},{"name":"BROWSER_RUNS_ON","value":"\"browser-provider\""}]'
@@ -746,7 +733,7 @@ esac
 if ! grep -F 'api repos/owner/internal/actions/organization-variables?per_page=30&page=1 --hostname ghe.example.com' "$STUB_CALLS" >/dev/null; then
     fail "organization routing did not honor the Enterprise host: $(cat "$STUB_CALLS")"
 fi
-for request in 'variable list --repo ghe.example.com/owner/internal --json name,value' 'variable list --json name --repo ghe.example.com/owner/internal' 'variable get CI_RUNS_ON --json name,value --repo ghe.example.com/owner/internal'; do
+for request in 'variable list --repo owner/internal --json name,value' 'variable list --json name --repo owner/internal'; do
     grep -F "$request" "$STUB_CALLS" >/dev/null || fail "repository routing did not honor Enterprise host: $request"
 done
 case "$out" in
@@ -758,17 +745,21 @@ unset STUB_CALLS
 
 echo "==> isolated self-hosted repository and inherited values render violations"
 unsafe_isolated='[{"name":"ISOLATED_RUNS_ON","value":"[\"linux\",\"SELF-HOSTED\"]"}]'
-out="$(GH_REPO_JSON="$internal_repo" GH_ROUTING_REPO_JSON="$unsafe_isolated" GH_ROUTING_ORG_JSON="$unsafe_isolated" run_setup_section project)"
-for scope in repo org; do
+out="$(GH_REPO_JSON="$internal_repo" GH_ROUTING_REPO_JSON='[]' GH_ROUTING_ORG_JSON="$unsafe_isolated" run_setup_section project)"
+for scope in org; do
     case "$out" in
     *"[ ] ISOLATED_RUNS_ON ($scope) - ISOLATED_RUNS_ON invariant violated"*) ;;
     *) fail "unsafe isolated $scope value was not a violation: $out" ;;
     esac
 done
 case "$out" in
-*'harmonops/harmon-infra routing reconciler'*) ;;
+*'organization Actions variables'*) ;;
 *) fail "organization isolated violation omitted owner: $out" ;;
 esac
+
+out="$(GH_REPO_JSON="$internal_repo" GH_ROUTING_REPO_JSON="$unsafe_isolated" GH_ROUTING_ORG_JSON="$unsafe_isolated" run_setup_section project)"
+case "$out" in *'[ ] ISOLATED_RUNS_ON (repo) - ISOLATED_RUNS_ON invariant violated'*) ;; *) fail "unsafe repository value not violation" ;; esac
+case "$out" in *'warning: unsafe or unsupported organization value shadowed'*) ;; *) fail "shadowed organization value not warning" ;; esac
 
 echo "==> full setup flow pins every GitHub call despite conflicting ambient hosts"
 for host in github.com ghe.example.com; do
@@ -780,8 +771,7 @@ for host in github.com ghe.example.com; do
     out="$(GH_REPO="$host/owner/internal" GH_HOST="$ambient" GH_REST_HOST="$ambient" GH_REPO_JSON="$internal_repo" GH_ROUTING_REPO_JSON='[]' GH_ROUTING_ORG_JSON='[]' run_setup_section project)"
     [ -s "$STUB_HOST_AUDIT" ] || fail "empty host property audit"
     while IFS='|' read -r actual_host actual_repo request; do
-        [ "$actual_host" = "$host" ] && [ "$actual_repo" = "$host/owner/internal" ] || fail "ambient host redirected $request"
-        case "$request" in api\ *) case " $request " in *" --hostname $host "*) ;; *) fail "API request omitted target host: $request" ;; esac ;; esac
+        [ "$actual_host" = "$host" ] && [ "$actual_repo" = "owner/internal" ] || fail "ambient host redirected $request"
     done <"$STUB_HOST_AUDIT"
     unset STUB_HOST_AUDIT
 done
@@ -790,13 +780,44 @@ echo "==> group labels and unsupported isolated shapes are violations in both sc
 for selector in '{"group":"pool","labels":"SELF-HOSTED"}' '{"group":"pool","labels":["linux","Self-Hosted"]}' '42' 'null' '{}' '{"group":"pool"}' '[["linux"]]'; do
     isolated="$(jq -cn --arg value "$selector" '[{name:"ISOLATED_RUNS_ON",value:$value}]')"
     out="$(GH_REPO_JSON="$internal_repo" GH_ROUTING_REPO_JSON="$isolated" GH_ROUTING_ORG_JSON="$isolated" run_setup_section project)"
-    for scope in repo org; do
+    for scope in repo; do
         case "$out" in *"[ ] ISOLATED_RUNS_ON ($scope) - ISOLATED_RUNS_ON invariant violated"*) ;; *) fail "unsupported/unsafe $scope selector accepted $selector: $out" ;; esac
     done
+    inherited="$(GH_REPO_JSON="$internal_repo" GH_ROUTING_REPO_JSON='[]' GH_ROUTING_ORG_JSON="$isolated" run_setup_section project)"
+    case "$inherited" in *'[ ] ISOLATED_RUNS_ON (org) - ISOLATED_RUNS_ON invariant violated'*) ;; *) fail "inherited selector was not violation: $inherited" ;; esac
 done
 isolated='[{"name":"ISOLATED_RUNS_ON","value":"{\"group\":\"pool\",\"labels\":[\"ubuntu-latest\"]}"}]'
 out="$(GH_REPO_JSON="$internal_repo" GH_ROUTING_REPO_JSON="$isolated" GH_ROUTING_ORG_JSON="$isolated" run_setup_section project)"
 case "$out" in *'ISOLATED_RUNS_ON invariant violated'*) fail "safe group selector reported as violation" ;; esac
+
+echo "==> custom-port remote and GH_REPO targets preserve REST refusal and escape"
+port_root="${TMP}/port-target"
+mkdir -p "$port_root/scripts/lib"
+cp "$status" "$port_root/scripts/status.sh"
+cp "$scopes_lib" "$port_root/scripts/gh-scopes.sh"
+cp "$output_lib" "$port_root/scripts/lib/output.sh"
+cp "$rest_lib" "$port_root/scripts/lib/gh-rest.sh"
+git -C "$port_root" init -q
+git -C "$port_root" remote add origin https://ghe.example.com:8443/owner/internal.git
+for source in explicit remote; do
+    make_stub project
+    STUB_HOST_AUDIT="${TMP}/port-status-audit"
+    export STUB_HOST_AUDIT
+    : >"$STUB_HOST_AUDIT"
+    target=ghe.example.com:8443/owner/internal
+    if [ "$source" = remote ]; then target=""; fi
+    out="$(GH_HOST= GH_REPO="$target" PATH="${TMP}/bin:$PATH" NO_COLOR=1 "$port_root/scripts/status.sh" setup 2>&1)"
+    if grep -q '|api repos/' "$STUB_HOST_AUDIT"; then fail "shared port refusal was bypassed"; fi
+    : >"$STUB_HOST_AUDIT"
+    out="$(GH_HOST= GH_REPO="$target" GH_REST_HOST= GH_REPO_JSON="$internal_repo" GH_ROUTING_REPO_JSON='[]' GH_ROUTING_ORG_JSON='[]' PATH="${TMP}/bin:$PATH" NO_COLOR=1 "$port_root/scripts/status.sh" setup 2>&1)"
+    [ -s "$STUB_HOST_AUDIT" ] || fail "empty port host audit"
+    while IFS='|' read -r host nwo request; do
+        [ "$host" = ghe.example.com:8443 ] && [ "$nwo" = owner/internal ] || fail "port status host mismatch ($source)"
+        case "$request" in api\ *) case "$request" in *--hostname*) fail "port escape emitted --hostname" ;; esac ;; esac
+    done <"$STUB_HOST_AUDIT"
+    case "$out" in *'authenticated to ghe.example.com:8443'*) ;; *) fail "printed host disagrees with check: $out" ;; esac
+    unset STUB_HOST_AUDIT
+done
 
 echo "==> failed owner-type reads leave all organization routing values unknown"
 out="$(GH_REPO_JSON="$internal_repo" GH_OWNER_TYPE_FAIL=1 GH_ROUTING_REPO_JSON='[]' GH_ROUTING_ORG_JSON="$routing_org" run_setup_section project)"
@@ -1094,7 +1115,7 @@ out="$(run_gh_section project "${HYPHENATED}")"
 case "$out" in
 *"not authenticated"*) fail "the hyphenated fixture's section did not render: ${out}" ;;
 esac
-grep -q '^api repos/my-org/harmon-init/pulls?state=open&sort=updated&direction=desc&per_page=10&page=1 --hostname github.com$' "${STUB_CALLS}" ||
+grep -q '^api repos/my-org/harmon-init/pulls?state=open&sort=updated&direction=desc&per_page=10&page=1$' "${STUB_CALLS}" ||
     fail "a hyphenated repository never reached the open-PR read: $(grep '^api ' "${STUB_CALLS}" | tr '\n' ';')"
 unset STUB_CALLS
 

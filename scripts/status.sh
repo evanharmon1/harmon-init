@@ -28,16 +28,13 @@ NETWORK_TIMEOUT="${NETWORK_TIMEOUT:-5}"
 # shellcheck source=scripts/lib/gh-rest.sh
 . "${REPO_ROOT}/scripts/lib/gh-rest.sh"
 
-# Freeze host and repository before any GitHub probe. All children inherit this
-# identity; run_timeout also binds each gh invocation and every api flag.
+# Resolve once before probes and remedies. Keep GH_REPO hostless so it cannot
+# override GH_HOST, and leave port policy to the shared REST helper.
 TARGET_HOST="$(gh_rest_host)"
 TARGET_HOST="${TARGET_HOST:-github.com}"
 TARGET_NWO="$(gh_rest_repo 2>/dev/null || true)"
-TARGET_REPO="${TARGET_NWO:+$TARGET_HOST/$TARGET_NWO}"
-export GH_HOST="$TARGET_HOST" GH_REPO="$TARGET_REPO"
-gh_rest_api() {
-    run_timeout "${GH_REST_TIMEOUT:-${NETWORK_TIMEOUT}}" gh api "$@"
-}
+export GH_HOST="$TARGET_HOST" GH_REPO="$TARGET_NWO"
+if [ -n "${GH_REST_HOST-unset}" ]; then export GH_REST_HOST="$TARGET_HOST"; fi
 
 # ── Tool detection ──────────────────────────────────────────────────────────
 
@@ -81,11 +78,6 @@ fi
 run_timeout() {
     local secs="$1"
     shift
-    if [ "${1:-}" = gh ]; then
-        shift
-        if [ "${1:-}" = api ]; then set -- "$@" --hostname "$TARGET_HOST"; fi
-        set -- env GH_HOST="$TARGET_HOST" GH_REPO="$TARGET_REPO" gh "$@"
-    fi
     if [ -z "${TIMEOUT_BIN}" ]; then
         "$@" </dev/null
     elif [ "${TIMEOUT_KILL_AFTER}" = yes ]; then
@@ -991,8 +983,7 @@ if [[ "${SECTION}" == "setup" ]]; then
         fi
 
         if ${HAS_REMOTE}; then
-            ROUTING_HOST="$TARGET_HOST"
-            ROUTING_REPO="${ROUTING_HOST:+${ROUTING_HOST}/}${NWO}"
+            ROUTING_REPO="$NWO"
             OWNER="${NWO%%/*}"
             REPO="${NWO##*/}"
             VISIBILITY="$(jq -r '.visibility // "?"' "${d}/repo.json" | tr '[:upper:]' '[:lower:]')"
@@ -1024,16 +1015,6 @@ if [[ "${SECTION}" == "setup" ]]; then
             else
                 echo '[]' >"${d}/vars.json"
                 echo no >"${d}/vars-probe"
-            fi) &
-            # CI_RUNS_ON is a non-secret Actions variable whose exact public
-            # value is a security boundary. Fetch only that value; never widen
-            # the general variable inventory from names to values.
-            (if run_timeout "${NETWORK_TIMEOUT}" gh variable get CI_RUNS_ON --json name,value --repo "$ROUTING_REPO" \
-                >"${d}/ci-runs-on.json" 2>/dev/null; then
-                echo yes >"${d}/ci-runs-on-probe"
-            else
-                echo 'null' >"${d}/ci-runs-on.json"
-                echo no >"${d}/ci-runs-on-probe"
             fi) &
             # Routing variables are non-secret. Keep their values separate from
             # the names-only credential inventory, and read the org explicitly:
@@ -1339,11 +1320,24 @@ if [[ "${SECTION}" == "setup" ]]; then
                         case "$routing_state" in
                         ok)
                             routing_display="$(jq -r --arg name "$routing_name" '[.[] | select(.name == $name)] | if length == 0 then "unset" else .[0].value end' "${d}/routing-${routing_scope}.json")"
+                            if [ "$routing_scope" = repo ] && [ "$VISIBILITY" = public ]; then
+                                if [ "$routing_display" = '"ubuntu-latest"' ]; then
+                                    checkline ok "Actions runner routing ($routing_name)" "public override is ubuntu-latest"
+                                else
+                                    checkline no "Actions runner routing ($routing_name)" "public override must be exact ubuntu-latest JSON — run task setup:github"
+                                fi
+                            fi
                             if [ "$routing_name" = ISOLATED_RUNS_ON ] &&
                                 jq -e --arg name "$routing_name" 'any(.[]; .name == $name)' "${d}/routing-${routing_scope}.json" >/dev/null &&
                                 [ "$(isolated_selector_state "$routing_display")" != safe ]; then
                                 if [ "$routing_scope" = org ]; then
-                                    checkline no "$routing_name ($routing_scope)" "ISOLATED_RUNS_ON invariant violated: self-hosted or unsupported selector shape; organization-level owner: harmonops/harmon-infra routing reconciler"
+                                    if [ "$(cat "${d}/routing-repo.state")" != ok ]; then
+                                        checkline unknown "$routing_name ($routing_scope)" "unsafe or unsupported organization value; repository override unreadable, inheritance unknown"
+                                    elif jq -e 'any(.[]; .name == "ISOLATED_RUNS_ON")' "${d}/routing-repo.json" >/dev/null; then
+                                        checkline unknown "$routing_name ($routing_scope)" "warning: unsafe or unsupported organization value shadowed by repository override"
+                                    else
+                                        checkline no "$routing_name ($routing_scope)" "ISOLATED_RUNS_ON invariant violated: inherited self-hosted or unsupported selector; contact the organization's routing owner (whoever manages organization Actions variables)"
+                                    fi
                                 else
                                     checkline no "$routing_name ($routing_scope)" "ISOLATED_RUNS_ON invariant violated: self-hosted or unsupported selector shape; repair the repository selector"
                                 fi
@@ -1352,33 +1346,15 @@ if [[ "${SECTION}" == "setup" ]]; then
                             fi
                             ;;
                         na) checkline na "$routing_name ($routing_scope)" "not an organization" ;;
-                        *) checkline unknown "$routing_name ($routing_scope)" "unknown — variable inventory unreadable" ;;
+                        *)
+                            checkline unknown "$routing_name ($routing_scope)" "unknown — variable inventory unreadable"
+                            if [ "$routing_scope" = repo ] && [ "$VISIBILITY" = public ]; then
+                                checkline unknown "Actions runner routing ($routing_name)" "public override unreadable"
+                            fi
+                            ;;
                         esac
                     done
                 done
-                if [ "${VISIBILITY}" = "public" ]; then
-                    if jq -e 'type == "object"' "${d}/ci-runs-on.json" >/dev/null 2>&1; then
-                        current_ci_runs_on="$(jq -r '.value // empty' "${d}/ci-runs-on.json")"
-                        if [ "${current_ci_runs_on}" = '"ubuntu-latest"' ]; then
-                            checkline ok "Actions runner routing" "public CI_RUNS_ON is ubuntu-latest"
-                        else
-                            checkline no "Actions runner routing" \
-                                "public CI_RUNS_ON must be exact ubuntu-latest JSON — run task setup:github"
-                        fi
-                    elif [ "$(cat "${d}/ci-runs-on-probe" 2>/dev/null)" = yes ]; then
-                        checkline unknown "Actions runner routing" \
-                            "CI_RUNS_ON lookup returned an unexpected payload"
-                    elif [ "$(cat "${d}/vars-probe" 2>/dev/null)" != yes ]; then
-                        checkline unknown "Actions runner routing" \
-                            "could not determine whether public CI_RUNS_ON exists"
-                    elif has_cred "${d}/vars.json" "CI_RUNS_ON"; then
-                        checkline unknown "Actions runner routing" \
-                            "CI_RUNS_ON exists but its public safety value was unreadable"
-                    else
-                        checkline no "Actions runner routing" \
-                            "public CI_RUNS_ON is missing — run task setup:github"
-                    fi
-                fi
                 if [ -f renovate.json ] || [ -f .github/renovate.json ]; then
                     if grep -i 'renovate' "${d}/apps.json" 2>/dev/null >/dev/null; then
                         checkline ok "Renovate app" "installed"

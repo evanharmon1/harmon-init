@@ -258,6 +258,9 @@ A generated repo's behavior also depends on state no answer captures.
 | `TERRAFORM_CI_ENABLED` | Enables the terraform CI job |
 | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare Workers deploy target |
 
+"safe" means the selector carries no `self-hosted` label, not that it is GitHub-hosted;
+a custom-label or group selector is the operator's attestation.
+
 Routing values are JSON strings or label arrays; isolated selectors also accept
 objects with a usable `labels` string or string array. On private/internal
 repositories, `scripts/setup-github.sh --repo <host/owner/repo>` creates a missing
@@ -274,13 +277,16 @@ enforcement against persistent runners inherited from an organization.
 `{group, labels}` selectors. A requested unsafe or unsupported selector fails
 before any GitHub access or write. An existing unsafe repository selector fails
 unless the operator supplies a safe isolated value with
-`--replace-isolated-runs-on`; public repositories repair that unsafe value
-automatically. Unsupported existing shapes fail closed: correct the repository
-variable before rerunning. Readable unsafe or unsupported inherited organization
-selectors also fail; ask the organization-level owner,
-`harmonops/harmon-infra`'s routing reconciler, to repair them. An unreadable or
+`--replace-isolated-runs-on`; public repositories repair unsafe and unsupported existing values automatically
+before checking organization routing. Private/internal unsupported shapes still
+fail closed. Unsafe or unsupported organization selectors fail only when actually
+inherited (no repository isolated override). A safe repository value, or an
+explicit safe isolated value plus its replace flag, shadows them and succeeds
+with a warning. Ask the organization's routing owner (whoever manages organization
+Actions variables) to repair inherited values, or supply a safe repository override. An unreadable or
 incomplete organization inventory is reported as unknown and does not fail the
-run. `task status:setup` reports unsafe or unsupported values as violations.
+run. `task status:setup` reports active unsafe or unsupported selectors as
+violations and shadowed organization values as warnings.
 
 **`FULL_SECURITY_SCAN` only means anything on a `use_codeql: true` repo.** Both
 reads of the variable are gated on that answer. `codeql.yml` exists only when
