@@ -53,9 +53,14 @@ label prohibition is deliberately conservative, and a label set without it
 still needs evidence of a disposable host. Provider choice and provisioning
 are separate work, not implied by these names.
 
-Shared package caches remain disabled for secret-holding/deploying jobs through
-`cache: "false"` on the setup action. Disposable placement alone does not prevent
-restoring attacker-controlled cache contents.
+The target shared package-cache rule requires setup `cache: "false"` for
+secret-holding/deploying jobs, with one deliberate exception: `deploy-preview.yml`
+`deploy` builds the PR's own code, so poisoning its cache grants nothing that PR
+does not already have (the rationale in `release.yml.jinja:108-112`). Disposable
+placement alone does not prevent restoring attacker-controlled cache contents.
+This rule is not yet satisfied everywhere: web-app `lint`'s codegen secret/cache
+combination is corrected by #1729; `sync-harmon-devkit.yml` `sync`'s App token
+with `contents:write` and shared pnpm cache on `use_node` is corrected by #1731.
 
 ## Not
 
@@ -75,7 +80,12 @@ restoring attacker-controlled cache contents.
 
 Private repositories whose `CI_RUNS_ON` selects a homelab now spend GitHub Actions
 minutes on isolated work when `ISOLATED_RUNS_ON` is unset. Usage can consume their
-included allowance and incur charges under their plan. This cost is intentional:
+included allowance and incur charges under their plan. With a $0 Actions budget,
+isolated jobs stop starting once included minutes run out rather than incurring
+charges. Because `closing-keywords` is both isolated and required, that also
+blocks merges. The main minute consumers are `claude-implement.yml` `implement`,
+`terraform.yml` `terraform-plan-apply`, and the preview/production deploy jobs.
+This cost and availability trade-off is intentional:
 configure a verified disposable-host pool explicitly rather than silently using
 persistent hardware to save minutes. The fallback introduces no new paid SaaS
 account or provider dependency.
@@ -83,4 +93,5 @@ account or provider dependency.
 The spec is the assignment source; architecture docs explain the contract and
 the glossary defines its four terms. Rendering, validation and reconciliation
 must implement it in later chunks. The existing web-app codegen/cache violation
-is recorded in the spec and is removed by #1729's isolated `codegen-guard` split.
+is recorded in the spec and is removed by #1729's isolated `codegen-guard` split;
+issue #1731 owns the existing skills-sync cache violation.

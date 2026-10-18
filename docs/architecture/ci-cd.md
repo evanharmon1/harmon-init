@@ -578,10 +578,10 @@ how-to lives at [../guides/deploying.md](../guides/deploying.md).
 
 ## Runners
 
-Current workflows read `CI_RUNS_ON` with a rendered default. The agreed routing
-contract introduces four class variables; workflow rendering and setup
-reconciliation land separately. A class names the reason for different runner
-placement, while its JSON string or array value selects a runner label set.
+Current workflows read `CI_RUNS_ON` with a rendered default. The four-class
+routing contract below is **planned until #1727 ships**; workflow rendering and
+setup reconciliation land separately. A class names the reason for different
+runner placement, while its JSON string or array value selects a runner label set.
 Provider names never belong in routing variable names.
 
 - **Default — `CI_RUNS_ON`:** general build, lint, test and aggregate work.
@@ -601,12 +601,17 @@ on every profile: it never inherits `CI_RUNS_ON` or the rendered default.
 Its host must be destroyed with the job, and its label set must not contain
 `self-hosted`. A disposable container on a persistent homelab host does not
 satisfy that boundary. The fallback can consume GitHub Actions minutes on private
-repositories even when their default pool is a homelab. Secret-holding/deploying
-jobs using the shared setup action also require `cache: "false"`.
+repositories even when their default pool is a homelab. The target shared-cache
+rule requires setup `cache: "false"` for secret-holding/deploying jobs, except
+`deploy-preview.yml` `deploy`: it builds the PR's own code, so cache poisoning
+grants nothing the PR does not already have. Existing violations remain in
+web-app `lint` (codegen split owned by #1729) and `sync-harmon-devkit.yml` `sync`
+(App `contents:write` token plus pnpm cache on `use_node`, owned by #1731).
 
-The [routing spec](../../specs/runner-routing-classes.md) owns the exhaustive
-job assignments and expressions; the
-[ADR](../decisions/2026-10-18-route-ci-jobs-by-class.md) records the trade-offs.
+The [routing spec](https://github.com/evanharmon1/harmon-init/blob/main/specs/runner-routing-classes.md)
+owns the exhaustive job assignments and expressions; the
+[ADR](https://github.com/evanharmon1/harmon-init/blob/main/docs/decisions/2026-10-18-route-ci-jobs-by-class.md)
+records the trade-offs.
 
 ### Job-private filesystem contract
 
@@ -635,8 +640,7 @@ inherit `CI_RUNS_ON`, while isolated may not. Empty or inaccessible variables
 use the next tier; nonempty invalid JSON is an error.
 
 Today `task setup:github` reconciles only `CI_RUNS_ON`, as described below.
-The four-variable reconciliation is follow-up work; this documentation change
-does not change repository or organization settings.
+Setup does not yet reconcile the class variables; that is #1728's follow-up.
 
 ### Reconciliation and lifecycle
 
@@ -654,8 +658,9 @@ fallback safety net.
 
 ### Security boundaries
 
-That convenience is also the risk: it is a runtime change with no diff and no
-review. **Do not point a public repository at a persistent self-hosted runner.**
+Editing a routing variable changes runner placement at runtime without a commit
+or a reviewed diff. **Do not point a public repository at a persistent self-hosted
+runner.**
 Workflows here already refuse to check out fork-controlled code on the trusted
 aggregate job, but that contract bounds one specific job — it does not make a
 long-lived runner safe for untrusted contributions generally. A fork PR that can

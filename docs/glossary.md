@@ -21,7 +21,7 @@ project-specific (domain) terms as the model firms up.
 | Routing class | A group of jobs defined by the reason it needs different runner placement: default, browser, image-build or isolated. |
 | Routing variable | A GitHub Actions variable naming a routing class whose JSON value selects a runner label set; the name never names a provider. |
 | Disposable host | A runner whose host is destroyed with the job. |
-| Homelab runner | A runner on hardware the maintainer owns; ephemeral as a container, persistent as a host. |
+| Homelab runner | A runner on hardware the maintainer owns; its jobs may run in ephemeral containers, but the host persists between jobs. |
 | TODO: term | TODO: project-specific definition |
 
 GitHub's `self-hosted` label is not a domain term: it covers both
