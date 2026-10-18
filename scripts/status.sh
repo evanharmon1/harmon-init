@@ -90,6 +90,35 @@ has_cred() {
     jq -e --arg n "$2" 'any(.[]; .name == $n)' "$1" >/dev/null 2>&1
 }
 
+# Organization-variable pages are repository-scoped and capped at 30 by the
+# API. Publish only a complete inventory; failed or truncated walks are unknown.
+collect_org_routing() {
+    local repo="$1" page=1 page_size=30 max_pages payload count expected="" total=0 pages=""
+    max_pages="$(gh_rest_max_pages)" || return 2
+    while [ "$page" -le "$max_pages" ]; do
+        payload="$(GH_REST_TIMEOUT="${NETWORK_TIMEOUT}" gh_rest_api \
+            "repos/${repo}/actions/organization-variables?per_page=${page_size}&page=${page}")" || return
+        jq -se 'length == 1 and (.[0] |
+            (.total_count | type == "number" and . >= 0 and floor == .) and
+            (.variables | type == "array" and length <= 30 and all(.[];
+                type == "object" and (.name | type == "string") and (.value | type == "string"))))' \
+            >/dev/null 2>&1 <<<"$payload" || return 3
+        count="$(jq -r '.total_count' <<<"$payload")"
+        [ -z "$expected" ] && expected="$count"
+        [ "$expected" = "$count" ] || return 3
+        count="$(jq '.variables | length' <<<"$payload")"
+        total=$((total + count))
+        pages="${pages}$(jq -c '.variables' <<<"$payload")"$'\n'
+        if [ "$total" -eq "$expected" ]; then
+            jq -se 'add | if (unique_by(.name) | length) == length then . else error("duplicate variables") end' <<<"$pages"
+            return
+        fi
+        [ "$count" -eq "$page_size" ] && [ "$total" -lt "$expected" ] || return 3
+        page=$((page + 1))
+    done
+    return 4
+}
+
 # has_scope LINE NAME — true if NAME is present as a quoted scope in a
 # `gh auth status` "Token scopes:" line (`… 'gist', 'project', 'repo'`).
 # Matching on the quotes is what keeps `project` from also matching
@@ -978,16 +1007,22 @@ if [[ "${SECTION}" == "setup" ]]; then
             # Routing variables are non-secret. Keep their values separate from
             # the names-only credential inventory, and read the org explicitly:
             # repository listings do not include inherited organization values.
+            # The org endpoint lists only values shared with this repository.
             for routing_scope in repo org; do
                 (
                     if [ "$routing_scope" = org ] && [ "$OWNER_TYPE" = User ]; then
                         echo '[]' >"${d}/routing-${routing_scope}.json"
                         echo na >"${d}/routing-${routing_scope}.state"
-                    elif { [ "$routing_scope" = repo ] || [ "$OWNER_TYPE" = Organization ]; } &&
-                        run_timeout "${NETWORK_TIMEOUT}" gh variable list \
-                            "--${routing_scope}" "$(if [ "$routing_scope" = repo ]; then printf '%s' "$NWO"; else printf '%s' "$OWNER"; fi)" \
-                            --json name,value --jq '[.[] | select(.name == "CI_RUNS_ON" or .name == "BROWSER_RUNS_ON" or .name == "IMAGE_BUILD_RUNS_ON" or .name == "ISOLATED_RUNS_ON")]' \
-                            >"${d}/routing-${routing_scope}.json" 2>/dev/null &&
+                    elif {
+                        if [ "$routing_scope" = repo ]; then
+                            run_timeout "${NETWORK_TIMEOUT}" gh variable list --repo "$NWO" \
+                                --json name,value --jq '[.[] | select(.name == "CI_RUNS_ON" or .name == "BROWSER_RUNS_ON" or .name == "IMAGE_BUILD_RUNS_ON" or .name == "ISOLATED_RUNS_ON")]'
+                        elif [ "$OWNER_TYPE" = Organization ]; then
+                            collect_org_routing "$NWO"
+                        else
+                            false
+                        fi
+                    } >"${d}/routing-${routing_scope}.json" 2>/dev/null &&
                         jq -se 'length == 1 and (.[0] | type == "array" and all(.[]; type == "object" and (.name | type == "string") and (.value | type == "string")))' \
                             "${d}/routing-${routing_scope}.json" >/dev/null 2>&1; then
                         echo ok >"${d}/routing-${routing_scope}.state"

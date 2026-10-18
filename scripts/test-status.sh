@@ -326,6 +326,24 @@ make_stub() {
         echo '        printf "%s\n" "$GH_REPO_JSON" | jq -r .owner.type'
         echo '        exit 0'
         echo '    fi'
+        cat <<'ROUTING_STUB'
+    case "$endpoint" in
+    repos/*/actions/organization-variables\?*)
+        [ -n "${GH_ROUTING_ORG_JSON:-}" ] || exit 1
+        case "${GH_ROUTING_ORG_MODE:-shared}" in
+        fail) exit 1 ;;
+        incomplete) printf '{"total_count":31,"variables":[]}\n'; exit 0 ;;
+        restricted) printf '{"total_count":0,"variables":[]}\n'; exit 0 ;;
+        esac
+        page="${endpoint##*&page=}"
+        per_page="${endpoint##*per_page=}"; per_page="${per_page%%&*}"
+        if [ "${GH_ROUTING_ORG_MODE:-}" = fail-page-two ] && [ "$page" -eq 2 ]; then exit 1; fi
+        printf '%s\n' "$GH_ROUTING_ORG_JSON" | jq -c --argjson page "$page" --argjson size "$per_page" \
+            '{total_count:length,variables:.[(($page-1)*$size):($page*$size)]}'
+        exit 0
+        ;;
+    esac
+ROUTING_STUB
         # GH_STUB_FULL_PAGES=1: answer the three completeness-required
         # inventories with a FULL page every time, exactly as GitHub answers a
         # list longer than per_page. Only a bound can end such a walk, so this
@@ -407,11 +425,6 @@ STUB
         echo 'if [ "$1" = "variable" ] && [ "$2" = "list" ] && [ "$3" = "--repo" ]; then'
         echo '    [ -n "${GH_ROUTING_REPO_JSON:-}" ] || exit 1'
         echo '    printf "%s\n" "$GH_ROUTING_REPO_JSON"'
-        echo '    exit 0'
-        echo 'fi'
-        echo 'if [ "$1" = "variable" ] && [ "$2" = "list" ] && [ "$3" = "--org" ]; then'
-        echo '    [ -n "${GH_ROUTING_ORG_JSON:-}" ] || exit 1'
-        echo '    printf "%s\n" "$GH_ROUTING_ORG_JSON"'
         echo '    exit 0'
         echo 'fi'
         echo 'if [ "$1" = "variable" ] && [ "$2" = "list" ] && [ -n "${GH_VARIABLES_JSON:-}" ]; then'
@@ -686,6 +699,54 @@ for unreadable in '' 'not-json' '{}'; do
         esac
     done
 done
+
+echo "==> organization routing excludes variables restricted to other repositories"
+out="$(GH_REPO_JSON="$internal_repo" GH_ROUTING_REPO_JSON='[]' GH_ROUTING_ORG_JSON="$routing_org" GH_ROUTING_ORG_MODE=restricted run_setup_section project)"
+for name in CI_RUNS_ON BROWSER_RUNS_ON IMAGE_BUILD_RUNS_ON ISOLATED_RUNS_ON; do
+    case "$out" in
+    *"$name (org) - unset"*) ;;
+    *) fail "restricted $name was not absent for this repository: $out" ;;
+    esac
+done
+
+echo "==> organization routing follows pages and rejects failed/incomplete inventories"
+paged_routing="$(jq -cn '[range(0;30) | {name:"OTHER_\(.)",value:"other"}] + [{name:"ISOLATED_RUNS_ON",value:"\"page-two-provider\""}]')"
+for mode in shared fail fail-page-two incomplete; do
+    out="$(GH_REPO_JSON="$internal_repo" GH_ROUTING_REPO_JSON='[]' GH_ROUTING_ORG_JSON="$paged_routing" GH_ROUTING_ORG_MODE="$mode" run_setup_section project)"
+    if [ "$mode" = shared ]; then
+        case "$out" in
+        *'ISOLATED_RUNS_ON (org) - "page-two-provider"'*) ;;
+        *) fail "organization routing missed page two: $out" ;;
+        esac
+    else
+        for name in CI_RUNS_ON BROWSER_RUNS_ON IMAGE_BUILD_RUNS_ON ISOLATED_RUNS_ON; do
+            case "$out" in
+            *"$name (org) - unknown"*) ;;
+            *) fail "$mode organization inventory hid incomplete $name: $out" ;;
+            esac
+        done
+    fi
+done
+out="$(GH_REST_MAX_PAGES=1 GH_REPO_JSON="$internal_repo" GH_ROUTING_REPO_JSON='[]' GH_ROUTING_ORG_JSON="$paged_routing" run_setup_section project)"
+case "$out" in
+*'ISOLATED_RUNS_ON (org) - unknown'*) ;;
+*) fail "page ceiling reported a partial organization inventory: $out" ;;
+esac
+
+echo "==> organization routing uses the repository's Enterprise host"
+STUB_CALLS="${TMP}/routing-ghe-calls.txt"
+export STUB_CALLS
+: >"$STUB_CALLS"
+out="$(GH_REPO=ghe.example.com/owner/internal GH_REPO_JSON="$internal_repo" GH_ROUTING_REPO_JSON='[]' GH_ROUTING_ORG_JSON="$routing_org" run_setup_section project)"
+case "$out" in
+*'CI_RUNS_ON (org) - "org-provider"'*) ;;
+*) fail "Enterprise organization routing was not shown: $out" ;;
+esac
+if ! /usr/bin/grep -F 'api repos/owner/internal/actions/organization-variables?per_page=30&page=1 --hostname ghe.example.com' "$STUB_CALLS" >/dev/null; then
+    fail "organization routing did not honor the Enterprise host: $(cat "$STUB_CALLS")"
+fi
+if /usr/bin/grep -F 'variable list --org' "$STUB_CALLS" >/dev/null; then fail "organization routing used an org-wide listing"; fi
+unset STUB_CALLS
 
 echo "==> failed owner-type reads leave all organization routing values unknown"
 out="$(GH_REPO_JSON="$internal_repo" GH_OWNER_TYPE_FAIL=1 GH_ROUTING_REPO_JSON='[]' GH_ROUTING_ORG_JSON="$routing_org" run_setup_section project)"

@@ -114,14 +114,19 @@ public | private | internal) ;;
     ;;
 esac
 
+# Public repository overrides must shadow every organization routing value.
+if [ "$repo_visibility" = public ] && ! command -v jq >/dev/null 2>&1; then
+    echo "Required tool not found: jq" >&2
+    exit 1
+fi
 for i in "${!routing_names[@]}"; do
-    ${routing_set[$i]} || continue
+    if [ "$repo_visibility" != public ] && ! ${routing_set[$i]}; then continue; fi
     routing_name="${routing_names[$i]}"
     routing_value="${routing_values[$i]}"
-    if [ "$repo_visibility" = public ] && [ "$routing_value" != '"ubuntu-latest"' ]; then
+    if [ "$repo_visibility" = public ] && ${routing_set[$i]} && [ "$routing_value" != '"ubuntu-latest"' ]; then
         checkline unknown "Actions runner routing" "public repository selected non-canonical routing; enforcing ubuntu-latest"
-        routing_value='"ubuntu-latest"'
     fi
+    if [ "$repo_visibility" = public ]; then routing_value='"ubuntu-latest"'; fi
     current_routing_records=""
     current_routing_present=false
     current_routing=""
@@ -144,7 +149,11 @@ for i in "${!routing_names[@]}"; do
             if output_run "Creating Actions runner routing" \
                 gh api "repos/$repo/actions/variables" --method POST \
                 -f name="$routing_name" -f value="$routing_value"; then
-                checkline ok "Actions runner routing" "created ${routing_name}"
+                if [ "$repo_visibility" = public ]; then
+                    checkline ok "Actions runner routing" "created ${routing_name} (public repository safety enforcement)"
+                else
+                    checkline ok "Actions runner routing" "created ${routing_name}"
+                fi
             else
                 rc=$?
                 fail_step "$rc" "Actions runner routing" "could not create ${routing_name}"
@@ -156,7 +165,7 @@ for i in "${!routing_names[@]}"; do
             if [ "$repo_visibility" = public ]; then
                 if output_run "Enforcing public repository runner safety" \
                     gh variable set "$routing_name" --repo "$repo" --body '"ubuntu-latest"'; then
-                    checkline ok "Actions runner routing" "standardized public ${routing_name} to ubuntu-latest"
+                    checkline ok "Actions runner routing" "standardized public ${routing_name} to ubuntu-latest (public repository safety enforcement)"
                 else
                     rc=$?
                     fail_step "$rc" "Actions runner routing" "could not enforce GitHub-hosted routing on a public repository"

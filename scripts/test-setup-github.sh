@@ -34,7 +34,7 @@ case "$*" in
         [ -n "${GH_VARIABLE_VALUE:-}" ] && variable_present=true || variable_present=false
     fi
     if [ "$variable_present" = true ]; then
-        jq -cn --arg value "${GH_VARIABLE_VALUE:-}" '[{name:"CI_RUNS_ON",value:$value}]'
+        jq -cn --arg value "${GH_VARIABLE_VALUE:-}" '[{name:"CI_RUNS_ON",value:$value}]' | jq "${!#}"
     else
         printf '[]\n'
     fi
@@ -241,7 +241,7 @@ GH_PRIVATE=false GH_VARIABLE_PRESENT=true GH_VARIABLE_VALUE= \
     fail "empty existing public variable was not repaired"
 /usr/bin/grep -Fq 'variable set CI_RUNS_ON --repo owner/public --body "ubuntu-latest"' "$stub_calls" ||
     fail "empty existing public variable was not updated"
-if /usr/bin/grep -q 'actions/variables --method POST' "$stub_calls"; then
+if /usr/bin/grep -q 'actions/variables --method POST -f name=CI_RUNS_ON ' "$stub_calls"; then
     fail "empty existing public variable was duplicate-created"
 fi
 
@@ -382,10 +382,30 @@ for flag in ci-runs-on browser-runs-on image-build-runs-on; do
     [ "$run_rc" -eq 0 ] || fail "$flag rejected permitted self-hosted label"
 done
 
-echo "==> absent flags leave all routing variables untouched"
-GH_ROUTING_VARIABLES_JSON='[]' run_case --repo owner/private
-[ "$run_rc" -eq 0 ] || fail "absent flags failed"
-if /usr/bin/grep -Eq 'variable (list|set)|actions/variables' "$stub_calls"; then fail "absent flags accessed routing variables"; fi
+echo "==> absent flags leave private and internal routing variables untouched"
+for visibility in private internal; do
+    GH_VISIBILITY="$visibility" GH_ROUTING_VARIABLES_JSON='[]' run_case --repo "owner/$visibility"
+    [ "$run_rc" -eq 0 ] || fail "absent flags failed for $visibility"
+    if /usr/bin/grep -Eq 'variable (list|set)|actions/variables' "$stub_calls"; then fail "absent flags accessed $visibility routing variables"; fi
+done
+
+echo "==> public repositories create all four safety overrides without flags"
+GH_VISIBILITY=public GH_ROUTING_VARIABLES_JSON='[]' run_case --repo owner/public
+[ "$run_rc" -eq 0 ] || fail "public defaults failed"
+for name in CI_RUNS_ON BROWSER_RUNS_ON IMAGE_BUILD_RUNS_ON ISOLATED_RUNS_ON; do
+    /usr/bin/grep -Fq "api repos/owner/public/actions/variables --method POST -f name=$name -f value=\"ubuntu-latest\"" "$stub_calls" || fail "missing public override $name"
+    /usr/bin/grep -Fq "created $name (public repository safety enforcement)" "$tmp/out" || fail "missing public safety creation report for $name"
+done
+
+echo "==> public repositories replace all differing classes without flags"
+existing="$(jq -cn '["CI_RUNS_ON","BROWSER_RUNS_ON","IMAGE_BUILD_RUNS_ON","ISOLATED_RUNS_ON"] | map({name:.,value:"[\"self-hosted\",\"linux\"]"})')"
+GH_VISIBILITY=public GH_ROUTING_VARIABLES_JSON="$existing" run_case --repo owner/public
+[ "$run_rc" -eq 0 ] || fail "public safety replacement failed"
+for name in CI_RUNS_ON BROWSER_RUNS_ON IMAGE_BUILD_RUNS_ON ISOLATED_RUNS_ON; do
+    /usr/bin/grep -Fq "variable set $name --repo owner/public --body \"ubuntu-latest\"" "$stub_calls" || fail "missing public replacement $name"
+    /usr/bin/grep -Fq "standardized public $name to ubuntu-latest (public repository safety enforcement)" "$tmp/out" || fail "missing public safety replacement report for $name"
+done
+if /usr/bin/grep -q 'actions/variables --method POST' "$stub_calls"; then fail "existing public overrides were duplicate-created"; fi
 
 echo "==> all four values are selected independently in one invocation"
 GH_ROUTING_VARIABLES_JSON='[]' run_case --repo owner/private \
