@@ -22,7 +22,7 @@ run-name: ${{ github.actor }} is proving the remote bootstrap on a stock Ubuntu 
 #               recorded gap.
 #
 # The pin CONTRACT is not proved here. `task test:bootstrap-remote` runs
-# unconditionally in build.yml's lint job, which has no path filter, so it sees
+# unconditionally in build.yml's repo-guards job, which has no path filter, so it sees
 # every PR — including one that edits only an input this workflow's filter does
 # not name. This workflow proves behaviour only, and the path filter below is
 # correct for that: a documentation edit cannot change what the scripts install
