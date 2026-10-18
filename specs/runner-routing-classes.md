@@ -1,0 +1,184 @@
+# Spec: Runner routing classes
+
+- **Status:** Approved
+- **Owner:** Evan Harmon
+- **Date:** 2026-10-18
+- **Related:** [#1725](https://github.com/evanharmon1/harmon-init/issues/1725),
+  [routing ADR](../docs/decisions/2026-10-18-route-ci-jobs-by-class.md)
+
+## Problem / Why
+
+One routing variable puts ordinary builds, browser tests, image builds and
+secret-holding automation on the same runner pool. Per-job overrides have grown
+without a rule for naming them. Consumers need stable classes that explain why
+work needs a different runner, independently of the provider supplying it.
+
+## Goal
+
+Define four routing variables and an exhaustive template-job assignment that
+workflow rendering and setup reconciliation can implement consistently.
+
+## Non-goals
+
+This change does not render new workflow expressions, reconcile GitHub variables,
+choose providers, or change runner infrastructure. Consumer-local workflows such
+as omator's `preview.yml`, `deploy.yml` and `demo-seed` are outside the template.
+
+## Requirements
+
+- [ ] Use exactly the four routing variables below. A variable names a class by
+  its execution requirement; a provider is never part of its name.
+- [ ] Treat each value as a JSON runner label set: a JSON string for one label
+  (for example `"ubuntu-latest"`) or a JSON array of labels that must all match
+  (for example `["self-hosted","linux","x64","build-pool"]`). The value selects
+  placement; a class name does not prescribe a provider.
+- [ ] Apply the fallback chains below, including the rendered default for
+  default/browser/image-build and the independent safe fallback for isolated.
+- [ ] Run isolated jobs only on a disposable host: the host is destroyed with
+  the job. `ISOLATED_RUNS_ON` must never contain the `self-hosted` label. Removing
+  that label alone is not proof that a host is disposable.
+- [ ] Keep existing merge-group GitHub-hosted pins and ternaries.
+- [ ] Disable shared package caching for secret-holding or deploying jobs using
+  the shared setup action (`cache: "false"`); routing alone does not fix cache
+  poisoning. Do not add cache restoration to API-only isolated jobs.
+
+### Classes and fallback expressions
+
+| Class | Variable | Reason for separate placement | Fallback chain |
+|---|---|---|---|
+| default | `CI_RUNS_ON` | General build, lint, test and aggregate work without a more specific requirement | `CI_RUNS_ON` → rendered `ci_runs_on_default` |
+| browser | `BROWSER_RUNS_ON` | Executes a real browser: Playwright, accessibility or Lighthouse checks | `BROWSER_RUNS_ON` → `CI_RUNS_ON` → rendered `ci_runs_on_default` |
+| image-build | `IMAGE_BUILD_RUNS_ON` | Builds Docker/devcontainer images or runs their container smoke/assertion tests | `IMAGE_BUILD_RUNS_ON` → `CI_RUNS_ON` → rendered `ci_runs_on_default` |
+| isolated | `ISOLATED_RUNS_ON` | Holds long-lived secrets, parses attacker-writable bodies, or deploys; sub-minute API-only glue also belongs here | `ISOLATED_RUNS_ON` → `"ubuntu-latest"` only |
+
+The target template expressions are:
+
+```yaml
+# default
+runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
+# browser
+runs-on: ${{ fromJSON(vars.BROWSER_RUNS_ON || vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
+# image-build
+runs-on: ${{ fromJSON(vars.IMAGE_BUILD_RUNS_ON || vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
+# isolated — never consult CI_RUNS_ON or the rendered default
+runs-on: ${{ fromJSON(vars.ISOLATED_RUNS_ON || '"ubuntu-latest"') }}
+```
+
+`ci_runs_on_default` is computed by Copier: `"ubuntu-latest"` for GitHub-hosted
+profiles and the configured JSON label list for `ci_runner == 'self-hosted'`.
+It is not a fifth routing variable. An unset or empty class variable takes the
+next tier; malformed nonempty JSON is a configuration error, not a fallback.
+Repository variables override organization variables of the same name before
+these expressions select a tier.
+
+If requirements overlap, isolated wins: a browser or image-building job that
+also holds a long-lived secret must run on a disposable host. A short-lived
+`GITHUB_TOKEN` alone does not make ordinary build work isolated. API automation
+is isolated by its work, even when it needs only that token.
+
+### Template job assignment
+
+This table is the single assignment source for the rendering test in #1727.
+Workflow names are rendered filenames; inclusion follows the template's existing
+Copier conditions. Rows name every job present at the recorded base plus the
+explicitly planned `codegen-guard` split. Matrix variants inherit their job's
+class. Pinned placement is an exception to the class expression, not a new class.
+
+| Workflow | Job | Class | Reason / placement exception |
+|---|---|---|---|
+| `build.yml` | `lint` | default | Lint; web-app codegen secret remains here temporarily until #1729 |
+| `build.yml` | `build-test` | default | Build and unit tests |
+| `build.yml` | `e2e` | browser | Playwright; included with Node |
+| `build.yml` | `security` | default | Free baseline scanners |
+| `build.yml` | `lighthouse` | browser | Lighthouse browser audit (web-astro) |
+| `build.yml` | `render-parity` | default | Compares built output without a browser (web-astro) |
+| `build.yml` | `a11y` | browser | Browser accessibility checks (web-app/web-astro) |
+| `build.yml` | `verify` | default | Aggregate check |
+| `build.yml` | `codegen-guard` | isolated | Future #1729 web-app split; `CONVEX_DEPLOY_KEY`, setup `cache: "false"` |
+| `devcontainer-build.yml` | `devcontainer-changes` | default | Change detection; preserve `merge_group` → `ubuntu-latest` ternary |
+| `devcontainer-build.yml` | `build` | image-build | Builds/publishes devcontainer images |
+| `devcontainer-build.yml` | `build-merge-group` | image-build | Preserve hard-coded `ubuntu-latest` on merge groups |
+| `devcontainer-build.yml` | `devcontainer-assert-bot` | image-build | Image smoke/assertion |
+| `devcontainer-build.yml` | `devcontainer-assert-agent` | image-build | Image smoke/assertion |
+| `devcontainer-build.yml` | `devcontainer-verify` | default | Aggregate; preserve `merge_group` → `ubuntu-latest` ternary |
+| `terraform.yml` | `terraform-changes` | default | Change detection |
+| `terraform.yml` | `terraform-validate` | default | Offline validation |
+| `terraform.yml` | `terraform-plan-apply` | isolated | R2 credentials and Terraform Cloudflare tokens; infrastructure deployment |
+| `terraform.yml` | `terraform-verify` | default | Aggregate check |
+| `deploy-preview.yml` | `preflight` | isolated | `CLOUDFLARE_API_TOKEN` |
+| `deploy-preview.yml` | `deploy` | isolated | Preview deployment and `CLOUDFLARE_API_TOKEN` |
+| `release.yml` | `release-please` | isolated | API automation and `CI_APP_PRIVATE_KEY` |
+| `release.yml` | `deploy-production` | isolated | Production deployment and `CLOUDFLARE_API_TOKEN` |
+| `sync-harmon-devkit.yml` | `sync` | isolated | `CI_APP_PRIVATE_KEY` |
+| `security-audit-fix.yml` | `audit` | default | Dependency audit without the App private key |
+| `security-audit-fix.yml` | `publish` | isolated | `CI_APP_PRIVATE_KEY` |
+| `snyk-scheduled.yml` | `scan` | isolated | `SNYK_TOKEN`; setup `cache: "false"` |
+| `claude-plan.yml` | `plan` | isolated | OAuth/App secrets and attacker-writable request bodies |
+| `claude-implement.yml` | `implement` | isolated | OAuth/App secrets and attacker-writable request bodies |
+| `claude-review.yml` | `review` | isolated | OAuth/App secrets and attacker-writable request bodies |
+| `claim-release.yml` | `on-issue-closed` | isolated | Parses attacker-writable claim bodies |
+| `claim-release.yml` | `on-pr-closed-unmerged` | isolated | Parses attacker-writable claim bodies |
+| `claim-release.yml` | `on-pr-merged` | isolated | Parses attacker-writable claim bodies |
+| `project-automation.yml` | `sync-status` | isolated | API automation and `CI_APP_PRIVATE_KEY` |
+| `project-automation.yml` | `project-automation-verify` | default | Aggregate check |
+| `classification-event.yml` | `reconcile` | isolated | Reusable-workflow caller; no `runs-on`, inherits callee placement |
+| `classification-reconcile.yml` | `reconcile` | isolated | API-only classification automation |
+| `closing-keywords.yml` | `closing-keywords` | isolated | API automation parsing issue/PR bodies |
+| `close-milestone-on-release.yml` | `close-milestone` | isolated | API-only milestone automation |
+| `release-content-guard.yml` | `guard` | isolated | Parses attacker-writable PR title/body |
+| `codeql.yml` | `analyze` | default | CodeQL analysis |
+| `codeql.yml` | `codeql-verify` | default | Aggregate check |
+
+The current web-app `lint` job passes `CONVEX_DEPLOY_KEY` to `guard:codegen`
+with the shared pnpm cache enabled. This is an existing cache-rule violation,
+not permission to cache secrets in isolated jobs. #1727 keeps `lint` on default
+until #1729 removes that secret-bearing step into `codegen-guard`, classified
+isolated with `cache: "false"`. This spec does not make that split.
+
+## Acceptance criteria (Given / When / Then)
+
+### Scenario: Existing default routing survives the class rollout
+
+- **Given** no new class variables and a GitHub-hosted or self-hosted Copier profile
+- **When** default, browser or image-build placement is evaluated
+- **Then** it uses `CI_RUNS_ON`, or the profile's rendered default if unset,
+  except for the preserved merge-group pins.
+
+### Scenario: An unset isolated variable cannot reach the homelab default
+
+- **Given** `CI_RUNS_ON` or the rendered default names a homelab label set
+- **When** `ISOLATED_RUNS_ON` is unset or empty
+- **Then** isolated resolves to `"ubuntu-latest"` and never consults either default.
+
+### Scenario: Explicit class placement and host safety
+
+- **Given** a repository sets a browser or image-build variable
+- **When** a matching job runs
+- **Then** its class variable takes precedence over `CI_RUNS_ON`.
+- **Given** an isolated value contains `self-hosted` or selects a persistent host
+- **When** routing configuration is validated
+- **Then** it is rejected; an ephemeral container on a persistent host is insufficient.
+
+### Scenario: Exhaustive workflow rendering
+
+- **Given** every workflow option is rendered across the template test profiles
+- **When** #1727's routing test enumerates jobs and their `runs-on` expressions
+- **Then** every job matches this table, no unknown routing variable occurs,
+  reusable callers inherit the callee, and merge-group pins remain intact.
+- **Given** the #1729 codegen split is rendered for web-app
+- **When** its setup action is inspected
+- **Then** `codegen-guard` is isolated with `cache: "false"` and `lint` no longer
+  holds the codegen secret.
+
+## Open questions
+
+None for the naming, fallback or class-assignment contract. Provider selection
+belongs to harmonops/harmon-infra#592 and the consumer pilots.
+
+## Notes
+
+Inventory baseline: `9e4e368a1eac2133e6cf3b5267b31ede7fbc185c`.
+Issue #1727 renders routing and tests this table; #1728 reconciles variables;
+issue #1729 splits codegen; #1730's docs-only path still runs check, repo-guards and
+security. These later implementations must not treat this specification's
+requirements as already implemented by the documentation PR.

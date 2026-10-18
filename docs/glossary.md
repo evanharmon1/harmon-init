@@ -18,7 +18,14 @@ project-specific (domain) terms as the model firms up.
 | bot / dev / agent posture | The three devcontainer postures, told apart by the `FOREMAN_DEVCONTAINER` marker (`bot`, unset, `agent`): `bot` (`.devcontainer/`, AI agents on controlled infrastructure, no Tailscale), `dev` (`.devcontainer/dev/`, human, with Tailscale), and `agent` (`.devcontainer/agent/`, unattended agents, never looser than bot: its own PAT, Claude Code and Codex only, allowlisted egress, no Docker by default). See [guides/devcontainers.md](guides/devcontainers.md). |
 | 1Password Environments | How devcontainer/local secrets are supplied — a virtual `.env` mounted over a pipe, never written to disk or git. |
 | bot vs operator | Two identities: the AI **bot** account (scoped; `main` needs code-owner approval and green checks, and though its `pull_requests: write` PAT can perform a merge a human has approved, merging stays the maintainer's decision) and the human **operator** (full access). See [architecture/security.md](architecture/security.md). |
+| Routing class | A group of jobs defined by the reason it needs different runner placement: default, browser, image-build or isolated. |
+| Routing variable | A GitHub Actions variable naming a routing class whose JSON value selects a runner label set; the name never names a provider. |
+| Disposable host | A runner whose host is destroyed with the job. |
+| Homelab runner | A runner on hardware the maintainer owns; ephemeral as a container, persistent as a host. |
 | TODO: term | TODO: project-specific definition |
+
+GitHub's `self-hosted` label is not a domain term: it covers both
+hosted-ephemeral and homelab runners and does not establish host lifetime.
 
 ## Issue classification
 
