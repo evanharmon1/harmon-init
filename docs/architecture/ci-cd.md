@@ -578,9 +578,40 @@ how-to lives at [../guides/deploying.md](../guides/deploying.md).
 
 ## Runners
 
-Jobs use `runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}`, so the
-`CI_RUNS_ON` variable dynamically controls runner placement without requiring a
-commit or template re-render.
+Current workflows read `CI_RUNS_ON` with a rendered default. The four-class
+routing contract below is **planned until #1727 ships**; workflow rendering and
+setup reconciliation land separately. A class names the reason for different
+runner placement, while its JSON string or array value selects a runner label set.
+Provider names never belong in routing variable names.
+
+- **Default — `CI_RUNS_ON`:** general build, lint, test and aggregate work.
+- **Browser — `BROWSER_RUNS_ON`:** jobs executing a real browser.
+- **Image-build — `IMAGE_BUILD_RUNS_ON`:** Docker/devcontainer builds and their smokes.
+- **Isolated — `ISOLATED_RUNS_ON`:** jobs holding long-lived secrets, parsing
+  attacker-writable bodies or deploying, plus sub-minute API-only automation.
+
+Default falls back from `CI_RUNS_ON` to the rendered `ci_runs_on_default`.
+Browser and image-build fall back from their class variable to `CI_RUNS_ON`,
+then that rendered default. The rendered default is `"ubuntu-latest"` for
+GitHub-hosted profiles or the configured JSON label list for self-hosted profiles.
+Existing merge-group GitHub-hosted pins remain.
+
+Isolated uses `${{ fromJSON(vars.ISOLATED_RUNS_ON || '"ubuntu-latest"') }}`
+on every profile: it never inherits `CI_RUNS_ON` or the rendered default.
+Its host must be destroyed with the job, and its label set must not contain
+`self-hosted`. A disposable container on a persistent homelab host does not
+satisfy that boundary. The fallback can consume GitHub Actions minutes on private
+repositories even when their default pool is a homelab. The target shared-cache
+rule requires setup `cache: "false"` for secret-holding/deploying jobs, except
+`deploy-preview.yml` `deploy`: it builds the PR's own code, so cache poisoning
+grants nothing the PR does not already have. Existing violations remain in
+web-app `lint` (codegen split owned by #1729) and `sync-harmon-devkit.yml` `sync`
+(App `contents:write` token plus pnpm cache on `use_node`, owned by #1731).
+
+The [routing spec](https://github.com/evanharmon1/harmon-init/blob/main/specs/runner-routing-classes.md)
+owns the exhaustive job assignments and expressions; the
+[ADR](https://github.com/evanharmon1/harmon-init/blob/main/docs/decisions/2026-10-18-route-ci-jobs-by-class.md)
+records the trade-offs.
 
 ### Job-private filesystem contract
 
@@ -603,25 +634,13 @@ recreated runner rather than becoming repository state.
 
 ### Variable hierarchy and precedence
 
-Runner selection resolves hierarchically via GitHub Actions variables:
+For each routing variable, a repository value shadows the organization value
+of the same name. Class fallback is a separate step: browser/image-build may
+inherit `CI_RUNS_ON`, while isolated may not. Empty or inaccessible variables
+use the next tier; nonempty invalid JSON is an error.
 
-1. **Repository variable (`vars.CI_RUNS_ON`)**: An individual repository can set
-   `CI_RUNS_ON` (via `task setup:github` or `gh variable set CI_RUNS_ON --repo`).
-   In GitHub Actions, repository variables shadow organization variables of the
-   same name. This allows a repository to override the organization default (for
-   example, to opt into specialized hardware or pin a specific repository to
-   `"ubuntu-latest"`).
-2. **Organization variable (`vars.CI_RUNS_ON`)**: Organizations across the platform
-   (`ponderousdev`, `harmonops`, `sommerlawn`) define an organization-level
-   `CI_RUNS_ON` variable scoped via `selected` visibility to audited private
-   repositories (such as `["self-hosted","linux","x64","ponderousdev"]` or
-   `["self-hosted","linux","x64","harmonops","contraption"]`). All audited member
-   repositories inherit this fleet routing unless explicitly overridden at the
-   repository level.
-3. **Workflow fallback (`"ubuntu-latest"`)**: If neither a repository variable nor
-   an organization variable is defined or accessible, the workflow expression
-   cleanly falls back to `"ubuntu-latest"` (or the template's render-time default
-   `ci_runs_on_default`).
+Today `task setup:github` reconciles only `CI_RUNS_ON`, as described below.
+Setup does not yet reconcile the class variables; that is #1728's follow-up.
 
 ### Reconciliation and lifecycle
 
@@ -639,8 +658,9 @@ fallback safety net.
 
 ### Security boundaries
 
-That convenience is also the risk: it is a runtime change with no diff and no
-review. **Do not point a public repository at a persistent self-hosted runner.**
+Editing a routing variable changes runner placement at runtime without a commit
+or a reviewed diff. **Do not point a public repository at a persistent self-hosted
+runner.**
 Workflows here already refuse to check out fork-controlled code on the trusted
 aggregate job, but that contract bounds one specific job — it does not make a
 long-lived runner safe for untrusted contributions generally. A fork PR that can
