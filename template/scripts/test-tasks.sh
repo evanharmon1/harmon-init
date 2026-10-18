@@ -115,13 +115,35 @@ cat >"$concurrency_fixture/member.sh" <<'EOF'
 #!/usr/bin/env bash
 set -eu
 name=$1
+case "$name" in
+    eslint) peer=typecheck ;;
+    typecheck) peer=eslint ;;
+    suite-alpha) peer=suite-beta ;;
+    suite-beta) peer=suite-alpha ;;
+    *) echo "unknown concurrency fixture member: $name" >&2; exit 2 ;;
+esac
+if [ "${DELAY_START_FOR:-}" = "$name" ]; then
+    sleep "${DELAY_START_SECONDS:-0.5}"
+fi
 : >"$RUN_DIR/started-$name"
-if mkdir "$RUN_DIR/active" 2>/dev/null; then
-    sleep 0.3
-    rmdir "$RUN_DIR/active"
-else
+if [ "${EXPECT_OVERLAP:-no}" = yes ]; then
+    waited=0
+    while [ ! -f "$RUN_DIR/started-$peer" ]; do
+        if [ "$waited" -ge 200 ]; then
+            echo "timed out waiting for peer $peer to start" >&2
+            exit 10
+        fi
+        sleep 0.1
+        waited=$((waited + 1))
+    done
     : >"$RUN_DIR/overlap"
-    sleep 0.3
+else
+    if mkdir "$RUN_DIR/active" 2>/dev/null; then
+        sleep 0.3
+        rmdir "$RUN_DIR/active"
+    else
+        : >"$RUN_DIR/overlap"
+    fi
 fi
 if [ "${FAIL_TASK:-}" = "$name" ]; then exit 9; fi
 EOF
@@ -129,9 +151,12 @@ chmod +x "$concurrency_fixture/member.sh"
 
 run_concurrency_case() {
     local concurrency=$1 task_name=$2 failing_task=$3 expected=$4 overlap=$5 run_name=$6 members=$7
+    local delay_task=${8:-} delay_seconds=${9:-0.5}
     local run_dir="${concurrency_fixture}/${run_name}" output rc member
     mkdir -p "$run_dir"
-    if TASK_CONCURRENCY="$concurrency" TASK_FAILFAST=0 RUN_DIR="$run_dir" FAIL_TASK="$failing_task" \
+    if TASK_CONCURRENCY="$concurrency" EXPECT_OVERLAP="$overlap" TASK_FAILFAST=0 \
+        RUN_DIR="$run_dir" FAIL_TASK="$failing_task" DELAY_START_FOR="$delay_task" \
+        DELAY_START_SECONDS="$delay_seconds" \
         task --dir "$concurrency_fixture" --color=false "$task_name" >"$run_dir/output" 2>&1; then
         rc=0
     else
@@ -154,7 +179,7 @@ run_concurrency_case() {
     fi
 }
 
-run_concurrency_case 0 check '' pass yes check-parallel-pass 'eslint typecheck'
+run_concurrency_case 0 check '' pass yes check-parallel-pass 'eslint typecheck' typecheck 0.5
 run_concurrency_case 1 check '' pass no check-serial-pass 'eslint typecheck'
 run_concurrency_case 0 check typecheck fail yes check-parallel-fail 'eslint typecheck'
 run_concurrency_case 1 check typecheck fail no check-serial-fail 'eslint typecheck'
