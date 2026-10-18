@@ -737,16 +737,37 @@ echo "==> organization routing uses the repository's Enterprise host"
 STUB_CALLS="${TMP}/routing-ghe-calls.txt"
 export STUB_CALLS
 : >"$STUB_CALLS"
-out="$(GH_REPO=ghe.example.com/owner/internal GH_REPO_JSON="$internal_repo" GH_ROUTING_REPO_JSON='[]' GH_ROUTING_ORG_JSON="$routing_org" run_setup_section project)"
+out="$(GH_REPO=ghe.example.com/owner/internal GH_REPO_JSON="$internal_repo" GH_ROUTING_REPO_JSON="$routing_repo" GH_ROUTING_ORG_JSON="$routing_org" run_setup_section project)"
 case "$out" in
 *'CI_RUNS_ON (org) - "org-provider"'*) ;;
 *) fail "Enterprise organization routing was not shown: $out" ;;
 esac
-if ! /usr/bin/grep -F 'api repos/owner/internal/actions/organization-variables?per_page=30&page=1 --hostname ghe.example.com' "$STUB_CALLS" >/dev/null; then
+if ! grep -F 'api repos/owner/internal/actions/organization-variables?per_page=30&page=1 --hostname ghe.example.com' "$STUB_CALLS" >/dev/null; then
     fail "organization routing did not honor the Enterprise host: $(cat "$STUB_CALLS")"
 fi
-if /usr/bin/grep -F 'variable list --org' "$STUB_CALLS" >/dev/null; then fail "organization routing used an org-wide listing"; fi
+for request in 'variable list --repo ghe.example.com/owner/internal --json name,value' 'variable list --json name --repo ghe.example.com/owner/internal' 'variable get CI_RUNS_ON --json name,value --repo ghe.example.com/owner/internal'; do
+    grep -F "$request" "$STUB_CALLS" >/dev/null || fail "repository routing did not honor Enterprise host: $request"
+done
+case "$out" in
+*'BROWSER_RUNS_ON (repo) - "browser-provider"'*) ;;
+*) fail "Enterprise repository routing was not shown: $out" ;;
+esac
+if grep -F 'variable list --org' "$STUB_CALLS" >/dev/null; then fail "organization routing used an org-wide listing"; fi
 unset STUB_CALLS
+
+echo "==> isolated self-hosted repository and inherited values render violations"
+unsafe_isolated='[{"name":"ISOLATED_RUNS_ON","value":"[\"linux\",\"SELF-HOSTED\"]"}]'
+out="$(GH_REPO_JSON="$internal_repo" GH_ROUTING_REPO_JSON="$unsafe_isolated" GH_ROUTING_ORG_JSON="$unsafe_isolated" run_setup_section project)"
+for scope in repo org; do
+    case "$out" in
+    *"[ ] ISOLATED_RUNS_ON ($scope) - ISOLATED_RUNS_ON invariant violated"*) ;;
+    *) fail "unsafe isolated $scope value was not a violation: $out" ;;
+    esac
+done
+case "$out" in
+*'harmonops/harmon-infra routing reconciler'*) ;;
+*) fail "organization isolated violation omitted owner: $out" ;;
+esac
 
 echo "==> failed owner-type reads leave all organization routing values unknown"
 out="$(GH_REPO_JSON="$internal_repo" GH_OWNER_TYPE_FAIL=1 GH_ROUTING_REPO_JSON='[]' GH_ROUTING_ORG_JSON="$routing_org" run_setup_section project)"

@@ -9,6 +9,8 @@ exec 1>&2
 OUTPUT_FD=2
 # shellcheck source=scripts/lib/output.sh
 . "${script_dir}/lib/output.sh"
+# shellcheck source=scripts/lib/gh-rest.sh
+. "${script_dir}/lib/gh-rest.sh"
 
 repo=""
 bot_collaborator=""
@@ -91,15 +93,61 @@ for i in "${!routing_names[@]}"; do
     fi
 done
 
+collect_org_routing() {
+    local repo="$1" page=1 page_size=30 max_pages payload count expected="" total=0 pages=""
+    max_pages="$(gh_rest_max_pages)" || return 2
+    while [ "$page" -le "$max_pages" ]; do
+        payload="$(GH_REST_TIMEOUT="${GH_REST_TIMEOUT:-5}" gh_rest_api \
+            "repos/${repo}/actions/organization-variables?per_page=${page_size}&page=${page}")" || return
+        jq -se 'length == 1 and (.[0] |
+            (.total_count | type == "number" and . >= 0 and floor == .) and
+            (.variables | type == "array" and length <= 30 and all(.[];
+                type == "object" and (.name | type == "string") and (.value | type == "string"))))' \
+            >/dev/null 2>&1 <<<"$payload" || return 3
+        count="$(jq -r '.total_count' <<<"$payload")"
+        [ -z "$expected" ] && expected="$count"
+        [ "$expected" = "$count" ] || return 3
+        count="$(jq '.variables | length' <<<"$payload")"
+        total=$((total + count))
+        pages="${pages}$(jq -c '.variables' <<<"$payload")"$'\n'
+        if [ "$total" -eq "$expected" ]; then
+            jq -se 'add | if (unique_by(.name) | length) == length then . else error("duplicate variables") end' <<<"$pages"
+            return
+        fi
+        [ "$count" -eq "$page_size" ] && [ "$total" -lt "$expected" ] || return 3
+        page=$((page + 1))
+    done
+    return 4
+}
+
+# Runner selectors are JSON strings or arrays of labels.
+isolated_uses_self_hosted() {
+    printf '%s\n' "$1" | jq -e '
+        (if type == "array" then . else [.] end) |
+        any(.[]; type == "string" and ascii_downcase == "self-hosted")
+    ' >/dev/null 2>&1
+}
+
 fail_step() {
     local rc="$1" label="$2" detail="$3"
     checkline no "$label" "$detail (exit $rc)"
 }
 
+# Resolve the explicit target and its host together, before the first API call.
+GH_REST_HOST="${GH_REST_HOST-$(GH_REPO="$repo" gh_rest_host)}"
+repo="$(GH_REPO="$repo" gh_rest_repo)"
+routing_repo="$repo"
+if [ -n "$GH_REST_HOST" ] && [ "$GH_REST_HOST" != github.com ]; then routing_repo="$GH_REST_HOST/$repo"; fi
+
+if ! command -v jq >/dev/null 2>&1; then
+    echo "Required tool not found: jq" >&2
+    exit 1
+fi
+
 action_banner setup "GitHub repository" "Safety, vulnerability reporting, and automation access"
 kv "Repository" "$repo"
 
-if repo_visibility="$(gh api "repos/$repo" --jq '.visibility')"; then
+if repo_visibility="$(gh_rest_api "repos/$repo" --jq '.visibility')"; then
     :
 else
     rc=$?
@@ -114,13 +162,22 @@ public | private | internal) ;;
     ;;
 esac
 
-# Public repository overrides must shadow every organization routing value.
-if [ "$repo_visibility" = public ] && ! command -v jq >/dev/null 2>&1; then
-    echo "Required tool not found: jq" >&2
-    exit 1
+# An inherited unsafe isolated route belongs to the organization's reconciler.
+# Unknown is explicit, but an unreadable organization inventory is not a refusal.
+if org_routing="$(collect_org_routing "$repo" 2>/dev/null)"; then
+    org_isolated="$(jq -r '.[] | select(.name == "ISOLATED_RUNS_ON") | .value' <<<"$org_routing")"
+    if isolated_uses_self_hosted "$org_isolated"; then
+        fail_step 1 "ISOLATED_RUNS_ON invariant" "organization value contains self-hosted; organization-level owner: harmonops/harmon-infra routing reconciler"
+        exit 1
+    fi
+else
+    checkline unknown "ISOLATED_RUNS_ON (org)" "unknown — organization variable inventory unreadable"
 fi
-for i in "${!routing_names[@]}"; do
-    if [ "$repo_visibility" != public ] && ! ${routing_set[$i]}; then continue; fi
+
+# Inspect isolated first, even without a flag, before any repository mutation.
+# Public repository overrides must shadow every organization routing value.
+for i in 3 0 1 2; do
+    if [ "$i" != 3 ] && [ "$repo_visibility" != public ] && ! ${routing_set[$i]}; then continue; fi
     routing_name="${routing_names[$i]}"
     routing_value="${routing_values[$i]}"
     if [ "$repo_visibility" = public ] && ${routing_set[$i]} && [ "$routing_value" != '"ubuntu-latest"' ]; then
@@ -130,7 +187,7 @@ for i in "${!routing_names[@]}"; do
     current_routing_records=""
     current_routing_present=false
     current_routing=""
-    if current_routing_records="$(gh variable list --repo "$repo" --json name,value \
+    if current_routing_records="$(gh variable list --repo "$routing_repo" --json name,value \
         --jq "[.[] | select(.name == \"$routing_name\")]")"; then
         current_routing_count="$(jq -r 'length' <<<"$current_routing_records")"
         case "$current_routing_count" in
@@ -145,9 +202,17 @@ for i in "${!routing_names[@]}"; do
             ;;
         esac
 
+        if [ "$routing_name" = ISOLATED_RUNS_ON ] && $current_routing_present &&
+            isolated_uses_self_hosted "$current_routing" && [ "$repo_visibility" != public ] &&
+            ! { ${routing_set[$i]} && ${routing_replace[$i]}; }; then
+            fail_step 1 "ISOLATED_RUNS_ON invariant" "existing repository value contains self-hosted; pass a safe --isolated-runs-on with --replace-isolated-runs-on to repair it"
+            exit 1
+        fi
+        if [ "$repo_visibility" != public ] && ! ${routing_set[$i]}; then continue; fi
+
         if ! $current_routing_present; then
             if output_run "Creating Actions runner routing" \
-                gh api "repos/$repo/actions/variables" --method POST \
+                gh_rest_api "repos/$repo/actions/variables" --method POST \
                 -f name="$routing_name" -f value="$routing_value"; then
                 if [ "$repo_visibility" = public ]; then
                     checkline ok "Actions runner routing" "created ${routing_name} (public repository safety enforcement)"
@@ -164,7 +229,7 @@ for i in "${!routing_names[@]}"; do
         else
             if [ "$repo_visibility" = public ]; then
                 if output_run "Enforcing public repository runner safety" \
-                    gh variable set "$routing_name" --repo "$repo" --body '"ubuntu-latest"'; then
+                    gh variable set "$routing_name" --repo "$routing_repo" --body '"ubuntu-latest"'; then
                     checkline ok "Actions runner routing" "standardized public ${routing_name} to ubuntu-latest (public repository safety enforcement)"
                 else
                     rc=$?
@@ -173,7 +238,7 @@ for i in "${!routing_names[@]}"; do
                 fi
             elif ${routing_replace[$i]}; then
                 if output_run "Replacing Actions runner routing" \
-                    gh variable set "$routing_name" --repo "$repo" --body "$routing_value"; then
+                    gh variable set "$routing_name" --repo "$routing_repo" --body "$routing_value"; then
                     checkline ok "Actions runner routing" "replaced ${routing_name} by explicit request"
                 else
                     rc=$?
@@ -195,7 +260,7 @@ done
 # independent repository settings below so an unrelated API failure cannot
 # leave a public repository on a previously unsafe route.
 if output_run "Enabling Dependabot alerts" \
-    gh api "repos/$repo/vulnerability-alerts" --method PUT; then
+    gh_rest_api "repos/$repo/vulnerability-alerts" --method PUT; then
     checkline ok "Dependabot alerts" "enabled"
 else
     rc=$?
@@ -205,7 +270,7 @@ fi
 
 if [ "$repo_visibility" = public ]; then
     if output_run "Enabling private vulnerability reporting" \
-        gh api "repos/$repo/private-vulnerability-reporting" --method PUT; then
+        gh_rest_api "repos/$repo/private-vulnerability-reporting" --method PUT; then
         checkline ok "Private vulnerability reporting" "enabled"
     else
         rc=$?
@@ -222,11 +287,11 @@ if [ -n "$bot_collaborator" ]; then
     # A follow-up permission lookup cannot distinguish a pending invite from a
     # lookup failure, which was the old implementation's misleading fallback.
     if collaborator_response="$(output_run "Adding bot collaborator" \
-        gh api "repos/$repo/collaborators/$bot_collaborator" --method PUT -f permission=push)"; then
+        gh_rest_api "repos/$repo/collaborators/$bot_collaborator" --method PUT -f permission=push)"; then
         if [ -n "$collaborator_response" ]; then
             bot_pending=true
             checkline unknown "Bot collaborator" "invitation sent to $bot_collaborator; access starts after acceptance"
-        elif permission="$(gh api "repos/$repo/collaborators/$bot_collaborator/permission" \
+        elif permission="$(gh_rest_api "repos/$repo/collaborators/$bot_collaborator/permission" \
             --jq '.permission' 2>/dev/null)"; then
             case "$permission" in
             admin | maintain | push | write)

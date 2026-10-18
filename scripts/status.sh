@@ -962,12 +962,14 @@ if [[ "${SECTION}" == "setup" ]]; then
         fi
 
         if ${HAS_REMOTE}; then
+            ROUTING_HOST="${GH_REST_HOST-$(gh_rest_host)}"
+            ROUTING_REPO="${ROUTING_HOST:+${ROUTING_HOST}/}${NWO}"
             OWNER="${NWO%%/*}"
             REPO="${NWO##*/}"
             VISIBILITY="$(jq -r '.visibility // "?"' "${d}/repo.json" | tr '[:upper:]' '[:lower:]')"
             IS_PRIVATE="$(jq -r '.private // false' "${d}/repo.json")"
             DEFAULT_BRANCH="$(jq -r '.default_branch // "?"' "${d}/repo.json")"
-            OWNER_TYPE="$(run_timeout "${NETWORK_TIMEOUT}" gh api "repos/${OWNER}/${REPO}" \
+            OWNER_TYPE="$(GH_REST_TIMEOUT="${NETWORK_TIMEOUT}" gh_rest_api "repos/${OWNER}/${REPO}" \
                 --jq '.owner.type' 2>/dev/null || echo "unknown")"
             if [[ "${OWNER_TYPE}" == "Organization" ]]; then
                 PKG_NS="orgs"
@@ -987,7 +989,7 @@ if [[ "${SECTION}" == "setup" ]]; then
             # --json name fetches ONLY names, never secret/variable values.
             (run_timeout "${NETWORK_TIMEOUT}" gh secret list --json name \
                 >"${d}/secrets.json" 2>/dev/null || echo '[]' >"${d}/secrets.json") &
-            (if run_timeout "${NETWORK_TIMEOUT}" gh variable list --json name \
+            (if run_timeout "${NETWORK_TIMEOUT}" gh variable list --json name --repo "$ROUTING_REPO" \
                 >"${d}/vars.json" 2>/dev/null; then
                 echo yes >"${d}/vars-probe"
             else
@@ -997,7 +999,7 @@ if [[ "${SECTION}" == "setup" ]]; then
             # CI_RUNS_ON is a non-secret Actions variable whose exact public
             # value is a security boundary. Fetch only that value; never widen
             # the general variable inventory from names to values.
-            (if run_timeout "${NETWORK_TIMEOUT}" gh variable get CI_RUNS_ON --json name,value \
+            (if run_timeout "${NETWORK_TIMEOUT}" gh variable get CI_RUNS_ON --json name,value --repo "$ROUTING_REPO" \
                 >"${d}/ci-runs-on.json" 2>/dev/null; then
                 echo yes >"${d}/ci-runs-on-probe"
             else
@@ -1015,7 +1017,7 @@ if [[ "${SECTION}" == "setup" ]]; then
                         echo na >"${d}/routing-${routing_scope}.state"
                     elif {
                         if [ "$routing_scope" = repo ]; then
-                            run_timeout "${NETWORK_TIMEOUT}" gh variable list --repo "$NWO" \
+                            run_timeout "${NETWORK_TIMEOUT}" gh variable list --repo "$ROUTING_REPO" \
                                 --json name,value --jq '[.[] | select(.name == "CI_RUNS_ON" or .name == "BROWSER_RUNS_ON" or .name == "IMAGE_BUILD_RUNS_ON" or .name == "ISOLATED_RUNS_ON")]'
                         elif [ "$OWNER_TYPE" = Organization ]; then
                             collect_org_routing "$NWO"
@@ -1308,7 +1310,19 @@ if [[ "${SECTION}" == "setup" ]]; then
                         case "$routing_state" in
                         ok)
                             routing_display="$(jq -r --arg name "$routing_name" '[.[] | select(.name == $name)] | if length == 0 then "unset" else .[0].value end' "${d}/routing-${routing_scope}.json")"
-                            checkline info "$routing_name ($routing_scope)" "$routing_display"
+                            if [ "$routing_name" = ISOLATED_RUNS_ON ] &&
+                                printf '%s\n' "$routing_display" | jq -e '
+                                    (if type == "array" then . else [.] end) |
+                                    any(.[]; type == "string" and ascii_downcase == "self-hosted")
+                                ' >/dev/null 2>&1; then
+                                if [ "$routing_scope" = org ]; then
+                                    checkline no "$routing_name ($routing_scope)" "ISOLATED_RUNS_ON invariant violated: self-hosted; organization-level owner: harmonops/harmon-infra routing reconciler"
+                                else
+                                    checkline no "$routing_name ($routing_scope)" "ISOLATED_RUNS_ON invariant violated: self-hosted; repair with a safe isolated value and --replace-isolated-runs-on"
+                                fi
+                            else
+                                checkline info "$routing_name ($routing_scope)" "$routing_display"
+                            fi
                             ;;
                         na) checkline na "$routing_name ($routing_scope)" "not an organization" ;;
                         *) checkline unknown "$routing_name ($routing_scope)" "unknown — variable inventory unreadable" ;;
