@@ -647,22 +647,52 @@ of the same name. Class fallback is a separate step: browser/image-build may
 inherit `CI_RUNS_ON`, while isolated may not. Empty or inaccessible variables
 use the next tier; nonempty invalid JSON is an error.
 
-Today `task setup:github` reconciles only `CI_RUNS_ON`, as described below.
-Setup does not yet reconcile the class variables; that is #1728's follow-up.
+`task setup:github` reconciles all four routing variables, as described below.
 
 ### Reconciliation and lifecycle
 
-`task setup:github` creates the repository-level variable when it is missing and
-preserves every existing value on non-public repositories; it never infers
-ownership from a JSON shape. An intentional replacement requires
-`scripts/setup-github.sh` with `--replace-ci-runs-on`. Public repositories are
-the safety exception and are always canonicalized to `"ubuntu-latest"`.
+`task setup:github` reconciles `CI_RUNS_ON`, `BROWSER_RUNS_ON`,
+`IMAGE_BUILD_RUNS_ON` and `ISOLATED_RUNS_ON` through `scripts/setup-github.sh`.
+On private/internal repositories, a missing repository variable is created only
+when its value flag is supplied. Existing values are preserved unless that
+variable's value and replacement flags are supplied together, subject to the
+isolated-runner invariant below. No ownership is inferred from a JSON shape.
 
-For `harmon-init` itself (as a public root repository), `task setup:github`
-explicitly sets `CI_RUNS_ON="ubuntu-latest"` at the repository variable layer.
-Its workflow actions dynamically evaluate `${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}`,
-so runner selection is driven through the variable while retaining the hardcoded
-fallback safety net.
+| Variable | Value flag | Replacement flag |
+|---|---|---|
+| `CI_RUNS_ON` | `--ci-runs-on` | `--replace-ci-runs-on` |
+| `BROWSER_RUNS_ON` | `--browser-runs-on` | `--replace-browser-runs-on` |
+| `IMAGE_BUILD_RUNS_ON` | `--image-build-runs-on` | `--replace-image-build-runs-on` |
+| `ISOLATED_RUNS_ON` | `--isolated-runs-on` | `--replace-isolated-runs-on` |
+
+A replacement flag requires its corresponding value flag. `task setup:github`
+supplies the rendered CI runner answer; pass additional class flags after `--`,
+for example `task setup:github -- --browser-runs-on '"ubuntu-latest"'`.
+
+Public repositories always receive all four repository-level overrides as exact
+`"ubuntu-latest"`, even without value or replacement flags. Missing values are
+created and differing values are replaced, including malformed existing isolated
+selectors. These overrides are written before existing/inherited isolated checks,
+so organization-level routing cannot send public jobs to a persistent pool.
+
+Requested unsafe or unsupported `ISOLATED_RUNS_ON` selectors fail before any
+GitHub access or write, including on public repositories. The invariant refuses
+`self-hosted` labels case-insensitively, including labels inside object selectors.
+On private/internal repositories, an existing self-hosted isolated value fails
+unless the same run supplies a safe value and `--replace-isolated-runs-on`;
+unsupported existing selectors also fail closed. A readable unsafe or unsupported
+organization isolated value fails only when actually inherited, with no repository
+override. A safe repository override shadows it and produces a warning instead.
+Unreadable or incomplete organization inventory is reported as unknown and does
+not fail the run. Ask the organization's routing owner to repair an inherited
+value, or supply a safe repository override. Passing the label check does not
+prove host isolation: custom pools still require operator attestation that the
+host is destroyed with the job.
+
+For `harmon-init` itself (as a public root repository), setup creates or replaces
+all four repository routing variables with `"ubuntu-latest"`. Workflow routing
+uses these repository values, shadowing organization routing while retaining the
+GitHub-hosted fallback.
 
 ### Security boundaries
 
