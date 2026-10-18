@@ -3393,14 +3393,21 @@ if grep -Eq '^project_type:[[:space:]]+web-app$' .copier-answers.yml; then
     else
         required task "codegen reachability" || fail=1
     fi
-    # The other half of the mirror: CI must run the same guard, or local `ci`
-    # and the PR disagree in the opposite direction.
-    grep -q 'task guard:codegen' .github/workflows/build.yml ||
-        err "build.yml never runs guard:codegen — CI would not catch stale generated files that local verify does"
-    grep -qF "CONVEX_DEPLOY_KEY: \${{ github.event_name != 'merge_group' && secrets.CONVEX_DEPLOY_KEY || '' }}" .github/workflows/build.yml ||
-        err "build.yml does not gate CONVEX_DEPLOY_KEY off merge_group for guard:codegen — merge_group would expose the secret to queued fork code"
-    ! grep -qF 'CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}' .github/workflows/build.yml ||
-        err "build.yml passes CONVEX_DEPLOY_KEY unconditionally without excluding merge_group"
+    # CI must run the guard in its isolated, uncached job. Slice jobs so a
+    # step elsewhere (or a comment) cannot satisfy the codegen assertions.
+    codegen_job="$(awk '/^  codegen-guard:[[:space:]]*$/ { on = 1; next } on && /^  [^ #]/ { exit } on' .github/workflows/build.yml)"
+    check_job="$(awk '/^  check:[[:space:]]*$/ { on = 1; next } on && /^  [^ #]/ { exit } on' .github/workflows/build.yml)"
+    grep -Eq '^[[:space:]]+cache:[[:space:]]+"false"[[:space:]]*$' <<<"$codegen_job" ||
+        err "build.yml codegen-guard job does not disable the shared cache"
+    grep -Eq '^[[:space:]]*(-[[:space:]]+)?run:[[:space:]]+task guard:codegen[[:space:]]*$' <<<"$codegen_job" ||
+        err "build.yml codegen-guard job never runs guard:codegen"
+    grep -F "CONVEX_DEPLOY_KEY: \${{ github.event_name != 'merge_group' && secrets.CONVEX_DEPLOY_KEY || '' }}" <<<"$codegen_job" |
+        grep -Eq '^[[:space:]]+CONVEX_DEPLOY_KEY:' ||
+        err "build.yml codegen-guard job does not gate CONVEX_DEPLOY_KEY off merge_group"
+    ! grep -qF 'CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}' <<<"$codegen_job" ||
+        err "build.yml codegen-guard job passes CONVEX_DEPLOY_KEY without excluding merge_group"
+    ! grep -qF 'CONVEX_DEPLOY_KEY' <<<"$check_job" ||
+        err "build.yml check job must not contain CONVEX_DEPLOY_KEY"
     # Exercise codegen.sh with a stub `convex` binary in an isolated git tree:
     #   1. unconfigured (no Convex deployment selector in env, .env.local or
     #      .env, or only empty/commented lines, or a non-selector CONVEX_* var,

@@ -36,7 +36,7 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
   outside the aggregate it guards: it fails if the workflow drops the
   `ci:repo-guards` call, that task drops `test:suite`, or `verify` drops the
   suite or adds a stray `test:*` entry.
-  The split runs `check`, repository guards and devcontainer permissions in parallel,
+  The split runs `check` and repository guards, plus devcontainer permissions in parallel,
   reducing the critical path to the longest job. Each additional job pays a
   setup phase and its own per-minute billing rounding; this can increase
   runner minutes and queueing on a small self-hosted pool. Measure the

@@ -84,7 +84,7 @@ tasks:
   ci:repo-guards:
     # CI-only aggregate: verify lists its offline members separately.
     # The workflow parity step stays outside this task so it can guard the suite call.
-    desc: Repository instruction audit, test suite and skills drift
+    desc: Repository instruction audit and test suite, plus skills drift
     cmds:
       - task: audit:agent-instructions
       - task: test:suite

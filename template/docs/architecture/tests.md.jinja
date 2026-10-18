@@ -151,6 +151,9 @@ Other rules:
 - Test files live in `tests/` at the repo root (or co-located per framework convention).
 - `task verify` is the local definition-of-done gate[% if use_node %]; `task ci` adds the
   port-binding e2e tier and security, on demand when CI is red[% endif %]. CI runs the same task targets.
+  The `repo-guards` job calls `ci:repo-guards` for the instruction audit,
+  shared `test:suite`[% if use_skills_sync %], and network skills check[% endif %].
+  Other gates have their own jobs (`check`[% if project_type == 'web-app' %], `codegen-guard`[% endif %][% if devcontainer %], `devcontainer-permissions`[% endif %]).
 [% if project_type in ['web-astro', 'web-app'] %]
 - Playwright runs desktop Chromium/Firefox/WebKit **and mobile device
   projects** (e.g. Pixel + iPhone). The scaffold ships the mobile projects
