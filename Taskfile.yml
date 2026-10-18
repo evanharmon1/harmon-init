@@ -96,7 +96,7 @@ tasks:
     # Suite members were audited: filesystem and Git mutations are confined to
     # per-run temporary fixtures; the suite has no shared checkout writes or
     # port listeners. Use TASK_CONCURRENCY=1 for serial execution on smaller runners.
-    desc: The test:* targets verify and the Build workflow's lint job both run (Task concurrency {{env "TASK_CONCURRENCY" | default "0"}}; set TASK_CONCURRENCY=1 for serial)
+    desc: The test:* targets verify and the Build workflow's lint job both run in parallel (set TASK_CONCURRENCY=1 for serial execution)
     deps:
       - task: test:agent-instructions-size
       - task: test:agent-skill-links
@@ -160,7 +160,7 @@ tasks:
 
   # ── Quality Checks ────────────────────────────────────────────
   check:
-    desc: Run all linters (Task concurrency {{env "TASK_CONCURRENCY" | default "0"}}; set TASK_CONCURRENCY=1 for serial)
+    desc: Run all linters in parallel (set TASK_CONCURRENCY=1 for serial execution)
     deps: [lint]
 
   audit:agent-instructions:

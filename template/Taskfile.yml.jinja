@@ -123,7 +123,7 @@ tasks:
     # Suite members were audited: filesystem and Git mutations are confined to
     # per-run temporary fixtures; the suite has no shared checkout writes or
     # port listeners. Use TASK_CONCURRENCY=1 for serial execution on smaller runners.
-    desc: The test:* targets verify and the Build workflow's lint job both run (Task concurrency {{env "TASK_CONCURRENCY" | default "0"}}; set TASK_CONCURRENCY=1 for serial)
+    desc: The test:* targets verify and the Build workflow's lint job both run in parallel (set TASK_CONCURRENCY=1 for serial execution)
     deps:
       - task: test:agent-instructions-size
       - task: test:agent-skill-links
@@ -186,9 +186,9 @@ tasks:
   check:
     # Fast local gate (target: well under a minute) — safe for editors, git
     # hooks, and AI agents to run on every change without getting bogged down.
+[% if use_node %]
     # Node profiles that run ESLint beside typecheck can use about 5.3 GB RSS
     # together; budget a ~6 GB peak. TASK_CONCURRENCY=1 serializes these deps.
-[% if use_node %]
     # Static analysis only, and PORT-FREE: nothing here starts a server, so
     # parallel agents/worktrees never collide. Anything that binds a port
     # (test:e2e) belongs in `ci`.
@@ -197,7 +197,7 @@ tasks:
     # Read-only, too — the pre-commit hooks run these targets directly, so
     # nothing here may write. `codegen` therefore sits in `verify`, not here.
 [% endif %]
-    desc: Fast local gate — all linters[% if use_node %] + typecheck[% endif %] (Task concurrency {{env "TASK_CONCURRENCY" | default "0"}}; set TASK_CONCURRENCY=1 for serial)
+    desc: Fast local gate — all linters (and TypeScript checking when enabled), in parallel (set TASK_CONCURRENCY=1 for serial execution)
     deps:
       - lint
 [% if use_node %]

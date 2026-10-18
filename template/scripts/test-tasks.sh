@@ -49,43 +49,50 @@ for taskfile in Taskfile.yml template/Taskfile.yml.jinja; do
 
     suite_block="$(task_block "$taskfile" test:suite)"
     [ -n "$suite_block" ] || fail "${taskfile}: test:suite task not found"
-    printf '%s\n' "$suite_block" | /usr/bin/grep -Eq '^    deps:' ||
+    printf '%s\n' "$suite_block" | grep -Eq '^    deps:' ||
         fail "${taskfile}: test:suite members are not parallel deps"
-    if printf '%s\n' "$suite_block" | /usr/bin/grep -Eq '^    cmds:'; then
+    if printf '%s\n' "$suite_block" | grep -Eq '^    cmds:'; then
         fail "${taskfile}: test:suite has a second sequential member list"
     fi
-    printf '%s\n' "$suite_block" | /usr/bin/grep -Fq 'TASK_CONCURRENCY=1' ||
+    printf '%s\n' "$suite_block" | grep -Fq 'TASK_CONCURRENCY=1' ||
         fail "${taskfile}: test:suite does not document Task's serial override"
 
     check_block="$(task_block "$taskfile" check)"
     [ -n "$check_block" ] || fail "${taskfile}: check task not found"
-    printf '%s\n' "$check_block" | /usr/bin/grep -Eq '^    deps:' ||
+    printf '%s\n' "$check_block" | grep -Eq '^    deps:' ||
         fail "${taskfile}: check is not defined through parallel deps"
-    printf '%s\n' "$check_block" | /usr/bin/grep -Fq 'TASK_CONCURRENCY=1' ||
+    printf '%s\n' "$check_block" | grep -Fq 'TASK_CONCURRENCY=1' ||
         fail "${taskfile}: check does not document Task's serial override"
 done
 [ "$checked_task_groups" -gt 0 ] || fail "no Taskfile check/test:suite groups were inspected"
 
-for task_name in check test:suite; do
-    task_summary="$(TASK_CONCURRENCY=1 task --color=false --summary "$task_name" 2>&1)"
-    printf '%s\n' "$task_summary" | /usr/bin/grep -Fq 'Task concurrency 1' ||
-        fail "${task_name}: Taskfile did not read TASK_CONCURRENCY through its Go template"
-done
-
 if [ -f template/Taskfile.yml.jinja ]; then
     template_check="$(task_block template/Taskfile.yml.jinja check)"
-    printf '%s\n' "$template_check" | /usr/bin/grep -Fq 'lint:typescript' ||
+    printf '%s\n' "$template_check" | grep -Fq 'lint:typescript' ||
         fail "template Taskfile check dropped its parallel typecheck dependency"
-    printf '%s\n' "$template_check" | /usr/bin/grep -Fq '~6 GB' ||
-        fail "template Taskfile check does not document the parallel memory floor"
+    if printf '%s\n' "$template_check" | grep -Fq 'lint:typescript'; then
+        printf '%s\n' "$template_check" | grep -Fq '~6 GB' ||
+            fail "template Taskfile check does not document the parallel memory floor"
+    fi
 fi
 
 for doc in docs/architecture/tests.md template/docs/architecture/tests.md.jinja; do
     [ -f "$doc" ] || continue
-    /usr/bin/grep -Fq 'TASK_CONCURRENCY=1' "$doc" ||
+    grep -Fq 'TASK_CONCURRENCY=1' "$doc" ||
         fail "${doc}: serial Task concurrency setting is undocumented"
-    /usr/bin/grep -Fq '6 GB' "$doc" ||
-        fail "${doc}: parallel check memory floor is undocumented"
+    doc_taskfile=Taskfile.yml
+    case "$doc" in
+    template/docs/architecture/tests.md.jinja)
+        doc_taskfile=template/Taskfile.yml.jinja
+        ;;
+    esac
+    if [ -f "$doc_taskfile" ]; then
+        doc_check="$(task_block "$doc_taskfile" check)"
+        if printf '%s\n' "$doc_check" | grep -Fq 'lint:typescript'; then
+            grep -Fq '6 GB' "$doc" ||
+                fail "${doc}: parallel check memory floor is undocumented"
+        fi
+    fi
 done
 
 echo "==> Task concurrency setting serializes dependency fan-out without changing results"
@@ -1091,7 +1098,7 @@ for taskfile in Taskfile.yml template/Taskfile.yml.jinja; do
     [ -n "$block" ] || fail "${taskfile}: setup:github task not found"
     grep -Fq './scripts/setup-github.sh --repo "{{.REPO}}"' <<<"$block" ||
         fail "${taskfile}: setup:github does not delegate to scripts/setup-github.sh"
-    if grep -Eq 'gh api|^[[:space:]]*-[[:space:]]*\|' <<<"$block"; then
+    if grep -Eq 'gh api|^[[:space:]]*-[[:space:]]*[|]' <<<"$block"; then
         fail "${taskfile}: setup:github contains inline action logic instead of a trivial script command"
     fi
 done
@@ -1119,7 +1126,7 @@ for taskfile in Taskfile.yml template/Taskfile.yml.jinja; do
         fail "${taskfile}: groom precondition message does not name the universal category"
     grep -Fq 'task sync:skills' <<<"$block" ||
         fail "${taskfile}: groom precondition message does not name task sync:skills"
-    if grep -Eq '^[[:space:]]*-[[:space:]]*\|' <<<"$block"; then
+    if grep -Eq '^[[:space:]]*-[[:space:]]*[|]' <<<"$block"; then
         fail "${taskfile}: groom contains inline multiline shell in cmds instead of a single wrapper invocation"
     fi
 done
