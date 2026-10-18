@@ -32,6 +32,167 @@ check_taskfile_paths() {
     done
 }
 
+task_block() {
+    local taskfile=$1 task_name=$2
+    awk -v target="  ${task_name}:" '
+        $0 == target { in_task = 1; next }
+        in_task && /^  [[:alnum:]_-]+:/ { exit }
+        in_task { print }
+    ' "$taskfile"
+}
+
+echo "==> check and test:suite expose parallel deps and the serial concurrency knob"
+checked_task_groups=0
+for taskfile in Taskfile.yml template/Taskfile.yml.jinja; do
+    [ -f "$taskfile" ] || continue
+    checked_task_groups=$((checked_task_groups + 1))
+
+    suite_block="$(task_block "$taskfile" test:suite)"
+    [ -n "$suite_block" ] || fail "${taskfile}: test:suite task not found"
+    printf '%s\n' "$suite_block" | grep -Eq '^    deps:' ||
+        fail "${taskfile}: test:suite members are not parallel deps"
+    if printf '%s\n' "$suite_block" | grep -Eq '^    cmds:'; then
+        fail "${taskfile}: test:suite has a second sequential member list"
+    fi
+    printf '%s\n' "$suite_block" | grep -Fq 'TASK_CONCURRENCY=1' ||
+        fail "${taskfile}: test:suite does not document Task's serial override"
+
+    check_block="$(task_block "$taskfile" check)"
+    [ -n "$check_block" ] || fail "${taskfile}: check task not found"
+    printf '%s\n' "$check_block" | grep -Eq '^    deps:' ||
+        fail "${taskfile}: check is not defined through parallel deps"
+    printf '%s\n' "$check_block" | grep -Fq 'TASK_CONCURRENCY=1' ||
+        fail "${taskfile}: check does not document Task's serial override"
+done
+[ "$checked_task_groups" -gt 0 ] || fail "no Taskfile check/test:suite groups were inspected"
+
+if [ -f template/Taskfile.yml.jinja ]; then
+    template_check="$(task_block template/Taskfile.yml.jinja check)"
+    printf '%s\n' "$template_check" | grep -Fq 'lint:typescript' ||
+        fail "template Taskfile check dropped its parallel typecheck dependency"
+    printf '%s\n' "$template_check" | grep -Fq '~6 GB' ||
+        fail "template Taskfile check does not document the parallel memory floor"
+fi
+
+for doc in docs/architecture/tests.md template/docs/architecture/tests.md.jinja; do
+    [ -f "$doc" ] || continue
+    grep -Fq 'TASK_CONCURRENCY=1' "$doc" ||
+        fail "${doc}: serial Task concurrency setting is undocumented"
+    doc_taskfile=Taskfile.yml
+    case "$doc" in
+    template/docs/architecture/tests.md.jinja)
+        doc_taskfile=template/Taskfile.yml.jinja
+        ;;
+    esac
+    if [ -f "$doc_taskfile" ]; then
+        doc_check="$(task_block "$doc_taskfile" check)"
+        if printf '%s\n' "$doc_check" | grep -Fq 'lint:typescript'; then
+            grep -Fq '6 GB' "$doc" ||
+                fail "${doc}: parallel check memory floor is undocumented"
+        fi
+    fi
+done
+
+echo "==> Task concurrency setting serializes dependency fan-out without changing results"
+concurrency_fixture="${test_tmp}/task-concurrency-fixture"
+mkdir -p "$concurrency_fixture"
+cat >"$concurrency_fixture/Taskfile.yml" <<'EOF'
+version: "3"
+tasks:
+  check:
+    deps: [eslint, typecheck]
+  test:suite:
+    deps: [suite:alpha, suite:beta]
+  eslint:
+    cmds:
+      - ./member.sh eslint
+  typecheck:
+    cmds:
+      - ./member.sh typecheck
+  suite:alpha:
+    cmds:
+      - ./member.sh suite-alpha
+  suite:beta:
+    cmds:
+      - ./member.sh suite-beta
+EOF
+cat >"$concurrency_fixture/member.sh" <<'EOF'
+#!/usr/bin/env bash
+set -eu
+name=$1
+case "$name" in
+    eslint) peer=typecheck ;;
+    typecheck) peer=eslint ;;
+    suite-alpha) peer=suite-beta ;;
+    suite-beta) peer=suite-alpha ;;
+    *) echo "unknown concurrency fixture member: $name" >&2; exit 2 ;;
+esac
+if [ "${DELAY_START_FOR:-}" = "$name" ]; then
+    sleep "${DELAY_START_SECONDS:-0.5}"
+fi
+: >"$RUN_DIR/started-$name"
+if [ "${EXPECT_OVERLAP:-no}" = yes ]; then
+    waited=0
+    while [ ! -f "$RUN_DIR/started-$peer" ]; do
+        if [ "$waited" -ge 200 ]; then
+            echo "timed out waiting for peer $peer to start" >&2
+            exit 10
+        fi
+        sleep 0.1
+        waited=$((waited + 1))
+    done
+    : >"$RUN_DIR/overlap"
+else
+    if mkdir "$RUN_DIR/active" 2>/dev/null; then
+        sleep 0.3
+        rmdir "$RUN_DIR/active"
+    else
+        : >"$RUN_DIR/overlap"
+    fi
+fi
+if [ "${FAIL_TASK:-}" = "$name" ]; then exit 9; fi
+EOF
+chmod +x "$concurrency_fixture/member.sh"
+
+run_concurrency_case() {
+    local concurrency=$1 task_name=$2 failing_task=$3 expected=$4 overlap=$5 run_name=$6 members=$7
+    local delay_task=${8:-} delay_seconds=${9:-0.5}
+    local run_dir="${concurrency_fixture}/${run_name}" rc member
+    mkdir -p "$run_dir"
+    if TASK_CONCURRENCY="$concurrency" EXPECT_OVERLAP="$overlap" TASK_FAILFAST=0 \
+        RUN_DIR="$run_dir" FAIL_TASK="$failing_task" DELAY_START_FOR="$delay_task" \
+        DELAY_START_SECONDS="$delay_seconds" \
+        task --dir "$concurrency_fixture" --color=false "$task_name" >"$run_dir/output" 2>&1; then
+        rc=0
+    else
+        rc=$?
+    fi
+
+    if [ "$expected" = pass ]; then
+        [ "$rc" -eq 0 ] || fail "${run_name}: expected pass with TASK_CONCURRENCY=${concurrency}: $(cat "$run_dir/output")"
+    else
+        [ "$rc" -ne 0 ] || fail "${run_name}: a failing dependency passed with TASK_CONCURRENCY=${concurrency}"
+    fi
+    for member in $members; do
+        [ -f "$run_dir/started-${member}" ] ||
+            fail "${run_name}: dependency ${member} did not run with TASK_CONCURRENCY=${concurrency}"
+    done
+    if [ "$overlap" = yes ]; then
+        [ -f "$run_dir/overlap" ] || fail "${run_name}: default parallel dependencies did not overlap"
+    else
+        [ ! -e "$run_dir/overlap" ] || fail "${run_name}: TASK_CONCURRENCY=1 allowed dependencies to overlap"
+    fi
+}
+
+run_concurrency_case 0 check '' pass yes check-parallel-pass 'eslint typecheck' typecheck 0.5
+run_concurrency_case 1 check '' pass no check-serial-pass 'eslint typecheck'
+run_concurrency_case 0 check typecheck fail yes check-parallel-fail 'eslint typecheck'
+run_concurrency_case 1 check typecheck fail no check-serial-fail 'eslint typecheck'
+run_concurrency_case 0 test:suite '' pass yes suite-parallel-pass 'suite-alpha suite-beta'
+run_concurrency_case 1 test:suite '' pass no suite-serial-pass 'suite-alpha suite-beta'
+run_concurrency_case 0 test:suite suite-beta fail yes suite-parallel-fail 'suite-alpha suite-beta'
+run_concurrency_case 1 test:suite suite-beta fail no suite-serial-fail 'suite-alpha suite-beta'
+
 echo "==> Taskfile paths derive from ROOT_DIR or TASKFILE_DIR, never PWD"
 # Assemble the copier marker so this verbatim script ships without an
 # unrendered marker, just like the path-safe formatter fixture below.
@@ -935,7 +1096,7 @@ for taskfile in Taskfile.yml template/Taskfile.yml.jinja; do
     [ -n "$block" ] || fail "${taskfile}: setup:github task not found"
     grep -Fq './scripts/setup-github.sh --repo "{{.REPO}}"' <<<"$block" ||
         fail "${taskfile}: setup:github does not delegate to scripts/setup-github.sh"
-    if grep -Eq 'gh api|^[[:space:]]*-[[:space:]]*\|' <<<"$block"; then
+    if grep -Eq 'gh api|^[[:space:]]*-[[:space:]]*[|]' <<<"$block"; then
         fail "${taskfile}: setup:github contains inline action logic instead of a trivial script command"
     fi
 done
@@ -963,7 +1124,7 @@ for taskfile in Taskfile.yml template/Taskfile.yml.jinja; do
         fail "${taskfile}: groom precondition message does not name the universal category"
     grep -Fq 'task sync:skills' <<<"$block" ||
         fail "${taskfile}: groom precondition message does not name task sync:skills"
-    if grep -Eq '^[[:space:]]*-[[:space:]]*\|' <<<"$block"; then
+    if grep -Eq '^[[:space:]]*-[[:space:]]*[|]' <<<"$block"; then
         fail "${taskfile}: groom contains inline multiline shell in cmds instead of a single wrapper invocation"
     fi
 done

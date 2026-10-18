@@ -120,8 +120,9 @@ tasks:
     # else; `test:verify-ci-parity` fails if either caller stops running it.
     # Not in this list: `build`, `validate` and `test` (the project's own tiers
     # — CI runs them in their own job) and the `ci`-only checks.
-    desc: The test:* targets verify and the Build workflow's lint job both run
-    cmds:
+    # Members run concurrently: each must confine filesystem and Git writes to its own mktemp fixture and bind no port.
+    desc: The test:* targets verify and the Build workflow's lint job both run (members run in parallel; set TASK_CONCURRENCY=1 for serial execution)
+    deps:
       - task: test:agent-instructions-size
       - task: test:agent-skill-links
 [% if project_type == 'web-astro' %]
@@ -184,6 +185,8 @@ tasks:
     # Fast local gate (target: well under a minute) — safe for editors, git
     # hooks, and AI agents to run on every change without getting bogged down.
 [% if use_node %]
+    # Node profiles that run ESLint beside typecheck can use about 5.3 GB RSS
+    # together; budget a ~6 GB peak. TASK_CONCURRENCY=1 serializes these deps.
     # Static analysis only, and PORT-FREE: nothing here starts a server, so
     # parallel agents/worktrees never collide. Anything that binds a port
     # (test:e2e) belongs in `ci`.
@@ -192,7 +195,7 @@ tasks:
     # Read-only, too — the pre-commit hooks run these targets directly, so
     # nothing here may write. `codegen` therefore sits in `verify`, not here.
 [% endif %]
-    desc: Fast local gate — all linters[% if use_node %] + typecheck[% endif %] (parallel)
+    desc: Fast local gate — all linters (and TypeScript checking when enabled), in parallel (set TASK_CONCURRENCY=1 for serial execution)
     deps:
       - lint
 [% if use_node %]

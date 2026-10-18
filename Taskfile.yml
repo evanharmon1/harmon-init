@@ -93,8 +93,9 @@ tasks:
     # right after this suite instead. CI-only-infrastructure checks
     # (`test:renovate-config` resolves Renovate from npm; `verify:skills` and
     # `test:devcontainer:permissions` are `ci` steps) stay outside it too.
-    desc: The test:* targets verify and the Build workflow's lint job both run (everything but test:template)
-    cmds:
+    # Members run concurrently: each must confine filesystem and Git writes to its own mktemp fixture and bind no port.
+    desc: The test:* targets verify and the Build workflow's lint job both run (members run in parallel; set TASK_CONCURRENCY=1 for serial execution)
+    deps:
       - task: test:agent-instructions-size
       - task: test:agent-skill-links
       - task: test:agent-registry
@@ -157,7 +158,7 @@ tasks:
 
   # ── Quality Checks ────────────────────────────────────────────
   check:
-    desc: Run all linters (parallel)
+    desc: Run all linters in parallel (set TASK_CONCURRENCY=1 for serial execution)
     deps: [lint]
 
   audit:agent-instructions:
