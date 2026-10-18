@@ -70,9 +70,9 @@ permissions:
 jobs:
   on-issue-closed:
     if: github.event_name == 'issues'
-    # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
-    # default; set it to a JSON runner spec to override without a commit.
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
+    # Isolated placement never inherits CI_RUNS_ON or a self-hosted default.
+    # Override only with a disposable-host pool, encoded as JSON.
+    runs-on: ${{ fromJSON(vars.ISOLATED_RUNS_ON || '"ubuntu-latest"') }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -126,7 +126,7 @@ jobs:
       github.event_name == 'pull_request' &&
       github.event.pull_request.merged == false &&
       github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
+    runs-on: ${{ fromJSON(vars.ISOLATED_RUNS_ON || '"ubuntu-latest"') }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -203,7 +203,7 @@ jobs:
       github.event.pull_request.merged == true &&
       github.event.pull_request.head.repo.full_name == github.repository &&
       github.event.pull_request.base.ref == github.event.repository.default_branch
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
+    runs-on: ${{ fromJSON(vars.ISOLATED_RUNS_ON || '"ubuntu-latest"') }}
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1

@@ -141,6 +141,7 @@ tasks:
       - task: test:starship-glyphs
       - task: test:template-independence
       - task: test:category-gates
+      - task: test:runner-routing
       - task: test:hooks
       - task: test:worktree
       - task: test:session-cleanup
@@ -739,6 +740,11 @@ tasks:
     desc: "Guard: no template file renders conditionally on skill_categories (drifts; #622)"
     cmds:
       - ./scripts/test-category-gates.sh
+
+  test:runner-routing:
+    desc: "Guard: runner routing classes and workflow coverage in every rendered fixture"
+    cmds:
+      - ./scripts/test-runner-routing.sh
 
   audit:dogfood:
     desc: "Report root<->template drift for jinja twins (report, not a gate; --summary for names only)"

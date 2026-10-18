@@ -143,9 +143,9 @@ jobs:
     # from verify). Once a config exists, scripts/e2e-env-guard.sh must be
     # configured or this check fails (fail-closed by design).
     #
-    # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
-    # default; set it to a JSON runner spec to override without a commit.
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
+    # BROWSER_RUNS_ON selects this class; CI_RUNS_ON and the rendered
+    # default remain its fallbacks. Values are JSON runner label sets.
+    runs-on: ${{ fromJSON(vars.BROWSER_RUNS_ON || vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
     if: >-
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
@@ -227,9 +227,9 @@ jobs:
 [% if project_type == 'web-astro' %]
 
   lighthouse:
-    # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
-    # default; set it to a JSON runner spec to override without a commit.
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
+    # BROWSER_RUNS_ON selects this class; CI_RUNS_ON and the rendered
+    # default remain its fallbacks. Values are JSON runner label sets.
+    runs-on: ${{ fromJSON(vars.BROWSER_RUNS_ON || vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
     if: >-
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository
@@ -362,7 +362,7 @@ jobs:
     # Self-activates once the app ships a playwright.config.* (before then
     # `task test:a11y` skips). To promote to a required check: add `a11y` to
     # verify.needs + a `check a11y` line, and to the ruleset's required checks.
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
+    runs-on: ${{ fromJSON(vars.BROWSER_RUNS_ON || vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
     if: >-
       github.event_name != 'pull_request' ||
       github.event.pull_request.head.repo.full_name == github.repository

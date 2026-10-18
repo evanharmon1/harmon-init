@@ -157,8 +157,9 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
   `task check` in the checkout using only what the bootstrap installed. Its
   container job is fork-gated like the image publisher's, for the same reason:
   it executes checked-out shell as root. The job runs on the runner's native
-  architecture, so `vars.CI_RUNS_ON` is what decides whether arm64 is
-  exercised. See [remote-environments.md](remote-environments.md).
+  architecture. `IMAGE_BUILD_RUNS_ON`, then `CI_RUNS_ON`, selects its runner
+  and architecture, deciding whether arm64 is exercised.
+  See [remote-environments.md](remote-environments.md).
 
 ## Issue classification reconciler
 
@@ -578,23 +579,23 @@ how-to lives at [../guides/deploying.md](../guides/deploying.md).
 
 ## Runners
 
-Current workflows read `CI_RUNS_ON` with a rendered default. The four-class
-routing contract below is **planned until #1727 ships**; workflow rendering and
-setup reconciliation land separately. A class names the reason for different
-runner placement, while its JSON string or array value selects a runner label set.
-Provider names never belong in routing variable names.
+Generated workflows route every job through one of four classes. A class names
+the reason for different placement; its JSON string or array value selects a
+runner label set. Provider names never belong in routing variable names.
 
-- **Default — `CI_RUNS_ON`:** general build, lint, test and aggregate work.
-- **Browser — `BROWSER_RUNS_ON`:** jobs executing a real browser.
-- **Image-build — `IMAGE_BUILD_RUNS_ON`:** Docker/devcontainer builds and their smokes.
-- **Isolated — `ISOLATED_RUNS_ON`:** jobs holding long-lived secrets, parsing
-  attacker-writable bodies or deploying, plus sub-minute API-only automation.
+| Class | Variable | Jobs / requirement | Fallback chain |
+|---|---|---|---|
+| default | `CI_RUNS_ON` | General build, lint, test and aggregate work | `CI_RUNS_ON` → rendered default |
+| browser | `BROWSER_RUNS_ON` | Real-browser tests: `e2e`, `a11y`, `lighthouse` | `BROWSER_RUNS_ON` → `CI_RUNS_ON` → rendered default |
+| image-build | `IMAGE_BUILD_RUNS_ON` | Docker/devcontainer builds and container smoke/assertion tests | `IMAGE_BUILD_RUNS_ON` → `CI_RUNS_ON` → rendered default |
+| isolated | `ISOLATED_RUNS_ON` | Long-lived secrets, attacker-writable bodies, deployments and API-only automation | `ISOLATED_RUNS_ON` → `"ubuntu-latest"` only |
 
 Default falls back from `CI_RUNS_ON` to the rendered `ci_runs_on_default`.
 Browser and image-build fall back from their class variable to `CI_RUNS_ON`,
 then that rendered default. The rendered default is `"ubuntu-latest"` for
 GitHub-hosted profiles or the configured JSON label list for self-hosted profiles.
-Existing merge-group GitHub-hosted pins remain.
+Existing merge-group GitHub-hosted pins remain. Root-only `remote-bootstrap.yml`
+`bootstrap` uses image-build because its stock container requires Docker.
 
 Isolated uses `${{ fromJSON(vars.ISOLATED_RUNS_ON || '"ubuntu-latest"') }}`
 on every profile: it never inherits `CI_RUNS_ON` or the rendered default.
@@ -605,8 +606,15 @@ repositories even when their default pool is a homelab. The target shared-cache
 rule requires setup `cache: "false"` for secret-holding/deploying jobs, except
 `deploy-preview.yml` `deploy`: it builds the PR's own code, so cache poisoning
 grants nothing the PR does not already have. Existing violations remain in
-web-app `lint` (codegen split owned by #1729) and `sync-harmon-devkit.yml` `sync`
-(App `contents:write` token plus pnpm cache on `use_node`, owned by #1731).
+web-app `lint` (codegen split owned by harmon-init#1729) and `sync-harmon-devkit.yml` `sync`
+(App `contents:write` token plus pnpm cache on `use_node`, owned by harmon-init#1731).
+
+**Self-hosted update note:** With `ci_runner: self-hosted`, isolated-class jobs
+now default to GitHub-hosted runners instead of the self-hosted default pool.
+This includes the `claude-*` jobs, Terraform plan/apply, deployment jobs and
+`closing-keywords`. They consume Actions minutes. Terraform that needs endpoints
+reachable only on a private network cannot run on those GitHub-hosted runners;
+configure a suitable disposable isolated pool before using that path.
 
 The [routing spec](https://github.com/evanharmon1/harmon-init/blob/main/specs/runner-routing-classes.md)
 owns the exhaustive job assignments and expressions; the
