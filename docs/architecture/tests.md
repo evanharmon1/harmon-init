@@ -18,3 +18,13 @@ How testing works in Harmon Init.
 - Test files live in `tests/` at the repo root (or co-located per framework convention).
 - `task verify` is the local merge gate; CI runs the same task targets.
 - TODO: document coverage expectations and fixtures as the suite grows.
+
+## Parallel Task groups
+
+Task runs the dependencies of `check` and `test:suite` concurrently by default.
+Set Task's built-in `TASK_CONCURRENCY=1` environment variable to run dependencies
+one at a time, for example `TASK_CONCURRENCY=1 task verify` or
+`TASK_CONCURRENCY=1 task test:suite`. A generated Node profile can run ESLint
+(measured around 3.8 GB RSS) alongside TypeScript checking (around 1.5 GB RSS),
+so budget about 6 GB for parallel `task check` or use the serial setting on a
+smaller runner.
