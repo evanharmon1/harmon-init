@@ -1232,11 +1232,22 @@ no separate, verified effort
 setting is recorded. Numeric token budgets and on/off switches are not mapped
 onto the ladder, and aliases that collapse onto another level add no rung.
 
-The following documentation was checked on **2026-10-10**. The existing
-`claude-code`, `claude-code-action` and `codex-cli` lists remain as previously
-verified; the checks below establish the other entries' status. GLM remains
+The provider documentation below was checked on **2026-10-10**. The existing
+`claude-code` and `claude-code-action` lists remain as previously verified;
+the `codex-cli` evidence was refreshed on **2026-10-18** as recorded below.
+The other checks establish the remaining entries' status. GLM remains
 unverified for Anthropic effort pass-through; hosted Qwen and MiniMax remain
 unverified for the models their wrappers resolve:
+
+- **`codex-cli`** (orchestrator-verified **2026-10-18**): CLI **0.163.0**'s
+  model catalog (each model's supported reasoning levels)
+  offers `max` for `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-astra` and `gpt-6-luna`.
+  Some models also list `ultra`, which is outside this registry's ladder.
+  Codex lanes launched with `-c model_reasoning_effort=max` showed
+  `GPT-6-Luna max` in the TUI status line, read through Herdr on 2026-10-18;
+  lanes launched with `-c model_reasoning_effort=low` and `=high` showed
+  `Sol low` and `Sol high`, respectively. Availability depends on the selected
+  model: a model whose catalog entry lacks `max` does not offer it.
 
 - **`claude-code-deepseek`**: DeepSeek's [thinking-mode reference](https://api-docs.deepseek.com/guides/thinking_mode/)
   documents Anthropic `output_config.effort` with distinct `low`, `high` and
@@ -1416,7 +1427,7 @@ Effort ladder: `minimal` < `low` < `medium` < `high` < `xhigh` < `max`.
 | `claude-code-minimax` | Claude Code provider wrapper | `minimax` | — | `provider-wrapper` | — |
 | `claude-code-qwen` | Claude Code provider wrapper | `qwen` | — | `provider-wrapper` | — |
 | `claude-code-qwen-local` | Claude Code provider wrapper | `qwen` | — | `provider-wrapper` | — |
-| `codex-cli` | OpenAI Codex CLI | `gpt` | `codex-cli` — production, not dispatchable, no label | `runner-config` | `minimal`, `low`, `medium`, `high`, `xhigh` |
+| `codex-cli` | OpenAI Codex CLI | `gpt` | `codex-cli` — production, not dispatchable, no label | `runner-config` | `minimal`, `low`, `medium`, `high`, `xhigh`, `max` |
 | `copilot-cli` | GitHub Copilot CLI | any (multi-provider; default `mai`) | — | `harness-runtime` | `low`, `medium`, `high`, `xhigh`, `max` |
 | `qwen-code` | Qwen Code CLI | `qwen` | — | `runner-config` | `low`, `medium`, `high`, `xhigh`, `max` |
 | `antigravity` | Google Antigravity | `gemini` | — | `harness-runtime` | — |

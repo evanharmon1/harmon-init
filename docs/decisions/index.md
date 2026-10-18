@@ -94,3 +94,6 @@ record is still open to edits.
 - [2026-10-13-branch-aware-git-merge-guard-hook.md](2026-10-13-branch-aware-git-merge-guard-hook.md)
   — replace the `git merge` ask rules with an allowlist-shaped, branch-aware merge guard
   hook (Accepted).
+- [2026-10-18-route-ci-jobs-by-class.md](2026-10-18-route-ci-jobs-by-class.md)
+  — route jobs by execution requirement with four runner variables and an
+  independent disposable-host fallback for isolated work (Accepted).

@@ -649,6 +649,8 @@ Adjudicate it; never disable the gate to get past a BLOCK.
   repository's copies and will not catch this on its own: a container built
   before the split keeps the old `/etc/codex/managed_config.toml` no matter what
   the checkout says, so the check passes while the running container still pins
-  the effort. Rebuild the container once the files are right. Effort levels are not model-specific: under a ChatGPT-account login on
-  the pinned CLI, `low`, `medium`, `high`, and `xhigh` all take effect for
-  every supported model once the key is out of the managed layer.
+  the effort. Rebuild the container once the files are right. Under a
+  ChatGPT-account login on the pinned CLI, `low`, `medium`, `high`, and `xhigh`
+  take effect for every supported model once the key is out of the managed
+  layer. `max` is offered only where the selected model's catalog lists it;
+  the current `gpt-6.x` models do.
