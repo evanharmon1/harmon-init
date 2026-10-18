@@ -28,9 +28,9 @@ jobs:
   # deploy should skip rather than fail. Secrets are not readable in job-level
   # `if:` expressions, so a tiny preflight job exposes the check as an output.
   preflight:
-    # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
-    # default; set it to a JSON runner spec to override without a commit.
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
+    # Isolated placement never inherits CI_RUNS_ON or a self-hosted default.
+    # Override only with a disposable-host pool, encoded as JSON.
+    runs-on: ${{ fromJSON(vars.ISOLATED_RUNS_ON || '"ubuntu-latest"') }}
     timeout-minutes: 5
     outputs:
       configured: ${{ steps.check.outputs.configured }}
@@ -51,7 +51,7 @@ jobs:
   deploy:
     needs: preflight
     if: needs.preflight.outputs.configured == 'true'
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
+    runs-on: ${{ fromJSON(vars.ISOLATED_RUNS_ON || '"ubuntu-latest"') }}
     timeout-minutes: 15
     permissions:
       contents: read

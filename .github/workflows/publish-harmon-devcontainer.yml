@@ -48,7 +48,7 @@ jobs:
     if: >-
       github.event_name == 'pull_request' &&
       github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
+    runs-on: ${{ fromJSON(vars.IMAGE_BUILD_RUNS_ON || vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     timeout-minutes: 90
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -106,7 +106,7 @@ jobs:
 
   publish:
     if: github.event_name == 'push' || github.event_name == 'schedule'
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
+    runs-on: ${{ fromJSON(vars.IMAGE_BUILD_RUNS_ON || vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     timeout-minutes: 90
     permissions:
       contents: read
@@ -211,7 +211,7 @@ jobs:
   sync-pin:
     if: needs.prepare-pin.outputs.ready == 'true'
     needs: [publish, prepare-pin]
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
+    runs-on: ${{ fromJSON(vars.ISOLATED_RUNS_ON || '"ubuntu-latest"') }}
     timeout-minutes: 15
     steps:
       # This is a fresh runner. It installs no mutable tooling and imports only
