@@ -1,13 +1,8 @@
 #!/usr/bin/env bash
-# Root-only render guard (harmon-init#1727). The spec tables own assignments;
-# this byte-identical shipped twin is a no-op in consumers without template/.
+# Root-only render guard (harmon-init#1727). The spec tables own assignments.
 set -euo pipefail
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
 repo="$(cd "$(dirname "$0")/.." && pwd)"
-if [ ! -d "$repo/template" ]; then
-    echo "SKIP: runner-routing render guard is template-repository-only"
-    exit 0
-fi
 [ -f "$repo/specs/runner-routing-classes.md" ] || {
     echo "FAIL: routing assignment spec is missing" >&2
     exit 1
@@ -77,7 +72,9 @@ def require(condition, message):
 
 def assignments(heading):
     text = (repo / "specs/runner-routing-classes.md").read_text()
-    section = text.split("### " + heading + "\n", 1)[1].split("\n### ", 1)[0]
+    marker = "### " + heading + "\n"
+    require(marker in text, f"missing spec heading: {heading}")
+    section = text.split(marker, 1)[1].split("\n### ", 1)[0]
     rows = {}
     for line in section.splitlines():
         if not line.startswith("| `"):
@@ -185,8 +182,10 @@ def check_tree(directory, rows, default):
                     ("ubuntu-latest" if cls == "isolated" or pinned else ["default-pool"]),
                     f"{path.name}:{job} CI_RUNS_ON precedence or isolation")
             if not pinned:
-                override = {variables[cls][0]: '["class-pool"]', "CI_RUNS_ON": '["default-pool"]'}
-                override[variables[cls][0]] = '["class-pool"]'
+                override = {
+                    var: '["class-pool"]' if var == variables[cls][0] else '["default-pool"]'
+                    for var in {"CI_RUNS_ON", variables[cls][0]}
+                }
                 require(resolve(actual, override) == ["class-pool"], f"{path.name}:{job} class override")
             if "`merge_group`" in note:
                 require(resolve(actual, {v: '["other"]' for vs in variables.values() for v in vs}, True)
@@ -199,14 +198,36 @@ def check_tree(directory, rows, default):
     return seen
 
 
-covered = set()
+def applicable(note, project):
+    # Parenthesized project restrictions in the spec distinguish the Astro
+    # browser/render jobs; prose such as lint's temporary web-app secret does
+    # not restrict the job to that project type.
+    projects = re.search(r"\((web-(?:astro|app)(?:/web-(?:astro|app))*)\)", note)
+    return not note.startswith("Future ") and (not projects or project in projects[1].split("/"))
+
+
+covered_workflows = set()
 for directory in sorted(p for p in work.glob("*-web-*") if p.is_dir()):
+    profile = re.fullmatch(r"(ubuntu-latest|self-hosted)-(web-astro|web-app)", directory.name)
+    require(profile, f"unknown fixture profile: {directory.name}")
     default = (json.dumps(["self-hosted", "linux", "x64", "routing-test"])
-               if directory.name.startswith("self-hosted-") else '"ubuntu-latest"')
-    covered |= check_tree(directory, template_rows, default)
-required = {key for key, (_, note) in template_rows.items() if not note.startswith("Future ")}
-require(required <= covered, f"template assignment rows never rendered: {sorted(required - covered)}")
+               if profile[1] == "self-hosted" else '"ubuntu-latest"')
+    seen = check_tree(directory, template_rows, default)
+    workflows = {p.name for p in (directory / ".github/workflows").glob("*.y*ml")}
+    required = {key for key, (_, note) in template_rows.items()
+                if key[0] in workflows and applicable(note, profile[2])}
+    require(required <= seen,
+            f"{directory.name}: spec jobs missing from rendered workflows: {sorted(required - seen)}")
+    covered_workflows |= workflows
+template_workflows = {
+    re.sub(r"\[%.*?%\]", "", path.name).removesuffix(".jinja")
+    for path in (repo / "template/.github/workflows").iterdir() if path.is_file()
+}
+require(template_workflows, "no template workflow files found")
+require(template_workflows <= covered_workflows,
+        f"template workflows never rendered: {sorted(template_workflows - covered_workflows)}")
 root_seen = check_tree(repo, template_rows | root_rows, '"ubuntu-latest"')
 require(root_rows.keys() <= root_seen, f"root-only rows not exercised: {root_rows.keys() - root_seen}")
-print("runner routing: all spec assignments covered; hosted/self-hosted fallbacks and merge-group pins verified")
+print(f"runner routing: per-fixture spec jobs and all {len(template_workflows)} template workflows covered; "
+      "hosted/self-hosted fallbacks and merge-group pins verified")
 PY

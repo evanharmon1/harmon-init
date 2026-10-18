@@ -157,8 +157,9 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
   `task check` in the checkout using only what the bootstrap installed. Its
   container job is fork-gated like the image publisher's, for the same reason:
   it executes checked-out shell as root. The job runs on the runner's native
-  architecture, so `vars.CI_RUNS_ON` is what decides whether arm64 is
-  exercised. See [remote-environments.md](remote-environments.md).
+  architecture. `IMAGE_BUILD_RUNS_ON`, then `CI_RUNS_ON`, selects its runner
+  and architecture, deciding whether arm64 is exercised.
+  See [remote-environments.md](remote-environments.md).
 
 ## Issue classification reconciler
 
@@ -607,6 +608,13 @@ rule requires setup `cache: "false"` for secret-holding/deploying jobs, except
 grants nothing the PR does not already have. Existing violations remain in
 web-app `lint` (codegen split owned by harmon-init#1729) and `sync-harmon-devkit.yml` `sync`
 (App `contents:write` token plus pnpm cache on `use_node`, owned by harmon-init#1731).
+
+**Self-hosted update note:** With `ci_runner: self-hosted`, isolated-class jobs
+now default to GitHub-hosted runners instead of the self-hosted default pool.
+This includes the `claude-*` jobs, Terraform plan/apply, deployment jobs and
+`closing-keywords`. They consume Actions minutes. Terraform that needs endpoints
+reachable only on a private network cannot run on those GitHub-hosted runners;
+configure a suitable disposable isolated pool before using that path.
 
 The [routing spec](https://github.com/evanharmon1/harmon-init/blob/main/specs/runner-routing-classes.md)
 owns the exhaustive job assignments and expressions; the

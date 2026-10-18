@@ -473,9 +473,10 @@ checkout, and a tag cannot serve files it does not contain. Until then what hold
 is § 24 of `scripts/test-bootstrap-remote.sh`, which keeps the fetched asset
 list equal to the files on disk and runs the fetch against a stubbed download.
 
-The CI job runs on the runner's native architecture, so `vars.CI_RUNS_ON` is
-what decides whether arm64 is exercised. On GitHub-hosted runners it is amd64;
-point that variable at arm64 hardware and the same job proves arm64 unchanged.
+The CI job runs on the runner's native architecture. `IMAGE_BUILD_RUNS_ON`,
+then `CI_RUNS_ON`, selects its runner and architecture, deciding whether arm64
+is exercised. The GitHub-hosted fallback is amd64; point the selected routing
+variable at arm64 hardware and the same job proves arm64 unchanged.
 Until such a runner exists the arm64 download paths are checksum-verified but
 **not executed**. The five-minute figure is likewise measured on a
 GitHub-hosted runner, which is not the remote VM — #1407's HUMAN item is what
