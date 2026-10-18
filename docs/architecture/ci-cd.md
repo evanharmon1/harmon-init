@@ -13,7 +13,7 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
 
 ## Workflows
 
-- `build.yml` — on push/PR to `main`: lint, security, template-test, then the
+- `build.yml` — on push/PR to `main`: check, repo-guards, devcontainer-permissions, security, template-test, then the
   aggregate **`verify`** job. Its `pull_request:` trigger is
   `[opened, synchronize, reopened]` — **no `draft` filter**, so it fires on
   draft PRs too. That is load-bearing, not incidental: PRs are drafts for their
@@ -23,27 +23,25 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
   until after the handoff it is supposed to authorize.
   **`edited` is deliberately absent** (#1328): it fires on a title/body edit,
   and the readiness gate *requires* body edits to tick `## Deferred findings`
-  — so carrying it here made settling a finding restart lint, security and all
+  — so carrying it here made settling a finding restart the checks, security and all
   seven template-test profiles, putting condition 1 (checks concluded) back to
   pending at the last step before promotion. `edited` also covers a
   base-**branch** change; losing that re-run is accepted, because retargeting a
   PR is rare and `strict_required_status_checks_policy` forces an up-to-date
   head before merge, which arrives as a `synchronize`.
-  **One list, not two** (#962, #1461): the `lint` job runs `check`, then a
-  single `task test:suite` step — the Taskfile's aggregate of every `test:*`
-  target `task verify` runs — so a guard added to `verify` is in CI by
-  construction instead of by someone remembering to list it in the workflow
-  too. The accepted cost is one Actions step for the whole suite rather than a
-  named step per test. Outside the suite, each with its reason beside it in
-  the workflow: `test:template` (it runs as the `template-test` matrix, one
-  profile per leg), `verify:skills` (network), `test:devcontainer:permissions`
-  (a `ci`-only unit check), and the `audit:*` step (not a `test:*` target).
-  `task test:verify-ci-parity` — in the suite, in both layers, and also its own
-  `lint` step so deleting the suite step cannot silence it — fails if
-  `build.yml`'s `lint` job stops calling `test:suite`, if `verify` stops running
-  it, or if `verify` lists a `test:*` target directly (`test:template` aside,
-  where the `template-test` job exists); `scripts/test-template.sh` asserts the
-  same for every rendered profile.
+  **One list, not two**: `repo-guards` runs `task ci:repo-guards`, which
+  calls the instruction audit and `test:suite` plus `verify:skills` (network).
+  The suite is the Taskfile's one list of `test:*` guards shared with local
+  `verify`. `task test:verify-ci-parity` remains a separate workflow step,
+  outside the aggregate it guards: it fails if the workflow drops the
+  `ci:repo-guards` call, that task drops `test:suite`, or `verify` drops the
+  suite or adds a stray `test:*` entry.
+  The split runs `check`, repository guards and devcontainer permissions in parallel,
+  reducing the critical path to the longest job. Each additional job pays a
+  setup phase and its own per-minute billing rounding; this can increase
+  runner minutes and queueing on a small self-hosted pool. Measure the
+  `repo-guards` duration in each repository: its parallel suite includes
+  render-based checks here, so the split alone promises no fixed duration.
 - `closing-keywords.yml` — the metadata-only gate that refuses a same-repo
   `Closes #N` while `#N` has unchecked task-list items. It lives in its own
   workflow precisely so it can keep `pull_request.edited`: it reads the PR
@@ -138,7 +136,7 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
   `images/devcontainer/bootstrap-remote.sh` on a stock `ubuntu:24.04` container.
   One job, because the offline half belongs everywhere. The pin contract
   (`task test:bootstrap-remote`) runs unconditionally, inside `test:suite`,
-  in `build.yml`'s `lint` job and in `verify`, so a change to any input it reads — the install scripts,
+  in `build.yml`'s `repo-guards` job and in `verify`, so a change to any input it reads — the install scripts,
   the pins, or the allowlist tables in
   [remote-environments.md](remote-environments.md) it derives its host sets
   from — is checked on every pull request rather than behind a path filter that
@@ -585,7 +583,7 @@ runner label set. Provider names never belong in routing variable names.
 
 | Class | Variable | Jobs / requirement | Fallback chain |
 |---|---|---|---|
-| default | `CI_RUNS_ON` | General build, lint, test and aggregate work | `CI_RUNS_ON` → rendered default |
+| default | `CI_RUNS_ON` | `check`, `repo-guards`, `devcontainer-permissions`; general build, test and aggregates | `CI_RUNS_ON` → rendered default |
 | browser | `BROWSER_RUNS_ON` | Real-browser tests: `e2e`, `a11y`, `lighthouse` | `BROWSER_RUNS_ON` → `CI_RUNS_ON` → rendered default |
 | image-build | `IMAGE_BUILD_RUNS_ON` | Docker/devcontainer builds and container smoke/assertion tests | `IMAGE_BUILD_RUNS_ON` → `CI_RUNS_ON` → rendered default |
 | isolated | `ISOLATED_RUNS_ON` | Long-lived secrets, attacker-writable bodies, deployments and API-only automation | `ISOLATED_RUNS_ON` → `"ubuntu-latest"` only |
@@ -605,13 +603,13 @@ satisfy that boundary. The fallback can consume GitHub Actions minutes on privat
 repositories even when their default pool is a homelab. The target shared-cache
 rule requires setup `cache: "false"` for secret-holding/deploying jobs, except
 `deploy-preview.yml` `deploy`: it builds the PR's own code, so cache poisoning
-grants nothing the PR does not already have. Existing violations remain in
-web-app `lint` (codegen split owned by harmon-init#1729) and `sync-harmon-devkit.yml` `sync`
+grants nothing the PR does not already have. The remaining violation is in
+`sync-harmon-devkit.yml` `sync`
 (App `contents:write` token plus pnpm cache on `use_node`, owned by harmon-init#1731).
 
 **Self-hosted update note:** With `ci_runner: self-hosted`, isolated-class jobs
 now default to GitHub-hosted runners instead of the self-hosted default pool.
-This includes the `claude-*` jobs, Terraform plan/apply, deployment jobs and
+This includes web-app `codegen-guard`, the `claude-*` jobs, Terraform plan/apply, deployment jobs and
 `closing-keywords`. They consume Actions minutes. Terraform that needs endpoints
 reachable only on a private network cannot run on those GitHub-hosted runners;
 configure a suitable disposable isolated pool before using that path.

@@ -52,7 +52,7 @@ tasks:
   # ── CI / Verification Pipelines ────────────────────────────────
   ci:
     # Full local mirror of this repo's CI — run on demand to catch everything CI
-    # would (the lint job's guards, the template render matrix, security) without
+    # would (the repository guards, the template render matrix, security) without
     # waiting on a PR. The PR-metadata closing guard stays outside offline
     # `verify`, so run it explicitly before building ON `verify` and adding every
     # other check the build workflow runs. verify:skills is the NETWORK drift
@@ -81,9 +81,18 @@ tasks:
       - task: test:suite
       - task: test:template
 
+  ci:repo-guards:
+    # CI-only aggregate: verify lists its offline members separately.
+    # The workflow parity step stays outside this task so it can guard the suite call.
+    desc: Repository instruction audit, test suite and skills drift
+    cmds:
+      - task: audit:agent-instructions
+      - task: test:suite
+      - task: verify:skills
+
   test:suite:
     # The ONE list of `test:*` targets that both `verify` and the required Build
-    # workflow's `lint` job run (build.yml calls this task in a single step), so
+    # workflow's `repo-guards` job run (through ci:repo-guards), so
     # the two cannot drift and nothing parses the workflow to police them
     # (harmon-init#962, #1461). A new `test:*` guard that belongs in the gate is
     # added HERE and nowhere else.
@@ -94,7 +103,7 @@ tasks:
     # (`test:renovate-config` resolves Renovate from npm; `verify:skills` and
     # `test:devcontainer:permissions` are `ci` steps) stay outside it too.
     # Members run concurrently: each must confine filesystem and Git writes to its own mktemp fixture and bind no port.
-    desc: The test:* targets verify and the Build workflow's lint job both run (members run in parallel; set TASK_CONCURRENCY=1 for serial execution)
+    desc: The test:* targets verify and the Build workflow's repo-guards job both run (members run in parallel; set TASK_CONCURRENCY=1 for serial execution)
     deps:
       - task: test:agent-instructions-size
       - task: test:agent-skill-links

@@ -820,8 +820,8 @@ if plan.returncode != 0:
 elif "./scripts/test-bootstrap-remote.sh" not in plan.stdout:
     fail("`task verify` does not run scripts/test-bootstrap-remote.sh")
 
-# CI. The `lint` job specifically, not build.yml as a whole: lint is the job
-# with no path filter, so it is the one placement that sees a PR touching any
+# CI. The `repo-guards` job specifically, not build.yml as a whole: repo-guards is the job
+# with no path filter, so it sees a PR touching any
 # input the guard reads. The job's own block is sliced out by indentation so
 # the step cannot satisfy this check from some other, filtered job.
 BUILD = pathlib.Path(".github/workflows/build.yml")
@@ -829,26 +829,32 @@ build_lines = BUILD.read_text().splitlines()
 if "jobs:" not in build_lines:
     fail(f"{BUILD}: no top-level `jobs:` key, so this guard's CI wiring cannot be checked")
 else:
-    lint_steps = []
-    in_lint = False
+    guard_steps = []
+    in_guards = False
     for line in build_lines[build_lines.index("jobs:") + 1 :]:
         job = re.fullmatch(r"  (?P<name>[A-Za-z0-9_-]+):\s*", line)
         if job:
-            in_lint = job["name"] == "lint"
-        elif in_lint:
-            lint_steps.append(line)
-    if not lint_steps:
-        fail(f"{BUILD}: no `lint:` job found under `jobs:`, so this guard's CI wiring cannot be checked")
-    elif not re.search(r"^\s*(?:- )?run: task test:suite\s*$", "\n".join(lint_steps), re.M):
+            in_guards = job["name"] == "repo-guards"
+        elif in_guards:
+            guard_steps.append(line)
+    if not guard_steps:
+        fail(f"{BUILD}: no `repo-guards:` job found under `jobs:`, so this guard's CI wiring cannot be checked")
+    elif not re.search(r"^\s*(?:- )?run: task ci:repo-guards\s*$", "\n".join(guard_steps), re.M):
         fail(
-            f"{BUILD}: the lint job does not run `task test:suite`, which carries `task test:bootstrap-remote`. "
-            "That job is the only one with no path filter, so without this step a pull request editing an input "
+            f"{BUILD}: the repo-guards job does not run `task ci:repo-guards`, which carries `task test:bootstrap-remote`. "
+            "That job has no path filter; without this step a pull request editing an input "
             "this guard reads runs it in no CI job"
         )
+    elif not re.search(
+        r"^\s*- task: test:suite\s*$",
+        re.split(r"(?m)^  [^ #]", pathlib.Path("Taskfile.yml").read_text().split("  ci:repo-guards:\n", 1)[-1], maxsplit=1)[0],
+        re.M,
+    ):
+        fail("`ci:repo-guards` does not run test:suite, so CI never reaches this guard")
     elif "task: [test:bootstrap-remote]" not in subprocess.run(
         ["task", "--dry", "--color=false", "test:suite"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
     ).stdout:
-        fail("`task test:suite` does not run test:bootstrap-remote, so the lint job's aggregate step never reaches this guard")
+        fail("`task test:suite` does not run test:bootstrap-remote, so the repo-guards job's aggregate step never reaches this guard")
 
 # ── 14. the standalone trust root: only a release tag is accepted ───────────
 # The ref is validated before the tier check and before the sudo re-exec, so

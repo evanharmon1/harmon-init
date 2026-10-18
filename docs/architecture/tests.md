@@ -17,6 +17,9 @@ How testing works in Harmon Init.
 
 - Test files live in `tests/` at the repo root (or co-located per framework convention).
 - `task verify` is the local merge gate; CI runs the same task targets.
+  The `repo-guards` job calls `ci:repo-guards` for the instruction audit,
+  shared `test:suite`, and network skills check; `check` and
+  `devcontainer-permissions` run as separate jobs.
 - TODO: document coverage expectations and fixtures as the suite grows.
 
 ## Parallel Task groups

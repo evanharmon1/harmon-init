@@ -6,7 +6,7 @@ on:
   # No `edited`: it fires on a PR title/body edit, and the dev loop's readiness
   # gate REQUIRES body edits (ticking `## Deferred findings`), so carrying it
   # here made satisfying one gate condition invalidate another — every
-  # settlement restarted lint, security and all seven template-test profiles
+  # settlement restarted check, repo-guards, security and all seven template-test profiles
   # (harmon-init#1328). `edited` also fires on a base-BRANCH change; dropping
   # that re-run is deliberate. Retargeting a PR is rare, and
   # `strict_required_status_checks_policy` already forces an up-to-date head
@@ -33,7 +33,7 @@ permissions:
 # copier + the devcontainer CLI the composite doesn't install.
 
 jobs:
-  lint:
+  check:
     # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
     # default; set it to a JSON runner spec to override without a commit.
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
@@ -45,20 +45,31 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-          # Full history + tags so `test:tag-hygiene` below is a real assertion.
-          # The default shallow, tagless checkout leaves `git describe` with
-          # nothing to select, which would make that guard vacuous here — and a
-          # poisoned tag on origin is precisely what CI should name outright
-          # rather than surfacing as seven opaque template-test failures.
+          # Full history lets check compare tool pins against the merge base.
           fetch-depth: 0
       - uses: ./.github/actions/setup
         with:
           lint-tools: "true"
-      - name: Lint
+      - name: Check
         run: task check
-      # Outside the suite: `audit:*` is not a `test:*` target, so `test:suite`
-      # does not carry it, and `verify` runs it between `check` and the suite.
-      - run: task audit:agent-instructions
+
+  repo-guards:
+    # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
+    # default; set it to a JSON runner spec to override without a commit.
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Full history + tags make test:tag-hygiene a real assertion.
+          fetch-depth: 0
+      - uses: ./.github/actions/setup
+        with:
+          lint-tools: "true"
       # The suite renders the template (test:dogfood-structure,
       # test:copier-validators), so copier has to be installed first. Installed
       # explicitly rather than via scripts/install-copier.sh: that script no-ops
@@ -72,26 +83,28 @@ jobs:
           # self-hosted CI_RUNS_ON runner.
           uv tool install --force copier
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
-      # Its own step, outside the suite it guards: it is also a suite member (so
-      # `verify` runs it), but deleting the suite step below would delete the
-      # only CI step that could notice — this one still fails then.
-      - name: Verify-CI parity guard (runs outside the suite it guards)
+      # Outside ci:repo-guards: deleting its suite call must not silence this guard.
+      - name: Verify-CI parity guard (runs outside the task it guards)
         run: task test:verify-ci-parity
-      # The ONE step for every `test:*` target `task verify` runs. The list lives
-      # in Taskfile.yml's `test:suite` and nowhere else, so a check added to
-      # `verify` can no longer be missed here (harmon-init#962, #614, #1461);
-      # test:verify-ci-parity (the step above) fails if this step is ever
-      # dropped. Not in it:
-      # `test:template`, which runs as the template-test job's matrix below.
-      # This job checks out with fetch-depth: 0, which test:tag-hygiene needs
-      # to be a real assertion rather than a vacuous one.
-      - name: Test suite (every test:* target verify runs, except test:template)
-        run: task test:suite
-      # Outside the suite, on purpose: a NETWORK check (`verify` stays offline)
-      # and a `ci`-only unit check.
-      - name: Skills drift check (vendored skills vs pinned harmon-devkit ref)
-        run: task verify:skills
-      - run: task test:devcontainer:permissions
+      - name: Repository guards
+        run: task ci:repo-guards
+
+  devcontainer-permissions:
+    # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
+    # default; set it to a JSON runner spec to override without a commit.
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: ./.github/actions/setup
+      - name: Devcontainer permissions
+        run: task test:devcontainer:permissions
 
   security:
     # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
@@ -183,7 +196,7 @@ jobs:
 
   verify:
     if: always()
-    needs: [lint, template-test]
+    needs: [check, repo-guards, devcontainer-permissions, template-test]
     # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
     # default; set it to a JSON runner spec to override without a commit.
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
@@ -194,7 +207,9 @@ jobs:
       - name: Verify deliberate skips at the untrusted-fork boundary
         if: env.IS_FORK == 'true'
         env:
-          LINT_RESULT: ${{ needs.lint.result }}
+          CHECK_RESULT: ${{ needs.check.result }}
+          REPO_GUARDS_RESULT: ${{ needs.repo-guards.result }}
+          DEVCONTAINER_PERMISSIONS_RESULT: ${{ needs.devcontainer-permissions.result }}
           TEMPLATE_TEST_RESULT: ${{ needs.template-test.result }}
         run: |
           fail=0
@@ -204,7 +219,9 @@ jobs:
               fail=1
             fi
           }
-          check_skipped lint "$LINT_RESULT"
+          check_skipped check "$CHECK_RESULT"
+          check_skipped repo-guards "$REPO_GUARDS_RESULT"
+          check_skipped devcontainer-permissions "$DEVCONTAINER_PERMISSIONS_RESULT"
           check_skipped template-test "$TEMPLATE_TEST_RESULT"
           if [ "$fail" -ne 0 ]; then
             exit 1
@@ -218,6 +235,8 @@ jobs:
         if: env.IS_FORK != 'true'
         env:
           EXPECTED_RESULT: success
-          LINT_RESULT: ${{ needs.lint.result }}
+          CHECK_RESULT: ${{ needs.check.result }}
+          REPO_GUARDS_RESULT: ${{ needs.repo-guards.result }}
+          DEVCONTAINER_PERMISSIONS_RESULT: ${{ needs.devcontainer-permissions.result }}
           TEMPLATE_TEST_RESULT: ${{ needs.template-test.result }}
-        run: ./scripts/verify-ci-results.sh "lint=${LINT_RESULT}" "template-test=${TEMPLATE_TEST_RESULT}"
+        run: ./scripts/verify-ci-results.sh "check=${CHECK_RESULT}" "repo-guards=${REPO_GUARDS_RESULT}" "devcontainer-permissions=${DEVCONTAINER_PERMISSIONS_RESULT}" "template-test=${TEMPLATE_TEST_RESULT}"

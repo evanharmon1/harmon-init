@@ -93,7 +93,7 @@ err() {
     fail=1
 }
 
-# Required CI runs every `test:*` target through ONE step, `task test:suite`
+# Required CI runs every `test:*` target through `ci:repo-guards` → `test:suite`
 # (#1461; the per-profile "verify <-> CI parity" section below asserts the call),
 # so "required CI runs X" means "X is in the suite's plan". Without go-task the
 # plan cannot be read: that fails in CI and is an explicit SKIP locally, via
@@ -434,15 +434,15 @@ fi
 # ── 1-ci. verify <-> required CI parity holds in every render profile (#1461) ──
 # Both run their `test:*` targets through the one aggregate task, so a rendered
 # repo's required Build workflow runs every target its `verify` runs. Asserted
-# three ways: the `lint` job calls the aggregate, `verify` lists it itself, and
+# three ways: the `repo-guards` job calls the CI aggregate, `verify` lists it itself, and
 # every `test:*` target in verify's plan is in the aggregate's plan — then the
 # rendered guard (with its planted cases) runs. The first two are plain text
 # checks on the rendered files (a block runs from its two-space-indented key to
 # the next one), the third asks `task` for the plan.
 if [ -f .github/workflows/build.yml ]; then
-    awk '/^  lint:[[:space:]]*$/ { on = 1; next } on && /^  [^ #]/ { exit } on' .github/workflows/build.yml |
-        grep -Eq '^[[:space:]]*(-[[:space:]]+)?run:[[:space:]]+task test:suite[[:space:]]*$' ||
-        err "rendered build.yml's lint job does not call \`task test:suite\` in a step"
+    awk '/^  repo-guards:[[:space:]]*$/ { on = 1; next } on && /^  [^ #]/ { exit } on' .github/workflows/build.yml |
+        grep -Eq '^[[:space:]]*(-[[:space:]]+)?run:[[:space:]]+task ci:repo-guards[[:space:]]*$' ||
+        err "rendered build.yml's repo-guards job does not call \`task ci:repo-guards\` in a step"
     awk '/^  verify:[[:space:]]*$/ { on = 1; next } on && /^  [^ #]/ { exit } on' Taskfile.yml |
         grep -Eq '^[[:space:]]+-[[:space:]]+task:[[:space:]]+test:suite[[:space:]]*$' ||
         err "rendered \`verify\` does not list \`task: test:suite\` itself"
@@ -934,9 +934,9 @@ suite_runs test:ci-results ||
 [ -x scripts/test-ci-results.sh ] || err "CI result helper regression missing or not executable"
 ./scripts/test-ci-results.sh >/dev/null || err "rendered CI result helper regression failed"
 [ -x scripts/verify-ci-results.sh ] || err "fail-closed CI result helper missing or not executable"
-EXPECTED_RESULT=success ./scripts/verify-ci-results.sh lint=success security=success >/dev/null ||
+EXPECTED_RESULT=success ./scripts/verify-ci-results.sh check=success security=success >/dev/null ||
     err "rendered CI result helper rejected successful trusted jobs"
-if EXPECTED_RESULT=success ./scripts/verify-ci-results.sh lint=success security=skipped >"$job_tmp/ci-results-negative.log" 2>&1; then
+if EXPECTED_RESULT=success ./scripts/verify-ci-results.sh check=success security=skipped >"$job_tmp/ci-results-negative.log" 2>&1; then
     dump_log ci-results-negative
     err "rendered CI result helper accepted an unexpectedly skipped trusted job"
 fi

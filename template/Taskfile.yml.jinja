@@ -99,7 +99,7 @@ tasks:
 [% if project_type == 'web-app' %]
       # Sequential and FIRST, so the typecheck below sees current generated
       # types. It FAILS on stale output rather than silently refreshing it —
-      # CI's lint job runs the same guard, so a green `task ci` here means a
+      # CI's codegen-guard job runs the same guard, so a green `task ci` here means a
       # green CI there. `check` and the pre-commit hooks stay read-only.
       - task: guard:codegen
 [% endif %]
@@ -112,16 +112,27 @@ tasks:
       - task: test:suite
       - task: test
 
+  ci:repo-guards:
+    # CI-only aggregate: verify lists its offline members separately.
+    # The workflow parity step stays outside this task so it can guard the suite call.
+    desc: Repository instruction audit, test suite and skills drift
+    cmds:
+      - task: audit:agent-instructions
+      - task: test:suite
+[% if use_skills_sync %]
+      - task: verify:skills
+[% endif %]
+
   test:suite:
     # The ONE list of `test:*` targets that both `verify` and the required Build
-    # workflow's `lint` job run (build.yml calls this task in a single step), so
+    # workflow's `repo-guards` job run (through ci:repo-guards), so
     # the two cannot drift and nothing parses the workflow to police them.
     # A new `test:*` guard that belongs in the gate is added HERE and nowhere
     # else; `test:verify-ci-parity` fails if either caller stops running it.
     # Not in this list: `build`, `validate` and `test` (the project's own tiers
     # — CI runs them in their own job) and the `ci`-only checks.
     # Members run concurrently: each must confine filesystem and Git writes to its own mktemp fixture and bind no port.
-    desc: The test:* targets verify and the Build workflow's lint job both run (members run in parallel; set TASK_CONCURRENCY=1 for serial execution)
+    desc: The test:* targets verify and the Build workflow's repo-guards job both run (members run in parallel; set TASK_CONCURRENCY=1 for serial execution)
     deps:
       - task: test:agent-instructions-size
       - task: test:agent-skill-links
