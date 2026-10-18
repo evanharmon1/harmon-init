@@ -93,8 +93,11 @@ tasks:
     # right after this suite instead. CI-only-infrastructure checks
     # (`test:renovate-config` resolves Renovate from npm; `verify:skills` and
     # `test:devcontainer:permissions` are `ci` steps) stay outside it too.
-    desc: The test:* targets verify and the Build workflow's lint job both run (everything but test:template)
-    cmds:
+    # Suite members were audited: filesystem and Git mutations are confined to
+    # per-run temporary fixtures; the suite has no shared checkout writes or
+    # port listeners. Use TASK_CONCURRENCY=1 for serial execution on smaller runners.
+    desc: The test:* targets verify and the Build workflow's lint job both run (Task concurrency {{env "TASK_CONCURRENCY" | default "0"}}; set TASK_CONCURRENCY=1 for serial)
+    deps:
       - task: test:agent-instructions-size
       - task: test:agent-skill-links
       - task: test:agent-registry
@@ -157,7 +160,7 @@ tasks:
 
   # ── Quality Checks ────────────────────────────────────────────
   check:
-    desc: Run all linters (parallel)
+    desc: Run all linters (Task concurrency {{env "TASK_CONCURRENCY" | default "0"}}; set TASK_CONCURRENCY=1 for serial)
     deps: [lint]
 
   audit:agent-instructions:
