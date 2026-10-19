@@ -106,6 +106,7 @@ split. Matrix variants inherit their job's class. Pinned placement is an excepti
 
 | Workflow | Job | Class | Reason / placement exception |
 |---|---|---|---|
+| `build.yml` | `changes` | default | Fail-closed docs-only classification |
 | `build.yml` | `check` | default | Lint and typecheck |
 | `build.yml` | `repo-guards` | default | Instruction audit, test suite and skills drift |
 | `build.yml` | `devcontainer-permissions` | default | Permission unit check; no container required |
@@ -127,6 +128,7 @@ split. Matrix variants inherit their job's class. Pinned placement is an excepti
 | `terraform.yml` | `terraform-validate` | default | Offline validation |
 | `terraform.yml` | `terraform-plan-apply` | isolated | R2 credentials and Terraform Cloudflare tokens; infrastructure deployment |
 | `terraform.yml` | `terraform-verify` | default | Aggregate check |
+| `deploy-preview.yml` | `changes` | default | Fail-closed docs-only classification |
 | `deploy-preview.yml` | `preflight` | isolated | `CLOUDFLARE_API_TOKEN` |
 | `deploy-preview.yml` | `deploy` | isolated | Preview deployment and `CLOUDFLARE_API_TOKEN`; deliberate shared-cache exception below |
 | `release.yml` | `release-please` | isolated | API automation and `CI_APP_PRIVATE_KEY` |

@@ -1,0 +1,154 @@
+#!/usr/bin/env bash
+# Real git trees exercise the skip boundary, including the stale-base revert.
+set -euo pipefail
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
+repo="$(cd "$(dirname "$0")/.." && pwd)"
+classifier="$repo/scripts/ci-changes-classify.sh"
+work="$(mktemp -d "${TMPDIR:-/tmp}/ci-changes-test.XXXXXX")"
+trap 'rm -rf "$work"' EXIT
+
+fail() {
+    echo "TEST FAIL: $*" >&2
+    exit 1
+}
+fixture() {
+    mkdir -p "$work/$1"
+    cd "$work/$1"
+    git init -q
+    git config user.name test
+    git config user.email test@example.invalid
+    git config core.fileMode true
+    mkdir -p docs nested specs src .github/workflows scripts
+    printf 'original\n' >src/app.js
+    printf 'original\n' >docs/guide.md
+    printf 'original\n' >README.md
+    cp "$repo/.devflow.toml" .devflow.toml
+    git add .
+    git commit -qm 'initial fixture'
+    base="$(git rev-parse HEAD)"
+}
+merge_tree() {
+    git add -A
+    git commit -qm 'candidate change' --allow-empty
+    candidate="$(git rev-parse HEAD)"
+    tree="$(git rev-parse HEAD^{tree})"
+    merge="$(printf 'synthetic PR merge\n' | git commit-tree "$tree" -p "$base" -p "$candidate")"
+    git update-ref HEAD "$merge"
+}
+expect() {
+    local expected="$1" event="${2:-pull_request}" actual
+    actual="$(GITHUB_EVENT_NAME="$event" bash "$classifier")" || fail "$PWD: classifier failed"
+    [ "$actual" = "docs_only=$expected" ] || fail "$PWD: expected $expected, got $actual"
+}
+
+fixture docs
+printf 'edit\n' >>docs/guide.md
+printf 'new\n' >specs/design.txt
+printf 'new\n' >README.md
+printf 'new\n' >nested/guide.md
+merge_tree
+expect true
+expect false push
+expect false merge_group
+expect false workflow_dispatch
+expect false unknown
+
+fixture mixed
+printf 'edit\n' >>docs/guide.md
+printf 'source\n' >>src/app.js
+merge_tree
+expect false
+
+fixture rename
+git mv docs/guide.md docs/renamed.md
+merge_tree
+expect false
+fixture deletion
+git rm -q docs/guide.md
+merge_tree
+expect false
+fixture symlink
+rm docs/guide.md
+ln -s ../src/app.js docs/guide.md
+merge_tree
+expect false
+fixture symlink_add
+ln -s ../src/app.js docs/link.md
+merge_tree
+expect false
+fixture mode
+chmod +x README.md
+merge_tree
+expect false
+fixture empty
+merge_tree
+expect false
+
+for path in .github/workflows/build.md scripts/helper.md Taskfile.yml .devflow.toml scripts/ci-changes-classify.sh; do
+    fixture "sensitive-$(printf '%s' "$path" | tr '/.' '--')"
+    printf '\n# edit\n' >>"$path"
+    merge_tree
+    expect false
+done
+
+# Config parsing: no missing/ambiguous/unsupported value may authorize a skip.
+for kind in missing absent empty malformed duplicate wrong_table; do
+    fixture "config-$kind"
+    printf 'edit\n' >>docs/guide.md
+    merge_tree
+    case "$kind" in
+    missing) rm .devflow.toml ;;
+    absent) printf '[gates]\nround_code = "verify"\n' >.devflow.toml ;;
+    empty) printf '[gates]\ndocs_only_paths = []\n' >.devflow.toml ;;
+    malformed) printf '[gates]\ndocs_only_paths = ["docs/**", broken]\n' >.devflow.toml ;;
+    duplicate) printf '[gates]\ndocs_only_paths = ["docs/**"]\ndocs_only_paths = ["**"]\n' >.devflow.toml ;;
+    wrong_table) printf '[other]\ndocs_only_paths = ["**"]\n' >.devflow.toml ;;
+    esac
+    expect false
+done
+fixture multiline
+printf 'edit\n' >>README.md
+merge_tree
+printf '[gates]\ndocs_only_paths = [\n  "docs/**", # comment\n  "**/*.md",\n]\n' >.devflow.toml
+expect true
+fixture custom_allowlist
+printf 'source\n' >>src/app.js
+merge_tree
+printf '[gates]\ndocs_only_paths = ["src/**"]\n' >.devflow.toml
+expect true
+printf '[gates]\ndocs_only_paths = ["specs/**"]\n' >.devflow.toml
+expect false
+
+# A stale event base equals the candidate's source tree and hides its revert.
+# The merge ref's FIRST parent is the current base, which exposes the source edit.
+fixture stale_base_revert
+stale="$base"
+printf 'base advanced\n' >src/app.js
+git add src/app.js
+git commit -qm 'base source change'
+base="$(git rev-parse HEAD)"
+git show "$stale:src/app.js" >src/app.js
+printf 'docs\n' >>README.md
+merge_tree
+hidden="$(git diff --name-only "$stale" HEAD)"
+[ "$hidden" = README.md ] || fail 'stale-range fixture does not hide the source revert'
+expect false
+
+fixture newline_path
+printf 'source\n' >$'src/hidden\nREADME.md'
+merge_tree
+expect false
+
+fixture missing_merge_parent
+printf 'docs\n' >>README.md
+git add README.md
+git commit -qm 'ordinary non-merge head'
+expect false
+fixture shallow_merge
+printf 'docs\n' >>README.md
+merge_tree
+git clone -q --depth 1 "file://$PWD" "$work/shallow-checkout"
+cd "$work/shallow-checkout"
+expect false
+
+echo 'CI changes classifier truth tables: PASS'

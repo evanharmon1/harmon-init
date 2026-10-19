@@ -22,6 +22,21 @@ How testing works in Harmon Init.
   Other gates have their own jobs (`check`, `devcontainer-permissions`).
 - TODO: document coverage expectations and fixtures as the suite grows.
 
+## CI classifier tests
+
+`task test:ci-changes-classify` runs real Git fixtures for docs-only and mixed
+changes, sensitive CI paths, rename/delete, symlink/mode changes, empty diffs,
+missing history and invalid allowlists. A stale-base fixture proves that a
+source revert hidden by the event base SHA still selects a full run against
+the current base. The shared allowlist also supplies custom-glob fixtures,
+including root Markdown matches. The test is a `test:suite` member.
+
+`task test:ci-results` checks the aggregate separately: an authorized classifier
+skip passes and is logged distinctly; a skip after classifier failure, with
+`docs_only=false`, or on `push`/`merge_group` fails. Always-on jobs such as
+`security` cannot borrow an app job's skip eligibility. Docs-only PRs still
+run these tests through `repo-guards`.
+
 ## Parallel Task groups
 
 Task runs the dependencies of `check` and `test:suite` concurrently by default.
