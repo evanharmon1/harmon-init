@@ -223,7 +223,7 @@ done
 # "Devcontainer" group (images/devcontainer/** and scripts/**), so a release
 # bumps both in ONE PR and this check passes or fails as a unit.
 #
-# This runs in required CI too (build.yml's lint job lists it explicitly, after
+# This runs in required CI too (build.yml's repo-guards job runs test:suite after
 # the copier install) — a guard that only runs locally would miss the case it
 # exists for: a Renovate bump that moves one pin and not the other arrives as a
 # PR. Scope note: CI still installs copier UNPINNED, here and in the

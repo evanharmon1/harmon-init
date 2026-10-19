@@ -115,7 +115,11 @@ include_ansible:
 
 ci_runner:
   type: str
-  help: "CI RUNNER: default GitHub Actions runner (the CI_RUNS_ON repo/org variable overrides at runtime)"
+  help: >-
+    CI RUNNER: default GitHub Actions runner (CI_RUNS_ON overrides at runtime).
+    Browser/image-build jobs read BROWSER_RUNS_ON/IMAGE_BUILD_RUNS_ON first, then
+    CI_RUNS_ON. Isolated jobs use ISOLATED_RUNS_ON or ubuntu-latest, never the
+    self-hosted default.
   choices:
     - ubuntu-latest
     - self-hosted

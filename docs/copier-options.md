@@ -44,7 +44,7 @@ In prompt order, as defined in `copier.yml`. "Asked when" is the question's
 | 9 | `include_terraform` | bool | `project_type == 'iac'` | always | `terraform/`, `.tflint.hcl`, `terraform.yml`, 4 terraform scripts |
 | 10 | `include_ansible` | bool | `project_type == 'iac'` | always | `ansible/`, `.ansible-lint`; seeds `use_python` |
 | 11 | `ci_runner` | choice `ubuntu-latest`/`self-hosted` | `ubuntu-latest` | always | Render-time `runs-on`; self-hosted also enables repository-variable setup |
-| 11a | `ci_runner_labels` | str (CSV) | `self-hosted,linux` | `ci_runner == 'self-hosted'` | Workflow fallback and repository `CI_RUNS_ON` reconciliation; add an architecture or host label when intentional |
+| 11a | `ci_runner_labels` | str (CSV) | `self-hosted,linux` | `ci_runner == 'self-hosted'` | CI workflow fallback and `--ci-runs-on` reconciliation; browser, image-build and isolated classes have separate flags |
 | 12 | `deploy_cloudflare_workers` | bool | `project_type == 'web-astro'` | `project_type in ['web-astro','web-app']` | `wrangler.jsonc`, `deploy-preview.yml` |
 | 13 | `license` | choice `mit`/`private` | `mit` | always | `LICENSE` (Licensor = the hidden `organization`) |
 | 14 | `use_release_please` | bool | **yes** | always | `release.yml`, release-please config/manifest, changelog scripts |
@@ -244,16 +244,49 @@ Copier-injected context the template reads: `_copier_operation`,
 
 A generated repo's behavior also depends on state no answer captures.
 
-### GitHub Actions variables (6)
+### GitHub Actions variables (9)
 
 | Variable | Effect |
 |---|---|
-| `CI_RUNS_ON` | Overrides `ci_runner` at runtime (JSON string or label array). `task setup:github` creates a missing value from the current Copier runner answers and preserves every existing non-public value. Use `scripts/setup-github.sh --repo <owner/repo> --ci-runs-on '<json>' --replace-ci-runs-on` for an intentional non-public replacement. Public repos are always forced to an explicit `"ubuntu-latest"` override, even when Copier or the existing variable selects other routing. |
+| `CI_RUNS_ON` | General CI selector; reconcile with `--ci-runs-on` and replace intentionally with `--replace-ci-runs-on`. |
+| `BROWSER_RUNS_ON` | Browser-job selector; `--browser-runs-on` / `--replace-browser-runs-on`. |
+| `IMAGE_BUILD_RUNS_ON` | Image-build selector; `--image-build-runs-on` / `--replace-image-build-runs-on`. |
+| `ISOLATED_RUNS_ON` | Isolated-job selector; `--isolated-runs-on` / `--replace-isolated-runs-on`, subject to the fail-closed invariant below. |
 | `CI_APP_CLIENT_ID` | CI GitHub App client ID (paired with `CI_APP_PRIVATE_KEY`) |
 | `FULL_SECURITY_SCAN` | On a repo rendered with `use_codeql: true`, opts a private repo into CodeQL (requires GitHub Code Security) and, in the same move, suppresses the Semgrep CE step in `build.yml` — a swap, not an addition. Compared as the string `'true'`. **Inert on a `use_codeql: false` repo** — see the note below |
 | `ORG_PROJECT_ID` | Org Projects V2 board the automation writes to |
 | `TERRAFORM_CI_ENABLED` | Enables the terraform CI job |
 | `CLOUDFLARE_ACCOUNT_ID` | Cloudflare Workers deploy target |
+
+"safe" means the selector carries no `self-hosted` label, not that it is GitHub-hosted;
+a custom-label or group selector is the operator's attestation.
+
+Routing values are JSON strings or label arrays; isolated selectors also accept
+objects with a usable `labels` string or string array. On private/internal
+repositories, `scripts/setup-github.sh --repo <host/owner/repo>` creates a missing
+class only when its value flag is supplied and preserves existing safe values
+unless that class's replace flag accompanies the value. `task setup:github`
+supplies the rendered CI runner answer; pass additional class flags after `--`,
+for example `task setup:github -- --browser-runs-on '"ubuntu-latest"'`. Repository values shadow inherited organization values.
+
+Public repositories always receive all four repository overrides as exact
+`"ubuntu-latest"`, even without class or replace flags. This is mandatory safety
+enforcement against persistent runners inherited from an organization.
+
+`ISOLATED_RUNS_ON` refuses `self-hosted` labels case-insensitively, including
+`{group, labels}` selectors. A requested unsafe or unsupported selector fails
+before any GitHub access or write. An existing unsafe repository selector fails
+unless the operator supplies a safe isolated value with
+`--replace-isolated-runs-on`; public repositories repair unsafe and unsupported existing values automatically
+before checking organization routing. Private/internal unsupported shapes still
+fail closed. Unsafe or unsupported organization selectors fail only when actually
+inherited (no repository isolated override). A safe repository value, or an
+explicit safe isolated value plus its replace flag, shadows them and succeeds
+with a warning. Ask the organization's routing owner (whoever manages organization
+Actions variables) to repair inherited values, or supply a safe repository override. An unreadable or
+incomplete organization inventory is reported as unknown and does not fail the
+run. `task status:setup` reports active unsafe or unsupported selectors as
+violations and shadowed organization values as warnings.
 
 **`FULL_SECURITY_SCAN` only means anything on a `use_codeql: true` repo.** Both
 reads of the variable are gated on that answer. `codeql.yml` exists only when

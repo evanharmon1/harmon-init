@@ -22,7 +22,7 @@ run-name: ${{ github.actor }} is proving the remote bootstrap on a stock Ubuntu 
 #               recorded gap.
 #
 # The pin CONTRACT is not proved here. `task test:bootstrap-remote` runs
-# unconditionally in build.yml's lint job, which has no path filter, so it sees
+# unconditionally in build.yml's repo-guards job, which has no path filter, so it sees
 # every PR — including one that edits only an input this workflow's filter does
 # not name. This workflow proves behaviour only, and the path filter below is
 # correct for that: a documentation edit cannot change what the scripts install
@@ -72,7 +72,7 @@ jobs:
     if: >-
       github.event_name == 'push' ||
       github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
+    runs-on: ${{ fromJSON(vars.IMAGE_BUILD_RUNS_ON || vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     timeout-minutes: 45
     container:
       # STOCK Ubuntu 24.04, deliberately: the point is to prove the bootstrap
@@ -80,10 +80,10 @@ jobs:
       # because a floating `24.04` would let "stock" change underneath the
       # proof.
       #
-      # The job therefore runs on whatever architecture the runner is. On
-      # GitHub-hosted runners that is amd64; point `vars.CI_RUNS_ON` at arm64
-      # hardware and the same job proves arm64 with no other change. Until
-      # such a runner exists the arm64 download paths are checksum-verified
+      # IMAGE_BUILD_RUNS_ON, then CI_RUNS_ON, selects the runner and its
+      # native architecture. The GitHub-hosted fallback is amd64; select
+      # arm64 hardware to prove arm64 with no other job change. Until such
+      # a runner exists the arm64 download paths are checksum-verified
       # but not executed, which docs/architecture/remote-environments.md says
       # outright rather than leaving to be assumed.
       image: ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55

@@ -54,9 +54,9 @@ permissions:
 
 jobs:
   sync:
-    # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
-    # default; set it to a JSON runner spec to override without a commit.
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
+    # Isolated placement never inherits CI_RUNS_ON or a self-hosted default.
+    # Override only with a disposable-host pool, encoded as JSON.
+    runs-on: ${{ fromJSON(vars.ISOLATED_RUNS_ON || '"ubuntu-latest"') }}
     # Generous: the pre-push gate runs `task verify`, which renders the whole
     # copier template matrix.
     timeout-minutes: 60
@@ -103,7 +103,7 @@ jobs:
         run: |
           # --force overwrites a foreign same-named entry point instead of
           # aborting, keeping reruns idempotent on a self-hosted CI_RUNS_ON
-          # runner (same reasoning as build.yml's lint job).
+          # runner (same reasoning as build.yml's repo-guards job).
           uv tool install --force copier
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           npm install --global @devcontainers/cli lefthook pnpm

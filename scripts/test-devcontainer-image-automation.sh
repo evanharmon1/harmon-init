@@ -95,12 +95,14 @@ pass
 
 # The offline automation suite is a required pre-merge check and runs before
 # either registry credentials or the App write token exist in publishing jobs.
-# Required CI runs this suite through the one `task test:suite` step (#1461), so
-# the check is that step plus this suite's membership. A text check on the
-# Taskfile, not `task --dry`: the publish job runs this script directly after
-# a bare checkout, with no go-task installed.
-ci_automation_line="$(grep -En '^[[:space:]]*(-[[:space:]]+)?run:[[:space:]]+task test:suite[[:space:]]*$' \
-    .github/workflows/build.yml | cut -d: -f1)"
+# Required CI reaches test:suite through repo-guards -> ci:repo-guards. Check
+# both links and this suite's membership. Text only, not `task --dry`: the
+# publish job runs this script directly after checkout, before Task is installed.
+ci_automation_line="$(awk '/^  repo-guards:[[:space:]]*$/ { on = 1; next } on && /^  [^ #]/ { exit } on' \
+    .github/workflows/build.yml | grep -En '^[[:space:]]*(-[[:space:]]+)?run:[[:space:]]+task ci:repo-guards[[:space:]]*$' || true)"
+ci_guards_block="$(awk '/^  ci:repo-guards:[[:space:]]*$/ { on = 1; next } on && /^  [^ #]/ { exit } on' Taskfile.yml)"
+grep -Eq '^[[:space:]]+-[[:space:]]+task:[[:space:]]+test:suite[[:space:]]*$' <<<"$ci_guards_block" ||
+    fail "ci:repo-guards does not run test:suite, so required CI does not run image automation"
 suite_block="$(awk '/^  test:suite:[[:space:]]*$/ { on = 1; next } on && /^  [^ #]/ { exit } on' Taskfile.yml)"
 grep -Eq '^[[:space:]]+-[[:space:]]+task:[[:space:]]+test:devcontainer:image:automation[[:space:]]*$' <<<"$suite_block" ||
     fail "test:suite does not run the image automation suite, so required CI does not"

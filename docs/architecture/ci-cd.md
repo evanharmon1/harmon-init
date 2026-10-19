@@ -13,7 +13,7 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
 
 ## Workflows
 
-- `build.yml` — on push/PR to `main`: lint, security, template-test, then the
+- `build.yml` — on push/PR to `main`: check, repo-guards, devcontainer-permissions, security, template-test, then the
   aggregate **`verify`** job. Its `pull_request:` trigger is
   `[opened, synchronize, reopened]` — **no `draft` filter**, so it fires on
   draft PRs too. That is load-bearing, not incidental: PRs are drafts for their
@@ -23,27 +23,25 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
   until after the handoff it is supposed to authorize.
   **`edited` is deliberately absent** (#1328): it fires on a title/body edit,
   and the readiness gate *requires* body edits to tick `## Deferred findings`
-  — so carrying it here made settling a finding restart lint, security and all
+  — so carrying it here made settling a finding restart the checks, security and all
   seven template-test profiles, putting condition 1 (checks concluded) back to
   pending at the last step before promotion. `edited` also covers a
   base-**branch** change; losing that re-run is accepted, because retargeting a
   PR is rare and `strict_required_status_checks_policy` forces an up-to-date
   head before merge, which arrives as a `synchronize`.
-  **One list, not two** (#962, #1461): the `lint` job runs `check`, then a
-  single `task test:suite` step — the Taskfile's aggregate of every `test:*`
-  target `task verify` runs — so a guard added to `verify` is in CI by
-  construction instead of by someone remembering to list it in the workflow
-  too. The accepted cost is one Actions step for the whole suite rather than a
-  named step per test. Outside the suite, each with its reason beside it in
-  the workflow: `test:template` (it runs as the `template-test` matrix, one
-  profile per leg), `verify:skills` (network), `test:devcontainer:permissions`
-  (a `ci`-only unit check), and the `audit:*` step (not a `test:*` target).
-  `task test:verify-ci-parity` — in the suite, in both layers, and also its own
-  `lint` step so deleting the suite step cannot silence it — fails if
-  `build.yml`'s `lint` job stops calling `test:suite`, if `verify` stops running
-  it, or if `verify` lists a `test:*` target directly (`test:template` aside,
-  where the `template-test` job exists); `scripts/test-template.sh` asserts the
-  same for every rendered profile.
+  **One list, not two**: `repo-guards` runs `task ci:repo-guards`, which
+  calls the instruction audit and `test:suite` plus `verify:skills` (network).
+  The suite is the Taskfile's one list of `test:*` guards shared with local
+  `verify`. `task test:verify-ci-parity` remains a separate workflow step,
+  outside the aggregate it guards: it fails if the workflow drops the
+  `ci:repo-guards` call, that task drops `test:suite`, or `verify` drops the
+  suite or adds a stray `test:*` entry.
+  The split runs `check` and repository guards, plus devcontainer permissions in parallel,
+  reducing the critical path to the longest job. Each additional job pays a
+  setup phase and its own per-minute billing rounding; this can increase
+  runner minutes and queueing on a small self-hosted pool. Measure the
+  `repo-guards` duration in each repository: its parallel suite includes
+  render-based checks here, so the split alone promises no fixed duration.
 - `closing-keywords.yml` — the metadata-only gate that refuses a same-repo
   `Closes #N` while `#N` has unchecked task-list items. It lives in its own
   workflow precisely so it can keep `pull_request.edited`: it reads the PR
@@ -138,7 +136,7 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
   `images/devcontainer/bootstrap-remote.sh` on a stock `ubuntu:24.04` container.
   One job, because the offline half belongs everywhere. The pin contract
   (`task test:bootstrap-remote`) runs unconditionally, inside `test:suite`,
-  in `build.yml`'s `lint` job and in `verify`, so a change to any input it reads — the install scripts,
+  in `build.yml`'s `repo-guards` job and in `verify`, so a change to any input it reads — the install scripts,
   the pins, or the allowlist tables in
   [remote-environments.md](remote-environments.md) it derives its host sets
   from — is checked on every pull request rather than behind a path filter that
@@ -157,8 +155,9 @@ plus an aggregate **`verify`** job; branch protection requires `verify` +
   `task check` in the checkout using only what the bootstrap installed. Its
   container job is fork-gated like the image publisher's, for the same reason:
   it executes checked-out shell as root. The job runs on the runner's native
-  architecture, so `vars.CI_RUNS_ON` is what decides whether arm64 is
-  exercised. See [remote-environments.md](remote-environments.md).
+  architecture. `IMAGE_BUILD_RUNS_ON`, then `CI_RUNS_ON`, selects its runner
+  and architecture, deciding whether arm64 is exercised.
+  See [remote-environments.md](remote-environments.md).
 
 ## Issue classification reconciler
 
@@ -578,23 +577,23 @@ how-to lives at [../guides/deploying.md](../guides/deploying.md).
 
 ## Runners
 
-Current workflows read `CI_RUNS_ON` with a rendered default. The four-class
-routing contract below is **planned until #1727 ships**; workflow rendering and
-setup reconciliation land separately. A class names the reason for different
-runner placement, while its JSON string or array value selects a runner label set.
-Provider names never belong in routing variable names.
+Generated workflows route every job through one of four classes. A class names
+the reason for different placement; its JSON string or array value selects a
+runner label set. Provider names never belong in routing variable names.
 
-- **Default — `CI_RUNS_ON`:** general build, lint, test and aggregate work.
-- **Browser — `BROWSER_RUNS_ON`:** jobs executing a real browser.
-- **Image-build — `IMAGE_BUILD_RUNS_ON`:** Docker/devcontainer builds and their smokes.
-- **Isolated — `ISOLATED_RUNS_ON`:** jobs holding long-lived secrets, parsing
-  attacker-writable bodies or deploying, plus sub-minute API-only automation.
+| Class | Variable | Jobs / requirement | Fallback chain |
+|---|---|---|---|
+| default | `CI_RUNS_ON` | `check`, `repo-guards`, `devcontainer-permissions`; general build, test and aggregates | `CI_RUNS_ON` → rendered default |
+| browser | `BROWSER_RUNS_ON` | Real-browser tests: `e2e`, `a11y`, `lighthouse` | `BROWSER_RUNS_ON` → `CI_RUNS_ON` → rendered default |
+| image-build | `IMAGE_BUILD_RUNS_ON` | Docker/devcontainer builds and container smoke/assertion tests | `IMAGE_BUILD_RUNS_ON` → `CI_RUNS_ON` → rendered default |
+| isolated | `ISOLATED_RUNS_ON` | Long-lived secrets, attacker-writable bodies, deployments and API-only automation | `ISOLATED_RUNS_ON` → `"ubuntu-latest"` only |
 
 Default falls back from `CI_RUNS_ON` to the rendered `ci_runs_on_default`.
 Browser and image-build fall back from their class variable to `CI_RUNS_ON`,
 then that rendered default. The rendered default is `"ubuntu-latest"` for
 GitHub-hosted profiles or the configured JSON label list for self-hosted profiles.
-Existing merge-group GitHub-hosted pins remain.
+Existing merge-group GitHub-hosted pins remain. Root-only `remote-bootstrap.yml`
+`bootstrap` uses image-build because its stock container requires Docker.
 
 Isolated uses `${{ fromJSON(vars.ISOLATED_RUNS_ON || '"ubuntu-latest"') }}`
 on every profile: it never inherits `CI_RUNS_ON` or the rendered default.
@@ -604,9 +603,16 @@ satisfy that boundary. The fallback can consume GitHub Actions minutes on privat
 repositories even when their default pool is a homelab. The target shared-cache
 rule requires setup `cache: "false"` for secret-holding/deploying jobs, except
 `deploy-preview.yml` `deploy`: it builds the PR's own code, so cache poisoning
-grants nothing the PR does not already have. Existing violations remain in
-web-app `lint` (codegen split owned by #1729) and `sync-harmon-devkit.yml` `sync`
-(App `contents:write` token plus pnpm cache on `use_node`, owned by #1731).
+grants nothing the PR does not already have. The remaining violation is in
+`sync-harmon-devkit.yml` `sync`
+(App `contents:write` token plus pnpm cache on `use_node`, owned by harmon-init#1731).
+
+**Self-hosted update note:** With `ci_runner: self-hosted`, isolated-class jobs
+now default to GitHub-hosted runners instead of the self-hosted default pool.
+This includes web-app `codegen-guard`, the `claude-*` jobs, Terraform plan/apply, deployment jobs and
+`closing-keywords`. They consume Actions minutes. Terraform that needs endpoints
+reachable only on a private network cannot run on those GitHub-hosted runners;
+configure a suitable disposable isolated pool before using that path.
 
 The [routing spec](https://github.com/evanharmon1/harmon-init/blob/main/specs/runner-routing-classes.md)
 owns the exhaustive job assignments and expressions; the
@@ -639,22 +645,52 @@ of the same name. Class fallback is a separate step: browser/image-build may
 inherit `CI_RUNS_ON`, while isolated may not. Empty or inaccessible variables
 use the next tier; nonempty invalid JSON is an error.
 
-Today `task setup:github` reconciles only `CI_RUNS_ON`, as described below.
-Setup does not yet reconcile the class variables; that is #1728's follow-up.
+`task setup:github` reconciles all four routing variables, as described below.
 
 ### Reconciliation and lifecycle
 
-`task setup:github` creates the repository-level variable when it is missing and
-preserves every existing value on non-public repositories; it never infers
-ownership from a JSON shape. An intentional replacement requires
-`scripts/setup-github.sh` with `--replace-ci-runs-on`. Public repositories are
-the safety exception and are always canonicalized to `"ubuntu-latest"`.
+`task setup:github` reconciles `CI_RUNS_ON`, `BROWSER_RUNS_ON`,
+`IMAGE_BUILD_RUNS_ON` and `ISOLATED_RUNS_ON` through `scripts/setup-github.sh`.
+On private/internal repositories, a missing repository variable is created only
+when its value flag is supplied. Existing values are preserved unless that
+variable's value and replacement flags are supplied together, subject to the
+isolated-runner invariant below. No ownership is inferred from a JSON shape.
 
-For `harmon-init` itself (as a public root repository), `task setup:github`
-explicitly sets `CI_RUNS_ON="ubuntu-latest"` at the repository variable layer.
-Its workflow actions dynamically evaluate `${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}`,
-so runner selection is driven through the variable while retaining the hardcoded
-fallback safety net.
+| Variable | Value flag | Replacement flag |
+|---|---|---|
+| `CI_RUNS_ON` | `--ci-runs-on` | `--replace-ci-runs-on` |
+| `BROWSER_RUNS_ON` | `--browser-runs-on` | `--replace-browser-runs-on` |
+| `IMAGE_BUILD_RUNS_ON` | `--image-build-runs-on` | `--replace-image-build-runs-on` |
+| `ISOLATED_RUNS_ON` | `--isolated-runs-on` | `--replace-isolated-runs-on` |
+
+A replacement flag requires its corresponding value flag. `task setup:github`
+supplies the rendered CI runner answer; pass additional class flags after `--`,
+for example `task setup:github -- --browser-runs-on '"ubuntu-latest"'`.
+
+Public repositories always receive all four repository-level overrides as exact
+`"ubuntu-latest"`, even without value or replacement flags. Missing values are
+created and differing values are replaced, including malformed existing isolated
+selectors. These overrides are written before existing/inherited isolated checks,
+so organization-level routing cannot send public jobs to a persistent pool.
+
+Requested unsafe or unsupported `ISOLATED_RUNS_ON` selectors fail before any
+GitHub access or write, including on public repositories. The invariant refuses
+`self-hosted` labels case-insensitively, including labels inside object selectors.
+On private/internal repositories, an existing self-hosted isolated value fails
+unless the same run supplies a safe value and `--replace-isolated-runs-on`;
+unsupported existing selectors also fail closed. A readable unsafe or unsupported
+organization isolated value fails only when actually inherited, with no repository
+override. A safe repository override shadows it and produces a warning instead.
+Unreadable or incomplete organization inventory is reported as unknown and does
+not fail the run. Ask the organization's routing owner to repair an inherited
+value, or supply a safe repository override. Passing the label check does not
+prove host isolation: custom pools still require operator attestation that the
+host is destroyed with the job.
+
+For `harmon-init` itself (as a public root repository), setup creates or replaces
+all four repository routing variables with `"ubuntu-latest"`. Workflow routing
+uses these repository values, shadowing organization routing while retaining the
+GitHub-hosted fallback.
 
 ### Security boundaries
 

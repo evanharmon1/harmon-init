@@ -52,7 +52,7 @@ tasks:
   # ── CI / Verification Pipelines ────────────────────────────────
   ci:
     # Full local mirror of this repo's CI — run on demand to catch everything CI
-    # would (the lint job's guards, the template render matrix, security) without
+    # would (the repository guards, the template render matrix, security) without
     # waiting on a PR. The PR-metadata closing guard stays outside offline
     # `verify`, so run it explicitly before building ON `verify` and adding every
     # other check the build workflow runs. verify:skills is the NETWORK drift
@@ -81,9 +81,18 @@ tasks:
       - task: test:suite
       - task: test:template
 
+  ci:repo-guards:
+    # CI-only aggregate: verify lists its offline members separately.
+    # The workflow parity step stays outside this task so it can guard the suite call.
+    desc: Repository instruction audit and test suite, plus skills drift
+    cmds:
+      - task: audit:agent-instructions
+      - task: test:suite
+      - task: verify:skills
+
   test:suite:
     # The ONE list of `test:*` targets that both `verify` and the required Build
-    # workflow's `lint` job run (build.yml calls this task in a single step), so
+    # workflow's `repo-guards` job run (through ci:repo-guards), so
     # the two cannot drift and nothing parses the workflow to police them
     # (harmon-init#962, #1461). A new `test:*` guard that belongs in the gate is
     # added HERE and nowhere else.
@@ -93,8 +102,9 @@ tasks:
     # right after this suite instead. CI-only-infrastructure checks
     # (`test:renovate-config` resolves Renovate from npm; `verify:skills` and
     # `test:devcontainer:permissions` are `ci` steps) stay outside it too.
-    desc: The test:* targets verify and the Build workflow's lint job both run (everything but test:template)
-    cmds:
+    # Members run concurrently: each must confine filesystem and Git writes to its own mktemp fixture and bind no port.
+    desc: The test:* targets verify and the Build workflow's repo-guards job both run (members run in parallel; set TASK_CONCURRENCY=1 for serial execution)
+    deps:
       - task: test:agent-instructions-size
       - task: test:agent-skill-links
       - task: test:agent-registry
@@ -140,6 +150,7 @@ tasks:
       - task: test:starship-glyphs
       - task: test:template-independence
       - task: test:category-gates
+      - task: test:runner-routing
       - task: test:hooks
       - task: test:worktree
       - task: test:session-cleanup
@@ -157,7 +168,7 @@ tasks:
 
   # ── Quality Checks ────────────────────────────────────────────
   check:
-    desc: Run all linters (parallel)
+    desc: Run all linters in parallel (set TASK_CONCURRENCY=1 for serial execution)
     deps: [lint]
 
   audit:agent-instructions:
@@ -739,6 +750,11 @@ tasks:
     cmds:
       - ./scripts/test-category-gates.sh
 
+  test:runner-routing:
+    desc: "Guard: runner routing classes and workflow coverage in every rendered fixture"
+    cmds:
+      - ./scripts/test-runner-routing.sh
+
   audit:dogfood:
     desc: "Report root<->template drift for jinja twins (report, not a gate; --summary for names only)"
     cmds:
@@ -972,7 +988,7 @@ tasks:
       REPO: "evanharmon1/harmon-init"
     cmds:
       - >-
-        ./scripts/setup-github.sh --repo "{{.REPO}}" --ci-runs-on '"ubuntu-latest"'
+        ./scripts/setup-github.sh --repo "{{.REPO}}" --ci-runs-on '"ubuntu-latest"' {{.CLI_ARGS}}
   setup:github-project:
     desc: Idempotently create/sync the owner's GitHub Project V2 board + Status pipeline (on a personal account also its Product field). Requires the Projects scopes — `task setup:gh-scopes`.
     cmds:

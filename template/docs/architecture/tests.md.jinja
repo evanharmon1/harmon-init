@@ -31,7 +31,7 @@ tier binds a port**, not what it is named:
 |---|---|---|
 | `task check` (lint, format check, typecheck) | no | inner loop, editors, git hooks |
 [% if project_type == 'web-app' %]
-| `task guard:codegen` | no — writes files, doesn't serve | `verify` (before `check`), CI `lint` |
+| `task guard:codegen` | no — writes files, doesn't serve | `verify` (before `check`), CI `codegen-guard` |
 [% endif %]
 | `task build` | no — writes `dist/`, does not serve | `verify`, CI `build-test` |
 | `task test` (vitest) | no | `verify`, CI `build-test` |
@@ -104,7 +104,7 @@ Two halves, one script (`scripts/codegen.sh`):
 | Task | What it does | Where it runs |
 |---|---|---|
 | `task codegen` | regenerates (Convex's `convex/_generated/` first) | by hand, after editing a schema |
-| `task guard:codegen` | regenerates, then **fails** if the output differs from what you staged | first in `verify`; CI's `lint` job |
+| `task guard:codegen` | regenerates, then **fails** if the output differs from what you staged | first in `verify`; CI's `codegen-guard` job |
 
 Editing `convex/schema.ts` without regenerating makes `tsc` fail against the
 stale types, with errors that point nowhere near the actual cause. Hence the
@@ -128,7 +128,7 @@ The Convex block in `task guard:codegen` runs only when a Convex deployment
 selector (`CONVEX_DEPLOY_KEY`, `CONVEX_DEPLOYMENT`, or both
 `CONVEX_SELF_HOSTED_URL` and `CONVEX_SELF_HOSTED_ADMIN_KEY`) has a non-empty
 effective value across the environment, `.env.local` and `.env`, and otherwise
-skips with a message; in CI, `.github/workflows/build.yml`'s `lint` job passes
+skips with a message; in CI, `.github/workflows/build.yml`'s `codegen-guard` job passes
 `CONVEX_DEPLOY_KEY` to `task guard:codegen` on pushes and same-repository pull
 requests, not in the merge queue, so setting the `CONVEX_DEPLOY_KEY` repository
 secret enables the staleness guard there too. When a deployment is configured,
@@ -151,6 +151,9 @@ Other rules:
 - Test files live in `tests/` at the repo root (or co-located per framework convention).
 - `task verify` is the local definition-of-done gate[% if use_node %]; `task ci` adds the
   port-binding e2e tier and security, on demand when CI is red[% endif %]. CI runs the same task targets.
+  The `repo-guards` job calls `ci:repo-guards` for the instruction audit,
+  shared `test:suite`[% if use_skills_sync %], and network skills check[% endif %].
+  Other gates have their own jobs (`check`[% if project_type == 'web-app' %], `codegen-guard`[% endif %][% if devcontainer %], `devcontainer-permissions`[% endif %]).
 [% if project_type in ['web-astro', 'web-app'] %]
 - Playwright runs desktop Chromium/Firefox/WebKit **and mobile device
   projects** (e.g. Pixel + iPhone). The scaffold ships the mobile projects
@@ -162,3 +165,15 @@ Other rules:
   rules axe can detect) — keyboard + screen-reader testing still required.
 [% endif %]
 - TODO: document coverage expectations and fixtures as the suite grows.
+
+## Parallel Task groups
+
+Task runs the dependencies of `check` and `test:suite` concurrently by default.
+Set Task's built-in `TASK_CONCURRENCY=1` environment variable to run dependencies
+one at a time, for example `TASK_CONCURRENCY=1 task verify` or
+`TASK_CONCURRENCY=1 task test:suite`.
+[% if use_node %]
+A Node profile can run ESLint (measured around 3.8 GB RSS) alongside TypeScript
+checking (around 1.5 GB RSS), so budget about 6 GB for parallel `task check` or
+use the serial setting on a smaller runner.
+[% endif %]

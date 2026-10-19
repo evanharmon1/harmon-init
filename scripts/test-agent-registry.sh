@@ -716,7 +716,7 @@ rejects "a harness effort that is not on the ladder" \
     'harness claude-code declares effort(s) max that are not on effort_ladder'
 rejects "harness efforts out of ladder order" \
     'harness-efforts-out-of-order' \
-    'harness codex-cli efforts ["xhigh","high","medium","low","minimal"] are out of ladder order'
+    'harness codex-cli efforts ["max","xhigh","high","medium","low","minimal"] are out of ladder order'
 rejects "a repeated harness effort" \
     'harness-duplicate-effort' \
     'items must be unique'

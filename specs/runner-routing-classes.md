@@ -101,13 +101,14 @@ harmonops/harmon-infra's organization reconciler owns organization-level drift.
 
 This table is the single assignment source for the rendering test in #1727.
 Workflow names are rendered filenames; inclusion follows the template's existing
-Copier conditions. Rows name every job present at the recorded base plus the
-explicitly planned `codegen-guard` split. Matrix variants inherit their job's
-class. Pinned placement is an exception to the class expression, not a new class.
+Copier conditions. Rows name every job, including the web-app `codegen-guard`
+split. Matrix variants inherit their job's class. Pinned placement is an exception to the class expression, not a new class.
 
 | Workflow | Job | Class | Reason / placement exception |
 |---|---|---|---|
-| `build.yml` | `lint` | default | Lint; web-app codegen secret remains here temporarily until #1729 |
+| `build.yml` | `check` | default | Lint and typecheck |
+| `build.yml` | `repo-guards` | default | Instruction audit, test suite and skills drift |
+| `build.yml` | `devcontainer-permissions` | default | Permission unit check; no container required |
 | `build.yml` | `build-test` | default | Build and unit tests |
 | `build.yml` | `e2e` | browser | Playwright; included with Node |
 | `build.yml` | `security` | default | Free baseline scanners |
@@ -115,7 +116,7 @@ class. Pinned placement is an exception to the class expression, not a new class
 | `build.yml` | `render-parity` | default | Compares built output without a browser (web-astro) |
 | `build.yml` | `a11y` | browser | Browser accessibility checks (web-app/web-astro) |
 | `build.yml` | `verify` | default | Aggregate check |
-| `build.yml` | `codegen-guard` | isolated | Future #1729 web-app split; `CONVEX_DEPLOY_KEY`, setup `cache: "false"` |
+| `build.yml` | `codegen-guard` | isolated | Generated code (web-app); `CONVEX_DEPLOY_KEY`, setup `cache: "false"` |
 | `devcontainer-build.yml` | `devcontainer-changes` | default | Change detection; preserve `merge_group` → `ubuntu-latest` ternary |
 | `devcontainer-build.yml` | `build` | image-build | Builds/publishes devcontainer images |
 | `devcontainer-build.yml` | `build-merge-group` | image-build | Preserve hard-coded `ubuntu-latest` on merge groups |
@@ -162,7 +163,7 @@ and updates these root-only jobs to match the same class definitions.
 | `publish-harmon-devcontainer.yml` | `publish` | image-build | Builds/publishes images with ephemeral `GITHUB_TOKEN` `packages:write` |
 | `publish-harmon-devcontainer.yml` | `prepare-pin` | default | Validates image metadata and prepares/tests a pin change without write credentials; no image build or smoke |
 | `publish-harmon-devcontainer.yml` | `sync-pin` | isolated | Publishes the pin PR with `CI_APP_PRIVATE_KEY` |
-| `remote-bootstrap.yml` | `bootstrap` | default | Toolchain bootstrap tests in a stock container; no image build or long-lived secret |
+| `remote-bootstrap.yml` | `bootstrap` | image-build | Stock-container toolchain tests require a Docker-capable pool; no long-lived secret |
 | `build.yml` | `template-test` | default | Renders and validates Copier profiles |
 
 ### Shared package-cache contract and existing exceptions
@@ -174,16 +175,14 @@ grants nothing the PR does not already have. This exception is documented in
 Production `deploy-production` does not share that trust boundary and requires
 setup `cache: "false"`.
 
-The current web-app `lint` job passes `CONVEX_DEPLOY_KEY` to `guard:codegen`
-with the shared pnpm cache enabled. This is an existing cache-rule violation,
-not permission to cache secrets in isolated jobs. #1727 keeps `lint` on default
-until #1729 removes that secret-bearing step into `codegen-guard`, classified
-isolated with `cache: "false"`. This spec does not make that split.
+The web-app `codegen-guard` job holds `CONVEX_DEPLOY_KEY` on the isolated
+class with setup `cache: "false"`. The default-class `check` job reads the
+committed tree without that secret.
 
-A second existing violation is `sync-harmon-devkit.yml` `sync`: it mints a
+The remaining existing violation is `sync-harmon-devkit.yml` `sync`: it mints a
 `contents:write` App token and, with `use_node`, the setup action restores the
-pnpm cache. #1731 owns removing that shared-cache restore. These two violations
-are tracked corrections, not additional deliberate exceptions.
+pnpm cache. #1731 owns removing that shared-cache restore. This violation
+is a tracked correction, not an additional deliberate exception.
 
 ## Acceptance criteria (Given / When / Then)
 
@@ -230,7 +229,7 @@ are tracked corrections, not additional deliberate exceptions.
   reusable callers inherit the callee, and merge-group pins remain intact.
 - **Given** the #1729 codegen split is rendered for web-app
 - **When** its setup action is inspected
-- **Then** `codegen-guard` is isolated with `cache: "false"` and `lint` no longer
+- **Then** `codegen-guard` is isolated with `cache: "false"` and `check` no longer
   holds the codegen secret.
 
 ## Open questions
