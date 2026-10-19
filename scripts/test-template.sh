@@ -3394,11 +3394,26 @@ with tempfile.TemporaryDirectory() as tmp:
         output = tmp / "output"
         output.write_text("")
         env = dict(os.environ, BROWSER_SET="all", GITHUB_OUTPUT=str(output))
+        env.pop("PLAYWRIGHT_BROWSERS_PATH", None)
+        env.pop("XDG_CACHE_HOME", None)
         subprocess.run(["bash", "-eo", "pipefail", "-c", reader_run], cwd=tmp, env=env, check=True)
         values = dict(line.split("=", 1) for line in output.read_text().splitlines())
         assert values == {"version": version, "platform": "ubuntu-22.04", "cacheable": "true"}
         keys.append(key.replace("${{ steps.playwright-version.outputs.version }}", version))
     assert keys[0] != keys[1]
+    # Either nonempty override makes the fixed cache path unusable. The action
+    # must skip restore/save so its hit output cannot suppress the download.
+    for overrides in ({"PLAYWRIGHT_BROWSERS_PATH": "0"},
+                      {"XDG_CACHE_HOME": str(tmp / "xdg")},
+                      {"PLAYWRIGHT_BROWSERS_PATH": str(tmp / "browsers"), "XDG_CACHE_HOME": str(tmp / "xdg")}):
+        output.write_text("")
+        subprocess.run(["bash", "-eo", "pipefail", "-c", reader_run], cwd=tmp,
+                       env=dict(env, **overrides), check=True)
+        assert output.read_text() == "cacheable=false\n"
+    output.write_text("")
+    subprocess.run(["bash", "-eo", "pipefail", "-c", reader_run], cwd=tmp,
+                   env=dict(env, PLAYWRIGHT_BROWSERS_PATH="", XDG_CACHE_HOME=""), check=True)
+    assert "cacheable=true\n" in output.read_text()
     release.write_text('ID=ubuntu\nVERSION_ID="24.04"\n')
     output.write_text("")
     subprocess.run(["bash", "-eo", "pipefail", "-c", reader_run], cwd=tmp, env=env, check=True)

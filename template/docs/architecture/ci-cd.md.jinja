@@ -650,7 +650,9 @@ architecture, Linux distribution ID and VERSION_ID from `/etc/os-release`,
 the installed Playwright CLI version (resolved after dependency installation),
 and the browser set. Multiple lockfile versions are supported: the installed
 CLI determines which one the job uses. Unresolvable versions or host platforms
-skip the cache and retain the ordinary browser download. Exact hits skip browser downloads. Hosted runners still run
+skip the cache and retain the ordinary browser download.
+Browser caching is also skipped when `PLAYWRIGHT_BROWSERS_PATH` or `XDG_CACHE_HOME` is non-empty in the job environment.
+Exact hits skip browser downloads. Hosted runners still run
 `playwright install-deps` for that set on every run; self-hosted runners use
 preinstalled system libraries and never sudo/apt. Missing Playwright configs
 skip browser caching and installation.

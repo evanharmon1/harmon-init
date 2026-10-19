@@ -372,6 +372,10 @@ runs:
         node <<'NODE' >> "$GITHUB_OUTPUT"
         const fs = require('node:fs');
         const { spawnSync } = require('node:child_process');
+        if (process.env.PLAYWRIGHT_BROWSERS_PATH || process.env.XDG_CACHE_HOME) {
+          console.log('cacheable=false');
+          process.exit(0);
+        }
         try {
           const cli = spawnSync('node_modules/.bin/playwright', ['--version'], { encoding: 'utf8' });
           const version = cli.status === 0 && /^Version ([0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]+)?)\s*$/.exec(cli.stdout);
