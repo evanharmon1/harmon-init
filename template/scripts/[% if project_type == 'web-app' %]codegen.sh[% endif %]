@@ -16,7 +16,7 @@
 # would refresh a stale committed convex/_generated/ into passing instead of
 # failing on it.
 #
-# So: `check` stays read-only, and `verify` (plus CI's lint job) runs the GUARD.
+# So: `check` stays read-only, and `verify` (plus CI's codegen-guard job) runs the GUARD.
 # Local `task ci` and CI therefore fail on exactly the same condition — a
 # self-healing local run would have made `ci` stop being a CI mirror. The guard
 # leaves the regenerated files in place, so the fix is `git add` + re-run. It

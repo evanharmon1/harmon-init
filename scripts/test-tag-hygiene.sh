@@ -25,7 +25,7 @@
 #
 # Vacuous without tags: GitHub's checkout fetches none by default, leaving
 # `git describe` nothing to select, so this would pass while asserting nothing.
-# The build workflow's lint job therefore checks out with `fetch-depth: 0` — the
+# The build workflow's repo-guards job therefore checks out with `fetch-depth: 0` — the
 # guard's first job is local `task verify` (this failure class originates on a
 # workstation, where an operator creates the tag), but once such a tag reaches
 # origin, CI naming it directly beats seven opaque template-test failures.

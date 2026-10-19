@@ -766,7 +766,7 @@ the compatibility reason in the rule's `description`.
       `playwright.config.ts`.
 [% endif %]
 - [ ] `task codegen` runs Convex codegen; `task guard:codegen` (first in
-      `task verify`, and a step in CI's lint job) regenerates and **fails** if
+      `task verify`, and a step in CI's codegen-guard job) regenerates and **fails** if
       the output isn't what you staged. Once `convex/` and the `convex` package
       exist, the Convex block runs only when a Convex deployment selector
       (`CONVEX_DEPLOY_KEY`, `CONVEX_DEPLOYMENT`, or both
