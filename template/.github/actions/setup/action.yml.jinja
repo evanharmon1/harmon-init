@@ -358,7 +358,7 @@ runs:
         SHARP_IGNORE_GLOBAL_LIBVIPS: "1"
       run: |
         if [ -f package.json ]; then pnpm install --frozen-lockfile; fi
-    - name: Read locked Playwright version
+    - name: Resolve installed Playwright cache identity
       if: inputs.browsers == 'true'
       id: playwright-version
       shell: bash
@@ -371,16 +371,29 @@ runs:
         esac
         node <<'NODE' >> "$GITHUB_OUTPUT"
         const fs = require('node:fs');
-        const lock = fs.readFileSync('pnpm-lock.yaml', 'utf8');
-        const versions = [...new Set([...lock.matchAll(/^  playwright@([0-9]+\.[0-9]+\.[0-9]+[^:]*):$/gm)].map(m => m[1]))];
-        if (versions.length !== 1) throw new Error('Expected exactly one locked Playwright version');
-        console.log(`version=${versions[0]}`);
+        const { spawnSync } = require('node:child_process');
+        try {
+          const cli = spawnSync('node_modules/.bin/playwright', ['--version'], { encoding: 'utf8' });
+          const version = cli.status === 0 && /^Version ([0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]+)?)\s*$/.exec(cli.stdout);
+          const release = Object.fromEntries(fs.readFileSync('/etc/os-release', 'utf8').split('\n')
+            .map(line => /^([A-Z_]+)=(.*)$/.exec(line)).filter(Boolean)
+            .map(m => [m[1], m[2].replace(/^['"]|['"]$/g, '')]));
+          if (!version || ![release.ID, release.VERSION_ID].every(v => v && /^[0-9A-Za-z._-]+$/.test(v))) {
+            console.log('cacheable=false');
+          } else {
+            console.log(`version=${version[1]}`);
+            console.log(`platform=${release.ID}-${release.VERSION_ID}`);
+            console.log('cacheable=true');
+          }
+        } catch {
+          console.log('cacheable=false');
+        }
         NODE
     - name: Cache Playwright browsers
-      if: inputs.browsers == 'true'
+      if: inputs.browsers == 'true' && steps.playwright-version.outputs.cacheable == 'true'
       id: browsers-cache
       uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
       with:
         path: ~/.cache/ms-playwright
-        key: playwright-v1-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright-version.outputs.version }}-${{ inputs.browser-set }}
+        key: playwright-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright-version.outputs.platform }}-${{ steps.playwright-version.outputs.version }}-${{ inputs.browser-set }}
 [% endif %]

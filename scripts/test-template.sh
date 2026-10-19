@@ -3348,7 +3348,7 @@ if [ -f prettier.config.cjs ]; then # use_node profiles (web-astro / web-app)
     # Execute the rendered version reader against two lockfile versions and the
     # refusal body itself; inspect the YAML conditions that select those steps.
     if have yq && have node; then
-        python3 - <<'PYTEST' || err "rendered browser/ESLint cache contract failed"
+        python3 - <<'PYTEST' || err "rendered browser cache contract failed"
 import json
 import os
 import pathlib
@@ -3368,25 +3368,57 @@ assert subprocess.run(["bash", "-eo", "pipefail", "-c", refusal["run"]],
                       capture_output=True).returncode != 0
 reader = next(s for s in steps if s.get("id") == "playwright-version")
 cache = next(s for s in steps if s.get("id") == "browsers-cache")
-assert cache["if"] == "inputs.browsers == 'true'"
+assert cache["if"] == "inputs.browsers == 'true' && steps.playwright-version.outputs.cacheable == 'true'"
 assert cache["with"]["path"] == "~/.cache/ms-playwright"
 key = cache["with"]["key"]
-for component in ("runner.os", "runner.arch", "steps.playwright-version.outputs.version", "inputs.browser-set"):
+for component in ("runner.os", "runner.arch", "steps.playwright-version.outputs.platform", "steps.playwright-version.outputs.version", "inputs.browser-set"):
     assert "${{ " + component + " }}" in key
 assert action["inputs"]["browsers"]["default"] == "false"
 assert action["outputs"]["browsers-cache-hit"]["value"] == "${{ steps.browsers-cache.outputs.cache-hit }}"
 with tempfile.TemporaryDirectory() as tmp:
     tmp = pathlib.Path(tmp)
     keys = []
+    release = tmp / "os-release"
+    release.write_text('ID=ubuntu\nVERSION_ID="22.04"\n')
+    # Bind the host-file read to a fixture so both distro identities are tested
+    # even on a macOS test host; the rendered reader logic runs unchanged.
+    reader_run = reader["run"].replace("'/etc/os-release'", repr(str(release)))
+    cli = tmp / "node_modules/.bin/playwright"
+    cli.parent.mkdir(parents=True)
+    # A valid workspace lock may contain several versions. The executable the
+    # job invokes, rather than unrelated lock entries, determines cache identity.
+    (tmp / "pnpm-lock.yaml").write_text("packages:\n  playwright@1.56.0:\n  playwright@1.57.0:\n")
     for version in ("1.56.0", "1.57.0"):
-        (tmp / "pnpm-lock.yaml").write_text("packages:\n  playwright@" + version + ":\n    resolution: {}\n")
+        cli.write_text("#!/bin/sh\necho 'Version " + version + "'\n")
+        cli.chmod(0o755)
         output = tmp / "output"
         output.write_text("")
         env = dict(os.environ, BROWSER_SET="all", GITHUB_OUTPUT=str(output))
-        subprocess.run(["bash", "-eo", "pipefail", "-c", reader["run"]], cwd=tmp, env=env, check=True)
-        assert output.read_text() == "version=" + version + "\n"
+        subprocess.run(["bash", "-eo", "pipefail", "-c", reader_run], cwd=tmp, env=env, check=True)
+        values = dict(line.split("=", 1) for line in output.read_text().splitlines())
+        assert values == {"version": version, "platform": "ubuntu-22.04", "cacheable": "true"}
         keys.append(key.replace("${{ steps.playwright-version.outputs.version }}", version))
     assert keys[0] != keys[1]
+    release.write_text('ID=ubuntu\nVERSION_ID="24.04"\n')
+    output.write_text("")
+    subprocess.run(["bash", "-eo", "pipefail", "-c", reader_run], cwd=tmp, env=env, check=True)
+    values = dict(line.split("=", 1) for line in output.read_text().splitlines())
+    assert values["platform"] == "ubuntu-24.04"
+    assert key.replace("${{ steps.playwright-version.outputs.platform }}", "ubuntu-22.04") != key.replace("${{ steps.playwright-version.outputs.platform }}", values["platform"])
+    release.unlink()
+    output.write_text("")
+    subprocess.run(["bash", "-eo", "pipefail", "-c", reader_run], cwd=tmp, env=env, check=True)
+    assert output.read_text() == "cacheable=false\n"
+    release.write_text('ID=ubuntu\nVERSION_ID="24.04"\n')
+    for cli_body in ("#!/bin/sh\nexit 1\n", "#!/bin/sh\necho unknown\n"):
+        cli.write_text(cli_body)
+        output.write_text("")
+        subprocess.run(["bash", "-eo", "pipefail", "-c", reader_run], cwd=tmp, env=env, check=True)
+        assert output.read_text() == "cacheable=false\n"
+    cli.unlink()
+    output.write_text("")
+    subprocess.run(["bash", "-eo", "pipefail", "-c", reader_run], cwd=tmp, env=env, check=True)
+    assert output.read_text() == "cacheable=false\n"
 workflow = read_yaml(".github/workflows/build.yml")
 for job, browser_set in (("e2e", "all"), ("a11y", "chromium")):
     if job not in workflow["jobs"]:
@@ -3401,12 +3433,7 @@ for job, browser_set in (("e2e", "all"), ("a11y", "chromium")):
     assert "runner.environment == 'github-hosted'" in deps["if"]
     assert "cache-hit" not in deps["if"]
     assert deps["run"] == "pnpm exec playwright install-deps" + (" chromium" if browser_set == "chromium" else "")
-eslint = next(s for s in workflow["jobs"]["check"]["steps"] if s.get("name") == "Cache ESLint results")
-assert eslint["with"]["path"] == ".cache/eslint/"
-for component in ("pnpm-lock.yaml", "**/eslint.config.*", "**/.eslintrc*", "**/package.json"):
-    assert component in eslint["with"]["key"]
-assert "--cache --cache-strategy content --cache-location .cache/eslint/" in pathlib.Path("Taskfile.yml").read_text()
-assert "/.cache/eslint/" in pathlib.Path(".gitignore").read_text()
+
 PYTEST
     else
         required yq "rendered browser cache contract" || fail=1

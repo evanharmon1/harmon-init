@@ -320,7 +320,7 @@ tasks:
         elif [ ! -x node_modules/.bin/eslint ]; then
           echo "lint:eslint: deps not installed yet -- skipping (install dependencies first)"
         else
-          node_modules/.bin/eslint --cache --cache-strategy content --cache-location .cache/eslint/ {{.CLI_ARGS | default "."}}
+          node_modules/.bin/eslint {{.CLI_ARGS | default "."}}
         fi
 
   lint:typescript:
