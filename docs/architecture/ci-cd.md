@@ -47,7 +47,7 @@ scheduling only.
 
 ## Workflows
 
-- `build.yml` — on push/PR to `main`: check, repo-guards, devcontainer-permissions, security, template-test, then the
+- `build.yml` — on push/PR to `main`: changes, check, repo-guards, devcontainer-permissions, security, template-test, then the
   aggregate **`verify`** job. Its `pull_request:` trigger is
   `[opened, synchronize, reopened]` — **no `draft` filter**, so it fires on
   draft PRs too. That is load-bearing, not incidental: PRs are drafts for their
@@ -617,7 +617,7 @@ runner label set. Provider names never belong in routing variable names.
 
 | Class | Variable | Jobs / requirement | Fallback chain |
 |---|---|---|---|
-| default | `CI_RUNS_ON` | `check`, `repo-guards`, `devcontainer-permissions`; general build, test and aggregates | `CI_RUNS_ON` → rendered default |
+| default | `CI_RUNS_ON` | `changes`, `check`, `repo-guards`, `devcontainer-permissions`; general build, test and aggregates | `CI_RUNS_ON` → rendered default |
 | browser | `BROWSER_RUNS_ON` | Real-browser tests: `e2e`, `a11y`, `lighthouse` | `BROWSER_RUNS_ON` → `CI_RUNS_ON` → rendered default |
 | image-build | `IMAGE_BUILD_RUNS_ON` | Docker/devcontainer builds and container smoke/assertion tests | `IMAGE_BUILD_RUNS_ON` → `CI_RUNS_ON` → rendered default |
 | isolated | `ISOLATED_RUNS_ON` | Long-lived secrets, attacker-writable bodies, deployments and API-only automation | `ISOLATED_RUNS_ON` → `"ubuntu-latest"` only |
