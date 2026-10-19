@@ -234,15 +234,15 @@ jobs:
       # blocking check on any config that declares firefox/webkit projects.
       #
       # Split by runner environment for the same reason the lighthouse job's
-      # Chrome install is: `--with-deps` shells out to apt via sudo. Hosted
-      # runners need that; persistent self-hosted machines already have the
-      # shared libs and may not have passwordless sudo, and wedging a REQUIRED
-      # check on sudo is not acceptable.
+      # Chrome install is: install-deps shells out to apt via sudo. Hosted
+      # runners need that; self-hosted machines provide the shared libraries.
+      # The separate idempotent install always checks that browsers are present,
+      # even if a cache hit restored into a different runner workspace layout.
       - name: Install Playwright system dependencies (hosted runner — apt via sudo)
         if: steps.pw.outputs.present == 'true' && runner.environment == 'github-hosted'
         run: pnpm exec playwright install-deps
-      - name: Download Playwright browsers (cache miss — no sudo/apt)
-        if: steps.pw.outputs.present == 'true' && steps.setup.outputs.browsers-cache-hit != 'true'
+      - name: Download Playwright browsers (idempotent — no sudo/apt)
+        if: steps.pw.outputs.present == 'true'
         run: pnpm exec playwright install
       - name: Build
         if: steps.pw.outputs.present == 'true'
@@ -448,8 +448,8 @@ jobs:
       - name: Install Playwright system dependencies (hosted runner — apt via sudo)
         if: steps.pw.outputs.present == 'true' && runner.environment == 'github-hosted'
         run: pnpm exec playwright install-deps chromium
-      - name: Download Playwright browsers (cache miss — no sudo/apt)
-        if: steps.pw.outputs.present == 'true' && steps.setup.outputs.browsers-cache-hit != 'true'
+      - name: Download Playwright browsers (idempotent — no sudo/apt)
+        if: steps.pw.outputs.present == 'true'
         run: pnpm exec playwright install chromium
       - name: Accessibility (axe) tests
         run: task test:a11y

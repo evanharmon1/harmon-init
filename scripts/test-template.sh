@@ -3345,6 +3345,8 @@ if [ -f prettier.config.cjs ]; then # use_node profiles (web-astro / web-app)
     e2e_job="$(awk '/^  e2e:$/{f=1} f&&/^  [a-z][a-z0-9-]*:$/&&!/^  e2e:$/{f=0} f' \
         .github/workflows/build.yml)"
     [ -n "$e2e_job" ] || err "could not isolate the e2e job block in build.yml"
+    grep -q '^## CI browser caches and uncached lint state$' docs/architecture/ci-cd.md ||
+        err "browser cache docs missing from Node profile"
     # Execute the rendered version reader against two lockfile versions and the
     # refusal body itself; inspect the YAML conditions that select those steps.
     if have yq && have node; then
@@ -3374,7 +3376,6 @@ key = cache["with"]["key"]
 for component in ("runner.os", "runner.arch", "steps.playwright-version.outputs.platform", "steps.playwright-version.outputs.version", "inputs.browser-set"):
     assert "${{ " + component + " }}" in key
 assert action["inputs"]["browsers"]["default"] == "false"
-assert action["outputs"]["browsers-cache-hit"]["value"] == "${{ steps.browsers-cache.outputs.cache-hit }}"
 with tempfile.TemporaryDirectory() as tmp:
     tmp = pathlib.Path(tmp)
     keys = []
@@ -3382,6 +3383,7 @@ with tempfile.TemporaryDirectory() as tmp:
     release.write_text('ID=ubuntu\nVERSION_ID="22.04"\n')
     # Bind the host-file read to a fixture so both distro identities are tested
     # even on a macOS test host; the rendered reader logic runs unchanged.
+    assert "'/etc/os-release'" in reader["run"]
     reader_run = reader["run"].replace("'/etc/os-release'", repr(str(release)))
     cli = tmp / "node_modules/.bin/playwright"
     cli.parent.mkdir(parents=True)
@@ -3402,14 +3404,16 @@ with tempfile.TemporaryDirectory() as tmp:
         keys.append(key.replace("${{ steps.playwright-version.outputs.version }}", version))
     assert keys[0] != keys[1]
     # Either nonempty override makes the fixed cache path unusable. The action
-    # must skip restore/save so its hit output cannot suppress the download.
+    # must skip restore/save, leaving the idempotent install to populate it.
     for overrides in ({"PLAYWRIGHT_BROWSERS_PATH": "0"},
                       {"XDG_CACHE_HOME": str(tmp / "xdg")},
                       {"PLAYWRIGHT_BROWSERS_PATH": str(tmp / "browsers"), "XDG_CACHE_HOME": str(tmp / "xdg")}):
         output.write_text("")
-        subprocess.run(["bash", "-eo", "pipefail", "-c", reader_run], cwd=tmp,
-                       env=dict(env, **overrides), check=True)
+        skipped = subprocess.run(["bash", "-eo", "pipefail", "-c", reader_run], cwd=tmp,
+                                 env=dict(env, **overrides), check=True, capture_output=True, text=True)
         assert output.read_text() == "cacheable=false\n"
+        assert skipped.stderr.count("::notice::") == 1
+        assert next(iter(overrides)) in skipped.stderr
     output.write_text("")
     subprocess.run(["bash", "-eo", "pipefail", "-c", reader_run], cwd=tmp,
                    env=dict(env, PLAYWRIGHT_BROWSERS_PATH="", XDG_CACHE_HOME=""), check=True)
@@ -3422,18 +3426,24 @@ with tempfile.TemporaryDirectory() as tmp:
     assert key.replace("${{ steps.playwright-version.outputs.platform }}", "ubuntu-22.04") != key.replace("${{ steps.playwright-version.outputs.platform }}", values["platform"])
     release.unlink()
     output.write_text("")
-    subprocess.run(["bash", "-eo", "pipefail", "-c", reader_run], cwd=tmp, env=env, check=True)
+    skipped = subprocess.run(["bash", "-eo", "pipefail", "-c", reader_run], cwd=tmp, env=env,
+                             check=True, capture_output=True, text=True)
     assert output.read_text() == "cacheable=false\n"
+    assert skipped.stderr.count("::notice::") == 1 and "/etc/os-release" in skipped.stderr
     release.write_text('ID=ubuntu\nVERSION_ID="24.04"\n')
     for cli_body in ("#!/bin/sh\nexit 1\n", "#!/bin/sh\necho unknown\n"):
         cli.write_text(cli_body)
         output.write_text("")
-        subprocess.run(["bash", "-eo", "pipefail", "-c", reader_run], cwd=tmp, env=env, check=True)
+        skipped = subprocess.run(["bash", "-eo", "pipefail", "-c", reader_run], cwd=tmp, env=env,
+                                 check=True, capture_output=True, text=True)
         assert output.read_text() == "cacheable=false\n"
+        assert skipped.stderr.count("::notice::") == 1 and "CLI version" in skipped.stderr
     cli.unlink()
     output.write_text("")
-    subprocess.run(["bash", "-eo", "pipefail", "-c", reader_run], cwd=tmp, env=env, check=True)
+    skipped = subprocess.run(["bash", "-eo", "pipefail", "-c", reader_run], cwd=tmp, env=env,
+                             check=True, capture_output=True, text=True)
     assert output.read_text() == "cacheable=false\n"
+    assert skipped.stderr.count("::notice::") == 1 and "CLI version" in skipped.stderr
 workflow = read_yaml(".github/workflows/build.yml")
 for job, browser_set in (("e2e", "all"), ("a11y", "chromium")):
     if job not in workflow["jobs"]:
@@ -3443,7 +3453,7 @@ for job, browser_set in (("e2e", "all"), ("a11y", "chromium")):
     assert setup["with"]["browser-set"] == browser_set
     assert setup["with"]["browsers"] == "${{ steps.pw.outputs.present == 'true' }}"
     download = next(s for s in job_steps if s.get("name", "").startswith("Download Playwright"))
-    assert "steps.setup.outputs.browsers-cache-hit != 'true'" in download["if"]
+    assert download["if"] == "steps.pw.outputs.present == 'true'"
     deps = next(s for s in job_steps if s.get("name", "").startswith("Install Playwright system"))
     assert "runner.environment == 'github-hosted'" in deps["if"]
     assert "cache-hit" not in deps["if"]
@@ -3458,14 +3468,10 @@ PYTEST
         err "the e2e job never installs Playwright browsers"
     ! grep -qE 'playwright install .*(chromium|firefox|webkit)' <<<"$e2e_job" ||
         err "the e2e job installs a single Playwright browser but runs the full suite"
-    # `--with-deps` shells out to apt via sudo. Self-hosted runners may have no
-    # passwordless sudo (same reason the lighthouse job splits its Chrome
-    # install), and wedging a REQUIRED check on sudo is not acceptable.
-    if grep -q -- '--with-deps' <<<"$e2e_job"; then
-        grep -q "runner.environment == 'github-hosted'" <<<"$e2e_job" ||
-            err "the e2e job runs 'playwright install --with-deps' unconditionally — it needs sudo/apt and would wedge a required check on self-hosted runners"
-    fi
+
 else
+    ! grep -q '^## CI browser caches and uncached lint state$' docs/architecture/ci-cd.md ||
+        err "browser cache docs rendered for a non-Node profile"
     [ ! -e scripts/e2e-run.sh ] || err "e2e-run.sh rendered for a non-node profile"
     ! grep -qE '^  e2e:' .github/workflows/build.yml || err "build.yml has an e2e job on a non-node profile"
 fi

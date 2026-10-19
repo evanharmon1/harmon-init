@@ -635,6 +635,7 @@ credentials, and whatever the previous job left behind.
 Before setting `CI_RUNS_ON` to a self-hosted value, audit every workflow for
 `pull_request_target` and for any step that runs code from the PR head. Keep
 untrusted-contribution workflows on GitHub-hosted runners.
+[% if use_node %]
 
 ## CI browser caches and uncached lint state
 
@@ -652,7 +653,8 @@ and the browser set. Multiple lockfile versions are supported: the installed
 CLI determines which one the job uses. Unresolvable versions or host platforms
 skip the cache and retain the ordinary browser download.
 Browser caching is also skipped when `PLAYWRIGHT_BROWSERS_PATH` or `XDG_CACHE_HOME` is non-empty in the job environment.
-Exact hits skip browser downloads. Hosted runners still run
+The idempotent browser install runs whenever a Playwright config is present;
+a hit makes the download a no-op. Hosted runners still run
 `playwright install-deps` for that set on every run; self-hosted runners use
 preinstalled system libraries and never sudo/apt. Missing Playwright configs
 skip browser caching and installation.
@@ -674,3 +676,4 @@ with restored state across consumers' reference graphs and compiler options.
 Before enabling this cache, prove cold/warm diagnostic equivalence on the
 actual reference graph, including changed sources and missing outputs, and key
 it on the lockfile and every `tsconfig*.json`.
+[% endif %]
