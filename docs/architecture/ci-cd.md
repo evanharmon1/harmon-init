@@ -744,3 +744,38 @@ credentials, and whatever the previous job left behind.
 Before setting `CI_RUNS_ON` to a self-hosted value, audit every workflow for
 `pull_request_target` and for any step that runs code from the PR head. Keep
 untrusted-contribution workflows on GitHub-hosted runners.
+
+## CI result and browser caches
+
+Only cache-allowed jobs use these caches; every existing `cache: "false"`
+caller remains cold. Credential-holding jobs must set setup `cache: "false"`
+because lower-trust PR runs can write the repository-wide Actions cache.
+The setup action refuses `browsers: "true"` unless `cache: "true"`.
+
+For Node profiles, `check` restores/saves `.cache/eslint/` with SHA-pinned
+`actions/cache`, keyed on runner OS, the lockfile, ESLint configs (including
+nested configs), ignore files and package manifests. `lint:eslint` uses
+`--cache --cache-strategy content` so fresh-checkout mtimes do not invalidate
+results. The workspace cache directory is gitignored.
+
+`a11y` opts into setup `browsers` with `browser-set: chromium`; template
+`build.yml` `e2e` uses `all`. Both hold no secret. Setup restores/saves
+`~/.cache/ms-playwright` with `actions/cache`, keyed on runner OS and
+architecture, the Playwright version read from `pnpm-lock.yaml`, and the
+browser set. Exact hits skip browser downloads. Hosted runners still run
+`playwright install-deps` for that set on every run; self-hosted runners use
+preinstalled system libraries and never sudo/apt. Missing Playwright configs
+skip browser caching and installation.
+
+A consumer adding a secret to `e2e` must set `cache: "false"` and disable
+`browsers` (the action rejects enabling both). That consumer keeps cold browser
+downloads; moving a secret to a later step does not isolate a job's cache.
+
+TypeScript state is deliberately not cached. Only the web-app `tsc -b` path
+(with tsconfig references) could reuse `.tsbuildinfo`; `tsc --noEmit` and
+`astro check` do not supply reusable build state here. The shipped web-app
+fixture exercises `--noEmit`, so it cannot demonstrate identical diagnostics
+with restored state across consumers' reference graphs and compiler options.
+Before enabling this cache, prove cold/warm diagnostic equivalence on the
+actual reference graph, including changed sources and missing outputs, and key
+it on the lockfile and every `tsconfig*.json`.

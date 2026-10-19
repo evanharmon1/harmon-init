@@ -71,6 +71,13 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           lint-tools: "true"
+[% if use_node %]
+      - name: Cache ESLint results
+        uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+        with:
+          path: .cache/eslint/
+          key: eslint-v1-${{ runner.os }}-${{ hashFiles('pnpm-lock.yaml', '**/eslint.config.*', '**/.eslintrc*', '**/.eslintignore', '**/package.json') }}
+[% endif %]
       - name: Check
         run: task check
 
@@ -224,6 +231,10 @@ jobs:
         if: steps.pw.outputs.present == 'true'
         run: ./scripts/e2e-env-guard.sh
       - uses: ./.github/actions/setup
+        id: setup
+        with:
+          browsers: ${{ steps.pw.outputs.present == 'true' }}
+          browser-set: all
       # Every browser, not just chromium: this job runs the WHOLE suite, and the
       # convention is multi-browser + mobile projects (see
       # docs/architecture/tests.md). Installing one browser would fail this
@@ -234,11 +245,11 @@ jobs:
       # runners need that; persistent self-hosted machines already have the
       # shared libs and may not have passwordless sudo, and wedging a REQUIRED
       # check on sudo is not acceptable.
-      - name: Install Playwright browsers (hosted runner — apt via sudo)
+      - name: Install Playwright system dependencies (hosted runner — apt via sudo)
         if: steps.pw.outputs.present == 'true' && runner.environment == 'github-hosted'
-        run: pnpm exec playwright install --with-deps
-      - name: Install Playwright browsers (self-hosted — no sudo/apt)
-        if: steps.pw.outputs.present == 'true' && runner.environment != 'github-hosted'
+        run: pnpm exec playwright install-deps
+      - name: Download Playwright browsers (cache miss — no sudo/apt)
+        if: steps.pw.outputs.present == 'true' && steps.setup.outputs.browsers-cache-hit != 'true'
         run: pnpm exec playwright install
       - name: Build
         if: steps.pw.outputs.present == 'true'
@@ -428,7 +439,6 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: ./.github/actions/setup
       - name: Detect Playwright config
         id: pw
         run: |
@@ -437,11 +447,16 @@ jobs:
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
           fi
-      - name: Install Playwright browsers (hosted runner — apt via sudo)
+      - uses: ./.github/actions/setup
+        id: setup
+        with:
+          browsers: ${{ steps.pw.outputs.present == 'true' }}
+          browser-set: chromium
+      - name: Install Playwright system dependencies (hosted runner — apt via sudo)
         if: steps.pw.outputs.present == 'true' && runner.environment == 'github-hosted'
-        run: pnpm exec playwright install --with-deps chromium
-      - name: Install Playwright browsers (self-hosted — no sudo/apt)
-        if: steps.pw.outputs.present == 'true' && runner.environment != 'github-hosted'
+        run: pnpm exec playwright install-deps chromium
+      - name: Download Playwright browsers (cache miss — no sudo/apt)
+        if: steps.pw.outputs.present == 'true' && steps.setup.outputs.browsers-cache-hit != 'true'
         run: pnpm exec playwright install chromium
       - name: Accessibility (axe) tests
         run: task test:a11y

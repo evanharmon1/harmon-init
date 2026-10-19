@@ -3345,6 +3345,73 @@ if [ -f prettier.config.cjs ]; then # use_node profiles (web-astro / web-app)
     e2e_job="$(awk '/^  e2e:$/{f=1} f&&/^  [a-z][a-z0-9-]*:$/&&!/^  e2e:$/{f=0} f' \
         .github/workflows/build.yml)"
     [ -n "$e2e_job" ] || err "could not isolate the e2e job block in build.yml"
+    # Execute the rendered version reader against two lockfile versions and the
+    # refusal body itself; inspect the YAML conditions that select those steps.
+    if have yq && have node; then
+        python3 - <<'PYTEST' || err "rendered browser/ESLint cache contract failed"
+import json
+import os
+import pathlib
+import subprocess
+import tempfile
+
+
+def read_yaml(path):
+    return json.loads(subprocess.check_output(["yq", "-o=json", ".", path]))
+
+
+action = read_yaml(".github/actions/setup/action.yml")
+steps = action["runs"]["steps"]
+refusal = next(s for s in steps if s.get("name") == "Reject unsafe browser cache configuration")
+assert refusal["if"] == "inputs.browsers == 'true' && inputs.cache != 'true'"
+assert subprocess.run(["bash", "-eo", "pipefail", "-c", refusal["run"]],
+                      capture_output=True).returncode != 0
+reader = next(s for s in steps if s.get("id") == "playwright-version")
+cache = next(s for s in steps if s.get("id") == "browsers-cache")
+assert cache["if"] == "inputs.browsers == 'true'"
+assert cache["with"]["path"] == "~/.cache/ms-playwright"
+key = cache["with"]["key"]
+for component in ("runner.os", "runner.arch", "steps.playwright-version.outputs.version", "inputs.browser-set"):
+    assert "${{ " + component + " }}" in key
+assert action["inputs"]["browsers"]["default"] == "false"
+assert action["outputs"]["browsers-cache-hit"]["value"] == "${{ steps.browsers-cache.outputs.cache-hit }}"
+with tempfile.TemporaryDirectory() as tmp:
+    tmp = pathlib.Path(tmp)
+    keys = []
+    for version in ("1.56.0", "1.57.0"):
+        (tmp / "pnpm-lock.yaml").write_text("packages:\n  playwright@" + version + ":\n    resolution: {}\n")
+        output = tmp / "output"
+        output.write_text("")
+        env = dict(os.environ, BROWSER_SET="all", GITHUB_OUTPUT=str(output))
+        subprocess.run(["bash", "-eo", "pipefail", "-c", reader["run"]], cwd=tmp, env=env, check=True)
+        assert output.read_text() == "version=" + version + "\n"
+        keys.append(key.replace("${{ steps.playwright-version.outputs.version }}", version))
+    assert keys[0] != keys[1]
+workflow = read_yaml(".github/workflows/build.yml")
+for job, browser_set in (("e2e", "all"), ("a11y", "chromium")):
+    if job not in workflow["jobs"]:
+        continue
+    job_steps = workflow["jobs"][job]["steps"]
+    setup = next(s for s in job_steps if s.get("id") == "setup")
+    assert setup["with"]["browser-set"] == browser_set
+    assert setup["with"]["browsers"] == "${{ steps.pw.outputs.present == 'true' }}"
+    download = next(s for s in job_steps if s.get("name", "").startswith("Download Playwright"))
+    assert "steps.setup.outputs.browsers-cache-hit != 'true'" in download["if"]
+    deps = next(s for s in job_steps if s.get("name", "").startswith("Install Playwright system"))
+    assert "runner.environment == 'github-hosted'" in deps["if"]
+    assert "cache-hit" not in deps["if"]
+    assert deps["run"] == "pnpm exec playwright install-deps" + (" chromium" if browser_set == "chromium" else "")
+eslint = next(s for s in workflow["jobs"]["check"]["steps"] if s.get("name") == "Cache ESLint results")
+assert eslint["with"]["path"] == ".cache/eslint/"
+for component in ("pnpm-lock.yaml", "**/eslint.config.*", "**/.eslintrc*", "**/package.json"):
+    assert component in eslint["with"]["key"]
+assert "--cache --cache-strategy content --cache-location .cache/eslint/" in pathlib.Path("Taskfile.yml").read_text()
+assert "/.cache/eslint/" in pathlib.Path(".gitignore").read_text()
+PYTEST
+    else
+        required yq "rendered browser cache contract" || fail=1
+        required node "rendered browser cache contract" || fail=1
+    fi
     grep -q 'playwright install' <<<"$e2e_job" ||
         err "the e2e job never installs Playwright browsers"
     ! grep -qE 'playwright install .*(chromium|firefox|webkit)' <<<"$e2e_job" ||
