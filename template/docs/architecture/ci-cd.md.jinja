@@ -537,9 +537,8 @@ satisfy that boundary. The fallback can consume GitHub Actions minutes on privat
 repositories even when their default pool is a homelab. The target shared-cache
 rule requires setup `cache: "false"` for secret-holding/deploying jobs, except
 `deploy-preview.yml` `deploy`: it builds the PR's own code, so cache poisoning
-grants nothing the PR does not already have. The remaining violation is in
-`sync-harmon-devkit.yml` `sync` (App `contents:write` token plus pnpm cache on
-`use_node`, owned by harmon-init#1731).
+grants nothing the PR does not already have. The credential-holding
+skills-sync job disables the shared cache in Node profiles.
 
 **Self-hosted update note:** With `ci_runner: self-hosted`, isolated-class jobs
 now default to GitHub-hosted runners instead of the self-hosted default pool.
@@ -644,9 +643,9 @@ caller remains cold. Credential-holding jobs must set setup `cache: "false"`
 because lower-trust PR runs can write the repository-wide Actions cache.
 The setup action refuses `browsers: "true"` unless `cache: "true"`.
 
-`a11y` opts into setup `browsers` with `browser-set: chromium`; template
-`build.yml` `e2e` uses `all`. Both hold no secret. Setup restores/saves
-`~/.cache/ms-playwright` with `actions/cache`, keyed on runner OS and
+`a11y` opts into setup `browsers` with `browser-set: chromium`;
+`build.yml` `e2e` uses `all`. Both hold no secret. On GitHub-hosted runners,
+setup restores/saves `~/.cache/ms-playwright` with `actions/cache`, keyed on runner OS and
 architecture, Linux distribution ID and VERSION_ID from `/etc/os-release`,
 the installed Playwright CLI version (resolved after dependency installation),
 and the browser set. Multiple lockfile versions are supported: the installed
@@ -656,7 +655,8 @@ Browser caching is also skipped when `PLAYWRIGHT_BROWSERS_PATH` or `XDG_CACHE_HO
 The idempotent browser install runs whenever a Playwright config is present;
 a hit makes the download a no-op. Hosted runners still run
 `playwright install-deps` for that set on every run; self-hosted runners use
-preinstalled system libraries and never sudo/apt. Missing Playwright configs
+preinstalled system libraries and never sudo/apt. Persistent self-hosted runners
+keep their browser directory and skip the Actions browser cache. Missing Playwright configs
 skip browser caching and installation.
 
 A consumer adding a secret to `e2e` must set `cache: "false"` and disable

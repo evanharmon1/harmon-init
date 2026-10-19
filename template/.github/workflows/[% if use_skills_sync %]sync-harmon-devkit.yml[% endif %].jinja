@@ -75,6 +75,9 @@ jobs:
           # gitleaks backs the security:secrets pre-push gate in the helper.
           lint-tools: "true"
           gitleaks: "true"
+[% if use_node %]
+          cache: "false"
+[% endif %]
       - name: Pin, vendor, verify, and open or update the sync PR
         if: vars.CI_APP_CLIENT_ID != ''
         env:

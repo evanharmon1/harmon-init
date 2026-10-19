@@ -47,8 +47,8 @@ as omator's `preview.yml`, `deploy.yml` and `demo-seed` are outside the template
 - [ ] Disable shared package caching for secret-holding or deploying jobs using
   the shared setup action (`cache: "false"`); routing alone does not fix cache
   poisoning. `deploy-preview.yml` `deploy` is the deliberate exception described
-  below. Existing codegen and skills-sync violations have explicit follow-up
-  owners. Do not add cache restoration to API-only isolated jobs.
+  below. Codegen and skills-sync now disable the shared cache; no tracked
+  violation remains. Do not add cache restoration to API-only isolated jobs.
 
 ### Classes and fallback expressions
 
@@ -133,7 +133,7 @@ split. Matrix variants inherit their job's class. Pinned placement is an excepti
 | `deploy-preview.yml` | `deploy` | isolated | Preview deployment and `CLOUDFLARE_API_TOKEN`; deliberate shared-cache exception below |
 | `release.yml` | `release-please` | isolated | API automation and `CI_APP_PRIVATE_KEY` |
 | `release.yml` | `deploy-production` | isolated | Production deployment and `CLOUDFLARE_API_TOKEN` |
-| `sync-harmon-devkit.yml` | `sync` | isolated | `CI_APP_PRIVATE_KEY`; existing shared-cache violation owned by #1731 |
+| `sync-harmon-devkit.yml` | `sync` | isolated | `CI_APP_PRIVATE_KEY`; shared cache disabled for Node profiles |
 | `security-audit-fix.yml` | `audit` | default | Dependency audit without the App private key |
 | `security-audit-fix.yml` | `publish` | isolated | `CI_APP_PRIVATE_KEY` |
 | `snyk-scheduled.yml` | `scan` | isolated | `SNYK_TOKEN`; setup `cache: "false"` |
@@ -181,10 +181,10 @@ The web-app `codegen-guard` job holds `CONVEX_DEPLOY_KEY` on the isolated
 class with setup `cache: "false"`. The default-class `check` job reads the
 committed tree without that secret.
 
-The remaining existing violation is `sync-harmon-devkit.yml` `sync`: it mints a
-`contents:write` App token and, with `use_node`, the setup action restores the
-pnpm cache. #1731 owns removing that shared-cache restore. This violation
-is a tracked correction, not an additional deliberate exception.
+`sync-harmon-devkit.yml` `sync` mints a `contents:write` App token and disables
+the shared pnpm cache with setup `cache: "false"` when `use_node` is true.
+The violation is corrected by #1731; no tracked shared-cache violation remains.
+Non-Node profiles have no setup cache input and render no cache override.
 
 ## Acceptance criteria (Given / When / Then)
 

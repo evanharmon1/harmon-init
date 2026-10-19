@@ -3284,7 +3284,7 @@ if [ -f prettier.config.cjs ]; then # use_node profiles (web-astro / web-app)
     grep -q 'playwright install' scripts/e2e-run.sh ||
         err "e2e-run.sh does not install Playwright browsers — local ci would fail where CI passes"
     ! grep -q 'playwright install .*--with-deps' scripts/e2e-run.sh ||
-        err "e2e-run.sh installs OS deps (--with-deps needs sudo); that is CI's hosted-runner step, not a local task's"
+        err "e2e-run.sh installs OS deps (--with-deps needs sudo); CI uses install-deps on hosted runners only, separate from its idempotent install"
     # The devcontainer bakes chromium into a root-owned PLAYWRIGHT_BROWSERS_PATH
     # (o+rx, not writable), so an unconditional install EACCESes there before a
     # single test runs — in the environment agents actually use.
@@ -3370,7 +3370,7 @@ assert subprocess.run(["bash", "-eo", "pipefail", "-c", refusal["run"]],
                       capture_output=True).returncode != 0
 reader = next(s for s in steps if s.get("id") == "playwright-version")
 cache = next(s for s in steps if s.get("id") == "browsers-cache")
-assert cache["if"] == "inputs.browsers == 'true' && steps.playwright-version.outputs.cacheable == 'true'"
+assert cache["if"] == "inputs.browsers == 'true' && steps.playwright-version.outputs.cacheable == 'true' && runner.environment == 'github-hosted'"
 assert cache["with"]["path"] == "~/.cache/ms-playwright"
 key = cache["with"]["key"]
 for component in ("runner.os", "runner.arch", "steps.playwright-version.outputs.platform", "steps.playwright-version.outputs.version", "inputs.browser-set"):
@@ -3445,9 +3445,14 @@ with tempfile.TemporaryDirectory() as tmp:
     assert output.read_text() == "cacheable=false\n"
     assert skipped.stderr.count("::notice::") == 1 and "CLI version" in skipped.stderr
 workflow = read_yaml(".github/workflows/build.yml")
+if read_yaml(".copier-answers.yml")["use_skills_sync"]:
+    sync_workflow = pathlib.Path(".github/workflows/sync-harmon-devkit.yml")
+    assert sync_workflow.exists(), "skills-sync workflow missing from Node + skills-sync profile"
+    sync_steps = read_yaml(str(sync_workflow))["jobs"]["sync"]["steps"]
+    sync_setup = next(s for s in sync_steps if s.get("uses") == "./.github/actions/setup")
+    assert sync_setup["with"]["cache"] == "false", "privileged sync job must not restore pnpm cache"
 for job, browser_set in (("e2e", "all"), ("a11y", "chromium")):
-    if job not in workflow["jobs"]:
-        continue
+    assert job in workflow["jobs"], f"missing required browser job: {job}"
     job_steps = workflow["jobs"][job]["steps"]
     setup = next(s for s in job_steps if s.get("id") == "setup")
     assert setup["with"]["browser-set"] == browser_set

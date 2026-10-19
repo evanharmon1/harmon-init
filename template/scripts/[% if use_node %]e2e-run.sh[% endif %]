@@ -36,9 +36,9 @@ fi
 # clean checkout instead of dying on "Executable doesn't exist". Idempotent and
 # offline once the browsers are present.
 #
-# WITHOUT --with-deps: that shells out to apt via sudo, and OS packages are not
-# something a local task may assume it can install. CI's hosted-runner step
-# passes --with-deps; its self-hosted branch does not, for the same reason.
+# OS packages are not something a local task may assume it can install.
+# CI runs playwright install-deps on hosted runners only, then an idempotent
+# playwright install on every runner. This local install never invokes apt/sudo.
 #
 # And never against an IMAGE-OWNED cache: the devcontainer bakes chromium into
 # PLAYWRIGHT_BROWSERS_PATH=/ms-playwright as root and grants o+rx, not write, so
