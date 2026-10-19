@@ -33,6 +33,24 @@ permissions:
 # copier + the devcontainer CLI the composite doesn't install.
 
 jobs:
+  changes:
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    timeout-minutes: 5
+    outputs:
+      docs_only: ${{ steps.classify.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Both parents of the PR merge ref: first parent is the live base.
+          fetch-depth: 2
+      - name: Classify docs-only changes (fail closed)
+        id: classify
+        run: ./scripts/ci-changes-classify.sh >> "$GITHUB_OUTPUT"
+
   check:
     # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
     # default; set it to a JSON runner spec to override without a commit.
@@ -90,12 +108,15 @@ jobs:
         run: task ci:repo-guards
 
   devcontainer-permissions:
+    needs: changes
     # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
     # default; set it to a JSON runner spec to override without a commit.
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     if: >-
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository
+      !cancelled() &&
+      (github.event_name != 'pull_request' ||
+       (github.event.pull_request.head.repo.full_name == github.repository &&
+        (needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true')))
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -196,11 +217,14 @@ jobs:
 
   verify:
     if: always()
-    needs: [check, repo-guards, devcontainer-permissions, template-test]
+    needs: [changes, check, repo-guards, devcontainer-permissions, template-test]
     # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
     # default; set it to a JSON runner spec to override without a commit.
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     env:
+      CI_EVENT_NAME: ${{ github.event_name }}
+      CHANGES_RESULT: ${{ needs.changes.result }}
+      DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
       IS_FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
     steps:
       # Never check out or run fork-controlled repository code on this path.
@@ -219,6 +243,7 @@ jobs:
               fail=1
             fi
           }
+          check_skipped changes "$CHANGES_RESULT"
           check_skipped check "$CHECK_RESULT"
           check_skipped repo-guards "$REPO_GUARDS_RESULT"
           check_skipped devcontainer-permissions "$DEVCONTAINER_PERMISSIONS_RESULT"
@@ -235,8 +260,9 @@ jobs:
         if: env.IS_FORK != 'true'
         env:
           EXPECTED_RESULT: success
+          DOCS_ONLY_JOBS: "devcontainer-permissions"
           CHECK_RESULT: ${{ needs.check.result }}
           REPO_GUARDS_RESULT: ${{ needs.repo-guards.result }}
           DEVCONTAINER_PERMISSIONS_RESULT: ${{ needs.devcontainer-permissions.result }}
           TEMPLATE_TEST_RESULT: ${{ needs.template-test.result }}
-        run: ./scripts/verify-ci-results.sh "check=${CHECK_RESULT}" "repo-guards=${REPO_GUARDS_RESULT}" "devcontainer-permissions=${DEVCONTAINER_PERMISSIONS_RESULT}" "template-test=${TEMPLATE_TEST_RESULT}"
+        run: ./scripts/verify-ci-results.sh "changes=${CHANGES_RESULT}" "check=${CHECK_RESULT}" "repo-guards=${REPO_GUARDS_RESULT}" "devcontainer-permissions=${DEVCONTAINER_PERMISSIONS_RESULT}" "template-test=${TEMPLATE_TEST_RESULT}"
