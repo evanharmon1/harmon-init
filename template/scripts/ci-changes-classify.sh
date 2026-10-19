@@ -5,6 +5,7 @@
 #
 # The sole allowlist is [gates].docs_only_paths in .devflow.toml. The minimal
 # reader accepts a double-quoted array (inline or multiline, comments allowed).
+# Multiline strings are unsupported; other gates keys must be simple strings.
 # Unsupported TOML or glob syntax fails closed. Globs are repository-relative:
 # * and ? do not cross /, so the shipped *.md matches only root Markdown.
 # ** crosses / and **/ also matches zero directories when explicitly configured.
@@ -35,10 +36,13 @@ patterns="$(awk '
         return result "$"
     }
     {
+        # Reject multiline strings anywhere: their contents can spoof tables/keys.
+        if (index($0, "\"\"\"") || index($0, sprintf("%c%c%c", 39, 39, 39))) bad = 1
         sub(/#.*/, "")
         gsub(/^[[:space:]]+|[[:space:]]+$/, "")
         if ($0 == "") next
         if ($0 ~ /^\[/ && !collecting) {
+            if ($0 !~ /^\[[A-Za-z0-9_.-]+\]$/ && $0 !~ /^\[\[[A-Za-z0-9_.-]+\]\]$/) bad = 1
             gates = ($0 == "[gates]")
             if (gates && ++sections != 1) bad = 1
             next
@@ -47,7 +51,11 @@ patterns="$(awk '
             if (++keys != 1 || collecting) bad = 1
             sub(/^docs_only_paths[[:space:]]*=[[:space:]]*/, "")
             collecting = 1
-        } else if (!collecting) next
+        } else if (!collecting) {
+            # Never ignore an ambiguous line in the table authorizing a skip.
+            if (gates && $0 !~ /^[A-Za-z0-9_-]+[[:space:]]*=[[:space:]]*"[^"\\]*"$/) bad = 1
+            next
+        }
         value = value $0
         if (index($0, "]")) collecting = 0
     }
@@ -99,7 +107,7 @@ while IFS= read -r -d '' record; do
     esac
     # Infrastructure is always sensitive, even if the configured glob allows it.
     case "$path" in
-    .github/workflows/* | Taskfile.yml | Taskfile.yaml | scripts/* | .devflow.toml)
+    .github/actions/* | .github/workflows/* | Taskfile.yml | Taskfile.yaml | scripts/* | .devflow.toml)
         full_run 'CI infrastructure changed'
         ;;
     esac

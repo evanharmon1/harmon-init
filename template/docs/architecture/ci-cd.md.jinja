@@ -24,9 +24,10 @@ skip app gates. The contract is:
    and `.claude/` Markdown select a full run.
 2. Classification fails closed: a path outside the allowlist, a rename,
    deletion, symlink or file-mode change, empty diff, missing merge parent,
-   unreadable or unsupported allowlist all select a full run. Workflows,
-   Taskfile, `scripts/`, `.devflow.toml` and the classifier always select a
-   full run, even when an allowlist glob would match them. The classifier
+   unreadable or unsupported allowlist all select a full run. Multiline strings
+   or ambiguous policy lines also select a full run. Workflows, `.github/actions/`,
+   Taskfile, `scripts/`, `.devflow.toml` and the classifier always select a full
+   run, even when an allowlist glob would match them. The classifier
    compares the PR merge ref's first parent (current base tip) with its merge
    result, never the potentially stale event `base.sha`.
 3. Pushes to `main`, `merge_group` and manual runs execute every job regardless

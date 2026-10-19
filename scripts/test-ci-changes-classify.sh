@@ -1,7 +1,21 @@
 #!/usr/bin/env bash
 # Real git trees exercise the skip boundary, including the stale-base revert.
 set -euo pipefail
+# Fixture commits must not inherit host signing, hooks or injected Git config.
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
+export GIT_CONFIG_GLOBAL=/dev/null
+export GIT_CONFIG_SYSTEM=/dev/null
+export GIT_CONFIG_NOSYSTEM=1
+git_config_count="${GIT_CONFIG_COUNT:-0}"
+case "$git_config_count" in
+'' | *[!0-9]*) git_config_count=0 ;;
+esac
+i=0
+while [ "$i" -lt "$git_config_count" ]; do
+    unset "GIT_CONFIG_KEY_$i" "GIT_CONFIG_VALUE_$i"
+    i=$((i + 1))
+done
+unset GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS GIT_ALTERNATE_OBJECT_DIRECTORIES
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 classifier="$repo/scripts/ci-changes-classify.sh"
 work="$(mktemp -d "${TMPDIR:-/tmp}/ci-changes-test.XXXXXX")"
@@ -23,7 +37,7 @@ fixture() {
     printf 'original\n' >docs/guide.md
     printf 'original\n' >README.md
     # Pin the shipped policy: consumer customizations must not alter fixtures.
-    printf '[gates]\ndocs_only_paths = ["docs/**", "specs/**", "*.md"]\n' >.devflow.toml
+    printf '[gates]\nround_code = "verify" # simple sibling key\ndocs_only_paths = ["docs/**", "specs/**", "*.md"]\n' >.devflow.toml
     git add .
     git commit -qm 'initial fixture'
     base="$(git rev-parse HEAD)"
@@ -97,10 +111,19 @@ fixture empty
 merge_tree
 expect false
 
-for path in .github/workflows/build.md scripts/helper.md Taskfile.yml .devflow.toml scripts/ci-changes-classify.sh; do
+# A permissive policy makes the infrastructure guard the only rejection reason.
+fixture permissive_docs
+printf 'edit\n' >>docs/guide.md
+merge_tree
+printf '[gates]\ndocs_only_paths = ["**"]\n' >.devflow.toml
+expect true
+
+for path in .github/actions/setup/action.yml .github/workflows/build.md scripts/helper.md Taskfile.yml Taskfile.yaml .devflow.toml scripts/ci-changes-classify.sh; do
     fixture "sensitive-$(printf '%s' "$path" | tr '/.' '--')"
+    mkdir -p "$(dirname "$path")"
     printf '\n# edit\n' >>"$path"
     merge_tree
+    printf '[gates]\ndocs_only_paths = ["**"]\n' >.devflow.toml
     expect false
 done
 
@@ -119,6 +142,18 @@ for kind in missing absent empty malformed duplicate wrong_table; do
     esac
     expect false
 done
+for quote in '"""' "'''"; do
+    fixture "multiline-string-${quote:0:1}"
+    printf 'source\n' >>src/app.js
+    merge_tree
+    printf '[gates]\nnotes = %s\ndocs_only_paths = ["**"]\n%s\n' "$quote" "$quote" >.devflow.toml
+    expect false
+done
+fixture ambiguous_gate_line
+printf 'source\n' >>src/app.js
+merge_tree
+printf '[gates]\nnotes = [\ndocs_only_paths = ["**"]\n]\n' >.devflow.toml
+expect false
 fixture multiline
 printf 'edit\n' >>README.md
 merge_tree
