@@ -537,9 +537,8 @@ satisfy that boundary. The fallback can consume GitHub Actions minutes on privat
 repositories even when their default pool is a homelab. The target shared-cache
 rule requires setup `cache: "false"` for secret-holding/deploying jobs, except
 `deploy-preview.yml` `deploy`: it builds the PR's own code, so cache poisoning
-grants nothing the PR does not already have. The remaining violation is in
-`sync-harmon-devkit.yml` `sync` (App `contents:write` token plus pnpm cache on
-`use_node`, owned by harmon-init#1731).
+grants nothing the PR does not already have. The credential-holding
+skills-sync job disables the shared cache in Node profiles.
 
 **Self-hosted update note:** With `ci_runner: self-hosted`, isolated-class jobs
 now default to GitHub-hosted runners instead of the self-hosted default pool.
@@ -635,3 +634,46 @@ credentials, and whatever the previous job left behind.
 Before setting `CI_RUNS_ON` to a self-hosted value, audit every workflow for
 `pull_request_target` and for any step that runs code from the PR head. Keep
 untrusted-contribution workflows on GitHub-hosted runners.
+[% if use_node %]
+
+## CI browser caches and uncached lint state
+
+Only cache-allowed jobs use these caches; every existing `cache: "false"`
+caller remains cold. Credential-holding jobs must set setup `cache: "false"`
+because lower-trust PR runs can write the repository-wide Actions cache.
+The setup action refuses `browsers: "true"` unless `cache: "true"`.
+
+`a11y` opts into setup `browsers` with `browser-set: chromium`;
+`build.yml` `e2e` uses `all`. Both hold no secret. On GitHub-hosted runners,
+setup restores/saves `~/.cache/ms-playwright` with `actions/cache`, keyed on runner OS and
+architecture, Linux distribution ID and VERSION_ID from `/etc/os-release`,
+the installed Playwright CLI version (resolved after dependency installation),
+and the browser set. Multiple lockfile versions are supported: the installed
+CLI determines which one the job uses. Unresolvable versions or host platforms
+skip the cache and retain the ordinary browser download.
+Browser caching is also skipped when `PLAYWRIGHT_BROWSERS_PATH` or `XDG_CACHE_HOME` is non-empty in the job environment.
+The idempotent browser install runs whenever a Playwright config is present;
+a hit makes the download a no-op. Hosted runners still run
+`playwright install-deps` for that set on every run; self-hosted runners use
+preinstalled system libraries and never sudo/apt. Persistent self-hosted runners
+keep their browser directory and skip the Actions browser cache. Missing Playwright configs
+skip browser caching and installation.
+
+A consumer adding a secret to `e2e` must set `cache: "false"` and disable
+`browsers` (the action rejects enabling both). That consumer keeps cold browser
+downloads; moving a secret to a later step does not isolate a job's cache.
+
+ESLint state is deliberately not cached. Its content cache cannot see cross-file
+type changes under the type-aware web-app configuration: a changed import can
+leave an unchanged caller cached clean, hiding errors such as
+`no-floating-promises`. Each check therefore runs ESLint afresh.
+
+TypeScript state is deliberately not cached. Only the web-app `tsc -b` path
+(with tsconfig references) could reuse `.tsbuildinfo`; `tsc --noEmit` and
+`astro check` do not supply reusable build state here. The shipped web-app
+fixture exercises `--noEmit`, so it cannot demonstrate identical diagnostics
+with restored state across consumers' reference graphs and compiler options.
+Before enabling this cache, prove cold/warm diagnostic equivalence on the
+actual reference graph, including changed sources and missing outputs, and key
+it on the lockfile and every `tsconfig*.json`.
+[% endif %]

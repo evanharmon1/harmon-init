@@ -26,16 +26,28 @@ inputs:
 [% if use_node %]
   cache:
     description: >-
-      Enable the pnpm dependency cache. Turn OFF for credential-holding jobs —
+      Enable dependency and browser caches. Turn OFF for credential-holding jobs —
       the repo-wide Actions cache is writable from lower-trust PR runs, so a
       job with push/deploy tokens takes the cold-install trade instead.
     default: "true"
+  browsers:
+    description: Restore/save Playwright browsers (requires cache true).
+    default: "false"
+  browser-set:
+    description: Playwright browser set (all or chromium).
+    default: all
 [% endif %]
 
 runs:
   using: composite
   steps:
 [% if use_node %]
+    - name: Reject unsafe browser cache configuration
+      if: inputs.browsers == 'true' && inputs.cache != 'true'
+      shell: bash
+      run: |
+        echo '::error::browsers: true requires cache: true; credential-holding jobs must disable browsers and cache.' >&2
+        exit 1
     - uses: pnpm/action-setup@0ebf47130e4866e96fce0953f49152a61190b271 # v6.0.9
     # pnpm 10 reads npm_config_store_dir; pnpm 11+ reads
     # PNPM_CONFIG_STORE_DIR. Export both forms of `--store-dir` to the
@@ -339,4 +351,55 @@ runs:
         SHARP_IGNORE_GLOBAL_LIBVIPS: "1"
       run: |
         if [ -f package.json ]; then pnpm install --frozen-lockfile; fi
+    - name: Resolve installed Playwright cache identity
+      if: inputs.browsers == 'true'
+      id: playwright-version
+      shell: bash
+      env:
+        BROWSER_SET: ${{ inputs.browser-set }}
+      run: |
+        case "$BROWSER_SET" in
+          all|chromium) ;;
+          *) echo '::error::browser-set must be all or chromium' >&2; exit 1 ;;
+        esac
+        node <<'NODE' >> "$GITHUB_OUTPUT"
+        const fs = require('node:fs');
+        const { spawnSync } = require('node:child_process');
+        if (process.env.PLAYWRIGHT_BROWSERS_PATH || process.env.XDG_CACHE_HOME) {
+          const name = process.env.PLAYWRIGHT_BROWSERS_PATH ? 'PLAYWRIGHT_BROWSERS_PATH' : 'XDG_CACHE_HOME';
+          console.error(`::notice::Browser cache disabled: ${name} is set.`);
+          console.log('cacheable=false');
+          process.exit(0);
+        }
+        try {
+          const cli = spawnSync('node_modules/.bin/playwright', ['--version'], { encoding: 'utf8' });
+          const version = cli.status === 0 && /^Version ([0-9]+\.[0-9]+\.[0-9]+(?:[-+][0-9A-Za-z.+-]+)?)\s*$/.exec(cli.stdout);
+          if (!version) {
+            console.error('::notice::Browser cache disabled: installed Playwright CLI version could not be resolved.');
+            console.log('cacheable=false');
+            process.exit(0);
+          }
+          const release = Object.fromEntries(fs.readFileSync('/etc/os-release', 'utf8').split('\n')
+            .map(line => /^([A-Z_]+)=(.*)$/.exec(line)).filter(Boolean)
+            .map(m => [m[1], m[2].replace(/^['"]|['"]$/g, '')]));
+          if (![release.ID, release.VERSION_ID].every(v => v && /^[0-9A-Za-z._-]+$/.test(v))) {
+            console.error('::notice::Browser cache disabled: /etc/os-release has no usable ID or VERSION_ID.');
+            console.log('cacheable=false');
+          } else {
+            console.log(`version=${version[1]}`);
+            console.log(`platform=${release.ID}-${release.VERSION_ID}`);
+            console.log('cacheable=true');
+          }
+        } catch {
+          console.error('::notice::Browser cache disabled: /etc/os-release could not be read.');
+          console.log('cacheable=false');
+        }
+        NODE
+    - name: Cache Playwright browsers
+      if: inputs.browsers == 'true' && steps.playwright-version.outputs.cacheable == 'true' && runner.environment == 'github-hosted'
+      id: browsers-cache
+      uses: actions/cache@27d5ce7f107fe9357f9df03efb73ab90386fccae # v5.0.5
+      with:
+        path: ~/.cache/ms-playwright
+        key: playwright-v2-${{ runner.os }}-${{ runner.arch }}-${{ steps.playwright-version.outputs.platform }}-${{ steps.playwright-version.outputs.version }}-${{ inputs.browser-set }}
 [% endif %]

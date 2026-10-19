@@ -3284,7 +3284,7 @@ if [ -f prettier.config.cjs ]; then # use_node profiles (web-astro / web-app)
     grep -q 'playwright install' scripts/e2e-run.sh ||
         err "e2e-run.sh does not install Playwright browsers — local ci would fail where CI passes"
     ! grep -q 'playwright install .*--with-deps' scripts/e2e-run.sh ||
-        err "e2e-run.sh installs OS deps (--with-deps needs sudo); that is CI's hosted-runner step, not a local task's"
+        err "e2e-run.sh installs OS deps (--with-deps needs sudo); CI uses install-deps on hosted runners only, separate from its idempotent install"
     # The devcontainer bakes chromium into a root-owned PLAYWRIGHT_BROWSERS_PATH
     # (o+rx, not writable), so an unconditional install EACCESes there before a
     # single test runs — in the environment agents actually use.
@@ -3345,18 +3345,138 @@ if [ -f prettier.config.cjs ]; then # use_node profiles (web-astro / web-app)
     e2e_job="$(awk '/^  e2e:$/{f=1} f&&/^  [a-z][a-z0-9-]*:$/&&!/^  e2e:$/{f=0} f' \
         .github/workflows/build.yml)"
     [ -n "$e2e_job" ] || err "could not isolate the e2e job block in build.yml"
+    grep -q '^## CI browser caches and uncached lint state$' docs/architecture/ci-cd.md ||
+        err "browser cache docs missing from Node profile"
+    # Execute the rendered version reader against two lockfile versions and the
+    # refusal body itself; inspect the YAML conditions that select those steps.
+    if have yq && have node; then
+        python3 - <<'PYTEST' || err "rendered browser cache contract failed"
+import json
+import os
+import pathlib
+import subprocess
+import tempfile
+
+
+def read_yaml(path):
+    return json.loads(subprocess.check_output(["yq", "-o=json", ".", path]))
+
+
+action = read_yaml(".github/actions/setup/action.yml")
+steps = action["runs"]["steps"]
+refusal = next(s for s in steps if s.get("name") == "Reject unsafe browser cache configuration")
+assert refusal["if"] == "inputs.browsers == 'true' && inputs.cache != 'true'"
+assert subprocess.run(["bash", "-eo", "pipefail", "-c", refusal["run"]],
+                      capture_output=True).returncode != 0
+reader = next(s for s in steps if s.get("id") == "playwright-version")
+cache = next(s for s in steps if s.get("id") == "browsers-cache")
+assert cache["if"] == "inputs.browsers == 'true' && steps.playwright-version.outputs.cacheable == 'true' && runner.environment == 'github-hosted'"
+assert cache["with"]["path"] == "~/.cache/ms-playwright"
+key = cache["with"]["key"]
+for component in ("runner.os", "runner.arch", "steps.playwright-version.outputs.platform", "steps.playwright-version.outputs.version", "inputs.browser-set"):
+    assert "${{ " + component + " }}" in key
+assert action["inputs"]["browsers"]["default"] == "false"
+with tempfile.TemporaryDirectory() as tmp:
+    tmp = pathlib.Path(tmp)
+    keys = []
+    release = tmp / "os-release"
+    release.write_text('ID=ubuntu\nVERSION_ID="22.04"\n')
+    # Bind the host-file read to a fixture so both distro identities are tested
+    # even on a macOS test host; the rendered reader logic runs unchanged.
+    assert "'/etc/os-release'" in reader["run"]
+    reader_run = reader["run"].replace("'/etc/os-release'", repr(str(release)))
+    cli = tmp / "node_modules/.bin/playwright"
+    cli.parent.mkdir(parents=True)
+    # A valid workspace lock may contain several versions. The executable the
+    # job invokes, rather than unrelated lock entries, determines cache identity.
+    (tmp / "pnpm-lock.yaml").write_text("packages:\n  playwright@1.56.0:\n  playwright@1.57.0:\n")
+    for version in ("1.56.0", "1.57.0"):
+        cli.write_text("#!/bin/sh\necho 'Version " + version + "'\n")
+        cli.chmod(0o755)
+        output = tmp / "output"
+        output.write_text("")
+        env = dict(os.environ, BROWSER_SET="all", GITHUB_OUTPUT=str(output))
+        env.pop("PLAYWRIGHT_BROWSERS_PATH", None)
+        env.pop("XDG_CACHE_HOME", None)
+        subprocess.run(["bash", "-eo", "pipefail", "-c", reader_run], cwd=tmp, env=env, check=True)
+        values = dict(line.split("=", 1) for line in output.read_text().splitlines())
+        assert values == {"version": version, "platform": "ubuntu-22.04", "cacheable": "true"}
+        keys.append(key.replace("${{ steps.playwright-version.outputs.version }}", version))
+    assert keys[0] != keys[1]
+    # Either nonempty override makes the fixed cache path unusable. The action
+    # must skip restore/save, leaving the idempotent install to populate it.
+    for overrides in ({"PLAYWRIGHT_BROWSERS_PATH": "0"},
+                      {"XDG_CACHE_HOME": str(tmp / "xdg")},
+                      {"PLAYWRIGHT_BROWSERS_PATH": str(tmp / "browsers"), "XDG_CACHE_HOME": str(tmp / "xdg")}):
+        output.write_text("")
+        skipped = subprocess.run(["bash", "-eo", "pipefail", "-c", reader_run], cwd=tmp,
+                                 env=dict(env, **overrides), check=True, capture_output=True, text=True)
+        assert output.read_text() == "cacheable=false\n"
+        assert skipped.stderr.count("::notice::") == 1
+        assert next(iter(overrides)) in skipped.stderr
+    output.write_text("")
+    subprocess.run(["bash", "-eo", "pipefail", "-c", reader_run], cwd=tmp,
+                   env=dict(env, PLAYWRIGHT_BROWSERS_PATH="", XDG_CACHE_HOME=""), check=True)
+    assert "cacheable=true\n" in output.read_text()
+    release.write_text('ID=ubuntu\nVERSION_ID="24.04"\n')
+    output.write_text("")
+    subprocess.run(["bash", "-eo", "pipefail", "-c", reader_run], cwd=tmp, env=env, check=True)
+    values = dict(line.split("=", 1) for line in output.read_text().splitlines())
+    assert values["platform"] == "ubuntu-24.04"
+    assert key.replace("${{ steps.playwright-version.outputs.platform }}", "ubuntu-22.04") != key.replace("${{ steps.playwright-version.outputs.platform }}", values["platform"])
+    release.unlink()
+    output.write_text("")
+    skipped = subprocess.run(["bash", "-eo", "pipefail", "-c", reader_run], cwd=tmp, env=env,
+                             check=True, capture_output=True, text=True)
+    assert output.read_text() == "cacheable=false\n"
+    assert skipped.stderr.count("::notice::") == 1 and "/etc/os-release" in skipped.stderr
+    release.write_text('ID=ubuntu\nVERSION_ID="24.04"\n')
+    for cli_body in ("#!/bin/sh\nexit 1\n", "#!/bin/sh\necho unknown\n"):
+        cli.write_text(cli_body)
+        output.write_text("")
+        skipped = subprocess.run(["bash", "-eo", "pipefail", "-c", reader_run], cwd=tmp, env=env,
+                                 check=True, capture_output=True, text=True)
+        assert output.read_text() == "cacheable=false\n"
+        assert skipped.stderr.count("::notice::") == 1 and "CLI version" in skipped.stderr
+    cli.unlink()
+    output.write_text("")
+    skipped = subprocess.run(["bash", "-eo", "pipefail", "-c", reader_run], cwd=tmp, env=env,
+                             check=True, capture_output=True, text=True)
+    assert output.read_text() == "cacheable=false\n"
+    assert skipped.stderr.count("::notice::") == 1 and "CLI version" in skipped.stderr
+workflow = read_yaml(".github/workflows/build.yml")
+if read_yaml(".copier-answers.yml")["use_skills_sync"]:
+    sync_workflow = pathlib.Path(".github/workflows/sync-harmon-devkit.yml")
+    assert sync_workflow.exists(), "skills-sync workflow missing from Node + skills-sync profile"
+    sync_steps = read_yaml(str(sync_workflow))["jobs"]["sync"]["steps"]
+    sync_setup = next(s for s in sync_steps if s.get("uses") == "./.github/actions/setup")
+    assert sync_setup["with"]["cache"] == "false", "privileged sync job must not restore pnpm cache"
+for job, browser_set in (("e2e", "all"), ("a11y", "chromium")):
+    assert job in workflow["jobs"], f"missing required browser job: {job}"
+    job_steps = workflow["jobs"][job]["steps"]
+    setup = next(s for s in job_steps if s.get("id") == "setup")
+    assert setup["with"]["browser-set"] == browser_set
+    assert setup["with"]["browsers"] == "${{ steps.pw.outputs.present == 'true' }}"
+    download = next(s for s in job_steps if s.get("name", "").startswith("Download Playwright"))
+    assert download["if"] == "steps.pw.outputs.present == 'true'"
+    deps = next(s for s in job_steps if s.get("name", "").startswith("Install Playwright system"))
+    assert "runner.environment == 'github-hosted'" in deps["if"]
+    assert "cache-hit" not in deps["if"]
+    assert deps["run"] == "pnpm exec playwright install-deps" + (" chromium" if browser_set == "chromium" else "")
+
+PYTEST
+    else
+        required yq "rendered browser cache contract" || fail=1
+        required node "rendered browser cache contract" || fail=1
+    fi
     grep -q 'playwright install' <<<"$e2e_job" ||
         err "the e2e job never installs Playwright browsers"
     ! grep -qE 'playwright install .*(chromium|firefox|webkit)' <<<"$e2e_job" ||
         err "the e2e job installs a single Playwright browser but runs the full suite"
-    # `--with-deps` shells out to apt via sudo. Self-hosted runners may have no
-    # passwordless sudo (same reason the lighthouse job splits its Chrome
-    # install), and wedging a REQUIRED check on sudo is not acceptable.
-    if grep -q -- '--with-deps' <<<"$e2e_job"; then
-        grep -q "runner.environment == 'github-hosted'" <<<"$e2e_job" ||
-            err "the e2e job runs 'playwright install --with-deps' unconditionally — it needs sudo/apt and would wedge a required check on self-hosted runners"
-    fi
+
 else
+    ! grep -q '^## CI browser caches and uncached lint state$' docs/architecture/ci-cd.md ||
+        err "browser cache docs rendered for a non-Node profile"
     [ ! -e scripts/e2e-run.sh ] || err "e2e-run.sh rendered for a non-node profile"
     ! grep -qE '^  e2e:' .github/workflows/build.yml || err "build.yml has an e2e job on a non-node profile"
 fi

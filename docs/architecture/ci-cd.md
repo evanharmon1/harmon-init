@@ -641,9 +641,8 @@ satisfy that boundary. The fallback can consume GitHub Actions minutes on privat
 repositories even when their default pool is a homelab. The target shared-cache
 rule requires setup `cache: "false"` for secret-holding/deploying jobs, except
 `deploy-preview.yml` `deploy`: it builds the PR's own code, so cache poisoning
-grants nothing the PR does not already have. The remaining violation is in
-`sync-harmon-devkit.yml` `sync`
-(App `contents:write` token plus pnpm cache on `use_node`, owned by harmon-init#1731).
+grants nothing the PR does not already have. The credential-holding
+skills-sync job disables the shared cache in Node profiles.
 
 **Self-hosted update note:** With `ci_runner: self-hosted`, isolated-class jobs
 now default to GitHub-hosted runners instead of the self-hosted default pool.
