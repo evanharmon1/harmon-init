@@ -6,9 +6,10 @@
 # The sole allowlist is [gates].docs_only_paths in .devflow.toml. The minimal
 # reader accepts a double-quoted array (inline or multiline, comments allowed).
 # Unsupported TOML or glob syntax fails closed. Globs are repository-relative:
-# * and ? do not cross /; ** crosses /; **/ also matches zero directories, so
-# **/*.md includes README.md. Only literal letters/digits/_/./- and * / ? are
-# supported. No shell expansion or evaluation of config or filenames occurs.
+# * and ? do not cross /, so the shipped *.md matches only root Markdown.
+# ** crosses / and **/ also matches zero directories when explicitly configured.
+# Only literal letters/digits/_/./- and * / ? are supported. No shell expansion
+# or evaluation of config or filenames occurs.
 set -euo pipefail
 
 full_run() {

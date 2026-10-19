@@ -22,7 +22,8 @@ fixture() {
     printf 'original\n' >src/app.js
     printf 'original\n' >docs/guide.md
     printf 'original\n' >README.md
-    cp "$repo/.devflow.toml" .devflow.toml
+    # Pin the shipped policy: consumer customizations must not alter fixtures.
+    printf '[gates]\ndocs_only_paths = ["docs/**", "specs/**", "*.md"]\n' >.devflow.toml
     git add .
     git commit -qm 'initial fixture'
     base="$(git rev-parse HEAD)"
@@ -45,13 +46,25 @@ fixture docs
 printf 'edit\n' >>docs/guide.md
 printf 'new\n' >specs/design.txt
 printf 'new\n' >README.md
-printf 'new\n' >nested/guide.md
 merge_tree
 expect true
 expect false push
 expect false merge_group
 expect false workflow_dispatch
 expect false unknown
+
+fixture root_markdown
+printf 'edit\n' >>README.md
+merge_tree
+expect true
+
+for path in src/pages/about.md src/content/posts/p.md terraform/README.md .claude/skills/example/x.md; do
+    fixture "nested-markdown-$(printf '%s' "$path" | tr '/.' '--')"
+    mkdir -p "$(dirname "$path")"
+    printf 'app or nested content\n' >"$path"
+    merge_tree
+    expect false
+done
 
 fixture mixed
 printf 'edit\n' >>docs/guide.md
@@ -109,7 +122,7 @@ done
 fixture multiline
 printf 'edit\n' >>README.md
 merge_tree
-printf '[gates]\ndocs_only_paths = [\n  "docs/**", # comment\n  "**/*.md",\n]\n' >.devflow.toml
+printf '[gates]\ndocs_only_paths = [\n  "docs/**", # comment\n  "*.md",\n]\n' >.devflow.toml
 expect true
 fixture custom_allowlist
 printf 'source\n' >>src/app.js
@@ -117,6 +130,18 @@ merge_tree
 printf '[gates]\ndocs_only_paths = ["src/**"]\n' >.devflow.toml
 expect true
 printf '[gates]\ndocs_only_paths = ["specs/**"]\n' >.devflow.toml
+expect false
+
+# A consumer may narrow the real policy without changing the suite fixtures.
+fixture custom_docs_allowlist
+printf 'edit\n' >>docs/guide.md
+merge_tree
+printf '[gates]\ndocs_only_paths = ["docs/**"]\n' >.devflow.toml
+expect true
+fixture custom_docs_root_markdown
+printf 'edit\n' >>README.md
+merge_tree
+printf '[gates]\ndocs_only_paths = ["docs/**"]\n' >.devflow.toml
 expect false
 
 # A stale event base equals the candidate's source tree and hides its revert.

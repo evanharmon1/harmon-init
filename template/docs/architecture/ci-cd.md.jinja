@@ -18,7 +18,10 @@ skip app gates. The contract is:
 
 1. The sole path allowlist is `[gates].docs_only_paths` in `.devflow.toml`.
    `scripts/ci-changes-classify.sh` reads that key without Node; it never
-   maintains a second path list. `**/*.md` includes root Markdown files.
+   maintains a second path list. The defaults are `docs/**`, `specs/**` and
+   `*.md`: the last glob matches only root Markdown files. App content such as
+   `src/pages/about.md` or `src/content/posts/p.md`, nested `terraform/README.md`
+   and `.claude/` Markdown select a full run.
 2. Classification fails closed: a path outside the allowlist, a rename,
    deletion, symlink or file-mode change, empty diff, missing merge parent,
    unreadable or unsupported allowlist all select a full run. Workflows,
