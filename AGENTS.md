@@ -1213,7 +1213,7 @@ the workflow rules above:
 
 ## CI/CD
 
-- `.github/workflows/build.yml` — jobs `lint`, `security`, `template-test` (matrix
+- `.github/workflows/build.yml` — jobs `check`, `repo-guards`, `devcontainer-permissions`, `security`, `template-test` (matrix
   of copier answer profiles), and the aggregate `verify` gate. All jobs delegate to
   `task` targets. Its `pull_request` trigger carries **no `edited`**: the
   readiness gate requires PR-body edits, so a title/body edit must not restart

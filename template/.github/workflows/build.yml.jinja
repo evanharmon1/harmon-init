@@ -33,7 +33,7 @@ permissions:
   contents: read
 
 jobs:
-  lint:
+  check:
     # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
     # default; set it to a JSON runner spec to override without a commit.
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
@@ -53,53 +53,71 @@ jobs:
       - uses: ./.github/actions/setup
         with:
           lint-tools: "true"
-      - name: Lint[% if use_node %] + typecheck[% endif +%]
+      - name: Check
         run: task check
+
 [% if project_type == 'web-app' %]
-      # AFTER `check`, so the typecheck above still runs against the committed
-      # tree. This guard regenerates and fails if the output differs from what
-      # was committed — the same target `task verify` runs locally, which is
-      # what keeps `task ci` an honest mirror of this job.
+  codegen-guard:
+    # Secret-holding codegen uses disposable runners, never the default pool.
+    runs-on: ${{ fromJSON(vars.ISOLATED_RUNS_ON || '"ubuntu-latest"') }}
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: ./.github/actions/setup
+        with:
+          cache: "false"
       - name: Generated code is current
         env:
           CONVEX_DEPLOY_KEY: ${{ github.event_name != 'merge_group' && secrets.CONVEX_DEPLOY_KEY || '' }}
         run: task guard:codegen
 [% endif %]
-      # Outside the suite: `audit:*` is not a `test:*` target, so `test:suite`
-      # does not carry it, and `verify` runs it between `check` and the suite.
-      - run: task audit:agent-instructions
-      # Its own step, outside the suite it guards: it is also a suite member (so
-      # `verify` runs it), but deleting the suite step below would delete the
-      # only CI step that could notice — this one still fails then.
-      - name: Verify-CI parity guard (runs outside the suite it guards)
-        run: task test:verify-ci-parity
-      # The ONE step for every `test:*` target `task verify` runs. The list
-      # lives in Taskfile.yml's `test:suite` and nowhere else, so a check added
-      # to `verify` can no longer be missed here (harmon-init#962, #1461) —
-      # each entry carries the same answer gate in both places.
-      # `test:verify-ci-parity` (the step above) fails if this step is ever
-      # dropped.
-      #
-      # NOT here, deliberately: `validate` and `test`. Both are in `verify`
-      # unconditionally, but CI only invokes them from the build-test job,
-      # which is gated on use_node. So a repo with
-      # `(include_terraform or include_ansible) and not use_node` runs real
-      # terraform/ansible checks locally and none in CI. Adding them here is
-      # not a one-liner — `terraform validate` needs an init step CI does not
-      # have — so it is tracked as harmon-init#978 rather than fixed in the
-      # same breath.
-      - name: Test suite (every test:* target verify runs)
-        run: task test:suite
-[% if use_skills_sync %]
-      # Outside the suite, on purpose: a NETWORK check (`verify` stays offline).
-      - name: Skills drift check (vendored skills vs pinned harmon-devkit ref)
-        run: task verify:skills
-[% endif %]
-[% if devcontainer %]
-      # Outside the suite, on purpose: a `ci`-only unit check, not in `verify`.
-      - run: task test:devcontainer:permissions
-[% endif %]
 
+  repo-guards:
+    # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
+    # default; set it to a JSON runner spec to override without a commit.
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: ./.github/actions/setup
+        with:
+          lint-tools: "true"
+      # Outside ci:repo-guards: deleting its suite call must not silence this guard.
+      - name: Verify-CI parity guard (runs outside the task it guards)
+        run: task test:verify-ci-parity
+      - name: Repository guards
+        run: task ci:repo-guards
+[% if devcontainer %]
+
+  devcontainer-permissions:
+    # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
+    # default; set it to a JSON runner spec to override without a commit.
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - uses: ./.github/actions/setup
+      - name: Devcontainer permissions
+        run: task test:devcontainer:permissions
+[% endif %]
 [% if use_node %]
 
   build-test:
@@ -392,7 +410,7 @@ jobs:
 
   verify:
     if: always()
-    needs: [lint, security[% if use_node %], build-test, e2e[% endif %][% if project_type == 'web-astro' %], lighthouse, render-parity[% endif %]]
+    needs: [check, repo-guards[% if project_type == 'web-app' %], codegen-guard[% endif %][% if devcontainer %], devcontainer-permissions[% endif %], security[% if use_node %], build-test, e2e[% endif %][% if project_type == 'web-astro' %], lighthouse, render-parity[% endif %]]
     # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
     # default; set it to a JSON runner spec to override without a commit.
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
@@ -403,7 +421,14 @@ jobs:
       - name: Verify deliberate skips at the untrusted-fork boundary
         if: env.IS_FORK == 'true'
         env:
-          LINT_RESULT: ${{ needs.lint.result }}
+          CHECK_RESULT: ${{ needs.check.result }}
+          REPO_GUARDS_RESULT: ${{ needs.repo-guards.result }}
+[% if project_type == 'web-app' %]
+          CODEGEN_GUARD_RESULT: ${{ needs.codegen-guard.result }}
+[% endif %]
+[% if devcontainer %]
+          DEVCONTAINER_PERMISSIONS_RESULT: ${{ needs.devcontainer-permissions.result }}
+[% endif %]
           SECURITY_RESULT: ${{ needs.security.result }}
 [% if use_node %]
           BUILD_TEST_RESULT: ${{ needs.build-test.result }}
@@ -421,7 +446,14 @@ jobs:
               fail=1
             fi
           }
-          check_skipped lint "$LINT_RESULT"
+          check_skipped check "$CHECK_RESULT"
+          check_skipped repo-guards "$REPO_GUARDS_RESULT"
+[% if project_type == 'web-app' %]
+          check_skipped codegen-guard "$CODEGEN_GUARD_RESULT"
+[% endif %]
+[% if devcontainer %]
+          check_skipped devcontainer-permissions "$DEVCONTAINER_PERMISSIONS_RESULT"
+[% endif %]
           check_skipped security "$SECURITY_RESULT"
 [% if use_node %]
           check_skipped build-test "$BUILD_TEST_RESULT"
@@ -443,7 +475,14 @@ jobs:
         if: env.IS_FORK != 'true'
         env:
           EXPECTED_RESULT: success
-          LINT_RESULT: ${{ needs.lint.result }}
+          CHECK_RESULT: ${{ needs.check.result }}
+          REPO_GUARDS_RESULT: ${{ needs.repo-guards.result }}
+[% if project_type == 'web-app' %]
+          CODEGEN_GUARD_RESULT: ${{ needs.codegen-guard.result }}
+[% endif %]
+[% if devcontainer %]
+          DEVCONTAINER_PERMISSIONS_RESULT: ${{ needs.devcontainer-permissions.result }}
+[% endif %]
           SECURITY_RESULT: ${{ needs.security.result }}
 [% if use_node %]
           BUILD_TEST_RESULT: ${{ needs.build-test.result }}
@@ -453,7 +492,7 @@ jobs:
           LIGHTHOUSE_RESULT: ${{ needs.lighthouse.result }}
           RENDER_PARITY_RESULT: ${{ needs.render-parity.result }}
 [% endif %]
-        run: ./scripts/verify-ci-results.sh "lint=${LINT_RESULT}" "security=${SECURITY_RESULT}"[% if use_node %] "build-test=${BUILD_TEST_RESULT}" "e2e=${E2E_RESULT}"[% endif %][% if project_type == 'web-astro' %] "lighthouse=${LIGHTHOUSE_RESULT}" "render-parity=${RENDER_PARITY_RESULT}"[% endif %]
+        run: ./scripts/verify-ci-results.sh "check=${CHECK_RESULT}" "repo-guards=${REPO_GUARDS_RESULT}"[% if project_type == 'web-app' %] "codegen-guard=${CODEGEN_GUARD_RESULT}"[% endif %][% if devcontainer %] "devcontainer-permissions=${DEVCONTAINER_PERMISSIONS_RESULT}"[% endif %] "security=${SECURITY_RESULT}"[% if use_node %] "build-test=${BUILD_TEST_RESULT}" "e2e=${E2E_RESULT}"[% endif %][% if project_type == 'web-astro' %] "lighthouse=${LIGHTHOUSE_RESULT}" "render-parity=${RENDER_PARITY_RESULT}"[% endif %]
 
 # Keep a literal final line after the inline Jinja conditionals above; with
 # trim_blocks enabled, ending on a block tag would strip the workflow's EOF newline.

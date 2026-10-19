@@ -99,7 +99,7 @@ tasks:
 [% if project_type == 'web-app' %]
       # Sequential and FIRST, so the typecheck below sees current generated
       # types. It FAILS on stale output rather than silently refreshing it —
-      # CI's lint job runs the same guard, so a green `task ci` here means a
+      # CI's codegen-guard job runs the same guard, so a green `task ci` here means a
       # green CI there. `check` and the pre-commit hooks stay read-only.
       - task: guard:codegen
 [% endif %]
@@ -112,16 +112,27 @@ tasks:
       - task: test:suite
       - task: test
 
+  ci:repo-guards:
+    # CI-only aggregate: verify lists its offline members separately.
+    # The workflow parity step stays outside this task so it can guard the suite call.
+    desc: Repository instruction audit and test suite[% if use_skills_sync %], plus skills drift[% endif +%]
+    cmds:
+      - task: audit:agent-instructions
+      - task: test:suite
+[% if use_skills_sync %]
+      - task: verify:skills
+[% endif %]
+
   test:suite:
     # The ONE list of `test:*` targets that both `verify` and the required Build
-    # workflow's `lint` job run (build.yml calls this task in a single step), so
+    # workflow's `repo-guards` job run (through ci:repo-guards), so
     # the two cannot drift and nothing parses the workflow to police them.
     # A new `test:*` guard that belongs in the gate is added HERE and nowhere
     # else; `test:verify-ci-parity` fails if either caller stops running it.
     # Not in this list: `build`, `validate` and `test` (the project's own tiers
     # — CI runs them in their own job) and the `ci`-only checks.
     # Members run concurrently: each must confine filesystem and Git writes to its own mktemp fixture and bind no port.
-    desc: The test:* targets verify and the Build workflow's lint job both run (members run in parallel; set TASK_CONCURRENCY=1 for serial execution)
+    desc: The test:* targets verify and the Build workflow's repo-guards job both run (members run in parallel; set TASK_CONCURRENCY=1 for serial execution)
     deps:
       - task: test:agent-instructions-size
       - task: test:agent-skill-links
@@ -407,7 +418,7 @@ tasks:
     # In the aggregate, not the validate tier: for an iac repo `use_node` is
     # false, so build.yml ships no `build-test` job and NOTHING in CI runs
     # `task validate` — a lock check there would be locally enforced and
-    # CI-blind. `check` runs in the lint job on every profile. It costs a
+    # CI-blind. `check` runs in the check job on every profile. It costs a
     # `terraform init` in a scratch copy, which is why the aggregate comment
     # above no longer claims to be network-free.
     desc: Check provider locks cover macOS arm64 and Linux amd64
@@ -667,7 +678,7 @@ tasks:
     # directly, and a generator firing there would rewrite the tree after the
     # index was built. It also keeps CI honest — CI runs `check`, so it
     # type-checks the generated files exactly as committed instead of silently
-    # refreshing a stale one into passing. `verify` and CI's lint job use
+    # refreshing a stale one into passing. `verify` and CI's codegen-guard job use
     # `guard:codegen` below, which fails on stale output instead of healing it.
     #
     # Port-free by contract: generators write files, they never start a server or
@@ -688,7 +699,7 @@ tasks:
   guard:codegen:
     # The gating half of `codegen`: regenerate, then FAIL if the result differs
     # from what is staged, listing the files to commit. Run by `verify` and by
-    # CI's lint job, so local `task ci` and CI fail on exactly the same
+    # CI's codegen-guard job, so local `task ci` and CI fail on exactly the same
     # condition — a `verify` that silently regenerated would let a green local
     # `ci` precede a red CI run, and `ci` would stop being a mirror.
     # It also catches what tsc cannot: an additive schema change whose stale

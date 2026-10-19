@@ -103,7 +103,7 @@ jobs:
         run: |
           # --force overwrites a foreign same-named entry point instead of
           # aborting, keeping reruns idempotent on a self-hosted CI_RUNS_ON
-          # runner (same reasoning as build.yml's lint job).
+          # runner (same reasoning as build.yml's repo-guards job).
           uv tool install --force copier
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
           npm install --global @devcontainers/cli lefthook pnpm

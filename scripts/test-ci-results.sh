@@ -28,17 +28,17 @@ reject_required() {
     fi
 }
 
-accept_required "trusted jobs succeeding" success lint=success security=success
-accept_required "fork-suppressed jobs skipping" skipped lint=skipped security=skipped
-reject_required "a skipped trusted job" success lint=success security=skipped
-reject_required "a successful fork-suppressed job" skipped lint=skipped security=success
-reject_required "a failed job" success lint=success security=failure
-reject_required "a cancelled job" success lint=success security=cancelled
-reject_required "an unknown job result" success lint=success security=unknown
-reject_required "an empty result" success lint=success security=
+accept_required "trusted jobs succeeding" success check=success security=success
+accept_required "fork-suppressed jobs skipping" skipped check=skipped security=skipped
+reject_required "a skipped trusted job" success check=success security=skipped
+reject_required "a successful fork-suppressed job" skipped check=skipped security=success
+reject_required "a failed job" success check=success security=failure
+reject_required "a cancelled job" success check=success security=cancelled
+reject_required "an unknown job result" success check=success security=unknown
+reject_required "an empty result" success check=success security=
 reject_required "an empty job name" success =success
-reject_required "a malformed pair" success lint
-reject_required "an unsupported expectation" neutral lint=neutral
+reject_required "a malformed pair" success check
+reject_required "an unsupported expectation" neutral check=neutral
 reject_required "an empty result set" success
 
 # The closing-keyword guard lives in its own workflow (harmon-init#1328) so it

@@ -288,7 +288,7 @@ has.
 - **Never gate a template file on `skill_categories`.** Not a filename
   condition, not a `[% if %]`, not a computed answer's `default:`/`when:`.
   `task test:category-gates` enforces this (`scripts/test-category-gates.sh`,
-  in both `verify` and the CI lint job).
+  in both `verify` and the CI repo-guards job).
 
   The guard works by **allowlist**: every occurrence of the answer under
   `template/` fails unless it is listed in the script with a reason (today,
