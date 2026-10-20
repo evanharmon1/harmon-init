@@ -389,7 +389,6 @@ jobs:
     timeout-minutes: 5
     permissions:
       pull-requests: write
-      actions: read
     steps:
       - name: Mark existing Lighthouse CI Results comment as not refreshed
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -408,22 +407,15 @@ jobs:
               c.user.type === 'Bot' && c.body.startsWith('## Lighthouse CI Results')
             )
             if (!existing) return
-            let reflectedSha = existing.body.match(/_Measured commit: ([0-9a-f]{40})_/)?.[1]
-            // Older Lighthouse comments recorded a run URL but no commit.
-            if (!reflectedSha) {
-              const runId = existing.body.match(/\/actions\/runs\/(\d+)/)?.[1]
-              if (runId) {
-                const { data: run } = await github.rest.actions.getWorkflowRun({ owner, repo, run_id: Number(runId) })
-                reflectedSha = run.head_sha
-              }
-            }
-            if (!reflectedSha) throw new Error('Existing comment has no identifiable Measured commit')
+            const reflectedSha = existing.body.match(/_Measured commit: ([0-9a-f]{40})_/)?.[1]
             const original = existing.body.split('\n\n<!-- docs-only-status -->')[0]
             const body = [
               original,
               '',
               '<!-- docs-only-status -->',
-              `Head ${process.env.HEAD_SHA} was not re-measured (docs-only change). This comment still reflects commit ${reflectedSha}.`,
+              reflectedSha
+                ? `Head ${process.env.HEAD_SHA} was not re-measured (docs-only change). This comment still reflects commit ${reflectedSha}.`
+                : `Head ${process.env.HEAD_SHA} was not re-measured (docs-only change). This comment reflects an earlier measurement whose commit was not recorded.`,
             ].join('\n')
             await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body })
 

@@ -207,13 +207,14 @@ jobs:
               c.user.type === 'Bot' && c.body.startsWith('## Cloudflare Workers Preview')
             )
             if (!existing) return
-            let reflectedSha = existing.body.match(/_Deployed commit: ([0-9a-f]{40})_/)?.[1]
-            if (!reflectedSha) throw new Error('Existing comment has no identifiable Deployed commit')
+            const reflectedSha = existing.body.match(/_Deployed commit: ([0-9a-f]{40})_/)?.[1]
             const original = existing.body.split('\n\n<!-- docs-only-status -->')[0]
             const body = [
               original,
               '',
               '<!-- docs-only-status -->',
-              `Head ${process.env.HEAD_SHA} was not re-deployed (docs-only change). This comment still reflects commit ${reflectedSha}.`,
+              reflectedSha
+                ? `Head ${process.env.HEAD_SHA} was not re-deployed (docs-only change). This comment still reflects commit ${reflectedSha}.`
+                : `Head ${process.env.HEAD_SHA} was not re-deployed (docs-only change). This comment reflects an earlier deployment whose commit was not recorded.`,
             ].join('\n')
             await github.rest.issues.updateComment({ owner, repo, comment_id: existing.id, body })

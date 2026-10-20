@@ -55,9 +55,9 @@ Generated web workflows mark existing preview and Lighthouse bot comments as
 not refreshed for a docs-only head, preserving the deployed/measured commit and
 URLs or scores. These comment-only jobs run only on same-repo PRs, without a
 checkout or deployment secrets, on the isolated `ISOLATED_RUNS_ON` class.
-Lighthouse comments record the measured commit;
-older comments recover it from their workflow run. No deployment or measurement
-is performed on this path.
+Lighthouse comments record the measured commit. Older comments without a commit
+marker are labeled as an earlier measurement or deployment whose commit was not
+recorded. No deployment or measurement is performed on this path.
 
 ## Workflows
 
