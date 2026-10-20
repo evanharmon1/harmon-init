@@ -187,8 +187,8 @@ Build and publish the plan in this order:
    containing `lane_profiles`. Do not infer past lane refinements from the
    global baseline. If inputs cannot be recovered, stop as indeterminate.
 6. **Reserve, emit and validate.** Before writing `plan.json` at all, take the
-   slate lock with its explicit issue set:
-   `dev-flow-support/assets/run-record.mjs lock acquire --slate <slate-id>
+   slate lock with its explicit issue set, reading its one-time stdout token from visible output:
+   `node dev-flow-support/assets/run-record.mjs lock acquire --slate <slate-id>
    --session <session> --issues <n,n,…>`, adding `--milestone <n>` for a
    milestone-backed slate (the milestone exists only in the lock). A second
    orchestrator naming the same work is refused here, before it can publish a
@@ -198,7 +198,7 @@ Build and publish the plan in this order:
    a graph/projection mismatch, an ownership error, or a cap violation. Both
    writers refuse while the canonical plan names an issue outside the
    reservation, so a later revision that adds issues widens the reservation
-   with `lock acquire --issues` first.
+   with `lock acquire --issues --owner-token <token>` first.
    Immediately before each lane dispatch, compare the live target head with the
    last revision's `plan.base_sha`; when they differ, recompute and validate the
    plan before dispatching.
@@ -225,7 +225,8 @@ Build and publish the plan in this order:
 ## Durable orchestrator state
 
 Everything you need in order to resume lives under the Git common directory,
-never in the session scratchpad. A scratchpad does not survive a session
+never in the session scratchpad, with one deliberate exception: the owner token
+lives only in session context, never under the Git common directory. A scratchpad does not survive a session
 restart, and one that was wiped mid-slate took every dispatch file, ruling
 and watcher script with it (harmon-devkit#1296). The scratchpad is for
 throwaway work only.
@@ -245,6 +246,7 @@ it supports, never a hand edit:
 
 - `transition`, which also appends the matching transition receipt;
 - `intervention`;
+- `authorize-cap` for one attributable maintainer instruction, shared with solo runs;
 - `bind-pr`;
 - `close`.
 
@@ -276,6 +278,22 @@ the same candidate, validate, rename and readback sequence. Parallel writers
 must first use `run-record.mjs`'s shared mutex and validated writer; its lock
 does not protect a caller that bypasses it.
 
+For a maintainer-authorized round above the resolved cap, use
+`run-record.mjs authorize-cap --slate <id> --session <id> --owner-token <token> --run-id <id>
+--stage <challenge|review|integration> --round <n> --actor <maintainer-identity>
+--instruction '<verbatim session instruction>' --at <instruction-UTC-time>`.
+An agent never authorizes itself: the writer records the maintainer's instruction,
+which may precede or follow the round. For integration, `round` names the charged
+cycle count, not a pass or retry. Each intervening over-cap round needs its own
+entry; malformed or duplicate entries refuse. A cap of 0 stays disabled. Never
+rewrite the resolved caps in `policy.json`. Continue the same run's numbering
+and show `round n/cap (authorized) — maintainer authorized on <date>` in the
+stage ledger, citing the instruction verbatim, actor and time; the PR body's
+budget line discloses that same overage alongside rigor overrides
+(harmon-devkit#683). Follow `/review`'s authorization procedure and ordinary
+convergence rules. An older merge-base engine/schema under `--closure` fails
+closed; report compatibility refusal rather than bypassing that trusted engine.
+
 Point an intervention that rests on a ruling file at it with
 `--ruling FILE`: the writer copies those bytes into the run's
 `rulings/<sha256>` file without overwriting an existing snapshot, and the
@@ -290,23 +308,28 @@ later session. Files under `.git/` never show in `git status`.
 
 Both writers take the **slate lock** (`run-record.mjs lock
 acquire|release|status`), recorded under `<git-common-dir>/dev-flow-v2/locks/`
-with the slate's milestone and issue set. While another session holds the
-same slate, the same milestone, or any of the same issues — under any slate
-id — every write is refused. Take it before publishing the plan (§ Planning
+with the slate's milestone and issue set. Every run-record.mjs and
+plan-revise.mjs write is refused while any lock other than this session's own
+covers the same slate, the same milestone, or any of the same issues; the
+owner-token caller contract below defines "own".
+Take it before publishing the plan (§ Planning
 step 6), with `--issues` and, for a milestone-backed slate, `--milestone`: an
-implicit lock taken at a first write records no milestone, and a plan
+unlocked slate refuses every run-record.mjs and plan-revise.mjs write except explicit `lock acquire`, and a plan
 published before its reservation can overwrite another session's plan. Release it when the slate
 ends. `--session` is the `/kickoff` session name recorded by `/claim` on the
-claim comment's `session:` line. Reuse it after a restart; it is not a PID or
-a liveness signal. A different session is refused even on the same host.
+claim comment's `session:` line; it is not a PID or a liveness signal.
+A restart, `/clear` or compaction also loses the owner token; resume through
+the recovery procedure below: operator confirmation, force release, then a
+fresh `lock acquire`. A different session is refused even on the same host.
+Follow “Owner-token caller contract” in `$support_dir/../SKILL.md`, with the support directory resolved physically via `cd … && pwd -P`.
 
 Recovery is an explicit operator decision, never an automatic timeout or a
 cross-host process probe. Inspect `lock status --slate <slate>`, have the
 operator confirm that the previous session and its writers have stopped, then
 run `lock release --slate <slate> --session <recovering-session> --force
 --reason "<operator attribution and why the old session is abandoned>"` once.
-The helper records that request, its session, reason, timestamp and complete
-previous lock in `locks/recoveries/<slate>/<id>.json` before removing the lock;
+The helper records that request, its session, reason, timestamp and
+previous lock metadata (including only the owner-token digest) in `locks/recoveries/<slate>/<id>.json` before removing the lock;
 failure to record it leaves the lock held. Re-read status after any failure:
 the audit records intent, so a crash may leave the lock still held. Acquire
 normally as the recovering session only after release; ordinary scope
@@ -697,7 +720,8 @@ lane is planned, fenced and claimed like any other.
 Watching is the standing mode, not a one-shot step. Use the harness's
 session-lifetime persistent monitor primitive—never a background shell subject
 to an ordinary command timeout—to poll fresh lane-agent and PR state and emit
-only transitions (`idle`, `done`, `blocked`, `unknown`, and PR deltas). If it
+transitions (`idle`, `done`, `blocked`, `unknown`, and PR deltas), approval
+prompts, stalls, and periodic heartbeat summaries. If it
 exits before the overall run reaches a terminal outcome, re-arm it immediately;
 never interpret monitor termination as human cancellation. If no persistent
 primitive is available, block instead of silently falling back to occasional
@@ -721,7 +745,42 @@ only ASCII letters, digits, underscores and hyphens. Both report and pane
 observations match the whole final nonblank line `<kind>-<lane-label>-<nonce>`.
 A HANDOFF emits its own `HANDOFF <agent>: <sentinel>` transition alongside
 `SENTINEL`; pane observations carry `(pane only)` and need report confirmation.
-Keep the state file across re-arms so reported
+The watcher also emits these supervision events:
+
+- `PROMPT <lane>: <approval request>` uses Herdr state for classified harnesses
+  (parsed explain with null `fallback_reason`): an episode starts at `blocked`
+  and ends when the lane leaves `blocked`. Pane text only quotes the request;
+  unavailable text uses `(input requested; text not captured)`. For agy and
+  fallback lanes, pane-text detection uses agy's approval strings instead.
+  The quote is partial: Codex/Claude show only the dialog header; agy shows
+  the first command line, cut at 300 bytes. Read the full pane with
+  `herdr agent read` before approving; never approve from the event quote.
+  A Herdr `blocked` state can be a question rather than an approval: answer
+  or escalate questions. For approvals, read the full pane first, then:
+  Inspect the request and approve or deny within your authority. Each episode
+  retains its first-seen time across redraws and restarts, repeats after
+  `--prompt-reemit-seconds` (default 180), and starts anew after a poll outside
+  the episode, even for identical text.
+- `STALL <lane>: no pane change for <N>m` fires once per unchanged-pane episode
+  after `--stall-minutes` (default 10). Read the pane and act: investigate,
+  re-brief, or escalate within authority. Pane content or Herdr revision/state
+  changes reset the timer; a terminal report or pane sentinel suppresses it.
+- `HEARTBEAT <lane>: state=<state> age=<seconds>s pr=<state>; ...` summarizes
+  every lane after `--heartbeat-minutes` (default 15), including cloud lanes.
+  Cloud age measures branch/PR changes; unavailable local progress has age
+  `unknown`. A missing heartbeat means re-arm the watcher and investigate its
+  exit, rather than assuming the lanes are healthy.
+
+When `herdr agent explain --json` identifies fallback detection, a visible
+approval prompt derives `blocked`; otherwise the watcher uses `unknown`.
+These agent events and approval requests carry `(fallback)`; fallback alone
+never proves `idle` or `done`. For a lane present in a successful agent list,
+a failed or unparseable explain read carries no new state: retain the previous
+AGENT state and emit no AGENT transition for that poll. A lane missing from a
+successful list is `absent` regardless of explain. Cloud lanes have no pane,
+so receive heartbeat summaries alongside their GitHub events, with no `PROMPT` or `STALL` events.
+Keep the state file across re-arms so prompt episodes and re-emission times,
+stall episodes, heartbeat timing, reported
 sentinels and post-promotion activity remain deduplicated. The watcher bounds
 every `herdr` and `gh` read, prefers each lane's explicit report-path sentinel,
 tags pane-only fallback results, and watches reviews plus top-level and inline
