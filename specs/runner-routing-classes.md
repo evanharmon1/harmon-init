@@ -114,6 +114,7 @@ split. Matrix variants inherit their job's class. Pinned placement is an excepti
 | `build.yml` | `e2e` | browser | Playwright; included with Node |
 | `build.yml` | `security` | default | Free baseline scanners |
 | `build.yml` | `lighthouse` | browser | Lighthouse browser audit (web-astro) |
+| `build.yml` | `lighthouse-stale-comment` | isolated | API-only PR-comment glue; docs-only Lighthouse annotation (web-astro) |
 | `build.yml` | `render-parity` | default | Compares built output without a browser (web-astro) |
 | `build.yml` | `a11y` | browser | Browser accessibility checks (web-app/web-astro) |
 | `build.yml` | `verify` | default | Aggregate check |
@@ -131,6 +132,7 @@ split. Matrix variants inherit their job's class. Pinned placement is an excepti
 | `deploy-preview.yml` | `changes` | default | Fail-closed docs-only classification |
 | `deploy-preview.yml` | `preflight` | isolated | `CLOUDFLARE_API_TOKEN` |
 | `deploy-preview.yml` | `deploy` | isolated | Preview deployment and `CLOUDFLARE_API_TOKEN`; deliberate shared-cache exception below |
+| `deploy-preview.yml` | `preview-stale-comment` | isolated | API-only PR-comment glue; docs-only preview annotation |
 | `release.yml` | `release-please` | isolated | API automation and `CI_APP_PRIVATE_KEY` |
 | `release.yml` | `deploy-production` | isolated | Production deployment and `CLOUDFLARE_API_TOKEN` |
 | `sync-harmon-devkit.yml` | `sync` | isolated | `CI_APP_PRIVATE_KEY`; shared cache disabled for Node profiles |

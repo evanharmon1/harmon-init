@@ -1213,9 +1213,12 @@ the workflow rules above:
 
 ## CI/CD
 
-- `.github/workflows/build.yml` — jobs `check`, `repo-guards`, `devcontainer-permissions`, `security`, `template-test` (matrix
-  of copier answer profiles), and the aggregate `verify` gate. All jobs delegate to
-  `task` targets. Its `pull_request` trigger carries **no `edited`**: the
+- `.github/workflows/build.yml` — jobs `changes`, `check`, `repo-guards`, `devcontainer-permissions`, `security`, `template-test` (matrix
+  of copier answer profiles), and the aggregate `verify` gate. Gate jobs delegate to
+  Taskfile targets; change-detection and aggregate plumbing (`changes`,
+  `devcontainer-changes`, `terraform-changes`, and the `verify` aggregates)
+  call scripts directly, passing event SHAs where applicable.
+  Its `pull_request` trigger carries **no `edited`**: the
   readiness gate requires PR-body edits, so a title/body edit must not restart
   the matrix (#1328). Guards that genuinely read the title or body keep
   `edited` in their own workflows.
