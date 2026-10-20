@@ -2,9 +2,9 @@
 
 How continuous integration and delivery are wired in Harmon Init. Gate
 jobs delegate to Taskfile targets, so local hooks, CI, and humans run identical
-commands. Change-detection and aggregate plumbing (`changes`,
-`devcontainer-changes`, `terraform-changes`, and the `verify` aggregates) call
-scripts directly, passing event SHAs where applicable.
+commands. Change-detection plumbing (`changes`, `devcontainer-changes`)
+and the `verify` aggregates call scripts directly, passing event SHAs where
+applicable.
 
 ## Quality gate
 
@@ -50,14 +50,6 @@ where those jobs exist. The existing non-blocking status of `a11y` is unchanged.
 The root-only `template-test` matrix always runs, including on shipped Markdown
 under `template/`. Local `task verify` still runs its full gate; classification changes CI job
 scheduling only.
-
-Generated web workflows mark existing preview and Lighthouse bot comments as
-not refreshed for a docs-only head, preserving the deployed/measured commit and
-URLs or scores. These comment-only jobs run only on same-repo PRs, without a
-checkout or deployment secrets, on the isolated `ISOLATED_RUNS_ON` class.
-Lighthouse comments record the measured commit. Older comments without a commit
-marker are labeled as an earlier measurement or deployment whose commit was not
-recorded. No deployment or measurement is performed on this path.
 
 ## Workflows
 
