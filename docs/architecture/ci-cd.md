@@ -11,9 +11,47 @@ The pipeline runs `check → build → validate → test → security` (see
 plus an aggregate **`verify`** job; branch protection requires `verify` +
 `security` to pass before a PR can merge to `main`.
 
+## Docs-only pull requests
+
+Build and preview classify only docs-only changes; no other change categories
+skip app gates. The contract is:
+
+1. The sole path allowlist is `[gates].docs_only_paths` in `.devflow.toml`.
+   `scripts/ci-changes-classify.sh` reads that key without Node; it never
+   maintains a second path list. The defaults are `docs/**`, `specs/**` and
+   `*.md`: the last glob matches only root Markdown files. App content such as
+   `src/pages/about.md` or `src/content/posts/p.md`, nested `terraform/README.md`
+   and `.claude/` Markdown select a full run.
+2. Classification fails closed: a path outside the allowlist, a rename,
+   deletion, symlink or file-mode change, empty diff, missing merge parent,
+   unreadable or unsupported allowlist all select a full run. Multiline strings
+   or ambiguous policy lines also select a full run. Workflows, `.github/actions/`,
+   Taskfile, `scripts/`, `.devflow.toml` and the classifier always select a full
+   run, even when an allowlist glob would match them. The classifier
+   compares the PR merge ref's first parent (current base tip) with its merge
+   result, never the potentially stale event `base.sha`.
+3. Pushes to `main`, `merge_group` and manual runs execute every job regardless
+   of a docs-only output. The skip predicate applies only to `pull_request`.
+4. `verify` accepts a required job's skip only on a PR with a successful
+   `changes` job and `docs_only=true`, and only for that job's explicit
+   docs-only eligibility. It logs `deliberately skipped: docs-only` per job;
+   a skip caused by an upstream failure fails the aggregate. Existing fork
+   suppression is verified separately inline, without checking out fork code.
+5. `task test:ci-changes-classify` belongs to `test:suite`, so repository guards
+   and local `verify` exercise the classifier even on docs-only changes.
+6. `security` and its `security:secrets` scan never skip for docs-only changes.
+   `check` and `repo-guards` also continue to run.
+
+On docs-only PRs, `build-test`, `e2e`, `a11y`, `lighthouse`, `render-parity`,
+`codegen-guard`, `devcontainer-permissions` and the preview `deploy` job skip
+where those jobs exist. The existing non-blocking status of `a11y` is unchanged.
+The root-only `template-test` matrix always runs, including on shipped Markdown
+under `template/`. Local `task verify` still runs its full gate; classification changes CI job
+scheduling only.
+
 ## Workflows
 
-- `build.yml` — on push/PR to `main`: check, repo-guards, devcontainer-permissions, security, template-test, then the
+- `build.yml` — on push/PR to `main`: changes, check, repo-guards, devcontainer-permissions, security, template-test, then the
   aggregate **`verify`** job. Its `pull_request:` trigger is
   `[opened, synchronize, reopened]` — **no `draft` filter**, so it fires on
   draft PRs too. That is load-bearing, not incidental: PRs are drafts for their
@@ -583,7 +621,7 @@ runner label set. Provider names never belong in routing variable names.
 
 | Class | Variable | Jobs / requirement | Fallback chain |
 |---|---|---|---|
-| default | `CI_RUNS_ON` | `check`, `repo-guards`, `devcontainer-permissions`; general build, test and aggregates | `CI_RUNS_ON` → rendered default |
+| default | `CI_RUNS_ON` | `changes`, `check`, `repo-guards`, `devcontainer-permissions`; general build, test and aggregates | `CI_RUNS_ON` → rendered default |
 | browser | `BROWSER_RUNS_ON` | Real-browser tests: `e2e`, `a11y`, `lighthouse` | `BROWSER_RUNS_ON` → `CI_RUNS_ON` → rendered default |
 | image-build | `IMAGE_BUILD_RUNS_ON` | Docker/devcontainer builds and container smoke/assertion tests | `IMAGE_BUILD_RUNS_ON` → `CI_RUNS_ON` → rendered default |
 | isolated | `ISOLATED_RUNS_ON` | Long-lived secrets, attacker-writable bodies, deployments and API-only automation | `ISOLATED_RUNS_ON` → `"ubuntu-latest"` only |
@@ -603,9 +641,8 @@ satisfy that boundary. The fallback can consume GitHub Actions minutes on privat
 repositories even when their default pool is a homelab. The target shared-cache
 rule requires setup `cache: "false"` for secret-holding/deploying jobs, except
 `deploy-preview.yml` `deploy`: it builds the PR's own code, so cache poisoning
-grants nothing the PR does not already have. The remaining violation is in
-`sync-harmon-devkit.yml` `sync`
-(App `contents:write` token plus pnpm cache on `use_node`, owned by harmon-init#1731).
+grants nothing the PR does not already have. The credential-holding
+skills-sync job disables the shared cache in Node profiles.
 
 **Self-hosted update note:** With `ci_runner: self-hosted`, isolated-class jobs
 now default to GitHub-hosted runners instead of the self-hosted default pool.

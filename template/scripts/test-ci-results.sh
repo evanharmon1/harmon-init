@@ -41,6 +41,61 @@ reject_required "a malformed pair" success check
 reject_required "an unsupported expectation" neutral check=neutral
 reject_required "an empty result set" success
 
+# A docs skip is evidence from a successful classifier, on PRs only.
+if ! output="$(DOCS_ONLY=true CHANGES_RESULT=success CI_EVENT_NAME=pull_request \
+    DOCS_ONLY_JOBS='build-test' "$verifier" changes=success check=success build-test=skipped 2>&1)"; then
+    fail 'classifier-authorized skip rejected'
+fi
+printf '%s\n' "$output" | grep -Fq 'Job build-test deliberately skipped: docs-only' ||
+    fail 'deliberate skip was not reported distinctly'
+for classifier_result in failure cancelled skipped ''; do
+    if DOCS_ONLY=true CHANGES_RESULT="$classifier_result" CI_EVENT_NAME=pull_request \
+        DOCS_ONLY_JOBS='build-test' "$verifier" build-test=skipped >/dev/null 2>&1; then
+        fail "upstream-failure skip accepted ($classifier_result)"
+    fi
+done
+for event in push merge_group workflow_dispatch ''; do
+    if DOCS_ONLY=true CHANGES_RESULT=success CI_EVENT_NAME="$event" \
+        DOCS_ONLY_JOBS='build-test' "$verifier" build-test=skipped >/dev/null 2>&1; then
+        fail "docs-only skip accepted on $event"
+    fi
+done
+for docs_only in false unknown ''; do
+    if DOCS_ONLY="$docs_only" CHANGES_RESULT=success CI_EVENT_NAME=pull_request \
+        DOCS_ONLY_JOBS='build-test' "$verifier" build-test=skipped >/dev/null 2>&1; then
+        fail "skip accepted with docs_only=$docs_only"
+    fi
+done
+if DOCS_ONLY=true CHANGES_RESULT=success CI_EVENT_NAME=pull_request \
+    DOCS_ONLY_JOBS='build-test' "$verifier" security=skipped >/dev/null 2>&1; then
+    fail 'security skip accepted on a docs-only PR'
+fi
+if DOCS_ONLY=true CHANGES_RESULT=success CI_EVENT_NAME=pull_request \
+    DOCS_ONLY_JOBS='build-test' "$verifier" check=failure build-test=skipped >/dev/null 2>&1; then
+    fail 'docs skip hid a failed always-on job'
+fi
+
+# Exercise the actual inline fork aggregate: it must fail if changes did not
+# skip at the fork boundary, rather than treating an upstream failure as a skip.
+inline="$(awk '
+    /name: Verify deliberate skips at the untrusted-fork boundary/ { step = 1 }
+    step && /^        run: \|/ { body = 1; next }
+    body && /^      -/ { exit }
+    body { sub(/^          /, ""); print }
+' "$repo/.github/workflows/build.yml")"
+[ -n "$inline" ] || fail 'inline fork aggregate was not found'
+fork_aggregate() {
+    CHANGES_RESULT="$1" CHECK_RESULT=skipped REPO_GUARDS_RESULT=skipped \
+        DEVCONTAINER_PERMISSIONS_RESULT=skipped TEMPLATE_TEST_RESULT=skipped \
+        CODEGEN_GUARD_RESULT=skipped SECURITY_RESULT=skipped BUILD_TEST_RESULT=skipped \
+        E2E_RESULT=skipped LIGHTHOUSE_RESULT=skipped RENDER_PARITY_RESULT=skipped \
+        bash -c "$inline" >/dev/null 2>&1
+}
+fork_aggregate skipped || fail 'inline aggregate rejected deliberate fork skips'
+if fork_aggregate failure; then
+    fail 'inline aggregate accepted a classifier failure at the fork boundary'
+fi
+
 # The closing-keyword guard lives in its own workflow (harmon-init#1328) so it
 # can keep the `pull_request.edited` trigger the build matrix deliberately
 # drops — it reads the PR title and body, so a body edit genuinely changes its

@@ -52,6 +52,19 @@ cp "${output_lib}" "${TMP}/repo/scripts/lib/output.sh"
 : >"${TMP}/repo/scripts/setup-github-project.sh"
 SUT="${TMP}/repo/scripts/setup-gh-scopes.sh"
 
+# Each bootstrap-writing case gets an immutable script path. A background bash
+# may open its script after setup returns, so overwriting a shared stub lets an
+# earlier case execute a later case's marker-writing code.
+bootstrap_fixture() {
+    local name="$1"
+    local root="${TMP}/bootstrap-${name}"
+    mkdir -p "${root}/scripts/lib" "${root}/.devcontainer/scripts"
+    cp "${script}" "${scopes_lib}" "${TMP}/repo/scripts/setup-github-project.sh" "${root}/scripts/"
+    cp "${output_lib}" "${root}/scripts/lib/"
+    SUT="${root}/scripts/setup-gh-scopes.sh"
+    BOOTSTRAP="${root}/.devcontainer/scripts/bootstrap-related-repos.sh"
+}
+
 fail() {
     echo "TEST FAIL: $*" >&2
     exit 1
@@ -377,14 +390,14 @@ if [ "${PTY_OK}" = true ]; then
     esac
 
     echo "==> triggers bootstrap-related-repos.sh upon successful refresh grant"
-    mkdir -p "${TMP}/repo/.devcontainer/scripts"
+    bootstrap_fixture success
     rm -f "${TMP}/bootstrap-marker"
-    cat <<EOF >"${TMP}/repo/.devcontainer/scripts/bootstrap-related-repos.sh"
+    cat <<EOF >"${BOOTSTRAP}"
 #!/usr/bin/env bash
 touch "${TMP}/bootstrap-marker"
 exit 0
 EOF
-    chmod +x "${TMP}/repo/.devcontainer/scripts/bootstrap-related-repos.sh"
+    chmod +x "${BOOTSTRAP}"
     out="$(run_sut_pty lands-after-refresh GH_HOST=github.com)"
     case "$out" in
     *"Bootstrapping related repos in the background"*"${TMP}/home/.related-repos-bootstrap.log"*) ;;
@@ -397,6 +410,8 @@ EOF
     [ -f "${TMP}/bootstrap-marker" ] || fail "bootstrap marker file was not created after grant landed"
 
     echo "==> the bootstrap is told the checkout's physical parent, on any layout"
+    SUT="${TMP}/repo/scripts/setup-gh-scopes.sh"
+    mkdir -p "${TMP}/repo/.devcontainer/scripts"
     # The bootstrap's default target is /workspaces, which is right only inside the
     # devcontainer; anywhere else a scope refresh would clone into a directory that
     # does not exist. The trigger names the target, as setup-remote.sh does: the
@@ -528,7 +543,8 @@ EOF
     rm -rf "${TMP}/layout"
 
     echo "==> bootstrap-related-repos.sh failure does not change exit status of setup-gh-scopes"
-    cat <<EOF >"${TMP}/repo/.devcontainer/scripts/bootstrap-related-repos.sh"
+    bootstrap_fixture failure
+    cat <<EOF >"${BOOTSTRAP}"
 #!/usr/bin/env bash
 exit 1
 EOF
@@ -536,22 +552,23 @@ EOF
         fail "setup-gh-scopes must succeed even if bootstrap-related-repos.sh exits non-zero"
 
     echo "==> bootstrap is NOT triggered if refresh does not land"
-    rm -f "${TMP}/bootstrap-marker"
-    cat <<EOF >"${TMP}/repo/.devcontainer/scripts/bootstrap-related-repos.sh"
+    bootstrap_fixture refused
+    rm -f "${TMP}/refused-bootstrap-marker"
+    cat <<EOF >"${BOOTSTRAP}"
 #!/usr/bin/env bash
-touch "${TMP}/bootstrap-marker"
+touch "${TMP}/refused-bootstrap-marker"
 exit 0
 EOF
-    chmod +x "${TMP}/repo/.devcontainer/scripts/bootstrap-related-repos.sh"
+    chmod +x "${BOOTSTRAP}"
     out="$(run_sut_pty does-not-land GH_HOST=github.com)"
     case "$out" in
     *"Bootstrapping related repos"*) fail "bootstrap should not be invoked when grant verification fails: ${out}" ;;
     esac
     sleep 0.5
-    [ ! -f "${TMP}/bootstrap-marker" ] || fail "bootstrap marker was created even though grant verification failed"
+    [ ! -f "${TMP}/refused-bootstrap-marker" ] || fail "bootstrap marker was created even though grant verification failed"
 
+    SUT="${TMP}/repo/scripts/setup-gh-scopes.sh"
     rm -rf "${TMP}/repo/.devcontainer"
-    rm -f "${TMP}/bootstrap-marker"
 
     echo "==> FAILS when the refresh silently did not land"
     # The whole reason this script verifies rather than trusting the exit code.

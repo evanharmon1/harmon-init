@@ -1059,6 +1059,9 @@ function measure(trajectory, policy) {
   for (const transition of transitions) push(transition.stage)
   for (const round of rounds) push(round.stage)
   if (policy.present) for (const stage of ['challenge', 'review', 'integration']) push(stage)
+  for (const stage of ['challenge', 'review', 'integration']) {
+    if (trajectory.authorized_ceiling?.[stage] !== undefined) push(stage)
+  }
 
   const stages = order.map((stage) => {
     const own = rounds.filter((round) => round.stage === stage)
@@ -1087,6 +1090,7 @@ function measure(trajectory, policy) {
         stage,
         entries,
         cap,
+        ...(trajectory.authorized_ceiling?.[stage] === undefined ? {} : { authorized_ceiling: trajectory.authorized_ceiling[stage] }),
         ...(exemptCap === undefined ? {} : { exempt_cap: exemptCap }),
         integration_evidence: trajectory.integration_evidence || 'unavailable',
         interventions: stageInterventions
@@ -1097,6 +1101,7 @@ function measure(trajectory, policy) {
       entries,
       rounds_spent: own.length,
       cap,
+      ...(trajectory.authorized_ceiling?.[stage] === undefined ? {} : { authorized_ceiling: trajectory.authorized_ceiling[stage] }),
       findings: own.reduce((total, round) => total + (round.finding_count || 0), 0),
       passes: own.reduce((total, round) => total + (round.pass_count || 0), 0),
       blocked_passes: own.reduce((total, round) => total + (round.blocked_passes || 0), 0),
@@ -1306,10 +1311,11 @@ function renderMarkdown(report) {
         stage.cap === null
           ? 'no cap recorded'
           : `cap ${stage.cap}${exemptSuffix} (disclosed, unverified)`
-      l.push(`- Rounds/passes/findings: not measured from local evidence (${cap}) — integration passes carry no authenticated evidence marker today.`)
-    } else if (stage.cap !== null || stage.rounds_spent > 0) {
+      const authorized = stage.authorized_ceiling === undefined ? '' : `; authorized ceiling ${stage.authorized_ceiling}`
+      l.push(`- Rounds/passes/findings: not measured from local evidence (${cap}${authorized}) — integration passes carry no authenticated evidence marker today.`)
+    } else if (stage.cap !== null || stage.rounds_spent > 0 || stage.authorized_ceiling !== undefined) {
       const cap = stage.cap === null ? 'no cap recorded' : `cap ${stage.cap} (disclosed, unverified)`
-      l.push(`- Rounds spent: ${stage.rounds_spent} / ${cap}`)
+      l.push(`- Rounds spent: ${stage.rounds_spent} / ${cap}${stage.authorized_ceiling === undefined ? '' : `; authorized ceiling ${stage.authorized_ceiling}`}`)
       l.push(`- Findings: ${stage.findings} across ${stage.passes} pass(es)`)
       for (const evidence of stage.round_evidence_counts) {
         l.push(`- Round ${evidence.round} evidence: ${evidence.passes} pass(es), ${evidence.blocked_passes} blocked pass(es), ${evidence.adjudications} adjudication(s)`)

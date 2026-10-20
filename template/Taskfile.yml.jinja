@@ -146,6 +146,7 @@ tasks:
       - task: test:label-registry
       - task: test:tasks
       - task: test:ci-results
+      - task: test:ci-changes-classify
       - task: test:output
       - task: test:status
       - task: test:gh-scopes
@@ -825,6 +826,11 @@ tasks:
     desc: Fail if the Build workflow stops calling test:suite or verify stops running it
     cmds:
       - ./scripts/test-verify-ci-parity.sh
+
+  test:ci-changes-classify:
+    desc: Unit-test the fail-closed docs-only CI classifier
+    cmds:
+      - ./scripts/test-ci-changes-classify.sh
 
   test:ci-results:
     desc: Unit-test CI aggregate and closing-keyword fail-closed truth tables

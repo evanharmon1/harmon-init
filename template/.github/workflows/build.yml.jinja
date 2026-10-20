@@ -33,6 +33,24 @@ permissions:
   contents: read
 
 jobs:
+  changes:
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    timeout-minutes: 5
+    outputs:
+      docs_only: ${{ steps.classify.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Both parents of the PR merge ref: first parent is the live base.
+          fetch-depth: 2
+      - name: Classify docs-only changes (fail closed)
+        id: classify
+        run: ./scripts/ci-changes-classify.sh >> "$GITHUB_OUTPUT"
+
   check:
     # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
     # default; set it to a JSON runner spec to override without a commit.
@@ -58,11 +76,14 @@ jobs:
 
 [% if project_type == 'web-app' %]
   codegen-guard:
+    needs: changes
     # Secret-holding codegen uses disposable runners, never the default pool.
     runs-on: ${{ fromJSON(vars.ISOLATED_RUNS_ON || '"ubuntu-latest"') }}
     if: >-
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository
+      !cancelled() &&
+      (github.event_name != 'pull_request' ||
+       (github.event.pull_request.head.repo.full_name == github.repository &&
+        (needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true')))
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -102,12 +123,15 @@ jobs:
 [% if devcontainer %]
 
   devcontainer-permissions:
+    needs: changes
     # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
     # default; set it to a JSON runner spec to override without a commit.
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
     if: >-
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository
+      !cancelled() &&
+      (github.event_name != 'pull_request' ||
+       (github.event.pull_request.head.repo.full_name == github.repository &&
+        (needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true')))
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -121,12 +145,15 @@ jobs:
 [% if use_node %]
 
   build-test:
+    needs: changes
     # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
     # default; set it to a JSON runner spec to override without a commit.
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
     if: >-
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository
+      !cancelled() &&
+      (github.event_name != 'pull_request' ||
+       (github.event.pull_request.head.repo.full_name == github.repository &&
+        (needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true')))
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -148,6 +175,7 @@ jobs:
         run: task test
 
   e2e:
+    needs: changes
     # End-to-end (Playwright) — the PORT-BINDING test tier. It gets its own job
     # rather than joining build-test because `task verify` (and every other
     # agent-facing tier) is deliberately port-free; only `task ci` and this job
@@ -165,8 +193,10 @@ jobs:
     # default remain its fallbacks. Values are JSON runner label sets.
     runs-on: ${{ fromJSON(vars.BROWSER_RUNS_ON || vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
     if: >-
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository
+      !cancelled() &&
+      (github.event_name != 'pull_request' ||
+       (github.event.pull_request.head.repo.full_name == github.repository &&
+        (needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true')))
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -194,21 +224,25 @@ jobs:
         if: steps.pw.outputs.present == 'true'
         run: ./scripts/e2e-env-guard.sh
       - uses: ./.github/actions/setup
+        id: setup
+        with:
+          browsers: ${{ steps.pw.outputs.present == 'true' }}
+          browser-set: all
       # Every browser, not just chromium: this job runs the WHOLE suite, and the
       # convention is multi-browser + mobile projects (see
       # docs/architecture/tests.md). Installing one browser would fail this
       # blocking check on any config that declares firefox/webkit projects.
       #
       # Split by runner environment for the same reason the lighthouse job's
-      # Chrome install is: `--with-deps` shells out to apt via sudo. Hosted
-      # runners need that; persistent self-hosted machines already have the
-      # shared libs and may not have passwordless sudo, and wedging a REQUIRED
-      # check on sudo is not acceptable.
-      - name: Install Playwright browsers (hosted runner — apt via sudo)
+      # Chrome install is: install-deps shells out to apt via sudo. Hosted
+      # runners need that; self-hosted machines provide the shared libraries.
+      # The separate idempotent install always checks that browsers are present,
+      # even if a cache hit restored into a different runner workspace layout.
+      - name: Install Playwright system dependencies (hosted runner — apt via sudo)
         if: steps.pw.outputs.present == 'true' && runner.environment == 'github-hosted'
-        run: pnpm exec playwright install --with-deps
-      - name: Install Playwright browsers (self-hosted — no sudo/apt)
-        if: steps.pw.outputs.present == 'true' && runner.environment != 'github-hosted'
+        run: pnpm exec playwright install-deps
+      - name: Download Playwright browsers (idempotent — no sudo/apt)
+        if: steps.pw.outputs.present == 'true'
         run: pnpm exec playwright install
       - name: Build
         if: steps.pw.outputs.present == 'true'
@@ -245,12 +279,15 @@ jobs:
 [% if project_type == 'web-astro' %]
 
   lighthouse:
+    needs: changes
     # BROWSER_RUNS_ON selects this class; CI_RUNS_ON and the rendered
     # default remain its fallbacks. Values are JSON runner label sets.
     runs-on: ${{ fromJSON(vars.BROWSER_RUNS_ON || vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
     if: >-
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository
+      !cancelled() &&
+      (github.event_name != 'pull_request' ||
+       (github.event.pull_request.head.repo.full_name == github.repository &&
+        (needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true')))
     timeout-minutes: 30
     permissions:
       contents: read
@@ -338,13 +375,14 @@ jobs:
             }
 
   render-parity:
+    needs: changes
     # Proves a formatter-package bump didn't alter the built site's visible
     # text (see docs/CHECKLIST.md and scripts/test-astro-compress-parity.sh).
     # Builds the merge-base AND HEAD, so it is expensive — REQUIRED (listed in
     # verify.needs) rather than self-activating like e2e/a11y, so the job
-    # itself always runs and reports success either way: a job-level `if:`
-    # skip would report "skipped", which scripts/verify-ci-results.sh treats
-    # as a failure for a required job. The job always runs `task
+    # itself runs on every non-docs change. Only a classifier-authorized
+    # docs-only job skip is accepted by scripts/verify-ci-results.sh.
+    # On other changes the job runs `task
     # test:render-parity` unconditionally; render-parity.sh itself carries
     # the ONE trigger predicate (only a change to a known formatter package,
     # never an ordinary `*.astro` content edit or an unrelated dependency
@@ -358,8 +396,10 @@ jobs:
     # default; set it to a JSON runner spec to override without a commit.
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
     if: >-
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository
+      !cancelled() &&
+      (github.event_name != 'pull_request' ||
+       (github.event.pull_request.head.repo.full_name == github.repository &&
+        (needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true')))
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -375,6 +415,7 @@ jobs:
 [% if project_type in ['web-astro', 'web-app'] %]
 
   a11y:
+    needs: changes
     # Accessibility (axe-core via Playwright). NON-BLOCKING for now: intentionally
     # NOT in the `verify` needs list, so it reports but does not gate merges.
     # Self-activates once the app ships a playwright.config.* (before then
@@ -382,14 +423,15 @@ jobs:
     # verify.needs + a `check a11y` line, and to the ruleset's required checks.
     runs-on: ${{ fromJSON(vars.BROWSER_RUNS_ON || vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
     if: >-
-      github.event_name != 'pull_request' ||
-      github.event.pull_request.head.repo.full_name == github.repository
+      !cancelled() &&
+      (github.event_name != 'pull_request' ||
+       (github.event.pull_request.head.repo.full_name == github.repository &&
+        (needs.changes.result != 'success' || needs.changes.outputs.docs_only != 'true')))
     timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: ./.github/actions/setup
       - name: Detect Playwright config
         id: pw
         run: |
@@ -398,11 +440,16 @@ jobs:
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
           fi
-      - name: Install Playwright browsers (hosted runner — apt via sudo)
+      - uses: ./.github/actions/setup
+        id: setup
+        with:
+          browsers: ${{ steps.pw.outputs.present == 'true' }}
+          browser-set: chromium
+      - name: Install Playwright system dependencies (hosted runner — apt via sudo)
         if: steps.pw.outputs.present == 'true' && runner.environment == 'github-hosted'
-        run: pnpm exec playwright install --with-deps chromium
-      - name: Install Playwright browsers (self-hosted — no sudo/apt)
-        if: steps.pw.outputs.present == 'true' && runner.environment != 'github-hosted'
+        run: pnpm exec playwright install-deps chromium
+      - name: Download Playwright browsers (idempotent — no sudo/apt)
+        if: steps.pw.outputs.present == 'true'
         run: pnpm exec playwright install chromium
       - name: Accessibility (axe) tests
         run: task test:a11y
@@ -410,11 +457,14 @@ jobs:
 
   verify:
     if: always()
-    needs: [check, repo-guards[% if project_type == 'web-app' %], codegen-guard[% endif %][% if devcontainer %], devcontainer-permissions[% endif %], security[% if use_node %], build-test, e2e[% endif %][% if project_type == 'web-astro' %], lighthouse, render-parity[% endif %]]
+    needs: [changes, check, repo-guards[% if project_type == 'web-app' %], codegen-guard[% endif %][% if devcontainer %], devcontainer-permissions[% endif %], security[% if use_node %], build-test, e2e[% endif %][% if project_type == 'web-astro' %], lighthouse, render-parity[% endif %]]
     # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
     # default; set it to a JSON runner spec to override without a commit.
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
     env:
+      CI_EVENT_NAME: ${{ github.event_name }}
+      CHANGES_RESULT: ${{ needs.changes.result }}
+      DOCS_ONLY: ${{ needs.changes.outputs.docs_only }}
       IS_FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
     steps:
       # Never check out or run fork-controlled repository code on this path.
@@ -446,6 +496,7 @@ jobs:
               fail=1
             fi
           }
+          check_skipped changes "$CHANGES_RESULT"
           check_skipped check "$CHECK_RESULT"
           check_skipped repo-guards "$REPO_GUARDS_RESULT"
 [% if project_type == 'web-app' %]
@@ -475,6 +526,7 @@ jobs:
         if: env.IS_FORK != 'true'
         env:
           EXPECTED_RESULT: success
+          DOCS_ONLY_JOBS: "[% if project_type == 'web-app' %]codegen-guard [% endif %][% if devcontainer %]devcontainer-permissions [% endif %][% if use_node %]build-test e2e [% endif %][% if project_type == 'web-astro' %]lighthouse render-parity[% endif %]"
           CHECK_RESULT: ${{ needs.check.result }}
           REPO_GUARDS_RESULT: ${{ needs.repo-guards.result }}
 [% if project_type == 'web-app' %]
@@ -492,7 +544,7 @@ jobs:
           LIGHTHOUSE_RESULT: ${{ needs.lighthouse.result }}
           RENDER_PARITY_RESULT: ${{ needs.render-parity.result }}
 [% endif %]
-        run: ./scripts/verify-ci-results.sh "check=${CHECK_RESULT}" "repo-guards=${REPO_GUARDS_RESULT}"[% if project_type == 'web-app' %] "codegen-guard=${CODEGEN_GUARD_RESULT}"[% endif %][% if devcontainer %] "devcontainer-permissions=${DEVCONTAINER_PERMISSIONS_RESULT}"[% endif %] "security=${SECURITY_RESULT}"[% if use_node %] "build-test=${BUILD_TEST_RESULT}" "e2e=${E2E_RESULT}"[% endif %][% if project_type == 'web-astro' %] "lighthouse=${LIGHTHOUSE_RESULT}" "render-parity=${RENDER_PARITY_RESULT}"[% endif %]
+        run: ./scripts/verify-ci-results.sh "changes=${CHANGES_RESULT}" "check=${CHECK_RESULT}" "repo-guards=${REPO_GUARDS_RESULT}"[% if project_type == 'web-app' %] "codegen-guard=${CODEGEN_GUARD_RESULT}"[% endif %][% if devcontainer %] "devcontainer-permissions=${DEVCONTAINER_PERMISSIONS_RESULT}"[% endif %] "security=${SECURITY_RESULT}"[% if use_node %] "build-test=${BUILD_TEST_RESULT}" "e2e=${E2E_RESULT}"[% endif %][% if project_type == 'web-astro' %] "lighthouse=${LIGHTHOUSE_RESULT}" "render-parity=${RENDER_PARITY_RESULT}"[% endif %]
 
 # Keep a literal final line after the inline Jinja conditionals above; with
 # trim_blocks enabled, ending on a block tag would strip the workflow's EOF newline.
