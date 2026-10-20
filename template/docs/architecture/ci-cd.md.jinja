@@ -1,8 +1,10 @@
 # CI/CD
 
-How continuous integration and delivery are wired in [[ project_name ]]. Every
-job delegates to `task` targets, so local hooks, CI, and humans run identical
-commands (the Taskfile is the single source of truth).
+How continuous integration and delivery are wired in [[ project_name ]]. Gate
+jobs delegate to Taskfile targets, so local hooks, CI, and humans run identical
+commands. Change-detection plumbing (`changes`[% if devcontainer %], `devcontainer-changes`[% endif %][% if include_terraform %], `terraform-changes`[% endif %])
+and the `verify` aggregates call scripts directly, passing event SHAs where
+applicable.
 
 ## Quality gate
 
@@ -47,10 +49,26 @@ On docs-only PRs, `build-test`, `e2e`, `a11y`, `lighthouse`, `render-parity`,
 where those jobs exist. The existing non-blocking status of `a11y` is unchanged.
 Local `task verify` still runs its full gate; classification changes CI job
 scheduling only.
+[% if project_type == 'web-astro' or deploy_cloudflare_workers %]
+
+Generated web workflows mark existing result bot comments as not refreshed for a
+docs-only head.
+[% if deploy_cloudflare_workers %]
+Preview comments preserve the deployed commit and URLs.
+[% endif %]
+[% if project_type == 'web-astro' %]
+Lighthouse comments preserve the measured merge commit, the PR head it merges,
+and the scores.
+[% endif %]
+These comment-only jobs run only on same-repo PRs, without a checkout or
+deployment secrets, on the isolated `ISOLATED_RUNS_ON` class. Older comments
+without a commit marker describe an earlier result whose commit was not recorded.
+No deployment or measurement is performed on this path.
+[% endif %]
 
 ## Workflows
 
-- `build.yml` — on push/PR to `main`: changes, check, repo-guards[% if project_type == 'web-app' %], codegen-guard[% endif %][% if devcontainer %], devcontainer-permissions[% endif %][% if use_node %], build-test, e2e[% endif %][% if project_type == 'web-astro' %], lighthouse, render-parity[% endif %], security, then the aggregate **`verify`** job. Security always runs gitleaks + dependency audit[% if use_codeql %], and uses Semgrep CE as the free private-repo SAST fallback[% else %] + Semgrep CE SAST[% endif %].
+- `build.yml` — on push/PR to `main`: changes, check, repo-guards[% if project_type == 'web-app' %], codegen-guard[% endif %][% if devcontainer %], devcontainer-permissions[% endif %][% if use_node %], build-test, e2e[% endif %][% if project_type == 'web-astro' %], lighthouse, lighthouse-stale-comment, render-parity[% endif %], security, then the aggregate **`verify`** job. Security always runs gitleaks + dependency audit[% if use_codeql %], and uses Semgrep CE as the free private-repo SAST fallback[% else %] + Semgrep CE SAST[% endif %].
   Its `pull_request:` trigger is `[opened, synchronize, reopened]`.
   **`edited` is deliberately absent**: it fires on a title/body edit, and the
   dev loop's readiness gate *requires* body edits to tick
@@ -543,7 +561,7 @@ skills-sync job disables the shared cache in Node profiles.
 **Self-hosted update note:** With `ci_runner: self-hosted`, isolated-class jobs
 now default to GitHub-hosted runners instead of the self-hosted default pool.
 This includes web-app `codegen-guard`, the `claude-*` jobs, Terraform plan/apply, deployment jobs and
-`closing-keywords`. They consume Actions minutes. Terraform that needs endpoints
+`closing-keywords`[% if project_type == 'web-astro' %], `lighthouse-stale-comment`[% endif %][% if deploy_cloudflare_workers %], `preview-stale-comment`[% endif %]. They consume Actions minutes. Terraform that needs endpoints
 reachable only on a private network cannot run on those GitHub-hosted runners;
 configure a suitable disposable isolated pool before using that path.
 
