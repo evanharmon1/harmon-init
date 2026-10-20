@@ -561,6 +561,8 @@ echo '==> a fork PR is found by a local ref match, not by a base-owner query'
 # owner, so a regression to that query shape fails every case below.
 fork_head='"head":{"sha":"localhead","ref":"feature","repo":{"full_name":"contributor/repo"}}'
 fork_base='"base":{"repo":{"full_name":"acme/repo"}}'
+# Build each proxy_guard listing here and below in payload first: macOS bash 3.2
+# misparses escaped JSON nested in "$(proxy_guard "…")". Do not inline it again (#1736).
 payload="[{\"title\":\"fix: closes #2\",\"body\":\"\",${fork_head},${fork_base}}]"
 [ "$(proxy_guard "$payload")" = 1 ] ||
     fail "a fork PR's real title was not used: $(cat "$tmp/driver-err")"
