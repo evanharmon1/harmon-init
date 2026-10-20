@@ -205,7 +205,7 @@ jobs:
       - name: Detect Playwright config
         id: pw
         run: |
-          if find . -maxdepth 1 -name 'playwright.config.*' 2>/dev/null | grep -q .; then
+          if [ -n "$(find . -maxdepth 1 -name 'playwright.config.*' -print 2>/dev/null)" ]; then
             echo "present=true" >> "$GITHUB_OUTPUT"
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
@@ -482,7 +482,7 @@ jobs:
       - name: Detect Playwright config
         id: pw
         run: |
-          if find . -maxdepth 1 -name 'playwright.config.*' 2>/dev/null | grep -q .; then
+          if [ -n "$(find . -maxdepth 1 -name 'playwright.config.*' -print 2>/dev/null)" ]; then
             echo "present=true" >> "$GITHUB_OUTPUT"
           else
             echo "present=false" >> "$GITHUB_OUTPUT"
