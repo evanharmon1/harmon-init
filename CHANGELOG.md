@@ -8,6 +8,29 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [5.10.0](https://github.com/evanharmon1/harmon-init/compare/v5.9.0...v5.10.0) (2026-10-20)
+
+
+### Features
+
+* **ci:** specify runner routing classes and the four RUNS_ON variables ([#1737](https://github.com/evanharmon1/harmon-init/issues/1737)) ([6824dff](https://github.com/evanharmon1/harmon-init/commit/6824dffcfe91cfe63e2a5d0ad01805eee39a0201))
+* **setup-github:** reconcile the four routing variables and refuse a self-hosted isolated value ([#1740](https://github.com/evanharmon1/harmon-init/issues/1740)) ([193e272](https://github.com/evanharmon1/harmon-init/commit/193e27243809cceba82e54d3becd436845b95ec8))
+* **taskfile:** run test:suite members in parallel behind a serial knob ([#1738](https://github.com/evanharmon1/harmon-init/issues/1738)) ([657410f](https://github.com/evanharmon1/harmon-init/commit/657410f3e2460c13686819c0bffbefc2c2ed899a))
+* **template:** cache Playwright browsers on cache-allowed jobs ([#1757](https://github.com/evanharmon1/harmon-init/issues/1757)) ([82a906b](https://github.com/evanharmon1/harmon-init/commit/82a906b587a63a271bc54674d7e17dcbcd1f11c7))
+* **template:** render the four routing classes into every generated workflow ([#1747](https://github.com/evanharmon1/harmon-init/issues/1747)) ([b616333](https://github.com/evanharmon1/harmon-init/commit/b61633357dc255d683b68fdfe35bc7f58b004c71))
+* **template:** skip app gates on docs-only pull requests under a fail-closed classifier ([#1755](https://github.com/evanharmon1/harmon-init/issues/1755)) ([21d01cc](https://github.com/evanharmon1/harmon-init/commit/21d01ccc629d3b6520d4e334d50e25474729c4a7))
+* **template:** split the build lint job into one job per Taskfile gate ([#1754](https://github.com/evanharmon1/harmon-init/issues/1754)) ([2c6484a](https://github.com/evanharmon1/harmon-init/commit/2c6484abc9d63813cb676b05719adc7da7d8daa1))
+
+
+### Bug Fixes
+
+* **devcontainer:** update shared image to b6163335 ([#1753](https://github.com/evanharmon1/harmon-init/issues/1753)) ([1b1b7e2](https://github.com/evanharmon1/harmon-init/commit/1b1b7e2cb7e7c1cea31e13f91923948d3aca0ffd))
+* **registry:** list max among codex-cli reasoning efforts ([#1746](https://github.com/evanharmon1/harmon-init/issues/1746)) ([561da21](https://github.com/evanharmon1/harmon-init/commit/561da21a25a051f09729863d57b9df5ceb02a660))
+* **template:** isolate gh scopes bootstrap test fixtures ([#1758](https://github.com/evanharmon1/harmon-init/issues/1758)) ([00cb2da](https://github.com/evanharmon1/harmon-init/commit/00cb2da5ad01fe103540586b0edf55d8ef4ce7a5))
+* **template:** ship a task groom target that runs the vendored groom wrapper ([#1722](https://github.com/evanharmon1/harmon-init/issues/1722)) ([9ef7a0a](https://github.com/evanharmon1/harmon-init/commit/9ef7a0aedc424f7d1d4225a669c20d617fc868ca))
+* **template:** sync harmon-devkit skills to v0.59.0 ([#1750](https://github.com/evanharmon1/harmon-init/issues/1750)) ([edbcaca](https://github.com/evanharmon1/harmon-init/commit/edbcaca636dd056148d5ad39bacba2b207a3bd96))
+* **test:** isolate test-bot-autonomy fixtures from host HARMON_BOT_AUTONOMY_* variables ([#1724](https://github.com/evanharmon1/harmon-init/issues/1724)) ([9e4e368](https://github.com/evanharmon1/harmon-init/commit/9e4e368a1eac2133e6cf3b5267b31ede7fbc185c))
+
 ## [5.9.0](https://github.com/evanharmon1/harmon-init/compare/v5.8.2...v5.9.0) (2026-10-16)
 
 
