@@ -87,6 +87,18 @@ turn_fixture 73 false
 MAX_TURNS=60 run false false failure true
 grep -q '::warning::.*73.*60' "$scratch/log" || fail 'turn-cap warning missing counts'
 echo 'PASS: successful 73-turn review above cap 60; no retry or comment, warning printed'
+turn_fixture '"73"' false
+MAX_TURNS=60 run false true failure true
+warning_status=0
+grep -q '^::warning::Claude succeeded after' "$scratch/log" || warning_status=$?
+[ "$warning_status" = 1 ] || fail 'string turn count must not produce a turn-cap warning'
+echo 'PASS: string num_turns remains failure without a turn-cap warning'
+turn_fixture 73 false
+MAX_TURNS=60 run false false success true
+warning_status=0
+grep -q '^::warning::Claude succeeded after' "$scratch/log" || warning_status=$?
+[ "$warning_status" = 1 ] || fail 'successful action must not produce a turn-cap warning'
+echo 'PASS: successful action above cap passes without a turn-cap warning'
 turn_fixture 60 false
 MAX_TURNS=60 run false true failure true
 echo 'PASS: turns equal to cap remain failure'

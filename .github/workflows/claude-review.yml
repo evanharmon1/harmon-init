@@ -328,6 +328,9 @@ jobs:
             echo "available=false" >> "$GITHUB_OUTPUT"
             echo "::notice::Default-branch helper unavailable for this step."
           fi
+      # When the default-branch helper ran, its failed verdict supersedes the
+      # action outcome so turn-cap recovery (#1772) passes. Unlike claude-plan
+      # and claude-implement, this gate must not regain an outcome == 'success' conjunct.
       - name: Require the last Claude attempt to succeed
         if: always() && steps.claude-primary.outcome != 'skipped' && steps.claude-primary.outcome != ''
         env:
