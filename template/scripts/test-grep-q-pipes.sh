@@ -6,6 +6,10 @@
 # A same-line `# grep-q-pipe: allow -- REASON` exempts an intentional fixture;
 # the reason must contain a non-whitespace character. Full-line comments do not
 # execute and are ignored. Matching uses POSIX ERE, including flag clusters.
+# This line-oriented heuristic checks the common printf/echo ... | grep -q form.
+# It is not a shell parser: pipe text inside quotes and pipelines continued
+# after a trailing comment are out of scope. Such constructs can false-positive
+# (use the allow pragma) or slip through (preserve the pipe-free idiom by review).
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
