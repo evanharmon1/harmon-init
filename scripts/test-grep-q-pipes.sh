@@ -63,8 +63,11 @@ done
 failed=0
 while IFS= read -r -d '' file; do
     kind=""
-    case "$file" in
-    *.sh | *.sh.jinja | *.sh\[%*) kind=shell ;;
+    # Copier conditionals can wrap filenames or directory names. Classify the
+    # rendered shape, but inspect and report the original source path.
+    norm="$(sed 's/\[%[^%]*%\]//g' <<<"$file")"
+    case "$norm" in
+    *.sh | *.sh.jinja) kind=shell ;;
     */Taskfile.yml | */Taskfile.yaml | */Taskfile.yml.jinja | */Taskfile.yaml.jinja | taskfiles/*.yml | taskfiles/*.yaml | */taskfiles/*.yml | */taskfiles/*.yml.jinja | */taskfiles/*.yaml | */taskfiles/*.yaml.jinja) kind=task ;;
     .github/workflows/*.yml | .github/workflows/*.yaml | */.github/workflows/*.yml | */.github/workflows/*.yml.jinja | */.github/workflows/*.yaml | */.github/workflows/*.yaml.jinja) kind=workflow ;;
     esac
