@@ -113,6 +113,7 @@ tasks:
       - task: test:registry-docs
       - task: test:label-registry
       - task: test:tasks
+      - task: test:grep-q-pipes
       - task: test:ci-results
       - task: test:ci-changes-classify
       - task: test:audit-ruleset
@@ -519,6 +520,11 @@ tasks:
     desc: Guard the Taskfile itself (compiles; setup tasks are safe no-ops)
     cmds:
       - ./scripts/test-tasks.sh
+
+  test:grep-q-pipes:
+    desc: Reject printf/echo pipelines into early-exiting grep
+    cmds:
+      - ./scripts/test-grep-q-pipes.sh
 
   test:verify-ci-parity:
     desc: Fail if the Build workflow stops calling test:suite or verify stops running it

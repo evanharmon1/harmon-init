@@ -441,10 +441,10 @@ fi
 # the next one), the third asks `task` for the plan.
 if [ -f .github/workflows/build.yml ]; then
     awk '/^  repo-guards:[[:space:]]*$/ { on = 1; next } on && /^  [^ #]/ { exit } on' .github/workflows/build.yml |
-        grep -Eq '^[[:space:]]*(-[[:space:]]+)?run:[[:space:]]+task ci:repo-guards[[:space:]]*$' ||
+        grep -E '^[[:space:]]*(-[[:space:]]+)?run:[[:space:]]+task ci:repo-guards[[:space:]]*$' >/dev/null ||
         err "rendered build.yml's repo-guards job does not call \`task ci:repo-guards\` in a step"
     awk '/^  verify:[[:space:]]*$/ { on = 1; next } on && /^  [^ #]/ { exit } on' Taskfile.yml |
-        grep -Eq '^[[:space:]]+-[[:space:]]+task:[[:space:]]+test:suite[[:space:]]*$' ||
+        grep -E '^[[:space:]]+-[[:space:]]+task:[[:space:]]+test:suite[[:space:]]*$' >/dev/null ||
         err "rendered \`verify\` does not list \`task: test:suite\` itself"
     if have task; then
         # A plan that cannot be read (a broken rendered Taskfile) must fail the
@@ -670,7 +670,7 @@ grep -q 'brew "uv"' Brewfile || err "Brewfile must install uv for the Semgrep ru
 [ -x scripts/install-brewfile.sh ] || err "Brewfile install helper missing or not executable"
 grep -q -- '- ./scripts/install-brewfile.sh' Taskfile.yml ||
     err "install must delegate to the fail-closed Brewfile helper"
-if sed -n '/^  install:/,/^  install:hooks:/p' Taskfile.yml | grep -q 'brew bundle'; then
+if sed -n '/^  install:/,/^  install:hooks:/p' Taskfile.yml | grep 'brew bundle' >/dev/null; then
     err "install must not inline brew bundle"
 fi
 if grep -q 'brew "pnpm"' Brewfile; then
@@ -865,7 +865,7 @@ fi
 [ -x scripts/install-brewfile.sh ] || err "Brewfile install helper missing or not executable"
 grep -q -- '- ./scripts/install-brewfile.sh' Taskfile.yml ||
     err "install must delegate to the fail-closed Brewfile helper"
-if sed -n '/^  install:/,/^  install:hooks:/p' Taskfile.yml | grep -q 'brew bundle'; then
+if sed -n '/^  install:/,/^  install:hooks:/p' Taskfile.yml | grep 'brew bundle' >/dev/null; then
     err "install must not inline brew bundle"
 fi
 if grep -q 'brew "pnpm"' Brewfile; then
@@ -888,7 +888,7 @@ if [ -f .github/workflows/deploy-preview.yml ]; then
         err "deploy-preview must use the shared job-private pnpm setup"
     grep -q 'uses: ./.github/actions/setup' .github/workflows/release.yml ||
         err "production deploy must use the shared job-private pnpm setup"
-    grep -A4 'uses: ./.github/actions/setup' .github/workflows/release.yml | grep -q 'cache: "false"' ||
+    grep -A4 'uses: ./.github/actions/setup' .github/workflows/release.yml | grep 'cache: "false"' >/dev/null ||
         err "production deploy must disable the lower-trust pnpm Actions cache"
 fi
 if [ -f pyproject.toml ]; then
@@ -2300,7 +2300,7 @@ grep -Fq 'types: [opened, synchronize, reopened]' <<<"$build_trigger" ||
     err "build.yml pull_request types must be [opened, synchronize, reopened]"
 # Fixed-string with comments stripped — see test-ci-results.sh for why `\b`
 # is avoided in a negative assertion, and why comments must go first.
-! grep -v '^[[:space:]]*#' <<<"$build_trigger" | grep -Fq 'edited' ||
+! grep -v '^[[:space:]]*#' <<<"$build_trigger" | grep -F 'edited' >/dev/null ||
     err "build.yml re-runs the whole matrix on a PR title/body edit"
 ck_trigger="$(awk '/^on:/,/^jobs:/' .github/workflows/closing-keywords.yml)"
 grep -Fq 'types: [opened, edited, synchronize, reopened]' <<<"$ck_trigger" ||
@@ -3522,7 +3522,7 @@ if grep -Eq '^project_type:[[:space:]]+web-app$' .copier-answers.yml; then
     grep -Eq '^[[:space:]]*(-[[:space:]]+)?run:[[:space:]]+task guard:codegen[[:space:]]*$' <<<"$codegen_job" ||
         err "build.yml codegen-guard job never runs guard:codegen"
     grep -F "CONVEX_DEPLOY_KEY: \${{ github.event_name != 'merge_group' && secrets.CONVEX_DEPLOY_KEY || '' }}" <<<"$codegen_job" |
-        grep -Eq '^[[:space:]]+CONVEX_DEPLOY_KEY:' ||
+        grep -E '^[[:space:]]+CONVEX_DEPLOY_KEY:' >/dev/null ||
         err "build.yml codegen-guard job does not gate CONVEX_DEPLOY_KEY off merge_group"
     ! grep -qF 'CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}' <<<"$codegen_job" ||
         err "build.yml codegen-guard job passes CONVEX_DEPLOY_KEY without excluding merge_group"

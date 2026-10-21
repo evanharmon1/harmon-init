@@ -49,28 +49,28 @@ for taskfile in Taskfile.yml template/Taskfile.yml.jinja; do
 
     suite_block="$(task_block "$taskfile" test:suite)"
     [ -n "$suite_block" ] || fail "${taskfile}: test:suite task not found"
-    printf '%s\n' "$suite_block" | grep -Eq '^    deps:' ||
+    grep -Eq '^    deps:' <<<"$suite_block" ||
         fail "${taskfile}: test:suite members are not parallel deps"
-    if printf '%s\n' "$suite_block" | grep -Eq '^    cmds:'; then
+    if grep -Eq '^    cmds:' <<<"$suite_block"; then
         fail "${taskfile}: test:suite has a second sequential member list"
     fi
-    printf '%s\n' "$suite_block" | grep -Fq 'TASK_CONCURRENCY=1' ||
+    grep -Fq 'TASK_CONCURRENCY=1' <<<"$suite_block" ||
         fail "${taskfile}: test:suite does not document Task's serial override"
 
     check_block="$(task_block "$taskfile" check)"
     [ -n "$check_block" ] || fail "${taskfile}: check task not found"
-    printf '%s\n' "$check_block" | grep -Eq '^    deps:' ||
+    grep -Eq '^    deps:' <<<"$check_block" ||
         fail "${taskfile}: check is not defined through parallel deps"
-    printf '%s\n' "$check_block" | grep -Fq 'TASK_CONCURRENCY=1' ||
+    grep -Fq 'TASK_CONCURRENCY=1' <<<"$check_block" ||
         fail "${taskfile}: check does not document Task's serial override"
 done
 [ "$checked_task_groups" -gt 0 ] || fail "no Taskfile check/test:suite groups were inspected"
 
 if [ -f template/Taskfile.yml.jinja ]; then
     template_check="$(task_block template/Taskfile.yml.jinja check)"
-    printf '%s\n' "$template_check" | grep -Fq 'lint:typescript' ||
+    grep -Fq 'lint:typescript' <<<"$template_check" ||
         fail "template Taskfile check dropped its parallel typecheck dependency"
-    printf '%s\n' "$template_check" | grep -Fq '~6 GB' ||
+    grep -Fq '~6 GB' <<<"$template_check" ||
         fail "template Taskfile check does not document the parallel memory floor"
 fi
 
@@ -86,7 +86,7 @@ for doc in docs/architecture/tests.md template/docs/architecture/tests.md.jinja;
     esac
     if [ -f "$doc_taskfile" ]; then
         doc_check="$(task_block "$doc_taskfile" check)"
-        if printf '%s\n' "$doc_check" | grep -Fq 'lint:typescript'; then
+        if grep -Fq 'lint:typescript' <<<"$doc_check"; then
             grep -Fq '6 GB' "$doc" ||
                 fail "${doc}: parallel check memory floor is undocumented"
         fi
