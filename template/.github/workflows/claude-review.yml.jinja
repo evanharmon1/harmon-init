@@ -33,6 +33,8 @@ jobs:
     # Override only with a disposable-host pool, encoded as JSON.
     runs-on: ${{ fromJSON(vars.ISOLATED_RUNS_ON || '"ubuntu-latest"') }}
     timeout-minutes: 138
+    env:
+      CLAUDE_MAX_TURNS: "120"
     # Serialize every claim-bearing run on one target. Acquiring a claim is a
     # read-then-add, so two runs that read "unclaimed" in the same instant
     # would both proceed; this group makes the second wait for the first.
@@ -234,8 +236,10 @@ jobs:
           # review 40, plan 40, implement 50; review and plan at --effort xhigh,
           # implement at --effort medium.
           # timeout-minutes (job- and step-level) and --max-turns remain
-          # the runaway guards.
-          claude_args: "--model opus --effort xhigh --max-budget-usd 40 --disallowedTools Edit Write Bash --max-turns 60"
+          # the runaway guards; the budget is the binding cost limit.
+          # Above the turn cap, the action may still write its own sticky-comment
+          # error banner, which later result inspection cannot undo.
+          claude_args: "--model opus --effort xhigh --max-budget-usd 40 --disallowedTools Edit Write Bash --max-turns ${{ env.CLAUDE_MAX_TURNS }}"
           prompt: |
             Review the PR diff and post a code review comment. Flag security,
             correctness, and convention concerns (see AGENTS.md). Do not write
@@ -247,6 +251,7 @@ jobs:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           EXECUTION_FILE: ${{ steps.claude-primary.outputs.execution_file }}
           ACTION_OUTCOME: ${{ steps.claude-primary.outcome }}
+          MAX_TURNS: ${{ env.CLAUDE_MAX_TURNS }}
           HAS_ALT: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN_2 != '' }}
           ARCHIVE_EXECUTION: 'true'
           REDACT_PRIMARY: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
@@ -286,8 +291,10 @@ jobs:
           # review 40, plan 40, implement 50; review and plan at --effort xhigh,
           # implement at --effort medium.
           # timeout-minutes (job- and step-level) and --max-turns remain
-          # the runaway guards.
-          claude_args: "--model opus --effort xhigh --max-budget-usd 40 --disallowedTools Edit Write Bash --max-turns 60"
+          # the runaway guards; the budget is the binding cost limit.
+          # Above the turn cap, the action may still write its own sticky-comment
+          # error banner, which later result inspection cannot undo.
+          claude_args: "--model opus --effort xhigh --max-budget-usd 40 --disallowedTools Edit Write Bash --max-turns ${{ env.CLAUDE_MAX_TURNS }}"
           prompt: |
             Review the PR diff and post a code review comment. Flag security,
             correctness, and convention concerns (see AGENTS.md). Do not write
@@ -299,6 +306,7 @@ jobs:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           EXECUTION_FILE: ${{ steps.claude-alternate.outputs.execution_file }}
           ACTION_OUTCOME: ${{ steps.claude-alternate.outcome }}
+          MAX_TURNS: ${{ env.CLAUDE_MAX_TURNS }}
           HAS_ALT: 'false'
           REDACT_PRIMARY: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN }}
           REDACT_ALT: ${{ secrets.CLAUDE_CODE_OAUTH_TOKEN_2 }}
