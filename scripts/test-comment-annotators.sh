@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Exercise the actual github-script bodies from two working-tree renders.
+# Exercise the actual github-script bodies from one working-tree render.
 # Node and mikefarah/yq are installed by Build's repo-guards setup action.
 set -euo pipefail
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE
@@ -18,28 +18,24 @@ trap 'rm -rf "$work"' EXIT
 mkdir -p "$work/tmp"
 export TMPDIR="$work/tmp"
 
-for profile in web-astro deploy_cloudflare_workers; do
-    deploy=false
-    [ "$profile" != deploy_cloudflare_workers ] || deploy=true
-    dest="$work/$profile"
-    if ! copier copy --vcs-ref=HEAD --trust --defaults --skip-tasks \
-        --data project_name="Comment Annotator Test" \
-        --data project_type=web-astro \
-        --data "deploy_cloudflare_workers=$deploy" \
-        --data github_remote_create=false \
-        --data github_release_init=false \
-        --data run_task_install=false \
-        --data bunch_add=false \
-        --data obsidian_project_add=false \
-        "$repo_root" "$dest" >"$work/$profile.log" 2>&1; then
-        cat "$work/$profile.log" >&2
-        exit 1
-    fi
-    echo "PASS: render $profile"
-done
+dest="$work/render"
+if ! copier copy --vcs-ref=HEAD --trust --defaults --skip-tasks \
+    --data project_name="Comment Annotator Test" \
+    --data project_type=web-astro \
+    --data deploy_cloudflare_workers=true \
+    --data github_remote_create=false \
+    --data github_release_init=false \
+    --data run_task_install=false \
+    --data bunch_add=false \
+    --data obsidian_project_add=false \
+    "$repo_root" "$dest" >"$work/render.log" 2>&1; then
+    cat "$work/render.log" >&2
+    exit 1
+fi
+echo "PASS: render web-astro with deploy_cloudflare_workers=true"
 
-yq -o=json '.' "$work/web-astro/.github/workflows/build.yml" >"$work/lighthouse.json"
-yq -o=json '.' "$work/deploy_cloudflare_workers/.github/workflows/deploy-preview.yml" >"$work/preview.json"
+yq -o=json '.' "$dest/.github/workflows/build.yml" >"$work/lighthouse.json"
+yq -o=json '.' "$dest/.github/workflows/deploy-preview.yml" >"$work/preview.json"
 
 node - "$work" <<'JS'
 const assert = require('node:assert/strict')
@@ -139,11 +135,10 @@ async function run(spec) {
   assert.equal(publisherStep.env[spec.shaEnv], '${{ github.sha }}')
   assert.equal(publisherStep.env.HEAD_SHA, '${{ github.event.pull_request.head.sha }}')
   assert.equal(annotatorStep.env.HEAD_SHA, '${{ github.event.pull_request.head.sha }}')
-  if (spec.job === 'deploy') {
-    const checkout = workflow.jobs.deploy.steps.find(s => s.uses?.startsWith('actions/checkout@'))
-    assert.ok(checkout, 'deployment must check out code')
-    assert.equal(checkout.with?.ref, undefined, 'keep default merge-ref checkout')
-  }
+  const checkout = workflow.jobs[spec.job].steps.find(s => s.uses?.startsWith('actions/checkout@'))
+  assert.ok(checkout, `${spec.job} must check out code`)
+  assert.equal(checkout.with?.ref, undefined, 'keep default merge-ref checkout')
+  console.log(`PASS: ${spec.job}: default merge-ref checkout`)
   const label = `${merge} (merge of head ${olderHead})`
   const original = marker => `${spec.heading}\n\n${marker ? `_${spec.marker} commit: ${marker}_\n\n` : ''}` +
     '| preserved | https://results.example/original |\n| score | 97 |'
