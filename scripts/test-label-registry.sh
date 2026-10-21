@@ -301,14 +301,14 @@ check_classification_registry() {
         fail "$manifest family priority-ai must be a meta family writable by human and agent — a classification family would become a required triage axis, and the AI's suggestion is agent-written"
     local note
     for note in purpose trust_note; do
-        jq -r --arg k "$note" '.families[] | select(.family == "priority-ai") | .[$k]' "$manifest" | grep -Fq "AI's suggest" ||
+        jq -r --arg k "$note" '.families[] | select(.family == "priority-ai") | .[$k]' "$manifest" | grep -F "AI's suggest" >/dev/null ||
             fail "$manifest family priority-ai $note must say it is the AI's suggestion"
     done
     for note in purpose lifecycle_note trust_note; do
-        jq -r --arg k "$note" '.families[] | select(.family == "priority-ai") | .[$k]' "$manifest" | grep -Fq 'overrid' ||
+        jq -r --arg k "$note" '.families[] | select(.family == "priority-ai") | .[$k]' "$manifest" | grep -F 'overrid' >/dev/null ||
             fail "$manifest family priority-ai $note must state that the human priority family overrides it"
     done
-    jq -r '.families[] | select(.family == "priority-ai") | .trust_note' "$manifest" | grep -Fq 'arms nothing' ||
+    jq -r '.families[] | select(.family == "priority-ai") | .trust_note' "$manifest" | grep -F 'arms nothing' >/dev/null ||
         fail "$manifest family priority-ai trust_note must state that it arms nothing"
 
     # none = inapplicable, on exactly the three taxonomy families.
@@ -329,7 +329,7 @@ check_classification_registry() {
         fail "$manifest tier:pinned must be human-only"
     [ "$(jq -r '.families[] | select(.family == "tier") | .values[] | select(.value == "adaptive") | "\(.retired) \(.lifecycle_note | length > 0)"' "$manifest")" = "true true" ] ||
         fail "$manifest tier:adaptive must be retired with a migration note"
-    if jq -r '.families[] | select(.family == "tier") | [.writer_note, .readers, .lifecycle_note] | .[]' "$manifest" | grep -qi 'never an agent on itself'; then
+    if jq -r '.families[] | select(.family == "tier") | [.writer_note, .readers, .lifecycle_note] | .[]' "$manifest" | grep -i 'never an agent on itself' >/dev/null; then
         fail "$manifest tier family still says agents never write it — the derived Tier cache is agent-written (ADR 2026-09-30 D4)"
     fi
     for fam in tier-role rigor strategy; do

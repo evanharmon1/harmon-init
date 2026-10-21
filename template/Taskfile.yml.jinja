@@ -145,6 +145,7 @@ tasks:
       - task: test:registry-docs
       - task: test:label-registry
       - task: test:tasks
+      - task: test:grep-q-pipes
       - task: test:ci-results
       - task: test:ci-changes-classify
       - task: test:output
@@ -315,7 +316,7 @@ tasks:
     desc: ESLint
     cmds:
       - |
-        if ! find . -maxdepth 1 \( -name 'eslint.config.*' -o -name '.eslintrc.*' \) 2>/dev/null | grep -q .; then
+        if [ -z "$(find . -maxdepth 1 \( -name 'eslint.config.*' -o -name '.eslintrc.*' \) -print 2>/dev/null)" ]; then
           echo "lint:eslint: no ESLint config yet -- skipping (add one after scaffolding the app)"
         elif [ ! -x node_modules/.bin/eslint ]; then
           echo "lint:eslint: deps not installed yet -- skipping (install dependencies first)"
@@ -822,6 +823,11 @@ tasks:
     cmds:
       - ./scripts/test-tasks.sh
 
+  test:grep-q-pipes:
+    desc: Reject printf/echo pipelines into early-exiting grep
+    cmds:
+      - ./scripts/test-grep-q-pipes.sh
+
   test:verify-ci-parity:
     desc: Fail if the Build workflow stops calling test:suite or verify stops running it
     cmds:
@@ -1084,7 +1090,7 @@ tasks:
     desc: Accessibility tests (axe-core via Playwright)
     cmds:
       - |
-        if ! find . -maxdepth 1 -name 'playwright.config.*' 2>/dev/null | grep -q .; then
+        if [ -z "$(find . -maxdepth 1 -name 'playwright.config.*' -print 2>/dev/null)" ]; then
           echo "test:a11y: no Playwright config yet -- skipping (add playwright.config.ts after scaffolding the app)"
         elif [ ! -x node_modules/.bin/playwright ]; then
           echo "test:a11y: deps not installed yet -- skipping (install deps; add @playwright/test + @axe-core/playwright as devDependencies if missing)"

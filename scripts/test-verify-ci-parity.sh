@@ -93,8 +93,8 @@ is_template_source_root() {
 # stub `echo` item and no other non-comment lines besides `desc:` and `cmds:`.
 unwired_non_node_scaffold() {
     local stub='^[[:space:]]+-[[:space:]]+'\''echo "TODO: wire tests for this project \(see docs/architecture/tests\.md\); test files live in tests/"'\''[[:space:]]*$'
-    block "$1" test | grep -Eq "$stub" || return 1
-    ! block "$1" test | grep -Ev '^[[:space:]]*(#|$|desc:[[:space:]]|cmds:[[:space:]]*$)' | grep -Evq "$stub"
+    block "$1" test | grep -E "$stub" >/dev/null || return 1
+    ! block "$1" test | grep -Ev '^[[:space:]]*(#|$|desc:[[:space:]]|cmds:[[:space:]]*$)' | grep -Ev "$stub" >/dev/null
 }
 
 # project_test_tier_active TASKFILE WORKFLOW — true when the Build workflow

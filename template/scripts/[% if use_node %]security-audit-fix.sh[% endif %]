@@ -402,7 +402,7 @@ carry_release_age_excludes() {
         # name or any other version form falls back to the package.
         _ra_pkg="$_ra" _ra_ver=""
         case "$_ra" in ?*@*) _ra_pkg="${_ra%@*}" _ra_ver="${_ra##*@}" ;; esac
-        if printf '%s\n' "$_ra_ver" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+        if grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' <<<"$_ra_ver"; then
             _ra_set="$WORK/applied-lines.txt" _ra_want="$_ra_pkg@$(major_key "$_ra_ver")"
         else
             _ra_set="$WORK/applied-pkgs.txt" _ra_want="$_ra_pkg"
