@@ -116,6 +116,7 @@ tasks:
       - task: test:grep-q-pipes
       - task: test:ci-results
       - task: test:ci-changes-classify
+      - task: test:comment-annotators
       - task: test:audit-ruleset
       - task: test:devcontainer-changed
       - task: test:summarize-gitleaks
@@ -535,6 +536,11 @@ tasks:
     desc: Unit-test the fail-closed docs-only CI classifier
     cmds:
       - ./scripts/test-ci-changes-classify.sh
+
+  test:comment-annotators:
+    desc: Exercise rendered comment publishers and docs-only annotators
+    cmds:
+      - ./scripts/test-comment-annotators.sh
 
   test:ci-results:
     desc: Unit-test CI aggregate and closing-keyword fail-closed truth tables

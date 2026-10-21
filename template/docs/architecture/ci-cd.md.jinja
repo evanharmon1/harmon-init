@@ -54,7 +54,8 @@ scheduling only.
 Generated web workflows mark existing result bot comments as not refreshed for a
 docs-only head.
 [% if deploy_cloudflare_workers %]
-Preview comments preserve the deployed commit and URLs.
+Preview comments preserve the deployed merge commit, the PR head it merges,
+and the URLs.
 [% endif %]
 [% if project_type == 'web-astro' %]
 Lighthouse comments preserve the measured merge commit, the PR head it merges,
