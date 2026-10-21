@@ -226,9 +226,9 @@ RUN case "${TARGETARCH}" in \
     && export GNUPGHOME="${terraform_gnupg_home}" \
     && curl -fsSL https://keybase.io/hashicorp/pgp_keys.asc -o /tmp/hashicorp-pgp-keys.asc \
     && gpg --batch --import /tmp/hashicorp-pgp-keys.asc \
-    && gpg --batch --with-colons --fingerprint 34365D9472D7468F \
-        | awk -F: '$1 == "fpr" { print $10; exit }' \
-        | grep -qx 'C874011F0AB405110D02105534365D9472D7468F' \
+    && fpr="$(gpg --batch --with-colons --fingerprint 34365D9472D7468F \
+        | awk -F: '$1 == "fpr" && !seen { print $10; seen = 1 }')" \
+    && [ "$fpr" = 'C874011F0AB405110D02105534365D9472D7468F' ] \
     && curl -fsSL "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_${TERRAFORM_ARCH}.zip" \
         -o "/tmp/terraform_${TERRAFORM_VERSION}_linux_${TERRAFORM_ARCH}.zip" \
     && curl -fsSL "https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_SHA256SUMS" \

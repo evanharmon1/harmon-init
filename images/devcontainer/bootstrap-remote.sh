@@ -845,8 +845,17 @@ for tool in yq task; do
     [ "$found" = "${HARMON_BIN}/${tool}" ] ||
         die "${tool} resolves to '${found:-nothing}', not ${HARMON_BIN}/${tool} — ${HARMON_PROFILE_DROPIN} did not win PATH precedence"
 done
-yq --version 2>&1 | grep -q 'mikefarah' ||
-    die "yq at ${HARMON_BIN}/yq is not mikefarah yq: $(yq --version 2>&1)"
+yq_status=0
+if yq_version="$(yq --version 2>&1)"; then
+    case "$yq_version" in
+    *mikefarah*) ;;
+    *) yq_status=1 ;;
+    esac
+else
+    yq_status=$?
+fi
+[ "$yq_status" -eq 0 ] ||
+    die "yq at ${HARMON_BIN}/yq is not mikefarah yq: ${yq_version}"
 
 # What it does NOT own: the invoking user's profile. bash reads ~/.profile after
 # /etc/profile, and a stock one puts ~/.local/bin ahead of everything, so a yq
