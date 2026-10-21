@@ -46,7 +46,7 @@ if ! output="$(DOCS_ONLY=true CHANGES_RESULT=success CI_EVENT_NAME=pull_request 
     DOCS_ONLY_JOBS='build-test' "$verifier" changes=success check=success build-test=skipped 2>&1)"; then
     fail 'classifier-authorized skip rejected'
 fi
-printf '%s\n' "$output" | grep -Fq 'Job build-test deliberately skipped: docs-only' ||
+grep -Fq 'Job build-test deliberately skipped: docs-only' <<<"$output" ||
     fail 'deliberate skip was not reported distinctly'
 for classifier_result in failure cancelled skipped ''; do
     if DOCS_ONLY=true CHANGES_RESULT="$classifier_result" CI_EVENT_NAME=pull_request \
@@ -109,7 +109,7 @@ grep -q 'types: \[opened, edited, synchronize, reopened\]' "$workflow" ||
 # nothing beyond POSIX). Comments must go first: build.yml's own explanation of
 # why `edited` is absent contains the word.
 if awk '/^on:/,/^jobs:/' "${repo}/.github/workflows/build.yml" |
-    grep -v '^[[:space:]]*#' | grep -Fq 'edited'; then
+    grep -v '^[[:space:]]*#' | grep -F 'edited' >/dev/null; then
     fail 'the build matrix must not re-run on a PR title/body edit'
 fi
 grep -q 'HEAD_REPO:.*head.repo.full_name' "$workflow" || fail 'bootstrap must compare the PR head repository'

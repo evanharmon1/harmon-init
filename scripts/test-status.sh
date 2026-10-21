@@ -1225,7 +1225,7 @@ while IFS= read -r line; do
     *"#"*"gh auth refresh"* | *"#"*"gh auth login"* | *"#"*"setup:gh-scopes"*) continue ;;
     esac
     # Inside a derivation helper? Then it is the single source, not a copy.
-    if printf '%s\n' "${remedy_helper_lines}" | grep -qx "${line%%:*}"; then
+    if grep -qx "${line%%:*}" <<<"${remedy_helper_lines}"; then
         continue
     fi
     fail "hardcoded remedy acting on the current login — derive it: ${line}"

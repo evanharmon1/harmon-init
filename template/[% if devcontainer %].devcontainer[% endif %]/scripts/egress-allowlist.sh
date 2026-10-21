@@ -410,7 +410,7 @@ cmd_verify() {
     [ "$last" = "-A ${CHAIN} -j REJECT --reject-with icmp-admin-prohibited" ] ||
         fail "verify failed — ${CHAIN} does not end in its REJECT rule (last rule: ${last})"
     if has_global_ipv6; then
-        ip6tables -S OUTPUT 2>/dev/null | grep -qx -- '-P OUTPUT DROP' ||
+        ip6tables -S OUTPUT 2>/dev/null | grep -x -- '-P OUTPUT DROP' >/dev/null ||
             fail "verify failed — the container has global IPv6 but the ip6tables OUTPUT policy is not DROP"
     fi
     echo "==> egress-allowlist: verify passed."

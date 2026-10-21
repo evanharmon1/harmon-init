@@ -1344,7 +1344,7 @@ run_fix "$p" --skip-refused --report "$p/report.md" >"$p/out.log" 2>&1 || {
 row="$(grep -F '| GHSA-zzzz-zzzz-zzzz |' "$p/report.md")" || fail "table-cells: the refusal row is missing"
 [ "$(printf '%s' "$row" | sed 's/\\|//g' | tr -cd '|' | wc -c | tr -d ' ')" -eq 6 ] ||
     fail "table-cells: the row does not have exactly 5 cells: $row"
-printf '%s' "$row" | grep -qF '>=1.3.4 <2.0.0 \|\| >=2.1.5' || fail "table-cells: the || range was not escaped: $row"
+grep -qF '>=1.3.4 <2.0.0 \|\| >=2.1.5' <<<"$row" || fail "table-cells: the || range was not escaped: $row"
 pass "table-cells: a || range in a refusal reason is escaped and the row keeps 5 cells"
 
 # ── 15. publish: one rolling draft PR, scope-checked patch ─────────────
@@ -1379,7 +1379,7 @@ publish >"$p/out/1.log" 2>&1 || {
 }
 git --git-dir="$ORIGIN" rev-parse -q --verify "refs/heads/$FIX_BRANCH" >/dev/null || fail "publish: bot branch not pushed"
 [ "$(grep -c '^gh pr create --draft' "$p/.stub/calls")" -eq 1 ] || fail "publish: expected exactly one draft PR"
-git --git-dir="$ORIGIN" show "refs/heads/$FIX_BRANCH:pnpm-workspace.yaml" | grep -qF "lodash@4: '>=4.18.1 <5'" ||
+git --git-dir="$ORIGIN" show "refs/heads/$FIX_BRANCH:pnpm-workspace.yaml" | grep -F "lodash@4: '>=4.18.1 <5'" >/dev/null ||
     fail "publish: bot branch lacks the floors"
 first="$(git --git-dir="$ORIGIN" rev-parse "refs/heads/$FIX_BRANCH")"
 (cd "$p" && git checkout -q main)
@@ -1491,7 +1491,7 @@ rc=0
     cat "$p/out/8.log"
     fail "publish-audited: publishing on the audited commit failed"
 }
-git --git-dir="$ORIGIN" show "refs/heads/$FIX_BRANCH:pnpm-workspace.yaml" | grep -qF "qs@6: '>=6.14.1 <7'" ||
+git --git-dir="$ORIGIN" show "refs/heads/$FIX_BRANCH:pnpm-workspace.yaml" | grep -F "qs@6: '>=6.14.1 <7'" >/dev/null ||
     fail "publish-audited: the bot branch lacks the floors"
 pass "publish-audited: on the audited commit (HEAD = GITHUB_SHA) the floors are published"
 

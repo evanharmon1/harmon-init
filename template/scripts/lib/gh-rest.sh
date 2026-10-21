@@ -44,7 +44,7 @@ gh_rest_repo() {
         return 0
     fi
     if [ -z "${remote}" ]; then
-        if git remote 2>/dev/null | grep -qx origin; then
+        if git remote 2>/dev/null | grep -x origin >/dev/null; then
             remote=origin
         else
             remote="$(git remote 2>/dev/null | sed -n '1p')"
@@ -136,7 +136,7 @@ gh_rest_host() {
         fi
     fi
     if [ -z "${remote}" ]; then
-        if git remote 2>/dev/null | grep -qx origin; then
+        if git remote 2>/dev/null | grep -x origin >/dev/null; then
             remote=origin
         else
             remote="$(git remote 2>/dev/null | sed -n '1p')" || remote=""

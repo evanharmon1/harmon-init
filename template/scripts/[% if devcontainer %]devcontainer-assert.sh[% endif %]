@@ -2118,7 +2118,7 @@ s.listen(1)' "$ts_sock" 2>/dev/null && [ -S "$ts_sock" ]; then
     # the tripwire and one edit that names the file there would silently make
     # this check vacuous. Cheap to close now; invisible once it happens.
     grep -Ev '^[[:space:]]*#' "${repo_root}/.devcontainer/post-start.sh" |
-        grep -qE '^[[:space:]]*bash[[:space:]]+[^[:space:]|]*check-bot-gh-identity\.sh' ||
+        grep -E '^[[:space:]]*bash[[:space:]]+[^[:space:]|]*check-bot-gh-identity\.sh' >/dev/null ||
         fail "bot post-start does not EXECUTE the gh-identity tripwire (a mention in a comment is not a run)"
     if grep -q 'check-bot-gh-identity.sh' "${repo_root}/.devcontainer/dev/post-start.sh"; then
         fail "human post-start runs the bot-only gh-identity tripwire"

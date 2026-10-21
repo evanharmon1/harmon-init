@@ -24,7 +24,7 @@ set -e
 if [ "$rc" -ne 2 ]; then
     fail "expected exit code 2 for missing args, got $rc"
 fi
-if ! echo "$out" | grep -q 'usage: summarize-gitleaks.mjs'; then
+if ! grep -q 'usage: summarize-gitleaks.mjs' <<<"$out"; then
     fail "expected usage message, got $out"
 fi
 
@@ -35,7 +35,7 @@ rc=$?
 if [ "$rc" -ne 0 ]; then
     fail "expected exit code 0 for missing report, got $rc"
 fi
-if ! echo "$out" | grep -q 'Secrets: PASS — 0 finding(s)'; then
+if ! grep -q 'Secrets: PASS — 0 finding(s)' <<<"$out"; then
     fail "expected PASS output, got $out"
 fi
 
@@ -43,7 +43,7 @@ fi
 echo "==> empty JSON report"
 echo "[]" >"$tmpdir/empty.json"
 out="$("$script" "$tmpdir/empty.json")"
-if ! echo "$out" | grep -q 'Secrets: PASS — 0 finding(s)'; then
+if ! grep -q 'Secrets: PASS — 0 finding(s)' <<<"$out"; then
     fail "expected PASS output, got $out"
 fi
 
@@ -51,7 +51,7 @@ fi
 echo "==> invalid JSON report"
 echo "{" >"$tmpdir/invalid.json"
 out="$("$script" "$tmpdir/invalid.json" 2>&1)"
-if ! echo "$out" | grep -q 'failed to parse'; then
+if ! grep -q 'failed to parse' <<<"$out"; then
     fail "expected parse error message, got $out"
 fi
 
@@ -68,7 +68,7 @@ cat <<'JSON' >"$tmpdir/findings.json"
 ]
 JSON
 out="$("$script" "$tmpdir/findings.json")"
-if ! echo "$out" | grep -q 'Secrets: FAIL — 1 finding(s)'; then
+if ! grep -q 'Secrets: FAIL — 1 finding(s)' <<<"$out"; then
     fail "expected FAIL output, got $out"
 fi
 
@@ -81,13 +81,13 @@ if [ ! -f "$summary_file" ]; then
     fail "summary file was not created"
 fi
 summary_out="$(cat "$summary_file")"
-if ! echo "$summary_out" | grep -q '### Secrets Scan (gitleaks)'; then
+if ! grep -q '### Secrets Scan (gitleaks)' <<<"$summary_out"; then
     fail "expected header in summary, got $summary_out"
 fi
-if ! echo "$summary_out" | grep -q '\*\*FAIL\*\* — 1 finding(s)'; then
+if ! grep -q '\*\*FAIL\*\* — 1 finding(s)' <<<"$summary_out"; then
     fail "expected FAIL result in summary, got $summary_out"
 fi
-if ! echo "$summary_out" | grep -Fq "\`test-rule\` | \`test-file.txt\` | 42 | \`a1b2c3d\`"; then
+if ! grep -Fq "\`test-rule\` | \`test-file.txt\` | 42 | \`a1b2c3d\`" <<<"$summary_out"; then
     fail "expected finding details in summary, got $summary_out"
 fi
 
@@ -99,7 +99,7 @@ export GITHUB_STEP_SUMMARY="$summary_file2"
 node -e "const fs = require('fs'); const findings = Array.from({length: 25}).map((_, i) => ({RuleID: 'rule'+i, File: 'file'+i, StartLine: i, Commit: 'c'+i})); fs.writeFileSync('$tmpdir/many.json', JSON.stringify(findings));"
 "$script" "$tmpdir/many.json" >/dev/null
 summary2_out="$(cat "$summary_file2")"
-if ! echo "$summary2_out" | grep -q '_(showing first 20 of 25)_'; then
+if ! grep -q '_(showing first 20 of 25)_' <<<"$summary2_out"; then
     fail "expected truncation message, got $summary2_out"
 fi
 
