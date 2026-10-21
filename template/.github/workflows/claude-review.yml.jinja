@@ -330,16 +330,16 @@ jobs:
           LAST_SUCCESS: >-
             ${{ (steps.claude-alternate.outcome != 'skipped' &&
             steps.claude-alternate.outcome != '' &&
-            steps.claude-alternate.outcome ||
-            steps.claude-primary.outcome) == 'success' &&
-            ((steps.claude-alternate.outcome != 'skipped' &&
-            steps.claude-alternate.outcome != '' &&
-            steps.claude-alternate-result.outputs.available ||
-            steps.claude-primary-result.outputs.available) != 'true' ||
-            (steps.claude-alternate.outcome != 'skipped' &&
-            steps.claude-alternate.outcome != '' &&
-            steps.claude-alternate-result.outputs.failed ||
-            steps.claude-primary-result.outputs.failed) == 'false') }}
+            ((steps.claude-alternate-result.outputs.available == 'true' &&
+            steps.claude-alternate-result.outputs.failed == 'false') ||
+            (steps.claude-alternate-result.outputs.available != 'true' &&
+            steps.claude-alternate.outcome == 'success'))) ||
+            ((steps.claude-alternate.outcome == 'skipped' ||
+            steps.claude-alternate.outcome == '') &&
+            ((steps.claude-primary-result.outputs.available == 'true' &&
+            steps.claude-primary-result.outputs.failed == 'false') ||
+            (steps.claude-primary-result.outputs.available != 'true' &&
+            steps.claude-primary.outcome == 'success'))) }}
         timeout-minutes: 2
         run: test "$LAST_SUCCESS" = true
       # Release the claim on EVERY terminal path — success, failure, step
