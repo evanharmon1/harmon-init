@@ -191,6 +191,8 @@ minimal)
     # so every other profile already covers the ON branch + its
     # conditionally-named release-please files.
     data_args+=(--data use_release_please=false)
+    # Greptile is independent of local Codex review; full covers both on.
+    data_args+=(--data use_greptile=true --data use_codex_review=false)
     # Exercise the skills-sync OFF branch too (default on -> every other profile
     # covers the ON branch + its conditionally-named files).
     data_args+=(--data use_skills_sync=false)
@@ -245,6 +247,7 @@ full)
         --data use_codex_review=true
         --data use_codex_cloud_review=true
         --data use_coderabbit=true
+        --data use_greptile=true
         --data use_gemini_code_assist=true
         --data use_antigravity_cli=true
         --data use_copilot_cli=true
@@ -2167,6 +2170,23 @@ else
         ! grep -q 'coderabbitai' .foreman.toml ||
             err "Foreman trusts CodeRabbit reviews but use_coderabbit is off"
     fi
+fi
+
+# ── 9d4b. Greptile renders only when explicitly enabled ────────────
+if [ "$profile" = "full" ] || [ "$profile" = "minimal" ]; then
+    [ -f .greptile/config.json ] || err "Greptile config missing (use_greptile=true)"
+    jq -e '.autoReview == []' .greptile/config.json >/dev/null ||
+        err "Greptile config must be valid JSON with autoReview disabled"
+    grep -Fq 'Install the [Greptile app]' docs/CHECKLIST.md ||
+        err "CHECKLIST missing Greptile setup (use_greptile=true)"
+    grep -Fxq '## Advisory Review (Greptile)' AGENTS.md ||
+        err "AGENTS missing independent Greptile section (use_greptile=true)"
+    grep -Fq '**Greptile is advisory and orchestrator-triggered.**' AGENTS.md ||
+        err "AGENTS missing Greptile advisory policy (use_greptile=true)"
+else
+    [ ! -d .greptile ] || err ".greptile rendered but use_greptile is off"
+    ! grep -iq 'greptile' docs/CHECKLIST.md AGENTS.md ||
+        err "Greptile text rendered but use_greptile is off"
 fi
 
 if [ "$profile" = "full" ]; then

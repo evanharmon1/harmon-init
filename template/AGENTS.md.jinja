@@ -1030,6 +1030,21 @@ against the hook, not against this rule: it neither reopens a stage that has
 already converged nor counts as one of that stage's rounds.
 
 [% endif %]
+[% if use_greptile %]
+## Advisory Review (Greptile)
+
+**Greptile is advisory and orchestrator-triggered.** Automatic reviews are off
+via `.greptile/config.json`. The integration stage posts the Greptile trigger
+comment once per head it reviews, while the PR is a draft and after CI is green,
+then waits a bounded 10–15-minute window (the window this file gives a Codex
+attempt, where Codex review is enabled). Adjudicate what lands like any reviewer:
+findings are hypotheses, inline comments receive per-thread replies, and deferred
+findings are recorded and settled. Greptile is
+not a readiness-gate condition: silence or a findings-free trial-ended or credit
+notice is neither a blocker nor a finding. Report an unsolicited Greptile review
+with no trigger comment: it means the config or dashboard has drifted back on.
+
+[% endif %]
 ## Conventions
 
 Full reference: [docs/conventions.md](docs/conventions.md). Highlights:

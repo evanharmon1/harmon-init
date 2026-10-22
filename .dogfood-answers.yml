@@ -49,11 +49,12 @@ trusted_orchestrator_actor_ids: "37220977, 269859446"
 # still ships CodeQL for consumers that select a language.
 use_codeql: false
 
-# This repo dogfoods local and cloud Codex review, plus Gemini Code Assist; CodeRabbit stays off.
+# This repo dogfoods local and cloud Codex review, plus Gemini Code Assist and Greptile; CodeRabbit stays off.
 use_codex_review: true
 use_codex_cloud_review: true
 use_coderabbit: false
 use_gemini_code_assist: true
+use_greptile: true
 
 devcontainer: true
 # harmon-init's own dev profile IS tailnet-bearing (Evan's Coder workspaces
