@@ -7,7 +7,7 @@ Claude Code plan/implement/review workflows), CodeQL for supported public
 repositories, Semgrep Community Edition as the free private-repository SAST
 fallback, gitleaks, Dependabot alerts, Renovate, optional Snyk Free scheduled or
 local second-opinion scans, paid security escalation, optional CodeRabbit
-(off by default; Codex is preferred), a dual-profile devcontainer (AI bot + human) with GHCR
+(off by default; Codex is preferred) and Greptile (off by default; manual reviews), a dual-profile devcontainer (AI bot + human) with GHCR
 prebuilds, a docs tree, and AI steering docs (canonical `AGENTS.md`). It can
 also be applied to existing repos to standardize them.
 
@@ -51,12 +51,12 @@ copier copy harmon-init new-project --trust
 Key questions: `project_type` (general | web-astro | web-app | iac | docs),
 `github_org`, `ci_runner` (ubuntu-latest | self-hosted), `devcontainer`,
 `include_terraform` / `include_ansible`, `use_codeql` / `codeql_languages`,
-`use_codex_review`, `use_coderabbit`, `license`. Hidden defaults (author
+`use_codex_review`, `use_coderabbit`, `use_greptile`, `license`. Hidden defaults (author
 identity, org info, directories) live in `copier.yml` under `when: false` —
 customize those once before first use.
 
 After generation, work through the project's `docs/CHECKLIST.md` (branch
-ruleset import, Dependabot alerts, Renovate and optional CodeRabbit apps, Actions secrets,
+ruleset import, Dependabot alerts, Renovate and optional CodeRabbit and Greptile apps, Actions secrets,
 framework scaffolding for web projects).
 
 ### Apply to / update an existing project

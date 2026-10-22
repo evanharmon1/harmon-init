@@ -341,6 +341,22 @@ use_gemini_code_assist:
     installed and linked to this repository.
   default: no
 
+use_greptile:
+  type: bool
+  help: >-
+    GREPTILE: Add .greptile/config.json with automatic reviews off?
+    Defaults off. Requires a Greptile account and the Greptile GitHub App
+    installed on this repository; the dev loop requests reviews explicitly.
+    Starter is free for one developer with 50 credits a month, including private
+    repositories. Pro is $30 per seat per month after a 14-day trial;
+    qualifying non-commercial OSI-licensed open-source projects are free on
+    application. Private repositories otherwise use the Starter allowance or
+    a paid plan. Choosing no on a later copier update removes
+    .greptile/config.json; if the App remains installed, Greptile falls back to
+    its default automatic reviews. Remove this repository from the Greptile
+    GitHub App installation separately.
+  default: no
+
 devcontainer:
   type: bool
   help: "DEVCONTAINER: Add dual-profile .devcontainer (AI bot + human dev)?"

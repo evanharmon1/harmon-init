@@ -166,6 +166,8 @@ the compatibility reason in the rule's `description`.
       the CodeRabbit GitHub App installation and confirm the App no longer has
       access. Deleting `.coderabbit.yaml` and bot trust does not revoke an
       existing installation.
+- [ ] Install the [Greptile app](https://github.com/apps/greptile-apps) on the repo
+      (`.greptile/config.json` turns automatic reviews off; the dev loop requests them)
 - [ ] **[human-only] Connect Codex cloud review** — connect this repository in
       ChatGPT Codex settings, grant private-repository access if applicable,
       and confirm review activity is authored by GitHub actor ID `199175422`

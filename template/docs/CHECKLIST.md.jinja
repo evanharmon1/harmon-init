@@ -169,6 +169,10 @@ the compatibility reason in the rule's `description`.
       installation. Deleting `.coderabbit.yaml` and bot trust does not revoke
       existing App access.
 [% endif %]
+[% if use_greptile %]
+- [ ] Install the [Greptile app](https://github.com/apps/greptile-apps) on the repo
+      (`.greptile/config.json` turns automatic reviews off; the dev loop requests them)
+[% endif %]
 [% if use_gemini_code_assist %]
 - [ ] **[human-only] Connect Gemini Code Assist on GitHub** — in Google Cloud
       Console (under your foundation project), navigate to **Gemini Code Assist →
