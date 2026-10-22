@@ -351,7 +351,10 @@ use_greptile:
     repositories. Pro is $30 per seat per month after a 14-day trial;
     qualifying non-commercial OSI-licensed open-source projects are free on
     application. Private repositories otherwise use the Starter allowance or
-    a paid plan.
+    a paid plan. Choosing no on a later copier update removes
+    .greptile/config.json; if the App remains installed, Greptile falls back to
+    its default automatic reviews. Remove this repository from the Greptile
+    GitHub App installation separately.
   default: no
 
 devcontainer:

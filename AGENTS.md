@@ -698,9 +698,9 @@ meets its exit condition on round 1 is done, whatever the cap allowed.
   the host and in the dev profile only; with `FOREMAN_DEVCONTAINER` set to
   `bot` or `agent` it makes no merge checks. Beside it,
   `.claude/hooks/review-trigger-allow.py` is a PreToolUse(Bash) hook that
-  approves without a prompt exactly three review-trigger commands: the
-  integrate broker's Codex trigger, and `gh pr comment` with the fixed Gemini
-  or Claude review body, each for the origin repository and a numeric PR (see
+  approves without a prompt only a fixed set of review-trigger commands:
+  the integrate broker's Codex trigger, and `gh pr comment` with one of the
+  reviewer bodies listed in the hook's docstring, each for the origin repository and a numeric PR (see
   the hook's docstring for the exact accepted forms). It gives no decision for
   anything else, so the normal permissions apply. It too is active on the host
   and in the dev profile only, and also makes no decision when `GH_HOST` names
@@ -1149,9 +1149,10 @@ already converged nor counts as one of that stage's rounds.
 
 **Greptile is advisory and orchestrator-triggered.** Automatic reviews are off
 via `.greptile/config.json`. The integration stage posts the Greptile trigger
-comment once per head it reviews, while the PR is a draft and after CI is green,
+comment, `gh pr comment <n> --repo <owner/repo> --body '@greptileai'`,
+once per head it reviews, while the PR is a draft and after CI is green,
 then waits a bounded 10–15-minute window (the window this file gives a Codex
-attempt, where Codex review is enabled). Adjudicate what lands like any reviewer:
+attempt). Adjudicate what lands like any reviewer:
 findings are hypotheses, inline comments receive per-thread replies, and deferred
 findings are recorded and settled. Greptile is
 not a readiness-gate condition: silence or a findings-free trial-ended or credit
