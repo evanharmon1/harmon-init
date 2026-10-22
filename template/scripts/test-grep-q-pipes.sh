@@ -61,7 +61,7 @@ scan() {
 }
 
 roots=()
-for dir in scripts template .devcontainer .github taskfiles; do
+for dir in scripts template .devcontainer .github taskfiles images sprites; do
     [ ! -d "$dir" ] || roots+=("$dir")
 done
 failed=0

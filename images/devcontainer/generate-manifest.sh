@@ -29,7 +29,8 @@ case "$revision_core" in
     ;;
 *)
     [ "$revision_core" = "$revision" ] || usage
-    printf '%s' "$revision" | grep -Eq '^v[0-9]+\.[0-9]+\.[0-9]+$' || usage
+    re='^v[0-9]+\.[0-9]+\.[0-9]+$'
+    [[ $revision =~ $re ]] || usage
     ;;
 esac
 
