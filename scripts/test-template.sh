@@ -2108,7 +2108,8 @@ else
         err "CHECKLIST rendered the Codex Automatic-reviews step without explicit opt-in"
 fi
 if [ "$profile" = "meta" ]; then
-    grep -Fq 'proceed on CI alone' AGENTS.md || err "AGENTS lost local-only Codex shepherd fallback"
+    grep -Fq 'Every required reviewer must' AGENTS.md ||
+        err "AGENTS lost required-review completion when Codex cloud review is off"
     grep -Fq '#   where Codex cloud review is connected: one terminal clean current-head cycle' docs/guides/codex-review.md &&
         grep -Fq '#   where Codex cloud review is connected: two consecutive clean cycles stop' docs/guides/codex-review.md ||
         err "Codex guide workflow cycles lack the cloud-review qualifier (use_codex_cloud_review=false)"
@@ -2206,26 +2207,41 @@ else
 fi
 
 # ── 9d5. the draft-PR workbench lifecycle renders in every profile ──
-# Draft = agent workbench, ready-for-review = human handoff, merge = human only
+# The live handoff check governs the merge-queue head; merging is human only
 # (AGENTS.md "Dev Loop"). The vendored implement/shepherd skills defer to the
 # generated AGENTS.md, so if these statements go missing the whole lifecycle
 # silently reverts to "open a PR and hope" in every downstream repo.
 grep -Fq 'gh pr create --draft' AGENTS.md ||
     err "AGENTS does not open PRs as drafts (draft-workbench lifecycle)"
-grep -Fq '### Readiness gate' AGENTS.md ||
-    err "AGENTS defines no readiness gate for the ready-for-review transition"
+grep -Fq '### Handoff check' AGENTS.md ||
+    err "AGENTS defines no live handoff check"
 grep -Fq 'gh pr ready' AGENTS.md ||
-    err "AGENTS never promotes the draft to ready for review"
+    err "AGENTS never promotes the merge-queue head"
 grep -Fq 'reviewDecision' AGENTS.md ||
-    err "AGENTS readiness gate ignores a CHANGES_REQUESTED review decision"
-grep -Fq 'mergeStateStatus' AGENTS.md ||
-    err "AGENTS readiness gate ignores mergeability state"
+    err "AGENTS handoff check ignores a CHANGES_REQUESTED review decision"
+grep -Fq 'behind_by == 0' AGENTS.md ||
+    err "AGENTS handoff check does not require a live base comparison"
 grep -Fqi 'never merge' AGENTS.md ||
     err "AGENTS lost the human-only merge boundary"
 
+# Shared carry permission and its proof must survive without Codex cloud review.
+# In particular, minimal enables Greptile while disabling Codex cloud review.
+for carry_text in \
+    'A byte-identical PR diff, proved by the canonical diff digest, owes nothing.' \
+    'The shared proof applies to every reviewer.' \
+    'computed from immutable commit SHAs in the local' \
+    'no textconv or external diff driver, no rename' \
+    'The identity is deliberately **not** `git patch-id`' \
+    'history overridden by replace refs or grafts' \
+    '**CI re-runs on the new head in full,' \
+    'reviewer actually read, a finding landing there after the carry still blocks,' \
+    'And the proof is **re-derived** each time'; do
+    grep -Fq "$carry_text" AGENTS.md ||
+        err "AGENTS missing shared carry permission or safety proof: $carry_text"
+done
+
 # The headless implement workflow opens the draft and stops there: it cannot
-# complete the readiness gate, so a promotion from it would make "non-draft"
-# stop meaning "a human should look at this". Assert the prohibition is stated
+# evaluate the live handoff check and merge queue. Assert the prohibition is stated
 # rather than that the string is absent — the prohibition names the command.
 grep -Fq 'gh pr create --draft' .github/workflows/claude-implement.yml ||
     err "claude-implement.yml does not open a draft PR"
