@@ -1193,7 +1193,7 @@ deliberately leaves it alone.
 | `human` | whoever files or triages the issue, human or agent; triage may remove it only when the issue no longer qualifies (non-collector, no [HUMAN] majority, agent-completable) | humans, saved views; agents, to skip dispatch | provisioned; inert | applied while completion is primarily a human's; removed once the issue's remaining completion is no longer primarily a human's |
 | `needs-triage` | people, agents and the issue forms add it at filing; after that the triage skill and the GitHub Actions classification reconciler maintain it (derived: added while classification is incomplete, removed once it is complete) | humans, the Triage view | provisioned; inert | a new issue that is not fully classified starts with it (people, agents and the issue forms add it at filing); after that it is derived and never cleared by hand |
 | `needs-requirements`, `blocked`, `waiting`, `needs-decision`, `needs-response`, `needs-communication` | humans, at triage | humans, the Triage view | provisioned; inert | transient — removed as soon as the state clears |
-| `needs-review` | the integration stage, at ready-for-review; humans | humans, the review list; the agent queue, which excludes it | provisioned; inert | added at ready-for-review, when `claim:*` is removed; removed if review pulls the work back into fix rounds |
+| `needs-review` | agents or humans requesting a review | humans, the review list; the agent queue, which excludes it | provisioned; inert | added when a review is requested and not yet complete; removed when review completes or work returns to fix rounds, when the issue closes, or when the delivery PR ends (merged or closed unmerged) |
 | `bug`, `feature`, `task`, `research` | the issue forms on personal-account repos; humans or agents at triage | humans, saved views | provisioned; inert | durable classification — org repos use native issue Type and no work-type label |
 | `documentation` | GitHub ships it at repo creation; humans or agents apply it at triage | humans, saved views | not provisioned — a GitHub repo-creation default adopted into the work-type vocabulary | durable classification — org repos use native issue Type and no work-type label |
 | `question` | GitHub ships it at repo creation; humans or agents apply it at triage | humans, saved views | not provisioned — a GitHub repo-creation default adopted into the work-type vocabulary | durable classification — org repos use native issue Type and no work-type label |
@@ -2047,12 +2047,11 @@ view**). Keep the saved set small; **slice the one board** (below) for the rest.
   priority families are labels and share the single Labels column, where both
   priority labels appear, so it shows that column and is read by effective
   priority (a view cannot sort by a label). It lists what awaits the
-  maintainer: the integration stage adds `needs-review` at ready-for-review and
-  removes it if review pulls the work back into fix rounds. Until that writer
-  ships (harmon-devkit#1255, with a skills-pin bump), add `needs-review` by hand
-  at hand-off (and remove it by hand if review sends the work back into fix
-  rounds), or a handed-off issue (its claim released) shows in the Agent queue
-  again.
+  maintainer: `needs-review` marks a requested review (agent or human) that
+  is not yet complete. It is cleared when review completes or work returns to
+  fix rounds, when the issue closes, and when the delivery PR ends (merged or
+  closed unmerged). The close-event workflow calls the vendored cleanup helper
+  independently of claim release; an absent helper is a runtime no-op.
 - **Planning** — table, grouped by **`Product`** (or `Type`, on an organization), sorted by
   `Priority` (organization only, as above). The "what's the plan" view, and a
   **dates-free roadmap substitute**: grouping by product shows the pile behind
