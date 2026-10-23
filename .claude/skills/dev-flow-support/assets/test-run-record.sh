@@ -15,6 +15,7 @@ unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY G
 
 asset_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
 writer="$asset_dir/run-record.mjs"
+monitor="$asset_dir/../../orchestrate/assets/dev-flow-monitor.sh"
 
 fail() {
     # shell-robustness: ok — always exits, so its status is never read
@@ -45,6 +46,9 @@ sha256_file() {
 repo="$tmp/repo"
 git init -q -b main "$repo"
 git -C "$repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
+printf '{"trusted_orchestrator_actor_ids": [12345]}\n' >"$repo/agent-registry.json"
+git -C "$repo" add agent-registry.json
+git -C "$repo" -c user.name=t -c user.email=t@t commit -q -m registry
 state="$repo/.git/dev-flow-v2"
 
 # The state root must be this fixture's, never the clone running the test.
@@ -52,7 +56,7 @@ resolved="$(cd "$repo" && git rev-parse --path-format=absolute --git-common-dir)
 [ "$resolved" = "$repo/.git" ] || fail "fixture common dir resolved to $resolved"
 
 new_run() {
-    local run_id="$1"
+    local run_id="$1" branch active_state registry_revision
     mkdir -p "$state/runs/$run_id"
     jq -n --arg id "$run_id" '{
       schema: 2, run_id: $id, initiated_by: "human",
@@ -62,10 +66,17 @@ new_run() {
       evidence_comments: [], evidence_registrations: [], pr_bindings: [],
       outcome_transitions: [], settlements: [], promotion: null, receipts: []
     }' >"$state/runs/$run_id/run.json"
+    branch="fixture-$run_id"
+    active_state="$("$monitor" active-path --branch "$branch" --repo-root "$repo")"
+    registry_revision="$(git -C "$repo" rev-parse HEAD)"
+    "$monitor" activate --active-state "$active_state" --run-id "$run_id" --branch "$branch" \
+        --expected-predecessor absent --expected-generation 0 --registry-revision "$registry_revision" \
+        --writer feature-owner --repo-root "$repo" >/dev/null
 }
 
 # Capture acquisition stdout; never recover tokens from status or the lock file.
 token_for() { cat "$tmp/token-$1" 2>/dev/null || true; }
+pointer_for_run() { "$monitor" active-path --branch "fixture-$1" --repo-root "$repo"; }
 acquire() {
     local slate="$1" session="$2"
     shift 2
@@ -391,6 +402,7 @@ walk run-c defer
 head_sha="$(printf '%040d' 0 | tr 0 a)"
 expect_refused "promotion before last transition" "must not be before the last stage_transitions entry" \
     rr alice promote --run-id run-c --head "$head_sha" --fingerprint fp --at 2026-01-01T00:02:30Z
+[ -e "$(pointer_for_run run-c)" ] || fail "a refused promotion retired the active pointer"
 pass "a promotion dated before the last transition is refused"
 node "$asset_dir/validate-result-schemas.mjs" run "$state/runs/run-c/run.json" --receipts "$state/runs/run-c/run.json" \
     --adjudication "$state/runs/run-c/adjudications/challenge-r1.json" >/dev/null ||
@@ -431,6 +443,7 @@ node "$asset_dir/validate-result-schemas.mjs" run "$run" --receipts "$run" --no-
     fail "the documented promotion command did not produce a strict-valid run"
 [ "$(jq -r '.outcome + ":" + .promotion.promoted_at + ":" + (.outcome_transitions|length|tostring)' "$run")" = \
     "ready-for-review:2026-01-01T00:10:00Z:1" ] || fail "promotion not recorded"
+[ ! -e "$(pointer_for_run run-a)" ] || fail "promotion did not retire the run's active pointer"
 pass "the documented promotion command records promotion, outcome and chain and passes run --receipts"
 
 expect_refused "intervention after promotion" "run already ended with outcome ready-for-review" \
@@ -498,7 +511,70 @@ expect_refused "archive clash" "refusing to overwrite" \
 rmdir "$state/runs/run-b/orchestrator/a1"
 rr alice close --run-id run-b >/dev/null
 [ -f "$state/runs/run-b/orchestrator/a1/dispatch.md" ] || fail "retried close did not archive"
+[ ! -e "$(pointer_for_run run-b)" ] || fail "close did not retire the abandoned run's active pointer"
 pass "closing an open run records its outcome, refuses to overwrite an archive, and archives on retry"
+
+for outcome in capped escalated; do
+    run_id="run-$outcome"
+    slate="s-$outcome"
+    issue=201
+    [ "$outcome" = escalated ] && issue=202
+    new_run "$run_id"
+    write_plan "$slate" "$issue:$run_id"
+    acquire "$slate" alice
+    (cd "$repo" && node "$writer" close --slate "$slate" --session alice --owner-token "$(token_for "$slate")" \
+        --run-id "$run_id" --outcome "$outcome" --exit "test $outcome" --at 2026-01-01T00:02:00Z) >/dev/null
+    [ "$(jq -r '.outcome' "$state/runs/$run_id/run.json")" = "$outcome" ] || fail "$outcome outcome was not recorded"
+    [ ! -e "$(pointer_for_run "$run_id")" ] || fail "$outcome close did not retire the active pointer"
+    (cd "$repo" && node "$writer" lock release --slate "$slate" --session alice --owner-token "$(token_for "$slate")") >/dev/null
+done
+pass "close retires active pointers for capped and escalated outcomes"
+
+terminal_pointer="$(pointer_for_run run-capped)"
+registry_revision="$(git -C "$repo" rev-parse HEAD)"
+# Model a stale terminal pointer left behind when retirement could not remove it.
+jq -n --arg run run-capped --arg branch fixture-run-capped --arg registry "$registry_revision" \
+    '{version: 1, run_id: $run, branch: $branch, generation: 1, registry_revision: $registry}' \
+    >"$terminal_pointer"
+prune_dry_run="$(cd "$tmp" && node "$writer" prune --dry-run --repo-root repo)"
+grep -qF "would remove ${terminal_pointer##*/} (run run-capped" <<<"$prune_dry_run" ||
+    fail "run-record prune --dry-run did not report a terminal pointer: $prune_dry_run"
+[ -e "$terminal_pointer" ] || fail "run-record prune --dry-run removed a pointer"
+prune_output="$(cd "$tmp" && node "$writer" prune --repo-root repo)"
+grep -qF "removed ${terminal_pointer##*/} (run run-capped" <<<"$prune_output" ||
+    fail "run-record prune did not report its terminal removal: $prune_output"
+[ ! -e "$terminal_pointer" ] || fail "run-record prune left the terminal pointer"
+for open_run in run-z run-u run-t; do
+    open_pointer="$(pointer_for_run "$open_run")"
+    [ -e "$open_pointer" ] || fail "run-record prune removed open-run pointer for $open_run"
+    grep -qF "prune: skipped ${open_pointer##*/}: run record is invalid or still open" <<<"$prune_output" ||
+        fail "run-record prune did not report open-run pointer $open_run as skipped: $prune_output"
+done
+pass "run-record prune resolves relative roots and removes only terminal pointers"
+
+# A cleanup error cannot refuse a validated terminal outcome. close can be
+# retried after the binding is restored and removes the still-live pointer.
+new_run run-retirement-recovery
+write_plan s-retirement-recovery 203:run-retirement-recovery
+acquire s-retirement-recovery alice
+recovery_binding="$state/runs/run-retirement-recovery/branch.json"
+cp "$recovery_binding" "$tmp/recovery-binding.json"
+rm "$recovery_binding"
+recovery_rc=0
+(cd "$repo" && node "$writer" close --slate s-retirement-recovery --session alice \
+    --owner-token "$(token_for s-retirement-recovery)" --run-id run-retirement-recovery \
+    --outcome abandoned --exit 'retirement retry fixture' --at 2026-01-01T00:02:00Z) \
+    >"$tmp/retirement-recovery.out" 2>"$tmp/retirement-recovery.err" || recovery_rc=$?
+[ "$recovery_rc" -eq 0 ] || fail "retirement failure refused close: $(cat "$tmp/retirement-recovery.err")"
+grep -qF 'active pointer retirement' "$tmp/retirement-recovery.err" || fail "retirement failure was not reported"
+[ "$(jq -r '.outcome' "$state/runs/run-retirement-recovery/run.json")" = abandoned ] || fail "close outcome was lost after retirement failure"
+cp "$tmp/recovery-binding.json" "$recovery_binding"
+(cd "$repo" && node "$writer" close --slate s-retirement-recovery --session alice \
+    --owner-token "$(token_for s-retirement-recovery)" --run-id run-retirement-recovery) >/dev/null
+[ ! -e "$(pointer_for_run run-retirement-recovery)" ] || fail "close retry did not retire the deferred pointer"
+(cd "$repo" && node "$writer" lock release --slate s-retirement-recovery --session alice \
+    --owner-token "$(token_for s-retirement-recovery)") >/dev/null
+pass "a retirement failure is reported without refusing close, and a close retry retires the pointer"
 
 # Fail the second attempt's rename after the first one actually moved. A
 # retry must preserve the terminal record and the archived first attempt,
@@ -557,6 +633,9 @@ pass "close resumes after an actual partial archive without overwriting attempts
     repo="$tmp/reversed-repo"
     git init -q -b main "$repo"
     git -C "$repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m init
+    printf '{"trusted_orchestrator_actor_ids": [12345]}\n' >"$repo/agent-registry.json"
+    git -C "$repo" add agent-registry.json
+    git -C "$repo" -c user.name=t -c user.email=t@t commit -q -m registry
     state="$repo/.git/dev-flow-v2"
     new_run run-partial
     write_plan s-partial 102:run-partial
@@ -702,6 +781,119 @@ expect_refused "old token after recovery" "owner token does not match" \
     bash -c "cd '$repo' && node '$writer' lock release --slate legacy --session alice --owner-token '$legacy_token'"
 (cd "$repo" && node "$writer" lock release --slate legacy --session alice --owner-token "$(token_for legacy)") >/dev/null
 pass "legacy locks accept a supplied token with a warning; explicit recovery mints a fresh token"
+
+# Planned-lane initialization uses the same receipt-aware writer as later
+# interventions; it must never adopt or overwrite an existing record.
+acquire planned-lane alice --issues 333
+write_plan planned-lane 333:run-planned-lane
+node --input-type=module - "$asset_dir" "$state/slates/planned-lane/plan.json" >"$tmp/lane-policy.json" <<'NODE'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+const [assets, planFile] = process.argv.slice(2)
+process.argv[1] = assets
+const { resolvePolicy } = await import(`${assets}/devflow-policy.mjs`)
+const { parseToml } = await import(`${assets}/lib/toml-lite.mjs`)
+const full = resolvePolicy(parseToml(readFileSync(resolve(assets, '../../../../../.devflow.toml'), 'utf8')))
+const profile = JSON.parse(readFileSync(planFile)).revisions.at(-1).plan.policy
+full.rigor = { ...full.rigor, level: profile.rigor, source: profile.rigor_source }
+full.rounds = { ...full.rounds, ...profile.caps, integration_exempt: profile.caps.integration }
+full.breadth = { ...full.breadth, ...profile.breadth }
+full.strategy.name = profile.strategy
+for (const [role, tier] of Object.entries(profile.role_tiers)) full.roles[role].tier = tier
+console.log(JSON.stringify(full))
+NODE
+deferred_run=run-deferred-lane
+deferred_branch=333-l
+deferred_revision="$(git -C "$repo" rev-parse HEAD)"
+deferred_pointer="$("$monitor" active-path --branch "$deferred_branch" --repo-root "$repo")"
+"$monitor" activate --active-state "$deferred_pointer" --run-id "$deferred_run" --branch "$deferred_branch" \
+    --expected-predecessor absent --expected-generation 0 --registry-revision "$deferred_revision" \
+    --writer feature-owner --repo-root "$repo" >/dev/null
+deferred_state="$("$monitor" state-path --run-id "$deferred_run" --repo-root "$repo")"
+deferred_head="$(git -C "$repo" rev-parse HEAD)"
+"$monitor" reserve --state "$deferred_state" --event evt-lane-init --action push \
+    --expected-head "$deferred_head" --writer feature-owner --active-state "$deferred_pointer" \
+    --run-id "$deferred_run" --branch "$deferred_branch" --generation 1 --repo-root "$repo" >/dev/null
+jq -n --arg run "$deferred_run" '{schema: 2, run_id: $run, outcome: "abandoned"}' \
+    >"$(dirname "$deferred_state")/run.json"
+lane_init_output=""
+lane_init_rc=0
+lane_init_output="$(cd "$repo" && node "$writer" lane-init --slate planned-lane --session alice \
+    --owner-token "$(token_for planned-lane)" --lane l333 --policy "$tmp/lane-policy.json" \
+    --at 2026-01-01T00:00:00Z 2>&1)" || lane_init_rc=$?
+[ "$lane_init_rc" -eq 1 ] || fail "lane-init did not refuse a deferred terminal pointer: exit=$lane_init_rc output=$lane_init_output"
+for needle in "$deferred_run" evt-lane-init reconcile retire prune; do
+    grep -qF "$needle" <<<"$lane_init_output" || fail "lane-init refusal omitted '$needle': $lane_init_output"
+done
+[ ! -e "$state/runs/run-planned-lane/run.json" ] || fail "refused lane-init wrote its run record"
+deferred_observed="$tmp/lane-init-observed.json"
+jq -n --arg event evt-lane-init --arg head "$deferred_head" \
+    '{status: "landed", event: $event, action: "push", head: $head}' >"$deferred_observed"
+"$monitor" reconcile --state "$deferred_state" --event evt-lane-init --observed "$deferred_observed" \
+    --active-state "$deferred_pointer" --run-id "$deferred_run" --branch "$deferred_branch" \
+    --generation 1 --repo-root "$repo" >/dev/null
+"$monitor" retire --run-id "$deferred_run" --repo-root "$repo" >/dev/null
+(cd "$repo" && node "$writer" lane-init --slate planned-lane --session alice \
+    --owner-token "$(token_for planned-lane)" --lane l333 --policy "$tmp/lane-policy.json" --at 2026-01-01T00:00:00Z) >/dev/null
+planned_record="$state/runs/run-planned-lane/run.json"
+jq -e '.schema == 2 and .receipts == [] and .stage_transitions[0].stage == "kickoff"' \
+    "$planned_record" >/dev/null || fail "lane-init omitted receipt-complete kickoff state"
+[ "$(cat "$state/runs/run-planned-lane/owner-slate")" = planned-lane ] || fail "lane-init omitted slate binding"
+(cd "$repo" && node "$writer" intervention --slate planned-lane --session alice \
+    --owner-token "$(token_for planned-lane)" --run-id run-planned-lane --kind asked \
+    --note 'planned-lane initialized' --at 2026-01-01T00:01:00Z) >/dev/null
+prior_record="$(sha256_file "$planned_record")"
+expect_refused "existing planned run" "already exists" \
+    bash -c 'cd "$1" && node "$2" lane-init --slate planned-lane --session alice --owner-token "$3" --lane l333' \
+    _ "$repo" "$writer" "$(token_for planned-lane)"
+[ "$(sha256_file "$planned_record")" = "$prior_record" ] || fail "lane-init replaced an existing run"
+expect_refused "unknown planned lane" "unknown lane" \
+    bash -c 'cd "$1" && node "$2" lane-init --slate planned-lane --session alice --owner-token "$3" --lane missing' \
+    _ "$repo" "$writer" "$(token_for planned-lane)"
+pass "lane-init creates a receipt-complete owned run, accepts an intervention, and never overwrites"
+
+# -- answered harness approvals (#1529): fresh run, independent of promotion cases --
+new_run run-prompts
+acquire prompt-slate alice --issues 999
+write_plan prompt-slate 999:run-prompts
+prompt_rr() {
+    (cd "$repo" && RUN_RECORD_OWNER_TOKEN="$(token_for prompt-slate)" node "$writer" "$@" --slate prompt-slate --session alice)
+}
+for decision in approved denied; do
+    prompt_rr intervention --run-id run-prompts --kind prompt --decision "$decision" \
+        --command 'task verify' --answered-by orchestrator --note 'inspected full request' \
+        --at 2026-01-01T00:01:00Z >/dev/null
+done
+jq -e '(.interventions | length) == 2 and .interventions[0].decision == "approved" and .interventions[1].decision == "denied" and all(.interventions[]; .command == "task verify" and .answered_by == "orchestrator")' \
+    "$state/runs/run-prompts/run.json" >/dev/null || fail "prompt fields were not retained"
+for vector in \
+    '--decision approved|--command is required' \
+    '--command verify|--decision must be approved or denied' \
+    '--decision unknown --command verify|--decision must be approved or denied' \
+    '--decision denied --command verify --answered-by bot|--answered-by must be orchestrator or human'; do
+    flags="${vector%%|*}"
+    expected="${vector#*|}"
+    # Fixed test vectors only; split intentionally into CLI arguments.
+    read -r -a prompt_flags <<<"$flags"
+    prompt_rc=0
+    prompt_rr intervention --run-id run-prompts --kind prompt --note request "${prompt_flags[@]}" >"$tmp/prompt-refusal" 2>&1 || prompt_rc=$?
+    [ "$prompt_rc" -ne 0 ] || fail "invalid prompt accepted: $flags"
+    grep -qF -- "$expected" "$tmp/prompt-refusal" || fail "writer refusal omitted '$expected': $(cat "$tmp/prompt-refusal")"
+done
+prompt_rc=0
+prompt_rr intervention --run-id run-prompts --kind other --decision approved --note request >"$tmp/prompt-refusal" 2>&1 || prompt_rc=$?
+[ "$prompt_rc" -ne 0 ] || fail "other accepted prompt fields"
+grep -qF -- 'prompt fields require --kind prompt' "$tmp/prompt-refusal" || fail "other refusal was not the writer's diagnostic"
+[ "$(jq '.interventions | length' "$state/runs/run-prompts/run.json")" -eq 2 ] || fail "refused prompt mutated run"
+pass "answered approval prompts retain decisions and commands and refuse incomplete or invalid input"
+for field in decision command; do
+    jq --arg field "$field" 'del(.interventions[0][$field])' "$state/runs/run-prompts/run.json" >"$tmp/incomplete-prompt.json"
+    prompt_rc=0
+    node "$asset_dir/validate-result-schemas.mjs" run "$tmp/incomplete-prompt.json" >"$tmp/prompt-schema-refusal" 2>&1 || prompt_rc=$?
+    [ "$prompt_rc" -ne 0 ] || fail "schema accepted prompt missing $field"
+    grep -qF "$field" "$tmp/prompt-schema-refusal" || fail "schema refusal omitted missing $field"
+done
+pass "run schema requires prompt decision and command independently of writer checks"
 
 no_candidates "suite"
 echo "test-run-record: all cases passed"
