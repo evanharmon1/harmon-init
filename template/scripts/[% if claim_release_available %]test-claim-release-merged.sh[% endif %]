@@ -323,7 +323,7 @@ STUB
                 # blocks: the job/cleanup must admit both main and staging,
                 # while ONLY the release step carries the base predicate.
                 merged_if="$(JOB="$job" yq -r '.jobs[strenv(JOB)].if' "$workflow")"
-                if printf '%s' "$merged_if" | grep -Fq 'base.ref'; then
+                if grep -Fq 'base.ref' <<<"$merged_if"; then
                     fail "$workflow merged cleanup is restricted to the default base"
                 fi
                 release_if="$(JOB="$job" yq -r '.jobs[strenv(JOB)].steps[] | select(.name // "" | test("^Release claims")) | .if' "$workflow")"
