@@ -637,18 +637,18 @@ summary_field() {
     sed -n -E "s#.*Summary:.*[^0-9]([0-9]+) $2.*#\1#p" <<<"$1" | sed -n '1p'
 }
 
-echo "==> public setup status requires exact safety overrides for all four classes"
+echo "==> public setup status requires exact safety overrides for all five classes"
 make_codex_stub in
 public_repo='{"full_name":"owner/public","visibility":"PUBLIC","private":false,"default_branch":"main","owner":{"type":"Organization"}}'
 internal_repo='{"full_name":"owner/internal","visibility":"INTERNAL","private":false,"default_branch":"main","owner":{"type":"Organization"}}'
-safe_public="$(jq -cn '["CI_RUNS_ON","BROWSER_RUNS_ON","IMAGE_BUILD_RUNS_ON","ISOLATED_RUNS_ON"] | map({name:.,value:"\"ubuntu-latest\""})')"
+safe_public="$(jq -cn '["CI_RUNS_ON","BROWSER_RUNS_ON","IMAGE_BUILD_RUNS_ON","ISOLATED_RUNS_ON","MULTICORE_RUNS_ON"] | map({name:.,value:"\"ubuntu-latest\""})')"
 STUB_CALLS="${TMP}/public-routing-calls"
 export STUB_CALLS
 : >"$STUB_CALLS"
 out="$(GH_REPO_JSON="$public_repo" GH_ROUTING_REPO_JSON="$safe_public" run_setup_section project)"
 baseline_missing="$(summary_field "$out" missing)"
 [ -n "$baseline_missing" ] || fail "safe public flow lacks failure tally"
-for name in CI_RUNS_ON BROWSER_RUNS_ON IMAGE_BUILD_RUNS_ON ISOLATED_RUNS_ON; do
+for name in CI_RUNS_ON BROWSER_RUNS_ON IMAGE_BUILD_RUNS_ON ISOLATED_RUNS_ON MULTICORE_RUNS_ON; do
     case "$out" in *"[x] Actions runner routing ($name) - public override is ubuntu-latest"*) ;; *) fail "missing safe public check $name: $out" ;; esac
     for mode in missing different; do
         inventory="$(jq -c --arg name "$name" --arg mode "$mode" 'if $mode == "missing" then map(select(.name != $name)) else map(if .name == $name then .value="\"provider\"" else . end) end' <<<"$safe_public")"
@@ -678,9 +678,19 @@ for expected in 'CI_RUNS_ON (repo) - ["self-hosted","linux"]' 'CI_RUNS_ON (org) 
     *) fail "missing routing value $expected: $out" ;;
     esac
 done
+echo "==> multicore routing reports selected and unset values"
+for value in '"multicore-provider"' '["self-hosted","linux"]'; do
+    multicore_repo="$(jq -cn --arg value "$value" '[{name:"MULTICORE_RUNS_ON",value:$value}]')"
+    out="$(GH_REPO_JSON="$internal_repo" GH_ROUTING_REPO_JSON="$multicore_repo" GH_ROUTING_ORG_JSON='[]' run_setup_section project)"
+    case "$out" in *"MULTICORE_RUNS_ON (repo) - $value"*) ;; *) fail "multicore selected value missing: $out" ;; esac
+done
+out="$(GH_REPO_JSON="$internal_repo" GH_ROUTING_REPO_JSON='[]' GH_ROUTING_ORG_JSON='[]' run_setup_section project)"
+for scope in repo org; do
+    case "$out" in *"MULTICORE_RUNS_ON ($scope) - unset"*) ;; *) fail "multicore unset fallback missing: $out" ;; esac
+done
 for unreadable in '' 'not-json' '{}'; do
     out="$(GH_REPO_JSON="$internal_repo" GH_ROUTING_REPO_JSON='[]' GH_ROUTING_ORG_JSON="$unreadable" run_setup_section project)"
-    for name in CI_RUNS_ON BROWSER_RUNS_ON IMAGE_BUILD_RUNS_ON ISOLATED_RUNS_ON; do
+    for name in CI_RUNS_ON BROWSER_RUNS_ON IMAGE_BUILD_RUNS_ON ISOLATED_RUNS_ON MULTICORE_RUNS_ON; do
         case "$out" in
         *"$name (org) - unknown"*) ;;
         *) fail "unreadable $name org value was not unknown: $out" ;;
@@ -690,7 +700,7 @@ done
 
 echo "==> organization routing excludes variables restricted to other repositories"
 out="$(GH_REPO_JSON="$internal_repo" GH_ROUTING_REPO_JSON='[]' GH_ROUTING_ORG_JSON="$routing_org" GH_ROUTING_ORG_MODE=restricted run_setup_section project)"
-for name in CI_RUNS_ON BROWSER_RUNS_ON IMAGE_BUILD_RUNS_ON ISOLATED_RUNS_ON; do
+for name in CI_RUNS_ON BROWSER_RUNS_ON IMAGE_BUILD_RUNS_ON ISOLATED_RUNS_ON MULTICORE_RUNS_ON; do
     case "$out" in
     *"$name (org) - unset"*) ;;
     *) fail "restricted $name was not absent for this repository: $out" ;;
@@ -707,7 +717,7 @@ for mode in shared fail fail-page-two incomplete; do
         *) fail "organization routing missed page two: $out" ;;
         esac
     else
-        for name in CI_RUNS_ON BROWSER_RUNS_ON IMAGE_BUILD_RUNS_ON ISOLATED_RUNS_ON; do
+        for name in CI_RUNS_ON BROWSER_RUNS_ON IMAGE_BUILD_RUNS_ON ISOLATED_RUNS_ON MULTICORE_RUNS_ON; do
             case "$out" in
             *"$name (org) - unknown"*) ;;
             *) fail "$mode organization inventory hid incomplete $name: $out" ;;
@@ -821,7 +831,7 @@ done
 
 echo "==> failed owner-type reads leave all organization routing values unknown"
 out="$(GH_REPO_JSON="$internal_repo" GH_OWNER_TYPE_FAIL=1 GH_ROUTING_REPO_JSON='[]' GH_ROUTING_ORG_JSON="$routing_org" run_setup_section project)"
-for name in CI_RUNS_ON BROWSER_RUNS_ON IMAGE_BUILD_RUNS_ON ISOLATED_RUNS_ON; do
+for name in CI_RUNS_ON BROWSER_RUNS_ON IMAGE_BUILD_RUNS_ON ISOLATED_RUNS_ON MULTICORE_RUNS_ON; do
     case "$out" in
     *"$name (org) - unknown"*) ;;
     *) fail "failed owner-type lookup hid unknown $name org value: $out" ;;

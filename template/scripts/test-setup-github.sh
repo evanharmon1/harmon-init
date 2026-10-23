@@ -338,7 +338,7 @@ fi
 echo "==> every routing class reconciles independently and accepts provider labels"
 # Every request includes an explicit host; default-host fixture expectations
 # below ignore that suffix while the property test audits the unmodified log.
-for routing_pair in CI_RUNS_ON:ci-runs-on BROWSER_RUNS_ON:browser-runs-on IMAGE_BUILD_RUNS_ON:image-build-runs-on ISOLATED_RUNS_ON:isolated-runs-on; do
+for routing_pair in CI_RUNS_ON:ci-runs-on MULTICORE_RUNS_ON:multicore-runs-on BROWSER_RUNS_ON:browser-runs-on IMAGE_BUILD_RUNS_ON:image-build-runs-on ISOLATED_RUNS_ON:isolated-runs-on; do
     name="${routing_pair%%:*}"
     flag="${routing_pair#*:}"
     for value in '["ubicloud-standard-4"]' '"blacksmith-4vcpu-ubuntu-2404"'; do
@@ -386,7 +386,7 @@ for unsafe in '"self-hosted"' '"SELF-HOSTED"' '["linux","Self-Hosted"]'; do
         [ ! -s "$stub_calls" ] || fail "isolated unsafe value reached GitHub"
     done
 done
-for flag in ci-runs-on browser-runs-on image-build-runs-on; do
+for flag in ci-runs-on multicore-runs-on browser-runs-on image-build-runs-on; do
     GH_ROUTING_VARIABLES_JSON='[]' run_case --repo owner/private "--$flag" '"SELF-HOSTED"'
     [ "$run_rc" -eq 0 ] || fail "$flag rejected permitted self-hosted label"
 done
@@ -398,30 +398,30 @@ for visibility in private internal; do
     if grep -Eq 'variable set|actions/variables --method POST' "$stub_calls"; then fail "absent flags mutated $visibility routing variables"; fi
 done
 
-echo "==> public repositories create all four safety overrides without flags"
+echo "==> public repositories create all five safety overrides without flags"
 GH_VISIBILITY=public GH_ROUTING_VARIABLES_JSON='[]' run_case --repo owner/public
 [ "$run_rc" -eq 0 ] || fail "public defaults failed"
-for name in CI_RUNS_ON BROWSER_RUNS_ON IMAGE_BUILD_RUNS_ON ISOLATED_RUNS_ON; do
+for name in CI_RUNS_ON BROWSER_RUNS_ON IMAGE_BUILD_RUNS_ON ISOLATED_RUNS_ON MULTICORE_RUNS_ON; do
     grep -Fq "api repos/owner/public/actions/variables --method POST -f name=$name -f value=\"ubuntu-latest\"" "$stub_calls" || fail "missing public override $name"
     grep -Fq "created $name (public repository safety enforcement)" "$tmp/out" || fail "missing public safety creation report for $name"
 done
 
 echo "==> public repositories replace all differing classes without flags"
-existing="$(jq -cn '["CI_RUNS_ON","BROWSER_RUNS_ON","IMAGE_BUILD_RUNS_ON","ISOLATED_RUNS_ON"] | map({name:.,value:"[\"self-hosted\",\"linux\"]"})')"
+existing="$(jq -cn '["CI_RUNS_ON","BROWSER_RUNS_ON","IMAGE_BUILD_RUNS_ON","ISOLATED_RUNS_ON","MULTICORE_RUNS_ON"] | map({name:.,value:"[\"self-hosted\",\"linux\"]"})')"
 GH_VISIBILITY=public GH_ROUTING_VARIABLES_JSON="$existing" run_case --repo owner/public
 [ "$run_rc" -eq 0 ] || fail "public safety replacement failed"
-for name in CI_RUNS_ON BROWSER_RUNS_ON IMAGE_BUILD_RUNS_ON ISOLATED_RUNS_ON; do
+for name in CI_RUNS_ON BROWSER_RUNS_ON IMAGE_BUILD_RUNS_ON ISOLATED_RUNS_ON MULTICORE_RUNS_ON; do
     grep -Fq "variable set $name --repo owner/public --body \"ubuntu-latest\"" "$stub_calls" || fail "missing public replacement $name"
     grep -Fq "standardized public $name to ubuntu-latest (public repository safety enforcement)" "$tmp/out" || fail "missing public safety replacement report for $name"
 done
 if grep -q 'actions/variables --method POST' "$stub_calls"; then fail "existing public overrides were duplicate-created"; fi
 
-echo "==> all four values are selected independently in one invocation"
+echo "==> all five values are selected independently in one invocation"
 GH_ROUTING_VARIABLES_JSON='[]' run_case --repo owner/private \
-    --ci-runs-on '"ci-provider"' --browser-runs-on '"browser-provider"' \
+    --ci-runs-on '"ci-provider"' --multicore-runs-on '"multicore-provider"' --browser-runs-on '"browser-provider"' \
     --image-build-runs-on '"image-provider"' --isolated-runs-on '"isolated-provider"'
 [ "$run_rc" -eq 0 ] || fail "combined routing failed"
-for pair in CI_RUNS_ON:ci BROWSER_RUNS_ON:browser IMAGE_BUILD_RUNS_ON:image ISOLATED_RUNS_ON:isolated; do
+for pair in CI_RUNS_ON:ci MULTICORE_RUNS_ON:multicore BROWSER_RUNS_ON:browser IMAGE_BUILD_RUNS_ON:image ISOLATED_RUNS_ON:isolated; do
     grep -Fq -- "-f name=${pair%%:*} -f value=\"${pair#*:}-provider\"" "$stub_calls" || fail "combined selection lost $pair"
 done
 
@@ -512,7 +512,7 @@ for old in '"self-hosted"' 'self-hosted' '42' '{}'; do
     existing="$(jq -cn --arg value "$old" '[{name:"ISOLATED_RUNS_ON",value:$value}]')"
     GH_VISIBILITY=public GH_ROUTING_VARIABLES_JSON="$existing" GH_ROUTING_ORG_JSON="$existing" run_case --repo owner/public
     [ "$run_rc" -eq 0 ] || fail "public repair failed for $old"
-    for name in CI_RUNS_ON BROWSER_RUNS_ON IMAGE_BUILD_RUNS_ON ISOLATED_RUNS_ON; do
+    for name in CI_RUNS_ON BROWSER_RUNS_ON IMAGE_BUILD_RUNS_ON ISOLATED_RUNS_ON MULTICORE_RUNS_ON; do
         if ! grep -Fq -- "-f name=$name -f value=\"ubuntu-latest\"" "$stub_calls" &&
             ! grep -Fq "variable set $name --repo owner/public --body \"ubuntu-latest\"" "$stub_calls"; then
             fail "public override missing $name"

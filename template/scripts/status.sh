@@ -1028,7 +1028,7 @@ if [[ "${SECTION}" == "setup" ]]; then
                     elif {
                         if [ "$routing_scope" = repo ]; then
                             run_timeout "${NETWORK_TIMEOUT}" gh variable list --repo "$ROUTING_REPO" \
-                                --json name,value --jq '[.[] | select(.name == "CI_RUNS_ON" or .name == "BROWSER_RUNS_ON" or .name == "IMAGE_BUILD_RUNS_ON" or .name == "ISOLATED_RUNS_ON")]'
+                                --json name,value --jq '[.[] | select(.name == "CI_RUNS_ON" or .name == "MULTICORE_RUNS_ON" or .name == "BROWSER_RUNS_ON" or .name == "IMAGE_BUILD_RUNS_ON" or .name == "ISOLATED_RUNS_ON")]'
                         elif [ "$OWNER_TYPE" = Organization ]; then
                             collect_org_routing "$NWO"
                         else
@@ -1314,7 +1314,7 @@ if [[ "${SECTION}" == "setup" ]]; then
                 else
                     checkline no "Private vuln reporting" "Settings → Advanced Security"
                 fi
-                for routing_name in CI_RUNS_ON BROWSER_RUNS_ON IMAGE_BUILD_RUNS_ON ISOLATED_RUNS_ON; do
+                for routing_name in CI_RUNS_ON BROWSER_RUNS_ON IMAGE_BUILD_RUNS_ON ISOLATED_RUNS_ON MULTICORE_RUNS_ON; do
                     for routing_scope in repo org; do
                         routing_state="$(cat "${d}/routing-${routing_scope}.state" 2>/dev/null || echo unknown)"
                         case "$routing_state" in

@@ -14,11 +14,11 @@ OUTPUT_FD=2
 
 repo=""
 bot_collaborator=""
-routing_names=(CI_RUNS_ON BROWSER_RUNS_ON IMAGE_BUILD_RUNS_ON ISOLATED_RUNS_ON)
-routing_flags=(ci-runs-on browser-runs-on image-build-runs-on isolated-runs-on)
-routing_values=('' '' '' '')
-routing_set=(false false false false)
-routing_replace=(false false false false)
+routing_names=(CI_RUNS_ON BROWSER_RUNS_ON IMAGE_BUILD_RUNS_ON ISOLATED_RUNS_ON MULTICORE_RUNS_ON)
+routing_flags=(ci-runs-on browser-runs-on image-build-runs-on isolated-runs-on multicore-runs-on)
+routing_values=('' '' '' '' '')
+routing_set=(false false false false false)
+routing_replace=(false false false false false)
 bot_pending=false
 bot_unverified=false
 while [ "$#" -gt 0 ]; do
@@ -31,8 +31,8 @@ while [ "$#" -gt 0 ]; do
         if [ "$1" = --repo ]; then repo="$2"; else bot_collaborator="$2"; fi
         shift 2
         ;;
-    --ci-runs-on | --browser-runs-on | --image-build-runs-on | --isolated-runs-on | \
-        --replace-ci-runs-on | --replace-browser-runs-on | --replace-image-build-runs-on | --replace-isolated-runs-on)
+    --ci-runs-on | --multicore-runs-on | --browser-runs-on | --image-build-runs-on | --isolated-runs-on | \
+        --replace-ci-runs-on | --replace-multicore-runs-on | --replace-browser-runs-on | --replace-image-build-runs-on | --replace-isolated-runs-on)
         for i in "${!routing_names[@]}"; do
             if [ "$1" = "--${routing_flags[$i]}" ]; then
                 if [ "$#" -lt 2 ] || [ -z "$2" ]; then
@@ -58,7 +58,7 @@ while [ "$#" -gt 0 ]; do
 done
 
 if [ -z "$repo" ]; then
-    echo "Usage: $0 --repo <owner/repo> [--bot-collaborator <login>] [--{ci,browser,image-build,isolated}-runs-on <json>] [--replace-{ci,browser,image-build,isolated}-runs-on]" >&2
+    echo "Usage: $0 --repo <owner/repo> [--bot-collaborator <login>] [--{ci,browser,image-build,isolated,multicore}-runs-on <json>] [--replace-{ci,browser,image-build,isolated,multicore}-runs-on]" >&2
     exit 2
 fi
 if ! command -v gh >/dev/null 2>&1; then
@@ -196,7 +196,7 @@ if jq -e 'any(.[]; .name == "ISOLATED_RUNS_ON")' <<<"$routing_inventory" >/dev/n
 # Inspect private isolated values first, even without a flag. Public values
 # are repaired without interpreting their old shape.
 # Public repository overrides must shadow every organization routing value.
-for i in 3 0 1 2; do
+for i in 3 0 1 2 4; do
     if [ "$i" != 3 ] && [ "$repo_visibility" != public ] && ! ${routing_set[$i]}; then continue; fi
     routing_name="${routing_names[$i]}"
     routing_value="${routing_values[$i]}"

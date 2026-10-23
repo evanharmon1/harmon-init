@@ -617,7 +617,7 @@ how-to lives at [../guides/deploying.md](../guides/deploying.md).
 
 ## Runners
 
-Generated workflows route every job through one of four classes. A class names
+Generated workflows route every job through one of five classes. A class names
 the reason for different placement; its JSON string or array value selects a
 runner label set. Provider names never belong in routing variable names.
 
@@ -626,11 +626,12 @@ runner label set. Provider names never belong in routing variable names.
 | default | `CI_RUNS_ON` | `changes`, `check`, `repo-guards`, `devcontainer-permissions`; general build, test and aggregates | `CI_RUNS_ON` → rendered default |
 | browser | `BROWSER_RUNS_ON` | Real-browser tests: `e2e`, `a11y`, `lighthouse` | `BROWSER_RUNS_ON` → `CI_RUNS_ON` → rendered default |
 | image-build | `IMAGE_BUILD_RUNS_ON` | Docker/devcontainer builds and container smoke/assertion tests | `IMAGE_BUILD_RUNS_ON` → `CI_RUNS_ON` → rendered default |
+| multicore | `MULTICORE_RUNS_ON` | `build-test`; measured core scaling past the default size at roughly flat per-job cost | `MULTICORE_RUNS_ON` → `CI_RUNS_ON` → rendered default |
 | isolated | `ISOLATED_RUNS_ON` | Long-lived secrets, attacker-writable bodies, deployments and API-only automation | `ISOLATED_RUNS_ON` → `"ubuntu-latest"` only |
 
 Default falls back from `CI_RUNS_ON` to the rendered `ci_runs_on_default`.
-Browser and image-build fall back from their class variable to `CI_RUNS_ON`,
-then that rendered default. The rendered default is `"ubuntu-latest"` for
+Browser, image-build and multicore fall back from their class variable to
+`CI_RUNS_ON`, then that rendered default. The rendered default is `"ubuntu-latest"` for
 GitHub-hosted profiles or the configured JSON label list for self-hosted profiles.
 Existing merge-group GitHub-hosted pins remain. Root-only `remote-bootstrap.yml`
 `bootstrap` uses image-build because its stock container requires Docker.
@@ -680,16 +681,16 @@ recreated runner rather than becoming repository state.
 ### Variable hierarchy and precedence
 
 For each routing variable, a repository value shadows the organization value
-of the same name. Class fallback is a separate step: browser/image-build may
+of the same name. Class fallback is a separate step: browser/image-build/multicore may
 inherit `CI_RUNS_ON`, while isolated may not. Empty or inaccessible variables
 use the next tier; nonempty invalid JSON is an error.
 
-`task setup:github` reconciles all four routing variables, as described below.
+`task setup:github` reconciles all five routing variables, as described below.
 
 ### Reconciliation and lifecycle
 
 `task setup:github` reconciles `CI_RUNS_ON`, `BROWSER_RUNS_ON`,
-`IMAGE_BUILD_RUNS_ON` and `ISOLATED_RUNS_ON` through `scripts/setup-github.sh`.
+`IMAGE_BUILD_RUNS_ON`, `MULTICORE_RUNS_ON` and `ISOLATED_RUNS_ON` through `scripts/setup-github.sh`.
 On private/internal repositories, a missing repository variable is created only
 when its value flag is supplied. Existing values are preserved unless that
 variable's value and replacement flags are supplied together, subject to the
@@ -699,6 +700,7 @@ isolated-runner invariant below. No ownership is inferred from a JSON shape.
 |---|---|---|
 | `CI_RUNS_ON` | `--ci-runs-on` | `--replace-ci-runs-on` |
 | `BROWSER_RUNS_ON` | `--browser-runs-on` | `--replace-browser-runs-on` |
+| `MULTICORE_RUNS_ON` | `--multicore-runs-on` | `--replace-multicore-runs-on` |
 | `IMAGE_BUILD_RUNS_ON` | `--image-build-runs-on` | `--replace-image-build-runs-on` |
 | `ISOLATED_RUNS_ON` | `--isolated-runs-on` | `--replace-isolated-runs-on` |
 
@@ -706,7 +708,7 @@ A replacement flag requires its corresponding value flag. `task setup:github`
 supplies the rendered CI runner answer; pass additional class flags after `--`,
 for example `task setup:github -- --browser-runs-on '"ubuntu-latest"'`.
 
-Public repositories always receive all four repository-level overrides as exact
+Public repositories always receive all five repository-level overrides as exact
 `"ubuntu-latest"`, even without value or replacement flags. Missing values are
 created and differing values are replaced, including malformed existing isolated
 selectors. These overrides are written before existing/inherited isolated checks,
@@ -727,7 +729,7 @@ prove host isolation: custom pools still require operator attestation that the
 host is destroyed with the job.
 
 For `harmon-init` itself (as a public root repository), setup creates or replaces
-all four repository routing variables with `"ubuntu-latest"`. Workflow routing
+all five repository routing variables with `"ubuntu-latest"`. Workflow routing
 uses these repository values, shadowing organization routing while retaining the
 GitHub-hosted fallback.
 

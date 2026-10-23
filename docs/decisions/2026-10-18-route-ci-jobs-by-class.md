@@ -9,6 +9,8 @@ Accepted. Records the maintainer's 2026-10-17 routing decision in
 The [spec](../../specs/runner-routing-classes.md) owns the job-assignment table
 and exact expressions; workflow rendering and setup reconciliation follow later.
 
+Amended by [ADR 2026-10-23](2026-10-23-route-core-scaling-jobs-to-a-multicore-class.md).
+
 ## Context
 
 One `CI_RUNS_ON` variable sends jobs with different execution requirements to
