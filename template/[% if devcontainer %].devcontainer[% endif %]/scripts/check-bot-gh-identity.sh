@@ -195,8 +195,7 @@ done
 # neither a stored login nor a token — that pseudo-source is the ordinary
 # unauthenticated state, handled below, not an unverified token.
 unnamed_token=false
-if printf '%s\n' "$status_out" |
-    grep -qE 'log in to [^ ]+ using token \((GH_TOKEN|GITHUB_TOKEN|GH_ENTERPRISE_TOKEN|GITHUB_ENTERPRISE_TOKEN)\)'; then
+if grep -qE 'log in to [^ ]+ using token \((GH_TOKEN|GITHUB_TOKEN|GH_ENTERPRISE_TOKEN|GITHUB_ENTERPRISE_TOKEN)\)' <<<"$status_out"; then
     unnamed_token=true
 fi
 
@@ -237,12 +236,10 @@ for login in $logins; do
     # remedy then omits the `gh auth logout` the stored one actually needs,
     # leaving the personal credential installed.
     login_records="$(printf '%s\n' "$status_out" | grep -E "(account|as) ${login} \\(" || true)"
-    if printf '%s\n' "$login_records" |
-        grep -qE '\((GH_TOKEN|GITHUB_TOKEN|GH_ENTERPRISE_TOKEN|GITHUB_ENTERPRISE_TOKEN)\)'; then
+    if grep -qE '\((GH_TOKEN|GITHUB_TOKEN|GH_ENTERPRISE_TOKEN|GITHUB_ENTERPRISE_TOKEN)\)' <<<"$login_records"; then
         bad_env=true
     fi
-    if printf '%s\n' "$login_records" |
-        grep -qvE '\((GH_TOKEN|GITHUB_TOKEN|GH_ENTERPRISE_TOKEN|GITHUB_ENTERPRISE_TOKEN)\)'; then
+    if grep -qvE '\((GH_TOKEN|GITHUB_TOKEN|GH_ENTERPRISE_TOKEN|GITHUB_ENTERPRISE_TOKEN)\)' <<<"$login_records"; then
         bad_stored=true
     fi
 done
@@ -315,7 +312,7 @@ elif [ -n "${GITHUB_ENTERPRISE_TOKEN:-}" ]; then
     enterprise_winner="GITHUB_ENTERPRISE_TOKEN"
 fi
 if [ -n "$enterprise_winner" ] &&
-    ! printf '%s\n' "$status_out" | grep -qF "(${enterprise_winner})"; then
+    ! grep -qF "(${enterprise_winner})" <<<"$status_out"; then
     if is_agent_posture; then
         echo "==> gh-identity: ${enterprise_winner} is set but no gh auth status record is" \
             "sourced from it, so that token was never enumerated — bot login unverified" \
@@ -381,7 +378,7 @@ unauthenticated_banner() {
 # attribute, so the remedy banner is the right answer, not a false
 # token-present indeterminate.
 if [ "$env_token_present" = false ] &&
-    printf '%s\n' "$status_out" | grep -qE 'log in to [^ ]+ using token \(default\)'; then
+    grep -qE 'log in to [^ ]+ using token \(default\)' <<<"$status_out"; then
     unauthenticated_banner
     exit 2
 fi

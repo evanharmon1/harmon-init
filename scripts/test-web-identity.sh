@@ -182,8 +182,8 @@ block="$(awk '$0 == "  setup:web-identity:" { inblock = 1; next }
     inblock && /^  [a-zA-Z0-9]/ { inblock = 0 }
     inblock { print }' "${repo}/Taskfile.yml")"
 [ -n "$block" ] || fail "Taskfile.yml: task setup:web-identity not found"
-printf '%s\n' "$block" | grep -vE '^[[:space:]]*#' |
-    grep -qE '^[[:space:]]*interactive:[[:space:]]*true[[:space:]]*$' ||
+grep -vE '^[[:space:]]*#' <<<"$block" |
+    grep -E '^[[:space:]]*interactive:[[:space:]]*true[[:space:]]*$' >/dev/null ||
     fail "Taskfile.yml: setup:web-identity lacks 'interactive: true'"
 
 echo "test-web-identity.sh passed"

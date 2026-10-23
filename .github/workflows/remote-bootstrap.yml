@@ -317,9 +317,9 @@ jobs:
           echo "login shell yq: $(login command -v yq)"
           test "$(login command -v yq)" = /usr/local/bin/yq
           test "$(login command -v task)" = /usr/local/bin/task
-          login yq --version | grep -q mikefarah
+          login yq --version | grep mikefarah >/dev/null
           echo "login shell locale:"; login locale
-          login locale | grep -Eq '^LC_CTYPE="?[^"]*(UTF-8|utf8)'
+          login locale | grep -E '^LC_CTYPE="?[^"]*(UTF-8|utf8)' >/dev/null
           test "$(sed -n 's/^LANG=//p' /etc/environment)" = C.UTF-8
           test "$(sed -n 's/^LC_ALL=//p' /etc/environment)" = C.UTF-8
       - name: Assert the VM manifest matches the pins it was built from

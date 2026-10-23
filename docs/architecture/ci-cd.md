@@ -1,8 +1,10 @@
 # CI/CD
 
-How continuous integration and delivery are wired in Harmon Init. Every
-job delegates to `task` targets, so local hooks, CI, and humans run identical
-commands (the Taskfile is the single source of truth).
+How continuous integration and delivery are wired in Harmon Init. Gate
+jobs delegate to Taskfile targets, so local hooks, CI, and humans run identical
+commands. Change-detection plumbing (`changes`, `devcontainer-changes`)
+and the `verify` aggregates call scripts directly, passing event SHAs where
+applicable.
 
 ## Quality gate
 
@@ -615,20 +617,21 @@ how-to lives at [../guides/deploying.md](../guides/deploying.md).
 
 ## Runners
 
-Generated workflows route every job through one of four classes. A class names
+Generated workflows route every job through one of five classes. A class names
 the reason for different placement; its JSON string or array value selects a
 runner label set. Provider names never belong in routing variable names.
 
 | Class | Variable | Jobs / requirement | Fallback chain |
 |---|---|---|---|
-| default | `CI_RUNS_ON` | `changes`, `check`, `repo-guards`, `devcontainer-permissions`; general build, test and aggregates | `CI_RUNS_ON` → rendered default |
+| default | `CI_RUNS_ON` | `changes`, `check`, `repo-guards`, `devcontainer-permissions`; aggregates and every job not in another class | `CI_RUNS_ON` → rendered default |
 | browser | `BROWSER_RUNS_ON` | Real-browser tests: `e2e`, `a11y`, `lighthouse` | `BROWSER_RUNS_ON` → `CI_RUNS_ON` → rendered default |
 | image-build | `IMAGE_BUILD_RUNS_ON` | Docker/devcontainer builds and container smoke/assertion tests | `IMAGE_BUILD_RUNS_ON` → `CI_RUNS_ON` → rendered default |
+| multicore | `MULTICORE_RUNS_ON` | `build-test`; measured core scaling past the default size at roughly flat per-job cost | `MULTICORE_RUNS_ON` → `CI_RUNS_ON` → rendered default |
 | isolated | `ISOLATED_RUNS_ON` | Long-lived secrets, attacker-writable bodies, deployments and API-only automation | `ISOLATED_RUNS_ON` → `"ubuntu-latest"` only |
 
 Default falls back from `CI_RUNS_ON` to the rendered `ci_runs_on_default`.
-Browser and image-build fall back from their class variable to `CI_RUNS_ON`,
-then that rendered default. The rendered default is `"ubuntu-latest"` for
+Browser, image-build and multicore fall back from their class variable to
+`CI_RUNS_ON`, then that rendered default. The rendered default is `"ubuntu-latest"` for
 GitHub-hosted profiles or the configured JSON label list for self-hosted profiles.
 Existing merge-group GitHub-hosted pins remain. Root-only `remote-bootstrap.yml`
 `bootstrap` uses image-build because its stock container requires Docker.
@@ -650,6 +653,13 @@ This includes web-app `codegen-guard`, the `claude-*` jobs, Terraform plan/apply
 `closing-keywords`. They consume Actions minutes. Terraform that needs endpoints
 reachable only on a private network cannot run on those GitHub-hosted runners;
 configure a suitable disposable isolated pool before using that path.
+
+**Public update note:** After updating to the release that adds
+`MULTICORE_RUNS_ON`, a public repository must re-run `task setup:github`.
+This creates the repository-level `MULTICORE_RUNS_ON` `"ubuntu-latest"`
+override, which shadows any organization value. Until then, an organization
+`MULTICORE_RUNS_ON` visible to the repository routes `build-test` to that pool.
+`task status` reports the missing override.
 
 The [routing spec](https://github.com/evanharmon1/harmon-init/blob/main/specs/runner-routing-classes.md)
 owns the exhaustive job assignments and expressions; the
@@ -678,16 +688,16 @@ recreated runner rather than becoming repository state.
 ### Variable hierarchy and precedence
 
 For each routing variable, a repository value shadows the organization value
-of the same name. Class fallback is a separate step: browser/image-build may
+of the same name. Class fallback is a separate step: browser/image-build/multicore may
 inherit `CI_RUNS_ON`, while isolated may not. Empty or inaccessible variables
 use the next tier; nonempty invalid JSON is an error.
 
-`task setup:github` reconciles all four routing variables, as described below.
+`task setup:github` reconciles all five routing variables, as described below.
 
 ### Reconciliation and lifecycle
 
 `task setup:github` reconciles `CI_RUNS_ON`, `BROWSER_RUNS_ON`,
-`IMAGE_BUILD_RUNS_ON` and `ISOLATED_RUNS_ON` through `scripts/setup-github.sh`.
+`IMAGE_BUILD_RUNS_ON`, `MULTICORE_RUNS_ON` and `ISOLATED_RUNS_ON` through `scripts/setup-github.sh`.
 On private/internal repositories, a missing repository variable is created only
 when its value flag is supplied. Existing values are preserved unless that
 variable's value and replacement flags are supplied together, subject to the
@@ -697,6 +707,7 @@ isolated-runner invariant below. No ownership is inferred from a JSON shape.
 |---|---|---|
 | `CI_RUNS_ON` | `--ci-runs-on` | `--replace-ci-runs-on` |
 | `BROWSER_RUNS_ON` | `--browser-runs-on` | `--replace-browser-runs-on` |
+| `MULTICORE_RUNS_ON` | `--multicore-runs-on` | `--replace-multicore-runs-on` |
 | `IMAGE_BUILD_RUNS_ON` | `--image-build-runs-on` | `--replace-image-build-runs-on` |
 | `ISOLATED_RUNS_ON` | `--isolated-runs-on` | `--replace-isolated-runs-on` |
 
@@ -704,7 +715,7 @@ A replacement flag requires its corresponding value flag. `task setup:github`
 supplies the rendered CI runner answer; pass additional class flags after `--`,
 for example `task setup:github -- --browser-runs-on '"ubuntu-latest"'`.
 
-Public repositories always receive all four repository-level overrides as exact
+Public repositories always receive all five repository-level overrides as exact
 `"ubuntu-latest"`, even without value or replacement flags. Missing values are
 created and differing values are replaced, including malformed existing isolated
 selectors. These overrides are written before existing/inherited isolated checks,
@@ -725,7 +736,7 @@ prove host isolation: custom pools still require operator attestation that the
 host is destroyed with the job.
 
 For `harmon-init` itself (as a public root repository), setup creates or replaces
-all four repository routing variables with `"ubuntu-latest"`. Workflow routing
+all five repository routing variables with `"ubuntu-latest"`. Workflow routing
 uses these repository values, shadowing organization routing while retaining the
 GitHub-hosted fallback.
 

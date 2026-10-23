@@ -565,7 +565,7 @@ while IFS='|' read -r origin_url expected_host; do
     ) >/dev/null 2>&1 || true
     [ -f "${GIT_LOG}" ] || fail "expected git to be invoked for fallback (origin '${origin_url}')"
     # Fixed-string match: an IPv6 authority's brackets are regex syntax.
-    grep -F "https://${expected_host}/test-owner/test-repo.git" "${GIT_LOG}" | grep -q clone ||
+    grep -F "https://${expected_host}/test-owner/test-repo.git" "${GIT_LOG}" | grep clone >/dev/null ||
         fail "expected clone from origin host ${expected_host} (origin '${origin_url}'), got: $(cat "${GIT_LOG}")"
 done <<EOF
 ${origin_cases}
@@ -693,7 +693,7 @@ grep -q 'WORKSPACES_DIR="${1:-${WORKSPACES_DIR:-/workspaces}}"' "${SUT}" || fail
 for site in .devcontainer/scripts/post-create-common.sh .devcontainer/scripts/post-start-common.sh; do
     calls="$(grep 'bootstrap-related-repos\.sh' "$site" | grep -v '^[[:space:]]*#' || true)"
     [ -n "$calls" ] || fail "$site no longer calls bootstrap-related-repos.sh"
-    if printf '%s\n' "$calls" | grep -Eq 'bootstrap-related-repos\.sh[[:space:]]+[^[:space:]&;|)<>]'; then
+    if grep -Eq 'bootstrap-related-repos\.sh[[:space:]]+[^[:space:]&;|)<>]' <<<"$calls"; then
         fail "$site must call bootstrap-related-repos.sh without a target argument (so it targets /workspaces)"
     fi
 done

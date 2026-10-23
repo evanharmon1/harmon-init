@@ -90,6 +90,7 @@ def assignments(heading):
 
 variables = {
     "default": ("CI_RUNS_ON",),
+    "multicore": ("MULTICORE_RUNS_ON", "CI_RUNS_ON"),
     "browser": ("BROWSER_RUNS_ON", "CI_RUNS_ON"),
     "image-build": ("IMAGE_BUILD_RUNS_ON", "CI_RUNS_ON"),
     "isolated": ("ISOLATED_RUNS_ON",),

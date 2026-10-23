@@ -15,7 +15,7 @@ work needs a different runner, independently of the provider supplying it.
 
 ## Goal
 
-Define four routing variables and an exhaustive template-job assignment that
+Define five routing variables and an exhaustive template-job assignment that
 workflow rendering and setup reconciliation can implement consistently.
 
 ## Non-goals
@@ -26,22 +26,22 @@ as omator's `preview.yml`, `deploy.yml` and `demo-seed` are outside the template
 
 ## Requirements
 
-- [ ] Use exactly the four routing variables below. A variable names a class by
+- [ ] Use exactly the five routing variables below. A variable names a class by
   its execution requirement; a provider is never part of its name.
 - [ ] Treat each value as a JSON runner label set: a JSON string for one label
   (for example `"ubuntu-latest"`) or a JSON array of labels that must all match
   (for example `["self-hosted","linux","x64","build-pool"]`). The value selects
   placement; a class name does not prescribe a provider.
 - [ ] Apply the fallback chains below, including the rendered default for
-  default/browser/image-build and the independent safe fallback for isolated.
+  default/browser/image-build/multicore and the independent safe fallback for isolated.
 - [ ] Run isolated jobs only on a disposable host: the host is destroyed with
   the job. #1728's `setup:github` reconciliation must reject a `self-hosted`
   label case-insensitively and expose the result in the status readout. Labels
   cannot prove host lifetime: the operator must attest that the selected pool
   destroys the host with the job, even when that label is absent.
 - [ ] On public repositories, #1728's `setup:github` must create or replace the
-  repository-level `CI_RUNS_ON`, `BROWSER_RUNS_ON`, `IMAGE_BUILD_RUNS_ON` and
-  `ISOLATED_RUNS_ON` values with `"ubuntu-latest"`. All four must shadow inherited
+  repository-level `CI_RUNS_ON`, `BROWSER_RUNS_ON`, `IMAGE_BUILD_RUNS_ON`,
+  `MULTICORE_RUNS_ON` and `ISOLATED_RUNS_ON` values with `"ubuntu-latest"`. All five must shadow inherited
   organization values so no class override routes public work to a persistent host.
 - [ ] Keep existing merge-group GitHub-hosted pins and ternaries.
 - [ ] Disable shared package caching for secret-holding or deploying jobs using
@@ -57,6 +57,7 @@ as omator's `preview.yml`, `deploy.yml` and `demo-seed` are outside the template
 | default | `CI_RUNS_ON` | General build, lint, test and aggregate work without a more specific requirement | `CI_RUNS_ON` → rendered `ci_runs_on_default` |
 | browser | `BROWSER_RUNS_ON` | Executes a real browser: Playwright, accessibility or Lighthouse checks | `BROWSER_RUNS_ON` → `CI_RUNS_ON` → rendered `ci_runs_on_default` |
 | image-build | `IMAGE_BUILD_RUNS_ON` | Builds Docker/devcontainer images or runs their container smoke/assertion tests | `IMAGE_BUILD_RUNS_ON` → `CI_RUNS_ON` → rendered `ci_runs_on_default` |
+| multicore | `MULTICORE_RUNS_ON` | Measured core scaling past the default size at roughly flat per-job cost | `MULTICORE_RUNS_ON` → `CI_RUNS_ON` → rendered `ci_runs_on_default` |
 | isolated | `ISOLATED_RUNS_ON` | Holds long-lived secrets, parses attacker-writable bodies, or deploys; sub-minute API-only glue also belongs here | `ISOLATED_RUNS_ON` → `"ubuntu-latest"` only |
 
 The target template expressions are:
@@ -64,6 +65,8 @@ The target template expressions are:
 ```yaml
 # default
 runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
+# multicore
+runs-on: ${{ fromJSON(vars.MULTICORE_RUNS_ON || vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
 # browser
 runs-on: ${{ fromJSON(vars.BROWSER_RUNS_ON || vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
 # image-build
@@ -74,17 +77,24 @@ runs-on: ${{ fromJSON(vars.ISOLATED_RUNS_ON || '"ubuntu-latest"') }}
 
 `ci_runs_on_default` is computed by Copier: `"ubuntu-latest"` for GitHub-hosted
 profiles and the configured JSON label list for `ci_runner == 'self-hosted'`.
-It is not a fifth routing variable. An unset or empty class variable takes the
+It is not a sixth routing variable. An unset or empty class variable takes the
 next tier; malformed nonempty JSON is a configuration error, not a fallback.
 Repository variables override organization variables of the same name before
 these expressions select a tier. Environment-scoped routing variables are not
 supported because they are unspecified at `runs-on` evaluation; supporting them
 is outside #1728's scope.
 
-If requirements overlap, isolated wins: a browser or image-building job that
-also holds a long-lived secret must run on a disposable host. A short-lived
-`GITHUB_TOKEN` alone does not make ordinary build work isolated. API automation
-is isolated by its work, even when it needs only that token. Publishing an
+A job joins multicore only when measurements on one provider show it keeps
+scaling past the default size: wall-clock gain at roughly flat cost per job is
+the bar. Feeling heavy is not evidence; memory requirements are a separate floor.
+
+If requirements overlap, isolated wins over every class, including multicore.
+Thus a browser or image-building job that also holds a long-lived secret must
+run on a disposable host. A job that needs a browser or builds images otherwise
+stays in that class; multicore applies only to jobs that would otherwise be
+default. A short-lived `GITHUB_TOKEN` alone does not make ordinary build work
+isolated. API automation is isolated by its work, even when it needs only that
+token. Publishing an
 artifact that others later execute does not, by itself, count as deploying in
 this spec. Thus `devcontainer-build.yml` `build` stays image-build: it needs a
 Docker-capable pool and holds only the ephemeral `GITHUB_TOKEN` with
@@ -110,10 +120,11 @@ split. Matrix variants inherit their job's class. Pinned placement is an excepti
 | `build.yml` | `check` | default | Lint and typecheck |
 | `build.yml` | `repo-guards` | default | Instruction audit, test suite and skills drift |
 | `build.yml` | `devcontainer-permissions` | default | Permission unit check; no container required |
-| `build.yml` | `build-test` | default | Build and unit tests |
+| `build.yml` | `build-test` | multicore | Build and unit tests; measured core scaling past the default size |
 | `build.yml` | `e2e` | browser | Playwright; included with Node |
 | `build.yml` | `security` | default | Free baseline scanners |
 | `build.yml` | `lighthouse` | browser | Lighthouse browser audit (web-astro) |
+| `build.yml` | `lighthouse-stale-comment` | isolated | API-only PR-comment glue; docs-only Lighthouse annotation (web-astro) |
 | `build.yml` | `render-parity` | default | Compares built output without a browser (web-astro) |
 | `build.yml` | `a11y` | browser | Browser accessibility checks (web-app/web-astro) |
 | `build.yml` | `verify` | default | Aggregate check |
@@ -131,6 +142,7 @@ split. Matrix variants inherit their job's class. Pinned placement is an excepti
 | `deploy-preview.yml` | `changes` | default | Fail-closed docs-only classification |
 | `deploy-preview.yml` | `preflight` | isolated | `CLOUDFLARE_API_TOKEN` |
 | `deploy-preview.yml` | `deploy` | isolated | Preview deployment and `CLOUDFLARE_API_TOKEN`; deliberate shared-cache exception below |
+| `deploy-preview.yml` | `preview-stale-comment` | isolated | API-only PR-comment glue; docs-only preview annotation |
 | `release.yml` | `release-please` | isolated | API automation and `CI_APP_PRIVATE_KEY` |
 | `release.yml` | `deploy-production` | isolated | Production deployment and `CLOUDFLARE_API_TOKEN` |
 | `sync-harmon-devkit.yml` | `sync` | isolated | `CI_APP_PRIVATE_KEY`; shared cache disabled for Node profiles |
@@ -191,7 +203,7 @@ Non-Node profiles have no setup cache input and render no cache override.
 ### Scenario: Existing default routing survives the class rollout
 
 - **Given** no new class variables and a GitHub-hosted or self-hosted Copier profile
-- **When** default, browser or image-build placement is evaluated
+- **When** default, browser, image-build or multicore placement is evaluated
 - **Then** it uses `CI_RUNS_ON`, or the profile's rendered default if unset,
   except for the preserved merge-group pins.
 
@@ -203,7 +215,7 @@ Non-Node profiles have no setup cache input and render no cache override.
 
 ### Scenario: Explicit class placement and host safety
 
-- **Given** a repository sets a browser or image-build variable
+- **Given** a repository sets a browser, image-build or multicore variable
 - **When** a matching job runs
 - **Then** its class variable takes precedence over `CI_RUNS_ON`.
 - **Given** an isolated label equals `self-hosted` in any letter case
@@ -220,7 +232,7 @@ Non-Node profiles have no setup cache input and render no cache override.
 - **Given** a public repository with missing or noncanonical routing variables,
   including inherited organization class overrides
 - **When** #1728's `setup:github` reconciles the repository
-- **Then** it creates or replaces all four repository-level values with
+- **Then** it creates or replaces all five repository-level values with
   `"ubuntu-latest"`, shadowing every organization routing value.
 
 ### Scenario: Exhaustive workflow rendering

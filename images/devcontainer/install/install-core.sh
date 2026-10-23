@@ -128,7 +128,7 @@ fi
 pnpm_is_shim=no
 case "${pnpm_shim_head%%$'\n'*}" in
 '#!'*node*)
-    if printf '%s' "$pnpm_shim_head" | grep -qE "require\(['\"][^'\"]*corepack"; then
+    if grep -qE "require\(['\"][^'\"]*corepack" <<<"$pnpm_shim_head"; then
         pnpm_is_shim=yes
     fi
     ;;

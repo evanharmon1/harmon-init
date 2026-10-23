@@ -111,7 +111,7 @@ while IFS= read -r -d '' record; do
         full_run 'CI infrastructure changed'
         ;;
     esac
-    printf '%s\n' "$path" | grep -Eq "$patterns" || full_run 'path outside docs allowlist'
+    grep -Eq "$patterns" <<<"$path" || full_run 'path outside docs allowlist'
 done <"$diff"
 
 echo 'docs_only=true'

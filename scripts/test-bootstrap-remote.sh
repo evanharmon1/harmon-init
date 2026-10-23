@@ -2216,7 +2216,7 @@ verdict() { # verdict <label>
     # Nothing ELSE on stderr: for a packed binary it is the SHELL, not head, that
     # warns about the NUL bytes a substitution drops, so an unredirected read is
     # noisy — and that noise has to stay distinguishable from the report above.
-    if grep -v 'WARNING: pnpm resolves to' "${root}/err" | grep -q .; then
+    if grep -v 'WARNING: pnpm resolves to' "${root}/err" | grep . >/dev/null; then
         _v="${_v},noisy"
     else
         _v="${_v},quiet"

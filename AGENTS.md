@@ -698,9 +698,9 @@ meets its exit condition on round 1 is done, whatever the cap allowed.
   the host and in the dev profile only; with `FOREMAN_DEVCONTAINER` set to
   `bot` or `agent` it makes no merge checks. Beside it,
   `.claude/hooks/review-trigger-allow.py` is a PreToolUse(Bash) hook that
-  approves without a prompt exactly three review-trigger commands: the
-  integrate broker's Codex trigger, and `gh pr comment` with the fixed Gemini
-  or Claude review body, each for the origin repository and a numeric PR (see
+  approves without a prompt only a fixed set of review-trigger commands:
+  the integrate broker's Codex trigger, and `gh pr comment` with one of the
+  reviewer bodies listed in the hook's docstring, each for the origin repository and a numeric PR (see
   the hook's docstring for the exact accepted forms). It gives no decision for
   anything else, so the normal permissions apply. It too is active on the host
   and in the dev profile only, and also makes no decision when `GH_HOST` names
@@ -1145,6 +1145,20 @@ disable the gate to get past a BLOCK. A BLOCK is settled on its own terms and
 against the hook, not against this rule: it neither reopens a stage that has
 already converged nor counts as one of that stage's rounds.
 
+## Advisory Review (Greptile)
+
+**Greptile is advisory and orchestrator-triggered.** Automatic reviews are off
+via `.greptile/config.json`. The integration stage posts the Greptile trigger
+comment, `gh pr comment <n> --repo <owner/repo> --body '@greptileai'`,
+once per head it reviews, while the PR is a draft and after CI is green,
+then waits a bounded 10–15-minute window (the window this file gives a Codex
+attempt). Adjudicate what lands like any reviewer:
+findings are hypotheses, inline comments receive per-thread replies, and deferred
+findings are recorded and settled. Greptile is
+not a readiness-gate condition: silence or a findings-free trial-ended or credit
+notice is neither a blocker nor a finding. Report an unsolicited Greptile review
+with no trigger comment: it means the config or dashboard has drifted back on.
+
 ## Conventions
 
 Full reference: [docs/conventions.md](docs/conventions.md). Highlights beyond
@@ -1213,9 +1227,12 @@ the workflow rules above:
 
 ## CI/CD
 
-- `.github/workflows/build.yml` — jobs `check`, `repo-guards`, `devcontainer-permissions`, `security`, `template-test` (matrix
-  of copier answer profiles), and the aggregate `verify` gate. All jobs delegate to
-  `task` targets. Its `pull_request` trigger carries **no `edited`**: the
+- `.github/workflows/build.yml` — jobs `changes`, `check`, `repo-guards`, `devcontainer-permissions`, `security`, `template-test` (matrix
+  of copier answer profiles), and the aggregate `verify` gate. Gate jobs delegate to
+  Taskfile targets; change-detection and aggregate plumbing (`changes` and `verify`)
+  call scripts directly, passing event SHAs where applicable. The separate
+  `devcontainer-build.yml` uses `devcontainer-changes` for change detection.
+  Its `pull_request` trigger carries **no `edited`**: the
   readiness gate requires PR-body edits, so a title/body edit must not restart
   the matrix (#1328). Guards that genuinely read the title or body keep
   `edited` in their own workflows.

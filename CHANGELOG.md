@@ -8,6 +8,24 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [5.11.0](https://github.com/evanharmon1/harmon-init/compare/v5.10.0...v5.11.0) (2026-10-22)
+
+
+### Features
+
+* **template:** add an opt-in Greptile config that turns off automatic reviews ([#1780](https://github.com/evanharmon1/harmon-init/issues/1780)) ([63987a1](https://github.com/evanharmon1/harmon-init/commit/63987a11c4789879a7af476b4ced62feb6a288e9))
+
+
+### Bug Fixes
+
+* **template:** close the docs-only classifier follow-ups from [#1755](https://github.com/evanharmon1/harmon-init/issues/1755) ([#1764](https://github.com/evanharmon1/harmon-init/issues/1764)) ([2eda8e3](https://github.com/evanharmon1/harmon-init/commit/2eda8e3d2292b7489e2b0df3c35e79ef29c16ff3))
+* **template:** exercise failed Tier writes without vendored skills ([#1760](https://github.com/evanharmon1/harmon-init/issues/1760)) ([ce782ce](https://github.com/evanharmon1/harmon-init/commit/ce782cedd1ffd05851e272c6d3e3e6405e727333))
+* **template:** extend the grep-q pipe guard to images/ and convert its sites ([#1776](https://github.com/evanharmon1/harmon-init/issues/1776)) ([df47298](https://github.com/evanharmon1/harmon-init/commit/df47298d393decd21192f521d96ade4e1eba2556))
+* **template:** keep a successful Claude review green when it exceeds the turn cap ([#1775](https://github.com/evanharmon1/harmon-init/issues/1775)) ([56d193e](https://github.com/evanharmon1/harmon-init/commit/56d193e66d889ffaab7eb6b45a06781a9c3c4f30))
+* **template:** label the preview's deployed merge commit and test the comment annotators ([#1768](https://github.com/evanharmon1/harmon-init/issues/1768)) ([b4dc0a3](https://github.com/evanharmon1/harmon-init/commit/b4dc0a3c30eb763d9aebe7910961cf2d929f501a))
+* **template:** make test-closing-keywords pass under macOS bash 3.2 ([#1762](https://github.com/evanharmon1/harmon-init/issues/1762)) ([547666f](https://github.com/evanharmon1/harmon-init/commit/547666f87847f3f0542d9338f94800a4f96fee2f))
+* **template:** remove producer-into-grep-q pipelines that flake under pipefail ([#1771](https://github.com/evanharmon1/harmon-init/issues/1771)) ([54ae7f1](https://github.com/evanharmon1/harmon-init/commit/54ae7f1ee053ffe020f8c2dd512af68ccebb4dda)), closes [#1759](https://github.com/evanharmon1/harmon-init/issues/1759)
+
 ## [5.10.0](https://github.com/evanharmon1/harmon-init/compare/v5.9.0...v5.10.0) (2026-10-20)
 
 

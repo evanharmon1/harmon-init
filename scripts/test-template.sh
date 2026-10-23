@@ -191,6 +191,8 @@ minimal)
     # so every other profile already covers the ON branch + its
     # conditionally-named release-please files.
     data_args+=(--data use_release_please=false)
+    # Greptile is independent of local Codex review; full covers both on.
+    data_args+=(--data use_greptile=true --data use_codex_review=false)
     # Exercise the skills-sync OFF branch too (default on -> every other profile
     # covers the ON branch + its conditionally-named files).
     data_args+=(--data use_skills_sync=false)
@@ -245,6 +247,7 @@ full)
         --data use_codex_review=true
         --data use_codex_cloud_review=true
         --data use_coderabbit=true
+        --data use_greptile=true
         --data use_gemini_code_assist=true
         --data use_antigravity_cli=true
         --data use_copilot_cli=true
@@ -441,10 +444,10 @@ fi
 # the next one), the third asks `task` for the plan.
 if [ -f .github/workflows/build.yml ]; then
     awk '/^  repo-guards:[[:space:]]*$/ { on = 1; next } on && /^  [^ #]/ { exit } on' .github/workflows/build.yml |
-        grep -Eq '^[[:space:]]*(-[[:space:]]+)?run:[[:space:]]+task ci:repo-guards[[:space:]]*$' ||
+        grep -E '^[[:space:]]*(-[[:space:]]+)?run:[[:space:]]+task ci:repo-guards[[:space:]]*$' >/dev/null ||
         err "rendered build.yml's repo-guards job does not call \`task ci:repo-guards\` in a step"
     awk '/^  verify:[[:space:]]*$/ { on = 1; next } on && /^  [^ #]/ { exit } on' Taskfile.yml |
-        grep -Eq '^[[:space:]]+-[[:space:]]+task:[[:space:]]+test:suite[[:space:]]*$' ||
+        grep -E '^[[:space:]]+-[[:space:]]+task:[[:space:]]+test:suite[[:space:]]*$' >/dev/null ||
         err "rendered \`verify\` does not list \`task: test:suite\` itself"
     if have task; then
         # A plan that cannot be read (a broken rendered Taskfile) must fail the
@@ -670,7 +673,7 @@ grep -q 'brew "uv"' Brewfile || err "Brewfile must install uv for the Semgrep ru
 [ -x scripts/install-brewfile.sh ] || err "Brewfile install helper missing or not executable"
 grep -q -- '- ./scripts/install-brewfile.sh' Taskfile.yml ||
     err "install must delegate to the fail-closed Brewfile helper"
-if sed -n '/^  install:/,/^  install:hooks:/p' Taskfile.yml | grep -q 'brew bundle'; then
+if sed -n '/^  install:/,/^  install:hooks:/p' Taskfile.yml | grep 'brew bundle' >/dev/null; then
     err "install must not inline brew bundle"
 fi
 if grep -q 'brew "pnpm"' Brewfile; then
@@ -865,7 +868,7 @@ fi
 [ -x scripts/install-brewfile.sh ] || err "Brewfile install helper missing or not executable"
 grep -q -- '- ./scripts/install-brewfile.sh' Taskfile.yml ||
     err "install must delegate to the fail-closed Brewfile helper"
-if sed -n '/^  install:/,/^  install:hooks:/p' Taskfile.yml | grep -q 'brew bundle'; then
+if sed -n '/^  install:/,/^  install:hooks:/p' Taskfile.yml | grep 'brew bundle' >/dev/null; then
     err "install must not inline brew bundle"
 fi
 if grep -q 'brew "pnpm"' Brewfile; then
@@ -888,7 +891,7 @@ if [ -f .github/workflows/deploy-preview.yml ]; then
         err "deploy-preview must use the shared job-private pnpm setup"
     grep -q 'uses: ./.github/actions/setup' .github/workflows/release.yml ||
         err "production deploy must use the shared job-private pnpm setup"
-    grep -A4 'uses: ./.github/actions/setup' .github/workflows/release.yml | grep -q 'cache: "false"' ||
+    grep -A4 'uses: ./.github/actions/setup' .github/workflows/release.yml | grep 'cache: "false"' >/dev/null ||
         err "production deploy must disable the lower-trust pnpm Actions cache"
 fi
 if [ -f pyproject.toml ]; then
@@ -2169,6 +2172,23 @@ else
     fi
 fi
 
+# ── 9d4b. Greptile renders only when explicitly enabled ────────────
+if [ "$profile" = "full" ] || [ "$profile" = "minimal" ]; then
+    [ -f .greptile/config.json ] || err "Greptile config missing (use_greptile=true)"
+    jq -e '.autoReview == []' .greptile/config.json >/dev/null ||
+        err "Greptile config must be valid JSON with autoReview disabled"
+    grep -Fq 'Install the [Greptile app]' docs/CHECKLIST.md ||
+        err "CHECKLIST missing Greptile setup (use_greptile=true)"
+    grep -Fxq '## Advisory Review (Greptile)' AGENTS.md ||
+        err "AGENTS missing independent Greptile section (use_greptile=true)"
+    grep -Fq '**Greptile is advisory and orchestrator-triggered.**' AGENTS.md ||
+        err "AGENTS missing Greptile advisory policy (use_greptile=true)"
+else
+    [ ! -d .greptile ] || err ".greptile rendered but use_greptile is off"
+    ! grep -iq 'greptile' docs/CHECKLIST.md AGENTS.md ||
+        err "Greptile text rendered but use_greptile is off"
+fi
+
 if [ "$profile" = "full" ]; then
     [ -f .gemini/config.yaml ] || err ".gemini/config.yaml missing (use_gemini_code_assist=true)"
     [ -f .gemini/styleguide.md ] || err ".gemini/styleguide.md missing (use_gemini_code_assist=true)"
@@ -2300,7 +2320,7 @@ grep -Fq 'types: [opened, synchronize, reopened]' <<<"$build_trigger" ||
     err "build.yml pull_request types must be [opened, synchronize, reopened]"
 # Fixed-string with comments stripped — see test-ci-results.sh for why `\b`
 # is avoided in a negative assertion, and why comments must go first.
-! grep -v '^[[:space:]]*#' <<<"$build_trigger" | grep -Fq 'edited' ||
+! grep -v '^[[:space:]]*#' <<<"$build_trigger" | grep -F 'edited' >/dev/null ||
     err "build.yml re-runs the whole matrix on a PR title/body edit"
 ck_trigger="$(awk '/^on:/,/^jobs:/' .github/workflows/closing-keywords.yml)"
 grep -Fq 'types: [opened, edited, synchronize, reopened]' <<<"$ck_trigger" ||
@@ -3271,6 +3291,14 @@ fi
 # unreachable, or reached transitively through an aggregate, and only the dry
 # run tells the two apart.
 if [ -f prettier.config.cjs ]; then # use_node profiles (web-astro / web-app)
+    python3 - <<'PYMULTICORE' || err "build-test multicore routing missing"
+import pathlib
+import re
+text = pathlib.Path(".github/workflows/build.yml").read_text()
+job = re.search(r"^  build-test:\n(.*?)(?=^  [A-Za-z_][\w-]*:|\Z)", text, re.M | re.S)
+assert job, "missing build-test job"
+assert "runs-on: ${{ fromJSON(vars.MULTICORE_RUNS_ON || vars.CI_RUNS_ON || '" in job[1]
+PYMULTICORE
     [ -x scripts/e2e-run.sh ] || err "scripts/e2e-run.sh missing or not executable (use_node profile)"
     # The skip is ONLY for a missing Playwright config. Widening it to swallow
     # the unconfigured env guard would turn a fail-closed security control into
@@ -3522,7 +3550,7 @@ if grep -Eq '^project_type:[[:space:]]+web-app$' .copier-answers.yml; then
     grep -Eq '^[[:space:]]*(-[[:space:]]+)?run:[[:space:]]+task guard:codegen[[:space:]]*$' <<<"$codegen_job" ||
         err "build.yml codegen-guard job never runs guard:codegen"
     grep -F "CONVEX_DEPLOY_KEY: \${{ github.event_name != 'merge_group' && secrets.CONVEX_DEPLOY_KEY || '' }}" <<<"$codegen_job" |
-        grep -Eq '^[[:space:]]+CONVEX_DEPLOY_KEY:' ||
+        grep -E '^[[:space:]]+CONVEX_DEPLOY_KEY:' >/dev/null ||
         err "build.yml codegen-guard job does not gate CONVEX_DEPLOY_KEY off merge_group"
     ! grep -qF 'CONVEX_DEPLOY_KEY: ${{ secrets.CONVEX_DEPLOY_KEY }}' <<<"$codegen_job" ||
         err "build.yml codegen-guard job passes CONVEX_DEPLOY_KEY without excluding merge_group"

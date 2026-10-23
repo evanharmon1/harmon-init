@@ -149,6 +149,14 @@ for quote in '"""' "'''"; do
     printf '[gates]\nnotes = %s\ndocs_only_paths = ["**"]\n%s\n' "$quote" "$quote" >.devflow.toml
     expect false
 done
+# Only the global multiline-string guard rejects a string spanning tables.
+for quote in '"""' "'''"; do
+    fixture "cross-table-multiline-string-${quote:0:1}"
+    printf 'source\n' >>src/app.js
+    merge_tree
+    printf '[other]\nnotes = %s\n[gates]\ndocs_only_paths = ["**"]\n[x]\n%s\n' "$quote" "$quote" >.devflow.toml
+    expect false
+done
 fixture ambiguous_gate_line
 printf 'source\n' >>src/app.js
 merge_tree
