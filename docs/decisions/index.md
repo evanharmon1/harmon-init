@@ -97,3 +97,5 @@ record is still open to edits.
 - [2026-10-18-route-ci-jobs-by-class.md](2026-10-18-route-ci-jobs-by-class.md)
   — route jobs by execution requirement with four runner variables and an
   independent disposable-host fallback for isolated work (Accepted).
+- [2026-10-23-route-core-scaling-jobs-to-a-multicore-class.md](2026-10-23-route-core-scaling-jobs-to-a-multicore-class.md)
+  — add measured core-scaling placement as the fifth routing class (Accepted; amends 2026-10-18).

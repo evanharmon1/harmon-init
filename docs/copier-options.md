@@ -43,7 +43,7 @@ In prompt order, as defined in `copier.yml`. "Asked when" is the question's
 | 9 | `include_terraform` | bool | `project_type == 'iac'` | always | `terraform/`, `.tflint.hcl`, `terraform.yml`, 4 terraform scripts |
 | 10 | `include_ansible` | bool | `project_type == 'iac'` | always | `ansible/`, `.ansible-lint`; seeds `use_python` |
 | 11 | `ci_runner` | choice `ubuntu-latest`/`self-hosted` | `ubuntu-latest` | always | Render-time `runs-on`; self-hosted also enables repository-variable setup |
-| 11a | `ci_runner_labels` | str (CSV) | `self-hosted,linux` | `ci_runner == 'self-hosted'` | CI workflow fallback and `--ci-runs-on` reconciliation; browser, image-build and isolated classes have separate flags |
+| 11a | `ci_runner_labels` | str (CSV) | `self-hosted,linux` | `ci_runner == 'self-hosted'` | CI workflow fallback and `--ci-runs-on` reconciliation; browser, image-build, multicore and isolated classes have separate flags |
 | 12 | `deploy_cloudflare_workers` | bool | `project_type == 'web-astro'` | `project_type in ['web-astro','web-app']` | `wrangler.jsonc`, `deploy-preview.yml` |
 | 13 | `license` | choice `mit`/`private` | `mit` | always | `LICENSE` (Licensor = the hidden `organization`) |
 | 14 | `use_release_please` | bool | **yes** | always | `release.yml`, release-please config/manifest, changelog scripts |
@@ -251,6 +251,7 @@ A generated repo's behavior also depends on state no answer captures.
 |---|---|
 | `CI_RUNS_ON` | General CI selector; reconcile with `--ci-runs-on` and replace intentionally with `--replace-ci-runs-on`. |
 | `BROWSER_RUNS_ON` | Browser-job selector; `--browser-runs-on` / `--replace-browser-runs-on`. |
+| `MULTICORE_RUNS_ON` | Measured core-scaling jobs; `--multicore-runs-on` / `--replace-multicore-runs-on`. |
 | `IMAGE_BUILD_RUNS_ON` | Image-build selector; `--image-build-runs-on` / `--replace-image-build-runs-on`. |
 | `ISOLATED_RUNS_ON` | Isolated-job selector; `--isolated-runs-on` / `--replace-isolated-runs-on`, subject to the fail-closed invariant below. |
 | `CI_APP_CLIENT_ID` | CI GitHub App client ID (paired with `CI_APP_PRIVATE_KEY`) |
@@ -270,7 +271,7 @@ unless that class's replace flag accompanies the value. `task setup:github`
 supplies the rendered CI runner answer; pass additional class flags after `--`,
 for example `task setup:github -- --browser-runs-on '"ubuntu-latest"'`. Repository values shadow inherited organization values.
 
-Public repositories always receive all four repository overrides as exact
+Public repositories always receive all five repository overrides as exact
 `"ubuntu-latest"`, even without class or replace flags. This is mandatory safety
 enforcement against persistent runners inherited from an organization.
 

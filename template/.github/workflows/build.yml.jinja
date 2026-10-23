@@ -146,9 +146,9 @@ jobs:
 
   build-test:
     needs: changes
-    # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
-    # default; set it to a JSON runner spec to override without a commit.
-    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
+    # Measured core-scaling work: unset MULTICORE_RUNS_ON preserves
+    # CI_RUNS_ON and the rendered default.
+    runs-on: ${{ fromJSON(vars.MULTICORE_RUNS_ON || vars.CI_RUNS_ON || '[[ ci_runs_on_default ]]') }}
     if: >-
       !cancelled() &&
       (github.event_name != 'pull_request' ||

@@ -117,7 +117,8 @@ ci_runner:
   type: str
   help: >-
     CI RUNNER: default GitHub Actions runner (CI_RUNS_ON overrides at runtime).
-    Browser/image-build jobs read BROWSER_RUNS_ON/IMAGE_BUILD_RUNS_ON first, then
+    Browser/image-build/multicore jobs read
+    BROWSER_RUNS_ON/IMAGE_BUILD_RUNS_ON/MULTICORE_RUNS_ON first, then
     CI_RUNS_ON. Isolated jobs use ISOLATED_RUNS_ON or ubuntu-latest, never the
     self-hosted default.
   choices:
