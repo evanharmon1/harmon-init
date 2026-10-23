@@ -87,16 +87,15 @@ the compatibility reason in the rule's `description`.
       re-run): enables **Dependabot alerts** and **private vulnerability
       reporting** when public. Routing uses `CI_RUNS_ON`, `BROWSER_RUNS_ON`,
       `IMAGE_BUILD_RUNS_ON`, `MULTICORE_RUNS_ON` and `ISOLATED_RUNS_ON`. Public
-      repositories always
-      create or replace all five repository overrides as `"ubuntu-latest"`,
-      even without flags, so inherited persistent runners cannot reach jobs.
+      repositories always create or replace all five repository overrides as
+      `"ubuntu-latest"`, even without flags, so inherited persistent runners
+      cannot reach jobs.
       On private/internal repositories, the script creates missing values only
       with `--ci-runs-on`, `--browser-runs-on`, `--multicore-runs-on`,
-      `--image-build-runs-on` or
-      `--isolated-runs-on`; intentional replacement also requires the matching
-      `--replace-*` flag. `task setup:github` supplies the rendered CI answer;
-      pass other class flags after `--`, for example
-      `task setup:github -- --browser-runs-on '"ubuntu-latest"'`.
+      `--image-build-runs-on` or `--isolated-runs-on`; intentional replacement
+      also requires the matching `--replace-*` flag. `task setup:github`
+      supplies the rendered CI answer; pass other class flags after `--`,
+      for example `task setup:github -- --browser-runs-on '"ubuntu-latest"'`.
       Repository values shadow organization values. Isolated selectors may be
       strings, label arrays, or objects with usable `labels`; `self-hosted` is
       refused case-insensitively, and unsupported shapes fail closed. Requested

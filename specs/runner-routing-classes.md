@@ -89,11 +89,12 @@ scaling past the default size: wall-clock gain at roughly flat cost per job is
 the bar. Feeling heavy is not evidence; memory requirements are a separate floor.
 
 If requirements overlap, isolated wins over every class, including multicore.
-A job that needs a browser or builds images stays in that class; multicore
-applies only to jobs that would otherwise be default. Thus a browser or image-building job that
-also holds a long-lived secret must run on a disposable host. A short-lived
-`GITHUB_TOKEN` alone does not make ordinary build work isolated. API automation
-is isolated by its work, even when it needs only that token. Publishing an
+Thus a browser or image-building job that also holds a long-lived secret must
+run on a disposable host. A job that needs a browser or builds images otherwise
+stays in that class; multicore applies only to jobs that would otherwise be
+default. A short-lived `GITHUB_TOKEN` alone does not make ordinary build work
+isolated. API automation is isolated by its work, even when it needs only that
+token. Publishing an
 artifact that others later execute does not, by itself, count as deploying in
 this spec. Thus `devcontainer-build.yml` `build` stays image-build: it needs a
 Docker-capable pool and holds only the ephemeral `GITHUB_TOKEN` with

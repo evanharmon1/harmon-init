@@ -425,7 +425,18 @@ STUB
         echo 'fi'
         echo 'if [ "$1" = "variable" ] && [ "$2" = "list" ] && [ "$3" = "--repo" ]; then'
         echo '    [ -n "${GH_ROUTING_REPO_JSON:-}" ] || exit 1'
-        echo '    printf "%s\n" "$GH_ROUTING_REPO_JSON"'
+        echo '    routing_jq=""'
+        echo '    while [ "$#" -gt 0 ]; do'
+        echo '        case "$1" in'
+        echo '        --jq) [ "$#" -ge 2 ] || exit 2; routing_jq="$2"; shift 2 ;;'
+        echo '        *) shift ;;'
+        echo '        esac'
+        echo '    done'
+        echo '    if [ -n "$routing_jq" ]; then'
+        echo '        printf "%s\n" "$GH_ROUTING_REPO_JSON" | jq "$routing_jq"'
+        echo '    else'
+        echo '        printf "%s\n" "$GH_ROUTING_REPO_JSON"'
+        echo '    fi'
         echo '    exit 0'
         echo 'fi'
         echo 'if [ "$1" = "variable" ] && [ "$2" = "list" ] && [ -n "${GH_VARIABLES_JSON:-}" ]; then'
@@ -680,7 +691,7 @@ for expected in 'CI_RUNS_ON (repo) - ["self-hosted","linux"]' 'CI_RUNS_ON (org) 
 done
 echo "==> multicore routing reports selected and unset values"
 for value in '"multicore-provider"' '["self-hosted","linux"]'; do
-    multicore_repo="$(jq -cn --arg value "$value" '[{name:"MULTICORE_RUNS_ON",value:$value}]')"
+    multicore_repo="$(jq -cn --arg value "$value" '[{name:"MULTICORE_RUNS_ON",value:$value},{name:"UNRELATED_VARIABLE",value:"unrelated"}]')"
     out="$(GH_REPO_JSON="$internal_repo" GH_ROUTING_REPO_JSON="$multicore_repo" GH_ROUTING_ORG_JSON='[]' run_setup_section project)"
     case "$out" in *"MULTICORE_RUNS_ON (repo) - $value"*) ;; *) fail "multicore selected value missing: $out" ;; esac
 done

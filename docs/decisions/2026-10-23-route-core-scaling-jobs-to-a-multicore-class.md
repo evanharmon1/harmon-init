@@ -40,8 +40,8 @@ Sample sizes: 35–207 successful jobs per 8 vCPU cell, and ≥ 35 per 4 vCPU ce
 **Findings**
 1. **`build-test` is the only default-class job that pays for itself past 4 vCPU.** It is 2.06× faster from 2 to 4 vCPU and 1.80× from 4 to 8. That matches local profiling, where vitest averages 3.2–6.3 cores. With per-minute rounding, 431 s at 4 vCPU (8 min × 4) and 239 s at 8 vCPU (4 min × 8) both bill 32 vCPU-minutes. Whether the provider rounds per minute is unconfirmed.
 2. **Every other default and browser job flattens at 4 vCPU.** They are 1.0–1.24× faster at 8 vCPU for 1.6–2.3× the cost.
-3. **Splitting this way saves wall-clock time.** Default-class jobs run in parallel, so CI time is the slowest job. Moving `build-test` to 8 vCPU cuts CI from 431 s to about 292 s, with `repo-guards` (292 s at 4 vCPU) becoming the slowest job. That is about 2.3 min per run, at roughly the same cost.
-4. **Moving the whole default class to 8 vCPU** costs about 1.55× per run (≈7,800 vs ≈5,030 vCPU-seconds) for the same gain.
+3. **Splitting this way saves wall-clock time.** Default-class jobs run in parallel, so CI time is the slowest job. Moving `build-test` to 8 vCPU cuts CI from 431 s to about 292 s, with `repo-guards` (292 s at 4 vCPU) becoming the slowest job. That is about 2.3 min per run, at roughly the same cost: the split costs about 1.04× the all-4 baseline (≈4,970 vs ≈4,780 vCPU-seconds).
+4. **Moving the whole default class to 8 vCPU** costs about 1.47× the split per run (≈7,300 vs ≈4,970 vCPU-seconds), or 1.53× the all-4 baseline. It buys about 46 s more than the split: the critical path becomes `check` at about 246 s. These sums cover the five measured default-class jobs running in parallel in Build & Validate: build-test, check, repo-guards, security and devcontainer-permissions. `changes` and `verify` are tiny and were not measured. The browser class (`a11y`) and `preview.yml` jobs (`preview`, `demo-seed` and `e2e`) are outside the sums.
 5. **Memory is a separate floor from cores.** eslint peaks at 3.8 GB RSS in `check`. 2 vCPU cannot build devcontainer images at all (`no space left on device`). Neither changes this decision, but both belong in the record.
 6. **Queue time stayed at 14–21 s at every size.**
 
@@ -69,13 +69,23 @@ With linear vCPU pricing, per-job cost ratio = size ratio ÷ speed-up.
 Parallel CI wall-clock time is the slowest job, not the sum of job durations.
 The measured split puts `build-test` at 8 vCPU while keeping the other default
 jobs at 4 vCPU: approximately 292 s instead of 431 s for the critical path,
-at roughly the same run cost. Per-minute rounding could make `build-test`'s
+at about 1.04× the all-4 baseline cost (≈4,970 vs ≈4,780 vCPU-seconds).
+The totals cover the five measured default-class jobs running in parallel in
+Build & Validate: `build-test`, `check`, `repo-guards`, `security` and
+`devcontainer-permissions`. `changes` and `verify` are tiny and were not measured.
+The browser class (`a11y`) and the separate `preview.yml` jobs (`preview`,
+`demo-seed` and `e2e`) are outside these sums. Putting all five measured jobs at
+8 vCPU costs about 1.47× the split (≈7,300 vs ≈4,970 vCPU-seconds), or 1.53×
+the all-4 baseline. It saves about 46 s more than the split: `check` becomes
+the critical path at about 246 s. Per-minute rounding could make `build-test`'s
 cost identical, but that billing behavior is unconfirmed.
 
 ## Not
 
-- **The whole default class at 8 vCPU.** About 1.55× the run cost for the same
-  critical-path gain; most jobs barely improve.
+- **The whole default class at 8 vCPU.** About 1.47× the split cost
+  (≈7,300 vs ≈4,970 vCPU-seconds over the five measured Build & Validate jobs),
+  for about 46 s more saved. The critical path becomes `check` at about 246 s;
+  most default-class jobs barely improve.
 - **The whole class at 4 vCPU.** `build-test` remains the 431 s critical path.
 - **A per-job variable (`BUILD_TEST_RUNS_ON` / `TEST_RUNS_ON`).** ADR 2026-10-18
   rejects one variable per job. Tests such as a11y and e2e do not keep scaling;
@@ -92,7 +102,10 @@ only by setting it; no provider or paid service becomes a template default.
 Adding another job to multicore requires its own measurement against the
 admission rule. Setup and status expose the fifth class with the same validation,
 replacement and shadowing rules as browser placement; multicore may be self-hosted.
-Public repositories retain exact GitHub-hosted safety overrides for every class.
+Public repositories retain exact GitHub-hosted safety overrides for every class
+once `task setup:github` has been re-run after updating to the release that adds
+`MULTICORE_RUNS_ON`. Until then, a visible organization value can route
+`build-test` to its pool; `task status` reports the missing repository override.
 
 [ponderousdev/omator#1614](https://github.com/ponderousdev/omator/issues/1614)
 adopts the class with `ubicloud-standard-8`, the measured consumer's provider choice.
