@@ -1397,7 +1397,7 @@ function verifyChain(rawEntries, contentKeys) {
 
 const CHAIN_FIELDS = {
   stage_transitions: ["stage", "entered_at", "exit"],
-  interventions: ["kind", "at", "note"],
+  interventions: ["kind", "at", "note", "decision", "command", "answered_by"],
   settlements: ["finding_id", "disposition", "settled_at", "reference"],
   splits: ["mechanism", "stage", "round", "issue", "milestone", "finding_ids", "split_at"],
   // The three chains below protect evidence_comments[]/pr/outcome — round 4
@@ -2830,16 +2830,53 @@ function loadLocalEvidenceRun(repo, recordRoot, runId, issueNumber, issueComment
     const forged = [...allUntrustedMarkers.filter((observed) => observed.reason === "untrusted-actor"), ...legacyForged];
     const tampered = allUntrustedMarkers.filter((observed) => observed.reason !== "untrusted-actor");
 
+    // The exit engine does not validate integrator passes. Only
+    // receipt-backed envelopes validated for this run contribute to this
+    // retained-record grouping; rejected integrators remain diagnostics.
+    const integratorsByRound = new Map();
+    for (const entry of localPasses) {
+      if (entry.content.role !== "integrator" || !receiptBackedNames.has(entry.name)) continue;
+      try {
+        runExitValidator(
+          ["integrator", entry.file, "--run-id", body.run_id, "--initiated-by", body.initiated_by],
+          `integrator pass ${entry.name}`,
+        );
+        const round = entry.content.payload.integration_round;
+        const entries = integratorsByRound.get(round) ?? [];
+        entries.push(entry);
+        integratorsByRound.set(round, entries);
+      } catch (error) {
+        if (!(error instanceof EvidenceError)) throw error;
+        diagnostics.push({ pass: entry.name, level: "reject", reason: error.message });
+      }
+    }
+
+    const retainedIntegratorPasses = [];
+    for (const [round, entries] of integratorsByRound) {
+      if (entries.length === 1) {
+        retainedIntegratorPasses.push(entries[0].content);
+      } else {
+        const files = entries.map((entry) => entry.name).sort();
+        diagnostics.push({
+          level: "reject", passes: files,
+          reason: `duplicate integrator passes for integration round ${round}: ${files.join(", ")}`,
+        });
+      }
+    }
+
     return {
       status: "ok",
       runId,
       issueNumber,
+      finderCountsSource: "retained-pass-files",
       record: { body },
       state,
       rounds,
       slotFailures: localSlotFailures,
       slotFailuresUnavailable: false,
       futureAdjudicationFiles: [],
+      remediationCap: recordedRounds?.remediation ?? null,
+      retainedIntegrationFinderCounts: integrationFinderCounts(retainedIntegratorPasses),
       localRecordCurrentState: Boolean(asOf),
       trajectoryDiagnostics: diagnostics,
       authorizedCeilings,
@@ -3178,6 +3215,7 @@ function computeClosedCohortMetric(repo, runsByIssue, { staleAfterDays, asOf, si
   let closedCount = 0;
   let successCount = 0;
   let askedTotal = 0;
+  let answeredPromptsTotal = 0;
   let postReadyFixCount = 0;
   let postReadyFixIndeterminateCount = 0;
   let indeterminateCount = 0;
@@ -3197,6 +3235,8 @@ function computeClosedCohortMetric(repo, runsByIssue, { staleAfterDays, asOf, si
     }
     closedCount++;
     askedTotal += verdict.asked;
+    const answeredPrompts = verdict.runs.reduce((n, run) => n + run.state.interventions.filter((entry) => entry.kind === "prompt").length, 0);
+    answeredPromptsTotal += answeredPrompts;
     if (verdict.success) successCount++;
     // Post-ready fixes are a SECOND, independent failure measure
     // (specs/dev-flow-v2.md § Success metric) — evaluated for any issue
@@ -3211,13 +3251,14 @@ function computeClosedCohortMetric(repo, runsByIssue, { staleAfterDays, asOf, si
       if (fixed) postReadyFixCount++;
       if (indeterminate) postReadyFixIndeterminateCount++;
     }
-    perIssue.push({ issueNumber, closed: true, success: verdict.success, interventions: verdict.interventions, asked: verdict.asked });
+    perIssue.push({ issueNumber, closed: true, success: verdict.success, interventions: verdict.interventions, asked: verdict.asked, answered_prompts: answeredPrompts });
   }
   return {
     cohort_size: closedCount,
     unattended_success_count: successCount,
     unattended_success_rate: closedCount > 0 ? successCount / closedCount : null,
     asked_count: askedTotal,
+    answered_prompts_count: answeredPromptsTotal,
     post_ready_fix_count: postReadyFixCount,
     post_ready_fix_indeterminate_count: postReadyFixIndeterminateCount,
     indeterminate_count: indeterminateCount,
@@ -3317,6 +3358,33 @@ function projectAdjudicationEntries(doc) {
   });
 }
 
+// Each integrator finding id carries
+// its source finder, and one integrator pass can include several sources.
+function integrationFinderCounts(passes) {
+  const counts = {};
+  for (const pass of passes) {
+    const payload = pass.payload || {};
+    for (const finding of payload.findings || []) {
+      const finder = /^integration-r[1-9][0-9]*-([a-z0-9-]+)-[1-9][0-9]*$/.exec(finding.id)?.[1] || "unknown";
+      counts[finder] = (Object.hasOwn(counts, finder) ? counts[finder] : 0) + 1;
+    }
+  }
+  return counts;
+}
+
+// Finder identity belongs to the pass, never to a deferred finding id.
+function findingsByStageFinder(rounds) {
+  const counts = {};
+  for (const round of rounds) {
+    const stage = counts[round.stage] ??= {};
+    for (const pass of round.payload.passes || []) {
+      const finder = pass.payload?.finder || pass.payload?.slot || "unknown";
+      stage[finder] = (Object.hasOwn(stage, finder) ? stage[finder] : 0) + (pass.payload?.findings || []).length;
+    }
+  }
+  return counts;
+}
+
 function renderTrajectory(run) {
   // Chronological (by comment id — ascending id IS creation order on
   // GitHub, the same fact buildRunDirectory's own chronology already
@@ -3337,7 +3405,20 @@ function renderTrajectory(run) {
     pr: run.state.pr,
     promotion: run.state.promotion,
     stage_transitions: run.state.stage_transitions,
+    remediation_cap: run.remediationCap ?? null,
+    remediation_pushes: (run.state.stage_transitions || [])
+      .filter((entry) => entry.stage === "integration" && entry.remediation)
+      .map((entry) => ({ entered_at: entry.entered_at, ...entry.remediation })),
+    findings_by_stage_finder_source: run.finderCountsSource ?? "authenticated-posted-projection",
+    findings_by_stage_finder: findingsByStageFinder(rounds.filter((entry) => entry.stage !== "integration")),
+    retained_record_findings_by_stage_finder: run.retainedIntegrationFinderCounts === undefined
+      ? null : { integration: run.retainedIntegrationFinderCounts },
     interventions: run.state.interventions,
+    answered_prompts_by_stage: run.state.interventions.filter((entry) => entry.kind === "prompt").reduce((counts, entry) => {
+      const stage = [...run.state.stage_transitions].reverse().find((transition) => Date.parse(transition.entered_at) <= Date.parse(entry.at))?.stage ?? "unknown";
+      counts[stage] = (counts[stage] ?? 0) + 1;
+      return counts;
+    }, {}),
     settlements: run.state.settlements,
     splits: run.state.splits,
     rounds: rounds.map((r) => {
@@ -3417,6 +3498,19 @@ function renderTrajectoryTable(trajectory) {
       lines.push(`    ${JSON.stringify(entry.finding_id)}: reviewer=${entry.reviewer_priority === null ? "not-applicable" : JSON.stringify(entry.reviewer_priority)} adjudicated=${JSON.stringify(entry.adjudicated_priority)} disposition=${JSON.stringify(entry.disposition)}${entry.override ? ` override: ${JSON.stringify(entry.override.reason)}` : ""}`);
     }
   }
+  lines.push(`remediation pushes: ${trajectory.remediation_pushes.length} / ${trajectory.remediation_cap === null ? "no cap recorded" : `cap ${trajectory.remediation_cap} (retained policy)`}`);
+  lines.push("findings_by_stage_finder:");
+  for (const [stage, counts] of Object.entries(trajectory.findings_by_stage_finder)) {
+    lines.push(`  ${stage}:`);
+    for (const [finder, count] of Object.entries(counts)) lines.push(`    ${finder}: ${count}`);
+  }
+  lines.push("retained-record findings by finder (not verified by GitHub):");
+  if (trajectory.retained_record_findings_by_stage_finder === null) {
+    lines.push("  not measured on this path: no retained run record was read");
+  }
+  for (const [stage, counts] of Object.entries(trajectory.retained_record_findings_by_stage_finder ?? {})) {
+    for (const [finder, count] of Object.entries(counts)) lines.push(`  ${stage}/${finder}: ${count}`);
+  }
   lines.push("integration: not measured from local evidence");
   for (const [stage, ceiling] of Object.entries(trajectory.authorized_ceiling ?? {})) {
     lines.push(`${stage}: authorized ceiling ${ceiling}`);
@@ -3437,7 +3531,8 @@ function renderTrajectoryTable(trajectory) {
   if (trajectory.interventions.length > 0) {
     lines.push("");
     lines.push("interventions:");
-    for (const i of trajectory.interventions) lines.push(`  ${i.at}  ${i.kind}: ${i.note}`);
+    lines.push(`answered prompts by stage: ${JSON.stringify(trajectory.answered_prompts_by_stage)}`);
+    for (const i of trajectory.interventions) lines.push(`  ${i.at}  ${i.kind}: ${i.note}${i.kind === "prompt" ? ` (${i.decision}: ${i.command}; answered by ${i.answered_by ?? "unspecified"})` : ""}`);
   }
   if (trajectory.unreceipted_pass_files.length > 0) {
     lines.push("");
@@ -3989,6 +4084,7 @@ function cliMetrics(args) {
   } else {
     const pct = metric.unattended_success_rate === null ? "n/a" : `${(metric.unattended_success_rate * 100).toFixed(1)}%`;
     console.log(`unattended-success: ${metric.unattended_success_count}/${metric.cohort_size} (${pct})`);
+    console.log(`answered-prompts: ${metric.answered_prompts_count} (reported separately; excluded from success metric)`);
     console.log(`asked: ${metric.asked_count}`);
     console.log(`post-ready human fixes: ${metric.post_ready_fix_count}`);
     // shepherd round 3, Codex-confirmed (P2): computeClosedCohortMetric
@@ -4000,7 +4096,7 @@ function cliMetrics(args) {
     if (metric.post_ready_fix_indeterminate_count > 0) console.log(`post-ready human fixes indeterminate (could not resolve commit visibility): ${metric.post_ready_fix_indeterminate_count}`);
     if (metric.indeterminate_count > 0) console.log(`indeterminate (broken/forged evidence, excluded above): ${metric.indeterminate_count}`);
     console.log("");
-    console.log("issue  closed  success  interventions  asked");
+    console.log("issue  closed  success  interventions  asked  prompts");
     for (const row of metric.per_issue) {
       if (row.indeterminate) {
         console.log(`#${row.issueNumber}  INDETERMINATE — ${row.reasons.join("; ")}`);
@@ -4010,7 +4106,7 @@ function cliMetrics(args) {
         console.log(`#${row.issueNumber}  no (not yet terminal / not stale)`);
         continue;
       }
-      console.log(`#${row.issueNumber}  yes  ${row.success}  ${row.interventions}  ${row.asked}`);
+      console.log(`#${row.issueNumber}  yes  ${row.success}  ${row.interventions}  ${row.asked}  ${row.answered_prompts}`);
     }
   }
   return 0;

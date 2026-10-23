@@ -7,18 +7,23 @@
 //   run-record.mjs transition   --slate ID --session ID --run-id ID --stage STAGE [--exit TEXT] [--at TS]
 //                               [--remediation-head SHA --remediation-findings ID,ID,...]
 //   run-record.mjs authorize-cap --slate ID --session ID --run-id ID --stage challenge|review|integration --round N --actor ID --instruction TEXT [--at TS]
-//   run-record.mjs intervention --slate ID --session ID --run-id ID --kind asked|other --note TEXT [--ruling FILE] [--at TS]
+//   run-record.mjs intervention --slate ID --session ID --run-id ID --kind asked|other|prompt --note TEXT [--ruling FILE] [--at TS]
+//                               [--decision approved|denied --command TEXT [--answered-by orchestrator|human]]
 //   run-record.mjs bind-pr      --slate ID --session ID --run-id ID --number N --url URL [--at TS]
 //   run-record.mjs promote      --slate ID --session ID --run-id ID --head SHA --fingerprint TEXT [--exit TEXT] [--at TS]
 //   run-record.mjs close        --slate ID --session ID --run-id ID [--outcome capped|escalated|abandoned --exit TEXT] [--at TS]
+//   run-record.mjs prune        [--dry-run] [--repo-root DIR]
 //   run-record.mjs solo-init    --session ID --run-id run-<issue>-<name> --issue N --title TEXT --url URL
 //                               --branch NAME --base SHA --policy FILE --actor-id N --strategy-source TEXT
 //                               [--operator-pin TEXT]... [--registry-revision SHA] [--at TS]
+//   run-record.mjs lane-init    --slate ID --session ID --lane ID --policy FILE [--at TS]
 //   run-record.mjs receipt      --slate ID --session ID --run-id ID --pass FILE
 //   run-record.mjs adjudicate   --slate ID --session ID --run-id ID --file FILE
 //   run-record.mjs ledger       --slate ID --session ID --run-id ID --stage challenge|review
 //   run-record.mjs lock acquire --slate ID --session ID [--milestone N] [--issues N,N,...]
 //   run-record.mjs lock release --slate ID --session ID [--force --reason TEXT]
+//   run-record.mjs lock check   --slate ID --session ID --owner-token TOKEN
+//                               Read-only: validates the existing lock owner without acquiring or changing it.
 //   run-record.mjs lock status  --slate ID
 //
 // Writes accept --owner-token TOKEN. For acquisition, persistence and recovery,
@@ -48,6 +53,11 @@
 // non-promotion terminal outcome (if the run is still open) and then moves
 // the run's orchestrator files from
 // `slates/<slate>/orchestrator/<run-id>/` into `runs/<run-id>/orchestrator/`.
+// After the validated terminal write and readback, `promote` and `close` ask
+// dev-flow-monitor.sh to retire only this run's active pointer. A cleanup
+// failure is reported without undoing or refusing the terminal outcome.
+// `prune` is the recovery path for terminal pointers left behind by a failed
+// retirement; it takes per-pointer monitor locks and can run as `--dry-run`.
 //
 // `--remediation-head`/`--remediation-findings` record an integration
 // remediation push on the transition that re-enters integration after it
@@ -62,8 +72,9 @@
 // run.schema.json closes intervention items, so the digest travels in the note.
 //
 // Exit codes: 0 written (or an idempotent no-op), 1 refused, 2 usage.
-// The state root is always resolved from the current directory's
-// `git rev-parse --git-common-dir`.
+// The state root is resolved from the current directory's
+// `git rev-parse --git-common-dir`, except `prune --repo-root DIR` uses DIR's
+// common directory.
 
 import { createHash, randomBytes } from 'node:crypto'
 import { execFileSync } from 'node:child_process'
@@ -71,6 +82,7 @@ import { validateCapAuthorizations } from './lib/cap-authorizations.mjs'
 import {
   existsSync,
   mkdirSync,
+  mkdtempSync,
   readFileSync,
   readdirSync,
   realpathSync,
@@ -81,9 +93,10 @@ import {
   writeFileSync,
   linkSync,
 } from 'node:fs'
-import { hostname } from 'node:os'
+import { hostname, tmpdir } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
+import { validateResolvedPolicy } from './devflow-policy.mjs'
 
 const ASSET_DIR = dirname(realpathSync(fileURLToPath(import.meta.url)))
 const VALIDATOR = join(ASSET_DIR, 'validate-result-schemas.mjs')
@@ -618,11 +631,22 @@ const MUTATORS = {
     return `cap authorization (${entry.stage} round ${entry.round})`
   },
   intervention(record, args, context) {
-    if (args.kind !== 'asked' && args.kind !== 'other') throw new UsageError('--kind must be asked or other')
+    if (!['asked', 'other', 'prompt'].includes(args.kind)) throw new UsageError('--kind must be asked, other or prompt')
+    const prompt = {}
+    if (args.kind === 'prompt') {
+      if (!['approved', 'denied'].includes(args.decision)) throw new UsageError('--decision must be approved or denied')
+      if (typeof args.command !== 'string' || args.command.trim() === '') throw new UsageError('--command is required')
+      if (args['answered-by'] !== undefined && !['orchestrator', 'human'].includes(args['answered-by'])) throw new UsageError('--answered-by must be orchestrator or human')
+      prompt.decision = args.decision
+      prompt.command = args.command
+      if (args['answered-by'] !== undefined) prompt.answered_by = args['answered-by']
+    } else if (['decision', 'command', 'answered-by'].some((key) => args[key] !== undefined)) {
+      throw new UsageError('prompt fields require --kind prompt')
+    }
     if (typeof args.note !== 'string' || args.note.trim() === '') throw new UsageError('--note is required')
     guardTimestamp(record, args.at)
     const note = args.ruling === undefined ? args.note : `${args.note}${rulingSuffix(context.common, record.run_id, args.ruling)}`
-    record.interventions.push({ kind: args.kind, at: args.at, note })
+    record.interventions.push({ kind: args.kind, at: args.at, note, ...prompt })
     return `intervention (${args.kind})`
   },
   'bind-pr'(record, args) {
@@ -716,12 +740,101 @@ function recordWrite(command, args) {
     writeValidated('run', canonical, record)
     return result
   })
+  const retirement = command === 'promote' || command === 'close' ? retireActivePointer(runId) : null
   if (command === 'close') {
     const moved = archiveOrchestratorFiles(root, slate, runId)
     const closed = summary === null ? 'run already closed' : `recorded ${summary}`
-    return `${closed}; archived ${moved.length} orchestrator attempt(s) into runs/${runId}/orchestrator/`
+    return `${closed}; ${retirement}; archived ${moved.length} orchestrator attempt(s) into runs/${runId}/orchestrator/`
   }
+  if (command === 'promote') return `recorded ${summary}; ${retirement}`
   return summary === null ? 'no change (already recorded)' : `recorded ${summary}`
+}
+
+// Initialize a planned lane without inventing a slate or changing its scope.
+// The provisioning composer validates its other inputs before calling this
+// writer; direct callers receive the same run/ownership/lock protections.
+export function laneInit(args) {
+  const { root } = stateRoot()
+  const slate = requireId('slate', args.slate)
+  const session = requireId('session', args.session)
+  const laneName = requireId('lane', args.lane)
+  const at = resolveAt(args.at)
+  const plan = currentPlan(root, slate)
+  const lane = plan?.lanes.find((entry) => entry.lane === laneName)
+  if (!lane) throw new Refusal(`unknown lane ${laneName} in the last validated plan revision`)
+  const runId = requireId('run-id', lane.run_id)
+  const repoRoot = git(['rev-parse', '--show-toplevel'])
+  checkActivationAllowed(repoRoot, lane.branch, runId)
+  const runDir = join(root, 'runs', runId)
+  const canonical = join(runDir, 'run.json')
+  if (existsSync(canonical)) throw new Refusal(`${canonical} already exists`)
+  if (existsSync(runDir) && readdirSync(runDir).length > 0) {
+    throw new Refusal(`${runDir} already contains state; inspect before initializing`)
+  }
+  assertRunOwner(root, slate, runId)
+  acquireSlateLock({ root, slate, session, ownerToken: args['owner-token'] })
+  const profile = plan.lane_profiles?.find((entry) => entry.lane === laneName)?.policy ?? plan.policy
+  const record = kickoffRecord(runId, at,
+    `resolved: rigor ${profile.rigor} (${profile.rigor_source}), strategy ${profile.strategy} (${profile.strategy_source}); lane ${laneName} of slate ${slate}, session ${session}`)
+  const projection = lanePolicyProjection(plan, lane, args.policy)
+  const selection = finderSelection(projection)
+  if (selection.length > 0) record.finder_selection = selection
+  // Validate the complete kickoff record before creating its durable directory.
+  // This also rejects calendar-invalid timestamps resolveAt cannot detect.
+  const temporary = mkdtempSync(join(tmpdir(), 'lane-init-'))
+  try {
+    writeValidated('run', join(temporary, 'run.json'), record)
+  } finally {
+    rmSync(temporary, { recursive: true, force: true })
+  }
+  mkdirSync(runDir, { recursive: true })
+  return withMutex(canonical, () => {
+    if (existsSync(canonical)) throw new Refusal(`${canonical} already exists`)
+    writeValidated('run', canonical, record)
+    bindRunToSlate(root, slate, runId)
+    publishExclusive(join(runDir, 'policy.json'), `${JSON.stringify(projection, null, 2)}\n`, 'policy projection')
+    return JSON.stringify({ run_id: runId, record_directory: runDir })
+  })
+}
+
+function kickoffRecord(runId, at, exit) {
+  return {
+    schema: 2, run_id: runId, initiated_by: 'human', started_at: at,
+    stage_transitions: [{ stage: 'kickoff', entered_at: at, exit }],
+    receipts: [], interventions: [], outcome: null, pr: null,
+    evidence_comments: [], evidence_registrations: [], pr_bindings: [],
+    outcome_transitions: [], settlements: [], promotion: null,
+  }
+}
+
+// Preserve the resolver's complete projection for both kickoff writers. Fields
+// such as stages, tier_order and gates govern later receipts and pushes.
+function kickoffPolicyProjection(policy, plannedPolicy) {
+  return { ...policy, rigor: { ...policy.rigor, source: policy.rigor.source ?? plannedPolicy.rigor_source } }
+}
+
+function finderSelection(policy) {
+  return (Array.isArray(policy.finder_selection) ? policy.finder_selection : [])
+    .map(({ stage, configured, requested, effective }) => ({ stage, configured, requested, effective }))
+}
+
+export function lanePolicyProjection(plan, lane, policyFile) {
+  if (typeof policyFile !== 'string' || !policyFile) throw new UsageError('--policy is required (resolved-policy JSON)')
+  const policy = readJson(policyFile, '--policy')
+  try {
+    validateResolvedPolicy(policy)
+  } catch (error) {
+    throw new Refusal(`--policy is not a complete resolved policy projection: ${error.message}`)
+  }
+  const profile = plan.lane_profiles?.find((entry) => entry.lane === lane.lane)?.policy ?? plan.policy
+  const projected = planPolicy(policy, { strategySource: profile.strategy_source, operatorPins: profile.operator_pins })
+  // The plan may carry attributed prose ("explicit operator input ...") where
+  // the resolver records "operator". Compare execution values, not that prose.
+  projected.rigor_source = profile.rigor_source
+  if (canonicalJson(projected) !== canonicalJson(profile)) {
+    throw new Refusal('--policy does not match the lane profile in the last validated plan revision')
+  }
+  return kickoffPolicyProjection(policy, profile)
 }
 
 // ---------------------------------------------------------------------------
@@ -745,7 +858,9 @@ function recordWrite(command, args) {
 //              the session's actor in its trusted set, the branch's pointer
 //              naming no live run) is resolved before the first write, and a
 //              step that still fails afterwards undoes everything this call
-//              created. It supersedes only a pointer whose run has ended.
+//              created. It supersedes only a pointer whose run has ended. A
+//              terminal run's pointer is retired; a new run on the same branch
+//              therefore starts at generation 1 again.
 //   receipt    admits one challenger/reviewer pass (see admitPass), puts it at
 //              passes/<stage>-r<round>-<slot>.json (no-clobber), and appends
 //              its {kind:"pass"} receipt.
@@ -783,8 +898,75 @@ function monitorPath() {
   return monitor
 }
 
+function checkActivationAllowed(repoRoot, branch, runId) {
+  const monitor = monitorPath()
+  try {
+    const snapshot = JSON.parse(execFileSync('bash', [monitor, 'check-activation', '--branch', branch, '--run-id', runId,
+      '--repo-root', repoRoot], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim())
+    if (!snapshot || !Number.isSafeInteger(snapshot.generation) || snapshot.generation < 0 ||
+        (snapshot.run_id !== null && !/^[A-Za-z0-9._-]+$/.test(snapshot.run_id)) ||
+        (snapshot.run_id === null && snapshot.generation !== 0) ||
+        (snapshot.run_id !== null && snapshot.generation < 1)) {
+      throw new Refusal('activation preflight returned an invalid predecessor snapshot')
+    }
+    return snapshot
+  } catch (error) {
+    if (error instanceof Refusal) throw error
+    const details = [error.stderr, error.stdout]
+      .map((value) => (Buffer.isBuffer(value) ? value.toString('utf8') : `${value ?? ''}`))
+      .filter(Boolean)
+      .join('\n')
+      .trim()
+    throw new Refusal(`activation refused: ${details || `exit ${error.status ?? 'unknown'}`}`)
+  }
+}
+
 function activePointerPath(root, branch) {
   return join(root, 'active', `${createHash('sha256').update(branch, 'utf8').digest('hex')}.json`)
+}
+
+function retireActivePointer(runId) {
+  try {
+    const repoRoot = git(['rev-parse', '--show-toplevel'])
+    return execFileSync('bash', [monitorPath(), 'retire', '--run-id', runId, '--repo-root', repoRoot], {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim()
+  } catch (error) {
+    const details = [error.stderr, error.stdout]
+      .map((value) => (Buffer.isBuffer(value) ? value.toString('utf8') : `${value ?? ''}`))
+      .filter(Boolean)
+      .join('\n')
+      .trim()
+    console.error(`warning: active pointer retirement for ${runId} did not complete${details ? `:\n${details}` : ` (exit ${error.status ?? 'unknown'})`}`)
+    return 'active pointer retirement reported incomplete'
+  }
+}
+
+function pruneActivePointers(args) {
+  try {
+    const repoRoot = resolve(args['repo-root'] ?? git(['rev-parse', '--show-toplevel']))
+    const command = [monitorPath(), 'prune']
+    if (args['dry-run'] === true) command.push('--dry-run')
+    command.push('--repo-root', repoRoot)
+    return execFileSync('bash', command, {
+      cwd: repoRoot,
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    }).trim()
+  } catch (error) {
+    const details = [error.stderr, error.stdout]
+      .map((value) => (Buffer.isBuffer(value) ? value.toString('utf8') : `${value ?? ''}`))
+      .filter(Boolean)
+      .join('\n')
+      .trim()
+    throw new Refusal(`active pointer prune failed${details ? `:\n${details}` : ` (exit ${error.status ?? 'unknown'})`}`)
+  }
 }
 
 // publishExclusive — write `content` to `target` only if it does not exist,
@@ -915,8 +1097,7 @@ function soloInit(args) {
   refuseGrafts(repoRoot)
   const policy = readJson(args.policy, '--policy')
   const plannedPolicy = planPolicy(policy, { strategySource: args['strategy-source'], operatorPins: args['operator-pin'] ?? [] })
-  const selection = (Array.isArray(policy.finder_selection) ? policy.finder_selection : [])
-    .map(({ stage, configured, requested, effective }) => ({ stage, configured, requested, effective }))
+  const selection = finderSelection(policy)
   const slate = soloSlate(runId)
   const runDir = join(root, 'runs', runId)
 
@@ -933,8 +1114,9 @@ function soloInit(args) {
   if (!trustedAt(repoRoot, revision).includes(actor)) {
     throw new Refusal(`actor ${actor} is not in agent-registry.json's trusted_orchestrator_actor_ids at ${revision}; its evidence markers would not authenticate, so no solo run is reserved`)
   }
+  const activationPredecessor = checkActivationAllowed(repoRoot, branch, runId)
   const active = activePointerPath(root, branch)
-  const current = existsSync(active) ? readJson(active, 'active run pointer') : null
+  const current = activationPredecessor.run_id === null ? null : activationPredecessor
   if (current !== null && current.run_id !== runId) {
     const other = join(root, 'runs', current.run_id, 'run.json')
     const ended = existsSync(other) && readJson(other, 'active run record').outcome !== null
@@ -993,7 +1175,7 @@ function soloInit(args) {
 
     // policy.json is the projection itself; the one field the renderer needs
     // and a default resolution leaves unset is the rigor source it discloses.
-    const projection = { ...policy, rigor: { ...policy.rigor, source: policy.rigor.source ?? plannedPolicy.rigor_source } }
+    const projection = kickoffPolicyProjection(policy, plannedPolicy)
     const policyFile = join(runDir, 'policy.json')
     if (publishExclusive(policyFile, `${JSON.stringify(projection, null, 2)}\n`, 'policy projection')) {
       undo.push(() => rmSync(policyFile, { force: true }))
@@ -1044,7 +1226,8 @@ function soloInit(args) {
       try {
         generation = Number(
           execFileSync('bash', [monitorPath(), 'activate', '--active-state', active, '--run-id', runId, '--branch', branch,
-            '--expected-generation', String(generation), '--registry-revision', revision, '--writer', 'feature-owner',
+            '--expected-predecessor', current?.run_id ?? 'absent', '--expected-generation', String(generation),
+            '--registry-revision', revision, '--writer', 'feature-owner',
             '--repo-root', repoRoot], { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim(),
         )
       } catch (error) {
@@ -1382,10 +1565,11 @@ function sideEffectWrite(command, args) {
 
 const VALUE_FLAGS = new Set([
   'slate', 'session', 'owner-token', 'run-id', 'stage', 'exit', 'at', 'kind', 'note', 'ruling', 'number', 'url',
+  'decision', 'command', 'answered-by',
   'head', 'fingerprint', 'outcome', 'milestone', 'issues', 'reason',
   'remediation-head', 'remediation-findings',
   'issue', 'title', 'branch', 'base', 'policy', 'registry-revision', 'pass', 'file',
-  'actor-id', 'strategy-source', 'operator-pin', 'round', 'actor', 'instruction',
+  'actor-id', 'strategy-source', 'operator-pin', 'round', 'actor', 'instruction', 'lane',
 ])
 const BOOLEAN_FLAGS = new Set(['force'])
 
@@ -1438,6 +1622,12 @@ function lockCommand(sub, args) {
     return JSON.stringify(readLock(file))
   }
   const session = requireId('session', args.session)
+  if (sub === 'check') {
+    const { file } = lockPaths(root, slate)
+    if (!existsSync(file)) throw new Refusal(`slate ${slate} is unlocked`)
+    assertLockOwner(readLock(file), session, args['owner-token'])
+    return 'slate lock owner verified (read-only)'
+  }
   if (sub === 'acquire') {
     const lock = acquireSlateLock({ root, slate, session, ownerToken: args['owner-token'], milestone: args.milestone, issues: args.issues, create: true })
     return lock.created === true ? lock.mintedToken : null
@@ -1471,14 +1661,18 @@ export function runCli(main) {
 
 function main(argv) {
   const [command, ...rest] = argv
+  if (command === 'prune') {
+    return pruneActivePointers(parseFlags(rest, new Set(['repo-root']), new Set(['dry-run'])))
+  }
   if (command === 'lock') {
     const [sub, ...flags] = rest
     return lockCommand(sub, parseScopeFlags(parseFlags(flags)))
   }
   if (command === 'solo-init') return soloInit(parseFlags(rest, VALUE_FLAGS, BOOLEAN_FLAGS, new Set(['operator-pin'])))
+  if (command === 'lane-init') return laneInit(parseFlags(rest))
   if (Object.hasOwn(SIDE_EFFECTS, command ?? '')) return sideEffectWrite(command, parseFlags(rest))
   if (!Object.hasOwn(MUTATORS, command ?? '')) {
-    throw new UsageError('run-record.mjs transition|authorize-cap|intervention|bind-pr|promote|close|solo-init|receipt|adjudicate|ledger|lock … (see the header)')
+    throw new UsageError('run-record.mjs transition|authorize-cap|intervention|bind-pr|promote|close|prune [--dry-run] [--repo-root DIR]|solo-init|lane-init|receipt|adjudicate|ledger|lock … (see the header)')
   }
   return recordWrite(command, parseScopeFlags(parseFlags(rest)))
 }

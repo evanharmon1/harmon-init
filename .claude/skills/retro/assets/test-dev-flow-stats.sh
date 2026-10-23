@@ -386,6 +386,17 @@ function writeScenario(name, db) {
     commits: { "501": [] },
     meta: { runId, trustedActorIds: [TRUSTED_ORCHESTRATOR], issueNumber: 101, evCommentId: ev.id },
   });
+  const promptsRunId = "run-answered-prompts-metric";
+  const promptFixture = JSON.parse(readFileSync("ai/schemas/fixtures/run.schema/valid/interventions-answered-prompt.json", "utf8"));
+  const promptBody = {...runBody, run_id: promptsRunId, evidence_comments: [],
+    interventions: chain(promptFixture.interventions.map(entry => ({...entry, at: "2026-09-01T00:04:00Z"})))};
+  const promptRecord = runRecordComment(TRUSTED_ORCHESTRATOR, "orchestrator", promptsRunId, promptBody, "2026-09-01T00:00:00Z");
+  writeScenario("answered-prompts-metric", {
+    issues: [{number: 1529, pull_request: null}],
+    comments: {"1529": [promptRecord.index, promptRecord.record]},
+    commits: {"501": []}, meta: {runId: promptsRunId},
+  });
+
 }
 
 // --- Scenario 2: chain fork — two entries claim the same prev_digest ---
@@ -4379,6 +4390,16 @@ out="$(node ai/skills/universal/retro/assets/dev-flow-stats.mjs --repo o/r --tru
 echo "$out" | jq -e '.cohort_size == 1 and .unattended_success_count == 1' >/dev/null || fail "happy: expected 1/1 unattended success"
 echo "$out" | jq -e '.per_issue[0].success == true' >/dev/null || fail "happy: per_issue success flag wrong"
 
+echo "== answered prompts remain visible beside the unchanged success metric =="
+export DFSTATS_DB="$tmp/scenarios/answered-prompts-metric.json"
+out="$(node ai/skills/universal/retro/assets/dev-flow-stats.mjs --repo o/r --trusted-actor-id 9001 --json)"
+echo "$out" | jq -e '.unattended_success_count == 1 and .answered_prompts_count == 3 and .per_issue[0].answered_prompts == 3 and .per_issue[0].interventions == 0' >/dev/null || fail "prompt metric JSON: $out"
+out="$(node ai/skills/universal/retro/assets/dev-flow-stats.mjs --repo o/r --trusted-actor-id 9001)"
+grep -qF 'unattended-success: 1/1' <<<"$out" || fail "prompt metric definition changed: $out"
+grep -qF 'answered-prompts: 3' <<<"$out" || fail "prompt total absent: $out"
+grep -qF 'issue  closed  success  interventions  asked  prompts' <<<"$out" || fail "prompt column absent: $out"
+grep -qF '#1529  yes  true  0  0  3' <<<"$out" || fail "per-issue prompt count absent: $out"
+
 echo "== issue discovery tolerates >1 MiB output and projects paginated fields =="
 export DFSTATS_DB="$tmp/scenarios/large-buffer.json"
 export DFSTATS_GH_LOG="$tmp/large-buffer-discovery-gh.log"
@@ -4686,11 +4707,89 @@ echo "== the exit-engine trajectory does not synthesize integration rounds, and 
 export DFSTATS_DB="$tmp/scenarios/integration-envelope.json"
 run_id="$(meta integration-envelope .meta.runId)"
 out="$(node ai/skills/universal/retro/assets/dev-flow-stats.mjs --repo o/r --run "$run_id" --record-dir "$tmp/local-records" --trusted-actor-id 9001 --json)"
+echo "$out" | jq -e '.retained_record_findings_by_stage_finder == {integration:{human:1}}' >/dev/null || fail "receipted integration finder counts missing: $out"
 echo "$out" | jq -e '.rounds == [] and .integration_evidence == "not-measured" and (has("integration_passes") | not)' >/dev/null ||
     fail "integration envelope coordinates: harvester did not disclose integration as not measured from local evidence (never a count, never zero): $out"
 out_table="$(node ai/skills/universal/retro/assets/dev-flow-stats.mjs --repo o/r --run "$run_id" --record-dir "$tmp/local-records" --trusted-actor-id 9001)"
 grep -Fq 'integration: not measured from local evidence' <<<"$out_table" ||
     fail "integration envelope coordinates: the table renderer did not disclose integration as not measured: $out_table"
+
+echo "== retained-record remediation cap is distinct from the integration cap =="
+cap_fixture="$tmp/remediation-cap"
+mkdir -p "$cap_fixture/records" "$cap_fixture/repo"
+cp -R "$tmp/local-records/$run_id" "$cap_fixture/records/$run_id"
+cp agent-registry.json "$cap_fixture/repo/agent-registry.json"
+node - .devflow.toml "$cap_fixture/repo/.devflow.toml" "$cap_fixture/records/$run_id/policy.json" <<'NODE'
+const fs = require('node:fs'), assert = require('node:assert/strict')
+const [source, policyFile, retainedPolicy] = process.argv.slice(2)
+const policy = fs.readFileSync(source, 'utf8')
+const changed = policy.replace(/(\[rounds\.standard\][\s\S]*?remediation\s*=\s*)4/, (_, prefix) => prefix + '7')
+assert.notEqual(changed, policy)
+fs.writeFileSync(policyFile, changed)
+fs.writeFileSync(retainedPolicy, JSON.stringify({
+  rigor: { level: 'standard', source: 'fixture' },
+  rounds: { challenge: 3, review: 3, integration: 4, remediation: 7, min_rounds: 1 }
+}))
+NODE
+out="$(node ai/skills/universal/retro/assets/dev-flow-stats.mjs --repo o/r --run "$run_id" --record-dir "$cap_fixture/records" --repo-root "$cap_fixture/repo" --trusted-actor-id 9001 --json)"
+echo "$out" | jq -e '.remediation_cap == 7' >/dev/null || fail "retained remediation cap must be 7, not integration cap 4: $out"
+out_table="$(node ai/skills/universal/retro/assets/dev-flow-stats.mjs --repo o/r --run "$run_id" --record-dir "$cap_fixture/records" --repo-root "$cap_fixture/repo" --trusted-actor-id 9001)"
+grep -Fq 'remediation pushes: 0 / cap 7 (retained policy)' <<<"$out_table" || fail "retained remediation cap text missing: $out_table"
+# End review-r1 retained remediation cap regression.
+
+# Challenge r2: current-run schema-valid integrators count, including blocked.
+echo "== invalid retained integrator passes are excluded nonfatally with diagnostics =="
+integrator_file="$tmp/local-records/$run_id/passes/integration-r1.json"
+cp "$integrator_file" "$tmp/integration-r1-valid.json"
+for mutation in wrong-run object-findings; do
+    case "$mutation" in
+    wrong-run) jq '.run.run_id = "run-999-other"' "$tmp/integration-r1-valid.json" >"$integrator_file" ;;
+    object-findings) jq '.payload.findings = {"x":1}' "$tmp/integration-r1-valid.json" >"$integrator_file" ;;
+    esac
+    set +e
+    out="$(node ai/skills/universal/retro/assets/dev-flow-stats.mjs --repo o/r --run "$run_id" --record-dir "$tmp/local-records" --trusted-actor-id 9001 --json 2>&1)"
+    rc=$?
+    set -e
+    [ "$rc" -eq 0 ] || fail "$mutation integrator must be nonfatal, got $rc: $out"
+    echo "$out" | jq -e '
+      .retained_record_findings_by_stage_finder == {integration:{}} and
+      any(.trajectory_diagnostics[]; .pass == "integration-r1" and .level == "reject")
+    ' >/dev/null || fail "$mutation integrator counted or omitted diagnostic: $out"
+done
+echo "== a valid blocked integrator carrying findings is counted =="
+jq '.status = "blocked"' "$tmp/integration-r1-valid.json" >"$integrator_file"
+out="$(node ai/skills/universal/retro/assets/dev-flow-stats.mjs --repo o/r --run "$run_id" --record-dir "$tmp/local-records" --trusted-actor-id 9001 --json)"
+echo "$out" | jq -e '.retained_record_findings_by_stage_finder == {integration:{human:1}}' >/dev/null ||
+    fail "valid blocked integrator findings not counted: $out"
+cp "$tmp/integration-r1-valid.json" "$integrator_file"
+echo "== prototype-named integration finders remain numeric =="
+jq '.payload.findings[0].id = "integration-r1-constructor-1"' "$tmp/integration-r1-valid.json" >"$integrator_file"
+out="$(node ai/skills/universal/retro/assets/dev-flow-stats.mjs --repo o/r --run "$run_id" --record-dir "$tmp/local-records" --trusted-actor-id 9001 --json)"
+echo "$out" | jq -e '.retained_record_findings_by_stage_finder.integration.constructor == 1 and .findings_by_stage_finder_source == "retained-pass-files"' >/dev/null ||
+    fail "prototype-named integration finder or retained source lost: $out"
+cp "$tmp/integration-r1-valid.json" "$integrator_file"
+
+echo "== duplicate valid integrators for one round are all excluded nonfatally =="
+cp "$tmp/local-records/$run_id/run.json" "$tmp/pre-duplicate-run.json"
+cp "$integrator_file" "$tmp/local-records/$run_id/passes/integration-r1-copy.json"
+jq '.receipts += [{kind:"pass",file:"integration-r1-copy"}]' "$tmp/pre-duplicate-run.json" >"$tmp/local-records/$run_id/run.json"
+set +e
+out="$(node ai/skills/universal/retro/assets/dev-flow-stats.mjs --repo o/r --run "$run_id" --record-dir "$tmp/local-records" --trusted-actor-id 9001 --json 2>&1)"
+rc=$?
+set -e
+[ "$rc" -eq 0 ] || fail "duplicate integrators must be nonfatal: $rc: $out"
+echo "$out" | jq -e '
+  .retained_record_findings_by_stage_finder == {integration:{}} and
+  ([.trajectory_diagnostics[] | select(.level == "reject" and
+    (.reason | contains("duplicate integrator passes for integration round 1")) and
+    .passes == ["integration-r1", "integration-r1-copy"])] | length) == 1
+' >/dev/null || fail "duplicate integrators counted or diagnostic missing: $out"
+rm "$tmp/local-records/$run_id/passes/integration-r1-copy.json"
+cp "$tmp/pre-duplicate-run.json" "$tmp/local-records/$run_id/run.json"
+out="$(node ai/skills/universal/retro/assets/dev-flow-stats.mjs --repo o/r --run "$run_id" --record-dir "$tmp/local-records" --trusted-actor-id 9001 --json)"
+echo "$out" | jq -e '.retained_record_findings_by_stage_finder == {integration:{human:1}}' >/dev/null ||
+    fail "single integrator no longer counted: $out"
+# End challenge-r1 integrator exclusion regressions.
 
 echo "== a completed integration adjudication does not block harvesting real review evidence (harmon-devkit#1001 challenge round 5/7, fixed round 6/7) =="
 export DFSTATS_DB="$tmp/scenarios/review-and-integration-complete.json"
@@ -4849,7 +4948,7 @@ echo "== an integration-only run's unreceipted pass is still caught by the engin
 export DFSTATS_DB="$tmp/scenarios/integration-only-unreceipted.json"
 run_id="$(meta integration-only-unreceipted .meta.runId)"
 out="$(node ai/skills/universal/retro/assets/dev-flow-stats.mjs --repo o/r --run "$run_id" --record-dir "$tmp/local-records" --trusted-actor-id 9001 --json)"
-echo "$out" | jq -e '.unreceipted_pass_files == ["integration-r1"] and .rounds == []' >/dev/null ||
+echo "$out" | jq -e '.unreceipted_pass_files == ["integration-r1"] and .rounds == [] and .retained_record_findings_by_stage_finder == {integration:{}}' >/dev/null ||
     fail "integration-only unreceipted: expected the integrator pass to be reported unreceipted with no confidence rounds: $out"
 
 echo "== two authoritative issue bindings for one arbitrary run are indeterminate =="
@@ -5707,7 +5806,7 @@ import { renderTrajectory, renderTrajectoryTable } from './ai/skills/universal/r
 const round = (stage, n, commentId, findings, attributions) => ({
   stage, round: n, dest: 'issue', commentIds: [commentId],
   payload: {
-    passes: [{ payload: { findings } }],
+    passes: [{ payload: { findings, ...(n === 2 ? {slot: "secondary-finder"} : {finder: stage + "-finder"}) } }],
     ...(attributions === null ? {} : { findingAttributions: attributions })
   }
 });
@@ -5716,8 +5815,11 @@ const attribution = (id, provenance, status = 'verified') => ({
   id, provenance, provenance_status: status, fingerprint: 'new', fingerprint_status: 'verified'
 });
 const run = {
-  runId: 'run-779-two-stages', issueNumber: 779,
-  state: { initiated_by: 'human', stage_transitions: [], interventions: [], settlements: [] },
+  runId: 'run-779-two-stages', issueNumber: 779, remediationCap: 5,
+  state: { initiated_by: 'human', stage_transitions: [
+    {stage:'integration', entered_at:'2026-10-19T00:00:00Z'},
+    {stage:'integration', entered_at:'2026-10-19T00:01:00Z', remediation:{head:'a'.repeat(40), findings:['integration-r1-human-1']}}
+  ], interventions: [], settlements: [] },
   untrusted: [], forged: [],
   rounds: [
     round('challenge', 1, 1, [finding('c1', 'correctness'), finding('c2', 'correctness')],
@@ -5729,7 +5831,42 @@ const run = {
     round('review', 3, 5, [finding('r3', 'design')], null)
   ]
 };
+const prototypeCounts = renderTrajectory({
+  ...run,
+  rounds: ['challenge', 'review'].map(stage => ({
+    ...round(stage, 1, 1, [finding('prototype', 'correctness')], null),
+    payload: { passes: [{ payload: { finder: 'constructor', findings: [finding('prototype', 'correctness')] } }] }
+  }))
+});
+assert.deepEqual(prototypeCounts.findings_by_stage_finder, {
+  challenge: {constructor: 1}, review: {constructor: 1}
+});
+// Prompt fields must participate in chain verification, and stage counts
+// must be visible without changing the other-only success metric.
+const { CHAIN_FIELDS, entryDigest, verifyChain, computeIssueVerdict } = await import('./ai/skills/universal/retro/assets/dev-flow-stats.mjs');
+const prompts = ['approved', 'denied', 'approved'].map(decision => ({kind: 'prompt',
+  at: '2026-10-19T00:00:30Z', note: 'approval request', decision, command: 'task verify', answered_by: 'orchestrator'}));
+const promptTrajectory = renderTrajectory({...run, state: {...run.state, interventions: prompts}});
+assert.deepEqual(promptTrajectory.answered_prompts_by_stage, {integration: 3});
+const verdict = computeIssueVerdict([{...run, state: {...run.state, outcome: 'ready-for-review', interventions: prompts}}], {});
+assert.equal(verdict.interventions, 0);
+assert.equal(verdict.asked, 0);
+assert.equal(verdict.success, true); // Prompts are reported, but the established cohort definition stays unchanged.
+assert.ok(renderTrajectoryTable(promptTrajectory).includes('answered prompts by stage: {"integration":3}'));
+const entry = {...prompts[0], seq: 0, prev_digest: 'genesis'};
+entry.digest = entryDigest(prompts[0], 'genesis');
+assert.equal(verifyChain([entry], CHAIN_FIELDS.interventions).ok, true);
+for (const [key, value] of Object.entries({decision: 'denied', command: 'other command', answered_by: 'human'})) {
+  assert.equal(verifyChain([{...entry, [key]: value}], CHAIN_FIELDS.interventions).ok, false, key);
+}
 const t = renderTrajectory(run);
+assert.equal(t.retained_record_findings_by_stage_finder, null);
+assert.equal(t.remediation_pushes.length, 1);
+assert.equal(t.remediation_pushes[0].head, 'a'.repeat(40));
+assert.deepEqual(t.findings_by_stage_finder, {
+  challenge: {'challenge-finder':2,'secondary-finder':2},
+  review: {'review-finder':2,'secondary-finder':1}
+});
 assert.deepEqual(t.findings_by_stage_class_and_provenance, {
   challenge: { 'correctness/original': 3, 'design/round:1': 1 },
   review: { 'correctness/original': 1 }
@@ -5739,6 +5876,7 @@ assert.deepEqual(t.findings_by_class_and_provenance, {
 });
 assert.deepEqual(t.provenance_unavailable_rounds, [{stage:'review',round:2}, {stage:'review',round:3}]);
 const table = renderTrajectoryTable(t);
+assert.ok(table.includes('remediation pushes: 1 / cap 5 (retained policy)'));
 assert.ok(table.includes('findings_by_stage_class_and_provenance:\n  challenge:\n    correctness/original: 3\n    design/round:1: 1\n  review:\n    correctness/original: 1'));
 assert.ok(table.includes('findings by class/provenance:\n  correctness/original: 4'));
 assert.ok(!table.includes('security/round:1'));
