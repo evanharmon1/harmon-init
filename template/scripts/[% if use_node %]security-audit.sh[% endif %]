@@ -186,7 +186,7 @@ else
         echo "security-audit: allowing $id (unpatched, dev-only, within expiry)" >&2
     done < <(jq -r '.[]' "$WORK/ids.json")
     # renovate: datasource=pypi depName=ruamel.yaml
-    YAML_VERSION=0.18.16
+    YAML_VERSION=0.19.1
     uv run --no-project --with "ruamel.yaml==$YAML_VERSION" python - "$WORK/project/pnpm-workspace.yaml" "$WORK/ids.json" <<'PYTHON'
 import json
 import sys
