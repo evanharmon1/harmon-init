@@ -2224,6 +2224,22 @@ grep -Fq 'behind_by == 0' AGENTS.md ||
 grep -Fqi 'never merge' AGENTS.md ||
     err "AGENTS lost the human-only merge boundary"
 
+# Shared carry permission and its proof must survive without Codex cloud review.
+# In particular, minimal enables Greptile while disabling Codex cloud review.
+for carry_text in \
+    'A byte-identical PR diff, proved by the canonical diff digest, owes nothing.' \
+    'The shared proof applies to every reviewer.' \
+    'computed from immutable commit SHAs in the local' \
+    'no textconv or external diff driver, no rename' \
+    'The identity is deliberately **not** `git patch-id`' \
+    'history overridden by replace refs or grafts' \
+    '**CI re-runs on the new head in full,' \
+    'reviewer actually read, a finding landing there after the carry still blocks,' \
+    'And the proof is **re-derived** each time'; do
+    grep -Fq "$carry_text" AGENTS.md ||
+        err "AGENTS missing shared carry permission or safety proof: $carry_text"
+done
+
 # The headless implement workflow opens the draft and stops there: it cannot
 # evaluate the live handoff check and merge queue. Assert the prohibition is stated
 # rather than that the string is absent — the prohibition names the command.

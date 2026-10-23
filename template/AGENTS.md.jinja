@@ -260,54 +260,18 @@ success. Immediately before accepting a result or promoting, re-check the
 **cycle** as well as `headRefOid`: a same-head finding can land after a clean
 one. § "Second-Model Review" carries the trigger cadence and both procedures.
 
-**One carve-out, and it is proved rather than judged** (evanharmon1/harmon-init#752). A head that
-advanced by a base catch-up merge can carry the change forward
-byte-for-byte, and a fresh cycle would re-attest the same bytes at the cost of
-a full reviewer window. This is the existing Codex checker's base-catch-up
-proof; the policy for every reviewer is under § "Reviewers and carry". Where the PR's three-dot diff (`base...head`) has the
-same identity at the previously reviewed head and at this one — a digest of
-that diff's own text, computed from immutable commit SHAs in the local
-checkout, never reconstructed from the API, and generated under fixed,
-non-normalizing options (no textconv or external diff driver, no rename
-detection, submodule changes never ignored, full object IDs and gitlinks, and
-pinned context, algorithm, prefixes, and file order) so no checkout's
-configuration can hide a change or make two different diffs digest alike; this is the *canonical diff digest* the guides and
-`.devflow.toml` refer to — the prior **clean** verdict
-carries to this head and no cycle is triggered. Equality of that one value is
-the whole argument: the reviewed artifact is the diff, and two heads whose
-diffs are identical are the same change.
-
-The identity is deliberately **not** `git patch-id`, which ignores hunk
-offsets: a reviewed edit relocated between two identically-surrounded regions
-— what a conflict resolution can produce — yields two different trees and one
-patch id, so a verdict would carry across a change that really moved. Digesting
-the diff text keeps the `@@` headers that distinguish them.
-
-Never assume byte identity when the proof cannot be established — for
-example, a base the verdict was never corroborated against, missing commits,
-history overridden by replace refs or grafts, or a verdict with unsettled
-findings. A changed diff follows the reviewer's offsets-only or real-change
-rule (§ "Reviewers and carry"); it does not automatically require a full review.
-
-Three things never move with the carry. **CI re-runs on the new head in full,
-always**, because what a base merge can change is everything *outside* the diff
-and that is CI's to catch. **The review cycle itself does not move**: a carry
-records that an existing cycle's verdict also attests a later head, and changes
-nothing else — so the ordinary evidence scan keeps running against the commit a
-reviewer actually read, a finding landing there after the carry still blocks,
-and it is still answered the ordinary way. What a carry removes is the second
-*review*, never the second *look*. And the proof is **re-derived** each time
-rather than read back from the record, so a resumed session trusts nothing a
-previous process wrote. Like the exemption, this belongs to the integration
-stage and takes effect only where that stage implements it. Every surface that
-drives or checks the cycle has to carry it, and all of them arrive through the
-skills pin: the checker and handoff check under `.claude/skills/`, the
-integrator agent under `.claude/agents/` that drives the cycle (without it the
-loop never calls `carry` and re-reviews every head), and the `dev-flow-support`
-package vendored beside them, whose result schemas and validator the gate uses
-(so they accept a result naming a reviewed commit that is not the gated head).
-harmon-devkit `v0.47.0` is the first release that carries all of them. At an
-older pin, every head is reviewed on its own and no verdict is carried.
+The Codex checker implements byte-identical carry for a base catch-up merge
+(evanharmon1/harmon-init#752), using the shared proof under § "Reviewers and carry".
+This belongs to the integration stage and takes effect only where that stage
+implements it. Every surface that drives or checks the cycle has to carry it,
+and all of them arrive through the skills pin: the checker and handoff check
+under `.claude/skills/`, the integrator agent under `.claude/agents/` that drives
+the cycle (without it the loop never calls `carry` and re-reviews every head),
+and the `dev-flow-support` package vendored beside them, whose result schemas
+and validator the gate uses (so they accept a result naming a reviewed commit
+that is not the gated head). harmon-devkit `v0.47.0` is the first release that
+carries all of them. At an older pin, every head is reviewed on its own and no
+verdict is carried.
 [% endif %]
 
 ### Handoff check
@@ -391,11 +355,42 @@ window elapsed. Apply each reviewer's carry rule:
   reviewer has one, and nothing otherwise.
 - A real change owes a fresh round within each reviewer's budget.
 
-[% if use_codex_cloud_review %]
-The Codex identity proof and vendored-capability boundary above implement its
-byte-identical carry; they never waive CI on the new head.
+The shared proof applies to every reviewer. Where the PR's three-dot diff (`base...head`) has the
+same identity at the previously reviewed head and at this one — a digest of
+that diff's own text, computed from immutable commit SHAs in the local
+checkout, never reconstructed from the API, and generated under fixed,
+non-normalizing options (no textconv or external diff driver, no rename
+detection, submodule changes never ignored, full object IDs and gitlinks, and
+pinned context, algorithm, prefixes, and file order) so no checkout's
+configuration can hide a change or make two different diffs digest alike; this is the *canonical diff digest* the guides and
+`.devflow.toml` refer to — the prior **clean** verdict
+carries to this head and no cycle is triggered. Equality of that one value is
+the whole argument: the reviewed artifact is the diff, and two heads whose
+diffs are identical are the same change.
 
-[% endif %]
+The identity is deliberately **not** `git patch-id`, which ignores hunk
+offsets: a reviewed edit relocated between two identically-surrounded regions
+— what a conflict resolution can produce — yields two different trees and one
+patch id, so a verdict would carry across a change that really moved. Digesting
+the diff text keeps the `@@` headers that distinguish them.
+
+Never assume byte identity when the proof cannot be established — for
+example, a base the verdict was never corroborated against, missing commits,
+history overridden by replace refs or grafts, or a verdict with unsettled
+findings. A changed diff follows the reviewer's offsets-only or real-change
+rule (§ "Reviewers and carry"); it does not automatically require a full review.
+
+Three things never move with the carry. **CI re-runs on the new head in full,
+always**, because what a base merge can change is everything *outside* the diff
+and that is CI's to catch. **The review cycle itself does not move**: a carry
+records that an existing cycle's verdict also attests a later head, and changes
+nothing else — so the ordinary evidence scan keeps running against the commit a
+reviewer actually read, a finding landing there after the carry still blocks,
+and it is still answered the ordinary way. What a carry removes is the second
+*review*, never the second *look*. And the proof is **re-derived** each time
+rather than read back from the record, so a resumed session trusts nothing a
+previous process wrote.
+
 ### Flake policy
 
 A failure in a file the PR does not touch may be re-run once; record the re-run.
