@@ -2046,9 +2046,8 @@ view**). Keep the saved set small; **slice the one board** (below) for the rest.
   and sorts by `Priority`, then `Priority (AI)`. On a personal account both
   priority families are labels and share the single Labels column, where both
   priority labels appear, so it shows that column and is read by effective
-  priority (a view cannot sort by a label). It lists what awaits the
-  maintainer: `needs-review` marks a requested review (agent or human) that
-  is not yet complete. It is cleared when review completes or work returns to
+  priority (a view cannot sort by a label). It lists requested reviews
+  (agent or human) that are not yet complete. It is cleared when review completes or work returns to
   fix rounds, when the issue closes, and when the delivery PR ends (merged or
   closed unmerged). The close-event workflow calls the vendored cleanup helper
   independently of claim release; an absent helper is a runtime no-op.
