@@ -199,7 +199,9 @@ while IFS= read -r issue; do
     rc=0
     if [ "$action" = clear-needs-review ]; then
         if [ "$event" = merged ]; then
-            # Closing references get their cleanup from the issue-close job.
+            # Both closing keywords and Refs can leave issues open (notably
+            # on a non-default-base merge). The issue-close job covers only
+            # issues GitHub actually closes; clear every still-open candidate.
             issue_json="$(gh api "repos/$GH_REPO/issues/$issue")" || rc=$?
             if [ "$rc" -ne 0 ]; then
                 echo "issue #$issue: state lookup failed with exit $rc — continuing" >&2

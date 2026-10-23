@@ -194,14 +194,14 @@ jobs:
         run: ./scripts/claim-release-merged.sh
 
   on-pr-merged:
-    # Default-base merges only: a PR merged into a staging or feature branch
-    # has not delivered its work unit (claim-lifecycle.md "Accepted gaps"
-    # preserves claims there), so releasing on it would strip active work.
+    # Any same-repository merge ends the PR's agent review work. Clear the
+    # review marker on still-open delivery issues regardless of the base.
+    # Claim release remains default-base only: staging/feature merges keep
+    # their active-work claim (claim-lifecycle.md "Accepted gaps").
     if: >-
       github.event_name == 'pull_request' &&
       github.event.pull_request.merged == true &&
-      github.event.pull_request.head.repo.full_name == github.repository &&
-      github.event.pull_request.base.ref == github.event.repository.default_branch
+      github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ${{ fromJSON(vars.ISOLATED_RUNS_ON || '"ubuntu-latest"') }}
     timeout-minutes: 5
     steps:
@@ -210,6 +210,7 @@ jobs:
           persist-credentials: false
           ref: ${{ github.event.repository.default_branch }}
       - name: Release claims attributable to the merged PR
+        if: github.event.pull_request.base.ref == github.event.repository.default_branch
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}

@@ -164,9 +164,9 @@
           "value": "needs-review",
           "description": "PR ready for human review; out of the agent queue",
           "writers": ["human", "agent"],
-          "writer_note": "agents or humans requesting a review",
+          "writer_note": "agents tracking review work they still owe",
           "readers": "humans, the review list; the agent queue, which excludes it",
-          "lifecycle_note": "added when a review is requested and not yet complete; removed when review completes or work returns to fix rounds, when the issue closes, or when the delivery PR ends (merged or closed unmerged)"
+          "lifecycle_note": "added when an agent owes review work on the issue's delivery PR; removed when it owes none (handoff to a human for review or merge), when review pulls work back into fix rounds (the claim takes over), when the issue closes, or when the delivery PR ends (merged into any branch or closed unmerged)"
         }
       ]
     },
