@@ -162,7 +162,7 @@
         },
         {
           "value": "needs-review",
-          "description": "PR ready for human review; out of the agent queue",
+          "description": "An agent still owes review work on the delivery PR",
           "writers": ["human", "agent"],
           "writer_note": "agents tracking review work they still owe",
           "readers": "humans, the review list; the agent queue, which excludes it",

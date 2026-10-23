@@ -64,15 +64,11 @@ if [ "$event" = closed-unmerged ]; then
         echo "PR #$PR_NUMBER is $pr_state again — the close event is stale"
         exit 0
     fi
-    # Keep GitHub's same-repository closing links, including UI-only links,
-    # and union them with the SAME body parser used for merged deliveries.
-    gh pr view "$PR_NUMBER" --repo "$GH_REPO" --json closingIssuesReferences \
-        --jq '.closingIssuesReferences[]
-              | select(.url | startswith("https://github.com/" + env.GH_REPO + "/"))
-              | .number' >>"$issues_file"
-elif [ "$action" = clear-needs-review ]; then
-    # UI-only links also remain open after non-default-base merges. A failed
-    # lookup must fail the job, while still cleaning body-derived candidates.
+fi
+if [ "$event" = closed-unmerged ] || [ "$action" = clear-needs-review ]; then
+    # Keep same-repository closing links, including UI-only links that remain
+    # open after non-default-base merges. A failed lookup must fail the job,
+    # while still processing body-derived candidates through the shared parser.
     rc=0
     gh pr view "$PR_NUMBER" --repo "$GH_REPO" --json closingIssuesReferences \
         --jq '.closingIssuesReferences[]

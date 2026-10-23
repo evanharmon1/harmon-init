@@ -409,7 +409,7 @@ STUB
                     fi
                 done
             done
-            if [ "$job" = on-pr-merged ] && [ -f "$helper" ]; then
+            if [ "$job" != on-issue-closed ] && [ -f "$helper" ]; then
                 # Lookup failure is a job failure, but must not starve known
                 # body references. The loop must preserve the query's rc.
                 export PR_BODY='Refs #43'
@@ -417,11 +417,11 @@ STUB
                 printf 'needs-review\n' >"$fixture/labels"
                 lookup_rc=0
                 (cd "$fixture" && GH_CLOSING_FAIL_RC=9 bash clear.sh) >"$tmp/out" 2>&1 || lookup_rc=$?
-                [ "$lookup_rc" -eq 9 ] || fail "closing-link lookup failure exited $lookup_rc, expected 9"
+                [ "$lookup_rc" -eq 9 ] || fail "$job closing-link lookup failure exited $lookup_rc, expected 9"
                 grep -Fq 'closingIssuesReferences lookup failed with exit 9' "$tmp/out" ||
-                    fail 'closing-link lookup failure was not reported'
+                    fail "$job closing-link lookup failure was not reported"
                 [ "$(cat "$fixture/writes")" = 'issue edit 43 --repo owner/repo --remove-label needs-review' ] ||
-                    fail 'closing-link lookup failure starved the body reference'
+                    fail "$job closing-link lookup failure starved the body reference"
             fi
         done
     done
