@@ -3291,6 +3291,14 @@ fi
 # unreachable, or reached transitively through an aggregate, and only the dry
 # run tells the two apart.
 if [ -f prettier.config.cjs ]; then # use_node profiles (web-astro / web-app)
+    python3 - <<'PYMULTICORE' || err "build-test multicore routing missing"
+import pathlib
+import re
+text = pathlib.Path(".github/workflows/build.yml").read_text()
+job = re.search(r"^  build-test:\n(.*?)(?=^  [A-Za-z_][\w-]*:|\Z)", text, re.M | re.S)
+assert job, "missing build-test job"
+assert "runs-on: ${{ fromJSON(vars.MULTICORE_RUNS_ON || vars.CI_RUNS_ON || '" in job[1]
+PYMULTICORE
     [ -x scripts/e2e-run.sh ] || err "scripts/e2e-run.sh missing or not executable (use_node profile)"
     # The skip is ONLY for a missing Playwright config. Widening it to swallow
     # the unconfigured env guard would turn a fail-closed security control into
