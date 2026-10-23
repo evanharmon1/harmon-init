@@ -8,6 +8,19 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [5.12.0](https://github.com/evanharmon1/harmon-init/compare/v5.11.0...v5.12.0) (2026-10-23)
+
+
+### Features
+
+* **ci:** route core-scaling jobs to a MULTICORE_RUNS_ON class ([#1783](https://github.com/evanharmon1/harmon-init/issues/1783)) ([a8e1980](https://github.com/evanharmon1/harmon-init/commit/a8e19804433e321fe93da3441aa1d60aa4dd5fcb))
+
+
+### Bug Fixes
+
+* **devcontainer:** update shared image to df47298d ([#1779](https://github.com/evanharmon1/harmon-init/issues/1779)) ([09a7b4c](https://github.com/evanharmon1/harmon-init/commit/09a7b4c075fdc7ab2fa0a7f76dc4c91f9aa7c917))
+* **template:** sync harmon-devkit skills to v0.60.0 ([#1788](https://github.com/evanharmon1/harmon-init/issues/1788)) ([8d0401e](https://github.com/evanharmon1/harmon-init/commit/8d0401e1b09244390b2d2074d26dd0f6ff54ccc4))
+
 ## [5.11.0](https://github.com/evanharmon1/harmon-init/compare/v5.10.0...v5.11.0) (2026-10-22)
 
 
