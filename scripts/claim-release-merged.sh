@@ -56,6 +56,7 @@ tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
 issues_file="$tmp/issues"
 : >"$issues_file"
+job_rc=0
 
 if [ "$event" = closed-unmerged ]; then
     pr_state="$(gh pr view "$PR_NUMBER" --repo "$GH_REPO" --json state --jq .state)"
@@ -69,12 +70,24 @@ if [ "$event" = closed-unmerged ]; then
         --jq '.closingIssuesReferences[]
               | select(.url | startswith("https://github.com/" + env.GH_REPO + "/"))
               | .number' >>"$issues_file"
+elif [ "$action" = clear-needs-review ]; then
+    # UI-only links also remain open after non-default-base merges. A failed
+    # lookup must fail the job, while still cleaning body-derived candidates.
+    rc=0
+    gh pr view "$PR_NUMBER" --repo "$GH_REPO" --json closingIssuesReferences \
+        --jq '.closingIssuesReferences[]
+              | select(.url | startswith("https://github.com/" + env.GH_REPO + "/"))
+              | .number' >>"$issues_file" || rc=$?
+    if [ "$rc" -ne 0 ]; then
+        echo "PR #$PR_NUMBER: closingIssuesReferences lookup failed with exit $rc — continuing with body references" >&2
+        job_rc="$rc"
+    fi
 fi
 
-# For merged events, no live closingIssuesReferences query: it reads current
-# PR state rather than the merge event, and it is redundant here — closing keywords in the
-# body are delivery keywords below, and an issue linked only through the UI
-# closes at merge, so the issues-closed job releases its claim.
+# Merged claim release stays body-only: UI-linked issues that GitHub closes
+# are released by the issues-closed job. Merged cleanup reads closing links
+# too, because a non-default-base merge closes nothing. Union those links
+# with the body parser below, then clean only candidates that remain open.
 # Treat PR-body text as data.  A candidate is a delivery reference — a
 # reference keyword (Closes/Fixes/Resolves/Refs and their variants)
 # immediately before a #N token or its repository-qualified same-repo form
@@ -185,7 +198,6 @@ write_audit() {
 # silently.
 max_candidates="${CLAIM_RELEASE_MAX_CANDIDATES:-50}"
 total_candidates="$(sort -nu "$issues_file" | grep -c . || true)"
-job_rc=0
 if [ "$total_candidates" -gt "$max_candidates" ]; then
     dropped="$(sort -nu "$issues_file" | tail -n +"$((max_candidates + 1))" | tr '\n' ' ')"
     echo "truncating: $total_candidates delivery references exceed the $max_candidates-candidate cap; unprocessed: $dropped" >&2

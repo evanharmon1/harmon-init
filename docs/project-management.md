@@ -1952,6 +1952,8 @@ view**). Keep the saved set small; **slice the one board** (below) for the rest.
   agent still owes review triggers, responses, fixes, or adjudications. The
   marker clears when the agent owes none, including handoff to a human for
   review or merge, or when work returns to fix rounds and the claim takes over.
+  Until the vendored `integrate` skill picks up harmon-devkit#1608, its
+  ready-for-review handoff still adds `needs-review`; remove it by hand there.
   It also clears when the issue closes or the delivery PR ends (merged into
   any branch or closed unmerged). A PR waiting on a human uses `merge-ready`
   or `parked`, not `needs-review`; #1787 provisions those labels. The close-event

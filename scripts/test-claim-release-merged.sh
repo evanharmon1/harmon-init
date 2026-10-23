@@ -286,6 +286,10 @@ case "$*" in
 'issue view '*'--json state'*) echo "${GH_LIVE_ISSUE_STATE:-CLOSED}" ;;
 *'--json state'*) echo "${GH_PR_STATE:-CLOSED}" ;;
 *'--json closingIssuesReferences'*)
+    if [ "${GH_CLOSING_FAIL_RC:-0}" -ne 0 ]; then
+        echo 'closing-links lookup failed (stub)' >&2
+        exit "$GH_CLOSING_FAIL_RC"
+    fi
     printf '%s\n' "${GH_LINKS:-[]}" | jq -r --arg repo "$GH_REPO" \
         '.[] | select(.url | startswith("https://github.com/" + $repo + "/")) | .number'
     ;;
@@ -331,7 +335,8 @@ STUB
                     fail "$workflow claim release must remain default-base only"
                 bases='main staging'
             fi
-            for body in 'Closes #42' 'Refs #42'; do
+            for body in 'Closes #42' 'Refs #42' 'UI link only'; do
+                [ "$body" != 'UI link only' ] || [ "$job" = on-pr-merged ] || continue
                 for base in $bases; do
                     export GH_REPO=owner/repo PR_NUMBER=1067 ISSUE_NUMBER=42
                     export CLOSED_AT=2026-10-23T11:00:00Z MERGED_AT=2026-10-23T11:00:00Z
@@ -344,7 +349,7 @@ STUB
                     # The Refs case has no API closing links: it MUST use the
                     # shared body parser; include a hostile cross-repo link too.
                     export GH_LINKS='[{"number":99,"url":"https://github.com/other/repo/issues/99"}]'
-                    if [ "$body" = 'Closes #42' ]; then
+                    if [ "$body" = 'Closes #42' ] || [ "$body" = 'UI link only' ]; then
                         export GH_LINKS='[{"number":42,"url":"https://github.com/owner/repo/issues/42"},{"number":99,"url":"https://github.com/other/repo/issues/99"}]'
                         if [ "$job" = on-pr-closed-unmerged ]; then
                             # API closing links must work without a body match.
@@ -363,10 +368,21 @@ STUB
                             [ -s "$fixture/release.sh" ] || fail "$job missing release wiring"
                             (cd "$fixture" && CLAIM_RELEASE_ACTION=release RELEASE_NO_CLAIM_ISSUE=42 bash release.sh) >"$tmp/out" 2>&1 ||
                                 fail "$job release failed"
-                            grep -Fq -- '--issue 42' "$fixture/releases" || fail "$job $body missed claim release"
+                            if [ "$body" = 'UI link only' ]; then
+                                [ ! -s "$fixture/releases" ] || fail 'merged claim release added a UI-only issue'
+                            else
+                                grep -Fq -- '--issue 42' "$fixture/releases" || fail "$job $body missed claim release"
+                            fi
                             if grep -Fq -- '--issue 99' "$fixture/releases"; then fail 'cross-repo claim released'; fi
                         fi
                         if [ "$job" = on-pr-merged ] && [ "$base" = staging ]; then
+                            if [ "$body" = 'UI link only' ]; then
+                                # Drive the same UI-only event through release
+                                # mode directly: its candidates stay body-only,
+                                # independently of the workflow base guard.
+                                (cd "$fixture" && CLAIM_RELEASE_ACTION=release bash scripts/claim-release-merged.sh) >"$tmp/out" 2>&1 ||
+                                    fail 'UI-only event failed in merged release mode'
+                            fi
                             [ ! -s "$fixture/releases" ] || fail "$body non-default-base merge released a claim"
                         fi
                         (cd "$fixture" && bash clear.sh) >"$tmp/out" 2>&1 || fail "$job cleanup failed"
@@ -393,6 +409,20 @@ STUB
                     fi
                 done
             done
+            if [ "$job" = on-pr-merged ] && [ -f "$helper" ]; then
+                # Lookup failure is a job failure, but must not starve known
+                # body references. The loop must preserve the query's rc.
+                export PR_BODY='Refs #43'
+                : >"$fixture/writes"
+                printf 'needs-review\n' >"$fixture/labels"
+                lookup_rc=0
+                (cd "$fixture" && GH_CLOSING_FAIL_RC=9 bash clear.sh) >"$tmp/out" 2>&1 || lookup_rc=$?
+                [ "$lookup_rc" -eq 9 ] || fail "closing-link lookup failure exited $lookup_rc, expected 9"
+                grep -Fq 'closingIssuesReferences lookup failed with exit 9' "$tmp/out" ||
+                    fail 'closing-link lookup failure was not reported'
+                [ "$(cat "$fixture/writes")" = 'issue edit 43 --repo owner/repo --remove-label needs-review' ] ||
+                    fail 'closing-link lookup failure starved the body reference'
+            fi
         done
     done
     unset CLAIM_RELEASE_ACTION CLAIM_RELEASE_EVENT
