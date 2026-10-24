@@ -127,6 +127,20 @@ jobs:
       - name: Devcontainer permissions
         run: task test:devcontainer:permissions
 
+  session-cleanup-stress:
+    runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: ./.github/actions/setup
+      - name: Repeat cleanup regression
+        run: task stress:session-cleanup
+
   security:
     # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
     # default; set it to a JSON runner spec to override without a commit.
@@ -217,7 +231,7 @@ jobs:
 
   verify:
     if: always()
-    needs: [changes, check, repo-guards, devcontainer-permissions, template-test]
+    needs: [changes, check, repo-guards, devcontainer-permissions, template-test, session-cleanup-stress]
     # Runner switch: CI_RUNS_ON repo/org variable unset -> the rendered
     # default; set it to a JSON runner spec to override without a commit.
     runs-on: ${{ fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
