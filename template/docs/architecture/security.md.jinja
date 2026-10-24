@@ -250,8 +250,11 @@ The PR audit reacts to the world changing, not to your diff, so a newly
 published transitive `high` turns `security` red on every open PR at once. The
 remediation is mechanical, and the template does it for you:
 
-- **`task security:audit:fix`** runs `pnpm audit --fix --audit-level=high` only
-  to learn which patched version each advisory needs, restores
+- **`task security:audit:fix`** runs `pnpm audit --fix=override --audit-level=high`
+  on pnpm 11/12 and `pnpm audit --fix --audit-level=high` on pnpm 10, only
+  to learn which patched version each advisory needs. An unsupported or
+  unparseable pnpm version (supported majors: 10–12) stops it with exit 1
+  before it audits or edits anything. It restores
   `pnpm-workspace.yaml` byte-for-byte, and writes its own floor for each
   one below the template-owned block's end marker: `pkg@<major>: '>=x.y.z
   <next-major'` (0.x: `pkg@0.m: '>=0.m.p <0.(m+1)'`) with a comment naming the
