@@ -1270,7 +1270,7 @@ regenerates them and fails on any difference, so they cannot drift from what
 provisioning actually creates. Model-level labels are created on demand rather
 than seeded.[% if use_foreman %] A `foreman:` selector is provisioned only for an adapter that
 exists and is production-dispatchable in the pinned Foreman release: a selector
-with no adapter behind it is a false capability that can strand armed work.[% endif %]
+with no adapter behind it is a false capability that can strand armed work.[% endif +%]
 [% if not use_foreman %]
 
 **Foreman is not enabled in this repository.** The harness table below still
