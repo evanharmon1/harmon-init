@@ -80,6 +80,10 @@ outranked() {
     return 1
 }
 case "$*" in
+"--version")
+    if [ -f "$STUB_DIR/version-warning" ]; then cat "$STUB_DIR/version-warning" >&2; fi
+    cat "$STUB_DIR/version"
+    ;;
 "audit --audit-level=high --json")
     if [ -f "$STUB_DIR/cleared-by" ] && grep -qF -f "$STUB_DIR/cleared-by" pnpm-workspace.yaml && ! outranked &&
         { [ ! -f "$STUB_DIR/needs-relock" ] || grep -qx '# relocked' pnpm-lock.yaml; }; then
@@ -93,7 +97,16 @@ case "$*" in
     fi
     exit 1
     ;;
-"audit --fix --audit-level=high")
+"audit --fix --audit-level=high" | "audit --fix=override --audit-level=high")
+    major="$(cut -d. -f1 "$STUB_DIR/version")"
+    if [ "$major" -ge 11 ] && [ "$2" = --fix ]; then
+        echo '[ERR_PNPM_INVALID_FIX_OPTION] Invalid value for --fix: --audit-level=high. Should be one of "override" or "update"' >&2
+        exit 1
+    fi
+    if [ "$major" -eq 10 ] && [ "$2" != --fix ]; then
+        echo 'pnpm 10 stub: --fix must be a boolean' >&2
+        exit 1
+    fi
     cat "$STUB_DIR/fixed.yaml" >pnpm-workspace.yaml
     echo "overrides were added to pnpm-workspace.yaml"
     ;;
@@ -183,6 +196,7 @@ $BLOCK_END
 
 # pnpm 11 defaults minimumReleaseAge to 1440
 EOF
+    echo 11.10.0 >"$_np/.stub/version"
     : >"$_np/.stub/calls"
     echo "$_np"
 }
@@ -274,6 +288,46 @@ expect_refused() {
     [ "$(snapshot_of "$_er")" = "$_er_before" ] || fail "$_er_label: a refused run changed bytes"
     grep -q -- "$_er_pat" "$_er/out.log" || fail "$_er_label: refusal does not say '$_er_pat'"
 }
+
+# Version agreement uses the running pnpm, not a template-owned version pin.
+for version_case in 10 11 12 10-warning 11-warning 12-warning; do
+    major="${version_case%%-*}"
+    p="$(new_project "pnpm-$version_case")"
+    if [ "$version_case" != "$major" ]; then
+        echo 'WARN: failed to replace env in config: ${NPM_TOKEN}' >"$p/.stub/version-warning"
+    fi
+    echo "$major.10.0" >"$p/.stub/version"
+    advisory GHSA-test-0000-0001 lodash high '<4.17.21' 4.17.20 lodash |
+        jq '{advisories: .}' >"$p/.stub/audit.json"
+    fix_writes "$p" '  lodash@<4.17.21: ^4.17.21'
+    echo "lodash@4: '>=4.17.21 <5'" >"$p/.stub/cleared-by"
+    run_fix "$p" >"$p/out.log" 2>&1 || {
+        cat "$p/out.log"
+        fail "pnpm $version_case: fix exited non-zero"
+    }
+    mode=--fix=override
+    [ "$major" -ne 10 ] || mode=--fix
+    grep -qx "pnpm audit $mode --audit-level=high" "$p/.stub/calls" ||
+        fail "pnpm $major: wrong fix mode or severity filter"
+    [ "$(grep -cx 'pnpm --version' "$p/.stub/calls")" -eq 1 ] || fail "pnpm $major: version not read exactly once"
+    expect_overrides "$p" "pnpm $major" '{"source-map-js@1": ">=1.2.2 <2", "left-pad@1": ">=1.3.0 <2", "lodash@4": ">=4.17.21 <5"}'
+    if [ "$version_case" != "$major" ]; then
+        grep -qF -f "$p/.stub/version-warning" "$p/out.log" || fail "pnpm $version_case: stderr warning lost"
+    fi
+    pass "pnpm $version_case: compatible fix mode applies a bounded floor"
+done
+for version in 9.15.0 13.0.0 garbage 11.bad; do
+    p="$(new_project "unsupported-$version")"
+    echo "$version" >"$p/.stub/version"
+    before="$(snapshot_of "$p")"
+    rc=0
+    run_fix "$p" >"$p/out.log" 2>&1 || rc=$?
+    [ "$rc" -ne 0 ] || fail "pnpm $version: unsupported version succeeded"
+    grep -qF "pnpm version '$version'" "$p/out.log" || fail "pnpm $version: diagnostic omits version"
+    [ "$(snapshot_of "$p")" = "$before" ] || fail "pnpm $version: changed bytes"
+    ! grep -q 'pnpm audit\|pnpm install' "$p/.stub/calls" || fail "pnpm $version: audited or installed before refusal"
+    pass "pnpm $version: fails closed before auditing or editing"
+done
 
 # ── 1. bounded floors below the end marker, merged per major ─────────
 p="$(new_project bounded)"

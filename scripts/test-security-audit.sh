@@ -13,6 +13,7 @@ cat >"$TMP/bin/pnpm" <<'STUB'
 set -euo pipefail
 printf '%s\n' "$*" >>"$STUB/calls"
 case "$*" in
+'--version') printf '%s.0.0\n' "${STUB_PNPM_MAJOR:?STUB_PNPM_MAJOR must be set for the pnpm version probe}" ;;
 'audit --audit-level=high --json') cat "$STUB/full.json"; exit 1 ;;
 'audit --audit-level=high --prod --json') cat "$STUB/prod.json"; exit 1 ;;
 'audit --audit-level=high --ignore GHSA-vfj7-8cjw-p6xm')
