@@ -3320,6 +3320,7 @@ note = re.search(r"\*\*Public update note:\*\*(.*?)(?=\n\n|\Z)", text, re.S)
 assert row, "missing multicore row"
 assert note, "missing Public update note"
 assert "re-run `task setup:github`" in note[1], "missing public setup instruction"
+assert "\n`task status` reports the missing override." in note[1], "missing newline before public override status"
 for section in (row[0], note[1]):
     assert ("`build-test`" in section) == pathlib.Path("prettier.config.cjs").is_file(), "build-test documentation does not match the profile"
 PYMULTICOREDOC
