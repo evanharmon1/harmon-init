@@ -669,12 +669,14 @@ cat >"${semgrep_bin}/uvx" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$@" >"${SEMGREP_ARGS:?}"
 if [ -n "${SEMGREP_ENV:-}" ]; then
-    printf 'UV_TOOL_DIR=%s\nUV_CACHE_DIR=%s\n' "${UV_TOOL_DIR:-}" "${UV_CACHE_DIR:-}" >"$SEMGREP_ENV"
+    printf 'UV_TOOL_DIR=%s\nUV_CACHE_DIR=%s\nUV_PYTHON_INSTALL_DIR=%s\n' "${UV_TOOL_DIR:-}" "${UV_CACHE_DIR:-}" "${UV_PYTHON_INSTALL_DIR:-}" >"$SEMGREP_ENV"
 fi
 EOF
 chmod +x "${semgrep_bin}/uvx"
 PATH="${semgrep_bin}:${PATH}" SEMGREP_ARGS="$semgrep_args" \
     ./scripts/run-semgrep.sh scripts
+[ "$(sed -n 1p "$semgrep_args")" = "--python" ] && [ "$(sed -n 2p "$semgrep_args")" = "3.14" ] ||
+    fail "Semgrep wrapper did not select its compatible interpreter"
 [ "$(tail -n 1 "$semgrep_args")" = "scripts" ] ||
     fail "Semgrep wrapper did not preserve the explicit target"
 if grep -Fxq . "$semgrep_args"; then
@@ -689,6 +691,7 @@ semgrep_ro_tmp="${test_tmp}/semgrep-ro-tmp"
 semgrep_tmp="${test_tmp}/semgrep-tmp"
 semgrep_custom_tools="${test_tmp}/semgrep-custom-tools"
 semgrep_custom_cache="${test_tmp}/semgrep-custom-cache"
+semgrep_custom_python="${test_tmp}/semgrep-custom-python"
 mkdir -p "$semgrep_ro_home" "$semgrep_ro_xdg_data" "$semgrep_ro_xdg_cache" "$semgrep_ro_tmp" "$semgrep_tmp"
 chmod 500 "$semgrep_ro_home" "$semgrep_ro_xdg_data" "$semgrep_ro_xdg_cache" "$semgrep_ro_tmp"
 if [ -w "$semgrep_ro_home" ]; then
@@ -702,7 +705,7 @@ if [ -w "$semgrep_ro_home" ]; then
 fi
 
 rm -f "$semgrep_args" "$semgrep_env"
-env -u UV_TOOL_DIR -u UV_CACHE_DIR -u XDG_DATA_HOME -u XDG_CACHE_HOME \
+env -u UV_PYTHON_INSTALL_DIR -u UV_TOOL_DIR -u UV_CACHE_DIR -u XDG_DATA_HOME -u XDG_CACHE_HOME \
     HOME="$semgrep_ro_home" TMPDIR="$semgrep_tmp" \
     PATH="${semgrep_bin}:${PATH}" SEMGREP_ARGS="$semgrep_args" SEMGREP_ENV="$semgrep_env" \
     ./scripts/run-semgrep.sh scripts
@@ -710,13 +713,16 @@ env -u UV_TOOL_DIR -u UV_CACHE_DIR -u XDG_DATA_HOME -u XDG_CACHE_HOME \
     fail "Semgrep wrapper lost explicit target under read-only HOME fallback"
 expected_fallback_tools="${semgrep_tmp}/uv-$(id -u)/tools"
 expected_fallback_cache="${semgrep_tmp}/uv-$(id -u)/cache"
+expected_fallback_python="${semgrep_tmp}/uv-$(id -u)/python"
 grep -Fxq "UV_TOOL_DIR=${expected_fallback_tools}" "$semgrep_env" ||
     fail "Semgrep wrapper did not export fallback UV_TOOL_DIR under read-only HOME: $(cat "$semgrep_env")"
 grep -Fxq "UV_CACHE_DIR=${expected_fallback_cache}" "$semgrep_env" ||
     fail "Semgrep wrapper did not export fallback UV_CACHE_DIR under read-only HOME: $(cat "$semgrep_env")"
+grep -Fxq "UV_PYTHON_INSTALL_DIR=${expected_fallback_python}" "$semgrep_env" ||
+    fail "Semgrep wrapper did not export fallback UV_PYTHON_INSTALL_DIR under read-only HOME"
 
 rm -f "$semgrep_args" "$semgrep_env"
-env -u UV_TOOL_DIR -u UV_CACHE_DIR \
+env -u UV_PYTHON_INSTALL_DIR -u UV_TOOL_DIR -u UV_CACHE_DIR \
     XDG_DATA_HOME="$semgrep_ro_xdg_data" XDG_CACHE_HOME="$semgrep_ro_xdg_cache" TMPDIR="$semgrep_tmp" \
     PATH="${semgrep_bin}:${PATH}" SEMGREP_ARGS="$semgrep_args" SEMGREP_ENV="$semgrep_env" \
     ./scripts/run-semgrep.sh scripts
@@ -724,19 +730,23 @@ grep -Fxq "UV_TOOL_DIR=${expected_fallback_tools}" "$semgrep_env" ||
     fail "Semgrep wrapper did not export fallback UV_TOOL_DIR under read-only XDG_DATA_HOME: $(cat "$semgrep_env")"
 grep -Fxq "UV_CACHE_DIR=${expected_fallback_cache}" "$semgrep_env" ||
     fail "Semgrep wrapper did not export fallback UV_CACHE_DIR under read-only XDG_CACHE_HOME: $(cat "$semgrep_env")"
+grep -Fxq "UV_PYTHON_INSTALL_DIR=${expected_fallback_python}" "$semgrep_env" ||
+    fail "Semgrep wrapper did not export fallback UV_PYTHON_INSTALL_DIR under read-only XDG_DATA_HOME"
 
 rm -f "$semgrep_args" "$semgrep_env"
 HOME="$semgrep_ro_home" TMPDIR="$semgrep_tmp" \
-    UV_TOOL_DIR="$semgrep_custom_tools" UV_CACHE_DIR="$semgrep_custom_cache" \
+    UV_TOOL_DIR="$semgrep_custom_tools" UV_CACHE_DIR="$semgrep_custom_cache" UV_PYTHON_INSTALL_DIR="$semgrep_custom_python" \
     PATH="${semgrep_bin}:${PATH}" SEMGREP_ARGS="$semgrep_args" SEMGREP_ENV="$semgrep_env" \
     ./scripts/run-semgrep.sh scripts
 grep -Fxq "UV_TOOL_DIR=${semgrep_custom_tools}" "$semgrep_env" ||
     fail "Semgrep wrapper did not respect caller-exported UV_TOOL_DIR: $(cat "$semgrep_env")"
 grep -Fxq "UV_CACHE_DIR=${semgrep_custom_cache}" "$semgrep_env" ||
     fail "Semgrep wrapper did not respect caller-exported UV_CACHE_DIR: $(cat "$semgrep_env")"
+grep -Fxq "UV_PYTHON_INSTALL_DIR=${semgrep_custom_python}" "$semgrep_env" ||
+    fail "Semgrep wrapper did not respect caller-exported UV_PYTHON_INSTALL_DIR"
 
 rm -f "$semgrep_args" "$semgrep_env"
-out=$(env -u UV_TOOL_DIR -u UV_CACHE_DIR -u XDG_DATA_HOME -u XDG_CACHE_HOME \
+out=$(env -u UV_PYTHON_INSTALL_DIR -u UV_TOOL_DIR -u UV_CACHE_DIR -u XDG_DATA_HOME -u XDG_CACHE_HOME \
     HOME="$semgrep_ro_home" TMPDIR="$semgrep_ro_tmp" \
     PATH="${semgrep_bin}:${PATH}" SEMGREP_ARGS="$semgrep_args" \
     ./scripts/run-semgrep.sh scripts 2>&1) && rc=0 || rc=$?
@@ -752,7 +762,7 @@ esac
 rm -f "$semgrep_args" "$semgrep_env"
 semgrep_writable_home="${test_tmp}/semgrep-writable-home"
 mkdir -p "$semgrep_writable_home"
-env -u UV_TOOL_DIR -u UV_CACHE_DIR -u XDG_DATA_HOME -u XDG_CACHE_HOME \
+env -u UV_PYTHON_INSTALL_DIR -u UV_TOOL_DIR -u UV_CACHE_DIR -u XDG_DATA_HOME -u XDG_CACHE_HOME \
     HOME="$semgrep_writable_home" TMPDIR="$semgrep_tmp" \
     PATH="${semgrep_bin}:${PATH}" SEMGREP_ARGS="$semgrep_args" SEMGREP_ENV="$semgrep_env" \
     ./scripts/run-semgrep.sh scripts
@@ -760,6 +770,8 @@ grep -Fxq "UV_TOOL_DIR=" "$semgrep_env" ||
     fail "Semgrep wrapper exported UV_TOOL_DIR when default tool dir was already writable: $(cat "$semgrep_env")"
 grep -Fxq "UV_CACHE_DIR=" "$semgrep_env" ||
     fail "Semgrep wrapper exported UV_CACHE_DIR when default cache dir was already writable: $(cat "$semgrep_env")"
+grep -Fxq "UV_PYTHON_INSTALL_DIR=" "$semgrep_env" ||
+    fail "Semgrep wrapper exported UV_PYTHON_INSTALL_DIR when the default was writable"
 
 rm -f "$semgrep_args" "$semgrep_env"
 out=$(HOME="$semgrep_ro_home" TMPDIR="$semgrep_tmp" \
@@ -773,6 +785,17 @@ out=$(HOME="$semgrep_ro_home" TMPDIR="$semgrep_tmp" \
 case "$out" in
 *"${semgrep_ro_home}/tools"*UV_TOOL_DIR*UV_CACHE_DIR*) ;;
 *) fail "Semgrep wrapper did not report unwritable caller-exported UV_TOOL_DIR: $out" ;;
+esac
+rm -f "$semgrep_args" "$semgrep_env"
+out=$(HOME="$semgrep_writable_home" TMPDIR="$semgrep_tmp" \
+    UV_PYTHON_INSTALL_DIR="${semgrep_ro_home}/python" \
+    PATH="${semgrep_bin}:${PATH}" SEMGREP_ARGS="$semgrep_args" \
+    ./scripts/run-semgrep.sh scripts 2>&1) && rc=0 || rc=$?
+[ "$rc" -ne 0 ] && [ ! -e "$semgrep_args" ] ||
+    fail "Semgrep wrapper ignored an unwritable explicit UV_PYTHON_INSTALL_DIR"
+case "$out" in
+*"UV_PYTHON_INSTALL_DIR directory"*) ;;
+*) fail "Semgrep wrapper did not name the unwritable Python directory: $out" ;;
 esac
 chmod -R u+w "$semgrep_ro_home" "$semgrep_ro_xdg_data" "$semgrep_ro_xdg_cache" "$semgrep_ro_tmp" 2>/dev/null || true
 

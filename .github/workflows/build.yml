@@ -212,6 +212,9 @@ jobs:
         run: task test:template:${{ matrix.profile }}
       # Strict Renovate validation resolves Renovate from npm and is therefore
       # an explicit CI/local-CI task; ordinary `task verify` stays offline.
+      - name: Scan generated Python 3.15 consumer with a fresh interpreter fallback
+        if: matrix.profile == 'minimal'
+        run: task test:semgrep-runtime
       - name: Strictly validate rendered Renovate config
         run: task test:renovate-config -- ${{ matrix.profile }}
 

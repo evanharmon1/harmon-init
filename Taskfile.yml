@@ -65,6 +65,7 @@ tasks:
       - task: guard:closing-keywords
       - task: verify
       - task: test:renovate-config
+      - task: test:semgrep-runtime
       - task: verify:skills
       - task: test:devcontainer:permissions
       - task: security
@@ -924,6 +925,11 @@ tasks:
     desc: Static application security testing (Semgrep Community Edition)
     cmds:
       - ./scripts/run-semgrep.sh --exclude=.foreman --exclude=template {{.CLI_ARGS}}
+
+  test:semgrep-runtime:
+    desc: Network smoke test of generated Semgrep on Python 3.15 with unavailable home/data paths
+    cmds:
+      - ./scripts/test-semgrep-runtime.sh
 
   security:sca:
     desc: Software composition analysis (free package-manager audit)
