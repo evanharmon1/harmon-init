@@ -35,7 +35,7 @@ environment — against the items below
       `.skills-sync.yaml`, then run `task skills:status` to see the current
       vendoring state without changing anything (add `-- --offline` for an
       offline snapshot). Then run `task sync:skills` and commit the refreshed
-      `.claude/skills/`[% if use_shared_agents %] and `.claude/agents/`[% endif %]
+      `.claude/skills/`[% if use_shared_agents %] and `.claude/agents/`[% endif +%]
       in the same PR. Renovate surfaces a new release in the
       Dependency Dashboard; approve it there to open the pin PR, then run the
       sync and push its output as a separate commit (do not amend Renovate's
@@ -99,7 +99,7 @@ the compatibility reason in the rule's `description`.
       Unreadable organization values report unknown without failing setup; `task status:setup` reports known violations. Do not add
       `dependabot.yml`: Renovate owns routine and vulnerability-remediation PRs;
       Dependabot owns advisory alerts.
-- [ ] Import the branch ruleset (see [architecture/branch-protection.md](architecture/branch-protection.md)) — do this once `build.yml`[% if use_codeql %], `codeql.yml`[% endif %][% if include_terraform %], `terraform.yml`[% endif %][% if devcontainer %], `devcontainer-build.yml`[% endif %] are on `main` so the required `verify`/`security`[% if use_codeql %]/`codeql-verify`[% endif %][% if include_terraform %]/`terraform-verify`[% endif %][% if devcontainer %]/`devcontainer-verify`[% endif %] checks resolve. **Use the UI import:** Settings → Rules → Rulesets → **New ruleset ▸ Import a ruleset** → select `.github/Branch Protection Ruleset - Protect Main.json`. (Prefer the UI over `gh api … rulesets`: the API `POST` is not idempotent — re-running creates a duplicate ruleset — and currently rejects the `merge_queue` rule. To later change the ruleset, edit the existing one in the UI rather than re-importing.)[% if devcontainer %] **Import it before provisioning the bot and agent PATs below:** those postures carry no local merge guard, so this ruleset's code-owner approval and required checks are the only thing between their PAT and an unreviewed merge into `main`.[% endif %]
+- [ ] Import the branch ruleset (see [architecture/branch-protection.md](architecture/branch-protection.md)) — do this once `build.yml`[% if use_codeql %], `codeql.yml`[% endif %][% if include_terraform %], `terraform.yml`[% endif %][% if devcontainer %], `devcontainer-build.yml`[% endif %] are on `main` so the required `verify`/`security`[% if use_codeql %]/`codeql-verify`[% endif %][% if include_terraform %]/`terraform-verify`[% endif %][% if devcontainer %]/`devcontainer-verify`[% endif %] checks resolve. **Use the UI import:** Settings → Rules → Rulesets → **New ruleset ▸ Import a ruleset** → select `.github/Branch Protection Ruleset - Protect Main.json`. (Prefer the UI over `gh api … rulesets`: the API `POST` is not idempotent — re-running creates a duplicate ruleset — and currently rejects the `merge_queue` rule. To later change the ruleset, edit the existing one in the UI rather than re-importing.)[% if devcontainer %] **Import it before provisioning the bot and agent PATs below:** those postures carry no local merge guard, so this ruleset's code-owner approval and required checks are the only thing between their PAT and an unreviewed merge into `main`.[% endif +%]
 [% if devcontainer %]
 - [ ] **Bot PAT** — the agent's `GH_TOKEN`. If a fine-grained PAT already covers
       [% if github_org != author_git_provider_username %]`[[ github_org ]]`[% else %]`[[ author_git_provider_username ]]`[% endif %],
@@ -424,7 +424,7 @@ the compatibility reason in the rule's `description`.
       re-reads them, and only then allows `--prune` to remove zero-association
       retired labels.
 - [ ] Labels: run `task setup:github-labels` to seed this repo's starter label
-      families from `label-registry.json`[% if project_management == 'github' %]
+      families from `label-registry.json`[% if project_management == 'github' +%]
       (see the generated taxonomy table in
       [project-management.md](project-management.md))[% endif %] — grow `domain:` values
       there as the product's own problem-space vocabulary and `area:` values as
