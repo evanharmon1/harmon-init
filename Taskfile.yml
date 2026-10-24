@@ -481,7 +481,7 @@ tasks:
   stress:session-cleanup:
     desc: Run the session-cleanup regression 20 consecutive times
     cmds:
-      - for i in $(seq 1 20); do ./scripts/test-session-cleanup.sh || exit 1; done
+      - ./scripts/test-session-cleanup-stress.sh
 
   test:session-cleanup:
     desc: Behavioral test for audit:session-artifacts / clean:branches / clean:worktree-records (evidence-gated deletion + negative controls, in a throwaway fixture repo)
