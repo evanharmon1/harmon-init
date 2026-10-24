@@ -60,6 +60,45 @@ scan() {
     ' "$1"
 }
 
+# Exercise the same scanner before trusting its repository-wide result. Keep
+# fixture pipes out of this source so the guard does not flag its own tests.
+self_test() (
+    fixtures="$(mktemp -d)"
+    trap 'rm -rf "$fixtures"' EXIT
+    printf 'printf "%%s\\n" "$x" %s grep -q PATTERN\n' '|' >"$fixtures/bad.sh"
+    printf 'tasks:\n  test:\n    cmds:\n      - echo "$x" %s grep -q PATTERN\n' '|' >"$fixtures/task.yml"
+    printf 'steps:\n  - run: |\n      echo "$x" %s grep -q PATTERN\n' '|' >"$fixtures/workflow.yml"
+    printf 'echo "$x" %s\n    grep -q PATTERN\n' '|' >"$fixtures/continued.sh"
+    printf 'echo "$x" %s grep -Fq PATTERN\n' '|' >"$fixtures/clustered.sh"
+    printf 'echo "$x" %s grep -E -q PATTERN\n' '|' >"$fixtures/separate.sh"
+    printf 'echo "$x" %s grep -q PATTERN # grep-q-pipe: allow --   \n' '|' >"$fixtures/empty-reason.sh"
+    printf 'grep -q PATTERN <<<"$(printf "%%s\\n" "$x")"\n' >"$fixtures/good.sh"
+    printf 'echo "$x" %s grep -q PATTERN # grep-q-pipe: allow -- intentional fixture\n' '|' >"$fixtures/allowed.sh"
+    for fixture in bad.sh continued.sh clustered.sh separate.sh empty-reason.sh task.yml workflow.yml; do
+        case "$fixture" in
+        *.sh) kind=shell ;;
+        task.yml) kind=task ;;
+        workflow.yml) kind=workflow ;;
+        esac
+        if scan "$fixtures/$fixture" "$kind" >"$fixtures/output"; then
+            echo "test-grep-q-pipes: self-test failed: missed $fixture" >&2
+            exit 1
+        fi
+        if [ ! -s "$fixtures/output" ]; then
+            echo "test-grep-q-pipes: self-test failed: no diagnostic for $fixture" >&2
+            exit 1
+        fi
+    done
+    for fixture in good.sh allowed.sh; do
+        if ! scan "$fixtures/$fixture" shell >"$fixtures/output"; then
+            echo "test-grep-q-pipes: self-test failed: rejected $fixture" >&2
+            cat "$fixtures/output" >&2
+            exit 1
+        fi
+    done
+)
+self_test
+
 roots=()
 for dir in scripts template .devcontainer .github taskfiles images sprites; do
     [ ! -d "$dir" ] || roots+=("$dir")
