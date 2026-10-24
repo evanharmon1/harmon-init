@@ -1193,7 +1193,7 @@ deliberately leaves it alone.
 | `human` | whoever files or triages the issue, human or agent; triage may remove it only when the issue no longer qualifies (non-collector, no [HUMAN] majority, agent-completable) | humans, saved views; agents, to skip dispatch | provisioned; inert | applied while completion is primarily a human's; removed once the issue's remaining completion is no longer primarily a human's |
 | `needs-triage` | people, agents and the issue forms add it at filing; after that the triage skill and the GitHub Actions classification reconciler maintain it (derived: added while classification is incomplete, removed once it is complete) | humans, the Triage view | provisioned; inert | a new issue that is not fully classified starts with it (people, agents and the issue forms add it at filing); after that it is derived and never cleared by hand |
 | `needs-requirements`, `blocked`, `waiting`, `needs-decision`, `needs-response`, `needs-communication` | humans, at triage | humans, the Triage view | provisioned; inert | transient — removed as soon as the state clears |
-| `needs-review` | the integration stage, at ready-for-review; humans | humans, the review list; the agent queue, which excludes it | provisioned; inert | added at ready-for-review, when `claim:*` is removed; removed if review pulls the work back into fix rounds |
+| `needs-review` | agents tracking review work they still owe | humans, the review list; the agent queue, which excludes it | provisioned; inert | added when an agent owes review work on the issue's delivery PR; removed when it owes none (handoff to a human for review or merge), when review pulls work back into fix rounds (the claim takes over), when the issue closes, or when the delivery PR ends (merged into any branch or closed unmerged) |
 | `bug`, `feature`, `task`, `research` | the issue forms on personal-account repos; humans or agents at triage | humans, saved views | provisioned; inert | durable classification — org repos use native issue Type and no work-type label |
 | `documentation` | GitHub ships it at repo creation; humans or agents apply it at triage | humans, saved views | not provisioned — a GitHub repo-creation default adopted into the work-type vocabulary | durable classification — org repos use native issue Type and no work-type label |
 | `question` | GitHub ships it at repo creation; humans or agents apply it at triage | humans, saved views | not provisioned — a GitHub repo-creation default adopted into the work-type vocabulary | durable classification — org repos use native issue Type and no work-type label |
@@ -2046,13 +2046,19 @@ view**). Keep the saved set small; **slice the one board** (below) for the rest.
   and sorts by `Priority`, then `Priority (AI)`. On a personal account both
   priority families are labels and share the single Labels column, where both
   priority labels appear, so it shows that column and is read by effective
-  priority (a view cannot sort by a label). It lists what awaits the
-  maintainer: the integration stage adds `needs-review` at ready-for-review and
-  removes it if review pulls the work back into fix rounds. Until that writer
-  ships (harmon-devkit#1255, with a skills-pin bump), add `needs-review` by hand
-  at hand-off (and remove it by hand if review sends the work back into fix
-  rounds), or a handed-off issue (its claim released) shows in the Agent queue
-  again.
+  priority (a view cannot sort by a label). It lists delivery PRs on which an
+  agent still owes review triggers, responses, fixes, or adjudications. The
+  marker clears when the agent owes none, including handoff to a human for
+  review or merge, or when work returns to fix rounds and the claim takes over.
+  Until the vendored `integrate` skill picks up harmon-devkit#1608, its
+  ready-for-review handoff still adds `needs-review`. Leave that label in place:
+  the terminal cleanup below clears it when the PR ends, and removing it earlier
+  would put the issue back in the Agent queue while its PR waits on a human.
+  It also clears when the issue closes or the delivery PR ends (merged into
+  any branch or closed unmerged). A PR waiting on a human uses `merge-ready`
+  or `parked`, not `needs-review`; harmon-init#1787 tracks provisioning those labels. The close-event
+  workflow calls the vendored cleanup helper independently of claim release;
+  an absent helper is a runtime no-op.
 - **Planning** — table, grouped by **`Product`** (or `Type`, on an organization), sorted by
   `Priority` (organization only, as above). The "what's the plan" view, and a
   **dates-free roadmap substitute**: grouping by product shows the pile behind
