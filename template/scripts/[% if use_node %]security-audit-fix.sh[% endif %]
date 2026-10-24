@@ -49,8 +49,8 @@
 #       (the commit the audit ran on) is set and the base has moved past it,
 #       publishes nothing and exits 0: the next run re-audits.
 #
-# Exit codes: 0 done (clean, no-op, or applied), 1 operational failure,
-# 3 refused (strict fix only).
+# Exit codes: 0 done (clean, no-op, or applied), 1 operational failure
+# (including an unsupported or unparseable pnpm version), 3 refused (strict fix only).
 # Exit 3 also covers a pnpm-workspace.yaml yq cannot parse or write, and a
 # template floor block with only one of its two marker lines.
 # Depends on: pnpm 10–12, jq, yq (mikefarah v4); publish also needs git and gh.
@@ -675,10 +675,10 @@ cmd_fix() {
     overrides_tsv "$WORKSPACE" >/dev/null
     template_keys | sort -u >"$WORK/template-keys.txt"
 
-    note "running pnpm audit --fix to learn the patched versions"
+    note "running pnpm audit $_pnpm_fix to learn the patched versions"
     pnpm audit "$_pnpm_fix" --audit-level=high >"$WORK/fix.log" 2>&1 || {
         cat "$WORK/fix.log" >&2
-        fail "pnpm audit --fix failed"
+        fail "pnpm audit $_pnpm_fix failed"
     }
     # What pnpm proposed = the entries whose value differs from the original
     # map, both read by yq.

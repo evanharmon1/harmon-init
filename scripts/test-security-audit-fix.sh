@@ -322,7 +322,7 @@ for version in 9.15.0 13.0.0 garbage 11.bad; do
     before="$(snapshot_of "$p")"
     rc=0
     run_fix "$p" >"$p/out.log" 2>&1 || rc=$?
-    [ "$rc" -ne 0 ] || fail "pnpm $version: unsupported version succeeded"
+    [ "$rc" -eq 1 ] || fail "pnpm $version: expected exit 1, got $rc"
     grep -qF "pnpm version '$version'" "$p/out.log" || fail "pnpm $version: diagnostic omits version"
     [ "$(snapshot_of "$p")" = "$before" ] || fail "pnpm $version: changed bytes"
     ! grep -q 'pnpm audit\|pnpm install' "$p/.stub/calls" || fail "pnpm $version: audited or installed before refusal"
