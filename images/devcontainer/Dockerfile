@@ -29,15 +29,15 @@ ARG ZELLIJ_VERSION=0.45.1
 # renovate: datasource=github-releases depName=raine/workmux extractVersion=^v?(?<version>.+)$
 ARG WORKMUX_VERSION=0.1.276
 # renovate: datasource=github-releases depName=njbrake/agent-of-empires extractVersion=^v?(?<version>.+)$
-ARG AOE_VERSION=1.19.0
+ARG AOE_VERSION=1.20.0
 # renovate: datasource=npm depName=@anthropic-ai/claude-code
-ARG CLAUDE_CODE_VERSION=2.1.300
+ARG CLAUDE_CODE_VERSION=2.1.306
 # renovate: datasource=npm depName=@github/copilot
-ARG COPILOT_VERSION=1.0.98
+ARG COPILOT_VERSION=1.0.101
 # renovate: datasource=npm depName=@earendil-works/pi-coding-agent
-ARG PI_VERSION=1.2.0
+ARG PI_VERSION=1.3.0
 # renovate: datasource=github-releases depName=can1357/oh-my-pi extractVersion=^v?(?<version>.+)$
-ARG OH_MY_PI_VERSION=18.11.0
+ARG OH_MY_PI_VERSION=18.12.5
 # oh-my-pi ships unsigned release binaries: the version pin above is
 # Renovate-managed, but these architecture-specific digests are not. Before
 # moving them, a person must download the new release's omp-linux-x64 and
@@ -48,13 +48,13 @@ ARG OH_MY_PI_VERSION=18.11.0
 ARG OH_MY_PI_SHA256_AMD64=c23a58ad8a92f4e738aa12dc904f3b0a1ac7035b953b9bf5d39b71a226179f6f
 ARG OH_MY_PI_SHA256_ARM64=299e0b63c482d78f00f2bae75000815ad6890cb6192cbc9f66c8d98e9ce70b80
 # renovate: datasource=npm depName=opencode-ai
-ARG OPENCODE_VERSION=1.19.0
+ARG OPENCODE_VERSION=1.19.3
 # Pinned from Google's per-platform release manifests. Keep the version, build,
 # URLs, and SHA-512 values here and in ensure-antigravity-cli.sh in one update.
 ARG ANTIGRAVITY_CLI_VERSION=1.1.11
 ARG ANTIGRAVITY_CLI_BUILD=4956531888881664
 # renovate: datasource=github-releases depName=asheshgoplani/agent-deck extractVersion=^v?(?<version>.+)$
-ARG AGENT_DECK_VERSION=1.16.28
+ARG AGENT_DECK_VERSION=1.16.30
 # renovate: datasource=github-releases depName=joshmedeski/sesh extractVersion=^v?(?<version>.+)$
 # Upstream v2.30.0 was published without release assets; stay on 2.29.0 until fixed
 ARG SESH_VERSION=2.29.0
@@ -72,7 +72,7 @@ ARG DIVE_VERSION=0.13.1
 # renovate: datasource=github-releases depName=antonmedv/fx extractVersion=^v?(?<version>.+)$
 ARG FX_VERSION=40.0.0
 # renovate: datasource=github-releases depName=sinelaw/fresh extractVersion=^v?(?<version>.+)$
-ARG FRESH_VERSION=0.5.3
+ARG FRESH_VERSION=0.5.4
 # Fresh release-archive SHA-256 values. The version pin is Renovate-managed;
 # update these reviewed, architecture-specific digests with each release.
 ARG FRESH_SHA256_AMD64=8c7ab2006922d1aec31664dce014e8715a18c7c98df572a4d72fe8aaa16c8533
@@ -86,24 +86,24 @@ ARG TTT_SHA256_ARM64=841c5b6f9e04d66254be241234100b12ac91173c8d5b2745f5712bcbbd8
 # renovate: datasource=github-releases depName=charmbracelet/glow extractVersion=^v?(?<version>.+)$
 ARG GLOW_VERSION=3.0.0
 # renovate: datasource=github-releases depName=jesseduffield/lazygit extractVersion=^v?(?<version>.+)$
-ARG LAZYGIT_VERSION=0.66.1
+ARG LAZYGIT_VERSION=0.66.2
 # renovate: datasource=github-releases depName=XAMPPRocky/tokei extractVersion=^v?(?<version>.+)$
 # Upstream v13.0.0+ publishes no prebuilt binary assets; stay on 13.0.0-alpha.0
 ARG TOKEI_VERSION=13.0.0-alpha.0
 # renovate: datasource=github-releases depName=dlvhdr/gh-dash extractVersion=^v?(?<version>.+)$
-ARG GH_DASH_VERSION=4.26.1
+ARG GH_DASH_VERSION=4.26.2
 # renovate: datasource=github-releases depName=charmbracelet/gum extractVersion=^v?(?<version>.+)$
 ARG GUM_VERSION=2.0.2
 # renovate: datasource=github-releases depName=o2sh/onefetch extractVersion=^v?(?<version>.+)$
-ARG ONEFETCH_VERSION=3.0.0
+ARG ONEFETCH_VERSION=3.1.0
 # renovate: datasource=github-releases depName=wtfutil/wtf extractVersion=^v?(?<version>.+)$
 ARG WTF_VERSION=0.51.0
 # renovate: datasource=github-releases depName=ducaale/xh extractVersion=^v?(?<version>.+)$
-ARG XH_VERSION=0.26.2
+ARG XH_VERSION=0.26.3
 # renovate: datasource=github-releases depName=alexpasmantier/television extractVersion=^v?(?<version>.+)$
 ARG TV_VERSION=0.15.9
 # renovate: datasource=github-releases depName=starship/starship extractVersion=^v?(?<version>.+)$
-ARG STARSHIP_VERSION=1.26.0
+ARG STARSHIP_VERSION=1.27.0
 
 LABEL org.opencontainers.image.source="https://github.com/evanharmon1/harmon-init" \
     org.opencontainers.image.revision="${IMAGE_REVISION}" \
