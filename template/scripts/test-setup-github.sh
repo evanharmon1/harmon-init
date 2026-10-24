@@ -536,7 +536,7 @@ done
 GH_OWNER_TYPE=User GH_ROUTING_ORG_JSON="$inherited" run_case --repo owner/private
 [ "$run_rc" -eq 0 ] || fail "User owner failed"
 if grep -q 'actions/organization-variables' "$stub_calls"; then fail "User owner queried organization variables"; fi
-GH_ROUTING_VARIABLES_JSON='[]' run_case --repo owner/private --ci-runs-on '"ci"' --browser-runs-on '"browser"' --image-build-runs-on '"image"' --isolated-runs-on '"iso"'
+GH_ROUTING_VARIABLES_JSON='[]' run_case --repo owner/private --ci-runs-on '"ci"' --browser-runs-on '"browser"' --image-build-runs-on '"image"' --isolated-runs-on '"iso"' --multicore-runs-on '"multicore"'
 [ "$run_rc" -eq 0 ] || fail "combined inventory flow failed"
 [ "$(grep -c 'variable list --repo' "$stub_calls")" -eq 1 ] || fail "repository inventory read more than once"
 
