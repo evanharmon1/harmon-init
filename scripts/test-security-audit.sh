@@ -13,6 +13,7 @@ cat >"$TMP/bin/pnpm" <<'STUB'
 set -euo pipefail
 printf '%s\n' "$*" >>"$STUB/calls"
 case "$*" in
+'--version') printf '%s.0.0\n' "${STUB_PNPM_MAJOR:?STUB_PNPM_MAJOR must be set for the pnpm version probe}" ;;
 'audit --audit-level=high --json') cat "$STUB/full.json"; exit 1 ;;
 'audit --audit-level=high --prod --json') cat "$STUB/prod.json"; exit 1 ;;
 'audit --audit-level=high --ignore GHSA-vfj7-8cjw-p6xm')
@@ -126,10 +127,10 @@ expect() {
             echo "missing failure: $2"
             exit 1
         }
-        ! grep -qE -- '--ignore|^config set ' "$TMP/calls" || {
-            echo 'invalid allowance registered an ignore'
+        if grep -qE -- '--ignore|^config set ' "$TMP/calls"; then
+            echo 'invalid allowance registered an ignore' >&2
             exit 1
-        }
+        fi
     fi
     echo "ok - $2"
 }
@@ -140,7 +141,10 @@ for STUB_PNPM_MAJOR in 10 11 12; do
         jq '.advisories["1"].patched_versions=null | .advisories["1"].vulnerable_versions="<=3.0.3"' "$TMP/base.json" >"$TMP/full.json"
     fi
     expect 0 "valid allowance (pnpm $STUB_PNPM_MAJOR)"
-    ! grep -qE -- '--ignore|^config set ' "$TMP/calls"
+    if grep -qE -- '--ignore|^config set ' "$TMP/calls"; then
+        echo 'valid allowance registered an ignore outside scratch' >&2
+        exit 1
+    fi
     cmp pnpm-workspace.yaml "$TMP/pristine.workspace"
     printf '{"allowances":[]}\n' >"$file"
     rc=0
@@ -318,7 +322,10 @@ printf '{}\n' >package.json
 cp pnpm-workspace.yaml "$TMP/before.workspace"
 cp pnpm-lock.yaml "$TMP/before.lock"
 ./scripts/security-audit-fix.sh fix --report "$TMP/report.md"
-! grep -q -- '--fix' "$TMP/calls"
+if grep -q -- '--fix' "$TMP/calls"; then
+    echo 'allowed-only fix invoked pnpm audit --fix' >&2
+    exit 1
+fi
 cmp pnpm-workspace.yaml "$TMP/before.workspace"
 cmp pnpm-lock.yaml "$TMP/before.lock"
 echo 'ok - allowed-only fix writes no floors and opens no remediation path'
