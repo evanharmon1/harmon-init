@@ -64,8 +64,8 @@ tasks:
     cmds:
       - task: guard:closing-keywords
       - task: verify
-      - task: test:renovate-config
       - task: stress:session-cleanup
+      - task: test:renovate-config
       - task: verify:skills
       - task: test:devcontainer:permissions
       - task: security
