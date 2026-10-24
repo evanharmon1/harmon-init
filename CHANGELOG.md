@@ -8,6 +8,21 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [5.13.0](https://github.com/evanharmon1/harmon-init/compare/v5.12.0...v5.13.0) (2026-10-24)
+
+
+### Features
+
+* **dev-loop:** define live PR handoff and merge queue ([#1794](https://github.com/evanharmon1/harmon-init/issues/1794)) ([8e9d3ce](https://github.com/evanharmon1/harmon-init/commit/8e9d3ceb28f3f0b26b9f2633177178b96aad31a1))
+
+
+### Bug Fixes
+
+* **ci:** clear needs-review whenever a delivery PR ends ([#1797](https://github.com/evanharmon1/harmon-init/issues/1797)) ([3705f4d](https://github.com/evanharmon1/harmon-init/commit/3705f4d8633e047a5c4253c544b57810f0bc0a17))
+* **deps:** update devcontainer ([#1720](https://github.com/evanharmon1/harmon-init/issues/1720)) ([b1229e9](https://github.com/evanharmon1/harmon-init/commit/b1229e9d85873c21a21f318ba6d5074eb381af64))
+* **template:** gate build-test mentions in the multicore docs and correct the ADR range ([#1811](https://github.com/evanharmon1/harmon-init/issues/1811)) ([ca165c0](https://github.com/evanharmon1/harmon-init/commit/ca165c0ad53f1ab6521b344bc7fe5463eaa2637f))
+* **template:** raise the undici security floors for GHSA-xjj6-f33q-929c ([#1808](https://github.com/evanharmon1/harmon-init/issues/1808)) ([ac81fbb](https://github.com/evanharmon1/harmon-init/commit/ac81fbb472b90c87e36695eec3c28f6ecc881236))
+
 ## [5.12.0](https://github.com/evanharmon1/harmon-init/compare/v5.11.0...v5.12.0) (2026-10-23)
 
 
