@@ -416,29 +416,63 @@ EOF
     # devcontainer; anywhere else a scope refresh would clone into a directory that
     # does not exist. The trigger names the target, as setup-remote.sh does: the
     # parent of the PHYSICAL checkout (pwd -P).
-    cat <<EOF >"${TMP}/repo/.devcontainer/scripts/bootstrap-related-repos.sh"
+    cat <<'EOF' >"${TMP}/repo/.devcontainer/scripts/bootstrap-related-repos.sh"
 #!/usr/bin/env bash
-printf '%s\n' "\$#" "\${1:-}" >"${TMP}/bootstrap-args"
-exit 0
+set -euo pipefail
+capture="${BOOTSTRAP_CAPTURE_DIR:?}"
+printf '%s\n' "$#" >"${capture}/args.pending"
+: >"${capture}/partial-ready"
+# Each layout pauses between fields until the assertion has checked readiness.
+# Open the FIFO read/write so even an aborted test cannot leave open() blocked;
+# the bounded read then lets this detached fixture exit on its own.
+IFS= read -r -t 10 release <>"${capture}/release" || exit 1
+printf '%s\n' "${1:-}" >>"${capture}/args.pending"
+mv "${capture}/args.pending" "${capture}/args"
 EOF
     chmod +x "${TMP}/repo/.devcontainer/scripts/bootstrap-related-repos.sh"
+    bootstrap_capture_ready() {
+        [ -f "$1/args" ]
+    }
     # assert_bootstrap_target SUT-PATH EXPECTED-DIR DESCRIPTION
     assert_bootstrap_target() {
-        local sut="$1" want="$2" what="$3" i
-        rm -f "${TMP}/bootstrap-args"
+        local sut="$1" want="$2" what="$3" capture got_count got_target
+        capture="$(mktemp -d "${TMP}/bootstrap-capture.XXXXXX")"
+        mkfifo "${capture}/release"
+        # Keeping both ends open makes the release write nonblocking even if the
+        # child fails. Each invocation owns its capture and synchronization paths.
+        exec 3<>"${capture}/release"
         (
             SUT="${sut}"
-            run_sut_pty lands-after-refresh GH_HOST=github.com
+            run_sut_pty lands-after-refresh GH_HOST=github.com BOOTSTRAP_CAPTURE_DIR="${capture}"
         ) >/dev/null
-        for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
-            [ -s "${TMP}/bootstrap-args" ] && break
+        for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+            [ -f "${capture}/partial-ready" ] && break
             sleep 0.2
         done
-        [ -s "${TMP}/bootstrap-args" ] || fail "${what}: the bootstrap was not started"
-        [ "$(sed -n 1p "${TMP}/bootstrap-args")" = 1 ] ||
-            fail "${what}: the bootstrap must get exactly one argument, got: $(tr '\n' ' ' <"${TMP}/bootstrap-args")"
-        [ "$(sed -n 2p "${TMP}/bootstrap-args")" = "${want}" ] ||
-            fail "${what}: expected the target ${want}, got: $(sed -n 2p "${TMP}/bootstrap-args")"
+        [ -f "${capture}/partial-ready" ] || fail "${what}: the bootstrap was not started"
+        # Deterministically hold a nonempty, incomplete record. The exact
+        # readiness predicate used below must reject it in every layout.
+        [ "$(cat "${capture}/args.pending")" = 1 ] || fail "${what}: expected only the count before release"
+        if bootstrap_capture_ready "${capture}"; then
+            fail "${what}: a partial bootstrap capture was ready before publication"
+        fi
+        printf 'publish\n' >&3
+        exec 3>&-
+        for _ in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
+            bootstrap_capture_ready "${capture}" && break
+            sleep 0.2
+        done
+        bootstrap_capture_ready "${capture}" || fail "${what}: the bootstrap did not publish its arguments"
+        # The atomic rename publishes a complete immutable capture. Read it once
+        # so assertions and diagnostics always describe the same snapshot.
+        {
+            IFS= read -r got_count
+            IFS= read -r got_target
+        } <"${capture}/args"
+        [ "${got_count}" = 1 ] ||
+            fail "${what}: the bootstrap must get exactly one argument, got: ${got_count}"
+        [ "${got_target}" = "${want}" ] ||
+            fail "${what}: expected the target ${want}, got: ${got_target}"
     }
     # A checkout whose parent is a directory named "workspaces" — the devcontainer
     # layout, without needing a writable /workspaces on this host...
