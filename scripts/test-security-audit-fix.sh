@@ -80,7 +80,10 @@ outranked() {
     return 1
 }
 case "$*" in
-"--version") cat "$STUB_DIR/version" ;;
+"--version")
+    if [ -f "$STUB_DIR/version-warning" ]; then cat "$STUB_DIR/version-warning" >&2; fi
+    cat "$STUB_DIR/version"
+    ;;
 "audit --audit-level=high --json")
     if [ -f "$STUB_DIR/cleared-by" ] && grep -qF -f "$STUB_DIR/cleared-by" pnpm-workspace.yaml && ! outranked &&
         { [ ! -f "$STUB_DIR/needs-relock" ] || grep -qx '# relocked' pnpm-lock.yaml; }; then
@@ -287,8 +290,12 @@ expect_refused() {
 }
 
 # Version agreement uses the running pnpm, not a template-owned version pin.
-for major in 10 11 12; do
-    p="$(new_project "pnpm-$major")"
+for version_case in 10 11 12 10-warning 11-warning 12-warning; do
+    major="${version_case%%-*}"
+    p="$(new_project "pnpm-$version_case")"
+    if [ "$version_case" != "$major" ]; then
+        echo 'WARN: failed to replace env in config: ${NPM_TOKEN}' >"$p/.stub/version-warning"
+    fi
     echo "$major.10.0" >"$p/.stub/version"
     advisory GHSA-test-0000-0001 lodash high '<4.17.21' 4.17.20 lodash |
         jq '{advisories: .}' >"$p/.stub/audit.json"
@@ -296,7 +303,7 @@ for major in 10 11 12; do
     echo "lodash@4: '>=4.17.21 <5'" >"$p/.stub/cleared-by"
     run_fix "$p" >"$p/out.log" 2>&1 || {
         cat "$p/out.log"
-        fail "pnpm $major: fix exited non-zero"
+        fail "pnpm $version_case: fix exited non-zero"
     }
     mode=--fix=override
     [ "$major" -ne 10 ] || mode=--fix
@@ -304,7 +311,10 @@ for major in 10 11 12; do
         fail "pnpm $major: wrong fix mode or severity filter"
     [ "$(grep -cx 'pnpm --version' "$p/.stub/calls")" -eq 1 ] || fail "pnpm $major: version not read exactly once"
     expect_overrides "$p" "pnpm $major" '{"source-map-js@1": ">=1.2.2 <2", "left-pad@1": ">=1.3.0 <2", "lodash@4": ">=4.17.21 <5"}'
-    pass "pnpm $major: compatible fix mode applies a bounded floor"
+    if [ "$version_case" != "$major" ]; then
+        grep -qF -f "$p/.stub/version-warning" "$p/out.log" || fail "pnpm $version_case: stderr warning lost"
+    fi
+    pass "pnpm $version_case: compatible fix mode applies a bounded floor"
 done
 for version in 9.15.0 13.0.0 garbage 11.bad; do
     p="$(new_project "unsupported-$version")"

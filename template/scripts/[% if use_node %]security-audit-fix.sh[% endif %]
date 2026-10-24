@@ -637,7 +637,7 @@ cmd_fix() {
         shift
     done
     need_bin pnpm
-    _pnpm_version="$(pnpm --version 2>&1)" || die "could not read pnpm version: $_pnpm_version"
+    _pnpm_version="$(pnpm --version)" || die "could not read pnpm version: $_pnpm_version"
     [[ "$_pnpm_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]] ||
         die "unparseable pnpm version '$_pnpm_version' (supported majors: 10–12)"
     _pnpm_major="${_pnpm_version%%.*}"
