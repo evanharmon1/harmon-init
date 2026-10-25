@@ -4,6 +4,21 @@
 // harmon-devkit#1296).
 //
 // Usage:
+//   plan-revise.mjs genesis --slate ID --session ID --owner-token TOKEN --input PLAN --reason TEXT
+//   plan-revise.mjs add-issue --slate ID --session ID --input ADDITION --reason TEXT
+//   plan-revise.mjs expand --slate ID --session ID --lane ID --path PATH --reason TEXT
+//   plan-revise.mjs release --slate ID --session ID --issue N --lane ID --path PATH... --reason TEXT
+//   plan-revise.mjs done --slate ID --session ID --issue N --reason TEXT [--input DECISIONS]
+//   plan-revise.mjs handoff --slate ID --session ID --issue N --pr N --reason TEXT
+//   plan-revise.mjs queue-order --slate ID --session ID --input ORDER --reason TEXT
+// Queue-order input: {issues: [N, ...]}, a permutation of the current queue.
+// All commands accept --at TS; writes after genesis require the held owner token.
+// Genesis input is planContent, with overlaps supplying resolution/dependency decisions;
+// paths are computed. It requires a held reservation and never acquires a lock.
+// Addition input: {issue, lane, profile: {lane, policy}, overlaps?: [...], waves?: [...]}.
+// Done/release input: {releases?: [{lane, paths}], addition?: ADDITION, waves?: [...]}.
+// A newly introduced receiver uses addition; existing receivers gain dated expansions.
+// Optional waves are the operator's complete placement decision; no wave is guessed.
 //   plan-revise.mjs base-move --slate ID --session ID --new-base SHA --reason TEXT
 //                             [--done N]... [--at TS] [--milestone N] [--issues N,N,...]
 //
@@ -12,13 +27,16 @@
 //
 // Appends one revision for a default-branch move: `base_sha` becomes the new
 // base, every `--done` issue keeps its verified record as `verdict: "done"`
-// (orchestrate § Planning step 2: never erase a verdict) and leaves every
-// dispatch structure — waves, lanes, lane_profiles, overlaps — and a wave the
-// removal empties is dropped with the later waves renumbered in order. The
+// (orchestrate § Planning step 2: never erase a verdict) and is removed from
+// waves, lanes, lane_profiles, overlaps and merge_queue.
+// Waiting handed-off successors are queued when their predecessors complete.
+// An emptied wave is dropped, with later waves renumbered in order. The
 // revision is chained (seq, prev_digest, digest over the canonical
 // {seq, plan, at, reason, prev_digest}) and published through the candidate,
 // `validate-result-schemas.mjs plan`, rename, readback sequence.
 //
+// Handed-off issues are excluded from the live set below: their candidate
+// paths do not block a base move, and eligible waiting handoffs queue mechanically.
 // Everything that is orchestrator judgment is refused, naming what needs it,
 // rather than written:
 //   - the commits between the old and new base touch a live lane's effective
@@ -26,20 +44,21 @@
 //     may need a rebase, a fence change, or a re-verification;
 //   - a done issue releases a dependent — a live issue lists it in
 //     `blocked_by`, or an overlap's merge dependency names it as `before` —
-//     because releasing it is a wave/queue decision;
+//     because releasing a live dispatch dependent needs a wave decision;
 //   - a live fence or candidate pattern has a component combining a bracket
 //     class with `*`/`?`, or holding a backslash — such a pattern is never
 //     interpreted here, so any move needs judgment;
 //   - the new base does not descend from the old one, or nothing moved;
 //   - the repository has an info/grafts file (replace refs are ignored).
 // The existing plan is validated before anything else, so a broken chain is
-// refused too. Both writers take the slate lock (see run-record.mjs).
+// refused too. Mutations authenticate the held slate lock (see run-record.mjs).
 //
 // Exit codes: 0 written, 1 refused, 2 usage.
 
 import { execFileSync } from 'node:child_process'
-import { existsSync, realpathSync } from 'node:fs'
-import { join } from 'node:path'
+import { randomBytes } from 'node:crypto'
+import { existsSync, mkdirSync, realpathSync, unlinkSync, writeFileSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import {
   Refusal,
@@ -118,6 +137,28 @@ function fencePaths(lane) {
   ]
 }
 
+export function effectiveFence(lane) {
+  return [...lane.fence.map((item) => typeof item === 'string' ? { path: item } : item),
+    ...lane.expansions.map((entry) => ({ path: entry.path, note: `expansion ${entry.at}: ${entry.reason}` }))]
+}
+
+// Literal-vs-pattern matching uses the existing fence matcher. Two globs with
+// disjoint literal prefixes are provably disjoint; otherwise fail closed rather
+// than claim disjointness from the files that happen to exist today.
+export function mayOverlap(left, right) {
+  const uncertain = (pattern) => pattern.split('/').some((part) => part.includes('\\') || (part.includes('[') && /[*?]/.test(part)))
+  if (uncertain(left) || uncertain(right)) return true
+  const glob = (pattern) => /[*?]/.test(pattern)
+  if (!glob(left)) return pathMatches(left, right)
+  if (!glob(right)) return pathMatches(right, left)
+  const a = left.split('/'), b = right.split('/')
+  for (let i = 0; i < Math.min(a.length, b.length); i += 1) {
+    if (glob(a[i]) || glob(b[i])) return true
+    if (a[i] !== b[i]) return false
+  }
+  return true
+}
+
 export function reviseForBaseMove(previous, { newBase, done, changed }) {
   const plan = structuredClone(previous)
   const doneSet = new Set(done)
@@ -125,7 +166,7 @@ export function reviseForBaseMove(previous, { newBase, done, changed }) {
   const unknown = done.filter((number) => !known.has(number))
   if (unknown.length > 0) throw new Refusal(`--done names issue(s) not in the plan: ${unknown.join(', ')}`)
 
-  const live = plan.issues.filter((issue) => issue.verdict !== 'done' && !doneSet.has(issue.number))
+  const live = plan.issues.filter((issue) => !['done', 'handed-off'].includes(issue.verdict) && !doneSet.has(issue.number))
   const refusals = []
   for (const issue of live) {
     for (const blocker of issue.blocked_by ?? []) {
@@ -134,7 +175,7 @@ export function reviseForBaseMove(previous, { newBase, done, changed }) {
   }
   for (const overlap of plan.overlaps) {
     const dependency = overlap.merge_dependency
-    if (dependency && doneSet.has(dependency.before) && !doneSet.has(dependency.after)) {
+    if (dependency && doneSet.has(dependency.before) && live.some((issue) => issue.number === dependency.after)) {
       refusals.push(`done issue #${dependency.before} releases dependent #${dependency.after} (merge dependency)`)
     }
   }
@@ -184,6 +225,8 @@ export function reviseForBaseMove(previous, { newBase, done, changed }) {
     plan.lane_profiles = plan.lane_profiles.filter((entry) => lanes.has(entry.lane))
   }
   plan.overlaps = plan.overlaps.filter((overlap) => !doneSet.has(overlap.issue_a) && !doneSet.has(overlap.issue_b))
+  if (plan.merge_queue !== undefined) plan.merge_queue = plan.merge_queue.filter((entry) => !doneSet.has(entry.issue))
+  queueWaitingHandoffs(plan)
   return plan
 }
 
@@ -234,18 +277,313 @@ function baseMove(args) {
   })
 }
 
+// Only decision fields enter the writer. In particular, a complete replacement
+// plan/fence is never accepted for a revision of an existing run.
+function fields(value, allowed, label) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Refusal(`${label} must be an object`)
+  for (const key of Object.keys(value)) {
+    if (!allowed.includes(key)) {
+      const fenceNote = ['fence', 'plan'].includes(key) ? '; existing original fences are immutable' : ''
+      throw new Refusal(`${label}.${key} is not accepted by this writer${fenceNote}`)
+    }
+  }
+}
+
+// Fence entries use the plan schema's string or {path, note} shape. Check
+// their path strings before the glob matcher, leaving closed-object checks to
+// candidate validation.
+function decisionPaths(value, label, fence = false) {
+  if (!Array.isArray(value) || value.length === 0) throw new UsageError(`${label} must be a non-empty array of path strings`)
+  const paths = fence ? value.map((entry) => typeof entry === 'string' ? entry : entry?.path) : value
+  if (paths.some((path) => typeof path !== 'string' || !path.trim())) {
+    throw new UsageError(`${label} must contain non-empty path strings`)
+  }
+}
+
+function liveIssues(plan) {
+  return plan.issues.filter((issue) => issue.verdict !== 'done')
+}
+
+function pairKey(a, b) {
+  return [a, b].sort((x, y) => x - y).join(':')
+}
+
+// The schema records exact candidate intersections. A glob-only intersection
+// without a shared candidate entry cannot be represented: refuse and ask the
+// operator to supply a concrete shared candidate, rather than inventing scope.
+function computeOverlaps(plan, decisions) {
+  if (!Array.isArray(decisions)) throw new Refusal('overlaps must be an array')
+  const byPair = new Map()
+  for (const decision of decisions) {
+    const key = pairKey(decision.issue_a, decision.issue_b)
+    if (byPair.has(key)) throw new Refusal(`duplicate overlap decision ${key}`)
+    byPair.set(key, decision)
+  }
+  const overlaps = []
+  const issues = liveIssues(plan)
+  for (let i = 0; i < issues.length; i += 1) for (const right of issues.slice(i + 1)) {
+    const left = issues[i]
+    const shared = [...new Set(left.candidate_files.filter((path) => right.candidate_files.includes(path)))].sort()
+    const collision = left.candidate_files.some((a) => right.candidate_files.some((b) => mayOverlap(a, b)))
+    const key = pairKey(left.number, right.number)
+    if (!collision) continue
+    const decision = byPair.get(key)
+    if (!decision || !['serialize', 'split'].includes(decision.resolution) || !decision.merge_dependency) {
+      throw new Refusal(`unresolved overlap ${key}; supply resolution and merge_dependency`)
+    }
+    if (!shared.length) throw new Refusal(`glob overlap ${key} needs a shared candidate entry to record its resolution`)
+    const [issue_a, issue_b] = [left.number, right.number].sort((a, b) => a - b)
+    overlaps.push({ issue_a, issue_b, paths: shared, resolution: decision.resolution, merge_dependency: decision.merge_dependency })
+    byPair.delete(key)
+  }
+  if (byPair.size) throw new Refusal(`overlap decisions name no live candidate intersection: ${[...byPair.keys()].join(', ')}`)
+  plan.overlaps = overlaps
+  // Cross-wave ownership still needs a path-specific decision. The schema's
+  // same-wave exact-string check alone cannot establish this property.
+  for (let i = 0; i < plan.lanes.length; i += 1) for (const right of plan.lanes.slice(i + 1)) {
+    const left = plan.lanes[i]
+    const overlap = overlaps.find((entry) => pairKey(entry.issue_a, entry.issue_b) === pairKey(left.issue, right.issue))
+    for (const a of effectiveFence(left)) for (const b of effectiveFence(right)) {
+      if (!mayOverlap(a.path, b.path)) continue
+      const covered = overlap?.paths.some((path) =>
+        (a.path === b.path && path === a.path) ||
+        (!/[*?]/.test(a.path) && pathMatches(a.path, path) && pathMatches(a.path, b.path)) ||
+        (!/[*?]/.test(b.path) && pathMatches(b.path, path) && pathMatches(b.path, a.path)))
+      if (!covered) throw new Refusal(`unresolved effective fence overlap ${left.lane}/${right.lane}: ${a.path} / ${b.path}`)
+    }
+  }
+}
+
+function appendIssue(plan, input) {
+  fields(input, ['issue', 'lane', 'profile', 'overlaps', 'waves'], 'addition')
+  if (!input.issue || !input.lane || !input.profile?.policy || input.profile.lane !== input.lane.lane) {
+    throw new Refusal('addition requires issue, lane and complete resolved profile {lane, policy}')
+  }
+  decisionPaths(input.issue.candidate_files, 'issue.candidate_files')
+  decisionPaths(input.lane.fence, 'lane.fence', true)
+  if (plan.issues.some((issue) => issue.number === input.issue.number)) throw new Refusal(`issue #${input.issue.number} already exists`)
+  if (input.issue.verdict === 'done') throw new Refusal('an added issue must be live')
+  if (input.lane.issue !== input.issue.number) throw new Refusal('added lane must name the added issue')
+  if (!plan.lane_profiles) {
+    throw new Refusal('before adding an issue, hand-append a validated revision recording complete lane_profiles, per orchestrate SKILL.md § Planning')
+  }
+  plan.issues.push(structuredClone(input.issue))
+  plan.lanes.push(structuredClone(input.lane))
+  plan.lane_profiles.push(structuredClone(input.profile))
+  if (!input.waves) {
+    const wave = plan.waves.find((entry) => entry.number === input.lane.wave)
+    if (wave) wave.issues.push(input.issue.number)
+    else plan.waves.push({ number: input.lane.wave, issues: [input.issue.number] })
+  }
+  return input.waves
+}
+
+function placeWaves(plan, waves) {
+  if (waves === undefined) return
+  if (!Array.isArray(waves)) throw new Refusal('waves must be an array')
+  plan.waves = structuredClone(waves)
+  for (const lane of plan.lanes) {
+    lane.wave = waves.find((wave) => wave.issues.includes(lane.issue))?.number
+  }
+}
+
+// One predecessor relation: file merge ordering and issue prerequisites.
+function planPredecessors(plan) {
+  const predecessors = new Map((plan.issues ?? []).map((issue) => [issue.number, new Set(issue.blocked_by ?? [])]))
+  for (const overlap of plan.overlaps ?? []) {
+    const edge = overlap.merge_dependency
+    if (edge) predecessors.get(edge.after)?.add(edge.before)
+  }
+  return predecessors
+}
+
+function retireIssue(plan, number, verdict = 'done') {
+  const issue = plan.issues.find((entry) => entry.number === number)
+  if (!issue || issue.verdict === 'done') throw new Refusal(`issue #${number} is not live in this slate`)
+  issue.verdict = verdict
+  const lanes = new Set(plan.lanes.filter((lane) => lane.issue === number).map((lane) => lane.lane))
+  plan.lanes = plan.lanes.filter((lane) => lane.issue !== number)
+  if (plan.lane_profiles) plan.lane_profiles = plan.lane_profiles.filter((entry) => !lanes.has(entry.lane))
+  if (verdict === 'done') {
+    const remap = new Map()
+    plan.waves = plan.waves.map((wave) => ({ ...wave, issues: wave.issues.filter((n) => n !== number) }))
+      .filter((wave) => wave.issues.length).sort((a, b) => a.number - b.number).map((wave, index) => {
+        remap.set(wave.number, index + 1)
+        return { ...wave, number: index + 1 }
+      })
+    for (const lane of plan.lanes) lane.wave = remap.get(lane.wave)
+    plan.overlaps = plan.overlaps.filter((entry) => entry.issue_a !== number && entry.issue_b !== number)
+    if (plan.merge_queue !== undefined) plan.merge_queue = plan.merge_queue.filter((entry) => entry.issue !== number)
+  }
+}
+
+// Every queued issue has each merge predecessor done or queued ahead of it.
+// A waiting handoff retains its PR on the issue until its predecessors allow
+// appending. Repeated passes release chains while preserving existing queue order.
+function queueWaitingHandoffs(plan) {
+  const queue = plan.merge_queue ?? []
+  const issueByNumber = new Map(plan.issues.map((issue) => [issue.number, issue]))
+  const predecessorByIssue = planPredecessors(plan)
+  let added
+  do {
+    added = false
+    for (const issue of plan.issues) {
+      if (issue.verdict !== 'handed-off' || queue.some((entry) => entry.issue === issue.number)) continue
+      const predecessors = [...predecessorByIssue.get(issue.number)]
+      if (predecessors.some((number) => issueByNumber.get(number)?.verdict !== 'done' && !queue.some((entry) => entry.issue === number))) continue
+      if (!Number.isInteger(issue.pr) || issue.pr < 1) throw new Refusal(`handed-off issue #${issue.number} needs its PR binding`)
+      queue.push({ issue: issue.number, pr: issue.pr })
+      added = true
+    }
+  } while (added)
+  if (plan.merge_queue !== undefined || queue.length) plan.merge_queue = queue
+}
+
+function expandLane(plan, laneName, paths, at, reason, { source, fresh = false } = {}) {
+  const lane = plan.lanes.find((entry) => entry.lane === laneName)
+  if (!lane) throw new Refusal(`unknown receiving live lane ${laneName}`)
+  if (!Array.isArray(paths) || !paths.length || paths.some((path) => typeof path !== 'string' || !path.trim())) {
+    throw new Refusal('at least one nonempty path is required')
+  }
+  for (const path of paths) {
+    const uncertain = source && [path, ...fencePaths(source)].find(uninterpretable)
+    if (uncertain) throw new Refusal(`pattern needs orchestrator judgment (not matched here): ${uncertain}`)
+    if (source && !effectiveFence(source).some((item) => path === item.path || (!/[*?]/.test(path) && pathMatches(path, item.path)))) {
+      throw new Refusal(`released path ${path} is outside finished lane ${source.lane}'s effective fence`)
+    }
+    for (const other of plan.lanes.filter((entry) => entry.lane !== laneName)) {
+      if (effectiveFence(other).some((item) => mayOverlap(path, item.path))) {
+        throw new Refusal(`path ${path} is covered by another live lane ${other.lane}'s effective fence`)
+      }
+    }
+    if (effectiveFence(lane).some((item) => path === item.path || (!/[*?\[]/.test(path) && pathMatches(path, item.path)))) {
+      throw new Refusal(`path ${path} is already covered by receiving lane ${laneName}`)
+    }
+    if (fresh) lane.fence.push({ path })
+    else lane.expansions.push({ path, at, reason })
+  }
+}
+
+function decisionWrite(command, args) {
+  const { root } = stateRoot()
+  const slate = requireId('slate', args.slate)
+  const session = requireId('session', args.session)
+  if (typeof args.reason !== 'string' || !args.reason.trim()) throw new UsageError('--reason is required')
+  const at = resolveAt(args.at)
+  const canonical = join(root, 'slates', slate, 'plan.json')
+  const input = args.input ? readJson(args.input, 'decision input') : {}
+  if (['genesis', 'add-issue', 'queue-order'].includes(command) && !args.input) throw new UsageError('--input is required')
+  if (command === 'genesis' && !args['owner-token']) throw new Refusal('genesis requires --owner-token for an already-held lock')
+  mkdirSync(dirname(canonical), { recursive: true })
+  return withMutex(canonical, () => {
+    if (command === 'genesis' && existsSync(canonical)) throw new Refusal(`slate ${slate} already has a plan`)
+    if (command !== 'genesis' && !existsSync(canonical)) throw new Refusal(`no plan for slate ${slate}`)
+    if (command !== 'genesis') validateFile('plan', canonical, 'existing plan')
+    const document = command === 'genesis' ? { schema: 1, slate_id: slate, revisions: [] } : readJson(canonical, 'plan')
+    if (document.slate_id !== slate) throw new Refusal('plan slate_id does not match its directory')
+    const last = document.revisions.at(-1)
+    if (last && isBefore(at, last.at)) throw new Refusal(`${at} precedes revision ${last.seq} (${last.at})`)
+    const plan = structuredClone(last?.plan ?? input)
+    const held = acquireSlateLock({ root, slate, session, ownerToken: args['owner-token'] })
+    let decisions = plan.overlaps
+    if (command === 'genesis') {
+      if (!Array.isArray(plan.issues)) throw new UsageError('plan.issues must be an array')
+      if (!Array.isArray(plan.lanes)) throw new UsageError('plan.lanes must be an array')
+      for (const issue of plan.issues) if (issue?.verdict !== 'done') decisionPaths(issue?.candidate_files, 'issue.candidate_files')
+      for (const lane of plan.lanes) decisionPaths(lane?.fence, 'lane.fence', true)
+      const outside = plan.issues?.filter((issue) => !held.issues.includes(issue.number)) ?? []
+      if (outside.length) throw new Refusal(`genesis issues outside the lock reservation: ${outside.map((issue) => issue.number).join(', ')}`)
+    } else if (command === 'add-issue') {
+      const waves = appendIssue(plan, input)
+      placeWaves(plan, waves)
+      decisions = [...plan.overlaps, ...(input.overlaps ?? [])]
+    } else if (command === 'expand') {
+      fields(input, [], 'expand input')
+      if (args.path?.length !== 1) throw new UsageError('expand requires exactly one --path')
+      expandLane(plan, requireId('lane', args.lane), args.path, at, args.reason)
+    } else if (command === 'handoff') {
+      fields(input, [], 'handoff input')
+      const number = Number(args.issue), pr = Number(args.pr)
+      if (!Number.isInteger(number) || number < 1) throw new UsageError('--issue must be a positive issue number')
+      if (!Number.isInteger(pr) || pr < 1) throw new UsageError('--pr must be a positive PR number')
+      if (!plan.lanes.some((lane) => lane.issue === number)) throw new Refusal(`issue #${number} has no live source lane`)
+      if ((plan.merge_queue ?? []).some((entry) => entry.pr === pr) ||
+          plan.issues.some((issue) => issue.verdict === 'handed-off' && issue.pr === pr)) {
+        throw new Refusal(`duplicate PR ${pr}`)
+      }
+      retireIssue(plan, number, 'handed-off')
+      plan.issues.find((issue) => issue.number === number).pr = pr
+    } else if (command === 'queue-order') {
+      fields(input, ['issues'], 'queue-order input')
+      const queue = plan.merge_queue ?? []
+      if (!Array.isArray(input.issues) || input.issues.length !== queue.length ||
+          new Set(input.issues).size !== queue.length ||
+          input.issues.some((number) => !queue.some((entry) => entry.issue === number))) {
+        throw new Refusal('queue-order issues must be a permutation of the current merge queue')
+      }
+      plan.merge_queue = input.issues.map((number) => queue.find((entry) => entry.issue === number))
+    } else {
+      fields(input, ['releases', 'addition', 'waves'], 'retirement input')
+      const number = Number(args.issue)
+      if (!Number.isInteger(number) || number < 1) throw new UsageError('--issue must be a positive issue number')
+      const source = plan.lanes.find((lane) => lane.issue === number)
+      if (!source && (command !== 'done' || plan.issues.find((issue) => issue.number === number)?.verdict !== 'handed-off')) {
+        throw new Refusal(`issue #${number} has no live source lane`)
+      }
+      if (!source && ((input.releases?.length ?? 0) > 0)) throw new Refusal('a handed-off issue has no source fence to release')
+      retireIssue(plan, number)
+      let waves
+      if (input.addition) waves = appendIssue(plan, input.addition)
+      const releases = [...(input.releases ?? [])]
+      if (command === 'release') {
+        if (!args.lane || !args.path?.length) throw new UsageError('release requires --lane and --path')
+        releases.push({ lane: args.lane, paths: args.path })
+      }
+      for (const release of releases) {
+        fields(release, ['lane', 'paths'], 'release')
+        expandLane(plan, release.lane, release.paths, at, args.reason, {
+          source, fresh: release.lane === input.addition?.lane?.lane,
+        })
+      }
+      placeWaves(plan, input.waves ?? waves)
+      decisions = [...plan.overlaps, ...(input.addition?.overlaps ?? [])]
+    }
+    computeOverlaps(plan, decisions)
+    if (['handoff', 'done', 'release'].includes(command)) queueWaitingHandoffs(plan)
+    const seq = document.revisions.length
+    const prev_digest = last?.digest ?? 'genesis'
+    const entry = { seq, prev_digest, at, reason: args.reason, plan }
+    entry.digest = chainDigest({ seq, plan, at, reason: args.reason }, prev_digest)
+    document.revisions.push(entry)
+    // Prove the complete candidate valid before reserving any additional
+    // issues. A refused revision must leave the held reservation unchanged.
+    if (command === 'add-issue' || input.addition) {
+      const candidate = `${canonical}.candidate.${process.pid}.${randomBytes(4).toString('hex')}`
+      writeFileSync(candidate, `${JSON.stringify(document, null, 2)}\n`, { flag: 'wx' })
+      try {
+        validateFile('plan', candidate, 'candidate before lock widening')
+      } finally {
+        unlinkSync(candidate)
+      }
+      acquireSlateLock({ root, slate, session, ownerToken: args['owner-token'],
+        issues: [...new Set([...held.issues, ...plan.issues.map((issue) => issue.number)])] })
+    }
+    writeValidated('plan', canonical, document)
+    return `appended revision ${seq}: ${command}`
+  })
+}
+
 function main(argv) {
   const [command, ...rest] = argv
-  if (command !== 'base-move') throw new UsageError('plan-revise.mjs base-move … (see the header)')
-  const args = parseScopeFlags(
-    parseFlags(
-      rest,
-      new Set(['slate', 'session', 'owner-token', 'new-base', 'reason', 'done', 'at', 'milestone', 'issues']),
-      new Set(),
-      new Set(['done']),
-    ),
-  )
-  return baseMove(args)
+  const usage = 'plan-revise.mjs genesis|add-issue|expand|release|done|handoff|queue-order|base-move … (see the header)'
+  if (!['genesis', 'add-issue', 'expand', 'release', 'done', 'handoff', 'queue-order', 'base-move'].includes(command)) throw new UsageError(usage)
+  const allowed = command === 'base-move'
+    ? ['slate', 'session', 'owner-token', 'new-base', 'reason', 'done', 'at', 'milestone', 'issues']
+    : ['slate', 'session', 'owner-token', 'reason', 'at',
+      ...({ genesis: ['input'], 'add-issue': ['input'], expand: ['lane', 'path'],
+        release: ['issue', 'lane', 'path', 'input'], done: ['issue', 'input'], handoff: ['issue', 'pr'], 'queue-order': ['input'] }[command])]
+  const args = parseScopeFlags(parseFlags(rest, new Set(allowed), new Set(), new Set(['done', 'path'])))
+  return command === 'base-move' ? baseMove(args) : decisionWrite(command, args)
 }
 
 if (realpathSync(process.argv[1] ?? '') === realpathSync(fileURLToPath(import.meta.url))) runCli(main)
