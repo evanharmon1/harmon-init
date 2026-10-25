@@ -18,7 +18,7 @@ scan() {
         function inspect(text, line) {
             if (text ~ /^[[:space:]]*#/) return
             if (text ~ /# grep-q-pipe: allow --[[:space:]]*[^[:space:]]/) return
-            if (text ~ /(^|[;&|()[:space:]\047"])(printf|echo)[[:space:]].*[|][[:space:]]*grep([[:space:]]+-[[:alpha:]]+)*[[:space:]]+-[[:alpha:]]*q[[:alpha:]]*([[:space:]]|$)/) {
+            if (text ~ /(^|[[;&|()[:space:]\047"])(printf|echo)[[:space:]].*[|][[:space:]]*grep([[:space:]]+-[[:alpha:]]+)*[[:space:]]+-[[:alpha:]]*q[[:alpha:]]*([[:space:]]|$)/) {
                 printf "%s:%d: producer piped into grep -q: %s\n", FILENAME, line, text
                 bad = 1
             }
@@ -68,17 +68,25 @@ self_test() (
     printf 'printf "%%s\\n" "$x" %s grep -q PATTERN\n' '|' >"$fixtures/bad.sh"
     printf 'tasks:\n  test:\n    cmds:\n      - echo "$x" %s grep -q PATTERN\n' '|' >"$fixtures/task.yml"
     printf 'steps:\n  - run: |\n      echo "$x" %s grep -q PATTERN\n' '|' >"$fixtures/workflow.yml"
+    printf 'tasks:\n  test:\n    cmds: echo "$x" %s grep -q PATTERN\n' '|' >"$fixtures/inline-task.yml"
+    printf 'tasks:\n  test:\n    cmds: [echo "$x" %s grep -q PATTERN]\n' '|' >"$fixtures/flow-task.yml"
+    printf 'steps:\n  - run: echo "$x" %s grep -q PATTERN\n' '|' >"$fixtures/inline-workflow.yml"
     printf 'echo "$x" %s\n    grep -q PATTERN\n' '|' >"$fixtures/continued.sh"
     printf 'echo "$x" %s grep -Fq PATTERN\n' '|' >"$fixtures/clustered.sh"
     printf 'echo "$x" %s grep -E -q PATTERN\n' '|' >"$fixtures/separate.sh"
     printf 'echo "$x" %s grep -q PATTERN # grep-q-pipe: allow --   \n' '|' >"$fixtures/empty-reason.sh"
     printf 'grep -q PATTERN <<<"$(printf "%%s\\n" "$x")"\n' >"$fixtures/good.sh"
     printf 'echo "$x" %s grep -q PATTERN # grep-q-pipe: allow -- intentional fixture\n' '|' >"$fixtures/allowed.sh"
-    for fixture in bad.sh continued.sh clustered.sh separate.sh empty-reason.sh task.yml workflow.yml; do
+    printf 'printf "%%s\\n" "$x" >"$f"; grep -q PATTERN "$f"\n' >"$fixtures/pipe-free.sh"
+    for fixture in bad.sh continued.sh clustered.sh separate.sh empty-reason.sh task.yml workflow.yml inline-task.yml inline-workflow.yml flow-task.yml; do
         case "$fixture" in
         *.sh) kind=shell ;;
-        task.yml) kind=task ;;
-        workflow.yml) kind=workflow ;;
+        *task.yml) kind=task ;;
+        *workflow.yml) kind=workflow ;;
+        *)
+            echo "test-grep-q-pipes: unclassified fixture $fixture" >&2
+            exit 1
+            ;;
         esac
         if scan "$fixtures/$fixture" "$kind" >"$fixtures/output"; then
             echo "test-grep-q-pipes: self-test failed: missed $fixture" >&2
@@ -89,7 +97,7 @@ self_test() (
             exit 1
         fi
     done
-    for fixture in good.sh allowed.sh; do
+    for fixture in good.sh allowed.sh pipe-free.sh; do
         if ! scan "$fixtures/$fixture" shell >"$fixtures/output"; then
             echo "test-grep-q-pipes: self-test failed: rejected $fixture" >&2
             cat "$fixtures/output" >&2
