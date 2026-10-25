@@ -86,7 +86,7 @@ jobs:
       # a runner exists the arm64 download paths are checksum-verified
       # but not executed, which docs/architecture/remote-environments.md says
       # outright rather than leaving to be assumed.
-      image: ubuntu:24.04@sha256:534baea6a22c03a63003dbc8dbe78fe34bc0d7e595d9a9dc9834884ff530eb55
+      image: ubuntu:24.04@sha256:68ee22004a9109b44973313b02ff7b1de250f1de0f5ecb628d73f579aaff33ac
       options: --user root
     env:
       # The core+agents budget the platform's cached setup has to fit
