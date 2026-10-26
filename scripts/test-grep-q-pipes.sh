@@ -2,14 +2,20 @@
 # Reject printf/echo producers piped into grep -q: under pipefail an early
 # match can SIGPIPE the producer and turn a match into failure. Use a here-string.
 # Scans shell scripts (including conditional Copier names and .sh.jinja),
-# Taskfile task-level `cmds:`, `status:`, and plain-string `preconditions:` values
-# in block, inline, and one-line flow-sequence forms, and workflow `run:` bodies.
+# Taskfile `cmds:`, `status:`, and `preconditions:` keys at any depth (when no
+# body is already open), scanning inline values and indented bodies, including
+# block scalars and single- or multi-line flow sequences. `sh:` text inside a
+# scanned `preconditions:` body is included. A task named `cmds`, `status`, or
+# `preconditions` also activates its body; this fail-safe over-scan produced no
+# diagnostics in the scoped Taskfile/workflow scans of the four checked repos.
+# Workflow `run:` bodies are scanned too.
 # Generated repos need no `template/` tree.
 # Taskfile forms out of scope: short task syntax (scalar, sequence, flow); all
-# `sh:` values (dynamic vars, precondition `sh:`, and env `sh:`), in every form;
-# flow-mapping tasks; compact (indentless) sequences; multiline block scalars
-# outside those three keys; task-level `cmd:` and `if:`; quoted keys; anchored
-# or tagged `tasks:` shapes beyond the indented command fields scanned here.
+# `sh:` values outside scanned `preconditions:` bodies (such as dynamic vars and
+# env `sh:`), in every form; YAML aliases such as `cmds: *anchor`; flow-mapping
+# tasks; compact (indentless) sequences; multiline block scalars outside those
+# three keys; task-level `cmd:` and `if:`; quoted keys; anchored or tagged
+# `tasks:` shapes beyond the indented command fields scanned here.
 # A same-line `# grep-q-pipe: allow -- REASON` exempts an intentional fixture;
 # the reason must contain a non-whitespace character. Full-line comments do not
 # execute and are ignored. Matching uses POSIX ERE, including flag clusters.
@@ -52,8 +58,8 @@ scan() {
                 pending = ""
                 active = 0
             }
-            if ((kind == "task" && $0 ~ /^[[:space:]]*(cmds|status|preconditions):/) ||
-                (kind == "workflow" && $0 ~ /^[[:space:]]*(-[[:space:]]+)?run:/)) {
+            if (!active && ((kind == "task" && $0 ~ /^[[:space:]]*(cmds|status|preconditions):/) ||
+                (kind == "workflow" && $0 ~ /^[[:space:]]*(-[[:space:]]+)?run:/))) {
                 active = 1
                 boundary = indent
                 text = $0
@@ -84,6 +90,8 @@ self_test() (
     printf 'tasks:\n  test:\n    preconditions:\n      - echo "$x" %s grep -q PATTERN\n' '|' >"$fixtures/preconditions-block-task.yml"
     printf 'tasks:\n  test:\n    preconditions: echo "$x" %s grep -q PATTERN\n' '|' >"$fixtures/preconditions-inline-task.yml"
     printf 'tasks:\n  test:\n    preconditions: [echo "$x" %s grep -q PATTERN]\n' '|' >"$fixtures/preconditions-flow-task.yml"
+    printf 'tasks:\n  default:\n    cmds:\n      - |\n        status: enabled\n      - echo abc %s grep -q abc && echo SECOND-RAN\n' '|' >"$fixtures/nested-status-boundary-task.yml"
+    printf 'tasks:\n  notify:\n    cmds:\n      - task: something\n        vars:\n          status: ok\n      - echo abc %s grep -q abc && echo SECOND-RAN\n' '|' >"$fixtures/nested-vars-status-boundary-task.yml"
     printf 'tasks:\n  default:\n    cmds:\n      - task: nested\n        vars:\n          X:\n            sh: |\n              echo safe\n      - echo "$x" %s grep -q PATTERN\n' '|' >"$fixtures/nested-sh-boundary-task.yml"
     printf 'steps:\n  - run: echo "$x" %s grep -q PATTERN\n' '|' >"$fixtures/inline-workflow.yml"
     printf 'echo "$x" %s\n    grep -q PATTERN\n' '|' >"$fixtures/continued.sh"
@@ -93,7 +101,7 @@ self_test() (
     printf 'grep -q PATTERN <<<"$(printf "%%s\\n" "$x")"\n' >"$fixtures/good.sh"
     printf 'echo "$x" %s grep -q PATTERN # grep-q-pipe: allow -- intentional fixture\n' '|' >"$fixtures/allowed.sh"
     printf 'printf "%%s\\n" "$x" >"$f"; grep -q PATTERN "$f"\n' >"$fixtures/pipe-free.sh"
-    for fixture in bad.sh continued.sh clustered.sh separate.sh empty-reason.sh task.yml workflow.yml inline-task.yml inline-workflow.yml flow-task.yml anchored-task.yml status-block-task.yml status-inline-task.yml status-flow-task.yml preconditions-block-task.yml preconditions-inline-task.yml preconditions-flow-task.yml nested-sh-boundary-task.yml; do
+    for fixture in bad.sh continued.sh clustered.sh separate.sh empty-reason.sh task.yml workflow.yml inline-task.yml inline-workflow.yml flow-task.yml anchored-task.yml status-block-task.yml status-inline-task.yml status-flow-task.yml preconditions-block-task.yml preconditions-inline-task.yml preconditions-flow-task.yml nested-status-boundary-task.yml nested-vars-status-boundary-task.yml nested-sh-boundary-task.yml; do
         case "$fixture" in
         *.sh) kind=shell ;;
         *task.yml) kind=task ;;
@@ -109,6 +117,11 @@ self_test() (
         fi
         if [ ! -s "$fixtures/output" ]; then
             echo "test-grep-q-pipes: self-test failed: no diagnostic for $fixture" >&2
+            exit 1
+        fi
+        if [ "$fixture" = status-block-task.yml ] && ! grep -Eq 'status-block-task\.yml:4: producer piped into grep -q:' "$fixtures/output"; then
+            echo "test-grep-q-pipes: self-test failed: wrong reported line for $fixture" >&2
+            cat "$fixtures/output" >&2
             exit 1
         fi
     done
