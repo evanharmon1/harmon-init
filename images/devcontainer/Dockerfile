@@ -75,8 +75,8 @@ ARG FX_VERSION=40.0.0
 ARG FRESH_VERSION=0.5.4
 # Fresh release-archive SHA-256 values. The version pin is Renovate-managed;
 # update these reviewed, architecture-specific digests with each release.
-ARG FRESH_SHA256_AMD64=8c7ab2006922d1aec31664dce014e8715a18c7c98df572a4d72fe8aaa16c8533
-ARG FRESH_SHA256_ARM64=9f5538bb6da4d67609c82d7fbc7e2f76dcab385c920856713eee73366351f3a9
+ARG FRESH_SHA256_AMD64=e3599c93b1eece4700d7c30726b461c9b962a91bee5da31cdf44e3dffeb6206c
+ARG FRESH_SHA256_ARM64=df10f648d81e194f613b975d63d4cdea3ccf3f6177325793701a50ce795ab143
 # renovate: datasource=github-releases depName=eugenioenko/ttt extractVersion=^v?(?<version>.+)$
 ARG TTT_VERSION=1.8.0
 # TTT release SHA-256 values. The version pin is Renovate-managed;
