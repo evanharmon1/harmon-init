@@ -2,13 +2,15 @@
 # Reject printf/echo producers piped into grep -q: under pipefail an early
 # match can SIGPIPE the producer and turn a match into failure. Use a here-string.
 # Scans shell scripts (including conditional Copier names and .sh.jinja),
-# Taskfile cmds/status blocks, short task scalar/sequence values,
-# preconditions `sh:` entries, dynamic-var `sh:` values, one-line flow-mapping
-# tasks, and workflow run bodies. It is a line-oriented heuristic, not a YAML
-# or shell parser: multiline flow collections and Taskfile `task:`/`defer:`
-# actions are out of scope. Quoted pipe text may false-positive; a pipeline
-# continued after a trailing comment can be missed. Generated repos need no
-# template/ tree.
+# task-level Taskfile `cmds:`, `status:`, and `preconditions:` values, short
+# task scalar and block-scalar body lines, short task command sequences,
+# dynamic-var and precondition `sh:` values, one-line flow-mapping tasks, and
+# workflow `run:` bodies. This line-oriented heuristic is not a YAML or shell
+# parser: multiline flow collections, next-line plain scalars, task-level
+# `if:`, quoted keys, and Taskfile `task:` actions are out of scope. Literal
+# and folded block bodies are scanned line by line; continued `sh:` values and
+# pipelines split across folded lines are not reconstructed. Quoted pipe text
+# may false-positive. Generated repos need no `template/` tree.
 # A same-line `# grep-q-pipe: allow -- REASON` exempts an intentional fixture;
 # the reason must contain a non-whitespace character. Full-line comments do not
 # execute and are ignored. Matching uses POSIX ERE, including flag clusters.
@@ -54,49 +56,68 @@ scan() {
             if (kind == "task" && $0 ~ /^[[:space:]]*tasks:[[:space:]]*($|#)/) {
                 task_map = 1
                 task_indent = indent
+                task_entry_indent = -1
+                task_field_indent = -1
                 short_candidate = 0
                 next
             }
             if (kind == "task" && task_map && indent <= task_indent) {
                 task_map = 0
+                task_entry_indent = -1
+                task_field_indent = -1
                 short_candidate = 0
             }
-            if (kind == "task" && task_map && short_candidate && indent > short_boundary) {
+            if (kind == "task" && task_map) {
+                if (task_entry_indent < 0 && indent > task_indent) {
+                    task_entry_indent = indent
+                }
+                if (indent == task_entry_indent) {
+                    task_field_indent = -1
+                    short_candidate = 0
+                    if (match($0, /:[[:space:]]/)) {
+                        text = substr($0, RSTART + RLENGTH)
+                        if (text ~ /^([#].*)?$/) {
+                            short_candidate = 1
+                        } else if (text ~ /^[|>][-+]?([1-9][-+]?)?[[:space:]]*(#.*)?$/) {
+                            active = 1
+                            boundary = indent
+                        } else {
+                            inspect(text, FNR)
+                        }
+                    } else if ($0 ~ /:$/) {
+                        short_candidate = 1
+                    }
+                    next
+                }
+            }
+            if (kind == "task" && task_map && short_candidate && indent > task_entry_indent) {
                 short_candidate = 0
-                if (indent == short_boundary + 2 && $0 ~ /^[[:space:]]*-[[:space:]]+/) {
+                if ($0 ~ /^[[:space:]]*-[[:space:]]+/) {
                     active = 1
-                    boundary = short_boundary
+                    boundary = task_entry_indent
                     command($0)
                     next
                 }
             }
-            if (kind == "task" && task_map && indent == task_indent + 2) {
-                if (match($0, /:[[:space:]]/)) {
-                    text = substr($0, RSTART + RLENGTH)
-                    if (text ~ /^([#].*)?$/) {
-                        short_candidate = 1
-                        short_boundary = indent
-                    } else {
-                        inspect(text, FNR)
-                    }
-                } else if ($0 ~ /:$/) {
-                    short_candidate = 1
-                    short_boundary = indent
-                }
+            if (kind == "task" && task_map && indent > task_entry_indent && task_field_indent < 0) {
+                task_field_indent = indent
             }
-            if (kind == "task" && $0 ~ /(^|[{,[:space:]])sh:[[:space:]]*/) {
+            if (kind == "task" && ($0 ~ /^[[:space:]]*(-[[:space:]]+)?sh:[[:space:]]*/ ||
+                $0 ~ /[{,][[:space:]]*sh:[[:space:]]*/)) {
                 inspect($0, FNR)
-                if ($0 ~ /(^|[{,[:space:]])sh:[[:space:]]*[|>][-+]?[[:space:]]*(#.*)?$/) {
+                if ($0 ~ /^[[:space:]]*(-[[:space:]]+)?sh:[[:space:]]*[|>][-+]?([1-9][-+]?)?[[:space:]]*(#.*)?$/ ||
+                    $0 ~ /[{,][[:space:]]*sh:[[:space:]]*[|>][-+]?([1-9][-+]?)?[[:space:]]*(#.*)?[},]?[[:space:]]*$/) {
                     active = 1
                     boundary = indent
                 }
             }
-            if ((kind == "task" && $0 ~ /^[[:space:]]*(cmds|status):/) ||
+            if ((kind == "task" && task_map && indent == task_field_indent &&
+                    $0 ~ /^[[:space:]]*(cmds|status|preconditions):/) ||
                 (kind == "workflow" && $0 ~ /^[[:space:]]*(-[[:space:]]+)?run:/)) {
                 active = 1
                 boundary = indent
                 text = $0
-                sub(/^[[:space:]]*(-[[:space:]]+)?(cmds|status|run):[[:space:]]*/, "", text)
+                sub(/^[[:space:]]*(-[[:space:]]+)?(cmds|status|preconditions|run):[[:space:]]*/, "", text)
                 if (text !~ /^([|>][-+]?|\[)?[[:space:]]*$/) command(text)
                 next
             }
@@ -117,11 +138,20 @@ self_test() (
     printf 'tasks:\n  test:\n    cmds: echo "$x" %s grep -q PATTERN\n' '|' >"$fixtures/inline-task.yml"
     printf 'tasks:\n  test:\n    cmds: [echo "$x" %s grep -q PATTERN]\n' '|' >"$fixtures/flow-task.yml"
     printf 'tasks: { a: echo "$x" %s grep -q PATTERN }\n' '|' >"$fixtures/short-flow-scalar-task.yml"
+    printf 'tasks:\n  a: [echo "$x" %s grep -q PATTERN]\n' '|' >"$fixtures/short-flow-sequence-task.yml"
     printf 'tasks:\n  a: echo "$x" %s grep -q PATTERN\n' '|' >"$fixtures/short-scalar-task.yml"
     printf 'tasks:\n  a:\n    - echo "$x" %s grep -q PATTERN\n' '|' >"$fixtures/short-sequence-task.yml"
     printf 'tasks:\n  a:\n    status:\n      - echo "$x" %s grep -q PATTERN\n' '|' >"$fixtures/status-task.yml"
+    printf 'tasks:\n  a:\n    preconditions:\n      - echo "$x" %s grep -q PATTERN\n' '|' >"$fixtures/preconditions-plain-block-task.yml"
+    printf 'tasks:\n  a:\n    preconditions: [echo "$x" %s grep -q PATTERN]\n' '|' >"$fixtures/preconditions-plain-flow-task.yml"
     printf 'tasks:\n  a:\n    preconditions:\n      - sh: echo "$x" %s grep -q PATTERN\n        msg: expected condition\n' '|' >"$fixtures/preconditions-task.yml"
     printf 'tasks:\n  a:\n    vars:\n      X:\n        sh: echo "$x" %s grep -q PATTERN\n' '|' >"$fixtures/dynamic-vars-task.yml"
+    printf 'tasks:\n  a:\n    preconditions:\n      - sh: |\n          echo "$x" %s grep -q PATTERN\n        msg: expected condition\n' '|' >"$fixtures/preconditions-sh-block-task.yml"
+    printf 'tasks:\n  a:\n    vars:\n      X:\n        sh: |\n          echo "$x" %s grep -q PATTERN\n' '|' >"$fixtures/dynamic-vars-sh-block-task.yml"
+    printf 'tasks:\n  a: |\n    echo "$x" %s grep -q PATTERN\n' '|' >"$fixtures/short-literal-block-task.yml"
+    printf 'tasks:\n  a: >-\n    echo "$x" %s grep -q PATTERN\n' '|' >"$fixtures/short-folded-block-task.yml"
+    printf 'tasks:\n    a:\n        - echo "$x" %s grep -q PATTERN\n' '|' >"$fixtures/short-indented-sequence-task.yml"
+    printf 'tasks:\n    a:\n        preconditions:\n            - echo "$x" %s grep -q PATTERN\n' '|' >"$fixtures/indented-preconditions-task.yml"
     printf 'tasks:\n  a: {cmds: [echo "$x" %s grep -q PATTERN]}\n' '|' >"$fixtures/flow-mapping-task.yml"
     printf 'steps:\n  - run: echo "$x" %s grep -q PATTERN\n' '|' >"$fixtures/inline-workflow.yml"
     printf 'echo "$x" %s\n    grep -q PATTERN\n' '|' >"$fixtures/continued.sh"
@@ -129,9 +159,11 @@ self_test() (
     printf 'echo "$x" %s grep -E -q PATTERN\n' '|' >"$fixtures/separate.sh"
     printf 'echo "$x" %s grep -q PATTERN # grep-q-pipe: allow --   \n' '|' >"$fixtures/empty-reason.sh"
     printf 'grep -q PATTERN <<<"$(printf "%%s\\n" "$x")"\n' >"$fixtures/good.sh"
+    printf 'tasks:\n  a:\n    vars:\n      X:\n        status:\n          - echo "$x" %s grep -q PATTERN\n' '|' >"$fixtures/nested-status-not-task-key.yml"
+    printf 'tasks:\n  a:\n    desc: a value containing sh: |\n      echo "$x" %s grep -q PATTERN\n    cmds:\n      - echo safe\n' '|' >"$fixtures/sh-text-is-not-key-task.yml"
     printf 'echo "$x" %s grep -q PATTERN # grep-q-pipe: allow -- intentional fixture\n' '|' >"$fixtures/allowed.sh"
     printf 'printf "%%s\\n" "$x" >"$f"; grep -q PATTERN "$f"\n' >"$fixtures/pipe-free.sh"
-    for fixture in bad.sh continued.sh clustered.sh separate.sh empty-reason.sh task.yml workflow.yml inline-task.yml inline-workflow.yml flow-task.yml short-flow-scalar-task.yml short-scalar-task.yml short-sequence-task.yml status-task.yml preconditions-task.yml dynamic-vars-task.yml flow-mapping-task.yml; do
+    for fixture in bad.sh continued.sh clustered.sh separate.sh empty-reason.sh task.yml workflow.yml inline-task.yml inline-workflow.yml flow-task.yml short-flow-scalar-task.yml short-flow-sequence-task.yml short-scalar-task.yml short-sequence-task.yml short-indented-sequence-task.yml short-literal-block-task.yml short-folded-block-task.yml status-task.yml preconditions-plain-block-task.yml preconditions-plain-flow-task.yml preconditions-task.yml preconditions-sh-block-task.yml dynamic-vars-task.yml dynamic-vars-sh-block-task.yml indented-preconditions-task.yml flow-mapping-task.yml; do
         case "$fixture" in
         *.sh) kind=shell ;;
         *task.yml) kind=task ;;
@@ -152,6 +184,13 @@ self_test() (
     done
     for fixture in good.sh allowed.sh pipe-free.sh; do
         if ! scan "$fixtures/$fixture" shell >"$fixtures/output"; then
+            echo "test-grep-q-pipes: self-test failed: rejected $fixture" >&2
+            cat "$fixtures/output" >&2
+            exit 1
+        fi
+    done
+    for fixture in nested-status-not-task-key.yml sh-text-is-not-key-task.yml; do
+        if ! scan "$fixtures/$fixture" task >"$fixtures/output"; then
             echo "test-grep-q-pipes: self-test failed: rejected $fixture" >&2
             cat "$fixtures/output" >&2
             exit 1
