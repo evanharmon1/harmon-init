@@ -8,8 +8,8 @@
 # scanned only when indented past their key. Text under scanned bodies is
 # included, including call-vars `sh:` inside `cmds:`. A task named `cmds`,
 # `status`, or `preconditions`, or a `status:` text line inside a block such as
-# `summary: |`, also opens a scan. These fail-safe over-scans produced no
-# diagnostics in the scoped Taskfile/workflow scans of the four checked repos.
+# `summary: |`, also opens a scan. These fail-safe over-scans can add diagnostics,
+# never hide one.
 # Workflow `run:` bodies are scanned too.
 # Generated repos need no `template/` tree.
 # Taskfile forms out of scope: short task syntax (scalar, sequence, flow); all
@@ -19,8 +19,7 @@
 # scanned bodies (such as env `sh:` and task-level dynamic vars); YAML aliases
 # such as `cmds: *anchor`; flow-mapping tasks; compact (indentless) sequences;
 # multiline block scalars outside the three scanned keys; task-level `cmd:` and
-# `if:`; quoted keys; anchored or tagged `tasks:` shapes beyond the indented
-# command fields scanned. Workflow `run :` keys are also out of scope.
+# `if:`; quoted keys. Workflow `run :` keys are also out of scope.
 # A same-line `# grep-q-pipe: allow -- REASON` exempts an intentional fixture;
 # the reason must contain a non-whitespace character. Full-line comments do not
 # execute and are ignored. Matching uses POSIX ERE, including flag clusters.
@@ -93,6 +92,7 @@ self_test() (
     printf 'tasks:\n  test:\n    status: echo "$x" %s grep -q PATTERN\n' '|' >"$fixtures/status-inline-task.yml"
     printf 'tasks:\n  test:\n    status: [echo "$x" %s grep -q PATTERN]\n' '|' >"$fixtures/status-flow-task.yml"
     printf 'tasks:\n  test:\n    preconditions:\n      - echo "$x" %s grep -q PATTERN\n' '|' >"$fixtures/preconditions-block-task.yml"
+    printf 'tasks:\n  a:\n    preconditions:\n      - sh: echo "$x" %s grep -q PATTERN\n' '|' >"$fixtures/preconditions-sh-task.yml"
     printf 'tasks:\n  test:\n    preconditions: echo "$x" %s grep -q PATTERN\n' '|' >"$fixtures/preconditions-inline-task.yml"
     printf 'tasks:\n  test:\n    preconditions: [echo "$x" %s grep -q PATTERN]\n' '|' >"$fixtures/preconditions-flow-task.yml"
     printf 'tasks:\n  default:\n    cmds:\n      - |\n        status: enabled\n      - echo abc %s grep -q abc && echo SECOND-RAN\n' '|' >"$fixtures/nested-status-boundary-task.yml"
@@ -107,7 +107,7 @@ self_test() (
     printf 'grep -q PATTERN <<<"$(printf "%%s\\n" "$x")"\n' >"$fixtures/good.sh"
     printf 'echo "$x" %s grep -q PATTERN # grep-q-pipe: allow -- intentional fixture\n' '|' >"$fixtures/allowed.sh"
     printf 'printf "%%s\\n" "$x" >"$f"; grep -q PATTERN "$f"\n' >"$fixtures/pipe-free.sh"
-    for fixture in bad.sh continued.sh clustered.sh separate.sh empty-reason.sh task.yml workflow.yml inline-task.yml inline-workflow.yml nested-run-boundary-workflow.yml flow-task.yml anchored-task.yml status-block-task.yml status-inline-task.yml status-flow-task.yml preconditions-block-task.yml preconditions-inline-task.yml preconditions-flow-task.yml nested-status-boundary-task.yml nested-vars-status-boundary-task.yml nested-sh-boundary-task.yml; do
+    for fixture in bad.sh continued.sh clustered.sh separate.sh empty-reason.sh task.yml workflow.yml inline-task.yml inline-workflow.yml nested-run-boundary-workflow.yml flow-task.yml anchored-task.yml status-block-task.yml status-inline-task.yml status-flow-task.yml preconditions-block-task.yml preconditions-sh-task.yml preconditions-inline-task.yml preconditions-flow-task.yml nested-status-boundary-task.yml nested-vars-status-boundary-task.yml nested-sh-boundary-task.yml; do
         case "$fixture" in
         *.sh) kind=shell ;;
         *task.yml) kind=task ;;
