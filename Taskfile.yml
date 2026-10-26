@@ -64,6 +64,7 @@ tasks:
     cmds:
       - task: guard:closing-keywords
       - task: verify
+      - task: stress:session-cleanup
       - task: test:renovate-config
       - task: verify:skills
       - task: test:devcontainer:permissions
@@ -477,6 +478,11 @@ tasks:
     desc: Behavioral test for worktree:new / worktree:rm (create → verify hooks → remove, in a throwaway fixture repo)
     cmds:
       - ./scripts/test-worktree.sh
+
+  stress:session-cleanup:
+    desc: Run the session-cleanup regression 20 consecutive times
+    cmds:
+      - ./scripts/test-session-cleanup-stress.sh
 
   test:session-cleanup:
     desc: Behavioral test for audit:session-artifacts / clean:branches / clean:worktree-records (evidence-gated deletion + negative controls, in a throwaway fixture repo)
