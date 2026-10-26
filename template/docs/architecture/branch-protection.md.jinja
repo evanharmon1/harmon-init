@@ -433,7 +433,7 @@ as a same-repo PR, or review the push-to-`main` run and be ready to revert.
 ### Fork pull requests and `merge_group` for `devcontainer-verify`
 
 `devcontainer-verify` reports success with nothing having run on a fork pull
-request — the same shape as `verify`/`security`[% if include_terraform %] and `terraform-verify`[% endif %]
+request — the same shape as `verify`/`security`[% if include_terraform %] and `terraform-verify`[% endif +%]
 above: every repository-controlled job in `devcontainer-build.yml` is
 skipped at the fork trust boundary, and the aggregate verifies exactly that.
 Before approving or merging a fork PR that touches `.devcontainer/**`,

@@ -626,7 +626,7 @@ runner label set. Provider names never belong in routing variable names.
 | default | `CI_RUNS_ON` | `changes`, `check`, `repo-guards`, `devcontainer-permissions`; aggregates and every job not in another class | `CI_RUNS_ON` → rendered default |
 | browser | `BROWSER_RUNS_ON` | Real-browser tests: `e2e`, `a11y`, `lighthouse` | `BROWSER_RUNS_ON` → `CI_RUNS_ON` → rendered default |
 | image-build | `IMAGE_BUILD_RUNS_ON` | Docker/devcontainer builds and container smoke/assertion tests | `IMAGE_BUILD_RUNS_ON` → `CI_RUNS_ON` → rendered default |
-| multicore | `MULTICORE_RUNS_ON` | `build-test`; measured core scaling past the default size at roughly flat per-job cost | `MULTICORE_RUNS_ON` → `CI_RUNS_ON` → rendered default |
+| multicore | `MULTICORE_RUNS_ON` | measured core scaling past the default size at roughly flat per-job cost | `MULTICORE_RUNS_ON` → `CI_RUNS_ON` → rendered default |
 | isolated | `ISOLATED_RUNS_ON` | Long-lived secrets, attacker-writable bodies, deployments and API-only automation | `ISOLATED_RUNS_ON` → `"ubuntu-latest"` only |
 
 Default falls back from `CI_RUNS_ON` to the rendered `ci_runs_on_default`.
@@ -657,8 +657,7 @@ configure a suitable disposable isolated pool before using that path.
 **Public update note:** After updating to the release that adds
 `MULTICORE_RUNS_ON`, a public repository must re-run `task setup:github`.
 This creates the repository-level `MULTICORE_RUNS_ON` `"ubuntu-latest"`
-override, which shadows any organization value. Until then, an organization
-`MULTICORE_RUNS_ON` visible to the repository routes `build-test` to that pool.
+override, which shadows any organization value.
 `task status` reports the missing override.
 
 The [routing spec](https://github.com/evanharmon1/harmon-init/blob/main/specs/runner-routing-classes.md)
