@@ -912,7 +912,7 @@ jq -e '.vulnerabilityAlerts.enabled == true' renovate.json >/dev/null ||
 jq -e '.osvVulnerabilityAlerts == true' renovate.json >/dev/null ||
     err "Renovate OSV vulnerability alerts must be enabled"
 # renovate: datasource=npm depName=renovate
-RENOVATE_VALIDATOR_VERSION=44.161.2
+RENOVATE_VALIDATOR_VERSION=44.176.2
 if [ "$validation_scope" = "renovate-config" ]; then
     if have npx; then
         run_quiet renovate-config-validator \
@@ -3299,13 +3299,7 @@ else
         err "ruleset requires devcontainer-verify but this profile has no devcontainer workflow — every PR would wedge"
 fi
 
-# ── 9i. The task tier boundary: port-free vs. port-binding ──────────
-# `check`/`build`/`test`/`verify` must never bind a port — that is what lets N
-# agents in N worktrees run the definition-of-done gate concurrently. `test:e2e`
-# serves the app, so it belongs in `ci` and the blocking `e2e` CI job ONLY.
-# Reachability is probed with `task --dry` (not grep): a task can be defined and
-# unreachable, or reached transitively through an aggregate, and only the dry
-# run tells the two apart.
+# ── Multicore routing and profile-specific documentation ──────────
 if [ -f prettier.config.cjs ]; then # use_node profiles (web-astro / web-app)
     python3 - <<'PYMULTICORE' || err "build-test multicore routing missing"
 import pathlib
@@ -3315,6 +3309,30 @@ job = re.search(r"^  build-test:\n(.*?)(?=^  [A-Za-z_][\w-]*:|\Z)", text, re.M |
 assert job, "missing build-test job"
 assert "runs-on: ${{ fromJSON(vars.MULTICORE_RUNS_ON || vars.CI_RUNS_ON || '" in job[1]
 PYMULTICORE
+fi
+python3 - <<'PYMULTICOREDOC' || err "multicore documentation does not match the profile"
+import pathlib
+import re
+
+text = pathlib.Path("docs/architecture/ci-cd.md").read_text()
+row = re.search(r"^\| multicore \|.*$", text, re.M)
+note = re.search(r"\*\*Public update note:\*\*(.*?)(?=\n\n|\Z)", text, re.S)
+assert row, "missing multicore row"
+assert note, "missing Public update note"
+assert "re-run `task setup:github`" in note[1], "missing public setup instruction"
+assert "\n`task status` reports the missing override." in note[1], "missing newline before public override status"
+for section in (row[0], note[1]):
+    assert ("`build-test`" in section) == pathlib.Path("prettier.config.cjs").is_file(), "build-test documentation does not match the profile"
+PYMULTICOREDOC
+
+# ── 9i. The task tier boundary: port-free vs. port-binding ──────────
+# `check`/`build`/`test`/`verify` must never bind a port — that is what lets N
+# agents in N worktrees run the definition-of-done gate concurrently. `test:e2e`
+# serves the app, so it belongs in `ci` and the blocking `e2e` CI job ONLY.
+# Reachability is probed with `task --dry` (not grep): a task can be defined and
+# unreachable, or reached transitively through an aggregate, and only the dry
+# run tells the two apart.
+if [ -f prettier.config.cjs ]; then # use_node profiles (web-astro / web-app)
     [ -x scripts/e2e-run.sh ] || err "scripts/e2e-run.sh missing or not executable (use_node profile)"
     # The skip is ONLY for a missing Playwright config. Widening it to swallow
     # the unconfigured env guard would turn a fail-closed security control into

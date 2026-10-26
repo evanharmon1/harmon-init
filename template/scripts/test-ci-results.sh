@@ -75,7 +75,30 @@ if DOCS_ONLY=true CHANGES_RESULT=success CI_EVENT_NAME=pull_request \
     fail 'docs skip hid a failed always-on job'
 fi
 
-# Exercise the actual inline fork aggregate: it must fail if changes did not
+# Root-only CI coverage needs the stress job bound into both verifier paths.
+# Generated consumers do not declare that root-only job, so their rendered
+# workflow takes the same aggregate checks without these extra assertions.
+if grep -Eq '^  session-cleanup-stress:' "$repo/.github/workflows/build.yml"; then
+    trusted_inline="$(awk '
+        /name: Verify required jobs succeeded/ { step = 1 }
+        step && /^        run: / { sub(/^        run: /, ""); print; exit }
+    ' "$repo/.github/workflows/build.yml")"
+    [ -n "$trusted_inline" ] || fail 'inline trusted aggregate was not found'
+    trusted_aggregate() {
+        CHANGES_RESULT=success CHECK_RESULT=success REPO_GUARDS_RESULT=success \
+            DEVCONTAINER_PERMISSIONS_RESULT=success TEMPLATE_TEST_RESULT=success \
+            SESSION_CLEANUP_STRESS_RESULT="$1" \
+            bash -c "cd \"$repo\" && $trusted_inline" >/dev/null 2>&1
+    }
+    trusted_aggregate success || fail 'inline aggregate rejected successful cleanup stress'
+    for result in failure cancelled skipped; do
+        if trusted_aggregate "$result"; then
+            fail "inline aggregate accepted cleanup stress result: $result"
+        fi
+    done
+fi
+
+# Exercise the actual inline fork aggregate: it must fail if a job did not
 # skip at the fork boundary, rather than treating an upstream failure as a skip.
 inline="$(awk '
     /name: Verify deliberate skips at the untrusted-fork boundary/ { step = 1 }
@@ -87,6 +110,7 @@ inline="$(awk '
 fork_aggregate() {
     CHANGES_RESULT="$1" CHECK_RESULT=skipped REPO_GUARDS_RESULT=skipped \
         DEVCONTAINER_PERMISSIONS_RESULT=skipped TEMPLATE_TEST_RESULT=skipped \
+        SESSION_CLEANUP_STRESS_RESULT="${2:-skipped}" \
         CODEGEN_GUARD_RESULT=skipped SECURITY_RESULT=skipped BUILD_TEST_RESULT=skipped \
         E2E_RESULT=skipped LIGHTHOUSE_RESULT=skipped RENDER_PARITY_RESULT=skipped \
         bash -c "$inline" >/dev/null 2>&1
@@ -94,6 +118,10 @@ fork_aggregate() {
 fork_aggregate skipped || fail 'inline aggregate rejected deliberate fork skips'
 if fork_aggregate failure; then
     fail 'inline aggregate accepted a classifier failure at the fork boundary'
+fi
+if grep -Eq '^  session-cleanup-stress:' "$repo/.github/workflows/build.yml" &&
+    fork_aggregate skipped success; then
+    fail 'inline aggregate accepted a non-skipped cleanup stress job at the fork boundary'
 fi
 
 # The closing-keyword guard lives in its own workflow (harmon-init#1328) so it

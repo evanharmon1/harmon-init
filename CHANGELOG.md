@@ -8,6 +8,28 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [5.13.0](https://github.com/evanharmon1/harmon-init/compare/v5.12.0...v5.13.0) (2026-10-26)
+
+
+### Features
+
+* **dev-loop:** define live PR handoff and merge queue ([#1794](https://github.com/evanharmon1/harmon-init/issues/1794)) ([8e9d3ce](https://github.com/evanharmon1/harmon-init/commit/8e9d3ceb28f3f0b26b9f2633177178b96aad31a1))
+
+
+### Bug Fixes
+
+* **ci:** clear needs-review whenever a delivery PR ends ([#1797](https://github.com/evanharmon1/harmon-init/issues/1797)) ([3705f4d](https://github.com/evanharmon1/harmon-init/commit/3705f4d8633e047a5c4253c544b57810f0bc0a17))
+* **deps:** update devcontainer ([#1720](https://github.com/evanharmon1/harmon-init/issues/1720)) ([b1229e9](https://github.com/evanharmon1/harmon-init/commit/b1229e9d85873c21a21f318ba6d5074eb381af64))
+* **devcontainer:** update shared image to 385c0f41 ([#1793](https://github.com/evanharmon1/harmon-init/issues/1793)) ([881f4ff](https://github.com/evanharmon1/harmon-init/commit/881f4fff4360fac88b5ca73504231e08d4e11e83))
+* **template:** flag flow-sequence cmds and cover inline commands in the grep-q guard ([#1819](https://github.com/evanharmon1/harmon-init/issues/1819)) ([3291ea8](https://github.com/evanharmon1/harmon-init/commit/3291ea8478922e31acc8cec77f04acbe873440bb)), closes [#1817](https://github.com/evanharmon1/harmon-init/issues/1817)
+* **template:** gate build-test mentions in the multicore docs and correct the ADR range ([#1811](https://github.com/evanharmon1/harmon-init/issues/1811)) ([ca165c0](https://github.com/evanharmon1/harmon-init/commit/ca165c0ad53f1ab6521b344bc7fe5463eaa2637f))
+* **template:** give the grep-q pipe guard a self-test ([#1815](https://github.com/evanharmon1/harmon-init/issues/1815)) ([86aaf50](https://github.com/evanharmon1/harmon-init/commit/86aaf50b4ddfcf098b927214bdcf03a165f9f47f))
+* **template:** keep line breaks after inline block tags under trim_blocks ([#1818](https://github.com/evanharmon1/harmon-init/issues/1818)) ([b20ba07](https://github.com/evanharmon1/harmon-init/commit/b20ba073227b5b60a5c8b1ba3eda0ee1438a1f30))
+* **template:** pass an explicit pnpm 11 --fix mode in security-audit-fix.sh ([#1814](https://github.com/evanharmon1/harmon-init/issues/1814)) ([71bc8ed](https://github.com/evanharmon1/harmon-init/commit/71bc8ed54e87a2a9ea86b29721956273f3d68cca))
+* **template:** raise the undici security floors for GHSA-xjj6-f33q-929c ([#1808](https://github.com/evanharmon1/harmon-init/issues/1808)) ([ac81fbb](https://github.com/evanharmon1/harmon-init/commit/ac81fbb472b90c87e36695eec3c28f6ecc881236))
+* **template:** sync harmon-devkit skills to v0.63.0 ([#1798](https://github.com/evanharmon1/harmon-init/issues/1798)) ([af35f11](https://github.com/evanharmon1/harmon-init/commit/af35f119ef969620922e930da1fb60a341bd7e51))
+* **template:** sync harmon-devkit skills to v0.63.1 ([#1821](https://github.com/evanharmon1/harmon-init/issues/1821)) ([f4abce0](https://github.com/evanharmon1/harmon-init/commit/f4abce04789c038dfdc1ffdb5866c1e55a932034))
+
 ## [5.12.0](https://github.com/evanharmon1/harmon-init/compare/v5.11.0...v5.12.0) (2026-10-23)
 
 

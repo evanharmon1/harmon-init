@@ -179,6 +179,7 @@ and updates these root-only jobs to match the same class definitions.
 | `publish-harmon-devcontainer.yml` | `sync-pin` | isolated | Publishes the pin PR with `CI_APP_PRIVATE_KEY` |
 | `remote-bootstrap.yml` | `bootstrap` | image-build | Stock-container toolchain tests require a Docker-capable pool; no long-lived secret |
 | `build.yml` | `template-test` | default | Renders and validates Copier profiles |
+| `build.yml` | `session-cleanup-stress` | default | Runs the cleanup regression 20 consecutive times |
 
 ### Shared package-cache contract and existing exceptions
 

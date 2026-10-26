@@ -64,6 +64,7 @@ tasks:
     cmds:
       - task: guard:closing-keywords
       - task: verify
+      - task: stress:session-cleanup
       - task: test:renovate-config
       - task: test:semgrep-runtime
       - task: verify:skills
@@ -154,6 +155,7 @@ tasks:
       - task: test:starship-glyphs
       - task: test:template-independence
       - task: test:category-gates
+      - task: test:md-block-trim
       - task: test:runner-routing
       - task: test:hooks
       - task: test:worktree
@@ -478,6 +480,11 @@ tasks:
     cmds:
       - ./scripts/test-worktree.sh
 
+  stress:session-cleanup:
+    desc: Run the session-cleanup regression 20 consecutive times
+    cmds:
+      - ./scripts/test-session-cleanup-stress.sh
+
   test:session-cleanup:
     desc: Behavioral test for audit:session-artifacts / clean:branches / clean:worktree-records (evidence-gated deletion + negative controls, in a throwaway fixture repo)
     cmds:
@@ -768,6 +775,11 @@ tasks:
     desc: "Guard: no template file renders conditionally on skill_categories (drifts; #622)"
     cmds:
       - ./scripts/test-category-gates.sh
+
+  test:md-block-trim:
+    desc: "Guard: inline Markdown block tags preserve their trailing newline"
+    cmds:
+      - ./scripts/test-md-block-trim.sh
 
   test:runner-routing:
     desc: "Guard: runner routing classes and workflow coverage in every rendered fixture"
