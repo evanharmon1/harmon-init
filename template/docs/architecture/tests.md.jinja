@@ -93,7 +93,7 @@ Two more things `task test:e2e` does, both to stay honest about the tiers:
   `EACCES`, so if your config declares Firefox/WebKit projects, add them to
   `.devcontainer/Dockerfile` and rebuild, or point `PLAYWRIGHT_BROWSERS_PATH`
   at a writable directory. The task prints both options rather than failing
-  obscurely.[% endif %]
+  obscurely.[% endif +%]
 [% endif %]
 [% if project_type == 'web-app' %]
 

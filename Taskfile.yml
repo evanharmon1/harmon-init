@@ -154,6 +154,7 @@ tasks:
       - task: test:starship-glyphs
       - task: test:template-independence
       - task: test:category-gates
+      - task: test:md-block-trim
       - task: test:runner-routing
       - task: test:hooks
       - task: test:worktree
@@ -773,6 +774,11 @@ tasks:
     desc: "Guard: no template file renders conditionally on skill_categories (drifts; #622)"
     cmds:
       - ./scripts/test-category-gates.sh
+
+  test:md-block-trim:
+    desc: "Guard: inline Markdown block tags preserve their trailing newline"
+    cmds:
+      - ./scripts/test-md-block-trim.sh
 
   test:runner-routing:
     desc: "Guard: runner routing classes and workflow coverage in every rendered fixture"

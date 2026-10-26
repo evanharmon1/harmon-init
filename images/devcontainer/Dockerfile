@@ -17,7 +17,7 @@ ARG IMAGE_REVISION
 # renovate: datasource=github-releases depName=terraform-docs/terraform-docs extractVersion=^v?(?<version>.+)$
 ARG TERRAFORM_DOCS_VERSION=0.24.0
 # renovate: datasource=github-releases depName=hashicorp/terraform extractVersion=^v?(?<version>.+)$
-ARG TERRAFORM_VERSION=1.16.6
+ARG TERRAFORM_VERSION=1.17.0
 # renovate: datasource=github-releases depName=terraform-linters/tflint extractVersion=^v?(?<version>.+)$
 ARG TFLINT_VERSION=0.64.0
 # TFLint release-archive SHA-256 values. The version pin is Renovate-managed;
@@ -29,32 +29,32 @@ ARG ZELLIJ_VERSION=0.45.1
 # renovate: datasource=github-releases depName=raine/workmux extractVersion=^v?(?<version>.+)$
 ARG WORKMUX_VERSION=0.1.276
 # renovate: datasource=github-releases depName=njbrake/agent-of-empires extractVersion=^v?(?<version>.+)$
-ARG AOE_VERSION=1.19.0
+ARG AOE_VERSION=1.21.0
 # renovate: datasource=npm depName=@anthropic-ai/claude-code
-ARG CLAUDE_CODE_VERSION=2.1.300
+ARG CLAUDE_CODE_VERSION=2.1.308
 # renovate: datasource=npm depName=@github/copilot
-ARG COPILOT_VERSION=1.0.98
+ARG COPILOT_VERSION=1.0.102
 # renovate: datasource=npm depName=@earendil-works/pi-coding-agent
-ARG PI_VERSION=1.2.0
+ARG PI_VERSION=1.4.0
 # renovate: datasource=github-releases depName=can1357/oh-my-pi extractVersion=^v?(?<version>.+)$
-ARG OH_MY_PI_VERSION=18.11.0
+ARG OH_MY_PI_VERSION=18.12.6
 # oh-my-pi ships unsigned release binaries: the version pin above is
 # Renovate-managed, but these architecture-specific digests are not. Before
 # moving them, a person must download the new release's omp-linux-x64 and
 # omp-linux-arm64 binaries (not the source archives), check the release notes
 # and provenance, and compute their sha256. scripts/test-oh-my-pi-pin.sh fails
 # fast until the marker below is moved to match OH_MY_PI_VERSION.
-# verified-for: 18.11.0
-ARG OH_MY_PI_SHA256_AMD64=c23a58ad8a92f4e738aa12dc904f3b0a1ac7035b953b9bf5d39b71a226179f6f
-ARG OH_MY_PI_SHA256_ARM64=299e0b63c482d78f00f2bae75000815ad6890cb6192cbc9f66c8d98e9ce70b80
+# verified-for: 18.12.6
+ARG OH_MY_PI_SHA256_AMD64=85d9daf3a05fc76e8cd425ae1904eb576af8d21cc85fcf4690742626e07ccfa4
+ARG OH_MY_PI_SHA256_ARM64=eee8e586274cef2e725c218b2b28b48ca9965d46dd58f60998cb347eca4ad0cf
 # renovate: datasource=npm depName=opencode-ai
-ARG OPENCODE_VERSION=1.19.0
+ARG OPENCODE_VERSION=1.19.3
 # Pinned from Google's per-platform release manifests. Keep the version, build,
 # URLs, and SHA-512 values here and in ensure-antigravity-cli.sh in one update.
 ARG ANTIGRAVITY_CLI_VERSION=1.1.11
 ARG ANTIGRAVITY_CLI_BUILD=4956531888881664
 # renovate: datasource=github-releases depName=asheshgoplani/agent-deck extractVersion=^v?(?<version>.+)$
-ARG AGENT_DECK_VERSION=1.16.28
+ARG AGENT_DECK_VERSION=1.16.30
 # renovate: datasource=github-releases depName=joshmedeski/sesh extractVersion=^v?(?<version>.+)$
 # Upstream v2.30.0 was published without release assets; stay on 2.29.0 until fixed
 ARG SESH_VERSION=2.29.0
@@ -72,11 +72,11 @@ ARG DIVE_VERSION=0.13.1
 # renovate: datasource=github-releases depName=antonmedv/fx extractVersion=^v?(?<version>.+)$
 ARG FX_VERSION=40.0.0
 # renovate: datasource=github-releases depName=sinelaw/fresh extractVersion=^v?(?<version>.+)$
-ARG FRESH_VERSION=0.5.3
+ARG FRESH_VERSION=0.5.4
 # Fresh release-archive SHA-256 values. The version pin is Renovate-managed;
 # update these reviewed, architecture-specific digests with each release.
-ARG FRESH_SHA256_AMD64=8c7ab2006922d1aec31664dce014e8715a18c7c98df572a4d72fe8aaa16c8533
-ARG FRESH_SHA256_ARM64=9f5538bb6da4d67609c82d7fbc7e2f76dcab385c920856713eee73366351f3a9
+ARG FRESH_SHA256_AMD64=e3599c93b1eece4700d7c30726b461c9b962a91bee5da31cdf44e3dffeb6206c
+ARG FRESH_SHA256_ARM64=df10f648d81e194f613b975d63d4cdea3ccf3f6177325793701a50ce795ab143
 # renovate: datasource=github-releases depName=eugenioenko/ttt extractVersion=^v?(?<version>.+)$
 ARG TTT_VERSION=1.8.0
 # TTT release SHA-256 values. The version pin is Renovate-managed;
@@ -86,24 +86,24 @@ ARG TTT_SHA256_ARM64=841c5b6f9e04d66254be241234100b12ac91173c8d5b2745f5712bcbbd8
 # renovate: datasource=github-releases depName=charmbracelet/glow extractVersion=^v?(?<version>.+)$
 ARG GLOW_VERSION=3.0.0
 # renovate: datasource=github-releases depName=jesseduffield/lazygit extractVersion=^v?(?<version>.+)$
-ARG LAZYGIT_VERSION=0.66.1
+ARG LAZYGIT_VERSION=0.66.2
 # renovate: datasource=github-releases depName=XAMPPRocky/tokei extractVersion=^v?(?<version>.+)$
 # Upstream v13.0.0+ publishes no prebuilt binary assets; stay on 13.0.0-alpha.0
 ARG TOKEI_VERSION=13.0.0-alpha.0
 # renovate: datasource=github-releases depName=dlvhdr/gh-dash extractVersion=^v?(?<version>.+)$
-ARG GH_DASH_VERSION=4.26.1
+ARG GH_DASH_VERSION=4.26.2
 # renovate: datasource=github-releases depName=charmbracelet/gum extractVersion=^v?(?<version>.+)$
 ARG GUM_VERSION=2.0.2
 # renovate: datasource=github-releases depName=o2sh/onefetch extractVersion=^v?(?<version>.+)$
-ARG ONEFETCH_VERSION=3.0.0
+ARG ONEFETCH_VERSION=3.1.0
 # renovate: datasource=github-releases depName=wtfutil/wtf extractVersion=^v?(?<version>.+)$
 ARG WTF_VERSION=0.51.0
 # renovate: datasource=github-releases depName=ducaale/xh extractVersion=^v?(?<version>.+)$
-ARG XH_VERSION=0.26.2
+ARG XH_VERSION=0.26.3
 # renovate: datasource=github-releases depName=alexpasmantier/television extractVersion=^v?(?<version>.+)$
 ARG TV_VERSION=0.15.9
 # renovate: datasource=github-releases depName=starship/starship extractVersion=^v?(?<version>.+)$
-ARG STARSHIP_VERSION=1.26.0
+ARG STARSHIP_VERSION=1.27.0
 
 LABEL org.opencontainers.image.source="https://github.com/evanharmon1/harmon-init" \
     org.opencontainers.image.revision="${IMAGE_REVISION}" \
