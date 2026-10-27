@@ -656,5 +656,5 @@ Adjudicate it; never disable the gate to get past a BLOCK.
   2026-10-18: `max` is offered only for models whose catalog lists it; the
   catalog lists `max` for `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-astra` and
   `gpt-6-luna`. A 2026-10-27 check of the `/model` picker on Codex CLI `0.163.0`
-  showed `max` for `gpt-5.6-terra` (Terra 5.6) (catalog listing; take-effect
+  showed `max` for `gpt-5.6-terra` (Terra 5.6; catalog listing; take-effect
   not probed).

@@ -1245,13 +1245,11 @@ unverified for the models their wrappers resolve:
   (each model's supported reasoning levels) listing `max` for `gpt-6.1-sol`,
   `gpt-6-sol`, `gpt-6-astra` and `gpt-6-luna`.
   Some models also list `ultra`, which is outside this registry's ladder.
-  Codex lanes launched with `-c model_reasoning_effort=max` showed
-  `GPT-6-Luna max` in the TUI status line, read through Herdr on 2026-10-18;
-  lanes launched with `-c model_reasoning_effort=low` showed
-  `GPT-6.1-Sol low` on 2026-10-18. A lane whose effort was set to high in the
+  Codex lanes showed `GPT-6-Luna max` and `GPT-6.1-Sol low` in the TUI status
+  line on 2026-10-18. A lane whose effort was set to high in the
   `/model` picker showed `GPT-6.1-Sol high · Context 57% left` on 2026-10-25.
-  A 2026-10-27 check of the `/model` picker on Codex CLI `0.163.0` showed `max`
-  for `gpt-5.6-terra` (Terra 5.6) (catalog listing; take-effect not probed).
+  A 2026-10-27 check of the `/model` picker on Codex CLI **0.163.0** showed
+  `max` for `gpt-5.6-terra` (Terra 5.6; catalog listing; take-effect not probed).
   Availability depends on the selected model: a model whose catalog entry lacks
   `max` does not offer it.
 - **`claude-code-deepseek`**: DeepSeek's [thinking-mode reference](https://api-docs.deepseek.com/guides/thinking_mode/)
