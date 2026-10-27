@@ -40,6 +40,8 @@ r="${tmp}/repo"
 fixture "$r" main feat yes
 git -C "$r" worktree add -q "${r}/wt" feat
 git -C "$r" remote add 'origin&cd' "${tmp}/absent.git"
+git -C "$r" remote add unsafe "${tmp}/absent.git"
+git -C "$r" config remote.unsafe.fetch '+refs/heads/*:refs/heads/*'
 git -C "$r" worktree add -q --detach "${r}/det" main
 tr="${tmp}/trunk"
 fixture "$tr" trunk feat yes
@@ -103,6 +105,10 @@ matrix() { # guard
     # 2026-10-25 observed shapes: lane catch-ups and evaluator mentions.
     case_ "$g" silent "$r" "git -C ${r}/wt merge --ff-only abc123"
     case_ "$g" silent "${r}/wt" "git fetch origin && git merge --ff-only abc123"
+    # R25: fetch companions accept only a configured remote with tracking-only specs.
+    case_ "$g" ask "${r}/wt" "git fetch origin main:main && git merge --ff-only feat"
+    case_ "$g" ask "${r}/wt" "git fetch unsafe && git merge --ff-only feat"
+    case_ "$g" ask "${r}/wt" "git fetch unconfigured && git merge --ff-only feat"
     case_ "$g" silent "$r" "cd ${r}/wt && git merge --ff-only origin/main"
     # V3-1: Python whitespace splitting must never change the Bash target word.
     case_ "$g" ask "$r" "git -C ${r}/wt${cr} merge --ff-only feat"
@@ -157,7 +163,10 @@ matrix() { # guard
     case_ "$g" ask "$r" "cd ${amp} && git merge --ff-only feat"
     # Pure syncs on main/trunk; every other default-branch merge asks.
     case_ "$g" silent "$r" "git pull --ff-only"
-    case_ "$g" silent "$r" "git pull --ff-only origin main"
+    case_ "$g" ask "$r" "git pull --ff-only origin main"
+    case_ "$g" silent "$r" "git pull --ff-only origin refs/heads/main"
+    case_ "$g" silent "$r" "git pull --ff-only origin"
+    case_ "$g" ask "$r" "git fetch origin && git pull --ff-only origin main"
     case_ "$g" silent "$r" "git merge --ff-only origin/main"
     # V1-1: fetch may import a tag that shadows the short operand after inspection.
     case_ "$g" ask "$r" "git fetch origin && git merge --ff-only origin/main"
@@ -169,7 +178,8 @@ matrix() { # guard
     # V2-2: this is a real configured remote, but & is shell control syntax.
     case_ "$g" ask "${r}/wt" "git fetch origin&cd ; git merge --ff-only feat"
     case_ "$g" silent "$r" "git fetch origin && git pull --ff-only"
-    case_ "$g" silent "$tr" "git pull --ff-only origin trunk"
+    case_ "$g" ask "$tr" "git pull --ff-only origin trunk"
+    case_ "$g" silent "$tr" "git pull --ff-only origin refs/heads/trunk"
     case_ "$g" ask "$nh" "git pull --ff-only"
     case_ "$g" ask "${r}/det" "git pull --ff-only"
     case_ "$g" ask "${nh}/wt" "git merge --ff-only origin/trunk"

@@ -17,10 +17,10 @@ approval and green required checks). The variable is read from the hook's own
 environment, which a Bash command cannot change.
 
 Invariant: the hook returns "ask" for every command that invokes, or could
-invoke, a git merge or pull, unless every merge segment is an allowlisted shape in a verified
-checkout (a feature branch, or a proven fast-forward sync of its default). The command is
-parsed the way bash reads it -- words, quotes, operators, comments, heredocs,
-command substitutions -- and a merge is:
+invoke, a git merge or pull, unless every merge segment is an allowlisted
+shape in a verified checkout (a feature branch, or a proven fast-forward sync
+of its default). The command is parsed the way bash reads it -- words, quotes,
+operators, comments, heredocs, command substitutions -- and a merge is:
 
   * a `git` command (any path, any case, `git.exe`) whose subcommand slot,
     after git's global options (`-C <dir>`, `-c <kv>`, ...), is `merge` or
@@ -87,8 +87,10 @@ be absolute, exist, contain no .. component and be followed by &&. Both
 The checkout must be on a named branch other than main/master and every
 remote's resolved default; at least one remote HEAD must resolve. Otherwise
 only --ff-only syncs from that branch's own configured upstream are silent:
-`git merge --ff-only origin/main`, `git pull --ff-only` or an explicit matching
-remote/branch. Detached/unreadable checkouts and unmatched refs ask. Git's
+`git merge --ff-only origin/main`, `git pull --ff-only [<remote>]`, or
+`git pull --ff-only <remote> refs/heads/<current-branch>`. An explicit short
+pull branch name asks: a remote tag may shadow it, and the hook cannot inspect
+the remote. Detached/unreadable checkouts and unmatched refs ask. Git's
 upstream must be refs/remotes/<remote>/<current-branch>, and its configured
 merge source must be refs/heads/<current-branch>. A merge operand must resolve
 unambiguously to that upstream, with no same-named tag or local branch.
@@ -816,7 +818,7 @@ TARGET_PATH = re.compile(r"^/[A-Za-z0-9_./:@%+=,-]+$")
 
 
 def allowlisted_target(command, cwd):
-    """Verify every literal merge segment against the checkout git will use.
+    """Return cwd only after every literal merge/pull segment passes its checks.
 
     Keep the old unquoted single-command forms. Compounds and explicit paths
     require --ff-only; companions are restricted to commands that cannot switch
@@ -916,7 +918,7 @@ def pure_sync(cwd, sub, refs, flags, other_git=False):
         shadows = {f"refs/tags/{operand}", f"refs/heads/{operand}", f"refs/{operand}"}
         found = git(cwd, "for-each-ref", "--format=%(refname)", *sorted(shadows))
         return found is not None and not shadows.intersection(found.splitlines())
-    return refs in ([], [remote], [remote, branch], [remote, head])
+    return refs in ([], [remote], [remote, head])
 
 
 def git(cwd, *args):

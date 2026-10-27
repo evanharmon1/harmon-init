@@ -73,16 +73,21 @@ runs in a scratch repository
    and `cd <dir> &&` targets and compounds whose every merge segment qualifies.
    State-changing or unknown companion commands remain gated. Default branches
    accept only proven `--ff-only` syncs from their own configured upstream.
+   A pull must omit its source (`git pull --ff-only [<remote>]`) or name the
+   full `refs/heads/<branch>` source. Short explicit branch names ask because
+   a remote tag can shadow them; the hook never inspects the remote.
    Evaluator mention handling is unchanged from the base guard: shell and
    other evaluator lines retain the conservative merge/pull mention test.
    The proposed exemption was removed after repeated bypass findings; its
-   redesign is tracked in [#1844](https://github.com/evanharmon1/harmon-init/issues/1844).
-   Target paths accept literal path characters only, with no shell metacharacters. It returns
+   redesign is tracked in
+   [#1844](https://github.com/evanharmon1/harmon-init/issues/1844).
+   Target paths accept literal path characters only, with no shell
+   metacharacters. It returns
    `permissionDecision: "ask"` for every other command it inspects that might
    run a `git merge` or `git pull`, and for internal errors. Parse errors ask
-   only when the text mentions git, merge or pull. The exact silent/ask boundary lives in `.claude/hooks/git-merge-guard.py` and is
-   pinned by `scripts/test-git-merge-guard.sh`; this record deliberately does
-   not restate it, so the two cannot drift apart. What the hook does not
+   only when the text mentions git, merge or pull. The exact silent/ask
+   boundary lives in `.claude/hooks/git-merge-guard.py` and is pinned by
+   `scripts/test-git-merge-guard.sh`; this record deliberately does not restate it, so the two cannot drift apart. What the hook does not
    inspect is listed under Consequences.
    ([#1455](https://github.com/evanharmon1/harmon-init/pull/1455) shipped the
    initial guard;
@@ -104,8 +109,11 @@ runs in a scratch repository
    default-branch exception: a configured-upstream `--ff-only` sync with an
    unambiguous operand. A merge beside any other git segment must name the
    full `refs/remotes/<remote>/<branch>` because a fetch can import shadowing
-   tags after inspection or concurrently in a pipeline. In the unattended `bot` and `agent` postures the hook stands down entirely (see Consequences),
-   so it cannot stall unattended workers the way `guard-process-kill` did.
+   tags after inspection or concurrently in a pipeline. A pull source is
+   omitted or fully qualified as `refs/heads/<branch>` to avoid remote tag
+   shadowing. In the unattended `bot` and `agent` postures the hook stands
+   down entirely (see Consequences), so it cannot stall unattended workers the
+   way `guard-process-kill` did.
 
 ## Not
 

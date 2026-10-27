@@ -609,8 +609,9 @@ cap allowed.
   `git merge`/`git pull` outside a verified feature-branch shape or the one
   default-branch exception: a configured-upstream `--ff-only` sync with an
   unambiguous operand (a merge beside any other git segment must name the full
-  `refs/remotes/<remote>/<branch>`); quoted text and heredoc bodies that no
-  shell runs, search patterns and `git merge-base` are data. The project settings ask on pushes to main and
+  `refs/remotes/<remote>/<branch>`). A default-branch pull must omit its source
+  or name `refs/heads/<branch>`; a short branch name can resolve to a remote tag
+  and asks. Quoted text and heredoc bodies that no shell runs, search patterns and `git merge-base` are data. The project settings ask on pushes to main and
   force-pushes (prefix rules: a backstop, not a boundary) but carry no `gh pr merge` ask: that prompt comes only from
   your own settings on a host[% if devcontainer %] and from the dev
   devcontainer's managed-settings drop-in

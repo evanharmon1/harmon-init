@@ -170,8 +170,11 @@ wrong checkout. A verified feature branch permits literal catch-up merges and
 non-rebasing pulls. Fast-forward-only forms also accept absolute `git -C` and
 `cd <dir> &&` targets and compounds with verified merge segments and known
 companions such as `git fetch origin`. A default branch permits only a proven
-`--ff-only` sync from its own configured remote-tracking branch. Rebase pulls,
-pulls with no explicit mode and `merge --abort` still ask.
+`--ff-only` sync from its own configured remote-tracking branch. An explicit
+pull source must be `refs/heads/<branch>`; omit the source to use the configured
+one (`git pull --ff-only [<remote>]`). A short pull branch name asks because a
+remote tag can shadow it. Rebase pulls, pulls with no explicit mode and
+`merge --abort` still ask.
 
 Evaluator mention handling is unchanged: a line running a shell or other
 text evaluator retains the conservative merge/pull mention test. The proposed
