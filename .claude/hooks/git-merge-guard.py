@@ -822,7 +822,7 @@ def allowlisted_target(command, cwd):
     require --ff-only; companions are restricted to commands that cannot switch
     branches or alter git's target/config. Unknown shell effects fail closed.
     """
-    if not os.path.isabs(cwd):
+    if not os.path.isabs(cwd) or re.search(r"[^\x20-\x7e]", command):
         return None
     # Split only a deliberately tiny literal grammar, never quoted shell text.
     if re.search(r"[\"'`$\\\n<>(){}*?\[\]~#]", command):

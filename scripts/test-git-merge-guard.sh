@@ -96,12 +96,17 @@ case_() { # guard expected cwd command
     fi
 }
 nl=$'\n'
+cr=$'\r'
+nbsp=$'\xc2\xa0'
 matrix() { # guard
     local g=$1
     # 2026-10-25 observed shapes: lane catch-ups and evaluator mentions.
     case_ "$g" silent "$r" "git -C ${r}/wt merge --ff-only abc123"
     case_ "$g" silent "${r}/wt" "git fetch origin && git merge --ff-only abc123"
     case_ "$g" silent "$r" "cd ${r}/wt && git merge --ff-only origin/main"
+    # V3-1: Python whitespace splitting must never change the Bash target word.
+    case_ "$g" ask "$r" "git -C ${r}/wt${cr} merge --ff-only feat"
+    case_ "$g" ask "$r" "cd ${r}/wt${nbsp} && git merge --ff-only feat"
     for op in '&&' '||' ';' '|'; do
         case_ "$g" silent "${r}/wt" "git merge --ff-only main $op git pull --ff-only origin main"
         case_ "$g" ask "${r}/wt" "git merge --ff-only main $op git -C ${r} merge --ff-only feat"
