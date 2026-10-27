@@ -51,7 +51,9 @@ command substitutions -- and a merge is:
     `${...}` that mentions merge/pull asks; a `trap` action counts too;
   * mentions of merge/pull in an evaluator whose input cannot be read.
     Literal bash/sh -c payloads and heredocs are parsed as commands instead;
-    a bash/sh script filename and its arguments are data, not script text.
+    this exemption requires expansion-free executable text and, for stdin,
+    exactly one literal here-string or quoted-delimiter heredoc with no other
+    input redirection. A bash/sh script filename and its arguments are data.
     Unknown pipe input and other evaluators retain the conservative word test.
 
 Everything else is data and stays silent: quoted text and heredoc bodies not
@@ -84,7 +86,9 @@ only --ff-only syncs from that branch's own configured upstream are silent:
 `git merge --ff-only origin/main`, `git pull --ff-only` or an explicit matching
 remote/branch. Detached/unreadable checkouts and unmatched refs ask. Git's
 upstream must be refs/remotes/<remote>/<current-branch>, and its configured
-merge source must be refs/heads/<current-branch>. Remote HEAD caches are local;
+merge source must be refs/heads/<current-branch>. A merge operand must resolve
+unambiguously to that upstream, with no same-named tag or local branch.
+Remote HEAD caches are local;
 refresh them with `git remote set-head <remote> --auto` after a default rename.
 
 (The decision to remove guard-process-kill,
@@ -257,6 +261,8 @@ class Command:
     def __init__(self):
         self.words = []
         self.stdin = []
+        self.stdin_literal = []
+        self.stdin_redirections = 0
 
 
 class Parser:
@@ -269,6 +275,7 @@ class Parser:
         self.commands = [] if commands is None else commands
         self.cur = None
         self.heredocs = []
+        self.redirect_fd = None
         # Expansion text the parser does not model; asks if it mentions merge/pull.
         self.uncertain = uncertain if uncertain is not None else []
 
@@ -324,6 +331,7 @@ class Parser:
                 word = self.read_word()
                 # `2>&1`: a file-descriptor number belongs to the redirection.
                 if word.value.isdigit() and self.i < len(s) and s[self.i] in "<>" and self.i > start:
+                    self.redirect_fd = int(word.value)
                     continue
                 cmd = self.command()
                 if not cmd.words and word.literal and word.value in KEYWORDS:
@@ -337,16 +345,23 @@ class Parser:
 
     def redirection(self):
         s = self.s
+        fd = self.redirect_fd
+        self.redirect_fd = None
+        cmd = self.command()
+        if s[self.i] == "<" or fd == 0:
+            cmd.stdin_redirections += 1
         if s.startswith("<<<", self.i):
             self.i += 3
-            self.command().stdin.append(self.redirect_target().value)
+            word = self.redirect_target()
+            cmd.stdin.append(word.value)
+            cmd.stdin_literal.append(word.literal and fd in (None, 0))
         elif s.startswith("<<", self.i):
             strip = s.startswith("<<-", self.i)
             self.i += 3 if strip else 2
             start = self.skip_blanks()
             word = self.read_word()
             quoted = any(ch in s[start : self.i] for ch in "'\"\\")
-            self.heredocs.append((self.command(), word.value, quoted, strip))
+            self.heredocs.append((cmd, word.value, quoted, strip, fd))
         elif s.startswith(("<(", ">("), self.i):
             self.i = Parser(s, self.commands, self.uncertain).nested(self.i + 2)
         else:
@@ -371,7 +386,7 @@ class Parser:
 
     def read_heredocs(self):
         s = self.s
-        for cmd, delim, quoted, strip in self.heredocs:
+        for cmd, delim, quoted, strip, fd in self.heredocs:
             lines = []
             while self.i < len(s):
                 end = s.find("\n", self.i)
@@ -386,6 +401,7 @@ class Parser:
                 # An unquoted heredoc expands `$(...)` and backticks: they run.
                 Parser(body, self.commands, self.uncertain).read_double_quoted(Word(), closing=None)
             cmd.stdin.append(body)
+            cmd.stdin_literal.append(quoted and fd in (None, 0))
         self.heredocs = []
 
     def read_word(self):
@@ -695,6 +711,25 @@ def is_evaluator(words, i):
     )
 
 
+def literal_script(text):
+    """Executable text needs no runtime expansion to identify its commands."""
+    # Conservatively reject expansion syntax even inside another quoted payload:
+    # a nested shell may give it meaning after the outer parse strips quotes.
+    if "$" in text or "`" in text:
+        return False
+    try:
+        commands, uncertain = parse(text)
+    except (ParseError, IndexError, RecursionError):
+        return False
+    return not uncertain and all(w.literal for c in commands for w in c.words)
+
+
+def known_stdin(cmd):
+    """One literal source, with no competing or overriding stdin redirect."""
+    return (cmd.stdin_redirections == 1 and len(cmd.stdin) == 1
+            and all(cmd.stdin_literal) and literal_script(cmd.stdin[0]))
+
+
 def parsed_shell(words, i, cmd):
     """Whether bash/sh input is covered by the payload parser below.
 
@@ -708,20 +743,22 @@ def parsed_shell(words, i, cmd):
     stdin_mode = False
     for j, word in enumerate(args):
         if SCRIPT_OPTION.match(word.value):
-            return j + 1 < len(args) and args[j + 1].literal
+            return (j + 1 < len(args) and args[j + 1].literal
+                    and literal_script(args[j + 1].value)
+                    and (cmd.stdin_redirections == 0 or known_stdin(cmd)))
         if not word.literal:
             return False
         if word.value == "-":
-            return bool(cmd.stdin)
+            return known_stdin(cmd)
         if not word.value.startswith("-"):
             if stdin_mode or word.value in {"/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"}:
-                return bool(cmd.stdin)
+                return known_stdin(cmd)
             return True  # script filename; never inspect file contents
         # Only known no-argument flags: other options can consume a filename.
         if not re.fullmatch(r"-[abefhkmnptuvxBCEHPTs]+|--", word.value):
             return False
         stdin_mode = stdin_mode or "s" in word.value
-    return bool(cmd.stdin)
+    return known_stdin(cmd)
 
 
 def command_might_merge(cmd, text, depth):
@@ -915,7 +952,14 @@ def pure_sync(cwd, sub, refs, flags):
     if not git(cwd, "rev-parse", "--verify", upstream):
         return False
     if sub == "merge":
-        return refs in ([f"{remote}/{branch}"], [upstream])
+        if refs not in ([f"{remote}/{branch}"], [upstream]):
+            return False
+        operand = refs[0]
+        if git(cwd, "rev-parse", "--symbolic-full-name", operand) != upstream:
+            return False
+        shadows = {f"refs/tags/{operand}", f"refs/heads/{operand}", f"refs/{operand}"}
+        found = git(cwd, "for-each-ref", "--format=%(refname)", *sorted(shadows))
+        return found is not None and not shadows.intersection(found.splitlines())
     return refs in ([], [remote], [remote, branch], [remote, head])
 
 

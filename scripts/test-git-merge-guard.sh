@@ -61,6 +61,12 @@ cs="${tmp}/casefold"
 fixture "$cs" trunk Main yes
 git -C "$cs" worktree add -q "${cs}/wt" Main
 
+# A same-named tag must never turn a protected-branch sync into a feature merge.
+shadow="${tmp}/shadow"
+fixture "$shadow" main feat yes
+git -C "$shadow" -c user.name=t -c user.email=t@t commit -q --allow-empty -m 'chore: feature target'
+git -C "$shadow" tag origin/main
+
 failures=0
 decide() { # guard cwd command -> silent|ask|rc<N>
     local out rc
@@ -106,6 +112,16 @@ matrix() { # guard
     case_ "$g" ask "$r" "printf 'git merge feat\\n' | bash -s merged"
     case_ "$g" ask "$r" "printf 'git merge feat\\n' | bash /dev/stdin"
     case_ "$g" ask "$r" "printf 'git pull\\n' | sh -"
+    # R13: executable input is literal and complete, or retains the word test.
+    case_ "$g" ask "$r" "CODE='git merge feat'; bash <<< \"\$CODE\""
+    case_ "$g" ask "$r" "bash -c '\"\$2\" \"\$1\" \"\$3\"' _ merge git feat"
+    case_ "$g" ask "$r" "bash <<< 'true' < /tmp/m.sh # git merge feat"
+    case_ "$g" ask "$r" "bash <<< 'true' 0<&3 # git merge feat"
+    case_ "$g" ask "$r" "bash <<< 'true' 0<> /tmp/m.sh # git merge feat"
+    case_ "$g" ask "$r" "bash <<EOF${nl}\$CODE${nl}EOF # git merge feat"
+    case_ "$g" silent "$r" "bash <<< 'echo merge'"
+    case_ "$g" ask "$shadow" "git merge --ff-only origin/main"
+    case_ "$g" silent "$shadow" "git merge --ff-only refs/remotes/origin/main"
     # Pure syncs on main/trunk; every other default-branch merge asks.
     case_ "$g" silent "$r" "git pull --ff-only"
     case_ "$g" silent "$r" "git pull --ff-only origin main"
