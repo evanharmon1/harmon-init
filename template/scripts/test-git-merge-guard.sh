@@ -115,13 +115,22 @@ matrix() { # guard
     # R13: executable input is literal and complete, or retains the word test.
     case_ "$g" ask "$r" "CODE='git merge feat'; bash <<< \"\$CODE\""
     case_ "$g" ask "$r" "bash -c '\"\$2\" \"\$1\" \"\$3\"' _ merge git feat"
-    case_ "$g" ask "$r" "bash <<< 'true' < /tmp/m.sh # git merge feat"
+    case_ "$g" ask "$r" "printf 'git merge feat\\n' > /tmp/m.sh; bash <<< 'true' < /tmp/m.sh"
     case_ "$g" ask "$r" "bash <<< 'true' 0<&3 # git merge feat"
     case_ "$g" ask "$r" "bash <<< 'true' 0<> /tmp/m.sh # git merge feat"
     case_ "$g" ask "$r" "bash <<EOF${nl}\$CODE${nl}EOF # git merge feat"
     case_ "$g" silent "$r" "bash <<< 'echo merge'"
     case_ "$g" ask "$shadow" "git merge --ff-only origin/main"
     case_ "$g" silent "$shadow" "git merge --ff-only refs/remotes/origin/main"
+    # R14: only the positive argument grammar and evaluator-free payloads qualify.
+    case_ "$g" ask "$r" "bash -c -- 'git merge feat'"
+    case_ "$g" ask "$r" "bash -c -x 'git merge feat'"
+    case_ "$g" ask "$r" "printf 'git merge feat\\n' | bash -c 'exec sh'"
+    case_ "$g" ask "$r" "printf 'git merge feat\\n' | bash -c 'xargs -I X X'"
+    case_ "$g" silent "$r" "bash 0<<< 'echo merge'"
+    case_ "$g" silent "$r" "printf 'git merge feat\\n' | bash -c 'echo merged'"
+    case_ "$g" ask "$r" "printf 'git merge feat\\n' | bash /dev/fd/3 3<&0"
+    case_ "$g" ask "$r" "printf 'git merge feat\\n' | bash /dev//stdin"
     # Pure syncs on main/trunk; every other default-branch merge asks.
     case_ "$g" silent "$r" "git pull --ff-only"
     case_ "$g" silent "$r" "git pull --ff-only origin main"

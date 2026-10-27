@@ -51,9 +51,10 @@ command substitutions -- and a merge is:
     `${...}` that mentions merge/pull asks; a `trap` action counts too;
   * mentions of merge/pull in an evaluator whose input cannot be read.
     Literal bash/sh -c payloads and heredocs are parsed as commands instead;
-    this exemption requires expansion-free executable text and, for stdin,
-    exactly one literal here-string or quoted-delimiter heredoc with no other
-    input redirection. A bash/sh script filename and its arguments are data.
+    this exemption requires an immediate -c and literal payload, or no args
+    and exactly one literal here-string or quoted-delimiter heredoc. Parsed
+    payloads contain no expansions or delegated evaluators. A literal script
+    path outside /dev and /proc with no descriptor redirects is opaque data.
     Unknown pipe input and other evaluators retain the conservative word test.
 
 Everything else is data and stays silent: quoted text and heredoc bodies not
@@ -263,6 +264,7 @@ class Command:
         self.stdin = []
         self.stdin_literal = []
         self.stdin_redirections = 0
+        self.fd_redirection = False
 
 
 class Parser:
@@ -348,7 +350,8 @@ class Parser:
         fd = self.redirect_fd
         self.redirect_fd = None
         cmd = self.command()
-        if s[self.i] == "<" or fd == 0:
+        cmd.fd_redirection |= fd is not None or s.startswith(("<&", "<>"), self.i)
+        if s[self.i] == "<" or fd == 0 or s.startswith(">&", self.i):
             cmd.stdin_redirections += 1
         if s.startswith("<<<", self.i):
             self.i += 3
@@ -711,54 +714,50 @@ def is_evaluator(words, i):
     )
 
 
-def literal_script(text):
-    """Executable text needs no runtime expansion to identify its commands."""
-    # Conservatively reject expansion syntax even inside another quoted payload:
-    # a nested shell may give it meaning after the outer parse strips quotes.
+def plain_payload(text):
+    """A literal payload with no runtime expansion or delegated evaluator."""
     if "$" in text or "`" in text:
         return False
     try:
         commands, uncertain = parse(text)
     except (ParseError, IndexError, RecursionError):
         return False
-    return not uncertain and all(w.literal for c in commands for w in c.words)
+    if uncertain or any(not w.literal for c in commands for w in c.words):
+        return False
+    for cmd in commands:
+        for i, word in enumerate(cmd.words):
+            if base(word) in ({"exec"} | ARG_FEEDERS) or is_evaluator(cmd.words, i):
+                return False
+        if any(SCRIPT_OPTION.match(w.value) for w in cmd.words):
+            return False
+    return True
 
 
 def known_stdin(cmd):
-    """One literal source, with no competing or overriding stdin redirect."""
+    """Exactly one literal source, with no competing or descriptor redirect."""
     return (cmd.stdin_redirections == 1 and len(cmd.stdin) == 1
-            and all(cmd.stdin_literal) and literal_script(cmd.stdin[0]))
+            and all(cmd.stdin_literal)
+            and plain_payload(cmd.stdin[0]))
 
 
 def parsed_shell(words, i, cmd):
-    """Whether bash/sh input is covered by the payload parser below.
-
-    A file invocation is opaque by design, but its filename/arguments are data.
-    With no file or -c, stdin is covered only for heredocs/here-strings; a pipe
-    remains unknown and retains the mention test.
-    """
-    if base(words[i]) not in {"bash", "sh"} or i not in command_positions(words):
+    """The three positive forms whose executable input is known or opaque."""
+    if (not words[i].literal or base(words[i]) not in {"bash", "sh"}
+            or i not in command_positions(words)):
         return False
     args = words[i + 1 :]
-    stdin_mode = False
-    for j, word in enumerate(args):
-        if SCRIPT_OPTION.match(word.value):
-            return (j + 1 < len(args) and args[j + 1].literal
-                    and literal_script(args[j + 1].value)
-                    and (cmd.stdin_redirections == 0 or known_stdin(cmd)))
-        if not word.literal:
-            return False
-        if word.value == "-":
-            return known_stdin(cmd)
-        if not word.value.startswith("-"):
-            if stdin_mode or word.value in {"/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"}:
-                return known_stdin(cmd)
-            return True  # script filename; never inspect file contents
-        # Only known no-argument flags: other options can consume a filename.
-        if not re.fullmatch(r"-[abefhkmnptuvxBCEHPTs]+|--", word.value):
-            return False
-        stdin_mode = stdin_mode or "s" in word.value
-    return known_stdin(cmd)
+    if any(not w.literal for w in args):
+        return False
+    if not args:
+        return known_stdin(cmd)
+    if args[0].value == "-c":
+        return (len(args) >= 2 and not args[1].value.startswith("-")
+                and plain_payload(args[1].value))
+    path = os.path.normpath(re.sub(r"/+", "/", args[0].value))
+    return (bool(args[0].value) and not args[0].value.startswith("-")
+            and path not in {"/dev", "/proc"}
+            and not path.startswith(("/dev/", "/proc/"))
+            and not cmd.fd_redirection)
 
 
 def command_might_merge(cmd, text, depth):
