@@ -161,6 +161,24 @@ it points here.
   Shell (`.editorconfig`). Final newline; trim trailing whitespace (except
   Markdown/MDX).
 
+## Merge guard
+
+In interactive host and dev sessions, the merge guard asks before a merge or
+pull that could land on main, master or any remote's resolved default branch.
+Unknown targets and shapes ask too: this is a backstop against merging into the
+wrong checkout. A verified feature branch permits literal catch-up merges and
+non-rebasing pulls. Fast-forward-only forms also accept absolute `git -C` and
+`cd <dir> &&` targets and compounds with verified merge segments and known
+companions such as `git fetch origin`. A default branch permits only a proven
+`--ff-only` sync from its own configured remote-tracking branch. Rebase pulls,
+pulls with no explicit mode and `merge --abort` still ask.
+
+Shell payloads (`bash -c`, `sh -c`, heredocs) are parsed as commands; mentioning
+merge in prose does not itself run a merge. Unreadable shell text retains the
+mention test. Script files are opaque. Ordinary permission rules still apply
+when the hook is silent; bot/agent profiles stand down and rely on the server's
+branch rules. See the hook docstring for the exact accepted grammar and limits.
+
 ## TODOs
 
 - Mark unfinished work with `TODO: <description>` — the literal `TODO:` prefix, in

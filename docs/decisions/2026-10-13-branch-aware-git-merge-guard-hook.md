@@ -13,11 +13,13 @@ for unattended postures is recorded in
 
 ## Context
 
-The repository's merge invariant has two halves:
+For interactive host and dev profiles, the repository's merge invariant has
+two halves (see Consequences for `-p` denial and bot/agent stand-down):
 
 1. Any `git merge` or `git pull` that would land on `main`, `master`, a
    resolved remote default branch, a detached `HEAD`, or a checkout whose
-   branch cannot be verified must reach a human approval prompt (the
+   branch cannot be verified must reach a human approval prompt, except a
+   proven `--ff-only` sync from that branch's own remote-tracking ref (the
    remote-`HEAD` limits are under Consequences).
 2. A plain catch-up merge of `main` into a verified feature branch must not
    be prompted by the guard; ordinary permission rules still decide.
@@ -66,11 +68,17 @@ runs in a scratch repository
 2. **Make the guard allowlist-shaped and fail-closed.** The hook stays silent
    (deferring to normal permission evaluation) only for a small set of fully
    literal catch-up shapes — `git merge <ref>`, `git merge --continue`/`--quit`
-   and a non-rebasing `git pull` — run in the checkout the hook payload names,
-   when that checkout is provably on a feature branch. It returns
+   and a non-rebasing `git pull` — when the checkout is provably on a feature
+   branch. Fast-forward-only forms also accept literal absolute `git -C <dir>`
+   and `cd <dir> &&` targets and compounds whose every merge segment qualifies.
+   State-changing or unknown companion commands remain gated. Default branches
+   accept only proven `--ff-only` syncs from their own configured upstream.
+   Literal `bash -c`, `sh -c` and shell heredoc payloads are parsed as commands;
+   script filenames and arguments are data, and unknown evaluator input retains
+   the mention test. It returns
    `permissionDecision: "ask"` for every other command it inspects that might
-   run a `git merge` or `git pull`, and for any parse or internal error. The
-   exact silent/ask boundary lives in `.claude/hooks/git-merge-guard.py` and is
+   run a `git merge` or `git pull`, and for internal errors. Parse errors ask
+   only when the text mentions git, merge or pull. The exact silent/ask boundary lives in `.claude/hooks/git-merge-guard.py` and is
    pinned by `scripts/test-git-merge-guard.sh`; this record deliberately does
    not restate it, so the two cannot drift apart. What the hook does not
    inspect is listed under Consequences.
@@ -117,7 +125,8 @@ runs in a scratch repository
   whether one appears still depends on the session's ordinary permission rules
   (for example the devcontainer's `Bash(git:*)` allow).
 - Merges and pulls targeting `main`, `master`, or a resolved remote default
-  branch — including `git -C <dir> merge` — prompt in `default`, `auto`, and
+  branch — including `git -C <dir> merge` — other than proven fast-forward
+  syncs from their own configured upstream prompt in `default`, `auto`, and
   `bypassPermissions` modes, and fail closed as a permission denial in `-p`
   mode.
 - The guard requires at least one remote `HEAD` to resolve and trusts the local

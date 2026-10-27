@@ -153,12 +153,14 @@ are the right place for gate variables an orchestrator sets under explicit
 human authorization (never in the worker's prompt). When to reach for a worktree at all is [worktrees.md](worktrees.md).
 
 A worker in its own worktree can keep up with the default branch without a
-prompt: the `git-merge-guard` hook stays silent for one literal merge or pull
-at a time, run in that worktree — `git pull --no-rebase origin main --no-edit`,
-or `git fetch origin` and then `git merge origin/main --no-edit` as two Bash
-calls. Joined with `&&` they ask, as do `git merge --abort` and
-`git pull --rebase`. Both silent forms need a resolvable remote HEAD (usually
-`git remote set-head origin --auto`). The hook parses each command, so a
+prompt: the `git-merge-guard` hook permits literal merges and non-rebasing
+pulls in a verified feature checkout. Fast-forward-only catch-ups also support
+`git -C /absolute/lane merge --ff-only <sha>`, a preceding `cd /absolute/lane &&`,
+and `git fetch origin && git merge --ff-only <sha>`. Every merge segment is
+verified; unknown companions, `git merge --abort` and `git pull --rebase` ask.
+Feature checks need a resolvable remote HEAD (usually
+`git remote set-head origin --auto`). Default branches permit only proven
+`--ff-only` syncs from their own configured remote-tracking branch. The hook parses each command, so a
 heredoc commit message or PR body that merely mentions `merge` or `pull` is
 data and stays silent; text a shell runs (`bash -c`, `$(...)`, a heredoc fed
 to a shell) is checked like any other command. All of this applies in the dev

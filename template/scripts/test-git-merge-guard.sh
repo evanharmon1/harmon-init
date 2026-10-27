@@ -30,6 +30,8 @@ fixture() { # dir default-branch feature-branch set-remote-head(yes|no) [remote-
     git -C "$1" branch "$3"
     git -C "$1" remote add "$rem" "${tmp}/absent.git"
     git -C "$1" update-ref "refs/remotes/${rem}/$2" HEAD
+    git -C "$1" config "branch.$2.remote" "$rem"
+    git -C "$1" config "branch.$2.merge" "refs/heads/$2"
     if [[ $4 == yes ]]; then
         git -C "$1" symbolic-ref "refs/remotes/${rem}/HEAD" "refs/remotes/${rem}/$2"
     fi
@@ -86,6 +88,41 @@ case_() { # guard expected cwd command
 nl=$'\n'
 matrix() { # guard
     local g=$1
+    # 2026-10-25 observed shapes: lane catch-ups and evaluator mentions.
+    case_ "$g" silent "$r" "git -C ${r}/wt merge --ff-only abc123"
+    case_ "$g" silent "${r}/wt" "git fetch origin && git merge --ff-only abc123"
+    case_ "$g" silent "$r" "cd ${r}/wt && git merge --ff-only origin/main"
+    for op in '&&' '||' ';' '|'; do
+        case_ "$g" silent "${r}/wt" "git merge --ff-only main $op git pull --ff-only origin main"
+        case_ "$g" ask "${r}/wt" "git merge --ff-only main $op git -C ${r} merge --ff-only feat"
+    done
+    case_ "$g" silent "$r" "bash <<'EOF'${nl}gh pr view 1 --json mergeStateStatus${nl}EOF"
+    case_ "$g" silent "$r" "bash -c 'gh pr view 1 --json mergedAt,mergeStateStatus; echo pulls/1'"
+    case_ "$g" silent "$r" "sh -c 'echo pull'"
+    case_ "$g" silent "$r" "D=\$(bash script.sh --json closedByPullRequestsReferences)"
+    case_ "$g" silent "$r" "bash script.sh merge pull"
+    case_ "$g" ask "$r" "bash -c \"echo 'git merge\""
+    case_ "$g" ask "$r" "bash <<'EOF'${nl}git pull --ff-only origin feat${nl}EOF"
+    case_ "$g" ask "$r" "printf 'git merge feat\\n' | bash -s merged"
+    case_ "$g" ask "$r" "printf 'git merge feat\\n' | bash /dev/stdin"
+    case_ "$g" ask "$r" "printf 'git pull\\n' | sh -"
+    # Pure syncs on main/trunk; every other default-branch merge asks.
+    case_ "$g" silent "$r" "git pull --ff-only"
+    case_ "$g" silent "$r" "git pull --ff-only origin main"
+    case_ "$g" silent "$r" "git merge --ff-only origin/main"
+    case_ "$g" silent "$tr" "git pull --ff-only origin trunk"
+    case_ "$g" ask "$nh" "git pull --ff-only"
+    case_ "$g" ask "${r}/det" "git pull --ff-only"
+    case_ "$g" ask "${nh}/wt" "git merge --ff-only origin/trunk"
+    case_ "$g" ask "$r" "git merge --ff-only feat"
+    case_ "$g" ask "$r" "git merge --ff-only --no-ff origin/main"
+    case_ "$g" ask "$r" "git merge --ff-only --ff origin/main"
+    case_ "$g" ask "$r" "git pull --ff-only origin feat"
+    case_ "$g" ask "$r" "git -C ${r} pull --rebase origin main"
+    case_ "$g" ask "$r" "git -C ${r} pull origin main"
+    case_ "$g" ask "${r}/wt" "git checkout main && git merge --ff-only origin/main"
+    case_ "$g" ask "${r}/wt" "cd ${r} || git merge --ff-only origin/main"
+    case_ "$g" ask "$r" "git -C ${tmp}/missing merge --ff-only main"
     # Allowlisted merges into a verified feature branch: no opinion.
     case_ "$g" silent "${r}/wt" "git merge origin/main --no-edit"
     case_ "$g" silent "${r}/wt" "git merge --no-ff main"
@@ -115,7 +152,7 @@ matrix() { # guard
     case_ "$g" ask "${r}/wt" "git merge --abort"
     # pull --rebase can rewrite already-pushed feature-branch commits.
     case_ "$g" ask "${r}/wt" "git pull --rebase origin main"
-    # cd / -C paths: the silent path takes no path arguments at all, so a
+    # Non-fast-forward path forms stay conservative, so a
     # symlink-then-.. or quoted-~ path can't make the guard verify a
     # different checkout than the one git uses (review round 1).
     case_ "$g" ask "$r" "cd ${r}/wt && git merge origin/main --no-edit"
@@ -190,11 +227,10 @@ matrix() { # guard
     case_ "$g" ask "$r" "git --shallow-file /dev/null \$'\\x6d\\x65\\x72\\x67\\x65' feat"
     case_ "$g" ask "$r" "git --config-env user.name=FOO \"\$SUB\" feat"
     case_ "$g" ask "$r" "git --super-prefix sub/ \$'\\x6d\\x65\\x72\\x67\\x65' feat"
-    # Scripts are not seen through (documented limit), but a shell name makes the
-    # command line an evaluator, so a mention of merge/pull asks.
+    # Script files are opaque; a shell filename/argument is data.
     case_ "$g" silent "${r}/wt" "./scripts/merge-main.sh"
-    case_ "$g" ask "${r}/wt" "sh ./scripts/merge-main.sh"
-    case_ "$g" ask "${r}/wt" "sh ./merge-main.sh"
+    case_ "$g" silent "${r}/wt" "sh ./scripts/merge-main.sh"
+    case_ "$g" silent "${r}/wt" "sh ./merge-main.sh"
     # No git merge/pull: no opinion, including everyday near-misses.
     case_ "$g" silent "${r}/wt" "git merge-base main feat"
     # A quoted word with trailing whitespace is not the word `merge`.
@@ -208,7 +244,7 @@ matrix() { # guard
     case_ "$g" ask "${r}/wt" "\$(git --exec-path)/git-merge main"
     case_ "$g" ask "${r}/wt" "git-pull origin main"
     case_ "$g" ask "$r" "eval \"git merge-ours feat\""
-    case_ "$g" ask "$r" "bash -c 'git merge-recursive base -- HEAD feat'"
+    case_ "$g" silent "$r" "bash -c 'git merge-recursive base -- HEAD feat'"
     case_ "$g" ask "$r" "eval \"git-merge-ours feat\""
     # An expanded subcommand inside an interpreter string, like the unwrapped form.
     case_ "$g" ask "$r" "bash -c \"git \$SUB main\""
@@ -462,7 +498,7 @@ done
 
 echo "==> git-merge-guard matrix catches a guard that never checks the target branch"
 mutant="${tmp}/mutant.py"
-sed 's/^    if feature_branch(target) is None:$/    if False:/' "$guard" >"$mutant"
+sed 's/^        if feature_branch(target) is None:$/        if False:/' "$guard" >"$mutant"
 if cmp -s "$guard" "$mutant"; then
     echo "TEST FAIL: mutation did not apply (feature_branch check line changed?)" >&2
     exit 1

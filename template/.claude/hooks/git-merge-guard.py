@@ -17,8 +17,8 @@ approval and green required checks). The variable is read from the hook's own
 environment, which a Bash command cannot change.
 
 Invariant: the hook returns "ask" for every command that invokes, or could
-invoke, a git merge or pull, unless the whole command is exactly one
-allowlisted shape run in a verified feature-branch checkout. The command is
+invoke, a git merge or pull, unless every merge segment is an allowlisted shape in a verified
+checkout (a feature branch, or a proven fast-forward sync of its default). The command is
 parsed the way bash reads it -- words, quotes, operators, comments, heredocs,
 command substitutions -- and a merge is:
 
@@ -49,11 +49,10 @@ command substitutions -- and a merge is:
     or `parallel` (whatever their arguments); `$"..."` locale strings are not
     literal; `${...}` operators are not modelled, so a
     `${...}` that mentions merge/pull asks; a `trap` action counts too;
-  * any mention of merge/pull anywhere in a command line that also runs an
-    evaluator (a shell, `eval`, `ssh`, `trap`, `watch`, `herdr pane run`, `parallel`,
-    `sudo -s`/`-i`, `env -S`): their option and
-    input shapes (`bash -C -c`, `env -S'...'`, a pipe into `if ...; then sh`)
-    are open-ended, so the word test covers what the parser does not.
+  * mentions of merge/pull in an evaluator whose input cannot be read.
+    Literal bash/sh -c payloads and heredocs are parsed as commands instead;
+    a bash/sh script filename and its arguments are data, not script text.
+    Unknown pipe input and other evaluators retain the conservative word test.
 
 Everything else is data and stays silent: quoted text and heredoc bodies not
 handed to an evaluator (`git commit -m "catch-up merge"`, report appends),
@@ -63,23 +62,30 @@ merely hold the word (`git merge-base`, `merge-tree`, `mergetool`,
 asks if it mentions git, merge or pull at all -- bash may still run the lines
 before the error -- so a parser gap costs a prompt, not a silent merge.
 
-The only silent (normal permission flow) shape is one fully literal command
--- no quotes, escapes, expansions, globs, operators, newlines, `cd` or `-C`:
+The silent (normal permission flow) shapes retain these fully literal,
+unquoted single commands in a verified feature-branch checkout:
 
     git merge <ref>, with any of --no-edit --no-ff --ff --ff-only
     git merge --continue | git merge --quit, alone
     git pull [<remote> [<ref>]], with --ff-only and/or --no-rebase,
              and optionally --no-edit
 
-Flags are a set: any combination of the listed flags, in any order and
-position, is the same shape (`git merge --no-edit --no-ff main` is silent).
-A shape is silent only when run in the working directory Claude Code reports
-in the hook payload (a lane merges from its own worktree), where that checkout
-is on a named branch that is not main/master and differs from every remote's
-resolved default branch -- at least one remote default must resolve
-(`git remote set-head <remote> --auto`), or it asks. With several remotes, a
-branch that is the default of one remote whose HEAD is unset stays silent
-unless another remote's HEAD names it.
+Flags are a set, in any order and position. Fast-forward-only merges/pulls
+also support a literal absolute `git -C <dir>` or preceding `cd <dir> &&`,
+and compounds joined by &&, ||, ; or |. Every merge segment must pass; other
+segments are limited to true, false, git status and a named-remote git fetch
+whose configured refspec writes only remote-tracking refs. Unknown commands,
+evaluators, expansions, quoting, redirects and path traversal ask. A cd must
+be absolute, exist, contain no .. component and be followed by &&.
+
+The checkout must be on a named branch other than main/master and every
+remote's resolved default; at least one remote HEAD must resolve. Otherwise
+only --ff-only syncs from that branch's own configured upstream are silent:
+`git merge --ff-only origin/main`, `git pull --ff-only` or an explicit matching
+remote/branch. Detached/unreadable checkouts and unmatched refs ask. Git's
+upstream must be refs/remotes/<remote>/<current-branch>, and its configured
+merge source must be refs/heads/<current-branch>. Remote HEAD caches are local;
+refresh them with `git remote set-head <remote> --auto` after a default rename.
 
 (The decision to remove guard-process-kill,
 https://github.com/evanharmon1/harmon-init/blob/main/docs/decisions/2026-09-02-remove-guard-process-kill-hook.md,
@@ -154,7 +160,6 @@ PULL_NO_REWRITE = {"--ff-only", "--no-rebase"}
 # merge.
 SOLO_FLAGS = {"--continue", "--quit"}
 REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
-LITERAL_UNSAFE = re.compile(r"[\"'`$\\\n;&|<>(){}*?\[\]~]")
 # A mention of merge/pull as a word; used only where the parser cannot say
 # what runs (an unreadable command, a shell reading a pipe). `merge-base` and
 # `merge-tree` are read-only plumbing; prose like `pull-requests` is not a word.
@@ -690,6 +695,35 @@ def is_evaluator(words, i):
     )
 
 
+def parsed_shell(words, i, cmd):
+    """Whether bash/sh input is covered by the payload parser below.
+
+    A file invocation is opaque by design, but its filename/arguments are data.
+    With no file or -c, stdin is covered only for heredocs/here-strings; a pipe
+    remains unknown and retains the mention test.
+    """
+    if base(words[i]) not in {"bash", "sh"} or i not in command_positions(words):
+        return False
+    args = words[i + 1 :]
+    stdin_mode = False
+    for j, word in enumerate(args):
+        if SCRIPT_OPTION.match(word.value):
+            return j + 1 < len(args) and args[j + 1].literal
+        if not word.literal:
+            return False
+        if word.value == "-":
+            return bool(cmd.stdin)
+        if not word.value.startswith("-"):
+            if stdin_mode or word.value in {"/dev/stdin", "/dev/fd/0", "/proc/self/fd/0"}:
+                return bool(cmd.stdin)
+            return True  # script filename; never inspect file contents
+        # Only known no-argument flags: other options can consume a filename.
+        if not re.fullmatch(r"-[abefhkmnptuvxBCEHPTs]+|--", word.value):
+            return False
+        stdin_mode = stdin_mode or "s" in word.value
+    return bool(cmd.stdin)
+
+
 def command_might_merge(cmd, text, depth):
     words = cmd.words
     ci = command_index(words)
@@ -715,11 +749,9 @@ def command_might_merge(cmd, text, depth):
             return True
         # A non-literal word counts when its decoded text names an evaluator
         # (`$'bash'`); an expansion such as `$SHELL` decodes to itself and does not.
-        # An evaluator's option and input shapes are open-ended (`bash -C -c`,
-        # `env -S'...'`, a pipe into a compound command), so its presence puts
-        # the whole script under the word test; the parse below still sees
-        # what the word test cannot (`$'\x70ull'`, `git $x`).
-        if is_evaluator(words, i) and MENTION.search(text):
+        # Unknown evaluator input retains the word test; literal bash/sh
+        # payloads and file arguments are handled by the parser below.
+        if is_evaluator(words, i) and not parsed_shell(words, i, cmd) and MENTION.search(text):
             return True
         # A `-c` / `-Command` payload is read as a script whatever program
         # takes it, so an interpreter missing from SHELLS is still seen.
@@ -796,30 +828,95 @@ def might_merge(command):
 
 
 def allowlisted_target(command, cwd):
-    """Return cwd if the whole command is exactly the silent shape.
+    """Verify every literal merge segment against the checkout git will use.
 
-    The shape is one fully literal `git merge` / `git pull` with no path
-    arguments: no quotes, escapes, expansions, globs, operators or newlines,
-    and no `cd` / `-C`. The checkout the guard verifies is therefore the one
-    git will use -- the working directory Claude Code reports in the payload.
+    Keep the old unquoted single-command forms. Compounds and explicit paths
+    require --ff-only; companions are restricted to commands that cannot switch
+    branches or alter git's target/config. Unknown shell effects fail closed.
     """
-    if LITERAL_UNSAFE.search(command) or not os.path.isabs(cwd):
+    if not os.path.isabs(cwd):
         return None
-    tokens = command.split()
-    if len(tokens) < 2 or tokens[0] != "git" or tokens[1] not in MERGE_WORDS:
+    # Split only a deliberately tiny literal grammar, never quoted shell text.
+    if re.search(r"[\"'`$\\\n<>(){}*?\[\]~#]", command):
         return None
-    sub, rest = tokens[1], tokens[2:]
-    refs = [a for a in rest if not a.startswith("-")]
-    flags = set(a for a in rest if a.startswith("-"))
-    if not all(REF.match(r) for r in refs):
+    parts = re.split(r"(&&|\|\||;|\|)", command)
+    if any(not p.strip() for p in parts[::2]):
         return None
+    compound = len(parts) > 1
+    current = cwd
+    merges = []
+    for n, part in enumerate(parts[::2]):
+        tokens = part.split()
+        if tokens[0] == "cd":
+            # Only && establishes that cd succeeded. Pipes and || do not.
+            if n != 0 or len(tokens) != 2 or any(op != "&&" for op in parts[1::2]):
+                return None
+            path = tokens[1]
+            if not os.path.isabs(path) or ".." in path.split("/") or not os.path.isdir(path):
+                return None
+            current = os.path.realpath(path)
+            continue
+        target = current
+        explicit = len(tokens) > 1 and tokens[:2] == ["git", "-C"]
+        if explicit:
+            if len(tokens) < 5 or not os.path.isabs(tokens[2]) or ".." in tokens[2].split("/"):
+                return None
+            target = tokens[2]
+            tokens = ["git"] + tokens[3:]
+        if len(tokens) < 2 or tokens[0] != "git" or tokens[1] not in MERGE_WORDS:
+            # A fetch from a named remote uses its configured refspec; reject
+            # arbitrary refspecs, options, commands and state-changing siblings.
+            if tokens in (["true"], ["false"], ["git", "status"]):
+                continue
+            if len(tokens) == 3 and tokens[:2] == ["git", "fetch"] and tokens[2] in (git(target, "remote") or "").split():
+                # A configured fetch refspec must not write local branches.
+                specs = git(target, "config", "--get-all", f"remote.{tokens[2]}.fetch")
+                if specs and all(re.fullmatch(r"\+?refs/heads/[^:]+:refs/remotes/[^:]+", x) for x in specs.splitlines()):
+                    continue
+            return None
+        sub, rest = tokens[1], tokens[2:]
+        refs = [a for a in rest if not a.startswith("-")]
+        flags = set(a for a in rest if a.startswith("-"))
+        if not all(REF.fullmatch(r) for r in refs):
+            return None
+        if sub == "merge":
+            ok = (len(rest) == 1 and rest[0] in SOLO_FLAGS) or (len(refs) == 1 and flags <= MERGE_FLAGS)
+        else:
+            ok = len(refs) <= 2 and flags <= PULL_FLAGS and bool(flags & PULL_NO_REWRITE)
+        if not ok or ((compound or explicit or current != cwd) and "--ff-only" not in flags):
+            return None
+        merges.append((target, sub, refs, flags))
+    if not merges:
+        return None
+    for target, sub, refs, flags in merges:
+        if feature_branch(target) is None:
+            if not pure_sync(target, sub, refs, flags):
+                return None
+    return cwd
+
+
+def pure_sync(cwd, sub, refs, flags):
+    """Prove a protected checkout only advances from its own tracking ref."""
+    if "--ff-only" not in flags or flags & {"--ff", "--no-ff"} or not os.path.isdir(cwd):
+        return False
+    head = git(cwd, "symbolic-ref", "--quiet", "HEAD")
+    if not head or not head.startswith("refs/heads/"):
+        return False
+    branch = head[len("refs/heads/"):]
+    defaults = [git(cwd, "symbolic-ref", "--quiet", f"refs/remotes/{r}/HEAD")
+                for r in (git(cwd, "remote") or "").split()]
+    if not any(defaults):
+        return False
+    upstream = git(cwd, "rev-parse", "--symbolic-full-name", "@{upstream}")
+    remote = git(cwd, "config", "--get", f"branch.{branch}.remote")
+    merge = git(cwd, "config", "--get", f"branch.{branch}.merge")
+    if not remote or remote == "." or merge != head or upstream != f"refs/remotes/{remote}/{branch}":
+        return False
+    if not git(cwd, "rev-parse", "--verify", upstream):
+        return False
     if sub == "merge":
-        ok = (len(rest) == 1 and rest[0] in SOLO_FLAGS) or (
-            len(refs) == 1 and flags <= MERGE_FLAGS
-        )
-    else:
-        ok = len(refs) <= 2 and flags <= PULL_FLAGS and bool(flags & PULL_NO_REWRITE)
-    return cwd if ok else None
+        return refs in ([f"{remote}/{branch}"], [upstream])
+    return refs in ([], [remote], [remote, branch], [remote, head])
 
 
 def git(cwd, *args):
@@ -864,12 +961,6 @@ def decide(command, cwd):
     target = allowlisted_target(command, cwd)
     if target is None:
         return "git merge/pull in a form this guard does not allowlist"
-    if feature_branch(target) is None:
-        return (
-            "git merge/pull would land on main/master or the remote default "
-            "branch, or the target branch could not be verified "
-            f"(detached HEAD, no resolvable remote HEAD, unreadable): {target}"
-        )
     return None
 
 
