@@ -102,9 +102,9 @@ runs in a scratch repository
    prompt on that command, and a command it flags runs silently only if it is
    exactly an allowlisted shape on a verified feature branch, or the one
    default-branch exception: a configured-upstream `--ff-only` sync with an
-   unambiguous operand. A merge after any earlier git segment must name the
+   unambiguous operand. A merge beside any other git segment must name the
    full `refs/remotes/<remote>/<branch>` because a fetch can import shadowing
-   tags after the guard inspects the refs. In the unattended `bot` and `agent` postures the hook stands down entirely (see Consequences),
+   tags after inspection or concurrently in a pipeline. In the unattended `bot` and `agent` postures the hook stands down entirely (see Consequences),
    so it cannot stall unattended workers the way `guard-process-kill` did.
 
 ## Not

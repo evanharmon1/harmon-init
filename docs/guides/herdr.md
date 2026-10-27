@@ -161,7 +161,7 @@ verified; unknown companions, `git merge --abort` and `git pull --rebase` ask.
 Feature checks need a resolvable remote HEAD (usually
 `git remote set-head origin --auto`). Default branches permit only proven
 `--ff-only` syncs from their own configured remote-tracking branch with an
-unambiguous operand; a merge after an earlier git segment must name the full
+unambiguous operand; a merge beside any other git segment must name the full
 `refs/remotes/<remote>/<branch>`. The hook parses each command, so a
 heredoc commit message or PR body that merely mentions `merge` or `pull` is
 data and stays silent; text a shell runs (`bash -c`, `$(...)`, a heredoc fed
@@ -249,7 +249,7 @@ can launch a worker can reach anything its own `ask` rules would have stopped
 its managed-settings drop-in; on any `git merge`/`git pull` that the
 `git-merge-guard` hook cannot verify is an allowed feature-branch operation
 or the one default-branch exception: a configured-upstream `--ff-only` sync with
-an unambiguous operand (a merge after an earlier git segment must name the full
+an unambiguous operand (a merge beside any other git segment must name the full
 `refs/remotes/<remote>/<branch>`); on
 `git push origin main`; and on force-pushes, prefix rules: a backstop, not a boundary) simply by asking a child to do it. That is accepted here for two
 reasons, neither of which is "it is safe": the orchestrator already holds

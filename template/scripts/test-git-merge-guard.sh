@@ -39,6 +39,7 @@ fixture() { # dir default-branch feature-branch set-remote-head(yes|no) [remote-
 r="${tmp}/repo"
 fixture "$r" main feat yes
 git -C "$r" worktree add -q "${r}/wt" feat
+git -C "$r" remote add 'origin&cd' "${tmp}/absent.git"
 git -C "$r" worktree add -q --detach "${r}/det" main
 tr="${tmp}/trunk"
 fixture "$tr" trunk feat yes
@@ -157,6 +158,11 @@ matrix() { # guard
     case_ "$g" ask "$r" "git fetch origin && git merge --ff-only origin/main"
     case_ "$g" silent "$r" "git fetch origin && git merge --ff-only refs/remotes/origin/main"
     case_ "$g" ask "$r" "git status && git merge --ff-only origin/main"
+    # V2-1: a later pipeline member can fetch concurrently and shadow a short ref.
+    case_ "$g" ask "$r" "git merge --ff-only origin/main | git fetch origin"
+    case_ "$g" silent "$r" "git merge --ff-only refs/remotes/origin/main | git fetch origin"
+    # V2-2: this is a real configured remote, but & is shell control syntax.
+    case_ "$g" ask "${r}/wt" "git fetch origin&cd ; git merge --ff-only feat"
     case_ "$g" silent "$r" "git fetch origin && git pull --ff-only"
     case_ "$g" silent "$tr" "git pull --ff-only origin trunk"
     case_ "$g" ask "$nh" "git pull --ff-only"

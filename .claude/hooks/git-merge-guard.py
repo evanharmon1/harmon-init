@@ -92,7 +92,7 @@ remote/branch. Detached/unreadable checkouts and unmatched refs ask. Git's
 upstream must be refs/remotes/<remote>/<current-branch>, and its configured
 merge source must be refs/heads/<current-branch>. A merge operand must resolve
 unambiguously to that upstream, with no same-named tag or local branch.
-After any earlier git segment, a default-branch merge must use the full
+Beside any other git segment, a default-branch merge must use the full
 refs/remotes/<remote>/<branch> operand; fetch may import short-name shadows.
 Remote HEAD caches are local;
 refresh them with `git remote set-head <remote> --auto` after a default rename.
@@ -828,7 +828,7 @@ def allowlisted_target(command, cwd):
     if re.search(r"[\"'`$\\\n<>(){}*?\[\]~#]", command):
         return None
     parts = re.split(r"(&&|\|\||;|\|)", command)
-    if any(not p.strip() for p in parts[::2]):
+    if any(not p.strip() or "&" in p for p in parts[::2]):
         return None
     compound = len(parts) > 1
     current = cwd
@@ -873,18 +873,19 @@ def allowlisted_target(command, cwd):
             ok = len(refs) <= 2 and flags <= PULL_FLAGS and bool(flags & PULL_NO_REWRITE)
         if not ok or ((compound or explicit or current != cwd) and "--ff-only" not in flags):
             return None
-        prior_git = any(p.split()[0] == "git" for p in parts[:n * 2:2])
-        merges.append((target, sub, refs, flags, prior_git))
+        other_git = any(j != n and p.split()[0] == "git"
+                        for j, p in enumerate(parts[::2]))
+        merges.append((target, sub, refs, flags, other_git))
     if not merges:
         return None
-    for target, sub, refs, flags, prior_git in merges:
+    for target, sub, refs, flags, other_git in merges:
         if feature_branch(target) is None:
-            if not pure_sync(target, sub, refs, flags, prior_git):
+            if not pure_sync(target, sub, refs, flags, other_git):
                 return None
     return cwd
 
 
-def pure_sync(cwd, sub, refs, flags, prior_git=False):
+def pure_sync(cwd, sub, refs, flags, other_git=False):
     """Prove a protected checkout only advances from its own tracking ref."""
     if "--ff-only" not in flags or flags & {"--ff", "--no-ff"} or not os.path.isdir(cwd):
         return False
@@ -907,8 +908,8 @@ def pure_sync(cwd, sub, refs, flags, prior_git=False):
         if refs not in ([f"{remote}/{branch}"], [upstream]):
             return False
         operand = refs[0]
-        # A preceding git segment (notably fetch) can import a shadowing tag.
-        if prior_git and operand != upstream:
+        # Another git segment (notably a concurrent fetch) can import a shadowing tag.
+        if other_git and operand != upstream:
             return False
         if git(cwd, "rev-parse", "--symbolic-full-name", operand) != upstream:
             return False
