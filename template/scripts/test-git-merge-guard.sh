@@ -102,6 +102,56 @@ cr=$'\r'
 nbsp=$'\xc2\xa0'
 matrix() { # guard
     local g=$1
+    # #787: GitHub merge entry points, writes versus reads, and push destinations.
+    local cmd op flag
+    for cmd in 'gh pr merge 1' 'gh pr merge --auto 1' 'gh pr merge --admin 1' 'gh pr merge --disable-auto 1' 'gh -R o/r pr merge 1' 'gh --repo=o/r pr merge 1' 'gh pr -R o/r merge 1' 'gh pr --repo=o/r merge 1'; do
+        case_ "$g" ask "${r}/wt" "$cmd"
+        for op in ';' '&&' '||' '|' '&' "$nl"; do
+            case_ "$g" ask "${r}/wt" "true $op $cmd"
+        done
+    done
+    for flag in '-X PUT' '-XPUT' '--method PUT' '--method=PUT' '-iX PUT' '-iXPUT' '-f x=y' '-F x=y'; do
+        case_ "$g" ask "$r" "gh api $flag repos/o/r/pulls/1/merge"
+        case_ "$g" ask "$r" "gh api /repos/{owner}/{repo}/pulls/1/merge $flag"
+        case_ "$g" ask "$r" "gh api https://api.github.com/repos/o/r/pulls/1/merge $flag"
+    done
+    for cmd in mergePullRequest enablePullRequestAutoMerge mergeBranch; do
+        case_ "$g" ask "$r" "gh api graphql -f 'query=mutation { $cmd(input: {}) { clientMutationId } }'"
+    done
+    for cmd in 'gh api graphql -F query=@file' 'gh api graphql --input file' 'gh api graphql' 'gh api -X "$METHOD" repos/o/r/pulls/1/merge'; do
+        case_ "$g" ask "$r" "$cmd"
+    done
+    for cmd in 'gh pr view 1' 'gh pr list' 'gh pr ready 1' 'gh api repos/o/r/pulls/1' 'gh api -X GET repos/o/r/pulls/1/merge' 'gh api graphql -f "query={ viewer { login } }"'; do
+        case_ "$g" silent "$r" "$cmd"
+    done
+    for cmd in 'HEAD:main' '+HEAD:main' ':main' 'refs/heads/main' 'feat:master' '--delete main' '--all' '--mirror'; do
+        case_ "$g" ask "${r}/wt" "git push origin $cmd"
+    done
+    case_ "$g" ask "${tr}/wt" 'git push origin HEAD:trunk'
+    case_ "$g" ask "${tr}/wt" 'git push origin refs/heads/trunk'
+    case_ "$g" ask "${r}/wt" 'git push origin feat HEAD:master'
+    case_ "$g" ask "${r}/wt" 'git push origin :feat'
+    case_ "$g" ask "${r}/wt" 'git push origin --delete feat'
+    case_ "$g" silent "${r}/wt" 'git push origin refs/heads/feat:refs/heads/feat'
+    case_ "$g" ask "${r}/wt" "git -C ${r}/wt push origin feat"
+    case_ "$g" ask "$r" 'git push'
+    case_ "$g" ask "$r" 'git push origin'
+    case_ "$g" ask "${nh}/wt" 'git push origin feat'
+    case_ "$g" silent "${r}/wt" 'git push -u origin feat'
+    case_ "$g" silent "${r}/wt" 'git push origin HEAD:feat'
+    case_ "$g" ask "${r}/wt" "cd ${tr} && git push origin feat"
+    case_ "$g" ask "${r}/wt" 'env -C /unknown git push origin feat'
+    case_ "$g" ask "${r}/wt" 'git -c alias.p=push p origin HEAD:main'
+    case_ "$g" ask "${r}/wt" 'xargs -I X gh X'
+    case_ "$g" ask "${r}/wt" 'git push'
+    case_ "$g" ask "${r}/wt" 'git push origin'
+    case_ "$g" ask "${r}/wt" 'git -c remote.origin.push=HEAD:main push origin'
+    case_ "$g" ask "${tr}/wt" "bash -c 'git push origin HEAD:trunk'"
+    for cmd in 'gh pr merge 1' 'gh api -X PUT repos/o/r/pulls/1/merge' 'gh api graphql -f query=mergePullRequest' 'git push origin HEAD:main'; do
+        case_ "$g" ask "$r" "bash -c '$cmd'"
+        case_ "$g" ask "$r" "bash <<< '$cmd'"
+        case_ "$g" ask "$r" "echo \$( $cmd )"
+    done
     # 2026-10-25 observed shapes: lane catch-ups and evaluator mentions.
     case_ "$g" silent "$r" "git -C ${r}/wt merge --ff-only abc123"
     case_ "$g" silent "${r}/wt" "git fetch origin && git merge --ff-only abc123"
@@ -333,7 +383,7 @@ matrix() { # guard
     case_ "$g" silent "${r}/wt" "git log --merges --oneline"
     case_ "$g" silent "${r}/wt" "git commit -m 'fix: catch-up merge of main'"
     case_ "$g" silent "${r}/wt" "git status && git log -1"
-    case_ "$g" silent "${r}/wt" "gh pr merge 1"
+    case_ "$g" ask "${r}/wt" "gh pr merge 1"
     case_ "$g" silent "${r}/wt" "gh pr view \"\$N\" --json mergeStateStatus,mergedAt"
     case_ "$g" silent "${r}/wt" "grep -rn merge docs/"
     # `.sh` is a file extension, not a shell name.
@@ -559,6 +609,8 @@ for profile in bot agent Bot; do
     profile_case "$profile" silent "$r" "git merge feat"
     profile_case "$profile" silent "$r" "git -C ${r} pull"
     profile_case "$profile" silent "$r" "bash -c 'git merge feat'"
+    profile_case "$profile" silent "$r" 'gh pr merge 1 --admin'
+    profile_case "$profile" silent "$r" 'git push origin HEAD:main'
 done
 for profile in "" dev; do
     profile_case "$profile" ask "$r" "git merge feat"

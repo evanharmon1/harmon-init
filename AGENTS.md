@@ -729,6 +729,10 @@ meets its exit condition on round 1 is done, whatever the cap allowed.
   the ruleset would allow it. Open the draft PR and integrate it — checks green
   with reviews unpolled is not the stopping point — then queue it under the
   handoff check and watch until merge or close; merging is always a human decision.
+  The `git-merge-guard` hook is the primary local gate for `gh pr merge`,
+  REST merge writes, GraphQL merge mutations and default-branch pushes,
+  including refspec destinations. Unresolved targets and payloads ask;
+  GitHub reads and explicit own-name feature pushes stay silent.
   (`.claude/settings.json` backstops this with `permissions.ask` rules on
   pushes to main and force-pushes (prefix rules: a backstop, not a boundary), plus the
   `git-merge-guard` hook, which asks
@@ -739,7 +743,7 @@ meets its exit condition on round 1 is done, whatever the cap allowed.
   its source or name `refs/heads/<branch>`; a short branch name can resolve to
   a remote tag and asks. The hook parses each command, so quoted text and
   heredoc bodies that no shell runs, search patterns and `git merge-base` are data and need no
-  workaround. The project settings carry no `gh pr merge` ask: that prompt
+  workaround. The project settings carry no `gh pr merge` ask rule: that backstop
   comes only from the user's own settings on a host and from the dev
   devcontainer's managed-settings drop-in
   (`.devcontainer/config/claude-settings-dev.json`). The hook, too, applies on

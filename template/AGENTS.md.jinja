@@ -604,15 +604,18 @@ cap allowed.
   green and the ruleset would allow it. Open the draft PR and integrate it —
   checks green with reviews unpolled is not the stopping point — then queue
   it under the handoff check and watch until merge or close; merging is always
-  a human decision. (The `git-merge-guard` hook in `.claude/settings.json` backstops
-  this: it parses each command and asks before any real or possible
+  a human decision. The `git-merge-guard` hook is the primary local gate for
+  `gh pr merge`, REST merge writes, GraphQL merge mutations and default-branch
+  pushes, including refspec destinations. Unresolved targets and payloads ask;
+  GitHub reads and explicit own-name feature pushes stay silent.
+  (The hook in `.claude/settings.json` also gates git merges: it parses each command and asks before any real or possible
   `git merge`/`git pull` outside a verified feature-branch shape or the one
   default-branch exception: a configured-upstream `--ff-only` sync with an
   unambiguous operand (a merge beside any other git segment must name the full
   `refs/remotes/<remote>/<branch>`). A default-branch pull must omit its source
   or name `refs/heads/<branch>`; a short branch name can resolve to a remote tag
   and asks. Quoted text and heredoc bodies that no shell runs, search patterns and `git merge-base` are data. The project settings ask on pushes to main and
-  force-pushes (prefix rules: a backstop, not a boundary) but carry no `gh pr merge` ask: that prompt comes only from
+  force-pushes (prefix rules: a backstop, not a boundary) but carry no `gh pr merge` ask rule: that backstop comes only from
   your own settings on a host[% if devcontainer %] and from the dev
   devcontainer's managed-settings drop-in
   (`.devcontainer/config/claude-settings-dev.json`)[% endif %]. The hook

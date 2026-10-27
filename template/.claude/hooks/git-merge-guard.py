@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
-"""PreToolUse(Bash) hook: ask before any git merge/pull that is not a
-recognized merge into a feature branch.
+"""PreToolUse(Bash) hook: gate merges and default-branch pushes locally.
+
+Ask before gh pr merge, gh api merge writes/mutations, protected refspec
+pushes, and git merge/pull outside the recognized branch-aware allowlist.
+Evaluator payloads mentioning push ask conservatively, including custom defaults.
 
 Replaces the `Bash(git merge)` / `Bash(git merge:*)` permissions.ask rules,
 which prompt on every merge (including routine catch-up merges of main into
@@ -114,11 +117,16 @@ such as `{git,merge} feat`, or a glob such as `gi[t]`); it is a backstop
 against mistakes, not an adversarial boundary. A `case` pattern inside `$(...)`
 can end the substitution early. An unquoted `git merge` in another command's
 arguments (`echo git pull`) asks.
-It gates only git merge/pull: `git reset --hard`, `git restore` and
+It also gates `gh pr merge`, merge REST writes, GraphQL merge mutations and
+protected/default-branch pushes. The hook is the primary local merge gate;
+`permissions.ask` rules remain a prefix-matching backstop when hooks do not run.
+Unreadable API methods, endpoints, GraphQL payloads and push targets ask.
+Explicit own-name feature pushes and routine GitHub reads stay silent.
+`git reset --hard`, `git restore` and
 `git checkout -- .` discard the same conflict resolutions `git merge --abort`
 would, and this hook does not see them. Nor does it see the commands that
-advance main without a merge or pull: `git fetch . feat:main`,
-`git push . HEAD:main`, `git branch -f main feat` and
+advance main outside the guarded entry points: `git fetch . feat:main`,
+`git branch -f main feat` and
 `git update-ref refs/heads/main`. Direct `git merge-recursive` and `git merge-file`
 are silent too: they write the index or a file but create no commit and move
 no ref, so nothing lands on main. `git pull --rebase` is not silent,
@@ -620,7 +628,7 @@ def git_might_merge(words, i, depth=0):
         return False
     slot = words[j]
     sub = slot.value.strip("\n").lower()
-    if not slot.literal or sub in MERGE_WORDS:
+    if not slot.literal or sub in MERGE_WORDS or (depth > 0 and sub == "push"):
         # Checked before aliases: git ignores an alias that hides a built-in.
         return True
     if sub in aliases:
@@ -708,6 +716,168 @@ def is_evaluator(words, i):
     )
 
 
+MUTATION = re.compile(r"\b(?:mergePullRequest|enablePullRequestAutoMerge|mergeBranch)\b")
+
+
+def risky_mention(text):
+    return bool(MENTION.search(text) or MUTATION.search(text)
+                or re.search(r"\bpush\b", text, re.I))
+
+
+def gh_might_land(words, i):
+    """Read gh's command slots and API options; unreadable write targets ask."""
+    args = words[i + 1:]
+    tokens = feeder_tokens(words, i)
+    if tokens is not None and (not args or any(
+            t and t in w.value for t in tokens for w in args)):
+        return True
+    j = 0
+    while j < len(args) and args[j].value.startswith("-"):
+        v = args[j].value
+        if v in ("-R", "--repo", "--hostname"):
+            j += 2
+        elif v.startswith(("--repo=", "--hostname=", "-R")):
+            j += 1
+        else:
+            return True
+    args = args[j:]
+    if not args or not args[0].literal:
+        return True
+    if args[0].value == "pr":
+        # Inherited flags may appear between the command and its verb too.
+        j = 1
+        while j < len(args) and args[j].value.startswith("-"):
+            opt = args[j].value
+            if opt in ("-R", "--repo"):
+                j += 2
+            elif opt.startswith(("-R", "--repo=")):
+                j += 1
+            else:
+                return True
+        return j >= len(args) or not args[j].literal or args[j].value == "merge"
+    if args[0].value != "api":
+        return False
+    endpoint = None
+    method = None
+    fields = False
+    queries = []
+    args = args[1:]
+    j = 0
+    values = {"-f", "-F", "--field", "--raw-field", "--input", "-H", "--header",
+              "--hostname", "--cache", "-q", "--jq", "-t", "--template"}
+    while j < len(args):
+        w = args[j]
+        v = w.value
+        if not w.literal:
+            return True
+        if v in ("-X", "--method") or re.match(r"^-[a-zA-Z]*X", v):
+            attached = v.split("X", 1)[1] if "X" in v else ""
+            if attached:
+                method = attached
+            else:
+                j += 1
+                if j >= len(args) or not args[j].literal:
+                    return True
+                method = args[j].value
+        elif v.startswith("--method="):
+            method = v.split("=", 1)[1]
+        elif v in values or v.startswith(("--field=", "--raw-field=", "--input=", "-f", "-F")):
+            key = v.split("=", 1)[0]
+            if v in values:
+                j += 1
+                if j >= len(args) or not args[j].literal:
+                    return True
+                value = args[j].value
+            else:
+                value = v.split("=", 1)[1] if v.startswith("--") else v[2:]
+            if key in ("--input",) or v.startswith("--input="):
+                return True
+            if v in ("-f", "-F", "--field", "--raw-field") or v.startswith(("-f", "-F", "--field=", "--raw-field=")):
+                fields = True
+                if value.startswith("query="):
+                    if value.startswith("query=@"):
+                        return True
+                    queries.append(value[6:])
+        elif v.startswith("-"):
+            if v not in ("-i", "--include", "--silent", "--paginate", "--slurp", "--verbose"):
+                return True
+        elif endpoint is None:
+            endpoint = v
+        else:
+            return True
+        j += 1
+    if endpoint is None:
+        return True
+    if endpoint.strip("/") == "graphql":
+        return not queries or any(MUTATION.search(q) for q in queries)
+    method = (method or ("POST" if fields else "GET")).upper()
+    if method not in ("GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"):
+        return True
+    if method in ("GET", "HEAD", "OPTIONS"):
+        return False
+    return bool(re.search(r"(?:^|/)repos/[^/]+/[^/]+/pulls/[^/]+/merge/?(?:\?.*)?$", endpoint)
+                or not re.match(r"^/?repos/[^/]+/[^/]+/", endpoint))
+
+
+def push_might_land(words, i, cwd):
+    """Only explicit own-name feature pushes to a resolved remote are silent.
+
+    Bare/remote-only pushes ask: push.default, remote.*.push and upstream
+    configuration can choose a protected destination independently of HEAD.
+    Global options (-C, -c, alternate git dirs) also fail closed.
+    """
+    j = i + 1
+    if j < len(words) and words[j].value.startswith("-"):
+        return True
+    if j >= len(words) or words[j].value != "push":
+        return False
+    args = words[j + 1:]
+    if any(not w.literal for w in args):
+        return True
+    defaults = set(PROTECTED)
+    remotes = git(cwd, "remote")
+    if remotes is None:
+        return True
+    for remote in remotes.split():
+        prefix = f"refs/remotes/{remote}/"
+        ref = git(cwd, "symbolic-ref", "--quiet", prefix + "HEAD")
+        if ref and ref.startswith(prefix):
+            defaults.add(ref[len(prefix):].casefold())
+    if not remotes:
+        return True
+    branch = feature_branch(cwd)
+    if not branch:
+        return True
+    positional = []
+    for w in args:
+        v = w.value
+        if v in ("--all", "--mirror"):
+            return True
+        if v.startswith("-"):
+            if v not in ("-u", "--set-upstream", "--dry-run", "-n", "--verbose", "-v"):
+                return True
+        else:
+            positional.append(v)
+    if positional:
+        remote = positional[0]
+        prefix = f"refs/remotes/{remote}/"
+        target = git(cwd, "symbolic-ref", "--quiet", prefix + "HEAD")
+        if remote not in remotes.split() or not target or not target.startswith(prefix):
+            return True
+    for refspec in positional[1:]:
+        if refspec.startswith(("+", ":")):
+            return True
+        dest = refspec.lstrip("+").split(":")[-1]
+        dest = dest.removeprefix("refs/heads/")
+        if dest.casefold() in defaults:
+            return True
+        if dest != branch:
+            return True
+    if len(positional) > 1:
+        return False
+    return True
+
+
 def command_might_merge(cmd, text, depth):
     words = cmd.words
     ci = command_index(words)
@@ -720,12 +890,16 @@ def command_might_merge(cmd, text, depth):
             # The command itself comes from an expansion (`$(printf 'git merge')`,
             # `git${IFS}merge`, `"$SHELL" <<< ...`, `xargs -I X X merge`): what runs is
             # unknown, so the line goes under the merge/pull word test.
-            if MENTION.search(text) or any(
+            if risky_mention(text) or any(
                 w.value.lower() in MERGE_WORDS for w in words[p + 1 : p + 2]
             ):
                 return True
     for i, w in enumerate(words):
         name = base(w)
+        if name == "gh" and gh_might_land(words, i):
+            return True
+        if name == "git" and depth > 0 and any(x.value == "push" for x in words[i + 1:]):
+            return True
         if name == "git" and git_might_merge(words, i):
             return True
         at_command = i in positions
@@ -737,7 +911,7 @@ def command_might_merge(cmd, text, depth):
         # `env -S'...'`, a pipe into a compound command), so its presence puts
         # the whole script under the word test; the parse below still sees
         # what the word test cannot (`$'\x70ull'`, `git $x`).
-        if is_evaluator(words, i) and MENTION.search(text):
+        if is_evaluator(words, i) and risky_mention(text):
             return True
         # A `-c` / `-Command` payload is read as a script whatever program
         # takes it, so an interpreter missing from SHELLS is still seen.
@@ -797,8 +971,8 @@ def script_might_merge(text, depth=0):
     except (ParseError, IndexError, RecursionError):
         # Unreadable: bash may still run the lines before the error, so ask on
         # any mention of git, merge or pull.
-        return bool(MENTION.search(text) or GIT_MENTION.search(text))
-    if any(MENTION.search(t) for t in uncertain):
+        return bool(risky_mention(text) or GIT_MENTION.search(text) or re.search(r"\bgh\b", text))
+    if any(risky_mention(t) for t in uncertain):
         return True
     # The word test reads decoded words and stdin too, so `printf $'git \x70ull'
     # | bash` shows `pull` where the raw text does not.
@@ -809,7 +983,7 @@ def script_might_merge(text, depth=0):
 
 
 def might_merge(command):
-    """True when the command invokes, or could invoke, a git merge/pull."""
+    """True when the command invokes, or could invoke, a guarded merge/push."""
     return script_might_merge(command)
 
 
@@ -958,11 +1132,19 @@ def feature_branch(cwd):
 
 def decide(command, cwd):
     """Return None (no opinion) or the reason to ask."""
+    try:
+        commands, _ = parse(command)
+    except (ParseError, IndexError, RecursionError):
+        return "unreadable merge/push command" if might_merge(command) else None
+    if any(base(w) == "git" and any(x.value == "push" for x in c.words[i + 1:])
+           and (len(commands) != 1 or i != 0 or push_might_land(c.words, i, cwd))
+           for c in commands for i, w in enumerate(c.words)):
+        return "push to a default branch or an unresolved push destination"
     if not might_merge(command):
         return None
     target = allowlisted_target(command, cwd)
     if target is None:
-        return "git merge/pull in a form this guard does not allowlist"
+        return "merge/pull or GitHub merge in a form this guard does not allowlist"
     return None
 
 

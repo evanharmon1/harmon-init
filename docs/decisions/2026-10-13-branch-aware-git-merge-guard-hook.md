@@ -56,6 +56,15 @@ runs in a scratch repository
 
 ## Decision
 
+The hook is the primary local merge gate (extended by #787): it asks for
+`gh pr merge` with any flags, REST writes to a pull request merge endpoint,
+GraphQL `mergePullRequest`, `enablePullRequestAutoMerge` and `mergeBranch`,
+and pushes to main/master or a resolved remote default branch, including
+refspec destinations. Unreadable methods, endpoints, payloads and targets ask.
+GitHub reads and explicit own-name feature pushes stay silent. Existing
+`permissions.ask` rules remain a prefix-matching backstop when hooks do not run.
+The bot/agent profile boundary and the existing fast-forward allowlist are unchanged.
+
 1. **Replace the `git merge` ask rules with `.claude/hooks/git-merge-guard.py`.**
    Remove `Bash(git merge)` and `Bash(git merge:*)` from `permissions.ask` in
    `.claude/settings.json` and `template/.claude/settings.json.jinja`, and
@@ -156,8 +165,7 @@ runs in a scratch repository
   ([2026-10-07-bot-and-agent-postures-carry-no-merge-guards.md](2026-10-07-bot-and-agent-postures-carry-no-merge-guards.md)).
 - The hook is a client-side backstop against mistakes, not an adversarial
   boundary: it does not inspect scripts, external git aliases, commands that
-  move `main` without `merge`/`pull` (`git push . HEAD:main`,
-  `git fetch . feat:main`, `git branch -f main feat`,
+  move `main` outside its guarded entry points (`git fetch . feat:main`, `git branch -f main feat`,
   `git update-ref refs/heads/main`), or sessions launched with `claude --bare`
   or `disableAllHooks`. Server-side enforcement remains the "Protect Main"
   ruleset.
