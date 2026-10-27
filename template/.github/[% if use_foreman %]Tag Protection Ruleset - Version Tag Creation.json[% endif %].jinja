@@ -28,6 +28,13 @@
       "actor_type": "RepositoryRole",
       "bypass_mode": "always"
     }
+[% endif %][% if ci_app_integration_id | trim %],[% endif %]
+[%- if ci_app_integration_id | trim %]
+    {
+      "actor_id": [[ ci_app_integration_id | trim | int ]],
+      "actor_type": "Integration",
+      "bypass_mode": "always"
+    }
 [% endif %]
   ]
 }

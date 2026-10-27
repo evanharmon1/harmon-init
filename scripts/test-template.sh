@@ -215,8 +215,8 @@ webapp)
     ;;
 iac)
     data_args+=(--data project_type=iac)
-    # Exercise the foreman ON branch with otherwise-default answers
-    # (use_foreman defaults off; full covers ON + coderabbit/cloud review).
+    # Exercise Foreman with the new optional App ID left empty; the ruleset
+    # must retain its old admin-only bypass output in this profile.
     data_args+=(--data use_foreman=true)
     ;;
 full)
@@ -258,6 +258,7 @@ full)
         --data use_fly_sprites=true
         --data devcontainer_coder_folder_uri="vscode-remote://dev-container+7b22686f737450617468223a222f7372762f636f6465722f736d6f6b652d74657374222c22636f6e66696746696c65223a7b2270617468223a222f7372762f636f6465722f736d6f6b652d746573742f2e646576636f6e7461696e65722f6465762f646576636f6e7461696e65722e6a736f6e227d7d@ssh-remote+coder.dev/workspaces/smoke-test"
         --data use_foreman=true
+        --data ci_app_integration_id=4109947
         --data foreman_additional_trusted_actors="AdmiralFraggle,review-app[bot]"
     )
     ;;
@@ -291,6 +292,18 @@ fi
 
 echo "Rendering profile '${profile}' into ${dest}"
 copier copy --trust --defaults --vcs-ref=HEAD "${copier_flags[@]+"${copier_flags[@]}"}" "${data_args[@]}" "$repo_root" "$dest"
+
+if [ "$profile" = "full" ]; then
+    invalid_id_dest="$job_tmp/render-invalid-integration-id"
+    if copier copy --trust --defaults --vcs-ref=HEAD \
+        "${copier_flags[@]+"${copier_flags[@]}"}" \
+        "${data_args[@]}" --data ci_app_integration_id=not-a-number \
+        "$repo_root" "$invalid_id_dest" >"$job_tmp/invalid-integration-id.log" 2>&1; then
+        err "non-numeric ci_app_integration_id was accepted"
+    elif ! grep -Fq 'CI APP INTEGRATION ID must be a positive integer' "$job_tmp/invalid-integration-id.log"; then
+        err "invalid ci_app_integration_id failed without the expected validation message"
+    fi
+fi
 
 cd "$dest"
 
@@ -1964,9 +1977,13 @@ iac | full)
     if [ "$profile" = "full" ]; then # org-owned
         grep -q 'OrganizationAdmin' ".github/Tag Protection Ruleset - Version Tag Creation.json" ||
             err "org repo's Creation ruleset lacks the OrganizationAdmin bypass"
+        jq -e '[.bypass_actors[] | select(.actor_type == "Integration" and .actor_id == 4109947 and .bypass_mode == "always")] | length == 1' ".github/Tag Protection Ruleset - Version Tag Creation.json" >/dev/null ||
+            err "Creation ruleset is missing the configured Integration bypass"
     else # iac — personal-account
         grep -q '"actor_type": "RepositoryRole"' ".github/Tag Protection Ruleset - Version Tag Creation.json" ||
             err "personal repo's Creation ruleset lacks the repository-admin bypass (OrganizationAdmin does not exist there)"
+        jq -e '.bypass_actors == [{"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"}]' ".github/Tag Protection Ruleset - Version Tag Creation.json" >/dev/null ||
+            err "empty ci_app_integration_id changed the Creation ruleset bypass actors"
     fi
     ;;
 *)
