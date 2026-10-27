@@ -153,6 +153,11 @@ matrix() { # guard
     case_ "$g" silent "$r" "git pull --ff-only"
     case_ "$g" silent "$r" "git pull --ff-only origin main"
     case_ "$g" silent "$r" "git merge --ff-only origin/main"
+    # V1-1: fetch may import a tag that shadows the short operand after inspection.
+    case_ "$g" ask "$r" "git fetch origin && git merge --ff-only origin/main"
+    case_ "$g" silent "$r" "git fetch origin && git merge --ff-only refs/remotes/origin/main"
+    case_ "$g" ask "$r" "git status && git merge --ff-only origin/main"
+    case_ "$g" silent "$r" "git fetch origin && git pull --ff-only"
     case_ "$g" silent "$tr" "git pull --ff-only origin trunk"
     case_ "$g" ask "$nh" "git pull --ff-only"
     case_ "$g" ask "${r}/det" "git pull --ff-only"

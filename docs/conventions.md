@@ -176,7 +176,7 @@ pulls with no explicit mode and `merge --abort` still ask.
 Evaluator mention handling is unchanged: a line running a shell or other
 text evaluator retains the conservative merge/pull mention test. The proposed
 exemption was removed after repeated bypass findings; its redesign is tracked
-in [#1844](https://github.com/evanharmon1/harmon-init/issues/1844). Literal
+in [issue #1844](https://github.com/evanharmon1/harmon-init/issues/1844). Literal
 `-C` and `cd` target paths must contain no shell metacharacters. Ordinary
 permission rules still apply when the hook is silent; bot/agent profiles stand
 down and rely on the server's branch rules. See the hook docstring for the

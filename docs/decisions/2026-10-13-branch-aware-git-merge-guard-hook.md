@@ -100,8 +100,11 @@ runs in a scratch repository
    merge or pull? — and that classifier has known blind spots (see
    Consequences). Its errors land on the safe side: a false positive costs one
    prompt on that command, and a command it flags runs silently only if it is
-   exactly an allowlisted shape on a verified feature branch. In the unattended
-   `bot` and `agent` postures the hook stands down entirely (see Consequences),
+   exactly an allowlisted shape on a verified feature branch, or the one
+   default-branch exception: a configured-upstream `--ff-only` sync with an
+   unambiguous operand. A merge after any earlier git segment must name the
+   full `refs/remotes/<remote>/<branch>` because a fetch can import shadowing
+   tags after the guard inspects the refs. In the unattended `bot` and `agent` postures the hook stands down entirely (see Consequences),
    so it cannot stall unattended workers the way `guard-process-kill` did.
 
 ## Not
