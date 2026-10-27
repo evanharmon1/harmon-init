@@ -8,6 +8,15 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [5.13.1](https://github.com/evanharmon1/harmon-init/compare/v5.13.0...v5.13.1) (2026-10-26)
+
+
+### Bug Fixes
+
+* **scripts:** eliminate the session cleanup pipefail flake ([#1813](https://github.com/evanharmon1/harmon-init/issues/1813)) ([2fd85fb](https://github.com/evanharmon1/harmon-init/commit/2fd85fbd23d5fb2d59cc22a834f8dc5b436779d3))
+* **security:** isolate Semgrep from Python 3.15 stack limits ([#1802](https://github.com/evanharmon1/harmon-init/issues/1802)) ([3e43d99](https://github.com/evanharmon1/harmon-init/commit/3e43d994bcecef01711953af7670da1556f58e3e))
+* **tests:** publish complete bootstrap argument captures ([#1803](https://github.com/evanharmon1/harmon-init/issues/1803)) ([cc263f4](https://github.com/evanharmon1/harmon-init/commit/cc263f4730f537291970208b77ed51ffc908882a))
+
 ## [5.13.0](https://github.com/evanharmon1/harmon-init/compare/v5.12.0...v5.13.0) (2026-10-26)
 
 
