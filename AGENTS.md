@@ -732,9 +732,13 @@ meets its exit condition on round 1 is done, whatever the cap allowed.
   (`.claude/settings.json` backstops this with `permissions.ask` rules on
   pushes to main and force-pushes (prefix rules: a backstop, not a boundary), plus the
   `git-merge-guard` hook, which asks
-  before any `git merge`/`git pull` it cannot verify lands on a feature
-  branch. The hook parses each command, so quoted text and heredoc bodies that
-  no shell runs, search patterns and `git merge-base` are data and need no
+  before any `git merge`/`git pull` outside a verified feature-branch shape
+  or the one default-branch exception: a configured-upstream `--ff-only` sync
+  with an unambiguous operand (a merge beside any other git segment must name
+  the full `refs/remotes/<remote>/<branch>`). A default-branch pull must omit
+  its source or name `refs/heads/<branch>`; a short branch name can resolve to
+  a remote tag and asks. The hook parses each command, so quoted text and
+  heredoc bodies that no shell runs, search patterns and `git merge-base` are data and need no
   workaround. The project settings carry no `gh pr merge` ask: that prompt
   comes only from the user's own settings on a host and from the dev
   devcontainer's managed-settings drop-in
