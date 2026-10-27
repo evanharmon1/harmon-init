@@ -1233,22 +1233,25 @@ setting is recorded. Numeric token budgets and on/off switches are not mapped
 onto the ladder, and aliases that collapse onto another level add no rung.
 
 The provider documentation below was checked on **2026-10-10**. The existing
-`claude-code` and `claude-code-action` lists remain as previously verified;
-the `codex-cli` evidence was refreshed on **2026-10-18** as recorded below.
+`claude-code` and `claude-code-action` lists remain as previously verified.
+The `codex-cli` evidence combines the **2026-10-18** catalog and status-line
+observations with the `GPT-6.1-Sol high` status-line readout from **2026-10-25**
+and a **2026-10-27** check of the `/model` picker.
 The other checks establish the remaining entries' status. GLM remains
 unverified for Anthropic effort pass-through; hosted Qwen and MiniMax remain
 unverified for the models their wrappers resolve:
 
-- **`codex-cli`** (orchestrator-verified **2026-10-18**): CLI **0.163.0**'s
-  model catalog (each model's supported reasoning levels)
-  offers `max` for `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-astra` and `gpt-6-luna`.
+- **`codex-cli`**: CLI **0.163.0** (observed 2026-10-18) has a model catalog
+  (each model's supported reasoning levels) listing `max` for `gpt-6.1-sol`,
+  `gpt-6-sol`, `gpt-6-astra` and `gpt-6-luna`.
   Some models also list `ultra`, which is outside this registry's ladder.
-  Codex lanes launched with `-c model_reasoning_effort=max` showed
-  `GPT-6-Luna max` in the TUI status line, read through Herdr on 2026-10-18;
-  lanes launched with `-c model_reasoning_effort=low` and `=high` showed
-  `Sol low` and `Sol high`, respectively. Availability depends on the selected
-  model: a model whose catalog entry lacks `max` does not offer it.
-
+  Codex lanes showed `GPT-6-Luna max` and `GPT-6.1-Sol low` in the TUI status
+  line on 2026-10-18. A lane whose effort was set to high in the
+  `/model` picker showed `GPT-6.1-Sol high · Context 57% left` on 2026-10-25.
+  A 2026-10-27 check of the `/model` picker on Codex CLI **0.163.0** showed
+  `max` for `gpt-5.6-terra` (Terra 5.6; catalog listing; take-effect not probed).
+  Availability depends on the selected model: a model whose catalog entry lacks
+  `max` does not offer it.
 - **`claude-code-deepseek`**: DeepSeek's [thinking-mode reference](https://api-docs.deepseek.com/guides/thinking_mode/)
   documents Anthropic `output_config.effort` with distinct `low`, `high` and
   `max` levels, covering the launcher's configured `deepseek-v4-pro` /
