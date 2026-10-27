@@ -73,9 +73,11 @@ runs in a scratch repository
    and `cd <dir> &&` targets and compounds whose every merge segment qualifies.
    State-changing or unknown companion commands remain gated. Default branches
    accept only proven `--ff-only` syncs from their own configured upstream.
-   Literal `bash -c`, `sh -c` and shell heredoc payloads are parsed as commands;
-   script filenames and arguments are data, and unknown evaluator input retains
-   the mention test. It returns
+   Evaluator mention handling is unchanged from the base guard: shell and
+   other evaluator lines retain the conservative merge/pull mention test.
+   The proposed exemption was removed after repeated bypass findings; its
+   redesign is tracked in [#1844](https://github.com/evanharmon1/harmon-init/issues/1844).
+   Target paths accept literal path characters only, with no shell metacharacters. It returns
    `permissionDecision: "ask"` for every other command it inspects that might
    run a `git merge` or `git pull`, and for internal errors. Parse errors ask
    only when the text mentions git, merge or pull. The exact silent/ask boundary lives in `.claude/hooks/git-merge-guard.py` and is

@@ -67,6 +67,9 @@ fixture "$shadow" main feat yes
 git -C "$shadow" -c user.name=t -c user.email=t@t commit -q --allow-empty -m 'chore: feature target'
 git -C "$shadow" tag origin/main
 
+amp="${tmp}/lane&git"
+git -C "$shadow" worktree add -q "$amp" feat
+
 failures=0
 decide() { # guard cwd command -> silent|ask|rc<N>
     local out rc
@@ -102,35 +105,50 @@ matrix() { # guard
         case_ "$g" silent "${r}/wt" "git merge --ff-only main $op git pull --ff-only origin main"
         case_ "$g" ask "${r}/wt" "git merge --ff-only main $op git -C ${r} merge --ff-only feat"
     done
+    # #1844: base word test excludes longer tokens; no evaluator exemption.
     case_ "$g" silent "$r" "bash <<'EOF'${nl}gh pr view 1 --json mergeStateStatus${nl}EOF"
+    # #1844: base word test excludes longer tokens; no evaluator exemption.
     case_ "$g" silent "$r" "bash -c 'gh pr view 1 --json mergedAt,mergeStateStatus; echo pulls/1'"
-    case_ "$g" silent "$r" "sh -c 'echo pull'"
+    # #1844: evaluator mention exemption descoped; retain base behavior.
+    case_ "$g" ask "$r" "sh -c 'echo pull'"
+    # #1844: base word test excludes longer tokens; no evaluator exemption.
     case_ "$g" silent "$r" "D=\$(bash script.sh --json closedByPullRequestsReferences)"
-    case_ "$g" silent "$r" "bash script.sh merge pull"
+    # #1844: evaluator mention exemption descoped; retain base behavior.
+    case_ "$g" ask "$r" "bash script.sh merge pull"
     case_ "$g" ask "$r" "bash -c \"echo 'git merge\""
     case_ "$g" ask "$r" "bash <<'EOF'${nl}git pull --ff-only origin feat${nl}EOF"
     case_ "$g" ask "$r" "printf 'git merge feat\\n' | bash -s merged"
     case_ "$g" ask "$r" "printf 'git merge feat\\n' | bash /dev/stdin"
     case_ "$g" ask "$r" "printf 'git pull\\n' | sh -"
-    # R13: executable input is literal and complete, or retains the word test.
+    # #1844 attack corpus: evaluator exemptions are deleted, all must ask.
     case_ "$g" ask "$r" "CODE='git merge feat'; bash <<< \"\$CODE\""
     case_ "$g" ask "$r" "bash -c '\"\$2\" \"\$1\" \"\$3\"' _ merge git feat"
     case_ "$g" ask "$r" "printf 'git merge feat\\n' > /tmp/m.sh; bash <<< 'true' < /tmp/m.sh"
     case_ "$g" ask "$r" "bash <<< 'true' 0<&3 # git merge feat"
     case_ "$g" ask "$r" "bash <<< 'true' 0<> /tmp/m.sh # git merge feat"
     case_ "$g" ask "$r" "bash <<EOF${nl}\$CODE${nl}EOF # git merge feat"
-    case_ "$g" silent "$r" "bash <<< 'echo merge'"
+    # #1844: evaluator mention exemption descoped; retain base behavior.
+    case_ "$g" ask "$r" "bash <<< 'echo merge'"
     case_ "$g" ask "$shadow" "git merge --ff-only origin/main"
     case_ "$g" silent "$shadow" "git merge --ff-only refs/remotes/origin/main"
-    # R14: only the positive argument grammar and evaluator-free payloads qualify.
+    # #1844: remaining option and delegated-stdin attack shapes.
     case_ "$g" ask "$r" "bash -c -- 'git merge feat'"
     case_ "$g" ask "$r" "bash -c -x 'git merge feat'"
     case_ "$g" ask "$r" "printf 'git merge feat\\n' | bash -c 'exec sh'"
     case_ "$g" ask "$r" "printf 'git merge feat\\n' | bash -c 'xargs -I X X'"
-    case_ "$g" silent "$r" "bash 0<<< 'echo merge'"
-    case_ "$g" silent "$r" "printf 'git merge feat\\n' | bash -c 'echo merged'"
+    # #1844: evaluator mention exemption descoped; retain base behavior.
+    case_ "$g" ask "$r" "bash 0<<< 'echo merge'"
+    # #1844: evaluator mention exemption descoped; retain base behavior.
+    case_ "$g" ask "$r" "printf 'git merge feat\\n' | bash -c 'echo merged'"
     case_ "$g" ask "$r" "printf 'git merge feat\\n' | bash /dev/fd/3 3<&0"
     case_ "$g" ask "$r" "printf 'git merge feat\\n' | bash /dev//stdin"
+    case_ "$g" ask "$r" "printf 'git merge feat\\n' | bash +x"
+    case_ "$g" ask "$r" "printf 'git merge feat\\n' | BASH_ENV=/dev/stdin bash -c 'true'"
+    case_ "$g" ask "$r" "printf 'git merge feat\\n' | bash ../../../../../../../../../../dev/stdin"
+    case_ "$g" ask "$r" "printf 'git merge feat\\n' | bash -c 'set -o history; history -r /dev/stdin; fc -s'"
+    # C3-5: the target exists on a feature branch, but & backgrounds the prefix.
+    case_ "$g" ask "$r" "git -C ${amp} merge --ff-only feat"
+    case_ "$g" ask "$r" "cd ${amp} && git merge --ff-only feat"
     # Pure syncs on main/trunk; every other default-branch merge asks.
     case_ "$g" silent "$r" "git pull --ff-only"
     case_ "$g" silent "$r" "git pull --ff-only origin main"
@@ -252,10 +270,10 @@ matrix() { # guard
     case_ "$g" ask "$r" "git --shallow-file /dev/null \$'\\x6d\\x65\\x72\\x67\\x65' feat"
     case_ "$g" ask "$r" "git --config-env user.name=FOO \"\$SUB\" feat"
     case_ "$g" ask "$r" "git --super-prefix sub/ \$'\\x6d\\x65\\x72\\x67\\x65' feat"
-    # Script files are opaque; a shell filename/argument is data.
+    # Base behavior: evaluator merge/pull mentions stay gated (#1844).
     case_ "$g" silent "${r}/wt" "./scripts/merge-main.sh"
-    case_ "$g" silent "${r}/wt" "sh ./scripts/merge-main.sh"
-    case_ "$g" silent "${r}/wt" "sh ./merge-main.sh"
+    case_ "$g" ask "${r}/wt" "sh ./scripts/merge-main.sh"
+    case_ "$g" ask "${r}/wt" "sh ./merge-main.sh"
     # No git merge/pull: no opinion, including everyday near-misses.
     case_ "$g" silent "${r}/wt" "git merge-base main feat"
     # A quoted word with trailing whitespace is not the word `merge`.
@@ -269,7 +287,7 @@ matrix() { # guard
     case_ "$g" ask "${r}/wt" "\$(git --exec-path)/git-merge main"
     case_ "$g" ask "${r}/wt" "git-pull origin main"
     case_ "$g" ask "$r" "eval \"git merge-ours feat\""
-    case_ "$g" silent "$r" "bash -c 'git merge-recursive base -- HEAD feat'"
+    case_ "$g" ask "$r" "bash -c 'git merge-recursive base -- HEAD feat'"
     case_ "$g" ask "$r" "eval \"git-merge-ours feat\""
     # An expanded subcommand inside an interpreter string, like the unwrapped form.
     case_ "$g" ask "$r" "bash -c \"git \$SUB main\""

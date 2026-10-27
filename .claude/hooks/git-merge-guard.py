@@ -49,13 +49,11 @@ command substitutions -- and a merge is:
     or `parallel` (whatever their arguments); `$"..."` locale strings are not
     literal; `${...}` operators are not modelled, so a
     `${...}` that mentions merge/pull asks; a `trap` action counts too;
-  * mentions of merge/pull in an evaluator whose input cannot be read.
-    Literal bash/sh -c payloads and heredocs are parsed as commands instead;
-    this exemption requires an immediate -c and literal payload, or no args
-    and exactly one literal here-string or quoted-delimiter heredoc. Parsed
-    payloads contain no expansions or delegated evaluators. A literal script
-    path outside /dev and /proc with no descriptor redirects is opaque data.
-    Unknown pipe input and other evaluators retain the conservative word test.
+  * any mention of merge/pull anywhere in a command line that also runs an
+    evaluator (a shell, `eval`, `ssh`, `trap`, `watch`, `herdr pane run`, `parallel`,
+    `sudo -s`/`-i`, `env -S`): their option and
+    input shapes (`bash -C -c`, `env -S'...'`, a pipe into `if ...; then sh`)
+    are open-ended, so the word test covers what the parser does not.
 
 Everything else is data and stays silent: quoted text and heredoc bodies not
 handed to an evaluator (`git commit -m "catch-up merge"`, report appends),
@@ -73,13 +71,18 @@ unquoted single commands in a verified feature-branch checkout:
     git pull [<remote> [<ref>]], with --ff-only and/or --no-rebase,
              and optionally --no-edit
 
+Evaluator mention handling is unchanged from the base guard. The exemption
+was removed after repeated bypass findings; its redesign is tracked in
+https://github.com/evanharmon1/harmon-init/issues/1844.
+
 Flags are a set, in any order and position. Fast-forward-only merges/pulls
 also support a literal absolute `git -C <dir>` or preceding `cd <dir> &&`,
 and compounds joined by &&, ||, ; or |. Every merge segment must pass; other
 segments are limited to true, false, git status and a named-remote git fetch
 whose configured refspec writes only remote-tracking refs. Unknown commands,
 evaluators, expansions, quoting, redirects and path traversal ask. A cd must
-be absolute, exist, contain no .. component and be followed by &&.
+be absolute, exist, contain no .. component and be followed by &&. Both
+-C and cd paths allow only literal path characters, never shell metacharacters.
 
 The checkout must be on a named branch other than main/master and every
 remote's resolved default; at least one remote HEAD must resolve. Otherwise
@@ -165,6 +168,7 @@ PULL_NO_REWRITE = {"--ff-only", "--no-rebase"}
 # merge.
 SOLO_FLAGS = {"--continue", "--quit"}
 REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
+LITERAL_UNSAFE = re.compile(r"[\"'`$\\\n;&|<>(){}*?\[\]~]")
 # A mention of merge/pull as a word; used only where the parser cannot say
 # what runs (an unreadable command, a shell reading a pipe). `merge-base` and
 # `merge-tree` are read-only plumbing; prose like `pull-requests` is not a word.
@@ -262,9 +266,6 @@ class Command:
     def __init__(self):
         self.words = []
         self.stdin = []
-        self.stdin_literal = []
-        self.stdin_redirections = 0
-        self.fd_redirection = False
 
 
 class Parser:
@@ -277,7 +278,6 @@ class Parser:
         self.commands = [] if commands is None else commands
         self.cur = None
         self.heredocs = []
-        self.redirect_fd = None
         # Expansion text the parser does not model; asks if it mentions merge/pull.
         self.uncertain = uncertain if uncertain is not None else []
 
@@ -333,7 +333,6 @@ class Parser:
                 word = self.read_word()
                 # `2>&1`: a file-descriptor number belongs to the redirection.
                 if word.value.isdigit() and self.i < len(s) and s[self.i] in "<>" and self.i > start:
-                    self.redirect_fd = int(word.value)
                     continue
                 cmd = self.command()
                 if not cmd.words and word.literal and word.value in KEYWORDS:
@@ -347,24 +346,16 @@ class Parser:
 
     def redirection(self):
         s = self.s
-        fd = self.redirect_fd
-        self.redirect_fd = None
-        cmd = self.command()
-        cmd.fd_redirection |= fd is not None or s.startswith(("<&", "<>"), self.i)
-        if s[self.i] == "<" or fd == 0 or s.startswith(">&", self.i):
-            cmd.stdin_redirections += 1
         if s.startswith("<<<", self.i):
             self.i += 3
-            word = self.redirect_target()
-            cmd.stdin.append(word.value)
-            cmd.stdin_literal.append(word.literal and fd in (None, 0))
+            self.command().stdin.append(self.redirect_target().value)
         elif s.startswith("<<", self.i):
             strip = s.startswith("<<-", self.i)
             self.i += 3 if strip else 2
             start = self.skip_blanks()
             word = self.read_word()
             quoted = any(ch in s[start : self.i] for ch in "'\"\\")
-            self.heredocs.append((cmd, word.value, quoted, strip, fd))
+            self.heredocs.append((self.command(), word.value, quoted, strip))
         elif s.startswith(("<(", ">("), self.i):
             self.i = Parser(s, self.commands, self.uncertain).nested(self.i + 2)
         else:
@@ -389,7 +380,7 @@ class Parser:
 
     def read_heredocs(self):
         s = self.s
-        for cmd, delim, quoted, strip, fd in self.heredocs:
+        for cmd, delim, quoted, strip in self.heredocs:
             lines = []
             while self.i < len(s):
                 end = s.find("\n", self.i)
@@ -404,7 +395,6 @@ class Parser:
                 # An unquoted heredoc expands `$(...)` and backticks: they run.
                 Parser(body, self.commands, self.uncertain).read_double_quoted(Word(), closing=None)
             cmd.stdin.append(body)
-            cmd.stdin_literal.append(quoted and fd in (None, 0))
         self.heredocs = []
 
     def read_word(self):
@@ -714,52 +704,6 @@ def is_evaluator(words, i):
     )
 
 
-def plain_payload(text):
-    """A literal payload with no runtime expansion or delegated evaluator."""
-    if "$" in text or "`" in text:
-        return False
-    try:
-        commands, uncertain = parse(text)
-    except (ParseError, IndexError, RecursionError):
-        return False
-    if uncertain or any(not w.literal for c in commands for w in c.words):
-        return False
-    for cmd in commands:
-        for i, word in enumerate(cmd.words):
-            if base(word) in ({"exec"} | ARG_FEEDERS) or is_evaluator(cmd.words, i):
-                return False
-        if any(SCRIPT_OPTION.match(w.value) for w in cmd.words):
-            return False
-    return True
-
-
-def known_stdin(cmd):
-    """Exactly one literal source, with no competing or descriptor redirect."""
-    return (cmd.stdin_redirections == 1 and len(cmd.stdin) == 1
-            and all(cmd.stdin_literal)
-            and plain_payload(cmd.stdin[0]))
-
-
-def parsed_shell(words, i, cmd):
-    """The three positive forms whose executable input is known or opaque."""
-    if (not words[i].literal or base(words[i]) not in {"bash", "sh"}
-            or i not in command_positions(words)):
-        return False
-    args = words[i + 1 :]
-    if any(not w.literal for w in args):
-        return False
-    if not args:
-        return known_stdin(cmd)
-    if args[0].value == "-c":
-        return (len(args) >= 2 and not args[1].value.startswith("-")
-                and plain_payload(args[1].value))
-    path = os.path.normpath(re.sub(r"/+", "/", args[0].value))
-    return (bool(args[0].value) and not args[0].value.startswith("-")
-            and path not in {"/dev", "/proc"}
-            and not path.startswith(("/dev/", "/proc/"))
-            and not cmd.fd_redirection)
-
-
 def command_might_merge(cmd, text, depth):
     words = cmd.words
     ci = command_index(words)
@@ -785,9 +729,11 @@ def command_might_merge(cmd, text, depth):
             return True
         # A non-literal word counts when its decoded text names an evaluator
         # (`$'bash'`); an expansion such as `$SHELL` decodes to itself and does not.
-        # Unknown evaluator input retains the word test; literal bash/sh
-        # payloads and file arguments are handled by the parser below.
-        if is_evaluator(words, i) and not parsed_shell(words, i, cmd) and MENTION.search(text):
+        # An evaluator's option and input shapes are open-ended (`bash -C -c`,
+        # `env -S'...'`, a pipe into a compound command), so its presence puts
+        # the whole script under the word test; the parse below still sees
+        # what the word test cannot (`$'\x70ull'`, `git $x`).
+        if is_evaluator(words, i) and MENTION.search(text):
             return True
         # A `-c` / `-Command` payload is read as a script whatever program
         # takes it, so an interpreter missing from SHELLS is still seen.
@@ -863,6 +809,10 @@ def might_merge(command):
     return script_might_merge(command)
 
 
+# A target word cannot hide shell control syntax such as `/tmp/lane&git`.
+TARGET_PATH = re.compile(r"^/[A-Za-z0-9_./:@%+=,-]+$")
+
+
 def allowlisted_target(command, cwd):
     """Verify every literal merge segment against the checkout git will use.
 
@@ -888,14 +838,14 @@ def allowlisted_target(command, cwd):
             if n != 0 or len(tokens) != 2 or any(op != "&&" for op in parts[1::2]):
                 return None
             path = tokens[1]
-            if not os.path.isabs(path) or ".." in path.split("/") or not os.path.isdir(path):
+            if not TARGET_PATH.fullmatch(path) or ".." in path.split("/") or not os.path.isdir(path):
                 return None
             current = os.path.realpath(path)
             continue
         target = current
         explicit = len(tokens) > 1 and tokens[:2] == ["git", "-C"]
         if explicit:
-            if len(tokens) < 5 or not os.path.isabs(tokens[2]) or ".." in tokens[2].split("/"):
+            if len(tokens) < 5 or not TARGET_PATH.fullmatch(tokens[2]) or ".." in tokens[2].split("/"):
                 return None
             target = tokens[2]
             tokens = ["git"] + tokens[3:]
