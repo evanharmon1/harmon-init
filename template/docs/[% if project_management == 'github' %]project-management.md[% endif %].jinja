@@ -1327,16 +1327,18 @@ The other checks establish the remaining entries' status. GLM remains
 unverified for Anthropic effort pass-through; hosted Qwen and MiniMax remain
 unverified for the models their wrappers resolve:
 
-- **`codex-cli`** (orchestrator-verified **2026-10-18**): CLI **0.163.0**'s
-  model catalog (each model's supported reasoning levels)
-  offers `max` for `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-astra` and `gpt-6-luna`.
+- **`codex-cli`** (orchestrator-verified **2026-10-18**): CLI **0.163.0** (the
+  pinned `CODEX_VERSION`) has a model catalog (each model's supported reasoning
+  levels) listing `max` for `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-astra` and
+  `gpt-6-luna`.
   Some models also list `ultra`, which is outside this registry's ladder.
   Codex lanes launched with `-c model_reasoning_effort=max` showed
   `GPT-6-Luna max` in the TUI status line, read through Herdr on 2026-10-18;
   lanes launched with `-c model_reasoning_effort=low` and `=high` showed
-  `Sol low` and `Sol high`, respectively. Availability depends on the selected
-  model: a model whose catalog entry lacks `max` does not offer it.
-
+  `GPT-6.1-Sol low` and `GPT-6.1-Sol high`, respectively. The 0.163.0
+  `/model` picker lists `max` for GPT-5.6-Terra (catalog listing; take-effect
+  not probed). Availability depends on the selected model: a model whose catalog
+  entry lacks `max` does not offer it.
 - **`claude-code-deepseek`**: DeepSeek's [thinking-mode reference](https://api-docs.deepseek.com/guides/thinking_mode/)
   documents Anthropic `output_config.effort` with distinct `low`, `high` and
   `max` levels, covering the launcher's configured `deepseek-v4-pro` /

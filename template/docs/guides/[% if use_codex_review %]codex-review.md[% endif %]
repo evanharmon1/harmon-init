@@ -652,5 +652,6 @@ Adjudicate it; never disable the gate to get past a BLOCK.
   the effort. Rebuild the container once the files are right. Under a
   ChatGPT-account login on the pinned CLI, `low`, `medium`, `high`, and `xhigh`
   take effect for every supported model once the key is out of the managed
-  layer. `max` is offered only where the selected model's catalog lists it;
-  the current `gpt-6.x` models do.
+  layer. The `max` availability claim was observed on the pinned Codex CLI
+  version `0.163.0`: `max` is offered only for models whose catalog lists it,
+  and the current `gpt-6.x` models do.
