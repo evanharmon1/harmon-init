@@ -8,6 +8,15 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [5.13.2](https://github.com/evanharmon1/harmon-init/compare/v5.13.1...v5.13.2) (2026-10-27)
+
+
+### Bug Fixes
+
+* **docs:** scope the codex-cli max evidence to the CLI version and dates observed ([#1846](https://github.com/evanharmon1/harmon-init/issues/1846)) ([ba15e61](https://github.com/evanharmon1/harmon-init/commit/ba15e616a6f8b1c1eb686b7f7101c9793cf2cb5e))
+* **git-merge-guard:** stay silent on verified fast-forward catch-ups ([#1848](https://github.com/evanharmon1/harmon-init/issues/1848)) ([1baa33d](https://github.com/evanharmon1/harmon-init/commit/1baa33d3204b48938907eccb862963d96335468d))
+* **template:** sweep the Task command-bearing shapes the grep-q guard never scans ([#1841](https://github.com/evanharmon1/harmon-init/issues/1841)) ([c7b6cef](https://github.com/evanharmon1/harmon-init/commit/c7b6cefc9368c8b963e00c997d5bf2268255b672))
+
 ## [5.13.1](https://github.com/evanharmon1/harmon-init/compare/v5.13.0...v5.13.1) (2026-10-26)
 
 
