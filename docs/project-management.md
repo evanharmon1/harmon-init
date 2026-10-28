@@ -816,7 +816,9 @@ the taxonomy table below is generated from) and the starter set is created by
 - **Slate membership** — `slated` marks that an issue belongs to an orchestrator
   slate. It is membership only, not a state or ownership marker; it may coexist
   with `claim:*`, `parked`, `merge-ready`, `needs-review` and `blocked`, and
-  counts toward no ceiling. The [harmon-devkit label transition table](https://github.com/evanharmon1/harmon-devkit/blob/3b23072e279bbede7ea7aa431ad307b251a01e9d/docs/dev-loop/label-lifecycle.md)
+  counts toward no ceiling. Humans may apply or remove it by hand for now;
+  `/orchestrate` updates and `/claim` membership reporting are pending
+  harmon-devkit#1688. The [harmon-devkit label transition table](https://github.com/evanharmon1/harmon-devkit/blob/3b23072e279bbede7ea7aa431ad307b251a01e9d/docs/dev-loop/label-lifecycle.md)
   defines when it is added and removed.
 - **Workflow** — transient triage states; `blocked` is the non-issue-blocker
   flag described above
@@ -1116,7 +1118,7 @@ deliberately leaves it alone.
 | `sec`, `a11y`, `perf`, `tech-debt`, `i18n`, `l10n` | humans, at triage | humans, saved views | provisioned; inert | applied when true, removed when not |
 | `customer-request`, `ai-generated` | whoever files or authors the work, human or agent | humans, saved views | provisioned; inert | durable provenance — never removed |
 | `epic`, `umbrella` | humans, at planning or grooming; agents when filing a (HUMAN)/(QA) collector or an approved breakdown | humans, saved views | provisioned; inert | applied to a parent while its role is current; removed or changed when its horizon changes |
-| `slated` | /orchestrate adds it when an issue enters a plan revision and removes it when the issue leaves the plan, the slate closes, or the issue closes | humans; /claim, to report membership without treating it as a claim conflict | provisioned; **membership-only** — not a state or ownership signal; counts toward no ceiling | added when an issue enters an orchestrator plan revision; removed when it leaves the plan, the slate closes, or the issue closes |
+| `slated` | Humans may apply or remove it by hand for now; /orchestrate automation for plan revisions and slate closure is pending harmon-devkit#1688. | humans; /claim membership reporting is pending harmon-devkit#1688 | provisioned; **membership-only** — not a state or ownership signal; counts toward no ceiling | Manual for now: apply when an issue enters a slate; remove when it leaves the plan, the slate closes, or the issue closes. /orchestrate automation is pending harmon-devkit#1688. |
 | `human` | whoever files or triages the issue, human or agent; triage may remove it only when the issue no longer qualifies (non-collector, no [HUMAN] majority, agent-completable) | humans, saved views; agents, to skip dispatch | provisioned; inert | applied while completion is primarily a human's; removed once the issue's remaining completion is no longer primarily a human's |
 | `needs-triage` | people, agents and the issue forms add it at filing; after that the triage skill and the GitHub Actions classification reconciler maintain it (derived: added while classification is incomplete, removed once it is complete) | humans, the Triage view | provisioned; inert | a new issue that is not fully classified starts with it (people, agents and the issue forms add it at filing); after that it is derived and never cleared by hand |
 | `needs-requirements`, `blocked`, `waiting`, `needs-decision`, `needs-response`, `needs-communication` | humans, at triage | humans, the Triage view | provisioned; inert | transient — removed as soon as the state clears |
