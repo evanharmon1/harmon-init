@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-template.sh — render the Copier template into a temp dir and validate it.
 #
-# Usage: ./scripts/test-template.sh <profile> [full|renovate-config]
+# Usage: ./scripts/test-template.sh <profile> [full|renovate-config|ruleset-matrix]
 # Profiles: minimal | web | webapp | iac | full | meta
 #
 # IMPORTANT: files with CONDITIONAL NAMES are never even compiled by jinja
@@ -35,7 +35,7 @@ export GIT_CONFIG_KEY_1=gc.autoDetach GIT_CONFIG_VALUE_1=false
 profile="${1:-minimal}"
 validation_scope="${2:-full}"
 case "$validation_scope" in
-full | renovate-config) ;;
+full | renovate-config | ruleset-matrix) ;;
 *)
     echo "Unknown validation scope: ${validation_scope}" >&2
     exit 2
@@ -167,6 +167,102 @@ if ! have copier; then
     exit 1
 fi
 
+# Exercise the owner/answer combinations independently of the large rendered
+# profiles. The fixture contains the real copier.yml and only the Creation
+# ruleset template, so Copier renders precisely the file whose whitespace is
+# under test. It intentionally has no Git metadata: `--vcs-ref=HEAD` is used
+# only for Git-backed sources, where it prevents rendering a stale tag.
+run_ruleset_matrix() {
+    local matrix_source="$job_tmp/ruleset-matrix-source"
+    local owner_case github_org answer_case render_dir ruleset_file baseline_file
+    mkdir -p "$matrix_source/template/.github"
+    cp "$repo_root/copier.yml" "$matrix_source/copier.yml"
+    cp "$repo_root/template/.github/[% if use_foreman %]Tag Protection Ruleset - Version Tag Creation.json[% endif %].jinja" \
+        "$matrix_source/template/.github/[% if use_foreman %]Tag Protection Ruleset - Version Tag Creation.json[% endif %].jinja"
+
+    for owner_case in user org; do
+        if [ "$owner_case" = user ]; then
+            github_org=evanharmon1
+        else
+            github_org=test-org
+        fi
+        baseline_file=""
+
+        for answer_case in baseline empty set; do
+            render_dir="$job_tmp/ruleset-$owner_case-$answer_case"
+            local copier_args=(
+                --trust
+                --skip-tasks
+                --defaults
+                --data "project_name=R9 Ruleset Matrix"
+                --data "author_git_provider_username=evanharmon1"
+                --data "github_org=$github_org"
+                --data use_foreman=true
+            )
+            case "$answer_case" in
+            empty) copier_args+=(--data ci_app_integration_id=) ;;
+            set) copier_args+=(--data ci_app_integration_id=4109947) ;;
+            esac
+
+            if ! run_quiet "ruleset-$owner_case-$answer_case-render" copier copy \
+                "${copier_args[@]}" "$matrix_source" "$render_dir"; then
+                err "Copier failed for the $owner_case/$answer_case Creation ruleset matrix case"
+                return 1
+            fi
+
+            ruleset_file="$render_dir/.github/Tag Protection Ruleset - Version Tag Creation.json"
+            [ -f "$ruleset_file" ] || {
+                err "Creation ruleset missing from the $owner_case/$answer_case matrix render"
+                return 1
+            }
+
+            if have npx; then
+                if ! run_quiet --in "$render_dir" "ruleset-$owner_case-$answer_case-prettier" \
+                    env "NPM_CONFIG_CACHE=$job_tmp/npm-cache" npx --yes prettier@3 \
+                    --no-config --single-quote --no-semi --trailing-comma none \
+                    --print-width 100 --check "$ruleset_file"; then
+                    err "Creation ruleset is not Prettier-clean for $owner_case/$answer_case"
+                    return 1
+                fi
+            else
+                required npx "Creation ruleset Prettier check" || {
+                    fail=1
+                    return 1
+                }
+            fi
+
+            case "$answer_case" in
+            baseline)
+                baseline_file="$ruleset_file"
+                jq -e '[.bypass_actors[] | select(.actor_type == "Integration")] | length == 0' \
+                    "$ruleset_file" >/dev/null || {
+                    err "$owner_case no-answer baseline unexpectedly has an Integration actor"
+                    return 1
+                }
+                ;;
+            empty)
+                if ! cmp -s "$baseline_file" "$ruleset_file"; then
+                    err "$owner_case empty answer changed the no-answer Creation ruleset render"
+                    return 1
+                fi
+                ;;
+            set)
+                if ! jq --slurpfile baseline "$baseline_file" -e '
+                    ([.bypass_actors[] | select(.actor_type == "Integration")]) ==
+                      [{"actor_id": 4109947, "actor_type": "Integration", "bypass_mode": "always"}]
+                    and
+                    ([.bypass_actors[] | select(.actor_type != "Integration")]) ==
+                      $baseline[0].bypass_actors
+                ' "$ruleset_file" >/dev/null; then
+                    err "$owner_case set answer did not add exactly one Integration actor to its baseline"
+                    return 1
+                fi
+                ;;
+            esac
+        done
+    done
+}
+
 # Answers shared by every profile. Side-effectful answers are forced off so
 # this is safe to run anywhere (no gh repo create, no iCloud moves). The meta
 # profile re-enables bunch/obsidian but renders with --skip-tasks.
@@ -285,6 +381,13 @@ meta)
     exit 2
     ;;
 esac
+
+if [ "$validation_scope" = "ruleset-matrix" ]; then
+    run_ruleset_matrix || fail=1
+    [ "$fail" -eq 0 ] || exit 1
+    echo "Creation ruleset owner/answer matrix passed"
+    exit 0
+fi
 
 if [ -n "$(git -C "$repo_root" status --porcelain)" ]; then
     echo "NOTE: dirty working tree — copier will include dirty/untracked changes (DirtyLocalWarning)."
@@ -1984,6 +2087,9 @@ iac | full)
             err "personal repo's Creation ruleset lacks the repository-admin bypass (OrganizationAdmin does not exist there)"
         jq -e '.bypass_actors == [{"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"}]' ".github/Tag Protection Ruleset - Version Tag Creation.json" >/dev/null ||
             err "empty ci_app_integration_id changed the Creation ruleset bypass actors"
+    fi
+    if [ "$profile" = "full" ] && [ "$validation_scope" = "full" ]; then
+        run_ruleset_matrix || fail=1
     fi
     ;;
 *)
