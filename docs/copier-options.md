@@ -52,6 +52,7 @@ In prompt order, as defined in `copier.yml`. "Asked when" is the question's
 | 17 | `skill_categories` | multiselect `universal`/`backend`/`frontend`/`infra`/`matt-pocock`/`mobile`/`repo` | seeded from `project_type` | `use_skills_sync` | **Seeds `.skills-sync.yaml` only** — never a file gate (see below) |
 | 18 | `use_shared_agents` | bool | **yes** | `use_skills_sync` | Also vendors devkit subagents into `.claude/agents` + `.codex/agents/implementer.toml` |
 | 19 | `use_foreman` | bool | **no** | always | `taskfiles/`, `.foreman.toml`, tag-protection rulesets, `audit-foreman-adapters.sh`; **requires `devcontainer`** (validator on Q28) |
+| 19a | `ci_app_integration_id` | str | `""` | `use_foreman` | Numeric GitHub App / Integration ID for the Version Tag Creation bypass; blank means release-please cannot create version tags after the ruleset is imported; **validator** requires a positive integer |
 | 20 | `foreman_additional_trusted_actors` | str (CSV) | `""` | `use_foreman` | Additional GitHub logins trusted to arm Foreman or supply prompt content; security-sensitive and deduplicated with the built-in actors |
 | 21 | `use_codeql` | bool | `project_type in ['web-astro','web-app']` | always | `codeql.yml` — free on public repos; private needs Code Security + `FULL_SECURITY_SCAN` |
 | 22 | `codeql_languages` | multiselect `javascript-typescript`/`python` | seeded; `[]` when `use_codeql` off | always | CodeQL matrix — **validator**: ≥1 required when `use_codeql` |
@@ -78,21 +79,22 @@ In prompt order, as defined in `copier.yml`. "Asked when" is the question's
 | 42 | `run_task_install` | bool | no | always | `_tasks`: `task install` — **ungated on `_copier_operation`, so it re-runs on every update** |
 | 43 | `decisions_seed_date` | str | today (`'%Y-%m-%d' \| strftime`) | always | Names and dates the seed decision record `docs/decisions/<date>-record-architecture-decisions.md` (and its index link) — **validator** (real calendar date); recorded once, so updates never rename the seed |
 
-### Conditionally asked (13)
+### Conditionally asked (15)
 
 `ci_runner_labels`, `deploy_cloudflare_workers`, `release_content_paths`,
 `skill_categories`,
-`use_shared_agents`, `foreman_additional_trusted_actors`,
+`use_shared_agents`, `ci_app_integration_id`, `foreman_additional_trusted_actors`,
 `use_codex_cloud_review`, `devcontainer_coder_folder_uri`, `use_antigravity_cli`,
 `use_copilot_cli`, `use_alternative_claude_providers`, `use_statusline_pr_lookup`,
 `bunches_directory`,
 `obsidian_directory`.
 
-### Validators (10)
+### Validators (11)
 
 | Question | Rule |
 |---|---|
 | `ci_runner_labels` | comma-separated safe labels containing `self-hosted`; rejects empty labels and characters outside ASCII letters, numbers, dots, underscores, and hyphens |
+| `ci_app_integration_id` | empty, or a positive integer GitHub App / Integration ID for the Foreman version-tag ruleset bypass |
 | `codeql_languages` | ≥1 language when `use_codeql` |
 | `use_codex_cloud_review` | requires `use_codex_review` |
 | `devcontainer` | rejects `use_foreman and not devcontainer` — deliberately declared **here**, not on `use_foreman`: a validator on the earlier question reads this one's raw default and lets the forbidden combination through |

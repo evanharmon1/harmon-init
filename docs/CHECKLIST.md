@@ -202,12 +202,23 @@ the compatibility reason in the rule's `description`.
       inject it (1Password → devcontainer.env). Run `task setup:github-labels`
       so the `foreman:*` arming labels exist. Import the two tag rulesets
       (`.github/Tag Protection Ruleset - Version Tag Creation.json` /
-      `… Immutability.json`, same UI import as the branch ruleset), then add
-      the CI GitHub App to the **Creation** ruleset's bypass list (`always`) —
-      release-please tags via that App, and bypass-actor App IDs are
-      per-installation so the JSON cannot ship them. (Immutability keeps an
+      `… Immutability.json`, same UI import as the branch ruleset). At
+      generation, set `ci_app_integration_id` to the CI GitHub App's numeric
+      App ID (the Integration ID used by the ruleset). Find it under the
+      account that owns the App: Settings → Developer settings → GitHub Apps →
+      your App; use **App ID**, not the client ID or installation ID. If you
+      leave it empty, release-please cannot create version tags after importing
+      the ruleset; add the Integration actor manually or regenerate with the
+      answer set, or update an existing checkout with
+      `copier update --trust --data ci_app_integration_id=<id>`. The bypass
+      applies to every workflow that mints a token from this App, including the
+      Claude implement job's agent push token, so an opted-in repository lets
+      that job create `v*` tags, which Version Tag Immutability then makes
+      undeletable. Recommend a dedicated release-only GitHub App when that
+      matters. The
+      Creation ruleset grants it `always` bypass; Immutability keeps an
       empty bypass list on purpose: a moved `v*` tag is code execution in
-      every consumer, so nobody bypasses it.) Create the standing probe tag on
+      every consumer, so nobody bypasses it. Create the standing probe tag on
       an **orphan commit**, so it is reachable from no branch:
       `git tag v0.0.0-probe "$(git commit-tree "$(git hash-object -t tree /dev/null)" -m 'foreman tag-immutability probe target (orphan; keep unreachable from any branch)')" && git push origin v0.0.0-probe`.
       Do not tag `HEAD` or any commit on `main`: `git describe` considers only
