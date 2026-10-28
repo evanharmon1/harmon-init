@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
 """PreToolUse(Bash) hook: gate merges and default-branch pushes locally.
 
-Ask before gh pr merge, gh api merge writes/mutations, protected refspec
-pushes, and git merge/pull outside the recognized branch-aware allowlist.
-Evaluator payloads mentioning push ask conservatively, including custom defaults.
+Ask before gh pr merge, GitHub operations in DEFAULT_BRANCH_WRITES,
+protected refspec pushes, and git merge/pull outside the branch-aware allowlist.
+The operation table covers API writes that can merge into or move a default
+ref, including direct ref/contents writes. REST paths are normalized once;
+GraphQL mutation names are matched as whole words. Other API writes stay silent.
+Evaluator push mentions ask only with git or a default-branch name.
 
 Replaces the `Bash(git merge)` / `Bash(git merge:*)` permissions.ask rules,
 which prompt on every merge (including routine catch-up merges of main into
@@ -117,11 +120,13 @@ such as `{git,merge} feat`, or a glob such as `gi[t]`); it is a backstop
 against mistakes, not an adversarial boundary. A `case` pattern inside `$(...)`
 can end the substitution early. An unquoted `git merge` in another command's
 arguments (`echo git pull`) asks.
-It also gates `gh pr merge`, merge REST writes, GraphQL merge mutations and
-protected/default-branch pushes. The hook is the primary local merge gate;
-`permissions.ask` rules remain a prefix-matching backstop when hooks do not run.
-Unreadable API methods, endpoints, GraphQL payloads and push targets ask.
-Explicit own-name feature pushes and routine GitHub reads stay silent.
+The hook is the primary local merge gate; `permissions.ask` rules remain a
+prefix-matching backstop when hooks do not run. DEFAULT_BRANCH_WRITES is the
+single API operation table: all listed writes ask independently of payload.
+Unreadable writes/queries and append-mode API feeders ask; routine reads and
+unlisted API writes stay silent. Literal pushes to an own-name feature branch
+stay silent, including no-refspec pushes proved from remote/config/upstream
+invariants and compounds accepted by the unchanged companion grammar.
 `git reset --hard`, `git restore` and
 `git checkout -- .` discard the same conflict resolutions `git merge --abort`
 would, and this hook does not see them. Nor does it see the commands that
@@ -158,6 +163,7 @@ import os
 import re
 import subprocess
 import sys
+from urllib.parse import unquote, urlsplit
 
 PROFILE_VAR = "FOREMAN_DEVCONTAINER"
 UNGUARDED_PROFILES = {"bot", "agent"}
@@ -716,15 +722,70 @@ def is_evaluator(words, i):
     )
 
 
-MUTATION = re.compile(r"\b(?:mergePullRequest|enablePullRequestAutoMerge|mergeBranch)\b")
+# Operations that can move a default-branch ref; target fields may be omitted,
+# computed or supplied indirectly, so every listed write asks regardless of payload.
+DEFAULT_BRANCH_WRITES = {
+    "rest": (
+        # Merging a PR advances its base branch.
+        ({"PUT", "POST", "PATCH", "DELETE"}, r"pulls/[^/]+/merge"),
+        # A repository merge can advance the default branch.
+        ({"POST"}, r"merges"),
+        # Syncing a fork can advance its default branch.
+        ({"POST"}, r"merge-upstream"),
+        # Ref creation, update and deletion can move/remove the default ref.
+        ({"POST", "PATCH", "DELETE"}, r"git/refs(?:/.*)?"),
+        # Contents writes commit to the default branch when no branch is given.
+        ({"PUT", "DELETE"}, r"contents/.+"),
+        # Renaming the default branch changes the protected ref's name.
+        ({"POST"}, r"branches/[^/]+/rename"),
+    ),
+    "graphql": (
+        "mergePullRequest",             # Merge immediately into the base branch.
+        "enablePullRequestAutoMerge",   # Arrange a later base-branch merge.
+        "enqueuePullRequest",          # Queue a merge into the base branch.
+        "mergeBranch",                 # Merge directly into a branch.
+        "updateRef",                   # Move one ref directly.
+        "updateRefs",                  # Move multiple refs directly.
+        "createCommitOnBranch",        # Commit directly onto a branch.
+        "deleteRef",                   # Delete a branch ref.
+    ),
+}
+MUTATION = re.compile(r"\b(?:" + "|".join(DEFAULT_BRANCH_WRITES["graphql"]) + r")\b")
 
 
 def risky_mention(text):
+    push = re.search(r"\bpush\b", text, re.I)
+    # git+push covers custom default names without gating a bare word like push.
     return bool(MENTION.search(text) or MUTATION.search(text)
-                or re.search(r"\bpush\b", text, re.I))
+                or (push and (GIT_MENTION.search(text)
+                              or re.search(r"\b(?:main|master)\b", text, re.I))))
 
 
-def gh_might_land(words, i):
+def normalized_endpoint(word):
+    """Return the HTTP path and whether Bash can change this endpoint word."""
+    # gh's placeholders are ordinary segments, not shell brace expansions.
+    masked = re.sub(r"\{(?:owner|repo|branch)\}", "segment", word.value)
+    literal = word.literal or not re.search(r"[\s$`*?\[\]{}\\]", masked)
+    raw = (urlsplit(word.value).path if re.match(r"https?://", word.value)
+           else word.value.split("#", 1)[0].split("?", 1)[0])
+    path = unquote(raw)
+    path = re.sub(r"/+", "/", path).strip("/")
+    return path, literal
+
+
+def gh_runs(words, i):
+    """A lookup's arguments are data, even though command is also a wrapper."""
+    if i not in command_positions(words):
+        return False
+    for j, w in enumerate(words[:i]):
+        if base(w) == "command" and any(
+                re.fullmatch(r"-[pvV]*[vV][pvV]*", x.value)
+                for x in words[j + 1:i]):
+            return False
+    return True
+
+
+def gh_might_land(words, i, appended=False):
     """Read gh's command slots and API options; unreadable write targets ask."""
     args = words[i + 1:]
     tokens = feeder_tokens(words, i)
@@ -757,6 +818,10 @@ def gh_might_land(words, i):
         return j >= len(args) or not args[j].literal or args[j].value == "merge"
     if args[0].value != "api":
         return False
+    # Feeders may append -X/-f/--input after an apparently read-only endpoint.
+    if appended or any(base(w) in ARG_FEEDERS | {"-exec", "-execdir", "-ok", "-okdir"}
+                       for w in words[:i]):
+        return True
     endpoint = None
     method = None
     fields = False
@@ -768,7 +833,7 @@ def gh_might_land(words, i):
     while j < len(args):
         w = args[j]
         v = w.value
-        if not w.literal:
+        if not w.literal and v.startswith("-"):
             return True
         if v in ("-X", "--method") or re.match(r"^-[a-zA-Z]*X", v):
             attached = v.split("X", 1)[1] if "X" in v else ""
@@ -802,29 +867,33 @@ def gh_might_land(words, i):
             if v not in ("-i", "--include", "--silent", "--paginate", "--slurp", "--verbose"):
                 return True
         elif endpoint is None:
-            endpoint = v
+            endpoint = w
         else:
             return True
         j += 1
     if endpoint is None:
         return True
-    if endpoint.strip("/") == "graphql":
-        return not queries or any(MUTATION.search(q) for q in queries)
+    path, literal = normalized_endpoint(endpoint)
+    if path == "graphql":
+        return not literal or not queries or any(MUTATION.search(q) for q in queries)
     method = (method or ("POST" if fields else "GET")).upper()
     if method not in ("GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"):
         return True
     if method in ("GET", "HEAD", "OPTIONS"):
         return False
-    return bool(re.search(r"(?:^|/)repos/[^/]+/[^/]+/pulls/[^/]+/merge/?(?:\?.*)?$", endpoint)
-                or not re.match(r"^/?repos/[^/]+/[^/]+/", endpoint))
+    if not literal:
+        return True
+    # Normalize once; all branch-moving REST writes use this same table.
+    return any(method in methods and re.fullmatch(r"repos/[^/]+/[^/]+/" + pattern, path)
+               for methods, pattern in DEFAULT_BRANCH_WRITES["rest"])
+
 
 
 def push_might_land(words, i, cwd):
-    """Only explicit own-name feature pushes to a resolved remote are silent.
+    """Prove explicit or configured pushes stay on the same feature name.
 
-    Bare/remote-only pushes ask: push.default, remote.*.push and upstream
-    configuration can choose a protected destination independently of HEAD.
-    Global options (-C, -c, alternate git dirs) also fail closed.
+    Global options (-C, -c, alternate git dirs) fail closed. No-refspec pushes
+    additionally require the resolved remote/config/upstream invariants below.
     """
     j = i + 1
     if j < len(words) and words[j].value.startswith("-"):
@@ -858,27 +927,85 @@ def push_might_land(words, i, cwd):
                 return True
         else:
             positional.append(v)
-    if positional:
-        remote = positional[0]
-        prefix = f"refs/remotes/{remote}/"
-        target = git(cwd, "symbolic-ref", "--quiet", prefix + "HEAD")
-        if remote not in remotes.split() or not target or not target.startswith(prefix):
-            return True
+    config_text = git(cwd, "config", "--null", "--list")
+    if config_text is None:
+        return True
+    config = {}
+    for entry in config_text.split("\0"):
+        if entry:
+            key, _, value = entry.partition("\n")
+            config.setdefault(key, []).append(value)
+
+    def setting(key):
+        return config.get(key, [None])[-1]
+
+    push_remote = setting(f"branch.{branch}.pushremote")
+    push_default = setting("remote.pushdefault")
+    upstream_remote = setting(f"branch.{branch}.remote")
+    remote = (positional[0] if positional else
+              push_remote or push_default or upstream_remote or
+              ("origin" if "origin" in remotes.split() else
+               remotes.split()[0] if len(remotes.split()) == 1 else None))
+    if remote not in remotes.split():
+        return True
+    prefix = f"refs/remotes/{remote}/"
+    target = git(cwd, "symbolic-ref", "--quiet", prefix + "HEAD")
+    if not target or not target.startswith(prefix):
+        return True
     for refspec in positional[1:]:
         if refspec.startswith(("+", ":")):
             return True
-        dest = refspec.lstrip("+").split(":")[-1]
-        dest = dest.removeprefix("refs/heads/")
-        if dest.casefold() in defaults:
-            return True
-        if dest != branch:
+        dest = refspec.split(":")[-1].removeprefix("refs/heads/")
+        if dest.casefold() in defaults or dest != branch:
             return True
     if len(positional) > 1:
         return False
-    return True
+    # With no CLI refspec, remote and upstream settings determine the target.
+    if (setting("push.default") or "simple").casefold() not in {
+            "simple", "current", "upstream"}:
+        return True
+    if f"remote.{remote}.push" in config:
+        return True
+    if any(r is not None and r != remote for r in (push_remote, push_default)):
+        return True
+    upstream = setting(f"branch.{branch}.merge")
+    if len(config.get(f"branch.{branch}.merge", [])) > 1:
+        return True
+    if upstream_remote is not None or upstream is not None:
+        if not upstream_remote or upstream != f"refs/heads/{branch}":
+            return True
+        # A custom upstream remote may have a different default branch.
+        if upstream_remote != ".":
+            upstream_prefix = f"refs/remotes/{upstream_remote}/"
+            upstream_default = git(cwd, "symbolic-ref", "--quiet", upstream_prefix + "HEAD")
+            if (not upstream_default or not upstream_default.startswith(upstream_prefix)
+                    or upstream_default[len(upstream_prefix):].casefold() == branch.casefold()):
+                return True
+    return False
 
 
-def command_might_merge(cmd, text, depth):
+def push_companions_safe(command, cwd):
+    """Reuse the existing companion proof without widening its accepted shapes.
+
+    Replacing already-verified pushes with feature-only ff merge probes lets
+    allowlisted_target enforce its exact true/false/status/tracking-fetch grammar.
+    No probe is executed, and cwd is already proved to be a feature checkout.
+    """
+    parts = re.split(r"(&&|\|\||;|\|)", command)
+    for i in range(0, len(parts), 2):
+        tokens = parts[i].split()
+        if not tokens or tokens[0] == "cd":
+            return False
+        if tokens[:2] == ["git", "push"]:
+            # Preserve syntax restrictions before replacing words with a probe.
+            if re.search(r"[\"'`$\\\n<>(){}*?\[\]~#&]", parts[i]):
+                return False
+            parts[i] = "git merge --ff-only HEAD"
+    return feature_branch(cwd) is not None and allowlisted_target("".join(parts), cwd) is not None
+
+
+
+def command_might_merge(cmd, text, depth, appended=False):
     words = cmd.words
     ci = command_index(words)
     positions = command_positions(words)
@@ -896,7 +1023,7 @@ def command_might_merge(cmd, text, depth):
                 return True
     for i, w in enumerate(words):
         name = base(w)
-        if name == "gh" and gh_might_land(words, i):
+        if name == "gh" and gh_runs(words, i) and gh_might_land(words, i, appended):
             return True
         if name == "git" and depth > 0 and any(x.value == "push" for x in words[i + 1:]):
             return True
@@ -958,12 +1085,12 @@ def command_might_merge(cmd, text, depth):
                     payload, rest = words[k + 1].value, words[k + 2 :]
                 else:
                     continue
-                if script_might_merge(" ".join([payload] + [x.value for x in rest]), depth + 1):
+                if script_might_merge(" ".join([payload] + [x.value for x in rest]), depth + 1, appended=True):
                     return True
     return False
 
 
-def script_might_merge(text, depth=0):
+def script_might_merge(text, depth=0, appended=False):
     if depth > MAX_DEPTH:
         return True
     try:
@@ -979,7 +1106,7 @@ def script_might_merge(text, depth=0):
     decoded = "\n".join(
         [w.value for c in commands for w in c.words] + [t for c in commands for t in c.stdin]
     )
-    return any(command_might_merge(c, text + "\n" + decoded, depth) for c in commands)
+    return any(command_might_merge(c, text + "\n" + decoded, depth, appended) for c in commands)
 
 
 def might_merge(command):
@@ -1137,7 +1264,8 @@ def decide(command, cwd):
     except (ParseError, IndexError, RecursionError):
         return "unreadable merge/push command" if might_merge(command) else None
     if any(base(w) == "git" and any(x.value == "push" for x in c.words[i + 1:])
-           and (len(commands) != 1 or i != 0 or push_might_land(c.words, i, cwd))
+           and (i != 0 or push_might_land(c.words, i, cwd)
+                or (len(commands) != 1 and not push_companions_safe(command, cwd)))
            for c in commands for i, w in enumerate(c.words)):
         return "push to a default branch or an unresolved push destination"
     if not might_merge(command):

@@ -247,10 +247,11 @@ Be precise about what the grant concedes, because it is not nothing. The
 launch line decides the *worker's* gate, and the lines this rule exists to
 permit start a child with no approval layer at all — so an orchestrator that
 can launch a worker can reach anything its own `ask` rules would have stopped
-(the `git-merge-guard` hook is the primary local gate for `gh pr merge`,
-REST merge writes, GraphQL merge mutations, default-branch pushes and
-`git merge`/`git pull` outside its branch-aware allowlist; `permissions.ask`
-rules remain a prefix-matching backstop) simply by asking a child to do it. That is accepted here for two
+(the `git-merge-guard` hook is the primary local gate: its
+`DEFAULT_BRANCH_WRITES` table gates API operations that can move a default ref;
+`gh pr merge`, protected pushes and merge/pull forms outside the branch-aware
+allowlist also ask. Routine API operations outside the table and proven feature
+pushes stay silent. `permissions.ask` rules remain a prefix-matching backstop) simply by asking a child to do it. That is accepted here for two
 reasons, neither of which is "it is safe": the orchestrator already holds
 `Bash(task:*)`, an unconditional grant over a checked-out Taskfile, so no new
 capability class is created; and the fan-out brief is trusted by construction

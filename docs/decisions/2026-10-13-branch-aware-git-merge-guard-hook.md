@@ -56,14 +56,18 @@ runs in a scratch repository
 
 ## Decision
 
-The hook is the primary local merge gate (extended by #787): it asks for
-`gh pr merge` with any flags, REST writes to a pull request merge endpoint,
-GraphQL `mergePullRequest`, `enablePullRequestAutoMerge` and `mergeBranch`,
-and pushes to main/master or a resolved remote default branch, including
-refspec destinations. Unreadable methods, endpoints, payloads and targets ask.
-GitHub reads and explicit own-name feature pushes stay silent. Existing
+The hook is the primary local merge gate (extended by #787).
+`DEFAULT_BRANCH_WRITES` is the single operation table for API writes that can
+merge into or move a default-branch ref. REST matching uses a normalized path
+(URL path, query/fragment removal, percent decoding and slash collapsing), with
+gh placeholders treated as literal segments. GraphQL matches table mutation
+names as whole words; unlisted routine writes remain silent. Unknown writes,
+unreadable queries and append-mode API feeders ask. The same hook gates
+`gh pr merge` and protected pushes. A no-refspec feature push is silent only
+when remote, push configuration and same-name upstream invariants prove its
+destination; compounds reuse the existing companion grammar.
 `permissions.ask` rules remain a prefix-matching backstop when hooks do not run.
-The bot/agent profile boundary and the existing fast-forward allowlist are unchanged.
+The bot/agent profile boundary and existing merge/pull allowlist are unchanged.
 
 1. **Replace the `git merge` ask rules with `.claude/hooks/git-merge-guard.py`.**
    Remove `Bash(git merge)` and `Bash(git merge:*)` from `permissions.ask` in

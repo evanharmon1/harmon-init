@@ -729,10 +729,12 @@ meets its exit condition on round 1 is done, whatever the cap allowed.
   the ruleset would allow it. Open the draft PR and integrate it — checks green
   with reviews unpolled is not the stopping point — then queue it under the
   handoff check and watch until merge or close; merging is always a human decision.
-  The `git-merge-guard` hook is the primary local gate for `gh pr merge`,
-  REST merge writes, GraphQL merge mutations and default-branch pushes,
-  including refspec destinations. Unresolved targets and payloads ask;
-  GitHub reads and explicit own-name feature pushes stay silent.
+  The `git-merge-guard` hook is the primary local gate. Its
+  `DEFAULT_BRANCH_WRITES` table gates GitHub API operations that can move a
+  default-branch ref; it also gates `gh pr merge` and default-branch pushes.
+  Routine API reads/writes outside the table stay silent. Feature pushes,
+  including no-refspec pushes, stay silent only with a verified destination;
+  allowed companions use the existing branch-aware grammar.
   (`.claude/settings.json` backstops this with `permissions.ask` rules on
   pushes to main and force-pushes (prefix rules: a backstop, not a boundary), plus the
   `git-merge-guard` hook, which asks

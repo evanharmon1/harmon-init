@@ -73,7 +73,18 @@ git -C "$shadow" tag origin/main
 amp="${tmp}/lane&git"
 git -C "$shadow" worktree add -q "$amp" feat
 
+# Dedicated push-config fixture; matrix mutations are restored before returning.
+pp="${tmp}/push-proof"
+fixture "$pp" main feat yes
+git -C "$pp" worktree add -q "${pp}/wt" feat
+git -C "$pp" config branch.feat.remote origin
+git -C "$pp" config branch.feat.merge refs/heads/feat
+git -C "$pp" update-ref refs/remotes/origin/feat HEAD
+git -C "$pp" remote add backup "${tmp}/absent.git"
+git -C "$pp" symbolic-ref refs/remotes/backup/HEAD refs/remotes/backup/main
+
 failures=0
+case_count=0
 decide() { # guard cwd command -> silent|ask|rc<N>
     local out rc
     out="$(jq -nc --arg c "$3" --arg d "$2" \
@@ -91,6 +102,7 @@ decide() { # guard cwd command -> silent|ask|rc<N>
 }
 case_() { # guard expected cwd command
     local got
+    case_count=$((case_count + 1))
     got="$(decide "$1" "$3" "$4")"
     if [[ $got != "$2" ]]; then
         failures=$((failures + 1))
@@ -115,7 +127,7 @@ matrix() { # guard
         case_ "$g" ask "$r" "gh api /repos/{owner}/{repo}/pulls/1/merge $flag"
         case_ "$g" ask "$r" "gh api https://api.github.com/repos/o/r/pulls/1/merge $flag"
     done
-    for cmd in mergePullRequest enablePullRequestAutoMerge mergeBranch; do
+    for cmd in mergePullRequest enablePullRequestAutoMerge enqueuePullRequest mergeBranch updateRef updateRefs createCommitOnBranch deleteRef; do
         case_ "$g" ask "$r" "gh api graphql -f 'query=mutation { $cmd(input: {}) { clientMutationId } }'"
     done
     for cmd in 'gh api graphql -F query=@file' 'gh api graphql --input file' 'gh api graphql' 'gh api -X "$METHOD" repos/o/r/pulls/1/merge'; do
@@ -143,14 +155,104 @@ matrix() { # guard
     case_ "$g" ask "${r}/wt" 'env -C /unknown git push origin feat'
     case_ "$g" ask "${r}/wt" 'git -c alias.p=push p origin HEAD:main'
     case_ "$g" ask "${r}/wt" 'xargs -I X gh X'
-    case_ "$g" ask "${r}/wt" 'git push'
-    case_ "$g" ask "${r}/wt" 'git push origin'
+    case_ "$g" silent "${r}/wt" 'git push'
+    case_ "$g" silent "${r}/wt" 'git push origin'
     case_ "$g" ask "${r}/wt" 'git -c remote.origin.push=HEAD:main push origin'
     case_ "$g" ask "${tr}/wt" "bash -c 'git push origin HEAD:trunk'"
     for cmd in 'gh pr merge 1' 'gh api -X PUT repos/o/r/pulls/1/merge' 'gh api graphql -f query=mergePullRequest' 'git push origin HEAD:main'; do
         case_ "$g" ask "$r" "bash -c '$cmd'"
         case_ "$g" ask "$r" "bash <<< '$cmd'"
         case_ "$g" ask "$r" "echo \$( $cmd )"
+    done
+    # R10 C1-1/3/4: one write table, independently exercised at every entry.
+    for cmd in \
+        '-X POST repos/o/r/merges' \
+        '-X POST repos/o/r/merge-upstream' \
+        '-X POST repos/o/r/git/refs' \
+        '-X PATCH repos/o/r/git/refs/heads/main' \
+        '-X DELETE repos/o/r/git/refs/heads/main' \
+        '-X PUT repos/o/r/contents/a/b' \
+        '-X DELETE repos/o/r/contents/a/b' \
+        '-X POST repos/o/r/branches/{branch}/rename'; do
+        case_ "$g" ask "$r" "gh api $cmd"
+    done
+    for cmd in \
+        'repos/o/r/pulls/1/merge#ignored' \
+        'repos/o/r/pulls/1/merge?x=y' \
+        'https://api.github.com/repos/o/r/pulls/1/merge#ignored' \
+        '//repos//o//r//pulls//1//merge' \
+        '/repos/{owner}/{repo}/pulls/1/merge' \
+        'repos/o/r/%70ulls/1/%6derge'; do
+        case_ "$g" ask "$r" "gh api -X PUT '$cmd'"
+    done
+    case_ "$g" ask "$r" 'gh api -X POST "$ENDPOINT"'
+    case_ "$g" silent "$r" 'gh api repos/{owner}/{repo}/pulls/1'
+    case_ "$g" silent "$r" 'gh api repos/{owner}/{repo}/pulls/1/comments'
+    case_ "$g" silent "$r" 'gh api -X POST repos/o/r/issues/1/comments -f body=hello'
+    case_ "$g" silent "$r" 'gh api -X POST repos/o/r/pulls/1/comments/2/replies -f body=hello'
+    case_ "$g" silent "$r" 'gh api graphql -f "query=mutation { resolveReviewThread(input: {}) { clientMutationId } }"'
+    case_ "$g" silent "$r" 'gh api graphql -f "query=mutation { addComment(input: {}) { clientMutationId } }"'
+    case_ "$g" silent "$r" 'gh api graphql -f "query=mutation { updateProjectV2ItemFieldValue(input: {}) { clientMutationId } }"'
+    # C1-2: appending a method or field can turn an apparent read into a write.
+    case_ "$g" ask "$r" "printf '%s\\n' '-X PUT' | xargs gh api repos/o/r/pulls/1/merge"
+    case_ "$g" ask "$r" 'parallel gh api repos/o/r/merges ::: -X POST'
+    case_ "$g" ask "$r" 'find . -exec gh api repos/o/r/merges {} +'
+    case_ "$g" ask "$r" "env -S 'gh api repos/o/r/pulls/1/merge' -X PUT"
+    case_ "$g" ask "$r" 'env -S gh api repos/o/r/pulls/1/merge -X PUT'
+    case_ "$g" silent "$r" 'printf 1 | xargs gh pr view'
+    # C1-6/8: lookup arguments and a bare push word are data.
+    for cmd in 'command -v gh' 'command -V gh' 'command -pv gh' 'which gh' 'type gh' 'ls /usr/local/bin/gh' 'test -x /usr/local/bin/gh'; do
+        case_ "$g" silent "$r" "$cmd"
+    done
+    case_ "$g" silent "$r" "bash -lc 'printf \"%s\\n\" push'"
+    case_ "$g" ask "$r" "bash -lc 'printf push main'"
+    # C1-9: the unchanged companion grammar also proves push compounds.
+    for op in '&&' '||' ';' '|'; do
+        case_ "$g" silent "${r}/wt" "git status $op git push origin feat"
+        case_ "$g" silent "${r}/wt" "true $op git push origin feat $op false"
+    done
+    case_ "$g" silent "${r}/wt" 'git fetch origin && git push origin feat'
+    case_ "$g" ask "${r}/wt" 'git fetch unsafe && git push origin feat'
+    case_ "$g" ask "${r}/wt" 'git fetch origin feat:feat && git push origin feat'
+    case_ "$g" ask "${r}/wt" 'git checkout main && git push origin feat'
+    # C1-5: prove each no-refspec configuration invariant, and its failure.
+    for cmd in 'git push' 'git push origin'; do
+        case_ "$g" silent "${pp}/wt" "$cmd"
+    done
+    for flag in simple current upstream; do
+        git -C "$pp" config push.default "$flag"
+        case_ "$g" silent "${pp}/wt" 'git push'
+        case_ "$g" silent "${pp}/wt" 'git push origin'
+    done
+    for flag in matching nothing; do
+        git -C "$pp" config push.default "$flag"
+        case_ "$g" ask "${pp}/wt" 'git push'
+        case_ "$g" ask "${pp}/wt" 'git push origin'
+    done
+    git -C "$pp" config --unset push.default
+    git -C "$pp" config remote.origin.push HEAD:main
+    case_ "$g" ask "${pp}/wt" 'git push'
+    case_ "$g" ask "${pp}/wt" 'git push origin'
+    git -C "$pp" config --unset remote.origin.push
+    for flag in branch.feat.pushRemote remote.pushDefault; do
+        git -C "$pp" config "$flag" origin
+        case_ "$g" silent "${pp}/wt" 'git push origin'
+        git -C "$pp" config "$flag" backup
+        case_ "$g" ask "${pp}/wt" 'git push origin'
+        git -C "$pp" config --unset "$flag"
+    done
+    for flag in main other; do
+        git -C "$pp" config branch.feat.merge "refs/heads/$flag"
+        case_ "$g" ask "${pp}/wt" 'git push'
+        case_ "$g" ask "${pp}/wt" 'git push origin'
+    done
+    git -C "$pp" config branch.feat.merge refs/heads/feat
+    git -C "$pp" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/feat
+    case_ "$g" ask "${pp}/wt" 'git push origin'
+    git -C "$pp" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+    case_ "$g" ask "${pp}/detached-nonexistent" 'git push origin'
+    for flag in --all --mirror --tags; do
+        case_ "$g" ask "${pp}/wt" "git push origin $flag"
     done
     # 2026-10-25 observed shapes: lane catch-ups and evaluator mentions.
     case_ "$g" silent "$r" "git -C ${r}/wt merge --ff-only abc123"
@@ -596,6 +698,7 @@ if [[ $failures -ne 0 ]]; then
     exit 1
 fi
 
+primary_case_count=$case_count
 echo "==> git-merge-guard applies only in the dev profile"
 profile_case() { # profile expected cwd command
     local got
@@ -670,4 +773,4 @@ if [[ -z ${GUARD:-} && -f $settings ]]; then
     expect_registered ask "${tmp}/no-such-project" "${r}/wt" "git merge origin/main --no-edit"
 fi
 
-echo "==> git-merge-guard OK"
+echo "==> git-merge-guard OK (${primary_case_count} decision cases)"
