@@ -254,6 +254,80 @@ matrix() { # guard
     for flag in --all --mirror --tags; do
         case_ "$g" ask "${pp}/wt" "git push origin $flag"
     done
+    # R11: API writes fail closed; routine skill writes are explicitly safe.
+    for cmd in \
+        '-X POST repos/o/r/issues/1/comments -f body=hello' \
+        '-X PATCH repos/o/r/issues/comments/2 -f body=hello' \
+        '-X DELETE repos/o/r/issues/comments/2' \
+        '-X POST repos/o/r/pulls/1/comments -f body=hello' \
+        '-X POST repos/o/r/pulls/1/comments/2/replies -f body=hello' \
+        '-X POST repos/o/r/pulls/1/reviews -f event=COMMENT' \
+        '-X POST repos/o/r/pulls/1/requested_reviewers -f reviewers[]=u' \
+        '-X PATCH repos/o/r/pulls/1 -f body=hello' \
+        '-X PATCH repos/o/r/issues/1 -f body=hello' \
+        '-X POST repos/o/r/issues/1/labels -f labels[]=bug' \
+        '-X DELETE repos/o/r/issues/1/labels' \
+        '-X POST repos/o/r/issues/1/assignees -f assignees[]=u' \
+        '-X POST repos/o/r/issues/1/reactions -f content=eyes' \
+        '-X PUT repos/o/r/pulls/1/update-branch' \
+        '-X POST repos/o/r/dispatches -f event_type=review' \
+        '-X POST repos/o/r/actions/workflows/review.yml/dispatches -f ref=feat'; do
+        case_ "$g" silent "$r" "gh api $cmd"
+    done
+    for cmd in addComment addPullRequestReview addPullRequestReviewComment addPullRequestReviewThreadReply resolveReviewThread unresolveReviewThread addReaction removeReaction updateIssue updatePullRequest addLabelsToLabelable removeLabelsFromLabelable updatePullRequestBranch updateProjectV2ItemFieldValue addProjectV2ItemById markPullRequestReadyForReview convertPullRequestToDraft; do
+        case_ "$g" silent "$r" "gh api graphql -f 'query=mutation { $cmd(input: {}) { clientMutationId } }'"
+    done
+    case_ "$g" silent "$r" 'gh pr update-branch 1'
+    case_ "$g" ask "$r" 'gh api -X PATCH repos/o/r/unknown-write'
+    case_ "$g" ask "$r" 'gh api -X POST repos/o/r/pulls/1/merge'
+    case_ "$g" ask "$r" 'gh api -X DELETE repos/o/r/git/refs/heads/main/reactions'
+    case_ "$g" ask "$r" 'gh api graphql -f "query=mutation { resolveReviewThread(input: {}) { thread { id } } mergePullRequest(input: {}) { clientMutationId } }"'
+    case_ "$g" ask "$r" 'gh api graphql -f "query=mutation { resolveReviewThread: mergePullRequest(input: {}) { clientMutationId } }"'
+    case_ "$g" silent "$r" 'gh api graphql -f "query=mutation { x: resolveReviewThread(input: {}) { clientMutationId } }"'
+    case_ "$g" ask "$r" 'gh api graphql -f "query=mutation { unknownNewWrite(input: {}) { clientMutationId } }"'
+    # C2-1: delegated API strings are opaque and always ask.
+    case_ "$g" ask "$r" "printf 'gh api -X PATCH repos/o/r/git/refs/heads/main' | bash"
+    case_ "$g" ask "$r" 'ssh host gh api -X POST repos/o/r/merges'
+    case_ "$g" ask "$r" "herdr pane run lane 'gh api -X PATCH repos/o/r/git/refs/heads/main'"
+    # C2-2: mirror can be configured without a CLI --mirror flag.
+    for flag in true yes on 1; do
+        git -C "$pp" config remote.origin.mirror "$flag"
+        case_ "$g" ask "${pp}/wt" 'git push'
+        case_ "$g" ask "${pp}/wt" 'git push origin'
+        case_ "$g" ask "${pp}/wt" 'git push origin feat'
+    done
+    git -C "$pp" config remote.origin.mirror false
+    case_ "$g" silent "${pp}/wt" 'git push origin'
+    git -C "$pp" config --unset remote.origin.mirror
+    # C2-3: only positional remote sync targets ask; update-branch is safe.
+    for cmd in 'gh repo sync o/r' 'gh repo sync o/r --source upstream/r --force' 'gh repo sync --force o/r' 'xargs gh repo sync'; do
+        case_ "$g" ask "$r" "$cmd"
+    done
+    case_ "$g" silent "$r" 'gh repo sync'
+    case_ "$g" silent "$r" 'gh repo sync --source o/r --force'
+    case_ "$g" ask "$r" "bash -lc 'gh repo sync'"
+    # C2-5/6: GHE prefixes are recognized; percent escapes cannot forge safe paths.
+    case_ "$g" silent "$r" 'gh api https://ghe.example/api/v3/repos/o/r/pulls/1'
+    case_ "$g" silent "$r" 'gh api /api/v3/repos/o/r/pulls/1'
+    case_ "$g" silent "$r" 'gh api -X PUT https://ghe.example/api/v3/repos/o/r/pulls/1/update-branch'
+    case_ "$g" silent "$r" 'gh api https://ghe.example/api/graphql -f "query={ viewer { login } }"'
+    case_ "$g" ask "$r" 'gh api -X POST https://ghe.example/api/v3/repos/o/r/merges'
+    case_ "$g" ask "$r" 'gh api -X POST repos/o/r/branches/feat%2Fmain/rename'
+    case_ "$g" ask "$r" 'gh api -X POST repos/o/r/issues/1%2Fcomments'
+    # C2-7: deleting the lookup exemption prevents option-operand confusion.
+    case_ "$g" ask "$r" 'env -u command -v gh pr merge 1'
+    case_ "$g" ask "$r" 'command -v gh pr merge 1'
+    # C2-8: only operation-controlling values must be literal.
+    case_ "$g" silent "$r" 'gh api repos/o/r/pulls/1 --jq "$F"'
+    case_ "$g" silent "$r" 'gh api repos/o/r/pulls/1 --template "$T" --cache "$TTL"'
+    case_ "$g" silent "$r" 'gh api repos/o/r/pulls/1 -q "$F" -t "$T" --paginate --slurp'
+    case_ "$g" ask "$r" 'gh api graphql -f "query=query($id: ID!) { node(id: $id) { id } }" -F id="$ID"'
+    case_ "$g" silent "$r" 'gh api graphql -f '"'"'query=query($id: ID!) { node(id: $id) { id } }'"'"' -F id="$ID"'
+    case_ "$g" silent "$r" 'gh api graphql -f '"'"'query=mutation($id: ID!) { resolveReviewThread(input: {threadId: $id}) { clientMutationId } }'"'"' -F id="$ID"'
+    case_ "$g" ask "$r" 'gh api graphql -f query="$Q"'
+    case_ "$g" ask "$r" 'gh api graphql -F "$KEY=value"'
+    case_ "$g" ask "$r" 'gh api repos/o/r/pulls/1 -H "$HEADER"'
+    case_ "$g" ask "$r" 'gh api repos/o/r/pulls/1 --input "$FILE"'
     # 2026-10-25 observed shapes: lane catch-ups and evaluator mentions.
     case_ "$g" silent "$r" "git -C ${r}/wt merge --ff-only abc123"
     case_ "$g" silent "${r}/wt" "git fetch origin && git merge --ff-only abc123"

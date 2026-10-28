@@ -56,18 +56,20 @@ runs in a scratch repository
 
 ## Decision
 
-The hook is the primary local merge gate (extended by #787).
-`DEFAULT_BRANCH_WRITES` is the single operation table for API writes that can
-merge into or move a default-branch ref. REST matching uses a normalized path
-(URL path, query/fragment removal, percent decoding and slash collapsing), with
-gh placeholders treated as literal segments. GraphQL matches table mutation
-names as whole words; unlisted routine writes remain silent. Unknown writes,
-unreadable queries and append-mode API feeders ask. The same hook gates
-`gh pr merge` and protected pushes. A no-refspec feature push is silent only
-when remote, push configuration and same-name upstream invariants prove its
-destination; compounds reuse the existing companion grammar.
-`permissions.ask` rules remain a prefix-matching backstop when hooks do not run.
-The bot/agent profile boundary and existing merge/pull allowlist are unchanged.
+The hook is the primary local merge gate (extended by #787). `gh api` asks
+unless it proves a read or an explicitly safe write. A short safe-write
+allowlist covers routine metadata/review operations and sanctioned PR-head
+catch-ups. Unknown writes ask; there is no dangerous-write denylist to complete.
+REST paths drop the host and optional Enterprise API prefix but stay undecoded,
+so encoded separators cannot manufacture a safe route. GraphQL mutation writes
+require every root field to be allowlisted. Operation-controlling inputs must
+be literal; presentation values and non-query field values may be dynamic.
+Evaluated API/sync strings and append-mode API feeders ask without further
+interpretation. The same hook gates `gh pr merge`, remote `gh repo sync` targets
+and protected/mirror pushes. No-refspec feature pushes require proved remote,
+configuration and same-name upstream invariants. Compounds reuse the existing
+companion grammar. `permissions.ask` remains a prefix-matching backstop when
+hooks do not run. The bot/agent boundary and merge/pull allowlist are unchanged.
 
 1. **Replace the `git merge` ask rules with `.claude/hooks/git-merge-guard.py`.**
    Remove `Bash(git merge)` and `Bash(git merge:*)` from `permissions.ask` in

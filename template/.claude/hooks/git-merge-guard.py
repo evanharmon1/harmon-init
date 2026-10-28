@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """PreToolUse(Bash) hook: gate merges and default-branch pushes locally.
 
-Ask before gh pr merge, GitHub operations in DEFAULT_BRANCH_WRITES,
-protected refspec pushes, and git merge/pull outside the branch-aware allowlist.
-The operation table covers API writes that can merge into or move a default
-ref, including direct ref/contents writes. REST paths are normalized once;
-GraphQL mutation names are matched as whole words. Other API writes stay silent.
-Evaluator push mentions ask only with git or a default-branch name.
+Ask before gh pr merge, remote gh repo sync, protected pushes and git
+merge/pull outside the branch-aware allowlist. gh api fails closed: only
+proved reads and a short safe-write allowlist stay silent. REST safe writes
+match undecoded paths; GraphQL mutations require every root field to be safe.
+Unknown API writes and evaluator-fed API/sync strings ask. Presentation values
+may be dynamic; operation-controlling inputs must be literal.
 
 Replaces the `Bash(git merge)` / `Bash(git merge:*)` permissions.ask rules,
 which prompt on every merge (including routine catch-up merges of main into
@@ -121,12 +121,14 @@ against mistakes, not an adversarial boundary. A `case` pattern inside `$(...)`
 can end the substitution early. An unquoted `git merge` in another command's
 arguments (`echo git pull`) asks.
 The hook is the primary local merge gate; `permissions.ask` rules remain a
-prefix-matching backstop when hooks do not run. DEFAULT_BRANCH_WRITES is the
-single API operation table: all listed writes ask independently of payload.
-Unreadable writes/queries and append-mode API feeders ask; routine reads and
-unlisted API writes stay silent. Literal pushes to an own-name feature branch
-stay silent, including no-refspec pushes proved from remote/config/upstream
-invariants and compounds accepted by the unchanged companion grammar.
+prefix-matching backstop when hooks do not run. API classification proves a
+read or an explicitly safe write; there is no dangerous-operation denylist.
+Normalized REST paths remain undecoded so encoded separators cannot forge an
+allowlisted route. Unknown GraphQL mutation fields and unreadable controlling
+inputs ask. Append-mode API feeders and evaluated API/sync strings ask.
+Literal pushes to an own-name feature branch stay silent, including no-refspec
+pushes proved from remote/config/upstream invariants. Configured mirror pushes
+ask. Compounds use the unchanged companion grammar.
 `git reset --hard`, `git restore` and
 `git checkout -- .` discard the same conflict resolutions `git merge --abort`
 would, and this hook does not see them. Nor does it see the commands that
@@ -163,7 +165,7 @@ import os
 import re
 import subprocess
 import sys
-from urllib.parse import unquote, urlsplit
+from urllib.parse import urlsplit
 
 PROFILE_VAR = "FOREMAN_DEVCONTAINER"
 UNGUARDED_PROFILES = {"bot", "agent"}
@@ -722,76 +724,42 @@ def is_evaluator(words, i):
     )
 
 
-# Operations that can move a default-branch ref; target fields may be omitted,
-# computed or supplied indirectly, so every listed write asks regardless of payload.
-DEFAULT_BRANCH_WRITES = {
-    "rest": (
-        # Merging a PR advances its base branch.
-        ({"PUT", "POST", "PATCH", "DELETE"}, r"pulls/[^/]+/merge"),
-        # A repository merge can advance the default branch.
-        ({"POST"}, r"merges"),
-        # Syncing a fork can advance its default branch.
-        ({"POST"}, r"merge-upstream"),
-        # Ref creation, update and deletion can move/remove the default ref.
-        ({"POST", "PATCH", "DELETE"}, r"git/refs(?:/.*)?"),
-        # Contents writes commit to the default branch when no branch is given.
-        ({"PUT", "DELETE"}, r"contents/.+"),
-        # Renaming the default branch changes the protected ref's name.
-        ({"POST"}, r"branches/[^/]+/rename"),
-    ),
-    "graphql": (
-        "mergePullRequest",             # Merge immediately into the base branch.
-        "enablePullRequestAutoMerge",   # Arrange a later base-branch merge.
-        "enqueuePullRequest",          # Queue a merge into the base branch.
-        "mergeBranch",                 # Merge directly into a branch.
-        "updateRef",                   # Move one ref directly.
-        "updateRefs",                  # Move multiple refs directly.
-        "createCommitOnBranch",        # Commit directly onto a branch.
-        "deleteRef",                   # Delete a branch ref.
-    ),
-}
-MUTATION = re.compile(r"\b(?:" + "|".join(DEFAULT_BRANCH_WRITES["graphql"]) + r")\b")
-
-
 def risky_mention(text):
     push = re.search(r"\bpush\b", text, re.I)
-    # git+push covers custom default names without gating a bare word like push.
-    return bool(MENTION.search(text) or MUTATION.search(text)
+    # Evaluated API/delegated sync strings are opaque: no second classifier.
+    return bool(MENTION.search(text)
+                or re.search(r"\bgh\b[^\n]*\bapi\b|\brepo\s+sync\b", text, re.I)
                 or (push and (GIT_MENTION.search(text)
                               or re.search(r"\b(?:main|master)\b", text, re.I))))
 
 
 def normalized_endpoint(word):
-    """Return the HTTP path and whether Bash can change this endpoint word."""
-    # gh's placeholders are ordinary segments, not shell brace expansions.
+    """Literal, undecoded path: encoded slashes must never forge safe routes."""
     masked = re.sub(r"\{(?:owner|repo|branch)\}", "segment", word.value)
     literal = word.literal or not re.search(r"[\s$`*?\[\]{}\\]", masked)
-    raw = (urlsplit(word.value).path if re.match(r"https?://", word.value)
-           else word.value.split("#", 1)[0].split("?", 1)[0])
-    path = unquote(raw)
+    path = (urlsplit(word.value).path if re.match(r"https?://", word.value)
+            else word.value.split("#", 1)[0].split("?", 1)[0])
     path = re.sub(r"/+", "/", path).strip("/")
+    if path.startswith("api/v3/"):
+        path = path[len("api/v3/"):]
+    if path == "api/graphql":
+        path = "graphql"
     return path, literal
 
 
-def gh_runs(words, i):
-    """A lookup's arguments are data, even though command is also a wrapper."""
-    if i not in command_positions(words):
-        return False
-    for j, w in enumerate(words[:i]):
-        if base(w) == "command" and any(
-                re.fullmatch(r"-[pvV]*[vV][pvV]*", x.value)
-                for x in words[j + 1:i]):
-            return False
-    return True
-
-
 def gh_might_land(words, i, appended=False):
-    """Read gh's command slots and API options; unreadable write targets ask."""
+    """Ask unless a built-in, API read or explicitly safe write is proved.
+
+    The safe-write lists describe permissions, not examples of dangerous writes.
+    Unknown paths/mutations/controlling inputs cost a prompt, never a silent write.
+    """
     args = words[i + 1:]
     tokens = feeder_tokens(words, i)
     if tokens is not None and (not args or any(
             t and t in w.value for t in tokens for w in args)):
         return True
+    fed = appended or any(base(w) in ARG_FEEDERS | {"-exec", "-execdir", "-ok", "-okdir"}
+                          for w in words[:i])
     j = 0
     while j < len(args) and args[j].value.startswith("-"):
         v = args[j].value
@@ -802,10 +770,11 @@ def gh_might_land(words, i, appended=False):
         else:
             return True
     args = args[j:]
-    if not args or not args[0].literal:
+    if not args:
+        return False
+    if not args[0].literal:
         return True
-    if args[0].value == "pr":
-        # Inherited flags may appear between the command and its verb too.
+    if args[0].value in ("pr", "repo"):
         j = 1
         while j < len(args) and args[j].value.startswith("-"):
             opt = args[j].value
@@ -815,56 +784,93 @@ def gh_might_land(words, i, appended=False):
                 j += 1
             else:
                 return True
-        return j >= len(args) or not args[j].literal or args[j].value == "merge"
+        if j >= len(args):
+            return fed
+        if not args[j].literal:
+            return True
+        if args[0].value == "pr":
+            return args[j].value == "merge"
+        if args[j].value != "sync":
+            return False
+        if fed:
+            return True
+        j += 1
+        while j < len(args):
+            opt = args[j].value
+            if opt in ("--source", "-s"):
+                j += 2
+            elif opt in ("--force", "-f", "--help") or opt.startswith("--source="):
+                j += 1
+            else:
+                # Any positional target (or unmodelled argument) may be remote.
+                return True
+        return False
     if args[0].value != "api":
         return False
-    # Feeders may append -X/-f/--input after an apparently read-only endpoint.
-    if appended or any(base(w) in ARG_FEEDERS | {"-exec", "-execdir", "-ok", "-okdir"}
-                       for w in words[:i]):
+    if fed:
         return True
+
     endpoint = None
     method = None
     fields = False
     queries = []
     args = args[1:]
     j = 0
-    values = {"-f", "-F", "--field", "--raw-field", "--input", "-H", "--header",
-              "--hostname", "--cache", "-q", "--jq", "-t", "--template"}
+    output_options = {"--jq", "-q", "--template", "-t", "--cache"}
+    field_options = {"-f", "-F", "--field", "--raw-field"}
     while j < len(args):
         w = args[j]
         v = w.value
-        if not w.literal and v.startswith("-"):
-            return True
+        name, sep, value = v.partition("=")
         if v in ("-X", "--method") or re.match(r"^-[a-zA-Z]*X", v):
-            attached = v.split("X", 1)[1] if "X" in v else ""
-            if attached:
-                method = attached
-            else:
-                j += 1
-                if j >= len(args) or not args[j].literal:
-                    return True
-                method = args[j].value
-        elif v.startswith("--method="):
-            method = v.split("=", 1)[1]
-        elif v in values or v.startswith(("--field=", "--raw-field=", "--input=", "-f", "-F")):
-            key = v.split("=", 1)[0]
-            if v in values:
+            value = v.split("X", 1)[1] if "X" in v else ""
+            if not value:
                 j += 1
                 if j >= len(args) or not args[j].literal:
                     return True
                 value = args[j].value
-            else:
-                value = v.split("=", 1)[1] if v.startswith("--") else v[2:]
-            if key in ("--input",) or v.startswith("--input="):
+            elif not w.literal:
                 return True
-            if v in ("-f", "-F", "--field", "--raw-field") or v.startswith(("-f", "-F", "--field=", "--raw-field=")):
-                fields = True
-                if value.startswith("query="):
-                    if value.startswith("query=@"):
-                        return True
-                    queries.append(value[6:])
+            method = value.upper()
+        elif name == "--method" and sep:
+            if not w.literal:
+                return True
+            method = value.upper()
+        elif (v in field_options or name in {"--field", "--raw-field"}
+              or v.startswith(("-f", "-F"))):
+            fields = True
+            value_literal = w.literal
+            if v in field_options:
+                j += 1
+                if j >= len(args):
+                    return True
+                value, value_literal = args[j].value, args[j].literal
+            elif v.startswith(("-f", "-F")):
+                value = v[2:]
+            key, eq, body = value.partition("=")
+            if not eq or not re.fullmatch(r"[A-Za-z_]\w*(?:\[\w*\])*", key):
+                return True
+            if key == "query":
+                if not value_literal or body.startswith("@"):
+                    return True
+                queries.append(body)
+        elif name in output_options or v.startswith(("-q", "-t")):
+            if v in output_options:
+                j += 1
+                if j >= len(args):
+                    return True
+            # Presentation/cache values are not operation-controlling.
+        elif v in ("-H", "--header", "--hostname") or name in {"--header", "--hostname"} or v.startswith("-H"):
+            if v in ("-H", "--header", "--hostname"):
+                j += 1
+                if j >= len(args) or not args[j].literal:
+                    return True
+            elif not w.literal:
+                return True
+        elif name == "--input":
+            return True  # Even a literal file name has an unreadable body.
         elif v.startswith("-"):
-            if v not in ("-i", "--include", "--silent", "--paginate", "--slurp", "--verbose"):
+            if not w.literal or v not in {"-i", "--include", "--silent", "--paginate", "--slurp", "--verbose"}:
                 return True
         elif endpoint is None:
             endpoint = w
@@ -874,19 +880,96 @@ def gh_might_land(words, i, appended=False):
     if endpoint is None:
         return True
     path, literal = normalized_endpoint(endpoint)
-    if path == "graphql":
-        return not literal or not queries or any(MUTATION.search(q) for q in queries)
-    method = (method or ("POST" if fields else "GET")).upper()
-    if method not in ("GET", "HEAD", "OPTIONS", "POST", "PUT", "PATCH", "DELETE"):
-        return True
-    if method in ("GET", "HEAD", "OPTIONS"):
-        return False
     if not literal:
         return True
-    # Normalize once; all branch-moving REST writes use this same table.
-    return any(method in methods and re.fullmatch(r"repos/[^/]+/[^/]+/" + pattern, path)
-               for methods, pattern in DEFAULT_BRANCH_WRITES["rest"])
+    if path == "graphql":
+        if method is not None and method not in {"GET", "HEAD", "POST"}:
+            return True
+        if not queries:
+            return True
+        safe_mutations = {
+            "addComment", "addPullRequestReview", "addPullRequestReviewComment",
+            "addPullRequestReviewThreadReply", "resolveReviewThread", "unresolveReviewThread",
+            "addReaction", "removeReaction", "updateIssue", "updatePullRequest",
+            "addLabelsToLabelable", "removeLabelsFromLabelable", "updatePullRequestBranch",
+            "updateProjectV2ItemFieldValue", "addProjectV2ItemById",
+            "markPullRequestReadyForReview", "convertPullRequestToDraft",
+        }
+        for query in queries:
+            if not re.search(r"\bmutation\b", query):
+                if not re.match(r"\s*(?:\{|query\b|subscription\b)", query):
+                    return True
+                continue
+            # Tokenize strings/comments atomically so braces in values cannot
+            # manufacture a safe root field. Fragments/directives at the root
+            # are unmodelled and ask; aliases are checked by their actual field.
+            ts = re.findall(r'"""[\s\S]*?"""|"(?:\\.|[^"\\])*"|#[^\n]*|[A-Za-z_]\w*|\.\.\.|[^\s,]', query)
+            ts = [t for t in ts if not t.startswith("#")]
+            k = 0
 
+            def skip_group(k, opening, closing):
+                depth = 0
+                while k < len(ts):
+                    if ts[k] == opening:
+                        depth += 1
+                    elif ts[k] == closing:
+                        depth -= 1
+                        if depth == 0:
+                            return k + 1
+                    k += 1
+                return len(ts) + 1
+
+            while k < len(ts):
+                if ts[k] != "mutation":
+                    return True
+                k += 1
+                if k < len(ts) and re.fullmatch(r"[A-Za-z_]\w*", ts[k]):
+                    k += 1  # Document operation name, not a mutation field.
+                if k < len(ts) and ts[k] == "(":
+                    k = skip_group(k, "(", ")")
+                if k >= len(ts) or ts[k] != "{":
+                    return True
+                k += 1
+                found = False
+                while k < len(ts) and ts[k] != "}":
+                    field = ts[k]
+                    k += 1
+                    if k < len(ts) and ts[k] == ":":
+                        k += 1
+                        if k >= len(ts):
+                            return True
+                        field = ts[k]
+                        k += 1
+                    if field not in safe_mutations:
+                        return True
+                    found = True
+                    if k < len(ts) and ts[k] == "(":
+                        k = skip_group(k, "(", ")")
+                    if k < len(ts) and ts[k] == "{":
+                        k = skip_group(k, "{", "}")
+                if not found or k >= len(ts):
+                    return True
+                k += 1
+        return False
+    method = method or ("POST" if fields else "GET")
+    if method in {"GET", "HEAD"} and not fields:
+        return False
+    # A short permission list; misses ask. Never decode percent escapes here.
+    safe_writes = (
+        ({"POST"}, r"issues/[0-9]+/comments"),
+        ({"PATCH", "DELETE"}, r"issues/comments/[0-9]+"),
+        ({"POST"}, r"pulls/[0-9]+/comments(?:/[0-9]+/replies)?"),
+        ({"POST"}, r"pulls/[0-9]+/reviews"),
+        ({"POST", "DELETE"}, r"pulls/[0-9]+/requested_reviewers"),
+        ({"PATCH"}, r"(?:issues|pulls)/[0-9]+"),
+        ({"POST", "PUT", "DELETE"}, r"issues/[0-9]+/labels"),
+        ({"POST", "DELETE"}, r"issues/[0-9]+/assignees"),
+        ({"POST"}, r".+/reactions"),
+        ({"PUT"}, r"pulls/[0-9]+/update-branch"),
+        ({"POST"}, r"(?:dispatches|actions/workflows/[^/]+/dispatches)"),
+    )
+    return not any(method in methods and re.fullmatch(r"repos/[^/]+/[^/]+/" + route, path)
+                   for methods, route in safe_writes)
 
 
 def push_might_land(words, i, cwd):
@@ -947,6 +1030,9 @@ def push_might_land(words, i, cwd):
               ("origin" if "origin" in remotes.split() else
                remotes.split()[0] if len(remotes.split()) == 1 else None))
     if remote not in remotes.split():
+        return True
+    mirror_key = f"remote.{remote}.mirror"
+    if mirror_key in config and git(cwd, "config", "--bool", "--get", mirror_key) != "false":
         return True
     prefix = f"refs/remotes/{remote}/"
     target = git(cwd, "symbolic-ref", "--quiet", prefix + "HEAD")
@@ -1023,7 +1109,7 @@ def command_might_merge(cmd, text, depth, appended=False):
                 return True
     for i, w in enumerate(words):
         name = base(w)
-        if name == "gh" and gh_runs(words, i) and gh_might_land(words, i, appended):
+        if name == "gh" and i in positions and gh_might_land(words, i, appended):
             return True
         if name == "git" and depth > 0 and any(x.value == "push" for x in words[i + 1:]):
             return True
