@@ -1,3 +1,4 @@
+[%- set ci_app_id = ci_app_integration_id | trim -%]
 {
   "name": "Version Tag Creation",
   "target": "tag",
@@ -22,12 +23,18 @@
       "actor_type": "OrganizationAdmin",
       "bypass_mode": "always"
     }
-[% else %]
+[%- else %]
     {
       "actor_id": 5,
       "actor_type": "RepositoryRole",
       "bypass_mode": "always"
     }
-[% endif %]
+[%- endif %][% if ci_app_id %],[% endif %][% if ci_app_id +%]
+    {
+      "actor_id": [[ ci_app_id | int ]],
+      "actor_type": "Integration",
+      "bypass_mode": "always"
+    }
+[% else %][[ '\n' ]][% endif %]
   ]
 }

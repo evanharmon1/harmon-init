@@ -224,6 +224,28 @@ use_foreman:
   help: "FOREMAN: Wire up foreman — deterministic supervisor that dispatches ready issues to headless agents, verifies, opens PRs, shepherds them (task foreman:* wrapping a pinned uvx-run CLI from ponderousdev/foreman; needs uv and operator setup: bot identity, arming labels, rulesets)?"
   default: no
 
+ci_app_integration_id:
+  type: str
+  help: >-
+    CI APP INTEGRATION ID: Optional numeric GitHub App ID for the Integration
+    bypass in the version-tag creation ruleset. Find the App ID under the
+    account that owns the app: Settings → Developer settings → GitHub Apps →
+    your app (not the client ID or installation ID), or fetch it with
+    `gh api apps/<app-slug> --jq .id`. Leave empty if this repo does not
+    release tags through that app; with the ruleset imported, release-please
+    cannot create version tags while this is empty. This answer adds no App
+    installation or credentials. The bypass applies to every workflow that
+    mints a token from this App, including the Claude implement job's agent
+    push token, so an opted-in repository lets that job create `v*` tags,
+    which Version Tag Immutability then makes undeletable. Recommend a
+    dedicated release-only GitHub App when that matters.
+  default: ""
+  when: "[[ use_foreman ]]"
+  validator: >-
+    [%- if ci_app_integration_id | trim and not (ci_app_integration_id | trim | regex_search('^[1-9][0-9]*$')) -%]
+      CI APP INTEGRATION ID must be a positive integer.
+    [%- endif -%]
+
 foreman_additional_trusted_actors:
   type: str
   help: >-
