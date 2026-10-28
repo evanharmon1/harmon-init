@@ -102,24 +102,27 @@ hooks do not run. The bot/agent boundary and merge/pull allowlist are unchanged.
    A pull must omit its source (`git pull --ff-only [<remote>]`) or name the
    full `refs/heads/<branch>` source. Short explicit branch names ask because
    a remote tag can shadow them; the hook never inspects the remote.
-   Evaluator mention handling retains the conservative merge/pull word test,
-   with one closed lexical exemption from
-   [#1844](https://github.com/evanharmon1/harmon-init/issues/1844): one complete
-   `bash -c 'PAYLOAD'` / `sh -c 'PAYLOAD'`, or bash/sh heredoc with a quoted
-   uppercase delimiter, may contain only echo, printf or gh pr view/list
-   commands with inert literal arguments. Arguments contain ASCII letters,
-   digits and `_./:@%+=,-`, optionally double quoted with spaces; commands
-   separate with semicolons or newlines. No git substring may appear anywhere.
-   Git/gh operation classification still runs. Everything outside that complete
-   language retains the fallback, including comments, expansions, assignments,
-   wrappers, script files, here-strings, redirects, pipelines and extra shell
-   arguments. This is an absence proof, not a list of blocked input channels:
-   unlisted syntax cannot introduce code or input because it cannot match the
-   complete positive language. The earlier general parsed-payload exemption
-   was removed after repeated bypass findings; it is not restored. Historical
-   run-record/plan text prompts no longer occur in the sampled post-devkit#1686
-   transcripts; observed commands containing git words remain conservatively
-   outside the exemption.
+   Visible bash/sh payloads are silent only when every simple command is
+   drawn from a closed read allowlist and every word is an inert literal.
+   The complete outer form must be bash/sh `-c` with one literal quoted
+   payload, or a heredoc with a quoted uppercase delimiter. The allowlist is
+   echo, printf, cat, head, tail, wc, grep, jq, sort, uniq and cut. Gh is limited
+   to pr view/list/status/checks/diff, issue view/list/status and repo view/list;
+   its existing operation proof must also pass. Printf variable assignments,
+   sort execution/output options and uniq output operands are excluded because
+   they violate the read-only property. Sed is omitted rather than
+   interpreting its executable expression language. Literal paths and arguments
+   containing git, merge or pull are data. Semicolons, newlines and pipes connect
+   only proved commands. Assignments, expansions, escapes, comments, redirects,
+   here-strings, descriptor paths, extra shell arguments and nested evaluators
+   cannot qualify. Redirects to `/dev/null` are conservatively excluded too,
+   retaining the earlier ask regression. Git/gh operation checks still run.
+   This is one complete absence proof, not a list of dangerous input channels:
+   unrecognized syntax fails the proof, so an unlisted channel cannot slip
+   through. Payloads that fail the proof, and script-file invocations, keep
+   the base mention fallback: they ask only when a merge/pull word appears.
+   The earlier general parsed-payload exemption is not restored. See
+   [#1844](https://github.com/evanharmon1/harmon-init/issues/1844).
    Target paths accept literal path characters only, with no shell
    metacharacters. It returns
    `permissionDecision: "ask"` for every other command it inspects that might

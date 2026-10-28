@@ -80,16 +80,21 @@ unquoted single commands in a verified feature-branch checkout:
     git pull [<remote> [<ref>]], with --ff-only and/or --no-rebase,
              and optionally --no-edit
 
-Evaluator mentions are silent only in a complete `bash -c 'PAYLOAD'` or
-`sh -c 'PAYLOAD'`, or bash/sh heredoc with a quoted uppercase delimiter.
-PAYLOAD is a nonempty sequence (semicolon/newline separated) of echo, printf,
-or gh pr view/list with inert literal arguments: ASCII letters/digits and
-_./:@%+=,-, optionally double quoted with spaces. No git substring may occur
-anywhere. No other syntax qualifies: expansions, escapes, assignments, comments,
-extra commands, wrappers, redirects, pipes, here-strings, script files and extra
-shell arguments retain the mention fallback. Silence requires proving the
-entire command belongs to this closed language; an unlisted input channel
-cannot qualify. Git/gh operation checks still run. See #1844.
+Visible bash/sh payloads are silent only when every simple command belongs
+to a closed read allowlist and every word is an inert literal. The complete
+outer form must be bash/sh -c with one literal quoted payload, or a heredoc
+with a quoted uppercase delimiter. Allowed commands are echo, printf, cat,
+head, tail, wc, grep, jq, sort, uniq, cut; gh is limited to pr view/list/status/
+checks/diff, issue view/list/status, and repo view/list, with the existing gh
+operation proof still required. Literal paths and data may contain git, merge
+or pull. Semicolons, newlines and pipes connect only proved commands. No
+assignments, expansions, escapes, comments, redirects, here-strings, descriptor
+paths, extra shell arguments, nested evaluators or other syntax qualifies.
+Sed is omitted; printf assignment formats, sort execution/output options and
+uniq output operands are excluded. Git/gh operation checks still run. Unknown syntax fails the
+complete proof, so an unlisted bash input channel cannot qualify. Payloads
+failing this proof, and script-file invocations, keep the base mention
+fallback: they ask only on a merge/pull word. See #1844.
 
 Flags are a set, in any order and position. Fast-forward-only merges/pulls
 also support a literal absolute `git -C <dir>` or preceding `cd <dir> &&`,
@@ -1282,27 +1287,68 @@ def push_companions_safe(command, cwd):
 
 
 
-# This is a closed lexical language, not a second shell parser. Every executable
-# is fixed; every argument is inert text. Adding syntax requires a new proof.
-MENTION_ARG = r'(?:[A-Za-z0-9_./:@%+=,-]+|"[A-Za-z0-9_ ./:@%+=,-]*")'
-MENTION_LINE = re.compile(
-    rf' *(?:(?:echo|printf)(?: +{MENTION_ARG})*|'
-    rf'gh +pr +(?:view|list)(?: +{MENTION_ARG})*) *'
+# A closed lexical language: commands are fixed reads and words are inert.
+# Unrecognized syntax fails the proof rather than acquiring shell semantics.
+MENTION_READS = {"echo", "printf", "cat", "head", "tail", "wc", "grep", "jq",
+                 "sort", "uniq", "cut"}
+MENTION_WORD = re.compile(
+    r"(?:[A-Za-z0-9_./:@%+=,-]+|\"[^\"\n]*\"|'[^'\n]*')(?=[ \t\n;|]|$)"
 )
 
 
-def literal_evaluator_mentions(text):
-    """Prove one evaluator has only fixed commands and inert literal inputs.
-
-    Match the entire outer command before considering its payload. Unknown
-    syntax cannot introduce an input channel: it is outside this language.
-    This proof only suppresses the broad word fallback, never git/gh checks.
-    """
-    if re.search("git", text, re.I):
+def mention_read(words):
+    """Require an exact command name; arguments never become executable code."""
+    if words[0] == "printf":
+        args = words[1:]
+        if args[:1] == ["--"]:
+            args = args[1:]
+        # -v and %n assign shell variables, including PATH; they are not reads.
+        return bool(args) and not args[0].startswith("-") and "%" not in re.sub(
+            r"%%|%[sdfq]", "", args[0]
+        )
+    if words[0] in {"sort", "uniq"}:
+        # sort can launch --compress-program or write -o; uniq's second file
+        # operand is output. Only these fixed flags and input files qualify.
+        flags = {"-n", "-r", "-u", "-f", "-b"} if words[0] == "sort" else {"-c", "-d", "-u", "-i"}
+        files = 0
+        options = True
+        for arg in words[1:]:
+            if options and arg == "--":
+                options = False
+            elif options and arg.startswith("-"):
+                if arg not in flags:
+                    return False
+            else:
+                files += 1
+        return words[0] == "sort" or files <= 1
+    if words[0] in MENTION_READS:
+        return True
+    if words[0] != "gh" or len(words) < 3:
         return False
-    match = re.fullmatch(r"(?:bash|sh) -c '([^']*)'", text)
+    # gh_might_land also permits safe writes and non-merging commands such as
+    # checkout: those are NOT reads. Narrow first, then reuse its operation proof.
+    reads = {"pr": {"view", "list", "status", "checks", "diff"},
+             "issue": {"view", "list", "status"}, "repo": {"view", "list"}}
+    if words[2] not in reads.get(words[1], set()):
+        return False
+    parsed = []
+    for value in words:
+        word = Word()
+        word.value = value
+        parsed.append(word)
+    return not gh_might_land(parsed, 0)
+
+
+def literal_evaluator_mentions(text):
+    """Prove a complete evaluator has only allowlisted reads and literal words.
+
+    Unknown syntax cannot introduce an input channel: it is outside this
+    language. No prefix assignments, substitutions, script files, feeders or
+    nested evaluators can match. Pipes connect only commands proved here.
+    """
+    match = re.fullmatch(r"(?:bash|sh) -c (?:'([^']*)'|\"([^\"]*)\")", text)
     if match:
-        payload = match[1]
+        payload = match[1] if match[1] is not None else match[2]
     else:
         match = re.fullmatch(
             r"(?:bash|sh) <<'([A-Z][A-Z0-9_]*)'\n(.*?)\n\1\n?", text, re.S
@@ -1310,10 +1356,35 @@ def literal_evaluator_mentions(text):
         if not match:
             return False
         payload = match[2]
-    # Only literal arguments and command separators; quotes cannot conceal
-    # separators because neither separator is admitted inside a quoted argument.
-    lines = re.split(r"[;\n]", payload)
-    return bool(lines) and all(MENTION_LINE.fullmatch(line) for line in lines)
+    if (re.search(r"[$`\\]", payload) or "BASH_ENV" in payload
+            or re.search(r"[^\x20-\x7e\n\t]", payload)):
+        return False
+    i = 0
+    words = []
+    while i < len(payload):
+        if payload[i] in " \t":
+            i += 1
+            continue
+        if payload[i] in ";\n|":
+            if not words or not mention_read(words):
+                return False
+            words = []
+            i += 1
+            continue
+        match = MENTION_WORD.match(payload, i)
+        if not match:
+            return False
+        value = match[0]
+        value = value[1:-1] if value[:1] in {"'", '\"'} else value
+        # A descriptor/stdin path never supplies an evaluator input in this
+        # grammar. Reject it anyway: do not broaden the external-input contract.
+        path = os.path.normpath(value)
+        if (value == "-" or path.startswith(("/dev/", "/proc/")) and path != "/dev/null"
+                or re.search(r"(?:^|/)dev/(?:stdin|fd)(?:/|$)", path)):
+            return False
+        words.append(value)
+        i = match.end()
+    return bool(words) and mention_read(words)
 
 
 def command_might_merge(cmd, text, depth, appended=False, literal_mentions=False):
