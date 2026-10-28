@@ -375,6 +375,31 @@ matrix() { # guard
     case_ "$g" silent "$r" 'op inject -i template.txt -o output.txt'
     case_ "$g" silent "$r" 'echo op run -- gh pr merge 1'
     case_ "$g" silent "$r" 'op run -- echo gh pr merge 1'
+    # R14 V2-1: help/version are non-executing; flag values are still data.
+    for cmd in 'gh --version' 'gh -v' 'gh --help' 'gh -h' 'gh help pr merge' 'gh pr --help' 'gh pr merge --help' 'gh pr merge -h' 'gh api --help' 'gh api -h' 'gh -R o/r help api' 'gh -R o/r pr merge --admin --help'; do
+        case_ "$g" silent "$r" "$cmd"
+    done
+    case_ "$g" ask "$r" 'gh api -X POST repos/o/r/merges --template --help'
+    case_ "$g" ask "$r" 'gh api -X POST repos/o/r/merges -t--help'
+    case_ "$g" ask "$r" 'gh pr merge help'
+    case_ "$g" ask "$r" 'gh api -X POST repos/o/r/merges --help --help=false'
+    case_ "$g" ask "$r" 'gh api -X POST repos/o/r/merges -f $FIELDS --help'
+    case_ "$g" ask "$r" 'gh api -X POST repos/o/r/merges --help "$OPTIONS"'
+    case_ "$g" ask "$r" 'xargs gh api -X POST repos/o/r/merges --help'
+    case_ "$g" ask "$r" 'xargs -I --help gh api -X POST repos/o/r/merges --help'
+    # V2-2: classify tokenized operations, not strings/comment text.
+    case_ "$g" silent "$r" 'gh api graphql -f '"'"'query=query { search(query: "mutation", type: ISSUE, first: 1) { issueCount } }'"'"''
+    case_ "$g" silent "$r" 'gh api graphql -f '"'"'query=# leading comment
+query { viewer { login } }'"'"''
+    case_ "$g" silent "$r" 'gh api graphql -f '"'"'query=query { viewer { login } } # mutation'"'"''
+    case_ "$g" silent "$r" 'gh api graphql -f '"'"'query=# mutation
+query { viewer { login } }'"'"''
+    case_ "$g" silent "$r" 'gh api graphql -f '"'"'query=query { search(query: """mutation""", type: ISSUE, first: 1) { issueCount } }'"'"''
+    case_ "$g" ask "$r" 'gh api graphql -f '"'"'query=# leading comment
+mutation { mergePullRequest(input: {}) { clientMutationId } }'"'"''
+    case_ "$g" silent "$r" 'gh api graphql -f '"'"'query=# leading comment
+mutation { resolveReviewThread(input: {}) { clientMutationId } }'"'"''
+    case_ "$g" ask "$r" 'gh api graphql -f '"'"'query=query Q { viewer { login } } mutation M { mergePullRequest(input: {}) { clientMutationId } }'"'"''
     # 2026-10-25 observed shapes: lane catch-ups and evaluator mentions.
     case_ "$g" silent "$r" "git -C ${r}/wt merge --ff-only abc123"
     case_ "$g" silent "${r}/wt" "git fetch origin && git merge --ff-only abc123"

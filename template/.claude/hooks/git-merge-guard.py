@@ -827,6 +827,52 @@ def normalized_endpoint(word):
     return path, literal
 
 
+def gh_prints_help(args):
+    """Prove a help/version flag is an option, not another option's value."""
+    values = {"-R", "--repo", "--hostname", "-X", "--method", "-f", "-F",
+              "--field", "--raw-field", "-H", "--header", "--input", "-q", "--jq",
+              "-t", "--template", "--cache", "--source", "-s", "--subject",
+              "-b", "--body", "--body-file", "-A", "--author-email", "--match-head-commit"}
+    bools = {"--auto", "--admin", "--merge", "--squash", "--rebase", "--delete-branch",
+             "--disable-auto", "--include", "--paginate", "--slurp", "--silent", "--verbose", "--force"}
+    if any(w.unquoted_dynamic for w in args):
+        return False
+    nonexecuting = False
+    j = 0
+    while j < len(args):
+        w = args[j]
+        if not w.literal or w.unquoted_dynamic:
+            return False
+        v = w.value
+        if v == "--":
+            return False
+        if v in {"--help", "-h", "--version", "-v"}:
+            nonexecuting = True
+            j += 1
+            continue
+        if v in values:
+            j += 2
+            continue
+        if v.startswith("--"):
+            name, eq, _ = v.partition("=")
+            if name not in bools and not (eq and name in values):
+                return False
+        elif v.startswith("-"):
+            # A value-taking short option consumes its suffix, including h/X.
+            for k, letter in enumerate(v[1:], 1):
+                if "-" + letter in values:
+                    if k == len(v) - 1:
+                        j += 1
+                    break
+                if letter in "hv":
+                    nonexecuting = True
+                    continue
+                if letter not in "imsrd":
+                    return False
+        j += 1
+    return nonexecuting
+
+
 def gh_might_land(words, i, appended=False):
     """Ask unless a built-in, API read or explicitly safe write is proved.
 
@@ -840,6 +886,9 @@ def gh_might_land(words, i, appended=False):
         return True
     fed = appended or any(base(w) in ARG_FEEDERS | {"-exec", "-execdir", "-ok", "-okdir"}
                           for w in words[:i])
+    # Feeders may replace a help flag or append --help=false; no exemption.
+    if not fed and gh_prints_help(args):
+        return False
     j = 0
     while j < len(args) and args[j].value.startswith("-"):
         v = args[j].value
@@ -854,6 +903,8 @@ def gh_might_land(words, i, appended=False):
         return False
     if not args[0].literal:
         return True
+    if args[0].value == "help":
+        return False
     if args[0].value in ("pr", "repo"):
         j = 1
         while j < len(args) and args[j].value.startswith("-"):
@@ -1005,15 +1056,16 @@ def gh_might_land(words, i, appended=False):
         for query in queries:
             if any(ord(c) < 32 and c not in "\t\r\n" or 127 <= ord(c) <= 159 for c in query):
                 return True
-            if not re.search(r"\bmutation\b", query):
-                if not re.match(r"\s*(?:\{|query\b|subscription\b)", query):
-                    return True
-                continue
-            # Tokenize strings/comments atomically so braces in values cannot
-            # manufacture a safe root field. Fragments/directives at the root
-            # are unmodelled and ask; aliases are checked by their actual field.
+            # Tokenize before classifying: strings and comments are data,
+            # including a leading comment or the text "mutation" inside a value.
             ts = re.findall(r'"""[\s\S]*?"""|"(?:\\.|[^"\\])*"|#[^\r\n]*|[A-Za-z_]\w*|\.\.\.|[^\s,]', query)
             ts = [t for t in ts if not t.startswith("#")]
+            operations = [t for t in ts if not t.startswith('"')]
+            if (operations and operations[0] in {"{", "query", "subscription"}
+                    and "mutation" not in operations):
+                continue
+            # Any actual mutation in a mixed document still owes the safe-field
+            # proof. The reader below fails closed on unmodelled root forms.
             k = 0
 
             def skip_group(k, opening, closing):
