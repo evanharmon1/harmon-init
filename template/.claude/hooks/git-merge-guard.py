@@ -569,6 +569,59 @@ def command_index(words):
     return i
 
 
+def op_run_command(words, i):
+    """Return op run's child position; inject/read do not execute arguments.
+
+    Flag names and arities come from installed op --help / op run --help.
+    Unknown or nonliteral options cannot establish the child slot and ask.
+    """
+    global_values = {"--account", "--config", "--session", "--encoding", "--format"}
+    global_bools = {"--cache", "--debug", "--iso-timestamps", "--no-color"}
+    j = i + 1
+    running = False
+    while j < len(words):
+        word = words[j]
+        opt = word.value
+        if not word.literal:
+            raise ParseError("unreadable op option or child")
+        if opt == "--" and running:
+            if j + 1 >= len(words):
+                raise ParseError("op run has no child command")
+            return j + 1
+        if opt in {"-h", "--help", "-v", "--version"}:
+            return None
+        if opt.startswith("-"):
+            name, eq, value = opt.partition("=")
+            values = global_values | ({"--env-file"} if running else set())
+            bools = global_bools | ({"--no-masking"} if running else set())
+            if name in values:
+                if eq:
+                    if not value:
+                        raise ParseError("empty op option value")
+                    j += 1
+                else:
+                    if j + 1 >= len(words) or not words[j + 1].literal or words[j + 1].value == "--":
+                        raise ParseError("unreadable op option value")
+                    j += 2
+            elif name in bools:
+                if eq and value.lower() not in {"true", "false", "1", "0", "t", "f"}:
+                    raise ParseError("unreadable op boolean value")
+                j += 1
+            else:
+                raise ParseError("unknown op option")
+            continue
+        if not running:
+            if opt != "run":
+                return None
+            running = True
+            j += 1
+        else:
+            return j
+    if running:
+        raise ParseError("op run has no child command")
+    return None
+
+
 def command_positions(words):
     """Every index that may be run as a command: the command word, and every
     word after a wrapper. A wrapper's option grammar (value-taking options,
@@ -576,11 +629,16 @@ def command_positions(words):
     `env --chd /repo -i`, `coproc NAME`) is open-ended, so the reader does not
     try to find where its options end. Only a non-literal word, a dashed
     `git-merge`/`git-pull` helper or an evaluator at one of these positions
-    triggers anything, so ordinary arguments stay silent."""
+    triggers anything, so ordinary arguments stay silent. op run adds only
+    its parsed child position; op inject never executes an argument."""
     positions = {command_index(words)}
     for i, w in enumerate(words):
         if w.literal and base(w) in WRAPPERS:
             positions.update(range(i + 1, len(words)))
+        if w.literal and base(w) == "op" and i in positions:
+            child = op_run_command(words, i)
+            if child is not None:
+                positions.add(child)
     return positions
 
 

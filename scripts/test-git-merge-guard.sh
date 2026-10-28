@@ -353,6 +353,28 @@ matrix() { # guard
     case_ "$g" silent "$r" 'git log --grep push; git status'
     case_ "$g" silent "$r" 'git -c color.ui=false grep push && true'
     case_ "$g" silent "$r" "git -C ${r} log --grep push; git status"
+    # R13 V1-1: documented credential wrapper executes its child; inject does not.
+    case_ "$g" ask "$r" 'op run -- gh pr merge 1'
+    case_ "$g" ask "$r" 'op run --env-file=.env -- gh api -X PUT repos/o/r/pulls/1/merge'
+    case_ "$g" silent "$r" 'op run -- gh pr view 1'
+    case_ "$g" silent "$r" 'op run -- gh api repos/o/r/pulls --jq .'
+    case_ "$g" ask "$r" 'op run -- git push origin main'
+    case_ "$g" ask "$r" 'op --account example run -- gh pr merge 1'
+    case_ "$g" ask "$r" 'op --config /tmp/config --session placeholder run --env-file .env gh pr merge 1'
+    case_ "$g" silent "$r" 'op --account=example --format json run --no-masking gh pr view 1'
+    case_ "$g" silent "$r" 'op run --env-file .env gh api repos/o/r/pulls/1'
+    case_ "$g" ask "$r" 'op run gh pr merge 1'
+    case_ "$g" ask "$r" 'op run --env-file'
+    case_ "$g" ask "$r" 'op --account'
+    case_ "$g" ask "$r" 'op --account "$ACCOUNT" run -- gh pr merge 1'
+    case_ "$g" ask "$r" 'op run --unknown value gh pr merge 1'
+    case_ "$g" ask "$r" 'op run --env-file "$FILE" gh pr merge 1'
+    case_ "$g" ask "$r" 'op run -- op run -- gh pr merge 1'
+    case_ "$g" ask "$r" 'env KEY=value op run -- gh pr merge 1'
+    case_ "$g" silent "$r" 'op inject -- gh pr merge 1'
+    case_ "$g" silent "$r" 'op inject -i template.txt -o output.txt'
+    case_ "$g" silent "$r" 'echo op run -- gh pr merge 1'
+    case_ "$g" silent "$r" 'op run -- echo gh pr merge 1'
     # 2026-10-25 observed shapes: lane catch-ups and evaluator mentions.
     case_ "$g" silent "$r" "git -C ${r}/wt merge --ff-only abc123"
     case_ "$g" silent "${r}/wt" "git fetch origin && git merge --ff-only abc123"
