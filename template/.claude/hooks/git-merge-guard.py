@@ -61,7 +61,8 @@ operators, comments, heredocs, command substitutions -- and a merge is:
     evaluator (a shell, `eval`, `ssh`, `trap`, `watch`, `herdr pane run`, `parallel`,
     `sudo -s`/`-i`, `env -S`): their option and
     input shapes (`bash -C -c`, `env -S'...'`, a pipe into `if ...; then sh`)
-    are open-ended, so the word test covers what the parser does not.
+    are open-ended, so the word test covers what the parser does not, except
+    for the closed literal mention language described below.
 
 Everything else is data and stays silent: quoted text and heredoc bodies not
 handed to an evaluator (`git commit -m "catch-up merge"`, report appends),
@@ -79,9 +80,16 @@ unquoted single commands in a verified feature-branch checkout:
     git pull [<remote> [<ref>]], with --ff-only and/or --no-rebase,
              and optionally --no-edit
 
-Evaluator mention handling is unchanged from the base guard. The exemption
-was removed after repeated bypass findings; its redesign is tracked in
-https://github.com/evanharmon1/harmon-init/issues/1844.
+Evaluator mentions are silent only in a complete `bash -c 'PAYLOAD'` or
+`sh -c 'PAYLOAD'`, or bash/sh heredoc with a quoted uppercase delimiter.
+PAYLOAD is a nonempty sequence (semicolon/newline separated) of echo, printf,
+or gh pr view/list with inert literal arguments: ASCII letters/digits and
+_./:@%+=,-, optionally double quoted with spaces. No git substring may occur
+anywhere. No other syntax qualifies: expansions, escapes, assignments, comments,
+extra commands, wrappers, redirects, pipes, here-strings, script files and extra
+shell arguments retain the mention fallback. Silence requires proving the
+entire command belongs to this closed language; an unlisted input channel
+cannot qualify. Git/gh operation checks still run. See #1844.
 
 Flags are a set, in any order and position. Fast-forward-only merges/pulls
 also support a literal absolute `git -C <dir>` or preceding `cd <dir> &&`,
@@ -1274,7 +1282,41 @@ def push_companions_safe(command, cwd):
 
 
 
-def command_might_merge(cmd, text, depth, appended=False):
+# This is a closed lexical language, not a second shell parser. Every executable
+# is fixed; every argument is inert text. Adding syntax requires a new proof.
+MENTION_ARG = r'(?:[A-Za-z0-9_./:@%+=,-]+|"[A-Za-z0-9_ ./:@%+=,-]*")'
+MENTION_LINE = re.compile(
+    rf' *(?:(?:echo|printf)(?: +{MENTION_ARG})*|'
+    rf'gh +pr +(?:view|list)(?: +{MENTION_ARG})*) *'
+)
+
+
+def literal_evaluator_mentions(text):
+    """Prove one evaluator has only fixed commands and inert literal inputs.
+
+    Match the entire outer command before considering its payload. Unknown
+    syntax cannot introduce an input channel: it is outside this language.
+    This proof only suppresses the broad word fallback, never git/gh checks.
+    """
+    if re.search("git", text, re.I):
+        return False
+    match = re.fullmatch(r"(?:bash|sh) -c '([^']*)'", text)
+    if match:
+        payload = match[1]
+    else:
+        match = re.fullmatch(
+            r"(?:bash|sh) <<'([A-Z][A-Z0-9_]*)'\n(.*?)\n\1\n?", text, re.S
+        )
+        if not match:
+            return False
+        payload = match[2]
+    # Only literal arguments and command separators; quotes cannot conceal
+    # separators because neither separator is admitted inside a quoted argument.
+    lines = re.split(r"[;\n]", payload)
+    return bool(lines) and all(MENTION_LINE.fullmatch(line) for line in lines)
+
+
+def command_might_merge(cmd, text, depth, appended=False, literal_mentions=False):
     words = cmd.words
     ci = command_index(words)
     positions = command_positions(words)
@@ -1314,7 +1356,8 @@ def command_might_merge(cmd, text, depth, appended=False):
         # `env -S'...'`, a pipe into a compound command), so its presence puts
         # the whole script under the word test; the parse below still sees
         # what the word test cannot (`$'\x70ull'`, `git $x`).
-        if is_evaluator(words, i) and risky_mention(text):
+        if (is_evaluator(words, i) and risky_mention(text)
+                and not literal_mentions):
             return True
         # A `-c` / `-Command` payload is read as a script whatever program
         # takes it, so an interpreter missing from SHELLS is still seen.
@@ -1382,7 +1425,9 @@ def script_might_merge(text, depth=0, appended=False):
     decoded = "\n".join(
         [w.value for c in commands for w in c.words] + [t for c in commands for t in c.stdin]
     )
-    return any(command_might_merge(c, text + "\n" + decoded, depth, appended) for c in commands)
+    literal_mentions = literal_evaluator_mentions(text)
+    return any(command_might_merge(c, text + "\n" + decoded, depth, appended, literal_mentions)
+               for c in commands)
 
 
 def might_merge(command):

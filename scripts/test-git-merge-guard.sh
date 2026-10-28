@@ -482,8 +482,8 @@ mutation { resolveReviewThread(input: {}) { clientMutationId } }'"'"''
     case_ "$g" silent "$r" "bash <<'EOF'${nl}gh pr view 1 --json mergeStateStatus${nl}EOF"
     # #1844: base word test excludes longer tokens; no evaluator exemption.
     case_ "$g" silent "$r" "bash -c 'gh pr view 1 --json mergedAt,mergeStateStatus; echo pulls/1'"
-    # #1844: evaluator mention exemption descoped; retain base behavior.
-    case_ "$g" ask "$r" "sh -c 'echo pull'"
+    # #1844: one complete literal evaluator with inert output is silent.
+    case_ "$g" silent "$r" "sh -c 'echo pull'"
     # #1844: base word test excludes longer tokens; no evaluator exemption.
     case_ "$g" silent "$r" "D=\$(bash script.sh --json closedByPullRequestsReferences)"
     # #1844: evaluator mention exemption descoped; retain base behavior.
@@ -493,7 +493,32 @@ mutation { resolveReviewThread(input: {}) { clientMutationId } }'"'"''
     case_ "$g" ask "$r" "printf 'git merge feat\\n' | bash -s merged"
     case_ "$g" ask "$r" "printf 'git merge feat\\n' | bash /dev/stdin"
     case_ "$g" ask "$r" "printf 'git pull\\n' | sh -"
-    # #1844 attack corpus: evaluator exemptions are deleted, all must ask.
+    # #1844: closed literal language; no unknown input channel can qualify.
+    case_ "$g" silent "$r" "bash -c 'echo merge'"
+    case_ "$g" silent "$r" "bash -c 'printf merge; echo pull'"
+    case_ "$g" silent "$r" "bash -c 'gh pr view 1 --json number --jq \".merge\"'"
+    case_ "$g" silent "$r" "bash <<'EOF'${nl}echo merge${nl}EOF"
+    case_ "$g" silent "$r" "sh <<'EOF'${nl}gh pr list --jq \".merge\"${nl}EOF${nl}"
+    case_ "$g" ask "$r" "bash -c 'echo git merge'"
+    case_ "$g" ask "$r" "bash -c 'gh pr merge 1'"
+    case_ "$g" ask "$r" "bash -c 'echo merge' extra"
+    case_ "$g" ask "$r" "bash -c 'echo merge'; true"
+    case_ "$g" ask "$r" "bash -c 'echo merge' < /dev/null"
+    case_ "$g" ask "$r" "bash -c 'echo merge' 3<&0"
+    case_ "$g" ask "$r" "BASH_ENV=/dev/stdin bash -c 'echo merge'"
+    case_ "$g" ask "$r" "bash -c 'exec echo merge'"
+    case_ "$g" ask "$r" "bash -c 'history -r; echo merge'"
+    case_ "$g" ask "$r" "bash -c 'echo merge; fc -s'"
+    case_ "$g" ask "$r" "bash -c 'echo merge \$CODE'"
+    case_ "$g" ask "$r" "bash -c 'echo merge \$(true)'"
+    case_ "$g" ask "$r" "bash -c 'echo merge \$1'"
+    case_ "$g" ask "$r" "bash -c 'echo merge > /dev/null'"
+    case_ "$g" ask "$r" "bash -c 'cat /dev/fd/3; echo merge'"
+    case_ "$g" ask "$r" "bash <<EOF${nl}echo merge${nl}EOF"
+    case_ "$g" ask "$r" "bash <<'EOF'${nl}echo merge${nl}EOF${nl}true"
+    case_ "$g" ask "$r" "bash <<'EOF' < /dev/null${nl}echo merge${nl}EOF"
+    case_ "$g" ask "$r" "bash -c 'echo merge # comment'"
+    # #1844 attack corpus: every probe must still ask on a default branch.
     case_ "$g" ask "$r" "CODE='git merge feat'; bash <<< \"\$CODE\""
     case_ "$g" ask "$r" "bash -c '\"\$2\" \"\$1\" \"\$3\"' _ merge git feat"
     case_ "$g" ask "$r" "printf 'git merge feat\\n' > /tmp/m.sh; bash <<< 'true' < /tmp/m.sh"

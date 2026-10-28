@@ -102,11 +102,24 @@ hooks do not run. The bot/agent boundary and merge/pull allowlist are unchanged.
    A pull must omit its source (`git pull --ff-only [<remote>]`) or name the
    full `refs/heads/<branch>` source. Short explicit branch names ask because
    a remote tag can shadow them; the hook never inspects the remote.
-   Evaluator mention handling is unchanged from the base guard: shell and
-   other evaluator lines retain the conservative merge/pull mention test.
-   The proposed exemption was removed after repeated bypass findings; its
-   redesign is tracked in
-   [#1844](https://github.com/evanharmon1/harmon-init/issues/1844).
+   Evaluator mention handling retains the conservative merge/pull word test,
+   with one closed lexical exemption from
+   [#1844](https://github.com/evanharmon1/harmon-init/issues/1844): one complete
+   `bash -c 'PAYLOAD'` / `sh -c 'PAYLOAD'`, or bash/sh heredoc with a quoted
+   uppercase delimiter, may contain only echo, printf or gh pr view/list
+   commands with inert literal arguments. Arguments contain ASCII letters,
+   digits and `_./:@%+=,-`, optionally double quoted with spaces; commands
+   separate with semicolons or newlines. No git substring may appear anywhere.
+   Git/gh operation classification still runs. Everything outside that complete
+   language retains the fallback, including comments, expansions, assignments,
+   wrappers, script files, here-strings, redirects, pipelines and extra shell
+   arguments. This is an absence proof, not a list of blocked input channels:
+   unlisted syntax cannot introduce code or input because it cannot match the
+   complete positive language. The earlier general parsed-payload exemption
+   was removed after repeated bypass findings; it is not restored. Historical
+   run-record/plan text prompts no longer occur in the sampled post-devkit#1686
+   transcripts; observed commands containing git words remain conservatively
+   outside the exemption.
    Target paths accept literal path characters only, with no shell
    metacharacters. It returns
    `permissionDecision: "ask"` for every other command it inspects that might
