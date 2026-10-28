@@ -224,7 +224,13 @@ the compatibility reason in the rule's `description`.
       your App; use **App ID**, not the client ID or installation ID. If you
       leave it empty, release-please cannot create version tags after importing
       the ruleset; add the Integration actor manually or regenerate with the
-      answer set. The App ID belongs to the App, not to an installation. The
+      answer set, or update an existing checkout with
+      `copier update --trust --data ci_app_integration_id=<id>`. The bypass
+      applies to every workflow that mints a token from this App, including the
+      Claude implement job's agent push token, so an opted-in repository lets
+      that job create `v*` tags, which Version Tag Immutability then makes
+      undeletable. Recommend a dedicated release-only GitHub App when that
+      matters. The
       Creation ruleset grants it `always` bypass; Immutability keeps an
       empty bypass list on purpose: a moved `v*` tag is code execution in
       every consumer, so nobody bypasses it. Create the standing probe tag on

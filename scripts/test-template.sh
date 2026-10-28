@@ -174,7 +174,7 @@ fi
 # only for Git-backed sources, where it prevents rendering a stale tag.
 run_ruleset_matrix() {
     local matrix_source="$job_tmp/ruleset-matrix-source"
-    local owner_case github_org answer_case render_dir ruleset_file baseline_file
+    local owner_case github_org answer_case render_dir ruleset_file baseline_file golden_file actual_block
     mkdir -p "$matrix_source/template/.github"
     cp "$repo_root/copier.yml" "$matrix_source/copier.yml"
     cp "$repo_root/template/.github/[% if use_foreman %]Tag Protection Ruleset - Version Tag Creation.json[% endif %].jinja" \
@@ -187,6 +187,31 @@ run_ruleset_matrix() {
             github_org=test-org
         fi
         baseline_file=""
+        golden_file="$job_tmp/ruleset-$owner_case-bypass.golden"
+        case "$owner_case" in
+        user)
+            cat >"$golden_file" <<'GOLDEN'
+  "bypass_actors": [
+    {
+      "actor_id": 5,
+      "actor_type": "RepositoryRole",
+      "bypass_mode": "always"
+    }
+  ]
+GOLDEN
+            ;;
+        org)
+            cat >"$golden_file" <<'GOLDEN'
+  "bypass_actors": [
+    {
+      "actor_id": null,
+      "actor_type": "OrganizationAdmin",
+      "bypass_mode": "always"
+    }
+  ]
+GOLDEN
+            ;;
+        esac
 
         for answer_case in baseline empty set; do
             render_dir="$job_tmp/ruleset-$owner_case-$answer_case"
@@ -194,7 +219,7 @@ run_ruleset_matrix() {
                 --trust
                 --skip-tasks
                 --defaults
-                --data "project_name=R9 Ruleset Matrix"
+                --data "project_name=Integration Bypass Matrix"
                 --data "author_git_provider_username=evanharmon1"
                 --data "github_org=$github_org"
                 --data use_foreman=true
@@ -215,6 +240,8 @@ run_ruleset_matrix() {
                 err "Creation ruleset missing from the $owner_case/$answer_case matrix render"
                 return 1
             }
+            actual_block="$job_tmp/ruleset-$owner_case-$answer_case-bypass.actual"
+            sed -n '/^  "bypass_actors": \[$/,/^  \]$/p' "$ruleset_file" >"$actual_block"
 
             if have npx; then
                 if ! run_quiet --in "$render_dir" "ruleset-$owner_case-$answer_case-prettier" \
@@ -239,10 +266,16 @@ run_ruleset_matrix() {
                     err "$owner_case no-answer baseline unexpectedly has an Integration actor"
                     return 1
                 }
+                if ! cmp -s "$golden_file" "$actual_block"; then
+                    diff -u "$golden_file" "$actual_block" >&2 || true
+                    err "$owner_case no-answer bypass block differs from the pre-PR golden bytes"
+                    return 1
+                fi
                 ;;
             empty)
-                if ! cmp -s "$baseline_file" "$ruleset_file"; then
-                    err "$owner_case empty answer changed the no-answer Creation ruleset render"
+                if ! cmp -s "$golden_file" "$actual_block"; then
+                    diff -u "$golden_file" "$actual_block" >&2 || true
+                    err "$owner_case empty-answer bypass block differs from the pre-PR golden bytes"
                     return 1
                 fi
                 ;;
@@ -261,6 +294,53 @@ run_ruleset_matrix() {
             esac
         done
     done
+
+    local invalid_id invalid_dest invalid_log
+    local invalid_args=(
+        --trust
+        --skip-tasks
+        --defaults
+        --data "project_name=Integration Bypass Matrix"
+        --data author_git_provider_username=evanharmon1
+        --data github_org=evanharmon1
+        --data use_foreman=true
+    )
+    for invalid_id in 0 0123; do
+        invalid_dest="$job_tmp/ruleset-invalid-id-$invalid_id"
+        invalid_log="$job_tmp/ruleset-invalid-id-$invalid_id.log"
+        if copier copy "${invalid_args[@]}" --data "ci_app_integration_id=$invalid_id" \
+            "$matrix_source" "$invalid_dest" >"$invalid_log" 2>&1; then
+            err "non-positive or leading-zero ci_app_integration_id '$invalid_id' was accepted"
+            return 1
+        elif ! grep -Fq 'CI APP INTEGRATION ID must be a positive integer' "$invalid_log"; then
+            cat "$invalid_log" >&2
+            err "invalid ci_app_integration_id '$invalid_id' failed without the expected validation message"
+            return 1
+        fi
+    done
+
+    local trimmed_dest="$job_tmp/ruleset-trimmed-id"
+    local trimmed_file="$trimmed_dest/.github/Tag Protection Ruleset - Version Tag Creation.json"
+    local trimmed_args=(
+        --trust
+        --skip-tasks
+        --defaults
+        --data "project_name=Integration Bypass Matrix"
+        --data author_git_provider_username=evanharmon1
+        --data github_org=evanharmon1
+        --data use_foreman=true
+        --data "ci_app_integration_id= 12 "
+    )
+    if ! run_quiet ruleset-trimmed-id-render copier copy \
+        "${trimmed_args[@]}" "$matrix_source" "$trimmed_dest"; then
+        err "Copier rejected a whitespace-padded positive ci_app_integration_id"
+        return 1
+    fi
+    jq -e '[.bypass_actors[] | select(.actor_type == "Integration" and .actor_id == 12 and .bypass_mode == "always")] | length == 1' \
+        "$trimmed_file" >/dev/null || {
+        err "whitespace-padded ci_app_integration_id did not render as numeric Integration actor 12"
+        return 1
+    }
 }
 
 # Answers shared by every profile. Side-effectful answers are forced off so
