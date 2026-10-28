@@ -41,6 +41,7 @@ skill_categories:
   - matt-pocock
 
 use_foreman: true
+ci_app_integration_id: "4109947"
 foreman_additional_trusted_actors: AdmiralFraggle
 trusted_orchestrator_actor_ids: "37220977, 269859446"
 

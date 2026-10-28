@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # test-template.sh — render the Copier template into a temp dir and validate it.
 #
-# Usage: ./scripts/test-template.sh <profile> [full|renovate-config]
+# Usage: ./scripts/test-template.sh <profile> [full|renovate-config|ruleset-matrix]
 # Profiles: minimal | web | webapp | iac | full | meta
 #
 # IMPORTANT: files with CONDITIONAL NAMES are never even compiled by jinja
@@ -35,7 +35,7 @@ export GIT_CONFIG_KEY_1=gc.autoDetach GIT_CONFIG_VALUE_1=false
 profile="${1:-minimal}"
 validation_scope="${2:-full}"
 case "$validation_scope" in
-full | renovate-config) ;;
+full | renovate-config | ruleset-matrix) ;;
 *)
     echo "Unknown validation scope: ${validation_scope}" >&2
     exit 2
@@ -167,6 +167,182 @@ if ! have copier; then
     exit 1
 fi
 
+# Exercise the owner/answer combinations independently of the large rendered
+# profiles. The fixture contains the real copier.yml and only the Creation
+# ruleset template, so Copier renders precisely the file whose whitespace is
+# under test. It intentionally has no Git metadata: `--vcs-ref=HEAD` is used
+# only for Git-backed sources, where it prevents rendering a stale tag.
+run_ruleset_matrix() {
+    local matrix_source="$job_tmp/ruleset-matrix-source"
+    local owner_case github_org answer_case render_dir ruleset_file baseline_file golden_file actual_block
+    mkdir -p "$matrix_source/template/.github"
+    cp "$repo_root/copier.yml" "$matrix_source/copier.yml"
+    cp "$repo_root/template/.github/[% if use_foreman %]Tag Protection Ruleset - Version Tag Creation.json[% endif %].jinja" \
+        "$matrix_source/template/.github/[% if use_foreman %]Tag Protection Ruleset - Version Tag Creation.json[% endif %].jinja"
+
+    for owner_case in user org; do
+        if [ "$owner_case" = user ]; then
+            github_org=evanharmon1
+        else
+            github_org=test-org
+        fi
+        baseline_file=""
+        golden_file="$job_tmp/ruleset-$owner_case-bypass.golden"
+        case "$owner_case" in
+        user)
+            cat >"$golden_file" <<'GOLDEN'
+  "bypass_actors": [
+    {
+      "actor_id": 5,
+      "actor_type": "RepositoryRole",
+      "bypass_mode": "always"
+    }
+  ]
+GOLDEN
+            ;;
+        org)
+            cat >"$golden_file" <<'GOLDEN'
+  "bypass_actors": [
+    {
+      "actor_id": null,
+      "actor_type": "OrganizationAdmin",
+      "bypass_mode": "always"
+    }
+  ]
+GOLDEN
+            ;;
+        esac
+
+        for answer_case in baseline empty set; do
+            render_dir="$job_tmp/ruleset-$owner_case-$answer_case"
+            local copier_args=(
+                --trust
+                --skip-tasks
+                --defaults
+                --data "project_name=Integration Bypass Matrix"
+                --data "author_git_provider_username=evanharmon1"
+                --data "github_org=$github_org"
+                --data use_foreman=true
+            )
+            case "$answer_case" in
+            empty) copier_args+=(--data ci_app_integration_id=) ;;
+            set) copier_args+=(--data ci_app_integration_id=4109947) ;;
+            esac
+
+            if ! run_quiet "ruleset-$owner_case-$answer_case-render" copier copy \
+                "${copier_args[@]}" "$matrix_source" "$render_dir"; then
+                err "Copier failed for the $owner_case/$answer_case Creation ruleset matrix case"
+                return 1
+            fi
+
+            ruleset_file="$render_dir/.github/Tag Protection Ruleset - Version Tag Creation.json"
+            [ -f "$ruleset_file" ] || {
+                err "Creation ruleset missing from the $owner_case/$answer_case matrix render"
+                return 1
+            }
+            actual_block="$job_tmp/ruleset-$owner_case-$answer_case-bypass.actual"
+            sed -n '/^  "bypass_actors": \[$/,/^  \]$/p' "$ruleset_file" >"$actual_block"
+
+            if have npx; then
+                if ! run_quiet --in "$render_dir" "ruleset-$owner_case-$answer_case-prettier" \
+                    env "NPM_CONFIG_CACHE=$job_tmp/npm-cache" npx --yes prettier@3 \
+                    --no-config --single-quote --no-semi --trailing-comma none \
+                    --print-width 100 --check "$ruleset_file"; then
+                    err "Creation ruleset is not Prettier-clean for $owner_case/$answer_case"
+                    return 1
+                fi
+            else
+                required npx "Creation ruleset Prettier check" || {
+                    fail=1
+                    return 1
+                }
+            fi
+
+            case "$answer_case" in
+            baseline)
+                baseline_file="$ruleset_file"
+                jq -e '[.bypass_actors[] | select(.actor_type == "Integration")] | length == 0' \
+                    "$ruleset_file" >/dev/null || {
+                    err "$owner_case no-answer baseline unexpectedly has an Integration actor"
+                    return 1
+                }
+                if ! cmp -s "$golden_file" "$actual_block"; then
+                    diff -u "$golden_file" "$actual_block" >&2 || true
+                    err "$owner_case no-answer bypass block differs from the pre-PR golden bytes"
+                    return 1
+                fi
+                ;;
+            empty)
+                if ! cmp -s "$golden_file" "$actual_block"; then
+                    diff -u "$golden_file" "$actual_block" >&2 || true
+                    err "$owner_case empty-answer bypass block differs from the pre-PR golden bytes"
+                    return 1
+                fi
+                ;;
+            set)
+                if ! jq --slurpfile baseline "$baseline_file" -e '
+                    ([.bypass_actors[] | select(.actor_type == "Integration")]) ==
+                      [{"actor_id": 4109947, "actor_type": "Integration", "bypass_mode": "always"}]
+                    and
+                    ([.bypass_actors[] | select(.actor_type != "Integration")]) ==
+                      $baseline[0].bypass_actors
+                ' "$ruleset_file" >/dev/null; then
+                    err "$owner_case set answer did not add exactly one Integration actor to its baseline"
+                    return 1
+                fi
+                ;;
+            esac
+        done
+    done
+
+    local invalid_id invalid_dest invalid_log
+    local invalid_args=(
+        --trust
+        --skip-tasks
+        --defaults
+        --data "project_name=Integration Bypass Matrix"
+        --data author_git_provider_username=evanharmon1
+        --data github_org=evanharmon1
+        --data use_foreman=true
+    )
+    for invalid_id in 0 0123; do
+        invalid_dest="$job_tmp/ruleset-invalid-id-$invalid_id"
+        invalid_log="$job_tmp/ruleset-invalid-id-$invalid_id.log"
+        if copier copy "${invalid_args[@]}" --data "ci_app_integration_id=$invalid_id" \
+            "$matrix_source" "$invalid_dest" >"$invalid_log" 2>&1; then
+            err "non-positive or leading-zero ci_app_integration_id '$invalid_id' was accepted"
+            return 1
+        elif ! grep -Fq 'CI APP INTEGRATION ID must be a positive integer' "$invalid_log"; then
+            cat "$invalid_log" >&2
+            err "invalid ci_app_integration_id '$invalid_id' failed without the expected validation message"
+            return 1
+        fi
+    done
+
+    local trimmed_dest="$job_tmp/ruleset-trimmed-id"
+    local trimmed_file="$trimmed_dest/.github/Tag Protection Ruleset - Version Tag Creation.json"
+    local trimmed_args=(
+        --trust
+        --skip-tasks
+        --defaults
+        --data "project_name=Integration Bypass Matrix"
+        --data author_git_provider_username=evanharmon1
+        --data github_org=evanharmon1
+        --data use_foreman=true
+        --data "ci_app_integration_id= 12 "
+    )
+    if ! run_quiet ruleset-trimmed-id-render copier copy \
+        "${trimmed_args[@]}" "$matrix_source" "$trimmed_dest"; then
+        err "Copier rejected a whitespace-padded positive ci_app_integration_id"
+        return 1
+    fi
+    jq -e '[.bypass_actors[] | select(.actor_type == "Integration" and .actor_id == 12 and .bypass_mode == "always")] | length == 1' \
+        "$trimmed_file" >/dev/null || {
+        err "whitespace-padded ci_app_integration_id did not render as numeric Integration actor 12"
+        return 1
+    }
+}
+
 # Answers shared by every profile. Side-effectful answers are forced off so
 # this is safe to run anywhere (no gh repo create, no iCloud moves). The meta
 # profile re-enables bunch/obsidian but renders with --skip-tasks.
@@ -215,8 +391,8 @@ webapp)
     ;;
 iac)
     data_args+=(--data project_type=iac)
-    # Exercise the foreman ON branch with otherwise-default answers
-    # (use_foreman defaults off; full covers ON + coderabbit/cloud review).
+    # Exercise Foreman with the new optional App ID left empty; the ruleset
+    # must retain its old admin-only bypass output in this profile.
     data_args+=(--data use_foreman=true)
     ;;
 full)
@@ -258,6 +434,7 @@ full)
         --data use_fly_sprites=true
         --data devcontainer_coder_folder_uri="vscode-remote://dev-container+7b22686f737450617468223a222f7372762f636f6465722f736d6f6b652d74657374222c22636f6e66696746696c65223a7b2270617468223a222f7372762f636f6465722f736d6f6b652d746573742f2e646576636f6e7461696e65722f6465762f646576636f6e7461696e65722e6a736f6e227d7d@ssh-remote+coder.dev/workspaces/smoke-test"
         --data use_foreman=true
+        --data ci_app_integration_id=4109947
         --data foreman_additional_trusted_actors="AdmiralFraggle,review-app[bot]"
     )
     ;;
@@ -285,12 +462,31 @@ meta)
     ;;
 esac
 
+if [ "$validation_scope" = "ruleset-matrix" ]; then
+    run_ruleset_matrix || fail=1
+    [ "$fail" -eq 0 ] || exit 1
+    echo "Creation ruleset owner/answer matrix passed"
+    exit 0
+fi
+
 if [ -n "$(git -C "$repo_root" status --porcelain)" ]; then
     echo "NOTE: dirty working tree — copier will include dirty/untracked changes (DirtyLocalWarning)."
 fi
 
 echo "Rendering profile '${profile}' into ${dest}"
 copier copy --trust --defaults --vcs-ref=HEAD "${copier_flags[@]+"${copier_flags[@]}"}" "${data_args[@]}" "$repo_root" "$dest"
+
+if [ "$profile" = "full" ]; then
+    invalid_id_dest="$job_tmp/render-invalid-integration-id"
+    if copier copy --trust --defaults --vcs-ref=HEAD \
+        "${copier_flags[@]+"${copier_flags[@]}"}" \
+        "${data_args[@]}" --data ci_app_integration_id=not-a-number \
+        "$repo_root" "$invalid_id_dest" >"$job_tmp/invalid-integration-id.log" 2>&1; then
+        err "non-numeric ci_app_integration_id was accepted"
+    elif ! grep -Fq 'CI APP INTEGRATION ID must be a positive integer' "$job_tmp/invalid-integration-id.log"; then
+        err "invalid ci_app_integration_id failed without the expected validation message"
+    fi
+fi
 
 cd "$dest"
 
@@ -1964,9 +2160,16 @@ iac | full)
     if [ "$profile" = "full" ]; then # org-owned
         grep -q 'OrganizationAdmin' ".github/Tag Protection Ruleset - Version Tag Creation.json" ||
             err "org repo's Creation ruleset lacks the OrganizationAdmin bypass"
+        jq -e '[.bypass_actors[] | select(.actor_type == "Integration" and .actor_id == 4109947 and .bypass_mode == "always")] | length == 1' ".github/Tag Protection Ruleset - Version Tag Creation.json" >/dev/null ||
+            err "Creation ruleset is missing the configured Integration bypass"
     else # iac — personal-account
         grep -q '"actor_type": "RepositoryRole"' ".github/Tag Protection Ruleset - Version Tag Creation.json" ||
             err "personal repo's Creation ruleset lacks the repository-admin bypass (OrganizationAdmin does not exist there)"
+        jq -e '.bypass_actors == [{"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "always"}]' ".github/Tag Protection Ruleset - Version Tag Creation.json" >/dev/null ||
+            err "empty ci_app_integration_id changed the Creation ruleset bypass actors"
+    fi
+    if [ "$profile" = "full" ] && [ "$validation_scope" = "full" ]; then
+        run_ruleset_matrix || fail=1
     fi
     ;;
 *)
