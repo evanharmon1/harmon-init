@@ -733,8 +733,11 @@ meets its exit condition on round 1 is done, whatever the cap allowed.
   `gh pr merge`, remote `gh repo sync` targets and protected pushes. API calls
   stay silent only for proved reads or explicitly allowlisted safe writes;
   unknown writes ask. Feature pushes, including no-refspec pushes, stay silent
-  only with a verified non-mirror destination. Allowed companions use the
-  existing branch-aware grammar.
+  only when the destination ref is the branch's own name, no ref mapping or
+  repository redirect applies, and that name is not the destination's default
+  branch. Allowed companions use the existing branch-aware grammar.
+  A push chained after other commands, such as a commit followed by
+  `&& git push`, asks, so run the push as its own command.
   (`.claude/settings.json` backstops this with `permissions.ask` rules on
   pushes to main and force-pushes (prefix rules: a backstop, not a boundary), plus the
   `git-merge-guard` hook, which asks

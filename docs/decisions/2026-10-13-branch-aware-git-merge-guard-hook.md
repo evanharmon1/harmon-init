@@ -71,9 +71,12 @@ requires proof that the destination ref equals the current branch's own name
 and that name is not the destination repository's default branch. Ref mappings
 can invalidate the first proof, and repository redirections invalidate the
 fetch-side default-branch proof even with an explicit source:destination.
-Every configured value participates in the proof. gh detection is position-free,
-like git detection, so an unlisted wrapper cannot hide a literal gh operation;
-argument data such as `echo gh pr merge 1` therefore asks too.
+Every configured value participates in the proof. gh at a command position
+keeps its fail-closed classification. Outside command position, a gh word is
+data unless a following word in the same simple command is nonliteral or
+literally `pr`, `api` or `repo`; those cases receive the full classification.
+This covers unlisted wrappers while keeping ordinary data words silent;
+`echo gh pr merge 1` therefore still asks.
 A push beside companions other than `true`, `false`, `git status` and a verified
 `git fetch <remote>` (for example `git commit … && git push`) asks.
 Compounds reuse the existing companion grammar. `permissions.ask` remains a prefix-matching backstop when

@@ -121,9 +121,11 @@ hides the `git` word itself (a variable as the whole command, brace expansion
 such as `{git,merge} feat`, or a glob such as `gi[t]`); it is a backstop
 against mistakes, not an adversarial boundary. A `case` pattern inside `$(...)`
 can end the substitution early. An unquoted `git merge` in another command's
-arguments (`echo git pull`) asks. gh detection is likewise position-free:
-every gh word is classified with its following arguments, so unlisted wrappers
-cannot hide it. Data such as `echo gh pr merge 1` also asks, by design.
+arguments (`echo git pull`) asks. gh at a command position is classified
+fail-closed. Outside command position, a gh word is data unless a following
+word in the same simple command is nonliteral or literally pr, api or repo;
+then it receives the full classification too. This covers unlisted wrappers
+without gating ordinary data words. `echo gh pr merge 1` still asks, by design.
 The hook is the primary local merge gate; `permissions.ask` rules remain a
 prefix-matching backstop when hooks do not run. API classification proves a
 read or an explicitly safe write; there is no dangerous-operation denylist.
@@ -1290,8 +1292,15 @@ def command_might_merge(cmd, text, depth, appended=False):
                 return True
     for i, w in enumerate(words):
         name = base(w)
-        if name == "gh" and gh_might_land(words, i, appended):
-            return True
+        if name == "gh":
+            # Outside command position, classify only when a following word
+            # could name a controlled subcommand; all other gh words are data.
+            controls = i in positions or any(
+                not x.literal or x.value in {"pr", "api", "repo"}
+                for x in words[i + 1:]
+            )
+            if controls and gh_might_land(words, i, appended):
+                return True
         if name == "git" and depth > 0 and git_subcommand(words, i) == "push":
             return True
         if name == "git" and git_might_merge(words, i):

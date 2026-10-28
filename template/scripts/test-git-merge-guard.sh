@@ -457,6 +457,12 @@ mutation { resolveReviewThread(input: {}) { clientMutationId } }'"'"''
     for cmd in 'uv run gh pr view 1' 'command -v gh' 'which gh' 'ls /usr/local/bin/gh'; do
         case_ "$g" silent "$r" "$cmd"
     done
+    # R16 I2-1: gh data words are silent unless following words control an operation.
+    for cmd in 'grep gh -r .' 'rg gh -t sh' 'find / -name gh -type f' 'brew install gh --quiet' 'apt-get install gh -y' 'ls ~/.config/gh -la' 'gh repo view cli/gh --json name'; do
+        case_ "$g" silent "$r" "$cmd"
+    done
+    case_ "$g" ask "$r" 'uv run gh --admin 1 pr merge'
+    case_ "$g" ask "$r" 'uv run gh "$X"'
     # 2026-10-25 observed shapes: lane catch-ups and evaluator mentions.
     case_ "$g" silent "$r" "git -C ${r}/wt merge --ff-only abc123"
     case_ "$g" silent "${r}/wt" "git fetch origin && git merge --ff-only abc123"
