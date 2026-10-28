@@ -335,13 +335,62 @@
           }
         },
         "collection": {
-          "description": "Required (non-null) for a pr-cloud finder, and null for a local-cli finder (which is invoked directly, never collected).",
+          "description": "Required (non-null) for a pr-cloud finder, and null for a local-cli finder (which is invoked directly, never collected). The trigger and terminal signals make the collection protocol explicit for the integrate gate.",
           "type": ["object", "null"],
           "additionalProperties": false,
-          "required": ["type", "protocol"],
+          "required": ["type", "protocol", "trigger", "terminal_signals"],
           "properties": {
             "type": { "const": "shepherd-checker" },
-            "protocol": { "type": "string", "minLength": 1 }
+            "protocol": { "type": "string", "minLength": 1 },
+            "trigger": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": ["mechanism", "body", "reviewer_login"],
+              "properties": {
+                "mechanism": { "enum": ["review-comment", "requested-reviewer"] },
+                "body": { "type": ["string", "null"], "minLength": 1 },
+                "reviewer_login": { "type": ["string", "null"], "minLength": 1 }
+              }
+            },
+            "terminal_signals": {
+              "type": "object",
+              "additionalProperties": false,
+              "required": [
+                "surfaces",
+                "head_binding",
+                "verdict_mode",
+                "clean_verdict",
+                "actionable_pattern",
+                "severity_marker",
+                "metadata_line",
+                "about_summary",
+                "heading",
+                "carrier_sentence",
+                "success_reaction",
+                "pending_reaction"
+              ],
+              "properties": {
+                "surfaces": {
+                  "type": "array",
+                  "minItems": 1,
+                  "uniqueItems": true,
+                  "items": { "enum": ["reaction", "comment", "review", "inline"] }
+                },
+                "head_binding": { "enum": ["reviewed-commit-line", "review-commit-id"] },
+                "verdict_mode": {
+                  "enum": ["clean-sentence", "actionable-count", "inline-comment-count"]
+                },
+                "clean_verdict": { "type": ["string", "null"], "minLength": 1 },
+                "actionable_pattern": { "type": ["string", "null"], "minLength": 1 },
+                "severity_marker": { "type": ["string", "null"], "minLength": 1 },
+                "metadata_line": { "type": ["string", "null"], "minLength": 1 },
+                "about_summary": { "type": ["string", "null"], "minLength": 1 },
+                "heading": { "type": ["string", "null"], "minLength": 1 },
+                "carrier_sentence": { "type": ["string", "null"], "minLength": 1 },
+                "success_reaction": { "type": ["string", "null"], "minLength": 1 },
+                "pending_reaction": { "type": ["string", "null"], "minLength": 1 }
+              }
+            }
           }
         },
         "trusted_actor_id": {

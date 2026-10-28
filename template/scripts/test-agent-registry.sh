@@ -21,6 +21,99 @@ command -v node >/dev/null 2>&1 || fail "node is required to validate the agent 
 
 node "$validator" "$registry" "$schema"
 
+node --input-type=module - "$registry" <<'NODE' || fail "trusted integrate finder profile validation failed"
+import { readFile } from 'node:fs/promises'
+
+const registry = JSON.parse(await readFile(process.argv[2], 'utf8'))
+const trustedCloud = (document) => document.finders.filter((finder) =>
+  finder.surface === 'pr-cloud' &&
+  finder.trusted_actor_id !== null &&
+  finder.trusted_actor_id !== undefined
+)
+const profileErrors = (finder) => {
+  const errors = []
+  const collection = finder.collection
+  const trigger = collection?.trigger
+  if (typeof finder.trusted_actor_id !== 'string' || finder.trusted_actor_id.length === 0) {
+    errors.push('trusted_actor_id')
+  }
+  if (typeof finder.trusted_actor_login !== 'string' || finder.trusted_actor_login.length === 0) {
+    errors.push('trusted_actor_login')
+  }
+  if (typeof collection?.protocol !== 'string') errors.push('collection.protocol')
+  if (typeof trigger?.mechanism !== 'string') {
+    errors.push('collection.trigger.mechanism')
+  } else if (trigger.mechanism === 'review-comment') {
+    if (typeof trigger.body !== 'string' || trigger.body.length === 0 || trigger.reviewer_login !== null) {
+      errors.push('collection.trigger.body/reviewer_login')
+    }
+  } else if (trigger.mechanism === 'requested-reviewer') {
+    if (
+      typeof trigger.reviewer_login !== 'string' ||
+      trigger.reviewer_login.length === 0 ||
+      trigger.body !== null
+    ) {
+      errors.push('collection.trigger.reviewer_login')
+    }
+  } else {
+    errors.push(`unsupported trigger mechanism ${trigger.mechanism}`)
+  }
+  if (
+    !collection?.terminal_signals ||
+    typeof collection.terminal_signals !== 'object' ||
+    Array.isArray(collection.terminal_signals)
+  ) {
+    errors.push('collection.terminal_signals')
+  }
+  return errors
+}
+
+const problems = trustedCloud(registry).flatMap((finder) =>
+  profileErrors(finder).map((field) => `${finder.slug}: ${field}`)
+)
+if (problems.length > 0) {
+  console.error(`FAIL: trusted integrate finder profile is incomplete: ${problems.join(', ')}`)
+  process.exit(1)
+}
+console.log('PASS: trusted pr-cloud finder profiles include the fields required by the integrate gate')
+
+const candidates = trustedCloud(registry)
+if (candidates.length === 0) {
+  console.log('SKIP: no trusted pr-cloud finder is configured to mutate')
+  process.exit(0)
+}
+const slug = candidates[0].slug
+let failures = 0
+const rejectsMissing = (description, mutate) => {
+  const mutated = structuredClone(registry)
+  mutate(mutated.finders.find((finder) => finder.slug === slug))
+  if (trustedCloud(mutated).every((finder) => profileErrors(finder).length === 0)) {
+    console.error(`FAIL: trusted pr-cloud profile passed with missing ${description}`)
+    failures += 1
+  } else {
+    console.log(`PASS: trusted pr-cloud profile fails when ${description} is missing`)
+  }
+}
+rejectsMissing('trusted_actor_login', (finder) => { delete finder.trusted_actor_login })
+rejectsMissing('trusted_actor_id', (finder) => { finder.trusted_actor_id = '' })
+rejectsMissing('collection.protocol', (finder) => { delete finder.collection.protocol })
+rejectsMissing('collection.trigger', (finder) => { delete finder.collection.trigger })
+rejectsMissing('collection.trigger.mechanism', (finder) => { delete finder.collection.trigger.mechanism })
+rejectsMissing('review-comment body', (finder) => { delete finder.collection.trigger.body })
+rejectsMissing('collection.terminal_signals', (finder) => { delete finder.collection.terminal_signals })
+
+const requestedReviewer = structuredClone(registry)
+const requestedFinder = requestedReviewer.finders.find((finder) => finder.slug === slug)
+requestedFinder.collection.trigger = { mechanism: 'requested-reviewer', body: null, reviewer_login: null }
+if (!profileErrors(requestedFinder).includes('collection.trigger.reviewer_login')) {
+  console.error('FAIL: requested-reviewer profile passed without reviewer_login')
+  failures += 1
+} else {
+  console.log('PASS: requested-reviewer profile fails without reviewer_login')
+}
+process.exit(failures === 0 ? 0 : 1)
+NODE
+
 test_tmp="$(mktemp -d)"
 trap 'rm -rf "$test_tmp"' EXIT
 mutated="${test_tmp}/agent-registry.json"
@@ -248,7 +341,7 @@ switch (mutation) {
     finder('codex-cloud').invocation = { type: 'taskfile-target', target: 'bogus' }
     break
   case 'local-cli-finder-with-collection':
-    finder('codex-adversarial').collection = { type: 'shepherd-checker', protocol: 'x' }
+    finder('codex-adversarial').collection = structuredClone(finder('codex-cloud').collection)
     break
   case 'local-cli-finder-with-trusted-actor':
     finder('codex-adversarial').trusted_actor_id = '1'
