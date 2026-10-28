@@ -66,9 +66,17 @@ require every root field to be allowlisted. Operation-controlling inputs must
 be literal; presentation values and non-query field values may be dynamic.
 Evaluated API/sync strings and append-mode API feeders ask without further
 interpretation. The same hook gates `gh pr merge`, remote `gh repo sync` targets
-and protected/mirror pushes. No-refspec feature pushes require proved remote,
-configuration and same-name upstream invariants. Compounds reuse the existing
-companion grammar. `permissions.ask` remains a prefix-matching backstop when
+and protected/mirror pushes. Every push form shares one invariant: silence
+requires proof that the destination ref equals the current branch's own name
+and that name is not the destination repository's default branch. Ref mappings
+can invalidate the first proof, and repository redirections invalidate the
+fetch-side default-branch proof even with an explicit source:destination.
+Every configured value participates in the proof. gh detection is position-free,
+like git detection, so an unlisted wrapper cannot hide a literal gh operation;
+argument data such as `echo gh pr merge 1` therefore asks too.
+A push beside companions other than `true`, `false`, `git status` and a verified
+`git fetch <remote>` (for example `git commit … && git push`) asks.
+Compounds reuse the existing companion grammar. `permissions.ask` remains a prefix-matching backstop when
 hooks do not run. The bot/agent boundary and merge/pull allowlist are unchanged.
 
 1. **Replace the `git merge` ask rules with `.claude/hooks/git-merge-guard.py`.**

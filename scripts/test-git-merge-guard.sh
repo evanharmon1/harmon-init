@@ -371,10 +371,10 @@ matrix() { # guard
     case_ "$g" ask "$r" 'op run --env-file "$FILE" gh pr merge 1'
     case_ "$g" ask "$r" 'op run -- op run -- gh pr merge 1'
     case_ "$g" ask "$r" 'env KEY=value op run -- gh pr merge 1'
-    case_ "$g" silent "$r" 'op inject -- gh pr merge 1'
+    case_ "$g" ask "$r" 'op inject -- gh pr merge 1'
     case_ "$g" silent "$r" 'op inject -i template.txt -o output.txt'
-    case_ "$g" silent "$r" 'echo op run -- gh pr merge 1'
-    case_ "$g" silent "$r" 'op run -- echo gh pr merge 1'
+    case_ "$g" ask "$r" 'echo op run -- gh pr merge 1'
+    case_ "$g" ask "$r" 'op run -- echo gh pr merge 1'
     # R14 V2-1: help/version are non-executing; flag values are still data.
     for cmd in 'gh --version' 'gh -v' 'gh --help' 'gh -h' 'gh help pr merge' 'gh pr --help' 'gh pr merge --help' 'gh pr merge -h' 'gh api --help' 'gh api -h' 'gh -R o/r help api' 'gh -R o/r pr merge --admin --help'; do
         case_ "$g" silent "$r" "$cmd"
@@ -400,6 +400,63 @@ mutation { mergePullRequest(input: {}) { clientMutationId } }'"'"''
     case_ "$g" silent "$r" 'gh api graphql -f '"'"'query=# leading comment
 mutation { resolveReviewThread(input: {}) { clientMutationId } }'"'"''
     case_ "$g" ask "$r" 'gh api graphql -f '"'"'query=query Q { viewer { login } } mutation M { mergePullRequest(input: {}) { clientMutationId } }'"'"''
+    # R15 I1-1/2/4: every push form shares destination ref/repository proof.
+    local push_cmd
+    git -C "$pp" config push.default upstream
+    git -C "$pp" config branch.feat.merge refs/heads/main
+    for push_cmd in 'git push' 'git push origin' 'git push origin feat' 'git push -u origin feat' 'git push origin refs/heads/feat' 'git push origin HEAD'; do
+        case_ "$g" ask "${pp}/wt" "$push_cmd"
+    done
+    case_ "$g" silent "${pp}/wt" 'git push origin HEAD:feat'
+    git -C "$pp" config branch.feat.merge refs/heads/feat
+    git -C "$pp" config --unset push.default
+    git -C "$pp" config remote.origin.push refs/heads/feat:refs/heads/main
+    for push_cmd in 'git push' 'git push origin' 'git push origin feat' 'git push -u origin feat' 'git push origin HEAD'; do
+        case_ "$g" ask "${pp}/wt" "$push_cmd"
+    done
+    case_ "$g" silent "${pp}/wt" 'git push origin HEAD:feat'
+    git -C "$pp" config --unset remote.origin.push
+    # Any pushurl disqualifies repository proof, including an empty first value.
+    git -C "$pp" config --add remote.origin.pushurl ''
+    git -C "$pp" config --add remote.origin.pushurl "${tmp}/other.git"
+    for push_cmd in 'git push' 'git push origin' 'git push origin feat' 'git push -u origin feat' 'git push origin HEAD' 'git push origin HEAD:feat'; do
+        case_ "$g" ask "${pp}/wt" "$push_cmd"
+    done
+    git -C "$pp" config --unset-all remote.origin.pushurl
+    # Match the first value, not just the last pushInsteadOf rule.
+    git -C "$pp" config --add "url.${tmp}/redirect.git.pushInsteadOf" "${tmp}/"
+    git -C "$pp" config --add "url.${tmp}/redirect.git.pushInsteadOf" 'nonmatching-prefix'
+    for push_cmd in 'git push' 'git push origin' 'git push origin feat' 'git push -u origin feat' 'git push origin HEAD' 'git push origin HEAD:feat'; do
+        case_ "$g" ask "${pp}/wt" "$push_cmd"
+    done
+    git -C "$pp" config --unset-all "url.${tmp}/redirect.git.pushInsteadOf"
+    git -C "$pp" config --add remote.origin.mirror true
+    git -C "$pp" config --add remote.origin.mirror false
+    case_ "$g" ask "${pp}/wt" 'git push origin HEAD:feat'
+    git -C "$pp" config --unset-all remote.origin.mirror
+    git -C "$pp" config --add push.default matching
+    git -C "$pp" config --add push.default simple
+    case_ "$g" ask "${pp}/wt" 'git push origin feat'
+    git -C "$pp" config --unset-all push.default
+    git -C "$pp" config branch.feat.pushRemote backup
+    case_ "$g" ask "${pp}/wt" 'git push origin HEAD:feat'
+    git -C "$pp" config --unset branch.feat.pushRemote
+    git -C "$pp" config remote.pushDefault backup
+    case_ "$g" ask "${pp}/wt" 'git push origin HEAD:feat'
+    git -C "$pp" config --unset remote.pushDefault
+    case_ "$g" silent "${pp}/wt" 'git push -u origin HEAD'
+    case_ "$g" silent "${pp}/wt" 'git push origin refs/heads/feat'
+    case_ "$g" ask "$pp" 'git push origin HEAD'
+    case_ "$g" ask "${pp}/wt" 'GIT PUSH origin main'
+    case_ "$g" ask "${pp}/wt" 'git-push origin main'
+    case_ "$g" ask "${pp}/wt" 'git commit -m message && git push origin feat'
+    # I1-3: no wrapper vocabulary can hide a literal gh word now.
+    for cmd in 'flock /tmp/l gh pr merge 1' 'uv run gh pr merge 1' 'nix develop -c gh pr merge 1' 'strace -f gh api -X PUT repos/o/r/pulls/1/merge' 'dotenvx run -- gh pr merge 1' 'echo gh pr merge 1'; do
+        case_ "$g" ask "$r" "$cmd"
+    done
+    for cmd in 'uv run gh pr view 1' 'command -v gh' 'which gh' 'ls /usr/local/bin/gh'; do
+        case_ "$g" silent "$r" "$cmd"
+    done
     # 2026-10-25 observed shapes: lane catch-ups and evaluator mentions.
     case_ "$g" silent "$r" "git -C ${r}/wt merge --ff-only abc123"
     case_ "$g" silent "${r}/wt" "git fetch origin && git merge --ff-only abc123"

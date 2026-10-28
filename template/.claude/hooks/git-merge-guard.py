@@ -121,16 +121,21 @@ hides the `git` word itself (a variable as the whole command, brace expansion
 such as `{git,merge} feat`, or a glob such as `gi[t]`); it is a backstop
 against mistakes, not an adversarial boundary. A `case` pattern inside `$(...)`
 can end the substitution early. An unquoted `git merge` in another command's
-arguments (`echo git pull`) asks.
+arguments (`echo git pull`) asks. gh detection is likewise position-free:
+every gh word is classified with its following arguments, so unlisted wrappers
+cannot hide it. Data such as `echo gh pr merge 1` also asks, by design.
 The hook is the primary local merge gate; `permissions.ask` rules remain a
 prefix-matching backstop when hooks do not run. API classification proves a
 read or an explicitly safe write; there is no dangerous-operation denylist.
 Normalized REST paths remain undecoded so encoded separators cannot forge an
 allowlisted route. Unknown GraphQL mutation fields and unreadable controlling
 inputs ask. Append-mode API feeders and evaluated API/sync strings ask.
-Literal pushes to an own-name feature branch stay silent, including no-refspec
-pushes proved from remote/config/upstream invariants. Configured mirror pushes
-ask. Compounds use the unchanged companion grammar.
+All push forms share one proof: the destination ref equals the current
+branch's own name, and that name is not the destination repository's default.
+Config-driven ref mappings and repository redirections invalidate that proof;
+explicit src:dst proves only the ref, never a redirected repository. HEAD uses
+the same colon-less proof as the branch name. Every configured value is read.
+Compounds use the unchanged companion grammar.
 `git reset --hard`, `git restore` and
 `git checkout -- .` discard the same conflict resolutions `git merge --abort`
 would, and this hook does not see them. Nor does it see the commands that
@@ -174,7 +179,7 @@ UNGUARDED_PROFILES = {"bot", "agent"}
 PROTECTED = {"main", "master"}
 MERGE_WORDS = {"merge", "pull"}
 # The dashed executables under `git --exec-path`, callable by full path.
-DASHED = {"git-merge", "git-pull"}
+DASHED = {"git-merge", "git-pull", "git-push"}
 MERGE_FLAGS = {"--no-edit", "--no-ff", "--ff", "--ff-only"}
 PULL_FLAGS = {"--ff-only", "--no-edit", "--no-rebase"}
 # A silent pull must name its mode: with `pull.rebase` or `branch.<name>.rebase`
@@ -801,7 +806,7 @@ def git_subcommand(words, i):
         j += 2 if opt in GIT_VALUE_OPTIONS else 1
         if opt == "--":
             break
-    return words[j].value if j < len(words) and words[j].literal else None
+    return words[j].value.strip("\n").lower() if j < len(words) and words[j].literal else None
 
 
 def risky_mention(text):
@@ -1134,100 +1139,115 @@ def gh_might_land(words, i, appended=False):
 
 
 def push_might_land(words, i, cwd):
-    """Prove explicit or configured pushes stay on the same feature name.
+    """Silence requires the destination ref to be this branch's own name,
+    and that name not to be the destination repository's default branch.
 
-    Global options (-C, -c, alternate git dirs) fail closed. No-refspec pushes
-    additionally require the resolved remote/config/upstream invariants below.
+    Every push form shares this proof. An explicit :dst proves only the ref;
+    repository redirections still invalidate the fetch-side remote HEAD proof.
     """
     j = i + 1
     if j < len(words) and words[j].value.startswith("-"):
-        return True
-    if j >= len(words) or words[j].value != "push":
+        return True  # Alternate checkout/config inputs cannot establish cwd.
+    if j >= len(words) or words[j].value.lower() != "push":
         return False
     args = words[j + 1:]
     if any(not w.literal for w in args):
         return True
-    defaults = set(PROTECTED)
-    remotes = git(cwd, "remote")
-    if remotes is None:
-        return True
-    for remote in remotes.split():
-        prefix = f"refs/remotes/{remote}/"
-        ref = git(cwd, "symbolic-ref", "--quiet", prefix + "HEAD")
-        if ref and ref.startswith(prefix):
-            defaults.add(ref[len(prefix):].casefold())
-    if not remotes:
-        return True
     branch = feature_branch(cwd)
-    if not branch:
+    remotes_text = git(cwd, "remote")
+    if not branch or not remotes_text:
         return True
+    remotes = remotes_text.split()
     positional = []
     for w in args:
-        v = w.value
-        if v in ("--all", "--mirror"):
-            return True
-        if v.startswith("-"):
-            if v not in ("-u", "--set-upstream", "--dry-run", "-n", "--verbose", "-v"):
+        if w.value.startswith("-"):
+            if w.value not in {"-u", "--set-upstream", "--dry-run", "-n", "--verbose", "-v"}:
                 return True
         else:
-            positional.append(v)
-    config_text = git(cwd, "config", "--null", "--list")
-    if config_text is None:
+            positional.append(w.value)
+    catalog = git(cwd, "config", "--null", "--list")
+    if catalog is None:
         return True
-    config = {}
-    for entry in config_text.split("\0"):
-        if entry:
-            key, _, value = entry.partition("\n")
-            config.setdefault(key, []).append(value)
+    keys = {entry.partition("\n")[0] for entry in catalog.split("\0") if entry}
 
-    def setting(key):
-        return config.get(key, [None])[-1]
+    def values(key, boolean=False):
+        if key not in keys:
+            return []
+        # Preserve every value exactly, including empty strings/newlines.
+        flags = ["--type=bool"] if boolean else []
+        out = subprocess.run(["git", "-C", cwd, "config", *flags, "--null", "--get-all", key],
+                             capture_output=True, text=True, timeout=5)
+        if out.returncode != 0 or not out.stdout.endswith("\0"):
+            raise ParseError("unreadable push configuration")
+        return out.stdout.split("\0")[:-1]
 
-    push_remote = setting(f"branch.{branch}.pushremote")
-    push_default = setting("remote.pushdefault")
-    upstream_remote = setting(f"branch.{branch}.remote")
+    def single(key):
+        choices = values(key)
+        if len(set(choices)) > 1:
+            raise ParseError("ambiguous push remote")
+        return choices[0] if choices else None
+
+    push_remote = single(f"branch.{branch}.pushremote")
+    push_default = single("remote.pushdefault")
+    upstream_remote = single(f"branch.{branch}.remote")
     remote = (positional[0] if positional else
               push_remote or push_default or upstream_remote or
-              ("origin" if "origin" in remotes.split() else
-               remotes.split()[0] if len(remotes.split()) == 1 else None))
-    if remote not in remotes.split():
-        return True
-    mirror_key = f"remote.{remote}.mirror"
-    if mirror_key in config and git(cwd, "config", "--bool", "--get", mirror_key) != "false":
-        return True
-    prefix = f"refs/remotes/{remote}/"
-    target = git(cwd, "symbolic-ref", "--quiet", prefix + "HEAD")
-    if not target or not target.startswith(prefix):
-        return True
-    for refspec in positional[1:]:
-        if refspec.startswith(("+", ":")):
-            return True
-        dest = refspec.split(":")[-1].removeprefix("refs/heads/")
-        if dest.casefold() in defaults or dest != branch:
-            return True
-    if len(positional) > 1:
-        return False
-    # With no CLI refspec, remote and upstream settings determine the target.
-    if (setting("push.default") or "simple").casefold() not in {
-            "simple", "current", "upstream"}:
-        return True
-    if f"remote.{remote}.push" in config:
+              ("origin" if "origin" in remotes else remotes[0] if len(remotes) == 1 else None))
+    if remote not in remotes:
         return True
     if any(r is not None and r != remote for r in (push_remote, push_default)):
         return True
-    upstream = setting(f"branch.{branch}.merge")
-    if len(config.get(f"branch.{branch}.merge", [])) > 1:
+    if any(v != "false" for v in values(f"remote.{remote}.mirror", boolean=True)):
         return True
-    if upstream_remote is not None or upstream is not None:
-        if not upstream_remote or upstream != f"refs/heads/{branch}":
-            return True
-        # A custom upstream remote may have a different default branch.
-        if upstream_remote != ".":
-            upstream_prefix = f"refs/remotes/{upstream_remote}/"
-            upstream_default = git(cwd, "symbolic-ref", "--quiet", upstream_prefix + "HEAD")
-            if (not upstream_default or not upstream_default.startswith(upstream_prefix)
-                    or upstream_default[len(upstream_prefix):].casefold() == branch.casefold()):
+    urls = values(f"remote.{remote}.url")
+    if len(urls) != 1 or not urls[0] or values(f"remote.{remote}.pushurl"):
+        return True
+    for key in keys:
+        if key.startswith("url.") and key.endswith(".pushinsteadof"):
+            if any(urls[0].startswith(prefix) for prefix in values(key)):
                 return True
+    prefix = f"refs/remotes/{remote}/"
+    default = git(cwd, "symbolic-ref", "--quiet", prefix + "HEAD")
+    if (not default or not default.startswith(prefix)
+            or branch.casefold() in PROTECTED | {default[len(prefix):].casefold()}):
+        return True
+
+    refs = positional[1:]
+    # Defaults and remote push mappings affect colon-less refs as well as bare
+    # pushes; evaluate them before returning for any source form, including HEAD.
+    implicit = not refs or any(":" not in ref for ref in refs)
+    upstream = values(f"branch.{branch}.merge")
+    if implicit:
+        if values(f"remote.{remote}.push"):
+            return True
+        for mode in values("push.default"):
+            mode = mode.casefold()
+            if mode in {"simple", "current"}:
+                continue
+            if mode != "upstream" or upstream != [f"refs/heads/{branch}"]:
+                return True
+        # No CLI source needs the configured upstream proof too. Explicit
+        # colon-less sources under simple/current already name their own ref.
+        if not refs and (upstream_remote is not None or upstream):
+            if not upstream_remote or upstream != [f"refs/heads/{branch}"]:
+                return True
+            if upstream_remote != ".":
+                up_prefix = f"refs/remotes/{upstream_remote}/"
+                up_default = git(cwd, "symbolic-ref", "--quiet", up_prefix + "HEAD")
+                if (not up_default or not up_default.startswith(up_prefix)
+                        or up_default[len(up_prefix):].casefold() == branch.casefold()):
+                    return True
+    for ref in refs:
+        if ref.startswith(("+", ":")):
+            return True
+        if ":" in ref:
+            if ref.count(":") != 1:
+                return True
+            destination = ref.split(":", 1)[1].removeprefix("refs/heads/")
+        else:
+            destination = branch if ref == "HEAD" else ref.removeprefix("refs/heads/")
+        if destination != branch:
+            return True
     return False
 
 
@@ -1270,7 +1290,7 @@ def command_might_merge(cmd, text, depth, appended=False):
                 return True
     for i, w in enumerate(words):
         name = base(w)
-        if name == "gh" and i in positions and gh_might_land(words, i, appended):
+        if name == "gh" and gh_might_land(words, i, appended):
             return True
         if name == "git" and depth > 0 and git_subcommand(words, i) == "push":
             return True
