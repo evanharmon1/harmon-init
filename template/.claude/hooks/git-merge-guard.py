@@ -6,7 +6,9 @@ merge/pull outside the branch-aware allowlist. gh api fails closed: only
 proved reads and a short safe-write allowlist stay silent. REST safe writes
 match undecoded paths; GraphQL mutations require every root field to be safe.
 Unknown API writes and evaluator-fed API/sync strings ask. Presentation values
-may be dynamic; operation-controlling inputs must be literal.
+may be dynamic only inside double quotes; operation-controlling inputs must
+be literal. Explicit GET/HEAD fields are read parameters. Short-option values
+consume their cluster suffix. Unparseable query controls ask.
 
 Replaces the `Bash(git merge)` / `Bash(git merge:*)` permissions.ask rules,
 which prompt on every merge (including routine catch-up merges of main into
@@ -277,6 +279,8 @@ class Word:
     def __init__(self):
         self.value = ""
         self.literal = True
+        # API values may be dynamic only without shell word splitting/globbing.
+        self.unquoted_dynamic = False
 
 
 class Command:
@@ -439,6 +443,7 @@ class Parser:
                 self.i += 2
                 self.read_double_quoted(word, closing='"')
                 word.literal = False
+                word.unquoted_dynamic = True
             elif s.startswith("$'", self.i):
                 j = self.i + 2
                 while j < len(s) and s[j] != "'":
@@ -447,6 +452,7 @@ class Parser:
                     raise ParseError("unterminated $'")
                 word.value += ansi_c(s[self.i + 2 : j])
                 word.literal = False
+                word.unquoted_dynamic = True
                 self.i = j + 1
             elif c == '"':
                 self.i += 1
@@ -456,6 +462,9 @@ class Parser:
             else:
                 if c in "*?[{}" and not (c in "{}" and word.value == "" and self.at_word_end(self.i + 1)):
                     word.literal = False
+                if (c in "*?" or (c == "[" and s[self.i + 1:self.i + 2] != "]")
+                        or (c == "{" and re.match(r"\{[^}]*(?:,|\.\.)[^}]*\}", s[self.i:]))):
+                    word.unquoted_dynamic = True
                 word.value += c
                 self.i += 1
         return word
@@ -478,14 +487,14 @@ class Parser:
                 word.value += nxt if nxt in '$`"\\' else c + nxt
                 self.i += 2
             elif c in "$`":
-                self.read_expansion(word)
+                self.read_expansion(word, quoted=True)
             else:
                 word.value += c
                 self.i += 1
         if closing:
             raise ParseError('unterminated "')
 
-    def read_expansion(self, word):
+    def read_expansion(self, word, quoted=False):
         """Read a `$...` or backtick expansion at self.i into word."""
         s = self.s
         start = self.i
@@ -518,6 +527,8 @@ class Parser:
             return
         word.value += s[start : self.i]
         word.literal = False
+        if not quoted:
+            word.unquoted_dynamic = True
 
 
 def ansi_c(body):
@@ -724,6 +735,17 @@ def is_evaluator(words, i):
     )
 
 
+def git_subcommand(words, i):
+    """Locate git's literal subcommand without treating argument data as push."""
+    j = i + 1
+    while j < len(words) and words[j].value.startswith("-"):
+        opt = words[j].value
+        j += 2 if opt in GIT_VALUE_OPTIONS else 1
+        if opt == "--":
+            break
+    return words[j].value if j < len(words) and words[j].literal else None
+
+
 def risky_mention(text):
     push = re.search(r"\bpush\b", text, re.I)
     # Evaluated API/delegated sync strings are opaque: no second classifier.
@@ -815,6 +837,33 @@ def gh_might_land(words, i, appended=False):
     fields = False
     queries = []
     args = args[1:]
+    if any(w.unquoted_dynamic for w in words[i + 1:]):
+        return True
+    # gh/pflag short clusters: booleans continue; the first value-taking
+    # option consumes the entire suffix. Thus -tXGET is template XGET,
+    # while -iXPUT is include + method PUT. Never hunt for X inside a value.
+    expanded = []
+    for w in args:
+        v = w.value
+        if len(v) > 2 and v.startswith("-") and not v.startswith("--"):
+            k = 1
+            while k < len(v):
+                flag = Word()
+                flag.value = "-" + v[k]
+                expanded.append(flag)
+                if v[k] in "XfFHqtp":
+                    if k + 1 < len(v):
+                        value = Word()
+                        value.value = v[k + 1:]
+                        value.literal = w.literal
+                        expanded.append(value)
+                    break
+                if v[k] != "i":
+                    return True
+                k += 1
+        else:
+            expanded.append(w)
+    args = expanded
     j = 0
     output_options = {"--jq", "-q", "--template", "-t", "--cache"}
     field_options = {"-f", "-F", "--field", "--raw-field"}
@@ -822,7 +871,7 @@ def gh_might_land(words, i, appended=False):
         w = args[j]
         v = w.value
         name, sep, value = v.partition("=")
-        if v in ("-X", "--method") or re.match(r"^-[a-zA-Z]*X", v):
+        if v in ("-X", "--method"):
             value = v.split("X", 1)[1] if "X" in v else ""
             if not value:
                 j += 1
@@ -896,6 +945,8 @@ def gh_might_land(words, i, appended=False):
             "markPullRequestReadyForReview", "convertPullRequestToDraft",
         }
         for query in queries:
+            if any(ord(c) < 32 and c not in "\t\r\n" or 127 <= ord(c) <= 159 for c in query):
+                return True
             if not re.search(r"\bmutation\b", query):
                 if not re.match(r"\s*(?:\{|query\b|subscription\b)", query):
                     return True
@@ -903,7 +954,7 @@ def gh_might_land(words, i, appended=False):
             # Tokenize strings/comments atomically so braces in values cannot
             # manufacture a safe root field. Fragments/directives at the root
             # are unmodelled and ask; aliases are checked by their actual field.
-            ts = re.findall(r'"""[\s\S]*?"""|"(?:\\.|[^"\\])*"|#[^\n]*|[A-Za-z_]\w*|\.\.\.|[^\s,]', query)
+            ts = re.findall(r'"""[\s\S]*?"""|"(?:\\.|[^"\\])*"|#[^\r\n]*|[A-Za-z_]\w*|\.\.\.|[^\s,]', query)
             ts = [t for t in ts if not t.startswith("#")]
             k = 0
 
@@ -952,7 +1003,7 @@ def gh_might_land(words, i, appended=False):
                 k += 1
         return False
     method = method or ("POST" if fields else "GET")
-    if method in {"GET", "HEAD"} and not fields:
+    if method in {"GET", "HEAD"} and not queries:
         return False
     # A short permission list; misses ask. Never decode percent escapes here.
     safe_writes = (
@@ -1111,7 +1162,7 @@ def command_might_merge(cmd, text, depth, appended=False):
         name = base(w)
         if name == "gh" and i in positions and gh_might_land(words, i, appended):
             return True
-        if name == "git" and depth > 0 and any(x.value == "push" for x in words[i + 1:]):
+        if name == "git" and depth > 0 and git_subcommand(words, i) == "push":
             return True
         if name == "git" and git_might_merge(words, i):
             return True
@@ -1349,7 +1400,7 @@ def decide(command, cwd):
         commands, _ = parse(command)
     except (ParseError, IndexError, RecursionError):
         return "unreadable merge/push command" if might_merge(command) else None
-    if any(base(w) == "git" and any(x.value == "push" for x in c.words[i + 1:])
+    if any(base(w) == "git" and git_subcommand(c.words, i) == "push"
            and (i != 0 or push_might_land(c.words, i, cwd)
                 or (len(commands) != 1 and not push_companions_safe(command, cwd)))
            for c in commands for i, w in enumerate(c.words)):

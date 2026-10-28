@@ -328,6 +328,31 @@ matrix() { # guard
     case_ "$g" ask "$r" 'gh api graphql -F "$KEY=value"'
     case_ "$g" ask "$r" 'gh api repos/o/r/pulls/1 -H "$HEADER"'
     case_ "$g" ask "$r" 'gh api repos/o/r/pulls/1 --input "$FILE"'
+    # R12: challenge r3 P2 hardening, with the deferred catch-up case explicit.
+    case_ "$g" ask "$r" 'gh api -X POST repos/o/r/merges -tXGET'
+    case_ "$g" ask "$r" 'gh api -X POST repos/o/r/merges -qXGET'
+    case_ "$g" silent "$r" 'gh api repos/o/r/pulls/1 -tXGET'
+    case_ "$g" ask "$r" 'gh api repos/o/r/pulls/1 -t $T'
+    case_ "$g" ask "$r" 'gh -R $REPO api repos/o/r/pulls/1'
+    case_ "$g" silent "$r" 'gh -R "$REPO" api repos/o/r/pulls/1'
+    case_ "$g" ask "$r" 'gh api repos/o/r/pulls/1 -t {1..3}'
+    case_ "$g" ask "$r" 'gh api repos/o/r/pulls/1 --jq $FILTER'
+    case_ "$g" ask "$r" 'gh api -X POST repos/o/r/issues/1/comments -f body=$BODY'
+    case_ "$g" silent "$r" 'gh api -X POST repos/o/r/issues/1/comments -f body="$BODY"'
+    case_ "$g" silent "$r" 'gh api repos/o/r/pulls/1 -t "$T"'
+    case_ "$g" ask "$r" 'gh api repos/o/r/pulls/1 -t "$T"$OTHER'
+    case_ "$g" ask "$r" "gh api graphql -f 'query=mutation { resolveReviewThread(input: {}) { clientMutationId } # comment${cr} mergePullRequest(input: {}) { clientMutationId } }'"
+    case_ "$g" ask "$r" "gh api graphql -f 'query={ viewer { login } }$(printf '\001')'"
+    # R3-4 deferred: a PR whose head is main still takes this sanctioned path;
+    # proving that head would require a network lookup inside this offline hook.
+    case_ "$g" silent "$r" 'gh api -X PUT repos/o/r/pulls/1/update-branch'
+    case_ "$g" silent "$r" 'gh api -X GET repos/o/r/pulls/1 -f state=all'
+    case_ "$g" silent "$r" 'gh api -X HEAD repos/o/r/pulls/1 -f state=all'
+    case_ "$g" ask "$r" 'gh api graphql -X GET -f "query=mutation { mergePullRequest(input: {}) { clientMutationId } }"'
+    case_ "$g" silent "$r" 'git grep push && true'
+    case_ "$g" silent "$r" 'git log --grep push; git status'
+    case_ "$g" silent "$r" 'git -c color.ui=false grep push && true'
+    case_ "$g" silent "$r" "git -C ${r} log --grep push; git status"
     # 2026-10-25 observed shapes: lane catch-ups and evaluator mentions.
     case_ "$g" silent "$r" "git -C ${r}/wt merge --ff-only abc123"
     case_ "$g" silent "${r}/wt" "git fetch origin && git merge --ff-only abc123"
