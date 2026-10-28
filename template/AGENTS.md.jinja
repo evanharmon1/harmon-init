@@ -142,11 +142,14 @@ where a **vendored** skill states a different cap, floor, or exit condition, **t
 ### PR states and labels
 
 Use the [harmon-devkit glossary](https://github.com/evanharmon1/harmon-devkit/blob/main/docs/glossary.md)
+and the [label transition table](https://github.com/evanharmon1/harmon-devkit/blob/3b23072e279bbede7ea7aa431ad307b251a01e9d/docs/dev-loop/label-lifecycle.md)
 for **Draft**, **Promoted**, **Merged**, **Closed**, **Working** (`claim:*`),
+**Slated** (`slated`, issue slate membership only; not a state or ownership),
 **Needs review** (`needs-review`), **Parked** (`parked`), **Blocked** (`blocked`),
-**Merge-ready** (`merge-ready`), **handoff**, and **handoff check**. These are the
-shared terms; promotion alone is never evidence that a PR is merge-ready now.
-Merged and Closed remain human decisions. Agents may promote and demote.
+**Merge-ready** (`merge-ready`), **handoff**, and **handoff check**. The `slated`
+label counts toward no ceiling. These are the shared terms; promotion alone is
+never evidence that a PR is merge-ready now. Merged and Closed remain human
+decisions. Agents may promote and demote.
 
 Creating a draft is a phase transition. Publish the lane's result as a draft;
 the orchestrator owns integration and the merge queue. Report an incomplete

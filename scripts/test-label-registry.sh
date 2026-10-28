@@ -68,6 +68,34 @@ if [ "$template_mode" = 1 ]; then
         fail "template/label-registry.json fails validation against its schema twin"
 fi
 
+# `slated` is a separately provisioned membership marker. Keep it out of the
+# workflow-state and claim families: it records plan membership, grants no
+# ownership, and has no ceiling effect.
+check_slated_registry() {
+    local manifest="$1" label="$2"
+    if ! jq -e '
+        [.families[] | select(.family == "slate-membership")] as $families
+        | ($families | length) == 1
+        and ($families[0].values | length) == 1
+        and $families[0].prefix == null
+        and $families[0].axis == "meta"
+        and $families[0].source == "inline"
+        and $families[0].writers == ["tool:orchestrate"]
+        and $families[0].lifecycle == "tool-managed"
+        and $families[0].exclusive == false
+        and $families[0].provision == true
+        and $families[0].color == "8250DF"
+        and $families[0].values[0].value == "slated"
+        and $families[0].values[0].description == "Marks slate membership only; not a state and not ownership."
+    ' "$manifest" >/dev/null; then
+        fail "$label must define the provisioned, tool-managed slated label as slate membership, not workflow state or ownership"
+    fi
+}
+check_slated_registry label-registry.json "label-registry.json"
+if [ "$template_mode" = 1 ]; then
+    check_slated_registry template/label-registry.json "template/label-registry.json"
+fi
+
 # ── 1b. validator mutation tests ───────────────────────────────────────────
 # The validator is only ever green against the two checked-in manifests above,
 # so exercise its rejection branches the way test-agent-registry.sh does: a
@@ -502,6 +530,7 @@ bug|D73A4A|Something isn't working
 feature|A2EEEF|New feature or request
 task|6E7781|General work: maintenance, chores, cleanup
 research|0E7C86|Produces a decision or written answer, not a code change
+slated|8250DF|Marks slate membership only; not a state and not ownership.
 layer:ui|1D76DB|Components, styling, interaction, tokens, a11y. No data change
 layer:logic|1D76DB|Business rules, handlers, calculation
 layer:data|1D76DB|Schema, indexes, validators, migrations

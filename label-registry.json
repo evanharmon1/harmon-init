@@ -94,6 +94,28 @@
       ]
     },
     {
+      "family": "slate-membership",
+      "prefix": null,
+      "purpose": "Slate membership only; not an issue state or ownership marker.",
+      "axis": "meta",
+      "source": "inline",
+      "writers": ["tool:orchestrate"],
+      "writer_note": "/orchestrate adds it when an issue enters a plan revision and removes it when the issue leaves the plan, the slate closes, or the issue closes",
+      "readers": "humans; /claim, to report membership without treating it as a claim conflict",
+      "lifecycle": "tool-managed",
+      "lifecycle_note": "added when an issue enters an orchestrator plan revision; removed when it leaves the plan, the slate closes, or the issue closes",
+      "trust_note": "provisioned; **membership-only** — not a state or ownership signal; counts toward no ceiling",
+      "exclusive": false,
+      "provision": true,
+      "color": "8250DF",
+      "values": [
+        {
+          "value": "slated",
+          "description": "Marks slate membership only; not a state and not ownership."
+        }
+      ]
+    },
+    {
       "family": "human-work",
       "prefix": null,
       "purpose": "Work whose completion is primarily a human's, kept off the agent dispatch path.",
