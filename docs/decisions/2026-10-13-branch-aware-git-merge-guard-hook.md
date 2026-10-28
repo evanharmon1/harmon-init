@@ -109,8 +109,10 @@ hooks do not run. The bot/agent boundary and merge/pull allowlist are unchanged.
    echo, printf, cat, head, tail, wc, grep, jq, sort, uniq and cut. Gh is limited
    to pr view/list/status/checks/diff, issue view/list/status and repo view/list;
    its existing operation proof must also pass. Printf variable assignments,
-   sort execution/output options and uniq output operands are excluded because
-   they violate the read-only property. Sed is omitted rather than
+   sort execution/output options, uniq output operands, any grep option outside
+   a fixed short-flag set (ugrep's `--filter`/`--pre` run commands) and gh
+   `--web`/`-w` (which launches `$BROWSER`) are excluded because they violate
+   the read-only property. Sed is omitted rather than
    interpreting its executable expression language. Literal paths and arguments
    containing git, merge or pull are data. Semicolons, newlines and pipes connect
    only proved commands. Assignments, expansions, escapes, comments, redirects,

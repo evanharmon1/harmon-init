@@ -91,7 +91,9 @@ or pull. Semicolons, newlines and pipes connect only proved commands. No
 assignments, expansions, escapes, comments, redirects, here-strings, descriptor
 paths, extra shell arguments, nested evaluators or other syntax qualifies.
 Sed is omitted; printf assignment formats, sort execution/output options and
-uniq output operands are excluded. Git/gh operation checks still run. Unknown syntax fails the
+uniq output operands are excluded; grep takes only fixed short flags (ugrep's
+--filter/--pre run commands) and gh no --web/-w (it launches $BROWSER).
+Git/gh operation checks still run. Unknown syntax fails the
 complete proof, so an unlisted bash input channel cannot qualify. Payloads
 failing this proof, and script-file invocations, keep the base mention
 fallback: they ask only on a merge/pull word. See #1844.
@@ -1321,9 +1323,26 @@ def mention_read(words):
             else:
                 files += 1
         return words[0] == "sort" or files <= 1
+    if words[0] == "grep":
+        # grep may be ugrep, whose --filter/--pre run commands and whose
+        # --save-config writes. Only fixed short flags qualify; no long option.
+        args = iter(words[1:])
+        for arg in args:
+            if arg == "--":
+                break
+            if re.fullmatch(r"-[ABCm][0-9]+", arg):
+                continue
+            if arg in {"-e", "-f", "-A", "-B", "-C", "-m"}:
+                next(args, None)
+            elif arg.startswith("-") and not re.fullmatch(r"-[EFHchilnoqrsvwx]+", arg):
+                return False
+        return True
     if words[0] in MENTION_READS:
         return True
     if words[0] != "gh" or len(words) < 3:
+        return False
+    # --web hands the URL to $BROWSER/$GH_BROWSER, which can be any program.
+    if any(re.match(r"--web|-[A-Za-z]*w", w) for w in words[3:]):
         return False
     # gh_might_land also permits safe writes and non-merging commands such as
     # checkout: those are NOT reads. Narrow first, then reuse its operation proof.

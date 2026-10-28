@@ -542,6 +542,15 @@ mutation { resolveReviewThread(input: {}) { clientMutationId } }'"'"''
     case_ "$g" ask "$r" "bash -c 'sort -o /tmp/gh merge.log'"
     case_ "$g" ask "$r" "bash -c 'uniq merge.log /tmp/gh'"
     case_ "$g" ask "$r" "bash -c 'cat ../../dev/stdin; echo merge'"
+    # C1-1 + security review: options that launch another program are not reads.
+    case_ "$g" ask "$r" "bash -c 'grep --filter=txt:sh merge f.txt'"
+    case_ "$g" ask "$r" "bash -c 'grep --pre=sh merge f.txt'"
+    case_ "$g" ask "$r" "bash -c 'grep --save-config merge f.txt'"
+    case_ "$g" silent "$r" "bash -c 'grep -n -A 2 -e merge -C3 f.txt'"
+    case_ "$g" ask "$r" "bash -c 'gh pr view --web https://github.com/o/r/pull/1'"
+    case_ "$g" ask "$r" "bash -c 'gh pr view 1 -w; echo merge'"
+    case_ "$g" ask "$r" "bash -c 'gh issue list --web=true; echo merge'"
+    case_ "$g" silent "$r" "bash -c 'gh pr view 1 --json title; echo merge'"
     # Failing the proof keeps the base fallback: no merge/pull word, no ask.
     case_ "$g" silent "$r" "bash -c 'task verify'"
     case_ "$g" silent "$r" "sh -c 'ls -la'"
