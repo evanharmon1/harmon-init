@@ -13,11 +13,13 @@ for unattended postures is recorded in
 
 ## Context
 
-The repository's merge invariant has two halves:
+For interactive host and dev profiles, the repository's merge invariant has
+two halves (see Consequences for `-p` denial and bot/agent stand-down):
 
 1. Any `git merge` or `git pull` that would land on `main`, `master`, a
    resolved remote default branch, a detached `HEAD`, or a checkout whose
-   branch cannot be verified must reach a human approval prompt (the
+   branch cannot be verified must reach a human approval prompt, except a
+   proven `--ff-only` sync from that branch's own remote-tracking ref (the
    remote-`HEAD` limits are under Consequences).
 2. A plain catch-up merge of `main` into a verified feature branch must not
    be prompted by the guard; ordinary permission rules still decide.
@@ -66,13 +68,26 @@ runs in a scratch repository
 2. **Make the guard allowlist-shaped and fail-closed.** The hook stays silent
    (deferring to normal permission evaluation) only for a small set of fully
    literal catch-up shapes — `git merge <ref>`, `git merge --continue`/`--quit`
-   and a non-rebasing `git pull` — run in the checkout the hook payload names,
-   when that checkout is provably on a feature branch. It returns
+   and a non-rebasing `git pull` — when the checkout is provably on a feature
+   branch. Fast-forward-only forms also accept literal absolute `git -C <dir>`
+   and `cd <dir> &&` targets and compounds whose every merge segment qualifies.
+   State-changing or unknown companion commands remain gated. Default branches
+   accept only proven `--ff-only` syncs from their own configured upstream.
+   A pull must omit its source (`git pull --ff-only [<remote>]`) or name the
+   full `refs/heads/<branch>` source. Short explicit branch names ask because
+   a remote tag can shadow them; the hook never inspects the remote.
+   Evaluator mention handling is unchanged from the base guard: shell and
+   other evaluator lines retain the conservative merge/pull mention test.
+   The proposed exemption was removed after repeated bypass findings; its
+   redesign is tracked in
+   [#1844](https://github.com/evanharmon1/harmon-init/issues/1844).
+   Target paths accept literal path characters only, with no shell
+   metacharacters. It returns
    `permissionDecision: "ask"` for every other command it inspects that might
-   run a `git merge` or `git pull`, and for any parse or internal error. The
-   exact silent/ask boundary lives in `.claude/hooks/git-merge-guard.py` and is
-   pinned by `scripts/test-git-merge-guard.sh`; this record deliberately does
-   not restate it, so the two cannot drift apart. What the hook does not
+   run a `git merge` or `git pull`, and for internal errors. Parse errors ask
+   only when the text mentions git, merge or pull. The exact silent/ask
+   boundary lives in `.claude/hooks/git-merge-guard.py` and is pinned by
+   `scripts/test-git-merge-guard.sh`; this record deliberately does not restate it, so the two cannot drift apart. What the hook does not
    inspect is listed under Consequences.
    ([#1455](https://github.com/evanharmon1/harmon-init/pull/1455) shipped the
    initial guard;
@@ -90,9 +105,15 @@ runs in a scratch repository
    merge or pull? — and that classifier has known blind spots (see
    Consequences). Its errors land on the safe side: a false positive costs one
    prompt on that command, and a command it flags runs silently only if it is
-   exactly an allowlisted shape on a verified feature branch. In the unattended
-   `bot` and `agent` postures the hook stands down entirely (see Consequences),
-   so it cannot stall unattended workers the way `guard-process-kill` did.
+   exactly an allowlisted shape on a verified feature branch, or the one
+   default-branch exception: a configured-upstream `--ff-only` sync with an
+   unambiguous operand. A merge beside any other git segment must name the
+   full `refs/remotes/<remote>/<branch>` because a fetch can import shadowing
+   tags after inspection or concurrently in a pipeline. A pull source is
+   omitted or fully qualified as `refs/heads/<branch>` to avoid remote tag
+   shadowing. In the unattended `bot` and `agent` postures the hook stands
+   down entirely (see Consequences), so it cannot stall unattended workers the
+   way `guard-process-kill` did.
 
 ## Not
 
@@ -117,7 +138,8 @@ runs in a scratch repository
   whether one appears still depends on the session's ordinary permission rules
   (for example the devcontainer's `Bash(git:*)` allow).
 - Merges and pulls targeting `main`, `master`, or a resolved remote default
-  branch — including `git -C <dir> merge` — prompt in `default`, `auto`, and
+  branch — including `git -C <dir> merge` — other than proven fast-forward
+  syncs from their own configured upstream prompt in `default`, `auto`, and
   `bypassPermissions` modes, and fail closed as a permission denial in `-p`
   mode.
 - The guard requires at least one remote `HEAD` to resolve and trusts the local
