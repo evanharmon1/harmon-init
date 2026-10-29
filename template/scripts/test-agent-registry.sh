@@ -27,26 +27,40 @@ mutated="${test_tmp}/agent-registry.json"
 mutated_schema="${test_tmp}/agent-registry.schema.json"
 
 gate_asset=".claude/skills/integrate/assets/trusted-registry.sh"
-policy_parser=".claude/skills/dev-flow-support/assets/lib/toml-lite.mjs"
-if [ -f "$gate_asset" ] && [ -f "$policy_parser" ]; then
-    # Use the same TOML parser as the vendored policy reader and resolve every
-    # configured slug through the gate's own required-field checks.
-    node --input-type=module - "$policy_parser" >"${test_tmp}/finders" <<'NODE'
-import { readFileSync } from 'node:fs'
-import { pathToFileURL } from 'node:url'
-import { resolve } from 'node:path'
-const { parseToml } = await import(pathToFileURL(resolve(process.argv[2])))
-const finders = parseToml(readFileSync('.devflow.toml', 'utf8')).stage.integration.finders
-if (!Array.isArray(finders) || finders.some((slug) => typeof slug !== 'string' || !slug)) {
-  throw new Error('invalid integration finder list')
-}
-for (const slug of finders) console.log(slug)
-NODE
+policy_reader=".claude/skills/dev-flow-support/assets/devflow-policy.mjs"
+if [ -f "$gate_asset" ] && [ -f "$policy_reader" ]; then
+    command -v jq >/dev/null 2>&1 || fail "jq is required to resolve integration finders"
+    command -v node >/dev/null 2>&1 || fail "node is required to resolve integration finders"
     # shellcheck source=/dev/null
     source "$gate_asset"
+
+    check_policy_finders() {
+        local policy="$1" registry_file="$2" slugs="${test_tmp}/finders"
+        node --input-type=module - "$policy_reader" "$policy" >"${test_tmp}/resolved.json" <<'NODE' || return 1
+import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
+const { readBranchPolicy, resolvePolicy } = await import(pathToFileURL(resolve(process.argv[2])))
+console.log(JSON.stringify(resolvePolicy(readBranchPolicy(process.argv[3]))))
+NODE
+        jq -er '.stages.integration.finders | if type == "array" then .[] else error("invalid finders") end' \
+            "${test_tmp}/resolved.json" >"$slugs" || {
+            # jq -e returns 4 for an empty array; distinguish it from invalid output.
+            jq -e '.stages.integration.finders == []' "${test_tmp}/resolved.json" >/dev/null || return 1
+        }
+        if [ ! -s "$slugs" ]; then
+            echo "SKIP: the integration policy names no finders"
+            return 0
+        fi
+        while IFS= read -r slug; do
+            resolve_finder_profile "$registry_file" "$slug" "${test_tmp}/profile.json" || return 1
+        done <"$slugs"
+        echo "PASS: all policy-named integration finders resolve through the gate"
+    }
+
+    check_policy_finders .devflow.toml "$registry" || fail "policy-named finder failed gate resolution"
+    # Preserve the effective list for the existing registry mutations.
+    cp "${test_tmp}/finders" "${test_tmp}/real-finders"
     while IFS= read -r slug; do
-        resolve_finder_profile "$registry" "$slug" "${test_tmp}/profile.json" ||
-            fail "policy-named finder $slug failed gate resolution"
         for mutation in null-actor missing-mechanism; do
             node --input-type=module - "$registry" "$mutated" "$slug" "$mutation" <<'NODE'
 import { readFileSync, writeFileSync } from 'node:fs'
@@ -62,8 +76,33 @@ NODE
             fi
             echo "PASS: $slug fails gate resolution with $mutation"
         done
-    done <"${test_tmp}/finders"
-    echo "PASS: all policy-named integration finders resolve through the gate"
+    done <"${test_tmp}/real-finders"
+
+    # Fixture policies retain the real policy and replace only its integration
+    # table, exercising the reader's absent and finder-entry forms.
+    node --input-type=module - .devflow.toml "$test_tmp" "$registry" "$mutated" <<'NODE'
+import { readFileSync, writeFileSync } from 'node:fs'
+const [policy, dir, registryPath, mutatedPath] = process.argv.slice(2)
+const text = readFileSync(policy, 'utf8')
+const section = /^\[stage\.integration\][\s\S]*?(?=^\[strategy\.oneshot\])/m
+if (!section.test(text)) throw new Error('integration fixture section not found')
+writeFileSync(`${dir}/empty.toml`, text.replace(section, '[stage.integration]\n\n'))
+writeFileSync(`${dir}/absent.toml`, text.replace(section, ''))
+writeFileSync(`${dir}/entry.toml`, text.replace(section, '[stage.integration]\nfinder = [{ id = "codex-cloud" }]\n\n'))
+const registry = JSON.parse(readFileSync(registryPath, 'utf8'))
+registry.finders.find((entry) => entry.slug === 'codex-cloud').trusted_actor_id = null
+writeFileSync(mutatedPath, JSON.stringify(registry))
+NODE
+    for fixture in empty absent; do
+        output="$(check_policy_finders "${test_tmp}/${fixture}.toml" "$registry")" || fail "$fixture policy failed"
+        [ "$output" = "SKIP: the integration policy names no finders" ] || fail "$fixture policy did not skip"
+        echo "PASS: $fixture integration policy reports no finders"
+    done
+    if check_policy_finders "${test_tmp}/entry.toml" "$mutated" >/dev/null 2>&1; then
+        fail "finder entry passed gate resolution with null actor"
+    fi
+    check_policy_finders "${test_tmp}/entry.toml" "$registry" >/dev/null || fail "finder entry failed with real registry"
+    echo "PASS: finder entry resolves and rejects a null actor"
 else
     echo "SKIP: integrate gate or policy reader is not vendored"
 fi
