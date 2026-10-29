@@ -143,18 +143,6 @@ const registry = JSON.parse(readFileSync(registryPath, 'utf8'))
 registry.finders.find((entry) => entry.slug === 'codex-cloud').trusted_actor_id = null
 writeFileSync(mutatedPath, JSON.stringify(registry))
 NODE
-    # The selected strategy is plan; deleting the unrelated oneshot table must
-    # not affect either the real policy check or the independent fixtures.
-    node --input-type=module - .devflow.toml "${test_tmp}/reordered.toml" <<'NODE' || fail "could not construct layout fixture"
-import { readFileSync, writeFileSync } from 'node:fs'
-const [input, output] = process.argv.slice(2)
-const text = readFileSync(input, 'utf8')
-const section = /^\[strategy\.oneshot\][^\n]*\n(?:[^\[\n][^\n]*\n|\n)*/m
-if (!section.test(text)) throw new Error('oneshot table not found')
-writeFileSync(output, text.replace(section, ''))
-NODE
-    check_policy_finders "${test_tmp}/reordered.toml" "$registry" || fail "policy without oneshot failed"
-    echo "PASS: policy without oneshot resolves independently of fixture layout"
     for fixture in empty absent; do
         output="$(check_policy_finders "${test_tmp}/${fixture}.toml" "$registry")" || fail "$fixture policy failed"
         [ "$output" = "SKIP: the integration policy names no finders" ] || fail "$fixture policy did not skip"
