@@ -875,8 +875,8 @@ repo a session might open, including one with no `AGENTS.md` of this shape. Put
 there: the small set of cross-project rules that are safety or communication
 rules rather than repository facts — never write to a password manager or
 credential store unless that exact write was requested, and even then restate
-what will be written and get confirmation before running it; never terminate a
-process without approval; never merge or cut a release, because both are the
+what will be written and get confirmation before running it; never merge or
+cut a release, because both are the
 maintainer's decisions and an agent acts on one only with explicit, per-merge
 (or per-release) approval; and the reply-style
 preferences. Keep them short: they are injected into every session. Everything
