@@ -94,6 +94,28 @@
       ]
     },
     {
+      "family": "slate-membership",
+      "prefix": null,
+      "purpose": "Slate membership only; not an issue state or ownership marker.",
+      "axis": "meta",
+      "source": "inline",
+      "writers": ["tool:orchestrate"],
+      "writer_note": "/orchestrate automation that applies and removes this label is pending harmon-devkit#1688; until it lands, nothing applies the provisioned label.",
+      "readers": "humans; /claim membership reporting is pending harmon-devkit#1688",
+      "lifecycle": "tool-managed",
+      "lifecycle_note": "Provisioned but unused until /orchestrate automation that applies and removes the label lands in harmon-devkit#1688.",
+      "trust_note": "provisioned; **membership-only** — not a state or ownership signal; counts toward no ceiling",
+      "exclusive": false,
+      "provision": true,
+      "color": "8250DF",
+      "values": [
+        {
+          "value": "slated",
+          "description": "Marks slate membership only; not a state and not ownership."
+        }
+      ]
+    },
+    {
       "family": "human-work",
       "prefix": null,
       "purpose": "Work whose completion is primarily a human's, kept off the agent dispatch path.",

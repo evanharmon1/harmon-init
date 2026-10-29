@@ -882,6 +882,13 @@ the taxonomy table below is generated from) and the starter set is created by
   startable until that standalone issue closes. `human` + `umbrella` marks a
   `(HUMAN):`/`(QA):` collector (see **Human-task and QA collectors** below) as
   the special case
+- **Slate membership** — `slated` marks that an issue belongs to an orchestrator
+  slate. It is membership only, not a state or ownership marker; it may coexist
+  with `claim:*`, `parked`, `merge-ready`, `needs-review` and `blocked`, and
+  counts toward no ceiling. `/orchestrate` automation that applies and removes
+  it is pending harmon-devkit#1688; until it lands, nothing applies the label
+  (it is provisioned but unused). The [harmon-devkit label transition table](https://github.com/evanharmon1/harmon-devkit/blob/3b23072e279bbede7ea7aa431ad307b251a01e9d/docs/dev-loop/label-lifecycle.md)
+  documents its intended lifecycle.
 - **Workflow** — transient triage states; `blocked` is the non-issue-blocker
   flag described above
 - **Layer** — which stack slice the change lives in
@@ -1190,6 +1197,7 @@ deliberately leaves it alone.
 | `sec`, `a11y`, `perf`, `tech-debt`, `i18n`, `l10n` | humans, at triage | humans, saved views | provisioned; inert | applied when true, removed when not |
 | `customer-request`, `ai-generated` | whoever files or authors the work, human or agent | humans, saved views | provisioned; inert | durable provenance — never removed |
 | `epic`, `umbrella` | humans, at planning or grooming; agents when filing a (HUMAN)/(QA) collector or an approved breakdown | humans, saved views | provisioned; inert | applied to a parent while its role is current; removed or changed when its horizon changes |
+| `slated` | /orchestrate automation that applies and removes this label is pending harmon-devkit#1688; until it lands, nothing applies the provisioned label. | humans; /claim membership reporting is pending harmon-devkit#1688 | provisioned; **membership-only** — not a state or ownership signal; counts toward no ceiling | Provisioned but unused until /orchestrate automation that applies and removes the label lands in harmon-devkit#1688. |
 | `human` | whoever files or triages the issue, human or agent; triage may remove it only when the issue no longer qualifies (non-collector, no [HUMAN] majority, agent-completable) | humans, saved views; agents, to skip dispatch | provisioned; inert | applied while completion is primarily a human's; removed once the issue's remaining completion is no longer primarily a human's |
 | `needs-triage` | people, agents and the issue forms add it at filing; after that the triage skill and the GitHub Actions classification reconciler maintain it (derived: added while classification is incomplete, removed once it is complete) | humans, the Triage view | provisioned; inert | a new issue that is not fully classified starts with it (people, agents and the issue forms add it at filing); after that it is derived and never cleared by hand |
 | `needs-requirements`, `blocked`, `waiting`, `needs-decision`, `needs-response`, `needs-communication` | humans, at triage | humans, the Triage view | provisioned; inert | transient — removed as soon as the state clears |
@@ -1238,6 +1246,7 @@ deliberately leaves it alone.
 | `autorelease: pending`, `autorelease: tagged` | release-please | release-please | **tool-owned, auto-created**; note the space after the colon — not part of the `family:value` convention | pending on the open release PR, tagged once the release is cut |
 [% endif %]
 | `duplicate`, `good first issue`, `help wanted`, `invalid`, `wontfix` | GitHub, at repo creation | humans | not provisioned, never deleted by setup | adopted; leave in place — inventory reporting and guarded pruning exclude it |
+
 <!-- label-taxonomy:end -->
 
 One nuance the table compresses: `claim:claude` in a repo with **no label
