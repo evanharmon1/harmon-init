@@ -33,6 +33,17 @@ this comment. -->
       harmon-devkit skill categories this repo vendors into `.claude/skills/`,
       and — when the manifest carries an `agents:` block — which shared
       subagents it vendors into `.claude/agents/`, at the same pinned ref.
+      Before applying a harmon-init release, read the sole source of the
+      required pin, `_min_harmon_devkit_skills` in that release tag's
+      `copier.yml`. With `TAG` set to the harmon-init release tag, read the key
+      without cloning harmon-init:
+      `gh api "repos/evanharmon1/harmon-init/contents/copier.yml?ref=$TAG" -q .content | base64 -d | grep '^_min_harmon_devkit_skills:'`.
+      Its initial `v0.58.0` value records that harmon-init v5.8.1 first
+      mirrored the result schemas and validator from harmon-devkit v0.58.0.
+      If a repository's current `.skills-sync.yaml` ref is below the declared
+      minimum, use the official skills sync: raise the pin to at least that tag,
+      run `task sync:skills`, and commit the refreshed skills (and agents, if
+      configured) in the same PR as the harmon-init update.
       **In this repo the bump is automated** — publishing a stable
       [harmon-devkit release](https://github.com/evanharmon1/harmon-devkit/releases)
       opens or updates one rolling `bot/sync-harmon-devkit` PR with both

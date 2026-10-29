@@ -31,7 +31,17 @@ environment — against the items below
       `.claude/skills/`[% if use_shared_agents %] **and `.claude/agents/`** (your
       manifest's `agents:` block vendors shared subagents there at the same
       pinned ref)[% endif %]. Until then the `verify:skills*` drift checks skip
-      cleanly (CI + pre-push). **Pin bumps are a two-step:** edit `ref` in
+      cleanly (CI + pre-push). Before applying a harmon-init release, read the
+      sole source of the required pin, `_min_harmon_devkit_skills` in that
+      release tag's `copier.yml`. With `TAG` set to the harmon-init release tag,
+      read the key without cloning harmon-init:
+      `gh api "repos/evanharmon1/harmon-init/contents/copier.yml?ref=$TAG" -q .content | base64 -d | grep '^_min_harmon_devkit_skills:'`.
+      Its initial `v0.58.0` value records that harmon-init v5.8.1 first
+      mirrored the result schemas and validator from harmon-devkit v0.58.0. If
+      your current `ref` is below the declared minimum, use the official skills
+      sync: raise the pin to at least that tag, run `task sync:skills`, and
+      commit the refreshed skills[% if use_shared_agents %] and agents[% endif +%]
+      in the same PR as the harmon-init update. **Pin bumps are a two-step:** edit `ref` in
       `.skills-sync.yaml`, then run `task skills:status` to see the current
       vendoring state without changing anything (add `-- --offline` for an
       offline snapshot). Then run `task sync:skills` and commit the refreshed
