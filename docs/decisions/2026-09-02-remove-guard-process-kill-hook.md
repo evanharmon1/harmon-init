@@ -8,6 +8,8 @@
 
 Accepted.
 
+Amended by [ADR 2026-10-28](2026-10-28-remove-process-termination-hard-rule.md), which removes the remaining prose rule.
+
 ## Context
 
 `guard-process-kill.sh` was a Claude Code / Codex / Antigravity `PreToolUse`

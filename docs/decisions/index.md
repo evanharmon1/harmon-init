@@ -56,7 +56,8 @@ record is still open to edits.
 - [2026-09-01-adopt-openspec.md](2026-09-01-adopt-openspec.md)
   — adopt OpenSpec for spec-driven changes at the repo root (Superseded by 2026-09-23).
 - [2026-09-02-remove-guard-process-kill-hook.md](2026-09-02-remove-guard-process-kill-hook.md)
-  — the process-kill guard hook is removed; the hard rule binds the agent directly (Accepted).
+  — the process-kill guard hook is removed (Accepted; the remaining prose rule was
+  later removed by [2026-10-28](2026-10-28-remove-process-termination-hard-rule.md)).
 - [2026-09-13-brief-envelope-schema-bound-free-form-body.md](2026-09-13-brief-envelope-schema-bound-free-form-body.md)
   — briefs get a schema-bound envelope around a free-form body
   (Accepted; amends 2026-08-29 (Dev flow v2) D2).
@@ -99,3 +100,6 @@ record is still open to edits.
   independent disposable-host fallback for isolated work (Accepted).
 - [2026-10-23-route-core-scaling-jobs-to-a-multicore-class.md](2026-10-23-route-core-scaling-jobs-to-a-multicore-class.md)
   — add measured core-scaling placement as the fifth routing class (Accepted; amends 2026-10-18).
+- [2026-10-28-remove-process-termination-hard-rule.md](2026-10-28-remove-process-termination-hard-rule.md)
+  — remove the general process-termination approval rule at the maintainer's request
+  (Accepted; amends 2026-09-02).
