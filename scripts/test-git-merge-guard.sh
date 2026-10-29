@@ -519,8 +519,8 @@ mutation { resolveReviewThread(input: {}) { clientMutationId } }'"'"''
     case_ "$g" ask "$r" "bash <<'EOF' < /dev/null${nl}echo merge${nl}EOF"
     case_ "$g" ask "$r" "bash -c 'echo merge # comment'"
     # R14: git in a literal path is data; only fixed read commands may run.
-    case_ "$g" silent "$r" "bash -c 'tail -5 /Users/x/git/repo/.git/log.txt'"
-    case_ "$g" silent "$r" "bash -c 'tail -5 /Users/x/git/repo/.git/merge.log | grep merge'"
+    case_ "$g" silent "$r" "bash -c 'tail -5 /srv/x/git/repo/.git/log.txt'"
+    case_ "$g" silent "$r" "bash -c 'tail -5 /srv/x/git/repo/.git/merge.log | grep merge'"
     case_ "$g" silent "$r" "bash -c 'cat merge.log | sort | uniq | head -5 | wc -l'"
     case_ "$g" silent "$r" "bash -c 'printf merge | cut -c 1-3'"
     case_ "$g" silent "$r" "bash -c 'gh issue view 1 --json title | jq \".merge\"'"
