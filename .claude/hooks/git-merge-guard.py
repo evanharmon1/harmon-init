@@ -61,7 +61,8 @@ operators, comments, heredocs, command substitutions -- and a merge is:
     evaluator (a shell, `eval`, `ssh`, `trap`, `watch`, `herdr pane run`, `parallel`,
     `sudo -s`/`-i`, `env -S`): their option and
     input shapes (`bash -C -c`, `env -S'...'`, a pipe into `if ...; then sh`)
-    are open-ended, so the word test covers what the parser does not.
+    are open-ended, so the word test covers what the parser does not, except
+    for the closed literal mention language described below.
 
 Everything else is data and stays silent: quoted text and heredoc bodies not
 handed to an evaluator (`git commit -m "catch-up merge"`, report appends),
@@ -79,9 +80,23 @@ unquoted single commands in a verified feature-branch checkout:
     git pull [<remote> [<ref>]], with --ff-only and/or --no-rebase,
              and optionally --no-edit
 
-Evaluator mention handling is unchanged from the base guard. The exemption
-was removed after repeated bypass findings; its redesign is tracked in
-https://github.com/evanharmon1/harmon-init/issues/1844.
+Visible bash/sh payloads are silent only when every simple command belongs
+to a closed read allowlist and every word is an inert literal. The complete
+outer form must be bash/sh -c with one literal quoted payload, or a heredoc
+with a quoted uppercase delimiter. Allowed commands are echo, printf, cat,
+head, tail, wc, grep, jq, sort, uniq, cut; gh is limited to pr view/list/status/
+checks/diff, issue view/list/status, and repo view/list, with the existing gh
+operation proof still required. Literal paths and data may contain git, merge
+or pull. Semicolons, newlines and pipes connect only proved commands. No
+assignments, expansions, escapes, comments, redirects, here-strings, descriptor
+paths, extra shell arguments, nested evaluators or other syntax qualifies.
+Sed is omitted; printf assignment formats, sort execution/output options and
+uniq output operands are excluded; grep takes only fixed short flags (ugrep's
+--filter/--pre run commands) and gh no --web/-w (it launches $BROWSER).
+Git/gh operation checks still run. Unknown syntax fails the
+complete proof, so an unlisted bash input channel cannot qualify. Payloads
+failing this proof, and script-file invocations, keep the base mention
+fallback: they ask only on a merge/pull word. See #1844.
 
 Flags are a set, in any order and position. Fast-forward-only merges/pulls
 also support a literal absolute `git -C <dir>` or preceding `cd <dir> &&`,
@@ -1274,7 +1289,124 @@ def push_companions_safe(command, cwd):
 
 
 
-def command_might_merge(cmd, text, depth, appended=False):
+# A closed lexical language: commands are fixed reads and words are inert.
+# Unrecognized syntax fails the proof rather than acquiring shell semantics.
+MENTION_READS = {"echo", "printf", "cat", "head", "tail", "wc", "grep", "jq",
+                 "sort", "uniq", "cut"}
+MENTION_WORD = re.compile(
+    r"(?:[A-Za-z0-9_./:@%+=,-]+|\"[^\"\n]*\"|'[^'\n]*')(?=[ \t\n;|]|$)"
+)
+
+
+def mention_read(words):
+    """Require an exact command name; arguments never become executable code."""
+    if words[0] == "printf":
+        args = words[1:]
+        if args[:1] == ["--"]:
+            args = args[1:]
+        # -v and %n assign shell variables, including PATH; they are not reads.
+        return bool(args) and not args[0].startswith("-") and "%" not in re.sub(
+            r"%%|%[sdfq]", "", args[0]
+        )
+    if words[0] in {"sort", "uniq"}:
+        # sort can launch --compress-program or write -o; uniq's second file
+        # operand is output. Only these fixed flags and input files qualify.
+        flags = {"-n", "-r", "-u", "-f", "-b"} if words[0] == "sort" else {"-c", "-d", "-u", "-i"}
+        files = 0
+        options = True
+        for arg in words[1:]:
+            if options and arg == "--":
+                options = False
+            elif options and arg.startswith("-"):
+                if arg not in flags:
+                    return False
+            else:
+                files += 1
+        return words[0] == "sort" or files <= 1
+    if words[0] == "grep":
+        # grep may be ugrep, whose --filter/--pre run commands and whose
+        # --save-config writes. Only fixed short flags qualify; no long option.
+        args = iter(words[1:])
+        for arg in args:
+            if arg == "--":
+                break
+            if re.fullmatch(r"-[ABCm][0-9]+", arg):
+                continue
+            if arg in {"-e", "-f", "-A", "-B", "-C", "-m"}:
+                next(args, None)
+            elif arg.startswith("-") and not re.fullmatch(r"-[EFHchilnoqrsvwx]+", arg):
+                return False
+        return True
+    if words[0] in MENTION_READS:
+        return True
+    if words[0] != "gh" or len(words) < 3:
+        return False
+    # --web hands the URL to $BROWSER/$GH_BROWSER, which can be any program.
+    if any(re.match(r"--web|-[A-Za-z]*w", w) for w in words[3:]):
+        return False
+    # gh_might_land also permits safe writes and non-merging commands such as
+    # checkout: those are NOT reads. Narrow first, then reuse its operation proof.
+    reads = {"pr": {"view", "list", "status", "checks", "diff"},
+             "issue": {"view", "list", "status"}, "repo": {"view", "list"}}
+    if words[2] not in reads.get(words[1], set()):
+        return False
+    parsed = []
+    for value in words:
+        word = Word()
+        word.value = value
+        parsed.append(word)
+    return not gh_might_land(parsed, 0)
+
+
+def literal_evaluator_mentions(text):
+    """Prove a complete evaluator has only allowlisted reads and literal words.
+
+    Unknown syntax cannot introduce an input channel: it is outside this
+    language. No prefix assignments, substitutions, script files, feeders or
+    nested evaluators can match. Pipes connect only commands proved here.
+    """
+    match = re.fullmatch(r"(?:bash|sh) -c (?:'([^']*)'|\"([^\"]*)\")", text)
+    if match:
+        payload = match[1] if match[1] is not None else match[2]
+    else:
+        match = re.fullmatch(
+            r"(?:bash|sh) <<'([A-Z][A-Z0-9_]*)'\n(.*?)\n\1\n?", text, re.S
+        )
+        if not match:
+            return False
+        payload = match[2]
+    if (re.search(r"[$`\\]", payload) or "BASH_ENV" in payload
+            or re.search(r"[^\x20-\x7e\n\t]", payload)):
+        return False
+    i = 0
+    words = []
+    while i < len(payload):
+        if payload[i] in " \t":
+            i += 1
+            continue
+        if payload[i] in ";\n|":
+            if not words or not mention_read(words):
+                return False
+            words = []
+            i += 1
+            continue
+        match = MENTION_WORD.match(payload, i)
+        if not match:
+            return False
+        value = match[0]
+        value = value[1:-1] if value[:1] in {"'", '\"'} else value
+        # A descriptor/stdin path never supplies an evaluator input in this
+        # grammar. Reject it anyway: do not broaden the external-input contract.
+        path = os.path.normpath(value)
+        if (value == "-" or path.startswith(("/dev/", "/proc/")) and path != "/dev/null"
+                or re.search(r"(?:^|/)dev/(?:stdin|fd)(?:/|$)", path)):
+            return False
+        words.append(value)
+        i = match.end()
+    return bool(words) and mention_read(words)
+
+
+def command_might_merge(cmd, text, depth, appended=False, literal_mentions=False):
     words = cmd.words
     ci = command_index(words)
     positions = command_positions(words)
@@ -1314,7 +1446,8 @@ def command_might_merge(cmd, text, depth, appended=False):
         # `env -S'...'`, a pipe into a compound command), so its presence puts
         # the whole script under the word test; the parse below still sees
         # what the word test cannot (`$'\x70ull'`, `git $x`).
-        if is_evaluator(words, i) and risky_mention(text):
+        if (is_evaluator(words, i) and risky_mention(text)
+                and not literal_mentions):
             return True
         # A `-c` / `-Command` payload is read as a script whatever program
         # takes it, so an interpreter missing from SHELLS is still seen.
@@ -1382,7 +1515,9 @@ def script_might_merge(text, depth=0, appended=False):
     decoded = "\n".join(
         [w.value for c in commands for w in c.words] + [t for c in commands for t in c.stdin]
     )
-    return any(command_might_merge(c, text + "\n" + decoded, depth, appended) for c in commands)
+    literal_mentions = literal_evaluator_mentions(text)
+    return any(command_might_merge(c, text + "\n" + decoded, depth, appended, literal_mentions)
+               for c in commands)
 
 
 def might_merge(command):
