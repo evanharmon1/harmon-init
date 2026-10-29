@@ -1946,7 +1946,7 @@ export function resolveV2(doc, opts = {}) {
     resolveConvergence(doc, profileName)
   }
   const rounds = resolveRounds(doc, profile, level)
-  const breadth = resolveBreadth(doc, selectedRun ? { breadth: selectedRun.breadth } : opts.breadth ? { breadth: opts.breadth } : profile, level)
+  const breadth = resolveBreadth(doc, selectedRun ? { breadth: selectedRun.breadth } : opts.breadth !== undefined ? { breadth: opts.breadth } : profile, level)
   const spend = resolveSpend(doc, profile)
   const gates = resolveGates(doc, { overrides: selectedRun?.gates ?? null })
   const convergence = resolveConvergence(doc, level)
