@@ -563,16 +563,13 @@ class Parser:
             return
         word.value += s[start : self.i]
         word.literal = False
-        # Quoted command substitutions are one word. For parameters, prove a
-        # plain scalar form; indirect, operator and nested forms stay dynamic.
-        single = True
-        if s[start] != "`" and not s.startswith("$(", start):
-            single = re.fullmatch(
-                r"\$(?:[A-Za-z_][A-Za-z0-9_]*|[0-9]+|[*#?$!-]"
-                r"|\{(?:[A-Za-z_][A-Za-z0-9_]*(?:\[\*\])?|[0-9]+|[*#?$!-])\})",
-                s[start:self.i],
-            )
-        if not quoted or not single:
+        # Quoting does not make positional/array @ expansions single words.
+        # Include their operators/slices and indirect name expansions; nested
+        # expansions propagate the same property through the brace reader above.
+        # Review proofs are stricter and read has_param (any parameter at all).
+        multiple = re.match(r"\$(?:@|\{(?:@|!?[A-Za-z_]\w*\[@\]|![A-Za-z_]\w*@))",
+                            s[start:self.i])
+        if not quoted or multiple:
             word.unquoted_dynamic = True
 
 
@@ -883,7 +880,9 @@ def gh_prints_help(args):
               "-b", "--body", "--body-file", "-A", "--author-email", "--match-head-commit"}
     bools = {"--auto", "--admin", "--merge", "--squash", "--rebase", "--delete-branch",
              "--disable-auto", "--include", "--paginate", "--slurp", "--silent", "--verbose", "--force"}
-    if any(w.unquoted_dynamic for w in args):
+    # A skipped value holding a parameter can expand to `--help=false --approve`,
+    # so help is proved only when no word's argument count is unknown.
+    if any(w.unquoted_dynamic or w.has_param for w in args):
         return False
     nonexecuting = False
     j = 0

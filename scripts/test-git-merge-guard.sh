@@ -341,6 +341,15 @@ matrix() { # guard
     case_ "$g" ask "$r" 'a=(t --approve); declare -n n='"'"'a[@]'"'"'; gh pr review 1 --comment --body "$n"'
     case_ "$g" ask "$r" 'a=(t --approve); declare -n n='"'"'a[@]'"'"'; gh api repos/o/r/pulls/1/reviews -f event=COMMENT -f body="$n"'
     case_ "$g" ask "$r" 'gh api repos/o/r/pulls/1/reviews -f event=COMMENT -f body="$BODY"'
+    # V1-1: help is not proved when a skipped value can expand to --help=false --approve.
+    case_ "$g" ask "$r" 'a=(t --help=false --approve); declare -n n='"'"'a[@]'"'"'; gh pr review 1 --help --body "$n"'
+    case_ "$g" ask "$r" 'gh pr review 1 --help --body "$BODY"'
+    case_ "$g" silent "$r" 'gh pr review 1 --help'
+    case_ "$g" silent "$r" 'gh pr review --help'
+    # V1-2: outside review paths, quoted parameters keep main's one-word rule.
+    case_ "$g" silent "$r" 'gh api repos/o/r/issues/1/comments -f body="${BODY:-fallback}"'
+    case_ "$g" silent "$r" 'gh api repos/o/r/pulls/1 --jq "${FILTER:-.id}"'
+    case_ "$g" silent "$r" 'gh api repos/o/r/pulls/1/comments/2/replies -f body="${BODY:-x}"'
     # Every word on a review path counts, not only fields: a parameter in any
     # option value can split into an injected -f event=APPROVE.
     review_mutation='mutation{addPullRequestReview(input:{pullRequestId:"x",event:COMMENT}){clientMutationId}}'
