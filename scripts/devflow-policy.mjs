@@ -47,7 +47,7 @@ const TOP_LEVEL_REQUIRED_KEYS = [
   'stage',
   'strategy'
 ]
-const TOP_LEVEL_OPTIONAL_KEYS = ['spend', 'tier']
+const TOP_LEVEL_OPTIONAL_KEYS = ['spend', 'tier', 'run']
 const GATE_KEYS = ['round_code', 'round_docs', 'secret_scan', 'pre_pr']
 const ROLES = ['orchestrator', 'implementer', 'challenger', 'reviewer', 'integrator']
 const CONFIDENCE_STAGES = ['challenge', 'review']
@@ -66,6 +66,62 @@ const PREDICATES = new Set([
   'count_rising',
   'repeat_after_fix'
 ])
+function validateRunProfiles(doc) {
+  if (!Object.hasOwn(doc, "run")) return {};
+  const profiles = doc.run;
+  if (profiles === null || typeof profiles !== "object" || Array.isArray(profiles) || Object.keys(profiles).length === 0) {
+    throw new PolicyError("[run] must be a non-empty table of named profiles");
+  }
+  for (const [name, profile] of Object.entries(profiles)) {
+    const errorPath = `[run.${name}]`;
+    if (!name || profile === null || typeof profile !== "object" || Array.isArray(profile)) {
+      throw new PolicyError(`${errorPath} must be a named profile table`);
+    }
+    const required = ["rigor", "breadth", "strategy"];
+    const missing = required.filter((key) => !Object.hasOwn(profile, key));
+    const extra = Object.keys(profile).filter((key) => !['rigor', 'breadth', 'strategy', 'gates'].includes(key));
+    if (missing.length > 0 || extra.length > 0) {
+      throw new PolicyError(
+        `${errorPath} must contain rigor, breadth, strategy, and optional gates` +
+          `${missing.length > 0 ? `; missing: ${missing.join(", ")}` : ""}` +
+          `${extra.length > 0 ? `; unsupported: ${extra.join(", ")}` : ""}`,
+      );
+    }
+    for (const key of required) {
+      if (typeof profile[key] !== "string" || profile[key].length === 0) {
+        throw new PolicyError(`${errorPath}.${key} must be a non-empty string`);
+      }
+    }
+    const rigorProfile = doc.rigor?.[profile.rigor];
+    if (!rigorProfile || typeof rigorProfile !== "object") {
+      throw new PolicyError(`${errorPath}.rigor = ${JSON.stringify(profile.rigor)} has no [rigor.${profile.rigor}] table`);
+    }
+    resolveRounds(doc, rigorProfile, profile.rigor);
+    resolveBreadth(doc, { breadth: profile.breadth }, profile.rigor);
+    resolveStrategy(doc, profile.strategy);
+
+    if (Object.hasOwn(profile, "gates")) {
+      const overrides = profile.gates;
+      if (overrides === null || typeof overrides !== "object" || Array.isArray(overrides) || Object.keys(overrides).length === 0) {
+        throw new PolicyError(`${errorPath}.gates must be a non-empty table when present`);
+      }
+      for (const [key, value] of Object.entries(overrides)) {
+        if (![...GATE_KEYS, 'docs_only_paths'].includes(key) || !Object.hasOwn(doc.gates ?? {}, key)) {
+          throw new PolicyError(`${errorPath}.gates.${key} does not name a key in [gates]`);
+        }
+        if (key === "docs_only_paths") {
+          if (!Array.isArray(value) || value.length === 0 || value.some((entry) => typeof entry !== "string" || entry.length === 0)) {
+            throw new PolicyError(`${errorPath}.gates.docs_only_paths must be a non-empty array of non-empty strings`);
+          }
+        } else if (typeof value !== "string" || value.length === 0 || !GATE_SLUG_RE.test(value)) {
+          throw new PolicyError(`${errorPath}.gates.${key} must be a bare Taskfile target slug`);
+        }
+      }
+    }
+  }
+  return profiles;
+}
+
 // specs/dev-flow-v2.md "Convergence model v0" § Finding fields: `class ∈
 // design | correctness | consistency | hardening | nit` — the same enum
 // ai/schemas/result*.schema.json ships for `finding.class`.
@@ -496,8 +552,12 @@ function validateRoundPolicy(policyName, table) {
 
 function validateBreadthPolicy(policyName, table) {
   const errorPath = `[breadth.${policyName}]`
-  requireClosedTable(table, BREADTH_KEYS, [], errorPath)
+  requireClosedTable(table, BREADTH_KEYS, ['max_in_flight'], errorPath)
   for (const key of BREADTH_KEYS) requirePositiveInt(table[key], key, errorPath)
+  if (Object.hasOwn(table, 'max_in_flight')) {
+    requirePositiveInt(table.max_in_flight, 'max_in_flight', errorPath)
+    if (table.max_in_flight < table.max_parallel_agents) throw new PolicyError(`${errorPath}: max_in_flight must be >= max_parallel_agents`)
+  }
 }
 
 function validateSpendPolicy(policyName, table) {
@@ -619,6 +679,7 @@ function resolveBreadth(doc, profile, levelName) {
     }
     breadth[key] = table[key]
   }
+  breadth.max_in_flight = table.max_in_flight ?? table.max_parallel_agents
   return breadth
 }
 
@@ -649,15 +710,15 @@ function resolveSpend(doc, profile) {
 
 const GATE_SLUG_RE = /^[a-z0-9]+(?:-[a-z0-9]+)*(?::[a-z0-9]+(?:-[a-z0-9]+)*)*$/
 
-function resolveGates(doc, { allowMissing = false, fallback = null } = {}) {
+function resolveGates(doc, { allowMissing = false, fallback = null, overrides = null } = {}) {
   const gates = doc.gates
   if (!gates || typeof gates !== 'object') {
     if (allowMissing && fallback) return { ...fallback, source: 'built-in-default' }
     throw new PolicyError('policy has no [gates] table')
   }
-  const resolved = { source: 'policy' }
+  const resolved = { source: overrides ? 'run-profile' : 'policy' }
   for (const key of GATE_KEYS) {
-    const value = gates[key]
+    const value = overrides && Object.hasOwn(overrides, key) ? overrides[key] : gates[key]
     if (typeof value !== 'string' || value.length === 0) {
       throw new PolicyError(`[gates] is missing string "${key}"`)
     }
@@ -668,7 +729,7 @@ function resolveGates(doc, { allowMissing = false, fallback = null } = {}) {
     }
     resolved[key] = value
   }
-  const docsOnly = gates.docs_only_paths
+  const docsOnly = overrides && Object.hasOwn(overrides, 'docs_only_paths') ? overrides.docs_only_paths : gates.docs_only_paths
   if (
     !Array.isArray(docsOnly) ||
     docsOnly.length === 0 ||
@@ -1759,7 +1820,14 @@ export function crossValidate(
  * crossValidate — callers that have a registry/task-target list call that
  * separately and decide whether "indeterminate" blocks them.
  */
-export function resolveV2(doc, { rigor: requestedRigor, strategy: requestedStrategy } = {}) {
+export function resolveV2(doc, opts = {}) {
+  let { rigor: requestedRigor, strategy: requestedStrategy } = opts
+  const runWarnings = []
+  for (const axis of ['rigor', 'breadth', 'strategy']) {
+    const source = opts[`${axis}Source`]
+    if (source !== undefined && !['operator', 'label'].includes(source)) throw new PolicyError(`${axis}Source must be operator or label`)
+    if (source !== undefined && opts[axis] === undefined) throw new PolicyError(`${axis}Source requires a selection`)
+  }
   requireClosedTable(doc, TOP_LEVEL_REQUIRED_KEYS, TOP_LEVEL_OPTIONAL_KEYS, 'policy')
   if (doc.schema_version !== 2) {
     throw new PolicyError(
@@ -1771,6 +1839,21 @@ export function resolveV2(doc, { rigor: requestedRigor, strategy: requestedStrat
   // malformed profile cannot become a delayed production failure when a
   // label selects it later.
   validatePolicyFamilies(doc)
+  const runs = validateRunProfiles(doc)
+  let selectedRun = null
+  if (opts.run !== undefined) {
+    if (typeof opts.run !== 'string' || !Object.hasOwn(runs, opts.run)) throw new PolicyError(`run profile ${JSON.stringify(opts.run)} has no matching table`)
+    selectedRun = runs[opts.run]
+    for (const [axis, value] of [['rigor', requestedRigor], ['strategy', requestedStrategy], ['breadth', opts.breadth]]) {
+      const source = opts[`${axis}Source`] ?? 'operator'
+      if (value !== undefined && value !== selectedRun[axis]) {
+        if (source !== 'label') throw new PolicyError(`run profile conflicts with explicit ${axis}`)
+        runWarnings.push({ code: 'run-profile-override', message: `run profile overrides ${axis} ${JSON.stringify(value)} from label` })
+      }
+    }
+    requestedRigor = selectedRun.rigor
+    requestedStrategy = selectedRun.strategy
+  }
   const { level, profile, order } = resolveRigorLevel(doc, requestedRigor)
 
   // Validate the whole closed rigor-profile family before selecting values.
@@ -1863,9 +1946,9 @@ export function resolveV2(doc, { rigor: requestedRigor, strategy: requestedStrat
     resolveConvergence(doc, profileName)
   }
   const rounds = resolveRounds(doc, profile, level)
-  const breadth = resolveBreadth(doc, profile, level)
+  const breadth = resolveBreadth(doc, selectedRun ? { breadth: selectedRun.breadth } : opts.breadth ? { breadth: opts.breadth } : profile, level)
   const spend = resolveSpend(doc, profile)
-  const gates = resolveGates(doc)
+  const gates = resolveGates(doc, { overrides: selectedRun?.gates ?? null })
   const convergence = resolveConvergence(doc, level)
   const tierOrder = doc.tier_order
   if (!Array.isArray(tierOrder) || tierOrder.length === 0) {
@@ -1903,7 +1986,9 @@ export function resolveV2(doc, { rigor: requestedRigor, strategy: requestedStrat
     tier_matrix: tierMatrix,
     roles,
     stages,
-    strategy
+    strategy,
+    ...(runWarnings.length ? { warnings: runWarnings } : {}),
+    ...(selectedRun ? { run: { name: opts.run, source: 'operator', ...(selectedRun.gates ? { gates: structuredClone(selectedRun.gates) } : {}) } } : {})
   }
 }
 
@@ -2457,7 +2542,7 @@ function applyTierInputs(resolved, opts = {}) {
   }
   const ladder = resolved.tier_order
   const matrix = resolved.tier_matrix ?? null
-  const warnings = []
+  const warnings = [...(resolved.warnings ?? [])]
   const indeterminate = []
   const operator = normalizeTierMap(tierOverrides, 'operator', ladder, warnings)
   const labels = normalizeTierMap(tierLabels, 'label', ladder, warnings)
@@ -2487,7 +2572,7 @@ function applyTierInputs(resolved, opts = {}) {
   }
   // An honored pin is the issue's Tier on every classification path.
   if (pin.status === 'honored') issue.cache = 'pinned'
-  const rigorChosen = requestedRigor !== undefined
+  const rigorChosen = requestedRigor !== undefined || resolved.run !== undefined
 
   const roles = {}
   for (const [role, entry] of Object.entries(resolved.roles)) {
@@ -2549,7 +2634,7 @@ function applyTierInputs(resolved, opts = {}) {
     // Tier may refine the implementer, so consumers can see which applied.
     rigor: {
       ...resolved.rigor,
-      chosen_by: requestedRigor === undefined ? null : (rigorSource ?? 'operator')
+      chosen_by: resolved.run ? 'operator' : requestedRigor === undefined ? null : (rigorSource ?? 'operator')
     },
     tier_matrix: matrix,
     roles,
@@ -2642,6 +2727,8 @@ export function resolvePolicy(doc, opts = {}) {
 }
 
 function resolveGoverningPolicy(doc, opts) {
+  if (opts.run !== undefined && (opts.mergeBasePolicyAbsent || (!doc && !opts.mergeBaseDoc))) throw new PolicyError('named run selection is unavailable without a v2 policy')
+  if (opts.run !== undefined && opts.mergeBaseDoc && detectShape(opts.mergeBaseDoc).shape !== 'v2') throw new PolicyError('named run selection is unavailable in a historical policy')
   if (opts.mergeBasePolicyAbsent && opts.mergeBaseDoc) {
     throw new PolicyError('an absent merge-base policy cannot also supply mergeBaseDoc')
   }
@@ -2763,6 +2850,10 @@ const RESOLVE_OPTIONS = new Set([
   'rigor',
   'rigor-source',
   'strategy',
+  'run',
+  'breadth',
+  'strategy-source',
+  'breadth-source',
   'tier-overrides',
   'tier-labels',
   'risk',
@@ -2990,6 +3081,10 @@ function cliResolve(args) {
     resolved = resolvePolicy(doc, {
       rigor: args.rigor,
       strategy: args.strategy,
+      run: args.run,
+      breadth: args.breadth,
+      breadthSource: args['breadth-source'],
+      strategySource: args['strategy-source'],
       mergeBaseDoc,
       mergeBasePolicyAbsent,
       ...tierInputsFromArgs(args)
