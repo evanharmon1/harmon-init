@@ -321,6 +321,27 @@ matrix() { # guard
     done
     case_ "$g" silent "$r" 'gh pr review 1 --comment --body "$BODY"'
     case_ "$g" silent "$r" 'gh pr review 1 -cb "$BODY"'
+    # C2-1: double quotes do not preserve one argument for @ expansions.
+    for expansion in '$@' '${@}' '${@:2}' '${a[@]}' '${a[@]:1}' '${a[@]#x}' '${!name@}' '${!name[@]}' '${body:-"$@"}'; do
+        case_ "$g" ask "$r" "gh pr review 1 --comment --body \"$expansion\""
+        case_ "$g" ask "$r" "gh api repos/o/r/pulls/1/reviews -f event=COMMENT -f body=\"$expansion\""
+        case_ "$g" ask "$r" "gh api repos/o/r/issues/1/comments -f body=\"$expansion\""
+    done
+    case_ "$g" silent "$r" 'gh pr review 1 --comment --body "$*"'
+    case_ "$g" silent "$r" 'gh pr review 1 --comment --body "${a[*]}"'
+    # C2-2: evaluator fallback covers review operations, including pipe data.
+    for shell in bash sh; do
+        case_ "$g" ask "$r" "printf 'gh pr review 1 --approve\\n' | $shell"
+        case_ "$g" ask "$r" "cat <<'EOF' | $shell
+ gh pr review 1 --approve
+EOF"
+        case_ "$g" ask "$r" "$shell <<'EOF'
+ gh pr review 1 --approve
+EOF"
+        case_ "$g" ask "$r" "printf 'gh api repos/o/r/pulls/1/reviews -f event=APPROVE\\n' | $shell"
+        case_ "$g" ask "$r" "printf 'addPullRequestReview\\n' | $shell"
+        case_ "$g" ask "$r" "printf 'submitPullRequestReview\\n' | $shell"
+    done
     for flag in -f -F --field --raw-field; do
         for event in COMMENT REQUEST_CHANGES; do
             case_ "$g" silent "$r" "gh api repos/o/r/pulls/1/reviews $flag event=$event"

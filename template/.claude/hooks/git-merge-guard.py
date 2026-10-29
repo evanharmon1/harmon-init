@@ -304,7 +304,8 @@ class Word:
     def __init__(self):
         self.value = ""
         self.literal = True
-        # API values may be dynamic only without shell word splitting/globbing.
+        # Dynamic values qualify only when expansion preserves one argument,
+        # including inside double quotes ("$@" can still produce many words).
         self.unquoted_dynamic = False
 
 
@@ -538,7 +539,10 @@ class Parser:
             self.i = Parser(s, self.commands, self.uncertain).nested(self.i + 2)
         elif s.startswith("${", self.i):
             self.i += 2
-            self.read_double_quoted(Word(), closing="}")
+            inner = Word()
+            self.read_double_quoted(inner, closing="}")
+            if inner.unquoted_dynamic:
+                word.unquoted_dynamic = True
             # Operators like `${x/merge/y}` are not modelled: the word test
             # covers anything they could spell.
             self.uncertain.append(s[start : self.i])
@@ -552,7 +556,12 @@ class Parser:
             return
         word.value += s[start : self.i]
         word.literal = False
-        if not quoted:
+        # Quoting does not make positional/array @ expansions single words.
+        # Include their operators/slices and indirect name expansions; nested
+        # expansions propagate the same property through the brace reader above.
+        multiple = re.match(r"\$(?:@|\{(?:@|!?[A-Za-z_]\w*\[@\]|![A-Za-z_]\w*@))",
+                            s[start:self.i])
+        if not quoted or multiple:
             word.unquoted_dynamic = True
 
 
@@ -833,6 +842,9 @@ def risky_mention(text):
     push = re.search(r"\bpush\b", text, re.I)
     # Evaluated API/delegated sync strings are opaque: no second classifier.
     return bool(MENTION.search(text)
+                or re.search(r"\bgh\b[^\n]*\bpr\s+review\b"
+                             r"|\bpulls/[0-9]+/reviews\b"
+                             r"|\b(?:addPullRequestReview|submitPullRequestReview)\b", text, re.I)
                 or re.search(r"\bgh\b[^\n]*\bapi\b|\brepo\s+sync\b", text, re.I)
                 or (push and (GIT_MENTION.search(text)
                               or re.search(r"\b(?:main|master)\b", text, re.I))))
