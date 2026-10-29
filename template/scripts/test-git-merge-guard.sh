@@ -329,6 +329,23 @@ matrix() { # guard
     done
     case_ "$g" silent "$r" 'gh pr review 1 --comment --body "$*"'
     case_ "$g" silent "$r" 'gh pr review 1 --comment --body "${a[*]}"'
+    # C3-1: only plain scalar parameter expansions prove one quoted argument.
+    for expansion in '${!n}' '${!n:-x}' '${a[1]}' '${a[@]}' '${x:-"$@"}' '${#a[@]}'; do
+        case_ "$g" ask "$r" "gh pr review 1 --comment --body \"$expansion\""
+        case_ "$g" ask "$r" "gh api repos/o/r/pulls/1/reviews -f event=COMMENT -f body=\"$expansion\""
+    done
+    for expansion in '$x' '${x}' '$1' '${10}' '$*' '${*}' '${a[*]}' '$#'; do
+        case_ "$g" silent "$r" "gh pr review 1 --comment --body \"$expansion\""
+        case_ "$g" silent "$r" "gh api repos/o/r/pulls/1/reviews -f event=COMMENT -f body=\"$expansion\""
+    done
+    # C3-2: the review subject can be separated from gh by printf formatting.
+    for shell in bash sh; do
+        case_ "$g" ask "$r" "printf '%s pr review 1 --approve\\n' gh | $shell"
+    done
+    # A bare review word in an evaluator line is not a review operation.
+    case_ "$g" silent "$r" 'bash scripts/codex-review.sh review --base main'
+    case_ "$g" silent "$r" 'bash -c "task review"'
+    case_ "$g" silent "$r" 'echo please review | bash'
     # C2-2: evaluator fallback covers review operations, including pipe data.
     for shell in bash sh; do
         case_ "$g" ask "$r" "printf 'gh pr review 1 --approve\\n' | $shell"

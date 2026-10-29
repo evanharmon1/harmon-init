@@ -556,12 +556,16 @@ class Parser:
             return
         word.value += s[start : self.i]
         word.literal = False
-        # Quoting does not make positional/array @ expansions single words.
-        # Include their operators/slices and indirect name expansions; nested
-        # expansions propagate the same property through the brace reader above.
-        multiple = re.match(r"\$(?:@|\{(?:@|!?[A-Za-z_]\w*\[@\]|![A-Za-z_]\w*@))",
-                            s[start:self.i])
-        if not quoted or multiple:
+        # Quoted command substitutions are one word. For parameters, prove a
+        # plain scalar form; indirect, operator and nested forms stay dynamic.
+        single = True
+        if s[start] != "`" and not s.startswith("$(", start):
+            single = re.fullmatch(
+                r"\$(?:[A-Za-z_][A-Za-z0-9_]*|[0-9]+|[*#?$!-]"
+                r"|\{(?:[A-Za-z_][A-Za-z0-9_]*(?:\[\*\])?|[0-9]+|[*#?$!-])\})",
+                s[start:self.i],
+            )
+        if not quoted or not single:
             word.unquoted_dynamic = True
 
 
@@ -842,7 +846,7 @@ def risky_mention(text):
     push = re.search(r"\bpush\b", text, re.I)
     # Evaluated API/delegated sync strings are opaque: no second classifier.
     return bool(MENTION.search(text)
-                or re.search(r"\bgh\b[^\n]*\bpr\s+review\b"
+                or re.search(r"\bpr\s+review\b"
                              r"|\bpulls/[0-9]+/reviews\b"
                              r"|\b(?:addPullRequestReview|submitPullRequestReview)\b", text, re.I)
                 or re.search(r"\bgh\b[^\n]*\bapi\b|\brepo\s+sync\b", text, re.I)
