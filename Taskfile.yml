@@ -729,6 +729,7 @@ tasks:
     desc: "Guard: root and template skills-sync pins meet the declared harmon-devkit minimum"
     cmds:
       - ./scripts/test-skills-pin-minimum.sh
+      - ./scripts/test-skills-pin-minimum-fixtures.sh
 
   # Root-only on purpose: only a repo that copier-renders ITSELF derives a
   # template version from `git describe`, so only this repo can be broken by a

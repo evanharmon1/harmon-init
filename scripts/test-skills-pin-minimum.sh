@@ -3,7 +3,9 @@
 # the minimum that consumers and standardize-repo can read from copier.yml.
 set -euo pipefail
 
-cd "$(dirname "$0")/.."
+script_dir="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
+repo_root="${SKILLS_PIN_REPO_ROOT:-${script_dir}/..}"
+cd -- "$repo_root"
 
 copier_manifest="copier.yml"
 root_manifest=".skills-sync.yaml"
@@ -63,7 +65,6 @@ minimum="$(read_minimum)"
 minimum_key="$(version_key "$minimum")"
 checked=0
 for manifest in "$root_manifest" "$template_manifest"; do
-    [ -f "$manifest" ] || continue
     pin="$(read_pin "$manifest")"
     pin_key="$(version_key "$pin")"
     [[ "$pin_key" < "$minimum_key" ]] &&
