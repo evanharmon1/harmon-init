@@ -21,103 +21,52 @@ command -v node >/dev/null 2>&1 || fail "node is required to validate the agent 
 
 node "$validator" "$registry" "$schema"
 
-node --input-type=module - "$registry" <<'NODE' || fail "trusted integrate finder profile validation failed"
-import { readFile } from 'node:fs/promises'
-
-const registry = JSON.parse(await readFile(process.argv[2], 'utf8'))
-const trustedCloud = (document) => document.finders.filter((finder) =>
-  finder.surface === 'pr-cloud' &&
-  finder.trusted_actor_id !== null &&
-  finder.trusted_actor_id !== undefined
-)
-const profileErrors = (finder) => {
-  const errors = []
-  const collection = finder.collection
-  const trigger = collection?.trigger
-  if (typeof finder.trusted_actor_id !== 'string' || finder.trusted_actor_id.length === 0) {
-    errors.push('trusted_actor_id')
-  }
-  if (typeof finder.trusted_actor_login !== 'string' || finder.trusted_actor_login.length === 0) {
-    errors.push('trusted_actor_login')
-  }
-  if (typeof collection?.protocol !== 'string') errors.push('collection.protocol')
-  if (typeof trigger?.mechanism !== 'string') {
-    errors.push('collection.trigger.mechanism')
-  } else if (trigger.mechanism === 'review-comment') {
-    if (typeof trigger.body !== 'string' || trigger.body.length === 0 || trigger.reviewer_login !== null) {
-      errors.push('collection.trigger.body/reviewer_login')
-    }
-  } else if (trigger.mechanism === 'requested-reviewer') {
-    if (
-      typeof trigger.reviewer_login !== 'string' ||
-      trigger.reviewer_login.length === 0 ||
-      trigger.body !== null
-    ) {
-      errors.push('collection.trigger.reviewer_login')
-    }
-  } else {
-    errors.push(`unsupported trigger mechanism ${trigger.mechanism}`)
-  }
-  if (
-    !collection?.terminal_signals ||
-    typeof collection.terminal_signals !== 'object' ||
-    Array.isArray(collection.terminal_signals)
-  ) {
-    errors.push('collection.terminal_signals')
-  }
-  return errors
-}
-
-const problems = trustedCloud(registry).flatMap((finder) =>
-  profileErrors(finder).map((field) => `${finder.slug}: ${field}`)
-)
-if (problems.length > 0) {
-  console.error(`FAIL: trusted integrate finder profile is incomplete: ${problems.join(', ')}`)
-  process.exit(1)
-}
-console.log('PASS: trusted pr-cloud finder profiles include the fields required by the integrate gate')
-
-const candidates = trustedCloud(registry)
-if (candidates.length === 0) {
-  console.log('SKIP: no trusted pr-cloud finder is configured to mutate')
-  process.exit(0)
-}
-const slug = candidates[0].slug
-let failures = 0
-const rejectsMissing = (description, mutate) => {
-  const mutated = structuredClone(registry)
-  mutate(mutated.finders.find((finder) => finder.slug === slug))
-  if (trustedCloud(mutated).every((finder) => profileErrors(finder).length === 0)) {
-    console.error(`FAIL: trusted pr-cloud profile passed with missing ${description}`)
-    failures += 1
-  } else {
-    console.log(`PASS: trusted pr-cloud profile fails when ${description} is missing`)
-  }
-}
-rejectsMissing('trusted_actor_login', (finder) => { delete finder.trusted_actor_login })
-rejectsMissing('trusted_actor_id', (finder) => { finder.trusted_actor_id = '' })
-rejectsMissing('collection.protocol', (finder) => { delete finder.collection.protocol })
-rejectsMissing('collection.trigger', (finder) => { delete finder.collection.trigger })
-rejectsMissing('collection.trigger.mechanism', (finder) => { delete finder.collection.trigger.mechanism })
-rejectsMissing('review-comment body', (finder) => { delete finder.collection.trigger.body })
-rejectsMissing('collection.terminal_signals', (finder) => { delete finder.collection.terminal_signals })
-
-const requestedReviewer = structuredClone(registry)
-const requestedFinder = requestedReviewer.finders.find((finder) => finder.slug === slug)
-requestedFinder.collection.trigger = { mechanism: 'requested-reviewer', body: null, reviewer_login: null }
-if (!profileErrors(requestedFinder).includes('collection.trigger.reviewer_login')) {
-  console.error('FAIL: requested-reviewer profile passed without reviewer_login')
-  failures += 1
-} else {
-  console.log('PASS: requested-reviewer profile fails without reviewer_login')
-}
-process.exit(failures === 0 ? 0 : 1)
-NODE
-
 test_tmp="$(mktemp -d)"
 trap 'rm -rf "$test_tmp"' EXIT
 mutated="${test_tmp}/agent-registry.json"
 mutated_schema="${test_tmp}/agent-registry.schema.json"
+
+gate_asset=".claude/skills/integrate/assets/trusted-registry.sh"
+policy_parser=".claude/skills/dev-flow-support/assets/lib/toml-lite.mjs"
+if [ -f "$gate_asset" ] && [ -f "$policy_parser" ]; then
+    # Use the same TOML parser as the vendored policy reader and resolve every
+    # configured slug through the gate's own required-field checks.
+    node --input-type=module - "$policy_parser" >"${test_tmp}/finders" <<'NODE'
+import { readFileSync } from 'node:fs'
+import { pathToFileURL } from 'node:url'
+import { resolve } from 'node:path'
+const { parseToml } = await import(pathToFileURL(resolve(process.argv[2])))
+const finders = parseToml(readFileSync('.devflow.toml', 'utf8')).stage.integration.finders
+if (!Array.isArray(finders) || finders.some((slug) => typeof slug !== 'string' || !slug)) {
+  throw new Error('invalid integration finder list')
+}
+for (const slug of finders) console.log(slug)
+NODE
+    # shellcheck source=/dev/null
+    source "$gate_asset"
+    while IFS= read -r slug; do
+        resolve_finder_profile "$registry" "$slug" "${test_tmp}/profile.json" ||
+            fail "policy-named finder $slug failed gate resolution"
+        for mutation in null-actor missing-mechanism; do
+            node --input-type=module - "$registry" "$mutated" "$slug" "$mutation" <<'NODE'
+import { readFileSync, writeFileSync } from 'node:fs'
+const [input, output, slug, mutation] = process.argv.slice(2)
+const registry = JSON.parse(readFileSync(input, 'utf8'))
+const finder = registry.finders.find((entry) => entry.slug === slug)
+if (mutation === 'null-actor') finder.trusted_actor_id = null
+else delete finder.collection.trigger.mechanism
+writeFileSync(output, JSON.stringify(registry))
+NODE
+            if resolve_finder_profile "$mutated" "$slug" "${test_tmp}/profile.json" >/dev/null 2>&1; then
+                fail "policy-named finder $slug passed gate resolution with $mutation"
+            fi
+            echo "PASS: $slug fails gate resolution with $mutation"
+        done
+    done <"${test_tmp}/finders"
+    echo "PASS: all policy-named integration finders resolve through the gate"
+else
+    echo "SKIP: integrate gate or policy reader is not vendored"
+fi
 
 # Exercise the pinned breakdown module itself, with transport responses supplied
 # from this checkout. Consumers without synced breakdown assets skip at runtime.
