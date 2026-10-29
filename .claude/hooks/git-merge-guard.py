@@ -12,6 +12,9 @@ consume their cluster suffix. Unparseable query controls ask.
 Pull-request reviews ask unless their event is proved COMMENT or REQUEST_CHANGES,
 in CLI, REST and GraphQL forms. Missing, dynamic and unreadable review events
 ask too: an approval can satisfy the code-owner gate and complete auto-merge.
+Review argument counts require literal words or literal text with quoted command
+substitutions; parameter expansions in review arguments/fields ask even when
+quoted. Parameters inside a command-substitution body belong to its nested command.
 
 Replaces the `Bash(git merge)` / `Bash(git merge:*)` permissions.ask rules,
 which prompt on every merge (including routine catch-up merges of main into
@@ -307,6 +310,8 @@ class Word:
         # Dynamic values qualify only when expansion preserves one argument,
         # including inside double quotes ("$@" can still produce many words).
         self.unquoted_dynamic = False
+        # Review proofs never infer a parameter's argument count, even quoted.
+        self.has_param = False
 
 
 class Command:
@@ -538,6 +543,7 @@ class Parser:
             # `$((git merge feat) )` as one, and arithmetic text is harmless.
             self.i = Parser(s, self.commands, self.uncertain).nested(self.i + 2)
         elif s.startswith("${", self.i):
+            word.has_param = True
             self.i += 2
             inner = Word()
             self.read_double_quoted(inner, closing="}")
@@ -547,6 +553,7 @@ class Parser:
             # covers anything they could spell.
             self.uncertain.append(s[start : self.i])
         elif self.i + 1 < len(s) and (s[self.i + 1].isalnum() or s[self.i + 1] in "_@*#?$!-"):
+            word.has_param = True
             self.i += 2
             while self.i < len(s) and (s[self.i].isalnum() or s[self.i] == "_"):
                 self.i += 1
@@ -920,9 +927,9 @@ NONAPPROVAL_EVENTS = {"COMMENT", "REQUEST_CHANGES"}
 
 def cli_review_might_approve(args):
     """Prove an explicit nonapproval mode, consuming option values first."""
-    # Inspect every word before any value is skipped: unquoted expansions can
-    # introduce mode flags through word splitting, even in presentation values.
-    if any(w.unquoted_dynamic for w in args):
+    # Inspect every word before skipping values. Parameters can yield several
+    # arguments even when quoted (for example a nameref to an array).
+    if any(w.unquoted_dynamic or w.has_param for w in args):
         return True
     mode = False
     j = 0
@@ -934,8 +941,6 @@ def cli_review_might_approve(args):
             if j > len(args):
                 return True
             continue
-        if not w.literal:
-            return True
         if v in {"--comment", "--request-changes"}:
             mode = True
         elif v.startswith(("--body=", "--body-file=", "--repo=")):
@@ -953,6 +958,8 @@ def cli_review_might_approve(args):
                 if letter not in "cr":
                     return True  # -a, including a boolean short-option cluster.
                 mode = True
+        elif not w.literal:
+            return True
         j += 1
     return not mode
 
@@ -1058,6 +1065,7 @@ def gh_might_land(words, i, appended=False):
     fields = False
     queries = []
     review_events = []
+    field_words = []
     args = args[1:]
     if any(w.unquoted_dynamic for w in words[i + 1:]):
         return True
@@ -1078,6 +1086,7 @@ def gh_might_land(words, i, appended=False):
                         value = Word()
                         value.value = v[k + 1:]
                         value.literal = w.literal
+                        value.has_param = w.has_param
                         expanded.append(value)
                     break
                 if v[k] != "i":
@@ -1111,11 +1120,13 @@ def gh_might_land(words, i, appended=False):
               or v.startswith(("-f", "-F"))):
             fields = True
             value_literal = w.literal
+            field_words.append(w)
             if v in field_options:
                 j += 1
                 if j >= len(args):
                     return True
                 value, value_literal = args[j].value, args[j].literal
+                field_words.append(args[j])
             elif v.startswith(("-f", "-F")):
                 value = v[2:]
             key, eq, body = value.partition("=")
@@ -1220,6 +1231,8 @@ def gh_might_land(words, i, appended=False):
                         return True
                     found = True
                     if field in {"addPullRequestReview", "submitPullRequestReview"}:
+                        if any(w.has_param for w in field_words):
+                            return True
                         end = skip_group(k, "(", ")") if k < len(ts) and ts[k] == "(" else k
                         if not graphql_review_is_nonapproval(ts[k:end]):
                             return True
@@ -1235,7 +1248,8 @@ def gh_might_land(words, i, appended=False):
     if method in {"GET", "HEAD"} and not queries:
         return False
     if method == "POST" and re.fullmatch(r"repos/[^/]+/[^/]+/pulls/[0-9]+/reviews", path):
-        return len(review_events) != 1 or review_events[0] not in NONAPPROVAL_EVENTS
+        return (any(w.has_param for w in field_words)
+                or len(review_events) != 1 or review_events[0] not in NONAPPROVAL_EVENTS)
     # A short permission list; misses ask. Never decode percent escapes here.
     safe_writes = (
         ({"POST"}, r"issues/[0-9]+/comments"),

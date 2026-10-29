@@ -283,6 +283,7 @@ matrix() { # guard
         'gh pr review 1 -a' \
         'gh pr review 1 -ca' \
         'gh pr review 1 -ra' \
+        'gh pr review 1 --request-changes --body "$BODY"' \
         'gh -R o/r pr review 1 --approve' \
         'gh pr -R o/r review 1 -a' \
         'gh pr review 1' \
@@ -298,7 +299,6 @@ matrix() { # guard
         'gh pr review 1 -cbapprove' \
         'gh pr review 1 -rb approve' \
         'gh pr review 1 --comment --body --approve' \
-        'gh pr review 1 --request-changes --body "$BODY"' \
         'gh pr review 1 --comment --body-file @file'; do
         case_ "$g" silent "$r" "$cmd"
     done
@@ -319,24 +319,47 @@ matrix() { # guard
         'gh pr -R $R review 1 --comment'; do
         case_ "$g" ask "$r" "$cmd"
     done
-    case_ "$g" silent "$r" 'gh pr review 1 --comment --body "$BODY"'
-    case_ "$g" silent "$r" 'gh pr review 1 -cb "$BODY"'
+    case_ "$g" ask "$r" 'gh pr review 1 --comment --body "$BODY"'
+    case_ "$g" ask "$r" 'gh pr review 1 -cb "$BODY"'
     # C2-1: double quotes do not preserve one argument for @ expansions.
     for expansion in '$@' '${@}' '${@:2}' '${a[@]}' '${a[@]:1}' '${a[@]#x}' '${!name@}' '${!name[@]}' '${body:-"$@"}'; do
         case_ "$g" ask "$r" "gh pr review 1 --comment --body \"$expansion\""
         case_ "$g" ask "$r" "gh api repos/o/r/pulls/1/reviews -f event=COMMENT -f body=\"$expansion\""
         case_ "$g" ask "$r" "gh api repos/o/r/issues/1/comments -f body=\"$expansion\""
     done
-    case_ "$g" silent "$r" 'gh pr review 1 --comment --body "$*"'
-    case_ "$g" silent "$r" 'gh pr review 1 --comment --body "${a[*]}"'
-    # C3-1: only plain scalar parameter expansions prove one quoted argument.
+    case_ "$g" ask "$r" 'gh pr review 1 --comment --body "$*"'
+    case_ "$g" ask "$r" 'gh pr review 1 --comment --body "${a[*]}"'
+    # C3-1/R14b: no parameter expansion proves one review argument.
     for expansion in '${!n}' '${!n:-x}' '${a[1]}' '${a[@]}' '${x:-"$@"}' '${#a[@]}'; do
         case_ "$g" ask "$r" "gh pr review 1 --comment --body \"$expansion\""
         case_ "$g" ask "$r" "gh api repos/o/r/pulls/1/reviews -f event=COMMENT -f body=\"$expansion\""
     done
     for expansion in '$x' '${x}' '$1' '${10}' '$*' '${*}' '${a[*]}' '$#'; do
-        case_ "$g" silent "$r" "gh pr review 1 --comment --body \"$expansion\""
-        case_ "$g" silent "$r" "gh api repos/o/r/pulls/1/reviews -f event=COMMENT -f body=\"$expansion\""
+        case_ "$g" ask "$r" "gh pr review 1 --comment --body \"$expansion\""
+        case_ "$g" ask "$r" "gh api repos/o/r/pulls/1/reviews -f event=COMMENT -f body=\"$expansion\""
+    done
+    case_ "$g" ask "$r" 'a=(t --approve); declare -n n='"'"'a[@]'"'"'; gh pr review 1 --comment --body "$n"'
+    case_ "$g" ask "$r" 'a=(t --approve); declare -n n='"'"'a[@]'"'"'; gh api repos/o/r/pulls/1/reviews -f event=COMMENT -f body="$n"'
+    case_ "$g" ask "$r" 'gh api repos/o/r/pulls/1/reviews -f event=COMMENT -f body="$BODY"'
+    # Attached values use the same review proof as separated values.
+    for option in --body --body-file --repo -b -F -R; do
+        case_ "$g" ask "$r" "gh pr review 1 --comment $option \"\$BODY\""
+        for value in literal '"$(printf x)"' '"`printf x`"'; do
+            case_ "$g" silent "$r" "gh pr review 1 --comment $option $value"
+        done
+    done
+    for option in --body= --body-file= --repo= -b -F -R; do
+        case_ "$g" ask "$r" "gh pr review 1 --comment ${option}\"\$BODY\""
+        for value in literal '"$(printf x)"' '"`printf x`"'; do
+            case_ "$g" silent "$r" "gh pr review 1 --comment $option$value"
+        done
+    done
+    case_ "$g" silent "$r" 'gh pr review 1 --comment --body prefix"$(printf "$x")"suffix'
+    for option in '--body ' --body= -b; do
+        case_ "$g" silent "$r" "gh pr review 1 --comment ${option}\"\$(cat <<'EOF'
+Review body
+EOF
+)\""
     done
     # C3-2: the review subject can be separated from gh by printf formatting.
     for shell in bash sh; do
@@ -382,6 +405,12 @@ EOF"
         for event in COMMENT REQUEST_CHANGES; do
             case_ "$g" silent "$r" "gh api graphql -f 'query=mutation { $mutation(input: {pullRequestId: \"PR\", event: $event, body: \"APPROVE\"}) { clientMutationId } }'"
         done
+        # Review-only parameter checks include variable fields and short suffixes.
+        for flag in -f -F --field --raw-field; do
+            case_ "$g" ask "$r" "gh api graphql -f 'query=mutation { $mutation(input: {event: COMMENT}) { clientMutationId } }' $flag body=\"\$BODY\""
+        done
+        case_ "$g" ask "$r" "gh api graphql -f 'query=mutation { $mutation(input: {event: COMMENT}) { clientMutationId } }' -fbody=\"\$BODY\""
+        case_ "$g" silent "$r" "gh api graphql -f 'query=mutation { $mutation(input: {event: COMMENT}) { clientMutationId } }' -f body=\"\$(printf x)\""
         for event in APPROVE UNKNOWN '$event'; do
             case_ "$g" ask "$r" "gh api graphql -f 'query=mutation { $mutation(input: {event: $event}) { clientMutationId } }'"
         done
@@ -460,6 +489,9 @@ EOF"
     case_ "$g" ask "$r" 'gh api repos/o/r/pulls/1 --jq $FILTER'
     case_ "$g" ask "$r" 'gh api -X POST repos/o/r/issues/1/comments -f body=$BODY'
     case_ "$g" silent "$r" 'gh api -X POST repos/o/r/issues/1/comments -f body="$BODY"'
+    # R14b: general comment/reply paths retain their quoted parameter behavior.
+    case_ "$g" silent "$r" 'gh api repos/o/r/pulls/1/comments/2/replies -f body="$BODY"'
+    case_ "$g" silent "$r" 'gh api repos/o/r/issues/1/comments -f body="$BODY"'
     case_ "$g" silent "$r" 'gh api repos/o/r/pulls/1 -t "$T"'
     case_ "$g" ask "$r" 'gh api repos/o/r/pulls/1 -t "$T"$OTHER'
     case_ "$g" ask "$r" "gh api graphql -f 'query=mutation { resolveReviewThread(input: {}) { clientMutationId } # comment${cr} mergePullRequest(input: {}) { clientMutationId } }'"
