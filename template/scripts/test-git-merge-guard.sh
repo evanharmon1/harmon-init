@@ -302,6 +302,25 @@ matrix() { # guard
         'gh pr review 1 --comment --body-file @file'; do
         case_ "$g" silent "$r" "$cmd"
     done
+    # C1-1: a skipped value must never inject approval flags by word splitting.
+    for cmd in \
+        'gh pr review 1 --comment --body $BODY' \
+        'gh pr review 1 --comment -b $B' \
+        'gh pr review 1 -cb $B' \
+        'gh pr review 1 --comment --body-file $F' \
+        'gh pr review 1 --comment -F $F' \
+        'gh pr review 1 --comment --repo $R' \
+        'gh pr review 1 --comment -R $R' \
+        'gh pr review 1 --comment --body-file=$F' \
+        'gh pr review 1 --comment --repo=$R' \
+        'gh pr review 1 --comment -cb$B' \
+        'gh pr review $PR --comment' \
+        'gh -R $R pr review 1 --comment' \
+        'gh pr -R $R review 1 --comment'; do
+        case_ "$g" ask "$r" "$cmd"
+    done
+    case_ "$g" silent "$r" 'gh pr review 1 --comment --body "$BODY"'
+    case_ "$g" silent "$r" 'gh pr review 1 -cb "$BODY"'
     for flag in -f -F --field --raw-field; do
         for event in COMMENT REQUEST_CHANGES; do
             case_ "$g" silent "$r" "gh api repos/o/r/pulls/1/reviews $flag event=$event"

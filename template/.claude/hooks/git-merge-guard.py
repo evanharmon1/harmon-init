@@ -904,13 +904,15 @@ NONAPPROVAL_EVENTS = {"COMMENT", "REQUEST_CHANGES"}
 
 def cli_review_might_approve(args):
     """Prove an explicit nonapproval mode, consuming option values first."""
+    # Inspect every word before any value is skipped: unquoted expansions can
+    # introduce mode flags through word splitting, even in presentation values.
+    if any(w.unquoted_dynamic for w in args):
+        return True
     mode = False
     j = 0
     while j < len(args):
         w = args[j]
         v = w.value
-        if w.unquoted_dynamic:
-            return True
         if v in {"-b", "--body", "-F", "--body-file", "-R", "--repo"}:
             j += 2
             if j > len(args):
@@ -1013,7 +1015,7 @@ def gh_might_land(words, i, appended=False):
             return True
         if args[0].value == "pr":
             if args[j].value == "review":
-                return fed or cli_review_might_approve(args[j + 1:])
+                return fed or cli_review_might_approve(words[i + 1:])
             return args[j].value == "merge"
         if args[j].value != "sync":
             return False
