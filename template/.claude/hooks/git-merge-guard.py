@@ -879,7 +879,8 @@ def gh_prints_help(args):
               "-t", "--template", "--cache", "--source", "-s", "--subject",
               "-b", "--body", "--body-file", "-A", "--author-email", "--match-head-commit"}
     bools = {"--auto", "--admin", "--merge", "--squash", "--rebase", "--delete-branch",
-             "--disable-auto", "--include", "--paginate", "--slurp", "--silent", "--verbose", "--force"}
+             "--disable-auto", "--include", "--paginate", "--slurp", "--silent", "--verbose", "--force",
+             "--comment", "--request-changes", "--approve"}
     # A skipped value holding a parameter can expand to `--help=false --approve`,
     # so help is proved only when no word's argument count is unknown.
     if any(w.unquoted_dynamic or w.has_param for w in args):
@@ -914,7 +915,7 @@ def gh_prints_help(args):
                 if letter in "hv":
                     nonexecuting = True
                     continue
-                if letter not in "imsrd":
+                if letter not in "imsrdca":
                     return False
         j += 1
     return nonexecuting
@@ -989,6 +990,16 @@ def graphql_review_is_nonapproval(ts):
     return False
 
 
+def gh_touches_review(args):
+    """Recognize review subjects before options or read/help exemptions."""
+    values = [w.value for w in args]
+    return (("pr" in values and "review" in values)
+            or any(re.fullmatch(r"repos/[^/]+/[^/]+/pulls/[0-9]+/reviews(?:/.*)?",
+                                normalized_endpoint(w)[0]) for w in args)
+            or any(re.search(r"\b(?:addPullRequestReview|submitPullRequestReview)\b", w.value)
+                   for w in args))
+
+
 def gh_might_land(words, i, appended=False):
     """Ask unless a built-in, API read or explicitly safe write is proved.
 
@@ -996,6 +1007,8 @@ def gh_might_land(words, i, appended=False):
     Unknown paths/mutations/controlling inputs cost a prompt, never a silent write.
     """
     args = words[i + 1:]
+    if any(w.has_param for w in args) and gh_touches_review(args):
+        return True
     tokens = feeder_tokens(words, i)
     if tokens is not None and (not args or any(
             t and t in w.value for t in tokens for w in args)):
@@ -1006,17 +1019,24 @@ def gh_might_land(words, i, appended=False):
     if not fed and gh_prints_help(args):
         return False
     j = 0
+    param_option = False
     while j < len(args) and args[j].value.startswith("-"):
         v = args[j].value
         if v in ("-R", "--repo", "--hostname"):
+            if j + 1 >= len(args):
+                return True
+            param_option |= args[j].has_param or args[j + 1].has_param
             j += 2
         elif v.startswith(("--repo=", "--hostname=", "-R")):
+            param_option |= args[j].has_param
             j += 1
         else:
             return True
     args = args[j:]
     if not args:
-        return False
+        return param_option
+    if args[0].value != "api" and param_option:
+        return True
     if not args[0].literal:
         return True
     if args[0].value == "help":
@@ -1026,8 +1046,12 @@ def gh_might_land(words, i, appended=False):
         while j < len(args) and args[j].value.startswith("-"):
             opt = args[j].value
             if opt in ("-R", "--repo"):
+                if j + 1 >= len(args) or args[j].has_param or args[j + 1].has_param:
+                    return True
                 j += 2
             elif opt.startswith(("-R", "--repo=")):
+                if args[j].has_param:
+                    return True
                 j += 1
             else:
                 return True

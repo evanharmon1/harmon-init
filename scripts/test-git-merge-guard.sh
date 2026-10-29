@@ -346,6 +346,22 @@ matrix() { # guard
     case_ "$g" ask "$r" 'gh pr review 1 --help --body "$BODY"'
     case_ "$g" silent "$r" 'gh pr review 1 --help'
     case_ "$g" silent "$r" 'gh pr review --help'
+    # V2-1: literal review modes retain the nonexecuting help exemption.
+    case_ "$g" silent "$r" 'gh pr review 1 --comment --help'
+    case_ "$g" silent "$r" 'gh pr review 1 --request-changes --help'
+    case_ "$g" silent "$r" 'gh pr review 1 --approve --help'
+    case_ "$g" silent "$r" 'gh pr review 1 -c -h'
+    # V3-1: review parameters ask before read exemptions or option consumption.
+    case_ "$g" ask "$r" 'a=(x -X POST -f event=APPROVE); declare -n n='"'"'a[@]'"'"'; gh api -X GET repos/o/r/pulls/1/reviews -f body="$n"'
+    case_ "$g" ask "$r" 'gh api -X GET repos/o/r/pulls/1/reviews -q "$n"'
+    case_ "$g" ask "$r" 'gh api -X HEAD repos/o/r/pulls/1/reviews -H "$n"'
+    case_ "$g" ask "$r" 'gh api -X GET repos/o/r/pulls/1/reviews/2/events -q "$n"'
+    case_ "$g" ask "$r" 'gh api graphql -X GET -f '"'"'query=mutation { submitPullRequestReview(input: {event: COMMENT}) { clientMutationId } }'"'"' -q "$n"'
+    case_ "$g" ask "$r" 'a=(o/r pr review --approve); declare -n n='"'"'a[@]'"'"'; gh -R "$n" 1'
+    case_ "$g" ask "$r" 'a=(o/r review 1 --approve --body); declare -n n='"'"'a[@]'"'"'; gh pr -R "$n" hi'
+    # R15b: no subcommand asks only when consumed options contain parameters.
+    case_ "$g" ask "$r" 'a=(o/r pr review 1 --approve); declare -n n='"'"'a[@]'"'"'; gh -R "$n"'
+    case_ "$g" silent "$r" 'gh -R o/r'
     # V1-2: outside review paths, quoted parameters keep main's one-word rule.
     case_ "$g" silent "$r" 'gh api repos/o/r/issues/1/comments -f body="${BODY:-fallback}"'
     case_ "$g" silent "$r" 'gh api repos/o/r/pulls/1 --jq "${FILTER:-.id}"'
