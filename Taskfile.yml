@@ -147,6 +147,7 @@ tasks:
       - task: test:devcontainer:image:automation
       - task: test:bootstrap-remote
       - task: test:skills-pin-parity
+      - task: test:skills-pin-minimum
       - task: test:tag-hygiene
       - task: test:dogfood-parity
       - task: test:dogfood-structure
@@ -721,6 +722,13 @@ tasks:
     desc: "Guard: the root and template skills-sync manifests pin the same harmon-devkit tag"
     cmds:
       - ./scripts/sync-devkit-release.sh pinned
+
+  # ROOT-ONLY: generated repos have no copier.yml minimum to compare against;
+  # this checks the source repo's root and template pins before release.
+  test:skills-pin-minimum:
+    desc: "Guard: root and template skills-sync pins meet the declared harmon-devkit minimum"
+    cmds:
+      - ./scripts/test-skills-pin-minimum.sh
 
   # Root-only on purpose: only a repo that copier-renders ITSELF derives a
   # template version from `git describe`, so only this repo can be broken by a
