@@ -285,6 +285,10 @@ fi
 
 reset_policy
 resolve_reader --rigor cursory --strategy oneshot
+if resolve_reader --breadth "" 2>/dev/null; then
+    echo "FAIL: JS reader accepted an empty breadth selection" >&2
+    exit 1
+fi
 
 resolved="$(node scripts/devflow-policy.mjs resolve \
     --policy=.devflow.toml \

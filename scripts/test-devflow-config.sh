@@ -58,7 +58,7 @@ for rel, text in policy_text.items():
     manifest = json.loads((root / manifest_rel).read_text())
     if cfg.get("schema_version") != 2:
         fail(f"{rel}: schema_version=2 is required; migrate legacy v1 configuration")
-    expected = {"schema_version", "default_rigor", "default_strategy", "rigor_order", "tier_order", "rigor", "rounds", "breadth", "gates", "convergence", "role", "stage", "strategy"}
+    expected = {"schema_version", "default_rigor", "default_strategy", "rigor_order", "tier_order", "rigor", "rounds", "breadth", "run", "gates", "convergence", "role", "stage", "strategy"}
     extra = set(cfg) - expected - {"spend", "tier"}
     if extra: fail(f"{rel}: unsupported top-level keys: {sorted(extra)}")
     if "tier" in cfg:
@@ -92,8 +92,11 @@ for rel, text in policy_text.items():
         if not isinstance(rounds["wall_clock_min"], int) or rounds["wall_clock_min"] < 1: fail(f"{rel}: rounds.{name}.wall_clock_min must be a positive integer")
         if rounds["min_rounds"] > min(rounds["challenge"], rounds["review"]): fail(f"{rel}: rounds.{name}.min_rounds exceeds a confidence-stage cap")
     for name, breadth in cfg["breadth"].items():
-        if set(breadth) != {"max_agent_runs", "max_parallel_agents"}: fail(f"{rel}: breadth.{name} has invalid keys")
+        if set(breadth) != {"max_agent_runs", "max_parallel_agents", "max_in_flight"}: fail(f"{rel}: breadth.{name} has invalid keys")
         if any(not isinstance(v, int) or v < 1 for v in breadth.values()): fail(f"{rel}: breadth.{name} must use positive integers")
+        if breadth["max_in_flight"] < breadth["max_parallel_agents"]: fail(f"{rel}: breadth.{name} in-flight ceiling is below parallel ceiling")
+    if cfg["breadth"].get("fleet") != {"max_agent_runs": 30, "max_parallel_agents": 5, "max_in_flight": 15}: fail(f"{rel}: fleet breadth drifted")
+    if cfg["run"].get("standardize-repo") != {"rigor": "standard", "breadth": "fleet", "strategy": "orchestrate"}: fail(f"{rel}: standardize-repo run drifted")
     for key in ("round_code", "round_docs", "secret_scan", "pre_pr"):
         value = cfg["gates"].get(key)
         if not isinstance(value, str) or " " in value or "/" in value or not re.search(rf"^  {re.escape(value)}:", taskfile, re.M): fail(f"{rel}: gates.{key} must be a Taskfile target")
@@ -146,12 +149,22 @@ with tempfile.TemporaryDirectory() as tmp:
         path = pathlib.Path(tmp) / f"{len(list(pathlib.Path(tmp).iterdir()))}.toml"
         path.write_text(text)
         run = subprocess.run(
-            ["node", "scripts/devflow-policy.mjs", "resolve", "--policy", str(path),
+            ["node", ".claude/skills/dev-flow-support/assets/devflow-policy.mjs", "resolve", "--policy", str(path),
              "--registry", "agent-registry.json", "--taskfile-dir", ".", "--json"],
             text=True, capture_output=True,
         )
         if run.returncode != 0:
             fail(f"{label}: executable reader rejected rendered policy: {run.stderr.strip()}")
+        named_run = subprocess.run(
+            ["node", ".claude/skills/dev-flow-support/assets/devflow-policy.mjs", "resolve", "--policy", str(path),
+             "--registry", "agent-registry.json", "--taskfile-dir", ".", "--run", "standardize-repo", "--json"],
+            text=True, capture_output=True,
+        )
+        if named_run.returncode != 0:
+            fail(f"{label}: vendored reader rejected standardize-repo run: {named_run.stderr.strip()}")
+        named = json.loads(named_run.stdout)
+        if named["breadth"].get("max_in_flight") != 15:
+            fail(f"{label}: standardize-repo did not resolve fleet breadth")
         # harmon-init#1326: the base-merge exemption is DERIVED, so it must
         # track the charged ceiling on every render — 0 included. A repo that
         # opted out of cloud review has no reviewer to run an exempt cycle
@@ -172,6 +185,9 @@ with tempfile.TemporaryDirectory() as tmp:
 
 schema = json.loads((root / ".devflow.schema.json").read_text())
 if schema["properties"]["schema_version"]["const"] != 2: fail("v2 schema const missing")
+if schema["properties"].get("run", {}).get("$ref") != "#/$defs/run_profiles": fail("schema must accept named runs")
+if schema["$defs"]["breadth_profile"]["properties"].get("max_in_flight") != {"type": "integer", "minimum": 1}: fail("schema must accept max_in_flight")
+if schema["$defs"]["run_profile"]["properties"].get("gates", {}).get("$ref") != "#/$defs/run_gate_overrides": fail("schema must accept run gate overrides")
 if schema["$defs"]["rigor_profile"]["properties"].get("convergence", {}).get("$ref") != "#/$defs/convergence_override": fail("v2 schema lacks per-rigor convergence overrides")
 if schema["$defs"]["rigor_profile"]["properties"].get("spend", {}).get("type") != "string": fail("v2 schema lacks per-rigor spend pointers")
 stage_schema = schema["$defs"]["stage_profiles"]
@@ -246,3 +262,46 @@ process.exit(1)
     echo "FAIL: resolvePolicy accepted an absent merge-base policy without a branch policy" >&2
     exit 1
 fi
+
+# Exercise the root reader's fleet/run contract, including dormant invalid profiles.
+node --input-type=module <<'NODE'
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { parseToml } from './scripts/lib/toml-lite.mjs'
+import { resolvePolicy } from './scripts/devflow-policy.mjs'
+const base = parseToml(readFileSync('.devflow.toml', 'utf8'))
+const clone = () => structuredClone(base)
+let doc = clone()
+let result = resolvePolicy(doc, { run: 'standardize-repo' })
+assert.equal(result.breadth.policy, 'fleet')
+assert.equal(result.breadth.max_in_flight, 15)
+assert.equal(result.rigor.chosen_by, 'operator')
+assert.equal(result.strategy.name, 'orchestrate')
+doc = clone()
+delete doc.breadth.standard.max_in_flight
+assert.equal(resolvePolicy(doc).breadth.max_in_flight, doc.breadth.standard.max_parallel_agents)
+for (const invalid of [0, 2, 3.5, '3']) {
+  doc = clone()
+  doc.breadth.standard.max_in_flight = invalid
+  assert.throws(() => resolvePolicy(doc))
+}
+for (const change of [
+  p => { p.run.bad = { rigor: 'missing', breadth: 'fleet', strategy: 'orchestrate' } },
+  p => { p.run.bad = { rigor: 'standard', breadth: 'missing', strategy: 'orchestrate' } },
+  p => { p.run.bad = { rigor: 'standard', breadth: 'fleet', strategy: 'missing' } },
+  p => { p.run.bad = { rigor: 'standard', breadth: 'fleet', strategy: 'orchestrate', extra: true } },
+  p => { p.run.bad = { rigor: 'standard', breadth: 'fleet', strategy: 'orchestrate', gates: { extra: 'check' } } },
+  p => { p.run.bad = { rigor: 'standard', breadth: 'fleet', strategy: 'orchestrate', gates: {} } },
+]) {
+  doc = clone(); change(doc); assert.throws(() => resolvePolicy(doc))
+}
+doc = clone()
+doc.run['standardize-repo'].gates = { round_code: 'check', docs_only_paths: ['docs/**'] }
+result = resolvePolicy(doc, { run: 'standardize-repo' })
+assert.equal(result.gates.round_code, 'check')
+assert.equal(result.gates.secret_scan, doc.gates.secret_scan)
+assert.deepEqual(result.gates.docs_only_paths, ['docs/**'])
+assert.throws(() => resolvePolicy(doc, { run: 'standardize-repo', rigor: 'deep' }))
+assert.equal(resolvePolicy(doc, { run: 'standardize-repo', rigor: 'deep', rigorSource: 'label' }).rigor.level, 'standard')
+console.log('fleet and named run reader cases OK')
+NODE
