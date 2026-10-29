@@ -56,6 +56,32 @@ runs in a scratch repository
 
 ## Decision
 
+The hook is the primary local merge gate (extended by #787). `gh api` asks
+unless it proves a read or an explicitly safe write. A short safe-write
+allowlist covers routine metadata/review operations and sanctioned PR-head
+catch-ups. Unknown writes ask; there is no dangerous-write denylist to complete.
+REST paths drop the host and optional Enterprise API prefix but stay undecoded,
+so encoded separators cannot manufacture a safe route. GraphQL mutation writes
+require every root field to be allowlisted. Operation-controlling inputs must
+be literal; presentation values and non-query field values may be dynamic.
+Evaluated API/sync strings and append-mode API feeders ask without further
+interpretation. The same hook gates `gh pr merge`, remote `gh repo sync` targets
+and protected/mirror pushes. Every push form shares one invariant: silence
+requires proof that the destination ref equals the current branch's own name
+and that name is not the destination repository's default branch. Ref mappings
+can invalidate the first proof, and repository redirections invalidate the
+fetch-side default-branch proof even with an explicit source:destination.
+Every configured value participates in the proof. gh at a command position
+keeps its fail-closed classification. Outside command position, a gh word is
+data unless a following word in the same simple command is nonliteral or
+literally `pr`, `api` or `repo`; those cases receive the full classification.
+This covers unlisted wrappers while keeping ordinary data words silent;
+`echo gh pr merge 1` therefore still asks.
+A push beside companions other than `true`, `false`, `git status` and a verified
+`git fetch <remote>` (for example `git commit … && git push`) asks.
+Compounds reuse the existing companion grammar. `permissions.ask` remains a prefix-matching backstop when
+hooks do not run. The bot/agent boundary and merge/pull allowlist are unchanged.
+
 1. **Replace the `git merge` ask rules with `.claude/hooks/git-merge-guard.py`.**
    Remove `Bash(git merge)` and `Bash(git merge:*)` from `permissions.ask` in
    `.claude/settings.json` and `template/.claude/settings.json.jinja`, and
@@ -156,8 +182,7 @@ runs in a scratch repository
   ([2026-10-07-bot-and-agent-postures-carry-no-merge-guards.md](2026-10-07-bot-and-agent-postures-carry-no-merge-guards.md)).
 - The hook is a client-side backstop against mistakes, not an adversarial
   boundary: it does not inspect scripts, external git aliases, commands that
-  move `main` without `merge`/`pull` (`git push . HEAD:main`,
-  `git fetch . feat:main`, `git branch -f main feat`,
+  move `main` outside its guarded entry points (`git fetch . feat:main`, `git branch -f main feat`,
   `git update-ref refs/heads/main`), or sessions launched with `claude --bare`
   or `disableAllHooks`. Server-side enforcement remains the "Protect Main"
   ruleset.
