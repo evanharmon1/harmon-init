@@ -274,8 +274,72 @@ matrix() { # guard
         '-X POST repos/o/r/actions/workflows/review.yml/dispatches -f ref=feat'; do
         case_ "$g" silent "$r" "gh api $cmd"
     done
-    for cmd in addComment addPullRequestReview addPullRequestReviewComment addPullRequestReviewThreadReply resolveReviewThread unresolveReviewThread addReaction removeReaction updateIssue updatePullRequest addLabelsToLabelable removeLabelsFromLabelable updatePullRequestBranch updateProjectV2ItemFieldValue addProjectV2ItemById markPullRequestReadyForReview convertPullRequestToDraft; do
+    for cmd in addComment addPullRequestReviewComment addPullRequestReviewThreadReply resolveReviewThread unresolveReviewThread addReaction removeReaction updateIssue updatePullRequest addLabelsToLabelable removeLabelsFromLabelable updatePullRequestBranch updateProjectV2ItemFieldValue addProjectV2ItemById markPullRequestReadyForReview convertPullRequestToDraft; do
         case_ "$g" silent "$r" "gh api graphql -f 'query=mutation { $cmd(input: {}) { clientMutationId } }'"
+    done
+    # #1858: every review must prove COMMENT or REQUEST_CHANGES; unknown asks.
+    for cmd in \
+        'gh pr review 1 --approve' \
+        'gh pr review 1 -a' \
+        'gh pr review 1 -ca' \
+        'gh pr review 1 -ra' \
+        'gh -R o/r pr review 1 --approve' \
+        'gh pr -R o/r review 1 -a' \
+        'gh pr review 1' \
+        'gh pr review 1 "$MODE"' \
+        'xargs gh pr review 1 --comment'; do
+        case_ "$g" ask "$r" "$cmd"
+    done
+    for cmd in \
+        'gh pr review 1 --comment' \
+        'gh pr review 1 -c' \
+        'gh pr review 1 --request-changes' \
+        'gh pr review 1 -r' \
+        'gh pr review 1 -cbapprove' \
+        'gh pr review 1 -rb approve' \
+        'gh pr review 1 --comment --body --approve' \
+        'gh pr review 1 --request-changes --body "$BODY"' \
+        'gh pr review 1 --comment --body-file @file'; do
+        case_ "$g" silent "$r" "$cmd"
+    done
+    for flag in -f -F --field --raw-field; do
+        for event in COMMENT REQUEST_CHANGES; do
+            case_ "$g" silent "$r" "gh api repos/o/r/pulls/1/reviews $flag event=$event"
+        done
+        for event in APPROVE UNKNOWN '@file' '@-' '"$EVENT"'; do
+            case_ "$g" ask "$r" "gh api repos/o/r/pulls/1/reviews $flag event=$event"
+        done
+    done
+    for cmd in \
+        'gh api repos/o/r/pulls/1/reviews --field=event=APPROVE' \
+        'gh api repos/o/r/pulls/1/reviews --raw-field=event=APPROVE' \
+        'gh api repos/o/r/pulls/1/reviews -if event=APPROVE' \
+        'gh api repos/o/r/pulls/1/reviews -f event=COMMENT -F event=@file' \
+        'gh api repos/o/r/pulls/1/reviews -f event[]=COMMENT' \
+        'gh api repos/o/r/pulls/1/reviews --input file' \
+        'gh api repos/o/r/pulls/1/reviews --input -' \
+        'gh api -X POST repos/o/r/pulls/1/reviews'; do
+        case_ "$g" ask "$r" "$cmd"
+    done
+    for mutation in addPullRequestReview submitPullRequestReview; do
+        for event in COMMENT REQUEST_CHANGES; do
+            case_ "$g" silent "$r" "gh api graphql -f 'query=mutation { $mutation(input: {pullRequestId: \"PR\", event: $event, body: \"APPROVE\"}) { clientMutationId } }'"
+        done
+        for event in APPROVE UNKNOWN '$event'; do
+            case_ "$g" ask "$r" "gh api graphql -f 'query=mutation { $mutation(input: {event: $event}) { clientMutationId } }'"
+        done
+        case_ "$g" ask "$r" "gh api graphql -f 'query=mutation { $mutation(input: {}) { clientMutationId } }'"
+        case_ "$g" ask "$r" "gh api graphql -f 'query=mutation { $mutation(input: {event: COMMENT, event: APPROVE}) { clientMutationId } }'"
+        case_ "$g" ask "$r" "gh api graphql -f 'query=mutation { $mutation(input: {event: APPROVE, comments: [{body: \"x\", event: COMMENT}]}) { clientMutationId } }'"
+        for flag in -f -F --field --raw-field; do
+            case_ "$g" ask "$r" "gh api graphql $flag 'query=mutation { $mutation(input: {event: APPROVE}) { clientMutationId } }'"
+            case_ "$g" ask "$r" "gh api graphql -f 'query=mutation(\$event: PullRequestReviewEvent!) { $mutation(input: {event: \$event}) { clientMutationId } }' $flag event=APPROVE"
+            case_ "$g" ask "$r" "gh api graphql -f 'query=mutation(\$input: SubmitPullRequestReviewInput!) { $mutation(input: \$input) { clientMutationId } }' $flag 'input[event]=APPROVE'"
+            case_ "$g" ask "$r" "gh api graphql $flag query=@file"
+            case_ "$g" ask "$r" "gh api graphql $flag query=@-"
+        done
+        case_ "$g" ask "$r" "gh api graphql --input file -f 'query=mutation { $mutation(input: {event: COMMENT}) { clientMutationId } }'"
+        case_ "$g" ask "$r" "gh api graphql --input - -f 'query=mutation { $mutation(input: {event: COMMENT}) { clientMutationId } }'"
     done
     case_ "$g" silent "$r" 'gh pr update-branch 1'
     case_ "$g" ask "$r" 'gh api -X PATCH repos/o/r/unknown-write'

@@ -9,6 +9,9 @@ Unknown API writes and evaluator-fed API/sync strings ask. Presentation values
 may be dynamic only inside double quotes; operation-controlling inputs must
 be literal. Explicit GET/HEAD fields are read parameters. Short-option values
 consume their cluster suffix. Unparseable query controls ask.
+Pull-request reviews ask unless their event is proved COMMENT or REQUEST_CHANGES,
+in CLI, REST and GraphQL forms. Missing, dynamic and unreadable review events
+ask too: an approval can satisfy the code-owner gate and complete auto-merge.
 
 Replaces the `Bash(git merge)` / `Bash(git merge:*)` permissions.ask rules,
 which prompt on every merge (including routine catch-up merges of main into
@@ -895,6 +898,73 @@ def gh_prints_help(args):
     return nonexecuting
 
 
+# Approval can complete an already armed auto-merge through the code-owner gate.
+NONAPPROVAL_EVENTS = {"COMMENT", "REQUEST_CHANGES"}
+
+
+def cli_review_might_approve(args):
+    """Prove an explicit nonapproval mode, consuming option values first."""
+    mode = False
+    j = 0
+    while j < len(args):
+        w = args[j]
+        v = w.value
+        if w.unquoted_dynamic:
+            return True
+        if v in {"-b", "--body", "-F", "--body-file", "-R", "--repo"}:
+            j += 2
+            if j > len(args):
+                return True
+            continue
+        if not w.literal:
+            return True
+        if v in {"--comment", "--request-changes"}:
+            mode = True
+        elif v.startswith(("--body=", "--body-file=", "--repo=")):
+            pass
+        elif v.startswith("--"):
+            return True  # Includes --approve and unknown mode controls.
+        elif v.startswith("-"):
+            for k, letter in enumerate(v[1:], 1):
+                if letter in "bFR":
+                    if k == len(v) - 1:
+                        j += 1
+                        if j >= len(args):
+                            return True
+                    break
+                if letter not in "cr":
+                    return True  # -a, including a boolean short-option cluster.
+                mode = True
+        j += 1
+    return not mode
+
+
+def graphql_review_is_nonapproval(ts):
+    """Prove the event in a review's input object; opaque inputs never qualify.
+
+    Only a literal input object with a literal enum event qualifies. Variables
+    (including variables supplied through gh fields), file/stdin values and
+    unmodelled argument shapes ask, rather than guessing their runtime value.
+    """
+    if ts[:3] != ["(", "input", ":"] or ts[3:4] != ["{"]:
+        return False
+    depth = 0
+    events = []
+    for k in range(3, len(ts)):
+        token = ts[k]
+        if token in {"{", "[", "("}:
+            depth += 1
+        elif token in {"}", "]", ")"}:
+            depth -= 1
+            if depth == 0:
+                return (ts[k:] == ["}", ")"] and len(events) == 1
+                        and events[0] in NONAPPROVAL_EVENTS)
+        elif depth == 1 and token == "event" and ts[k + 1:k + 2] == [":"]:
+            # A variable or a string is not a literal GraphQL enum event.
+            events.append(ts[k + 2] if k + 2 < len(ts) else None)
+    return False
+
+
 def gh_might_land(words, i, appended=False):
     """Ask unless a built-in, API read or explicitly safe write is proved.
 
@@ -942,6 +1012,8 @@ def gh_might_land(words, i, appended=False):
         if not args[j].literal:
             return True
         if args[0].value == "pr":
+            if args[j].value == "review":
+                return fed or cli_review_might_approve(args[j + 1:])
             return args[j].value == "merge"
         if args[j].value != "sync":
             return False
@@ -967,6 +1039,7 @@ def gh_might_land(words, i, appended=False):
     method = None
     fields = False
     queries = []
+    review_events = []
     args = args[1:]
     if any(w.unquoted_dynamic for w in words[i + 1:]):
         return True
@@ -1030,6 +1103,8 @@ def gh_might_land(words, i, appended=False):
             key, eq, body = value.partition("=")
             if not eq or not re.fullmatch(r"[A-Za-z_]\w*(?:\[\w*\])*", key):
                 return True
+            if key == "event" or key.startswith("event["):
+                review_events.append(body if value_literal and key == "event" else None)
             if key == "query":
                 if not value_literal or body.startswith("@"):
                     return True
@@ -1068,7 +1143,7 @@ def gh_might_land(words, i, appended=False):
         if not queries:
             return True
         safe_mutations = {
-            "addComment", "addPullRequestReview", "addPullRequestReviewComment",
+            "addComment", "addPullRequestReview", "submitPullRequestReview", "addPullRequestReviewComment",
             "addPullRequestReviewThreadReply", "resolveReviewThread", "unresolveReviewThread",
             "addReaction", "removeReaction", "updateIssue", "updatePullRequest",
             "addLabelsToLabelable", "removeLabelsFromLabelable", "updatePullRequestBranch",
@@ -1126,6 +1201,10 @@ def gh_might_land(words, i, appended=False):
                     if field not in safe_mutations:
                         return True
                     found = True
+                    if field in {"addPullRequestReview", "submitPullRequestReview"}:
+                        end = skip_group(k, "(", ")") if k < len(ts) and ts[k] == "(" else k
+                        if not graphql_review_is_nonapproval(ts[k:end]):
+                            return True
                     if k < len(ts) and ts[k] == "(":
                         k = skip_group(k, "(", ")")
                     if k < len(ts) and ts[k] == "{":
@@ -1137,12 +1216,13 @@ def gh_might_land(words, i, appended=False):
     method = method or ("POST" if fields else "GET")
     if method in {"GET", "HEAD"} and not queries:
         return False
+    if method == "POST" and re.fullmatch(r"repos/[^/]+/[^/]+/pulls/[0-9]+/reviews", path):
+        return len(review_events) != 1 or review_events[0] not in NONAPPROVAL_EVENTS
     # A short permission list; misses ask. Never decode percent escapes here.
     safe_writes = (
         ({"POST"}, r"issues/[0-9]+/comments"),
         ({"PATCH", "DELETE"}, r"issues/comments/[0-9]+"),
         ({"POST"}, r"pulls/[0-9]+/comments(?:/[0-9]+/replies)?"),
-        ({"POST"}, r"pulls/[0-9]+/reviews"),
         ({"POST", "DELETE"}, r"pulls/[0-9]+/requested_reviewers"),
         ({"PATCH"}, r"(?:issues|pulls)/[0-9]+"),
         ({"POST", "PUT", "DELETE"}, r"issues/[0-9]+/labels"),
