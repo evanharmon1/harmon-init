@@ -36,7 +36,7 @@ if [ -f "$gate_asset" ] && [ -f "$policy_reader" ]; then
 
     check_policy_finders() {
         local policy="$1" registry_file="$2" slugs="${test_tmp}/finders"
-        node --input-type=module - "$policy_reader" "$policy" >"${test_tmp}/resolved.json" <<'NODE' || return 1
+        node --input-type=module - "$policy_reader" "$policy" >"${test_tmp}/resolved.json" <<'NODE' || return 2
 import { resolve } from 'node:path'
 import { pathToFileURL } from 'node:url'
 const { readBranchPolicy, resolvePolicy } = await import(pathToFileURL(resolve(process.argv[2])))
@@ -45,7 +45,7 @@ NODE
         jq -er '.stages.integration.finders | if type == "array" then .[] else error("invalid finders") end' \
             "${test_tmp}/resolved.json" >"$slugs" || {
             # jq -e returns 4 for an empty array; distinguish it from invalid output.
-            jq -e '.stages.integration.finders == []' "${test_tmp}/resolved.json" >/dev/null || return 1
+            jq -e '.stages.integration.finders == []' "${test_tmp}/resolved.json" >/dev/null || return 2
         }
         if [ ! -s "$slugs" ]; then
             echo "SKIP: the integration policy names no finders"
@@ -62,7 +62,7 @@ NODE
     cp "${test_tmp}/finders" "${test_tmp}/real-finders"
     while IFS= read -r slug; do
         for mutation in null-actor missing-mechanism; do
-            node --input-type=module - "$registry" "$mutated" "$slug" "$mutation" <<'NODE'
+            node --input-type=module - "$registry" "$mutated" "$slug" "$mutation" <<'NODE' || fail "could not construct $mutation registry fixture"
 import { readFileSync, writeFileSync } from 'node:fs'
 const [input, output, slug, mutation] = process.argv.slice(2)
 const registry = JSON.parse(readFileSync(input, 'utf8'))
@@ -78,29 +78,92 @@ NODE
         done
     done <"${test_tmp}/real-finders"
 
-    # Fixture policies retain the real policy and replace only its integration
-    # table, exercising the reader's absent and finder-entry forms.
-    node --input-type=module - .devflow.toml "$test_tmp" "$registry" "$mutated" <<'NODE'
+    # Self-contained policies exercise the reader without depending on the
+    # consumer's table order or unrelated policy choices.
+    cat >"${test_tmp}/base.toml" <<'TOML' || fail "could not construct fixture policy"
+schema_version = 2
+default_rigor = "standard"
+default_strategy = "plan"
+rigor_order = ["cursory", "light", "standard", "thorough", "deep", "forensic"]
+tier_order = ["local", "economy", "standard", "frontier", "apex"]
+[rigor.standard]
+rounds = "standard"
+breadth = "standard"
+orchestrator_tier = "frontier"
+implementer_tier = "standard"
+challenger_tier = "frontier"
+reviewer_tier = "standard"
+integrator_tier = "economy"
+tier_escalation = true
+[rounds.standard]
+challenge = 3
+review = 3
+integration = 4
+remediation = 4
+min_rounds = 1
+wall_clock_min = 720
+[breadth.standard]
+max_agent_runs = 6
+max_parallel_agents = 3
+[gates]
+round_code = "verify"
+round_docs = "check"
+secret_scan = "security:secrets"
+pre_pr = "security"
+docs_only_paths = ["docs/**"]
+[convergence]
+converged = { all = [{ predicate = "no_gating_findings" }] }
+diverging = { any = [{ predicate = "repeat_after_fix" }] }
+[role.orchestrator]
+tier = "frontier"
+[role.implementer]
+tier = "standard"
+[role.challenger]
+tier = "frontier"
+[role.reviewer]
+tier = "standard"
+[role.integrator]
+tier = "economy"
+[strategy.plan]
+topology = "single-agent"
+planning = "explicit"
+delegation = "optional"
+human_gates = []
+TOML
+    for fixture in absent empty entry; do
+        cp "${test_tmp}/base.toml" "${test_tmp}/${fixture}.toml" || fail "could not construct $fixture policy"
+        printf '\n[stage.integration]\n' >>"${test_tmp}/${fixture}.toml" || fail "could not construct $fixture policy"
+    done
+    printf 'finders = []\n' >>"${test_tmp}/empty.toml" || fail "could not construct empty policy"
+    printf 'finder = [{ id = "codex-cloud" }]\n' >>"${test_tmp}/entry.toml" || fail "could not construct entry policy"
+    node --input-type=module - "$registry" "$mutated" <<'NODE' || fail "could not construct null actor fixture"
 import { readFileSync, writeFileSync } from 'node:fs'
-const [policy, dir, registryPath, mutatedPath] = process.argv.slice(2)
-const text = readFileSync(policy, 'utf8')
-const section = /^\[stage\.integration\][\s\S]*?(?=^\[strategy\.oneshot\])/m
-if (!section.test(text)) throw new Error('integration fixture section not found')
-writeFileSync(`${dir}/empty.toml`, text.replace(section, '[stage.integration]\n\n'))
-writeFileSync(`${dir}/absent.toml`, text.replace(section, ''))
-writeFileSync(`${dir}/entry.toml`, text.replace(section, '[stage.integration]\nfinder = [{ id = "codex-cloud" }]\n\n'))
+const [registryPath, mutatedPath] = process.argv.slice(2)
 const registry = JSON.parse(readFileSync(registryPath, 'utf8'))
 registry.finders.find((entry) => entry.slug === 'codex-cloud').trusted_actor_id = null
 writeFileSync(mutatedPath, JSON.stringify(registry))
 NODE
+    # The selected strategy is plan; deleting the unrelated oneshot table must
+    # not affect either the real policy check or the independent fixtures.
+    node --input-type=module - .devflow.toml "${test_tmp}/reordered.toml" <<'NODE' || fail "could not construct layout fixture"
+import { readFileSync, writeFileSync } from 'node:fs'
+const [input, output] = process.argv.slice(2)
+const text = readFileSync(input, 'utf8')
+const section = /^\[strategy\.oneshot\][^\n]*\n(?:[^\[\n][^\n]*\n|\n)*/m
+if (!section.test(text)) throw new Error('oneshot table not found')
+writeFileSync(output, text.replace(section, ''))
+NODE
+    check_policy_finders "${test_tmp}/reordered.toml" "$registry" || fail "policy without oneshot failed"
+    echo "PASS: policy without oneshot resolves independently of fixture layout"
     for fixture in empty absent; do
         output="$(check_policy_finders "${test_tmp}/${fixture}.toml" "$registry")" || fail "$fixture policy failed"
         [ "$output" = "SKIP: the integration policy names no finders" ] || fail "$fixture policy did not skip"
         echo "PASS: $fixture integration policy reports no finders"
     done
-    if check_policy_finders "${test_tmp}/entry.toml" "$mutated" >/dev/null 2>&1; then
-        fail "finder entry passed gate resolution with null actor"
-    fi
+    entry_status=0
+    check_policy_finders "${test_tmp}/entry.toml" "$mutated" >/dev/null 2>&1 || entry_status=$?
+    [ "$entry_status" -ne 0 ] || fail "finder entry passed gate resolution with null actor"
+    [ "$entry_status" -eq 1 ] || fail "finder entry policy reader failed"
     check_policy_finders "${test_tmp}/entry.toml" "$registry" >/dev/null || fail "finder entry failed with real registry"
     echo "PASS: finder entry resolves and rejects a null actor"
 else
