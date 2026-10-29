@@ -341,6 +341,15 @@ matrix() { # guard
     case_ "$g" ask "$r" 'a=(t --approve); declare -n n='"'"'a[@]'"'"'; gh pr review 1 --comment --body "$n"'
     case_ "$g" ask "$r" 'a=(t --approve); declare -n n='"'"'a[@]'"'"'; gh api repos/o/r/pulls/1/reviews -f event=COMMENT -f body="$n"'
     case_ "$g" ask "$r" 'gh api repos/o/r/pulls/1/reviews -f event=COMMENT -f body="$BODY"'
+    # Every word on a review path counts, not only fields: a parameter in any
+    # option value can split into an injected -f event=APPROVE.
+    review_mutation='mutation{addPullRequestReview(input:{pullRequestId:"x",event:COMMENT}){clientMutationId}}'
+    for option in '-t "$n"' '--template "$n"' '--jq "$n"' '-q"$n"' '-H "$n"' '--input "$n"'; do
+        case_ "$g" ask "$r" "gh api repos/o/r/pulls/1/reviews -f event=COMMENT $option"
+        case_ "$g" ask "$r" "gh api graphql -f query='$review_mutation' $option"
+    done
+    case_ "$g" silent "$r" "gh api graphql -f query='$review_mutation' -t literal"
+    case_ "$g" silent "$r" 'gh api repos/o/r/pulls/1/comments/2/replies -f body="$BODY" -q .id'
     # Attached values use the same review proof as separated values.
     for option in --body --body-file --repo -b -F -R; do
         case_ "$g" ask "$r" "gh pr review 1 --comment $option \"\$BODY\""

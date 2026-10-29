@@ -1065,7 +1065,6 @@ def gh_might_land(words, i, appended=False):
     fields = False
     queries = []
     review_events = []
-    field_words = []
     args = args[1:]
     if any(w.unquoted_dynamic for w in words[i + 1:]):
         return True
@@ -1120,13 +1119,11 @@ def gh_might_land(words, i, appended=False):
               or v.startswith(("-f", "-F"))):
             fields = True
             value_literal = w.literal
-            field_words.append(w)
             if v in field_options:
                 j += 1
                 if j >= len(args):
                     return True
                 value, value_literal = args[j].value, args[j].literal
-                field_words.append(args[j])
             elif v.startswith(("-f", "-F")):
                 value = v[2:]
             key, eq, body = value.partition("=")
@@ -1231,7 +1228,8 @@ def gh_might_land(words, i, appended=False):
                         return True
                     found = True
                     if field in {"addPullRequestReview", "submitPullRequestReview"}:
-                        if any(w.has_param for w in field_words):
+                        # Any parameter can split into extra options (-f event=...).
+                        if any(w.has_param for w in words[i + 1:]):
                             return True
                         end = skip_group(k, "(", ")") if k < len(ts) and ts[k] == "(" else k
                         if not graphql_review_is_nonapproval(ts[k:end]):
@@ -1248,7 +1246,7 @@ def gh_might_land(words, i, appended=False):
     if method in {"GET", "HEAD"} and not queries:
         return False
     if method == "POST" and re.fullmatch(r"repos/[^/]+/[^/]+/pulls/[0-9]+/reviews", path):
-        return (any(w.has_param for w in field_words)
+        return (any(w.has_param for w in words[i + 1:])
                 or len(review_events) != 1 or review_events[0] not in NONAPPROVAL_EVENTS)
     # A short permission list; misses ask. Never decode percent escapes here.
     safe_writes = (
