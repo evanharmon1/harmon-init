@@ -96,9 +96,9 @@ reviewer_tier = "standard"
 integrator_tier = "economy"
 tier_escalation = true
 [rounds.standard]
-challenge = 3
-review = 3
-integration = 4
+challenge = 0
+review = 0
+integration = 0
 remediation = 4
 min_rounds = 1
 wall_clock_min = 720
@@ -115,14 +115,19 @@ docs_only_paths = ["docs/**"]
 converged = { all = [{ predicate = "no_gating_findings" }] }
 diverging = { any = [{ predicate = "repeat_after_fix" }] }
 [role.orchestrator]
+families = ["gpt", "claude"]
 tier = "frontier"
 [role.implementer]
+families = ["gpt", "claude"]
 tier = "standard"
 [role.challenger]
+families = ["gpt", "claude"]
 tier = "frontier"
 [role.reviewer]
+families = ["gpt", "claude"]
 tier = "standard"
 [role.integrator]
+families = ["gpt", "claude"]
 tier = "economy"
 [strategy.plan]
 topology = "single-agent"
@@ -136,6 +141,25 @@ TOML
     done
     printf 'finders = []\n' >>"${test_tmp}/empty.toml" || fail "could not construct empty policy"
     printf 'finder = [{ id = "codex-cloud" }]\n' >>"${test_tmp}/entry.toml" || fail "could not construct entry policy"
+    for fixture in absent empty entry; do
+        reason="$(
+            node --input-type=module - "$policy_reader" "${test_tmp}/${fixture}.toml" "$registry" <<'NODE'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
+try {
+  const { readBranchPolicy, resolvePolicy, crossValidate } = await import(pathToFileURL(resolve(process.argv[2])))
+  const policy = resolvePolicy(readBranchPolicy(process.argv[3]))
+  const registry = JSON.parse(readFileSync(process.argv[4], 'utf8'))
+  const errors = crossValidate(policy, registry, new Set(['verify', 'check', 'security:secrets', 'security']))
+  if (errors.length) throw new Error(errors.join('; '))
+} catch (error) {
+  console.log(error.message)
+  process.exitCode = 1
+}
+NODE
+        )" || fail "fixture $fixture is not a valid policy: $reason"
+    done
     node --input-type=module - "$registry" "$mutated" <<'NODE' || fail "could not construct null actor fixture"
 import { readFileSync, writeFileSync } from 'node:fs'
 const [registryPath, mutatedPath] = process.argv.slice(2)
