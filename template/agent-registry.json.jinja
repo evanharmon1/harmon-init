@@ -664,7 +664,26 @@
       "invocation": null,
       "collection": {
         "type": "shepherd-checker",
-        "protocol": "reserve-trigger-attach-check"
+        "protocol": "reserve-trigger-attach-check",
+        "trigger": {
+          "mechanism": "review-comment",
+          "body": "@codex review",
+          "reviewer_login": null
+        },
+        "terminal_signals": {
+          "surfaces": ["reaction", "comment", "review", "inline"],
+          "head_binding": "reviewed-commit-line",
+          "verdict_mode": "clean-sentence",
+          "clean_verdict": "codex review: didn't find any major issues.",
+          "actionable_pattern": null,
+          "severity_marker": "\\bp[0-9]+\\b",
+          "metadata_line": "^\\*\\*reviewed commit:\\*\\*[% raw %][[:space:]]*`[0-9a-f]{7,40}`[[:space:]]*$[% endraw %]",
+          "about_summary": "about codex",
+          "heading": "^#{1,6}[^a-z0-9]*codex review$",
+          "carrier_sentence": "here are some automated review suggestions for this pull request.",
+          "success_reaction": "+1",
+          "pending_reaction": "eyes"
+        }
       },
       "trusted_actor_id": "199175422",
       "trusted_actor_login": "chatgpt-codex-connector[bot]"
