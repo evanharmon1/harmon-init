@@ -102,10 +102,28 @@ hooks do not run. The bot/agent boundary and merge/pull allowlist are unchanged.
    A pull must omit its source (`git pull --ff-only [<remote>]`) or name the
    full `refs/heads/<branch>` source. Short explicit branch names ask because
    a remote tag can shadow them; the hook never inspects the remote.
-   Evaluator mention handling is unchanged from the base guard: shell and
-   other evaluator lines retain the conservative merge/pull mention test.
-   The proposed exemption was removed after repeated bypass findings; its
-   redesign is tracked in
+   Visible bash/sh payloads are silent only when every simple command is
+   drawn from a closed read allowlist and every word is an inert literal.
+   The complete outer form must be bash/sh `-c` with one literal quoted
+   payload, or a heredoc with a quoted uppercase delimiter. The allowlist is
+   echo, printf, cat, head, tail, wc, grep, jq, sort, uniq and cut. Gh is limited
+   to pr view/list/status/checks/diff, issue view/list/status and repo view/list;
+   its existing operation proof must also pass. Printf variable assignments,
+   sort execution/output options, uniq output operands, any grep option outside
+   a fixed short-flag set (ugrep's `--filter`/`--pre` run commands) and gh
+   `--web`/`-w` (which launches `$BROWSER`) are excluded because they violate
+   the read-only property. Sed is omitted rather than
+   interpreting its executable expression language. Literal paths and arguments
+   containing git, merge or pull are data. Semicolons, newlines and pipes connect
+   only proved commands. Assignments, expansions, escapes, comments, redirects,
+   here-strings, descriptor paths, extra shell arguments and nested evaluators
+   cannot qualify. Redirects to `/dev/null` are conservatively excluded too,
+   retaining the earlier ask regression. Git/gh operation checks still run.
+   This is one complete absence proof, not a list of dangerous input channels:
+   unrecognized syntax fails the proof, so an unlisted channel cannot slip
+   through. Payloads that fail the proof, and script-file invocations, keep
+   the base mention fallback: they ask only when a merge/pull word appears.
+   The earlier general parsed-payload exemption is not restored. See
    [#1844](https://github.com/evanharmon1/harmon-init/issues/1844).
    Target paths accept literal path characters only, with no shell
    metacharacters. It returns
