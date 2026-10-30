@@ -2237,4 +2237,18 @@ case "$out" in
     ;;
 esac
 
+echo "==> status and both session hooks surface image staleness"
+if [ -r .devcontainer/scripts/check-image-staleness.sh ]; then
+    out="$(DEVCONTAINER_BAKED_CONFIG_DIR="$TMP/no-image" bash "$status" env)"
+    case "$out" in
+    *"image staleness unavailable"*) ;;
+    *) fail "status environment omitted image staleness: ${out}" ;;
+    esac
+fi
+for h in .devcontainer/config/claude-hooks/session-start-context.sh .claude/hooks/session-start-context.sh; do
+    [ -f "$h" ] || continue
+    grep -q 'task status:image' "$h" || fail "$h does not run the image probe"
+    grep -q '=== image staleness ===' "$h" || fail "$h does not include the image result"
+done
+
 echo "status.sh tests passed"

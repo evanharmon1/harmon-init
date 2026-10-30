@@ -574,7 +574,7 @@ if should_show "env"; then
         # The helper is the single implementation — `task status:image` and
         # post-start run this same script — and it always exits 0.
         if [ -r .devcontainer/scripts/check-image-staleness.sh ]; then
-            bash .devcontainer/scripts/check-image-staleness.sh || true
+            DEVCONTAINER_STALENESS_ALWAYS=1 bash .devcontainer/scripts/check-image-staleness.sh || true
         fi
     } | section_box
 fi
