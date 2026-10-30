@@ -21,103 +21,166 @@ command -v node >/dev/null 2>&1 || fail "node is required to validate the agent 
 
 node "$validator" "$registry" "$schema"
 
-node --input-type=module - "$registry" <<'NODE' || fail "trusted integrate finder profile validation failed"
-import { readFile } from 'node:fs/promises'
-
-const registry = JSON.parse(await readFile(process.argv[2], 'utf8'))
-const trustedCloud = (document) => document.finders.filter((finder) =>
-  finder.surface === 'pr-cloud' &&
-  finder.trusted_actor_id !== null &&
-  finder.trusted_actor_id !== undefined
-)
-const profileErrors = (finder) => {
-  const errors = []
-  const collection = finder.collection
-  const trigger = collection?.trigger
-  if (typeof finder.trusted_actor_id !== 'string' || finder.trusted_actor_id.length === 0) {
-    errors.push('trusted_actor_id')
-  }
-  if (typeof finder.trusted_actor_login !== 'string' || finder.trusted_actor_login.length === 0) {
-    errors.push('trusted_actor_login')
-  }
-  if (typeof collection?.protocol !== 'string') errors.push('collection.protocol')
-  if (typeof trigger?.mechanism !== 'string') {
-    errors.push('collection.trigger.mechanism')
-  } else if (trigger.mechanism === 'review-comment') {
-    if (typeof trigger.body !== 'string' || trigger.body.length === 0 || trigger.reviewer_login !== null) {
-      errors.push('collection.trigger.body/reviewer_login')
-    }
-  } else if (trigger.mechanism === 'requested-reviewer') {
-    if (
-      typeof trigger.reviewer_login !== 'string' ||
-      trigger.reviewer_login.length === 0 ||
-      trigger.body !== null
-    ) {
-      errors.push('collection.trigger.reviewer_login')
-    }
-  } else {
-    errors.push(`unsupported trigger mechanism ${trigger.mechanism}`)
-  }
-  if (
-    !collection?.terminal_signals ||
-    typeof collection.terminal_signals !== 'object' ||
-    Array.isArray(collection.terminal_signals)
-  ) {
-    errors.push('collection.terminal_signals')
-  }
-  return errors
-}
-
-const problems = trustedCloud(registry).flatMap((finder) =>
-  profileErrors(finder).map((field) => `${finder.slug}: ${field}`)
-)
-if (problems.length > 0) {
-  console.error(`FAIL: trusted integrate finder profile is incomplete: ${problems.join(', ')}`)
-  process.exit(1)
-}
-console.log('PASS: trusted pr-cloud finder profiles include the fields required by the integrate gate')
-
-const candidates = trustedCloud(registry)
-if (candidates.length === 0) {
-  console.log('SKIP: no trusted pr-cloud finder is configured to mutate')
-  process.exit(0)
-}
-const slug = candidates[0].slug
-let failures = 0
-const rejectsMissing = (description, mutate) => {
-  const mutated = structuredClone(registry)
-  mutate(mutated.finders.find((finder) => finder.slug === slug))
-  if (trustedCloud(mutated).every((finder) => profileErrors(finder).length === 0)) {
-    console.error(`FAIL: trusted pr-cloud profile passed with missing ${description}`)
-    failures += 1
-  } else {
-    console.log(`PASS: trusted pr-cloud profile fails when ${description} is missing`)
-  }
-}
-rejectsMissing('trusted_actor_login', (finder) => { delete finder.trusted_actor_login })
-rejectsMissing('trusted_actor_id', (finder) => { finder.trusted_actor_id = '' })
-rejectsMissing('collection.protocol', (finder) => { delete finder.collection.protocol })
-rejectsMissing('collection.trigger', (finder) => { delete finder.collection.trigger })
-rejectsMissing('collection.trigger.mechanism', (finder) => { delete finder.collection.trigger.mechanism })
-rejectsMissing('review-comment body', (finder) => { delete finder.collection.trigger.body })
-rejectsMissing('collection.terminal_signals', (finder) => { delete finder.collection.terminal_signals })
-
-const requestedReviewer = structuredClone(registry)
-const requestedFinder = requestedReviewer.finders.find((finder) => finder.slug === slug)
-requestedFinder.collection.trigger = { mechanism: 'requested-reviewer', body: null, reviewer_login: null }
-if (!profileErrors(requestedFinder).includes('collection.trigger.reviewer_login')) {
-  console.error('FAIL: requested-reviewer profile passed without reviewer_login')
-  failures += 1
-} else {
-  console.log('PASS: requested-reviewer profile fails without reviewer_login')
-}
-process.exit(failures === 0 ? 0 : 1)
-NODE
-
 test_tmp="$(mktemp -d)"
 trap 'rm -rf "$test_tmp"' EXIT
 mutated="${test_tmp}/agent-registry.json"
 mutated_schema="${test_tmp}/agent-registry.schema.json"
+
+gate_asset=".claude/skills/integrate/assets/trusted-registry.sh"
+policy_reader=".claude/skills/dev-flow-support/assets/devflow-policy.mjs"
+if [ -f "$gate_asset" ] && [ -f "$policy_reader" ]; then
+    command -v jq >/dev/null 2>&1 || fail "jq is required to resolve integration finders"
+    command -v node >/dev/null 2>&1 || fail "node is required to resolve integration finders"
+    # shellcheck source=/dev/null
+    source "$gate_asset"
+
+    check_policy_finders() {
+        local policy="$1" registry_file="$2" slugs="${test_tmp}/finders"
+        node --input-type=module - "$policy_reader" "$policy" >"${test_tmp}/resolved.json" <<'NODE' || return 2
+import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
+const { readBranchPolicy, resolvePolicy } = await import(pathToFileURL(resolve(process.argv[2])))
+console.log(JSON.stringify(resolvePolicy(readBranchPolicy(process.argv[3]))))
+NODE
+        jq -er '.stages.integration.finders | if type == "array" then .[] else error("invalid finders") end' \
+            "${test_tmp}/resolved.json" >"$slugs" || {
+            # jq -e returns 4 for an empty array; distinguish it from invalid output.
+            jq -e '.stages.integration.finders == []' "${test_tmp}/resolved.json" >/dev/null || return 2
+        }
+        if [ ! -s "$slugs" ]; then
+            echo "SKIP: the integration policy names no finders"
+            return 0
+        fi
+        while IFS= read -r slug; do
+            resolve_finder_profile "$registry_file" "$slug" "${test_tmp}/profile.json" || return 1
+        done <"$slugs"
+        echo "PASS: all policy-named integration finders resolve through the gate"
+    }
+
+    check_policy_finders .devflow.toml "$registry" || fail "policy-named finder failed gate resolution"
+    # Preserve the effective list for the existing registry mutations.
+    cp "${test_tmp}/finders" "${test_tmp}/real-finders"
+    while IFS= read -r slug; do
+        for mutation in null-actor missing-mechanism; do
+            node --input-type=module - "$registry" "$mutated" "$slug" "$mutation" <<'NODE' || fail "could not construct $mutation registry fixture"
+import { readFileSync, writeFileSync } from 'node:fs'
+const [input, output, slug, mutation] = process.argv.slice(2)
+const registry = JSON.parse(readFileSync(input, 'utf8'))
+const finder = registry.finders.find((entry) => entry.slug === slug)
+if (mutation === 'null-actor') finder.trusted_actor_id = null
+else delete finder.collection.trigger.mechanism
+writeFileSync(output, JSON.stringify(registry))
+NODE
+            if resolve_finder_profile "$mutated" "$slug" "${test_tmp}/profile.json" >/dev/null 2>&1; then
+                fail "policy-named finder $slug passed gate resolution with $mutation"
+            fi
+            echo "PASS: $slug fails gate resolution with $mutation"
+        done
+    done <"${test_tmp}/real-finders"
+
+    # Self-contained policies exercise the reader without depending on the
+    # consumer's table order or unrelated policy choices.
+    cat >"${test_tmp}/base.toml" <<'TOML' || fail "could not construct fixture policy"
+schema_version = 2
+default_rigor = "standard"
+default_strategy = "plan"
+rigor_order = ["cursory", "light", "standard", "thorough", "deep", "forensic"]
+tier_order = ["local", "economy", "standard", "frontier", "apex"]
+[rigor.standard]
+rounds = "standard"
+breadth = "standard"
+orchestrator_tier = "frontier"
+implementer_tier = "standard"
+challenger_tier = "frontier"
+reviewer_tier = "standard"
+integrator_tier = "economy"
+tier_escalation = true
+[rounds.standard]
+challenge = 0
+review = 0
+integration = 0
+remediation = 4
+min_rounds = 1
+wall_clock_min = 720
+[breadth.standard]
+max_agent_runs = 6
+max_parallel_agents = 3
+[gates]
+round_code = "verify"
+round_docs = "check"
+secret_scan = "security:secrets"
+pre_pr = "security"
+docs_only_paths = ["docs/**"]
+[convergence]
+converged = { all = [{ predicate = "no_gating_findings" }] }
+diverging = { any = [{ predicate = "repeat_after_fix" }] }
+[role.orchestrator]
+families = ["gpt", "claude"]
+tier = "frontier"
+[role.implementer]
+families = ["gpt", "claude"]
+tier = "standard"
+[role.challenger]
+families = ["gpt", "claude"]
+tier = "frontier"
+[role.reviewer]
+families = ["gpt", "claude"]
+tier = "standard"
+[role.integrator]
+families = ["gpt", "claude"]
+tier = "economy"
+[strategy.plan]
+topology = "single-agent"
+planning = "explicit"
+delegation = "optional"
+human_gates = []
+TOML
+    for fixture in absent empty entry; do
+        cp "${test_tmp}/base.toml" "${test_tmp}/${fixture}.toml" || fail "could not construct $fixture policy"
+        printf '\n[stage.integration]\n' >>"${test_tmp}/${fixture}.toml" || fail "could not construct $fixture policy"
+    done
+    printf 'finders = []\n' >>"${test_tmp}/empty.toml" || fail "could not construct empty policy"
+    printf 'finder = [{ id = "codex-cloud" }]\n' >>"${test_tmp}/entry.toml" || fail "could not construct entry policy"
+    for fixture in absent empty entry; do
+        reason="$(
+            node --input-type=module - "$policy_reader" "${test_tmp}/${fixture}.toml" "$registry" <<'NODE'
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
+import { pathToFileURL } from 'node:url'
+try {
+  const { readBranchPolicy, resolvePolicy, crossValidate } = await import(pathToFileURL(resolve(process.argv[2])))
+  const policy = resolvePolicy(readBranchPolicy(process.argv[3]))
+  const registry = JSON.parse(readFileSync(process.argv[4], 'utf8'))
+  const errors = crossValidate(policy, registry, new Set(['verify', 'check', 'security:secrets', 'security']))
+  if (errors.length) throw new Error(errors.join('; '))
+} catch (error) {
+  console.log(error.message)
+  process.exitCode = 1
+}
+NODE
+        )" || fail "fixture $fixture is not a valid policy: $reason"
+    done
+    node --input-type=module - "$registry" "$mutated" <<'NODE' || fail "could not construct null actor fixture"
+import { readFileSync, writeFileSync } from 'node:fs'
+const [registryPath, mutatedPath] = process.argv.slice(2)
+const registry = JSON.parse(readFileSync(registryPath, 'utf8'))
+registry.finders.find((entry) => entry.slug === 'codex-cloud').trusted_actor_id = null
+writeFileSync(mutatedPath, JSON.stringify(registry))
+NODE
+    for fixture in empty absent; do
+        output="$(check_policy_finders "${test_tmp}/${fixture}.toml" "$registry")" || fail "$fixture policy failed"
+        [ "$output" = "SKIP: the integration policy names no finders" ] || fail "$fixture policy did not skip"
+        echo "PASS: $fixture integration policy reports no finders"
+    done
+    entry_status=0
+    check_policy_finders "${test_tmp}/entry.toml" "$mutated" >/dev/null 2>&1 || entry_status=$?
+    [ "$entry_status" -ne 0 ] || fail "finder entry passed gate resolution with null actor"
+    [ "$entry_status" -eq 1 ] || fail "finder entry policy reader failed"
+    check_policy_finders "${test_tmp}/entry.toml" "$registry" >/dev/null || fail "finder entry failed with real registry"
+    echo "PASS: finder entry resolves and rejects a null actor"
+else
+    echo "SKIP: integrate gate or policy reader is not vendored"
+fi
 
 # Exercise the pinned breakdown module itself, with transport responses supplied
 # from this checkout. Consumers without synced breakdown assets skip at runtime.

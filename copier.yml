@@ -811,6 +811,11 @@ _tasks:
 
 # ── Copier settings ─────────────────────────────────────────────────
 
+# Readable from a release tag without rendering the template: consumers and
+# standardize-repo use this floor before applying an update. v5.8.1 first
+# mirrored harmon-devkit's result schemas and validator from v0.58.0 (#1678).
+_min_harmon_devkit_skills: "v0.58.0"
+
 _min_copier_version: "9.4.0"
 
 _subdirectory: template
