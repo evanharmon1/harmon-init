@@ -725,13 +725,64 @@ if [ -f scripts/setup-github-labels.sh ]; then
     emitted_file="$stub_dir/emitted"
     cat >"$stub_dir/gh" <<'STUB'
 #!/usr/bin/env bash
-[ "$1" = label ] && { shift 2; printf '%s\n' "$1" >>"$STUB_EMITTED"; exit 0; }
-exit 0
+set -euo pipefail
+if [ "$1" = api ]; then
+    [ "$*" = 'api --paginate --slurp repos/drift/check/labels?per_page=100' ] || exit 2
+    case "${STUB_HUMAN:-absent}" in
+    absent) printf '%s\n' '[[]]' ;;
+    conflict) printf '%s\n' '[[{"name":"human","description":"Assigned to a person"}]]' ;;
+    matching) jq -n --arg desc "$STUB_HUMAN_DESC" '[[{name:"human", description:$desc}]]' ;;
+    case-conflict) printf '%s\n' '[[],[{"name":"HuMaN","description":"Assigned to a person"}]]' ;;
+    null) printf '%s\n' '[[{"name":"human","description":null}]]' ;;
+    unreadable) exit 1 ;;
+    malformed) printf '%s\n' '{"message":"unexpected response"}' ;;
+    esac
+    exit 0
+fi
+[ "$1" = label ] && [ "$2" = create ] && { shift 2; printf '%s\n' "$1" >>"$STUB_EMITTED"; exit 0; }
+exit 2
 STUB
     chmod +x "$stub_dir/gh"
     STUB_EMITTED="$emitted_file" PATH="$stub_dir:$PATH" \
         bash scripts/setup-github-labels.sh --repo drift/check --foreman >/dev/null 2>&1
     emitted="$(sort "$emitted_file")"
+    # Protect existing associations from an implicit change of meaning. The
+    # expected description comes from the renderer so consumer wording works.
+    human_desc="$(node scripts/label-registry-render.mjs labels | sed -n 's/^human|[^|]*|//p')"
+    for human_case in conflict case-conflict null matching; do
+        : >"$emitted_file"
+        human_out="$(STUB_HUMAN="$human_case" STUB_HUMAN_DESC="$human_desc" \
+            STUB_EMITTED="$emitted_file" PATH="$stub_dir:$PATH" \
+            bash scripts/setup-github-labels.sh --repo drift/check 2>&1)" ||
+            fail "human $human_case fixture failed: $human_out"
+        if [ "$human_case" = matching ]; then
+            grep -Fqx human "$emitted_file" || fail "matching human description was not provisioned"
+        else
+            ! grep -Fqx human "$emitted_file" || fail "conflicting human label was silently adopted ($human_case)"
+            case "$human_out" in
+            *"human skipped:"*"--adopt-human-label"*"attention=1"*) ;;
+            *) fail "human conflict was not reported and counted ($human_case): $human_out" ;;
+            esac
+            grep -Fqx needs-triage "$emitted_file" || fail "human conflict prevented unrelated label provisioning"
+        fi
+    done
+    : >"$emitted_file"
+    STUB_HUMAN=conflict STUB_EMITTED="$emitted_file" PATH="$stub_dir:$PATH" \
+        bash scripts/setup-github-labels.sh --repo drift/check --adopt-human-label >/dev/null 2>&1 ||
+        fail "explicit human adoption failed"
+    grep -Fqx human "$emitted_file" || fail "explicit adoption did not provision human"
+    for human_case in unreadable malformed; do
+        : >"$emitted_file"
+        if human_out="$(STUB_HUMAN="$human_case" STUB_EMITTED="$emitted_file" PATH="$stub_dir:$PATH" \
+            bash scripts/setup-github-labels.sh --repo drift/check 2>&1)"; then
+            fail "human provisioning accepted $human_case live labels"
+        fi
+        ! grep -Fqx human "$emitted_file" || fail "human was provisioned after $human_case live labels"
+        case "$human_out" in
+        *"refusing to provision 'human'"*) ;;
+        *) fail "$human_case live labels refusal was not reported: $human_out" ;;
+        esac
+    done
     rm -rf "$stub_dir"
     want_names="$(node scripts/label-registry-render.mjs labels --foreman | sed 's/|.*//' | sort)"
     if grep -Eq '^(suggest:|tier:adaptive$)' <<<"$emitted"; then
