@@ -33,10 +33,18 @@ out=""
 rc=0
 run_helper() {
     set +e
-    out="$(DEVCONTAINER_BAKED_CONFIG_DIR="$1" DEVCONTAINER_REPO_CONFIG_DIR="$2" bash "$helper" 2>&1)"
+    out="$(DEVCONTAINER_BAKED_CONFIG_DIR="$1" DEVCONTAINER_REPO_CONFIG_DIR="$2" \
+        DEVCONTAINER_BAKED_IMAGE_INPUTS_FILE="$tmp_root/absent-image-inputs.sha256" bash "$helper" 2>&1)"
     rc=$?
     set -e
 }
+
+echo "==> Docker build context includes every image input"
+for path in .devcontainer/ .devcontainer/Dockerfile .devcontainer/devcontainer.json \
+    .devcontainer/agent/ .devcontainer/agent/devcontainer.json \
+    .devcontainer/dev/ .devcontainer/dev/devcontainer.json; do
+    grep -qxF "!$path" .dockerignore || fail "Docker build context does not explicitly allow $path"
+done
 
 # fixture <label> — a baked/checkout pair holding the same three files, one of
 # them nested, so a case only has to describe how it diverges from clean.
@@ -63,6 +71,12 @@ root="$(fixture identical)"
 run_helper "$root/baked" "$root/checkout"
 [ "$rc" -eq 0 ] || fail "identical trees exited ${rc}, not 0"
 [ -z "$out" ] || fail "identical trees produced output: ${out}"
+
+echo "==> config fixtures ignore a host-like stale image manifest"
+printf 'stale manifest\n' >"$tmp_root/host-image-inputs.sha256"
+DEVCONTAINER_BAKED_IMAGE_INPUTS_FILE="$tmp_root/host-image-inputs.sha256" run_helper "$root/baked" "$root/checkout"
+[ "$rc" -eq 0 ] || fail "isolated fixture exited ${rc}, not 0"
+[ -z "$out" ] || fail "host manifest affected config fixture: ${out}"
 
 # ---- 2. modified + added + removed: all three shapes are drift ----
 # A modified file is the obvious one. The other two matter because the config
