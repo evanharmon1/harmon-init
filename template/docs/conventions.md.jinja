@@ -213,10 +213,14 @@ one (`git pull --ff-only [<remote>]`). A short pull branch name asks because a
 remote tag can shadow it. Rebase pulls, pulls with no explicit mode and
 `merge --abort` still ask.
 
-A line running a shell or other text evaluator stays silent only when its
+Payloads with no base-test risk mention (for example, `bash -c 'task verify'`)
+are already silent under the base word test. For a payload with a merge/pull
+mention, the literal-read proof suppresses that ask only when the complete
 payload is proved to be literal, read-only commands from a fixed allowlist;
-options that launch programs or write files fail the proof. Other payloads
-and script-file invocations keep the conservative merge/pull mention test
+options that launch programs or write files fail the proof. The proof applies
+to `bash`/`sh -c` with one quoted literal payload or a heredoc with a
+quoted-uppercase delimiter. Other evaluator payloads and script-file
+invocations keep the conservative base merge/pull word-test fallback
 ([issue #1844](https://github.com/evanharmon1/harmon-init/issues/1844)). Literal
 `-C` and `cd` target paths must contain no shell metacharacters. Ordinary
 permission rules still apply when the hook is silent; bot/agent profiles stand
