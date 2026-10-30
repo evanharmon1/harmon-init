@@ -378,7 +378,7 @@ the compatibility reason in the rule's `description`.
       personal-account repository, monthly on an organization one).
       Before that first write, add `tier:pinned` to each open issue whose
       hand-set tier label you want to keep.
-- [ ] **[unknown-when-unprivileged]** Probe: Read the repository label list and compare it with the label registry. Write: none. <!-- reconcile-id: root-after-a-copier-update-that-adds-labe-038 --> **After a `copier update` that adds label families** (e.g. `impact:*` — a
+- [ ] **[agent-apply]** Probe: Read the repository label list and compare it with the label registry. Write: `task setup:github-labels`. <!-- reconcile-id: root-after-a-copier-update-that-adds-labe-038 --> **After a `copier update` that adds label families** (e.g. `impact:*` — a
       pure addition), re-run `task setup:github-labels` to provision the new
       labels here — it is additive and never deletes, so existing labels and
       the issues they sit on are untouched — then classify open issues with the
@@ -480,12 +480,12 @@ the compatibility reason in the rule's `description`.
       the operation as incomplete, reconcile live associations, and rerun in a
       new quiet window; do not infer association preservation from a successful
       exit alone; this is a guarded best-effort operation at that API boundary.
-- [ ] **[unknown-when-unprivileged]** Probe: Read the project views and compare them with the documented starter views. Write: none. <!-- reconcile-id: root-project-views-create-the-starter-vie-041 --> Project views: create the starter views that the Views section of
+- [ ] **[human-only]** Probe: none. Write: none. <!-- reconcile-id: root-project-views-create-the-starter-vie-041 --> Project views: create the starter views that the Views section of
       [project-management.md](project-management.md) specifies — including
       Needs review and Human queue — in the Project UI. Projects V2 has no view
       API, so this is a one-time manual step; the filters and layouts are in
       that section.
-- [ ] **[unknown-when-unprivileged]** Probe: Read the project workflow settings for the auto-add rule. Write: none. <!-- reconcile-id: root-github-project-auto-add-adds-every-i-042 --> GitHub Project auto-add (**adds every issue to the board**): in the
+- [ ] **[human-only]** Probe: none. Write: none. <!-- reconcile-id: root-github-project-auto-add-adds-every-i-042 --> GitHub Project auto-add (**adds every issue to the board**): in the
       Project's **Settings → Workflows**, turn on **"Auto-add to project"** and
       point it at this repo (filter `is:issue`, `is:pr`) so *every* new issue and
       PR lands on the board automatically, however it's created. GitHub's native

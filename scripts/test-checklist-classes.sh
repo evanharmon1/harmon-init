@@ -37,14 +37,21 @@ for entry in entries:
     ids.add(entry["id"])
     assert entry["source"] in {"template", "root"}, f"invalid source for {entry['id']}"
     assert entry["class"] in classes, f"invalid class for {entry['id']}"
-    assert isinstance(entry["probe"], str) and entry["probe"].strip(), f"missing probe for {entry['id']}"
-    assert safe_probe(entry["probe"]), f"potentially mutating probe for {entry['id']}"
+    probe = entry["probe"]
+    if probe is None:
+        assert entry["class"] == "human-only", f"missing probe for {entry['id']}"
+    else:
+        assert isinstance(probe, str) and probe.strip(), f"missing probe for {entry['id']}"
+        assert safe_probe(probe), f"potentially mutating probe for {entry['id']}"
     assert entry["write_task"] is None or re.fullmatch(r"task [\w:-]+", entry["write_task"]), f"invalid write task for {entry['id']}"
     by_source.setdefault(entry["source"], {})[entry["id"]] = entry
 
+def is_item(line):
+    return re.match(r"^- \[[ xX]\]", line) is not None
+
 def validate(path, source, subset=False):
     text = path.read_text()
-    rows = [line for line in text.splitlines() if line.startswith("- [ ]")]
+    rows = [line for line in text.splitlines() if is_item(line)]
     assert rows, f"{path}: no checklist items found"
     expected = by_source[source]
     found = set()
@@ -53,7 +60,7 @@ def validate(path, source, subset=False):
         heading = re.match(r"^## (.+?)\s*$", line)
         if heading:
             section = heading.group(1)
-        if not line.startswith("- [ ]"):
+        if not is_item(line):
             continue
         match = re.search(r"<!-- reconcile-id: ([a-z0-9-]+) -->", line)
         assert match, f"{path}:{line_no}: checklist item has no catalog id"
@@ -69,7 +76,9 @@ def validate(path, source, subset=False):
         assert label and line[match.end():].strip().startswith(label), f"{path}:{line_no}: label differs from catalog"
         item_class = re.findall(r"\[(agent-apply(?:-with-fleet-approval)?|human-only|unknown-when-unprivileged)\]", line)
         assert item_class == [entry["class"]], f"{path}:{line_no}: missing, invalid, or multiple class tags"
-        assert "Probe:" in line and entry["probe"] in line, f"{path}:{line_no}: probe missing or differs from catalog"
+        probe = entry["probe"]
+        expected_probe = f"Probe: {probe}" if probe is not None else "Probe: none."
+        assert expected_probe in line, f"{path}:{line_no}: probe missing or differs from catalog"
         write = entry["write_task"]
         expected_write = f"Write: `{write}`." if write else "Write: none."
         assert expected_write in line, f"{path}:{line_no}: write task missing or differs from catalog"
@@ -85,15 +94,32 @@ else:
 # Exercise the same validator with realistic single-item fixtures.
 source = "root" if template.exists() else "template"
 original = (root / "docs/CHECKLIST.md").read_text().splitlines()
-line = next(line for line in original if line.startswith("- [ ]"))
+line = next(line for line in original if is_item(line))
 item_id = re.search(r"<!-- reconcile-id: ([a-z0-9-]+) -->", line).group(1)
 entry = by_source[source][item_id]
 with tempfile.TemporaryDirectory(prefix="checklist-classes-") as tmp:
     fixture = Path(tmp) / "CHECKLIST.md"
+    checked_lines = []
+    for doc_line in original:
+        if is_item(doc_line):
+            mark = "x" if len(checked_lines) % 2 else "X"
+            doc_line = re.sub(r"^- \[[ xX]\]", f"- [{mark}]", doc_line, count=1)
+        checked_lines.append(doc_line)
+    fixture.write_text("\n".join(checked_lines) + "\n")
+    validate(fixture, source, subset=True)
     def check(test_line, section):
         fixture.write_text("## " + section + "\n\n" + test_line + "\n")
         validate(fixture, source, subset=True)
     check(line, entry["section"])
+    for mark in (" ", "x", "X"):
+        checked = re.sub(r"^- \[[ xX]\]", f"- [{mark}]", line, count=1)
+        check(checked, entry["section"])
+        try:
+            check(checked.replace("[" + entry["class"] + "]", "[invalid]", 1), entry["section"])
+        except AssertionError:
+            pass
+        else:
+            raise AssertionError("checked item with invalid class passed")
     for test_line, section in [
         (line.replace("[" + entry["class"] + "]", "[invalid]", 1), entry["section"]),
         (line.replace(entry["label"].split("[%")[0].strip(), "wrong label", 1), entry["section"]),

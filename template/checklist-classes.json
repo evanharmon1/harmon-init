@@ -418,9 +418,9 @@
       "source": "template",
       "section": "2. GitHub repo settings",
       "label": "**After a `copier update` that adds label families** (e.g. `impact:*` — a",
-      "class": "unknown-when-unprivileged",
+      "class": "agent-apply",
       "probe": "Read the repository label list and compare it with the label registry.",
-      "write_task": null
+      "write_task": "task setup:github-labels"
     },
     {
       "id": "template-inspect-live-label-drift-before-reti-047",
@@ -445,8 +445,8 @@
       "source": "template",
       "section": "2. GitHub repo settings",
       "label": "Project views: create the starter views that the Views section of",
-      "class": "unknown-when-unprivileged",
-      "probe": "Read the project views and compare them with the documented starter views.",
+      "class": "human-only",
+      "probe": null,
       "write_task": null
     },
     {
@@ -454,8 +454,8 @@
       "source": "template",
       "section": "2. GitHub repo settings",
       "label": "GitHub Project auto-add (**adds every issue to the board**): in the",
-      "class": "unknown-when-unprivileged",
-      "probe": "Read the project workflow settings for the auto-add rule.",
+      "class": "human-only",
+      "probe": null,
       "write_task": null
     },
     {
@@ -1210,9 +1210,9 @@
       "source": "root",
       "section": "2. GitHub repo settings",
       "label": "**After a `copier update` that adds label families** (e.g. `impact:*` — a",
-      "class": "unknown-when-unprivileged",
+      "class": "agent-apply",
       "probe": "Read the repository label list and compare it with the label registry.",
-      "write_task": null
+      "write_task": "task setup:github-labels"
     },
     {
       "id": "root-inspect-live-label-drift-before-reti-039",
@@ -1237,8 +1237,8 @@
       "source": "root",
       "section": "2. GitHub repo settings",
       "label": "Project views: create the starter views that the Views section of",
-      "class": "unknown-when-unprivileged",
-      "probe": "Read the project views and compare them with the documented starter views.",
+      "class": "human-only",
+      "probe": null,
       "write_task": null
     },
     {
@@ -1246,8 +1246,8 @@
       "source": "root",
       "section": "2. GitHub repo settings",
       "label": "GitHub Project auto-add (**adds every issue to the board**): in the",
-      "class": "unknown-when-unprivileged",
-      "probe": "Read the project workflow settings for the auto-add rule.",
+      "class": "human-only",
+      "probe": null,
       "write_task": null
     },
     {
