@@ -873,28 +873,47 @@ def normalized_endpoint(word):
 
 
 def gh_prints_help(args):
-    """Prove a help/version flag is an option, not another option's value."""
-    values = {"-R", "--repo", "--hostname", "-X", "--method", "-f", "-F",
-              "--field", "--raw-field", "-H", "--header", "--input", "-q", "--jq",
-              "-t", "--template", "--cache", "--source", "-s", "--subject",
-              "-b", "--body", "--body-file", "-A", "--author-email", "--match-head-commit"}
-    bools = {"--auto", "--admin", "--merge", "--squash", "--rebase", "--delete-branch",
-             "--disable-auto", "--include", "--paginate", "--slurp", "--silent", "--verbose", "--force",
-             "--comment", "--request-changes", "--approve"}
+    """Prove help/version using only the active subcommand's flag arities."""
+    inherited = {"-R", "--repo", "--hostname"}
+    # The same short flag takes a value in one command and is boolean in
+    # another: -s is sync's source but merge's squash; -F is API's field but
+    # merge/review's body-file. Unknown command/option shapes fail the proof.
+    options = {
+        (): (set(), set()),
+        ("pr",): (set(), set()),
+        ("repo",): (set(), set()),
+        ("pr", "merge"): (
+            {"-A", "--author-email", "-b", "--body", "-F", "--body-file",
+             "--match-head-commit", "-t", "--subject"},
+            {"--admin", "--auto", "-d", "--delete-branch", "--disable-auto",
+             "-m", "--merge", "-r", "--rebase", "-s", "--squash"}),
+        ("pr", "review"): (
+            {"-b", "--body", "-F", "--body-file"},
+            {"-a", "--approve", "-c", "--comment", "-r", "--request-changes"}),
+        ("repo", "sync"): (
+            {"-b", "--branch", "-s", "--source"}, {"--force"}),
+        ("api",): (
+            {"-X", "--method", "-f", "-F", "--field", "--raw-field", "-H", "--header",
+             "--input", "-q", "--jq", "-t", "--template", "--cache", "-p", "--preview"},
+            {"-i", "--include", "--paginate", "--slurp", "--silent", "--verbose"}),
+    }
     # A skipped value holding a parameter can expand to `--help=false --approve`,
     # so help is proved only when no word's argument count is unknown.
     if any(w.unquoted_dynamic or w.has_param for w in args):
         return False
     nonexecuting = False
+    command = ()
     j = 0
     while j < len(args):
         w = args[j]
         if not w.literal or w.unquoted_dynamic:
             return False
         v = w.value
+        values, bools = options[command]
+        values = values | inherited
         if v == "--":
             return False
-        if v in {"--help", "-h", "--version", "-v"}:
+        if v in {"--help", "-h"} or (not command and v in {"--version", "-v"}):
             nonexecuting = True
             j += 1
             continue
@@ -912,11 +931,15 @@ def gh_prints_help(args):
                     if k == len(v) - 1:
                         j += 1
                     break
-                if letter in "hv":
+                if letter == "h" or (not command and letter == "v"):
                     nonexecuting = True
                     continue
-                if letter not in "imsrdca":
+                if "-" + letter not in bools:
                     return False
+        elif command in {(), ("pr",), ("repo",)}:
+            command += (v,)
+            if command not in options:
+                return False
         j += 1
     return nonexecuting
 
@@ -1034,7 +1057,7 @@ def gh_might_land(words, i, appended=False):
             return True
     args = args[j:]
     if not args:
-        return param_option
+        return fed or param_option
     if args[0].value != "api" and param_option:
         return True
     if not args[0].literal:
@@ -1069,10 +1092,16 @@ def gh_might_land(words, i, appended=False):
             return True
         j += 1
         while j < len(args):
-            opt = args[j].value
+            w = args[j]
+            opt = w.value
+            if not w.literal or w.has_param:
+                return True
             if opt in ("--source", "-s"):
+                if (j + 1 >= len(args) or not args[j + 1].literal
+                        or args[j + 1].has_param):
+                    return True
                 j += 2
-            elif opt in ("--force", "-f", "--help") or opt.startswith("--source="):
+            elif opt in ("--force", "-f", "--help") or opt.startswith(("--source=", "-s")):
                 j += 1
             else:
                 # Any positional target (or unmodelled argument) may be remote.
@@ -1141,6 +1170,7 @@ def gh_might_land(words, i, appended=False):
         elif (v in field_options or name in {"--field", "--raw-field"}
               or v.startswith(("-f", "-F"))):
             fields = True
+            typed = v in {"-F", "--field"} or name == "--field" or v.startswith("-F")
             value_literal = w.literal
             if v in field_options:
                 j += 1
@@ -1156,6 +1186,10 @@ def gh_might_land(words, i, appended=False):
                 review_events.append(body if value_literal and key == "event" else None)
             if key == "query":
                 if not value_literal or body.startswith("@"):
+                    return True
+                # gh expands typed-field placeholders before sending the query;
+                # a branch named mutation can change the operation itself.
+                if typed and re.search(r"\{(?:owner|repo|branch)\}", body):
                     return True
                 queries.append(body)
         elif name in output_options or v.startswith(("-q", "-t")):
@@ -1591,7 +1625,7 @@ def command_might_merge(cmd, text, depth, appended=False, literal_mentions=False
         if SCRIPT_OPTION.match(w.value) and i + 1 < len(words) and not searching:
             if script_might_merge(words[i + 1].value, depth + 1):
                 return True
-        if name == "cmd":
+        if name == "cmd" and at_command:
             # `cmd.exe /c` and `/k` (Windows Git Bash, WSL interop) run what
             # follows. cmd's switch spellings are open-ended (`/c`, `//c` to dodge
             # MSYS path conversion, `/Q/C`, attached `/cgit pull`), and its own
@@ -1649,6 +1683,22 @@ def script_might_merge(text, depth=0, appended=False):
         [w.value for c in commands for w in c.words] + [t for c in commands for t in c.stdin]
     )
     literal_mentions = literal_evaluator_mentions(text)
+    # Only an executing printf alongside an evaluator makes format assembly
+    # opaque. A shell payload that merely prints text is checked recursively,
+    # where its printf has no evaluator; printf -v alone only assigns a value.
+    formatted_printf = False
+    evaluator = False
+    for c in commands:
+        for i in command_positions(c.words):
+            if i >= len(c.words):
+                continue
+            w = c.words[i]
+            if w.literal and base(w) == "printf":
+                formatted_printf |= any("%" in a.value or a.value.startswith("-v")
+                                        for a in c.words[i + 1:])
+            evaluator |= not w.literal or is_evaluator(c.words, i)
+    if formatted_printf and evaluator and not literal_mentions:
+        return True
     return any(command_might_merge(c, text + "\n" + decoded, depth, appended, literal_mentions)
                for c in commands)
 
