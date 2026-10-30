@@ -116,39 +116,15 @@ hooks do not run. The bot/agent boundary and merge/pull allowlist are unchanged.
    `.devcontainer/config/claude-settings.json`, decided 2026-09-30 in
    [#1435](https://github.com/evanharmon1/harmon-init/issues/1435) and
    [#1456](https://github.com/evanharmon1/harmon-init/issues/1456)).
-2. **Make the guard allowlist-shaped and fail-closed.** The hook stays silent
-   (deferring to normal permission evaluation) only for a small set of fully
-   literal catch-up shapes — `git merge <ref>`, `git merge --continue`/`--quit`
-   and a non-rebasing `git pull` — when the checkout is provably on a feature
-   branch. Fast-forward-only forms also accept literal absolute `git -C <dir>`
-   and `cd <dir> &&` targets and compounds whose every merge segment qualifies.
-   State-changing or unknown companion commands remain gated. Default branches
-   accept only proven `--ff-only` syncs from their own configured upstream.
-   A pull must omit its source (`git pull --ff-only [<remote>]`) or name the
-   full `refs/heads/<branch>` source. Short explicit branch names ask because
-   a remote tag can shadow them; the hook never inspects the remote.
-   Visible bash/sh payloads are silent only when every simple command is
-   drawn from a closed read allowlist and every word is an inert literal.
-   The complete outer form must be bash/sh `-c` with one literal quoted
-   payload, or a heredoc with a quoted uppercase delimiter. The allowlist is
-   echo, printf, cat, head, tail, wc, grep, jq, sort, uniq and cut. Gh is limited
-   to pr view/list/status/checks/diff, issue view/list/status and repo view/list;
-   its existing operation proof must also pass. Printf variable assignments,
-   sort execution/output options, uniq output operands, any grep option outside
-   a fixed short-flag set (ugrep's `--filter`/`--pre` run commands) and gh
-   `--web`/`-w` (which launches `$BROWSER`) are excluded because they violate
-   the read-only property. Sed is omitted rather than
-   interpreting its executable expression language. Literal paths and arguments
-   containing git, merge or pull are data. Semicolons, newlines and pipes connect
-   only proved commands. Assignments, expansions, escapes, comments, redirects,
-   here-strings, descriptor paths, extra shell arguments and nested evaluators
-   cannot qualify. Redirects to `/dev/null` are conservatively excluded too,
-   retaining the earlier ask regression. Git/gh operation checks still run.
-   This is one complete absence proof, not a list of dangerous input channels:
-   unrecognized syntax fails the proof, so an unlisted channel cannot slip
-   through. Payloads that fail the proof, and script-file invocations, keep
-   the base mention fallback: they ask only when a merge/pull word appears.
-   The earlier general parsed-payload exemption is not restored. See
+2. **Make the guard allowlist-shaped and fail-closed.** A payload with no
+   base-test risk mention is already silent under the base word test. For a
+   payload with a merge/pull mention, the closed literal-read proof can
+   suppress that ask only for `bash`/`sh -c` with one quoted literal payload
+   or a quoted-uppercase heredoc, and only when the complete payload satisfies
+   the closed read allowlist and absence proof. Otherwise, the unchanged base
+   word-test fallback applies. This is a complete absence proof, not an
+   enumeration of input channels; the concrete grammar and options remain in
+   the hook docstring and tests. See
    [#1844](https://github.com/evanharmon1/harmon-init/issues/1844).
    Target paths accept literal path characters only, with no shell
    metacharacters. It returns

@@ -86,10 +86,12 @@ unquoted single commands in a verified feature-branch checkout:
     git pull [<remote> [<ref>]], with --ff-only and/or --no-rebase,
              and optionally --no-edit
 
-Visible bash/sh payloads are silent only when every simple command belongs
-to a closed read allowlist and every word is an inert literal. The complete
-outer form must be bash/sh -c with one literal quoted payload, or a heredoc
-with a quoted uppercase delimiter. Allowed commands are echo, printf, cat,
+Payloads with no base-test risk mention (for example, `bash -c 'task verify'`)
+are already silent under the base word test. For a payload with a merge/pull
+mention, the literal-read proof can suppress that ask only for the complete
+bash/sh -c form with one literal quoted payload, or a heredoc with a quoted
+uppercase delimiter, and only when every simple command belongs to a closed
+read allowlist and every word is an inert literal. Allowed commands are echo, printf, cat,
 head, tail, wc, grep, jq, sort, uniq, cut; gh is limited to pr view/list/status/
 checks/diff, issue view/list/status, and repo view/list, with the existing gh
 operation proof still required. Literal paths and data may contain git, merge
@@ -1547,19 +1549,33 @@ def literal_evaluator_mentions(text):
         return False
     i = 0
     words = []
+    completed = False
+    separator = None
+    pipe_pending = False
     while i < len(payload):
         if payload[i] in " \t":
             i += 1
             continue
         if payload[i] in ";\n|":
-            if not words or not mention_read(words):
+            if words:
+                if not mention_read(words):
+                    return False
+                words = []
+                completed = True
+                separator = payload[i]
+                pipe_pending = separator == "|"
+            elif payload[i] != "\n":
+                # Empty newline segments are harmless, but empty semicolon or
+                # pipe segments (including either side of a pipe) are not.
                 return False
-            words = []
             i += 1
             continue
         match = MENTION_WORD.match(payload, i)
         if not match:
             return False
+        if not words:
+            separator = None
+            pipe_pending = False
         value = match[0]
         value = value[1:-1] if value[:1] in {"'", '\"'} else value
         # A descriptor/stdin path never supplies an evaluator input in this
@@ -1570,7 +1586,9 @@ def literal_evaluator_mentions(text):
             return False
         words.append(value)
         i = match.end()
-    return bool(words) and mention_read(words)
+    if words:
+        return mention_read(words)
+    return completed and not pipe_pending and separator in {";", "\n"}
 
 
 def command_might_merge(cmd, text, depth, appended=False, literal_mentions=False):
