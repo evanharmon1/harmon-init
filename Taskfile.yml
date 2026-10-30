@@ -118,6 +118,7 @@ tasks:
       - task: test:grep-q-pipes
       - task: test:ci-results
       - task: test:ci-changes-classify
+      - task: test:checklist-classes
       - task: test:comment-annotators
       - task: test:audit-ruleset
       - task: test:devcontainer-changed
@@ -540,6 +541,11 @@ tasks:
     desc: Fail if the Build workflow stops calling test:suite or verify stops running it
     cmds:
       - ./scripts/test-verify-ci-parity.sh
+
+  test:checklist-classes:
+    desc: Validate checklist reconcile classes and their machine-readable catalog
+    cmds:
+      - ./scripts/test-checklist-classes.sh
 
   test:ci-changes-classify:
     desc: Unit-test the fail-closed docs-only CI classifier
