@@ -50,6 +50,81 @@ fail() {
     return 0
 }
 
+# Read literal YAML only: consumers inspect a release tag before trusting a run.
+check_sensitive_questions() {
+    yq -o=json '.' "$1" >"$work/questions.json" || return 1
+    python3 - "$work/questions.json" <<'PYTHON'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    config = json.load(source)
+marker = "[security-sensitive]"
+# Independent documented baseline: removing BOTH markers must still fail.
+# Includes every legacy confirm-answers.sh key present in copier.yml;
+# setup_github/setup_labels/setup_branch_protection are not questions here.
+required = set("""
+author_git_provider_username github_org code_owner claude_authorized_members
+snyk_scan_schedule ci_runner ci_runner_labels deploy_cloudflare_workers
+use_release_please use_skills_sync skill_categories use_shared_agents
+use_foreman ci_app_integration_id foreman_additional_trusted_actors
+trusted_orchestrator_actor_ids use_codeql use_codex_review use_codex_cloud_review
+use_coderabbit use_gemini_code_assist use_greptile devcontainer tailscale_required
+use_antigravity_cli use_copilot_cli use_alternative_claude_providers use_fly_sprites
+git_init github_remote_create github_release_init bunch_add bunches_directory
+obsidian_project_add obsidian_directory run_task_install devcontainer_image
+projects_directory
+""".split())
+questions = {key: value for key, value in config.items()
+             if not key.startswith("_") and isinstance(value, dict) and "type" in value}
+listed = config.get("_sensitive_questions")
+errors = []
+if not isinstance(listed, list) or not listed or not all(isinstance(key, str) for key in listed):
+    sys.exit("_sensitive_questions must be a nonempty list of question keys")
+if len(listed) != len(set(listed)):
+    errors.append("_sensitive_questions contains duplicate keys")
+listed = set(listed)
+marked = {key for key, value in questions.items()
+          if isinstance(value.get("help"), str) and value["help"].startswith(marker)}
+for key in sorted(required - listed):
+    errors.append(f"documented sensitive question missing from catalog: {key}")
+for key in sorted(listed - questions.keys()):
+    errors.append(f"sensitive key is not a question: {key}")
+for key in sorted(listed - marked):
+    errors.append(f"sensitive question missing help marker: {key}")
+for key in sorted(marked - listed):
+    errors.append(f"help marker missing catalog entry: {key}")
+if errors:
+    sys.exit("\n".join(errors))
+PYTHON
+}
+
+echo "==> security-sensitive questions have a non-rendering catalog and help markers"
+if check_sensitive_questions "$repo/copier.yml"; then
+    pass "all documented sensitive questions have matching catalog and help markers"
+else
+    fail "security-sensitive question metadata is inconsistent"
+fi
+
+# Mutate fixtures and exercise the same checker used on the real configuration.
+for mutation in missing-marker missing-entry unknown-question missing-both duplicate-entry; do
+    cp "$repo/copier.yml" "$work/sensitive.yml"
+    case "$mutation" in
+    missing-marker) yq -i '.code_owner.help = "CODE OWNER: missing marker"' "$work/sensitive.yml" ;;
+    missing-entry) yq -i 'del(._sensitive_questions[] | select(. == "code_owner"))' "$work/sensitive.yml" ;;
+    unknown-question) yq -i '._sensitive_questions += ["no_such_question"]' "$work/sensitive.yml" ;;
+    missing-both)
+        yq -i 'del(._sensitive_questions[] | select(. == "code_owner")) | .code_owner.help = "CODE OWNER: missing marker"' "$work/sensitive.yml"
+        ;;
+    duplicate-entry) yq -i '._sensitive_questions += ["code_owner"]' "$work/sensitive.yml" ;;
+    esac
+    if check_sensitive_questions "$work/sensitive.yml" >"$work/sensitive.log" 2>&1; then
+        fail "accepted security-sensitive metadata fixture: $mutation"
+    else
+        pass "rejected security-sensitive metadata fixture: $mutation"
+    fi
+done
+
 # Name the real cause when a render dies on copier's dirty-tree wip commit
 # having swept in a registered git worktree (e.g. an agent worktree under
 # .claude/worktrees/). Such a directory is a gitlink with no `.gitmodules`

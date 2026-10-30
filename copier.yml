@@ -7,6 +7,57 @@
 # go-task `{{.VAR}}`, and lefthook `{staged_files}` appear verbatim in template
 # files with zero escaping.
 
+# Security-sensitive question convention (plain YAML; no Jinja evaluation):
+# _sensitive_questions is the authoritative list of question keys whose answers
+# select trusted principals, agent/reviewer execution, external code/data access,
+# security policy, or post-generation side effects and their destinations.
+# Each listed question MUST also start its help text with [security-sensitive],
+# and every help text with that marker MUST be listed here. Consumers can read
+# this metadata from a release tag without rendering or executing the template.
+# This is trust/side-effect metadata, NOT _secret_questions: these answers are
+# still recorded normally in .copier-answers.yml. When adding a sensitive
+# question, update both markers and the documented baseline in
+# scripts/test-copier-validators.sh.
+_sensitive_questions:
+  - author_git_provider_username
+  - github_org
+  - code_owner
+  - claude_authorized_members
+  - snyk_scan_schedule
+  - ci_runner
+  - ci_runner_labels
+  - deploy_cloudflare_workers
+  - use_release_please
+  - use_skills_sync
+  - skill_categories
+  - use_shared_agents
+  - use_foreman
+  - ci_app_integration_id
+  - foreman_additional_trusted_actors
+  - trusted_orchestrator_actor_ids
+  - use_codeql
+  - use_codex_review
+  - use_codex_cloud_review
+  - use_coderabbit
+  - use_gemini_code_assist
+  - use_greptile
+  - devcontainer
+  - tailscale_required
+  - use_antigravity_cli
+  - use_copilot_cli
+  - use_alternative_claude_providers
+  - use_fly_sprites
+  - git_init
+  - github_remote_create
+  - github_release_init
+  - bunch_add
+  - bunches_directory
+  - obsidian_project_add
+  - obsidian_directory
+  - run_task_install
+  - devcontainer_image
+  - projects_directory
+
 # ── Asked questions ─────────────────────────────────────────────────
 
 project_name:
@@ -53,17 +104,18 @@ author_url:
 
 author_git_provider_username:
   type: str
+  help: "[security-sensitive] GitHub principal used as the default repository owner, code owner and Claude Actions allowlist."
   default: evanharmon1
   when: false
 
 github_org:
   type: str
-  help: "GITHUB ORG: GitHub org/user that will own the repo (drives repo URL, GHCR images, workflows)"
+  help: "[security-sensitive] GITHUB ORG: GitHub org/user that will own the repo (drives repo URL, GHCR images, workflows)"
   default: "[[ author_git_provider_username ]]"
 
 code_owner:
   type: str
-  help: "CODE OWNER: GitHub user/team for CODEOWNERS (org repos may use org/team)"
+  help: "[security-sensitive] CODE OWNER: GitHub user/team for CODEOWNERS (org repos may use org/team)"
   # Defaults to the human author, NOT github_org: GitHub rejects a bare org as a
   # CODEOWNERS principal ("Unknown owner"), which silently makes
   # require-code-owner-review match nobody. An org/team (`@org/team`) is a valid
@@ -73,7 +125,7 @@ code_owner:
 claude_authorized_members:
   type: str
   help: >-
-    CLAUDE ACTIONS: comma-separated GitHub usernames allowed to trigger the
+    [security-sensitive] CLAUDE ACTIONS: comma-separated GitHub usernames allowed to trigger the
     @claude commands (plan/implement/review). This is an explicit allowlist
     (not org membership); the review workflow additionally allows Renovate
     and Dependabot, plus
@@ -94,7 +146,7 @@ project_type:
 snyk_scan_schedule:
   type: str
   help: >-
-    SNYK: Optional advisory SAST/SCA schedule. Off keeps Snyk manual/local;
+    [security-sensitive] SNYK: Optional advisory SAST/SCA schedule. Off keeps Snyk manual/local;
     weekly is the quota-aware opt-in; daily is intended for public repos or
     accepted unlimited open-source projects.
   choices:
@@ -116,7 +168,7 @@ include_ansible:
 ci_runner:
   type: str
   help: >-
-    CI RUNNER: default GitHub Actions runner (CI_RUNS_ON overrides at runtime).
+    [security-sensitive] CI RUNNER: default GitHub Actions runner (CI_RUNS_ON overrides at runtime).
     Browser/image-build/multicore jobs read
     BROWSER_RUNS_ON/IMAGE_BUILD_RUNS_ON/MULTICORE_RUNS_ON first, then
     CI_RUNS_ON. Isolated jobs use ISOLATED_RUNS_ON or ubuntu-latest, never the
@@ -128,7 +180,7 @@ ci_runner:
 
 ci_runner_labels:
   type: str
-  help: "CI RUNNER LABELS: comma-separated labels for self-hosted jobs (include self-hosted; add org/host labels to control routing)"
+  help: "[security-sensitive] CI RUNNER LABELS: comma-separated labels for self-hosted jobs (include self-hosted; add org/host labels to control routing)"
   default: self-hosted,linux
   when: "[[ ci_runner == 'self-hosted' ]]"
   validator: >-
@@ -152,7 +204,7 @@ ci_runner_labels:
 
 deploy_cloudflare_workers:
   type: bool
-  help: "DEPLOY: Deploy the site to Cloudflare Workers (static assets) from CI? (PR preview versions + release-gated production; the sommerlawn-site pattern)"
+  help: "[security-sensitive] DEPLOY: Deploy the site to Cloudflare Workers (static assets) from CI? (PR preview versions + release-gated production; the sommerlawn-site pattern)"
   default: "[[ project_type == 'web-astro' ]]"
   when: "[[ project_type in ['web-astro', 'web-app'] ]]"
 
@@ -166,7 +218,7 @@ license:
 
 use_release_please:
   type: bool
-  help: "RELEASE-PLEASE: Manage releases with release-please? (opens a rolling release PR you merge intentionally; CHANGELOG auto-generated from conventional commits)"
+  help: "[security-sensitive] RELEASE-PLEASE: Manage releases with release-please? (opens a rolling release PR you merge intentionally; CHANGELOG auto-generated from conventional commits)"
   default: yes
 
 release_content_paths:
@@ -178,7 +230,7 @@ release_content_paths:
 use_skills_sync:
   type: bool
   help: >-
-    SKILLS SYNC: Vendor shared agent skills from harmon-devkit (pinned,
+    [security-sensitive] SKILLS SYNC: Vendor shared agent skills from harmon-devkit (pinned,
     drift-checked)? Local vendoring and drift checks require no paid service.
     The generated GitHub sync workflow stays inert until you explicitly
     configure its CI GitHub App credentials. When enabled, that automation
@@ -189,7 +241,7 @@ use_skills_sync:
 
 skill_categories:
   type: str
-  help: "SKILLS: Which shared-skill categories to vendor? (seeded from project type; edit later in .skills-sync.yaml)"
+  help: "[security-sensitive] SKILLS: Which shared-skill categories to vendor? (seeded from project type; edit later in .skills-sync.yaml)"
   multiselect: true
   choices:
     universal: universal
@@ -210,7 +262,7 @@ skill_categories:
 
 use_shared_agents:
   type: bool
-  help: "AGENTS: Also vendor harmon-devkit's shared subagents (e.g. implementer) into .claude/agents?"
+  help: "[security-sensitive] AGENTS: Also vendor harmon-devkit's shared subagents (e.g. implementer) into .claude/agents?"
   # Rides the same manifest, and therefore the same pinned ref, as the skills
   # above — a thin agent defers to a skill by reading it, so two pins that could
   # disagree would leave an agent following a procedure that no longer exists.
@@ -221,13 +273,13 @@ use_shared_agents:
 
 use_foreman:
   type: bool
-  help: "FOREMAN: Wire up foreman — deterministic supervisor that dispatches ready issues to headless agents, verifies, opens PRs, shepherds them (task foreman:* wrapping a pinned uvx-run CLI from ponderousdev/foreman; needs uv and operator setup: bot identity, arming labels, rulesets)?"
+  help: "[security-sensitive] FOREMAN: Wire up foreman — deterministic supervisor that dispatches ready issues to headless agents, verifies, opens PRs, shepherds them (task foreman:* wrapping a pinned uvx-run CLI from ponderousdev/foreman; needs uv and operator setup: bot identity, arming labels, rulesets)?"
   default: no
 
 ci_app_integration_id:
   type: str
   help: >-
-    CI APP INTEGRATION ID: Optional numeric GitHub App ID for the Integration
+    [security-sensitive] CI APP INTEGRATION ID: Optional numeric GitHub App ID for the Integration
     bypass in the version-tag creation ruleset. Find the App ID under the
     account that owns the app: Settings → Developer settings → GitHub Apps →
     your app (not the client ID or installation ID), or fetch it with
@@ -249,7 +301,7 @@ ci_app_integration_id:
 foreman_additional_trusted_actors:
   type: str
   help: >-
-    FOREMAN TRUST: Additional comma-separated GitHub logins whose arming events
+    [security-sensitive] FOREMAN TRUST: Additional comma-separated GitHub logins whose arming events
     and comment/review content Foreman may trust (for example, an operator App
     identity). Security-sensitive; leave empty unless each identity is
     intentionally authorized.
@@ -259,7 +311,7 @@ foreman_additional_trusted_actors:
 trusted_orchestrator_actor_ids:
   type: str
   help: >-
-    TRUSTED ORCHESTRATORS: comma-separated GitHub actor IDs (integers, not logins)
+    [security-sensitive] TRUSTED ORCHESTRATORS: comma-separated GitHub actor IDs (integers, not logins)
     whose run-record and evidence comments are authenticated by the retro helper
     and Dev Flow tools. Look up an ID with `gh api users/<login> --jq .id`.
     Leave empty to configure no allowlist by default.
@@ -281,7 +333,7 @@ trusted_orchestrator_actor_ids:
 use_codeql:
   type: bool
   help: >-
-    CODEQL: Include GitHub CodeQL SAST for selected first-party source languages?
+    [security-sensitive] CODEQL: Include GitHub CodeQL SAST for selected first-party source languages?
     Public repositories receive CodeQL for free. Private/internal repositories
     require GitHub Code Security (billed by active committer) plus an explicit
     FULL_SECURITY_SCAN=true repository variable; otherwise leave this off and
@@ -311,7 +363,7 @@ codeql_languages:
 use_codex_review:
   type: bool
   help: >-
-    CODEX REVIEW: Add second-model review tasks (task review / task challenge →
+    [security-sensitive] CODEX REVIEW: Add second-model review tasks (task review / task challenge →
     OpenAI Codex CLI) plus a toggle for the automatic Claude Code → Codex
     stop-gate review? Requires each developer to install and authenticate the
     Codex CLI themselves (ChatGPT account — free tier has tight usage limits —
@@ -327,7 +379,7 @@ use_codex_review:
 use_codex_cloud_review:
   type: bool
   help: >-
-    CODEX CLOUD REVIEW: Require a terminal Codex review attributable to every
+    [security-sensitive] CODEX CLOUD REVIEW: Require a terminal Codex review attributable to every
     PR head before shepherding can report green? Defaults off and requires
     CODEX REVIEW. A maintainer must connect the repository to Codex cloud
     review through GitHub. Free-tier access is not assumed: availability and
@@ -342,7 +394,7 @@ use_codex_cloud_review:
 use_coderabbit:
   type: bool
   help: >-
-    CODERABBIT: Add the CodeRabbit configuration and GitHub App setup
+    [security-sensitive] CODERABBIT: Add the CodeRabbit configuration and GitHub App setup
     instructions? Defaults off; Codex is the preferred second-model review
     path. CodeRabbit requires an account and App installation. Public
     open-source repositories can receive hosted PR reviews without a paid
@@ -357,7 +409,7 @@ use_coderabbit:
 use_gemini_code_assist:
   type: bool
   help: >-
-    GEMINI CODE ASSIST: Add the Gemini Code Assist configuration (.gemini/config.yaml
+    [security-sensitive] GEMINI CODE ASSIST: Add the Gemini Code Assist configuration (.gemini/config.yaml
     and .gemini/styleguide.md) for Google Cloud SCM PR reviews? Defaults off.
     Requires a Google Cloud project with the Gemini Code Assist Management and
     Developer Connect APIs enabled, plus the Gemini Code Assist GitHub App
@@ -367,7 +419,7 @@ use_gemini_code_assist:
 use_greptile:
   type: bool
   help: >-
-    GREPTILE: Add .greptile/config.json with automatic reviews off?
+    [security-sensitive] GREPTILE: Add .greptile/config.json with automatic reviews off?
     Defaults off. Requires a Greptile account and the Greptile GitHub App
     installed on this repository; the dev loop requests reviews explicitly.
     Starter is free for one developer with 50 credits a month, including private
@@ -382,7 +434,7 @@ use_greptile:
 
 devcontainer:
   type: bool
-  help: "DEVCONTAINER: Add dual-profile .devcontainer (AI bot + human dev)?"
+  help: "[security-sensitive] DEVCONTAINER: Add dual-profile .devcontainer (AI bot + human dev)?"
   default: yes
   # Validated here (after both answers are typed) rather than on use_foreman:
   # a validator on the earlier question reads this one's raw default and lets
@@ -392,7 +444,7 @@ devcontainer:
 tailscale_required:
   type: bool
   help: >-
-    TAILSCALE REQUIRED: Make the dev devcontainer FAIL TO START when it cannot
+    [security-sensitive] TAILSCALE REQUIRED: Make the dev devcontainer FAIL TO START when it cannot
     join your tailnet? Defaults off. The dev profile installs the Tailscale CLI
     either way and connects when TS_AUTHKEY is present — this only decides
     whether a missing, expired, or rejected key is a fatal build error instead
@@ -464,7 +516,7 @@ devcontainer_coder_folder_uri:
 use_antigravity_cli:
   type: bool
   help: >-
-    ANTIGRAVITY CLI: Configure Google's account-backed Antigravity CLI for
+    [security-sensitive] ANTIGRAVITY CLI: Configure Google's account-backed Antigravity CLI for
     prompt-free operation in the devcontainer? Defaults off. Requires one
     interactive Google sign-in (Antigravity has no API-key env var), persisted
     via the ~/.gemini named volume. Google's $0 Individual plan has basic weekly
@@ -488,7 +540,7 @@ use_antigravity_cli:
 use_copilot_cli:
   type: bool
   help: >-
-    COPILOT CLI (security-sensitive): Configure GitHub's account-backed Copilot
+    [security-sensitive] COPILOT CLI (security-sensitive): Configure GitHub's account-backed Copilot
     CLI for prompt-free operation in the BOT devcontainer? Defaults off. Requires a GitHub account
     and a Copilot plan: a free tier exists (limited monthly completions/chat
     requests; historically also free for verified students/teachers via GitHub
@@ -518,7 +570,7 @@ use_copilot_cli:
 use_alternative_claude_providers:
   type: bool
   help: >-
-    ALT MODELS: Add claude-kimi / claude-deepseek / claude-glm / claude-qwen
+    [security-sensitive] ALT MODELS: Add claude-kimi / claude-deepseek / claude-glm / claude-qwen
     wrapper functions that launch Claude Code against alternative
     Anthropic-compatible model providers (Moonshot Kimi K3, DeepSeek V4, Z.AI
     GLM-5.2, Alibaba Qwen3.7-Max/Qwen3-Coder-Plus)? Each requires an account +
@@ -540,7 +592,7 @@ use_alternative_claude_providers:
 use_fly_sprites:
   type: bool
   help: >-
-    FLY.IO SPRITES: Add sprites/network-policy.sh, which generates a Fly.io
+    [security-sensitive] FLY.IO SPRITES: Add sprites/network-policy.sh, which generates a Fly.io
     Sprite's egress network policy from the devcontainer's shared egress
     allowlist and applies it from outside the Sprite, plus the human-only
     checklist steps for running remote agent lanes on Sprites? Defaults off.
@@ -568,13 +620,13 @@ project_management:
 
 git_init:
   type: bool
-  help: "GIT INIT: Initialize git repo?"
+  help: "[security-sensitive] GIT INIT: Initialize git repo?"
   default: yes
 
 github_remote_create:
   type: bool
   help: >-
-    GITHUB REMOTE: Create the remote repo on GitHub (gh repo create, private,
+    [security-sensitive] GITHUB REMOTE: Create the remote repo on GitHub (gh repo create, private,
     pushes initial state)? Note it is created PRIVATE, and GitHub restricts
     draft pull requests on private repositories to its paid plans. The generated
     agent workflow opens every PR as a draft and promotes it only through the
@@ -585,12 +637,12 @@ github_remote_create:
 
 github_release_init:
   type: bool
-  help: "RELEASE: Create an initial release (task release:init)?"
+  help: "[security-sensitive] RELEASE: Create an initial release (task release:init)?"
   default: no
 
 bunch_add:
   type: bool
-  help: "BUNCH: Add Bunch file to project (macOS-only, moves file to iCloud)?"
+  help: "[security-sensitive] BUNCH: Add Bunch file to project (macOS-only, moves file to iCloud)?"
   default: no
 
 # Prompted only when the feature is on, and recorded in .copier-answers.yml so
@@ -600,7 +652,7 @@ bunch_add:
 # copier run abort. `~` is expanded at run time by scripts/meta-install.sh.
 bunches_directory:
   type: str
-  help: "BUNCH: Directory holding your .bunch files (must already exist)"
+  help: "[security-sensitive] BUNCH: Directory holding your .bunch files (must already exist)"
   default: "~/Library/Mobile Documents/com~apple~CloudDocs/Bunches"
   when: "[[ bunch_add ]]"
   validator: >-
@@ -612,12 +664,12 @@ bunches_directory:
 
 obsidian_project_add:
   type: bool
-  help: "OBSIDIAN: Add Obsidian project note to the vault (macOS-only)?"
+  help: "[security-sensitive] OBSIDIAN: Add Obsidian project note to the vault (macOS-only)?"
   default: no
 
 obsidian_directory:
   type: str
-  help: "OBSIDIAN: Vault directory the project note is filed under (must already exist)"
+  help: "[security-sensitive] OBSIDIAN: Vault directory the project note is filed under (must already exist)"
   default: "~/Local/Memex/Professional"
   when: "[[ obsidian_project_add ]]"
   validator: >-
@@ -629,7 +681,7 @@ obsidian_directory:
 
 run_task_install:
   type: bool
-  help: "TASK INSTALL: Run 'task install' after generation (brew bundle + git hooks)?"
+  help: "[security-sensitive] TASK INSTALL: Run 'task install' after generation (brew bundle + git hooks)?"
   default: no
 
 # ── Hidden defaults (when: false) ───────────────────────────────────
@@ -708,6 +760,7 @@ use_python:
 
 devcontainer_image:
   type: str
+  help: "[security-sensitive] Container image executed by the generated development environment."
   default: "ghcr.io/[[ github_org ]]/[[ project_slug ]]-devcontainer"
   when: false
 
@@ -720,6 +773,7 @@ devcontainer_image:
 # Taskfile commands where the shell will not expand a `~`.
 projects_directory:
   type: str
+  help: "[security-sensitive] Workspace directory used by the generated Bunch launcher."
   default: ~/git
   when: false
 
