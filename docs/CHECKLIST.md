@@ -20,8 +20,8 @@ environment — against the items below
 
 ## 1. Local setup
 
-- [ ] `task install` — Brewfile deps, and lefthook git hooks
-- [ ] `task verify` passes locally
+- [ ] **[human-only]** Probe: Read installed tool versions and the configured git hooks, treating unavailable tools as missing. Write: `task install`. <!-- reconcile-id: root-task-install-brewfile-deps-and-lefth-001 --> `task install` — Brewfile deps, and lefthook git hooks
+- [ ] **[human-only]** Probe: Read the exit status from the latest locally recorded verification execution, treating an absent record as unknown. Write: none. <!-- reconcile-id: root-task-verify-passes-locally-002 --> `task verify` passes locally
 <!-- Diverges from template/docs/CHECKLIST.md.jinja ON PURPOSE — do not
 "reconcile" it. sync-harmon-devkit.yml is root-only harmon-platform glue with no
 template twin, so a generated repo really does the manual two-step the template
@@ -29,7 +29,7 @@ describes, while harmon-init's bump is automated. Note that NOTHING will tell yo
 this: the parity gate skips jinja twins, the structure gate checks headings and
 tasks rather than prose, and this file is on audit-dogfood.sh's SKIP list. Hence
 this comment. -->
-- [ ] **Vendored agent skills stay pinned**: `.skills-sync.yaml` pins which
+- [ ] **[human-only]** Probe: Read .skills-sync.yaml and the vendored skill files, comparing the pin and categories to the required release. Write: `task sync:skills`. <!-- reconcile-id: root-vendored-agent-skills-stay-pinned-sk-003 --> **Vendored agent skills stay pinned**: `.skills-sync.yaml` pins which
       harmon-devkit skill categories this repo vendors into `.claude/skills/`,
       and — when the manifest carries an `agents:` block — which shared
       subagents it vendors into `.claude/agents/`, at the same pinned ref.
@@ -77,10 +77,10 @@ this comment. -->
       second, ref-only PR for a bump the automation is already handling, and
       Renovate cannot do the re-sync, so that PR fails `verify:skills` until
       someone finishes it by hand.
-- [ ] Verify `harmon-init.code-workspace` opens the repo's folder in VS Code and has a unique VS Code Workspace color. Then add any other related repos (e.g. other org repos) to the `folders` list in the workspace file so you have quick access to those repos
-- [ ] Extend `.gitignore` for your stack — the template ships a base; add stack-specific entries via [gitignore.io](https://www.toptal.com/developers/gitignore)
-- [ ] macOS: add a Raycast quicklink/alias that opens the `harmon-init.code-workspace`
-- [ ] macOS (Bunch): scaffold the launcher with `task util:bunch-add` (if not generated at copier time), then `task util:bunch-install` to move it to iCloud and leave a `.meta/*.bunch` symlink (re-run install if missing)
+- [ ] **[human-only]** Probe: Read the workspace file and inspect its folder list and VS Code color. Write: none. <!-- reconcile-id: root-verify-harmon-init-code-workspace-op-004 --> Verify `harmon-init.code-workspace` opens the repo's folder in VS Code and has a unique VS Code Workspace color. Then add any other related repos (e.g. other org repos) to the `folders` list in the workspace file so you have quick access to those repos
+- [ ] **[human-only]** Probe: Read .gitignore and compare entries with the chosen project stack. Write: none. <!-- reconcile-id: root-extend-gitignore-for-your-stack-the-005 --> Extend `.gitignore` for your stack — the template ships a base; add stack-specific entries via [gitignore.io](https://www.toptal.com/developers/gitignore)
+- [ ] **[human-only]** Probe: Inspect the Raycast quicklink list for the workspace target. Write: none. <!-- reconcile-id: root-macos-add-a-raycast-quicklink-alias-006 --> macOS: add a Raycast quicklink/alias that opens the `harmon-init.code-workspace`
+- [ ] **[human-only]** Probe: Read the Bunch launcher and its installed symlink in the configured location. Write: `task util:bunch-add`. <!-- reconcile-id: root-macos-bunch-scaffold-the-launcher-wi-007 --> macOS (Bunch): scaffold the launcher with `task util:bunch-add` (if not generated at copier time), then `task util:bunch-install` to move it to iCloud and leave a `.meta/*.bunch` symlink (re-run install if missing)
 
 ### Package-manager major upgrades
 
@@ -94,7 +94,7 @@ the compatibility reason in the rule's `description`.
 
 ## 2. GitHub repo settings
 
-- [ ] **Automated settings** — run `task setup:github` (idempotent, safe to
+- [ ] **[agent-apply]** Probe: Read repository settings and Actions variables with the GitHub REST API and compare them with the configured desired values. Write: `task setup:github`. <!-- reconcile-id: root-automated-settings-run-task-setup-gi-008 --> **Automated settings** — run `task setup:github` (idempotent, safe to
       re-run): enables **Dependabot alerts** and **private vulnerability
       reporting** when public. Routing uses `CI_RUNS_ON`, `BROWSER_RUNS_ON`,
       `IMAGE_BUILD_RUNS_ON`, `MULTICORE_RUNS_ON` and `ISOLATED_RUNS_ON`. Public
@@ -122,19 +122,19 @@ the compatibility reason in the rule's `description`.
       Unreadable organization values report unknown without failing setup; `task status:setup` reports known violations. Do not add
       `dependabot.yml`: Renovate owns routine and vulnerability-remediation PRs;
       Dependabot owns advisory alerts.
-- [ ] Import the branch ruleset (see [architecture/branch-protection.md](architecture/branch-protection.md)) — do this once `build.yml` and `devcontainer-build.yml` are on `main` so the required `verify`/`security`/`devcontainer-verify` checks resolve. **Use the UI import:** Settings → Rules → Rulesets → **New ruleset ▸ Import a ruleset** → select `.github/Branch Protection Ruleset - Protect Main.json`. (Prefer the UI over `gh api … rulesets`: the API `POST` is not idempotent — re-running creates a duplicate ruleset — and currently rejects the `merge_queue` rule. To later change the ruleset, edit the existing one in the UI rather than re-importing.) **Import it before provisioning the bot and agent PATs below:** those postures carry no local merge guard ([decision](decisions/2026-10-07-bot-and-agent-postures-carry-no-merge-guards.md)), so this ruleset's code-owner approval and required checks are the only thing between their PAT and an unreviewed merge into `main`.
-- [ ] **Bot PAT** — the agent's `GH_TOKEN`. If a fine-grained PAT already covers
+- [ ] **[human-only]** Probe: Read the live repository rulesets and required checks through the GitHub API. Write: none. <!-- reconcile-id: root-import-the-branch-ruleset-see-archit-009 --> Import the branch ruleset (see [architecture/branch-protection.md](architecture/branch-protection.md)) — do this once `build.yml` and `devcontainer-build.yml` are on `main` so the required `verify`/`security`/`devcontainer-verify` checks resolve. **Use the UI import:** Settings → Rules → Rulesets → **New ruleset ▸ Import a ruleset** → select `.github/Branch Protection Ruleset - Protect Main.json`. (Prefer the UI over `gh api … rulesets`: the API `POST` is not idempotent — re-running creates a duplicate ruleset — and currently rejects the `merge_queue` rule. To later change the ruleset, edit the existing one in the UI rather than re-importing.) **Import it before provisioning the bot and agent PATs below:** those postures carry no local merge guard ([decision](decisions/2026-10-07-bot-and-agent-postures-carry-no-merge-guards.md)), so this ruleset's code-owner approval and required checks are the only thing between their PAT and an unreviewed merge into `main`.
+- [ ] **[human-only]** Probe: Read the existing token coverage and the latest authenticated GitHub workflow result without exposing token values. Write: none. <!-- reconcile-id: root-bot-pat-the-agent-s-gh-token-if-a-fi-010 --> **Bot PAT** — the agent's `GH_TOKEN`. If a fine-grained PAT already covers
       `evanharmon1`, just add this repo to its **selected repositories**; a token is
       scoped to one resource owner, so a **new owner needs a new PAT**. Both layers
       are required — the collaborator grant sets the ceiling, the PAT's repo list
       reaches it. Procedure: [guides/bot-account.md](guides/bot-account.md).
-- [ ] **[human-only] Agent PAT** — only if this repo allows unattended remote
+- [ ] **[human-only]** Probe: Read the existing token coverage and the latest authenticated GitHub workflow result without exposing token values. Write: none. <!-- reconcile-id: root-agent-pat-only-if-this-repo-allows-u-011 --> **Agent PAT** — only if this repo allows unattended remote
       lanes (the agent devcontainer, `.devcontainer/agent/`). A **separate**
       fine-grained PAT on the bot account, same permissions as the bot's, expiry
       of 180 days at most, its own repository list, one per resource owner;
       supplied as `AGENT_GH_TOKEN`, never as `GH_TOKEN`. Procedure:
       [guides/bot-account.md](guides/bot-account.md#the-agent-pat-the-agent-postures-own-token).
-- [ ] **[human-only] Fly.io Sprites (paid, opt-in)** — only if this repo runs
+- [ ] **[human-only]** Probe: Read the configured Sprites posture and current provider account status. Write: none. <!-- reconcile-id: root-fly-io-sprites-paid-opt-in-only-if-t-012 --> **Fly.io Sprites (paid, opt-in)** — only if this repo runs
       remote agent lanes on Sprites (`use_fly_sprites`). A Fly.io organization
       with a credit card on file (new organizations get a one-time trial
       credit; a Sprite is billed for compute while running and for storage
@@ -144,7 +144,7 @@ the compatibility reason in the rule's `description`.
       its Codex CLI in by hand through `sprite console`; an agent never does,
       and that login is never copied to another machine. Procedure:
       [guides/sprites.md](guides/sprites.md).
-- [ ] **[human-only] Add `closing-keywords` to the live branch ruleset** —
+- [ ] **[human-only]** Probe: Read required checks in the live branch ruleset through the GitHub API. Write: none. <!-- reconcile-id: root-add-closing-keywords-to-the-live-bra-013 --> **Add `closing-keywords` to the live branch ruleset** —
       **required, not optional, and no longer deferrable.** Until
       harmon-init#1328 the guard was enforced *transitively*: the job sat in
       `build.yml` and fed the aggregate `verify` check, so a failing guard
@@ -160,13 +160,13 @@ the compatibility reason in the rule's `description`.
       the live one. `task audit:ruleset` names a context the live ruleset is
       missing — run it to confirm. (evanharmon1/harmon-init#1333 will automate
       this as `task setup:ruleset`; until it lands the edit is by hand.)
-- [ ] **[human-only] Enable unattributed-changes approval in the live branch
+- [ ] **[human-only]** Probe: Read the live branch ruleset approval conditions through the GitHub API. Write: none. <!-- reconcile-id: root-enable-unattributed-changes-approval-014 --> **Enable unattributed-changes approval in the live branch
       ruleset** — when the checked-in ruleset gains this setting, edit the
       existing main-branch ruleset in Settings → Rules → Rulesets and enable the
       matching additional-approval setting. Do not re-import the JSON: GitHub
       creates a duplicate ruleset rather than updating the live one.
 
-- [ ] **Install and activate Renovate** — install the
+- [ ] **[human-only]** Probe: Read the repository app installation and the Renovate dashboard issue. Write: none. <!-- reconcile-id: root-install-and-activate-renovate-instal-015 --> **Install and activate Renovate** — install the
       [Renovate app](https://github.com/apps/renovate) for **Only select
       repositories** and select this repo. In the Mend Developer Portal choose
       the **Renovate** product and **Scan and Alert** mode. Do not choose **Scan
@@ -174,17 +174,17 @@ the compatibility reason in the rule's `description`.
       checks, issues (including the Dependency Dashboard), or update/remediation
       PRs. This repo already has `renovate.json`; keep that configuration rather
       than replacing it with a generic onboarding config.
-- [ ] **[human-only] Remove CodeRabbit access** — remove this repository from
+- [ ] **[human-only]** Probe: Read the repository app installation and review settings in the GitHub and CodeRabbit interfaces. Write: none. <!-- reconcile-id: root-remove-coderabbit-access-remove-this-016 --> **Remove CodeRabbit access** — remove this repository from
       the CodeRabbit GitHub App installation and confirm the App no longer has
       access. Deleting `.coderabbit.yaml` and bot trust does not revoke an
       existing installation.
-- [ ] Install the [Greptile app](https://github.com/apps/greptile-apps) on the repo
+- [ ] **[human-only]** Probe: Read the repository app installation and review settings in the GitHub and Greptile interfaces. Write: none. <!-- reconcile-id: root-install-the-greptile-app-https-githu-017 --> Install the [Greptile app](https://github.com/apps/greptile-apps) on the repo
       (`.greptile/config.json` turns automatic reviews off; the dev loop requests them)
-- [ ] **[human-only] Connect Codex cloud review** — connect this repository in
+- [ ] **[human-only]** Probe: Read the repository connection and review preferences in Codex settings. Write: none. <!-- reconcile-id: root-connect-codex-cloud-review-connect-t-018 --> **Connect Codex cloud review** — connect this repository in
       ChatGPT Codex settings, grant private-repository access if applicable,
       and confirm review activity is authored by GitHub actor ID `199175422`
       (`chatgpt-codex-connector[bot]`, type `Bot`).
-- [ ] **[human-only] Disable Codex Automatic reviews** — turn **personal Auto
+- [ ] **[human-only]** Probe: Read personal Auto review and repository review trigger preferences in Codex settings. Write: none. <!-- reconcile-id: root-disable-codex-automatic-reviews-turn-019 --> **Disable Codex Automatic reviews** — turn **personal Auto
       review** off and set this repository's **Auto code review** preference to
       **Follow personal** — and its review **Trigger** to Follow personal too,
       since an "On every push" trigger sits dormant while Auto review is off
@@ -197,17 +197,17 @@ the compatibility reason in the rule's `description`.
       configuration — nothing in the lifecycle gates on it — and the one thing
       worth reporting later is an unsolicited Codex review, the signature of
       the knobs drifting back on.
-- [ ] **[human-only] Any other automatic reviewer must review drafts** — if you
+- [ ] **[human-only]** Probe: Read each connected review service configuration and its draft review setting. Write: none. <!-- reconcile-id: root-any-other-automatic-reviewer-must-re-020 --> **Any other automatic reviewer must review drafts** — if you
       enable one (GitHub Copilot code review, for example — foreman trusts its
       findings via `trusted_actors`), turn on its draft-review option.
       A reviewer that skips drafts first reports *after* promotion, so the
       readiness gate would hand a human a PR it had not actually reviewed.
       Leave it off rather than run it blind to the workbench.
-- [ ] Actions secret: `CLAUDE_CODE_OAUTH_TOKEN` (claude-* workflows) — generate
+- [ ] **[human-only]** Probe: Read Actions secret names with gh secret list and compare the expected name. Write: none. <!-- reconcile-id: root-actions-secret-claude-code-oauth-tok-021 --> Actions secret: `CLAUDE_CODE_OAUTH_TOKEN` (claude-* workflows) — generate
       with `claude setup-token`; the value must start **`sk-ant-oat01-`** (an OAuth
       token, billed to your Claude subscription), **not** `sk-ant-api03-` (a raw API
       key, billed at pay-as-you-go API rates). Then `gh secret set CLAUDE_CODE_OAUTH_TOKEN`
-- [ ] **Foreman operator setup** — provision the separate READ-ONLY PAT that
+- [ ] **[human-only]** Probe: Read Foreman configuration and the names of its credential references without revealing credentials. Write: none. <!-- reconcile-id: root-foreman-operator-setup-provision-the-022 --> **Foreman operator setup** — provision the separate READ-ONLY PAT that
       foreman hands to dispatched agents: export/store it as
       `FOREMAN_AGENT_GH_TOKEN` where the bot devcontainer's `init-env.sh` can
       inject it (1Password → devcontainer.env). Run `task setup:github-labels`
@@ -244,7 +244,7 @@ the compatibility reason in the rule's `description`.
       rulesets and the tag exist. Then `task foreman:preflight` (inside the
       bot devcontainer — foreman refuses to start anywhere else) to assert
       the security controls before any dispatch.
-- [ ] **[human-only] Foreman reviewer-gate check** — `.foreman.toml`'s
+- [ ] **[human-only]** Probe: Read .foreman.toml reviewer settings and the latest reviewer gate evidence. Write: none. <!-- reconcile-id: root-foreman-reviewer-gate-check-foreman-023 --> **Foreman reviewer-gate check** — `.foreman.toml`'s
       `[reviewer]` table is foreman's current-head review gate for the PRs it
       shepherds. Before the first dispatch (and again after any Foreman bump),
       confirm the configured `login` still matches the live Codex connector
@@ -252,7 +252,7 @@ the compatibility reason in the rule's `description`.
       review at the head, or a 👍 from that login on foreman's own request
       comment — still mean what the readiness gate assumes, and that required
       checks run on draft PRs (foreman promotes only after they conclude).
-- [ ] **Free SAST coverage** — Harmon Init has no CodeQL workflow (its
+- [ ] **[unknown-when-unprivileged]** Probe: Read the Semgrep workflow and the repository code scanning configuration. Write: none. <!-- reconcile-id: root-free-sast-coverage-harmon-init-has-n-024 --> **Free SAST coverage** — Harmon Init has no CodeQL workflow (its
       first-party source is shell/config; foreman is a pinned external CLI), so
       Semgrep CE runs in `build.yml` at both visibilities. Generated supported
       public stacks run CodeQL automatically (with GitHub's CodeQL Default setup
@@ -263,14 +263,14 @@ the compatibility reason in the rule's `description`.
       Actions → CodeQL → "Enable workflow" or `gh workflow enable codeql.yml`);
       free private repos use Semgrep CE unless paid private CodeQL is explicitly
       enabled.
-- [ ] **Choose the Snyk posture** — Harmon Init runs the free baseline
+- [ ] **[unknown-when-unprivileged]** Probe: Read the Snyk workflow schedule and configured secret names. Write: none. <!-- reconcile-id: root-choose-the-snyk-posture-harmon-init-025 --> **Choose the Snyk posture** — Harmon Init runs the free baseline
       (Semgrep CE + Dependabot alerts/Renovate + gitleaks) and adds Snyk as an
       advisory second opinion at `snyk_scan_schedule=weekly`. Free private repos
       keep Snyk manual/local via `task security:sast:snyk` and
       `task security:sca:snyk`; local tests consume the same Snyk Organization
       quota. Do not install the Snyk GitHub App for this posture; its PR checks
       are not required by the branch ruleset.
-- [ ] **Activate scheduled Snyk (weekly)** — set the Actions secret `SNYK_TOKEN`
+- [ ] **[human-only]** Probe: Read Actions secret names with gh secret list and inspect the Snyk workflow schedule. Write: none. <!-- reconcile-id: root-activate-scheduled-snyk-weekly-set-t-026 --> **Activate scheduled Snyk (weekly)** — set the Actions secret `SNYK_TOKEN`
       (the value must be piped on stdin, e.g.
       `op read "op://<vault>/<item>/<field>" | task secret:set:gh NAME=SNYK_TOKEN REPO=evanharmon1/harmon-init`)
       and run
@@ -282,9 +282,9 @@ the compatibility reason in the rule's `description`.
       generated from this template chooses `weekly` (conservative) or `daily`
       (public or accepted unlimited OSS); prefer weekly for any deliberately
       budgeted private repo and check Organization Usage before enabling it.
-- [ ] **Create** the CI GitHub App `evanharmon1-ci` by hand (one App per org;
+- [ ] **[human-only]** Probe: Read GitHub App registrations for the expected CI app name. Write: none. <!-- reconcile-id: root-create-the-ci-github-app-evanharmon1-027 --> **Create** the CI GitHub App `evanharmon1-ci` by hand (one App per org;
       **Settings → Developer settings → GitHub Apps**), or reuse the org's existing one.
-- [ ] **[human-only] Confirm CI GitHub App permissions** — the App must grant
+- [ ] **[human-only]** Probe: Read the CI GitHub App permissions in its settings. Write: none. <!-- reconcile-id: root-confirm-ci-github-app-permissions-th-028 --> **Confirm CI GitHub App permissions** — the App must grant
       **Checks: Read-only**, **Commit statuses: Read-only**, and
       **Actions: Read-only** for
       claude-implement's `gh pr checks`. For an existing App, update its
@@ -292,14 +292,14 @@ the compatibility reason in the rule's `description`.
       installation**; until then, `create-github-app-token` fails and
       claude-implement cannot start. See
       [architecture/security.md](architecture/security.md#ci-automation-identity-github-app).
-- [ ] **Install** the App on this repo — **Install App → Only select repositories**
+- [ ] **[human-only]** Probe: Read GitHub App installations for this repository. Write: none. <!-- reconcile-id: root-install-the-app-on-this-repo-install-029 --> **Install** the App on this repo — **Install App → Only select repositories**
       (the harmon-init repos that run release-please / claude-* / project-automation),
       **not "All"**. **Creating the App is not enough:** an App whose credentials are
       set but which is *not installed* on the repo makes
       `actions/create-github-app-token` fail at runtime with a **404**
       (`Not Found` — "not installed on this repository"). This is the single
       easiest step to miss.
-- [ ] Set `CI_APP_CLIENT_ID` (Actions **variable**) + `CI_APP_PRIVATE_KEY` (Actions
+- [ ] **[human-only]** Probe: Read Actions variable and secret names with gh variable list and gh secret list. Write: none. <!-- reconcile-id: root-set-ci-app-client-id-actions-variabl-030 --> Set `CI_APP_CLIENT_ID` (Actions **variable**) + `CI_APP_PRIVATE_KEY` (Actions
       **secret**) — **pipe the `.pem` in** (never paste it; flattened newlines break
       the key), and **scope both to those same repos** (least privilege — the key can
       act as the App: commits, PRs, releases, workflow edits):
@@ -316,9 +316,9 @@ the compatibility reason in the rule's `description`.
       re-run with the full list to add a repo. Drives release-please, the claude-*
       workflows, and project-automation; blast-radius + rotation in
       [architecture/security.md](architecture/security.md).
-- [ ] GHCR: ensure the org/user allows publishing packages; the first
+- [ ] **[human-only]** Probe: Read package publishing permissions and the current package list. Write: none. <!-- reconcile-id: root-ghcr-ensure-the-org-user-allows-publ-031 --> GHCR: ensure the org/user allows publishing packages; the first
       devcontainer prebuild populates `ghcr.io/evanharmon1/harmon-init-devcontainer` on merge to main
-- [ ] GitHub Project: run `task setup:github-project` (needs
+- [ ] **[agent-apply]** Probe: Read the owner project list and project fields with gh project list and gh project field-list. Write: `task setup:github-project`. <!-- reconcile-id: root-github-project-run-task-setup-github-032 --> GitHub Project: run `task setup:github-project` (needs
       `gh auth refresh -s project`) to create the owner's default project (titled
       `evanharmon1 Project`) and idempotently sync its `Status` pipeline — see
       [project-management.md](project-management.md).
@@ -330,13 +330,13 @@ the compatibility reason in the rule's `description`.
       starter option the Status field is missing (so a value added by a later
       harmon-init release lands on the next run) and never touch, reorder, or
       delete the options you added.
-- [ ] **Upgrading from a release before #875?** If this repo's board still
+- [ ] **[human-only]** Probe: Read the project field list and compare it with the documented migration state. Write: none. <!-- reconcile-id: root-upgrading-from-a-release-before-875-033 --> **Upgrading from a release before #875?** If this repo's board still
       carries `Domain`/`Layer` fields from an earlier harmon-init release, they
       are not deleted automatically — retiring them is a deliberate,
       irreversible operator step. See
       [project-management.md](project-management.md), "Migrating a board that
       still has one."
-- [ ] **[human-only] Delete the `Priority` and `Size` project fields on an
+- [ ] **[human-only]** Probe: Read the project field list for Priority and Size. Write: none. <!-- reconcile-id: root-delete-the-priority-and-size-project-034 --> **Delete the `Priority` and `Size` project fields on an
       existing board** — only if this repo's board was set up by a release
       before harmon-init#1451; they are not deleted automatically, and
       deleting a field destroys every value on it, unrecoverably. Do it after
@@ -350,7 +350,7 @@ the compatibility reason in the rule's `description`.
       out. On a personal account both fields go; on an organization only `Size`
       was ever a project field — its `Priority` is GitHub's built-in issue
       field and stays.
-- [ ] **Upgrading from a release before harmon-init#1047
+- [ ] **[human-only]** Probe: Read the project field configuration and compare it with the documented migration state. Write: none. <!-- reconcile-id: root-upgrading-from-a-release-before-harm-035 --> **Upgrading from a release before harmon-init#1047
       (`method:*` → `strategy:*`)?** Run `task setup:github-labels` first so
       the `strategy:*` destinations exist, then use the read-only report and
       guarded maintenance flow below. For each live value among `oneshot`,
@@ -359,7 +359,7 @@ the compatibility reason in the rule's `description`.
       associations for matching issues, PRs, and discussions found in its paginated snapshots,
       re-reads them, and only then allows `--prune` to remove zero-association
       retired labels.
-- [ ] Labels: run `task setup:github-labels` to seed this repo's starter label
+- [ ] **[agent-apply]** Probe: Read repository labels with gh label list and compare them with the label registry. Write: `task setup:github-labels`. <!-- reconcile-id: root-labels-run-task-setup-github-labels-036 --> Labels: run `task setup:github-labels` to seed this repo's starter label
       families from `label-registry.json` (see the generated taxonomy table in
       [project-management.md](project-management.md)) — grow `domain:` values
       there as the product's own problem-space vocabulary and `area:` values as
@@ -367,7 +367,7 @@ the compatibility reason in the rule's `description`.
       is product-independent and normally needs no edits. Labels are per-repo,
       so run it in each repo; org default labels (org Settings → Repository,
       UI-only) only seed new repos.
-- [ ] **[human-only] Pin any hand-applied Tier before the first classification
+- [ ] **[human-only]** Probe: Read issue Tier labels and the tier pin labels before classification. Write: none. <!-- reconcile-id: root-pin-any-hand-applied-tier-before-the-037 --> **Pin any hand-applied Tier before the first classification
       write** — on an existing repository an unqualified `tier:<value>` label
       used to be a human's implementer override; it is now the cache automation
       rewrites. On an unpinned issue with Risk and Complexity set, a writer of
@@ -378,14 +378,14 @@ the compatibility reason in the rule's `description`.
       personal-account repository, monthly on an organization one).
       Before that first write, add `tier:pinned` to each open issue whose
       hand-set tier label you want to keep.
-- [ ] **After a `copier update` that adds label families** (e.g. `impact:*` — a
+- [ ] **[unknown-when-unprivileged]** Probe: Read the repository label list and compare it with the label registry. Write: none. <!-- reconcile-id: root-after-a-copier-update-that-adds-labe-038 --> **After a `copier update` that adds label families** (e.g. `impact:*` — a
       pure addition), re-run `task setup:github-labels` to provision the new
       labels here — it is additive and never deletes, so existing labels and
       the issues they sit on are untouched — then classify open issues with the
       added families. A RENAMED family (like `method:*` → `strategy:*` above)
       is not a pure addition — provision the new destinations first, then
       migrate the old associations before retiring their labels.
-- [ ] **[human-only] Inspect live label drift before retiring anything** — keep
+- [ ] **[human-only]** Probe: Read the repository label list and its issue usage before considering retirement. Write: none. <!-- reconcile-id: root-inspect-live-label-drift-before-reti-039 --> **Inspect live label drift before retiring anything** — keep
       the default setup path additive, then run
       `./scripts/setup-github-labels.sh --repo <owner/repo> --report-unregistered`
       with the same `--foreman` / `--release-please` profile flags used for
@@ -395,7 +395,7 @@ the compatibility reason in the rule's `description`.
       live labels, all-state issues and pull requests, and repository
       discussions, and reports separate association counts. An indeterminate read is a stop, not
       permission to clean up.
-- [ ] **[human-only] Retire any legacy `agent:*` claim labels or pre-2026
+- [ ] **[human-only]** Probe: Read legacy label names and their issue usage. Write: none. <!-- reconcile-id: root-retire-any-legacy-agent-claim-labels-040 --> **Retire any legacy `agent:*` claim labels or pre-2026
       `codex`/`copilot` labels** — use the guarded maintenance flow, never a
       direct `gh label delete` or a hand-written association list. Perform its
       write path in a quiescent maintenance window: pause claim/release,
@@ -480,12 +480,12 @@ the compatibility reason in the rule's `description`.
       the operation as incomplete, reconcile live associations, and rerun in a
       new quiet window; do not infer association preservation from a successful
       exit alone; this is a guarded best-effort operation at that API boundary.
-- [ ] Project views: create the starter views that the Views section of
+- [ ] **[unknown-when-unprivileged]** Probe: Read the project views and compare them with the documented starter views. Write: none. <!-- reconcile-id: root-project-views-create-the-starter-vie-041 --> Project views: create the starter views that the Views section of
       [project-management.md](project-management.md) specifies — including
       Needs review and Human queue — in the Project UI. Projects V2 has no view
       API, so this is a one-time manual step; the filters and layouts are in
       that section.
-- [ ] GitHub Project auto-add (**adds every issue to the board**): in the
+- [ ] **[unknown-when-unprivileged]** Probe: Read the project workflow settings for the auto-add rule. Write: none. <!-- reconcile-id: root-github-project-auto-add-adds-every-i-042 --> GitHub Project auto-add (**adds every issue to the board**): in the
       Project's **Settings → Workflows**, turn on **"Auto-add to project"** and
       point it at this repo (filter `is:issue`, `is:pr`) so *every* new issue and
       PR lands on the board automatically, however it's created. GitHub's native
@@ -496,14 +496,14 @@ the compatibility reason in the rule's `description`.
 
 ## 3. Framework scaffolding (conventions-only template)
 
-- [ ] Add the project's primary toolchain; extend Taskfile `build`/`test` accordingly
+- [ ] **[human-only]** Probe: Read project manifests and Taskfile build and test tasks for the chosen toolchain. Write: none. <!-- reconcile-id: root-add-the-project-s-primary-toolchain-043 --> Add the project's primary toolchain; extend Taskfile `build`/`test` accordingly
 
 ## 4. Secrets & environment
 
-- [ ] For local `.env` needs, use **1Password Environments** (mounts a virtual
+- [ ] **[human-only]** Probe: Read local environment references and the configured 1Password environment without exposing secret values. Write: none. <!-- reconcile-id: root-for-local-env-needs-use-1password-en-044 --> For local `.env` needs, use **1Password Environments** (mounts a virtual
       `.env`; secrets never hit disk or git) or `op run`/`op inject`. Commit only
       `.env.example`-style files
-- [ ] Devcontainer secrets: create a **1Password environment** that mounts
+- [ ] **[human-only]** Probe: Read the configured secret references and the devcontainer configuration without reading secret values. Write: none. <!-- reconcile-id: root-devcontainer-secrets-create-a-1passw-045 --> Devcontainer secrets: create a **1Password environment** that mounts
       `.devcontainer/devcontainer.env` (and `.devcontainer/dev/devcontainer.env`)
       with `CLAUDE_CODE_OAUTH_TOKEN` and `AGENT_DECK_TELEGRAM_KEY`, plus
       `GH_TOKEN` for the bot profile and `TS_AUTHKEY` for the dev one — the dev
@@ -517,9 +517,9 @@ the compatibility reason in the rule's `description`.
 
 ## 5. Docs & meta
 
-- [ ] Fill in the `TODO:` markers in README.md and docs/ (architecture diagram first)
-- [ ] Confirm README badges render (Actions URLs are correct once CI runs)
-- [ ] Initial release when ready: `task release:init` (v0.1.0) — releases stay manual
-- [ ] Stay current with harmon-init: periodically run `copier update --trust` to pull
+- [ ] **[human-only]** Probe: Read README.md and docs for unresolved TODO markers. Write: none. <!-- reconcile-id: root-fill-in-the-todo-markers-in-readme-m-046 --> Fill in the `TODO:` markers in README.md and docs/ (architecture diagram first)
+- [ ] **[human-only]** Probe: Read README badge links and the latest GitHub Actions results. Write: none. <!-- reconcile-id: root-confirm-readme-badges-render-actions-047 --> Confirm README badges render (Actions URLs are correct once CI runs)
+- [ ] **[human-only]** Probe: Read the repository release list and release task configuration. Write: `task release:init`. <!-- reconcile-id: root-initial-release-when-ready-task-rele-048 --> Initial release when ready: `task release:init` (v0.1.0) — releases stay manual
+- [ ] **[human-only]** Probe: Read the Copier answers commit and compare it with the current harmon-init release. Write: none. <!-- reconcile-id: root-stay-current-with-harmon-init-period-049 --> Stay current with harmon-init: periodically run `copier update --trust` to pull
       template improvements (a three-way merge — your own edits are preserved). The
       standardize-repo skill (`update` mode) automates this and verifies the result.
