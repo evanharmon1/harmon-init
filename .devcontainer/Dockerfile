@@ -6,6 +6,14 @@ USER root
 # in the canonical harmon-init image, not in generated repository Dockerfiles.
 
 COPY .devcontainer/config/ /usr/local/share/devcontainer-config/
+COPY .devcontainer/Dockerfile /tmp/harmon-image-inputs/Dockerfile
+COPY .devcontainer/devcontainer.json /tmp/harmon-image-inputs/devcontainer.json
+COPY .devcontainer/agent/devcontainer.json /tmp/harmon-image-inputs/agent/devcontainer.json
+COPY .devcontainer/dev/devcontainer.json /tmp/harmon-image-inputs/dev/devcontainer.json
+RUN mkdir -p /etc/harmon-devcontainer \
+    && (cd /tmp/harmon-image-inputs && sha256sum Dockerfile devcontainer.json agent/devcontainer.json dev/devcontainer.json) \
+        > /etc/harmon-devcontainer/image-inputs.sha256 \
+    && rm -rf /tmp/harmon-image-inputs
 RUN /usr/local/sbin/install-harmon-repo-config
 
 # Prepend ~/.local/bin onto PATH for every process the container ever runs —

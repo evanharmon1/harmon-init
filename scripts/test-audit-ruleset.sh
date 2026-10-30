@@ -25,6 +25,30 @@ run_audit() {
 echo "==> identical fixtures"
 run_audit >/dev/null
 
+echo "==> server-added disabled dismissal restriction"
+jq '(.rules[] | select(.type == "pull_request") | .parameters.dismissal_restriction) = {"allowed_actors": [], "enabled": false}' "$file" >"$live"
+run_audit >/dev/null
+
+for restriction in '{"allowed_actors": [], "enabled": true}' '{"allowed_actors": [42], "enabled": false}' '{"allowed_actors": [], "enabled": false, "extra": true}'; do
+    echo "==> meaningful dismissal restriction: $restriction"
+    jq --argjson restriction "$restriction" '(.rules[] | select(.type == "pull_request") | .parameters.dismissal_restriction) = $restriction' "$file" >"$live"
+    if run_audit >"$tmp_dir/out"; then
+        echo "FAIL: dismissal restriction was reported clean" >&2
+        exit 1
+    else
+        status=$?
+        [ "$status" -eq 1 ] || {
+            echo "FAIL: dismissal restriction exit was $status" >&2
+            exit 1
+        }
+    fi
+    grep -q 'RULESET AUDIT DRIFT' "$tmp_dir/out" || {
+        echo "FAIL: drift output missing" >&2
+        exit 1
+    }
+done
+cp "$file" "$live"
+
 echo "==> missing required-check context"
 jq '(.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks) |= map(select(.context != "devcontainer-verify"))' "$file" >"$live.tmp"
 mv "$live.tmp" "$live"

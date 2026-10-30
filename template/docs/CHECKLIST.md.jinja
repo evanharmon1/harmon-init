@@ -20,10 +20,10 @@ environment — against the items below
 
 ## 1. Local setup
 
-- [ ] `task install` — Brewfile deps[% if use_python %], `uv sync`[% endif %][% if use_node %], `pnpm install`[% endif %], and lefthook git hooks
-- [ ] `task verify` passes locally
+- [ ] **[human-only]** Probe: Read installed tool versions and the configured git hooks, treating unavailable tools as missing. Write: `task install`. <!-- reconcile-id: template-task-install-brewfile-deps-if-use-py-001 --> `task install` — Brewfile deps[% if use_python %], `uv sync`[% endif %][% if use_node %], `pnpm install`[% endif %], and lefthook git hooks
+- [ ] **[human-only]** Probe: Read the exit status from the latest locally recorded verification execution, treating an absent record as unknown. Write: none. <!-- reconcile-id: template-task-verify-passes-locally-002 --> `task verify` passes locally
 [% if use_skills_sync %]
-- [ ] **Vendor shared agent skills**: `.skills-sync.yaml` pins which harmon-devkit
+- [ ] **[human-only]** Probe: Read .skills-sync.yaml and the vendored skill files, comparing the pin and categories to the required release. Write: `task sync:skills`. <!-- reconcile-id: template-vendor-shared-agent-skills-skills-sy-003 --> **Vendor shared agent skills**: `.skills-sync.yaml` pins which harmon-devkit
       skill categories this repo gets (from your `skill_categories` answer). Set
       `ref` to the latest
       [harmon-devkit release](https://github.com/evanharmon1/harmon-devkit/releases)
@@ -52,10 +52,10 @@ environment — against the items below
       commit). Renovate cannot do the re-sync, so a ref-only commit fails the
       drift check.
 [% endif %]
-- [ ] Verify `[[ project_slug ]].code-workspace` opens the repo's folder in VS Code and has a unique VS Code Workspace color. Then add any other related repos (e.g. other org repos) to the `folders` list in the workspace file so you have quick access to those repos
-- [ ] Extend `.gitignore` for your stack — the template ships a base; add stack-specific entries via [gitignore.io](https://www.toptal.com/developers/gitignore)
-- [ ] macOS: add a Raycast quicklink/alias that opens the `[[ project_slug ]].code-workspace`
-- [ ] macOS (Bunch): scaffold the launcher with `task util:bunch-add` (if not generated at copier time), then `task util:bunch-install` to move it to iCloud and leave a `.meta/*.bunch` symlink (re-run install if missing)
+- [ ] **[human-only]** Probe: Read the workspace file and inspect its folder list and VS Code color. Write: none. <!-- reconcile-id: template-verify-project-slug-code-workspace-o-004 --> Verify `[[ project_slug ]].code-workspace` opens the repo's folder in VS Code and has a unique VS Code Workspace color. Then add any other related repos (e.g. other org repos) to the `folders` list in the workspace file so you have quick access to those repos
+- [ ] **[human-only]** Probe: Read .gitignore and compare entries with the chosen project stack. Write: none. <!-- reconcile-id: template-extend-gitignore-for-your-stack-the-005 --> Extend `.gitignore` for your stack — the template ships a base; add stack-specific entries via [gitignore.io](https://www.toptal.com/developers/gitignore)
+- [ ] **[human-only]** Probe: Inspect the Raycast quicklink list for the workspace target. Write: none. <!-- reconcile-id: template-macos-add-a-raycast-quicklink-alias-006 --> macOS: add a Raycast quicklink/alias that opens the `[[ project_slug ]].code-workspace`
+- [ ] **[human-only]** Probe: Read the Bunch launcher and its installed symlink in the configured location. Write: `task util:bunch-add`. <!-- reconcile-id: template-macos-bunch-scaffold-the-launcher-wi-007 --> macOS (Bunch): scaffold the launcher with `task util:bunch-add` (if not generated at copier time), then `task util:bunch-install` to move it to iCloud and leave a `.meta/*.bunch` symlink (re-run install if missing)
 [% if use_node %]
 
 ### Package-manager major upgrades
@@ -71,7 +71,7 @@ the compatibility reason in the rule's `description`.
 
 ## 2. GitHub repo settings
 
-- [ ] **Confirm draft pull requests are available on this repo** — every agent
+- [ ] **[human-only]** Probe: Read repository plan and draft pull request availability in GitHub settings. Write: none. <!-- reconcile-id: template-confirm-draft-pull-requests-are-avai-008 --> **Confirm draft pull requests are available on this repo** — every agent
       PR opens as a draft and is promoted only by the readiness gate (AGENTS.md,
       "Dev Loop"). GitHub restricts draft PRs on **private** repositories to its
       paid plans, so on a private free-plan repo `gh pr create --draft` fails
@@ -81,7 +81,7 @@ the compatibility reason in the rule's `description`.
       if drafts are unavailable, make the repo public, upgrade the plan, or
       decide deliberately not to run agent workflows here — do not "fix" it by
       dropping `--draft`, which would make an open PR mean nothing again.
-- [ ] **Automated settings** — run `task setup:github` (idempotent, safe to
+- [ ] **[agent-apply]** Probe: Read repository settings and Actions variables with the GitHub REST API and compare them with the configured desired values. Write: `task setup:github`. <!-- reconcile-id: template-automated-settings-run-task-setup-gi-009 --> **Automated settings** — run `task setup:github` (idempotent, safe to
       re-run): enables **Dependabot alerts** and **private vulnerability
       reporting** when public[% if github_org != author_git_provider_username %], and adds the `[[ author_git_provider_username ]]-bot` machine account as a Write collaborator[% endif %]. Routing uses `CI_RUNS_ON`, `BROWSER_RUNS_ON`,
       `IMAGE_BUILD_RUNS_ON`, `MULTICORE_RUNS_ON` and `ISOLATED_RUNS_ON`. Public
@@ -109,16 +109,16 @@ the compatibility reason in the rule's `description`.
       Unreadable organization values report unknown without failing setup; `task status:setup` reports known violations. Do not add
       `dependabot.yml`: Renovate owns routine and vulnerability-remediation PRs;
       Dependabot owns advisory alerts.
-- [ ] Import the branch ruleset (see [architecture/branch-protection.md](architecture/branch-protection.md)) — do this once `build.yml`[% if use_codeql %], `codeql.yml`[% endif %][% if include_terraform %], `terraform.yml`[% endif %][% if devcontainer %], `devcontainer-build.yml`[% endif %] are on `main` so the required `verify`/`security`[% if use_codeql %]/`codeql-verify`[% endif %][% if include_terraform %]/`terraform-verify`[% endif %][% if devcontainer %]/`devcontainer-verify`[% endif %] checks resolve. **Use the UI import:** Settings → Rules → Rulesets → **New ruleset ▸ Import a ruleset** → select `.github/Branch Protection Ruleset - Protect Main.json`. (Prefer the UI over `gh api … rulesets`: the API `POST` is not idempotent — re-running creates a duplicate ruleset — and currently rejects the `merge_queue` rule. To later change the ruleset, edit the existing one in the UI rather than re-importing.)[% if devcontainer %] **Import it before provisioning the bot and agent PATs below:** those postures carry no local merge guard, so this ruleset's code-owner approval and required checks are the only thing between their PAT and an unreviewed merge into `main`.[% endif +%]
+- [ ] **[human-only]** Probe: Read the live repository rulesets and required checks through the GitHub API. Write: none. <!-- reconcile-id: template-import-the-branch-ruleset-see-archit-010 --> Import the branch ruleset (see [architecture/branch-protection.md](architecture/branch-protection.md)) — do this once `build.yml`[% if use_codeql %], `codeql.yml`[% endif %][% if include_terraform %], `terraform.yml`[% endif %][% if devcontainer %], `devcontainer-build.yml`[% endif %] are on `main` so the required `verify`/`security`[% if use_codeql %]/`codeql-verify`[% endif %][% if include_terraform %]/`terraform-verify`[% endif %][% if devcontainer %]/`devcontainer-verify`[% endif %] checks resolve. **Use the UI import:** Settings → Rules → Rulesets → **New ruleset ▸ Import a ruleset** → select `.github/Branch Protection Ruleset - Protect Main.json`. (Prefer the UI over `gh api … rulesets`: the API `POST` is not idempotent — re-running creates a duplicate ruleset — and currently rejects the `merge_queue` rule. To later change the ruleset, edit the existing one in the UI rather than re-importing.)[% if devcontainer %] **Import it before provisioning the bot and agent PATs below:** those postures carry no local merge guard, so this ruleset's code-owner approval and required checks are the only thing between their PAT and an unreviewed merge into `main`.[% endif +%]
 [% if devcontainer %]
-- [ ] **Bot PAT** — the agent's `GH_TOKEN`. If a fine-grained PAT already covers
+- [ ] **[human-only]** Probe: Read the existing token coverage and the latest authenticated GitHub workflow result without exposing token values. Write: none. <!-- reconcile-id: template-bot-pat-the-agent-s-gh-token-if-a-fi-011 --> **Bot PAT** — the agent's `GH_TOKEN`. If a fine-grained PAT already covers
       [% if github_org != author_git_provider_username %]`[[ github_org ]]`[% else %]`[[ author_git_provider_username ]]`[% endif %],
       just add this repo to its **selected repositories**; a token is scoped to one
       resource owner, so a **new owner needs a new PAT**. Both layers are required —
       the collaborator grant above sets the ceiling, the PAT's repo list reaches it.
       Procedure: [guides/bot-account.md](guides/bot-account.md).
 [% if devcontainer %]
-- [ ] **[human-only] Agent PAT** — only if this repo allows unattended remote
+- [ ] **[human-only]** Probe: Read the existing token coverage and the latest authenticated GitHub workflow result without exposing token values. Write: none. <!-- reconcile-id: template-agent-pat-only-if-this-repo-allows-u-012 --> **Agent PAT** — only if this repo allows unattended remote
       lanes (the agent devcontainer, `.devcontainer/agent/`). A **separate**
       fine-grained PAT on the bot account, same permissions as the bot's, expiry
       of 180 days at most, its own repository list, one per resource owner;
@@ -126,7 +126,7 @@ the compatibility reason in the rule's `description`.
       [guides/devcontainers.md](guides/devcontainers.md) (agent posture).
 [% endif %]
 [% if use_fly_sprites %]
-- [ ] **[human-only] Fly.io Sprites (paid, opt-in)** — only if this repo runs
+- [ ] **[human-only]** Probe: Read the configured Sprites posture and current provider account status. Write: none. <!-- reconcile-id: template-fly-io-sprites-paid-opt-in-only-if-t-013 --> **Fly.io Sprites (paid, opt-in)** — only if this repo runs
       remote agent lanes on Sprites (`use_fly_sprites`). A Fly.io organization
       with a credit card on file (new organizations get a one-time trial
       credit; a Sprite is billed for compute while running and for storage
@@ -142,7 +142,7 @@ the compatibility reason in the rule's `description`.
       [Sprites guide](https://github.com/evanharmon1/harmon-init/blob/main/docs/guides/sprites.md).
 [% endif %]
 [% endif %]
-- [ ] **[human-only] Add `closing-keywords` to the live branch ruleset** —
+- [ ] **[human-only]** Probe: Read required checks in the live branch ruleset through the GitHub API. Write: none. <!-- reconcile-id: template-add-closing-keywords-to-the-live-bra-014 --> **Add `closing-keywords` to the live branch ruleset** —
       **required, not optional, and no longer deferrable.** Until
       harmon-init#1328 the guard was enforced *transitively*: the job sat in
       `build.yml` and fed the aggregate `verify` check, so a failing guard
@@ -158,13 +158,13 @@ the compatibility reason in the rule's `description`.
       the live one. `task audit:ruleset` names a context the live ruleset is
       missing — run it to confirm. (evanharmon1/harmon-init#1333 will automate
       this as `task setup:ruleset`; until it lands the edit is by hand.)
-- [ ] **[human-only] Enable unattributed-changes approval in the live branch
+- [ ] **[human-only]** Probe: Read the live branch ruleset approval conditions through the GitHub API. Write: none. <!-- reconcile-id: template-enable-unattributed-changes-approval-015 --> **Enable unattributed-changes approval in the live branch
       ruleset** — after a `copier update` adds this parameter, edit the existing
       main-branch ruleset in Settings → Rules → Rulesets and enable the matching
       additional-approval setting. Do not re-import the JSON: GitHub creates a
       duplicate ruleset rather than updating the live one.
 
-- [ ] **Install and activate Renovate** — install the
+- [ ] **[human-only]** Probe: Read the repository app installation and the Renovate dashboard issue. Write: none. <!-- reconcile-id: template-install-and-activate-renovate-instal-016 --> **Install and activate Renovate** — install the
       [Renovate app](https://github.com/apps/renovate) for **Only select
       repositories** and select this repo. In the Mend Developer Portal choose
       the **Renovate** product and **Scan and Alert** mode. Do not choose **Scan
@@ -173,30 +173,30 @@ the compatibility reason in the rule's `description`.
       PRs. This repo already has `renovate.json`; keep that configuration rather
       than replacing it with a generic onboarding config.
 [% if use_coderabbit %]
-- [ ] Install the [CodeRabbit app](https://github.com/apps/coderabbitai) on the repo (`.coderabbit.yaml` is pre-configured, including `reviews.auto_review.drafts: true` so it reviews the draft workbench rather than firing on promotion)
+- [ ] **[human-only]** Probe: Read the repository app installation and review settings in the GitHub and CodeRabbit interfaces. Write: none. <!-- reconcile-id: template-install-the-coderabbit-app-https-git-017 --> Install the [CodeRabbit app](https://github.com/apps/coderabbitai) on the repo (`.coderabbit.yaml` is pre-configured, including `reviews.auto_review.drafts: true` so it reviews the draft workbench rather than firing on promotion)
 [% else %]
-- [ ] **[human-only] Confirm CodeRabbit has no access** — for a repository that
+- [ ] **[human-only]** Probe: Read the repository app installation and review settings in the GitHub and CodeRabbit interfaces. Write: none. <!-- reconcile-id: template-confirm-coderabbit-has-no-access-for-018 --> **Confirm CodeRabbit has no access** — for a repository that
       previously used it, remove this repo from the CodeRabbit GitHub App
       installation. Deleting `.coderabbit.yaml` and bot trust does not revoke
       existing App access.
 [% endif %]
 [% if use_greptile %]
-- [ ] Install the [Greptile app](https://github.com/apps/greptile-apps) on the repo
+- [ ] **[human-only]** Probe: Read the repository app installation and review settings in the GitHub and Greptile interfaces. Write: none. <!-- reconcile-id: template-install-the-greptile-app-https-githu-019 --> Install the [Greptile app](https://github.com/apps/greptile-apps) on the repo
       (`.greptile/config.json` turns automatic reviews off; the dev loop requests them)
 [% endif %]
 [% if use_gemini_code_assist %]
-- [ ] **[human-only] Connect Gemini Code Assist on GitHub** — in Google Cloud
+- [ ] **[human-only]** Probe: Read the Gemini Code Assist connection in Google Cloud and GitHub settings. Write: none. <!-- reconcile-id: template-connect-gemini-code-assist-on-github-020 --> **Connect Gemini Code Assist on GitHub** — in Google Cloud
       Console (under your foundation project), navigate to **Gemini Code Assist →
       Agents & Tools → Code Assist Source Code Management**, create/select the
       connection in `us-east1`, install the Gemini Code Assist GitHub App for
       this repository, and complete the Cloud-side repository link.
 [% endif %]
 [% if use_codex_cloud_review %]
-- [ ] **[human-only] Connect Codex cloud review** — connect this repository in
+- [ ] **[human-only]** Probe: Read the repository connection and review preferences in Codex settings. Write: none. <!-- reconcile-id: template-connect-codex-cloud-review-connect-t-021 --> **Connect Codex cloud review** — connect this repository in
       ChatGPT Codex settings, grant private-repository access if applicable,
       and confirm review activity is authored by GitHub actor ID `199175422`
       (`chatgpt-codex-connector[bot]`, type `Bot`).
-- [ ] **[human-only] Disable Codex Automatic reviews** — turn **personal Auto
+- [ ] **[human-only]** Probe: Read personal Auto review and repository review trigger preferences in Codex settings. Write: none. <!-- reconcile-id: template-disable-codex-automatic-reviews-turn-022 --> **Disable Codex Automatic reviews** — turn **personal Auto
       review** off and set this repository's **Auto code review** preference to
       **Follow personal** — and its review **Trigger** to Follow personal too,
       since an "On every push" trigger sits dormant while Auto review is off
@@ -210,18 +210,18 @@ the compatibility reason in the rule's `description`.
       worth reporting later is an unsolicited Codex review, the signature of
       the knobs drifting back on.
 [% endif %]
-- [ ] **[human-only] Any other automatic reviewer must review drafts** — if you
+- [ ] **[human-only]** Probe: Read each connected review service configuration and its draft review setting. Write: none. <!-- reconcile-id: template-any-other-automatic-reviewer-must-re-023 --> **Any other automatic reviewer must review drafts** — if you
       enable one (GitHub Copilot code review, for example[% if use_foreman %] — foreman trusts its
       findings via `trusted_actors`[% endif %]), turn on its draft-review option.
       A reviewer that skips drafts first reports *after* promotion, so the
       readiness gate would hand a human a PR it had not actually reviewed.
       Leave it off rather than run it blind to the workbench.
-- [ ] Actions secret: `CLAUDE_CODE_OAUTH_TOKEN` (claude-* workflows) — generate
+- [ ] **[human-only]** Probe: Read Actions secret names with gh secret list and compare the expected name. Write: none. <!-- reconcile-id: template-actions-secret-claude-code-oauth-tok-024 --> Actions secret: `CLAUDE_CODE_OAUTH_TOKEN` (claude-* workflows) — generate
       with `claude setup-token`; the value must start **`sk-ant-oat01-`** (an OAuth
       token, billed to your Claude subscription), **not** `sk-ant-api03-` (a raw API
       key, billed at pay-as-you-go API rates). Then `gh secret set CLAUDE_CODE_OAUTH_TOKEN`
 [% if use_foreman %]
-- [ ] **Foreman operator setup** — provision the separate READ-ONLY PAT that
+- [ ] **[human-only]** Probe: Read Foreman configuration and the names of its credential references without revealing credentials. Write: none. <!-- reconcile-id: template-foreman-operator-setup-provision-the-025 --> **Foreman operator setup** — provision the separate READ-ONLY PAT that
       foreman hands to dispatched agents: export/store it as
       `FOREMAN_AGENT_GH_TOKEN` where the bot devcontainer's `init-env.sh` can
       inject it (1Password → devcontainer.env). Run `task setup:github-labels`
@@ -258,7 +258,7 @@ the compatibility reason in the rule's `description`.
       bot devcontainer — foreman refuses to start anywhere else) to assert
       the security controls before any dispatch.
 [% if use_codex_cloud_review %]
-- [ ] **[human-only] Foreman reviewer-gate check** — `.foreman.toml`'s
+- [ ] **[human-only]** Probe: Read .foreman.toml reviewer settings and the latest reviewer gate evidence. Write: none. <!-- reconcile-id: template-foreman-reviewer-gate-check-foreman-026 --> **Foreman reviewer-gate check** — `.foreman.toml`'s
       `[reviewer]` table is foreman's current-head review gate for the PRs it
       shepherds. Before the first dispatch (and again after any Foreman bump),
       confirm the configured `login` still matches the live Codex connector
@@ -269,7 +269,7 @@ the compatibility reason in the rule's `description`.
 [% endif %]
 [% endif %]
 [% if use_codeql %]
-- [ ] **Disable GitHub CodeQL Default setup** — with the shipped advanced
+- [ ] **[unknown-when-unprivileged]** Probe: Read CodeQL default setup status through the GitHub code scanning API. Write: none. <!-- reconcile-id: template-disable-github-codeql-default-setup-027 --> **Disable GitHub CodeQL Default setup** — with the shipped advanced
       `codeql.yml` workflow, GitHub's CodeQL Default setup must be off
       (**Settings → Advanced Security → CodeQL analysis**, or
       `gh api --method PATCH repos/OWNER/REPO/code-scanning/default-setup -f state=not-configured`
@@ -279,7 +279,7 @@ the compatibility reason in the rule's `description`.
       disabled that workflow — then re-enable the CodeQL workflow (**Actions →
       CodeQL → "Enable workflow"**, or `gh workflow enable codeql.yml`). Keep it
       off (re-enabling it re-triggers the collision).
-- [ ] **SAST coverage** — public repositories run CodeQL automatically and for
+- [ ] **[unknown-when-unprivileged]** Probe: Read repository visibility and CodeQL workflow and code scanning status. Write: none. <!-- reconcile-id: template-sast-coverage-public-repositories-ru-028 --> **SAST coverage** — public repositories run CodeQL automatically and for
       free for the selected `codeql_languages`; confirm a successful upload in
       the Security tab. Free private repos
       run Semgrep CE in `build.yml`. Only set `FULL_SECURITY_SCAN=true` on a
@@ -287,7 +287,7 @@ the compatibility reason in the rule's `description`.
       variable is a run switch, not an entitlement. It cannot disable public
       CodeQL.
 [% else %]
-- [ ] **SAST coverage** — this profile has no CodeQL workflow, so Semgrep CE runs
+- [ ] **[unknown-when-unprivileged]** Probe: Read the Semgrep workflow and the repository code scanning configuration. Write: none. <!-- reconcile-id: template-sast-coverage-this-profile-has-no-co-029 --> **SAST coverage** — this profile has no CodeQL workflow, so Semgrep CE runs
       in `build.yml` for public and private repositories. Add CodeQL later if the
       repo gains supported first-party source: turn off GitHub's CodeQL Default
       setup (**Settings → Advanced Security → CodeQL analysis**, or
@@ -298,14 +298,14 @@ the compatibility reason in the rule's `description`.
       `gh workflow enable codeql.yml`), and ensure the repository is public
       (free) or has paid GitHub Code Security (private/internal).
 [% endif %]
-- [ ] **Choose the Snyk posture** — the default is manual/local only via
+- [ ] **[unknown-when-unprivileged]** Probe: Read the Snyk workflow schedule and configured secret names. Write: none. <!-- reconcile-id: template-choose-the-snyk-posture-the-default-030 --> **Choose the Snyk posture** — the default is manual/local only via
       `task security:sast:snyk` and `task security:sca:snyk`; it is not part of
       `task security` or required PR CI. Free private-repository tests share the
       Snyk Organization's monthly quota, including local CLI tests. Leave the
       Snyk GitHub App off unless deliberately adopting its PR integration; its
       checks are not required by the default branch ruleset.
 [% if snyk_scan_schedule != 'off' %]
-- [ ] **Activate scheduled Snyk ([[ snyk_scan_schedule ]])** —
+- [ ] **[unknown-when-unprivileged]** Probe: Read the Snyk workflow schedule and Actions secret names. Write: none. <!-- reconcile-id: template-activate-scheduled-snyk-snyk-scan-sc-031 --> **Activate scheduled Snyk ([[ snyk_scan_schedule ]])** —
       `snyk-scheduled.yml` was generated as an advisory SAST + SCA second
       opinion. Set the Actions secret `SNYK_TOKEN`, use **Run workflow** once to
       verify it, and check the Snyk Organization Usage page. It has schedule and
@@ -315,7 +315,7 @@ the compatibility reason in the rule's `description`.
       `snyk monitor` once and set the Project's Git remote URL in Snyk. Reconsider
       weekly private scans if the shared quota is too small.
 [% else %]
-- [ ] **Optional scheduled Snyk** — leave this off for ordinary and free private
+- [ ] **[unknown-when-unprivileged]** Probe: Read the Snyk workflow schedule and Actions secret names. Write: none. <!-- reconcile-id: template-optional-scheduled-snyk-leave-this-o-032 --> **Optional scheduled Snyk** — leave this off for ordinary and free private
       repos. For a selected important public repo, re-render with
       `snyk_scan_schedule=weekly` (conservative) or `daily` (public or accepted
       unlimited OSS), set the generated workflow's `SNYK_TOKEN` Actions secret,
@@ -323,16 +323,16 @@ the compatibility reason in the rule's `description`.
       correctly. The workflow is advisory and never a required PR check.
 [% endif %]
 [% if project_type == 'web-app' %]
-- [ ] **Product security** (this is a web-app — likely a customer-facing product):
+- [ ] **[human-only]** Probe: Read the repository security configuration and published security guidance. Write: none. <!-- reconcile-id: template-product-security-this-is-a-web-app-l-033 --> **Product security** (this is a web-app — likely a customer-facing product):
       visibility-appropriate SAST + Dependabot alerts/Renovate + gitleaks is the
       floor. For a real SaaS, evaluate paid GitHub Code Security and/or Snyk,
       GitHub Secret Protection, DAST against the running app, and a multi-tenant
       isolation review before onboarding customers. See
       [architecture/security.md](architecture/security.md).
 [% endif %]
-- [ ] **Create** the CI GitHub App `[[ github_org ]]-ci` by hand (one App per org;
+- [ ] **[human-only]** Probe: Read GitHub App registrations for the expected CI app name. Write: none. <!-- reconcile-id: template-create-the-ci-github-app-github-org-034 --> **Create** the CI GitHub App `[[ github_org ]]-ci` by hand (one App per org;
       **Settings → Developer settings → GitHub Apps**), or reuse the org's existing one.
-- [ ] **[human-only] Confirm CI GitHub App permissions** — the App must grant
+- [ ] **[human-only]** Probe: Read the CI GitHub App permissions in its settings. Write: none. <!-- reconcile-id: template-confirm-ci-github-app-permissions-th-035 --> **Confirm CI GitHub App permissions** — the App must grant
       **Checks: Read-only**, **Commit statuses: Read-only**, and
       **Actions: Read-only** for
       claude-implement's `gh pr checks`. For an existing App, update its
@@ -340,14 +340,14 @@ the compatibility reason in the rule's `description`.
       installation**; until then, `create-github-app-token` fails and
       claude-implement cannot start. See
       [architecture/security.md](architecture/security.md#ci-automation-identity-github-app).
-- [ ] **Install** the App on this repo — **Install App → Only select repositories**
+- [ ] **[human-only]** Probe: Read GitHub App installations for this repository. Write: none. <!-- reconcile-id: template-install-the-app-on-this-repo-install-036 --> **Install** the App on this repo — **Install App → Only select repositories**
       (the harmon-init repos that run release-please / claude-* / project-automation),
       **not "All"**. **Creating the App is not enough:** an App whose credentials are
       set but which is *not installed* on the repo makes
       `actions/create-github-app-token` fail at runtime with a **404**
       (`Not Found` — "not installed on this repository"). This is the single
       easiest step to miss.
-- [ ] Set `CI_APP_CLIENT_ID` (Actions **variable**) + `CI_APP_PRIVATE_KEY` (Actions
+- [ ] **[human-only]** Probe: Read Actions variable and secret names with gh variable list and gh secret list. Write: none. <!-- reconcile-id: template-set-ci-app-client-id-actions-variabl-037 --> Set `CI_APP_CLIENT_ID` (Actions **variable**) + `CI_APP_PRIVATE_KEY` (Actions
       **secret**) — **pipe the `.pem` in** (never paste it; flattened newlines break
       the key), and **scope both to those same repos** (least privilege — the key can
       act as the App: commits, PRs, releases, workflow edits):
@@ -365,11 +365,11 @@ the compatibility reason in the rule's `description`.
       workflows, [% if use_node %]the daily `security-audit-fix.yml` remediation PR, [% endif %]and project-automation; blast-radius + rotation in
       docs/architecture/security.md.
 [% if devcontainer %]
-- [ ] GHCR: ensure the org/user allows publishing packages; the first
+- [ ] **[human-only]** Probe: Read package publishing permissions and the current package list. Write: none. <!-- reconcile-id: template-ghcr-ensure-the-org-user-allows-publ-038 --> GHCR: ensure the org/user allows publishing packages; the first
       devcontainer prebuild populates `[[ devcontainer_image ]]` on merge to main
 [% endif %]
 [% if project_management == 'github' %]
-- [ ] GitHub Project: run `task setup:github-project` (needs
+- [ ] **[agent-apply]** Probe: Read the owner project list and project fields with gh project list and gh project field-list. Write: `task setup:github-project`. <!-- reconcile-id: template-github-project-run-task-setup-github-039 --> GitHub Project: run `task setup:github-project` (needs
       `gh auth refresh -s project`) to create the owner's default project (titled
       `[[ github_org ]] Project`) and idempotently sync its `Status` pipeline —
       see [project-management.md](project-management.md).
@@ -377,7 +377,7 @@ the compatibility reason in the rule's `description`.
       It also writes the project id to the `ORG_PROJECT_ID` org variable that
       project-automation.yml and the claude-* workflows read (they fall back to
       the project title).
-- [ ] Org issue fields: run `task setup:github-issue-fields` (needs `gh` with the
+- [ ] **[agent-apply]** Probe: Read the organization issue fields through the GitHub GraphQL API and compare them with the registry. Write: `task setup:github-issue-fields`. <!-- reconcile-id: template-org-issue-fields-run-task-setup-gith-040 --> Org issue fields: run `task setup:github-issue-fields` (needs `gh` with the
       `admin:org` scope) to add the org's **Product** field and the
       issue-classification fields **Impact**, **Risk**, **Complexity**, and
       **Priority (AI)**, and to add the modified Fibonacci ladder
@@ -406,7 +406,7 @@ the compatibility reason in the rule's `description`.
       (so a value added by a later harmon-init release lands on the next run)
       and never touch, reorder, or delete the options you added.
 [% endif %]
-- [ ] **Upgrading from a release before harmon-init#875?**
+- [ ] **[human-only]** Probe: Read the project field list and compare it with the documented migration state. Write: none. <!-- reconcile-id: template-upgrading-from-a-release-before-harm-041 --> **Upgrading from a release before harmon-init#875?**
 [% if github_org != author_git_provider_username %]
       Check the org's issue-field settings (**Settings → Planning → Issue
       fields**), not just this repo's board — `Domain`/`Layer` from an
@@ -419,7 +419,7 @@ the compatibility reason in the rule's `description`.
       Retiring them is a deliberate, irreversible operator step — see
       [project-management.md](project-management.md), "Migrating a board that
       still has one."
-- [ ] **[human-only] Delete the `Priority` and `Size` project fields on an
+- [ ] **[human-only]** Probe: Read the project field list for Priority and Size. Write: none. <!-- reconcile-id: template-delete-the-priority-and-size-project-042 --> **Delete the `Priority` and `Size` project fields on an
       existing board** — only if this repo's board was set up by a release
       before harmon-init#1451; they are not deleted automatically, and
       deleting a field destroys every value on it, unrecoverably. Do it after
@@ -435,7 +435,7 @@ the compatibility reason in the rule's `description`.
       field and stays.
 [% endif %]
 [% if project_management == 'github' or use_foreman %]
-- [ ] **Upgrading from a release before harmon-init#1047
+- [ ] **[human-only]** Probe: Read the project field configuration and compare it with the documented migration state. Write: none. <!-- reconcile-id: template-upgrading-from-a-release-before-harm-043 --> **Upgrading from a release before harmon-init#1047
       (`method:*` → `strategy:*`)?** Run `task setup:github-labels` first so
       the `strategy:*` destinations exist, then use the read-only report and
       guarded maintenance flow below. For each live value among `oneshot`,
@@ -444,7 +444,7 @@ the compatibility reason in the rule's `description`.
       associations for matching issues, PRs, and discussions found in its paginated snapshots,
       re-reads them, and only then allows `--prune` to remove zero-association
       retired labels.
-- [ ] Labels: run `task setup:github-labels` to seed this repo's starter label
+- [ ] **[agent-apply]** Probe: Read repository labels with gh label list and compare them with the label registry. Write: `task setup:github-labels`. <!-- reconcile-id: template-labels-run-task-setup-github-labels-044 --> Labels: run `task setup:github-labels` to seed this repo's starter label
       families from `label-registry.json`[% if project_management == 'github' +%]
       (see the generated taxonomy table in
       [project-management.md](project-management.md))[% endif %] — grow `domain:` values
@@ -453,7 +453,7 @@ the compatibility reason in the rule's `description`.
       is product-independent and normally needs no edits. Labels are per-repo,
       so run it in each repo; org default labels (org Settings → Repository,
       UI-only) only seed new repos.
-- [ ] **[human-only] Pin any hand-applied Tier before the first classification
+- [ ] **[human-only]** Probe: Read issue Tier labels and the tier pin labels before classification. Write: none. <!-- reconcile-id: template-pin-any-hand-applied-tier-before-the-045 --> **Pin any hand-applied Tier before the first classification
       write** — on an existing repository an unqualified `tier:<value>` label
       used to be a human's implementer override; it is now the cache automation
       rewrites. On an unpinned issue with Risk and Complexity set, a writer of
@@ -466,14 +466,14 @@ the compatibility reason in the rule's `description`.
 [% endif %]
       Before that first write, add `tier:pinned` to each open issue whose
       hand-set tier label you want to keep.
-- [ ] **After a `copier update` that adds label families** (e.g. `impact:*` — a
+- [ ] **[agent-apply]** Probe: Read the repository label list and compare it with the label registry. Write: `task setup:github-labels`. <!-- reconcile-id: template-after-a-copier-update-that-adds-labe-046 --> **After a `copier update` that adds label families** (e.g. `impact:*` — a
       pure addition), re-run `task setup:github-labels` to provision the new
       labels here — it is additive and never deletes, so existing labels and
       the issues they sit on are untouched — then classify open issues with the
       added families. A RENAMED family (like `method:*` → `strategy:*` above)
       is not a pure addition — provision the new destinations first, then
       migrate the old associations before retiring their labels.
-- [ ] **[human-only] Inspect live label drift before retiring anything** — keep
+- [ ] **[human-only]** Probe: Read the repository label list and its issue usage before considering retirement. Write: none. <!-- reconcile-id: template-inspect-live-label-drift-before-reti-047 --> **Inspect live label drift before retiring anything** — keep
       the default setup path additive, then run
       `./scripts/setup-github-labels.sh --repo <owner/repo> --report-unregistered`
       with the same `--foreman` / `--release-please` profile flags used for
@@ -483,7 +483,7 @@ the compatibility reason in the rule's `description`.
       live labels, all-state issues and pull requests, and repository
       discussions, and reports separate association counts. An indeterminate read is a stop, not
       permission to clean up.
-- [ ] **[human-only] Retire any legacy `agent:*` claim labels or pre-2026
+- [ ] **[human-only]** Probe: Read legacy label names and their issue usage. Write: none. <!-- reconcile-id: template-retire-any-legacy-agent-claim-labels-048 --> **Retire any legacy `agent:*` claim labels or pre-2026
       `codex`/`copilot` labels** — use the guarded maintenance flow, never a
       direct `gh label delete` or a hand-written association list. Perform its
       write path in a quiescent maintenance window: pause claim/release,
@@ -570,12 +570,12 @@ the compatibility reason in the rule's `description`.
       exit alone; this is a guarded best-effort operation at that API boundary.
 [% endif %]
 [% if project_management == 'github' %]
-- [ ] Project views: create the starter views that the Views section of
+- [ ] **[human-only]** Probe: none. Write: none. <!-- reconcile-id: template-project-views-create-the-starter-vie-049 --> Project views: create the starter views that the Views section of
       [project-management.md](project-management.md) specifies — including
       Needs review and Human queue — in the Project UI. Projects V2 has no view
       API, so this is a one-time manual step; the filters and layouts are in
       that section.
-- [ ] GitHub Project auto-add (**adds every issue to the board**): in the
+- [ ] **[human-only]** Probe: none. Write: none. <!-- reconcile-id: template-github-project-auto-add-adds-every-i-050 --> GitHub Project auto-add (**adds every issue to the board**): in the
       Project's **Settings → Workflows**, turn on **"Auto-add to project"** and
       point it at this repo (filter `is:issue`, `is:pr`) so *every* new issue and
       PR lands on the board automatically, however it's created. GitHub's native
@@ -585,7 +585,7 @@ the compatibility reason in the rule's `description`.
       [project-management.md](project-management.md).
 [% endif %]
 [% if github_org != author_git_provider_username %]
-- [ ] Org issue types: run `task setup:github-issue-types` (needs `gh` with the
+- [ ] **[agent-apply]** Probe: Read the organization issue types through the GitHub GraphQL API and compare them with the registry. Write: `task setup:github-issue-types`. <!-- reconcile-id: template-org-issue-types-run-task-setup-githu-051 --> Org issue types: run `task setup:github-issue-types` (needs `gh` with the
       `admin:org` scope) to ensure the org's issue types are Bug/Feature/Task/Research
       (adds any missing; keeps GitHub's defaults) — idempotent and non-destructive.
 [% endif %]
@@ -593,23 +593,23 @@ the compatibility reason in the rule's `description`.
 ## 3. Framework scaffolding (conventions-only template)
 
 [% if project_type == 'web-astro' %]
-- [ ] Scaffold Astro: `pnpm create astro@latest . --template minimal` (or preferred template)
+- [ ] **[human-only]** Probe: Read package.json and the Astro project configuration. Write: none. <!-- reconcile-id: template-scaffold-astro-pnpm-create-astro-lat-052 --> Scaffold Astro: `pnpm create astro@latest . --template minimal` (or preferred template)
 [% if deploy_cloudflare_workers %]
-- [ ] Add Wrangler as a devDependency: `pnpm add -D wrangler` — the deploy
+- [ ] **[human-only]** Probe: Read package.json devDependencies and the lockfile for Wrangler. Write: none. <!-- reconcile-id: template-add-wrangler-as-a-devdependency-pnpm-053 --> Add Wrangler as a devDependency: `pnpm add -D wrangler` — the deploy
       workflows no longer set a separate Cloudflare Workers version input for
       the deploy action (harmon-init#1347), so `cloudflare/wrangler-action`
       deploys with whatever version this lockfile pins; Renovate's `npm
       dependencies` group keeps it current like any other devDependency.
 [% endif %]
-- [ ] Add the standard stack: Tailwind v4 (`@tailwindcss/vite`), zod, vitest, lucide
-- [ ] Move lint tooling into devDependencies (prettier, eslint, markdownlint-cli2,
+- [ ] **[human-only]** Probe: Read package.json dependencies and compare them with the documented stack. Write: none. <!-- reconcile-id: template-add-the-standard-stack-tailwind-v4-t-054 --> Add the standard stack: Tailwind v4 (`@tailwindcss/vite`), zod, vitest, lucide
+- [ ] **[human-only]** Probe: Read package.json dependency sections for lint tooling. Write: none. <!-- reconcile-id: template-move-lint-tooling-into-devdependenci-055 --> Move lint tooling into devDependencies (prettier, eslint, markdownlint-cli2,
       @commitlint/cli); switch the `lint:prettier` / `lint:markdown` `npx --yes`
       calls to `pnpm exec` (`lint:eslint` already uses it once a config + deps exist)
-- [ ] Install the shipped `eslint.config.js`'s plugins:
+- [ ] **[human-only]** Probe: Read eslint.config.js and package.json for the referenced plugins. Write: none. <!-- reconcile-id: template-install-the-shipped-eslint-config-js-056 --> Install the shipped `eslint.config.js`'s plugins:
       `pnpm add -D eslint @eslint/js typescript-eslint eslint-plugin-astro globals`
-- [ ] Install the shipped prettier config's plugins:
+- [ ] **[human-only]** Probe: Read the Prettier configuration and package.json for the referenced plugins. Write: none. <!-- reconcile-id: template-install-the-shipped-prettier-config-057 --> Install the shipped prettier config's plugins:
       `pnpm add -D prettier prettier-config-standard prettier-plugin-astro prettier-plugin-tailwindcss`
-- [ ] If you set `compressHTML` in `astro.config.*` to anything other than its
+- [ ] **[human-only]** Probe: Read the Astro configuration and compression setting. Write: none. <!-- reconcile-id: template-if-you-set-compresshtml-in-astro-con-058 --> If you set `compressHTML` in `astro.config.*` to anything other than its
       default (`true`), update `astroCompressHTML` to match in
       `prettier.config.cjs`'s `*.astro` override — `task test:astro-compress-parity`
       (part of `task verify`) fails otherwise, and a mismatch lets a prettier
@@ -617,7 +617,7 @@ the compatibility reason in the rule's `description`.
       page (harmon-init#1350). Before merging a prettier/prettier-plugin-astro
       bump, also run `task test:render-parity` — it builds the merge-base and
       HEAD and diffs the rendered text, so it isn't part of `verify`.
-- [ ] Build-script approvals + version pins already ship in
+- [ ] **[human-only]** Probe: Read pnpm workspace settings for build approvals and version pins. Write: none. <!-- reconcile-id: template-build-script-approvals-version-pins-059 --> Build-script approvals + version pins already ship in
       **`pnpm-workspace.yaml`** — the template pre-approves `esbuild` + `sharp`
       (and **`workerd`** when deploying to Cloudflare Workers, so `wrangler deploy`
       doesn't fail `ERR_PNPM_IGNORED_BUILDS`) under `allowBuilds` (pnpm 10+
@@ -657,22 +657,22 @@ the compatibility reason in the rule's `description`.
       all pnpm `overrides` / `auditConfig` there too, **not** in the `package.json`
       `pnpm` field — pnpm 10+ silently ignores that field, so entries there vanish
       on the next lockfile resolve
-- [ ] Review `lighthouserc.json` URLs once routes exist
-- [ ] Enable mobile device projects in `playwright.config.ts` (e.g. Pixel +
+- [ ] **[human-only]** Probe: Read lighthouserc.json and compare its URLs with the available routes. Write: none. <!-- reconcile-id: template-review-lighthouserc-json-urls-once-r-060 --> Review `lighthouserc.json` URLs once routes exist
+- [ ] **[human-only]** Probe: Read playwright.config.ts and its configured device projects. Write: none. <!-- reconcile-id: template-enable-mobile-device-projects-in-pla-061 --> Enable mobile device projects in `playwright.config.ts` (e.g. Pixel +
       iPhone) — the Playwright scaffold ships them commented out, and
       mobile-first is the convention
-- [ ] When adding Playwright e2e: configure `scripts/e2e-env-guard.sh` with this
+- [ ] **[human-only]** Probe: Read scripts/e2e-env-guard.sh and compare its configuration with the environment. Write: none. <!-- reconcile-id: template-when-adding-playwright-e2e-configure-062 --> When adding Playwright e2e: configure `scripts/e2e-env-guard.sh` with this
       site's credentials and production domains — `task test:e2e` runs it first
       and it **fails until configured** (fail closed; see the script header).
       Adding a `playwright.config.*` also activates the blocking **`e2e` CI
       job** and the `test:e2e` step of `task ci` (both skip until then), so the
       guard must be configured for those to go green. Don't gut it to get green.
-- [ ] Give `playwright.config.ts` a `webServer` — `task test:e2e` never builds
+- [ ] **[human-only]** Probe: Read playwright.config.ts for its webServer configuration. Write: none. <!-- reconcile-id: template-give-playwright-config-ts-a-webserve-063 --> Give `playwright.config.ts` a `webServer` — `task test:e2e` never builds
       or serves on its own. In `task ci` and the `e2e` CI job a build has
       already run, so `astro preview` with `reuseExistingServer: true` is the
       usual shape; see docs/architecture/tests.md ("Build ↔ e2e contract").
 [% if use_foreman %]
-- [ ] **Adding that config makes `task ci` bind a port.** `.foreman.toml`
+- [ ] **[human-only]** Probe: Read .foreman.toml and the Playwright webServer configuration for network access. Write: none. <!-- reconcile-id: template-adding-that-config-makes-task-ci-bin-064 --> **Adding that config makes `task ci` bind a port.** `.foreman.toml`
       ships `[verify] default = ["bash", "-c", "task verify && task security"]`
       with `max_parallel = 3` — this is port-free and runs the pre-PR gate.
       If you override it to `["task", "ci"]` for full local CI mirroring,
@@ -680,7 +680,7 @@ the compatibility reason in the rule's `description`.
       case, set `max_parallel = 1` or derive a per-worktree port in
       `playwright.config.ts`.
 [% endif %]
-- [ ] Accessibility (axe-core): `pnpm add -D @playwright/test
+- [ ] **[human-only]** Probe: Read package.json and the accessibility test files for axe dependencies and coverage. Write: none. <!-- reconcile-id: template-accessibility-axe-core-pnpm-add-d-pl-065 --> Accessibility (axe-core): `pnpm add -D @playwright/test
       @axe-core/playwright` — the shipped `tests/a11y.spec.ts` imports both, so
       `tsc`/`astro check` fail until they're installed (pair the spec with the
       dep install). Then add a
@@ -689,48 +689,48 @@ the compatibility reason in the rule's `description`.
       a11y gate (static pages) by covering interactive states (nav, cookie
       banner, forms). `task test:a11y` skips until that config exists; once it
       does, the non-blocking `a11y` CI job runs automatically.
-- [ ] Once real routes exist and pass axe, promote the `a11y` CI job to a
+- [ ] **[human-only]** Probe: Read the a11y workflow and branch ruleset required checks. Write: none. <!-- reconcile-id: template-once-real-routes-exist-and-pass-axe-066 --> Once real routes exist and pass axe, promote the `a11y` CI job to a
       required check: add `a11y` to `verify.needs` + a `check a11y` line in
       `.github/workflows/build.yml`, and add it to the ruleset's
       `required_status_checks`.
 [% elif project_type == 'web-app' %]
-- [ ] Scaffold the app: `pnpm create @tanstack/start@latest` (TanStack Start) or vite + react
+- [ ] **[human-only]** Probe: Read package.json and framework configuration for the app scaffold. Write: none. <!-- reconcile-id: template-scaffold-the-app-pnpm-create-tanstac-067 --> Scaffold the app: `pnpm create @tanstack/start@latest` (TanStack Start) or vite + react
 [% if deploy_cloudflare_workers %]
-- [ ] Add Wrangler as a devDependency: `pnpm add -D wrangler` — the deploy
+- [ ] **[human-only]** Probe: Read package.json devDependencies and the lockfile for Wrangler. Write: none. <!-- reconcile-id: template-add-wrangler-as-a-devdependency-pnpm-068 --> Add Wrangler as a devDependency: `pnpm add -D wrangler` — the deploy
       workflows no longer set a separate Cloudflare Workers version input for
       the deploy action (harmon-init#1347), so `cloudflare/wrangler-action`
       deploys with whatever version this lockfile pins; Renovate's `npm
       dependencies` group keeps it current like any other devDependency.
 [% endif %]
-- [ ] Add the standard stack: Tailwind v4, shadcn/ui, zod, vitest, lucide
-- [ ] Move lint tooling into devDependencies (`pnpm add -D prettier
+- [ ] **[human-only]** Probe: Read package.json dependencies and compare them with the documented stack. Write: none. <!-- reconcile-id: template-add-the-standard-stack-tailwind-v4-s-069 --> Add the standard stack: Tailwind v4, shadcn/ui, zod, vitest, lucide
+- [ ] **[human-only]** Probe: Read package.json dependency sections for lint tooling. Write: none. <!-- reconcile-id: template-move-lint-tooling-into-devdependenci-070 --> Move lint tooling into devDependencies (`pnpm add -D prettier
       prettier-config-standard prettier-plugin-tailwindcss markdownlint-cli2`) —
       the Taskfile auto-prefers the repo-pinned `node_modules` bins over
       `npx --yes` once they're installed
-- [ ] Install the shipped `eslint.config.js`'s plugins (ESLint 10; no
+- [ ] **[human-only]** Probe: Read eslint.config.js and package.json for the referenced plugins. Write: none. <!-- reconcile-id: template-install-the-shipped-eslint-config-js-071 --> Install the shipped `eslint.config.js`'s plugins (ESLint 10; no
       eslint-plugin-react — ESLint 10 tracks JSX natively): `pnpm add -D eslint
       @eslint/js typescript-eslint eslint-config-prettier eslint-plugin-react-hooks
       globals @tanstack/eslint-plugin-router @convex-dev/eslint-plugin` (drop the
       TanStack Router / Convex plugins if a given app doesn't use them)
-- [ ] The shipped config runs **type-aware linting** (`projectService`), so every
+- [ ] **[human-only]** Probe: Read eslint.config.js and TypeScript project files for projectService coverage. Write: none. <!-- reconcile-id: template-the-shipped-config-runs-type-aware-l-072 --> The shipped config runs **type-aware linting** (`projectService`), so every
       linted `.ts`/`.tsx` file must belong to a tsconfig project: give `convex/`
       its own `convex/tsconfig.json` (Convex runtime: `"types": []`, exclude
       `./_generated`) and keep generated files (`src/routeTree.gen.ts`,
       `convex/_generated/`) in the config's `ignores` — commit them, never lint
       them. Directories of one-off scripts either get a tsconfig or an
       `ignores` entry.
-- [ ] If the root `tsconfig.json` becomes solution-style (`files: []` +
+- [ ] **[human-only]** Probe: Read the root and referenced TypeScript configurations and their include patterns. Write: none. <!-- reconcile-id: template-if-the-root-tsconfig-json-becomes-so-073 --> If the root `tsconfig.json` becomes solution-style (`files: []` +
       `references`), nothing to do — `task lint:typescript` detects it and runs
       `tsc -b` instead of `tsc --noEmit` (which would silently check nothing).
-- [ ] Tailwind v4 has no `tailwind.config`: once the main stylesheet exists
+- [ ] **[human-only]** Probe: Read the main stylesheet and Tailwind configuration. Write: none. <!-- reconcile-id: template-tailwind-v4-has-no-tailwind-config-o-074 --> Tailwind v4 has no `tailwind.config`: once the main stylesheet exists
       (e.g. `src/styles/globals.css`), uncomment `tailwindStylesheet` in
       `prettier.config.cjs` so prettier-plugin-tailwindcss can sort classes
       (it hard-fails if the path doesn't exist yet)
-- [ ] Vitest: split `vitest.config.ts` into **projects** when the backend needs
+- [ ] **[human-only]** Probe: Read vitest.config.ts for its project configuration. Write: none. <!-- reconcile-id: template-vitest-split-vitest-config-ts-into-p-075 --> Vitest: split `vitest.config.ts` into **projects** when the backend needs
       a different runtime — e.g. a `react` project (jsdom, `src/**/*.test.{ts,tsx}`)
       and a `convex` project (edge-runtime + `convex-test`, `convex/**/*.test.ts`,
       no deployment needed). `task test` picks the config up automatically.
-- [ ] Put pnpm `overrides` / `auditConfig` / `allowBuilds` in
+- [ ] **[human-only]** Probe: Read pnpm-workspace.yaml and package.json for overrides and audit settings. Write: none. <!-- reconcile-id: template-put-pnpm-overrides-auditconfig-allow-076 --> Put pnpm `overrides` / `auditConfig` / `allowBuilds` in
       `pnpm-workspace.yaml`, **not** the `package.json` `pnpm` field — pnpm 10+
       ignores that field. Approve blocked build scripts (e.g. vite's `esbuild`,
       and `workerd` if deploying to Cloudflare Workers — else `wrangler deploy`
@@ -766,7 +766,7 @@ the compatibility reason in the rule's `description`.
       upstream; an advisory on a release line the block already floors
       (its `pkg@<major>` or `pkg@0.<minor>` key) is refused there, so raise
       that one upstream instead.
-- [ ] When adding Playwright e2e: configure `scripts/e2e-env-guard.sh` with this
+- [ ] **[human-only]** Probe: Read scripts/e2e-env-guard.sh and compare its configuration with the environment. Write: none. <!-- reconcile-id: template-when-adding-playwright-e2e-configure-077 --> When adding Playwright e2e: configure `scripts/e2e-env-guard.sh` with this
       app's auth providers, deploy credentials, and production domains —
       `task test:e2e` runs it first and it **fails until configured** (fail
       closed; see the script header). Document required env vars in
@@ -778,12 +778,12 @@ the compatibility reason in the rule's `description`.
       `task test:e2e`, `task ci`, and the `e2e` check — either configure it in
       the same update PR, or consciously defer (keep running Playwright
       directly) and file a follow-up; don't gut the guard to get green.
-- [ ] Give `playwright.config.ts` a `webServer` — `task test:e2e` never builds
+- [ ] **[human-only]** Probe: Read playwright.config.ts for its webServer configuration. Write: none. <!-- reconcile-id: template-give-playwright-config-ts-a-webserve-078 --> Give `playwright.config.ts` a `webServer` — `task test:e2e` never builds
       or serves on its own. In `task ci` and the `e2e` CI job a build has
       already run, so `vite preview` with `reuseExistingServer: true` is the
       usual shape; see docs/architecture/tests.md ("Build ↔ e2e contract").
 [% if use_foreman %]
-- [ ] **Adding that config makes `task ci` bind a port.** `.foreman.toml`
+- [ ] **[human-only]** Probe: Read .foreman.toml and the Playwright webServer configuration for network access. Write: none. <!-- reconcile-id: template-adding-that-config-makes-task-ci-bin-079 --> **Adding that config makes `task ci` bind a port.** `.foreman.toml`
       ships `[verify] default = ["bash", "-c", "task verify && task security"]`
       with `max_parallel = 3` — this is port-free and runs the pre-PR gate.
       If you override it to `["task", "ci"]` for full local CI mirroring,
@@ -791,7 +791,7 @@ the compatibility reason in the rule's `description`.
       case, set `max_parallel = 1` or derive a per-worktree port in
       `playwright.config.ts`.
 [% endif %]
-- [ ] `task codegen` runs Convex codegen; `task guard:codegen` (first in
+- [ ] **[human-only]** Probe: Read the codegen task definitions and generated Convex artifacts. Write: `task codegen`. <!-- reconcile-id: template-task-codegen-runs-convex-codegen-tas-080 --> `task codegen` runs Convex codegen; `task guard:codegen` (first in
       `task verify`, and a step in CI's codegen-guard job) regenerates and **fails** if
       the output isn't what you staged. Once `convex/` and the `convex` package
       exist, the Convex block runs only when a Convex deployment selector
@@ -806,61 +806,61 @@ the compatibility reason in the rule's `description`.
       committed. Add any other generators (GraphQL, OpenAPI, ORM clients) to
       `scripts/codegen.sh` — port-free, skip-cleanly, and listed in
       `generated_paths` so the guard can see them.
-- [ ] Accessibility (axe-core): `pnpm add -D @playwright/test
+- [ ] **[human-only]** Probe: Read package.json and accessibility tests for axe dependencies and coverage. Write: none. <!-- reconcile-id: template-accessibility-axe-core-pnpm-add-d-pl-081 --> Accessibility (axe-core): `pnpm add -D @playwright/test
       @axe-core/playwright` — the shipped `tests/a11y.spec.ts` imports both, so
       `tsc` fails until they're installed (pair the spec with the dep install).
       Then add a `playwright.config.ts` with a `webServer` (starts the app) +
       `baseURL` so `tests/a11y.spec.ts` can run. `task test:a11y` skips until that config
       exists; once it does, the non-blocking `a11y` CI job runs automatically.
-- [ ] Once real routes exist and pass axe, promote the `a11y` CI job to a
+- [ ] **[human-only]** Probe: Read the a11y workflow and branch ruleset required checks. Write: none. <!-- reconcile-id: template-once-real-routes-exist-and-pass-axe-082 --> Once real routes exist and pass axe, promote the `a11y` CI job to a
       required check: add `a11y` to `verify.needs` + a `check a11y` line in
       `.github/workflows/build.yml`, and add it to the ruleset's
       `required_status_checks`.
 [% elif project_type == 'iac' %]
-- [ ] Lay out `terraform/` (main.tf, variables.tf, outputs.tf) and/or
+- [ ] **[human-only]** Probe: Read the Terraform directory and its declared infrastructure files. Write: none. <!-- reconcile-id: template-lay-out-terraform-main-tf-variables-083 --> Lay out `terraform/` (main.tf, variables.tf, outputs.tf) and/or
       `ansible/` (site.yml, ansible.cfg, inventory/, roles/) — the lint tasks
       activate automatically once `ansible/site.yml` exists
 [% if include_terraform %]
-- [ ] `terraform/variables.tf` carries a `# tflint-ignore:
+- [ ] **[human-only]** Probe: Read terraform/variables.tf for the documented TFLint annotation. Write: none. <!-- reconcile-id: template-terraform-variables-tf-carries-a-tfl-084 --> `terraform/variables.tf` carries a `# tflint-ignore:
       terraform_unused_declarations` on its example variable, because TFLint
       fails a declared-but-unused one — drop that line once something
       references `var.environment`
-- [ ] Enabling a cloud TFLint ruleset (aws/google/azurerm) in `.tflint.hcl`
+- [ ] **[human-only]** Probe: Read .tflint.hcl for enabled cloud rulesets and their pinned versions. Write: none. <!-- reconcile-id: template-enabling-a-cloud-tflint-ruleset-aws-085 --> Enabling a cloud TFLint ruleset (aws/google/azurerm) in `.tflint.hcl`
       means adding `tflint --init` to `lint:terraform:tflint` **and** to the CI
       composite action — the bundled `terraform` ruleset needs neither
 [% endif %]
 [% elif project_type == 'docs' %]
-- [ ] Decide the docs toolchain (plain markdown / Obsidian vault / static site generator)
+- [ ] **[human-only]** Probe: Read the documentation configuration and files for the selected toolchain. Write: none. <!-- reconcile-id: template-decide-the-docs-toolchain-plain-mark-086 --> Decide the docs toolchain (plain markdown / Obsidian vault / static site generator)
 [% else %]
-- [ ] Add the project's primary toolchain; extend Taskfile `build`/`test` accordingly
+- [ ] **[human-only]** Probe: Read project manifests and Taskfile build and test tasks for the chosen toolchain. Write: none. <!-- reconcile-id: template-add-the-project-s-primary-toolchain-087 --> Add the project's primary toolchain; extend Taskfile `build`/`test` accordingly
 [% endif %]
 
 ## 4. Secrets & environment
 [% if deploy_cloudflare_workers %]
 
-- [ ] Cloudflare Workers deploys: create an **Account API Token** scoped to
+- [ ] **[human-only]** Probe: Read the Cloudflare token reference and deployment workflow configuration without revealing the token. Write: none. <!-- reconcile-id: template-cloudflare-workers-deploys-create-an-088 --> Cloudflare Workers deploys: create an **Account API Token** scoped to
       **Account → Workers Scripts → Edit** only (1-year TTL + renewal
       reminder) and add it: `gh secret set CLOUDFLARE_API_TOKEN`. The
       `CLOUDFLARE_ACCOUNT_ID` org-level Actions variable is shared org-wide —
       set it once per org if missing.
-- [ ] Create the `preview` and `production` GitHub Environments (production:
+- [ ] **[human-only]** Probe: Read GitHub environment names and protection rules through the GitHub API. Write: none. <!-- reconcile-id: template-create-the-preview-and-production-gi-089 --> Create the `preview` and `production` GitHub Environments (production:
       restrict to protected branches). Then bootstrap the Worker: Actions →
       *Release Please* → *Run workflow* (main) — the first `wrangler deploy`
       creates it; PR preview uploads work from that point.
 [% endif %]
 
-- [ ] For local `.env` needs, use **1Password Environments** (mounts a virtual
+- [ ] **[human-only]** Probe: Read local environment references and the configured 1Password environment without exposing secret values. Write: none. <!-- reconcile-id: template-for-local-env-needs-use-1password-en-090 --> For local `.env` needs, use **1Password Environments** (mounts a virtual
       `.env`; secrets never hit disk or git) or `op run`/`op inject`. Commit only
       `.env.example`-style files
 [% if use_python %]
-- [ ] For direnv env vars that include secrets (cloud creds, `TF_VAR_*`), put
+- [ ] **[human-only]** Probe: Read direnv configuration and secret references without exposing secret values. Write: none. <!-- reconcile-id: template-for-direnv-env-vars-that-include-sec-091 --> For direnv env vars that include secrets (cloud creds, `TF_VAR_*`), put
       `op://` references in `.envrc.tpl`, then run
       `op inject -i .envrc.tpl -o .envrc.local`. `.envrc` (committed, activates the
       venv) sources the resolved `.envrc.local` (gitignored) — never commit resolved
       secrets. `direnv allow` once to trust it
 [% endif %]
 [% if devcontainer %]
-- [ ] Devcontainer secrets: create a **1Password environment** that mounts
+- [ ] **[human-only]** Probe: Read the configured secret references and the devcontainer configuration without reading secret values. Write: none. <!-- reconcile-id: template-devcontainer-secrets-create-a-1passw-092 --> Devcontainer secrets: create a **1Password environment** that mounts
       `.devcontainer/devcontainer.env` (and `.devcontainer/dev/devcontainer.env`)
       with `CLAUDE_CODE_OAUTH_TOKEN` and `AGENT_DECK_TELEGRAM_KEY`, plus
       `GH_TOKEN` for the bot profile and `TS_AUTHKEY` for the dev one — the dev
@@ -875,9 +875,9 @@ the compatibility reason in the rule's `description`.
 
 ## 5. Docs & meta
 
-- [ ] Fill in the `TODO:` markers in README.md and docs/ (architecture diagram first)
-- [ ] Confirm README badges render (Actions URLs are correct once CI runs)
-- [ ] Initial release when ready: `task release:init` (v0.1.0) — releases stay manual
-- [ ] Stay current with harmon-init: periodically run `copier update --trust` to pull
+- [ ] **[human-only]** Probe: Read README.md and docs for unresolved TODO markers. Write: none. <!-- reconcile-id: template-fill-in-the-todo-markers-in-readme-m-093 --> Fill in the `TODO:` markers in README.md and docs/ (architecture diagram first)
+- [ ] **[human-only]** Probe: Read README badge links and the latest GitHub Actions results. Write: none. <!-- reconcile-id: template-confirm-readme-badges-render-actions-094 --> Confirm README badges render (Actions URLs are correct once CI runs)
+- [ ] **[human-only]** Probe: Read the repository release list and release task configuration. Write: `task release:init`. <!-- reconcile-id: template-initial-release-when-ready-task-rele-095 --> Initial release when ready: `task release:init` (v0.1.0) — releases stay manual
+- [ ] **[human-only]** Probe: Read the Copier answers commit and compare it with the current harmon-init release. Write: none. <!-- reconcile-id: template-stay-current-with-harmon-init-period-096 --> Stay current with harmon-init: periodically run `copier update --trust` to pull
       template improvements (a three-way merge — your own edits are preserved). The
       standardize-repo skill (`update` mode) automates this and verifies the result.
