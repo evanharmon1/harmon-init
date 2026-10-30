@@ -39,11 +39,17 @@ run_helper() {
     set -e
 }
 
-echo "==> Docker build context includes every image input"
-for path in .devcontainer/ .devcontainer/Dockerfile .devcontainer/devcontainer.json \
-    .devcontainer/agent/ .devcontainer/agent/devcontainer.json \
-    .devcontainer/dev/ .devcontainer/dev/devcontainer.json; do
+echo "==> Docker build context includes every image input without exposing devcontainer.env"
+for path in .devcontainer/Dockerfile .devcontainer/devcontainer.json \
+    .devcontainer/agent/devcontainer.json .devcontainer/dev/devcontainer.json \
+    .devcontainer/config/; do
     grep -qxF "!$path" .dockerignore || fail "Docker build context does not explicitly allow $path"
+done
+for forbidden in .devcontainer/ .devcontainer/agent/ .devcontainer/dev/ \
+    .devcontainer/devcontainer.env .devcontainer/agent/devcontainer.env .devcontainer/dev/devcontainer.env; do
+    if grep -qxF "!$forbidden" .dockerignore; then
+        fail "Docker build context must not un-ignore $forbidden"
+    fi
 done
 
 # fixture <label> — a baked/checkout pair holding the same three files, one of
@@ -253,7 +259,14 @@ printf 'FROM example\n' >"$root/repo/.devcontainer/Dockerfile"
 for profile in devcontainer.json agent/devcontainer.json dev/devcontainer.json; do
     printf '{"features":{"example:1":{}}}\n' >"$root/repo/.devcontainer/$profile"
 done
-(cd "$root/repo/.devcontainer" && sha256sum Dockerfile devcontainer.json agent/devcontainer.json dev/devcontainer.json) >"$root/digests"
+sha256_inputs() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$@"
+    else
+        shasum -a 256 "$@"
+    fi
+}
+(cd "$root/repo/.devcontainer" && sha256_inputs Dockerfile devcontainer.json agent/devcontainer.json dev/devcontainer.json) >"$root/digests"
 probe_inputs() {
     out="$(DEVCONTAINER_BAKED_CONFIG_DIR="$root/baked" DEVCONTAINER_REPO_CONFIG_DIR="$root/checkout" \
         DEVCONTAINER_REPO_ROOT="$root/repo" DEVCONTAINER_BAKED_IMAGE_INPUTS_FILE="$root/digests" \

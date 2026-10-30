@@ -174,6 +174,16 @@ fi
 # Older images have no digest file and remain usable. New images include the
 # Dockerfile plus all profile devcontainer.json files, which carry the feature
 # pin definitions; compare using the same relative names captured at build.
+sha256_inputs() {
+    if command -v sha256sum >/dev/null 2>&1; then
+        sha256sum "$@"
+    elif command -v shasum >/dev/null 2>&1; then
+        shasum -a 256 "$@"
+    else
+        return 1
+    fi
+}
+
 image_inputs_stale=0
 inputs_checked=0
 if [ -f "${baked_inputs}" ]; then
@@ -181,9 +191,9 @@ if [ -f "${baked_inputs}" ]; then
         [ -r "${repo_root}/.devcontainer/devcontainer.json" ] &&
         [ -r "${repo_root}/.devcontainer/agent/devcontainer.json" ] &&
         [ -r "${repo_root}/.devcontainer/dev/devcontainer.json" ] &&
-        command -v sha256sum >/dev/null 2>&1; then
+        (command -v sha256sum >/dev/null 2>&1 || command -v shasum >/dev/null 2>&1); then
         inputs_checked=1
-        current_inputs="$(cd "${repo_root}/.devcontainer" && sha256sum Dockerfile devcontainer.json agent/devcontainer.json dev/devcontainer.json)" || current_inputs=""
+        current_inputs="$(cd "${repo_root}/.devcontainer" && sha256_inputs Dockerfile devcontainer.json agent/devcontainer.json dev/devcontainer.json)" || current_inputs=""
         baked_inputs_value="$(cat "${baked_inputs}" 2>/dev/null || true)"
         if [ -z "${current_inputs}" ] || [ "${current_inputs}" != "${baked_inputs_value}" ]; then
             image_inputs_stale=1

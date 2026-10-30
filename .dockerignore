@@ -5,11 +5,8 @@
 #
 # Allow only the config and image inputs used by the Dockerfile.
 *
-!.devcontainer/
 !.devcontainer/Dockerfile
 !.devcontainer/devcontainer.json
-!.devcontainer/agent/
 !.devcontainer/agent/devcontainer.json
-!.devcontainer/dev/
 !.devcontainer/dev/devcontainer.json
 !.devcontainer/config/
