@@ -47,7 +47,8 @@ Run `task audit:ruleset` after a template update or a manual ruleset change to
 compare the checked-in import file with the live ruleset named in it. The audit
 uses GitHub's read-only ruleset API, ignores server-owned ids and timestamps,
 sorts rules and required-check contexts, and prints a diff when policy fields
-drift. Exit status 2 means GitHub access, repository discovery, or ruleset
+drift. GitHub also adds `pull_request.parameters.dismissal_restriction` server-side;
+the audit ignores it only when `enabled` is false and `allowed_actors` is empty. Exit status 2 means GitHub access, repository discovery, or ruleset
 lookup was unavailable; it is not a clean result.
 
 The audit is deliberately read-only. Apply a confirmed change manually in
