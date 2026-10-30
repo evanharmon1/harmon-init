@@ -304,6 +304,29 @@ else
     checkline unknown "ISOLATED_RUNS_ON (org)" "unknown — organization variable inventory unreadable"
 fi
 
+# Reconcile repository merge settings only after runner safety checks.
+if output_run "Applying repository merge settings" \
+    gh_rest_api "repos/$repo" --method PATCH \
+    -F delete_branch_on_merge=true -F allow_update_branch=true -F allow_auto_merge=false; then
+    :
+else
+    rc=$?
+    fail_step "$rc" "Repository merge settings" "GitHub API request failed"
+    exit "$rc"
+fi
+if settings="$(gh_rest_api "repos/$repo")"; then
+    if jq -e '.delete_branch_on_merge == true and .allow_update_branch == true and .allow_auto_merge == false' >/dev/null 2>&1 <<<"$settings"; then
+        checkline ok "Repository merge settings" "verified"
+    else
+        fail_step 1 "Repository merge settings" "readback did not match desired settings"
+        exit 1
+    fi
+else
+    rc=$?
+    fail_step "$rc" "Repository merge settings" "could not read back settings"
+    exit "$rc"
+fi
+
 # Runner routing is the security-relevant mutation. Complete it before the
 # independent repository settings below so an unrelated API failure cannot
 # leave a public repository on a previously unsafe route.

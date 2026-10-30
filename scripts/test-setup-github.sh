@@ -59,6 +59,8 @@ case "$*" in
         printf 'public\n'
     fi
     ;;
+*"api repos/"*" --method PATCH"*) ;;
+*"api repos/"*) printf '%s\n' "${GH_SETTINGS_JSON:-}" ; [ -n "${GH_SETTINGS_JSON:-}" ] || printf '%s\n' '{"delete_branch_on_merge":true,"allow_update_branch":true,"allow_auto_merge":false}' ;;
 esac
 STUB
 chmod +x "$tmp/bin/gh"
@@ -71,6 +73,17 @@ run_case() {
     run_rc=$?
     set -e
 }
+
+echo "==> merge settings are patched and verified"
+run_case --repo owner/private
+[ "$run_rc" -eq 0 ] || fail "merge settings success failed"
+grep -Fq 'api repos/owner/private --method PATCH -F delete_branch_on_merge=true -F allow_update_branch=true -F allow_auto_merge=false' "$stub_calls" || fail "missing merge settings PATCH"
+grep -Fxq 'api repos/owner/private' "$stub_calls" || fail "missing merge settings readback"
+GH_SETTINGS_JSON='{"delete_branch_on_merge":false,"allow_update_branch":true,"allow_auto_merge":false}' run_case --repo owner/private
+[ "$run_rc" -ne 0 ] || fail "mismatched readback succeeded"
+grep -Fq 'readback did not match' "$tmp/out" || fail "missing readback failure"
+GH_FAIL_MATCH='--method PATCH' run_case --repo owner/private
+[ "$run_rc" -ne 0 ] || fail "failed PATCH succeeded"
 
 echo "==> private repositories report success plus the reason for a skip"
 GH_PRIVATE=true run_case --repo owner/private

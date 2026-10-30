@@ -95,7 +95,8 @@ the compatibility reason in the rule's `description`.
 ## 2. GitHub repo settings
 
 - [ ] **[agent-apply]** Probe: Read repository settings and Actions variables with the GitHub REST API and compare them with the configured desired values. Write: `task setup:github`. <!-- reconcile-id: root-automated-settings-run-task-setup-gi-008 --> **Automated settings** — run `task setup:github` (idempotent, safe to
-      re-run): enables **Dependabot alerts** and **private vulnerability
+      re-run): sets `delete_branch_on_merge: true`, `allow_update_branch: true`,
+      and `allow_auto_merge: false`, verifies those settings, and enables **Dependabot alerts** and **private vulnerability
       reporting** when public. Routing uses `CI_RUNS_ON`, `BROWSER_RUNS_ON`,
       `IMAGE_BUILD_RUNS_ON`, `MULTICORE_RUNS_ON` and `ISOLATED_RUNS_ON`. Public
       repositories always create or replace all five repository overrides as
