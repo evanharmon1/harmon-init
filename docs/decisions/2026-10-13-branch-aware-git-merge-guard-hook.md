@@ -78,6 +78,17 @@ nameref can expand to several arguments. Parameters inside a command-substitutio
 body belong to that nested command, not its containing word. Attached option
 values use the same proof as separated values. Other API operations retain their
 existing treatment of quoted dynamic presentation values.
+
+Help/version exemptions use the active gh subcommand's flag arities: merge's
+`-s` is a boolean, while sync's `-s` takes a source value. Every local-sync source
+must be literal, including attached values. Feeders still ask when global gh
+selectors leave the subcommand to stdin. Typed GraphQL query fields (`-F` or
+`--field`) ask while `{owner}`, `{repo}`, or `{branch}` placeholders remain:
+gh expands these before sending the query, which can change its operation.
+Evaluator lines using printf format conversions or `printf -v` also ask when
+the literal read proof does not apply; fragments can assemble an operation word.
+Ordinary printf output and quoted dynamic bodies on non-review API paths keep
+their existing treatment.
 Evaluated API/sync strings and append-mode API feeders ask without further
 interpretation. The same hook gates `gh pr merge`, remote `gh repo sync` targets
 and protected/mirror pushes. Every push form shares one invariant: silence

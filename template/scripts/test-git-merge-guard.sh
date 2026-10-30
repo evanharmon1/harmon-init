@@ -574,6 +574,91 @@ EOF"
     case_ "$g" ask "$r" 'gh api -X POST repos/o/r/merges --help "$OPTIONS"'
     case_ "$g" ask "$r" 'xargs gh api -X POST repos/o/r/merges --help'
     case_ "$g" ask "$r" 'xargs -I --help gh api -X POST repos/o/r/merges --help'
+    # #1860: help proof uses the active command's arities, including clusters.
+    for cmd in \
+        'gh pr merge 1 --help -s --help=false' \
+        'gh pr merge 1 --help -ds --help=false' \
+        'gh pr merge 1 --help -s--help=false' \
+        'gh pr review 1 --help -s --help=false --approve' \
+        'gh pr review 1 --help -a --help=false' \
+        'gh pr merge 1 --body-file --help' \
+        'gh pr merge 1 -F--help' \
+        'gh pr review 1 -F --help' \
+        'gh pr merge 1 --subject --help'; do
+        case_ "$g" ask "$r" "$cmd"
+    done
+    for cmd in \
+        'gh pr merge 1 -s --help' \
+        'gh pr merge 1 -dsh' \
+        'gh pr merge 1 -F message.txt --help' \
+        'gh pr review 1 -F body.txt --help' \
+        'gh pr review 1 -ach' \
+        'gh api -iF x=y --help' \
+        'gh repo sync --source o/r --help'; do
+        case_ "$g" silent "$r" "$cmd"
+    done
+    # Sources must be literal even when quoted or attached to the option.
+    for cmd in \
+        'gh repo sync --source $SOURCE' \
+        'gh repo sync --source=$SOURCE' \
+        'gh repo sync -s $SOURCE' \
+        'gh repo sync -s$SOURCE' \
+        'gh repo sync --source "$SOURCE"' \
+        'gh repo sync --source="$SOURCE"' \
+        'gh repo sync -s"$SOURCE"' \
+        'gh repo sync --source o/r --source "$SOURCE"' \
+        'gh repo sync --source "$(cat source.txt)"' \
+        'gh repo sync --source'; do
+        case_ "$g" ask "$r" "$cmd"
+    done
+    for flag in '--source o/r' '--source=o/r' '-s o/r' '-so/r'; do
+        case_ "$g" silent "$r" "gh repo sync $flag"
+    done
+    # Top-level selectors cannot discard append-mode feeder state.
+    for flag in '-R o/r' '-Ro/r' '--repo o/r' '--repo=o/r' '--hostname github.com'; do
+        case_ "$g" ask "$r" "printf 'pr merge 1 --squash' | xargs gh $flag"
+        case_ "$g" silent "$r" "gh $flag"
+    done
+    # Typed query fields expand placeholders; raw fields retain literal text.
+    local placeholder
+    for placeholder in owner repo branch; do
+        for flag in '-F ' '--field ' '-F' '--field=' '-iF ' '-iF'; do
+            case_ "$g" ask "$r" "gh api graphql $flag'query={$placeholder} { mergePullRequest(input: {}) { clientMutationId } }'"
+        done
+        for flag in '-f ' '--raw-field='; do
+            case_ "$g" silent "$r" "gh api graphql $flag'query={ viewer { login } } # {$placeholder}'"
+        done
+    done
+    case_ "$g" silent "$r" "gh api graphql -F 'query={ viewer { login } }'"
+    case_ "$g" silent "$r" "gh api graphql -f 'query={ viewer { login } }' -F owner='{owner}'"
+    # Evaluator fallback sees format-string assembly of operation words.
+    for cmd in \
+        "printf 'git me%sge feat' r | bash" \
+        "printf 'git pu%sl' l | sh" \
+        "printf 'gh pr re%siew 1 --approve' v | bash" \
+        "printf 'gh a%si -X PUT repos/o/r/pulls/1/merge' p | sh" \
+        "printf 'gh repo sy%sc o/r' n | bash" \
+        'printf -v cmd "git me%sge feat" r; eval "$cmd"' \
+        'printf -v cmd "gh pr re%siew 1 --approve" v; eval "$cmd"' \
+        'bash -c '\''eval "$(printf "git me%sge feat" r)"'\''' \
+        'bash -lc '\''printf "git me%sge feat" r | sh'\''' \
+        "printf 'git me%sge feat' r | env -S sh"; do
+        case_ "$g" ask "$r" "$cmd"
+    done
+    case_ "$g" ask "$r" "printf 'git me%sge${nl}feat' r | bash"
+    # Integration cycle 1: remote cmd executes; printf wrapper names are data.
+    case_ "$g" ask "$r" 'ssh windows-host cmd.exe /c "git m^erge feat"'
+    case_ "$g" silent "$r" "printf '%s\\n' 'env' 'bash'"
+    for cmd in \
+        "printf 'git me%sge feat' r" \
+        "printf 'gh pr re%siew 1 --approve' v" \
+        'printf -v cmd "git me%sge feat" r' \
+        'printf -v command_text "git me%sge feat" r' \
+        'bash -lc '\''printf "%s\n" push'\''' \
+        'bash -lc '\''printf "git me%sge feat" r'\''' \
+        'bash -c '\''printf "%s" "merge notes"'\'''; do
+        case_ "$g" silent "$r" "$cmd"
+    done
     # V2-2: classify tokenized operations, not strings/comment text.
     case_ "$g" silent "$r" 'gh api graphql -f '"'"'query=query { search(query: "mutation", type: ISSUE, first: 1) { issueCount } }'"'"''
     case_ "$g" silent "$r" 'gh api graphql -f '"'"'query=# leading comment
