@@ -750,15 +750,15 @@ mutation { resolveReviewThread(input: {}) { clientMutationId } }'"'"''
         case_ "$g" silent "${r}/wt" "git merge --ff-only main $op git pull --ff-only origin main"
         case_ "$g" ask "${r}/wt" "git merge --ff-only main $op git -C ${r} merge --ff-only feat"
     done
-    # #1844: base word test excludes longer tokens; no evaluator exemption.
+    # #1868: longer field names do not trigger the base word test; no proof is needed.
     case_ "$g" silent "$r" "bash <<'EOF'${nl}gh pr view 1 --json mergeStateStatus${nl}EOF"
-    # #1844: base word test excludes longer tokens; no evaluator exemption.
+    # #1868: longer field names and plural paths do not trigger the base word test.
     case_ "$g" silent "$r" "bash -c 'gh pr view 1 --json mergedAt,mergeStateStatus; echo pulls/1'"
     # #1844: one complete literal evaluator with inert output is silent.
     case_ "$g" silent "$r" "sh -c 'echo pull'"
-    # #1844: base word test excludes longer tokens; no evaluator exemption.
+    # #1868: the camel-cased field name has no base-risk word; no proof is needed.
     case_ "$g" silent "$r" "D=\$(bash script.sh --json closedByPullRequestsReferences)"
-    # #1844: evaluator mention exemption descoped; retain base behavior.
+    # #1868: script-file form is outside the proof; the merge/pull word test asks.
     case_ "$g" ask "$r" "bash script.sh merge pull"
     case_ "$g" ask "$r" "bash -c \"echo 'git merge\""
     case_ "$g" ask "$r" "bash <<'EOF'${nl}git pull --ff-only origin feat${nl}EOF"
@@ -771,6 +771,19 @@ mutation { resolveReviewThread(input: {}) { clientMutationId } }'"'"''
     case_ "$g" silent "$r" "bash -c 'gh pr view 1 --json number --jq \".merge\"'"
     case_ "$g" silent "$r" "bash <<'EOF'${nl}echo merge${nl}EOF"
     case_ "$g" silent "$r" "sh <<'EOF'${nl}gh pr list --jq \".merge\"${nl}EOF${nl}"
+    # #1868: blank and trailing newline segments, plus a trailing semicolon, are harmless.
+    case_ "$g" silent "$r" "bash <<'EOF'${nl}echo merge${nl}${nl}echo pull${nl}EOF"
+    case_ "$g" silent "$r" "bash <<'EOF'${nl}echo merge;${nl}EOF"
+    case_ "$g" silent "$r" "bash <<'EOF'${nl}echo merge${nl}${nl}EOF"
+    # #1868: every empty pipe segment stays outside the proof and asks.
+    for payload in \
+        '| echo merge' \
+        'echo merge |' \
+        'echo merge || echo pull' \
+        'echo merge | ; echo pull' \
+        'echo merge ; | echo pull'; do
+        case_ "$g" ask "$r" "bash <<'EOF'${nl}${payload}${nl}EOF"
+    done
     case_ "$g" ask "$r" "bash -c 'echo git merge'"
     case_ "$g" ask "$r" "bash -c 'gh pr merge 1'"
     case_ "$g" ask "$r" "bash -c 'echo merge' extra"
@@ -834,7 +847,7 @@ mutation { resolveReviewThread(input: {}) { clientMutationId } }'"'"''
     case_ "$g" ask "$r" "bash <<< 'true' 0<&3 # git merge feat"
     case_ "$g" ask "$r" "bash <<< 'true' 0<> /tmp/m.sh # git merge feat"
     case_ "$g" ask "$r" "bash <<EOF${nl}\$CODE${nl}EOF # git merge feat"
-    # #1844: evaluator mention exemption descoped; retain base behavior.
+    # #1868: here-string input is outside the proof; the merge word makes it ask.
     case_ "$g" ask "$r" "bash <<< 'echo merge'"
     case_ "$g" ask "$shadow" "git merge --ff-only origin/main"
     case_ "$g" silent "$shadow" "git merge --ff-only refs/remotes/origin/main"
@@ -843,9 +856,9 @@ mutation { resolveReviewThread(input: {}) { clientMutationId } }'"'"''
     case_ "$g" ask "$r" "bash -c -x 'git merge feat'"
     case_ "$g" ask "$r" "printf 'git merge feat\\n' | bash -c 'exec sh'"
     case_ "$g" ask "$r" "printf 'git merge feat\\n' | bash -c 'xargs -I X X'"
-    # #1844: evaluator mention exemption descoped; retain base behavior.
+    # #1868: here-string input is outside the proof; the merge word makes it ask.
     case_ "$g" ask "$r" "bash 0<<< 'echo merge'"
-    # #1844: evaluator mention exemption descoped; retain base behavior.
+    # #1868: piped stdin is outside the proof; the producer's git merge mention asks.
     case_ "$g" ask "$r" "printf 'git merge feat\\n' | bash -c 'echo merged'"
     case_ "$g" ask "$r" "printf 'git merge feat\\n' | bash /dev/fd/3 3<&0"
     case_ "$g" ask "$r" "printf 'git merge feat\\n' | bash /dev//stdin"
