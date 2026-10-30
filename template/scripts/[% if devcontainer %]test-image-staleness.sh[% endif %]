@@ -231,4 +231,31 @@ run_helper "$root/baked" "$root/checkout"
 [ "$rc" -eq 0 ] || fail "a missing checkout directory exited ${rc}, not 0"
 [ -z "$out" ] || fail "a missing checkout directory produced output: ${out}"
 
+# Bake input digests exactly as the Dockerfile does, then vary each input.
+echo "==> image input digests detect Dockerfile and feature-pin drift"
+root="$(fixture inputs)"
+mkdir -p "$root/repo/.devcontainer/agent" "$root/repo/.devcontainer/dev"
+printf 'FROM example\n' >"$root/repo/.devcontainer/Dockerfile"
+for profile in devcontainer.json agent/devcontainer.json dev/devcontainer.json; do
+    printf '{"features":{"example:1":{}}}\n' >"$root/repo/.devcontainer/$profile"
+done
+(cd "$root/repo/.devcontainer" && sha256sum Dockerfile devcontainer.json agent/devcontainer.json dev/devcontainer.json) >"$root/digests"
+probe_inputs() {
+    out="$(DEVCONTAINER_BAKED_CONFIG_DIR="$root/baked" DEVCONTAINER_REPO_CONFIG_DIR="$root/checkout" \
+        DEVCONTAINER_REPO_ROOT="$root/repo" DEVCONTAINER_BAKED_IMAGE_INPUTS_FILE="$root/digests" \
+        DEVCONTAINER_STALENESS_ALWAYS=1 bash "$helper" 2>&1)" || fail "input probe failed"
+}
+probe_inputs
+grep -q 'no drift detected' <<<"$out" || fail "fresh digests: $out"
+printf 'RUN true\n' >>"$root/repo/.devcontainer/Dockerfile"
+probe_inputs
+grep -q 'image is stale' <<<"$out" || fail "Dockerfile drift missed: $out"
+printf 'FROM example\n' >"$root/repo/.devcontainer/Dockerfile"
+printf '{"features":{"example:2":{}}}\n' >"$root/repo/.devcontainer/devcontainer.json"
+probe_inputs
+grep -q 'image is stale' <<<"$out" || fail "feature drift missed: $out"
+rm "$root/digests"
+probe_inputs
+grep -q 'could not be verified' <<<"$out" || fail "old image falsely reported fresh: $out"
+
 echo "image-staleness: all cases passed"
