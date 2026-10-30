@@ -274,8 +274,192 @@ matrix() { # guard
         '-X POST repos/o/r/actions/workflows/review.yml/dispatches -f ref=feat'; do
         case_ "$g" silent "$r" "gh api $cmd"
     done
-    for cmd in addComment addPullRequestReview addPullRequestReviewComment addPullRequestReviewThreadReply resolveReviewThread unresolveReviewThread addReaction removeReaction updateIssue updatePullRequest addLabelsToLabelable removeLabelsFromLabelable updatePullRequestBranch updateProjectV2ItemFieldValue addProjectV2ItemById markPullRequestReadyForReview convertPullRequestToDraft; do
+    for cmd in addComment addPullRequestReviewComment addPullRequestReviewThreadReply resolveReviewThread unresolveReviewThread addReaction removeReaction updateIssue updatePullRequest addLabelsToLabelable removeLabelsFromLabelable updatePullRequestBranch updateProjectV2ItemFieldValue addProjectV2ItemById markPullRequestReadyForReview convertPullRequestToDraft; do
         case_ "$g" silent "$r" "gh api graphql -f 'query=mutation { $cmd(input: {}) { clientMutationId } }'"
+    done
+    # #1858: every review must prove COMMENT or REQUEST_CHANGES; unknown asks.
+    for cmd in \
+        'gh pr review 1 --approve' \
+        'gh pr review 1 -a' \
+        'gh pr review 1 -ca' \
+        'gh pr review 1 -ra' \
+        'gh pr review 1 --request-changes --body "$BODY"' \
+        'gh -R o/r pr review 1 --approve' \
+        'gh pr -R o/r review 1 -a' \
+        'gh pr review 1' \
+        'gh pr review 1 "$MODE"' \
+        'xargs gh pr review 1 --comment'; do
+        case_ "$g" ask "$r" "$cmd"
+    done
+    for cmd in \
+        'gh pr review 1 --comment' \
+        'gh pr review 1 -c' \
+        'gh pr review 1 --request-changes' \
+        'gh pr review 1 -r' \
+        'gh pr review 1 -cbapprove' \
+        'gh pr review 1 -rb approve' \
+        'gh pr review 1 --comment --body --approve' \
+        'gh pr review 1 --comment --body-file @file'; do
+        case_ "$g" silent "$r" "$cmd"
+    done
+    # C1-1: a skipped value must never inject approval flags by word splitting.
+    for cmd in \
+        'gh pr review 1 --comment --body $BODY' \
+        'gh pr review 1 --comment -b $B' \
+        'gh pr review 1 -cb $B' \
+        'gh pr review 1 --comment --body-file $F' \
+        'gh pr review 1 --comment -F $F' \
+        'gh pr review 1 --comment --repo $R' \
+        'gh pr review 1 --comment -R $R' \
+        'gh pr review 1 --comment --body-file=$F' \
+        'gh pr review 1 --comment --repo=$R' \
+        'gh pr review 1 --comment -cb$B' \
+        'gh pr review $PR --comment' \
+        'gh -R $R pr review 1 --comment' \
+        'gh pr -R $R review 1 --comment'; do
+        case_ "$g" ask "$r" "$cmd"
+    done
+    case_ "$g" ask "$r" 'gh pr review 1 --comment --body "$BODY"'
+    case_ "$g" ask "$r" 'gh pr review 1 -cb "$BODY"'
+    # C2-1: double quotes do not preserve one argument for @ expansions.
+    for expansion in '$@' '${@}' '${@:2}' '${a[@]}' '${a[@]:1}' '${a[@]#x}' '${!name@}' '${!name[@]}' '${body:-"$@"}'; do
+        case_ "$g" ask "$r" "gh pr review 1 --comment --body \"$expansion\""
+        case_ "$g" ask "$r" "gh api repos/o/r/pulls/1/reviews -f event=COMMENT -f body=\"$expansion\""
+        case_ "$g" ask "$r" "gh api repos/o/r/issues/1/comments -f body=\"$expansion\""
+    done
+    case_ "$g" ask "$r" 'gh pr review 1 --comment --body "$*"'
+    case_ "$g" ask "$r" 'gh pr review 1 --comment --body "${a[*]}"'
+    # C3-1/R14b: no parameter expansion proves one review argument.
+    for expansion in '${!n}' '${!n:-x}' '${a[1]}' '${a[@]}' '${x:-"$@"}' '${#a[@]}'; do
+        case_ "$g" ask "$r" "gh pr review 1 --comment --body \"$expansion\""
+        case_ "$g" ask "$r" "gh api repos/o/r/pulls/1/reviews -f event=COMMENT -f body=\"$expansion\""
+    done
+    for expansion in '$x' '${x}' '$1' '${10}' '$*' '${*}' '${a[*]}' '$#'; do
+        case_ "$g" ask "$r" "gh pr review 1 --comment --body \"$expansion\""
+        case_ "$g" ask "$r" "gh api repos/o/r/pulls/1/reviews -f event=COMMENT -f body=\"$expansion\""
+    done
+    case_ "$g" ask "$r" 'a=(t --approve); declare -n n='"'"'a[@]'"'"'; gh pr review 1 --comment --body "$n"'
+    case_ "$g" ask "$r" 'a=(t --approve); declare -n n='"'"'a[@]'"'"'; gh api repos/o/r/pulls/1/reviews -f event=COMMENT -f body="$n"'
+    case_ "$g" ask "$r" 'gh api repos/o/r/pulls/1/reviews -f event=COMMENT -f body="$BODY"'
+    # V1-1: help is not proved when a skipped value can expand to --help=false --approve.
+    case_ "$g" ask "$r" 'a=(t --help=false --approve); declare -n n='"'"'a[@]'"'"'; gh pr review 1 --help --body "$n"'
+    case_ "$g" ask "$r" 'gh pr review 1 --help --body "$BODY"'
+    case_ "$g" silent "$r" 'gh pr review 1 --help'
+    case_ "$g" silent "$r" 'gh pr review --help'
+    # V2-1: literal review modes retain the nonexecuting help exemption.
+    case_ "$g" silent "$r" 'gh pr review 1 --comment --help'
+    case_ "$g" silent "$r" 'gh pr review 1 --request-changes --help'
+    case_ "$g" silent "$r" 'gh pr review 1 --approve --help'
+    case_ "$g" silent "$r" 'gh pr review 1 -c -h'
+    # V3-1: review parameters ask before read exemptions or option consumption.
+    case_ "$g" ask "$r" 'a=(x -X POST -f event=APPROVE); declare -n n='"'"'a[@]'"'"'; gh api -X GET repos/o/r/pulls/1/reviews -f body="$n"'
+    case_ "$g" ask "$r" 'gh api -X GET repos/o/r/pulls/1/reviews -q "$n"'
+    case_ "$g" ask "$r" 'gh api -X HEAD repos/o/r/pulls/1/reviews -H "$n"'
+    case_ "$g" ask "$r" 'gh api -X GET repos/o/r/pulls/1/reviews/2/events -q "$n"'
+    case_ "$g" ask "$r" 'gh api graphql -X GET -f '"'"'query=mutation { submitPullRequestReview(input: {event: COMMENT}) { clientMutationId } }'"'"' -q "$n"'
+    case_ "$g" ask "$r" 'a=(o/r pr review --approve); declare -n n='"'"'a[@]'"'"'; gh -R "$n" 1'
+    case_ "$g" ask "$r" 'a=(o/r review 1 --approve --body); declare -n n='"'"'a[@]'"'"'; gh pr -R "$n" hi'
+    # R15b: no subcommand asks only when consumed options contain parameters.
+    case_ "$g" ask "$r" 'a=(o/r pr review 1 --approve); declare -n n='"'"'a[@]'"'"'; gh -R "$n"'
+    case_ "$g" silent "$r" 'gh -R o/r'
+    # V1-2: outside review paths, quoted parameters keep main's one-word rule.
+    case_ "$g" silent "$r" 'gh api repos/o/r/issues/1/comments -f body="${BODY:-fallback}"'
+    case_ "$g" silent "$r" 'gh api repos/o/r/pulls/1 --jq "${FILTER:-.id}"'
+    case_ "$g" silent "$r" 'gh api repos/o/r/pulls/1/comments/2/replies -f body="${BODY:-x}"'
+    # Every word on a review path counts, not only fields: a parameter in any
+    # option value can split into an injected -f event=APPROVE.
+    review_mutation='mutation{addPullRequestReview(input:{pullRequestId:"x",event:COMMENT}){clientMutationId}}'
+    for option in '-t "$n"' '--template "$n"' '--jq "$n"' '-q"$n"' '-H "$n"' '--input "$n"'; do
+        case_ "$g" ask "$r" "gh api repos/o/r/pulls/1/reviews -f event=COMMENT $option"
+        case_ "$g" ask "$r" "gh api graphql -f query='$review_mutation' $option"
+    done
+    case_ "$g" silent "$r" "gh api graphql -f query='$review_mutation' -t literal"
+    case_ "$g" silent "$r" 'gh api repos/o/r/pulls/1/comments/2/replies -f body="$BODY" -q .id'
+    # Attached values use the same review proof as separated values.
+    for option in --body --body-file --repo -b -F -R; do
+        case_ "$g" ask "$r" "gh pr review 1 --comment $option \"\$BODY\""
+        for value in literal '"$(printf x)"' '"`printf x`"'; do
+            case_ "$g" silent "$r" "gh pr review 1 --comment $option $value"
+        done
+    done
+    for option in --body= --body-file= --repo= -b -F -R; do
+        case_ "$g" ask "$r" "gh pr review 1 --comment ${option}\"\$BODY\""
+        for value in literal '"$(printf x)"' '"`printf x`"'; do
+            case_ "$g" silent "$r" "gh pr review 1 --comment $option$value"
+        done
+    done
+    case_ "$g" silent "$r" 'gh pr review 1 --comment --body prefix"$(printf "$x")"suffix'
+    for option in '--body ' --body= -b; do
+        case_ "$g" silent "$r" "gh pr review 1 --comment ${option}\"\$(cat <<'EOF'
+Review body
+EOF
+)\""
+    done
+    # C3-2: the review subject can be separated from gh by printf formatting.
+    for shell in bash sh; do
+        case_ "$g" ask "$r" "printf '%s pr review 1 --approve\\n' gh | $shell"
+    done
+    # A bare review word in an evaluator line is not a review operation.
+    case_ "$g" silent "$r" 'bash scripts/codex-review.sh review --base main'
+    case_ "$g" silent "$r" 'bash -c "task review"'
+    case_ "$g" silent "$r" 'echo please review | bash'
+    # C2-2: evaluator fallback covers review operations, including pipe data.
+    for shell in bash sh; do
+        case_ "$g" ask "$r" "printf 'gh pr review 1 --approve\\n' | $shell"
+        case_ "$g" ask "$r" "cat <<'EOF' | $shell
+ gh pr review 1 --approve
+EOF"
+        case_ "$g" ask "$r" "$shell <<'EOF'
+ gh pr review 1 --approve
+EOF"
+        case_ "$g" ask "$r" "printf 'gh api repos/o/r/pulls/1/reviews -f event=APPROVE\\n' | $shell"
+        case_ "$g" ask "$r" "printf 'addPullRequestReview\\n' | $shell"
+        case_ "$g" ask "$r" "printf 'submitPullRequestReview\\n' | $shell"
+    done
+    for flag in -f -F --field --raw-field; do
+        for event in COMMENT REQUEST_CHANGES; do
+            case_ "$g" silent "$r" "gh api repos/o/r/pulls/1/reviews $flag event=$event"
+        done
+        for event in APPROVE UNKNOWN '@file' '@-' '"$EVENT"'; do
+            case_ "$g" ask "$r" "gh api repos/o/r/pulls/1/reviews $flag event=$event"
+        done
+    done
+    for cmd in \
+        'gh api repos/o/r/pulls/1/reviews --field=event=APPROVE' \
+        'gh api repos/o/r/pulls/1/reviews --raw-field=event=APPROVE' \
+        'gh api repos/o/r/pulls/1/reviews -if event=APPROVE' \
+        'gh api repos/o/r/pulls/1/reviews -f event=COMMENT -F event=@file' \
+        'gh api repos/o/r/pulls/1/reviews -f event[]=COMMENT' \
+        'gh api repos/o/r/pulls/1/reviews --input file' \
+        'gh api repos/o/r/pulls/1/reviews --input -' \
+        'gh api -X POST repos/o/r/pulls/1/reviews'; do
+        case_ "$g" ask "$r" "$cmd"
+    done
+    for mutation in addPullRequestReview submitPullRequestReview; do
+        for event in COMMENT REQUEST_CHANGES; do
+            case_ "$g" silent "$r" "gh api graphql -f 'query=mutation { $mutation(input: {pullRequestId: \"PR\", event: $event, body: \"APPROVE\"}) { clientMutationId } }'"
+        done
+        # Review-only parameter checks include variable fields and short suffixes.
+        for flag in -f -F --field --raw-field; do
+            case_ "$g" ask "$r" "gh api graphql -f 'query=mutation { $mutation(input: {event: COMMENT}) { clientMutationId } }' $flag body=\"\$BODY\""
+        done
+        case_ "$g" ask "$r" "gh api graphql -f 'query=mutation { $mutation(input: {event: COMMENT}) { clientMutationId } }' -fbody=\"\$BODY\""
+        case_ "$g" silent "$r" "gh api graphql -f 'query=mutation { $mutation(input: {event: COMMENT}) { clientMutationId } }' -f body=\"\$(printf x)\""
+        for event in APPROVE UNKNOWN '$event'; do
+            case_ "$g" ask "$r" "gh api graphql -f 'query=mutation { $mutation(input: {event: $event}) { clientMutationId } }'"
+        done
+        case_ "$g" ask "$r" "gh api graphql -f 'query=mutation { $mutation(input: {}) { clientMutationId } }'"
+        case_ "$g" ask "$r" "gh api graphql -f 'query=mutation { $mutation(input: {event: COMMENT, event: APPROVE}) { clientMutationId } }'"
+        case_ "$g" ask "$r" "gh api graphql -f 'query=mutation { $mutation(input: {event: APPROVE, comments: [{body: \"x\", event: COMMENT}]}) { clientMutationId } }'"
+        for flag in -f -F --field --raw-field; do
+            case_ "$g" ask "$r" "gh api graphql $flag 'query=mutation { $mutation(input: {event: APPROVE}) { clientMutationId } }'"
+            case_ "$g" ask "$r" "gh api graphql -f 'query=mutation(\$event: PullRequestReviewEvent!) { $mutation(input: {event: \$event}) { clientMutationId } }' $flag event=APPROVE"
+            case_ "$g" ask "$r" "gh api graphql -f 'query=mutation(\$input: SubmitPullRequestReviewInput!) { $mutation(input: \$input) { clientMutationId } }' $flag 'input[event]=APPROVE'"
+            case_ "$g" ask "$r" "gh api graphql $flag query=@file"
+            case_ "$g" ask "$r" "gh api graphql $flag query=@-"
+        done
+        case_ "$g" ask "$r" "gh api graphql --input file -f 'query=mutation { $mutation(input: {event: COMMENT}) { clientMutationId } }'"
+        case_ "$g" ask "$r" "gh api graphql --input - -f 'query=mutation { $mutation(input: {event: COMMENT}) { clientMutationId } }'"
     done
     case_ "$g" silent "$r" 'gh pr update-branch 1'
     case_ "$g" ask "$r" 'gh api -X PATCH repos/o/r/unknown-write'
@@ -339,6 +523,9 @@ matrix() { # guard
     case_ "$g" ask "$r" 'gh api repos/o/r/pulls/1 --jq $FILTER'
     case_ "$g" ask "$r" 'gh api -X POST repos/o/r/issues/1/comments -f body=$BODY'
     case_ "$g" silent "$r" 'gh api -X POST repos/o/r/issues/1/comments -f body="$BODY"'
+    # R14b: general comment/reply paths retain their quoted parameter behavior.
+    case_ "$g" silent "$r" 'gh api repos/o/r/pulls/1/comments/2/replies -f body="$BODY"'
+    case_ "$g" silent "$r" 'gh api repos/o/r/issues/1/comments -f body="$BODY"'
     case_ "$g" silent "$r" 'gh api repos/o/r/pulls/1 -t "$T"'
     case_ "$g" ask "$r" 'gh api repos/o/r/pulls/1 -t "$T"$OTHER'
     case_ "$g" ask "$r" "gh api graphql -f 'query=mutation { resolveReviewThread(input: {}) { clientMutationId } # comment${cr} mergePullRequest(input: {}) { clientMutationId } }'"

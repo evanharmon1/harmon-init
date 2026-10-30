@@ -63,7 +63,21 @@ catch-ups. Unknown writes ask; there is no dangerous-write denylist to complete.
 REST paths drop the host and optional Enterprise API prefix but stay undecoded,
 so encoded separators cannot manufacture a safe route. GraphQL mutation writes
 require every root field to be allowlisted. Operation-controlling inputs must
-be literal; presentation values and non-query field values may be dynamic.
+be literal; presentation values and non-controlling field values may be dynamic.
+Pull-request reviews ask unless the event is proved `COMMENT` or
+`REQUEST_CHANGES`: this applies to `gh pr review`, REST `pulls/N/reviews`, and
+GraphQL `addPullRequestReview` and `submitPullRequestReview`. Missing, dynamic,
+variable-fed or unreadable file/stdin events ask too. Review approvals can satisfy
+the code-owner requirement on an already auto-merging PR, so they require the
+maintainer's approval even though they do not themselves request a merge.
+In approval proofs, an argument is proved to stay one argument only when it is
+fully literal or literal text plus quoted command substitutions (including quoted
+backticks), with no parameter expansion in the word. Any parameter expansion in
+CLI review arguments or REST/GraphQL review fields asks, even when quoted: a
+nameref can expand to several arguments. Parameters inside a command-substitution
+body belong to that nested command, not its containing word. Attached option
+values use the same proof as separated values. Other API operations retain their
+existing treatment of quoted dynamic presentation values.
 Evaluated API/sync strings and append-mode API feeders ask without further
 interpretation. The same hook gates `gh pr merge`, remote `gh repo sync` targets
 and protected/mirror pushes. Every push form shares one invariant: silence

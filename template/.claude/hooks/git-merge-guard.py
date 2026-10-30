@@ -9,6 +9,12 @@ Unknown API writes and evaluator-fed API/sync strings ask. Presentation values
 may be dynamic only inside double quotes; operation-controlling inputs must
 be literal. Explicit GET/HEAD fields are read parameters. Short-option values
 consume their cluster suffix. Unparseable query controls ask.
+Pull-request reviews ask unless their event is proved COMMENT or REQUEST_CHANGES,
+in CLI, REST and GraphQL forms. Missing, dynamic and unreadable review events
+ask too: an approval can satisfy the code-owner gate and complete auto-merge.
+Review argument counts require literal words or literal text with quoted command
+substitutions; parameter expansions in review arguments/fields ask even when
+quoted. Parameters inside a command-substitution body belong to its nested command.
 
 Replaces the `Bash(git merge)` / `Bash(git merge:*)` permissions.ask rules,
 which prompt on every merge (including routine catch-up merges of main into
@@ -301,8 +307,11 @@ class Word:
     def __init__(self):
         self.value = ""
         self.literal = True
-        # API values may be dynamic only without shell word splitting/globbing.
+        # Dynamic values qualify only when expansion preserves one argument,
+        # including inside double quotes ("$@" can still produce many words).
         self.unquoted_dynamic = False
+        # Review proofs never infer a parameter's argument count, even quoted.
+        self.has_param = False
 
 
 class Command:
@@ -534,12 +543,17 @@ class Parser:
             # `$((git merge feat) )` as one, and arithmetic text is harmless.
             self.i = Parser(s, self.commands, self.uncertain).nested(self.i + 2)
         elif s.startswith("${", self.i):
+            word.has_param = True
             self.i += 2
-            self.read_double_quoted(Word(), closing="}")
+            inner = Word()
+            self.read_double_quoted(inner, closing="}")
+            if inner.unquoted_dynamic:
+                word.unquoted_dynamic = True
             # Operators like `${x/merge/y}` are not modelled: the word test
             # covers anything they could spell.
             self.uncertain.append(s[start : self.i])
         elif self.i + 1 < len(s) and (s[self.i + 1].isalnum() or s[self.i + 1] in "_@*#?$!-"):
+            word.has_param = True
             self.i += 2
             while self.i < len(s) and (s[self.i].isalnum() or s[self.i] == "_"):
                 self.i += 1
@@ -549,7 +563,13 @@ class Parser:
             return
         word.value += s[start : self.i]
         word.literal = False
-        if not quoted:
+        # Quoting does not make positional/array @ expansions single words.
+        # Include their operators/slices and indirect name expansions; nested
+        # expansions propagate the same property through the brace reader above.
+        # Review proofs are stricter and read has_param (any parameter at all).
+        multiple = re.match(r"\$(?:@|\{(?:@|!?[A-Za-z_]\w*\[@\]|![A-Za-z_]\w*@))",
+                            s[start:self.i])
+        if not quoted or multiple:
             word.unquoted_dynamic = True
 
 
@@ -830,6 +850,9 @@ def risky_mention(text):
     push = re.search(r"\bpush\b", text, re.I)
     # Evaluated API/delegated sync strings are opaque: no second classifier.
     return bool(MENTION.search(text)
+                or re.search(r"\bpr\s+review\b"
+                             r"|\bpulls/[0-9]+/reviews\b"
+                             r"|\b(?:addPullRequestReview|submitPullRequestReview)\b", text, re.I)
                 or re.search(r"\bgh\b[^\n]*\bapi\b|\brepo\s+sync\b", text, re.I)
                 or (push and (GIT_MENTION.search(text)
                               or re.search(r"\b(?:main|master)\b", text, re.I))))
@@ -856,8 +879,11 @@ def gh_prints_help(args):
               "-t", "--template", "--cache", "--source", "-s", "--subject",
               "-b", "--body", "--body-file", "-A", "--author-email", "--match-head-commit"}
     bools = {"--auto", "--admin", "--merge", "--squash", "--rebase", "--delete-branch",
-             "--disable-auto", "--include", "--paginate", "--slurp", "--silent", "--verbose", "--force"}
-    if any(w.unquoted_dynamic for w in args):
+             "--disable-auto", "--include", "--paginate", "--slurp", "--silent", "--verbose", "--force",
+             "--comment", "--request-changes", "--approve"}
+    # A skipped value holding a parameter can expand to `--help=false --approve`,
+    # so help is proved only when no word's argument count is unknown.
+    if any(w.unquoted_dynamic or w.has_param for w in args):
         return False
     nonexecuting = False
     j = 0
@@ -889,10 +915,89 @@ def gh_prints_help(args):
                 if letter in "hv":
                     nonexecuting = True
                     continue
-                if letter not in "imsrd":
+                if letter not in "imsrdca":
                     return False
         j += 1
     return nonexecuting
+
+
+# Approval can complete an already armed auto-merge through the code-owner gate.
+NONAPPROVAL_EVENTS = {"COMMENT", "REQUEST_CHANGES"}
+
+
+def cli_review_might_approve(args):
+    """Prove an explicit nonapproval mode, consuming option values first."""
+    # Inspect every word before skipping values. Parameters can yield several
+    # arguments even when quoted (for example a nameref to an array).
+    if any(w.unquoted_dynamic or w.has_param for w in args):
+        return True
+    mode = False
+    j = 0
+    while j < len(args):
+        w = args[j]
+        v = w.value
+        if v in {"-b", "--body", "-F", "--body-file", "-R", "--repo"}:
+            j += 2
+            if j > len(args):
+                return True
+            continue
+        if v in {"--comment", "--request-changes"}:
+            mode = True
+        elif v.startswith(("--body=", "--body-file=", "--repo=")):
+            pass
+        elif v.startswith("--"):
+            return True  # Includes --approve and unknown mode controls.
+        elif v.startswith("-"):
+            for k, letter in enumerate(v[1:], 1):
+                if letter in "bFR":
+                    if k == len(v) - 1:
+                        j += 1
+                        if j >= len(args):
+                            return True
+                    break
+                if letter not in "cr":
+                    return True  # -a, including a boolean short-option cluster.
+                mode = True
+        elif not w.literal:
+            return True
+        j += 1
+    return not mode
+
+
+def graphql_review_is_nonapproval(ts):
+    """Prove the event in a review's input object; opaque inputs never qualify.
+
+    Only a literal input object with a literal enum event qualifies. Variables
+    (including variables supplied through gh fields), file/stdin values and
+    unmodelled argument shapes ask, rather than guessing their runtime value.
+    """
+    if ts[:3] != ["(", "input", ":"] or ts[3:4] != ["{"]:
+        return False
+    depth = 0
+    events = []
+    for k in range(3, len(ts)):
+        token = ts[k]
+        if token in {"{", "[", "("}:
+            depth += 1
+        elif token in {"}", "]", ")"}:
+            depth -= 1
+            if depth == 0:
+                return (ts[k:] == ["}", ")"] and len(events) == 1
+                        and events[0] in NONAPPROVAL_EVENTS)
+        elif depth == 1 and token == "event" and ts[k + 1:k + 2] == [":"]:
+            # A variable or a string is not a literal GraphQL enum event.
+            events.append(ts[k + 2] if k + 2 < len(ts) else None)
+    return False
+
+
+def gh_touches_review(args):
+    """Recognize review subjects before options or read/help exemptions."""
+    values = [w.value for w in args]
+    return (("pr" in values and "review" in values)
+            or any(re.fullmatch(r"repos/[^/]+/[^/]+/pulls/[0-9]+/reviews(?:/.*)?",
+                                normalized_endpoint(w)[0]) for w in args)
+            or any(re.search(r"\b(?:addPullRequestReview|submitPullRequestReview)\b", w.value)
+                   for w in args))
 
 
 def gh_might_land(words, i, appended=False):
@@ -902,6 +1007,8 @@ def gh_might_land(words, i, appended=False):
     Unknown paths/mutations/controlling inputs cost a prompt, never a silent write.
     """
     args = words[i + 1:]
+    if any(w.has_param for w in args) and gh_touches_review(args):
+        return True
     tokens = feeder_tokens(words, i)
     if tokens is not None and (not args or any(
             t and t in w.value for t in tokens for w in args)):
@@ -912,17 +1019,24 @@ def gh_might_land(words, i, appended=False):
     if not fed and gh_prints_help(args):
         return False
     j = 0
+    param_option = False
     while j < len(args) and args[j].value.startswith("-"):
         v = args[j].value
         if v in ("-R", "--repo", "--hostname"):
+            if j + 1 >= len(args):
+                return True
+            param_option |= args[j].has_param or args[j + 1].has_param
             j += 2
         elif v.startswith(("--repo=", "--hostname=", "-R")):
+            param_option |= args[j].has_param
             j += 1
         else:
             return True
     args = args[j:]
     if not args:
-        return False
+        return param_option
+    if args[0].value != "api" and param_option:
+        return True
     if not args[0].literal:
         return True
     if args[0].value == "help":
@@ -932,8 +1046,12 @@ def gh_might_land(words, i, appended=False):
         while j < len(args) and args[j].value.startswith("-"):
             opt = args[j].value
             if opt in ("-R", "--repo"):
+                if j + 1 >= len(args) or args[j].has_param or args[j + 1].has_param:
+                    return True
                 j += 2
             elif opt.startswith(("-R", "--repo=")):
+                if args[j].has_param:
+                    return True
                 j += 1
             else:
                 return True
@@ -942,6 +1060,8 @@ def gh_might_land(words, i, appended=False):
         if not args[j].literal:
             return True
         if args[0].value == "pr":
+            if args[j].value == "review":
+                return fed or cli_review_might_approve(words[i + 1:])
             return args[j].value == "merge"
         if args[j].value != "sync":
             return False
@@ -967,6 +1087,7 @@ def gh_might_land(words, i, appended=False):
     method = None
     fields = False
     queries = []
+    review_events = []
     args = args[1:]
     if any(w.unquoted_dynamic for w in words[i + 1:]):
         return True
@@ -987,6 +1108,7 @@ def gh_might_land(words, i, appended=False):
                         value = Word()
                         value.value = v[k + 1:]
                         value.literal = w.literal
+                        value.has_param = w.has_param
                         expanded.append(value)
                     break
                 if v[k] != "i":
@@ -1030,6 +1152,8 @@ def gh_might_land(words, i, appended=False):
             key, eq, body = value.partition("=")
             if not eq or not re.fullmatch(r"[A-Za-z_]\w*(?:\[\w*\])*", key):
                 return True
+            if key == "event" or key.startswith("event["):
+                review_events.append(body if value_literal and key == "event" else None)
             if key == "query":
                 if not value_literal or body.startswith("@"):
                     return True
@@ -1068,7 +1192,7 @@ def gh_might_land(words, i, appended=False):
         if not queries:
             return True
         safe_mutations = {
-            "addComment", "addPullRequestReview", "addPullRequestReviewComment",
+            "addComment", "addPullRequestReview", "submitPullRequestReview", "addPullRequestReviewComment",
             "addPullRequestReviewThreadReply", "resolveReviewThread", "unresolveReviewThread",
             "addReaction", "removeReaction", "updateIssue", "updatePullRequest",
             "addLabelsToLabelable", "removeLabelsFromLabelable", "updatePullRequestBranch",
@@ -1126,6 +1250,13 @@ def gh_might_land(words, i, appended=False):
                     if field not in safe_mutations:
                         return True
                     found = True
+                    if field in {"addPullRequestReview", "submitPullRequestReview"}:
+                        # Any parameter can split into extra options (-f event=...).
+                        if any(w.has_param for w in words[i + 1:]):
+                            return True
+                        end = skip_group(k, "(", ")") if k < len(ts) and ts[k] == "(" else k
+                        if not graphql_review_is_nonapproval(ts[k:end]):
+                            return True
                     if k < len(ts) and ts[k] == "(":
                         k = skip_group(k, "(", ")")
                     if k < len(ts) and ts[k] == "{":
@@ -1137,12 +1268,14 @@ def gh_might_land(words, i, appended=False):
     method = method or ("POST" if fields else "GET")
     if method in {"GET", "HEAD"} and not queries:
         return False
+    if method == "POST" and re.fullmatch(r"repos/[^/]+/[^/]+/pulls/[0-9]+/reviews", path):
+        return (any(w.has_param for w in words[i + 1:])
+                or len(review_events) != 1 or review_events[0] not in NONAPPROVAL_EVENTS)
     # A short permission list; misses ask. Never decode percent escapes here.
     safe_writes = (
         ({"POST"}, r"issues/[0-9]+/comments"),
         ({"PATCH", "DELETE"}, r"issues/comments/[0-9]+"),
         ({"POST"}, r"pulls/[0-9]+/comments(?:/[0-9]+/replies)?"),
-        ({"POST"}, r"pulls/[0-9]+/reviews"),
         ({"POST", "DELETE"}, r"pulls/[0-9]+/requested_reviewers"),
         ({"PATCH"}, r"(?:issues|pulls)/[0-9]+"),
         ({"POST", "PUT", "DELETE"}, r"issues/[0-9]+/labels"),
