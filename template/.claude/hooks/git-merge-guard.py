@@ -1625,7 +1625,9 @@ def command_might_merge(cmd, text, depth, appended=False, literal_mentions=False
         if SCRIPT_OPTION.match(w.value) and i + 1 < len(words) and not searching:
             if script_might_merge(words[i + 1].value, depth + 1):
                 return True
-        if name == "cmd" and at_command:
+        if name == "cmd" and not (
+                ci < len(words) and base(words[ci]) == "printf"
+                and i > ci and words[i - 1].value == "-v"):
             # `cmd.exe /c` and `/k` (Windows Git Bash, WSL interop) run what
             # follows. cmd's switch spellings are open-ended (`/c`, `//c` to dodge
             # MSYS path conversion, `/Q/C`, attached `/cgit pull`), and its own
@@ -1689,7 +1691,14 @@ def script_might_merge(text, depth=0, appended=False):
     formatted_printf = False
     evaluator = False
     for c in commands:
-        for i in command_positions(c.words):
+        ci = command_index(c.words)
+        positions = command_positions(c.words)
+        if ci < len(c.words) and c.words[ci].literal and base(c.words[ci]) == "printf":
+            formatted_printf |= any("%" in a.value or a.value.startswith("-v")
+                                    for a in c.words[ci + 1:])
+            # printf's format and data arguments cannot become commands.
+            positions = {i for i in positions if i < ci}
+        for i in positions:
             if i >= len(c.words):
                 continue
             w = c.words[i]

@@ -646,6 +646,9 @@ EOF"
         case_ "$g" ask "$r" "$cmd"
     done
     case_ "$g" ask "$r" "printf 'git me%sge${nl}feat' r | bash"
+    # Integration cycle 1: remote cmd executes; printf wrapper names are data.
+    case_ "$g" ask "$r" 'ssh windows-host cmd.exe /c "git m^erge feat"'
+    case_ "$g" silent "$r" "printf '%s\\n' 'env' 'bash'"
     for cmd in \
         "printf 'git me%sge feat' r" \
         "printf 'gh pr re%siew 1 --approve' v" \
