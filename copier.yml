@@ -17,19 +17,18 @@
 # This is trust/side-effect metadata, NOT _secret_questions: these answers are
 # still recorded normally in .copier-answers.yml. When adding a sensitive
 # question, update both markers and the documented baseline in
-# scripts/test-copier-validators.sh.
+# scripts/test-copier-validators.sh. Hidden (when: false) variables and gated
+# questions with Jinja defaults are excluded: the non-rendering confirmation
+# reader cannot resolve their absent answers.
 _sensitive_questions:
-  - author_git_provider_username
   - github_org
   - code_owner
   - claude_authorized_members
   - snyk_scan_schedule
   - ci_runner
   - ci_runner_labels
-  - deploy_cloudflare_workers
   - use_release_please
   - use_skills_sync
-  - skill_categories
   - use_shared_agents
   - use_foreman
   - ci_app_integration_id
@@ -55,8 +54,6 @@ _sensitive_questions:
   - obsidian_project_add
   - obsidian_directory
   - run_task_install
-  - devcontainer_image
-  - projects_directory
 
 # ── Asked questions ─────────────────────────────────────────────────
 
@@ -104,7 +101,7 @@ author_url:
 
 author_git_provider_username:
   type: str
-  help: "[security-sensitive] GitHub principal used as the default repository owner, code owner and Claude Actions allowlist."
+  help: "GitHub principal used as the default repository owner, code owner and Claude Actions allowlist."
   default: evanharmon1
   when: false
 
@@ -204,7 +201,7 @@ ci_runner_labels:
 
 deploy_cloudflare_workers:
   type: bool
-  help: "[security-sensitive] DEPLOY: Deploy the site to Cloudflare Workers (static assets) from CI? (PR preview versions + release-gated production; the sommerlawn-site pattern)"
+  help: "DEPLOY: Deploy the site to Cloudflare Workers (static assets) from CI? (PR preview versions + release-gated production; the sommerlawn-site pattern)"
   default: "[[ project_type == 'web-astro' ]]"
   when: "[[ project_type in ['web-astro', 'web-app'] ]]"
 
@@ -241,7 +238,7 @@ use_skills_sync:
 
 skill_categories:
   type: str
-  help: "[security-sensitive] SKILLS: Which shared-skill categories to vendor? (seeded from project type; edit later in .skills-sync.yaml)"
+  help: "SKILLS: Which shared-skill categories to vendor? (seeded from project type; edit later in .skills-sync.yaml)"
   multiselect: true
   choices:
     universal: universal
@@ -760,7 +757,7 @@ use_python:
 
 devcontainer_image:
   type: str
-  help: "[security-sensitive] Container image executed by the generated development environment."
+  help: "Container image executed by the generated development environment."
   default: "ghcr.io/[[ github_org ]]/[[ project_slug ]]-devcontainer"
   when: false
 
@@ -773,7 +770,7 @@ devcontainer_image:
 # Taskfile commands where the shell will not expand a `~`.
 projects_directory:
   type: str
-  help: "[security-sensitive] Workspace directory used by the generated Bunch launcher."
+  help: "Workspace directory used by the generated Bunch launcher."
   default: ~/git
   when: false
 

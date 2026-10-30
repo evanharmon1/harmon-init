@@ -55,6 +55,7 @@ check_sensitive_questions() {
     yq -o=json '.' "$1" >"$work/questions.json" || return 1
     python3 - "$work/questions.json" <<'PYTHON'
 import json
+import re
 import sys
 
 with open(sys.argv[1], encoding="utf-8") as source:
@@ -64,16 +65,15 @@ marker = "[security-sensitive]"
 # Includes every legacy confirm-answers.sh key present in copier.yml;
 # setup_github/setup_labels/setup_branch_protection are not questions here.
 required = set("""
-author_git_provider_username github_org code_owner claude_authorized_members
-snyk_scan_schedule ci_runner ci_runner_labels deploy_cloudflare_workers
-use_release_please use_skills_sync skill_categories use_shared_agents
+github_org code_owner claude_authorized_members
+snyk_scan_schedule ci_runner ci_runner_labels
+use_release_please use_skills_sync use_shared_agents
 use_foreman ci_app_integration_id foreman_additional_trusted_actors
 trusted_orchestrator_actor_ids use_codeql use_codex_review use_codex_cloud_review
 use_coderabbit use_gemini_code_assist use_greptile devcontainer tailscale_required
 use_antigravity_cli use_copilot_cli use_alternative_claude_providers use_fly_sprites
 git_init github_remote_create github_release_init bunch_add bunches_directory
-obsidian_project_add obsidian_directory run_task_install devcontainer_image
-projects_directory
+obsidian_project_add obsidian_directory run_task_install
 """.split())
 questions = {key: value for key, value in config.items()
              if not key.startswith("_") and isinstance(value, dict) and "type" in value}
@@ -86,6 +86,19 @@ if len(listed) != len(set(listed)):
 listed = set(listed)
 marked = {key for key, value in questions.items()
           if isinstance(value.get("help"), str) and value["help"].startswith(marker)}
+legacy_sensitive = {key for key, value in questions.items()
+                    if isinstance(value.get("help"), str)
+                    and re.search(r"security-sensitive|dangerously", value["help"], re.IGNORECASE)}
+for key in sorted(legacy_sensitive - (marked & listed)):
+    errors.append(f"legacy-sensitive help requires prefix and catalog entry: {key}")
+for key in sorted(listed & questions.keys()):
+    question = questions[key]
+    if question.get("when") is False:
+        errors.append(f"hidden variable cannot be sensitive: {key}")
+    elif "when" in question and question["when"] is not True:
+        default = question.get("default")
+        if isinstance(default, str) and "[[" in default and "]]" in default:
+            errors.append(f"gated Jinja default cannot be sensitive: {key}")
 for key in sorted(required - listed):
     errors.append(f"documented sensitive question missing from catalog: {key}")
 for key in sorted(listed - questions.keys()):
@@ -107,7 +120,8 @@ else
 fi
 
 # Mutate fixtures and exercise the same checker used on the real configuration.
-for mutation in missing-marker missing-entry unknown-question missing-both duplicate-entry; do
+for mutation in missing-marker missing-entry unknown-question missing-both duplicate-entry \
+    legacy-sensitive-help legacy-dangerous-help hidden-variable gated-jinja-default; do
     cp "$repo/copier.yml" "$work/sensitive.yml"
     case "$mutation" in
     missing-marker) yq -i '.code_owner.help = "CODE OWNER: missing marker"' "$work/sensitive.yml" ;;
@@ -115,6 +129,18 @@ for mutation in missing-marker missing-entry unknown-question missing-both dupli
     unknown-question) yq -i '._sensitive_questions += ["no_such_question"]' "$work/sensitive.yml" ;;
     missing-both)
         yq -i 'del(._sensitive_questions[] | select(. == "code_owner")) | .code_owner.help = "CODE OWNER: missing marker"' "$work/sensitive.yml"
+        ;;
+    legacy-sensitive-help)
+        yq -i '.project_description.help = "A SeCuRiTy-SeNsItIvE option"' "$work/sensitive.yml"
+        ;;
+    legacy-dangerous-help)
+        yq -i '.project_description.help = "Run DANGEROUSLY without confirmation"' "$work/sensitive.yml"
+        ;;
+    hidden-variable)
+        yq -i '.devcontainer_image.help = "[security-sensitive] Image" | ._sensitive_questions += ["devcontainer_image"]' "$work/sensitive.yml"
+        ;;
+    gated-jinja-default)
+        yq -i '.deploy_cloudflare_workers.help = "[security-sensitive] Deploy" | ._sensitive_questions += ["deploy_cloudflare_workers"]' "$work/sensitive.yml"
         ;;
     duplicate-entry) yq -i '._sensitive_questions += ["code_owner"]' "$work/sensitive.yml" ;;
     esac
