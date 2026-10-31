@@ -521,7 +521,7 @@ run_untrusted() {
 # is left to the sync PR's CI, which runs it before branch protection allows
 # a merge.
 run_verification() {
-    for _rv_target in verify:skills:offline security:secrets; do
+    for _rv_target in verify:skills:offline test:result-schemas security:secrets; do
         note "verifying: task $_rv_target"
         run_untrusted task "$_rv_target" ||
             die "verification failed at 'task $_rv_target' — nothing pushed, no PR touched"

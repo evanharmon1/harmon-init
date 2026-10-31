@@ -30,6 +30,7 @@ mkdir -p "${test_tmp}/bin"
 cat >"${test_tmp}/bin/codex" <<'CODEXSTUB'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"$STUB_ARGV"
+[ -z "${STUB_CWD_FILE:-}" ] || pwd -P >"$STUB_CWD_FILE"
 printf 'STUB-ARGS:'
 printf ' %s' "$@"
 printf '\n'
@@ -383,6 +384,62 @@ grep -q "hypothesis the" <<<"$out" ||
     fail "challenge prompt missing the label-is-a-hypothesis rule — an under-labelled P3 could be dropped without adjudication (harmon-init#923 shepherd r2): $out"
 ! grep -q "not carried into the pull request description" <<<"$out" ||
     fail "challenge prompt still claims a P3 is never deferred — deferral is decided by adjudication, not by the badge: $out"
+
+echo "==> an external trusted runner reviews the target root without executing target runner bytes"
+external_target="${test_tmp}/external-target"
+git clone -q "${test_tmp}/upstream" "$external_target"
+git -C "$external_target" checkout -qb candidate
+target_runner_marker="${test_tmp}/target-runner-executed"
+target_library_marker="${test_tmp}/target-library-executed"
+cat >"$external_target/scripts/codex-review.sh" <<'TARGETRUNNER'
+#!/usr/bin/env bash
+: >"$TARGET_RUNNER_MARKER"
+exit 91
+TARGETRUNNER
+cat >"$external_target/scripts/lib/review-scope.sh" <<'TARGETLIBRARY'
+: >"$TARGET_LIBRARY_MARKER"
+exit 92
+TARGETLIBRARY
+printf 'candidate-only instructions\n' >"$external_target/scripts/lib/review-instructions/standardize.txt"
+printf 'candidate change\n' >"$external_target/candidate.txt"
+git -C "$external_target" add -A
+git_t -C "$external_target" commit -qm 'test: change candidate finder bytes'
+external_target="$(cd "$external_target" && pwd -P)"
+stub_cwd="${test_tmp}/external-codex-cwd"
+out="$(TARGET_RUNNER_MARKER="$target_runner_marker" TARGET_LIBRARY_MARKER="$target_library_marker" \
+    STUB_CWD_FILE="$stub_cwd" "${repo}/scripts/codex-review.sh" challenge \
+    --repo-root "$external_target" --base origin/develop 2>&1)" ||
+    fail "trusted external runner failed: $out"
+[ "$(cat "$stub_cwd")" = "$external_target" ] ||
+    fail "codex ran outside the target root: $(cat "$stub_cwd")"
+[ ! -e "$target_runner_marker" ] || fail "the target's codex-review.sh executed"
+[ ! -e "$target_library_marker" ] || fail "the target's review-scope.sh executed"
+grep -Fq 'candidate.txt' <<<"$out" || fail "trusted runner did not scope the target diff: $out"
+grep -Fq 'scripts/codex-review.sh' <<<"$out" || fail "target runner change missing from the review manifest: $out"
+grep -Fq 'scripts/lib/review-scope.sh' <<<"$out" || fail "target library change missing from the review manifest: $out"
+
+echo "==> an external trusted runner accepts an empty forwarded-argument list under nounset"
+out="$(TARGET_RUNNER_MARKER="$target_runner_marker" TARGET_LIBRARY_MARKER="$target_library_marker" \
+    STUB_CWD_FILE="$stub_cwd" "${repo}/scripts/codex-review.sh" challenge \
+    --repo-root "$external_target" 2>&1)" ||
+    fail "trusted external runner failed with only --repo-root: $out"
+grep -Fq 'candidate.txt' <<<"$out" || fail "empty forwarded arguments did not reach default scope resolution: $out"
+grep -Fq 'if [ "${#review_args[@]}" -eq 0 ]; then' "${repo}/scripts/codex-review.sh" ||
+    fail "runner lost the explicit Bash 3.2/4.3 empty-array guard"
+
+echo "==> --repo-root refuses a target subdirectory"
+if out="$("${repo}/scripts/codex-review.sh" review --repo-root "$external_target/scripts" \
+    --base origin/develop 2>&1)"; then
+    fail "--repo-root accepted a target subdirectory: $out"
+fi
+grep -Fq -- '--repo-root must name the Git worktree root' <<<"$out" ||
+    fail "target-subdirectory refusal did not name the root requirement: $out"
+
+echo "==> an external trusted runner preserves the finder exit status"
+status=0
+STUB_EXIT=7 "${repo}/scripts/codex-review.sh" review --repo-root "$external_target" \
+    --base origin/develop >/dev/null 2>&1 || status=$?
+[ "$status" -eq 7 ] || fail "external runner lost the finder exit status (got ${status}, want 7)"
 
 echo "==> origin/HEAD outranks a stray local main"
 git branch -q main "$(git rev-list --max-parents=0 HEAD)"
@@ -902,4 +959,4 @@ if out="$(CLAUDE_CONFIG_DIR="${fake_claude}2" CLAUDE_PLUGIN_DATA="${test_tmp}/pl
 fi
 grep -q "non-interactive" <<<"$out" || fail "missing non-interactive disable refusal message: $out"
 
-echo "codex-review + codex-gate guards OK ($((38 + standardize_cases)) cases)"
+echo "codex-review + codex-gate guards OK ($((42 + standardize_cases)) cases)"

@@ -552,6 +552,7 @@ logged "gh pr create --draft" || fail "the sync PR was not created as draft"
 logged "gh pr view 42 --json headRefOid,isDraft" ||
     fail "the created PR's head and draft state were not confirmed"
 logged "fix(template): sync harmon-devkit skills to v0.9.0" || fail "PR title is not releasing"
+logged "task test:result-schemas" || fail "result-schema contract gate never ran"
 logged "task verify" || fail "verification never ran"
 [ "$(git -C "$fix" rev-parse main)" = "$main_before" ] || fail "main was modified"
 # The commit must contain exactly the expected paths — including the
@@ -1002,7 +1003,7 @@ rc="$(run_helper "$fix" run v0.9.0)"
 ! logged "gh pr" || fail "a failing sync still touched a PR"
 
 start "a failing verification never pushes or opens a PR"
-for failing in verify:skills:offline security:secrets verify:skills verify; do
+for failing in verify:skills:offline test:result-schemas security:secrets verify:skills verify; do
     fix="$(new_fixture "verify_fail_${failing//:/_}")"
     STUB_FAIL_TASKS="$failing"
     rc="$(run_helper "$fix" run v0.9.0)"

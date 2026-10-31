@@ -39,7 +39,7 @@ resolves which one applies:
 2. Read `role`.
 3. Validate `instance.payload` against `result.<role>.schema.json`'s own root.
 
-This is `scripts/validate-result-schemas.mjs`'s job (`<kind> <file>`, where
+This is `.claude/skills/dev-flow-support/assets/validate-result-schemas.mjs`'s job (`<kind> <file>`, where
 `kind` is `envelope | implementer | challenger | reviewer | integrator |
 adjudication | run`). **`kind: envelope` is a convenience for "I don't already
 know the role," not a payload-blind mode** — it runs steps 2 and 3 (and every
@@ -65,7 +65,7 @@ practice: no schema file needs to know another schema file exists.
 
 ### `result.schema.json`: the same dispatch, inlined for a native validator
 
-The five schemas above assume a caller that can run `scripts/validate-result-schemas.mjs`
+The five schemas above assume a caller that can run `.claude/skills/dev-flow-support/assets/validate-result-schemas.mjs`
 — something with `node` and this repo checked out. A harness that only
 accepts **one schema document** for native JSON-Schema validation (for
 example a Workflow/Agent `schema` field) cannot call out to that script, and
@@ -117,7 +117,7 @@ counts tally that disagrees with the findings array, a blocked reviewer
 that still reports findings — none of it is visible to a validator holding
 only one document). Use `result.schema.json` where only structural,
 single-document validation is possible; use
-`scripts/validate-result-schemas.mjs` (which loads the same per-role
+`.claude/skills/dev-flow-support/assets/validate-result-schemas.mjs` (which loads the same per-role
 bodies from the standalone `result.<role>.schema.json` files, not from
 this composed one) wherever a real `node` call is available, since it adds
 every receipt check on top for free.
@@ -633,7 +633,7 @@ reach a sibling field outside it. Duplicating `status` into the payload just
 to make the condition local was considered and rejected — it would need its
 own "envelope.status must equal payload.status" semantic check to keep the
 copy honest, trading one semantic check for another plus a redundant field.
-`scripts/validate-result-schemas.mjs`'s `checkImplementerStatus` reads the
+`.claude/skills/dev-flow-support/assets/validate-result-schemas.mjs`'s `checkImplementerStatus` reads the
 envelope and payload together instead.
 
 `result.integrator.schema.json`'s conditional (`applied_dispositions`
@@ -701,7 +701,7 @@ decisions):
   `finder`/`findings[]`/`counts` are field-for-field identical to
   `result.reviewer.schema.json`'s — same finding shape (`id`, `path`, `line`,
   `class`, `provenance`, `fingerprint`, `priority`, `recommended_disposition`,
-  `evidence`), so `scripts/validate-result-schemas.mjs`'s `checkFindingIds`
+  `evidence`), so `.claude/skills/dev-flow-support/assets/validate-result-schemas.mjs`'s `checkFindingIds`
   and `checkReviewerBlockedStatus` (and #636's exit script) compute over
   either role without a role-specific branch. A design-level finding is
   simply a finding with `class: design`; a de-scaffolding recommendation is
@@ -887,7 +887,7 @@ decisions):
   — UTC only, literal trailing `Z`, no other offset accepted, matching the
   spec's own examples. **The pattern alone only proves the shape, never the
   calendar** — `2026-02-30T10:00:00Z` matches it and names a day that does
-  not exist. `scripts/validate-result-schemas.mjs`'s `checkTimestampRealness`
+  not exist. `.claude/skills/dev-flow-support/assets/validate-result-schemas.mjs`'s `checkTimestampRealness`
   is one generic walk over the whole instance (any object key equal to `at`
   or ending in `_at`, whatever schema it belongs to) that round-trips each
   value through `Date` parsing and confirms it re-renders to the same
@@ -1150,8 +1150,12 @@ focused shipped suite in one mechanically checked contract.
 
 ## Running the validator
 
+Repositories with skills sync enabled receive the validator through the
+vendored `dev-flow-support` package:
+
 ```sh
-node scripts/validate-result-schemas.mjs <envelope|implementer|challenger|reviewer|integrator|adjudication|run> <file> \
+node .claude/skills/dev-flow-support/assets/validate-result-schemas.mjs <envelope|implementer|challenger|reviewer|integrator|adjudication|run> <file> \
+  --schemas-dir ai/schemas \
   [--known-ids <ids.json>] [--run-id <id> --initiated-by <human|foreman>] \
   [--pass <envelope.json> ...] [--known-adjudicated <ids.json>] \
   [--adjudication <file.json> ... | --no-adjudications] \
@@ -1165,22 +1169,24 @@ and `--initiated-by` must be
 given together. `--no-adjudications` (run only) asserts a confirmed-empty
 adjudication history in place of real `--adjudication` files — see
 "`--receipt`: a reduced check is visible, never silent" above; mutually
-exclusive with `--adjudication` (a usage error together). The
-schemas directory defaults to `ai/schemas` resolved **relative to the
-script's own location**, not the caller's working directory, so the
-validator can be invoked from anywhere; override it with the
-`RESULT_SCHEMAS_DIR` environment variable or, taking precedence over both,
-`--schemas-dir <dir>`. `--receipt` requires every context flag applicable
+exclusive with `--adjudication` (a usage error together). The repository
+contract suite always supplies `--schemas-dir ai/schemas`, so the vendored
+validator checks the repository's mirrored schema family rather than its own
+bundled schemas. Direct callers validating repository receipts must do the
+same. Without the flag, the schemas directory defaults to the vendored skill's
+bundled schemas; `RESULT_SCHEMAS_DIR` can override that default, and
+`--schemas-dir <dir>` takes precedence over both. `--receipt` requires every
+context flag applicable
 to `<kind>` — see "`--receipt`: a reduced check is visible, never silent"
 above; without it, the success message names whichever applicable flags
 were left unsupplied instead of silently running a narrower check. Exit 0
 and a one-line summary when valid; exit 1 and every violation (one per
 line) otherwise; exit 2 for a usage error (bad `kind`, missing file,
 `--run-id`/`--initiated-by` given alone, or a `--receipt`-required flag
-missing). `scripts/test-result-schemas.sh` (wired into
-`task test:result-schemas`, run from `task verify`) exercises every file in
-the generated inventory plus its named in-memory receipt mutations, and
-rejects any README/inventory drift.
+missing). In repositories with skills sync enabled,
+`scripts/test-result-schemas.sh` (wired into `task test:result-schemas`, run
+from `task verify`) exercises every file in the generated inventory plus its
+named in-memory receipt mutations, and rejects any README/inventory drift.
 
 ## External Dev flow v2 policy and exit design reference
 
@@ -1414,7 +1420,7 @@ requires; it may never fall through to the branch reader.
 `result.challenger.schema.json` shipped with lane
 [#635](https://github.com/evanharmon1/harmon-devkit/issues/635)'s registry
 roles (PR #713); `dev-flow-exit.mjs`'s `PASS_VALIDATION_KIND` is `"envelope"`
-— `scripts/validate-result-schemas.mjs`'s self-dispatching kind, which reads
+— `.claude/skills/dev-flow-support/assets/validate-result-schemas.mjs`'s self-dispatching kind, which reads
 each pass's own `role` field and runs exactly the same payload + receipt
 checks as invoking that role's kind name directly. A challenge-stage pass
 authored `role: "challenger"` validates against

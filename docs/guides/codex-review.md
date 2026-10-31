@@ -123,6 +123,30 @@ when the base has run *ahead* of its upstream rather than behind, and when the
 gap changes no files at all (a change and its revert) — the two scopes are
 byte-identical there, so there is nothing to warn about.
 
+### Trusted runner for another checkout
+
+A confidence-stage launcher can hold the runner and its libraries fixed while
+reviewing a different candidate checkout:
+
+```bash
+/path/to/trusted-release/scripts/codex-review.sh challenge \
+  --repo-root /absolute/path/to/candidate --base origin/main
+```
+
+`--repo-root` changes only the repository being reviewed. The runner still
+loads `review-scope.sh` and any profile instructions from its own trusted tree,
+then runs every Git scope operation and Codex itself from the target. The path
+is resolved physically and must name the target worktree root, not a
+subdirectory. Omitting the option preserves the ordinary same-checkout
+behavior used by `task challenge` and `task review`.
+
+The option does not decide what is trusted. The launcher must obtain the
+runner from the target repository's captured default branch or from an
+operator-pinned, immutable released checkout outside the candidate. The latter
+is the first-adoption path when the candidate introduces this interface or
+changes the confidence machinery itself; without either source, fail closed
+instead of executing the candidate copy.
+
 ### Standardize application profile
 
 For a committed harmon-init update, the local review runner accepts the
