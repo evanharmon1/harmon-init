@@ -19,7 +19,7 @@ ARG TERRAFORM_DOCS_VERSION=0.24.0
 # renovate: datasource=github-releases depName=hashicorp/terraform extractVersion=^v?(?<version>.+)$
 ARG TERRAFORM_VERSION=1.17.0
 # renovate: datasource=github-releases depName=terraform-linters/tflint extractVersion=^v?(?<version>.+)$
-ARG TFLINT_VERSION=0.64.0
+ARG TFLINT_VERSION=0.65.0
 # TFLint release-archive SHA-256 values. The version pin is Renovate-managed;
 # update these reviewed, architecture-specific digests with each release.
 ARG TFLINT_SHA256_AMD64=cca9d13e2e1d7a2c627af60ff899a3c9b74212899416aeb96ec764d2ef954537
@@ -27,17 +27,17 @@ ARG TFLINT_SHA256_ARM64=560da89aacf59389d4eb029730dd5b109b7288096c32f2726a0d9e78
 # renovate: datasource=github-releases depName=zellij-org/zellij extractVersion=^v?(?<version>.+)$
 ARG ZELLIJ_VERSION=0.45.1
 # renovate: datasource=github-releases depName=raine/workmux extractVersion=^v?(?<version>.+)$
-ARG WORKMUX_VERSION=0.1.276
+ARG WORKMUX_VERSION=0.1.277
 # renovate: datasource=github-releases depName=njbrake/agent-of-empires extractVersion=^v?(?<version>.+)$
 ARG AOE_VERSION=1.21.0
 # renovate: datasource=npm depName=@anthropic-ai/claude-code
-ARG CLAUDE_CODE_VERSION=2.1.308
+ARG CLAUDE_CODE_VERSION=2.1.312
 # renovate: datasource=npm depName=@github/copilot
-ARG COPILOT_VERSION=1.0.102
+ARG COPILOT_VERSION=1.0.105
 # renovate: datasource=npm depName=@earendil-works/pi-coding-agent
 ARG PI_VERSION=1.4.0
 # renovate: datasource=github-releases depName=can1357/oh-my-pi extractVersion=^v?(?<version>.+)$
-ARG OH_MY_PI_VERSION=18.12.6
+ARG OH_MY_PI_VERSION=18.13.3
 # oh-my-pi ships unsigned release binaries: the version pin above is
 # Renovate-managed, but these architecture-specific digests are not. Before
 # moving them, a person must download the new release's omp-linux-x64 and
@@ -48,13 +48,13 @@ ARG OH_MY_PI_VERSION=18.12.6
 ARG OH_MY_PI_SHA256_AMD64=85d9daf3a05fc76e8cd425ae1904eb576af8d21cc85fcf4690742626e07ccfa4
 ARG OH_MY_PI_SHA256_ARM64=eee8e586274cef2e725c218b2b28b48ca9965d46dd58f60998cb347eca4ad0cf
 # renovate: datasource=npm depName=opencode-ai
-ARG OPENCODE_VERSION=1.19.3
+ARG OPENCODE_VERSION=1.19.5
 # Pinned from Google's per-platform release manifests. Keep the version, build,
 # URLs, and SHA-512 values here and in ensure-antigravity-cli.sh in one update.
 ARG ANTIGRAVITY_CLI_VERSION=1.1.11
 ARG ANTIGRAVITY_CLI_BUILD=4956531888881664
 # renovate: datasource=github-releases depName=asheshgoplani/agent-deck extractVersion=^v?(?<version>.+)$
-ARG AGENT_DECK_VERSION=1.16.30
+ARG AGENT_DECK_VERSION=1.16.34
 # renovate: datasource=github-releases depName=joshmedeski/sesh extractVersion=^v?(?<version>.+)$
 # Upstream v2.30.0 was published without release assets; stay on 2.29.0 until fixed
 ARG SESH_VERSION=2.29.0
@@ -66,11 +66,11 @@ ARG DMUX_VERSION=5.11.1
 # renovate: datasource=github-releases depName=getsops/sops extractVersion=^v?(?<version>.+)$
 ARG SOPS_VERSION=3.13.3
 # renovate: datasource=github-releases depName=nektos/act extractVersion=^v?(?<version>.+)$
-ARG ACT_VERSION=0.2.89
+ARG ACT_VERSION=0.2.91
 # renovate: datasource=github-releases depName=wagoodman/dive extractVersion=^v?(?<version>.+)$
 ARG DIVE_VERSION=0.13.1
 # renovate: datasource=github-releases depName=antonmedv/fx extractVersion=^v?(?<version>.+)$
-ARG FX_VERSION=40.0.0
+ARG FX_VERSION=40.0.1
 # renovate: datasource=github-releases depName=sinelaw/fresh extractVersion=^v?(?<version>.+)$
 ARG FRESH_VERSION=0.5.4
 # Fresh release-archive SHA-256 values. The version pin is Renovate-managed;
@@ -78,7 +78,7 @@ ARG FRESH_VERSION=0.5.4
 ARG FRESH_SHA256_AMD64=e3599c93b1eece4700d7c30726b461c9b962a91bee5da31cdf44e3dffeb6206c
 ARG FRESH_SHA256_ARM64=df10f648d81e194f613b975d63d4cdea3ccf3f6177325793701a50ce795ab143
 # renovate: datasource=github-releases depName=eugenioenko/ttt extractVersion=^v?(?<version>.+)$
-ARG TTT_VERSION=1.8.0
+ARG TTT_VERSION=1.9.0
 # TTT release SHA-256 values. The version pin is Renovate-managed;
 # update these reviewed, architecture-specific digests with each release.
 ARG TTT_SHA256_AMD64=9a48f8aa87542f77cc5f19082965e243ac21f06558950ebbc2241940a5f5af82
