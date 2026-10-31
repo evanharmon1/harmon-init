@@ -560,7 +560,7 @@ run_untrusted() {
 # a credential that reached a harmon-devkit release would be in harmon-init's
 # remote history — and need rotating — before any PR check could object.
 run_verification() {
-    for _rv_target in verify:skills:offline security:secrets verify:skills verify; do
+    for _rv_target in verify:skills:offline test:result-schemas security:secrets verify:skills verify; do
         note "verifying: task $_rv_target"
         run_untrusted task "$_rv_target" ||
             die "verification failed at 'task $_rv_target' — nothing pushed, no PR touched"
