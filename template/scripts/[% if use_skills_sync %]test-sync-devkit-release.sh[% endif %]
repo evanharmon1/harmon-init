@@ -149,7 +149,7 @@ echo "task \$*" >>"$TASK_LOG"
 [ -n "\${GITHUB_TOKEN:-}" ] && echo "LEAKED GITHUB_TOKEN" >>"$TASK_LOG"
 case "\${1:-}" in
 sync:skills)
-    if [ "$_ts_mode" = "pass" ]; then
+    if [ "$_ts_mode" != "fail" ]; then
         mkdir -p .claude/skills/universal
         echo "# ref: \$(awk '/^[[:space:]]*ref:/{sub(/^[[:space:]]*ref:[[:space:]]*/,""); print}' .skills-sync.yaml)" > .claude/skills/.SKILLS_PROVENANCE
         echo "# categories: universal" >> .claude/skills/.SKILLS_PROVENANCE
@@ -200,6 +200,12 @@ sync:skills)
     fi
     ;;
 verify:skills:offline) ;;
+test:result-schemas)
+    [ "$_ts_mode" != "fail-result-schemas" ] || {
+        echo "result-schema contract failed" >&2
+        exit 1
+    }
+    ;;
 security:secrets) ;;
 *)
     echo "unexpected task target: \$*" >&2
@@ -458,6 +464,7 @@ test_happy_path() {
     assert_pin v0.9.0 "$FIXTURE/.skills-sync.yaml" || return 1
     assert_task_logged "task sync:skills" || return 1
     assert_task_logged "task verify:skills:offline" || return 1
+    assert_task_logged "task test:result-schemas" || return 1
     assert_task_logged "task security:secrets" || return 1
     assert_task_not_logged "task verify:skills" || return 1
     assert_task_not_logged "task verify" || return 1
@@ -704,6 +711,21 @@ SCRIPT
         echo "should have failed"
         return 1
     }
+}
+
+test_failing_result_schema_gate_never_pushes() {
+    note "a failing result-schema contract gate never pushes"
+    FIXTURE="$(build_fixture v0.1.0)"
+    clear_logs
+    write_gh_stub
+    write_task_stub fail-result-schemas
+    ! run_helper_with_tag v0.9.0 || {
+        echo "should have failed"
+        return 1
+    }
+    assert_task_logged "task test:result-schemas" || return 1
+    ! grep -qF "gh pr create" "$GH_LOG" || return 1
+    ! git --git-dir="$TEST_ROOT/origin.git" show-ref --verify --quiet refs/heads/bot/sync-harmon-devkit
 }
 
 test_token_never_reaches_task() {
@@ -966,6 +988,7 @@ TESTS=(
     test_downgrade_allowed_with_env
     test_failing_sync_never_pushes
     test_failing_verify_never_pushes
+    test_failing_result_schema_gate_never_pushes
     test_token_never_reaches_task
     test_app_slug_identity
     test_bogus_app_slug_refused

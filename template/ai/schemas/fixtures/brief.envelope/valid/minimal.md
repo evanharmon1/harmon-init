@@ -46,7 +46,12 @@
     "labels": [],
     "branch": "b"
   },
-  "sentinels": { "ready": "r-n", "handoff": "h-n", "blocked": "b-n", "attempt_nonce": "n" }
+  "sentinels": {
+    "ready": "MERGE-READY-lane-a-n",
+    "handoff": "DRAFT-PUBLISHED-lane-a-n",
+    "blocked": "BLOCKED-lane-a-n",
+    "attempt_nonce": "n"
+  }
 }
 ```
 
