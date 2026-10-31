@@ -8,6 +8,36 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [5.14.0](https://github.com/evanharmon1/harmon-init/compare/v5.13.3...v5.14.0) (2026-10-31)
+
+
+### Features
+
+* **checklist:** mark every CHECKLIST item with its reconcile class ([#1883](https://github.com/evanharmon1/harmon-init/issues/1883)) ([b8ead96](https://github.com/evanharmon1/harmon-init/commit/b8ead9647df5f74dca615a9e2b586c907ebd269f))
+* **devcontainer:** surface image staleness at session start and bake Dockerfile digest ([#1884](https://github.com/evanharmon1/harmon-init/issues/1884)) ([55bc127](https://github.com/evanharmon1/harmon-init/commit/55bc1279753afe18ccef1b5ca6a5d97b3dab5a34))
+* **devflow:** render the fleet breadth and run profiles in the template policy ([#1876](https://github.com/evanharmon1/harmon-init/issues/1876)) ([1ba8158](https://github.com/evanharmon1/harmon-init/commit/1ba81587fb186ba6e1c0896b32a0c4842c1fbce6)), closes [#1864](https://github.com/evanharmon1/harmon-init/issues/1864)
+* **labels:** define the slated label for slate membership ([#1859](https://github.com/evanharmon1/harmon-init/issues/1859)) ([23ce231](https://github.com/evanharmon1/harmon-init/commit/23ce231d33ec5b8f7e49d47cd4632fe2831bf6a7))
+* **release:** declare the minimum harmon-devkit skills pin each release requires ([#1870](https://github.com/evanharmon1/harmon-init/issues/1870)) ([c0914ce](https://github.com/evanharmon1/harmon-init/commit/c0914ce6aba53574915a53bfe9330a30d3c43d4e))
+* **review:** add the standardize review profile to the template review runner ([#1875](https://github.com/evanharmon1/harmon-init/issues/1875)) ([aa936ac](https://github.com/evanharmon1/harmon-init/commit/aa936ac2c36e66613932f6b5b40812f09d15154a)), closes [#1862](https://github.com/evanharmon1/harmon-init/issues/1862)
+
+
+### Bug Fixes
+
+* **agent-registry:** add the codex-cloud trigger fields the vendored readiness gate requires ([#1865](https://github.com/evanharmon1/harmon-init/issues/1865)) ([2c48509](https://github.com/evanharmon1/harmon-init/commit/2c48509ef782507679c5ac348e978afe90df0844)), closes [#1861](https://github.com/evanharmon1/harmon-init/issues/1861)
+* **agents:** remove the never-terminate-a-process hard rule ([#1863](https://github.com/evanharmon1/harmon-init/issues/1863)) ([a36a674](https://github.com/evanharmon1/harmon-init/commit/a36a6742fef232e8e27831fbe9310f0c5fe18b1e))
+* **audit:** accept disabled dismissal restriction ([#1885](https://github.com/evanharmon1/harmon-init/issues/1885)) ([abde550](https://github.com/evanharmon1/harmon-init/commit/abde550ef8736aed057c4285f858ce5b1f5a0328))
+* **git-merge-guard:** ask before a pull-request approval in CLI, REST, and GraphQL forms ([#1880](https://github.com/evanharmon1/harmon-init/issues/1880)) ([7865302](https://github.com/evanharmon1/harmon-init/commit/786530209c79a30b2a04a838ba9f57e082194c12))
+* **git-merge-guard:** ask on gh evasion forms and evaluator assembly ([#1881](https://github.com/evanharmon1/harmon-init/issues/1881)) ([87b04be](https://github.com/evanharmon1/harmon-init/commit/87b04be548b14fa88f399616a2692a647014c6a6))
+* **git-merge-guard:** gate gh merges and default-branch pushes ([#1856](https://github.com/evanharmon1/harmon-init/issues/1856)) ([012fc59](https://github.com/evanharmon1/harmon-init/commit/012fc59581ae7645190885496b47d5b261771a45))
+* **git-merge-guard:** silence evaluator payloads proved to be literal reads ([#1866](https://github.com/evanharmon1/harmon-init/issues/1866)) ([0006f82](https://github.com/evanharmon1/harmon-init/commit/0006f826c463f9c22aee45444abf732ac26f7eb6))
+* **git-merge-guard:** tighten evaluator-proof wording after [#1866](https://github.com/evanharmon1/harmon-init/issues/1866) ([#1882](https://github.com/evanharmon1/harmon-init/issues/1882)) ([d7a9728](https://github.com/evanharmon1/harmon-init/commit/d7a972881cfc286230424f31f079aeb1265ccb8d))
+* **labels:** refuse implicit human label adoption ([#1886](https://github.com/evanharmon1/harmon-init/issues/1886)) ([8bc3cf8](https://github.com/evanharmon1/harmon-init/commit/8bc3cf82a991a5e71ae47eb9a07fa48510c28c0d))
+* **template:** render the CI app bypass in the version-tag creation ruleset ([#1852](https://github.com/evanharmon1/harmon-init/issues/1852)) ([38e64ae](https://github.com/evanharmon1/harmon-init/commit/38e64ae426ee052505d763b2116b3250edd32a57))
+* **template:** serve the paired needs-review cleanup reads in the claim-release test ([#1872](https://github.com/evanharmon1/harmon-init/issues/1872)) ([6c1e133](https://github.com/evanharmon1/harmon-init/commit/6c1e133cdce546f5c4afb08a70bcf500dd73ab73)), closes [#1854](https://github.com/evanharmon1/harmon-init/issues/1854)
+* **template:** sync harmon-devkit skills to v0.65.0 ([#1874](https://github.com/evanharmon1/harmon-init/issues/1874)) ([0f65a7c](https://github.com/evanharmon1/harmon-init/commit/0f65a7c7e0670b5d9b2e8bc0a683d67473778bd9))
+* **template:** use canonical result validator ([#1888](https://github.com/evanharmon1/harmon-init/issues/1888)) ([2e08477](https://github.com/evanharmon1/harmon-init/commit/2e08477fa4c84339b1bc82242d16faf0eaa8ffba))
+* **tests:** check every policy-named finder against the gate rules in test-agent-registry ([#1878](https://github.com/evanharmon1/harmon-init/issues/1878)) ([97773b9](https://github.com/evanharmon1/harmon-init/commit/97773b924a5e98c749b7f93139c2dde5cd6c42cd)), closes [#1867](https://github.com/evanharmon1/harmon-init/issues/1867)
+
 ## [5.13.3](https://github.com/evanharmon1/harmon-init/compare/v5.13.2...v5.13.3) (2026-10-27)
 
 
