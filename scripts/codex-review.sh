@@ -120,7 +120,13 @@ case "$MAX_STDERR_BYTES" in
     ;;
 esac
 
-resolve_review_scope "${review_args[@]}"
+# Bash 3.2/4.3 treats an empty array as unset under `set -u`, so expanding
+# "${review_args[@]}" directly aborts the ordinary no-extra-arguments path.
+if [ "${#review_args[@]}" -eq 0 ]; then
+    resolve_review_scope
+else
+    resolve_review_scope "${review_args[@]}"
+fi
 review_scope_apply_profile
 
 if [ "$MODE" = "challenge" ]; then

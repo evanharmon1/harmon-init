@@ -418,6 +418,15 @@ grep -Fq 'candidate.txt' <<<"$out" || fail "trusted runner did not scope the tar
 grep -Fq 'scripts/codex-review.sh' <<<"$out" || fail "target runner change missing from the review manifest: $out"
 grep -Fq 'scripts/lib/review-scope.sh' <<<"$out" || fail "target library change missing from the review manifest: $out"
 
+echo "==> an external trusted runner accepts an empty forwarded-argument list under nounset"
+out="$(TARGET_RUNNER_MARKER="$target_runner_marker" TARGET_LIBRARY_MARKER="$target_library_marker" \
+    STUB_CWD_FILE="$stub_cwd" "${repo}/scripts/codex-review.sh" challenge \
+    --repo-root "$external_target" 2>&1)" ||
+    fail "trusted external runner failed with only --repo-root: $out"
+grep -Fq 'candidate.txt' <<<"$out" || fail "empty forwarded arguments did not reach default scope resolution: $out"
+grep -Fq 'if [ "${#review_args[@]}" -eq 0 ]; then' "${repo}/scripts/codex-review.sh" ||
+    fail "runner lost the explicit Bash 3.2/4.3 empty-array guard"
+
 echo "==> --repo-root refuses a target subdirectory"
 if out="$("${repo}/scripts/codex-review.sh" review --repo-root "$external_target/scripts" \
     --base origin/develop 2>&1)"; then
@@ -950,4 +959,4 @@ if out="$(CLAUDE_CONFIG_DIR="${fake_claude}2" CLAUDE_PLUGIN_DATA="${test_tmp}/pl
 fi
 grep -q "non-interactive" <<<"$out" || fail "missing non-interactive disable refusal message: $out"
 
-echo "codex-review + codex-gate guards OK ($((41 + standardize_cases)) cases)"
+echo "codex-review + codex-gate guards OK ($((42 + standardize_cases)) cases)"
