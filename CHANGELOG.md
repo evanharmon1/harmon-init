@@ -8,6 +8,19 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [5.15.0](https://github.com/evanharmon1/harmon-init/compare/v5.14.0...v5.15.0) (2026-10-31)
+
+
+### Features
+
+* **copier:** mark security-sensitive questions in copier.yml ([#1887](https://github.com/evanharmon1/harmon-init/issues/1887)) ([3e2999e](https://github.com/evanharmon1/harmon-init/commit/3e2999ed52c5d24d250a2148ba4d74eac33cca90))
+* **ruleset:** reconcile repository merge settings in setup:github ([#1896](https://github.com/evanharmon1/harmon-init/issues/1896)) ([43fb6e7](https://github.com/evanharmon1/harmon-init/commit/43fb6e73ce2f9829a7380b6502be65d3c180d6a3))
+
+
+### Bug Fixes
+
+* **codex-review:** support trusted external review runners ([#1892](https://github.com/evanharmon1/harmon-init/issues/1892)) ([ca18da0](https://github.com/evanharmon1/harmon-init/commit/ca18da057ddaadf43d98151550acd2ddd623fe0a))
+
 ## [5.14.0](https://github.com/evanharmon1/harmon-init/compare/v5.13.3...v5.14.0) (2026-10-31)
 
 
