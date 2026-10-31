@@ -1943,6 +1943,85 @@ minimal) # use_skills_sync=false -> none of the machinery renders
     grep -q 'sync:skills:' Taskfile.yml || err "sync:skills task missing (use_skills_sync default on)"
     grep -q '^  groom:' Taskfile.yml || err "groom task missing (use_skills_sync default on)"
     if have task; then
+        result_schema_out=$(task --color=false test:result-schemas 2>&1) && result_schema_rc=0 || result_schema_rc=$?
+        [ "$result_schema_rc" -eq 0 ] ||
+            err "fresh scaffold result-schema test failed before skills were vendored: $result_schema_out"
+        grep -Fq "SKIP: canonical result validator is not vendored" <<<"$result_schema_out" ||
+            err "fresh scaffold result-schema test did not explain its pre-sync skip: $result_schema_out"
+        printf '# managed: standardize-repo\n' >.claude/skills/.SKILLS_PROVENANCE
+        unselected_schema_out=$(task --color=false test:result-schemas 2>&1) && unselected_schema_rc=0 || unselected_schema_rc=$?
+        [ "$unselected_schema_rc" -eq 0 ] ||
+            err "result-schema test failed when dev-flow-support was intentionally unselected: $unselected_schema_out"
+        grep -Fq "SKIP: canonical result validator was not selected by the synced skills package" <<<"$unselected_schema_out" ||
+            err "unselected-package skip did not explain why validation was inapplicable: $unselected_schema_out"
+        printf '# managed: standardize-repo, dev-flow-support\n' >.claude/skills/.SKILLS_PROVENANCE
+        synced_schema_out=$(task --color=false test:result-schemas 2>&1) && synced_schema_rc=0 || synced_schema_rc=$?
+        rm -f .claude/skills/.SKILLS_PROVENANCE
+        [ "$synced_schema_rc" -ne 0 ] ||
+            err "result-schema test skipped an incomplete already-synced package"
+        grep -Fq "FAIL: canonical result validator is missing from an already-synced skills package" <<<"$synced_schema_out" ||
+            err "incomplete synced-package failure did not explain the missing validator: $synced_schema_out"
+        mkdir .claude/skills/my-local-skill
+        printf '# Local skill\n' >.claude/skills/my-local-skill/SKILL.md
+        local_schema_out=$(task --color=false test:result-schemas 2>&1) && local_schema_rc=0 || local_schema_rc=$?
+        rm -rf .claude/skills/my-local-skill
+        [ "$local_schema_rc" -eq 0 ] ||
+            err "result-schema test mistook a legitimate local skill for an interrupted sync: $local_schema_out"
+        grep -Fq "SKIP: canonical result validator is not vendored" <<<"$local_schema_out" ||
+            err "local-skill pre-sync skip did not explain why validation was inapplicable: $local_schema_out"
+        mkdir -p .claude/agents
+        printf '# managed: reviewer\n' >.claude/agents/.AGENTS_PROVENANCE
+        agent_schema_out=$(task --color=false test:result-schemas 2>&1) && agent_schema_rc=0 || agent_schema_rc=$?
+        rm -f .claude/agents/.AGENTS_PROVENANCE
+        rmdir .claude/agents
+        [ "$agent_schema_rc" -ne 0 ] ||
+            err "result-schema test ignored agent provenance proving a previous sync"
+        grep -Fq "FAIL: canonical result validator is missing from an incomplete skills sync" <<<"$agent_schema_out" ||
+            err "agent-provenance failure did not explain the missing validator: $agent_schema_out"
+        cp .skills-sync.yaml "$job_tmp/skills-sync.yaml"
+        cat >.skills-sync.yaml <<'EOF'
+categories: [universal]
+dest: .claude/skills
+agents:
+  dest: custom-agents
+EOF
+        mkdir custom-agents
+        printf '# managed: reviewer\n' >custom-agents/.AGENTS_PROVENANCE
+        inline_schema_out=$(task --color=false test:result-schemas 2>&1) && inline_schema_rc=0 || inline_schema_rc=$?
+        rm -rf custom-agents
+        cp "$job_tmp/skills-sync.yaml" .skills-sync.yaml
+        [ "$inline_schema_rc" -ne 0 ] ||
+            err "result-schema test ignored inline universal categories or a custom agents destination"
+        grep -Fq "FAIL: canonical result validator is missing from an incomplete skills sync" <<<"$inline_schema_out" ||
+            err "inline-category/custom-agent failure did not explain the missing validator: $inline_schema_out"
+        cp -R "$repo_root/.claude/skills/dev-flow-support" .claude/skills/dev-flow-support
+        printf '# managed: dev-flow-support\n' >.claude/skills/.SKILLS_PROVENANCE
+        vendored_schema_out=$(task --color=false test:result-schemas 2>&1) && vendored_schema_rc=0 || vendored_schema_rc=$?
+        [ "$vendored_schema_rc" -eq 0 ] ||
+            err "result-schema test failed with the canonical package vendored: $vendored_schema_out"
+        mv .claude/skills/dev-flow-support/assets/schemas "$job_tmp/bundled-result-schemas"
+        bundle_schema_out=$(task --color=false test:result-schemas 2>&1) && bundle_schema_rc=0 || bundle_schema_rc=$?
+        mv "$job_tmp/bundled-result-schemas" .claude/skills/dev-flow-support/assets/schemas
+        rm -rf .claude/skills/dev-flow-support
+        rm -f .claude/skills/.SKILLS_PROVENANCE
+        [ "$bundle_schema_rc" -ne 0 ] ||
+            err "result-schema test accepted a canonical package without bundled schemas"
+        grep -Fq "FAIL: canonical result validator is missing its bundled schemas" <<<"$bundle_schema_out" ||
+            err "missing-bundle failure did not explain the incomplete canonical package: $bundle_schema_out"
+        mkdir custom-skills
+        cp -R "$repo_root/.claude/skills/dev-flow-support" custom-skills/dev-flow-support
+        printf '# managed: dev-flow-support\n' >custom-skills/.SKILLS_PROVENANCE
+        cat >.skills-sync.yaml <<'EOF'
+categories: [universal]
+dest: custom-skills
+agents:
+  dest: .claude/agents
+EOF
+        custom_schema_out=$(task --color=false test:result-schemas 2>&1) && custom_schema_rc=0 || custom_schema_rc=$?
+        cp "$job_tmp/skills-sync.yaml" .skills-sync.yaml
+        rm -rf custom-skills
+        [ "$custom_schema_rc" -eq 0 ] ||
+            err "result-schema test failed to validate the package at a custom skills destination: $custom_schema_out"
         groom_list_out=$(task --color=false --list-all 2>&1) && groom_list_rc=0 || groom_list_rc=$?
         if [ "$groom_list_rc" -ne 0 ] || ! grep -qE '^\* groom:' <<<"$groom_list_out"; then
             err "task --list-all did not list groom (use_skills_sync default on)"

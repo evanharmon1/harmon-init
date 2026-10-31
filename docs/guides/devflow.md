@@ -303,8 +303,9 @@ Agent results are wrapped in `ai/schemas/result.envelope.schema.json` and use
 the role payload schemas. `ai/schemas/result.schema.json` is the composed
 entry point. Orchestrator-owned adjudication batches and mutable run records
 use `adjudication.schema.json` and `run.schema.json`; they are not agent result
-envelopes. `scripts/validate-result-schemas.mjs` provides the receipt and
-cross-document checks JSON Schema alone cannot express.
+envelopes. The vendored
+`.claude/skills/dev-flow-support/assets/validate-result-schemas.mjs` provides
+the receipt and cross-document checks JSON Schema alone cannot express.
 
 ## Consumer checklist
 
