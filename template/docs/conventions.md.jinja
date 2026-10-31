@@ -245,6 +245,10 @@ exact accepted grammar and limits.
 
 ## CI / GitHub Actions
 
+- `task setup:github` reconciles repository merge settings to
+  `delete_branch_on_merge: true`, `allow_update_branch: true`, and
+  `allow_auto_merge: false`, then verifies the values.
+
 - **Pin third-party actions by full commit SHA** with a trailing `# vX.Y.Z`
   comment, and annotate tool versions with `# renovate: datasource=…` so
   Renovate keeps them current.
