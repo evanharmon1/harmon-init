@@ -8,7 +8,7 @@
 #               (architecture, authz, data loss, rollback, races, hidden
 #               coupling, operational failure modes, overdesign).
 #
-# Usage: codex-review.sh <review|challenge> [--profile standardize --release <release> --frozen-render <bundle>] [--base <ref>|--uncommitted|--commit <sha>] [focus text ...]
+# Usage: codex-review.sh <review|challenge> [--repo-root <path>] [--profile standardize --release <release> --frozen-render <bundle>] [--base <ref>|--uncommitted|--commit <sha>] [focus text ...]
 #
 # Target selection when no explicit flag is given: whatever exists is in
 # scope. Commits beyond the default base AND a dirty working tree are reviewed
@@ -33,13 +33,12 @@
 # see docs/guides/codex-review.md.
 set -euo pipefail
 script_dir="$(cd "$(dirname "$0")" && pwd)"
-cd "$script_dir/.."
 
 # shellcheck source=scripts/lib/review-scope.sh
 . "$script_dir/lib/review-scope.sh"
 
 usage() {
-    echo "usage: $0 <review|challenge> [--profile standardize --release <release> --frozen-render <bundle>] [--base <ref>|--uncommitted|--commit <sha>] [focus text ...]" >&2
+    echo "usage: $0 <review|challenge> [--repo-root <path>] [--profile standardize --release <release> --frozen-render <bundle>] [--base <ref>|--uncommitted|--commit <sha>] [focus text ...]" >&2
 }
 
 MODE="${1:-}"
@@ -50,6 +49,49 @@ review | challenge) shift ;;
     exit 2
     ;;
 esac
+
+# Ordinarily the trusted runner lives inside the checkout it reviews. A
+# confidence-stage launcher can instead hold these runner/library bytes fixed
+# and point them at a separate candidate checkout. Strip only this runner-owned
+# option; review-scope.sh receives every remaining argument unchanged.
+repo_root="$script_dir/.."
+repo_root_seen=false
+review_args=()
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+    --repo-root)
+        if [ "$repo_root_seen" = true ] || [ "$#" -lt 2 ] || [ -z "$2" ]; then
+            echo "--repo-root requires exactly one non-empty path" >&2
+            usage
+            exit 2
+        fi
+        repo_root="$2"
+        repo_root_seen=true
+        shift 2
+        ;;
+    *)
+        review_args+=("$1")
+        shift
+        ;;
+    esac
+done
+
+if [ ! -d "$repo_root" ]; then
+    echo "--repo-root is not a directory: $repo_root" >&2
+    exit 2
+fi
+repo_root="$(cd "$repo_root" && pwd -P)"
+git_root="$(git -C "$repo_root" rev-parse --show-toplevel 2>/dev/null || true)"
+if [ -z "$git_root" ]; then
+    echo "--repo-root is not a Git worktree: $repo_root" >&2
+    exit 2
+fi
+git_root="$(cd "$git_root" && pwd -P)"
+if [ "$git_root" != "$repo_root" ]; then
+    echo "--repo-root must name the Git worktree root (got: $repo_root; root: $git_root)" >&2
+    exit 2
+fi
+cd "$repo_root"
 
 if ! command -v codex >/dev/null 2>&1; then
     echo "codex CLI not found. Install it (brew install --cask codex, or npm install -g @openai/codex)," >&2
@@ -78,7 +120,7 @@ case "$MAX_STDERR_BYTES" in
     ;;
 esac
 
-resolve_review_scope "$@"
+resolve_review_scope "${review_args[@]}"
 review_scope_apply_profile
 
 if [ "$MODE" = "challenge" ]; then
