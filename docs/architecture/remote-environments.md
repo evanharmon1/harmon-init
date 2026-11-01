@@ -580,19 +580,12 @@ is writable and precedes competing tools on `PATH`. This avoids `sudo` and a
 user prefix that a child preparation task cannot put onto the parent agent's
 `PATH`. Host and devcontainer preparation do not reconcile. An install gets
 30 s plus a 2 s kill grace, leaving room inside SessionStart's 90 s deadline;
-version probes get 2 s plus a 1 s grace. An unreconciled tool produces a
-non-fatal summary warning with its installed version, checkout pin, environment
-revision (from the bootstrap manifest, or `unknown`) and a remedy for the cause.
-For a writable-prefix or `PATH` refusal, make
-`${HARMON_PREFIX:-/usr/local}/bin` writable and place it before competing tool
-copies on `PATH`, then rerun `task setup:remote`. For ambiguous checkout pins,
-keep exactly one `SHELLCHECK_VERSION` assignment in
-`.github/actions/setup/action.yml`, then rerun `task setup:remote`. For other
-version drift, the warning advises setting `HARMON_INIT_REF` to a release carrying
-the named checkout tool pin and rebuilding the environment. If the manifest
-records a newer tool version than the checkout pins, the warning instead advises
-updating the repository's pin (`copier update` for a generated repository). The
-harmon-init release number is not compared with a tool version.
+version probes get 2 s plus a 1 s grace. Warnings are non-fatal: each names its
+cause and the remedy for that cause. Both reconciliation and report-only status
+use the single cause-to-remedy mapping in
+[`scripts/reconcile-toolchain.sh`](../../scripts/reconcile-toolchain.sh).
+Version warnings also carry the installed version, checkout pin and environment
+revision (from the bootstrap manifest, or `unknown`).
 Any preparation failure, including an outer timeout,
 triggers a report-only probe in the wrapper; it reports remaining drift without
 inferring that the time budget caused it. Probe stdout is captured in a regular

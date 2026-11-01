@@ -77,20 +77,13 @@ Rules for this script, each with its reason:
   It writes to `${HARMON_PREFIX:-/usr/local}/bin` only when that directory is
   writable and wins tool resolution on `PATH`; it never requests `sudo` or
   changes the parent session's `PATH`.
-  A successful summary names the reconciled tool. When the install cannot run,
-  download fails, or time runs out, the warning summary names the tool, installed
-  version, checkout pin and environment revision from
+  A successful summary names the reconciled tool. Every warning names its cause
+  and the remedy for that cause, using the single mapping in
+  [`scripts/reconcile-toolchain.sh`](../../scripts/reconcile-toolchain.sh) for
+  both reconciliation and report-only status. Version warnings also name the
+  installed version, checkout pin and environment revision from
   `${HARMON_PREFIX:-/usr/local}/share/harmon-remote-env/manifest.json` (or
-  `unknown` if unavailable). The remedy depends on the cause. For a writable-prefix
-  or `PATH` refusal, make `${HARMON_PREFIX:-/usr/local}/bin` writable and place it
-  before competing tool copies on `PATH`, then rerun `task setup:remote`. For
-  ambiguous checkout pins, keep exactly one `SHELLCHECK_VERSION` assignment in
-  `.github/actions/setup/action.yml`, then rerun `task setup:remote`. For other
-  version drift, the warning advises setting `HARMON_INIT_REF` to a release carrying
-  the named checkout tool pin and rebuilding the environment. If the manifest
-  records a newer tool version than the checkout pins, the warning instead advises
-  updating the repository's pin (`copier update` for a generated repository); the
-  latest environment release may already be ahead of the repo.
+  `unknown` if unavailable).
   Generated repositories reuse the installer and checksum metadata saved by
   bootstrap; an older environment without them, or with metadata for another
   pin, gets this warning too. Keep the release pin: per-session reconciliation

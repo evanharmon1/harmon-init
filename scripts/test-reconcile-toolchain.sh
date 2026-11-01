@@ -277,6 +277,16 @@ exec {shlex.quote(real_task)} "$@"
     assert rc == 0 and not log.exists(), out
     drift_warning(out, "must be writable and precede",
                   remedy=f"make {prefix / 'bin'} writable and place it before other shellcheck copies on PATH")
+    rc, out = run(["bash", "scripts/reconcile-toolchain.sh", "--status"], repo,
+                  env | {"PATH": f"{stubs}:{prefix / 'bin'}:{base_env['PATH']}"})
+    assert rc == 0 and not log.exists(), out
+    line = next(line for line in out.splitlines() if line.startswith("WARNING:"))
+    for value in ("installed 1.2.3", "checkout pin 7.8.9", "environment v1.2.3",
+                  "must be writable and precede",
+                  f"make {prefix / 'bin'} writable and place it before other shellcheck copies on PATH"):
+        assert value in line, (value, out)
+    assert "HARMON_INIT_REF" not in line and "rebuild the environment" not in line, out
+    print("OK: --status shares the shadowed-prefix cause and remedy without installing or advising a rebuild")
     (stubs / "shellcheck").unlink()
     print("OK: successful SessionStart names the repair; missing installers and shadowed prefixes warn without installing")
     action = repo / ".github/actions/setup/action.yml"
