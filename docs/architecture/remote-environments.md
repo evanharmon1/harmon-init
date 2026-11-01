@@ -583,9 +583,15 @@ user prefix that a child preparation task cannot put onto the parent agent's
 version probes get 2 s plus a 1 s grace. An unreconciled tool produces a
 non-fatal summary warning with its installed version, checkout pin, environment
 revision (from the bootstrap manifest, or `unknown`) and the remedy: set
-`HARMON_INIT_REF` to a release carrying the pin, for example the latest release,
-and rebuild the environment. Even an outer preparation timeout triggers a
-report-only probe in the wrapper. The release pin remains the bootstrap trust
+`HARMON_INIT_REF` to a release carrying the named checkout tool pin and rebuild
+the environment. If the manifest records a newer tool version than the checkout
+pins, the warning instead advises updating the repository's pin (`copier update`
+for a generated repository). The harmon-init release number is not compared
+with a tool version. Any preparation failure, including an outer timeout,
+triggers a report-only probe in the wrapper; it reports remaining drift without
+inferring that the time budget caused it. Probe stdout is captured in a regular
+file so a descendant holding stdout open cannot extend the probe's bound.
+The release pin remains the bootstrap trust
 root, and only changing the environment setup script rebuilds the platform's
 cached toolchain; a floating ref or version range would not repair that cache.
 

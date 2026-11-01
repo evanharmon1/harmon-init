@@ -36,16 +36,23 @@ read_pin() {
 }
 
 installed_version() {
-    local output
+    local output_file rc=0
     # SessionStart must be able to report even a broken or hanging executable.
+    # A descendant can outlive timeout while holding stdout open. A regular file
+    # lets the probe finish without waiting for that writer to close a pipe.
+    output_file="$(mktemp)" || return 1
     if [ "$mode" = --check ]; then
-        output="$("$1" --version 2>/dev/null)" || return 1
+        "$1" --version >"$output_file" 2>/dev/null || rc=$?
     else
-        output="$(timeout --kill-after=1s 2s "$1" --version 2>/dev/null)" || return 1
+        timeout --kill-after=1s 2s "$1" --version >"$output_file" 2>/dev/null || rc=$?
     fi
-    case "$1" in
-    shellcheck) printf '%s\n' "$output" | sed -n 's/^version: //p' ;;
-    esac
+    if [ "$rc" -eq 0 ]; then
+        case "$1" in
+        shellcheck) sed -n 's/^version: //p' "$output_file" ;;
+        esac
+    fi
+    rm -f "$output_file"
+    return "$rc"
 }
 
 prefix="${HARMON_PREFIX:-/usr/local}"
@@ -57,8 +64,25 @@ if [ -r "${cache}/manifest.json" ]; then
     revision="$(jq -r '.image.revision // "unknown"' "${cache}/manifest.json" 2>/dev/null)" || revision=unknown
 fi
 warn_drift() {
-    printf 'WARNING: %s installed %s, checkout pin %s, environment %s: %s; set HARMON_INIT_REF to a release carrying this pin (for example the latest release) and rebuild the environment.\n' \
-        "$tool" "${seen:-unknown}" "${pin:-unknown}" "${revision:-unknown}" "$1"
+    local environment_pin= remedy
+    remedy="set HARMON_INIT_REF to a release carrying ${tool} ${pin:-unknown} and rebuild the environment"
+    if [ -r "${cache}/manifest.json" ]; then
+        # harmon-init's release and a tool's version are different number lines.
+        # Compare the checkout pin to the TOOL version that release installed.
+        environment_pin="$(jq -r --arg tool "$tool" --arg pin "$pin" '
+            .tools[$tool] as $version |
+            select($version | type == "string") |
+            select($version | test("^[0-9]+\\.[0-9]+\\.[0-9]+$")) |
+            select($pin | test("^[0-9]+\\.[0-9]+\\.[0-9]+$")) |
+            select(($version | split(".") | map(tonumber)) > ($pin | split(".") | map(tonumber))) |
+            $version
+        ' "${cache}/manifest.json" 2>/dev/null)" || environment_pin=
+    fi
+    if [ -n "$environment_pin" ]; then
+        remedy="update the repository's ${tool} pin to the environment's ${environment_pin} (copier update for a generated repository)"
+    fi
+    printf 'WARNING: %s installed %s, checkout pin %s, environment %s: %s; %s.\n' \
+        "$tool" "${seen:-unknown}" "${pin:-unknown}" "${revision:-unknown}" "$1" "$remedy"
 }
 
 if [ "$mode" = --check ]; then
@@ -100,7 +124,7 @@ for tool in "${tools[@]}"; do
         exit 1
     fi
     if [ "$mode" = --status ]; then
-        warn_drift "preparation could not reconcile this tool within its time budget"
+        warn_drift "preparation left this tool unreconciled"
         continue
     fi
 

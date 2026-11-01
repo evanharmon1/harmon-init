@@ -10,10 +10,13 @@ import json
 import os
 from pathlib import Path
 import re
+import shlex
 import shutil
 import subprocess
+import sys
 import tarfile
 import tempfile
+import time
 
 source = Path.cwd()
 base_env = os.environ.copy()
@@ -23,8 +26,11 @@ for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_CONFIG_COUNT", "
     base_env.pop(name, None)
 base_env.update(GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1")
 real_timeout = shutil.which("timeout")
+real_task = shutil.which("task")
 if not real_timeout:
     raise SystemExit("test-reconcile-toolchain needs GNU timeout")
+if not real_task:
+    raise SystemExit("test-reconcile-toolchain needs task")
 
 
 def run(args, cwd=source, env=None):
@@ -74,7 +80,9 @@ with tempfile.TemporaryDirectory(prefix="reconcile-") as scratch:
     assets = repo / "images/devcontainer"
     (assets / "install").mkdir(parents=True)
     (cache / "install").mkdir(parents=True)
-    (cache / "manifest.json").write_text(json.dumps({"image": {"revision": "v1.2.3"}}))
+    manifest = cache / "manifest.json"
+    original_manifest = {"image": {"revision": "v1.2.3"}, "tools": {"shellcheck": "1.2.3"}}
+    manifest.write_text(json.dumps(original_manifest))
     log = scratch / "downloads"
 
     def executable(path, text):
@@ -137,6 +145,10 @@ fi
 if [ "${{RECONCILE_TEST_MODE:-}}" = outer ] && [ "${{2:-}}" = 90s ]; then exit 124; fi
 exec {real_timeout} "$@"
 ''')
+    executable(stubs / "task", f'''#!/usr/bin/env bash
+if [ "${{RECONCILE_TEST_MODE:-}}" = setup-failure ]; then exit 7; fi
+exec {shlex.quote(real_task)} "$@"
+''')
     env = base_env | {"CLAUDE_CODE_REMOTE": "true", "HARMON_PREFIX": str(prefix),
                       "PATH": f"{prefix / 'bin'}:{stubs}:{base_env['PATH']}",
                       "RECONCILE_TEST_LOG": str(log), "RECONCILE_TEST_ARCHIVE": str(archive),
@@ -153,8 +165,10 @@ exec {real_timeout} "$@"
 
     def drift_warning(output, reason):
         line = next(line for line in output.splitlines() if line.startswith("==> setup:remote completed with warnings:"))
-        for value in ("shellcheck", "installed 1.2.3", "checkout pin 7.8.9", "environment v1.2.3", "HARMON_INIT_REF", reason):
+        for value in ("shellcheck", "installed 1.2.3", "checkout pin 7.8.9", "environment v1.2.3",
+                      "HARMON_INIT_REF", "release carrying shellcheck 7.8.9", reason):
             assert value in line, (value, output)
+        assert "latest release" not in line, output
 
     old_tool()
     out = setup()
@@ -220,12 +234,54 @@ exec {real_timeout} "$@"
     if real_install.exists():
         print("OK: a bad digest rejects the archive before replacing the existing tool")
 
-    rc, out = run(["bash", "scripts/session-start-remote.sh"], repo, env | {"RECONCILE_TEST_MODE": "outer"})
-    assert rc == 0, out
-    line = next(line for line in out.splitlines() if "SessionStart remote preparation:" in line)
-    for value in ("shellcheck", "installed 1.2.3", "checkout pin 7.8.9", "environment v1.2.3", "HARMON_INIT_REF"):
-        assert value in line, out
-    print("OK: outer SessionStart timeout still reports complete drift/fix without failing the session")
+    # The environment release number is deliberately unrelated to the tool's
+    # version. Numeric tuple comparison must recognize 7.8.10 > 7.8.9.
+    old_tool("7.8.10")
+    cached_pins.write_text(pins.replace("7.8.9", "7.8.10"))
+    manifest.write_text(json.dumps({"image": {"revision": "v1.2.3"}, "tools": {"shellcheck": "7.8.10"}}))
+    out = setup()
+    assert not log.exists(), out
+    line = next(line for line in out.splitlines() if line.startswith("==> setup:remote completed with warnings:"))
+    for value in ("installed 7.8.10", "checkout pin 7.8.9", "environment v1.2.3",
+                  "update the repository's shellcheck pin", "7.8.10", "copier update"):
+        assert value in line, (value, out)
+    assert "HARMON_INIT_REF" not in line and "latest release" not in line, out
+    manifest.write_text(json.dumps(original_manifest))
+    cached_pins.write_text(pins)
+    old_tool()
+    print("OK: a newer recorded tool pin advises a repository update instead of the latest environment release")
+
+    for mode in ("outer", "setup-failure"):
+        rc, out = run(["bash", "scripts/session-start-remote.sh"], repo, env | {"RECONCILE_TEST_MODE": mode})
+        assert rc == 0, out
+        line = next(line for line in out.splitlines() if "SessionStart remote preparation:" in line)
+        for value in ("shellcheck", "installed 1.2.3", "checkout pin 7.8.9", "environment v1.2.3", "HARMON_INIT_REF",
+                      "preparation left this tool unreconciled"):
+            assert value in line, (mode, value, out)
+        assert "within its time budget" not in line, out
+    print("OK: outer timeout and ordinary preparation failure report drift without inventing a timeout cause")
+
+    # This child escapes timeout's process group and retains stdout for 8s
+    # after the version command exits. A pipe capture used to wait for it.
+    executable(prefix / "bin/shellcheck", f'''#!/usr/bin/env bash
+exec {shlex.quote(sys.executable)} - <<'PYPROBE'
+import subprocess
+import sys
+subprocess.Popen([sys.executable, "-c", "import time; time.sleep(8)"],
+                 start_new_session=True, stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+print("version: 1.2.3", flush=True)
+PYPROBE
+''')
+    for args, mode in ((["bash", "scripts/reconcile-toolchain.sh", "--status"], ""),
+                       (["bash", "scripts/session-start-remote.sh"], "outer")):
+        started = time.monotonic()
+        rc, out = run(args, repo, env | {"RECONCILE_TEST_MODE": mode})
+        elapsed = time.monotonic() - started
+        assert rc == 0 and "installed 1.2.3" in out, out
+        # The actual probe budget is 2s + 1s kill grace; allow 0.5s for the
+        # wrapper/metadata probes. Waiting for the 8s child fails decisively.
+        assert elapsed < 3.5, (args, elapsed, out)
+        print(f"OK: stdout-holding descendant cannot extend {args[1]} beyond the probe budget ({elapsed:.2f}s)")
 
 print("reconcile-toolchain OK")
 PY

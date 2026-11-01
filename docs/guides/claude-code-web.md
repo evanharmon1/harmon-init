@@ -82,7 +82,10 @@ Rules for this script, each with its reason:
   version, checkout pin and environment revision from
   `${HARMON_PREFIX:-/usr/local}/share/harmon-remote-env/manifest.json` (or
   `unknown` if unavailable). The fix is to set `HARMON_INIT_REF` to a release
-  carrying that pin, for example the latest release, and rebuild the environment.
+  carrying the named checkout tool pin and rebuild the environment. If the
+  manifest records a newer tool version than the checkout pins, the warning
+  instead advises updating the repository's pin (`copier update` for a generated
+  repository); the latest environment release may already be ahead of the repo.
   Generated repositories reuse the installer and checksum metadata saved by
   bootstrap; an older environment without them, or with metadata for another
   pin, gets this warning too. Keep the release pin: per-session reconciliation
