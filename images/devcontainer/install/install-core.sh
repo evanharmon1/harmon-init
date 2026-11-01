@@ -182,19 +182,8 @@ if harmon_needs_all uv "$UV_VERSION" uvx -- uv --version; then
     rm -f "${tmp}/${uv_tarball}" "${tmp}/uv" "${tmp}/uvx"
 fi
 
-# ---------- ShellCheck (checksum-pinned GitHub release) ----------
-if harmon_needs shellcheck "$SHELLCHECK_VERSION" shellcheck --version; then
-    shellcheck_arch="$(harmon_pick x86_64 aarch64)"
-    shellcheck_sha="$(harmon_pick "$shellcheck_amd64_sha256" "$shellcheck_arm64_sha256")"
-    shellcheck_tarball="shellcheck-v${SHELLCHECK_VERSION}.linux.${shellcheck_arch}.tar.xz"
-    harmon_fetch "https://github.com/koalaman/shellcheck/releases/download/v${SHELLCHECK_VERSION}/${shellcheck_tarball}" \
-        "${tmp}/${shellcheck_tarball}"
-    harmon_verify_sha256 "${tmp}/${shellcheck_tarball}" "$shellcheck_sha"
-    tar -xJf "${tmp}/${shellcheck_tarball}" -C "$tmp" \
-        "shellcheck-v${SHELLCHECK_VERSION}/shellcheck"
-    harmon_install_bin "${tmp}/shellcheck-v${SHELLCHECK_VERSION}/shellcheck" shellcheck
-    rm -rf "${tmp}/${shellcheck_tarball}" "${tmp}/shellcheck-v${SHELLCHECK_VERSION}"
-fi
+# ---------- ShellCheck (shared with per-session reconciliation) ----------
+bash "${HARMON_INSTALL_DIR}/install-shellcheck.sh"
 
 # ---------- checksum-free GitHub release binaries ----------
 # The upstream projects publish no stable per-asset digest this repository has
