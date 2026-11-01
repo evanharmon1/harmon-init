@@ -86,6 +86,7 @@ generate-manifest.sh
 install/lib.sh
 install/apt-core.sh
 install/install-core.sh
+install/install-shellcheck.sh
 install/install-agents.sh
 install/install-browsers.sh
 "
@@ -906,6 +907,20 @@ case "$login_ctype" in
 *UTF-8 | *utf8) ;;
 *) die "a fresh login shell that started with LC_ALL=C still has LC_CTYPE='${login_ctype:-unset}' — ${HARMON_PROFILE_DROPIN} did not force the locale" ;;
 esac
+
+# Retain the shared installer for generated repositories, which do not ship
+# images/devcontainer/. Reconciliation checks this metadata against the gate's
+# checkout pin before using it; an older cache can only warn, never install an
+# unchecked release. Count only changed bytes, preserving bootstrap idempotence.
+reconcile_dir="${HARMON_PREFIX}/share/harmon-remote-env"
+for reconcile_asset in versions.env install/lib.sh install/install-shellcheck.sh; do
+    reconcile_target="${reconcile_dir}/${reconcile_asset}"
+    if ! cmp -s "${asset_dir}/${reconcile_asset}" "$reconcile_target"; then
+        install -d -m 0755 "$(dirname "$reconcile_target")"
+        install -m 0644 "${asset_dir}/${reconcile_asset}" "$reconcile_target"
+        harmon_changed "reconcile asset ${reconcile_asset}"
+    fi
+done
 
 # ---------- record what was installed ----------
 # The same manifest the image writes (generate-manifest.sh, the same file), so

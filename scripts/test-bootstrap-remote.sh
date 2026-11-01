@@ -73,6 +73,13 @@ versions_lines = versions_text.splitlines()
 bootstrap_text = BOOTSTRAP.read_text()
 dockerfile_text = DOCKERFILE.read_text()
 tier_scripts = sorted(p.name for p in INSTALL.glob("*.sh"))
+# Per-tool installers are reached through their owning tier, in both the image
+# and bootstrap. Verify the edge rather than treating a helper as a new tier.
+subinstallers = {"install-shellcheck.sh": "install-core.sh"}
+for helper, parent in subinstallers.items():
+    call = 'bash "${HARMON_INSTALL_DIR}/' + helper + '"'
+    if call not in (INSTALL / parent).read_text():
+        fail(f"{INSTALL}/{parent}: does not run shared installer {helper}")
 
 ASSIGN = re.compile(r"^(?P<var>[A-Za-z_][A-Za-z0-9_]*)=(?P<val>[^\s#]+)(?:\s+# pin-pair: [A-Za-z0-9._-]+)?\s*$")
 ANNOT = re.compile(r"^# renovate: datasource=(?P<ds>\S+) depName=(?P<dep>\S+)")
@@ -415,6 +422,8 @@ else:
         if f"install-{tier}.sh" not in tier_scripts:
             fail(f"{BOOTSTRAP}: tier '{tier}' has no images/devcontainer/install/install-{tier}.sh")
     for name in tier_scripts:
+        if name in subinstallers:
+            continue  # owning tier's invocation is verified above
         m = re.fullmatch(r"install-([a-z0-9-]+)\.sh", name)
         if m and m.group(1) not in tiers:
             fail(f"{INSTALL}/{name}: no tier named '{m.group(1)}' in HARMON_TIER_ORDER, so it never runs")
@@ -787,7 +796,8 @@ for scenario, script_line, host in (
 for script in tier_scripts:
     if script == "lib.sh":
         continue  # sourced by the others, never run
-    if f"{SHARE}/install/{script}" not in dockerfile_text:
+    image_entry = subinstallers.get(script, script)
+    if f"{SHARE}/install/{image_entry}" not in dockerfile_text:
         fail(f"{DOCKERFILE}: does not run {SHARE}/install/{script} — the image would install its own copy")
 if f"COPY versions.env {SHARE}/versions.env" not in dockerfile_text:
     fail(f"{DOCKERFILE}: does not COPY versions.env to {SHARE}/versions.env")
@@ -1156,7 +1166,8 @@ for name in tier_scripts:
             fail(f"{INSTALL}/{name}: records {key}={var} but {DOCKERFILE}'s manifest layer has no entry for {var}")
         elif image_keys[var] != key:
             fail(f"{INSTALL}/{name}: records {var} as {key!r} but the image's manifest names it {image_keys[var]!r}")
-    if tier in default_tiers:
+    owner_tier = subinstallers.get(name, name).removeprefix("install-").removesuffix(".sh")
+    if owner_tier in default_tiers:
         recorded_by_default |= set(recorded)
         consumed_by_default |= consumed
 if consumed_by_default != recorded_by_default:
@@ -2954,6 +2965,35 @@ else:
     for ok, case, why in checks:
         if not ok:
             fail(f"{INSTALL}/lib.sh: system-trust-store case {case} ({seen.get(case)!r}) — {why}")
+
+# ── 26. generated repositories retain the exact shared reconcile assets ────
+# Execute the actual persistence block twice: the cache is complete and a
+# second bootstrap neither rewrites assets nor records another installation.
+cache_start = bootstrap_text.find('# Retain the shared installer for generated repositories')
+cache_end = bootstrap_text.find('# ---------- record what was installed ----------', cache_start)
+if cache_start < 0 or cache_end < 0:
+    fail(f"{BOOTSTRAP}: reconcile-asset persistence block is missing")
+else:
+    cache_script = r"""
+set -euo pipefail
+scratch="$(mktemp -d)"
+trap 'rm -rf "$scratch"' EXIT
+HARMON_PREFIX="${scratch}/prefix"
+asset_dir='@ASSET_DIR@'
+harmon_changed() { echo "$*" >>"${scratch}/changes"; }
+""".replace('@ASSET_DIR@', str(IMG.resolve()))
+    cache_block = bootstrap_text[cache_start:cache_end]
+    cache_script += cache_block + r"""
+cp "${scratch}/changes" "${scratch}/before"
+for relative in versions.env install/lib.sh install/install-shellcheck.sh; do
+    cmp "${asset_dir}/${relative}" "${HARMON_PREFIX}/share/harmon-remote-env/${relative}"
+done
+""" + cache_block + r"""
+cmp "${scratch}/before" "${scratch}/changes"
+"""
+    cache_run = run_lifted(cache_script)
+    if cache_run is None or cache_run.returncode != 0:
+        fail(f"{BOOTSTRAP}: reconcile assets are not byte-identical/idempotent: {'' if cache_run is None else cache_run.stderr}")
 
 for e in errors:
     print(f"FAIL: {e}", file=sys.stderr)
