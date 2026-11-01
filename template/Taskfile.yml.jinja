@@ -158,6 +158,7 @@ tasks:
       - task: test:related-repos
 [% endif %]
       - task: test:setup-remote
+      - task: test:reconcile-toolchain
       - task: test:meta-install
 [% if use_codex_review %]
       - task: test:codex-review
@@ -890,6 +891,11 @@ tasks:
     cmds:
       - ./scripts/test-setup-remote.sh
 
+  test:reconcile-toolchain:
+    desc: Verify remote gate-tool reconciliation, bounded warning fallbacks and gate registry coverage (offline)
+    cmds:
+      - ./scripts/test-reconcile-toolchain.sh
+
   test:meta-install:
     desc: Unit-test the .meta sidecar installer's ~-expansion and refusals
     cmds:
@@ -1264,7 +1270,7 @@ tasks:
       - lefthook install
 
   setup:remote:
-    desc: Prepare this checkout for the dev loop on a remote platform (no devcontainer hooks) — git hooks, related repos cloned then fetched beside it, frozen dependencies. Idempotent
+    desc: Prepare a remote checkout — reconcile gate tools, install hooks, clone/fetch siblings, and install frozen dependencies. Idempotent
     cmds:
       - ./scripts/setup-remote.sh
 

@@ -29,13 +29,16 @@ if timeout --kill-after=5s 90s task --dir "$ROOT" setup:remote >"$output_file"; 
         case "$line" in
         # The last status marker wins, including a final clean status that
         # supersedes a tool's earlier marker-shaped output.
-        '==> setup:remote completed.' | '==> setup:remote completed with warnings:'*) summary="${line#==> }" ;;
+        '==> setup:remote completed.'* | '==> setup:remote completed with warnings:'*) summary="${line#==> }" ;;
         esac
     done <"$output_file"
     echo "==> SessionStart remote preparation: ${summary}"
 else
     cat "$output_file" >&2
-    echo "==> WARNING: SessionStart remote preparation: setup:remote failed; run task setup:remote again."
+    # A killed preparation cannot reach its summary. Re-probe without installing
+    # so the visible fallback still names drift, versions and the release fix.
+    drift="$(cd "$ROOT" && bash scripts/reconcile-toolchain.sh --status)" || drift="toolchain status unavailable"
+    echo "==> WARNING: SessionStart remote preparation: setup:remote failed; run task setup:remote again.${drift:+ ${drift}}"
 fi
 # Preparation failures must never prevent a session from starting.
 exit 0

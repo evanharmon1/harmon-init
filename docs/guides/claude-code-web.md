@@ -68,6 +68,26 @@ Rules for this script, each with its reason:
   `vX.Y.Z`. The tag is the trust root, and the environment moves only when you
   edit the tag — which also rebuilds the cache (*docs, 2026-09-29*: a changed
   setup script re-runs it).
+- **Session preparation reconciles gate-checked tools to the checkout.** A
+  cached environment can predate a checkout's tool bump. Before hooks, siblings
+  and dependencies, `task setup:remote` compares ShellCheck with the checkout's
+  `.github/actions/setup/action.yml` pin (the same source the lint gate reads,
+  including in generated repositories). It reuses the bootstrap's checksum-verified
+  installer, with a 30 s install budget inside the 90 s SessionStart deadline.
+  It writes to `${HARMON_PREFIX:-/usr/local}/bin` only when that directory is
+  writable and wins tool resolution on `PATH`; it never requests `sudo` or
+  changes the parent session's `PATH`.
+  A successful summary names the reconciled tool. Every warning names its cause
+  and the remedy for that cause, using the single mapping in
+  [`scripts/reconcile-toolchain.sh`](../../scripts/reconcile-toolchain.sh) for
+  both reconciliation and report-only status. Version warnings also name the
+  installed version, checkout pin and environment revision from
+  `${HARMON_PREFIX:-/usr/local}/share/harmon-remote-env/manifest.json` (or
+  `unknown` if unavailable).
+  Generated repositories reuse the installer and checksum metadata saved by
+  bootstrap; an older environment without them, or with metadata for another
+  pin, gets this warning too. Keep the release pin: per-session reconciliation
+  does not change the bootstrap trust root or invalidate the platform's cache.
 - **`vX.Y.Z` is the release tag you want, `v5.2.1` or later** — `v5.2.1`
   (published 2026-10-07) is the first release that carries the trust-store
   fix; `v4.48.0` (published 2026-10-03) is the first that carries the bootstrap.
@@ -1080,7 +1100,7 @@ session (*docs, 2026-09-29*). If the hook did not run (a multi-repository sessio
 or a platform without it), the `AGENTS.md` fallback still tells the agent to run
 `task setup:remote` once before work.
 
-`task setup:remote` (`scripts/setup-remote.sh`,
+After remote tool reconciliation, `task setup:remote` (`scripts/setup-remote.sh`,
 [#1405](https://github.com/evanharmon1/harmon-init/issues/1405)) runs
 `lefthook install` (when lefthook is on `PATH`), then the same sibling clones
 the devcontainer makes (`.devcontainer/related-repos.txt`), into the checkout's **parent**
