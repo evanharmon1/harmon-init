@@ -265,6 +265,11 @@ BOUND_STUB
             echo '        echo "unknown flag: --active" >&2'
             echo '        exit 1'
             echo '    fi'
+            echo '    if [ -n "${GH_STUB_NO_ACTIVE_DELAY:-}" ]; then sleep "$GH_STUB_NO_ACTIVE_DELAY"; fi'
+            echo '    if [ "${GH_STUB_NO_ACTIVE_FAIL:-0}" = 1 ]; then'
+            echo '        echo "error connecting to github.com" >&2'
+            echo '        exit 1'
+            echo '    fi'
             echo "    echo \"  - Token scopes: 'gist', 'project', 'repo'\""
             echo '    exit 0'
             ;;
@@ -1335,6 +1340,47 @@ case "$out" in
 *"token has 'project'"*) ;;
 *) fail "expected the fallback to read the full report, got: ${out}" ;;
 esac
+
+echo "==> an old gh retry that exhausts its budget reports timeout without REST"
+if [ -n "$phase_timeout" ]; then
+    STUB_CALLS="${TMP}/legacy-retry-calls.txt"
+    export STUB_CALLS
+    : >"$STUB_CALLS"
+    out="$(NETWORK_TIMEOUT=3 GH_STUB_NO_ACTIVE_DELAY=5 GH_STUB_USER=success \
+        run_gh_section no-active-flag)"
+    case "$out" in
+    *"not authenticated"*) fail "a timed-out legacy retry must not report missing auth: ${out}" ;;
+    *"timed out"*) ;;
+    *) fail "expected timeout wording from the legacy retry: ${out}" ;;
+    esac
+    [ "$(grep -c '^auth status' "$STUB_CALLS" || true)" -eq 2 ] ||
+        fail "the timeout case must exercise the legacy retry"
+    if grep -q '^api user' "$STUB_CALLS"; then
+        fail "a timed-out legacy retry must not make a REST user probe"
+    fi
+
+    echo "==> a failed old gh retry recovers with exactly one bounded REST probe"
+    : >"$STUB_CALLS"
+    legacy_bounds="${TMP}/legacy-retry-bounds.txt"
+    : >"$legacy_bounds"
+    out="$(PATH="${TMP}/bounded-bin:${PATH}" STUB_REAL_TIMEOUT="$phase_timeout" \
+        STUB_TIMEOUT_CALLS="$legacy_bounds" GH_STUB_REQUIRE_BOUND=1 \
+        GH_STUB_NO_ACTIVE_FAIL=1 GH_STUB_USER=success \
+        run_gh_section no-active-flag)"
+    case "$out" in
+    *"Open PRs:"*"Recent CI runs:"*"could not read token scopes"*) ;;
+    *) fail "a non-timeout legacy retry failure must recover through REST: ${out}" ;;
+    esac
+    [ "$(grep -c '^auth status' "$STUB_CALLS" || true)" -eq 2 ] ||
+        fail "the recovery case must exercise the legacy retry"
+    [ "$(grep -c '^api user' "$STUB_CALLS" || true)" -eq 1 ] ||
+        fail "the failed legacy retry must make exactly one REST user probe"
+    [ "$(grep -c '^gh api user' "$legacy_bounds" || true)" -eq 1 ] ||
+        fail "the legacy recovery REST probe must be bounded directly"
+    unset STUB_CALLS
+else
+    echo "    (skipped: no timeout binary — the probes are unbounded here)"
+fi
 
 echo "==> a probe that outlives its deadline says so, not 'not authenticated'"
 # Bounding the auth probe made a slow network look exactly like a missing login.
