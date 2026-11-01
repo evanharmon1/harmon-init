@@ -497,14 +497,15 @@ echo "$*" >>"${STUB_LOG_DIR}/history-timeout.log"
 shift 2
 [ "$*" = 'git fetch --unshallow origin' ] || exit 99
 [ -f "${STUB_LOG_DIR}/reconcile.done" ] || exit 98
-if [ "${STUB_CHECKOUT_HISTORY:-}" = timeout ]; then
+if [ "${STUB_CHECKOUT_HISTORY:-}" = timeout ] || [ "${STUB_CHECKOUT_HISTORY:-}" = timeout-killed ]; then
     echo "${*:2}" >>"${STUB_LOG_DIR}/unshallow.log"
+    [ "$STUB_CHECKOUT_HISTORY" != timeout-killed ] || exit 137
     exit 124
 fi
 exec "$@"
 EOF
 chmod +x "${HISTORY_BIN}/timeout"
-for scenario in success fail timeout incomplete full local-unset local-false missing-timeout; do
+for scenario in success fail timeout timeout-killed incomplete full local-unset local-false missing-timeout; do
     make_fixture "history-${scenario}" -
     # Isolate history while proving reconciliation keeps its first position.
     cat >"${FIX}/scripts/reconcile-toolchain.sh" <<'EOF'
@@ -543,12 +544,29 @@ EOF
         output_has 'checkout history: unshallowed from origin' || fail "success summary must name unshallow"
         ! output_has 'completed with warnings' || fail "successful unshallow must not degrade preparation"
         ;;
-    fail | timeout | incomplete | missing-timeout)
+    fail | timeout | timeout-killed | incomplete | missing-timeout)
         output_has 'completed with warnings: checkout history is shallow' || fail "${scenario}: summary must warn about shallow history"
         output_has 'ancestry-dependent verify/integrate gates may go indeterminate' || fail "${scenario}: warning must name affected gates"
         ! output_has 'unshallowed from origin' || fail "${scenario}: cannot report successful unshallow"
+        ! output_has 'run task setup:remote again' || fail "${scenario}: a bounded retry must not be promised as the remedy"
         ;;
     *) ! output_has 'checkout history' || fail "${scenario}: history no-op must not warn" ;;
+    esac
+    case "$scenario" in
+    timeout | timeout-killed)
+        output_has 'run git fetch --unshallow origin by hand in this checkout without a timeout' || fail "${scenario}: remedy must allow an unbounded manual fetch"
+        ;;
+    fail)
+        output_has 'unshallow fetch failed (exit 1)' || fail "non-timeout failure must name its actual outcome"
+        output_has 'check the origin URL, authentication and network access' || fail "non-timeout failure must give relevant checks"
+        ! output_has 'timed out' && ! output_has 'without a timeout' || fail "non-timeout failure must not claim timeout"
+        ;;
+    incomplete)
+        output_has 'check whether origin provides complete history' || fail "incomplete fetch must name the upstream history check"
+        ;;
+    missing-timeout)
+        output_has 'install timeout or run git fetch --unshallow origin by hand in this checkout' || fail "missing timeout must name a usable remedy"
+        ;;
     esac
 done
 
@@ -570,6 +588,7 @@ EOF
     [ "$(cat "${LOG_DIR}/unshallow.log")" = 'fetch --unshallow origin' ] || fail "real timeout must start exactly one fetch"
     [ ! -e "${LOG_DIR}/unshallow.done" ] || fail "real deadline must interrupt the slow fetch"
     output_has 'completed with warnings: checkout history is shallow' || fail "real timeout must warn in summary"
+    output_has 'run git fetch --unshallow origin by hand in this checkout without a timeout' || fail "real timeout must name the unbounded manual remedy"
 
     echo "==> a real shallow clone gains history without moving HEAD"
     make_fixture history-real-git -

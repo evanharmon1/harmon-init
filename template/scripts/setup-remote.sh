@@ -110,20 +110,38 @@ fi
 # Fetch only this checkout's origin; never move HEAD or merge any branch.
 if [ "${CLAUDE_CODE_REMOTE:-}" = true ]; then
     history_warning=""
+    history_remedy="check Git repository access in this checkout"
     if ! shallow="$(git rev-parse --is-shallow-repository 2>/dev/null)"; then
         history_warning="checkout history could not be checked"
     elif [ "$shallow" = true ]; then
         if ! command -v timeout >/dev/null 2>&1; then
             history_warning="checkout history is shallow; timeout is unavailable"
-        elif timeout --kill-after=2s 20s git fetch --unshallow origin >&2 &&
-            [ "$(git rev-parse --is-shallow-repository 2>/dev/null)" = false ]; then
-            note_did "checkout history: unshallowed from origin"
+            history_remedy="install timeout or run git fetch --unshallow origin by hand in this checkout"
         else
-            history_warning="checkout history is shallow or incomplete; unshallow fetch failed or timed out"
+            history_fetch_rc=0
+            timeout --kill-after=2s 20s git fetch --unshallow origin >&2 || history_fetch_rc=$?
+            case "$history_fetch_rc" in
+            0)
+                if [ "$(git rev-parse --is-shallow-repository 2>/dev/null)" = false ]; then
+                    note_did "checkout history: unshallowed from origin"
+                else
+                    history_warning="checkout history is shallow or incomplete after the fetch"
+                    history_remedy="check whether origin provides complete history"
+                fi
+                ;;
+            124 | 137)
+                history_warning="checkout history is shallow or incomplete; unshallow fetch timed out or was killed"
+                history_remedy="run git fetch --unshallow origin by hand in this checkout without a timeout"
+                ;;
+            *)
+                history_warning="checkout history is shallow or incomplete; unshallow fetch failed (exit ${history_fetch_rc})"
+                history_remedy="check the origin URL, authentication and network access"
+                ;;
+            esac
         fi
     fi
     if [ -n "$history_warning" ]; then
-        note_warning "${history_warning}; ancestry-dependent verify/integrate gates may go indeterminate; run task setup:remote again"
+        note_warning "${history_warning}; ancestry-dependent verify/integrate gates may go indeterminate; ${history_remedy}"
     fi
 fi
 

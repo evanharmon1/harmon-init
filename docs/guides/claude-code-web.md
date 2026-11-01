@@ -1109,8 +1109,14 @@ After tool reconciliation, remote preparation checks this checkout with
 within the existing 90 s SessionStart budget. Success appears in the preparation
 summary. Failure, expiry, missing `timeout`, or a fetch that leaves the checkout
 shallow produces a non-fatal summary warning: ancestry-dependent verify/integrate
-gates may go indeterminate; retry `task setup:remote`. Full checkouts need no
-history fetch, and local/devcontainer preparation does not probe or fetch
+gates may go indeterminate. If the fetch times out or is killed, run
+`git fetch --unshallow origin` by hand in the checkout **without a timeout**;
+re-running preparation would apply the same 20 s bound. For a non-timeout fetch
+error, check the origin URL, authentication and network access. If the fetch
+succeeds but history remains shallow, check whether origin provides complete
+history. If `timeout` is missing, install it or run the fetch by hand.
+Full checkouts need no history fetch, and local/devcontainer preparation does
+not probe or fetch
 checkout history. This adds no history step for siblings: their existing clones
 are full-depth. Real web-session confirmation remains on
 [#1460](https://github.com/evanharmon1/harmon-init/issues/1460).

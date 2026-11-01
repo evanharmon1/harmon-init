@@ -594,9 +594,14 @@ shallow, attempts one `git fetch --unshallow origin`. It gets 20 s plus a 2 s
 kill grace within the same 90 s SessionStart deadline. Success is reported in
 the preparation summary; failure, expiry, missing `timeout`, or remaining
 shallow history warns without failing preparation. The warning names the
-ancestry-dependent verify/integrate gates that may go indeterminate and asks for
-a `task setup:remote` retry. Full checkouts do not fetch history; local and
-devcontainer preparation do not check it. Sibling fetching is unchanged, and
+ancestry-dependent verify/integrate gates that may go indeterminate. A timed-out
+or killed fetch requires `git fetch --unshallow origin` by hand in the checkout,
+without a timeout; a preparation retry would impose the same 20 s limit. A
+non-timeout fetch error instead asks for checks of the origin URL,
+authentication and network access. A successful fetch that leaves history
+shallow asks whether origin provides complete history. Missing `timeout` asks
+for its installation or a manual fetch. Full checkouts do not fetch history;
+local and devcontainer preparation do not check it. Sibling fetching is unchanged, and
 the existing sibling clone path does not request shallow history. A real
 web-session verification run remains a follow-up on
 [#1460](https://github.com/evanharmon1/harmon-init/issues/1460).
