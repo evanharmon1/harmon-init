@@ -152,6 +152,15 @@ make_stub() {
         # network call that a stub happily answers is to look at the log.
         echo 'if [ -n "${STUB_CALLS:-}" ]; then echo "$*" >>"$STUB_CALLS"; fi'
         echo 'if [ -n "${STUB_HOST_AUDIT:-}" ]; then printf "%s|%s|%s\n" "${GH_HOST:-}" "${GH_REPO:-}" "$*" >>"$STUB_HOST_AUDIT"; fi'
+        cat <<'BOUND_STUB'
+if [ "${GH_STUB_REQUIRE_BOUND:-0}" = 1 ]; then
+    case "$1 $2" in
+    'auth status' | 'api user')
+        [ "${GH_STUB_BOUNDED:-0}" = 1 ] || { echo 'stub: gh probe is unbounded' >&2; exit 1; }
+        ;;
+    esac
+fi
+BOUND_STUB
         echo 'if [ "$1" = "auth" ] && [ "$2" = "status" ]; then'
         case "$scenario" in
         project)
@@ -1114,11 +1123,14 @@ fi
 
 echo "==> the REST fallback is bounded too"
 if command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1; then
-    out="$(GH_STUB_USER=hangs NETWORK_TIMEOUT=1 run_gh_section proxy-false-negative)"
+    : >"${STUB_CALLS}"
+    out="$(GH_STUB_USER=hangs NETWORK_TIMEOUT=3 run_gh_section proxy-false-negative)"
     case "$out" in
     *"not authenticated -- skipping"*) ;;
     *) fail "an unanswered REST probe must keep the unauthenticated path: ${out}" ;;
     esac
+    [ "$(grep -c '^api user' "${STUB_CALLS}" || true)" -eq 1 ] ||
+        fail "the bounded-REST case must actually reach its REST probe"
 fi
 
 echo "==> a slow failed auth and hanging REST share one auth-phase deadline"
@@ -1126,11 +1138,12 @@ phase_timeout="$(command -v timeout || command -v gtimeout || true)"
 if [ -n "$phase_timeout" ]; then
     make_stub proxy-false-negative
     : >"${STUB_CALLS}"
-    # Auth spends 2s of a 3s phase before failing. The REST read must use only
-    # the remainder; giving it a fresh 3s would exceed this 4s outer bound.
-    out="$(PATH="${TMP}/bin:${PATH}" NO_COLOR=1 NETWORK_TIMEOUT=3 \
+    # Auth spends 2s of a 5s phase before failing. Leave a safe remainder
+    # after the whole-second clock reserve. A fresh 5s REST bound would exceed
+    # this 6s outer deadline; the shared phase (including kill grace) fits.
+    out="$(PATH="${TMP}/bin:${PATH}" NO_COLOR=1 NETWORK_TIMEOUT=5 \
         GH_STUB_AUTH_DELAY=2 GH_STUB_USER=hangs \
-        "$phase_timeout" 4 "${WITH_BOARD}" gh 2>&1)" ||
+        "$phase_timeout" 6 "${WITH_BOARD}" gh 2>&1)" ||
         fail "auth and REST exceeded their shared deadline: ${out}"
     case "$out" in
     *"not authenticated -- skipping"*) ;;
@@ -1138,6 +1151,50 @@ if [ -n "$phase_timeout" ]; then
     esac
     [ "$(grep -c '^api user' "${STUB_CALLS}" || true)" -eq 1 ] ||
         fail "the shared-budget case must reach exactly one REST fallback"
+fi
+
+echo "==> no REST call starts when the safe auth-phase remainder is exhausted"
+: >"${STUB_CALLS}"
+out="$(GH_STUB_AUTH_DELAY=1 GH_STUB_USER=success NETWORK_TIMEOUT=2 \
+    run_gh_section proxy-false-negative)"
+case "$out" in
+*"not authenticated -- skipping"*) ;;
+*) fail "an exhausted auth budget must keep the original skip wording: ${out}" ;;
+esac
+if grep -q '^api user' "${STUB_CALLS}"; then
+    fail "REST must not start without time left in the auth phase"
+fi
+
+echo "==> both gh probes are direct children of their bounded calls"
+if [ -n "$phase_timeout" ]; then
+    mkdir -p "${TMP}/bounded-bin"
+    cat >"${TMP}/bounded-bin/timeout" <<'TIMEOUT_STUB'
+#!/usr/bin/env bash
+args=("$@")
+if [ "${1:-}" = -k ]; then shift 2; fi
+[ "$#" -ge 2 ] && [ "$1" -gt 0 ] || exit 1
+shift
+case "$1" in
+true | gh) ;;
+*) echo "stub: timeout must launch gh directly, not $1" >&2; exit 1 ;;
+esac
+printf '%s\n' "$*" >>"$STUB_TIMEOUT_CALLS"
+export GH_STUB_BOUNDED=1
+exec "$STUB_REAL_TIMEOUT" "${args[@]}"
+TIMEOUT_STUB
+    chmod +x "${TMP}/bounded-bin/timeout"
+    STUB_TIMEOUT_CALLS="${TMP}/bounded-probes.txt"
+    : >"$STUB_TIMEOUT_CALLS"
+    out="$(PATH="${TMP}/bounded-bin:${PATH}" STUB_REAL_TIMEOUT="$phase_timeout" \
+        STUB_TIMEOUT_CALLS="$STUB_TIMEOUT_CALLS" GH_STUB_REQUIRE_BOUND=1 \
+        GH_STUB_USER=success run_gh_section proxy-false-negative)"
+    case "$out" in
+    *"Open PRs:"*"could not read token scopes"*) ;;
+    *) fail "direct bounded auth and REST must recover the proxy token: ${out}" ;;
+    esac
+    grep -q '^gh auth status ' "$STUB_TIMEOUT_CALLS" || fail "auth was not bounded directly"
+    grep -q '^gh api user' "$STUB_TIMEOUT_CALLS" || fail "REST was not bounded directly"
+    unset STUB_TIMEOUT_CALLS
 fi
 unset STUB_CALLS
 

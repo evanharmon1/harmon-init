@@ -189,52 +189,46 @@ GH_AUTH_PROBED=false
 # validating probe would change what that line is entitled to claim. The scope
 # check issue #827 asks for is added there as its own narrowly-scoped call
 # instead — see render_gh_scope_check.
-# Run the whole auth phase under one deadline. The REST fallback receives only
-# the time auth status leaves, so it cannot add another NETWORK_TIMEOUT phase
-# to the session-start budget. Export the function for the bounded child bash;
-# positional arguments carry paths/host without interpolating them into code.
-probe_gh_access() {
-    local report="$1" host="$2" rest_marker="$3" rest_lib="$4" rc=0
-    # Narrow to the active credential on this repository's host. Older gh
-    # lacks --active; its retry shares this phase's deadline too.
-    gh auth status --active --hostname "$host" >"$report" 2>&1 || rc=$?
-    if grep -i 'unknown flag' "$report" >/dev/null 2>&1; then
-        rc=0
-        gh auth status --hostname "$host" >"$report" 2>&1 || rc=$?
-    fi
-    case "$rc" in
-    0 | 124 | 137) return "$rc" ;;
-    esac
-    # A proxy can reject auth status while allowing authenticated REST reads.
-    # Mark the fallback so a phase timeout here keeps the failed-auth wording,
-    # rather than incorrectly claiming auth status itself timed out.
-    : >"$rest_marker"
-    # shellcheck source=scripts/lib/gh-rest.sh
-    . "$rest_lib"
-    # The outer run_timeout bounds both reads; no second deadline starts here.
-    if GH_REST_TIMEOUT= gh_rest_api user >/dev/null 2>&1; then
-        # Access is proved, scopes are not. Discard even scope-looking output
-        # from the failed report so no scope verdict/remedy can rely on it.
-        : >"$report"
-        return 0
-    fi
-    return 1
-}
-
 if should_show "gh" || [[ "${SECTION}" == "setup" ]]; then
     GH_AUTH_PROBED=true
     gh_auth_rc=0
-    gh_rest_marker="${TMPDIR_STATUS}/auth-rest-probed"
-    export -f probe_gh_access
-    run_timeout "${NETWORK_TIMEOUT}" bash -c 'probe_gh_access "$@"' -- \
-        "${GH_AUTH_FILE}" "${TARGET_HOST}" "${gh_rest_marker}" \
-        "${REPO_ROOT}/scripts/lib/gh-rest.sh" || gh_auth_rc=$?
+    gh_auth_started=$SECONDS
+    # Keep gh a direct child of timeout: BusyBox timeout signals only that
+    # child, so a shell wrapping the probes would leave gh running afterwards.
+    run_timeout "${NETWORK_TIMEOUT}" gh auth status --active \
+        --hostname "${TARGET_HOST}" >"${GH_AUTH_FILE}" 2>&1 || gh_auth_rc=$?
+    if [[ "${gh_auth_rc}" != 124 && "${gh_auth_rc}" != 137 ]] &&
+        grep -i 'unknown flag' "${GH_AUTH_FILE}" >/dev/null 2>&1; then
+        # Older gh lacks --active. Retry on the same host, within the auth
+        # phase. Reserve a second because SECONDS has whole-second resolution:
+        # elapsed time may otherwise be understated by almost one second.
+        gh_auth_remaining=$((NETWORK_TIMEOUT - (SECONDS - gh_auth_started) - 1))
+        gh_auth_rc=124
+        if [[ "${gh_auth_remaining}" -gt 0 ]]; then
+            gh_auth_rc=0
+            run_timeout "${gh_auth_remaining}" gh auth status \
+                --hostname "${TARGET_HOST}" >"${GH_AUTH_FILE}" 2>&1 || gh_auth_rc=$?
+        fi
+    fi
     case "${gh_auth_rc}" in
     0) GH_AUTHED=true ;;
     124 | 137)
-        # Either timeout's deadline/hard kill or an external kill is unknown,
-        # never a missing login. No REST read starts after those auth results.
-        if [[ ! -f "${gh_rest_marker}" ]]; then GH_AUTH_TIMEDOUT=true; fi
+        # A deadline or an external kill is unknown, never a missing login.
+        # No REST read starts after either auth result.
+        GH_AUTH_TIMEDOUT=true
+        ;;
+    *)
+        # A proxy can reject auth status while authenticated REST reads work.
+        # Give that direct, bounded read only the safe auth-phase remainder;
+        # skip it when none remains, preserving the original skip wording.
+        gh_auth_remaining=$((NETWORK_TIMEOUT - (SECONDS - gh_auth_started) - 1))
+        if [[ "${gh_auth_remaining}" -gt 0 ]] &&
+            GH_REST_TIMEOUT="${gh_auth_remaining}" gh_rest_api user >/dev/null 2>&1; then
+            GH_AUTHED=true
+            # REST proves access, not scopes. Discard even scope-looking text
+            # from the failed report so no scope verdict/remedy relies on it.
+            : >"${GH_AUTH_FILE}"
+        fi
         ;;
     esac
 fi
