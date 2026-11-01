@@ -61,7 +61,7 @@ In prompt order, as defined in `copier.yml`. "Asked when" is the question's
 | 23 | `use_codex_review` | bool | no | always | `docs/guides/codex-review.md`, `codex-review.sh`, `codex-gate.sh`, `task challenge` / `task review` |
 | 24 | `use_codex_cloud_review` | bool | no | `use_codex_review` | Makes a terminal Codex review a **required shepherd signal** — **validator** |
 | 25 | `use_coderabbit` | bool | no | always | `.coderabbit.yaml` + bot trust |
-| 25a | `coderabbit_review_trigger` | choice `on-request`/`automatic` | `on-request` | `use_coderabbit` | `.coderabbit.yaml` `reviews.auto_review` (off under `on-request`, on with drafts under `automatic`), `chat.auto_reply`, and the CHECKLIST install item; repos that answered `use_coderabbit` before it existed get `on-request` on update |
+| 25a | `coderabbit_review_trigger` | choice `on-request`/`automatic` | `on-request` | `use_coderabbit` | `.coderabbit.yaml` `reviews.auto_review` (off under `on-request`, on with drafts under `automatic`), `chat.auto_reply`, and the CHECKLIST install item; repos that answered `use_coderabbit` before it existed get `on-request` on update; **security-sensitive** (selects reviewer execution) |
 | 26 | `use_gemini_code_assist` | bool | no | always | `.gemini/` (`config.yaml` + `styleguide.md`) |
 | 27 | `use_greptile` | bool | no | always | `.greptile/config.json` with automatic reviews off; requires a Greptile account and App |
 | 28 | `devcontainer` | bool | **yes** | always | The whole dual-profile `.devcontainer/`, `devcontainer-build.yml`, 4 scripts, 4 guides — **validator** rejects `use_foreman` without it |

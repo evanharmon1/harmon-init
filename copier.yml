@@ -38,6 +38,7 @@ _sensitive_questions:
   - use_codex_review
   - use_codex_cloud_review
   - use_coderabbit
+  - coderabbit_review_trigger
   - use_gemini_code_assist
   - use_greptile
   - devcontainer
@@ -407,7 +408,7 @@ use_coderabbit:
 coderabbit_review_trigger:
   type: str
   help: >-
-    CODERABBIT TRIGGER: When should CodeRabbit review? on-request (the
+    [security-sensitive] CODERABBIT TRIGGER: When should CodeRabbit review? on-request (the
     default) turns automatic reviews off in .coderabbit.yaml, so CodeRabbit
     reviews only when asked with `@coderabbitai review`, as the dev loop asks
     every reviewer. automatic reviews every push, drafts included. Repos that
