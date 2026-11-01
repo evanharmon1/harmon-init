@@ -195,6 +195,12 @@ if should_show "gh" || [[ "${SECTION}" == "setup" ]]; then
     gh_auth_started=$SECONDS
     # Keep gh a direct child of timeout: BusyBox timeout signals only that
     # child, so a shell wrapping the probes would leave gh running afterwards.
+    # `gh auth status` reports every account on every host, and the scope line
+    # read below cannot tell them apart — so narrow it to one credential from
+    # both directions: --active (not a second, inactive account on this host)
+    # and --hostname (not an unrelated host's account, whose scopes say nothing
+    # about the API calls this repo makes). The host comes from the repository,
+    # not a github.com assumption — see gh_target_host.
     run_timeout "${NETWORK_TIMEOUT}" gh auth status --active \
         --hostname "${TARGET_HOST}" >"${GH_AUTH_FILE}" 2>&1 || gh_auth_rc=$?
     if [[ "${gh_auth_rc}" != 124 && "${gh_auth_rc}" != 137 ]] &&
@@ -213,7 +219,10 @@ if should_show "gh" || [[ "${SECTION}" == "setup" ]]; then
     case "${gh_auth_rc}" in
     0) GH_AUTHED=true ;;
     124 | 137)
-        # A deadline or an external kill is unknown, never a missing login.
+        # 137 is not proof the deadline fired: `timeout` also returns it for a
+        # probe killed by anything else (OOM, an operator, a supervisor). Both
+        # roads lead to the same verdict — UNKNOWN, never "logged out" — so
+        # they share a branch, and the wording stays agnostic about the cause.
         # No REST read starts after either auth result.
         GH_AUTH_TIMEDOUT=true
         ;;
@@ -223,7 +232,8 @@ if should_show "gh" || [[ "${SECTION}" == "setup" ]]; then
         # skip it when none remains, preserving the original skip wording.
         gh_auth_remaining=$((NETWORK_TIMEOUT - (SECONDS - gh_auth_started) - 1))
         if [[ "${gh_auth_remaining}" -gt 0 ]] &&
-            GH_REST_TIMEOUT="${gh_auth_remaining}" gh_rest_api user >/dev/null 2>&1; then
+            run_timeout "${gh_auth_remaining}" gh api user \
+                --hostname "${TARGET_HOST}" >/dev/null 2>&1; then
             GH_AUTHED=true
             # REST proves access, not scopes. Discard even scope-looking text
             # from the failed report so no scope verdict/remedy relies on it.

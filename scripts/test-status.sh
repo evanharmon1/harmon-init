@@ -1171,7 +1171,10 @@ if [ -n "$phase_timeout" ]; then
     cat >"${TMP}/bounded-bin/timeout" <<'TIMEOUT_STUB'
 #!/usr/bin/env bash
 args=("$@")
-if [ "${1:-}" = -k ]; then shift 2; fi
+if [ "${1:-}" = -k ]; then
+    [ "${GH_STUB_REJECT_K:-0}" = 0 ] || exit 2
+    shift 2
+fi
 [ "$#" -ge 2 ] && [ "$1" -gt 0 ] || exit 1
 shift
 case "$1" in
@@ -1184,16 +1187,21 @@ exec "$STUB_REAL_TIMEOUT" "${args[@]}"
 TIMEOUT_STUB
     chmod +x "${TMP}/bounded-bin/timeout"
     STUB_TIMEOUT_CALLS="${TMP}/bounded-probes.txt"
-    : >"$STUB_TIMEOUT_CALLS"
-    out="$(PATH="${TMP}/bounded-bin:${PATH}" STUB_REAL_TIMEOUT="$phase_timeout" \
-        STUB_TIMEOUT_CALLS="$STUB_TIMEOUT_CALLS" GH_STUB_REQUIRE_BOUND=1 \
-        GH_STUB_USER=success run_gh_section proxy-false-negative)"
-    case "$out" in
-    *"Open PRs:"*"could not read token scopes"*) ;;
-    *) fail "direct bounded auth and REST must recover the proxy token: ${out}" ;;
-    esac
-    grep -q '^gh auth status ' "$STUB_TIMEOUT_CALLS" || fail "auth was not bounded directly"
-    grep -q '^gh api user' "$STUB_TIMEOUT_CALLS" || fail "REST was not bounded directly"
+    # Both probes must remain bounded and recover when timeout rejects -k.
+    # run_timeout probes that capability; a helper that assumes -k fails here.
+    for reject_k in 0 1; do
+        : >"$STUB_TIMEOUT_CALLS"
+        out="$(PATH="${TMP}/bounded-bin:${PATH}" STUB_REAL_TIMEOUT="$phase_timeout" \
+            STUB_TIMEOUT_CALLS="$STUB_TIMEOUT_CALLS" GH_STUB_REQUIRE_BOUND=1 \
+            GH_STUB_REJECT_K="$reject_k" GH_STUB_USER=success \
+            run_gh_section proxy-false-negative)"
+        case "$out" in
+        *"Open PRs:"*"could not read token scopes"*) ;;
+        *) fail "bounded probes must recover with reject_k=${reject_k}: ${out}" ;;
+        esac
+        grep -q '^gh auth status ' "$STUB_TIMEOUT_CALLS" || fail "auth was not bounded directly"
+        grep -q '^gh api user' "$STUB_TIMEOUT_CALLS" || fail "REST was not bounded directly"
+    done
     unset STUB_TIMEOUT_CALLS
 fi
 unset STUB_CALLS
