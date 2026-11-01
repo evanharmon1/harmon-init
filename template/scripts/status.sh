@@ -165,8 +165,8 @@ PID_TOKEI=""
 
 CURRENT_BRANCH="$(git branch --show-current 2>/dev/null || echo "detached")"
 
-# Resolve auth once and keep the output: it is both the gate for the GitHub
-# section and the only place the token's scopes are reported, and re-running it
+# Resolve auth once and keep the output: it normally gates the GitHub
+# section and is the only place the token's scopes are reported, and re-running it
 # per use would spend an extra API call to learn the same thing. Captured with
 # `2>&1` because gh has moved this report between stdout and stderr across
 # versions, and bounded by run_timeout — the bare `gh auth status` calls it
@@ -189,42 +189,53 @@ GH_AUTH_PROBED=false
 # validating probe would change what that line is entitled to claim. The scope
 # check issue #827 asks for is added there as its own narrowly-scoped call
 # instead — see render_gh_scope_check.
+# Run the whole auth phase under one deadline. The REST fallback receives only
+# the time auth status leaves, so it cannot add another NETWORK_TIMEOUT phase
+# to the session-start budget. Export the function for the bounded child bash;
+# positional arguments carry paths/host without interpolating them into code.
+probe_gh_access() {
+    local report="$1" host="$2" rest_marker="$3" rest_lib="$4" rc=0
+    # Narrow to the active credential on this repository's host. Older gh
+    # lacks --active; its retry shares this phase's deadline too.
+    gh auth status --active --hostname "$host" >"$report" 2>&1 || rc=$?
+    if grep -i 'unknown flag' "$report" >/dev/null 2>&1; then
+        rc=0
+        gh auth status --hostname "$host" >"$report" 2>&1 || rc=$?
+    fi
+    case "$rc" in
+    0 | 124 | 137) return "$rc" ;;
+    esac
+    # A proxy can reject auth status while allowing authenticated REST reads.
+    # Mark the fallback so a phase timeout here keeps the failed-auth wording,
+    # rather than incorrectly claiming auth status itself timed out.
+    : >"$rest_marker"
+    # shellcheck source=scripts/lib/gh-rest.sh
+    . "$rest_lib"
+    # The outer run_timeout bounds both reads; no second deadline starts here.
+    if GH_REST_TIMEOUT= gh_rest_api user >/dev/null 2>&1; then
+        # Access is proved, scopes are not. Discard even scope-looking output
+        # from the failed report so no scope verdict/remedy can rely on it.
+        : >"$report"
+        return 0
+    fi
+    return 1
+}
+
 if should_show "gh" || [[ "${SECTION}" == "setup" ]]; then
     GH_AUTH_PROBED=true
     gh_auth_rc=0
-    # `gh auth status` reports every account on every host, and the scope line
-    # read below cannot tell them apart — so narrow it to one credential from
-    # both directions: --active (not a second, inactive account on this host)
-    # and --hostname (not an unrelated host's account, whose scopes say nothing
-    # about the API calls this repo makes). The host comes from the repository,
-    # not a github.com assumption — see gh_target_host.
-    gh_host="${TARGET_HOST}"
-    run_timeout "${NETWORK_TIMEOUT}" gh auth status --active \
-        --hostname "${gh_host}" >"${GH_AUTH_FILE}" 2>&1 ||
-        gh_auth_rc=$?
-    if grep -i 'unknown flag' "${GH_AUTH_FILE}" 2>/dev/null >/dev/null; then
-        # gh predates --active (added in 2.40). Fall back rather than read a
-        # usage error as a failed login — and keep --hostname, which is far
-        # older. Multi-account per host arrived WITH 2.40, so on a gh this old
-        # one host means one account and the narrowing is complete anyway.
-        gh_auth_rc=0
-        run_timeout "${NETWORK_TIMEOUT}" gh auth status \
-            --hostname "${gh_host}" >"${GH_AUTH_FILE}" 2>&1 ||
-            gh_auth_rc=$?
-    fi
-    # 124 is `timeout`'s own "deadline hit" code, and 137 the same deadline
-    # reached through run_timeout's `-k` hard kill. Both are distinguished from
-    # a real failure because bounding this probe made a slow network
-    # indistinguishable from a missing login, and reporting "not authenticated"
-    # for a timeout sends the reader to fix the wrong thing.
-    #
-    # 137 is not proof the deadline fired: `timeout` also returns it for a probe
-    # killed by anything else (OOM, an operator, a supervisor). Both roads lead
-    # to the same verdict — UNKNOWN, never "logged out" — so they share a branch,
-    # and only the wording below stays agnostic about which one it was.
+    gh_rest_marker="${TMPDIR_STATUS}/auth-rest-probed"
+    export -f probe_gh_access
+    run_timeout "${NETWORK_TIMEOUT}" bash -c 'probe_gh_access "$@"' -- \
+        "${GH_AUTH_FILE}" "${TARGET_HOST}" "${gh_rest_marker}" \
+        "${REPO_ROOT}/scripts/lib/gh-rest.sh" || gh_auth_rc=$?
     case "${gh_auth_rc}" in
     0) GH_AUTHED=true ;;
-    124 | 137) GH_AUTH_TIMEDOUT=true ;;
+    124 | 137)
+        # Either timeout's deadline/hard kill or an external kill is unknown,
+        # never a missing login. No REST read starts after those auth results.
+        if [[ ! -f "${gh_rest_marker}" ]]; then GH_AUTH_TIMEDOUT=true; fi
+        ;;
     esac
 fi
 
