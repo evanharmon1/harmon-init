@@ -582,12 +582,18 @@ user prefix that a child preparation task cannot put onto the parent agent's
 30 s plus a 2 s kill grace, leaving room inside SessionStart's 90 s deadline;
 version probes get 2 s plus a 1 s grace. An unreconciled tool produces a
 non-fatal summary warning with its installed version, checkout pin, environment
-revision (from the bootstrap manifest, or `unknown`) and the remedy: set
-`HARMON_INIT_REF` to a release carrying the named checkout tool pin and rebuild
-the environment. If the manifest records a newer tool version than the checkout
-pins, the warning instead advises updating the repository's pin (`copier update`
-for a generated repository). The harmon-init release number is not compared
-with a tool version. Any preparation failure, including an outer timeout,
+revision (from the bootstrap manifest, or `unknown`) and a remedy for the cause.
+For a writable-prefix or `PATH` refusal, make
+`${HARMON_PREFIX:-/usr/local}/bin` writable and place it before competing tool
+copies on `PATH`, then rerun `task setup:remote`. For ambiguous checkout pins,
+keep exactly one `SHELLCHECK_VERSION` assignment in
+`.github/actions/setup/action.yml`, then rerun `task setup:remote`. For other
+version drift, the warning advises setting `HARMON_INIT_REF` to a release carrying
+the named checkout tool pin and rebuilding the environment. If the manifest
+records a newer tool version than the checkout pins, the warning instead advises
+updating the repository's pin (`copier update` for a generated repository). The
+harmon-init release number is not compared with a tool version.
+Any preparation failure, including an outer timeout,
 triggers a report-only probe in the wrapper; it reports remaining drift without
 inferring that the time budget caused it. Probe stdout is captured in a regular
 file so a descendant holding stdout open cannot extend the probe's bound.

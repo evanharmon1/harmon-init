@@ -81,11 +81,16 @@ Rules for this script, each with its reason:
   download fails, or time runs out, the warning summary names the tool, installed
   version, checkout pin and environment revision from
   `${HARMON_PREFIX:-/usr/local}/share/harmon-remote-env/manifest.json` (or
-  `unknown` if unavailable). The fix is to set `HARMON_INIT_REF` to a release
-  carrying the named checkout tool pin and rebuild the environment. If the
-  manifest records a newer tool version than the checkout pins, the warning
-  instead advises updating the repository's pin (`copier update` for a generated
-  repository); the latest environment release may already be ahead of the repo.
+  `unknown` if unavailable). The remedy depends on the cause. For a writable-prefix
+  or `PATH` refusal, make `${HARMON_PREFIX:-/usr/local}/bin` writable and place it
+  before competing tool copies on `PATH`, then rerun `task setup:remote`. For
+  ambiguous checkout pins, keep exactly one `SHELLCHECK_VERSION` assignment in
+  `.github/actions/setup/action.yml`, then rerun `task setup:remote`. For other
+  version drift, the warning advises setting `HARMON_INIT_REF` to a release carrying
+  the named checkout tool pin and rebuilding the environment. If the manifest
+  records a newer tool version than the checkout pins, the warning instead advises
+  updating the repository's pin (`copier update` for a generated repository); the
+  latest environment release may already be ahead of the repo.
   Generated repositories reuse the installer and checksum metadata saved by
   bootstrap; an older environment without them, or with metadata for another
   pin, gets this warning too. Keep the release pin: per-session reconciliation
