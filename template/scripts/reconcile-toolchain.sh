@@ -77,7 +77,9 @@ fi
 warn_drift() {
     local environment_pin= remedy
     remedy="set HARMON_INIT_REF to a release carrying ${tool} ${pin:-unknown} and rebuild the environment"
-    if [ -r "${cache}/manifest.json" ]; then
+    if [ -n "${2:-}" ]; then
+        remedy="$2"
+    elif [ -r "${cache}/manifest.json" ]; then
         # harmon-init's release and a tool's version are different number lines.
         # Compare the checkout pin to the TOOL version that release installed.
         environment_pin="$(jq -r --arg tool "$tool" --arg pin "$pin" '
@@ -118,7 +120,8 @@ for tool in "${tools[@]}"; do
         fi
         pin=ambiguous
         seen=unknown
-        warn_drift "multiple ${pin_name} pins in ${setup_action}"
+        warn_drift "multiple ${pin_name} pins in ${setup_action}" \
+            "keep exactly one ${pin_name} assignment in ${setup_action}, then run task setup:remote again"
         continue
         ;;
     esac
@@ -173,7 +176,8 @@ for tool in "${tools[@]}"; do
         if [ -x "${entry:-.}/${tool}" ]; then break; fi
     done
     if [ "$first_bin" != "$bin" ] || [ ! -d "$bin" ] || [ ! -w "$bin" ]; then
-        warn_drift "${bin} must be writable and precede other ${tool} copies on PATH"
+        warn_drift "${bin} must be writable and precede other ${tool} copies on PATH" \
+            "make ${bin} writable and place it before other ${tool} copies on PATH, then run task setup:remote again"
         continue
     fi
     rc=0

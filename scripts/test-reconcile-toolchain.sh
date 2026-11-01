@@ -25,10 +25,33 @@ for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_CONFIG_COUNT", "
              "HARMON_CHANGE_LOG", "HARMON_TMPDIR"):
     base_env.pop(name, None)
 base_env.update(GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1")
-real_timeout = shutil.which("timeout")
+
+
+def resolve_tool(names, path=None):
+    for name in names:
+        found = shutil.which(name, path=path)
+        if found:
+            return found
+    return None
+
+
+def required_tool(names):
+    found = resolve_tool(names)
+    if found:
+        return found
+    name = " or ".join(names)
+    # Same contract as test-template.sh: missing local tools skip the fixture;
+    # GitHub Actions must have every capability needed by the verification gate.
+    if base_env.get("GITHUB_ACTIONS"):
+        print(f"FAIL: required tool '{name}' is not installed in CI", file=sys.stderr)
+        raise SystemExit(1)
+    print(f"SKIP: '{name}' not installed — skipping remote toolchain fixtures")
+    raise SystemExit(0)
+
+
+real_timeout = required_tool(("timeout", "gtimeout"))
+required_tool(("sha256sum", "shasum"))
 real_task = shutil.which("task")
-if not real_timeout:
-    raise SystemExit("test-reconcile-toolchain needs GNU timeout")
 if not real_task:
     raise SystemExit("test-reconcile-toolchain needs task")
 
@@ -66,6 +89,11 @@ print("OK: gate registry coverage rejects unknown tools and private gate probes"
 
 with tempfile.TemporaryDirectory(prefix="reconcile-") as scratch:
     scratch = Path(scratch)
+    resolver_bin = scratch / "resolver-bin"
+    resolver_bin.mkdir()
+    (resolver_bin / "gtimeout").symlink_to(real_timeout)
+    assert resolve_tool(("timeout", "gtimeout"), path=str(resolver_bin)) == str(resolver_bin / "gtimeout")
+    print("OK: suite timeout resolver accepts a PATH containing only gtimeout")
     repo = scratch / "checkout"
     prefix = scratch / "prefix"
     stubs = scratch / "stubs"
@@ -106,6 +134,22 @@ with tempfile.TemporaryDirectory(prefix="reconcile-") as scratch:
     if real_install.exists():
         for name in ("lib.sh", "install-shellcheck.sh"):
             shutil.copyfile(real_install.parent / name, assets / "install" / name)
+        real_shasum = shutil.which("shasum")
+        if real_shasum:
+            sha_bin = scratch / "shasum-only"
+            sha_bin.mkdir()
+            for name in ("dirname", "shasum", "perl"):
+                found = shutil.which(name)
+                if found:
+                    (sha_bin / name).symlink_to(found)
+            sha_env = base_env | {"PATH": str(sha_bin)}
+            verifier = [shutil.which("bash"), "-c", '. "$1"; harmon_verify_sha256 "$2" "$3"',
+                        "_", str(real_install.parent / "lib.sh"), str(archive)]
+            rc, out = run([*verifier, checksum], env=sha_env)
+            assert rc == 0, out
+            rc, out = run([*verifier, "0" * 64], env=sha_env)
+            assert rc != 0 and "checksum mismatch" in out, out
+            print("OK: shared verifier accepts shasum-only PATH and rejects a bad digest")
     else:
         # Consumers do not ship image assets. Model a bootstrap-owned installer
         # contract; harmon-init's root run above exercises the actual installer.
@@ -140,10 +184,10 @@ exit 2
     executable(stubs / "timeout", f'''#!/usr/bin/env bash
 if [ "${{RECONCILE_TEST_MODE:-}}" = slow ] && [ "${{2:-}}" = 30s ]; then
     shift 2
-    exec {real_timeout} --kill-after=0.5s 3s "$@"
+    exec {shlex.quote(real_timeout)} --kill-after=0.5s 3s "$@"
 fi
 if [ "${{RECONCILE_TEST_MODE:-}}" = outer ] && [ "${{2:-}}" = 90s ]; then exit 124; fi
-exec {real_timeout} "$@"
+exec {shlex.quote(real_timeout)} "$@"
 ''')
     executable(stubs / "task", f'''#!/usr/bin/env bash
 if [ "${{RECONCILE_TEST_MODE:-}}" = setup-failure ]; then exit 7; fi
@@ -163,11 +207,15 @@ exec {shlex.quote(real_task)} "$@"
         assert rc == 0, output
         return output
 
-    def drift_warning(output, reason):
+    def drift_warning(output, reason, remedy=None):
         line = next(line for line in output.splitlines() if line.startswith("==> setup:remote completed with warnings:"))
         for value in ("shellcheck", "installed 1.2.3", "checkout pin 7.8.9", "environment v1.2.3",
-                      "HARMON_INIT_REF", "release carrying shellcheck 7.8.9", reason):
+                      reason):
             assert value in line, (value, output)
+        if remedy is None:
+            assert "HARMON_INIT_REF" in line and "release carrying shellcheck 7.8.9" in line, output
+        else:
+            assert remedy in line and "HARMON_INIT_REF" not in line, output
         assert "latest release" not in line, output
 
     old_tool()
@@ -227,9 +275,19 @@ exec {shlex.quote(real_task)} "$@"
     rc, out = run(["task", "--silent", "setup:remote"], repo,
                   env | {"PATH": f"{stubs}:{prefix / 'bin'}:{base_env['PATH']}"})
     assert rc == 0 and not log.exists(), out
-    drift_warning(out, "must be writable and precede")
+    drift_warning(out, "must be writable and precede",
+                  remedy=f"make {prefix / 'bin'} writable and place it before other shellcheck copies on PATH")
     (stubs / "shellcheck").unlink()
     print("OK: successful SessionStart names the repair; missing installers and shadowed prefixes warn without installing")
+    action = repo / ".github/actions/setup/action.yml"
+    action.write_text("SHELLCHECK_VERSION=7.8.9\nSHELLCHECK_VERSION=7.8.8\n")
+    out = setup()
+    line = next(line for line in out.splitlines() if line.startswith("==> setup:remote completed with warnings:"))
+    assert "multiple SHELLCHECK_VERSION pins" in line and "keep exactly one SHELLCHECK_VERSION assignment" in line, out
+    assert str(action) in line and "HARMON_INIT_REF" not in line and "release carrying" not in line, out
+    assert not log.exists(), out
+    action.write_text("SHELLCHECK_VERSION=7.8.9\n")
+    print("OK: duplicate pins advise correcting the checkout configuration rather than rebuilding the environment")
     old_tool()
     cached_pins = cache / "versions.env"
     cached_pins.write_text(pins.replace("7.8.9", "7.8.8"))
