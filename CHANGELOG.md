@@ -8,6 +8,24 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [5.15.0](https://github.com/evanharmon1/harmon-init/compare/v5.14.0...v5.15.0) (2026-11-01)
+
+
+### Features
+
+* **coderabbit:** review on request by default; adopters switch on their next copier update ([#1912](https://github.com/evanharmon1/harmon-init/issues/1912)) ([7b60cf1](https://github.com/evanharmon1/harmon-init/commit/7b60cf1c97d35462445b13851d9a94a6d82ef3e9))
+* **copier:** mark security-sensitive questions in copier.yml ([#1887](https://github.com/evanharmon1/harmon-init/issues/1887)) ([3e2999e](https://github.com/evanharmon1/harmon-init/commit/3e2999ed52c5d24d250a2148ba4d74eac33cca90))
+* **ruleset:** reconcile repository merge settings in setup:github ([#1896](https://github.com/evanharmon1/harmon-init/issues/1896)) ([43fb6e7](https://github.com/evanharmon1/harmon-init/commit/43fb6e73ce2f9829a7380b6502be65d3c180d6a3))
+
+
+### Bug Fixes
+
+* **codex-review:** support trusted external review runners ([#1892](https://github.com/evanharmon1/harmon-init/issues/1892)) ([ca18da0](https://github.com/evanharmon1/harmon-init/commit/ca18da057ddaadf43d98151550acd2ddd623fe0a))
+* **registry:** preserve Sol 5.6 as retired ([#1901](https://github.com/evanharmon1/harmon-init/issues/1901)) ([f0cb16d](https://github.com/evanharmon1/harmon-init/commit/f0cb16df25fc366fb44437e866f35f084ff75784))
+* **registry:** register Terra 6.1 and retire 5.6 ([#1902](https://github.com/evanharmon1/harmon-init/issues/1902)) ([4287ea9](https://github.com/evanharmon1/harmon-init/commit/4287ea981749030b6db998818da3d9224a85fca4))
+* **remote-env:** reconcile gate-checked tool versions against the checkout's pins at session start ([#1907](https://github.com/evanharmon1/harmon-init/issues/1907)) ([6bd1df2](https://github.com/evanharmon1/harmon-init/commit/6bd1df279636eb75d5f16e4092debab865f3508e))
+* **status:** render the GitHub section when gh auth status is a false negative behind a proxy ([#1909](https://github.com/evanharmon1/harmon-init/issues/1909)) ([66ac9c5](https://github.com/evanharmon1/harmon-init/commit/66ac9c5b487858aeff242594e6ebd9268378d4c9))
+
 ## [5.14.0](https://github.com/evanharmon1/harmon-init/compare/v5.13.3...v5.14.0) (2026-10-31)
 
 
