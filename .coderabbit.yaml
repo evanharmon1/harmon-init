@@ -1,0 +1,64 @@
+---
+# CodeRabbit configuration
+# Docs:   https://docs.coderabbit.ai/reference/configuration
+# Schema: https://coderabbit.ai/integrations/schema.v2.json
+
+language: en-US
+
+tone_instructions: >-
+  Be concise and practical. Prioritize security and correctness.
+  Copier project template that scaffolds repos with pre-configured DevOps tooling, CI/CD, linting, security checks, git hooks, and task runners
+
+reviews:
+  profile: chill
+  request_changes_workflow: false
+  high_level_summary: true
+  poem: false
+  collapse_walkthrough: true
+  changed_files_summary: true
+  assess_linked_issues: true
+
+  # Keep the "Review skipped" status comment. It tells a human how to ask for a
+  # review, and a status that stops saying "skipped" is how automatic reviews
+  # switched back on (here or in the CodeRabbit UI) get noticed.
+  review_status: true
+  # Review on request only: the dev loop asks for each review itself
+  # (`@coderabbitai full review`, then `@coderabbitai review` for an
+  # incremental pass), so every review counts against the per-PR review
+  # budget. Answer `coderabbit_review_trigger: automatic` to review every push.
+  auto_review:
+    enabled: false
+    ignore_usernames:
+      - renovate[bot]
+      - dependabot[bot]
+
+  path_instructions:
+    - path: "**"
+      instructions: >-
+        Enforce Conventional Commits. Trunk-based development: PRs target
+        main. Never suggest bypassing git hooks with --no-verify; fix the
+        underlying issue. `task verify` must pass before merge — flag changes
+        that would break it.
+
+    - path: "Taskfile.yml"
+      instructions: >-
+        Keep lint/build/validate/test targets parallel-safe. `task verify`
+        is the merge gate.
+
+    - path: ".github/workflows/**"
+      instructions: >-
+        Workflows should call `task` targets rather than re-implement logic,
+        so local + CI stay identical. Pin third-party actions by commit SHA
+        with a trailing version comment. Use Renovate datasource comments for
+        tool versions. Apply least-privilege permissions. Never log secrets.
+
+    - path: "lefthook.yml"
+      instructions: >-
+        Git hooks are orchestrated via lefthook (not pre-commit) and must
+        delegate to Taskfile tasks so CI, local hooks, and manual runs
+        execute identical commands. Do not duplicate command logic here.
+
+chat:
+  # Answer only when mentioned. The dev loop replies in every review thread,
+  # and an automatic answer to each reply is a review nobody asked for.
+  auto_reply: false

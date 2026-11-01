@@ -174,7 +174,17 @@ the compatibility reason in the rule's `description`.
       PRs. This repo already has `renovate.json`; keep that configuration rather
       than replacing it with a generic onboarding config.
 [% if use_coderabbit %]
-- [ ] **[human-only]** Probe: Read the repository app installation and review settings in the GitHub and CodeRabbit interfaces. Write: none. <!-- reconcile-id: template-install-the-coderabbit-app-https-git-017 --> Install the [CodeRabbit app](https://github.com/apps/coderabbitai) on the repo (`.coderabbit.yaml` is pre-configured, including `reviews.auto_review.drafts: true` so it reviews the draft workbench rather than firing on promotion)
+- [ ] **[human-only]** Probe: Read the repository app installation and review settings in the GitHub and CodeRabbit interfaces. Write: none. <!-- reconcile-id: template-install-the-coderabbit-app-https-git-017 --> Install the [CodeRabbit app](https://github.com/apps/coderabbitai) on the repo
+[% if coderabbit_review_trigger == 'automatic' %]
+      (`.coderabbit.yaml` is pre-configured, including `reviews.auto_review.drafts: true` so it reviews the draft workbench rather than firing on promotion).
+      Confirm the organization's **Automatic Review** setting in the CodeRabbit
+      UI is on as well, so a missing file does not silently stop reviews.
+[% else %]
+      (`.coderabbit.yaml` turns automatic reviews off; the dev loop requests them with
+      `@coderabbitai review`). Confirm the organization's **Automatic Review**
+      setting in the CodeRabbit UI is off as well: CodeRabbit falls back to it when
+      the file is missing, and a setting left on reviews every push.
+[% endif %]
 [% else %]
 - [ ] **[human-only]** Probe: Read the repository app installation and review settings in the GitHub and CodeRabbit interfaces. Write: none. <!-- reconcile-id: template-confirm-coderabbit-has-no-access-for-018 --> **Confirm CodeRabbit has no access** — for a repository that
       previously used it, remove this repo from the CodeRabbit GitHub App

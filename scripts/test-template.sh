@@ -394,6 +394,9 @@ iac)
     # Exercise Foreman with the new optional App ID left empty; the ruleset
     # must retain its old admin-only bypass output in this profile.
     data_args+=(--data use_foreman=true)
+    # CodeRabbit's opt-in automatic trigger. `full` covers the default
+    # (on-request), so between them both trigger choices render (#1908).
+    data_args+=(--data use_coderabbit=true --data coderabbit_review_trigger=automatic)
     ;;
 full)
     # Maximize conditional coverage: web tooling + terraform + ansible +
@@ -1116,6 +1119,23 @@ if [ "$validation_scope" = "renovate-config" ]; then
             err "rendered renovate.json fails renovate-config-validator --strict"
     else
         err "required tool 'npx' is not installed for strict Renovate configuration validation"
+    fi
+fi
+# CodeRabbit's schema is fetched from coderabbit.ai, so like Renovate's
+# validator it runs only in this network-bound scope; ordinary `task verify`
+# stays offline. `full` renders the on-request config and `iac` the automatic
+# one, so both trigger choices are validated (#1908).
+# renovate: datasource=pypi depName=check-jsonschema
+CHECK_JSONSCHEMA_VERSION=0.39.0
+CODERABBIT_SCHEMA_URL=https://coderabbit.ai/integrations/schema.v2.json
+if [ "$validation_scope" = "renovate-config" ] && [ -f .coderabbit.yaml ]; then
+    if have uvx; then
+        run_quiet coderabbit-schema \
+            uvx --from "check-jsonschema==${CHECK_JSONSCHEMA_VERSION}" check-jsonschema \
+            --schemafile "$CODERABBIT_SCHEMA_URL" .coderabbit.yaml ||
+            err "rendered .coderabbit.yaml fails CodeRabbit's schema"
+    else
+        err "required tool 'uvx' is not installed for CodeRabbit schema validation"
     fi
 fi
 if [ "$validation_scope" = "renovate-config" ]; then
@@ -2092,8 +2112,8 @@ if [ -f .skills-sync.yaml ]; then
 fi
 
 # ── 9d2. foreman renders per use_foreman (default off) ──────────────
-# `iac` (defaults + foreman) and `full` (foreman + coderabbit + cloud
-# review) opt in; every other profile exercises the default-off branch.
+# `iac` (defaults + foreman + automatic CodeRabbit) and `full` (foreman +
+# coderabbit + cloud review) opt in; every other profile exercises the default-off branch.
 # Foreman v2 is a THIN integration: the template ships only the wrapper
 # taskfile (a pinned uvx invocation of ponderousdev/foreman) and
 # .foreman.toml — no vendored source, agents, or architecture doc.
@@ -2424,23 +2444,40 @@ assert bool(policy["stage"]["integration"].get("finders", [])) == cloud_review
 PY
 
 # ── 9d4. CodeRabbit renders only when explicitly enabled ───────────
-# Only `full` opts in; every other profile exercises the default-off path.
-# Keep the config, setup docs, and bot trust wiring aligned with the answer.
-if [ "$profile" = "full" ]; then
+# `full` opts in with no trigger answer, which is what an existing adopter gets
+# on `copier update`: the on-request default. `iac` opts in with
+# `coderabbit_review_trigger=automatic`. Every other profile exercises the
+# default-off path. Keep the config, setup docs, and bot trust wiring aligned
+# with the answer (#1908).
+case "$profile" in
+full | iac)
     [ -f .coderabbit.yaml ] || err ".coderabbit.yaml missing (use_coderabbit=true)"
     grep -Fq 'Install the [CodeRabbit app]' docs/CHECKLIST.md ||
         err "CHECKLIST missing CodeRabbit setup (use_coderabbit=true)"
+    grep -Fq "organization's **Automatic Review**" docs/CHECKLIST.md ||
+        err "CHECKLIST does not ask to confirm CodeRabbit's organization auto-review setting"
     ! grep -Fq 'Confirm CodeRabbit has no access' docs/CHECKLIST.md ||
         err "CHECKLIST rendered the CodeRabbit removal step for an opt-in"
     grep -Fq 'coderabbitai[bot]' .github/workflows/claude-review.yml ||
         err "Claude review workflow does not trust CodeRabbit (use_coderabbit=true)"
     grep -q 'coderabbitai' .foreman.toml ||
         err "Foreman does not trust CodeRabbit reviews (use_coderabbit=true)"
-    # The draft PR is the workbench, so a reviewer that skips drafts would only
-    # ever report after the readiness gate promoted the PR past it.
-    grep -Eq '^ +drafts: true$' .coderabbit.yaml ||
-        err "CodeRabbit skips drafts — it cannot review the draft workbench"
-else
+    if [ -f docs/project-management.md ]; then
+        grep -Fq '`coderabbitai[bot]`' docs/project-management.md ||
+            err "project-management sender list omits CodeRabbit (use_coderabbit=true)"
+    fi
+    # Both triggers keep the same review voice and project guidance.
+    if have yq; then
+        yq -o json .coderabbit.yaml | jq -e '.reviews.profile == "chill" and
+            (.tone_instructions | startswith("Be concise and practical.")) and
+            ([.reviews.path_instructions[].path][0:4] == ["**", "Taskfile.yml", ".github/workflows/**", "lefthook.yml"]) and
+            (.reviews.auto_review.ignore_usernames == ["renovate[bot]", "dependabot[bot]"])' \
+            >/dev/null || err ".coderabbit.yaml lost its shared review settings"
+    else
+        required yq "CodeRabbit shared-settings check" || fail=1
+    fi
+    ;;
+*)
     [ ! -f .coderabbit.yaml ] ||
         err ".coderabbit.yaml rendered but use_coderabbit is off"
     ! grep -Fq 'Install the [CodeRabbit app]' docs/CHECKLIST.md ||
@@ -2453,6 +2490,37 @@ else
         ! grep -q 'coderabbitai' .foreman.toml ||
             err "Foreman trusts CodeRabbit reviews but use_coderabbit is off"
     fi
+    ;;
+esac
+if [ "$profile" = "full" ]; then
+    # On request: no automatic review, so nothing reviews a draft or a push
+    # the dev loop did not ask about, and the "Review skipped" status stays.
+    if have yq; then
+        yq -o json .coderabbit.yaml | jq -e '.reviews.auto_review.enabled == false and
+            (.reviews.auto_review | has("drafts") | not) and
+            (.reviews.auto_review | has("base_branches") | not) and
+            .reviews.review_status == true and
+            .chat.auto_reply == false' >/dev/null ||
+            err "default CodeRabbit config is not request-only"
+    else
+        required yq "CodeRabbit request-only check" || fail=1
+    fi
+    ! grep -Fq 'auto_review.drafts' docs/CHECKLIST.md ||
+        err "request-only CHECKLIST still says CodeRabbit auto-reviews drafts"
+    grep -Fq '`@coderabbitai review`' docs/CHECKLIST.md ||
+        err "request-only CHECKLIST does not say how reviews are requested"
+fi
+if [ "$profile" = "iac" ]; then
+    # Automatic is the pre-#1908 file, byte for byte: an adopter who answers
+    # `automatic` sees no change. The fixture is that file rendered for this
+    # profile from 4287ea9; change it only together with a deliberate change
+    # to the automatic config.
+    cmp -s .coderabbit.yaml "$repo_root/tests/fixtures/coderabbit/automatic-iac.yaml" ||
+        err "automatic CodeRabbit config differs from the pre-#1908 file (tests/fixtures/coderabbit/automatic-iac.yaml)"
+    grep -Fq 'auto_review.drafts: true' docs/CHECKLIST.md ||
+        err "automatic CHECKLIST lost the draft auto-review note"
+    grep -q '^coderabbit_review_trigger: automatic$' .copier-answers.yml ||
+        err "answers file does not record the automatic CodeRabbit trigger"
 fi
 
 # ── 9d4b. Greptile renders only when explicitly enabled ────────────

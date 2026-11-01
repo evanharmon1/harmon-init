@@ -175,10 +175,11 @@ the compatibility reason in the rule's `description`.
       checks, issues (including the Dependency Dashboard), or update/remediation
       PRs. This repo already has `renovate.json`; keep that configuration rather
       than replacing it with a generic onboarding config.
-- [ ] **[human-only]** Probe: Read the repository app installation and review settings in the GitHub and CodeRabbit interfaces. Write: none. <!-- reconcile-id: root-remove-coderabbit-access-remove-this-016 --> **Remove CodeRabbit access** — remove this repository from
-      the CodeRabbit GitHub App installation and confirm the App no longer has
-      access. Deleting `.coderabbit.yaml` and bot trust does not revoke an
-      existing installation.
+- [ ] **[human-only]** Probe: Read the repository app installation and review settings in the GitHub and CodeRabbit interfaces. Write: none. <!-- reconcile-id: root-install-the-coderabbit-app-https-git-016 --> Install the [CodeRabbit app](https://github.com/apps/coderabbitai) on the repo
+      (`.coderabbit.yaml` turns automatic reviews off; the dev loop requests them with
+      `@coderabbitai review`). Confirm the organization's **Automatic Review**
+      setting in the CodeRabbit UI is off as well: CodeRabbit falls back to it when
+      the file is missing, and a setting left on reviews every push.
 - [ ] **[human-only]** Probe: Read the repository app installation and review settings in the GitHub and Greptile interfaces. Write: none. <!-- reconcile-id: root-install-the-greptile-app-https-githu-017 --> Install the [Greptile app](https://github.com/apps/greptile-apps) on the repo
       (`.greptile/config.json` turns automatic reviews off; the dev loop requests them)
 - [ ] **[human-only]** Probe: Read the repository connection and review preferences in Codex settings. Write: none. <!-- reconcile-id: root-connect-codex-cloud-review-connect-t-018 --> **Connect Codex cloud review** — connect this repository in
