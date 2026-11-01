@@ -6,6 +6,7 @@
 # hook runs this task on the web; other sessions run `task setup:remote` once. Every step is idempotent and
 # a safe no-op when already done:
 #
+#   0. gate-checked tools  remote sessions reconcile to the checkout's CI pins
 #   1. lefthook install     so the pre-commit / commit-msg / pre-push gates run
 #   2. related repos        .devcontainer/related-repos.txt cloned beside this
 #                           checkout (its PARENT directory), then fetched forward
@@ -38,6 +39,7 @@ did=""
 skipped=""
 failed=""
 warnings=""
+reconciled=""
 
 note_did() { did="${did}  + $1"$'\n'; }
 # Routine no-op steps are listed for context without degrading preparation.
@@ -83,6 +85,24 @@ run_step() {
 }
 
 echo "==> setup:remote in ${ROOT}"
+
+# Run first so slow sibling/dependency work cannot consume the tool budget.
+# The helper never makes installation trouble fatal to session preparation.
+if [ "${CLAUDE_CODE_REMOTE:-}" = true ]; then
+    reconcile_output="$(bash scripts/reconcile-toolchain.sh 2>&1)" || {
+        note_warning "toolchain reconciliation could not run; run task setup:remote"
+    }
+    [ -z "$reconcile_output" ] || printf '%s\n' "$reconcile_output" >&2
+    while IFS= read -r line; do
+        case "$line" in
+        'Reconciled '*)
+            note_did "$line"
+            reconciled="${reconciled}${reconciled:+; }${line}"
+            ;;
+        'WARNING: '*) note_warning "${line#WARNING: }" ;;
+        esac
+    done <<<"$reconcile_output"
+fi
 
 # --- 1. git hooks ---
 # Every config name lefthook itself searches for.
@@ -178,6 +198,6 @@ fi
 if [ -n "$warnings" ]; then
     echo "==> setup:remote completed with warnings: ${warnings}"
 else
-    echo "==> setup:remote completed."
+    echo "==> setup:remote completed.${reconciled:+ ${reconciled}}"
 fi
 echo "Run 'task verify' to check the checkout."
