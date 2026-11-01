@@ -1100,7 +1100,23 @@ session (*docs, 2026-09-29*). If the hook did not run (a multi-repository sessio
 or a platform without it), the `AGENTS.md` fallback still tells the agent to run
 `task setup:remote` once before work.
 
-After remote tool reconciliation, `task setup:remote` (`scripts/setup-remote.sh`,
+**Observed 2026-11-01:** the platform clones shallow (both harmon-devkit and
+omator probes). That left harmon-devkit's ancestry-dependent readiness tests
+indeterminate even though the earlier verification gates passed.
+After tool reconciliation, remote preparation checks this checkout with
+`git rev-parse --is-shallow-repository`. If shallow, it makes one
+`git fetch --unshallow origin` attempt, bounded at 20 s plus a 2 s kill grace
+within the existing 90 s SessionStart budget. Success appears in the preparation
+summary. Failure, expiry, missing `timeout`, or a fetch that leaves the checkout
+shallow produces a non-fatal summary warning: ancestry-dependent verify/integrate
+gates may go indeterminate; retry `task setup:remote`. Full checkouts need no
+history fetch, and local/devcontainer preparation does not probe or fetch
+checkout history. This adds no history step for siblings: their existing clones
+are full-depth. Real web-session confirmation remains on
+[#1460](https://github.com/evanharmon1/harmon-init/issues/1460).
+
+After remote tool reconciliation and checkout history preparation,
+`task setup:remote` (`scripts/setup-remote.sh`,
 [#1405](https://github.com/evanharmon1/harmon-init/issues/1405)) runs
 `lefthook install` (when lefthook is on `PATH`), then the same sibling clones
 the devcontainer makes (`.devcontainer/related-repos.txt`), into the checkout's **parent**

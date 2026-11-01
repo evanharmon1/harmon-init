@@ -586,6 +586,21 @@ use the single cause-to-remedy mapping in
 [`scripts/reconcile-toolchain.sh`](../../scripts/reconcile-toolchain.sh).
 Version warnings also carry the installed version, checkout pin and environment
 revision (from the bootstrap manifest, or `unknown`).
+
+The platform also clones the checkout shallow (observed 2026-11-01 on
+harmon-devkit and omator). After tool reconciliation and before hooks/siblings,
+remote-only preparation checks `git rev-parse --is-shallow-repository` and, when
+shallow, attempts one `git fetch --unshallow origin`. It gets 20 s plus a 2 s
+kill grace within the same 90 s SessionStart deadline. Success is reported in
+the preparation summary; failure, expiry, missing `timeout`, or remaining
+shallow history warns without failing preparation. The warning names the
+ancestry-dependent verify/integrate gates that may go indeterminate and asks for
+a `task setup:remote` retry. Full checkouts do not fetch history; local and
+devcontainer preparation do not check it. Sibling fetching is unchanged, and
+the existing sibling clone path does not request shallow history. A real
+web-session verification run remains a follow-up on
+[#1460](https://github.com/evanharmon1/harmon-init/issues/1460).
+
 Any preparation failure, including an outer timeout,
 triggers a report-only probe in the wrapper; it reports remaining drift without
 inferring that the time budget caused it. Probe stdout is captured in a regular

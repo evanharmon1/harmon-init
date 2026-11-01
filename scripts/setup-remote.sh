@@ -7,6 +7,7 @@
 # a safe no-op when already done:
 #
 #   0. gate-checked tools  remote sessions reconcile to the checkout's CI pins
+#      checkout history    remote sessions unshallow this checkout (bounded, warn-only)
 #   1. lefthook install     so the pre-commit / commit-msg / pre-push gates run
 #   2. related repos        .devcontainer/related-repos.txt cloned beside this
 #                           checkout (its PARENT directory), then fetched forward
@@ -17,7 +18,8 @@
 # Never prompts (git: GIT_TERMINAL_PROMPT=0 and, unless GIT_SSH_COMMAND is already set,
 # ssh BatchMode; pnpm: CI=true). A step whose tool is missing is reported as skipped; the exit
 # status is non-zero only when a step that could run failed. A related repo that
-# cannot be cloned or fetched is a warning, not a failure.
+# cannot be cloned or fetched, or checkout history that cannot be completed, is
+# a warning, not a failure.
 set -euo pipefail
 
 # -P: the PHYSICAL path, so a checkout entered through a symlink still clones its
@@ -102,6 +104,27 @@ if [ "${CLAUDE_CODE_REMOTE:-}" = true ]; then
         'WARNING: '*) note_warning "${line#WARNING: }" ;;
         esac
     done <<<"$reconcile_output"
+fi
+
+# Keep reconciliation first, and leave room inside SessionStart's 90s budget.
+# Fetch only this checkout's origin; never move HEAD or merge any branch.
+if [ "${CLAUDE_CODE_REMOTE:-}" = true ]; then
+    history_warning=""
+    if ! shallow="$(git rev-parse --is-shallow-repository 2>/dev/null)"; then
+        history_warning="checkout history could not be checked"
+    elif [ "$shallow" = true ]; then
+        if ! command -v timeout >/dev/null 2>&1; then
+            history_warning="checkout history is shallow; timeout is unavailable"
+        elif timeout --kill-after=2s 20s git fetch --unshallow origin >&2 &&
+            [ "$(git rev-parse --is-shallow-repository 2>/dev/null)" = false ]; then
+            note_did "checkout history: unshallowed from origin"
+        else
+            history_warning="checkout history is shallow or incomplete; unshallow fetch failed or timed out"
+        fi
+    fi
+    if [ -n "$history_warning" ]; then
+        note_warning "${history_warning}; ancestry-dependent verify/integrate gates may go indeterminate; run task setup:remote again"
+    fi
 fi
 
 # --- 1. git hooks ---

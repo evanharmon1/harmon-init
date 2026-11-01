@@ -12,6 +12,7 @@ REPO_ROOT="$PWD"
 unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN GH_HOST
 unset GIT_SSH_COMMAND # a host may set one; the default (unset) case is what is under test
 unset NODE_OPTIONS GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS
+unset CLAUDE_CODE_REMOTE
 # Hermetic git: a platform may inject config (SSH->HTTPS rewrites, hooks paths).
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 
@@ -104,6 +105,27 @@ REAL_GIT="$(command -v git)"
 cat >"${STUB_BIN}/git" <<EOF
 #!/usr/bin/env bash
 [ -z "\${STUB_LOG_DIR:-}" ] || echo "\${GIT_SSH_COMMAND-unset}" >>"\${STUB_LOG_DIR}/git-ssh.log"
+if [ -n "\${STUB_CHECKOUT_HISTORY:-}" ]; then
+    if [ "\$*" = 'rev-parse --is-shallow-repository' ]; then
+        echo probe >>"\${STUB_LOG_DIR}/history.log"
+        if [ "\${STUB_CHECKOUT_HISTORY}" = full ] || [ -f "\${STUB_LOG_DIR}/unshallow.done" ]; then
+            echo false
+        else
+            echo true
+        fi
+        exit 0
+    elif [ "\${1:-}" = fetch ]; then
+        echo "\$*" >>"\${STUB_LOG_DIR}/unshallow.log"
+        [ "\$*" = 'fetch --unshallow origin' ] || exit 99
+        case "\${STUB_CHECKOUT_HISTORY}" in
+        fail) exit 1 ;;
+        slow) sleep 5 ;;
+        incomplete) exit 0 ;;
+        esac
+        touch "\${STUB_LOG_DIR}/unshallow.done"
+        exit 0
+    fi
+fi
 for arg in "\$@"; do
     if [ "\$arg" = fetch ] && [ "\${STUB_FETCH_FAIL_DIR:-}" = "\${2:-}" ]; then
         echo "simulated fetch failure" >&2
@@ -462,6 +484,110 @@ if [ "$HAVE_BOOTSTRAP" = 1 ]; then
     expected_head="$(git -C "${TMP}/seed-sibling-a" rev-parse HEAD)"
     run_setup "${STUBS_PATH}" "EXPECTED_SIBLING=${FIX_PARENT}/sibling-a" "EXPECTED_SIBLING_HEAD=${expected_head}"
     [ "$rc" -eq 0 ] || fail "sibling fetch must precede both installers: $(all_output)"
+fi
+
+# --- This checkout's shallow history, remote sessions only ---
+echo "==> remote shallow history gets one bounded fetch after reconciliation"
+HISTORY_BIN="${TMP}/history-bin"
+mkdir -p "$HISTORY_BIN"
+cat >"${HISTORY_BIN}/timeout" <<'EOF'
+#!/usr/bin/env bash
+echo "$*" >>"${STUB_LOG_DIR}/history-timeout.log"
+[ "$1" = '--kill-after=2s' ] && [ "$2" = 20s ] || exit 99
+shift 2
+[ "$*" = 'git fetch --unshallow origin' ] || exit 99
+[ -f "${STUB_LOG_DIR}/reconcile.done" ] || exit 98
+if [ "${STUB_CHECKOUT_HISTORY:-}" = timeout ]; then
+    echo "${*:2}" >>"${STUB_LOG_DIR}/unshallow.log"
+    exit 124
+fi
+exec "$@"
+EOF
+chmod +x "${HISTORY_BIN}/timeout"
+for scenario in success fail timeout incomplete full local-unset local-false missing-timeout; do
+    make_fixture "history-${scenario}" -
+    # Isolate history while proving reconciliation keeps its first position.
+    cat >"${FIX}/scripts/reconcile-toolchain.sh" <<'EOF'
+#!/usr/bin/env bash
+touch "${STUB_LOG_DIR}/reconcile.done"
+EOF
+    rm -f "${LOG_DIR}/history.log" "${LOG_DIR}/unshallow.log" \
+        "${LOG_DIR}/unshallow.done" "${LOG_DIR}/history-timeout.log" \
+        "${LOG_DIR}/reconcile.done" "${LOG_DIR}/lefthook.log"
+    history_path="${HISTORY_BIN}:${STUBS_PATH}"
+    remote=true
+    history_mode="$scenario"
+    case "$scenario" in
+    local-unset) remote= ;;
+    local-false) remote=false ;;
+    missing-timeout) history_path="${STUBS_PATH}" ;;
+    esac
+    run_setup "$history_path" "CLAUDE_CODE_REMOTE=${remote}" "STUB_CHECKOUT_HISTORY=${history_mode}"
+    [ "$rc" -eq 0 ] || fail "${scenario}: history preparation must exit 0: $(all_output)"
+    [ -s "${LOG_DIR}/lefthook.log" ] || fail "${scenario}: later preparation must still run"
+    case "$scenario" in
+    local-*)
+        [ ! -e "${LOG_DIR}/history.log" ] && [ ! -e "${LOG_DIR}/unshallow.log" ] || fail "local preparation must not probe or fetch history"
+        [ ! -e "${LOG_DIR}/reconcile.done" ] || fail "local preparation must not reconcile"
+        ;;
+    full | missing-timeout)
+        [ ! -e "${LOG_DIR}/unshallow.log" ] && [ ! -e "${LOG_DIR}/history-timeout.log" ] || fail "${scenario}: no fetch may start"
+        ;;
+    *)
+        [ "$(cat "${LOG_DIR}/unshallow.log")" = 'fetch --unshallow origin' ] || fail "${scenario}: exactly one origin unshallow fetch required"
+        [ "$(cat "${LOG_DIR}/history-timeout.log")" = '--kill-after=2s 20s git fetch --unshallow origin' ] || fail "${scenario}: fetch must be bounded"
+        ;;
+    esac
+    case "$scenario" in
+    success)
+        output_has 'checkout history: unshallowed from origin' || fail "success summary must name unshallow"
+        ! output_has 'completed with warnings' || fail "successful unshallow must not degrade preparation"
+        ;;
+    fail | timeout | incomplete | missing-timeout)
+        output_has 'completed with warnings: checkout history is shallow' || fail "${scenario}: summary must warn about shallow history"
+        output_has 'ancestry-dependent verify/integrate gates may go indeterminate' || fail "${scenario}: warning must name affected gates"
+        ! output_has 'unshallowed from origin' || fail "${scenario}: cannot report successful unshallow"
+        ;;
+    *) ! output_has 'checkout history' || fail "${scenario}: history no-op must not warn" ;;
+    esac
+done
+
+# Exercise the real timeout and Git transport offline as well as the stubs.
+HISTORY_TIMEOUT="$(command -v timeout 2>/dev/null || true)"
+if [ -n "$HISTORY_TIMEOUT" ]; then
+    cat >"${HISTORY_BIN}/timeout" <<EOF
+#!/usr/bin/env bash
+[ "\$1" = '--kill-after=2s' ] && [ "\$2" = 20s ] || exit 99
+shift 2
+exec "${HISTORY_TIMEOUT}" --kill-after=1s 0.1s "\$@"
+EOF
+    echo "==> a real deadline interrupts a slow unshallow and preparation continues"
+    make_fixture history-real-timeout -
+    printf '#!/usr/bin/env bash\nexit 0\n' >"${FIX}/scripts/reconcile-toolchain.sh"
+    rm -f "${LOG_DIR}/unshallow.log" "${LOG_DIR}/unshallow.done"
+    run_setup "${HISTORY_BIN}:${STUBS_PATH}" CLAUDE_CODE_REMOTE=true STUB_CHECKOUT_HISTORY=slow
+    [ "$rc" -eq 0 ] || fail "real history timeout must exit 0: $(all_output)"
+    [ "$(cat "${LOG_DIR}/unshallow.log")" = 'fetch --unshallow origin' ] || fail "real timeout must start exactly one fetch"
+    [ ! -e "${LOG_DIR}/unshallow.done" ] || fail "real deadline must interrupt the slow fetch"
+    output_has 'completed with warnings: checkout history is shallow' || fail "real timeout must warn in summary"
+
+    echo "==> a real shallow clone gains history without moving HEAD"
+    make_fixture history-real-git -
+    git -C "$FIX" fetch -q --depth=1 "file://${BARE_BASE}/test-owner/sibling-a.git" main
+    git -C "$FIX" checkout -q --detach FETCH_HEAD
+    git -C "$FIX" remote add origin "file://${BARE_BASE}/test-owner/sibling-a.git"
+    before_head="$(git -C "$FIX" rev-parse HEAD)"
+    [ "$(git -C "$FIX" rev-parse --is-shallow-repository)" = true ] || fail "real fixture must start shallow"
+    printf '#!/usr/bin/env bash\nexit 0\n' >"${FIX}/scripts/reconcile-toolchain.sh"
+    # A real local fetch should use the production budget, not the short test deadline.
+    ln -sf "$HISTORY_TIMEOUT" "${HISTORY_BIN}/timeout"
+    run_setup "${HISTORY_BIN}:${STUBS_PATH}" CLAUDE_CODE_REMOTE=true
+    [ "$rc" -eq 0 ] || fail "real unshallow must succeed: $(all_output)"
+    [ "$(git -C "$FIX" rev-parse --is-shallow-repository)" = false ] || fail "real checkout must become full"
+    [ "$(git -C "$FIX" rev-parse HEAD)" = "$before_head" ] || fail "unshallow must not move HEAD"
+    output_has 'checkout history: unshallowed from origin' || fail "real unshallow summary must report success"
+else
+    echo "skip: timeout is unavailable; real history deadline/transport checks cannot run"
 fi
 
 # --- Frozen dependency installs, only for lockfiles that exist ---
