@@ -400,8 +400,24 @@ use_coderabbit:
     14-day trial. Choosing no—including accepting the default when updating a
     repo created before this question existed—removes the template-managed
     CodeRabbit config and bot trust; remove the repo from the GitHub App
-    installation separately.
+    installation separately. CODERABBIT TRIGGER (next) chooses when it
+    reviews; the default is on request.
   default: no
+
+coderabbit_review_trigger:
+  type: str
+  help: >-
+    CODERABBIT TRIGGER: When should CodeRabbit review? on-request (the
+    default) turns automatic reviews off in .coderabbit.yaml, so CodeRabbit
+    reviews only when asked with `@coderabbitai review`, as the dev loop asks
+    every reviewer. automatic reviews every push, drafts included. Repos that
+    answered CODERABBIT yes before this question existed get on-request on
+    their next copier update; answer automatic to keep automatic reviews.
+  choices:
+    on-request: on-request
+    automatic: automatic
+  default: on-request
+  when: "[[ use_coderabbit ]]"
 
 use_gemini_code_assist:
   type: bool

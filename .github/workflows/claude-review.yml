@@ -27,7 +27,8 @@ jobs:
        github.event.sender.login == 'admiralfraggle' ||
        github.event.sender.login == 'admiralfraggle-bot' ||
        github.event.sender.login == 'renovate[bot]' ||
-       github.event.sender.login == 'dependabot[bot]') &&
+       github.event.sender.login == 'dependabot[bot]' ||
+       github.event.sender.login == 'coderabbitai[bot]') &&
       (contains(github.event.comment.body, '@claude review') ||
        contains(github.event.review.body, '@claude review'))
     # Isolated placement never inherits CI_RUNS_ON or a self-hosted default.
@@ -77,6 +78,7 @@ jobs:
             "admiralfraggle-bot") echo "$SENDER is authorized"; exit 0 ;;
             "renovate[bot]") echo "$SENDER is authorized"; exit 0 ;;
             "dependabot[bot]") echo "$SENDER is authorized"; exit 0 ;;
+            "coderabbitai[bot]") echo "$SENDER is authorized"; exit 0 ;;
           esac
           echo "::error::$SENDER is not an authorized sender"
           exit 1
@@ -229,7 +231,7 @@ jobs:
           trigger_phrase: "@claude review"
           track_progress: true
           use_sticky_comment: true
-          allowed_bots: "renovate[bot],dependabot[bot]"
+          allowed_bots: "renovate[bot],dependabot[bot],coderabbitai[bot]"
           base_branch: main
           branch_prefix: claude/
           # --max-budget-usd is ENFORCED under CLAUDE_CODE_OAUTH_TOKEN
@@ -284,7 +286,7 @@ jobs:
           trigger_phrase: "@claude review"
           track_progress: true
           use_sticky_comment: true
-          allowed_bots: "renovate[bot],dependabot[bot]"
+          allowed_bots: "renovate[bot],dependabot[bot],coderabbitai[bot]"
           base_branch: main
           branch_prefix: claude/
           # --max-budget-usd is ENFORCED under CLAUDE_CODE_OAUTH_TOKEN

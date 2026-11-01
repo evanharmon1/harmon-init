@@ -7,7 +7,7 @@ Claude Code plan/implement/review workflows), CodeQL for supported public
 repositories, Semgrep Community Edition as the free private-repository SAST
 fallback, gitleaks, Dependabot alerts, Renovate, optional Snyk Free scheduled or
 local second-opinion scans, paid security escalation, optional CodeRabbit
-(off by default; Codex is preferred) and Greptile (off by default; manual reviews), a dual-profile devcontainer (AI bot + human) with GHCR
+(off by default; Codex is preferred; reviews on request) and Greptile (off by default; manual reviews), a dual-profile devcontainer (AI bot + human) with GHCR
 prebuilds, a docs tree, and AI steering docs (canonical `AGENTS.md`). It can
 also be applied to existing repos to standardize them.
 
