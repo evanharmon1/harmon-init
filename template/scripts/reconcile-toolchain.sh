@@ -36,23 +36,34 @@ read_pin() {
 }
 
 installed_version() {
-    local output_file rc=0
+    local output output_file rc=0
+    # The lint gate never needs temporary storage. Keep it outside the bounded
+    # capture path so TMPDIR cannot create a false version mismatch in --check.
+    if [ "$mode" = --check ]; then
+        output="$("$1" --version 2>/dev/null)" || return 1
+        case "$1" in
+        shellcheck) printf '%s\n' "$output" | sed -n 's/^version: //p' ;;
+        esac
+        return 0
+    fi
     # SessionStart must be able to report even a broken or hanging executable.
     # A descendant can outlive timeout while holding stdout open. A regular file
     # lets the probe finish without waiting for that writer to close a pipe.
-    output_file="$(mktemp)" || return 1
-    if [ "$mode" = --check ]; then
-        "$1" --version >"$output_file" 2>/dev/null || rc=$?
-    else
-        timeout --kill-after=1s 2s "$1" --version >"$output_file" 2>/dev/null || rc=$?
-    fi
+    # Status 2 means capture storage is unavailable, not that a tool drifted.
+    output_file="$(mktemp 2>/dev/null)" || return 2
+    timeout --kill-after=1s 2s "$1" --version >"$output_file" 2>/dev/null || rc=$?
     if [ "$rc" -eq 0 ]; then
         case "$1" in
         shellcheck) sed -n 's/^version: //p' "$output_file" ;;
         esac
     fi
     rm -f "$output_file"
-    return "$rc"
+    [ "$rc" -eq 0 ]
+}
+
+warn_probe_capture() {
+    printf 'WARNING: %s version probe: mktemp failed; check TMPDIR (%s) and run task setup:remote again.\n' \
+        "$tool" "${TMPDIR:-/tmp}"
 }
 
 prefix="${HARMON_PREFIX:-/usr/local}"
@@ -117,7 +128,16 @@ for tool in "${tools[@]}"; do
         fi
         continue
     fi
-    seen="$(installed_version "$tool")" || seen=unknown
+    probe_rc=0
+    seen="$(installed_version "$tool")" || probe_rc=$?
+    case "$probe_rc" in
+    0) ;;
+    2)
+        warn_probe_capture
+        continue
+        ;;
+    *) seen=unknown ;;
+    esac
     [ "$seen" != "$pin" ] || continue
     if [ "$mode" = --check ]; then
         echo "ERROR: local ${tool} ${seen:-unknown} differs from CI's pinned $pin; rebuild the devcontainer, or install ${tool} $pin." >&2
@@ -162,7 +182,16 @@ for tool in "${tools[@]}"; do
         HARMON_VERSIONS_FILE="${assets}/versions.env" \
         bash "${assets}/install/install-${tool}.sh" >&2 || rc=$?
     hash -r
-    after="$(installed_version "$tool")" || after=unknown
+    probe_rc=0
+    after="$(installed_version "$tool")" || probe_rc=$?
+    case "$probe_rc" in
+    0) ;;
+    2)
+        warn_probe_capture
+        continue
+        ;;
+    *) after=unknown ;;
+    esac
     if [ "$rc" -eq 0 ] && [ "$after" = "$pin" ]; then
         printf 'Reconciled %s %s -> %s\n' "$tool" "${seen:-unknown}" "$pin"
     else

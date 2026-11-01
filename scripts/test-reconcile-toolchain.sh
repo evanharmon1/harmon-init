@@ -179,6 +179,19 @@ exec {shlex.quote(real_task)} "$@"
     assert not log.exists() and "WARNING" not in out and "Reconciled" not in out, out
     print("OK: task setup:remote installs the checkout pin and matching versions do not install/warn")
 
+    missing_tmp = scratch / "missing-tmpdir"
+    assert not missing_tmp.exists()
+    bad_tmp_env = env | {"TMPDIR": str(missing_tmp)}
+    rc, out = run(["bash", "scripts/reconcile-toolchain.sh", "--check", "shellcheck"], repo, bad_tmp_env)
+    assert rc == 0 and not out, out
+    print("OK: --check at the pinned version succeeds with a missing TMPDIR")
+    for args in (["--status"], []):
+        rc, out = run(["bash", "scripts/reconcile-toolchain.sh", *args], repo, bad_tmp_env)
+        assert rc == 0 and "WARNING: shellcheck version probe: mktemp failed" in out, out
+        assert str(missing_tmp) in out and "installed unknown" not in out and "checkout pin" not in out, out
+        assert not log.exists(), out
+    print("OK: bounded probe allocation failure reports mktemp/TMPDIR rather than unknown version drift")
+
     for mode, reason in (("fail", "installer failed"), ("slow", "time budget exhausted")):
         old_tool()
         before = (prefix / "bin/shellcheck").read_bytes()
