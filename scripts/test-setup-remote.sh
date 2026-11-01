@@ -149,6 +149,7 @@ make_fixture() {
     git init -q "${FIX}"
     cp "${REPO_ROOT}/scripts/setup-remote.sh" "${FIX}/scripts/setup-remote.sh"
     cp "${REPO_ROOT}/scripts/session-start-remote.sh" "${FIX}/scripts/session-start-remote.sh"
+    cp "${REPO_ROOT}/scripts/reconcile-toolchain.sh" "${FIX}/scripts/reconcile-toolchain.sh"
     if [ "$HAVE_BOOTSTRAP" = 1 ]; then
         cp "${REPO_ROOT}/.devcontainer/scripts/bootstrap-related-repos.sh" "${FIX}/.devcontainer/scripts/"
         cp "${REPO_ROOT}/.devcontainer/scripts/fetch-related-repos.sh" "${FIX}/.devcontainer/scripts/"

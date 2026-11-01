@@ -558,6 +558,42 @@ clone then fetch siblings without moving their checkouts, and install from
 lockfiles. Preparation warns rather than failing session start; the `AGENTS.md`
 instruction is the fallback when the hook did not run, including multi-repository
 sessions. See the [decision](../decisions/2026-10-09-web-session-start-preparation.md).
+Before those checkout steps, `scripts/reconcile-toolchain.sh` reconciles the
+explicit gate-checked tool registry, currently ShellCheck alone. The registry
+owns the gate's `--check` operation too; the coverage test rejects unknown gate
+selectors and direct version probes in lint scripts. Tools merely pinned in
+the bootstrap manifest or a `pin-pair` group are outside this set.
+
+The comparison pin comes from `.github/actions/setup/action.yml`, which ships
+to generated repositories; `images/devcontainer/versions.env` does not. The
+install itself uses `install/install-shellcheck.sh`, the same checksum and
+staged-version verification as the image and bootstrap. In harmon-init the
+installer and checksum metadata come from the checkout. In generated repos
+they come from `${HARMON_PREFIX}/share/harmon-remote-env`, where bootstrap saves
+`versions.env`, `install/lib.sh` and `install/install-shellcheck.sh`. Metadata
+must cover the checkout's requested version, otherwise no install is attempted.
+The bootstrap manifest remains a record of the base environment revision; a
+per-session replacement does not rewrite that provenance.
+
+Reconciliation uses the existing `${HARMON_PREFIX:-/usr/local}/bin` only if it
+is writable and precedes competing tools on `PATH`. This avoids `sudo` and a
+user prefix that a child preparation task cannot put onto the parent agent's
+`PATH`. Host and devcontainer preparation do not reconcile. An install gets
+30 s plus a 2 s kill grace, leaving room inside SessionStart's 90 s deadline;
+version probes get 2 s plus a 1 s grace. Warnings are non-fatal: each names its
+cause and the remedy for that cause. Both reconciliation and report-only status
+use the single cause-to-remedy mapping in
+[`scripts/reconcile-toolchain.sh`](../../scripts/reconcile-toolchain.sh).
+Version warnings also carry the installed version, checkout pin and environment
+revision (from the bootstrap manifest, or `unknown`).
+Any preparation failure, including an outer timeout,
+triggers a report-only probe in the wrapper; it reports remaining drift without
+inferring that the time budget caused it. Probe stdout is captured in a regular
+file so a descendant holding stdout open cannot extend the probe's bound.
+The release pin remains the bootstrap trust
+root, and only changing the environment setup script rebuilds the platform's
+cached toolchain; a floating ref or version range would not repair that cache.
+
 Everything specific to the platform — the environment's configuration,
 the secrets policy, how its GitHub proxy changes the `gh` calls the dev loop
 makes, the terminal-to-cloud bridges, and the observations still owed by a live
