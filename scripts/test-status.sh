@@ -262,6 +262,7 @@ BOUND_STUB
             # gh predates --active (pre-2.40): the flag is a usage error, which
             # must not read as a failed login.
             echo '    if [ "$3" = "--active" ]; then'
+            echo '        if [ -n "${GH_STUB_ACTIVE_DELAY:-}" ]; then sleep "$GH_STUB_ACTIVE_DELAY"; fi'
             echo '        echo "unknown flag: --active" >&2'
             echo '        exit 1'
             echo '    fi'
@@ -1341,20 +1342,41 @@ case "$out" in
 *) fail "expected the fallback to read the full report, got: ${out}" ;;
 esac
 
-echo "==> an old gh retry that exhausts its budget reports timeout without REST"
+echo "==> an exhausted auth phase reports timeout without another gh call"
 if [ -n "$phase_timeout" ]; then
     STUB_CALLS="${TMP}/legacy-retry-calls.txt"
     export STUB_CALLS
     : >"$STUB_CALLS"
-    out="$(NETWORK_TIMEOUT=3 GH_STUB_NO_ACTIVE_DELAY=5 GH_STUB_USER=success \
+    # The unsupported --active response spends the safe phase budget before
+    # any retry starts. Exhaustion must remain a timeout, never a login failure.
+    out="$(NETWORK_TIMEOUT=3 GH_STUB_ACTIVE_DELAY=2 GH_STUB_USER=success \
         run_gh_section no-active-flag)"
+    case "$out" in
+    *"not authenticated"*) fail "an exhausted auth phase must not report missing auth: ${out}" ;;
+    *"timed out"*) ;;
+    *) fail "expected timeout wording for an exhausted auth phase: ${out}" ;;
+    esac
+    [ "$(grep -c '^auth status' "$STUB_CALLS" || true)" -eq 1 ] ||
+        fail "an exhausted auth phase must not start a legacy retry"
+    if grep -q '^api user' "$STUB_CALLS"; then
+        fail "an exhausted auth phase must not make a REST user probe"
+    fi
+    [ "$(wc -l <"$STUB_CALLS")" -eq 1 ] ||
+        fail "an exhausted auth phase must not make any further gh call"
+
+    echo "==> an old gh retry cannot restart the auth phase deadline"
+    : >"$STUB_CALLS"
+    # After 1s on --active, at most 3s of the 5s phase are safely left. The
+    # retry's 4s reply would succeed under a fresh 5s bound, but must time out.
+    out="$(NETWORK_TIMEOUT=5 GH_STUB_ACTIVE_DELAY=1 GH_STUB_NO_ACTIVE_DELAY=4 \
+        GH_STUB_USER=success run_gh_section no-active-flag)"
     case "$out" in
     *"not authenticated"*) fail "a timed-out legacy retry must not report missing auth: ${out}" ;;
     *"timed out"*) ;;
-    *) fail "expected timeout wording from the legacy retry: ${out}" ;;
+    *) fail "the legacy retry received a fresh deadline: ${out}" ;;
     esac
     [ "$(grep -c '^auth status' "$STUB_CALLS" || true)" -eq 2 ] ||
-        fail "the timeout case must exercise the legacy retry"
+        fail "the remaining-budget case must exercise the legacy retry"
     if grep -q '^api user' "$STUB_CALLS"; then
         fail "a timed-out legacy retry must not make a REST user probe"
     fi
