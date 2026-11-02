@@ -224,7 +224,7 @@ jobs:
           github_token: ${{ steps.app-token.outputs.token }}
           trigger_phrase: "@claude review"
           track_progress: true
-          use_sticky_comment: true
+          use_sticky_comment: false
           allowed_bots: "[[ _review_bots | join(',') ]]"
           base_branch: main
           branch_prefix: claude/
@@ -284,7 +284,7 @@ jobs:
           github_token: ${{ steps.app-token.outputs.token }}
           trigger_phrase: "@claude review"
           track_progress: true
-          use_sticky_comment: true
+          use_sticky_comment: false
           allowed_bots: "[[ _review_bots | join(',') ]]"
           base_branch: main
           branch_prefix: claude/

@@ -2421,10 +2421,10 @@ if [ "$profile" = "meta" ]; then
         err "Codex guide workflow cycles lack the cloud-review qualifier (use_codex_cloud_review=false)"
 fi
 
-# The generated execution policy must honor the same Codex opt-outs as the
-# tasks and setup assets above. A non-zero cap with no matching finder/task is
+# The generated policy honors local Codex opt-outs and enables integration
+# whenever any cloud reviewer is selected. A non-zero cap with no matching finder/task is
 # fail-closed invalid, not a harmless unused setting.
-python3 - "$profile" <<'PY' || err ".devflow.toml does not honor Codex review opt-outs"
+python3 - "$profile" <<'PY' || err ".devflow.toml does not honor reviewer opt-outs"
 import pathlib
 import sys
 import tomllib
@@ -2432,7 +2432,7 @@ import tomllib
 profile = sys.argv[1]
 policy = tomllib.loads(pathlib.Path(".devflow.toml").read_text())
 local_review = profile in {"full", "meta"}
-cloud_review = profile == "full"
+integration_review = profile in {"full", "minimal", "iac"}
 
 assert policy["schema_version"] == 2
 for rounds in policy["rounds"].values():
@@ -2440,7 +2440,7 @@ for rounds in policy["rounds"].values():
         assert rounds["challenge"] > 0 and rounds["review"] > 0 and rounds["min_rounds"] > 0
     else:
         assert rounds["challenge"] == rounds["review"] == rounds["min_rounds"] == 0
-    assert (rounds["integration"] > 0) == cloud_review
+    assert (rounds["integration"] > 0) == integration_review
 
 for stage in ("challenge", "review"):
     assert bool(policy["stage"][stage].get("finders", [])) == local_review
@@ -2626,6 +2626,12 @@ for claude_wf in claude-plan.yml claude-implement.yml claude-review.yml; do
         err "$claude_wf is missing"
         continue
     }
+    if [ "$claude_wf" = claude-review.yml ]; then
+        [ "$(grep -c 'use_sticky_comment: false' "$claude_wf_path")" = 2 ] ||
+            err "Claude review must create a fresh comment in primary and fallback steps"
+        ! grep -q 'use_sticky_comment: true' "$claude_wf_path" ||
+            err "Claude review must not reuse a sticky completion comment"
+    fi
     ! grep -q 'labeled' < <(awk '/^on:/,/^jobs:/' "$claude_wf_path") ||
         err "$claude_wf still accepts a labeled event trigger"
     ! grep -q 'label_trigger:' "$claude_wf_path" ||

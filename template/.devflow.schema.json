@@ -87,16 +87,12 @@
     },
     "run_profiles": {
       "type": "object",
-      "if": { "required": ["full"] },
-      "then": {},
-      "else": { "required": ["incremental"] },
+      "minProperties": 1,
       "additionalProperties": { "$ref": "#/$defs/run_profile" }
     },
     "run_gate_overrides": {
       "type": "object",
-      "if": { "required": ["full"] },
-      "then": {},
-      "else": { "required": ["incremental"] },
+      "minProperties": 1,
       "additionalProperties": false,
       "properties": {
         "round_code": { "type": "string", "minLength": 1 },
@@ -162,9 +158,7 @@
     },
     "rigor_profiles": {
       "type": "object",
-      "if": { "required": ["full"] },
-      "then": {},
-      "else": { "required": ["incremental"] },
+      "minProperties": 1,
       "additionalProperties": { "$ref": "#/$defs/rigor_profile" }
     },
     "round_profile": {
@@ -189,9 +183,7 @@
     },
     "round_profiles": {
       "type": "object",
-      "if": { "required": ["full"] },
-      "then": {},
-      "else": { "required": ["incremental"] },
+      "minProperties": 1,
       "additionalProperties": { "$ref": "#/$defs/round_profile" }
     },
     "breadth_profile": {
@@ -206,9 +198,7 @@
     },
     "breadth_profiles": {
       "type": "object",
-      "if": { "required": ["full"] },
-      "then": {},
-      "else": { "required": ["incremental"] },
+      "minProperties": 1,
       "additionalProperties": { "$ref": "#/$defs/breadth_profile" }
     },
     "spend_profile": {
@@ -221,9 +211,7 @@
     },
     "spend_profiles": {
       "type": "object",
-      "if": { "required": ["full"] },
-      "then": {},
-      "else": { "required": ["incremental"] },
+      "minProperties": 1,
       "additionalProperties": { "$ref": "#/$defs/spend_profile" }
     },
     "role_profile": {
@@ -520,9 +508,7 @@
     },
     "strategy_profiles": {
       "type": "object",
-      "if": { "required": ["full"] },
-      "then": {},
-      "else": { "required": ["incremental"] },
+      "minProperties": 1,
       "additionalProperties": { "$ref": "#/$defs/strategy_profile" }
     },
     "convergence_expression": {
@@ -601,9 +587,7 @@
     "convergence_override": {
       "type": "object",
       "additionalProperties": false,
-      "if": { "required": ["full"] },
-      "then": {},
-      "else": { "required": ["incremental"] },
+      "minProperties": 1,
       "properties": {
         "converged": { "$ref": "#/$defs/convergence_expression" },
         "diverging": { "$ref": "#/$defs/convergence_expression" }

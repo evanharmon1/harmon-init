@@ -26,6 +26,69 @@ def fail(message):
     print(f"FAIL: {message}", file=sys.stderr)
     raise SystemExit(1)
 
+# Validate the complete document, including unrelated definitions. This small
+# offline validator covers the policy schema vocabulary, refusing unknown keys.
+def validate_schema(value, spec, schema, where="$"):
+    if isinstance(spec, bool):
+        if not spec: raise ValueError(f"{where}: false schema")
+        return
+    supported = {"$schema", "$id", "$defs", "$ref", "title", "description", "type", "const", "enum",
+                 "required", "properties", "additionalProperties", "minProperties", "items", "minItems",
+                 "uniqueItems", "minLength", "maxLength", "pattern", "minimum", "maximum", "exclusiveMinimum",
+                 "allOf", "anyOf", "oneOf", "not", "if", "then", "else"}
+    unknown = set(spec) - supported
+    if unknown: raise RuntimeError(f"unsupported schema keywords: {unknown}")
+    def check(v, rule, path=where): validate_schema(v, rule, schema, path)
+    def matches(rule):
+        try: check(value, rule); return True
+        except ValueError: return False
+    if "$ref" in spec:
+        ref = spec["$ref"]
+        if not ref.startswith("#/"): raise RuntimeError(f"non-local schema ref: {ref}")
+        target = schema
+        for key in ref[2:].split("/"): target = target[key.replace("~1", "/").replace("~0", "~")]
+        check(value, target)
+    types = {"object": isinstance(value, dict), "array": isinstance(value, list),
+             "string": isinstance(value, str), "boolean": isinstance(value, bool),
+             "integer": isinstance(value, int) and not isinstance(value, bool),
+             "number": isinstance(value, (int, float)) and not isinstance(value, bool), "null": value is None}
+    if "type" in spec and not types[spec["type"]]: raise ValueError(f"{where}: expected {spec['type']}")
+    if "const" in spec and value != spec["const"]: raise ValueError(f"{where}: const mismatch")
+    if "enum" in spec and value not in spec["enum"]: raise ValueError(f"{where}: enum mismatch")
+    for rule in spec.get("allOf", []): check(value, rule)
+    if "anyOf" in spec and not any(matches(r) for r in spec["anyOf"]): raise ValueError(f"{where}: anyOf")
+    if "oneOf" in spec and sum(matches(r) for r in spec["oneOf"]) != 1: raise ValueError(f"{where}: oneOf")
+    if "not" in spec and matches(spec["not"]): raise ValueError(f"{where}: not")
+    if "if" in spec: check(value, spec.get("then" if matches(spec["if"]) else "else", {}))
+    if types["object"]:
+        if len(value) < spec.get("minProperties", 0): raise ValueError(f"{where}: minProperties")
+        for key in spec.get("required", []):
+            if key not in value: raise ValueError(f"{where}: missing required {key}")
+        for key, item in value.items():
+            rule = spec.get("properties", {}).get(key, spec.get("additionalProperties", True))
+            check(item, rule, f"{where}.{key}")
+    if types["array"]:
+        if len(value) < spec.get("minItems", 0): raise ValueError(f"{where}: minItems")
+        if spec.get("uniqueItems") and len({json.dumps(v, sort_keys=True) for v in value}) != len(value):
+            raise ValueError(f"{where}: uniqueItems")
+        for i, item in enumerate(value): check(item, spec.get("items", {}), f"{where}[{i}]")
+    if types["string"]:
+        if not spec.get("minLength", 0) <= len(value) <= spec.get("maxLength", float("inf")):
+            raise ValueError(f"{where}: string length")
+        if "pattern" in spec and not re.search(spec["pattern"], value): raise ValueError(f"{where}: pattern")
+    if types["number"]:
+        if not spec.get("minimum", -float("inf")) <= value <= spec.get("maximum", float("inf")):
+            raise ValueError(f"{where}: numeric bounds")
+        if "exclusiveMinimum" in spec and value <= spec["exclusiveMinimum"]: raise ValueError(f"{where}: exclusiveMinimum")
+
+schema = json.loads((root / ".devflow.schema.json").read_text())
+# TOML values are converted through JSON so this exercises the published schema.
+validate_schema(json.loads(json.dumps(tomllib.loads((root / ".devflow.toml").read_text()))), schema, schema)
+
+floor_match = re.search(r'^_min_harmon_devkit_skills: "v(\d+)\.(\d+)\.(\d+)"$', (root / "copier.yml").read_text(), re.M)
+if not floor_match or tuple(map(int, floor_match.groups())) < (0, 62, 0):
+    fail("finder policies require harmon-devkit skills v0.62.0 or newer")
+
 taskfile = (root / "Taskfile.yml").read_text()
 registry = json.loads((root / "agent-registry.json").read_text())
 families = {row["slug"] for row in registry["families"]}
@@ -71,6 +134,8 @@ with tempfile.TemporaryDirectory() as tmp:
         policy_text[label] = (dest / ".devflow.toml").read_text()
         render_options[label] = options
         cfg = tomllib.loads(policy_text[label])
+        rendered_schema = json.loads((dest / ".devflow.schema.json").read_text())
+        validate_schema(json.loads(json.dumps(cfg)), rendered_schema, rendered_schema, label)
         entries = cfg["stage"]["integration"].get("finder", [])
         expected = [slug for option, slug in reviewer_options.items() if options[option]]
         if [entry["id"] for entry in entries] != expected: fail(f"{label}: incorrect enabled finder entries")
@@ -173,14 +238,14 @@ if policy_text[all_on] != policy_text["root .devflow.toml"]:
     fail("root .devflow.toml must byte-match the fully opted-in template render")
 for label, options in render_options.items():
     local_review = options["use_codex_review"]
-    cloud_review = options["use_codex_cloud_review"]
+    integration_review = any(options[option] for option in reviewer_options)
     cfg = parsed[label]
     for name, rounds in cfg["rounds"].items():
         expected = canonical["rounds"][name]
         for key in ("challenge", "review", "min_rounds"):
             want = expected[key] if local_review else 0
             if rounds[key] != want: fail(f"{label}: rounds.{name}.{key} must be {want}")
-        want_integration = expected["integration"] if cloud_review else 0
+        want_integration = expected["integration"] if integration_review else 0
         if rounds["integration"] != want_integration:
             fail(f"{label}: rounds.{name}.integration must be {want_integration}")
     for stage in ("challenge", "review"):
