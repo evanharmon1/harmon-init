@@ -238,7 +238,7 @@ if policy_text[all_on] != policy_text["root .devflow.toml"]:
     fail("root .devflow.toml must byte-match the fully opted-in template render")
 for label, options in render_options.items():
     local_review = options["use_codex_review"]
-    integration_review = any(options[option] for option in reviewer_options)
+    integration_review = options["use_codex_cloud_review"]
     cfg = parsed[label]
     for name, rounds in cfg["rounds"].items():
         expected = canonical["rounds"][name]

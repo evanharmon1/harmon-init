@@ -2421,8 +2421,8 @@ if [ "$profile" = "meta" ]; then
         err "Codex guide workflow cycles lack the cloud-review qualifier (use_codex_cloud_review=false)"
 fi
 
-# The generated policy honors local Codex opt-outs and enables integration
-# whenever any cloud reviewer is selected. A non-zero cap with no matching finder/task is
+# Integration remains Codex-gated until harmon-devkit#1819 counts all reviewers.
+# Non-Codex finder entries remain declarative even when the cap is zero. A non-zero cap with no matching finder/task is
 # fail-closed invalid, not a harmless unused setting.
 python3 - "$profile" <<'PY' || err ".devflow.toml does not honor reviewer opt-outs"
 import pathlib
@@ -2432,7 +2432,7 @@ import tomllib
 profile = sys.argv[1]
 policy = tomllib.loads(pathlib.Path(".devflow.toml").read_text())
 local_review = profile in {"full", "meta"}
-integration_review = profile in {"full", "minimal", "iac"}
+integration_review = profile == "full"
 
 assert policy["schema_version"] == 2
 for rounds in policy["rounds"].values():

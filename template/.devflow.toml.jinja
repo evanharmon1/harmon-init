@@ -158,12 +158,11 @@ description       = "Rigor: maximum scrutiny at every role — irreversible fail
 # confidence stage below which the single-empty-round exit cannot fire;
 # effective floor is min(min_rounds, cap).
 # Generated projects set challenge/review and min_rounds to 0 when
-# use_codex_review is off, and integration to 0 when all integration reviewers
-# are off. Their matching [stage.*].finders arrays render empty below, so an
-# opt-out never leaves an enabled stage with no installed reviewer task.
-# integration: bounds review cycles across the enabled integration reviewers.
-# Human and CI findings are always answered — uncapped. 0 means no integration
-# reviews; every other readiness condition stays. A fix after
+# use_codex_review is off, with their local finder arrays empty below.
+# integration: bounds Codex cloud review cycles and opens the stage only when
+# use_codex_cloud_review is on. Non-Codex-only repositories have no integration
+# review stage until evanharmon1/harmon-devkit#1819; their finder entries remain
+# declarative. Human and CI findings are always answered — uncapped. A fix after
 # the last permitted cycle = `capped`: blocker report naming the unreviewed
 # head, PR stays draft. The verdict is never waived.
 # Only a cycle that reviews something NEW is charged. One whose head differs
@@ -200,11 +199,15 @@ description       = "Rigor: maximum scrutiny at every role — irreversible fail
 # A fully-disabled custom policy (all caps 0) remains schema-valid for repos
 # that want zero AI review at a level; no shipped level uses one.
 
-[% set integration_review = use_codex_cloud_review or use_claude_review or use_coderabbit or use_greptile or use_gemini_code_assist %]
+# The integration cap opens the stage only when Codex cloud review is enabled.
+# Other reviewers' finder entries take effect once harmon-devkit's integration
+# lifecycle counts every configured reviewer (evanharmon1/harmon-devkit#1819).
+# Until then, repositories with only non-Codex reviewers have no integration
+# review stage.
 [rounds.cursory]
 challenge      = [[ 1 if use_codex_review else 0 ]]
 review         = [[ 1 if use_codex_review else 0 ]]
-integration    = [[ 1 if integration_review else 0 ]]
+integration    = [[ 1 if use_codex_cloud_review else 0 ]]
 remediation    = 2
 min_rounds     = [[ 1 if use_codex_review else 0 ]]
 wall_clock_min = 180
@@ -212,7 +215,7 @@ wall_clock_min = 180
 [rounds.light]
 challenge      = [[ 2 if use_codex_review else 0 ]]
 review         = [[ 2 if use_codex_review else 0 ]]
-integration    = [[ 3 if integration_review else 0 ]]
+integration    = [[ 3 if use_codex_cloud_review else 0 ]]
 remediation    = 3
 min_rounds     = [[ 1 if use_codex_review else 0 ]]
 wall_clock_min = 360
@@ -220,7 +223,7 @@ wall_clock_min = 360
 [rounds.standard]
 challenge      = [[ 3 if use_codex_review else 0 ]]
 review         = [[ 3 if use_codex_review else 0 ]]
-integration    = [[ 4 if integration_review else 0 ]]
+integration    = [[ 4 if use_codex_cloud_review else 0 ]]
 remediation    = 4
 min_rounds     = [[ 1 if use_codex_review else 0 ]]
 wall_clock_min = 720
@@ -228,7 +231,7 @@ wall_clock_min = 720
 [rounds.thorough]
 challenge      = [[ 4 if use_codex_review else 0 ]]
 review         = [[ 4 if use_codex_review else 0 ]]
-integration    = [[ 5 if integration_review else 0 ]]
+integration    = [[ 5 if use_codex_cloud_review else 0 ]]
 remediation    = 5
 min_rounds     = [[ 1 if use_codex_review else 0 ]]
 wall_clock_min = 1440
@@ -236,7 +239,7 @@ wall_clock_min = 1440
 [rounds.deep]
 challenge      = [[ 5 if use_codex_review else 0 ]]
 review         = [[ 5 if use_codex_review else 0 ]]
-integration    = [[ 6 if integration_review else 0 ]]
+integration    = [[ 6 if use_codex_cloud_review else 0 ]]
 remediation    = 6
 min_rounds     = [[ 1 if use_codex_review else 0 ]]
 wall_clock_min = 2880
@@ -244,7 +247,7 @@ wall_clock_min = 2880
 [rounds.forensic]
 challenge      = [[ 6 if use_codex_review else 0 ]]
 review         = [[ 6 if use_codex_review else 0 ]]
-integration    = [[ 8 if integration_review else 0 ]]
+integration    = [[ 8 if use_codex_cloud_review else 0 ]]
 remediation    = 8
 min_rounds     = [[ 2 if use_codex_review else 0 ]]   # forensic: a single empty round never ends a stage
 wall_clock_min = 4320
@@ -433,6 +436,11 @@ finders = ["codex-verification"]
 # finder_fallbacks = []
 
 [stage.integration]
+# The integration cap opens the stage only when Codex cloud review is enabled.
+# Other reviewers' finder entries take effect once harmon-devkit's integration
+# lifecycle counts every configured reviewer (evanharmon1/harmon-devkit#1819).
+# Until then, repositories with only non-Codex reviewers have no integration
+# review stage.
 # Per-repository reviewer defaults; a recorded operator instruction may override
 # them per PR. Codex omits budget/rounds to follow the resolved rounds policy.
 # Completion is current-head evidence from the registered actor, never a timer.
