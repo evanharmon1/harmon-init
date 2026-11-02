@@ -1115,6 +1115,8 @@ re-running preparation would apply the same 20 s bound. For a non-timeout fetch
 error, check the origin URL, authentication and network access. If the fetch
 succeeds but history remains shallow, check whether origin provides complete
 history. If `timeout` is missing, install it or run the fetch by hand.
+If the history probe fails, no fetch is attempted: the warning says "checkout
+history could not be checked"; check Git repository access in this checkout.
 Full checkouts need no history fetch, and local/devcontainer preparation does
 not probe or fetch
 checkout history. This adds no history step for siblings: their existing clones

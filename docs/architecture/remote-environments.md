@@ -600,7 +600,9 @@ without a timeout; a preparation retry would impose the same 20 s limit. A
 non-timeout fetch error instead asks for checks of the origin URL,
 authentication and network access. A successful fetch that leaves history
 shallow asks whether origin provides complete history. Missing `timeout` asks
-for its installation or a manual fetch. Full checkouts do not fetch history;
+for its installation or a manual fetch. A failed history probe starts no fetch
+and warns "checkout history could not be checked", with the remedy "check Git
+repository access in this checkout". Full checkouts do not fetch history;
 local and devcontainer preparation do not check it. Sibling fetching is unchanged, and
 the existing sibling clone path does not request shallow history. A real
 web-session verification run remains a follow-up on
