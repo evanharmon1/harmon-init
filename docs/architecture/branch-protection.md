@@ -8,10 +8,10 @@ This document explains the branch protection ruleset applied to `main` and how i
 
 An importable copy of the ruleset ships in this repo at
 `.github/Branch Protection Ruleset - Protect Main.json`. Apply it through the
-GitHub **UI import** — do this only once `build.yml` and
-`devcontainer-build.yml` are on
-`main`, so the required
-`verify`/`security`/`devcontainer-verify` checks can actually report.
+GitHub **UI import** — do this only once `build.yml`, `closing-keywords.yml`,
+`devcontainer-build.yml` and `remote-bootstrap.yml` are on `main` and their
+required `verify`/`security`/`closing-keywords`/`devcontainer-verify`/
+`remote-bootstrap-verify` checks have reported there.
 Importing first wedges the repository: a required check with no workflow to emit
 it stays pending forever and blocks every pull request.
 
@@ -26,8 +26,10 @@ template, not live configuration — a `copier update` changes the JSON here and
 nothing on GitHub), apply it by hand in that order:
 
 1. **Merge the workflow first.** The job that emits the check must already be on
-   `main`.
-2. **Then** add the context under Settings → Rules → Rulesets → Protect Main →
+   `main`; for the remote bootstrap, let `remote-bootstrap-verify` report on
+   that main push before changing the live ruleset.
+2. **Then** import the ruleset for a new repository, or add the context to the
+   existing ruleset under Settings → Rules → Rulesets → Protect Main →
    Require status checks to pass.
 
 Doing it the other way round wedges the repository: a required check that has
@@ -210,6 +212,10 @@ This mirrors the importable
           {
             "context": "devcontainer-verify",
             "integration_id": 15368
+          },
+          {
+            "context": "remote-bootstrap-verify",
+            "integration_id": 15368
           }
         ]
       }
@@ -293,6 +299,21 @@ The required checks are the build gates (see [ci-cd.md](ci-cd.md)):
 | `security` | gitleaks + dependency audit + Semgrep CE (this repo's SAST engine — it has no CodeQL workflow) |
 | `closing-keywords` | Metadata-only PR gate: a same-repository closing keyword may pass only when its issue has no unchecked task-list items; it reports a successful no-op on push, merge-queue, and manual runs. **Must be listed here directly.** It moved out of `build.yml` into its own workflow so it could keep the `pull_request.edited` trigger the build matrix must not have (#1328), and `needs:` cannot cross workflows — so the aggregate `verify` no longer carries it. A live ruleset missing this context enforces the closing policy not at all. `task audit:ruleset` names it if the live ruleset lacks it. |
 | `devcontainer-verify` | Aggregate for `devcontainer-build.yml`. Runs on every event with **no `paths:` filter** — a filtered workflow never reports, and a required check that never reports blocks the merge forever. Its `devcontainer-changes` job decides internally, so an unrelated PR is a deliberate, reported no-op. See "Fork pull requests report a vacuous pass" and "`merge_group` runs a credential-free build" below |
+
+The root ruleset also requires `remote-bootstrap-verify`, the aggregate for
+`remote-bootstrap.yml`. Its `if: always()` job reports on every PR, main push,
+merge-group and manual event without a workflow-level path filter.
+`bootstrap-changes` keeps the proof's path filter internally; an unrelated PR
+reports a deliberate no-op, and a relevant change requires `bootstrap` to
+succeed. A failed detector or missing output fails the aggregate. Fork PRs
+pass only when both repository-controlled jobs were skipped. Merge-group jobs
+use GitHub-hosted runners with read-only contents permission.
+
+This context is an intentional root/template ruleset divergence: generated
+repositories consume the bootstrap but do not ship its producer workflow, so
+their ruleset must not require this check. After this change merges, the
+maintainer must apply the live ruleset in the order above; editing this JSON
+alone does not enforce a new check on GitHub.
 
 Snyk PR/App checks are absent by default. This repo's weekly
 `snyk-scheduled.yml` — like the one a generated repo opts into — is advisory and
