@@ -174,7 +174,15 @@ scheduling only.
   release into a verified pin-and-sync PR (see below).
 - `remote-bootstrap.yml` — **root-only**: proves
   `images/devcontainer/bootstrap-remote.sh` on a stock `ubuntu:24.04` container.
-  One job, because the offline half belongs everywhere. The pin contract
+  The **required** `remote-bootstrap-verify` aggregate reports on every PR,
+  main push, merge-group and manual event with `if: always()` and no workflow
+  path filter. `bootstrap-changes` calls `scripts/remote-bootstrap-changed.sh`,
+  which uses the devcontainer detector's fail-safe,
+  NUL-delimited, no-rename diff approach to retain the expensive proof's path
+  filter internally; unrelated PRs pass a deliberate no-op. Push and manual
+  runs reconcile unconditionally. The aggregate requires a successful detector
+  and a successful proof when relevant, and fails on missing detection output.
+  The pin contract
   (`task test:bootstrap-remote`) runs unconditionally, inside `test:suite`,
   in `build.yml`'s `repo-guards` job and in `verify`, so a change to any input it reads — the install scripts,
   the pins, or the allowlist tables in
@@ -191,12 +199,23 @@ scheduling only.
   asserts that the agent posture landed (both managed destinations
   byte-identical to `.devcontainer/config/agent/`, and
   `HARMON_BOOTSTRAP_POSTURE_GAPS=0` on the first run),
+  after writing architecture and elapsed measurements to the summary so a
+  posture or budget failure still leaves them visible,
   asserts that `op`, Homebrew and Tailscale are absent, and then runs
   `task check` in the checkout using only what the bootstrap installed. Its
-  container job is fork-gated like the image publisher's, for the same reason:
-  it executes checked-out shell as root. The job runs on the runner's native
+  detector and container job are fork-gated like the image publisher's, for
+  the same reason: the proof executes checked-out shell as root. On a fork PR,
+  the aggregate checks both deliberate skips without checking out fork code;
+  that passing boundary check provides no posture proof. All merge-group jobs
+  use GitHub-hosted runners and read-only contents permission. The proof is a
+  CI-only check outside the local `task ci` mirror: it needs a stock Ubuntu
+  container, a Docker runner and real downloads. The job runs on the runner's native
   architecture. `IMAGE_BUILD_RUNS_ON`, then `CI_RUNS_ON`, selects its runner
-  and architecture, deciding whether arm64 is exercised.
+  and architecture, deciding whether arm64 is exercised outside merge groups.
+  Only the root ruleset requires this aggregate; consumers ship neither this
+  producer workflow nor its required context. The maintainer applies the live
+  context after merge and after it reports on main, as
+  [branch-protection.md](branch-protection.md#applying-the-ruleset) describes.
   See [remote-environments.md](remote-environments.md).
 
 ## Issue classification reconciler
