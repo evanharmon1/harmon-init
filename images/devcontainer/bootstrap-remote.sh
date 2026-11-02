@@ -695,10 +695,15 @@ posture_describe() {
 # recorded as an install, so a second run reports none. It runs in a command
 # substitution, so it sets no variable of the caller's.
 prepare_posture_dest() {
-    local src="$1" dest="$2" scratch="$3" kept
-    if [ ! -d "$(dirname "$dest")" ]; then
-        install -d -m 0755 "$(dirname "$dest")"
-        printf '    created %s\n' "$(dirname "$dest")" >&2
+    local src="$1" dest="$2" scratch="$3" kept dir
+    dir="$(dirname "$dest")"
+    # Refuse both resolved and dangling parent links: replacing a managed file
+    # does not authorize writing through a platform-owned directory, even when
+    # HARMON_AGENT_POSTURE_REPLACE=1 opts into replacing the file itself.
+    [ ! -L "$dir" ] || die "refusing symlinked parent ${dir} for the agent posture"
+    if [ ! -d "$dir" ]; then
+        install -d -m 0755 "$dir" || die "could not create ${dir} for the agent posture"
+        printf '    created %s\n' "$dir" >&2
     fi
     # Absent means NOTHING at the path. `-e` alone follows a symlink, so a
     # dangling one — a platform's link to a target it has not populated yet —

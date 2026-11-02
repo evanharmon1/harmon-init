@@ -536,7 +536,7 @@ FOREMAN_DEVCONTAINER=agent run_autonomy apply >/dev/null || fail "apply did not 
 # an ARGUMENT: an environment variable of the same meaning — the variable this
 # seam briefly was — must change nothing, because a devcontainer.json
 # containerEnv entry could set it for the agent devcontainer's own lifecycle.
-# Neither lifecycle hook may pass the flag.
+# No devcontainer lifecycle entry may pass the flag.
 chmod +x "${fake_bin}/opencode"
 AGENT_AUTONOMY_SKIP_HARNESS_REFUSAL=1 FOREMAN_DEVCONTAINER=agent run_autonomy apply >/dev/null ||
     fail "apply failed with AGENT_AUTONOMY_SKIP_HARNESS_REFUSAL=1 in the environment"
@@ -547,10 +547,26 @@ if AGENT_AUTONOMY_SKIP_HARNESS_REFUSAL=1 FOREMAN_DEVCONTAINER=agent run_autonomy
     fail "verify skipped the refused-harness check because of an environment variable — only --platform-vm may skip it"
 fi
 chmod -x "${fake_bin}/opencode"
-for hook in .devcontainer/agent/post-create.sh .devcontainer/agent/post-start.sh; do
+
+# The positive half belongs in the shipped test too: a broken argument parser
+# must fail here, not only in harmon-init's root-only bootstrap suite.
+chmod 0755 "${fake_bin}/opencode"
+FOREMAN_DEVCONTAINER=agent run_autonomy apply --platform-vm >/dev/null ||
+    fail "apply --platform-vm failed"
+[ "$(python3 -c 'import os, sys; print(oct(os.stat(sys.argv[1]).st_mode & 0o777))' "${fake_bin}/opencode")" = 0o755 ] ||
+    fail "apply --platform-vm changed the refused harness mode"
+FOREMAN_DEVCONTAINER=agent run_autonomy verify --platform-vm >/dev/null ||
+    fail "verify --platform-vm rejected an executable refused harness"
+chmod -x "${fake_bin}/opencode"
+
+# Include devcontainer.json and future lifecycle files, not just today's two
+# scripts. The installer itself defines the flag; callers must never pass it.
+while IFS= read -r -d '' hook; do
+    [ "$hook" != "$agent_autonomy" ] || continue
+    grep -qF 'agent-autonomy.sh' "$hook" || continue
     ! grep -q -- '--platform-vm' "$hook" ||
         fail "${hook} passes --platform-vm: the agent devcontainer must always refuse harnesses"
-done
+done < <(find .devcontainer/agent -type f -print0)
 
 chmod +x "${fake_bin}/opencode"
 if FOREMAN_DEVCONTAINER=agent run_autonomy verify >/dev/null 2>&1; then

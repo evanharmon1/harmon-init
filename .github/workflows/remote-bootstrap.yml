@@ -5,7 +5,9 @@ run-name: ${{ github.actor }} is proving the remote bootstrap on a stock Ubuntu 
 # release tag but never prove it; images/devcontainer/ has no template twin, so
 # there is nothing to render.
 #
-# One job, one kind of proof:
+# One kind of proof, behind an always-reporting required aggregate:
+#   bootstrap-changes — the same fail-safe range detection as devcontainer-build
+#   remote-bootstrap-verify — requires the proof, or a deliberate no-op
 #   bootstrap — the BEHAVIOUR, which no metadata check can reach: the scripts
 #               really do install a working toolchain on a stock ubuntu:24.04
 #               VM, a second run performs no new installs and changes no
@@ -29,50 +31,65 @@ run-name: ${{ github.actor }} is proving the remote bootstrap on a stock Ubuntu 
 # on a real container. An edit to the agent posture's installer
 # (.devcontainer/agent/agent-autonomy.sh) or its definition
 # (.devcontainer/config/agent/) can — the bootstrap installs both — so both are
-# named in the lists below.
+# named in scripts/remote-bootstrap-changed.sh. There are NO workflow-level path filters: the
+# required remote-bootstrap-verify context must report even on unrelated PRs.
 on:
-  # The two path lists are spelled out twice rather than shared through a YAML
-  # anchor: GitHub's workflow parser does not support anchors, so an anchor
-  # here would be a parse error at dispatch time rather than a lint failure.
   pull_request:
-    paths:
-      - "images/devcontainer/**"
-      - "scripts/**"
-      - "Taskfile.yml"
-      - "renovate.json"
-      - ".devcontainer/agent/agent-autonomy.sh"
-      - ".devcontainer/config/agent/**"
-      - ".github/workflows/remote-bootstrap.yml"
+    branches: [main]
   push:
     branches: [main]
-    paths:
-      - "images/devcontainer/**"
-      - "scripts/**"
-      - "Taskfile.yml"
-      - "renovate.json"
-      - ".devcontainer/agent/agent-autonomy.sh"
-      - ".devcontainer/config/agent/**"
-      - ".github/workflows/remote-bootstrap.yml"
+  merge_group:
+  workflow_dispatch:
 
 concurrency:
-  group: >-
-    remote-bootstrap-${{
-      github.event_name == 'pull_request' && github.event.pull_request.number || 'main'
-    }}
+  group: remote-bootstrap-${{ github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 permissions:
   contents: read
 
 jobs:
+  bootstrap-changes:
+    # Never check out or execute fork-controlled code on the PR path.
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    # Queued content can come from forks: keep merge_group on hosted runners,
+    # as devcontainer-build.yml does, regardless of repository runner variables.
+    runs-on: ${{ github.event_name == 'merge_group' && 'ubuntu-latest' || fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
+    timeout-minutes: 5
+    outputs:
+      changed: ${{ steps.detect.outputs.changed }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      - name: Detect bootstrap changes
+        id: detect
+        env:
+          # Push and dispatch reconcile unconditionally, like the devcontainer
+          # detector. PRs and queued groups compare their event endpoints.
+          BASE_SHA: >-
+            ${{ github.event_name == 'pull_request' && github.event.pull_request.base.sha
+            || github.event_name == 'merge_group' && github.event.merge_group.base_sha
+            || '' }}
+          HEAD_SHA: >-
+            ${{ github.event_name == 'pull_request' && github.event.pull_request.head.sha
+            || github.event_name == 'merge_group' && github.event.merge_group.head_sha
+            || github.sha }}
+        run: ./scripts/remote-bootstrap-changed.sh "$BASE_SHA" "$HEAD_SHA"
+
   bootstrap:
+    needs: [bootstrap-changes]
     # A fork PR gets no repository-controlled container run, for the same
     # reason publish-harmon-devcontainer.yml declines to build fork
     # Dockerfiles: this job executes checked-out shell as root.
     if: >-
-      github.event_name == 'push' ||
-      github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ${{ fromJSON(vars.IMAGE_BUILD_RUNS_ON || vars.CI_RUNS_ON || '"ubuntu-latest"') }}
+      needs.bootstrap-changes.outputs.changed == 'true' &&
+      (github.event_name != 'pull_request' ||
+       github.event.pull_request.head.repo.full_name == github.repository)
+    runs-on: ${{ github.event_name == 'merge_group' && 'ubuntu-latest' || fromJSON(vars.IMAGE_BUILD_RUNS_ON || vars.CI_RUNS_ON || '"ubuntu-latest"') }}
     timeout-minutes: 45
     container:
       # STOCK Ubuntu 24.04, deliberately: the point is to prove the bootstrap
@@ -120,14 +137,14 @@ jobs:
           # fails closed on a pull request with no merge-base.
           fetch-depth: 0
       - name: Run the bootstrap (core + agents) and time it
+        # Container steps default to sh. Each tee pipeline explicitly selects
+        # bash, which already enables pipefail; set -o pipefail is a tripwire
+        # if a future edit drops that shell selection. Keep this per-step:
+        # defaults.run.shell would also affect grep pipelines, where an early
+        # reader exit can turn a successful producer into a SIGPIPE failure.
         # Under the seeded traps: /usr/bin ahead of /usr/local/bin, LC_ALL=C.
-        # bash, explicitly: this job runs in a container whose default `run:`
-        # shell is `sh` (dash), which rejects `set -o pipefail` and fails the
-        # step before the bootstrap runs. `shell: bash` also applies pipefail.
         shell: bash
         run: |
-          # A pipeline's status is its LAST command's: without this, a bootstrap
-          # that dies still passes the step because `tee` exited 0.
           set -o pipefail
           start=$(date +%s)
           env PATH=/usr/bin:/bin:/usr/local/bin LC_ALL=C \
@@ -136,12 +153,15 @@ jobs:
           # The agent posture, checked BEFORE the budget so a slow run still
           # reports it: on a container that had no managed files, both must now
           # be the checked-in definition byte for byte, and the run must have
-          # recorded no gap. The summary table is opened here for that reason.
+          # recorded no gap. Populate the measurements before either gate so
+          # a posture failure still reports the architecture and elapsed time.
           {
             echo "### Remote bootstrap"
             echo
             echo "| Measurement | Value |"
             echo "| --- | --- |"
+            echo "| architecture | \`$(uname -m)\` |"
+            echo "| core + agents tiers | **${elapsed}s** (budget ${BOOTSTRAP_BUDGET_SECONDS}s) |"
           } >> "$GITHUB_STEP_SUMMARY"
           cmp .devcontainer/config/agent/claude-managed-settings.json /etc/claude-code/managed-settings.json ||
             { echo "::error::/etc/claude-code/managed-settings.json is not the agent definition"; exit 1; }
@@ -153,10 +173,6 @@ jobs:
             echo "::error::the first run recorded ${gaps:-no} agent-posture gap(s); expected 0 on a container with no managed files"
             exit 1
           fi
-          {
-            echo "| architecture | \`$(uname -m)\` |"
-            echo "| core + agents tiers | **${elapsed}s** (budget ${BOOTSTRAP_BUDGET_SECONDS}s) |"
-          } >> "$GITHUB_STEP_SUMMARY"
           if [ "$elapsed" -gt "$BOOTSTRAP_BUDGET_SECONDS" ]; then
             echo "::error::core+agents took ${elapsed}s, over the ${BOOTSTRAP_BUDGET_SECONDS}s budget"
             exit 1
@@ -170,13 +186,8 @@ jobs:
         # upgrades it lets through — the apt packages are unpinned and converge
         # on the archive by design — so the claim is two assertions: zero new
         # installs, and a byte-identical manifest (no pinned version moved).
-        # bash, explicitly: this job runs in a container whose default `run:`
-        # shell is `sh` (dash), which rejects `set -o pipefail` and fails the
-        # step before the bootstrap runs. `shell: bash` also applies pipefail.
         shell: bash
         run: |
-          # A pipeline's status is its LAST command's: without this, a bootstrap
-          # that dies still passes the step because `tee` exited 0.
           set -o pipefail
           env PATH=/usr/bin:/bin:/usr/local/bin LC_ALL=C \
             ./images/devcontainer/bootstrap-remote.sh | tee /tmp/bootstrap-second.log
@@ -205,13 +216,8 @@ jobs:
         # ~/.profile — so it has to run AS that user, never as root with the
         # user's HOME. The planted ~/.profile tries to create a file only root
         # can create; it must not exist afterwards.
-        # bash, explicitly: this job runs in a container whose default `run:`
-        # shell is `sh` (dash), which rejects `set -o pipefail` and fails the
-        # step before the bootstrap runs. `shell: bash` also applies pipefail.
         shell: bash
         run: |
-          # A pipeline's status is its LAST command's: without this, a bootstrap
-          # that dies still passes the step because `tee` exited 0.
           set -o pipefail
           useradd -m -s /bin/bash shadowed
           echo 'shadowed ALL=(ALL) NOPASSWD:ALL' > /etc/sudoers.d/shadowed
@@ -238,13 +244,8 @@ jobs:
         # the running uid's passwd home on every path before a tier runs, and
         # this is the proof for the path the re-exec never sees. Same user,
         # same planted shadow and marker profile, same three assertions.
-        # bash, explicitly: this job runs in a container whose default `run:`
-        # shell is `sh` (dash), which rejects `set -o pipefail` and fails the
-        # step before the bootstrap runs. `shell: bash` also applies pipefail.
         shell: bash
         run: |
-          # A pipeline's status is its LAST command's: without this, a bootstrap
-          # that dies still passes the step because `tee` exited 0.
           set -o pipefail
           entry_uid="$(runuser -u shadowed -- sudo -E id -u)"
           entry_home="$(runuser -u shadowed -- sudo -E env | sed -n 's/^HOME=//p')"
@@ -266,13 +267,8 @@ jobs:
         # is claimed for EVERY tier, and the default-tier check above cannot see
         # the browsers tier at all — so without this step that claim is simply
         # never tested, which is how it was wrong when first written.
-        # bash, explicitly: this job runs in a container whose default `run:`
-        # shell is `sh` (dash), which rejects `set -o pipefail` and fails the
-        # step before the bootstrap runs. `shell: bash` also applies pipefail.
         shell: bash
         run: |
-          # A pipeline's status is its LAST command's: without this, a bootstrap
-          # that dies still passes the step because `tee` exited 0.
           set -o pipefail
           ./images/devcontainer/bootstrap-remote.sh --tiers core,agents,browsers >/dev/null
           ./images/devcontainer/bootstrap-remote.sh --tiers core,agents,browsers \
@@ -344,3 +340,45 @@ jobs:
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           . /etc/profile.d/harmon-remote-env.sh
           task check
+
+  remote-bootstrap-verify:
+    # Required context: report even when dependencies fail or deliberately skip.
+    if: always()
+    needs: [bootstrap-changes, bootstrap]
+    runs-on: ${{ github.event_name == 'merge_group' && 'ubuntu-latest' || fromJSON(vars.CI_RUNS_ON || '"ubuntu-latest"') }}
+    timeout-minutes: 5
+    env:
+      IS_FORK: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+      CHANGED: ${{ needs.bootstrap-changes.outputs.changed }}
+      CHANGES_RESULT: ${{ needs.bootstrap-changes.result }}
+      BOOTSTRAP_RESULT: ${{ needs.bootstrap.result }}
+    steps:
+      - name: Verify deliberate skips at the untrusted-fork boundary
+        if: env.IS_FORK == 'true'
+        run: |
+          if [ "$CHANGES_RESULT:$BOOTSTRAP_RESULT" != 'skipped:skipped' ]; then
+            echo "::error::fork jobs must be skipped (detector=$CHANGES_RESULT, bootstrap=$BOOTSTRAP_RESULT)"
+            exit 1
+          fi
+          echo "Untrusted fork: no repository-controlled bootstrap job ran."
+      - if: env.IS_FORK != 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Verify bootstrap result or deliberate no-op
+        if: env.IS_FORK != 'true'
+        run: |
+          EXPECTED_RESULT=success ./scripts/verify-ci-results.sh "bootstrap-changes=$CHANGES_RESULT"
+          case "$CHANGED" in
+            false)
+              EXPECTED_RESULT=skipped ./scripts/verify-ci-results.sh "bootstrap=$BOOTSTRAP_RESULT"
+              echo "No bootstrap-relevant changes: the proof was deliberately skipped."
+              ;;
+            true)
+              EXPECTED_RESULT=success ./scripts/verify-ci-results.sh "bootstrap=$BOOTSTRAP_RESULT"
+              ;;
+            *)
+              echo "::error::invalid bootstrap change detection output: '$CHANGED'"
+              exit 1
+              ;;
+          esac
