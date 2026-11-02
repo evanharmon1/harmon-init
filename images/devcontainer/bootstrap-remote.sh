@@ -521,7 +521,7 @@ ensure_environment_line() {
     local key="$1" want="$1=$2"
     if [ ! -f /etc/environment ]; then
         printf '%s\n' "$want" >/etc/environment
-    elif grep -qx "$want" /etc/environment; then
+    elif grep -Fxq "$want" /etc/environment; then
         : # already exactly right; leave the file alone
     elif grep -q "^${key}=" /etc/environment; then
         sed -i "s|^${key}=.*|${want}|" /etc/environment
@@ -578,7 +578,17 @@ export PATH="${HARMON_BIN}\${harmon_remote_env_path:+:\${harmon_remote_env_path}
 unset harmon_remote_env_path harmon_remote_env_ifs harmon_remote_env_entry
 PROFILE
     if ! cmp -s "$tmp" "$HARMON_PROFILE_DROPIN"; then
-        install -m 0644 "$tmp" "$HARMON_PROFILE_DROPIN"
+        # Stage on the destination filesystem: a failed write must leave the
+        # previous login profile intact, and rename publishes complete bytes.
+        local staged="${HARMON_PROFILE_DROPIN}.$$.harmon-staging"
+        if ! install -m 0644 "$tmp" "$staged"; then
+            rm -f "$tmp" "$staged"
+            die "could not stage the remote environment profile"
+        fi
+        if ! mv -f "$staged" "$HARMON_PROFILE_DROPIN"; then
+            rm -f "$tmp" "$staged"
+            die "could not publish the remote environment profile"
+        fi
     fi
     rm -f "$tmp"
 }
@@ -974,6 +984,9 @@ write_manifest() {
                 status_rc=$?
             if [ "$status_rc" -ne 0 ]; then
                 warn "no manifest written: git exited ${status_rc} reading the working-tree status of ${self_dir}, so whether the installed bytes are commit ${revision} cannot be established. An empty status from a FAILED read is not a clean checkout, and a manifest attesting one would defeat the image-to-VM comparison it exists for."
+                # Keep the installed tools usable, but invalidate provenance:
+                # consumers report unknown rather than trusting an older run.
+                rm -f "$manifest"
                 return 0
             fi
             if [ -n "$status_out" ]; then
@@ -986,6 +999,9 @@ write_manifest() {
     fi
     if [ -z "$revision" ]; then
         warn "no manifest written: the source revision is unknown (not a git checkout, and no release tag). The image-to-VM comparison needs one or the other."
+        # The same invalidation as a failed cleanliness read above: no stale
+        # revision may describe the tools this run just installed.
+        rm -f "$manifest"
         return 0
     fi
     if [ -f "$manifest" ]; then

@@ -29,30 +29,39 @@ tmp="$HARMON_TMPDIR"
 # Installed under ${HARMON_PREFIX} so it wins PATH precedence over a
 # pre-provisioned /usr/bin/node (the remote VM ships Node 22).
 #
-# The gate names npm, npx and corepack as well as node: this block publishes
-# four executables and node's version alone is no evidence the other three
-# landed. See harmon_needs_all in lib.sh, and the copy-order note below for the
-# half the ordering already covers.
-if harmon_needs_all node "$NODE_VERSION" npm npx corepack -- node --version; then
+# A receipt binds the pinned distribution to all four executable targets.
+# Presence alone accepts an interrupted upgrade's new node beside old companions.
+# Recompute the identity on every run, so a missing/replaced companion invalidates
+# it too. sha256sum follows npm/npx/corepack's symlinks into lib/node_modules.
+node_receipt="${HARMON_PREFIX}/share/harmon-node/distribution.identity"
+node_distribution_identity() {
+    printf 'node=%s\n' "$NODE_VERSION"
+    sha256sum "${HARMON_BIN}/node" "${HARMON_BIN}/npm" \
+        "${HARMON_BIN}/npx" "${HARMON_BIN}/corepack"
+}
+node_distribution_current() {
+    local identity recorded
+    harmon_at_version node "$NODE_VERSION" node --version &&
+        harmon_have_bins npm npx corepack || return 1
+    identity="$(node_distribution_identity)" || return 1
+    recorded="$(cat "$node_receipt" 2>/dev/null)" || return 1
+    [ "$identity" = "$recorded" ]
+}
+harmon_record tool "node=$NODE_VERSION"
+if node_distribution_current; then
+    harmon_skip "node $NODE_VERSION"
+else
+    harmon_changed "node $NODE_VERSION"
+    # Invalidate BEFORE copying: an interrupted reinstall cannot inherit proof
+    # from an earlier complete distribution, even when node is already at pin.
+    rm -f "$node_receipt"
     node_arch="$(harmon_pick x64 arm64)"
     node_sha="$(harmon_pick "$node_amd64_sha256" "$node_arm64_sha256")"
     node_tarball="node-v${NODE_VERSION}-linux-${node_arch}.tar.xz"
     harmon_fetch "https://nodejs.org/dist/v${NODE_VERSION}/${node_tarball}" "${tmp}/${node_tarball}"
     harmon_verify_sha256 "${tmp}/${node_tarball}" "$node_sha"
-    # Extracted into a staging directory (transient disk: one extra copy of
-    # the tarball's contents until the copy below finishes) and copied into
-    # the prefix only once the whole tarball is out, so an interrupted
-    # extraction leaves the prefix untouched. The copy order matters too:
-    # bin/ goes LAST because bin/node is what the gate reads as the version
-    # witness and bin/npm is a relative symlink into ../lib/node_modules. lib/
-    # first means the symlink's target exists the moment bin/ lands, and a copy
-    # that dies before bin/ leaves the OLD node (or none) in place, so the next
-    # run redoes the install instead of skipping a new node beside a dangling
-    # npm. What the ordering cannot cover is an interruption INSIDE this last
-    # copy, which can publish bin/node while bin/npm is still missing: on a
-    # FIRST install there is no old node for the version comparison to catch,
-    # and the run would then skip the block for good and die later on the
-    # missing npm. That half is the gate's companion list above, not this loop.
+    # Extract before touching the prefix and publish bin/ last, after its
+    # symlink targets. Only a fully completed copy earns the receipt below.
     # --no-same-owner: the tarball records nodejs.org's build uid/gid, which
     # exists on no machine this runs on.
     node_stage="${tmp}/node-${NODE_VERSION}"
@@ -66,6 +75,11 @@ if harmon_needs_all node "$NODE_VERSION" npm npx corepack -- node --version; the
         install -d -m 0755 "${HARMON_PREFIX}/${node_dir}"
         cp -a "${node_stage}/${node_dir}/." "${HARMON_PREFIX}/${node_dir}/"
     done
+    harmon_have_bins node npm npx corepack ||
+        harmon_die "the Node distribution did not publish every executable"
+    node_distribution_identity >"${tmp}/node-distribution.identity"
+    install -d -m 0755 "$(dirname "$node_receipt")"
+    install -m 0644 "${tmp}/node-distribution.identity" "$node_receipt"
     rm -rf "$node_stage" "${tmp}/${node_tarball}"
 fi
 # ---------- corepack's pnpm shim (bundled with the Node tarball) ----------

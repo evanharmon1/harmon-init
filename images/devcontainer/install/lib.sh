@@ -410,7 +410,15 @@ harmon_tmpdir_init() {
 # store through the NODE_EXTRA_CA_CERTS export near the top of this file.
 harmon_npm_global() {
     if harmon_needs "$3" "$2" "$3" --version; then
-        npm install -g "${1}@${2}"
+        # CLI configuration wins over inherited NPM_CONFIG_PREFIX and .npmrc.
+        npm install -g --prefix "$HARMON_PREFIX" "${1}@${2}"
+        # A successful npm exit is not proof of publication into our prefix.
+        case "$(readlink -f "${HARMON_BIN}/$3")" in
+        "$(readlink -f "$HARMON_PREFIX")/"*) ;;
+        *) harmon_die "npm did not publish $3 inside ${HARMON_PREFIX}" ;;
+        esac
+        harmon_at_version "$3" "$2" "$3" --version ||
+            harmon_die "npm did not publish $3 at $2 in ${HARMON_BIN}"
     fi
 }
 

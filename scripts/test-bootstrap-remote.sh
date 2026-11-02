@@ -1136,6 +1136,7 @@ for GUIDE, guide_recipes in guide_recipe_blocks.items():
 RECORDERS = re.compile(
     r'\bharmon_needs(?:_all)?\s+(?P<key1>[a-z0-9-]+)\s+"\$(?P<var1>[A-Z0-9_]+_VERSION)"'
     r'|\bharmon_(?:npm_global|uv_tool)\s+\S+\s+"\$(?P<var2>[A-Z0-9_]+_VERSION)"\s+(?P<key2>[a-z0-9-]+)\b'
+    r'|\bharmon_record\s+tool\s+"(?P<key3>[a-z0-9-]+)=\$(?P<var3>[A-Z0-9_]+_VERSION)"'
 )
 CONSUMED = re.compile(r"\$\{?(?P<var>[A-Z][A-Z0-9_]*_VERSION)\b")
 image_keys = {var: key for key, var in re.findall(r'"([a-z0-9-]+)=\$\{([A-Z0-9_]+)\}"', dockerfile_text)}
@@ -1152,7 +1153,8 @@ for name in tier_scripts:
     consumed = set(CONSUMED.findall(code))
     recorded = {}
     for mo in RECORDERS.finditer(code):
-        key, var = mo["key1"] or mo["key2"], mo["var1"] or mo["var2"]
+        key = mo["key1"] or mo["key2"] or mo["key3"]
+        var = mo["var1"] or mo["var2"] or mo["var3"]
         if var in recorded:
             fail(f"{INSTALL}/{name}: {var} is recorded twice (as {recorded[var]} and {key}); the manifest would carry a duplicate key")
         recorded[var] = key
@@ -1160,7 +1162,7 @@ for name in tier_scripts:
     if unrecorded:
         fail(
             f"{INSTALL}/{name}: {unrecorded} are read by the tier but reach the manifest through no recording helper "
-            "(harmon_needs / harmon_needs_all / harmon_npm_global / harmon_uv_tool) — the VM would install them "
+            "(harmon_needs / harmon_needs_all / harmon_npm_global / harmon_uv_tool / harmon_record) — the VM would install them "
             "and not record them"
         )
     for var, key in sorted(recorded.items()):
@@ -1282,12 +1284,27 @@ git() {
     command git "$@"
 }
 manifest_dir="${root}/m-unreadable"
+mkdir -p "$manifest_dir"
+cp "${root}/m-local/manifest.json" "${manifest_dir}/manifest.json"
 write_manifest
 unset -f git
 if [ -f "${manifest_dir}/manifest.json" ]; then
     printf 'UNREADABLE_STATUS %s\n' "$(jq -r .image.revision "${manifest_dir}/manifest.json")"
 else
     printf 'UNREADABLE_STATUS none\n'
+fi
+
+# (5) an unversioned fetched source must invalidate a previous run too.
+assets_local=0
+ref=unknown
+manifest_dir="${root}/m-unknown"
+mkdir -p "$manifest_dir"
+cp "${root}/m-local/manifest.json" "${manifest_dir}/manifest.json"
+write_manifest
+if [ -e "${manifest_dir}/manifest.json" ]; then
+    printf 'UNKNOWN_REVISION stale\n'
+else
+    printf 'UNKNOWN_REVISION none\n'
 fi
 """
     harness = (
@@ -1300,7 +1317,7 @@ fi
     out = {} if run is None else dict(
         line.split(" ", 1) for line in run.stdout.splitlines() if line.count(" ") == 1
     )
-    if run is None or run.returncode != 0 or len(out) != 7:
+    if run is None or run.returncode != 0 or len(out) != 8:
         fail(
             f"{BOOTSTRAP}: the manifest provenance case could not run "
             f"({'timed out' if run is None else f'exit {run.returncode}'}) — "
@@ -1313,6 +1330,8 @@ fi
                 f"uncommitted changes at {out['LOCAL_HEAD'][:12]} — a successful status read that reports a dirty "
                 "tree must still suffix the commit, or restructuring the read has dropped the `-dirty` marker"
             )
+        if out["UNKNOWN_REVISION"] != "none":
+            fail(f"{BOOTSTRAP}: an unknown source revision left a stale manifest from an earlier run")
         if out["UNREADABLE_STATUS"] != "none":
             fail(
                 f"{BOOTSTRAP}: the cleanliness probe failed and write_manifest still attested revision "
@@ -1418,10 +1437,10 @@ else:
                 "unless its version witness is at the pin AND every executable it publishes is present"
             )
 
-# …and the two call sites that need it name every executable their block
-# publishes, or the helper is correct and unused where it matters.
+# The uv call site names every executable it publishes. Node's stronger
+# distribution-identity gate is executed against replaced companions in § 30.
 core_text = (INSTALL / "install-core.sh").read_text()
-for gated, companions in (("node", ["corepack", "npm", "npx"]), ("uv", ["uvx"])):
+for gated, companions in (("uv", ["uvx"]),):
     site = re.search(rf'^if harmon_needs_all {gated} "\$[A-Z0-9_]+_VERSION" (.+?) -- ', core_text, re.M)
     if not site:
         fail(
@@ -2954,7 +2973,12 @@ PATH="${root}/stubs:${HARMON_BIN}:${PATH}"
 
 # Stubs record what a process started AFTER sourcing lib.sh would have seen;
 # `<unset>` marks an unset variable.
-printf '#!/bin/sh\nprintf "NPM ca=%%s\\n" "${NODE_EXTRA_CA_CERTS-<unset>}"\n' >"${root}/stubs/npm"
+cat >"${root}/stubs/npm" <<'NPM'
+#!/bin/sh
+printf 'NPM ca=%s\n' "${NODE_EXTRA_CA_CERTS-<unset>}"
+printf '#!/bin/sh\nprintf "1.2.3\\n"\n' >"${HARMON_BIN}/somepkg-cmd"
+chmod 0755 "${HARMON_BIN}/somepkg-cmd"
+NPM
 printf '#!/bin/sh\nprintf "NODE ca=%%s\\n" "${NODE_EXTRA_CA_CERTS-<unset>}"\n' >"${root}/stubs/node-outside-helper"
 printf '#!/bin/sh\nprintf "UV args=%%s\\n" "$*"\n' >"${root}/stubs/uv"
 chmod 0755 "${root}/stubs/npm" "${root}/stubs/node-outside-helper" "${root}/stubs/uv"
@@ -2984,7 +3008,7 @@ source_case SRC_NO_BUNDLE_CALLER_KEPT "${root}/missing.crt" /caller/own.pem
     printf 'SCOPE %s\n' "$(node-outside-helper)"
     # …and so does npm, through the helper, with nothing set around it.
     printf 'NPM %s\n' "$(harmon_npm_global somepkg 1.2.3 somepkg-cmd | grep '^NPM ')"
-    printf 'UV %s\n' "$(harmon_uv_tool somepkg 1.2.3 somepkg-cmd | grep '^UV ')"
+    printf 'UV %s\n' "$(harmon_uv_tool somepkg 1.2.3 uvpkg-cmd | grep '^UV ')"
 )
 """
 run = run_lifted(trust.replace("@LIB@", str(INSTALL / "lib.sh")))
@@ -3165,12 +3189,180 @@ GITHUB_STEP_SUMMARY='{summary}'
     if compared != {str(AGENT_CONFIG / name) for name in ('claude-managed-settings.json', 'codex-managed-config.toml')}:
         fail(f'{workflow_file}: posture comparisons diverged from the managed definitions')
 
+
+# ── 30. bootstrap repairs require literal values and complete publication ──
+# Lift both locale functions, redirecting only their two system paths. The
+# installer stub fails after writing partial bytes to its destination; using
+# the live path there would truncate the old login profile before the failure.
+locale_start = bootstrap_text.index("ensure_environment_line() {")
+locale_end = bootstrap_text.index("\nset_locale\n", locale_start)
+locale_functions = bootstrap_text[locale_start:locale_end].replace(
+    "/etc/environment", "${root}/environment"
+).replace("/etc/profile.d", "${root}/profile.d")
+locale_harness = r"""
+set -euo pipefail
+root="$(mktemp -d)"
+trap 'rm -rf "$root"' EXIT
+HARMON_BIN="${root}/bin"
+HARMON_PROFILE_DROPIN="${root}/profile.d/harmon-remote-env.sh"
+die() { printf '%s\n' "$*" >&2; exit 1; }
+@LOCALE@
+printf 'LANG=C-UTF-8\nLC_ALL=C-UTF-8\nOTHER=preserved\n' >"${root}/environment"
+set_locale
+grep -Fxq LANG=C.UTF-8 "${root}/environment"
+grep -Fxq LC_ALL=C.UTF-8 "${root}/environment"
+grep -Fxq OTHER=preserved "${root}/environment"
+[ "$(stat -c %a "$HARMON_PROFILE_DROPIN")" = 644 ]
+printf 'LOCALE_LITERAL repaired\n'
+
+install() {
+    local destination="${!#}"
+    if [ "$mode" = write ] && [[ "$destination" == "$HARMON_PROFILE_DROPIN"* ]]; then
+        printf 'partial\n' >"$destination"
+        return 1
+    fi
+    command install "$@"
+}
+mv() { [ "$mode" != rename ] || return 1; command mv "$@"; }
+for mode in write rename; do
+    printf 'previous login profile\n' >"$HARMON_PROFILE_DROPIN"
+    cp "$HARMON_PROFILE_DROPIN" "${root}/before"
+    if (set_locale) >/dev/null 2>&1; then exit 1; fi
+    cmp "${root}/before" "$HARMON_PROFILE_DROPIN"
+    [ -z "$(find "${root}/profile.d" -name '*.harmon-staging' -print)" ]
+    printf 'PROFILE_%s preserved\n' "$mode"
+done
+"""
+run = run_lifted(locale_harness.replace("@LOCALE@", locale_functions))
+if run is None or run.returncode != 0 or run.stdout.splitlines() != [
+    "LOCALE_LITERAL repaired", "PROFILE_write preserved", "PROFILE_rename preserved"
+]:
+    fail(f"{BOOTSTRAP}: locale/profile fault injection failed: {run}")
+
+# Execute the real Node block with a locally generated distribution archive.
+# The stubbed download counts repairs; checksum validation is the only other
+# substituted operation. npm/npx/corepack are real symlinks into lib/.
+node_block = core_text.split("# ---------- Node.js", 1)[1].split(
+    "# ---------- corepack's pnpm shim", 1
+)[0]
+node_block = node_block[node_block.index("\n") + 1:]
+node_harness = r"""
+set -euo pipefail
+root="$(mktemp -d)"
+trap 'rm -rf "$root"' EXIT
+export HARMON_PREFIX="${root}/prefix" HARMON_BIN="${root}/prefix/bin"
+. '@LIB@'
+harmon_ensure_bin
+PATH="${HARMON_BIN}:${PATH}"
+tmp="${root}/tmp"
+mkdir -p "$tmp" "${root}/dist/bin" "${root}/dist/lib/node_modules"
+NODE_VERSION=9.9.9
+node_amd64_sha256=unused
+node_arm64_sha256=unused
+printf '#!/bin/sh\nprintf "v9.9.9\n"\n' >"${root}/dist/bin/node"
+chmod 0755 "${root}/dist/bin/node"
+for companion in npm npx corepack; do
+    printf '#!/bin/sh\nprintf "bundled-new\n"\n' >"${root}/dist/lib/node_modules/${companion}.js"
+    chmod 0755 "${root}/dist/lib/node_modules/${companion}.js"
+    ln -s "../lib/node_modules/${companion}.js" "${root}/dist/bin/$companion"
+done
+tar -cJf "${root}/node.tar.xz" -C "$root" dist
+harmon_fetch() { printf 'fetch\n' >>"${root}/fetches"; cp "${root}/node.tar.xz" "$2"; }
+harmon_verify_sha256() { :; }
+run_node() {
+@NODE_BLOCK@
+}
+run_node >/dev/null
+[ "$(wc -l <"${root}/fetches")" -eq 1 ]
+run_node >/dev/null
+[ "$(wc -l <"${root}/fetches")" -eq 1 ]
+expected_fetches=1
+for companion in npm npx corepack; do
+    # Keep the new node and a valid previous receipt, replace just one target.
+    printf '#!/bin/sh\nprintf "old-companion\n"\n' >"${HARMON_BIN}/${companion}"
+    run_node >/dev/null
+    expected_fetches=$((expected_fetches + 1))
+    [ "$(wc -l <"${root}/fetches")" -eq "$expected_fetches" ]
+    cmp "${root}/dist/lib/node_modules/${companion}.js" "${HARMON_BIN}/${companion}"
+    printf 'NODE_%s repaired\n' "$companion"
+done
+# Simulate interruption while copying the last bin/ directory. The receipt
+# must already be gone, so even unchanged executables cannot make a skip.
+cp() {
+    if [ "${1:-}" = -a ] && [[ "$2" == */bin/. ]]; then return 1; fi
+    command cp "$@"
+}
+rm -f "${HARMON_BIN}/npm"
+if (run_node) >/dev/null 2>&1; then exit 1; fi
+[ ! -e "$node_receipt" ]
+unset -f cp
+run_node >/dev/null
+printf 'NODE_INTERRUPTED repaired\n'
+"""
+run = run_lifted(node_harness.replace("@LIB@", str(INSTALL / "lib.sh")).replace("@NODE_BLOCK@", node_block))
+if run is None or run.returncode != 0 or run.stdout.splitlines() != [
+    "NODE_npm repaired", "NODE_npx repaired", "NODE_corepack repaired", "NODE_INTERRUPTED repaired"
+]:
+    fail(f"{INSTALL}/install-core.sh: Node distribution identity fault injection failed: {run}")
+
+# npm is a process stub so the inherited prefix reaches it exactly as it would
+# reach real npm. It honours the CLI prefix only when present. A second mode
+# lies about successful publication, and a third publishes a link outside the
+# managed prefix: both must fail the helper's post-install check.
+npm_harness = r"""
+set -euo pipefail
+root="$(mktemp -d)"
+trap 'rm -rf "$root"' EXIT
+export HARMON_PREFIX="${root}/managed" HARMON_BIN="${root}/managed/bin"
+export NPM_CONFIG_PREFIX="${root}/foreign"
+mkdir -p "$HARMON_BIN" "${root}/stub"
+PATH="${root}/stub:${HARMON_BIN}:${PATH}"
+. '@LIB@'
+cat >"${root}/stub/npm" <<'NPM'
+#!/bin/sh
+prefix="$NPM_CONFIG_PREFIX"
+while [ "$#" -gt 0 ]; do
+    if [ "$1" = --prefix ]; then prefix="$2"; shift; fi
+    shift
+done
+[ "${MODE:-}" != missing ] || exit 0
+mkdir -p "${prefix}/bin"
+printf '#!/bin/sh\nprintf "1.2.3\n"\n' >"${prefix}/bin/test-tool"
+chmod 0755 "${prefix}/bin/test-tool"
+if [ "${MODE:-}" = external ]; then
+    mkdir -p "$NPM_CONFIG_PREFIX"
+    mv "${prefix}/bin/test-tool" "${NPM_CONFIG_PREFIX}/test-tool"
+    ln -s "${NPM_CONFIG_PREFIX}/test-tool" "${prefix}/bin/test-tool"
+fi
+NPM
+chmod 0755 "${root}/stub/npm"
+harmon_npm_global test-package 1.2.3 test-tool >/dev/null
+[ -x "${HARMON_BIN}/test-tool" ]
+[ ! -e "$NPM_CONFIG_PREFIX" ]
+printf 'NPM_PREFIX managed\n'
+for MODE in missing external; do
+    export MODE
+    rm -f "${HARMON_BIN}/test-tool"
+    if (harmon_npm_global test-package 1.2.3 test-tool) >/dev/null 2>&1; then exit 1; fi
+    printf 'NPM_%s refused\n' "$MODE"
+done
+"""
+run = run_lifted(npm_harness.replace("@LIB@", str(INSTALL / "lib.sh")))
+if run is None or run.returncode != 0 or run.stdout.splitlines() != [
+    "NPM_PREFIX managed", "NPM_missing refused", "NPM_external refused"
+]:
+    fail(f"{INSTALL}/lib.sh: npm managed-prefix fault injection failed: {run}")
+
 for e in errors:
     print(f"FAIL: {e}", file=sys.stderr)
 if errors:
     print(f"test-bootstrap-remote: {len(errors)} issue(s) found", file=sys.stderr)
     sys.exit(1)
 
+print("bootstrap-remote OK: malformed locale near-matches are repaired, and failed profile writes/renames preserve the old login file")
+print("bootstrap-remote OK: unknown source provenance removes stale manifests from previous runs")
+print("bootstrap-remote OK: replaced Node companions and interrupted copies force a complete distribution repair")
+print("bootstrap-remote OK: npm ignores inherited prefixes and refuses missing or external publications")
 print(f"bootstrap-remote OK: {len(pins)} pin(s) in {VERSIONS}, all Renovate-extractable")
 print(f"bootstrap-remote OK: {len(tier_scripts)} shared install script(s) declare no pin of their own")
 print(f"bootstrap-remote OK: {len(head_pairs)} checksum pin-pair(s) agree with their version pin; {drift_note}")
