@@ -391,10 +391,9 @@ harnesses = ["claude-code"]   # (preference) — live every run:
                                            # verdict it collects
 
 # ── Stages — stage → registry actors ────────────────────────────────────────
-# Monomorphic keys; the KEY carries the semantics, the value is always a
-# plain array of agent-registry.json slugs (never commands — those live one
-# hop away, behind the registry entry's Taskfile target). The one scalar is
-# [stage.integration].review_trigger, documented beside it below:
+# Actor arrays contain agent-registry.json slugs. Integration also supports
+# finder tables with per-reviewer settings; local commands remain behind
+# registry Taskfile targets. The review_trigger scalar controls timing:
 #   finders           (all-of) every listed finder returns a completed pass at
 #                     the same reviewed_head or the round is incomplete
 #                     (finder_unavailable after one retry — never a round
@@ -429,7 +428,16 @@ finders = ["codex-verification"]
 # finder_fallbacks = []
 
 [stage.integration]
-finders = ["codex-cloud"]
+# Per-repository reviewer defaults; a recorded operator instruction may override
+# them per PR. Codex omits budget/rounds to follow the resolved rounds policy.
+# Completion is current-head evidence from the registered actor, never a timer.
+finder = [
+  { id = "codex-cloud", trigger = "@codex review", completion = { kind = "comment", actor_id = 199175422, body = "Reviewed commit:" }, gates = true, carry = "identity" },
+  { id = "claude", trigger = "@claude review", budget = 2, rounds = 2, completion = { kind = "comment", actor_id = 295644852, body = "Claude Review complete." }, gates = false, carry = "identity" },
+  { id = "greptile", trigger = "@greptileai", budget = 1, rounds = 1, completion = { kind = "review", actor_id = 165735046 }, gates = false, carry = "identity" },
+  { id = "coderabbit-cloud", trigger = "@coderabbitai full review", trigger_incremental = "@coderabbitai review", budget = 3, rounds = { full = [1], incremental = [2, 3] }, completion = { kind = "review", actor_id = 136622811 }, gates = false, carry = "identity-or-incremental" },
+  { id = "gemini", trigger = "/gemini review", budget = 3, rounds = 3, completion = { kind = "review", actor_id = 176961590 }, gates = false, carry = "identity" },
+]
 # finder_fallbacks = []
 # review_trigger: WHEN the integration stage requests its PR-side reviews
 # (every finder above) relative to CI on the head. Absent = "after-ci".

@@ -425,6 +425,9 @@ full)
         --data release_content_paths="src docs"
         --data use_codex_review=true
         --data use_codex_cloud_review=true
+        --data use_claude_review=true
+        --data claude_review_actor_id=295644852
+        --data 'claude_review_actor_login=evanharmon1-ci[bot]'
         --data use_coderabbit=true
         --data use_greptile=true
         --data use_gemini_code_assist=true
@@ -1869,7 +1872,8 @@ esac
 
 # Each authorized sender gets its own continuation line; otherwise a larger
 # allowlist silently creates an overlong generated YAML expression.
-if grep -Eq 'sender\.login.*sender\.login' .github/workflows/claude-review.yml; then
+if [ -f .github/workflows/claude-review.yml ] &&
+    grep -Eq 'sender\.login.*sender\.login' .github/workflows/claude-review.yml; then
     err "claude-review sender expression contains multiple senders on one line"
 fi
 
@@ -2440,7 +2444,11 @@ for rounds in policy["rounds"].values():
 
 for stage in ("challenge", "review"):
     assert bool(policy["stage"][stage].get("finders", [])) == local_review
-assert bool(policy["stage"]["integration"].get("finders", [])) == cloud_review
+expected = {
+    "full": ["codex-cloud", "claude", "greptile", "coderabbit-cloud", "gemini"],
+    "minimal": ["greptile"], "iac": ["coderabbit-cloud"],
+}.get(profile, [])
+assert [entry["id"] for entry in policy["stage"]["integration"]["finder"]] == expected
 PY
 
 # ── 9d4. CodeRabbit renders only when explicitly enabled ───────────
@@ -2458,8 +2466,10 @@ full | iac)
         err "CHECKLIST does not ask to confirm CodeRabbit's organization auto-review setting"
     ! grep -Fq 'Confirm CodeRabbit has no access' docs/CHECKLIST.md ||
         err "CHECKLIST rendered the CodeRabbit removal step for an opt-in"
-    grep -Fq 'coderabbitai[bot]' .github/workflows/claude-review.yml ||
-        err "Claude review workflow does not trust CodeRabbit (use_coderabbit=true)"
+    if [ -f .github/workflows/claude-review.yml ]; then
+        grep -Fq 'coderabbitai[bot]' .github/workflows/claude-review.yml ||
+            err "Claude review workflow does not trust CodeRabbit (use_coderabbit=true)"
+    fi
     grep -q 'coderabbitai' .foreman.toml ||
         err "Foreman does not trust CodeRabbit reviews (use_coderabbit=true)"
     if [ -f docs/project-management.md ]; then
@@ -2484,8 +2494,10 @@ full | iac)
         err "CHECKLIST mentions CodeRabbit setup but use_coderabbit is off"
     grep -Fq 'Confirm CodeRabbit has no access' docs/CHECKLIST.md ||
         err "CHECKLIST omits CodeRabbit App-access confirmation when off"
-    ! grep -Fq 'coderabbitai[bot]' .github/workflows/claude-review.yml ||
-        err "Claude review workflow trusts CodeRabbit but use_coderabbit is off"
+    if [ -f .github/workflows/claude-review.yml ]; then
+        ! grep -Fq 'coderabbitai[bot]' .github/workflows/claude-review.yml ||
+            err "Claude review workflow trusts CodeRabbit but use_coderabbit is off"
+    fi
     if [ -f .foreman.toml ]; then
         ! grep -q 'coderabbitai' .foreman.toml ||
             err "Foreman trusts CodeRabbit reviews but use_coderabbit is off"
@@ -2606,6 +2618,10 @@ grep -Fq 'NEVER run `gh pr ready`' .github/workflows/claude-implement.yml ||
 # time a run fails or is cancelled, which is exactly when nobody is watching.
 for claude_wf in claude-plan.yml claude-implement.yml claude-review.yml; do
     claude_wf_path=".github/workflows/$claude_wf"
+    if [ "$claude_wf" = claude-review.yml ] && [ "$profile" != full ]; then
+        [ ! -f "$claude_wf_path" ] || err "Claude review workflow rendered despite default opt-out"
+        continue
+    fi
     [ -f "$claude_wf_path" ] || {
         err "$claude_wf is missing"
         continue

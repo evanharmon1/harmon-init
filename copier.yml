@@ -37,6 +37,9 @@ _sensitive_questions:
   - use_codeql
   - use_codex_review
   - use_codex_cloud_review
+  - use_claude_review
+  - claude_review_actor_id
+  - claude_review_actor_login
   - use_coderabbit
   - coderabbit_review_trigger
   - use_gemini_code_assist
@@ -388,6 +391,43 @@ use_codex_cloud_review:
   default: no
   when: "[[ use_codex_review ]]"
   validator: "[% if use_codex_cloud_review and not use_codex_review %]Enable CODEX REVIEW before CODEX CLOUD REVIEW.[% endif %]"
+
+use_claude_review:
+  type: bool
+  help: >-
+    [security-sensitive] CLAUDE REVIEW: Add the on-request Claude review workflow and finder?
+    Defaults off. Requires a paid Claude subscription or API billing, a CI
+    GitHub App installed on this repository, and the workflow secrets documented
+    in docs/architecture/security.md. No free hosted-review tier is assumed;
+    private repositories also require the App's explicit repository access.
+    Existing adopters must opt in to retain the template-managed review workflow.
+  default: no
+
+claude_review_actor_id:
+  type: str
+  help: >-
+    [security-sensitive] CLAUDE REVIEW ACTOR ID: Numeric GitHub user ID of the CI App bot
+    that posts Claude reviews. Read users/<app-slug>[bot] with the GitHub API.
+    This is not the App integration ID or the public Claude bot's ID.
+  default: ""
+  when: "[[ use_claude_review ]]"
+  validator: >-
+    [% if use_claude_review and not (claude_review_actor_id | regex_search('^[1-9][0-9]*$')) %]
+    CLAUDE REVIEW requires a positive numeric CI App bot actor ID.
+    [% endif %]
+
+claude_review_actor_login:
+  type: str
+  help: >-
+    [security-sensitive] CLAUDE REVIEW ACTOR LOGIN: GitHub login of that same CI App bot,
+    including the [bot] suffix. Verify that its user ID matches CLAUDE REVIEW
+    ACTOR ID; never substitute the App integration ID.
+  default: ""
+  when: "[[ use_claude_review ]]"
+  validator: >-
+    [% if use_claude_review and not (claude_review_actor_login | regex_search('^[A-Za-z0-9][A-Za-z0-9-]*\[bot\]$')) %]
+    CLAUDE REVIEW requires the CI App bot login, including its [bot] suffix.
+    [% endif %]
 
 use_coderabbit:
   type: bool
