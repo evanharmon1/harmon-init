@@ -32,7 +32,6 @@ import fcntl
 import json
 import os
 from pathlib import Path
-import shutil
 import subprocess
 import sys
 import tempfile
@@ -48,19 +47,6 @@ with (state / "launch.lock").open("a") as launch_lock:
             # An active setup owns the run lock. Observe it; never launch a peer.
             info = json.loads((state / "active.json").read_text())
         else:
-            # Prune only completed history, before creating this run. The
-            # previously published active run is protected even if it is old.
-            active = state / "active.json"
-            active_directory = json.loads(active.read_text())["directory"] if active.exists() else None
-            completed = sorted(
-                (entry for entry in state.glob("run-*")
-                 if entry.is_dir() and not entry.is_symlink() and (entry / "status").is_file()),
-                key=lambda entry: ((entry / "status").stat().st_mtime_ns, entry.name),
-                reverse=True,
-            )
-            for old in completed[3:]:
-                if str(old) != active_directory:
-                    shutil.rmtree(old)
             directory = Path(tempfile.mkdtemp(prefix="run-", dir=state))
             info = {"directory": str(directory)}
             with (directory / "output.log").open("w") as log:

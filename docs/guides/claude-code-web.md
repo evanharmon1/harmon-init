@@ -1109,11 +1109,14 @@ warns to run `task setup:remote` manually.
 Its one-line
 `SessionStart remote preparation:` summary distinguishes complete preparation,
 preparation completed with warnings (skipped required steps or warnings), a failure
-requiring a retry, and setup still running. The last case names the worker PID,
-log and status file, and warns that lefthook hooks, related repos and dependencies
+requiring a retry, setup still running, or setup ended without a status. The
+still-running case names the worker PID, log and status file, and warns that
+lefthook hooks, related repos and dependencies
 may not be ready. Wait for the status file before working or manually re-running
-`task setup:remote`; `0` means success and any other value means failure. The
-hook's lock prevents overlapping hook setups; direct manual task invocations do
+`task setup:remote`; `0` means success and any other value means failure. If the
+worker ended without a status, the warning names its log and asks the agent to
+run `task setup:remote` again. The hook's lock prevents overlapping hook setups;
+direct manual task invocations do
 not acquire that lock. Logs and status files persist for inspection. Missing
 tools for applicable steps, a missing bootstrap helper, or an unwritable clone
 parent degrade the summary; routine not-applicable skips (no lockfiles, hook

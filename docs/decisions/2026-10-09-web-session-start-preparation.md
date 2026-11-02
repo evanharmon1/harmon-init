@@ -43,7 +43,9 @@ retains the observed evidence separately from this decision.
    worker holds an advisory lock until setup exits; overlapping hook invocations
    observe it instead of starting another setup. Only a disposable waiter has a
    90 s deadline. Expiry never signals preparation: the hook exits 0 with a
-   still-running summary naming the PID, log and status file. Hooks, related
+   still-running summary naming the PID, log and status file when the worker
+   holds the run lock. If the worker ended without a status, a warning names
+   the log and asks for `task setup:remote` again. Hooks, related
    repos and dependencies may not be ready; the agent must wait for that status
    before work or a manual setup retry. Without `timeout` or Python 3, the
    wrapper skips preparation, warns to run `task setup:remote` manually and
@@ -78,9 +80,11 @@ Ordering tradeoff accepted for [#1576](https://github.com/evanharmon1/harmon-ini
 sibling network work remains before dependency installs. A slow or unreachable
 sibling can consume the hook's 90 s wait before pnpm or uv runs. The
 2026-11-02 amendment preserves that order and lets preparation continue after
-the hook returns. Expiry is reported as still running, with a durable log and
-status file rather than a failure. A status of `0` means success; any other
-value means failure. After completion the agent may retry a failed
+the hook returns. Expiry is reported as still running while the worker holds
+the run lock, with a durable log and status file rather than a failure. If the
+worker ended without a status, the warning names the log and asks for a manual
+`task setup:remote` retry. A status of `0` means success; any other value means
+failure. After completion the agent may retry a failed
 `task setup:remote` manually. No new setup termination path is introduced.
 Persistent run logs and status files remain available for diagnosis.
 

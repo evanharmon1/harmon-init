@@ -1087,53 +1087,6 @@ assert len(list(state.glob("run-*"))) == 1, "observer launched another setup"
 print("OK: launcher and observer both report a terminated worker without a status, never still running")
 PYDEADWORKER
 
-    echo "==> SessionStart retains three newest completed runs, plus protected active and incomplete runs"
-    make_fixture hook-retention -
-    cat >"${TMP}/hook-bin/task" <<'EOF'
-#!/usr/bin/env bash
-echo '==> setup:remote completed.'
-EOF
-    cat >"${TMP}/hook-bin/timeout" <<'EOF'
-#!/usr/bin/env bash
-[ "$1" = '90s' ] || exit 99
-shift
-exec "$@"
-EOF
-    chmod +x "${TMP}/hook-bin/task" "${TMP}/hook-bin/timeout"
-    python3 - "${FIX}/scripts/session-start-remote.sh" "${TMP}/hook-bin:${MIN_BIN}" <<'PYRETENTION'
-import json
-import os
-from pathlib import Path
-import subprocess
-import sys
-
-script, path = sys.argv[1:]
-state = Path(script).parent.parent / ".git/session-start-remote"
-state.mkdir()
-for number in range(1, 6):
-    directory = state / f"run-old-{number}"
-    directory.mkdir()
-    status = directory / "status"
-    status.write_text("0\n")
-    os.utime(status, (number, number))
-# The previous active run is deliberately older than the three newest.
-protected = state / "run-old-1"
-(state / "active.json").write_text(json.dumps({"directory": str(protected), "pid": 999999}))
-incomplete = state / "run-incomplete"
-incomplete.mkdir()
-(incomplete / "output.log").write_text("unfinished preparation\n")
-result = subprocess.run(["bash", script], env=dict(os.environ, CLAUDE_CODE_REMOTE="true", PATH=path),
-                        capture_output=True, text=True)
-assert result.returncode == 0 and "setup:remote completed." in result.stdout, result
-assert not (state / "run-old-2").exists(), "old completed history was not pruned"
-for number in (1, 3, 4, 5):
-    assert (state / f"run-old-{number}" / "status").exists(), number
-assert (incomplete / "output.log").read_text() == "unfinished preparation\n"
-current = Path(json.loads((state / "active.json").read_text())["directory"])
-assert current not in (protected, incomplete) and (current / "status").read_text().strip() == "0", current
-assert len(list(state.glob("run-*"))) == 6, list(state.iterdir())
-print("OK: only older unprotected completed runs are removed; newest three, previous active, current and incomplete survive")
-PYRETENTION
 else
     echo "skip: timeout is unavailable; the real deadline scenario cannot run"
 fi
