@@ -635,7 +635,7 @@ tasks:
       - ./scripts/test-renovate-pins.sh
 
   test:renovate-config:
-    desc: Render each template profile and validate renovate.json strictly (pass one profile with -- <profile>)
+    desc: Render each template profile and validate renovate.json strictly and .coderabbit.yaml against its schema (pass one profile with -- <profile>)
     cmds:
       - ./scripts/test-renovate-config.sh {{.CLI_ARGS}}
 

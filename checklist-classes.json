@@ -156,7 +156,7 @@
       "id": "template-install-the-coderabbit-app-https-git-017",
       "source": "template",
       "section": "2. GitHub repo settings",
-      "label": "Install the [CodeRabbit app](https://github.com/apps/coderabbitai) on the repo (`.coderabbit.yaml` is pre-configured, including `reviews.auto_review.drafts: tru",
+      "label": "Install the [CodeRabbit app](https://github.com/apps/coderabbitai) on the repo",
       "class": "human-only",
       "probe": "Read the repository app installation and review settings in the GitHub and CodeRabbit interfaces.",
       "write_task": null
@@ -1008,10 +1008,10 @@
       "write_task": null
     },
     {
-      "id": "root-remove-coderabbit-access-remove-this-016",
+      "id": "root-install-the-coderabbit-app-https-git-016",
       "source": "root",
       "section": "2. GitHub repo settings",
-      "label": "**Remove CodeRabbit access** — remove this repository from",
+      "label": "Install the [CodeRabbit app](https://github.com/apps/coderabbitai) on the repo",
       "class": "human-only",
       "probe": "Read the repository app installation and review settings in the GitHub and CodeRabbit interfaces.",
       "write_task": null

@@ -31,6 +31,17 @@ RENOVATE_VALIDATOR_VERSION=44.176.2
 npx --yes --package "renovate@${RENOVATE_VALIDATOR_VERSION}" -- \
     renovate-config-validator --strict renovate.json
 
+# The dogfood .coderabbit.yaml against CodeRabbit's published schema. Each
+# profile's render is validated the same way inside test-template.sh (#1908).
+if ! command -v uvx >/dev/null 2>&1; then
+    echo "FAIL: required tool 'uvx' is not installed for CodeRabbit schema validation" >&2
+    exit 1
+fi
+# renovate: datasource=pypi depName=check-jsonschema
+CHECK_JSONSCHEMA_VERSION=0.39.0
+uvx --from "check-jsonschema==${CHECK_JSONSCHEMA_VERSION}" check-jsonschema \
+    --schemafile https://coderabbit.ai/integrations/schema.v2.json .coderabbit.yaml
+
 for profile in "${profiles[@]}"; do
     if [ "$profile" = "update" ]; then
         ./scripts/test-template-update.sh renovate-config
