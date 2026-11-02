@@ -561,12 +561,25 @@ chmod -x "${fake_bin}/opencode"
 
 # Include devcontainer.json and future lifecycle files, not just today's two
 # scripts. The installer itself defines the flag; callers must never pass it.
+lifecycle_count=0
+lifecycle_post_create_seen=false
+lifecycle_post_start_seen=false
 while IFS= read -r -d '' hook; do
     [ "$hook" != "$agent_autonomy" ] || continue
     grep -qF 'agent-autonomy.sh' "$hook" || continue
+    lifecycle_count=$((lifecycle_count + 1))
+    printf 'checked agent lifecycle reference: %s\n' "$hook"
+    case "$hook" in
+    .devcontainer/agent/post-create.sh) lifecycle_post_create_seen=true ;;
+    .devcontainer/agent/post-start.sh) lifecycle_post_start_seen=true ;;
+    esac
     ! grep -q -- '--platform-vm' "$hook" ||
         fail "${hook} passes --platform-vm: the agent devcontainer must always refuse harnesses"
 done < <(find .devcontainer/agent -type f -print0)
+[ "$lifecycle_count" -gt 0 ] || fail "no agent lifecycle files matched agent-autonomy.sh"
+[ "$lifecycle_post_create_seen" = true ] || fail "lifecycle-file check did not include .devcontainer/agent/post-create.sh"
+[ "$lifecycle_post_start_seen" = true ] || fail "lifecycle-file check did not include .devcontainer/agent/post-start.sh"
+printf 'agent lifecycle files checked: %s\n' "$lifecycle_count"
 
 chmod +x "${fake_bin}/opencode"
 if FOREMAN_DEVCONTAINER=agent run_autonomy verify >/dev/null 2>&1; then
