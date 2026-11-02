@@ -589,8 +589,10 @@ Reconciliation uses the existing `${HARMON_PREFIX:-/usr/local}/bin` only if it
 is writable and precedes competing tools on `PATH`. This avoids `sudo` and a
 user prefix that a child preparation task cannot put onto the parent agent's
 `PATH`. Host and devcontainer preparation do not reconcile. An install gets
-30 s plus a 2 s kill grace, leaving room inside SessionStart's 90 s deadline;
-version probes get 2 s plus a 1 s grace. Warnings are non-fatal: each names its
+30 s plus a 2 s kill grace, aiming to leave room for checkout preparation within
+SessionStart's 90 s wait so a normal start reports a final status rather than
+"still running". Setup is not killed when that wait ends. Version probes get
+2 s plus a 1 s grace. Warnings are non-fatal: each names its
 cause and the remedy for that cause. Both reconciliation and report-only status
 use the single cause-to-remedy mapping in
 [`scripts/reconcile-toolchain.sh`](../../scripts/reconcile-toolchain.sh).
@@ -601,8 +603,9 @@ The platform also clones the checkout shallow (observed 2026-11-01 on
 harmon-devkit and omator). After tool reconciliation and before hooks/siblings,
 remote-only preparation checks `git rev-parse --is-shallow-repository` and, when
 shallow, attempts one `git fetch --unshallow origin`. It gets 20 s plus a 2 s
-kill grace within the same 90 s SessionStart deadline. Success is reported in
-the preparation summary; failure, expiry, missing `timeout`, or remaining
+kill grace, also aiming to finish within the hook's 90 s wait so a normal start
+reports a final status. Setup keeps running if that wait ends. Success is
+reported in the preparation summary; failure, expiry, missing `timeout`, or remaining
 shallow history warns without failing preparation. The warning names the
 ancestry-dependent verify/integrate gates that may go indeterminate. A timed-out
 or killed fetch requires `git fetch --unshallow origin` by hand in the checkout,
@@ -618,9 +621,10 @@ the existing sibling clone path does not request shallow history. A real
 web-session verification run remains a follow-up on
 [#1460](https://github.com/evanharmon1/harmon-init/issues/1460).
 
-Any preparation failure, including an outer timeout,
-triggers a report-only probe in the wrapper; it reports remaining drift without
-inferring that the time budget caused it. Probe stdout is captured in a regular
+A completed preparation failure triggers a report-only probe in the wrapper;
+it reports remaining drift without inferring that the time budget caused it.
+When the hook's wait expires, the wrapper instead reports setup still running
+or ended without a status, with its log path; it never kills setup. Probe stdout is captured in a regular
 file so a descendant holding stdout open cannot extend the probe's bound.
 The release pin remains the bootstrap trust
 root, and only changing the environment setup script rebuilds the platform's
