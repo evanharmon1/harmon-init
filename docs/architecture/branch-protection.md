@@ -212,6 +212,10 @@ This mirrors the importable
           {
             "context": "devcontainer-verify",
             "integration_id": 15368
+          },
+          {
+            "context": "remote-bootstrap-verify",
+            "integration_id": 15368
           }
         ]
       }
