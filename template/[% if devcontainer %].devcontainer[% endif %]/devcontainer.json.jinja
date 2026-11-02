@@ -63,7 +63,7 @@
     // Mask the bind-mounted .venv with a container-private volume: the
     // container's `uv sync` must never rewrite the host's venv in place
     // (Linux binaries + /workspaces shebangs break every host-side run).
-    "source=venv-[[ github_org ]]-[[ project_slug ]],target=${containerWorkspaceFolder}/.venv,type=volume",
+    "source=venv-[[ github_org ]]-[[ project_slug ]]${localEnv:HARMON_DEVCONTAINER_SMOKE_VOLUME_SUFFIX},target=${containerWorkspaceFolder}/.venv,type=volume",
     [% endif %]
     "source=claude-code-config-[[ github_org ]]-[[ project_slug ]],target=/home/vscode/.claude,type=volume",
     "source=codex-config-[[ github_org ]]-[[ project_slug ]],target=/home/vscode/.codex,type=volume",
