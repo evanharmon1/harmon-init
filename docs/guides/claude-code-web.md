@@ -73,7 +73,8 @@ Rules for this script, each with its reason:
   and dependencies, `task setup:remote` compares ShellCheck with the checkout's
   `.github/actions/setup/action.yml` pin (the same source the lint gate reads,
   including in generated repositories). It reuses the bootstrap's checksum-verified
-  installer, with a 30 s install budget inside the 90 s SessionStart deadline.
+  installer, with a 30 s install budget intended to fit within the hook's 90 s
+  wait; setup continues if that wait ends.
   It writes to `${HARMON_PREFIX:-/usr/local}/bin` only when that directory is
   writable and wins tool resolution on `PATH`; it never requests `sudo` or
   changes the parent session's `PATH`.

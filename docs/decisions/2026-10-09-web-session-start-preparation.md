@@ -54,8 +54,9 @@ retains the observed evidence separately from this decision.
 3. `task setup:remote` installs current lefthook shims, bootstraps missing siblings
    and fetches existing siblings into the checkout's parent directory, then
    installs frozen dependencies where lockfiles exist. Slow installs run last,
-   so a deadline does not prevent the preceding hook and sibling preparation. The shared fetch
-   script accepts that directory, defaulting to `/workspaces` for devcontainers.
+   prioritizing hook and sibling availability before dependency installation.
+   The shared fetch script accepts that directory, defaulting to `/workspaces`
+   for devcontainers.
    Fetch identifies the sibling by a remote whose final owner/repository path
    matches the configured entry case-insensitively, with `.git` stripped;
    host, scheme, port and leading path do not define identity. This supports
