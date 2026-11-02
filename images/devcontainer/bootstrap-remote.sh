@@ -697,10 +697,13 @@ posture_describe() {
 prepare_posture_dest() {
     local src="$1" dest="$2" scratch="$3" kept dir
     dir="$(dirname "$dest")"
-    # Refuse both resolved and dangling parent links: replacing a managed file
-    # does not authorize writing through a platform-owned directory, even when
-    # HARMON_AGENT_POSTURE_REPLACE=1 opts into replacing the file itself.
-    [ ! -L "$dir" ] || die "refusing symlinked parent ${dir} for the agent posture"
+    # A platform owns a parent link, resolved or dangling. Route to scratch
+    # before any file decision, so the replacement opt-in never writes through it.
+    if [ -L "$dir" ]; then
+        warn "found symlinked parent ${dir} -> $(readlink "$dir") — left in place, so the agent posture is NOT applied for ${dest}; HARMON_AGENT_POSTURE_REPLACE only replaces files in real directories"
+        printf '%s\n' "$scratch"
+        return 0
+    fi
     if [ ! -d "$dir" ]; then
         install -d -m 0755 "$dir" || die "could not create ${dir} for the agent posture"
         printf '    created %s\n' "$dir" >&2

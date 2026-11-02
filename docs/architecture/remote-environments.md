@@ -386,6 +386,9 @@ leave a harness installed on the machine without its managed policy.
   `<path>.replaced-<unique suffix>`, a name never used before, so a second
   replacement cannot overwrite the first kept copy. The variable is forwarded
   through the `sudo` re-exec like the other `HARMON_*` settings.
+  A symlinked parent directory, resolvable or dangling, is left untouched
+  without writes through it and reported with its target as a delivery gap,
+  even when `HARMON_AGENT_POSTURE_REPLACE=1`.
 - **Hooks are not delivered.** The definition's hook commands name the agent
   image's hook scripts (`/etc/claude-code/hooks/`, `/etc/codex/hooks/`, and the
   session-end archive hook under `/usr/local/share/devcontainer-config/`). The

@@ -2680,23 +2680,38 @@ run WRAPPER_RERUN
 printf 'WRAPPER_RERUN_BYTES %s\n' "$(same "$wrapper" "$wrapper_def")"
 printf 'WRAPPER_RERUN_MODE %s\n' "$([ -x "$wrapper" ] && echo executable || echo refused)"
 
-# Refuse a platform-owned parent link, resolved or dangling, even when file
-# replacement is enabled. A regular file at the parent forces install -d to
-# fail deterministically (also when this suite runs as root).
+# A platform-owned parent link is a delivery gap, resolved or dangling, even
+# when file replacement is enabled. Check the link and target after EACH run.
 parent="${claude%/*}"
 mv "$parent" "${root}/platform-parent"
 printf '{"platform": "parent"}\n' >"${root}/platform-parent/managed-settings.json"
+cp "${root}/platform-parent/managed-settings.json" "${root}/parent-file.before"
+find "${root}/platform-parent" -print | sort >"${root}/parent-files.before"
 ln -s "${root}/platform-parent" "$parent"
-run PARENT_LINK
-run PARENT_LINK_REPLACE HARMON_AGENT_POSTURE_REPLACE=1
-printf 'PARENT_LINK_WARNED %s\n' "$(grep -qF "bootstrap-remote: refusing symlinked parent ${parent} for the agent posture" "${root}/PARENT_LINK.err" && echo named || echo silent)"
-printf 'PARENT_LINK_KEPT %s\n' "$([ -L "$parent" ] && grep -qF '"platform": "parent"' "$claude" && echo kept || echo changed)"
+for label in PARENT_LINK PARENT_LINK_REPLACE; do
+    if [ "$label" = PARENT_LINK_REPLACE ]; then
+        run "$label" HARMON_AGENT_POSTURE_REPLACE=1
+    else
+        run "$label"
+    fi
+    find "${root}/platform-parent" -print | sort >"${root}/parent-files.after"
+    printf '%s_WARNED %s\n' "$label" "$(grep -qF "WARNING: found symlinked parent ${parent} -> ${root}/platform-parent — left in place" "${root}/${label}.err" && echo named || echo silent)"
+    printf '%s_KEPT %s\n' "$label" "$([ -L "$parent" ] && [ "$(readlink "$parent")" = "${root}/platform-parent" ] && cmp -s "${root}/parent-file.before" "$claude" && cmp -s "${root}/parent-files.before" "${root}/parent-files.after" && echo kept || echo changed)"
+done
 rm "$parent"
 ln -s "${root}/missing-parent" "$parent"
-run PARENT_DANGLING
-printf 'PARENT_DANGLING_WARNED %s\n' "$(grep -qF "bootstrap-remote: refusing symlinked parent ${parent} for the agent posture" "${root}/PARENT_DANGLING.err" && echo named || echo silent)"
-printf 'PARENT_DANGLING_KEPT %s\n' "$([ -L "$parent" ] && [ ! -e "$parent" ] && echo kept || echo changed)"
+for label in PARENT_DANGLING PARENT_DANGLING_REPLACE; do
+    if [ "$label" = PARENT_DANGLING_REPLACE ]; then
+        run "$label" HARMON_AGENT_POSTURE_REPLACE=1
+    else
+        run "$label"
+    fi
+    printf '%s_WARNED %s\n' "$label" "$(grep -qF "WARNING: found symlinked parent ${parent} -> ${root}/missing-parent — left in place" "${root}/${label}.err" && echo named || echo silent)"
+    printf '%s_KEPT %s\n' "$label" "$([ -L "$parent" ] && [ "$(readlink "$parent")" = "${root}/missing-parent" ] && [ ! -e "${root}/missing-parent" ] && [ ! -L "${root}/missing-parent" ] && echo kept || echo changed)"
+done
 rm "$parent"
+# A regular file at the parent forces install -d to fail deterministically,
+# also when the suite runs as root. This remains a named, genuine failure.
 printf 'not a directory\n' >"$parent"
 run PARENT_CREATE_FAILED
 printf 'PARENT_CREATE_FAILED_WARNED %s\n' "$(grep -qF "bootstrap-remote: could not create ${parent} for the agent posture" "${root}/PARENT_CREATE_FAILED.err" && echo named || echo silent)"
@@ -2761,14 +2776,6 @@ printf 'MODES %s\n' "$(cmp -s "${root}/modes.before" "${root}/modes.after" && ec
         "WRAPPER_RERUN_GAPS": "0",
         "WRAPPER_RERUN_BYTES": "same",
         "WRAPPER_RERUN_MODE": "executable",
-        "PARENT_LINK_EXIT": "failed",
-        "PARENT_LINK_REPLACE_EXIT": "failed",
-        "PARENT_LINK_INSTALLS": "0",
-        "PARENT_LINK_WARNED": "named",
-        "PARENT_LINK_KEPT": "kept",
-        "PARENT_DANGLING_EXIT": "failed",
-        "PARENT_DANGLING_WARNED": "named",
-        "PARENT_DANGLING_KEPT": "kept",
         "PARENT_CREATE_FAILED_EXIT": "failed",
         "PARENT_CREATE_FAILED_WARNED": "named",
         "MODES": "unchanged",
@@ -2826,18 +2833,20 @@ printf 'MODES %s\n' "$(cmp -s "${root}/modes.before" "${root}/modes.after" && ec
         "WRAPPER_RERUN_GAPS": "a rerun after wrapper replacement reports no delivery gap",
         "WRAPPER_RERUN_BYTES": "a rerun keeps the delivered wrapper bytes",
         "WRAPPER_RERUN_MODE": "a rerun keeps the delivered wrapper executable",
-        "PARENT_LINK_EXIT": "a platform-owned parent symlink must not be followed",
-        "PARENT_LINK_REPLACE_EXIT": "file replacement does not authorize following a parent symlink",
-        "PARENT_LINK_INSTALLS": "a refused parent link installs nothing",
-        "PARENT_LINK_WARNED": "refusing a resolved parent link names the bootstrap and path",
-        "PARENT_LINK_KEPT": "the parent link and platform bytes remain unchanged",
-        "PARENT_DANGLING_EXIT": "a dangling parent link is deliberately refused",
-        "PARENT_DANGLING_WARNED": "refusing a dangling parent link names the bootstrap and path",
-        "PARENT_DANGLING_KEPT": "the dangling parent link remains unchanged",
         "PARENT_CREATE_FAILED_EXIT": "failure to create the destination directory stops the run",
         "PARENT_CREATE_FAILED_WARNED": "a failed install -d names the bootstrap and directory",
         "MODES": "the posture step changes no file mode outside its temporary destinations",
     }
+    for label in ("PARENT_LINK", "PARENT_LINK_REPLACE", "PARENT_DANGLING", "PARENT_DANGLING_REPLACE"):
+        for suffix, want, reason in (
+            ("EXIT", "0", "a platform-owned parent link is a gap, not a failed run, with either replacement policy"),
+            ("GAPS", "1", "a parent link leaves exactly one managed destination unverified"),
+            ("INSTALLS", "0", "nothing is installed through or over a parent link"),
+            ("WARNED", "named", "the warning names the parent link and its target"),
+            ("KEPT", "kept", "the parent link and its target stay unchanged"),
+        ):
+            expected[f"{label}_{suffix}"] = want
+            why[f"{label}_{suffix}"] = reason
     if run is None or run.returncode != 0 or any(k.startswith("MISSING_TOOL") for k in got):
         fail(
             f"{BOOTSTRAP}: the posture-install cases could not run "
