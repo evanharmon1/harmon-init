@@ -108,6 +108,7 @@ cat >"${STUB_BIN}/git" <<EOF
 if [ -n "\${STUB_CHECKOUT_HISTORY:-}" ]; then
     if [ "\$*" = 'rev-parse --is-shallow-repository' ]; then
         echo probe >>"\${STUB_LOG_DIR}/history.log"
+        [ "\${STUB_CHECKOUT_HISTORY}" != probe-fail ] || exit 1
         if [ "\${STUB_CHECKOUT_HISTORY}" = full ] || [ -f "\${STUB_LOG_DIR}/unshallow.done" ]; then
             echo false
         else
@@ -505,7 +506,7 @@ fi
 exec "$@"
 EOF
 chmod +x "${HISTORY_BIN}/timeout"
-for scenario in success fail timeout timeout-killed incomplete full local-unset local-false missing-timeout; do
+for scenario in success fail timeout timeout-killed incomplete full local-unset local-false missing-timeout probe-fail; do
     make_fixture "history-${scenario}" -
     # Isolate history while proving reconciliation keeps its first position.
     cat >"${FIX}/scripts/reconcile-toolchain.sh" <<'EOF'
@@ -531,7 +532,7 @@ EOF
         [ ! -e "${LOG_DIR}/history.log" ] && [ ! -e "${LOG_DIR}/unshallow.log" ] || fail "local preparation must not probe or fetch history"
         [ ! -e "${LOG_DIR}/reconcile.done" ] || fail "local preparation must not reconcile"
         ;;
-    full | missing-timeout)
+    full | missing-timeout | probe-fail)
         [ ! -e "${LOG_DIR}/unshallow.log" ] && [ ! -e "${LOG_DIR}/history-timeout.log" ] || fail "${scenario}: no fetch may start"
         ;;
     *)
@@ -543,6 +544,11 @@ EOF
     success)
         output_has 'checkout history: unshallowed from origin' || fail "success summary must name unshallow"
         ! output_has 'completed with warnings' || fail "successful unshallow must not degrade preparation"
+        ;;
+    probe-fail)
+        [ "$(cat "${LOG_DIR}/history.log")" = probe ] || fail "probe-fail: history must be checked once"
+        output_has 'completed with warnings: checkout history could not be checked' || fail "probe-fail: summary must warn that checkout history could not be checked"
+        output_has 'check Git repository access in this checkout' || fail "probe-fail: warning must name the repository-access remedy"
         ;;
     fail | timeout | timeout-killed | incomplete | missing-timeout)
         output_has 'completed with warnings: checkout history is shallow' || fail "${scenario}: summary must warn about shallow history"
