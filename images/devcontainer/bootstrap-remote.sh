@@ -197,7 +197,9 @@ through .devcontainer/agent/agent-autonomy.sh. Anything already at either
 path that is not the definition — a file, or a symlink, dangling or not — is
 left in place, reported, and counted in HARMON_BOOTSTRAP_POSTURE_GAPS (the
 posture is then not applied for it) unless HARMON_AGENT_POSTURE_REPLACE=1,
-which replaces it and keeps the previous entry beside it. The agent
+which replaces it and keeps the previous entry beside it.
+A symlinked parent directory, resolvable or dangling, is left untouched and
+counted as a gap even with HARMON_AGENT_POSTURE_REPLACE=1. The agent
 posture's GET-only read wrapper, /usr/local/bin/gh-api-read, is ours rather
 than admin-owned, so it is always written with the shipped bytes at mode
 0755, without that gate. Harness executables are never modified.
@@ -695,10 +697,18 @@ posture_describe() {
 # recorded as an install, so a second run reports none. It runs in a command
 # substitution, so it sets no variable of the caller's.
 prepare_posture_dest() {
-    local src="$1" dest="$2" scratch="$3" kept
-    if [ ! -d "$(dirname "$dest")" ]; then
-        install -d -m 0755 "$(dirname "$dest")"
-        printf '    created %s\n' "$(dirname "$dest")" >&2
+    local src="$1" dest="$2" scratch="$3" kept dir
+    dir="$(dirname "$dest")"
+    # A platform owns a parent link, resolved or dangling. Route to scratch
+    # before any file decision, so the replacement opt-in never writes through it.
+    if [ -L "$dir" ]; then
+        warn "found symlinked parent ${dir} -> $(readlink "$dir") — left in place, so the agent posture is NOT applied for ${dest}; HARMON_AGENT_POSTURE_REPLACE only replaces files in real directories"
+        printf '%s\n' "$scratch"
+        return 0
+    fi
+    if [ ! -d "$dir" ]; then
+        install -d -m 0755 "$dir" || die "could not create ${dir} for the agent posture"
+        printf '    created %s\n' "$dir" >&2
     fi
     # Absent means NOTHING at the path. `-e` alone follows a symlink, so a
     # dangling one — a platform's link to a target it has not populated yet —

@@ -49,24 +49,26 @@ for restriction in '{"allowed_actors": [], "enabled": true}' '{"allowed_actors":
 done
 cp "$file" "$live"
 
-echo "==> missing required-check context"
-jq '(.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks) |= map(select(.context != "devcontainer-verify"))' "$file" >"$live.tmp"
-mv "$live.tmp" "$live"
-if run_audit >"$tmp_dir/out"; then
-    echo "FAIL: missing context was reported clean" >&2
-    exit 1
-else
-    status=$?
-    [ "$status" -eq 1 ] || {
-        echo "FAIL: missing context exit was $status" >&2
+for context in devcontainer-verify remote-bootstrap-verify; do
+    echo "==> missing required-check context: $context"
+    jq --arg context "$context" '(.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks) |= map(select(.context != $context))' "$file" >"$live.tmp"
+    mv "$live.tmp" "$live"
+    if run_audit >"$tmp_dir/out"; then
+        echo "FAIL: missing context was reported clean" >&2
+        exit 1
+    else
+        status=$?
+        [ "$status" -eq 1 ] || {
+            echo "FAIL: missing context exit was $status" >&2
+            exit 1
+        }
+    fi
+    grep -q 'RULESET AUDIT DRIFT' "$tmp_dir/out" || {
+        echo "FAIL: drift output missing" >&2
         exit 1
     }
-fi
-grep -q 'RULESET AUDIT DRIFT' "$tmp_dir/out" || {
-    echo "FAIL: drift output missing" >&2
-    exit 1
-}
-cp "$file" "$live"
+    cp "$file" "$live"
+done
 
 echo "==> extra live flag"
 jq '(.rules[] | select(.type == "pull_request") | .parameters.extra_fixture_flag) = true' "$live" >"$live.tmp"

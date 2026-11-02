@@ -26,6 +26,8 @@ import pathlib
 import re
 import subprocess
 import sys
+import tempfile
+import textwrap
 
 errors = []
 
@@ -2679,6 +2681,44 @@ run WRAPPER_RERUN
 printf 'WRAPPER_RERUN_BYTES %s\n' "$(same "$wrapper" "$wrapper_def")"
 printf 'WRAPPER_RERUN_MODE %s\n' "$([ -x "$wrapper" ] && echo executable || echo refused)"
 
+# A platform-owned parent link is a delivery gap, resolved or dangling, even
+# when file replacement is enabled. Check the link and target after EACH run.
+parent="${claude%/*}"
+mv "$parent" "${root}/platform-parent"
+printf '{"platform": "parent"}\n' >"${root}/platform-parent/managed-settings.json"
+cp "${root}/platform-parent/managed-settings.json" "${root}/parent-file.before"
+find "${root}/platform-parent" -print | sort >"${root}/parent-files.before"
+ln -s "${root}/platform-parent" "$parent"
+for label in PARENT_LINK PARENT_LINK_REPLACE; do
+    if [ "$label" = PARENT_LINK_REPLACE ]; then
+        run "$label" HARMON_AGENT_POSTURE_REPLACE=1
+    else
+        run "$label"
+    fi
+    find "${root}/platform-parent" -print | sort >"${root}/parent-files.after"
+    printf '%s_WARNED %s\n' "$label" "$(grep -qF "WARNING: found symlinked parent ${parent} -> ${root}/platform-parent — left in place" "${root}/${label}.err" && echo named || echo silent)"
+    printf '%s_KEPT %s\n' "$label" "$([ -L "$parent" ] && [ "$(readlink "$parent")" = "${root}/platform-parent" ] && cmp -s "${root}/parent-file.before" "$claude" && cmp -s "${root}/parent-files.before" "${root}/parent-files.after" && echo kept || echo changed)"
+done
+rm "$parent"
+ln -s "${root}/missing-parent" "$parent"
+for label in PARENT_DANGLING PARENT_DANGLING_REPLACE; do
+    if [ "$label" = PARENT_DANGLING_REPLACE ]; then
+        run "$label" HARMON_AGENT_POSTURE_REPLACE=1
+    else
+        run "$label"
+    fi
+    printf '%s_WARNED %s\n' "$label" "$(grep -qF "WARNING: found symlinked parent ${parent} -> ${root}/missing-parent — left in place" "${root}/${label}.err" && echo named || echo silent)"
+    printf '%s_KEPT %s\n' "$label" "$([ -L "$parent" ] && [ "$(readlink "$parent")" = "${root}/missing-parent" ] && [ ! -e "${root}/missing-parent" ] && [ ! -L "${root}/missing-parent" ] && echo kept || echo changed)"
+done
+rm "$parent"
+# A regular file at the parent forces install -d to fail deterministically,
+# also when the suite runs as root. This remains a named, genuine failure.
+printf 'not a directory\n' >"$parent"
+run PARENT_CREATE_FAILED
+printf 'PARENT_CREATE_FAILED_WARNED %s\n' "$(grep -qF "bootstrap-remote: could not create ${parent} for the agent posture" "${root}/PARENT_CREATE_FAILED.err" && echo named || echo silent)"
+rm "$parent"
+mv "${root}/platform-parent" "$parent"
+
 modes >"${root}/modes.after"
 printf 'MODES %s\n' "$(cmp -s "${root}/modes.before" "${root}/modes.after" && echo unchanged || echo changed)"
 """.replace("@WORKER_B64@", base64.b64encode(install_worker.encode()).decode()).replace("@REPO@", repo_root)
@@ -2737,6 +2777,8 @@ printf 'MODES %s\n' "$(cmp -s "${root}/modes.before" "${root}/modes.after" && ec
         "WRAPPER_RERUN_GAPS": "0",
         "WRAPPER_RERUN_BYTES": "same",
         "WRAPPER_RERUN_MODE": "executable",
+        "PARENT_CREATE_FAILED_EXIT": "failed",
+        "PARENT_CREATE_FAILED_WARNED": "named",
         "MODES": "unchanged",
     }
     why = {
@@ -2792,8 +2834,20 @@ printf 'MODES %s\n' "$(cmp -s "${root}/modes.before" "${root}/modes.after" && ec
         "WRAPPER_RERUN_GAPS": "a rerun after wrapper replacement reports no delivery gap",
         "WRAPPER_RERUN_BYTES": "a rerun keeps the delivered wrapper bytes",
         "WRAPPER_RERUN_MODE": "a rerun keeps the delivered wrapper executable",
+        "PARENT_CREATE_FAILED_EXIT": "failure to create the destination directory stops the run",
+        "PARENT_CREATE_FAILED_WARNED": "a failed install -d names the bootstrap and directory",
         "MODES": "the posture step changes no file mode outside its temporary destinations",
     }
+    for label in ("PARENT_LINK", "PARENT_LINK_REPLACE", "PARENT_DANGLING", "PARENT_DANGLING_REPLACE"):
+        for suffix, want, reason in (
+            ("EXIT", "0", "a platform-owned parent link is a gap, not a failed run, with either replacement policy"),
+            ("GAPS", "1", "a parent link leaves exactly one managed destination unverified"),
+            ("INSTALLS", "0", "nothing is installed through or over a parent link"),
+            ("WARNED", "named", "the warning names the parent link and its target"),
+            ("KEPT", "kept", "the parent link and its target stay unchanged"),
+        ):
+            expected[f"{label}_{suffix}"] = want
+            why[f"{label}_{suffix}"] = reason
     if run is None or run.returncode != 0 or any(k.startswith("MISSING_TOOL") for k in got):
         fail(
             f"{BOOTSTRAP}: the posture-install cases could not run "
@@ -2995,6 +3049,121 @@ cmp "${scratch}/before" "${scratch}/changes"
     cache_run = run_lifted(cache_script)
     if cache_run is None or cache_run.returncode != 0:
         fail(f"{BOOTSTRAP}: reconcile assets are not byte-identical/idempotent: {'' if cache_run is None else cache_run.stderr}")
+
+# ── 27. the required bootstrap aggregate reports and fails closed ──────────
+workflow_file = pathlib.Path('.github/workflows/remote-bootstrap.yml')
+workflow_text = workflow_file.read_text()
+trigger_text = workflow_text.split('\non:', 1)[1].split('\nconcurrency:', 1)[0]
+if re.search(r'^\s+paths(?:-ignore)?:', trigger_text, re.M):
+    fail(f'{workflow_file}: a required aggregate cannot have workflow path filters')
+for event in ('pull_request', 'push', 'merge_group', 'workflow_dispatch'):
+    if not re.search(r'^  ' + event + ':', trigger_text, re.M):
+        fail(f'{workflow_file}: required aggregate does not report on {event}')
+workflow_jobs = dict(re.findall(r'^  ([\w-]+):\n(.*?)(?=^  [\w-]+:|\Z)', workflow_text.split('\njobs:\n', 1)[1], re.M | re.S))
+aggregate = workflow_jobs.get('remote-bootstrap-verify', '')
+detector = workflow_jobs.get('bootstrap-changes', '')
+proof = workflow_jobs.get('bootstrap', '')
+if 'if: always()' not in aggregate or 'needs: [bootstrap-changes, bootstrap]' not in aggregate:
+    fail(f'{workflow_file}: aggregate must always report and await detector and proof')
+if 'needs: [bootstrap-changes]' not in proof or "needs.bootstrap-changes.outputs.changed == 'true'" not in proof:
+    fail(f'{workflow_file}: expensive proof lost its internal change filter')
+for job_name, job in workflow_jobs.items():
+    if "github.event_name == 'merge_group' && 'ubuntu-latest'" not in job:
+        fail(f'{workflow_file}: {job_name} must use hosted runners for queued content')
+for job_name, job in (('bootstrap-changes', detector), ('bootstrap', proof)):
+    if "github.event_name != 'pull_request'" not in job or 'github.event.pull_request.head.repo.full_name == github.repository' not in job:
+        fail(f'{workflow_file}: {job_name} lost its fork boundary')
+root_ruleset = json.loads(pathlib.Path('.github/Branch Protection Ruleset - Protect Main.json').read_text())
+contexts = {c['context'] for r in root_ruleset['rules'] if r['type'] == 'required_status_checks' for c in r['parameters']['required_status_checks']}
+if 'remote-bootstrap-verify' not in contexts:
+    fail('root ruleset must require remote-bootstrap-verify')
+if 'remote-bootstrap-verify' in pathlib.Path('template/.github/Branch Protection Ruleset - Protect Main.json.jinja').read_text():
+    fail('consumer ruleset must not require the root-only bootstrap producer')
+
+
+def workflow_run(job, step):
+    """Lift an actual named run step, retaining its shell logic for the cases."""
+    marker = '      - name: ' + step + '\n'
+    body = job.split(marker, 1)[-1].split('\n      - ', 1)[0] if marker in job else ''
+    if '        run: |\n' not in body:
+        fail(f'{workflow_file}: cannot exercise step {step!r}')
+        return 'exit 99\n'
+    return textwrap.dedent(body.split('        run: |\n', 1)[1])
+
+
+aggregate_run = workflow_run(aggregate, 'Verify bootstrap result or deliberate no-op')
+fork_run = workflow_run(aggregate, 'Verify deliberate skips at the untrusted-fork boundary')
+# A fork must never reach checkout or the repository-controlled result helper.
+if aggregate.count("if: env.IS_FORK != 'true'") != 2 or "if: env.IS_FORK == 'true'" not in aggregate:
+    fail(f'{workflow_file}: fork aggregate must check skips without checkout or repository scripts')
+for changes, changed, result, want in (
+    ('success', 'true', 'success', 0), ('success', 'false', 'skipped', 0),
+    ('success', 'true', 'failure', 1), ('success', 'true', 'cancelled', 1),
+    ('success', 'true', 'skipped', 1), ('success', 'false', 'failure', 1),
+    ('failure', 'false', 'skipped', 1), ('cancelled', 'false', 'skipped', 1),
+    ('skipped', 'false', 'skipped', 1), ('success', '', 'skipped', 1),
+    ('success', 'unknown', 'success', 1), ('success', 'false', 'success', 1),
+):
+    setup = f"set -e\nCHANGES_RESULT={changes}\nCHANGED='{changed}'\nBOOTSTRAP_RESULT={result}\n"
+    run = run_lifted(setup + aggregate_run)
+    if run is None or run.returncode != want:
+        fail(f'{workflow_file}: aggregate accepted/rejected wrong result {changes}/{changed}/{result}')
+for changes, result, want in (('skipped', 'skipped', 0), ('success', 'skipped', 1), ('skipped', 'success', 1), ('', '', 1)):
+    run = run_lifted(f"set -e\nCHANGES_RESULT='{changes}'\nBOOTSTRAP_RESULT='{result}'\n" + fork_run)
+    if run is None or run.returncode != want:
+        fail(f'{workflow_file}: fork aggregate accepted/rejected wrong result {changes}/{result}')
+
+# Control git's range/diff responses, including missing history, diff failure
+# and filenames Git normally quotes. The real command must retain NUL output
+# and both sides of a moved file, as the existing devcontainer detector does.
+detect_script = pathlib.Path('scripts/remote-bootstrap-changed.sh')
+if f'run: ./{detect_script} "$BASE_SHA" "$HEAD_SHA"' not in detector:
+    fail(f'{workflow_file}: change detection must call {detect_script} with the event endpoints')
+with tempfile.TemporaryDirectory() as tmp:
+    tmp = pathlib.Path(tmp)
+    (tmp / 'git').write_text('''#!/bin/sh
+case "$1" in
+  cat-file) exit "${CAT_STATUS:-0}" ;;
+  diff)
+    case "$*" in 'diff -z --name-only --no-renames '*) ;; *) exit 97 ;; esac
+    printf '%s' "$DIFF_B64" | base64 -d
+    exit "${DIFF_STATUS:-0}"
+    ;;
+  *) exit 98 ;;
+esac
+''')
+    (tmp / 'git').chmod(0o755)
+    relevant_paths = ['images/devcontainer/versions.env', 'scripts/verify-ci-results.sh', str(detect_script), 'Taskfile.yml', 'renovate.json', '.devcontainer/agent/agent-autonomy.sh', '.devcontainer/config/agent/codex-managed-config.toml', '.github/workflows/remote-bootstrap.yml', 'images/devcontainer/tab\tand\nnewline']
+    cases = [(p, 'base', '0', '0', 'true') for p in relevant_paths]
+    cases += [('docs/readme.md', 'base', '0', '0', 'false'), ('', '', '0', '0', 'true'), ('', 'base', '1', '0', 'true'), ('', 'base', '0', '1', 'true')]
+    for path, base, cat_status, diff_status, want in cases:
+        output = tmp / 'output'
+        output.write_text('')
+        env = dict(os.environ, PATH=f'{tmp}:{os.environ["PATH"]}', BASE_SHA=base, HEAD_SHA='head', GITHUB_OUTPUT=str(output), CAT_STATUS=cat_status, DIFF_STATUS=diff_status, DIFF_B64=base64.b64encode((path + '\0').encode() if path else b'').decode())
+        run = subprocess.run([str(detect_script.resolve()), base, 'head'], env=env, capture_output=True, text=True, timeout=15)
+        if run.returncode != 0 or run.stdout.strip() != want or output.read_text().strip() != f'changed={want}':
+            fail(f'{detect_script}: change detection failed for {path!r}/{base}/{cat_status}/{diff_status}')
+
+    # Fake only the install and cmp, executing the real summary/gating logic.
+    summary_run = workflow_run(proof, 'Run the bootstrap (core + agents) and time it')
+    summary_run = summary_run.replace('/tmp/bootstrap-first.log', str(tmp / 'first.log'))
+    for cmp_status, gaps, budget, want in ((1, '0', '300', 1), (0, '1', '300', 1), (0, '0', '-1', 1), (0, '0', '300', 0)):
+        summary = tmp / 'summary'
+        summary.write_text('')
+        setup = f'''set -eo pipefail
+env() {{ echo HARMON_BOOTSTRAP_POSTURE_GAPS={gaps}; }}
+date() {{ echo 0; }}
+cmp() {{ return {cmp_status}; }}
+cp() {{ :; }}
+BOOTSTRAP_BUDGET_SECONDS={budget}
+GITHUB_STEP_SUMMARY='{summary}'
+'''
+        run = run_lifted(setup + summary_run)
+        if run is None or run.returncode != want or not all(row in summary.read_text() for row in ('| architecture |', '| core + agents tiers |')):
+            fail(f'{workflow_file}: posture/budget result {cmp_status}/{gaps}/{budget} lost summary measurements or gated incorrectly')
+    compared = set(re.findall(r'^cmp (\.devcontainer/config/agent/\S+) ', summary_run, re.M))
+    if compared != {str(AGENT_CONFIG / name) for name in ('claude-managed-settings.json', 'codex-managed-config.toml')}:
+        fail(f'{workflow_file}: posture comparisons diverged from the managed definitions')
 
 for e in errors:
     print(f"FAIL: {e}", file=sys.stderr)
