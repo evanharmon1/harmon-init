@@ -88,6 +88,7 @@ EOF
 EOF
 
     cp "$REPO_ROOT/$HELPER" "$_nf_dir/scripts/"
+    cp "$REPO_ROOT/scripts/test-skills-template-compatibility.sh" "$_nf_dir/scripts/"
     cp "$REPO_ROOT/scripts/require-release-title.sh" "$_nf_dir/scripts/"
     # link-agent-skills.sh is the second command in `task sync:skills`; the stub
     # below runs the REAL one so the scope guard is exercised against the
@@ -280,6 +281,9 @@ case ",${STUB_FAIL_TASKS:-}," in
     ;;
 esac
 case "$target" in
+test:skills-template-compatibility)
+    exec bash scripts/test-skills-template-compatibility.sh
+    ;;
 guard:release-title)
     exec ./scripts/require-release-title.sh template
     ;;
@@ -535,6 +539,32 @@ pr_written() { grep -qE '^gh pr (create|edit)' "$STUB_LOG"; }
 pushed() { git -C "$1.origin.git" show-ref --verify --quiet "refs/heads/$SYNC_BRANCH"; }
 pin_of() { sed -n 's/^[[:space:]]*ref:[[:space:]]*\([^[:space:]#]*\).*/\1/p' "$1"; }
 
+# Model the observed boundary without vendoring historical helper snapshots.
+# The old consumer supplies plain label text; the new helper expects JSON.
+seed_compatibility_contract() {
+    local dir="$1" mode="$2"
+    mkdir -p "$dir/.github/workflows" "$dir/.claude/skills/track-work/assets"
+    printf 'permissions: {pull-requests: write}\njobs: {cleanup: {runs-on: ubuntu-latest}}\n' >"$dir/.github/workflows/claim-release.yml"
+    printf '# selected cleanup helper\n' >"$dir/.claude/skills/track-work/assets/clear-needs-review.sh"
+    printf '%s\n' '{"labels":[]}' >"$dir/consumer-reply.json"
+    cat >"$dir/scripts/test-claim-release-merged.sh" <<'CONTRACT'
+#!/usr/bin/env bash
+set -euo pipefail
+jq -e '.labels | type == "array"' consumer-reply.json >/dev/null
+CONTRACT
+    case "$mode" in
+    old-contract) echo needs-review >"$dir/consumer-reply.json" ;;
+    missing-test) rm "$dir/scripts/test-claim-release-merged.sh" ;;
+    permission) printf 'permissions: {pull-requests: read}\njobs: {cleanup: {runs-on: ubuntu-latest}}\n' >"$dir/.github/workflows/claim-release.yml" ;;
+    job-permission) printf 'permissions: {pull-requests: write}\njobs: {cleanup: {permissions: {contents: read}}}\n' >"$dir/.github/workflows/claim-release.yml" ;;
+    fixed) ;;
+    *) return 1 ;;
+    esac
+    git -C "$dir" add -A
+    git -C "$dir" commit --quiet -m "seed consumer contract"
+    git -C "$dir" push --quiet origin main
+}
+
 # ── Cases ─────────────────────────────────────────────────────────────
 
 start "a stable release payload produces one verified, pushed sync PR"
@@ -552,6 +582,7 @@ logged "gh pr create --draft" || fail "the sync PR was not created as draft"
 logged "gh pr view 42 --json headRefOid,isDraft" ||
     fail "the created PR's head and draft state were not confirmed"
 logged "fix(template): sync harmon-devkit skills to v0.9.0" || fail "PR title is not releasing"
+logged "task test:skills-template-compatibility" || fail "consumer contract gate never ran"
 logged "task test:result-schemas" || fail "result-schema contract gate never ran"
 logged "task verify" || fail "verification never ran"
 [ "$(git -C "$fix" rev-parse main)" = "$main_before" ] || fail "main was modified"
@@ -1001,6 +1032,45 @@ rc="$(run_helper "$fix" run v0.9.0)"
 [ "$rc" != 0 ] || fail "a failing sync:skills was ignored"
 ! pushed "$fix" || fail "a failing sync still pushed"
 ! logged "gh pr" || fail "a failing sync still touched a PR"
+
+start "consumer compatibility blocks new and existing PRs before publication"
+for mode in old-contract missing-test permission job-permission fixed; do
+    for existing in no yes; do
+        fix="$(new_fixture "compatibility_${mode}_${existing}")"
+        seed_compatibility_contract "$fix" "$mode"
+        STUB_RELEASES="v0.65.0 false false"
+        STUB_PR_LIST=""
+        [ "$existing" != yes ] || STUB_PR_LIST="42 false"
+        : >"$STUB_LOG"
+        rc="$(run_helper "$fix" run v0.65.0)"
+        if [ "$mode" = fixed ]; then
+            [ "$rc" = 0 ] || fail "corrected contract rejected: $(cat "$LAST_OUT")"
+            pushed "$fix" || fail "corrected contract did not publish"
+        else
+            [ "$rc" != 0 ] || fail "$mode was accepted"
+            grep -Fq 'harmon-init v5.14.0' "$LAST_OUT" || fail "missing upgrade requirement"
+            grep -Fq 'v0.65.0' "$LAST_OUT" || fail "missing requested version"
+            ! pushed "$fix" || fail "$mode pushed an incompatible sync"
+            ! pr_written || fail "$mode touched a PR"
+            ! logged 'gh pr ready' || fail "$mode demoted an existing PR"
+        fi
+    done
+done
+
+start "compatibility failure also blocks identical-tree metadata repairs"
+fix="$(new_fixture compatibility_metadata)"
+rc="$(run_helper "$fix" run v0.9.0)"
+[ "$rc" = 0 ] || fail "initial sync failed"
+pushed_before="$(git -C "$fix.origin.git" rev-parse "$SYNC_BRANCH")"
+git -C "$fix" checkout --quiet main
+STUB_PR_LIST="42 false"
+STUB_PR_TITLE="stale title"
+STUB_FAIL_TASKS="test:skills-template-compatibility"
+: >"$STUB_LOG"
+rc="$(run_helper "$fix" run v0.9.0)"
+[ "$rc" != 0 ] || fail "metadata repair bypassed compatibility"
+[ "$(git -C "$fix.origin.git" rev-parse "$SYNC_BRANCH")" = "$pushed_before" ] || fail "incompatible metadata repair pushed"
+! pr_written || fail "incompatible metadata repair edited the PR"
 
 start "a failing verification never pushes or opens a PR"
 for failing in verify:skills:offline test:result-schemas security:secrets verify:skills verify; do
