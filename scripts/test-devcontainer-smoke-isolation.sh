@@ -66,7 +66,12 @@ shutil.copy(repo / 'scripts/devcontainer-smoke.sh', scripts / 'devcontainer-smok
 set -eu
 id="$3"
 touch "$SMOKE_FIXTURE_STATE/ready/$id"
-while [ ! -f "$SMOKE_FIXTURE_STATE/release/$id" ]; do sleep 0.05; done
+attempt=0
+while [ -d "$SMOKE_FIXTURE_STATE/release" ] && [ ! -f "$SMOKE_FIXTURE_STATE/release/$id" ]; do
+    attempt=$((attempt + 1))
+    [ "$attempt" -lt 400 ] || exit 1
+    sleep 0.05
+done
 ''')
 state = work / 'state'
 for directory in ('volumes', 'containers', 'ready', 'release', 'records'):
@@ -139,6 +144,7 @@ for name in ('docker', 'devcontainer'):
     (tool.parent / name).symlink_to(tool)
 env = dict(os.environ, PATH=str(tool.parent) + os.pathsep + os.environ['PATH'],
            SMOKE_FIXTURE_STATE=str(state))
+children = []
 
 
 def start(profile, cid, fail=False):
@@ -152,6 +158,7 @@ def start(profile, cid, fail=False):
     with log.open('w') as out:
         child = subprocess.Popen(['bash', str(scripts / 'devcontainer-smoke.sh'), str(path)],
                                  env=child_env, stdout=out, stderr=subprocess.STDOUT)
+        children.append((child, cid))
     return child, log, cfg
 
 
@@ -178,66 +185,79 @@ def finish(child, log, cid, expected=0):
     return record
 
 
-for profile in ('', 'dev', 'agent'):
-    key = profile or 'bot'
-    cfg = config(fixture / '.devcontainer' / profile / 'devcontainer.json')
-    baseline = []
-    for mount in cfg['mounts']:
-        spec = dict(part.split('=', 1) for part in mount.split(','))
-        if spec.get('type') != 'volume':
-            continue
-        name = spec['source'].replace('${localEnv:HARMON_DEVCONTAINER_SMOKE_VOLUME_SUFFIX}', '')
-        baseline.append(name)
-        volume = state / 'volumes' / name
-        volume.mkdir(exist_ok=True)
-        (volume / 'persistent').write_text('developer state')
-        if spec['target'].endswith('/.venv'):
-            (volume / 'bin').mkdir(exist_ok=True)
-            (volume / 'bin/python').symlink_to(
-                '/home/vscode/.local/share/uv/python/cpython-3.14-linux-x86_64-gnu/bin/python3.14')
-    python_mounts = [m for m in cfg['mounts'] if '/.venv,' in m]
-    if (repo / '.dogfood-answers.yml').exists():
-        check(len(python_mounts) == 1, f'{key}: Python-enabled render missing venv')
-        expected = 'venv-smoke-tests-smokefixture' + ('-' + profile if profile else '')
-        check(expected in baseline, f'{key}: changed normal Python identity')
-    # Sequential runs see a fresh venv even after another run has torn down its
-    # interpreter; long-lived volumes deliberately remain poisoned/untouched.
-    previous = None
-    for n in range(2):
-        cid = f'{key}-sequential-{n}'
-        child, log, _ = start(profile, cid)
-        record = wait_ready(child, log, cid)
-        if previous:
-            check(record['suffix'] != previous['suffix'], 'sequential identity reused')
-        previous = finish(child, log, cid)
-    left, left_log, _ = start(profile, key+'-left')
-    right, right_log, _ = start(profile, key+'-right')
-    l = wait_ready(left, left_log, key+'-left')
-    r = wait_ready(right, right_log, key+'-right')
-    check(l['suffix'] != r['suffix'], 'concurrent identity reused')
-    finish(left, left_log, key+'-left')
-    check((state/'containers'/(key+'-right')).exists(), 'cleanup removed another active container')
-    for m in r['mounts']:
-        if m['target'].endswith('/.venv'):
-            venv = state/'volumes'/m['source']
-            check((venv/'owner').read_text() == key+'-right', 'another run altered the venv')
-            check((venv/'bin/python').exists(), 'another run removed the interpreter')
-    finish(right, right_log, key+'-right')
-    child, log, _ = start(profile, key+'-failed', fail=True)
-    finish(child, log, key+'-failed', expected=2)
-    for name in baseline:
-        check((state/'volumes'/name/'persistent').read_text() == 'developer state',
-              f'{key}: persistent volume changed')
-    for raw in python_mounts:
-        normal_name = raw.split(',')[0].removeprefix('source=').replace(
-            '${localEnv:HARMON_DEVCONTAINER_SMOKE_VOLUME_SUFFIX}', '')
-        check(os.readlink(state/'volumes'/normal_name/'bin/python').endswith('/bin/python3.14'),
-              'smoke run consumed or repaired the stale developer interpreter')
-    # Existing credential/config names must preserve their suffix policy.
-    for raw, actual in zip([m for m in cfg['mounts'] if 'type=volume' in m], r['mounts']):
-        if '/.venv,' not in raw and '${localEnv:HARMON_DEVCONTAINER_SMOKE_VOLUME_SUFFIX}' not in raw:
-            check(actual['source'] in baseline, f'{key}: credential/config identity changed')
-    print(f'PASS: {key} sequential/concurrent Python state, failure cleanup, normal volumes')
+def exercise_profiles():
+    for profile in ('', 'dev', 'agent'):
+        key = profile or 'bot'
+        cfg = config(fixture / '.devcontainer' / profile / 'devcontainer.json')
+        baseline = []
+        for mount in cfg['mounts']:
+            spec = dict(part.split('=', 1) for part in mount.split(','))
+            if spec.get('type') != 'volume':
+                continue
+            name = spec['source'].replace('${localEnv:HARMON_DEVCONTAINER_SMOKE_VOLUME_SUFFIX}', '')
+            baseline.append(name)
+            volume = state / 'volumes' / name
+            volume.mkdir(exist_ok=True)
+            (volume / 'persistent').write_text('developer state')
+            if spec['target'].endswith('/.venv'):
+                (volume / 'bin').mkdir(exist_ok=True)
+                (volume / 'bin/python').symlink_to(
+                    '/home/vscode/.local/share/uv/python/cpython-3.14-linux-x86_64-gnu/bin/python3.14')
+        python_mounts = [m for m in cfg['mounts'] if '/.venv,' in m]
+        if (repo / '.dogfood-answers.yml').exists():
+            check(len(python_mounts) == 1, f'{key}: Python-enabled render missing venv')
+            expected = 'venv-smoke-tests-smokefixture' + ('-' + profile if profile else '')
+            check(expected in baseline, f'{key}: changed normal Python identity')
+        # Sequential runs see a fresh venv even after another run has torn down its
+        # interpreter; long-lived volumes deliberately remain poisoned/untouched.
+        previous = None
+        for n in range(2):
+            cid = f'{key}-sequential-{n}'
+            child, log, _ = start(profile, cid)
+            record = wait_ready(child, log, cid)
+            if previous:
+                check(record['suffix'] != previous['suffix'], 'sequential identity reused')
+            previous = finish(child, log, cid)
+        left, left_log, _ = start(profile, key+'-left')
+        right, right_log, _ = start(profile, key+'-right')
+        l = wait_ready(left, left_log, key+'-left')
+        r = wait_ready(right, right_log, key+'-right')
+        check(l['suffix'] != r['suffix'], 'concurrent identity reused')
+        finish(left, left_log, key+'-left')
+        check((state/'containers'/(key+'-right')).exists(), 'cleanup removed another active container')
+        for m in r['mounts']:
+            if m['target'].endswith('/.venv'):
+                venv = state/'volumes'/m['source']
+                check((venv/'owner').read_text() == key+'-right', 'another run altered the venv')
+                check((venv/'bin/python').exists(), 'another run removed the interpreter')
+        finish(right, right_log, key+'-right')
+        child, log, _ = start(profile, key+'-failed', fail=True)
+        finish(child, log, key+'-failed', expected=2)
+        for name in baseline:
+            check((state/'volumes'/name/'persistent').read_text() == 'developer state',
+                  f'{key}: persistent volume changed')
+        for raw in python_mounts:
+            normal_name = raw.split(',')[0].removeprefix('source=').replace(
+                '${localEnv:HARMON_DEVCONTAINER_SMOKE_VOLUME_SUFFIX}', '')
+            check(os.readlink(state/'volumes'/normal_name/'bin/python').endswith('/bin/python3.14'),
+                  'smoke run consumed or repaired the stale developer interpreter')
+        # Existing credential/config names must preserve their suffix policy.
+        for raw, actual in zip([m for m in cfg['mounts'] if 'type=volume' in m], r['mounts']):
+            if '/.venv,' not in raw and '${localEnv:HARMON_DEVCONTAINER_SMOKE_VOLUME_SUFFIX}' not in raw:
+                check(actual['source'] in baseline, f'{key}: credential/config identity changed')
+        print(f'PASS: {key} sequential/concurrent Python state, failure cleanup, normal volumes')
+
+
+try:
+    exercise_profiles()
+finally:
+    # Only these Popen handles and private release files belong to this fixture.
+    # Release foreground assertion loops before reaping their smoke shells;
+    # each shell waits for its synchronous child commands before it exits.
+    for child, cid in children:
+        (state / 'release' / cid).touch()
+    for child, _ in children:
+        child.wait()
 
 # Real uv, no downloads or dependency resolution: reproduce a dangling Linux
 # interpreter link, then isolate the new environment from that prior state.
@@ -249,26 +269,51 @@ stale = work / 'stale-project'
 missing = '/home/vscode/.local/share/uv/python/cpython-3.14-linux-x86_64-gnu/bin/python3.14'
 (stale / '.venv/bin/python').symlink_to(missing)
 (stale / '.venv/pyvenv.cfg').write_text('home = /missing\nversion = 3.14\n')
-uv_env = dict(os.environ, UV_CACHE_DIR=str(work/'uv-cache'),
+# A real disposable caller distribution makes ambient-env regressions visible
+# without ever risking the actual caller's environment.
+caller = work / 'caller-environment'
+uv_env = dict(os.environ, UV_PROJECT_ENVIRONMENT=str(caller),
+              UV_CACHE_DIR=str(work/'uv-cache'),
               UV_PYTHON_INSTALL_DIR=str(work/'uv-python'), UV_PYTHON_DOWNLOADS='never')
+run([uv, 'venv', '--offline', '--python', sys.executable, str(caller)], env=uv_env)
+site = Path(run([str(caller/'bin/python'), '-c',
+                 'import sysconfig; print(sysconfig.get_path("purelib"))']).strip())
+check(site.resolve().is_relative_to(caller.resolve()), 'caller fixture escaped its scratch environment')
+site.mkdir(parents=True, exist_ok=True)
+sentinel = site / 'caller_sentinel.py'
+sentinel.write_text('TOKEN = "preserved"\n')
+distribution = site / 'caller_sentinel-1.0.dist-info'
+distribution.mkdir()
+(distribution/'METADATA').write_text('Metadata-Version: 2.1\nName: caller-sentinel\nVersion: 1.0\n')
+(distribution/'RECORD').write_text('caller_sentinel.py,,\ncaller_sentinel-1.0.dist-info/METADATA,,\ncaller_sentinel-1.0.dist-info/RECORD,,\n')
 fresh = work / 'fresh-environment'
 run([uv, 'sync', '--offline', '--no-install-project', '--python', sys.executable],
     cwd=stale, env=dict(uv_env, UV_PROJECT_ENVIRONMENT=str(fresh)))
 check((fresh/'bin/python').exists(), 'isolated environment lacks interpreter')
 check(os.readlink(stale/'.venv/bin/python') == missing, 'fresh run repaired prior state')
-# Make only this scratch project directory non-writable: uv cannot replace its
-# stale environment. This reproduces EACCES, not Docker mount-point semantics.
+# Deny ordinary-user writes in this scratch directory. Privileged hosts can
+# still write, so assert the actual precondition rather than assume EACCES.
 stale.chmod(0o555)
+permission_denied = not os.access(stale, os.W_OK)
 try:
     result = subprocess.run([uv, 'sync', '--offline', '--no-install-project', '--python', sys.executable],
-                            cwd=stale, env=uv_env, text=True, stdout=subprocess.PIPE,
+                            cwd=stale, env=dict(uv_env, UV_PROJECT_ENVIRONMENT=str(stale/'.venv')),
+                            text=True, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT)
 finally:
     stale.chmod(0o755)
-check(result.returncode != 0, 'stale environment unexpectedly recovered in non-writable fixture')
 check('non-existent Python interpreter' in result.stdout and missing in result.stdout,
       'missing-interpreter warning was not reproduced: '+result.stdout)
-check('failed to remove' in result.stdout and 'Permission denied' in result.stdout,
-      'stale removal permission failure was not reproduced: '+result.stdout)
-print('PASS: real uv dangling interpreter → removal permission error; fresh environment leaves it unchanged')
+if permission_denied:
+    check(result.returncode != 0, 'stale environment unexpectedly recovered in non-writable fixture')
+    check('failed to remove' in result.stdout and 'Permission denied' in result.stdout,
+          'stale removal permission failure was not reproduced: '+result.stdout)
+    print('PASS: real uv dangling interpreter → removal permission error')
+else:
+    check(result.returncode == 0 and (stale/'.venv/bin/python').exists(),
+          'privileged writable fixture did not recover its stale interpreter: '+result.stdout)
+    print('PASS: missing-interpreter warning reproduced; privileged writable fixture recovered (no EACCES claim)')
+check(sentinel.read_text() == 'TOKEN = \"preserved\"\n' and (distribution/'METADATA').exists(),
+      'uv sync changed the disposable caller environment')
+print('PASS: ambient caller environment and sentinel distribution preserved')
 PY
