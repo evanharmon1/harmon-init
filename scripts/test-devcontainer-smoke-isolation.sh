@@ -268,7 +268,8 @@ stale = work / 'stale-project'
 (stale / 'pyproject.toml').write_text('[project]\nname="stale-fixture"\nversion="0.0.0"\n')
 missing = '/home/vscode/.local/share/uv/python/cpython-3.14-linux-x86_64-gnu/bin/python3.14'
 (stale / '.venv/bin/python').symlink_to(missing)
-(stale / '.venv/pyvenv.cfg').write_text('home = /missing\nversion = 3.14\n')
+seed_config = 'home = /missing\nversion = 3.14\n'
+(stale / '.venv/pyvenv.cfg').write_text(seed_config)
 # A real disposable caller distribution makes ambient-env regressions visible
 # without ever risking the actual caller's environment.
 caller = work / 'caller-environment'
@@ -302,17 +303,26 @@ try:
                             stderr=subprocess.STDOUT)
 finally:
     stale.chmod(0o755)
-check('non-existent Python interpreter' in result.stdout and missing in result.stdout,
-      'missing-interpreter warning was not reproduced: '+result.stdout)
-if permission_denied:
-    check(result.returncode != 0, 'stale environment unexpectedly recovered in non-writable fixture')
-    check('failed to remove' in result.stdout and 'Permission denied' in result.stdout,
-          'stale removal permission failure was not reproduced: '+result.stdout)
-    print('PASS: real uv dangling interpreter → removal permission error')
+legacy_rejection = (result.returncode > 0
+                    and 'not a valid Python environment' in result.stdout
+                    and 'no Python executable was found' in result.stdout)
+if legacy_rejection:
+    check(os.readlink(stale/'.venv/bin/python') == missing
+          and (stale/'.venv/pyvenv.cfg').read_text() == seed_config,
+          'legacy uv rejection changed the seeded invalid environment')
+    print('PASS: dangling environment rejected before recovery (removal/EACCES not reached)')
 else:
-    check(result.returncode == 0 and (stale/'.venv/bin/python').exists(),
-          'privileged writable fixture did not recover its stale interpreter: '+result.stdout)
-    print('PASS: missing-interpreter warning reproduced; privileged writable fixture recovered (no EACCES claim)')
+    check('non-existent Python interpreter' in result.stdout and missing in result.stdout,
+          'missing-interpreter warning was not reproduced: '+result.stdout)
+    if permission_denied:
+        check(result.returncode != 0, 'stale environment unexpectedly recovered in non-writable fixture')
+        check('failed to remove' in result.stdout and 'Permission denied' in result.stdout,
+              'stale removal permission failure was not reproduced: '+result.stdout)
+        print('PASS: real uv dangling interpreter → removal permission error')
+    else:
+        check(result.returncode == 0 and (stale/'.venv/bin/python').exists(),
+              'privileged writable fixture did not recover its stale interpreter: '+result.stdout)
+        print('PASS: missing-interpreter warning reproduced; privileged writable fixture recovered (no EACCES claim)')
 check(sentinel.read_text() == 'TOKEN = \"preserved\"\n' and (distribution/'METADATA').exists(),
       'uv sync changed the disposable caller environment')
 print('PASS: ambient caller environment and sentinel distribution preserved')
