@@ -1895,15 +1895,17 @@ run = run_lifted(reap.replace("@LIB@", str(INSTALL / "lib.sh")))
 reaped = {} if run is None else dict(
     line.split(" ", 1) for line in run.stdout.splitlines() if line.count(" ") == 1
 )
+# No procfs means liveness is indeterminate: production deliberately retains
+# abandoned-looking files. Linux still has to prove the dead writer is reaped.
+dead_writer_state = "reaped" if pathlib.Path("/proc").is_dir() else "kept"
 expected = {
-    "DEAD_WRITER": "reaped",
+    "DEAD_WRITER": dead_writer_state,
     "LIVE_WRITER": "kept",
     "NO_PID_FIELD": "kept",
     "FAILED_PUBLISH": "reaped",
 }
 why = {
-    "DEAD_WRITER": "a staging file whose writer is gone is litter, and a later run has a different pid, so "
-    "nothing but a liveness sweep will ever remove it",
+    "DEAD_WRITER": "reap a provably gone writer on procfs; retain when liveness is indeterminate",
     "LIVE_WRITER": "deleting a live writer's staging file is the exact race the pid in the name exists to "
     "prevent — reaping by age or by pattern alone would do it",
     "NO_PID_FIELD": "a name this code did not write is left alone rather than guessed at",
@@ -1985,16 +1987,15 @@ staged = {} if run is None else dict(
     line.split(" ", 1) for line in run.stdout.splitlines() if line.count(" ") == 1
 )
 expected = {
-    "MANIFEST_DEAD_WRITER": "reaped",
+    "MANIFEST_DEAD_WRITER": dead_writer_state,
     "MANIFEST_LIVE_WRITER": "kept",
     "MANIFEST_NO_PID_FIELD": "kept",
     "MANIFEST_FAILED_PUBLISH_STATUS": "nonzero",
     "MANIFEST_FAILED_PUBLISH": "reaped",
 }
 why = {
-    "MANIFEST_DEAD_WRITER": "an abandoned manifest staging file is a full-size file in the prefix that nothing "
-    "else will ever remove: a later run has a different pid, and the common run writes nothing here at all "
-    "because the manifest has not changed — so the sweep cannot be conditional on the write",
+    "MANIFEST_DEAD_WRITER": "the unchanged-manifest sweep reaps a provably gone writer on procfs; "
+    "retain when liveness is indeterminate",
     "MANIFEST_LIVE_WRITER": "deleting a live writer's staging file is the race the pid in the name exists to "
     "prevent, and two bootstraps on one VM are exactly that case",
     "MANIFEST_NO_PID_FIELD": "a name this code did not write is left alone rather than guessed at",
@@ -3018,8 +3019,8 @@ print("bootstrap-remote OK: markdownlint-cli2 resolves to a PATH binary at the p
 print("bootstrap-remote OK: an unsafe HARMON_PREFIX is refused before anything runs, and the drop-in quotes the prefix it renders")
 print("bootstrap-remote OK: given a ref the assets come from the tag and the script's own directory is never read; without one the siblings are used or the run stops")
 print("bootstrap-remote OK: the tier selection canonicalises once; no downstream consumer re-parses it")
-print("bootstrap-remote OK: a staging file whose writer is gone is reaped, a live writer's is not, and a failed publish cleans up after itself")
-print("bootstrap-remote OK: the manifest's own staged write reaps by liveness too, and a failed publish fails the run without leaving litter")
+print(f"bootstrap-remote OK: a gone writer is {dead_writer_state} per procfs availability, a live writer is kept, and a failed publish cleans up after itself")
+print(f"bootstrap-remote OK: manifest gone-writer state is {dead_writer_state} per procfs availability, and a failed publish fails the run without leaving litter")
 print("bootstrap-remote OK: a version probe that prints the pin and exits nonzero is treated as needing the install")
 print("bootstrap-remote OK: the corepack step recreates the pnpm shim unless the file at its path really is corepack's launcher, at either edge of its bounded read, and reports a pnpm that shadows it on PATH")
 print("bootstrap-remote OK: uv installs with --system-certs, sourcing lib.sh points every Node process at the system CA bundle unless the caller named one, and the sudo re-exec forwards the knob")

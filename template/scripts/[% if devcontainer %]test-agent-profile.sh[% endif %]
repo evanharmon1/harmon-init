@@ -335,7 +335,8 @@ for settings in "$agent_settings" 'template/[% if devcontainer %].devcontainer[%
 done
 
 # Run only a recording stub; no network request or real GitHub mutation.
-wrapper_bin="${work_dir}/wrapper-bin"
+# Always exercise whitespace in the recording stub path, regardless of host PATH.
+wrapper_bin="${work_dir}/wrapper bin"
 mkdir -p "$wrapper_bin"
 cat >"${wrapper_bin}/gh" <<'STUB'
 #!/usr/bin/env bash
@@ -379,7 +380,8 @@ fi
 # Only the argument-contract fixture replaces the PATH pin with the recording
 # stub's directory. No production file or system executable is changed.
 wrapper="${work_dir}/wrapper-with-stub"
-sed "s|^export PATH=.*|export PATH=${wrapper_bin}:$PATH|" "$shipped_wrapper" >"$wrapper"
+# run_wrapper supplies PATH as runtime data; never splice it into shell source.
+sed 's/^export PATH=.*/# PATH supplied by the argument-contract fixture./' "$shipped_wrapper" >"$wrapper"
 # This contract refuses any implementation that does not pin the outgoing GET.
 wrapper_contract() {
     run_wrapper "$1" 'repos/example/repo?per_page=100' --paginate --jq '.items[]' || return 1
