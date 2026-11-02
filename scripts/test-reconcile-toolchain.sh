@@ -186,7 +186,7 @@ if [ "${{RECONCILE_TEST_MODE:-}}" = slow ] && [ "${{2:-}}" = 30s ]; then
     shift 2
     exec {shlex.quote(real_timeout)} --kill-after=0.5s 3s "$@"
 fi
-if [ "${{RECONCILE_TEST_MODE:-}}" = outer ] && [ "${{2:-}}" = 90s ]; then exit 124; fi
+
 exec {shlex.quote(real_timeout)} "$@"
 ''')
     executable(stubs / "task", f'''#!/usr/bin/env bash
@@ -332,7 +332,7 @@ exec {shlex.quote(real_task)} "$@"
     old_tool()
     print("OK: a newer recorded tool pin advises a repository update instead of the latest environment release")
 
-    for mode in ("outer", "setup-failure"):
+    for mode in ("setup-failure",):
         rc, out = run(["bash", "scripts/session-start-remote.sh"], repo, env | {"RECONCILE_TEST_MODE": mode})
         assert rc == 0, out
         line = next(line for line in out.splitlines() if "SessionStart remote preparation:" in line)
@@ -340,7 +340,46 @@ exec {shlex.quote(real_task)} "$@"
                       "preparation left this tool unreconciled"):
             assert value in line, (mode, value, out)
         assert "within its time budget" not in line, out
-    print("OK: outer timeout and ordinary preparation failure report drift without inventing a timeout cause")
+    print("OK: preparation failure reports drift without inventing a timeout cause")
+
+    executable(stubs / "timeout", f'''#!/usr/bin/env bash
+if [ "${{1:-}}" = 90s ]; then
+    shift
+    exec {shlex.quote(real_timeout)} 0.1s "$@"
+fi
+exec {shlex.quote(real_timeout)} "$@"
+''')
+    executable(stubs / "task", '''#!/usr/bin/env bash
+trap 'echo TERM >>"$RECONCILE_SIGNALS"' TERM
+trap 'echo INT >>"$RECONCILE_SIGNALS"' INT
+trap 'echo HUP >>"$RECONCILE_SIGNALS"' HUP
+echo "$$" >"$RECONCILE_PID"
+sleep 1
+echo complete >"$RECONCILE_DONE"
+''')
+    signal_file, pid_file, done_file = (scratch / name for name in ("signals", "setup.pid", "setup.done"))
+    current_env = env | {"RECONCILE_SIGNALS": str(signal_file), "RECONCILE_PID": str(pid_file),
+                         "RECONCILE_DONE": str(done_file)}
+    rc, out = run(["bash", "scripts/session-start-remote.sh"], repo, current_env)
+    try:
+        assert rc == 0 and "setup:remote still running" in out, out
+        os.kill(int(pid_file.read_text()), 0)
+        assert not signal_file.exists(), signal_file.read_text()
+        assert not done_file.exists(), out
+        assert "unreconciled" not in out and "failed" not in out, out
+    finally:
+        for _ in range(200):
+            if done_file.exists():
+                break
+            time.sleep(0.01)
+    assert done_file.read_text().strip() == "complete"
+    assert not signal_file.exists(), signal_file.read_text()
+    print("OK: a SessionStart deadline reports running setup without signals or a fabricated drift/failure cause")
+    executable(stubs / "task", f'''#!/usr/bin/env bash
+if [ "${{RECONCILE_TEST_MODE:-}}" = setup-failure ]; then exit 7; fi
+exec {shlex.quote(real_task)} "$@"
+''')
+    executable(stubs / "timeout", f'#!/usr/bin/env bash\nexec {shlex.quote(real_timeout)} "$@"\n')
 
     # This child escapes timeout's process group and retains stdout for 8s
     # after the version command exits. A pipe capture used to wait for it.
@@ -354,7 +393,7 @@ print("version: 1.2.3", flush=True)
 PYPROBE
 ''')
     for args, mode in ((["bash", "scripts/reconcile-toolchain.sh", "--status"], ""),
-                       (["bash", "scripts/session-start-remote.sh"], "outer")):
+                       (["bash", "scripts/session-start-remote.sh"], "setup-failure")):
         started = time.monotonic()
         rc, out = run(args, repo, env | {"RECONCILE_TEST_MODE": mode})
         elapsed = time.monotonic() - started

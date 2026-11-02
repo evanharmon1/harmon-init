@@ -47,7 +47,7 @@ done
 # the host cannot leak into (or be missing from) a scenario. ---
 MIN_BIN="${TMP}/minbin"
 mkdir -p "${MIN_BIN}"
-for tool in bash env git task dirname basename mktemp mv rm mkdir find cat sed grep sort cksum \
+for tool in python3 bash env git task dirname basename mktemp mv rm mkdir find cat sed grep sort cksum \
     xargs kill sleep uname head tr wc cp chmod ln touch id printf ls date; do
     src="$(command -v "$tool" 2>/dev/null || true)"
     [ -n "$src" ] && [ -x "$src" ] && ln -sf "$src" "${MIN_BIN}/${tool}"
@@ -740,7 +740,7 @@ else
     echo "==> (lefthook is not installed on this host; the real-shim check is skipped)"
 fi
 
-# Settings must leave room for the wrapper's deadline and kill grace.
+# Settings must leave room for the waiter's deadline and the hook summary.
 python3 - "${REPO_ROOT}" <<'PYSETTINGS'
 import json
 import pathlib
@@ -750,7 +750,7 @@ import sys
 
 root = pathlib.Path(sys.argv[1])
 script = (root / "scripts/session-start-remote.sh").read_text()
-grace, deadline = map(int, re.search(r"timeout --kill-after=(\d+)s (\d+)s task", script).groups())
+deadline = int(re.search(r"timeout (\d+)s bash", script).group(1))
 for name in (".claude/settings.json", "template/.claude/settings.json.jinja"):
     path = root / name
     if not path.exists():  # Generated repos have only the root settings.
@@ -759,7 +759,7 @@ for name in (".claude/settings.json", "template/.claude/settings.json.jinja"):
     assert len(entries) == 1 and entries[0]["matcher"] == "startup|resume", name
     hook = entries[0]["hooks"][0]
     assert 'scripts/session-start-remote.sh' in hook["command"], name
-    assert hook["timeout"] > deadline + grace, name
+    assert hook["timeout"] > deadline, name
     # A missing wrapper must still report its fallback summary to the agent.
     result = subprocess.run(hook["command"], shell=True, env={"CLAUDE_PROJECT_DIR": "/nonexistent-session-checkout"}, capture_output=True, text=True)
     assert result.returncode == 0 and "SessionStart remote preparation:" in result.stdout, name
@@ -771,8 +771,8 @@ make_fixture hook -
 mkdir -p "${TMP}/hook-bin"
 cat >"${TMP}/hook-bin/timeout" <<'EOF'
 #!/usr/bin/env bash
-[ "$1" = '--kill-after=5s' ] && [ "$2" = '90s' ] || exit 99
-shift 2
+[ "$1" = '90s' ] || exit 99
+shift
 exec "$@"
 EOF
 cat >"${TMP}/hook-bin/task" <<'EOF'
@@ -833,8 +833,8 @@ exit "${HOOK_TASK_RC:-0}"
 EOF
 cat >"${TMP}/hook-bin/timeout" <<'EOF'
 #!/usr/bin/env bash
-[ "$1" = '--kill-after=5s' ] && [ "$2" = '90s' ] || exit 99
-shift 2
+[ "$1" = '90s' ] || exit 99
+shift
 exec "$@"
 EOF
 chmod +x "${TMP}/hook-bin/task" "${TMP}/hook-bin/timeout"
@@ -890,91 +890,123 @@ CLAUDE_CODE_REMOTE=true PATH="${TMP}/hook-bin:${MIN_BIN}" \
 [ ! -e "$HOOK_TASK_LOG" ] || fail "missing timeout must skip preparation"
 grep -q 'SessionStart remote preparation: preparation skipped because timeout is unavailable; run task setup:remote.' "${OUT}" || fail "missing timeout must report a skip and manual setup instruction"
 
-echo "==> SessionStart bounds a slow preparation task and still exits 0"
+echo "==> SessionStart skips preparation when Python 3 is missing"
+cat >"${TMP}/hook-bin/timeout" <<'EOF'
+#!/usr/bin/env bash
+exec "$@"
+EOF
+chmod +x "${TMP}/hook-bin/timeout"
+mv "${MIN_BIN}/python3" "${TMP}/python3-saved"
+CLAUDE_CODE_REMOTE=true PATH="${TMP}/hook-bin:${MIN_BIN}" \
+    bash "${FIX}/scripts/session-start-remote.sh" >"${OUT}" 2>"${ERR}" || fail "missing python3 must not fail SessionStart"
+[ ! -e "$HOOK_TASK_LOG" ] || fail "missing python3 must skip preparation"
+grep -q 'preparation skipped because python3 is unavailable' "${OUT}" || fail "missing python3 must report the manual setup fallback"
+mv "${TMP}/python3-saved" "${MIN_BIN}/python3"
+
+echo "==> SessionStart stops waiting without signalling setup, and overlapping hooks share it"
 REAL_TIMEOUT="$(command -v timeout 2>/dev/null || true)"
 if [ -n "$REAL_TIMEOUT" ]; then
+    make_fixture hook-deadline -
     cat >"${TMP}/hook-bin/task" <<'EOF'
 #!/usr/bin/env bash
 printf '%s\n' "$*" >>"${HOOK_TASK_LOG}"
-sleep 5
+echo "$$" >"${HOOK_TASK_PID}"
+trap 'echo TERM >>"${HOOK_SIGNALS}"' TERM
+trap 'echo INT >>"${HOOK_SIGNALS}"' INT
+trap 'echo HUP >>"${HOOK_SIGNALS}"' HUP
+echo 'slow preparation started'
+# A finite job: the test waits for natural completion, never kills it.
+sleep 2
 echo 'slow task completed' >>"${HOOK_TASK_LOG}"
 EOF
     cat >"${TMP}/hook-bin/timeout" <<EOF
 #!/usr/bin/env bash
-[ "\$1" = '--kill-after=5s' ] && [ "\$2" = '90s' ] || exit 99
-shift 2
-# Exercise a real deadline without making the suite wait 90 seconds.
-exec "${REAL_TIMEOUT}" --kill-after=1s 0.1s "\$@"
-EOF
-    chmod +x "${TMP}/hook-bin/task" "${TMP}/hook-bin/timeout"
-    rm -f "$HOOK_TASK_LOG"
-    rc=0
-    CLAUDE_CODE_REMOTE=true PATH="${TMP}/hook-bin:${MIN_BIN}" \
-        bash "${FIX}/scripts/session-start-remote.sh" >"${OUT}" 2>"${ERR}" || rc=$?
-    [ "$rc" -eq 0 ] || fail "deadline must not fail SessionStart"
-    grep -qx -- "--dir ${FIX} setup:remote" "$HOOK_TASK_LOG" || fail "deadline must actually start preparation"
-    ! grep -q 'slow task completed' "$HOOK_TASK_LOG" || fail "deadline must interrupt slow preparation"
-    grep -q 'WARNING: SessionStart remote preparation: setup:remote failed' "${OUT}" || fail "deadline must warn"
-
-    echo "==> an escaped descendant holding stdout cannot keep SessionStart past its deadline"
-    cat >"${TMP}/hook-bin/task" <<EOF
-#!/usr/bin/env bash
-# Simulate a slow launcher: readiness, not this startup latency, starts the clock.
-sleep 0.3
-"$(command -v python3)" - <<'PYDAEMON'
-import subprocess
-import sys
-
-# The detached child signals only after it starts with stdout inherited.
-subprocess.Popen([sys.executable, "-c", """
-import os
-import pathlib
-import time
-print("daemon holding stdout started", flush=True)
-pathlib.Path(os.environ["HOOK_DAEMON_READY"]).write_text(str(time.monotonic()))
-time.sleep(3)
-"""], start_new_session=True, stdin=subprocess.DEVNULL,
-                 stderr=subprocess.DEVNULL)
-PYDAEMON
-EOF
-    cat >"${TMP}/hook-bin/timeout" <<'EOF'
-#!/usr/bin/env bash
-[ "$1" = '--kill-after=5s' ] && [ "$2" = '90s' ] || exit 99
-shift 2
-# The preceding scenario tests real GNU timeout. This shim isolates pipe EOF:
-# start the task, wait for explicit daemon readiness, then model deadline expiry.
-"$@" &
-attempts=0
-while [ ! -s "$HOOK_DAEMON_READY" ] && [ "$attempts" -lt 1000 ]; do
-    sleep 0.01
-    attempts=$((attempts + 1))
-done
-[ -s "$HOOK_DAEMON_READY" ] || exit 99
-sleep 0.1
-exit 124
+[ "\$1" = '90s' ] || exit 99
+shift
+exec "${REAL_TIMEOUT}" 0.1s "\$@"
 EOF
     chmod +x "${TMP}/hook-bin/task" "${TMP}/hook-bin/timeout"
     python3 - "${FIX}/scripts/session-start-remote.sh" "${TMP}/hook-bin:${MIN_BIN}" "${TMP}" <<'PYDEADLINE'
 import os
 import pathlib
+import re
 import subprocess
 import sys
 import time
 
 script, path, fixture_tmp = sys.argv[1:]
-ready = pathlib.Path(fixture_tmp) / "daemon.ready"
-env = dict(os.environ, CLAUDE_CODE_REMOTE="true", PATH=path, TMPDIR=fixture_tmp,
-           HOOK_DAEMON_READY=str(ready))
+root = pathlib.Path(fixture_tmp)
+log, signals, pid_file = (root / name for name in ("slow-task.log", "signals", "task.pid"))
+env = dict(os.environ, CLAUDE_CODE_REMOTE="true", PATH=path,
+           HOOK_TASK_LOG=str(log), HOOK_TASK_PID=str(pid_file), HOOK_SIGNALS=str(signals))
+started = time.monotonic()
 result = subprocess.run(["bash", script], env=env, capture_output=True, text=True)
-finished = time.monotonic()
-assert result.returncode == 0, result
-assert ready.exists(), "daemon never signaled readiness within the bounded startup wait"
-elapsed = finished - float(ready.read_text())
-assert "daemon holding stdout started" in result.stderr, result
-assert "setup:remote failed; run task setup:remote again." in result.stdout, result
-assert elapsed < 1.1, f"wrapper waited {elapsed:.2f}s past the 0.1s deadline + 1s grace"
-print(f"stdout-holder wrapper returned {elapsed:.2f}s after readiness (deadline + grace: 1.1s)")
+elapsed = time.monotonic() - started
+try:
+    assert result.returncode == 0, result
+    assert "setup:remote still running" in result.stdout, result
+    assert elapsed < 1.5, f"hook waited {elapsed:.2f}s instead of returning at the short deadline"
+    assert pid_file.exists(), "deadline did not start preparation"
+    pid = int(pid_file.read_text())
+    os.kill(pid, 0)  # existence probe, no signal is delivered
+    assert not signals.exists(), signals.read_text()
+    assert "slow task completed" not in log.read_text(), log.read_text()
+    assert all(word in result.stdout for word in ("PID", "log:", "Lefthook", "related repos", "dependencies", "wait")), result
+    output_log = pathlib.Path(re.search(r"log: ([^\n]+?)\)", result.stdout).group(1))
+    assert output_log.exists(), result
+    assert os.getsid(pid) != os.getsid(0), "setup must escape the hook session"
+    # A second hook must observe the first run, even after its waiter expired.
+    second = subprocess.run(["bash", script], env=env, capture_output=True, text=True)
+    assert "setup:remote still running" in second.stdout, second
+    assert re.search(r"PID (\d+)", second.stdout).group(1) == re.search(r"PID (\d+)", result.stdout).group(1), (result, second)
+    assert log.read_text().count("--dir ") == 1, "overlapping hooks started concurrent setups"
+finally:
+    # Wait even on assertion failure so fixture cleanup never removes a live
+    # worker's files. The stub is deliberately finite and needs no stop signal.
+    deadline = time.monotonic() + 5
+    while time.monotonic() < deadline:
+        if log.exists() and "slow task completed" in log.read_text():
+            break
+        time.sleep(0.02)
+assert "slow task completed" in log.read_text(), "setup never completed after the hook returned"
+assert not signals.exists(), signals.read_text()
+status = output_log.with_name("status")
+for _ in range(100):
+    if status.exists():
+        break
+    time.sleep(0.01)
+assert status.read_text().strip() == "0", status.read_text()
+assert "slow preparation started" in output_log.read_text(), output_log.read_text()
+print(f"OK: hook returned in {elapsed:.2f}s; same detached setup survived two deadlines without signals and completed")
 PYDEADLINE
+
+    echo "==> an escaped descendant holding setup stdout cannot delay a completed hook"
+    make_fixture hook-descendant -
+    cat >"${TMP}/hook-bin/task" <<'EOF'
+#!/usr/bin/env bash
+exec python3 - <<'PYDAEMON'
+import subprocess
+import sys
+subprocess.Popen([sys.executable, "-c", "import time; time.sleep(2)"],
+                 start_new_session=True, stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+print("daemon holding stdout started", flush=True)
+PYDAEMON
+EOF
+    chmod +x "${TMP}/hook-bin/task"
+    python3 - "${FIX}/scripts/session-start-remote.sh" "${TMP}/hook-bin:${MIN_BIN}" <<'PYHOLDER'
+import os
+import subprocess
+import sys
+import time
+started = time.monotonic()
+result = subprocess.run(["bash", sys.argv[1]], env=dict(os.environ, CLAUDE_CODE_REMOTE="true", PATH=sys.argv[2]),
+                        capture_output=True, text=True)
+elapsed = time.monotonic() - started
+assert result.returncode == 0 and "setup:remote completed." in result.stdout, result
+assert "daemon holding stdout started" in result.stderr, result
+assert elapsed < 1.5, f"wrapper waited {elapsed:.2f}s for a descendant holding stdout"
+time.sleep(2)  # let the finite descendant exit before removing the fixture
+PYHOLDER
 else
     echo "skip: timeout is unavailable; the real deadline scenario cannot run"
 fi

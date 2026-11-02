@@ -1071,8 +1071,20 @@ A cached start resumes an existing checkout and moves its `HEAD` forward rather
 than clone afresh ([Setup script](#setup-script), observed 2026-10-07; that
 `origin/main` is left at the snapshot's commit was seen 2026-10-11, under
 [Other behaviour worth knowing](#other-behaviour-worth-knowing)), which the
-docs' "fresh clone per session" does not describe; where that checkout is kept,
-and which run built it, is not established.
+docs' "fresh clone per session" does not describe. The 2026-11-02 observation
+below locates the resumed checkout in the cached snapshot.
+
+**Observed 2026-11-02** ([session `session_01DVJhSbPmZQAaEb7Biy2rpk`](https://claude.ai/code/session_01DVJhSbPmZQAaEb7Biy2rpk),
+harmon-init `635b7b4`, `harmon-remote` `v5.14.0`): the manager used `resume-cached`,
+logged "Fast resume: Using existing repository clones" and "Skipping initialization
+script for faster startup"; the setup script did not run in that boot.
+The checkout was born 2026-11-01 02:45:35Z, about 35 hours before the VM booted
+2026-11-02 13:19:56Z: it was in the cached snapshot. The manager fetched into it
+(`depth=50`), then SessionStart ran `setup:remote`. Setup-script preparation would
+therefore miss resumed sessions; preparation must run at session start. The clone
+predates apt/dpkg writes at 02:45:47–48Z and the manifest at 02:46:26Z, consistent
+with cloning before setup on a fresh build, but that order is **not established**:
+no log names the setup script's start time or working directory.
 
 **Decision (maintainer, 2026-10-09):** the environment setup script remains
 machine-level and repository-independent (the bootstrap only). A repository
@@ -1086,12 +1098,23 @@ lockfiles and sibling remote refs.
 The hook in `.claude/settings.json` calls `scripts/session-start-remote.sh`,
 which runs `task setup:remote` only when `CLAUDE_CODE_REMOTE=true`; it is a
 silent no-op locally and in devcontainers. The hook has an explicit 120 s
-timeout. When `timeout` is available, preparation has a 90 s deadline and a 5 s
-kill grace, leaving time for the wrapper to warn and exit 0 on failure or expiry.
-Without `timeout`, it skips preparation and warns to run `task setup:remote` manually.
+timeout. The wrapper starts preparation in a separate session with stdin closed
+and both output streams directed to a persistent log under this checkout's Git
+directory (`session-start-remote/run-*/output.log`). Python 3's standard library
+provides detachment and advisory locks; overlapping hook invocations observe the
+same worker instead of starting another setup. Only a disposable waiter has a
+90 s deadline. Expiry stops waiting and never signals preparation, which continues
+to completion. Without `timeout` or Python 3, the wrapper skips preparation and
+warns to run `task setup:remote` manually.
 Its one-line
-`SessionStart remote preparation:` summary distinguishes complete preparation, preparation completed with warnings
-(skipped required steps or warnings), and a failure requiring a retry. Missing
+`SessionStart remote preparation:` summary distinguishes complete preparation,
+preparation completed with warnings (skipped required steps or warnings), a failure
+requiring a retry, and setup still running. The last case names the worker PID,
+log and status file, and warns that lefthook hooks, related repos and dependencies
+may not be ready. Wait for the status file before working or manually re-running
+`task setup:remote`; `0` means success and any other value means failure. The
+hook's lock prevents overlapping hook setups; direct manual task invocations do
+not acquire that lock. Logs and status files persist for inspection. Missing
 tools for applicable steps, a missing bootstrap helper, or an unwritable clone
 parent degrade the summary; routine not-applicable skips (no lockfiles, hook
 config, or related-repository list) do not. Details
@@ -1106,7 +1129,7 @@ indeterminate even though the earlier verification gates passed.
 After tool reconciliation, remote preparation checks this checkout with
 `git rev-parse --is-shallow-repository`. If shallow, it makes one
 `git fetch --unshallow origin` attempt, bounded at 20 s plus a 2 s kill grace
-within the existing 90 s SessionStart budget. Success appears in the preparation
+during preparation; this bound is independent of the hook’s 90 s wait. Success appears in the preparation
 summary. Failure, expiry, missing `timeout`, or a fetch that leaves the checkout
 shallow produces a non-fatal summary warning: ancestry-dependent verify/integrate
 gates may go indeterminate. If the fetch times out or is killed, run
@@ -1133,8 +1156,10 @@ directory. It then fetches existing siblings with
 Frozen `pnpm` / `uv` installs from the lockfiles that exist run last, so a slow
 install cannot prevent the preceding hook and sibling preparation. The reverse
 tradeoff is accepted in the [ADR](../decisions/2026-10-09-web-session-start-preparation.md#cost-and-failure):
-a slow sibling can consume the hook deadline before installs run. On expiry,
-the summary asks for a manual `task setup:remote` retry without that wrapper deadline.
+a slow sibling can consume the hook's wait before installs run. On expiry,
+preparation keeps running and the summary tells the agent to wait for its status
+file. After it finishes, a failed preparation can be retried with
+`task setup:remote`.
 Before fetching, one sibling remote must name the configured owner/repository
 in its final two path components (case-insensitive, with `.git` stripped),
 independent of host, scheme, port or leading path. Rewritten URLs and forks with
@@ -1223,7 +1248,7 @@ date and the Claude Code version.
 | # | What has to be seen | Where the result lands |
 | --- | --- | --- |
 | 1 | Seen 2026-10-06: `v4.48.0` is the first release carrying the bootstrap; at `v5.2.0` the setup script fails at `semgrep`, and with the interim `sudo env …` line it completes in 86 s (48 s on a second VM). Seen 2026-10-07: the recipe unchanged, with `sudo bash` and no interim `env`, at `v5.2.1` started a session; the manifest reports `harmon-remote-env` at revision `v5.2.1`, `semgrep 1.178.0` and `copier` are at `/usr/local/bin`, `markdownlint-cli2` and `codex` at `/opt/node22/bin`, and `task` is 3.53.1 | [Setup script](#setup-script) |
-| 1 (cache) | Seen 2026-10-07: the setup-script cache works; a session booted 13.5 h after the run it started from, across GitHub-connection changes. Two earlier sessions had re-run the script (why the second is not established). Seen 2026-10-07 after the script change to `v5.2.1`: the next session was ready about 5.6 s after VM boot in resume-cached mode, against about three minutes uncached (also from VM boot), and the cached start resumes an existing checkout and moves its `HEAD` forward (`origin/main` staying at the snapshot was seen 2026-10-11, see [Other behaviour](#other-behaviour-worth-knowing); where that checkout is kept is not established). Decision 2026-10-09: a repository SessionStart hook prepares each web checkout ([ADR](../decisions/2026-10-09-web-session-start-preparation.md)). *Open:* a cached live session shows prepared hooks and fresh sibling remote refs without a manual task run ([#1548](https://github.com/evanharmon1/harmon-init/issues/1548)) | [Setup script](#setup-script) |
+| 1 (cache) | Seen 2026-10-07: the setup-script cache works; a session booted 13.5 h after the run it started from, across GitHub-connection changes. Two earlier sessions had re-run the script (why the second is not established). Seen 2026-10-07 after the script change to `v5.2.1`: the next session was ready about 5.6 s after VM boot in resume-cached mode, against about three minutes uncached (also from VM boot), and the cached start resumes an existing checkout and moves its `HEAD` forward (`origin/main` staying at the snapshot was seen 2026-10-11, see [Other behaviour](#other-behaviour-worth-knowing)). Observed 2026-11-02: the checkout is in the cached snapshot; the setup script is skipped and SessionStart runs preparation ([evidence](#when-per-checkout-preparation-runs)). Fresh-build clone/setup ordering in that probe is still **not established**. Decision 2026-10-09: a repository SessionStart hook prepares each web checkout ([ADR](../decisions/2026-10-09-web-session-start-preparation.md)). *Open:* a cached live session shows prepared hooks and fresh sibling remote refs without a manual task run ([#1548](https://github.com/evanharmon1/harmon-init/issues/1548)) | [Setup script](#setup-script) |
 | — | Seen 2026-10-07: the session's built-in GitHub tools are not covered by the agent posture; a draft PR was opened, commented on and closed as the bot (PR #1546). The `gh` write forms tried stay refused (defence in depth, not the boundary; [why](#the-gh-call-inventory)). *Open:* which other built-in tools exist (merge, workflow runs, releases) was not asked; a merge into a protected branch still needs code-owner approval and the required checks | [What runs where](#what-runs-where) |
 | — | Seen 2026-10-07: with a `/web-setup` PAT stored first and an App connection added afterwards on the same account, git pushes still use the PAT (workflow push refused). *Open:* the reverse order, and which credential serves API calls | [Whose identity GitHub sees](#whose-identity-github-sees) |
 | 3 | Seen 2026-10-07, on `evanharmon1/harmon-init` and `ponderousdev/foreman`: the PAT-only route gives `gh api user` → `evanharmon1-bot`, the write role without admin or maintain (`push: true, admin: false, maintain: false`), the bot as push actor, the commit author Claude, and a refused workflow push; the App-as-bot route gives the same identity but accepts a workflow push. A PR opened through a session's built-in tools is authored by the bot (seen on `evanharmon1/harmon-init` only). *Open:* a PR through a session on a ponderousdev repository | [Whose identity GitHub sees](#whose-identity-github-sees) |
