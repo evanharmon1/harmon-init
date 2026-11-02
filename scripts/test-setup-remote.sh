@@ -47,7 +47,7 @@ done
 # the host cannot leak into (or be missing from) a scenario. ---
 MIN_BIN="${TMP}/minbin"
 mkdir -p "${MIN_BIN}"
-for tool in python3 bash env git task dirname basename mktemp mv rm mkdir find cat sed grep sort cksum \
+for tool in ps python3 bash env git task dirname basename mktemp mv rm mkdir find cat sed grep sort cksum \
     xargs kill sleep uname head tr wc cp chmod ln touch id printf ls date; do
     src="$(command -v "$tool" 2>/dev/null || true)"
     [ -n "$src" ] && [ -x "$src" ] && ln -sf "$src" "${MIN_BIN}/${tool}"
@@ -1007,6 +1007,133 @@ assert "daemon holding stdout started" in result.stderr, result
 assert elapsed < 1.5, f"wrapper waited {elapsed:.2f}s for a descendant holding stdout"
 time.sleep(2)  # let the finite descendant exit before removing the fixture
 PYHOLDER
+
+    echo "==> SessionStart reports a dead worker to both its launcher and an overlapping observer"
+    make_fixture hook-dead-worker -
+    cat >"${TMP}/hook-bin/task" <<'EOF'
+#!/usr/bin/env python3
+import json
+import os
+from pathlib import Path
+import signal
+import subprocess
+import time
+
+root = Path(os.environ["HOOK_DEAD_ROOT"])
+ready, release, done = (root / name for name in ("dead.ready", "dead.release", "dead.done"))
+parent = os.getppid()
+ready.write_text(str(parent))
+end = time.monotonic() + 5
+while not release.exists() and time.monotonic() < end:
+    time.sleep(0.01)
+assert release.exists(), "test never released the finite setup stub"
+# This test alone intentionally ends its own worker. Verify the exact recorded
+# worker and re-read its command immediately before TERM; never signal by name.
+active = json.loads((root / ".git/session-start-remote/active.json").read_text())
+assert active["pid"] == parent, active
+command = subprocess.check_output(["ps", "-p", str(parent), "-o", "command="], text=True)
+assert "python3" in command and str(root) in command, command
+os.kill(parent, signal.SIGTERM)
+done.write_text("worker terminated without status\n")
+EOF
+    cat >"${TMP}/hook-bin/timeout" <<EOF
+#!/usr/bin/env bash
+[ "\$1" = '90s' ] || exit 99
+shift
+echo waiter >>"\$HOOK_DEAD_WAITERS"
+exec "${REAL_TIMEOUT}" 1s "\$@"
+EOF
+    chmod +x "${TMP}/hook-bin/task" "${TMP}/hook-bin/timeout"
+    python3 - "${FIX}/scripts/session-start-remote.sh" "${TMP}/hook-bin:${MIN_BIN}" <<'PYDEADWORKER'
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+import time
+
+script, path = sys.argv[1:]
+root = Path(script).parent.parent
+ready, release, done, waiters = (root / name for name in ("dead.ready", "dead.release", "dead.done", "dead.waiters"))
+env = dict(os.environ, CLAUDE_CODE_REMOTE="true", PATH=path,
+           HOOK_DEAD_ROOT=str(root), HOOK_DEAD_WAITERS=str(waiters))
+hooks = [subprocess.Popen(["bash", script], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)]
+try:
+    for _ in range(200):
+        if ready.exists():
+            break
+        time.sleep(0.01)
+    assert ready.exists(), "setup never published worker readiness"
+    hooks.append(subprocess.Popen(["bash", script], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True))
+    for _ in range(200):
+        if waiters.exists() and waiters.read_text().count("waiter") == 2:
+            break
+        time.sleep(0.01)
+    assert waiters.read_text().count("waiter") == 2, "both hooks must observe the same worker before it dies"
+finally:
+    release.touch()
+    results = [hook.communicate(timeout=10) for hook in hooks]
+for hook, (out, err) in zip(hooks, results):
+    assert hook.returncode == 0, (out, err)
+    assert "WARNING: SessionStart remote preparation: setup:remote ended without a status" in out, (out, err)
+    assert "still running" not in out, out
+    assert "log:" in out and "run task setup:remote again" in out, out
+assert done.read_text().strip() == "worker terminated without status"
+state = root / ".git/session-start-remote"
+active = json.loads((state / "active.json").read_text())
+assert int(ready.read_text()) == active["pid"], "hooks started different workers"
+assert not (Path(active["directory"]) / "status").exists(), "fixture did not exercise a missing status"
+assert len(list(state.glob("run-*"))) == 1, "observer launched another setup"
+print("OK: launcher and observer both report a terminated worker without a status, never still running")
+PYDEADWORKER
+
+    echo "==> SessionStart retains three newest completed runs, plus protected active and incomplete runs"
+    make_fixture hook-retention -
+    cat >"${TMP}/hook-bin/task" <<'EOF'
+#!/usr/bin/env bash
+echo '==> setup:remote completed.'
+EOF
+    cat >"${TMP}/hook-bin/timeout" <<'EOF'
+#!/usr/bin/env bash
+[ "$1" = '90s' ] || exit 99
+shift
+exec "$@"
+EOF
+    chmod +x "${TMP}/hook-bin/task" "${TMP}/hook-bin/timeout"
+    python3 - "${FIX}/scripts/session-start-remote.sh" "${TMP}/hook-bin:${MIN_BIN}" <<'PYRETENTION'
+import json
+import os
+from pathlib import Path
+import subprocess
+import sys
+
+script, path = sys.argv[1:]
+state = Path(script).parent.parent / ".git/session-start-remote"
+state.mkdir()
+for number in range(1, 6):
+    directory = state / f"run-old-{number}"
+    directory.mkdir()
+    status = directory / "status"
+    status.write_text("0\n")
+    os.utime(status, (number, number))
+# The previous active run is deliberately older than the three newest.
+protected = state / "run-old-1"
+(state / "active.json").write_text(json.dumps({"directory": str(protected), "pid": 999999}))
+incomplete = state / "run-incomplete"
+incomplete.mkdir()
+(incomplete / "output.log").write_text("unfinished preparation\n")
+result = subprocess.run(["bash", script], env=dict(os.environ, CLAUDE_CODE_REMOTE="true", PATH=path),
+                        capture_output=True, text=True)
+assert result.returncode == 0 and "setup:remote completed." in result.stdout, result
+assert not (state / "run-old-2").exists(), "old completed history was not pruned"
+for number in (1, 3, 4, 5):
+    assert (state / f"run-old-{number}" / "status").exists(), number
+assert (incomplete / "output.log").read_text() == "unfinished preparation\n"
+current = Path(json.loads((state / "active.json").read_text())["directory"])
+assert current not in (protected, incomplete) and (current / "status").read_text().strip() == "0", current
+assert len(list(state.glob("run-*"))) == 6, list(state.iterdir())
+print("OK: only older unprotected completed runs are removed; newest three, previous active, current and incomplete survive")
+PYRETENTION
 else
     echo "skip: timeout is unavailable; the real deadline scenario cannot run"
 fi

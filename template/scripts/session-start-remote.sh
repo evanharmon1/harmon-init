@@ -32,6 +32,7 @@ import fcntl
 import json
 import os
 from pathlib import Path
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -47,6 +48,19 @@ with (state / "launch.lock").open("a") as launch_lock:
             # An active setup owns the run lock. Observe it; never launch a peer.
             info = json.loads((state / "active.json").read_text())
         else:
+            # Prune only completed history, before creating this run. The
+            # previously published active run is protected even if it is old.
+            active = state / "active.json"
+            active_directory = json.loads(active.read_text())["directory"] if active.exists() else None
+            completed = sorted(
+                (entry for entry in state.glob("run-*")
+                 if entry.is_dir() and not entry.is_symlink() and (entry / "status").is_file()),
+                key=lambda entry: ((entry / "status").stat().st_mtime_ns, entry.name),
+                reverse=True,
+            )
+            for old in completed[3:]:
+                if str(old) != active_directory:
+                    shutil.rmtree(old)
             directory = Path(tempfile.mkdtemp(prefix="run-", dir=state))
             info = {"directory": str(directory)}
             with (directory / "output.log").open("w") as log:
@@ -88,8 +102,41 @@ status_file="$run_dir/status"
 # hook stdin/stdout/stderr pipes and keeps running after the 90-second deadline.
 timeout 90s bash -c 'while [ ! -f "$1" ]; do sleep 0.1; done' bash "$status_file" >/dev/null 2>&1 || true
 if [ ! -f "$status_file" ]; then
-    echo "==> WARNING: SessionStart remote preparation: setup:remote still running (PID $worker_pid; log: $output_file). Lefthook hooks, related repos and dependencies may not be ready; wait for $status_file before working or re-running task setup:remote."
-    exit 0
+    # Both new launches and observers re-check the lock after their wait. PIDs
+    # can be reused, and a dead worker cannot write its completion status.
+    if ! worker_state="$(
+        python3 - "$state_dir/session-start-remote" "$run_dir" <<'PYLIVENESS'
+import fcntl
+import json
+from pathlib import Path
+import sys
+
+state, directory = Path(sys.argv[1]), sys.argv[2]
+with (state / "launch.lock").open("a") as launch_lock:
+    fcntl.flock(launch_lock, fcntl.LOCK_EX)
+    with (state / "run.lock").open("a") as run_lock:
+        try:
+            fcntl.flock(run_lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            active = json.loads((state / "active.json").read_text())
+            print("running" if active["directory"] == directory else "ended")
+        else:
+            print("ended")
+PYLIVENESS
+    )"; then
+        echo "==> WARNING: SessionStart remote preparation: could not check setup:remote status (log: $output_file); inspect preparation before re-running task setup:remote."
+        exit 0
+    fi
+    # Completion can race the liveness check; status is published before the
+    # worker releases the lock, so re-read it before declaring a lost worker.
+    if [ ! -f "$status_file" ]; then
+        if [ "$worker_state" = running ]; then
+            echo "==> WARNING: SessionStart remote preparation: setup:remote still running (PID $worker_pid; log: $output_file). Lefthook hooks, related repos and dependencies may not be ready; wait for $status_file before working or re-running task setup:remote."
+        else
+            echo "==> WARNING: SessionStart remote preparation: setup:remote ended without a status (log: $output_file); run task setup:remote again."
+        fi
+        exit 0
+    fi
 fi
 
 cat "$output_file" >&2

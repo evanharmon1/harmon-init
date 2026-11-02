@@ -815,6 +815,9 @@ no devcontainer), run `task setup:remote` first if preparation has not run.
 In a single-repository web session, the repository's remote-only `SessionStart`
 hook runs it automatically and prints a summary; if the hook did not run (a
 multi-repository session or a platform without the hook), run it once yourself.
+If the SessionStart summary says setup is still running, wait for its named
+status file before working or re-running `task setup:remote`, because a manual
+run takes no lock.
 It is idempotent — it installs the lefthook git hooks, clones then fetches the
 repos in `.devcontainer/related-repos.txt` (when present) beside the checkout,
 and installs dependencies from the lockfile. Fetching
