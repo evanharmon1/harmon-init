@@ -386,6 +386,9 @@ leave a harness installed on the machine without its managed policy.
   `<path>.replaced-<unique suffix>`, a name never used before, so a second
   replacement cannot overwrite the first kept copy. The variable is forwarded
   through the `sudo` re-exec like the other `HARMON_*` settings.
+  A symlinked parent directory, resolvable or dangling, is left untouched
+  without writes through it and reported with its target as a delivery gap,
+  even when `HARMON_AGENT_POSTURE_REPLACE=1`.
 - **Hooks are not delivered.** The definition's hook commands name the agent
   image's hook scripts (`/etc/claude-code/hooks/`, `/etc/codex/hooks/`, and the
   session-end archive hook under `/usr/local/share/devcontainer-config/`). The
@@ -459,13 +462,20 @@ check a VM; the comparison above is.
 | `remote-bootstrap.yml` → `bootstrap` | CI, stock `ubuntu:24.04` container, seeded with `/usr/bin` ahead of `/usr/local/bin` and `LC_ALL=C` | It runs: the tiers install inside the budget, the second run performs no new installs and leaves the manifest byte-identical, `yq` and `task` resolve from `/usr/local/bin` and the effective locale is UTF-8 in a fresh login shell on the system profile path, a user with `~/.local/bin/yq` planted gets the shadow warning and exit 0 through the un-sudoed re-exec path **and** through `sudo -E` (asserted to enter as uid 0 with that user's `HOME`), each with nothing of root's left in that home and that user's `~/.profile` never executed as root, nothing forbidden appeared on `PATH`, the agent posture is delivered — after the first run both managed destinations are byte-identical to `.devcontainer/config/agent/` and the run printed `HARMON_BOOTSTRAP_POSTURE_GAPS=0` — every VM manifest key names its pin, and `task check` then passes in a harmon-init checkout. Every step that pipes the bootstrap through `tee` runs under `pipefail`, so a bootstrap that dies fails the step it died in |
 | `images/devcontainer/smoke.sh` | the built image | The image really runs the shared scripts — they ship in the image beside `versions.env`, and its manifest records their versions for the comparison above |
 
-**The `remote-bootstrap` job is advisory.** It is path-filtered and is not a
-required status check (see [branch-protection.md](branch-protection.md)), yet it
-is the only end-to-end evidence that the agent posture is delivered on a real
-machine: a pull request can merge with it red, or without it having run. Making
-it required needs the unfiltered-aggregator shape `devcontainer-verify` uses — a
-job that runs on every event and decides internally whether there is anything to
-prove — and that is follow-up work, not part of this change.
+**`remote-bootstrap-verify` is the required root-only aggregate.** The workflow
+has no path filter and reports on every PR, main push, merge-group and manual
+event. `bootstrap-changes` keeps the expensive proof's filter internally: an
+unrelated PR reports a deliberate no-op; a relevant change requires `bootstrap`
+to succeed, and a failed detector or missing output fails the aggregate. Push
+and manual runs always reconcile. A fork PR passes only the boundary assertion
+that both repository-controlled jobs were skipped, without checking out its
+code; this does not prove the fork's bootstrap works. Merge-group jobs run on
+GitHub-hosted runners with read-only contents permission. Architecture and
+elapsed measurements reach the summary before posture and budget gates.
+The checked-in root ruleset requires this context; the maintainer applies it
+after merge and after the aggregate reports on main, in the order documented
+in [branch-protection.md](branch-protection.md#applying-the-ruleset). Generated
+repositories do not ship this producer workflow or require its context.
 
 **The `--ref` posture fetch is not executed by any test or job** until the first
 release that carries these files exists: CI runs the bootstrap from its
@@ -523,7 +533,7 @@ that needs a live session.
 | --- | --- | --- | --- |
 | Claude Code on the web | The setup script's bootstrap writes `/etc/claude-code/managed-settings.json`, creating the directory | The refusals observed in a session (`sudo`, `gh pr merge`, and a `gh api -i -X POST` write) are consistent with the managed file's deny rules being enforced: they carried the permission-rule message form and came without a prompt, unlike the classifier's refusals. The `gh pr merge` refusal predates the agent posture dropping its merge guard ([ADR](../decisions/2026-10-07-bot-and-agent-postures-carry-no-merge-guards.md)): from v5.3.0 the managed file allows `gh pr merge`, so a repeat uses `gh release delete x`, which it still denies. `/permissions` cannot list rules on the web, so this is inferred from behaviour, not shown by a listing. The deny rules are defence in depth, not the write boundary: they match argument patterns (bundled short flags evade that matching, [#1549](https://github.com/evanharmon1/harmon-init/issues/1549)) and are not transitive, so they do not see what an allowed `task` target or script runs ([ADR](../decisions/2026-09-29-agent-posture-three-posture-model.md)); the boundary is the bot's collaborator grants, the token's missing `workflow` scope and the branch rulesets. Raw `gh api` is now denied; REST reads use `/usr/local/bin/gh-api-read` ([ADR](../decisions/2026-10-10-route-agent-posture-api-reads-through-a-get-only-wrapper.md)). They do not cover the session's built-in GitHub tools, which opened, commented on and closed a draft PR as the bot (observed 2026-10-07). The platform's server-side auto-mode classifier is a second, separate layer above it. Harness refusal is not applied; what bounds the session instead is the managed file, the classifier, and that the platform starts Claude Code, not another harness. No hooks | observed 2026-09-27 ([evidence](https://github.com/evanharmon1/harmon-init/issues/1404#issuecomment-5860625696)) for the VM; delivery (the file written and verified) observed 2026-10-06; enforcement inferred from the refusals 2026-10-06/07, criterion 2 ([guide](../guides/claude-code-web.md#the-agent-posture)) |
 | Codex cloud | The setup script's bootstrap writes `/etc/codex/managed_config.toml`, creating the directory | Whether the cloud agent reads a managed config written in the setup phase is **unproven**, and no page gives an environment a permission or approval configuration. The Codex configuration has no deny list to lose: it pins `workspace-write` and approval `never`, and the Claude deny list has no Codex equivalent. Harness refusal is not applied; the platform runs Codex and nothing else, inside its per-task isolation. No hooks | docs (legacy), 2026-09-29; delivery expected, not yet observed — pending, criterion 3 ([guide](../guides/codex-cloud.md#the-agent-posture-as-far-as-codex-cloud-can-express-it)) |
-| Sprites | The bootstrap, run once per Sprite from `sprite console` at a pinned release tag, then checkpointed ([guide](../guides/sprites.md#provisioning)); the machine is ours, so the files install as they do on any platform VM | The same two gaps as every platform VM apply: the adapter adds no harness refusal and installs nothing beyond the bootstrap, and a managed file already there is left in place unless `HARMON_AGENT_POSTURE_REPLACE=1`. Egress is bounded from outside the VM by the network policy generated from the shared allowlist, which the agent cannot change from inside; that it is still in force is confirmed before each lane by comparing the stored policy with a fresh generation ([guide](../guides/sprites.md#network-policy)), because whether a checkpoint restore reverts it is pending. Codex: the Sprite is persistent, so it holds one login of its own, made once by the maintainer ([agents tier](#tiers)). No hooks | expected, not yet observed — pending, criterion 4 |
+| Sprites | The bootstrap runs from `sprite console` on the Sprite's stock image at a pinned release tag; the Sprite is then checkpointed ([guide](../guides/sprites.md#provisioning)) | The same two gaps as every platform VM apply: the adapter adds no harness refusal and installs nothing beyond the bootstrap, and a managed file already there is left in place and counted as a gap unless `HARMON_AGENT_POSTURE_REPLACE=1`. Egress is bounded from outside the VM by the network policy generated from the shared allowlist, which the agent cannot change from inside; that it is still in force is confirmed before each lane by comparing the stored policy with a fresh generation ([guide](../guides/sprites.md#network-policy)), because whether a checkpoint restore reverts it is pending. Codex: the Sprite is persistent, so it holds one login of its own, made once by the maintainer ([agents tier](#tiers)). No hooks | expected, not yet observed — pending, criterion 4 |
 | Self-hosted | The same bootstrap, once [#1410](https://github.com/evanharmon1/harmon-init/issues/1410) builds the adapter | The adapter does not exist yet. The same two gaps as every platform VM apply: harness refusal is not applied by the bootstrap, and a managed file already there is left in place unless `HARMON_AGENT_POSTURE_REPLACE=1`. Codex: a self-hosted machine holds at most one login of its own, made once at provisioning ([agents tier](#tiers)). No hooks | expected, not yet observed — pending, #1410 |
 | Agent devcontainer | Not the bootstrap: `.devcontainer/agent/post-create.sh` runs `agent-autonomy.sh apply` and `verify` against the image's baked copy of the same definition, and the image installs the hooks; `apply` there also refuses the harnesses the definition refuses | None recorded | the definition is tested by `scripts/test-agent-profile.sh`; in effect in a live session: pending, criterion 4 |
 
@@ -586,6 +596,28 @@ use the single cause-to-remedy mapping in
 [`scripts/reconcile-toolchain.sh`](../../scripts/reconcile-toolchain.sh).
 Version warnings also carry the installed version, checkout pin and environment
 revision (from the bootstrap manifest, or `unknown`).
+
+The platform also clones the checkout shallow (observed 2026-11-01 on
+harmon-devkit and omator). After tool reconciliation and before hooks/siblings,
+remote-only preparation checks `git rev-parse --is-shallow-repository` and, when
+shallow, attempts one `git fetch --unshallow origin`. It gets 20 s plus a 2 s
+kill grace within the same 90 s SessionStart deadline. Success is reported in
+the preparation summary; failure, expiry, missing `timeout`, or remaining
+shallow history warns without failing preparation. The warning names the
+ancestry-dependent verify/integrate gates that may go indeterminate. A timed-out
+or killed fetch requires `git fetch --unshallow origin` by hand in the checkout,
+without a timeout; a preparation retry would impose the same 20 s limit. A
+non-timeout fetch error instead asks for checks of the origin URL,
+authentication and network access. A successful fetch that leaves history
+shallow asks whether origin provides complete history. Missing `timeout` asks
+for its installation or a manual fetch. A failed history probe starts no fetch
+and warns "checkout history could not be checked", with the remedy "check Git
+repository access in this checkout". Full checkouts do not fetch history;
+local and devcontainer preparation do not check it. Sibling fetching is unchanged, and
+the existing sibling clone path does not request shallow history. A real
+web-session verification run remains a follow-up on
+[#1460](https://github.com/evanharmon1/harmon-init/issues/1460).
+
 Any preparation failure, including an outer timeout,
 triggers a report-only probe in the wrapper; it reports remaining drift without
 inferring that the time budget caused it. Probe stdout is captured in a regular
