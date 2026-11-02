@@ -893,6 +893,7 @@ cmd_run() {
     # without exercising the consumer contract now required by this template.
     run_untrusted task test:skills-template-compatibility ||
         die "$_run_target failed consumer compatibility (task test:skills-template-compatibility) — update the template before retrying; nothing pushed, no PR touched"
+    assert_expected_scope "$_run_dest"
 
     _run_title="fix(template): sync harmon-devkit skills to $_run_target"
     preflight_title "$_run_title"

@@ -965,7 +965,7 @@ test_schema_new_registry() {
 # Model the observed boundary without vendoring historical helper snapshots.
 # The old consumer supplies plain label text; the new helper expects JSON.
 seed_compatibility_contract() {
-    local dir="$1" mode="$2"
+    local dir="$1" mode="$2" value
     mkdir -p "$dir/.github/workflows" "$dir/.claude/skills/track-work/assets"
     printf 'permissions: {pull-requests: write}\njobs: {cleanup: {runs-on: ubuntu-latest}}\n' >"$dir/.github/workflows/claim-release.yml"
     printf '# selected cleanup helper\n' >"$dir/.claude/skills/track-work/assets/clear-needs-review.sh"
@@ -980,6 +980,17 @@ CONTRACT
     missing-test) rm "$dir/scripts/test-claim-release-merged.sh" ;;
     permission) printf 'permissions: {pull-requests: read}\njobs: {cleanup: {runs-on: ubuntu-latest}}\n' >"$dir/.github/workflows/claim-release.yml" ;;
     job-permission) printf 'permissions: {pull-requests: write}\njobs: {cleanup: {permissions: {contents: read}}}\n' >"$dir/.github/workflows/claim-release.yml" ;;
+    write-all) printf 'permissions: write-all\njobs: {cleanup: {runs-on: ubuntu-latest}}\n' >"$dir/.github/workflows/claim-release.yml" ;;
+    job-write-all) printf 'permissions: read-all\njobs: {cleanup: {permissions: write-all}}\n' >"$dir/.github/workflows/claim-release.yml" ;;
+    read-all | empty | invalid | job-read-all | job-empty | job-invalid | job-null)
+        value=read-all
+        case "$mode" in *empty) value='{}' ;; *invalid) value=invalid ;; *null) value=null ;; esac
+        case "$mode" in
+        job-*) printf 'permissions: write-all\njobs: {cleanup: {permissions: %s}}\n' "$value" ;;
+        *) printf 'permissions: %s\njobs: {cleanup: {runs-on: ubuntu-latest}}\n' "$value" ;;
+        esac >"$dir/.github/workflows/claim-release.yml"
+        ;;
+    unowned-write) printf 'touch UNEXPECTED.md\n' >>"$dir/scripts/test-claim-release-merged.sh" ;;
     fixed) ;;
     *) return 1 ;;
     esac
@@ -990,7 +1001,7 @@ CONTRACT
 
 test_consumer_compatibility() {
     note "consumer compatibility rejects incompatible new/existing PR proposals"
-    for mode in old-contract missing-test permission job-permission fixed; do
+    for mode in old-contract missing-test permission job-permission read-all empty invalid job-read-all job-empty job-invalid job-null unowned-write fixed write-all job-write-all; do
         for existing in no yes; do
             FIXTURE="$(build_fixture v0.1.0)"
             seed_compatibility_contract "$FIXTURE" "$mode"
@@ -999,15 +1010,19 @@ test_consumer_compatibility() {
             write_task_stub pass
             [ "$existing" != yes ] || STUB_PR_LIST="42"
             if run_helper_with_tag v0.65.0 >"$TEST_ROOT/compatibility.log" 2>&1; then
-                [ "$mode" = fixed ] || return 1
+                [[ "$mode" = fixed || "$mode" = write-all || "$mode" = job-write-all ]] || return 1
                 git --git-dir="$TEST_ROOT/origin.git" show-ref --verify --quiet refs/heads/bot/sync-harmon-devkit || return 1
             else
-                [ "$mode" != fixed ] || {
+                [[ "$mode" != fixed && "$mode" != write-all && "$mode" != job-write-all ]] || {
                     cat "$TEST_ROOT/compatibility.log"
                     return 1
                 }
-                grep -Fq 'harmon-init v5.14.0' "$TEST_ROOT/compatibility.log" || return 1
-                grep -Fq 'v0.65.0' "$TEST_ROOT/compatibility.log" || return 1
+                if [ "$mode" = unowned-write ]; then
+                    grep -Fq 'paths it does not own' "$TEST_ROOT/compatibility.log" || return 1
+                else
+                    grep -Fq 'harmon-init v5.14.0' "$TEST_ROOT/compatibility.log" || return 1
+                    grep -Fq 'v0.65.0' "$TEST_ROOT/compatibility.log" || return 1
+                fi
                 ! grep -Eq 'gh pr (create|edit|ready)' "$GH_LOG" || return 1
                 ! git --git-dir="$TEST_ROOT/origin.git" show-ref --verify --quiet refs/heads/bot/sync-harmon-devkit || return 1
             fi

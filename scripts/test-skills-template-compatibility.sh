@@ -31,7 +31,13 @@ for workflow in "${workflows[@]}"; do
     # Job permissions replace the workflow default when present.
     if ((10#$major > 0 || 10#$minor >= 65)) &&
         [ -f .claude/skills/track-work/assets/clear-needs-review.sh ]; then
-        yq -o=json "$workflow" | jq -e '.permissions as $defaults | [.jobs[] | ((.permissions // $defaults)."pull-requests" == "write")] | length > 0 and all' >/dev/null ||
+        yq -o=json "$workflow" | jq -e '
+            def can_write_prs:
+                if type == "object" then .["pull-requests"] == "write"
+                else . == "write-all" end;
+            .permissions as $defaults |
+            [.jobs[] | (if has("permissions") then .permissions else $defaults end) | can_write_prs] |
+            length > 0 and all' >/dev/null ||
             fail "$pin: $workflow needs pull-requests: write for delivery-PR cleanup"
     fi
 done

@@ -542,7 +542,7 @@ pin_of() { sed -n 's/^[[:space:]]*ref:[[:space:]]*\([^[:space:]#]*\).*/\1/p' "$1
 # Model the observed boundary without vendoring historical helper snapshots.
 # The old consumer supplies plain label text; the new helper expects JSON.
 seed_compatibility_contract() {
-    local dir="$1" mode="$2"
+    local dir="$1" mode="$2" value
     mkdir -p "$dir/.github/workflows" "$dir/.claude/skills/track-work/assets"
     printf 'permissions: {pull-requests: write}\njobs: {cleanup: {runs-on: ubuntu-latest}}\n' >"$dir/.github/workflows/claim-release.yml"
     printf '# selected cleanup helper\n' >"$dir/.claude/skills/track-work/assets/clear-needs-review.sh"
@@ -557,6 +557,17 @@ CONTRACT
     missing-test) rm "$dir/scripts/test-claim-release-merged.sh" ;;
     permission) printf 'permissions: {pull-requests: read}\njobs: {cleanup: {runs-on: ubuntu-latest}}\n' >"$dir/.github/workflows/claim-release.yml" ;;
     job-permission) printf 'permissions: {pull-requests: write}\njobs: {cleanup: {permissions: {contents: read}}}\n' >"$dir/.github/workflows/claim-release.yml" ;;
+    write-all) printf 'permissions: write-all\njobs: {cleanup: {runs-on: ubuntu-latest}}\n' >"$dir/.github/workflows/claim-release.yml" ;;
+    job-write-all) printf 'permissions: read-all\njobs: {cleanup: {permissions: write-all}}\n' >"$dir/.github/workflows/claim-release.yml" ;;
+    read-all | empty | invalid | job-read-all | job-empty | job-invalid | job-null)
+        value=read-all
+        case "$mode" in *empty) value='{}' ;; *invalid) value=invalid ;; *null) value=null ;; esac
+        case "$mode" in
+        job-*) printf 'permissions: write-all\njobs: {cleanup: {permissions: %s}}\n' "$value" ;;
+        *) printf 'permissions: %s\njobs: {cleanup: {runs-on: ubuntu-latest}}\n' "$value" ;;
+        esac >"$dir/.github/workflows/claim-release.yml"
+        ;;
+    unowned-write) printf 'touch UNEXPECTED.md\n' >>"$dir/scripts/test-claim-release-merged.sh" ;;
     fixed) ;;
     *) return 1 ;;
     esac
@@ -1034,7 +1045,7 @@ rc="$(run_helper "$fix" run v0.9.0)"
 ! logged "gh pr" || fail "a failing sync still touched a PR"
 
 start "consumer compatibility blocks new and existing PRs before publication"
-for mode in old-contract missing-test permission job-permission fixed; do
+for mode in old-contract missing-test permission job-permission read-all empty invalid job-read-all job-empty job-invalid job-null unowned-write fixed write-all job-write-all; do
     for existing in no yes; do
         fix="$(new_fixture "compatibility_${mode}_${existing}")"
         seed_compatibility_contract "$fix" "$mode"
@@ -1043,13 +1054,17 @@ for mode in old-contract missing-test permission job-permission fixed; do
         [ "$existing" != yes ] || STUB_PR_LIST="42 false"
         : >"$STUB_LOG"
         rc="$(run_helper "$fix" run v0.65.0)"
-        if [ "$mode" = fixed ]; then
+        if [[ "$mode" = fixed || "$mode" = write-all || "$mode" = job-write-all ]]; then
             [ "$rc" = 0 ] || fail "corrected contract rejected: $(cat "$LAST_OUT")"
             pushed "$fix" || fail "corrected contract did not publish"
         else
             [ "$rc" != 0 ] || fail "$mode was accepted"
-            grep -Fq 'harmon-init v5.14.0' "$LAST_OUT" || fail "missing upgrade requirement"
-            grep -Fq 'v0.65.0' "$LAST_OUT" || fail "missing requested version"
+            if [ "$mode" = unowned-write ]; then
+                grep -Fq 'paths it does not own' "$LAST_OUT" || fail "missing scope rejection"
+            else
+                grep -Fq 'harmon-init v5.14.0' "$LAST_OUT" || fail "missing upgrade requirement"
+                grep -Fq 'v0.65.0' "$LAST_OUT" || fail "missing requested version"
+            fi
             ! pushed "$fix" || fail "$mode pushed an incompatible sync"
             ! pr_written || fail "$mode touched a PR"
             ! logged 'gh pr ready' || fail "$mode demoted an existing PR"
