@@ -86,8 +86,8 @@ schema = json.loads((root / ".devflow.schema.json").read_text())
 validate_schema(json.loads(json.dumps(tomllib.loads((root / ".devflow.toml").read_text()))), schema, schema)
 
 floor_match = re.search(r'^_min_harmon_devkit_skills: "v(\d+)\.(\d+)\.(\d+)"$', (root / "copier.yml").read_text(), re.M)
-if not floor_match or tuple(map(int, floor_match.groups())) < (0, 62, 0):
-    fail("finder policies require harmon-devkit skills v0.62.0 or newer")
+if not floor_match or tuple(map(int, floor_match.groups())) < (0, 63, 1):
+    fail("finder policies and readiness require harmon-devkit skills v0.63.1 or newer")
 
 taskfile = (root / "Taskfile.yml").read_text()
 registry = json.loads((root / "agent-registry.json").read_text())

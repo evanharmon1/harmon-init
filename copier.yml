@@ -922,8 +922,9 @@ _tasks:
 # Readable from a release tag without rendering the template: consumers and
 # standardize-repo use this floor before applying an update. v5.8.1 first
 # mirrored harmon-devkit's result schemas and validator from v0.58.0 (#1678).
-# Per-reviewer finder tables require the reader first released in v0.62.0.
-_min_harmon_devkit_skills: "v0.62.0"
+# Finder entries require the reader from v0.62.0; per-finder required sets
+# require the readiness gate from v0.63.1. Both assets bind this floor.
+_min_harmon_devkit_skills: "v0.63.1"
 
 _min_copier_version: "9.4.0"
 
