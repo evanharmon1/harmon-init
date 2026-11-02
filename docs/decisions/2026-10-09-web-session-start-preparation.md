@@ -84,8 +84,10 @@ sibling can consume the hook's 90 s wait before pnpm or uv runs. The
 the hook returns. Expiry is reported as still running while the worker holds
 the run lock, with a durable log and status file rather than a failure. If the
 worker ended without a status, the warning names the log and asks for a manual
-`task setup:remote` retry. A status of `0` means success; any other value means
-failure. After completion the agent may retry a failed
+`task setup:remote` retry. A status of `0` means setup finished; the last
+`==> setup:remote completed` line in the named log says whether it finished
+cleanly or with warnings. Any other status value means failure. After completion
+the agent may retry a failed
 `task setup:remote` manually. No new setup termination path is introduced.
 Persistent run logs and status files remain available for diagnosis.
 

@@ -1114,7 +1114,9 @@ requiring a retry, setup still running, or setup ended without a status. The
 still-running case names the worker PID, log and status file, and warns that
 lefthook hooks, related repos and dependencies
 may not be ready. Wait for the status file before working or manually re-running
-`task setup:remote`; `0` means success and any other value means failure. If the
+`task setup:remote`; `0` means setup finished. The last
+`==> setup:remote completed` line in the named log says whether it finished
+cleanly or with warnings; any other status value means failure. If the
 worker ended without a status, the warning names its log and asks the agent to
 run `task setup:remote` again. The hook's lock prevents overlapping hook setups;
 direct manual task invocations do

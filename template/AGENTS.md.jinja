@@ -690,8 +690,9 @@ In a single-repository web session, the repository's remote-only `SessionStart`
 hook runs it automatically and prints a summary; if the hook did not run (a
 multi-repository session or a platform without the hook), run it once yourself.
 If the SessionStart summary says setup is still running, wait for its named
-status file before working. If none appears and the log has stopped advancing,
-run `task setup:remote` again; a manual run takes no lock.
+status file before working. Re-run `task setup:remote` only if that file is still
+missing and the warning's worker PID is no longer running (`kill -0 <PID>` fails);
+a manual run takes no lock.
 It is idempotent — it installs the lefthook git hooks, clones then fetches the
 repos in `.devcontainer/related-repos.txt` (when present) beside the checkout,
 and installs dependencies from the lockfile. Fetching
