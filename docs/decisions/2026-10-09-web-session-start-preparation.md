@@ -6,7 +6,10 @@ Date: 2026-10-09
 
 Accepted — maintainer decision of 2026-10-09 for
 [#1548](https://github.com/evanharmon1/harmon-init/issues/1548).
-Live cached-session verification remains a human follow-up.
+Amended 2026-11-02 for
+[#1671](https://github.com/evanharmon1/harmon-init/issues/1671): the hook's deadline
+bounds waiting, without terminating preparation. Live cached-session and detached
+worker verification remain human follow-ups.
 
 ## Context
 
@@ -34,16 +37,26 @@ retains the observed evidence separately from this decision.
    `task setup:remote`; local sessions and devcontainers do nothing. The wrapper
    warns and exits 0 on preparation failure, preserving session start, and
    prints a one-line complete, degraded (skipped required steps or warnings),
-   or failure summary; details stay on stderr. The hook timeout is 120 s;
-   when `timeout` is available, preparation has a 90 s deadline and a 5 s kill
-   grace so the wrapper can warn and exit before the hook expires. Without
-   `timeout`, it skips preparation, warns to run `task setup:remote` manually,
-   and exits 0.
+   or failure summary; completed-run details stay on stderr. The hook timeout is
+   120 s. Python 3 starts preparation in a new session with stdin closed and both
+   output streams in a persistent log under this checkout's Git directory. The
+   worker holds an advisory lock until setup exits; overlapping hook invocations
+   observe it instead of starting another setup. Only a disposable waiter has a
+   90 s deadline. Expiry never signals preparation: the hook exits 0 with a
+   still-running summary naming the PID, log and status file when the worker
+   holds the run lock. If the worker ended without a status, a warning names
+   the log and asks for `task setup:remote` again. Hooks, related
+   repos and dependencies may not be ready; the agent must wait for that status
+   before work or a manual setup retry. Without `timeout` or Python 3, the
+   wrapper skips preparation, warns to run `task setup:remote` manually and
+   exits 0. Direct manual task invocations do not take the hook's lock, so they
+   must wait for its worker to finish.
 3. `task setup:remote` installs current lefthook shims, bootstraps missing siblings
    and fetches existing siblings into the checkout's parent directory, then
    installs frozen dependencies where lockfiles exist. Slow installs run last,
-   so a deadline does not prevent the preceding hook and sibling preparation. The shared fetch
-   script accepts that directory, defaulting to `/workspaces` for devcontainers.
+   prioritizing hook and sibling availability before dependency installation.
+   The shared fetch script accepts that directory, defaulting to `/workspaces`
+   for devcontainers.
    Fetch identifies the sibling by a remote whose final owner/repository path
    matches the configured entry case-insensitively, with `.git` stripped;
    host, scheme, port and leading path do not define identity. This supports
@@ -65,15 +78,18 @@ start in a web session. Open only checkouts you would run `task setup:remote` on
 ## Cost and failure
 
 Ordering tradeoff accepted for [#1576](https://github.com/evanharmon1/harmon-init/issues/1576):
-sibling network work remains before dependency installs under the single 90 s
-hook deadline. A slow or unreachable sibling can consume that deadline before
-pnpm or uv runs. Keeping one deadline and the existing order is the smaller
-change: it avoids a second timeout/supervision mechanism, preserves sibling
-availability before installers run, and keeps the tested preparation order.
-The hook reports expiry as failure and asks the session to retry
-`task setup:remote` manually; that invocation has no wrapper deadline. This is
-an accepted availability tradeoff, not a guarantee that installs run on every
-hook invocation.
+sibling network work remains before dependency installs. A slow or unreachable
+sibling can consume the hook's 90 s wait before pnpm or uv runs. The
+2026-11-02 amendment preserves that order and lets preparation continue after
+the hook returns. Expiry is reported as still running while the worker holds
+the run lock, with a durable log and status file rather than a failure. If the
+worker ended without a status, the warning names the log and asks for a manual
+`task setup:remote` retry. A status of `0` means setup finished; the last
+`==> setup:remote completed` line in the named log says whether it finished
+cleanly or with warnings. Any other status value means failure. After completion
+the agent may retry a failed
+`task setup:remote` manually. No new setup termination path is introduced.
+Persistent run logs and status files remain available for diagnosis.
 
 Measured in this devcontainer on 2026-10-09: cold `task setup:remote` with three
 sibling clones took 7.7 s; a warm run with siblings present took well under 1 s.
@@ -109,7 +125,11 @@ The existing setup-remote fixture suite proves fetch-forward without moving HEAD
 or local work, unrelated-origin refusal, mirror-refspec branch preservation,
 linked-worktree/separate-git-dir fetches, read-only-parent fetching, complete
 and degraded summaries, warning-only fetch failure, remote-only hook execution and exit 0
-on preparation failure. Root/template twins ship the same behavior. The
+on preparation failure. A short real deadline verifies that setup remains alive,
+receives no TERM/INT/HUP, survives overlapping hook invocations without a duplicate
+setup, and later writes its completion marker. A mutation restoring termination
+must fail that regression. A descendant retaining stdout cannot keep the hook
+waiting. Root/template twins ship the same behavior. The
 bootstrap recipe guard still tests the unchanged machine-only recipe.
 A live session from a cached snapshot must still confirm hooks and expected
 sibling remote refs without a manual `task setup:remote` run.

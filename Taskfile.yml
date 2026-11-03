@@ -111,6 +111,7 @@ tasks:
       - task: test:agent-skill-links
       - task: test:agent-registry
       - task: test:result-schemas
+      - task: test:skills-template-compatibility
       - task: test:registry-drift
       - task: test:registry-docs
       - task: test:label-registry
@@ -168,6 +169,7 @@ tasks:
       - task: test:link-claude-json
       - task: test:image-staleness
       - task: test:open-devcontainer
+      - task: test:devcontainer-smoke-isolation
       - task: test:bot-autonomy
       - task: test:agent-profile
       - task: test:codex-review
@@ -427,6 +429,11 @@ tasks:
     cmds:
       - ./scripts/test-image-staleness.sh
 
+  test:devcontainer-smoke-isolation:
+    desc: Prove smoke-run Python state and cleanup isolation (no Docker needed)
+    cmds:
+      - ./scripts/test-devcontainer-smoke-isolation.sh
+
   test:open-devcontainer:
     desc: Unit-test the client-side dev container launcher (no VS Code needed)
     cmds:
@@ -523,6 +530,11 @@ tasks:
     desc: Bind label provisioning, the docs taxonomy table, and the status inventory to the label registry
     cmds:
       - ./scripts/test-label-registry.sh
+
+  test:skills-template-compatibility:
+    desc: Exercise selected skills against the consumer cleanup contract before publication
+    cmds:
+      - ./scripts/test-skills-template-compatibility.sh
 
   test:result-schemas:
     desc: Schema-check the dev-flow-v2 result/record contracts and receipt smoke fixtures

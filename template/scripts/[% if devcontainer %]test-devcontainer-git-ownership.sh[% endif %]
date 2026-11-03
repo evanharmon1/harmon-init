@@ -40,6 +40,8 @@ fi
 # Extract the production helper verbatim. This keeps the fixture attached to
 # the implementation instead of growing a second, drifting permissions routine.
 tmp_root="$(mktemp -d -t harmon-git-ownership-XXXXXX)"
+# The initial fixture expects the invoking user's primary group.
+chgrp "$(id -g)" "$tmp_root"
 trap 'rm -rf "$tmp_root"' EXIT
 helpers="$tmp_root/workspace-permissions.sh"
 sed -n '/^resolve_workspace_root()/,/^# --- End workspace permissions reconciliation ---$/p' "$post_create" | sed '$d' >"$helpers"
