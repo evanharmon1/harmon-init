@@ -142,6 +142,7 @@ tasks:
       - task: test:agent-registry
 [% if use_skills_sync %]
       - task: test:result-schemas
+      - task: test:skills-template-compatibility
 [% endif %]
       - task: test:registry-drift
       - task: test:registry-docs
@@ -771,6 +772,11 @@ tasks:
       - ./scripts/test-agent-registry.sh
 
 [% if use_skills_sync %]
+  test:skills-template-compatibility:
+    desc: Exercise selected skills against the consumer cleanup contract before publication
+    cmds:
+      - ./scripts/test-skills-template-compatibility.sh
+
   test:result-schemas:
     desc: Schema-check the dev-flow-v2 result/record contracts and receipt smoke fixtures
     cmds:
