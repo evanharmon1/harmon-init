@@ -8,6 +8,18 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [5.15.1](https://github.com/evanharmon1/harmon-init/compare/v5.15.0...v5.15.1) (2026-11-03)
+
+
+### Bug Fixes
+
+* **ci:** bound disposable workflow artifact retention ([#1922](https://github.com/evanharmon1/harmon-init/issues/1922)) ([e119de8](https://github.com/evanharmon1/harmon-init/commit/e119de897e448f69b207f19cc51e289c0040c1f1))
+* **ci:** make the remote-bootstrap posture proof a required check and close the PR 1440 residuals ([#1918](https://github.com/evanharmon1/harmon-init/issues/1918)) ([0bd0287](https://github.com/evanharmon1/harmon-init/commit/0bd02879dcb3e7a61ee7bd338e91f1968f15e031))
+* **devcontainer:** close five robustness gaps in the remote bootstrap installers ([#1927](https://github.com/evanharmon1/harmon-init/issues/1927)) ([612e215](https://github.com/evanharmon1/harmon-init/commit/612e2153266c08213df3c4fd6dc8ffab017982c9))
+* Isolate Python environments between devcontainer smoke runs ([#1924](https://github.com/evanharmon1/harmon-init/issues/1924)) ([23624c2](https://github.com/evanharmon1/harmon-init/commit/23624c22aed489347b84f513590c9b30f17e26e5)), closes [#1916](https://github.com/evanharmon1/harmon-init/issues/1916)
+* **remote-env:** stop the SessionStart hook from killing in-flight setup at its deadline ([#1925](https://github.com/evanharmon1/harmon-init/issues/1925)) ([2c3c4b7](https://github.com/evanharmon1/harmon-init/commit/2c3c4b7ab36fe0bd1abbceb2cc18b3faebf30b11))
+* **skills:** prevent incompatible consumer skills sync ([#1921](https://github.com/evanharmon1/harmon-init/issues/1921)) ([091958e](https://github.com/evanharmon1/harmon-init/commit/091958e3e679269209f8cecb243d5b8255998d67))
+
 ## [5.15.0](https://github.com/evanharmon1/harmon-init/compare/v5.14.0...v5.15.0) (2026-11-02)
 
 

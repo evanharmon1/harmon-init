@@ -142,6 +142,7 @@ tasks:
       - task: test:agent-registry
 [% if use_skills_sync %]
       - task: test:result-schemas
+      - task: test:skills-template-compatibility
 [% endif %]
       - task: test:registry-drift
       - task: test:registry-docs
@@ -191,6 +192,7 @@ tasks:
       - task: test:link-claude-json
       - task: test:image-staleness
       - task: test:open-devcontainer
+      - task: test:devcontainer-smoke-isolation
       - task: test:bot-autonomy
       - task: test:agent-profile
       - task: test:devcontainer-changed
@@ -770,6 +772,11 @@ tasks:
       - ./scripts/test-agent-registry.sh
 
 [% if use_skills_sync %]
+  test:skills-template-compatibility:
+    desc: Exercise selected skills against the consumer cleanup contract before publication
+    cmds:
+      - ./scripts/test-skills-template-compatibility.sh
+
   test:result-schemas:
     desc: Schema-check the dev-flow-v2 result/record contracts and receipt smoke fixtures
     cmds:
@@ -1022,6 +1029,11 @@ tasks:
     desc: Unit-test the image-staleness warning (no container needed)
     cmds:
       - ./scripts/test-image-staleness.sh
+
+  test:devcontainer-smoke-isolation:
+    desc: Prove smoke-run Python state and cleanup isolation (no Docker needed)
+    cmds:
+      - ./scripts/test-devcontainer-smoke-isolation.sh
 
   test:open-devcontainer:
     desc: Unit-test the client-side dev container launcher (no VS Code needed)
