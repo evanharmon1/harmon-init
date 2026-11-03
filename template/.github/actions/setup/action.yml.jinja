@@ -65,7 +65,7 @@ runs:
     - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7
       with:
         # renovate: datasource=node-version depName=node
-        node-version: "24"
+        node-version: "26"
 [% if use_node %]
         cache: ${{ inputs.cache == 'true' && 'pnpm' || '' }}
     - name: Verify job-private pnpm store
