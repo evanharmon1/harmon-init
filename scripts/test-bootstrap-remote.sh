@@ -24,6 +24,8 @@ import json
 import os
 import pathlib
 import re
+import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -53,6 +55,53 @@ def run_lifted(script, args=(), limit=120):
         )
     except subprocess.TimeoutExpired:
         return None
+
+# Linux-only installer primitives are fixture dependencies, not host
+# requirements. Preserve real hashes/path resolution with Python, and reject
+# GNU-only tools/flags on PATH even when the test host happens to provide them.
+HOST_TOOL_ADAPTERS = r"""
+readlink() {
+    if [ "${1:-}" = -f ]; then
+        python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$2"
+    else
+        command readlink "$@"
+    fi
+}
+sha256sum() {
+    python3 - "$@" <<'DIGEST'
+import hashlib
+import pathlib
+import sys
+for name in sys.argv[1:]:
+    print(f"{hashlib.sha256(pathlib.Path(name).read_bytes()).hexdigest()}  {name}")
+DIGEST
+}
+"""
+
+
+def run_host_fixture(script):
+    """Exercise affected host checks without GNU stat/readlink/sha256sum."""
+    script = script.replace('$(mktemp -d)', '$(mktemp -d "${TMPDIR:-/tmp}/harmon-fixture.XXXXXX")')
+    script = script.replace('$(mktemp)', '$(mktemp "${TMPDIR:-/tmp}/harmon-fixture.XXXXXX")')
+    with tempfile.TemporaryDirectory() as directory:
+        tools = {name: shutil.which(name) for name in ("stat", "readlink", "sed", "cp", "sha256sum")}
+        shim = '''#!/usr/bin/env python3
+import os, sys
+name = os.path.basename(sys.argv[0])
+args = sys.argv[1:]
+if (name == "sha256sum" or (name == "stat" and "-c" in args)
+        or (name == "readlink" and "-f" in args)
+        or (name == "sed" and "-i" in args)
+        or (name == "cp" and "-a" in args)):
+    sys.exit("GNU-only host invocation: " + name + " " + " ".join(args))
+real = TOOLS[name]
+os.execv(real, [real, *args])
+'''.replace("TOOLS", repr(tools))
+        for name in tools:
+            path = pathlib.Path(directory) / name
+            path.write_text(shim)
+            path.chmod(0o755)
+        return run_lifted(f"PATH={shlex.quote(directory)}:$PATH\n" + HOST_TOOL_ADAPTERS + script)
 
 
 IMG = pathlib.Path("images/devcontainer")
@@ -3021,7 +3070,7 @@ source_case SRC_NO_BUNDLE_CALLER_KEPT "${root}/missing.crt" /caller/own.pem
     printf 'UV %s\n' "$(harmon_uv_tool somepkg 1.2.3 uvpkg-cmd | grep '^UV ')"
 )
 """
-run = run_lifted(trust.replace("@LIB@", str(INSTALL / "lib.sh")))
+run = run_host_fixture(trust.replace("@LIB@", str(INSTALL / "lib.sh")))
 seen = {} if run is None else {
     line.split(" ", 1)[0]: line.split(" ", 1)[1] for line in run.stdout.splitlines() if " " in line
 }
@@ -3208,7 +3257,7 @@ locale_start = bootstrap_text.index("ensure_environment_line() {")
 locale_end = bootstrap_text.index("\nset_locale\n", locale_start)
 locale_functions = bootstrap_text[locale_start:locale_end].replace(
     "/etc/environment", "${root}/environment"
-).replace("/etc/profile.d", "${root}/profile.d")
+).replace("/etc/profile.d", "${root}/profile.d").replace("sed -i ", "sed -i.bak ")
 locale_harness = r"""
 set -euo pipefail
 root="$(mktemp -d)"
@@ -3222,7 +3271,7 @@ set_locale
 grep -Fxq LANG=C.UTF-8 "${root}/environment"
 grep -Fxq LC_ALL=C.UTF-8 "${root}/environment"
 grep -Fxq OTHER=preserved "${root}/environment"
-[ "$(stat -c %a "$HARMON_PROFILE_DROPIN")" = 644 ]
+python3 -c 'import os, stat, sys; assert stat.S_IMODE(os.stat(sys.argv[1]).st_mode) == 0o644' "$HARMON_PROFILE_DROPIN"
 printf 'LOCALE_LITERAL repaired\n'
 
 install() {
@@ -3243,19 +3292,20 @@ for mode in write rename; do
     printf 'PROFILE_%s preserved\n' "$mode"
 done
 """
-run = run_lifted(locale_harness.replace("@LOCALE@", locale_functions))
+run = run_host_fixture(locale_harness.replace("@LOCALE@", locale_functions))
 if run is None or run.returncode != 0 or run.stdout.splitlines() != [
     "LOCALE_LITERAL repaired", "PROFILE_write preserved", "PROFILE_rename preserved"
 ]:
     fail(f"{BOOTSTRAP}: locale/profile fault injection failed: {run}")
 
 # Execute the real Node block with a locally generated distribution archive.
-# The stubbed download counts repairs; checksum validation is the only other
-# substituted operation. npm/npx/corepack are real symlinks into lib/.
+# The fixture download counts repairs; checksum validation is stubbed and
+# SHA-256 uses Python on the host. npm/npx/corepack remain real symlinks into lib/.
+# Use cp's BSD/GNU-common preservation flags only in the lifted fixture.
 node_block = core_text.split("# ---------- Node.js", 1)[1].split(
     "# ---------- corepack's pnpm shim", 1
 )[0]
-node_block = node_block[node_block.index("\n") + 1:]
+node_block = node_block[node_block.index("\n") + 1:].replace("cp -a ", "cp -PRp ")
 node_harness = r"""
 set -euo pipefail
 root="$(mktemp -d)"
@@ -3301,7 +3351,7 @@ done
 # Simulate interruption while copying the last bin/ directory. The receipt
 # must already be gone, so even unchanged executables cannot make a skip.
 cp() {
-    if [ "${1:-}" = -a ] && [[ "$2" == */bin/. ]]; then return 1; fi
+    if [ "${1:-}" = -PRp ] && [[ "$2" == */bin/. ]]; then return 1; fi
     command cp "$@"
 }
 rm -f "${HARMON_BIN}/npm"
@@ -3311,7 +3361,7 @@ unset -f cp
 run_node >/dev/null
 printf 'NODE_INTERRUPTED repaired\n'
 """
-run = run_lifted(node_harness.replace("@LIB@", str(INSTALL / "lib.sh")).replace("@NODE_BLOCK@", node_block))
+run = run_host_fixture(node_harness.replace("@LIB@", str(INSTALL / "lib.sh")).replace("@NODE_BLOCK@", node_block))
 if run is None or run.returncode != 0 or run.stdout.splitlines() != [
     "NODE_npm repaired", "NODE_npx repaired", "NODE_corepack repaired", "NODE_INTERRUPTED repaired"
 ]:
@@ -3380,7 +3430,7 @@ if (harmon_npm_global test-package 1.2.3 test-tool) >/dev/null 2>&1; then exit 1
 [ "$(grep -c '^tool' "$HARMON_CHANGE_LOG")" -eq 4 ]
 printf 'NPM_external_repeat refused\n'
 """
-run = run_lifted(npm_harness.replace("@LIB@", str(INSTALL / "lib.sh")))
+run = run_host_fixture(npm_harness.replace("@LIB@", str(INSTALL / "lib.sh")))
 if run is None or run.returncode != 0 or run.stdout.splitlines() != [
     "NPM_PREFIX managed", "NPM_missing refused", "NPM_external refused", "NPM_external_repeat refused"
 ]:
