@@ -90,9 +90,12 @@ rather than `astral.sh`. Node is pinned to an exact patch release as a result;
 the apt repository pinned only its major.
 
 The Node installer records the pinned version and hashes of its four executable
-targets only after publishing the whole distribution. Missing or changed
-companions force a reinstall. npm globals use an explicit managed prefix and
-verify the published command there, regardless of inherited npm configuration.
+targets only after publishing the whole distribution. The receipt proves that
+publication completed and the four executable files remain present and unchanged;
+it does not check package versions or changes behind unchanged launcher scripts.
+Missing or changed executable files force a reinstall. npm globals use an explicit
+managed prefix and verify the published command there, regardless of inherited
+npm configuration.
 The VM bootstrap matches locale lines literally and publishes its login profile
 by staging beside the destination and renaming. When source provenance cannot be
 established, it removes any previous VM manifest; reconciliation then reports

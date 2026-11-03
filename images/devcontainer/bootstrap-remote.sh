@@ -986,7 +986,10 @@ write_manifest() {
                 warn "no manifest written: git exited ${status_rc} reading the working-tree status of ${self_dir}, so whether the installed bytes are commit ${revision} cannot be established. An empty status from a FAILED read is not a clean checkout, and a manifest attesting one would defeat the image-to-VM comparison it exists for."
                 # Keep the installed tools usable, but invalidate provenance:
                 # consumers report unknown rather than trusting an older run.
-                rm -f "$manifest"
+                if [ -e "$manifest" ] || [ -L "$manifest" ]; then
+                    rm -f "$manifest"
+                    harmon_changed "removed stale manifest ${manifest} (source provenance unknown)"
+                fi
                 return 0
             fi
             if [ -n "$status_out" ]; then
@@ -1001,7 +1004,10 @@ write_manifest() {
         warn "no manifest written: the source revision is unknown (not a git checkout, and no release tag). The image-to-VM comparison needs one or the other."
         # The same invalidation as a failed cleanliness read above: no stale
         # revision may describe the tools this run just installed.
-        rm -f "$manifest"
+        if [ -e "$manifest" ] || [ -L "$manifest" ]; then
+            rm -f "$manifest"
+            harmon_changed "removed stale manifest ${manifest} (source provenance unknown)"
+        fi
         return 0
     fi
     if [ -f "$manifest" ]; then

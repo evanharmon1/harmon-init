@@ -29,10 +29,10 @@ tmp="$HARMON_TMPDIR"
 # Installed under ${HARMON_PREFIX} so it wins PATH precedence over a
 # pre-provisioned /usr/bin/node (the remote VM ships Node 22).
 #
-# A receipt binds the pinned distribution to all four executable targets.
-# Presence alone accepts an interrupted upgrade's new node beside old companions.
-# Recompute the identity on every run, so a missing/replaced companion invalidates
-# it too. sha256sum follows npm/npx/corepack's symlinks into lib/node_modules.
+# A receipt proves the pinned distribution was published completely and its
+# four executable files remain present and unchanged. sha256sum follows the
+# npm/npx/corepack symlinks to their launcher scripts; it does not check package
+# versions or changes to package contents behind an unchanged launcher.
 node_receipt="${HARMON_PREFIX}/share/harmon-node/distribution.identity"
 node_distribution_identity() {
     printf 'node=%s\n' "$NODE_VERSION"

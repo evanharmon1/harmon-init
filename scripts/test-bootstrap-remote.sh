@@ -1207,7 +1207,7 @@ set -euo pipefail
 # Stubs for the run-record helpers only; nothing the revision is decided by.
 warn() { printf 'warn: %s\n' "$*" >&2; }
 harmon_skip() { :; }
-harmon_changed() { :; }
+harmon_changed() { printf 'install\t%s\n' "$*" >>"$change_log"; }
 harmon_arch() { printf 'amd64\n'; }
 tab="$(printf '\t')"
 HARMON_RELEASE_TAG_RE='@TAG_RE@'
@@ -1286,7 +1286,12 @@ git() {
 manifest_dir="${root}/m-unreadable"
 mkdir -p "$manifest_dir"
 cp "${root}/m-local/manifest.json" "${manifest_dir}/manifest.json"
+changes_before="$(grep -c "^install${tab}" "$change_log")"
 write_manifest
+changes_after="$(grep -c "^install${tab}" "$change_log")"
+[ "$changes_after" -eq "$((changes_before + 1))" ]
+write_manifest
+[ "$(grep -c "^install${tab}" "$change_log")" -eq "$changes_after" ]
 unset -f git
 if [ -f "${manifest_dir}/manifest.json" ]; then
     printf 'UNREADABLE_STATUS %s\n' "$(jq -r .image.revision "${manifest_dir}/manifest.json")"
@@ -1300,7 +1305,12 @@ ref=unknown
 manifest_dir="${root}/m-unknown"
 mkdir -p "$manifest_dir"
 cp "${root}/m-local/manifest.json" "${manifest_dir}/manifest.json"
+changes_before="$(grep -c "^install${tab}" "$change_log")"
 write_manifest
+changes_after="$(grep -c "^install${tab}" "$change_log")"
+[ "$changes_after" -eq "$((changes_before + 1))" ]
+write_manifest
+[ "$(grep -c "^install${tab}" "$change_log")" -eq "$changes_after" ]
 if [ -e "${manifest_dir}/manifest.json" ]; then
     printf 'UNKNOWN_REVISION stale\n'
 else
@@ -3278,7 +3288,9 @@ run_node >/dev/null
 [ "$(wc -l <"${root}/fetches")" -eq 1 ]
 expected_fetches=1
 for companion in npm npx corepack; do
-    # Keep the new node and a valid previous receipt, replace just one target.
+    # Keep the new node and a valid receipt, overwrite one launcher file's
+    # bytes. This simulates an old executable, not an in-place package change
+    # whose launcher remains byte-identical.
     printf '#!/bin/sh\nprintf "old-companion\n"\n' >"${HARMON_BIN}/${companion}"
     run_node >/dev/null
     expected_fetches=$((expected_fetches + 1))
@@ -3308,18 +3320,21 @@ if run is None or run.returncode != 0 or run.stdout.splitlines() != [
 # npm is a process stub so the inherited prefix reaches it exactly as it would
 # reach real npm. It honours the CLI prefix only when present. A second mode
 # lies about successful publication, and a third publishes a link outside the
-# managed prefix: both must fail the helper's post-install check.
+# managed prefix: both must fail the helper's post-install check. A second
+# attempt with that foreign link still present must reinstall and refuse again.
 npm_harness = r"""
 set -euo pipefail
 root="$(mktemp -d)"
 trap 'rm -rf "$root"' EXIT
 export HARMON_PREFIX="${root}/managed" HARMON_BIN="${root}/managed/bin"
 export NPM_CONFIG_PREFIX="${root}/foreign"
+export NPM_ATTEMPTS="${root}/npm-attempts"
 mkdir -p "$HARMON_BIN" "${root}/stub"
 PATH="${root}/stub:${HARMON_BIN}:${PATH}"
 . '@LIB@'
 cat >"${root}/stub/npm" <<'NPM'
 #!/bin/sh
+printf 'install\n' >>"$NPM_ATTEMPTS"
 prefix="$NPM_CONFIG_PREFIX"
 while [ "$#" -gt 0 ]; do
     if [ "$1" = --prefix ]; then prefix="$2"; shift; fi
@@ -3327,6 +3342,7 @@ while [ "$#" -gt 0 ]; do
 done
 [ "${MODE:-}" != missing ] || exit 0
 mkdir -p "${prefix}/bin"
+rm -f "${prefix}/bin/test-tool"
 printf '#!/bin/sh\nprintf "1.2.3\n"\n' >"${prefix}/bin/test-tool"
 chmod 0755 "${prefix}/bin/test-tool"
 if [ "${MODE:-}" = external ]; then
@@ -3340,16 +3356,33 @@ harmon_npm_global test-package 1.2.3 test-tool >/dev/null
 [ -x "${HARMON_BIN}/test-tool" ]
 [ ! -e "$NPM_CONFIG_PREFIX" ]
 printf 'NPM_PREFIX managed\n'
+# A valid managed tool skips without another npm invocation, while recording
+# the tool on both the install and skip paths as harmon_needs does.
+export HARMON_CHANGE_LOG="${root}/changes"
+: >"$HARMON_CHANGE_LOG"
+harmon_npm_global test-package 1.2.3 test-tool >/dev/null
+[ "$(wc -l <"$NPM_ATTEMPTS")" -eq 1 ]
+grep -Fxq "$(printf 'tool\ttest-tool=1.2.3')" "$HARMON_CHANGE_LOG"
+[ "$(grep -c '^install' "$HARMON_CHANGE_LOG" || true)" -eq 0 ]
 for MODE in missing external; do
     export MODE
     rm -f "${HARMON_BIN}/test-tool"
     if (harmon_npm_global test-package 1.2.3 test-tool) >/dev/null 2>&1; then exit 1; fi
     printf 'NPM_%s refused\n' "$MODE"
 done
+# The external refusal left a version-correct link behind. Do not remove it:
+# the next run must try npm again and refuse, rather than accept the version.
+attempts_before="$(wc -l <"$NPM_ATTEMPTS")"
+changes_before="$(grep -c '^install' "$HARMON_CHANGE_LOG")"
+if (harmon_npm_global test-package 1.2.3 test-tool) >/dev/null 2>&1; then exit 1; fi
+[ "$(wc -l <"$NPM_ATTEMPTS")" -eq "$((attempts_before + 1))" ]
+[ "$(grep -c '^install' "$HARMON_CHANGE_LOG")" -eq "$((changes_before + 1))" ]
+[ "$(grep -c '^tool' "$HARMON_CHANGE_LOG")" -eq 4 ]
+printf 'NPM_external_repeat refused\n'
 """
 run = run_lifted(npm_harness.replace("@LIB@", str(INSTALL / "lib.sh")))
 if run is None or run.returncode != 0 or run.stdout.splitlines() != [
-    "NPM_PREFIX managed", "NPM_missing refused", "NPM_external refused"
+    "NPM_PREFIX managed", "NPM_missing refused", "NPM_external refused", "NPM_external_repeat refused"
 ]:
     fail(f"{INSTALL}/lib.sh: npm managed-prefix fault injection failed: {run}")
 

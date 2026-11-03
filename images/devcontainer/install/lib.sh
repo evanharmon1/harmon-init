@@ -403,22 +403,36 @@ harmon_tmpdir_init() {
     trap 'rm -rf "$HARMON_TMPDIR"' EXIT
 }
 
+# harmon_npm_at_version <command> <version>
+# Both the skip gate and publication check require the pinned command to
+# resolve inside our managed prefix, not through a link to a foreign install.
+harmon_npm_at_version() {
+    local resolved prefix
+    resolved="$(readlink -f "${HARMON_BIN}/$1")" || return 1
+    prefix="$(readlink -f "$HARMON_PREFIX")" || return 1
+    case "$resolved" in
+    "${prefix}/"*) ;;
+    *) return 1 ;;
+    esac
+    harmon_at_version "$1" "$2" "$1" --version
+}
+
 # harmon_npm_global <package> <version> <command>
-# npm's own idempotence is a network round-trip even when nothing changes, so
-# decide first — through harmon_needs, like every other pinned tool: a same
-# version under a pre-provisioned prefix is still not ours. Trusts the system CA
-# store through the NODE_EXTRA_CA_CERTS export near the top of this file.
+# Avoid npm's network round-trip when the pinned tool is already managed here.
+# Record/skip/change accounting matches harmon_needs; the shared predicate also
+# refuses a foreign link left behind by an earlier rejected publication.
+# Trusts the system CA store through NODE_EXTRA_CA_CERTS above.
 harmon_npm_global() {
-    if harmon_needs "$3" "$2" "$3" --version; then
+    harmon_record tool "$3=$2"
+    if harmon_npm_at_version "$3" "$2"; then
+        harmon_skip "$3 $2"
+    else
+        harmon_changed "$3 $2"
         # CLI configuration wins over inherited NPM_CONFIG_PREFIX and .npmrc.
         npm install -g --prefix "$HARMON_PREFIX" "${1}@${2}"
         # A successful npm exit is not proof of publication into our prefix.
-        case "$(readlink -f "${HARMON_BIN}/$3")" in
-        "$(readlink -f "$HARMON_PREFIX")/"*) ;;
-        *) harmon_die "npm did not publish $3 inside ${HARMON_PREFIX}" ;;
-        esac
-        harmon_at_version "$3" "$2" "$3" --version ||
-            harmon_die "npm did not publish $3 at $2 in ${HARMON_BIN}"
+        harmon_npm_at_version "$3" "$2" ||
+            harmon_die "npm did not publish $3 at $2 inside ${HARMON_PREFIX}"
     fi
 }
 
