@@ -365,7 +365,7 @@ with Path({str(trace)!r}).open('a') as log:
     log.write('called\\n')
 venv = Path(os.environ['UV_PROJECT_ENVIRONMENT'])
 if (os.environ.get('SMOKE_FIXTURE_UV_CORRUPT_STALE') == '1'
-        and sys.argv[1] == 'sync' and venv == Path.cwd()/'.venv'):
+        and sys.argv[1] == 'sync' and venv.resolve() == (Path.cwd()/'.venv').resolve()):
     # A failed tool must not replace the dangling interpreter, even with a
     # different dangling link. exists() alone would miss this corruption.
     (venv/'bin/python').unlink()
@@ -384,8 +384,13 @@ hostile = dict(os.environ, PATH=str(competing) + os.pathsep + os.environ['PATH']
 exercise_uv(hostile, work/'web-uv')
 check(trace.exists(), 'web regression did not exercise the competing PATH-first uv')
 print('PASS: web PATH precedence, ambient UV settings, and reworded uv diagnostics')
+# Exercise the corruption check through a symlink, as with macOS /var TMPDIRs.
+corrupt_root = work / 'corrupt-uv'
+corrupt_root.mkdir()
+linked_root = work / 'linked-uv'
+linked_root.symlink_to(corrupt_root, target_is_directory=True)
 try:
-    exercise_uv(dict(hostile, SMOKE_FIXTURE_UV_CORRUPT_STALE='1'), work/'corrupt-uv')
+    exercise_uv(dict(hostile, SMOKE_FIXTURE_UV_CORRUPT_STALE='1'), linked_root)
 except AssertionError as error:
     check(str(error).startswith('failed uv changed or repaired stale environment:'),
           'corrupt-link regression failed before its state assertion: '+str(error))
