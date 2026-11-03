@@ -168,6 +168,7 @@ tasks:
       - task: test:link-claude-json
       - task: test:image-staleness
       - task: test:open-devcontainer
+      - task: test:devcontainer-smoke-isolation
       - task: test:bot-autonomy
       - task: test:agent-profile
       - task: test:codex-review
@@ -426,6 +427,11 @@ tasks:
     desc: Unit-test the image-staleness warning (no container needed)
     cmds:
       - ./scripts/test-image-staleness.sh
+
+  test:devcontainer-smoke-isolation:
+    desc: Prove smoke-run Python state and cleanup isolation (no Docker needed)
+    cmds:
+      - ./scripts/test-devcontainer-smoke-isolation.sh
 
   test:open-devcontainer:
     desc: Unit-test the client-side dev container launcher (no VS Code needed)
