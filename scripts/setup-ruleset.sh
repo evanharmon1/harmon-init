@@ -18,11 +18,12 @@
 # declines to do, `task audit:ruleset` still reports.
 #
 # Usage:
-#   setup-ruleset.sh [--repo owner/name] [--yes] [--dry-run]
+#   setup-ruleset.sh [--repo owner/name] [--yes] [--dry-run] [--allow-unreported]
 #
 #   --repo     target repository (default: derived from origin, as audit does)
 #   --yes      skip the confirmation prompt (for non-interactive operators)
 #   --dry-run  print the additions and exit without writing
+#   --allow-unreported  explicitly allow checks not yet reported on the default head
 #
 # Exit: 0 = already in sync, or the additions were applied (or --dry-run);
 #       1 = incomplete (a mismatch or failed verification/write); 2 = unavailable (cannot determine the target,
@@ -36,9 +37,12 @@ readonly fixture_list="${RULESET_AUDIT_LIVE_LIST:-}"
 readonly fixture_detail="${RULESET_AUDIT_LIVE_DETAIL:-}"
 readonly fixture_write="${RULESET_SETUP_WRITE_OUT:-}"
 readonly fixture_after="${RULESET_SETUP_LIVE_AFTER:-}"
+readonly fixture_checks="${RULESET_SETUP_CHECK_RUNS:-}"
+readonly fixture_statuses="${RULESET_SETUP_STATUSES:-}"
 
 assume_yes=no
 dry_run=no
+allow_unreported=no
 repo_arg=""
 
 die_unavailable() {
@@ -55,6 +59,7 @@ while [ "$#" -gt 0 ]; do
         ;;
     --yes) assume_yes=yes && shift ;;
     --dry-run) dry_run=yes && shift ;;
+    --allow-unreported) allow_unreported=yes && shift ;;
     *) die_unavailable "unknown argument: $1" ;;
     esac
 done
@@ -67,7 +72,7 @@ ruleset_name="$(jq -er '.name' "$ruleset_file" 2>/dev/null)" ||
 # A partially configured fixture must never fall through to GitHub. Every API
 # site below is excluded in this mode, including re-reads and the write.
 fixture_mode=no
-if [ -n "$fixture_list$fixture_detail$fixture_write$fixture_after" ]; then
+if [ -n "$fixture_list$fixture_detail$fixture_write$fixture_after$fixture_checks$fixture_statuses" ]; then
     fixture_mode=yes
     [ -n "$fixture_list" ] && [ -n "$fixture_detail" ] ||
         die_unavailable "offline mode requires both ruleset list and detail fixtures"
@@ -139,6 +144,14 @@ def checks: [ .rules[]? | select(.type == "required_status_checks")
               | .parameters.required_status_checks[]? ];
 def names: checks | map(.context);
 def identity: {name, target, enforcement, bypass_actors, conditions, rules};
+def normalize:
+  identity
+  | .rules |= sort_by(.type)
+  | .rules |= map(if .type == "required_status_checks" then
+      .parameters.required_status_checks |= sort_by(.context, .integration_id)
+    elif .type == "pull_request" and .parameters.dismissal_restriction == {"allowed_actors": [], "enabled": false} then
+      del(.parameters.dismissal_restriction)
+    else . end);
 '
 
 # Do not mistake malformed policy for an empty set of required checks. A live
@@ -220,6 +233,54 @@ fi
 
 echo "RULESET SETUP: ${ruleset_name} (${repo}) is missing $(jq -r 'length' "$tmp_dir/missing.json") required status check(s):"
 jq -r '.[] | "  + \(.context)"' "$tmp_dir/missing.json"
+
+# Read the default branch's check inventory once, then match every proposed
+# addition locally. Pin the commit so checks and legacy statuses attest the
+# same head even when the default branch moves between the two reads.
+printf '[]\n' >"$tmp_dir/statuses.json"
+if [ "$fixture_mode" = yes ]; then
+    [ -n "$fixture_checks" ] && cp "$fixture_checks" "$tmp_dir/check-runs.json" 2>/dev/null ||
+        die_unavailable "offline additions require a readable RULESET_SETUP_CHECK_RUNS fixture"
+else
+    gh api "repos/${repo}" >"$tmp_dir/repo.json" 2>/dev/null ||
+        die_unavailable "gh cannot discover the default branch"
+    default_ref="$(jq -er '.default_branch | select(type == "string" and length > 0) | @uri' "$tmp_dir/repo.json")" ||
+        die_unavailable "repository has no default branch"
+    gh api "repos/${repo}/commits/${default_ref}" >"$tmp_dir/default-commit.json" 2>/dev/null ||
+        die_unavailable "gh cannot resolve the default branch head"
+    default_head="$(jq -er '.sha | select(type == "string" and test("^[0-9a-fA-F]{40}$"))' "$tmp_dir/default-commit.json")" ||
+        die_unavailable "repository has no default branch head"
+    gh api --paginate --slurp "repos/${repo}/commits/${default_head}/check-runs?per_page=100" 2>/dev/null |
+        jq '{check_runs: [.[].check_runs[]]}' >"$tmp_dir/check-runs.json" ||
+        die_unavailable "gh cannot read checks on the default branch head"
+fi
+if jq -e 'any(.[]; .integration_id == null)' "$tmp_dir/missing.json" >/dev/null; then
+    if [ "$fixture_mode" = yes ]; then
+        [ -n "$fixture_statuses" ] && cp "$fixture_statuses" "$tmp_dir/statuses.json" 2>/dev/null ||
+            die_unavailable "offline unpinned additions require a readable RULESET_SETUP_STATUSES fixture"
+    else
+        gh api --paginate --slurp "repos/${repo}/commits/${default_head}/statuses?per_page=100" 2>/dev/null |
+            jq 'add' >"$tmp_dir/statuses.json" ||
+            die_unavailable "gh cannot read commit statuses on the default branch head"
+    fi
+fi
+jq --slurpfile runs "$tmp_dir/check-runs.json" --slurpfile statuses "$tmp_dir/statuses.json" '
+  [ .[] | . as $want
+    | select((any($runs[0].check_runs[];
+        .name == $want.context and ($want.integration_id == null or .app.id == $want.integration_id))
+      or ($want.integration_id == null and any($statuses[0][]; .context == $want.context))) | not) ]
+' "$tmp_dir/missing.json" >"$tmp_dir/unreported.json" 2>/dev/null ||
+    die_unavailable "could not compare reported checks on the default branch head"
+if [ "$(jq 'length' "$tmp_dir/unreported.json")" -gt 0 ]; then
+    echo "RULESET SETUP UNREPORTED: these additions have not reported on the default branch head from the required integration:" >&2
+    jq -r '.[] | "  ! \(.context) (integration_id \(.integration_id // "any"))"' "$tmp_dir/unreported.json" >&2
+    echo "Requiring them would wedge every PR until they report. Merge and run their workflows first." >&2
+    if [ "$allow_unreported" != yes ]; then
+        echo "Refusing additions; --allow-unreported is the explicit override." >&2
+        exit 1
+    fi
+    echo "Proceeding under the explicit --allow-unreported override." >&2
+fi
 
 if [ "$dry_run" = yes ]; then
     echo "(--dry-run: nothing written)"
@@ -321,31 +382,26 @@ else
 fi
 jq -e "$jq_valid" "$tmp_dir/after.json" >/dev/null 2>&1 ||
     die_unavailable "the update was accepted but the returned ruleset is malformed"
-jq -r "$jq_defs names[]" "$tmp_dir/after.json" | sort >"$tmp_dir/after.txt"
-absent="$(comm -23 "$tmp_dir/expected.txt" "$tmp_dir/after.txt" | tr '\n' ' ')"
-case "$absent" in
-*[![:space:]]*)
-    echo "RULESET SETUP FAILED: the update was accepted but ${repo} still does not require: ${absent}" >&2
-    echo "Add them by hand: Settings → Rules → Rulesets → ${ruleset_name}." >&2
+# One normalization, based on the audit's rule/check ordering and server-owned
+# disabled dismissal default. Compare every writable field and every rule.
+for snapshot in payload after; do
+    jq -S -e "$jq_defs normalize" "$tmp_dir/$snapshot.json" >"$tmp_dir/$snapshot.normalized.json" 2>/dev/null ||
+        die_unavailable "could not normalize the ruleset to verify the update"
+done
+if ! diff -u "$tmp_dir/payload.normalized.json" "$tmp_dir/after.normalized.json" >"$tmp_dir/after.diff"; then
+    echo "RULESET SETUP FAILED: the live after-state differs from the update payload:" >&2
+    cat "$tmp_dir/after.diff" >&2
     exit 1
-    ;;
-esac
-
-# Also prove that the required check objects (including integration bindings)
-# survived the write. Presence of the names alone does not establish that.
-jq -e --slurpfile payload "$tmp_dir/payload.json" "
-  $jq_defs
-  checks as \$after
-  | all(\$payload[0] | checks[]; . as \$check | \$after | index(\$check) != null)
-" "$tmp_dir/after.json" >/dev/null || {
-    echo "RULESET SETUP FAILED: required check integration bindings changed after the update." >&2
-    exit 1
-}
+fi
 
 if [ "$mismatch_count" -gt 0 ]; then
     echo "RULESET SETUP INCOMPLETE: additions applied, but the integration mismatch above still needs a human." >&2
     exit 1
 fi
 
-echo "RULESET SETUP APPLIED: ${ruleset_name} (${repo}) now requires every checked-in status check."
+enforcement="$(jq -r '.enforcement' "$tmp_dir/after.json")"
+echo "RULESET SETUP APPLIED: ${ruleset_name} (${repo}) configured every checked-in status check (enforcement: ${enforcement})."
+if [ "$enforcement" != active ]; then
+    echo "Checks are configured but not enforced (enforcement: ${enforcement})."
+fi
 echo "Confirm with: task audit:ruleset"

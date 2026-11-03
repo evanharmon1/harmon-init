@@ -68,6 +68,16 @@ The task needs an existing repository ruleset with exactly the checked-in name
 and administrator access through your existing `gh` login. It does not create
 rulesets or change credentials. Non-interactive writes require `--yes`.
 
+Before adding a context, the task checks whether it has reported on the default
+branch's head commit, using one check-run inventory for all additions. A pinned
+`integration_id` must match the reporting app; unpinned contexts may also match
+legacy commit statuses on that same commit. A missing report refuses the update
+and names the context, including in `--dry-run`: requiring it would wedge every
+PR until the check reports. Merge and run the workflow first. The explicit
+`--allow-unreported` flag overrides this refusal, for example
+`task setup:ruleset -- --allow-unreported`. It also works with `--dry-run`; the
+warning remains visible, and no write is made during a dry-run.
+
 The update is additive: it keeps every live required check and its integration
 binding, adding only checked-in contexts missing from live. Extra live
 checks are reported and left alone. A same-context integration mismatch is
@@ -79,9 +89,14 @@ and conditions.
 
 After confirmation, the task re-reads those fields and refuses if they moved.
 It asserts the expected contexts in the payload and re-reads after the `PUT` to
-verify every expected check and integration binding. A failed write or outcome
+compare the entire normalized payload with the live after-state: name, target,
+enforcement, bypass actors, conditions and every rule. A difference is shown as
+a diff and exits non-zero without claiming APPLIED. Normalization ignores server
+metadata, rule/check ordering and the server's disabled dismissal default, as
+the audit does. APPLIED states the enforcement mode; when it is not `active`,
+the checks are configured but not enforced. A failed write or outcome
 verification exits non-zero; a successful no-op, verified update or mismatch-free
-dry-run exits 0. Exit 2 means the target, ruleset, input or confirmation could not
+dry-run with no unreported checks (or their explicit override) exits 0. Exit 2 means the target, ruleset, input or confirmation could not
 be verified. `--dry-run` makes only reads. It cannot prove GitHub will accept a
 write; the maintainer verifies that on a real repository after merge.
 
