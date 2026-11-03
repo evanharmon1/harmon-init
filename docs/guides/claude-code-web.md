@@ -85,8 +85,8 @@ Rules for this script, each with its reason:
   or fails, the hook reports that limitation and names incoming shadowing paths;
   put the managed bin first in agent shells manually. Report-only
   `bash scripts/reconcile-toolchain.sh --status` also names these shadows when
-  the manifest exists. Without the manifest, preparation leaves PATH alone and
-  emits no PATH messages.
+  the manifest exists. Without the manifest, the managed-PATH export, its
+  `CLAUDE_ENV_FILE` persistence and the shadow report are skipped.
   Preparation writes to `${HARMON_BIN:-${HARMON_PREFIX:-/usr/local}/bin}` only when that directory is
   writable and wins tool resolution on `PATH`; it never requests `sudo` or
   changes the parent session's `PATH` from a standalone child task. SessionStart

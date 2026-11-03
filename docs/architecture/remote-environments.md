@@ -577,7 +577,8 @@ the hook instead warns that only preparation gets the corrected PATH and names
 shadowed Node commands, uv/uvx, the gate
 registry and commands published in the managed bin named by the bootstrap
 manifest; `reconcile-toolchain.sh --status` reports these shadows too. Without
-the bootstrap manifest, preparation leaves PATH alone and emits no PATH messages.
+the bootstrap manifest, the managed-PATH export, its `CLAUDE_ENV_FILE` persistence
+and the shadow report are skipped.
 
 The hook runs `task setup:remote` when
 `CLAUDE_CODE_REMOTE=true`, including cached resumes, to reinstall checkout hooks,
