@@ -285,11 +285,17 @@ def exercise_uv(ambient, work):
         (venv / 'bin/python').symlink_to(missing)
         (venv / 'pyvenv.cfg').write_text(seed_config)
 
-    def stale_unchanged():
-        return (os.readlink(stale/'.venv/bin/python') == missing
-                and (stale/'.venv/pyvenv.cfg').read_text() == seed_config)
+    def stale_state():
+        venv = stale / '.venv'
+        # lexists includes dangling links: replacing one missing interpreter
+        # with another must count as a change, even though exists() is false.
+        return {str(path.relative_to(venv)):
+                ('symlink', os.readlink(path)) if path.is_symlink() else
+                ('directory',) if path.is_dir() else ('file', path.read_bytes())
+                for path in [venv, *venv.rglob('*')] if os.path.lexists(path)}
 
     seed_stale()
+    seeded_state = stale_state()
     # A real disposable caller distribution makes ambient-env regressions
     # visible without ever risking the actual caller's environment.
     run([uv, 'venv', '--offline', '--python', sys.executable, str(caller)], env=uv_env)
@@ -307,11 +313,12 @@ def exercise_uv(ambient, work):
     run([uv, 'sync', '--offline', '--no-install-project', '--python', sys.executable],
         cwd=stale, env=dict(uv_env, UV_PROJECT_ENVIRONMENT=str(fresh)))
     check((fresh/'bin/python').exists(), 'isolated environment lacks interpreter')
-    check(stale_unchanged(), 'fresh run changed prior state')
+    check(stale_state() == seeded_state, 'fresh run changed prior state')
     # Always exercise writable recovery too: normal users otherwise only see
     # EACCES, while root in web sessions can write even after chmod(0555).
     for protected in (False, True):
         seed_stale()
+        before = stale_state()
         stale.chmod(0o555 if protected else 0o755)
         permission_denied = not os.access(stale, os.W_OK)
         try:
@@ -321,22 +328,17 @@ def exercise_uv(ambient, work):
                                     stderr=subprocess.STDOUT)
         finally:
             stale.chmod(0o755)
-        legacy_rejection = (result.returncode > 0
-                            and 'not a valid Python environment' in result.stdout
-                            and 'no Python executable was found' in result.stdout)
-        if legacy_rejection:
-            check(stale_unchanged(), 'legacy uv rejection changed the seeded invalid environment')
-            print('PASS: dangling environment rejected before recovery (removal/EACCES not reached)')
-        elif permission_denied:
+        after = stale_state()
+        if result.returncode != 0:
             # Removal may delete the venv's contents before failing to unlink
             # its directory from the non-writable project; it is not atomic.
-            check(result.returncode != 0 and not (stale/'.venv/bin/python').exists(),
-                  'stale environment unexpectedly recovered in non-writable fixture: '+result.stdout)
-            check('failed to remove' in result.stdout and 'Permission denied' in result.stdout,
-                  'stale removal permission failure was not reproduced: '+result.stdout)
-            print('PASS: real uv dangling interpreter → removal permission error')
+            only_removed = all(key in before and value == before[key]
+                               for key, value in after.items())
+            check(after == before or (permission_denied and only_removed),
+                  'failed uv changed or repaired stale environment: '+result.stdout)
+            print('PASS: uv refused unchanged stale state or removed contents under write denial')
         else:
-            check(result.returncode == 0 and (stale/'.venv/bin/python').exists(),
+            check(not permission_denied and (stale/'.venv/bin/python').exists(),
                   'writable fixture did not recover its stale interpreter: '+result.stdout)
             run([str(stale/'.venv/bin/python'), '-c', 'import sys; assert sys.prefix != sys.base_prefix'])
             print('PASS: writable fixture recovered its stale interpreter (no EACCES claim)')
@@ -347,7 +349,7 @@ def exercise_uv(ambient, work):
 
 exercise_uv(os.environ, work/'real-uv')
 # Recreate web PATH precedence and ambient UV settings with a competing uv
-# executable forwarding to the real tool. Suppress only the unstable warning,
+# executable forwarding to the real tool. Reword its output completely while
 # keeping exit status and real filesystem effects, including EACCES, intact.
 real_uv = shutil.which('uv')
 competing = work / 'competing-tools'
@@ -361,17 +363,33 @@ allowed = {{'UV_PROJECT_ENVIRONMENT', 'UV_CACHE_DIR', 'UV_NO_CONFIG',
 assert {{k for k in os.environ if k.startswith('UV_')}} == allowed, 'ambient UV settings leaked'
 with Path({str(trace)!r}).open('a') as log:
     log.write('called\\n')
+venv = Path(os.environ['UV_PROJECT_ENVIRONMENT'])
+if (os.environ.get('SMOKE_FIXTURE_UV_CORRUPT_STALE') == '1'
+        and sys.argv[1] == 'sync' and venv == Path.cwd()/'.venv'):
+    # A failed tool must not replace the dangling interpreter, even with a
+    # different dangling link. exists() alone would miss this corruption.
+    (venv/'bin/python').unlink()
+    (venv/'bin/python').symlink_to({str(work/'different-missing-python')!r})
+    print('stand-in uv: differently phrased failure', file=sys.stderr)
+    sys.exit(2)
 result = subprocess.run([{real_uv!r}, *sys.argv[1:]], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-sys.stdout.buffer.write(result.stdout)
-sys.stderr.buffer.write(b''.join(line for line in result.stderr.splitlines(keepends=True)
-                                if b'non-existent Python interpreter' not in line))
+print('stand-in uv: differently phrased result', file=sys.stderr)
 sys.exit(result.returncode)
 ''')
 (competing/'uv').chmod(0o755)
 hostile = dict(os.environ, PATH=str(competing) + os.pathsep + os.environ['PATH'],
                UV_NATIVE_TLS='1', UV_FUTURE_SETTING='must-not-leak', UV_NO_SYNC='1',
-               UV_CONFIG_FILE=str(work/'nonexistent-uv.toml'), UV_PYTHON='/missing/python')
+               UV_CONFIG_FILE=str(work/'nonexistent-uv.toml'), UV_PYTHON='/missing/python',
+               SMOKE_FIXTURE_UV_CORRUPT_STALE='0')
 exercise_uv(hostile, work/'web-uv')
 check(trace.exists(), 'web regression did not exercise the competing PATH-first uv')
-print('PASS: web PATH precedence, ambient UV settings, and warning-independent recovery')
+print('PASS: web PATH precedence, ambient UV settings, and reworded uv diagnostics')
+try:
+    exercise_uv(dict(hostile, SMOKE_FIXTURE_UV_CORRUPT_STALE='1'), work/'corrupt-uv')
+except AssertionError as error:
+    check(str(error).startswith('failed uv changed or repaired stale environment:'),
+          'corrupt-link regression failed before its state assertion: '+str(error))
+else:
+    raise AssertionError('failed uv replaced a dangling interpreter without detection')
+print('PASS: failed uv cannot replace one dangling interpreter with another')
 PY
