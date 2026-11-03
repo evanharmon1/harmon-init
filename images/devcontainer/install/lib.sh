@@ -312,14 +312,42 @@ harmon_reap_staging() {
     return 0
 }
 
-# harmon_ensure_bin — the install prefix's bin directory exists, and carries no
-# staging file left behind by a writer that is gone.
-#
-# Called once per tier, and by harmon_install_bin on demand. /usr/local/bin
-# exists on every real target, so the directory half only ever bites a
-# non-default HARMON_PREFIX — which is exactly the case where half the tier would
-# install and half would not.
+# Refuse directory aliases within the managed prefix before any write.
+harmon_assert_directory_path() {
+    local directory="${1%/}" prefix="${HARMON_PREFIX%/}"
+    # The configured prefix is the boundary; its own parents may be aliases
+    # (for example /var on a host), but no directory within it may redirect a write.
+    while [ -n "$directory" ]; do
+        [ ! -L "$directory" ] || harmon_die "refusing symlink directory ${directory} in managed install path"
+        [ "$directory" != "$prefix" ] || break
+        case "$directory" in
+        */*) directory="${directory%/*}" ;;
+        *) break ;;
+        esac
+    done
+}
+
+# Preflight every directory before removing leaf links. cp -a replaces source
+# symlinks, but follows destination symlinks when the source is a regular file.
+# Removing those links first preserves platform targets outside our prefix.
+harmon_prepare_tree() {
+    local source="${1%/}" destination="${2%/}" entry target
+    harmon_assert_directory_path "$destination"
+    while IFS= read -r -d '' entry; do
+        if [ -d "$entry" ] && [ ! -L "$entry" ]; then
+            harmon_assert_directory_path "${destination}/${entry#"$source"/}"
+        fi
+    done < <(find "$source" -mindepth 1 -print0)
+    while IFS= read -r -d '' entry; do
+        target="${destination}/${entry#"$source"/}"
+        [ ! -L "$target" ] || rm -f "$target"
+    done < <(find "$source" -mindepth 1 ! -type d -print0)
+}
+
+# Called once per tier, and by the binary publisher, including skipped runs so
+# staging files abandoned by a dead writer are still reaped.
 harmon_ensure_bin() {
+    harmon_assert_directory_path "$HARMON_BIN"
     install -d -m 0755 "$HARMON_BIN"
     harmon_reap_staging
 }
@@ -349,10 +377,14 @@ harmon_ensure_bin() {
 harmon_install_bin() {
     harmon_ensure_bin
     _hib_stage="${HARMON_BIN}/.${2}.$$.harmon-staging"
+    [ ! -L "$_hib_stage" ] || rm -f "$_hib_stage"
     if ! install -m 0755 "$1" "$_hib_stage"; then
         rm -f "$_hib_stage"
         harmon_die "could not stage $2 into ${HARMON_BIN}"
     fi
+    # mv treats a link to a directory as a destination directory. Remove the
+    # link itself so even that platform shape cannot redirect publication.
+    [ ! -L "${HARMON_BIN}/$2" ] || rm -f "${HARMON_BIN}/$2"
     if ! mv -f "$_hib_stage" "${HARMON_BIN}/$2"; then
         rm -f "$_hib_stage"
         harmon_die "could not publish $2 into ${HARMON_BIN}"

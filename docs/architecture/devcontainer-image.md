@@ -93,7 +93,12 @@ The Node installer records the pinned version and hashes of its four executable
 targets only after publishing the whole distribution. The receipt proves that
 publication completed and the four executable files remain present and unchanged;
 it does not check package versions or changes behind unchanged launcher scripts.
-Missing or changed executable files force a reinstall. npm globals use an explicit
+Missing or changed executable files, or executable targets outside the managed
+prefix, force a reinstall. Before copying Node, the installer refuses symlinked
+destination directories and removes destination leaf symlinks. A platform's
+`bin/node` link is replaced without changing its target. The shared binary
+publisher also removes destination links before renaming, including links to
+directories. npm globals use an explicit
 managed prefix and verify the published command there, regardless of inherited
 npm configuration.
 The VM bootstrap matches locale lines literally and publishes its login profile

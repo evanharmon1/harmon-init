@@ -12,9 +12,9 @@ if [ "$mode" = --list ]; then
     exit 0
 fi
 case "$mode" in
---check | --reconcile | --status) ;;
+--check | --reconcile | --status | --session-env) ;;
 *)
-    echo "Usage: $0 [--list | --check <tool> | --reconcile | --status]" >&2
+    echo "Usage: $0 [--list | --check <tool> | --reconcile | --status | --session-env]" >&2
     exit 2
     ;;
 esac
@@ -62,7 +62,43 @@ installed_version() {
 }
 
 prefix="${HARMON_PREFIX:-/usr/local}"
+bin="${HARMON_BIN:-${prefix}/bin}"
 cache="${prefix}/share/harmon-remote-env"
+
+# Manifest pins extend the gate registry only for PATH diagnostics, never for
+# per-checkout version reconciliation. Apt tools live outside bin; report only
+# commands actually published in our bin. Node's bundled commands have no
+# individual manifest keys, so include those explicitly.
+report_path_shadows() {
+    local tool found pinned_tools="node npm npx corepack pnpm uv uvx ${tools[*]}" manifest_tools
+    if [ -r "${cache}/manifest.json" ] && command -v jq >/dev/null 2>&1; then
+        manifest_tools="$(jq -r '.tools | keys[] | select(test("^[A-Za-z0-9][A-Za-z0-9._+-]*$"))' \
+            "${cache}/manifest.json" 2>/dev/null)" || manifest_tools=
+        for tool in $manifest_tools; do
+            case " $pinned_tools " in
+            *" $tool "*) ;;
+            *) pinned_tools="${pinned_tools} ${tool}" ;;
+            esac
+        done
+    fi
+    for tool in $pinned_tools; do
+        [ -x "${bin}/${tool}" ] || continue
+        found="$(command -v "$tool" 2>/dev/null || true)"
+        [ "$found" = "${bin}/${tool}" ] ||
+            printf "WARNING: incoming PATH shadows pinned %s: resolves to '%s', expected %s/%s; put %s first on PATH.\n" \
+                "$tool" "${found:-nothing}" "$bin" "$tool" "$bin"
+    done
+}
+
+if [ "$mode" = --session-env ]; then
+    report_path_shadows >&2
+    # Evaluated after login startup files, before each agent Bash command. Quote
+    # the prefix as shell data, but expand PATH in that future shell. Repeated
+    # sourcing is idempotent and preserves later session PATH additions.
+    printf 'if [ "${PATH%%%%:*}" != %q ]; then export PATH=%q"${PATH:+:${PATH}}"; fi\n' "$bin" "$bin"
+    exit 0
+fi
+if [ "$mode" = --status ]; then report_path_shadows; fi
 revision=unknown
 if [ -r "${cache}/manifest.json" ]; then
     # jq is a bootstrap core dependency. No manifest or unreadable metadata
@@ -183,7 +219,6 @@ for tool in "${tools[@]}"; do
     fi
     # A child task cannot export PATH to the parent agent. Use the existing
     # bootstrap prefix only when it wins PATH and is writable, without sudo.
-    bin="${prefix}/bin"
     first_bin=
     IFS=: read -r -a path_entries <<<"$PATH"
     for entry in "${path_entries[@]}"; do

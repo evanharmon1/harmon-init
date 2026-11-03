@@ -303,10 +303,11 @@ CI requires `NEW_INSTALLS=0` plus
 a byte-identical manifest on the second run, because a script that
 re-downloaded and re-installed everything also exits 0.
 
-One residual is stated rather than solved: the bootstrap guarantees `PATH`
-precedence for bash and POSIX-sh login shells (the ones that read
-`/etc/profile.d`) and for its own process, and can only *report* a user-level
-shadow such as `~/.local/bin/yq`, because that user's own profile runs last.
+The bootstrap sets `PATH` precedence in its own process and in its system
+login drop-in. A later platform or user profile can still prepend tools, and
+non-login shells do not read that drop-in. Per-session preparation below
+reapplies the managed prefix for agent Bash commands through `CLAUDE_ENV_FILE`;
+without that mechanism it reports shadowing paths and the manual remedy.
 zsh login shells on Ubuntu do not read `/etc/profile.d` at all, so a user
 whose login shell is zsh must source `/etc/profile.d/harmon-remote-env.sh` or
 put `/usr/local/bin` first on `PATH` themselves.
@@ -562,7 +563,19 @@ and Playwright's two browser download hosts; the
 [guide](../guides/claude-code-web.md#network) records the denial behind each).
 The platform takes no
 custom image and ignores `devcontainer.json`. The setup script provisions the
-machine only. A repository `SessionStart` hook runs `task setup:remote` when
+machine only. Before launching preparation, the repository `SessionStart` hook
+prepends `${HARMON_BIN:-${HARMON_PREFIX:-/usr/local}/bin}` in its own process and
+appends the same dynamic export to `CLAUDE_ENV_FILE`, preserving other hooks'
+content. Claude evaluates this file before subsequent Bash commands, after shell
+startup, so platform paths cannot shadow the managed tools in those commands.
+Repeated sourcing keeps the prefix first without adding duplicates. This uses
+the documented [SessionStart environment persistence](https://code.claude.com/docs/en/hooks#persist-environment-variables).
+If the file is absent or cannot be written, the hook warns that only preparation
+gets the corrected PATH. It names shadowed Node commands, uv/uvx, the gate
+registry and commands published in the managed bin named by the bootstrap
+manifest; `reconcile-toolchain.sh --status` reports these shadows too.
+
+The hook runs `task setup:remote` when
 `CLAUDE_CODE_REMOTE=true`, including cached resumes, to reinstall checkout hooks,
 clone then fetch siblings without moving their checkouts, and install from
 lockfiles. Preparation warns rather than failing session start; the `AGENTS.md`
@@ -585,10 +598,12 @@ must cover the checkout's requested version, otherwise no install is attempted.
 The bootstrap manifest remains a record of the base environment revision; a
 per-session replacement does not rewrite that provenance.
 
-Reconciliation uses the existing `${HARMON_PREFIX:-/usr/local}/bin` only if it
+Preparation applies the same PATH export before reconciling. A standalone
+`task setup:remote` changes only its child environment and reports incoming
+shadow paths; it cannot persist the parent agent's PATH. Reconciliation uses
+the existing `${HARMON_BIN:-${HARMON_PREFIX:-/usr/local}/bin}` only if it
 is writable and precedes competing tools on `PATH`. This avoids `sudo` and a
-user prefix that a child preparation task cannot put onto the parent agent's
-`PATH`. Host and devcontainer preparation do not reconcile. An install gets
+new user prefix. Host and devcontainer preparation do not reconcile. An install gets
 30 s plus a 2 s kill grace, aiming to leave room for checkout preparation within
 SessionStart's 90 s wait so a normal start reports a final status rather than
 "still running". Setup is not killed when that wait ends. Version probes get

@@ -22,7 +22,7 @@ source = Path.cwd()
 base_env = os.environ.copy()
 for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS",
              "CLAUDE_CODE_REMOTE", "HARMON_PREFIX", "HARMON_BIN", "HARMON_VERSIONS_FILE",
-             "HARMON_CHANGE_LOG", "HARMON_TMPDIR"):
+             "HARMON_CHANGE_LOG", "HARMON_TMPDIR", "CLAUDE_ENV_FILE"):
     base_env.pop(name, None)
 base_env.update(GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1")
 
@@ -198,6 +198,63 @@ exec {shlex.quote(real_task)} "$@"
                       "RECONCILE_TEST_LOG": str(log), "RECONCILE_TEST_ARCHIVE": str(archive),
                       "TMPDIR": str(scratch)}
 
+    # Platform tools precede the bootstrap even in non-login agent shells.
+    # Persist the export synchronously and test the exact file in fresh shells.
+    competing = scratch / "platform-bin"
+    competing.mkdir()
+    path_tools = ("node", "npm", "uv", "yq")
+    for tool in path_tools:
+        executable(prefix / "bin" / tool, "#!/bin/sh\necho pinned\n")
+        executable(competing / tool, "#!/bin/sh\necho platform\n")
+    manifest.write_text(json.dumps(original_manifest | {"tools": {"yq": "4.0.0"}}))
+    executable(prefix / "bin/task", f'#!/bin/sh\nexec {shlex.quote(real_task)} "$@"\n')
+    executable(competing / "task", "#!/bin/sh\necho platform-task-must-not-run\nexit 97\n")
+    shadow_env = env | {"PATH": f"{competing}:{stubs}:{prefix / 'bin'}:{base_env['PATH']}"}
+    persisted = scratch / "session env.sh"
+    persisted.write_text("export KEEP_OTHER_HOOK=value\n")
+    rc, out = run(["bash", "scripts/session-start-remote.sh"], repo,
+                  shadow_env | {"CLAUDE_ENV_FILE": str(persisted)})
+    assert rc == 0 and "setup:remote completed" in out, out
+    assert "platform-task-must-not-run" not in out, out
+    assert persisted.read_text().startswith("export KEEP_OTHER_HOOK=value\n"), persisted.read_text()
+    for tool in path_tools:
+        assert f"shadows pinned {tool}: resolves to '{competing / tool}'" in out, out
+    # The shell receives a different PATH after the hook returned: the export
+    # must expand it at command time, not overwrite it with the hook's snapshot.
+    shell_env = shadow_env | {"PATH": f"{competing}:/later-session-entry:{base_env['PATH']}"}
+    for shell_args in (("bash", "--noprofile", "--norc"), ("bash", "--login")):
+        rc, out = run([*shell_args, "-c", '''
+PATH="$1"
+. "$2"
+first="$PATH"
+. "$2"
+[ "$PATH" = "$first" ] && [ "$KEEP_OTHER_HOOK" = value ] || exit 1
+for tool in node npm uv yq; do command -v "$tool"; done
+printf '%s\\n' "$PATH"
+''', "_", shell_env["PATH"], str(persisted)], repo, shell_env)
+        assert rc == 0 and out.splitlines()[:4] == [str(prefix / "bin" / tool) for tool in path_tools], out
+        assert ":/later-session-entry:" in out, out
+    for persistence in ({}, {"CLAUDE_ENV_FILE": str(scratch / "missing/env")}):
+        rc, out = run(["bash", "scripts/session-start-remote.sh"], repo, shadow_env | persistence)
+        assert rc == 0 and "CLAUDE_ENV_FILE" in out, out
+        for tool in path_tools:
+            assert str(competing / tool) in out, out
+    rc, out = run(["bash", "scripts/reconcile-toolchain.sh", "--status"], repo, shadow_env)
+    assert rc == 0 and all(str(competing / tool) in out for tool in path_tools), out
+    # Shell data in a custom bin path must survive export generation literally.
+    awkward_bin = scratch / "bin with 'quotes $dollar; characters"
+    result = subprocess.run(["bash", "scripts/reconcile-toolchain.sh", "--session-env"], cwd=repo,
+                            env=env | {"HARMON_BIN": str(awkward_bin)},
+                            capture_output=True, text=True, timeout=20)
+    rc, out = run(["bash", "-c", result.stdout + '\nprintf "%s\\n" "${PATH%%:*}"'], repo, env)
+    assert rc == 0 and out.strip() == str(awkward_bin), out
+    for tool in (*path_tools, "task"):
+        (prefix / "bin" / tool).unlink()
+    (competing / "task").unlink()
+    manifest.write_text(json.dumps(original_manifest))
+    log.unlink(missing_ok=True)
+    print("OK: SessionStart persists managed PATH before task; login/non-login shells resolve pinned tools; unavailable persistence names shadows")
+
     def setup(mode="", remote=True):
         log.unlink(missing_ok=True)
         current_env = env | {"RECONCILE_TEST_MODE": mode}
@@ -274,13 +331,13 @@ exec {shlex.quote(real_task)} "$@"
     log.unlink(missing_ok=True)
     rc, out = run(["task", "--silent", "setup:remote"], repo,
                   env | {"PATH": f"{stubs}:{prefix / 'bin'}:{base_env['PATH']}"})
-    assert rc == 0 and not log.exists(), out
-    drift_warning(out, "must be writable and precede",
-                  remedy=f"make {prefix / 'bin'} writable and place it before other shellcheck copies on PATH")
+    assert rc == 0 and log.exists() and "Reconciled shellcheck 1.2.3 -> 7.8.9" in out, out
+    assert f"incoming PATH shadows pinned shellcheck: resolves to '{stubs / 'shellcheck'}'" in out, out
+    log.unlink()
     rc, out = run(["bash", "scripts/reconcile-toolchain.sh", "--status"], repo,
                   env | {"PATH": f"{stubs}:{prefix / 'bin'}:{base_env['PATH']}"})
     assert rc == 0 and not log.exists(), out
-    line = next(line for line in out.splitlines() if line.startswith("WARNING:"))
+    line = next(line for line in out.splitlines() if line.startswith("WARNING: shellcheck installed"))
     for value in ("installed 1.2.3", "checkout pin 7.8.9", "environment v1.2.3",
                   "must be writable and precede",
                   f"make {prefix / 'bin'} writable and place it before other shellcheck copies on PATH"):
@@ -288,7 +345,7 @@ exec {shlex.quote(real_task)} "$@"
     assert "HARMON_INIT_REF" not in line and "rebuild the environment" not in line, out
     print("OK: --status shares the shadowed-prefix cause and remedy without installing or advising a rebuild")
     (stubs / "shellcheck").unlink()
-    print("OK: successful SessionStart names the repair; missing installers and shadowed prefixes warn without installing")
+    print("OK: setup fixes PATH before reconciling; status only diagnoses shadows; missing installers warn without installing")
     action = repo / ".github/actions/setup/action.yml"
     action.write_text("SHELLCHECK_VERSION=7.8.9\nSHELLCHECK_VERSION=7.8.8\n")
     out = setup()
