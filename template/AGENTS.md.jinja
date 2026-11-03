@@ -290,12 +290,13 @@ Never reuse an earlier result. All of these must hold:
   requires on this PR was requested on this head, or its verdict legitimately
   carries to it. Require each reviewer's own completion signal, never a timer,
   and settle every finding: fixed, declined with evidence, or filed.
+  `reviewDecision` must not be `CHANGES_REQUESTED`.
 - **Every thread settled.** Each has the agent's reply, and either the agent
   has the last word or the thread is resolved. A reviewer's acknowledgement
   followed by resolving the thread settles it.
 - **PR body and run record complete.** Tick every `## Deferred findings`
   entry with its disposition, include the disclosures, and verify the closing
-  keyword. `reviewDecision` must not be `CHANGES_REQUESTED`.
+  keyword.
 - **Nothing moved.** Re-read `headRefOid` and review activity immediately
   before the action or message; any change invalidates the earlier result.
 
@@ -328,17 +329,24 @@ first-to-merge, and small independent units may go ahead.
   and apply `merge-ready` after the live check passes.
 
 The orchestrator owns each PR until it merges or closes and watches for as long
-as it is open; there is no fixed post-promotion watch window. Lanes retire at
-handoff. A lane's draft-publication signal is `DRAFT-PUBLISHED-`, the queue-head
+as it is open; there is no fixed post-promotion watch window. At a passing
+handoff check (parked or merge-ready), a lane releases its Working slot, but its
+session stays alive and idle for integration fix rounds. Tear it down only after
+the PR merges; a PR closed unmerged waits for maintainer go-ahead. The orchestrator
+owns parked drafts, including their catch-up and re-check at the queue head.
+A lane's draft-publication signal is `DRAFT-PUBLISHED-`, the queue-head
 report is the merge-ready report, and the PR body section is `Deferred findings`.
 
 If anything changes on a promoted PR — a late review, red required CI, or the
 base moving — remove `merge-ready` and act. Lead any message withdrawing an
 earlier merge-ready report with that withdrawal. **A late finding needing a
 code change sends the PR back to draft by default.** Settle a finding needing
-no code change (declined or filed) in place. A base move gets a catch-up; return
-to draft only if the new head owes a review. Work may restart on a promoted
-PR, and the claim label is re-added whenever work resumes.
+no code change (declined or filed) in place. Catching up the queue head is upkeep:
+it stays promoted, `merge-ready` is removed while the handoff check re-runs,
+and the claim is not re-added. Return it to draft if the new head owes a review.
+Other catch-up of a promoted PR requires a maintainer request. Working is
+draft-only: return the PR to draft before restarting work, and re-add the claim
+label only when it goes back to draft.
 
 ### Reviewers and carry
 
