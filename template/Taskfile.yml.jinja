@@ -859,6 +859,13 @@ tasks:
     cmds:
       - ./scripts/audit-ruleset.sh
 
+  setup:ruleset:
+    desc: Add missing required status checks to the live ruleset (additive only; prompts unless --yes)
+    # Grouped output would hide the confirmation prompt from a terminal user.
+    interactive: true
+    cmds:
+      - ./scripts/setup-ruleset.sh {{.CLI_ARGS}}
+
   test:output:
     desc: Unit-test shared color/Unicode fallbacks and spinner cleanup
     cmds:

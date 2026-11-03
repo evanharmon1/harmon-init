@@ -122,6 +122,7 @@ tasks:
       - task: test:comment-annotators
       - task: test:artifact-retention
       - task: test:audit-ruleset
+      - task: test:setup-ruleset
       - task: test:devcontainer-changed
       - task: test:summarize-gitleaks
       - task: test:output
@@ -822,6 +823,18 @@ tasks:
     desc: Compare the checked-in branch ruleset with GitHub's live ruleset (read-only)
     cmds:
       - ./scripts/audit-ruleset.sh
+
+  setup:ruleset:
+    desc: Add missing required status checks to the live ruleset (additive only; prompts unless --yes)
+    # Grouped output would hide the confirmation prompt from a terminal user.
+    interactive: true
+    cmds:
+      - ./scripts/setup-ruleset.sh {{.CLI_ARGS}}
+
+  test:setup-ruleset:
+    desc: Unit-test the ruleset required-check sync with offline fixtures
+    cmds:
+      - ./scripts/test-setup-ruleset.sh
 
   test:audit-ruleset:
     desc: Unit-test ruleset audit normalization with offline fixtures
