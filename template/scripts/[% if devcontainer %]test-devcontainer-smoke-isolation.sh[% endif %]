@@ -259,71 +259,119 @@ finally:
     for child, _ in children:
         child.wait()
 
-# Real uv, no downloads or dependency resolution: reproduce a dangling Linux
-# interpreter link, then isolate the new environment from that prior state.
-uv = shutil.which('uv')
-check(uv is not None, 'uv is required for the stale-interpreter regression')
-stale = work / 'stale-project'
-(stale / '.venv/bin').mkdir(parents=True)
-(stale / 'pyproject.toml').write_text('[project]\nname="stale-fixture"\nversion="0.0.0"\n')
-missing = '/home/vscode/.local/share/uv/python/cpython-3.14-linux-x86_64-gnu/bin/python3.14'
-(stale / '.venv/bin/python').symlink_to(missing)
-seed_config = 'home = /missing\nversion = 3.14\n'
-(stale / '.venv/pyvenv.cfg').write_text(seed_config)
-# A real disposable caller distribution makes ambient-env regressions visible
-# without ever risking the actual caller's environment.
-caller = work / 'caller-environment'
-uv_env = dict(os.environ, UV_PROJECT_ENVIRONMENT=str(caller),
-              UV_CACHE_DIR=str(work/'uv-cache'),
-              UV_PYTHON_INSTALL_DIR=str(work/'uv-python'), UV_PYTHON_DOWNLOADS='never')
-run([uv, 'venv', '--offline', '--python', sys.executable, str(caller)], env=uv_env)
-site = Path(run([str(caller/'bin/python'), '-c',
-                 'import sysconfig; print(sysconfig.get_path("purelib"))']).strip())
-check(site.resolve().is_relative_to(caller.resolve()), 'caller fixture escaped its scratch environment')
-site.mkdir(parents=True, exist_ok=True)
-sentinel = site / 'caller_sentinel.py'
-sentinel.write_text('TOKEN = "preserved"\n')
-distribution = site / 'caller_sentinel-1.0.dist-info'
-distribution.mkdir()
-(distribution/'METADATA').write_text('Metadata-Version: 2.1\nName: caller-sentinel\nVersion: 1.0\n')
-(distribution/'RECORD').write_text('caller_sentinel.py,,\ncaller_sentinel-1.0.dist-info/METADATA,,\ncaller_sentinel-1.0.dist-info/RECORD,,\n')
-fresh = work / 'fresh-environment'
-run([uv, 'sync', '--offline', '--no-install-project', '--python', sys.executable],
-    cwd=stale, env=dict(uv_env, UV_PROJECT_ENVIRONMENT=str(fresh)))
-check((fresh/'bin/python').exists(), 'isolated environment lacks interpreter')
-check(os.readlink(stale/'.venv/bin/python') == missing, 'fresh run repaired prior state')
-# Deny ordinary-user writes in this scratch directory. Privileged hosts can
-# still write, so assert the actual precondition rather than assume EACCES.
-stale.chmod(0o555)
-permission_denied = not os.access(stale, os.W_OK)
-try:
-    result = subprocess.run([uv, 'sync', '--offline', '--no-install-project', '--python', sys.executable],
-                            cwd=stale, env=dict(uv_env, UV_PROJECT_ENVIRONMENT=str(stale/'.venv')),
-                            text=True, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT)
-finally:
-    stale.chmod(0o755)
-legacy_rejection = (result.returncode > 0
-                    and 'not a valid Python environment' in result.stdout
-                    and 'no Python executable was found' in result.stdout)
-if legacy_rejection:
-    check(os.readlink(stale/'.venv/bin/python') == missing
-          and (stale/'.venv/pyvenv.cfg').read_text() == seed_config,
-          'legacy uv rejection changed the seeded invalid environment')
-    print('PASS: dangling environment rejected before recovery (removal/EACCES not reached)')
-else:
-    check('non-existent Python interpreter' in result.stdout and missing in result.stdout,
-          'missing-interpreter warning was not reproduced: '+result.stdout)
-    if permission_denied:
-        check(result.returncode != 0, 'stale environment unexpectedly recovered in non-writable fixture')
-        check('failed to remove' in result.stdout and 'Permission denied' in result.stdout,
-              'stale removal permission failure was not reproduced: '+result.stdout)
-        print('PASS: real uv dangling interpreter → removal permission error')
-    else:
-        check(result.returncode == 0 and (stale/'.venv/bin/python').exists(),
-              'privileged writable fixture did not recover its stale interpreter: '+result.stdout)
-        print('PASS: missing-interpreter warning reproduced; privileged writable fixture recovered (no EACCES claim)')
-check(sentinel.read_text() == 'TOKEN = \"preserved\"\n' and (distribution/'METADATA').exists(),
-      'uv sync changed the disposable caller environment')
-print('PASS: ambient caller environment and sentinel distribution preserved')
+def exercise_uv(ambient, work):
+    # Real uv, no downloads or dependency resolution. Its diagnostics vary by
+    # version, so prove isolation/recovery from filesystem state, not warnings.
+    uv = shutil.which('uv', path=ambient['PATH'])
+    check(uv is not None, 'uv is required for the stale-interpreter regression')
+    # The caller may supply TLS, Python, config or future uv settings. None
+    # belong to this disposable fixture; only its explicit controls may enter.
+    uv_env = {key: value for key, value in ambient.items() if not key.startswith('UV_')}
+    caller = work / 'caller-environment'
+    uv_env.update(UV_PROJECT_ENVIRONMENT=str(caller),
+                  UV_CACHE_DIR=str(work/'uv-cache'), UV_NO_CONFIG='1',
+                  UV_PYTHON_INSTALL_DIR=str(work/'uv-python'), UV_PYTHON_DOWNLOADS='never')
+    stale = work / 'stale-project'
+    stale.mkdir(parents=True)
+    (stale / 'pyproject.toml').write_text('[project]\nname="stale-fixture"\nversion="0.0.0"\n')
+    missing = '/home/vscode/.local/share/uv/python/cpython-3.14-linux-x86_64-gnu/bin/python3.14'
+    seed_config = 'home = /missing\nversion = 3.14\n'
+
+    def seed_stale():
+        venv = stale / '.venv'
+        if venv.exists():
+            shutil.rmtree(venv)
+        (venv / 'bin').mkdir(parents=True)
+        (venv / 'bin/python').symlink_to(missing)
+        (venv / 'pyvenv.cfg').write_text(seed_config)
+
+    def stale_unchanged():
+        return (os.readlink(stale/'.venv/bin/python') == missing
+                and (stale/'.venv/pyvenv.cfg').read_text() == seed_config)
+
+    seed_stale()
+    # A real disposable caller distribution makes ambient-env regressions
+    # visible without ever risking the actual caller's environment.
+    run([uv, 'venv', '--offline', '--python', sys.executable, str(caller)], env=uv_env)
+    site = Path(run([str(caller/'bin/python'), '-c',
+                     'import sysconfig; print(sysconfig.get_path("purelib"))']).strip())
+    check(site.resolve().is_relative_to(caller.resolve()), 'caller fixture escaped its scratch environment')
+    site.mkdir(parents=True, exist_ok=True)
+    sentinel = site / 'caller_sentinel.py'
+    sentinel.write_text('TOKEN = "preserved"\n')
+    distribution = site / 'caller_sentinel-1.0.dist-info'
+    distribution.mkdir()
+    (distribution/'METADATA').write_text('Metadata-Version: 2.1\nName: caller-sentinel\nVersion: 1.0\n')
+    (distribution/'RECORD').write_text('caller_sentinel.py,,\ncaller_sentinel-1.0.dist-info/METADATA,,\ncaller_sentinel-1.0.dist-info/RECORD,,\n')
+    fresh = work / 'fresh-environment'
+    run([uv, 'sync', '--offline', '--no-install-project', '--python', sys.executable],
+        cwd=stale, env=dict(uv_env, UV_PROJECT_ENVIRONMENT=str(fresh)))
+    check((fresh/'bin/python').exists(), 'isolated environment lacks interpreter')
+    check(stale_unchanged(), 'fresh run changed prior state')
+    # Always exercise writable recovery too: normal users otherwise only see
+    # EACCES, while root in web sessions can write even after chmod(0555).
+    for protected in (False, True):
+        seed_stale()
+        stale.chmod(0o555 if protected else 0o755)
+        permission_denied = not os.access(stale, os.W_OK)
+        try:
+            result = subprocess.run([uv, 'sync', '--offline', '--no-install-project', '--python', sys.executable],
+                                    cwd=stale, env=dict(uv_env, UV_PROJECT_ENVIRONMENT=str(stale/'.venv')),
+                                    text=True, stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT)
+        finally:
+            stale.chmod(0o755)
+        legacy_rejection = (result.returncode > 0
+                            and 'not a valid Python environment' in result.stdout
+                            and 'no Python executable was found' in result.stdout)
+        if legacy_rejection:
+            check(stale_unchanged(), 'legacy uv rejection changed the seeded invalid environment')
+            print('PASS: dangling environment rejected before recovery (removal/EACCES not reached)')
+        elif permission_denied:
+            # Removal may delete the venv's contents before failing to unlink
+            # its directory from the non-writable project; it is not atomic.
+            check(result.returncode != 0 and not (stale/'.venv/bin/python').exists(),
+                  'stale environment unexpectedly recovered in non-writable fixture: '+result.stdout)
+            check('failed to remove' in result.stdout and 'Permission denied' in result.stdout,
+                  'stale removal permission failure was not reproduced: '+result.stdout)
+            print('PASS: real uv dangling interpreter → removal permission error')
+        else:
+            check(result.returncode == 0 and (stale/'.venv/bin/python').exists(),
+                  'writable fixture did not recover its stale interpreter: '+result.stdout)
+            run([str(stale/'.venv/bin/python'), '-c', 'import sys; assert sys.prefix != sys.base_prefix'])
+            print('PASS: writable fixture recovered its stale interpreter (no EACCES claim)')
+    check(sentinel.read_text() == 'TOKEN = "preserved"\n' and (distribution/'METADATA').exists(),
+          'uv sync changed the disposable caller environment')
+    print('PASS: ambient caller environment and sentinel distribution preserved')
+
+
+exercise_uv(os.environ, work/'real-uv')
+# Recreate web PATH precedence and ambient UV settings with a competing uv
+# executable forwarding to the real tool. Suppress only the unstable warning,
+# keeping exit status and real filesystem effects, including EACCES, intact.
+real_uv = shutil.which('uv')
+competing = work / 'competing-tools'
+competing.mkdir()
+trace = competing / 'invocations'
+(competing/'uv').write_text(f'''#!/usr/bin/env python3
+import os, subprocess, sys
+from pathlib import Path
+allowed = {{'UV_PROJECT_ENVIRONMENT', 'UV_CACHE_DIR', 'UV_NO_CONFIG',
+           'UV_PYTHON_INSTALL_DIR', 'UV_PYTHON_DOWNLOADS'}}
+assert {{k for k in os.environ if k.startswith('UV_')}} == allowed, 'ambient UV settings leaked'
+with Path({str(trace)!r}).open('a') as log:
+    log.write('called\\n')
+result = subprocess.run([{real_uv!r}, *sys.argv[1:]], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+sys.stdout.buffer.write(result.stdout)
+sys.stderr.buffer.write(b''.join(line for line in result.stderr.splitlines(keepends=True)
+                                if b'non-existent Python interpreter' not in line))
+sys.exit(result.returncode)
+''')
+(competing/'uv').chmod(0o755)
+hostile = dict(os.environ, PATH=str(competing) + os.pathsep + os.environ['PATH'],
+               UV_NATIVE_TLS='1', UV_FUTURE_SETTING='must-not-leak', UV_NO_SYNC='1',
+               UV_CONFIG_FILE=str(work/'nonexistent-uv.toml'), UV_PYTHON='/missing/python')
+exercise_uv(hostile, work/'web-uv')
+check(trace.exists(), 'web regression did not exercise the competing PATH-first uv')
+print('PASS: web PATH precedence, ambient UV settings, and warning-independent recovery')
 PY
