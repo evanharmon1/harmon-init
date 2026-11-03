@@ -197,7 +197,9 @@ through .devcontainer/agent/agent-autonomy.sh. Anything already at either
 path that is not the definition — a file, or a symlink, dangling or not — is
 left in place, reported, and counted in HARMON_BOOTSTRAP_POSTURE_GAPS (the
 posture is then not applied for it) unless HARMON_AGENT_POSTURE_REPLACE=1,
-which replaces it and keeps the previous entry beside it. The agent
+which replaces it and keeps the previous entry beside it.
+A symlinked parent directory, resolvable or dangling, is left untouched and
+counted as a gap even with HARMON_AGENT_POSTURE_REPLACE=1. The agent
 posture's GET-only read wrapper, /usr/local/bin/gh-api-read, is ours rather
 than admin-owned, so it is always written with the shipped bytes at mode
 0755, without that gate. Harness executables are never modified.
@@ -519,7 +521,7 @@ ensure_environment_line() {
     local key="$1" want="$1=$2"
     if [ ! -f /etc/environment ]; then
         printf '%s\n' "$want" >/etc/environment
-    elif grep -qx "$want" /etc/environment; then
+    elif grep -Fxq "$want" /etc/environment; then
         : # already exactly right; leave the file alone
     elif grep -q "^${key}=" /etc/environment; then
         sed -i "s|^${key}=.*|${want}|" /etc/environment
@@ -576,7 +578,17 @@ export PATH="${HARMON_BIN}\${harmon_remote_env_path:+:\${harmon_remote_env_path}
 unset harmon_remote_env_path harmon_remote_env_ifs harmon_remote_env_entry
 PROFILE
     if ! cmp -s "$tmp" "$HARMON_PROFILE_DROPIN"; then
-        install -m 0644 "$tmp" "$HARMON_PROFILE_DROPIN"
+        # Stage on the destination filesystem: a failed write must leave the
+        # previous login profile intact, and rename publishes complete bytes.
+        local staged="${HARMON_PROFILE_DROPIN}.$$.harmon-staging"
+        if ! install -m 0644 "$tmp" "$staged"; then
+            rm -f "$tmp" "$staged"
+            die "could not stage the remote environment profile"
+        fi
+        if ! mv -f "$staged" "$HARMON_PROFILE_DROPIN"; then
+            rm -f "$tmp" "$staged"
+            die "could not publish the remote environment profile"
+        fi
     fi
     rm -f "$tmp"
 }
@@ -695,10 +707,18 @@ posture_describe() {
 # recorded as an install, so a second run reports none. It runs in a command
 # substitution, so it sets no variable of the caller's.
 prepare_posture_dest() {
-    local src="$1" dest="$2" scratch="$3" kept
-    if [ ! -d "$(dirname "$dest")" ]; then
-        install -d -m 0755 "$(dirname "$dest")"
-        printf '    created %s\n' "$(dirname "$dest")" >&2
+    local src="$1" dest="$2" scratch="$3" kept dir
+    dir="$(dirname "$dest")"
+    # A platform owns a parent link, resolved or dangling. Route to scratch
+    # before any file decision, so the replacement opt-in never writes through it.
+    if [ -L "$dir" ]; then
+        warn "found symlinked parent ${dir} -> $(readlink "$dir") — left in place, so the agent posture is NOT applied for ${dest}; HARMON_AGENT_POSTURE_REPLACE only replaces files in real directories"
+        printf '%s\n' "$scratch"
+        return 0
+    fi
+    if [ ! -d "$dir" ]; then
+        install -d -m 0755 "$dir" || die "could not create ${dir} for the agent posture"
+        printf '    created %s\n' "$dir" >&2
     fi
     # Absent means NOTHING at the path. `-e` alone follows a symlink, so a
     # dangling one — a platform's link to a target it has not populated yet —
@@ -964,6 +984,12 @@ write_manifest() {
                 status_rc=$?
             if [ "$status_rc" -ne 0 ]; then
                 warn "no manifest written: git exited ${status_rc} reading the working-tree status of ${self_dir}, so whether the installed bytes are commit ${revision} cannot be established. An empty status from a FAILED read is not a clean checkout, and a manifest attesting one would defeat the image-to-VM comparison it exists for."
+                # Keep the installed tools usable, but invalidate provenance:
+                # consumers report unknown rather than trusting an older run.
+                if [ -e "$manifest" ] || [ -L "$manifest" ]; then
+                    rm -f "$manifest"
+                    harmon_changed "removed stale manifest ${manifest} (source provenance unknown)"
+                fi
                 return 0
             fi
             if [ -n "$status_out" ]; then
@@ -976,6 +1002,12 @@ write_manifest() {
     fi
     if [ -z "$revision" ]; then
         warn "no manifest written: the source revision is unknown (not a git checkout, and no release tag). The image-to-VM comparison needs one or the other."
+        # The same invalidation as a failed cleanliness read above: no stale
+        # revision may describe the tools this run just installed.
+        if [ -e "$manifest" ] || [ -L "$manifest" ]; then
+            rm -f "$manifest"
+            harmon_changed "removed stale manifest ${manifest} (source provenance unknown)"
+        fi
         return 0
     fi
     if [ -f "$manifest" ]; then

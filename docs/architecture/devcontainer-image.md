@@ -89,6 +89,18 @@ than `deb.nodesource.com`, and uv from its checksum-pinned GitHub release
 rather than `astral.sh`. Node is pinned to an exact patch release as a result;
 the apt repository pinned only its major.
 
+The Node installer records the pinned version and hashes of its four executable
+targets only after publishing the whole distribution. The receipt proves that
+publication completed and the four executable files remain present and unchanged;
+it does not check package versions or changes behind unchanged launcher scripts.
+Missing or changed executable files force a reinstall. npm globals use an explicit
+managed prefix and verify the published command there, regardless of inherited
+npm configuration.
+The VM bootstrap matches locale lines literally and publishes its login profile
+by staging beside the destination and renaming. When source provenance cannot be
+established, it removes any previous VM manifest; reconciliation then reports
+an unknown environment revision instead of an obsolete one.
+
 The full contract, the remote environment's observed properties, and the
 per-platform adapters are in
 [remote-environments.md](remote-environments.md).

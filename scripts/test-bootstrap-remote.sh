@@ -24,8 +24,12 @@ import json
 import os
 import pathlib
 import re
+import shlex
+import shutil
 import subprocess
 import sys
+import tempfile
+import textwrap
 
 errors = []
 
@@ -51,6 +55,53 @@ def run_lifted(script, args=(), limit=120):
         )
     except subprocess.TimeoutExpired:
         return None
+
+# Linux-only installer primitives are fixture dependencies, not host
+# requirements. Preserve real hashes/path resolution with Python, and reject
+# GNU-only tools/flags on PATH even when the test host happens to provide them.
+HOST_TOOL_ADAPTERS = r"""
+readlink() {
+    if [ "${1:-}" = -f ]; then
+        python3 -c 'import os, sys; print(os.path.realpath(sys.argv[1]))' "$2"
+    else
+        command readlink "$@"
+    fi
+}
+sha256sum() {
+    python3 - "$@" <<'DIGEST'
+import hashlib
+import pathlib
+import sys
+for name in sys.argv[1:]:
+    print(f"{hashlib.sha256(pathlib.Path(name).read_bytes()).hexdigest()}  {name}")
+DIGEST
+}
+"""
+
+
+def run_host_fixture(script):
+    """Exercise affected host checks without GNU stat/readlink/sha256sum."""
+    script = script.replace('$(mktemp -d)', '$(mktemp -d "${TMPDIR:-/tmp}/harmon-fixture.XXXXXX")')
+    script = script.replace('$(mktemp)', '$(mktemp "${TMPDIR:-/tmp}/harmon-fixture.XXXXXX")')
+    with tempfile.TemporaryDirectory() as directory:
+        tools = {name: shutil.which(name) for name in ("stat", "readlink", "sed", "cp", "sha256sum")}
+        shim = '''#!/usr/bin/env python3
+import os, sys
+name = os.path.basename(sys.argv[0])
+args = sys.argv[1:]
+if (name == "sha256sum" or (name == "stat" and "-c" in args)
+        or (name == "readlink" and "-f" in args)
+        or (name == "sed" and "-i" in args)
+        or (name == "cp" and "-a" in args)):
+    sys.exit("GNU-only host invocation: " + name + " " + " ".join(args))
+real = TOOLS[name]
+os.execv(real, [real, *args])
+'''.replace("TOOLS", repr(tools))
+        for name in tools:
+            path = pathlib.Path(directory) / name
+            path.write_text(shim)
+            path.chmod(0o755)
+        return run_lifted(f"PATH={shlex.quote(directory)}:$PATH\n" + HOST_TOOL_ADAPTERS + script)
 
 
 IMG = pathlib.Path("images/devcontainer")
@@ -1134,6 +1185,7 @@ for GUIDE, guide_recipes in guide_recipe_blocks.items():
 RECORDERS = re.compile(
     r'\bharmon_needs(?:_all)?\s+(?P<key1>[a-z0-9-]+)\s+"\$(?P<var1>[A-Z0-9_]+_VERSION)"'
     r'|\bharmon_(?:npm_global|uv_tool)\s+\S+\s+"\$(?P<var2>[A-Z0-9_]+_VERSION)"\s+(?P<key2>[a-z0-9-]+)\b'
+    r'|\bharmon_record\s+tool\s+"(?P<key3>[a-z0-9-]+)=\$(?P<var3>[A-Z0-9_]+_VERSION)"'
 )
 CONSUMED = re.compile(r"\$\{?(?P<var>[A-Z][A-Z0-9_]*_VERSION)\b")
 image_keys = {var: key for key, var in re.findall(r'"([a-z0-9-]+)=\$\{([A-Z0-9_]+)\}"', dockerfile_text)}
@@ -1150,7 +1202,8 @@ for name in tier_scripts:
     consumed = set(CONSUMED.findall(code))
     recorded = {}
     for mo in RECORDERS.finditer(code):
-        key, var = mo["key1"] or mo["key2"], mo["var1"] or mo["var2"]
+        key = mo["key1"] or mo["key2"] or mo["key3"]
+        var = mo["var1"] or mo["var2"] or mo["var3"]
         if var in recorded:
             fail(f"{INSTALL}/{name}: {var} is recorded twice (as {recorded[var]} and {key}); the manifest would carry a duplicate key")
         recorded[var] = key
@@ -1158,7 +1211,7 @@ for name in tier_scripts:
     if unrecorded:
         fail(
             f"{INSTALL}/{name}: {unrecorded} are read by the tier but reach the manifest through no recording helper "
-            "(harmon_needs / harmon_needs_all / harmon_npm_global / harmon_uv_tool) — the VM would install them "
+            "(harmon_needs / harmon_needs_all / harmon_npm_global / harmon_uv_tool / harmon_record) — the VM would install them "
             "and not record them"
         )
     for var, key in sorted(recorded.items()):
@@ -1203,7 +1256,7 @@ set -euo pipefail
 # Stubs for the run-record helpers only; nothing the revision is decided by.
 warn() { printf 'warn: %s\n' "$*" >&2; }
 harmon_skip() { :; }
-harmon_changed() { :; }
+harmon_changed() { printf 'install\t%s\n' "$*" >>"$change_log"; }
 harmon_arch() { printf 'amd64\n'; }
 tab="$(printf '\t')"
 HARMON_RELEASE_TAG_RE='@TAG_RE@'
@@ -1280,12 +1333,37 @@ git() {
     command git "$@"
 }
 manifest_dir="${root}/m-unreadable"
+mkdir -p "$manifest_dir"
+cp "${root}/m-local/manifest.json" "${manifest_dir}/manifest.json"
+changes_before="$(grep -c "^install${tab}" "$change_log")"
 write_manifest
+changes_after="$(grep -c "^install${tab}" "$change_log")"
+[ "$changes_after" -eq "$((changes_before + 1))" ]
+write_manifest
+[ "$(grep -c "^install${tab}" "$change_log")" -eq "$changes_after" ]
 unset -f git
 if [ -f "${manifest_dir}/manifest.json" ]; then
     printf 'UNREADABLE_STATUS %s\n' "$(jq -r .image.revision "${manifest_dir}/manifest.json")"
 else
     printf 'UNREADABLE_STATUS none\n'
+fi
+
+# (5) an unversioned fetched source must invalidate a previous run too.
+assets_local=0
+ref=unknown
+manifest_dir="${root}/m-unknown"
+mkdir -p "$manifest_dir"
+cp "${root}/m-local/manifest.json" "${manifest_dir}/manifest.json"
+changes_before="$(grep -c "^install${tab}" "$change_log")"
+write_manifest
+changes_after="$(grep -c "^install${tab}" "$change_log")"
+[ "$changes_after" -eq "$((changes_before + 1))" ]
+write_manifest
+[ "$(grep -c "^install${tab}" "$change_log")" -eq "$changes_after" ]
+if [ -e "${manifest_dir}/manifest.json" ]; then
+    printf 'UNKNOWN_REVISION stale\n'
+else
+    printf 'UNKNOWN_REVISION none\n'
 fi
 """
     harness = (
@@ -1298,7 +1376,7 @@ fi
     out = {} if run is None else dict(
         line.split(" ", 1) for line in run.stdout.splitlines() if line.count(" ") == 1
     )
-    if run is None or run.returncode != 0 or len(out) != 7:
+    if run is None or run.returncode != 0 or len(out) != 8:
         fail(
             f"{BOOTSTRAP}: the manifest provenance case could not run "
             f"({'timed out' if run is None else f'exit {run.returncode}'}) — "
@@ -1311,6 +1389,8 @@ fi
                 f"uncommitted changes at {out['LOCAL_HEAD'][:12]} — a successful status read that reports a dirty "
                 "tree must still suffix the commit, or restructuring the read has dropped the `-dirty` marker"
             )
+        if out["UNKNOWN_REVISION"] != "none":
+            fail(f"{BOOTSTRAP}: an unknown source revision left a stale manifest from an earlier run")
         if out["UNREADABLE_STATUS"] != "none":
             fail(
                 f"{BOOTSTRAP}: the cleanliness probe failed and write_manifest still attested revision "
@@ -1416,10 +1496,10 @@ else:
                 "unless its version witness is at the pin AND every executable it publishes is present"
             )
 
-# …and the two call sites that need it name every executable their block
-# publishes, or the helper is correct and unused where it matters.
+# The uv call site names every executable it publishes. Node's stronger
+# distribution-identity gate is executed against replaced companions in § 30.
 core_text = (INSTALL / "install-core.sh").read_text()
-for gated, companions in (("node", ["corepack", "npm", "npx"]), ("uv", ["uvx"])):
+for gated, companions in (("uv", ["uvx"]),):
     site = re.search(rf'^if harmon_needs_all {gated} "\$[A-Z0-9_]+_VERSION" (.+?) -- ', core_text, re.M)
     if not site:
         fail(
@@ -1895,15 +1975,17 @@ run = run_lifted(reap.replace("@LIB@", str(INSTALL / "lib.sh")))
 reaped = {} if run is None else dict(
     line.split(" ", 1) for line in run.stdout.splitlines() if line.count(" ") == 1
 )
+# No procfs means liveness is indeterminate: production deliberately retains
+# abandoned-looking files. Linux still has to prove the dead writer is reaped.
+dead_writer_state = "reaped" if pathlib.Path("/proc").is_dir() else "kept"
 expected = {
-    "DEAD_WRITER": "reaped",
+    "DEAD_WRITER": dead_writer_state,
     "LIVE_WRITER": "kept",
     "NO_PID_FIELD": "kept",
     "FAILED_PUBLISH": "reaped",
 }
 why = {
-    "DEAD_WRITER": "a staging file whose writer is gone is litter, and a later run has a different pid, so "
-    "nothing but a liveness sweep will ever remove it",
+    "DEAD_WRITER": "reap a provably gone writer on procfs; retain when liveness is indeterminate",
     "LIVE_WRITER": "deleting a live writer's staging file is the exact race the pid in the name exists to "
     "prevent — reaping by age or by pattern alone would do it",
     "NO_PID_FIELD": "a name this code did not write is left alone rather than guessed at",
@@ -1985,16 +2067,15 @@ staged = {} if run is None else dict(
     line.split(" ", 1) for line in run.stdout.splitlines() if line.count(" ") == 1
 )
 expected = {
-    "MANIFEST_DEAD_WRITER": "reaped",
+    "MANIFEST_DEAD_WRITER": dead_writer_state,
     "MANIFEST_LIVE_WRITER": "kept",
     "MANIFEST_NO_PID_FIELD": "kept",
     "MANIFEST_FAILED_PUBLISH_STATUS": "nonzero",
     "MANIFEST_FAILED_PUBLISH": "reaped",
 }
 why = {
-    "MANIFEST_DEAD_WRITER": "an abandoned manifest staging file is a full-size file in the prefix that nothing "
-    "else will ever remove: a later run has a different pid, and the common run writes nothing here at all "
-    "because the manifest has not changed — so the sweep cannot be conditional on the write",
+    "MANIFEST_DEAD_WRITER": "the unchanged-manifest sweep reaps a provably gone writer on procfs; "
+    "retain when liveness is indeterminate",
     "MANIFEST_LIVE_WRITER": "deleting a live writer's staging file is the race the pid in the name exists to "
     "prevent, and two bootstraps on one VM are exactly that case",
     "MANIFEST_NO_PID_FIELD": "a name this code did not write is left alone rather than guessed at",
@@ -2678,6 +2759,44 @@ run WRAPPER_RERUN
 printf 'WRAPPER_RERUN_BYTES %s\n' "$(same "$wrapper" "$wrapper_def")"
 printf 'WRAPPER_RERUN_MODE %s\n' "$([ -x "$wrapper" ] && echo executable || echo refused)"
 
+# A platform-owned parent link is a delivery gap, resolved or dangling, even
+# when file replacement is enabled. Check the link and target after EACH run.
+parent="${claude%/*}"
+mv "$parent" "${root}/platform-parent"
+printf '{"platform": "parent"}\n' >"${root}/platform-parent/managed-settings.json"
+cp "${root}/platform-parent/managed-settings.json" "${root}/parent-file.before"
+find "${root}/platform-parent" -print | sort >"${root}/parent-files.before"
+ln -s "${root}/platform-parent" "$parent"
+for label in PARENT_LINK PARENT_LINK_REPLACE; do
+    if [ "$label" = PARENT_LINK_REPLACE ]; then
+        run "$label" HARMON_AGENT_POSTURE_REPLACE=1
+    else
+        run "$label"
+    fi
+    find "${root}/platform-parent" -print | sort >"${root}/parent-files.after"
+    printf '%s_WARNED %s\n' "$label" "$(grep -qF "WARNING: found symlinked parent ${parent} -> ${root}/platform-parent — left in place" "${root}/${label}.err" && echo named || echo silent)"
+    printf '%s_KEPT %s\n' "$label" "$([ -L "$parent" ] && [ "$(readlink "$parent")" = "${root}/platform-parent" ] && cmp -s "${root}/parent-file.before" "$claude" && cmp -s "${root}/parent-files.before" "${root}/parent-files.after" && echo kept || echo changed)"
+done
+rm "$parent"
+ln -s "${root}/missing-parent" "$parent"
+for label in PARENT_DANGLING PARENT_DANGLING_REPLACE; do
+    if [ "$label" = PARENT_DANGLING_REPLACE ]; then
+        run "$label" HARMON_AGENT_POSTURE_REPLACE=1
+    else
+        run "$label"
+    fi
+    printf '%s_WARNED %s\n' "$label" "$(grep -qF "WARNING: found symlinked parent ${parent} -> ${root}/missing-parent — left in place" "${root}/${label}.err" && echo named || echo silent)"
+    printf '%s_KEPT %s\n' "$label" "$([ -L "$parent" ] && [ "$(readlink "$parent")" = "${root}/missing-parent" ] && [ ! -e "${root}/missing-parent" ] && [ ! -L "${root}/missing-parent" ] && echo kept || echo changed)"
+done
+rm "$parent"
+# A regular file at the parent forces install -d to fail deterministically,
+# also when the suite runs as root. This remains a named, genuine failure.
+printf 'not a directory\n' >"$parent"
+run PARENT_CREATE_FAILED
+printf 'PARENT_CREATE_FAILED_WARNED %s\n' "$(grep -qF "bootstrap-remote: could not create ${parent} for the agent posture" "${root}/PARENT_CREATE_FAILED.err" && echo named || echo silent)"
+rm "$parent"
+mv "${root}/platform-parent" "$parent"
+
 modes >"${root}/modes.after"
 printf 'MODES %s\n' "$(cmp -s "${root}/modes.before" "${root}/modes.after" && echo unchanged || echo changed)"
 """.replace("@WORKER_B64@", base64.b64encode(install_worker.encode()).decode()).replace("@REPO@", repo_root)
@@ -2736,6 +2855,8 @@ printf 'MODES %s\n' "$(cmp -s "${root}/modes.before" "${root}/modes.after" && ec
         "WRAPPER_RERUN_GAPS": "0",
         "WRAPPER_RERUN_BYTES": "same",
         "WRAPPER_RERUN_MODE": "executable",
+        "PARENT_CREATE_FAILED_EXIT": "failed",
+        "PARENT_CREATE_FAILED_WARNED": "named",
         "MODES": "unchanged",
     }
     why = {
@@ -2791,8 +2912,20 @@ printf 'MODES %s\n' "$(cmp -s "${root}/modes.before" "${root}/modes.after" && ec
         "WRAPPER_RERUN_GAPS": "a rerun after wrapper replacement reports no delivery gap",
         "WRAPPER_RERUN_BYTES": "a rerun keeps the delivered wrapper bytes",
         "WRAPPER_RERUN_MODE": "a rerun keeps the delivered wrapper executable",
+        "PARENT_CREATE_FAILED_EXIT": "failure to create the destination directory stops the run",
+        "PARENT_CREATE_FAILED_WARNED": "a failed install -d names the bootstrap and directory",
         "MODES": "the posture step changes no file mode outside its temporary destinations",
     }
+    for label in ("PARENT_LINK", "PARENT_LINK_REPLACE", "PARENT_DANGLING", "PARENT_DANGLING_REPLACE"):
+        for suffix, want, reason in (
+            ("EXIT", "0", "a platform-owned parent link is a gap, not a failed run, with either replacement policy"),
+            ("GAPS", "1", "a parent link leaves exactly one managed destination unverified"),
+            ("INSTALLS", "0", "nothing is installed through or over a parent link"),
+            ("WARNED", "named", "the warning names the parent link and its target"),
+            ("KEPT", "kept", "the parent link and its target stay unchanged"),
+        ):
+            expected[f"{label}_{suffix}"] = want
+            why[f"{label}_{suffix}"] = reason
     if run is None or run.returncode != 0 or any(k.startswith("MISSING_TOOL") for k in got):
         fail(
             f"{BOOTSTRAP}: the posture-install cases could not run "
@@ -2899,7 +3032,12 @@ PATH="${root}/stubs:${HARMON_BIN}:${PATH}"
 
 # Stubs record what a process started AFTER sourcing lib.sh would have seen;
 # `<unset>` marks an unset variable.
-printf '#!/bin/sh\nprintf "NPM ca=%%s\\n" "${NODE_EXTRA_CA_CERTS-<unset>}"\n' >"${root}/stubs/npm"
+cat >"${root}/stubs/npm" <<'NPM'
+#!/bin/sh
+printf 'NPM ca=%s\n' "${NODE_EXTRA_CA_CERTS-<unset>}"
+printf '#!/bin/sh\nprintf "1.2.3\\n"\n' >"${HARMON_BIN}/somepkg-cmd"
+chmod 0755 "${HARMON_BIN}/somepkg-cmd"
+NPM
 printf '#!/bin/sh\nprintf "NODE ca=%%s\\n" "${NODE_EXTRA_CA_CERTS-<unset>}"\n' >"${root}/stubs/node-outside-helper"
 printf '#!/bin/sh\nprintf "UV args=%%s\\n" "$*"\n' >"${root}/stubs/uv"
 chmod 0755 "${root}/stubs/npm" "${root}/stubs/node-outside-helper" "${root}/stubs/uv"
@@ -2929,10 +3067,10 @@ source_case SRC_NO_BUNDLE_CALLER_KEPT "${root}/missing.crt" /caller/own.pem
     printf 'SCOPE %s\n' "$(node-outside-helper)"
     # …and so does npm, through the helper, with nothing set around it.
     printf 'NPM %s\n' "$(harmon_npm_global somepkg 1.2.3 somepkg-cmd | grep '^NPM ')"
-    printf 'UV %s\n' "$(harmon_uv_tool somepkg 1.2.3 somepkg-cmd | grep '^UV ')"
+    printf 'UV %s\n' "$(harmon_uv_tool somepkg 1.2.3 uvpkg-cmd | grep '^UV ')"
 )
 """
-run = run_lifted(trust.replace("@LIB@", str(INSTALL / "lib.sh")))
+run = run_host_fixture(trust.replace("@LIB@", str(INSTALL / "lib.sh")))
 seen = {} if run is None else {
     line.split(" ", 1)[0]: line.split(" ", 1)[1] for line in run.stdout.splitlines() if " " in line
 }
@@ -2995,12 +3133,319 @@ cmp "${scratch}/before" "${scratch}/changes"
     if cache_run is None or cache_run.returncode != 0:
         fail(f"{BOOTSTRAP}: reconcile assets are not byte-identical/idempotent: {'' if cache_run is None else cache_run.stderr}")
 
+# ── 27. the required bootstrap aggregate reports and fails closed ──────────
+workflow_file = pathlib.Path('.github/workflows/remote-bootstrap.yml')
+workflow_text = workflow_file.read_text()
+trigger_text = workflow_text.split('\non:', 1)[1].split('\nconcurrency:', 1)[0]
+if re.search(r'^\s+paths(?:-ignore)?:', trigger_text, re.M):
+    fail(f'{workflow_file}: a required aggregate cannot have workflow path filters')
+for event in ('pull_request', 'push', 'merge_group', 'workflow_dispatch'):
+    if not re.search(r'^  ' + event + ':', trigger_text, re.M):
+        fail(f'{workflow_file}: required aggregate does not report on {event}')
+workflow_jobs = dict(re.findall(r'^  ([\w-]+):\n(.*?)(?=^  [\w-]+:|\Z)', workflow_text.split('\njobs:\n', 1)[1], re.M | re.S))
+aggregate = workflow_jobs.get('remote-bootstrap-verify', '')
+detector = workflow_jobs.get('bootstrap-changes', '')
+proof = workflow_jobs.get('bootstrap', '')
+if 'if: always()' not in aggregate or 'needs: [bootstrap-changes, bootstrap]' not in aggregate:
+    fail(f'{workflow_file}: aggregate must always report and await detector and proof')
+if 'needs: [bootstrap-changes]' not in proof or "needs.bootstrap-changes.outputs.changed == 'true'" not in proof:
+    fail(f'{workflow_file}: expensive proof lost its internal change filter')
+for job_name, job in workflow_jobs.items():
+    if "github.event_name == 'merge_group' && 'ubuntu-latest'" not in job:
+        fail(f'{workflow_file}: {job_name} must use hosted runners for queued content')
+for job_name, job in (('bootstrap-changes', detector), ('bootstrap', proof)):
+    if "github.event_name != 'pull_request'" not in job or 'github.event.pull_request.head.repo.full_name == github.repository' not in job:
+        fail(f'{workflow_file}: {job_name} lost its fork boundary')
+root_ruleset = json.loads(pathlib.Path('.github/Branch Protection Ruleset - Protect Main.json').read_text())
+contexts = {c['context'] for r in root_ruleset['rules'] if r['type'] == 'required_status_checks' for c in r['parameters']['required_status_checks']}
+if 'remote-bootstrap-verify' not in contexts:
+    fail('root ruleset must require remote-bootstrap-verify')
+if 'remote-bootstrap-verify' in pathlib.Path('template/.github/Branch Protection Ruleset - Protect Main.json.jinja').read_text():
+    fail('consumer ruleset must not require the root-only bootstrap producer')
+
+
+def workflow_run(job, step):
+    """Lift an actual named run step, retaining its shell logic for the cases."""
+    marker = '      - name: ' + step + '\n'
+    body = job.split(marker, 1)[-1].split('\n      - ', 1)[0] if marker in job else ''
+    if '        run: |\n' not in body:
+        fail(f'{workflow_file}: cannot exercise step {step!r}')
+        return 'exit 99\n'
+    return textwrap.dedent(body.split('        run: |\n', 1)[1])
+
+
+aggregate_run = workflow_run(aggregate, 'Verify bootstrap result or deliberate no-op')
+fork_run = workflow_run(aggregate, 'Verify deliberate skips at the untrusted-fork boundary')
+# A fork must never reach checkout or the repository-controlled result helper.
+if aggregate.count("if: env.IS_FORK != 'true'") != 2 or "if: env.IS_FORK == 'true'" not in aggregate:
+    fail(f'{workflow_file}: fork aggregate must check skips without checkout or repository scripts')
+for changes, changed, result, want in (
+    ('success', 'true', 'success', 0), ('success', 'false', 'skipped', 0),
+    ('success', 'true', 'failure', 1), ('success', 'true', 'cancelled', 1),
+    ('success', 'true', 'skipped', 1), ('success', 'false', 'failure', 1),
+    ('failure', 'false', 'skipped', 1), ('cancelled', 'false', 'skipped', 1),
+    ('skipped', 'false', 'skipped', 1), ('success', '', 'skipped', 1),
+    ('success', 'unknown', 'success', 1), ('success', 'false', 'success', 1),
+):
+    setup = f"set -e\nCHANGES_RESULT={changes}\nCHANGED='{changed}'\nBOOTSTRAP_RESULT={result}\n"
+    run = run_lifted(setup + aggregate_run)
+    if run is None or run.returncode != want:
+        fail(f'{workflow_file}: aggregate accepted/rejected wrong result {changes}/{changed}/{result}')
+for changes, result, want in (('skipped', 'skipped', 0), ('success', 'skipped', 1), ('skipped', 'success', 1), ('', '', 1)):
+    run = run_lifted(f"set -e\nCHANGES_RESULT='{changes}'\nBOOTSTRAP_RESULT='{result}'\n" + fork_run)
+    if run is None or run.returncode != want:
+        fail(f'{workflow_file}: fork aggregate accepted/rejected wrong result {changes}/{result}')
+
+# Control git's range/diff responses, including missing history, diff failure
+# and filenames Git normally quotes. The real command must retain NUL output
+# and both sides of a moved file, as the existing devcontainer detector does.
+detect_script = pathlib.Path('scripts/remote-bootstrap-changed.sh')
+if f'run: ./{detect_script} "$BASE_SHA" "$HEAD_SHA"' not in detector:
+    fail(f'{workflow_file}: change detection must call {detect_script} with the event endpoints')
+with tempfile.TemporaryDirectory() as tmp:
+    tmp = pathlib.Path(tmp)
+    (tmp / 'git').write_text('''#!/bin/sh
+case "$1" in
+  cat-file) exit "${CAT_STATUS:-0}" ;;
+  diff)
+    case "$*" in 'diff -z --name-only --no-renames '*) ;; *) exit 97 ;; esac
+    printf '%s' "$DIFF_B64" | base64 -d
+    exit "${DIFF_STATUS:-0}"
+    ;;
+  *) exit 98 ;;
+esac
+''')
+    (tmp / 'git').chmod(0o755)
+    relevant_paths = ['images/devcontainer/versions.env', 'scripts/verify-ci-results.sh', str(detect_script), 'Taskfile.yml', 'renovate.json', '.devcontainer/agent/agent-autonomy.sh', '.devcontainer/config/agent/codex-managed-config.toml', '.github/workflows/remote-bootstrap.yml', 'images/devcontainer/tab\tand\nnewline']
+    cases = [(p, 'base', '0', '0', 'true') for p in relevant_paths]
+    cases += [('docs/readme.md', 'base', '0', '0', 'false'), ('', '', '0', '0', 'true'), ('', 'base', '1', '0', 'true'), ('', 'base', '0', '1', 'true')]
+    for path, base, cat_status, diff_status, want in cases:
+        output = tmp / 'output'
+        output.write_text('')
+        env = dict(os.environ, PATH=f'{tmp}:{os.environ["PATH"]}', BASE_SHA=base, HEAD_SHA='head', GITHUB_OUTPUT=str(output), CAT_STATUS=cat_status, DIFF_STATUS=diff_status, DIFF_B64=base64.b64encode((path + '\0').encode() if path else b'').decode())
+        run = subprocess.run([str(detect_script.resolve()), base, 'head'], env=env, capture_output=True, text=True, timeout=15)
+        if run.returncode != 0 or run.stdout.strip() != want or output.read_text().strip() != f'changed={want}':
+            fail(f'{detect_script}: change detection failed for {path!r}/{base}/{cat_status}/{diff_status}')
+
+    # Fake only the install and cmp, executing the real summary/gating logic.
+    summary_run = workflow_run(proof, 'Run the bootstrap (core + agents) and time it')
+    summary_run = summary_run.replace('/tmp/bootstrap-first.log', str(tmp / 'first.log'))
+    for cmp_status, gaps, budget, want in ((1, '0', '300', 1), (0, '1', '300', 1), (0, '0', '-1', 1), (0, '0', '300', 0)):
+        summary = tmp / 'summary'
+        summary.write_text('')
+        setup = f'''set -eo pipefail
+env() {{ echo HARMON_BOOTSTRAP_POSTURE_GAPS={gaps}; }}
+date() {{ echo 0; }}
+cmp() {{ return {cmp_status}; }}
+cp() {{ :; }}
+BOOTSTRAP_BUDGET_SECONDS={budget}
+GITHUB_STEP_SUMMARY='{summary}'
+'''
+        run = run_lifted(setup + summary_run)
+        if run is None or run.returncode != want or not all(row in summary.read_text() for row in ('| architecture |', '| core + agents tiers |')):
+            fail(f'{workflow_file}: posture/budget result {cmp_status}/{gaps}/{budget} lost summary measurements or gated incorrectly')
+    compared = set(re.findall(r'^cmp (\.devcontainer/config/agent/\S+) ', summary_run, re.M))
+    if compared != {str(AGENT_CONFIG / name) for name in ('claude-managed-settings.json', 'codex-managed-config.toml')}:
+        fail(f'{workflow_file}: posture comparisons diverged from the managed definitions')
+
+
+# ── 30. bootstrap repairs require literal values and complete publication ──
+# Lift both locale functions, redirecting only their two system paths. The
+# installer stub fails after writing partial bytes to its destination; using
+# the live path there would truncate the old login profile before the failure.
+locale_start = bootstrap_text.index("ensure_environment_line() {")
+locale_end = bootstrap_text.index("\nset_locale\n", locale_start)
+locale_functions = bootstrap_text[locale_start:locale_end].replace(
+    "/etc/environment", "${root}/environment"
+).replace("/etc/profile.d", "${root}/profile.d").replace("sed -i ", "sed -i.bak ")
+locale_harness = r"""
+set -euo pipefail
+root="$(mktemp -d)"
+trap 'rm -rf "$root"' EXIT
+HARMON_BIN="${root}/bin"
+HARMON_PROFILE_DROPIN="${root}/profile.d/harmon-remote-env.sh"
+die() { printf '%s\n' "$*" >&2; exit 1; }
+@LOCALE@
+printf 'LANG=C-UTF-8\nLC_ALL=C-UTF-8\nOTHER=preserved\n' >"${root}/environment"
+set_locale
+grep -Fxq LANG=C.UTF-8 "${root}/environment"
+grep -Fxq LC_ALL=C.UTF-8 "${root}/environment"
+grep -Fxq OTHER=preserved "${root}/environment"
+python3 -c 'import os, stat, sys; assert stat.S_IMODE(os.stat(sys.argv[1]).st_mode) == 0o644' "$HARMON_PROFILE_DROPIN"
+printf 'LOCALE_LITERAL repaired\n'
+
+install() {
+    local destination="${!#}"
+    if [ "$mode" = write ] && [[ "$destination" == "$HARMON_PROFILE_DROPIN"* ]]; then
+        printf 'partial\n' >"$destination"
+        return 1
+    fi
+    command install "$@"
+}
+mv() { [ "$mode" != rename ] || return 1; command mv "$@"; }
+for mode in write rename; do
+    printf 'previous login profile\n' >"$HARMON_PROFILE_DROPIN"
+    cp "$HARMON_PROFILE_DROPIN" "${root}/before"
+    if (set_locale) >/dev/null 2>&1; then exit 1; fi
+    cmp "${root}/before" "$HARMON_PROFILE_DROPIN"
+    [ -z "$(find "${root}/profile.d" -name '*.harmon-staging' -print)" ]
+    printf 'PROFILE_%s preserved\n' "$mode"
+done
+"""
+run = run_host_fixture(locale_harness.replace("@LOCALE@", locale_functions))
+if run is None or run.returncode != 0 or run.stdout.splitlines() != [
+    "LOCALE_LITERAL repaired", "PROFILE_write preserved", "PROFILE_rename preserved"
+]:
+    fail(f"{BOOTSTRAP}: locale/profile fault injection failed: {run}")
+
+# Execute the real Node block with a locally generated distribution archive.
+# The fixture download counts repairs; checksum validation is stubbed and
+# SHA-256 uses Python on the host. npm/npx/corepack remain real symlinks into lib/.
+# Use cp's BSD/GNU-common preservation flags only in the lifted fixture.
+node_block = core_text.split("# ---------- Node.js", 1)[1].split(
+    "# ---------- corepack's pnpm shim", 1
+)[0]
+node_block = node_block[node_block.index("\n") + 1:].replace("cp -a ", "cp -PRp ")
+node_harness = r"""
+set -euo pipefail
+root="$(mktemp -d)"
+trap 'rm -rf "$root"' EXIT
+export HARMON_PREFIX="${root}/prefix" HARMON_BIN="${root}/prefix/bin"
+. '@LIB@'
+harmon_ensure_bin
+PATH="${HARMON_BIN}:${PATH}"
+tmp="${root}/tmp"
+mkdir -p "$tmp" "${root}/dist/bin" "${root}/dist/lib/node_modules"
+NODE_VERSION=9.9.9
+node_amd64_sha256=unused
+node_arm64_sha256=unused
+printf '#!/bin/sh\nprintf "v9.9.9\n"\n' >"${root}/dist/bin/node"
+chmod 0755 "${root}/dist/bin/node"
+for companion in npm npx corepack; do
+    printf '#!/bin/sh\nprintf "bundled-new\n"\n' >"${root}/dist/lib/node_modules/${companion}.js"
+    chmod 0755 "${root}/dist/lib/node_modules/${companion}.js"
+    ln -s "../lib/node_modules/${companion}.js" "${root}/dist/bin/$companion"
+done
+tar -cJf "${root}/node.tar.xz" -C "$root" dist
+harmon_fetch() { printf 'fetch\n' >>"${root}/fetches"; cp "${root}/node.tar.xz" "$2"; }
+harmon_verify_sha256() { :; }
+run_node() {
+@NODE_BLOCK@
+}
+run_node >/dev/null
+[ "$(wc -l <"${root}/fetches")" -eq 1 ]
+run_node >/dev/null
+[ "$(wc -l <"${root}/fetches")" -eq 1 ]
+expected_fetches=1
+for companion in npm npx corepack; do
+    # Keep the new node and a valid receipt, overwrite one launcher file's
+    # bytes. This simulates an old executable, not an in-place package change
+    # whose launcher remains byte-identical.
+    printf '#!/bin/sh\nprintf "old-companion\n"\n' >"${HARMON_BIN}/${companion}"
+    run_node >/dev/null
+    expected_fetches=$((expected_fetches + 1))
+    [ "$(wc -l <"${root}/fetches")" -eq "$expected_fetches" ]
+    cmp "${root}/dist/lib/node_modules/${companion}.js" "${HARMON_BIN}/${companion}"
+    printf 'NODE_%s repaired\n' "$companion"
+done
+# Simulate interruption while copying the last bin/ directory. The receipt
+# must already be gone, so even unchanged executables cannot make a skip.
+cp() {
+    if [ "${1:-}" = -PRp ] && [[ "$2" == */bin/. ]]; then return 1; fi
+    command cp "$@"
+}
+rm -f "${HARMON_BIN}/npm"
+if (run_node) >/dev/null 2>&1; then exit 1; fi
+[ ! -e "$node_receipt" ]
+unset -f cp
+run_node >/dev/null
+printf 'NODE_INTERRUPTED repaired\n'
+"""
+run = run_host_fixture(node_harness.replace("@LIB@", str(INSTALL / "lib.sh")).replace("@NODE_BLOCK@", node_block))
+if run is None or run.returncode != 0 or run.stdout.splitlines() != [
+    "NODE_npm repaired", "NODE_npx repaired", "NODE_corepack repaired", "NODE_INTERRUPTED repaired"
+]:
+    fail(f"{INSTALL}/install-core.sh: Node distribution identity fault injection failed: {run}")
+
+# npm is a process stub so the inherited prefix reaches it exactly as it would
+# reach real npm. It honours the CLI prefix only when present. A second mode
+# lies about successful publication, and a third publishes a link outside the
+# managed prefix: both must fail the helper's post-install check. A second
+# attempt with that foreign link still present must reinstall and refuse again.
+npm_harness = r"""
+set -euo pipefail
+root="$(mktemp -d)"
+trap 'rm -rf "$root"' EXIT
+export HARMON_PREFIX="${root}/managed" HARMON_BIN="${root}/managed/bin"
+export NPM_CONFIG_PREFIX="${root}/foreign"
+export NPM_ATTEMPTS="${root}/npm-attempts"
+mkdir -p "$HARMON_BIN" "${root}/stub"
+PATH="${root}/stub:${HARMON_BIN}:${PATH}"
+. '@LIB@'
+cat >"${root}/stub/npm" <<'NPM'
+#!/bin/sh
+printf 'install\n' >>"$NPM_ATTEMPTS"
+prefix="$NPM_CONFIG_PREFIX"
+while [ "$#" -gt 0 ]; do
+    if [ "$1" = --prefix ]; then prefix="$2"; shift; fi
+    shift
+done
+[ "${MODE:-}" != missing ] || exit 0
+mkdir -p "${prefix}/bin"
+rm -f "${prefix}/bin/test-tool"
+printf '#!/bin/sh\nprintf "1.2.3\n"\n' >"${prefix}/bin/test-tool"
+chmod 0755 "${prefix}/bin/test-tool"
+if [ "${MODE:-}" = external ]; then
+    mkdir -p "$NPM_CONFIG_PREFIX"
+    mv "${prefix}/bin/test-tool" "${NPM_CONFIG_PREFIX}/test-tool"
+    ln -s "${NPM_CONFIG_PREFIX}/test-tool" "${prefix}/bin/test-tool"
+fi
+NPM
+chmod 0755 "${root}/stub/npm"
+harmon_npm_global test-package 1.2.3 test-tool >/dev/null
+[ -x "${HARMON_BIN}/test-tool" ]
+[ ! -e "$NPM_CONFIG_PREFIX" ]
+printf 'NPM_PREFIX managed\n'
+# A valid managed tool skips without another npm invocation, while recording
+# the tool on both the install and skip paths as harmon_needs does.
+export HARMON_CHANGE_LOG="${root}/changes"
+: >"$HARMON_CHANGE_LOG"
+harmon_npm_global test-package 1.2.3 test-tool >/dev/null
+[ "$(wc -l <"$NPM_ATTEMPTS")" -eq 1 ]
+grep -Fxq "$(printf 'tool\ttest-tool=1.2.3')" "$HARMON_CHANGE_LOG"
+[ "$(grep -c '^install' "$HARMON_CHANGE_LOG" || true)" -eq 0 ]
+for MODE in missing external; do
+    export MODE
+    rm -f "${HARMON_BIN}/test-tool"
+    if (harmon_npm_global test-package 1.2.3 test-tool) >/dev/null 2>&1; then exit 1; fi
+    printf 'NPM_%s refused\n' "$MODE"
+done
+# The external refusal left a version-correct link behind. Do not remove it:
+# the next run must try npm again and refuse, rather than accept the version.
+attempts_before="$(wc -l <"$NPM_ATTEMPTS")"
+changes_before="$(grep -c '^install' "$HARMON_CHANGE_LOG")"
+if (harmon_npm_global test-package 1.2.3 test-tool) >/dev/null 2>&1; then exit 1; fi
+[ "$(wc -l <"$NPM_ATTEMPTS")" -eq "$((attempts_before + 1))" ]
+[ "$(grep -c '^install' "$HARMON_CHANGE_LOG")" -eq "$((changes_before + 1))" ]
+[ "$(grep -c '^tool' "$HARMON_CHANGE_LOG")" -eq 4 ]
+printf 'NPM_external_repeat refused\n'
+"""
+run = run_host_fixture(npm_harness.replace("@LIB@", str(INSTALL / "lib.sh")))
+if run is None or run.returncode != 0 or run.stdout.splitlines() != [
+    "NPM_PREFIX managed", "NPM_missing refused", "NPM_external refused", "NPM_external_repeat refused"
+]:
+    fail(f"{INSTALL}/lib.sh: npm managed-prefix fault injection failed: {run}")
+
 for e in errors:
     print(f"FAIL: {e}", file=sys.stderr)
 if errors:
     print(f"test-bootstrap-remote: {len(errors)} issue(s) found", file=sys.stderr)
     sys.exit(1)
 
+print("bootstrap-remote OK: malformed locale near-matches are repaired, and failed profile writes/renames preserve the old login file")
+print("bootstrap-remote OK: unknown source provenance removes stale manifests from previous runs")
+print("bootstrap-remote OK: replaced Node companions and interrupted copies force a complete distribution repair")
+print("bootstrap-remote OK: npm ignores inherited prefixes and refuses missing or external publications")
 print(f"bootstrap-remote OK: {len(pins)} pin(s) in {VERSIONS}, all Renovate-extractable")
 print(f"bootstrap-remote OK: {len(tier_scripts)} shared install script(s) declare no pin of their own")
 print(f"bootstrap-remote OK: {len(head_pairs)} checksum pin-pair(s) agree with their version pin; {drift_note}")
@@ -3018,8 +3463,8 @@ print("bootstrap-remote OK: markdownlint-cli2 resolves to a PATH binary at the p
 print("bootstrap-remote OK: an unsafe HARMON_PREFIX is refused before anything runs, and the drop-in quotes the prefix it renders")
 print("bootstrap-remote OK: given a ref the assets come from the tag and the script's own directory is never read; without one the siblings are used or the run stops")
 print("bootstrap-remote OK: the tier selection canonicalises once; no downstream consumer re-parses it")
-print("bootstrap-remote OK: a staging file whose writer is gone is reaped, a live writer's is not, and a failed publish cleans up after itself")
-print("bootstrap-remote OK: the manifest's own staged write reaps by liveness too, and a failed publish fails the run without leaving litter")
+print(f"bootstrap-remote OK: a gone writer is {dead_writer_state} per procfs availability, a live writer is kept, and a failed publish cleans up after itself")
+print(f"bootstrap-remote OK: manifest gone-writer state is {dead_writer_state} per procfs availability, and a failed publish fails the run without leaving litter")
 print("bootstrap-remote OK: a version probe that prints the pin and exits nonzero is treated as needing the install")
 print("bootstrap-remote OK: the corepack step recreates the pnpm shim unless the file at its path really is corepack's launcher, at either edge of its bounded read, and reports a pnpm that shadows it on PATH")
 print("bootstrap-remote OK: uv installs with --system-certs, sourcing lib.sh points every Node process at the system CA bundle unless the caller named one, and the sudo re-exec forwards the knob")
