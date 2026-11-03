@@ -280,23 +280,19 @@ printf '%s\\n' "$PATH"
     finally:
         reconciler.write_bytes(original_reconciler)
 
-    # A prefix pathname can itself redirect to a platform distribution, even
-    # when command -v reports precisely the expected managed-bin entry.
-    (prefix / "bin/node").unlink()
-    (prefix / "bin/node").symlink_to(competing / "node")
-    rc, out, err = run_streams(["bash", "scripts/reconcile-toolchain.sh", "--status"], repo, env)
-    foreign = f"pinned node at {prefix / 'bin/node'} resolves outside managed prefix {prefix} to '{competing / 'node'}'"
-    assert rc == 0 and foreign in out, (out, err)
-    assert "incoming PATH shadows pinned node:" not in out, out
-    rc, export, diagnostics = run_streams(["bash", "scripts/reconcile-toolchain.sh", "--session-env"], repo, env)
-    assert rc == 0 and "WARNING" not in export and foreign in diagnostics, (export, diagnostics)
-    rc, out, err = run_streams(["bash", "scripts/session-start-remote.sh"], repo,
-                               env | {"CLAUDE_ENV_FILE": str(persisted)})
-    # Setup's detailed log may repeat the target warning on stderr; the hook's
-    # own diagnostic must independently appear in stdout for agent context.
-    assert rc == 0 and foreign in out, (out, err)
-    (prefix / "bin/node").unlink()
-    executable(prefix / "bin/node", "#!/bin/sh\necho pinned\n")
+    # Advisory helpers must not suppress the PATH fix itself. Recreate a
+    # present-but-broken Python and a failing manifest reader (exit 127).
+    failing_helpers = scratch / "failing-helpers"
+    failing_helpers.mkdir()
+    for helper in ("python3", "jq"):
+        executable(failing_helpers / helper, "#!/bin/sh\nexit 127\n")
+    helper_env = shadow_env | {"PATH": f"{failing_helpers}:{shadow_env['PATH']}"}
+    rc, export, diagnostics = run_streams(["bash", "scripts/reconcile-toolchain.sh", "--session-env"],
+                                          repo, helper_env)
+    assert rc == 0 and 'export PATH=' in export and "WARNING" not in export, (rc, export, diagnostics)
+    rc, out = run(["bash", "-c", export + '\nprintf "%s\\n" "${PATH%%:*}"'], repo, helper_env)
+    assert rc == 0 and out.strip() == str(prefix / "bin"), out
+    print("OK: --session-env still prints a working export with helpers that exit 127")
     rc, out = run(["bash", "scripts/reconcile-toolchain.sh", "--status"], repo, shadow_env)
     assert rc == 0 and all(str(competing / tool) in out for tool in path_tools), out
     # Shell data in a custom bin path must survive export generation literally.

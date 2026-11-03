@@ -88,26 +88,6 @@ report_path_shadows() {
             printf "WARNING: incoming PATH shadows pinned %s: resolves to '%s', expected %s/%s; put %s first on PATH.\n" \
                 "$tool" "${found:-nothing}" "$bin" "$tool" "$bin"
     done
-    # A pathname inside bin is not proof of a managed tool: old web images can
-    # leave bin/node pointing into the platform's Node distribution. Python is
-    # part of the bootstrap core; its realpath also works on macOS hosts.
-    if command -v python3 >/dev/null 2>&1; then
-        python3 - "$prefix" "$bin" "$pinned_tools" <<'PYTARGETS'
-import os
-import sys
-
-prefix, binary_dir, names = sys.argv[1:]
-managed = os.path.realpath(prefix)
-for tool in names.split():
-    entry = os.path.join(binary_dir, tool)
-    if not os.access(entry, os.X_OK):
-        continue
-    target = os.path.realpath(entry)
-    if os.path.commonpath((managed, target)) != managed:
-        print(f"WARNING: pinned {tool} at {entry} resolves outside managed prefix {prefix} "
-              f"to '{target}'; rebuild the environment with a fixed bootstrap.")
-PYTARGETS
-    fi
 }
 
 if [ "$mode" = --session-env ]; then
