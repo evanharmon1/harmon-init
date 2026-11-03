@@ -144,6 +144,8 @@ with tempfile.TemporaryDirectory() as tmp:
         rendered_registry = json.loads((dest / "agent-registry.json").read_text())
         by_id = {entry["slug"]: entry for entry in rendered_registry["finders"]}
         for entry in entries:
+            if entry["id"] != "codex-cloud" and entry.get("gates") is not False:
+                fail(f"{label}: {entry['id']} must set gates=false until harmon-devkit's lifecycle counts every reviewer (evanharmon1/harmon-devkit#1819)")
             if int(by_id[entry["id"]]["trusted_actor_id"]) != entry["completion"]["actor_id"]:
                 fail(f"{label}: policy and registry actor identity disagree")
             if by_id[entry["id"]]["collection"]["trigger"]["body"] != entry["trigger"]:
