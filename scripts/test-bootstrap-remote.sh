@@ -76,6 +76,15 @@ for name in sys.argv[1:]:
     print(f"{hashlib.sha256(pathlib.Path(name).read_bytes()).hexdigest()}  {name}")
 DIGEST
 }
+mv() {
+    if [ "${1:-}" = -fT ]; then
+        # Linux mv -T is an atomic same-filesystem replacement, including when
+        # the destination is a symlink to a directory. Model that on BSD hosts.
+        python3 -c 'import os, sys; os.replace(sys.argv[1], sys.argv[2])' "$2" "$3"
+    else
+        command mv "$@"
+    fi
+}
 """
 
 
@@ -84,7 +93,7 @@ def run_host_fixture(script):
     script = script.replace('$(mktemp -d)', '$(mktemp -d "${TMPDIR:-/tmp}/harmon-fixture.XXXXXX")')
     script = script.replace('$(mktemp)', '$(mktemp "${TMPDIR:-/tmp}/harmon-fixture.XXXXXX")')
     with tempfile.TemporaryDirectory() as directory:
-        tools = {name: shutil.which(name) for name in ("stat", "readlink", "sed", "cp", "sha256sum")}
+        tools = {name: shutil.which(name) for name in ("stat", "readlink", "sed", "cp", "mv", "sha256sum")}
         shim = '''#!/usr/bin/env python3
 import os, sys
 name = os.path.basename(sys.argv[0])
@@ -92,7 +101,8 @@ args = sys.argv[1:]
 if (name == "sha256sum" or (name == "stat" and "-c" in args)
         or (name == "readlink" and "-f" in args)
         or (name == "sed" and "-i" in args)
-        or (name == "cp" and "-a" in args)):
+        or (name == "cp" and "-a" in args)
+        or (name == "mv" and any(arg in ("-T", "-fT", "--no-target-directory") for arg in args))):
     sys.exit("GNU-only host invocation: " + name + " " + " ".join(args))
 real = TOOLS[name]
 os.execv(real, [real, *args])
@@ -3406,8 +3416,8 @@ if run is None or run.returncode != 0 or run.stdout.splitlines() != [
 ]:
     fail(f"{INSTALL}/install-core.sh: Node distribution identity fault injection failed: {run}")
 
-# Generic binary publication must also replace links to directories: mv without
-# removing that link moves the staged file INTO the platform directory instead.
+# Generic binary publication must replace the destination entry atomically,
+# including directory links. A failed rename must preserve the old command.
 managed_symlinks = r"""
 set -euo pipefail
 root="$(mktemp -d)"
@@ -3421,6 +3431,15 @@ printf 'pinned\n' >"${root}/source"
 for shape in file directory; do
     if [ "$shape" = file ]; then target="${root}/platform/sentinel"; else target="${root}/platform"; fi
     ln -s "$target" "${HARMON_BIN}/test-tool"
+    ln -s "$target" "${HARMON_BIN}/.test-tool.$$.harmon-staging"
+    portable_mv="$(declare -f mv)"
+    mv() { return 1; }
+    if (harmon_install_bin "${root}/source" test-tool) >"${root}/rename-error" 2>&1; then exit 1; fi
+    eval "$portable_mv"
+    [ -L "${HARMON_BIN}/test-tool" ] || { echo 'LIVE_SYMLINK_LOST'; exit 1; }
+    [ "$(readlink "${HARMON_BIN}/test-tool")" = "$target" ]
+    [ ! -e "${HARMON_BIN}/.test-tool.$$.harmon-staging" ]
+    grep -q 'could not publish test-tool' "${root}/rename-error"
     ln -s "$target" "${HARMON_BIN}/.test-tool.$$.harmon-staging"
     harmon_install_bin "${root}/source" test-tool
     [ ! -L "${HARMON_BIN}/test-tool" ]

@@ -22,7 +22,7 @@ source = Path.cwd()
 base_env = os.environ.copy()
 for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS",
              "CLAUDE_CODE_REMOTE", "HARMON_PREFIX", "HARMON_BIN", "HARMON_VERSIONS_FILE",
-             "HARMON_CHANGE_LOG", "HARMON_TMPDIR", "CLAUDE_ENV_FILE"):
+             "HARMON_CHANGE_LOG", "HARMON_TMPDIR", "CLAUDE_ENV_FILE", "BASH_ENV"):
     base_env.pop(name, None)
 base_env.update(GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1")
 
@@ -56,9 +56,14 @@ if not real_task:
     raise SystemExit("test-reconcile-toolchain needs task")
 
 
-def run(args, cwd=source, env=None):
+def run_streams(args, cwd=source, env=None):
     result = subprocess.run(args, cwd=cwd, env=env or base_env, text=True, capture_output=True, timeout=20)
-    return result.returncode, result.stdout + result.stderr
+    return result.returncode, result.stdout, result.stderr
+
+
+def run(args, cwd=source, env=None):
+    rc, stdout, stderr = run_streams(args, cwd, env)
+    return rc, stdout + stderr
 
 
 registry = set(subprocess.check_output(["bash", "scripts/reconcile-toolchain.sh", "--list"], text=True).split())
@@ -116,6 +121,19 @@ with tempfile.TemporaryDirectory(prefix="reconcile-") as scratch:
     def executable(path, text):
         path.write_text(text)
         path.chmod(0o755)
+
+    # Shared image installers use Linux mv -T. Keep this host fixture portable
+    # while preserving its atomic, non-directory-target replacement semantics.
+    real_mv = shutil.which("mv")
+    executable(stubs / "mv", f'''#!/usr/bin/env python3
+import os
+import sys
+args = sys.argv[1:]
+if args[0] == "-fT":
+    os.replace(args[1], args[2])
+else:
+    os.execv({real_mv!r}, [{real_mv!r}, *args])
+''')
 
     def old_tool(text="1.2.3", exit_code=0):
         executable(prefix / "bin/shellcheck", f"#!/bin/sh\necho 'version: {text}'\nexit {exit_code}\n")
@@ -212,33 +230,73 @@ exec {shlex.quote(real_task)} "$@"
     shadow_env = env | {"PATH": f"{competing}:{stubs}:{prefix / 'bin'}:{base_env['PATH']}"}
     persisted = scratch / "session env.sh"
     persisted.write_text("export KEEP_OTHER_HOOK=value\n")
-    rc, out = run(["bash", "scripts/session-start-remote.sh"], repo,
-                  shadow_env | {"CLAUDE_ENV_FILE": str(persisted)})
+    rc, out, err = run_streams(["bash", "scripts/session-start-remote.sh"], repo,
+                               shadow_env | {"CLAUDE_ENV_FILE": str(persisted)})
     assert rc == 0 and "setup:remote completed" in out, out
     assert "platform-task-must-not-run" not in out, out
     assert persisted.read_text().startswith("export KEEP_OTHER_HOOK=value\n"), persisted.read_text()
     for tool in path_tools:
         assert f"shadows pinned {tool}: resolves to '{competing / tool}'" in out, out
+        assert f"shadows pinned {tool}:" not in err, err
+    assert "WARNING" not in persisted.read_text(), persisted.read_text()
     # The shell receives a different PATH after the hook returned: the export
     # must expand it at command time, not overwrite it with the hook's snapshot.
     shell_env = shadow_env | {"PATH": f"{competing}:/later-session-entry:{base_env['PATH']}"}
-    for shell_args in (("bash", "--noprofile", "--norc"), ("bash", "--login")):
+    startup = scratch / "login-shell-startup.sh"
+    startup.write_text(f'export PATH={shlex.quote(str(competing))}:/later-session-entry:"$PATH"\n'
+                       'export LOGIN_STARTUP_FIXTURE_LOADED=yes\n')
+    for login in (False, True):
+        shell_args = ("bash", "--login") if login else ("bash", "--noprofile", "--norc")
+        current_env = shell_env | {"BASH_ENV": str(startup), "PATH": base_env["PATH"]} if login else shell_env
         rc, out = run([*shell_args, "-c", '''
-PATH="$1"
-. "$2"
+[ "$4" != True ] || [ "${LOGIN_STARTUP_FIXTURE_LOADED:-}" = yes ] || exit 1
+[ "${PATH%%:*}" = "$2" ] || exit 1
+incoming="$PATH"
+. "$1"
+[ "$PATH" = "$3:$incoming" ] || exit 1
 first="$PATH"
-. "$2"
+. "$1"
 [ "$PATH" = "$first" ] && [ "$KEEP_OTHER_HOOK" = value ] || exit 1
 for tool in node npm uv yq; do command -v "$tool"; done
 printf '%s\\n' "$PATH"
-''', "_", shell_env["PATH"], str(persisted)], repo, shell_env)
+''', "_", str(persisted), str(competing), str(prefix / "bin"), str(login)], repo, current_env)
         assert rc == 0 and out.splitlines()[:4] == [str(prefix / "bin" / tool) for tool in path_tools], out
         assert ":/later-session-entry:" in out, out
     for persistence in ({}, {"CLAUDE_ENV_FILE": str(scratch / "missing/env")}):
-        rc, out = run(["bash", "scripts/session-start-remote.sh"], repo, shadow_env | persistence)
-        assert rc == 0 and "CLAUDE_ENV_FILE" in out, out
+        rc, out, err = run_streams(["bash", "scripts/session-start-remote.sh"], repo, shadow_env | persistence)
+        warning = "could not persist managed PATH" if persistence else "CLAUDE_ENV_FILE is unavailable"
+        assert rc == 0 and warning in out and warning not in err, (out, err)
         for tool in path_tools:
             assert str(competing / tool) in out, out
+            assert f"shadows pinned {tool}:" not in err, err
+
+    reconciler = repo / "scripts/reconcile-toolchain.sh"
+    original_reconciler = reconciler.read_bytes()
+    try:
+        reconciler.write_text("#!/bin/sh\nexit 1\n")
+        rc, out, err = run_streams(["bash", "scripts/session-start-remote.sh"], repo, shadow_env)
+        assert rc == 0 and "could not prepare managed PATH" in out, (out, err)
+        assert "could not prepare managed PATH" not in err, err
+    finally:
+        reconciler.write_bytes(original_reconciler)
+
+    # A prefix pathname can itself redirect to a platform distribution, even
+    # when command -v reports precisely the expected managed-bin entry.
+    (prefix / "bin/node").unlink()
+    (prefix / "bin/node").symlink_to(competing / "node")
+    rc, out, err = run_streams(["bash", "scripts/reconcile-toolchain.sh", "--status"], repo, env)
+    foreign = f"pinned node at {prefix / 'bin/node'} resolves outside managed prefix {prefix} to '{competing / 'node'}'"
+    assert rc == 0 and foreign in out, (out, err)
+    assert "incoming PATH shadows pinned node:" not in out, out
+    rc, export, diagnostics = run_streams(["bash", "scripts/reconcile-toolchain.sh", "--session-env"], repo, env)
+    assert rc == 0 and "WARNING" not in export and foreign in diagnostics, (export, diagnostics)
+    rc, out, err = run_streams(["bash", "scripts/session-start-remote.sh"], repo,
+                               env | {"CLAUDE_ENV_FILE": str(persisted)})
+    # Setup's detailed log may repeat the target warning on stderr; the hook's
+    # own diagnostic must independently appear in stdout for agent context.
+    assert rc == 0 and foreign in out, (out, err)
+    (prefix / "bin/node").unlink()
+    executable(prefix / "bin/node", "#!/bin/sh\necho pinned\n")
     rc, out = run(["bash", "scripts/reconcile-toolchain.sh", "--status"], repo, shadow_env)
     assert rc == 0 and all(str(competing / tool) in out for tool in path_tools), out
     # Shell data in a custom bin path must survive export generation literally.
@@ -318,7 +376,7 @@ printf '%s\\n' "$PATH"
     old_tool()
     rc, out = run(["bash", "scripts/session-start-remote.sh"], repo, env)
     assert rc == 0, out
-    line = next(line for line in out.splitlines() if "SessionStart remote preparation:" in line)
+    line = next(line for line in out.splitlines() if line.startswith("==> SessionStart remote preparation:"))
     assert "Reconciled shellcheck 1.2.3 -> 7.8.9" in line, out
     old_tool()
     installer = cache / "install/install-shellcheck.sh"
@@ -392,7 +450,8 @@ printf '%s\\n' "$PATH"
     for mode in ("setup-failure",):
         rc, out = run(["bash", "scripts/session-start-remote.sh"], repo, env | {"RECONCILE_TEST_MODE": mode})
         assert rc == 0, out
-        line = next(line for line in out.splitlines() if "SessionStart remote preparation:" in line)
+        line = next(line for line in out.splitlines()
+                    if line.startswith("==> WARNING: SessionStart remote preparation: setup:remote failed;"))
         for value in ("shellcheck", "installed 1.2.3", "checkout pin 7.8.9", "environment v1.2.3", "HARMON_INIT_REF",
                       "preparation left this tool unreconciled"):
             assert value in line, (mode, value, out)

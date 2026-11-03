@@ -173,6 +173,9 @@ make_fixture() {
     FIX_PARENT="${TMP}/${name}"
     FIX="${FIX_PARENT}/checkout"
     mkdir -p "${FIX}/scripts" "${FIX}/.devcontainer/scripts"
+    # These scenarios test preparation's compact summary. Persistence failure
+    # and shadow warnings are tested separately with distinct output streams.
+    export CLAUDE_ENV_FILE="${FIX_PARENT}/session-env.sh"
     git init -q "${FIX}"
     cp "${REPO_ROOT}/scripts/setup-remote.sh" "${FIX}/scripts/setup-remote.sh"
     cp "${REPO_ROOT}/scripts/session-start-remote.sh" "${FIX}/scripts/session-start-remote.sh"

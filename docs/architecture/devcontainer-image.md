@@ -97,8 +97,8 @@ Missing or changed executable files, or executable targets outside the managed
 prefix, force a reinstall. Before copying Node, the installer refuses symlinked
 destination directories and removes destination leaf symlinks. A platform's
 `bin/node` link is replaced without changing its target. The shared binary
-publisher also removes destination links before renaming, including links to
-directories. npm globals use an explicit
+publisher atomically replaces the destination entry, including links to
+directories, and preserves it when the rename fails. npm globals use an explicit
 managed prefix and verify the published command there, regardless of inherited
 npm configuration.
 The VM bootstrap matches locale lines literally and publishes its login profile

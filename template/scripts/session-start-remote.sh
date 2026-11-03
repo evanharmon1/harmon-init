@@ -11,18 +11,20 @@ fi
 # Do this synchronously, before detaching setup and before even looking up task:
 # a child preparation process cannot change the agent's environment. Claude
 # evaluates these exports before subsequent Bash commands, after shell startup.
-if session_env="$(bash "$ROOT/scripts/reconcile-toolchain.sh" --session-env)"; then
+# FD 3 preserves hook stdout for diagnostics while the substitution captures
+# only the generated export. Exit-0 SessionStart context comes from stdout.
+if session_env="$(bash "$ROOT/scripts/reconcile-toolchain.sh" --session-env 2>&3)"; then
     eval "$session_env"
     if [ -n "${CLAUDE_ENV_FILE:-}" ]; then
         if ! printf '\n%s\n' "$session_env" >>"$CLAUDE_ENV_FILE"; then
-            echo "==> WARNING: SessionStart remote preparation: could not persist managed PATH in CLAUDE_ENV_FILE; the incoming shadow paths above still apply to agent commands." >&2
+            echo "==> WARNING: SessionStart remote preparation: could not persist managed PATH in CLAUDE_ENV_FILE; the incoming shadow paths above still apply to agent commands."
         fi
     else
-        echo "==> WARNING: SessionStart remote preparation: CLAUDE_ENV_FILE is unavailable; managed PATH applies only to preparation. Put ${HARMON_BIN:-${HARMON_PREFIX:-/usr/local}/bin} first on PATH in agent shells; any incoming shadows are named above." >&2
+        echo "==> WARNING: SessionStart remote preparation: CLAUDE_ENV_FILE is unavailable; managed PATH applies only to preparation. Put ${HARMON_BIN:-${HARMON_PREFIX:-/usr/local}/bin} first on PATH in agent shells; any incoming shadows are named above."
     fi
 else
-    echo "==> WARNING: SessionStart remote preparation: could not prepare managed PATH; run bash scripts/reconcile-toolchain.sh --status." >&2
-fi
+    echo "==> WARNING: SessionStart remote preparation: could not prepare managed PATH; run bash scripts/reconcile-toolchain.sh --status."
+fi 3>&1
 
 # Only the disposable waiter uses timeout; preparation never receives its signals.
 if ! command -v timeout >/dev/null 2>&1; then

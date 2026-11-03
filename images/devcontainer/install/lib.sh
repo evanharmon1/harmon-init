@@ -382,10 +382,9 @@ harmon_install_bin() {
         rm -f "$_hib_stage"
         harmon_die "could not stage $2 into ${HARMON_BIN}"
     fi
-    # mv treats a link to a directory as a destination directory. Remove the
-    # link itself so even that platform shape cannot redirect publication.
-    [ ! -L "${HARMON_BIN}/$2" ] || rm -f "${HARMON_BIN}/$2"
-    if ! mv -f "$_hib_stage" "${HARMON_BIN}/$2"; then
+    # This install path is Linux-only. -T replaces the destination entry itself,
+    # even for a link to a directory, while preserving it if the rename fails.
+    if ! mv -fT "$_hib_stage" "${HARMON_BIN}/$2"; then
         rm -f "$_hib_stage"
         harmon_die "could not publish $2 into ${HARMON_BIN}"
     fi
