@@ -158,12 +158,11 @@ description       = "Rigor: maximum scrutiny at every role — irreversible fail
 # confidence stage below which the single-empty-round exit cannot fire;
 # effective floor is min(min_rounds, cap).
 # Generated projects set challenge/review and min_rounds to 0 when
-# use_codex_review is off, and integration to 0 when use_codex_cloud_review
-# is off. Their matching [stage.*].finders arrays render empty below, so an
-# opt-out never leaves an enabled stage with no installed reviewer task.
-# integration: bounds CODEX RE-REVIEW CYCLES ONLY. Human and CI findings are
-# always answered — uncapped. 0 waives only the Codex cycle (the readiness
-# gate's Codex condition drops out; every other condition stays). A fix after
+# use_codex_review is off, with their local finder arrays empty below.
+# integration: bounds Codex cloud review cycles and opens the stage only when
+# use_codex_cloud_review is on. Non-Codex-only repositories have no integration
+# review stage until evanharmon1/harmon-devkit#1819; their finder entries remain
+# declarative. Human and CI findings are always answered — uncapped. A fix after
 # the last permitted cycle = `capped`: blocker report naming the unreviewed
 # head, PR stays draft. The verdict is never waived.
 # Only a cycle that reviews something NEW is charged. One whose head differs
@@ -200,6 +199,11 @@ description       = "Rigor: maximum scrutiny at every role — irreversible fail
 # A fully-disabled custom policy (all caps 0) remains schema-valid for repos
 # that want zero AI review at a level; no shipped level uses one.
 
+# The integration cap opens the stage only when Codex cloud review is enabled.
+# Other reviewers' finder entries take effect once harmon-devkit's integration
+# lifecycle counts every configured reviewer (evanharmon1/harmon-devkit#1819).
+# Until then, repositories with only non-Codex reviewers have no integration
+# review stage.
 [rounds.cursory]
 challenge      = [[ 1 if use_codex_review else 0 ]]
 review         = [[ 1 if use_codex_review else 0 ]]
@@ -391,10 +395,9 @@ harnesses = ["claude-code"]   # (preference) — live every run:
                                            # verdict it collects
 
 # ── Stages — stage → registry actors ────────────────────────────────────────
-# Monomorphic keys; the KEY carries the semantics, the value is always a
-# plain array of agent-registry.json slugs (never commands — those live one
-# hop away, behind the registry entry's Taskfile target). The one scalar is
-# [stage.integration].review_trigger, documented beside it below:
+# Actor arrays contain agent-registry.json slugs. Integration also supports
+# finder tables with per-reviewer settings; local commands remain behind
+# registry Taskfile targets. The review_trigger scalar controls timing:
 #   finders           (all-of) every listed finder returns a completed pass at
 #                     the same reviewed_head or the round is incomplete
 #                     (finder_unavailable after one retry — never a round
@@ -433,9 +436,31 @@ finders = ["codex-verification"]
 # finder_fallbacks = []
 
 [stage.integration]
+# The integration cap opens the stage only when Codex cloud review is enabled.
+# Other reviewers' finder entries take effect once harmon-devkit's integration
+# lifecycle counts every configured reviewer (evanharmon1/harmon-devkit#1819).
+# Until then, repositories with only non-Codex reviewers have no integration
+# review stage.
+# Per-repository reviewer defaults; a recorded operator instruction may override
+# them per PR. Codex omits budget/rounds to follow the resolved rounds policy.
+# Completion is current-head evidence from the registered actor, never a timer.
+finder = [
 [% if use_codex_cloud_review %]
-finders = ["codex-cloud"]
+  { id = "codex-cloud", trigger = "@codex review", completion = { kind = "comment", actor_id = 199175422, body = "Reviewed commit:" }, gates = true, carry = "identity" },
 [% endif %]
+[% if use_claude_review %]
+  { id = "claude", trigger = "@claude review", budget = 2, rounds = 2, completion = { kind = "comment", actor_id = [[ claude_review_actor_id ]], body = "Claude Review complete." }, gates = false, carry = "identity" },
+[% endif %]
+[% if use_greptile %]
+  { id = "greptile", trigger = "@greptileai", budget = 1, rounds = 1, completion = { kind = "review", actor_id = 165735046 }, gates = false, carry = "identity" },
+[% endif %]
+[% if use_coderabbit %]
+  { id = "coderabbit-cloud", trigger = "@coderabbitai full review", trigger_incremental = "@coderabbitai review", budget = 3, rounds = { full = [1], incremental = [2, 3] }, completion = { kind = "review", actor_id = 136622811 }, gates = false, carry = "identity-or-incremental" },
+[% endif %]
+[% if use_gemini_code_assist %]
+  { id = "gemini", trigger = "/gemini review", budget = 3, rounds = 3, completion = { kind = "review", actor_id = 176961590 }, gates = false, carry = "identity" },
+[% endif %]
+]
 # finder_fallbacks = []
 # review_trigger: WHEN the integration stage requests its PR-side reviews
 # (every finder above) relative to CI on the head. Absent = "after-ci".

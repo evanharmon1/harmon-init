@@ -51,10 +51,9 @@ primary agent to adjudicate — the protocol and the loop caps live in AGENTS.md
    sits dormant while Auto review is off and arms the moment the personal
    toggle changes). Codex triggers a cloud review on three events: opening a
    PR for review, marking a draft ready, and an explicit `@codex review`. Only
-   the third is usable here: the PR is a draft for the whole automated
-   lifecycle, so the first never fires, and the second fires *after* the
-   readiness gate — starting a new asynchronous review at the exact moment
-   "non-draft" is supposed to mean the automated work is done. Record the
+   the third is usable before handoff: promotion would start a new asynchronous
+   review after the handoff check. The orchestrator continues to own and watch
+   the PR after promotion. Record the
    three knobs under docs/CHECKLIST.md's [human-only] item; once recorded it
    is settled configuration — nothing in the lifecycle gates on it, and the
    one thing worth reporting later is an unsolicited Codex review, the
@@ -349,10 +348,9 @@ task security   # Semgrep CE + gitleaks + dependency audit — pre-publication g
 # → merging stays a human decision
 ```
 
-The full staged loop — including the PR integration rounds and the readiness
-gate that ends them — is defined in AGENTS.md ("Dev Loop"). The PR is a
-**draft** for every stage above: it is the agent's workbench, and promoting it
-is the one signal that the automated work is finished.
+The full staged loop, including PR integration and the handoff check, is defined
+in AGENTS.md ("Dev Loop"). The PR is a **draft** during those stages; promotion
+is the handoff, and the orchestrator owns and watches it until merge or close.
 
 The caps are not written down here, or in AGENTS.md. They live in
 [`.devflow.toml`](../../.devflow.toml): a `rigor` level selects a
@@ -367,7 +365,7 @@ is connected, `integration` bounds current-head Codex review cycles;
 pushes. These numbers move together with the resolved policy, and a cap of 0
 disables only the work it names, never a deterministic gate, a security scan, or
 the other readiness-gate conditions — under an `integration` cap of 0 only the
-current-head Codex condition drops out, exactly as `AGENTS.md` § Readiness gate
+current-head Codex condition drops out, exactly as `AGENTS.md` § Handoff check
 states; CI, thread replies, and the rest still apply. Announce
 the resolved profile — caps and floor included — when you enter the loop.
 
