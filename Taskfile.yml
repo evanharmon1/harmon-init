@@ -121,6 +121,7 @@ tasks:
       - task: test:ci-changes-classify
       - task: test:checklist-classes
       - task: test:comment-annotators
+      - task: test:artifact-retention
       - task: test:audit-ruleset
       - task: test:devcontainer-changed
       - task: test:summarize-gitleaks
@@ -168,6 +169,7 @@ tasks:
       - task: test:link-claude-json
       - task: test:image-staleness
       - task: test:open-devcontainer
+      - task: test:devcontainer-smoke-isolation
       - task: test:bot-autonomy
       - task: test:agent-profile
       - task: test:codex-review
@@ -427,6 +429,11 @@ tasks:
     cmds:
       - ./scripts/test-image-staleness.sh
 
+  test:devcontainer-smoke-isolation:
+    desc: Prove smoke-run Python state and cleanup isolation (no Docker needed)
+    cmds:
+      - ./scripts/test-devcontainer-smoke-isolation.sh
+
   test:open-devcontainer:
     desc: Unit-test the client-side dev container launcher (no VS Code needed)
     cmds:
@@ -558,6 +565,11 @@ tasks:
     desc: Unit-test the fail-closed docs-only CI classifier
     cmds:
       - ./scripts/test-ci-changes-classify.sh
+
+  test:artifact-retention:
+    desc: Validate bounded workflow artifacts and failure-path report preservation
+    cmds:
+      - ./scripts/test-artifact-retention.sh
 
   test:comment-annotators:
     desc: Exercise rendered comment publishers and docs-only annotators

@@ -106,7 +106,8 @@ if [ "${CLAUDE_CODE_REMOTE:-}" = true ]; then
     done <<<"$reconcile_output"
 fi
 
-# Keep reconciliation first, and leave room inside SessionStart's 90s budget.
+# Keep reconciliation first so history work fits the hook's 90 s wait when possible.
+# That wait no longer bounds setup itself; preparation continues after it.
 # Fetch only this checkout's origin; never move HEAD or merge any branch.
 if [ "${CLAUDE_CODE_REMOTE:-}" = true ]; then
     history_warning=""
