@@ -154,13 +154,17 @@ the compatibility reason in the rule's `description`.
       the build matrix must not have) removes that path — `needs:` cannot cross
       workflows. A live ruleset that does not name `closing-keywords` therefore
       enforces nothing, and a `copier update` cannot fix that for you, because
-      it does not mutate live rulesets. After the job has reported once, edit
-      the existing main-branch ruleset in Settings → Rules → Rulesets and add
-      that exact required status check. Do **not** re-import the JSON solely
-      for this change: GitHub creates a duplicate ruleset rather than updating
-      the live one. `task audit:ruleset` names a context the live ruleset is
-      missing — run it to confirm. (evanharmon1/harmon-init#1333 will automate
-      this as `task setup:ruleset`; until it lands the edit is by hand.)
+      it does not mutate live rulesets. After every newly required job has
+      reported once, preview with **`task setup:ruleset -- --dry-run`**, then
+      run **`task setup:ruleset`** and confirm the additions. It updates the
+      existing ruleset via `PUT`, preserving live conditions, bypass actors
+      and other rules. It only adds missing contexts: extra live checks stay,
+      and integration mismatches need a manual edit and exit non-zero even
+      when additions were applied. Non-interactive writes require `--yes`.
+      Do **not** re-import the JSON: that creates a duplicate ruleset.
+      `task audit:ruleset` confirms the result and reports other policy drift.
+      If the API rejects a rule (for example `merge_queue`), add the checks
+      to the existing ruleset in Settings → Rules → Rulesets instead.
 - [ ] **[human-only]** Probe: Read the live branch ruleset approval conditions through the GitHub API. Write: none. <!-- reconcile-id: root-enable-unattributed-changes-approval-014 --> **Enable unattributed-changes approval in the live branch
       ruleset** — when the checked-in ruleset gains this setting, edit the
       existing main-branch ruleset in Settings → Rules → Rulesets and enable the
