@@ -70,6 +70,7 @@ cache="${prefix}/share/harmon-remote-env"
 # commands actually published in our bin. Node's bundled commands have no
 # individual manifest keys, so include those explicitly.
 report_path_shadows() {
+    [ -f "${cache}/manifest.json" ] || return 0
     local tool found pinned_tools="node npm npx corepack pnpm uv uvx ${tools[*]}" manifest_tools
     if [ -r "${cache}/manifest.json" ] && command -v jq >/dev/null 2>&1; then
         manifest_tools="$(jq -r '.tools | keys[] | select(test("^[A-Za-z0-9][A-Za-z0-9._+-]*$"))' \
@@ -91,6 +92,7 @@ report_path_shadows() {
 }
 
 if [ "$mode" = --session-env ]; then
+    [ -f "${cache}/manifest.json" ] || exit 0
     report_path_shadows >&2
     # Evaluated after login startup files, before each agent Bash command. Quote
     # the prefix as shell data, but expand PATH in that future shell. Repeated

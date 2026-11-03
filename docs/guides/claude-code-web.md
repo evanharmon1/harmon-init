@@ -75,14 +75,18 @@ Rules for this script, each with its reason:
   including in generated repositories). It reuses the bootstrap's checksum-verified
   installer, with a 30 s install budget intended to fit within the hook's 90 s
   wait; setup continues if that wait ends.
-  The remote SessionStart hook first prepends the managed bin and appends a
+  When `${HARMON_PREFIX:-/usr/local}/share/harmon-remote-env/manifest.json` exists,
+  the remote SessionStart hook first prepends the managed bin and appends a
   dynamic PATH export to `CLAUDE_ENV_FILE`, which Claude applies before each
   subsequent Bash command, after shell startup. This covers both login and
   non-login agent shells even when the platform prepends its own Node or uv.
-  Other hooks' environment exports are preserved. If persistence is unavailable
+  Other hooks' environment exports are preserved. Successful persistence prints
+  one confirmation that managed PATH was saved for agent commands. If persistence is unavailable
   or fails, the hook reports that limitation and names incoming shadowing paths;
   put the managed bin first in agent shells manually. Report-only
-  `bash scripts/reconcile-toolchain.sh --status` also names these shadows.
+  `bash scripts/reconcile-toolchain.sh --status` also names these shadows when
+  the manifest exists. Without the manifest, preparation leaves PATH alone and
+  emits no PATH messages.
   Preparation writes to `${HARMON_BIN:-${HARMON_PREFIX:-/usr/local}/bin}` only when that directory is
   writable and wins tool resolution on `PATH`; it never requests `sudo` or
   changes the parent session's `PATH` from a standalone child task. SessionStart

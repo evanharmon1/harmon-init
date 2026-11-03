@@ -563,17 +563,21 @@ and Playwright's two browser download hosts; the
 [guide](../guides/claude-code-web.md#network) records the denial behind each).
 The platform takes no
 custom image and ignores `devcontainer.json`. The setup script provisions the
-machine only. Before launching preparation, the repository `SessionStart` hook
-prepends `${HARMON_BIN:-${HARMON_PREFIX:-/usr/local}/bin}` in its own process and
+machine only. When `${HARMON_PREFIX:-/usr/local}/share/harmon-remote-env/manifest.json`
+exists, the repository `SessionStart` hook prepends
+`${HARMON_BIN:-${HARMON_PREFIX:-/usr/local}/bin}` in its own process before preparation and
 appends the same dynamic export to `CLAUDE_ENV_FILE`, preserving other hooks'
 content. Claude evaluates this file before subsequent Bash commands, after shell
 startup, so platform paths cannot shadow the managed tools in those commands.
 Repeated sourcing keeps the prefix first without adding duplicates. This uses
 the documented [SessionStart environment persistence](https://code.claude.com/docs/en/hooks#persist-environment-variables).
-If the file is absent or cannot be written, the hook warns that only preparation
-gets the corrected PATH. It names shadowed Node commands, uv/uvx, the gate
+After saving the export, the hook prints one confirmation that managed PATH was
+saved for agent commands. If `CLAUDE_ENV_FILE` is absent or cannot be written,
+the hook instead warns that only preparation gets the corrected PATH and names
+shadowed Node commands, uv/uvx, the gate
 registry and commands published in the managed bin named by the bootstrap
-manifest; `reconcile-toolchain.sh --status` reports these shadows too.
+manifest; `reconcile-toolchain.sh --status` reports these shadows too. Without
+the bootstrap manifest, preparation leaves PATH alone and emits no PATH messages.
 
 The hook runs `task setup:remote` when
 `CLAUDE_CODE_REMOTE=true`, including cached resumes, to reinstall checkout hooks,
@@ -598,7 +602,7 @@ must cover the checkout's requested version, otherwise no install is attempted.
 The bootstrap manifest remains a record of the base environment revision; a
 per-session replacement does not rewrite that provenance.
 
-Preparation applies the same PATH export before reconciling. A standalone
+With a bootstrap manifest, preparation applies the same PATH export before reconciling. A standalone
 `task setup:remote` changes only its child environment and reports incoming
 shadow paths; it cannot persist the parent agent's PATH. Reconciliation uses
 the existing `${HARMON_BIN:-${HARMON_PREFIX:-/usr/local}/bin}` only if it

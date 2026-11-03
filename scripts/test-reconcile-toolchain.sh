@@ -235,10 +235,40 @@ exec {shlex.quote(real_task)} "$@"
     assert rc == 0 and "setup:remote completed" in out, out
     assert "platform-task-must-not-run" not in out, out
     assert persisted.read_text().startswith("export KEEP_OTHER_HOOK=value\n"), persisted.read_text()
-    for tool in path_tools:
-        assert f"shadows pinned {tool}: resolves to '{competing / tool}'" in out, out
-        assert f"shadows pinned {tool}:" not in err, err
+    assert out.count("Managed PATH saved for agent commands:") == 1, out
+    assert "shadows pinned" not in out + err, (out, err)
     assert "WARNING" not in persisted.read_text(), persisted.read_text()
+
+    # Consumers can use the hook without adopting the shared bootstrap. Even
+    # with tools under the default-style bin, no manifest means no managed PATH.
+    saved_manifest = manifest.with_suffix(".saved")
+    platform_task = competing / "task"
+    saved_platform_task = platform_task.read_text()
+    incoming_path_log = scratch / "unbootstrapped-task-path"
+    no_manifest_env = scratch / "no-manifest-env.sh"
+    no_manifest_env.write_text("export KEEP_OTHER_HOOK=value\n")
+    manifest.rename(saved_manifest)
+    try:
+        executable(platform_task, f'''#!/bin/sh
+printf '%s\\n' "$PATH" >{shlex.quote(str(incoming_path_log))}
+exec {shlex.quote(real_task)} "$@"
+''')
+        rc, export, diagnostics = run_streams(["bash", "scripts/reconcile-toolchain.sh", "--session-env"],
+                                              repo, shadow_env)
+        assert rc == 0 and not export and not diagnostics, (rc, export, diagnostics)
+        rc, status = run(["bash", "scripts/reconcile-toolchain.sh", "--status"], repo, shadow_env)
+        assert rc == 0 and "shadows pinned" not in status, status
+        rc, out, err = run_streams(["bash", "scripts/session-start-remote.sh"], repo,
+                                   shadow_env | {"CLAUDE_ENV_FILE": str(no_manifest_env)})
+        assert rc == 0 and "setup:remote completed" in out, (out, err)
+        assert incoming_path_log.read_text().strip() == shadow_env["PATH"], (out, err)
+        assert no_manifest_env.read_text() == "export KEEP_OTHER_HOOK=value\n"
+        assert "managed PATH" not in out + err and "Managed PATH" not in out + err, (out, err)
+        assert "shadows pinned" not in out + err, (out, err)
+    finally:
+        saved_manifest.rename(manifest)
+        executable(platform_task, saved_platform_task)
+    print("OK: no bootstrap manifest means no export, PATH change, persistence or shadow report")
     # The shell receives a different PATH after the hook returned: the export
     # must expand it at command time, not overwrite it with the hook's snapshot.
     shell_env = shadow_env | {"PATH": f"{competing}:/later-session-entry:{base_env['PATH']}"}
@@ -266,8 +296,9 @@ printf '%s\\n' "$PATH"
         rc, out, err = run_streams(["bash", "scripts/session-start-remote.sh"], repo, shadow_env | persistence)
         warning = "could not persist managed PATH" if persistence else "CLAUDE_ENV_FILE is unavailable"
         assert rc == 0 and warning in out and warning not in err, (out, err)
+        assert "Managed PATH saved for agent commands:" not in out + err, (out, err)
         for tool in path_tools:
-            assert str(competing / tool) in out, out
+            assert f"shadows pinned {tool}: resolves to '{competing / tool}'" in out, out
             assert f"shadows pinned {tool}:" not in err, err
 
     reconciler = repo / "scripts/reconcile-toolchain.sh"
