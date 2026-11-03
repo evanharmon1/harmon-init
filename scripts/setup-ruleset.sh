@@ -25,9 +25,15 @@
 #   --dry-run  print the additions and exit without writing
 #   --allow-unreported  explicitly allow checks not yet reported on the default head
 #
-# Exit: 0 = already in sync, or the additions were applied (or --dry-run);
-#       1 = incomplete (a mismatch or failed verification/write); 2 = unavailable (cannot determine the target,
-#       no single live ruleset, malformed JSON, declined at the prompt).
+# Exit: 0 = clean (no integration mismatch), verified additions without a
+#       mismatch, or a dry-run with no mismatch and no unreported additions
+#       (unless --allow-unreported explicitly overrides the latter).
+#       1 = integration mismatch or refused unreported additions (including
+#       dry-run), incomplete payload, failed write, or after-state mismatch.
+#       2 = invalid arguments/inputs or missing jq; unavailable target, unique
+#       ruleset, default-head inventory or fixtures; unavailable/declined
+#       confirmation; live policy moved; payload construction/normalization
+#       or post-write read/validation unavailable.
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
