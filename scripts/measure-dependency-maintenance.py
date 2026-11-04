@@ -23,15 +23,39 @@ def timestamp(value):
 
 def measure(pr, timeline, runs):
     """Return observable counts; force pushes are only possible rebases."""
-    human_events = {"commented", "reviewed", "head_ref_force_pushed"}
-    interventions = sum(
-        1 for event in timeline
-        if event.get("event") in human_events
-        and (event.get("actor") or {}).get("type") == "User"
-    )
-    force_pushes = sum(event.get("event") == "head_ref_force_pushed" for event in timeline)
-    attempts = sum(max(0, run["run_attempt"] - 1) for run in runs)
-    age = (timestamp(pr["merged_at"]) - timestamp(pr["created_at"])).total_seconds() / 86400
+    start, end = timestamp(pr["created_at"]), timestamp(pr["merged_at"])
+    interventions = force_pushes = 0
+    for event in timeline:
+        kind = event.get("event")
+        if kind not in {"commented", "reviewed", "head_ref_force_pushed"}:
+            continue
+        identity = event.get("user") if kind == "reviewed" else event.get("actor")
+        human = (identity or {}).get("type") == "User"
+        when = event.get("submitted_at") if kind == "reviewed" else event.get("created_at")
+        if not when:
+            if human:
+                interventions = None
+            if kind == "head_ref_force_pushed":
+                force_pushes = None
+            continue
+        if not start <= timestamp(when) <= end:
+            continue
+        if human and interventions is not None:
+            interventions += 1
+        if kind == "head_ref_force_pushed" and force_pushes is not None:
+            force_pushes += 1
+    attempts = 0
+    for run in runs:
+        created = timestamp(run["created_at"]) if run.get("created_at") else None
+        updated = timestamp(run["updated_at"]) if run.get("updated_at") else None
+        started = timestamp(run["run_started_at"]) if run.get("run_started_at") else None
+        if (created and created > end) or (updated and updated < start):
+            continue
+        if not all((created, updated, started)) or created < start or updated > end or started < start or started > end:
+            attempts = None
+        elif attempts is not None:
+            attempts += max(0, run["run_attempt"] - 1)
+    age = (end - start).total_seconds() / 86400
     return interventions, attempts, age, force_pushes
 
 
@@ -108,6 +132,9 @@ def main():
         print("---|---|---:|---|---:|---:|---|---:")
         for number, interventions, reruns, age, pushes in rows:
             actual = evidence.get(number, {})
+            interventions, reruns, pushes = (
+                "unknown" if value is None else value for value in (interventions, reruns, pushes)
+            )
             print(f"#{number} | {actual.get('interventions', 'unknown')} | {interventions} | "
                   f"{actual.get('reruns', 'unknown')} | {reruns} | {age:.2f} | "
                   f"{actual.get('rebases', 'unknown')} | {pushes}")

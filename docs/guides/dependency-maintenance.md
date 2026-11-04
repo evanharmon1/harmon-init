@@ -9,7 +9,10 @@ python3 scripts/measure-dependency-maintenance.py --repo OWNER/REPO \
   --cycle 2026-10 --start 2026-10-01 --end 2026-11-01 --pr 123 --pr 124
 ```
 
-Dates are UTC, with an inclusive start and exclusive end. The authenticated
+Dates are UTC, with an inclusive start and exclusive end. Cycle bounds select
+PRs by merge time; observable activity is bounded to each selected PR’s lifetime
+from creation through merge, inclusive. A PR created before the cycle start
+still contributes its lifetime activity. The authenticated
 `gh` CLI needs access to the repository's pull requests, timelines and Actions
 runs. The table reports each selected PR separately, allowing comparison within
 and across cycles. Retain the output, selection and any run records alongside
@@ -27,7 +30,11 @@ as unknown because these API sources cannot establish their completeness. A nume
 column means no matching event was observed, not that the actual measure is zero.
 Human timeline comments, reviews and force pushes are observable action counts,
 not a complete count of maintainer interventions or a measure of active time.
-CI reruns sum additional attempts of workflow runs found for commits still in
+When relevant timeline timestamps are missing, the affected proxy is unknown.
+Observed reruns are unknown when run timing cannot establish that all attempts
+belong to the PR lifetime, including a latest attempt after merge or an earlier
+attempt before creation. Runs wholly outside the lifetime are excluded. CI
+reruns otherwise sum additional attempts of workflow runs found for commits still in
 the PR; deleted runs, removed commits and unavailable evidence can make this an
 undercount, while unrelated workflows on the same commit can inflate it. The age uses PR creation and merge timestamps, not the upstream
 release date. Timeline force pushes are possible rebases, not proof of a rebase:
