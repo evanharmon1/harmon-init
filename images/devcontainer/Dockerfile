@@ -21,6 +21,9 @@ ARG TERRAFORM_VERSION=1.17.0
 # renovate: datasource=github-releases depName=terraform-linters/tflint extractVersion=^v?(?<version>.+)$
 ARG TFLINT_VERSION=0.64.0
 # pin-pair: tflint
+# Renovate computes these release-attachment digests at lookup time; builds
+# verify downloaded assets against the pinned values. The same applies to the
+# managed fresh and ttt digests below.
 # renovate: datasource=github-release-attachments depName=terraform-linters/tflint digestVersion=v0.64.0
 ARG TFLINT_SHA256_AMD64=cca9d13e2e1d7a2c627af60ff899a3c9b74212899416aeb96ec764d2ef954537
 # pin-pair: tflint

@@ -303,6 +303,20 @@ expect_output image-stale "TOOL_VERSION changed"
 write_image 2.0.0 "$NEW_AMD" "$NEW_ARM"
 run_guard
 expect_pass image-matched
+# Use a real PR merge-base and a real checksum consumed by sha256sum.
+git update-ref refs/remotes/origin/main "$(git rev-parse base)"
+git commit -qam 'matched image pins'
+CASE_GITHUB_BASE_REF=main PIN_PAIRS_BASE= run_guard
+expect_pass image-pr-matched
+printf probe >probe
+checksum="$(sha256sum probe | cut -d ' ' -f 1)"
+printf 'ARG EXTRA_CHECKSUM=%s\nRUN echo "${EXTRA_CHECKSUM}  probe" | sha256sum --check -\n' "$checksum" >>images/devcontainer/Dockerfile
+printf '%s  probe\n' "$checksum" | sha256sum --check - >/dev/null
+git commit -qam 'unclassified checksum'
+CASE_GITHUB_BASE_REF=main PIN_PAIRS_BASE= run_guard
+expect_fail image-pr-unclassified-checksum
+expect_output image-pr-unclassified-checksum 'neither Renovate-managed nor guarded'
+write_image 2.0.0 "$NEW_AMD" "$NEW_ARM"
 printf 'ARG OTHER_SHA256_AMD64=%s\n' "$NEW_AMD" >>images/devcontainer/Dockerfile
 run_guard
 expect_fail image-unclassified
@@ -317,7 +331,7 @@ for declaration in '  ARG OTHER_SHA256_AMD64=' 'ARG  OTHER_SHA256_AMD64=' 'arg O
 done
 write_image 2.0.0 "$NEW_AMD" "$NEW_ARM"
 printf '# verified-for: v2.0.0\nARG OH_MY_PI_SHA256_AMD64=%s\n' "$NEW_AMD" >>images/devcontainer/Dockerfile
-run_guard
+CASE_GITHUB_BASE_REF=main PIN_PAIRS_BASE= run_guard
 expect_pass image-verified
 
 # Every ARG must use the supported single-line form before digest classification.

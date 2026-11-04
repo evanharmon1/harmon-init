@@ -51,7 +51,7 @@ def load_shell_manager(path, probe="scripts/example.sh"):
     covered scripts/*.sh pin as invisible to Renovate. Order in customManagers
     means nothing to Renovate, so it must mean nothing here either.
     """
-    raw = pathlib.Path(path).read_text()
+    raw = pathlib.Path(path).read_text(encoding="utf-8")
     # The template config is jinja-templated, so it is not always valid JSON;
     # pull the manager out textually and fall back to a JSON parse when clean.
     try:
@@ -79,9 +79,9 @@ errors = []
 
 # CI and the strict-validation dispatcher must cover the same profile set.
 # This keeps a new matrix entry from silently taking an unsupported path.
-workflow = pathlib.Path(".github/workflows/build.yml").read_text()
+workflow = pathlib.Path(".github/workflows/build.yml").read_text(encoding="utf-8")
 matrix_match = re.search(r"profile:\s*\[([^]]+)\]", workflow)
-dispatcher = pathlib.Path("scripts/test-renovate-config.sh").read_text()
+dispatcher = pathlib.Path("scripts/test-renovate-config.sh").read_text(encoding="utf-8")
 profiles_match = re.search(r"profiles=\(([^)]+)\)", dispatcher)
 if not matrix_match or not profiles_match:
     errors.append("unable to read template-test matrix or strict-validation profiles")
@@ -100,10 +100,10 @@ if 'renovate-config-validator --strict renovate.json' not in dispatcher:
 if "command -v npx" not in dispatcher:
     errors.append("test:renovate-config does not require npx before strict validation")
 for strict_path in ("scripts/test-template.sh", "scripts/test-template-update.sh"):
-    strict_script = pathlib.Path(strict_path).read_text()
+    strict_script = pathlib.Path(strict_path).read_text(encoding="utf-8")
     if "skipping strict Renovate configuration validation" in strict_script:
         errors.append(f"{strict_path}: strict Renovate validation still skips when npx is unavailable")
-if 'required npx "strict Renovate configuration validation"' in pathlib.Path("scripts/test-template.sh").read_text():
+if 'required npx "strict Renovate configuration validation"' in pathlib.Path("scripts/test-template.sh").read_text(encoding="utf-8"):
     errors.append("scripts/test-template.sh: strict Renovate validation still uses the fail-open optional-tool helper")
 
 root_mgr = load_shell_manager("renovate.json")
@@ -126,7 +126,7 @@ for p in sorted(pathlib.Path(".").glob("scripts/*.sh")) + sorted(
 ):
     if not p.is_file():
         continue
-    text = p.read_text(errors="replace")
+    text = p.read_text(encoding="utf-8", errors="replace")
     if not ANNOT.search(text):
         continue
 
@@ -176,7 +176,7 @@ for p in sorted(pathlib.Path(".").glob("scripts/*.sh")) + sorted(
 # the one Renovate runs here; the rendered side is asserted by
 # scripts/test-template.sh.
 try:
-    root_cfg = json.loads(pathlib.Path("renovate.json").read_text())
+    root_cfg = json.loads(pathlib.Path("renovate.json").read_text(encoding="utf-8"))
 except json.JSONDecodeError as exc:
     root_cfg = {"customManagers": []}
     errors.append(f"renovate.json does not parse: {exc}")
@@ -196,7 +196,7 @@ for p in (
     + sorted(pathlib.Path(".").glob(".github/workflows/*.y*ml"))
     + sorted(pathlib.Path(".").glob("template/.github/workflows/*"))
 ):
-    text = p.read_text(errors="replace")
+    text = p.read_text(encoding="utf-8", errors="replace")
     rel = str(p)
     seen = set()
     for m in root_cfg.get("customManagers", []):
@@ -306,7 +306,7 @@ for top in SWEEP:
     base = pathlib.Path(top)
     files = [base] if base.is_file() else sorted(p for p in base.rglob("*") if p.is_file()) if base.is_dir() else []
     for p in files:
-        text = p.read_text(errors="replace")
+        text = p.read_text(encoding="utf-8", errors="replace")
         if ANNOT.search(text):
             file_pins[str(p)] = extract_pins(root_cfg, str(p), text)
 
@@ -325,7 +325,7 @@ INTENTIONALLY_UNPAIRED_TWIN_PINS = {
     ),
 }
 
-template_setup = pathlib.Path("template/.github/actions/setup/action.yml.jinja").read_text()
+template_setup = pathlib.Path("template/.github/actions/setup/action.yml.jinja").read_text(encoding="utf-8")
 template_setup_lines = template_setup.splitlines()
 pnpm_step = next(
     (i for i, line in enumerate(template_setup_lines) if "- uses: pnpm/action-setup@" in line),
@@ -427,7 +427,7 @@ if validator_group is not None:
 # while unrelated script pins (markdownlint-cli2, pip-audit) stay out of it.
 
 def render_template_config(answers):
-    raw = pathlib.Path("template/renovate.json.jinja").read_text()
+    raw = pathlib.Path("template/renovate.json.jinja").read_text(encoding="utf-8")
     rendered = re.sub(
         r"\[%[-+]?\s*if (\w+)\s*%\](.*?)\[%[-+]?\s*endif\s*[-+]?%\]",
         lambda m: m.group(2) if answers.get(m.group(1)) else "",
@@ -467,17 +467,10 @@ if tmpl_off and resolve_group(tmpl_off, "scripts/run-semgrep.sh", "semgrep", "py
         "should be ungrouped when no Devcontainer rule is rendered"
     )
 
-# Both vulnerability feeds, asserted on BOTH layers. test-template.sh checks the
-# rendered project and so cannot see the root copy — exactly the root drift
-# AGENTS.md warns test:template will not catch — and this is a security setting
-# whose absence is silent: osvVulnerabilityAlerts defaults to false in
-# Renovate's schema, so dropping the field disables the feed with every gate
-# still green. The two feeds have different reach (Dependabot's carries
-# transitive advisories; OSV is direct-only), so neither substitutes for the
-# other and both are required.
-root_cfg = json.loads(pathlib.Path("renovate.json").read_text())
+# Assert the identities of all image release-attachment digests Renovate extracts.
+root_cfg = json.loads(pathlib.Path("renovate.json").read_text(encoding="utf-8"))
 image_path = "images/devcontainer/Dockerfile"
-image_text = pathlib.Path(image_path).read_text()
+image_text = pathlib.Path(image_path).read_text(encoding="utf-8")
 image_managers = [m for m in root_cfg["customManagers"] if any(
     re.search(pattern.strip("/"), image_path) for pattern in m.get("managerFilePatterns", [])
 ) and any("currentDigest" in pattern for pattern in m.get("matchStrings", []))]
@@ -500,6 +493,14 @@ for match in image_matches:
     image_keys.add((dep, declaration.group(1)))
 if image_keys != expected_image_keys:
     errors.append(f"{image_path}: release attachment identities differ: expected {sorted(expected_image_keys)!r}, found {sorted(image_keys)!r}")
+# Both vulnerability feeds, asserted on BOTH layers. test-template.sh checks the
+# rendered project and so cannot see the root copy — exactly the root drift
+# AGENTS.md warns test:template will not catch — and this is a security setting
+# whose absence is silent: osvVulnerabilityAlerts defaults to false in
+# Renovate's schema, so dropping the field disables the feed with every gate
+# still green. The two feeds have different reach (Dependabot's carries
+# transitive advisories; OSV is direct-only), so neither substitutes for the
+# other and both are required.
 for label, cfg in [("renovate.json", root_cfg), ("template/renovate.json.jinja", tmpl_on)]:
     if cfg is None:
         continue
