@@ -120,6 +120,7 @@ tasks:
       - task: test:ci-results
       - task: test:ci-changes-classify
       - task: test:checklist-classes
+      - task: test:audit-github
       - task: test:comment-annotators
       - task: test:artifact-retention
       - task: test:audit-ruleset
@@ -830,6 +831,19 @@ tasks:
     desc: "Report root<->template drift for jinja twins (report, not a gate; --summary for names only)"
     cmds:
       - ./scripts/audit-dogfood.sh {{.CLI_ARGS}}
+
+  audit:github:
+    desc: Read-only GitHub checklist audit (NDJSON; 0 clean, 1 drift, 2 unavailable)
+    # Preserve machine-readable stdout under the global grouped output mode.
+    interactive: true
+    silent: true
+    cmds:
+      - ./scripts/audit-github.sh {{.CLI_ARGS}}
+
+  test:audit-github:
+    desc: Test GitHub checklist probes offline with stubbed gh
+    cmds:
+      - ./scripts/test-audit-github.sh
 
   audit:ruleset:
     desc: Compare the checked-in branch ruleset with GitHub's live ruleset (read-only)
