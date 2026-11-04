@@ -485,6 +485,21 @@ image_matches = [match for manager in image_managers for pattern in manager["mat
                  for match in re.finditer(js_to_py(pattern), image_text)]
 if len(image_matches) != 6:
     errors.append(f"{image_path}: expected six extractable release attachment digests, found {len(image_matches)}")
+expected_image_keys = {
+    (dep, arch)
+    for dep in ("terraform-linters/tflint", "sinelaw/fresh", "eugenioenko/ttt")
+    for arch in ("AMD64", "ARM64")
+}
+image_keys = set()
+for match in image_matches:
+    declaration = re.search(r"\bARG [A-Z0-9_]+_SHA256_(AMD64|ARM64)=", match.group(0))
+    dep = match.groupdict().get("depName")
+    if not declaration or not dep:
+        errors.append(f"{image_path}: unable to identify extracted release attachment: {match.group(0)!r}")
+        continue
+    image_keys.add((dep, declaration.group(1)))
+if image_keys != expected_image_keys:
+    errors.append(f"{image_path}: release attachment identities differ: expected {sorted(expected_image_keys)!r}, found {sorted(image_keys)!r}")
 for label, cfg in [("renovate.json", root_cfg), ("template/renovate.json.jinja", tmpl_on)]:
     if cfg is None:
         continue
