@@ -114,6 +114,12 @@ github_org:
   help: "[security-sensitive] GITHUB ORG: GitHub org/user that will own the repo (drives repo URL, GHCR images, workflows)"
   default: "[[ author_git_provider_username ]]"
 
+merge_queue_available:
+  type: bool
+  help: "MERGE QUEUE: Available for public organization repositories or private organization repositories on GitHub Enterprise Cloud; private Team repositories cannot use it. Enable only when available."
+  default: false
+  when: "[[ github_org != author_git_provider_username ]]"
+
 code_owner:
   type: str
   help: "[security-sensitive] CODE OWNER: GitHub user/team for CODEOWNERS (org repos may use org/team)"
