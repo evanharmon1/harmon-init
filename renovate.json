@@ -258,6 +258,12 @@
       "description": "Ignore tokei >=13.0.0 — upstream releases after v13.0.0-alpha.0 publish no prebuilt binary assets",
       "matchPackageNames": ["XAMPPRocky/tokei"],
       "allowedVersions": "<=13.0.0-alpha.0"
+    },
+    {
+      "description": "Hold Node at the 24 LTS line: Node 25+ no longer bundles corepack, which images/devcontainer/install/install-core.sh needs for pnpm (#1899). Remove this hold once the image installs pnpm another way.",
+      "matchDatasources": ["node-version"],
+      "matchPackageNames": ["node"],
+      "allowedVersions": "<25"
     }
   ]
 }
