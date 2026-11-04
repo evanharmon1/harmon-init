@@ -8,6 +8,37 @@ if ! ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"; then
     exit 0
 fi
 
+# Do this synchronously, before detaching setup and before even looking up task:
+# a child preparation process cannot change the agent's environment. Claude
+# evaluates these exports before subsequent Bash commands, after shell startup.
+# Only a bootstrap-owned environment supplies a managed toolchain. Decide
+# persistence before emitting remedies: a saved export already fixes shadows.
+if [ -f "${HARMON_PREFIX:-/usr/local}/share/harmon-remote-env/manifest.json" ]; then
+    if session_env="$(bash "$ROOT/scripts/reconcile-toolchain.sh" --session-env 2>/dev/null)"; then
+        if [ -n "$session_env" ]; then
+            path_warning=""
+            if [ -n "${CLAUDE_ENV_FILE:-}" ]; then
+                if printf '\n%s\n' "$session_env" >>"$CLAUDE_ENV_FILE"; then
+                    echo "==> Managed PATH saved for agent commands: ${HARMON_BIN:-${HARMON_PREFIX:-/usr/local}/bin} first."
+                else
+                    path_warning="could not persist managed PATH in CLAUDE_ENV_FILE; managed PATH applies only to preparation."
+                fi
+            else
+                path_warning="CLAUDE_ENV_FILE is unavailable; managed PATH applies only to preparation."
+            fi
+            if [ -n "$path_warning" ]; then
+                # PATH is still the incoming one. Send only the helper's
+                # diagnostics to stdout; discard its duplicate export.
+                bash "$ROOT/scripts/reconcile-toolchain.sh" --session-env 2>&1 >/dev/null
+                echo "==> WARNING: SessionStart remote preparation: ${path_warning} Put ${HARMON_BIN:-${HARMON_PREFIX:-/usr/local}/bin} first on PATH in agent shells."
+            fi
+            eval "$session_env"
+        fi
+    else
+        echo "==> WARNING: SessionStart remote preparation: could not prepare managed PATH; run bash scripts/reconcile-toolchain.sh --status."
+    fi
+fi
+
 # Only the disposable waiter uses timeout; preparation never receives its signals.
 if ! command -v timeout >/dev/null 2>&1; then
     echo "==> WARNING: SessionStart remote preparation: preparation skipped because timeout is unavailable; run task setup:remote."

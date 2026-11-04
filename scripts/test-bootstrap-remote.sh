@@ -76,6 +76,15 @@ for name in sys.argv[1:]:
     print(f"{hashlib.sha256(pathlib.Path(name).read_bytes()).hexdigest()}  {name}")
 DIGEST
 }
+mv() {
+    if [ "${1:-}" = -fT ]; then
+        # Linux mv -T is an atomic same-filesystem replacement, including when
+        # the destination is a symlink to a directory. Model that on BSD hosts.
+        python3 -c 'import os, sys; os.replace(sys.argv[1], sys.argv[2])' "$2" "$3"
+    else
+        command mv "$@"
+    fi
+}
 """
 
 
@@ -84,7 +93,7 @@ def run_host_fixture(script):
     script = script.replace('$(mktemp -d)', '$(mktemp -d "${TMPDIR:-/tmp}/harmon-fixture.XXXXXX")')
     script = script.replace('$(mktemp)', '$(mktemp "${TMPDIR:-/tmp}/harmon-fixture.XXXXXX")')
     with tempfile.TemporaryDirectory() as directory:
-        tools = {name: shutil.which(name) for name in ("stat", "readlink", "sed", "cp", "sha256sum")}
+        tools = {name: shutil.which(name) for name in ("stat", "readlink", "sed", "cp", "mv", "sha256sum")}
         shim = '''#!/usr/bin/env python3
 import os, sys
 name = os.path.basename(sys.argv[0])
@@ -92,7 +101,8 @@ args = sys.argv[1:]
 if (name == "sha256sum" or (name == "stat" and "-c" in args)
         or (name == "readlink" and "-f" in args)
         or (name == "sed" and "-i" in args)
-        or (name == "cp" and "-a" in args)):
+        or (name == "cp" and "-a" in args)
+        or (name == "mv" and any(arg in ("-T", "-fT", "--no-target-directory") for arg in args))):
     sys.exit("GNU-only host invocation: " + name + " " + " ".join(args))
 real = TOOLS[name]
 os.execv(real, [real, *args])
@@ -3332,11 +3342,48 @@ harmon_verify_sha256() { :; }
 run_node() {
 @NODE_BLOCK@
 }
+# Recreate the web VM: the prefix executable redirects into platform tools.
+mkdir -p "${root}/platform"
+printf 'platform node\n' >"${root}/platform/node"
+ln -s "${root}/platform/node" "${HARMON_BIN}/node"
+# A portable regular-file copy demonstrates the same destination-following
+# behaviour as the recursive cp -a publication on the Linux installer.
+cp -p "${root}/dist/bin/node" "${HARMON_BIN}/node"
+cmp "${root}/dist/bin/node" "${root}/platform/node"
+printf 'platform node\n' >"${root}/platform/node"
 run_node >/dev/null
+[ ! -L "${HARMON_BIN}/node" ]
+[ "$(cat "${root}/platform/node")" = 'platform node' ]
+printf 'NODE_PLATFORM_SYMLINK replaced safely\n'
 [ "$(wc -l <"${root}/fetches")" -eq 1 ]
 run_node >/dev/null
 [ "$(wc -l <"${root}/fetches")" -eq 1 ]
 expected_fetches=1
+# Equal bytes and a matching receipt must not attest a foreign executable.
+for executable in node npm; do
+    cp "${HARMON_BIN}/${executable}" "${root}/platform/${executable}"
+    rm "${HARMON_BIN}/${executable}"
+    ln -s "${root}/platform/${executable}" "${HARMON_BIN}/${executable}"
+    run_node >/dev/null
+    expected_fetches=$((expected_fetches + 1))
+    [ "$(wc -l <"${root}/fetches")" -eq "$expected_fetches" ]
+    cmp "${HARMON_BIN}/${executable}" "${root}/platform/${executable}"
+done
+printf 'NODE_FOREIGN_RECEIPT repaired\n'
+
+# Directory links must be refused before copying any package into their target.
+mv "${HARMON_PREFIX}/lib/node_modules" "${root}/saved-modules"
+ln -s "${root}/platform" "${HARMON_PREFIX}/lib/node_modules"
+printf 'platform npm\n' >"${root}/platform/npm.js"
+if (run_node) >"${root}/directory-error" 2>&1; then exit 1; fi
+grep -q 'refusing symlink directory' "${root}/directory-error"
+[ "$(cat "${root}/platform/npm.js")" = 'platform npm' ]
+[ ! -e "${root}/platform/npx.js" ]
+rm "${HARMON_PREFIX}/lib/node_modules"
+mv "${root}/saved-modules" "${HARMON_PREFIX}/lib/node_modules"
+run_node >/dev/null
+expected_fetches="$(wc -l <"${root}/fetches")"
+printf 'NODE_DIRECTORY_SYMLINK refused safely\n'
 for companion in npm npx corepack; do
     # Keep the new node and a valid receipt, overwrite one launcher file's
     # bytes. This simulates an old executable, not an in-place package change
@@ -3363,9 +3410,54 @@ printf 'NODE_INTERRUPTED repaired\n'
 """
 run = run_host_fixture(node_harness.replace("@LIB@", str(INSTALL / "lib.sh")).replace("@NODE_BLOCK@", node_block))
 if run is None or run.returncode != 0 or run.stdout.splitlines() != [
-    "NODE_npm repaired", "NODE_npx repaired", "NODE_corepack repaired", "NODE_INTERRUPTED repaired"
+    "NODE_PLATFORM_SYMLINK replaced safely", "NODE_FOREIGN_RECEIPT repaired",
+    "NODE_DIRECTORY_SYMLINK refused safely", "NODE_npm repaired", "NODE_npx repaired",
+    "NODE_corepack repaired", "NODE_INTERRUPTED repaired"
 ]:
     fail(f"{INSTALL}/install-core.sh: Node distribution identity fault injection failed: {run}")
+
+# Generic binary publication must replace the destination entry atomically,
+# including directory links. A failed rename must preserve the old command.
+managed_symlinks = r"""
+set -euo pipefail
+root="$(mktemp -d)"
+trap 'rm -rf "$root"' EXIT
+export HARMON_PREFIX="${root}/prefix" HARMON_BIN="${root}/prefix/bin"
+. '@LIB@'
+harmon_ensure_bin
+mkdir "${root}/platform"
+printf 'platform\n' >"${root}/platform/sentinel"
+printf 'pinned\n' >"${root}/source"
+for shape in file directory; do
+    if [ "$shape" = file ]; then target="${root}/platform/sentinel"; else target="${root}/platform"; fi
+    ln -s "$target" "${HARMON_BIN}/test-tool"
+    ln -s "$target" "${HARMON_BIN}/.test-tool.$$.harmon-staging"
+    portable_mv="$(declare -f mv)"
+    mv() { return 1; }
+    if (harmon_install_bin "${root}/source" test-tool) >"${root}/rename-error" 2>&1; then exit 1; fi
+    eval "$portable_mv"
+    [ -L "${HARMON_BIN}/test-tool" ] || { echo 'LIVE_SYMLINK_LOST'; exit 1; }
+    [ "$(readlink "${HARMON_BIN}/test-tool")" = "$target" ]
+    [ ! -e "${HARMON_BIN}/.test-tool.$$.harmon-staging" ]
+    grep -q 'could not publish test-tool' "${root}/rename-error"
+    ln -s "$target" "${HARMON_BIN}/.test-tool.$$.harmon-staging"
+    harmon_install_bin "${root}/source" test-tool
+    [ ! -L "${HARMON_BIN}/test-tool" ]
+    cmp "${root}/source" "${HARMON_BIN}/test-tool"
+    [ "$(cat "${root}/platform/sentinel")" = platform ]
+    [ "$(find "${root}/platform" -type f | wc -l)" -eq 1 ]
+    rm "${HARMON_BIN}/test-tool"
+done
+mv "$HARMON_BIN" "${root}/saved-bin"
+ln -s "${root}/platform" "$HARMON_BIN"
+if (harmon_install_bin "${root}/source" test-tool) >"${root}/refusal" 2>&1; then exit 1; fi
+grep -q 'refusing symlink directory' "${root}/refusal"
+[ ! -e "${root}/platform/test-tool" ]
+printf 'BINARY_SYMLINKS safe\n'
+"""
+run = run_host_fixture(managed_symlinks.replace("@LIB@", str(INSTALL / "lib.sh")))
+if run is None or run.returncode != 0 or run.stdout.splitlines() != ["BINARY_SYMLINKS safe"]:
+    fail(f"{INSTALL}/lib.sh: managed-prefix symlink fault injection failed: {run}")
 
 # npm is a process stub so the inherited prefix reaches it exactly as it would
 # reach real npm. It honours the CLI prefix only when present. A second mode
