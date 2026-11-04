@@ -96,10 +96,21 @@ for stale_validator in "$stale_validator_path" "template/$stale_validator_path";
 done
 reference_roots=(AGENTS.md ai docs)
 [ ! -d template ] || reference_roots+=(template)
-if rg -n --fixed-strings "$stale_validator_path" "${reference_roots[@]}"; then
+# grep is POSIX and always present; distinguish its error exit (2) from "no
+# match" (1) so an unreadable root fails rather than passing the guard.
+stale_reference_status=0
+grep -rnF -- "$stale_validator_path" "${reference_roots[@]}" || stale_reference_status=$?
+case "$stale_reference_status" in
+0)
     echo "FAIL: repository-root result validator path is still documented" >&2
     exit 1
-fi
+    ;;
+1) ;;
+*)
+    echo "FAIL: could not scan for the stale result validator path (grep exit $stale_reference_status)" >&2
+    exit 1
+    ;;
+esac
 
 accepts() {
     kind="$1"
@@ -192,11 +203,33 @@ done
 accepts brief "$fixtures/brief.envelope/valid/minimal.md"
 accepts plan "$fixtures/plan/valid/interactive.json"
 
+# harmon-devkit v0.66.0 (#1691) authenticates integrator receipts: --receipt
+# then also needs the run record, the Codex checker state and its repository,
+# and the vendored package's own suite covers that path. Without those inputs
+# the receipt must now be refused, so assert the refusal and keep validating
+# each fixture against its schema. An older pinned validator keeps the bare
+# receipt check. The capability is read from the validator's usage text, which
+# it prints on a usage error (a non-zero exit, so capture before matching).
+validator_usage="$(node "$validator" 2>&1 || true)"
+if [[ "$validator_usage" == *--integrator-record* ]]; then
+    integrator_receipt_authenticated=1
+else
+    integrator_receipt_authenticated=0
+fi
+integrator_accepts() {
+    file="$1"
+    run_id="$2"
+    if [ "$integrator_receipt_authenticated" = 1 ]; then
+        accepts integrator "$file" --known-ids "$known_ids" --run-id "$run_id" --initiated-by human
+        rejects integrator-unauthenticated-receipt integrator "$file" \
+            --known-ids "$known_ids" --run-id "$run_id" --initiated-by human --receipt
+    else
+        accepts integrator "$file" --known-ids "$known_ids" --run-id "$run_id" --initiated-by human --receipt
+    fi
+}
+
 for fixture in charged-exempt carried; do
-    accepts integrator "$fixtures/result.integrator.schema/valid/$fixture.json" \
-        --known-ids "$known_ids" --run-id run-4001-verdict-clean --initiated-by human --receipt
-    node "$validator" integrator "$fixtures/result.integrator.schema/valid/$fixture.json" \
-        --known-ids "$known_ids" --run-id run-4001-verdict-clean --initiated-by human --receipt >/dev/null
+    integrator_accepts "$fixtures/result.integrator.schema/valid/$fixture.json" run-4001-verdict-clean
 done
 
 for mutation in '.payload.codex_cycle.charged = -1' \
@@ -246,8 +279,7 @@ accepts reviewer "$fixtures/result.reviewer.schema/valid/empty-findings.json" \
 rejects reviewer-counts-mismatch reviewer \
     "$fixtures/result.reviewer.schema/invalid/counts-mismatch-tally.json"
 
-accepts integrator "$fixtures/result.integrator.schema/valid/verdict-clean.json" \
-    --known-ids "$known_ids" --run-id run-4001-verdict-clean --initiated-by human --receipt
+integrator_accepts "$fixtures/result.integrator.schema/valid/verdict-clean.json" run-4001-verdict-clean
 rejects integrator-bad-verdict integrator \
     "$fixtures/result.integrator.schema/invalid/bad-verdict-enum.json"
 
