@@ -41,7 +41,7 @@ class Unavailable(Exception):
 
 cache = {}
 repo = None
-host = None
+owner = name = host = None
 try:
     target = args.repo
     if not target:
@@ -55,17 +55,19 @@ try:
         owner, name = parts
     else:
         raise Unavailable('repository must be [HOST/]OWNER/REPO')
-    if not all(re.fullmatch(r'[A-Za-z0-9_.-]+', part) for part in (owner, name)):
+    if not all(part not in ('.', '..') and not part.startswith('-') and
+               re.fullmatch(r'[A-Za-z0-9_.-]+', part) for part in parts):
         raise Unavailable('invalid repository')
     repo = owner + '/' + name
     target_error = None
-except (Unavailable, KeyError, IndexError) as error:
+except (Unavailable, KeyError, IndexError, TypeError) as error:
     target_error = str(error)
+    owner = name = host = None
 
 
-def api(endpoint, key=None, paginated=False):
+def api(endpoint, key=None, paginated=False, headers=()):
     """GET only, bounded pagination; cache evidence within this invocation."""
-    identity = (endpoint, key, paginated)
+    identity = (endpoint, key, paginated, tuple(headers))
     if identity not in cache:
         try:
             if target_error:
@@ -76,6 +78,8 @@ def api(endpoint, key=None, paginated=False):
                 if paginated:
                     path += ('&' if '?' in path else '?') + f'per_page=100&page={page}'
                 argv = ['gh', 'api', '--method', 'GET', path]
+                for header in headers:
+                    argv += ['-H', header]
                 if host:
                     argv += ['--hostname', host]
                 payload = command(argv)
@@ -127,39 +131,63 @@ def outcome(ok, reason):
 
 
 def probe(entry):
+    if target_error:
+        raise Unavailable(target_error)
     item = entry['id']
     manual = 'manual evidence required: ' + (entry['probe'] or 'no read-only probe is available')
     if 'automated-settings-' in item:
         settings = api('repos/' + repo) if repo else api('')
         if args.bot_collaborator and not re.fullmatch(r'[A-Za-z0-9-]+', args.bot_collaborator):
             raise Unavailable('invalid bot collaborator login')
-        ok = (field(settings, 'delete_branch_on_merge') is True and
-              field(settings, 'allow_update_branch') is True and
-              field(settings, 'allow_auto_merge') is False)
-        # A 404 on this permission-sensitive endpoint is unknown, never disabled.
-        api('repos/' + repo + '/vulnerability-alerts')
-        if field(settings, 'visibility') == 'public':
-            ok = field(read('private-vulnerability-reporting'), 'enabled') is True and ok
-        variables = read('actions/variables', 'variables', True)
-        routing = {row['name']: row['value'] for row in variables}
-        expected = ('CI_RUNS_ON', 'BROWSER_RUNS_ON', 'IMAGE_BUILD_RUNS_ON', 'ISOLATED_RUNS_ON', 'MULTICORE_RUNS_ON')
-        if not all(key in routing for key in expected):
-            raise Unavailable('runner variables missing; inherited organization values require operator verification')
-        for key in expected:
+        drifted = False
+        unavailable = []
+
+        def check_setting(check):
+            nonlocal drifted
             try:
-                selector = json.loads(routing[key])
-            except (ValueError, TypeError):
-                return outcome(False, 'invalid runner selector: ' + key)
-            labels = selector.get('labels') if isinstance(selector, dict) else selector
-            labels = [labels] if isinstance(labels, str) else labels
-            valid = isinstance(labels, list) and bool(labels) and all(isinstance(label, str) and label for label in labels)
-            ok = valid and ok
-            if key == 'ISOLATED_RUNS_ON' and valid:
-                ok = all(label.lower() != 'self-hosted' for label in labels) and ok
+                if not check():
+                    drifted = True
+            except Unavailable as error:
+                unavailable.append(str(error))
+
+        for key, expected in (('delete_branch_on_merge', True), ('allow_update_branch', True), ('allow_auto_merge', False)):
+            check_setting(lambda: field(settings, key) is expected)
+        # An unreadable permission-sensitive endpoint is unknown, never disabled.
+        check_setting(lambda: (api('repos/' + repo + '/vulnerability-alerts'), True)[1])
+        try:
+            visibility = field(settings, 'visibility')
+        except Unavailable as error:
+            visibility = None
+            unavailable.append(str(error))
+        if visibility == 'public':
+            check_setting(lambda: field(read('private-vulnerability-reporting'), 'enabled') is True)
+
+        def check_routing():
+            if visibility not in ('public', 'private', 'internal'):
+                raise Unavailable('repository visibility unavailable')
+            routing = {}
+            if visibility in ('private', 'internal'):
+                try:
+                    routing.update({row['name']: row['value'] for row in read('actions/organization-variables', 'variables', True)})
+                except Unavailable:
+                    pass  # Optional inheritance; repo CI_RUNS_ON is provisioned by setup.
+            routing.update({row['name']: row['value'] for row in read('actions/variables', 'variables', True)})
+            expected = ('CI_RUNS_ON', 'BROWSER_RUNS_ON', 'IMAGE_BUILD_RUNS_ON', 'ISOLATED_RUNS_ON', 'MULTICORE_RUNS_ON')
+            if visibility == 'public':
+                return all(routing.get(key) == '"ubuntu-latest"' for key in expected)
+            if routing.get('CI_RUNS_ON') not in ('"ubuntu-latest"', '"self-hosted"'):
+                return False
+            return all(routing[key] in (('"ubuntu-latest"',) if key == 'ISOLATED_RUNS_ON' else
+                                       ('"ubuntu-latest"', '"self-hosted"')) for key in expected[1:] if key in routing)
+
+        check_setting(check_routing)
         if args.bot_collaborator:
-            permission = field(read('collaborators/' + args.bot_collaborator + '/permission'), 'permission')
-            ok = permission in ('admin', 'maintain', 'write') and ok
-        return outcome(ok, 'repository merge/security settings and runner routing' + ('; bot permission checked' if args.bot_collaborator else '; no bot login specified'))
+            check_setting(lambda: field(read('collaborators/' + args.bot_collaborator + '/permission'), 'permission') in ('admin', 'maintain', 'write'))
+        if drifted:
+            return outcome(False, 'repository settings drift detected')
+        if unavailable:
+            raise Unavailable('; '.join(unavailable))
+        return outcome(True, 'repository merge/security settings and runner routing' + ('; bot permission checked' if args.bot_collaborator else '; no bot login specified'))
     if 'actions-secret-claude-code' in item:
         return outcome(*secret('CLAUDE_CODE_OAUTH_TOKEN'))
     if 'set-ci-app-client-id-' in item:
@@ -172,7 +200,7 @@ def probe(entry):
         raise Unavailable(reason + '; workflow schedule and intended Snyk posture require operator verification')
     if 'install-and-activate-renovate-' in item:
         issues = read('issues?state=open', pages=True)
-        found = any(row.get('title') == 'Dependency Dashboard' and row.get('user', {}).get('login') in ('renovate[bot]', 'renovate-bot') for row in issues)
+        found = any('pull_request' not in row and row.get('title') == 'Dependency Dashboard' and (row.get('user') or {}).get('login') in ('renovate[bot]', 'renovate-bot') for row in issues)
         return outcome(found, 'Renovate Dependency Dashboard ' + ('present' if found else 'absent'))
     if 'install-the-app-on-this-repo-' in item:
         # A succeeded workflow is evidence of token minting only when the workflow
@@ -181,7 +209,7 @@ def probe(entry):
         for run in runs[:20]:
             jobs = read('actions/runs/' + str(run['id']) + '/jobs?filter=latest', 'jobs', True)
             for job in jobs:
-                for step in job.get('steps', []):
+                for step in (job.get('steps') or []):
                     if 'actions/create-github-app-token@' in step.get('name', '') and step.get('conclusion') == 'success':
                         return outcome(True, 'succeeded App token-minting step in run ' + str(run['id']))
         raise Unavailable('no succeeded token-minting step in the latest 20 successful runs; installation cannot be inferred')
@@ -193,7 +221,7 @@ def probe(entry):
         observed = False
         for pull in pulls[:20]:
             reviews = read('pulls/' + str(pull['number']) + '/reviews', pages=True)
-            if any(review.get('user', {}).get('login') == login for review in reviews):
+            if any((review.get('user') or {}).get('login') == login for review in reviews):
                 observed = True
                 break
         raise Unavailable(login + (' review evidence present' if observed else ' not observed in latest 20 updated PRs') + '; connection and service preferences require manual verification')
@@ -209,7 +237,7 @@ def probe(entry):
         read('code-scanning/default-setup')
         raise Unavailable('code scanning configuration readable; language coverage requires manual verification')
     if 'labels-run-task-' in item or 'after-a-copier-update-that-adds-labe-' in item:
-        live = {row['name']: row for row in read('labels', pages=True)}
+        live = {row['name'].lower(): row for row in read('labels', pages=True)}
         # Use the same registry renderer as setup:github-labels, when available.
         renderer = Path('scripts/label-registry-render.mjs')
         if not renderer.exists():
@@ -228,7 +256,7 @@ def probe(entry):
         drift = []
         for line in rendered.stdout.splitlines():
             label, color, description = line.split('|', 2)
-            row = live.get(label)
+            row = live.get(label.lower())
             if row is None or field(row, 'color').lower() != color.lower() or (field(row, 'description') or '') != description:
                 drift.append(label)
         if not rendered.stdout.strip():
@@ -238,24 +266,73 @@ def probe(entry):
         labels = names('labels', None)
         legacy = sorted(name for name in labels if name.startswith('agent:'))
         return outcome(not legacy, 'legacy claim labels: ' + (', '.join(legacy) or 'none'))
-    if 'github-project-run-' in item or 'org-issue-fields-run-' in item or 'org-issue-types-run-' in item:
-        # REST's repository projects endpoint is Projects classic, not Projects V2.
-        # Query actual repository linkage with GraphQL instead of reporting classic.
-        query = 'query($owner:String!,$name:String!){repository(owner:$owner,name:$name){projectsV2(first:100){nodes{id title} pageInfo{hasNextPage}}}}'
-        argv = ['gh', 'api', 'graphql', '-f', 'query=' + query, '-f', 'owner=' + owner, '-f', 'name=' + name]
+    if 'org-issue-fields-run-' in item or 'org-issue-types-run-' in item or 'github-project-run-' in item:
+        settings = api('repos/' + repo)
+        owner_type = (settings.get('owner') or {}).get('type')
+        if 'org-issue-' in item:
+            if owner_type != 'Organization':
+                raise Unavailable('organization repository required')
+            if 'org-issue-types-run-' in item:
+                types = api(f'orgs/{owner}/issue-types')
+                enabled = {row['name'] for row in types if row.get('is_enabled') is True}
+                return outcome({'Bug', 'Feature', 'Task', 'Research'} <= enabled, 'organization issue types')
+            fields = api(f'orgs/{owner}/issue-fields', headers=['X-GitHub-Api-Version: 2026-03-10'])
+            fields = fields['issue_fields'] if isinstance(fields, dict) else fields
+            live = {row['name']: row for row in fields}
+            # Keep equal to setup-github-issue-fields.sh / status.sh. Tier is a label.
+            wanted = {
+                'Product': ('text', ()),
+                'Impact': ('single_select', ('minimal', 'low', 'medium', 'high', 'massive')),
+                'Risk': ('single_select', ('trivial', 'low', 'medium', 'high', 'critical')),
+                'Complexity': ('single_select', ('xs', 's', 'm', 'l', 'xl')),
+                'Priority (AI)': ('single_select', ('p0', 'p1', 'p2', 'p3', 'p4')),
+                'Effort': ('single_select', ('1', '2', '3', '5', '8', '13', '20')),
+                **{name: ('single_select', ()) for name in ('Model family', 'Model', 'Model version', 'Model effort')},
+            }
+            ok = all(name in live and live[name].get('data_type') == dtype and
+                     set(options) <= {option['name'] for option in (live[name].get('options') or [])}
+                     for name, (dtype, options) in wanted.items())
+            return outcome(ok, 'organization issue fields and options')
+        # Inspect the owner board setup creates, rather than repository linkage.
+        query = ('query($owner:String!){repositoryOwner(login:$owner){__typename '
+                 '... on ProjectV2Owner{projectsV2(first:20){pageInfo{hasNextPage} nodes{id title closed '
+                 'fields(first:100){pageInfo{hasNextPage} nodes{... on ProjectV2Field{name dataType} '
+                 '... on ProjectV2SingleSelectField{name dataType options{name}}}}}}}}}')
+        argv = ['gh', 'api', 'graphql', '-f', 'query=' + query, '-f', 'owner=' + owner]
         if host:
             argv += ['--hostname', host]
         payload = command(argv)
         if payload.get('errors'):
             raise Unavailable('GitHub GraphQL project read denied or incomplete (HTTP 200)')
-        projects = payload['data']['repository']['projectsV2']
-        if projects['pageInfo']['hasNextPage']:
-            raise Unavailable('project linkage exceeds 100 results')
-        if 'github-project-run-' in item:
-            if not projects['nodes']:
-                return outcome(False, 'Projects V2 repository linkage absent')
-            raise Unavailable('Projects V2 repository linkage present; expected project and field configuration require operator verification')
-        raise Unavailable('read ' + str(len(projects['nodes'])) + ' linked Projects V2; organization issue fields/types require operator verification')
+        projects = payload['data']['repositoryOwner']['projectsV2']
+        board = next((row for row in projects['nodes'] if row['title'] == f'{owner} Project' and row['closed'] is False), None)
+        if board is None:
+            if projects['pageInfo']['hasNextPage']:
+                raise Unavailable('owner projects exceed 20 results; evidence incomplete')
+            return outcome(False, 'owner Projects V2 board absent')
+        fields = {row['name']: row for row in board['fields']['nodes'] if 'name' in row}
+        status = fields.get('Status', {})
+        ok = status.get('dataType') == 'SINGLE_SELECT' and {
+            'Inbox', 'Backlog', 'Ready', 'In Progress', 'In Review', 'Blocked', 'Done'
+        } <= {option['name'] for option in status.get('options', [])}
+        if owner_type == 'User':
+            ok = fields.get('Product', {}).get('dataType') == 'TEXT' and ok
+        if not ok and board['fields']['pageInfo']['hasNextPage']:
+            raise Unavailable('project fields exceed 100 results; evidence incomplete')
+        if not ok:
+            return outcome(False, 'owner project field drift detected')
+        if owner_type == 'Organization':
+            try:
+                project_id = api(f'orgs/{owner}/actions/variables/ORG_PROJECT_ID')['value']
+            except Unavailable:
+                inherited = read('actions/organization-variables', 'variables', True)
+                project_id = next((row['value'] for row in inherited if row['name'] == 'ORG_PROJECT_ID'), None)
+                if project_id is None:
+                    raise Unavailable('ORG_PROJECT_ID organization variable unreadable or not exposed to repository')
+            ok = project_id == board['id']
+        elif owner_type != 'User':
+            raise Unavailable('repository owner type unavailable')
+        return outcome(ok, 'owner Projects V2 board, fields and routing')
     return ('unknown', manual)
 
 

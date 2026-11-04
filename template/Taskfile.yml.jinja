@@ -868,7 +868,7 @@ tasks:
     interactive: true
     silent: true
     cmds:
-      - ./scripts/audit-github.sh {{.CLI_ARGS}}
+      - ./scripts/audit-github.sh[% if github_org != author_git_provider_username %] --bot-collaborator "[[ author_git_provider_username ]]-bot"[% endif %] {{.CLI_ARGS}}
 
   test:audit-github:
     desc: Test GitHub checklist probes offline with stubbed gh
