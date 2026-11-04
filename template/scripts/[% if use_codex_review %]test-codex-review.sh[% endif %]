@@ -107,8 +107,15 @@ standardize_cases=0
 # templates. Build the fixtures as real producer output there; an older
 # helper reads the hand-built bundles as they are.
 standardize_verifier=""
+standardize_skip="standardize-repo helper is not installed"
 if [ -n "$standardize_helper" ] && [ -f "${standardize_helper%/*}/render-bundle.sh" ]; then
     standardize_verifier="${standardize_helper%/*}/render-bundle.sh"
+    # Producing and verifying an authenticated bundle both re-render with
+    # Copier, which a generated repository's toolchain does not install.
+    if ! command -v copier >/dev/null 2>&1; then
+        standardize_helper=""
+        standardize_skip="the authenticated standardize-repo helper needs copier, which is not installed"
+    fi
 fi
 # Turn a hand-built bundle's previous/current snapshots into a tagged Copier
 # template and replace the bundle with render-bundle.sh output over it. Test
@@ -411,7 +418,7 @@ LEGACYHELPER
     standardize_cases=6
     unset HARMON_INIT
 else
-    echo "==> skipping standardize bundle fixtures: standardize-repo helper is not installed"
+    echo "==> skipping standardize bundle fixtures: $standardize_skip"
 fi
 
 echo "==> clean tree, no local main/master: falls back to origin/HEAD's branch"
