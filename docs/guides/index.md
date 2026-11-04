@@ -53,5 +53,8 @@ Calm, repeatable how-tos read *in advance* (the crisis counterpart is
   network policy generated from the shared egress allowlist and applied from
   outside the VM, Herdr attachment, and the observations still pending a
   provisioned Sprite.
+- [renovate-preset-publication.md](renovate-preset-publication.md) — publish
+  the shared Renovate preset, then adopt it after release with policy parity
+  checks and pilot repositories.
 
 TODO: add more guides, e.g. "local development setup", "add a feature", "how X works".
