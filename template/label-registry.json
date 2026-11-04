@@ -139,7 +139,7 @@
     {
       "family": "workflow",
       "prefix": null,
-      "purpose": "Transient triage and review-hand-off states; blocked is the non-issue-blocker flag.",
+      "purpose": "Transient triage and delivery PR states, including external blockers and review handoff.",
       "axis": "workflow",
       "source": "inline",
       "writers": ["human"],
@@ -164,7 +164,10 @@
         },
         {
           "value": "blocked",
-          "description": "Blocked by a non-issue dependency (reason in a comment)"
+          "description": "External blocker or draft PR awaiting human input (reason in a comment)",
+          "writers": ["human", "agent"],
+          "writer_note": "humans at triage; agents when a draft PR needs a human decision or input",
+          "readers": "humans, the Triage view and delivery PRs"
         },
         {
           "value": "waiting",
@@ -181,6 +184,22 @@
         {
           "value": "needs-communication",
           "description": "An update needs to be communicated out"
+        },
+        {
+          "value": "parked",
+          "description": "Draft PR passed the handoff check and is waiting its turn in the merge queue",
+          "writers": ["human", "agent"],
+          "writer_note": "the orchestrator after the handoff check",
+          "readers": "humans and the merge queue",
+          "lifecycle_note": "draft delivery PR waiting behind the queue head; removed when promoted, blocked, merged or closed"
+        },
+        {
+          "value": "merge-ready",
+          "description": "Queue-head PR passed the live handoff check and awaits human review or merge",
+          "writers": ["human", "agent"],
+          "writer_note": "the orchestrator after the live handoff check",
+          "readers": "humans and the merge queue",
+          "lifecycle_note": "promoted queue-head delivery PR; removed when its handoff check is invalidated, or the PR merges or closes"
         },
         {
           "value": "needs-review",

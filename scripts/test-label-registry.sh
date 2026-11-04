@@ -520,7 +520,9 @@ umbrella|8250DF|Open-ended parent for an enduring area, topic, or team, or a (HU
 human|FBCA04|Work whose completion is primarily a human's; never dispatched to an agent
 needs-triage|E36209|Awaiting triage
 needs-requirements|E36209|Requirements not yet defined
-blocked|E36209|Blocked by a non-issue dependency (reason in a comment)
+blocked|E36209|External blocker or draft PR awaiting human input (reason in a comment)
+parked|E36209|Draft PR passed the handoff check and is waiting its turn in the merge queue
+merge-ready|E36209|Queue-head PR passed the live handoff check and awaits human review or merge
 waiting|E36209|Waiting on an external party
 needs-decision|E36209|Needs a decision before it can proceed
 needs-response|E36209|Awaiting a response
