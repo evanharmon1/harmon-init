@@ -24,6 +24,7 @@ You are the **implementer lane worker** for an orchestrated dev-flow v2 run,
 running in **{{harness}}**. An orchestrator session supervises you and reads
 `{{report-path}}`; keep that file current.
 
+- Repository: `{{repository}}`. Qualify every non-conductor PR reference as `owner/repo#N`.
 - Run: `{{run-id}}` · Lane: `{{lane-name}}` · Branch: `{{branch}}` (already
   created off `{{default-branch}}` @ `{{base-sha}}`; you are in its worktree).
   Worktree: `{{worktree-path}}`.
@@ -47,9 +48,10 @@ running in **{{harness}}**. An orchestrator session supervises you and reads
   never at the scratchpad root (base contract § "Delegation contract", rule 4).
 - Stay inside this worktree for project files. The lane brief and
   `{{report-path}}` are git-excluded control files: never commit or rename them.
-- Before writing the report, resolve the worktree root and common Git directory,
+- Before writing the report, resolve the worktree root and the conductor common
+  Git directory `{{conductor-common-dir}}` (which may belong to another clone),
   then take the **first** proof that holds: (1) `{{report-path}}` resolves inside
-  the common Git directory, or (2) it is inside the worktree and
+  the conductor common Git directory, or (2) it is inside the worktree and
   `git check-ignore -q --no-index -- "{{report-path}}"` succeeds. **Either way
   it must also be untracked** — `git ls-files --error-unmatch -- "{{report-path}}"`
   must FAIL. A tracked file can satisfy both proofs above and still be swept
@@ -87,8 +89,9 @@ with `plan-revise.mjs wave-release`; a lane never releases its own wave.
 Dispatch must keep Working lanes within `max_parallel_agents` and issues with
 `claim:*` or an open delivery PR within `max_in_flight` **{{max-in-flight}}**,
 counting each issue once, including parked and promoted PRs. Release is
-eligibility, not a slot reservation. Dispatch-time live counting/enforcement is
-tracked in harmon-devkit#1704; the orchestrator owes that check before dispatch.
+eligibility, not a slot reservation. `lane-init` admits a slate lane once against
+both ceilings and records the admission on the run; monitor `activate` refuses
+an unadmitted run.
 
 ## Active run identity
 
@@ -120,7 +123,7 @@ do not restart the clock at dispatch or resume.
 
 ## Scope — one issue, one PR
 
-- **[#{{issue-number}}]({{issue-url}})** — `` {{issue-title}} ``. Use this
+- **[{{issue-reference}}]({{issue-url}})** — `` {{issue-title}} ``. Issue number: {{issue-number}}. Use this
   canonical URL as `/implement`'s target so the target repository remains
   pinned under fork topology. Read the issue body and every comment in full at
   implementation time. Unit kind: **{{unit-kind}}**.
@@ -392,6 +395,28 @@ ledger denominators. Stop at **{{deadline}}** with a blocker report.
 
 ## Reporting protocol
 
+- **Structured lane status:** derive the path
+  `<record_directory>/lane-status-<attempt_nonce>.json` from this brief's
+  validated envelope, without adding envelope fields. Resolve
+  `dev-flow-support/assets/lane-status.mjs` beside the vendored skills. Use
+  `node <support-dir>/lane-status.mjs set --file <status-path> --state <state>
+  --stage <stage> --round <round> --head <current-HEAD> --summary <single-line-text>`.
+  The helper advances `seq` and validates a sibling candidate before atomic
+  rename; never hand-write the JSON. Set `working` at startup and on every
+  resume, `decision-request --request-id <DR-id>` at **every orchestrator-gated
+  stop** (including design approval, confidence rulings and fence grants),
+  `handoff` at verified draft publication, `blocked` on a blocker, and `done`
+  at completion. Omit `--request-id` outside a decision request. Stages are
+  `implement`, `verify`, `challenge`, `review`, `security`, or `integration`;
+  use round 0 outside a counted round. Bind each update to `git rev-parse HEAD`.
+  Write the prose to `{{report-path}}` as well; keep the existing terminal
+  sentinels and their confirmation rules. Pass this rendered brief to the
+  watcher with `--brief <path>` or `--status-file <label>=<path>`, or let it
+  discover the run's rendered `lane-brief-<attempt_nonce>.md` under
+  `<git-common-dir>/dev-flow-v2/runs/`. It also checks for a rendered brief
+  beside an explicitly supplied report. Status signals waiting and handoff;
+  they never attest PR readiness.
+
 - Write the plan to `{{report-path}}` before implementation. Append the
   `AGENTS.md` § Stage Ledger table at every stage transition and round boundary,
   plus a per-round adjudication table. Never delete history.
@@ -417,11 +442,10 @@ ledger denominators. Stop at **{{deadline}}** with a blocker report.
     through the readiness gate. This sentinel is the orchestrator's own mark:
     a lane never promotes its own PR and never writes this sentinel.
     **Invariant: the orchestrator appends this sentinel only for a
-    `POST-PROMOTION-CLOSED` event that names the promotion event id the
-    watcher armed on, with zero activity rows in that window, and only
-    after one re-read taken after the close shows the same head, the same
+    `PR-WATCHING` event for the promoted PR's current head with `draft=false`, and only
+    after a fresh handoff re-read shows the same head, the same
     readiness fingerprint, and every check still concluded green; any other
-    observation (a different promotion id, any activity row, any changed
+    observation (any activity row, any changed
     value, any indeterminate read) withdraws the report and re-arms
     instead of appending this sentinel.** The re-read uses the same
     mechanisms `AGENTS.md` § Readiness gate names for the promotion-time
@@ -432,12 +456,12 @@ ledger denominators. Stop at **{{deadline}}** with a blocker report.
     (`.claude/skills/integrate/SKILL.md` step 6): withdrawing runs
     `gh pr ready --undo` and confirms the PR is draft on the current head
     before deciding whether to re-verify or escalate. The mechanism that
-    satisfies this invariant — window arming, activity/close correlation by
-    promotion event id, retry on an indeterminate read — belongs to
-    `assets/lane-watch.sh`; this bullet states only what must be true
+    satisfies this invariant — continuous PR observation and retry on an
+    indeterminate read — belongs to `assets/lane-watch.sh`; this bullet states only what must be true
     before the sentinel is appended, never the ordering or per-endpoint
-    steps the watcher uses to get there.
-  - `{{handoff-sentinel}}-{{attempt-nonce}}` — the lane published and verified its draft PR, then returned integration to the orchestrator.
+    steps the watcher uses to get there. The PR stays watched until merge
+    or close, retaining both the idle session and its PR watch after handoff.
+  - `{{handoff-sentinel}}-{{attempt-nonce}}` — the lane published and verified its draft PR, then returned integration to the orchestrator. Stay idle in this session; the orchestrator may send fix rounds here. Draft publication does not end the session.
   - `{{blocked-sentinel}}-{{attempt-nonce}}` — stopped on a blocker, cap, deadline, or indeterminate gate.
 
   The lane's own handoff sentinel and the orchestrator's later ready
