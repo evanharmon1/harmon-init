@@ -37,6 +37,7 @@ In prompt order, as defined in `copier.yml`. "Asked when" is the question's
 | 2 | `project_slug` | str | slugified `project_name` | always | Directory/repo name, GHCR image, `.code-workspace` |
 | 3 | `project_description` | str | `TODO: project_description` | always | README, package metadata |
 | 4 | `github_org` | str | `[[ author_git_provider_username ]]` | always | Repo URL, GHCR namespace; **≠ author ⇒ org-only files render** |
+| 4a | `merge_queue_available` | bool | **no** | always | Opt in to the merge queue rule for public organization repositories or private organizations on Enterprise Cloud; unavailable on private Team repositories |
 | 5 | `code_owner` | str | `[[ author_git_provider_username ]]` | always | `.github/CODEOWNERS` (frozen after first render — see `_skip_if_exists`) |
 | 6 | `claude_authorized_members` | str (CSV) | `[[ author_git_provider_username ]]` | always | allowlist for the `@claude` commands (plan/implement/review) |
 | 7 | `project_type` | choice `general`/`web-astro`/`web-app`/`iac`/`docs` | `general` | always | Taskfile, CI jobs, devcontainer tooling; **seeds 6 asked answers** (+ hidden `use_node`/`use_python`, and it gates `deploy_cloudflare_workers`'s `when:`) |

@@ -74,7 +74,7 @@
           }
         ]
       }
-[% if github_org != author_git_provider_username %]
+[% if merge_queue_available %]
     },
     {
       "type": "merge_queue",
@@ -87,24 +87,20 @@
         "min_entries_to_merge": 1,
         "min_entries_to_merge_wait_minutes": 5
       }
+[% endif %]
     }
   ],
   "bypass_actors": [
     {
+[% if github_org != author_git_provider_username %]
       "actor_id": null,
       "actor_type": "OrganizationAdmin",
       "bypass_mode": "pull_request"
-    }
-  ]
 [% else %]
-    }
-  ],
-  "bypass_actors": [
-    {
       "actor_id": 5,
       "actor_type": "RepositoryRole",
       "bypass_mode": "pull_request"
+[% endif %]
     }
   ]
-[% endif %]
 }

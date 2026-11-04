@@ -39,8 +39,14 @@ workflow, and add it back.
 **Why the UI, not `gh api … rulesets`:** the REST `POST` is **not idempotent**
 (every run creates another "Protect Main" ruleset — silent duplicates), the
 `PUT` form needs the live ruleset id, and both currently reject the
-`merge_queue` rule with `422 Invalid rule 'merge_queue'`. The UI import handles
-every rule type and is the GitHub-native way to apply an exported ruleset.
+`merge_queue` rule with `422 Invalid rule 'merge_queue'`. The UI import is the GitHub-native way to apply an exported ruleset; check the
+result because GitHub may omit rules unavailable to the repository.
+
+GitHub offers merge queues for public organization repositories and private
+organization repositories on Enterprise Cloud. A private Team-plan repository
+cannot use one; strict `required_status_checks` instead requires checks against
+the current `main` before merging. Enable the queue answer only where available,
+and verify the imported ruleset in GitHub.
 
 ### Auditing live ruleset drift
 
@@ -310,7 +316,7 @@ This mirrors the importable
           }
         ]
       }
-[% if github_org != author_git_provider_username %]
+[% if merge_queue_available %]
     },
     {
       "type": "merge_queue",
@@ -323,26 +329,22 @@ This mirrors the importable
         "min_entries_to_merge": 1,
         "min_entries_to_merge_wait_minutes": 5
       }
+[% endif %]
     }
   ],
   "bypass_actors": [
     {
+[% if github_org != author_git_provider_username %]
       "actor_id": null,
       "actor_type": "OrganizationAdmin",
       "bypass_mode": "pull_request"
-    }
-  ]
 [% else %]
-    }
-  ],
-  "bypass_actors": [
-    {
       "actor_id": 5,
       "actor_type": "RepositoryRole",
       "bypass_mode": "pull_request"
+[% endif %]
     }
   ]
-[% endif %]
 }
 ```
 
@@ -465,12 +467,12 @@ the aggregate verifies exactly that. This is the same shape as the required
 `verify` and `security` checks, which skip `check`, `repo-guards`[% if project_type == 'web-app' %], `codegen-guard`[% endif %][% if devcontainer %], `devcontainer-permissions`[% endif %], `security`[% if use_node %], `build-test`, `e2e`[% endif %] the same
 way — a green aggregate on a fork PR means "the trust boundary held", not
 "validation passed".
-[% if github_org != author_git_provider_username %]
+[% if merge_queue_available %]
 This repository has the merge queue enabled, which closes the gap: a queued
 entry raises a `merge_group` event, which is not a fork event, so `fmt` and
 `validate` run against the trusted merged result before it reaches `main`.
 [% else %]
-This repository has **no merge queue** (it is owned by a personal account), so
+This repository has **no merge queue configured**, so
 there is no trusted pre-merge run. If you begin accepting fork pull requests,
 validate them before merging — push the branch to this repository and let it run
 as a same-repo PR, or review the push-to-`main` run and be ready to revert.
@@ -536,7 +538,7 @@ push trigger.[% endif %] Only a high-consequence repository that deliberately ad
 paid Snyk should consider per-PR scans and whether to make them merge
 requirements. See [security.md](security.md) for the scanner policy.
 
-[% if github_org != author_git_provider_username %]
+[% if merge_queue_available %]
 ### `merge_queue`
 
 Merges go through a merge queue (`grouping_strategy: ALLGREEN`): GitHub batches queued
