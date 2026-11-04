@@ -182,8 +182,11 @@ for path in files:
     if path == "images/devcontainer/Dockerfile":
         lines = open(path, encoding="utf-8").read().splitlines()
         for i, line in enumerate(lines):
-            m = re.match(r"^ARG (\w*SHA256\w*)=", line)
+            m = re.match(r"^[ \t]*ARG[ \t]+(\w*SHA256\w*)=", line, re.IGNORECASE)
             if not m:
+                continue
+            if not re.match(r"^ARG \w*SHA256\w*=", line):
+                errors.append(f"{path}:{i + 1}: digest {m[1]} uses an unsupported ARG spelling")
                 continue
             managed = i + 1 < len(lines) and bool(re.fullmatch(r"# pin-pair: [A-Za-z0-9._-]+", lines[i + 1]))
             # Both oh-my-pi architecture pins share a marker checked by test-oh-my-pi-pin.sh.

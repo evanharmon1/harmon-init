@@ -307,3 +307,15 @@ printf 'ARG OTHER_SHA256_AMD64=%s\n' "$NEW_AMD" >>images/devcontainer/Dockerfile
 run_guard
 expect_fail image-unclassified
 expect_output image-unclassified 'neither Renovate-managed nor guarded'
+
+for declaration in '  ARG OTHER_SHA256_AMD64=' 'ARG  OTHER_SHA256_AMD64=' 'arg OTHER_SHA256_AMD64='; do
+    write_image 2.0.0 "$NEW_AMD" "$NEW_ARM"
+    printf '%s%s\n' "$declaration" "$NEW_AMD" >>images/devcontainer/Dockerfile
+    run_guard
+    expect_fail image-noncanonical
+    expect_output image-noncanonical 'unsupported ARG spelling'
+done
+write_image 2.0.0 "$NEW_AMD" "$NEW_ARM"
+printf '# verified-for: v2.0.0\nARG OH_MY_PI_SHA256_AMD64=%s\n' "$NEW_AMD" >>images/devcontainer/Dockerfile
+run_guard
+expect_pass image-verified
