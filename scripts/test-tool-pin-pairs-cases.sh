@@ -275,3 +275,35 @@ expect_pass none
 expect_output none "no '# pin-pair:' markers"
 
 echo "tool pin-pair guard cases: PASS"
+
+# Dockerfile pins use separate marker lines because Docker does not support inline comments.
+write_image() {
+    mkdir -p images/devcontainer
+    cat >images/devcontainer/Dockerfile <<EOF
+${ann}: datasource=github-releases depName=example/tool
+ARG TOOL_VERSION=$1
+# pin-pair: tool
+${ann}: datasource=github-release-attachments depName=example/tool digestVersion=v$1
+ARG TOOL_SHA256_AMD64=$2
+# pin-pair: tool
+${ann}: datasource=github-release-attachments depName=example/tool digestVersion=v$1
+ARG TOOL_SHA256_ARM64=$3
+# pin-pair: tool
+EOF
+}
+new_repo image-stale
+write_image 1.0.0 "$OLD_AMD" "$OLD_ARM"
+git add images/devcontainer/Dockerfile
+git commit -qm 'image baseline'
+git branch -f base HEAD
+write_image 2.0.0 "$OLD_AMD" "$OLD_ARM"
+run_guard
+expect_fail image-stale
+expect_output image-stale "TOOL_VERSION changed"
+write_image 2.0.0 "$NEW_AMD" "$NEW_ARM"
+run_guard
+expect_pass image-matched
+printf 'ARG OTHER_SHA256_AMD64=%s\n' "$NEW_AMD" >>images/devcontainer/Dockerfile
+run_guard
+expect_fail image-unclassified
+expect_output image-unclassified 'neither Renovate-managed nor guarded'

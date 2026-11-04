@@ -476,6 +476,15 @@ if tmpl_off and resolve_group(tmpl_off, "scripts/run-semgrep.sh", "semgrep", "py
 # transitive advisories; OSV is direct-only), so neither substitutes for the
 # other and both are required.
 root_cfg = json.loads(pathlib.Path("renovate.json").read_text())
+image_path = "images/devcontainer/Dockerfile"
+image_text = pathlib.Path(image_path).read_text()
+image_managers = [m for m in root_cfg["customManagers"] if any(
+    re.search(pattern.strip("/"), image_path) for pattern in m.get("managerFilePatterns", [])
+) and any("currentDigest" in pattern for pattern in m.get("matchStrings", []))]
+image_matches = [match for manager in image_managers for pattern in manager["matchStrings"]
+                 for match in re.finditer(js_to_py(pattern), image_text)]
+if len(image_matches) != 6:
+    errors.append(f"{image_path}: expected six extractable release attachment digests, found {len(image_matches)}")
 for label, cfg in [("renovate.json", root_cfg), ("template/renovate.json.jinja", tmpl_on)]:
     if cfg is None:
         continue

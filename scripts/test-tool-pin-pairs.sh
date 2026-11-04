@@ -70,10 +70,14 @@ fi
 # git grep exits 1 for "no match" and 2+ for a real failure; only the former
 # may read as "nothing to check".
 rc=0
-listing="$(git grep -l -F '# pin-pair: ' -- '.github/**' '*/.github/**')" || rc=$?
+listing="$(git grep -l -F '# pin-pair: ' -- '.github/**' '*/.github/**' 'images/devcontainer/Dockerfile')" || rc=$?
 if [ "$rc" -gt 1 ]; then
     echo "pin-pairs: git grep failed (exit ${rc})" >&2
     exit 1
+fi
+# Enumerate the image even when all markers were accidentally removed.
+if git ls-files --error-unmatch images/devcontainer/Dockerfile >/dev/null 2>&1 && ! grep -Fxq 'images/devcontainer/Dockerfile' <<<"$listing"; then
+    listing="${listing}"$'\n''images/devcontainer/Dockerfile'
 fi
 files=()
 while IFS= read -r f; do
@@ -93,7 +97,7 @@ import sys
 base_ref, merge_base, files = sys.argv[1], sys.argv[2], sys.argv[3:]
 
 MEMBER = re.compile(
-    r"^\s*(?P<var>[A-Za-z_][A-Za-z0-9_]*)=(?P<val>\S+)\s+# pin-pair: (?P<tool>[A-Za-z0-9._-]+)\s*$"
+    r"^\s*(?:ARG\s+)?(?P<var>[A-Za-z_][A-Za-z0-9_]*)=(?P<val>\S+)\s+# pin-pair: (?P<tool>[A-Za-z0-9._-]+)\s*$"
 )
 MARKER = re.compile(r"# pin-pair:")
 ANNOTATION = re.compile(
@@ -109,6 +113,10 @@ def parse(path, text, errors):
     """{tool: {"version": (line, var, val, dep) | None, "hashes": [(line, var, val, dep, tag, branch)]}}"""
     pairs = {}
     lines = text.splitlines()
+    if path == "images/devcontainer/Dockerfile":
+        for i in range(1, len(lines)):
+            if re.fullmatch(r"# pin-pair: [A-Za-z0-9._-]+", lines[i]):
+                lines[i - 1] += " " + lines[i]
     branch = ""
     for i, line in enumerate(lines, 1):
         label = CASE_LABEL.match(line)
@@ -137,10 +145,10 @@ def parse(path, text, errors):
                     "move its hashes but never the version"
                 )
             entry["version"] = (i, var, val, ann["dep"] if ann else None)
-        elif var.lower().endswith("_sha256"):
+        elif var.lower().endswith("_sha256") or re.fullmatch(r"[A-Z0-9_]+_SHA256_(AMD64|ARM64)", var):
             # Exactly the name grammar the renovate.json checksum manager
             # extracts (`[a-z0-9_]+_sha256`); anything else is never updated.
-            if not re.fullmatch(r"[a-z0-9_]+_sha256", var):
+            if not (re.fullmatch(r"[a-z0-9_]+_sha256", var) or (path == "images/devcontainer/Dockerfile" and re.fullmatch(r"[A-Z0-9_]+_SHA256_(AMD64|ARM64)", var))):
                 errors.append(
                     f"{path}:{i}: pin-pair '{tool}' hash {var} must be lowercase `[a-z0-9_]+_sha256` "
                     "— the Renovate checksum manager extracts nothing else"
@@ -171,6 +179,19 @@ checked = 0
 for path in files:
     with open(path, encoding="utf-8", errors="replace") as fh:
         head = parse(path, fh.read(), errors)
+    if path == "images/devcontainer/Dockerfile":
+        lines = open(path, encoding="utf-8").read().splitlines()
+        for i, line in enumerate(lines):
+            m = re.match(r"^ARG (\w*SHA256\w*)=", line)
+            if not m:
+                continue
+            managed = i + 1 < len(lines) and bool(re.fullmatch(r"# pin-pair: [A-Za-z0-9._-]+", lines[i + 1]))
+            # Both oh-my-pi architecture pins share a marker checked by test-oh-my-pi-pin.sh.
+            verified = m[1] in {"OH_MY_PI_SHA256_AMD64", "OH_MY_PI_SHA256_ARM64"} and any(
+                re.fullmatch(r"# verified-for: \S+", x) for x in lines[max(0, i - 2):i]
+            )
+            if not (managed or verified):
+                errors.append(f"{path}:{i + 1}: digest {m[1]} is neither Renovate-managed nor guarded by a verified-for marker")
     base = None
     if merge_base:
         shown = subprocess.run(
