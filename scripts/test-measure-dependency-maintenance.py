@@ -5,8 +5,9 @@ import importlib.util
 import pathlib
 import json
 import io
+import subprocess
 from unittest.mock import patch
-from contextlib import redirect_stdout
+from contextlib import redirect_stdout, redirect_stderr
 import unittest
 
 spec = importlib.util.spec_from_file_location(
@@ -30,8 +31,30 @@ class MeasureTests(unittest.TestCase):
         run["updated_at"] = "2026-11-01T00:00:00Z"
         self.assertIsNone(measure.measure(pr, timeline, [run])[1])
         self.assertIsNone(measure.measure(pr, [{"event": "reviewed", "user": {"type": "User"}}], [])[0])
+        run["updated_at"] = pr["merged_at"]
         run["created_at"] = "2026-09-30T00:00:00Z"
         self.assertIsNone(measure.measure(pr, [], [run])[1])
+
+    def test_single_attempt_crosses_lifetime(self):
+        pr = {"created_at": "2026-10-01T00:00:00Z", "merged_at": "2026-10-03T00:00:00Z"}
+        run = {"run_attempt": 1, "created_at": "2026-09-30T00:00:00Z", "run_started_at": pr["created_at"], "updated_at": "2026-10-04T00:00:00Z"}
+        self.assertEqual(measure.measure(pr, [], [run])[1], 0)
+        run["run_attempt"] = 2
+        self.assertIsNone(measure.measure(pr, [], [run])[1])
+
+    def test_cli_errors(self):
+        base = ["measure", "--repo", "a/b", "--cycle", "oct", "--start", "2026-10-01", "--end", "2026-11-01", "--pr", "12"]
+        for flag, value in [("--start", "2026-10-01T00:00:00+02:00"), ("--end", "2026-11-01T00:00:00Z")]:
+            args = base.copy()
+            args[args.index(flag) + 1] = value
+            with self.subTest(flag=flag), patch("sys.argv", args), redirect_stderr(io.StringIO()), redirect_stdout(io.StringIO()) as out:
+                self.assertEqual(measure.main(), 1)
+                self.assertEqual(out.getvalue(), "")
+        error = subprocess.CalledProcessError(1, ["gh"], stderr="access denied")
+        with patch("sys.argv", base), patch.object(measure.subprocess, "run", side_effect=error), redirect_stderr(io.StringIO()) as err, redirect_stdout(io.StringIO()) as out:
+            self.assertEqual(measure.main(), 1)
+            self.assertIn("access denied", err.getvalue())
+            self.assertEqual(out.getvalue(), "")
 
     def test_main_historical_cohort(self):
         pr = {"created_at": "2026-09-30T00:00:00Z", "merged_at": "2026-10-15T00:00:00Z"}

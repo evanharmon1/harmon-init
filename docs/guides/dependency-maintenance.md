@@ -28,11 +28,13 @@ attempts. Run records and manual examination can provide additional evidence.
 The baseline reports human timeline actions, observed rerun attempts and
 force-push events as proxies, plus age at merge. A numeric zero means no
 matching event was observed in the available sources, not that the actual
-measure is zero. Human comments, reviews and force pushes are not a complete
+measure is zero. Human means GitHub identity type `User`, including machine users and agents using
+personal tokens, and excludes `Bot` accounts. Human comments, reviews and force pushes are not a complete
 count of maintainer interventions or a measure of active time. When relevant
 timeline timestamps are missing, the affected proxy is unknown.
 
-Observed reruns are unknown when run timing cannot establish that all attempts
+A run with one attempt has zero additional attempts regardless of timing.
+For multi-attempt runs, observed reruns are unknown when run timing cannot establish that all attempts
 belong to the PR lifetime, including a latest attempt after merge or an earlier
 attempt before creation. Runs wholly outside the lifetime are excluded. The
 count sums additional attempts of workflow runs found for commits still in the

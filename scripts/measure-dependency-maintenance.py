@@ -46,6 +46,8 @@ def measure(pr, timeline, runs):
             force_pushes += 1
     attempts = 0
     for run in runs:
+        if run["run_attempt"] == 1:
+            continue
         created = timestamp(run["created_at"]) if run.get("created_at") else None
         updated = timestamp(run["updated_at"]) if run.get("updated_at") else None
         started = timestamp(run["run_started_at"]) if run.get("run_started_at") else None
@@ -68,8 +70,8 @@ def main():
     parser.add_argument("--pr", required=True, type=int, action="append", help="dependency PR number; repeat for every merged update")
     args = parser.parse_args()
     try:
-        start = dt.datetime.fromisoformat(args.start).replace(tzinfo=dt.timezone.utc)
-        end = dt.datetime.fromisoformat(args.end).replace(tzinfo=dt.timezone.utc)
+        start = dt.datetime.combine(dt.date.fromisoformat(args.start), dt.time.min, tzinfo=dt.timezone.utc)
+        end = dt.datetime.combine(dt.date.fromisoformat(args.end), dt.time.min, tzinfo=dt.timezone.utc)
         if start >= end or len(set(args.pr)) != len(args.pr):
             raise ValueError("cycle dates must increase and PR numbers must be unique")
         rows = []
@@ -106,7 +108,8 @@ def main():
               "Reruns exclude unavailable/deleted runs and commits absent from the final PR commit list; runs on the same SHA may include unrelated workflows. "
               "Force pushes are not confirmed rebases; rebases without a visible force-push event are unknown.")
     except (OSError, TypeError, ValueError, KeyError, json.JSONDecodeError, subprocess.CalledProcessError) as exc:
-        print(f"Unable to measure: {exc}", file=sys.stderr)
+        detail = f": {exc.stderr.strip()}" if isinstance(exc, subprocess.CalledProcessError) and exc.stderr else ""
+        print(f"Unable to measure: {exc}{detail}", file=sys.stderr)
         return 1
     return 0
 

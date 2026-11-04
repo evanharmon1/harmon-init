@@ -662,7 +662,7 @@ tasks:
   test:measure-dependency-maintenance:
     desc: Verify dependency-maintenance measurements with offline source fixtures
     cmds:
-      - python3 scripts/test-measure-dependency-maintenance.py
+      - python3 "{{.ROOT_DIR}}/scripts/test-measure-dependency-maintenance.py"
 
   test:tool-pin-pairs:
     desc: Behavioural fixtures for the version/checksum pin-pair guard
