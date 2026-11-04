@@ -22,8 +22,8 @@ ARG TERRAFORM_VERSION=1.17.1
 ARG TFLINT_VERSION=0.65.0
 # TFLint release-archive SHA-256 values. The version pin is Renovate-managed;
 # update these reviewed, architecture-specific digests with each release.
-ARG TFLINT_SHA256_AMD64=cca9d13e2e1d7a2c627af60ff899a3c9b74212899416aeb96ec764d2ef954537
-ARG TFLINT_SHA256_ARM64=560da89aacf59389d4eb029730dd5b109b7288096c32f2726a0d9e783a5ea8eb
+ARG TFLINT_SHA256_AMD64=d4c545ed2e29d6338604b586f34f544f380f70f243aa72f7b484713835eaec61
+ARG TFLINT_SHA256_ARM64=843017c47a98be1de4d88fa038daa293770fe25cd01656c4f08b2e30d1d3b3a0
 # renovate: datasource=github-releases depName=zellij-org/zellij extractVersion=^v?(?<version>.+)$
 ARG ZELLIJ_VERSION=0.45.1
 # renovate: datasource=github-releases depName=raine/workmux extractVersion=^v?(?<version>.+)$
