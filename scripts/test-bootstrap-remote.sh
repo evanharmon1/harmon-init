@@ -3348,7 +3348,7 @@ env() {
     shift
     local script="${!#}"
     if [ "$1" = --noprofile ]; then
-        script="${script/. \/etc\/profile;/. \"\$FIXTURE_ROOT\/profile\";}"
+        script='. "$FIXTURE_ROOT/profile";'"${script#. /etc/profile;}"
         command env "${environment[@]}" FIXTURE_ROOT="$root" "$bash_bin" --noprofile -lc "$script"
     else
         [ "$1" = -lc ]

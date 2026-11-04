@@ -306,7 +306,9 @@ re-downloaded and re-installed everything also exits 0.
 The bootstrap sets `PATH` precedence in its own process and in
 `/etc/profile.d/zz-harmon-remote-env.sh`, which sorts after platform profiles
 such as `nodejs.sh`. It removes its former `harmon-remote-env.sh` drop-in only
-after publishing the new one. The closing check runs a real bash login shell
+after publishing the new one. If a shell startup file such as `~/.zshrc` or
+`~/.bashrc` sourced the old path, point that line at
+`/etc/profile.d/zz-harmon-remote-env.sh`. The closing check runs a real bash login shell
 for `yq`, `task`, `node`, `npm`, `npx`, `corepack`, `uv`, and `uvx`, as the
 invoking user (via `runuser` for a non-root caller; skipped with a note if
 unavailable). A later system or user profile can still prepend tools: a
