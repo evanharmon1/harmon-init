@@ -13,6 +13,7 @@ unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN GH_HOST
 unset GIT_SSH_COMMAND # a host may set one; the default (unset) case is what is under test
 unset NODE_OPTIONS GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS
 unset CLAUDE_CODE_REMOTE
+unset HARMON_PREFIX HARMON_BIN CLAUDE_ENV_FILE
 # Hermetic git: a platform may inject config (SSH->HTTPS rewrites, hooks paths).
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 
@@ -26,6 +27,9 @@ TMP="$(mktemp -d)" || exit 1
 TMP="$(cd "${TMP}" && pwd -P)" || exit 1
 # A scenario may chmod a directory read-only; restore write access before removing it.
 trap 'chmod -R u+w "${TMP}" 2>/dev/null; rm -rf "${TMP}"' EXIT
+# Never let remote PATH preparation expose the host's real /usr/local tools
+# to fixtures that deliberately hide them.
+export HARMON_PREFIX="${TMP}/unmanaged-prefix"
 
 fail() {
     echo "TEST FAIL: $*" >&2
@@ -169,6 +173,9 @@ make_fixture() {
     FIX_PARENT="${TMP}/${name}"
     FIX="${FIX_PARENT}/checkout"
     mkdir -p "${FIX}/scripts" "${FIX}/.devcontainer/scripts"
+    # These scenarios test preparation's compact summary. Persistence failure
+    # and shadow warnings are tested separately with distinct output streams.
+    export CLAUDE_ENV_FILE="${FIX_PARENT}/session-env.sh"
     git init -q "${FIX}"
     cp "${REPO_ROOT}/scripts/setup-remote.sh" "${FIX}/scripts/setup-remote.sh"
     cp "${REPO_ROOT}/scripts/session-start-remote.sh" "${FIX}/scripts/session-start-remote.sh"

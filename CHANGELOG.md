@@ -8,6 +8,25 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [5.16.0](https://github.com/evanharmon1/harmon-init/compare/v5.15.1...v5.16.0) (2026-11-04)
+
+
+### Features
+
+* **tasks:** ship task setup:ruleset so a required check reaches live rulesets ([#1929](https://github.com/evanharmon1/harmon-init/issues/1929)) ([e9a145c](https://github.com/evanharmon1/harmon-init/commit/e9a145ccb90c782bf9ca72a19e67708b12f1ca59))
+* **template:** render one dev-flow finder per enabled reviewer and add parked/merge-ready labels ([#1928](https://github.com/evanharmon1/harmon-init/issues/1928)) ([45f162a](https://github.com/evanharmon1/harmon-init/commit/45f162ac8d9ac116e17ee7a3b33ae1c8a741301f))
+
+
+### Bug Fixes
+
+* **devcontainer:** keep the smoke-isolation test independent of uv wording, ambient settings and PATH ([#1936](https://github.com/evanharmon1/harmon-init/issues/1936)) ([ded96ce](https://github.com/evanharmon1/harmon-init/commit/ded96cee41e7d56a0cc60bfcd5b2ba7d9091c5ad))
+* **devcontainer:** update shared image to 612e2153 ([#1910](https://github.com/evanharmon1/harmon-init/issues/1910)) ([878ef6f](https://github.com/evanharmon1/harmon-init/commit/878ef6f9ab81231db0f1c1aee038789643d2cef9))
+* **remote-env:** keep the pinned toolchain first on PATH and never write through platform symlinks ([#1943](https://github.com/evanharmon1/harmon-init/issues/1943)) ([2a4d451](https://github.com/evanharmon1/harmon-init/commit/2a4d451559e95849b755710c55b809ea12d01272))
+* **template:** align review handoff guidance ([#1934](https://github.com/evanharmon1/harmon-init/issues/1934)) ([7d23684](https://github.com/evanharmon1/harmon-init/commit/7d23684103d6f2a7c4d52be9d473245c5ed9e3a5))
+* **template:** give the claim-release fixture's closing links a repository identity ([#1937](https://github.com/evanharmon1/harmon-init/issues/1937)) ([7ec14f7](https://github.com/evanharmon1/harmon-init/commit/7ec14f77d02f96043625acc5b86d0bfd4823323f)), closes [#1372](https://github.com/evanharmon1/harmon-init/issues/1372)
+* **template:** keep test:result-schemas green under devkit v0.66.0 authenticated receipts ([#1942](https://github.com/evanharmon1/harmon-init/issues/1942)) ([4c415bd](https://github.com/evanharmon1/harmon-init/commit/4c415bd7b69452dc0691beb3cd909ac6e54f94db))
+* **test:** stop hook-descendant inheriting hook-deadline's 0.1s timeout stub ([#1938](https://github.com/evanharmon1/harmon-init/issues/1938)) ([f5db6d8](https://github.com/evanharmon1/harmon-init/commit/f5db6d83abcc93490ca2bd49d301e4bedbfab725)), closes [#1935](https://github.com/evanharmon1/harmon-init/issues/1935)
+
 ## [5.15.1](https://github.com/evanharmon1/harmon-init/compare/v5.15.0...v5.15.1) (2026-11-03)
 
 
