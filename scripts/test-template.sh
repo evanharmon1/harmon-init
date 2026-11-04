@@ -179,6 +179,7 @@ run_ruleset_matrix() {
     cp "$repo_root/copier.yml" "$matrix_source/copier.yml"
     cp "$repo_root/template/.github/[% if use_foreman %]Tag Protection Ruleset - Version Tag Creation.json[% endif %].jinja" \
         "$matrix_source/template/.github/[% if use_foreman %]Tag Protection Ruleset - Version Tag Creation.json[% endif %].jinja"
+    cp "$repo_root/template/.github/Branch Protection Ruleset - Protect Main.json.jinja" "$matrix_source/template/.github/"
 
     for owner_case in user org; do
         if [ "$owner_case" = user ]; then
@@ -226,12 +227,21 @@ GOLDEN
             )
             case "$answer_case" in
             empty) copier_args+=(--data ci_app_integration_id=) ;;
-            set) copier_args+=(--data ci_app_integration_id=4109947) ;;
+            set) copier_args+=(--data ci_app_integration_id=4109947 --data merge_queue_available=true) ;;
             esac
 
             if ! run_quiet "ruleset-$owner_case-$answer_case-render" copier copy \
                 "${copier_args[@]}" "$matrix_source" "$render_dir"; then
                 err "Copier failed for the $owner_case/$answer_case Creation ruleset matrix case"
+                return 1
+            fi
+
+            local expected_queue=0
+            if [ "$owner_case" = org ] && [ "$answer_case" = set ]; then expected_queue=1; fi
+            if ! jq -e --argjson expected "$expected_queue" \
+                '[.rules[] | select(.type == "merge_queue")] | length == $expected' \
+                "$render_dir/.github/Branch Protection Ruleset - Protect Main.json" >/dev/null; then
+                err "merge_queue rule count mismatch for $owner_case/$answer_case"
                 return 1
             fi
 
@@ -402,7 +412,7 @@ full)
     # Maximize conditional coverage: web tooling + terraform + ansible +
     # devcontainer + self-hosted runner labels (exercises actionlint config)
     # + an org owner != author (renders project-automation.yml, the org
-    # branches of the claude workflows, and the merge_queue ruleset rule)
+    # branches of the claude workflows)
     # + the GitHub project-management doc (docs/project-management.md).
     data_args+=(
         --data project_type=web-astro
@@ -418,6 +428,7 @@ full)
         --data tailscale_required=true
         --data ci_runner=self-hosted
         --data github_org=test-org
+        --data merge_queue_available=true
         --data claude_authorized_members="evanharmon1,reviewer-a,reviewer-b"
         --data trusted_orchestrator_actor_ids="37220977,269859446"
         --data project_management=github
@@ -492,6 +503,16 @@ if [ "$profile" = "full" ]; then
     elif ! grep -Fq 'CI APP INTEGRATION ID must be a positive integer' "$job_tmp/invalid-integration-id.log"; then
         err "invalid ci_app_integration_id failed without the expected validation message"
     fi
+fi
+
+# The full organization profile opts in; every other profile uses the default off.
+# The ruleset matrix separately exercises default-off organization renders.
+expected_queue=0
+if [ "$profile" = full ]; then expected_queue=1; fi
+if ! jq -e --argjson expected "$expected_queue" \
+    '[.rules[] | select(.type == "merge_queue")] | length == $expected' \
+    "$dest/.github/Branch Protection Ruleset - Protect Main.json" >/dev/null; then
+    err "merge_queue rule count does not match availability for $profile"
 fi
 
 cd "$dest"

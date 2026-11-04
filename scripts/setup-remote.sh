@@ -88,6 +88,16 @@ run_step() {
 
 echo "==> setup:remote in ${ROOT}"
 
+# A standalone preparation task can fix its own tools and report the incoming
+# shadows; SessionStart persists the same export for the parent agent's shells.
+if [ "${CLAUDE_CODE_REMOTE:-}" = true ]; then
+    if session_env="$(bash scripts/reconcile-toolchain.sh --session-env)"; then
+        eval "$session_env"
+    else
+        note_warning "session PATH preparation failed; put ${HARMON_BIN:-${HARMON_PREFIX:-/usr/local}/bin} first on PATH"
+    fi
+fi
+
 # Run first so slow sibling/dependency work cannot consume the tool budget.
 # The helper never makes installation trouble fatal to session preparation.
 if [ "${CLAUDE_CODE_REMOTE:-}" = true ]; then
