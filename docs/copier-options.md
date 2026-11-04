@@ -9,8 +9,8 @@ recipes in [Regeneration recipes](#regeneration-recipes).
 
 | Kind | Count |
 |---|---|
-| Questions in `copier.yml` (asked + hidden) | **72** |
-| — asked | **52** |
+| Questions in `copier.yml` (asked + hidden) | **73** |
+| — asked | **53** |
 | — hidden (`when: false`) | **20** |
 | Template-level `_`-prefixed keys | **9** |
 | Distinct Jinja path-gate conditions under `template/` | **33** (over 114 gated paths, 9 of them directories) |
@@ -21,11 +21,11 @@ recipes in [Regeneration recipes](#regeneration-recipes).
 > *every* top-level question key, asked and hidden alike. **Asked = total −
 > hidden.** The drift so far: 54/21 (v4.14.3) → 55/20 (v4.17.1) → 56/20
 > (v4.25.1) → 57/20 (#850) → 58/20 → 59/20 (#1042) → 60/20 → 61/20 → … →
-> 69/20 (#1908) → 72/20 (#1787).
+> 69/20 (#1908) → 72/20 (#1787) → 73/20 (#1733).
 
 ---
 
-## Asked questions (52)
+## Asked questions (53)
 
 In prompt order, as defined in `copier.yml`. "Asked when" is the question's
 `when:`; when the condition is false the key is **absent** from the repo's
@@ -37,7 +37,7 @@ In prompt order, as defined in `copier.yml`. "Asked when" is the question's
 | 2 | `project_slug` | str | slugified `project_name` | always | Directory/repo name, GHCR image, `.code-workspace` |
 | 3 | `project_description` | str | `TODO: project_description` | always | README, package metadata |
 | 4 | `github_org` | str | `[[ author_git_provider_username ]]` | always | Repo URL, GHCR namespace; **≠ author ⇒ org-only files render** |
-| 4a | `merge_queue_available` | bool | **no** | always | Opt in to the merge queue rule for public organization repositories or private organizations on Enterprise Cloud; unavailable on private Team repositories |
+| 4a | `merge_queue_available` | bool | **no** | `github_org != author_git_provider_username` | Opt in to the merge queue rule for public organization repositories or private organizations on Enterprise Cloud; unavailable on private Team repositories |
 | 5 | `code_owner` | str | `[[ author_git_provider_username ]]` | always | `.github/CODEOWNERS` (frozen after first render — see `_skip_if_exists`) |
 | 6 | `claude_authorized_members` | str (CSV) | `[[ author_git_provider_username ]]` | always | allowlist for the `@claude` commands (plan/implement/review) |
 | 7 | `project_type` | choice `general`/`web-astro`/`web-app`/`iac`/`docs` | `general` | always | Taskfile, CI jobs, devcontainer tooling; **seeds 6 asked answers** (+ hidden `use_node`/`use_python`, and it gates `deploy_cloudflare_workers`'s `when:`) |
@@ -497,7 +497,7 @@ top when you re-run these.
 
 ```sh
 # every question (asked + hidden)
-grep -cE '^[a-z][a-z_]*:' copier.yml                    # 72
+grep -cE '^[a-z][a-z_]*:' copier.yml                    # 73
 
 # hidden questions (when: false)
 grep -cE '^[[:space:]]+when: false' copier.yml          # 20
@@ -509,7 +509,7 @@ grep -cE '^_[a-z_]*:' copier.yml                        # 9
 hidden="$(mktemp)"
 awk '/^[a-z][a-z_]*:/{n=$1} /^[[:space:]]+when: false/{print n}' copier.yml \
   | sort > "$hidden"
-grep -oE '^[a-z][a-z_]*:' copier.yml | sort | comm -23 - "$hidden"     # 52 names
+grep -oE '^[a-z][a-z_]*:' copier.yml | sort | comm -23 - "$hidden"     # 53 names
 rm -f "$hidden"
 
 # distinct Jinja path-gate conditions, with a count of the paths each gates

@@ -316,7 +316,7 @@ This mirrors the importable
           }
         ]
       }
-[% if merge_queue_available %]
+[% if github_org != author_git_provider_username and merge_queue_available | default(false) %]
     },
     {
       "type": "merge_queue",
@@ -467,7 +467,7 @@ the aggregate verifies exactly that. This is the same shape as the required
 `verify` and `security` checks, which skip `check`, `repo-guards`[% if project_type == 'web-app' %], `codegen-guard`[% endif %][% if devcontainer %], `devcontainer-permissions`[% endif %], `security`[% if use_node %], `build-test`, `e2e`[% endif %] the same
 way — a green aggregate on a fork PR means "the trust boundary held", not
 "validation passed".
-[% if merge_queue_available %]
+[% if github_org != author_git_provider_username and merge_queue_available | default(false) %]
 This repository has the merge queue enabled, which closes the gap: a queued
 entry raises a `merge_group` event, which is not a fork event, so `fmt` and
 `validate` run against the trusted merged result before it reaches `main`.
@@ -538,7 +538,7 @@ push trigger.[% endif %] Only a high-consequence repository that deliberately ad
 paid Snyk should consider per-PR scans and whether to make them merge
 requirements. See [security.md](security.md) for the scanner policy.
 
-[% if merge_queue_available %]
+[% if github_org != author_git_provider_username and merge_queue_available | default(false) %]
 ### `merge_queue`
 
 Merges go through a merge queue (`grouping_strategy: ALLGREEN`): GitHub batches queued

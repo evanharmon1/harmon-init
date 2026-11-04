@@ -74,7 +74,7 @@
           }
         ]
       }
-[% if merge_queue_available %]
+[% if github_org != author_git_provider_username and merge_queue_available | default(false) %]
     },
     {
       "type": "merge_queue",

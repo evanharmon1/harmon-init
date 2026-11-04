@@ -118,6 +118,7 @@ merge_queue_available:
   type: bool
   help: "MERGE QUEUE: Available for public organization repositories or private organization repositories on GitHub Enterprise Cloud; private Team repositories cannot use it. Enable only when available."
   default: false
+  when: "[[ github_org != author_git_provider_username ]]"
 
 code_owner:
   type: str

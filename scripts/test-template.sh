@@ -237,7 +237,7 @@ GOLDEN
             fi
 
             local expected_queue=0
-            if [ "$answer_case" = set ]; then expected_queue=1; fi
+            if [ "$owner_case" = org ] && [ "$answer_case" = set ]; then expected_queue=1; fi
             if ! jq -e --argjson expected "$expected_queue" \
                 '[.rules[] | select(.type == "merge_queue")] | length == $expected' \
                 "$render_dir/.github/Branch Protection Ruleset - Protect Main.json" >/dev/null; then
