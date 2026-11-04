@@ -475,7 +475,7 @@ STUB
         cp "$fixture/labels" "$fixture/pr-labels-1067"
         cp "$fixture/labels" "$fixture/pr-labels-1068"
         : >"$fixture/writes"
-        (cd "$fixture" && unset PR_NUMBER && GH_CLOSING_PRS='[{"number":1067,"url":"https://github.com/owner/repo/pull/1067"}]' \
+        (cd "$fixture" && unset PR_NUMBER && GH_CLOSING_PRS='[{"number":1067,"repository":{"name":"repo","owner":{"login":"owner"}},"url":"https://github.com/owner/repo/pull/1067"}]' \
             bash .claude/skills/track-work/assets/clear-needs-review.sh --repo owner/repo --issue 42) >"$tmp/out" 2>&1 || fail 'closing PR cleanup failed'
         [ "$(cat "$fixture/writes")" = $'pr edit 1067 --repo owner/repo --remove-label needs-review\nissue edit 42 --repo owner/repo --remove-label needs-review' ] || fail 'closing PR cleanup selected the wrong objects'
         [ "$(cat "$fixture/pr-labels-1067")" = feature ] || fail 'closing PR marker was not cleared'
@@ -487,7 +487,7 @@ STUB
         cp "$fixture/labels" "$fixture/pr-labels-1068"
         : >"$fixture/writes"
         (cd "$fixture" && unset PR_NUMBER && GH_SIBLING_STATE=OPEN \
-            GH_CLOSING_PRS='[{"number":1068,"url":"https://github.com/owner/repo/pull/1068"}]' \
+            GH_CLOSING_PRS='[{"number":1068,"repository":{"name":"repo","owner":{"login":"owner"}},"url":"https://github.com/owner/repo/pull/1068"}]' \
             GH_BRANCH_PRS='[{"number":1067,"headRefName":"fix/partial","isCrossRepository":false}]' \
             bash .claude/skills/track-work/assets/clear-needs-review.sh --repo owner/repo --issue 42 --branch fix/partial) >"$tmp/out" 2>&1 || fail 'sibling retention cleanup failed'
         [ "$(cat "$fixture/writes")" = 'pr edit 1067 --repo owner/repo --remove-label needs-review' ] || fail 'sibling retention wrote to the wrong objects'
