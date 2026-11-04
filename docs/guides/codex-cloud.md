@@ -210,7 +210,7 @@ be a secret**: anything set here is visible to the agent.
 The docs' own way to keep a setup-time environment for the agent is to add it to
 `~/.bashrc` or the environment settings. If the observation below shows the
 agent's shell does not read the bootstrap's `/etc/profile.d` drop-in, a line in
-the setup script sourcing `/etc/profile.d/harmon-remote-env.sh` from `~/.bashrc`
+the setup script sourcing `/etc/profile.d/zz-harmon-remote-env.sh` from `~/.bashrc`
 is the candidate remedy. It is **not** part of the script above: the script is
 held equal to the entrypoint, so the remedy needs the observation first and then
 a decision on where it lives.

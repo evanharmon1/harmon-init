@@ -1619,7 +1619,7 @@ chose REPO_LOCAL_WINS "$matching"
                 fail(f"{MARKDOWNLINT}: {case} ran {got!r}, expected {want!r} — {why[case]}")
 
 # ── 18. the install prefix: refused at the door, quoted where it is rendered ─
-# HARMON_BIN is interpolated into /etc/profile.d/harmon-remote-env.sh, which this
+# HARMON_BIN is interpolated into HARMON_PROFILE_DROPIN, which this
 # root process sources and so does every login shell on the machine afterwards. A
 # prefix carrying a quote, a `$`, a backtick or a newline writes a broken drop-in
 # and breaks every later login, persistently — so the value is validated before
@@ -3268,21 +3268,128 @@ locale_end = bootstrap_text.index("\nset_locale\n", locale_start)
 locale_functions = bootstrap_text[locale_start:locale_end].replace(
     "/etc/environment", "${root}/environment"
 ).replace("/etc/profile.d", "${root}/profile.d").replace("sed -i ", "sed -i.bak ")
+profile_constants = "\n".join(
+    line.replace("/etc/profile.d", "${root}/profile.d").replace("=", '="', 1) + '"'
+    for line in bootstrap_text.splitlines()
+    if line.startswith("readonly HARMON_PROFILE_")
+)
+login_start = bootstrap_text.index("# Check the invoking user's real login shell")
+login_end = bootstrap_text.index("# The EFFECTIVE locale", login_start)
+login_check = bootstrap_text[login_start:login_end]
 locale_harness = r"""
 set -euo pipefail
 root="$(mktemp -d)"
 trap 'rm -rf "$root"' EXIT
 HARMON_BIN="${root}/bin"
-HARMON_PROFILE_DROPIN="${root}/profile.d/harmon-remote-env.sh"
+@PROFILE_CONSTANTS@
 die() { printf '%s\n' "$*" >&2; exit 1; }
+warn() { printf 'WARNING: %s\n' "$*" >&2; }
 @LOCALE@
+mkdir -p "${root}/profile.d" "$HARMON_BIN" "${root}/platform" "${root}/home/.local/bin"
+# The web VM: nodejs.sh runs after the old harmon-remote-env.sh name.
+printf 'export PATH="%s:$PATH"\n' "${root}/platform" >"${root}/profile.d/nodejs.sh"
+cp "${root}/profile.d/nodejs.sh" "${root}/platform-before"
+printf 'old owned profile\n' >"$HARMON_PROFILE_LEGACY_DROPIN"
 printf 'LANG=C-UTF-8\nLC_ALL=C-UTF-8\nOTHER=preserved\n' >"${root}/environment"
 set_locale
+[ ! -e "$HARMON_PROFILE_LEGACY_DROPIN" ]
+cmp "${root}/platform-before" "${root}/profile.d/nodejs.sh"
 grep -Fxq LANG=C.UTF-8 "${root}/environment"
 grep -Fxq LC_ALL=C.UTF-8 "${root}/environment"
 grep -Fxq OTHER=preserved "${root}/environment"
 python3 -c 'import os, stat, sys; assert stat.S_IMODE(os.stat(sys.argv[1]).st_mode) == 0o644' "$HARMON_PROFILE_DROPIN"
 printf 'LOCALE_LITERAL repaired\n'
+
+# A no-op bootstrap preserves the published profile's bytes, inode and mtime.
+profile_identity() {
+    python3 -c 'import os, sys; s=os.stat(sys.argv[1]); print(s.st_ino, s.st_mtime_ns)' "$HARMON_PROFILE_DROPIN"
+}
+cp "$HARMON_PROFILE_DROPIN" "${root}/published"
+before="$(profile_identity)"
+set_locale
+cmp "${root}/published" "$HARMON_PROFILE_DROPIN"
+[ "$(profile_identity)" = "$before" ]
+printf 'PROFILE_UPGRADE idempotent\n'
+
+# A real bash login executes the redirected system profile. Keep host startup
+# files out of the fixture's PATH result without writing to the host's /etc.
+bash_bin="$(command -v bash)"
+cat >"${root}/profile" <<'PROFILE'
+export PATH=/usr/bin:/bin
+for profile in "$FIXTURE_ROOT"/profile.d/*.sh; do . "$profile"; done
+PROFILE
+for tool in yq task node npm npx corepack uv uvx; do
+    printf '#!/bin/sh\nexit 0\n' >"${HARMON_BIN}/${tool}"
+    chmod 0755 "${HARMON_BIN}/${tool}"
+done
+for tool in node npm uv; do
+    cp "${HARMON_BIN}/${tool}" "${root}/platform/${tool}"
+done
+resolved="$(FIXTURE_ROOT="$root" "$bash_bin" -lc '. "$FIXTURE_ROOT/profile"; command -v node npm uv')"
+[ "$resolved" = "$(printf '%s\n' "${HARMON_BIN}/node" "${HARMON_BIN}/npm" "${HARMON_BIN}/uv")" ]
+# The generated drop-in is also sourced by POSIX sh.
+[ "$(FIXTURE_ROOT="$root" sh -c '. "$FIXTURE_ROOT/profile"; command -v node')" = "${HARMON_BIN}/node" ]
+printf 'PROFILE_LOGIN pinned\n'
+
+# Run the actual closing check with only OS/account paths redirected. env
+# still starts a real, clean bash login; the second probe still suppresses
+# startup files and explicitly sources the system profile alone.
+getent() { printf 'fixture:x:123:123::%s:/bin/bash\n' "${root}/home"; }
+id() { printf '%s\n' "$fixture_uid"; }
+runuser() {
+    [ "$1" = -u ] && [ "$2" = fixture ] && [ "$3" = -- ]
+    printf 'runuser\n' >>"${root}/runuser-calls"
+    shift 3
+    "$@"
+}
+env() {
+    local -a environment=()
+    while [ "$1" != bash ]; do environment+=("$1"); shift; done
+    shift
+    local script="${!#}"
+    if [ "$1" = --noprofile ]; then
+        script="${script/. \/etc\/profile;/. \"\$FIXTURE_ROOT\/profile\";}"
+        command env "${environment[@]}" FIXTURE_ROOT="$root" "$bash_bin" --noprofile -lc "$script"
+    else
+        [ "$1" = -lc ]
+        command env "${environment[@]}" FIXTURE_ROOT="$root" "$bash_bin" -lc \
+            '. "$FIXTURE_ROOT/profile"; . "$FIXTURE_ROOT/user-profile"; '"$script"
+    fi
+}
+run_login_check() {
+@LOGIN_CHECK@
+}
+export SUDO_USER=fixture
+: >"${root}/user-profile"
+fixture_uid=0
+run_login_check 2>"${root}/warnings"
+[ ! -s "${root}/warnings" ]
+[ ! -e "${root}/runuser-calls" ]
+fixture_uid=123
+run_login_check 2>"${root}/warnings"
+[ ! -s "${root}/warnings" ]
+[ "$(wc -l <"${root}/runuser-calls")" -eq 8 ]
+printf 'LOGIN_CHECK pinned as root and user\n'
+
+cp "${HARMON_BIN}/yq" "${root}/home/.local/bin/yq"
+printf 'export PATH="%s:$PATH"\n' "${root}/home/.local/bin" >"${root}/user-profile"
+run_login_check 2>"${root}/warnings"
+grep -Fq "fixture's login shell resolves yq to '${root}/home/.local/bin/yq'" "${root}/warnings"
+grep -q 'a user-level PATH entry' "${root}/warnings"
+! grep -q 'system login profile' "${root}/warnings"
+printf 'LOGIN_CHECK user shadow reported\n'
+
+# Even our late name can be outranked by a future platform script. The
+# closing check must name each affected executable and its actual path.
+: >"${root}/user-profile"
+cp "${root}/profile.d/nodejs.sh" "${root}/profile.d/zzz-platform.sh"
+run_login_check 2>"${root}/warnings"
+for tool in node npm uv; do
+    grep -Fq "system login profile resolves ${tool} to '${root}/platform/${tool}'" "${root}/warnings"
+done
+grep -q '/etc/profile.d script shadows' "${root}/warnings"
+! grep -q 'user-level PATH entry' "${root}/warnings"
+printf 'LOGIN_CHECK system shadows reported\n'
 
 install() {
     local destination="${!#}"
@@ -3294,17 +3401,24 @@ install() {
 }
 mv() { [ "$mode" != rename ] || return 1; command mv "$@"; }
 for mode in write rename; do
+    printf 'old owned profile\n' >"$HARMON_PROFILE_LEGACY_DROPIN"
     printf 'previous login profile\n' >"$HARMON_PROFILE_DROPIN"
     cp "$HARMON_PROFILE_DROPIN" "${root}/before"
     if (set_locale) >/dev/null 2>&1; then exit 1; fi
     cmp "${root}/before" "$HARMON_PROFILE_DROPIN"
+    grep -Fxq 'old owned profile' "$HARMON_PROFILE_LEGACY_DROPIN"
+    cmp "${root}/platform-before" "${root}/profile.d/nodejs.sh"
     [ -z "$(find "${root}/profile.d" -name '*.harmon-staging' -print)" ]
     printf 'PROFILE_%s preserved\n' "$mode"
 done
 """
-run = run_host_fixture(locale_harness.replace("@LOCALE@", locale_functions))
+run = run_host_fixture(locale_harness.replace("@LOCALE@", locale_functions).replace(
+    "@PROFILE_CONSTANTS@", profile_constants
+).replace("@LOGIN_CHECK@", login_check))
 if run is None or run.returncode != 0 or run.stdout.splitlines() != [
-    "LOCALE_LITERAL repaired", "PROFILE_write preserved", "PROFILE_rename preserved"
+    "LOCALE_LITERAL repaired", "PROFILE_UPGRADE idempotent", "PROFILE_LOGIN pinned",
+    "LOGIN_CHECK pinned as root and user", "LOGIN_CHECK user shadow reported",
+    "LOGIN_CHECK system shadows reported", "PROFILE_write preserved", "PROFILE_rename preserved"
 ]:
     fail(f"{BOOTSTRAP}: locale/profile fault injection failed: {run}")
 
