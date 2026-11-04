@@ -2,7 +2,7 @@
 # Offline contract tests: stub gh, never contact GitHub.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-python3 - <<'PY'
+python3 -B - <<'PY'
 import copy
 import json
 import os
@@ -36,7 +36,11 @@ assert not any(word in args for word in ['--input', 'POST', 'PUT', 'PATCH', 'DEL
 endpoint = args[3] if args[1] == '--method' else 'graphql'
 data = json.loads(Path(os.environ['AUDIT_TEST_DATA']).read_text())
 key = endpoint.split('?')[0]
-value = data.get(endpoint, data.get(key, {'error': 403}))
+from urllib.parse import parse_qs
+page = int(parse_qs(endpoint.partition('?')[2]).get('page', ['1'])[0])
+value = data.get(endpoint, data.get(key, {'error': 403}) if page == 1 else
+                 ({'variables': [], 'secrets': [], 'jobs': [], 'workflow_runs': []}
+                  if isinstance(data.get(key), dict) and 'error' not in data[key] else []))
 if isinstance(value, dict) and 'error' in value:
     print('gh: permission unavailable (HTTP ' + str(value['error']) + ')', file=sys.stderr)
     sys.exit(1)
@@ -169,6 +173,7 @@ print(json.dumps(value) if value is not None else '')
         assert run([settings], 0, private)[0]['result'] == 'pass'
         private['repos/acme/widget/actions/variables']['variables'] = []
         assert run([settings], 1, private)[0]['result'] == 'fail'
+        private['repos/acme/widget']['owner']['type'] = 'Organization'
         private['repos/acme/widget/actions/organization-variables'] = {'variables': [{'name': 'CI_RUNS_ON', 'value': '"ubuntu-latest"'}]}
         assert run([settings], 0, private)[0]['result'] == 'pass'
         private['repos/acme/widget/actions/variables']['variables'] = [{'name': 'CI_RUNS_ON', 'value': '"self-hosted"'}]
@@ -178,12 +183,38 @@ print(json.dumps(value) if value is not None else '')
         assert run([settings], 0, private)[0]['result'] == 'pass'
         private['repos/acme/widget/actions/variables']['variables'].append({'name': 'ISOLATED_RUNS_ON', 'value': '"self-hosted"'})
         assert run([settings], 1, private)[0]['result'] == 'fail'
+    private_org = copy.deepcopy(data)
+    private_org['repos/acme/widget'].update(visibility='private', owner={'type': 'Organization'})
+    private_org['repos/acme/widget/actions/organization-variables'] = {'error': 403}
+    row = run([settings], 2, private_org)[0]
+    assert row['result'] == 'unknown' and '403' in row['reason'] and 'organization-variables' in row['reason']
+    private_org['repos/acme/widget']['owner']['type'] = 'User'
+    assert run([settings], 0, private_org)[0]['result'] == 'pass'
+    assert 'organization-variables' not in (fixture / 'calls').read_text()
+    for selector in (['ubuntu-latest'], {'labels': ['ubuntu-latest']}, {'labels': 'ubuntu-latest'}):
+        selectors = copy.deepcopy(data)
+        for variable in selectors['repos/acme/widget/actions/variables']['variables']:
+            variable['value'] = json.dumps(selector)
+        assert run([settings], 0, selectors)[0]['result'] == 'pass'
+    pages = copy.deepcopy(private_org)
+    pages['repos/acme/widget/actions/variables'] = {'variables': [
+        {'name': 'CI_RUNS_ON', 'value': '"ubuntu-latest"'}] + [
+        {'name': 'UNRELATED_' + str(i), 'value': 'unused'} for i in range(29)]}
+    pages['repos/acme/widget/actions/variables?per_page=100&page=2'] = {'variables': [
+        {'name': 'ISOLATED_RUNS_ON', 'value': '["SELF-HOSTED", "linux"]'}]}
+    assert run([settings], 1, pages)[0]['result'] == 'fail'
+    busy = changed('repos/acme/widget/actions/runs', {'total_count': 1100, 'workflow_runs': [{'id': 42}] * 100})
+    assert run([app], 0, busy)[0]['result'] == 'pass'
+    calls = [json.loads(line) for line in (fixture / 'calls').read_text().splitlines()]
+    assert len([call for call in calls if call[3].split('?')[0] == 'repos/acme/widget/actions/runs']) == 1
     drifted = copy.deepcopy(data)
     drifted['repos/acme/widget']['delete_branch_on_merge'] = False
     drifted['repos/acme/widget/vulnerability-alerts'] = {'error': 404}
-    assert run([settings], 1, drifted)[0]['result'] == 'fail'
+    row = run([settings], 2, drifted)[0]
+    assert row['result'] == 'unknown' and '404' in row['reason'] and 'delete_branch_on_merge' in row['reason']
     drifted['repos/acme/widget/actions/variables'] = {'error': 403}
-    assert run([settings], 1, drifted)[0]['result'] == 'fail'
+    row = run([settings], 2, drifted)[0]
+    assert all(text in row['reason'] for text in ('404', '403', 'vulnerability-alerts', 'actions/variables', 'delete_branch_on_merge'))
     assert run([settings], 2, changed('repos/acme/widget/actions/variables', {'error': 403}))[0]['result'] == 'unknown'
     assert run([renovate], 1, changed('repos/acme/widget/issues', [
         {'title': 'Dependency Dashboard', 'user': None},
@@ -204,7 +235,8 @@ print(json.dumps(value) if value is not None else '')
         denied = dict(data, **{'repos/acme/widget/actions/secrets': {'error': status}})
         row = run([secrets], 2, denied)[0]
         assert row['result'] == 'unknown' and str(status) in row['reason']
-    assert any(row['result'] == 'fail' for row in run([secrets, manual], 2, drift))  # unknown dominates drift
+    assert any(row['result'] == 'fail' for row in run([secrets, manual], 1, drift))
+    assert run([manual], 0)[0]['result'] == 'manual'
     assert run([sast], 2)[0]['class'] == 'unknown-when-unprivileged'
     # All four classifications have the same read-only probe semantics.
     fleet = dict(settings, **{'class': 'agent-apply-with-fleet-approval'})
@@ -217,7 +249,7 @@ print(json.dumps(value) if value is not None else '')
     assert len(output) == len(catalog['entries'])
     calls = [json.loads(line) for line in (fixture / 'calls').read_text().splitlines()]
     secret_calls = [call for call in calls if 'actions/secrets' in ' '.join(call)]
-    assert len(secret_calls) == 1, secret_calls  # cached metadata inventory
+    assert len(secret_calls) == 2, secret_calls  # cached metadata inventory
     assert secret_calls[0][3].split('?')[0] == 'repos/acme/widget/actions/secrets'
     assert 'CLAUDE_CODE_OAUTH_TOKEN' not in ' '.join(secret_calls[0])
     # Permission-sensitive repository reads must never manufacture a failure.
@@ -230,6 +262,8 @@ print(json.dumps(value) if value is not None else '')
     assert run([app], 2, skipped)[0]['result'] == 'unknown'
     # Exhaustion and a denied later page cannot make a partial list pass/fail.
     many = dict(data, **{'repos/acme/widget/labels': [{'name': 'x' + str(i), 'color': 'ffffff', 'description': ''} for i in range(100)]})
+    many.update({'repos/acme/widget/labels?per_page=100&page=' + str(page): many['repos/acme/widget/labels']
+                 for page in range(1, 11)})
     assert '10 pages' in run([labels], 2, many)[0]['reason']
     later = dict(many, **{'repos/acme/widget/labels?per_page=100&page=2': {'error': 403}})
     assert '403' in run([labels], 2, later)[0]['reason']

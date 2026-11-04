@@ -3,7 +3,7 @@
 # Requires python3 and gh. No secret value endpoint is ever requested.
 set -euo pipefail
 cd "$(dirname "$0")/.."
-exec python3 - "$@" <<'PY'
+exec python3 -B - "$@" <<'PY'
 import argparse
 import json
 import re
@@ -11,7 +11,7 @@ import subprocess
 import sys
 from pathlib import Path
 
-parser = argparse.ArgumentParser(description='Read-only GitHub checklist audit (NDJSON). Exit 0: clean, 1: drift, 2: unavailable (takes precedence). Manual evidence is unknown.')
+parser = argparse.ArgumentParser(description='Read-only GitHub checklist audit (NDJSON). Exit 0: clean, 1: drift, 2: unavailable (takes precedence). Manual rows do not affect the exit code.')
 parser.add_argument('--repo', help='[HOST/]OWNER/REPO; defaults to gh repository resolution')
 parser.add_argument('--all', action='store_true', help='audit every catalog entry, including inactive template options')
 parser.add_argument('--foreman', action='store_true', help='include Foreman labels in registry comparison')
@@ -82,7 +82,10 @@ def api(endpoint, key=None, paginated=False, headers=()):
                     argv += ['-H', header]
                 if host:
                     argv += ['--hostname', host]
-                payload = command(argv)
+                try:
+                    payload = command(argv)
+                except Unavailable as error:
+                    raise Unavailable(path + ': ' + str(error)) from None
                 if not paginated:
                     cache[identity] = payload
                     break
@@ -90,7 +93,7 @@ def api(endpoint, key=None, paginated=False, headers=()):
                 if not isinstance(payload, list):
                     raise Unavailable('GitHub list response has an unsupported shape')
                 values.extend(payload)
-                if len(payload) < 100:
+                if not payload:
                     cache[identity] = values
                     break
             else:
@@ -127,7 +130,46 @@ def secret(*expected):
 
 
 def outcome(ok, reason):
-    return ('pass' if ok else 'fail', reason)
+    evidence = Evidence()
+    if not ok:
+        evidence.drift.append(reason)
+    return evidence.resolve(reason)
+
+
+def selector_labels(value):
+    """Parse the same usable label shapes accepted by setup-github.sh."""
+    try:
+        selector = json.loads(value)
+    except (ValueError, TypeError):
+        return None
+    labels = selector.get('labels') if isinstance(selector, dict) else selector
+    labels = [labels] if isinstance(labels, str) else labels
+    if isinstance(labels, list) and labels and all(isinstance(label, str) and label for label in labels):
+        return labels
+    return None
+
+
+class Evidence:
+    """Resolve a row once, with unavailable reads taking precedence over drift."""
+    def __init__(self):
+        self.failures = []
+        self.drift = []
+
+    def collect(self, label, read):
+        try:
+            return read()
+        except Unavailable as error:
+            self.failures.append(label + ': ' + str(error))
+            return None
+
+    def check(self, label, check):
+        if self.collect(label, check) is False:
+            self.drift.append(label)
+
+    def resolve(self, reason):
+        details = self.failures + (['drift: ' + ', '.join(self.drift)] if self.drift else [])
+        return ('unknown' if self.failures else 'fail' if self.drift else 'pass',
+                '; '.join(details) if details else reason)
 
 
 def probe(entry):
@@ -136,64 +178,61 @@ def probe(entry):
     item = entry['id']
     manual = 'manual evidence required: ' + (entry['probe'] or 'no read-only probe is available')
     if 'automated-settings-' in item:
-        settings = api('repos/' + repo) if repo else api('')
+        evidence = Evidence()
+        settings = evidence.collect('repository settings', lambda: api('repos/' + repo))
         if args.bot_collaborator and not re.fullmatch(r'[A-Za-z0-9-]+', args.bot_collaborator):
             raise Unavailable('invalid bot collaborator login')
-        drifted = False
-        unavailable = []
-
-        def check_setting(check):
-            nonlocal drifted
-            try:
-                if not check():
-                    drifted = True
-            except Unavailable as error:
-                unavailable.append(str(error))
-
-        for key, expected in (('delete_branch_on_merge', True), ('allow_update_branch', True), ('allow_auto_merge', False)):
-            check_setting(lambda: field(settings, key) is expected)
-        # An unreadable permission-sensitive endpoint is unknown, never disabled.
-        check_setting(lambda: (api('repos/' + repo + '/vulnerability-alerts'), True)[1])
-        try:
-            visibility = field(settings, 'visibility')
-        except Unavailable as error:
-            visibility = None
-            unavailable.append(str(error))
+        if settings is not None:
+            for key, expected in (('delete_branch_on_merge', True), ('allow_update_branch', True), ('allow_auto_merge', False)):
+                evidence.check(key, lambda: field(settings, key) is expected)
+        evidence.collect('vulnerability alerts', lambda: read('vulnerability-alerts'))
+        visibility = evidence.collect('visibility', lambda: field(settings, 'visibility')) if settings is not None else None
         if visibility == 'public':
-            check_setting(lambda: field(read('private-vulnerability-reporting'), 'enabled') is True)
+            evidence.check('private vulnerability reporting', lambda: field(read('private-vulnerability-reporting'), 'enabled') is True)
 
-        def check_routing():
-            if visibility not in ('public', 'private', 'internal'):
-                raise Unavailable('repository visibility unavailable')
-            routing = {}
-            if visibility in ('private', 'internal'):
-                try:
-                    routing.update({row['name']: row['value'] for row in read('actions/organization-variables', 'variables', True)})
-                except Unavailable:
-                    pass  # Optional inheritance; repo CI_RUNS_ON is provisioned by setup.
-            routing.update({row['name']: row['value'] for row in read('actions/variables', 'variables', True)})
-            expected = ('CI_RUNS_ON', 'BROWSER_RUNS_ON', 'IMAGE_BUILD_RUNS_ON', 'ISOLATED_RUNS_ON', 'MULTICORE_RUNS_ON')
-            if visibility == 'public':
-                return all(routing.get(key) == '"ubuntu-latest"' for key in expected)
-            if routing.get('CI_RUNS_ON') not in ('"ubuntu-latest"', '"self-hosted"'):
-                return False
-            return all(routing[key] in (('"ubuntu-latest"',) if key == 'ISOLATED_RUNS_ON' else
-                                       ('"ubuntu-latest"', '"self-hosted"')) for key in expected[1:] if key in routing)
-
-        check_setting(check_routing)
+        routing = {}
+        inventory_complete = True
+        if visibility in ('private', 'internal'):
+            owner_type = evidence.collect('owner type', lambda: field(field(settings, 'owner'), 'type'))
+            if owner_type == 'Organization':
+                inherited = evidence.collect('organization variables', lambda: read('actions/organization-variables', 'variables', True))
+                inventory_complete = inherited is not None
+                if inherited is not None:
+                    routing.update({row['name']: row['value'] for row in inherited})
+            elif owner_type != 'User':
+                inventory_complete = False
+                evidence.failures.append('repository owner type unavailable')
+        variables = evidence.collect('repository variables', lambda: read('actions/variables', 'variables', True))
+        inventory_complete = inventory_complete and variables is not None
+        if variables is not None:
+            routing.update({row['name']: row['value'] for row in variables})
+        expected = ('CI_RUNS_ON', 'BROWSER_RUNS_ON', 'IMAGE_BUILD_RUNS_ON', 'ISOLATED_RUNS_ON', 'MULTICORE_RUNS_ON')
+        for key in expected:
+            if key not in routing:
+                # A failed inventory cannot establish that a variable is missing.
+                if inventory_complete and (visibility == 'public' or key == 'CI_RUNS_ON'):
+                    evidence.drift.append('missing runner selector: ' + key)
+                continue
+            labels = selector_labels(routing[key])
+            valid = labels is not None
+            if valid and visibility == 'public':
+                valid = labels == ['ubuntu-latest']
+            if valid and key == 'ISOLATED_RUNS_ON':
+                valid = all(label.lower() != 'self-hosted' for label in labels)
+            if not valid:
+                evidence.drift.append('invalid runner selector: ' + key)
+        if visibility not in ('public', 'private', 'internal'):
+            evidence.failures.append('repository visibility unavailable')
         if args.bot_collaborator:
-            check_setting(lambda: field(read('collaborators/' + args.bot_collaborator + '/permission'), 'permission') in ('admin', 'maintain', 'write'))
-        if drifted:
-            return outcome(False, 'repository settings drift detected')
-        if unavailable:
-            raise Unavailable('; '.join(unavailable))
-        return outcome(True, 'repository merge/security settings and runner routing' + ('; bot permission checked' if args.bot_collaborator else '; no bot login specified'))
+            evidence.check('bot permission', lambda: field(read('collaborators/' + args.bot_collaborator + '/permission'), 'permission') in ('admin', 'maintain', 'write'))
+        return evidence.resolve('repository merge/security settings and runner routing' + ('; bot permission checked' if args.bot_collaborator else '; no bot login specified'))
     if 'actions-secret-claude-code' in item:
         return outcome(*secret('CLAUDE_CODE_OAUTH_TOKEN'))
     if 'set-ci-app-client-id-' in item:
-        ok, reason = secret('CI_APP_PRIVATE_KEY')
-        present = 'CI_APP_CLIENT_ID' in names('actions/variables', 'variables')
-        return outcome(ok and present, reason + '; CI_APP_CLIENT_ID variable ' + ('present' if present else 'missing'))
+        evidence = Evidence()
+        evidence.check('CI_APP_PRIVATE_KEY secret missing', lambda: secret('CI_APP_PRIVATE_KEY')[0])
+        evidence.check('CI_APP_CLIENT_ID variable missing', lambda: 'CI_APP_CLIENT_ID' in names('actions/variables', 'variables'))
+        return evidence.resolve('CI_APP_PRIVATE_KEY secret and CI_APP_CLIENT_ID variable present')
     if 'snyk' in item:
         ok, reason = secret('SNYK_TOKEN')
         # Schedule opt-in is explicit; name presence alone cannot prove posture.
@@ -205,7 +244,7 @@ def probe(entry):
     if 'install-the-app-on-this-repo-' in item:
         # A succeeded workflow is evidence of token minting only when the workflow
         # itself contains the mint step. Whole-run success can skip that step.
-        runs = read('actions/runs?status=success', 'workflow_runs', True)
+        runs = read('actions/runs?status=success&per_page=100')['workflow_runs']
         for run in runs[:20]:
             jobs = read('actions/runs/' + str(run['id']) + '/jobs?filter=latest', 'jobs', True)
             for job in jobs:
@@ -214,7 +253,7 @@ def probe(entry):
                         return outcome(True, 'succeeded App token-minting step in run ' + str(run['id']))
         raise Unavailable('no succeeded token-minting step in the latest 20 successful runs; installation cannot be inferred')
     if any(part in item for part in ('coderabbit', 'greptile', 'gemini-code', 'connect-codex')):
-        pulls = read('pulls?state=all&sort=updated&direction=desc', pages=True)
+        pulls = read('pulls?state=all&sort=updated&direction=desc&per_page=100')
         login = ('coderabbitai[bot]' if 'coderabbit' in item else
                  'chatgpt-codex-connector[bot]' if 'codex' in item else
                  'gemini-code-assist[bot]' if 'gemini' in item else 'greptile-apps[bot]')
@@ -333,7 +372,7 @@ def probe(entry):
         elif owner_type != 'User':
             raise Unavailable('repository owner type unavailable')
         return outcome(ok, 'owner Projects V2 board, fields and routing')
-    return ('unknown', manual)
+    return ('manual', manual)
 
 
 try:
