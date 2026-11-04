@@ -39,6 +39,9 @@ for runner in ubuntu-latest self-hosted; do
             --data include_terraform=true \
             --data devcontainer=true \
             --data use_codeql=true \
+            --data use_claude_review=true \
+            --data claude_review_actor_id=295644852 \
+            --data 'claude_review_actor_login=evanharmon1-ci[bot]' \
             --data use_release_please=true \
             --data use_skills_sync=true \
             --data deploy_cloudflare_workers=true \

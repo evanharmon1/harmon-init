@@ -180,7 +180,10 @@ git -C "$tmpl" tag v0.0.2
 # Keep copier's own output: when this fails in CI, "copier update failed" alone
 # is not enough to diagnose it, and the failure is not always reproducible
 # locally (copier version, git config, and checkout differences all matter).
-if ! (cd "$gen" && copier update --trust --defaults) >"$work/update.log" 2>&1; then
+if ! (cd "$gen" && copier update --trust --defaults \
+    --data use_claude_review=true \
+    --data claude_review_actor_id=295644852 \
+    --data 'claude_review_actor_login=evanharmon1-ci[bot]') >"$work/update.log" 2>&1; then
     err "copier update failed — output follows"
     sed 's/^/    /' "$work/update.log" >&2
 fi

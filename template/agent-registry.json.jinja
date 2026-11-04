@@ -693,6 +693,142 @@
       },
       "trusted_actor_id": "199175422",
       "trusted_actor_login": "chatgpt-codex-connector[bot]"
-    }
+    }[% if use_claude_review %],
+    {
+      "slug": "claude",
+      "display_name": "Claude Review",
+      "surface": "pr-cloud",
+      "role": null,
+      "stages": ["integration"],
+      "result_schema": null,
+      "invocation": null,
+      "collection": {
+        "type": "shepherd-checker",
+        "protocol": "reserve-trigger-attach-check",
+        "trigger": {
+          "mechanism": "review-comment",
+          "body": "@claude review",
+          "reviewer_login": null
+        },
+        "terminal_signals": {
+          "surfaces": ["comment", "review", "inline"],
+          "head_binding": "reviewed-commit-line",
+          "verdict_mode": "clean-sentence",
+          "clean_verdict": "claude review: didn't find any major issues.",
+          "actionable_pattern": null,
+          "severity_marker": "\\bp[0-9]+\\b",
+          "metadata_line": "^\\*\\*reviewed commit:\\*\\*[% raw %][[:space:]][% endraw %]*`[0-9a-f]{7,40}`[% raw %][[:space:]][% endraw %]*$",
+          "about_summary": null,
+          "heading": "^#{1,6}[^a-z0-9]*claude review$",
+          "carrier_sentence": null,
+          "success_reaction": null,
+          "pending_reaction": null
+        }
+      },
+      "trusted_actor_id": "[[ claude_review_actor_id ]]",
+      "trusted_actor_login": [[ claude_review_actor_login | to_json ]]
+    }[% endif %][% if use_greptile %],
+    {
+      "slug": "greptile",
+      "display_name": "Greptile Review",
+      "surface": "pr-cloud",
+      "role": null,
+      "stages": ["integration"],
+      "result_schema": null,
+      "invocation": null,
+      "collection": {
+        "type": "shepherd-checker",
+        "protocol": "reserve-trigger-attach-check",
+        "trigger": {
+          "mechanism": "review-comment",
+          "body": "@greptileai",
+          "reviewer_login": null
+        },
+        "terminal_signals": {
+          "surfaces": ["review", "inline"],
+          "head_binding": "review-commit-id",
+          "verdict_mode": "inline-comment-count",
+          "clean_verdict": null,
+          "actionable_pattern": null,
+          "severity_marker": null,
+          "metadata_line": null,
+          "about_summary": null,
+          "heading": null,
+          "carrier_sentence": null,
+          "success_reaction": null,
+          "pending_reaction": null
+        }
+      },
+      "trusted_actor_id": "165735046",
+      "trusted_actor_login": "greptile-apps[bot]"
+    }[% endif %][% if use_coderabbit %],
+    {
+      "slug": "coderabbit-cloud",
+      "display_name": "CodeRabbit Cloud Review",
+      "surface": "pr-cloud",
+      "role": null,
+      "stages": ["integration"],
+      "result_schema": null,
+      "invocation": null,
+      "collection": {
+        "type": "shepherd-checker",
+        "protocol": "reserve-trigger-attach-check",
+        "trigger": {
+          "mechanism": "review-comment",
+          "body": "@coderabbitai full review",
+          "reviewer_login": null
+        },
+        "terminal_signals": {
+          "surfaces": ["reaction", "review", "inline"],
+          "head_binding": "review-commit-id",
+          "verdict_mode": "actionable-count",
+          "clean_verdict": null,
+          "actionable_pattern": "actionable comments posted:[% raw %][[:space:]][% endraw %]*([0-9]+)",
+          "severity_marker": null,
+          "metadata_line": null,
+          "about_summary": null,
+          "heading": null,
+          "carrier_sentence": null,
+          "success_reaction": null,
+          "pending_reaction": "eyes"
+        }
+      },
+      "trusted_actor_id": "136622811",
+      "trusted_actor_login": "coderabbitai[bot]"
+    }[% endif %][% if use_gemini_code_assist %],
+    {
+      "slug": "gemini",
+      "display_name": "Gemini Code Assist Review",
+      "surface": "pr-cloud",
+      "role": null,
+      "stages": ["integration"],
+      "result_schema": null,
+      "invocation": null,
+      "collection": {
+        "type": "shepherd-checker",
+        "protocol": "reserve-trigger-attach-check",
+        "trigger": {
+          "mechanism": "review-comment",
+          "body": "/gemini review",
+          "reviewer_login": null
+        },
+        "terminal_signals": {
+          "surfaces": ["review", "inline"],
+          "head_binding": "review-commit-id",
+          "verdict_mode": "inline-comment-count",
+          "clean_verdict": null,
+          "actionable_pattern": null,
+          "severity_marker": null,
+          "metadata_line": null,
+          "about_summary": null,
+          "heading": null,
+          "carrier_sentence": null,
+          "success_reaction": null,
+          "pending_reaction": null
+        }
+      },
+      "trusted_actor_id": "176961590",
+      "trusted_actor_login": "gemini-code-assist[bot]"
+    }[% endif +%]
   ]
 }
