@@ -319,3 +319,31 @@ write_image 2.0.0 "$NEW_AMD" "$NEW_ARM"
 printf '# verified-for: v2.0.0\nARG OH_MY_PI_SHA256_AMD64=%s\n' "$NEW_AMD" >>images/devcontainer/Dockerfile
 run_guard
 expect_pass image-verified
+
+# Every ARG must use the supported single-line form before digest classification.
+for declaration in 'ARG \' 'ARG `' 'ARG OTHER_VERSION=1.0.0 OTHER_SHA256_AMD64=abc'; do
+    write_image 2.0.0 "$NEW_AMD" "$NEW_ARM"
+    printf '%s\n%s\n' "$declaration" "  OTHER_SHA256_AMD64=$NEW_AMD" >>images/devcontainer/Dockerfile
+    run_guard
+    expect_fail image-unsupported-layout
+    expect_output image-unsupported-layout 'unsupported ARG spelling'
+done
+write_image 2.0.0 "$NEW_AMD" "$NEW_ARM"
+printf '%s\n' 'ARG OTHER_SHA256_AMD64' >>images/devcontainer/Dockerfile
+run_guard
+expect_fail image-bare-digest
+expect_output image-bare-digest 'has no pinned value'
+write_image 2.0.0 "$NEW_AMD" "$NEW_ARM"
+printf '%s\n' 'ARG TARGETARCH' 'ARG IMAGE_REVISION' >>images/devcontainer/Dockerfile
+run_guard
+expect_pass image-bare-platform
+
+write_image 2.0.0 "$NEW_AMD" "$NEW_ARM"
+cat >>images/devcontainer/Dockerfile <<EOF
+${ann}: datasource=github-release-attachments depName=example/tool digestVersion=v2.0.0
+ARG other_sha256=$NEW_AMD
+# pin-pair: tool
+EOF
+run_guard
+expect_fail image-managed-extractor-grammar
+expect_output image-managed-extractor-grammar 'does not match the image Renovate extractor name grammar'

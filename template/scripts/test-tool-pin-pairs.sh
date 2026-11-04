@@ -182,13 +182,22 @@ for path in files:
     if path == "images/devcontainer/Dockerfile":
         lines = open(path, encoding="utf-8").read().splitlines()
         for i, line in enumerate(lines):
-            m = re.match(r"^[ \t]*ARG[ \t]+(\w*SHA256\w*)=", line, re.IGNORECASE)
-            if not m:
+            # Inventory only the image's supported ARG form: one canonical physical
+            # line, one name, and an optional whitespace-free, unescaped default.
+            if not re.match(r"^[ \t]*ARG(?:[ \t]|$)", line, re.IGNORECASE):
                 continue
-            if not re.match(r"^ARG \w*SHA256\w*=", line):
-                errors.append(f"{path}:{i + 1}: digest {m[1]} uses an unsupported ARG spelling")
+            m = re.fullmatch(r"ARG ([A-Za-z_][A-Za-z0-9_]*)(?:=([^\s\\`]+))?", line)
+            if not m:
+                errors.append(f"{path}:{i + 1}: unsupported ARG spelling; use one canonical ARG name with an optional unescaped default on one physical line")
+                continue
+            if "SHA256" not in m[1].upper():
+                continue
+            if m[2] is None:
+                errors.append(f"{path}:{i + 1}: digest {m[1]} has no pinned value")
                 continue
             managed = i + 1 < len(lines) and bool(re.fullmatch(r"# pin-pair: [A-Za-z0-9._-]+", lines[i + 1]))
+            if managed and not re.fullmatch(r"[A-Z0-9_]+_SHA256_(AMD64|ARM64)", m[1]):
+                errors.append(f"{path}:{i + 1}: managed digest {m[1]} does not match the image Renovate extractor name grammar")
             # Both oh-my-pi architecture pins share a marker checked by test-oh-my-pi-pin.sh.
             verified = m[1] in {"OH_MY_PI_SHA256_AMD64", "OH_MY_PI_SHA256_ARM64"} and any(
                 re.fullmatch(r"# verified-for: \S+", x) for x in lines[max(0, i - 2):i]
