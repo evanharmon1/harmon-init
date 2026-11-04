@@ -982,6 +982,12 @@ PYDEADLINE
 
     echo "==> an escaped descendant holding setup stdout cannot delay a completed hook"
     make_fixture hook-descendant -
+    # hook-deadline's 0.1s timeout stub is still on PATH; this case asserts a
+    # completed setup, so restore the hook's real 90s wait rather than race it.
+    cat >"${TMP}/hook-bin/timeout" <<EOF
+#!/usr/bin/env bash
+exec "${REAL_TIMEOUT}" "\$@"
+EOF
     cat >"${TMP}/hook-bin/task" <<'EOF'
 #!/usr/bin/env bash
 exec python3 - <<'PYDAEMON'
@@ -992,7 +998,7 @@ subprocess.Popen([sys.executable, "-c", "import time; time.sleep(2)"],
 print("daemon holding stdout started", flush=True)
 PYDAEMON
 EOF
-    chmod +x "${TMP}/hook-bin/task"
+    chmod +x "${TMP}/hook-bin/task" "${TMP}/hook-bin/timeout"
     python3 - "${FIX}/scripts/session-start-remote.sh" "${TMP}/hook-bin:${MIN_BIN}" <<'PYHOLDER'
 import os
 import subprocess
