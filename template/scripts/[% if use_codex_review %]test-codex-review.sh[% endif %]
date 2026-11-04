@@ -101,6 +101,70 @@ for candidate in .claude/skills/standardize-repo/assets/diff-template.sh \
         break
     fi
 done
+# Pin-independent stub helpers: whatever skills pin is vendored, prove the
+# runner hands a helper its sibling verifier from the merge base only.
+sibling_fixture() {
+    local fixture="$1" base_verifier="$2" head_verifier="$3" assets
+    assets="$fixture/.claude/skills/standardize-repo/assets"
+    mkdir -p "$fixture/scripts/lib" "$assets" "$fixture/src"
+    cp "${repo}/scripts/codex-review.sh" "$fixture/scripts/"
+    cp "${repo}/scripts/lib/review-scope.sh" "$fixture/scripts/lib/"
+    cp -R "${repo}/scripts/lib/review-instructions" "$fixture/scripts/lib/"
+    cat >"$assets/diff-template.sh" <<'SIBLINGHELPER'
+#!/usr/bin/env bash
+dir="$(cd "$(dirname "$0")" && pwd)"
+if [ -f "$dir/render-bundle.sh" ]; then
+    [ "$#" -gt 1 ] || exit 2
+    bash "$dir/render-bundle.sh"
+    exit
+fi
+[ -n "${SIBLING_REQUIRED:-}" ] || { [ "$#" -gt 1 ] && printf 'src/base-excluded.txt\0'; exit; }
+echo "FAIL: authenticated render-bundle.sh verifier is unavailable" >&2
+exit 2
+SIBLINGHELPER
+    [ -z "$base_verifier" ] || printf '%s\n' "$base_verifier" >"$assets/render-bundle.sh"
+    git init -q -b main "$fixture"
+    printf 'old\n' >"$fixture/src/base-excluded.txt"
+    printf 'old\n' >"$fixture/src/head-excluded.txt"
+    git -C "$fixture" add -A
+    git_t -C "$fixture" commit -qm 'test: sibling base'
+    git -C "$fixture" checkout -qb update
+    [ -z "$head_verifier" ] || printf '%s\n' "$head_verifier" >"$assets/render-bundle.sh"
+    printf 'new\n' >"$fixture/src/base-excluded.txt"
+    printf 'new\n' >"$fixture/src/head-excluded.txt"
+    git -C "$fixture" add -A
+    git_t -C "$fixture" commit -qm 'test: sibling head'
+}
+sibling_review() {
+    (cd "$1" && ./scripts/codex-review.sh review --profile standardize --release v2.0.0 \
+        --frozen-render "${test_tmp}/unused-bundle" --base main 2>&1)
+}
+
+echo "==> standardize materializes the helper's sibling verifier from the merge base, never the head"
+sibling_fixture "${test_tmp}/sibling-merge-base" "printf 'src/base-excluded.txt\\0'" \
+    "printf 'src/head-excluded.txt\\0'"
+out="$(SIBLING_REQUIRED=1 sibling_review "${test_tmp}/sibling-merge-base")" ||
+    fail "standardize review with a merge-base sibling verifier failed: $out"
+! grep -Fq 'src/base-excluded.txt' <<<"$out" ||
+    fail "the merge-base verifier's exclusion was not applied: $out"
+grep -Fq 'src/head-excluded.txt' <<<"$out" ||
+    fail "the head-edited verifier changed the exclusions: $out"
+
+echo "==> a merge-base helper package without a verifier keeps working"
+sibling_fixture "${test_tmp}/sibling-legacy" "" ""
+out="$(sibling_review "${test_tmp}/sibling-legacy")" ||
+    fail "standardize review with a verifier-less legacy helper failed: $out"
+! grep -Fq 'src/base-excluded.txt' <<<"$out" ||
+    fail "the legacy helper's exclusion was not applied: $out"
+
+echo "==> a verifier added only at the reviewed head is not used"
+sibling_fixture "${test_tmp}/sibling-head-only" "" "printf 'src/head-excluded.txt\\0'"
+if out="$(SIBLING_REQUIRED=1 sibling_review "${test_tmp}/sibling-head-only")"; then
+    fail "standardize review used a verifier added only at the head: $out"
+fi
+grep -Fq 'authenticated render-bundle.sh verifier is unavailable' <<<"$out" ||
+    fail "head-only verifier refusal did not come from the helper: $out"
+
 standardize_cases=0
 # harmon-devkit v0.66.0+ ships render-bundle.sh beside the helper, and that
 # helper only trusts a bundle its sibling verifier re-renders from tagged
@@ -1031,4 +1095,4 @@ if out="$(CLAUDE_CONFIG_DIR="${fake_claude}2" CLAUDE_PLUGIN_DATA="${test_tmp}/pl
 fi
 grep -q "non-interactive" <<<"$out" || fail "missing non-interactive disable refusal message: $out"
 
-echo "codex-review + codex-gate guards OK ($((42 + standardize_cases)) cases)"
+echo "codex-review + codex-gate guards OK ($((45 + standardize_cases)) cases)"
