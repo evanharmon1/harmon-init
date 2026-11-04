@@ -20,6 +20,17 @@ project_description: >-
   tooling, CI/CD, linting, security checks, git hooks, and task runners
 project_type: general
 
+# Explicit identity defaults; consumers may override all nine per repo.
+author_first_name: Evan
+author_last_name: Harmon
+author_full_name: Evan Harmon
+author_email: evan@evanharmon.com
+author_url: https://evanharmon.com
+author_git_provider_username: evanharmon1
+organization: Harmon Lab
+organization_url: https://harmonlab.net
+organization_email: evan@evanharmon.com
+
 github_org: evanharmon1
 code_owner: evanharmon1
 claude_authorized_members: evanharmon1,evanharmon1-bot,admiralfraggle,admiralfraggle-bot
