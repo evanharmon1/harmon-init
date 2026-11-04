@@ -169,6 +169,7 @@ tasks:
       - task: test:statusline
       - task: test:link-claude-json
       - task: test:image-staleness
+      - task: test:rebuild-devcontainer
       - task: test:open-devcontainer
       - task: test:devcontainer-smoke-isolation
       - task: test:bot-autonomy
@@ -424,6 +425,11 @@ tasks:
     desc: Unit-test the ~/.claude.json persistence helper (no container needed)
     cmds:
       - ./scripts/test-link-claude-json.sh
+
+  test:rebuild-devcontainer:
+    desc: Test host-side devcontainer rebuild routing
+    cmds:
+      - ./scripts/test-rebuild-devcontainer.sh
 
   test:image-staleness:
     desc: Unit-test the image-staleness warning (no container needed)
@@ -1251,6 +1257,12 @@ tasks:
     interactive: true
     cmds:
       - ./scripts/status.sh env
+
+  devcontainer:rebuild:
+    desc: Recreate a devcontainer on the host (default dev; pass dev, bot, or agent)
+    interactive: true
+    cmds:
+      - ./scripts/rebuild-devcontainer.sh {{.CLI_ARGS}}
 
   status:image:
     desc: Warn if the container's image-baked config has drifted from the checkout (silent when fresh)
