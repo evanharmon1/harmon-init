@@ -2,7 +2,10 @@
 # Recreate one profile from the current checkout, then inspect its baked inputs.
 set -euo pipefail
 
-if [ -e /.dockerenv ] || [ -e /run/.containerenv ] || [ -n "${REMOTE_CONTAINERS:-}" ] || [ -n "${FOREMAN_DEVCONTAINER:-}" ] || [ -n "${CODESPACES:-}" ]; then
+if [ -d /usr/local/share/devcontainer-config ] || [ -e /etc/harmon-devcontainer/image-inputs.sha256 ] ||
+    [ "${CODER_WORKSPACE_AGENT_NAME:-}" = devcontainer ] || [ -n "${REMOTE_CONTAINERS:-}" ] ||
+    [ -n "${FOREMAN_DEVCONTAINER:-}" ] || [ -n "${CODESPACES:-}" ] ||
+    { [ "${CODER_WORKSPACE_AGENT_NAME:-}" != host ] && { [ -e /.dockerenv ] || [ -e /run/.containerenv ]; }; }; then
     echo 'Run devcontainer:rebuild on the host, not inside a container.' >&2
     exit 1
 fi
