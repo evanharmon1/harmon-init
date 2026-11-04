@@ -59,34 +59,6 @@ def measure(pr, timeline, runs):
     return interventions, attempts, age, force_pushes
 
 
-def load_evidence(data, repo, cycle, prs):
-    """Count cited records only for explicitly complete, bound measures."""
-    if data["repo"] != repo or data["cycle"] != cycle:
-        raise ValueError("evidence repository or cycle does not match")
-    result = {}
-    for entry in data["pull_requests"]:
-        number = entry["number"]
-        if number not in prs or number in result:
-            raise ValueError("evidence PR is unselected or duplicated")
-        result[number] = {}
-        for name in ("interventions", "reruns", "rebases"):
-            if name not in entry:
-                continue
-            measure_data = entry[name]
-            if not isinstance(measure_data["complete"], bool):
-                raise ValueError("evidence completeness must be boolean")
-            records = measure_data["records"]
-            if not isinstance(records, list) or any(
-                not isinstance(ref, str) or not ref.strip() for ref in records
-            ):
-                raise ValueError("every evidence record needs a source reference")
-            if measure_data["complete"]:
-                if len(set(records)) != len(records):
-                    raise ValueError("duplicate evidence references")
-                result[number][name] = len(records)
-    return result
-
-
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", required=True, help="GitHub OWNER/REPO")
@@ -94,17 +66,12 @@ def main():
     parser.add_argument("--start", required=True, help="inclusive UTC date YYYY-MM-DD")
     parser.add_argument("--end", required=True, help="exclusive UTC date YYYY-MM-DD")
     parser.add_argument("--pr", required=True, type=int, action="append", help="dependency PR number; repeat for every merged update")
-    parser.add_argument("--evidence", help="JSON file of reviewed, cited run records")
     args = parser.parse_args()
     try:
         start = dt.datetime.fromisoformat(args.start).replace(tzinfo=dt.timezone.utc)
         end = dt.datetime.fromisoformat(args.end).replace(tzinfo=dt.timezone.utc)
         if start >= end or len(set(args.pr)) != len(args.pr):
             raise ValueError("cycle dates must increase and PR numbers must be unique")
-        evidence = {}
-        if args.evidence:
-            with open(args.evidence, encoding="utf-8") as handle:
-                evidence = load_evidence(json.load(handle), args.repo, args.cycle, args.pr)
         rows = []
         for number in args.pr:
             # Objects are fetched separately from paginated collections.
@@ -128,16 +95,13 @@ def main():
                         runs[run["id"]] = run
             rows.append((number, *measure(pr, timeline, runs.values())))
         print(f"Repository: {args.repo}  Cycle: {args.cycle} [{args.start}, {args.end})")
-        print("PR | actual interventions | human timeline actions (proxy) | actual CI reruns | observed rerun attempts (partial) | age at merge (days) | actual rebases | force pushes (proxy)")
-        print("---|---|---:|---|---:|---:|---|---:")
-        for number, interventions, reruns, age, pushes in rows:
-            actual = evidence.get(number, {})
-            interventions, reruns, pushes = (
-                "unknown" if value is None else value for value in (interventions, reruns, pushes)
+        print("PR | human timeline actions (proxy) | observed rerun attempts (partial proxy) | age at merge (days) | force-push events (proxy)")
+        print("---|---:|---:|---:|---:")
+        for number, actions, reruns, age, pushes in rows:
+            actions, reruns, pushes = (
+                "unknown" if value is None else value for value in (actions, reruns, pushes)
             )
-            print(f"#{number} | {actual.get('interventions', 'unknown')} | {interventions} | "
-                  f"{actual.get('reruns', 'unknown')} | {reruns} | {age:.2f} | "
-                  f"{actual.get('rebases', 'unknown')} | {pushes}")
+            print(f"#{number} | {actions} | {reruns} | {age:.2f} | {pushes}")
         print("Evidence limits: selected PRs only; human actions are an observable proxy, not all interventions. "
               "Reruns exclude unavailable/deleted runs and commits absent from the final PR commit list; runs on the same SHA may include unrelated workflows. "
               "Force pushes are not confirmed rebases; rebases without a visible force-push event are unknown.")

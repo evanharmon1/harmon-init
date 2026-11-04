@@ -25,45 +25,20 @@ The issue timeline supplies human action and force-push proxies; workflow runs
 looked up by each commit in the final PR commit list supply observed rerun
 attempts. Run records and manual examination can provide additional evidence.
 
-Without reviewed evidence, actual interventions, CI reruns and rebases are shown
-as unknown because these API sources cannot establish their completeness. A numeric zero in a proxy
-column means no matching event was observed, not that the actual measure is zero.
-Human timeline comments, reviews and force pushes are observable action counts,
-not a complete count of maintainer interventions or a measure of active time.
-When relevant timeline timestamps are missing, the affected proxy is unknown.
+The baseline reports human timeline actions, observed rerun attempts and
+force-push events as proxies, plus age at merge. A numeric zero means no
+matching event was observed in the available sources, not that the actual
+measure is zero. Human comments, reviews and force pushes are not a complete
+count of maintainer interventions or a measure of active time. When relevant
+timeline timestamps are missing, the affected proxy is unknown.
+
 Observed reruns are unknown when run timing cannot establish that all attempts
 belong to the PR lifetime, including a latest attempt after merge or an earlier
-attempt before creation. Runs wholly outside the lifetime are excluded. CI
-reruns otherwise sum additional attempts of workflow runs found for commits still in
-the PR; deleted runs, removed commits and unavailable evidence can make this an
-undercount, while unrelated workflows on the same commit can inflate it. The age uses PR creation and merge timestamps, not the upstream
-release date. Timeline force pushes are possible rebases, not proof of a rebase:
-other force pushes count too, and not all rebases are visible. Review the PR
-and available run records to establish actual interventions and rebases; where
-that is impossible, record them as unknown rather than treating the proxy as a
-confirmed count. The operator is responsible for selecting every relevant PR;
-the script does not discover omitted updates.
-
-To include reviewed actual counts, pass `--evidence path/to/evidence.json`:
-
-```json
-{
-  "repo": "OWNER/REPO",
-  "cycle": "2026-10",
-  "pull_requests": [{
-    "number": 123,
-    "interventions": {"complete": true, "records": ["run-record:cycle-1#intervention-1"]},
-    "rebases": {"complete": false, "records": []},
-    "reruns": {"complete": true, "records": []}
-  }]
-}
-```
-
-Each record is a distinct, traceable reference to one confirmed event in a run
-record or PR timeline. Inspect and retain those sources; the script counts
-references but cannot independently verify their contents or the operator's
-completeness declaration. Set `complete` only after checking all relevant
-sources for that PR and measure. A complete empty list explicitly records a
-confirmed zero; omit a measure or mark it incomplete to report unknown. The
-repository, cycle, and PR numbers must match the command. The evidence file is
-not a substitute for checking whether the selected PR population is complete.
+attempt before creation. Runs wholly outside the lifetime are excluded. The
+count sums additional attempts of workflow runs found for commits still in the
+PR; deleted runs, removed commits and unavailable evidence can make this an
+undercount, while unrelated workflows on the same commit can inflate it. The
+age uses PR creation and merge timestamps, not the upstream release date.
+Force-push events do not establish rebases: other force pushes count too, and
+not all rebases are visible. Historical API data may omit deleted or unavailable
+sources; failed API reads stop the command rather than reporting zero.

@@ -137,6 +137,7 @@ tasks:
       - task: test:copier-validators
       - task: test:renovate-pins
       - task: test:tool-pin-pairs
+      - task: test:measure-dependency-maintenance
       - task: test:oh-my-pi-pin
       - task: test:render-parity-cases
       - task: test:lint-hygiene
@@ -657,6 +658,11 @@ tasks:
     desc: Render each template profile and validate renovate.json strictly and .coderabbit.yaml against its schema (pass one profile with -- <profile>)
     cmds:
       - ./scripts/test-renovate-config.sh {{.CLI_ARGS}}
+
+  test:measure-dependency-maintenance:
+    desc: Verify dependency-maintenance measurements with offline source fixtures
+    cmds:
+      - python3 scripts/test-measure-dependency-maintenance.py
 
   test:tool-pin-pairs:
     desc: Behavioural fixtures for the version/checksum pin-pair guard

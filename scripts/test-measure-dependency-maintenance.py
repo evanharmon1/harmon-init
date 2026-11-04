@@ -46,20 +46,27 @@ class MeasureTests(unittest.TestCase):
         with patch.object(measure.subprocess, "run", side_effect=[Result(v) for v in responses]), \
              patch("sys.argv", ["measure", "--repo", "a/b", "--cycle", "oct", "--start", "2026-10-01", "--end", "2026-11-01", "--pr", "12"]), redirect_stdout(output):
             self.assertEqual(measure.main(), 0)
-        self.assertIn("#12 | unknown | 1 | unknown | unknown | 15.00 | unknown | 0", output.getvalue())
+        self.assertIn("#12 | 1 | unknown | 15.00 | 0", output.getvalue())
 
-    def test_bound_cited_records_and_incomplete_measure(self):
-        data = {"repo": "a/b", "cycle": "oct", "pull_requests": [{
-            "number": 12,
-            "interventions": {"complete": True, "records": ["run:1", "timeline:2"]},
-            "rebases": {"complete": False, "records": ["run:3"]},
-        }]}
-        self.assertEqual(measure.load_evidence(data, "a/b", "oct", [12]), {12: {"interventions": 2}})
-        with self.assertRaises(ValueError):
-            measure.load_evidence(data, "a/b", "nov", [12])
-        data["pull_requests"][0]["interventions"]["records"].append("run:1")
-        with self.assertRaises(ValueError):
-            measure.load_evidence(data, "a/b", "oct", [12])
+    def test_cli_reports_paginated_observed_proxies(self):
+        pr = {"created_at": "2026-10-01T00:00:00Z", "merged_at": "2026-10-03T00:00:00Z"}
+        timeline = [[{"event": "reviewed", "user": {"type": "User"}, "submitted_at": pr["created_at"]}],
+                    [{"event": "head_ref_force_pushed", "actor": {"type": "Bot"}, "created_at": pr["merged_at"]}]]
+        run = {"id": 1, "run_attempt": 3, "created_at": pr["created_at"],
+               "run_started_at": pr["created_at"], "updated_at": pr["merged_at"]}
+        responses = [pr, timeline, [[{"sha": "abc"}], [{"sha": "def"}]],
+                     [{"workflow_runs": [run]}, {"workflow_runs": []}],
+                     [{"workflow_runs": [run]}]]
+        class Result:
+            def __init__(self, value):
+                self.stdout = json.dumps(value)
+        output = io.StringIO()
+        with patch.object(measure.subprocess, "run", side_effect=[Result(v) for v in responses]), \
+             patch("sys.argv", ["measure", "--repo", "a/b", "--cycle", "oct", "--start", "2026-10-01", "--end", "2026-11-01", "--pr", "12"]), redirect_stdout(output):
+            self.assertEqual(measure.main(), 0)
+        self.assertIn("#12 | 1 | 2 | 2.00 | 1", output.getvalue())
+        self.assertIn("human timeline actions (proxy)", output.getvalue())
+        self.assertNotIn("actual interventions", output.getvalue())
 
     def test_empty_evidence_does_not_invent_activity(self):
         pr = {"created_at": "2026-10-01T00:00:00Z", "merged_at": "2026-10-01T00:00:00Z"}
