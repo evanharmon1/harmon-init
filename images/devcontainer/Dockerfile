@@ -75,14 +75,14 @@ ARG FX_VERSION=40.0.1
 ARG FRESH_VERSION=0.5.7
 # Fresh release-archive SHA-256 values. The version pin is Renovate-managed;
 # update these reviewed, architecture-specific digests with each release.
-ARG FRESH_SHA256_AMD64=e3599c93b1eece4700d7c30726b461c9b962a91bee5da31cdf44e3dffeb6206c
-ARG FRESH_SHA256_ARM64=df10f648d81e194f613b975d63d4cdea3ccf3f6177325793701a50ce795ab143
+ARG FRESH_SHA256_AMD64=4112b8b131e02bf4896a09146c4dd7b3383a2332ab554c3638394932ce94baff
+ARG FRESH_SHA256_ARM64=ffb4f056417bc653ddd073921e123491dbe3509e83f3fd55436be372a35e8f84
 # renovate: datasource=github-releases depName=eugenioenko/ttt extractVersion=^v?(?<version>.+)$
 ARG TTT_VERSION=1.10.0
 # TTT release SHA-256 values. The version pin is Renovate-managed;
 # update these reviewed, architecture-specific digests with each release.
-ARG TTT_SHA256_AMD64=9a48f8aa87542f77cc5f19082965e243ac21f06558950ebbc2241940a5f5af82
-ARG TTT_SHA256_ARM64=841c5b6f9e04d66254be241234100b12ac91173c8d5b2745f5712bcbbd85a7e3
+ARG TTT_SHA256_AMD64=0e9344c396a783eaf4fc60f1d6f76b85de2b2c303bba2cb07e563a09950097a0
+ARG TTT_SHA256_ARM64=a8019bb62205dd631664bf563bb1a00c2a735ba69405840e9c84ae7757365978
 # renovate: datasource=github-releases depName=charmbracelet/glow extractVersion=^v?(?<version>.+)$
 ARG GLOW_VERSION=3.0.0
 # renovate: datasource=github-releases depName=jesseduffield/lazygit extractVersion=^v?(?<version>.+)$
