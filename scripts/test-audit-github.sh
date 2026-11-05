@@ -120,6 +120,14 @@ print(json.dumps(value) if value is not None else '')
     org[inventory] = {'variables': [{'name': 'ORG_PROJECT_ID', 'value': 'P1'}]}
     assert run([project], 0, org)[0]['result'] == 'pass'
     assert 'orgs/acme/actions/variables/ORG_PROJECT_ID' not in (fixture / 'calls').read_text()
+    for override in ('P1', 'wrong', ''):
+        overridden = copy.deepcopy(org)
+        overridden['repos/acme/widget/actions/variables']['variables'].append({'name': 'ORG_PROJECT_ID', 'value': override})
+        row = run([project], 0 if override == 'P1' else 1, overridden)[0]
+        assert row['result'] == ('pass' if override == 'P1' else 'fail')
+    denied_override = dict(org, **{'repos/acme/widget/actions/variables': {'error': 403}})
+    row = run([project], 2, denied_override)[0]
+    assert row['result'] == 'unknown' and '403' in row['reason'] and 'actions/variables' in row['reason']
     org[inventory] = {'variables': [{'name': 'ORG_PROJECT_ID', 'value': 'wrong'}]}
     assert run([project], 1, org)[0]['result'] == 'fail'
     org[inventory] = {'variables': []}
@@ -133,6 +141,35 @@ print(json.dumps(value) if value is not None else '')
     assert row['result'] == 'unknown' and all(text in row['reason'] for text in (
         'field drift', '403', 'organization-variables'))
     org[inventory] = {'variables': [{'name': 'ORG_PROJECT_ID', 'value': 'P1'}]}
+    ci_app = entry('set-ci-app-client-id-')
+    inherited_app = copy.deepcopy(org)
+    inherited_app['repos/acme/widget/actions/organization-secrets'] = {'secrets': [{'name': 'CI_APP_PRIVATE_KEY'}]}
+    inherited_app[inventory]['variables'].append({'name': 'CI_APP_CLIENT_ID', 'value': 'client-id'})
+    assert run([ci_app], 0, inherited_app)[0]['result'] == 'pass'
+    calls = [json.loads(line) for line in (fixture / 'calls').read_text().splitlines()]
+    assert all('CI_APP_PRIVATE_KEY' not in ' '.join(call) for call in calls)
+    assert all(not call[3].startswith('orgs/') for call in calls)
+    for kind, name in (('secrets', 'CI_APP_PRIVATE_KEY'), ('variables', 'CI_APP_CLIENT_ID')):
+        mixed = copy.deepcopy(inherited_app)
+        credential = mixed['repos/acme/widget/actions/organization-' + kind][kind].pop()
+        mixed['repos/acme/widget/actions/' + kind][kind].append(credential)
+        # No inherited read is necessary for a credential present at repository scope.
+        mixed['repos/acme/widget/actions/organization-' + kind] = {'error': 403}
+        assert run([ci_app], 0, mixed)[0]['result'] == 'pass'
+        missing = copy.deepcopy(inherited_app)
+        missing['repos/acme/widget/actions/organization-' + kind][kind] = []
+        row = run([ci_app], 1, missing)[0]
+        assert row['result'] == 'fail' and name in row['reason']
+        for scope in ('', 'organization-'):
+            denied = dict(inherited_app, **{'repos/acme/widget/actions/' + scope + kind: {'error': 403}})
+            row = run([ci_app], 2, denied)[0]
+            assert row['result'] == 'unknown' and '403' in row['reason']
+    repository_app = copy.deepcopy(data)
+    repository_app['repos/acme/widget/actions/secrets']['secrets'].append({'name': 'CI_APP_PRIVATE_KEY'})
+    repository_app['repos/acme/widget/actions/variables']['variables'].append({'name': 'CI_APP_CLIENT_ID', 'value': 'client-id'})
+    assert run([ci_app], 0, repository_app)[0]['result'] == 'pass'
+    row = run([ci_app], 1)[0]
+    assert row['result'] == 'fail' and 'CI_APP_PRIVATE_KEY' in row['reason'] and 'CI_APP_CLIENT_ID' in row['reason']
     legacy = entry('retire-any-legacy-agent-claim-')
     assert run([legacy], 0)[0]['result'] == 'pass'
     for name in ('agent:codex', 'claim:codex', 'claim:codex:sol', 'Claim:Codex:Sol', 'claim:copilot', 'claim:copilot:model'):
@@ -234,6 +271,17 @@ print(json.dumps(value) if value is not None else '')
         for variable in selectors['repos/acme/widget/actions/variables']['variables']:
             variable['value'] = json.dumps(selector)
         assert run([settings], 0, selectors)[0]['result'] == 'pass'
+    for index, variable in enumerate(data['repos/acme/widget/actions/variables']['variables']):
+        grouped = copy.deepcopy(data)
+        grouped['repos/acme/widget/actions/variables']['variables'][index]['value'] = json.dumps({
+            'group': 'persistent', 'labels': 'ubuntu-latest'})
+        row = run([settings], 1, grouped)[0]
+        assert row['result'] == 'fail' and variable['name'] in row['reason']
+    grouped_private = copy.deepcopy(data)
+    grouped_private['repos/acme/widget']['visibility'] = 'private'
+    grouped_private['repos/acme/widget/actions/variables']['variables'][0]['value'] = json.dumps({
+        'group': 'persistent', 'labels': 'ubuntu-latest'})
+    assert run([settings], 0, grouped_private)[0]['result'] == 'pass'
     pages = copy.deepcopy(private_org)
     pages['repos/acme/widget/actions/variables'] = {'variables': [
         {'name': 'CI_RUNS_ON', 'value': '"ubuntu-latest"'}] + [

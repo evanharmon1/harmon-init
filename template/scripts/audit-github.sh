@@ -222,7 +222,8 @@ def probe(entry):
             labels = selector_labels(routing[key])
             valid = labels is not None
             if valid and visibility == 'public':
-                valid = labels == ['ubuntu-latest']
+                selector = json.loads(routing[key])
+                valid = labels == ['ubuntu-latest'] and not (isinstance(selector, dict) and 'group' in selector)
             if valid and key == 'ISOLATED_RUNS_ON':
                 valid = all(label.lower() != 'self-hosted' for label in labels)
             if not valid:
@@ -236,8 +237,22 @@ def probe(entry):
         return outcome(*secret('CLAUDE_CODE_OAUTH_TOKEN'))
     if 'set-ci-app-client-id-' in item:
         evidence = Evidence()
-        evidence.check('CI_APP_PRIVATE_KEY secret missing', lambda: secret('CI_APP_PRIVATE_KEY')[0])
-        evidence.check('CI_APP_CLIENT_ID variable missing', lambda: 'CI_APP_CLIENT_ID' in names('actions/variables', 'variables'))
+        missing = []
+        for expected, kind in (('CI_APP_PRIVATE_KEY', 'secrets'), ('CI_APP_CLIENT_ID', 'variables')):
+            available = evidence.collect('repository ' + kind, lambda: names('actions/' + kind, kind))
+            if available is not None and expected not in available:
+                missing.append((expected, kind))
+        if missing:
+            owner_type = evidence.collect('repository owner type', lambda: field(field(api('repos/' + repo), 'owner'), 'type'))
+            for expected, kind in missing:
+                if owner_type == 'Organization':
+                    available = evidence.collect('organization ' + kind, lambda: names('actions/organization-' + kind, kind))
+                    if available is not None and expected not in available:
+                        evidence.drift.append(expected + ' missing')
+                elif owner_type == 'User':
+                    evidence.drift.append(expected + ' missing')
+            if owner_type not in ('Organization', 'User'):
+                evidence.failures.append('repository owner type unavailable')
         return evidence.resolve('CI_APP_PRIVATE_KEY secret and CI_APP_CLIENT_ID variable present')
     if 'snyk' in item:
         ok, reason = secret('SNYK_TOKEN')
@@ -377,6 +392,11 @@ def probe(entry):
                 project_id = next((row['value'] for row in inherited if row['name'] == 'ORG_PROJECT_ID'), None)
                 if project_id != board['id']:
                     evidence.drift.append('ORG_PROJECT_ID absent or differs from owner board id')
+            variables = evidence.collect('repository project routing', lambda: read('actions/variables', 'variables', True))
+            if variables is not None:
+                overrides = {row['name']: row['value'] for row in variables}
+                if 'ORG_PROJECT_ID' in overrides and overrides['ORG_PROJECT_ID'] != board['id']:
+                    evidence.drift.append('repository ORG_PROJECT_ID differs from owner board id')
         elif owner_type != 'User':
             evidence.failures.append('repository owner type unavailable')
         return evidence.resolve('owner Projects V2 board, fields and routing')
