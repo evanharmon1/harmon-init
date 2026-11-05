@@ -59,9 +59,98 @@ Verify these before doing anything; stop and tell the user if one is unmet.
   legacy-baseline recovery — that path is `git`-only (`assets/diff-template.sh`
   resolves via `git ls-remote`, never `gh api`).
 
+## Fleet decisions and lane briefs
+
+Before dispatching any lane, the parent asks this fixed set once, in order.
+Defaults are proposals to present for approval, never inferred consent. Keys
+refer to the versioned start-of-run payloads under `releases.<release>` in the
+existing v1 decisions file; per-repository answers have repository scope.
+
+| Order | Question | Default | Decisions key | Later stop removed |
+| --- | --- | --- | --- | --- |
+| 1 | Target harmon-init release? | Latest published harmon-init tag, resolved and remote-verified by the parent | `target_release` | Repeated release selection in lanes |
+| 2 | Fleet, one wave, or one repository? | Fleet from the supplied inventory | `scope` | Per-lane target/wave selection |
+| 3 | Per-repo Copier answer changes? | Carry recorded answers forward; present the release's new questions/defaults for each repo | `copier_answers` (repository scope) | Repeated answer collection and confirmation in lanes |
+| 4 | Which agent-apply reconcile classes may run? | None (`[]`); probes still run | `reconcile_classes` | Repeated requests for configuration-write approval |
+| 5 | Disposition of open skills-sync PRs for the whole run? | `merge-first`; alternative `absorb` | `skills_sync` | Each lane asking whether its sync PR goes first or is superseded |
+| 6 | Accept legacy baselines? | No (`false`) | `legacy_baseline` | Repeated legacy-baseline acceptance questions |
+| 7 | Approve guarded rollback? | No (`false`) | `guarded_rollback` | Repeated rollback permission questions |
+| 8 | Model rulings for lanes? | No overrides (`{}`); use resolved execution policy | `model_rulings` | Per-lane model-choice questions |
+| 9 | Additional review exclusions? | None (`[]`); existing review invariants still apply | `review_exclusions` | Per-lane exclusion requests |
+
+A negative approval is a ruling to withhold that action, not a missing answer.
+No answer permits merging, credential writes, self-confirmation, bypassing a
+gate, or choosing how a branch reviews itself. Missing rulings stop the lane
+with the exact key it needs in its question file; the lane never asks the human.
+Only the parent obtains an answer, records it once, and supplies an updated
+pinned snapshot. See the reference for render/record/require commands and the
+parent's batch Copier presentation. Recording a `copier_answers` delta alone
+does not satisfy the content-bound Copier confirmation gate.
+
+For a fleet dispatch, read [the fleet decisions contract](references/fleet-decisions.md)
+and render `assets/fleet-lane-brief.md` alongside the current orchestrate brief.
+The parent supplies a versioned `fleet/decisions.yaml` from the configurable fleet
+home, pinned by commit and digest. Validate it with `assets/fleet-decisions.py`
+against `assets/fleet-decisions.schema.json`, including every required entry ID
+for the selected release and repository. Lanes cite those IDs beside actions;
+missing or conflicting rulings stop the affected action with the exact key in
+the lane question file, never an interactive prompt. The parent records answers,
+confirms Copier answers and runs GitHub-side configuration writes; lanes probe
+and report. Brief release-approved security surfaces up front, and give each CI
+job only the setup its own tasks need. The fictional example is a format aid,
+not approval. This asset contract leaves the four single-repo modes below intact.
+
+### Fleet container preflight
+
+Before creating the epic, check the orchestrator workspace's own running container.
+Run its `.devcontainer/scripts/check-image-staleness.sh` with both the baked
+config directory and checkout config directory present and readable; the script
+is warn-only and exits zero even when it cannot compare. Treat missing inputs,
+any stale or indeterminate output, or a failed invocation as a stop. Check each
+installed tool against the selected release's actual tool floors, including its
+container pins; a missing, unparseable or below-floor version also stops the run.
+If either check cannot pass, report the workspace's rebuild command and stop
+before creating the epic or dispatching lanes. A fleet run never rebuilds a
+container; the maintainer runs the queued command after the wave's merges.
+
+### Fleet reports
+
+Read [the report input and marker contract](references/fleet-report.md). The parent
+projects the run record and probe results into `run-report.json`, with optional
+reconcile and devcontainer arrays; absent probes render `not run`. Use
+`assets/devcontainer-probe.sh --repo OWNER/NAME --checkout PATH --head FULL_SHA
+--base DEFAULT_BRANCH` to obtain the per-repository rows; add `--merged-head
+FULL_SHA` after merge. The image row reports the devcontainer-build workflow-run
+conclusion for that head; push is unknown because it is not observable without
+the packages scope. Project the decisions file's workspaces and their rebuild
+commands into the report's wave-ordered rebuild queue. Seed the marked
+regions when creating the epic/tracking issues through track-work. Provision the
+epic's `(HUMAN):` collector lazily through track-work before publishing human gaps.
+
+At **each lane transition**, the lane returns its current report row to the parent.
+The parent updates the complete snapshot and, from this skill directory, runs:
+
+```sh
+python3 assets/fleet-report.py write --input /path/to/run-report.json
+```
+
+The parent runs that same command **after its reconcile writes and re-probes**,
+including post-merge metadata and image results. Serialize publication for the
+run; lanes return evidence rather than editing the shared epic. Preview with
+`python3 assets/fleet-report.py render --input /path/to/run-report.json`. Render
+reads live issue bodies from GitHub and writes nothing; it needs GitHub read access.
+An unchanged report makes no edit; missing markers or a failed write stop the
+affected publication. Human gaps append once to the epic's collector, grouped by
+owner, with source lines on tracking issues; the reporter never ticks them.
+
 ## Mode routing
 
-Detect the situation, then follow the matching reference file end to end.
+Detect the situation, then follow the matching reference. For **update** mode,
+read the short [update runbook](references/mode-update.md) first. Read each
+linked step reference only when reaching that step or its recovery case; keep
+the same shell and guarded state across steps. The runbook orders the gates;
+the linked procedures preserve their full rules and commands. Other modes
+follow their matching reference file end to end.
 
 | Situation | Mode | Reference |
 | --- | --- | --- |
@@ -77,6 +166,10 @@ differently.
 ## Cardinal copier rules (read before running any copier command)
 
 These are load-bearing. Full rationale and edge cases in `references/copier-gotchas.md`.
+
+- **Run the skills-sync preflight in each fleet lane** using `assets/skills-sync-preflight.sh`; report its JSON and pin-lag row for the tracking issue and follow the run-wide ruling in `assets/fleet-lane-brief.md`.
+- **Check the target release minimum skills pin before Copier** in update and
+  adopt-existing modes; follow their preflight for below-minimum and unknown results.
 
 - **Production scaffolds use the canonical GitHub URL at a remote-verified
   release ref.** Select `HARMON_INIT_REF`, verify that exact tag against
