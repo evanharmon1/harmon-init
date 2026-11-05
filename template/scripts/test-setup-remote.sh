@@ -150,7 +150,8 @@ if [ "\${3:-}" = fetch ] && [ -n "\${STUB_NETWORK_FETCH_BASE:-}" ]; then
         -c "url.file://\${STUB_NETWORK_FETCH_BASE}/test-owner/sibling-a.git.insteadOf=https://example.test/test-owner/SIBLING-a" \
         -c "url.file://\${STUB_NETWORK_FETCH_BASE}/test-owner/.insteadOf=https://example.test/TEST-owner/" \
         -c "url.file://\${STUB_NETWORK_FETCH_BASE}/.insteadOf=https://example.test/" \
-        -c "url.file://\${STUB_NETWORK_FETCH_BASE}/.insteadOf=git@[2001:db8::1]:" "\$@"
+        -c "url.file://\${STUB_NETWORK_FETCH_BASE}/.insteadOf=git@[2001:db8::1]:" \
+        -c "url.file://\${STUB_NETWORK_FETCH_BASE}/.insteadOf=[2001:db8::1]:" "\$@"
 fi
 exec "${REAL_GIT}" "\$@"
 EOF
@@ -395,6 +396,20 @@ if [ "$HAVE_BOOTSTRAP" = 1 ]; then
     run_setup "${STUBS_PATH}" "STUB_NETWORK_FETCH_BASE=${BARE_BASE}"
     output_has 'Related-repo fetch: 1 fetched' || fail "a bracketed IPv6 scp entry must match: $(all_output)"
 
+    echo "==> a userless bracketed IPv6 scp-style remote matches its owner/repository identity"
+    make_fixture ipv6-userless 'test-owner/sibling-a'
+    sibling="${FIX_PARENT}/sibling-a"
+    git clone -q "${BARE_BASE}/test-owner/sibling-a.git" "$sibling"
+    git -C "$sibling" remote set-url origin '[2001:db8::1]:test-owner/sibling-a.git'
+    git -C "${TMP}/seed-sibling-a" -c user.name=Test -c user.email=test@example.com \
+        commit -q --allow-empty -m 'upstream for userless IPv6 remote'
+    git -C "${TMP}/seed-sibling-a" push -q origin HEAD:main
+    expected_head="$(git -C "${TMP}/seed-sibling-a" rev-parse HEAD)"
+    run_setup "${STUBS_PATH}" "STUB_NETWORK_FETCH_BASE=${BARE_BASE}"
+    [ "$rc" -eq 0 ] || fail "userless IPv6 remote run must succeed: $(all_output)"
+    output_has 'Related-repo fetch: 1 fetched' || fail "a userless bracketed IPv6 scp remote must match: $(all_output)"
+    [ "$(git -C "$sibling" rev-parse origin/main)" = "$expected_head" ] || fail "the userless IPv6 remote must be fetched"
+
     echo "==> a remote named with a leading dash is not parsed as an option"
     expected_head="$(git -C "${TMP}/seed-sibling-a" rev-parse HEAD)"
     make_fixture dash-remote 'test-owner/sibling-a'
@@ -418,14 +433,18 @@ if [ "$HAVE_BOOTSTRAP" = 1 ]; then
         if [ "$nesting" = child ]; then
             # upstream matches; upstream/fork owns refs/remotes/upstream/fork/*.
             matching=upstream
-            git -C "$sibling" remote add upstream "${BARE_BASE}/test-owner/sibling-a.git"
-            git -C "$sibling" remote add upstream/fork "${BARE_BASE}/fork-owner/sibling-a.git"
+            git -C "$sibling" config remote.upstream.url "${BARE_BASE}/test-owner/sibling-a.git"
+            git -C "$sibling" config remote.upstream.fetch '+refs/heads/*:refs/remotes/upstream/*'
+            git -C "$sibling" config remote.upstream/fork.url "${BARE_BASE}/fork-owner/sibling-a.git"
+            git -C "$sibling" config remote.upstream/fork.fetch '+refs/heads/*:refs/remotes/upstream/fork/*'
             foreign=refs/remotes/upstream/fork/main
         else
             # upstream/fork matches; upstream's branch fork/feature lands in its namespace.
             matching=upstream/fork
-            git -C "$sibling" remote add upstream "${BARE_BASE}/fork-owner/sibling-a.git"
-            git -C "$sibling" remote add upstream/fork "${BARE_BASE}/test-owner/sibling-a.git"
+            git -C "$sibling" config remote.upstream.url "${BARE_BASE}/fork-owner/sibling-a.git"
+            git -C "$sibling" config remote.upstream.fetch '+refs/heads/*:refs/remotes/upstream/*'
+            git -C "$sibling" config remote.upstream/fork.url "${BARE_BASE}/test-owner/sibling-a.git"
+            git -C "$sibling" config remote.upstream/fork.fetch '+refs/heads/*:refs/remotes/upstream/fork/*'
             foreign=refs/remotes/upstream/fork/feature
         fi
         git -C "$sibling" update-ref "$foreign" "$old_head"
@@ -516,6 +535,17 @@ if [ "$HAVE_BOOTSTRAP" = 1 ]; then
         output_has 'WARNING: cannot open repository sibling-a; continuing.' || fail "a damaged bare sibling (${damage}) must warn: $(all_output)"
         output_has '0 fetched, 0 not-yet-cloned, 1 failed' || fail "a damaged bare sibling (${damage}) must count as failed: $(all_output)"
     done
+
+    echo "==> objects and refs directories alone do not identify a damaged bare sibling"
+    make_fixture bare-lookalike 'test-owner/sibling-a'
+    sibling="${FIX_PARENT}/sibling-a"
+    mkdir -p "${sibling}/objects" "${sibling}/refs"
+    before="$(digest "$sibling")"
+    run_setup "${STUBS_PATH}"
+    [ "$rc" -eq 0 ] || fail "a bare lookalike must not fail setup: $(all_output)"
+    output_has '0 fetched, 1 not-yet-cloned, 0 failed' || fail "objects and refs alone must count as not-yet-cloned: $(all_output)"
+    ! output_has 'WARNING: cannot open repository sibling-a' || fail "a bare lookalike must not warn about a damaged repository: $(all_output)"
+    [ "$before" = "$(digest "$sibling")" ] || fail "a bare lookalike must remain untouched"
 
     echo "==> linked-worktree and separate-git-dir siblings are fetched"
     for layout in worktree separate; do
