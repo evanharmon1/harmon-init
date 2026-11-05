@@ -132,7 +132,7 @@ print(json.dumps(value) if value is not None else '')
     org[inventory] = {'variables': [{'name': 'ORG_PROJECT_ID', 'value': 'P1'}]}
     legacy = entry('retire-any-legacy-agent-claim-')
     assert run([legacy], 0)[0]['result'] == 'pass'
-    for name in ('agent:codex', 'claim:codex', 'claim:codex:sol', 'claim:copilot', 'claim:copilot:model'):
+    for name in ('agent:codex', 'claim:codex', 'claim:codex:sol', 'Claim:Codex:Sol', 'claim:copilot', 'claim:copilot:model'):
         row = run([legacy], 1, changed('repos/acme/widget/labels', [{'name': name}]))[0]
         assert row['result'] == 'fail' and name in row['reason']
     missing_board = copy.deepcopy(data)
@@ -225,11 +225,11 @@ print(json.dumps(value) if value is not None else '')
     drifted = copy.deepcopy(data)
     drifted['repos/acme/widget']['delete_branch_on_merge'] = False
     drifted['repos/acme/widget/vulnerability-alerts'] = {'error': 404}
-    row = run([settings], 2, drifted)[0]
-    assert row['result'] == 'unknown' and '404' in row['reason'] and 'delete_branch_on_merge' in row['reason']
+    row = run([settings], 1, drifted)[0]
+    assert row['result'] == 'fail' and '404' in row['reason'] and 'delete_branch_on_merge' in row['reason']
     drifted['repos/acme/widget/actions/variables'] = {'error': 403}
     row = run([settings], 2, drifted)[0]
-    assert all(text in row['reason'] for text in ('404', '403', 'vulnerability-alerts', 'actions/variables', 'delete_branch_on_merge'))
+    assert all(text in row['reason'] for text in ('404', '403', 'vulnerability alerts disabled', 'actions/variables', 'delete_branch_on_merge'))
     assert run([settings], 2, changed('repos/acme/widget/actions/variables', {'error': 403}))[0]['result'] == 'unknown'
     assert run([renovate], 1, changed('repos/acme/widget/issues', [
         {'title': 'Dependency Dashboard', 'user': None},
@@ -237,7 +237,26 @@ print(json.dumps(value) if value is not None else '')
     assert 'token-minting' in run([app], 2, changed('repos/acme/widget/actions/runs/42/jobs', {'jobs': [{'steps': None}]}))[0]['reason']
     connector = entry('connect-codex')
     null_review = dict(data, **{'repos/acme/widget/pulls': [{'number': 1}], 'repos/acme/widget/pulls/1/reviews': [{'user': None}]})
-    assert 'not observed' in run([connector], 2, null_review)[0]['reason']
+    row = run([connector], 0, null_review)[0]
+    assert row['result'] == 'manual' and 'not observed' in row['reason']
+    observed_review = copy.deepcopy(null_review)
+    observed_review['repos/acme/widget/pulls/1/reviews'] = [{'user': {'login': 'chatgpt-codex-connector[bot]'}}]
+    row = run([connector], 0, observed_review)[0]
+    assert row['result'] == 'manual' and 'review evidence present' in row['reason']
+    for endpoint in ('repos/acme/widget/pulls', 'repos/acme/widget/pulls/1/reviews'):
+        denied_review = dict(null_review, **{endpoint: {'error': 403}})
+        assert run([connector], 2, denied_review)[0]['result'] == 'unknown'
+    snyk = entry('choose-the-snyk-posture-')
+    for tokens in ([], [{'name': 'SNYK_TOKEN'}]):
+        row = run([snyk], 0, changed('repos/acme/widget/actions/secrets', {'secrets': tokens}))[0]
+        assert row['result'] == 'manual' and 'require operator verification' in row['reason']
+    assert run([snyk], 2, changed('repos/acme/widget/actions/secrets', {'error': 403}))[0]['result'] == 'unknown'
+    rules = [entry('add-closing-keywords-'), entry('enable-unattributed-')]
+    output = run(rules, 0, changed('repos/acme/widget/rulesets', []))
+    assert all(row['result'] == 'manual' and 'manual applicability review' in row['reason'] for row in output)
+    assert all(row['result'] == 'unknown' for row in run(rules, 2))
+    row = run([sast], 0, changed('repos/acme/widget/code-scanning/default-setup', {'state': 'configured'}))[0]
+    assert row['result'] == 'manual' and 'language coverage requires manual verification' in row['reason']
     assert run([labels], 0, changed('repos/acme/widget/labels', [{'name': 'FEATURE', 'color': 'abcdef', 'description': 'Feature work'}]))[0]['result'] == 'pass'
     # Rendered profiles include only their active template IDs, never root IDs
     # or catalog items from options Copier omitted.
@@ -267,9 +286,13 @@ print(json.dumps(value) if value is not None else '')
     assert len(secret_calls) == 2, secret_calls  # cached metadata inventory
     assert secret_calls[0][3].split('?')[0] == 'repos/acme/widget/actions/secrets'
     assert 'CLAUDE_CODE_OAUTH_TOKEN' not in ' '.join(secret_calls[0])
-    # Permission-sensitive repository reads must never manufacture a failure.
-    denied = dict(data, **{'repos/acme/widget/vulnerability-alerts': {'error': 404}})
-    assert run([settings], 2, denied)[0]['result'] == 'unknown'
+    # Only vulnerability-alerts treats 404 as disabled; denied reads stay unknown.
+    disabled = changed('repos/acme/widget/vulnerability-alerts', {'error': 404})
+    row = run([settings], 1, disabled)[0]
+    assert row['result'] == 'fail' and 'vulnerability alerts disabled' in row['reason']
+    denied = changed('repos/acme/widget/vulnerability-alerts', {'error': 403})
+    row = run([settings], 2, denied)[0]
+    assert row['result'] == 'unknown' and '403' in row['reason']
     invalid = dict(data, **{'repos/acme/widget/actions/secrets': {'unexpected': []}})
     assert run([secrets], 2, invalid)[0]['result'] == 'unknown'
     # A skipped mint step is not installation evidence.

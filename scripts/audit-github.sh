@@ -185,7 +185,13 @@ def probe(entry):
         if settings is not None:
             for key, expected in (('delete_branch_on_merge', True), ('allow_update_branch', True), ('allow_auto_merge', False)):
                 evidence.check(key, lambda: field(settings, key) is expected)
-        evidence.collect('vulnerability alerts', lambda: read('vulnerability-alerts'))
+        try:
+            read('vulnerability-alerts')
+        except Unavailable as error:
+            if str(error).endswith('(HTTP 404)'):
+                evidence.drift.append('vulnerability alerts disabled (HTTP 404)')
+            else:
+                evidence.failures.append('vulnerability alerts: ' + str(error))
         visibility = evidence.collect('visibility', lambda: field(settings, 'visibility')) if settings is not None else None
         if visibility == 'public':
             evidence.check('private vulnerability reporting', lambda: field(read('private-vulnerability-reporting'), 'enabled') is True)
@@ -236,7 +242,7 @@ def probe(entry):
     if 'snyk' in item:
         ok, reason = secret('SNYK_TOKEN')
         # Schedule opt-in is explicit; name presence alone cannot prove posture.
-        raise Unavailable(reason + '; workflow schedule and intended Snyk posture require operator verification')
+        return ('manual', reason + '; workflow schedule and intended Snyk posture require operator verification')
     if 'install-and-activate-renovate-' in item:
         issues = read('issues?state=open', pages=True)
         found = any('pull_request' not in row and row.get('title') == 'Dependency Dashboard' and (row.get('user') or {}).get('login') in ('renovate[bot]', 'renovate-bot') for row in issues)
@@ -263,18 +269,18 @@ def probe(entry):
             if any((review.get('user') or {}).get('login') == login for review in reviews):
                 observed = True
                 break
-        raise Unavailable(login + (' review evidence present' if observed else ' not observed in latest 20 updated PRs') + '; connection and service preferences require manual verification')
+        return ('manual', login + (' review evidence present' if observed else ' not observed in latest 20 updated PRs') + '; connection and service preferences require manual verification')
     if 'import-the-branch-ruleset-' in item or 'add-closing-keywords-' in item or 'enable-unattributed-' in item:
         rules = read('rulesets?includes_parents=true', pages=True)
         if 'import-the-branch' in item:
             desired = json.loads(Path('.github/Branch Protection Ruleset - Protect Main.json').read_text())
             return outcome(any(row.get('name') == desired['name'] and row.get('enforcement') == 'active' for row in rules), 'named active ruleset presence only; content comparison: task audit:ruleset')
-        raise Unavailable('read ' + str(len(rules)) + ' rulesets; approval/check conditions require task audit:ruleset and manual applicability review')
+        return ('manual', 'read ' + str(len(rules)) + ' rulesets; approval/check conditions require task audit:ruleset and manual applicability review')
     if 'disable-github-codeql-' in item:
         return outcome(field(read('code-scanning/default-setup'), 'state') == 'not-configured', 'CodeQL default setup state')
     if 'free-sast-' in item or 'sast-coverage-' in item:
         read('code-scanning/default-setup')
-        raise Unavailable('code scanning configuration readable; language coverage requires manual verification')
+        return ('manual', 'code scanning configuration readable; language coverage requires manual verification')
     if 'labels-run-task-' in item or 'after-a-copier-update-that-adds-labe-' in item:
         live = {row['name'].lower(): row for row in read('labels', pages=True)}
         # Use the same registry renderer as setup:github-labels, when available.
@@ -305,7 +311,7 @@ def probe(entry):
         labels = names('labels', None)
         retired_families = ('agent', 'claim:codex', 'claim:copilot')
         legacy = sorted(name for name in labels if any(
-            name == family or name.startswith(family + ':') for family in retired_families))
+            name.lower() == family or name.lower().startswith(family + ':') for family in retired_families))
         return outcome(not legacy, 'legacy claim labels: ' + (', '.join(legacy) or 'none'))
     if 'org-issue-fields-run-' in item or 'org-issue-types-run-' in item or 'github-project-run-' in item:
         settings = api('repos/' + repo)
