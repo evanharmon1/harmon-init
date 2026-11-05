@@ -38,9 +38,73 @@
 
 set -euo pipefail
 
+# Parent-owned fleet presentation. The manifest is data, never shell text;
+# each row invokes the existing gate once and keeps its own confirmation state.
+# A one-row manifest is the equivalent per-repository parent invocation.
+if [ "${1:-}" = --batch ]; then
+    [ $# -ge 2 ] && [ $# -le 3 ] || {
+        echo 'Usage: confirm-answers.sh --batch <manifest.json> [--confirm|--check]' >&2
+        exit 2
+    }
+    exec python3 - "$0" "$2" "${3:-}" <<'PY'
+import json
+from pathlib import Path
+import re
+import subprocess
+import sys
+
+script, manifest, mode = sys.argv[1:]
+try:
+    if mode not in ('', '--confirm', '--check'):
+        raise ValueError('batch mode must be --confirm or --check')
+    manifest = Path(manifest).resolve()
+    rows = json.loads(manifest.read_text())
+    if not isinstance(rows, list) or not rows:
+        raise ValueError('batch manifest must be a nonempty list')
+    required = {'repository', 'template_copier', 'data_file', 'recorded', 'template_commit', 'state_dir'}
+    commands = []
+    repositories, states = set(), set()
+    for row in rows:
+        if not isinstance(row, dict) or not required <= row.keys() or row.keys() - required - {'active_keys'}:
+            raise ValueError('batch row needs repository, template_copier, data_file, recorded, template_commit, state_dir')
+        if any(not isinstance(v, str) or not v.strip() for v in row.values()):
+            raise ValueError('batch values must be nonempty strings')
+        repo = row['repository']
+        if not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+', repo):
+            raise ValueError('batch repository must be owner/name')
+        if repo.lower() in repositories:
+            raise ValueError(f'duplicate batch repository: {repo}')
+        repositories.add(repo.lower())
+        command = [script]
+        for key, value in row.items():
+            if key == 'repository':
+                continue
+            if key != 'template_commit' and not (key == 'recorded' and value == 'none'):
+                value = str((manifest.parent / value).resolve())
+            if key == 'state_dir':
+                if value in states:
+                    raise ValueError('each batch repository needs a distinct state_dir')
+                states.add(value)
+            command.extend(['--' + key.replace('_', '-'), value])
+        if mode:
+            command.append(mode)
+        commands.append((repo, command))
+    # Validate the entire manifest before presenting/confirming any repository.
+    for repo, command in commands:
+        print(f'\nRepository: {repo}', flush=True)
+        result = subprocess.run(command, check=False)
+        if result.returncode:
+            sys.exit(result.returncode)
+except (OSError, ValueError) as error:
+    print(f'FAIL: batch answers: {error}', file=sys.stderr)
+    sys.exit(2)
+PY
+fi
+
 usage() {
     cat >&2 <<'USAGE'
 Usage:
+  confirm-answers.sh --batch <manifest.json> [--confirm|--check]
   confirm-answers.sh --template-copier <copier.yml> --data-file <answers.yml> \
                      --recorded <.copier-answers.yml|none> \
                      [--active-keys <file>] [--template-commit <sha>] \
@@ -53,8 +117,8 @@ USAGE
 # Security-sensitive questions: answers that grant trust to a principal or a
 # bot (Foreman trusted actors, the Claude allowlist, CODEOWNERS, the Codex
 # cloud / CodeRabbit bot reviewers), enable an autonomous agent, or fire a side
-# effect. harmon-init's copier.yml carries NO machine-readable sensitivity marker
-# today, so this list is maintained here and widened by a `help:` text match.
+# effect. This list is a fallback only for releases predating the top-level
+# _sensitive_questions marker. Help text widens either source.
 # NEW keys are flagged separately precisely so an unknown addition still gets
 # reviewed rather than silently passing as ordinary config.
 SENSITIVE_KEYS="
@@ -309,6 +373,36 @@ fi
 work="$(mktemp -d)"
 trap 'rm -rf "$work"' EXIT
 
+# Never expand aliases: even an alias unrelated to the marker can make a full
+# document expansion exponential. Reject anchors, aliases and merge keys in the
+# entire template before any further YAML reads; quoted strings are unaffected.
+if ! yq -r '[... | select((anchor != "") or (kind == "alias") or (tag == "!!merge"))] | length' \
+    "$template_copier" >"$work/yaml-construct-counts"; then
+    echo "FAIL: could not inspect YAML constructs in $template_copier" >&2
+    exit 2
+fi
+if awk '$1 > 0 { found = 1 } END { exit !found }' "$work/yaml-construct-counts"; then
+    echo "FAIL: YAML anchors, aliases or merge keys are unsupported in $template_copier" >&2
+    exit 2
+fi
+
+# Inspect entries before lookup: yq's key lookup collapses duplicate keys and
+# its per-document output cannot be treated as one marker presence value.
+yq -r '([to_entries | .[] | select(.key == "_sensitive_questions")] | length | tostring) + " " + ((tag != "!!null") | tostring)' \
+    "$template_copier" >"$work/marker-counts" || {
+    echo "FAIL: could not read _sensitive_questions from $template_copier" >&2
+    exit 2
+}
+if awk '$1 > 1 { duplicate = 1 } END { exit !duplicate }' "$work/marker-counts"; then
+    echo "FAIL: duplicate _sensitive_questions key in $template_copier" >&2
+    exit 2
+fi
+if awk '$2 == "true" { documents++ } $1 > 0 { marker = 1 } END { exit !(documents > 1 && marker) }' \
+    "$work/marker-counts"; then
+    echo "FAIL: _sensitive_questions is not supported in multi-document $template_copier" >&2
+    exit 2
+fi
+
 # key <TAB> default-json <TAB> help-json <TAB> has-when <TAB> has-default
 yq -r '
   to_entries | .[] | select(.key | test("^_") | not) |
@@ -336,6 +430,43 @@ if [ "$recorded" != none ]; then
             echo "FAIL: could not read $recorded" >&2
             exit 2
         }
+fi
+
+# Preserve the validated document for marker validation and membership.
+yq 'select(tag != "!!null")' "$template_copier" >"$work/resolved-template.yml" || {
+    echo "FAIL: could not read _sensitive_questions from $template_copier" >&2
+    exit 2
+}
+
+# A present marker is authoritative, including an empty list. Validate before
+# classifying anything so malformed input cannot silently use the fallback.
+marker_present="$(yq -r 'select(tag != "!!null") | has("_sensitive_questions")' "$work/resolved-template.yml")" || {
+    echo "FAIL: could not read _sensitive_questions from $template_copier" >&2
+    exit 2
+}
+if [ "$marker_present" = true ]; then
+    marker_tag="$(yq -r '._sensitive_questions | tag' "$work/resolved-template.yml")" || exit 2
+    : >"$work/marker-item-tags"
+    if [ "$marker_tag" = '!!seq' ]; then
+        yq -r '._sensitive_questions | .[] | tag' "$work/resolved-template.yml" >"$work/marker-item-tags" || exit 2
+    fi
+    if [ "$marker_tag" != '!!seq' ] ||
+        grep -qvFx '!!str' "$work/marker-item-tags"; then
+        echo "FAIL: _sensitive_questions must be a list of strings in $template_copier" >&2
+        exit 2
+    fi
+    if ! yq -r '(. | keys) as $keys | ._sensitive_questions[] |
+      select(. as $item | (($item | test("^_")) or
+        ([$keys[] | select(. == $item)] | length == 0)))' \
+        "$work/resolved-template.yml" >"$work/unknown-sensitive-keys"; then
+        echo "FAIL: could not validate _sensitive_questions in $template_copier" >&2
+        exit 2
+    fi
+    if [ -s "$work/unknown-sensitive-keys" ]; then
+        echo "FAIL: unknown _sensitive_questions entry in $template_copier:" >&2
+        cat "$work/unknown-sensitive-keys" >&2
+        exit 2
+    fi
 fi
 
 # Questions copier itself marks secret are never printed as values.
@@ -385,7 +516,11 @@ has_key() {
     awk -F '\t' -v k="$2" '$1 == k { found = 1; exit } END { exit found ? 0 : 1 }' "$1"
 }
 is_listed_sensitive() {
-    grep -qxF -- "$1" <<<"$SENSITIVE_KEYS"
+    if [ "$marker_present" = true ]; then
+        [ "$(SENSITIVITY_KEY="$1" yq -r '[._sensitive_questions[] | select(. == strenv(SENSITIVITY_KEY))] | length' "$work/resolved-template.yml")" -gt 0 ]
+    else
+        grep -qxF -- "$1" <<<"$SENSITIVE_KEYS"
+    fi
 }
 resolve_template_commit() { # guarded snapshot path, recorded _commit value
     local snapshot="$1" commit_ref="$2" resolved="" describe_hash=""

@@ -4,6 +4,7 @@
 # revision resolution, and fail-closed behavior on absent/malformed inputs.
 # Refs #780, #741.
 set -euo pipefail
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_PREFIX
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MONITOR="$SCRIPT_DIR/dev-flow-monitor.sh"
@@ -25,6 +26,19 @@ command -v git >/dev/null 2>&1 || fail "git is required"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
+
+source_root="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
+# Execute tools from a current, isolated Git root, independent of the outer branch.
+tool_root="${tmp}/tool-root"
+mkdir -p "$tool_root"
+cp -R "${source_root}/ai" "$tool_root/ai"
+cp "${source_root}/.devflow.toml" "${source_root}/agent-registry.json" "$tool_root/"
+git init -q -b main "$tool_root"
+git -C "$tool_root" add ai .devflow.toml agent-registry.json
+git -C "$tool_root" -c user.name=test -c user.email=test@example.test commit -qm 'controlled executing tools'
+git -C "$tool_root" update-ref refs/remotes/origin/main HEAD
+git -C "$tool_root" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+MONITOR="$tool_root/ai/skills/universal/orchestrate/assets/dev-flow-monitor.sh"
 
 sha256_of() {
     if command -v sha256sum >/dev/null 2>&1; then
@@ -57,10 +71,22 @@ setup_fixture() {
     git clone -q --bare "$base/source" "$base/remote.git"
     git clone -q "$base/remote.git" "$base/work"
     git -C "$base/work" remote set-head origin main
+    git -C "$base/work" config user.name "test"
+    git -C "$base/work" config user.email "test@test.com"
 
     FIXTURE_REPO="$base/work"
     FIXTURE_REV="$(git -C "$FIXTURE_REPO" log -1 --format='%H' origin/main -- agent-registry.json)"
     return 0
+}
+
+# Monitor tests start with an admitted run; admission itself is tested by provisioning.
+admit_run() {
+    local repo="$1" run_id="$2" record
+    record="$(dirname "$("$MONITOR" state-path --run-id "$run_id" --repo-root "$repo")")/run.json"
+    mkdir -p "$(dirname "$record")"
+    printf 'fixture\n' >"$(dirname "$record")/owner-slate"
+    jq -n --arg run "$run_id" '{schema: 2, run_id: $run, outcome: null,
+        dispatch_admission: {slate: "fixture", working: 1, in_flight: 1, at: "2026-01-01T00:00:00Z"}}' >"$record"
 }
 
 # Helper: activate a run and return the generation
@@ -68,6 +94,7 @@ activate_run() {
     local repo="$1" run_id="$2" branch="$3" rev="$4"
     local active_state
     active_state="$("$MONITOR" active-path --branch "$branch" --repo-root "$repo")"
+    admit_run "$repo" "$run_id"
     "$MONITOR" activate --active-state "$active_state" --run-id "$run_id" \
         --branch "$branch" --expected-predecessor absent --expected-generation 0 \
         --registry-revision "$rev" --writer feature-owner --repo-root "$repo"
@@ -296,6 +323,7 @@ grep -qF 'retired run run-retire active pointer' <<<"$output" || fail "matching 
 [ ! -e "$retire_pointer" ] || fail "retire left the matching pointer behind"
 race_output=""
 race_rc=0
+admit_run "$FIXTURE_REPO" run-retire-race
 race_output="$("$MONITOR" activate --active-state "$retire_pointer" --run-id run-retire-race \
     --branch retire-branch --expected-predecessor run-retire --expected-generation 1 \
     --registry-revision "$FIXTURE_REV" \
@@ -327,6 +355,59 @@ replay_output="$("$MONITOR" activate --active-state "$retire_pointer" --run-id r
 [ "$replay_rc" -eq 2 ] || fail "activation replayed an ended run after an intervening run ended and retired: $replay_output"
 [ ! -e "$retire_pointer" ] || fail "intervening-run replay recreated the active pointer"
 pass "activation refuses an ended run's original request after an intervening run also ended and retired"
+# Admission is bound to the owner slate, with the existing solo exemption.
+for admission_case in mismatch missing admitted solo; do
+    admission_run="run-admission-$admission_case"
+    admission_branch="admission-$admission_case"
+    admit_run "$FIXTURE_REPO" "$admission_run"
+    admission_dir="$(dirname "$("$MONITOR" state-path --run-id "$admission_run" --repo-root "$FIXTURE_REPO")")"
+    case "$admission_case" in
+    mismatch) printf 'other\n' >"$admission_dir/owner-slate" ;;
+    missing) rm "$admission_dir/owner-slate" ;;
+    solo)
+        printf 'solo-%s\n' "$admission_run" >"$admission_dir/owner-slate"
+        jq 'del(.dispatch_admission)' "$admission_dir/run.json" >"$admission_dir/new.json"
+        mv "$admission_dir/new.json" "$admission_dir/run.json"
+        ;;
+    esac
+    admission_pointer="$("$MONITOR" active-path --branch "$admission_branch" --repo-root "$FIXTURE_REPO")"
+    admission_rc=0
+    admission_output="$("$MONITOR" activate --active-state "$admission_pointer" --run-id "$admission_run" \
+        --branch "$admission_branch" --expected-predecessor absent --expected-generation 0 \
+        --registry-revision "$FIXTURE_REV" --writer feature-owner --repo-root "$FIXTURE_REPO" 2>&1)" || admission_rc=$?
+    case "$admission_case" in
+    mismatch | missing)
+        [ "$admission_rc" -eq 2 ] || fail "$admission_case owner slate accepted: $admission_output"
+        grep -qF 'activation refused:' <<<"$admission_output" || fail "unclear refusal: $admission_output"
+        [ ! -e "$admission_pointer" ] || fail "$admission_case wrote an active pointer"
+        ;;
+    *) [ "$admission_rc" -eq 0 ] && [ "$admission_output" = 1 ] || fail "$admission_case activation failed: $admission_output" ;;
+    esac
+    pass "activation admission: $admission_case"
+done
+# A legacy active generation must refuse re-arm with an actionable migration.
+legacy_run=run-admission-legacy
+legacy_branch=admission-legacy
+admit_run "$FIXTURE_REPO" "$legacy_run"
+legacy_dir="$(dirname "$("$MONITOR" state-path --run-id "$legacy_run" --repo-root "$FIXTURE_REPO")")"
+legacy_pointer="$("$MONITOR" active-path --branch "$legacy_branch" --repo-root "$FIXTURE_REPO")"
+"$MONITOR" activate --active-state "$legacy_pointer" --run-id "$legacy_run" --branch "$legacy_branch" \
+    --expected-predecessor absent --expected-generation 0 --registry-revision "$FIXTURE_REV" \
+    --writer feature-owner --repo-root "$FIXTURE_REPO" >/dev/null
+rearm_output="$("$MONITOR" activate --active-state "$legacy_pointer" --run-id "$legacy_run" --branch "$legacy_branch" \
+    --expected-predecessor absent --expected-generation 0 --registry-revision "$FIXTURE_REV" \
+    --writer feature-owner --repo-root "$FIXTURE_REPO" 2>&1)" || fail "admitted re-arm failed: $rearm_output"
+[ "$rearm_output" = 1 ] || fail "admitted re-arm changed generation: $rearm_output"
+pass "admitted active generation can re-arm"
+jq 'del(.dispatch_admission)' "$legacy_dir/run.json" >"$legacy_dir/new.json"
+mv "$legacy_dir/new.json" "$legacy_dir/run.json"
+legacy_rc=0
+legacy_output="$("$MONITOR" activate --active-state "$legacy_pointer" --run-id "$legacy_run" --branch "$legacy_branch" \
+    --expected-predecessor absent --expected-generation 0 --registry-revision "$FIXTURE_REV" \
+    --writer feature-owner --repo-root "$FIXTURE_REPO" 2>&1)" || legacy_rc=$?
+[ "$legacy_rc" -eq 2 ] || fail "legacy re-arm unexpectedly succeeded: $legacy_output"
+grep -qF 'retire the legacy run (reconcile its events and prune its active pointer if required), then provision a replacement run' <<<"$legacy_output" || fail "legacy migration missing: $legacy_output"
+pass "legacy active generation refuses re-arm with migration guidance"
 ended_target=run-activate-ended
 ended_record="$(dirname "$("$MONITOR" state-path --run-id "$ended_target" --repo-root "$FIXTURE_REPO")")/run.json"
 mkdir -p "$(dirname "$ended_record")"
@@ -370,6 +451,7 @@ jq -n '{schema: 2, run_id: "run-aba-a", outcome: "abandoned"}' >"$aba_old_record
 aba_live_record="$(dirname "$("$MONITOR" state-path --run-id run-aba-b --repo-root "$FIXTURE_REPO")")/run.json"
 jq -n '{schema: 2, run_id: "run-aba-b", outcome: null}' >"$aba_live_record"
 aba_rc=0
+admit_run "$FIXTURE_REPO" run-aba-c
 aba_output="$("$MONITOR" activate --active-state "$aba_pointer" --run-id run-aba-c --branch "$aba_branch" \
     --expected-predecessor run-aba-a --expected-generation 1 --registry-revision "$FIXTURE_REV" \
     --writer feature-owner --repo-root "$FIXTURE_REPO" 2>&1)" || aba_rc=$?
@@ -387,6 +469,7 @@ pass "stale generation-1 activation is refused without replacing or damaging the
 
 activate_run "$FIXTURE_REPO" run-retire-old replace-branch "$FIXTURE_REV" >/dev/null
 replace_pointer="$("$MONITOR" active-path --branch replace-branch --repo-root "$FIXTURE_REPO")"
+admit_run "$FIXTURE_REPO" run-retire-new
 "$MONITOR" activate --active-state "$replace_pointer" --run-id run-retire-new \
     --branch replace-branch --expected-predecessor run-retire-old --expected-generation 1 \
     --registry-revision "$FIXTURE_REV" \
@@ -410,6 +493,7 @@ grep -qF 'run record is invalid or still open' <<<"$output" || fail "open-run re
 [ -f "$open_retire_pointer" ] || fail "refused retirement removed an open run's pointer"
 
 activate_run "$FIXTURE_REPO" run-retire-missing missing-retire-branch "$FIXTURE_REV" >/dev/null
+rm "$(dirname "$("$MONITOR" state-path --run-id run-retire-missing --repo-root "$FIXTURE_REPO")")/run.json"
 missing_retire_pointer="$("$MONITOR" active-path --branch missing-retire-branch --repo-root "$FIXTURE_REPO")"
 retire_rc=0
 output="$("$MONITOR" retire --run-id run-retire-missing --repo-root "$FIXTURE_REPO" 2>&1)" || retire_rc=$?
@@ -435,6 +519,7 @@ grep -qF 'monitor.json has an unreconciled reserved action' <<<"$output" ||
     fail "unreconciled reservation did not defer retirement: $output"
 [ -f "$reserved_pointer" ] || fail "retire deleted a pointer with an unreconciled reservation"
 activation_rc=0
+admit_run "$FIXTURE_REPO" run-retire-next-reserved
 activation_output="$("$MONITOR" activate --active-state "$reserved_pointer" --run-id run-retire-next-reserved \
     --branch reserved-branch --expected-predecessor run-retire-reserved --expected-generation 1 \
     --registry-revision "$FIXTURE_REV" \
@@ -509,6 +594,7 @@ eventless_retire_output="$("$MONITOR" retire --run-id run-retire-eventless --rep
 grep -qF 'unreconciled reserved action' <<<"$eventless_retire_output" ||
     fail "eventless reservation did not defer retirement: $eventless_retire_output"
 eventless_activate_rc=0
+admit_run "$FIXTURE_REPO" run-eventless-next
 eventless_activate_output="$("$MONITOR" activate --active-state "$eventless_pointer" --run-id run-eventless-next \
     --branch eventless-branch --expected-predecessor run-retire-eventless --expected-generation 1 \
     --registry-revision "$FIXTURE_REV" --writer feature-owner --repo-root "$FIXTURE_REPO" 2>&1)" ||
@@ -543,6 +629,39 @@ grep -qF 'run run-cancel-live is live' <<<"$cancel_output" || fail "live cancell
 jq -e '.actions[0].state == "reserved"' "$live_cancel_state" >/dev/null ||
     fail "refused cancellation changed the live reservation"
 pass "cancel refuses a live run without changing its reservation"
+
+# Use the actual pointer branch, keeping the negative identity tests explicit.
+live_cancel_identity=(--writer feature-owner --active-state "$live_cancel_pointer"
+    --branch "$(jq -r .branch "$live_cancel_pointer")" --generation 1)
+for bad_generation in 2 0; do
+    cancel_rc=0
+    "$MONITOR" cancel --state "$live_cancel_state" --run-id run-cancel-live --event evt-live-cancel \
+        --writer feature-owner --active-state "$live_cancel_pointer" \
+        --branch "$(jq -r .branch "$live_cancel_pointer")" --generation "$bad_generation" \
+        --observed "$tmp/live-cancel-observed.json" --reason 'stale caller' --repo-root "$FIXTURE_REPO" \
+        >"$tmp/live-cancel-error" 2>&1 || cancel_rc=$?
+    [ "$cancel_rc" -eq 2 ] || fail "live cancellation accepted a stale/invalid generation"
+done
+"$MONITOR" cancel --state "$live_cancel_state" --run-id run-cancel-live --event evt-live-cancel \
+    "${live_cancel_identity[@]}" --observed "$tmp/live-cancel-observed.json" \
+    --reason 'owner observed absent push' --repo-root "$FIXTURE_REPO" >/dev/null
+jq -e '.actions[0].state == "cancelled" and .actions[0].cancellation.observation.status == "absent"' \
+    "$live_cancel_state" >/dev/null || fail "live owner cancellation was not recorded"
+pass "live push cancellation requires matching active generation and records absence"
+printf '%s\n' '{"integrated_lanes":["a"],"discarded_lanes":[]}' >"$tmp/live-assembly.json"
+"$MONITOR" reserve --state "$live_cancel_state" --run-id run-cancel-live --event assembly-live \
+    --action assembly --expected-head "$live_cancel_head" --writer feature-owner \
+    --active-state "$live_cancel_pointer" --branch live-cancel-branch --generation 1 \
+    --assembly-plan "$tmp/live-assembly.json" --repo-root "$FIXTURE_REPO" >/dev/null
+jq -n --arg head "$live_cancel_head" '{status:"absent",event:"assembly-live",action:"assembly",head:$head}' \
+    >"$tmp/live-assembly-absent.json"
+cancel_rc=0
+"$MONITOR" cancel --state "$live_cancel_state" --run-id run-cancel-live --event assembly-live \
+    "${live_cancel_identity[@]}" --observed "$tmp/live-assembly-absent.json" \
+    --reason 'non-push owner attempt' --repo-root "$FIXTURE_REPO" >"$tmp/live-cancel-error" 2>&1 || cancel_rc=$?
+[ "$cancel_rc" -eq 2 ] || fail 'live owner cancelled a non-push reservation'
+jq -e '.actions[1].state == "reserved"' "$live_cancel_state" >/dev/null || fail 'non-push cancellation modified state'
+pass "live cancellation remains push-only"
 
 activate_run "$FIXTURE_REPO" run-retire-serial serial-branch "$FIXTURE_REV" >/dev/null
 serial_pointer="$("$MONITOR" active-path --branch serial-branch --repo-root "$FIXTURE_REPO")"
@@ -629,6 +748,7 @@ binding="$(dirname "$("$MONITOR" state-path --run-id run-prune-mismatch --repo-r
 jq '.branch = "other-branch"' "$binding" >"$binding.tmp"
 mv "$binding.tmp" "$binding"
 activate_run "$FIXTURE_REPO" run-prune-missing missing-branch "$FIXTURE_REV" >/dev/null
+rm "$(dirname "$("$MONITOR" state-path --run-id run-prune-missing --repo-root "$FIXTURE_REPO")")/run.json"
 missing_pointer="$("$MONITOR" active-path --branch missing-branch --repo-root "$FIXTURE_REPO")"
 activate_run "$FIXTURE_REPO" run-prune-reserved reserved-prune-branch "$FIXTURE_REV" >/dev/null
 reserved_prune_pointer="$("$MONITOR" active-path --branch reserved-prune-branch --repo-root "$FIXTURE_REPO")"
@@ -678,4 +798,142 @@ grep -qF "removed ${terminal_pointer##*/} (run run-prune-terminal" <<<"$output" 
 pass "prune dry-run is read-only; actual pruning removes the terminal run and reports all skip classes"
 
 echo ""
+
+# #1722: every guarded boundary refuses stale tools before touching state.
+setup_fixture '{"trusted_orchestrator_actor_ids": [12345]}'
+mkdir -p "$FIXTURE_REPO/skills/orchestrate/assets"
+cp "$MONITOR" "$FIXTURE_REPO/skills/orchestrate/assets/dev-flow-monitor.sh"
+fixture_monitor="$FIXTURE_REPO/skills/orchestrate/assets/dev-flow-monitor.sh"
+printf 'source:\n  ref: v1\n' >"$FIXTURE_REPO/.skills-sync.yaml"
+git -C "$FIXTURE_REPO" add .skills-sync.yaml skills
+git -C "$FIXTURE_REPO" commit -qm 'old pin'
+old_head="$(git -C "$FIXTURE_REPO" rev-parse HEAD)"
+printf 'source:\n  ref: v2\n' >"$FIXTURE_REPO/.skills-sync.yaml"
+git -C "$FIXTURE_REPO" commit -qam 'new pin'
+new_head="$(git -C "$FIXTURE_REPO" rev-parse HEAD)"
+git -C "$FIXTURE_REPO" update-ref refs/remotes/origin/main "$new_head"
+git -C "$FIXTURE_REPO" checkout -q --detach "$old_head"
+for boundary in check-assets activate reserve-agent-run reserve; do
+    rc=0
+    output="$("$fixture_monitor" "$boundary" --repo-root "$FIXTURE_REPO" 2>&1)" || rc=$?
+    [ "$rc" -eq 2 ] || fail "$boundary accepted stale tools"
+    for expected in BLOCKER "$old_head" "$new_head" v1 v2 'fetch origin' 'merge --ff-only origin/main'; do
+        [[ "$output" == *"$expected"* ]] || fail "$boundary omitted $expected: $output"
+    done
+done
+git -C "$FIXTURE_REPO" checkout -q --detach "$new_head"
+"$fixture_monitor" check-assets --repo-root "$FIXTURE_REPO"
+printf 'source:\n  ref: v1\n' >"$FIXTURE_REPO/.skills-sync.yaml"
+rc=0
+output="$("$fixture_monitor" check-assets --repo-root "$FIXTURE_REPO" 2>&1)" || rc=$?
+[ "$rc" -eq 2 ] && [[ "$output" == *'skills pin v1, default pin v2'* ]] || fail "pin-only mismatch accepted"
+git -C "$FIXTURE_REPO" restore .skills-sync.yaml
+# The target lane is current, but a script in an older sibling checkout is not.
+mkdir -p "$FIXTURE_REPO/skills/orchestrate/assets"
+cp "$MONITOR" "$FIXTURE_REPO/skills/orchestrate/assets/dev-flow-monitor.sh"
+git -C "$FIXTURE_REPO" add skills
+git -C "$FIXTURE_REPO" commit --allow-empty -qm 'vendored monitor'
+script_head="$(git -C "$FIXTURE_REPO" rev-parse HEAD)"
+git -C "$FIXTURE_REPO" -c user.name=test -c user.email=test@test.com commit --allow-empty -qm 'default advances'
+fresh_head="$(git -C "$FIXTURE_REPO" rev-parse HEAD)"
+git -C "$FIXTURE_REPO" update-ref refs/remotes/origin/main "$fresh_head"
+git -C "$FIXTURE_REPO" worktree add -q --detach "$tmp/current-lane" "$fresh_head"
+git -C "$FIXTURE_REPO" checkout -q --detach "$script_head"
+rc=0
+output="$(bash "$FIXTURE_REPO/skills/orchestrate/assets/dev-flow-monitor.sh" check-assets --repo-root "$tmp/current-lane" 2>&1)" || rc=$?
+[ "$rc" -eq 2 ] && [[ "$output" == *"HEAD $script_head, default $fresh_head"* ]] || fail "current lane hid stale asset checkout: $output"
+pass "stale HEAD and pins refuse all boundaries; current tools pass (#1722)"
+
+# Challenge r1: executing assets keep their identity across clone boundaries.
+git -C "$tmp/current-lane" status --porcelain >/dev/null
+for layout in extracted separate; do
+    tools="$tmp/$layout-tools"
+    mkdir -p "$tools/skills/orchestrate/assets"
+    cp "$MONITOR" "$tools/skills/orchestrate/assets/dev-flow-monitor.sh"
+    if [ "$layout" = separate ]; then
+        git -C "$tools" init -q -b main
+        git -C "$tools" config user.name test
+        git -C "$tools" config user.email test@test.com
+        printf 'source:\n  ref: v1\n' >"$tools/.skills-sync.yaml"
+        git -C "$tools" add .
+        git -C "$tools" commit -qm 'separate tools v1'
+        git -C "$tools" update-ref refs/remotes/origin/main HEAD
+        git -C "$tools" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+    else
+        printf '# ref: v1 (fixture)\n' >"$tools/skills/.SKILLS_PROVENANCE"
+    fi
+    rc=0
+    output="$(bash "$tools/skills/orchestrate/assets/dev-flow-monitor.sh" check-assets --repo-root "$tmp/current-lane" 2>&1)" || rc=$?
+    [ "$rc" -eq 2 ] && [[ "$output" == *BLOCKER* && "$output" == *v1* && "$output" == *v2* ]] || fail "$layout assets lost their own stale pin: $output"
+    if [ "$layout" = separate ]; then
+        printf 'source:\n  ref: v2\n' >"$tools/.skills-sync.yaml"
+        git -C "$tools" commit -qam 'separate tools v2'
+        git -C "$tools" update-ref refs/remotes/origin/main HEAD
+    else
+        printf '# ref: v2 (fixture)\n' >"$tools/skills/.SKILLS_PROVENANCE"
+    fi
+    bash "$tools/skills/orchestrate/assets/dev-flow-monitor.sh" check-assets --repo-root "$tmp/current-lane"
+    if [ "$layout" = separate ]; then
+        tools_head="$(git -C "$tools" rev-parse HEAD)"
+        git -C "$tools" commit --allow-empty -qm 'separate default advances'
+        tools_tip="$(git -C "$tools" rev-parse HEAD)"
+        git -C "$tools" update-ref refs/remotes/origin/main HEAD
+        git -C "$tools" checkout -q --detach "$tools_head"
+        rc=0
+        output="$(bash "$tools/skills/orchestrate/assets/dev-flow-monitor.sh" check-assets --repo-root "$tmp/current-lane" 2>&1)" || rc=$?
+        [ "$rc" -eq 2 ] && [[ "$output" == *"$tools_head"* && "$output" == *"$tools_tip"* ]] || fail "current target hid behind separate tools: $output"
+    fi
+done
+pass "separate and extracted tools retain pins; separate checkout ancestry is checked"
+
+# Challenge r2: current executing tools accept feature targets before catch-up.
+primary="$tmp/separate-tools"
+git -C "$primary" checkout -q --detach refs/remotes/origin/main
+primary_head="$(git -C "$primary" rev-parse HEAD)"
+git -C "$primary" worktree add -q --detach "$tmp/diverged-same-clone" "$tools_head"
+git -C "$tmp/diverged-same-clone" commit --allow-empty -qm 'feature changes before catch-up'
+[ "$(git -C "$tmp/diverged-same-clone" rev-list --count HEAD..refs/remotes/origin/main)" -gt 0 ] || fail 'same-clone target must be behind the base'
+bash "$primary/skills/orchestrate/assets/dev-flow-monitor.sh" check-assets --repo-root "$tmp/diverged-same-clone"
+git -C "$tmp/current-lane" checkout -q --detach "$script_head"
+git -C "$tmp/current-lane" commit --allow-empty -qm 'separate feature changes before catch-up'
+[ "$(git -C "$tmp/current-lane" rev-list --count HEAD..refs/remotes/origin/main)" -gt 0 ] || fail 'separate-clone target must be behind the base'
+bash "$primary/skills/orchestrate/assets/dev-flow-monitor.sh" check-assets --repo-root "$tmp/current-lane"
+pass "current primary assets accept diverged same-clone and separate-clone feature targets"
+# A Git-backed asset checkout must never skip its own ancestry proof.
+git -C "$primary" symbolic-ref --delete refs/remotes/origin/HEAD
+git -C "$primary" update-ref -d refs/remotes/origin/main
+rc=0
+output="$(bash "$primary/skills/orchestrate/assets/dev-flow-monitor.sh" check-assets --repo-root "$tmp/current-lane" 2>&1)" || rc=$?
+[ "$rc" -eq 2 ] && [[ "$output" == *BLOCKER* ]] || fail "missing executing default refs passed: $output"
+git -C "$primary" update-ref refs/remotes/origin/main "$primary_head"
+git -C "$primary" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+pass "separate Git-backed assets fail closed when default tracking refs are missing"
+
+# Challenge r1: an active generation cannot reserve work after its tools go stale.
+setup_fixture '{"trusted_orchestrator_actor_ids": [12345]}'
+mkdir -p "$FIXTURE_REPO/skills/orchestrate/assets"
+cp "$MONITOR" "$FIXTURE_REPO/skills/orchestrate/assets/dev-flow-monitor.sh"
+git -C "$FIXTURE_REPO" add skills
+git -C "$FIXTURE_REPO" commit -qm 'executing fixture monitor'
+git -C "$FIXTURE_REPO" update-ref refs/remotes/origin/main HEAD
+fixture_monitor="$FIXTURE_REPO/skills/orchestrate/assets/dev-flow-monitor.sh"
+activate_run "$FIXTURE_REPO" run-stale-reserve stale-reserve "$FIXTURE_REV" >/dev/null
+active="$("$MONITOR" active-path --branch stale-reserve --repo-root "$FIXTURE_REPO")"
+state="$("$MONITOR" state-path --run-id run-stale-reserve --repo-root "$FIXTURE_REPO")"
+reserve_head="$(git -C "$FIXTURE_REPO" rev-parse HEAD)"
+"$fixture_monitor" reserve --state "$state" --event before-stale --action push \
+    --expected-head "$reserve_head" --writer feature-owner --active-state "$active" \
+    --run-id run-stale-reserve --branch stale-reserve --generation 1 --repo-root "$FIXTURE_REPO" >/dev/null
+cp "$state" "$tmp/reservation-before-stale.json"
+git -C "$FIXTURE_REPO" commit --allow-empty -qm 'default advances after activation'
+git -C "$FIXTURE_REPO" update-ref refs/remotes/origin/main HEAD
+git -C "$FIXTURE_REPO" checkout -q --detach "$reserve_head"
+rc=0
+output="$("$fixture_monitor" reserve --state "$state" --event after-stale --action push \
+    --expected-head "$reserve_head" --writer feature-owner --active-state "$active" \
+    --run-id run-stale-reserve --branch stale-reserve --generation 1 --repo-root "$FIXTURE_REPO" 2>&1)" || rc=$?
+[ "$rc" -eq 2 ] && [[ "$output" == *BLOCKER* ]] || fail "stale active run reserved a push: $output"
+cmp -s "$state" "$tmp/reservation-before-stale.json" || fail 'stale reservation changed monitor state'
+pass "reserve refuses after activation when tools become stale, without durable writes"
+
 echo "=== All dev-flow-monitor trust contract tests passed ==="

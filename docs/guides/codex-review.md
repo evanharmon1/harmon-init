@@ -181,6 +181,16 @@ and emits the NUL-delimited paths that both match the previous render at the
 merge base and the requested render at the head, including Git mode. It does
 not invoke Copier or fetch a template, so every finder gets the same
 pre-generated input.
+
+From harmon-devkit v0.66.0 the helper also authenticates the bundle. Produce
+it with the sibling `render-bundle.sh` instead of by hand:
+`render-bundle.sh --previous-release <previous> --release <release> --base
+<merge base> --head <head> --output <bundle> <repo>`. That writes `-v2`
+metadata, and its own documented requirements are Python 3, Copier and yq v4.
+The runner takes the verifier from the same merge-base package as the helper,
+and the helper refuses exclusions when it is missing. Verification re-renders
+both releases with Copier, so authenticated review needs Copier wherever it
+runs; the v1 description above applies to earlier packages.
 Customized files, `.copier-answers.yml`, listed conflict resolutions, and
 repo-owned files stay in scope. If filtering would remove the whole diff, the
 runner clears the exclusions and restores the full diff under the standardize

@@ -71,10 +71,10 @@ set -euo pipefail
 
 readonly HARMON_REPO_RAW="https://raw.githubusercontent.com/evanharmon1/harmon-init"
 readonly HARMON_RELEASE_TAG_RE='^v[0-9]+\.[0-9]+\.[0-9]+$'
-# The system profile drop-in this script owns. Declared here rather than beside
-# set_locale because the prefix validation names it, and one path spelled twice
-# is a path that will disagree with itself.
-readonly HARMON_PROFILE_DROPIN=/etc/profile.d/harmon-remote-env.sh
+# Sort after platform toolchain profiles (notably nodejs.sh), which prepend
+# their own bins. The closing login-shell check reports any later shadow.
+readonly HARMON_PROFILE_DROPIN=/etc/profile.d/zz-harmon-remote-env.sh
+readonly HARMON_PROFILE_LEGACY_DROPIN=/etc/profile.d/harmon-remote-env.sh
 
 # The files this script needs when it was fetched on its own (the standalone
 # recipe above), relative to images/devcontainer/. Kept equal to what is actually
@@ -138,7 +138,7 @@ warn() {
 # script may render into a shell file verbatim, or the run stops naming the
 # caller's mistake.
 #
-# The install prefix is interpolated into /etc/profile.d/harmon-remote-env.sh,
+# The install prefix is interpolated into HARMON_PROFILE_DROPIN,
 # which this process sources and so does every later login shell on the machine.
 # The defect that matters is not injection — whoever sets the prefix already
 # runs this as root and could write that file directly — it is CORRUPTION: a
@@ -591,12 +591,14 @@ PROFILE
         fi
     fi
     rm -f "$tmp"
+    # Only remove our exact former name, and only after the new profile is
+    # complete. Never leave both copies running at different points in glob order.
+    rm -f "$HARMON_PROFILE_LEGACY_DROPIN"
 }
 set_locale
 
-# This process runs the very drop-in a login shell will, so the PATH order and
-# locale the installs and the closing assertions see are the ones a session
-# gets — one piece of logic, not two that agree today.
+# Apply the published drop-in to installs and in-process assertions too. Real
+# login shells also run other profiles; the closing check probes them separately.
 # shellcheck source=/dev/null
 . "$HARMON_PROFILE_DROPIN"
 
@@ -878,10 +880,10 @@ fi
 [ "$yq_status" -eq 0 ] ||
     die "yq at ${HARMON_BIN}/yq is not mikefarah yq: ${yq_version}"
 
-# What it does NOT own: the invoking user's profile. bash reads ~/.profile after
-# /etc/profile, and a stock one puts ~/.local/bin ahead of everything, so a yq
-# there shadows the pinned one in that user's login shells and no system file
-# can prevent it. Checked in that user's real login shell, AS that user: a
+# Check the invoking user's real login shell, including every system profile.
+# A platform profile sorting after ours can prepend its own Node; bash also
+# reads the user's startup profile after /etc/profile. On a shadow, probe the
+# system profile alone to distinguish those causes. Checked AS that user: a
 # login shell executes ~/.profile, and running one as root with a user's HOME
 # would execute that user's file as uid 0. Without runuser the check is
 # skipped and says so; it never falls back to root. Reported, never fatal.
@@ -900,14 +902,25 @@ done
 if [ "$login_uid" != 0 ] && [ -z "$runuser_bin" ]; then
     printf "    (not checked) %s's login shell: runuser is unavailable, and the check never runs as root with a user's HOME\n" "$login_user"
 else
-    for tool in yq task; do
+    login_shell() {
         if [ "$login_uid" = 0 ]; then
-            found="$(env -i HOME="${login_home:-/root}" USER=root PATH=/usr/bin:/bin bash -lc "command -v ${tool}" 2>/dev/null || true)"
+            env -i HOME="${login_home:-/root}" USER=root PATH=/usr/bin:/bin bash "$@"
         else
-            found="$("$runuser_bin" -u "$login_user" -- env -i HOME="$login_home" USER="$login_user" PATH=/usr/bin:/bin bash -lc "command -v ${tool}" 2>/dev/null || true)"
+            "$runuser_bin" -u "$login_user" -- env -i HOME="$login_home" USER="$login_user" PATH=/usr/bin:/bin bash "$@"
         fi
+    }
+    for tool in yq task node npm npx corepack uv uvx; do
+        found="$(login_shell -lc "command -v ${tool}" 2>/dev/null || true)"
         [ "$found" != "${HARMON_BIN}/${tool}" ] || continue
-        warn "${login_user}'s login shell resolves ${tool} to '${found:-nothing}', not ${HARMON_BIN}/${tool}: a user-level PATH entry (${found%/*}) shadows the pinned toolchain. Remedy: in ${login_home:-/root}/.profile put ${HARMON_BIN} ahead of ${found%/*}, or remove ${found}."
+        # --noprofile suppresses both automatic startup profiles; explicitly
+        # source only the system one, with the same uid and clean environment.
+        system_found="$(login_shell --noprofile -lc ". /etc/profile; command -v ${tool}" 2>/dev/null || true)"
+        if [ "$system_found" != "${HARMON_BIN}/${tool}" ]; then
+            warn "${login_user}'s system login profile resolves ${tool} to '${system_found:-nothing}', not ${HARMON_BIN}/${tool}: /etc/profile or a later /etc/profile.d script shadows the pinned toolchain. Remedy: check PATH changes after ${HARMON_PROFILE_DROPIN}."
+        fi
+        if [ "$found" != "$system_found" ] || [ "$system_found" = "${HARMON_BIN}/${tool}" ]; then
+            warn "${login_user}'s login shell resolves ${tool} to '${found:-nothing}', not ${HARMON_BIN}/${tool}: a user-level PATH entry (${found%/*}) shadows the pinned toolchain. Remedy: in ${login_home:-/root}/.profile put ${HARMON_BIN} ahead of ${found%/*}, or remove ${found}."
+        fi
     done
 fi
 
