@@ -9,10 +9,12 @@ root Renovate configuration.
 
 The later adoption must retain local rules for Copier answers and project types,
 including skills sync, devcontainer, Node, Python, Ansible, and Terraform, as
-well as root maintainer-specific policy. Some common rules include conditional
-package names in the template; those names must remain local exceptions when
-the preset is adopted. Rule order matters when matching rules override groups or
-other settings.
+well as root maintainer-specific policy. Preset rules precede local rules, and
+later matching rules override earlier settings. A consumer with a local npm
+major/non-major split must re-declare its
+complete formatter rule after that split: include `markdownlint-cli2` as well
+as the optional formatter names selected by its answers. Otherwise the local
+split can override the shared formatter grouping.
 
 The strict Renovate configuration CI task validates the preset and root
 `renovate.json` with the pinned `renovate-config-validator`, then validates the
@@ -29,5 +31,7 @@ Roll out in this order:
 3. Run three pilot repositories for two cycles and check for policy regressions
    before fleet adoption.
 
-No existing release is assumed to contain this preset. Select the actual release
-tag only after publication; do not point consumers at an unreleased path.
+A future reference has the form
+`github>evanharmon1/harmon-init//renovate/default#vX.Y.Z`. Replace `vX.Y.Z`
+only with an actual released tag containing the preset. Release `v5.17.0` does
+not yet contain it; select the tag only after publication.
