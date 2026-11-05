@@ -152,6 +152,7 @@ tasks:
       - task: test:ci-results
       - task: test:ci-changes-classify
       - task: test:checklist-classes
+      - task: test:audit-github
       - task: test:output
       - task: test:status
       - task: test:gh-scopes
@@ -191,6 +192,7 @@ tasks:
       - task: test:statusline
       - task: test:link-claude-json
       - task: test:image-staleness
+      - task: test:rebuild-devcontainer
       - task: test:open-devcontainer
       - task: test:devcontainer-smoke-isolation
       - task: test:bot-autonomy
@@ -861,6 +863,19 @@ tasks:
     cmds:
       - ./scripts/test-ci-results.sh
 
+  audit:github:
+    desc: Read-only GitHub checklist audit (NDJSON; 0 clean, 1 drift, 2 unavailable)
+    # Preserve machine-readable stdout under the global grouped output mode.
+    interactive: true
+    silent: true
+    cmds:
+      - ./scripts/audit-github.sh[% if github_org != author_git_provider_username %] --bot-collaborator "[[ author_git_provider_username ]]-bot"[% endif %] {{.CLI_ARGS}}
+
+  test:audit-github:
+    desc: Test GitHub checklist probes offline with stubbed gh
+    cmds:
+      - ./scripts/test-audit-github.sh
+
   audit:ruleset:
     desc: Compare the checked-in branch ruleset with GitHub's live ruleset (read-only)
     cmds:
@@ -1024,6 +1039,11 @@ tasks:
     desc: Unit-test the ~/.claude.json persistence helper (no container needed)
     cmds:
       - ./scripts/test-link-claude-json.sh
+
+  test:rebuild-devcontainer:
+    desc: Test host-side devcontainer rebuild routing
+    cmds:
+      - ./scripts/test-rebuild-devcontainer.sh
 
   test:image-staleness:
     desc: Unit-test the image-staleness warning (no container needed)
@@ -1532,6 +1552,12 @@ tasks:
       - ./scripts/status.sh env
 
 [% if devcontainer %]
+  devcontainer:rebuild:
+    desc: Recreate a devcontainer on the host (default dev; pass dev, bot, or agent)
+    interactive: true
+    cmds:
+      - ./scripts/rebuild-devcontainer.sh {{.CLI_ARGS}}
+
   status:image:
     desc: Warn if the container's image-baked config has drifted from the checkout (silent when fresh)
     cmds:

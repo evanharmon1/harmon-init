@@ -65,7 +65,7 @@ marker = "[security-sensitive]"
 # Includes every legacy confirm-answers.sh key present in copier.yml;
 # setup_github/setup_labels/setup_branch_protection are not questions here.
 required = set("""
-github_org code_owner claude_authorized_members
+author_git_provider_username github_org code_owner claude_authorized_members
 snyk_scan_schedule ci_runner ci_runner_labels
 use_release_please use_skills_sync use_shared_agents
 use_foreman ci_app_integration_id foreman_additional_trusted_actors
@@ -397,6 +397,87 @@ for good_date in 2024-02-29 2026-12-31 2000-02-29; do
         hint_stale_worktree
     fi
 done
+
+# Compare the same current template with the nine identity questions exposed
+# and hidden. Only persistence may change; no historical migration fixture.
+echo "==> identity defaults preserve generated content and persist all nine answers"
+identity_source="$work/identity-source"
+mkdir -p "$identity_source"
+cp "$repo/copier.yml" "$identity_source/copier.yml"
+cp -a "$repo/template" "$identity_source/template"
+render_identity_defaults() {
+    copier copy --trust --defaults --skip-tasks \
+        --data project_name="Identity Test" --data git_init=false \
+        --data decisions_seed_date=2026-11-04 \
+        "$identity_source" "$1" >"$work/identity.log" 2>&1
+}
+if render_identity_defaults "$work/identity-new"; then
+    yq -o=json '.' "$work/identity-new/.copier-answers.yml" >"$work/identity-answers.json"
+    if python3 - "$work/identity-answers.json" <<'PYTHON'
+import json
+import sys
+
+expected = dict(
+    author_first_name="Evan", author_last_name="Harmon",
+    author_full_name="Evan Harmon", author_email="evan@evanharmon.com",
+    author_url="https://evanharmon.com", author_git_provider_username="evanharmon1",
+    organization="Harmon Lab", organization_url="https://harmonlab.net",
+    organization_email="evan@evanharmon.com",
+)
+with open(sys.argv[1], encoding="utf-8") as source:
+    answers = json.load(source)
+assert {key: answers.get(key) for key in expected} == expected, answers
+PYTHON
+    then
+        pass "all nine unchanged identity defaults persist"
+    else
+        fail "identity defaults missing or changed in saved answers"
+    fi
+    # Restore exactly the previous hidden behaviour in this temporary source.
+    for key in author_first_name author_last_name author_full_name author_email \
+        author_url author_git_provider_username organization organization_url organization_email; do
+        yq -i ".$key.when = false" "$identity_source/copier.yml"
+    done
+    if render_identity_defaults "$work/identity-old"; then
+        # The workspace's Peacock color is random on every copy; hold this
+        # unrelated nondeterministic file fixed for the content comparison.
+        cp "$work/identity-old/identity-test.code-workspace" "$work/identity-new/identity-test.code-workspace"
+        yq -o=json '.' "$work/identity-old/.copier-answers.yml" >"$work/identity-old.json"
+        if python3 - "$work/identity-old.json" "$work/identity-answers.json" <<'PYTHON'
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as source:
+    old = json.load(source)
+with open(sys.argv[2], encoding="utf-8") as source:
+    new = json.load(source)
+keys = """author_first_name author_last_name author_full_name author_email
+          author_url author_git_provider_username organization organization_url
+          organization_email""".split()
+assert all(key not in old for key in keys), old
+for key in keys:
+    del new[key]
+assert old == new, (old, new)
+PYTHON
+        then
+            pass "saved answers differ only by nine newly persisted values"
+        else
+            fail "default answers changed beyond identity persistence"
+        fi
+        if diff -r --exclude=.copier-answers.yml "$work/identity-old" "$work/identity-new" >"$work/identity.diff"; then
+            pass "default generated content is byte-identical (workspace random color held fixed)"
+        else
+            fail "identity exposure changed default generated content"
+            cat "$work/identity.diff" >&2
+        fi
+    else
+        fail "hidden-identity baseline failed to render"
+        cat "$work/identity.log" >&2
+    fi
+else
+    fail "identity defaults failed to render"
+    cat "$work/identity.log" >&2
+fi
 
 if [ "$failures" -gt 0 ]; then
     echo "test-copier-validators: FAILED ($failures)" >&2

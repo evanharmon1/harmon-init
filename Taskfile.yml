@@ -120,6 +120,7 @@ tasks:
       - task: test:ci-results
       - task: test:ci-changes-classify
       - task: test:checklist-classes
+      - task: test:audit-github
       - task: test:comment-annotators
       - task: test:artifact-retention
       - task: test:audit-ruleset
@@ -137,6 +138,7 @@ tasks:
       - task: test:copier-validators
       - task: test:renovate-pins
       - task: test:tool-pin-pairs
+      - task: test:measure-dependency-maintenance
       - task: test:oh-my-pi-pin
       - task: test:render-parity-cases
       - task: test:lint-hygiene
@@ -169,6 +171,7 @@ tasks:
       - task: test:statusline
       - task: test:link-claude-json
       - task: test:image-staleness
+      - task: test:rebuild-devcontainer
       - task: test:open-devcontainer
       - task: test:devcontainer-smoke-isolation
       - task: test:bot-autonomy
@@ -425,6 +428,11 @@ tasks:
     cmds:
       - ./scripts/test-link-claude-json.sh
 
+  test:rebuild-devcontainer:
+    desc: Test host-side devcontainer rebuild routing
+    cmds:
+      - ./scripts/test-rebuild-devcontainer.sh
+
   test:image-staleness:
     desc: Unit-test the image-staleness warning (no container needed)
     cmds:
@@ -658,6 +666,11 @@ tasks:
     cmds:
       - ./scripts/test-renovate-config.sh {{.CLI_ARGS}}
 
+  test:measure-dependency-maintenance:
+    desc: Verify dependency-maintenance measurements with offline source fixtures
+    cmds:
+      - python3 "{{.ROOT_DIR}}/scripts/test-measure-dependency-maintenance.py"
+
   test:tool-pin-pairs:
     desc: Behavioural fixtures for the version/checksum pin-pair guard
     cmds:
@@ -830,6 +843,19 @@ tasks:
     desc: "Report root<->template drift for jinja twins (report, not a gate; --summary for names only)"
     cmds:
       - ./scripts/audit-dogfood.sh {{.CLI_ARGS}}
+
+  audit:github:
+    desc: Read-only GitHub checklist audit (NDJSON; 0 clean, 1 drift, 2 unavailable)
+    # Preserve machine-readable stdout under the global grouped output mode.
+    interactive: true
+    silent: true
+    cmds:
+      - ./scripts/audit-github.sh {{.CLI_ARGS}}
+
+  test:audit-github:
+    desc: Test GitHub checklist probes offline with stubbed gh
+    cmds:
+      - ./scripts/test-audit-github.sh
 
   audit:ruleset:
     desc: Compare the checked-in branch ruleset with GitHub's live ruleset (read-only)
@@ -1251,6 +1277,12 @@ tasks:
     interactive: true
     cmds:
       - ./scripts/status.sh env
+
+  devcontainer:rebuild:
+    desc: Recreate a devcontainer on the host (default dev; pass dev, bot, or agent)
+    interactive: true
+    cmds:
+      - ./scripts/rebuild-devcontainer.sh {{.CLI_ARGS}}
 
   status:image:
     desc: Warn if the container's image-baked config has drifted from the checkout (silent when fresh)

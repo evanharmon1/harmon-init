@@ -9,7 +9,7 @@
 // Usage:
 //   validate-result-schemas.mjs <kind> <file> [options]
 //
-//   kind: brief | envelope | implementer | challenger | reviewer | integrator | adjudication | run | plan
+//   kind: brief | envelope | implementer | challenger | reviewer | integrator | adjudication | run | plan | lane-status
 //   `brief` accepts rendered Markdown, extracts the fenced JSON fact block
 //   between the schema-bound-envelope delimiters, derives `body` from every
 //   byte outside that block, then validates brief.envelope.schema.json.
@@ -19,6 +19,8 @@
 //   not a payload-blind mode, just a way to validate a full result without
 //   the caller having to already know its role.
 //
+//   --prev <file.json>            (lane-status only) validate the previous status
+//                                 and require seq to increase by exactly 1.
 //   --known-ids <file.json>       JSON array of finding ids already used
 //                                 elsewhere in the run (challenger, reviewer,
 //                                 and integrator) — rejects a collision (spec:
@@ -106,7 +108,10 @@
 //   --receipt                    Require every context flag applicable to
 //                                 this invocation's <kind> (envelope kinds:
 //                                 --run-id/--initiated-by; challenger,
-//                                 reviewer, and integrator: also --known-ids;
+//                                 reviewer: also --known-ids; integrator:
+//                                 also --known-ids and --integrator-record,
+//                                 plus --codex-state/--codex-repo-dir only
+//                                 when its cycle is non-null;
 //                                 adjudication: --pass and
 //                                 --known-adjudicated; run: --adjudication)
 //                                 — a missing one is a
@@ -146,6 +151,8 @@
 // violation (one per line) otherwise. A usage error (bad kind, missing
 // file, a paired flag given alone, or a --receipt-required flag missing)
 // exits 2.
+import { pathMatches } from './lib/fence-match.mjs'
+import { planGraph, itemRepository, repository } from './run-record.mjs'
 import { validateCapAuthorizations } from './lib/cap-authorizations.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -153,6 +160,7 @@ import process from 'node:process'
 import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { createSchemaValidator, canonicalJson } from './lib/json-schema-subset.mjs'
+import { authenticateIntegratorReceipt, integratorReceiptObservationErrors } from './lib/integrator-receipt-auth.mjs'
 
 // The package's OWN schema copy, resolved from this file's location — never a
 // repository-root `ai/schemas`. A vendored consumer has no `ai/` tree, and the
@@ -163,7 +171,7 @@ import { createSchemaValidator, canonicalJson } from './lib/json-schema-subset.m
 // stays the authoring source of truth; `assets/schemas/` is its byte-identical
 // copy, asserted by `task test:schema-parity`.
 const DEFAULT_SCHEMAS_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), 'schemas')
-const KINDS = ['brief', 'envelope', 'implementer', 'challenger', 'reviewer', 'integrator', 'adjudication', 'run', 'plan']
+const KINDS = ['brief', 'envelope', 'implementer', 'challenger', 'reviewer', 'integrator', 'adjudication', 'run', 'plan', 'lane-status']
 const FINDING_ID = /^(challenge|review|integration)-r([1-9][0-9]*)-(.+)-([1-9][0-9]*)$/
 const SHA_PATTERN = /^[0-9a-f]{40}$/
 const BRIEF_BEGIN = '<!-- BEGIN SCHEMA-BOUND ENVELOPE FACTS -->'
@@ -179,10 +187,11 @@ const ISSUE_NUMBER_PATTERN = /^(?:[1-9][0-9]*|[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+#[
 
 function usage() {
   console.error(
-    'usage: validate-result-schemas.mjs <brief|envelope|implementer|challenger|reviewer|integrator|adjudication|run|plan> <file> ' +
+    'usage: validate-result-schemas.mjs <brief|envelope|implementer|challenger|reviewer|integrator|adjudication|run|plan|lane-status> <file> ' +
       '[--known-ids <file.json>] [--run-id <id> --initiated-by <human|foreman>] ' +
       '[--pass <file.json> ...] [--known-adjudicated <file.json>] [--adjudication <file.json> ...] ' +
-      '[--no-adjudications] [--schemas-dir <dir>] [--receipt] [--receipts <run.json>]'
+      '[--prev <file.json>] [--no-adjudications] [--schemas-dir <dir>] [--receipt] [--receipts <run.json>] ' +
+      '[--integrator-record <run.json> --codex-state <state.json> --codex-repo-dir <dir>]'
   )
 }
 
@@ -342,12 +351,14 @@ function checkBriefFacts(instance, errors) {
   for (const entry of overlaps) {
     // Every entry must first parse as the builder's canonical lane tuple.
     // Free-form prose cannot bypass the identity comparison.
-    const identity = /^lane `([^`\r\n]+)` \(#([1-9][0-9]*), branch `([^`\r\n]+)`, wave [1-9][0-9]*\)(?: [^\r\n]+)?$/.exec(entry)
+    const identity = /^lane `([^`\r\n]+)` \((?:([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+))?#([1-9][0-9]*), branch `([^`\r\n]+)`, wave [1-9][0-9]*\)(?: [^\r\n]+)?$/.exec(entry)
     if (!identity) {
       errors.push('$brief.live_lane_overlaps: non-canonical lane tuple')
       continue
     }
-    if (ownLanes.has(identity[1]) || Number(identity[2]) === instance.issue.number || identity[3] === instance.branch) {
+    const ownRepo = /^https:\/\/github\.com\/([^/]+\/[^/]+)\/issues\//.exec(instance.issue.url)?.[1]?.toLowerCase()
+    const sameRepo = identity[2] === undefined || identity[2].toLowerCase() === ownRepo
+    if (ownLanes.has(identity[1]) || (sameRepo && Number(identity[3]) === instance.issue.number) || identity[4] === instance.branch) {
       errors.push('$brief.live_lane_overlaps: names its own lane by label, branch or issue')
     }
   }
@@ -443,6 +454,7 @@ function parseArgs(argv) {
     else if (peek && peek.stage === 'challenge') passAllowedRoles = ['reviewer', 'challenger']
   }
   const options = {
+    prev: null,
     knownIds: null,
     runId: null,
     initiatedBy: null,
@@ -451,10 +463,21 @@ function parseArgs(argv) {
     adjudications: [],
     receipt: false,
     noAdjudications: false,
-    receiptsRecord: null
+    receiptsRecord: null,
+    integratorRecord: null,
+    integratorRecordFile: null,
+    codexState: null,
+    codexRepoDir: null
   }
   for (let i = 0; i < rest.length; i += 1) {
     switch (rest[i]) {
+      case '--prev':
+        if (kind !== 'lane-status' || !rest[i + 1]) {
+          console.error('--prev requires a file and is only valid for lane-status')
+          process.exit(2)
+        }
+        options.prev = rest[(i += 1)]
+        break
       case '--known-ids':
         options.knownIds = loadIdArray(rest[(i += 1)], '--known-ids')
         break
@@ -557,6 +580,16 @@ function parseArgs(argv) {
         options.receiptsRecord = record
         break
       }
+      case '--integrator-record':
+        options.integratorRecordFile = rest[(i += 1)]
+        options.integratorRecord = loadJson(options.integratorRecordFile)
+        break
+      case '--codex-state':
+        options.codexState = rest[(i += 1)]
+        break
+      case '--codex-repo-dir':
+        options.codexRepoDir = rest[(i += 1)]
+        break
       default:
         console.error(`validate-result-schemas: unknown option ${rest[i]}`)
         usage()
@@ -600,7 +633,12 @@ const CONTEXT_FLAGS = {
   implementer: [RUN_ID_FLAG],
   challenger: [{ flag: '--known-ids', given: (o) => o.knownIds !== null }, RUN_ID_FLAG],
   reviewer: [{ flag: '--known-ids', given: (o) => o.knownIds !== null }, RUN_ID_FLAG],
-  integrator: [{ flag: '--known-ids', given: (o) => o.knownIds !== null }, RUN_ID_FLAG],
+  integrator: [
+    { flag: '--codex-repo-dir', given: (o) => o.codexRepoDir !== null },
+    { flag: '--codex-state', given: (o) => o.codexState !== null },
+    { flag: '--integrator-record', given: (o) => o.integratorRecord !== null },
+    { flag: '--known-ids', given: (o) => o.knownIds !== null }, RUN_ID_FLAG
+  ],
   adjudication: [
     { flag: '--known-adjudicated', given: (o) => o.knownAdjudicated !== null },
     { flag: '--pass', given: (o) => o.passes.length > 0 },
@@ -615,13 +653,23 @@ const CONTEXT_FLAGS = {
 // unrecognised role (a garbage or missing `role` on an envelope-kind
 // instance) falls back to the universal envelope baseline (--run-id only)
 // rather than guessing at extras it cannot confirm apply.
-function applicableContextSpecs(kind, role) {
-  if (kind === 'envelope') return CONTEXT_FLAGS[role] ?? [RUN_ID_FLAG]
-  return CONTEXT_FLAGS[kind] ?? []
+function applicableContextSpecs(kind, role, instance) {
+  const effectiveRole = kind === 'envelope' ? role : kind
+  const specs = CONTEXT_FLAGS[effectiveRole] ?? (kind === 'envelope' ? [RUN_ID_FLAG] : [])
+  // A cap-zero/null-cycle integrator receipt has no checker state to
+  // authenticate. It is still strict evidence: --integrator-record supplies
+  // the retained policy that proves the waiver, alongside the ordinary run
+  // and finding context. Requiring a made-up --codex-state would either
+  // encourage a fabricated file or make legitimate cap-zero receipts
+  // impossible to record.
+  if (effectiveRole === 'integrator' && instance?.payload?.codex_cycle === null) {
+    return specs.filter((spec) => spec.flag !== '--codex-repo-dir' && spec.flag !== '--codex-state')
+  }
+  return specs
 }
 
-function skippedContextFlags(kind, role, options) {
-  return applicableContextSpecs(kind, role)
+function skippedContextFlags(kind, role, options, instance) {
+  return applicableContextSpecs(kind, role, instance)
     .filter((spec) => !spec.given(options))
     .map((spec) => spec.flag)
 }
@@ -630,9 +678,9 @@ function skippedContextFlags(kind, role, options) {
 // to this invocation must actually be given; a missing one is a usage
 // error (exit 2), matching how --run-id given without --initiated-by is
 // already treated as a usage error rather than a guaranteed rejection.
-function checkReceiptRequirements(kind, role, options) {
+function checkReceiptRequirements(kind, role, options, instance) {
   if (!options.receipt) return
-  const missing = skippedContextFlags(kind, role, options)
+  const missing = skippedContextFlags(kind, role, options, instance)
   if (missing.length === 0) return
   for (const flag of missing) {
     console.error(`validate-result-schemas: --receipt requires ${flag} for kind ${kind}`)
@@ -1448,6 +1496,40 @@ function checkIntegratorCleanVerdict(payload, errors) {
   }
 }
 
+// A pending check is useful diagnostic data in an in-flight integrator
+// report, but it cannot become an immutable pass receipt: a later reader
+// would otherwise mistake an incomplete CI observation for settled evidence.
+// Keep this at the receipt boundary so schema-only fixture and diagnostic
+// validation can still represent the truthful pending state.
+function checkIntegratorReceiptChecks(payload, options, errors) {
+  if (!options.receipt) return
+  errors.push(...integratorReceiptObservationErrors(payload))
+}
+
+function checkIntegratorReceiptAuthentication(envelope, options, errors) {
+  // Bare validation remains useful for historical retained envelopes. Strict
+  // receipt mode requires explicit live context (CONTEXT_FLAGS above).
+  if (!options.receipt || !options.integratorRecord) return
+  // Do not issue a live authentication query for a receipt that the local,
+  // immutable-terminality rule has already refused.  Apart from avoiding an
+  // irrelevant network read, this keeps the durable admission failure about
+  // the incomplete round rather than about unavailable live checker context.
+  if (integratorReceiptObservationErrors(envelope?.payload).length > 0) return
+  const policyFile = path.join(path.dirname(options.integratorRecordFile), 'policy.json')
+  let policy
+  try { policy = JSON.parse(fs.readFileSync(policyFile, 'utf8')) } catch {
+    errors.push(`$result.payload.codex_cycle: cannot read the recorded resolved policy ${policyFile}`)
+    return
+  }
+  errors.push(...authenticateIntegratorReceipt(envelope, {
+    record: options.integratorRecord,
+    policy,
+    stateFile: options.codexState,
+    repoDir: options.codexRepoDir,
+    recordDir: path.dirname(options.integratorRecordFile)
+  }))
+}
+
 // validateEnvelopeInstance INSTANCE KIND OPTIONS — the full envelope +
 // payload + receipt-validation pipeline, shared by the top-level `<kind>
 // <file>` invocation and by --pass's own pre-validation of the reviewer
@@ -1484,6 +1566,8 @@ function validateEnvelopeInstance(instance, kind, options) {
           checkAppliedDispositionsKnownFindingIds(instance.payload, options.knownIds, errors)
           checkAppliedDispositionsIntegrationRound(instance.payload, errors)
           checkIntegratorCleanVerdict(instance.payload, errors)
+          checkIntegratorReceiptChecks(instance.payload, options, errors)
+          checkIntegratorReceiptAuthentication(instance, options, errors)
           checkIntegratorFindingIds(instance, options, errors)
           checkIntegratorSettledAtAgreement(instance, errors)
         }
@@ -2425,7 +2509,7 @@ function planPredecessors(plan) {
 // checkPlanCoherence — the schema closes each record; these checks close the
 // relationships between them so a structurally valid file is also a usable
 // dispatch plan rather than several disagreeing lists.
-function checkPlanCoherence(document, errors) {
+function checkPlanCoherence(document, errors, previousPlan) {
   const issues = Array.isArray(document.issues) ? document.issues : []
   const overlaps = Array.isArray(document.overlaps) ? document.overlaps : []
   const waves = Array.isArray(document.waves) ? document.waves : []
@@ -2450,6 +2534,24 @@ function checkPlanCoherence(document, errors) {
         errors.push(`$plan.issues[${index}].blocked_by: issue cannot block itself`)
       }
     }
+  }
+
+  const retained = document.retained_lanes ?? []
+  const retainedIssues = new Set()
+  const retainedNames = new Set(lanes.map((lane) => lane.lane))
+  const retainedRuns = new Set(lanes.map((lane) => lane.run_id))
+  const retainedBranches = new Set(lanes.map((lane) => lane.branch))
+  for (const entry of retained) {
+    const lane = entry.lane
+    if (issueByNumber.get(lane.issue)?.verdict !== 'handed-off') errors.push('$plan.retained_lanes: retained lane requires a handed-off issue')
+    if (!Number.isInteger(issueByNumber.get(lane.issue)?.pr)) errors.push('$plan.retained_lanes: retained lane requires a delivery PR')
+    if (retainedIssues.has(lane.issue) || lanes.some((item) => item.issue === lane.issue)) errors.push('$plan.retained_lanes: duplicate issue')
+    if (retainedNames.has(lane.lane) || retainedRuns.has(lane.run_id) || retainedBranches.has(lane.branch)) errors.push('$plan.retained_lanes: duplicate lane, run or branch')
+    retainedIssues.add(lane.issue)
+    retainedNames.add(lane.lane)
+    retainedRuns.add(lane.run_id)
+    retainedBranches.add(lane.branch)
+    checkBreadthCeilings(entry.policy?.breadth, '$plan.retained_lanes.policy.breadth', errors)
   }
 
   const expectedIssues = issues.filter((issue) => !['done', 'handed-off'].includes(issue.verdict)).map((issue) => issue.number)
@@ -2587,26 +2689,40 @@ function checkPlanCoherence(document, errors) {
     for (let right = left + 1; right < activeIssues.length; right += 1) {
       const issueA = activeIssues[left]
       const issueB = activeIssues[right]
+      if (itemRepository(document, issueA) !== itemRepository(document, issueB)) continue
       const rightPaths = new Set(issueB.candidate_files || [])
       const shared = [...new Set((issueA.candidate_files || []).filter((path) => rightPaths.has(path)))].sort()
       if (shared.length > 0) {
-        const pair = [issueA.number, issueB.number].sort((a, b) => a - b)
+        const pair = [issueA.number, issueB.number].sort((a, b) => String(a).localeCompare(String(b), 'en', { numeric: true }))
         expectedOverlaps.set(pair.join(':'), shared)
       }
     }
   }
   const seenOverlapPairs = new Set()
   for (const [index, overlap] of overlaps.entries()) {
-    const pair = [overlap.issue_a, overlap.issue_b].sort((a, b) => a - b)
+    const pair = [overlap.issue_a, overlap.issue_b].sort((a, b) => String(a).localeCompare(String(b), 'en', { numeric: true }))
     const key = pair.join(':')
-    if (overlap.issue_a >= overlap.issue_b) errors.push(`$plan.overlaps[${index}]: issue_a must be less than issue_b`)
+    if (pair[0] !== overlap.issue_a || overlap.issue_a === overlap.issue_b) errors.push(`$plan.overlaps[${index}]: issue_a must be less than issue_b`)
     if (seenOverlapPairs.has(key)) errors.push(`$plan.overlaps: duplicate issue pair ${key}`)
     seenOverlapPairs.add(key)
     const expectedPaths = expectedOverlaps.get(key)
     const actualPaths = [...new Set(overlap.paths || [])].sort()
-    if (!expectedPaths) errors.push(`$plan.overlaps[${index}]: pair ${key} has no candidate-file overlap`)
-    else if (canonicalJsonForDigest(actualPaths) !== canonicalJsonForDigest(expectedPaths)) {
-      errors.push(`$plan.overlaps[${index}].paths: must equal the pair's complete candidate-file intersection`)
+    if (!pair.every((number) => issueByNumber.has(number) && issueByNumber.get(number).verdict !== 'done')) {
+      errors.push(`$plan.overlaps[${index}]: pair ${key} must name live issues`)
+    }
+    if ((expectedPaths ?? []).some((path) => !actualPaths.includes(path))) {
+      errors.push(`$plan.overlaps[${index}].paths: must include the pair's complete candidate-file intersection`)
+    }
+    const pairLanes = pair.map((number) => lanes.find((lane) => lane.issue === number))
+    for (const path of actualPaths.filter((entry) => !(expectedPaths ?? []).includes(entry))) {
+      const covered = (lane) => [...(lane.fence || []).map((entry) => typeof entry === 'string' ? entry : entry.path), ...(lane.expansions || []).map((entry) => entry.path)]
+        .some((pattern) => pattern && !pattern.includes('\\') && !(/\[[^/]*[*?]/.test(pattern)) && pathMatches(path, pattern))
+      const prior = previousPlan?.overlaps?.find((entry) => entry.issue_a === overlap.issue_a && entry.issue_b === overlap.issue_b && entry.paths.includes(path) && entry.resolution === overlap.resolution && entry.merge_dependency.before === overlap.merge_dependency.before && entry.merge_dependency.after === overlap.merge_dependency.after)
+      const missingLane = pairLanes.some((lane) => !lane)
+      const validMissing = pairLanes.every((lane, i) => lane || issueByNumber.get(pair[i])?.verdict === 'handed-off')
+      if (/[*?\\]/.test(path) || !validMissing || (missingLane ? !prior : !pairLanes.some(covered))) {
+        errors.push(`$plan.overlaps[${index}].paths: ${path} must be covered by a lane or carried from a prior decision`)
+      }
     }
     const dependency = overlap.merge_dependency
     if (dependency && !pair.includes(dependency.before)) {
@@ -2634,7 +2750,7 @@ function checkPlanCoherence(document, errors) {
   for (const number of duplicates(queue.map((entry) => entry.issue))) {
     errors.push(`$plan.merge_queue: duplicate issue ${number}`)
   }
-  for (const pr of duplicates(queue.map((entry) => entry.pr))) {
+  for (const pr of duplicates(queue.map((entry) => (itemRepository(document, entry) === undefined ? entry.pr : `${itemRepository(document, entry)}#${entry.pr}`)))) {
     errors.push(`$plan.merge_queue: duplicate PR ${pr}`)
   }
   const queuePosition = new Map()
@@ -2653,9 +2769,9 @@ function checkPlanCoherence(document, errors) {
     if (issue.pr === undefined) errors.push(`$plan.issues: waiting handed-off issue ${issue.number} requires a PR binding`)
   }
   const handoffBindings = issues.filter((issue) => issue.verdict === 'handed-off')
-    .map((issue) => issue.pr ?? queue.find((entry) => entry.issue === issue.number)?.pr).filter((pr) => pr !== undefined)
+    .map((issue) => { const pr = issue.pr ?? queue.find((entry) => entry.issue === issue.number)?.pr; return pr === undefined ? undefined : (itemRepository(document, issue) === undefined ? pr : `${itemRepository(document, issue)}#${pr}`) }).filter((pr) => pr !== undefined)
   for (const pr of duplicates(handoffBindings)) {
-    if (!duplicates(queue.map((entry) => entry.pr)).includes(pr)) errors.push(`$plan.issues: duplicate handoff PR ${pr}`)
+    if (!duplicates(queue.map((entry) => (itemRepository(document, entry) === undefined ? entry.pr : `${itemRepository(document, entry)}#${entry.pr}`))).includes(pr)) errors.push(`$plan.issues: duplicate handoff PR ${pr}`)
   }
   for (const [after, predecessors] of predecessorByIssue) for (const before of predecessors) {
     if (queuePosition.has(after) && issueByNumber.get(before)?.verdict !== 'done' && !queuePosition.has(before)) {
@@ -2699,8 +2815,8 @@ function checkPlanCoherence(document, errors) {
   )
   const literalFenceOwnersByWave = new Map()
   for (const lane of lanes) {
-    const literalFenceOwner = literalFenceOwnersByWave.get(lane.wave) || new Map()
-    literalFenceOwnersByWave.set(lane.wave, literalFenceOwner)
+    const literalFenceOwner = literalFenceOwnersByWave.get(`${itemRepository(document, lane) ?? ""}:${lane.wave}`) || new Map()
+    literalFenceOwnersByWave.set(`${itemRepository(document, lane) ?? ""}:${lane.wave}`, literalFenceOwner)
     for (const path of effectiveFenceByLane.get(lane.lane) || []) {
       const owner = literalFenceOwner.get(path)
       if (owner) {
@@ -2713,10 +2829,67 @@ function checkPlanCoherence(document, errors) {
 }
 
 function checkDispatchPlan(document, errors) {
-  const revisions = checkPlanRevisionChain(document, errors)
-  if (!revisions) return
+  const wireRevisions = checkPlanRevisionChain(document, errors)
+  if (!wireRevisions) return
+  const revisions = []
+  let conductor
+  for (const revision of wireRevisions) {
+    const plan = revision.plan
+    try {
+      const qualified = [...(plan.issues ?? []), ...(plan.lanes ?? []), ...(plan.overlaps ?? []), ...(plan.merge_queue ?? [])].some((item) => item.repo !== undefined) ||
+        (plan.waves ?? []).some((wave) => wave.issues.some((id) => typeof id === 'string'))
+      if (qualified && plan.repo === undefined) throw new Error('repository-qualified plan requires conductor repo')
+      if (plan.repo !== undefined) {
+        repository(plan.repo)
+        for (const issue of plan.issues ?? []) {
+          const expected = `https://github.com/${itemRepository(plan, issue)}/issues/${issue.number}`
+          if (issue.url.toLowerCase().replace(/\/$/, '') !== expected) throw new Error(`issue URL must match repository and number: ${expected}`)
+        }
+      }
+      if (conductor !== undefined && plan.repo?.toLowerCase() !== conductor) throw new Error('conductor repo must remain immutable')
+      if (conductor === undefined && plan.repo !== undefined) {
+        conductor = repository(plan.repo)
+        for (const prior of wireRevisions.slice(0, revision.seq)) for (const issue of prior.plan.issues ?? []) {
+          if (issue.url.toLowerCase().replace(/\/$/, '') !== `https://github.com/${conductor}/issues/${issue.number}`) {
+            throw new Error('binding conductor repo must preserve every legacy issue identity')
+          }
+        }
+      }
+      const baseRepos = new Set()
+      for (const entry of plan.repository_bases ?? []) {
+        const repo = repository(entry.repo)
+        if (baseRepos.has(repo)) throw new Error('duplicate repository_bases repository')
+        baseRepos.add(repo)
+        if (!plan.repo || repo === repository(plan.repo) ||
+            !plan.issues.some((issue) => itemRepository(plan, issue) === repo)) {
+          throw new Error('repository_bases must name a foreign repository in the plan')
+        }
+      }
+      for (const issue of plan.issues ?? []) {
+        const repo = itemRepository(plan, issue)
+        if (plan.repo !== undefined && repo !== repository(plan.repo) && !baseRepos.has(repo)) {
+          throw new Error('foreign repository with issues requires a repository_bases entry')
+        }
+      }
+      for (const lane of plan.lanes ?? []) {
+        const recorded = plan.repository_bases?.find((entry) => repository(entry.repo) === itemRepository(plan, lane))?.base_sha
+        if (recorded !== undefined && lane.base_sha !== recorded) {
+          throw new Error('foreign lane base_sha must match repository_bases')
+        }
+        if (itemRepository(plan, lane) === (plan.repo === undefined ? undefined : repository(plan.repo)) &&
+            lane.base_sha !== undefined && lane.base_sha !== plan.base_sha) {
+          throw new Error('conductor lane base_sha must match plan base_sha')
+        }
+      }
+      revisions.push({ ...revision, plan: planGraph(plan) })
+    } catch (error) {
+      errors.push(`$plan.revisions[${revision.seq}].plan: ${error.message}`)
+      return
+    }
+  }
   const runBindings = new Map()
   const pinnedLaneProfiles = new Map()
+  const pinnedRetainedProfiles = new Map()
   let laneProfilesRecorded = false
   // Tracks revisions[seq-1].at across the loop below (this whole document is
   // one plan's revision history, so "the preceding revision" is unambiguous)
@@ -2730,7 +2903,7 @@ function checkDispatchPlan(document, errors) {
   for (const revision of revisions) {
     const revisionTime = Date.parse(revision.at)
     const revisionErrors = []
-    checkPlanCoherence(revision.plan, revisionErrors)
+    checkPlanCoherence(revision.plan, revisionErrors, previousPlan)
     errors.push(...revisionErrors.map((error) => error.replace('$plan', `$plan.revisions[${revision.seq}].plan`)))
     if (previousPlan && !revision.reason.startsWith('wave-release:')) {
       const done = new Set((revision.plan.issues || []).filter((issue) => issue.verdict === 'done').map((issue) => issue.number))
@@ -2768,29 +2941,52 @@ function checkDispatchPlan(document, errors) {
         errors.push(`$plan.revisions[${revision.seq}].plan.dispatcher: must remain byte-identical to revision 0's dispatcher across revision history`)
       }
     }
-    if (revision.plan.lane_profiles !== undefined) {
-      laneProfilesRecorded = true
-      const profilesByLane = new Map(revision.plan.lane_profiles.map((entry) => [entry.lane, entry.policy]))
-      for (const lane of revision.plan.lanes || []) {
-        if (!profilesByLane.has(lane.lane)) continue
-        const profileJson = canonicalJsonForDigest(profilesByLane.get(lane.lane))
-        const recordedProfile = pinnedLaneProfiles.get(lane.run_id)
-        if (recordedProfile !== undefined && profileJson !== recordedProfile) {
-          errors.push(`$plan.revisions[${revision.seq}].plan.lane_profiles: profile for run_id ${JSON.stringify(lane.run_id)} must remain byte-identical across revision history`)
-        } else if (recordedProfile === undefined) {
-          pinnedLaneProfiles.set(lane.run_id, profileJson)
-        }
-      }
-    } else if (laneProfilesRecorded) {
+    const adoptingLaneProfiles = !laneProfilesRecorded && revision.plan.lane_profiles !== undefined
+    if (revision.plan.lane_profiles !== undefined) laneProfilesRecorded = true
+    else if (laneProfilesRecorded) {
       errors.push(`$plan.revisions[${revision.seq}].plan.lane_profiles: must remain present across revision history once recorded`)
     }
-    for (const [laneIndex, lane] of (revision.plan.lanes || []).entries()) {
+    const profilesByLane = new Map([...(revision.plan.lane_profiles ?? []).map((entry) => [entry.lane, entry.policy]), ...(revision.plan.retained_lanes ?? []).map((entry) => [entry.lane.lane, entry.policy])])
+    for (const lane of revision.plan.lanes || []) {
+      if (!profilesByLane.has(lane.lane)) profilesByLane.set(lane.lane, revision.plan.policy)
+    }
+    for (const lane of [...(revision.plan.lanes || []), ...(revision.plan.retained_lanes ?? []).map((entry) => entry.lane)]) {
+      if (!profilesByLane.has(lane.lane)) continue
+      const profileJson = canonicalJsonForDigest(profilesByLane.get(lane.lane))
+      const retained = (revision.plan.retained_lanes ?? []).some((entry) => entry.lane.lane === lane.lane)
+      // A retained delivery keeps its policy when reactivation assigns a new run.
+      // Normalized issue identities include the repository. A lane name can
+      // be reused after retirement, so pin the delivery rather than its name.
+      if (retained) {
+        const delivery = canonicalJsonForDigest([lane.lane, lane.issue, lane.branch])
+        const pinned = pinnedRetainedProfiles.get(delivery) ?? pinnedLaneProfiles.get(lane.run_id)
+        if (pinned !== undefined && pinned !== profileJson) {
+          errors.push(`$plan.revisions[${revision.seq}].plan.retained_lanes: profile for lane ${JSON.stringify(lane.lane)} must remain byte-identical across revision history`)
+        } else if (pinned === undefined) {
+          pinnedRetainedProfiles.set(delivery, profileJson)
+        } else {
+          pinnedRetainedProfiles.set(delivery, pinned)
+        }
+      }
+      const recordedProfile = pinnedLaneProfiles.get(lane.run_id)
+      // Legacy live lanes may adopt explicit profiles once; handoff is not adoption.
+      if (adoptingLaneProfiles && (revision.plan.lanes || []).some((entry) => entry.run_id === lane.run_id)) {
+        pinnedLaneProfiles.set(lane.run_id, profileJson)
+      } else if (recordedProfile !== undefined && profileJson !== recordedProfile) {
+        errors.push(`$plan.revisions[${revision.seq}].plan.lane_profiles: profile for run_id ${JSON.stringify(lane.run_id)} must remain byte-identical across revision history`)
+      } else if (recordedProfile === undefined) {
+        pinnedLaneProfiles.set(lane.run_id, profileJson)
+      }
+    }
+    for (const [laneIndex, lane] of [...(revision.plan.lanes || []), ...(revision.plan.retained_lanes ?? []).map((entry) => entry.lane)].entries()) {
+      const lanePath = laneIndex < (revision.plan.lanes || []).length
+        ? `lanes[${laneIndex}]` : `retained_lanes[${laneIndex - (revision.plan.lanes || []).length}]`
       if (lane.run_id === '.' || lane.run_id === '..') {
-        errors.push(`$plan.revisions[${revision.seq}].plan.lanes[${laneIndex}].run_id: must not be ${JSON.stringify(lane.run_id)}`)
+        errors.push(`$plan.revisions[${revision.seq}].plan.${lanePath}.run_id: must not be ${JSON.stringify(lane.run_id)}`)
       }
       const binding = runBindings.get(lane.run_id)
       if (binding && (binding.issue !== lane.issue || binding.branch !== lane.branch)) {
-        errors.push(`$plan.revisions[${revision.seq}].plan.lanes[${laneIndex}].run_id: ${JSON.stringify(lane.run_id)} must remain bound to issue ${binding.issue} and branch ${JSON.stringify(binding.branch)} across revision history`)
+        errors.push(`$plan.revisions[${revision.seq}].plan.${lanePath}.run_id: ${JSON.stringify(lane.run_id)} must remain bound to issue ${binding.issue} and branch ${JSON.stringify(binding.branch)} across revision history`)
       } else if (!binding) {
         runBindings.set(lane.run_id, {
           issue: lane.issue,
@@ -2802,7 +2998,7 @@ function checkDispatchPlan(document, errors) {
       }
       const stableBinding = binding || runBindings.get(lane.run_id)
       if (binding && canonicalJsonForDigest(lane.fence || []) !== canonicalJsonForDigest(binding.fence)) {
-        errors.push(`$plan.revisions[${revision.seq}].plan.lanes[${laneIndex}].fence: must remain immutable for run_id ${JSON.stringify(lane.run_id)} across revision history`)
+        errors.push(`$plan.revisions[${revision.seq}].plan.${lanePath}.fence: must remain immutable for run_id ${JSON.stringify(lane.run_id)} across revision history`)
       }
       // Captured before the append-only-prefix check below may advance
       // binding.expansions to this revision's list, so it stays "how many
@@ -2818,18 +3014,18 @@ function checkDispatchPlan(document, errors) {
               canonicalJsonForDigest(expansion) === canonicalJsonForDigest(expansions[index]),
           )
         if (!prefixIsUnchanged) {
-          errors.push(`$plan.revisions[${revision.seq}].plan.lanes[${laneIndex}].expansions: must append to the prior expansion list verbatim for run_id ${JSON.stringify(lane.run_id)}`)
+          errors.push(`$plan.revisions[${revision.seq}].plan.${lanePath}.expansions: must append to the prior expansion list verbatim for run_id ${JSON.stringify(lane.run_id)}`)
         } else {
           binding.expansions = expansions
         }
       } else if ((lane.expansions || []).length > 0) {
-        errors.push(`$plan.revisions[${revision.seq}].plan.lanes[${laneIndex}].expansions: must be empty in run_id ${JSON.stringify(lane.run_id)}'s first revision`)
+        errors.push(`$plan.revisions[${revision.seq}].plan.${lanePath}.expansions: must be empty in run_id ${JSON.stringify(lane.run_id)}'s first revision`)
       }
       const currentExpansions = lane.expansions || []
       for (const [expansionIndex, expansion] of currentExpansions.entries()) {
         const expansionTime = Date.parse(expansion.at)
         if (!Number.isFinite(expansionTime)) {
-          errors.push(`$plan.revisions[${revision.seq}].plan.lanes[${laneIndex}].expansions[${expansionIndex}].at: must parse as a finite instant`)
+          errors.push(`$plan.revisions[${revision.seq}].plan.${lanePath}.expansions[${expansionIndex}].at: must parse as a finite instant`)
           continue
         }
         if (
@@ -2837,7 +3033,7 @@ function checkDispatchPlan(document, errors) {
           Number.isFinite(revisionTime) &&
           (expansionTime < stableBinding.firstTime || expansionTime > revisionTime)
         ) {
-          errors.push(`$plan.revisions[${revision.seq}].plan.lanes[${laneIndex}].expansions[${expansionIndex}].at: must fall between the first revision and its containing revision for run_id ${JSON.stringify(lane.run_id)}`)
+          errors.push(`$plan.revisions[${revision.seq}].plan.${lanePath}.expansions[${expansionIndex}].at: must fall between the first revision and its containing revision for run_id ${JSON.stringify(lane.run_id)}`)
         }
         // The check above bounds every expansion by the lane's very first
         // revision, which never advances — so a newly appended expansion can
@@ -2847,12 +3043,12 @@ function checkDispatchPlan(document, errors) {
         // an unchanged prefix already satisfied it when it was first added.
         if (expansionIndex >= priorExpansionsLength) {
           if (Number.isFinite(previousRevisionTime) && expansionTime < previousRevisionTime) {
-            errors.push(`$plan.revisions[${revision.seq}].plan.lanes[${laneIndex}].expansions[${expansionIndex}].at: newly appended expansion must not precede revision ${revision.seq - 1} for run_id ${JSON.stringify(lane.run_id)}`)
+            errors.push(`$plan.revisions[${revision.seq}].plan.${lanePath}.expansions[${expansionIndex}].at: newly appended expansion must not precede revision ${revision.seq - 1} for run_id ${JSON.stringify(lane.run_id)}`)
           }
           if (expansionIndex > 0) {
             const priorExpansionTime = Date.parse(currentExpansions[expansionIndex - 1].at)
             if (Number.isFinite(priorExpansionTime) && expansionTime < priorExpansionTime) {
-              errors.push(`$plan.revisions[${revision.seq}].plan.lanes[${laneIndex}].expansions[${expansionIndex}].at: newly appended expansion must not precede the previous expansion for run_id ${JSON.stringify(lane.run_id)}`)
+              errors.push(`$plan.revisions[${revision.seq}].plan.${lanePath}.expansions[${expansionIndex}].at: newly appended expansion must not precede the previous expansion for run_id ${JSON.stringify(lane.run_id)}`)
             }
           }
         }
@@ -3714,8 +3910,23 @@ function main() {
     return
   }
   const instance = loadJson(file)
+  if (kind === 'lane-status') {
+    const schema = loadSchema('lane-status.schema.json')
+    const errors = validateAgainst(schema, instance, '$lane-status')
+    checkTimestampRealness(instance, errors, '$lane-status')
+    if (options.prev) {
+      const previous = loadJson(options.prev)
+      errors.push(...validateAgainst(schema, previous, '$previous'))
+      checkTimestampRealness(previous, errors, '$previous')
+      if (errors.length === 0 && instance.seq !== previous.seq + 1) {
+        errors.push('$lane-status.seq: must increase by exactly 1 from previous seq')
+      }
+    }
+    report(errors, 'lane status OK')
+    return
+  }
   const role = kind === 'envelope' ? instance.role : kind
-  checkReceiptRequirements(kind, role, options)
+  checkReceiptRequirements(kind, role, options, instance)
 
   if (kind === 'adjudication') {
     const errors = validateAdjudicationInstance(instance)
@@ -3724,7 +3935,7 @@ function main() {
       if (options.passes.length > 0) checkAdjudicationAgainstPass(instance, options.passes, options, errors)
       checkAdjudicationUniqueAcrossRun(instance, options, errors)
     }
-    const skipped = skippedContextFlags(kind, role, options)
+    const skipped = skippedContextFlags(kind, role, options, instance)
     const suffix = skipped.length > 0 ? ` (context skipped: ${skipped.join(', ')})` : ''
     report(errors, `adjudication record OK${suffix}`)
     return
@@ -3776,7 +3987,7 @@ function main() {
       }
     }
     checkTimestampRealness(instance, errors, '$run')
-    const skipped = skippedContextFlags(kind, role, options)
+    const skipped = skippedContextFlags(kind, role, options, instance)
     const suffix = skipped.length > 0 ? ` (context skipped: ${skipped.join(', ')})` : ''
     report(errors, `run record OK${suffix}`)
     return
@@ -3792,7 +4003,7 @@ function main() {
   }
 
   const errors = validateEnvelopeInstance(instance, kind, options)
-  const skipped = skippedContextFlags(kind, role, options)
+  const skipped = skippedContextFlags(kind, role, options, instance)
   const skippedPart = skipped.length > 0 ? `, context skipped: ${skipped.join(', ')}` : ''
   report(errors, `${kind} result OK (role=${instance.role ?? 'n/a'}, status=${instance.status ?? 'n/a'}${skippedPart})`)
 }

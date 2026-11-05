@@ -146,9 +146,8 @@
 set -euo pipefail
 
 # A standardize review consumes a bundle frozen before the review starts. This
-# mode is deliberately independent of Copier, yq, network access, and the
-# ordinary drift-audit setup below: finders must all inspect the same pair of
-# render snapshots bound to the same release and immutable Git trees.
+# mode authenticates the bundle against independent tagged-release renders
+# before comparing the same captured repository commits for every finder.
 review_exclusions_fail() {
     echo "FAIL: $*" >&2
     exit 2
@@ -289,8 +288,6 @@ review_exclusions_snapshot_matches() {
 review_exclusions_tmpdir=""
 review_exclusions_main() {
     local release="" frozen_render="" base_oid="" head_oid="" target="" arg
-    local metadata_file format="" bundle_release="" previous_release="" bundle_base="" bundle_head=""
-    local line key value seen_format=0 seen_release=0 seen_previous=0 seen_base=0 seen_head=0
     local changed_file path old_status new_status
     local old_match new_match
     review_conflict_paths=()
@@ -348,59 +345,25 @@ review_exclusions_main() {
         review_exclusions_fail "bundle must contain a real previous/ render directory"
     [ ! -L "$frozen_render/current" ] && [ -d "$frozen_render/current" ] ||
         review_exclusions_fail "bundle must contain a real current/ render directory"
-    metadata_file="$frozen_render/metadata"
-    [ -f "$metadata_file" ] && [ ! -L "$metadata_file" ] ||
-        review_exclusions_fail "bundle metadata file is missing or invalid"
-    while IFS= read -r line || [ -n "$line" ]; do
-        case "$line" in
-        *=*)
-            key="${line%%=*}"
-            value="${line#*=}"
-            ;;
-        *) review_exclusions_fail "invalid bundle metadata line" ;;
-        esac
-        case "$key" in
-        format)
-            [ "$seen_format" -eq 0 ] || review_exclusions_fail "duplicate format in bundle metadata"
-            seen_format=1
-            format="$value"
-            ;;
-        release)
-            [ "$seen_release" -eq 0 ] || review_exclusions_fail "duplicate release in bundle metadata"
-            seen_release=1
-            bundle_release="$value"
-            ;;
-        previous-release)
-            [ "$seen_previous" -eq 0 ] || review_exclusions_fail "duplicate previous-release in bundle metadata"
-            seen_previous=1
-            previous_release="$value"
-            ;;
-        base)
-            [ "$seen_base" -eq 0 ] || review_exclusions_fail "duplicate base in bundle metadata"
-            seen_base=1
-            bundle_base="$value"
-            ;;
-        head)
-            [ "$seen_head" -eq 0 ] || review_exclusions_fail "duplicate head in bundle metadata"
-            seen_head=1
-            bundle_head="$value"
-            ;;
-        *) review_exclusions_fail "unknown bundle metadata key '$key'" ;;
-        esac
-    done <"$metadata_file"
-    [ "$format" = harmon-devkit-review-frozen-render-v1 ] ||
-        review_exclusions_fail "unsupported frozen-render bundle format"
-    [ "$bundle_release" = "$release" ] ||
-        review_exclusions_fail "bundle release does not match --release"
-    [ -n "$previous_release" ] || review_exclusions_fail "bundle previous-release is empty"
-    [ "$bundle_base" = "$base_oid" ] || review_exclusions_fail "bundle base does not match --base"
-    [ "$bundle_head" = "$head_oid" ] || review_exclusions_fail "bundle head does not match --head"
-
-    review_exclusions_load_paths "$frozen_render/conflict-resolutions.nul" conflict
-    review_exclusions_load_paths "$frozen_render/repo-owned.nul" repo-owned
     review_exclusions_tmpdir="$(mktemp -d -t harmon-review-exclusions-XXXXXX)" ||
         review_exclusions_fail "could not create temporary review-exclusions storage"
     trap 'rm -rf "$review_exclusions_tmpdir"' EXIT
+    local verifier
+    verifier="$(cd "$(dirname "$0")" && pwd)/render-bundle.sh"
+    [ -f "$verifier" ] && [ ! -L "$verifier" ] ||
+        review_exclusions_fail "authenticated render-bundle.sh verifier is unavailable"
+    if ! bash "$verifier" --verify --release "$release" \
+        --base "$base_oid" --head "$head_oid" --frozen-render "$frozen_render" \
+        --protected-output "$review_exclusions_tmpdir/protected.nul" \
+        --verified-output "$review_exclusions_tmpdir/verified" "$review_repo"; then
+        review_exclusions_fail "frozen-render bundle binding verification failed; refusing exclusions"
+    fi
+    review_exclusions_load_paths "$review_exclusions_tmpdir/protected.nul" repo-owned
+    # Lists may add protection, never remove the derived protection. Conflicts
+    # that changed either side away from its authentic render cannot satisfy
+    # the two pristine comparisons below, even when these lists are empty.
+    review_exclusions_load_paths "$frozen_render/conflict-resolutions.nul" conflict
+    review_exclusions_load_paths "$frozen_render/repo-owned.nul" repo-owned
     changed_file="$review_exclusions_tmpdir/changed-paths.nul"
     review_tree_entry_file="$review_exclusions_tmpdir/tree-entry.nul"
     if ! git -C "$review_repo" diff --no-ext-diff --no-renames --ignore-submodules=none \
@@ -412,13 +375,13 @@ review_exclusions_main() {
         review_exclusions_protected "$path" && continue
         old_match=false
         new_match=false
-        if review_exclusions_snapshot_matches "$base_oid" "$path" "$frozen_render/previous"; then
+        if review_exclusions_snapshot_matches "$base_oid" "$path" "$review_exclusions_tmpdir/verified/previous"; then
             old_match=true
         else
             old_status=$?
             [ "$old_status" -eq 1 ] || review_exclusions_fail "could not compare the base tree path '$path'"
         fi
-        if review_exclusions_snapshot_matches "$head_oid" "$path" "$frozen_render/current"; then
+        if review_exclusions_snapshot_matches "$head_oid" "$path" "$review_exclusions_tmpdir/verified/current"; then
             new_match=true
         else
             new_status=$?
@@ -1189,6 +1152,28 @@ git -C "$template" show "$src_ref:$skip_decl_source" >"$skip_decl_yml" 2>/dev/nu
     echo "FAIL: cannot read the template's $skip_decl_source at $src_ref" >&2
     exit 2
 }
+# Deliberate loader limits: Copier merges YAML documents and expands !include;
+# yq does neither. Refuse both with exit 2, even when another document or a
+# top-level include would otherwise look like an absent (legacy) declaration.
+# Read the frozen config, never the mutable checkout or its include files.
+skip_decl_documents="$(yq eval-all '[.] | length' "$skip_decl_yml" 2>/dev/null)" || {
+    echo "FAIL: cannot parse $skip_decl_source for OWNED derivation" >&2
+    exit 2
+}
+if [ "$skip_decl_documents" != 1 ]; then
+    echo "FAIL: multi-document copier config is not supported for OWNED derivation" >&2
+    echo "  refusing to continue: Copier merges documents and this evaluator does not" >&2
+    exit 2
+fi
+skip_decl_includes="$(yq '[.. | select(tag == "!include")] | length' "$skip_decl_yml" 2>/dev/null)" || {
+    echo "FAIL: cannot inspect $skip_decl_source for !include" >&2
+    exit 2
+}
+if [ "$skip_decl_includes" != 0 ]; then
+    echo "FAIL: !include copier config is not supported for OWNED derivation" >&2
+    echo "  refusing to continue: Copier expands includes and this evaluator does not" >&2
+    exit 2
+fi
 skip_decl_tag="$(yq -r '._skip_if_exists | tag' "$skip_decl_yml" 2>/dev/null || echo "")"
 # THREE outcomes, not two, and the difference is the whole fail-closed argument:
 #   • `!!seq` — a declaration to derive the class from. The normal path.
@@ -1314,7 +1299,33 @@ if [ "$skip_decl_available" -eq 1 ]; then
             echo "FAIL: $skip_decl_source has an empty _skip_if_exists entry" >&2
             exit 2
         }
-        case "$skip_decl_pattern" in
+        # Both pathspec (GitIgnoreBasicPattern) and git check-ignore strip
+        # unescaped trailing spaces before matching, so a pattern like
+        # `docs/**/ ` or `docs/* ` would bypass the literal suffix checks below
+        # and then match as `docs/**/` or `docs/*`. Strip unescaped trailing
+        # spaces to evaluate the effective pattern shape, and refuse a
+        # whitespace-only entry that gitignore treats as a blank line.
+        skip_decl_trimmed="$skip_decl_pattern"
+        while [[ "$skip_decl_trimmed" == *' ' ]]; do
+            skip_decl_stem="${skip_decl_trimmed%' '}"
+            if [[ "$skip_decl_stem" == *'\' ]]; then
+                skip_decl_tail="$skip_decl_stem"
+                skip_decl_bs_count=0
+                while [[ "$skip_decl_tail" == *'\' ]]; do
+                    skip_decl_tail="${skip_decl_tail%'\'}"
+                    skip_decl_bs_count=$((skip_decl_bs_count + 1))
+                done
+                if [ $((skip_decl_bs_count % 2)) -eq 1 ]; then
+                    break
+                fi
+            fi
+            skip_decl_trimmed="$skip_decl_stem"
+        done
+        [ -n "$skip_decl_trimmed" ] || {
+            echo "FAIL: $skip_decl_source has a whitespace-only _skip_if_exists entry" >&2
+            exit 2
+        }
+        case "$skip_decl_trimmed" in
         *[!\ -~]*)
             # NON-ASCII. copier NFD-normalizes each pattern before matching
             # while leaving the rendered path as the filesystem produced it, and
@@ -1326,6 +1337,14 @@ if [ "$skip_decl_available" -eq 1 ]; then
             # today and cannot rot into a wrong answer tomorrow.
             echo "FAIL: non-ASCII _skip_if_exists pattern is not supported: $skip_decl_pattern" >&2
             echo "  refusing to continue: copier NFD-normalizes patterns and git does not, so the two matchers would disagree" >&2
+            exit 2
+            ;;
+        *'/**/')
+            # Deliberate matcher limit: pathspec matches a direct child of
+            # docs/**/ while git does not. Refuse with exit 2 instead of
+            # reporting gating DRIFT for content Copier would leave alone.
+            echo "FAIL: _skip_if_exists pattern ending in '/**/' is not supported: $skip_decl_pattern" >&2
+            echo "  refusing to continue: copier matches direct children and git does not" >&2
             exit 2
             ;;
         *'/*' | *'/*/')
@@ -1377,7 +1396,8 @@ if [ "$skip_decl_available" -eq 1 ]; then
         done <"$skip_decl_delim_file"
     done <"$skip_decl_patterns"
     # Matched with `git check-ignore` against a scratch repo whose .gitignore IS
-    # the declaration. With negation refused above this is not an approximation:
+    # the declaration. This is an approximation with the measured divergent
+    # shapes refused above, not Copier's own loader or matcher:
     # copier matches `_skip_if_exists` with pathspec's gitignore dialect
     # (`PathSpec.from_lines`), which is git's own, so `*.code-workspace` reaches
     # any depth and `.github/CODEOWNERS` anchors — the same semantics, evaluated
