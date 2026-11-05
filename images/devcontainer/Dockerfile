@@ -17,50 +17,50 @@ ARG IMAGE_REVISION
 # renovate: datasource=github-releases depName=terraform-docs/terraform-docs extractVersion=^v?(?<version>.+)$
 ARG TERRAFORM_DOCS_VERSION=0.24.0
 # renovate: datasource=github-releases depName=hashicorp/terraform extractVersion=^v?(?<version>.+)$
-ARG TERRAFORM_VERSION=1.17.0
+ARG TERRAFORM_VERSION=1.17.1
 # renovate: datasource=github-releases depName=terraform-linters/tflint extractVersion=^v?(?<version>.+)$
-ARG TFLINT_VERSION=0.64.0
+ARG TFLINT_VERSION=0.65.0
 # pin-pair: tflint
 # Renovate computes these release-attachment digests at lookup time; builds
 # verify downloaded assets against the pinned values. The same applies to the
 # managed fresh and ttt digests below.
-# renovate: datasource=github-release-attachments depName=terraform-linters/tflint digestVersion=v0.64.0
-ARG TFLINT_SHA256_AMD64=cca9d13e2e1d7a2c627af60ff899a3c9b74212899416aeb96ec764d2ef954537
+# renovate: datasource=github-release-attachments depName=terraform-linters/tflint digestVersion=v0.65.0
+ARG TFLINT_SHA256_AMD64=d4c545ed2e29d6338604b586f34f544f380f70f243aa72f7b484713835eaec61
 # pin-pair: tflint
-# renovate: datasource=github-release-attachments depName=terraform-linters/tflint digestVersion=v0.64.0
-ARG TFLINT_SHA256_ARM64=560da89aacf59389d4eb029730dd5b109b7288096c32f2726a0d9e783a5ea8eb
+# renovate: datasource=github-release-attachments depName=terraform-linters/tflint digestVersion=v0.65.0
+ARG TFLINT_SHA256_ARM64=843017c47a98be1de4d88fa038daa293770fe25cd01656c4f08b2e30d1d3b3a0
 # pin-pair: tflint
 # renovate: datasource=github-releases depName=zellij-org/zellij extractVersion=^v?(?<version>.+)$
 ARG ZELLIJ_VERSION=0.45.1
 # renovate: datasource=github-releases depName=raine/workmux extractVersion=^v?(?<version>.+)$
-ARG WORKMUX_VERSION=0.1.276
+ARG WORKMUX_VERSION=0.1.278
 # renovate: datasource=github-releases depName=njbrake/agent-of-empires extractVersion=^v?(?<version>.+)$
 ARG AOE_VERSION=1.21.0
 # renovate: datasource=npm depName=@anthropic-ai/claude-code
-ARG CLAUDE_CODE_VERSION=2.1.308
+ARG CLAUDE_CODE_VERSION=2.1.316
 # renovate: datasource=npm depName=@github/copilot
-ARG COPILOT_VERSION=1.0.102
+ARG COPILOT_VERSION=1.0.105
 # renovate: datasource=npm depName=@earendil-works/pi-coding-agent
 ARG PI_VERSION=1.4.0
 # renovate: datasource=github-releases depName=can1357/oh-my-pi extractVersion=^v?(?<version>.+)$
-ARG OH_MY_PI_VERSION=18.12.6
+ARG OH_MY_PI_VERSION=18.14.2
 # oh-my-pi ships unsigned release binaries: the version pin above is
 # Renovate-managed, but these architecture-specific digests are not. Before
 # moving them, a person must download the new release's omp-linux-x64 and
 # omp-linux-arm64 binaries (not the source archives), check the release notes
 # and provenance, and compute their sha256. scripts/test-oh-my-pi-pin.sh fails
 # fast until the marker below is moved to match OH_MY_PI_VERSION.
-# verified-for: 18.12.6
-ARG OH_MY_PI_SHA256_AMD64=85d9daf3a05fc76e8cd425ae1904eb576af8d21cc85fcf4690742626e07ccfa4
-ARG OH_MY_PI_SHA256_ARM64=eee8e586274cef2e725c218b2b28b48ca9965d46dd58f60998cb347eca4ad0cf
+# verified-for: 18.14.2
+ARG OH_MY_PI_SHA256_AMD64=cde0bc4ac8ec333c4880039a5242ff33dbfc6544747d67aeb99bb077874aeec1
+ARG OH_MY_PI_SHA256_ARM64=afbdf04be3ddbe34a07e91c913ddb6d335a3a0210f520ac5a197a245888ad63e
 # renovate: datasource=npm depName=opencode-ai
-ARG OPENCODE_VERSION=1.19.3
+ARG OPENCODE_VERSION=1.19.5
 # Pinned from Google's per-platform release manifests. Keep the version, build,
 # URLs, and SHA-512 values here and in ensure-antigravity-cli.sh in one update.
 ARG ANTIGRAVITY_CLI_VERSION=1.1.11
 ARG ANTIGRAVITY_CLI_BUILD=4956531888881664
 # renovate: datasource=github-releases depName=asheshgoplani/agent-deck extractVersion=^v?(?<version>.+)$
-ARG AGENT_DECK_VERSION=1.16.30
+ARG AGENT_DECK_VERSION=1.16.35
 # renovate: datasource=github-releases depName=joshmedeski/sesh extractVersion=^v?(?<version>.+)$
 # Upstream v2.30.0 was published without release assets; stay on 2.29.0 until fixed
 ARG SESH_VERSION=2.29.0
@@ -72,28 +72,28 @@ ARG DMUX_VERSION=5.11.1
 # renovate: datasource=github-releases depName=getsops/sops extractVersion=^v?(?<version>.+)$
 ARG SOPS_VERSION=3.13.3
 # renovate: datasource=github-releases depName=nektos/act extractVersion=^v?(?<version>.+)$
-ARG ACT_VERSION=0.2.89
+ARG ACT_VERSION=0.2.94
 # renovate: datasource=github-releases depName=wagoodman/dive extractVersion=^v?(?<version>.+)$
 ARG DIVE_VERSION=0.13.1
 # renovate: datasource=github-releases depName=antonmedv/fx extractVersion=^v?(?<version>.+)$
-ARG FX_VERSION=40.0.0
+ARG FX_VERSION=40.0.1
 # renovate: datasource=github-releases depName=sinelaw/fresh extractVersion=^v?(?<version>.+)$
-ARG FRESH_VERSION=0.5.4
+ARG FRESH_VERSION=0.5.7
 # pin-pair: fresh
-# renovate: datasource=github-release-attachments depName=sinelaw/fresh digestVersion=v0.5.4
-ARG FRESH_SHA256_AMD64=e3599c93b1eece4700d7c30726b461c9b962a91bee5da31cdf44e3dffeb6206c
+# renovate: datasource=github-release-attachments depName=sinelaw/fresh digestVersion=v0.5.7
+ARG FRESH_SHA256_AMD64=4112b8b131e02bf4896a09146c4dd7b3383a2332ab554c3638394932ce94baff
 # pin-pair: fresh
-# renovate: datasource=github-release-attachments depName=sinelaw/fresh digestVersion=v0.5.4
-ARG FRESH_SHA256_ARM64=df10f648d81e194f613b975d63d4cdea3ccf3f6177325793701a50ce795ab143
+# renovate: datasource=github-release-attachments depName=sinelaw/fresh digestVersion=v0.5.7
+ARG FRESH_SHA256_ARM64=ffb4f056417bc653ddd073921e123491dbe3509e83f3fd55436be372a35e8f84
 # pin-pair: fresh
 # renovate: datasource=github-releases depName=eugenioenko/ttt extractVersion=^v?(?<version>.+)$
-ARG TTT_VERSION=1.8.0
+ARG TTT_VERSION=1.10.0
 # pin-pair: ttt
-# renovate: datasource=github-release-attachments depName=eugenioenko/ttt digestVersion=v1.8.0
-ARG TTT_SHA256_AMD64=9a48f8aa87542f77cc5f19082965e243ac21f06558950ebbc2241940a5f5af82
+# renovate: datasource=github-release-attachments depName=eugenioenko/ttt digestVersion=v1.10.0
+ARG TTT_SHA256_AMD64=0e9344c396a783eaf4fc60f1d6f76b85de2b2c303bba2cb07e563a09950097a0
 # pin-pair: ttt
-# renovate: datasource=github-release-attachments depName=eugenioenko/ttt digestVersion=v1.8.0
-ARG TTT_SHA256_ARM64=841c5b6f9e04d66254be241234100b12ac91173c8d5b2745f5712bcbbd85a7e3
+# renovate: datasource=github-release-attachments depName=eugenioenko/ttt digestVersion=v1.10.0
+ARG TTT_SHA256_ARM64=a8019bb62205dd631664bf563bb1a00c2a735ba69405840e9c84ae7757365978
 # pin-pair: ttt
 # renovate: datasource=github-releases depName=charmbracelet/glow extractVersion=^v?(?<version>.+)$
 ARG GLOW_VERSION=3.0.0
@@ -107,7 +107,7 @@ ARG GH_DASH_VERSION=4.26.2
 # renovate: datasource=github-releases depName=charmbracelet/gum extractVersion=^v?(?<version>.+)$
 ARG GUM_VERSION=2.0.2
 # renovate: datasource=github-releases depName=o2sh/onefetch extractVersion=^v?(?<version>.+)$
-ARG ONEFETCH_VERSION=3.1.0
+ARG ONEFETCH_VERSION=3.2.0
 # renovate: datasource=github-releases depName=wtfutil/wtf extractVersion=^v?(?<version>.+)$
 ARG WTF_VERSION=0.51.0
 # renovate: datasource=github-releases depName=ducaale/xh extractVersion=^v?(?<version>.+)$
