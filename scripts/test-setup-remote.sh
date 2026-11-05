@@ -149,7 +149,8 @@ if [ "\${3:-}" = fetch ] && [ -n "\${STUB_NETWORK_FETCH_BASE:-}" ]; then
     exec "${REAL_GIT}" \
         -c "url.file://\${STUB_NETWORK_FETCH_BASE}/test-owner/sibling-a.git.insteadOf=https://example.test/test-owner/SIBLING-a" \
         -c "url.file://\${STUB_NETWORK_FETCH_BASE}/test-owner/.insteadOf=https://example.test/TEST-owner/" \
-        -c "url.file://\${STUB_NETWORK_FETCH_BASE}/.insteadOf=https://example.test/" "\$@"
+        -c "url.file://\${STUB_NETWORK_FETCH_BASE}/.insteadOf=https://example.test/" \
+        -c "url.file://\${STUB_NETWORK_FETCH_BASE}/.insteadOf=git@[2001:db8::1]:" "\$@"
 fi
 exec "${REAL_GIT}" "\$@"
 EOF
@@ -376,6 +377,66 @@ if [ "$HAVE_BOOTSTRAP" = 1 ]; then
     output_has 'WARNING: skipping sibling-a: no remote matches' || fail "effective unrelated URL must be refused"
     [ "$before" = "$(digest "$sibling")" ] || fail "a mismatching effective URL must not mutate the sibling"
 
+    echo "==> a bracketed IPv6 scp-style remote matches its owner/repository identity"
+    make_fixture ipv6 'test-owner/sibling-a'
+    sibling="${FIX_PARENT}/sibling-a"
+    git clone -q "${BARE_BASE}/test-owner/sibling-a.git" "$sibling"
+    git -C "$sibling" remote set-url origin 'git@[2001:db8::1]:test-owner/sibling-a.git'
+    git -C "${TMP}/seed-sibling-a" -c user.name=Test -c user.email=test@example.com \
+        commit -q --allow-empty -m 'upstream for IPv6 remote'
+    git -C "${TMP}/seed-sibling-a" push -q origin HEAD:main
+    expected_head="$(git -C "${TMP}/seed-sibling-a" rev-parse HEAD)"
+    run_setup "${STUBS_PATH}" "STUB_NETWORK_FETCH_BASE=${BARE_BASE}"
+    [ "$rc" -eq 0 ] || fail "IPv6 remote run must succeed: $(all_output)"
+    output_has 'Related-repo fetch: 1 fetched' || fail "a bracketed IPv6 scp remote must match: $(all_output)"
+    [ "$(git -C "$sibling" rev-parse origin/main)" = "$expected_head" ] || fail "the IPv6 remote must be fetched"
+    git -C "$sibling" remote set-url origin 'https://example.test/test-owner/sibling-a'
+    printf '%s\n' 'git@[2001:db8::1]:Test-Owner/sibling-a.git' >"${FIX}/.devcontainer/related-repos.txt"
+    run_setup "${STUBS_PATH}" "STUB_NETWORK_FETCH_BASE=${BARE_BASE}"
+    output_has 'Related-repo fetch: 1 fetched' || fail "a bracketed IPv6 scp entry must match: $(all_output)"
+
+    echo "==> a remote named with a leading dash is not parsed as an option"
+    expected_head="$(git -C "${TMP}/seed-sibling-a" rev-parse HEAD)"
+    make_fixture dash-remote 'test-owner/sibling-a'
+    sibling="${FIX_PARENT}/sibling-a"
+    git clone -q "${BARE_BASE}/test-owner/sibling-a.git" "$sibling"
+    git -C "$sibling" remote set-url origin "${BARE_BASE}/fork-owner/sibling-a.git"
+    git -C "$sibling" remote add -- -x "${BARE_BASE}/test-owner/sibling-a.git"
+    run_setup "${STUBS_PATH}"
+    [ "$rc" -eq 0 ] || fail "dash-named remote run must succeed: $(all_output)"
+    output_has 'Related-repo fetch: 1 fetched' || fail "a remote named -x must be matched and fetched: $(all_output)"
+    [ "$(git -C "$sibling" rev-parse refs/remotes/-x/main)" = "$expected_head" ] || fail "the -x remote must be fetched into its own namespace"
+
+    echo "==> a fetch does not prune refs of a remote nested in, or around, its namespace"
+    expected_head="$(git -C "${TMP}/seed-sibling-a" rev-parse HEAD)"
+    for nesting in child parent; do
+        make_fixture "nested-${nesting}" 'test-owner/sibling-a'
+        sibling="${FIX_PARENT}/sibling-a"
+        git clone -q "${BARE_BASE}/test-owner/sibling-a.git" "$sibling"
+        old_head="$(git -C "$sibling" rev-parse HEAD)"
+        git -C "$sibling" remote set-url origin "${BARE_BASE}/fork-owner/sibling-a.git"
+        if [ "$nesting" = child ]; then
+            # upstream matches; upstream/fork owns refs/remotes/upstream/fork/*.
+            matching=upstream
+            git -C "$sibling" remote add upstream "${BARE_BASE}/test-owner/sibling-a.git"
+            git -C "$sibling" remote add upstream/fork "${BARE_BASE}/fork-owner/sibling-a.git"
+            foreign=refs/remotes/upstream/fork/main
+        else
+            # upstream/fork matches; upstream's branch fork/feature lands in its namespace.
+            matching=upstream/fork
+            git -C "$sibling" remote add upstream "${BARE_BASE}/fork-owner/sibling-a.git"
+            git -C "$sibling" remote add upstream/fork "${BARE_BASE}/test-owner/sibling-a.git"
+            foreign=refs/remotes/upstream/fork/feature
+        fi
+        git -C "$sibling" update-ref "$foreign" "$old_head"
+        run_setup "${STUBS_PATH}"
+        [ "$rc" -eq 0 ] || fail "nested-remote (${nesting}) run must succeed: $(all_output)"
+        output_has 'Related-repo fetch: 1 fetched' || fail "nested-remote (${nesting}) sibling must still be fetched: $(all_output)"
+        output_has "WARNING: sibling-a: remotes ${matching} and .* share remote-tracking refs" || fail "nested-remote (${nesting}) skip of pruning must warn: $(all_output)"
+        [ "$(git -C "$sibling" rev-parse "refs/remotes/${matching}/main")" = "$expected_head" ] || fail "nested-remote (${nesting}) matching remote must update"
+        [ "$(git -C "$sibling" rev-parse "$foreign")" = "$old_head" ] || fail "nested-remote (${nesting}) fetch must not prune ${foreign}"
+    done
+
     echo "==> checkout SSH host/port does not govern shorthand sibling identity"
     make_fixture ssh-checkout 'test-owner/sibling-a'
     git -C "$FIX" remote add origin 'ssh://git@ssh.github.com:443/checkout-owner/checkout.git'
@@ -440,6 +501,21 @@ if [ "$HAVE_BOOTSTRAP" = 1 ]; then
     git clone -q --bare "${BARE_BASE}/test-owner/sibling-a.git" "${FIX_PARENT}/sibling-a"
     run_setup "${STUBS_PATH}"
     output_has 'Related-repo fetch: 1 fetched' || fail "a bare sibling root must be recognized"
+
+    echo "==> a damaged bare sibling is reported as a failure, not as not-yet-cloned"
+    for damage in HEAD config; do
+        make_fixture "bare-bad-${damage}" 'test-owner/sibling-a'
+        git clone -q --bare "${BARE_BASE}/test-owner/sibling-a.git" "${FIX_PARENT}/sibling-a"
+        if [ "$damage" = HEAD ]; then
+            printf 'not a ref\n' >"${FIX_PARENT}/sibling-a/HEAD"
+        else
+            printf '[core\n' >>"${FIX_PARENT}/sibling-a/config"
+        fi
+        run_setup "${STUBS_PATH}"
+        [ "$rc" -eq 0 ] || fail "a damaged bare sibling (${damage}) must not fail setup: $(all_output)"
+        output_has 'WARNING: cannot open repository sibling-a; continuing.' || fail "a damaged bare sibling (${damage}) must warn: $(all_output)"
+        output_has '0 fetched, 0 not-yet-cloned, 1 failed' || fail "a damaged bare sibling (${damage}) must count as failed: $(all_output)"
+    done
 
     echo "==> linked-worktree and separate-git-dir siblings are fetched"
     for layout in worktree separate; do
