@@ -1854,6 +1854,10 @@ if [ -f .github/workflows/classification-reconcile.yml ]; then
     rm -rf "$org_example"
 fi
 
+# GitHub audit ships to every profile; exercise the rendered runner with no network.
+[ -x scripts/audit-github.sh ] || err "audit-github.sh missing or not executable"
+./scripts/test-audit-github.sh || err "rendered GitHub audit contract failed"
+
 # ── 9c. Conditional prose and generated workflow layout ────────────
 # Inline block tags at the end of Markdown lines can consume the following
 # newline. Keep conditional checklist items structurally separate when the
