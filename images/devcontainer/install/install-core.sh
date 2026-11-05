@@ -34,13 +34,22 @@ tmp="$HARMON_TMPDIR"
 # npm/npx/corepack symlinks to their launcher scripts; it does not check package
 # versions or changes to package contents behind an unchanged launcher.
 node_receipt="${HARMON_PREFIX}/share/harmon-node/distribution.identity"
+harmon_assert_directory_path "$(dirname "$node_receipt")"
 node_distribution_identity() {
     printf 'node=%s\n' "$NODE_VERSION"
     sha256sum "${HARMON_BIN}/node" "${HARMON_BIN}/npm" \
         "${HARMON_BIN}/npx" "${HARMON_BIN}/corepack"
 }
 node_distribution_current() {
-    local identity recorded
+    local identity recorded executable resolved prefix
+    prefix="$(readlink -f "$HARMON_PREFIX")" || return 1
+    for executable in node npm npx corepack; do
+        resolved="$(readlink -f "${HARMON_BIN}/${executable}")" || return 1
+        case "$resolved" in
+        "${prefix}/"*) ;;
+        *) return 1 ;;
+        esac
+    done
     harmon_at_version node "$NODE_VERSION" node --version &&
         harmon_have_bins npm npx corepack || return 1
     identity="$(node_distribution_identity)" || return 1
@@ -72,6 +81,7 @@ else
     [ -x "${node_stage}/bin/node" ] || harmon_die "the Node tarball did not extract completely"
     for node_dir in lib include share bin; do
         [ -d "${node_stage}/${node_dir}" ] || continue
+        harmon_prepare_tree "${node_stage}/${node_dir}" "${HARMON_PREFIX}/${node_dir}"
         install -d -m 0755 "${HARMON_PREFIX}/${node_dir}"
         cp -a "${node_stage}/${node_dir}/." "${HARMON_PREFIX}/${node_dir}/"
     done

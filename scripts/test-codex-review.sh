@@ -101,7 +101,123 @@ for candidate in .claude/skills/standardize-repo/assets/diff-template.sh \
         break
     fi
 done
+# Pin-independent stub helpers: whatever skills pin is vendored, prove the
+# runner hands a helper its sibling verifier from the merge base only.
+sibling_fixture() {
+    local fixture="$1" base_verifier="$2" head_verifier="$3" assets
+    assets="$fixture/.claude/skills/standardize-repo/assets"
+    mkdir -p "$fixture/scripts/lib" "$assets" "$fixture/src"
+    cp "${repo}/scripts/codex-review.sh" "$fixture/scripts/"
+    cp "${repo}/scripts/lib/review-scope.sh" "$fixture/scripts/lib/"
+    cp -R "${repo}/scripts/lib/review-instructions" "$fixture/scripts/lib/"
+    cat >"$assets/diff-template.sh" <<'SIBLINGHELPER'
+#!/usr/bin/env bash
+dir="$(cd "$(dirname "$0")" && pwd)"
+if [ -f "$dir/render-bundle.sh" ]; then
+    [ "$#" -gt 1 ] || exit 2
+    bash "$dir/render-bundle.sh"
+    exit
+fi
+[ -n "${SIBLING_REQUIRED:-}" ] || { [ "$#" -gt 1 ] && printf 'src/base-excluded.txt\0'; exit; }
+echo "FAIL: authenticated render-bundle.sh verifier is unavailable" >&2
+exit 2
+SIBLINGHELPER
+    [ -z "$base_verifier" ] || printf '%s\n' "$base_verifier" >"$assets/render-bundle.sh"
+    git init -q -b main "$fixture"
+    printf 'old\n' >"$fixture/src/base-excluded.txt"
+    printf 'old\n' >"$fixture/src/head-excluded.txt"
+    git -C "$fixture" add -A
+    git_t -C "$fixture" commit -qm 'test: sibling base'
+    git -C "$fixture" checkout -qb update
+    [ -z "$head_verifier" ] || printf '%s\n' "$head_verifier" >"$assets/render-bundle.sh"
+    printf 'new\n' >"$fixture/src/base-excluded.txt"
+    printf 'new\n' >"$fixture/src/head-excluded.txt"
+    git -C "$fixture" add -A
+    git_t -C "$fixture" commit -qm 'test: sibling head'
+}
+sibling_review() {
+    (cd "$1" && ./scripts/codex-review.sh review --profile standardize --release v2.0.0 \
+        --frozen-render "${test_tmp}/unused-bundle" --base main 2>&1)
+}
+
+echo "==> standardize materializes the helper's sibling verifier from the merge base, never the head"
+sibling_fixture "${test_tmp}/sibling-merge-base" "printf 'src/base-excluded.txt\\0'" \
+    "printf 'src/head-excluded.txt\\0'"
+out="$(SIBLING_REQUIRED=1 sibling_review "${test_tmp}/sibling-merge-base")" ||
+    fail "standardize review with a merge-base sibling verifier failed: $out"
+! grep -Fq 'src/base-excluded.txt' <<<"$out" ||
+    fail "the merge-base verifier's exclusion was not applied: $out"
+grep -Fq 'src/head-excluded.txt' <<<"$out" ||
+    fail "the head-edited verifier changed the exclusions: $out"
+
+echo "==> a merge-base helper package without a verifier keeps working"
+sibling_fixture "${test_tmp}/sibling-legacy" "" ""
+out="$(sibling_review "${test_tmp}/sibling-legacy")" ||
+    fail "standardize review with a verifier-less legacy helper failed: $out"
+! grep -Fq 'src/base-excluded.txt' <<<"$out" ||
+    fail "the legacy helper's exclusion was not applied: $out"
+
+echo "==> a verifier added only at the reviewed head is not used"
+sibling_fixture "${test_tmp}/sibling-head-only" "" "printf 'src/head-excluded.txt\\0'"
+if out="$(SIBLING_REQUIRED=1 sibling_review "${test_tmp}/sibling-head-only")"; then
+    fail "standardize review used a verifier added only at the head: $out"
+fi
+grep -Fq 'authenticated render-bundle.sh verifier is unavailable' <<<"$out" ||
+    fail "head-only verifier refusal did not come from the helper: $out"
+
 standardize_cases=0
+# harmon-devkit v0.66.0+ ships render-bundle.sh beside the helper, and that
+# helper only trusts a bundle its sibling verifier re-renders from tagged
+# templates. Build the fixtures as real producer output there; an older
+# helper reads the hand-built bundles as they are.
+standardize_verifier=""
+standardize_skip="standardize-repo helper is not installed"
+if [ -n "$standardize_helper" ] && [ -f "${standardize_helper%/*}/render-bundle.sh" ]; then
+    standardize_verifier="${standardize_helper%/*}/render-bundle.sh"
+    # Producing and verifying an authenticated bundle both re-render with
+    # Copier, which a generated repository's toolchain does not install.
+    if ! command -v copier >/dev/null 2>&1; then
+        standardize_helper=""
+        standardize_skip="the authenticated standardize-repo helper needs copier, which is not installed"
+    fi
+fi
+# Turn a hand-built bundle's previous/current snapshots into a tagged Copier
+# template and replace the bundle with render-bundle.sh output over it. Test
+# data setup only, mirroring harmon-devkit's own fixture; a no-op without
+# the verifier.
+standardize_render_bundle() {
+    local bundle="$1" target="$2" base="$3" head="$4" release="$5"
+    local template_source="${bundle}-template" side tag
+    [ -n "$standardize_verifier" ] || return 0
+    rm -rf "$template_source"
+    mkdir -p "$template_source/template"
+    git init -q "$template_source"
+    git -C "$template_source" config user.name Fixture
+    git -C "$template_source" config user.email fixture@example.invalid
+    printf '_subdirectory: template\n_skip_if_exists: [src/repo-owned.txt]\n' \
+        >"$template_source/copier.yml"
+    for side in previous current; do
+        rm -rf "$template_source/template"
+        mkdir -p "$template_source/template"
+        cp -R "$bundle/$side/." "$template_source/template/"
+        : >"$template_source/template/.fixture"
+        rm -f "$template_source/template/.copier-answers.yml"
+        git -C "$template_source" add -A
+        git_t -C "$template_source" commit -qm "test: $side template" --allow-empty
+        if [ "$side" = previous ]; then tag=v1.0.0; else tag="$release"; fi
+        git -C "$template_source" tag "$tag"
+    done
+    # The helper's verifier re-renders from HARMON_INIT too, so it stays
+    # exported for the review runs that read this bundle.
+    export HARMON_INIT="$template_source"
+    cp "$bundle/conflict-resolutions.nul" "${bundle}-conflicts.nul"
+    rm -rf "$bundle"
+    bash "$standardize_verifier" \
+        --previous-release v1.0.0 --release "$release" --base "$base" \
+        --head "$head" --output "$bundle" "$target" ||
+        fail "render-bundle.sh could not produce the $release fixture bundle"
+    cp "${bundle}-conflicts.nul" "$bundle/conflict-resolutions.nul"
+}
 if [ -n "$standardize_helper" ]; then
     echo "==> standardize excludes only pristine frozen-render paths and keeps protected or customized files"
     std_repo="${test_tmp}/standardize-repo"
@@ -113,12 +229,14 @@ if [ -n "$standardize_helper" ]; then
     cp -R "${repo}/scripts/lib/review-instructions" "$std_repo/scripts/lib/"
     cp "${standardize_helper}" \
         "$std_repo/.claude/skills/standardize-repo/assets/"
+    [ -z "$standardize_verifier" ] ||
+        cp "$standardize_verifier" "$std_repo/.claude/skills/standardize-repo/assets/"
     git init -q -b main "$std_repo"
     git -C "$std_repo" config user.email test@test
     git -C "$std_repo" config user.name test
     printf 'template old\n' >"$std_repo/src/generated.txt"
     printf 'repository customization old\n' >"$std_repo/src/customized.txt"
-    printf 'answers old\n' >"$std_repo/.copier-answers.yml"
+    printf '_commit: v1.0.0\n' >"$std_repo/.copier-answers.yml"
     printf 'conflict old\n' >"$std_repo/src/conflict-resolution.txt"
     printf 'owned old\n' >"$std_repo/src/repo-owned.txt"
     printf 'mode\n' >"$std_repo/src/mode-change.sh"
@@ -129,7 +247,7 @@ if [ -n "$standardize_helper" ]; then
     git -C "$std_repo" checkout -qb update
     printf 'template new\n' >"$std_repo/src/generated.txt"
     printf 'repository customization new\n' >"$std_repo/src/customized.txt"
-    printf 'answers new\n' >"$std_repo/.copier-answers.yml"
+    printf '_commit: v2.0.0\n' >"$std_repo/.copier-answers.yml"
     printf 'conflict new\n' >"$std_repo/src/conflict-resolution.txt"
     printf 'owned new\n' >"$std_repo/src/repo-owned.txt"
     chmod +x "$std_repo/src/mode-change.sh"
@@ -140,8 +258,8 @@ if [ -n "$standardize_helper" ]; then
     printf 'template new\n' >"$std_bundle/current/src/generated.txt"
     printf 'template old\n' >"$std_bundle/previous/src/customized.txt"
     printf 'template new\n' >"$std_bundle/current/src/customized.txt"
-    printf 'answers old\n' >"$std_bundle/previous/.copier-answers.yml"
-    printf 'answers new\n' >"$std_bundle/current/.copier-answers.yml"
+    printf '_commit: v1.0.0\n' >"$std_bundle/previous/.copier-answers.yml"
+    printf '_commit: v2.0.0\n' >"$std_bundle/current/.copier-answers.yml"
     printf 'conflict old\n' >"$std_bundle/previous/src/conflict-resolution.txt"
     printf 'conflict new\n' >"$std_bundle/current/src/conflict-resolution.txt"
     printf 'owned old\n' >"$std_bundle/previous/src/repo-owned.txt"
@@ -153,6 +271,7 @@ if [ -n "$standardize_helper" ]; then
         "$std_base" "$std_head" >"$std_bundle/metadata"
     printf 'src/conflict-resolution.txt\0' >"$std_bundle/conflict-resolutions.nul"
     printf 'src/repo-owned.txt\0' >"$std_bundle/repo-owned.nul"
+    standardize_render_bundle "$std_bundle" "$std_repo" "$std_base" "$std_head" v2.0.0
     printf 'src/generated.txt\0' >"${test_tmp}/standardize-expected.nul"
     bash "$std_repo/.claude/skills/standardize-repo/assets/diff-template.sh" \
         --review-exclusions --release v2.0.0 --frozen-render "$std_bundle" \
@@ -211,6 +330,7 @@ if [ -n "$standardize_helper" ]; then
         "$std_base" "$large_head" >"$large_bundle/metadata"
     : >"$large_bundle/conflict-resolutions.nul"
     : >"$large_bundle/repo-owned.nul"
+    standardize_render_bundle "$large_bundle" "$std_repo" "$std_base" "$large_head" v2.0.1
     : >"$stub_argv"
     if out="$(cd "$std_repo" && ./scripts/codex-review.sh review --profile standardize \
         --release v2.0.1 --frozen-render "$large_bundle" --base "$std_base" 2>&1)"; then
@@ -234,8 +354,20 @@ HEADHELPER
     git -C "$std_repo" add .claude/skills/standardize-repo/assets/diff-template.sh
     git -C "$std_repo" commit -qm 'test: head helper tries to exclude a customization'
     std_head_tampered="$(git -C "$std_repo" rev-parse HEAD)"
-    printf 'format=harmon-devkit-review-frozen-render-v1\nrelease=v2.0.0\nprevious-release=v1.0.0\nbase=%s\nhead=%s\n' \
-        "$std_base" "$std_head_tampered" >"$std_bundle/metadata"
+    if [ -n "$standardize_verifier" ]; then
+        # Re-produce the bundle for the tampered head from the same tagged
+        # template; the verifier still runs from the merge-base package.
+        export HARMON_INIT="${std_bundle}-template"
+        rm -rf "$std_bundle"
+        bash "$standardize_verifier" \
+            --previous-release v1.0.0 --release v2.0.0 --base "$std_base" \
+            --head "$std_head_tampered" --output "$std_bundle" "$std_repo" ||
+            fail "render-bundle.sh could not produce the tampered-head bundle"
+        printf 'src/conflict-resolution.txt\0' >"$std_bundle/conflict-resolutions.nul"
+    else
+        printf 'format=harmon-devkit-review-frozen-render-v1\nrelease=v2.0.0\nprevious-release=v1.0.0\nbase=%s\nhead=%s\n' \
+            "$std_base" "$std_head_tampered" >"$std_bundle/metadata"
+    fi
     out="$(cd "$std_repo" && ./scripts/codex-review.sh review --profile standardize \
         --release v2.0.0 --frozen-render "$std_bundle" --base "$std_base" 2>&1)" ||
         fail "standardize review with a head-edited helper failed: $out"
@@ -294,6 +426,7 @@ LEGACYHELPER
         "$std_base" "$fallback_head" >"$fallback_bundle/metadata"
     : >"$fallback_bundle/conflict-resolutions.nul"
     : >"$fallback_bundle/repo-owned.nul"
+    standardize_render_bundle "$fallback_bundle" "$std_repo" "$std_base" "$fallback_head" v2.1.0
     out="$(cd "$std_repo" && ./scripts/codex-review.sh review --profile standardize \
         --release v2.1.0 --frozen-render "$fallback_bundle" --base "$std_base" 2>&1)" ||
         fail "all-pristine standardize review failed: $out"
@@ -329,6 +462,8 @@ LEGACYHELPER
         "$oversized_fallback_base" "$oversized_fallback_head" >"$oversized_fallback_bundle/metadata"
     : >"$oversized_fallback_bundle/conflict-resolutions.nul"
     : >"$oversized_fallback_bundle/repo-owned.nul"
+    standardize_render_bundle "$oversized_fallback_bundle" "$std_repo" \
+        "$oversized_fallback_base" "$oversized_fallback_head" v2.2.0
     : >"$stub_argv"
     out="$(cd "$std_repo" && ./scripts/codex-review.sh review --profile standardize \
         --release v2.2.0 --frozen-render "$oversized_fallback_bundle" \
@@ -345,8 +480,9 @@ LEGACYHELPER
         fail "oversized full-diff fixture contains $oversized_fallback_paths paths, expected 201"
 
     standardize_cases=6
+    unset HARMON_INIT
 else
-    echo "==> skipping standardize bundle fixtures: standardize-repo helper is not installed"
+    echo "==> skipping standardize bundle fixtures: $standardize_skip"
 fi
 
 echo "==> clean tree, no local main/master: falls back to origin/HEAD's branch"
@@ -959,4 +1095,4 @@ if out="$(CLAUDE_CONFIG_DIR="${fake_claude}2" CLAUDE_PLUGIN_DATA="${test_tmp}/pl
 fi
 grep -q "non-interactive" <<<"$out" || fail "missing non-interactive disable refusal message: $out"
 
-echo "codex-review + codex-gate guards OK ($((42 + standardize_cases)) cases)"
+echo "codex-review + codex-gate guards OK ($((45 + standardize_cases)) cases)"

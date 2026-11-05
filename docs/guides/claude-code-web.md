@@ -75,9 +75,23 @@ Rules for this script, each with its reason:
   including in generated repositories). It reuses the bootstrap's checksum-verified
   installer, with a 30 s install budget intended to fit within the hook's 90 s
   wait; setup continues if that wait ends.
-  It writes to `${HARMON_PREFIX:-/usr/local}/bin` only when that directory is
+  When `${HARMON_PREFIX:-/usr/local}/share/harmon-remote-env/manifest.json` exists,
+  the remote SessionStart hook first prepends the managed bin and appends a
+  dynamic PATH export to `CLAUDE_ENV_FILE`, which Claude applies before each
+  subsequent Bash command, after shell startup. This covers both login and
+  non-login agent shells even when the platform prepends its own Node or uv.
+  Other hooks' environment exports are preserved. Successful persistence prints
+  one confirmation that managed PATH was saved for agent commands. If persistence is unavailable
+  or fails, the hook reports that limitation and names incoming shadowing paths;
+  put the managed bin first in agent shells manually. Report-only
+  `bash scripts/reconcile-toolchain.sh --status` also names these shadows when
+  the manifest exists. Without the manifest, the managed-PATH export, its
+  `CLAUDE_ENV_FILE` persistence and the shadow report are skipped.
+  Preparation writes to `${HARMON_BIN:-${HARMON_PREFIX:-/usr/local}/bin}` only when that directory is
   writable and wins tool resolution on `PATH`; it never requests `sudo` or
-  changes the parent session's `PATH`.
+  changes the parent session's `PATH` from a standalone child task. SessionStart
+  uses the [documented environment file](https://code.claude.com/docs/en/hooks#persist-environment-variables)
+  to make that change available to later agent commands.
   A successful summary names the reconciled tool. Every warning names its cause
   and the remedy for that cause, using the single mapping in
   [`scripts/reconcile-toolchain.sh`](../../scripts/reconcile-toolchain.sh) for

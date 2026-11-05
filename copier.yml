@@ -21,6 +21,7 @@
 # questions with Jinja defaults are excluded: the non-rendering confirmation
 # reader cannot resolve their absent answers.
 _sensitive_questions:
+  - author_git_provider_username
   - github_org
   - code_owner
   - claude_authorized_members
@@ -76,43 +77,48 @@ project_description:
   help: "DESCRIPTION: Short description of the project"
   default: "TODO: project_description"
 
-# Hidden author identity (defaults rarely change) — defined early so asked
-# questions below can reference them in their own defaults.
+# Per-repo author identity — recorded in .copier-answers.yml. Defined early
+# so questions below can reference these unchanged defaults.
 author_first_name:
   type: str
+  help: "Author first name"
   default: Evan
-  when: false
 
 author_last_name:
   type: str
+  help: "Author last name"
   default: Harmon
-  when: false
 
 author_full_name:
   type: str
+  help: "Author full name (defaults to first and last name)"
   default: "[[ author_first_name + ' ' + author_last_name ]]"
-  when: false
 
 author_email:
   type: str
+  help: "Author email address"
   default: "evan@evanharmon.com"
-  when: false
 
 author_url:
   type: str
+  help: "Author website URL"
   default: "https://evanharmon.com"
-  when: false
 
 author_git_provider_username:
   type: str
-  help: "GitHub principal used as the default repository owner, code owner and Claude Actions allowlist."
+  help: "[security-sensitive] GitHub principal used as the default repository owner, code owner and Claude Actions allowlist."
   default: evanharmon1
-  when: false
 
 github_org:
   type: str
   help: "[security-sensitive] GITHUB ORG: GitHub org/user that will own the repo (drives repo URL, GHCR images, workflows)"
   default: "[[ author_git_provider_username ]]"
+
+merge_queue_available:
+  type: bool
+  help: "MERGE QUEUE: Available for public organization repositories or private organization repositories on GitHub Enterprise Cloud; private Team repositories cannot use it. Enable only when available."
+  default: false
+  when: "[[ github_org != author_git_provider_username ]]"
 
 code_owner:
   type: str
@@ -738,22 +744,23 @@ run_task_install:
   help: "[security-sensitive] TASK INSTALL: Run 'task install' after generation (brew bundle + git hooks)?"
   default: no
 
-# ── Hidden defaults (when: false) ───────────────────────────────────
-
+# Per-repo organization identity (LICENSE uses organization as the Licensor).
 organization:
   type: str
+  help: "Organization or licensor name"
   default: "Harmon Lab"
-  when: false
 
 organization_url:
   type: str
+  help: "Organization website URL"
   default: "https://harmonlab.net"
-  when: false
 
 organization_email:
   type: str
+  help: "Organization email address"
   default: "evan@evanharmon.com"
-  when: false
+
+# ── Hidden defaults (when: false) ───────────────────────────────────
 
 repo_url:
   type: str

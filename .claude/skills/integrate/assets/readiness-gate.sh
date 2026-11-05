@@ -713,6 +713,48 @@ run_gh() {
     fi
 }
 
+# The helper mints a fresh, single-repository installation token on stdout.
+# Keep it in this subshell and the environment of this read only; neither the
+# helper nor gh receives secret material in argv. See github-app-checks.md.
+run_checks_gh() (
+    if [ -z "${READINESS_APP_TOKEN_HELPER:-}" ]; then
+        run_gh "$@"
+        exit $?
+    fi
+    { set +x; } 2>/dev/null
+    # On the helper path, reserve 125 for secret-free helper diagnostics.
+    # Remap the API read’s own 125 below; callers emit fetch-failed (exit 2).
+    case "$READINESS_APP_TOKEN_HELPER" in
+    /*) [ -f "$READINESS_APP_TOKEN_HELPER" ] && [ -x "$READINESS_APP_TOKEN_HELPER" ] || {
+        printf 'App token helper failed (invalid executable path)'
+        return 125
+    } ;;
+    *)
+        printf 'App token helper failed (invalid executable path)'
+        return 125
+        ;;
+    esac
+    local checks_token helper_exit=0 read_exit=0
+    if [ -n "$timeout_bin" ]; then
+        checks_token="$("$timeout_bin" -k 1 60 "$READINESS_APP_TOKEN_HELPER" "$repo" 2>/dev/null)" || helper_exit=$?
+    else
+        checks_token="$("$READINESS_APP_TOKEN_HELPER" "$repo" 2>/dev/null)" || helper_exit=$?
+    fi
+    if [ "$helper_exit" -ne 0 ]; then
+        printf 'App token helper failed (exit %s)' "$helper_exit"
+        return 125
+    fi
+    case "$checks_token" in
+    '' | *$'\n'* | *$'\r'*)
+        printf 'App token helper failed (invalid output)'
+        return 125
+        ;;
+    esac
+    GH_TOKEN="$checks_token" GH_ENTERPRISE_TOKEN="$checks_token" run_gh "$@" || read_exit=$?
+    [ "$read_exit" -ne 125 ] || read_exit=1
+    return "$read_exit"
+)
+
 asset_freshness_check() {
     if check_vendored_asset_freshness "$pr" "$repo" "$script_dir" "$timeout_bin"; then
         return 0
@@ -1077,17 +1119,23 @@ evaluate_checks() {
     if [ "$classic_checks" != null ] && [ "$required_checks" != '[]' ] && [ "$rules_known" = true ]; then
         explicit_required_rule=true
     fi
-    check_runs_pages="$(run_gh api --paginate --slurp \
+    check_runs_pages="$(run_checks_gh api --paginate --slurp \
         "repos/$repo/commits/$head/check-runs?per_page=100&filter=latest")" ||
-        indeterminate fetch-failed "cannot fetch check runs for the head"
+        {
+            [ "$?" -ne 125 ] || [ -z "${READINESS_APP_TOKEN_HELPER:-}" ] || indeterminate fetch-failed "$check_runs_pages"
+            indeterminate fetch-failed "cannot fetch check runs for the head"
+        }
     check_runs="$(jq -ce \
         '[.[] | if (.check_runs | type) == "array" then .check_runs[]
                 else error("page carries no check_runs") end]' \
         <<<"$check_runs_pages" 2>/dev/null)" ||
         indeterminate malformed-data "check-runs payload is malformed"
-    statuses_pages="$(run_gh api --paginate --slurp \
+    statuses_pages="$(run_checks_gh api --paginate --slurp \
         "repos/$repo/commits/$head/statuses?per_page=100")" ||
-        indeterminate fetch-failed "cannot fetch commit statuses for the head"
+        {
+            [ "$?" -ne 125 ] || [ -z "${READINESS_APP_TOKEN_HELPER:-}" ] || indeterminate fetch-failed "$statuses_pages"
+            indeterminate fetch-failed "cannot fetch commit statuses for the head"
+        }
     # The raw statuses list keeps superseded posts for a context; only the
     # newest per context is live, and GitHub status IDs increase
     # monotonically.
@@ -1701,9 +1749,9 @@ if [ -n "$integrator_result" ]; then
     # `--record` is the dev-flow-v2 record directory the review stage retains
     # and this stage consumes, so both subdirectories are its documented
     # contents, not an assumption about the caller.
-    # A plain glob and jq, never find/xargs: this script must keep running on
+    # A plain glob and jq, never find/xargs: this comparison must run on
     # the minimal toolset its own no-GNU-timeout path already restricts PATH to,
-    # and jq is the only thing here that is not a shell builtin.
+    # and jq is the only non-builtin used to compare and collect ids.
     # mktemp, never a $$-derived name: on a shared host $TMPDIR is world-writable
     # and a PID-derived path is predictable, so `>` would follow a symlink an
     # attacker planted there and truncate whatever the invoking user can write.
@@ -1715,25 +1763,40 @@ if [ -n "$integrator_result" ]; then
     # restricted PATH, a read-only TMPDIR — must never be what the caller reads
     # instead of fail/indeterminate/pass.
     trap 'rm -f "$known_ids_file" 2>/dev/null || :' EXIT
-    {
-        for known_ids_doc in "$record_dir"/passes/*.json; do
-            [ -f "$known_ids_doc" ] || continue
-            # SEMANTICALLY validate each pass before trusting its ids, rather
-            # than approximating validity with a status/role filter of our own.
-            # `status: "completed"` does not establish it — a structurally valid
-            # pass whose `counts` disagree with its findings is rejected by
-            # validate-result-schemas.mjs while render-dev-flow's readiness-input,
-            # which is only structural, lets it through (integrate cycle 3 on
-            # PR #800). Running the real validator is both stricter and less code:
-            # it subsumes the blocked-role rule this filter used to hand-roll,
-            # including the distinction that a blocked confidence-role pass
-            # carries no findings while a blocked integrator legitimately does.
-            node "$validate_result_schemas" envelope "$known_ids_doc" \
-                --run-id "$active_run_id" --initiated-by "$active_initiated_by" \
-                >/dev/null 2>&1 || continue
-            jq -r '.payload.findings[]?.id // empty' "$known_ids_doc" 2>/dev/null || true
-        done
-    } | jq -Rn '[inputs | select(. != "")] | unique' >"$known_ids_file" 2>/dev/null || true
+    jq empty "$integrator_result" >/dev/null 2>&1 ||
+        indeterminate codex-indeterminate "integrator result $integrator_result is not valid JSON"
+    known_ids_lines=
+    for known_ids_doc in "$record_dir"/passes/*.json; do
+        [ -f "$known_ids_doc" ] || continue
+        # The gated envelope validates its own findings separately. Exclude
+        # a receipt with the same JSON value, regardless of serialization.
+        if jq -n -e --slurpfile a "$known_ids_doc" --slurpfile b "$integrator_result" '$a == $b' >/dev/null 2>&1; then
+            continue
+        else
+            comparison_rc=$?
+            [ "$comparison_rc" -eq 1 ] ||
+                indeterminate codex-indeterminate "could not compare integrator result with a recorded pass"
+        fi
+        # SEMANTICALLY validate each pass before trusting its ids, rather
+        # than approximating validity with a status/role filter of our own.
+        # `status: "completed"` does not establish it — a structurally valid
+        # pass whose `counts` disagree with its findings is rejected by
+        # validate-result-schemas.mjs while render-dev-flow's readiness-input,
+        # which is only structural, lets it through (integrate cycle 3 on
+        # PR #800). Running the real validator is both stricter and less code:
+        # it subsumes the blocked-role rule this filter used to hand-roll,
+        # including the distinction that a blocked confidence-role pass
+        # carries no findings while a blocked integrator legitimately does.
+        node "$validate_result_schemas" envelope "$known_ids_doc" \
+            --run-id "$active_run_id" --initiated-by "$active_initiated_by" \
+            >/dev/null 2>&1 || continue
+        pass_ids="$(jq -r '.payload.findings[]?.id // empty' "$known_ids_doc" 2>/dev/null)" ||
+            indeterminate codex-indeterminate "could not read finding ids from a recorded pass"
+        known_ids_lines="${known_ids_lines}
+${pass_ids}"
+    done
+    jq -Rn '[inputs | select(. != "")] | unique' <<<"$known_ids_lines" >"$known_ids_file" 2>/dev/null ||
+        indeterminate codex-indeterminate "could not build the run's known finding universe"
     # An unreadable or absent record leaves an EMPTY universe rather than no
     # check: an empty FILE would make the validator's own --known-ids parse fail
     # (a usage error), where an empty ARRAY is the honest "this run has produced
@@ -2269,7 +2332,7 @@ try {
   await integrationExitForRunDir(record, { integrationCap: Number(cap), validatorPath: validator });
 } catch (err) {
   if (!(err instanceof ExitIndeterminate)) throw err;
-  console.log(JSON.stringify({ ok: false, reason: err.message }));
+  console.log(JSON.stringify({ ok: false, code: err.code, reason: err.message }));
   process.exit(0);
 }
 const { passes, adjudications } = loadRunDir(record);
@@ -2291,6 +2354,9 @@ const filed = docs.flatMap((d) => d.adjudications)
 console.log(JSON.stringify({ ok: true, filed, bound, latest, want }));
 ' "$record_dir" "$integration_cap" "$validate_result_schemas" "$integrator_result" "$exit_engine" 2>/dev/null)" ||
     indeterminate integration-exit-indeterminate "the integration record could not be read over --record"
+if [ "$(jq -r '.code // empty' <<<"$integration_record")" = cycle-sequence ]; then
+    indeterminate integration-history-incomplete "a terminal review cycle was not receipted before its head moved; restore original authenticated owner evidence and receipt it while its head is current, or stop for owner recovery. Never synthesize a historical integrator pass or reset counters. $(jq -r '.reason' <<<"$integration_record")"
+fi
 jq -e '.ok' <<<"$integration_record" >/dev/null 2>&1 ||
     indeterminate integration-exit-indeterminate "the integration exit is indeterminate: $(jq -r '.reason // "unreadable record output"' <<<"$integration_record" 2>/dev/null)"
 jq -e '.bound' <<<"$integration_record" >/dev/null 2>&1 ||
