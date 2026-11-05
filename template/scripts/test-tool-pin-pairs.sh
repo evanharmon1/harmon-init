@@ -198,7 +198,7 @@ for path in files:
             if not m:
                 errors.append(f"{path}:{i + 1}: unsupported ARG spelling; use one canonical ARG name with an optional unescaped default on one physical line")
                 continue
-            if "SHA256" not in m[1].upper() and not (m[2] and re.fullmatch(r"[0-9a-fA-F]{64}", m[2])):
+            if "SHA256" not in m[1].upper() and not (m[2] and re.fullmatch(r'''(?:[0-9a-fA-F]{64}|"[0-9a-fA-F]{64}"|'[0-9a-fA-F]{64}')''', m[2])):
                 continue
             if m[2] is None:
                 errors.append(f"{path}:{i + 1}: digest {m[1]} has no pinned value")

@@ -316,6 +316,14 @@ git commit -qam 'unclassified checksum'
 CASE_GITHUB_BASE_REF=main PIN_PAIRS_BASE= run_guard
 expect_fail image-pr-unclassified-checksum
 expect_output image-pr-unclassified-checksum 'neither Renovate-managed nor guarded'
+for quote in '"' "'"; do
+    write_image 2.0.0 "$NEW_AMD" "$NEW_ARM"
+    printf 'ARG EXTRA_CHECKSUM=%s%s%s\nRUN echo "${EXTRA_CHECKSUM}  probe" | sha256sum --check -\n' "$quote" "$checksum" "$quote" >>images/devcontainer/Dockerfile
+    git commit -qam 'quoted unclassified checksum'
+    CASE_GITHUB_BASE_REF=main PIN_PAIRS_BASE='' run_guard
+    expect_fail image-pr-quoted-unclassified-checksum
+    expect_output image-pr-quoted-unclassified-checksum 'neither Renovate-managed nor guarded'
+done
 write_image 2.0.0 "$NEW_AMD" "$NEW_ARM"
 printf 'ARG OTHER_SHA256_AMD64=%s\n' "$NEW_AMD" >>images/devcontainer/Dockerfile
 run_guard
