@@ -20,10 +20,13 @@ ARG TERRAFORM_DOCS_VERSION=0.24.0
 ARG TERRAFORM_VERSION=1.17.1
 # renovate: datasource=github-releases depName=terraform-linters/tflint extractVersion=^v?(?<version>.+)$
 ARG TFLINT_VERSION=0.65.0
-# TFLint release-archive SHA-256 values. The version pin is Renovate-managed;
-# update these reviewed, architecture-specific digests with each release.
+# pin-pair: tflint
+# renovate: datasource=github-release-attachments depName=terraform-linters/tflint digestVersion=v0.65.0
 ARG TFLINT_SHA256_AMD64=d4c545ed2e29d6338604b586f34f544f380f70f243aa72f7b484713835eaec61
+# pin-pair: tflint
+# renovate: datasource=github-release-attachments depName=terraform-linters/tflint digestVersion=v0.65.0
 ARG TFLINT_SHA256_ARM64=843017c47a98be1de4d88fa038daa293770fe25cd01656c4f08b2e30d1d3b3a0
+# pin-pair: tflint
 # renovate: datasource=github-releases depName=zellij-org/zellij extractVersion=^v?(?<version>.+)$
 ARG ZELLIJ_VERSION=0.45.1
 # renovate: datasource=github-releases depName=raine/workmux extractVersion=^v?(?<version>.+)$
@@ -73,16 +76,22 @@ ARG DIVE_VERSION=0.13.1
 ARG FX_VERSION=40.0.1
 # renovate: datasource=github-releases depName=sinelaw/fresh extractVersion=^v?(?<version>.+)$
 ARG FRESH_VERSION=0.5.7
-# Fresh release-archive SHA-256 values. The version pin is Renovate-managed;
-# update these reviewed, architecture-specific digests with each release.
+# pin-pair: fresh
+# renovate: datasource=github-release-attachments depName=sinelaw/fresh digestVersion=v0.5.7
 ARG FRESH_SHA256_AMD64=4112b8b131e02bf4896a09146c4dd7b3383a2332ab554c3638394932ce94baff
+# pin-pair: fresh
+# renovate: datasource=github-release-attachments depName=sinelaw/fresh digestVersion=v0.5.7
 ARG FRESH_SHA256_ARM64=ffb4f056417bc653ddd073921e123491dbe3509e83f3fd55436be372a35e8f84
+# pin-pair: fresh
 # renovate: datasource=github-releases depName=eugenioenko/ttt extractVersion=^v?(?<version>.+)$
 ARG TTT_VERSION=1.10.0
-# TTT release SHA-256 values. The version pin is Renovate-managed;
-# update these reviewed, architecture-specific digests with each release.
+# pin-pair: ttt
+# renovate: datasource=github-release-attachments depName=eugenioenko/ttt digestVersion=v1.10.0
 ARG TTT_SHA256_AMD64=0e9344c396a783eaf4fc60f1d6f76b85de2b2c303bba2cb07e563a09950097a0
+# pin-pair: ttt
+# renovate: datasource=github-release-attachments depName=eugenioenko/ttt digestVersion=v1.10.0
 ARG TTT_SHA256_ARM64=a8019bb62205dd631664bf563bb1a00c2a735ba69405840e9c84ae7757365978
+# pin-pair: ttt
 # renovate: datasource=github-releases depName=charmbracelet/glow extractVersion=^v?(?<version>.+)$
 ARG GLOW_VERSION=3.0.0
 # renovate: datasource=github-releases depName=jesseduffield/lazygit extractVersion=^v?(?<version>.+)$
