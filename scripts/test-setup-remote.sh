@@ -16,6 +16,10 @@ unset CLAUDE_CODE_REMOTE
 unset HARMON_PREFIX HARMON_BIN CLAUDE_ENV_FILE
 # Hermetic git: a platform may inject config (SSH->HTTPS rewrites, hooks paths).
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+# Command-scope config is inherited by every Git child, including clones and fetches.
+# Keep the full tree digest stable without touching user or repository settings.
+export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=maintenance.auto GIT_CONFIG_VALUE_0=false
+export GIT_CONFIG_KEY_1=gc.auto GIT_CONFIG_VALUE_1=0
 
 # scripts/setup-remote.sh resolves the checkout with pwd -P (physical); a
 # symlinked TMPDIR such as macOS's /var would otherwise make the printed and
@@ -68,6 +72,8 @@ cat >"${STUB_BIN}/lefthook" <<'EOF'
 echo "$*" >>"${STUB_LOG_DIR}/lefthook.log"
 [ "${STUB_LEFTHOOK:-}" = "fail" ] && { echo "lefthook: simulated failure" >&2; exit 1; }
 [ "${1:-}" = "install" ] || exit 2
+[ "${STUB_MUTATE_SETUP:-}" != 1 ] || printf "mutation\n" > .git/setup-mutation
+[ "${STUB_MUTATE_SETUP:-}" != content ] || printf "mutation\n" >> lefthook.yml
 hook=.git/hooks/pre-push
 body='#!/bin/sh
 # lefthook shim (stub)
@@ -109,6 +115,14 @@ REAL_GIT="$(command -v git)"
 cat >"${STUB_BIN}/git" <<EOF
 #!/usr/bin/env bash
 [ -z "\${STUB_LOG_DIR:-}" ] || echo "\${GIT_SSH_COMMAND-unset}" >>"\${STUB_LOG_DIR}/git-ssh.log"
+# Record effective configuration from the actual Git child, before executing it.
+if [ -n "\${STUB_LOG_DIR:-}" ]; then
+    config_dir=()
+    [ "\${1:-}" != -C ] || config_dir=(-C "\$2")
+    maintenance="\$("${REAL_GIT}" "\${config_dir[@]}" config --bool maintenance.auto 2>/dev/null || true)"
+    gc="\$("${REAL_GIT}" "\${config_dir[@]}" config --int gc.auto 2>/dev/null || true)"
+    printf '%s|%s|%s\n' "\$*" "\$maintenance" "\$gc" >>"\${STUB_LOG_DIR}/git-maintenance.log"
+fi
 if [ -n "\${STUB_CHECKOUT_HISTORY:-}" ]; then
     if [ "\$*" = 'rev-parse --is-shallow-repository' ]; then
         echo probe >>"\${STUB_LOG_DIR}/history.log"
@@ -221,6 +235,29 @@ digest() {
     (cd "$1" && find . | LC_ALL=C sort && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 cksum)
 }
 
+assert_unchanged() {
+    local before="$1" after="$2"
+    [ "$before" = "$after" ] || fail "the second run changed the tree:
+$(diff <(printf '%s\n' "$before") <(printf '%s\n' "$after") || true)"
+}
+
+assert_maintenance_disabled() {
+    local repo="$1"
+    # A descendant shell and repository-local conflicting settings prove that
+    # the effective command-scope settings reach cloned repositories as well.
+    [ "$(bash -c 'git -C "$1" config --bool maintenance.auto' _ "$repo")" = false ] || fail "maintenance.auto enabled in $repo"
+    [ "$(bash -c 'git -C "$1" config --int gc.auto' _ "$repo")" = 0 ] || fail "gc.auto enabled in $repo"
+}
+
+# Require every observed operation of this kind to carry both settings.
+assert_git_maintenance() {
+    local log="$1" operation="$2"
+    awk -F '|' -v op="$operation" '
+        $1 ~ op { seen = 1; if ($2 != "false" || $3 != "0") bad = 1 }
+        END { exit !(seen && !bad) }
+    ' "$log"
+}
+
 # The uncloneable entry comes first so a later entry proves the run continues.
 RELATED='test-owner/missing-repo
 test-owner/sibling-a # inline comments are ignored
@@ -240,6 +277,11 @@ run_setup "${STUBS_PATH}"
 if [ "$HAVE_BOOTSTRAP" = 1 ]; then
     [ -d "${FIX_PARENT}/sibling-a/.git" ] || fail "sibling-a must be cloned into the checkout's parent"
     [ -d "${FIX_PARENT}/sibling-b/.git" ] || fail "sibling-b (listed after the failing entry) must be cloned: the run continues"
+    for sibling in "${FIX_PARENT}/sibling-a" "${FIX_PARENT}/sibling-b"; do
+        git -C "$sibling" config --local maintenance.auto true
+        git -C "$sibling" config --local gc.auto 1
+        assert_maintenance_disabled "$sibling"
+    done
     [ ! -e "${FIX_PARENT}/missing-repo" ] || fail "an uncloneable repository must leave nothing behind"
     [ "$(cat "${FIX_PARENT}/existing-repo/marker.txt")" = "custom-content" ] || fail "an existing directory must not be modified"
     [ ! -d "${FIX_PARENT}/existing-repo/.git" ] || fail "an existing directory must not be cloned over"
@@ -249,6 +291,7 @@ if [ "$HAVE_BOOTSTRAP" = 1 ]; then
     output_has "cloned into ${FIX_PARENT}" || fail "the task must print where it cloned"
     output_has 'reference context' || fail "the task must say siblings are reference context"
     output_has 'private to you' || fail "the task must state that the target directory must be private to the user"
+    assert_git_maintenance "${LOG_DIR}/git-maintenance.log" '^clone ' || fail "clone child did not inherit maintenance settings"
     [ -s "${LOG_DIR}/git-ssh.log" ] || fail "expected git to be invoked with GIT_SSH_COMMAND recorded"
     [ "$(sort -u "${LOG_DIR}/git-ssh.log")" = "ssh -oBatchMode=yes" ] || fail "git must run with GIT_SSH_COMMAND=\"ssh -oBatchMode=yes\" (so an ssh remote cannot prompt), got: $(sort -u "${LOG_DIR}/git-ssh.log")"
     output_has "session's own repository" || fail "the task must say siblings cannot be pushed from Claude Code on the web"
@@ -256,6 +299,25 @@ else
     output_has 'is not present in this repository' || fail "without the bootstrap script the task must report the related repos as skipped: $(all_output)"
     [ -z "$(find "${FIX_PARENT}" -mindepth 1 -maxdepth 1 ! -name checkout ! -name existing-repo -print -quit)" ] || fail "nothing may be cloned without the bootstrap script"
 fi
+
+echo "==> maintenance observation detects a missing setting"
+(
+    export STUB_LOG_DIR="${TMP}/maintenance-negative"
+    mkdir -p "$STUB_LOG_DIR"
+    export GIT_CONFIG_COUNT=1
+    # Reproduce checkout-local gc.auto=0, then observe from outside any repo.
+    # The negative control must not inherit the caller checkout's local config.
+    git init -q "${TMP}/maintenance-checkout"
+    git -C "${TMP}/maintenance-checkout" config --local gc.auto 0
+    [ "$(git -C "${TMP}/maintenance-checkout" config --int gc.auto)" = 0 ] || fail "checkout config setup failed"
+    mkdir -p "${TMP}/maintenance-isolated"
+    cd "${TMP}/maintenance-isolated"
+    "${STUB_BIN}/git" --version >/dev/null
+    if assert_git_maintenance "${STUB_LOG_DIR}/git-maintenance.log" '^--version$'; then
+        fail "maintenance assertion accepted missing gc.auto"
+    fi
+    grep -Eq '^--version\|false\|$' "${STUB_LOG_DIR}/git-maintenance.log" || fail "negative control failed for the wrong reason"
+)
 
 echo "==> .git/hooks/pre-push is the lefthook shim"
 [ -x "${FIX}/.git/hooks/pre-push" ] || fail "pre-push must be installed and executable"
@@ -266,9 +328,40 @@ before="$(digest "${FIX_PARENT}")"
 run_setup "${STUBS_PATH}"
 [ "$rc" -eq 0 ] || fail "second run must succeed (rc=$rc): $(all_output)"
 after="$(digest "${FIX_PARENT}")"
-[ "$before" = "$after" ] || fail "the second run changed the tree:
-$(diff <(printf '%s\n' "$before") <(printf '%s\n' "$after") || true)"
+assert_unchanged "$before" "$after"
 [ "$(wc -l <"${LOG_DIR}/lefthook.log" | tr -d ' ')" -eq 2 ] || fail "lefthook install must run on each invocation (idempotent, not skipped)"
+
+echo "==> the idempotence assertion rejects a real second-run mutation"
+(
+    make_fixture mutation -
+    run_setup "${STUBS_PATH}"
+    [ "$rc" -eq 0 ] || fail "negative-control first run failed: $(all_output)"
+    before="$(digest "${FIX_PARENT}")"
+    run_setup "${STUBS_PATH}" STUB_MUTATE_SETUP=1
+    [ "$rc" -eq 0 ] || fail "negative-control second run failed: $(all_output)"
+    after="$(digest "${FIX_PARENT}")"
+    if (assert_unchanged "$before" "$after") >"${TMP}/negative-control.out" 2>&1; then
+        fail "idempotence assertion accepted a second-run mutation"
+    fi
+    grep -q 'the second run changed the tree' "${TMP}/negative-control.out" || fail "negative control failed for the wrong reason"
+)
+
+echo "==> the idempotence assertion rejects content-only mutation"
+(
+    make_fixture content-mutation -
+    run_setup "${STUBS_PATH}"
+    [ "$rc" -eq 0 ] || fail "content negative-control first run failed: $(all_output)"
+    before_paths="$(cd "${FIX_PARENT}" && find . | LC_ALL=C sort)"
+    before="$(digest "${FIX_PARENT}")"
+    run_setup "${STUBS_PATH}" STUB_MUTATE_SETUP=content
+    [ "$rc" -eq 0 ] || fail "content negative-control second run failed: $(all_output)"
+    [ "$before_paths" = "$(cd "${FIX_PARENT}" && find . | LC_ALL=C sort)" ] || fail "content mutation changed path list"
+    after="$(digest "${FIX_PARENT}")"
+    if (assert_unchanged "$before" "$after") >"${TMP}/content-negative-control.out" 2>&1; then
+        fail "idempotence assertion accepted a content-only mutation"
+    fi
+    grep -q 'the second run changed the tree' "${TMP}/content-negative-control.out" || fail "content negative control failed for the wrong reason"
+)
 
 if [ "$HAVE_BOOTSTRAP" = 1 ]; then
     echo "==> a cached sibling is fetched forward without changing its checkout"
@@ -284,6 +377,7 @@ if [ "$HAVE_BOOTSTRAP" = 1 ]; then
     [ "$(git -C "$sibling" rev-parse origin/main)" = "$new_head" ] || fail "existing sibling must see new upstream commit"
     [ "$(git -C "$sibling" rev-parse HEAD)" = "$old_head" ] || fail "fetch must not move the checkout"
     [ "$(cat "${sibling}/local-work.txt")" = 'local work' ] || fail "fetch must preserve local work"
+    assert_git_maintenance "${LOG_DIR}/git-maintenance.log" '(^| )fetch( |$)' || fail "fetch child did not inherit maintenance settings"
     output_has '^  + related-repo fetch -> .* (warn-only)' || fail "fetch must appear in the setup summary: $(all_output)"
     output_has 'Related-repo fetch: 2 fetched' || fail "fetch summary must report both siblings: $(all_output)"
 
@@ -1135,7 +1229,9 @@ import json
 import os
 from pathlib import Path
 import signal
+import shutil
 import subprocess
+import sys
 import time
 
 root = Path(os.environ["HOOK_DEAD_ROOT"])
@@ -1150,8 +1246,25 @@ assert release.exists(), "test never released the finite setup stub"
 # worker and re-read its command immediately before TERM; never signal by name.
 active = json.loads((root / ".git/session-start-remote/active.json").read_text())
 assert active["pid"] == parent, active
-command = subprocess.check_output(["ps", "-p", str(parent), "-o", "command="], text=True)
-assert "python3" in command and str(root) in command, command
+command = subprocess.check_output(["ps", "-p", str(parent), "-o", "command="], text=True).rstrip("\n")
+state_dir = root / ".git/session-start-remote"
+suffix = f" - {root} {state_dir}"
+expected = {os.path.realpath(sys.executable)}
+if sys.platform == "darwin":
+    expected.add(os.path.realpath(os.path.join(sys.base_prefix, "Resources/Python.app/Contents/MacOS/Python")))
+
+def worker_command_matches(value):
+    if not value.endswith(suffix):
+        return False
+    executable = value[:-len(suffix)]
+    return os.path.realpath(shutil.which(executable) or executable) in expected
+
+assert worker_command_matches(command), command
+executable = command[:-len(suffix)]
+assert not worker_command_matches(f"{executable} - {root}-wrong {state_dir}")
+assert not worker_command_matches(f"{executable} - {root} {state_dir}-wrong")
+assert not worker_command_matches(f"{root / 'wrong-interpreter'}{suffix}")
+assert shutil.which("bash") and not worker_command_matches(f"bash{suffix}")
 os.kill(parent, signal.SIGTERM)
 done.write_text("worker terminated without status\n")
 EOF
@@ -1163,7 +1276,8 @@ echo waiter >>"\$HOOK_DEAD_WAITERS"
 exec "${REAL_TIMEOUT}" 1s "\$@"
 EOF
     chmod +x "${TMP}/hook-bin/task" "${TMP}/hook-bin/timeout"
-    python3 - "${FIX}/scripts/session-start-remote.sh" "${TMP}/hook-bin:${MIN_BIN}" <<'PYDEADWORKER'
+    run_dead_worker() {
+        python3 - "${FIX}/scripts/session-start-remote.sh" "${TMP}/hook-bin:${1}:${MIN_BIN}" <<'PYDEADWORKER'
 import json
 import os
 from pathlib import Path
@@ -1205,6 +1319,12 @@ assert not (Path(active["directory"]) / "status").exists(), "fixture did not exe
 assert len(list(state.glob("run-*"))) == 1, "observer launched another setup"
 print("OK: launcher and observer both report a terminated worker without a status, never still running")
 PYDEADWORKER
+    }
+    run_dead_worker "${MIN_BIN}"
+    echo "==> SessionStart worker identity accepts a virtualenv interpreter"
+    python3 -m venv --without-pip "${TMP}/worker-venv"
+    make_fixture hook-dead-worker-venv -
+    run_dead_worker "${TMP}/worker-venv/bin"
 
 else
     echo "skip: timeout is unavailable; the real deadline scenario cannot run"
