@@ -8,6 +8,22 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [5.17.0](https://github.com/evanharmon1/harmon-init/compare/v5.16.0...v5.17.0) (2026-11-05)
+
+
+### Features
+
+* **copier:** make identity and org answers overridable per repo ([#1955](https://github.com/evanharmon1/harmon-init/issues/1955)) ([7bdbf81](https://github.com/evanharmon1/harmon-init/commit/7bdbf818ce582e08075af4e65d3a31854398ea9a))
+* **devcontainer:** add host rebuild task ([#1833](https://github.com/evanharmon1/harmon-init/issues/1833)) ([#1951](https://github.com/evanharmon1/harmon-init/issues/1951)) ([d3cf40d](https://github.com/evanharmon1/harmon-init/commit/d3cf40d407c7a2bd13a60023ede181c0ffaaa6f5))
+
+
+### Bug Fixes
+
+* keep shared image digests paired with version bumps ([#1946](https://github.com/evanharmon1/harmon-init/issues/1946)) ([b06472d](https://github.com/evanharmon1/harmon-init/commit/b06472d8015b10f3251b3bac5e031456f3121faf)), closes [#1824](https://github.com/evanharmon1/harmon-init/issues/1824)
+* **remote-env:** keep the pinned toolchain first on PATH in login shells ([#1956](https://github.com/evanharmon1/harmon-init/issues/1956)) ([3065ef0](https://github.com/evanharmon1/harmon-init/commit/3065ef00ff843071ef6a188f8b3adf4db7e76528))
+* **ruleset:** render merge_queue rule only when available ([#1733](https://github.com/evanharmon1/harmon-init/issues/1733)) ([#1945](https://github.com/evanharmon1/harmon-init/issues/1945)) ([14e5e2b](https://github.com/evanharmon1/harmon-init/commit/14e5e2bdbf6a0c4a6c2d9e1e809f4ab05242e3f3))
+* **template:** run standardize reviews with the merge-base render-bundle.sh verifier ([#1950](https://github.com/evanharmon1/harmon-init/issues/1950)) ([2f3d5b7](https://github.com/evanharmon1/harmon-init/commit/2f3d5b706e7e6b8c06b5ab873ac88ddee330f39b))
+
 ## [5.16.0](https://github.com/evanharmon1/harmon-init/compare/v5.15.1...v5.16.0) (2026-11-04)
 
 
