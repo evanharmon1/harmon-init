@@ -87,6 +87,13 @@ done
 [[ "$repo" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ && "$pr" =~ ^[1-9][0-9]*$ && "$head" =~ ^[0-9a-f]{40}$ ]] || usage
 [ -n "$record" ] && [ -n "$slate" ] && [ -n "$session" ] && [ -n "$owner_token" ] || usage
 [[ "$run_id" =~ ^[A-Za-z0-9._-]+$ && "$run_id" != . && "$run_id" != .. ]] || usage
+freshness="$script_dir/../../orchestrate/assets/dev-flow-monitor.sh"
+if [ ! -r "$freshness" ]; then
+    echo 'BLOCKER: missing sibling orchestrate/assets/dev-flow-monitor.sh; indeterminate' >&2
+    exit 11
+fi
+bash "$freshness" check-assets --repo-root "$PWD" || exit 11
+
 # Bind the gate's record to the record the writer will update; no second gate.
 common="$(git rev-parse --path-format=absolute --git-common-dir)" || exit 11
 canonical="$(cd "$common/dev-flow-v2/runs/$run_id" && pwd -P)" || exit 11
@@ -114,6 +121,11 @@ gate_fingerprint="$(jq -er --arg head "$head" '
   select(.status == "pass" and .condition == "ready" and .head == $head)
   | .fingerprint | select(type == "string" and length > 0)' <<<"$verdict")" || exit 11
 
+# Keep the complete passing verdict for both writer checks, not only its digest.
+gate_document="$(mktemp)" || exit 11
+trap 'rm -f "$gate_document"' EXIT
+printf '%s\n' "$verdict" >"$gate_document"
+
 # Each read is attempted once; failed or malformed evidence routes to undo.
 read_scalars() {
     local value
@@ -139,7 +151,7 @@ undo() {
 promoted_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)" || exit 11
 if ! node "$support_dir/run-record.mjs" promote --check \
     --slate "$slate" --session "$session" --owner-token "$owner_token" --run-id "$run_id" \
-    --head "$head" --fingerprint "$gate_fingerprint" --at "$promoted_at"; then
+    --head "$head" --fingerprint "$gate_fingerprint" --gate "$gate_document" --at "$promoted_at"; then
     echo 'BLOCKER: promotion precheck refused; no promotion attempted' >&2
     exit 16
 fi
@@ -169,7 +181,7 @@ if [ "$ready_rc" -ne 0 ]; then
 fi
 if ! node "$support_dir/run-record.mjs" promote \
     --slate "$slate" --session "$session" --owner-token "$owner_token" --run-id "$run_id" \
-    --head "$head" --fingerprint "$gate_fingerprint" --at "$promoted_at"; then
+    --head "$head" --fingerprint "$gate_fingerprint" --gate "$gate_document" --at "$promoted_at"; then
     # Accept only an exact lost-response success, including the submitted time.
     if ! jq -e --arg head "$head" --arg fp "$gate_fingerprint" --arg at "$promoted_at" '
       .outcome == "ready-for-review" and .promotion ==

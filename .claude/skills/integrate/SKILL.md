@@ -91,7 +91,7 @@ migration visible; a stage that finds another way to finish hides it.
 orchestrated run's record comes from `/review` and its role agents; an
 ordinary interactive session's comes from `/implement` § 6a, which records the
 inline `task challenge` / `task review` stages in a real single-lane run
-(`run-record.mjs solo-init`, `receipt`, `adjudicate`, `transition`,
+  (`run-record.mjs solo-init`, `receipt`, `adjudicate`, `transition`,
 `bind-pr`) with no orchestrator brief envelope. Both are the same `run.json`,
 `policy.json`, `passes/` and `adjudications/`, so `--record` takes either
 directory unchanged, and a solo session promotes through
@@ -105,6 +105,16 @@ the slate lock, the same value on every write — or a non-promotion ending with
 --outcome capped|escalated|abandoned --exit "<why>"`, then releases the slate
 lock with `run-record.mjs lock release --slate solo-<run-id> --session <its
 session> --owner-token <token>` (`/implement` § 6a step 6).
+
+**Persist integration evidence through the writer.** Receipt each completed
+integrator envelope with `run-record.mjs receipt`; an envelope with a non-null
+`codex_cycle` also supplies the checker state and checkout via
+`--codex-state <state> --codex-repo-dir <checkout>`. The writer re-runs the
+read-only checker and binds its live result to the run's recorded PR before it
+accepts the immutable pass. A null cycle is admitted only when the retained
+policy disables integration review, so it supplies the retained run/policy
+context but no invented checker state or checkout. A diagnostic pending report
+is never a receipt.
 
 Follow “Owner-token caller contract” in `$support_dir/../SKILL.md`, with the support directory resolved physically via `cd … && pwd -P`.
 
@@ -393,7 +403,7 @@ the reservation untouched and report the draft-flip blocker. It releases only an
 after the age check and live comment scan with the 10-minute skew margin; attached
 triggers, matching live comments and unreadable evidence refuse recovery. The
 same order binds every per-finder trigger (#804) — its fresh cycle, its
-attempt-2 retry, and its reconcile path alike.
+owner-run attempt-2 retry, and its reconcile path alike.
 
 **Wait-then-release and resume:** report the mismatch and the old reserved head,
 then wait only until `reserved_at + 600 s` before running release once. Bound
@@ -436,7 +446,8 @@ retains charged/exempt counters and the run-spend file, and permits the next
 `phase:"released"` state through the fresh-reservation recipe, carrying its
 first and previous trigger-history anchors; only same-head `attached` state
 resumes at `check`, and same-head `reserved` state resumes at the broker.
-It does not refund a charged cycle; the next reservation charges normally. A refused release is a
+It refunds only an untriggered first attempt's charge in state and the run-spend
+sidecar; a released retry retains the original cycle's spend. The next reservation charges normally. A refused release is a
 blocker to reconcile, never permission to delete state. Late
 `attach --trigger-id` retries have independent 60-second read budgets, like
 `check`, including after the review window expires.
@@ -955,8 +966,10 @@ timing (§2's first bullet), then begin the checks watch. Leave Project fields u
 
   If a provisioned-label write fails, retry, reconcile and report the result;
   never claim paired success from only one object. `needs-review` never coexists with `merge-ready`
-  or `parked`. For claim-owned fix rounds, §6's pull-back removes both review
-  markers while the claim takes over; reapply both when review becomes due.
+  or `parked`. For claim-owned fix rounds, §6's pull-back restores and verifies
+  the exact chain-owned claim labels before removing either review marker;
+  reapply both review markers when review becomes due. A failed or unverified
+  pull-back stops fixes with the marker-state blocker report required by §6.
   Before the readiness check, §6 requires paired cleanup once every needed
   review is complete. An issue with an open delivery PR remains outside
   the Agent queue even after handoff clears `needs-review` and `claim:*`.
@@ -1075,7 +1088,7 @@ timing (§2's first bullet), then begin the checks watch. Leave Project fields u
     already-non-draft path prescribes; do **not** call `gh pr ready` again.
     Only a passing `promoted` handoff check on the current head may be recorded;
     catch up a behind head first. Record the accepted promotion
-    with `run-record.mjs promote --head <head> --fingerprint <audit fingerprint> --exit "reconciled ready_for_review event <event id> at <event time>"`
+    with `run-record.mjs promote --head <head> --fingerprint <audit fingerprint> --gate <promoted-pass-document.json> --exit "reconciled ready_for_review event <event id> at <event time>"`
     and the existing slate/session/owner/run arguments, as on exit 17. Omit
     `--at` so the writer records reconciliation time; the `--exit` retains the
     original event ID and time for attribution.
@@ -1169,7 +1182,8 @@ timing (§2's first bullet), then begin the checks watch. Leave Project fields u
     Each entry carries the `ready_for_review` event ID, time and actor, observed
     head, run id, undo time, and read-back `convert_to_draft` event ID, time and
     actor, with confirmed `isDraft == true`. `run.json.interventions` remains
-    human touchpoints only; never append automatic undos there. Preserve every
+    human touchpoints only; never append automatic undos there. (Owner
+    authority captures also live there; every reader skips them.) Preserve every
     earlier ledger entry; append once per ready/conversion event pair, never
     duplicate it on resume. Write the complete candidate to a temporary file
     beside the ledger, validate its version, repo, pr, array and complete event
@@ -1387,6 +1401,76 @@ timing (§2's first bullet), then begin the checks watch. Leave Project fields u
   charged/exempt counters, with its resolved budget passed to reservation;
   no finder borrows another's spend. Carry remains Codex-only and must satisfy
   that finder's resolved carry rule; `fresh` requires a new review.
+  **The run owner alone drives cycle transitions and their capture boundaries.**
+  For the owner-driven Codex path, use `assets/drive-codex-cycle.sh` rather
+  than composing scratchpad commands:
+
+  ```sh
+  "$skill_dir/assets/drive-codex-cycle.sh" --repo OWNER/REPO --pr N --head SHA \
+    --repo-dir /path/to/target-clone --slate SLATE --session SESSION \
+    --owner-token TOKEN --run-id RUN --remediation 0
+  ```
+
+  It derives the canonical run directory and shared Codex state from the
+  target clone's `git rev-parse --git-common-dir`, reads timing and caps from
+  that run's resolved `policy.json`, attempts carry first, and otherwise
+  composes the CI settle-wait, reservation, owner reserve capture, broker
+  trigger, bounded checker polling, and terminal attach capture. Runtime
+  executables resolve physically beside the installed skill. The broker's
+  `--common-state` selects this shared state; existing callers without it keep
+  their checkout-local state. Do not mix the two state locations for a cycle.
+  `--wait-seconds` bounds each CI/check wait (default 3600), and
+  `--timeout-min` fixes the review window (10–15, default 15). Only checker
+  pending/transient reads are polled; every failed operation stops with its
+  nonzero status, without reading a producer status through a pipeline.
+  Exit 12 retains the first request and returns to the owner for receipt and
+  the ordinary bounded retry decision; `--attempt 2` never happens implicitly.
+  A local polling expiry captures no attachment. Same-head reserved requests
+  resume at reserve capture and the broker; attached requests resume at check.
+  A moved head refuses further work. The command neither dispatches an
+  integrator nor adjudicates, replies, receipts, promotes, or attests readiness;
+  the owner still performs those steps under this procedure.
+
+  Capture `reserve` immediately. After broker `attach`, the integrator polls
+  first. On a terminal clean/findings result, first-window exit 12, final exit
+  13, or quota answer, the owner calls `run-record.mjs integration-review-capture`
+  with its owner token, run/slate/session, the checker state, and
+  `--authority-kind attach` before admitting a receipt or reserving retry 2.
+  Only that command writes an `integration-review-authority v1` note; the
+  generic `intervention` command refuses one.
+  When multiple independently configured finders reserve the same public
+  PR/head/cycle/attempt tuple, the owner also passes an immutable
+  `--parent-authority-digest` selected from the retained owner capture, never
+  a checker-state finder hint. An `attach` selects its retained `reserve`; a
+  retry `reserve` selects the first retained `attach` for that finder/cycle;
+  a `carry` selects its immediate retained predecessor. An exact carry replay
+  reuses the same parent digest as the original carry capture, never the
+  carried child digest. Capture rejects a missing, cross-finder or
+  control-mismatched parent. Single-parent and legacy captures retain their
+  existing unique-or-refuse behavior.
+  The command reconstructs the attachment from the retained reservation and
+  exact owner trigger, then runs the ordinary canonical checker on scratch while
+  the origin head is still live; it retains that one canonical attachment, not
+  mutable poll-state fields. A clean attachment therefore retains the checker’s
+  corroborated reviewed base; an exit-12 attachment retains only the first
+  request controls retry 2 needs. Capture `carry` immediately after its
+  owner-driven transition (with `--repo-dir`). The origin is keyed by run, PR,
+  original head, cycle ordinal, and finder; current CI's charged/exempt split
+  and independently corroborated settlements remain live observations. Before
+  any owner-captured `reserve`,
+  choose and pass an explicit numeric `--timeout-min` (at least 10) so the
+  polling state and retained authority share one window. The checker's generic
+  unset-timeout adoption remains for legacy recovery, never a new owner
+  capture. It does no network work under the run mutex. If a crash or
+  concurrent state change prevents that capture, retry the owner transition or
+  leave the receipt blocked; do not admit an integrator result from mutable
+  state. Original-head legacy receipt admission remains supported; without an
+  owner-retained, corroborated reviewed base, first carry is refused and the
+  owner starts a fresh ordinary cycle at the new head. The dispatch brief gives
+  the integrator this captured cycle only for
+  polling and reporting. This applies to every
+  trigger order (`after-ci`, `with-push`, and `after-ci-first`), including
+  status-only CI and no-suite heads; timestamps do not bind a review to a head.
   Checker-only evidence is a **clean-run fast path**: the active stage must
   be integration, with no run-level integration `finder_selection`;
   the record holds no integrator pass; it holds no integration adjudication;
@@ -1507,6 +1591,14 @@ timing (§2's first bullet), then begin the checks watch. Leave Project fields u
 
   Branch on the validated result:
 
+  - A report-only `completed`/`pending` result carrying
+    `codex_cycle.exit_code: 12` is consumed by the owner before any receipt,
+    adjudication, evidence publication, or stage transition. The owner verifies
+    the first window, captures the reconstructed attempt-1 attachment, reserves
+    and broker-attaches attempt 2, and re-dispatches the same integration round. It spends neither
+    another cycle nor a remediation round. A second timeout is exit 13 and
+    follows the ordinary terminal path below.
+
   - **`status: "blocked"` is terminal for the stage**, regardless of verdict,
     cycle presence or review timing. Surface the integrator's §9 blocker
     report (for the permission fallback, the token cannot read the checks
@@ -1522,7 +1614,17 @@ timing (§2's first bullet), then begin the checks watch. Leave Project fields u
     wait, re-dispatch. Handing it to §6's gate under a positive cap is
     `codex-cap-mismatch` by design, and under cap 0 the gate now refuses any
     non-clean verdict outright.
-  - `codex_cycle: null` with verdict `clean` or `findings` (cap 0), or
+  - A completed `findings` or `escalate` result with `codex_cycle: null` is a
+    blocked diagnostic only when the **resolved Codex finder is required**
+    (the same `gates`/`budget` predicate receipt admission uses). A positive
+    integration cap alone does not make an explicitly disabled or non-gating
+    finder required: such a result may enter the ordinary receipt and
+    adjudication path. Preserve terminal required-CI failure information in a
+    required-finder blocker report, leave the PR draft, and do not submit that
+    report for receipt or adjudication. Pending checks and permission-fallback
+    results stay in the prior blocked/pending paths.
+  - `codex_cycle: null` with verdict `clean` or `findings` when Codex is not
+    required (including cap 0), or
     `codex_cycle.exit_code` `0`/`10` — terminal for this pass. A `10` (or
     any human finding the agent also surfaced) feeds `findings[]` into §3;
     a clean `0` with no other open finding and an empty
@@ -1557,8 +1659,10 @@ timing (§2's first bullet), then begin the checks watch. Leave Project fields u
     terminal Codex result. Waiting is never a round (see "Round accounting"
     above): re-dispatch the agent after a bounded wait rather than
     inventing a poller of your own. The agent absorbs the single
-    reserve-retry attempt (exit `12`) internally within one dispatch, so you
-    should never see `12` at this level.
+    reserve-retry attempt (exit `12`) through the owner-only transition: the
+    owner observes the first full window, captures attempt 1, reserves and
+    broker-attaches attempt 2, then re-dispatches. A delegate never creates
+    owner-controlled retry evidence.
   - A checker exit `19` — whether recorded as `codex_cycle.exit_code: 19` or
     reported with `codex_cycle: null` because a stale `reserve` (including a
     `carry` that falls through to `reserve`) posted no trigger — is an
@@ -1591,11 +1695,13 @@ timing (§2's first bullet), then begin the checks watch. Leave Project fields u
     body, re-triggering a reviewer that had just refused.)
   - `codex_cycle.exit_code: 16` (a transient evidence-read failure,
     harmon-devkit#508) — this says nothing about the reviewer, only that
-    GitHub would not answer a read. It arrives as `verdict: "pending"` and is
-    handled like `11`: bounded wait, then re-dispatch so the **read** is
-    repeated. Never treat it as a non-clean cycle; §6's gate reports it as
-    `codex-transient-read` (indeterminate with the reason), never
-    `codex-not-clean`.
+    GitHub would not answer a read. The result envelope retains
+    `verdict: "pending"` for its existing shape, but exit 16 is a transient
+    read status, never evidence that the reviewer is still working or that a
+    review settled. It is handled like `11`: bounded wait, then re-dispatch so
+    the **read** is repeated. Never treat it as a non-clean cycle; §6's gate
+    reports it as `codex-transient-read` (indeterminate with the reason),
+    never `codex-not-clean`.
     **One way it is not like `11`:** a `11` that persists is a reviewer still
     working, while a 16 that persists is a read that keeps failing — and the
     causes that keep failing (a revoked token, a permission that no longer
@@ -1610,7 +1716,11 @@ timing (§2's first bullet), then begin the checks watch. Leave Project fields u
     vocabulary for the same condition, which is a different field on a
     different document. Treat that shape as a blocker to escalate, not as a
     cycle to re-drive; a lone 16 between two good reads is still the ordinary
-    transient case.
+    transient case. When the harness monitor cannot reach GitHub, run each
+    checker call as a finite background Bash pass outside that sandbox and
+    capture its complete result. A retry after exit 16 uses the same checker
+    `--state` and cycle; it repeats the read without reserving or triggering
+    another review. Stop after the third consecutive transient read as above.
   - `verdict: "escalate"` with a terminal or null `codex_cycle` for the
     remediation-cap reason — a finding still needs a code fix and the resolved
     cap is spent (see "A resolved remediation cap of 0..." above, which is the
@@ -2317,7 +2427,7 @@ never `gh pr update-branch` or a raw call:
 state_file="$(git rev-parse --path-format=absolute --git-path \
   integrate-codex/<owner>/<repo>/<pr>.json)"
 new_head="$("$skill_dir"/assets/update-branch.sh --repo <repo> --pr <n> \
-  --head <captured headRefOid> --base <captured baseRefName> --state "$state_file")"
+  --head <captured headRefOid> --base <captured baseRefName> --state "$state_file" --record "<record dir>")"
 ```
 
 Compute the path from the lane worktree. Pass one `--state` per configured
@@ -2464,6 +2574,9 @@ receipt; the gate projects its Codex carry in memory and binds the original
 receipt to the terminal record. Claim and delivery-label restoration use §6's
 fresh-run follow-up text beginning "A later human request to reverse a
 **recorded handoff**", not a new writer here.
+
+For App authentication of the gate’s Checks and Statuses reads, see
+[GitHub App checks](references/github-app-checks.md).
 
 **A PR the gate can establish is behind is never reported ready** — under any
 cap, at any round, however clean everything else is. Both draft `check` and
@@ -2743,7 +2856,7 @@ that loops indefinitely:
 
    Before the ready mutation the command rehearses the full promotion-candidate
    validation through read-only `run-record.mjs promote --check`, using the
-   captured slate, session, owner token, run, head, gate fingerprint, and
+   captured slate, session, owner token, run, head, gate fingerprint, full pass document (`--gate FILE`), and
    `promoted_at`. This durable-write-free precheck exercises the same writer
    validation that the real promotion repeats after remote confirmation; exit
    16 is its refusal boundary, before notifying anyone. Every GitHub call is bounded by
@@ -2781,7 +2894,7 @@ that loops indefinitely:
    unexplained-promotion procedure. When §2's reconcile branch accepts the
    promotion (the current head independently passes `readiness-gate.sh promoted`),
    the orchestrator records it with
-   `run-record.mjs promote --head <head> --fingerprint <audit fingerprint> --exit "reconciled ready_for_review event <event id> at <event time>"`
+   `run-record.mjs promote --head <head> --fingerprint <audit fingerprint> --gate <promoted-pass-document.json> --exit "reconciled ready_for_review event <event id> at <event time>"`
    and the existing slate/session/owner/run arguments. Omit `--at` so the writer
    records reconciliation time; the `--exit` retains the original event ID and
    time for attribution. Only promoted status `pass`
@@ -2806,8 +2919,15 @@ that loops indefinitely:
    ```sh
    node "$support_dir/run-record.mjs" promote \
      --slate "$slate" --session "$session" --owner-token <token> --run-id "$run_id" \
-     --head "$head" --fingerprint "$gate_fingerprint" --at "$promoted_at"
+     --head "$head" --fingerprint "$gate_fingerprint" --gate "$gate_document" --at "$promoted_at"
    ```
+
+   `gate_document` names the saved JSON pass document returned by the gate.
+   Both `promote` and its read-only `--check` require `--gate FILE`, with
+   status `pass`, condition `ready` or `promoted`, and the exact submitted
+   head and fingerprint. Both modes accept either condition, including the
+   mutating reconciliation write for an existing promotion. Missing, malformed or non-pass
+   evidence refuses the record; a fingerprint alone never authorizes it.
 
    Internally, the helper writes `promotion`, the `ready-for-review` outcome and its
    outcome-transition chain together, under the shared mutex, validating
@@ -2873,7 +2993,7 @@ that loops indefinitely:
    a head that independently passes the gate — reconciling *is* this paragraph
    and its `promoted` run. For that accepted unexplained promotion, use the same
    record step as exit 17:
-   `run-record.mjs promote --head <head> --fingerprint <audit fingerprint> --exit "reconciled ready_for_review event <event id> at <event time>"`
+   `run-record.mjs promote --head <head> --fingerprint <audit fingerprint> --gate <promoted-pass-document.json> --exit "reconciled ready_for_review event <event id> at <event time>"`
    with the existing slate/session/owner/run arguments. Omit `--at` so the writer
    records reconciliation time; the `--exit` retains the original event ID and
    time for attribution. Only promoted status `pass`
@@ -2939,7 +3059,14 @@ that loops indefinitely:
    substitute full claim release for label-only release. A fresh run that
    resumes actual draft work requests a claim through the same machinery;
    queue upkeep alone does not reclaim the issue. Follow the table’s paired-helper
-   pull-back procedure before resuming fix rounds. Then stop.
+   pull-back procedure before resuming fix rounds: restore and verify the exact
+   chain-owned claim labels before removing `needs-review` from issue or PR.
+   Use the existing claim machinery and paired cleanup helper, not a new label
+   writer. If claim restoration or review-marker cleanup fails or cannot be
+   verified (including `NEEDS-REVIEW-RETAINED`), leave the PR draft, stop fixes,
+   and persist a blocker report naming the verified claim labels and
+   `needs-review` state on the issue and delivery PR. Mark any unreadable state
+   unknown; never infer success from an attempted write. Then stop.
 
 2. **Cap reached** — checks still fail or findings remain unresolved after
    the resolved **remediation** cap's rounds, or the dispatched integrator
@@ -3016,3 +3143,43 @@ Project fields are a manual, non-authoritative delivery view. Integration
 never reads or writes them: the PR state, checks, reviews, and claim markers are its
 authoritative inputs. This avoids a one-way session projection that cannot be
 restored safely after independent planning edits.
+
+## Retain each cycle before moving its head
+
+An owner `reserve` naming `--run-id` or `--record "<record dir>"` requires an
+explicit `--timeout-min` (10–15 minutes). A missing window is refused before
+state or counters change. Capture reserve authority immediately, then capture
+attach authority once the checker reports a terminal observation. Dispatch
+and receipt the actual integrator pass **before** catch-up or remediation.
+`update-branch --record` enforces this for catch-up; remediation remains a
+procedure requirement until #1810.
+`reserve --record` also refuses to supersede an unreceipted terminal cycle.
+Findings receipts followed by adjudication remain immutable;
+a clean follow-up pass can replay the same request using later trusted inline
+replies and independently authenticated settlements. Supply the live checker
+state to receipt; a retained attach snapshot is also supported, with settlement
+candidates recovered from the canonical state and authenticated against the
+run's admitted findings and adjudications.
+
+For `update-branch.sh`, pass `--record "<record dir>"` along with every
+`--state`: it refuses run-owned checker state at the head when `--record` is
+omitted. It also refuses a terminal unreceipted cycle with
+`integration-receipt-required` before any GitHub write.
+
+An uncaptured earlier cycle cannot be reconstructed from counters or a later
+carry. If its original reservation and attachment authority remain available
+and its reviewed head is still current, capture them through
+`integration-review-capture`, dispatch the integrator, and receipt the truthful
+result. When original authority is unavailable or the head already moved,
+stop for owner recovery; never fabricate a historical role result, renumber
+cycles or reset spend. Receipt refuses an ordinal gap up front with
+`integration-history-incomplete`; readiness uses the same named condition for
+an existing incomplete record. The exit reader still requires contiguous
+cycles. This prevention contract does not backfill missing history (#1630).
+
+Releasing a reservation that never triggered refunds only the charge that
+reservation took (first attempt); releasing a retry retains the original
+cycle's spend. The state and run-spend sidecar both retain the restored
+counters. Carry captures re-prove the change identity but preserve the
+checker's original carry object, including `carried_at`, so receipt and
+readiness consume one canonical object.
