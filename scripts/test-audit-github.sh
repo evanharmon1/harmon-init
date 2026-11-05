@@ -113,13 +113,28 @@ print(json.dumps(value) if value is not None else '')
     assert all(row['result'] == 'unknown' for row in run([fields_entry, types_entry], 2))
     org = copy.deepcopy(data)
     org['repos/acme/widget']['owner']['type'] = 'Organization'
-    org['orgs/acme/actions/variables/ORG_PROJECT_ID'] = {'value': 'P1'}
+    inventory = 'repos/acme/widget/actions/organization-variables'
+    org[inventory] = {'variables': [{'name': 'ORG_PROJECT_ID', 'value': 'P1'}]}
     assert run([project], 0, org)[0]['result'] == 'pass'
-    org['orgs/acme/actions/variables/ORG_PROJECT_ID'] = {'value': 'wrong'}
+    assert 'orgs/acme/actions/variables/ORG_PROJECT_ID' not in (fixture / 'calls').read_text()
+    org[inventory] = {'variables': [{'name': 'ORG_PROJECT_ID', 'value': 'wrong'}]}
     assert run([project], 1, org)[0]['result'] == 'fail'
-    org['orgs/acme/actions/variables/ORG_PROJECT_ID'] = {'error': 403}
-    org['repos/acme/widget/actions/organization-variables'] = {'variables': [{'name': 'ORG_PROJECT_ID', 'value': 'P1'}]}
-    assert run([project], 0, org)[0]['result'] == 'pass'
+    org[inventory] = {'variables': []}
+    assert run([project], 1, org)[0]['result'] == 'fail'
+    org[inventory] = {'error': 403}
+    row = run([project], 2, org)[0]
+    assert row['result'] == 'unknown' and '403' in row['reason'] and 'organization-variables' in row['reason']
+    denied_drift = copy.deepcopy(org)
+    denied_drift['graphql']['data']['repositoryOwner']['projectsV2']['nodes'][0]['fields']['nodes'][0]['options'] = []
+    row = run([project], 2, denied_drift)[0]
+    assert row['result'] == 'unknown' and all(text in row['reason'] for text in (
+        'field drift', '403', 'organization-variables'))
+    org[inventory] = {'variables': [{'name': 'ORG_PROJECT_ID', 'value': 'P1'}]}
+    legacy = entry('retire-any-legacy-agent-claim-')
+    assert run([legacy], 0)[0]['result'] == 'pass'
+    for name in ('agent:codex', 'claim:codex', 'claim:codex:sol', 'claim:copilot', 'claim:copilot:model'):
+        row = run([legacy], 1, changed('repos/acme/widget/labels', [{'name': name}]))[0]
+        assert row['result'] == 'fail' and name in row['reason']
     missing_board = copy.deepcopy(data)
     missing_board['graphql']['data']['repositoryOwner']['projectsV2']['nodes'] = []
     assert run([project], 1, missing_board)[0]['result'] == 'fail'

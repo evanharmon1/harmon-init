@@ -303,7 +303,9 @@ def probe(entry):
         return outcome(not drift, 'registry label drift: ' + (', '.join(drift) or 'none') + '; extra labels preserved')
     if 'retire-any-legacy-agent-claim-' in item:
         labels = names('labels', None)
-        legacy = sorted(name for name in labels if name.startswith('agent:'))
+        retired_families = ('agent', 'claim:codex', 'claim:copilot')
+        legacy = sorted(name for name in labels if any(
+            name == family or name.startswith(family + ':') for family in retired_families))
         return outcome(not legacy, 'legacy claim labels: ' + (', '.join(legacy) or 'none'))
     if 'org-issue-fields-run-' in item or 'org-issue-types-run-' in item or 'github-project-run-' in item:
         settings = api('repos/' + repo)
@@ -356,22 +358,20 @@ def probe(entry):
         } <= {option['name'] for option in status.get('options', [])}
         if owner_type == 'User':
             ok = fields.get('Product', {}).get('dataType') == 'TEXT' and ok
+        evidence = Evidence()
         if not ok and board['fields']['pageInfo']['hasNextPage']:
-            raise Unavailable('project fields exceed 100 results; evidence incomplete')
-        if not ok:
-            return outcome(False, 'owner project field drift detected')
+            evidence.failures.append('project fields exceed 100 results; evidence incomplete')
+        elif not ok:
+            evidence.drift.append('owner project field drift detected')
         if owner_type == 'Organization':
-            try:
-                project_id = api(f'orgs/{owner}/actions/variables/ORG_PROJECT_ID')['value']
-            except Unavailable:
-                inherited = read('actions/organization-variables', 'variables', True)
+            inherited = evidence.collect('ORG_PROJECT_ID exposure', lambda: read('actions/organization-variables', 'variables', True))
+            if inherited is not None:
                 project_id = next((row['value'] for row in inherited if row['name'] == 'ORG_PROJECT_ID'), None)
-                if project_id is None:
-                    raise Unavailable('ORG_PROJECT_ID organization variable unreadable or not exposed to repository')
-            ok = project_id == board['id']
+                if project_id != board['id']:
+                    evidence.drift.append('ORG_PROJECT_ID absent or differs from owner board id')
         elif owner_type != 'User':
-            raise Unavailable('repository owner type unavailable')
-        return outcome(ok, 'owner Projects V2 board, fields and routing')
+            evidence.failures.append('repository owner type unavailable')
+        return evidence.resolve('owner Projects V2 board, fields and routing')
     return ('manual', manual)
 
 
