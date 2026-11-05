@@ -152,6 +152,7 @@ tasks:
       - task: test:ci-results
       - task: test:ci-changes-classify
       - task: test:checklist-classes
+      - task: test:audit-github
       - task: test:output
       - task: test:status
       - task: test:gh-scopes
@@ -412,7 +413,7 @@ tasks:
     desc: Checkov IaC security scan
     vars:
       # renovate: datasource=pypi depName=checkov
-      CHECKOV_VERSION: 3.3.30
+      CHECKOV_VERSION: 3.4.0
     cmds:
       - uvx --from "checkov=={{.CHECKOV_VERSION}}" checkov -d terraform --quiet --compact
 
@@ -861,6 +862,19 @@ tasks:
     desc: Unit-test CI aggregate and closing-keyword fail-closed truth tables
     cmds:
       - ./scripts/test-ci-results.sh
+
+  audit:github:
+    desc: Read-only GitHub checklist audit (NDJSON; 0 clean, 1 drift, 2 unavailable)
+    # Preserve machine-readable stdout under the global grouped output mode.
+    interactive: true
+    silent: true
+    cmds:
+      - ./scripts/audit-github.sh[% if github_org != author_git_provider_username %] --bot-collaborator "[[ author_git_provider_username ]]-bot"[% endif %] {{.CLI_ARGS}}
+
+  test:audit-github:
+    desc: Test GitHub checklist probes offline with stubbed gh
+    cmds:
+      - ./scripts/test-audit-github.sh
 
   audit:ruleset:
     desc: Compare the checked-in branch ruleset with GitHub's live ruleset (read-only)
