@@ -319,12 +319,13 @@ def probe(entry):
         if 'org-issue-' in item:
             if owner_type != 'Organization':
                 raise Unavailable('organization repository required')
+            # These two endpoints return the complete list and ignore page.
             if 'org-issue-types-run-' in item:
-                types = api(f'orgs/{owner}/issue-types', paginated=True)
+                types = api(f'orgs/{owner}/issue-types')
                 enabled = {row['name'] for row in types if row.get('is_enabled') is True}
                 return outcome({'Bug', 'Feature', 'Task', 'Research'} <= enabled, 'organization issue types')
-            fields = api(f'orgs/{owner}/issue-fields', key='issue_fields', paginated=True,
-                         headers=['X-GitHub-Api-Version: 2026-03-10'])
+            fields = api(f'orgs/{owner}/issue-fields', headers=['X-GitHub-Api-Version: 2026-03-10'])
+            fields = fields['issue_fields'] if isinstance(fields, dict) else fields
             live = {row['name']: row for row in fields}
             # Keep equal to setup-github-issue-fields.sh / status.sh. Tier is a label.
             wanted = {
