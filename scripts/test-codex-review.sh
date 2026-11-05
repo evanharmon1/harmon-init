@@ -10,7 +10,12 @@
 # a capped review loop exits on. Also guards the scope union: a branch holding
 # commits AND uncommitted work is the ordinary mid-loop state, and reviewing
 # only one half is how a re-run banks a clean pass for a fraction of the
-# change. Run via `task test:codex-review`.
+# change. And guards the review guidelines (harmon-init#1530): the table and
+# the file are read from the review's BASE revision, never the working tree;
+# the unconfigured prompt is held to a golden copy byte for byte; and the
+# severity scale's normative statement in docs/review-guidelines.md and the
+# prompt's copy are compared, so the two sites can never disagree (#964).
+# Run via `task test:codex-review`.
 set -euo pipefail
 
 repo="$(git rev-parse --show-toplevel)"
@@ -605,6 +610,316 @@ grep -q "hypothesis the" <<<"$out" ||
 ! grep -q "not carried into the pull request description" <<<"$out" ||
     fail "review prompt still claims a P3 is never deferred — deferral is decided by adjudication, not by the badge: $out"
 
+# ── Review guidelines (harmon-init#1530) ─────────────────────────────────────
+# Everything after STUB-PROMPT: is the prompt codex received, byte for byte.
+prompt_of() {
+    sed -n '/^STUB-PROMPT:/,$p' <<<"$1" | sed '1s/^STUB-PROMPT://'
+}
+# A fresh repository carrying the runner, on main. Callers add the files each
+# case needs and commit; the runner's own bytes are the ones under test.
+guidelines_fixture() {
+    local fixture="$1"
+    mkdir -p "$fixture/scripts/lib" "$fixture/docs"
+    cp "${repo}/scripts/codex-review.sh" "$fixture/scripts/"
+    cp "${repo}/scripts/lib/review-scope.sh" "$fixture/scripts/lib/"
+    cp -R "${repo}/scripts/lib/review-instructions" "$fixture/scripts/lib/"
+    git init -q -b main "$fixture"
+}
+# A stand-in policy reader at a fixture's base revision: prints the JSON its
+# body carries, after proving it was handed the BASE copy of .devflow.toml (a
+# branch copy carries a different marker). Deterministic whatever reader the
+# repository running this test vendors, so every projection path is covered
+# without depending on the pin.
+stub_reader() {
+    local fixture="$1" json="$2"
+    mkdir -p "$fixture/scripts/lib"
+    printf 'export const stub = true\n' >"$fixture/scripts/lib/toml-lite.mjs"
+    cat >"$fixture/scripts/devflow-policy.mjs" <<STUBREADER
+import { readFileSync } from 'node:fs'
+import './lib/toml-lite.mjs'
+const args = process.argv.slice(2)
+if (args[0] !== 'resolve' || !args.includes('--json')) { console.error('stub reader: unexpected arguments', args); process.exit(2) }
+const policy = readFileSync(args[args.indexOf('--policy') + 1], 'utf8')
+if (!policy.includes('BASE-POLICY-MARKER')) { console.error('stub reader: not the base revision policy'); process.exit(1) }
+console.log(JSON.stringify(${json}))
+STUBREADER
+}
+
+echo "==> unconfigured: the prompt is the built-in text, byte for byte (golden)"
+# The clone fixture has no docs/review-guidelines.md and no .devflow.toml at
+# its base, so this is the prompt the runner sent before guidelines existed.
+# A change to this text is a change to every review; it is made here on
+# purpose, never by accident.
+golden_file="${test_tmp}/golden-review-prompt"
+cat >"$golden_file" <<'GOLDEN'
+Review the changes on the current branch relative to base branch 'origin/develop' (the merge-base diff origin/develop...HEAD).
+
+Run a VERIFICATION-CHECKPOINT review of this change: double-check that the
+implementation actually does what it claims, is internally consistent and
+consistent with this repository's existing conventions and docs, handles
+errors and edge cases, and has adequate test coverage (including regression
+tests for anything it fixes). Flag docs the change should have updated.
+Report only material, defensible findings tied to concrete files and lines —
+no style nits. If the change holds up, say so directly.
+
+Label EVERY finding with a priority, as the first token of the finding:
+
+  P0 — a defect that breaks correctness, security, or data integrity in
+       ordinary use, or that breaks an existing contract. Merge-blocking.
+  P1 — a real defect or materially wrong design decision with a plausible
+       trigger. Merge-blocking unless argued down with evidence.
+  P2 — worth knowing, but not merge-blocking: hardening, edge cases behind
+       unlikely preconditions, maintainability, non-critical test gaps.
+  P3 — cosmetic or purely informational: a naming or wording choice that
+       will mislead a reader, an observation with no defect behind it.
+       Never gating. The no-style-nits rule above still binds — P3 is the
+       floor for findings worth stating, not a licence to report nits.
+
+Only P0 and P1 decide whether this review passes. Still report P2s in full —
+they are triaged later, once the pull request is open — but do not let them
+hold the stage open. Do not inflate a P2 to P1 to make it heard, and do not
+withhold or soften a P2 because it is non-gating: a P2 reported here is
+carried into the pull request description, so an unreported one is lost
+outright. The same holds one level down: report a P3 as a P3 rather than
+inflating it to P2 or dropping it for being small. Use these four labels and
+no others — a finding that arrives off this scale, or with no label at all,
+is adjudicated as at least a P2. Every label you apply is a hypothesis the
+reader adjudicates on evidence, P3 included; none of them decides its own
+disposition. If there are no P0 or P1 findings, say so
+explicitly and in those terms.
+
+Authoritative changed-file manifest from git for this scope (status + path;
+cover EVERY entry, including untracked files, collecting the diffs yourself
+with git):
+
+GOLDEN
+printf 'A\tfeature.txt' >>"$golden_file"
+golden="$(cat "$golden_file")"
+out="$(run review --base origin/develop)" || fail "unconfigured review exited non-zero: $out"
+grep -Fq 'Review guidelines: none at' <<<"$out" || fail "unconfigured run did not say no guidelines govern: $out"
+if [ "$(prompt_of "$out")" != "$golden" ]; then
+    diff <(printf '%s\n' "$golden") <(prompt_of "$out") >&2 || true
+    fail "the unconfigured prompt drifted from its golden copy (above); change both deliberately or neither"
+fi
+
+echo "==> the severity scale in docs/review-guidelines.md and in the prompt are the same lines"
+# The file holds the scale's single normative statement (#964); the prompt
+# carries a copy because it is what the reviewer actually reads. Two copies
+# are one too many unless a gate holds them together — this is that gate.
+scale_prompt="$(sed -n '/^  P0 — /,/^$/p' <<<"$golden" | sed '$d')"
+[ "$(wc -l <<<"$scale_prompt")" -eq 10 ] || fail "could not extract the prompt's scale block: $scale_prompt"
+if [ -f "${repo}/docs/review-guidelines.md" ]; then
+    scale_doc="$(awk '/^## Severity scale$/ { s = 1 } s && /^```text$/ { f = 1; next } f && /^```$/ { exit } f' "${repo}/docs/review-guidelines.md")"
+    [ -n "$scale_doc" ] || fail "docs/review-guidelines.md has no fenced text block under '## Severity scale'"
+    if [ "$scale_doc" != "$scale_prompt" ]; then
+        diff <(printf '%s\n' "$scale_doc") <(printf '%s\n' "$scale_prompt") >&2 || true
+        fail "docs/review-guidelines.md's severity scale differs from the prompt's (above): edit both in the same commit"
+    fi
+else
+    echo "    (docs/review-guidelines.md is absent here; nothing to compare the prompt's scale against)"
+fi
+
+echo "==> guidelines come from the base revision: worktree and branch edits do not reach a --base review"
+conv="${test_tmp}/guidelines-conventional"
+guidelines_fixture "$conv"
+printf 'BASE-GUIDELINES-MARKER\n' >"$conv/docs/review-guidelines.md"
+printf 'old\n' >"$conv/src.txt"
+git -C "$conv" add -A
+git_t -C "$conv" commit -qm 'test: base with guidelines'
+conv_base="$(git -C "$conv" rev-parse HEAD)"
+git -C "$conv" checkout -qb feature
+printf 'HEAD-GUIDELINES-MARKER\n' >"$conv/docs/review-guidelines.md"
+printf 'new\n' >"$conv/src.txt"
+git -C "$conv" add -A
+git_t -C "$conv" commit -qm 'test: branch rewrites the guidelines'
+conv_head="$(git -C "$conv" rev-parse HEAD)"
+printf 'WORKTREE-GUIDELINES-MARKER\n' >"$conv/docs/review-guidelines.md"
+out="$(cd "$conv" && ./scripts/codex-review.sh review --base main 2>&1)" || fail "--base review with guidelines failed: $out"
+grep -Fq "Review guidelines: docs/review-guidelines.md at $(git -C "$conv" rev-parse --short main)" <<<"$out" ||
+    fail "the run did not name the base revision's guidelines: $out"
+prompt="$(prompt_of "$out")"
+grep -Fq 'BASE-GUIDELINES-MARKER' <<<"$prompt" || fail "base-revision guidelines missing from the --base prompt: $prompt"
+! grep -Fq 'HEAD-GUIDELINES-MARKER' <<<"$prompt" || fail "the branch's rewritten guidelines reached the --base prompt: $prompt"
+! grep -Fq 'WORKTREE-GUIDELINES-MARKER' <<<"$prompt" || fail "a working-tree edit to the guidelines reached the --base prompt: $prompt"
+grep -Fq "Repository review guidelines (docs/review-guidelines.md, read at $(git -C "$conv" rev-parse --short main)). Apply them throughout this review:" <<<"$prompt" ||
+    fail "the guidelines block does not state its provenance: $prompt"
+# Assembly order: preamble, guidelines, scale, manifest.
+awk '/VERIFICATION-CHECKPOINT/ { a = NR } /BASE-GUIDELINES-MARKER/ { b = NR } /^Label EVERY finding/ { c = NR } /^Authoritative changed-file manifest/ { d = NR }
+    END { exit !(a && b && c && d && a < b && b < c && c < d) }' <<<"$prompt" ||
+    fail "prompt is not assembled as preamble, guidelines, scale, manifest: $prompt"
+
+echo "==> --uncommitted reads HEAD's guidelines, --commit the parent's, the default union the merge base's"
+out="$(cd "$conv" && ./scripts/codex-review.sh review --uncommitted 2>&1)" || fail "--uncommitted review failed: $out"
+prompt="$(prompt_of "$out")"
+grep -Fq 'HEAD-GUIDELINES-MARKER' <<<"$prompt" || fail "--uncommitted did not read HEAD's guidelines: $prompt"
+! grep -Fq 'WORKTREE-GUIDELINES-MARKER' <<<"$prompt" || fail "--uncommitted read the working tree's guidelines: $prompt"
+out="$(cd "$conv" && ./scripts/codex-review.sh review --commit "$conv_head" 2>&1)" || fail "--commit review failed: $out"
+prompt="$(prompt_of "$out")"
+grep -Fq 'BASE-GUIDELINES-MARKER' <<<"$prompt" || fail "--commit did not read the parent's guidelines: $prompt"
+! grep -Fq 'HEAD-GUIDELINES-MARKER' <<<"$prompt" || fail "--commit read the reviewed commit's own guidelines: $prompt"
+out="$(cd "$conv" && ./scripts/codex-review.sh challenge 2>&1)" || fail "default-scope challenge failed: $out"
+grep -q "Reviewing branch changes against main AND uncommitted work" <<<"$out" || fail "default scope did not take both halves: $out"
+prompt="$(prompt_of "$out")"
+grep -Fq 'BASE-GUIDELINES-MARKER' <<<"$prompt" || fail "the default union did not read the merge base's guidelines: $prompt"
+! grep -Fq 'WORKTREE-GUIDELINES-MARKER' <<<"$prompt" || fail "the default union read the working tree's guidelines: $prompt"
+out="$(cd "$conv" && ./scripts/codex-review.sh review --commit "$conv_base" 2>&1)" || fail "--commit on the root commit failed: $out"
+grep -Fq 'no base revision for this scope; built-in instructions only' <<<"$out" || fail "a parentless commit did not fall back to the built-in instructions: $out"
+! grep -Fq 'Repository review guidelines' <<<"$(prompt_of "$out")" || fail "a parentless commit still carried guidelines: $out"
+
+echo "==> [review_guidelines].file at the base revision governs: not the branch's table, not the conventional path"
+pol="${test_tmp}/guidelines-policied"
+guidelines_fixture "$pol"
+printf '# BASE-POLICY-MARKER\n' >"$pol/.devflow.toml"
+stub_reader "$pol" '{ rigor: { level: "standard" }, review_guidelines: { file: "docs/custom-guidelines.md", text: null, challenge_focus: "CONFIGURED-CHALLENGE-FOCUS", review_focus: "CONFIGURED-REVIEW-FOCUS" } }'
+printf 'CUSTOM-GUIDELINES-MARKER\n' >"$pol/docs/custom-guidelines.md"
+printf 'CONVENTIONAL-GUIDELINES-MARKER\n' >"$pol/docs/review-guidelines.md"
+git -C "$pol" add -A
+git_t -C "$pol" commit -qm 'test: base policy names custom guidelines'
+git -C "$pol" checkout -qb feature
+printf '# BRANCH-POLICY-MARKER\n' >"$pol/.devflow.toml"
+stub_reader "$pol" '{ rigor: { level: "standard" }, review_guidelines: { file: "docs/branch-guidelines.md", text: null, challenge_focus: "BRANCH-FOCUS", review_focus: "BRANCH-FOCUS" } }'
+printf 'BRANCH-GUIDELINES-MARKER\n' >"$pol/docs/branch-guidelines.md"
+git -C "$pol" add -A
+git_t -C "$pol" commit -qm 'test: branch points the table at its own file'
+out="$(cd "$pol" && ./scripts/codex-review.sh challenge --base main 2>&1)" || fail "challenge with a configured table failed: $out"
+grep -Fq "Review guidelines: docs/custom-guidelines.md at $(git -C "$pol" rev-parse --short main)" <<<"$out" ||
+    fail "the run did not name the configured file at the base revision: $out"
+prompt="$(prompt_of "$out")"
+grep -Fq 'CUSTOM-GUIDELINES-MARKER' <<<"$prompt" || fail "the configured guidelines file is missing from the prompt: $prompt"
+! grep -Fq 'CONVENTIONAL-GUIDELINES-MARKER' <<<"$prompt" || fail "the conventional path was used although the table names another file: $prompt"
+! grep -Fq 'BRANCH-GUIDELINES-MARKER' <<<"$prompt" || fail "the branch's own table chose the guidelines: $prompt"
+grep -Fq 'Default focus from the repository'"'"'s review policy (.devflow.toml [review_guidelines].challenge_focus; weight it heavily): CONFIGURED-CHALLENGE-FOCUS' <<<"$prompt" ||
+    fail "the configured challenge focus is missing from a focus-less challenge: $prompt"
+! grep -Fq 'CONFIGURED-REVIEW-FOCUS' <<<"$prompt" || fail "the review focus leaked into a challenge: $prompt"
+! grep -Fq 'BRANCH-FOCUS' <<<"$prompt" || fail "the branch's focus reached the prompt: $prompt"
+out="$(cd "$pol" && ./scripts/codex-review.sh review --base main 2>&1)" || fail "review with a configured table failed: $out"
+prompt="$(prompt_of "$out")"
+grep -Fq '[review_guidelines].review_focus; weight it heavily): CONFIGURED-REVIEW-FOCUS' <<<"$prompt" ||
+    fail "the configured review focus is missing from a focus-less review: $prompt"
+! grep -Fq 'CONFIGURED-CHALLENGE-FOCUS' <<<"$prompt" || fail "the challenge focus leaked into a review: $prompt"
+
+echo "==> CLI focus text outranks the configured default focus"
+out="$(cd "$pol" && ./scripts/codex-review.sh review --base main watch the hooks 2>&1)" || fail "review with CLI focus failed: $out"
+prompt="$(prompt_of "$out")"
+grep -Fq 'Additional focus from the invoker (weight it heavily): watch the hooks' <<<"$prompt" || fail "CLI focus missing: $prompt"
+! grep -Fq 'Default focus from the repository' <<<"$prompt" || fail "the configured focus was appended beside the CLI focus: $prompt"
+! grep -Fq 'CONFIGURED-REVIEW-FOCUS' <<<"$prompt" || fail "the configured focus text leaked beside the CLI focus: $prompt"
+
+echo "==> [review_guidelines].text is used inline, over the conventional file"
+inl="${test_tmp}/guidelines-inline"
+guidelines_fixture "$inl"
+printf '# BASE-POLICY-MARKER\n' >"$inl/.devflow.toml"
+stub_reader "$inl" '{ rigor: { level: "standard" }, review_guidelines: { file: null, text: "INLINE-GUIDELINES-MARKER\nsecond inline line", challenge_focus: null, review_focus: null } }'
+printf 'CONVENTIONAL-GUIDELINES-MARKER\n' >"$inl/docs/review-guidelines.md"
+git -C "$inl" add -A
+git_t -C "$inl" commit -qm 'test: inline guidelines'
+git -C "$inl" checkout -qb feature
+printf 'change\n' >"$inl/src.txt"
+git -C "$inl" add -A
+git_t -C "$inl" commit -qm 'test: work'
+out="$(cd "$inl" && ./scripts/codex-review.sh review --base main 2>&1)" || fail "review with inline guidelines failed: $out"
+grep -Fq 'Review guidelines: .devflow.toml [review_guidelines].text at' <<<"$out" || fail "the run did not name the inline source: $out"
+prompt="$(prompt_of "$out")"
+grep -Fq 'Repository review guidelines (.devflow.toml [review_guidelines].text, read at' <<<"$prompt" || fail "inline guidelines block missing its provenance: $prompt"
+grep -Fq 'INLINE-GUIDELINES-MARKER' <<<"$prompt" && grep -Fq 'second inline line' <<<"$prompt" || fail "inline guidelines text missing or truncated: $prompt"
+! grep -Fq 'CONVENTIONAL-GUIDELINES-MARKER' <<<"$prompt" || fail "the conventional file was used although text is configured: $prompt"
+! grep -Fq 'Default focus' <<<"$prompt" || fail "a null focus produced a default-focus block: $prompt"
+
+echo "==> a reader that does not project the table, or refuses the policy, falls back to the conventional path"
+for variant in unsupported refusing; do
+    fb="${test_tmp}/guidelines-${variant}"
+    guidelines_fixture "$fb"
+    printf '# BASE-POLICY-MARKER\n' >"$fb/.devflow.toml"
+    if [ "$variant" = unsupported ]; then
+        stub_reader "$fb" '{ rigor: { level: "standard" } }'
+    else
+        stub_reader "$fb" '{}'
+        printf '# BRANCH-POLICY-MARKER (not the base copy, so the stub refuses with exit 1)\n' >"$fb/.devflow.toml"
+    fi
+    printf 'CONVENTIONAL-GUIDELINES-MARKER\n' >"$fb/docs/review-guidelines.md"
+    git -C "$fb" add -A
+    git_t -C "$fb" commit -qm 'test: base'
+    git -C "$fb" checkout -qb feature
+    printf 'change\n' >"$fb/src.txt"
+    git -C "$fb" add -A
+    git_t -C "$fb" commit -qm 'test: work'
+    out="$(cd "$fb" && ./scripts/codex-review.sh review --base main 2>&1)" || fail "review with a ${variant} reader failed: $out"
+    if [ "$variant" = refusing ]; then
+        grep -Fq 'refused .devflow.toml (exit 1); using the conventional path' <<<"$out" || fail "a refusing reader was not reported: $out"
+        grep -Fq 'stub reader: not the base revision policy' <<<"$out" || fail "the stderr of the refusing reader was not surfaced: $out"
+    fi
+    grep -Fq 'Review guidelines: docs/review-guidelines.md at' <<<"$out" || fail "the ${variant} reader did not fall back to the conventional path: $out"
+    grep -Fq 'CONVENTIONAL-GUIDELINES-MARKER' <<<"$(prompt_of "$out")" || fail "conventional guidelines missing after the ${variant} reader: $out"
+done
+
+echo "==> a configured file missing at the base revision refuses before codex is invoked"
+mis="${test_tmp}/guidelines-missing"
+guidelines_fixture "$mis"
+printf '# BASE-POLICY-MARKER\n' >"$mis/.devflow.toml"
+stub_reader "$mis" '{ rigor: { level: "standard" }, review_guidelines: { file: "docs/nowhere.md", text: null, challenge_focus: null, review_focus: null } }'
+git -C "$mis" add -A
+git_t -C "$mis" commit -qm 'test: base names a missing file'
+git -C "$mis" checkout -qb feature
+printf 'change\n' >"$mis/src.txt"
+git -C "$mis" add -A
+git_t -C "$mis" commit -qm 'test: work'
+: >"$stub_argv"
+if out="$(cd "$mis" && ./scripts/codex-review.sh review --base main 2>&1)"; then
+    fail "a configured guidelines file missing at the base revision was accepted: $out"
+fi
+grep -Fq "[review_guidelines].file names 'docs/nowhere.md', which does not exist at" <<<"$out" || fail "missing-file refusal did not name the file and revision: $out"
+[ ! -s "$stub_argv" ] || fail "codex was invoked despite the missing guidelines file: $(cat "$stub_argv")"
+
+# The repository's REAL reader, where one is vendored: prove the runner can
+# drive it from a base revision. A reader that projects the table must select
+# the configured file; one that predates it (an older harmon-devkit pin) must
+# leave the conventional path in force. Either is the documented behaviour.
+real_reader=""
+for candidate in scripts/devflow-policy.mjs \
+    .claude/skills/dev-flow-support/assets/devflow-policy.mjs \
+    .agents/skills/dev-flow-support/assets/devflow-policy.mjs; do
+    if [ -f "${repo}/${candidate}" ] && [ -f "${repo}/${candidate%/*}/lib/toml-lite.mjs" ]; then
+        real_reader="$candidate"
+        break
+    fi
+done
+if [ -n "$real_reader" ] && [ -f "${repo}/.devflow.toml" ] &&
+    grep -q '^file  *= "docs/review-guidelines.md"' "${repo}/.devflow.toml"; then
+    echo "==> the vendored policy reader (${real_reader}) is driven from the base revision"
+    rr="${test_tmp}/guidelines-real-reader"
+    guidelines_fixture "$rr"
+    mkdir -p "$rr/${real_reader%/*}/lib"
+    cp "${repo}/${real_reader}" "$rr/${real_reader}"
+    cp "${repo}/${real_reader%/*}/lib/toml-lite.mjs" "$rr/${real_reader%/*}/lib/"
+    sed 's|^file  *= "docs/review-guidelines.md"|file = "docs/custom-guidelines.md"|' "${repo}/.devflow.toml" >"$rr/.devflow.toml"
+    printf 'CUSTOM-GUIDELINES-MARKER\n' >"$rr/docs/custom-guidelines.md"
+    printf 'CONVENTIONAL-GUIDELINES-MARKER\n' >"$rr/docs/review-guidelines.md"
+    git -C "$rr" add -A
+    git_t -C "$rr" commit -qm 'test: base with the real reader'
+    git -C "$rr" checkout -qb feature
+    printf 'change\n' >"$rr/src.txt"
+    git -C "$rr" add -A
+    git_t -C "$rr" commit -qm 'test: work'
+    # Exit 3 (no registry offered, so cross-validation is indeterminate) still
+    # prints the projection; capture first so pipefail does not read it as
+    # "no projection".
+    projection="$(node "${repo}/${real_reader}" resolve --policy "$rr/.devflow.toml" --json 2>/dev/null || true)"
+    if grep -q '"review_guidelines"' <<<"$projection"; then
+        expect=CUSTOM-GUIDELINES-MARKER
+        reject=CONVENTIONAL-GUIDELINES-MARKER
+    else
+        echo "    (this reader predates [review_guidelines]; expecting the conventional-path fallback)"
+        expect=CONVENTIONAL-GUIDELINES-MARKER
+        reject=CUSTOM-GUIDELINES-MARKER
+    fi
+    out="$(cd "$rr" && ./scripts/codex-review.sh review --base main 2>&1)" || fail "review with the real reader failed: $out"
+    prompt="$(prompt_of "$out")"
+    grep -Fq "$expect" <<<"$prompt" || fail "real reader: expected ${expect} in the prompt: $out"
+    ! grep -Fq "$reject" <<<"$prompt" || fail "real reader: ${reject} should not be in the prompt: $out"
+else
+    echo "    (no vendored policy reader beside a shipped [review_guidelines] table; real-reader case skipped)"
+fi
+
 echo "==> --base warns when the ref lags an upstream HEAD already contains"
 # The reported bug: `--base main` on a checkout whose local main trails
 # origin/main reviews the already-merged commits as if this branch introduced
@@ -1095,4 +1410,4 @@ if out="$(CLAUDE_CONFIG_DIR="${fake_claude}2" CLAUDE_PLUGIN_DATA="${test_tmp}/pl
 fi
 grep -q "non-interactive" <<<"$out" || fail "missing non-interactive disable refusal message: $out"
 
-echo "codex-review + codex-gate guards OK ($((45 + standardize_cases)) cases)"
+echo "codex-review + codex-gate guards OK ($((56 + standardize_cases)) cases)"
