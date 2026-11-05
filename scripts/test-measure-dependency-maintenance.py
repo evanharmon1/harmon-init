@@ -6,6 +6,7 @@ import pathlib
 import json
 import io
 import subprocess
+import sys
 from unittest.mock import patch
 from contextlib import redirect_stdout, redirect_stderr
 import unittest
@@ -14,7 +15,12 @@ spec = importlib.util.spec_from_file_location(
     "measure", pathlib.Path(__file__).with_name("measure-dependency-maintenance.py")
 )
 measure = importlib.util.module_from_spec(spec)
-spec.loader.exec_module(measure)
+previous_bytecode_setting = sys.dont_write_bytecode
+try:
+    sys.dont_write_bytecode = True
+    spec.loader.exec_module(measure)
+finally:
+    sys.dont_write_bytecode = previous_bytecode_setting
 
 
 class MeasureTests(unittest.TestCase):
@@ -44,17 +50,34 @@ class MeasureTests(unittest.TestCase):
 
     def test_cli_errors(self):
         base = ["measure", "--repo", "a/b", "--cycle", "oct", "--start", "2026-10-01", "--end", "2026-11-01", "--pr", "12"]
-        for flag, value in [("--start", "2026-10-01T00:00:00+02:00"), ("--end", "2026-11-01T00:00:00Z")]:
+        for flag, value, diagnostic in [("--start", "2026-10-32", "day"), ("--start", "2026-10-01T00:00:00+02:00", "Invalid isoformat string"), ("--end", "2026-11-01T00:00:00Z", "Invalid isoformat string")]:
             args = base.copy()
             args[args.index(flag) + 1] = value
-            with self.subTest(flag=flag), patch("sys.argv", args), redirect_stderr(io.StringIO()), redirect_stdout(io.StringIO()) as out:
+            with self.subTest(flag=flag, value=value), patch("sys.argv", args), \
+                 patch.object(measure.subprocess, "run", side_effect=AssertionError("subprocess forbidden")) as run, \
+                 redirect_stderr(io.StringIO()) as err, redirect_stdout(io.StringIO()) as out:
                 self.assertEqual(measure.main(), 1)
                 self.assertEqual(out.getvalue(), "")
+                self.assertIn("Unable to measure:", err.getvalue())
+                self.assertIn(diagnostic, err.getvalue())
+                run.assert_not_called()
         error = subprocess.CalledProcessError(1, ["gh"], stderr="access denied")
         with patch("sys.argv", base), patch.object(measure.subprocess, "run", side_effect=error), redirect_stderr(io.StringIO()) as err, redirect_stdout(io.StringIO()) as out:
             self.assertEqual(measure.main(), 1)
             self.assertIn("access denied", err.getvalue())
             self.assertEqual(out.getvalue(), "")
+
+    def test_malformed_pr_response(self):
+        args = ["measure", "--repo", "a/b", "--cycle", "oct", "--start", "2026-10-01", "--end", "2026-11-01", "--pr", "12"]
+        for value in ([], None, "invalid", 42):
+            result = subprocess.CompletedProcess(["gh"], 0, stdout=json.dumps(value))
+            with self.subTest(value=value), patch("sys.argv", args), \
+                 patch.object(measure.subprocess, "run", return_value=result) as run, \
+                 redirect_stderr(io.StringIO()) as err, redirect_stdout(io.StringIO()) as out:
+                self.assertEqual(measure.main(), 1)
+                self.assertEqual(out.getvalue(), "")
+                self.assertIn("PR #12 response must be a JSON object", err.getvalue())
+                self.assertEqual(run.call_count, 1)
 
     def test_main_historical_cohort(self):
         pr = {"created_at": "2026-09-30T00:00:00Z", "merged_at": "2026-10-15T00:00:00Z"}

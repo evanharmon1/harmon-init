@@ -3,9 +3,10 @@
 Calm, repeatable how-tos read *in advance* (the crisis counterpart is
 [runbooks/](../runbooks/index.md)).
 
-- [dependency-maintenance.md](dependency-maintenance.md) — measure dependency update maintenance proxies across cycles.
 - [onboarding.md](onboarding.md) — get a new dev or agent productive: setup,
   where things live, the dev loop. The human entry procedure.
+- [dependency-maintenance.md](dependency-maintenance.md) — measure dependency
+  update maintenance proxies across cycles.
 - [deploying.md](deploying.md) — how to cut/promote a release (the calm
   procedure); cross-links a rollback runbook for when it goes wrong.
 - [troubleshooting.md](troubleshooting.md) — symptom → cause → fix for **dev**
