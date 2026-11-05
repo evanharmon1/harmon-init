@@ -8,12 +8,14 @@ set -euo pipefail
 usage() {
     cat >&2 <<'EOF'
 Usage:
+  dev-flow-monitor.sh check-assets [--repo-root DIR]
   dev-flow-monitor.sh state-path --run-id ID [--repo-root DIR]
   dev-flow-monitor.sh active-path --branch BRANCH [--repo-root DIR]
   dev-flow-monitor.sh check-activation --branch BRANCH --run-id ID [--repo-root DIR]
   dev-flow-monitor.sh retire --run-id ID [--repo-root DIR]
   dev-flow-monitor.sh cancel --state FILE --run-id ID --event ID \
-    --observed FILE --reason TEXT [--repo-root DIR]
+    --observed FILE --reason TEXT [--repo-root DIR] \
+    [--writer feature-owner --active-state FILE --branch BRANCH --generation N]
   dev-flow-monitor.sh prune [--dry-run] [--repo-root DIR]
   dev-flow-monitor.sh orchestrator-dir --slate-id ID --run-id ID --nonce NONCE \
     [--repo-root DIR]
@@ -53,7 +55,8 @@ Agent-run reservations durably enforce the run-wide max_agent_runs ceiling;
 an exact event re-arm adopts the already-spent slot without consuming another.
 `reconcile` prints adopt, retry, or block and advances the event cursor only
 for an adopted landed action. An operator may cancel an ended run's reserved
-action after recording an absent observation and a reason. PR merges are never
+action after recording an absent observation and a reason. A live run's owner
+may cancel only a push, supplying its complete active identity. PR merges are never
 reservable.
 EOF
     exit 2
@@ -366,6 +369,80 @@ while [ "$#" -gt 0 ]; do
     *) usage ;;
     esac
 done
+
+# One read-only predicate shared by activation, dispatch, provisioning and promotion.
+check_asset_checkout() {
+    local assets_dir
+    assets_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+    node --input-type=module - "$assets_dir" "$repo_root" <<'NODE'
+import { execFileSync } from 'node:child_process'
+import { existsSync, readFileSync, realpathSync } from 'node:fs'
+import { dirname, join, relative, isAbsolute } from 'node:path'
+const [assets, target] = process.argv.slice(2)
+const git = (cwd, ...args) => execFileSync('git', ['--no-replace-objects', '-C', cwd, ...args],
+  { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
+const optionalGit = (cwd, ...args) => { try { return git(cwd, ...args) } catch { return '' } }
+const ref = text => text.match(/^\s*(?:#\s*)?ref:\s*["']?([^\s"'#()]+)/m)?.[1] || ''
+try {
+  const common = cwd => realpathSync(git(cwd, 'rev-parse', '--path-format=absolute', '--git-common-dir'))
+  const targetRoot = git(target, 'rev-parse', '--show-toplevel')
+  const assetRoot = optionalGit(assets, 'rev-parse', '--show-toplevel')
+  const read = file => existsSync(file) ? readFileSync(file, 'utf8') : ''
+  const rootPin = root => ref(read(join(root, '.SKILLS_PROVENANCE'))) || ref(read(join(root, '.skills-sync.yaml')))
+  const packageProvenance = join(dirname(dirname(assets)), '.SKILLS_PROVENANCE')
+  const sourceRelative = assetRoot ? relative(join(assetRoot, 'ai/skills'), assets) : '..'
+  const sourceOwned = assetRoot && sourceRelative !== '..' && !sourceRelative.startsWith('../') && !isAbsolute(sourceRelative) &&
+    !existsSync(packageProvenance) && !existsSync(join(assetRoot, '.SKILLS_PROVENANCE'))
+  // A source tree's dogfood manifest is not the identity of its executing tools.
+  const assetPin = ref(read(packageProvenance)) || (assetRoot ? ref(read(join(assetRoot, '.SKILLS_PROVENANCE'))) ||
+    (sourceOwned ? '' : ref(read(join(assetRoot, '.skills-sync.yaml')))) : '')
+  const defaultState = root => {
+    const symbolic = optionalGit(root, 'symbolic-ref', 'refs/remotes/origin/HEAD')
+    const defaultRef = symbolic || 'refs/remotes/origin/main'
+    if (!defaultRef.startsWith('refs/remotes/origin/')) throw Error('cannot resolve origin default branch')
+    const tip = git(root, 'rev-parse', `${defaultRef}^{commit}`)
+    return { defaultRef, tip, pin: ref(optionalGit(root, 'show', `${tip}:.skills-sync.yaml`)) }
+  }
+  const quote = value => "'" + value.replaceAll("'", "'\\''") + "'"
+  const refuse = (root, state, head, pin, expectedPin) => {
+    throw Error(`stale asset checkout ${root}: HEAD ${head}, default ${state.tip}; skills pin ${pin || 'unpinned'}, default pin ${expectedPin || 'unpinned'}. ` +
+      `Run: git -C ${quote(root)} fetch origin && git -C ${quote(root)} merge --ff-only origin/${state.defaultRef.slice('refs/remotes/origin/'.length)}`)
+  }
+  const checkCheckout = (root, state, pin, checkPin = true) => {
+    const head = git(root, 'rev-parse', 'HEAD^{commit}')
+    if (existsSync(join(common(root), 'info/grafts'))) throw Error('grafted history cannot prove checkout freshness')
+    if (Number(git(root, 'rev-list', '--count', `${head}..${state.tip}`)) > 0 || (checkPin && state.pin && pin !== state.pin)) {
+      refuse(root, state, head, pin, state.pin)
+    }
+  }
+  const targetDefault = defaultState(targetRoot)
+  const targetPin = rootPin(targetRoot)
+  const sameClone = Boolean(assetRoot && common(assetRoot) === common(targetRoot))
+  if (assetRoot) {
+    const assetDefault = sameClone ? targetDefault : defaultState(assetRoot)
+    const pin = assetPin || (!sourceOwned && sameClone ? targetPin : '')
+    checkCheckout(assetRoot, assetDefault, pin, !sourceOwned || Boolean(assetPin))
+  } else if (!assetPin) {
+    checkCheckout(targetRoot, targetDefault, targetPin)
+  }
+  const expectedPin = targetDefault.pin || (sourceOwned && sameClone ? '' : targetPin)
+  if (!sourceOwned && expectedPin && (assetPin || !sameClone) && assetPin !== expectedPin) {
+    refuse(assetRoot || dirname(dirname(assets)), targetDefault,
+      assetRoot ? git(assetRoot, 'rev-parse', 'HEAD^{commit}') : 'extracted', assetPin, expectedPin)
+  }
+} catch (error) {
+  console.error(`BLOCKER: ${error.message}`)
+  process.exitCode = 2
+}
+NODE
+}
+
+case "$command_name" in
+check-assets | activate | reserve-agent-run | reserve)
+    check_asset_checkout || exit 2
+    [ "$command_name" != check-assets ] || exit 0
+    ;;
+esac
 
 validate_run_id() {
     [[ "$run_id" =~ ^[A-Za-z0-9._-]+$ ]] && [ "$run_id" != "." ] && [ "$run_id" != ".." ] ||
@@ -690,7 +767,7 @@ retire_active_pointer() {
 
 cancel_reserved_action() {
     local binding_branch pointer reservation reservation_state
-    local expected_action expected_head_value status previous_pending tmp
+    local expected_action expected_head_value status previous_pending tmp cancel_mode
     validate_run_id
     [ -n "$state" ] && [ -n "$event" ] && [ -n "$observed" ] && [ -n "$reason" ] || usage
     [[ "$reason" =~ [^[:space:]] ]] || die "cancellation reason must contain non-whitespace text"
@@ -698,19 +775,34 @@ cancel_reserved_action() {
     [ -f "$observed" ] && [ ! -L "$observed" ] || die "observation is not a regular file: $observed"
     [ "$state" = "$(state_path)" ] || die "monitor state path is not canonical for this run"
     binding_branch="$(run_branch_binding)"
+    cancel_mode=cancel
+    # Supplying any live identity field opts into the full authenticated path;
+    # incomplete or stale identities never fall back to terminal cancellation.
+    if [ -n "$writer$active_state$branch$generation" ]; then
+        [ "$writer" = feature-owner ] && [ "$branch" = "$binding_branch" ] &&
+            [[ "$generation" =~ ^[1-9][0-9]*$ ]] || die "live cancellation requires the complete feature-owner identity"
+        cancel_mode=live-cancel
+    fi
     branch="$binding_branch"
     pointer="$(active_path)"
+    if [ "$cancel_mode" = live-cancel ]; then
+        [ "$active_state" = "$pointer" ] || die "active state path is not canonical for this branch"
+    fi
     [ -f "$pointer" ] && [ ! -L "$pointer" ] ||
         die "cancel refused: run $run_id has no active pointer to lock; inspect the run state"
     acquire_lock "$pointer"
     [ -f "$pointer" ] && [ ! -L "$pointer" ] ||
         die "cancel refused: active pointer for run $run_id disappeared before the lock was acquired"
-    if ! pointer_eligibility "$pointer" "${pointer##*/}" "$run_id" cancel; then
+    if ! pointer_eligibility "$pointer" "${pointer##*/}" "$run_id" "$cancel_mode"; then
         if [ "$pointer_eligibility_reason" = "run record is invalid or still open" ]; then
             die "cancel refused: run $run_id is live or its run.json is not a valid terminal record"
         fi
         [ -n "$pointer_eligibility_reason" ] || pointer_eligibility_reason="active pointer does not match run binding"
         die "cancel refused: $pointer_eligibility_reason"
+    fi
+    if [ "$cancel_mode" = live-cancel ]; then
+        [ "$generation" = "$pointer_eligibility_generation" ] || die "run is no longer active for this branch generation"
+        [ -z "$pointer_eligibility_outcome" ] || die "live cancellation requires an open run"
     fi
     [ -f "$state" ] && [ ! -L "$state" ] || die "monitor state is not a regular file: $state"
     jq -e --arg event "$event" '[.actions[] | select(.event == $event)] | length == 1' \
@@ -718,6 +810,9 @@ cancel_reserved_action() {
     reservation="$(jq -c --arg event "$event" '.actions[] | select(.event == $event)' "$state")"
     reservation_state="$(jq -r '.state' <<<"$reservation")"
     expected_action="$(jq -r '.action' <<<"$reservation")"
+    if [ "$cancel_mode" = live-cancel ]; then
+        [ "$expected_action" = push ] || die "live cancellation is permitted only for push reservations"
+    fi
     expected_head_value="$(jq -r '.expected_head' <<<"$reservation")"
     case "$reservation_state" in
     reserved) ;;
@@ -752,7 +847,7 @@ cancel_reserved_action() {
         else . end)
     ' "$state" >"$tmp"
     mv "$tmp" "$state"
-    printf 'cancelled reservation %s for ended run %s: %s\n' "$event" "$run_id" "$reason"
+    printf 'cancelled reservation %s for run %s: %s\n' "$event" "$run_id" "$reason"
 }
 
 skip_prune_entry() {
@@ -811,7 +906,7 @@ prune_active_pointers() {
     fi
     shopt -s nullglob dotglob
     local entries=("$active_dir"/*)
-    for entry in "${entries[@]}"; do
+    for entry in "${entries[@]+"${entries[@]}"}"; do
         name="${entry##*/}"
         if [[ "$name" == *.json ]]; then
             prune_pointer "$entry" "$name"
@@ -915,14 +1010,35 @@ if [ "$command_name" = "activate" ]; then
     git -C "$repo_root" show "${registry_revision}:agent-registry.json" >/dev/null 2>&1 ||
         die "could not read agent-registry.json at the kickoff-pinned revision"
     [ "$active_state" = "$(active_path)" ] || die "active state path is not canonical for this branch"
+    target_run_record="$(dirname "$(state_path)")/run.json"
+    [ -f "$target_run_record" ] ||
+        die "activation refused: run $run_id lacks a run record with dispatch admission; initialize it first"
+    validate_run_record "$run_id" "$target_run_record" activation ||
+        die "activation refused: $run_record_reason"
+    [ -z "$run_record_outcome" ] ||
+        die "activation refused: target run $run_id has already ended (outcome $run_record_outcome)"
     mkdir -p "$(dirname "$active_state")"
     acquire_lock "$active_state"
-    target_run_record="$(dirname "$(state_path)")/run.json"
-    if [ -e "$target_run_record" ]; then
-        validate_run_record "$run_id" "$target_run_record" activation ||
-            die "activation refused: $run_record_reason"
-        [ -z "$run_record_outcome" ] ||
-            die "activation refused: target run $run_id has already ended (outcome $run_record_outcome)"
+    [ -f "$target_run_record" ] || die "activation refused: run $run_id lacks a run record with dispatch admission; initialize it first"
+    validate_run_record "$run_id" "$target_run_record" activation ||
+        die "activation refused: $run_record_reason"
+    [ -z "$run_record_outcome" ] ||
+        die "activation refused: target run $run_id has already ended (outcome $run_record_outcome)"
+    # Solo initialization owns a separate single-lane slate and no admission.
+    owner_slate_file="$(dirname "$target_run_record")/owner-slate"
+    [ -f "$owner_slate_file" ] || die "activation refused: run $run_id lacks an owner slate for dispatch admission"
+    owner_slate="$(cat "$owner_slate_file")"
+    [ -n "$owner_slate" ] || die "activation refused: run $run_id lacks an owner slate for dispatch admission"
+    if [ "$owner_slate" != "solo-$run_id" ]; then
+        jq -e --arg owner "$owner_slate" '
+            .dispatch_admission |
+            type == "object" and (keys == ["at", "in_flight", "slate", "working"]) and
+            (.slate | type == "string" and length > 0 and . == $owner) and
+            (.working | type == "number" and . >= 1 and floor == .) and
+            (.in_flight | type == "number" and . >= 1 and floor == .) and
+            (.at | type == "string" and test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\\.[0-9]+)?Z$"))
+        ' "$target_run_record" >/dev/null 2>&1 ||
+            die "activation refused: run $run_id lacks a valid dispatch admission matching its owner slate; retire the legacy run (reconcile its events and prune its active pointer if required), then provision a replacement run"
     fi
     if [ -e "$active_state" ]; then
         # Re-arm after a crash that landed the activation: adopt the exact

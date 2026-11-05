@@ -36,7 +36,22 @@
       "additionalProperties": false,
       "required": ["base_sha", "policy", "dispatcher", "issues", "overlaps", "waves", "lanes"],
       "properties": {
+        "repo": { "$ref": "#/$defs/repository" },
         "base_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "repository_bases": {
+          "description": "Exactly one base for every foreign repository with issues, including done issues; initialized on first entry and updated only by base-move.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["repo", "base_sha"],
+            "properties": {
+              "repo": { "$ref": "#/$defs/repository" },
+              "base_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" }
+            }
+          }
+        },
+        "input": { "$ref": "#/$defs/slateInput" },
         "policy": { "$ref": "#/$defs/resolvedPolicy" },
         "lane_profiles": {
           "type": "array",
@@ -69,6 +84,7 @@
             "additionalProperties": false,
             "required": ["number", "title", "url", "verdict", "candidate_files", "blocked_by"],
             "properties": {
+              "repo": { "$ref": "#/$defs/repository" },
               "number": { "type": "integer", "minimum": 1 },
               "title": { "type": "string", "minLength": 1 },
               "url": { "type": "string", "minLength": 1 },
@@ -97,6 +113,7 @@
             "additionalProperties": false,
             "required": ["issue", "pr"],
             "properties": {
+              "repo": { "$ref": "#/$defs/repository" },
               "issue": { "type": "integer", "minimum": 1 },
               "pr": { "type": "integer", "minimum": 1 }
             }
@@ -109,6 +126,7 @@
             "additionalProperties": false,
             "required": ["issue_a", "issue_b", "paths", "resolution", "merge_dependency"],
             "properties": {
+              "repo": { "$ref": "#/$defs/repository" },
               "issue_a": { "type": "integer", "minimum": 1 },
               "issue_b": { "type": "integer", "minimum": 1 },
               "paths": {
@@ -144,7 +162,27 @@
               "issues": {
                 "type": "array",
                 "minItems": 1,
-                "items": { "type": "integer", "minimum": 1 }
+                "items": { "$ref": "#/$defs/issueReference" }
+              }
+            }
+          }
+        },
+        "retained_lanes": {
+          "description": "Sessions retained after handoff. Pending fixes have priority over new dispatch; working fixes hold a Working slot. Removed only by done/teardown bookkeeping.",
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["lane", "policy", "state"],
+            "properties": {
+              "lane": {
+                "$ref": "#/$defs/planContent/properties/lanes/items"
+              },
+              "policy": {
+                "$ref": "#/$defs/resolvedPolicy"
+              },
+              "state": {
+                "enum": ["idle", "pending", "working"]
               }
             }
           }
@@ -156,7 +194,9 @@
             "additionalProperties": false,
             "required": ["lane", "issue", "wave", "branch", "run_id", "fence", "expansions"],
             "properties": {
+              "repo": { "$ref": "#/$defs/repository" },
               "lane": { "type": "string", "minLength": 1 },
+              "base_sha": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
               "issue": { "type": "integer", "minimum": 1 },
               "wave": { "type": "integer", "minimum": 1 },
               "branch": { "type": "string", "minLength": 1 },
@@ -182,6 +222,55 @@
           }
         }
       }
+    },
+    "repository": { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$" },
+    "issueReference": {
+      "description": "A conductor issue number or a repository-qualified foreign issue reference.",
+      "oneOf": [
+        { "type": "integer", "minimum": 1 },
+        { "type": "string", "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[1-9][0-9]*$" }
+      ]
+    },
+    "slateInput": {
+      "description": "Original slate input recorded at genesis; optional for older plans.",
+      "oneOf": [
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "url"],
+          "properties": {
+            "kind": { "enum": ["single", "epic"] },
+            "url": { "$ref": "#/$defs/issueUrl" }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "urls"],
+          "properties": {
+            "kind": { "const": "list" },
+            "urls": {
+              "type": "array",
+              "minItems": 1,
+              "uniqueItems": true,
+              "items": { "$ref": "#/$defs/issueUrl" }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["kind", "number"],
+          "properties": {
+            "kind": { "const": "milestone" },
+            "number": { "type": "integer", "minimum": 1 }
+          }
+        }
+      ]
+    },
+    "issueUrl": {
+      "type": "string",
+      "pattern": "^https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+/issues/[1-9][0-9]*$"
     },
     "resolvedPolicy": {
       "type": "object",
