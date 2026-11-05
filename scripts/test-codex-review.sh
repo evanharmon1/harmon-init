@@ -825,14 +825,17 @@ grep -Fq 'INLINE-GUIDELINES-MARKER' <<<"$prompt" && grep -Fq 'second inline line
 ! grep -Fq 'CONVENTIONAL-GUIDELINES-MARKER' <<<"$prompt" || fail "the conventional file was used although text is configured: $prompt"
 ! grep -Fq 'Default focus' <<<"$prompt" || fail "a null focus produced a default-focus block: $prompt"
 
-echo "==> a reader that does not project the table, or refuses the policy, falls back to the conventional path"
-for variant in unsupported refusing; do
+echo "==> an absent, incomplete, old, or refusing reader falls back to the conventional path"
+for variant in absent incomplete unsupported refusing; do
     fb="${test_tmp}/guidelines-${variant}"
     guidelines_fixture "$fb"
     printf '# BASE-POLICY-MARKER\n' >"$fb/.devflow.toml"
     if [ "$variant" = unsupported ]; then
         stub_reader "$fb" '{ rigor: { level: "standard" } }'
-    else
+    elif [ "$variant" = incomplete ]; then
+        stub_reader "$fb" '{}'
+        rm "$fb/scripts/lib/toml-lite.mjs"
+    elif [ "$variant" = refusing ]; then
         stub_reader "$fb" '{}'
         printf '# BRANCH-POLICY-MARKER (not the base copy, so the stub refuses with exit 1)\n' >"$fb/.devflow.toml"
     fi
@@ -869,6 +872,46 @@ if out="$(cd "$mis" && ./scripts/codex-review.sh review --base main 2>&1)"; then
 fi
 grep -Fq "[review_guidelines].file names 'docs/nowhere.md', which does not exist at" <<<"$out" || fail "missing-file refusal did not name the file and revision: $out"
 [ ! -s "$stub_argv" ] || fail "codex was invoked despite the missing guidelines file: $(cat "$stub_argv")"
+
+echo "==> failed Git tree or existing-blob reads refuse before codex is invoked"
+# Keep real repositories and inject only the failed Git operation: a missing
+# path has a successful, empty tree lookup, whereas an unavailable object or
+# failed lookup must never downgrade the configured instructions to fallback.
+mkdir -p "${test_tmp}/object-read-bin"
+export OBJECT_READ_REAL_GIT="$(command -v git)"
+cat >"${test_tmp}/object-read-bin/git" <<'GITSTUB'
+#!/usr/bin/env bash
+if [ "$OBJECT_READ_OPERATION" = tree ] && [ "$1" = --literal-pathspecs ] &&
+    [ "$2" = ls-tree ] && [ "${@: -1}" = "$OBJECT_READ_PATH" ]; then
+    echo "simulated Git tree lookup failure" >&2
+    exit 128
+fi
+if [ "$OBJECT_READ_OPERATION" = blob ] && [ "$1" = show ] &&
+    [ "$2" = "$OBJECT_READ_REV:$OBJECT_READ_PATH" ]; then
+    echo "simulated Git blob read failure" >&2
+    exit 128
+fi
+exec "$OBJECT_READ_REAL_GIT" "$@"
+GITSTUB
+chmod +x "${test_tmp}/object-read-bin/git"
+for operation in tree blob; do
+    for path in .devflow.toml scripts/devflow-policy.mjs scripts/lib/toml-lite.mjs \
+        docs/custom-guidelines.md docs/review-guidelines.md; do
+        fixture="$pol"
+        [ "$path" != docs/review-guidelines.md ] || fixture="$conv"
+        revision="$(git -C "$fixture" rev-parse main)"
+        : >"$stub_argv"
+        status=0
+        out="$(cd "$fixture" && PATH="${test_tmp}/object-read-bin:$PATH" \
+            OBJECT_READ_OPERATION="$operation" OBJECT_READ_PATH="$path" OBJECT_READ_REV="$revision" \
+            ./scripts/codex-review.sh review --base main 2>&1)" || status=$?
+        [ "$status" -eq 2 ] || fail "${operation} failure for $path exited $status instead of 2: $out"
+        if [ "$operation" = tree ]; then diagnostic=inspect; else diagnostic=read; fi
+        grep -Fq "could not $diagnostic '$path' at $revision" <<<"$out" ||
+            fail "${operation} refusal did not identify $path at $revision: $out"
+        [ ! -s "$stub_argv" ] || fail "codex was invoked despite the ${operation} failure for $path"
+    done
+done
 
 # The repository's REAL reader, where one is vendored: prove the runner can
 # drive it from a base revision. A reader that projects the table must select
@@ -1410,4 +1453,4 @@ if out="$(CLAUDE_CONFIG_DIR="${fake_claude}2" CLAUDE_PLUGIN_DATA="${test_tmp}/pl
 fi
 grep -q "non-interactive" <<<"$out" || fail "missing non-interactive disable refusal message: $out"
 
-echo "codex-review + codex-gate guards OK ($((56 + standardize_cases)) cases)"
+echo "codex-review + codex-gate guards OK ($((68 + standardize_cases)) cases)"

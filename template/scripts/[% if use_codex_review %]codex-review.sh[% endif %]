@@ -163,12 +163,21 @@ guidelines_tmp="$(mktemp -d "${TMPDIR:-/tmp}/harmon-review-guidelines.XXXXXX")" 
 }
 trap 'rm -rf "$guidelines_tmp"' EXIT
 
-# `git show <rev>:<path>` into a file, so content keeps its exact bytes
-# (a $(...) capture would strip trailing newlines) and a path that does not
-# exist at the revision is a clean non-zero status rather than empty text.
+# Prove absence with a successful literal tree lookup before reading content.
+# Failed tree/blob reads are fatal even inside conditional callers, where
+# errexit is suppressed; only a genuinely absent path returns 1 for fallback.
+# Writing content to a file preserves its exact bytes (including newlines).
 show_at_rev() {
-    git cat-file -e "${1}:${2}" 2>/dev/null || return 1
-    git show "${1}:${2}" >"$3" 2>/dev/null
+    local entry
+    entry="$(git --literal-pathspecs ls-tree --full-tree "$1" -- "$2")" || {
+        echo "could not inspect '$2' at $1 for the review guidelines" >&2
+        exit 2
+    }
+    [ -n "$entry" ] || return 1
+    git show "${1}:${2}" >"$3" || {
+        echo "could not read '$2' at $1 for the review guidelines" >&2
+        exit 2
+    }
 }
 
 # The merge-base copy of the policy reader, in the layouts a repository can
