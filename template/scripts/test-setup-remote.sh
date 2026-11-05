@@ -303,6 +303,13 @@ echo "==> maintenance observation detects a missing setting"
     export STUB_LOG_DIR="${TMP}/maintenance-negative"
     mkdir -p "$STUB_LOG_DIR"
     export GIT_CONFIG_COUNT=1
+    # Reproduce checkout-local gc.auto=0, then observe from outside any repo.
+    # The negative control must not inherit the caller checkout's local config.
+    git init -q "${TMP}/maintenance-checkout"
+    git -C "${TMP}/maintenance-checkout" config --local gc.auto 0
+    [ "$(git -C "${TMP}/maintenance-checkout" config --int gc.auto)" = 0 ] || fail "checkout config setup failed"
+    mkdir -p "${TMP}/maintenance-isolated"
+    cd "${TMP}/maintenance-isolated"
     "${STUB_BIN}/git" --version >/dev/null
     if assert_git_maintenance "${STUB_LOG_DIR}/git-maintenance.log" '^--version$'; then
         fail "maintenance assertion accepted missing gc.auto"
