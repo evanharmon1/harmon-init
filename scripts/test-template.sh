@@ -1134,6 +1134,34 @@ jq -e '.vulnerabilityAlerts.enabled == true' renovate.json >/dev/null ||
 # and tasks, not JSON fields, so nothing else here would notice.
 jq -e '.osvVulnerabilityAlerts == true' renovate.json >/dev/null ||
     err "Renovate OSV vulnerability alerts must be enabled"
+# The published preset must match the actual minimal render, apart from prose.
+# This does not establish parity for conditional profiles or adopted configs.
+if [ "$profile" = "minimal" ]; then
+    python3 - "$repo_root/renovate/default.json" renovate.json <<'PYGUARD' ||
+import json
+import sys
+
+
+def functional(value):
+    if isinstance(value, dict):
+        return {key: functional(item) for key, item in value.items() if key != "description"}
+    if isinstance(value, list):
+        return [functional(item) for item in value]
+    return value
+
+
+with open(sys.argv[1], encoding="utf-8") as preset_file, open(sys.argv[2], encoding="utf-8") as render_file:
+    preset = json.load(preset_file)
+    rendered = json.load(render_file)
+if functional(preset) != functional(rendered):
+    sys.exit("published Renovate preset differs from minimal rendered policy")
+if preset.get("vulnerabilityAlerts", {}).get("enabled") is not True or preset.get("osvVulnerabilityAlerts") is not True:
+    sys.exit("published Renovate preset must enable both vulnerability feeds")
+PYGUARD
+        err "published Renovate preset failed minimal policy parity or feed checks"
+    grep -Fq 'renovate-config-validator --strict --no-global renovate/default.json' "$repo_root/scripts/test-renovate-config.sh" ||
+        err "strict shared Renovate preset validation route is missing"
+fi
 # renovate: datasource=npm depName=renovate
 RENOVATE_VALIDATOR_VERSION=44.176.2
 if [ "$validation_scope" = "renovate-config" ]; then
