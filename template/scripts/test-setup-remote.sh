@@ -16,6 +16,10 @@ unset CLAUDE_CODE_REMOTE
 unset HARMON_PREFIX HARMON_BIN CLAUDE_ENV_FILE
 # Hermetic git: a platform may inject config (SSH->HTTPS rewrites, hooks paths).
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+# Command-scope config is inherited by every Git child, including clones and fetches.
+# Keep the full tree digest stable without touching user or repository settings.
+export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=maintenance.auto GIT_CONFIG_VALUE_0=false
+export GIT_CONFIG_KEY_1=gc.auto GIT_CONFIG_VALUE_1=0
 
 # scripts/setup-remote.sh resolves the checkout with pwd -P (physical); a
 # symlinked TMPDIR such as macOS's /var would otherwise make the printed and
@@ -68,6 +72,7 @@ cat >"${STUB_BIN}/lefthook" <<'EOF'
 echo "$*" >>"${STUB_LOG_DIR}/lefthook.log"
 [ "${STUB_LEFTHOOK:-}" = "fail" ] && { echo "lefthook: simulated failure" >&2; exit 1; }
 [ "${1:-}" = "install" ] || exit 2
+[ "${STUB_MUTATE_SETUP:-}" != 1 ] || printf "mutation\n" > .git/setup-mutation
 hook=.git/hooks/pre-push
 body='#!/bin/sh
 # lefthook shim (stub)
@@ -219,6 +224,20 @@ digest() {
     (cd "$1" && find . | LC_ALL=C sort && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 cksum)
 }
 
+assert_unchanged() {
+    local before="$1" after="$2"
+    [ "$before" = "$after" ] || fail "the second run changed the tree:
+$(diff <(printf '%s\n' "$before") <(printf '%s\n' "$after") || true)"
+}
+
+assert_maintenance_disabled() {
+    local repo="$1"
+    # A descendant shell and repository-local conflicting settings prove that
+    # the effective command-scope settings reach cloned repositories as well.
+    [ "$(bash -c 'git -C "$1" config --bool maintenance.auto' _ "$repo")" = false ] || fail "maintenance.auto enabled in $repo"
+    [ "$(bash -c 'git -C "$1" config --int gc.auto' _ "$repo")" = 0 ] || fail "gc.auto enabled in $repo"
+}
+
 # The uncloneable entry comes first so a later entry proves the run continues.
 RELATED='test-owner/missing-repo
 test-owner/sibling-a # inline comments are ignored
@@ -238,6 +257,11 @@ run_setup "${STUBS_PATH}"
 if [ "$HAVE_BOOTSTRAP" = 1 ]; then
     [ -d "${FIX_PARENT}/sibling-a/.git" ] || fail "sibling-a must be cloned into the checkout's parent"
     [ -d "${FIX_PARENT}/sibling-b/.git" ] || fail "sibling-b (listed after the failing entry) must be cloned: the run continues"
+    for sibling in "${FIX_PARENT}/sibling-a" "${FIX_PARENT}/sibling-b"; do
+        git -C "$sibling" config --local maintenance.auto true
+        git -C "$sibling" config --local gc.auto 1
+        assert_maintenance_disabled "$sibling"
+    done
     [ ! -e "${FIX_PARENT}/missing-repo" ] || fail "an uncloneable repository must leave nothing behind"
     [ "$(cat "${FIX_PARENT}/existing-repo/marker.txt")" = "custom-content" ] || fail "an existing directory must not be modified"
     [ ! -d "${FIX_PARENT}/existing-repo/.git" ] || fail "an existing directory must not be cloned over"
@@ -264,9 +288,23 @@ before="$(digest "${FIX_PARENT}")"
 run_setup "${STUBS_PATH}"
 [ "$rc" -eq 0 ] || fail "second run must succeed (rc=$rc): $(all_output)"
 after="$(digest "${FIX_PARENT}")"
-[ "$before" = "$after" ] || fail "the second run changed the tree:
-$(diff <(printf '%s\n' "$before") <(printf '%s\n' "$after") || true)"
+assert_unchanged "$before" "$after"
 [ "$(wc -l <"${LOG_DIR}/lefthook.log" | tr -d ' ')" -eq 2 ] || fail "lefthook install must run on each invocation (idempotent, not skipped)"
+
+echo "==> the idempotence assertion rejects a real second-run mutation"
+(
+    make_fixture mutation -
+    run_setup "${STUBS_PATH}"
+    [ "$rc" -eq 0 ] || fail "negative-control first run failed: $(all_output)"
+    before="$(digest "${FIX_PARENT}")"
+    run_setup "${STUBS_PATH}" STUB_MUTATE_SETUP=1
+    [ "$rc" -eq 0 ] || fail "negative-control second run failed: $(all_output)"
+    after="$(digest "${FIX_PARENT}")"
+    if (assert_unchanged "$before" "$after") >"${TMP}/negative-control.out" 2>&1; then
+        fail "idempotence assertion accepted a second-run mutation"
+    fi
+    grep -q 'the second run changed the tree' "${TMP}/negative-control.out" || fail "negative control failed for the wrong reason"
+)
 
 if [ "$HAVE_BOOTSTRAP" = 1 ]; then
     echo "==> a cached sibling is fetched forward without changing its checkout"
@@ -1029,7 +1067,9 @@ import json
 import os
 from pathlib import Path
 import signal
+import shutil
 import subprocess
+import sys
 import time
 
 root = Path(os.environ["HOOK_DEAD_ROOT"])
@@ -1044,8 +1084,24 @@ assert release.exists(), "test never released the finite setup stub"
 # worker and re-read its command immediately before TERM; never signal by name.
 active = json.loads((root / ".git/session-start-remote/active.json").read_text())
 assert active["pid"] == parent, active
-command = subprocess.check_output(["ps", "-p", str(parent), "-o", "command="], text=True)
-assert "python3" in command and str(root) in command, command
+command = subprocess.check_output(["ps", "-p", str(parent), "-o", "command="], text=True).rstrip("\n")
+state_dir = root / ".git/session-start-remote"
+suffix = f" - {root} {state_dir}"
+expected = {os.path.realpath(sys.executable)}
+if sys.platform == "darwin":
+    expected.add(os.path.realpath(os.path.join(sys.prefix, "Resources/Python.app/Contents/MacOS/Python")))
+
+def worker_command_matches(value):
+    if not value.endswith(suffix):
+        return False
+    executable = value[:-len(suffix)]
+    return os.path.realpath(shutil.which(executable) or executable) in expected
+
+assert worker_command_matches(command), command
+executable = command[:-len(suffix)]
+assert not worker_command_matches(f"{executable} - {root}-wrong {state_dir}")
+assert not worker_command_matches(f"{executable} - {root} {state_dir}-wrong")
+assert not worker_command_matches(f"{root / 'wrong-interpreter'}{suffix}")
 os.kill(parent, signal.SIGTERM)
 done.write_text("worker terminated without status\n")
 EOF
