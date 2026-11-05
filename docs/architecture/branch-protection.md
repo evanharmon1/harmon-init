@@ -41,8 +41,14 @@ workflow, and add it back.
 **Why the UI, not `gh api … rulesets`:** the REST `POST` is **not idempotent**
 (every run creates another "Protect Main" ruleset — silent duplicates), the
 `PUT` form needs the live ruleset id, and both currently reject the
-`merge_queue` rule with `422 Invalid rule 'merge_queue'`. The UI import handles
-every rule type and is the GitHub-native way to apply an exported ruleset.
+`merge_queue` rule with `422 Invalid rule 'merge_queue'`. The UI import is the GitHub-native way to apply an exported ruleset; check the
+result because GitHub may omit rules unavailable to the repository.
+
+GitHub offers merge queues for public organization repositories and private
+organization repositories on Enterprise Cloud. A private Team-plan repository
+cannot use one; strict `required_status_checks` instead requires checks against
+the current `main` before merging. Enable the queue answer only where available,
+and verify the imported ruleset in GitHub.
 
 ### Auditing live ruleset drift
 

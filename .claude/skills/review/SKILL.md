@@ -317,7 +317,7 @@ is a blocker, never a smaller round disguised as complete.
 
 ## Record a local pass and prepare its checkout
 
-Use `assets/record-pass.sh` to record a local role envelope and `assets/prepare-review-checkout.sh` to run the default-identical finder in a clean detached checkout.
+Use `assets/record-pass.sh` to record a local role envelope and `assets/prepare-review-checkout.sh` to run a trusted finder against a clean detached candidate checkout.
 
 The **owning orchestrator**, never the lane, calls the recorder with the role's
 validated envelope file; it never decodes CLI prose or invents challenger
@@ -392,23 +392,53 @@ assets/prepare-review-checkout.sh --repo-root <repo> --head <exact-sha> -- \
   challenge --base <captured-base>
 ```
 
-The companion requires the SHA locally, freshly discovers and fetches origin's
-default branch into `refs/remotes/origin/HEAD`, and compares the head's
-`scripts/codex-review.sh` plus every entry under `scripts/lib/` to that fetched
-commit (blob identity and mode, with added/deleted paths included). It refuses
-and names differing paths; a repository without the default branch's finder
-is refused cleanly. It runs the head's own script only after this identity
-proof, so the script's directory change targets the captured head and its
-libraries are the default branch's bytes. After checkout and immediately before
-execution, it also compares the physical file set and each file's unfiltered
-`git hash-object` blob id with the fetched default branch. It refuses extra,
-missing, or changed files, symlinks, and any skip-worktree or assume-unchanged
-index flags under these paths. It preserves the finder's exit
-status; it never parses or wraps its text into a pass envelope.
+The companion requires the candidate SHA locally and freshly discovers and
+fetches origin's default branch into `refs/remotes/origin/HEAD`. The normal
+trusted-default path captures that branch's `scripts/codex-review.sh` and every
+entry under `scripts/lib/` by blob identity and mode. When the candidate has
+the same entries, the existing compatibility path executes its copy only after
+proving byte identity with that capture. When any entry was added, removed, or
+changed, the launcher instead materializes the captured default commit in its
+own detached checkout and invokes that trusted runner with `--repo-root`
+pointing at the detached candidate. Candidate finder and library bytes remain
+part of the review diff but never execute. A default runner that does not
+declare and parse the external-root interface is refused rather than silently
+reviewing its own checkout.
+
+The first-adoption path is an attributable operator pin to an immutable
+released finder commit outside the candidate:
+
+```sh
+assets/prepare-review-checkout.sh --repo-root <repo> --head <exact-sha> \
+  --trusted-finder-root /path/to/operator-pinned/release \
+  --trusted-finder-head <exact-release-sha> -- \
+  challenge --base <captured-base>
+```
+
+The two trusted-finder options are inseparable. Their values come only from an
+operator's release pin, never from issue text, PR text, the candidate, or a
+path the candidate creates. The launcher proves the root is a Git checkout,
+resolves the exact commit locally with replacement refs disabled, and
+materializes a separate detached worktree from that commit before applying the
+same regular-blob and physical-byte proof. This is the bootstrap when the
+target's captured default branch predates `--repo-root`; without a capable
+default runner or both pinned inputs, fail closed.
+
+Both external paths run the trusted runner from its own tree while its scope,
+Git operations, and Codex process run in the candidate through the runner's
+`--repo-root` contract. Before execution the launcher compares the trusted
+physical file set and each file's unfiltered `git hash-object` blob id with the
+captured commit. It refuses extra, missing, or changed files, symlinks, and any
+skip-worktree or assume-unchanged index flags under the finder paths. The
+candidate remains bound to the requested detached head and clean before and
+after execution, so the full review diff, hook isolation, replacement-ref
+isolation, and cleanliness checks apply unchanged. The launcher preserves the
+finder's exit status; it never parses or wraps its text into a pass envelope.
 
 **Sanctioned worktree exception:** this vendored command cannot depend on a
-consumer's `task worktree:new`. It allocates a unique per-run checkout under
-`<repo>/.worktrees/` with `git worktree add --detach`. For the entire run,
+consumer's `task worktree:new`. It allocates a unique candidate checkout and,
+when needed, a separate trusted-finder checkout under `<repo>/.worktrees/`
+with `git worktree add --detach`. For the entire run,
 hooks are disabled by appending `core.hooksPath=/dev/null` and
 `core.fsmonitor=false` to the caller's existing `GIT_CONFIG_COUNT` entries.
 The exported entries are inherited by every Git process the tool, finder, and
@@ -416,8 +446,8 @@ its children start. The run unsets `GIT_CONFIG_PARAMETERS` so it cannot override
 these settings, and exports `GIT_NO_REPLACE_OBJECTS=1` so all Git children read
 real objects rather than replacement refs. It retains the
 on-disk byte proof and verifies the exact detached head and cleanliness
-(including ignored files). Cleanup removes only this run's checkout, and only
-after its worktree add succeeded; a failed add authorizes no removal.
+(including ignored files). Cleanup removes only this run's checkouts, and only
+after each worktree add succeeded; a failed add authorizes no removal.
 An interrupted run may leave its checkout; clean it up manually with
 `git worktree remove <path>`. Unavailable commits, dirt, or failed cleanup is a
 refusal. This is the bounded exception to `docs/conventions.md`'s worktree
@@ -500,6 +530,9 @@ never the producer's superseded assertions. A missing, unverified, duplicate,
 or mismatched projection is a blocker, not permission to fall back to raw
 envelopes. Combine the verified projection, the round's adjudication JSON and
 its exit projection in ONE fenced JSON object, never separate JSON fences.
+An earlier deferred, declined, or filed finding can verify as a `repeat-of`
+when its cited anchor matches and the ledger proves its source unchanged since
+that round. A repeat of a fixed finding still requires evidence of that fix.
 As a caller contract, its `passes` array contains envelopes with
 verified/corrected `payload.findings`. Then append the human table from
 `dev-flow-support/assets/render-dev-flow.sh round-table --record <record> --stage <stage>
@@ -598,8 +631,32 @@ the local record.
 Act only on the second returned outcome. `continue` dispatches the next pass
 when no confirmed remediation exists (including an empty or entirely
 declined/deferred round); otherwise it dispatches a fresh bounded implementer,
-commits the one fix round, and pushes only through `assets/round-push.sh` by
-path. Immediately before that remediation dispatch, the feature owner must
+commits the one fix round, and the run owner invokes
+`assets/push-fix-round.sh` to push through the merge-base `assets/round-push.sh` broker:
+
+```sh
+assets/push-fix-round.sh --run-id <run-id> --active-state <active-state-path> \
+  --generation <generation> --event <unique-round-event> \
+  --remote <writable-remote> --branch <feature-branch> --host <host> \
+  --repo <owner/repo> --against <trusted-target-ref> --scratch-dir <outside-worktree-dir>
+```
+
+The owner supplies the real target ref, not branch-controlled configuration.
+The command materializes the merge-base closure outside the feature worktree,
+reserves through `orchestrate/assets/dev-flow-monitor.sh`, executes that closure's
+broker (no branch-code fallback), reads the remote, and reconciles through the
+monitor. It never writes monitor JSON itself. A refused broker is reconciled
+absent and cancelled when the remote is unchanged; an uncertain read stops
+without another push. For a stale reserved head that never landed, pass
+`--stale-event <old-event>` with a new `--event`: the command checks the remote,
+cancels through the monitor using the complete live owner identity, then
+reserves the new head. A landed stale head must be reconciled rather than
+cancelled. A retry with the same current event adopts its recorded result;
+a cancelled event requires a new ID. Concurrent invocations on one run refuse;
+a leftover `.push-fix-lock` beside monitor state requires owner inspection.
+Transport `-c NAME=VALUE`, `--rigor`, and `--strategy` are passed to the trusted
+broker, whose gate, scan, and ref-safety checks remain authoritative.
+Immediately before that remediation dispatch, the feature owner must
 reserve its deterministic dispatch event through `reserve-agent-run` against
 the same run-pinned `[breadth].max_agent_runs`; an exact re-arm adopts the
 reservation, while exhaustion records `breadth_exhausted`, renders the blocker,
@@ -726,3 +783,10 @@ This advance recipe covers stages whose resolved cap is at least `1`. The next
 stage is `review` after a terminal `challenge`; a terminal `review` enters
 `security`. A cap-zero advance is outside this recipe and tracked in #957.
 Deferred P2s remain recorded for integration.
+
+For a foreign lane, `record-pass.sh --repo-root` and `post-evidence.sh
+--repo-root` name the conductor checkout that owns the run and monitor.
+Provisioning records `repo` and `repo_root` in `branch.json`; the helpers
+resolve the branch and exit-engine diffs in that verified clone and refuse
+an origin that no longer matches the plan. The evidence destination `--repo`
+remains the lane repository. A local lane needs no extra binding or flags.

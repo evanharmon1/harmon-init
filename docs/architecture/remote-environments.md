@@ -41,7 +41,7 @@ exits 0 and the answers are quietly wrong:
 
 | Trap | What breaks | How the bootstrap answers it |
 | --- | --- | --- |
-| `/usr/bin/yq` is the **Python** yq | It shadows mikefarah yq v4, and every frontmatter then reads as invalid | Installs into `/usr/local/bin` and puts that directory **first** on `PATH` by order, not membership, for bash and POSIX-sh login shells — the `/etc/profile.d` drop-in removes every existing occurrence and prepends it — then asserts that `yq` and `task` *resolve* from it in the running process, which sourced that very drop-in. What the bootstrap does not own it reports: bash reads `~/.profile` *after* `/etc/profile`, and a stock one prepends `~/.local/bin`, so a `yq` there still shadows the pinned one in that user's login shells — the closing check runs the invoking user's real login shell *as that user* (via `runuser`, the user named by `SUDO_USER`; skipped with a note where `runuser` is missing, never run as root with the user's `HOME`, since a login shell executes `~/.profile`) and prints a warning naming the shadowing path and the remedy, and exits 0. Root's own `HOME` is the running uid's passwd home on every entry path — `sudo -E` preserves the caller's, and the bootstrap replaces it before any tier runs — so no probe and no install ever sources or writes under the caller's home |
+| `/usr/bin/yq` is the **Python** yq | It shadows mikefarah yq v4, and every frontmatter then reads as invalid | Installs into `/usr/local/bin` and puts that directory **first** on `PATH` by order, not membership, for bash and POSIX-sh login shells — the `/etc/profile.d` drop-in removes every existing occurrence and prepends it — then asserts that `yq` and `task` *resolve* from it in the running process, which sourced that very drop-in. What the bootstrap does not own it reports: bash reads `~/.profile` *after* `/etc/profile`, and a stock one prepends `~/.local/bin`, so a `yq` there still shadows the pinned one in that user's login shells — the closing check covers Node and uv as well as `yq` and `task`, runs the invoking user's real login shell *as that user* (via `runuser`, the user named by `SUDO_USER`; skipped with a note where `runuser` is missing, never run as root with the user's `HOME`, since a login shell executes `~/.profile`) and prints a warning naming the shadowing path and the remedy, and exits 0. Root's own `HOME` is the running uid's passwd home on every entry path — `sudo -E` preserves the caller's, and the bootstrap replaces it before any tier runs — so no probe and no install ever sources or writes under the caller's home |
 | The locale is POSIX (`LANG` unset), or `LC_ALL=C` is already set | NBSP stops reading as whitespace, so Unicode-title checks silently pass what they should reject; a pre-existing `LC_ALL=C` overrides any `LANG` set beside it | Sets `LANG=C.UTF-8` in `/etc/environment` (and rewrites an `LC_ALL=` line there when one exists), **forces** `LANG` and `LC_ALL` to `C.UTF-8` in the `profile.d` drop-in rather than defaulting them, and asserts the *effective* locale — `locale` must report a UTF-8 `LC_CTYPE`, in the process and in a fresh login shell seeded with `LC_ALL=C` |
 
 Ubuntu's **git 2.43** is kept deliberately: it is the git the shared image
@@ -303,12 +303,23 @@ CI requires `NEW_INSTALLS=0` plus
 a byte-identical manifest on the second run, because a script that
 re-downloaded and re-installed everything also exits 0.
 
-One residual is stated rather than solved: the bootstrap guarantees `PATH`
-precedence for bash and POSIX-sh login shells (the ones that read
-`/etc/profile.d`) and for its own process, and can only *report* a user-level
-shadow such as `~/.local/bin/yq`, because that user's own profile runs last.
+The bootstrap sets `PATH` precedence in its own process and in
+`/etc/profile.d/zz-harmon-remote-env.sh`, which sorts after platform profiles
+such as `nodejs.sh`. It removes its former `harmon-remote-env.sh` drop-in only
+after publishing the new one. If a shell startup file such as `~/.zshrc` or
+`~/.bashrc` sourced the old path, point that line at
+`/etc/profile.d/zz-harmon-remote-env.sh`. The closing check runs a real bash login shell
+for `yq`, `task`, `node`, `npm`, `npx`, `corepack`, `uv`, and `uvx`, as the
+invoking user (via `runuser` for a non-root caller; skipped with a note if
+unavailable). A later system or user profile can still prepend tools: a
+warning names the tool and shadowing path, and a system-only profile probe
+distinguishes `/etc/profile` or `/etc/profile.d` changes from a user's startup
+profile. Neither case modifies those other profiles. Non-login shells do not
+read the drop-in. Per-session preparation below
+reapplies the managed prefix for agent Bash commands through `CLAUDE_ENV_FILE`;
+without that mechanism it reports shadowing paths and the manual remedy.
 zsh login shells on Ubuntu do not read `/etc/profile.d` at all, so a user
-whose login shell is zsh must source `/etc/profile.d/harmon-remote-env.sh` or
+whose login shell is zsh must source `/etc/profile.d/zz-harmon-remote-env.sh` or
 put `/usr/local/bin` first on `PATH` themselves.
 
 ### The agent posture
@@ -562,7 +573,24 @@ and Playwright's two browser download hosts; the
 [guide](../guides/claude-code-web.md#network) records the denial behind each).
 The platform takes no
 custom image and ignores `devcontainer.json`. The setup script provisions the
-machine only. A repository `SessionStart` hook runs `task setup:remote` when
+machine only. When `${HARMON_PREFIX:-/usr/local}/share/harmon-remote-env/manifest.json`
+exists, the repository `SessionStart` hook prepends
+`${HARMON_BIN:-${HARMON_PREFIX:-/usr/local}/bin}` in its own process before preparation and
+appends the same dynamic export to `CLAUDE_ENV_FILE`, preserving other hooks'
+content. Claude evaluates this file before subsequent Bash commands, after shell
+startup, so platform paths cannot shadow the managed tools in those commands.
+Repeated sourcing keeps the prefix first without adding duplicates. This uses
+the documented [SessionStart environment persistence](https://code.claude.com/docs/en/hooks#persist-environment-variables).
+After saving the export, the hook prints one confirmation that managed PATH was
+saved for agent commands. If `CLAUDE_ENV_FILE` is absent or cannot be written,
+the hook instead warns that only preparation gets the corrected PATH and names
+shadowed Node commands, uv/uvx, the gate
+registry and commands published in the managed bin named by the bootstrap
+manifest; `reconcile-toolchain.sh --status` reports these shadows too. Without
+the bootstrap manifest, the managed-PATH export, its `CLAUDE_ENV_FILE` persistence
+and the shadow report are skipped.
+
+The hook runs `task setup:remote` when
 `CLAUDE_CODE_REMOTE=true`, including cached resumes, to reinstall checkout hooks,
 clone then fetch siblings without moving their checkouts, and install from
 lockfiles. Preparation warns rather than failing session start; the `AGENTS.md`
@@ -585,10 +613,12 @@ must cover the checkout's requested version, otherwise no install is attempted.
 The bootstrap manifest remains a record of the base environment revision; a
 per-session replacement does not rewrite that provenance.
 
-Reconciliation uses the existing `${HARMON_PREFIX:-/usr/local}/bin` only if it
+With a bootstrap manifest, preparation applies the same PATH export before reconciling. A standalone
+`task setup:remote` changes only its child environment and reports incoming
+shadow paths; it cannot persist the parent agent's PATH. Reconciliation uses
+the existing `${HARMON_BIN:-${HARMON_PREFIX:-/usr/local}/bin}` only if it
 is writable and precedes competing tools on `PATH`. This avoids `sudo` and a
-user prefix that a child preparation task cannot put onto the parent agent's
-`PATH`. Host and devcontainer preparation do not reconcile. An install gets
+new user prefix. Host and devcontainer preparation do not reconcile. An install gets
 30 s plus a 2 s kill grace, aiming to leave room for checkout preparation within
 SessionStart's 90 s wait so a normal start reports a final status rather than
 "still running". Setup is not killed when that wait ends. Version probes get

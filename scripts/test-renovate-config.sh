@@ -25,11 +25,13 @@ if ! command -v npx >/dev/null 2>&1; then
     exit 1
 fi
 
-# Validate the dogfood layer once before rendering the template profiles.
+# Validate the dogfood layer and published preset before rendering profiles.
 # renovate: datasource=npm depName=renovate
 RENOVATE_VALIDATOR_VERSION=44.198.3
 npx --yes --package "renovate@${RENOVATE_VALIDATOR_VERSION}" -- \
     renovate-config-validator --strict renovate.json
+npx --yes --package "renovate@${RENOVATE_VALIDATOR_VERSION}" -- \
+    renovate-config-validator --strict --no-global renovate/default.json
 
 # The dogfood .coderabbit.yaml against CodeRabbit's published schema. Each
 # profile's render is validated the same way inside test-template.sh (#1908).

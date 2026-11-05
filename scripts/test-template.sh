@@ -179,6 +179,7 @@ run_ruleset_matrix() {
     cp "$repo_root/copier.yml" "$matrix_source/copier.yml"
     cp "$repo_root/template/.github/[% if use_foreman %]Tag Protection Ruleset - Version Tag Creation.json[% endif %].jinja" \
         "$matrix_source/template/.github/[% if use_foreman %]Tag Protection Ruleset - Version Tag Creation.json[% endif %].jinja"
+    cp "$repo_root/template/.github/Branch Protection Ruleset - Protect Main.json.jinja" "$matrix_source/template/.github/"
 
     for owner_case in user org; do
         if [ "$owner_case" = user ]; then
@@ -226,12 +227,21 @@ GOLDEN
             )
             case "$answer_case" in
             empty) copier_args+=(--data ci_app_integration_id=) ;;
-            set) copier_args+=(--data ci_app_integration_id=4109947) ;;
+            set) copier_args+=(--data ci_app_integration_id=4109947 --data merge_queue_available=true) ;;
             esac
 
             if ! run_quiet "ruleset-$owner_case-$answer_case-render" copier copy \
                 "${copier_args[@]}" "$matrix_source" "$render_dir"; then
                 err "Copier failed for the $owner_case/$answer_case Creation ruleset matrix case"
+                return 1
+            fi
+
+            local expected_queue=0
+            if [ "$owner_case" = org ] && [ "$answer_case" = set ]; then expected_queue=1; fi
+            if ! jq -e --argjson expected "$expected_queue" \
+                '[.rules[] | select(.type == "merge_queue")] | length == $expected' \
+                "$render_dir/.github/Branch Protection Ruleset - Protect Main.json" >/dev/null; then
+                err "merge_queue rule count mismatch for $owner_case/$answer_case"
                 return 1
             fi
 
@@ -402,7 +412,7 @@ full)
     # Maximize conditional coverage: web tooling + terraform + ansible +
     # devcontainer + self-hosted runner labels (exercises actionlint config)
     # + an org owner != author (renders project-automation.yml, the org
-    # branches of the claude workflows, and the merge_queue ruleset rule)
+    # branches of the claude workflows)
     # + the GitHub project-management doc (docs/project-management.md).
     data_args+=(
         --data project_type=web-astro
@@ -418,6 +428,7 @@ full)
         --data tailscale_required=true
         --data ci_runner=self-hosted
         --data github_org=test-org
+        --data merge_queue_available=true
         --data claude_authorized_members="evanharmon1,reviewer-a,reviewer-b"
         --data trusted_orchestrator_actor_ids="37220977,269859446"
         --data project_management=github
@@ -492,6 +503,16 @@ if [ "$profile" = "full" ]; then
     elif ! grep -Fq 'CI APP INTEGRATION ID must be a positive integer' "$job_tmp/invalid-integration-id.log"; then
         err "invalid ci_app_integration_id failed without the expected validation message"
     fi
+fi
+
+# The full organization profile opts in; every other profile uses the default off.
+# The ruleset matrix separately exercises default-off organization renders.
+expected_queue=0
+if [ "$profile" = full ]; then expected_queue=1; fi
+if ! jq -e --argjson expected "$expected_queue" \
+    '[.rules[] | select(.type == "merge_queue")] | length == $expected' \
+    "$dest/.github/Branch Protection Ruleset - Protect Main.json" >/dev/null; then
+    err "merge_queue rule count does not match availability for $profile"
 fi
 
 cd "$dest"
@@ -1113,6 +1134,34 @@ jq -e '.vulnerabilityAlerts.enabled == true' renovate.json >/dev/null ||
 # and tasks, not JSON fields, so nothing else here would notice.
 jq -e '.osvVulnerabilityAlerts == true' renovate.json >/dev/null ||
     err "Renovate OSV vulnerability alerts must be enabled"
+# The published preset must match the actual minimal render, apart from prose.
+# This does not establish parity for conditional profiles or adopted configs.
+if [ "$profile" = "minimal" ]; then
+    python3 - "$repo_root/renovate/default.json" renovate.json <<'PYGUARD' ||
+import json
+import sys
+
+
+def functional(value):
+    if isinstance(value, dict):
+        return {key: functional(item) for key, item in value.items() if key != "description"}
+    if isinstance(value, list):
+        return [functional(item) for item in value]
+    return value
+
+
+with open(sys.argv[1], encoding="utf-8") as preset_file, open(sys.argv[2], encoding="utf-8") as render_file:
+    preset = json.load(preset_file)
+    rendered = json.load(render_file)
+if functional(preset) != functional(rendered):
+    sys.exit("published Renovate preset differs from minimal rendered policy")
+if preset.get("vulnerabilityAlerts", {}).get("enabled") is not True or preset.get("osvVulnerabilityAlerts") is not True:
+    sys.exit("published Renovate preset must enable both vulnerability feeds")
+PYGUARD
+        err "published Renovate preset failed minimal policy parity or feed checks"
+    grep -Fq 'renovate-config-validator --strict --no-global renovate/default.json' "$repo_root/scripts/test-renovate-config.sh" ||
+        err "strict shared Renovate preset validation route is missing"
+fi
 # renovate: datasource=npm depName=renovate
 RENOVATE_VALIDATOR_VERSION=44.198.3
 if [ "$validation_scope" = "renovate-config" ]; then
@@ -1832,6 +1881,10 @@ if [ -f .github/workflows/classification-reconcile.yml ]; then
     fi
     rm -rf "$org_example"
 fi
+
+# GitHub audit ships to every profile; exercise the rendered runner with no network.
+[ -x scripts/audit-github.sh ] || err "audit-github.sh missing or not executable"
+./scripts/test-audit-github.sh || err "rendered GitHub audit contract failed"
 
 # ── 9c. Conditional prose and generated workflow layout ────────────
 # Inline block tags at the end of Markdown lines can consume the following
