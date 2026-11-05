@@ -76,7 +76,8 @@ print(json.dumps(value) if value is not None else '')
         'graphql': {'data': {'repositoryOwner': {'projectsV2': {
             'nodes': [{'id': 'P1', 'title': 'acme Project', 'closed': False, 'fields': {
                 'nodes': [{'name': 'Status', 'dataType': 'SINGLE_SELECT', 'options': [
-                    {'name': name} for name in ['Inbox', 'Backlog', 'Ready', 'In Progress', 'In Review', 'Blocked', 'Done']]},
+                    {'name': name} for name in ['Inbox', 'Icebox', 'Next', 'Todo', 'Shaping', 'Ready', 'Agent Queue',
+                                              'In Progress', 'Verifying', 'In Review', 'Ready to Merge', 'Done', 'Deployed', 'Accepted']]},
                     {'name': 'Product', 'dataType': 'TEXT'}], 'pageInfo': {'hasNextPage': False}}}],
             'pageInfo': {'hasNextPage': False}}}}},
     }
@@ -143,6 +144,11 @@ print(json.dumps(value) if value is not None else '')
     wrong_field = copy.deepcopy(data)
     wrong_field['graphql']['data']['repositoryOwner']['projectsV2']['nodes'][0]['fields']['nodes'][0]['options'] = []
     assert run([project], 1, wrong_field)[0]['result'] == 'fail'
+    missing_option = copy.deepcopy(data)
+    options = missing_option['graphql']['data']['repositoryOwner']['projectsV2']['nodes'][0]['fields']['nodes'][0]['options']
+    options[:] = [option for option in options if option['name'] != 'Agent Queue']
+    row = run([project], 1, missing_option)[0]
+    assert row['result'] == 'fail' and 'field drift' in row['reason']
     assert run([project], 2, changed('graphql', {'errors': [{'message': 'denied'}]}))[0]['result'] == 'unknown'
     wanted = {
         'Product': ('text', []), 'Impact': ('single_select', ['minimal', 'low', 'medium', 'high', 'massive']),

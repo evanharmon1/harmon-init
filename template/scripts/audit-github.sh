@@ -361,7 +361,8 @@ def probe(entry):
         fields = {row['name']: row for row in board['fields']['nodes'] if 'name' in row}
         status = fields.get('Status', {})
         ok = status.get('dataType') == 'SINGLE_SELECT' and {
-            'Inbox', 'Backlog', 'Ready', 'In Progress', 'In Review', 'Blocked', 'Done'
+            'Inbox', 'Icebox', 'Next', 'Todo', 'Shaping', 'Ready', 'Agent Queue',
+            'In Progress', 'Verifying', 'In Review', 'Ready to Merge', 'Done', 'Deployed', 'Accepted'
         } <= {option['name'] for option in status.get('options', [])}
         if owner_type == 'User':
             ok = fields.get('Product', {}).get('dataType') == 'TEXT' and ok
