@@ -39,7 +39,7 @@ key = endpoint.split('?')[0]
 from urllib.parse import parse_qs
 page = int(parse_qs(endpoint.partition('?')[2]).get('page', ['1'])[0])
 value = data.get(endpoint, data.get(key, {'error': 403}) if page == 1 else
-                 ({'variables': [], 'secrets': [], 'jobs': [], 'workflow_runs': []}
+                 ({'variables': [], 'secrets': [], 'jobs': [], 'workflow_runs': [], 'issue_fields': []}
                   if isinstance(data.get(key), dict) and 'error' not in data[key] else []))
 if isinstance(value, dict) and 'error' in value:
     print('gh: permission unavailable (HTTP ' + str(value['error']) + ')', file=sys.stderr)
@@ -157,6 +157,20 @@ print(json.dumps(value) if value is not None else '')
     assert all(row['result'] == 'pass' for row in run([fields_entry, types_entry], 0, org))
     calls = [json.loads(line) for line in (fixture / 'calls').read_text().splitlines()]
     assert any('X-GitHub-Api-Version: 2026-03-10' in call for call in calls)
+    # Organization inventories continue through short pages until an empty page.
+    for endpoint, row, key in [('orgs/acme/issue-types', types_entry, None),
+                               ('orgs/acme/issue-fields', fields_entry, 'issue_fields')]:
+        paged = copy.deepcopy(org)
+        items = paged[endpoint][key] if key else paged[endpoint]
+        paged[endpoint] = {key: items[:-1]} if key else items[:-1]
+        second_page = endpoint + '?per_page=100&page=2'
+        paged[second_page] = {key: items[-1:]} if key else items[-1:]
+        assert run([row], 0, paged)[0]['result'] == 'pass'
+        calls = [json.loads(line) for line in (fixture / 'calls').read_text().splitlines()]
+        assert any(endpoint + '?per_page=100&page=3' in call for call in calls)
+        paged[second_page] = {'error': 403}
+        result = run([row], 2, paged)[0]
+        assert result['result'] == 'unknown' and '403' in result['reason'] and second_page in result['reason']
     for field_change in ('missing', 'type', 'options'):
         drifted = copy.deepcopy(org)
         fields = drifted['orgs/acme/issue-fields']['issue_fields']
