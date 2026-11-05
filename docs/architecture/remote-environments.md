@@ -41,7 +41,7 @@ exits 0 and the answers are quietly wrong:
 
 | Trap | What breaks | How the bootstrap answers it |
 | --- | --- | --- |
-| `/usr/bin/yq` is the **Python** yq | It shadows mikefarah yq v4, and every frontmatter then reads as invalid | Installs into `/usr/local/bin` and puts that directory **first** on `PATH` by order, not membership, for bash and POSIX-sh login shells — the `/etc/profile.d` drop-in removes every existing occurrence and prepends it — then asserts that `yq` and `task` *resolve* from it in the running process, which sourced that very drop-in. What the bootstrap does not own it reports: bash reads `~/.profile` *after* `/etc/profile`, and a stock one prepends `~/.local/bin`, so a `yq` there still shadows the pinned one in that user's login shells — the closing check runs the invoking user's real login shell *as that user* (via `runuser`, the user named by `SUDO_USER`; skipped with a note where `runuser` is missing, never run as root with the user's `HOME`, since a login shell executes `~/.profile`) and prints a warning naming the shadowing path and the remedy, and exits 0. Root's own `HOME` is the running uid's passwd home on every entry path — `sudo -E` preserves the caller's, and the bootstrap replaces it before any tier runs — so no probe and no install ever sources or writes under the caller's home |
+| `/usr/bin/yq` is the **Python** yq | It shadows mikefarah yq v4, and every frontmatter then reads as invalid | Installs into `/usr/local/bin` and puts that directory **first** on `PATH` by order, not membership, for bash and POSIX-sh login shells — the `/etc/profile.d` drop-in removes every existing occurrence and prepends it — then asserts that `yq` and `task` *resolve* from it in the running process, which sourced that very drop-in. What the bootstrap does not own it reports: bash reads `~/.profile` *after* `/etc/profile`, and a stock one prepends `~/.local/bin`, so a `yq` there still shadows the pinned one in that user's login shells — the closing check covers Node and uv as well as `yq` and `task`, runs the invoking user's real login shell *as that user* (via `runuser`, the user named by `SUDO_USER`; skipped with a note where `runuser` is missing, never run as root with the user's `HOME`, since a login shell executes `~/.profile`) and prints a warning naming the shadowing path and the remedy, and exits 0. Root's own `HOME` is the running uid's passwd home on every entry path — `sudo -E` preserves the caller's, and the bootstrap replaces it before any tier runs — so no probe and no install ever sources or writes under the caller's home |
 | The locale is POSIX (`LANG` unset), or `LC_ALL=C` is already set | NBSP stops reading as whitespace, so Unicode-title checks silently pass what they should reject; a pre-existing `LC_ALL=C` overrides any `LANG` set beside it | Sets `LANG=C.UTF-8` in `/etc/environment` (and rewrites an `LC_ALL=` line there when one exists), **forces** `LANG` and `LC_ALL` to `C.UTF-8` in the `profile.d` drop-in rather than defaulting them, and asserts the *effective* locale — `locale` must report a UTF-8 `LC_CTYPE`, in the process and in a fresh login shell seeded with `LC_ALL=C` |
 
 Ubuntu's **git 2.43** is kept deliberately: it is the git the shared image
@@ -303,13 +303,23 @@ CI requires `NEW_INSTALLS=0` plus
 a byte-identical manifest on the second run, because a script that
 re-downloaded and re-installed everything also exits 0.
 
-The bootstrap sets `PATH` precedence in its own process and in its system
-login drop-in. A later platform or user profile can still prepend tools, and
-non-login shells do not read that drop-in. Per-session preparation below
+The bootstrap sets `PATH` precedence in its own process and in
+`/etc/profile.d/zz-harmon-remote-env.sh`, which sorts after platform profiles
+such as `nodejs.sh`. It removes its former `harmon-remote-env.sh` drop-in only
+after publishing the new one. If a shell startup file such as `~/.zshrc` or
+`~/.bashrc` sourced the old path, point that line at
+`/etc/profile.d/zz-harmon-remote-env.sh`. The closing check runs a real bash login shell
+for `yq`, `task`, `node`, `npm`, `npx`, `corepack`, `uv`, and `uvx`, as the
+invoking user (via `runuser` for a non-root caller; skipped with a note if
+unavailable). A later system or user profile can still prepend tools: a
+warning names the tool and shadowing path, and a system-only profile probe
+distinguishes `/etc/profile` or `/etc/profile.d` changes from a user's startup
+profile. Neither case modifies those other profiles. Non-login shells do not
+read the drop-in. Per-session preparation below
 reapplies the managed prefix for agent Bash commands through `CLAUDE_ENV_FILE`;
 without that mechanism it reports shadowing paths and the manual remedy.
 zsh login shells on Ubuntu do not read `/etc/profile.d` at all, so a user
-whose login shell is zsh must source `/etc/profile.d/harmon-remote-env.sh` or
+whose login shell is zsh must source `/etc/profile.d/zz-harmon-remote-env.sh` or
 put `/usr/local/bin` first on `PATH` themselves.
 
 ### The agent posture

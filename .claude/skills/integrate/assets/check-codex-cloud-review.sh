@@ -3,6 +3,10 @@
 #
 # This helper never writes to GitHub. The caller owns the explicit
 # `@codex review` comment between `reserve` and `attach`.
+# Run owners may compose this protocol with sibling drive-codex-cycle.sh,
+# which captures authority around the broker trigger and terminal check.
+# Its --state is under the target clone's common Git directory; this checker
+# continues to accept an explicit state path for legacy checkout-local callers.
 #
 # Exit codes from `check` and the shared freshness preflight:
 #   0  clean
@@ -28,8 +32,9 @@
 #      nothing here says anything about the reviewer, so the caller retries
 #      the READ rather than the reviewer cycle, and a gate maps it to
 #      indeterminate-with-reason rather than to a not-clean failure. During
-#      `check`, a transient base-SHA freshness read failure also exits 16;
-#      permanent base-SHA failures and failures under other subcommands exit 2.
+#      `check`, transient base-SHA freshness and terminal base-proof read
+#      failures also exit 16; malformed base-proof payloads are indeterminate
+#      (2), and failures under other subcommands exit 2.
 #   17 not carried — `carry` only (harmon-init#752). The previously reviewed
 #      clean verdict could not be shown to attest this head, so a fresh cycle
 #      is required: reserve and trigger exactly as before. A normal negative
@@ -180,9 +185,10 @@ reserved_at minus 10 minutes, by any author. RELEASE_MARGIN_SEC=600 governs
 both the minimum age and fixed skew margin. Wait 10 minutes after a failed
 trigger before releasing. Attached triggers and indeterminate reads refuse.
 It records the old head, reserved_at and reason in superseded_reservations,
-leaves charged/exempt counters and the run-spend sidecar unchanged, and marks
-the reservation released. A following reserve begins at attempt 1 and charges
-normally; releasing does not refund spend. Never delete state to recover.
+refunds the charge taken by an untriggered first attempt in both the counters
+and the run-spend sidecar, and marks the reservation released. Releasing an
+unused retry refunds nothing: attempt 1 already ran. A following reserve
+begins at attempt 1 and charges normally. Never delete state to recover.
 
 `carry` (harmon-init#752) answers one question before a cycle is reserved:
 does the previously reviewed clean verdict still attest THIS head? It does
@@ -1126,6 +1132,7 @@ base_events_window_start() {
 # the state file distinguishes them.
 mark_terminally_reviewed() {
     [ "$read_only" = 0 ] || return 0
+    mark_terminal_detail=
     reviewed_verdict=${1:-}
     [ -n "${state_file:-}" ] && [ -f "$state_file" ] || return 0
     [ -n "${state_head:-}" ] || return 0
@@ -1166,9 +1173,21 @@ mark_terminally_reviewed() {
     # this sample below, so it does not spend the API read on one.
     reviewed_base_sha=
     if [ -z "$carry_present" ]; then
-        reviewed_base_sha=$(run_gh api "repos/${state_repo:-}/pulls/${state_pr:-}" 2>/dev/null |
-            jq -r '.base.sha // empty' 2>/dev/null) || reviewed_base_sha=
-        valid_sha "$reviewed_base_sha" || reviewed_base_sha=
+        reviewed_pr_payload=$(run_gh api "repos/${state_repo:-}/pulls/${state_pr:-}" 2>/dev/null) || {
+            mark_terminal_detail="cannot read the PR base while recording the terminal review result"
+            return 16
+        }
+        reviewed_base_sha=$(jq -er '
+            if (.base.sha | type) == "string" then .base.sha
+            else error("missing PR base SHA") end
+        ' <<<"$reviewed_pr_payload" 2>/dev/null) || {
+            mark_terminal_detail="the PR base payload is malformed while recording the terminal review result"
+            return 2
+        }
+        valid_sha "$reviewed_base_sha" || {
+            mark_terminal_detail="the PR base payload has no valid SHA while recording the terminal review result"
+            return 2
+        }
         reserved_base_sha=$(jq -r '.base_sha // empty' "$state_file" 2>/dev/null) || reserved_base_sha=
         [ -n "$reviewed_base_sha" ] && [ "$reviewed_base_sha" = "$reserved_base_sha" ] ||
             reviewed_base_sha=
@@ -1195,12 +1214,12 @@ mark_terminally_reviewed() {
         # other shape proves nothing and leaves the proof unset. Base events
         # are the two `base_ref_*` kinds GitHub documents, any other event it
         # may add under that prefix, and the automatic base changes it makes
-        # when a base branch is merged away. A timeline read that fails, a
-        # page that is not an array, or a missing anchor proves nothing either
-        # way — unset, per the governing invariant. Only these timeline-stage
-        # refusals print the one stderr line naming why, and only after the
-        # two samples agreed; a failed PR read or two disagreeing samples
-        # (above) leave the proof unset without a line.
+        # when a base branch is merged away. An event at or after the window
+        # start, an untimed event, or a missing anchor leaves the proof unset.
+        # A failed GitHub read is exit 16 and a malformed page is indeterminate
+        # exit 2; neither may be recorded as a terminal clean/findings result.
+        # A valid PR read that disagrees with the reservation sample is a real
+        # base move, so it only clears the carry proof.
         base_proof_unset_reason=
         if [ -n "$reviewed_base_sha" ]; then
             base_events_anchor=$(base_events_window_start "$state_file") ||
@@ -1212,10 +1231,24 @@ mark_terminally_reviewed() {
             base_events_tmp=$(mktemp -d -t codex-base-events-XXXXXX) || base_events_tmp=
             if [ -z "$base_events_tmp" ]; then
                 base_proof_unset_reason="could not create a scratch directory for the timeline read"
-            elif ! fetch_pages "repos/${state_repo:-}/issues/${state_pr:-}/timeline?per_page=100" \
-                "$base_events_tmp/timeline.json" 2>/dev/null; then
-                base_proof_unset_reason="the PR timeline could not be read"
-            elif ! jq -e --arg since "$base_events_anchor" '
+            else
+                timeline_fetch_status=0
+                fetch_pages "repos/${state_repo:-}/issues/${state_pr:-}/timeline?per_page=100" \
+                    "$base_events_tmp/timeline.json" 2>/dev/null || timeline_fetch_status=$?
+                case "$timeline_fetch_status" in
+                1)
+                    rm -rf "$base_events_tmp"
+                    mark_terminal_detail="cannot read the PR timeline while recording the terminal review result"
+                    return 16
+                    ;;
+                2)
+                    rm -rf "$base_events_tmp"
+                    mark_terminal_detail="the PR timeline payload is malformed while recording the terminal review result"
+                    return 2
+                    ;;
+                esac
+                timeline_proof_status=0
+                jq -e --arg since "$base_events_anchor" '
                     all(.[];
                       (type == "object") and
                       (((.event | type) == "string"
@@ -1227,8 +1260,18 @@ mark_terminally_reviewed() {
                            and (.created_at
                                 | test("^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z$"))
                            and .created_at < $since)))
-                  ' "$base_events_tmp/timeline.json" >/dev/null 2>&1; then
-                base_proof_unset_reason="the PR timeline shows a base change at or after $base_events_anchor, carries one without a canonical time, or is not a readable page"
+                  ' "$base_events_tmp/timeline.json" >/dev/null 2>&1 || timeline_proof_status=$?
+                case "$timeline_proof_status" in
+                0) ;;
+                1)
+                    base_proof_unset_reason="the PR timeline shows a base change at or after $base_events_anchor or carries one without a canonical time"
+                    ;;
+                *)
+                    rm -rf "$base_events_tmp"
+                    mark_terminal_detail="the PR timeline payload could not be classified while recording the terminal review result"
+                    return 2
+                    ;;
+                esac
             fi
             [ -z "$base_events_tmp" ] || rm -rf "$base_events_tmp"
         fi
@@ -1237,10 +1280,23 @@ mark_terminally_reviewed() {
         # timeline nor the earlier sample. Re-read the live base now and keep
         # the proof only if it still corroborates.
         if [ -n "$reviewed_base_sha" ] && [ -z "$base_proof_unset_reason" ]; then
-            base_resample=$(run_gh api "repos/${state_repo:-}/pulls/${state_pr:-}" 2>/dev/null |
-                jq -r '.base.sha // empty' 2>/dev/null) || base_resample=
+            base_resample_payload=$(run_gh api "repos/${state_repo:-}/pulls/${state_pr:-}" 2>/dev/null) || {
+                mark_terminal_detail="cannot re-read the PR base after the timeline read while recording the terminal review result"
+                return 16
+            }
+            base_resample=$(jq -er '
+                if (.base.sha | type) == "string" then .base.sha
+                else error("missing PR base SHA") end
+            ' <<<"$base_resample_payload" 2>/dev/null) || {
+                mark_terminal_detail="the re-read PR base payload is malformed while recording the terminal review result"
+                return 2
+            }
+            valid_sha "$base_resample" || {
+                mark_terminal_detail="the re-read PR base payload has no valid SHA while recording the terminal review result"
+                return 2
+            }
             [ "$base_resample" = "$reviewed_base_sha" ] ||
-                base_proof_unset_reason="the PR base moved, or could not be re-read, after the timeline read"
+                base_proof_unset_reason="the PR base moved after the timeline read"
         fi
         if [ -n "$reviewed_base_sha" ] && [ -n "$base_proof_unset_reason" ]; then
             printf 'codex-cloud-review: %s\n' \
@@ -1377,7 +1433,17 @@ emit() {
         # `indeterminate`, `head-changed` and `transient-read`, none of which
         # match this case, so its own emits pass straight through.
         verify_carried_attestation
-        mark_terminally_reviewed "$result"
+        mark_status=0
+        mark_terminally_reviewed "$result" || mark_status=$?
+        case "$mark_status" in
+        0) ;;
+        16) transient_read_failure "$mark_terminal_detail" ;;
+        2)
+            emit indeterminate "$mark_terminal_detail"
+            exit 2
+            ;;
+        *) die "could not record the terminal review result (exit $mark_status)" ;;
+        esac
         settle_ci_charge
         ;;
     esac
@@ -2392,6 +2458,12 @@ reserve)
     valid_sha "$head" || die "head must be a full 40-hex commit"
     valid_uint "$timeout_min" || die "timeout must be a positive integer"
     case "$attempt" in 1 | 2) ;; *) die "attempt must be 1 or 2" ;; esac
+    if [ -n "$run_id" ] || [ -n "$record_dir" ]; then
+        [ "$timeout_min_set" = 1 ] ||
+            die "owner reserve with --run-id or --record requires explicit --timeout-min (10–15 minutes); no reservation was written"
+        [ "$timeout_min" -ge 10 ] ||
+            die "owner reserve with --run-id or --record requires --timeout-min of at least 10; no reservation was written"
+    fi
     # harmon-devkit#1406: the exempt ceiling is persisted for `check`, so a
     # value that is not a count must never reach the state.
     for reserve_cap in "$integration_cap" "$integration_exempt_cap"; do
@@ -2527,6 +2599,12 @@ reserve)
         # therefore not extend to it: an unresolved reservation stays blocked
         # whoever owns it, which is what the reserve-before-write contract
         # requires.
+        if [ "$foreign_run_state" = "0" ] && [ -n "$record_dir" ] && [ "$attempt" = 1 ] &&
+            jq -e '.last_reviewed_head == .head and (.last_reviewed_verdict == "clean" or .last_reviewed_verdict == "findings")' "$state_file" >/dev/null; then
+            node "$SCRIPT_DIR/../../dev-flow-support/assets/lib/integrator-review-authority.mjs" \
+                require-receipt "$record_dir" "$state_file" ||
+                die "prior terminal review must be receipted before reserving another cycle"
+        fi
         if [ "$old_phase" = "reserved" ]; then
             die "an unresolved reservation must be reconciled before replacing its head"
         fi
@@ -3085,12 +3163,30 @@ release)
         die "cannot classify live triggers; reservation remains reserved"
     [ "$(jq 'length' <<<"$release_candidates")" = 0 ] ||
         die "a matching trigger exists; reconcile its attachment instead of releasing"
+    # Only a first attempt took a charge. Releasing an unused retry must not
+    # refund the review that actually ran on attempt 1. State is written first;
+    # a later retry repairs the sidecar from this authoritative released state.
+    release_run=$(jq -r '.run_id // empty' "$state_file")
+    release_spend="${state_file%.json}.spend.json"
     payload=$(jq --arg reason "$note" --arg at "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" '
+        if .attempt == 1 then
+          if .charge == "exempt" and .exempt_cycles > 0 then .exempt_cycles -= 1
+          elif (.charge // "charged") == "charged" and .charged_cycles > 0 then .charged_cycles -= 1
+          else error("reservation charge cannot be restored") end
+        else . end |
         .superseded_reservations = ((.superseded_reservations // []) +
           [{head:.head,reserved_at:.reserved_at,reason:$reason,released_at:$at}]) |
         .phase = "released"
     ' "$state_file")
     write_state "$state_file" "$payload"
+    if [ -n "$release_run" ]; then
+        { [ -f "$release_spend" ] || printf '{}' >"$release_spend"; } &&
+            jq --arg r "$release_run" --argjson c "$(jq '.charged_cycles' <<<"$payload")" \
+                --argjson e "$(jq '.exempt_cycles' <<<"$payload")" \
+                '.[$r] = {charged:$c, exempt:$e}' "$release_spend" >"${release_spend}.next" &&
+            mv "${release_spend}.next" "$release_spend" ||
+            die "reservation released but spend sidecar repair failed; preserve released state and reconcile before removing it"
+    fi
     release_state_lock
     printf '%s\n' "$payload"
     ;;

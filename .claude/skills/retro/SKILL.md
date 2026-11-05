@@ -15,6 +15,16 @@ allowed-tools: Read, Glob, Grep, Bash(git status:*), Bash(gh pr view:*), Bash(gh
 
 # Retro
 
+**Skills pin disclosure.** Print the skills pin that produced the report, from
+the executing package's `.SKILLS_PROVENANCE` ref or the checkout's
+`.skills-sync.yaml` ref; an unpinned source reports `source-tree@<short-sha>`.
+Warn clearly when it differs from the local default branch's `.skills-sync.yaml`
+pin. `retro-run-report.mjs` reads local files and Git refs for this disclosure,
+without extra GitHub calls; preserve its warning in the retrospective. Assets must run from a current checkout with the intended pin. To recover,
+run `git fetch origin && git merge --ff-only --no-edit origin/<default>` in the
+asset checkout before producing the report again; fetching alone does not update
+the executing tools.
+
 **Runtime assets travel with the skills.** Every executable this skill names is
 vendored by `task sync:skills`, never fetched from a repository-root `scripts/`
 path (harmon-devkit#974): a consumer that installed the skill has no such
@@ -53,6 +63,11 @@ End-of-session retrospective. Review the whole conversation, not just the
 most recent work.
 
 ## 1. Start from the run's retained evidence
+
+When closing a slate as part of this retrospective, before releasing its lock
+run sibling `dev-flow-support/assets/plan-revise.mjs membership --slate <slate>
+--session <session> --owner-token <token> --close`. This removes membership for
+issues whose lanes never started; report any failed or skipped reconciliation.
 
 Dev flow v2 leaves a durable record per run — a run record and one adjudicated
 round comment per confidence round on the issue, a stage projection on the PR
@@ -352,7 +367,9 @@ most of the signal:
   shows it, the improvement cites that stage, its convergence policy or skill,
   and this run id.
 - **Interventions.** `interventions[]` holds human touchpoints plus answered
-  prompts (kind `prompt`). The success metric never counts kind `prompt`. Ask
+  prompts (kind `prompt`), plus owner integration-review authority captures,
+  which the retro tools drop as machine bookkeeping. The success metric never
+  counts kind `prompt`. Ask
   what would have had to be true for each touchpoint or prompt not to happen.
 - **Integrity.** A forged-author or orphan comment is a finding about the
   evidence protocol, not a footnote.
