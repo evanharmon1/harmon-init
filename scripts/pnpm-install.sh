@@ -31,7 +31,10 @@ fresh="$(mktemp -d "${RUNNER_TEMP}/pnpm-recovery.XXXXXX")" || {
 export PNPM_CONFIG_STORE_DIR="$fresh"
 export npm_config_store_dir="$fresh"
 if pnpm install --frozen-lockfile; then
-    printf '%s=%s\n%s=%s\n' PNPM_CONFIG_STORE_DIR "$fresh" npm_config_store_dir "$fresh" >>"$GITHUB_ENV"
+    if ! printf '%s=%s\n%s=%s\n' PNPM_CONFIG_STORE_DIR "$fresh" npm_config_store_dir "$fresh" >>"$GITHUB_ENV"; then
+        summary 'Dependency setup failed: could not publish the recovered store to GITHUB_ENV.'
+        exit 1
+    fi
     summary 'Dependency setup recovered on the single retry.'
 else
     status=$?
