@@ -113,14 +113,8 @@ decide() { # guard cwd command -> silent|ask|rc<N>
 }
 echo "==> merge-guard JSON transport regressions"
 large_command="$(python3 -c 'print("x" * 98304, end="")')"
-large_payload_size="$(jq -nc --arg c "$large_command" --arg d "$r" \
-    '{tool_name:"Bash",tool_input:{command:$c},cwd:$d}' | wc -c | tr -d '[:space:]')"
-if [[ $large_payload_size -le 65536 ]]; then
-    echo "TEST FAIL: early-reader payload was not larger than 64 KiB (${large_payload_size} bytes)" >&2
-    exit 1
-fi
 if jq -nc --arg c "$large_command" --arg d "$r" \
-    '{tool_name:"Bash",tool_input:{command:$c},cwd:$d}' |
+    'repeat({tool_name:"Bash",tool_input:{command:$c},cwd:$d})' |
     python3 -c 'import time; time.sleep(0.1)'; then
     old_pipeline_rc=0
 else
