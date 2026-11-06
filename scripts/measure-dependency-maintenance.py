@@ -26,6 +26,8 @@ def measure(pr, timeline, runs):
     start, end = timestamp(pr["created_at"]), timestamp(pr["merged_at"])
     interventions = force_pushes = 0
     for event in timeline:
+        if not isinstance(event, dict):
+            raise ValueError("timeline entry must be a JSON object")
         kind = event.get("event")
         if kind not in {"commented", "reviewed", "head_ref_force_pushed"}:
             continue
@@ -81,6 +83,8 @@ def main():
                 ["gh", "api", f"repos/{args.repo}/pulls/{number}"],
                 check=True, capture_output=True, text=True,
             ).stdout)
+            if not isinstance(pr, dict):
+                raise ValueError(f"PR #{number} response must be a JSON object")
             if not pr.get("merged_at") or not start <= timestamp(pr["merged_at"]) < end:
                 raise ValueError(f"PR #{number} was not merged within the cycle")
             timeline = api(f"repos/{args.repo}/issues/{number}/timeline?per_page=100")
