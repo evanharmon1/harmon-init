@@ -17,7 +17,8 @@
 #     # renovate: datasource=github-release-attachments depName=mvdan/sh digestVersion=v3.14.1
 #     shfmt_sha256=76e7… # pin-pair: shfmt
 #
-# Two checks, both on tracked files under `.github/` (either layer):
+# Checks on tracked CI files under `.github/` (either layer) and the shared
+# `images/devcontainer/Dockerfile`:
 #   1. static  — every hash member sits directly under its Renovate
 #                annotation, and that annotation's tag is the version line's
 #                value (with or without a leading `v`);
@@ -27,6 +28,15 @@
 #                merge-base, every branch's hash differs too. A tag bumped
 #                without its hash is what Renovate leaves when it cannot find
 #                the release asset.
+# Image markers are standalone `# pin-pair: <tool>` lines immediately after
+# canonical `ARG NAME=value` lines. Managed hashes use uppercase
+# `*_SHA256_AMD64` or `*_SHA256_ARM64`; the two oh-my-pi hashes instead use
+# a preceding `# verified-for: <version>` marker. The image inventory requires
+# classification of every SHA256-named ARG and every literal 64-hex default,
+# regardless of name. Defaults must be unquoted or enclosed in one matching
+# pair of whole-value quotes, with no inner quotes, whitespace or escapes.
+# Other ARGs are allowed; computed or non-literal checksums are outside this
+# bounded inventory, which does not parse shell consumption.
 # The drift check needs a merge-base. On a pull request (GITHUB_BASE_REF set)
 # a missing one fails the guard — the checkout needs `fetch-depth: 0` — because
 # the action's own `sha256sum -c` is skipped whenever the runner already has
@@ -190,7 +200,10 @@ for path in files:
             if not m:
                 errors.append(f"{path}:{i + 1}: unsupported ARG spelling; use one canonical ARG name with an optional unescaped default on one physical line")
                 continue
-            if "SHA256" not in m[1].upper():
+            if m[2] is not None and not re.fullmatch(r'''(?:[^'"\s\\`]+|"[^'"\s\\`]*"|'[^'"\s\\`]*')''', m[2]):
+                errors.append(f"{path}:{i + 1}: unsupported ARG default quote placement; use an unquoted value or one pair of whole-value quotes without inner quotes")
+                continue
+            if "SHA256" not in m[1].upper() and not (m[2] and re.fullmatch(r'''(?:[0-9a-fA-F]{64}|"[0-9a-fA-F]{64}"|'[0-9a-fA-F]{64}')''', m[2])):
                 continue
             if m[2] is None:
                 errors.append(f"{path}:{i + 1}: digest {m[1]} has no pinned value")

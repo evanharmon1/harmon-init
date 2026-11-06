@@ -1134,6 +1134,27 @@ jq -e '.vulnerabilityAlerts.enabled == true' renovate.json >/dev/null ||
 # and tasks, not JSON fields, so nothing else here would notice.
 jq -e '.osvVulnerabilityAlerts == true' renovate.json >/dev/null ||
     err "Renovate OSV vulnerability alerts must be enabled"
+# Check every rendered profile, including profiles without a given ecosystem:
+# later package-specific rules must not take a lockfile update out of its group.
+python3 - renovate.json <<'PYGROUP' || err "rendered Renovate lockfile grouping is incomplete"
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as config_file:
+    config = json.load(config_file)
+rules = config["packageRules"]
+for manager, expected in (("npm", "npm dependencies"), ("pep621", "Python dependencies"),
+                          ("gomod", "Go dependencies"), ("terraform", "Terraform providers")):
+    matching = [rule for rule in rules if rule.get("matchManagers") == [manager]
+                and rule.get("groupName") == expected
+                and set(rule.get("matchUpdateTypes", [])) == {"minor", "patch", "pin", "digest"}]
+    if len(matching) != 1:
+        sys.exit(f"{manager}: expected one non-major group")
+    major = [rule for rule in rules if manager in rule.get("matchManagers", [])
+             and rule.get("matchUpdateTypes") == ["major"] and "groupName" in rule]
+    if not major or major[-1]["groupName"] is not None or rules.index(major[-1]) < rules.index(matching[0]):
+        sys.exit(f"{manager}: majors are not isolated after the group")
+PYGROUP
 # The published preset must match the actual minimal render, apart from prose.
 # This does not establish parity for conditional profiles or adopted configs.
 if [ "$profile" = "minimal" ]; then
@@ -4268,6 +4289,15 @@ if [ "$profile" = "web" ] && [ -f eslint.config.js ]; then
         # from-source build then fails without node-addon-api — a machine-local
         # false failure, never a CI one (runners carry no global libvips).
         SHARP_IGNORE_GLOBAL_LIBVIPS=1 pnpm install --silent >/dev/null 2>&1 || true
+        if ! awk '
+            /^snapshots:$/ { in_snapshots = 1; next }
+            in_snapshots && /^  \047@astrojs\/astro2tsx@0\.1\.3(\047:|\()/ { in_target = 1; found_package = 1; next }
+            in_target && /^  [^ ]/ { in_target = 0 }
+            in_target && /^      '\''@emnapi\/runtime'\'': 1\.11\.3$/ { found_runtime = 1 }
+            END { exit !( !found_package || found_runtime ) }
+        ' pnpm-lock.yaml; then
+            err "web-astro fixture: lockfile does not bind @astrojs/astro2tsx@0.1.3 to @emnapi/runtime@1.11.3"
+        fi
         bin="node_modules/.bin"
         if [ ! -x "$bin/eslint" ] || [ ! -x "$bin/prettier" ] || [ ! -x "$bin/astro" ] || [ ! -x "$bin/wrangler" ]; then
             err "web-astro fixture: install did not provide the toolchain (see tests/fixtures/web-astro/package.json)"

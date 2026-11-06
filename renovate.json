@@ -195,20 +195,6 @@
       "separateMajorMinor": false
     },
     {
-      "description": "Batch non-major npm/Node updates into one PR",
-      "matchManagers": ["npm"],
-      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
-      "matchFileNames": ["!tests/fixtures/**"],
-      "groupName": "npm dependencies"
-    },
-    {
-      "description": "Give each npm major its own PR so one incompatible package cannot block unrelated upgrades",
-      "matchManagers": ["npm"],
-      "matchUpdateTypes": ["major"],
-      "matchFileNames": ["!tests/fixtures/**"],
-      "groupName": null
-    },
-    {
       "description": "Hold TypeScript below 7 until typescript-eslint and Astro's language server support the native-compiler rewrite; remove this hold when https://github.com/typescript-eslint/typescript-eslint/issues/10940 and https://github.com/withastro/roadmap/issues/1321 are resolved",
       "matchManagers": ["npm"],
       "matchPackageNames": ["typescript"],
@@ -223,20 +209,6 @@
       "prBodyNotes": [
         "Before approving this update, follow the [package-manager major-upgrade checklist](docs/CHECKLIST.md#package-manager-major-upgrades). If this repository deliberately stays on an older major, add a local disabling package rule whose description records why."
       ]
-    },
-    {
-      "description": "Keep the tightly coupled ESLint packages together, including eslint-plugin-astro, while isolating their breakage from unrelated npm updates",
-      "matchManagers": ["npm"],
-      "matchPackageNames": ["typescript-eslint", "@typescript-eslint/*", "eslint", "@eslint/*", "eslint-plugin-astro"],
-      "matchFileNames": ["!tests/fixtures/**"],
-      "groupName": "ESLint toolchain"
-    },
-    {
-      "description": "Keep Astro and its official integrations together while isolating their breakage from unrelated npm updates",
-      "matchManagers": ["npm"],
-      "matchPackageNames": ["astro", "@astrojs/*"],
-      "matchFileNames": ["!tests/fixtures/**"],
-      "groupName": "Astro"
     },
     {
       "description": "Batch markdownlint-cli2 as \"Formatters\" — the template's twin rule also groups prettier and Black there, but this repo renders use_node/use_python off, so only markdownlint-cli2 applies here. Its script-pinned dependency (scripts/markdownlint.sh, under scripts/**) would otherwise land in the broad Devcontainer batch above; this rule must come after it (and after the fixture-specific groups, which own markdownlint-cli2 within tests/fixtures/** if it's ever added there) to reclaim it. shfmt is already isolated in the CI lint tools group (#1352) and is deliberately not duplicated here.",
@@ -272,6 +244,74 @@
       "matchDatasources": ["node-version"],
       "matchPackageNames": ["node"],
       "allowedVersions": "<25"
+    },
+    {
+      "description": "Group non-major npm lockfile updates",
+      "matchManagers": [
+        "npm"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "pin",
+        "digest"
+      ],
+      "groupName": "npm dependencies",
+      "matchFileNames": [
+        "!tests/fixtures/**"
+      ]
+    },
+    {
+      "description": "Group non-major pep621 lockfile updates",
+      "matchManagers": [
+        "pep621"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "pin",
+        "digest"
+      ],
+      "groupName": "Python dependencies"
+    },
+    {
+      "description": "Group non-major gomod lockfile updates",
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "pin",
+        "digest"
+      ],
+      "groupName": "Go dependencies"
+    },
+    {
+      "description": "Group non-major terraform lockfile updates",
+      "matchManagers": [
+        "terraform"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "pin",
+        "digest"
+      ],
+      "groupName": "Terraform providers"
+    },
+    {
+      "description": "Keep lockfile ecosystem majors separate",
+      "matchManagers": [
+        "npm",
+        "pep621",
+        "gomod",
+        "terraform"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "groupName": null
     }
   ]
 }

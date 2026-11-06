@@ -303,6 +303,46 @@ expect_output image-stale "TOOL_VERSION changed"
 write_image 2.0.0 "$NEW_AMD" "$NEW_ARM"
 run_guard
 expect_pass image-matched
+# Use a real PR merge-base and a real checksum consumed by the fixture.
+git update-ref refs/remotes/origin/main "$(git rev-parse base)"
+git commit -qam 'matched image pins'
+CASE_GITHUB_BASE_REF=main PIN_PAIRS_BASE='' run_guard
+expect_pass image-pr-matched
+printf probe >probe
+if command -v sha256sum >/dev/null 2>&1; then
+    checksum_cmd=(sha256sum)
+else
+    checksum_cmd=(shasum -a 256)
+fi
+checksum="$("${checksum_cmd[@]}" probe | cut -d ' ' -f 1)"
+printf 'ARG EXTRA_CHECKSUM=%s\nRUN echo "${EXTRA_CHECKSUM}  probe" | sha256sum --check -\n' "$checksum" >>images/devcontainer/Dockerfile
+printf '%s  probe\n' "$checksum" | "${checksum_cmd[@]}" --check - >/dev/null
+git commit -qam 'unclassified checksum'
+CASE_GITHUB_BASE_REF=main PIN_PAIRS_BASE='' run_guard
+expect_fail image-pr-unclassified-checksum
+expect_output image-pr-unclassified-checksum 'neither Renovate-managed nor guarded'
+for quote in '"' "'"; do
+    write_image 2.0.0 "$NEW_AMD" "$NEW_ARM"
+    printf 'ARG EXTRA_CHECKSUM=%s%s%s\nRUN echo "${EXTRA_CHECKSUM}  probe" | sha256sum --check -\n' "$quote" "$checksum" "$quote" >>images/devcontainer/Dockerfile
+    git commit -qam 'quoted unclassified checksum'
+    CASE_GITHUB_BASE_REF=main PIN_PAIRS_BASE='' run_guard
+    expect_fail image-pr-quoted-unclassified-checksum
+    expect_output image-pr-quoted-unclassified-checksum 'neither Renovate-managed nor guarded'
+done
+for value in "${checksum}''" "${checksum:0:32}'${checksum:32}'" "'${checksum:0:32}'\"${checksum:32}\""; do
+    write_image 2.0.0 "$NEW_AMD" "$NEW_ARM"
+    printf 'ARG EXTRA_CHECKSUM=%s\nRUN echo "${EXTRA_CHECKSUM}  probe" | sha256sum --check -\n' "$value" >>images/devcontainer/Dockerfile
+    git commit -qam 'unsupported composed checksum default'
+    CASE_GITHUB_BASE_REF=main PIN_PAIRS_BASE='' run_guard
+    expect_fail image-pr-composed-checksum
+    expect_output image-pr-composed-checksum 'unsupported ARG default quote placement'
+done
+write_image 2.0.0 "$NEW_AMD" "$NEW_ARM"
+printf '%s\n' 'ARG PLAIN=1.2.3' 'ARG SINGLE='"'stable'" 'ARG DOUBLE="stable"' 'ARG EMPTY_SINGLE='"''" 'ARG EMPTY_DOUBLE=""' >>images/devcontainer/Dockerfile
+git commit -qam 'supported nonchecksum defaults'
+CASE_GITHUB_BASE_REF=main PIN_PAIRS_BASE='' run_guard
+expect_pass image-pr-nonchecksum-defaults
+write_image 2.0.0 "$NEW_AMD" "$NEW_ARM"
 printf 'ARG OTHER_SHA256_AMD64=%s\n' "$NEW_AMD" >>images/devcontainer/Dockerfile
 run_guard
 expect_fail image-unclassified
@@ -317,7 +357,7 @@ for declaration in '  ARG OTHER_SHA256_AMD64=' 'ARG  OTHER_SHA256_AMD64=' 'arg O
 done
 write_image 2.0.0 "$NEW_AMD" "$NEW_ARM"
 printf '# verified-for: v2.0.0\nARG OH_MY_PI_SHA256_AMD64=%s\n' "$NEW_AMD" >>images/devcontainer/Dockerfile
-run_guard
+CASE_GITHUB_BASE_REF=main PIN_PAIRS_BASE='' run_guard
 expect_pass image-verified
 
 # Every ARG must use the supported single-line form before digest classification.
