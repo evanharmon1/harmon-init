@@ -1163,6 +1163,8 @@ for rule in rules:
     unknown = {key for key in rule if key.startswith("match")} - supported
     if unknown:
         sys.exit(f"unsupported finite policy matcher(s): {sorted(unknown)}")
+    if any("**/" in pattern for pattern in rule.get("matchFileNames", [])):
+        sys.exit(f"unsupported globstar-directory filename pattern: {rule['matchFileNames']!r}")
 
 def matches(patterns, value):
     if any(any(c in pattern for c in "[]{}?()") or pattern.startswith("/") for pattern in patterns):

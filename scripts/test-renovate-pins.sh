@@ -521,6 +521,8 @@ def check_lockfile_policy(label, cfg):
         unknown = {k for k in rule if k.startswith("match")} - supported
         if unknown:
             errors.append(f"{label}: unsupported finite policy matcher(s): {sorted(unknown)}")
+        if any("**/" in pattern for pattern in rule.get("matchFileNames", [])):
+            errors.append(f"{label}: unsupported globstar-directory filename pattern: {rule['matchFileNames']!r}")
     def names_match(patterns, package):
         # Finite glob subset: no regex, brace expansion, extglobs or character classes.
         if any(any(c in p for c in "[]{}?()") or p.lstrip("!").startswith("/") for p in patterns):
