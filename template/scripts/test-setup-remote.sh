@@ -305,13 +305,17 @@ echo "==> maintenance observation detects a missing setting"
     export STUB_LOG_DIR="${TMP}/maintenance-negative"
     mkdir -p "$STUB_LOG_DIR"
     export GIT_CONFIG_COUNT=1
-    # Reproduce checkout-local gc.auto=0, then observe from outside any repo.
-    # The negative control must not inherit the caller checkout's local config.
+    # Place a physical temporary parent inside a checkout to exercise the
+    # ancestor-config leak even when the caller's TMPDIR is outside a repo.
     git init -q "${TMP}/maintenance-checkout"
     git -C "${TMP}/maintenance-checkout" config --local gc.auto 0
     [ "$(git -C "${TMP}/maintenance-checkout" config --int gc.auto)" = 0 ] || fail "checkout config setup failed"
-    mkdir -p "${TMP}/maintenance-isolated"
-    cd "${TMP}/maintenance-isolated"
+    mkdir -p "${TMP}/maintenance-checkout/temp-parent"
+    temp_parent="$(cd "${TMP}/maintenance-checkout/temp-parent" && pwd -P)"
+    isolated="$(TMPDIR="$temp_parent" mktemp -d)" || fail "negative control temp directory failed"
+    cd "$isolated"
+    [ "$(env -u GIT_CEILING_DIRECTORIES git config --int gc.auto)" = 0 ] || fail "ancestor config leak was not reproduced"
+    export GIT_CEILING_DIRECTORIES="$temp_parent"
     "${STUB_BIN}/git" --version >/dev/null
     if assert_git_maintenance "${STUB_LOG_DIR}/git-maintenance.log" '^--version$'; then
         fail "maintenance assertion accepted missing gc.auto"
