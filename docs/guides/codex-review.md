@@ -134,7 +134,7 @@ names it:
 ```toml
 [review_guidelines]
 file            = "docs/review-guidelines.md"  # repo-relative; or set `text` instead
-# text          = """..."""                     # inline alternative; mutually exclusive with `file`
+# text          = "First rule\nSecond rule"  # inline alternative; mutually exclusive with `file`
 challenge_focus = ""   # appended to every local challenge pass when the CLI gives no focus text
 review_focus    = ""   # likewise for the local review pass
 ```
