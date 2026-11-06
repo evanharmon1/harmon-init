@@ -523,6 +523,9 @@ def check_lockfile_policy(label, cfg):
             errors.append(f"{label}: unsupported finite policy matcher(s): {sorted(unknown)}")
         if any("**/" in pattern for pattern in rule.get("matchFileNames", [])):
             errors.append(f"{label}: unsupported globstar-directory filename pattern: {rule['matchFileNames']!r}")
+        for field in ("matchDatasources", "matchDepTypes"):
+            if any(any(c in value for c in "*!?[]{}()/\\") for value in rule.get(field, [])):
+                errors.append(f"{label}: unsupported non-literal {field} selector: {rule[field]!r}")
     def names_match(patterns, package):
         # Finite glob subset: no regex, brace expansion, extglobs or character classes.
         if any(any(c in p for c in "[]{}?()") or p.lstrip("!").startswith("/") for p in patterns):
@@ -542,9 +545,9 @@ def check_lockfile_policy(label, cfg):
                 continue
             if "matchUpdateTypes" in rule and update not in rule["matchUpdateTypes"]:
                 continue
-            if "matchDepTypes" in rule and dep_type not in rule["matchDepTypes"]:
+            if "matchDepTypes" in rule and (dep_type is None or dep_type.lower() not in [value.lower() for value in rule["matchDepTypes"]]):
                 continue
-            if "matchDatasources" in rule and datasource not in rule["matchDatasources"]:
+            if "matchDatasources" in rule and (datasource is None or datasource.lower() not in [value.lower() for value in rule["matchDatasources"]]):
                 continue
             if "matchFileNames" in rule and not match_file_patterns(rule["matchFileNames"], path):
                 continue
@@ -567,10 +570,11 @@ def check_lockfile_policy(label, cfg):
         if resolve(manager, "major", dep, path, "dependency-groups" if manager == "pep621" else "dependencies", "pypi" if manager == "pep621" else None)["groupName"] is not None:
             errors.append(f"{label}: {manager} {dep} major must not be grouped")
     if label in ("template/renovate.json.jinja", "template python disabled"):
-        notes = resolve("pep621", "minor", "black", "pyproject.toml", "dependency-groups", "pypi")["prBodyNotes"]
         reminder = "Run `task fix` and commit the reformat as a separate commit from this dependency bump; do not amend Renovate's commit."
-        if (reminder in notes) != (label == "template/renovate.json.jinja"):
-            errors.append(f"{label}: Black formatter reminder has incorrect applicability")
+        for update in ("minor", "patch", "pin", "digest", "major"):
+            notes = resolve("pep621", update, "black", "pyproject.toml", "dependency-groups", "pypi")["prBodyNotes"]
+            if (reminder in notes) != (label == "template/renovate.json.jinja"):
+                errors.append(f"{label}: Black formatter reminder has incorrect applicability for {update}")
     if label not in ("renovate/default.json", "template python disabled"):
         if resolve("npm", "minor", "typescript", "package.json").get("allowedVersions") != "<7.0.0":
             errors.append(f"{label}: TypeScript hold lost")
