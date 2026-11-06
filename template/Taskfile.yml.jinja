@@ -148,6 +148,7 @@ tasks:
       - task: test:registry-docs
       - task: test:label-registry
       - task: test:tasks
+      - task: test:pnpm-install
       - task: test:grep-q-pipes
       - task: test:ci-results
       - task: test:ci-changes-classify
@@ -832,6 +833,11 @@ tasks:
       COPIER_ANSWERS_FILE: [[ _copier_conf.answers_file | string | tojson ]]
     cmds:
       - ./scripts/test-label-registry.sh
+
+  test:pnpm-install:
+    desc: Test job-private pnpm install recovery
+    cmds:
+      - ./scripts/test-pnpm-install.sh
 
   test:tasks:
     desc: Guard the Taskfile itself (compiles; setup tasks are safe no-ops)

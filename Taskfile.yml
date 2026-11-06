@@ -116,6 +116,7 @@ tasks:
       - task: test:registry-docs
       - task: test:label-registry
       - task: test:tasks
+      - task: test:pnpm-install
       - task: test:grep-q-pipes
       - task: test:ci-results
       - task: test:ci-changes-classify
@@ -549,6 +550,11 @@ tasks:
     desc: Schema-check the dev-flow-v2 result/record contracts and receipt smoke fixtures
     cmds:
       - ./scripts/test-result-schemas.sh
+
+  test:pnpm-install:
+    desc: Test job-private pnpm install recovery
+    cmds:
+      - ./scripts/test-pnpm-install.sh
 
   test:tasks:
     desc: Guard the Taskfile itself (compiles; setup tasks are safe no-ops)
