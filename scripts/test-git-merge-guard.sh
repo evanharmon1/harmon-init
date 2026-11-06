@@ -86,9 +86,20 @@ git -C "$pp" symbolic-ref refs/remotes/backup/HEAD refs/remotes/backup/main
 failures=0
 case_count=0
 decide() { # guard cwd command -> silent|ask|rc<N>
-    local out rc
-    out="$(jq -nc --arg c "$3" --arg d "$2" \
-        '{tool_name:"Bash",tool_input:{command:$c},cwd:$d}' | python3 "$1")" && rc=0 || rc=$?
+    local input out rc
+    if input="$(jq -nc --arg c "$3" --arg d "$2" \
+        '{tool_name:"Bash",tool_input:{command:$c},cwd:$d}')"; then
+        :
+    else
+        rc=$?
+        echo "rc${rc}"
+        return
+    fi
+    if out="$(python3 "$1" <<<"$input")"; then
+        rc=0
+    else
+        rc=$?
+    fi
     if [[ $rc -ne 0 ]]; then
         echo "rc${rc}"
     elif [[ -z $out ]]; then
@@ -100,6 +111,56 @@ decide() { # guard cwd command -> silent|ask|rc<N>
         echo "unexpected:${out}"
     fi
 }
+echo "==> merge-guard JSON transport regressions"
+large_command="$(python3 -c 'print("x" * 98304, end="")')"
+large_payload_size="$(jq -nc --arg c "$large_command" --arg d "$r" \
+    '{tool_name:"Bash",tool_input:{command:$c},cwd:$d}' | wc -c | tr -d '[:space:]')"
+if [[ $large_payload_size -le 65536 ]]; then
+    echo "TEST FAIL: early-reader payload was not larger than 64 KiB (${large_payload_size} bytes)" >&2
+    exit 1
+fi
+if jq -nc --arg c "$large_command" --arg d "$r" \
+    '{tool_name:"Bash",tool_input:{command:$c},cwd:$d}' |
+    python3 -c 'import time; time.sleep(0.1)'; then
+    old_pipeline_rc=0
+else
+    old_pipeline_rc=$?
+fi
+if [[ $old_pipeline_rc -ne 141 ]]; then
+    echo "TEST FAIL: expected old early-reader pipeline to expose jq SIGPIPE 141, got ${old_pipeline_rc}" >&2
+    exit 1
+fi
+early_guard="${tmp}/early-guard.py"
+cat >"$early_guard" <<'PY'
+#!/usr/bin/env python3
+import time
+
+time.sleep(0.1)
+PY
+chmod +x "$early_guard"
+if [[ $(decide "$early_guard" "$r" "$large_command") != silent ]]; then
+    echo "TEST FAIL: successful early-return consumer changed the direct decision" >&2
+    exit 1
+fi
+mkdir -p "${tmp}/generator-fails"
+cat >"${tmp}/generator-fails/jq" <<'SH'
+#!/bin/sh
+exit 23
+SH
+chmod +x "${tmp}/generator-fails/jq"
+if [[ $(PATH="${tmp}/generator-fails:$PATH" decide "$early_guard" "$r" command) != rc23 ]]; then
+    echo "TEST FAIL: direct JSON generator sentinel 23 was not preserved" >&2
+    exit 1
+fi
+cat >"${tmp}/failed-guard.py" <<'PY'
+#!/usr/bin/env python3
+raise SystemExit(29)
+PY
+chmod +x "${tmp}/failed-guard.py"
+if [[ $(decide "${tmp}/failed-guard.py" "$r" command) != rc29 ]]; then
+    echo "TEST FAIL: direct consumer sentinel 29 was not preserved" >&2
+    exit 1
+fi
 case_() { # guard expected cwd command
     local got
     case_count=$((case_count + 1))
@@ -1303,10 +1364,16 @@ if [[ -z ${GUARD:-} && -f $settings ]]; then
         exit 1
     fi
     registered_decision() { # project-dir cwd command -> silent|ask|other
-        local out
-        out="$(jq -nc --arg c "$3" --arg d "$2" \
-            '{tool_name:"Bash",tool_input:{command:$c},cwd:$d}' |
-            CLAUDE_PROJECT_DIR="$1" bash -c "$registered" 2>/dev/null)" || true
+        local input out rc
+        if input="$(jq -nc --arg c "$3" --arg d "$2" \
+            '{tool_name:"Bash",tool_input:{command:$c},cwd:$d}')"; then
+            :
+        else
+            rc=$?
+            echo "rc${rc}"
+            return
+        fi
+        out="$(CLAUDE_PROJECT_DIR="$1" bash -c "$registered" 2>/dev/null <<<"$input")" || true
         if [[ -z $out ]]; then
             echo silent
         elif jq -e '.hookSpecificOutput.permissionDecision == "ask"' <<<"$out" >/dev/null 2>&1; then
@@ -1323,6 +1390,22 @@ if [[ -z ${GUARD:-} && -f $settings ]]; then
             exit 1
         fi
     }
+    actual_registered=$registered
+    registered="python3 -c 'import time; time.sleep(0.1)'"
+    if [[ $(registered_decision "$repo_root" "$r" "$large_command") != silent ]]; then
+        echo "TEST FAIL: successful early-return consumer changed registered decision" >&2
+        exit 1
+    fi
+    if [[ $(PATH="${tmp}/generator-fails:$PATH" registered_decision "$repo_root" "$r" command) != rc23 ]]; then
+        echo "TEST FAIL: registered JSON generator sentinel 23 was not preserved" >&2
+        exit 1
+    fi
+    registered="exit 29"
+    if [[ $(registered_decision "$repo_root" "$r" command) != silent ]]; then
+        echo "TEST FAIL: registered consumer fallback semantics changed" >&2
+        exit 1
+    fi
+    registered=$actual_registered
     expect_registered ask "$repo_root" "$r" "git merge feat"
     expect_registered silent "$repo_root" "${r}/wt" "git merge origin/main --no-edit"
     # A guard that cannot be run must ask, never stay silent.
