@@ -116,6 +116,71 @@
         "Run `task fix` and commit the reformat as a separate commit from this dependency bump; do not amend Renovate's commit.",
         "web-astro only: before merging, run `task test:render-parity` — a prettier-plugin-astro bump can silently reflow whitespace-sensitive inline markup when this repo's `astroCompressHTML` setting (prettier.config.cjs) disagrees with `astro.config`'s `compressHTML` (see docs/CHECKLIST.md and scripts/test-astro-compress-parity.sh)."
       ]
+    },
+    {
+      "description": "Group non-major npm lockfile updates",
+      "matchManagers": [
+        "npm"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "pin",
+        "digest"
+      ],
+      "groupName": "npm dependencies"
+    },
+    {
+      "description": "Group non-major pep621 lockfile updates",
+      "matchManagers": [
+        "pep621"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "pin",
+        "digest"
+      ],
+      "groupName": "Python dependencies"
+    },
+    {
+      "description": "Group non-major gomod lockfile updates",
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "pin",
+        "digest"
+      ],
+      "groupName": "Go dependencies"
+    },
+    {
+      "description": "Group non-major terraform lockfile updates",
+      "matchManagers": [
+        "terraform"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "pin",
+        "digest"
+      ],
+      "groupName": "Terraform providers"
+    },
+    {
+      "description": "Keep lockfile ecosystem majors separate",
+      "matchManagers": [
+        "npm",
+        "pep621",
+        "gomod",
+        "terraform"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "groupName": null
     }
   ]
 }

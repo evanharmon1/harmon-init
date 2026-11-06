@@ -8,13 +8,17 @@ set -uo pipefail
 log="$(mktemp "${RUNNER_TEMP}/pnpm-install.XXXXXX")" || exit 1
 trap 'rm -f "$log"' EXIT
 summary() { printf '%s\n' "$1" >>"$GITHUB_STEP_SUMMARY"; }
-if pnpm install --frozen-lockfile >"$log" 2>&1; then
-    cat "$log"
+if pnpm install --frozen-lockfile 2>&1 | tee "$log"; then
     exit 0
 else
-    status=$?
+    statuses=("${PIPESTATUS[@]}")
+    status=${statuses[0]}
+    if [ "${statuses[1]}" -ne 0 ]; then
+        summary 'Dependency setup failed: could not capture the install log.'
+        if [ "$status" -eq 0 ]; then status=${statuses[1]}; fi
+        exit "$status"
+    fi
 fi
-cat "$log"
 if ! grep -E '\[?(ERR_PNPM_)?ERR_SQLITE_ERROR\]?.*database disk image is malformed' "$log" >/dev/null; then
     summary '### Dependency setup failed
 
