@@ -1155,10 +1155,9 @@ for manager, expected in (("npm", "npm dependencies"), ("pep621", "Python depend
     if not major or major[-1]["groupName"] is not None or rules.index(major[-1]) < rules.index(matching[0]):
         sys.exit(f"{manager}: majors are not isolated after the group")
 PYGROUP
-# The published preset must match the actual minimal render, apart from prose.
-# This does not establish parity for conditional profiles or adopted configs.
-if [ "$profile" = "minimal" ]; then
-    python3 - "$repo_root/renovate/default.json" renovate.json <<'PYGUARD' ||
+# Minimal compares the entire shared policy, excluding only the explicitly
+# Node-specific TypeScript hold. Every profile checks that hold's applicability.
+python3 - "$repo_root/renovate/default.json" renovate.json "$profile" <<'PYGUARD' ||
 import json
 import sys
 
@@ -1171,15 +1170,34 @@ def functional(value):
     return value
 
 
+def typescript_holds(config):
+    return [rule for rule in config["packageRules"] if rule.get("matchPackageNames") == ["typescript"]]
+
+
 with open(sys.argv[1], encoding="utf-8") as preset_file, open(sys.argv[2], encoding="utf-8") as render_file:
     preset = json.load(preset_file)
     rendered = json.load(render_file)
-if functional(preset) != functional(rendered):
-    sys.exit("published Renovate preset differs from minimal rendered policy")
-if preset.get("vulnerabilityAlerts", {}).get("enabled") is not True or preset.get("osvVulnerabilityAlerts") is not True:
-    sys.exit("published Renovate preset must enable both vulnerability feeds")
+profile = sys.argv[3]
+expected = {"matchManagers": ["npm"], "matchPackageNames": ["typescript"], "allowedVersions": "<7.0.0"}
+preset_holds = typescript_holds(preset)
+if len(preset_holds) != 1 or functional(preset_holds[0]) != expected:
+    sys.exit("published preset TypeScript hold is missing or differs from the expected npm policy")
+rendered_holds = typescript_holds(rendered)
+if profile in ("web", "webapp", "full", "meta"):
+    if len(rendered_holds) != 1 or functional(rendered_holds[0]) != functional(preset_holds[0]):
+        sys.exit("Node profile TypeScript hold differs from the preset")
+elif rendered_holds:
+    sys.exit("non-Node profile unexpectedly renders the TypeScript hold")
+if profile == "minimal":
+    # Delete exactly the validated Node-only rule, not arbitrary holds.
+    preset["packageRules"].remove(preset_holds[0])
+    if functional(preset) != functional(rendered):
+        sys.exit("published Renovate preset differs from minimal rendered policy")
+    if preset.get("vulnerabilityAlerts", {}).get("enabled") is not True or preset.get("osvVulnerabilityAlerts") is not True:
+        sys.exit("published Renovate preset must enable both vulnerability feeds")
 PYGUARD
-        err "published Renovate preset failed minimal policy parity or feed checks"
+    err "published Renovate preset failed policy parity or feed checks"
+if [ "$profile" = "minimal" ]; then
     grep -Fq 'renovate-config-validator --strict --no-global renovate/default.json' "$repo_root/scripts/test-renovate-config.sh" ||
         err "strict shared Renovate preset validation route is missing"
 fi

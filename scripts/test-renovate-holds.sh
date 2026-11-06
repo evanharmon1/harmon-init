@@ -75,4 +75,45 @@ if "$lint" "$tmp" >/dev/null 2>&1; then
     echo 'accepted a root/preset range mismatch' >&2
     exit 1
 fi
+# Exercise the actual template parity guard, including the narrow Node exception.
+awk '/<<.PYGUARD./ {copy=1; next} /^PYGUARD$/ {exit} copy' "$repo/scripts/test-template.sh" >"$tmp/parity-guard.py"
+python3 - "$repo/renovate/default.json" "$tmp" <<'PYTEST'
+import copy, json, pathlib, subprocess, sys
+preset = json.loads(pathlib.Path(sys.argv[1]).read_text())
+tmp = pathlib.Path(sys.argv[2])
+
+def is_ts(rule):
+    return rule.get('matchPackageNames') == ['typescript']
+
+def check(label, shared, rendered, profile, expected):
+    (tmp / 'shared.json').write_text(json.dumps(shared))
+    (tmp / 'rendered.json').write_text(json.dumps(rendered))
+    result = subprocess.run([sys.executable, str(tmp / 'parity-guard.py'), str(tmp / 'shared.json'),
+                             str(tmp / 'rendered.json'), profile], capture_output=True, text=True)
+    if (result.returncode == 0) != expected:
+        sys.exit(f'{label}: unexpected exit {result.returncode}: {result.stderr}')
+
+minimal = copy.deepcopy(preset)
+minimal['packageRules'] = [r for r in minimal['packageRules'] if not is_ts(r)]
+check('minimal valid', preset, minimal, 'minimal', True)
+check('Node valid', preset, preset, 'web', True)
+changed = copy.deepcopy(minimal)
+changed['schedule'] = ['* * * * *']
+check('common policy drift', preset, changed, 'minimal', False)
+changed = copy.deepcopy(minimal)
+changed['packageRules'].append({'matchPackageNames': ['other'], 'allowedVersions': '<2'})
+check('unrelated hold', preset, changed, 'minimal', False)
+changed = copy.deepcopy(minimal)
+changed['osvVulnerabilityAlerts'] = False
+shared = copy.deepcopy(preset)
+shared['osvVulnerabilityAlerts'] = False
+check('both feeds disabled equally', shared, changed, 'minimal', False)
+check('Node hold missing', preset, minimal, 'web', False)
+changed = copy.deepcopy(preset)
+next(r for r in changed['packageRules'] if is_ts(r))['allowedVersions'] = '<8.0.0'
+check('Node hold wrong', preset, changed, 'web', False)
+check('both TypeScript holds wrong', changed, changed, 'web', False)
+check('preset hold missing', minimal, minimal, 'minimal', False)
+check('non-Node hold unexpectedly present', preset, preset, 'iac', False)
+PYTEST
 echo 'Renovate hold fixtures passed'
