@@ -11,7 +11,13 @@ holds() {
 }
 check() {
     local file=$1 exemptions=$2 count extracted
-    count=$(jq -Rsc '[scan("\"allowedVersions\"[[:space:]]*:")] | length' "$file")
+    if [[ $file == *.jinja ]]; then
+        # Decode JSON-shaped keys before counting; an escaped hold key must not
+        # evade both the count and the deliberately literal object extractor.
+        count=$(jq -Rsc '[scan("\"(?:[^\"\\\\]|\\\\.)*\"[[:space:]]*:") | sub("[[:space:]]*:$"; "") | fromjson | select(. == "allowedVersions")] | length' "$file")
+    else
+        count=$(jq '[.. | objects | select(has("allowedVersions"))] | length' "$file")
+    fi
     extracted=$(holds "$file")
     if [[ $(jq 'length' <<<"$extracted") != "$count" ]]; then
         echo "$file: cannot inspect every allowedVersions rule" >&2
@@ -21,7 +27,7 @@ check() {
     all(.[];
       if (.matchPackageNames == ["joshmedeski/sesh"] or .matchPackageNames == ["XAMPPRocky/tokei"]) and $exemptions then true
       else (.description | type == "string" and
-        test("^Reason: [^;]*[^[:space:];][^;]*; Upstream: https://github[.]com/[^ /;]+/[^ /;]+/(issues|pull)/[0-9]+; Remove when: [^;]*[^[:space:];][^;]*; Canary: https://github[.]com/[^ /;]+/[^ /;]+$")) end)' <<<"$extracted" >/dev/null || {
+        test("^Reason: [^;]*[^[:space:];][^;]*; Upstream: https://github[.]com/[^[:space:][:cntrl:]/;]+/[^[:space:][:cntrl:]/;]+/(issues|pull)/[0-9]+; Remove when: [^;]*[^[:space:];][^;]*; Canary: https://github[.]com/[^[:space:][:cntrl:]/;]+/[^[:space:][:cntrl:]/;]+$")) end)' <<<"$extracted" >/dev/null || {
         echo "$file: allowedVersions rule needs Reason, upstream issue/PR, Remove when, and Canary" >&2
         return 1
     }

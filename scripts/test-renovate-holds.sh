@@ -69,6 +69,73 @@ PYCODE
         cp "$repo/template/renovate.json.jinja" "$tmp/template/renovate.json.jinja"
     done
 done
+# Escaped keys are valid JSON. Reject incomplete holds even when every copy
+# uses the same spelling, and when the generated consumer has no preset.
+for mode in consumer copies; do
+    for missing in description removal; do
+        python3 - "$tmp" "$mode" "$missing" <<'PYCASE'
+import pathlib, sys
+root, mode, missing = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+paths = [root / 'renovate.json']
+if mode == 'copies':
+    paths += [root / 'renovate/default.json', root / 'template/renovate.json.jinja']
+for path in paths:
+    text = path.read_text()
+    match = text.index('"matchPackageNames": ["typescript"]')
+    start = text.rindex('{', 0, match)
+    end = text.index('}', match)
+    rule = text[start:end]
+    assert '"allowedVersions"' in rule and '"description"' in rule
+    rule = rule.replace('"allowedVersions"', r'"allowed\u0056ersions"', 1)
+    if missing == 'description':
+        import re
+        rule = re.sub(r'"description": "[^"\n]*",?\s*', '', rule, count=1)
+    else:
+        rule = rule.replace('; Remove when: typescript-eslint supports TypeScript 7 and the canary Node and Astro checks pass with TypeScript 7', '', 1)
+    if mode == 'consumer':
+        path.write_text('{"packageRules": [' + rule + '}]}')
+    else:
+        path.write_text(text[:start] + rule + text[end:])
+if mode == 'consumer':
+    (root / 'renovate/default.json').unlink()
+PYCASE
+        if "$lint" "$tmp" >/dev/null 2>&1; then
+            echo "accepted escaped hold key with missing $missing ($mode)" >&2
+            exit 1
+        fi
+        cp "$repo/renovate.json" "$tmp/renovate.json"
+        cp "$repo/renovate/default.json" "$tmp/renovate/default.json"
+        cp "$repo/template/renovate.json.jinja" "$tmp/template/renovate.json.jinja"
+    done
+done
+# JSON-decoded whitespace and controls cannot form a GitHub owner or repo.
+for component in upstream_owner upstream_repo canary_owner canary_repo; do
+    for value in tab newline control; do
+        python3 - "$tmp" "$component" "$value" <<'PYURL'
+import json, pathlib, sys
+root, component, value = pathlib.Path(sys.argv[1]), sys.argv[2], sys.argv[3]
+old = {
+    'upstream_owner': 'github.com/typescript-eslint/typescript-eslint/issues/10940',
+    'upstream_repo': 'github.com/typescript-eslint/typescript-eslint/issues/10940',
+    'canary_owner': 'github.com/evanharmon1/harmon-init',
+    'canary_repo': 'github.com/evanharmon1/harmon-init',
+}[component]
+parts = old.split('/')
+parts[1 if component.endswith('owner') else 2] = json.dumps({'tab': '\t', 'newline': '\n', 'control': '\x01'}[value])[1:-1]
+for path in (root / 'renovate.json', root / 'renovate/default.json', root / 'template/renovate.json.jinja'):
+    text = path.read_text()
+    assert old in text
+    path.write_text(text.replace(old, '/'.join(parts), 1))
+PYURL
+        if "$lint" "$tmp" >/dev/null 2>&1; then
+            echo "accepted $value in $component" >&2
+            exit 1
+        fi
+        cp "$repo/renovate.json" "$tmp/renovate.json"
+        cp "$repo/renovate/default.json" "$tmp/renovate/default.json"
+        cp "$repo/template/renovate.json.jinja" "$tmp/template/renovate.json.jinja"
+    done
+done
 # A range drift must fail even if its description stays valid.
 sed -i 's/"<7.0.0"/"<8.0.0"/' "$tmp/renovate.json"
 if "$lint" "$tmp" >/dev/null 2>&1; then
