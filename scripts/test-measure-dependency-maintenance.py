@@ -106,6 +106,36 @@ class MeasureTests(unittest.TestCase):
             self.assertIn("#12 | unknown | 0 | 2.00 | unknown", out.getvalue())
             self.assertEqual(err.getvalue(), "")
 
+    def test_cli_malformed_nested_identities_are_atomic(self):
+        args = ["measure", "--repo", "a/b", "--cycle", "oct", "--start", "2026-10-01", "--end", "2026-11-01", "--pr", "12", "--pr", "13"]
+        pr = {"created_at": "2026-10-01T00:00:00Z", "merged_at": "2026-10-03T00:00:00Z"}
+        for kind, field in (("reviewed", "user"), ("commented", "actor"), ("head_ref_force_pushed", "actor")):
+            for identity in ("invalid", ["invalid"], "", [], 0, False):
+                event = {"event": kind, field: identity, "created_at": pr["created_at"], "submitted_at": pr["created_at"]}
+                responses = [pr, [[]], [[]], pr, [[event]], [[]]]
+                results = [subprocess.CompletedProcess(["gh"], 0, stdout=json.dumps(value)) for value in responses]
+                with self.subTest(kind=kind, identity=identity), patch("sys.argv", args), \
+                     patch.object(measure.subprocess, "run", side_effect=results) as run, \
+                     redirect_stderr(io.StringIO()) as err, redirect_stdout(io.StringIO()) as out:
+                    self.assertEqual(measure.main(), 1)
+                    self.assertEqual(out.getvalue(), "")
+                    self.assertIn(f"Unable to measure: timeline {field} must be a JSON object or null", err.getvalue())
+                    self.assertEqual(run.call_count, 6)
+
+    def test_timeline_identity_controls(self):
+        pr = {"created_at": "2026-10-01T00:00:00Z", "merged_at": "2026-10-03T00:00:00Z"}
+        for kind, field in (("reviewed", "user"), ("commented", "actor"), ("head_ref_force_pushed", "actor")):
+            for identity in (None, {}, {"type": "Bot"}, {"type": "unknown"}, {"type": "User"}):
+                for present in (True, False) if identity is None else (True,):
+                    event = {"event": kind, "created_at": pr["created_at"], "submitted_at": pr["created_at"]}
+                    if present:
+                        event[field] = identity
+                    with self.subTest(kind=kind, identity=identity, present=present):
+                        expected_humans = int(identity == {"type": "User"})
+                        expected_pushes = int(kind == "head_ref_force_pushed")
+                        self.assertEqual(measure.measure(pr, [event], []), (expected_humans, 0, 2, expected_pushes))
+        self.assertEqual(measure.measure(pr, [{"event": "ignored", "user": [], "actor": False}], []), (0, 0, 2, 0))
+
     def test_main_historical_cohort(self):
         pr = {"created_at": "2026-09-30T00:00:00Z", "merged_at": "2026-10-15T00:00:00Z"}
         timeline = [{"event": "reviewed", "user": {"type": "User"}, "submitted_at": "2026-10-01T00:00:00Z"},
