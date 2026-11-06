@@ -79,6 +79,33 @@ class MeasureTests(unittest.TestCase):
                 self.assertIn("PR #12 response must be a JSON object", err.getvalue())
                 self.assertEqual(run.call_count, 1)
 
+    def test_cli_malformed_timeline_entry(self):
+        args = ["measure", "--repo", "a/b", "--cycle", "oct", "--start", "2026-10-01", "--end", "2026-11-01", "--pr", "12", "--pr", "13"]
+        pr = {"created_at": "2026-10-01T00:00:00Z", "merged_at": "2026-10-03T00:00:00Z"}
+        for entry in (None, [], "invalid", 42):
+            responses = [pr, [[]], [[]], pr, [[entry]], [[]]]
+            results = [subprocess.CompletedProcess(["gh"], 0, stdout=json.dumps(value)) for value in responses]
+            with self.subTest(entry=entry), patch("sys.argv", args), \
+                 patch.object(measure.subprocess, "run", side_effect=results) as run, \
+                 redirect_stderr(io.StringIO()) as err, redirect_stdout(io.StringIO()) as out:
+                self.assertEqual(measure.main(), 1)
+                self.assertEqual(out.getvalue(), "")
+                self.assertIn("Unable to measure: timeline entry must be a JSON object", err.getvalue())
+                self.assertEqual(run.call_count, 6)
+
+    def test_cli_unavailable_timeline_evidence(self):
+        pr = {"created_at": "2026-10-01T00:00:00Z", "merged_at": "2026-10-03T00:00:00Z"}
+        timeline = [{"event": "reviewed", "user": {"type": "User"}},
+                    {"event": "head_ref_force_pushed", "actor": {"type": "Bot"}}]
+        responses = [pr, [timeline], [[]]]
+        results = [subprocess.CompletedProcess(["gh"], 0, stdout=json.dumps(value)) for value in responses]
+        args = ["measure", "--repo", "a/b", "--cycle", "oct", "--start", "2026-10-01", "--end", "2026-11-01", "--pr", "12"]
+        with patch("sys.argv", args), patch.object(measure.subprocess, "run", side_effect=results), \
+             redirect_stdout(io.StringIO()) as out, redirect_stderr(io.StringIO()) as err:
+            self.assertEqual(measure.main(), 0)
+            self.assertIn("#12 | unknown | 0 | 2.00 | unknown", out.getvalue())
+            self.assertEqual(err.getvalue(), "")
+
     def test_main_historical_cohort(self):
         pr = {"created_at": "2026-09-30T00:00:00Z", "merged_at": "2026-10-15T00:00:00Z"}
         timeline = [{"event": "reviewed", "user": {"type": "User"}, "submitted_at": "2026-10-01T00:00:00Z"},
