@@ -21,7 +21,7 @@ check() {
     all(.[];
       if (.matchPackageNames == ["joshmedeski/sesh"] or .matchPackageNames == ["XAMPPRocky/tokei"]) and $exemptions then true
       else (.description | type == "string" and
-        test("^Reason: [^ ;][^;]*; Upstream: https://github[.]com/[^ /;]+/[^ /;]+/(issues|pull)/[0-9]+; Remove when: [^ ;][^;]*; Canary: https://github[.]com/[^ /;]+/[^ /;]+$")) end)' <<<"$extracted" >/dev/null || {
+        test("^Reason: [^;]*[^[:space:];][^;]*; Upstream: https://github[.]com/[^ /;]+/[^ /;]+/(issues|pull)/[0-9]+; Remove when: [^;]*[^[:space:];][^;]*; Canary: https://github[.]com/[^ /;]+/[^ /;]+$")) end)' <<<"$extracted" >/dev/null || {
         echo "$file: allowedVersions rule needs Reason, upstream issue/PR, Remove when, and Canary" >&2
         return 1
     }
