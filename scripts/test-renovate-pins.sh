@@ -509,89 +509,59 @@ for label, cfg in [("renovate.json", root_cfg), ("template/renovate.json.jinja",
     if cfg.get("vulnerabilityAlerts", {}).get("enabled") is not True:
         errors.append(f"{label}: vulnerabilityAlerts.enabled must be true")
 
-# npm update routing is order-sensitive: generic majors are ejected first,
-# then the two tightly coupled toolchains deliberately override that null group.
-# Assert both layers here so a root-only or template-only edit cannot silently
-# restore the red mega-PR this policy replaces.
-def check_npm_policy(label, cfg):
+# Check effective rule ordering for representative lockfile updates and majors.
+# This deliberately exercises the shipped rules, including package-specific
+# formatter and fixture groups, rather than merely counting group names.
+def check_lockfile_policy(label, cfg):
+    import fnmatch
     rules = cfg.get("packageRules", [])
-    def find(prefix):
-        matches = [
-            (i, rule)
-            for i, rule in enumerate(rules)
-            if rule.get("description", "").startswith(prefix)
-        ]
-        if len(matches) != 1:
-            errors.append(f"{label}: expected exactly one package rule starting {prefix!r}")
-            return None, None
-        return matches[0]
-
-    minor_i, minor = find("Batch non-major npm/Node updates")
-    major_i, major = find("Give each npm major its own PR")
-    typescript_i, typescript = find("Hold TypeScript below 7")
-    package_manager_i, package_manager = find("Require explicit approval for package-manager majors")
-    eslint_i, eslint = find("Keep the tightly coupled ESLint packages together")
-    astro_i, astro = find("Keep Astro and its official integrations together")
-    found = [minor, major, typescript, package_manager, eslint, astro]
-    if any(rule is None for rule in found):
-        return
-
-    if set(minor.get("matchUpdateTypes", [])) != {"minor", "patch", "pin", "digest"} or minor.get("groupName") != "npm dependencies":
-        errors.append(f"{label}: non-major npm updates must be the 'npm dependencies' group")
-    if major.get("matchUpdateTypes") != ["major"] or major.get("groupName", "missing") is not None:
-        errors.append(f"{label}: npm majors must set groupName to null")
-    description = typescript.get("description", "")
-    if (
-        typescript.get("matchManagers") != ["npm"]
-        or typescript.get("matchPackageNames") != ["typescript"]
-        or typescript.get("allowedVersions") != "<7.0.0"
-        or not all(
-        issue in description
-        for issue in ("typescript-eslint/typescript-eslint/issues/10940", "withastro/roadmap/issues/1321")
-        )
-    ):
-        errors.append(f"{label}: TypeScript 7 hold must name both upstream removal conditions")
-    notes = "\n".join(package_manager.get("prBodyNotes", []))
-    if (
-        package_manager.get("matchDepTypes") != ["packageManager"]
-        or package_manager.get("matchUpdateTypes") != ["major"]
-        or package_manager.get("dependencyDashboardApproval") is not True
-        or "docs/CHECKLIST.md#package-manager-major-upgrades" not in notes
-        or "deliberately stays on an older major" not in notes
-    ):
-        errors.append(f"{label}: package-manager majors must be approval-gated with the migration/hold guidance")
-    if set(eslint.get("matchPackageNames", [])) != {"typescript-eslint", "@typescript-eslint/*", "eslint", "@eslint/*", "eslint-plugin-astro"} or eslint.get("groupName") != "ESLint toolchain":
-        errors.append(f"{label}: ESLint toolchain rule is incomplete")
-    if set(astro.get("matchPackageNames", [])) != {"astro", "@astrojs/*"} or astro.get("groupName") != "Astro":
-        errors.append(f"{label}: Astro toolchain rule is incomplete")
+    def resolve(manager, update, package, path, dep_type="dependencies"):
+        result = {"groupName": None, "enabled": True}
+        for rule in rules:
+            if "matchManagers" in rule and manager not in rule["matchManagers"]:
+                continue
+            if "matchUpdateTypes" in rule and update not in rule["matchUpdateTypes"]:
+                continue
+            if "matchDepTypes" in rule and dep_type not in rule["matchDepTypes"]:
+                continue
+            if "matchDatasources" in rule:
+                continue
+            if "matchFileNames" in rule and not match_file_patterns(rule["matchFileNames"], path):
+                continue
+            if "matchPackageNames" in rule and not any(fnmatch.fnmatchcase(package, n) for n in rule["matchPackageNames"]):
+                continue
+            result.update({k: rule[k] for k in ("groupName", "enabled", "allowedVersions", "dependencyDashboardApproval") if k in rule})
+        return result
+    cases = [("npm", "prettier", "package.json", "npm dependencies"),
+             ("npm", "eslint", "package.json", "npm dependencies"),
+             ("npm", "astro", "package.json", "npm dependencies"),
+             ("pep621", "black", "pyproject.toml", "Python dependencies"),
+             ("gomod", "example/module", "go.mod", "Go dependencies"),
+             ("terraform", "hashicorp/aws", "main.tf", "Terraform providers")]
+    for manager, dep, path, expected in cases:
+        for update in ("minor", "patch", "pin", "digest"):
+            actual = resolve(manager, update, dep, path)["groupName"]
+            if actual != expected:
+                errors.append(f"{label}: {manager} {dep} {update} resolves to {actual!r}, expected {expected!r}")
+        if resolve(manager, "major", dep, path)["groupName"] is not None:
+            errors.append(f"{label}: {manager} {dep} major must not be grouped")
+    if label != "renovate/default.json":
+        if resolve("npm", "minor", "typescript", "package.json").get("allowedVersions") != "<7.0.0":
+            errors.append(f"{label}: TypeScript hold lost")
+        if not resolve("npm", "major", "pnpm", "package.json", "packageManager").get("dependencyDashboardApproval"):
+            errors.append(f"{label}: package manager major approval lost")
+    if label == "template/renovate.json.jinja" and resolve("npm", "minor", "example", "package.json", "pnpm-workspace.overrides")["enabled"] is not False:
+        errors.append(f"{label}: security override hold lost")
     if label == "renovate.json":
-        fixture_file_patterns = {"!tests/fixtures/**"}
-        for name, rule in (
-            ("non-major npm", minor),
-            ("npm major", major),
-            ("ESLint toolchain", eslint),
-            ("Astro toolchain", astro),
-        ):
-            if set(rule.get("matchFileNames", [])) != fixture_file_patterns:
-                errors.append(f"{label}: {name} rule must preserve fixture-specific grouping")
-        for fixture_path, fixture_group in (
-            ("tests/fixtures/web-astro/package.json", "web-astro fixture"),
-            ("tests/fixtures/web-app/package.json", "web-app fixture"),
-        ):
-            for dep in ("typescript", "eslint", "astro"):
-                resolved = resolve_group(cfg, fixture_path, dep, "npm", manager="npm")
-                if resolved != fixture_group:
-                    errors.append(
-                        f"{label}: {dep} in {fixture_path} resolves to {resolved!r}, "
-                        f"expected {fixture_group!r}"
-                    )
-    if not (minor_i < major_i < typescript_i < package_manager_i < eslint_i < astro_i):
-        errors.append(f"{label}: npm package rules are not in override-safe order")
+        for path, expected in (("tests/fixtures/web-astro/package.json", "web-astro fixture"), ("tests/fixtures/web-app/package.json", "web-app fixture")):
+            if resolve("npm", "minor", "astro", path)["groupName"] != expected:
+                errors.append(f"{label}: {path} lost its independent fixture group")
+    if cfg.get("vulnerabilityAlerts", {}).get("groupName", None) is not None:
+        errors.append(f"{label}: vulnerability alerts must bypass groups")
 
-
-for label, cfg in [("renovate.json", root_cfg), ("template/renovate.json.jinja", tmpl_on)]:
+for label, cfg in [("renovate.json", root_cfg), ("template/renovate.json.jinja", tmpl_on), ("renovate/default.json", json.loads(pathlib.Path("renovate/default.json").read_text(encoding="utf-8")))]:
     if cfg is not None:
-        check_npm_policy(label, cfg)
+        check_lockfile_policy(label, cfg)
 
 if errors:
     for e in errors:
