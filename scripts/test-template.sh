@@ -1134,6 +1134,27 @@ jq -e '.vulnerabilityAlerts.enabled == true' renovate.json >/dev/null ||
 # and tasks, not JSON fields, so nothing else here would notice.
 jq -e '.osvVulnerabilityAlerts == true' renovate.json >/dev/null ||
     err "Renovate OSV vulnerability alerts must be enabled"
+# Check every rendered profile, including profiles without a given ecosystem:
+# later package-specific rules must not take a lockfile update out of its group.
+python3 - renovate.json <<'PYGROUP' || err "rendered Renovate lockfile grouping is incomplete"
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as config_file:
+    config = json.load(config_file)
+rules = config["packageRules"]
+for manager, expected in (("npm", "npm dependencies"), ("pep621", "Python dependencies"),
+                          ("gomod", "Go dependencies"), ("terraform", "Terraform providers")):
+    matching = [rule for rule in rules if rule.get("matchManagers") == [manager]
+                and rule.get("groupName") == expected
+                and set(rule.get("matchUpdateTypes", [])) == {"minor", "patch", "pin", "digest"}]
+    if len(matching) != 1:
+        sys.exit(f"{manager}: expected one non-major group")
+    major = [rule for rule in rules if manager in rule.get("matchManagers", [])
+             and rule.get("matchUpdateTypes") == ["major"] and "groupName" in rule]
+    if not major or major[-1]["groupName"] is not None or rules.index(major[-1]) < rules.index(matching[0]):
+        sys.exit(f"{manager}: majors are not isolated after the group")
+PYGROUP
 # The published preset must match the actual minimal render, apart from prose.
 # This does not establish parity for conditional profiles or adopted configs.
 if [ "$profile" = "minimal" ]; then
