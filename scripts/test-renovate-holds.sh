@@ -137,7 +137,7 @@ PYURL
     done
 done
 # A range drift must fail even if its description stays valid.
-sed -i 's/"<7.0.0"/"<8.0.0"/' "$tmp/renovate.json"
+sed -i.bak 's/"<7.0.0"/"<8.0.0"/' "$tmp/renovate.json"
 if "$lint" "$tmp" >/dev/null 2>&1; then
     echo 'accepted a root/preset range mismatch' >&2
     exit 1
