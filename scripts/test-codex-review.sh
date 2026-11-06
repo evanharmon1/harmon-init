@@ -762,9 +762,25 @@ grep -q "Reviewing branch changes against main AND uncommitted work" <<<"$out" |
 prompt="$(prompt_of "$out")"
 grep -Fq 'BASE-GUIDELINES-MARKER' <<<"$prompt" || fail "the default union did not read the merge base's guidelines: $prompt"
 ! grep -Fq 'WORKTREE-GUIDELINES-MARKER' <<<"$prompt" || fail "the default union read the working tree's guidelines: $prompt"
+: >"$stub_argv"
 out="$(cd "$conv" && ./scripts/codex-review.sh review --commit "$conv_base" 2>&1)" || fail "--commit on the root commit failed: $out"
 grep -Fq 'no base revision for this scope; built-in instructions only' <<<"$out" || fail "a parentless commit did not fall back to the built-in instructions: $out"
 ! grep -Fq 'Repository review guidelines' <<<"$(prompt_of "$out")" || fail "a parentless commit still carried guidelines: $out"
+[ -s "$stub_argv" ] || fail "codex was not invoked for a genuine root commit"
+
+echo "==> --commit refuses a shallow boundary with unavailable parent history before codex"
+shallow="${test_tmp}/guidelines-shallow"
+git clone -q --depth 1 --branch feature "file://$conv" "$shallow"
+[ "$(git -C "$shallow" rev-parse --is-shallow-repository)" = true ] || fail "the shallow fixture is not shallow"
+if git -C "$shallow" cat-file -e "${conv_base}^{commit}" 2>/dev/null; then
+    fail "the shallow fixture still has its parent commit"
+fi
+: >"$stub_argv"
+status=0
+out="$(cd "$shallow" && ./scripts/codex-review.sh review --commit HEAD 2>&1)" || status=$?
+[ "$status" -eq 2 ] || fail "unavailable parent history exited $status instead of 2: $out"
+grep -Fq "parent history unavailable at $conv_base" <<<"$out" || fail "the shallow refusal did not identify the unavailable parent: $out"
+[ ! -s "$stub_argv" ] || fail "codex was invoked despite unavailable parent history"
 
 echo "==> [review_guidelines].file at the base revision governs: not the branch's table, not the conventional path"
 pol="${test_tmp}/guidelines-policied"
@@ -872,6 +888,31 @@ if out="$(cd "$mis" && ./scripts/codex-review.sh review --base main 2>&1)"; then
 fi
 grep -Fq "[review_guidelines].file names 'docs/nowhere.md', which does not exist at" <<<"$out" || fail "missing-file refusal did not name the file and revision: $out"
 [ ! -s "$stub_argv" ] || fail "codex was invoked despite the missing guidelines file: $(cat "$stub_argv")"
+
+echo "==> symlinks in policy, reader, and guidelines paths refuse before codex"
+for path in .devflow.toml scripts/devflow-policy.mjs scripts/lib/toml-lite.mjs \
+    docs/custom-guidelines.md docs/review-guidelines.md; do
+    fixture="$pol"
+    [ "$path" != docs/review-guidelines.md ] || fixture="$conv"
+    symlink_repo="${test_tmp}/guidelines-symlink-${path//\//-}"
+    git clone -q --branch main "$fixture" "$symlink_repo"
+    mv "$symlink_repo/$path" "$symlink_repo/$path.regular"
+    ln -s "${path##*/}.regular" "$symlink_repo/$path"
+    git -C "$symlink_repo" add -A
+    git_t -C "$symlink_repo" commit -qm 'test: base has a symlink instead of a regular file'
+    revision="$(git -C "$symlink_repo" rev-parse HEAD)"
+    git -C "$symlink_repo" checkout -qb symlink-change
+    printf 'candidate change\n' >"$symlink_repo/symlink-change.txt"
+    git -C "$symlink_repo" add symlink-change.txt
+    git_t -C "$symlink_repo" commit -qm 'test: work after the symlink base'
+    : >"$stub_argv"
+    status=0
+    out="$(cd "$symlink_repo" && ./scripts/codex-review.sh review --base main 2>&1)" || status=$?
+    [ "$status" -eq 2 ] || fail "symlink at $path exited $status instead of 2: $out"
+    grep -Fq "'$path' at $revision is not a regular file" <<<"$out" ||
+        fail "the symlink refusal did not identify $path at $revision: $out"
+    [ ! -s "$stub_argv" ] || fail "codex was invoked despite the symlink at $path"
+done
 
 echo "==> failed Git tree or existing-blob reads refuse before codex is invoked"
 # Keep real repositories and inject only the failed Git operation: a missing
@@ -1453,4 +1494,4 @@ if out="$(CLAUDE_CONFIG_DIR="${fake_claude}2" CLAUDE_PLUGIN_DATA="${test_tmp}/pl
 fi
 grep -q "non-interactive" <<<"$out" || fail "missing non-interactive disable refusal message: $out"
 
-echo "codex-review + codex-gate guards OK ($((68 + standardize_cases)) cases)"
+echo "codex-review + codex-gate guards OK ($((74 + standardize_cases)) cases)"

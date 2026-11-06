@@ -150,7 +150,18 @@ base:* | both:*)
     guidelines_rev="$(git merge-base "${review_diff_spec#*:}" HEAD 2>/dev/null || true)"
     ;;
 commit:*)
-    guidelines_rev="$(git rev-parse --verify --quiet "${review_diff_spec#commit:}^" 2>/dev/null || true)"
+    # Revision traversal hides parents at a shallow boundary. Read the commit
+    # headers instead so missing history cannot masquerade as a genuine root.
+    guidelines_commit="$(git cat-file -p "${review_diff_spec#commit:}^{commit}")" || {
+        echo "could not read the reviewed commit for the review guidelines" >&2
+        exit 2
+    }
+    guidelines_rev="$(sed -n '/^$/q; s/^parent //p' <<<"$guidelines_commit")"
+    guidelines_rev="${guidelines_rev%%$'\n'*}"
+    if [ -n "$guidelines_rev" ] && ! git cat-file -e "${guidelines_rev}^{commit}"; then
+        echo "parent history unavailable at $guidelines_rev for the review guidelines; fetch the missing history before reviewing" >&2
+        exit 2
+    fi
     ;;
 worktree)
     guidelines_rev="$(git rev-parse --verify --quiet 'HEAD^{commit}' 2>/dev/null || true)"
@@ -174,6 +185,13 @@ show_at_rev() {
         exit 2
     }
     [ -n "$entry" ] || return 1
+    case "$entry" in
+    '100644 blob '* | '100755 blob '*) ;;
+    *)
+        echo "'$2' at $1 is not a regular file for the review guidelines" >&2
+        exit 2
+        ;;
+    esac
     git show "${1}:${2}" >"$3" || {
         echo "could not read '$2' at $1 for the review guidelines" >&2
         exit 2
