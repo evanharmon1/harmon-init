@@ -31,7 +31,10 @@ def measure(pr, timeline, runs):
         kind = event.get("event")
         if kind not in {"commented", "reviewed", "head_ref_force_pushed"}:
             continue
-        identity = event.get("user") if kind == "reviewed" else event.get("actor")
+        identity_field = "user" if kind == "reviewed" else "actor"
+        identity = event.get(identity_field)
+        if identity is not None and not isinstance(identity, dict):
+            raise ValueError(f"timeline {identity_field} must be a JSON object or null")
         human = (identity or {}).get("type") == "User"
         when = event.get("submitted_at") if kind == "reviewed" else event.get("created_at")
         if not when:
