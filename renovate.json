@@ -195,7 +195,7 @@
       "separateMajorMinor": false
     },
     {
-      "description": "Hold TypeScript below 7 until typescript-eslint and Astro's language server support the native-compiler rewrite; remove this hold when https://github.com/typescript-eslint/typescript-eslint/issues/10940 and https://github.com/withastro/roadmap/issues/1321 are resolved",
+      "description": "Reason: TypeScript 7 requires typescript-eslint support for its native compiler; Upstream: https://github.com/typescript-eslint/typescript-eslint/issues/10940; Remove when: typescript-eslint supports TypeScript 7 and the canary Node and Astro checks pass with TypeScript 7; Canary: https://github.com/evanharmon1/harmon-init",
       "matchManagers": ["npm"],
       "matchPackageNames": ["typescript"],
       "allowedVersions": "<7.0.0"
@@ -240,7 +240,7 @@
       "allowedVersions": "<=13.0.0-alpha.0"
     },
     {
-      "description": "Hold Node at the 24 LTS line: Node 25+ no longer bundles corepack, which images/devcontainer/install/install-core.sh needs for pnpm (#1899). Remove this hold once the image installs pnpm another way.",
+      "description": "Reason: the shared image installer relies on Corepack bundled with Node, which Node 25 removes; Upstream: https://github.com/nodejs/node/pull/51981; Remove when: the shared image installs pnpm independently of bundled Corepack and its Node 25 build and checks pass; Canary: https://github.com/evanharmon1/harmon-init",
       "matchDatasources": ["node-version"],
       "matchPackageNames": ["node"],
       "allowedVersions": "<25"
