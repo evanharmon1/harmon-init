@@ -7,6 +7,11 @@
 # check of a real UID-mismatched bind mount and host-runner checkout.
 set -euo pipefail
 
+# Isolate all fixture Git processes, including cloned repositories and helpers.
+unset GIT_CONFIG_PARAMETERS
+export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=maintenance.auto GIT_CONFIG_VALUE_0=false
+export GIT_CONFIG_KEY_1=gc.auto GIT_CONFIG_VALUE_1=0
+
 cd "$(dirname "$0")/.."
 
 fail() {
@@ -413,6 +418,12 @@ git -C "$f23_source" -c user.name=fixture -c user.email=fixture@example.test com
 # loose objects into the clone instead of copying them — verified below by
 # comparing inodes, not assumed.
 git clone -q --local "$f23_source" "$f23_clone"
+# Conflicting local config proves the descendant Git process sees the fixture's
+# command-scope isolation even in a cloned repository.
+git -C "$f23_clone" config --local maintenance.auto true
+git -C "$f23_clone" config --local gc.auto 1
+[ "$(bash -c 'git -C "$1" config --bool maintenance.auto' _ "$f23_clone")" = false ] || fail "maintenance.auto enabled in cloned fixture"
+[ "$(bash -c 'git -C "$1" config --int gc.auto' _ "$f23_clone")" = 0 ] || fail "gc.auto enabled in cloned fixture"
 mkdir -p "$f23_clone/subdirectory"
 f23_object="$(find "$f23_source/.git/objects" -type f | sort | head -1)"
 [ -n "$f23_object" ] || fail "fixture setup: source repo has no loose objects to test with"
