@@ -1000,6 +1000,20 @@ if [ -n "$real_reader" ] && [ -f "${repo}/.devflow.toml" ] &&
     prompt="$(prompt_of "$out")"
     grep -Fq "$expect" <<<"$prompt" || fail "real reader: expected ${expect} in the prompt: $out"
     ! grep -Fq "$reject" <<<"$prompt" || fail "real reader: ${reject} should not be in the prompt: $out"
+
+    echo "==> a symlinked TMPDIR preserves the base reader's configured guidance and scratch cleanup"
+    scratch_parent="${test_tmp}/guidelines-physical-tmp"
+    scratch_alias="${test_tmp}/guidelines-symlink-tmp"
+    mkdir -p "$scratch_parent"
+    ln -s "$scratch_parent" "$scratch_alias"
+    : >"$stub_argv"
+    out="$(cd "$rr" && TMPDIR="$scratch_alias" ./scripts/codex-review.sh review --base main 2>&1)" ||
+        fail "review with a symlinked TMPDIR failed: $out"
+    prompt="$(prompt_of "$out")"
+    grep -Fq "$expect" <<<"$prompt" || fail "symlinked TMPDIR: expected ${expect} in the prompt: $out"
+    ! grep -Fq "$reject" <<<"$prompt" || fail "symlinked TMPDIR: ${reject} should not be in the prompt: $out"
+    [ -s "$stub_argv" ] || fail "codex was not invoked with a symlinked TMPDIR"
+    [ -z "$(ls -A "$scratch_parent")" ] || fail "review left scratch files in the symlinked TMPDIR"
 else
     echo "    (no vendored policy reader beside a shipped [review_guidelines] table; real-reader case skipped)"
 fi
@@ -1494,4 +1508,4 @@ if out="$(CLAUDE_CONFIG_DIR="${fake_claude}2" CLAUDE_PLUGIN_DATA="${test_tmp}/pl
 fi
 grep -q "non-interactive" <<<"$out" || fail "missing non-interactive disable refusal message: $out"
 
-echo "codex-review + codex-gate guards OK ($((74 + standardize_cases)) cases)"
+echo "codex-review + codex-gate guards OK ($((75 + standardize_cases)) cases)"

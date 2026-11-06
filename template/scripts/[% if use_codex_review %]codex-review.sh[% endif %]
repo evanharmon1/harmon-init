@@ -173,6 +173,13 @@ guidelines_tmp="$(mktemp -d "${TMPDIR:-/tmp}/harmon-review-guidelines.XXXXXX")" 
     exit 2
 }
 trap 'rm -rf "$guidelines_tmp"' EXIT
+# Node resolves import.meta.url physically; its CLI entry-point check must see
+# the same path in argv even when TMPDIR contains a symlink.
+guidelines_tmp_physical="$(cd "$guidelines_tmp" && pwd -P)" || {
+    echo "could not resolve the scratch directory for the review guidelines" >&2
+    exit 2
+}
+guidelines_tmp="$guidelines_tmp_physical"
 
 # Prove absence with a successful literal tree lookup before reading content.
 # Failed tree/blob reads are fatal even inside conditional callers, where
