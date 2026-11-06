@@ -26,11 +26,13 @@ case "$SCENARIO:$(wc -l < "$CALLS" | tr -d ' ')" in
 esac
 STUB
 chmod +x "$tmp/bin/pnpm"
+real_tee="$(command -v tee)"
+export REAL_TEE="$(cd "$(dirname "$real_tee")" && pwd -P)/$(basename "$real_tee")"
 cat >"$tmp/bin/tee" <<'STUB'
 #!/usr/bin/env bash
 case "$SCENARIO" in
     capture-fails|capture-and-install-fail) cat >/dev/null; exit 42 ;;
-    *) exec /usr/bin/tee "$@" ;;
+    *) exec "$REAL_TEE" "$@" ;;
 esac
 STUB
 chmod +x "$tmp/bin/tee"
