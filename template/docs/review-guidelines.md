@@ -8,9 +8,9 @@ and the finder reads both the table and the file from the review's **base
 revision** — the merge base for a branch review, `HEAD` for `--uncommitted` —
 never from the working tree, so a change can never rewrite the instructions
 that review it. How the file is resolved, and the inline `text` and `*_focus`
-alternatives, are in [guides/codex-review.md](guides/codex-review.md) under
-"Review guidelines". Edit the last section freely; the first two are the
-template's and the severity scale is gated (see below).
+alternatives, are in the [Dev flow guide](guides/devflow.md#review-guidelines).
+Edit the last section freely; the first two are the template's and the
+severity scale is gated (see below).
 
 ## Review priorities
 
