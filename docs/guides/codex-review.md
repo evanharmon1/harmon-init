@@ -122,6 +122,53 @@ when the base has run *ahead* of its upstream rather than behind, and when the
 gap changes no files at all (a change and its revert) — the two scopes are
 byte-identical there, so there is nothing to warn about.
 
+### Review guidelines
+
+Both modes send the repository's own reviewer instructions — review
+priorities, the normative P0–P3 severity scale, and the repository-specific
+invariants — from **one canonical file**,
+[docs/review-guidelines.md](../review-guidelines.md) by convention, so the
+local finder and the PR-side reviewers read the same copy. `.devflow.toml`
+names it:
+
+```toml
+[review_guidelines]
+file            = "docs/review-guidelines.md"  # repo-relative; or set `text` instead
+# text          = "First rule\nSecond rule"  # inline alternative; mutually exclusive with `file`
+challenge_focus = ""   # appended to every local challenge pass when the CLI gives no focus text
+review_focus    = ""   # likewise for the local review pass
+```
+
+The prompt is assembled as the mode preamble, then the guidelines, then the
+severity scale, then the focus — the CLI's focus text when given, else the
+configured `*_focus` for the mode. With nothing configured and no conventional
+file, the prompt is the built-in text alone, byte for byte (the test holds a
+golden copy of it).
+
+**Both the table and the file are read from the review's base revision, never
+the working tree** — the merge base for a branch-scoped review (explicit
+`--base`, or the auto-detected union of commits and worktree), the commit's
+parent for `--commit`, `HEAD` for `--uncommitted`. A change therefore cannot
+rewrite the instructions that review it: editing `docs/review-guidelines.md`
+or `[review_guidelines]` on the branch takes effect for the *next* branch,
+once it has merged. The policy reader is materialized from the same revision
+(`scripts/devflow-policy.mjs` here; the vendored `dev-flow-support` copy in a
+generated repository), for the same reason. A reader that predates the table
+ignores it — the pinned harmon-devkit reader does until
+evanharmon1/harmon-devkit#1289 is released and pinned — and the finder then
+falls back to the conventional path at that revision, so the table can ship
+before the reader projects it. The run says which copy governed:
+
+```text
+==> Review guidelines: docs/review-guidelines.md at 1f7f961b
+```
+
+A configured `file` that does not exist at the base revision is refused before
+Codex is invoked (exit 2); an unsafe path — absolute, option-like, a `..`
+segment, a backslash or NUL — is refused by the reader and the schema
+(`task test:devflow-config`). The validation rules and the reader's projection
+are in [devflow.md](devflow.md) under "Review guidelines".
+
 ### Trusted runner for another checkout
 
 A confidence-stage launcher can hold the runner and its libraries fixed while
@@ -507,23 +554,17 @@ integration/remediation and exempt/carried accounting.
 
 ## Finding priorities
 
-Both modes ask Codex to label every finding on this scale. The label is the
-reviewer's opening claim; what the local loops gate on is the **adjudicated**
-priority — your verdict after verifying the finding (see "Convergence: when a
-stage ends" above). Adjudication may downgrade a label with evidence, never
-silently drop one:
-
-| Priority | Meaning | Gates `challenge`/`review`? |
-| --- | --- | --- |
-| `P0` | Breaks correctness, security, or data integrity in ordinary use, or breaks an existing contract | Yes |
-| `P1` | A real defect or materially wrong design decision with a plausible trigger | Yes |
-| `P2` | Worth knowing, not merge-blocking: hardening, unlikely edge cases, maintainability, non-critical test gaps | No |
-| `P3` | Cosmetic or purely informational: a naming or wording choice that will mislead a reader, an observation with no defect behind it. The no-style-nits rule still binds — P3 is the floor for findings worth stating, not a licence to report nits | No |
-
-The scale lives in the prompt that `scripts/codex-review.sh` builds — not in
-the Codex CLI's own priority labels, which are an undocumented convention
-that can change. Keeping the definition local means the gate still means what
-it says when Codex's output format moves.
+Both modes ask Codex to label every finding on the P0–P3 scale. **The scale's
+single normative statement is [docs/review-guidelines.md](../review-guidelines.md)
+("Severity scale")**; it is not restated here. `scripts/codex-review.sh` sends
+those same lines in its prompt — not the Codex CLI's own priority labels,
+which are an undocumented convention that can change, so the gate still means
+what it says when Codex's output format moves — and `task test:codex-review`
+fails when the file and the prompt differ. The label is the reviewer's opening
+claim; what the local loops gate on is the **adjudicated** priority — your
+verdict after verifying the finding (see "Convergence: when a stage ends"
+above). Adjudication may downgrade a label with evidence, never silently drop
+one. Only `P0` and `P1` gate `challenge`/`review`.
 
 That prompt reaches the **local** tasks only. Codex **cloud** review runs on
 its own instructions and has been seen badging a finding off this scale (a
