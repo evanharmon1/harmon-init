@@ -138,6 +138,7 @@ tasks:
       - task: test:meta-install
       - task: test:copier-validators
       - task: test:renovate-pins
+      - task: test:renovate-holds
       - task: test:tool-pin-pairs
       - task: test:measure-dependency-maintenance
       - task: test:oh-my-pi-pin
@@ -202,6 +203,7 @@ tasks:
       - lint:actions
       - lint:hygiene
       - lint:pin-pairs
+      - lint:renovate-holds
       - lint:oh-my-pi-pin
 
   lint:yaml:
@@ -243,6 +245,11 @@ tasks:
     desc: Fail fast when OH_MY_PI_VERSION outruns its hand-verified marker (scripts/test-oh-my-pi-pin.sh)
     cmds:
       - ./scripts/test-oh-my-pi-pin.sh
+
+  lint:renovate-holds:
+    desc: Validate Renovate compatibility hold records
+    cmds:
+      - ./scripts/lint-renovate-holds.sh
 
   lint:hygiene:
     desc: File hygiene (trailing whitespace, EOF newlines, merge markers, etc.)
@@ -661,6 +668,11 @@ tasks:
     desc: Guard the answer validators that keep unsafe characters out of rendered paths
     cmds:
       - ./scripts/test-copier-validators.sh
+
+  test:renovate-holds:
+    desc: Exercise compatibility hold metadata and parity checks
+    cmds:
+      - ./scripts/test-renovate-holds.sh
 
   test:renovate-pins:
     desc: Check every annotated shell version pin is extractable by Renovate

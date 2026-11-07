@@ -118,6 +118,12 @@
       ]
     },
     {
+      "description": "Reason: TypeScript 7 requires typescript-eslint support for its native compiler; Upstream: https://github.com/typescript-eslint/typescript-eslint/issues/10940; Remove when: typescript-eslint supports TypeScript 7 and the canary Node and Astro checks pass with TypeScript 7; Canary: https://github.com/evanharmon1/harmon-init",
+      "matchManagers": ["npm"],
+      "matchPackageNames": ["typescript"],
+      "allowedVersions": "<7.0.0"
+    },
+    {
       "description": "Group non-major npm lockfile updates",
       "matchManagers": [
         "npm"

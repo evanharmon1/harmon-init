@@ -437,13 +437,14 @@ def render_template_config(answers):
     return json.loads(rendered)
 
 ALL_ON = dict.fromkeys(
-    ["use_skills_sync", "devcontainer", "include_ansible", "use_node", "include_terraform", "use_foreman"], True
+    ["use_skills_sync", "devcontainer", "include_ansible", "use_node", "use_python", "include_terraform", "use_foreman"], True
 )
 try:
     tmpl_on = render_template_config(ALL_ON)
     tmpl_off = render_template_config({**ALL_ON, "devcontainer": False})
+    tmpl_python_off = render_template_config({**ALL_ON, "use_python": False})
 except json.JSONDecodeError as exc:
-    tmpl_on = tmpl_off = None
+    tmpl_on = tmpl_off = tmpl_python_off = None
     errors.append(f"template/renovate.json.jinja does not render to valid JSON: {exc}")
 
 if tmpl_on:
@@ -515,51 +516,89 @@ for label, cfg in [("renovate.json", root_cfg), ("template/renovate.json.jinja",
 def check_lockfile_policy(label, cfg):
     import fnmatch
     rules = cfg.get("packageRules", [])
-    def resolve(manager, update, package, path, dep_type="dependencies"):
-        result = {"groupName": None, "enabled": True}
+    supported = {"matchManagers", "matchUpdateTypes", "matchDepTypes", "matchDatasources", "matchFileNames", "matchPackageNames"}
+    errors_before_validation = len(errors)
+    for rule in rules:
+        unknown = {k for k in rule if k.startswith("match")} - supported
+        if unknown:
+            errors.append(f"{label}: unsupported finite policy matcher(s): {sorted(unknown)}")
+        if any("**/" in pattern for pattern in rule.get("matchFileNames", [])):
+            errors.append(f"{label}: unsupported globstar-directory filename pattern: {rule['matchFileNames']!r}")
+        for field in ("matchDatasources", "matchDepTypes"):
+            if any(any(c in value for c in "*!?[]{}()/\\") for value in rule.get(field, [])):
+                errors.append(f"{label}: unsupported non-literal {field} selector: {rule[field]!r}")
+        if any(any(c in value for c in "*!?[]{}()/\\") for value in rule.get("matchManagers", [])):
+            errors.append(f"{label}: unsupported non-literal matchManagers selector: {rule['matchManagers']!r}")
+        if any(any(c in p for c in "[]{}?()") or p.lstrip("!").startswith("/") for p in rule.get("matchPackageNames", [])):
+            errors.append(f"{label}: unsupported package pattern: {rule['matchPackageNames']!r}")
+    if len(errors) != errors_before_validation:
+        return
+    def names_match(patterns, package):
+        # Finite glob subset: no regex, brace expansion, extglobs or character classes.
+        positives = [p for p in patterns if not p.startswith("!")]
+        negatives = [p[1:] for p in patterns if p.startswith("!")]
+        return (not positives or any(fnmatch.fnmatchcase(package.lower(), p.lower()) for p in positives)) and not any(
+            fnmatch.fnmatchcase(package.lower(), p.lower()) for p in negatives
+        )
+    # Renovate's negative-only pattern excludes its target and accepts others.
+    if names_match(["!renovate"], "renovate") or not names_match(["!renovate"], "other"):
+        errors.append(f"{label}: negated package-name control failed")
+    def resolve(manager, update, package, path, dep_type, datasource):
+        result = {"groupName": None, "enabled": True, "prBodyNotes": []}
         for rule in rules:
-            if "matchManagers" in rule and manager not in rule["matchManagers"]:
+            if "matchManagers" in rule and manager.lower() not in [value.lower() for value in rule["matchManagers"]]:
                 continue
             if "matchUpdateTypes" in rule and update not in rule["matchUpdateTypes"]:
                 continue
-            if "matchDepTypes" in rule and dep_type not in rule["matchDepTypes"]:
+            if "matchDepTypes" in rule and (dep_type is None or dep_type.lower() not in [value.lower() for value in rule["matchDepTypes"]]):
                 continue
-            if "matchDatasources" in rule:
+            if "matchDatasources" in rule and (datasource is None or datasource.lower() not in [value.lower() for value in rule["matchDatasources"]]):
                 continue
-            if "matchFileNames" in rule and not match_file_patterns(rule["matchFileNames"], path):
+            if "matchFileNames" in rule and not match_file_patterns([p.lower() for p in rule["matchFileNames"]], path.lower()):
                 continue
-            if "matchPackageNames" in rule and not any(fnmatch.fnmatchcase(package, n) for n in rule["matchPackageNames"]):
+            if "matchPackageNames" in rule and not names_match(rule["matchPackageNames"], package):
                 continue
             result.update({k: rule[k] for k in ("groupName", "enabled", "allowedVersions", "dependencyDashboardApproval") if k in rule})
+            result["prBodyNotes"].extend(rule.get("prBodyNotes", []))
         return result
-    cases = [("npm", "prettier", "package.json", "npm dependencies"),
-             ("npm", "eslint", "package.json", "npm dependencies"),
-             ("npm", "astro", "package.json", "npm dependencies"),
-             ("pep621", "black", "pyproject.toml", "Python dependencies"),
-             ("gomod", "example/module", "go.mod", "Go dependencies"),
-             ("terraform", "hashicorp/aws", "main.tf", "Terraform providers")]
-    for manager, dep, path, expected in cases:
+    cases = [("npm", "prettier", "package.json", "devDependencies", "npm", "npm dependencies"),
+             ("npm", "eslint", "package.json", "devDependencies", "npm", "npm dependencies"),
+             ("npm", "astro", "package.json", "devDependencies", "npm", "npm dependencies"),
+             ("pep621", "black", "pyproject.toml", "dependency-groups", "pypi", "Python dependencies"),
+             ("gomod", "example/module", "go.mod", "require", "go", "Go dependencies"),
+             ("terraform", "hashicorp/aws", "main.tf", "required_provider", "terraform-provider", "Terraform providers")]
+    for manager, dep, path, dep_type, datasource, expected in cases:
         for update in ("minor", "patch", "pin", "digest"):
-            actual = resolve(manager, update, dep, path)["groupName"]
+            actual = resolve(manager, update, dep, path, dep_type, datasource)["groupName"]
             if actual != expected:
                 errors.append(f"{label}: {manager} {dep} {update} resolves to {actual!r}, expected {expected!r}")
-        if resolve(manager, "major", dep, path)["groupName"] is not None:
+        if resolve(manager, "major", dep, path, dep_type, datasource)["groupName"] is not None:
             errors.append(f"{label}: {manager} {dep} major must not be grouped")
+    if label in ("template/renovate.json.jinja", "template python disabled"):
+        reminder = "Run `task fix` and commit the reformat as a separate commit from this dependency bump; do not amend Renovate's commit."
+        for update in ("minor", "patch", "pin", "digest", "major"):
+            notes = resolve("pep621", update, "black", "pyproject.toml", "dependency-groups", "pypi")["prBodyNotes"]
+            if (reminder in notes) != (label == "template/renovate.json.jinja"):
+                errors.append(f"{label}: Black formatter reminder has incorrect applicability for {update}")
     if label != "renovate/default.json":
-        if resolve("npm", "minor", "typescript", "package.json").get("allowedVersions") != "<7.0.0":
+        if resolve("npm", "minor", "typescript", "package.json", "devDependencies", "npm").get("allowedVersions") != "<7.0.0":
             errors.append(f"{label}: TypeScript hold lost")
-        if not resolve("npm", "major", "pnpm", "package.json", "packageManager").get("dependencyDashboardApproval"):
+        if not resolve("npm", "major", "pnpm", "package.json", "packageManager", "npm").get("dependencyDashboardApproval"):
             errors.append(f"{label}: package manager major approval lost")
-    if label == "template/renovate.json.jinja" and resolve("npm", "minor", "example", "package.json", "pnpm-workspace.overrides")["enabled"] is not False:
+    if label == "template/renovate.json.jinja" and resolve("npm", "minor", "example", "pnpm-workspace.yaml", "pnpm-workspace.overrides", "npm")["enabled"] is not False:
         errors.append(f"{label}: security override hold lost")
     if label == "renovate.json":
-        for path, expected in (("tests/fixtures/web-astro/package.json", "web-astro fixture"), ("tests/fixtures/web-app/package.json", "web-app fixture")):
-            if resolve("npm", "minor", "astro", path)["groupName"] != expected:
+        if resolve("custom.regex", "minor", "renovate", "scripts/test-template.sh", None, "npm")["groupName"] is not None:
+            errors.append(f"{label}: Devcontainer negation must exclude renovate")
+        if resolve("custom.regex", "minor", "another-tool", "scripts/test-template.sh", None, "npm")["groupName"] != "Devcontainer":
+            errors.append(f"{label}: Devcontainer negation must include other packages")
+        for path, dep, expected in (("tests/fixtures/web-astro/package.json", "astro", "web-astro fixture"), ("tests/fixtures/web-app/package.json", "react", "web-app fixture")):
+            if resolve("npm", "minor", dep, path, "devDependencies", "npm")["groupName"] != expected:
                 errors.append(f"{label}: {path} lost its independent fixture group")
     if cfg.get("vulnerabilityAlerts", {}).get("groupName", None) is not None:
         errors.append(f"{label}: vulnerability alerts must bypass groups")
 
-for label, cfg in [("renovate.json", root_cfg), ("template/renovate.json.jinja", tmpl_on), ("renovate/default.json", json.loads(pathlib.Path("renovate/default.json").read_text(encoding="utf-8")))]:
+for label, cfg in [("renovate.json", root_cfg), ("template/renovate.json.jinja", tmpl_on), ("template python disabled", tmpl_python_off), ("renovate/default.json", json.loads(pathlib.Path("renovate/default.json").read_text(encoding="utf-8")))]:
     if cfg is not None:
         check_lockfile_policy(label, cfg)
 
