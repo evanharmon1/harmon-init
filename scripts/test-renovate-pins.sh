@@ -543,7 +543,7 @@ def check_lockfile_policy(label, cfg):
     # Renovate's negative-only pattern excludes its target and accepts others.
     if names_match(["!renovate"], "renovate") or not names_match(["!renovate"], "other"):
         errors.append(f"{label}: negated package-name control failed")
-    def resolve(manager, update, package, path, dep_type="dependencies", datasource=None):
+    def resolve(manager, update, package, path, dep_type, datasource):
         result = {"groupName": None, "enabled": True, "prBodyNotes": []}
         for rule in rules:
             if "matchManagers" in rule and manager.lower() not in [value.lower() for value in rule["matchManagers"]]:
@@ -581,19 +581,19 @@ def check_lockfile_policy(label, cfg):
             if (reminder in notes) != (label == "template/renovate.json.jinja"):
                 errors.append(f"{label}: Black formatter reminder has incorrect applicability for {update}")
     if label != "renovate/default.json":
-        if resolve("npm", "minor", "typescript", "package.json").get("allowedVersions") != "<7.0.0":
+        if resolve("npm", "minor", "typescript", "package.json", "devDependencies", "npm").get("allowedVersions") != "<7.0.0":
             errors.append(f"{label}: TypeScript hold lost")
-        if not resolve("npm", "major", "pnpm", "package.json", "packageManager").get("dependencyDashboardApproval"):
+        if not resolve("npm", "major", "pnpm", "package.json", "packageManager", "npm").get("dependencyDashboardApproval"):
             errors.append(f"{label}: package manager major approval lost")
-    if label == "template/renovate.json.jinja" and resolve("npm", "minor", "example", "package.json", "pnpm-workspace.overrides")["enabled"] is not False:
+    if label == "template/renovate.json.jinja" and resolve("npm", "minor", "example", "pnpm-workspace.yaml", "pnpm-workspace.overrides", "npm")["enabled"] is not False:
         errors.append(f"{label}: security override hold lost")
     if label == "renovate.json":
-        if resolve("custom.regex", "minor", "renovate", "scripts/test-template.sh", datasource="npm")["groupName"] is not None:
+        if resolve("custom.regex", "minor", "renovate", "scripts/test-template.sh", None, "npm")["groupName"] is not None:
             errors.append(f"{label}: Devcontainer negation must exclude renovate")
-        if resolve("custom.regex", "minor", "another-tool", "scripts/test-template.sh", datasource="npm")["groupName"] != "Devcontainer":
+        if resolve("custom.regex", "minor", "another-tool", "scripts/test-template.sh", None, "npm")["groupName"] != "Devcontainer":
             errors.append(f"{label}: Devcontainer negation must include other packages")
-        for path, expected in (("tests/fixtures/web-astro/package.json", "web-astro fixture"), ("tests/fixtures/web-app/package.json", "web-app fixture")):
-            if resolve("npm", "minor", "astro", path)["groupName"] != expected:
+        for path, dep, expected in (("tests/fixtures/web-astro/package.json", "astro", "web-astro fixture"), ("tests/fixtures/web-app/package.json", "react", "web-app fixture")):
+            if resolve("npm", "minor", dep, path, "devDependencies", "npm")["groupName"] != expected:
                 errors.append(f"{label}: {path} lost its independent fixture group")
     if cfg.get("vulnerabilityAlerts", {}).get("groupName", None) is not None:
         errors.append(f"{label}: vulnerability alerts must bypass groups")
