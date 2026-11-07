@@ -8,6 +8,41 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [5.18.0](https://github.com/evanharmon1/harmon-init/compare/v5.17.0...v5.18.0) (2026-11-07)
+
+
+### Features
+
+* **deps:** publish shared Renovate policy preset ([#1957](https://github.com/evanharmon1/harmon-init/issues/1957)) ([71d5593](https://github.com/evanharmon1/harmon-init/commit/71d5593915950dd2ed328559e2549bd58322686c))
+* **deps:** report dependency-maintenance proxies and age ([#1948](https://github.com/evanharmon1/harmon-init/issues/1948)) ([e9843fd](https://github.com/evanharmon1/harmon-init/commit/e9843fdb957e55628f7f895ead1a6330b2606696))
+* **github:** audit classified GitHub configuration read-only ([#1968](https://github.com/evanharmon1/harmon-init/issues/1968)) ([9e9f315](https://github.com/evanharmon1/harmon-init/commit/9e9f3152b5d767840ccfb57b821eea974057d121))
+* **review:** configure base-pinned review guidelines ([#1986](https://github.com/evanharmon1/harmon-init/issues/1986)) ([d8a0eb1](https://github.com/evanharmon1/harmon-init/commit/d8a0eb16e50264c3e713cd2b7e50ddb4d93edd2a))
+
+
+### Bug Fixes
+
+* **ci:** recover once from malformed pnpm store indexes ([#1987](https://github.com/evanharmon1/harmon-init/issues/1987)) ([fc5b8f8](https://github.com/evanharmon1/harmon-init/commit/fc5b8f8e930c51ab9ec1b02f408669dc91c2d159))
+* close image digest inventory gaps ([#1969](https://github.com/evanharmon1/harmon-init/issues/1969)) ([d9e893c](https://github.com/evanharmon1/harmon-init/commit/d9e893c0e86278335e3a0906a111d145f6748148)), closes [#1947](https://github.com/evanharmon1/harmon-init/issues/1947)
+* cover merge-guard prerequisites and fixture gaps ([#2000](https://github.com/evanharmon1/harmon-init/issues/2000)) ([78e1b7a](https://github.com/evanharmon1/harmon-init/commit/78e1b7a734bcada4ab8b4187fc66eebb393e1961))
+* **deps:** group non-major lockfile updates by ecosystem ([#1980](https://github.com/evanharmon1/harmon-init/issues/1980)) ([1203362](https://github.com/evanharmon1/harmon-init/commit/1203362275ef6754f82c5cf2f1b12c392963a5e2))
+* **deps:** handle malformed maintenance timeline entries ([#1978](https://github.com/evanharmon1/harmon-init/issues/1978)) ([2b2c77c](https://github.com/evanharmon1/harmon-init/commit/2b2c77c36a6e3dd3bb496f4d4a604b7be5a7c71b))
+* **deps:** handle malformed timeline identities ([#1984](https://github.com/evanharmon1/harmon-init/issues/1984)) ([0e0142c](https://github.com/evanharmon1/harmon-init/commit/0e0142c9f7c0866b837edae18bc0c64ea5e3b3b5))
+* **deps:** harden dependency maintenance report failures ([#1972](https://github.com/evanharmon1/harmon-init/issues/1972)) ([77ac9e5](https://github.com/evanharmon1/harmon-init/commit/77ac9e538df002ff5f0015b735819d7548c9c294))
+* **deps:** harden maintenance-report input and test isolation ([77ac9e5](https://github.com/evanharmon1/harmon-init/commit/77ac9e538df002ff5f0015b735819d7548c9c294))
+* **deps:** record and lint compatibility holds ([#1988](https://github.com/evanharmon1/harmon-init/issues/1988)) ([6ec4ef7](https://github.com/evanharmon1/harmon-init/commit/6ec4ef7099fba4b8333c5509850f85a9a15ac608))
+* **deps:** update dependency anthropics/claude-code-action to v1.0.267 ([#1889](https://github.com/evanharmon1/harmon-init/issues/1889)) ([9f07396](https://github.com/evanharmon1/harmon-init/commit/9f07396a082c24e550bc5afe3665e05c7b1b752c))
+* **deps:** update devcontainer ([#1894](https://github.com/evanharmon1/harmon-init/issues/1894)) ([9ce5af5](https://github.com/evanharmon1/harmon-init/commit/9ce5af5a095b750900c67eca6c390fc3aafb7dce))
+* **devcontainer:** update shared image to 3065ef00 ([#1944](https://github.com/evanharmon1/harmon-init/issues/1944)) ([3ef476a](https://github.com/evanharmon1/harmon-init/commit/3ef476af6d35cf07327b8b66c7f94b30669d5c4e))
+* **devcontainer:** update shared image to d9e893c0 ([#1971](https://github.com/evanharmon1/harmon-init/issues/1971)) ([e20c65d](https://github.com/evanharmon1/harmon-init/commit/e20c65da56a4187df2605a0791792d0e6a780e1c))
+* **git-merge-guard:** preserve target diagnostics and constrain sync proofs ([#1991](https://github.com/evanharmon1/harmon-init/issues/1991)) ([a7581d6](https://github.com/evanharmon1/harmon-init/commit/a7581d6614d5b260c259f4fdea35e06af2caea29))
+* handle sibling repository fetch edge cases ([#1965](https://github.com/evanharmon1/harmon-init/issues/1965)) ([421dbdc](https://github.com/evanharmon1/harmon-init/commit/421dbdc00807bc88efdcb529983fdc3709e2b561))
+* pair Astro compiler with its compatible Emnapi runtime ([#1983](https://github.com/evanharmon1/harmon-init/issues/1983)) ([7e79e6e](https://github.com/evanharmon1/harmon-init/commit/7e79e6efb4c483b4a0e102a6e6fb2201c553b861))
+* preserve JSON producer status in merge-guard fixtures ([#1985](https://github.com/evanharmon1/harmon-init/issues/1985)) ([58360a9](https://github.com/evanharmon1/harmon-init/commit/58360a998cbcec805e25c6ebe9f0645fc20ec7dc))
+* scan Claude hook scripts for remote Codex credentials ([#1964](https://github.com/evanharmon1/harmon-init/issues/1964)) ([3204e4c](https://github.com/evanharmon1/harmon-init/commit/3204e4cd3e6cf0689d7abb8376b0fc79da7cdbc0))
+* **template:** sync harmon-devkit skills to v0.67.0 ([#1954](https://github.com/evanharmon1/harmon-init/issues/1954)) ([ae49b50](https://github.com/evanharmon1/harmon-init/commit/ae49b508c86d9e9855ac0c2d7c3310cf7cb27f3c))
+* **tests:** bound setup fixture Git discovery ([#1976](https://github.com/evanharmon1/harmon-init/issues/1976)) ([53fa05b](https://github.com/evanharmon1/harmon-init/commit/53fa05ba6004345fbb63f8547321055a6cc277ab))
+* **tests:** isolate Git maintenance in fixture repositories ([#1962](https://github.com/evanharmon1/harmon-init/issues/1962)) ([3951c62](https://github.com/evanharmon1/harmon-init/commit/3951c6293109ef05239936cf2f5cbeb34cbf6504))
+
 ## [5.17.0](https://github.com/evanharmon1/harmon-init/compare/v5.16.0...v5.17.0) (2026-11-05)
 
 
