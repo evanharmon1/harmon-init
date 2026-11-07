@@ -110,8 +110,10 @@ Flags are a set, in any order and position. Fast-forward-only merges/pulls
 also support a literal absolute `git -C <dir>` or preceding `cd <dir> &&`,
 and compounds joined by &&, ||, ; or |. Every merge segment must pass; other
 segments are limited to true, false, git status and a named-remote git fetch
-whose configured refspec writes only remote-tracking refs. Unknown commands,
-evaluators, expansions, quoting, redirects and path traversal ask. A cd must
+whose configured refspecs all write under refs/remotes/<selected-remote>/.
+An explicit git -C <dir> status companion remains outside this grammar.
+Unknown commands, evaluators, expansions, quoting, redirects and path
+traversal ask. A cd must
 be absolute, exist, contain no .. component and be followed by &&. Both
 -C and cd paths allow only literal path characters, never shell metacharacters.
 
@@ -123,8 +125,9 @@ only --ff-only syncs from that branch's own configured upstream are silent:
 pull branch name asks: a remote tag may shadow it, and the hook cannot inspect
 the remote. Detached/unreadable checkouts and unmatched refs ask. Git's
 upstream must be refs/remotes/<remote>/<current-branch>, and its configured
-merge source must be refs/heads/<current-branch>. A merge operand must resolve
-unambiguously to that upstream, with no same-named tag or local branch.
+merge source must have exactly one value, refs/heads/<current-branch>.
+A merge operand must resolve unambiguously to that upstream, with no
+same-named tag or local branch.
 Beside any other git segment, a default-branch merge must use the full
 refs/remotes/<remote>/<branch> operand; fetch may import short-name shadows.
 Remote HEAD caches are local;
@@ -220,7 +223,6 @@ PULL_NO_REWRITE = {"--ff-only", "--no-rebase"}
 # merge.
 SOLO_FLAGS = {"--continue", "--quit"}
 REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*$")
-LITERAL_UNSAFE = re.compile(r"[\"'`$\\\n;&|<>(){}*?\[\]~]")
 # A mention of merge/pull as a word; used only where the parser cannot say
 # what runs (an unreadable command, a shell reading a pipe). `merge-base` and
 # `merge-tree` are read-only plumbing; prose like `pull-requests` is not a word.
@@ -1739,12 +1741,14 @@ def might_merge(command):
 TARGET_PATH = re.compile(r"^/[A-Za-z0-9_./:@%+=,-]+$")
 
 
-def allowlisted_target(command, cwd):
+def allowlisted_target(command, cwd, rejected_targets=None):
     """Return cwd only after every literal merge/pull segment passes its checks.
 
     Keep the old unquoted single-command forms. Compounds and explicit paths
     require --ff-only; companions are restricted to commands that cannot switch
-    branches or alter git's target/config. Unknown shell effects fail closed.
+    branches or alter git's target/config. If supplied, rejected_targets records
+    a failed checkout proof only after the whole grammar passes, so unsupported
+    shapes keep a generic reason. Unknown shell effects fail closed.
     """
     if not os.path.isabs(cwd) or re.search(r"[^\x20-\x7e]", command):
         return None
@@ -1781,9 +1785,11 @@ def allowlisted_target(command, cwd):
             if tokens in (["true"], ["false"], ["git", "status"]):
                 continue
             if len(tokens) == 3 and tokens[:2] == ["git", "fetch"] and tokens[2] in (git(target, "remote") or "").split():
-                # A configured fetch refspec must not write local branches.
-                specs = git(target, "config", "--get-all", f"remote.{tokens[2]}.fetch")
-                if specs and all(re.fullmatch(r"\+?refs/heads/[^:]+:refs/remotes/[^:]+", x) for x in specs.splitlines()):
+                # Every destination must belong to this remote, not merely
+                # be a tracking ref: another prefix could redirect a later sync.
+                specs = git(target, "config", "--null", "--get-all", f"remote.{tokens[2]}.fetch", strip=False)
+                pattern = rf"\+?refs/heads/[^:]+:refs/remotes/{re.escape(tokens[2])}/[^:]+"
+                if specs and all(re.fullmatch(pattern, x) for x in specs[:-1].split("\0")):
                     continue
             return None
         sub, rest = tokens[1], tokens[2:]
@@ -1805,6 +1811,8 @@ def allowlisted_target(command, cwd):
     for target, sub, refs, flags, other_git in merges:
         if feature_branch(target) is None:
             if not pure_sync(target, sub, refs, flags, other_git):
+                if rejected_targets is not None:
+                    rejected_targets.append(target)
                 return None
     return cwd
 
@@ -1823,8 +1831,10 @@ def pure_sync(cwd, sub, refs, flags, other_git=False):
         return False
     upstream = git(cwd, "rev-parse", "--symbolic-full-name", "@{upstream}")
     remote = git(cwd, "config", "--get", f"branch.{branch}.remote")
-    merge = git(cwd, "config", "--get", f"branch.{branch}.merge")
-    if not remote or remote == "." or merge != head or upstream != f"refs/remotes/{remote}/{branch}":
+    # Preserve delimiters: stripping get-all output hides empty values and
+    # would make a multi-source pull look like one configured merge source.
+    merge = git(cwd, "config", "--null", "--get-all", f"branch.{branch}.merge", strip=False)
+    if not remote or remote == "." or merge != head + "\0" or upstream != f"refs/remotes/{remote}/{branch}":
         return False
     if not git(cwd, "rev-parse", "--verify", upstream):
         return False
@@ -1843,11 +1853,11 @@ def pure_sync(cwd, sub, refs, flags, other_git=False):
     return refs in ([], [remote], [remote, head])
 
 
-def git(cwd, *args):
+def git(cwd, *args, strip=True):
     out = subprocess.run(
         ["git", "-C", cwd, *args], capture_output=True, text=True, timeout=5
     )
-    return out.stdout.strip() if out.returncode == 0 else None
+    return (out.stdout.strip() if strip else out.stdout) if out.returncode == 0 else None
 
 
 def feature_branch(cwd):
@@ -1891,8 +1901,12 @@ def decide(command, cwd):
         return "push to a default branch or an unresolved push destination"
     if not might_merge(command):
         return None
-    target = allowlisted_target(command, cwd)
+    rejected_targets = []
+    target = allowlisted_target(command, cwd, rejected_targets)
     if target is None:
+        if rejected_targets:
+            return ("merge/pull would land on main/master or a remote default branch, "
+                    f"or the target is unverifiable: {rejected_targets[0]}")
         return "merge/pull or GitHub merge in a form this guard does not allowlist"
     return None
 

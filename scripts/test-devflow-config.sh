@@ -85,6 +85,28 @@ schema = json.loads((root / ".devflow.schema.json").read_text())
 # TOML values are converted through JSON so this exercises the published schema.
 validate_schema(json.loads(json.dumps(tomllib.loads((root / ".devflow.toml").read_text()))), schema, schema)
 
+# [review_guidelines] (harmon-init#1530): the schema refuses the same inputs
+# scripts/devflow-policy.mjs refuses — unknown keys, both sources, an unsafe
+# `file` (absolute, option-like, a `..` segment, a backslash or NUL, over 255),
+# over-length text/focus — and accepts the shipped and the inline shapes.
+rg_schema = schema["$defs"]["review_guidelines"]
+if schema["properties"].get("review_guidelines") != {"$ref": "#/$defs/review_guidelines"} or rg_schema.get("additionalProperties") is not False:
+    fail("v2 schema must close [review_guidelines] and reference it from the top level")
+if "review_guidelines" in schema["required"]: fail("v2 schema must keep [review_guidelines] optional")
+for table in [{}, {"file": "docs/review-guidelines.md"}, {"file": ".github/review.md"}, {"file": "a..b/notes.md"},
+              {"text": "inline"}, {"file": "docs/review-guidelines.md", "challenge_focus": "", "review_focus": "x"}]:
+    try: validate_schema(table, rg_schema, schema, "[review_guidelines]")
+    except ValueError as err: fail(f"schema refused a valid [review_guidelines] table {table}: {err}")
+for table in [{"file": "docs/review-guidelines.md", "surprise": True}, {"file": "docs/review-guidelines.md", "text": "both"},
+              {"file": 42}, {"text": ["x"]}, {"file": ""}, {"text": ""}, {"file": "/etc/passwd"}, {"file": "-rf"},
+              {"file": "../outside.md"}, {"file": "docs/../../outside.md"}, {"file": "docs/.."}, {"file": "docs\\review.md"},
+              {"file": "docs/review\x00.md"}, {"file": "a" * 253 + ".md"}, {"text": "x" * (16 * 1024 + 1)},
+              {"challenge_focus": "x" * 2049}, {"review_focus": "x" * 2049}]:
+    try: validate_schema(table, rg_schema, schema, "[review_guidelines]")
+    except ValueError: continue
+    fail(f"schema accepted an invalid [review_guidelines] table {str(table)[:80]}")
+print("[review_guidelines] schema cases OK")
+
 floor_match = re.search(r'^_min_harmon_devkit_skills: "v(\d+)\.(\d+)\.(\d+)"$', (root / "copier.yml").read_text(), re.M)
 if not floor_match or tuple(map(int, floor_match.groups())) < (0, 63, 1):
     fail("finder policies and readiness require harmon-devkit skills v0.63.1 or newer")
@@ -174,7 +196,7 @@ for rel, text in policy_text.items():
     if cfg.get("schema_version") != 2:
         fail(f"{rel}: schema_version=2 is required; migrate legacy v1 configuration")
     expected = {"schema_version", "default_rigor", "default_strategy", "rigor_order", "tier_order", "rigor", "rounds", "breadth", "run", "gates", "convergence", "role", "stage", "strategy"}
-    extra = set(cfg) - expected - {"spend", "tier"}
+    extra = set(cfg) - expected - {"spend", "tier", "review_guidelines"}
     if extra: fail(f"{rel}: unsupported top-level keys: {sorted(extra)}")
     if "tier" in cfg:
         if set(cfg["tier"]) != {"matrix"}: fail(f"{rel}: [tier] may hold only [tier.matrix], got {sorted(cfg['tier'])}")
@@ -414,6 +436,67 @@ assert.throws(() => resolvePolicy(doc, { run: 'standardize-repo', rigor: 'deep' 
 assert.equal(resolvePolicy(doc, { run: 'standardize-repo', rigor: 'deep', rigorSource: 'label' }).rigor.level, 'standard')
 console.log('fleet and named run reader cases OK')
 NODE
+
+# [review_guidelines] (harmon-init#1530): the root reader validates and
+# projects the table; the pinned devkit reader must keep ACCEPTING a policy
+# that carries it (it projects nothing until harmon-devkit#1289 is pinned, and
+# a refusal there would break every generated repository the template renders
+# the table into). The schema and the reader refuse the same unsafe inputs.
+node --input-type=module <<'JS'
+import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
+import { parseToml } from './scripts/lib/toml-lite.mjs'
+import * as root from './scripts/devflow-policy.mjs'
+import * as vendored from './.claude/skills/dev-flow-support/assets/devflow-policy.mjs'
+const base = parseToml(readFileSync('.devflow.toml', 'utf8'))
+const clone = () => structuredClone(base)
+const shape = ['file', 'text', 'challenge_focus', 'review_focus']
+// The shipped policy names the conventional file; absent table projects null.
+let doc = clone()
+assert.deepEqual(root.resolvePolicy(doc).review_guidelines,
+  { file: 'docs/review-guidelines.md', text: null, challenge_focus: '', review_focus: '' })
+assert.deepEqual(Object.keys(root.resolvePolicy(doc).review_guidelines), shape)
+doc = clone(); delete doc.review_guidelines
+assert.equal(root.resolvePolicy(doc).review_guidelines, null)
+assert.equal(root.resolveAbsentPolicy().review_guidelines, null)
+doc = clone(); doc.review_guidelines = {}
+assert.deepEqual(root.resolvePolicy(doc).review_guidelines, { file: null, text: null, challenge_focus: null, review_focus: null })
+doc = clone(); doc.review_guidelines = { text: 'Inline guidelines.', review_focus: 'tests first' }
+assert.deepEqual(root.resolvePolicy(doc).review_guidelines, { file: null, text: 'Inline guidelines.', challenge_focus: null, review_focus: 'tests first' })
+// A branch that edits the table does not choose its own guidelines: the
+// merge-base copy governs, the same rule every other parameter follows.
+const mergeBase = clone(); mergeBase.review_guidelines = { file: 'docs/base-guidelines.md' }
+doc = clone(); doc.review_guidelines = { file: 'docs/branch-guidelines.md' }
+assert.equal(root.resolvePolicy(doc, { mergeBaseDoc: mergeBase }).review_guidelines.file, 'docs/base-guidelines.md')
+// The pinned reader tolerates every accepted shape (and projects nothing yet).
+for (const table of [undefined, {}, { file: 'docs/review-guidelines.md' }, { text: 'Inline guidelines.', challenge_focus: 'x' }]) {
+  doc = clone()
+  if (table === undefined) delete doc.review_guidelines; else doc.review_guidelines = table
+  const resolved = vendored.resolvePolicy(doc)
+  assert.equal(resolved.rigor.level, 'standard')
+  assert.ok(resolved.review_guidelines === undefined || resolved.review_guidelines === null || typeof resolved.review_guidelines === 'object')
+}
+// Refusals: unknown key, both sources, non-strings, empties, unsafe paths and
+// over-length values — the same list the schema cases above refuse.
+const refused = [
+  { file: 'docs/review-guidelines.md', surprise: true },
+  { file: 'docs/review-guidelines.md', text: 'both' },
+  { file: 42 }, { text: ['x'] }, { challenge_focus: 1 }, { review_focus: false },
+  { file: '' }, { text: '' },
+  { file: '/etc/passwd' }, { file: '-rf' }, { file: '../outside.md' }, { file: 'docs/../../outside.md' }, { file: 'docs/..' },
+  { file: 'docs\\review-guidelines.md' }, { file: 'docs/review\u0000.md' }, { file: `${'a'.repeat(253)}.md` },
+  { text: 'x'.repeat(16 * 1024 + 1) }, { challenge_focus: 'x'.repeat(2048 + 1) }, { review_focus: 'x'.repeat(2048 + 1) },
+]
+for (const table of refused) {
+  doc = clone(); doc.review_guidelines = table
+  assert.throws(() => root.resolvePolicy(doc), root.PolicyError, `reader accepted ${JSON.stringify(table).slice(0, 60)}`)
+}
+// `[review]` stays a v1 marker: the table could not have taken that name.
+doc = clone(); doc.review = { file: 'docs/review-guidelines.md' }
+assert.equal(root.detectShape(doc).shape, 'mixed')
+assert.equal(vendored.detectShape(doc).shape, 'mixed')
+console.log('review_guidelines reader cases OK')
+JS
 
 # Per-reviewer settings must resolve identically in the root and pinned readers.
 node --input-type=module <<'JS'

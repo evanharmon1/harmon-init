@@ -989,12 +989,25 @@ def contract_violations(source: str, path: "pathlib.Path | None" = None) -> list
     # (e.g. the verification step's own store_dir) even if the export step's own
     # assignment were changed to a persistent path.
     path_is_setup_action = path == SETUP_ACTION_PATH
+    # Only the recovery helper may switch to its freshly-created RUNNER_TEMP
+    # directory. The fixture's initial values are private to its own temp tree.
+    recovery_export = re.compile(r'^\s*export (?:PNPM_CONFIG_STORE_DIR|npm_config_store_dir)="\$fresh"\s*$')
+    fixture_export = 'export PNPM_CONFIG_STORE_DIR="$RUNNER_TEMP/.pnpm-store" npm_config_store_dir="$RUNNER_TEMP/.pnpm-store"'
+    recovery_safe = False
     reaching_store_dir_is_runner_temp = False
     for line in source.splitlines():
+        if re.match(r"^\s*fresh=", line):
+            recovery_safe = path == pathlib.Path("scripts/pnpm-install.sh") and line.strip() == (
+                'fresh="$(mktemp -d "${RUNNER_TEMP}/pnpm-recovery.XXXXXX")" || {'
+            )
         if re.match(r"^\s*store_dir=", line):
             reaching_store_dir_is_runner_temp = bool(
                 re.search(r"store_dir=\"?\$\{?RUNNER_TEMP\}?/", line)
             )
+        if (recovery_safe and recovery_export.fullmatch(line)) or (
+            path == pathlib.Path("scripts/test-pnpm-install.sh") and line.strip() == fixture_export
+        ):
+            continue
         if re.search(
             r"^\s*(?:export\s+)?[\"']?(?:PNPM_CONFIG_STORE_DIR|npm_config_store_dir)[\"']?\s*[:=]",
             line,
@@ -1046,6 +1059,20 @@ for fixture in (
 ):
     if not contract_violations(fixture):
         print(f"pnpm-store guard missed its negative control: {fixture}", file=sys.stderr)
+        raise SystemExit(1)
+
+# Recovery exports are valid only in the helper and only with its fixed
+# RUNNER_TEMP mktemp pattern; persistent and other-script overrides still fail.
+recovery_line = 'export PNPM_CONFIG_STORE_DIR="$fresh"'
+private_recovery = 'fresh="$(mktemp -d "${RUNNER_TEMP}/pnpm-recovery.XXXXXX")" || {'
+for source, path in (
+    (f'fresh="$HOME/store"\n{recovery_line}', pathlib.Path("scripts/pnpm-install.sh")),
+    (f'{private_recovery}\n{recovery_line}', pathlib.Path("scripts/other.sh")),
+    (f'{private_recovery}\nfresh="$HOME/store"\n{recovery_line}', pathlib.Path("scripts/pnpm-install.sh")),
+    (f'fresh="$HOME/store"\n{recovery_line}\n{private_recovery}', pathlib.Path("scripts/pnpm-install.sh")),
+):
+    if not contract_violations(source, path):
+        print("pnpm-store guard missed a recovery override negative control", file=sys.stderr)
         raise SystemExit(1)
 
 # The literal safe-echo line is exempt only in the shared setup action, and only
@@ -1154,6 +1181,44 @@ for manager, expected in (("npm", "npm dependencies"), ("pep621", "Python depend
              and rule.get("matchUpdateTypes") == ["major"] and "groupName" in rule]
     if not major or major[-1]["groupName"] is not None or rules.index(major[-1]) < rules.index(matching[0]):
         sys.exit(f"{manager}: majors are not isolated after the group")
+# Evaluate representative extracted dependencies against all later rules, not
+# just the presence of the four group declarations. This is a finite glob
+# subset for these fixtures; unknown matcher keys fail rather than being ignored.
+import fnmatch
+supported = {"matchManagers", "matchUpdateTypes", "matchDepTypes", "matchDatasources", "matchFileNames", "matchPackageNames"}
+for rule in rules:
+    unknown = {key for key in rule if key.startswith("match")} - supported
+    if unknown:
+        sys.exit(f"unsupported finite policy matcher(s): {sorted(unknown)}")
+    if any("**/" in pattern for pattern in rule.get("matchFileNames", [])):
+        sys.exit(f"unsupported globstar-directory filename pattern: {rule['matchFileNames']!r}")
+
+def matches(patterns, value):
+    if any(any(c in pattern for c in "[]{}?()") or pattern.startswith("/") for pattern in patterns):
+        sys.exit(f"unsupported finite policy pattern: {patterns!r}")
+    positive = [pattern for pattern in patterns if not pattern.startswith("!")]
+    negative = [pattern[1:] for pattern in patterns if pattern.startswith("!")]
+    return (not positive or any(fnmatch.fnmatchcase(value.lower(), p.lower()) for p in positive)) and not any(
+        fnmatch.fnmatchcase(value.lower(), p.lower()) for p in negative
+    )
+
+for manager, name, path, dep_type, datasource, expected in (
+    ("npm", "prettier", "package.json", "devDependencies", "npm", "npm dependencies"),
+    ("pep621", "black", "pyproject.toml", "dependency-groups", "pypi", "Python dependencies"),
+    ("gomod", "example/module", "go.mod", "require", "go", "Go dependencies"),
+    ("terraform", "hashicorp/aws", "main.tf", "required_provider", "terraform-provider", "Terraform providers"),
+):
+    for update in ("minor", "patch", "pin", "digest", "major"):
+        group = None
+        attributes = {"matchManagers": manager, "matchPackageNames": name, "matchFileNames": path,
+                      "matchDepTypes": dep_type, "matchDatasources": datasource, "matchUpdateTypes": update}
+        for rule in rules:
+            if all(matches(rule[key], value) for key, value in attributes.items() if key in rule):
+                if "groupName" in rule:
+                    group = rule["groupName"]
+        wanted = None if update == "major" else expected
+        if group != wanted:
+            sys.exit(f"{manager} {name} {update}: effective group {group!r}, expected {wanted!r}")
 PYGROUP
 # Minimal compares the entire shared policy, excluding only the explicitly
 # Node-specific TypeScript hold. Every profile checks that hold's applicability.
