@@ -1181,6 +1181,44 @@ for manager, expected in (("npm", "npm dependencies"), ("pep621", "Python depend
              and rule.get("matchUpdateTypes") == ["major"] and "groupName" in rule]
     if not major or major[-1]["groupName"] is not None or rules.index(major[-1]) < rules.index(matching[0]):
         sys.exit(f"{manager}: majors are not isolated after the group")
+# Evaluate representative extracted dependencies against all later rules, not
+# just the presence of the four group declarations. This is a finite glob
+# subset for these fixtures; unknown matcher keys fail rather than being ignored.
+import fnmatch
+supported = {"matchManagers", "matchUpdateTypes", "matchDepTypes", "matchDatasources", "matchFileNames", "matchPackageNames"}
+for rule in rules:
+    unknown = {key for key in rule if key.startswith("match")} - supported
+    if unknown:
+        sys.exit(f"unsupported finite policy matcher(s): {sorted(unknown)}")
+    if any("**/" in pattern for pattern in rule.get("matchFileNames", [])):
+        sys.exit(f"unsupported globstar-directory filename pattern: {rule['matchFileNames']!r}")
+
+def matches(patterns, value):
+    if any(any(c in pattern for c in "[]{}?()") or pattern.startswith("/") for pattern in patterns):
+        sys.exit(f"unsupported finite policy pattern: {patterns!r}")
+    positive = [pattern for pattern in patterns if not pattern.startswith("!")]
+    negative = [pattern[1:] for pattern in patterns if pattern.startswith("!")]
+    return (not positive or any(fnmatch.fnmatchcase(value.lower(), p.lower()) for p in positive)) and not any(
+        fnmatch.fnmatchcase(value.lower(), p.lower()) for p in negative
+    )
+
+for manager, name, path, dep_type, datasource, expected in (
+    ("npm", "prettier", "package.json", "devDependencies", "npm", "npm dependencies"),
+    ("pep621", "black", "pyproject.toml", "dependency-groups", "pypi", "Python dependencies"),
+    ("gomod", "example/module", "go.mod", "require", "go", "Go dependencies"),
+    ("terraform", "hashicorp/aws", "main.tf", "required_provider", "terraform-provider", "Terraform providers"),
+):
+    for update in ("minor", "patch", "pin", "digest", "major"):
+        group = None
+        attributes = {"matchManagers": manager, "matchPackageNames": name, "matchFileNames": path,
+                      "matchDepTypes": dep_type, "matchDatasources": datasource, "matchUpdateTypes": update}
+        for rule in rules:
+            if all(matches(rule[key], value) for key, value in attributes.items() if key in rule):
+                if "groupName" in rule:
+                    group = rule["groupName"]
+        wanted = None if update == "major" else expected
+        if group != wanted:
+            sys.exit(f"{manager} {name} {update}: effective group {group!r}, expected {wanted!r}")
 PYGROUP
 # The published preset must match the actual minimal render, apart from prose.
 # This does not establish parity for conditional profiles or adopted configs.
