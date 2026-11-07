@@ -1267,7 +1267,7 @@ if [ "$profile" = "minimal" ]; then
         err "strict shared Renovate preset validation route is missing"
 fi
 # renovate: datasource=npm depName=renovate
-RENOVATE_VALIDATOR_VERSION=44.198.3
+RENOVATE_VALIDATOR_VERSION=44.216.0
 if [ "$validation_scope" = "renovate-config" ]; then
     if have npx; then
         run_quiet renovate-config-validator \
