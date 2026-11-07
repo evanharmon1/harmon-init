@@ -1194,7 +1194,7 @@ for rule in rules:
         sys.exit(f"unsupported globstar-directory filename pattern: {rule['matchFileNames']!r}")
 
 def matches(patterns, value):
-    if any(any(c in pattern for c in "[]{}?()") or pattern.startswith("/") for pattern in patterns):
+    if any(any(c in pattern for c in "[]{}?()") or pattern.lstrip("!").startswith("/") for pattern in patterns):
         sys.exit(f"unsupported finite policy pattern: {patterns!r}")
     positive = [pattern for pattern in patterns if not pattern.startswith("!")]
     negative = [pattern[1:] for pattern in patterns if pattern.startswith("!")]
