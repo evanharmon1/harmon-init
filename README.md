@@ -42,6 +42,11 @@ tracks fleet membership only; each repository records its own template version.
 
 ## Usage
 
+Python 3 (`python3` on PATH) is a hard prerequisite for the shipped
+`.claude/hooks/git-merge-guard.py` hook. If Python is unavailable or the guard
+crashes, its registered invocation asks with the generic message
+`git-merge-guard failed to run`.
+
 ### New project
 
 ```bash

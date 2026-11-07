@@ -836,6 +836,12 @@ Those siblings are reference context, not pushable where the platform only
 allows pushes to the session's own repository and branch. The pre-push hook is
 not a substitute for `task verify`, so run it yourself.
 
+For fetch-based checkouts that did not get a remote HEAD from a clone, run
+`git remote set-head origin --auto` explicitly when the default-branch cache
+is missing or stale. This idempotent command queries the remote and sets
+`refs/remotes/origin/HEAD`; ordinary fetches do not maintain that cache, which
+the merge guard needs to verify feature branches.
+
 **Second model on a remote lane.** Every remote lane gets a Codex second-model
 review on the ChatGPT plan with no human step: ephemeral cloud VMs never hold
 Codex credentials, and a persistent environment may hold exactly one Codex login

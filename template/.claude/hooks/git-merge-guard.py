@@ -1,6 +1,10 @@
 #!/usr/bin/env python3
 """PreToolUse(Bash) hook: gate merges and default-branch pushes locally.
 
+Python 3 (`python3` on PATH) is a hard prerequisite for this hook. If the
+interpreter is unavailable or the guard crashes, the registered command uses
+the same generic fail-closed ask: "git-merge-guard failed to run".
+
 Ask before gh pr merge, remote gh repo sync, protected pushes and git
 merge/pull outside the branch-aware allowlist. gh api fails closed: only
 proved reads and a short safe-write allowlist stay silent. REST safe writes
