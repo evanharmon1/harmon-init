@@ -238,6 +238,7 @@ tasks:
       - lint:actions
       - lint:hygiene
       - lint:pin-pairs
+      - lint:renovate-holds
 [% if use_node %]
       - lint:prettier
       - lint:eslint
@@ -285,6 +286,11 @@ tasks:
     desc: Version pins and their paired checksum pins moved together (scripts/test-tool-pin-pairs.sh)
     cmds:
       - ./scripts/test-tool-pin-pairs.sh
+
+  lint:renovate-holds:
+    desc: Validate Renovate compatibility hold records
+    cmds:
+      - ./scripts/lint-renovate-holds.sh
 
   lint:hygiene:
     desc: File hygiene (trailing whitespace, EOF newlines, merge markers, etc.)

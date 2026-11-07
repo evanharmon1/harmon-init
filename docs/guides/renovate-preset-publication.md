@@ -16,6 +16,16 @@ complete formatter rule after that split: include `markdownlint-cli2` as well
 as the optional formatter names selected by its answers. Otherwise the local
 split can override the shared formatter grouping.
 
+Compatibility holds use Renovate's `description` field with `Reason:`,
+`Upstream:`, `Remove when:`, and `Canary:` sections, separated by semicolons.
+The removal condition names a test, and the canary is a public repository that
+tries the removal first. Harmon-init is the Node and Astro canary: test the
+candidate version in its image or rendered Node/Astro profiles before lifting a
+hold. `task lint:renovate-holds` checks the records and shared hold parity. The
+TypeScript rule remains inline in root and template until preset adoption; the
+Node Corepack constraint and missing-binary exclusions are root-local. Do not
+copy the missing-binary exclusions into the shared preset.
+
 The strict Renovate configuration CI task validates the preset and root
 `renovate.json` with the pinned `renovate-config-validator`, then validates the
 rendered profile matrix. Validation of the preset alone does not prove that an
