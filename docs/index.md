@@ -28,6 +28,7 @@ This is the **hub** — read it when you're unsure where something belongs. It
 | Area | Where |
 |---|---|
 | Conventions (enforced rules) | [conventions.md](conventions.md) |
+| Review guidelines (what every reviewer is told; the normative severity scale) | [review-guidelines.md](review-guidelines.md) |
 | Glossary (term → definition) | [glossary.md](glossary.md) |
 | Copier inputs (questions, hidden answers, fleet answers) | [copier-options.md](copier-options.md) |
 | Product — vision, roadmap, domain | [product/](product/index.md) |

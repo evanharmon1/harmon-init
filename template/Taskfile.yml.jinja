@@ -1170,12 +1170,12 @@ tasks:
   # automatic stop-time review for this repo + machine. See
   # docs/guides/codex-review.md for setup, mechanics, and the loop caps.
   review:
-    desc: Second-model verification review of the current change (Codex)
+    desc: "Second-model verification review of the current change (Codex; usage: task review -- [--base <ref>|--uncommitted] [focus text])"
     cmds:
       - task: review:codex
 
   challenge:
-    desc: Second-model adversarial review of the current change (Codex)
+    desc: "Second-model adversarial review of the current change (Codex; usage: task challenge -- [--base <ref>|--uncommitted] [focus text])"
     cmds:
       - task: challenge:codex
 

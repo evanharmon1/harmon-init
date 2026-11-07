@@ -4,7 +4,8 @@
 # [rounds] (vertical appetite: review rounds + wall clock), [breadth]
 # (horizontal scale: agent runs + parallelism), [convergence] (computed stage
 # exits), [role.*] (per-role tier baselines and family/harness preferences),
-# [stage.*] (stage → registry actors). Model-tier CLASSIFICATION lives in
+# [stage.*] (stage → registry actors), [review_guidelines] (where the one copy
+# of the reviewer instructions lives). Model-tier CLASSIFICATION lives in
 # agent-registry.json (each model entry carries its stratum); this file holds
 # tier_order, the per-role/per-rigor tier CHOICES, and [tier.matrix] — the
 # risk × complexity matrix that derives an issue's Tier (ADR 2026-09-30 D4).
@@ -322,6 +323,23 @@ pre_pr          = "security"          # after asserting a round-gate marker on
 # The ONLY copy of the docs-only allowlist; the push helper re-derives the
 # classification from the diff — never trusts the caller's word for it.
 docs_only_paths = ["docs/**", "specs/**", "*.md"]   # (allowlist)
+
+# ── Review guidelines — what every reviewer is told, from one file ──────────
+# Names the canonical reviewer instructions: review priorities, the P0–P3
+# severity scale (its single normative statement) and the repository's own
+# invariants. scripts/codex-review.sh reads this table AND the file it names
+# from the review's BASE revision (the merge base for a branch review, the
+# parent for --commit, HEAD for --uncommitted), never from the working tree, so
+# a change cannot rewrite the instructions that review it. `text` is the inline
+# alternative to `file` (mutually exclusive); each *_focus string is appended to
+# the matching local pass only when the CLI is given no focus text of its own.
+# The devkit reader projects this table from harmon-devkit#1289 onward and
+# ignores it before that, when codex-review.sh falls back to the conventional
+# path named here. (harmon-init#1530)
+[review_guidelines]
+file            = "docs/review-guidelines.md"
+challenge_focus = ""
+review_focus    = ""
 
 [run.standardize-repo]
 rigor    = "standard"

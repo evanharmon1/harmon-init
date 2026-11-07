@@ -114,6 +114,14 @@ rejects missing-matrix-column replace_in_table tier.matrix 'xl = { trivial = "fr
 rejects extra-matrix-column replace_in_table tier.matrix 'xs = { trivial' 'xs = { extreme = "apex", trivial'
 rejects unknown-matrix-row replace_in_table tier.matrix 'xl = {' 'xxl = {'
 rejects tier-table-without-matrix replace_once $'\n[tier.matrix]\n' $'\n[tier.grid]\n'
+# [review_guidelines] (harmon-init#1530): a closed table whose file/text are
+# mutually exclusive and whose file is a safe repo-relative path. The reader
+# unit cases in test-devflow-config.sh cover the full refusal list; these
+# prove the SHIPPED file's validation path refuses them end to end.
+rejects review-guidelines-unknown-key replace_in_table review_guidelines 'review_focus    = ""' $'review_focus    = ""\nsurprise = true'
+rejects review-guidelines-both-sources replace_in_table review_guidelines 'review_focus    = ""' $'review_focus    = ""\ntext = "inline"'
+rejects review-guidelines-dotdot-path replace_in_table review_guidelines 'file            = "docs/review-guidelines.md"' 'file            = "../docs/review-guidelines.md"'
+rejects review-table-is-v1-marker replace_once $'\n[review_guidelines]\n' $'\n[review]\n'
 
 # Exercise the shipped JS parser directly. Python's tomllib also rejects
 # these mutations in test-devflow-config.sh, but that would let a regression
