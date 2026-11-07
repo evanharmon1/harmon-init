@@ -350,7 +350,7 @@ runs:
       env:
         SHARP_IGNORE_GLOBAL_LIBVIPS: "1"
       run: |
-        if [ -f package.json ]; then pnpm install --frozen-lockfile; fi
+        ./scripts/pnpm-install.sh
     - name: Resolve installed Playwright cache identity
       if: inputs.browsers == 'true'
       id: playwright-version

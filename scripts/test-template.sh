@@ -989,12 +989,25 @@ def contract_violations(source: str, path: "pathlib.Path | None" = None) -> list
     # (e.g. the verification step's own store_dir) even if the export step's own
     # assignment were changed to a persistent path.
     path_is_setup_action = path == SETUP_ACTION_PATH
+    # Only the recovery helper may switch to its freshly-created RUNNER_TEMP
+    # directory. The fixture's initial values are private to its own temp tree.
+    recovery_export = re.compile(r'^\s*export (?:PNPM_CONFIG_STORE_DIR|npm_config_store_dir)="\$fresh"\s*$')
+    fixture_export = 'export PNPM_CONFIG_STORE_DIR="$RUNNER_TEMP/.pnpm-store" npm_config_store_dir="$RUNNER_TEMP/.pnpm-store"'
+    recovery_safe = False
     reaching_store_dir_is_runner_temp = False
     for line in source.splitlines():
+        if re.match(r"^\s*fresh=", line):
+            recovery_safe = path == pathlib.Path("scripts/pnpm-install.sh") and line.strip() == (
+                'fresh="$(mktemp -d "${RUNNER_TEMP}/pnpm-recovery.XXXXXX")" || {'
+            )
         if re.match(r"^\s*store_dir=", line):
             reaching_store_dir_is_runner_temp = bool(
                 re.search(r"store_dir=\"?\$\{?RUNNER_TEMP\}?/", line)
             )
+        if (recovery_safe and recovery_export.fullmatch(line)) or (
+            path == pathlib.Path("scripts/test-pnpm-install.sh") and line.strip() == fixture_export
+        ):
+            continue
         if re.search(
             r"^\s*(?:export\s+)?[\"']?(?:PNPM_CONFIG_STORE_DIR|npm_config_store_dir)[\"']?\s*[:=]",
             line,
@@ -1046,6 +1059,20 @@ for fixture in (
 ):
     if not contract_violations(fixture):
         print(f"pnpm-store guard missed its negative control: {fixture}", file=sys.stderr)
+        raise SystemExit(1)
+
+# Recovery exports are valid only in the helper and only with its fixed
+# RUNNER_TEMP mktemp pattern; persistent and other-script overrides still fail.
+recovery_line = 'export PNPM_CONFIG_STORE_DIR="$fresh"'
+private_recovery = 'fresh="$(mktemp -d "${RUNNER_TEMP}/pnpm-recovery.XXXXXX")" || {'
+for source, path in (
+    (f'fresh="$HOME/store"\n{recovery_line}', pathlib.Path("scripts/pnpm-install.sh")),
+    (f'{private_recovery}\n{recovery_line}', pathlib.Path("scripts/other.sh")),
+    (f'{private_recovery}\nfresh="$HOME/store"\n{recovery_line}', pathlib.Path("scripts/pnpm-install.sh")),
+    (f'fresh="$HOME/store"\n{recovery_line}\n{private_recovery}', pathlib.Path("scripts/pnpm-install.sh")),
+):
+    if not contract_violations(source, path):
+        print("pnpm-store guard missed a recovery override negative control", file=sys.stderr)
         raise SystemExit(1)
 
 # The literal safe-echo line is exempt only in the shared setup action, and only
