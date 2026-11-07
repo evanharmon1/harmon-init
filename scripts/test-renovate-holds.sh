@@ -16,7 +16,7 @@ for field in reason upstream removal removal_missing canary; do
 import pathlib, sys
 root, field = pathlib.Path(sys.argv[1]), sys.argv[2]
 for path in (root / 'renovate.json', root / 'renovate/default.json', root / 'template/renovate.json.jinja'):
-    text = path.read_text()
+    text = path.read_text(encoding='utf-8')
     old, new = {
         'reason': ('Reason: TypeScript 7 requires typescript-eslint support for its native compiler', 'Reason: '),
         'upstream': ('https://github.com/typescript-eslint/typescript-eslint/issues/10940', 'invalid'),
@@ -24,7 +24,7 @@ for path in (root / 'renovate.json', root / 'renovate/default.json', root / 'tem
         'removal_missing': ('; Remove when: typescript-eslint supports TypeScript 7 and the canary Node and Astro checks pass with TypeScript 7', ''),
         'canary': ('https://github.com/evanharmon1/harmon-init', 'invalid'),
     }[field]
-    path.write_text(text.replace(old, new, 1))
+    path.write_text(text.replace(old, new, 1), encoding='utf-8')
 PY
     if "$lint" "$tmp" >/dev/null 2>&1; then
         echo "accepted invalid $field" >&2
@@ -51,9 +51,9 @@ replacement = {
     'valid_spaces': '  meaningful text  ', 'valid_mixed': '\t meaningful text \n',
 }[value]
 for path in (root / 'renovate.json', root / 'renovate/default.json', root / 'template/renovate.json.jinja'):
-    text = path.read_text()
+    text = path.read_text(encoding='utf-8')
     assert text.count(original) == 1
-    path.write_text(text.replace(original, json.dumps(replacement)[1:-1], 1))
+    path.write_text(text.replace(original, json.dumps(replacement)[1:-1], 1), encoding='utf-8')
 PYCODE
         if [[ $value == valid_* ]]; then
             "$lint" "$tmp" || {
@@ -80,7 +80,7 @@ paths = [root / 'renovate.json']
 if mode == 'copies':
     paths += [root / 'renovate/default.json', root / 'template/renovate.json.jinja']
 for path in paths:
-    text = path.read_text()
+    text = path.read_text(encoding='utf-8')
     match = text.index('"matchPackageNames": ["typescript"]')
     start = text.rindex('{', 0, match)
     end = text.index('}', match)
@@ -93,14 +93,18 @@ for path in paths:
     else:
         rule = rule.replace('; Remove when: typescript-eslint supports TypeScript 7 and the canary Node and Astro checks pass with TypeScript 7', '', 1)
     if mode == 'consumer':
-        path.write_text('{"packageRules": [' + rule + '}]}')
+        path.write_text('{"packageRules": [' + rule + '}]}', encoding='utf-8')
     else:
-        path.write_text(text[:start] + rule + text[end:])
+        path.write_text(text[:start] + rule + text[end:], encoding='utf-8')
 if mode == 'consumer':
     (root / 'renovate/default.json').unlink()
 PYCASE
-        if "$lint" "$tmp" >/dev/null 2>&1; then
+        if "$lint" "$tmp" >"$tmp/diagnostic" 2>&1; then
             echo "accepted escaped hold key with missing $missing ($mode)" >&2
+            exit 1
+        fi
+        if ! grep -q 'allowedVersions rule needs Reason' "$tmp/diagnostic"; then
+            echo "escaped hold key failed for the wrong reason ($mode, $missing)" >&2
             exit 1
         fi
         cp "$repo/renovate.json" "$tmp/renovate.json"
@@ -123,9 +127,9 @@ old = {
 parts = old.split('/')
 parts[1 if component.endswith('owner') else 2] = json.dumps({'tab': '\t', 'newline': '\n', 'control': '\x01'}[value])[1:-1]
 for path in (root / 'renovate.json', root / 'renovate/default.json', root / 'template/renovate.json.jinja'):
-    text = path.read_text()
+    text = path.read_text(encoding='utf-8')
     assert old in text
-    path.write_text(text.replace(old, '/'.join(parts), 1))
+    path.write_text(text.replace(old, '/'.join(parts), 1), encoding='utf-8')
 PYURL
         if "$lint" "$tmp" >/dev/null 2>&1; then
             echo "accepted $value in $component" >&2
@@ -136,6 +140,46 @@ PYURL
         cp "$repo/template/renovate.json.jinja" "$tmp/template/renovate.json.jinja"
     done
 done
+# Quoted braces and escaped quotes are JSON data in both paired and consumer configs.
+for mode in copies consumer; do
+    if [[ $mode == consumer ]]; then
+        cp "$repo/renovate/default.json" "$tmp/renovate.json"
+    fi
+    python3 - "$tmp" "$mode" <<'PYBRACE'
+import pathlib, sys
+root, mode = pathlib.Path(sys.argv[1]), sys.argv[2]
+paths = [root / 'renovate.json']
+if mode == 'copies':
+    paths += [root / 'renovate/default.json', root / 'template/renovate.json.jinja']
+for path in paths:
+    text = path.read_text(encoding='utf-8')
+    text = text.replace('Reason: TypeScript 7 requires', r'Reason: {candidate} \"quoted\" TypeScript 7 requires', 1)
+    path.write_text(text, encoding='utf-8')
+if mode == 'consumer':
+    (root / 'renovate/default.json').unlink()
+PYBRACE
+    "$lint" "$tmp"
+    cp "$repo/renovate.json" "$tmp/renovate.json"
+    cp "$repo/renovate/default.json" "$tmp/renovate/default.json"
+    cp "$repo/template/renovate.json.jinja" "$tmp/template/renovate.json.jinja"
+done
+# A template hold whose object contains Jinja is outside the bounded extractor.
+python3 - "$tmp/template/renovate.json.jinja" <<'PYUNSUPPORTED'
+import pathlib, sys
+path = pathlib.Path(sys.argv[1])
+text = path.read_text(encoding='utf-8')
+text = text.replace('"allowedVersions": "<7.0.0"', '"allowedVersions": [[ unsupported ]]', 1)
+path.write_text(text, encoding='utf-8')
+PYUNSUPPORTED
+if "$lint" "$tmp" >"$tmp/diagnostic" 2>&1; then
+    echo 'accepted unsupported template hold' >&2
+    exit 1
+fi
+if ! grep -q 'cannot inspect every allowedVersions rule' "$tmp/diagnostic"; then
+    echo 'unsupported template hold failed for the wrong reason' >&2
+    exit 1
+fi
+cp "$repo/template/renovate.json.jinja" "$tmp/template/renovate.json.jinja"
 # A range drift must fail even if its description stays valid.
 sed -i.bak 's/"<7.0.0"/"<8.0.0"/' "$tmp/renovate.json"
 if "$lint" "$tmp" >/dev/null 2>&1; then
@@ -146,15 +190,15 @@ fi
 awk '/<<.PYGUARD./ {copy=1; next} /^PYGUARD$/ {exit} copy' "$repo/scripts/test-template.sh" >"$tmp/parity-guard.py"
 python3 - "$repo/renovate/default.json" "$tmp" <<'PYTEST'
 import copy, json, pathlib, subprocess, sys
-preset = json.loads(pathlib.Path(sys.argv[1]).read_text())
+preset = json.loads(pathlib.Path(sys.argv[1]).read_text(encoding='utf-8'))
 tmp = pathlib.Path(sys.argv[2])
 
 def is_ts(rule):
     return rule.get('matchPackageNames') == ['typescript']
 
 def check(label, shared, rendered, profile, expected):
-    (tmp / 'shared.json').write_text(json.dumps(shared))
-    (tmp / 'rendered.json').write_text(json.dumps(rendered))
+    (tmp / 'shared.json').write_text(json.dumps(shared), encoding='utf-8')
+    (tmp / 'rendered.json').write_text(json.dumps(rendered), encoding='utf-8')
     result = subprocess.run([sys.executable, str(tmp / 'parity-guard.py'), str(tmp / 'shared.json'),
                              str(tmp / 'rendered.json'), profile], capture_output=True, text=True)
     if (result.returncode == 0) != expected:

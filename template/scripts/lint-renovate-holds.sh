@@ -3,61 +3,94 @@
 set -euo pipefail
 root=${1:-.}
 cd "$root"
+python3 - <<'PY'
+import json
+import pathlib
+import re
+import sys
 
-# The template contains Jinja, so extract each simple package-rule object before
-# parsing it. Renovate config validation separately checks the rendered JSON.
-holds() {
-    jq -Rsc '[scan("\\{[^{}]*\\\"allowedVersions\\\"[^{}]*\\}") | fromjson]' "$1"
-}
-check() {
-    local file=$1 exemptions=$2 count extracted
-    if [[ $file == *.jinja ]]; then
-        # Decode JSON-shaped keys before counting; an escaped hold key must not
-        # evade both the count and the deliberately literal object extractor.
-        count=$(jq -Rsc '[scan("\"(?:[^\"\\\\]|\\\\.)*\"[[:space:]]*:") | sub("[[:space:]]*:$"; "") | fromjson | select(. == "allowedVersions")] | length' "$file")
-    else
-        count=$(jq '[.. | objects | select(has("allowedVersions"))] | length' "$file")
-    fi
-    extracted=$(holds "$file")
-    if [[ $(jq 'length' <<<"$extracted") != "$count" ]]; then
-        echo "$file: cannot inspect every allowedVersions rule" >&2
-        return 1
-    fi
-    jq -e --argjson exemptions "$exemptions" '
-    all(.[];
-      if (.matchPackageNames == ["joshmedeski/sesh"] or .matchPackageNames == ["XAMPPRocky/tokei"]) and $exemptions then true
-      else (.description | type == "string" and
-        test("^Reason: [^;]*[^[:space:];][^;]*; Upstream: https://github[.]com/[^[:space:][:cntrl:]/;]+/[^[:space:][:cntrl:]/;]+/(issues|pull)/[0-9]+; Remove when: [^;]*[^[:space:];][^;]*; Canary: https://github[.]com/[^[:space:][:cntrl:]/;]+/[^[:space:][:cntrl:]/;]+$")) end)' <<<"$extracted" >/dev/null || {
-        echo "$file: allowedVersions rule needs Reason, upstream issue/PR, Remove when, and Canary" >&2
-        return 1
-    }
-}
 
-if [[ ! -f renovate.json ]]; then
-    echo 'renovate.json: missing' >&2
-    exit 1
-fi
-jq -e . renovate.json >/dev/null
-if [[ -f renovate/default.json && -f template/renovate.json.jinja ]]; then
-    jq -e . renovate/default.json >/dev/null
-    check renovate.json true
-    check renovate/default.json false
-    check template/renovate.json.jinja false
-    # Until preset adoption, every shared hold must match the rendered template
-    # and its root copy. Root may also carry repository-specific holds.
-    shared=$(holds renovate/default.json | jq -c 'sort_by(.matchPackageNames)')
-    templated=$(holds template/renovate.json.jinja | jq -c 'sort_by(.matchPackageNames)')
-    [[ $shared == "$templated" ]] || {
-        echo 'template holds differ from preset' >&2
-        exit 1
-    }
-    actual=$(holds renovate.json)
-    jq -en --argjson shared "$shared" --argjson actual "$actual" \
-        'all($shared[]; . as $hold | [$actual[] | select(. == $hold)] | length == 1)' >/dev/null || {
-        echo 'root is missing a shared hold or differs from the preset' >&2
-        exit 1
-    }
+def fail(message):
+    print(message, file=sys.stderr)
+    sys.exit(1)
 
-else
-    check renovate.json false
-fi
+
+def objects(value):
+    """Walk parsed JSON objects, including nested package rules."""
+    if isinstance(value, dict):
+        yield value
+        for child in value.values():
+            yield from objects(child)
+    elif isinstance(value, list):
+        for child in value:
+            yield from objects(child)
+
+
+def holds(path):
+    """Extract JSON objects; template hold objects must be standalone JSON."""
+    try:
+        text = path.read_text(encoding='utf-8')
+        if path.suffix != '.jinja':
+            return [obj for obj in objects(json.loads(text)) if 'allowedVersions' in obj]
+        # Skip complete JSON strings and Jinja tags when looking for object starts
+        # and decoded keys. Every hold key must belong to a parseable object.
+        tokens = re.compile(r'"(?:[^"\\]|\\.)*"|\[%.*?%\]|\[\[.*?\]\]|\{', re.S)
+        decoder = json.JSONDecoder()
+        found, count = [], 0
+        for token in tokens.finditer(text):
+            value = token.group()
+            if value.startswith('"'):
+                if re.match(r'\s*:', text[token.end():]) and json.loads(value) == 'allowedVersions':
+                    count += 1
+            elif value == '{':
+                try:
+                    obj, _ = decoder.raw_decode(text, token.start())
+                except ValueError:
+                    continue
+                if isinstance(obj, dict) and 'allowedVersions' in obj:
+                    found.append(obj)
+        if len(found) != count:
+            fail(f'{path}: cannot inspect every allowedVersions rule')
+        return found
+    except (OSError, ValueError) as error:
+        fail(f'{path}: cannot inspect JSON: {error}')
+
+
+component = r'[^\s\x00-\x1f\x7f-\x9f/;]+'
+pattern = re.compile(
+    r'^Reason: [^;]*[^\s;][^;]*; Upstream: https://github\.com/'
+    + component + '/' + component + r'/(?:issues|pull)/[0-9]+; Remove when: '
+    + r'[^;]*[^\s;][^;]*; Canary: https://github\.com/' + component + '/' + component + r'$',
+    re.DOTALL,
+)
+
+
+def check(path, exemptions=False):
+    rules = holds(path)
+    for rule in rules:
+        if exemptions and rule.get('matchPackageNames') in ([ 'joshmedeski/sesh' ], [ 'XAMPPRocky/tokei' ]):
+            continue
+        description = rule.get('description')
+        if not isinstance(description, str) or not pattern.fullmatch(description):
+            fail(f'{path}: allowedVersions rule needs Reason, upstream issue/PR, Remove when, and Canary')
+    return rules
+
+
+root = pathlib.Path('renovate.json')
+preset = pathlib.Path('renovate/default.json')
+template = pathlib.Path('template/renovate.json.jinja')
+if not root.is_file():
+    fail('renovate.json: missing')
+if preset.is_file() and template.is_file():
+    actual = check(root, True)
+    shared = check(preset)
+    templated = check(template)
+    # Compare complete objects, preserving multiplicity without requiring key order.
+    canonical = lambda rule: json.dumps(rule, sort_keys=True, ensure_ascii=True)
+    if sorted(map(canonical, shared)) != sorted(map(canonical, templated)):
+        fail('template holds differ from preset')
+    if any(list(map(canonical, actual)).count(canonical(rule)) != 1 for rule in shared):
+        fail('root is missing a shared hold or differs from the preset')
+else:
+    check(root)
+PY
