@@ -39,6 +39,7 @@ fixture() { # dir default-branch feature-branch set-remote-head(yes|no) [remote-
 r="${tmp}/repo"
 fixture "$r" main feat yes
 git -C "$r" worktree add -q "${r}/wt" feat
+mkdir -p "${r}/wt/sub"
 git -C "$r" remote add 'origin&cd' "${tmp}/absent.git"
 git -C "$r" remote add unsafe "${tmp}/absent.git"
 git -C "$r" config remote.unsafe.fetch '+refs/heads/*:refs/heads/*'
@@ -86,6 +87,36 @@ git -C "$pp" symbolic-ref refs/remotes/backup/HEAD refs/remotes/backup/main
 # Isolate multivalued merge-source mutations from the ordinary sync cases.
 ms="${tmp}/merge-sources"
 fixture "$ms" main feat yes
+
+# A real local remote proves --ff-only overrides pull.rebase=true: it can
+# fast-forward, but must refuse divergence without rewriting the local commit.
+rb_source="${tmp}/rebase-origin"
+fixture "$rb_source" main feat yes
+rb="${tmp}/rebase-true"
+git clone -q --no-local "$rb_source" "$rb"
+git -C "$rb" checkout -q -b feat --track origin/main
+git -C "$rb" config pull.rebase true
+git -C "$rb_source" -c user.name=t -c user.email=t@t commit -q --allow-empty -m 'chore: upstream advances'
+echo "==> pull.rebase=true permits fast-forward-only pulls without rewriting"
+git -C "$rb" pull --ff-only >"${tmp}/rebase-ff.log" 2>&1
+if [[ $(git -C "$rb" rev-parse HEAD) != "$(git -C "$rb_source" rev-parse HEAD)" ]]; then
+    echo "TEST FAIL: --ff-only did not fast-forward with pull.rebase=true" >&2
+    exit 1
+fi
+git -C "$rb" -c user.name=t -c user.email=t@t commit -q --allow-empty -m 'chore: local divergence'
+local_head="$(git -C "$rb" rev-parse HEAD)"
+git -C "$rb_source" -c user.name=t -c user.email=t@t commit -q --allow-empty -m 'chore: upstream divergence'
+if LC_ALL=C git -C "$rb" pull --ff-only >"${tmp}/rebase-diverged.log" 2>&1; then
+    echo "TEST FAIL: --ff-only accepted divergence with pull.rebase=true" >&2
+    exit 1
+fi
+if [[ $(git -C "$rb" rev-parse HEAD) != "$local_head" ||
+$(git -C "$rb" rev-parse refs/remotes/origin/main) != "$(git -C "$rb_source" rev-parse HEAD)" ]] ||
+    ! grep -q 'Not possible to fast-forward' "${tmp}/rebase-diverged.log"; then
+    cat "${tmp}/rebase-diverged.log" >&2
+    echo "TEST FAIL: --ff-only must fetch then refuse divergence without rewriting HEAD" >&2
+    exit 1
+fi
 
 failures=0
 case_count=0
@@ -1013,10 +1044,14 @@ mutation { resolveReviewThread(input: {}) { clientMutationId } }'"'"''
     case_ "$g" 'git-merge-guard: merge/pull or GitHub merge in a form this guard does not allowlist' "$r" "git merge --ff-only feat && git checkout main" reason
     # Allowlisted merges into a verified feature branch: no opinion.
     case_ "$g" silent "${r}/wt" "git merge origin/main --no-edit"
+    case_ "$g" silent "${r}/wt/sub" "git merge origin/main --no-edit"
     case_ "$g" silent "${r}/wt" "git merge --no-ff main"
     case_ "$g" silent "${r}/wt" "git merge --continue"
     case_ "$g" silent "${r}/wt" "git merge --quit"
     case_ "$g" silent "${r}/wt" "git pull --ff-only"
+    case_ "$g" silent "$rb" "git pull --ff-only"
+    case_ "$g" ask "$rb" "git pull"
+    case_ "$g" ask "$rb" "git pull --rebase"
     case_ "$g" silent "${r}/wt" "git pull --no-rebase origin main --no-edit"
     case_ "$g" silent "${tr}/wt" "git merge trunk --no-edit"
     case_ "$g" silent "${sl}/wt" "git merge trunk --no-edit"
@@ -1406,6 +1441,20 @@ fi
 settings="${repo_root}/.claude/settings.json"
 if [[ -z ${GUARD:-} && -f $settings ]]; then
     echo "==> git-merge-guard is registered in .claude/settings.json and fails closed"
+    # Match the rendered-settings contract: merge prompts belong to the hook
+    # or the dev-only drop-in, while protected/force-push backstops stay here.
+    if ! jq -e '[.permissions.ask[] | select(test("^Bash\\(git merge"))] | length == 0' "$settings" >/dev/null; then
+        echo "TEST FAIL: project settings still ask on every git merge" >&2
+        exit 1
+    fi
+    if ! jq -e '[.permissions.ask[] | select(test("^Bash\\(gh pr merge"))] | length == 0' "$settings" >/dev/null; then
+        echo "TEST FAIL: project settings still ask on gh pr merge" >&2
+        exit 1
+    fi
+    if ! jq -e '.permissions.ask | (index("Bash(git push origin main)") != null) and (index("Bash(git push --force:*)") != null)' "$settings" >/dev/null; then
+        echo "TEST FAIL: project settings lost the push-to-main / force-push ask rules" >&2
+        exit 1
+    fi
     registered="$(jq -r '[.hooks.PreToolUse[]? | select(.matcher == "Bash") | .hooks[]?
         | select(.type == "command" and (.command | contains("git-merge-guard.py")))
         | .command] | first // empty' "$settings")"
@@ -1413,7 +1462,7 @@ if [[ -z ${GUARD:-} && -f $settings ]]; then
         echo "TEST FAIL: no PreToolUse Bash hook in .claude/settings.json runs git-merge-guard.py" >&2
         exit 1
     fi
-    registered_decision() { # project-dir cwd command -> silent|ask|other
+    registered_decision() { # project-dir cwd command [reason] -> silent|ask|reason|other
         local input out rc
         if input="$(jq -nc --arg c "$3" --arg d "$2" \
             '{tool_name:"Bash",tool_input:{command:$c},cwd:$d}')"; then
@@ -1427,7 +1476,11 @@ if [[ -z ${GUARD:-} && -f $settings ]]; then
         if [[ -z $out ]]; then
             echo silent
         elif jq -e '.hookSpecificOutput.permissionDecision == "ask"' <<<"$out" >/dev/null 2>&1; then
-            echo ask
+            if [[ ${4:-} == reason ]]; then
+                jq -r '.hookSpecificOutput.permissionDecisionReason' <<<"$out"
+            else
+                echo ask
+            fi
         else
             echo other
         fi
@@ -1460,6 +1513,20 @@ if [[ -z ${GUARD:-} && -f $settings ]]; then
     expect_registered silent "$repo_root" "${r}/wt" "git merge origin/main --no-edit"
     # A guard that cannot be run must ask, never stay silent.
     expect_registered ask "${tmp}/no-such-project" "${r}/wt" "git merge origin/main --no-edit"
+    # Remove python3 from PATH entirely; jq and bash still run the registered
+    # command and inspect its existing generic fail-closed fallback.
+    mkdir -p "${tmp}/no-python"
+    ln -s "$(command -v jq)" "${tmp}/no-python/jq"
+    ln -s "$(command -v bash)" "${tmp}/no-python/bash"
+    if PATH="${tmp}/no-python" command -v python3 >/dev/null; then
+        echo "TEST FAIL: missing-interpreter fixture still finds python3" >&2
+        exit 1
+    fi
+    PATH="${tmp}/no-python" expect_registered ask "$repo_root" "${r}/wt" "git merge origin/main --no-edit"
+    if [[ $(PATH="${tmp}/no-python" registered_decision "$repo_root" "${r}/wt" "git merge origin/main --no-edit" reason) != 'git-merge-guard failed to run' ]]; then
+        echo "TEST FAIL: missing python3 changed the generic registered fallback reason" >&2
+        exit 1
+    fi
 fi
 
 echo "==> git-merge-guard OK (${primary_case_count} decision cases)"
