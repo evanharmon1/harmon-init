@@ -101,8 +101,9 @@ for probe_script in clean-branches audit-session-artifacts; do
     probe_elapsed=$(($(date +%s) - probe_start))
     [ "$probe_elapsed" -lt 20 ] ||
         fail "$probe_script.sh net_probe took ${probe_elapsed}s for a 1s deadline — a surviving descendant held the capture open"
-    [ "$probe_rc" -eq 137 ] ||
-        fail "$probe_script.sh net_probe returned $probe_rc for a hard-killed probe, expected 137"
+    # 137 after the hard kill; 124 if a loaded host delivered the TERM before
+    # the stub installed its trap. The bound above is the property under test.
+    case "$probe_rc" in 124 | 137) ;; *) fail "$probe_script.sh net_probe returned $probe_rc for a killed probe, expected 124 or 137" ;; esac
 done
 
 # ── gh stub ─────────────────────────────────────────────────────────────────

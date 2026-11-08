@@ -2172,8 +2172,10 @@ chmod +x "${bounded_dir}/stuck"
         elapsed=$(($(date +%s) - start))
         [ "${elapsed}" -lt 8 ] ||
             fail "bounded_run took ${elapsed}s for a 1s deadline + 1s grace under ${label} — a surviving descendant held the capture open"
-        [ "${rc}" -eq 137 ] ||
-            fail "bounded_run under ${label} returned ${rc} for a hard-killed probe, expected 137"
+        # 137 after the hard kill; 124 if a loaded host delivered the TERM before
+        # the stub installed its trap (the elapsed bound above is the property).
+        [ "${rc}" -eq 137 ] || [ "${rc}" -eq 124 ] ||
+            fail "bounded_run under ${label} returned ${rc} for a killed probe, expected 124 or 137"
 
         # Output and status pass through untouched, each stream on its own fd.
         rc=0
@@ -2217,8 +2219,8 @@ echo "==> gh_rest_api honours GH_REST_TIMEOUT even when gh leaves a descendant b
     out="$(PATH="${bounded_dir}/rest-bin:${PATH}" GH_REST_HOST="" GH_REST_TIMEOUT=1 gh_rest_api repos/o/r 2>&1)" || rc=$?
     [ "$(($(date +%s) - start))" -lt 8 ] ||
         fail "gh_rest_api outlived GH_REST_TIMEOUT=1 by $(($(date +%s) - start))s — a surviving gh descendant held the capture open"
-    [ "${rc}" -eq 137 ] ||
-        fail "gh_rest_api returned ${rc} for a hard-killed gh, expected 137: ${out}"
+    [ "${rc}" -eq 137 ] || [ "${rc}" -eq 124 ] ||
+        fail "gh_rest_api returned ${rc} for a killed gh, expected 124 or 137: ${out}"
 ) || exit 1
 
 echo "==> every gum call keeps its stdout off the terminal"
