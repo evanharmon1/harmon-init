@@ -64,9 +64,10 @@
 # status: 124 for a deadline, 137 after a hard kill, as timeout(1) reports.
 # Where scratch files cannot be created it falls back to the plain pipe-bound
 # call — the pre-#2014 behaviour — rather than failing a probe over its own
-# bookkeeping.
+# bookkeeping. The scratch files are unlinked before the probe runs (see the
+# body), so an interrupted caller leaves nothing behind.
 bounded_run() {
-    local timeout_bin="$1" kill_grace="$2" secs="$3" out_file err_file rc=0
+    local timeout_bin="$1" kill_grace="$2" secs="$3" out_file err_file
     shift 3
     if [ -z "${timeout_bin}" ]; then
         "$@" </dev/null
@@ -86,11 +87,20 @@ bounded_run() {
         "${bound[@]}" "$@" </dev/null
         return
     }
-    "${bound[@]}" "$@" </dev/null >"${out_file}" 2>"${err_file}" || rc=$?
-    cat "${out_file}"
-    cat "${err_file}" >&2
-    rm -f "${out_file}" "${err_file}"
-    return "${rc}"
+    # A subshell owns the descriptors, and both files are unlinked before the
+    # probe starts: it writes through fds 6/8 and the replay reads fds 7/9, so
+    # no name survives a caller that is interrupted mid-probe. That matters
+    # because a probe's stdout can be a credential (`gh auth token`) that the
+    # caller discards; it must never rest in $TMPDIR under a guessable name.
+    (
+        exec 6>"${out_file}" 7<"${out_file}" 8>"${err_file}" 9<"${err_file}"
+        rm -f "${out_file}" "${err_file}"
+        rc=0
+        "${bound[@]}" "$@" </dev/null >&6 2>&8 6>&- 7<&- 8>&- 9<&- || rc=$?
+        cat <&7
+        cat <&9 >&2
+        exit "${rc}"
+    )
 }
 
 # gh_rest_repo [REMOTE] — print OWNER/REPO from GH_REPO or a git remote.

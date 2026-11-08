@@ -2192,6 +2192,17 @@ chmod +x "${bounded_dir}/stuck"
             fail "bounded_run under ${label} handed the probe the caller's stdin: ${out}"
     done
 
+    # No scratch file keeps a name while the probe runs: a probe's stdout can be
+    # a credential (`gh auth token`) the caller discards, and a caller
+    # interrupted mid-probe would otherwise leave it in $TMPDIR.
+    leak_dir="$(mktemp -d "${TMP}/leak.XXXXXX")"
+    TMPDIR="${leak_dir}" bounded_run "${direct_timeout}" 1 30 sh -c 'echo secret; sleep 3' >/dev/null &
+    leak_pid=$!
+    sleep 1
+    [ -z "$(ls -A "${leak_dir}")" ] ||
+        fail "bounded_run left a named scratch file while the probe ran: $(ls -A "${leak_dir}")"
+    wait "${leak_pid}"
+
     # No grace means no -k (a timeout that rejects the flag): the plain
     # deadline still ends a probe that honours TERM.
     start="$(date +%s)"
