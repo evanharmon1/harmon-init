@@ -9,13 +9,16 @@
 # depName and datasource Renovate really assigns to each pin, including
 # setup-node's `node-version` input, which only the github-actions manager's
 # known-actions table turns into a `node` dependency. The hold's matchers are
-# literal (`matchManagers` + `matchDepNames`), so applying them to the
-# extracted dependencies is exact: Renovate reports a custom manager as
-# `regex`, which `custom.regex` in matchManagers selects.
+# literal (`matchManagers`, `matchDepNames`, `matchDatasources`), so applying
+# them to the extracted dependencies is exact: Renovate reports a custom
+# manager as `regex`, which `custom.regex` in matchManagers selects.
 #
-# The rendered tree is copied first and three negative fixtures are added to
-# the copy: a package.json with engines.node and @types/node, and a Dockerfile
-# FROM node. None is the CI runtime, and the hold must select none of them.
+# The rendered tree is copied first and negative fixtures are added to the
+# copy: a package.json with engines.node and @types/node, a Dockerfile FROM
+# node, and a workflow whose job container and service are node images. The
+# workflow images matter most: the github-actions manager extracts them as
+# depName `node` too, with datasource docker, so only the hold's datasource
+# matcher keeps them out. None is the CI runtime; the hold must select none.
 #
 # Network: npx resolves the pinned Renovate from npm, so this runs only in the
 # network-bound `renovate-config` scope of test-template.sh, never in verify.
@@ -43,6 +46,20 @@ JSON
 mkdir -p node-hold-fixture
 mv node-hold-fixture.package.json node-hold-fixture/package.json
 printf 'FROM node:24.11.0-bookworm\n' >node-hold-fixture/Dockerfile
+mkdir -p .github/workflows
+cat >.github/workflows/node-hold-fixture.yml <<'YAML'
+name: node-hold-fixture
+on: push
+jobs:
+  fixture:
+    runs-on: ubuntu-latest
+    container: node:24.11.0-bookworm
+    services:
+      cache:
+        image: node:24.11.0-slim
+    steps:
+      - run: "true"
+YAML
 
 # Renovate's local platform reads the file list from git. The copy is a
 # throwaway fixture repository with no hooks of its own; an empty hooks path
@@ -74,7 +91,7 @@ holds = [r for r in config["packageRules"] if r.get("matchDepNames") == ["node"]
 if len(holds) != 1:
     sys.exit(f"expected exactly one Node runtime hold, found {len(holds)}")
 hold = holds[0]
-expected = {"matchManagers": ["github-actions", "custom.regex"], "matchDepNames": ["node"], "allowedVersions": "<25"}
+expected = {"matchManagers": ["github-actions", "custom.regex"], "matchDepNames": ["node"], "matchDatasources": ["node-version", "github-releases"], "allowedVersions": "<25"}
 if {k: v for k, v in hold.items() if k != "description"} != expected:
     sys.exit(f"Node runtime hold has unexpected matchers: {hold}")
 
@@ -92,7 +109,8 @@ if package_files is None:
 
 def selected(manager, dep):
     name = "custom." + manager if manager == "regex" else manager
-    return name in hold["matchManagers"] and dep.get("depName") in hold["matchDepNames"]
+    return (name in hold["matchManagers"] and dep.get("depName") in hold["matchDepNames"]
+            and dep.get("datasource") in hold["matchDatasources"])
 
 
 runtime, rejected = [], []
@@ -116,7 +134,8 @@ for manager, datasource, value, where in runtime:
         sys.exit(f"selected runtime pin is not on the held 24 major: {where} = {value}")
 
 seen = {(m, t, n) for m, t, n, _ in rejected}
-for want in (("npm", "engines", "node"), ("npm", "devDependencies", "@types/node"), ("dockerfile", "final", "node")):
+for want in (("npm", "engines", "node"), ("npm", "devDependencies", "@types/node"), ("dockerfile", "final", "node"),
+             ("github-actions", "container", "node"), ("github-actions", "service", "node")):
     if want not in seen:
         sys.exit(f"negative fixture {want} was not extracted, so the test proves nothing about it; extracted: {sorted(seen)}")
 

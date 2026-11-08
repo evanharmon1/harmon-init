@@ -606,9 +606,11 @@ def check_lockfile_policy(label, cfg):
                                       ("github-actions", ".github/workflows/ci.yml", "github-releases")):
         if resolve(manager, "major", "node", path, None, datasource).get("allowedVersions") != "<25":
             errors.append(f"{label}: Node runtime hold lost for {manager}")
-    for dep, dep_type in (("node", "engines"), ("@types/node", "devDependencies")):
-        if resolve("npm", "major", dep, "package.json", dep_type, "npm").get("allowedVersions") == "<25":
-            errors.append(f"{label}: Node runtime hold wrongly selects npm {dep_type} {dep}")
+    for manager, dep, dep_type, datasource in (("npm", "node", "engines", "node-version"),
+                                               ("npm", "@types/node", "devDependencies", "npm"),
+                                               ("github-actions", "node", "container", "docker")):
+        if resolve(manager, "major", dep, "package.json", dep_type, datasource).get("allowedVersions") == "<25":
+            errors.append(f"{label}: Node runtime hold wrongly selects {manager} {dep_type} {dep}")
     if cfg.get("vulnerabilityAlerts", {}).get("groupName", None) is not None:
         errors.append(f"{label}: vulnerability alerts must bypass groups")
 

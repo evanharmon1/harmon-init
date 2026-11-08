@@ -1269,7 +1269,7 @@ python3 - "$repo_root/renovate/default.json" renovate.json <<'PYNODEHOLD' ||
 import json
 import sys
 
-expected = {"matchManagers": ["github-actions", "custom.regex"], "matchDepNames": ["node"], "allowedVersions": "<25"}
+expected = {"matchManagers": ["github-actions", "custom.regex"], "matchDepNames": ["node"], "matchDatasources": ["node-version", "github-releases"], "allowedVersions": "<25"}
 configs = [json.load(open(path, encoding="utf-8")) for path in sys.argv[1:3]]
 holds = [[rule for rule in config["packageRules"] if rule.get("matchDepNames") == ["node"]] for config in configs]
 for label, found in zip(("preset", "render"), holds):
