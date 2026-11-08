@@ -442,10 +442,19 @@ GitHub labels.
 
 ### Working-slot release and reactivation
 
-Handoff releases a Working slot; it does not tear down a lane. At the passing
-handoff check, remove the chain-owned `claim:*` and use `plan-revise.mjs handoff`.
-The plan moves the lane and its complete policy to typed `retained_lanes`, with
-state `idle`. It counts only toward `max_in_flight` while its delivery PR is open.
+Handoff releases a Working slot; it does not tear down a lane. After the passing
+handoff check, use `plan-revise.mjs handoff`; that writer releases the current
+branch's chain-owned claim through `track-work/assets/release-claim.sh` before
+recording the handoff. A release refusal or partial release is an error, never a
+successful handoff. The writer then reads the canonical issue's live labels and
+requires a valid response with no `claim:*` marker; even a successful release
+that preserves a marker it does not own cannot publish a handoff. The release
+key is deterministic for the issue, PR and branch, so retrying after a
+successful GitHub release but interrupted plan write can verify that exact
+release and continue; a different branch, a newer claim, a failed or malformed
+label read, or surviving claim markers still refuses. The plan moves the lane and its
+complete policy to typed `retained_lanes`, with state `idle`. It counts only
+toward `max_in_flight` while its delivery PR is open.
 Only § Lane teardown closes tabs/panes or removes worktrees, after merge; a PR
 closed without merging still requires the maintainer's go-ahead for teardown.
 
@@ -453,11 +462,22 @@ Send every post-handoff code-change round—late finding, red required CI, or a
 conflicting catch-up—to that lane's existing session while it is alive. Record
 `plan-revise.mjs fix-request --issue N --reason <finding>` with the usual slate,
 session and owner-token arguments. This records `pending` before admission.
-Run `plan-revise.mjs reactivate --issue N --reason <round>`: the shared dispatch
-mutex and the same capacity predicate as `lane-init` hold it at the working cap.
-Pending open-PR fixes take the next free Working slot before any new lane.
-On success the plan records `working`; re-add the claim through the claim
-procedure and send the fix round. The lane now counts toward both ceilings.
+Run `plan-revise.mjs reactivate --issue N --reason <round>` with the claim
+resolver's explicit `--claim-record-file`, `--claim-label`, `--model-label`,
+`--family`, and fetched `--registry-snapshot` inputs (plus
+`--runtime-environment` where recorded; use `--claim-label none
+--allow-label-less` only for a label-less resolver result). Never infer a model
+or re-add a label directly. If a verified late-review fix explicitly requires
+pulling back an existing `needs-review` marker, pass
+`--approve-review-pullback` only with the human's approval; by default the
+claim transaction continues to refuse that pull-back. The writer first holds the shared dispatch mutex and
+checks the same capacity predicate as `lane-init`; only after admission and
+the complete working-state plan candidate passes overlap and schema validation does it invoke the existing
+`claim/assets/claim-transaction.sh` with those inputs, then record `working`.
+A failed helper leaves the plan pending; retry the same record through the
+transaction helper's idempotent path. Pending open-PR fixes take the next free
+Working slot before any new lane. On success, send the fix round; the lane now
+counts toward both ceilings.
 After another passing handoff check, `handoff --issue N --pr P
 --expected-revision R` returns it to `idle`. Capture the plan's current revision
 `R` with that check; the writer compares it under the plan mutex. An unqualified
@@ -515,6 +535,30 @@ candidate entry plus the operator's resolution. It never invents fence scope or
 overlap decisions. `base-move` keeps its mechanical-only refusal contract.
 
 ## Durable orchestrator state
+
+After a restart, first run `assets/dev-flow-monitor.sh resume --slate-id ID`.
+This read-only command reconstructs the latest slate from the Git common
+directory: live runs, stages, generations, branches, bound PRs, lane statuses,
+unreconciled reservations, terminal pointer prune candidates, and watcher argv.
+Run it from the conductor checkout (or pass `--repo-root DIR`). Its JSON output
+includes `watcher.argv` for `lane-watch.sh`; review it before re-arming the watcher.
+The recovered watcher observes GitHub and durable lane status without guessing
+lost session names. Reconnect local session supervision explicitly when needed.
+Recovered live lanes preserve bound PR numbers and use each brief's recorded
+local worktree for status head checks, including foreign and unpushed branches.
+Saved statuses are labelled `current`, `stale`, or `unverifiable` against the
+captured `local_branch_head`; an unavailable local head cannot attest a status.
+Watcher arguments bind the conductor's registry path and immutable kickoff
+revision through `--registry` and `--registry-revision`, independent of the tool
+checkout and subsequent registry edits. Watched runs must retain matching active
+pointers with the same registry revision. A terminal PR whose pointer has been
+retired cannot supply that evidence and blocks watcher reconstruction; its
+summary remains available. Different pinned revisions also block a shared watcher.
+A missing run record is
+undispatched only when no dispatch evidence survives; retained lanes, attempt
+records, run files or active pointers make that loss a blocker.
+Missing or ambiguous attempt evidence is reported as a blocker rather than a
+watcher specification. No locks, records, pointers or watcher state are written.
 
 The conductor owns slate plans, locks, run records, briefs, reports, sentinels
 and the merge queue across repositories. Run control writers from its checkout.

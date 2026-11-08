@@ -11,6 +11,8 @@ import { existsSync, readFileSync, realpathSync } from 'node:fs'
 import { join, normalize, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+import { terminalReviewHistory } from './checker-cycle-history.mjs'
+
 export const AUTHORITY_NOTE_PREFIX = 'integration-review-authority v1'
 const SHA = /^[0-9a-f]{64}$/
 const SHA40 = /^[0-9a-f]{40}$/
@@ -376,21 +378,15 @@ function matchingTerminalReceipt(record, snapshot, { common, runId }) {
   if (!bound || snapshot.last_reviewed_head !== snapshot.head ||
       !['clean', 'findings'].includes(snapshot.last_reviewed_verdict) ||
       !SHA40.test(snapshot.last_reviewed_base_sha ?? '')) return false
-  const matches = (record?.receipts ?? []).filter((receipt) =>
-    receipt?.kind === 'pass' && /^integration-r[1-9][0-9]*-integrator$/.test(receipt?.file ?? ''))
-    .map((receipt) => readJson(join(common, 'dev-flow-v2', 'runs', runId, 'passes', `${receipt.file}.json`)))
-    .filter((pass) => {
-      const finder = snapshot?.finder?.slug
-      const cycle = finder && finder !== 'codex-cloud'
-        ? pass?.payload?.finder_cycles?.find((entry) => entry?.finder === finder)
-        : pass?.payload?.codex_cycle
-      return pass?.run?.run_id === record?.run_id && pass?.role === 'integrator' &&
-        pass?.status === 'completed' && pass?.head === snapshot.head &&
-        pass?.payload?.verdict === 'clean' && cycle?.head === snapshot.head &&
-        cycle?.exit_code === 0 && Number(cycle?.cycle) === Number(snapshot.charged_cycles) + Number(snapshot.exempt_cycles) &&
-        Number(cycle?.attempt) === Number(snapshot.attempt) &&
-        String(cycle?.trigger_comment_id) === String(snapshot.trigger_comment_id)
-    })
+  const recordDir = join(common, 'dev-flow-v2', 'runs', runId)
+  const matches = terminalReviewHistory(record, recordDir).filter((item) => {
+    const finder = snapshot?.finder?.slug ?? 'codex-cloud'
+    return item.head === snapshot.head && item.verdict === 'clean' && item.cycles.some((cycle) =>
+      cycle.finder === finder && cycle.head === snapshot.head && cycle.exit_code === 0 &&
+      Number(cycle.cycle) === snapshot.charged_cycles + snapshot.exempt_cycles &&
+      Number(cycle.attempt) === Number(snapshot.attempt) &&
+      String(cycle.trigger_comment_id) === String(snapshot.trigger_comment_id))
+  })
   // Independent completed passes can corroborate exactly the same clean
   // cycle. They are evidence of the same immutable origin, not competing
   // origins; each item already passed the full binding above.
@@ -642,20 +638,90 @@ export function assertTerminalReviewReceipted(record, state, { recordDir }) {
       state.last_reviewed_head !== state.head) return
   const head = state.carry?.attests_head ?? state.head
   const finder = state.finder?.slug ?? 'codex-cloud'
-  const found = (record.receipts ?? []).some((receipt) => {
-    if (receipt.kind !== 'pass' || !/^integration-r[1-9][0-9]*-integrator$/.test(receipt.file ?? '')) return false
-    const pass = readJson(join(recordDir, 'passes', `${receipt.file}.json`))
-    const cycle = finder === 'codex-cloud' ? pass?.payload?.codex_cycle
-      : pass?.payload?.finder_cycles?.find((entry) => entry.finder === finder)
-    return pass?.run?.run_id === record.run_id && pass.role === 'integrator' &&
-      pass.status === 'completed' && pass.head === head && cycle?.head === head &&
-      [0, 10].includes(cycle.exit_code) &&
-      cycle.cycle === state.charged_cycles + state.exempt_cycles &&
+  const found = terminalReviewHistory(record, recordDir).some((item) =>
+    item.head === head && item.cycles.some((cycle) => cycle.finder === finder && cycle.head === head &&
+      [0, 10].includes(cycle.exit_code) && cycle.cycle === state.charged_cycles + state.exempt_cycles &&
       cycle.attempt === state.attempt && (state.trigger_comment_id == null
-        ? cycle.trigger_comment_id == null
-        : String(cycle.trigger_comment_id) === String(state.trigger_comment_id))
-  })
+        ? cycle.trigger_comment_id == null : String(cycle.trigger_comment_id) === String(state.trigger_comment_id))))
   if (!found) throw new Error(`integration-receipt-required: ${finder} cycle ${state.charged_cycles + state.exempt_cycles} at ${head} is terminal but unreceipted; run integration-review-capture (reserve then terminal attach), dispatch the integrator and run receipt before catch-up or remediation. If reserve authority was never captured, stop for owner recovery; never invent a historical pass or reset counters.`)
+}
+
+// Cycle receipts are the durable completion evidence. A completed retry pays
+// the same cycle's earlier attempt; neither stale files nor a moved PR head
+// can turn that cycle back into a debt.
+function remediationCycleReceipted(record, state, recordDir) {
+  const finder = state.finder?.slug ?? 'codex-cloud'
+  return terminalReviewHistory(record, recordDir).some((item) => item.head === state.head &&
+    item.cycles.some((cycle) => cycle.finder === finder && cycle.head === state.head &&
+      [0, 10].includes(cycle.exit_code) && cycle.cycle === state.charged_cycles + state.exempt_cycles &&
+      cycle.attempt >= state.attempt && (cycle.attempt > state.attempt || state.trigger_comment_id == null ||
+        String(cycle.trigger_comment_id) === String(state.trigger_comment_id))))
+}
+
+// This inventory depends only on retained reservations and admitted receipts.
+// A candidate copy is never a way to select which debt the run owes.
+export function unreceiptedReviewReservations(record, entries, { recordDir }) {
+  return entries.filter((entry) => entry.kind === 'reserve' &&
+    !remediationCycleReceipted(record, entry.authority.snapshot, recordDir))
+}
+
+// Release history is owner-managed checker evidence, not independent authority.
+// Its entries omit ownership and counters: bind them to this exact retained
+// reservation's container and reject ambiguous or contradicted identities.
+function reservationReleaseEvidence(reserve, state, entries) {
+  const retained = reserve.authority.snapshot
+  const sameContainer = (candidate) => candidate?.repo === retained.repo && candidate.pr === retained.pr &&
+    candidate.run_id === retained.run_id && stable(candidate.finder ?? null) === stable(retained.finder ?? null)
+  if (!validState(state) || !sameContainer(state) || !Array.isArray(state.superseded_reservations)) return null
+  const identities = new Set()
+  for (const release of state.superseded_reservations) {
+    if (!SHA40.test(release?.head ?? '') || typeof release.reserved_at !== 'string' ||
+        typeof release.released_at !== 'string' || !Number.isFinite(Date.parse(release.reserved_at)) ||
+        !Number.isFinite(Date.parse(release.released_at)) || Date.parse(release.released_at) < Date.parse(release.reserved_at)) return null
+    const identity = stable([release.head, release.reserved_at])
+    if (identities.has(identity)) return null
+    identities.add(identity)
+  }
+  const release = state.superseded_reservations.find((entry) => entry.head === retained.head && entry.reserved_at === retained.reserved_at)
+  if (!release) return null
+  const matching = entries.filter((entry) => sameContainer(entry.authority.snapshot) &&
+    entry.authority.snapshot.head === retained.head && entry.authority.snapshot.reserved_at === retained.reserved_at)
+  if (matching.some((entry) => entry.kind !== 'reserve') ||
+      new Set(matching.map((entry) => stable(reservationControls(entry.authority.snapshot)))).size !== 1) return null
+  return release
+}
+
+export function releasedUnusedReviewReservation(reserve, state, entries) {
+  const retained = reserve.authority.snapshot
+  const refunded = retained.attempt === 1 ? 1 : 0
+  return state?.phase === 'released' && state.trigger_comment_id == null &&
+    reservationReleaseEvidence(reserve, state, entries) !== null &&
+    stable(reservationControls({ ...state,
+      charged_cycles: retained.charged_cycles, exempt_cycles: retained.exempt_cycles })) === stable(reservationControls(retained)) &&
+    state.charged_cycles + state.exempt_cycles === retained.charged_cycles + retained.exempt_cycles - refunded
+}
+
+// Historical release discharges only its retained debt. It cannot authorize
+// the replacement candidate, which must independently pass live settlement.
+export function releasedReviewReservation(reserve, state, entries) {
+  if (releasedUnusedReviewReservation(reserve, state, entries)) return true
+  const release = reservationReleaseEvidence(reserve, state, entries)
+  return release !== null && typeof state.reserved_at === 'string' &&
+    Date.parse(state.reserved_at) > Date.parse(release.reserved_at) &&
+    Date.parse(state.reserved_at) >= Date.parse(release.released_at)
+}
+
+// Live candidates add only reservations the record has not yet captured. An
+// admitted receipt settles a retained cycle without polling a historical head.
+export function assertRemediationReviewSettled(record, state, entries, { recordDir }) {
+  if (!validState(state) || state.run_id !== record.run_id) throw new Error('live checker state cannot be bound to this run')
+  const reserves = entries.filter((entry) => entry.kind === 'reserve')
+  if (reserves.some((entry) => releasedUnusedReviewReservation(entry, state, entries))) return
+  if (!reserves.some((entry) => stable(reservationControls(entry.authority.snapshot)) === stable(reservationControls(state)))) {
+    throw new Error('uncaptured reservation: live reservation has no retained reserve authority')
+  }
+  if (remediationCycleReceipted(record, state, recordDir)) return
+  throw new Error('integration-receipt-required: live checker state has no admitted terminal receipt; finish polling, capture the terminal attach, dispatch the integrator and run receipt before remediation')
 }
 
 // Small read-only CLI shared by the checker and catch-up helper. --record is

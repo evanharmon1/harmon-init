@@ -200,6 +200,66 @@ standing assertion about later activity. This own-mutation act remains
 outside §2's automatic-undo bound, as §6 describes. The unexplained-promotion
 procedure governs flips the durable record does not account for.
 
+## Terminal lane takeover
+
+Only the supervising orchestrator performs a takeover. This is a
+**bookkeeping-only path**: a lane stopped with `escalated` or `capped` may have
+its **same bound PR** recovered only when existing exact-head review, CI and
+finding-settlement authority already satisfies a fresh full handoff check.
+Takeover does not resume integration work or reopen the run. Preserve the original outcome, outcome chain, stage exits,
+and promotion. Recovery is a separate optional `takeover_history` digest chain;
+retro shows the original failure beside the later orchestrator promotion and
+stats never count that recovery as unattended success.
+
+Use an already acquired slate lock and its original owner token. The taking-over
+slate must reserve the source lane's same qualified issue, derived from the
+original owner's retained plan revisions. A different slate can take over only
+after the former reservation is legitimately released; this operation never
+recovers locks, transfers `owner-slate`, or invents credentials. If the required
+owner operation has not happened, report the blocker to the owner.
+
+Before recording takeover, establish eligibility with the ordinary fresh full
+handoff check on the current head using existing authority. If a new review
+cycle, carry, authority capture, finding-settlement write to the terminal run,
+or any other terminal-record mutation is needed to pass, **stop and escalate**
+to the supervising owner. The review driver still requires the original
+`owner-slate`, and authority capture refuses terminal runs even for that owner.
+Do not run those writers against the terminal run, reopen it, transfer its
+ownership, or imply that takeover supplies a recovery-run procedure. This
+feature supplies no recovery-run procedure; work still owed is a blocker.
+The takeover-history appends below are the only terminal-record writes this
+path authorizes, and they preserve all original history.
+
+For an eligible PR, record the taking-over identity and the lane's terminal blocker:
+
+```sh
+node "$support_dir/run-record.mjs" takeover \
+  --slate <taking-over-slate> --session <taking-over-session> --owner-token <token> \
+  --run-id <original-run> --actor <orchestrator-identity> --reason <lane-terminal-blocker> \
+  --number <bound-pr> --url <bound-pr-url>
+```
+
+Then re-run the full current-head handoff check; if eligibility changed or any
+condition is failed or indeterminate, stop and escalate. Never treat takeover
+as permission to bypass that gate or complete work against the terminal run.
+Run `assets/promote.sh` with the ordinary record,
+identity and gate arguments **plus `--takeover`**. It rehearses
+`run-record.mjs takeover-promote --check`, promotes through the same immediate
+handoff check and readback, then appends `takeover-promote` on the exact head
+and gate fingerprint. The writer requires that recorded taking-over slate and
+session and the same PR number and URL. A passing gate document is mandatory;
+a changed head or fingerprint refuses the write. For an already non-draft PR,
+follow the ordinary unexplained-promotion reconciliation, retaining the fresh
+`promoted` gate document, then call `takeover-promote` with `--number`, `--url`,
+`--head`, `--fingerprint`, and `--gate` along with the same owner identity.
+Do not trigger a second promotion just to record an accepted recovery.
+
+Identical takeover/promotion retries are no-ops, including after a lost response;
+when `--at` is explicit it must match the recorded timestamp. A conflicting
+identity, blocker, PR, head, fingerprint or timestamp is refused. No lane
+entries are replaced. Historical/as-of reports include only recovery events
+whose own timestamps are at or before the cutoff.
+
 ## Stage ledger
 
 The stage ledger — distinct from the review skill's private adjudication ledger,
@@ -1501,6 +1561,31 @@ timing (§2's first bullet), then begin the checks watch. Leave Project fields u
   Conversation or cycle-work preconditions use `checker-fast-path-unavailable`;
   existing live-checker and counter-validation errors remain explicit.
   The fast path does not detect badges, match replies or derive dispositions.
+  **Retain checker-only history before moving the reviewed head.** After the
+  owner captures reserve and terminal attach authority, admit the genuine
+  initial clean observation while that head is still current:
+
+  ```sh
+  node "$support_dir/run-record.mjs" checker-cycle-receipt \
+      --slate <slate> --session <session> --run-id <run-id> \
+      --state <canonical-checker-state> --repo-dir <lane-worktree>
+  ```
+
+  The owner lock/token is required as for every run write. This retains an
+  immutable, digest-bound `checker-cycles/` receipt in `checker_cycle_receipts`,
+  with its run, PR, head, request authority, trigger, counters and accepted
+  evidence. It is not an agent result and consumes no dispatched round.
+  Admission rechecks the canonical checker and trusted finder profile live;
+  only the original clean charged cycle with no exemptions, carry or settlements
+  is eligible. The ordinary checker-only handoff constraints above still hold.
+  Never backfill this receipt after a head move. A missing reserve/attach or
+  receipt is an owner-recovery blocker, never permission to synthesize a pass.
+  If a later catch-up cannot carry the verdict, dispatch the real next cycle.
+  Its first integrator pass remains integration round 1 and reports the actual
+  cumulative cycle ordinal (2). Writer admission, head-movement debt checks
+  and integration exit accounting share the retained checker history; readiness
+  still requires the actual current-head integrator result and adjudication.
+
 - **For dispatched integration, retain the integrator agent
   (`ai/agents/integrator.md`) and its validated result.** Dispatch it when the
   first bullet of this section says: after the checks watch settles under an
@@ -3151,8 +3236,63 @@ explicit `--timeout-min` (10–15 minutes). A missing window is refused before
 state or counters change. Capture reserve authority immediately, then capture
 attach authority once the checker reports a terminal observation. Dispatch
 and receipt the actual integrator pass **before** catch-up or remediation.
-`update-branch --record` enforces this for catch-up; remediation remains a
-procedure requirement until #1810.
+`update-branch --record` enforces this for catch-up; `run-record.mjs
+transition --stage implement` enforces it when leaving integration for remediation.
+The transition resolves the run's retained `branch.json` to that branch's live
+worktree, then reads every existing supported state candidate for each finder:
+`<record-dir>/<finder-slug>-review.json` (Codex: `codex-cloud-review.json`),
+and both `integrate-codex/<owner>/<repo>/<pr>.json` (legacy) and
+`integrate-codex-cloud/<owner>/<repo>/<pr>.json` (explicit `--finder codex-cloud`)
+for Codex, or
+`integrate-<finder-slug>/<owner>/<repo>/<pr>.json` for other finders under
+both the target clone's common Git directory and the lane's own Git directory.
+The driver and broker's `--common-state` use the shared location; callers without
+it keep checkout-local state. Calling from the conductor does not change these
+locations. The scan deduplicates full paths and checks every state and sidecar.
+Finder discovery includes finders no
+longer configured, including finders discovered only from spend sidecars.
+The guard performs two independent checks, in order. First, it inventories
+**every retained reservation** against admitted cycle receipts, independently of
+which candidate files exist. A terminal attempt-2 receipt settles that cycle's
+first attempt as well. Each remaining debt must have **exact released-unused
+proof** in a supported canonical candidate: the reservation identity and refund
+history must match that particular debt. Historical release evidence may
+discharge that exact retained debt after a later reservation replaces it. These
+owner-managed history entries are not independently authenticated: the guard
+binds the repo, PR, run and full finder container, exact head and reservation
+time, coherent release/replacement times, and refuses ambiguous history or a
+contradictory retained attachment. This historical proof never settles the
+replacement candidate; it must independently be receipted or exactly released.
+Missing or mismatched proof refuses;
+an older released state cannot discharge a newer reservation, even if a refund
+reused the cycle ordinal. No new release record is written by this check.
+
+Second, it checks live candidates for reservations the record cannot know.
+Only candidates whose `run_id` matches this run count. A candidate covered by a
+retained, receipted cycle is settled **without invoking the checker**, including
+when the PR head moved before an `after-ci` reservation. Exact released-unused
+candidates are settled too. An uncaptured reservation refuses; otherwise the
+checker runs only to distinguish pending from terminal-but-unreceipted recovery,
+never to turn either into success. Another run's state is ignored unless this
+run retains authority or spend for that finder, which still refuses. Unreadable
+or malformed candidates always refuse, regardless of ownership.
+
+Optional repeatable `--finder-state <slug>=<absolute-path>` arguments accept
+only the supported paths and never narrow the scan. A copied scratch snapshot
+cannot supply an unretained cycle. Absence is authenticated only when no same-run
+candidate, retained reservation debt or spend exists for that finder, including
+a first-head CI failure or integration cap 0. Releasing an unused retry still
+leaves the original cycle's receipt debt outstanding.
+
+`integration-remediation-unsettled` leaves the stage unchanged. Finish polling,
+capture the terminal attachment and receipt the actual integrator result before
+retrying the transition. A reserve-only frontier or a pending attach never
+counts as completed. Restore missing canonical state from the original evidence;
+never supply an older terminal snapshot while a newer reservation is live. A
+missing PR binding fails closed: use `bind-pr` with the original PR number and
+URL, restore the bound branch worktree if necessary, then retry. Missing authority
+or irrecoverable state requires owner recovery, never counter resets.
+
 `reserve --record` also refuses to supersede an unreceipted terminal cycle.
 Findings receipts followed by adjudication remain immutable;
 a clean follow-up pass can replay the same request using later trusted inline
@@ -3176,6 +3316,38 @@ cycles or reset spend. Receipt refuses an ordinal gap up front with
 `integration-history-incomplete`; readiness uses the same named condition for
 an existing incomplete record. The exit reader still requires contiguous
 cycles. This prevention contract does not backfill missing history (#1630).
+
+**Before-cycle recovery is narrower.** When a reviewer finding is authenticated
+and fixed after integration opened but before any Codex cycle was reserved, use
+the run-record transition's `--pre-cycle-*` evidence fields. The current
+source comment revision (`source.updated_at`) must be no later than the trusted
+fix reply revision (`verification.updated_at`); if CodeRabbit or another actor
+edits the source afterward, obtain a fresh trusted verification rather than
+claiming that an earlier reply proved the current source. Use those fields with an
+empty `--remediation-findings` list and the exact `--remediation-head`. The
+writer reads the original inline comment and its thread reply live, binds their
+actor ids, timestamps and body digests, and proves the remediation head descends
+from the reviewed source head. The trusted-owner reply must contain exactly one
+`<!-- dev-flow-pre-cycle-remediation: {…} -->` JSON attestation whose `disposition`
+is `fix` and whose finding id, source comment id, fixed head, original priority,
+and adjudicated priority exactly match the CLI evidence. A reviewer badge is not
+the original priority: preserve its raw body digest and bind the P0/P1 priority
+through that trusted attestation instead. It retains that chained evidence on the
+integration re-entry; it does not create an integrator envelope or a null Codex
+cycle. The writer also retains a no-clobber admission ruling outside mutable
+`run.json`; readers require it and the projection to agree, so deletion or
+rehashing cannot erase the admission. Use `--pre-cycle-batch FILE` (a JSON
+array of additional authenticated finding evidence) when one remediation push
+fixes several findings; it remains one remediation. When the resolved integration
+cap is positive, the first completed cycle must review that exact remediation
+head. A zero integration cap requires neither a Codex reservation nor a completed
+Codex cycle. It still validates the retained admission and its exact
+remediation-head binding; admission integrity, chronology, and every other
+readiness condition remain required.
+If the current source comment revision, reply, commits, or chronology can no longer be proven,
+stop and report recovery unavailable. Do not move a historical P0/P1 into a
+later clean adjudication, mutate an immutable receipt, lower its priority, or
+reset either budget (#1861).
 
 Releasing a reservation that never triggered refunds only the charge that
 reservation took (first attempt); releasing a retry retains the original

@@ -61,12 +61,56 @@ if [ "$1" = "issue" ]; then
     printf '%s\n' '{"state":"OPEN","labels":[]}'
 elif [ "$1" = "label" ] && [ "$2" = "list" ]; then
     printf '[]\n'
+elif [ "$1" = "api" ]; then
+    api_path=""
+    for arg in "$@"; do
+        case "$arg" in
+        repos/example/repo/issues/334 | repos/example/repo/issues/334/comments | repos/example/repo/issues/334/timeline | \
+            repos/owner/b/issues/7 | repos/owner/b/issues/7/comments | repos/owner/b/issues/7/timeline)
+            api_path="$arg"
+            ;;
+        esac
+    done
+    case "$api_path" in
+    repos/example/repo/issues/334 | repos/owner/b/issues/7)
+        printf '%s\n' '{"state":"open","labels":[],"assignees":[]}'
+        ;;
+    repos/example/repo/issues/334/comments | repos/example/repo/issues/334/timeline | \
+        repos/owner/b/issues/7/comments | repos/owner/b/issues/7/timeline)
+        printf '[]\n'
+        ;;
+    *)
+        printf '{"state":"%s"}\n' "${RUN_RECORD_PR_STATE:-MERGED}"
+        ;;
+    esac
 else
     printf '{"state":"%s"}\n' "${RUN_RECORD_PR_STATE:-MERGED}"
 fi
 GH
 chmod +x "$tmp/bin/gh"
 export PATH="$tmp/bin:$PATH"
+
+# plan-revise calls the existing restoration helper at its supported boundary.
+# This test verifies that resolved claim inputs are passed without doing any
+# external claim writes; the helper's transaction semantics are covered by its
+# dedicated suite.
+claim_record_file="$tmp/retained-claim-record.md"
+claim_registry_snapshot="$tmp/retained-claim-registry.json"
+claim_transaction_log="$tmp/claim-transaction-calls.log"
+printf '%s\n' 'Claiming — starting implementation on branch 334-l (session fixture).' >"$claim_record_file"
+printf '%s\n' '{"families":[{"slug":"gpt"}]}' >"$claim_registry_snapshot"
+: >"$claim_transaction_log"
+export RUN_RECORD_CLAIM_TXN_LOG="$claim_transaction_log"
+cat >"$tool_root/ai/skills/universal/claim/assets/claim-transaction.sh" <<'CLAIM_TXN'
+#!/usr/bin/env bash
+set -euo pipefail
+{
+    printf 'restore'
+    for arg in "$@"; do printf ' %s' "$arg"; done
+    printf '\n'
+} >>"${RUN_RECORD_CLAIM_TXN_LOG:?}"
+CLAIM_TXN
+chmod +x "$tool_root/ai/skills/universal/claim/assets/claim-transaction.sh"
 
 sha256_file() {
     if command -v sha256sum >/dev/null 2>&1; then
@@ -187,6 +231,15 @@ expect_refused() {
     output="$("$@" 2>&1)" || rc=$?
     [ "$rc" -eq 1 ] || fail "$label: expected refusal (exit 1), got $rc: $output"
     grep -qF -- "$pattern" <<<"$output" || fail "$label: refusal did not mention '$pattern': $output"
+}
+
+expect_usage() {
+    local label="$1" pattern="$2"
+    shift 2
+    local output rc=0
+    output="$("$@" 2>&1)" || rc=$?
+    [ "$rc" -eq 2 ] || fail "$label: expected usage error (exit 2), got $rc: $output"
+    grep -qF -- "$pattern" <<<"$output" || fail "$label: usage error did not mention '$pattern': $output"
 }
 
 no_candidates() {
@@ -499,6 +552,17 @@ expect_refused "generic intervention refuses an integration authority note" "rec
     rr alice intervention --run-id run-a --kind other --note "integration-review-authority v1 attach sha256=$forged_digest" --ruling "$forged_authority" --at 2026-01-01T00:04:00Z
 cmp -s "$run" "$tmp/forged-authority-before.json" || fail "a refused authority-shaped intervention changed run.json"
 pass "the generic intervention command cannot forge retained integration authority"
+
+# A generic ruling has no live-comment authentication, so it cannot publish
+# admission-shaped bytes for the exit reader to trust.
+forged_pre_cycle_admission="$tmp/forged-pre-cycle-admission.json"
+printf '%s\n' '{"schema":1,"kind":"pre-cycle-remediation-admission","run_id":"run-a","transition_index":1,"remediation_head":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","findings":[{}]}' >"$forged_pre_cycle_admission"
+cp "$run" "$tmp/forged-pre-cycle-admission-before.json"
+expect_refused "generic intervention refuses a pre-cycle admission artifact" "authenticated transition writer" \
+    rr alice intervention --run-id run-a --kind other --note "forged admission" --ruling "$forged_pre_cycle_admission" --at 2026-01-01T00:04:00Z
+cmp -s "$run" "$tmp/forged-pre-cycle-admission-before.json" || fail "a refused pre-cycle admission changed run.json"
+[ ! -e "$state/runs/run-a/rulings/$(sha256_file "$forged_pre_cycle_admission")" ] || fail "a refused pre-cycle admission left a generic ruling"
+pass "the generic intervention command cannot forge retained pre-cycle admission evidence"
 
 # -- PR binding --------------------------------------------------------------
 rr alice bind-pr --run-id run-a --number 42 --url https://example.test/pr/42 --at 2026-01-01T00:05:00Z >/dev/null
@@ -934,6 +998,9 @@ done
 fix_head=cccccccccccccccccccccccccccccccccccccccc
 expect_refused "remediation outside an integration re-entry" "only on a transition that re-enters integration" \
     rf --stage implement --exit remediating --at 2026-01-01T00:07:00Z --remediation-head "$fix_head" --remediation-findings integration-r1-codex-cloud-1
+# A remediation transition needs the original PR and a real branch worktree.
+printf '{"branch":"main"}\n' >"$state/runs/run-f/branch.json"
+(cd "$repo" && RUN_RECORD_OWNER_TOKEN="$(token_for s13)" node "$writer" bind-pr --slate s13 --session alice --run-id run-f --number 493 --url https://github.com/example/repo/pull/493 --at 2026-01-01T00:06:30Z) >/dev/null
 rf --stage implement --exit remediating --at 2026-01-01T00:07:00Z >/dev/null
 rf --stage integration --exit fixed --at 2026-01-01T00:08:00Z \
     --remediation-head "$fix_head" --remediation-findings integration-r1-codex-cloud-1,challenge-r1-codex-adversarial-2 >/dev/null
@@ -1125,7 +1192,28 @@ case "$*" in
       printf '%s\n' '[[]]'
     fi ;;
   *'repos/example/repo/pulls/493/comments?per_page=100'*)
-    if [ "${CAPTURE_INLINE:-}" = 1 ]; then
+    if [ "${CAPTURE_PRE_CYCLE:-}" = 1 ]; then
+      jq -cn --arg source "${CAPTURE_PRE_CYCLE_SOURCE:?}" --arg reply "${CAPTURE_PRE_CYCLE_REPLY:?}" \
+        --arg source_updated_at "${CAPTURE_PRE_CYCLE_SOURCE_UPDATED_AT:-2026-10-01T00:01:00Z}" \
+        --arg reply_updated_at "${CAPTURE_PRE_CYCLE_REPLY_UPDATED_AT:-2026-10-01T00:02:00Z}" \
+        --argjson source_root "${CAPTURE_PRE_CYCLE_SOURCE_ROOT:-null}" \
+        --argjson reply_root "${CAPTURE_PRE_CYCLE_REPLY_ROOT:-4483086823}" \
+        --arg batch_reply "${CAPTURE_PRE_CYCLE_BATCH_REPLY:-}" '[[
+        {id:4483086823,body:"<!-- CodeRabbit -->\n\n**Minor** registry-path defect",original_commit_id:$source,commit_id:$source,
+          created_at:"2026-10-01T00:01:00Z",updated_at:$source_updated_at,
+          user:{id:136622811,login:"coderabbitai[bot]",type:"Bot"}} + (if $source_root == null then {} else {in_reply_to_id:$source_root} end),
+        {id:4483740368,in_reply_to_id:$reply_root,body:$reply,
+          created_at:"2026-10-01T00:02:00Z",updated_at:$reply_updated_at,
+          user:{id:37220977,login:"fixture-owner",type:"User"}}
+      ] + (if $batch_reply == "" then [] else [
+        {id:4483086824,body:"<!-- CodeRabbit -->\n\n**Minor** second registry-path defect",original_commit_id:$source,commit_id:$source,
+          created_at:"2026-10-01T00:01:30Z",updated_at:"2026-10-01T00:01:30Z",
+          user:{id:136622811,login:"coderabbitai[bot]",type:"Bot"}},
+        {id:4483740369,in_reply_to_id:4483086824,body:$batch_reply,
+          created_at:"2026-10-01T00:02:30Z",updated_at:"2026-10-01T00:02:30Z",
+          user:{id:37220977,login:"fixture-owner",type:"User"}}
+      ] end)]'
+    elif [ "${CAPTURE_INLINE:-}" = 1 ]; then
       jq -cn --arg h "$CAPTURE_HEAD" --arg reply "${CAPTURE_INLINE_REPLIED:-}" '[[
         {id:905,body:"**P2** inline finding",original_commit_id:$h,commit_id:$h,pull_request_review_id:904,
           created_at:"2026-10-01T00:23:00Z",updated_at:"2026-10-01T00:23:00Z",
@@ -1171,6 +1259,339 @@ esac
 EOF
 chmod +x "$capture_bin/date"
 base64 <"$asset_dir/../../../../../agent-registry.json" >"$capture_bin/registry.b64"
+
+# #1861: a reviewer can find a P1 after integration begins but before any
+# Codex cycle exists (for example while initial CI/base reconciliation is
+# pending). Exercise the public writer, its real authenticated comment reader,
+# and the documented CLI flags rather than constructing run.json by hand.
+# The source/fix commits are real local objects so the writer also proves the
+# remediation head descends from the reviewed head.
+pre_cycle_source="$(git -C "$repo" rev-parse HEAD)"
+pre_cycle_fixed="$(git -C "$repo" commit-tree "${pre_cycle_source}^{tree}" -p "$pre_cycle_source" -m 'pre-cycle remediation fixture')"
+pre_cycle_branch="fixture-run-pre-cycle"
+git -C "$repo" branch -f "$pre_cycle_branch" "$pre_cycle_fixed"
+pre_cycle_lane="$tmp/pre-cycle-bound-lane"
+git -C "$repo" worktree add -q "$pre_cycle_lane" "$pre_cycle_branch"
+pre_cycle_lane_git="$(git -C "$pre_cycle_lane" rev-parse --path-format=absolute --git-dir)"
+[ "$pre_cycle_lane_git" != "$repo/.git" ] || fail "pre-cycle remediation fixture is not a linked worktree"
+pre_cycle_source_digest="sha256:$(printf '%s' $'<!-- CodeRabbit -->\n\n**Minor** registry-path defect' | sha256sum | awk '{print $1}')"
+pre_cycle_attestation="{\"disposition\":\"fix\",\"finding_id\":\"pre-cycle-coderabbit-4483086823\",\"source_comment_id\":4483086823,\"fixed_head\":\"$pre_cycle_fixed\",\"original_priority\":\"P1\",\"adjudicated_priority\":\"P1\"}"
+pre_cycle_reply="<!-- dev-flow-pre-cycle-remediation: $pre_cycle_attestation -->"
+pre_cycle_reply_digest="sha256:$(printf '%s' "$pre_cycle_reply" | sha256sum | awk '{print $1}')"
+new_run run-pre-cycle
+write_plan s-pre-cycle 1861:run-pre-cycle
+acquire s-pre-cycle alice --issues 1861
+printf '{"branch":"%s"}\n' "$pre_cycle_branch" >"$state/runs/run-pre-cycle/branch.json"
+pre_write() {
+    (cd "$pre_cycle_lane" && PATH="$capture_bin:$PATH" CAPTURE_HEAD="$pre_cycle_fixed" CAPTURE_BASE="$integration_base" \
+        CAPTURE_PRE_CYCLE=1 CAPTURE_PRE_CYCLE_SOURCE="$pre_cycle_source" CAPTURE_PRE_CYCLE_REPLY="${CAPTURE_PRE_CYCLE_REPLY:-$pre_cycle_reply}" \
+        RUN_RECORD_OWNER_TOKEN="$(token_for s-pre-cycle)" node "$writer" "$@" --slate s-pre-cycle --session alice --run-id run-pre-cycle)
+}
+for step in "claim:k" "implement:claimed" "verify:implemented" "challenge:verified" "security:converged" "integration:secure"; do
+    pre_write transition --stage "${step%%:*}" --exit "${step#*:}" --at 2026-10-01T00:00:00Z >/dev/null
+done
+pre_write bind-pr --number 493 --url https://github.com/example/repo/pull/493 --at 2026-10-01T00:00:30Z >/dev/null
+pre_cycle_args=(
+    --remediation-head "$pre_cycle_fixed" --remediation-findings ''
+    --pre-cycle-finding-id pre-cycle-coderabbit-4483086823
+    --pre-cycle-original-priority P1 --pre-cycle-adjudicated-priority P1
+    --pre-cycle-source-head "$pre_cycle_source" --pre-cycle-source-comment-id 4483086823
+    --pre-cycle-source-actor-id 136622811 --pre-cycle-source-created-at 2026-10-01T00:01:00Z
+    --pre-cycle-source-updated-at 2026-10-01T00:01:00Z
+    --pre-cycle-source-digest "$pre_cycle_source_digest"
+    --pre-cycle-verification-head "$pre_cycle_fixed" --pre-cycle-verification-reply-id 4483740368
+    --pre-cycle-verification-actor-id 37220977 --pre-cycle-verification-created-at 2026-10-01T00:02:00Z
+    --pre-cycle-verification-updated-at 2026-10-01T00:02:00Z
+    --pre-cycle-verification-digest "$pre_cycle_reply_digest"
+)
+pre_cycle_run="$state/runs/run-pre-cycle/run.json"
+# Recovery does not require a disabled Codex finder merely to read the
+# independent orchestrator allowlist. A finding nested below an older thread
+# root still receives its verification reply at that root.
+printf '%s\n' '{"trusted_orchestrator_actor_ids":[37220977]}' >"$tmp/pre-cycle-trust-registry.json"
+base64 <"$tmp/pre-cycle-trust-registry.json" >"$capture_bin/custom-registry.b64"
+if ! (cd "$repo" && PATH="$capture_bin:$PATH" CAPTURE_CUSTOM=1 CAPTURE_PRE_CYCLE=1 \
+    CAPTURE_PRE_CYCLE_SOURCE="$pre_cycle_source" CAPTURE_PRE_CYCLE_REPLY="$pre_cycle_reply" \
+    CAPTURE_PRE_CYCLE_SOURCE_ROOT=4483000000 CAPTURE_PRE_CYCLE_REPLY_ROOT=4483000000 \
+    CAPTURE_HEAD="$pre_cycle_fixed" CAPTURE_BASE="$integration_base" PRE_SOURCE="$pre_cycle_source" \
+    PRE_FIXED="$pre_cycle_fixed" PRE_REPLY="$pre_cycle_reply" node --input-type=module -e '
+      import { createHash } from "node:crypto";
+      import { pathToFileURL } from "node:url";
+      const { authenticatePreCycleRemediation } = await import(pathToFileURL(process.argv[1]).href);
+      const digest = (body) => `sha256:${createHash("sha256").update(body, "utf8").digest("hex")}`;
+      const errors = authenticatePreCycleRemediation({
+        finding_id:"pre-cycle-coderabbit-4483086823", original_priority:"P1", adjudicated_priority:"P1",
+        source:{comment_id:4483086823,author_actor_id:136622811,created_at:"2026-10-01T00:01:00Z",updated_at:"2026-10-01T00:01:00Z",head:process.env.PRE_SOURCE,body_digest:digest("<!-- CodeRabbit -->\n\n**Minor** registry-path defect")},
+        verification:{head:process.env.PRE_FIXED,reply_id:4483740368,author_actor_id:37220977,created_at:"2026-10-01T00:02:00Z",updated_at:"2026-10-01T00:02:00Z",body_digest:digest(process.env.PRE_REPLY)}
+      }, {record:{pr_bindings:[{number:493,url:"https://github.com/example/repo/pull/493"}]},repoDir:process.cwd()});
+      if (errors.length) console.error(JSON.stringify(errors));
+      process.exit(errors.length === 0 ? 0 : 1);
+    ' "$asset_dir/lib/integrator-receipt-auth.mjs"); then
+    fail "pre-cycle recovery rejected a trusted reply at a follow-up thread root or required an omitted Codex finder"
+fi
+pass "pre-cycle recovery reads trust independently and matches follow-up replies to their thread root"
+# The authenticated source and remediation commits can belong to a foreign
+# lane clone. The conductor has no copy of these objects, so only the recorded
+# lane repository can prove ancestry.
+foreign_pre_cycle="$tmp/pre-cycle-foreign"
+git init -q -b main "$foreign_pre_cycle"
+git -C "$foreign_pre_cycle" config user.name t
+git -C "$foreign_pre_cycle" config user.email t@t
+git -C "$foreign_pre_cycle" -c user.name=t -c user.email=t@t commit -q --allow-empty -m source
+foreign_source="$(git -C "$foreign_pre_cycle" rev-parse HEAD)"
+git -C "$foreign_pre_cycle" -c user.name=t -c user.email=t@t commit -q --allow-empty -m fixed
+foreign_fixed="$(git -C "$foreign_pre_cycle" rev-parse HEAD)"
+foreign_attestation="{\"disposition\":\"fix\",\"finding_id\":\"pre-cycle-coderabbit-4483086823\",\"source_comment_id\":4483086823,\"fixed_head\":\"$foreign_fixed\",\"original_priority\":\"P1\",\"adjudicated_priority\":\"P1\"}"
+foreign_reply="<!-- dev-flow-pre-cycle-remediation: $foreign_attestation -->"
+if ! (cd "$repo" && PATH="$capture_bin:$PATH" CAPTURE_PRE_CYCLE=1 CAPTURE_PRE_CYCLE_SOURCE="$foreign_source" \
+    CAPTURE_PRE_CYCLE_REPLY="$foreign_reply" CAPTURE_HEAD="$foreign_fixed" CAPTURE_BASE="$integration_base" \
+    PRE_SOURCE="$foreign_source" PRE_FIXED="$foreign_fixed" PRE_REPLY="$foreign_reply" PRE_REPO="$foreign_pre_cycle" node --input-type=module -e '
+      import { createHash } from "node:crypto";
+      import { pathToFileURL } from "node:url";
+      const { authenticatePreCycleRemediation } = await import(pathToFileURL(process.argv[1]).href);
+      const digest = (body) => `sha256:${createHash("sha256").update(body, "utf8").digest("hex")}`;
+      const errors = authenticatePreCycleRemediation({
+        finding_id:"pre-cycle-coderabbit-4483086823", original_priority:"P1", adjudicated_priority:"P1",
+        source:{comment_id:4483086823,author_actor_id:136622811,created_at:"2026-10-01T00:01:00Z",updated_at:"2026-10-01T00:01:00Z",head:process.env.PRE_SOURCE,body_digest:digest("<!-- CodeRabbit -->\n\n**Minor** registry-path defect")},
+        verification:{head:process.env.PRE_FIXED,reply_id:4483740368,author_actor_id:37220977,created_at:"2026-10-01T00:02:00Z",updated_at:"2026-10-01T00:02:00Z",body_digest:digest(process.env.PRE_REPLY)}
+      }, {record:{pr_bindings:[{number:493,url:"https://github.com/example/repo/pull/493"}]},repoDir:process.env.PRE_REPO});
+      process.exit(errors.length === 0 ? 0 : 1);
+    ' "$asset_dir/lib/integrator-receipt-auth.mjs"); then
+    fail "pre-cycle recovery did not use the supplied foreign repository for ancestry"
+fi
+pass "pre-cycle ancestry verification accepts commits only present in the recorded lane clone"
+# Authentication must prove ancestry from the real graph, not a locally
+# replaced one.  This replacement would make the unrelated source appear to
+# be the remediation's parent to an unguarded `git merge-base` call.
+pre_cycle_fake_source="$(git -C "$repo" commit-tree "${pre_cycle_source}^{tree}" -m 'unrelated pre-cycle source')"
+pre_cycle_fake_attestation="{\"disposition\":\"fix\",\"finding_id\":\"pre-cycle-coderabbit-4483086823\",\"source_comment_id\":4483086823,\"fixed_head\":\"$pre_cycle_fixed\",\"original_priority\":\"P1\",\"adjudicated_priority\":\"P1\"}"
+pre_cycle_fake_reply="<!-- dev-flow-pre-cycle-remediation: $pre_cycle_fake_attestation -->"
+git -C "$repo" replace --graft "$pre_cycle_fixed" "$pre_cycle_fake_source"
+if (cd "$pre_cycle_lane" && PATH="$capture_bin:$PATH" CAPTURE_HEAD="$pre_cycle_fixed" CAPTURE_BASE="$integration_base" \
+    CAPTURE_PRE_CYCLE=1 CAPTURE_PRE_CYCLE_SOURCE="$pre_cycle_fake_source" CAPTURE_PRE_CYCLE_REPLY="$pre_cycle_fake_reply" \
+    PRE_SOURCE="$pre_cycle_fake_source" PRE_FIXED="$pre_cycle_fixed" PRE_REPLY="$pre_cycle_fake_reply" node --input-type=module -e '
+      import { createHash } from "node:crypto";
+      import { pathToFileURL } from "node:url";
+      const { authenticatePreCycleRemediation } = await import(pathToFileURL(process.argv[1]).href);
+      const digest = (body) => `sha256:${createHash("sha256").update(body, "utf8").digest("hex")}`;
+      const source = process.env.PRE_SOURCE;
+      const fixed = process.env.PRE_FIXED;
+      const errors = authenticatePreCycleRemediation({
+        finding_id: "pre-cycle-coderabbit-4483086823", original_priority: "P1", adjudicated_priority: "P1",
+        source: { comment_id: 4483086823, author_actor_id: 136622811, created_at: "2026-10-01T00:01:00Z", updated_at: "2026-10-01T00:01:00Z", head: source, body_digest: digest("<!-- CodeRabbit -->\\n\\n**Minor** registry-path defect") },
+        verification: { head: fixed, reply_id: 4483740368, author_actor_id: 37220977, created_at: "2026-10-01T00:02:00Z", updated_at: "2026-10-01T00:02:00Z", body_digest: digest(process.env.PRE_REPLY) },
+      }, { record: { pr_bindings: [{ number: 493, url: "https://github.com/example/repo/pull/493" }] }, repoDir: process.cwd() });
+      process.exit(errors.some((error) => error.includes("is not a descendant")) ? 0 : 1);
+    ' "$asset_dir/lib/integrator-receipt-auth.mjs"); then
+    :
+else
+    fail "replace-ref fake ancestry was accepted for pre-cycle remediation"
+fi
+git -C "$repo" replace -d "$pre_cycle_fixed" >/dev/null
+# Unlike replace refs, graft files have no command-line opt-out.  Their mere
+# presence therefore refuses even otherwise valid ancestry evidence.
+pre_cycle_grafts="$(git -C "$pre_cycle_lane" rev-parse --path-format=absolute --git-path info/grafts)"
+mkdir -p "$(dirname "$pre_cycle_grafts")"
+printf '%s %s\n' "$pre_cycle_fixed" "$pre_cycle_source" >"$pre_cycle_grafts"
+if (cd "$pre_cycle_lane" && PATH="$capture_bin:$PATH" CAPTURE_HEAD="$pre_cycle_fixed" CAPTURE_BASE="$integration_base" \
+    CAPTURE_PRE_CYCLE=1 CAPTURE_PRE_CYCLE_SOURCE="$pre_cycle_source" CAPTURE_PRE_CYCLE_REPLY="$pre_cycle_reply" \
+    PRE_SOURCE="$pre_cycle_source" PRE_FIXED="$pre_cycle_fixed" PRE_REPLY="$pre_cycle_reply" node --input-type=module -e '
+      import { createHash } from "node:crypto";
+      import { pathToFileURL } from "node:url";
+      const { authenticatePreCycleRemediation } = await import(pathToFileURL(process.argv[1]).href);
+      const digest = (body) => `sha256:${createHash("sha256").update(body, "utf8").digest("hex")}`;
+      const source = process.env.PRE_SOURCE;
+      const fixed = process.env.PRE_FIXED;
+      const errors = authenticatePreCycleRemediation({
+        finding_id: "pre-cycle-coderabbit-4483086823", original_priority: "P1", adjudicated_priority: "P1",
+        source: { comment_id: 4483086823, author_actor_id: 136622811, created_at: "2026-10-01T00:01:00Z", updated_at: "2026-10-01T00:01:00Z", head: source, body_digest: digest("<!-- CodeRabbit -->\\n\\n**Minor** registry-path defect") },
+        verification: { head: fixed, reply_id: 4483740368, author_actor_id: 37220977, created_at: "2026-10-01T00:02:00Z", updated_at: "2026-10-01T00:02:00Z", body_digest: digest(process.env.PRE_REPLY) },
+      }, { record: { pr_bindings: [{ number: 493, url: "https://github.com/example/repo/pull/493" }] }, repoDir: process.cwd() });
+      process.exit(errors.some((error) => error.includes("is not a descendant")) ? 0 : 1);
+    ' "$asset_dir/lib/integrator-receipt-auth.mjs"); then
+    :
+else
+    rm -f "$pre_cycle_grafts"
+    fail "grafted ancestry was accepted for pre-cycle remediation"
+fi
+rm -f "$pre_cycle_grafts"
+pass "pre-cycle ancestry ignores replace refs and refuses grafted history"
+# The first attempted admission is a direct integration → integration
+# transition. It reaches the new deferred-publication path, then fails complete
+# candidate validation. Neither its run projection nor a ruling may survive.
+cp "$pre_cycle_run" "$tmp/pre-cycle-before-invalid-reentry.json"
+if [ -d "$state/runs/run-pre-cycle/rulings" ]; then
+    find "$state/runs/run-pre-cycle/rulings" -type f -print -exec sha256sum {} \; | sort >"$tmp/pre-cycle-rulings-before-invalid-reentry.txt"
+else
+    : >"$tmp/pre-cycle-rulings-before-invalid-reentry.txt"
+fi
+expect_refused "invalid direct pre-cycle integration re-entry leaves no admission" \
+    "not a valid transition from integration" \
+    pre_write transition --stage integration --exit fixed --at 2026-10-01T00:03:00Z "${pre_cycle_args[@]}"
+cmp -s "$pre_cycle_run" "$tmp/pre-cycle-before-invalid-reentry.json" || fail "an invalid pre-cycle re-entry changed run.json"
+if [ -d "$state/runs/run-pre-cycle/rulings" ]; then
+    find "$state/runs/run-pre-cycle/rulings" -type f -print -exec sha256sum {} \; | sort >"$tmp/pre-cycle-rulings-after-invalid-reentry.txt"
+else
+    : >"$tmp/pre-cycle-rulings-after-invalid-reentry.txt"
+fi
+cmp -s "$tmp/pre-cycle-rulings-before-invalid-reentry.txt" "$tmp/pre-cycle-rulings-after-invalid-reentry.txt" || fail "an invalid pre-cycle re-entry published an orphan admission"
+# The ordinary remediation path remains able to make its first admission.
+pre_write transition --stage implement --exit remediating --at 2026-10-01T00:00:40Z >/dev/null
+pre_write transition --stage verify --exit fixed --at 2026-10-01T00:00:45Z >/dev/null
+pre_write transition --stage security --exit clean --at 2026-10-01T00:00:50Z >/dev/null
+cp "$pre_cycle_run" "$tmp/pre-cycle-before.json"
+expect_usage "pre-cycle evidence cannot omit a required receipt field" "pre-cycle remediation evidence requires every" \
+    pre_write transition --stage integration --exit fixed --at 2026-10-01T00:03:00Z \
+    --remediation-head "$pre_cycle_fixed" --remediation-findings '' \
+    --pre-cycle-finding-id pre-cycle-coderabbit-4483086823
+cmp -s "$pre_cycle_run" "$tmp/pre-cycle-before.json" || fail "a missing pre-cycle evidence field changed run.json"
+pre_cycle_untrusted_args=("${pre_cycle_args[@]}")
+for index in "${!pre_cycle_untrusted_args[@]}"; do
+    if [ "${pre_cycle_untrusted_args[$index]}" = --pre-cycle-verification-actor-id ]; then
+        pre_cycle_untrusted_args[$((index + 1))]=1
+        break
+    fi
+done
+expect_refused "pre-cycle verification actor must be trusted" "must be by a trusted orchestrator" \
+    pre_write transition --stage integration --exit fixed --at 2026-10-01T00:03:00Z "${pre_cycle_untrusted_args[@]}"
+cmp -s "$pre_cycle_run" "$tmp/pre-cycle-before.json" || fail "an unauthenticated pre-cycle reply changed run.json"
+pre_cycle_not_fixed="not fixed at $pre_cycle_fixed"
+pre_cycle_not_fixed_args=("${pre_cycle_args[@]}")
+for index in "${!pre_cycle_not_fixed_args[@]}"; do
+    if [ "${pre_cycle_not_fixed_args[$index]}" = --pre-cycle-verification-digest ]; then
+        pre_cycle_not_fixed_args[$((index + 1))]="sha256:$(printf '%s' "$pre_cycle_not_fixed" | sha256sum | awk '{print $1}')"
+        break
+    fi
+done
+CAPTURE_PRE_CYCLE_REPLY="$pre_cycle_not_fixed" expect_refused "pre-cycle reply must explicitly attest a fix" "canonical fix attestation" \
+    pre_write transition --stage integration --exit fixed --at 2026-10-01T00:03:00Z "${pre_cycle_not_fixed_args[@]}"
+cmp -s "$pre_cycle_run" "$tmp/pre-cycle-before.json" || fail "a non-fix pre-cycle reply changed run.json"
+pre_cycle_misprioritized_attestation="{\"disposition\":\"fix\",\"finding_id\":\"pre-cycle-coderabbit-4483086823\",\"source_comment_id\":4483086823,\"fixed_head\":\"$pre_cycle_fixed\",\"original_priority\":\"P2\",\"adjudicated_priority\":\"P2\"}"
+pre_cycle_misprioritized_reply="<!-- dev-flow-pre-cycle-remediation: $pre_cycle_misprioritized_attestation -->"
+pre_cycle_misprioritized_args=("${pre_cycle_args[@]}")
+for index in "${!pre_cycle_misprioritized_args[@]}"; do
+    if [ "${pre_cycle_misprioritized_args[$index]}" = --pre-cycle-verification-digest ]; then
+        pre_cycle_misprioritized_args[$((index + 1))]="sha256:$(printf '%s' "$pre_cycle_misprioritized_reply" | sha256sum | awk '{print $1}')"
+        break
+    fi
+done
+CAPTURE_PRE_CYCLE_REPLY="$pre_cycle_misprioritized_reply" expect_refused "pre-cycle attestation cannot rescore the original priority" "canonical fix attestation" \
+    pre_write transition --stage integration --exit fixed --at 2026-10-01T00:03:00Z "${pre_cycle_misprioritized_args[@]}"
+cmp -s "$pre_cycle_run" "$tmp/pre-cycle-before.json" || fail "a misprioritized pre-cycle reply changed run.json"
+# GitHub keeps an edited reply's original created_at. The body is valid only
+# at its authenticated updated_at, so current text cannot be backdated.
+CAPTURE_PRE_CYCLE_REPLY_UPDATED_AT=2026-10-01T00:10:00Z expect_refused \
+    "an edited pre-cycle reply cannot be backdated with its original created_at" \
+    "paginated source-thread reply" \
+    pre_write transition --stage integration --exit fixed --at 2026-10-01T00:03:00Z "${pre_cycle_args[@]}"
+cmp -s "$pre_cycle_run" "$tmp/pre-cycle-before.json" || fail "a backdated edited reply changed run.json"
+# An edited source revision before the trusted reply is valid. The real
+# admission below uses this exact evidence and its retry repeats it unchanged.
+pre_cycle_edited_source_args=("${pre_cycle_args[@]}")
+for index in "${!pre_cycle_edited_source_args[@]}"; do
+    if [ "${pre_cycle_edited_source_args[$index]}" = --pre-cycle-source-updated-at ]; then
+        pre_cycle_edited_source_args[$((index + 1))]=2026-10-01T00:01:30Z
+        break
+    fi
+done
+# But a current source revision after the trusted reply is not covered by it,
+# even when the live object and CLI evidence agree on that edited timestamp.
+pre_cycle_stale_source_args=("${pre_cycle_args[@]}")
+for index in "${!pre_cycle_stale_source_args[@]}"; do
+    if [ "${pre_cycle_stale_source_args[$index]}" = --pre-cycle-source-updated-at ]; then
+        pre_cycle_stale_source_args[$((index + 1))]=2026-10-01T00:02:30Z
+        break
+    fi
+done
+CAPTURE_PRE_CYCLE_SOURCE_UPDATED_AT=2026-10-01T00:02:30Z expect_refused \
+    "an edited pre-cycle source cannot rely on an earlier trusted reply" \
+    "chronologically ordered" \
+    pre_write transition --stage integration --exit fixed --at 2026-10-01T00:03:00Z "${pre_cycle_stale_source_args[@]}"
+cmp -s "$pre_cycle_run" "$tmp/pre-cycle-before.json" || fail "an edited source changed run.json"
+# Simulate interruption after the deterministic ruling published but before
+# run.json did: restore the exact pre-call record and retry the same command.
+cp "$pre_cycle_run" "$tmp/pre-cycle-before-admission.json"
+CAPTURE_PRE_CYCLE_SOURCE_UPDATED_AT=2026-10-01T00:01:30Z \
+    pre_write transition --stage integration --exit fixed --at 2026-10-01T00:03:00Z "${pre_cycle_edited_source_args[@]}" >/dev/null
+find "$state/runs/run-pre-cycle/rulings" -type f -print | sort >"$tmp/pre-cycle-rulings-after-admission.txt"
+cp "$tmp/pre-cycle-before-admission.json" "$pre_cycle_run"
+CAPTURE_PRE_CYCLE_SOURCE_UPDATED_AT=2026-10-01T00:01:30Z \
+    pre_write transition --stage integration --exit fixed --at 2026-10-01T00:03:00Z "${pre_cycle_edited_source_args[@]}" >/dev/null
+find "$state/runs/run-pre-cycle/rulings" -type f -print | sort >"$tmp/pre-cycle-rulings-after-retry.txt"
+cmp -s "$tmp/pre-cycle-rulings-after-admission.txt" "$tmp/pre-cycle-rulings-after-retry.txt" || fail "an exact pre-cycle retry changed the deterministic admission set"
+node "$asset_dir/validate-result-schemas.mjs" run "$pre_cycle_run" --no-adjudications >/dev/null ||
+    fail "authenticated pre-cycle remediation record failed strict validation"
+jq -e --arg source "$pre_cycle_source" --arg fixed "$pre_cycle_fixed" '
+  [.stage_transitions[] | select(any(.remediation?.pre_cycle?.findings[]?; .finding_id == "pre-cycle-coderabbit-4483086823"))] | .[0].remediation as $r |
+  $r.head == $fixed and $r.findings == [] and
+  ($r.pre_cycle.admission_digest | test("^[0-9a-f]{64}$")) and
+  ($r.pre_cycle.findings | length) == 1 and
+  $r.pre_cycle.findings[0].finding_id == "pre-cycle-coderabbit-4483086823" and
+  $r.pre_cycle.findings[0].original_priority == "P1" and $r.pre_cycle.findings[0].adjudicated_priority == "P1" and
+  $r.pre_cycle.findings[0].source.head == $source and $r.pre_cycle.findings[0].verification.head == $fixed and
+  $r.pre_cycle.findings[0].seq == 0 and $r.pre_cycle.findings[0].prev_digest == "genesis" and
+  ($r.pre_cycle.findings[0].digest | test("^[0-9a-f]{64}$"))' "$pre_cycle_run" >/dev/null ||
+    fail "writer did not retain authenticated pre-cycle evidence with original P1 and exact fix head"
+pass "public writer authenticates and chains a pre-cycle P1 remediation without inventing a cycle"
+
+# Multiple independently authenticated findings fixed by the same commit stay
+# in one remediation transition. The batch is evidence, not a synthetic cycle.
+pre_cycle_batch_attestation="{\"disposition\":\"fix\",\"finding_id\":\"pre-cycle-coderabbit-4483086824\",\"source_comment_id\":4483086824,\"fixed_head\":\"$pre_cycle_fixed\",\"original_priority\":\"P1\",\"adjudicated_priority\":\"P1\"}"
+pre_cycle_batch_reply="<!-- dev-flow-pre-cycle-remediation: $pre_cycle_batch_attestation -->"
+pre_cycle_batch_source_digest="sha256:$(printf '%s' $'<!-- CodeRabbit -->\n\n**Minor** second registry-path defect' | sha256sum | awk '{print $1}')"
+pre_cycle_batch_reply_digest="sha256:$(printf '%s' "$pre_cycle_batch_reply" | sha256sum | awk '{print $1}')"
+new_run run-pre-cycle-batch
+write_plan s-pre-cycle-batch 1862:run-pre-cycle-batch
+acquire s-pre-cycle-batch alice --issues 1862
+printf '{"branch":"%s"}\n' "$pre_cycle_branch" >"$state/runs/run-pre-cycle-batch/branch.json"
+pre_batch_write() {
+    (cd "$pre_cycle_lane" && PATH="$capture_bin:$PATH" CAPTURE_HEAD="$pre_cycle_fixed" CAPTURE_BASE="$integration_base" \
+        CAPTURE_PRE_CYCLE=1 CAPTURE_PRE_CYCLE_SOURCE="$pre_cycle_source" CAPTURE_PRE_CYCLE_REPLY="$pre_cycle_reply" \
+        CAPTURE_PRE_CYCLE_BATCH_REPLY="$pre_cycle_batch_reply" RUN_RECORD_OWNER_TOKEN="$(token_for s-pre-cycle-batch)" \
+        node "$writer" "$@" --slate s-pre-cycle-batch --session alice --run-id run-pre-cycle-batch)
+}
+for step in "claim:k" "implement:claimed" "verify:implemented" "challenge:verified" "security:converged" "integration:secure"; do
+    pre_batch_write transition --stage "${step%%:*}" --exit "${step#*:}" --at 2026-10-01T00:00:00Z >/dev/null
+done
+pre_batch_write bind-pr --number 493 --url https://github.com/example/repo/pull/493 --at 2026-10-01T00:00:30Z >/dev/null
+pre_batch_write transition --stage implement --exit remediating --at 2026-10-01T00:00:40Z >/dev/null
+pre_batch_write transition --stage verify --exit fixed --at 2026-10-01T00:00:45Z >/dev/null
+pre_batch_write transition --stage security --exit clean --at 2026-10-01T00:00:50Z >/dev/null
+pre_cycle_batch_file="$tmp/pre-cycle-batch.json"
+jq -n --arg source "$pre_cycle_source" --arg fixed "$pre_cycle_fixed" --arg source_digest "$pre_cycle_batch_source_digest" --arg reply_digest "$pre_cycle_batch_reply_digest" '[{
+  finding_id:"pre-cycle-coderabbit-4483086824", original_priority:"P1", adjudicated_priority:"P1",
+  source:{comment_id:4483086824,author_actor_id:136622811,created_at:"2026-10-01T00:01:30Z",updated_at:"2026-10-01T00:01:30Z",head:$source,body_digest:$source_digest},
+  verification:{head:$fixed,reply_id:4483740369,author_actor_id:37220977,created_at:"2026-10-01T00:02:30Z",updated_at:"2026-10-01T00:02:30Z",body_digest:$reply_digest}
+}]' >"$pre_cycle_batch_file"
+pre_cycle_batch_run="$state/runs/run-pre-cycle-batch/run.json"
+# A batch supplements the primary evidence; by itself it must be refused
+# before candidate validation or retained-admission publication.
+cp "$pre_cycle_batch_run" "$tmp/pre-cycle-batch-only-before.json"
+if [ -d "$state/runs/run-pre-cycle-batch/rulings" ]; then
+    find "$state/runs/run-pre-cycle-batch/rulings" -type f -print | sort >"$tmp/pre-cycle-batch-only-rulings-before.txt"
+else
+    : >"$tmp/pre-cycle-batch-only-rulings-before.txt"
+fi
+expect_usage "pre-cycle batch cannot be supplied without its primary evidence" "pre-cycle-batch requires the complete primary" \
+    pre_batch_write transition --stage integration --exit fixed --at 2026-10-01T00:03:00Z \
+    --remediation-head "$pre_cycle_fixed" --remediation-findings '' --pre-cycle-batch "$pre_cycle_batch_file"
+cmp -s "$pre_cycle_batch_run" "$tmp/pre-cycle-batch-only-before.json" || fail "a batch-only pre-cycle request changed run.json"
+if [ -d "$state/runs/run-pre-cycle-batch/rulings" ]; then
+    find "$state/runs/run-pre-cycle-batch/rulings" -type f -print | sort >"$tmp/pre-cycle-batch-only-rulings-after.txt"
+else
+    : >"$tmp/pre-cycle-batch-only-rulings-after.txt"
+fi
+cmp -s "$tmp/pre-cycle-batch-only-rulings-before.txt" "$tmp/pre-cycle-batch-only-rulings-after.txt" || fail "a batch-only pre-cycle request published a retained admission"
+pass "batch-only pre-cycle evidence is refused without changing public run state"
+pre_batch_write transition --stage integration --exit fixed --at 2026-10-01T00:03:00Z "${pre_cycle_args[@]}" --pre-cycle-batch "$pre_cycle_batch_file" >/dev/null
+node "$asset_dir/validate-result-schemas.mjs" run "$pre_cycle_batch_run" --no-adjudications >/dev/null ||
+    fail "two-finding pre-cycle remediation record failed strict validation"
+jq -e '[.stage_transitions[] | select(.remediation? != null)] as $pushes |
+  ($pushes | length) == 1 and ($pushes[0].remediation.pre_cycle.findings | length) == 2 and
+  ([.receipts[] | select(.kind == "pass")] | length) == 0' "$pre_cycle_batch_run" >/dev/null ||
+    fail "batch evidence did not retain two findings in one remediation entry without a fake review"
+pass "public writer authenticates two distinct source/reply pairs in one pre-cycle remediation push"
+
 capture_state="$tmp/capture-state.json"
 capture_base="$integration_base"
 capture_finder="$(jq -c '
@@ -1185,6 +1606,24 @@ capture_finder="$(jq -c '
     carrier_sentence:.collection.terminal_signals.carrier_sentence, success_reaction:.collection.terminal_signals.success_reaction,
     pending_reaction:.collection.terminal_signals.pending_reaction
   }' "$asset_dir/../../../../../agent-registry.json")"
+# A retained reservation is the first real review-request authority, not a
+# later receipt or settlement.  The public writer must refuse an attempt to
+# record a new pre-cycle attestation after that immutable boundary.
+pre_cycle_reserve_state="$tmp/pre-cycle-reserve-state.json"
+jq -n --arg head "$pre_cycle_fixed" --argjson finder "$capture_finder" '{version:2,repo:"example/repo",pr:493,head:$head,phase:"reserved",trigger_comment_id:null,
+  charged_cycles:1,exempt_cycles:0,attempt:1,run_id:"run-pre-cycle",timeout_min:10,reserved_at:"2026-10-01T00:03:15Z",finder:$finder}' >"$pre_cycle_reserve_state"
+pre_write integration-review-capture --state "$pre_cycle_reserve_state" --authority-kind reserve --at 2026-10-01T00:03:30Z >/dev/null
+pre_cycle_late_args=("${pre_cycle_args[@]}")
+for index in "${!pre_cycle_late_args[@]}"; do
+    if [ "${pre_cycle_late_args[$index]}" = --pre-cycle-finding-id ]; then
+        pre_cycle_late_args[$((index + 1))]=pre-cycle-coderabbit-4483086824
+        break
+    fi
+done
+expect_refused "pre-cycle writer refuses a retained reservation before verification admission" \
+    "before the first retained review reservation" \
+    pre_write transition --stage integration --exit fixed --at 2026-10-01T00:04:00Z "${pre_cycle_late_args[@]}"
+pass "a real retained reserve authority blocks late pre-cycle recovery before any settlement"
 # The fixture GH endpoint supplies the trusted registry at the retained base;
 # that base itself must be on the reviewed branch so the real carry proof can
 # derive both canonical three-dot identities from one local graph.
@@ -1196,7 +1635,7 @@ jq -n --arg head "$integration_head" --argjson finder "$capture_finder" '{versio
 # Keep the old ruling: downstream attachment replay and receipt must select
 # the replacement by its reservation time, not become ambiguous.
 recovery_checker="$fixture_integrate/assets/check-codex-cloud-review.sh"
-(cd "$repo" && PATH="$capture_bin:$PATH" CAPTURE_HEAD="$integration_head" CAPTURE_BASE="$capture_base" \
+(cd "$repo" && PATH="$capture_bin:$PATH" CAPTURE_NOW=2026-10-01T00:05:00Z CAPTURE_HEAD="$integration_head" CAPTURE_BASE="$capture_base" \
     bash "$recovery_checker" release --state "$capture_state" --note 'trigger POST failed' \
     --now 2026-10-01T00:05:00Z) >/dev/null
 jq -e '.phase == "released" and .charged_cycles == 0 and .exempt_cycles == 0' "$capture_state" >/dev/null ||
@@ -1245,6 +1684,529 @@ AUTH_COMMON="$repo/.git" AUTH_RUN=run-integrator AUTH_RECORD="$state/runs/run-in
       attached.finder?.slug !== "codex-cloud" || attached.last_reviewed_verdict === "clean") process.exit(1);
 ' "$asset_dir/lib/integrator-review-authority.mjs" || fail "public capture command did not retain a validated reserve/attach ruling chain"
 pass "owner attachment replay rechecks live evidence without enriching the retained immutable capture"
+
+# Remediation must consume the live frontier before any head move. These use
+# the public writer and real checker with the authenticated offline GH fixture.
+new_run run-remediation
+write_plan s-remediation 181043:run-remediation
+acquire s-remediation alice --issues 181043
+rem_dir="$state/runs/run-remediation"
+printf '{"branch":"%s"}\n' "$integration_branch" >"$rem_dir/branch.json"
+resolve_fixture_policy "$rem_dir/policy.json" 1
+rem_write() {
+    (cd "$repo" && PATH="$capture_bin:$PATH" CAPTURE_HEAD="$integration_head" CAPTURE_BASE="$capture_base" \
+        RUN_RECORD_OWNER_TOKEN="$(token_for s-remediation)" node "$capture_writer" "$@" \
+        --slate s-remediation --session alice --run-id run-remediation)
+}
+for step in "claim:k" "implement:claimed" "verify:implemented" "challenge:verified" "security:converged" "integration:secure"; do
+    rem_write transition --stage "${step%%:*}" --exit "${step#*:}" --at 2026-10-01T00:05:00Z >/dev/null
+done
+rem_transition() { rem_write transition --stage implement --exit remediating --at 2026-10-01T00:40:00Z "$@"; }
+cp "$rem_dir/run.json" "$tmp/rem-unbound.json"
+expect_refused "unbound remediation names bind-pr recovery" "use bind-pr" rem_transition
+cmp -s "$rem_dir/run.json" "$tmp/rem-unbound.json" || fail "unbound refusal changed run"
+rem_write bind-pr --number 493 --url https://github.com/example/repo/pull/493 --at 2026-10-01T00:05:30Z >/dev/null
+cp "$rem_dir/run.json" "$tmp/rem-no-reservation.json"
+rem_transition >/dev/null
+cp "$tmp/rem-no-reservation.json" "$rem_dir/run.json"
+pass "unbound remediation fails closed and bind-pr recovers without inventing a reservation"
+# A configured positive-cap finder never reserved is not pending.
+rem_transition >/dev/null
+cp "$tmp/rem-no-reservation.json" "$rem_dir/run.json"
+pass "configured but never-reserved finder permits remediation after first-head CI failure"
+cp "$rem_dir/policy.json" "$tmp/rem-policy.json"
+resolve_fixture_policy "$rem_dir/policy.json" 0
+rem_transition >/dev/null
+cp "$tmp/rem-no-reservation.json" "$rem_dir/run.json"
+cp "$tmp/rem-policy.json" "$rem_dir/policy.json"
+pass "cap-zero never-reserved finder permits remediation"
+rem_state="$repo/.git/integrate-codex/example/repo/493.json"
+mkdir -p "$(dirname "$rem_state")"
+jq --arg run run-remediation '.run_id=$run' "$tmp/recovery-reserve.json" >"$rem_state"
+rem_write integration-review-capture --state "$rem_state" --authority-kind reserve --at 2026-10-01T00:06:30Z >/dev/null
+cp "$rem_dir/run.json" "$tmp/rem-reserved.json"
+cp "$rem_state" "$tmp/rem-reserve-state.json"
+CAPTURE_CLEAN=1 expect_refused "reserve-only frontier blocks even when reviewer has finished" "integration-receipt-required" rem_transition
+cmp -s "$rem_dir/run.json" "$tmp/rem-reserved.json" || fail "reserve-only refusal changed run"
+pass "reserve-only frontier cannot skip terminal attach capture"
+# An actual released-unused reservation keeps its immutable identity and refund.
+(cd "$repo" && PATH="$capture_bin:$PATH" CAPTURE_NOW=2026-10-01T00:20:00Z CAPTURE_HEAD="$integration_head" CAPTURE_BASE="$capture_base" \
+    bash "$recovery_checker" release --state "$rem_state" --note 'unused remediation fixture' --now 2026-10-01T00:20:00Z) >/dev/null
+cp "$rem_state" "$tmp/rem-exact-released.json"
+rem_transition >/dev/null
+cp "$tmp/rem-reserved.json" "$rem_dir/run.json"
+pass "exact released-unused reservation proof permits remediation"
+# Replacing the released reservation preserves its history, even when the
+# refunded ordinal is reused. Historical proof pays only the old debt.
+(cd "$repo" && PATH="$capture_bin:$PATH" CAPTURE_NOW=2026-10-01T00:21:00Z CAPTURE_HEAD="$integration_head" CAPTURE_BASE="$capture_base" \
+    bash "$recovery_checker" reserve --state "$rem_state" --repo example/repo --pr 493 \
+    --head "$integration_head" --attempt 1 --run-id run-remediation --timeout-min 10 --finder codex-cloud) >/dev/null
+expect_refused "released R1 cannot authorize uncaptured pending R2" "uncaptured reservation" rem_transition
+rem_write integration-review-capture --state "$rem_state" --authority-kind reserve --at 2026-10-01T00:21:30Z >/dev/null
+cp "$rem_dir/run.json" "$tmp/rem-release-r2-reserved-record.json"
+expect_refused "released R1 cannot authorize retained pending R2" "integration-receipt-required" rem_transition
+(cd "$repo" && PATH="$capture_bin:$PATH" CAPTURE_NOW=2026-10-01T00:32:00Z CAPTURE_HEAD="$integration_head" CAPTURE_BASE="$capture_base" \
+    bash "$recovery_checker" release --state "$rem_state" --note 'second unused fixture' --now 2026-10-01T00:32:00Z) >/dev/null
+cp "$rem_state" "$tmp/rem-release-r2-state.json"
+rem_transition >/dev/null
+cp "$tmp/rem-release-r2-reserved-record.json" "$rem_dir/run.json"
+pass "released R1 followed by released R2 settles both retained debts"
+for mutation in wrong-head wrong-time release-before-reserve release-after-replacement wrong-finder wrong-run ambiguous malformed; do
+    case "$mutation" in
+    wrong-head) filter='.superseded_reservations[1].head=("f" * 40)' ;;
+    wrong-time) filter='.superseded_reservations[1].reserved_at="2026-10-01T00:06:01Z"' ;;
+    release-before-reserve) filter='.superseded_reservations[1].released_at="2026-10-01T00:05:00Z"' ;;
+    release-after-replacement) filter='.superseded_reservations[1].released_at="2026-10-01T00:22:00Z"' ;;
+    wrong-finder) filter='.finder.slug="other-finder"' ;;
+    wrong-run) filter='.run_id="other-run"' ;;
+    ambiguous) filter='.superseded_reservations += [.superseded_reservations[1]]' ;;
+    malformed) filter='.superseded_reservations[1].released_at="invalid"' ;;
+    esac
+    jq "$filter" "$tmp/rem-release-r2-state.json" >"$rem_state"
+    expect_refused "$mutation historical release proof refuses" "integration-receipt-required" rem_transition
+    cmp -s "$rem_dir/run.json" "$tmp/rem-release-r2-reserved-record.json" || fail "release proof refusal changed the record"
+done
+cp "$tmp/rem-exact-released.json" "$rem_state"
+expect_refused "old released R1 cannot hide lost retained R2" "integration-receipt-required" rem_transition
+cp "$tmp/rem-reserved.json" "$rem_dir/run.json"
+pass "historical release proof binds exact identity, coherent times and owner container"
+jq '.head=("f" * 40)' "$tmp/rem-exact-released.json" >"$rem_state"
+expect_refused "released-unused proof must match the retained reservation identity" "integration-receipt-required" rem_transition
+cp "$tmp/rem-exact-released.json" "$rem_state"
+# Refunds reuse the ordinal. Only the old reservation's exact identity is paid;
+# losing a new same-ordinal reservation cannot make that old release pay twice.
+jq '.phase="reserved" | .charged_cycles=1 | .exempt_cycles=0 |
+  .reserved_at="2026-10-01T00:20:30Z"' "$rem_state" >"$tmp/rem-after-release-reserve.json"
+rem_write integration-review-capture --state "$tmp/rem-after-release-reserve.json" --authority-kind reserve --at 2026-10-01T00:20:40Z >/dev/null
+rm "$tmp/rem-after-release-reserve.json"
+expect_refused "older released state cannot discharge lost newer reservation debt" "integration-receipt-required" rem_transition
+cp "$tmp/rem-reserved.json" "$rem_dir/run.json"
+cp "$tmp/rem-reserve-state.json" "$rem_state"
+pass "mismatched and older released-unused proofs cannot discharge another reservation"
+# Capture at a pending exit, then make the live review terminal independently.
+jq '.phase="attached" | .trigger_comment_id="200"' "$rem_state" >"$rem_state.next"
+mv "$rem_state.next" "$rem_state"
+rem_write integration-review-capture --state "$rem_state" --authority-kind attach --at 2026-10-01T00:07:30Z >/dev/null
+cp "$rem_dir/run.json" "$tmp/rem-pending-attach.json"
+cp "$tmp/rem-release-r2-state.json" "$rem_state"
+expect_refused "release history cannot contradict retained R1 attachment" "integration-receipt-required" rem_transition
+cmp -s "$rem_dir/run.json" "$tmp/rem-pending-attach.json" || fail "contradictory release refusal changed the record"
+# Public capture deliberately does not mutate caller input: use its retained
+# controls as the canonical state the integrator would have attached itself.
+rem_attach_digest="$(jq -r '.interventions[-1].note' "$rem_dir/run.json" | sed -E 's/.*sha256=([0-9a-f]{64}).*/\1/')"
+jq '.snapshot' "$rem_dir/rulings/$rem_attach_digest" >"$rem_state"
+expect_refused "nonterminal attach cannot count as terminal" "integration-receipt-required" rem_transition
+CAPTURE_CLEAN=1 expect_refused "live terminal cycle still requires receipt" "integration-receipt-required" rem_transition
+pass "pending attach refuses without an admitted terminal receipt"
+# An old terminal file must never replace canonical live state, even before
+# the owner has captured the live newer reservation.
+cp "$rem_state" "$tmp/rem-stale-state.json"
+expect_refused "caller-named snapshot cannot replace canonical state" "not a supported canonical live state location" \
+    rem_transition --finder-state "codex-cloud=$tmp/rem-stale-state.json"
+jq '.phase="reserved" | .charged_cycles=2 | .attempt=1 | .trigger_comment_id=null | .reserved_at="2026-10-01T00:08:00Z"' \
+    "$rem_state" >"$rem_state.next"
+mv "$rem_state.next" "$rem_state"
+CAPTURE_CLEAN=1 expect_refused "retained cycle debt refuses before classifying newer uncaptured live state" "integration-receipt-required" rem_transition
+pass "stale caller-named state and newer unretained live reservation both refuse"
+cp "$tmp/rem-stale-state.json" "$rem_state"
+# #1630: genuinely admit checker-only cycle 1 before any role exists. The
+# existing fixture captured a pending attachment; live authentication observes
+# its later clean reaction without enriching those immutable authority bytes.
+cp "$rem_dir/run.json" "$tmp/checker-before.json"
+CAPTURE_CLEAN=1 rem_write checker-cycle-receipt --state "$rem_state" --repo-dir "$repo" --at 2026-10-01T00:23:00Z >/dev/null
+CAPTURE_CLEAN=1 rem_write checker-cycle-receipt --state "$rem_state" --repo-dir "$repo" --at 2026-10-01T00:23:15Z >/dev/null
+checker_digest="$(jq -r '.checker_cycle_receipts[0].digest' "$rem_dir/run.json")"
+checker_receipt="$rem_dir/checker-cycles/$checker_digest.json"
+jq -e '.kind == "checker-cycle" and .cycle.cycle == 1 and .cycle.exit_code == 0 and
+  .cycle.accepted.id == "901" and (has("producer") | not) and (has("role") | not)' "$checker_receipt" >/dev/null ||
+    fail 'checker history fabricated an agent result or lost accepted evidence'
+[ ! -e "$rem_dir/passes/integration-r1-integrator.json" ] || fail 'checker receipt consumed an integrator round'
+cp "$rem_dir/run.json" "$tmp/checker-admitted.json"
+CAPTURE_CLEAN=1 rem_transition >/dev/null
+cp "$tmp/checker-admitted.json" "$rem_dir/run.json"
+pass "authenticated checker receipt is immutable, idempotent and discharges head-movement debt without a role pass"
+# Retained receipts remain checked even by the head-movement guard. Neither
+# a missing file nor altered bytes can turn historical evidence into authority.
+cp "$checker_receipt" "$tmp/checker-receipt-original.json"
+printf '\n' >>"$checker_receipt"
+CAPTURE_CLEAN=1 expect_refused "altered historical checker bytes" "checker receipt digest mismatch" rem_transition
+cp "$tmp/checker-receipt-original.json" "$checker_receipt"
+mv "$checker_receipt" "$checker_receipt.missing"
+CAPTURE_CLEAN=1 expect_refused "missing historical checker bytes" "checker-cycles" rem_transition
+mv "$checker_receipt.missing" "$checker_receipt"
+cp "$rem_dir/run.json" "$tmp/checker-mixed-start.json"
+# A real new head with unavailable carry proof owes cycle 2. Preserve the
+# original admitted cycle and its ordinal; the actual first role pass is r1.
+cp "$rem_state" "$tmp/checker-state-before-catchup.json"
+cp "${rem_state%.json}.spend.json" "$tmp/checker-spend-before-catchup.json"
+cp "$rem_dir/policy.json" "$tmp/checker-policy-before-catchup.json"
+resolve_fixture_policy "$rem_dir/policy.json" 5
+# The owner normally retains the resolver's provenance in the run projection.
+# This writer fixture used only raw resolver output until it reached readiness.
+jq '.rigor.source = (.rigor.chosen_by // "default_rigor")' "$rem_dir/policy.json" >"$rem_dir/policy.json.next"
+mv "$rem_dir/policy.json.next" "$rem_dir/policy.json"
+checker_original_head="$integration_head"
+checker_base_advance="$(printf 'fixture base advance\n' | git -C "$repo" commit-tree "$capture_base^{tree}" -p "$capture_base")"
+checker_catchup="$(printf 'fixture base catch-up\n' | git -C "$repo" commit-tree "$integration_head^{tree}" -p "$integration_head" -p "$checker_base_advance")"
+git -C "$repo" update-ref "refs/heads/$integration_branch" "$checker_catchup" "$integration_head"
+integration_head="$checker_catchup"
+# No reviewed base identity was available to the initial checker state. The
+# actual carry command must refuse, so no carried evidence is invented.
+jq --arg origin "$checker_original_head" '.last_reviewed_head=$origin | .last_reviewed_verdict="clean" |
+  .last_reviewed_base_sha=null' "$rem_state" >"$rem_state.next"
+mv "$rem_state.next" "$rem_state"
+checker_carry_rc=0
+(cd "$repo" && PATH="$capture_bin:$PATH" CAPTURE_CLEAN=1 CAPTURE_HEAD="$integration_head" CAPTURE_BASE="$capture_base" \
+    bash "$recovery_checker" carry --state "$rem_state" --head "$integration_head" --run-id run-remediation --repo-dir "$repo" \
+    --record "$rem_dir") >"$tmp/checker-carry.json" 2>&1 || checker_carry_rc=$?
+[ "$checker_carry_rc" -eq 17 ] || fail "unavailable base proof did not refuse carry: $(cat "$tmp/checker-carry.json")"
+CAPTURE_CLEAN=1 expect_refused "checker history cannot be backfilled after a head move" "checker receipt authentication failed" \
+    rem_write checker-cycle-receipt --state "$rem_state" --repo-dir "$repo" --at 2026-10-01T00:32:00Z
+# Use the real checker reservation and owner captures for the actual second
+# review. Its clean result is a genuine dispatched integrator envelope.
+(cd "$repo" && PATH="$capture_bin:$PATH" CAPTURE_NOW=2026-10-01T00:23:30Z CAPTURE_HEAD="$integration_head" CAPTURE_BASE="$capture_base" \
+    bash "$recovery_checker" reserve --state "$rem_state" --repo example/repo --pr 493 \
+    --head "$integration_head" --attempt 1 --run-id run-remediation --timeout-min 10 --finder codex-cloud \
+    --record "$rem_dir" --integration-cap 5) >/dev/null
+rem_write integration-review-capture --state "$rem_state" --authority-kind reserve --at 2026-10-01T00:23:31Z >/dev/null
+jq '.phase="attached" | .trigger_comment_id="202"' "$rem_state" >"$rem_state.next"
+mv "$rem_state.next" "$rem_state"
+CAPTURE_CLEAN=1 CAPTURE_REACTION_AT=2026-10-01T00:25:00Z rem_write integration-review-capture --state "$rem_state" --authority-kind attach --at 2026-10-01T00:25:30Z >/dev/null
+checker_second_digest="$(jq -r '.interventions[-1].note' "$rem_dir/run.json" | sed -E 's/.*sha256=([0-9a-f]{64}).*/\1/')"
+jq '.snapshot' "$rem_dir/rulings/$checker_second_digest" >"$rem_state"
+checker_second_pass="$tmp/checker-second-integrator.json"
+jq --arg head "$integration_head" '.run.run_id="run-remediation" | .head=$head | .produced_at="2026-10-01T00:35:00Z" |
+  .payload.settled_at="2026-10-01T00:35:00Z" | .payload.integration_round=1 |
+  .payload.codex_cycle={head:$head,cycle:2,charged:2,exempt:0,attempt:1,trigger_comment_id:"202",exit_code:0,
+    accepted:{surface:"reaction",id:"901",reviewed_commit:$head}}' "$integration_pass" >"$checker_second_pass"
+CAPTURE_CLEAN=1 CAPTURE_REACTION_AT=2026-10-01T00:25:00Z rem_write receipt --pass "$checker_second_pass" --codex-state "$rem_state" --codex-repo-dir "$repo" >/dev/null
+jq -n --arg head "$integration_head" '{schema:2,run_id:"run-remediation",stage:"integration",round:1,reviewed_head:$head,adjudications:[]}' \
+    >"$tmp/checker-second-adjudication.json"
+rem_write adjudicate --file "$tmp/checker-second-adjudication.json" >/dev/null
+node --input-type=module -e '
+ const { integrationExitForRunDir } = await import(process.argv[2]);
+ const result = await integrationExitForRunDir(process.argv[1], { integrationCap:5 });
+ if (result.outcome !== "converged" || result.rounds_counted !== 2 || result.clean_streak !== 2 ||
+     result.cycles[0].rounds.length !== 0 || result.cycles[1].rounds[0] !== 1) throw new Error(JSON.stringify(result));
+' "$rem_dir" "$asset_dir/dev-flow-exit.mjs" || fail 'mixed checker/dispatched history did not retain both actual cycles'
+MIXED_REAL_CHECKER="$recovery_checker" MIXED_CHECKER_PATH="$capture_bin:$PATH" \
+    CAPTURE_HEAD="$integration_head" CAPTURE_BASE="$capture_base" CAPTURE_CLEAN=1 CAPTURE_REACTION_AT=2026-10-01T00:25:00Z \
+    bash "$source_root/scripts/test-integrate-readiness.sh" --checker-history-record "$rem_dir" "$rem_state" "$repo" >"$tmp/checker-readiness.log" 2>&1 ||
+    fail "actual mixed history failed readiness: $(cat "$tmp/checker-readiness.log")"
+pass "checker-only cycle 1 → catch-up without carry → actual dispatched cycle 2/pass round 1 retains contiguous clean history"
+# Restore this isolated fixture branch and record for the independent tests.
+git -C "$repo" update-ref "refs/heads/$integration_branch" "$checker_original_head" "$checker_catchup"
+integration_head="$checker_original_head"
+cp "$tmp/checker-state-before-catchup.json" "$rem_state"
+cp "$tmp/checker-spend-before-catchup.json" "${rem_state%.json}.spend.json"
+cp "$tmp/checker-policy-before-catchup.json" "$rem_dir/policy.json"
+rm -f "$rem_dir/passes/integration-r1-integrator.json" "$rem_dir/adjudications/integration-r1.json"
+
+# Keep the actual admitted receipt for the mixed-history integration fixture.
+# Restore the independent role-only debt regressions below to their own state.
+cp "$tmp/checker-before.json" "$rem_dir/run.json"
+
+# A true admitted terminal receipt allows the transition, even though the
+# immutable attach capture was pending. Receipt authenticates its fresh verdict.
+rem_pass="$tmp/rem-integrator-pass.json"
+jq --arg head "$integration_head" '.run.run_id="run-remediation" | .head=$head | .produced_at="2026-10-01T00:30:00Z" |
+  .payload.settled_at="2026-10-01T00:30:00Z" | .payload.integration_round=1 |
+  .payload.codex_cycle={head:$head,cycle:1,attempt:1,trigger_comment_id:"200",exit_code:0,
+    accepted:{surface:"reaction",id:"901",reviewed_commit:$head}}' "$integration_pass" >"$rem_pass"
+CAPTURE_CLEAN=1 rem_write receipt --pass "$rem_pass" --codex-state "$rem_state" --codex-repo-dir "$repo" >/dev/null
+cp "$rem_dir/run.json" "$tmp/rem-receipted.json"
+CAPTURE_CLEAN=1 rem_transition >/dev/null
+cp "$tmp/rem-receipted.json" "$rem_dir/run.json"
+pass "fresh terminal observation with an admitted receipt permits remediation"
+# A receipt only pays the exact captured cycle. If live state advances or is
+# replaced, remediation still refuses but must never poll GitHub under the lock.
+jq '.trigger_comment_id="201"' "$rem_state" >"$rem_state.next"
+mv "$rem_state.next" "$rem_state"
+cat >"$tmp/rem-forbidden-check.cjs" <<'JS'
+const cp = require('node:child_process')
+const fs = require('node:fs')
+const original = cp.execFileSync
+cp.execFileSync = function (command, args, ...rest) {
+  if (command === 'bash' && args?.[0]?.endsWith('/check-codex-cloud-review.sh') && args[1] === 'check') {
+    fs.appendFileSync(process.env.REMEDIATION_CHECKER_CALL_LOG, 'check\n')
+    throw new Error('receipt refusal must not invoke the checker')
+  }
+  return original.call(this, command, args, ...rest)
+}
+require('node:module').syncBuiltinESMExports()
+JS
+cp "$rem_dir/run.json" "$tmp/rem-before-unreceipted-frontier.json"
+rm -f "$tmp/rem-checker-calls.log"
+output="$(cd "$repo" && PATH="$capture_bin:$PATH" CAPTURE_HEAD="$integration_head" CAPTURE_BASE="$capture_base" \
+    REMEDIATION_CHECKER_CALL_LOG="$tmp/rem-checker-calls.log" NODE_OPTIONS="--require=$tmp/rem-forbidden-check.cjs" \
+    RUN_RECORD_OWNER_TOKEN="$(token_for s-remediation)" node "$capture_writer" transition \
+    --slate s-remediation --session alice --run-id run-remediation --stage implement --exit remediating \
+    --at 2026-10-01T00:40:00Z 2>&1)" && fail "unreceipted live frontier unexpectedly passed: $output"
+grep -qF 'finish polling, capture the terminal attach, dispatch the integrator and run receipt' <<<"$output" || fail "unreceipted live frontier refusal lacked recovery guidance: $output"
+[ ! -e "$tmp/rem-checker-calls.log" ] || fail "unreceipted live frontier invoked the checker"
+cmp -s "$rem_dir/run.json" "$tmp/rem-before-unreceipted-frontier.json" || fail "unreceipted refusal changed run.json"
+[ ! -e "$rem_dir/run.json.wlock" ] || fail "unreceipted refusal left the run-record mutex behind"
+pass "unreceipted live frontier refuses with guidance without checker calls or lock residue"
+cp "$tmp/rem-stale-state.json" "$rem_state"
+# Even an admitted old terminal snapshot cannot authorize a newer reservation.
+(cd "$repo" && PATH="$capture_bin:$PATH" CAPTURE_CLEAN=1 CAPTURE_HEAD="$integration_head" CAPTURE_BASE="$capture_base" \
+    bash "$recovery_checker" check --state "$rem_state" --run-id run-remediation --repo-dir "$repo") >/dev/null
+cp "$rem_state" "$tmp/rem-old-terminal.json"
+# A later head's paid review cannot receipt R1's old-head reservation. Its
+# preserved exact release history must settle R1 independently instead.
+cp "${rem_state%.json}.spend.json" "$tmp/rem-before-release-head-spend.json"
+mv "$rem_dir/passes/integration-r1-integrator.json" "$tmp/rem-before-release-head-pass.json"
+cp "$tmp/rem-reserved.json" "$rem_dir/run.json"
+cp "$tmp/rem-exact-released.json" "$rem_state"
+rem_release_head_a="$integration_head"
+rem_release_head_b="$(git -C "$repo" commit-tree "$integration_head^{tree}" -p "$integration_head" -m 'review after an unused released reservation')"
+git -C "$repo" update-ref "refs/heads/$integration_branch" "$rem_release_head_b" "$rem_release_head_a"
+integration_head="$rem_release_head_b"
+(cd "$repo" && PATH="$capture_bin:$PATH" CAPTURE_NOW=2026-10-01T00:21:00Z CAPTURE_HEAD="$integration_head" CAPTURE_BASE="$capture_base" \
+    bash "$recovery_checker" reserve --state "$rem_state" --repo example/repo --pr 493 \
+    --head "$integration_head" --attempt 1 --run-id run-remediation --timeout-min 10 --finder codex-cloud) >/dev/null
+rem_write integration-review-capture --state "$rem_state" --authority-kind reserve --at 2026-10-01T00:21:30Z >/dev/null
+jq '.phase="attached" | .trigger_comment_id="202"' "$rem_state" >"$rem_state.next"
+mv "$rem_state.next" "$rem_state"
+CAPTURE_CLEAN=1 CAPTURE_REACTION_AT=2026-10-01T00:25:00Z rem_write integration-review-capture \
+    --state "$rem_state" --authority-kind attach --at 2026-10-01T00:25:30Z >/dev/null
+rem_release_attach_digest="$(jq -r '.interventions[-1].note' "$rem_dir/run.json" | sed -E 's/.*sha256=([0-9a-f]{64}).*/\1/')"
+jq '.snapshot' "$rem_dir/rulings/$rem_release_attach_digest" >"$rem_state"
+jq --arg head "$integration_head" '.head=$head | .payload.codex_cycle.head=$head |
+  .payload.codex_cycle.trigger_comment_id="202" | .payload.codex_cycle.accepted.reviewed_commit=$head' \
+    "$rem_pass" >"$tmp/rem-released-new-head-pass.json"
+CAPTURE_CLEAN=1 CAPTURE_REACTION_AT=2026-10-01T00:25:00Z rem_write receipt \
+    --pass "$tmp/rem-released-new-head-pass.json" --codex-state "$rem_state" --codex-repo-dir "$repo" >/dev/null
+CAPTURE_CLEAN=1 rem_transition >/dev/null
+git -C "$repo" update-ref "refs/heads/$integration_branch" "$rem_release_head_a" "$rem_release_head_b"
+integration_head="$rem_release_head_a"
+mv "$rem_dir/passes/integration-r1-integrator.json" "$tmp/rem-release-head-admitted-pass.json"
+mv "$tmp/rem-before-release-head-pass.json" "$rem_dir/passes/integration-r1-integrator.json"
+cp "$tmp/rem-receipted.json" "$rem_dir/run.json"
+cp "$tmp/rem-old-terminal.json" "$rem_state"
+cp "$tmp/rem-before-release-head-spend.json" "${rem_state%.json}.spend.json"
+pass "released R1 plus a new-head receipted R2 settles independently"
+# Recovery can restore a paid cycle's state while a newer reservation's spend
+# survives, even though that reservation crashed before authority capture.
+rem_spend="${rem_state%.json}.spend.json"
+cp "$rem_spend" "$tmp/rem-spend-before-rollback.json"
+for newer_spend in '{"charged":2,"exempt":0}' '{"charged":0,"exempt":2}'; do
+    jq -n --argjson spend "$newer_spend" '{"run-remediation":$spend}' >"$rem_spend"
+    CAPTURE_CLEAN=1 expect_refused "old paid state cannot hide newer unretained sidecar spend" "spend exceeds its matching live state" rem_transition
+    cmp -s "$rem_dir/run.json" "$tmp/rem-receipted.json" || fail "newer spend refusal changed the record"
+done
+pass "restored older receipted state refuses higher sidecar spend without newer retained authority"
+for malformed_spend in 'null' '{}' '[]' '{"charged":1}' '{"charged":null,"exempt":0}' \
+    '{"charged":"1","exempt":0}' '{"charged":-1,"exempt":0}' '{"charged":0.5,"exempt":0}' \
+    '{"charged":0,"exempt":null}' '{"charged":0,"exempt":"1"}' \
+    '{"charged":0,"exempt":-1}' '{"charged":0,"exempt":0.5}'; do
+    jq -n --argjson spend "$malformed_spend" '{"run-remediation":$spend}' >"$rem_spend"
+    CAPTURE_CLEAN=1 expect_refused "present run spend requires both nonnegative integer counters" "invalid current-run spend counters" rem_transition
+    cmp -s "$rem_dir/run.json" "$tmp/rem-receipted.json" || fail "malformed spend refusal changed the record"
+done
+printf '{broken\n' >"$rem_spend"
+CAPTURE_CLEAN=1 expect_refused "malformed sidecar is not missing evidence" "integration-remediation-unsettled" rem_transition
+rm "$rem_spend"
+mkdir "$rem_spend"
+CAPTURE_CLEAN=1 expect_refused "unreadable sidecar is not missing evidence" "integration-remediation-unsettled" rem_transition
+rmdir "$rem_spend"
+cmp -s "$rem_dir/run.json" "$tmp/rem-receipted.json" || fail "unreadable spend refusal changed the record"
+# Equal totals with a different charged/exempt split are valid after CI
+# reclassification. A lower total also does not contradict the paid state.
+for settled_spend in '{"charged":0,"exempt":1}' '{"charged":0,"exempt":0}'; do
+    jq -n --argjson spend "$settled_spend" '{"run-remediation":$spend}' >"$rem_spend"
+    CAPTURE_CLEAN=1 rem_transition >/dev/null
+    cp "$tmp/rem-receipted.json" "$rem_dir/run.json"
+done
+cp "$tmp/rem-spend-before-rollback.json" "$rem_spend"
+pass "spend validation fails closed while accepting equal reclassified and lower cycle totals"
+jq '.phase="reserved" | .charged_cycles=2 | .attempt=1 | .trigger_comment_id=null |
+  .first_trigger_comment_id=null | .requested_at=null | .reserved_at="2026-10-01T00:08:00Z"' \
+    "$rem_state" >"$rem_state.next"
+mv "$rem_state.next" "$rem_state"
+rem_write integration-review-capture --state "$rem_state" --authority-kind reserve --at 2026-10-01T00:08:30Z >/dev/null
+cp "$rem_state" "$tmp/rem-new-reserve-state.json"
+cp "$rem_dir/run.json" "$tmp/rem-new-reserve-record.json"
+cp "$tmp/rem-old-terminal.json" "$rem_dir/codex-cloud-review.json"
+rm "$rem_state"
+CAPTURE_CLEAN=1 expect_refused "lost newer retained reservation cannot hide behind older settled copy" "integration-receipt-required" rem_transition
+cmp -s "$rem_dir/run.json" "$tmp/rem-new-reserve-record.json" || fail "lost reservation refusal changed the record"
+cp "$tmp/rem-new-reserve-state.json" "$rem_state"
+rm "$rem_dir/codex-cloud-review.json"
+pass "record-only reservation inventory refuses a lost second cycle even with a settled first-cycle copy"
+CAPTURE_CLEAN=1 expect_refused "old receipted terminal snapshot cannot select a prior frontier" "not a supported canonical live state location" \
+    rem_transition --finder-state "codex-cloud=$tmp/rem-old-terminal.json"
+CAPTURE_CLEAN=1 expect_refused "new retained cycle remains pending after earlier receipt" "integration-receipt-required" rem_transition
+cp "$tmp/rem-receipted.json" "$rem_dir/run.json"
+cp "$tmp/rem-old-terminal.json" "$rem_state"
+pass "stale terminal receipted snapshot cannot bypass a newer retained reservation"
+# A custom finder outside integrate-codex is included in the live-state scan.
+custom_rem_state="$repo/.git/integrate-custom-reviewer/example/repo/493.json"
+mkdir -p "$(dirname "$custom_rem_state")"
+jq '.finder.slug="custom-reviewer"' "$tmp/rem-reserve-state.json" >"$custom_rem_state"
+rem_write integration-review-capture --state "$custom_rem_state" --authority-kind reserve --at 2026-10-01T00:08:30Z >/dev/null
+CAPTURE_CLEAN=1 expect_refused "custom finder reservation cannot be ignored" "integration-receipt-required" rem_transition
+cp "$tmp/rem-receipted.json" "$rem_dir/run.json"
+rm "$custom_rem_state"
+pass "every PR-side finder slug is checked, including a custom finder"
+# The bound lane is a real linked worktree. Its local Git dir differs from
+# the shared driver/broker directory, while the owner may also keep run state.
+git -C "$repo" checkout -q main
+git -C "$repo" worktree add -q "$tmp/rem-bound-lane" "$integration_branch"
+rem_lane_git="$(git -C "$tmp/rem-bound-lane" rev-parse --path-format=absolute --git-dir)"
+[ "$rem_lane_git" != "$repo/.git" ] || fail "remediation fixture is not a linked worktree"
+mv "$rem_state" "$tmp/rem-common-backup.json"
+for location in record common; do
+    case "$location" in
+    record) rem_candidate="$rem_dir/codex-cloud-review.json" ;;
+    common) rem_candidate="$rem_state" ;;
+    esac
+    cp "$tmp/rem-reserved.json" "$rem_dir/run.json"
+    cp "$tmp/rem-old-terminal.json" "$rem_candidate"
+    CAPTURE_CLEAN=1 expect_refused "$location retained reservation refuses before receipt" "integration-receipt-required" rem_transition
+    cp "$tmp/rem-no-reservation.json" "$rem_dir/run.json"
+    cp "$tmp/rem-reserve-state.json" "$rem_candidate"
+    CAPTURE_CLEAN=1 expect_refused "$location uncaptured reservation is not absence" "live reservation has no retained reserve authority" rem_transition
+    cp "$tmp/rem-receipted.json" "$rem_dir/run.json"
+    cp "$tmp/rem-old-terminal.json" "$rem_candidate"
+    CAPTURE_CLEAN=1 rem_transition --finder-state "codex-cloud=$rem_candidate" >/dev/null
+    cp "$tmp/rem-receipted.json" "$rem_dir/run.json"
+    rm "$rem_candidate"
+    pass "$location state is found for a linked lane: retained and uncaptured refuse, receipted passes"
+done
+# Naming the settled owner-record candidate cannot hide a newer common state.
+cp "$tmp/rem-old-terminal.json" "$rem_dir/codex-cloud-review.json"
+jq '.phase="reserved" | .charged_cycles=2 | .trigger_comment_id=null |
+  .reserved_at="2026-10-01T00:35:00Z"' "$tmp/rem-reserve-state.json" >"$rem_state"
+CAPTURE_CLEAN=1 expect_refused "settled record state cannot hide unsettled common state" "uncaptured reservation" \
+    rem_transition --finder-state "codex-cloud=$rem_dir/codex-cloud-review.json"
+rm "$rem_state"
+# An unreadable/invalid candidate never becomes authenticated absence just
+# because a different supported location has a valid settled copy.
+rem_local_state="$rem_lane_git/integrate-codex/example/repo/493.json"
+mkdir -p "$(dirname "$rem_local_state")"
+printf '{broken\n' >"$rem_local_state"
+CAPTURE_CLEAN=1 expect_refused "malformed local state refuses beside settled record state" "integration-remediation-unsettled" rem_transition
+rm "$rem_local_state"
+# Explicit --finder codex-cloud uses the named directory. Both common and
+# linked-worktree locations remain candidates alongside the legacy directory.
+cp "$tmp/rem-old-terminal.json" "$rem_state"
+for named_git_dir in "$repo/.git" "$rem_lane_git"; do
+    named_rem_state="$named_git_dir/integrate-codex-cloud/example/repo/493.json"
+    mkdir -p "$(dirname "$named_rem_state")"
+    jq '.reserved_at="2026-10-01T00:35:00Z"' "$tmp/rem-reserve-state.json" >"$named_rem_state"
+    CAPTURE_CLEAN=1 expect_refused "settled legacy state cannot hide uncaptured named Codex pending state" "uncaptured reservation" \
+        rem_transition --finder-state "codex-cloud=$rem_state"
+    cmp -s "$rem_dir/run.json" "$tmp/rem-receipted.json" || fail "named-state refusal changed the record"
+    rm "$named_rem_state"
+    printf '{"run-remediation":{"charged":1,"exempt":0}}\n' >"${named_rem_state%.json}.spend.json"
+    CAPTURE_CLEAN=1 expect_refused "named Codex spend without state cannot be missed" "has run spend without live reservation state" rem_transition
+    rm "${named_rem_state%.json}.spend.json"
+done
+rm "$rem_state" "$rem_dir/codex-cloud-review.json"
+pass "both legacy and named Codex state and sidecars are scanned in common and lane Git directories"
+pass "every existing candidate must settle; an asserted settled path never narrows the scan"
+# Discover uncaptured custom finders beside a settled Codex candidate.
+mv "$tmp/rem-common-backup.json" "$rem_state"
+for location in record common; do
+    slug="custom-$location"
+    case "$location" in
+    record) custom_candidate="$rem_dir/$slug-review.json" ;;
+    common) custom_candidate="$repo/.git/integrate-$slug/example/repo/493.json" ;;
+    esac
+    mkdir -p "$(dirname "$custom_candidate")"
+    jq --arg slug "$slug" '.finder.slug=$slug' "$tmp/rem-reserve-state.json" >"$custom_candidate"
+    CAPTURE_CLEAN=1 expect_refused "$location custom finder discovery refuses uncaptured state" "live reservation has no retained reserve authority" rem_transition
+    rm "$custom_candidate"
+done
+pass "finder discovery scans record and common directories as well as the linked lane Git directory"
+# Common state from a different run is not this run's review history.
+foreign_candidate="$repo/.git/integrate-foreign-common/example/repo/493.json"
+mkdir -p "$(dirname "$foreign_candidate")"
+jq '.run_id="another-run" | .finder.slug="foreign-common"' "$tmp/rem-reserve-state.json" >"$foreign_candidate"
+CAPTURE_CLEAN=1 rem_transition >/dev/null
+cp "$tmp/rem-receipted.json" "$rem_dir/run.json"
+pass "another run's common state is ignored when this run never reserved the finder"
+foreign_spend="${foreign_candidate%.json}.spend.json"
+printf '{"run-remediation":{"charged":1,"exempt":0}}\n' >"$foreign_spend"
+CAPTURE_CLEAN=1 expect_refused "another run's common state cannot erase this run's spend" "retains authority or spend" rem_transition
+rm "$foreign_candidate" "$foreign_spend"
+pass "foreign common state refuses when this run holds finder spend"
+# Discover charged spend even after a custom finder's record state was lost.
+lost_spend="$rem_dir/lost-custom-review.spend.json"
+printf '{"run-remediation":{"charged":1,"exempt":0}}\n' >"$lost_spend"
+CAPTURE_CLEAN=1 expect_refused "record-only custom spend is not absence" "has run spend without live reservation state" rem_transition
+rm "$lost_spend"
+pass "record-directory spend-only custom finder discovery refuses lost charged state"
+# An old same-run copy can coexist with a later, independently receipted cycle.
+cp "$tmp/rem-old-terminal.json" "$rem_dir/codex-cloud-review.json"
+resolve_fixture_policy "$rem_dir/policy.json" 2
+rem_adjudication="$tmp/rem-cycle-one-adjudication.json"
+jq -n --arg head "$integration_head" '{schema:2,run_id:"run-remediation",stage:"integration",round:1,
+  reviewed_head:$head,adjudications:[]}' >"$rem_adjudication"
+rem_write adjudicate --file "$rem_adjudication" >/dev/null
+jq '.phase="reserved" | .charged_cycles=2 | .exempt_cycles=0 | .attempt=1 |
+  .trigger_comment_id=null | .first_trigger_comment_id=null | .requested_at=null |
+  .first_requested_at=null | .reserved_at="2026-10-01T00:23:00Z"' "$tmp/rem-old-terminal.json" >"$rem_state"
+rem_write integration-review-capture --state "$rem_state" --authority-kind reserve --at 2026-10-01T00:23:30Z >/dev/null
+jq '.phase="attached" | .trigger_comment_id="202"' "$rem_state" >"$rem_state.next"
+mv "$rem_state.next" "$rem_state"
+CAPTURE_CLEAN=1 CAPTURE_REACTION_AT=2026-10-01T00:25:00Z rem_write integration-review-capture \
+    --state "$rem_state" --authority-kind attach --at 2026-10-01T00:25:30Z >/dev/null
+rem_current_digest="$(jq -r '.interventions[-1].note' "$rem_dir/run.json" | sed -E 's/.*sha256=([0-9a-f]{64}).*/\1/')"
+jq '.snapshot' "$rem_dir/rulings/$rem_current_digest" >"$rem_state"
+jq '.payload.integration_round=2 | .payload.codex_cycle.cycle=2 |
+  .payload.codex_cycle.trigger_comment_id="202"' "$rem_pass" >"$tmp/rem-cycle-two-pass.json"
+CAPTURE_CLEAN=1 CAPTURE_REACTION_AT=2026-10-01T00:25:00Z rem_write receipt \
+    --pass "$tmp/rem-cycle-two-pass.json" --codex-state "$rem_state" --codex-repo-dir "$repo" >/dev/null
+CAPTURE_CLEAN=1 CAPTURE_REACTION_AT=2026-10-01T00:25:00Z rem_transition \
+    --finder-state "codex-cloud=$rem_dir/codex-cloud-review.json" >/dev/null
+cp "$tmp/rem-receipted.json" "$rem_dir/run.json"
+cp "$tmp/rem-policy.json" "$rem_dir/policy.json"
+cp "$tmp/rem-old-terminal.json" "$rem_state"
+rm "$rem_dir/codex-cloud-review.json"
+pass "older same-run settled record copy and current settled common copy both pass"
+# A paid cycle on A stays paid when after-ci sees head B before a new reserve.
+# Patch only the test process boundary and assert check is never invoked.
+rem_no_check_hook="$tmp/rem-checker-forbidden.cjs"
+cat >"$rem_no_check_hook" <<'JS'
+const cp = require('node:child_process')
+const fs = require('node:fs')
+const original = cp.execFileSync
+cp.execFileSync = function (command, args, ...rest) {
+  if (command === 'bash' && args?.[0]?.endsWith('/check-codex-cloud-review.sh') && args[1] === 'check') {
+    fs.appendFileSync(process.env.REMEDIATION_CHECKER_CALL_LOG, 'check\n')
+    throw new Error('receipted cycle must not invoke the checker')
+  }
+  return original.call(this, command, args, ...rest)
+}
+require('node:module').syncBuiltinESMExports()
+JS
+rem_moved_head="$(git -C "$repo" commit-tree "$integration_head^{tree}" -p "$integration_head" -m 'head moved before after-ci reservation')"
+git -C "$repo" update-ref "refs/heads/$integration_branch" "$rem_moved_head" "$integration_head"
+(cd "$repo" && PATH="$capture_bin:$PATH" CAPTURE_HEAD="$rem_moved_head" CAPTURE_BASE="$capture_base" \
+    REMEDIATION_CHECKER_CALL_LOG="$tmp/rem-head-move-checks.log" NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require=$rem_no_check_hook" \
+    RUN_RECORD_OWNER_TOKEN="$(token_for s-remediation)" node "$capture_writer" transition \
+    --slate s-remediation --session alice --run-id run-remediation --stage implement --exit remediating --at 2026-10-01T00:40:00Z) >/dev/null
+[ ! -e "$tmp/rem-head-move-checks.log" ] || fail "receipted head A was re-polled after head B moved"
+cp "$tmp/rem-receipted.json" "$rem_dir/run.json"
+git -C "$repo" update-ref "refs/heads/$integration_branch" "$integration_head" "$rem_moved_head"
+pass "receipted cycle on head A permits head B remediation without invoking the checker"
+git -C "$repo" worktree remove "$tmp/rem-bound-lane"
+git -C "$repo" checkout -q "$integration_branch"
+
+# Caller cwd has no checker state. Only the bound lane's worktree is
+# authoritative; a cross-worktree conductor must still see its pending review.
+git -C "$repo" worktree add -q -b rem-conductor "$tmp/rem-conductor" "$integration_head"
+rem_token="$(token_for s-remediation)"
+cp "$tmp/rem-new-reserve-record.json" "$rem_dir/run.json"
+expect_refused "cross-worktree caller cannot escape a retained cycle debt" "integration-receipt-required" \
+    bash -c 'cd "$1" && PATH="$2" CAPTURE_HEAD="$3" CAPTURE_BASE="$4" RUN_RECORD_OWNER_TOKEN="$5" node "$6" transition --slate s-remediation --session alice --run-id run-remediation --stage implement --exit remediating --at 2026-10-01T00:40:00Z' _ \
+    "$tmp/rem-conductor" "$capture_bin:$PATH" "$integration_head" "$capture_base" "$rem_token" "$capture_writer"
+cp "$tmp/rem-receipted.json" "$rem_dir/run.json"
+pass "cross-worktree transition preserves the record-only reservation check"
+rem_write lock release >/dev/null
+rm "$rem_state" "${rem_state%.json}.spend.json"
 
 # reserved_at is the owner host's clock and the trigger's created_at is
 # GitHub's. A host running fast by less than the checker's skew margin still
@@ -1815,6 +2777,23 @@ expect_refused "strict validator rejects a stale attempt-one clean receipt after
 (cd "$repo" && PATH="$capture_bin:$PATH" CAPTURE_CLEAN=1 CAPTURE_HEAD="$integration_head" CAPTURE_BASE="$capture_base" RUN_RECORD_OWNER_TOKEN="$(token_for s-integrator)" node "$capture_writer" receipt \
     --slate s-integrator --session alice --run-id run-integrator --pass "$carry_pass" \
     --codex-state "$carry_auth_state" --codex-repo-dir "$repo") >/dev/null
+# A receipt for retry attempt 2 settles both retained reservations of that
+# cycle, including the pending first attempt. No checker re-poll is needed.
+cp "$state/runs/run-integrator/run.json" "$tmp/rem-retry-receipted-record.json"
+cp "$carry_auth_state" "$state/runs/run-integrator/codex-cloud-review.json"
+# The prior settlement fixture shares this PR's canonical path. Isolate the
+# retry fixture from that foreign run, then restore its state for later cases.
+cp "$codex_settlement_state" "$tmp/rem-retry-foreign-state.json"
+cp "$carry_auth_state" "$codex_settlement_state"
+(cd "$repo" && PATH="$capture_bin:$PATH" REMEDIATION_CHECKER_CALL_LOG="$tmp/rem-retry-checks.log" \
+    NODE_OPTIONS="${NODE_OPTIONS:+$NODE_OPTIONS }--require=$rem_no_check_hook" RUN_RECORD_OWNER_TOKEN="$(token_for s-integrator)" \
+    node "$capture_writer" transition --slate s-integrator --session alice --run-id run-integrator \
+    --stage implement --exit remediating --at 2026-10-01T00:40:00Z) >/dev/null
+[ ! -e "$tmp/rem-retry-checks.log" ] || fail "receipted retry was re-polled"
+cp "$tmp/rem-retry-receipted-record.json" "$state/runs/run-integrator/run.json"
+rm "$state/runs/run-integrator/codex-cloud-review.json"
+mv "$tmp/rem-retry-foreign-state.json" "$codex_settlement_state"
+pass "attempt-two receipt settles the cycle's first and retry reservations without polling"
 # The same independently observed clean cycle can be retained by a later
 # integration round once the first round is adjudicated. These are
 # corroborating receipts for one immutable owner attachment, not ambiguity.
@@ -2460,11 +3439,16 @@ for decision in handoff fix-request reactivate; do
     extra=()
     case "$decision" in
     handoff) extra=(--pr 334) ;;
-    reactivate) extra=(--run-id run-retained-fix) ;;
+    reactivate) extra=(
+        --run-id run-retained-fix --claim-record-file "$claim_record_file"
+        --claim-label claim:gpt --model-label none --family gpt --registry-snapshot "$claim_registry_snapshot"
+    ) ;;
     esac
     (cd "$repo" && node "$asset_dir/plan-revise.mjs" "$decision" --slate retained-lane --session alice \
         --owner-token "$(token_for retained-lane)" --issue 334 --reason 'retained activation regression' "${extra[@]+"${extra[@]}"}") >/dev/null
 done
+claim_restore_call="restore --repo example/repo --issue 334 --record-file $claim_record_file --claim-label claim:gpt --model-label none --family gpt --registry-snapshot $claim_registry_snapshot"
+[ "$(cat "$claim_transaction_log")" = "$claim_restore_call" ] || fail "retained reactivation did not pass the exact resolved claim inputs: $(cat "$claim_transaction_log")"
 # A parked branch stays on its old merge base when the slate base advances.
 git -C "$repo" -c user.name=t -c user.email=t@t commit -q --allow-empty -m 'advance slate base'
 retained_moved="$(git -C "$repo" rev-parse HEAD)"
@@ -2561,11 +3545,16 @@ for decision in handoff fix-request reactivate; do
     extra=()
     case "$decision" in
     handoff) extra=(--pr 334 --expected-revision "$retained_sequence") ;;
-    reactivate) extra=(--run-id run-retained-no-local-ref) ;;
+    reactivate) extra=(
+        --run-id run-retained-no-local-ref --claim-record-file "$claim_record_file"
+        --claim-label claim:gpt --model-label none --family gpt --registry-snapshot "$claim_registry_snapshot"
+    ) ;;
     esac
     (cd "$repo" && node "$asset_dir/plan-revise.mjs" "$decision" --slate retained-lane --session alice \
         --owner-token "$(token_for retained-lane)" --issue 334 --reason 'foreign branch regression' "${extra[@]+"${extra[@]}"}") >/dev/null
 done
+claim_restore_calls_twice="$(printf '%s\n%s' "$claim_restore_call" "$claim_restore_call")"
+[ "$(cat "$claim_transaction_log")" = "$claim_restore_calls_twice" ] || fail "foreign-branch reactivation did not pass the exact resolved claim inputs twice: $(cat "$claim_transaction_log")"
 git -C "$repo" update-ref -d refs/heads/334-l
 retained_rr lane-init --lane l334 --policy "$tmp/lane-policy.json" >"$tmp/retained-no-local-ref.json"
 jq -e '.run_id == "run-retained-no-local-ref" and .branch == "334-l"' \
@@ -2735,8 +3724,11 @@ const bin = join(tmp, 'multi-repo-bin')
 mkdirSync(bin)
 const log = join(tmp, 'multi-repo-gh.jsonl')
 writeFileSync(join(bin, 'gh'), `#!/usr/bin/env node
-require('node:fs').appendFileSync(${JSON.stringify(log)}, JSON.stringify(process.argv.slice(2))+'\\n')
-console.log(JSON.stringify({state: process.argv[4].includes('/owner/a/') ? 'CLOSED' : 'OPEN', labels: []}))
+const args = process.argv.slice(2)
+require('node:fs').appendFileSync(${JSON.stringify(log)}, JSON.stringify(args)+'\\n')
+const path = args.find((arg) => arg.startsWith('repos/owner/')) || ''
+if (path.endsWith('/comments') || path.endsWith('/timeline')) console.log('[]')
+else console.log(JSON.stringify({state: path.includes('/owner/a/') ? 'CLOSED' : 'OPEN', labels: [], assignees: []}))
 `, { mode: 0o755 })
 process.env.PATH = `${bin}:${process.env.PATH}`
 assert.deepEqual(assertDispatchCapacity(root, plan, plan.lanes[1], 'fleet'), { working: 1, in_flight: 1 })
@@ -2840,3 +3832,77 @@ for missing in record state repo; do
     grep -Fxq -- "validate-result-schemas: --receipt requires $flag for kind integrator" <<<"$strict_output" || fail "missing $flag was not named: $strict_output"
 done
 pass "documented strict non-null invocation and missing context"
+
+# Takeover is an authorized append after terminal failure, never a reopen.
+(
+    repo="$tmp/takeover-repo"
+    git init -q -b main "$repo"
+    git -C "$repo" remote add origin https://github.com/o/r
+    state="$repo/.git/dev-flow-v2"
+    new_record run-takeover
+    write_plan source 77:run-takeover
+    printf 'source\n' >"$state/runs/run-takeover/owner-slate"
+    TAKEOVER_RECORD="$state/runs/run-takeover/run.json" PLAN_WRITER="$writer" node --input-type=module <<'NODE'
+import { readFileSync, writeFileSync } from 'node:fs'
+const { chainDigest } = await import(process.env.PLAN_WRITER)
+const file = process.env.TAKEOVER_RECORD
+const r = JSON.parse(readFileSync(file))
+r.stage_transitions = ['kickoff', 'claim', 'implement', 'verify', 'security', 'integration'].map((stage) => ({stage, entered_at:r.started_at, exit:'tooling blocker'}))
+r.pr = {number:42, url:'https://github.com/o/r/pull/42'}
+const content = { ...r.pr, bound_at:r.started_at }
+r.pr_bindings = [{seq:0, ...content, prev_digest:'genesis', digest:chainDigest(content, 'genesis')}]
+const outcome = {outcome:'escalated', at:'2026-01-01T00:01:00Z'}
+r.outcome = outcome.outcome
+r.outcome_transitions = [{seq:0, ...outcome, prev_digest:'genesis', digest:chainDigest(outcome,'genesis')}]
+writeFileSync(file, JSON.stringify(r))
+NODE
+    original="$tmp/takeover-original.json"
+    cp "$state/runs/run-takeover/run.json" "$original"
+    acquire recovery bob --issues 77
+    tk() {
+        (cd "$repo" && node "$writer" "$@" --slate recovery --session bob --owner-token "$(token_for recovery)" --run-id run-takeover --number 42 --url https://github.com/o/r/pull/42)
+    }
+    expect_refused 'promotion without takeover' 'requires the recorded taking-over' tk takeover-promote --head "$head_sha" --fingerprint fp --gate "$gate_document"
+    tk takeover --actor orchestrator-bob --reason 'tooling blocker' --at 2026-01-01T00:02:00Z >/dev/null
+    cp "$state/runs/run-takeover/run.json" "$tmp/takeover-started.json"
+    tk takeover --actor orchestrator-bob --reason 'tooling blocker' >/dev/null
+    cmp -s "$state/runs/run-takeover/run.json" "$tmp/takeover-started.json" || fail 'takeover retry changed history'
+    expect_refused 'conflicting reason' 'conflicting takeover retry' tk takeover --actor orchestrator-bob --reason other
+    expect_refused 'backdated promotion' 'timestamp must not precede' tk takeover-promote --head "$head_sha" --fingerprint fp --gate "$gate_document" --at 2026-01-01T00:01:30Z
+    expect_refused 'wrong gate head' 'same head and fingerprint' tk takeover-promote --head bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb --fingerprint fp --gate "$gate_document"
+    tk takeover-promote --check --head "$head_sha" --fingerprint fp --gate "$gate_document" --at 2026-01-01T00:03:00Z >/dev/null
+    cmp -s "$state/runs/run-takeover/run.json" "$tmp/takeover-started.json" || fail 'takeover precheck wrote state'
+    tk takeover-promote --head "$head_sha" --fingerprint fp --gate "$gate_document" --at 2026-01-01T00:03:00Z >/dev/null
+    cp "$state/runs/run-takeover/run.json" "$tmp/takeover-promoted.json"
+    tk takeover-promote --head "$head_sha" --fingerprint fp --gate "$gate_document" >/dev/null
+    cmp -s "$state/runs/run-takeover/run.json" "$tmp/takeover-promoted.json" || fail 'promotion retry changed history'
+    expect_refused 'conflicting promotion time' 'conflicting takeover retry' tk takeover-promote --head "$head_sha" --fingerprint fp --gate "$gate_document" --at 2026-01-01T00:04:00Z
+    diff -u <(jq -S . "$original") <(jq -S 'del(.takeover_history)' "$state/runs/run-takeover/run.json") || fail 'takeover rewrote original lane record'
+    [ "$(cat "$state/runs/run-takeover/owner-slate")" = source ] || fail 'takeover transferred owner-slate'
+    cp "$original" "$state/runs/run-takeover/run.json"
+    expect_refused 'wrong bound PR' 'bound PR' bash -c 'cd "$1" && node "$2" takeover --slate recovery --session bob --owner-token "$3" --run-id run-takeover --number 99 --url https://github.com/o/r/pull/99 --actor bob --reason blocker' _ "$repo" "$writer" "$(token_for recovery)"
+    for outcome in null abandoned ready-for-review capped; do
+        # Keep the original record valid while varying the original outcome.
+        OUTCOME="$outcome" INPUT="$original" OUTPUT="$state/runs/run-takeover/run.json" PLAN_WRITER="$writer" node --input-type=module <<'NODE'
+import {readFileSync,writeFileSync} from 'node:fs'
+const {chainDigest}=await import(process.env.PLAN_WRITER)
+const r=JSON.parse(readFileSync(process.env.INPUT))
+r.outcome=process.env.OUTCOME==='null'?null:process.env.OUTCOME
+const c={outcome:r.outcome,at:'2026-01-01T00:01:00Z'}
+r.outcome_transitions=r.outcome?[{seq:0,...c,prev_digest:'genesis',digest:chainDigest(c,'genesis')}]:[]
+if(r.outcome==='ready-for-review')r.promotion={head:'a'.repeat(40),promoted_at:c.at,gate_fingerprint:'fp'}
+writeFileSync(process.env.OUTPUT,JSON.stringify(r))
+NODE
+        if [ "$outcome" = capped ]; then
+            tk takeover --actor bob --reason blocker --at 2026-01-01T00:02:00Z >/dev/null
+        else
+            expect_refused "ineligible $outcome" 'escalated or capped' tk takeover --actor bob --reason blocker
+        fi
+    done
+    cp "$original" "$state/runs/run-takeover/run.json"
+    expect_refused 'wrong owner token' 'token does not match' bash -c 'cd "$1" && node "$2" takeover --slate recovery --session bob --owner-token wrong --run-id run-takeover --number 42 --url https://github.com/o/r/pull/42 --actor bob --reason blocker' _ "$repo" "$writer"
+    acquire recovery-other charlie --issues 88
+    expect_refused 'unrelated issue scope' 'same qualified issue' bash -c 'cd "$1" && node "$2" takeover --slate recovery-other --session charlie --owner-token "$3" --run-id run-takeover --number 42 --url https://github.com/o/r/pull/42 --actor charlie --reason blocker' _ "$repo" "$writer" "$(token_for recovery-other)"
+    expect_refused 'different session' 'locked by session bob' bash -c 'cd "$1" && node "$2" takeover --slate recovery --session eve --owner-token "$3" --run-id run-takeover --number 42 --url https://github.com/o/r/pull/42 --actor eve --reason blocker' _ "$repo" "$writer" "$(token_for recovery)"
+    pass 'terminal takeover preserves original history, authorizes owner, binds PR and exact gate, and retries idempotently'
+)
