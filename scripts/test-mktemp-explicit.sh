@@ -33,7 +33,7 @@ cd "$(dirname "$0")/.."
 
 baseline_file=scripts/mktemp-baseline.txt
 
-# scan FILE -> prints "LINE:TEXT" for each unallowed bare mktemp call.
+# scan FILE -> prints "LINE:TEXT" for each unallowed bare mktemp call (a line holding two prints two rows).
 scan() {
     awk '
         {
@@ -57,7 +57,7 @@ scan() {
                 n = split(args, w, /[[:space:]]+/)
                 explicit = 0
                 for (i = 1; i <= n; i++) if (w[i] != "" && w[i] !~ /^-/) explicit = 1
-                if (!explicit) { printf "%d:%s\n", FNR, line; break }
+                if (!explicit) printf "%d:%s\n", FNR, line   # one row per call, so a line with two counts twice
             }
         }
     ' "$1"
@@ -76,19 +76,22 @@ count() { scan "$1" | wc -l | tr -d ' '; }
 self_test() (
     fixtures="$(mktemp -d "${TMPDIR:-/tmp}/mktemp-explicit.XXXXXX")"
     trap 'rm -rf "$fixtures"' EXIT
-    # Fixture calls are written with printf so this source holds no bare call.
-    printf 'tmp="$(%s -d)"\n' mktemp >"$fixtures/bare-d.sh"
-    printf 'f=$(%s)\n' mktemp >"$fixtures/bare.sh"
-    printf 'x="$(%s 2>/dev/null)" || return 2\n' mktemp >"$fixtures/bare-redirect.sh"
-    printf 'tmp=$(%s -d) || exit 1\n' mktemp >"$fixtures/bare-or.sh"
-    printf '%s -d | tee out\n' mktemp >"$fixtures/bare-pipe.sh"
-    printf 'tmp="$(%s -d "${TMPDIR:-/tmp}/x.XXXXXX")"\n' mktemp >"$fixtures/explicit.sh"
-    printf 'f="$(%s /tmp/x.XXXXXX 2>/dev/null)"\n' mktemp >"$fixtures/explicit-redirect.sh"
-    printf 'tmp="$(%s -p "$dir" -d)"\n' mktemp >"$fixtures/explicit-p.sh"
-    printf '# tmp="$(%s -d)"\n' mktemp >"$fixtures/comment.sh"
-    printf 'REAL=$(command -v %s)\ncat >"$bin/%s"\n' mktemp mktemp >"$fixtures/word.sh"
-    printf 'tmp="$(%s -d)" # mktemp: allow -- location irrelevant\n' mktemp >"$fixtures/allowed.sh"
-    printf 'tmp="$(%s -d)" # mktemp: allow --   \n' mktemp >"$fixtures/empty-reason.sh"
+    # Fixture calls are written with printf, and the tool name is assembled at
+    # runtime, so this source holds no literal call for the guard to count.
+    mt="$(printf 'mk%s' temp)"
+    printf 'tmp="$(%s -d)"\n' "$mt" >"$fixtures/bare-d.sh"
+    printf 'f=$(%s)\n' "$mt" >"$fixtures/bare.sh"
+    printf 'x="$(%s 2>/dev/null)" || return 2\n' "$mt" >"$fixtures/bare-redirect.sh"
+    printf 'tmp=$(%s -d) || exit 1\n' "$mt" >"$fixtures/bare-or.sh"
+    printf '%s -d | tee out\n' "$mt" >"$fixtures/bare-pipe.sh"
+    printf 'a="$(%s -d)"; b="$(%s -d)"\n' "$mt" "$mt" >"$fixtures/two-per-line.sh"
+    printf 'tmp="$(%s -d "${TMPDIR:-/tmp}/x.XXXXXX")"\n' "$mt" >"$fixtures/explicit.sh"
+    printf 'f="$(%s /tmp/x.XXXXXX 2>/dev/null)"\n' "$mt" >"$fixtures/explicit-redirect.sh"
+    printf 'tmp="$(%s -p "$dir" -d)"\n' "$mt" >"$fixtures/explicit-p.sh"
+    printf '# tmp="$(%s -d)"\n' "$mt" >"$fixtures/comment.sh"
+    printf 'REAL=$(command -v %s)\ncat >"$bin/%s"\n' "$mt" "$mt" >"$fixtures/word.sh"
+    printf 'tmp="$(%s -d)" # mktemp: allow -- location irrelevant\n' "$mt" >"$fixtures/allowed.sh"
+    printf 'tmp="$(%s -d)" # mktemp: allow --   \n' "$mt" >"$fixtures/empty-reason.sh"
     for f in bare-d bare bare-redirect bare-or bare-pipe empty-reason; do
         [ "$(count "$fixtures/$f.sh")" = 1 ] || {
             echo "test-mktemp-explicit: self-test failed: missed $f.sh" >&2
@@ -97,6 +100,10 @@ self_test() (
     done
     [ "$(key "template/scripts/[% if a == 'b' and c != d %]test-x.sh[% endif %]")" = scripts/test-x.sh ] || {
         echo "test-mktemp-explicit: self-test failed: conditional name not normalized" >&2
+        exit 1
+    }
+    [ "$(count "$fixtures/two-per-line.sh")" = 2 ] || {
+        echo "test-mktemp-explicit: self-test failed: two calls on one line not both counted" >&2
         exit 1
     }
     for f in explicit explicit-redirect explicit-p comment word allowed; do

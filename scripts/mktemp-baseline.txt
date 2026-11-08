@@ -7,7 +7,7 @@ scripts/test-agent-instructions-size.sh 1
 scripts/test-agent-profile.sh 1
 scripts/test-agent-registry.sh 1
 scripts/test-bootstrap-related-repos.sh 1
-scripts/test-bootstrap-remote.sh 22
+scripts/test-bootstrap-remote.sh 23
 scripts/test-bot-autonomy.sh 1
 scripts/test-claim-release-merged.sh 1
 scripts/test-classification-reconcile.sh 1
@@ -25,7 +25,6 @@ scripts/test-image-staleness.sh 1
 scripts/test-label-registry.sh 5
 scripts/test-lint-hygiene.sh 2
 scripts/test-meta-install.sh 1
-scripts/test-mktemp-explicit.sh 10
 scripts/test-output.sh 1
 scripts/test-rebuild-devcontainer.sh 1
 scripts/test-registry-docs.sh 1
