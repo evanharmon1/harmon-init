@@ -208,6 +208,12 @@ restarts the gate.
 A genuine merge refusal, or a base merge that must ship with a fix, falls back
 to a local merge, which is an ordinary remediation round.
 `AGENTS.md` § "Policy invariants" states the standard path and fallback.
+That order is for agent and human PRs. A Renovate PR is never caught up with
+update-branch or a local merge: a commit Renovate did not author stops it
+rebasing the branch. Renovate rebases it itself (`rebaseWhen` is
+`behind-base-branch`), and ticking its rebase checkbox requests that sooner;
+`AGENTS.md` § "Policy invariants" also covers recovering a branch that
+already took a manual catch-up.
 
 A base catch-up merge is tried for a **carry** before the exemption. When the
 change's canonical diff digest against the new base is identical to the one a
