@@ -197,6 +197,12 @@ exact accepted grammar and limits.
   rules are off.
 - **Shell:** must pass `shellcheck --severity=error` and `shfmt -d`, and stay
   portable to macOS bash 3.2 (no `mapfile`, no `grep -P`).
+- **Bounded commands:** `timeout -k` on a command read through `$(...)` or a
+  pipe does not bound the call. The read lasts until every process holding the
+  pipe exits, and uutils `timeout` (Ubuntu 26.04, so `ubuntu-latest` since
+  2026-11-08) sends its KILL to the direct child only, leaving a surviving
+  descendant holding it. Capture into a file and read that back instead
+  (`bounded_run` in `scripts/lib/gh-rest.sh`).
 
 ## CI / GitHub Actions
 
