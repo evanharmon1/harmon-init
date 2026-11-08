@@ -197,6 +197,14 @@ exact accepted grammar and limits.
   rules are off.
 - **Shell:** must pass `shellcheck --severity=error` and `shfmt -d`, and stay
   portable to macOS bash 3.2 (no `mapfile`, no `grep -P`).
+- **Test scratch dirs:** create them under an explicit parent —
+  `mktemp -d "${TMPDIR:-/tmp}/name.XXXXXX"`, then `pwd -P` where paths are
+  compared. A bare `mktemp -d` ignores `TMPDIR` on macOS and returns a
+  `/var/folders` path (`/var` is a symlink to `/private/var`), so such tests
+  pass on Ubuntu and fail on a Mac. `task test:mktemp-explicit` rejects a new
+  bare call in `scripts/test-*.sh`; mark one whose location truly does not
+  matter with `# mktemp: allow -- REASON`. Pre-existing calls are counted in
+  `scripts/mktemp-baseline.txt`, which can only shrink.
 
 ## CI / GitHub Actions
 
