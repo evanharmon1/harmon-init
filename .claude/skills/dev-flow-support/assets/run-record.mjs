@@ -6,6 +6,15 @@
 // Usage:
 //   run-record.mjs transition   --slate ID --session ID --run-id ID --stage STAGE [--exit TEXT] [--at TS]
 //                               [--remediation-head SHA --remediation-findings ID,ID,...]
+//                               [--pre-cycle-finding-id ID --pre-cycle-original-priority P0|P1
+//                                --pre-cycle-adjudicated-priority P0|P1 --pre-cycle-source-head SHA
+//                                --pre-cycle-source-comment-id ID --pre-cycle-source-actor-id ID
+//                                --pre-cycle-source-created-at TS --pre-cycle-source-updated-at TS --pre-cycle-source-digest sha256:HEX
+//                                --pre-cycle-verification-head SHA --pre-cycle-verification-reply-id ID
+//                                --pre-cycle-verification-actor-id ID --pre-cycle-verification-created-at TS
+//                                --pre-cycle-verification-updated-at TS --pre-cycle-verification-digest sha256:HEX
+//                                [--pre-cycle-batch FILE]]
+//                               [--finder-state SLUG=CANONICAL_PATH]...
 //   run-record.mjs authorize-cap --slate ID --session ID --run-id ID --stage challenge|review|integration --round N --actor ID --instruction TEXT [--at TS]
 //   run-record.mjs intervention --slate ID --session ID --run-id ID --kind asked|other|prompt --note TEXT [--ruling FILE] [--at TS]
 //                               [--decision approved|denied --command TEXT [--answered-by orchestrator|human]]
@@ -13,6 +22,8 @@
 //                               --authority-kind reserve|attach|carry [--parent-authority-digest SHA256] [--repo-dir DIR] [--at TS]
 //   run-record.mjs bind-pr      --slate ID --session ID --run-id ID --number N --url URL [--at TS]
 //   run-record.mjs promote [--check] --slate ID --session ID --run-id ID --head SHA --fingerprint TEXT --gate FILE [--exit TEXT] [--at TS]
+//   run-record.mjs takeover --slate ID --session ID --owner-token TOKEN --run-id ID --actor TEXT --reason TEXT --number N --url URL [--at TS]
+//   run-record.mjs takeover-promote [--check] --slate ID --session ID --owner-token TOKEN --run-id ID --number N --url URL --head SHA --fingerprint TEXT --gate FILE [--at TS]
 //   run-record.mjs close        --slate ID --session ID --run-id ID [--outcome capped|escalated|abandoned --exit TEXT] [--at TS]
 //   run-record.mjs prune        [--dry-run] [--repo-root DIR]
 //   run-record.mjs solo-init    --session ID --run-id run-<issue>-<name> --issue N --title TEXT --url URL
@@ -100,8 +111,10 @@ import { hostname, tmpdir } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { validateResolvedPolicy } from './devflow-policy.mjs'
-import { authenticateIntegratorReceipt, integratorReceiptObservationErrors } from './lib/integrator-receipt-auth.mjs'
-import { AUTHORITY_NOTE_PREFIX, authorityIdentity, authorityNote, consumedRequestTimes, retainedAuthorities, retainedCarryPredecessor, retainedCarryReplay, retainedCycleOrigin, retainedCycleOriginEntry, retainedRetryReservation, retainedReservation, sameAuthoritySnapshot, validateAuthority } from './lib/integrator-review-authority.mjs'
+import { authenticateCheckerCycle, authenticateIntegratorReceipt, authenticatePreCycleRemediation, integratorReceiptObservationErrors } from './lib/integrator-receipt-auth.mjs'
+import { AUTHORITY_NOTE_PREFIX, assertRemediationReviewSettled, unreceiptedReviewReservations, releasedReviewReservation, authorityIdentity, authorityNote, consumedRequestTimes, retainedAuthorities, retainedCarryPredecessor, retainedCarryReplay, retainedCycleOrigin, retainedCycleOriginEntry, retainedRetryReservation, retainedReservation, sameAuthoritySnapshot, validateAuthority } from './lib/integrator-review-authority.mjs'
+
+import { checkerCycleHistory, terminalReviewHistory } from './lib/checker-cycle-history.mjs'
 
 const ASSET_DIR = dirname(realpathSync(fileURLToPath(import.meta.url)))
 const VALIDATOR = join(ASSET_DIR, 'validate-result-schemas.mjs')
@@ -673,6 +686,7 @@ export function releaseSlateLock({ root, slate, session, ownerToken = process.en
 // ---------------------------------------------------------------------------
 
 const OUTCOME_FIELDS = ['outcome', 'at']
+const TAKEOVER_FIELDS = ['kind', 'slate', 'session', 'actor', 'reason', 'pr', 'terminal_digest', 'at', 'head', 'gate_fingerprint']
 const PR_FIELDS = ['number', 'url', 'bound_at']
 
 function appendChain(entries, fields, content) {
@@ -718,10 +732,34 @@ function rulingSuffix(common, runId, file) {
   }
   // Hash and publish the same read, not two reads of a mutable source.
   const content = readFileSync(absolute)
+  // A generic ruling is intentionally opaque evidence, but it must never
+  // mint an artifact consumed as an authenticated admission. Admissions have
+  // a dedicated publication path below, after the complete candidate and its
+  // live GitHub attestations have been validated.
+  try {
+    if (JSON.parse(content)?.kind === 'pre-cycle-remediation-admission') {
+      throw new Refusal('pre-cycle remediation admissions are recorded only by the authenticated transition writer')
+    }
+  } catch (error) {
+    if (error instanceof Refusal) throw error
+  }
   const digest = createHash('sha256').update(content).digest('hex')
   const snapshot = join(common, 'dev-flow-v2', 'runs', runId, 'rulings', digest)
   publishExclusive(snapshot, content, 'ruling')
   return ` [ruling ${relative(common, snapshot)} sha256=${digest}]`
+}
+
+// Build an admission before its mutable projection is validated, but do not
+// publish it yet. A refused transition must leave no retained ruling.
+function preCycleAdmission(common, runId, admission) {
+  const content = Buffer.from(`${JSON.stringify(admission, null, 2)}\n`, 'utf8')
+  const digest = createHash('sha256').update(content).digest('hex')
+  const snapshot = join(common, 'dev-flow-v2', 'runs', runId, 'rulings', digest)
+  return {
+    digest,
+    note: `pre-cycle-remediation-admission v1 sha256=${digest} [ruling ${relative(common, snapshot)} sha256=${digest}]`,
+    publish() { publishExclusive(snapshot, content, 'ruling') },
+  }
 }
 
 // remediationRecord — the explicit remediation-push record (harmon-devkit#1386),
@@ -747,19 +785,205 @@ function remediationRecord(record, stage, args) {
   return { head, findings: ids }
 }
 
+// A pre-cycle P0/P1 is not an integration adjudication: there was no
+// integrator envelope or Codex cycle to adjudicate yet.  Retain the authentic
+// reviewer thread and the remediation head on the re-entry that follows the
+// fix instead.  The entry hashes its complete evidence against the previous
+// pre-cycle entry so a later edit cannot turn an unresolved old-head finding
+// into an apparent clean first cycle.
+function preCycleRemediationRecord(record, stage, args, remediation, context) {
+  const names = [
+    'pre-cycle-finding-id', 'pre-cycle-original-priority', 'pre-cycle-adjudicated-priority',
+    'pre-cycle-source-head', 'pre-cycle-source-comment-id', 'pre-cycle-source-actor-id',
+    'pre-cycle-source-created-at', 'pre-cycle-source-updated-at', 'pre-cycle-source-digest', 'pre-cycle-verification-head',
+    'pre-cycle-verification-reply-id', 'pre-cycle-verification-actor-id',
+    'pre-cycle-verification-created-at', 'pre-cycle-verification-updated-at', 'pre-cycle-verification-digest',
+  ]
+  const supplied = names.filter((name) => args[name] !== undefined)
+  if (supplied.length === 0) {
+    if (args['pre-cycle-batch'] !== undefined) {
+      throw new UsageError('--pre-cycle-batch requires the complete primary pre-cycle remediation evidence')
+    }
+    return null
+  }
+  if (supplied.length !== names.length) throw new UsageError(`pre-cycle remediation evidence requires every --${names.join(', --')} field`)
+  if (stage !== 'integration' || remediation === null || !record.stage_transitions.some((transition) => transition.stage === 'integration')) {
+    throw new Refusal('pre-cycle remediation evidence is recorded only on an integration re-entry with a remediation head')
+  }
+  if (remediation.findings.length !== 0) throw new Refusal('pre-cycle remediation evidence cannot share a remediation record with adjudicated finding ids')
+  if ((record.receipts ?? []).some((receipt) => receipt?.kind === 'pass' && /^integration-r[1-9][0-9]*-integrator$/.test(receipt.file ?? ''))) {
+    throw new Refusal('pre-cycle remediation evidence is available only before the first receipted integration cycle; never retrofit historical receipts')
+  }
+  // A receipt is settlement evidence, not admission evidence.  The immutable
+  // reserve capture is the first point at which a review can actually have
+  // been requested, so a recovery recorded after it is necessarily late.
+  if (retainedAuthorities(record, { common: context.common, runId: record.run_id }).length > 0) {
+    throw new Refusal('pre-cycle remediation evidence must be recorded before the first retained review reservation; never retrofit a requested cycle')
+  }
+  const integer = (name) => {
+    const value = Number(args[name])
+    if (!Number.isSafeInteger(value) || value < 1) throw new UsageError(`--${name} must be a positive integer`)
+    return value
+  }
+  const timestamp = (name) => {
+    const value = args[name]
+    if (typeof value !== 'string' || !TIMESTAMP.test(value) || Number.isNaN(Date.parse(value))) throw new UsageError(`--${name} must be a UTC timestamp`)
+    return value
+  }
+  const sha = (name) => {
+    const value = args[name]
+    if (typeof value !== 'string' || !/^[0-9a-f]{40}$/.test(value)) throw new UsageError(`--${name} must be a 40-hex SHA`)
+    return value
+  }
+  const digest = (name) => {
+    const value = args[name]
+    if (typeof value !== 'string' || !/^sha256:[0-9a-f]{64}$/.test(value)) throw new UsageError(`--${name} must be sha256:<64 lowercase hex>`)
+    return value
+  }
+  const original = args['pre-cycle-original-priority']
+  const adjudicated = args['pre-cycle-adjudicated-priority']
+  if (!['P0', 'P1'].includes(original) || !['P0', 'P1'].includes(adjudicated) || original !== adjudicated) {
+    throw new Refusal('pre-cycle remediation preserves its original P0/P1 exactly; it cannot be lowered or re-scored')
+  }
+  const sourceCreatedAt = timestamp('pre-cycle-source-created-at')
+  const sourceUpdatedAt = timestamp('pre-cycle-source-updated-at')
+  const verifiedAt = timestamp('pre-cycle-verification-created-at')
+  const verifiedUpdatedAt = timestamp('pre-cycle-verification-updated-at')
+  if (!(Date.parse(sourceCreatedAt) <= Date.parse(sourceUpdatedAt) && Date.parse(verifiedAt) <= Date.parse(verifiedUpdatedAt) &&
+      Date.parse(sourceUpdatedAt) <= Date.parse(verifiedUpdatedAt) && Date.parse(verifiedUpdatedAt) <= Date.parse(args.at))) {
+    throw new Refusal('pre-cycle source revision, verification, and remediation entry must be chronologically ordered')
+  }
+  const sourceHead = sha('pre-cycle-source-head')
+  const verificationHead = sha('pre-cycle-verification-head')
+  if (sourceHead === verificationHead || verificationHead !== remediation.head) {
+    throw new Refusal('pre-cycle verification head must differ from the source head and equal --remediation-head')
+  }
+  const prior = record.stage_transitions
+    .map((transition) => transition?.remediation?.pre_cycle)
+    .flatMap((container) => {
+      if (!container || typeof container !== 'object') return []
+      // Current records retain a batch; tolerate the prior singular shape so
+      // its immutable history still participates in duplicate/chain checks.
+      return Array.isArray(container.findings) ? container.findings : [container]
+    })
+    .filter((entry) => entry && typeof entry === 'object')
+  const findingId = args['pre-cycle-finding-id']
+  if (typeof findingId !== 'string' || !/^pre-cycle-[a-z0-9][a-z0-9-]*-[1-9][0-9]*$/.test(findingId)) throw new UsageError('--pre-cycle-finding-id is invalid')
+  if (prior.some((entry) => entry.finding_id === findingId)) throw new Refusal(`pre-cycle finding ${findingId} is already retained`)
+  const prevDigest = prior.length === 0 ? 'genesis' : prior.at(-1).digest
+  const entry = {
+    seq: prior.length,
+    finding_id: findingId,
+    original_priority: original,
+    adjudicated_priority: adjudicated,
+    source: {
+      comment_id: integer('pre-cycle-source-comment-id'),
+      author_actor_id: integer('pre-cycle-source-actor-id'),
+      created_at: sourceCreatedAt,
+      updated_at: sourceUpdatedAt,
+      head: sourceHead,
+      body_digest: digest('pre-cycle-source-digest'),
+    },
+    verification: {
+      head: verificationHead,
+      reply_id: integer('pre-cycle-verification-reply-id'),
+      author_actor_id: integer('pre-cycle-verification-actor-id'),
+      created_at: verifiedAt,
+      updated_at: verifiedUpdatedAt,
+      body_digest: digest('pre-cycle-verification-digest'),
+    },
+    prev_digest: prevDigest,
+  }
+  entry.digest = chainDigest({
+    finding_id: entry.finding_id,
+    original_priority: entry.original_priority,
+    adjudicated_priority: entry.adjudicated_priority,
+    source: entry.source,
+    verification: entry.verification,
+  }, prevDigest)
+  const findings = [entry]
+  // Several independent findings can be fixed in the same remediation push.
+  // The optional batch is content, not a second transition: every member is
+  // authenticated below and shares this exact remediation head.
+  if (args['pre-cycle-batch'] !== undefined) {
+    let batch
+    try { batch = JSON.parse(readFileSync(args['pre-cycle-batch'], 'utf8')) } catch { throw new UsageError('--pre-cycle-batch must name a JSON array of finding evidence') }
+    if (!Array.isArray(batch) || batch.length === 0) throw new UsageError('--pre-cycle-batch must contain one or more finding evidence objects')
+    for (const candidate of batch) {
+      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate) ||
+          typeof candidate.finding_id !== 'string' || !/^pre-cycle-[a-z0-9][a-z0-9-]*-[1-9][0-9]*$/.test(candidate.finding_id) ||
+          !['P0', 'P1'].includes(candidate.original_priority) ||
+          candidate.adjudicated_priority !== candidate.original_priority || !candidate.source || !candidate.verification ||
+          candidate.verification.head !== verificationHead) throw new UsageError('--pre-cycle-batch has malformed finding evidence')
+      const source = candidate.source
+      const verification = candidate.verification
+      const sane = (value) => typeof value === 'string' && TIMESTAMP.test(value) && !Number.isNaN(Date.parse(value))
+      const id = (value) => Number.isSafeInteger(value) && value > 0
+      const sha40 = (value) => typeof value === 'string' && /^[0-9a-f]{40}$/.test(value)
+      const bodyDigest = (value) => typeof value === 'string' && /^sha256:[0-9a-f]{64}$/.test(value)
+      if (!id(source.comment_id) || !id(source.author_actor_id) || !sane(source.created_at) || !sane(source.updated_at) || !sha40(source.head) || !bodyDigest(source.body_digest) ||
+          !id(verification.reply_id) || !id(verification.author_actor_id) || !sane(verification.created_at) || !sane(verification.updated_at) || !bodyDigest(verification.body_digest) || source.head === verification.head ||
+          !(Date.parse(source.created_at) <= Date.parse(source.updated_at) && Date.parse(verification.created_at) <= Date.parse(verification.updated_at) &&
+            Date.parse(source.updated_at) <= Date.parse(verification.updated_at) && Date.parse(verification.updated_at) <= Date.parse(args.at))) {
+        throw new UsageError('--pre-cycle-batch has invalid finding evidence timestamps or identities')
+      }
+      if (prior.some((item) => item.finding_id === candidate.finding_id) || findings.some((item) => item.finding_id === candidate.finding_id)) throw new Refusal(`pre-cycle finding ${candidate.finding_id} is already retained`)
+      const previous = findings.at(-1)
+      const additional = { finding_id: candidate.finding_id, original_priority: candidate.original_priority,
+        adjudicated_priority: candidate.adjudicated_priority, source: candidate.source, verification: candidate.verification,
+        seq: prior.length + findings.length, prev_digest: previous.digest }
+      additional.digest = chainDigest({ finding_id: additional.finding_id, original_priority: additional.original_priority,
+        adjudicated_priority: additional.adjudicated_priority, source: additional.source, verification: additional.verification }, additional.prev_digest)
+      findings.push(additional)
+    }
+  }
+  return findings
+}
+
 const MUTATORS = {
-  transition(record, args) {
+  transition(record, args, context) {
     if (record.outcome !== null) throw new Refusal(`run already ended with outcome ${record.outcome}`)
     const stage = args.stage
     if (typeof stage !== 'string' || stage === '') throw new UsageError('--stage is required')
     guardTimestamp(record, args.at)
     const remediation = remediationRecord(record, stage, args)
+    const preCycle = preCycleRemediationRecord(record, stage, args, remediation, context)
+    let afterValidate = null
+    if (preCycle) {
+      for (const finding of preCycle) {
+        const runDir = join(context.common, 'dev-flow-v2', 'runs', record.run_id)
+        const errors = authenticatePreCycleRemediation(finding, { record, repoDir: branchHead(runDir).repoRoot })
+        if (errors.length) throw new Refusal(errors.join('; '))
+      }
+    }
+    if (stage === 'implement' && record.stage_transitions.at(-1).stage === 'integration') {
+      requireRemediationReceipts(record, args, { common: context.common, root: join(context.common, 'dev-flow-v2') })
+    }
     closeLastExit(record, args.exit, { required: true })
+    if (preCycle) {
+      // The copy in run.json is deliberately only a projection.  Preserve the
+      // admission separately using the same no-clobber ruling mechanism that
+      // protects review authority, so rehashing or deleting mutable record
+      // fields cannot erase that a recovery was admitted.
+      const admission = preCycleAdmission(context.common, record.run_id, {
+        schema: 1,
+        kind: 'pre-cycle-remediation-admission',
+        run_id: record.run_id,
+        transition_index: record.stage_transitions.length,
+        remediation_head: remediation.head,
+        findings: preCycle,
+      })
+      // Publish only after the complete mutable candidate validates. The
+      // content-addressed destination makes a post-publication retry safe.
+      afterValidate = () => admission.publish()
+      record.interventions.push({ kind: 'other', at: args.at, note: admission.note })
+      remediation.pre_cycle = { admission_digest: admission.digest, findings: preCycle }
+    }
     record.stage_transitions.push(remediation ? { stage, entered_at: args.at, remediation } : { stage, entered_at: args.at })
     // dev-flow-exit reads the active stage from the receipts sequence, so the
     // transition and its receipt land in the same candidate.
     record.receipts = [...(record.receipts ?? []), { kind: 'transition', stage, entered_at: args.at }]
-    return `transition → ${stage}`
+    return afterValidate ? { summary: `transition → ${stage}`, afterValidate } : `transition → ${stage}`
   },
   'authorize-cap'(record, args) {
     guardTimestamp(record, args.at)
@@ -919,10 +1143,23 @@ function recordMutation(command, args, { check = false } = {}) {
       if (retained && retained.state !== 'working') throw new Refusal('retained lane must pass reactivation admission before a fix round')
     }
     const candidate = check ? structuredClone(record) : record
-    const result = MUTATORS[command](candidate, args, { common })
-    if (result === null) return null
-    if (check) validateCandidate('run', canonical, candidate)
-    else writeValidated('run', canonical, candidate)
+    const mutation = MUTATORS[command](candidate, args, { common })
+    if (mutation === null) return null
+    const { summary: result, afterValidate = null } = typeof mutation === 'string'
+      ? { summary: mutation }
+      : mutation
+    if (check) {
+      validateCandidate('run', canonical, candidate)
+    } else {
+      // Keep deferred durable side effects behind a full dry validation of
+      // the complete candidate. Ordinary mutations retain writeValidated's
+      // single validation/replacement path.
+      if (afterValidate) {
+        validateCandidate('run', canonical, candidate)
+        afterValidate()
+      }
+      writeValidated('run', canonical, candidate)
+    }
     return result
   })
   if (check) return `checked ${summary === null ? 'no change (already recorded)' : summary} (read-only)`
@@ -934,6 +1171,214 @@ function recordMutation(command, args, { check = false } = {}) {
   }
   if (command === 'promote') return `recorded ${summary}; ${retirement}`
   return summary === null ? 'no change (already recorded)' : `recorded ${summary}`
+}
+
+// Recovery appends its own history; it never reopens the lane or changes its owner.
+// Authorization is a current lock over the source lane's qualified issue. This
+// permits a different slate/session only after the old reservation is released;
+// no lock recovery or ownership transfer is implicit in this command.
+function takeoverMutation(command, args) {
+  const { root } = stateRoot()
+  const slate = requireId('slate', args.slate)
+  const session = requireId('session', args.session)
+  const runId = requireId('run-id', args['run-id'])
+  const explicitAt = args.at
+  const at = resolveAt(explicitAt)
+  const { registry } = lockPaths(root, slate)
+  return withMutex(registry, () => {
+    const lock = validateSlateLock({ root, slate, session, ownerToken: args['owner-token'] })
+    const owner = readRunOwner(root, runId)
+    if (owner === null) throw new Refusal('takeover requires an existing run owner')
+    const revisions = readValidatedPlan(root, owner)?.revisions ?? []
+    const keys = new Set()
+    for (const { plan } of revisions) {
+      for (const lane of [...plan.lanes, ...(plan.retained_lanes ?? []).map((entry) => entry.lane)]) {
+        if (lane.run_id === runId) keys.add(issueKey({}, lane.issue, lane.repo ?? plan.repo ?? originRepository()))
+      }
+    }
+    if (keys.size !== 1 || !lock.scope.issues.some((issue) => keys.has(issueKey({}, issue, currentPlan(root, slate)?.repo ?? originRepository())))) {
+      throw new Refusal("takeover lock must reserve the source run's same qualified issue")
+    }
+    // Check other reservations even when the caller's scope has not changed.
+    for (const name of readdirSync(lock.dir)) {
+      if (!name.endsWith('.json') || name === `${slate}.json`) continue
+      const other = readLock(join(lock.dir, name))
+      const otherPlan = currentPlan(root, other.slate_id)
+      if (other.issues.some((issue) => keys.has(issueKey({}, issue, otherPlan?.repo ?? originRepository())))) {
+        throw new Refusal('source issue is still reserved by another slate; no takeover or lock recovery is performed')
+      }
+    }
+    const canonical = join(root, 'runs', runId, 'run.json')
+    return withMutex(canonical, () => {
+      const record = readJson(canonical, 'run record')
+      validateFile('run', canonical, 'existing run')
+      if (record.run_id !== runId || !['escalated', 'capped'].includes(record.outcome)) {
+        throw new Refusal('takeover requires the existing run outcome to be escalated or capped')
+      }
+      const pr = { number: Number(args.number), url: args.url }
+      if (canonicalJson(pr) !== canonicalJson(record.pr) || record.pr === null) {
+        throw new Refusal("takeover must name the run's bound PR number and URL")
+      }
+      const history = record.takeover_history ?? []
+      const start = history[0]
+      let content
+      if (command === 'takeover') {
+        if (![args.actor, args.reason].every((value) => typeof value === 'string' && value.trim() !== '')) {
+          throw new UsageError('--actor and --reason (the lane terminal blocker) are required')
+        }
+        content = { kind: 'takeover', slate, session, actor: args.actor, reason: args.reason,
+          pr, terminal_digest: record.outcome_transitions.at(-1).digest, at }
+      } else {
+        if (!start || start.slate !== slate || start.session !== session) {
+          throw new Refusal('takeover promotion requires the recorded taking-over slate and session')
+        }
+        if (typeof args.gate !== 'string' || args.gate === '') throw new Refusal('--gate readiness pass document is required')
+        const gate = readJson(args.gate, 'readiness gate document')
+        if (!/^[0-9a-f]{40}$/.test(args.head ?? '') || typeof args.fingerprint !== 'string' || args.fingerprint.trim() === '' ||
+            gate?.status !== 'pass' || !['ready', 'promoted'].includes(gate.condition) ||
+            gate.head !== args.head || gate.fingerprint !== args.fingerprint) {
+          throw new Refusal('takeover promotion requires a passing gate on the same head and fingerprint')
+        }
+        content = { ...Object.fromEntries(TAKEOVER_FIELDS.map((key) => [key, start[key]])),
+          kind: 'promotion', at, head: args.head, gate_fingerprint: args.fingerprint }
+      }
+      const existing = history.find((entry) => entry.kind === content.kind)
+      if (existing) {
+        if (explicitAt === undefined) content.at = existing.at
+        const picked = Object.fromEntries(TAKEOVER_FIELDS.map((key) => [key, existing[key]]))
+        if (canonicalJson(picked) !== canonicalJson(content)) throw new Refusal('conflicting takeover retry; history is never rewritten')
+        return 'no change (takeover already recorded)'
+      }
+      record.takeover_history = appendChain(history, TAKEOVER_FIELDS, content)
+      if (args.check === true) validateCandidate('run', canonical, record)
+      else writeValidated('run', canonical, record)
+      return `${args.check === true ? 'checked' : 'recorded'} takeover ${content.kind}`
+    })
+  })
+}
+
+// Fixed supported locations: owner-record state, shared driver/broker state,
+// and checkout-local state. Deduplicate common/local paths in a main checkout.
+function remediationStatePaths({ runDir, commonDir, gitDir }, slug, repo, pr) {
+  const directories = slug === 'codex-cloud' ? ['integrate-codex', 'integrate-codex-cloud'] : [`integrate-${slug}`]
+  return [...new Set([
+    join(runDir, `${slug}-review.json`),
+    ...[commonDir, gitDir].flatMap((directory) => directories.map((name) => join(directory, name, repo, `${pr}.json`))),
+  ])]
+}
+
+// Resolve the bound branch's worktree, including a cross-worktree conductor.
+// Caller-named files assert a supported live location, never a scratch snapshot.
+function requireRemediationReceipts(record, args, { common, root }) {
+  const recover = (reason) => {
+    throw new Refusal(`integration-remediation-unsettled: ${reason}; before remediation, bind-pr to the original PR if missing, restore its lane worktree/state, retain existing reserve authority; if it is missing, stop for owner recovery; otherwise capture terminal attach (or release an unused reservation), dispatch the integrator and run receipt. Never reset counters or fabricate a historical pass.`)
+  }
+  try {
+    const runDir = join(root, 'runs', record.run_id)
+    const binding = record.pr_bindings?.at(-1)
+    let repo, pr
+    try {
+      const url = new URL(binding?.url)
+      const match = /^\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/pull\/([1-9][0-9]*)$/.exec(url.pathname)
+      if (!match || Number(match[2]) !== binding.number) throw new Error('invalid binding')
+      repo = match[1]
+      pr = binding.number
+    } catch { recover('run has no valid bound PR; use bind-pr with its original number and URL') }
+    const { branch, repoRoot } = branchHead(runDir)
+    const worktrees = git(['worktree', 'list', '--porcelain', '-z'], repoRoot).split('\0\0')
+      .map((entry) => entry.split('\0'))
+      .filter((fields) => fields.includes(`branch refs/heads/${branch}`))
+    if (worktrees.length !== 1) recover('bound branch has no unique live lane worktree')
+    const lane = worktrees[0].find((field) => field.startsWith('worktree '))?.slice(9)
+    if (!lane) recover('bound branch worktree cannot be resolved')
+    const gitDir = git(['rev-parse', '--path-format=absolute', '--git-dir'], lane)
+    const commonDir = stateRoot(lane).common
+    const locations = { runDir, commonDir, gitDir }
+    const entries = retainedAuthorities(record, { common, runId: record.run_id })
+    const retainedFinders = new Set()
+    const debts = unreceiptedReviewReservations(record, entries, { recordDir: runDir })
+    for (const entry of entries) {
+      const state = entry.authority.snapshot
+      if (state.repo !== repo || state.pr !== pr) recover('retained review authority belongs to another PR binding')
+      retainedFinders.add(state.finder?.slug ?? 'codex-cloud')
+    }
+    const slugs = new Set(['codex-cloud', ...retainedFinders])
+    for (const directory of new Set([commonDir, gitDir])) {
+      for (const name of readdirSync(directory)) {
+        if (name.startsWith('integrate-') && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name.slice(10))) {
+          slugs.add(name === 'integrate-codex' ? 'codex-cloud' : name.slice(10))
+        }
+      }
+    }
+    for (const name of readdirSync(runDir)) {
+      const match = /^([a-z0-9]+(?:-[a-z0-9]+)*)-review(?:\.spend)?\.json$/.exec(name)
+      if (match) slugs.add(match[1])
+    }
+    const pathsFor = (slug) => remediationStatePaths(locations, slug, repo, pr)
+    const asserted = new Set()
+    for (const spec of args['finder-state'] ?? []) {
+      const separator = spec.indexOf('=')
+      const slug = spec.slice(0, separator), file = spec.slice(separator + 1)
+      if (separator < 1 || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug) || asserted.has(slug)) {
+        recover('--finder-state must be a unique SLUG=CANONICAL_PATH for each finder')
+      }
+      asserted.add(slug)
+      slugs.add(slug)
+      if (!pathsFor(slug).some((candidate) => resolve(file) === candidate ||
+          (existsSync(candidate) && realpathSync(file) === realpathSync(candidate)))) {
+        recover('--finder-state is not a supported canonical live state location')
+      }
+    }
+    const optionalState = (file) => {
+      let bytes
+      try { bytes = readFileSync(file, 'utf8') } catch (error) {
+        if (error.code === 'ENOENT') return null
+        throw error // Unreadable is not authenticated absence.
+      }
+      const value = JSON.parse(bytes)
+      if (!value || typeof value !== 'object' || Array.isArray(value)) recover(`invalid checker state or spend at ${file}`)
+      return value
+    }
+    for (const slug of slugs) {
+      const candidates = pathsFor(slug).map((file) => ({
+        file, state: optionalState(file), spendMap: optionalState(file.replace(/\.json$/, '.spend.json')),
+      }))
+      const debt = debts.find((entry) => (entry.authority.snapshot.finder?.slug ?? 'codex-cloud') === slug &&
+        !candidates.some(({ state }) => releasedReviewReservation(entry, state, entries)))
+      if (debt) recover(`integration-receipt-required: retained reservation for ${slug} cycle ${debt.authority.snapshot.charged_cycles + debt.authority.snapshot.exempt_cycles} has no admitted terminal receipt or exact released-unused proof`)
+      const hasSpend = candidates.some(({ spendMap }) => spendMap && Object.hasOwn(spendMap, record.run_id) &&
+        (spendMap[record.run_id]?.charged !== 0 || spendMap[record.run_id]?.exempt !== 0))
+      for (const { file, state, spendMap } of candidates) {
+        const spend = spendMap?.[record.run_id]
+        const hasRunSpend = spendMap && Object.hasOwn(spendMap, record.run_id)
+        if (hasRunSpend && !['charged', 'exempt'].every((key) => Number.isInteger(spend?.[key]) && spend[key] >= 0)) {
+          recover(`${slug} has invalid current-run spend counters at ${file}`)
+        }
+        if (hasRunSpend && !state &&
+            (spend?.charged !== 0 || spend?.exempt !== 0)) recover(`${slug} has run spend without live reservation state`)
+        if (!state) continue
+        if (state.run_id !== record.run_id) {
+          if (retainedFinders.has(slug) || hasSpend) recover(`${slug} state belongs to another run while this run retains authority or spend`)
+          continue
+        }
+        if (state.repo !== repo || state.pr !== pr || (state.finder?.slug ?? 'codex-cloud') !== slug) {
+          recover(`${slug} has no matching canonical live checker state`)
+        }
+        // A restored paid state cannot erase newer, unretained sidecar spend.
+        // CI can reclassify charged/exempt cycles, so reconcile totals only.
+        if (hasRunSpend && spend.charged + spend.exempt > state.charged_cycles + state.exempt_cycles) {
+          recover(`${slug} current-run spend exceeds its matching live state's cumulative cycles`)
+        }
+        assertRemediationReviewSettled(record, state, entries, { recordDir: runDir })
+        if (canonicalJson(readJson(file, 'live finder state')) !== canonicalJson(state)) {
+          recover(`${slug} checker state changed during the remediation check; retry on its current frontier`)
+        }
+      }
+    }
+  } catch (error) {
+    if (error instanceof Refusal && error.message.startsWith('integration-remediation-unsettled:')) throw error
+    recover(error.message)
+  }
 }
 
 // Capacity is a dispatch predicate, never a plan-coherence predicate. Historical
@@ -1368,7 +1813,7 @@ function publishExclusive(target, content, label) {
   return true
 }
 
-function planPolicy(policy, { strategySource, operatorPins }) {
+export function planPolicy(policy, { strategySource = policy?.strategy?.chosen_by ?? 'default_strategy', operatorPins = [] } = {}) {
   const fail = (what) => {
     throw new Refusal(`--policy is not a resolved policy projection (devflow-policy.mjs resolve): ${what}`)
   }
@@ -1841,10 +2286,8 @@ function admitIntegratorPass(record, envelope, runDir, args, { adoptOrphan = fal
   }
   const cycle = envelope.payload?.codex_cycle
   if (cycle) {
-    const previous = receiptedPassNames(record)
-      .filter((name) => /^integration-r[1-9][0-9]*-integrator$/.test(name))
-      .map((name) => readJson(join(runDir, 'passes', `${name}.json`), 'integration receipt'))
-      .map((pass) => pass.payload?.codex_cycle?.cycle ?? 0)
+    const previous = terminalReviewHistory(record, runDir)
+      .flatMap((item) => item.cycles.filter((entry) => entry.finder === 'codex-cloud').map((entry) => entry.cycle))
     const ordinal = Math.max(0, ...previous)
     if (cycle.cycle !== ordinal && cycle.cycle !== ordinal + 1) {
       refuse(`integration-history-incomplete: cycle ${cycle.cycle} follows receipted cycle ${ordinal}; capture and receipt each terminal integrator pass before moving its head. Restore original authenticated evidence through the owner recovery procedure; never fabricate a historical pass or renumber counters.`)
@@ -1897,6 +2340,45 @@ function ledgerEntries(round, from, to, repoRoot) {
 }
 
 const SIDE_EFFECTS = {
+  'checker-cycle-receipt'(record, args, { runDir }) {
+    const at = resolveAt(args.at)
+    guardTimestamp(record, at)
+    if (Date.parse(at) > Date.now()) throw new Refusal('checker receipt cannot be dated in the future')
+    if (record.stage_transitions.at(-1)?.stage !== 'integration') throw new Refusal('checker receipt requires active integration')
+    if (isBefore(at, record.stage_transitions.at(-1).entered_at)) throw new Refusal('checker receipt predates integration')
+    if (receiptedPassNames(record).some((name) => /^integration-r/.test(name)) ||
+        (existsSync(join(runDir, 'passes')) ? readdirSync(join(runDir, 'passes')) : []).some((name) => /^integration-r/.test(name)) ||
+        (existsSync(join(runDir, 'adjudications')) ? readdirSync(join(runDir, 'adjudications')) : []).some((name) => /^integration-r/.test(name))) {
+      throw new Refusal('checker receipt is available only before dispatched integration')
+    }
+    let existing
+    try { existing = checkerCycleHistory(record, runDir) }
+    catch (error) { throw new Refusal(`checker history is invalid: ${error.message}`) }
+    const { head } = branchHead(runDir)
+    let receipt
+    try {
+      receipt = authenticateCheckerCycle({ record,
+        policy: readJson(join(runDir, 'policy.json'), 'resolved policy'),
+        stateFile: args.state, repoDir: args['repo-dir'], recordDir: runDir,
+        at: existing[0]?.captured_at ?? at })
+    } catch (error) { throw new Refusal(`checker receipt authentication failed: ${error.message}`) }
+    if (receipt.head !== head || branchHead(runDir).head !== head) throw new Refusal('checker receipt head moved; historical backfill is forbidden')
+    const bytes = Buffer.from(`${JSON.stringify(receipt, null, 2)}\n`)
+    const digest = createHash('sha256').update(bytes).digest('hex')
+    if (existing.length) {
+      if (record.checker_cycle_receipts[0].digest !== digest) throw new Refusal('checker receipt conflicts with immutable admitted evidence')
+      return null
+    }
+    const directory = join(runDir, 'checker-cycles')
+    mkdirSync(directory, { recursive: true })
+    const file = join(directory, `${digest}.json`)
+    if (existsSync(file)) {
+      if (!readFileSync(file).equals(bytes)) throw new Refusal('checker receipt conflicts with retained bytes')
+    } else writeFileSync(file, bytes, { flag: 'wx', mode: 0o600 })
+    record.checker_cycle_receipts = [{ digest, at }]
+    checkerCycleHistory(record, runDir)
+    return { write: true, summary: 'authenticated checker-only cycle 1' }
+  },
   receipt(record, args, { runDir, canonical: runPath }) {
     if (typeof args.pass !== 'string' || args.pass === '') throw new UsageError('--pass is required')
     guardTimestamp(record, resolveAt(undefined))
@@ -2457,7 +2939,12 @@ const VALUE_FLAGS = new Set([
   'slate', 'session', 'owner-token', 'run-id', 'stage', 'exit', 'at', 'kind', 'note', 'ruling', 'number', 'url',
   'decision', 'command', 'answered-by',
   'head', 'fingerprint', 'gate', 'outcome', 'milestone', 'issues', 'reason',
-  'remediation-head', 'remediation-findings',
+  'remediation-head', 'remediation-findings', 'finder-state',
+  'pre-cycle-finding-id', 'pre-cycle-original-priority', 'pre-cycle-adjudicated-priority',
+  'pre-cycle-source-head', 'pre-cycle-source-comment-id', 'pre-cycle-source-actor-id',
+  'pre-cycle-source-created-at', 'pre-cycle-source-updated-at', 'pre-cycle-source-digest', 'pre-cycle-verification-head',
+  'pre-cycle-verification-reply-id', 'pre-cycle-verification-actor-id',
+  'pre-cycle-verification-created-at', 'pre-cycle-verification-updated-at', 'pre-cycle-verification-digest', 'pre-cycle-batch',
   'issue', 'title', 'branch', 'base', 'policy', 'registry-revision', 'pass', 'file',
   'actor-id', 'strategy-source', 'operator-pin', 'round', 'actor', 'instruction', 'lane', 'codex-state', 'codex-repo-dir', 'state', 'authority-kind', 'authority', 'parent-authority-digest', 'repo-dir',
 ])
@@ -2561,6 +3048,9 @@ function main(argv) {
   if (command === 'solo-init') return soloInit(parseFlags(rest, VALUE_FLAGS, BOOLEAN_FLAGS, new Set(['operator-pin'])))
   if (command === 'lane-init') return laneInit(parseFlags(rest))
   if (command === 'integration-review-capture') return captureIntegrationReviewAuthority(parseFlags(rest))
+  if (command === 'takeover' || command === 'takeover-promote') {
+    return takeoverMutation(command, parseFlags(rest, VALUE_FLAGS, new Set(['check'])))
+  }
   if (command === 'promote') {
     const args = parseScopeFlags(parseFlags(rest, VALUE_FLAGS, new Set(['check'])))
     return recordMutation(command, args, { check: args.check === true })
@@ -2569,7 +3059,7 @@ function main(argv) {
   if (!Object.hasOwn(MUTATORS, command ?? '')) {
     throw new UsageError('run-record.mjs transition|authorize-cap|intervention|bind-pr|promote|close|prune [--dry-run] [--repo-root DIR]|solo-init|lane-init|receipt|adjudicate|ledger|lock … (see the header)')
   }
-  return recordMutation(command, parseScopeFlags(parseFlags(rest)))
+  return recordMutation(command, parseScopeFlags(parseFlags(rest, VALUE_FLAGS, BOOLEAN_FLAGS, new Set(['finder-state']))))
 }
 
 if (realpathSync(process.argv[1] ?? '') === realpathSync(fileURLToPath(import.meta.url))) runCli(main)
