@@ -1529,9 +1529,10 @@ hook_deadline() {
 # closes, so every budget below is modelled from the sum, not the deadline
 # alone. Read out of status.sh rather than restated, because a grace changed
 # in one place and remembered in the other is exactly how these budgets rot.
-# Absent (no `-k` in run_timeout) it is zero and the sums are unchanged.
-kill_grace="$(sed -n -E 's/.*"\$\{TIMEOUT_BIN\}" -k ([0-9]+) "\$\{secs\}".*/\1/p' "${status}" | sed -n '1p')"
-: "${kill_grace:=0}"
+# An unreadable grace is a failure, never zero: a silent zero shrinks every sum
+# below and lets a hook deadline that truncates the buffered sections pass.
+kill_grace="$(sed -n -E '/^run_timeout\(\) \{/,/^\}/ s/^[[:space:]]*grace=([0-9]+)$/\1/p' "${status}" | sed -n '1p')"
+[ -n "${kill_grace}" ] || fail "could not read the kill grace out of run_timeout in ${status}"
 
 probe="$(sed -n -E 's/^NETWORK_TIMEOUT="\$\{NETWORK_TIMEOUT:-([0-9]+)\}"$/\1/p' "${status}")"
 [ -n "$probe" ] || fail "could not read NETWORK_TIMEOUT out of ${status}"
