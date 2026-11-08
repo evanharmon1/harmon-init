@@ -37,6 +37,7 @@ scripts/test-security-audit-fix.sh 1
 scripts/test-security-audit.sh 1
 scripts/test-semgrep-runtime.sh 1
 scripts/test-setup-gh-scopes.sh 1
+scripts/test-setup-github-issue-fields.sh 1
 scripts/test-setup-github-project.sh 1
 scripts/test-setup-github.sh 1
 scripts/test-skills-pin-minimum-fixtures.sh 1

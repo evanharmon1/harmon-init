@@ -8,7 +8,8 @@
 # explicit parent: `mktemp -d "${TMPDIR:-/tmp}/name.XXXXXX"`, followed by
 # `pwd -P` where the path is compared.
 #
-# Scans scripts/test-*.sh and template/scripts/test-*.sh (whichever exist).
+# Scans scripts/test-*.sh and template/scripts/test-*.sh (whichever exist),
+# including template suites whose name carries a Copier [% if %] conditional.
 #
 # Two ways a bare call is allowed, both reviewable in a diff:
 #   1. A same-line `# mktemp: allow -- REASON` pragma (REASON non-blank) for a
@@ -17,7 +18,7 @@
 #      predate this guard and have not been judged yet. The count must EQUAL
 #      the actual number of bare calls in that file: a new bare call fails, and
 #      so does fixing one without lowering the count, so the debt can only
-#      shrink. A `template/` copy is keyed by its `scripts/...` path. Entries
+#      shrink. A `template/` copy is keyed by its rendered `scripts/...` path. Entries
 #      for files a repo does not have are ignored (the file ships to consumers
 #      alongside only some of the suites it lists).
 # `--baseline` prints the current counts in baseline format.
@@ -62,8 +63,11 @@ scan() {
     ' "$1"
 }
 
-# key FILE -> the baseline key: template/scripts/x -> scripts/x
-key() { printf '%s\n' "${1#template/}"; }
+# norm PATH -> PATH with Copier conditional markers ([% if x %]...[% endif %]) removed.
+norm() { printf '%s\n' "$1" | sed 's/\[%[^%]*%\]//g'; }
+
+# key FILE -> the baseline key: template/scripts/[% if x %]test-y.sh[% endif %] -> scripts/test-y.sh
+key() { norm "${1#template/}"; }
 
 # count FILE -> number of unallowed bare calls.
 count() { scan "$1" | wc -l | tr -d ' '; }
@@ -91,6 +95,10 @@ self_test() (
             exit 1
         }
     done
+    [ "$(key "template/scripts/[% if a == 'b' and c != d %]test-x.sh[% endif %]")" = scripts/test-x.sh ] || {
+        echo "test-mktemp-explicit: self-test failed: conditional name not normalized" >&2
+        exit 1
+    }
     for f in explicit explicit-redirect explicit-p comment word allowed; do
         [ "$(count "$fixtures/$f.sh")" = 0 ] || {
             echo "test-mktemp-explicit: self-test failed: rejected $f.sh" >&2
@@ -102,7 +110,11 @@ self_test() (
 files() {
     for dir in scripts template/scripts; do
         [ -d "$dir" ] || continue
-        find "$dir" -maxdepth 1 -type f -name 'test-*.sh' | sort
+        # Copier wraps a conditionally shipped suite's name in [% if %] markers;
+        # classify the rendered name, report the source path.
+        find "$dir" -maxdepth 1 -type f | sort | while IFS= read -r file; do
+            case "$(norm "${file##*/}")" in test-*.sh) printf '%s\n' "$file" ;; esac
+        done
     done
 }
 
