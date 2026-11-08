@@ -37,13 +37,13 @@ ARG WORKMUX_VERSION=0.1.278
 # renovate: datasource=github-releases depName=njbrake/agent-of-empires extractVersion=^v?(?<version>.+)$
 ARG AOE_VERSION=1.21.0
 # renovate: datasource=npm depName=@anthropic-ai/claude-code
-ARG CLAUDE_CODE_VERSION=2.1.316
+ARG CLAUDE_CODE_VERSION=2.1.318
 # renovate: datasource=npm depName=@github/copilot
 ARG COPILOT_VERSION=1.0.105
 # renovate: datasource=npm depName=@earendil-works/pi-coding-agent
-ARG PI_VERSION=1.4.0
+ARG PI_VERSION=1.5.0
 # renovate: datasource=github-releases depName=can1357/oh-my-pi extractVersion=^v?(?<version>.+)$
-ARG OH_MY_PI_VERSION=18.14.2
+ARG OH_MY_PI_VERSION=18.16.0
 # oh-my-pi ships unsigned release binaries: the version pin above is
 # Renovate-managed, but these architecture-specific digests are not. Before
 # moving them, a person must download the new release's omp-linux-x64 and
@@ -60,7 +60,7 @@ ARG OPENCODE_VERSION=1.19.5
 ARG ANTIGRAVITY_CLI_VERSION=1.1.11
 ARG ANTIGRAVITY_CLI_BUILD=4956531888881664
 # renovate: datasource=github-releases depName=asheshgoplani/agent-deck extractVersion=^v?(?<version>.+)$
-ARG AGENT_DECK_VERSION=1.16.35
+ARG AGENT_DECK_VERSION=1.16.36
 # renovate: datasource=github-releases depName=joshmedeski/sesh extractVersion=^v?(?<version>.+)$
 # Upstream v2.30.0 was published without release assets; stay on 2.29.0 until fixed
 ARG SESH_VERSION=2.29.0
@@ -72,7 +72,7 @@ ARG DMUX_VERSION=5.11.1
 # renovate: datasource=github-releases depName=getsops/sops extractVersion=^v?(?<version>.+)$
 ARG SOPS_VERSION=3.13.3
 # renovate: datasource=github-releases depName=nektos/act extractVersion=^v?(?<version>.+)$
-ARG ACT_VERSION=0.2.94
+ARG ACT_VERSION=0.2.97
 # renovate: datasource=github-releases depName=wagoodman/dive extractVersion=^v?(?<version>.+)$
 ARG DIVE_VERSION=0.13.1
 # renovate: datasource=github-releases depName=antonmedv/fx extractVersion=^v?(?<version>.+)$
