@@ -8,6 +8,13 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [5.18.2](https://github.com/evanharmon1/harmon-init/compare/v5.18.1...v5.18.2) (2026-11-09)
+
+
+### Bug Fixes
+
+* bound captured timeout calls on uutils coreutils (ubuntu-26.04) ([#2020](https://github.com/evanharmon1/harmon-init/issues/2020)) ([98e4e8d](https://github.com/evanharmon1/harmon-init/commit/98e4e8d5a524911a3c6a0c45f95b39d1cb84c73a))
+
 ## [5.18.1](https://github.com/evanharmon1/harmon-init/compare/v5.18.0...v5.18.1) (2026-11-08)
 
 
