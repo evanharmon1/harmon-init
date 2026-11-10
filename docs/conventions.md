@@ -46,6 +46,10 @@ it points here.
   tracked, never recreated — so that path needs the remotes reachable: an
   offline run fails closed with the fix in the message, and an explicit
   `--base <ref>` skips the remote lookup entirely.
+  A **new** branch is created without an upstream (`--no-track`), even when
+  its `--base` is a remote-tracking ref such as `origin/main`: inheriting that
+  ref would make a bare `git push` from the lane read as a push to the default
+  branch. The first push names the branch's own upstream (`git push -u`).
   `--branch` and `--no-install` cover the rest.
   One entrypoint means a second agent session, a terminal multiplexer, or a
   human all get the same tree instead of each rediscovering the setup.
