@@ -30,7 +30,7 @@ src="${1:?usage: $0 <rendered-repo-dir>}"
     exit 1
 }
 
-work="$(mktemp -d)"
+work="$(mktemp -d "${TMPDIR:-/tmp}/renovate-node-hold.XXXXXX")"
 trap 'rm -rf "$work"' EXIT
 cp -R "$src" "$work/repo"
 cd "$work/repo"
