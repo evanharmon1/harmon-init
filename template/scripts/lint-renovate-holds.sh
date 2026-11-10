@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
 # Validate the records attached to Renovate allowedVersions rules.
+# Config location: the root renovate.json when it exists, otherwise
+# .github/renovate.json. Root first matches Renovate's own file order, so
+# when both exist the checked file is the one Renovate reads.
 set -euo pipefail
 root=${1:-.}
 cd "$root"
@@ -76,11 +79,12 @@ def check(path, exemptions=False):
     return rules
 
 
-root = pathlib.Path('renovate.json')
+locations = (pathlib.Path('renovate.json'), pathlib.Path('.github/renovate.json'))
+root = next((path for path in locations if path.is_file()), None)
 preset = pathlib.Path('renovate/default.json')
 template = pathlib.Path('template/renovate.json.jinja')
-if not root.is_file():
-    fail('renovate.json: missing')
+if root is None:
+    fail('renovate.json: missing (also checked .github/renovate.json)')
 if preset.is_file() and template.is_file():
     actual = check(root, True)
     shared = check(preset)

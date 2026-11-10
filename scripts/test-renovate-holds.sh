@@ -227,4 +227,51 @@ check('both TypeScript holds wrong', changed, changed, 'web', False)
 check('preset hold missing', minimal, minimal, 'minimal', False)
 check('non-Node hold unexpectedly present', preset, preset, 'iac', False)
 PYTEST
+# A private consumer may keep its config at .github/renovate.json; the root
+# file, when present, takes precedence because Renovate reads it first.
+alt="$tmp/alt"
+mkdir -p "$alt/.github"
+strip_removal() {
+    python3 - "$1" <<'PYALT'
+import pathlib, sys
+path = pathlib.Path(sys.argv[1])
+text = path.read_text(encoding='utf-8')
+old = '; Remove when: typescript-eslint supports TypeScript 7 and the canary Node and Astro checks pass with TypeScript 7'
+assert text.count(old) == 1
+path.write_text(text.replace(old, '', 1), encoding='utf-8')
+PYALT
+}
+expect_alt_failure() {
+    if "$lint" "$alt" >"$tmp/diagnostic" 2>&1; then
+        echo "accepted $1" >&2
+        exit 1
+    fi
+    if ! grep -qF "$2" "$tmp/diagnostic"; then
+        echo "$1 failed for the wrong reason: $(cat "$tmp/diagnostic")" >&2
+        exit 1
+    fi
+}
+expect_alt_failure 'a consumer with no Renovate config' \
+    'renovate.json: missing (also checked .github/renovate.json)'
+cp "$repo/renovate/default.json" "$alt/.github/renovate.json"
+"$lint" "$alt" || {
+    echo 'rejected valid holds in .github/renovate.json' >&2
+    exit 1
+}
+strip_removal "$alt/.github/renovate.json"
+expect_alt_failure 'missing hold metadata in .github/renovate.json' \
+    '.github/renovate.json: allowedVersions rule needs Reason'
+cp "$repo/renovate/default.json" "$alt/renovate.json"
+"$lint" "$alt" || {
+    echo 'checked .github/renovate.json although the root config exists' >&2
+    exit 1
+}
+cp "$repo/renovate/default.json" "$alt/.github/renovate.json"
+strip_removal "$alt/renovate.json"
+expect_alt_failure 'missing hold metadata in a root config beside .github/renovate.json' \
+    'renovate.json: allowedVersions rule needs Reason'
+if grep -qF '.github/' "$tmp/diagnostic"; then
+    echo 'root config precedence reported the .github config' >&2
+    exit 1
+fi
 echo 'Renovate hold fixtures passed'
