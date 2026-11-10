@@ -289,4 +289,39 @@ if grep -qF '.github/renovate.json:' "$tmp/diagnostic"; then
     echo 'a root renovate.json5 reported the .github config' >&2
     exit 1
 fi
+# Renovate's order, highest first. For every adjacent pair, the higher file
+# beside a valid lower one must be the file checked: an invalid .json fails on
+# its records and a .jsonc/.json5 fails closed, each naming the higher file.
+order=(renovate.json renovate.jsonc renovate.json5
+    .github/renovate.json .github/renovate.jsonc .github/renovate.json5)
+alt="$tmp/order"
+for ((i = 0; i + 1 < ${#order[@]}; i++)); do
+    high=${order[i]} low=${order[i + 1]}
+    rm -rf "$alt"
+    mkdir -p "$alt/.github"
+    cp "$repo/renovate/default.json" "$alt/$low"
+    cp "$repo/renovate/default.json" "$alt/$high"
+    if [[ $high == *.json ]]; then
+        strip_removal "$alt/$high"
+        expected="$high: allowedVersions rule needs Reason"
+    else
+        expected="$high: the hold checker reads only renovate.json or .github/renovate.json"
+    fi
+    if "$lint" "$alt" >"$tmp/diagnostic" 2>&1; then
+        echo "accepted $high beside a valid $low" >&2
+        exit 1
+    fi
+    if [[ $(head -n 1 "$tmp/diagnostic") != "$expected"* ]]; then
+        echo "$high beside $low checked the wrong file: $(cat "$tmp/diagnostic")" >&2
+        exit 1
+    fi
+done
+rm -rf "$alt"
+mkdir -p "$alt"
+cp "$repo/renovate/default.json" "$alt/renovate.json"
+cp "$repo/renovate/default.json" "$alt/renovate.json5"
+"$lint" "$alt" || {
+    echo 'rejected a valid renovate.json beside renovate.json5' >&2
+    exit 1
+}
 echo 'Renovate hold fixtures passed'
