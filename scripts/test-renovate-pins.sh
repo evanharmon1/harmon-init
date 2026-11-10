@@ -39,7 +39,7 @@ if grep -Fq 'HARMON_INIT_VALIDATE_RENOVATE' Taskfile.yml; then
 fi
 
 python3 - <<'PY'
-import json, re, sys, pathlib
+import copy, json, re, sys, pathlib
 
 def load_shell_manager(path, probe="scripts/example.sh"):
     """The `FOO_VERSION=` manager that covers shell SCRIPTS.
@@ -513,6 +513,8 @@ for label, cfg in [("renovate.json", root_cfg), ("template/renovate.json.jinja",
 # Check effective rule ordering for representative lockfile updates and majors.
 # This deliberately exercises the shipped rules, including package-specific
 # formatter and fixture groups, rather than merely counting group names.
+DOCKER_GROUP_UPDATES = ("minor", "patch", "pin", "digest", "major")
+
 def check_lockfile_policy(label, cfg):
     import fnmatch
     rules = cfg.get("packageRules", [])
@@ -595,12 +597,43 @@ def check_lockfile_policy(label, cfg):
         for path, dep, expected in (("tests/fixtures/web-astro/package.json", "astro", "web-astro fixture"), ("tests/fixtures/web-app/package.json", "react", "web-app fixture")):
             if resolve("npm", "minor", dep, path, "devDependencies", "npm")["groupName"] != expected:
                 errors.append(f"{label}: {path} lost its independent fixture group")
+        # Root Docker images group (#1994). Kept out of the `cases` table above
+        # on purpose: that table's ecosystems require ungrouped majors, while
+        # the root Docker rule groups majors too. The specimen is the image
+        # pinned Renovate 44.216.5 extracts from this repo (manager
+        # github-actions, depType container, datasource docker, package
+        # ubuntu); its lookup files the digest and the major update on
+        # renovate/docker-images and renovate/major-docker-images.
+        for update in DOCKER_GROUP_UPDATES:
+            actual = resolve("github-actions", update, "ubuntu", ".github/workflows/remote-bootstrap.yml", "container", "docker")["groupName"]
+            if actual != "Docker images":
+                errors.append(f"{label}: Docker image ubuntu {update} in .github/workflows/remote-bootstrap.yml resolves to {actual!r}, expected 'Docker images'")
     if cfg.get("vulnerabilityAlerts", {}).get("groupName", None) is not None:
         errors.append(f"{label}: vulnerability alerts must bypass groups")
 
 for label, cfg in [("renovate.json", root_cfg), ("template/renovate.json.jinja", tmpl_on), ("template python disabled", tmpl_python_off), ("renovate/default.json", json.loads(pathlib.Path("renovate/default.json").read_text(encoding="utf-8")))]:
     if cfg is not None:
         check_lockfile_policy(label, cfg)
+
+# Controls for the Docker group assertion: an isolated in-memory removal of the
+# root Docker rule, and an override of its groupName, must each fail with
+# exactly the Docker grouping diagnostic (one per update type) and nothing else.
+docker_rules = [i for i, rule in enumerate(root_cfg.get("packageRules", []))
+                if rule.get("matchDatasources") == ["docker"] and rule.get("groupName") == "Docker images"]
+if len(docker_rules) != 1:
+    errors.append(f"renovate.json: expected exactly one Docker images rule, found {len(docker_rules)}")
+else:
+    removed = copy.deepcopy(root_cfg)
+    del removed["packageRules"][docker_rules[0]]
+    overridden = copy.deepcopy(root_cfg)
+    overridden["packageRules"][docker_rules[0]]["groupName"] = "Docker images override control"
+    for control, mutant in (("removal", removed), ("groupName override", overridden)):
+        before = len(errors)
+        check_lockfile_policy("renovate.json", mutant)
+        found = errors[before:]
+        del errors[before:]
+        if len(found) != len(DOCKER_GROUP_UPDATES) or not all(e.startswith("renovate.json: Docker image ubuntu ") for e in found):
+            errors.append(f"renovate.json: Docker group {control} control did not fail with only the Docker grouping diagnostic: {found!r}")
 
 if errors:
     for e in errors:
@@ -611,4 +644,5 @@ print("renovate pins: every annotated shell pin is extractable and in scope")
 print("renovate pins: every composite-action pin (both layers) is extractable and in scope")
 print("renovate pins: root files and their template twins resolve to the same group")
 print("renovate pins: rendered template rules route consumer pins to the right groups")
+print("renovate pins: root Docker images group holds for every update type; removal and override controls fail")
 PY
