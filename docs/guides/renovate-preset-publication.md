@@ -22,9 +22,11 @@ The removal condition names a test, and the canary is a public repository that
 tries the removal first. Harmon-init is the Node and Astro canary: test the
 candidate version in its image or rendered Node/Astro profiles before lifting a
 hold. `task lint:renovate-holds` checks the records and shared hold parity. It
-reads the root `renovate.json` when that file exists and otherwise
-`.github/renovate.json`; the root file wins when both exist because Renovate
-reads it first. The TypeScript rule remains inline in root and template until preset adoption; the
+selects the config the way Renovate does: the first of `renovate.json`,
+`renovate.jsonc`, `renovate.json5`, then the same three names under
+`.github/`. It checks only `renovate.json` or `.github/renovate.json` and
+fails closed when Renovate would read a `.jsonc` or `.json5` file first. The
+TypeScript rule remains inline in root and template until preset adoption; the
 Node Corepack constraint and missing-binary exclusions are root-local. Do not
 copy the missing-binary exclusions into the shared preset.
 
