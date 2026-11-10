@@ -1,5 +1,10 @@
 #!/usr/bin/env bash
 # Validate the records attached to Renovate allowedVersions rules.
+# Config location: the first that exists of renovate.json, renovate.jsonc,
+# renovate.json5, .github/renovate.json, .github/renovate.jsonc and
+# .github/renovate.json5, which is Renovate's own order. Only the plain
+# .json names are checked; a selected .jsonc or .json5 file fails closed
+# because Renovate would read it instead of any file checked here.
 set -euo pipefail
 root=${1:-.}
 cd "$root"
@@ -76,11 +81,16 @@ def check(path, exemptions=False):
     return rules
 
 
-root = pathlib.Path('renovate.json')
+locations = [pathlib.Path(prefix + 'renovate.json' + suffix)
+             for prefix in ('', '.github/') for suffix in ('', 'c', '5')]
+root = next((path for path in locations if path.is_file()), None)
 preset = pathlib.Path('renovate/default.json')
 template = pathlib.Path('template/renovate.json.jinja')
-if not root.is_file():
-    fail('renovate.json: missing')
+if root is None:
+    fail('renovate.json: missing (checked renovate.json, renovate.jsonc, renovate.json5 and the same names under .github/)')
+if root.suffix != '.json':
+    fail(f'{root}: the hold checker reads only renovate.json or .github/renovate.json, '
+         'and Renovate would read this file first')
 if preset.is_file() and template.is_file():
     actual = check(root, True)
     shared = check(preset)

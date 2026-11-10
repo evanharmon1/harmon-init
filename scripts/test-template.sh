@@ -1161,6 +1161,20 @@ jq -e '.vulnerabilityAlerts.enabled == true' renovate.json >/dev/null ||
 # and tasks, not JSON fields, so nothing else here would notice.
 jq -e '.osvVulnerabilityAlerts == true' renovate.json >/dev/null ||
     err "Renovate OSV vulnerability alerts must be enabled"
+# Rendered repos protect the default branch with a ruleset, not classic branch
+# protection, so Renovate's default rebaseWhen=auto rebases a behind PR only
+# on conflict (#2012). The catch-up rule for bot PRs in AGENTS.md depends on
+# this, so both travel together, and the root dogfood copy says the same.
+jq -e '.rebaseWhen == "behind-base-branch"' renovate.json >/dev/null ||
+    err "Renovate must rebase PRs that fall behind the base branch (rebaseWhen)"
+for agents_file in AGENTS.md "$repo_root/AGENTS.md"; do
+    grep -Fq 'Catch a Renovate PR up with its rebase checkbox, never update-branch.' "$agents_file" ||
+        err "$agents_file is missing the Renovate PR catch-up rule"
+    grep -Fq 'only when every non-bot commit is a clean catch-up merge' "$agents_file" ||
+        err "$agents_file is missing the modified bot-branch recovery rule"
+    grep -Fq 'PR through its rebase checkbox, never update-branch.' "$agents_file" ||
+        err "$agents_file handoff check does not scope update-branch away from Renovate PRs"
+done
 # Check every rendered profile, including profiles without a given ecosystem:
 # later package-specific rules must not take a lockfile update out of its group.
 python3 - renovate.json <<'PYGROUP' || err "rendered Renovate lockfile grouping is incomplete"
