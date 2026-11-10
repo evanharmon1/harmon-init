@@ -315,6 +315,24 @@ Binding on every stage, skill, and harness, whatever rigor resolved:
   return it to draft only if the new head owes a review. Parked PRs stay
   drafts and are not caught up; report their drift. Reconcile once, base
   into branch only; the ledger names it a catch-up, not a remediation push.
+- **Catch a Renovate PR up with its rebase checkbox, never update-branch.**
+  The catch-up above is for agent and human PRs. A Renovate PR (author
+  `renovate[bot]`, head branch `renovate/…`) is kept current by Renovate:
+  `renovate.json` sets `"rebaseWhen": "behind-base-branch"` because the
+  default, `auto`, learns that the base requires up-to-date branches only from
+  classic branch protection, which a ruleset-protected default branch does not
+  have, so it would rebase on conflict alone. Renovate rebases a behind bot PR
+  on its next scheduled run; to catch one up sooner, tick its rebase checkbox
+  (edit the PR body's `- [ ] <!-- rebase-check -->` line to `- [x]`). Never use
+  update-branch or a local merge on it: any commit Renovate did not author, a
+  catch-up merge included, marks the branch modified, and Renovate stops
+  rebasing it, so every later base move needs another manual catch-up.
+  Renovate force-pushing its own branch is not an agent rewriting pushed
+  history. To recover a bot branch that already carries a non-bot commit, tick
+  the rebase checkbox only when every non-bot commit is a clean catch-up merge
+  of the base with nothing else in it, because Renovate force-resets the
+  branch and discards them. Leave a branch carrying a real fix commit alone
+  and report its drift.
 - **One conventional commit per adjudicated round, pushed** to the branch's own
   writable remote (`git push -u <remote> <branch>` on the first push). Per *round*,
   not per finding: five fixes are one commit, a round with nothing to fix pushes
@@ -393,7 +411,8 @@ Never reuse an earlier result. All of these must hold:
 
 - **Current with the base.** Read `compare/<base>...<head>` live and require
   `behind_by == 0`. Do not use `mergeStateStatus`. Catch up the queue head
-  through update-branch (§ "Policy invariants"), never a rebase.
+  through update-branch (§ "Policy invariants"), never a rebase; a Renovate
+  PR through its rebase checkbox, never update-branch.
 - **Required CI green on the exact head.** The latest run of each required
   check concluded successfully; skipped is neutral. Pending, missing, or an
   empty check list is indeterminate. Report failing non-required checks to
