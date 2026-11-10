@@ -13,8 +13,13 @@ unset GH_TOKEN GITHUB_TOKEN GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN GH_HOST
 unset GIT_SSH_COMMAND # a host may set one; the default (unset) case is what is under test
 unset NODE_OPTIONS GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS
 unset CLAUDE_CODE_REMOTE
+unset HARMON_PREFIX HARMON_BIN CLAUDE_ENV_FILE
 # Hermetic git: a platform may inject config (SSH->HTTPS rewrites, hooks paths).
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+# Command-scope config is inherited by every Git child, including clones and fetches.
+# Keep the full tree digest stable without touching user or repository settings.
+export GIT_CONFIG_COUNT=2 GIT_CONFIG_KEY_0=maintenance.auto GIT_CONFIG_VALUE_0=false
+export GIT_CONFIG_KEY_1=gc.auto GIT_CONFIG_VALUE_1=0
 
 # scripts/setup-remote.sh resolves the checkout with pwd -P (physical); a
 # symlinked TMPDIR such as macOS's /var would otherwise make the printed and
@@ -22,10 +27,13 @@ export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
 # Two steps, each stopped by its own || exit 1 (not left to set -e): one
 # command, cd "$(mktemp -d)", would swallow a failed mktemp and `cd ""` would
 # resolve the checkout itself as the directory the trap removes.
-TMP="$(mktemp -d)" || exit 1
+TMP="$(mktemp -d "${TMPDIR:-/tmp}/setup-remote.XXXXXX")" || exit 1
 TMP="$(cd "${TMP}" && pwd -P)" || exit 1
 # A scenario may chmod a directory read-only; restore write access before removing it.
 trap 'chmod -R u+w "${TMP}" 2>/dev/null; rm -rf "${TMP}"' EXIT
+# Never let remote PATH preparation expose the host's real /usr/local tools
+# to fixtures that deliberately hide them.
+export HARMON_PREFIX="${TMP}/unmanaged-prefix"
 
 fail() {
     echo "TEST FAIL: $*" >&2
@@ -64,6 +72,8 @@ cat >"${STUB_BIN}/lefthook" <<'EOF'
 echo "$*" >>"${STUB_LOG_DIR}/lefthook.log"
 [ "${STUB_LEFTHOOK:-}" = "fail" ] && { echo "lefthook: simulated failure" >&2; exit 1; }
 [ "${1:-}" = "install" ] || exit 2
+[ "${STUB_MUTATE_SETUP:-}" != 1 ] || printf "mutation\n" > .git/setup-mutation
+[ "${STUB_MUTATE_SETUP:-}" != content ] || printf "mutation\n" >> lefthook.yml
 hook=.git/hooks/pre-push
 body='#!/bin/sh
 # lefthook shim (stub)
@@ -105,6 +115,14 @@ REAL_GIT="$(command -v git)"
 cat >"${STUB_BIN}/git" <<EOF
 #!/usr/bin/env bash
 [ -z "\${STUB_LOG_DIR:-}" ] || echo "\${GIT_SSH_COMMAND-unset}" >>"\${STUB_LOG_DIR}/git-ssh.log"
+# Record effective configuration from the actual Git child, before executing it.
+if [ -n "\${STUB_LOG_DIR:-}" ]; then
+    config_dir=()
+    [ "\${1:-}" != -C ] || config_dir=(-C "\$2")
+    maintenance="\$("${REAL_GIT}" "\${config_dir[@]}" config --bool maintenance.auto 2>/dev/null || true)"
+    gc="\$("${REAL_GIT}" "\${config_dir[@]}" config --int gc.auto 2>/dev/null || true)"
+    printf '%s|%s|%s\n' "\$*" "\$maintenance" "\$gc" >>"\${STUB_LOG_DIR}/git-maintenance.log"
+fi
 if [ -n "\${STUB_CHECKOUT_HISTORY:-}" ]; then
     if [ "\$*" = 'rev-parse --is-shallow-repository' ]; then
         echo probe >>"\${STUB_LOG_DIR}/history.log"
@@ -145,7 +163,9 @@ if [ "\${3:-}" = fetch ] && [ -n "\${STUB_NETWORK_FETCH_BASE:-}" ]; then
     exec "${REAL_GIT}" \
         -c "url.file://\${STUB_NETWORK_FETCH_BASE}/test-owner/sibling-a.git.insteadOf=https://example.test/test-owner/SIBLING-a" \
         -c "url.file://\${STUB_NETWORK_FETCH_BASE}/test-owner/.insteadOf=https://example.test/TEST-owner/" \
-        -c "url.file://\${STUB_NETWORK_FETCH_BASE}/.insteadOf=https://example.test/" "\$@"
+        -c "url.file://\${STUB_NETWORK_FETCH_BASE}/.insteadOf=https://example.test/" \
+        -c "url.file://\${STUB_NETWORK_FETCH_BASE}/.insteadOf=git@[2001:db8::1]:" \
+        -c "url.file://\${STUB_NETWORK_FETCH_BASE}/.insteadOf=[2001:db8::1]:" "\$@"
 fi
 exec "${REAL_GIT}" "\$@"
 EOF
@@ -169,6 +189,9 @@ make_fixture() {
     FIX_PARENT="${TMP}/${name}"
     FIX="${FIX_PARENT}/checkout"
     mkdir -p "${FIX}/scripts" "${FIX}/.devcontainer/scripts"
+    # These scenarios test preparation's compact summary. Persistence failure
+    # and shadow warnings are tested separately with distinct output streams.
+    export CLAUDE_ENV_FILE="${FIX_PARENT}/session-env.sh"
     git init -q "${FIX}"
     cp "${REPO_ROOT}/scripts/setup-remote.sh" "${FIX}/scripts/setup-remote.sh"
     cp "${REPO_ROOT}/scripts/session-start-remote.sh" "${FIX}/scripts/session-start-remote.sh"
@@ -212,6 +235,29 @@ digest() {
     (cd "$1" && find . | LC_ALL=C sort && find . -type f -print0 | LC_ALL=C sort -z | xargs -0 cksum)
 }
 
+assert_unchanged() {
+    local before="$1" after="$2"
+    [ "$before" = "$after" ] || fail "the second run changed the tree:
+$(diff <(printf '%s\n' "$before") <(printf '%s\n' "$after") || true)"
+}
+
+assert_maintenance_disabled() {
+    local repo="$1"
+    # A descendant shell and repository-local conflicting settings prove that
+    # the effective command-scope settings reach cloned repositories as well.
+    [ "$(bash -c 'git -C "$1" config --bool maintenance.auto' _ "$repo")" = false ] || fail "maintenance.auto enabled in $repo"
+    [ "$(bash -c 'git -C "$1" config --int gc.auto' _ "$repo")" = 0 ] || fail "gc.auto enabled in $repo"
+}
+
+# Require every observed operation of this kind to carry both settings.
+assert_git_maintenance() {
+    local log="$1" operation="$2"
+    awk -F '|' -v op="$operation" '
+        $1 ~ op { seen = 1; if ($2 != "false" || $3 != "0") bad = 1 }
+        END { exit !(seen && !bad) }
+    ' "$log"
+}
+
 # The uncloneable entry comes first so a later entry proves the run continues.
 RELATED='test-owner/missing-repo
 test-owner/sibling-a # inline comments are ignored
@@ -231,6 +277,11 @@ run_setup "${STUBS_PATH}"
 if [ "$HAVE_BOOTSTRAP" = 1 ]; then
     [ -d "${FIX_PARENT}/sibling-a/.git" ] || fail "sibling-a must be cloned into the checkout's parent"
     [ -d "${FIX_PARENT}/sibling-b/.git" ] || fail "sibling-b (listed after the failing entry) must be cloned: the run continues"
+    for sibling in "${FIX_PARENT}/sibling-a" "${FIX_PARENT}/sibling-b"; do
+        git -C "$sibling" config --local maintenance.auto true
+        git -C "$sibling" config --local gc.auto 1
+        assert_maintenance_disabled "$sibling"
+    done
     [ ! -e "${FIX_PARENT}/missing-repo" ] || fail "an uncloneable repository must leave nothing behind"
     [ "$(cat "${FIX_PARENT}/existing-repo/marker.txt")" = "custom-content" ] || fail "an existing directory must not be modified"
     [ ! -d "${FIX_PARENT}/existing-repo/.git" ] || fail "an existing directory must not be cloned over"
@@ -240,6 +291,7 @@ if [ "$HAVE_BOOTSTRAP" = 1 ]; then
     output_has "cloned into ${FIX_PARENT}" || fail "the task must print where it cloned"
     output_has 'reference context' || fail "the task must say siblings are reference context"
     output_has 'private to you' || fail "the task must state that the target directory must be private to the user"
+    assert_git_maintenance "${LOG_DIR}/git-maintenance.log" '^clone ' || fail "clone child did not inherit maintenance settings"
     [ -s "${LOG_DIR}/git-ssh.log" ] || fail "expected git to be invoked with GIT_SSH_COMMAND recorded"
     [ "$(sort -u "${LOG_DIR}/git-ssh.log")" = "ssh -oBatchMode=yes" ] || fail "git must run with GIT_SSH_COMMAND=\"ssh -oBatchMode=yes\" (so an ssh remote cannot prompt), got: $(sort -u "${LOG_DIR}/git-ssh.log")"
     output_has "session's own repository" || fail "the task must say siblings cannot be pushed from Claude Code on the web"
@@ -247,6 +299,29 @@ else
     output_has 'is not present in this repository' || fail "without the bootstrap script the task must report the related repos as skipped: $(all_output)"
     [ -z "$(find "${FIX_PARENT}" -mindepth 1 -maxdepth 1 ! -name checkout ! -name existing-repo -print -quit)" ] || fail "nothing may be cloned without the bootstrap script"
 fi
+
+echo "==> maintenance observation detects a missing setting"
+(
+    export STUB_LOG_DIR="${TMP}/maintenance-negative"
+    mkdir -p "$STUB_LOG_DIR"
+    export GIT_CONFIG_COUNT=1
+    # Place a physical temporary parent inside a checkout to exercise the
+    # ancestor-config leak even when the caller's TMPDIR is outside a repo.
+    git init -q "${TMP}/maintenance-checkout"
+    git -C "${TMP}/maintenance-checkout" config --local gc.auto 0
+    [ "$(git -C "${TMP}/maintenance-checkout" config --int gc.auto)" = 0 ] || fail "checkout config setup failed"
+    mkdir -p "${TMP}/maintenance-checkout/temp-parent"
+    temp_parent="$(cd "${TMP}/maintenance-checkout/temp-parent" && pwd -P)"
+    isolated="$(mktemp -d "${temp_parent}/negative.XXXXXX")" || fail "negative control temp directory failed"
+    cd "$isolated"
+    [ "$(env -u GIT_CEILING_DIRECTORIES git config --int gc.auto)" = 0 ] || fail "ancestor config leak was not reproduced"
+    export GIT_CEILING_DIRECTORIES="$temp_parent"
+    "${STUB_BIN}/git" --version >/dev/null
+    if assert_git_maintenance "${STUB_LOG_DIR}/git-maintenance.log" '^--version$'; then
+        fail "maintenance assertion accepted missing gc.auto"
+    fi
+    grep -Eq '^--version\|false\|$' "${STUB_LOG_DIR}/git-maintenance.log" || fail "negative control failed for the wrong reason"
+)
 
 echo "==> .git/hooks/pre-push is the lefthook shim"
 [ -x "${FIX}/.git/hooks/pre-push" ] || fail "pre-push must be installed and executable"
@@ -257,9 +332,40 @@ before="$(digest "${FIX_PARENT}")"
 run_setup "${STUBS_PATH}"
 [ "$rc" -eq 0 ] || fail "second run must succeed (rc=$rc): $(all_output)"
 after="$(digest "${FIX_PARENT}")"
-[ "$before" = "$after" ] || fail "the second run changed the tree:
-$(diff <(printf '%s\n' "$before") <(printf '%s\n' "$after") || true)"
+assert_unchanged "$before" "$after"
 [ "$(wc -l <"${LOG_DIR}/lefthook.log" | tr -d ' ')" -eq 2 ] || fail "lefthook install must run on each invocation (idempotent, not skipped)"
+
+echo "==> the idempotence assertion rejects a real second-run mutation"
+(
+    make_fixture mutation -
+    run_setup "${STUBS_PATH}"
+    [ "$rc" -eq 0 ] || fail "negative-control first run failed: $(all_output)"
+    before="$(digest "${FIX_PARENT}")"
+    run_setup "${STUBS_PATH}" STUB_MUTATE_SETUP=1
+    [ "$rc" -eq 0 ] || fail "negative-control second run failed: $(all_output)"
+    after="$(digest "${FIX_PARENT}")"
+    if (assert_unchanged "$before" "$after") >"${TMP}/negative-control.out" 2>&1; then
+        fail "idempotence assertion accepted a second-run mutation"
+    fi
+    grep -q 'the second run changed the tree' "${TMP}/negative-control.out" || fail "negative control failed for the wrong reason"
+)
+
+echo "==> the idempotence assertion rejects content-only mutation"
+(
+    make_fixture content-mutation -
+    run_setup "${STUBS_PATH}"
+    [ "$rc" -eq 0 ] || fail "content negative-control first run failed: $(all_output)"
+    before_paths="$(cd "${FIX_PARENT}" && find . | LC_ALL=C sort)"
+    before="$(digest "${FIX_PARENT}")"
+    run_setup "${STUBS_PATH}" STUB_MUTATE_SETUP=content
+    [ "$rc" -eq 0 ] || fail "content negative-control second run failed: $(all_output)"
+    [ "$before_paths" = "$(cd "${FIX_PARENT}" && find . | LC_ALL=C sort)" ] || fail "content mutation changed path list"
+    after="$(digest "${FIX_PARENT}")"
+    if (assert_unchanged "$before" "$after") >"${TMP}/content-negative-control.out" 2>&1; then
+        fail "idempotence assertion accepted a content-only mutation"
+    fi
+    grep -q 'the second run changed the tree' "${TMP}/content-negative-control.out" || fail "content negative control failed for the wrong reason"
+)
 
 if [ "$HAVE_BOOTSTRAP" = 1 ]; then
     echo "==> a cached sibling is fetched forward without changing its checkout"
@@ -275,6 +381,7 @@ if [ "$HAVE_BOOTSTRAP" = 1 ]; then
     [ "$(git -C "$sibling" rev-parse origin/main)" = "$new_head" ] || fail "existing sibling must see new upstream commit"
     [ "$(git -C "$sibling" rev-parse HEAD)" = "$old_head" ] || fail "fetch must not move the checkout"
     [ "$(cat "${sibling}/local-work.txt")" = 'local work' ] || fail "fetch must preserve local work"
+    assert_git_maintenance "${LOG_DIR}/git-maintenance.log" '(^| )fetch( |$)' || fail "fetch child did not inherit maintenance settings"
     output_has '^  + related-repo fetch -> .* (warn-only)' || fail "fetch must appear in the setup summary: $(all_output)"
     output_has 'Related-repo fetch: 2 fetched' || fail "fetch summary must report both siblings: $(all_output)"
 
@@ -369,6 +476,84 @@ if [ "$HAVE_BOOTSTRAP" = 1 ]; then
     output_has 'WARNING: skipping sibling-a: no remote matches' || fail "effective unrelated URL must be refused"
     [ "$before" = "$(digest "$sibling")" ] || fail "a mismatching effective URL must not mutate the sibling"
 
+    echo "==> a bracketed IPv6 scp-style remote matches its owner/repository identity"
+    make_fixture ipv6 'test-owner/sibling-a'
+    sibling="${FIX_PARENT}/sibling-a"
+    git clone -q "${BARE_BASE}/test-owner/sibling-a.git" "$sibling"
+    git -C "$sibling" remote set-url origin 'git@[2001:db8::1]:test-owner/sibling-a.git'
+    git -C "${TMP}/seed-sibling-a" -c user.name=Test -c user.email=test@example.com \
+        commit -q --allow-empty -m 'upstream for IPv6 remote'
+    git -C "${TMP}/seed-sibling-a" push -q origin HEAD:main
+    expected_head="$(git -C "${TMP}/seed-sibling-a" rev-parse HEAD)"
+    run_setup "${STUBS_PATH}" "STUB_NETWORK_FETCH_BASE=${BARE_BASE}"
+    [ "$rc" -eq 0 ] || fail "IPv6 remote run must succeed: $(all_output)"
+    output_has 'Related-repo fetch: 1 fetched' || fail "a bracketed IPv6 scp remote must match: $(all_output)"
+    [ "$(git -C "$sibling" rev-parse origin/main)" = "$expected_head" ] || fail "the IPv6 remote must be fetched"
+    git -C "$sibling" remote set-url origin 'https://example.test/test-owner/sibling-a'
+    printf '%s\n' 'git@[2001:db8::1]:Test-Owner/sibling-a.git' >"${FIX}/.devcontainer/related-repos.txt"
+    run_setup "${STUBS_PATH}" "STUB_NETWORK_FETCH_BASE=${BARE_BASE}"
+    output_has 'Related-repo fetch: 1 fetched' || fail "a bracketed IPv6 scp entry must match: $(all_output)"
+
+    echo "==> a userless bracketed IPv6 scp-style remote matches its owner/repository identity"
+    make_fixture ipv6-userless 'test-owner/sibling-a'
+    sibling="${FIX_PARENT}/sibling-a"
+    git clone -q "${BARE_BASE}/test-owner/sibling-a.git" "$sibling"
+    git -C "$sibling" remote set-url origin '[2001:db8::1]:test-owner/sibling-a.git'
+    git -C "${TMP}/seed-sibling-a" -c user.name=Test -c user.email=test@example.com \
+        commit -q --allow-empty -m 'upstream for userless IPv6 remote'
+    git -C "${TMP}/seed-sibling-a" push -q origin HEAD:main
+    expected_head="$(git -C "${TMP}/seed-sibling-a" rev-parse HEAD)"
+    run_setup "${STUBS_PATH}" "STUB_NETWORK_FETCH_BASE=${BARE_BASE}"
+    [ "$rc" -eq 0 ] || fail "userless IPv6 remote run must succeed: $(all_output)"
+    output_has 'Related-repo fetch: 1 fetched' || fail "a userless bracketed IPv6 scp remote must match: $(all_output)"
+    [ "$(git -C "$sibling" rev-parse origin/main)" = "$expected_head" ] || fail "the userless IPv6 remote must be fetched"
+
+    echo "==> a remote named with a leading dash is not parsed as an option"
+    expected_head="$(git -C "${TMP}/seed-sibling-a" rev-parse HEAD)"
+    make_fixture dash-remote 'test-owner/sibling-a'
+    sibling="${FIX_PARENT}/sibling-a"
+    git clone -q "${BARE_BASE}/test-owner/sibling-a.git" "$sibling"
+    git -C "$sibling" remote set-url origin "${BARE_BASE}/fork-owner/sibling-a.git"
+    git -C "$sibling" remote add -- -x "${BARE_BASE}/test-owner/sibling-a.git"
+    run_setup "${STUBS_PATH}"
+    [ "$rc" -eq 0 ] || fail "dash-named remote run must succeed: $(all_output)"
+    output_has 'Related-repo fetch: 1 fetched' || fail "a remote named -x must be matched and fetched: $(all_output)"
+    [ "$(git -C "$sibling" rev-parse refs/remotes/-x/main)" = "$expected_head" ] || fail "the -x remote must be fetched into its own namespace"
+
+    echo "==> a fetch does not prune refs of a remote nested in, or around, its namespace"
+    expected_head="$(git -C "${TMP}/seed-sibling-a" rev-parse HEAD)"
+    for nesting in child parent; do
+        make_fixture "nested-${nesting}" 'test-owner/sibling-a'
+        sibling="${FIX_PARENT}/sibling-a"
+        git clone -q "${BARE_BASE}/test-owner/sibling-a.git" "$sibling"
+        old_head="$(git -C "$sibling" rev-parse HEAD)"
+        git -C "$sibling" remote set-url origin "${BARE_BASE}/fork-owner/sibling-a.git"
+        if [ "$nesting" = child ]; then
+            # upstream matches; upstream/fork owns refs/remotes/upstream/fork/*.
+            matching=upstream
+            git -C "$sibling" config remote.upstream.url "${BARE_BASE}/test-owner/sibling-a.git"
+            git -C "$sibling" config remote.upstream.fetch '+refs/heads/*:refs/remotes/upstream/*'
+            git -C "$sibling" config remote.upstream/fork.url "${BARE_BASE}/fork-owner/sibling-a.git"
+            git -C "$sibling" config remote.upstream/fork.fetch '+refs/heads/*:refs/remotes/upstream/fork/*'
+            foreign=refs/remotes/upstream/fork/main
+        else
+            # upstream/fork matches; upstream's branch fork/feature lands in its namespace.
+            matching=upstream/fork
+            git -C "$sibling" config remote.upstream.url "${BARE_BASE}/fork-owner/sibling-a.git"
+            git -C "$sibling" config remote.upstream.fetch '+refs/heads/*:refs/remotes/upstream/*'
+            git -C "$sibling" config remote.upstream/fork.url "${BARE_BASE}/test-owner/sibling-a.git"
+            git -C "$sibling" config remote.upstream/fork.fetch '+refs/heads/*:refs/remotes/upstream/fork/*'
+            foreign=refs/remotes/upstream/fork/feature
+        fi
+        git -C "$sibling" update-ref "$foreign" "$old_head"
+        run_setup "${STUBS_PATH}"
+        [ "$rc" -eq 0 ] || fail "nested-remote (${nesting}) run must succeed: $(all_output)"
+        output_has 'Related-repo fetch: 1 fetched' || fail "nested-remote (${nesting}) sibling must still be fetched: $(all_output)"
+        output_has "WARNING: sibling-a: remotes ${matching} and .* share remote-tracking refs" || fail "nested-remote (${nesting}) skip of pruning must warn: $(all_output)"
+        [ "$(git -C "$sibling" rev-parse "refs/remotes/${matching}/main")" = "$expected_head" ] || fail "nested-remote (${nesting}) matching remote must update"
+        [ "$(git -C "$sibling" rev-parse "$foreign")" = "$old_head" ] || fail "nested-remote (${nesting}) fetch must not prune ${foreign}"
+    done
+
     echo "==> checkout SSH host/port does not govern shorthand sibling identity"
     make_fixture ssh-checkout 'test-owner/sibling-a'
     git -C "$FIX" remote add origin 'ssh://git@ssh.github.com:443/checkout-owner/checkout.git'
@@ -433,6 +618,32 @@ if [ "$HAVE_BOOTSTRAP" = 1 ]; then
     git clone -q --bare "${BARE_BASE}/test-owner/sibling-a.git" "${FIX_PARENT}/sibling-a"
     run_setup "${STUBS_PATH}"
     output_has 'Related-repo fetch: 1 fetched' || fail "a bare sibling root must be recognized"
+
+    echo "==> a damaged bare sibling is reported as a failure, not as not-yet-cloned"
+    for damage in HEAD config; do
+        make_fixture "bare-bad-${damage}" 'test-owner/sibling-a'
+        git clone -q --bare "${BARE_BASE}/test-owner/sibling-a.git" "${FIX_PARENT}/sibling-a"
+        if [ "$damage" = HEAD ]; then
+            printf 'not a ref\n' >"${FIX_PARENT}/sibling-a/HEAD"
+        else
+            printf '[core\n' >>"${FIX_PARENT}/sibling-a/config"
+        fi
+        run_setup "${STUBS_PATH}"
+        [ "$rc" -eq 0 ] || fail "a damaged bare sibling (${damage}) must not fail setup: $(all_output)"
+        output_has 'WARNING: cannot open repository sibling-a; continuing.' || fail "a damaged bare sibling (${damage}) must warn: $(all_output)"
+        output_has '0 fetched, 0 not-yet-cloned, 1 failed' || fail "a damaged bare sibling (${damage}) must count as failed: $(all_output)"
+    done
+
+    echo "==> objects and refs directories alone do not identify a damaged bare sibling"
+    make_fixture bare-lookalike 'test-owner/sibling-a'
+    sibling="${FIX_PARENT}/sibling-a"
+    mkdir -p "${sibling}/objects" "${sibling}/refs"
+    before="$(digest "$sibling")"
+    run_setup "${STUBS_PATH}"
+    [ "$rc" -eq 0 ] || fail "a bare lookalike must not fail setup: $(all_output)"
+    output_has '0 fetched, 1 not-yet-cloned, 0 failed' || fail "objects and refs alone must count as not-yet-cloned: $(all_output)"
+    ! output_has 'WARNING: cannot open repository sibling-a' || fail "a bare lookalike must not warn about a damaged repository: $(all_output)"
+    [ "$before" = "$(digest "$sibling")" ] || fail "a bare lookalike must remain untouched"
 
     echo "==> linked-worktree and separate-git-dir siblings are fetched"
     for layout in worktree separate; do
@@ -982,6 +1193,12 @@ PYDEADLINE
 
     echo "==> an escaped descendant holding setup stdout cannot delay a completed hook"
     make_fixture hook-descendant -
+    # hook-deadline's 0.1s timeout stub is still on PATH; this case asserts a
+    # completed setup, so restore the hook's real 90s wait rather than race it.
+    cat >"${TMP}/hook-bin/timeout" <<EOF
+#!/usr/bin/env bash
+exec "${REAL_TIMEOUT}" "\$@"
+EOF
     cat >"${TMP}/hook-bin/task" <<'EOF'
 #!/usr/bin/env bash
 exec python3 - <<'PYDAEMON'
@@ -992,7 +1209,7 @@ subprocess.Popen([sys.executable, "-c", "import time; time.sleep(2)"],
 print("daemon holding stdout started", flush=True)
 PYDAEMON
 EOF
-    chmod +x "${TMP}/hook-bin/task"
+    chmod +x "${TMP}/hook-bin/task" "${TMP}/hook-bin/timeout"
     python3 - "${FIX}/scripts/session-start-remote.sh" "${TMP}/hook-bin:${MIN_BIN}" <<'PYHOLDER'
 import os
 import subprocess
@@ -1016,7 +1233,9 @@ import json
 import os
 from pathlib import Path
 import signal
+import shutil
 import subprocess
+import sys
 import time
 
 root = Path(os.environ["HOOK_DEAD_ROOT"])
@@ -1031,8 +1250,25 @@ assert release.exists(), "test never released the finite setup stub"
 # worker and re-read its command immediately before TERM; never signal by name.
 active = json.loads((root / ".git/session-start-remote/active.json").read_text())
 assert active["pid"] == parent, active
-command = subprocess.check_output(["ps", "-p", str(parent), "-o", "command="], text=True)
-assert "python3" in command and str(root) in command, command
+command = subprocess.check_output(["ps", "-p", str(parent), "-o", "command="], text=True).rstrip("\n")
+state_dir = root / ".git/session-start-remote"
+suffix = f" - {root} {state_dir}"
+expected = {os.path.realpath(sys.executable)}
+if sys.platform == "darwin":
+    expected.add(os.path.realpath(os.path.join(sys.base_prefix, "Resources/Python.app/Contents/MacOS/Python")))
+
+def worker_command_matches(value):
+    if not value.endswith(suffix):
+        return False
+    executable = value[:-len(suffix)]
+    return os.path.realpath(shutil.which(executable) or executable) in expected
+
+assert worker_command_matches(command), command
+executable = command[:-len(suffix)]
+assert not worker_command_matches(f"{executable} - {root}-wrong {state_dir}")
+assert not worker_command_matches(f"{executable} - {root} {state_dir}-wrong")
+assert not worker_command_matches(f"{root / 'wrong-interpreter'}{suffix}")
+assert shutil.which("bash") and not worker_command_matches(f"bash{suffix}")
 os.kill(parent, signal.SIGTERM)
 done.write_text("worker terminated without status\n")
 EOF
@@ -1044,7 +1280,8 @@ echo waiter >>"\$HOOK_DEAD_WAITERS"
 exec "${REAL_TIMEOUT}" 1s "\$@"
 EOF
     chmod +x "${TMP}/hook-bin/task" "${TMP}/hook-bin/timeout"
-    python3 - "${FIX}/scripts/session-start-remote.sh" "${TMP}/hook-bin:${MIN_BIN}" <<'PYDEADWORKER'
+    run_dead_worker() {
+        python3 - "${FIX}/scripts/session-start-remote.sh" "${TMP}/hook-bin:${1}:${MIN_BIN}" <<'PYDEADWORKER'
 import json
 import os
 from pathlib import Path
@@ -1086,6 +1323,12 @@ assert not (Path(active["directory"]) / "status").exists(), "fixture did not exe
 assert len(list(state.glob("run-*"))) == 1, "observer launched another setup"
 print("OK: launcher and observer both report a terminated worker without a status, never still running")
 PYDEADWORKER
+    }
+    run_dead_worker "${MIN_BIN}"
+    echo "==> SessionStart worker identity accepts a virtualenv interpreter"
+    python3 -m venv --without-pip "${TMP}/worker-venv"
+    make_fixture hook-dead-worker-venv -
+    run_dead_worker "${TMP}/worker-venv/bin"
 
 else
     echo "skip: timeout is unavailable; the real deadline scenario cannot run"

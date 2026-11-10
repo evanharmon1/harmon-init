@@ -179,6 +179,7 @@ run_ruleset_matrix() {
     cp "$repo_root/copier.yml" "$matrix_source/copier.yml"
     cp "$repo_root/template/.github/[% if use_foreman %]Tag Protection Ruleset - Version Tag Creation.json[% endif %].jinja" \
         "$matrix_source/template/.github/[% if use_foreman %]Tag Protection Ruleset - Version Tag Creation.json[% endif %].jinja"
+    cp "$repo_root/template/.github/Branch Protection Ruleset - Protect Main.json.jinja" "$matrix_source/template/.github/"
 
     for owner_case in user org; do
         if [ "$owner_case" = user ]; then
@@ -226,12 +227,21 @@ GOLDEN
             )
             case "$answer_case" in
             empty) copier_args+=(--data ci_app_integration_id=) ;;
-            set) copier_args+=(--data ci_app_integration_id=4109947) ;;
+            set) copier_args+=(--data ci_app_integration_id=4109947 --data merge_queue_available=true) ;;
             esac
 
             if ! run_quiet "ruleset-$owner_case-$answer_case-render" copier copy \
                 "${copier_args[@]}" "$matrix_source" "$render_dir"; then
                 err "Copier failed for the $owner_case/$answer_case Creation ruleset matrix case"
+                return 1
+            fi
+
+            local expected_queue=0
+            if [ "$owner_case" = org ] && [ "$answer_case" = set ]; then expected_queue=1; fi
+            if ! jq -e --argjson expected "$expected_queue" \
+                '[.rules[] | select(.type == "merge_queue")] | length == $expected' \
+                "$render_dir/.github/Branch Protection Ruleset - Protect Main.json" >/dev/null; then
+                err "merge_queue rule count mismatch for $owner_case/$answer_case"
                 return 1
             fi
 
@@ -402,7 +412,7 @@ full)
     # Maximize conditional coverage: web tooling + terraform + ansible +
     # devcontainer + self-hosted runner labels (exercises actionlint config)
     # + an org owner != author (renders project-automation.yml, the org
-    # branches of the claude workflows, and the merge_queue ruleset rule)
+    # branches of the claude workflows)
     # + the GitHub project-management doc (docs/project-management.md).
     data_args+=(
         --data project_type=web-astro
@@ -418,6 +428,7 @@ full)
         --data tailscale_required=true
         --data ci_runner=self-hosted
         --data github_org=test-org
+        --data merge_queue_available=true
         --data claude_authorized_members="evanharmon1,reviewer-a,reviewer-b"
         --data trusted_orchestrator_actor_ids="37220977,269859446"
         --data project_management=github
@@ -492,6 +503,16 @@ if [ "$profile" = "full" ]; then
     elif ! grep -Fq 'CI APP INTEGRATION ID must be a positive integer' "$job_tmp/invalid-integration-id.log"; then
         err "invalid ci_app_integration_id failed without the expected validation message"
     fi
+fi
+
+# The full organization profile opts in; every other profile uses the default off.
+# The ruleset matrix separately exercises default-off organization renders.
+expected_queue=0
+if [ "$profile" = full ]; then expected_queue=1; fi
+if ! jq -e --argjson expected "$expected_queue" \
+    '[.rules[] | select(.type == "merge_queue")] | length == $expected' \
+    "$dest/.github/Branch Protection Ruleset - Protect Main.json" >/dev/null; then
+    err "merge_queue rule count does not match availability for $profile"
 fi
 
 cd "$dest"
@@ -968,12 +989,25 @@ def contract_violations(source: str, path: "pathlib.Path | None" = None) -> list
     # (e.g. the verification step's own store_dir) even if the export step's own
     # assignment were changed to a persistent path.
     path_is_setup_action = path == SETUP_ACTION_PATH
+    # Only the recovery helper may switch to its freshly-created RUNNER_TEMP
+    # directory. The fixture's initial values are private to its own temp tree.
+    recovery_export = re.compile(r'^\s*export (?:PNPM_CONFIG_STORE_DIR|npm_config_store_dir)="\$fresh"\s*$')
+    fixture_export = 'export PNPM_CONFIG_STORE_DIR="$RUNNER_TEMP/.pnpm-store" npm_config_store_dir="$RUNNER_TEMP/.pnpm-store"'
+    recovery_safe = False
     reaching_store_dir_is_runner_temp = False
     for line in source.splitlines():
+        if re.match(r"^\s*fresh=", line):
+            recovery_safe = path == pathlib.Path("scripts/pnpm-install.sh") and line.strip() == (
+                'fresh="$(mktemp -d "${RUNNER_TEMP}/pnpm-recovery.XXXXXX")" || {'
+            )
         if re.match(r"^\s*store_dir=", line):
             reaching_store_dir_is_runner_temp = bool(
                 re.search(r"store_dir=\"?\$\{?RUNNER_TEMP\}?/", line)
             )
+        if (recovery_safe and recovery_export.fullmatch(line)) or (
+            path == pathlib.Path("scripts/test-pnpm-install.sh") and line.strip() == fixture_export
+        ):
+            continue
         if re.search(
             r"^\s*(?:export\s+)?[\"']?(?:PNPM_CONFIG_STORE_DIR|npm_config_store_dir)[\"']?\s*[:=]",
             line,
@@ -1025,6 +1059,20 @@ for fixture in (
 ):
     if not contract_violations(fixture):
         print(f"pnpm-store guard missed its negative control: {fixture}", file=sys.stderr)
+        raise SystemExit(1)
+
+# Recovery exports are valid only in the helper and only with its fixed
+# RUNNER_TEMP mktemp pattern; persistent and other-script overrides still fail.
+recovery_line = 'export PNPM_CONFIG_STORE_DIR="$fresh"'
+private_recovery = 'fresh="$(mktemp -d "${RUNNER_TEMP}/pnpm-recovery.XXXXXX")" || {'
+for source, path in (
+    (f'fresh="$HOME/store"\n{recovery_line}', pathlib.Path("scripts/pnpm-install.sh")),
+    (f'{private_recovery}\n{recovery_line}', pathlib.Path("scripts/other.sh")),
+    (f'{private_recovery}\nfresh="$HOME/store"\n{recovery_line}', pathlib.Path("scripts/pnpm-install.sh")),
+    (f'fresh="$HOME/store"\n{recovery_line}\n{private_recovery}', pathlib.Path("scripts/pnpm-install.sh")),
+):
+    if not contract_violations(source, path):
+        print("pnpm-store guard missed a recovery override negative control", file=sys.stderr)
         raise SystemExit(1)
 
 # The literal safe-echo line is exempt only in the shared setup action, and only
@@ -1113,8 +1161,113 @@ jq -e '.vulnerabilityAlerts.enabled == true' renovate.json >/dev/null ||
 # and tasks, not JSON fields, so nothing else here would notice.
 jq -e '.osvVulnerabilityAlerts == true' renovate.json >/dev/null ||
     err "Renovate OSV vulnerability alerts must be enabled"
+# Check every rendered profile, including profiles without a given ecosystem:
+# later package-specific rules must not take a lockfile update out of its group.
+python3 - renovate.json <<'PYGROUP' || err "rendered Renovate lockfile grouping is incomplete"
+import json
+import sys
+
+with open(sys.argv[1], encoding="utf-8") as config_file:
+    config = json.load(config_file)
+rules = config["packageRules"]
+for manager, expected in (("npm", "npm dependencies"), ("pep621", "Python dependencies"),
+                          ("gomod", "Go dependencies"), ("terraform", "Terraform providers")):
+    matching = [rule for rule in rules if rule.get("matchManagers") == [manager]
+                and rule.get("groupName") == expected
+                and set(rule.get("matchUpdateTypes", [])) == {"minor", "patch", "pin", "digest"}]
+    if len(matching) != 1:
+        sys.exit(f"{manager}: expected one non-major group")
+    major = [rule for rule in rules if manager in rule.get("matchManagers", [])
+             and rule.get("matchUpdateTypes") == ["major"] and "groupName" in rule]
+    if not major or major[-1]["groupName"] is not None or rules.index(major[-1]) < rules.index(matching[0]):
+        sys.exit(f"{manager}: majors are not isolated after the group")
+# Evaluate representative extracted dependencies against all later rules, not
+# just the presence of the four group declarations. This is a finite glob
+# subset for these fixtures; unknown matcher keys fail rather than being ignored.
+import fnmatch
+supported = {"matchManagers", "matchUpdateTypes", "matchDepTypes", "matchDatasources", "matchFileNames", "matchPackageNames"}
+for rule in rules:
+    unknown = {key for key in rule if key.startswith("match")} - supported
+    if unknown:
+        sys.exit(f"unsupported finite policy matcher(s): {sorted(unknown)}")
+    if any("**/" in pattern for pattern in rule.get("matchFileNames", [])):
+        sys.exit(f"unsupported globstar-directory filename pattern: {rule['matchFileNames']!r}")
+
+def matches(patterns, value):
+    if any(any(c in pattern for c in "[]{}?()") or pattern.lstrip("!").startswith("/") for pattern in patterns):
+        sys.exit(f"unsupported finite policy pattern: {patterns!r}")
+    positive = [pattern for pattern in patterns if not pattern.startswith("!")]
+    negative = [pattern[1:] for pattern in patterns if pattern.startswith("!")]
+    return (not positive or any(fnmatch.fnmatchcase(value.lower(), p.lower()) for p in positive)) and not any(
+        fnmatch.fnmatchcase(value.lower(), p.lower()) for p in negative
+    )
+
+for manager, name, path, dep_type, datasource, expected in (
+    ("npm", "prettier", "package.json", "devDependencies", "npm", "npm dependencies"),
+    ("pep621", "black", "pyproject.toml", "dependency-groups", "pypi", "Python dependencies"),
+    ("gomod", "example/module", "go.mod", "require", "go", "Go dependencies"),
+    ("terraform", "hashicorp/aws", "main.tf", "required_provider", "terraform-provider", "Terraform providers"),
+):
+    for update in ("minor", "patch", "pin", "digest", "major"):
+        group = None
+        attributes = {"matchManagers": manager, "matchPackageNames": name, "matchFileNames": path,
+                      "matchDepTypes": dep_type, "matchDatasources": datasource, "matchUpdateTypes": update}
+        for rule in rules:
+            if all(matches(rule[key], value) for key, value in attributes.items() if key in rule):
+                if "groupName" in rule:
+                    group = rule["groupName"]
+        wanted = None if update == "major" else expected
+        if group != wanted:
+            sys.exit(f"{manager} {name} {update}: effective group {group!r}, expected {wanted!r}")
+PYGROUP
+# Minimal compares the entire shared policy, excluding only the explicitly
+# Node-specific TypeScript hold. Every profile checks that hold's applicability.
+python3 - "$repo_root/renovate/default.json" renovate.json "$profile" <<'PYGUARD' ||
+import json
+import sys
+
+
+def functional(value):
+    if isinstance(value, dict):
+        return {key: functional(item) for key, item in value.items() if key != "description"}
+    if isinstance(value, list):
+        return [functional(item) for item in value]
+    return value
+
+
+def typescript_holds(config):
+    return [rule for rule in config["packageRules"] if rule.get("matchPackageNames") == ["typescript"]]
+
+
+with open(sys.argv[1], encoding="utf-8") as preset_file, open(sys.argv[2], encoding="utf-8") as render_file:
+    preset = json.load(preset_file)
+    rendered = json.load(render_file)
+profile = sys.argv[3]
+expected = {"matchManagers": ["npm"], "matchPackageNames": ["typescript"], "allowedVersions": "<7.0.0"}
+preset_holds = typescript_holds(preset)
+if len(preset_holds) != 1 or functional(preset_holds[0]) != expected:
+    sys.exit("published preset TypeScript hold is missing or differs from the expected npm policy")
+rendered_holds = typescript_holds(rendered)
+if profile in ("web", "webapp", "full", "meta"):
+    if len(rendered_holds) != 1 or functional(rendered_holds[0]) != functional(preset_holds[0]):
+        sys.exit("Node profile TypeScript hold differs from the preset")
+elif rendered_holds:
+    sys.exit("non-Node profile unexpectedly renders the TypeScript hold")
+if profile == "minimal":
+    # Delete exactly the validated Node-only rule, not arbitrary holds.
+    preset["packageRules"].remove(preset_holds[0])
+    if functional(preset) != functional(rendered):
+        sys.exit("published Renovate preset differs from minimal rendered policy")
+    if preset.get("vulnerabilityAlerts", {}).get("enabled") is not True or preset.get("osvVulnerabilityAlerts") is not True:
+        sys.exit("published Renovate preset must enable both vulnerability feeds")
+PYGUARD
+    err "published Renovate preset failed policy parity or feed checks"
+if [ "$profile" = "minimal" ]; then
+    grep -Fq 'renovate-config-validator --strict --no-global renovate/default.json' "$repo_root/scripts/test-renovate-config.sh" ||
+        err "strict shared Renovate preset validation route is missing"
+fi
 # renovate: datasource=npm depName=renovate
-RENOVATE_VALIDATOR_VERSION=44.176.2
+RENOVATE_VALIDATOR_VERSION=44.216.5
 if [ "$validation_scope" = "renovate-config" ]; then
     if have npx; then
         run_quiet renovate-config-validator \
@@ -1832,6 +1985,10 @@ if [ -f .github/workflows/classification-reconcile.yml ]; then
     fi
     rm -rf "$org_example"
 fi
+
+# GitHub audit ships to every profile; exercise the rendered runner with no network.
+[ -x scripts/audit-github.sh ] || err "audit-github.sh missing or not executable"
+./scripts/test-audit-github.sh || err "rendered GitHub audit contract failed"
 
 # ── 9c. Conditional prose and generated workflow layout ────────────
 # Inline block tags at the end of Markdown lines can consume the following
@@ -4215,6 +4372,15 @@ if [ "$profile" = "web" ] && [ -f eslint.config.js ]; then
         # from-source build then fails without node-addon-api — a machine-local
         # false failure, never a CI one (runners carry no global libvips).
         SHARP_IGNORE_GLOBAL_LIBVIPS=1 pnpm install --silent >/dev/null 2>&1 || true
+        if ! awk '
+            /^snapshots:$/ { in_snapshots = 1; next }
+            in_snapshots && /^  \047@astrojs\/astro2tsx@0\.1\.3(\047:|\()/ { in_target = 1; found_package = 1; next }
+            in_target && /^  [^ ]/ { in_target = 0 }
+            in_target && /^      '\''@emnapi\/runtime'\'': 1\.11\.3$/ { found_runtime = 1 }
+            END { exit !( !found_package || found_runtime ) }
+        ' pnpm-lock.yaml; then
+            err "web-astro fixture: lockfile does not bind @astrojs/astro2tsx@0.1.3 to @emnapi/runtime@1.11.3"
+        fi
         bin="node_modules/.bin"
         if [ ! -x "$bin/eslint" ] || [ ! -x "$bin/prettier" ] || [ ! -x "$bin/astro" ] || [ ! -x "$bin/wrangler" ]; then
             err "web-astro fixture: install did not provide the toolchain (see tests/fixtures/web-astro/package.json)"

@@ -148,10 +148,13 @@ tasks:
       - task: test:registry-docs
       - task: test:label-registry
       - task: test:tasks
+      - task: test:pnpm-install
       - task: test:grep-q-pipes
+      - task: test:mktemp-explicit
       - task: test:ci-results
       - task: test:ci-changes-classify
       - task: test:checklist-classes
+      - task: test:audit-github
       - task: test:output
       - task: test:status
       - task: test:gh-scopes
@@ -191,6 +194,7 @@ tasks:
       - task: test:statusline
       - task: test:link-claude-json
       - task: test:image-staleness
+      - task: test:rebuild-devcontainer
       - task: test:open-devcontainer
       - task: test:devcontainer-smoke-isolation
       - task: test:bot-autonomy
@@ -235,6 +239,7 @@ tasks:
       - lint:actions
       - lint:hygiene
       - lint:pin-pairs
+      - lint:renovate-holds
 [% if use_node %]
       - lint:prettier
       - lint:eslint
@@ -282,6 +287,11 @@ tasks:
     desc: Version pins and their paired checksum pins moved together (scripts/test-tool-pin-pairs.sh)
     cmds:
       - ./scripts/test-tool-pin-pairs.sh
+
+  lint:renovate-holds:
+    desc: Validate Renovate compatibility hold records
+    cmds:
+      - ./scripts/lint-renovate-holds.sh
 
   lint:hygiene:
     desc: File hygiene (trailing whitespace, EOF newlines, merge markers, etc.)
@@ -411,7 +421,7 @@ tasks:
     desc: Checkov IaC security scan
     vars:
       # renovate: datasource=pypi depName=checkov
-      CHECKOV_VERSION: 3.3.30
+      CHECKOV_VERSION: 3.4.0
     cmds:
       - uvx --from "checkov=={{.CHECKOV_VERSION}}" checkov -d terraform --quiet --compact
 
@@ -831,6 +841,11 @@ tasks:
     cmds:
       - ./scripts/test-label-registry.sh
 
+  test:pnpm-install:
+    desc: Test job-private pnpm install recovery
+    cmds:
+      - ./scripts/test-pnpm-install.sh
+
   test:tasks:
     desc: Guard the Taskfile itself (compiles; setup tasks are safe no-ops)
     cmds:
@@ -840,6 +855,11 @@ tasks:
     desc: Reject printf/echo pipelines into early-exiting grep
     cmds:
       - ./scripts/test-grep-q-pipes.sh
+
+  test:mktemp-explicit:
+    desc: Reject a bare mktemp (no explicit parent) in test scripts — macOS ignores TMPDIR
+    cmds:
+      - ./scripts/test-mktemp-explicit.sh
 
   test:verify-ci-parity:
     desc: Fail if the Build workflow stops calling test:suite or verify stops running it
@@ -860,6 +880,19 @@ tasks:
     desc: Unit-test CI aggregate and closing-keyword fail-closed truth tables
     cmds:
       - ./scripts/test-ci-results.sh
+
+  audit:github:
+    desc: Read-only GitHub checklist audit (NDJSON; 0 clean, 1 drift, 2 unavailable)
+    # Preserve machine-readable stdout under the global grouped output mode.
+    interactive: true
+    silent: true
+    cmds:
+      - ./scripts/audit-github.sh[% if github_org != author_git_provider_username %] --bot-collaborator "[[ author_git_provider_username ]]-bot"[% endif %] {{.CLI_ARGS}}
+
+  test:audit-github:
+    desc: Test GitHub checklist probes offline with stubbed gh
+    cmds:
+      - ./scripts/test-audit-github.sh
 
   audit:ruleset:
     desc: Compare the checked-in branch ruleset with GitHub's live ruleset (read-only)
@@ -1025,6 +1058,11 @@ tasks:
     cmds:
       - ./scripts/test-link-claude-json.sh
 
+  test:rebuild-devcontainer:
+    desc: Test host-side devcontainer rebuild routing
+    cmds:
+      - ./scripts/test-rebuild-devcontainer.sh
+
   test:image-staleness:
     desc: Unit-test the image-staleness warning (no container needed)
     cmds:
@@ -1144,12 +1182,12 @@ tasks:
   # automatic stop-time review for this repo + machine. See
   # docs/guides/codex-review.md for setup, mechanics, and the loop caps.
   review:
-    desc: Second-model verification review of the current change (Codex)
+    desc: "Second-model verification review of the current change (Codex; usage: task review -- [--base <ref>|--uncommitted] [focus text])"
     cmds:
       - task: review:codex
 
   challenge:
-    desc: Second-model adversarial review of the current change (Codex)
+    desc: "Second-model adversarial review of the current change (Codex; usage: task challenge -- [--base <ref>|--uncommitted] [focus text])"
     cmds:
       - task: challenge:codex
 
@@ -1532,6 +1570,12 @@ tasks:
       - ./scripts/status.sh env
 
 [% if devcontainer %]
+  devcontainer:rebuild:
+    desc: Recreate a devcontainer on the host (default dev; pass dev, bot, or agent)
+    interactive: true
+    cmds:
+      - ./scripts/rebuild-devcontainer.sh {{.CLI_ARGS}}
+
   status:image:
     desc: Warn if the container's image-baked config has drifted from the checkout (silent when fresh)
     cmds:

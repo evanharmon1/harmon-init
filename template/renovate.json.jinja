@@ -166,19 +166,7 @@
       "groupName": "Devcontainer"
     }[% endif %][% if use_node %],
     {
-      "description": "Batch non-major npm/Node updates into one PR",
-      "matchManagers": ["npm"],
-      "matchUpdateTypes": ["minor", "patch", "pin", "digest"],
-      "groupName": "npm dependencies"
-    },
-    {
-      "description": "Give each npm major its own PR so one incompatible package cannot block unrelated upgrades",
-      "matchManagers": ["npm"],
-      "matchUpdateTypes": ["major"],
-      "groupName": null
-    },
-    {
-      "description": "Hold TypeScript below 7 until typescript-eslint and Astro's language server support the native-compiler rewrite; remove this hold when https://github.com/typescript-eslint/typescript-eslint/issues/10940 and https://github.com/withastro/roadmap/issues/1321 are resolved",
+      "description": "Reason: TypeScript 7 requires typescript-eslint support for its native compiler; Upstream: https://github.com/typescript-eslint/typescript-eslint/issues/10940; Remove when: typescript-eslint supports TypeScript 7 and the canary Node and Astro checks pass with TypeScript 7; Canary: https://github.com/evanharmon1/harmon-init",
       "matchManagers": ["npm"],
       "matchPackageNames": ["typescript"],
       "allowedVersions": "<7.0.0"
@@ -194,36 +182,84 @@
       ]
     },
     {
-      "description": "Keep the tightly coupled ESLint packages together, including eslint-plugin-astro, while isolating their breakage from unrelated npm updates",
-      "matchManagers": ["npm"],
-      "matchPackageNames": ["typescript-eslint", "@typescript-eslint/*", "eslint", "@eslint/*", "eslint-plugin-astro"],
-      "groupName": "ESLint toolchain"
-    },
-    {
-      "description": "Keep Astro and its official integrations together while isolating their breakage from unrelated npm updates",
-      "matchManagers": ["npm"],
-      "matchPackageNames": ["astro", "@astrojs/*"],
-      "groupName": "Astro"
-    },
-    {
       "description": "Disable auto-update for npm overrides used as security pins — Renovate runs npm install <pkg>@<version> to update overrides, which causes EOVERRIDE when the package also appears as a transitive dep. The template-owned security floors in pnpm-workspace.yaml are major-bounded on purpose, and Renovate reads that file under its own depType (pnpm-workspace.overrides), so without this rule it proposes widening a floor across the major the block forbids",
       "matchManagers": ["npm"],
       "matchDepTypes": ["overrides", "pnpm.overrides", "pnpm-workspace.overrides"],
       "enabled": false
     }[% endif %],
     {
-      "description": "Batch prettier (with its plugins and shared config), markdownlint-cli2, and Black together as \"Formatters\": a formatter bump can reformat every file it touches with no code change behind it, so it gets its own PR and its own reminders rather than riding the generic npm/majors batches. Always present — markdownlint-cli2 is not gated by use_node — but must come after the npm major/non-major split above so a prettier major still lands here instead of getting its own solo PR (no other rule here matches these names, so ordering against ESLint/Astro/CI lint tools/Devcontainer is otherwise moot). shfmt is already isolated in the 'CI lint tools' group (#1352) and is deliberately not duplicated here.",
+      "description": "Keep formatter guidance for updates to prettier, markdownlint-cli2, and Black; lockfile ecosystem rules below select their non-major groups",
       "matchPackageNames": ["markdownlint-cli2"[% if use_node %], "prettier", "prettier-plugin-*", "prettier-config-*"[% endif %][% if use_python %], "black"[% endif %]],
       "groupName": "Formatters",
       "prBodyNotes": [
         "Run `task fix` and commit the reformat as a separate commit from this dependency bump; do not amend Renovate's commit.",
         "web-astro only: before merging, run `task test:render-parity` — a prettier-plugin-astro bump can silently reflow whitespace-sensitive inline markup when this repo's `astroCompressHTML` setting (prettier.config.cjs) disagrees with `astro.config`'s `compressHTML` (see docs/CHECKLIST.md and scripts/test-astro-compress-parity.sh)."
       ]
-    }[% if include_terraform %],
+    },
     {
-      "description": "Batch all Terraform provider updates into one PR",
-      "matchManagers": ["terraform"],
+      "description": "Group non-major npm lockfile updates",
+      "matchManagers": [
+        "npm"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "pin",
+        "digest"
+      ],
+      "groupName": "npm dependencies"
+    },
+    {
+      "description": "Group non-major pep621 lockfile updates",
+      "matchManagers": [
+        "pep621"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "pin",
+        "digest"
+      ],
+      "groupName": "Python dependencies"
+    },
+    {
+      "description": "Group non-major gomod lockfile updates",
+      "matchManagers": [
+        "gomod"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "pin",
+        "digest"
+      ],
+      "groupName": "Go dependencies"
+    },
+    {
+      "description": "Group non-major terraform lockfile updates",
+      "matchManagers": [
+        "terraform"
+      ],
+      "matchUpdateTypes": [
+        "minor",
+        "patch",
+        "pin",
+        "digest"
+      ],
       "groupName": "Terraform providers"
-    }[% endif +%]
+    },
+    {
+      "description": "Keep lockfile ecosystem majors separate",
+      "matchManagers": [
+        "npm",
+        "pep621",
+        "gomod",
+        "terraform"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "groupName": null
+    }
   ]
 }

@@ -22,7 +22,7 @@ source = Path.cwd()
 base_env = os.environ.copy()
 for name in ("GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_CONFIG_COUNT", "GIT_CONFIG_PARAMETERS",
              "CLAUDE_CODE_REMOTE", "HARMON_PREFIX", "HARMON_BIN", "HARMON_VERSIONS_FILE",
-             "HARMON_CHANGE_LOG", "HARMON_TMPDIR"):
+             "HARMON_CHANGE_LOG", "HARMON_TMPDIR", "CLAUDE_ENV_FILE", "BASH_ENV"):
     base_env.pop(name, None)
 base_env.update(GIT_CONFIG_GLOBAL="/dev/null", GIT_CONFIG_NOSYSTEM="1")
 
@@ -56,9 +56,14 @@ if not real_task:
     raise SystemExit("test-reconcile-toolchain needs task")
 
 
-def run(args, cwd=source, env=None):
+def run_streams(args, cwd=source, env=None):
     result = subprocess.run(args, cwd=cwd, env=env or base_env, text=True, capture_output=True, timeout=20)
-    return result.returncode, result.stdout + result.stderr
+    return result.returncode, result.stdout, result.stderr
+
+
+def run(args, cwd=source, env=None):
+    rc, stdout, stderr = run_streams(args, cwd, env)
+    return rc, stdout + stderr
 
 
 registry = set(subprocess.check_output(["bash", "scripts/reconcile-toolchain.sh", "--list"], text=True).split())
@@ -117,6 +122,19 @@ with tempfile.TemporaryDirectory(prefix="reconcile-") as scratch:
         path.write_text(text)
         path.chmod(0o755)
 
+    # Shared image installers use Linux mv -T. Keep this host fixture portable
+    # while preserving its atomic, non-directory-target replacement semantics.
+    real_mv = shutil.which("mv")
+    executable(stubs / "mv", f'''#!/usr/bin/env python3
+import os
+import sys
+args = sys.argv[1:]
+if args[0] == "-fT":
+    os.replace(args[1], args[2])
+else:
+    os.execv({real_mv!r}, [{real_mv!r}, *args])
+''')
+
     def old_tool(text="1.2.3", exit_code=0):
         executable(prefix / "bin/shellcheck", f"#!/bin/sh\necho 'version: {text}'\nexit {exit_code}\n")
 
@@ -156,7 +174,7 @@ with tempfile.TemporaryDirectory(prefix="reconcile-") as scratch:
         (assets / "install/lib.sh").write_text("# bootstrap fixture\n")
         (assets / "install/install-shellcheck.sh").write_text('''#!/usr/bin/env bash
 set -euo pipefail
-tmp="$(mktemp -d)"
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/fixture-install.XXXXXX")"
 trap 'rm -rf "$tmp"' EXIT
 curl -o "$tmp/archive"
 tar -xJf "$tmp/archive" -C "$tmp"
@@ -197,6 +215,130 @@ exec {shlex.quote(real_task)} "$@"
                       "PATH": f"{prefix / 'bin'}:{stubs}:{base_env['PATH']}",
                       "RECONCILE_TEST_LOG": str(log), "RECONCILE_TEST_ARCHIVE": str(archive),
                       "TMPDIR": str(scratch)}
+
+    # Platform tools precede the bootstrap even in non-login agent shells.
+    # Persist the export synchronously and test the exact file in fresh shells.
+    competing = scratch / "platform-bin"
+    competing.mkdir()
+    path_tools = ("node", "npm", "uv", "yq")
+    for tool in path_tools:
+        executable(prefix / "bin" / tool, "#!/bin/sh\necho pinned\n")
+        executable(competing / tool, "#!/bin/sh\necho platform\n")
+    manifest.write_text(json.dumps(original_manifest | {"tools": {"yq": "4.0.0"}}))
+    executable(prefix / "bin/task", f'#!/bin/sh\nexec {shlex.quote(real_task)} "$@"\n')
+    executable(competing / "task", "#!/bin/sh\necho platform-task-must-not-run\nexit 97\n")
+    shadow_env = env | {"PATH": f"{competing}:{stubs}:{prefix / 'bin'}:{base_env['PATH']}"}
+    persisted = scratch / "session env.sh"
+    persisted.write_text("export KEEP_OTHER_HOOK=value\n")
+    rc, out, err = run_streams(["bash", "scripts/session-start-remote.sh"], repo,
+                               shadow_env | {"CLAUDE_ENV_FILE": str(persisted)})
+    assert rc == 0 and "setup:remote completed" in out, out
+    assert "platform-task-must-not-run" not in out, out
+    assert persisted.read_text().startswith("export KEEP_OTHER_HOOK=value\n"), persisted.read_text()
+    assert out.count("Managed PATH saved for agent commands:") == 1, out
+    assert "shadows pinned" not in out + err, (out, err)
+    assert "WARNING" not in persisted.read_text(), persisted.read_text()
+
+    # Consumers can use the hook without adopting the shared bootstrap. Even
+    # with tools under the default-style bin, no manifest means no managed PATH.
+    saved_manifest = manifest.with_suffix(".saved")
+    platform_task = competing / "task"
+    saved_platform_task = platform_task.read_text()
+    incoming_path_log = scratch / "unbootstrapped-task-path"
+    no_manifest_env = scratch / "no-manifest-env.sh"
+    no_manifest_env.write_text("export KEEP_OTHER_HOOK=value\n")
+    manifest.rename(saved_manifest)
+    try:
+        executable(platform_task, f'''#!/bin/sh
+printf '%s\\n' "$PATH" >{shlex.quote(str(incoming_path_log))}
+exec {shlex.quote(real_task)} "$@"
+''')
+        rc, export, diagnostics = run_streams(["bash", "scripts/reconcile-toolchain.sh", "--session-env"],
+                                              repo, shadow_env)
+        assert rc == 0 and not export and not diagnostics, (rc, export, diagnostics)
+        rc, status = run(["bash", "scripts/reconcile-toolchain.sh", "--status"], repo, shadow_env)
+        assert rc == 0 and "shadows pinned" not in status, status
+        rc, out, err = run_streams(["bash", "scripts/session-start-remote.sh"], repo,
+                                   shadow_env | {"CLAUDE_ENV_FILE": str(no_manifest_env)})
+        assert rc == 0 and "setup:remote completed" in out, (out, err)
+        assert incoming_path_log.read_text().strip() == shadow_env["PATH"], (out, err)
+        assert no_manifest_env.read_text() == "export KEEP_OTHER_HOOK=value\n"
+        assert "managed PATH" not in out + err and "Managed PATH" not in out + err, (out, err)
+        assert "shadows pinned" not in out + err, (out, err)
+    finally:
+        saved_manifest.rename(manifest)
+        executable(platform_task, saved_platform_task)
+    print("OK: no bootstrap manifest means no export, PATH change, persistence or shadow report")
+    # The shell receives a different PATH after the hook returned: the export
+    # must expand it at command time, not overwrite it with the hook's snapshot.
+    shell_env = shadow_env | {"PATH": f"{competing}:/later-session-entry:{base_env['PATH']}"}
+    startup = scratch / "login-shell-startup.sh"
+    startup.write_text(f'export PATH={shlex.quote(str(competing))}:/later-session-entry:"$PATH"\n'
+                       'export LOGIN_STARTUP_FIXTURE_LOADED=yes\n')
+    for login in (False, True):
+        shell_args = ("bash", "--login") if login else ("bash", "--noprofile", "--norc")
+        current_env = shell_env | {"BASH_ENV": str(startup), "PATH": base_env["PATH"]} if login else shell_env
+        rc, out = run([*shell_args, "-c", '''
+[ "$4" != True ] || [ "${LOGIN_STARTUP_FIXTURE_LOADED:-}" = yes ] || exit 1
+[ "${PATH%%:*}" = "$2" ] || exit 1
+incoming="$PATH"
+. "$1"
+[ "$PATH" = "$3:$incoming" ] || exit 1
+first="$PATH"
+. "$1"
+[ "$PATH" = "$first" ] && [ "$KEEP_OTHER_HOOK" = value ] || exit 1
+for tool in node npm uv yq; do command -v "$tool"; done
+printf '%s\\n' "$PATH"
+''', "_", str(persisted), str(competing), str(prefix / "bin"), str(login)], repo, current_env)
+        assert rc == 0 and out.splitlines()[:4] == [str(prefix / "bin" / tool) for tool in path_tools], out
+        assert ":/later-session-entry:" in out, out
+    for persistence in ({}, {"CLAUDE_ENV_FILE": str(scratch / "missing/env")}):
+        rc, out, err = run_streams(["bash", "scripts/session-start-remote.sh"], repo, shadow_env | persistence)
+        warning = "could not persist managed PATH" if persistence else "CLAUDE_ENV_FILE is unavailable"
+        assert rc == 0 and warning in out and warning not in err, (out, err)
+        assert "Managed PATH saved for agent commands:" not in out + err, (out, err)
+        for tool in path_tools:
+            assert f"shadows pinned {tool}: resolves to '{competing / tool}'" in out, out
+            assert f"shadows pinned {tool}:" not in err, err
+
+    reconciler = repo / "scripts/reconcile-toolchain.sh"
+    original_reconciler = reconciler.read_bytes()
+    try:
+        reconciler.write_text("#!/bin/sh\nexit 1\n")
+        rc, out, err = run_streams(["bash", "scripts/session-start-remote.sh"], repo, shadow_env)
+        assert rc == 0 and "could not prepare managed PATH" in out, (out, err)
+        assert "could not prepare managed PATH" not in err, err
+    finally:
+        reconciler.write_bytes(original_reconciler)
+
+    # Advisory helpers must not suppress the PATH fix itself. Recreate a
+    # present-but-broken Python and a failing manifest reader (exit 127).
+    failing_helpers = scratch / "failing-helpers"
+    failing_helpers.mkdir()
+    for helper in ("python3", "jq"):
+        executable(failing_helpers / helper, "#!/bin/sh\nexit 127\n")
+    helper_env = shadow_env | {"PATH": f"{failing_helpers}:{shadow_env['PATH']}"}
+    rc, export, diagnostics = run_streams(["bash", "scripts/reconcile-toolchain.sh", "--session-env"],
+                                          repo, helper_env)
+    assert rc == 0 and 'export PATH=' in export and "WARNING" not in export, (rc, export, diagnostics)
+    rc, out = run(["bash", "-c", export + '\nprintf "%s\\n" "${PATH%%:*}"'], repo, helper_env)
+    assert rc == 0 and out.strip() == str(prefix / "bin"), out
+    print("OK: --session-env still prints a working export with helpers that exit 127")
+    rc, out = run(["bash", "scripts/reconcile-toolchain.sh", "--status"], repo, shadow_env)
+    assert rc == 0 and all(str(competing / tool) in out for tool in path_tools), out
+    # Shell data in a custom bin path must survive export generation literally.
+    awkward_bin = scratch / "bin with 'quotes $dollar; characters"
+    result = subprocess.run(["bash", "scripts/reconcile-toolchain.sh", "--session-env"], cwd=repo,
+                            env=env | {"HARMON_BIN": str(awkward_bin)},
+                            capture_output=True, text=True, timeout=20)
+    rc, out = run(["bash", "-c", result.stdout + '\nprintf "%s\\n" "${PATH%%:*}"'], repo, env)
+    assert rc == 0 and out.strip() == str(awkward_bin), out
+    for tool in (*path_tools, "task"):
+        (prefix / "bin" / tool).unlink()
+    (competing / "task").unlink()
+    manifest.write_text(json.dumps(original_manifest))
+    log.unlink(missing_ok=True)
+    print("OK: SessionStart persists managed PATH before task; login/non-login shells resolve pinned tools; unavailable persistence names shadows")
 
     def setup(mode="", remote=True):
         log.unlink(missing_ok=True)
@@ -261,7 +403,7 @@ exec {shlex.quote(real_task)} "$@"
     old_tool()
     rc, out = run(["bash", "scripts/session-start-remote.sh"], repo, env)
     assert rc == 0, out
-    line = next(line for line in out.splitlines() if "SessionStart remote preparation:" in line)
+    line = next(line for line in out.splitlines() if line.startswith("==> SessionStart remote preparation:"))
     assert "Reconciled shellcheck 1.2.3 -> 7.8.9" in line, out
     old_tool()
     installer = cache / "install/install-shellcheck.sh"
@@ -274,13 +416,13 @@ exec {shlex.quote(real_task)} "$@"
     log.unlink(missing_ok=True)
     rc, out = run(["task", "--silent", "setup:remote"], repo,
                   env | {"PATH": f"{stubs}:{prefix / 'bin'}:{base_env['PATH']}"})
-    assert rc == 0 and not log.exists(), out
-    drift_warning(out, "must be writable and precede",
-                  remedy=f"make {prefix / 'bin'} writable and place it before other shellcheck copies on PATH")
+    assert rc == 0 and log.exists() and "Reconciled shellcheck 1.2.3 -> 7.8.9" in out, out
+    assert f"incoming PATH shadows pinned shellcheck: resolves to '{stubs / 'shellcheck'}'" in out, out
+    log.unlink()
     rc, out = run(["bash", "scripts/reconcile-toolchain.sh", "--status"], repo,
                   env | {"PATH": f"{stubs}:{prefix / 'bin'}:{base_env['PATH']}"})
     assert rc == 0 and not log.exists(), out
-    line = next(line for line in out.splitlines() if line.startswith("WARNING:"))
+    line = next(line for line in out.splitlines() if line.startswith("WARNING: shellcheck installed"))
     for value in ("installed 1.2.3", "checkout pin 7.8.9", "environment v1.2.3",
                   "must be writable and precede",
                   f"make {prefix / 'bin'} writable and place it before other shellcheck copies on PATH"):
@@ -288,7 +430,7 @@ exec {shlex.quote(real_task)} "$@"
     assert "HARMON_INIT_REF" not in line and "rebuild the environment" not in line, out
     print("OK: --status shares the shadowed-prefix cause and remedy without installing or advising a rebuild")
     (stubs / "shellcheck").unlink()
-    print("OK: successful SessionStart names the repair; missing installers and shadowed prefixes warn without installing")
+    print("OK: setup fixes PATH before reconciling; status only diagnoses shadows; missing installers warn without installing")
     action = repo / ".github/actions/setup/action.yml"
     action.write_text("SHELLCHECK_VERSION=7.8.9\nSHELLCHECK_VERSION=7.8.8\n")
     out = setup()
@@ -335,7 +477,8 @@ exec {shlex.quote(real_task)} "$@"
     for mode in ("setup-failure",):
         rc, out = run(["bash", "scripts/session-start-remote.sh"], repo, env | {"RECONCILE_TEST_MODE": mode})
         assert rc == 0, out
-        line = next(line for line in out.splitlines() if "SessionStart remote preparation:" in line)
+        line = next(line for line in out.splitlines()
+                    if line.startswith("==> WARNING: SessionStart remote preparation: setup:remote failed;"))
         for value in ("shellcheck", "installed 1.2.3", "checkout pin 7.8.9", "environment v1.2.3", "HARMON_INIT_REF",
                       "preparation left this tool unreconciled"):
             assert value in line, (mode, value, out)

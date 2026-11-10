@@ -10,7 +10,12 @@
 # a capped review loop exits on. Also guards the scope union: a branch holding
 # commits AND uncommitted work is the ordinary mid-loop state, and reviewing
 # only one half is how a re-run banks a clean pass for a fraction of the
-# change. Run via `task test:codex-review`.
+# change. And guards the review guidelines (harmon-init#1530): the table and
+# the file are read from the review's BASE revision, never the working tree;
+# the unconfigured prompt is held to a golden copy byte for byte; and the
+# severity scale's normative statement in docs/review-guidelines.md and the
+# prompt's copy are compared, so the two sites can never disagree (#964).
+# Run via `task test:codex-review`.
 set -euo pipefail
 
 repo="$(git rev-parse --show-toplevel)"
@@ -101,7 +106,123 @@ for candidate in .claude/skills/standardize-repo/assets/diff-template.sh \
         break
     fi
 done
+# Pin-independent stub helpers: whatever skills pin is vendored, prove the
+# runner hands a helper its sibling verifier from the merge base only.
+sibling_fixture() {
+    local fixture="$1" base_verifier="$2" head_verifier="$3" assets
+    assets="$fixture/.claude/skills/standardize-repo/assets"
+    mkdir -p "$fixture/scripts/lib" "$assets" "$fixture/src"
+    cp "${repo}/scripts/codex-review.sh" "$fixture/scripts/"
+    cp "${repo}/scripts/lib/review-scope.sh" "$fixture/scripts/lib/"
+    cp -R "${repo}/scripts/lib/review-instructions" "$fixture/scripts/lib/"
+    cat >"$assets/diff-template.sh" <<'SIBLINGHELPER'
+#!/usr/bin/env bash
+dir="$(cd "$(dirname "$0")" && pwd)"
+if [ -f "$dir/render-bundle.sh" ]; then
+    [ "$#" -gt 1 ] || exit 2
+    bash "$dir/render-bundle.sh"
+    exit
+fi
+[ -n "${SIBLING_REQUIRED:-}" ] || { [ "$#" -gt 1 ] && printf 'src/base-excluded.txt\0'; exit; }
+echo "FAIL: authenticated render-bundle.sh verifier is unavailable" >&2
+exit 2
+SIBLINGHELPER
+    [ -z "$base_verifier" ] || printf '%s\n' "$base_verifier" >"$assets/render-bundle.sh"
+    git init -q -b main "$fixture"
+    printf 'old\n' >"$fixture/src/base-excluded.txt"
+    printf 'old\n' >"$fixture/src/head-excluded.txt"
+    git -C "$fixture" add -A
+    git_t -C "$fixture" commit -qm 'test: sibling base'
+    git -C "$fixture" checkout -qb update
+    [ -z "$head_verifier" ] || printf '%s\n' "$head_verifier" >"$assets/render-bundle.sh"
+    printf 'new\n' >"$fixture/src/base-excluded.txt"
+    printf 'new\n' >"$fixture/src/head-excluded.txt"
+    git -C "$fixture" add -A
+    git_t -C "$fixture" commit -qm 'test: sibling head'
+}
+sibling_review() {
+    (cd "$1" && ./scripts/codex-review.sh review --profile standardize --release v2.0.0 \
+        --frozen-render "${test_tmp}/unused-bundle" --base main 2>&1)
+}
+
+echo "==> standardize materializes the helper's sibling verifier from the merge base, never the head"
+sibling_fixture "${test_tmp}/sibling-merge-base" "printf 'src/base-excluded.txt\\0'" \
+    "printf 'src/head-excluded.txt\\0'"
+out="$(SIBLING_REQUIRED=1 sibling_review "${test_tmp}/sibling-merge-base")" ||
+    fail "standardize review with a merge-base sibling verifier failed: $out"
+! grep -Fq 'src/base-excluded.txt' <<<"$out" ||
+    fail "the merge-base verifier's exclusion was not applied: $out"
+grep -Fq 'src/head-excluded.txt' <<<"$out" ||
+    fail "the head-edited verifier changed the exclusions: $out"
+
+echo "==> a merge-base helper package without a verifier keeps working"
+sibling_fixture "${test_tmp}/sibling-legacy" "" ""
+out="$(sibling_review "${test_tmp}/sibling-legacy")" ||
+    fail "standardize review with a verifier-less legacy helper failed: $out"
+! grep -Fq 'src/base-excluded.txt' <<<"$out" ||
+    fail "the legacy helper's exclusion was not applied: $out"
+
+echo "==> a verifier added only at the reviewed head is not used"
+sibling_fixture "${test_tmp}/sibling-head-only" "" "printf 'src/head-excluded.txt\\0'"
+if out="$(SIBLING_REQUIRED=1 sibling_review "${test_tmp}/sibling-head-only")"; then
+    fail "standardize review used a verifier added only at the head: $out"
+fi
+grep -Fq 'authenticated render-bundle.sh verifier is unavailable' <<<"$out" ||
+    fail "head-only verifier refusal did not come from the helper: $out"
+
 standardize_cases=0
+# harmon-devkit v0.66.0+ ships render-bundle.sh beside the helper, and that
+# helper only trusts a bundle its sibling verifier re-renders from tagged
+# templates. Build the fixtures as real producer output there; an older
+# helper reads the hand-built bundles as they are.
+standardize_verifier=""
+standardize_skip="standardize-repo helper is not installed"
+if [ -n "$standardize_helper" ] && [ -f "${standardize_helper%/*}/render-bundle.sh" ]; then
+    standardize_verifier="${standardize_helper%/*}/render-bundle.sh"
+    # Producing and verifying an authenticated bundle both re-render with
+    # Copier, which a generated repository's toolchain does not install.
+    if ! command -v copier >/dev/null 2>&1; then
+        standardize_helper=""
+        standardize_skip="the authenticated standardize-repo helper needs copier, which is not installed"
+    fi
+fi
+# Turn a hand-built bundle's previous/current snapshots into a tagged Copier
+# template and replace the bundle with render-bundle.sh output over it. Test
+# data setup only, mirroring harmon-devkit's own fixture; a no-op without
+# the verifier.
+standardize_render_bundle() {
+    local bundle="$1" target="$2" base="$3" head="$4" release="$5"
+    local template_source="${bundle}-template" side tag
+    [ -n "$standardize_verifier" ] || return 0
+    rm -rf "$template_source"
+    mkdir -p "$template_source/template"
+    git init -q "$template_source"
+    git -C "$template_source" config user.name Fixture
+    git -C "$template_source" config user.email fixture@example.invalid
+    printf '_subdirectory: template\n_skip_if_exists: [src/repo-owned.txt]\n' \
+        >"$template_source/copier.yml"
+    for side in previous current; do
+        rm -rf "$template_source/template"
+        mkdir -p "$template_source/template"
+        cp -R "$bundle/$side/." "$template_source/template/"
+        : >"$template_source/template/.fixture"
+        rm -f "$template_source/template/.copier-answers.yml"
+        git -C "$template_source" add -A
+        git_t -C "$template_source" commit -qm "test: $side template" --allow-empty
+        if [ "$side" = previous ]; then tag=v1.0.0; else tag="$release"; fi
+        git -C "$template_source" tag "$tag"
+    done
+    # The helper's verifier re-renders from HARMON_INIT too, so it stays
+    # exported for the review runs that read this bundle.
+    export HARMON_INIT="$template_source"
+    cp "$bundle/conflict-resolutions.nul" "${bundle}-conflicts.nul"
+    rm -rf "$bundle"
+    bash "$standardize_verifier" \
+        --previous-release v1.0.0 --release "$release" --base "$base" \
+        --head "$head" --output "$bundle" "$target" ||
+        fail "render-bundle.sh could not produce the $release fixture bundle"
+    cp "${bundle}-conflicts.nul" "$bundle/conflict-resolutions.nul"
+}
 if [ -n "$standardize_helper" ]; then
     echo "==> standardize excludes only pristine frozen-render paths and keeps protected or customized files"
     std_repo="${test_tmp}/standardize-repo"
@@ -113,12 +234,14 @@ if [ -n "$standardize_helper" ]; then
     cp -R "${repo}/scripts/lib/review-instructions" "$std_repo/scripts/lib/"
     cp "${standardize_helper}" \
         "$std_repo/.claude/skills/standardize-repo/assets/"
+    [ -z "$standardize_verifier" ] ||
+        cp "$standardize_verifier" "$std_repo/.claude/skills/standardize-repo/assets/"
     git init -q -b main "$std_repo"
     git -C "$std_repo" config user.email test@test
     git -C "$std_repo" config user.name test
     printf 'template old\n' >"$std_repo/src/generated.txt"
     printf 'repository customization old\n' >"$std_repo/src/customized.txt"
-    printf 'answers old\n' >"$std_repo/.copier-answers.yml"
+    printf '_commit: v1.0.0\n' >"$std_repo/.copier-answers.yml"
     printf 'conflict old\n' >"$std_repo/src/conflict-resolution.txt"
     printf 'owned old\n' >"$std_repo/src/repo-owned.txt"
     printf 'mode\n' >"$std_repo/src/mode-change.sh"
@@ -129,7 +252,7 @@ if [ -n "$standardize_helper" ]; then
     git -C "$std_repo" checkout -qb update
     printf 'template new\n' >"$std_repo/src/generated.txt"
     printf 'repository customization new\n' >"$std_repo/src/customized.txt"
-    printf 'answers new\n' >"$std_repo/.copier-answers.yml"
+    printf '_commit: v2.0.0\n' >"$std_repo/.copier-answers.yml"
     printf 'conflict new\n' >"$std_repo/src/conflict-resolution.txt"
     printf 'owned new\n' >"$std_repo/src/repo-owned.txt"
     chmod +x "$std_repo/src/mode-change.sh"
@@ -140,8 +263,8 @@ if [ -n "$standardize_helper" ]; then
     printf 'template new\n' >"$std_bundle/current/src/generated.txt"
     printf 'template old\n' >"$std_bundle/previous/src/customized.txt"
     printf 'template new\n' >"$std_bundle/current/src/customized.txt"
-    printf 'answers old\n' >"$std_bundle/previous/.copier-answers.yml"
-    printf 'answers new\n' >"$std_bundle/current/.copier-answers.yml"
+    printf '_commit: v1.0.0\n' >"$std_bundle/previous/.copier-answers.yml"
+    printf '_commit: v2.0.0\n' >"$std_bundle/current/.copier-answers.yml"
     printf 'conflict old\n' >"$std_bundle/previous/src/conflict-resolution.txt"
     printf 'conflict new\n' >"$std_bundle/current/src/conflict-resolution.txt"
     printf 'owned old\n' >"$std_bundle/previous/src/repo-owned.txt"
@@ -153,6 +276,7 @@ if [ -n "$standardize_helper" ]; then
         "$std_base" "$std_head" >"$std_bundle/metadata"
     printf 'src/conflict-resolution.txt\0' >"$std_bundle/conflict-resolutions.nul"
     printf 'src/repo-owned.txt\0' >"$std_bundle/repo-owned.nul"
+    standardize_render_bundle "$std_bundle" "$std_repo" "$std_base" "$std_head" v2.0.0
     printf 'src/generated.txt\0' >"${test_tmp}/standardize-expected.nul"
     bash "$std_repo/.claude/skills/standardize-repo/assets/diff-template.sh" \
         --review-exclusions --release v2.0.0 --frozen-render "$std_bundle" \
@@ -211,6 +335,7 @@ if [ -n "$standardize_helper" ]; then
         "$std_base" "$large_head" >"$large_bundle/metadata"
     : >"$large_bundle/conflict-resolutions.nul"
     : >"$large_bundle/repo-owned.nul"
+    standardize_render_bundle "$large_bundle" "$std_repo" "$std_base" "$large_head" v2.0.1
     : >"$stub_argv"
     if out="$(cd "$std_repo" && ./scripts/codex-review.sh review --profile standardize \
         --release v2.0.1 --frozen-render "$large_bundle" --base "$std_base" 2>&1)"; then
@@ -234,8 +359,20 @@ HEADHELPER
     git -C "$std_repo" add .claude/skills/standardize-repo/assets/diff-template.sh
     git -C "$std_repo" commit -qm 'test: head helper tries to exclude a customization'
     std_head_tampered="$(git -C "$std_repo" rev-parse HEAD)"
-    printf 'format=harmon-devkit-review-frozen-render-v1\nrelease=v2.0.0\nprevious-release=v1.0.0\nbase=%s\nhead=%s\n' \
-        "$std_base" "$std_head_tampered" >"$std_bundle/metadata"
+    if [ -n "$standardize_verifier" ]; then
+        # Re-produce the bundle for the tampered head from the same tagged
+        # template; the verifier still runs from the merge-base package.
+        export HARMON_INIT="${std_bundle}-template"
+        rm -rf "$std_bundle"
+        bash "$standardize_verifier" \
+            --previous-release v1.0.0 --release v2.0.0 --base "$std_base" \
+            --head "$std_head_tampered" --output "$std_bundle" "$std_repo" ||
+            fail "render-bundle.sh could not produce the tampered-head bundle"
+        printf 'src/conflict-resolution.txt\0' >"$std_bundle/conflict-resolutions.nul"
+    else
+        printf 'format=harmon-devkit-review-frozen-render-v1\nrelease=v2.0.0\nprevious-release=v1.0.0\nbase=%s\nhead=%s\n' \
+            "$std_base" "$std_head_tampered" >"$std_bundle/metadata"
+    fi
     out="$(cd "$std_repo" && ./scripts/codex-review.sh review --profile standardize \
         --release v2.0.0 --frozen-render "$std_bundle" --base "$std_base" 2>&1)" ||
         fail "standardize review with a head-edited helper failed: $out"
@@ -294,6 +431,7 @@ LEGACYHELPER
         "$std_base" "$fallback_head" >"$fallback_bundle/metadata"
     : >"$fallback_bundle/conflict-resolutions.nul"
     : >"$fallback_bundle/repo-owned.nul"
+    standardize_render_bundle "$fallback_bundle" "$std_repo" "$std_base" "$fallback_head" v2.1.0
     out="$(cd "$std_repo" && ./scripts/codex-review.sh review --profile standardize \
         --release v2.1.0 --frozen-render "$fallback_bundle" --base "$std_base" 2>&1)" ||
         fail "all-pristine standardize review failed: $out"
@@ -329,6 +467,8 @@ LEGACYHELPER
         "$oversized_fallback_base" "$oversized_fallback_head" >"$oversized_fallback_bundle/metadata"
     : >"$oversized_fallback_bundle/conflict-resolutions.nul"
     : >"$oversized_fallback_bundle/repo-owned.nul"
+    standardize_render_bundle "$oversized_fallback_bundle" "$std_repo" \
+        "$oversized_fallback_base" "$oversized_fallback_head" v2.2.0
     : >"$stub_argv"
     out="$(cd "$std_repo" && ./scripts/codex-review.sh review --profile standardize \
         --release v2.2.0 --frozen-render "$oversized_fallback_bundle" \
@@ -345,8 +485,9 @@ LEGACYHELPER
         fail "oversized full-diff fixture contains $oversized_fallback_paths paths, expected 201"
 
     standardize_cases=6
+    unset HARMON_INIT
 else
-    echo "==> skipping standardize bundle fixtures: standardize-repo helper is not installed"
+    echo "==> skipping standardize bundle fixtures: $standardize_skip"
 fi
 
 echo "==> clean tree, no local main/master: falls back to origin/HEAD's branch"
@@ -468,6 +609,414 @@ grep -q "hypothesis the" <<<"$out" ||
     fail "review prompt missing the label-is-a-hypothesis rule — an under-labelled P3 could be dropped without adjudication (harmon-init#923 shepherd r2): $out"
 ! grep -q "not carried into the pull request description" <<<"$out" ||
     fail "review prompt still claims a P3 is never deferred — deferral is decided by adjudication, not by the badge: $out"
+
+# ── Review guidelines (harmon-init#1530) ─────────────────────────────────────
+# Everything after STUB-PROMPT: is the prompt codex received, byte for byte.
+prompt_of() {
+    sed -n '/^STUB-PROMPT:/,$p' <<<"$1" | sed '1s/^STUB-PROMPT://'
+}
+# A fresh repository carrying the runner, on main. Callers add the files each
+# case needs and commit; the runner's own bytes are the ones under test.
+guidelines_fixture() {
+    local fixture="$1"
+    mkdir -p "$fixture/scripts/lib" "$fixture/docs"
+    cp "${repo}/scripts/codex-review.sh" "$fixture/scripts/"
+    cp "${repo}/scripts/lib/review-scope.sh" "$fixture/scripts/lib/"
+    cp -R "${repo}/scripts/lib/review-instructions" "$fixture/scripts/lib/"
+    git init -q -b main "$fixture"
+}
+# A stand-in policy reader at a fixture's base revision: prints the JSON its
+# body carries, after proving it was handed the BASE copy of .devflow.toml (a
+# branch copy carries a different marker). Deterministic whatever reader the
+# repository running this test vendors, so every projection path is covered
+# without depending on the pin.
+stub_reader() {
+    local fixture="$1" json="$2"
+    mkdir -p "$fixture/scripts/lib"
+    printf 'export const stub = true\n' >"$fixture/scripts/lib/toml-lite.mjs"
+    cat >"$fixture/scripts/devflow-policy.mjs" <<STUBREADER
+import { readFileSync } from 'node:fs'
+import './lib/toml-lite.mjs'
+const args = process.argv.slice(2)
+if (args[0] !== 'resolve' || !args.includes('--json')) { console.error('stub reader: unexpected arguments', args); process.exit(2) }
+const policy = readFileSync(args[args.indexOf('--policy') + 1], 'utf8')
+if (!policy.includes('BASE-POLICY-MARKER')) { console.error('stub reader: not the base revision policy'); process.exit(1) }
+console.log(JSON.stringify(${json}))
+STUBREADER
+}
+
+echo "==> unconfigured: the prompt is the built-in text, byte for byte (golden)"
+# The clone fixture has no docs/review-guidelines.md and no .devflow.toml at
+# its base, so this is the prompt the runner sent before guidelines existed.
+# A change to this text is a change to every review; it is made here on
+# purpose, never by accident.
+golden_file="${test_tmp}/golden-review-prompt"
+cat >"$golden_file" <<'GOLDEN'
+Review the changes on the current branch relative to base branch 'origin/develop' (the merge-base diff origin/develop...HEAD).
+
+Run a VERIFICATION-CHECKPOINT review of this change: double-check that the
+implementation actually does what it claims, is internally consistent and
+consistent with this repository's existing conventions and docs, handles
+errors and edge cases, and has adequate test coverage (including regression
+tests for anything it fixes). Flag docs the change should have updated.
+Report only material, defensible findings tied to concrete files and lines —
+no style nits. If the change holds up, say so directly.
+
+Label EVERY finding with a priority, as the first token of the finding:
+
+  P0 — a defect that breaks correctness, security, or data integrity in
+       ordinary use, or that breaks an existing contract. Merge-blocking.
+  P1 — a real defect or materially wrong design decision with a plausible
+       trigger. Merge-blocking unless argued down with evidence.
+  P2 — worth knowing, but not merge-blocking: hardening, edge cases behind
+       unlikely preconditions, maintainability, non-critical test gaps.
+  P3 — cosmetic or purely informational: a naming or wording choice that
+       will mislead a reader, an observation with no defect behind it.
+       Never gating. The no-style-nits rule above still binds — P3 is the
+       floor for findings worth stating, not a licence to report nits.
+
+Only P0 and P1 decide whether this review passes. Still report P2s in full —
+they are triaged later, once the pull request is open — but do not let them
+hold the stage open. Do not inflate a P2 to P1 to make it heard, and do not
+withhold or soften a P2 because it is non-gating: a P2 reported here is
+carried into the pull request description, so an unreported one is lost
+outright. The same holds one level down: report a P3 as a P3 rather than
+inflating it to P2 or dropping it for being small. Use these four labels and
+no others — a finding that arrives off this scale, or with no label at all,
+is adjudicated as at least a P2. Every label you apply is a hypothesis the
+reader adjudicates on evidence, P3 included; none of them decides its own
+disposition. If there are no P0 or P1 findings, say so
+explicitly and in those terms.
+
+Authoritative changed-file manifest from git for this scope (status + path;
+cover EVERY entry, including untracked files, collecting the diffs yourself
+with git):
+
+GOLDEN
+printf 'A\tfeature.txt' >>"$golden_file"
+golden="$(cat "$golden_file")"
+out="$(run review --base origin/develop)" || fail "unconfigured review exited non-zero: $out"
+grep -Fq 'Review guidelines: none at' <<<"$out" || fail "unconfigured run did not say no guidelines govern: $out"
+if [ "$(prompt_of "$out")" != "$golden" ]; then
+    diff <(printf '%s\n' "$golden") <(prompt_of "$out") >&2 || true
+    fail "the unconfigured prompt drifted from its golden copy (above); change both deliberately or neither"
+fi
+
+echo "==> the severity scale in docs/review-guidelines.md and in the prompt are the same lines"
+# The file holds the scale's single normative statement (#964); the prompt
+# carries a copy because it is what the reviewer actually reads. Two copies
+# are one too many unless a gate holds them together — this is that gate.
+scale_prompt="$(sed -n '/^  P0 — /,/^$/p' <<<"$golden" | sed '$d')"
+[ "$(wc -l <<<"$scale_prompt")" -eq 10 ] || fail "could not extract the prompt's scale block: $scale_prompt"
+if [ -f "${repo}/docs/review-guidelines.md" ]; then
+    scale_doc="$(awk '/^## Severity scale$/ { s = 1 } s && /^```text$/ { f = 1; next } f && /^```$/ { exit } f' "${repo}/docs/review-guidelines.md")"
+    [ -n "$scale_doc" ] || fail "docs/review-guidelines.md has no fenced text block under '## Severity scale'"
+    if [ "$scale_doc" != "$scale_prompt" ]; then
+        diff <(printf '%s\n' "$scale_doc") <(printf '%s\n' "$scale_prompt") >&2 || true
+        fail "docs/review-guidelines.md's severity scale differs from the prompt's (above): edit both in the same commit"
+    fi
+else
+    echo "    (docs/review-guidelines.md is absent here; nothing to compare the prompt's scale against)"
+fi
+
+echo "==> guidelines come from the base revision: worktree and branch edits do not reach a --base review"
+conv="${test_tmp}/guidelines-conventional"
+guidelines_fixture "$conv"
+printf 'BASE-GUIDELINES-MARKER\n' >"$conv/docs/review-guidelines.md"
+printf 'old\n' >"$conv/src.txt"
+git -C "$conv" add -A
+git_t -C "$conv" commit -qm 'test: base with guidelines'
+conv_base="$(git -C "$conv" rev-parse HEAD)"
+git -C "$conv" checkout -qb feature
+printf 'HEAD-GUIDELINES-MARKER\n' >"$conv/docs/review-guidelines.md"
+printf 'new\n' >"$conv/src.txt"
+git -C "$conv" add -A
+git_t -C "$conv" commit -qm 'test: branch rewrites the guidelines'
+conv_head="$(git -C "$conv" rev-parse HEAD)"
+printf 'WORKTREE-GUIDELINES-MARKER\n' >"$conv/docs/review-guidelines.md"
+out="$(cd "$conv" && ./scripts/codex-review.sh review --base main 2>&1)" || fail "--base review with guidelines failed: $out"
+grep -Fq "Review guidelines: docs/review-guidelines.md at $(git -C "$conv" rev-parse --short main)" <<<"$out" ||
+    fail "the run did not name the base revision's guidelines: $out"
+prompt="$(prompt_of "$out")"
+grep -Fq 'BASE-GUIDELINES-MARKER' <<<"$prompt" || fail "base-revision guidelines missing from the --base prompt: $prompt"
+! grep -Fq 'HEAD-GUIDELINES-MARKER' <<<"$prompt" || fail "the branch's rewritten guidelines reached the --base prompt: $prompt"
+! grep -Fq 'WORKTREE-GUIDELINES-MARKER' <<<"$prompt" || fail "a working-tree edit to the guidelines reached the --base prompt: $prompt"
+grep -Fq "Repository review guidelines (docs/review-guidelines.md, read at $(git -C "$conv" rev-parse --short main)). Apply them throughout this review:" <<<"$prompt" ||
+    fail "the guidelines block does not state its provenance: $prompt"
+# Assembly order: preamble, guidelines, scale, manifest.
+awk '/VERIFICATION-CHECKPOINT/ { a = NR } /BASE-GUIDELINES-MARKER/ { b = NR } /^Label EVERY finding/ { c = NR } /^Authoritative changed-file manifest/ { d = NR }
+    END { exit !(a && b && c && d && a < b && b < c && c < d) }' <<<"$prompt" ||
+    fail "prompt is not assembled as preamble, guidelines, scale, manifest: $prompt"
+
+echo "==> --uncommitted reads HEAD's guidelines, --commit the parent's, the default union the merge base's"
+out="$(cd "$conv" && ./scripts/codex-review.sh review --uncommitted 2>&1)" || fail "--uncommitted review failed: $out"
+prompt="$(prompt_of "$out")"
+grep -Fq 'HEAD-GUIDELINES-MARKER' <<<"$prompt" || fail "--uncommitted did not read HEAD's guidelines: $prompt"
+! grep -Fq 'WORKTREE-GUIDELINES-MARKER' <<<"$prompt" || fail "--uncommitted read the working tree's guidelines: $prompt"
+out="$(cd "$conv" && ./scripts/codex-review.sh review --commit "$conv_head" 2>&1)" || fail "--commit review failed: $out"
+prompt="$(prompt_of "$out")"
+grep -Fq 'BASE-GUIDELINES-MARKER' <<<"$prompt" || fail "--commit did not read the parent's guidelines: $prompt"
+! grep -Fq 'HEAD-GUIDELINES-MARKER' <<<"$prompt" || fail "--commit read the reviewed commit's own guidelines: $prompt"
+out="$(cd "$conv" && ./scripts/codex-review.sh challenge 2>&1)" || fail "default-scope challenge failed: $out"
+grep -q "Reviewing branch changes against main AND uncommitted work" <<<"$out" || fail "default scope did not take both halves: $out"
+prompt="$(prompt_of "$out")"
+grep -Fq 'BASE-GUIDELINES-MARKER' <<<"$prompt" || fail "the default union did not read the merge base's guidelines: $prompt"
+! grep -Fq 'WORKTREE-GUIDELINES-MARKER' <<<"$prompt" || fail "the default union read the working tree's guidelines: $prompt"
+: >"$stub_argv"
+out="$(cd "$conv" && ./scripts/codex-review.sh review --commit "$conv_base" 2>&1)" || fail "--commit on the root commit failed: $out"
+grep -Fq 'no base revision for this scope; built-in instructions only' <<<"$out" || fail "a parentless commit did not fall back to the built-in instructions: $out"
+! grep -Fq 'Repository review guidelines' <<<"$(prompt_of "$out")" || fail "a parentless commit still carried guidelines: $out"
+[ -s "$stub_argv" ] || fail "codex was not invoked for a genuine root commit"
+
+echo "==> --commit refuses a shallow boundary with unavailable parent history before codex"
+shallow="${test_tmp}/guidelines-shallow"
+git clone -q --depth 1 --branch feature "file://$conv" "$shallow"
+[ "$(git -C "$shallow" rev-parse --is-shallow-repository)" = true ] || fail "the shallow fixture is not shallow"
+if git -C "$shallow" cat-file -e "${conv_base}^{commit}" 2>/dev/null; then
+    fail "the shallow fixture still has its parent commit"
+fi
+: >"$stub_argv"
+status=0
+out="$(cd "$shallow" && ./scripts/codex-review.sh review --commit HEAD 2>&1)" || status=$?
+[ "$status" -eq 2 ] || fail "unavailable parent history exited $status instead of 2: $out"
+grep -Fq "parent history unavailable at $conv_base" <<<"$out" || fail "the shallow refusal did not identify the unavailable parent: $out"
+[ ! -s "$stub_argv" ] || fail "codex was invoked despite unavailable parent history"
+
+echo "==> [review_guidelines].file at the base revision governs: not the branch's table, not the conventional path"
+pol="${test_tmp}/guidelines-policied"
+guidelines_fixture "$pol"
+printf '# BASE-POLICY-MARKER\n' >"$pol/.devflow.toml"
+stub_reader "$pol" '{ rigor: { level: "standard" }, review_guidelines: { file: "docs/custom-guidelines.md", text: null, challenge_focus: "CONFIGURED-CHALLENGE-FOCUS", review_focus: "CONFIGURED-REVIEW-FOCUS" } }'
+printf 'CUSTOM-GUIDELINES-MARKER\n' >"$pol/docs/custom-guidelines.md"
+printf 'CONVENTIONAL-GUIDELINES-MARKER\n' >"$pol/docs/review-guidelines.md"
+git -C "$pol" add -A
+git_t -C "$pol" commit -qm 'test: base policy names custom guidelines'
+git -C "$pol" checkout -qb feature
+printf '# BRANCH-POLICY-MARKER\n' >"$pol/.devflow.toml"
+stub_reader "$pol" '{ rigor: { level: "standard" }, review_guidelines: { file: "docs/branch-guidelines.md", text: null, challenge_focus: "BRANCH-FOCUS", review_focus: "BRANCH-FOCUS" } }'
+printf 'BRANCH-GUIDELINES-MARKER\n' >"$pol/docs/branch-guidelines.md"
+git -C "$pol" add -A
+git_t -C "$pol" commit -qm 'test: branch points the table at its own file'
+out="$(cd "$pol" && ./scripts/codex-review.sh challenge --base main 2>&1)" || fail "challenge with a configured table failed: $out"
+grep -Fq "Review guidelines: docs/custom-guidelines.md at $(git -C "$pol" rev-parse --short main)" <<<"$out" ||
+    fail "the run did not name the configured file at the base revision: $out"
+prompt="$(prompt_of "$out")"
+grep -Fq 'CUSTOM-GUIDELINES-MARKER' <<<"$prompt" || fail "the configured guidelines file is missing from the prompt: $prompt"
+! grep -Fq 'CONVENTIONAL-GUIDELINES-MARKER' <<<"$prompt" || fail "the conventional path was used although the table names another file: $prompt"
+! grep -Fq 'BRANCH-GUIDELINES-MARKER' <<<"$prompt" || fail "the branch's own table chose the guidelines: $prompt"
+grep -Fq 'Default focus from the repository'"'"'s review policy (.devflow.toml [review_guidelines].challenge_focus; weight it heavily): CONFIGURED-CHALLENGE-FOCUS' <<<"$prompt" ||
+    fail "the configured challenge focus is missing from a focus-less challenge: $prompt"
+! grep -Fq 'CONFIGURED-REVIEW-FOCUS' <<<"$prompt" || fail "the review focus leaked into a challenge: $prompt"
+! grep -Fq 'BRANCH-FOCUS' <<<"$prompt" || fail "the branch's focus reached the prompt: $prompt"
+out="$(cd "$pol" && ./scripts/codex-review.sh review --base main 2>&1)" || fail "review with a configured table failed: $out"
+prompt="$(prompt_of "$out")"
+grep -Fq '[review_guidelines].review_focus; weight it heavily): CONFIGURED-REVIEW-FOCUS' <<<"$prompt" ||
+    fail "the configured review focus is missing from a focus-less review: $prompt"
+! grep -Fq 'CONFIGURED-CHALLENGE-FOCUS' <<<"$prompt" || fail "the challenge focus leaked into a review: $prompt"
+
+echo "==> CLI focus text outranks the configured default focus"
+out="$(cd "$pol" && ./scripts/codex-review.sh review --base main watch the hooks 2>&1)" || fail "review with CLI focus failed: $out"
+prompt="$(prompt_of "$out")"
+grep -Fq 'Additional focus from the invoker (weight it heavily): watch the hooks' <<<"$prompt" || fail "CLI focus missing: $prompt"
+! grep -Fq 'Default focus from the repository' <<<"$prompt" || fail "the configured focus was appended beside the CLI focus: $prompt"
+! grep -Fq 'CONFIGURED-REVIEW-FOCUS' <<<"$prompt" || fail "the configured focus text leaked beside the CLI focus: $prompt"
+
+echo "==> [review_guidelines].text is used inline, over the conventional file"
+inl="${test_tmp}/guidelines-inline"
+guidelines_fixture "$inl"
+printf '# BASE-POLICY-MARKER\n' >"$inl/.devflow.toml"
+stub_reader "$inl" '{ rigor: { level: "standard" }, review_guidelines: { file: null, text: "INLINE-GUIDELINES-MARKER\nsecond inline line", challenge_focus: null, review_focus: null } }'
+printf 'CONVENTIONAL-GUIDELINES-MARKER\n' >"$inl/docs/review-guidelines.md"
+git -C "$inl" add -A
+git_t -C "$inl" commit -qm 'test: inline guidelines'
+git -C "$inl" checkout -qb feature
+printf 'change\n' >"$inl/src.txt"
+git -C "$inl" add -A
+git_t -C "$inl" commit -qm 'test: work'
+out="$(cd "$inl" && ./scripts/codex-review.sh review --base main 2>&1)" || fail "review with inline guidelines failed: $out"
+grep -Fq 'Review guidelines: .devflow.toml [review_guidelines].text at' <<<"$out" || fail "the run did not name the inline source: $out"
+prompt="$(prompt_of "$out")"
+grep -Fq 'Repository review guidelines (.devflow.toml [review_guidelines].text, read at' <<<"$prompt" || fail "inline guidelines block missing its provenance: $prompt"
+grep -Fq 'INLINE-GUIDELINES-MARKER' <<<"$prompt" && grep -Fq 'second inline line' <<<"$prompt" || fail "inline guidelines text missing or truncated: $prompt"
+! grep -Fq 'CONVENTIONAL-GUIDELINES-MARKER' <<<"$prompt" || fail "the conventional file was used although text is configured: $prompt"
+! grep -Fq 'Default focus' <<<"$prompt" || fail "a null focus produced a default-focus block: $prompt"
+
+echo "==> an absent, incomplete, old, or refusing reader falls back to the conventional path"
+for variant in absent incomplete unsupported refusing; do
+    fb="${test_tmp}/guidelines-${variant}"
+    guidelines_fixture "$fb"
+    printf '# BASE-POLICY-MARKER\n' >"$fb/.devflow.toml"
+    if [ "$variant" = unsupported ]; then
+        stub_reader "$fb" '{ rigor: { level: "standard" } }'
+    elif [ "$variant" = incomplete ]; then
+        stub_reader "$fb" '{}'
+        rm "$fb/scripts/lib/toml-lite.mjs"
+    elif [ "$variant" = refusing ]; then
+        stub_reader "$fb" '{}'
+        printf '# BRANCH-POLICY-MARKER (not the base copy, so the stub refuses with exit 1)\n' >"$fb/.devflow.toml"
+    fi
+    printf 'CONVENTIONAL-GUIDELINES-MARKER\n' >"$fb/docs/review-guidelines.md"
+    git -C "$fb" add -A
+    git_t -C "$fb" commit -qm 'test: base'
+    git -C "$fb" checkout -qb feature
+    printf 'change\n' >"$fb/src.txt"
+    git -C "$fb" add -A
+    git_t -C "$fb" commit -qm 'test: work'
+    out="$(cd "$fb" && ./scripts/codex-review.sh review --base main 2>&1)" || fail "review with a ${variant} reader failed: $out"
+    if [ "$variant" = refusing ]; then
+        grep -Fq 'refused .devflow.toml (exit 1); using the conventional path' <<<"$out" || fail "a refusing reader was not reported: $out"
+        grep -Fq 'stub reader: not the base revision policy' <<<"$out" || fail "the stderr of the refusing reader was not surfaced: $out"
+    fi
+    grep -Fq 'Review guidelines: docs/review-guidelines.md at' <<<"$out" || fail "the ${variant} reader did not fall back to the conventional path: $out"
+    grep -Fq 'CONVENTIONAL-GUIDELINES-MARKER' <<<"$(prompt_of "$out")" || fail "conventional guidelines missing after the ${variant} reader: $out"
+done
+
+echo "==> a configured file missing at the base revision refuses before codex is invoked"
+mis="${test_tmp}/guidelines-missing"
+guidelines_fixture "$mis"
+printf '# BASE-POLICY-MARKER\n' >"$mis/.devflow.toml"
+stub_reader "$mis" '{ rigor: { level: "standard" }, review_guidelines: { file: "docs/nowhere.md", text: null, challenge_focus: null, review_focus: null } }'
+git -C "$mis" add -A
+git_t -C "$mis" commit -qm 'test: base names a missing file'
+git -C "$mis" checkout -qb feature
+printf 'change\n' >"$mis/src.txt"
+git -C "$mis" add -A
+git_t -C "$mis" commit -qm 'test: work'
+: >"$stub_argv"
+if out="$(cd "$mis" && ./scripts/codex-review.sh review --base main 2>&1)"; then
+    fail "a configured guidelines file missing at the base revision was accepted: $out"
+fi
+grep -Fq "[review_guidelines].file names 'docs/nowhere.md', which does not exist at" <<<"$out" || fail "missing-file refusal did not name the file and revision: $out"
+[ ! -s "$stub_argv" ] || fail "codex was invoked despite the missing guidelines file: $(cat "$stub_argv")"
+
+echo "==> symlinks in policy, reader, and guidelines paths refuse before codex"
+for path in .devflow.toml scripts/devflow-policy.mjs scripts/lib/toml-lite.mjs \
+    docs/custom-guidelines.md docs/review-guidelines.md; do
+    fixture="$pol"
+    [ "$path" != docs/review-guidelines.md ] || fixture="$conv"
+    symlink_repo="${test_tmp}/guidelines-symlink-${path//\//-}"
+    git clone -q --branch main "$fixture" "$symlink_repo"
+    mv "$symlink_repo/$path" "$symlink_repo/$path.regular"
+    ln -s "${path##*/}.regular" "$symlink_repo/$path"
+    git -C "$symlink_repo" add -A
+    git_t -C "$symlink_repo" commit -qm 'test: base has a symlink instead of a regular file'
+    revision="$(git -C "$symlink_repo" rev-parse HEAD)"
+    git -C "$symlink_repo" checkout -qb symlink-change
+    printf 'candidate change\n' >"$symlink_repo/symlink-change.txt"
+    git -C "$symlink_repo" add symlink-change.txt
+    git_t -C "$symlink_repo" commit -qm 'test: work after the symlink base'
+    : >"$stub_argv"
+    status=0
+    out="$(cd "$symlink_repo" && ./scripts/codex-review.sh review --base main 2>&1)" || status=$?
+    [ "$status" -eq 2 ] || fail "symlink at $path exited $status instead of 2: $out"
+    grep -Fq "'$path' at $revision is not a regular file" <<<"$out" ||
+        fail "the symlink refusal did not identify $path at $revision: $out"
+    [ ! -s "$stub_argv" ] || fail "codex was invoked despite the symlink at $path"
+done
+
+echo "==> failed Git tree or existing-blob reads refuse before codex is invoked"
+# Keep real repositories and inject only the failed Git operation: a missing
+# path has a successful, empty tree lookup, whereas an unavailable object or
+# failed lookup must never downgrade the configured instructions to fallback.
+mkdir -p "${test_tmp}/object-read-bin"
+export OBJECT_READ_REAL_GIT="$(command -v git)"
+cat >"${test_tmp}/object-read-bin/git" <<'GITSTUB'
+#!/usr/bin/env bash
+if [ "$OBJECT_READ_OPERATION" = tree ] && [ "$1" = --literal-pathspecs ] &&
+    [ "$2" = ls-tree ] && [ "${@: -1}" = "$OBJECT_READ_PATH" ]; then
+    echo "simulated Git tree lookup failure" >&2
+    exit 128
+fi
+if [ "$OBJECT_READ_OPERATION" = blob ] && [ "$1" = show ] &&
+    [ "$2" = "$OBJECT_READ_REV:$OBJECT_READ_PATH" ]; then
+    echo "simulated Git blob read failure" >&2
+    exit 128
+fi
+exec "$OBJECT_READ_REAL_GIT" "$@"
+GITSTUB
+chmod +x "${test_tmp}/object-read-bin/git"
+for operation in tree blob; do
+    for path in .devflow.toml scripts/devflow-policy.mjs scripts/lib/toml-lite.mjs \
+        docs/custom-guidelines.md docs/review-guidelines.md; do
+        fixture="$pol"
+        [ "$path" != docs/review-guidelines.md ] || fixture="$conv"
+        revision="$(git -C "$fixture" rev-parse main)"
+        : >"$stub_argv"
+        status=0
+        out="$(cd "$fixture" && PATH="${test_tmp}/object-read-bin:$PATH" \
+            OBJECT_READ_OPERATION="$operation" OBJECT_READ_PATH="$path" OBJECT_READ_REV="$revision" \
+            ./scripts/codex-review.sh review --base main 2>&1)" || status=$?
+        [ "$status" -eq 2 ] || fail "${operation} failure for $path exited $status instead of 2: $out"
+        if [ "$operation" = tree ]; then diagnostic=inspect; else diagnostic=read; fi
+        grep -Fq "could not $diagnostic '$path' at $revision" <<<"$out" ||
+            fail "${operation} refusal did not identify $path at $revision: $out"
+        [ ! -s "$stub_argv" ] || fail "codex was invoked despite the ${operation} failure for $path"
+    done
+done
+
+# The repository's REAL reader, where one is vendored: prove the runner can
+# drive it from a base revision. A reader that projects the table must select
+# the configured file; one that predates it (an older harmon-devkit pin) must
+# leave the conventional path in force. Either is the documented behaviour.
+real_reader=""
+for candidate in scripts/devflow-policy.mjs \
+    .claude/skills/dev-flow-support/assets/devflow-policy.mjs \
+    .agents/skills/dev-flow-support/assets/devflow-policy.mjs; do
+    if [ -f "${repo}/${candidate}" ] && [ -f "${repo}/${candidate%/*}/lib/toml-lite.mjs" ]; then
+        real_reader="$candidate"
+        break
+    fi
+done
+if [ -n "$real_reader" ] && [ -f "${repo}/.devflow.toml" ] &&
+    grep -q '^file  *= "docs/review-guidelines.md"' "${repo}/.devflow.toml"; then
+    echo "==> the vendored policy reader (${real_reader}) is driven from the base revision"
+    rr="${test_tmp}/guidelines-real-reader"
+    guidelines_fixture "$rr"
+    mkdir -p "$rr/${real_reader%/*}/lib"
+    cp "${repo}/${real_reader}" "$rr/${real_reader}"
+    cp "${repo}/${real_reader%/*}/lib/toml-lite.mjs" "$rr/${real_reader%/*}/lib/"
+    sed 's|^file  *= "docs/review-guidelines.md"|file = "docs/custom-guidelines.md"|' "${repo}/.devflow.toml" >"$rr/.devflow.toml"
+    printf 'CUSTOM-GUIDELINES-MARKER\n' >"$rr/docs/custom-guidelines.md"
+    printf 'CONVENTIONAL-GUIDELINES-MARKER\n' >"$rr/docs/review-guidelines.md"
+    git -C "$rr" add -A
+    git_t -C "$rr" commit -qm 'test: base with the real reader'
+    git -C "$rr" checkout -qb feature
+    printf 'change\n' >"$rr/src.txt"
+    git -C "$rr" add -A
+    git_t -C "$rr" commit -qm 'test: work'
+    # Exit 3 (no registry offered, so cross-validation is indeterminate) still
+    # prints the projection; capture first so pipefail does not read it as
+    # "no projection".
+    projection="$(node "${repo}/${real_reader}" resolve --policy "$rr/.devflow.toml" --json 2>/dev/null || true)"
+    if grep -q '"review_guidelines"' <<<"$projection"; then
+        expect=CUSTOM-GUIDELINES-MARKER
+        reject=CONVENTIONAL-GUIDELINES-MARKER
+    else
+        echo "    (this reader predates [review_guidelines]; expecting the conventional-path fallback)"
+        expect=CONVENTIONAL-GUIDELINES-MARKER
+        reject=CUSTOM-GUIDELINES-MARKER
+    fi
+    out="$(cd "$rr" && ./scripts/codex-review.sh review --base main 2>&1)" || fail "review with the real reader failed: $out"
+    prompt="$(prompt_of "$out")"
+    grep -Fq "$expect" <<<"$prompt" || fail "real reader: expected ${expect} in the prompt: $out"
+    ! grep -Fq "$reject" <<<"$prompt" || fail "real reader: ${reject} should not be in the prompt: $out"
+
+    echo "==> a symlinked TMPDIR preserves the base reader's configured guidance and scratch cleanup"
+    scratch_parent="${test_tmp}/guidelines-physical-tmp"
+    scratch_alias="${test_tmp}/guidelines-symlink-tmp"
+    mkdir -p "$scratch_parent"
+    ln -s "$scratch_parent" "$scratch_alias"
+    : >"$stub_argv"
+    out="$(cd "$rr" && TMPDIR="$scratch_alias" ./scripts/codex-review.sh review --base main 2>&1)" ||
+        fail "review with a symlinked TMPDIR failed: $out"
+    prompt="$(prompt_of "$out")"
+    grep -Fq "$expect" <<<"$prompt" || fail "symlinked TMPDIR: expected ${expect} in the prompt: $out"
+    ! grep -Fq "$reject" <<<"$prompt" || fail "symlinked TMPDIR: ${reject} should not be in the prompt: $out"
+    [ -s "$stub_argv" ] || fail "codex was not invoked with a symlinked TMPDIR"
+    [ -z "$(ls -A "$scratch_parent")" ] || fail "review left scratch files in the symlinked TMPDIR"
+else
+    echo "    (no vendored policy reader beside a shipped [review_guidelines] table; real-reader case skipped)"
+fi
 
 echo "==> --base warns when the ref lags an upstream HEAD already contains"
 # The reported bug: `--base main` on a checkout whose local main trails
@@ -959,4 +1508,4 @@ if out="$(CLAUDE_CONFIG_DIR="${fake_claude}2" CLAUDE_PLUGIN_DATA="${test_tmp}/pl
 fi
 grep -q "non-interactive" <<<"$out" || fail "missing non-interactive disable refusal message: $out"
 
-echo "codex-review + codex-gate guards OK ($((42 + standardize_cases)) cases)"
+echo "codex-review + codex-gate guards OK ($((75 + standardize_cases)) cases)"

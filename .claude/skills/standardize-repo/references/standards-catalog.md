@@ -723,6 +723,10 @@ The repository-class policy is:
   the ruleset. REST supports `merge_queue`; safe automation must discover
   exactly one matching ruleset and `PUT` its id. Edit the existing ruleset in
   the UI to change it later.
+  **[audit]** When the target ships `audit:ruleset`, run it through
+  `verify-applied.sh` and record live-vs-file drift with its diff as advisory.
+  Exit 0 is identical, 1 is drift, 2 is unavailable / not checked; targets
+  without the task are skipped (mode-audit §1). No live ruleset is changed.
 - **`SECURITY.md`** lives in **`.github/`** (Private Vulnerability Reporting).
   **[copier]**
 - **Renovate, NOT Dependabot** for version updates. CHECKLIST explicitly says
@@ -864,6 +868,9 @@ install the Renovate GitHub App on the repo. Conventions:
   repo (harmon-devkit) that already ships that classifier natively as a
   git-tracked, non-symlink executable regular file at
   `ai/skills/universal/integrate/assets/check-codex-cloud-review.sh`, alongside a
+  git-tracked, non-symlink executable regular file (index mode `100755`) at
+  `ai/skills/universal/integrate/assets/require-marker.sh`; the worktree must hold
+  that regular file (a staged-but-deleted marker does not qualify), alongside a
   tracked `ai/skills/universal/integrate/SKILL.md` entry point that is itself a
   regular file (index mode `100644`/`100755`; a `120000` symlink fails however
   valid its target) and whose frontmatter
@@ -876,15 +883,22 @@ install the Renovate GitHub App on the repo. Conventions:
   skills source". `scripts/verify-skills.sh` stays canonical for layout — with that
   helper's **executable body** carrying the five dispatch `case` arms
   (`reserve)`, `attach)`, `check)`, `show)`, `reap)`) and the exit contract
-  `integrate` reads — `emit pending`/`exit 11` and `emit escalate`/`exit 13` —
-  which together satisfy the requirement directly and so may keep
+  `integrate` reads — `emit pending`/`exit 11` and `emit escalate`/`exit 13`.
+  These checks together satisfy the requirement directly, so the repo may keep
   `use_skills_sync=false` (the update guard and G4 audit both waive
   sync/`universal` on exactly those tests, so a `100755` stub, a missing,
   untracked, or frontmatter-less `SKILL.md`, or a no-op helper that merely
   prints the usage forms in comments all fail the waiver — the guard strips
   comment lines before matching). All of it is static — the helper is never
   executed, so this proves the interface is shipped rather than that it works,
-  and a file deliberately shaped to match would still pass. Its human setup also disables
+  and a file deliberately shaped to match would still pass. The asset probes check the classifier and `require-marker.sh`. The entry-point
+  check also helps identify the source, but these checks do not verify a complete
+  vendor. The classifier itself sources `asset-freshness.sh` and
+  `trusted-registry.sh`; a vendor missing either cannot run it, although the
+  probe still identifies the source. Other
+  procedure assets are deliberately unprobed because their presence is unnecessary
+  for identity; `mode-update.md` lists them for review as procedures change.
+  Its human setup also disables
   Codex Automatic reviews so the explicit draft-time cycle remains authoritative
   when the PR is promoted to ready for review.
   machinery is `.skills-sync.yaml`, `scripts/sync-skills.sh`, the

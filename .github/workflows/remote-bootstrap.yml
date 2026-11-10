@@ -338,7 +338,7 @@ jobs:
       - name: Run the repository's own lint gate with only what the bootstrap installed
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          . /etc/profile.d/harmon-remote-env.sh
+          . /etc/profile.d/zz-harmon-remote-env.sh
           task check
 
   remote-bootstrap-verify:

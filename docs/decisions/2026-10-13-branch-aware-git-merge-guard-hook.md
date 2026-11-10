@@ -187,6 +187,23 @@ hooks do not run. The bot/agent boundary and merge/pull allowlist are unchanged.
   syncs from their own configured upstream prompt in `default`, `auto`, and
   `bypassPermissions` modes, and fail closed as a permission denial in `-p`
   mode.
+- For a recognised merge/pull shape, a failed checkout proof names the
+  protected or unverifiable target path in the prompt. Unsupported grammar
+  keeps the generic reason; diagnostics do not grant permission. Fetch
+  companions require every configured destination to stay under
+  `refs/remotes/<selected-remote>/`. Protected-branch syncs require exactly
+  one `branch.<branch>.merge` value equal to `refs/heads/<branch>`, including
+  empty values in that count. An explicit `git -C <dir> status` companion
+  remains outside the grammar and asks.
+- REST `PUT pulls/N/update-branch` and GraphQL `updatePullRequestBranch`
+  remain offline safe-write allowlist entries. The hook does not fetch the
+  remote PR head, so these forms stay silent even when the head is a default
+  branch, including a fork's `main`. Update-branch is the required PR catch-up
+  path and writes the PR head rather than the base; preserving that path
+  avoids a network lookup on each hook invocation. This is a deliberate limit
+  of the client-side backstop: the caller must verify the intended head, and
+  the destination repository's server-side rules govern the write. REST and
+  GraphQL tests pin this behaviour without making network requests.
 - The guard requires at least one remote `HEAD` to resolve and trusts the local
   `refs/remotes/<remote>/HEAD` cache: even with a single remote, a renamed
   remote default branch whose local `refs/remotes/<remote>/HEAD` cache is stale

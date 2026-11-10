@@ -6,11 +6,24 @@
 // Usage:
 //   run-record.mjs transition   --slate ID --session ID --run-id ID --stage STAGE [--exit TEXT] [--at TS]
 //                               [--remediation-head SHA --remediation-findings ID,ID,...]
+//                               [--pre-cycle-finding-id ID --pre-cycle-original-priority P0|P1
+//                                --pre-cycle-adjudicated-priority P0|P1 --pre-cycle-source-head SHA
+//                                --pre-cycle-source-comment-id ID --pre-cycle-source-actor-id ID
+//                                --pre-cycle-source-created-at TS --pre-cycle-source-updated-at TS --pre-cycle-source-digest sha256:HEX
+//                                --pre-cycle-verification-head SHA --pre-cycle-verification-reply-id ID
+//                                --pre-cycle-verification-actor-id ID --pre-cycle-verification-created-at TS
+//                                --pre-cycle-verification-updated-at TS --pre-cycle-verification-digest sha256:HEX
+//                                [--pre-cycle-batch FILE]]
+//                               [--finder-state SLUG=CANONICAL_PATH]...
 //   run-record.mjs authorize-cap --slate ID --session ID --run-id ID --stage challenge|review|integration --round N --actor ID --instruction TEXT [--at TS]
 //   run-record.mjs intervention --slate ID --session ID --run-id ID --kind asked|other|prompt --note TEXT [--ruling FILE] [--at TS]
 //                               [--decision approved|denied --command TEXT [--answered-by orchestrator|human]]
+//   run-record.mjs integration-review-capture --slate ID --session ID --run-id ID --state FILE
+//                               --authority-kind reserve|attach|carry [--parent-authority-digest SHA256] [--repo-dir DIR] [--at TS]
 //   run-record.mjs bind-pr      --slate ID --session ID --run-id ID --number N --url URL [--at TS]
-//   run-record.mjs promote [--check] --slate ID --session ID --run-id ID --head SHA --fingerprint TEXT [--exit TEXT] [--at TS]
+//   run-record.mjs promote [--check] --slate ID --session ID --run-id ID --head SHA --fingerprint TEXT --gate FILE [--exit TEXT] [--at TS]
+//   run-record.mjs takeover --slate ID --session ID --owner-token TOKEN --run-id ID --actor TEXT --reason TEXT --number N --url URL [--at TS]
+//   run-record.mjs takeover-promote [--check] --slate ID --session ID --owner-token TOKEN --run-id ID --number N --url URL --head SHA --fingerprint TEXT --gate FILE [--at TS]
 //   run-record.mjs close        --slate ID --session ID --run-id ID [--outcome capped|escalated|abandoned --exit TEXT] [--at TS]
 //   run-record.mjs prune        [--dry-run] [--repo-root DIR]
 //   run-record.mjs solo-init    --session ID --run-id run-<issue>-<name> --issue N --title TEXT --url URL
@@ -18,9 +31,10 @@
 //                               [--operator-pin TEXT]... [--registry-revision SHA] [--at TS]
 //   run-record.mjs lane-init    --slate ID --session ID --lane ID --policy FILE [--at TS]
 //   run-record.mjs receipt      --slate ID --session ID --run-id ID --pass FILE
+//                               [--codex-state FILE --codex-repo-dir DIR]
 //   run-record.mjs adjudicate   --slate ID --session ID --run-id ID --file FILE
 //   run-record.mjs ledger       --slate ID --session ID --run-id ID --stage challenge|review
-//   run-record.mjs lock acquire --slate ID --session ID [--milestone N] [--issues N,N,...]
+//   run-record.mjs lock acquire --slate ID --session ID [--milestone N] [--issues N,owner/repo#N,...]
 //   run-record.mjs lock release --slate ID --session ID [--force --reason TEXT]
 //   run-record.mjs lock check   --slate ID --session ID --owner-token TOKEN
 //                               Read-only: validates the existing lock owner without acquiring or changing it.
@@ -97,11 +111,16 @@ import { hostname, tmpdir } from 'node:os'
 import { dirname, join, relative, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { validateResolvedPolicy } from './devflow-policy.mjs'
+import { authenticateCheckerCycle, authenticateIntegratorReceipt, authenticatePreCycleRemediation, integratorReceiptObservationErrors } from './lib/integrator-receipt-auth.mjs'
+import { AUTHORITY_NOTE_PREFIX, assertRemediationReviewSettled, unreceiptedReviewReservations, releasedReviewReservation, authorityIdentity, authorityNote, consumedRequestTimes, retainedAuthorities, retainedCarryPredecessor, retainedCarryReplay, retainedCycleOrigin, retainedCycleOriginEntry, retainedRetryReservation, retainedReservation, sameAuthoritySnapshot, validateAuthority } from './lib/integrator-review-authority.mjs'
+
+import { checkerCycleHistory, terminalReviewHistory } from './lib/checker-cycle-history.mjs'
 
 const ASSET_DIR = dirname(realpathSync(fileURLToPath(import.meta.url)))
 const VALIDATOR = join(ASSET_DIR, 'validate-result-schemas.mjs')
 const TIMESTAMP = /^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(\.[0-9]+)?Z$/
 const SAFE_ID = /^[A-Za-z0-9._-]+$/
+const INTEGRATION_CHECKER = join(ASSET_DIR, '../../integrate/assets/check-codex-cloud-review.sh')
 
 export class Refusal extends Error {}
 export class UsageError extends Error {}
@@ -434,13 +453,94 @@ function assertRunCanBindToSlate(root, slate, runId) {
     return
   }
   const revisions = readValidatedPlan(root, slate)?.revisions ?? []
-  if (!Array.isArray(revisions) || !revisions.some((revision) => (revision?.plan?.lanes ?? []).some((lane) => lane?.run_id === runId))) {
+  if (!Array.isArray(revisions) || !revisions.some((revision) => [...(revision?.plan?.lanes ?? []), ...(revision?.plan?.retained_lanes ?? []).map((entry) => entry.lane)].some((lane) => lane?.run_id === runId))) {
     throw new Refusal(`run ${runId} is not a lane in any revision of slate ${slate}'s plan; refusing to write it under this slate`)
   }
 }
 
+// The wire format keeps issue numbers numeric. Graph algorithms use conductor
+// numbers or qualified foreign IDs; never join two repositories by number alone.
+export function repository(value) {
+  if (typeof value !== 'string' || !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(value) ||
+      value.split('/').some((part) => ['.', '..'].includes(part))) throw new Refusal(`invalid repository ${value}`)
+  return value.toLowerCase()
+}
+
+export function originRepository(cwd = process.cwd()) {
+  const origin = git(['remote', 'get-url', 'origin'], cwd)
+  const match = /^(?:https:\/\/github\.com\/|git@github\.com:|ssh:\/\/git@github\.com\/)([^/]+\/[^/]+?)(?:\.git)?\/?$/.exec(origin)
+  if (!match) throw new Refusal(`origin is not a supported GitHub repository: ${origin}`)
+  return repository(match[1])
+}
+
+export function issueKey(plan, value, repo) {
+  if (typeof value === 'string' && value.includes('#')) {
+    const [owner, number] = value.split('#')
+    if (!/^[1-9][0-9]*$/.test(number ?? '') || value.split('#').length !== 2) throw new Refusal(`invalid issue identity ${value}`)
+    return issueKey(plan, Number(number), owner)
+  }
+  if (!Number.isSafeInteger(value) || value < 1) throw new Refusal(`invalid issue number ${value}`)
+  const conductor = plan.repo === undefined ? undefined : repository(plan.repo)
+  const target = repo === undefined ? conductor : repository(repo)
+  return target === undefined || target === conductor ? value : `${target}#${value}`
+}
+
+export function itemKey(plan, item, field = 'number') {
+  return issueKey(plan, item[field], item.repo)
+}
+
+export function itemRepository(plan, item) {
+  return item.repo === undefined ? (plan.repo === undefined ? undefined : repository(plan.repo)) : repository(item.repo)
+}
+
+// A pure projection, also used by the validator after checking the wire schema
+// and digest chain. Numeric fields become graph IDs only in this private copy.
+export function planGraph(wire) {
+  const plan = structuredClone(wire)
+  if (plan.repo !== undefined) plan.repo = repository(plan.repo)
+  const numericKey = (value, repo) => {
+    if (!Number.isSafeInteger(value)) throw new Refusal('wire issue numbers must be integers; qualify them with repo')
+    return issueKey(plan, value, repo)
+  }
+  for (const issue of plan.issues ?? []) {
+    issue.number = numericKey(issue.number, issue.repo)
+    if (issue.blocked_by !== undefined) issue.blocked_by = issue.blocked_by.map((n) => numericKey(n, issue.repo))
+  }
+  for (const lane of [...(plan.lanes ?? []), ...(plan.retained_lanes ?? []).map((entry) => entry.lane)]) lane.issue = numericKey(lane.issue, lane.repo)
+  for (const wave of plan.waves ?? []) wave.issues = wave.issues.map((n) => issueKey(plan, n))
+  for (const overlap of plan.overlaps ?? []) {
+    overlap.issue_a = numericKey(overlap.issue_a, overlap.repo)
+    overlap.issue_b = numericKey(overlap.issue_b, overlap.repo)
+    if (overlap.merge_dependency) for (const side of ['before', 'after']) {
+      overlap.merge_dependency[side] = numericKey(overlap.merge_dependency[side], overlap.repo)
+    }
+  }
+  for (const entry of plan.merge_queue ?? []) entry.issue = numericKey(entry.issue, entry.repo)
+  return plan
+}
+
+export function planWire(graph) {
+  const plan = structuredClone(graph)
+  const number = (id) => typeof id === 'string' ? Number(id.split('#')[1]) : id
+  const restore = (item, field) => {
+    if (typeof item[field] === 'string') item.repo = item[field].split('#')[0]
+    item[field] = number(item[field])
+  }
+  for (const issue of plan.issues ?? []) {
+    restore(issue, 'number')
+    if (issue.blocked_by !== undefined) issue.blocked_by = issue.blocked_by.map(number)
+  }
+  for (const lane of [...(plan.lanes ?? []), ...(plan.retained_lanes ?? []).map((entry) => entry.lane)]) restore(lane, 'issue')
+  for (const overlap of plan.overlaps ?? []) {
+    restore(overlap, 'issue_a'); restore(overlap, 'issue_b')
+    for (const side of ['before', 'after']) overlap.merge_dependency[side] = number(overlap.merge_dependency[side])
+  }
+  for (const entry of plan.merge_queue ?? []) restore(entry, 'issue')
+  return plan
+}
+
 function normalizeScope({ milestone, issues }) {
-  const set = [...new Set(issues ?? [])].sort((a, b) => a - b)
+  const set = [...new Set(issues ?? [])].sort((a, b) => String(a).localeCompare(String(b), 'en', { numeric: true }))
   return { milestone: milestone ?? null, issues: set }
 }
 
@@ -477,8 +577,14 @@ function assertLockOwner(held, session, ownerToken) {
 function validateSlateLock({ root, slate, session, ownerToken = process.env.RUN_RECORD_OWNER_TOKEN, milestone, issues, create = false }) {
   const { dir, file, registry } = lockPaths(root, slate)
   const plan = currentPlan(root, slate)
-  const planned = plan === null ? null : normalizeScope({ issues: plan.issues.map((issue) => issue.number) }).issues
-  const outside = (reserved) => (planned ?? []).filter((n) => !reserved.includes(n))
+  let conductor = plan?.repo
+  if (conductor === undefined) {
+    try { conductor = originRepository() } catch { /* Legacy local fixtures may have no origin. */ }
+  }
+  const identity = { repo: conductor }
+  const lockKey = (value) => issueKey(identity, value)
+  const planned = plan === null ? null : normalizeScope({ issues: plan.issues.map((issue) => itemKey(plan, issue)) }).issues
+  const outside = (reserved) => (planned ?? []).filter((n) => !reserved.map(lockKey).includes(lockKey(n)))
   const held = existsSync(file) ? readLock(file) : null
   if (held === null && !create) {
     throw new Refusal(`slate ${slate} is unlocked; run lock acquire with --slate, --session and --issues first`)
@@ -492,7 +598,7 @@ function validateSlateLock({ root, slate, session, ownerToken = process.env.RUN_
   // back to the plan's own issue set.
   const scope = normalizeScope({
     milestone: held?.milestone ?? milestone,
-    issues: issues !== undefined ? issues : (held?.issues ?? planned),
+    issues: (issues !== undefined ? issues : (held?.issues ?? planned))?.map(lockKey),
   })
   const unreserved = outside(scope.issues)
   if (unreserved.length > 0) {
@@ -516,7 +622,7 @@ function validateSlateLock({ root, slate, session, ownerToken = process.env.RUN_
         `milestone ${scope.milestone} is already locked by session ${other.session} under slate ${other.slate_id}; refusing`,
       )
     }
-    const shared = scope.issues.filter((n) => other.issues.includes(n))
+    const shared = scope.issues.filter((n) => other.issues.map(lockKey).includes(lockKey(n)))
     if (shared.length > 0) {
       throw new Refusal(
         `issue(s) ${shared.join(', ')} are already locked by session ${other.session} under slate ${other.slate_id}; refusing`,
@@ -526,7 +632,7 @@ function validateSlateLock({ root, slate, session, ownerToken = process.env.RUN_
   return { dir, file, registry, held, scope, changed: true }
 }
 
-function checkSlateLock(args) {
+export function checkSlateLock(args) {
   const { dir, registry } = lockPaths(args.root, args.slate)
   if (!existsSync(dir)) return validateSlateLock(args)
   return withMutex(registry, () => validateSlateLock(args))
@@ -580,6 +686,7 @@ export function releaseSlateLock({ root, slate, session, ownerToken = process.en
 // ---------------------------------------------------------------------------
 
 const OUTCOME_FIELDS = ['outcome', 'at']
+const TAKEOVER_FIELDS = ['kind', 'slate', 'session', 'actor', 'reason', 'pr', 'terminal_digest', 'at', 'head', 'gate_fingerprint']
 const PR_FIELDS = ['number', 'url', 'bound_at']
 
 function appendChain(entries, fields, content) {
@@ -625,10 +732,34 @@ function rulingSuffix(common, runId, file) {
   }
   // Hash and publish the same read, not two reads of a mutable source.
   const content = readFileSync(absolute)
+  // A generic ruling is intentionally opaque evidence, but it must never
+  // mint an artifact consumed as an authenticated admission. Admissions have
+  // a dedicated publication path below, after the complete candidate and its
+  // live GitHub attestations have been validated.
+  try {
+    if (JSON.parse(content)?.kind === 'pre-cycle-remediation-admission') {
+      throw new Refusal('pre-cycle remediation admissions are recorded only by the authenticated transition writer')
+    }
+  } catch (error) {
+    if (error instanceof Refusal) throw error
+  }
   const digest = createHash('sha256').update(content).digest('hex')
   const snapshot = join(common, 'dev-flow-v2', 'runs', runId, 'rulings', digest)
   publishExclusive(snapshot, content, 'ruling')
   return ` [ruling ${relative(common, snapshot)} sha256=${digest}]`
+}
+
+// Build an admission before its mutable projection is validated, but do not
+// publish it yet. A refused transition must leave no retained ruling.
+function preCycleAdmission(common, runId, admission) {
+  const content = Buffer.from(`${JSON.stringify(admission, null, 2)}\n`, 'utf8')
+  const digest = createHash('sha256').update(content).digest('hex')
+  const snapshot = join(common, 'dev-flow-v2', 'runs', runId, 'rulings', digest)
+  return {
+    digest,
+    note: `pre-cycle-remediation-admission v1 sha256=${digest} [ruling ${relative(common, snapshot)} sha256=${digest}]`,
+    publish() { publishExclusive(snapshot, content, 'ruling') },
+  }
 }
 
 // remediationRecord — the explicit remediation-push record (harmon-devkit#1386),
@@ -654,19 +785,205 @@ function remediationRecord(record, stage, args) {
   return { head, findings: ids }
 }
 
+// A pre-cycle P0/P1 is not an integration adjudication: there was no
+// integrator envelope or Codex cycle to adjudicate yet.  Retain the authentic
+// reviewer thread and the remediation head on the re-entry that follows the
+// fix instead.  The entry hashes its complete evidence against the previous
+// pre-cycle entry so a later edit cannot turn an unresolved old-head finding
+// into an apparent clean first cycle.
+function preCycleRemediationRecord(record, stage, args, remediation, context) {
+  const names = [
+    'pre-cycle-finding-id', 'pre-cycle-original-priority', 'pre-cycle-adjudicated-priority',
+    'pre-cycle-source-head', 'pre-cycle-source-comment-id', 'pre-cycle-source-actor-id',
+    'pre-cycle-source-created-at', 'pre-cycle-source-updated-at', 'pre-cycle-source-digest', 'pre-cycle-verification-head',
+    'pre-cycle-verification-reply-id', 'pre-cycle-verification-actor-id',
+    'pre-cycle-verification-created-at', 'pre-cycle-verification-updated-at', 'pre-cycle-verification-digest',
+  ]
+  const supplied = names.filter((name) => args[name] !== undefined)
+  if (supplied.length === 0) {
+    if (args['pre-cycle-batch'] !== undefined) {
+      throw new UsageError('--pre-cycle-batch requires the complete primary pre-cycle remediation evidence')
+    }
+    return null
+  }
+  if (supplied.length !== names.length) throw new UsageError(`pre-cycle remediation evidence requires every --${names.join(', --')} field`)
+  if (stage !== 'integration' || remediation === null || !record.stage_transitions.some((transition) => transition.stage === 'integration')) {
+    throw new Refusal('pre-cycle remediation evidence is recorded only on an integration re-entry with a remediation head')
+  }
+  if (remediation.findings.length !== 0) throw new Refusal('pre-cycle remediation evidence cannot share a remediation record with adjudicated finding ids')
+  if ((record.receipts ?? []).some((receipt) => receipt?.kind === 'pass' && /^integration-r[1-9][0-9]*-integrator$/.test(receipt.file ?? ''))) {
+    throw new Refusal('pre-cycle remediation evidence is available only before the first receipted integration cycle; never retrofit historical receipts')
+  }
+  // A receipt is settlement evidence, not admission evidence.  The immutable
+  // reserve capture is the first point at which a review can actually have
+  // been requested, so a recovery recorded after it is necessarily late.
+  if (retainedAuthorities(record, { common: context.common, runId: record.run_id }).length > 0) {
+    throw new Refusal('pre-cycle remediation evidence must be recorded before the first retained review reservation; never retrofit a requested cycle')
+  }
+  const integer = (name) => {
+    const value = Number(args[name])
+    if (!Number.isSafeInteger(value) || value < 1) throw new UsageError(`--${name} must be a positive integer`)
+    return value
+  }
+  const timestamp = (name) => {
+    const value = args[name]
+    if (typeof value !== 'string' || !TIMESTAMP.test(value) || Number.isNaN(Date.parse(value))) throw new UsageError(`--${name} must be a UTC timestamp`)
+    return value
+  }
+  const sha = (name) => {
+    const value = args[name]
+    if (typeof value !== 'string' || !/^[0-9a-f]{40}$/.test(value)) throw new UsageError(`--${name} must be a 40-hex SHA`)
+    return value
+  }
+  const digest = (name) => {
+    const value = args[name]
+    if (typeof value !== 'string' || !/^sha256:[0-9a-f]{64}$/.test(value)) throw new UsageError(`--${name} must be sha256:<64 lowercase hex>`)
+    return value
+  }
+  const original = args['pre-cycle-original-priority']
+  const adjudicated = args['pre-cycle-adjudicated-priority']
+  if (!['P0', 'P1'].includes(original) || !['P0', 'P1'].includes(adjudicated) || original !== adjudicated) {
+    throw new Refusal('pre-cycle remediation preserves its original P0/P1 exactly; it cannot be lowered or re-scored')
+  }
+  const sourceCreatedAt = timestamp('pre-cycle-source-created-at')
+  const sourceUpdatedAt = timestamp('pre-cycle-source-updated-at')
+  const verifiedAt = timestamp('pre-cycle-verification-created-at')
+  const verifiedUpdatedAt = timestamp('pre-cycle-verification-updated-at')
+  if (!(Date.parse(sourceCreatedAt) <= Date.parse(sourceUpdatedAt) && Date.parse(verifiedAt) <= Date.parse(verifiedUpdatedAt) &&
+      Date.parse(sourceUpdatedAt) <= Date.parse(verifiedUpdatedAt) && Date.parse(verifiedUpdatedAt) <= Date.parse(args.at))) {
+    throw new Refusal('pre-cycle source revision, verification, and remediation entry must be chronologically ordered')
+  }
+  const sourceHead = sha('pre-cycle-source-head')
+  const verificationHead = sha('pre-cycle-verification-head')
+  if (sourceHead === verificationHead || verificationHead !== remediation.head) {
+    throw new Refusal('pre-cycle verification head must differ from the source head and equal --remediation-head')
+  }
+  const prior = record.stage_transitions
+    .map((transition) => transition?.remediation?.pre_cycle)
+    .flatMap((container) => {
+      if (!container || typeof container !== 'object') return []
+      // Current records retain a batch; tolerate the prior singular shape so
+      // its immutable history still participates in duplicate/chain checks.
+      return Array.isArray(container.findings) ? container.findings : [container]
+    })
+    .filter((entry) => entry && typeof entry === 'object')
+  const findingId = args['pre-cycle-finding-id']
+  if (typeof findingId !== 'string' || !/^pre-cycle-[a-z0-9][a-z0-9-]*-[1-9][0-9]*$/.test(findingId)) throw new UsageError('--pre-cycle-finding-id is invalid')
+  if (prior.some((entry) => entry.finding_id === findingId)) throw new Refusal(`pre-cycle finding ${findingId} is already retained`)
+  const prevDigest = prior.length === 0 ? 'genesis' : prior.at(-1).digest
+  const entry = {
+    seq: prior.length,
+    finding_id: findingId,
+    original_priority: original,
+    adjudicated_priority: adjudicated,
+    source: {
+      comment_id: integer('pre-cycle-source-comment-id'),
+      author_actor_id: integer('pre-cycle-source-actor-id'),
+      created_at: sourceCreatedAt,
+      updated_at: sourceUpdatedAt,
+      head: sourceHead,
+      body_digest: digest('pre-cycle-source-digest'),
+    },
+    verification: {
+      head: verificationHead,
+      reply_id: integer('pre-cycle-verification-reply-id'),
+      author_actor_id: integer('pre-cycle-verification-actor-id'),
+      created_at: verifiedAt,
+      updated_at: verifiedUpdatedAt,
+      body_digest: digest('pre-cycle-verification-digest'),
+    },
+    prev_digest: prevDigest,
+  }
+  entry.digest = chainDigest({
+    finding_id: entry.finding_id,
+    original_priority: entry.original_priority,
+    adjudicated_priority: entry.adjudicated_priority,
+    source: entry.source,
+    verification: entry.verification,
+  }, prevDigest)
+  const findings = [entry]
+  // Several independent findings can be fixed in the same remediation push.
+  // The optional batch is content, not a second transition: every member is
+  // authenticated below and shares this exact remediation head.
+  if (args['pre-cycle-batch'] !== undefined) {
+    let batch
+    try { batch = JSON.parse(readFileSync(args['pre-cycle-batch'], 'utf8')) } catch { throw new UsageError('--pre-cycle-batch must name a JSON array of finding evidence') }
+    if (!Array.isArray(batch) || batch.length === 0) throw new UsageError('--pre-cycle-batch must contain one or more finding evidence objects')
+    for (const candidate of batch) {
+      if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate) ||
+          typeof candidate.finding_id !== 'string' || !/^pre-cycle-[a-z0-9][a-z0-9-]*-[1-9][0-9]*$/.test(candidate.finding_id) ||
+          !['P0', 'P1'].includes(candidate.original_priority) ||
+          candidate.adjudicated_priority !== candidate.original_priority || !candidate.source || !candidate.verification ||
+          candidate.verification.head !== verificationHead) throw new UsageError('--pre-cycle-batch has malformed finding evidence')
+      const source = candidate.source
+      const verification = candidate.verification
+      const sane = (value) => typeof value === 'string' && TIMESTAMP.test(value) && !Number.isNaN(Date.parse(value))
+      const id = (value) => Number.isSafeInteger(value) && value > 0
+      const sha40 = (value) => typeof value === 'string' && /^[0-9a-f]{40}$/.test(value)
+      const bodyDigest = (value) => typeof value === 'string' && /^sha256:[0-9a-f]{64}$/.test(value)
+      if (!id(source.comment_id) || !id(source.author_actor_id) || !sane(source.created_at) || !sane(source.updated_at) || !sha40(source.head) || !bodyDigest(source.body_digest) ||
+          !id(verification.reply_id) || !id(verification.author_actor_id) || !sane(verification.created_at) || !sane(verification.updated_at) || !bodyDigest(verification.body_digest) || source.head === verification.head ||
+          !(Date.parse(source.created_at) <= Date.parse(source.updated_at) && Date.parse(verification.created_at) <= Date.parse(verification.updated_at) &&
+            Date.parse(source.updated_at) <= Date.parse(verification.updated_at) && Date.parse(verification.updated_at) <= Date.parse(args.at))) {
+        throw new UsageError('--pre-cycle-batch has invalid finding evidence timestamps or identities')
+      }
+      if (prior.some((item) => item.finding_id === candidate.finding_id) || findings.some((item) => item.finding_id === candidate.finding_id)) throw new Refusal(`pre-cycle finding ${candidate.finding_id} is already retained`)
+      const previous = findings.at(-1)
+      const additional = { finding_id: candidate.finding_id, original_priority: candidate.original_priority,
+        adjudicated_priority: candidate.adjudicated_priority, source: candidate.source, verification: candidate.verification,
+        seq: prior.length + findings.length, prev_digest: previous.digest }
+      additional.digest = chainDigest({ finding_id: additional.finding_id, original_priority: additional.original_priority,
+        adjudicated_priority: additional.adjudicated_priority, source: additional.source, verification: additional.verification }, additional.prev_digest)
+      findings.push(additional)
+    }
+  }
+  return findings
+}
+
 const MUTATORS = {
-  transition(record, args) {
+  transition(record, args, context) {
     if (record.outcome !== null) throw new Refusal(`run already ended with outcome ${record.outcome}`)
     const stage = args.stage
     if (typeof stage !== 'string' || stage === '') throw new UsageError('--stage is required')
     guardTimestamp(record, args.at)
     const remediation = remediationRecord(record, stage, args)
+    const preCycle = preCycleRemediationRecord(record, stage, args, remediation, context)
+    let afterValidate = null
+    if (preCycle) {
+      for (const finding of preCycle) {
+        const runDir = join(context.common, 'dev-flow-v2', 'runs', record.run_id)
+        const errors = authenticatePreCycleRemediation(finding, { record, repoDir: branchHead(runDir).repoRoot })
+        if (errors.length) throw new Refusal(errors.join('; '))
+      }
+    }
+    if (stage === 'implement' && record.stage_transitions.at(-1).stage === 'integration') {
+      requireRemediationReceipts(record, args, { common: context.common, root: join(context.common, 'dev-flow-v2') })
+    }
     closeLastExit(record, args.exit, { required: true })
+    if (preCycle) {
+      // The copy in run.json is deliberately only a projection.  Preserve the
+      // admission separately using the same no-clobber ruling mechanism that
+      // protects review authority, so rehashing or deleting mutable record
+      // fields cannot erase that a recovery was admitted.
+      const admission = preCycleAdmission(context.common, record.run_id, {
+        schema: 1,
+        kind: 'pre-cycle-remediation-admission',
+        run_id: record.run_id,
+        transition_index: record.stage_transitions.length,
+        remediation_head: remediation.head,
+        findings: preCycle,
+      })
+      // Publish only after the complete mutable candidate validates. The
+      // content-addressed destination makes a post-publication retry safe.
+      afterValidate = () => admission.publish()
+      record.interventions.push({ kind: 'other', at: args.at, note: admission.note })
+      remediation.pre_cycle = { admission_digest: admission.digest, findings: preCycle }
+    }
     record.stage_transitions.push(remediation ? { stage, entered_at: args.at, remediation } : { stage, entered_at: args.at })
     // dev-flow-exit reads the active stage from the receipts sequence, so the
     // transition and its receipt land in the same candidate.
     record.receipts = [...(record.receipts ?? []), { kind: 'transition', stage, entered_at: args.at }]
-    return `transition → ${stage}`
+    return afterValidate ? { summary: `transition → ${stage}`, afterValidate } : `transition → ${stage}`
   },
   'authorize-cap'(record, args) {
     guardTimestamp(record, args.at)
@@ -693,10 +1010,33 @@ const MUTATORS = {
       throw new UsageError('prompt fields require --kind prompt')
     }
     if (typeof args.note !== 'string' || args.note.trim() === '') throw new UsageError('--note is required')
+    if (args.note.trimStart().startsWith(AUTHORITY_NOTE_PREFIX)) {
+      throw new Refusal('integration review authority is recorded only by integration-review-capture')
+    }
     guardTimestamp(record, args.at)
     const note = args.ruling === undefined ? args.note : `${args.note}${rulingSuffix(context.common, record.run_id, args.ruling)}`
     record.interventions.push({ kind: args.kind, at: args.at, note, ...prompt })
     return `intervention (${args.kind})`
+  },
+  'integration-review-capture'(record, args, context) {
+    guardTimestamp(record, args.at)
+    const authority = readJson(args.authority, 'integration review authority')
+    if (authority?.kind !== args['authority-kind']) throw new Refusal('integration review authority kind does not match --authority-kind')
+    const prior = retainedAuthorities(record, { common: context.common, runId: record.run_id })
+    const identical = prior.filter((entry) => authorityIdentity(entry.authority) === authorityIdentity(authority))
+    if (identical.length > 0) {
+      if (identical.length === 1 && sameAuthoritySnapshot(identical[0].authority, authority)) return null
+      throw new Refusal('integration review authority conflicts with a retained transition capture')
+    }
+    try { validateAuthority(authority, prior, record, { common: context.common, runId: record.run_id }) } catch (error) {
+      throw new Refusal(`integration review authority is invalid: ${error.message}`)
+    }
+    const digest = sha256File(args.authority)
+    const note = `${authorityNote(args['authority-kind'], digest)}${rulingSuffix(context.common, record.run_id, args.authority)}`
+    const existing = record.interventions.find((entry) => entry.note === note)
+    if (existing) return null
+    record.interventions.push({ kind: 'other', at: args.at, note })
+    return `integration review authority (${args['authority-kind']})`
   },
   'bind-pr'(record, args) {
     const number = Number(args.number)
@@ -712,6 +1052,15 @@ const MUTATORS = {
     if (record.outcome !== null) throw new Refusal(`run already ended with outcome ${record.outcome}`)
     if (typeof args.head !== 'string' || !/^[0-9a-f]{40}$/.test(args.head)) throw new UsageError('--head must be a 40-hex SHA')
     if (typeof args.fingerprint !== 'string' || args.fingerprint === '') throw new UsageError('--fingerprint is required')
+    // Both mutation and --check require the same gate evidence. The promoted
+    // mode is the full readiness re-check used to reconcile an existing promotion.
+    if (typeof args.gate !== 'string' || args.gate === '') throw new Refusal('--gate readiness pass document is required')
+    const gate = readJson(args.gate, 'readiness gate document')
+    if (gate === null || typeof gate !== 'object' || Array.isArray(gate) ||
+        gate.status !== 'pass' || !['ready', 'promoted'].includes(gate.condition) ||
+        gate.head !== args.head || gate.fingerprint !== args.fingerprint) {
+      throw new Refusal('readiness gate document must pass ready or promoted on the same head and fingerprint')
+    }
     guardTimestamp(record, args.at)
     for (const binding of record.pr_bindings) {
       if (isBefore(args.at, binding.bound_at)) {
@@ -789,11 +1138,28 @@ function recordMutation(command, args, { check = false } = {}) {
       throw new Refusal(`${canonical} has no stage_transitions`)
     }
     validateFile('run', canonical, `existing ${canonical}`)
+    if (command === 'transition' && args.stage === 'implement') {
+      const retained = currentPlan(root, slate)?.retained_lanes?.find((entry) => entry.lane.run_id === runId)
+      if (retained && retained.state !== 'working') throw new Refusal('retained lane must pass reactivation admission before a fix round')
+    }
     const candidate = check ? structuredClone(record) : record
-    const result = MUTATORS[command](candidate, args, { common })
-    if (result === null) return null
-    if (check) validateCandidate('run', canonical, candidate)
-    else writeValidated('run', canonical, candidate)
+    const mutation = MUTATORS[command](candidate, args, { common })
+    if (mutation === null) return null
+    const { summary: result, afterValidate = null } = typeof mutation === 'string'
+      ? { summary: mutation }
+      : mutation
+    if (check) {
+      validateCandidate('run', canonical, candidate)
+    } else {
+      // Keep deferred durable side effects behind a full dry validation of
+      // the complete candidate. Ordinary mutations retain writeValidated's
+      // single validation/replacement path.
+      if (afterValidate) {
+        validateCandidate('run', canonical, candidate)
+        afterValidate()
+      }
+      writeValidated('run', canonical, candidate)
+    }
     return result
   })
   if (check) return `checked ${summary === null ? 'no change (already recorded)' : summary} (read-only)`
@@ -807,6 +1173,332 @@ function recordMutation(command, args, { check = false } = {}) {
   return summary === null ? 'no change (already recorded)' : `recorded ${summary}`
 }
 
+// Recovery appends its own history; it never reopens the lane or changes its owner.
+// Authorization is a current lock over the source lane's qualified issue. This
+// permits a different slate/session only after the old reservation is released;
+// no lock recovery or ownership transfer is implicit in this command.
+function takeoverMutation(command, args) {
+  const { root } = stateRoot()
+  const slate = requireId('slate', args.slate)
+  const session = requireId('session', args.session)
+  const runId = requireId('run-id', args['run-id'])
+  const explicitAt = args.at
+  const at = resolveAt(explicitAt)
+  const { registry } = lockPaths(root, slate)
+  return withMutex(registry, () => {
+    const lock = validateSlateLock({ root, slate, session, ownerToken: args['owner-token'] })
+    const owner = readRunOwner(root, runId)
+    if (owner === null) throw new Refusal('takeover requires an existing run owner')
+    const revisions = readValidatedPlan(root, owner)?.revisions ?? []
+    const keys = new Set()
+    for (const { plan } of revisions) {
+      for (const lane of [...plan.lanes, ...(plan.retained_lanes ?? []).map((entry) => entry.lane)]) {
+        if (lane.run_id === runId) keys.add(issueKey({}, lane.issue, lane.repo ?? plan.repo ?? originRepository()))
+      }
+    }
+    if (keys.size !== 1 || !lock.scope.issues.some((issue) => keys.has(issueKey({}, issue, currentPlan(root, slate)?.repo ?? originRepository())))) {
+      throw new Refusal("takeover lock must reserve the source run's same qualified issue")
+    }
+    // Check other reservations even when the caller's scope has not changed.
+    for (const name of readdirSync(lock.dir)) {
+      if (!name.endsWith('.json') || name === `${slate}.json`) continue
+      const other = readLock(join(lock.dir, name))
+      const otherPlan = currentPlan(root, other.slate_id)
+      if (other.issues.some((issue) => keys.has(issueKey({}, issue, otherPlan?.repo ?? originRepository())))) {
+        throw new Refusal('source issue is still reserved by another slate; no takeover or lock recovery is performed')
+      }
+    }
+    const canonical = join(root, 'runs', runId, 'run.json')
+    return withMutex(canonical, () => {
+      const record = readJson(canonical, 'run record')
+      validateFile('run', canonical, 'existing run')
+      if (record.run_id !== runId || !['escalated', 'capped'].includes(record.outcome)) {
+        throw new Refusal('takeover requires the existing run outcome to be escalated or capped')
+      }
+      const pr = { number: Number(args.number), url: args.url }
+      if (canonicalJson(pr) !== canonicalJson(record.pr) || record.pr === null) {
+        throw new Refusal("takeover must name the run's bound PR number and URL")
+      }
+      const history = record.takeover_history ?? []
+      const start = history[0]
+      let content
+      if (command === 'takeover') {
+        if (![args.actor, args.reason].every((value) => typeof value === 'string' && value.trim() !== '')) {
+          throw new UsageError('--actor and --reason (the lane terminal blocker) are required')
+        }
+        content = { kind: 'takeover', slate, session, actor: args.actor, reason: args.reason,
+          pr, terminal_digest: record.outcome_transitions.at(-1).digest, at }
+      } else {
+        if (!start || start.slate !== slate || start.session !== session) {
+          throw new Refusal('takeover promotion requires the recorded taking-over slate and session')
+        }
+        if (typeof args.gate !== 'string' || args.gate === '') throw new Refusal('--gate readiness pass document is required')
+        const gate = readJson(args.gate, 'readiness gate document')
+        if (!/^[0-9a-f]{40}$/.test(args.head ?? '') || typeof args.fingerprint !== 'string' || args.fingerprint.trim() === '' ||
+            gate?.status !== 'pass' || !['ready', 'promoted'].includes(gate.condition) ||
+            gate.head !== args.head || gate.fingerprint !== args.fingerprint) {
+          throw new Refusal('takeover promotion requires a passing gate on the same head and fingerprint')
+        }
+        content = { ...Object.fromEntries(TAKEOVER_FIELDS.map((key) => [key, start[key]])),
+          kind: 'promotion', at, head: args.head, gate_fingerprint: args.fingerprint }
+      }
+      const existing = history.find((entry) => entry.kind === content.kind)
+      if (existing) {
+        if (explicitAt === undefined) content.at = existing.at
+        const picked = Object.fromEntries(TAKEOVER_FIELDS.map((key) => [key, existing[key]]))
+        if (canonicalJson(picked) !== canonicalJson(content)) throw new Refusal('conflicting takeover retry; history is never rewritten')
+        return 'no change (takeover already recorded)'
+      }
+      record.takeover_history = appendChain(history, TAKEOVER_FIELDS, content)
+      if (args.check === true) validateCandidate('run', canonical, record)
+      else writeValidated('run', canonical, record)
+      return `${args.check === true ? 'checked' : 'recorded'} takeover ${content.kind}`
+    })
+  })
+}
+
+// Fixed supported locations: owner-record state, shared driver/broker state,
+// and checkout-local state. Deduplicate common/local paths in a main checkout.
+function remediationStatePaths({ runDir, commonDir, gitDir }, slug, repo, pr) {
+  const directories = slug === 'codex-cloud' ? ['integrate-codex', 'integrate-codex-cloud'] : [`integrate-${slug}`]
+  return [...new Set([
+    join(runDir, `${slug}-review.json`),
+    ...[commonDir, gitDir].flatMap((directory) => directories.map((name) => join(directory, name, repo, `${pr}.json`))),
+  ])]
+}
+
+// Resolve the bound branch's worktree, including a cross-worktree conductor.
+// Caller-named files assert a supported live location, never a scratch snapshot.
+function requireRemediationReceipts(record, args, { common, root }) {
+  const recover = (reason) => {
+    throw new Refusal(`integration-remediation-unsettled: ${reason}; before remediation, bind-pr to the original PR if missing, restore its lane worktree/state, retain existing reserve authority; if it is missing, stop for owner recovery; otherwise capture terminal attach (or release an unused reservation), dispatch the integrator and run receipt. Never reset counters or fabricate a historical pass.`)
+  }
+  try {
+    const runDir = join(root, 'runs', record.run_id)
+    const binding = record.pr_bindings?.at(-1)
+    let repo, pr
+    try {
+      const url = new URL(binding?.url)
+      const match = /^\/([A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+)\/pull\/([1-9][0-9]*)$/.exec(url.pathname)
+      if (!match || Number(match[2]) !== binding.number) throw new Error('invalid binding')
+      repo = match[1]
+      pr = binding.number
+    } catch { recover('run has no valid bound PR; use bind-pr with its original number and URL') }
+    const { branch, repoRoot } = branchHead(runDir)
+    const worktrees = git(['worktree', 'list', '--porcelain', '-z'], repoRoot).split('\0\0')
+      .map((entry) => entry.split('\0'))
+      .filter((fields) => fields.includes(`branch refs/heads/${branch}`))
+    if (worktrees.length !== 1) recover('bound branch has no unique live lane worktree')
+    const lane = worktrees[0].find((field) => field.startsWith('worktree '))?.slice(9)
+    if (!lane) recover('bound branch worktree cannot be resolved')
+    const gitDir = git(['rev-parse', '--path-format=absolute', '--git-dir'], lane)
+    const commonDir = stateRoot(lane).common
+    const locations = { runDir, commonDir, gitDir }
+    const entries = retainedAuthorities(record, { common, runId: record.run_id })
+    const retainedFinders = new Set()
+    const debts = unreceiptedReviewReservations(record, entries, { recordDir: runDir })
+    for (const entry of entries) {
+      const state = entry.authority.snapshot
+      if (state.repo !== repo || state.pr !== pr) recover('retained review authority belongs to another PR binding')
+      retainedFinders.add(state.finder?.slug ?? 'codex-cloud')
+    }
+    const slugs = new Set(['codex-cloud', ...retainedFinders])
+    for (const directory of new Set([commonDir, gitDir])) {
+      for (const name of readdirSync(directory)) {
+        if (name.startsWith('integrate-') && /^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(name.slice(10))) {
+          slugs.add(name === 'integrate-codex' ? 'codex-cloud' : name.slice(10))
+        }
+      }
+    }
+    for (const name of readdirSync(runDir)) {
+      const match = /^([a-z0-9]+(?:-[a-z0-9]+)*)-review(?:\.spend)?\.json$/.exec(name)
+      if (match) slugs.add(match[1])
+    }
+    const pathsFor = (slug) => remediationStatePaths(locations, slug, repo, pr)
+    const asserted = new Set()
+    for (const spec of args['finder-state'] ?? []) {
+      const separator = spec.indexOf('=')
+      const slug = spec.slice(0, separator), file = spec.slice(separator + 1)
+      if (separator < 1 || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug) || asserted.has(slug)) {
+        recover('--finder-state must be a unique SLUG=CANONICAL_PATH for each finder')
+      }
+      asserted.add(slug)
+      slugs.add(slug)
+      if (!pathsFor(slug).some((candidate) => resolve(file) === candidate ||
+          (existsSync(candidate) && realpathSync(file) === realpathSync(candidate)))) {
+        recover('--finder-state is not a supported canonical live state location')
+      }
+    }
+    const optionalState = (file) => {
+      let bytes
+      try { bytes = readFileSync(file, 'utf8') } catch (error) {
+        if (error.code === 'ENOENT') return null
+        throw error // Unreadable is not authenticated absence.
+      }
+      const value = JSON.parse(bytes)
+      if (!value || typeof value !== 'object' || Array.isArray(value)) recover(`invalid checker state or spend at ${file}`)
+      return value
+    }
+    for (const slug of slugs) {
+      const candidates = pathsFor(slug).map((file) => ({
+        file, state: optionalState(file), spendMap: optionalState(file.replace(/\.json$/, '.spend.json')),
+      }))
+      const debt = debts.find((entry) => (entry.authority.snapshot.finder?.slug ?? 'codex-cloud') === slug &&
+        !candidates.some(({ state }) => releasedReviewReservation(entry, state, entries)))
+      if (debt) recover(`integration-receipt-required: retained reservation for ${slug} cycle ${debt.authority.snapshot.charged_cycles + debt.authority.snapshot.exempt_cycles} has no admitted terminal receipt or exact released-unused proof`)
+      const hasSpend = candidates.some(({ spendMap }) => spendMap && Object.hasOwn(spendMap, record.run_id) &&
+        (spendMap[record.run_id]?.charged !== 0 || spendMap[record.run_id]?.exempt !== 0))
+      for (const { file, state, spendMap } of candidates) {
+        const spend = spendMap?.[record.run_id]
+        const hasRunSpend = spendMap && Object.hasOwn(spendMap, record.run_id)
+        if (hasRunSpend && !['charged', 'exempt'].every((key) => Number.isInteger(spend?.[key]) && spend[key] >= 0)) {
+          recover(`${slug} has invalid current-run spend counters at ${file}`)
+        }
+        if (hasRunSpend && !state &&
+            (spend?.charged !== 0 || spend?.exempt !== 0)) recover(`${slug} has run spend without live reservation state`)
+        if (!state) continue
+        if (state.run_id !== record.run_id) {
+          if (retainedFinders.has(slug) || hasSpend) recover(`${slug} state belongs to another run while this run retains authority or spend`)
+          continue
+        }
+        if (state.repo !== repo || state.pr !== pr || (state.finder?.slug ?? 'codex-cloud') !== slug) {
+          recover(`${slug} has no matching canonical live checker state`)
+        }
+        // A restored paid state cannot erase newer, unretained sidecar spend.
+        // CI can reclassify charged/exempt cycles, so reconcile totals only.
+        if (hasRunSpend && spend.charged + spend.exempt > state.charged_cycles + state.exempt_cycles) {
+          recover(`${slug} current-run spend exceeds its matching live state's cumulative cycles`)
+        }
+        assertRemediationReviewSettled(record, state, entries, { recordDir: runDir })
+        if (canonicalJson(readJson(file, 'live finder state')) !== canonicalJson(state)) {
+          recover(`${slug} checker state changed during the remediation check; retry on its current frontier`)
+        }
+      }
+    }
+  } catch (error) {
+    if (error instanceof Refusal && error.message.startsWith('integration-remediation-unsettled:')) throw error
+    recover(error.message)
+  }
+}
+
+// Capacity is a dispatch predicate, never a plan-coherence predicate. Historical
+// lane assignments identify runs after handoff releases their Working slot.
+// Lane initialization holds the dispatch mutex through its durable writes.
+function github(kind, url, fields) {
+  try {
+    return JSON.parse(execFileSync('gh', [kind, 'view', url, '--json', fields], {
+      encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'],
+    }))
+  } catch {
+    throw new Refusal(`dispatch capacity is indeterminate: could not read ${kind} ${url}`)
+  }
+}
+
+export function assertDispatchCapacity(root, candidatePlan, candidateLane, slate) {
+  const retained = candidatePlan.retained_lanes ?? []
+  const fix = retained.find((entry) => itemKey(candidatePlan, entry.lane, 'issue') === itemKey(candidatePlan, candidateLane, 'issue'))
+  const issues = new Map()
+  const runs = new Map()
+  const add = (issue) => {
+    if (!issue || typeof issue.url !== 'string') throw new Refusal('dispatch capacity: missing issue identity')
+    // Canonical issue URL binds the host, repository and issue number.
+    const url = issue.url.replace(/\/$/, '')
+    if (!issues.has(url)) issues.set(url, { url, prs: new Set(), dispatched: false, preClaimAdmission: false })
+    return issues.get(url)
+  }
+  const slates = join(root, 'slates')
+  for (const entry of readdirSync(slates, { withFileTypes: true })) {
+    if (entry.name !== slate || !entry.isDirectory() || !existsSync(join(slates, entry.name, 'plan.json'))) continue
+    const plan = currentPlan(root, entry.name)
+    const document = readJson(join(slates, entry.name, 'plan.json'), 'dispatch plan')
+    for (const revision of document.revisions) {
+      for (const lane of [...revision.plan.lanes, ...(revision.plan.retained_lanes ?? []).map((entry) => entry.lane)]) {
+        const issue = revision.plan.issues.find((issue) => itemKey(revision.plan, issue) === itemKey(revision.plan, lane, 'issue'))
+        if (!issue) throw new Refusal(`dispatch capacity: missing issue #${lane.issue} for historical run ${lane.run_id}`)
+        const prior = runs.get(lane.run_id)
+        if (prior && prior.url !== issue.url) throw new Refusal(`dispatch capacity: ambiguous run ${lane.run_id}`)
+        runs.set(lane.run_id, issue)
+      }
+    }
+    for (const issue of plan.issues) {
+      const bindings = [issue.pr, ...(plan.merge_queue ?? []).filter((item) => itemKey(plan, item, 'issue') === itemKey(plan, issue)).map((item) => item.pr)]
+      if (bindings.some((pr) => pr !== undefined)) {
+        const item = add(issue)
+        for (const pr of bindings) if (pr !== undefined) item.prs.add(item.url.replace(/\/issues\/[^/]+$/, `/pull/${pr}`))
+      }
+    }
+  }
+  const runRoot = join(root, 'runs')
+  if (existsSync(runRoot)) for (const entry of readdirSync(runRoot, { withFileTypes: true })) {
+    const file = join(runRoot, entry.name, 'run.json')
+    if (!entry.isDirectory() || !existsSync(file)) continue
+    if (!runs.has(entry.name)) continue
+    validateFile('run', file, 'dispatch run')
+    const run = readJson(file, 'dispatch run')
+    if (run.run_id !== entry.name) throw new Refusal(`dispatch capacity: run identity differs from ${entry.name}`)
+    const issue = runs.get(entry.name)
+    if (!issue) throw new Refusal(`dispatch capacity: run ${entry.name} has no durable plan issue binding`)
+    const item = add(issue)
+    item.dispatched ||= run.outcome === null
+    item.preClaimAdmission ||= run.outcome === null && run.dispatch_admission?.slate === slate &&
+      !run.stage_transitions.some((transition) => transition.stage === 'claim')
+    if (run.pr !== null && run.pr !== undefined) {
+      if (typeof run.pr.url !== 'string') throw new Refusal(`dispatch capacity: invalid PR binding for ${entry.name}`)
+      item.prs.add(run.pr.url)
+    }
+  }
+  const candidate = add(candidatePlan.issues.find((issue) => itemKey(candidatePlan, issue) === itemKey(candidatePlan, candidateLane, 'issue')))
+  const working = new Set([candidate.url])
+  const inFlight = new Set([candidate.url])
+  let candidateDeliveryOpen = false
+  for (const item of issues.values()) {
+    const state = github('issue', item.url, 'labels,state')
+    if (!state || !['OPEN', 'CLOSED'].includes(state.state) || !Array.isArray(state.labels) ||
+        state.labels.some((label) => !label || typeof label.name !== 'string')) {
+      throw new Refusal(`dispatch capacity: invalid issue state for ${item.url}`)
+    }
+    if (item === candidate && state.state !== 'OPEN') throw new Refusal('dispatch candidate issue is closed')
+    if (state.state === 'CLOSED') continue
+    const retainedLane = retained.find((entry) => candidatePlan.issues.find((issue) => itemKey(candidatePlan, issue) === itemKey(candidatePlan, entry.lane, 'issue'))?.url.replace(/\/$/, '') === item.url)
+    const claimed = state.labels.some((label) => label.name.startsWith('claim:'))
+    if (claimed || item.preClaimAdmission) working.add(item.url)
+    if (!retainedLane && item.dispatched && claimed) inFlight.add(item.url)
+    for (const url of item.prs) {
+      const pr = github('pr', url, 'state')
+      if (!pr || !['OPEN', 'CLOSED', 'MERGED'].includes(pr.state)) throw new Refusal(`dispatch capacity: invalid PR state for ${url}`)
+      if (pr.state === 'OPEN') {
+        if (item === candidate) candidateDeliveryOpen = true
+        inFlight.add(item.url)
+        if (retainedLane?.state === 'working') working.add(item.url)
+        if (!fix && retainedLane?.state === 'pending') throw new Refusal(`dispatch held: pending fix for ${item.url} takes the next Working slot`)
+      }
+    }
+  }
+  if (fix && !candidateDeliveryOpen) throw new Refusal('reactivation requires an open delivery PR')
+  const breadth = (fix?.policy ?? candidatePlan.lane_profiles?.find((profile) => profile.lane === candidateLane.lane)?.policy ?? candidatePlan.policy).breadth
+  const parallel = Math.min(breadth.max_parallel_agents, candidatePlan.dispatcher.parallel_cap)
+  const flight = breadth.max_in_flight ?? breadth.max_parallel_agents
+  const counts = `working ${working.size}, in-flight ${inFlight.size} (including candidate #${candidateLane.issue})`
+  if (working.size > parallel) throw new Refusal(`dispatch exceeds max_parallel_agents ${parallel}: ${counts}`)
+  if (inFlight.size > flight) throw new Refusal(`dispatch exceeds max_in_flight ${flight}: ${counts}`)
+  return { working: working.size, in_flight: inFlight.size }
+}
+
+// solo-init creates its own single-lane solo-* slate; these are per-slate
+// breadth limits, so solo initialization is outside this dispatch guard.
+export function withSlateDispatch(root, slate, laneName, action) {
+  return withMutex(join(root, 'dispatch'), () => {
+    const plan = currentPlan(root, slate)
+    if (!plan) throw new Refusal(`dispatch admission: missing owner plan for slate ${slate}`)
+    const retained = plan.retained_lanes?.find((entry) => entry.lane.lane === laneName)
+    if (retained && retained.state !== 'working') throw new Refusal('reactivate the retained lane before initializing its fresh run')
+    const lane = plan.lanes.find((entry) => entry.lane === laneName) ?? retained?.lane
+    if (!lane) throw new Refusal(`unknown lane ${laneName} in the last validated plan revision`)
+    const counts = assertDispatchCapacity(root, plan, lane, slate)
+    return action(plan, lane, counts)
+  })
+}
+
 // Initialize a planned lane without inventing a slate or changing its scope.
 // The provisioning composer validates its other inputs before calling this
 // writer; direct callers receive the same run/ownership/lock protections.
@@ -816,41 +1508,106 @@ export function laneInit(args) {
   const session = requireId('session', args.session)
   const laneName = requireId('lane', args.lane)
   const at = resolveAt(args.at)
-  const plan = currentPlan(root, slate)
-  const lane = plan?.lanes.find((entry) => entry.lane === laneName)
-  if (!lane) throw new Refusal(`unknown lane ${laneName} in the last validated plan revision`)
-  const runId = requireId('run-id', lane.run_id)
-  const repoRoot = git(['rev-parse', '--show-toplevel'])
-  checkActivationAllowed(repoRoot, lane.branch, runId)
-  const runDir = join(root, 'runs', runId)
-  const canonical = join(runDir, 'run.json')
-  if (existsSync(canonical)) throw new Refusal(`${canonical} already exists`)
-  if (existsSync(runDir) && readdirSync(runDir).length > 0) {
-    throw new Refusal(`${runDir} already contains state; inspect before initializing`)
-  }
-  assertRunOwner(root, slate, runId)
-  acquireSlateLock({ root, slate, session, ownerToken: args['owner-token'] })
-  const profile = plan.lane_profiles?.find((entry) => entry.lane === laneName)?.policy ?? plan.policy
-  const record = kickoffRecord(runId, at,
-    `resolved: rigor ${profile.rigor} (${profile.rigor_source}), strategy ${profile.strategy} (${profile.strategy_source}); lane ${laneName} of slate ${slate}, session ${session}`)
-  const projection = lanePolicyProjection(plan, lane, args.policy)
-  const selection = finderSelection(projection)
-  if (selection.length > 0) record.finder_selection = selection
-  // Validate the complete kickoff record before creating its durable directory.
-  // This also rejects calendar-invalid timestamps resolveAt cannot detect.
-  const temporary = mkdtempSync(join(tmpdir(), 'lane-init-'))
-  try {
-    writeValidated('run', join(temporary, 'run.json'), record)
-  } finally {
-    rmSync(temporary, { recursive: true, force: true })
-  }
-  mkdirSync(runDir, { recursive: true })
-  return withMutex(canonical, () => {
+  return withSlateDispatch(root, slate, laneName, (plan, lane, counts) => {
+    const runId = requireId('run-id', lane.run_id)
+    const repoRoot = git(['rev-parse', '--show-toplevel'])
+    const activationPredecessor = checkActivationAllowed(repoRoot, lane.branch, runId)
+    const isRetained = plan.retained_lanes?.some((entry) => entry.lane.lane === laneName)
+    let foreignBinding
+    if (isRetained) {
+      try {
+        execFileSync('bash', [monitorPath(), 'check-assets', '--repo-root', repoRoot],
+          { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+      } catch (error) {
+        throw new Refusal(`asset preflight refused: ${`${error.stderr || ''}`.trim() || `exit ${error.status}`}`)
+      }
+      const target = itemRepository(plan, lane)
+      if (target !== undefined && target !== repository(plan.repo)) {
+        const document = readValidatedPlan(root, slate)
+        const previous = document.revisions.slice().reverse()
+          .map(({ plan: prior }) => [...prior.lanes, ...(prior.retained_lanes ?? []).map((entry) => entry.lane)]
+            .find((entry) => entry.lane === laneName && entry.run_id !== runId &&
+              itemKey(prior, entry, 'issue') === itemKey(plan, lane, 'issue') && entry.branch === lane.branch))
+          .find((entry) => entry !== undefined)
+        if (!previous) throw new Refusal('foreign retained lane has no predecessor repository binding')
+        const previousDir = join(root, 'runs', previous.run_id)
+        const clone = runRepository(previousDir, repoRoot)
+        const binding = readJson(join(previousDir, 'branch.json'), 'predecessor branch binding')
+        if (binding.repo !== target || binding.branch !== lane.branch) throw new Refusal('foreign retained lane predecessor binding differs')
+        foreignBinding = { repo: target, repo_root: clone }
+      }
+    }
+    const baseSha = plan.base_sha
+    const revision = isRetained
+      ? git(['log', '-1', '--format=%H', baseSha, '--', ':(top)agent-registry.json'], repoRoot)
+      : null
+    if (isRetained && !/^[0-9a-f]{40}$/.test(revision)) {
+      throw new Refusal(`the merge base ${baseSha} carries no agent-registry.json revision`)
+    }
+    const runDir = join(root, 'runs', runId)
+    const canonical = join(runDir, 'run.json')
     if (existsSync(canonical)) throw new Refusal(`${canonical} already exists`)
-    writeValidated('run', canonical, record)
-    bindRunToSlate(root, slate, runId)
-    publishExclusive(join(runDir, 'policy.json'), `${JSON.stringify(projection, null, 2)}\n`, 'policy projection')
-    return JSON.stringify({ run_id: runId, record_directory: runDir })
+    if (existsSync(runDir) && readdirSync(runDir).length > 0) {
+      throw new Refusal(`${runDir} already contains state; inspect before initializing`)
+    }
+    assertRunOwner(root, slate, runId)
+    const profile = plan.retained_lanes?.find((entry) => entry.lane.lane === laneName)?.policy ?? plan.lane_profiles?.find((entry) => entry.lane === laneName)?.policy ?? plan.policy
+    const record = kickoffRecord(runId, at,
+      `resolved: rigor ${profile.rigor} (${profile.rigor_source}), strategy ${profile.strategy} (${profile.strategy_source}); lane ${laneName} of slate ${slate}, session ${session}`)
+    record.dispatch_admission = { slate, ...counts, at }
+    const projection = lanePolicyProjection(plan, lane, args.policy)
+    const selection = finderSelection(projection)
+    if (selection.length > 0) record.finder_selection = selection
+    // Validate the complete kickoff record before creating its durable directory.
+    // This also rejects calendar-invalid timestamps resolveAt cannot detect.
+    const temporary = mkdtempSync(join(tmpdir(), 'lane-init-'))
+    try {
+      writeValidated('run', join(temporary, 'run.json'), record)
+    } finally {
+      rmSync(temporary, { recursive: true, force: true })
+    }
+    acquireSlateLock({ root, slate, session, ownerToken: args['owner-token'] })
+    mkdirSync(runDir, { recursive: true })
+    return withMutex(canonical, () => {
+      if (existsSync(canonical)) throw new Refusal(`${canonical} already exists`)
+      try {
+        writeValidated('run', canonical, record)
+        bindRunToSlate(root, slate, runId)
+        publishExclusive(join(runDir, 'policy.json'), `${JSON.stringify(projection, null, 2)}\n`, 'policy projection')
+        if (!isRetained) return JSON.stringify({ run_id: runId, record_directory: runDir })
+        if (foreignBinding) publishExclusive(join(runDir, 'branch.json'), `${JSON.stringify({ version: 1, run_id: runId, branch: lane.branch, ...foreignBinding }, null, 2)}\n`, 'foreign branch binding')
+        const active = activePointerPath(root, lane.branch)
+        let generation
+        try {
+          generation = Number(execFileSync('bash', [monitorPath(), 'activate', '--active-state', active,
+            '--run-id', runId, '--branch', lane.branch,
+            '--expected-predecessor', activationPredecessor.run_id ?? 'absent',
+            '--expected-generation', String(activationPredecessor.generation),
+            '--registry-revision', revision, '--writer', 'feature-owner', '--repo-root', repoRoot],
+          { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim())
+        } catch (error) {
+          throw new Refusal(`activation refused: ${`${error.stderr || ''}`.trim() || `exit ${error.status}`}`)
+        }
+        return JSON.stringify({ run_id: runId, record_directory: runDir, branch: lane.branch,
+          generation, active_state_path: active })
+      } catch (error) {
+        if (isRetained) {
+          // A subprocess failure may follow committed activation. Preserve its
+          // files unless the pointer is confirmed absent or names another run.
+          let removeRunFiles = false
+          try {
+            const pointer = JSON.parse(readFileSync(activePointerPath(root, lane.branch), 'utf8'))
+            removeRunFiles = typeof pointer?.run_id === 'string' && pointer.run_id !== runId
+          } catch (pointerError) {
+            removeRunFiles = pointerError.code === 'ENOENT'
+          }
+          if (removeRunFiles) {
+            for (const name of ['run.json', 'owner-slate', 'policy.json', 'branch.json']) rmSync(join(runDir, name), { force: true })
+          }
+        }
+        throw error
+      }
+    })
   })
 }
 
@@ -883,7 +1640,7 @@ export function lanePolicyProjection(plan, lane, policyFile) {
   } catch (error) {
     throw new Refusal(`--policy is not a complete resolved policy projection: ${error.message}`)
   }
-  const profile = plan.lane_profiles?.find((entry) => entry.lane === lane.lane)?.policy ?? plan.policy
+  const profile = plan.retained_lanes?.find((entry) => entry.lane.lane === lane.lane)?.policy ?? plan.lane_profiles?.find((entry) => entry.lane === lane.lane)?.policy ?? plan.policy
   const projected = planPolicy(policy, { strategySource: profile.strategy_source, operatorPins: profile.operator_pins })
   // The plan may carry attributed prose ("explicit operator input ...") where
   // the resolver records "operator". Compare execution values, not that prose.
@@ -1056,7 +1813,7 @@ function publishExclusive(target, content, label) {
   return true
 }
 
-function planPolicy(policy, { strategySource, operatorPins }) {
+export function planPolicy(policy, { strategySource = policy?.strategy?.chosen_by ?? 'default_strategy', operatorPins = [] } = {}) {
   const fail = (what) => {
     throw new Refusal(`--policy is not a resolved policy projection (devflow-policy.mjs resolve): ${what}`)
   }
@@ -1190,6 +1947,16 @@ function soloInit(args) {
     throw new Refusal(`run ${runId} is already bound to branch ${readJson(binding, 'run branch binding').branch}, not ${branch}`)
   }
   assertRunOwner(root, slate, runId)
+
+  const slates = join(root, 'slates')
+  if (existsSync(slates)) for (const entry of readdirSync(slates, { withFileTypes: true })) {
+    if (!entry.isDirectory() || entry.name === slate || !existsSync(join(slates, entry.name, 'plan.json'))) continue
+    currentPlan(root, entry.name) // Validate the full revision chain before inspecting it.
+    const document = readJson(join(slates, entry.name, 'plan.json'), 'dispatch plan')
+    if (document.revisions.some((revision) => revision.plan.lanes.some((lane) => lane.run_id === runId))) {
+      throw new Refusal(`run ${runId} is reserved by slate ${entry.name}'s plan history; refusing solo-init`)
+    }
+  }
 
   // Writes. Each records how to undo itself, so a later failure leaves
   // nothing this call created behind (a re-arm adopts what already existed).
@@ -1341,6 +2108,16 @@ function withJsonTemp(runDir, value, fn) {
   }
 }
 
+function withBytesTemp(runDir, bytes, fn) {
+  const file = join(runDir, `.input.${process.pid}.${randomBytes(4).toString('hex')}.json`)
+  writeFileSync(file, bytes)
+  try {
+    return fn(file)
+  } finally {
+    unlinkSync(file)
+  }
+}
+
 function receiptedPassNames(record) {
   return (record.receipts ?? []).filter((receipt) => receipt.kind === 'pass').map((receipt) => receipt.file)
 }
@@ -1354,16 +2131,55 @@ function adjudicatedRounds(runDir, stage) {
     .map((match) => Number(match[1]))
 }
 
-// branchHead — the head of the branch the run is bound to (branch.json), read
-// from the shared refs so any worktree of the clone resolves the same commit.
-function branchHead(runDir) {
+// Run state stays in the conductor. Provisioning records the independently
+// verified clone for a foreign lane; never discover a branch by caller cwd.
+export function runRepository(runDir, conductorRoot = process.cwd()) {
+  const root = resolve(runDir, '../..')
+  if (stateRoot(conductorRoot).root !== root) throw new Refusal('run record is not in the conductor repository')
+  const binding = readJson(join(runDir, 'branch.json'), 'run branch binding')
+  const owner = join(runDir, 'owner-slate')
+  let target
+  if (existsSync(owner)) {
+    const slate = requireId('slate', readFileSync(owner, 'utf8').trim())
+    const document = readValidatedPlan(root, slate)
+    const runId = readJson(join(runDir, 'run.json'), 'run record').run_id
+    // Handoff retires the live lane, not the open run's repository binding.
+    const assignment = document?.revisions.slice().reverse().map(({ plan }) => ({
+      plan, lane: [...plan.lanes, ...(plan.retained_lanes ?? []).map((entry) => entry.lane)].find((entry) => entry.run_id === runId),
+    })).find(({ lane }) => lane !== undefined)
+    if (assignment) {
+      const { plan, lane } = assignment
+      const repo = itemRepository(plan, lane)
+      const conductor = plan.repo === undefined ? undefined : repository(plan.repo)
+      if (repo !== undefined && repo !== conductor) {
+        if (lane.branch !== binding.branch) throw new Refusal('run branch differs from its planned lane')
+        target = repo
+      }
+    }
+  }
+  if (target === undefined) {
+    if (binding.repo !== undefined || binding.repo_root !== undefined) throw new Refusal('foreign clone binding has no matching planned repository')
+    return realpathSync(conductorRoot)
+  }
+  if (binding.repo !== target || typeof binding.repo_root !== 'string') throw new Refusal('foreign lane needs its provisioned repository binding')
+  const repoRoot = realpathSync(binding.repo_root)
+  if (git(['rev-parse', '--show-toplevel'], repoRoot) !== repoRoot || originRepository(repoRoot) !== target) {
+    throw new Refusal('run clone origin does not match the planned lane repository')
+  }
+  refuseGrafts(repoRoot)
+  return repoRoot
+}
+
+// Shared refs resolve the lane head even when the lane worktree is elsewhere.
+export function branchHead(runDir, conductorRoot = process.cwd()) {
   const binding = join(runDir, 'branch.json')
   if (!existsSync(binding)) throw new Refusal(`${binding} is missing; the run is bound to no branch`)
   const { branch } = readJson(binding, 'run branch binding')
+  const repoRoot = runRepository(runDir, conductorRoot)
   try {
-    return { branch, head: git(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}^{commit}`]) }
+    return { branch, repoRoot, head: git(['rev-parse', '--verify', '--quiet', `refs/heads/${branch}^{commit}`], repoRoot) }
   } catch {
-    throw new Refusal(`branch ${branch} does not resolve to a commit in this clone`)
+    throw new Refusal(`branch ${branch} does not resolve to a commit in its bound clone`)
   }
 }
 
@@ -1424,6 +2240,70 @@ function admitPass(record, envelope, runDir) {
   return `${stage}-r${round}-${slot}`
 }
 
+// admitIntegratorPass — integration has one durable coordinator result per
+// pass, rather than one finder slot per confidence round.  Keep it on the
+// same immutable receipt path as confidence evidence: it must describe the
+// active integration stage, the next unadjudicated integration round, and
+// the branch head at the instant the result was captured.  The literal slot
+// name is intentional: it is the stable producer coordinate used by the
+// integration exit reader and by evidence publication, not a caller choice.
+function admitIntegratorPass(record, envelope, runDir, args, { adoptOrphan = false } = {}) {
+  const stage = 'integration'
+  const round = envelope.payload?.integration_round
+  const slot = 'integrator'
+  const refuse = (reason) => {
+    throw new Refusal(`pass ${stage}-r${round}-${slot} is not admissible: ${reason}`)
+  }
+  if (envelope.role !== 'integrator') refuse(`it is a ${JSON.stringify(envelope.role)} result, not an integrator result`)
+  if (!Number.isSafeInteger(round) || round < 1) refuse('it names no positive integration_round')
+  if (envelope.status !== 'completed') refuse(`its status is ${JSON.stringify(envelope.status)}, not "completed"`)
+  const observationErrors = integratorReceiptObservationErrors(envelope.payload)
+  if (observationErrors.length) refuse(observationErrors.join('; '))
+  const resolution = readJson(join(runDir, 'policy.json'), 'run policy projection')
+  try {
+    validateResolvedPolicy(resolution)
+  } catch (error) {
+    refuse(`the run's resolved policy is incomplete or invalid: ${error.message}`)
+  }
+  const order = Array.isArray(resolution?.tier_order) ? resolution.tier_order : null
+  const resolvedTier = resolution?.roles?.integrator?.tier
+  if (!(order.indexOf(envelope.producer?.tier) >= order.indexOf(resolvedTier))) {
+    refuse(`its producer tier ${JSON.stringify(envelope.producer?.tier)} is below the run's resolved integrator tier ${resolvedTier}`)
+  }
+  const active = record.stage_transitions.at(-1)
+  if (active.stage !== stage) refuse(`the run's active stage is ${active.stage}`)
+  // Recovery is deliberately narrower than ordinary sequencing: only an
+  // already-published byte-identical r1 beside its r1 adjudication can lack
+  // the pass receipt after a crash. Every other admission predicate below
+  // still applies, including current stage/head/tier/time and live auth.
+  const next = adoptOrphan ? 1 : Math.max(0, ...adjudicatedRounds(runDir, stage)) + 1
+  if (round !== next) refuse(`the next unadjudicated integration round is ${next}`)
+  const { branch, head } = branchHead(runDir)
+  if (envelope.head !== head) refuse(`it reviewed ${envelope.head}, not ${branch}'s head ${head}`)
+  if (typeof envelope.produced_at !== 'string' || !TIMESTAMP.test(envelope.produced_at) ||
+      isBefore(envelope.produced_at, active.entered_at) || Date.now() < Date.parse(envelope.produced_at)) {
+    refuse(`produced_at ${JSON.stringify(envelope.produced_at)} is outside the stage's span (${active.entered_at} to now)`)
+  }
+  const cycle = envelope.payload?.codex_cycle
+  if (cycle) {
+    const previous = terminalReviewHistory(record, runDir)
+      .flatMap((item) => item.cycles.filter((entry) => entry.finder === 'codex-cloud').map((entry) => entry.cycle))
+    const ordinal = Math.max(0, ...previous)
+    if (cycle.cycle !== ordinal && cycle.cycle !== ordinal + 1) {
+      refuse(`integration-history-incomplete: cycle ${cycle.cycle} follows receipted cycle ${ordinal}; capture and receipt each terminal integrator pass before moving its head. Restore original authenticated evidence through the owner recovery procedure; never fabricate a historical pass or renumber counters.`)
+    }
+  }
+  const authErrors = authenticateIntegratorReceipt(envelope, {
+    record,
+    policy: resolution,
+    stateFile: args['codex-state'],
+    repoDir: args['codex-repo-dir'],
+    recordDir: runDir
+  })
+  if (authErrors.length) refuse(authErrors.join('; '))
+  return `${stage}-r${round}-${slot}`
+}
+
 // ledgerEntries — the change ledger for one fix: how the commits between two
 // reviewed heads changed each file (new-side added lines, old-side deleted
 // lines, and the rename source), in the shape dev-flow-exit.mjs verifies
@@ -1431,9 +2311,9 @@ function admitPass(record, envelope, runDir) {
 // Paths come only from `--name-status -z` (raw bytes, NUL-separated, never
 // quoted or prefixed), and each file's hunk headers from a diff limited to
 // that pathspec, so no presentation header is ever parsed for a path.
-function ledgerEntries(round, from, to) {
+function ledgerEntries(round, from, to, repoRoot) {
   const diffArgs = ['-c', 'core.quotePath=false', 'diff', '--no-ext-diff', '--no-color', '--no-textconv', '-M']
-  const fields = git([...diffArgs, '--name-status', '-z', from, to]).split('\0').filter((field) => field !== '')
+  const fields = git([...diffArgs, '--name-status', '-z', from, to], repoRoot).split('\0').filter((field) => field !== '')
   const entries = []
   for (let index = 0; index < fields.length; ) {
     const status = fields[index]
@@ -1446,7 +2326,7 @@ function ledgerEntries(round, from, to) {
     const entry = { round, path, added_lines: [], deleted_lines: [], renamed_from: status.startsWith('R') ? source : null }
     const pathspec = (value) => `:(literal)${value}`
     const hunks = git([...diffArgs, '--unified=0', '--src-prefix=a/', '--dst-prefix=b/', from, to, '--',
-      ...(renamed ? [pathspec(source)] : []), pathspec(path)])
+      ...(renamed ? [pathspec(source)] : []), pathspec(path)], repoRoot)
     for (const line of hunks.split('\n').filter((text) => text.startsWith('@@ '))) {
       const hunk = /^@@ -([0-9]+)(?:,([0-9]+))? \+([0-9]+)(?:,([0-9]+))? @@/.exec(line)
       if (!hunk) throw new Refusal(`unparseable hunk header ${JSON.stringify(line)} between ${from} and ${to}`)
@@ -1460,13 +2340,65 @@ function ledgerEntries(round, from, to) {
 }
 
 const SIDE_EFFECTS = {
-  receipt(record, args, { runDir }) {
+  'checker-cycle-receipt'(record, args, { runDir }) {
+    const at = resolveAt(args.at)
+    guardTimestamp(record, at)
+    if (Date.parse(at) > Date.now()) throw new Refusal('checker receipt cannot be dated in the future')
+    if (record.stage_transitions.at(-1)?.stage !== 'integration') throw new Refusal('checker receipt requires active integration')
+    if (isBefore(at, record.stage_transitions.at(-1).entered_at)) throw new Refusal('checker receipt predates integration')
+    if (receiptedPassNames(record).some((name) => /^integration-r/.test(name)) ||
+        (existsSync(join(runDir, 'passes')) ? readdirSync(join(runDir, 'passes')) : []).some((name) => /^integration-r/.test(name)) ||
+        (existsSync(join(runDir, 'adjudications')) ? readdirSync(join(runDir, 'adjudications')) : []).some((name) => /^integration-r/.test(name))) {
+      throw new Refusal('checker receipt is available only before dispatched integration')
+    }
+    let existing
+    try { existing = checkerCycleHistory(record, runDir) }
+    catch (error) { throw new Refusal(`checker history is invalid: ${error.message}`) }
+    const { head } = branchHead(runDir)
+    let receipt
+    try {
+      receipt = authenticateCheckerCycle({ record,
+        policy: readJson(join(runDir, 'policy.json'), 'resolved policy'),
+        stateFile: args.state, repoDir: args['repo-dir'], recordDir: runDir,
+        at: existing[0]?.captured_at ?? at })
+    } catch (error) { throw new Refusal(`checker receipt authentication failed: ${error.message}`) }
+    if (receipt.head !== head || branchHead(runDir).head !== head) throw new Refusal('checker receipt head moved; historical backfill is forbidden')
+    const bytes = Buffer.from(`${JSON.stringify(receipt, null, 2)}\n`)
+    const digest = createHash('sha256').update(bytes).digest('hex')
+    if (existing.length) {
+      if (record.checker_cycle_receipts[0].digest !== digest) throw new Refusal('checker receipt conflicts with immutable admitted evidence')
+      return null
+    }
+    const directory = join(runDir, 'checker-cycles')
+    mkdirSync(directory, { recursive: true })
+    const file = join(directory, `${digest}.json`)
+    if (existsSync(file)) {
+      if (!readFileSync(file).equals(bytes)) throw new Refusal('checker receipt conflicts with retained bytes')
+    } else writeFileSync(file, bytes, { flag: 'wx', mode: 0o600 })
+    record.checker_cycle_receipts = [{ digest, at }]
+    checkerCycleHistory(record, runDir)
+    return { write: true, summary: 'authenticated checker-only cycle 1' }
+  },
+  receipt(record, args, { runDir, canonical: runPath }) {
     if (typeof args.pass !== 'string' || args.pass === '') throw new UsageError('--pass is required')
     guardTimestamp(record, resolveAt(undefined))
-    const envelope = readJson(args.pass, 'pass')
-    const bytes = readFileSync(args.pass)
-    const slot = envelope?.payload?.slot ?? envelope?.payload?.finder
-    const name = `${envelope?.payload?.stage}-r${envelope?.payload?.round}-${slot}`
+    let bytes
+    try {
+      bytes = readFileSync(args.pass)
+    } catch {
+      throw new Refusal(`pass not found: ${args.pass}`)
+    }
+    let envelope
+    try {
+      envelope = JSON.parse(bytes.toString('utf8'))
+    } catch {
+      throw new Refusal(`pass is not valid JSON: ${args.pass}`)
+    }
+    const integrator = envelope?.role === 'integrator'
+    const slot = integrator ? 'integrator' : envelope?.payload?.slot ?? envelope?.payload?.finder
+    const stage = integrator ? 'integration' : envelope?.payload?.stage
+    const round = integrator ? envelope?.payload?.integration_round : envelope?.payload?.round
+    const name = `${stage}-r${round}-${slot}`
     // The name becomes a path: validate it before any path is built.
     if (typeof slot !== 'string' || !SAFE_ID.test(slot) || !SAFE_ID.test(name)) {
       throw new Refusal(`pass ${JSON.stringify(name)} is not admissible: its stage, round and slot do not form a safe file name`)
@@ -1478,29 +2410,48 @@ const SIDE_EFFECTS = {
       }
       return null
     }
-    admitPass(record, envelope, runDir)
+    const orphan = integrator && existsSync(canonical) && readFileSync(canonical).equals(bytes)
+    if (integrator) {
+      // A crash may have published immutable bytes before its receipt write.
+      // Adopt only the exact existing integration-r1 bytes, after the same
+      // fresh admission checks; never rewrite an orphan or skip a later round.
+      const adoptOrphan = orphan && round === 1 && adjudicatedRounds(runDir, 'integration').includes(1)
+      admitIntegratorPass(record, envelope, runDir, args, { adoptOrphan })
+    }
+    else admitPass(record, envelope, runDir)
     const knownIds = receiptedPassNames(record).flatMap((file) => {
       const path = join(runDir, 'passes', `${file}.json`)
       if (!existsSync(path)) throw new Refusal(`run.json receipts pass ${file}, but ${path} does not exist`)
       return (readJson(path, 'receipted pass').payload?.findings ?? []).map((finding) => finding.id)
     })
-    const failure = withJsonTemp(runDir, knownIds, (known) =>
-      runValidatorWith(['envelope', args.pass, '--run-id', record.run_id, '--initiated-by', record.initiated_by, '--known-ids', known, '--receipt']),
+    const failure = withBytesTemp(runDir, bytes, (snapshot) => withJsonTemp(runDir, knownIds, (known) =>
+      runValidatorWith(['envelope', snapshot, '--run-id', record.run_id, '--initiated-by', record.initiated_by, '--known-ids', known, '--receipt',
+        ...(integrator ? ['--integrator-record', runPath, '--codex-state', args['codex-state'] ?? '', '--codex-repo-dir', args['codex-repo-dir'] ?? ''] : [])])),
     )
     if (failure !== null) throw new Refusal(`pass ${args.pass} failed receipt validation; nothing was published:\n${failure}`)
-    publishExclusive(canonical, bytes, 'pass')
+    if (!orphan) publishExclusive(canonical, bytes, 'pass')
     record.receipts = [...(record.receipts ?? []), { kind: 'pass', file: name }]
     return { write: true, summary: `pass receipt ${name}` }
   },
   adjudicate(record, args, { runDir, canonical: runPath }) {
     if (typeof args.file !== 'string' || args.file === '') throw new UsageError('--file is required')
     guardTimestamp(record, resolveAt(undefined))
-    const document = readJson(args.file, 'adjudication')
-    const bytes = readFileSync(args.file)
+    let bytes
+    try {
+      bytes = readFileSync(args.file)
+    } catch {
+      throw new Refusal(`adjudication not found: ${args.file}`)
+    }
+    let document
+    try {
+      document = JSON.parse(bytes.toString('utf8'))
+    } catch {
+      throw new Refusal(`adjudication is not valid JSON: ${args.file}`)
+    }
     if (document?.run_id !== record.run_id) throw new Refusal(`adjudication names run ${JSON.stringify(document?.run_id)}, not ${record.run_id}`)
     const { stage, round } = document
-    if (!CONFIDENCE_STAGES.has(stage) || !Number.isSafeInteger(round) || round < 1) {
-      throw new Refusal('adjudication names no confidence stage and positive round')
+    if ((!CONFIDENCE_STAGES.has(stage) && stage !== 'integration') || !Number.isSafeInteger(round) || round < 1) {
+      throw new Refusal('adjudication names no confidence stage or integration stage and positive round')
     }
     const name = `${stage}-r${round}`
     const target = join(runDir, 'adjudications', `${name}.json`)
@@ -1514,7 +2465,8 @@ const SIDE_EFFECTS = {
       .filter((file) => file.startsWith(`${name}-`))
       .map((file) => join(runDir, 'passes', `${file}.json`))
     if (passes.length === 0) throw new Refusal(`round ${name} has no receipted pass to adjudicate`)
-    const missing = [...resolvedSlots(record, runDir, stage)].filter((slot) => !receiptedPassNames(record).includes(`${name}-${slot}`))
+    const requiredSlots = stage === 'integration' ? ['integrator'] : [...resolvedSlots(record, runDir, stage)]
+    const missing = requiredSlots.filter((slot) => !receiptedPassNames(record).includes(`${name}-${slot}`))
     if (missing.length > 0) throw new Refusal(`round ${name} is incomplete: no receipted pass for slot(s) ${missing.join(', ')}`)
     const directory = join(runDir, 'adjudications')
     const known = existsSync(directory)
@@ -1522,9 +2474,9 @@ const SIDE_EFFECTS = {
           .filter((file) => file.endsWith('.json') && file !== `${name}.json`)
           .flatMap((file) => (readJson(join(directory, file), 'adjudication').adjudications ?? []).map((entry) => entry.finding_id))
       : []
-    const failure = withJsonTemp(runDir, known, (knownFile) =>
-      runValidatorWith(['adjudication', args.file, ...passes.flatMap((pass) => ['--pass', pass]),
-        '--run-id', record.run_id, '--initiated-by', record.initiated_by, '--known-adjudicated', knownFile, '--receipt']),
+    const failure = withBytesTemp(runDir, bytes, (snapshot) => withJsonTemp(runDir, known, (knownFile) =>
+      runValidatorWith(['adjudication', snapshot, ...passes.flatMap((pass) => ['--pass', pass]),
+        '--run-id', record.run_id, '--initiated-by', record.initiated_by, '--known-adjudicated', knownFile, '--receipt'])),
     )
     if (failure !== null) throw new Refusal(`adjudication ${args.file} failed receipt validation; nothing was published:\n${failure}`)
     publishExclusive(target, bytes, 'adjudication')
@@ -1550,11 +2502,11 @@ const SIDE_EFFECTS = {
       }
       heads.set(round, pass.payload.reviewed_head)
     }
-    const { branch, head } = branchHead(runDir)
+    const { branch, head, repoRoot } = branchHead(runDir)
     const rounds = [...heads.keys()].sort((a, b) => a - b)
     const ancestor = (a, b) => {
       try {
-        git(['merge-base', '--is-ancestor', a, b])
+        git(['merge-base', '--is-ancestor', a, b], repoRoot)
         return true
       } catch {
         return false
@@ -1566,19 +2518,19 @@ const SIDE_EFFECTS = {
         throw new Refusal(`${stage} round ${round}'s reviewed head ${heads.get(round)} is not on ${branch}; the branch was rewritten`)
       }
       const next = rounds[index + 1]
-      if (next !== undefined) history.push(...ledgerEntries(round, heads.get(round), heads.get(next)))
+      if (next !== undefined) history.push(...ledgerEntries(round, heads.get(round), heads.get(next), repoRoot))
     }
     // First-parent head map from the branch head back to its merge base with
     // the default branch, which is the explicit root.
     let defaultRef
     try {
-      defaultRef = git(['symbolic-ref', 'refs/remotes/origin/HEAD'])
+      defaultRef = git(['symbolic-ref', 'refs/remotes/origin/HEAD'], repoRoot)
     } catch {
       throw new Refusal('could not resolve the default branch (refs/remotes/origin/HEAD is unset)')
     }
-    const mergeBase = git(['merge-base', defaultRef, head])
+    const mergeBase = git(['merge-base', defaultRef, head], repoRoot)
     const map = { [mergeBase]: { parent: null } }
-    const walk = git(['rev-list', '--first-parent', '--parents', `${mergeBase}..${head}`])
+    const walk = git(['rev-list', '--first-parent', '--parents', `${mergeBase}..${head}`], repoRoot)
     for (const line of walk.split('\n').filter(Boolean)) {
       const [commit, parent] = line.split(' ')
       map[commit] = { parent: parent ?? null }
@@ -1619,6 +2571,366 @@ function sideEffectWrite(command, args) {
   return summary === null ? 'no change (already recorded)' : `recorded ${summary}`
 }
 
+function readCaptureState(file) {
+  const state = readJson(file, '--state')
+  if (!state || typeof state !== 'object') throw new Refusal('--state is not a checker-state object')
+  return state
+}
+
+function ghJson(args) {
+  try {
+    return JSON.parse(execFileSync('gh', args, { encoding: 'utf8', timeout: 10_000, stdio: ['ignore', 'pipe', 'pipe'] }))
+  } catch (error) {
+    throw new Refusal(`cannot observe integration review authority: ${(error.stderr || error.message).trim()}`)
+  }
+}
+
+// reserved_at is the owner host's clock; a request's created_at is GitHub's.
+// Allow the checker's BASE_EVENT_SKEW_SEC so a fast host still recognizes its
+// own post-reservation request, but never reach back to a request an earlier
+// cycle already attached.
+const REQUEST_CLOCK_SKEW_MS = 300_000
+
+function postReservationRequest(at, reservation, consumed) {
+  const time = typeof at === 'string' && TIMESTAMP.test(at) ? Date.parse(at) : NaN
+  return Number.isFinite(time) && time >= Date.parse(reservation.reserved_at) - REQUEST_CLOCK_SKEW_MS &&
+    consumed.every((prior) => time > prior)
+}
+
+function requestedReviewerEvidence(reservation, consumed) {
+  const reviewerId = Number(reservation?.finder?.actor_id)
+  if (!Number.isSafeInteger(reviewerId) || reviewerId < 1) {
+    throw new Refusal('requested-reviewer authority has no retained reviewer actor ID')
+  }
+  if (!TIMESTAMP.test(reservation?.reserved_at ?? '')) {
+    throw new Refusal('requested-reviewer authority has no retained reservation timestamp')
+  }
+  const owner = ghJson(['api', 'user'])
+  if (!Number.isSafeInteger(owner?.id) || owner.id < 1) {
+    throw new Refusal('requested-reviewer authority could not authenticate the requesting owner')
+  }
+  // Project each page before it reaches Node: one irrelevant timeline body can
+  // otherwise exceed spawnSync's buffer.  We retain every page's event shape
+  // needed to authenticate the owner request and accumulate only matches, so
+  // duplicate requests on distinct pages remain ambiguous.
+  const matches = []
+  for (let page = 1; ; page += 1) {
+    const events = ghJson(['api', `repos/${reservation.repo}/issues/${reservation.pr}/timeline?per_page=100&page=${page}`,
+      '-H', 'Accept: application/vnd.github+json',
+      '--jq', '[.[] | {event, actor:{id:.actor.id}, review_requester:{id:.review_requester.id}, requested_reviewer:{id:.requested_reviewer.id}, created_at}]'])
+    if (!Array.isArray(events) || !events.every((event) => event && typeof event === 'object')) {
+      throw new Refusal('requested-reviewer authority timeline is not a complete event array')
+    }
+    for (const event of events) {
+      if (event.event === 'review_requested' && event.actor?.id === owner?.id &&
+          event.review_requester?.id === owner?.id && Number(event.requested_reviewer?.id) === reviewerId &&
+          postReservationRequest(event.created_at, reservation, consumed)) matches.push(event)
+    }
+    if (events.length < 100) break
+  }
+  if (matches.length !== 1) {
+    throw new Refusal(`requested-reviewer authority needs exactly one owner request after reservation (found ${matches.length})`)
+  }
+  return matches[0]
+}
+
+// Observe the transition outside run.json's mutex. The caller owns the slate
+// token and captures reserve/carry immediately, but captures attach only after
+// the checker has reached its terminal or retry observation; the retained
+// ruling, not this mutable source file, is later receipt authority.
+function rederiveRetryReservation(source, record, context, parentDigest) {
+  // An idempotent owner replay keeps the reservation capture the owner already
+  // retained.  Re-running reserve would create a new timestamp and turn a
+  // prior request into a different freshness boundary.
+  let origin
+  try { origin = retainedCycleOrigin(record, source, { common: context.common, runId: record.run_id }, parentDigest) } catch (error) {
+    throw new Refusal(`retry reservation has no immutable first-request controls: ${error.message}`)
+  }
+  // A retained attempt-2 reservation is reusable only after resolving the
+  // selected immutable first request.  Public PR/head/cycle coordinates are
+  // shared by independently configured finders, so adopting before this
+  // selection can return another finder's retry and later fail its controls.
+  try {
+    const retained = retainedRetryReservation(record, source, { common: context.common, runId: record.run_id }, parentDigest)
+    if (retained) return retained
+  } catch (error) { throw new Refusal(`retry reservation has no unique retained replay: ${error.message}`) }
+  const scratch = mkdtempSync(join(tmpdir(), 'integration-retry-'))
+  try {
+    const scratchState = join(scratch, 'state.json')
+    writeFileSync(scratchState, `${JSON.stringify(origin)}\n`, { mode: 0o600 })
+    const args = [INTEGRATION_CHECKER, 'reserve', '--state', scratchState,
+      '--repo', origin.repo, '--pr', String(origin.pr), '--head', origin.head,
+      '--attempt', '2', '--timeout-min', String(origin.timeout_min)]
+    if (origin.run_id) args.push('--run-id', origin.run_id)
+    if (typeof origin.finder?.slug === 'string' && origin.finder.slug !== '') args.push('--finder', origin.finder.slug)
+    if (origin.review_trigger) args.push('--review-trigger', origin.review_trigger)
+    if (origin.integration_exempt_cap != null) args.push('--integration-exempt-cap', String(origin.integration_exempt_cap))
+    execFileSync('bash', args, { encoding: 'utf8', timeout: 30_000, stdio: ['ignore', 'pipe', 'pipe'] })
+    const retry = JSON.parse(readFileSync(scratchState, 'utf8'))
+    // The canonical checker reconstructs a fresh reservation. Preserve the
+    // selected immutable first request, never a mutable source timestamp.
+    if (origin?.finder?.trigger_mechanism === 'requested-reviewer') {
+      if (!TIMESTAMP.test(origin.first_requested_at ?? '')) {
+        throw new Refusal('retry reservation has no authenticated first requested-reviewer timestamp')
+      }
+      retry.first_requested_at = origin.first_requested_at
+    }
+    return retry
+  } catch (error) {
+    throw new Refusal(`retry reservation did not complete the canonical retained-origin transition: ${(error.stderr || error.stdout || error.message).trim()}`)
+  } finally { rmSync(scratch, { recursive: true, force: true }) }
+}
+
+function rederiveCarry(source, repoDir, record, context, parentDigest) {
+  if (typeof repoDir !== 'string' || repoDir === '') throw new Refusal('carry authority requires --repo-dir for canonical carry re-derivation')
+  const target = source?.carry?.attests_head
+  if (typeof target !== 'string' || target === '') throw new Refusal('carry authority has no claimed attested head')
+  let predecessor
+  try {
+    // A selector always identifies the immutable predecessor.  On an exact
+    // replay, the existing carry proves it retained that predecessor; otherwise
+    // canonical re-derivation selects the predecessor itself.  In particular,
+    // a carried child cannot be used as its own parent.
+    const replay = retainedCarryReplay(record, source,
+      { common: context.common, runId: record.run_id }, parentDigest)
+    predecessor = replay ?? retainedCarryPredecessor(record, source,
+      { common: context.common, runId: record.run_id }, parentDigest)
+  } catch (error) {
+    throw new Refusal(`carry authority has no immutable predecessor controls: ${error.message}`)
+  }
+  const scratch = mkdtempSync(join(tmpdir(), 'integration-carry-'))
+  try {
+    const scratchState = join(scratch, 'state.json')
+    writeFileSync(scratchState, `${JSON.stringify(predecessor)}\n`, { mode: 0o600 })
+    const carryArgs = [INTEGRATION_CHECKER, 'carry', '--state', scratchState, '--head', target, '--repo-dir', repoDir]
+    if (predecessor.run_id) carryArgs.push('--run-id', predecessor.run_id)
+    execFileSync('bash', carryArgs, { encoding: 'utf8', timeout: 30_000, stdio: ['ignore', 'pipe', 'pipe'] })
+    let exit = 0, output = ''
+    try {
+      output = execFileSync('bash', [INTEGRATION_CHECKER, 'check', '--state', scratchState,
+        '--actor-id', '199175422', '--repo-dir', repoDir, '--read-only'], {
+        encoding: 'utf8', timeout: 30_000, stdio: ['ignore', 'pipe', 'pipe'],
+      })
+    } catch (error) {
+      exit = error.status
+      output = `${error.stdout ?? ''}`
+      if (exit !== 10) throw new Refusal(`carry authority canonical proof did not re-derive: ${(error.stderr || output || error.message).trim()}`)
+    }
+    try { JSON.parse(output.trim()) } catch {
+      throw new Refusal('carry authority canonical proof returned no machine-readable observation')
+    }
+    // Exit 10 preserves a live finding for ordinary receipt/adjudication; it
+    // proves a carry transition but never becomes a clean verdict here.
+    const derived = JSON.parse(readFileSync(scratchState, 'utf8'))
+    // carried_at records the original transition, not this later proof check.
+    // Re-prove every semantic field from immutable predecessor controls, then
+    // retain the checker's original canonical object verbatim.
+    if (source.carry?.carried_at !== undefined) {
+      if (!TIMESTAMP.test(source.carry.carried_at) || Date.parse(source.carry.carried_at) > Date.now()) {
+        throw new Refusal('carry authority has an invalid original carried_at')
+      }
+      const expected = { ...derived.carry, carried_at: source.carry.carried_at }
+      if (JSON.stringify(Object.entries(expected).sort()) !== JSON.stringify(Object.entries(source.carry).sort())) {
+        throw new Refusal('carry authority source differs from the canonical carry proof')
+      }
+      derived.carry = structuredClone(source.carry)
+    }
+    return derived
+  } catch (error) {
+    if (error instanceof Refusal) throw error
+    throw new Refusal(`carry authority did not complete the canonical retained-origin transition: ${(error.stderr || error.stdout || error.message).trim()}`)
+  } finally { rmSync(scratch, { recursive: true, force: true }) }
+}
+
+function observeAuthority(kind, source, repoDir, record, context, parentDigest) {
+  if (kind === 'reserve' && Number(source.attempt) === 2) source = rederiveRetryReservation(source, record, context, parentDigest)
+  if (kind === 'attach') {
+    let reservation
+    let verifiedTrigger
+    let verifiedRequest
+    let consumed
+    try {
+      reservation = retainedReservation(record, source, { common: context.common, runId: record.run_id }, parentDigest)
+      consumed = consumedRequestTimes(retainedAuthorities(record, { common: context.common, runId: record.run_id }), reservation)
+    } catch (error) {
+      throw new Refusal(`attached trigger has no immutable reservation controls: ${error.message}`)
+    }
+    // The retained reservation, rather than the mutable checker file, binds
+    // this transition to its original PR and head before reconstruction.
+    const pr = ghJson(['pr', 'view', String(reservation.pr), '--repo', reservation.repo, '--json', 'state,isDraft,headRefOid'])
+    if (pr?.state !== 'OPEN' || pr?.isDraft !== true || pr?.headRefOid !== reservation.head) {
+      throw new Refusal('integration review authority must observe an open draft on the retained reservation head')
+    }
+    const scratch = mkdtempSync(join(tmpdir(), 'integration-attach-'))
+    let attached
+    try {
+      const scratchState = join(scratch, 'state.json')
+      writeFileSync(scratchState, `${JSON.stringify(reservation)}\n`, { mode: 0o600 })
+      const requestedReviewer = reservation?.finder?.trigger_mechanism === 'requested-reviewer'
+      const attachArgs = [INTEGRATION_CHECKER, 'attach', '--state', scratchState]
+      if (requestedReviewer) {
+        verifiedRequest = requestedReviewerEvidence(reservation, consumed)
+        attachArgs.push('--requested-at', verifiedRequest.created_at)
+      } else {
+        attachArgs.push('--trigger-id', String(source.trigger_comment_id))
+      }
+      attached = JSON.parse(execFileSync('bash', attachArgs, { encoding: 'utf8', timeout: 30_000, stdio: ['ignore', 'pipe', 'pipe'] }))
+      if (!requestedReviewer) {
+        const trigger = ghJson(['api', `repos/${reservation.repo}/issues/comments/${attached.trigger_comment_id}`])
+        const actor = ghJson(['api', 'user'])
+        const body = reservation?.finder?.trigger_body ?? '@codex review'
+        if (Number(trigger?.id) !== Number(attached.trigger_comment_id) || trigger?.user?.id !== actor?.id ||
+          typeof trigger?.body !== 'string' || trigger.body.trim() !== body ||
+          typeof trigger?.issue_url !== 'string' || !trigger.issue_url.endsWith(`/issues/${reservation.pr}`) ||
+          !postReservationRequest(trigger?.created_at, reservation, consumed)) {
+          throw new Refusal('attached trigger is not the exact post-reservation owner request')
+        }
+        verifiedTrigger = trigger
+      }
+      const checkArgs = [INTEGRATION_CHECKER, 'check', '--state', scratchState,
+        '--actor-id', '199175422']
+      if (reservation.run_id) checkArgs.push('--run-id', reservation.run_id)
+      let checkExit = 0
+      try {
+        execFileSync('bash', checkArgs, {
+          encoding: 'utf8', timeout: 30_000, stdio: ['ignore', 'pipe', 'pipe'],
+        })
+      } catch (error) {
+        checkExit = error.status
+        if (![10, 12, 13, 15].includes(checkExit)) {
+          throw new Refusal(`attached trigger did not reach a terminal canonical observation: ${(error.stderr || error.stdout || error.message).trim()}`)
+        }
+      }
+      attached = readJson(scratchState, 'canonical attached checker state')
+      if (requestedReviewer) {
+        attached.first_requested_at ??= verifiedRequest.created_at
+        if (attached.requested_at !== verifiedRequest.created_at ||
+            (Number(attached.attempt) === 1 && attached.first_requested_at !== verifiedRequest.created_at)) {
+          throw new Refusal('requested-reviewer attachment did not retain the authenticated request timestamp')
+        }
+      }
+      if (!attached || (checkExit === 0 && attached.last_reviewed_verdict !== 'clean') ||
+          (checkExit === 10 && attached.last_reviewed_verdict !== 'findings') ||
+          ([0, 10].includes(checkExit) && attached.last_reviewed_head !== reservation.head)) {
+        throw new Refusal('attached trigger did not retain the canonical terminal review observation')
+      }
+    } catch (error) {
+      throw new Refusal(`attached trigger did not complete the canonical retained-reservation transition: ${(error.stderr || error.stdout || error.message).trim()}`)
+    } finally { rmSync(scratch, { recursive: true, force: true }) }
+    // Retain the canonical transition itself.  Merging into source would let
+    // source-only keys (for example injected carry provenance) survive.
+    const finalPr = ghJson(['pr', 'view', String(reservation.pr), '--repo', reservation.repo, '--json', 'state,isDraft,headRefOid'])
+    if (finalPr?.state !== 'OPEN' || finalPr?.isDraft !== true || finalPr?.headRefOid !== reservation.head) {
+      throw new Refusal('integration review authority head moved while the terminal attachment was being captured')
+    }
+    if (Number(attached.attempt) === 2) {
+      const timeoutMin = Number(reservation.timeout_min ?? 15)
+      if (!Number.isSafeInteger(timeoutMin) || timeoutMin < 10) throw new Refusal('retry authority has no valid full-window control')
+      if (reservation?.finder?.trigger_mechanism === 'requested-reviewer') {
+        const waited = Date.parse(verifiedRequest?.created_at) - Date.parse(reservation.first_requested_at)
+        if (!TIMESTAMP.test(reservation.first_requested_at ?? '') || !Number.isFinite(waited) || waited < timeoutMin * 60_000) {
+          throw new Refusal('retry authority did not observe two owner review requests separated by the full review window')
+        }
+      } else {
+        const firstId = Number(reservation.first_trigger_comment_id)
+        if (!Number.isSafeInteger(firstId) || firstId < 1) throw new Refusal('retry authority has no valid first-request control')
+        const first = ghJson(['api', `repos/${reservation.repo}/issues/comments/${firstId}`])
+        const waited = Date.parse(verifiedTrigger?.created_at) - Date.parse(first?.created_at)
+        if (first?.id !== firstId || !Number.isFinite(waited) || waited < timeoutMin * 60_000) {
+          throw new Refusal('retry authority did not observe two owner requests separated by the full review window')
+        }
+      }
+    }
+    return attached
+  }
+  if (kind === 'carry') source = rederiveCarry(source, repoDir, record, context, parentDigest)
+  const expectedHead = source?.carry?.attests_head ?? source?.head
+  const pr = ghJson(['pr', 'view', String(source?.pr), '--repo', source?.repo ?? '', '--json', 'state,isDraft,headRefOid'])
+  if (pr?.state !== 'OPEN' || pr?.isDraft !== true || pr?.headRefOid !== expectedHead) {
+    throw new Refusal('integration review authority must observe an open draft on the captured head')
+  }
+  return source
+}
+
+function captureIntegrationReviewAuthority(args) {
+  const { common, root } = stateRoot()
+  const slate = requireId('slate', args.slate)
+  const session = requireId('session', args.session)
+  const runId = requireId('run-id', args['run-id'])
+  const kind = args['authority-kind']
+  if (!['reserve', 'attach', 'carry'].includes(kind)) throw new UsageError('--authority-kind must be reserve, attach or carry')
+  let parentDigest = args['parent-authority-digest']
+  if (parentDigest !== undefined && !/^[0-9a-f]{64}$/.test(parentDigest)) {
+    throw new UsageError('--parent-authority-digest must be a 64-hex retained ruling digest')
+  }
+  if (typeof args.state !== 'string' || args.state === '') throw new UsageError('--state is required')
+  args.at = resolveAt(args.at)
+  refuseGrafts()
+  assertRunOwner(root, slate, runId)
+  acquireSlateLock({ root, slate, session, ownerToken: args['owner-token'] })
+  bindRunToSlate(root, slate, runId)
+  const runDir = join(root, 'runs', runId)
+  const canonical = join(runDir, 'run.json')
+  const source = readCaptureState(args.state)
+  if (kind === 'reserve' && parentDigest !== undefined && Number(source.attempt) !== 2) {
+    throw new UsageError('--parent-authority-digest applies to reserve only for retry attempt 2')
+  }
+  const priorRecord = readJson(canonical, 'run record')
+  const priorAuthorities = retainedAuthorities(priorRecord, { common, runId })
+  if (kind === 'reserve' && Number(source.attempt) === 2) {
+    try {
+      // Persist the canonical selected parent even when this first retry did
+      // not need a selector. A later replay may need one after another finder
+      // shares the public cycle coordinates.
+      parentDigest ??= retainedCycleOriginEntry(priorRecord, source, { common, runId }, parentDigest).digest
+    } catch (error) {
+      throw new Refusal(`retry reservation has no immutable first-request controls: ${error.message}`)
+    }
+  }
+  const previousAuthorityDigest = priorAuthorities.at(-1)?.digest ?? null
+  // A caller may replay the current retained carry without repeating a
+  // selector. Only the same frontier lookup that authorizes a no-selector
+  // replay may supply its stored parent binding; never search historical
+  // carries, which would turn a stale replay into an implicitly selected one.
+  if (kind === 'carry' && parentDigest === undefined) {
+    const replaySnapshot = retainedCarryReplay(priorRecord, source, { common, runId })
+    const exactReplay = replaySnapshot === null ? [] : priorAuthorities.filter((entry) =>
+      entry.kind === 'carry' && sameAuthoritySnapshot(entry.authority, { kind, snapshot: replaySnapshot }))
+    if (exactReplay.length === 1) parentDigest = exactReplay[0].authority.parent_authority_digest
+  }
+  let state = observeAuthority(kind, structuredClone(source), args['repo-dir'], priorRecord,
+    { common, runId }, parentDigest)
+  // Replaying an attachment proves the current request and live observation
+  // again, but never turns a later CI split or terminal result into a second
+  // immutable capture for the same request. Receipt authentication consumes
+  // that fresh observation and remains responsible for its verdict.
+  if (kind === 'attach') {
+    const replay = retainedAuthorities(priorRecord, { common, runId })
+      .filter((entry) => authorityIdentity(entry.authority) === authorityIdentity({ kind, snapshot: state, parent_authority_digest: parentDigest }))
+    if (replay.length === 1) {
+      state = replay[0].authority.snapshot
+    }
+  }
+  const temporary = join(mkdtempSync(join(tmpdir(), 'integration-authority-')), 'authority.json')
+  try {
+    const authority = { schema: 1, kind, captured_at: args.at, previous_authority_digest: previousAuthorityDigest, snapshot: state }
+    if (parentDigest !== undefined) authority.parent_authority_digest = parentDigest
+    writeFileSync(temporary, `${JSON.stringify(authority, null, 2)}\n`, { mode: 0o600 })
+    args.authority = temporary
+    const summary = withMutex(canonical, () => {
+      const record = readJson(canonical, 'run record')
+      validateFile('run', canonical, `existing ${canonical}`)
+      const result = MUTATORS['integration-review-capture'](record, args, { common })
+      if (result === null) return null
+      writeValidated('run', canonical, record)
+      return result
+    })
+    return summary === null ? 'no change (already recorded)' : `recorded ${summary}`
+  } finally {
+    rmSync(dirname(temporary), { recursive: true, force: true })
+  }
+}
+
 // ---------------------------------------------------------------------------
 // CLI
 // ---------------------------------------------------------------------------
@@ -1626,10 +2938,15 @@ function sideEffectWrite(command, args) {
 const VALUE_FLAGS = new Set([
   'slate', 'session', 'owner-token', 'run-id', 'stage', 'exit', 'at', 'kind', 'note', 'ruling', 'number', 'url',
   'decision', 'command', 'answered-by',
-  'head', 'fingerprint', 'outcome', 'milestone', 'issues', 'reason',
-  'remediation-head', 'remediation-findings',
+  'head', 'fingerprint', 'gate', 'outcome', 'milestone', 'issues', 'reason',
+  'remediation-head', 'remediation-findings', 'finder-state',
+  'pre-cycle-finding-id', 'pre-cycle-original-priority', 'pre-cycle-adjudicated-priority',
+  'pre-cycle-source-head', 'pre-cycle-source-comment-id', 'pre-cycle-source-actor-id',
+  'pre-cycle-source-created-at', 'pre-cycle-source-updated-at', 'pre-cycle-source-digest', 'pre-cycle-verification-head',
+  'pre-cycle-verification-reply-id', 'pre-cycle-verification-actor-id',
+  'pre-cycle-verification-created-at', 'pre-cycle-verification-updated-at', 'pre-cycle-verification-digest', 'pre-cycle-batch',
   'issue', 'title', 'branch', 'base', 'policy', 'registry-revision', 'pass', 'file',
-  'actor-id', 'strategy-source', 'operator-pin', 'round', 'actor', 'instruction', 'lane',
+  'actor-id', 'strategy-source', 'operator-pin', 'round', 'actor', 'instruction', 'lane', 'codex-state', 'codex-repo-dir', 'state', 'authority-kind', 'authority', 'parent-authority-digest', 'repo-dir',
 ])
 const BOOLEAN_FLAGS = new Set(['force'])
 
@@ -1664,8 +2981,8 @@ export function parseScopeFlags(args) {
     args.milestone = milestone
   }
   if (args.issues !== undefined) {
-    const issues = args.issues.split(',').map((value) => Number(value.trim()))
-    if (issues.length === 0 || !issues.every((n) => Number.isInteger(n) && n >= 1)) {
+    const issues = args.issues.split(',').map((value) => value.includes('#') ? issueKey({}, value.trim()) : Number(value.trim()))
+    if (issues.length === 0 || !issues.every((n) => typeof n === 'string' || (Number.isSafeInteger(n) && n >= 1))) {
       throw new UsageError('--issues must be a comma-separated list of issue numbers')
     }
     args.issues = issues
@@ -1730,6 +3047,10 @@ function main(argv) {
   }
   if (command === 'solo-init') return soloInit(parseFlags(rest, VALUE_FLAGS, BOOLEAN_FLAGS, new Set(['operator-pin'])))
   if (command === 'lane-init') return laneInit(parseFlags(rest))
+  if (command === 'integration-review-capture') return captureIntegrationReviewAuthority(parseFlags(rest))
+  if (command === 'takeover' || command === 'takeover-promote') {
+    return takeoverMutation(command, parseFlags(rest, VALUE_FLAGS, new Set(['check'])))
+  }
   if (command === 'promote') {
     const args = parseScopeFlags(parseFlags(rest, VALUE_FLAGS, new Set(['check'])))
     return recordMutation(command, args, { check: args.check === true })
@@ -1738,7 +3059,7 @@ function main(argv) {
   if (!Object.hasOwn(MUTATORS, command ?? '')) {
     throw new UsageError('run-record.mjs transition|authorize-cap|intervention|bind-pr|promote|close|prune [--dry-run] [--repo-root DIR]|solo-init|lane-init|receipt|adjudicate|ledger|lock … (see the header)')
   }
-  return recordMutation(command, parseScopeFlags(parseFlags(rest)))
+  return recordMutation(command, parseScopeFlags(parseFlags(rest, VALUE_FLAGS, BOOLEAN_FLAGS, new Set(['finder-state']))))
 }
 
 if (realpathSync(process.argv[1] ?? '') === realpathSync(fileURLToPath(import.meta.url))) runCli(main)

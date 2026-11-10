@@ -697,7 +697,8 @@ configured pool can satisfy that constraint.
 **Announce the resolved profile on entering the loop.** Include rigor and
 source; the selected rounds policy's challenge, review, integration,
 remediation, floor, and wall-clock values; the breadth envelope; all five
-role tiers; and strategy and source. Fill it from the reader output, carry it
+role tiers; strategy and source; and the review-guidelines source (the
+reader's `review_guidelines` line). Fill it from the reader output, carry it
 into the PR body, and use the resolved stage caps as ledger denominators.
 Everything else about these stages is policy rather than a parameter and does
 not vary by rigor level or rounds policy: the exit condition, the round-2
@@ -835,6 +836,12 @@ Those siblings are reference context, not pushable where the platform only
 allows pushes to the session's own repository and branch. The pre-push hook is
 not a substitute for `task verify`, so run it yourself.
 
+For fetch-based checkouts that did not get a remote HEAD from a clone, run
+`git remote set-head origin --auto` explicitly when the default-branch cache
+is missing or stale. This idempotent command queries the remote and sets
+`refs/remotes/origin/HEAD`; ordinary fetches do not maintain that cache, which
+the merge guard needs to verify feature branches.
+
 **Second model on a remote lane.** Every remote lane gets a Codex second-model
 review on the ChatGPT plan with no human step: ephemeral cloud VMs never hold
 Codex credentials, and a persistent environment may hold exactly one Codex login
@@ -869,6 +876,14 @@ on Codex. Setup and mechanics: `docs/guides/codex-review.md`.
   `task challenge -- --base main focus on the update/migration path`.
 - `task review` (→ `review:codex`) — verification checkpoint: double-checks
   the implementation, consistency, and test coverage before the draft PR.
+- Both read the repository's **review guidelines** — priorities, the
+  severity scale, this repo's invariants — from the one file `.devflow.toml`
+  `[review_guidelines]` names ([docs/review-guidelines.md](docs/review-guidelines.md)),
+  at the review's *base* revision (merge base; `HEAD` for `--uncommitted`), never
+  the working tree, so a change cannot rewrite the instructions that review it.
+  `challenge_focus` / `review_focus` there supply a default focus when the
+  CLI is given none. See [docs/guides/codex-review.md](docs/guides/codex-review.md)
+  "Review guidelines".
 - `task codex:gate:enable` / `:disable` / `:status` — the automatic
   Claude Code → Codex stop-gate (the codex plugin's Stop hook reviews each
   editing turn and blocks completion on material findings). Per-repo,
@@ -1090,16 +1105,15 @@ non-zero by design, so the stage cannot pass and re-running will not change
 that. Treat it as the answer rather than a failure to work around: a change
 that has become empty is abandoned, not reviewed clean.
 
-**Severity gating.** Both tasks ask Codex to label every finding `P0`
-(breaks correctness, security, or data integrity in ordinary use, or breaks
-an existing contract), `P1` (a real defect or materially wrong design
-decision with a plausible trigger), `P2` (worth knowing, not
-merge-blocking: hardening, unlikely edge cases, maintainability, non-critical
-test gaps), or `P3` (cosmetic or informational — reported and adjudicated, never
-gating). The scale is defined in
-`scripts/codex-review.sh`, not inherited from the Codex CLI's own labels, so
-the gate keeps its meaning if Codex changes its output; a finding badged off
-that scale, or not badged at all, is adjudicated as **at least a P2**. A label
+**Severity gating.** Both tasks ask Codex to label every finding on the
+P0–P3 scale whose **single normative statement** is
+[docs/review-guidelines.md](docs/review-guidelines.md) ("Severity scale") —
+not inherited from the Codex CLI's own labels, so the gate keeps its meaning
+if Codex changes its output. `scripts/codex-review.sh` sends the same lines
+and `task test:codex-review` fails when the two differ; every other site,
+this paragraph included, points there rather than restating the levels. A
+finding badged off that scale, or not badged at all, is adjudicated as **at
+least a P2**. A label
 is a hypothesis and the **adjudicated** severity is the verdict — P3 included,
 whatever reviewer produced it. The sidecar records what is *deferred*, so an entry is
 owed only for a finding left unresolved and carried forward — one fixed in

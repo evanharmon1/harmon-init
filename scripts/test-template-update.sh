@@ -194,6 +194,11 @@ node_gen="$work/node"
 if ! copier copy "$tmpl" "$node_gen" --vcs-ref=v0.0.2 --trust --defaults \
     --data project_name="Allowance Update Test" --data project_slug=allowance-update-test \
     --data project_type=web-app --data git_init=false --data run_task_install=false \
+    --data license=private --data author_first_name=Alex --data author_last_name=River \
+    --data author_full_name="Alex R. River" --data author_email=alex@example.org \
+    --data author_url=https://alex.example.org --data author_git_provider_username=alex-river \
+    --data organization="Example Company" --data organization_url=https://example.org \
+    --data organization_email=team@example.org \
     --data github_remote_create=false --data github_release_init=false \
     --data bunch_add=false --data obsidian_project_add=false >"$work/node-copy.log" 2>&1; then
     err "Node allowance preservation fixture failed to render"
@@ -203,6 +208,7 @@ else
         err "Node allowances were not seeded empty"
     printf '{"allowances":[],"consumer_note":"reviewed decisions stay here"}\n' >"$node_gen/.security-audit-allowances.json"
     cp "$node_gen/.security-audit-allowances.json" "$work/consumer-allowances.json"
+    yq -o=json '.' "$node_gen/.copier-answers.yml" >"$work/identity-copy.json"
     git -C "$node_gen" init -q
     gitq "$node_gen" add -A
     gitq "$node_gen" commit -qm "customize Node allowances"
@@ -216,6 +222,29 @@ else
     fi
     cmp -s "$work/consumer-allowances.json" "$node_gen/.security-audit-allowances.json" ||
         err "Copier update overwrote consumer-owned security allowances"
+    yq -o=json '.' "$node_gen/.copier-answers.yml" >"$work/identity-update.json"
+    if ! python3 - "$work/identity-copy.json" "$work/identity-update.json" <<'PYTHON'
+import json
+import sys
+
+expected = dict(
+    author_first_name="Alex", author_last_name="River",
+    author_full_name="Alex R. River", author_email="alex@example.org",
+    author_url="https://alex.example.org", author_git_provider_username="alex-river",
+    organization="Example Company", organization_url="https://example.org",
+    organization_email="team@example.org",
+)
+for filename in sys.argv[1:]:
+    with open(filename, encoding="utf-8") as source:
+        answers = json.load(source)
+    assert {key: answers.get(key) for key in expected} == expected, answers
+PYTHON
+    then
+        err "identity overrides did not persist across copy and update without re-supplying them"
+    fi
+    grep -Fq 'Example Company' "$node_gen/LICENSE" ||
+        err "LICENSE did not retain the overridden organization"
+
 fi
 
 # 6. Assertions.
@@ -242,7 +271,7 @@ rejs="$(find "$gen" -name '*.rej' -not -path '*/.git/*' || true)"
 
 if [ "$validation_scope" = "renovate-config" ]; then
     # renovate: datasource=npm depName=renovate
-    RENOVATE_VALIDATOR_VERSION=44.176.2
+    RENOVATE_VALIDATOR_VERSION=44.216.5
     if have npx; then
         (cd "$gen" && npx --yes --package "renovate@${RENOVATE_VALIDATOR_VERSION}" -- renovate-config-validator --strict) ||
             err "updated project renovate.json failed strict validation"

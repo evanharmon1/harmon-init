@@ -37,6 +37,82 @@ tmp="$(mktemp -d "${TMPDIR:-/tmp}/plan-revise.XXXXXX")"
 tmp="$(cd "$tmp" && pwd -P)"
 trap 'rm -rf "$tmp"' EXIT
 
+# Activation checks the executing tools' checkout as well as the lane branch.
+# Keep both in controlled repositories, independent of the outer branch's age.
+source_root="$(git -C "$asset_dir" rev-parse --show-toplevel)"
+tool_root="$tmp/tool-root"
+mkdir -p "$tool_root"
+cp -R "$source_root/ai" "$tool_root/ai"
+cp "$source_root/.devflow.toml" "$source_root/agent-registry.json" "$tool_root/"
+git init -q -b main "$tool_root"
+git -C "$tool_root" add ai .devflow.toml agent-registry.json
+git -C "$tool_root" -c user.name=test -c user.email=test@example.test commit -qm 'controlled executing tools'
+git -C "$tool_root" update-ref refs/remotes/origin/main HEAD
+git -C "$tool_root" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+asset_dir="$tool_root/ai/skills/universal/dev-flow-support/assets"
+reviser="$asset_dir/plan-revise.mjs"
+writer="$asset_dir/run-record.mjs"
+validator="$asset_dir/validate-result-schemas.mjs"
+# Exercise the plan writer's use of the established claim helper interfaces
+# without making live GitHub writes. The helpers' own suites cover their API
+# behavior; these stubs prove plan transitions call them in the right order.
+cat >"$tool_root/ai/skills/universal/track-work/assets/release-claim.sh" <<'MOCK_RELEASE'
+#!/usr/bin/env bash
+printf 'release %s\n' "$*" >>"${CLAIM_HELPER_LOG:?}"
+if [ "${MOCK_RELEASE_UNCLAIMED:-}" = yes ]; then
+    echo 'example/repo#1 has no trusted claim comment — nothing to release' >&2
+    exit 3
+fi
+if [ "${MOCK_RELEASE_WRONG_BRANCH:-}" = yes ]; then
+    echo "example/repo#1: claim of record is for branch 'newer-branch', not 'issue-1' — this close does not own it" >&2
+    exit 3
+fi
+if [ "${MOCK_RELEASE_FAIL:-}" = yes ]; then
+    echo 'simulated claim release failure' >&2
+    exit 5
+fi
+exit 0
+MOCK_RELEASE
+cat >"$tool_root/ai/skills/universal/claim/assets/claim-transaction.sh" <<'MOCK_CLAIM'
+#!/usr/bin/env bash
+printf 'restore %s\n' "$*" >>"${CLAIM_HELPER_LOG:?}"
+if [ "${MOCK_CLAIM_FAIL:-}" = yes ]; then
+    echo 'simulated claim restoration failure' >&2
+    exit 6
+fi
+if [ "${MOCK_CLAIM_REQUIRE_APPROVAL:-}" = yes ] && [[ " $* " != *" --approve-review-pullback "* ]]; then
+    echo 'needs-review requires --approve-review-pullback' >&2
+    exit 7
+fi
+exit 0
+MOCK_CLAIM
+chmod +x "$tool_root/ai/skills/universal/track-work/assets/release-claim.sh" \
+    "$tool_root/ai/skills/universal/claim/assets/claim-transaction.sh"
+mkdir -p "$tmp/bin"
+cat >"$tmp/bin/gh" <<'MOCK_GH'
+#!/usr/bin/env bash
+if [ "$1" = api ]; then
+    printf '%s\n' "$2" >>"${CLAIM_API_LOG:?}"
+    [ "${MOCK_CLAIM_API_FAIL:-}" != yes ] || { echo 'simulated issue read failure' >&2; exit 1; }
+    if [ "${MOCK_CLAIM_API_RESPONSE+x}" = x ]; then printf '%s\n' "$MOCK_CLAIM_API_RESPONSE"
+    else printf '{"labels":[]}\n'; fi
+    exit 0
+fi
+if [ "$1" = label ] && [ "$2" = list ]; then printf '[]\n'; exit 0; fi
+if [ "$1" = issue ] && [ "$2" = view ]; then printf '{"state":"OPEN","labels":[]}\n'; exit 0; fi
+if [ "$1" = pr ] && [ "$2" = view ]; then
+    if [ "${MOCK_MERGED_PR:-}" = "${3##*/}" ]; then printf '{"state":"MERGED"}\n'
+    else printf '{"state":"OPEN"}\n'; fi
+    exit 0
+fi
+echo "unexpected gh call: $*" >&2
+exit 1
+MOCK_GH
+chmod +x "$tmp/bin/gh"
+export CLAIM_HELPER_LOG="$tmp/claim-helper.log"
+export CLAIM_API_LOG="$tmp/claim-api.log"
+export PATH="$tmp/bin:$PATH"
+
 expect_refused() {
     local label="$1" pattern="$2"
     shift 2
@@ -97,7 +173,7 @@ write_plan() {
         operator_pins: [],
       }
       const issue = (number, files, blocked_by = []) => ({
-        number, title: `Issue ${number}`, url: `https://example.test/issues/${number}`,
+        number, title: `Issue ${number}`, url: `https://github.com/example/repo/issues/${number}`,
         verdict: "valid", candidate_files: files, blocked_by,
       })
       const lane = (name, number, wave, fence) => ({
@@ -135,6 +211,17 @@ pr() {
     (cd "$repo" && node "$reviser" base-move --slate "$slate" --session "$session" --owner-token "$(cat "$tmp/token-$slate")" --reason "main moved" "$@")
 }
 
+# Base moves do not wait for dispatch admission's live GitHub reads.
+lock_repo="$(new_repo lock-order)"
+write_plan "$lock_repo" lock-order '[]'
+lock_base="$(commit_touching "$lock_repo" unrelated.txt)"
+lock_root="$lock_repo/.git/dev-flow-v2"
+node -e 'require("fs").writeFileSync(process.argv[1], JSON.stringify({pid: process.ppid, host: require("os").hostname()}))' "$lock_root/dispatch.wlock"
+pr "$lock_repo" alice lock-order --new-base "$lock_base" --at 2026-01-01T01:00:00Z >"$tmp/lock-order.out" 2>&1 ||
+    fail "base-move waited for dispatch mutex: $(cat "$tmp/lock-order.out")"
+rm "$lock_root/dispatch.wlock"
+pass "base-move succeeds while the dispatch mutex is held"
+
 # -- disjoint base move ------------------------------------------------------
 repo="$(new_repo disjoint)"
 write_plan "$repo" s1 '[]'
@@ -146,7 +233,14 @@ expect_refused "base-move wrong owner token" "owner token does not match" \
 expect_refused "base-move without explicit acquire" "lock acquire" \
     pr "$repo" alice s1 --new-base "$new_base" --at 2026-01-01T01:00:00Z
 (cd "$repo" && node "$writer" lock acquire --slate s1 --session alice) >"$tmp/token-s1"
-pr "$repo" alice s1 --new-base "$new_base" --done 1 --at 2026-01-01T01:00:00Z >/dev/null
+before_dry_run="$(cat "$plan")"
+dry_rc=0
+dry_output="$(pr "$repo" alice s1 --new-base "$new_base" --dry-run 2>&1)" || dry_rc=$?
+[ "$dry_rc" -eq 2 ] || fail "revision dry-run expected exit 2, got $dry_rc: $dry_output"
+[[ "$dry_output" == *"unknown flag --dry-run"* ]] || fail "revision dry-run missing unknown flag: $dry_output"
+[ "$(cat "$plan")" = "$before_dry_run" ] || fail "revision dry-run modified plan"
+revision_output="$(pr "$repo" alice s1 --new-base "$new_base" --done 1 --at 2026-01-01T01:00:00Z)"
+[[ "$revision_output" == *"membership: example/repo has no slated label; skipped"* ]] || fail "base-move did not report skipped membership: $revision_output"
 node "$validator" plan "$plan" >/dev/null || fail "revised plan does not validate"
 current="$(jq -c '.revisions[-1]' "$plan")"
 [ "$(jq -r '.seq' <<<"$current")" = "1" ] || fail "no revision appended"
@@ -186,6 +280,65 @@ expect_refused "candidate-touching move" "issue #2 candidate file: b.txt" \
     pr "$repo" alice s1 --new-base "$candidate" --at 2026-01-01T02:00:00Z
 pass "a base move touching a live issue's candidate files is refused, naming the path"
 
+# -- explicit re-verification --------------------------------------------------
+repo_r="$(new_repo reverified)"
+write_plan "$repo_r" sr '[]'
+plan_r="$repo_r/.git/dev-flow-v2/slates/sr/plan.json"
+(cd "$repo_r" && node "$reviser" handoff --slate sr --session alice --owner-token "$(cat "$tmp/token-sr")" --issue 2 --pr 22 --reason handed --at 2026-01-01T00:30:00Z) >/dev/null
+cp "$plan_r" "$tmp/reverified-before.json"
+move_r="$(commit_touching "$repo_r" a.txt b.txt)"
+expect_refused "unknown re-verification" "not a live issue" pr "$repo_r" alice sr --new-base "$move_r" --reverified 99 --at 2026-01-01T01:00:00Z
+expect_refused "handed-off re-verification" "not a live issue" pr "$repo_r" alice sr --new-base "$move_r" --reverified 2 --at 2026-01-01T01:00:00Z
+expect_refused "untouched re-verification" "no fence or candidate collision" pr "$repo_r" alice sr --new-base "$move_r" --reverified 3 --at 2026-01-01T01:00:00Z
+mkdir -p "$repo_r/.git/dev-flow-v2/runs/run-1"
+printf "{}\n" >"$repo_r/.git/dev-flow-v2/runs/run-1/run.json"
+expect_refused "provisioned re-verification" "provisioned lane a (run run-1)" pr "$repo_r" alice sr --new-base "$move_r" --reverified 1 --at 2026-01-01T01:00:00Z
+rm "$repo_r/.git/dev-flow-v2/runs/run-1/run.json"
+expect_refused "run directory alone" "provisioned lane a" pr "$repo_r" alice sr --new-base "$move_r" --reverified 1 --at 2026-01-01T01:00:00Z
+rmdir "$repo_r/.git/dev-flow-v2/runs/run-1"
+expect_refused "older re-verification" "precedes revision" pr "$repo_r" alice sr --new-base "$move_r" --reverified 1 --at 2025-01-01T01:00:00Z
+cmp -s "$plan_r" "$tmp/reverified-before.json" || fail "refused re-verification wrote plan"
+output_r="$(pr "$repo_r" alice sr --new-base "$move_r" --reverified 1 --reverified 1 --at 2026-01-01T01:00:00Z)"
+[[ "$output_r" == *'reverified #1'* && "$output_r" != *'reverified #1 #1'* ]] || fail "summary does not deduplicate re-verification"
+jq -e '.revisions[-1].reason | endswith("reverified #1") and (contains("#1 #1") | not)' "$plan_r" >/dev/null || fail "reason omits decision"
+[ "$(jq -c '.revisions[0].plan.lanes[] | select(.issue == 1) | .fence' "$plan_r")" = "$(jq -c '.revisions[-1].plan.lanes[] | select(.issue == 1) | .fence' "$plan_r")" ] || fail "fence changed"
+[ "$(jq -c '.revisions[0].plan.issues[] | select(.number == 1) | .candidate_files' "$plan_r")" = "$(jq -c '.revisions[-1].plan.issues[] | select(.number == 1) | .candidate_files' "$plan_r")" ] || fail "candidates changed"
+node "$validator" plan "$plan_r" >/dev/null
+pass "re-verification accepts only a colliding unprovisioned live lane and records the decision"
+
+repo_m="$(new_repo reverified-mixed)"
+write_plan "$repo_m" sm '[]'
+plan_m="$repo_m/.git/dev-flow-v2/slates/sm/plan.json"
+cp "$plan_m" "$tmp/mixed-before.json"
+move_m="$(commit_touching "$repo_m" a.txt b.txt)"
+expect_refused "uncovered collision" "lane b (#2) fence" pr "$repo_m" alice sm --new-base "$move_m" --reverified 1 --at 2026-01-01T01:00:00Z
+cmp -s "$plan_m" "$tmp/mixed-before.json" || fail "mixed collision wrote plan"
+pr "$repo_m" alice sm --new-base "$move_m" --reverified 1 --reverified 2 --at 2026-01-01T01:00:00Z >/dev/null
+pass "other collisions refuse atomically; repeatable decisions cover both"
+
+# A merge's side parent predates oldBase and must not manufacture collisions.
+repo_side="$(new_repo side-parent)"
+git -C "$repo_side" branch side
+commit_touching "$repo_side" a.txt >/dev/null
+write_plan "$repo_side" ss '[]'
+git -C "$repo_side" checkout -q side
+commit_touching "$repo_side" unrelated.txt >/dev/null
+git -C "$repo_side" checkout -q main
+git -C "$repo_side" merge -q --no-ff side -m merge
+merge_side="$(git -C "$repo_side" rev-parse HEAD)"
+expect_refused "unchanged merge fence" "no fence or candidate collision" pr "$repo_side" alice ss --new-base "$merge_side" --reverified 1 --at 2026-01-01T01:00:00Z
+pr "$repo_side" alice ss --new-base "$merge_side" --at 2026-01-01T01:00:00Z >/dev/null
+pass "a side parent predating the base does not create a collision"
+
+PLAN_REVISER="$reviser" PLAN_FILE="$plan_r" node --input-type=module -e '
+  import assert from "node:assert/strict"
+  import { readFileSync } from "node:fs"
+  const { reviseForBaseMove } = await import(process.env.PLAN_REVISER)
+  const plan = JSON.parse(readFileSync(process.env.PLAN_FILE)).revisions[0].plan
+  assert.throws(() => reviseForBaseMove(plan, { newBase: plan.base_sha, done: [], changed: ["a.txt"], reverified: [1] }), /--reverified requires state root/)
+'
+pass "direct re-verification requires a state root"
+
 # -- a second revision chains onto the first ------------------------------
 git -C "$repo" reset -q --hard "$new_base"
 moved="$(commit_touching "$repo" docs.txt)"
@@ -203,6 +356,8 @@ cp "$plan8" "$tmp/bracket-plan.json"
 moved="$(commit_touching "$repo8" src/a1.js)"
 expect_refused "bracket fence" "pattern needs orchestrator judgment (not matched here): src/[ab]*.js" \
     pr "$repo8" alice s8 --new-base "$moved" --at 2026-01-01T01:00:00Z
+expect_refused "reverified bracket fence" "pattern needs orchestrator judgment (not matched here): src/[ab]*.js" \
+    pr "$repo8" alice s8 --new-base "$moved" --reverified 3 --at 2026-01-01T01:00:00Z
 cmp -s "$plan8" "$tmp/bracket-plan.json" || fail "a refused bracket move changed plan.json"
 pass "a fence combining a bracket class with a wildcard makes a base move refuse instead of being matched"
 
@@ -352,11 +507,13 @@ pass "plan writes take the slate lock and refuse while another session holds the
 node --input-type=module - "$asset_dir" "$tmp" <<'NODE'
 import assert from 'node:assert/strict'
 import { execFileSync, spawnSync } from 'node:child_process'
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync, unlinkSync } from 'node:fs'
 import { join } from 'node:path'
+import { hostname } from 'node:os'
 const [assets, tmp] = process.argv.slice(2)
 process.argv[1] = tmp
 const reviser = join(assets, 'plan-revise.mjs'), writer = join(assets, 'run-record.mjs')
+const { chainDigest } = await import(writer)
 const { mayOverlap, effectiveFence } = await import(reviser)
 assert.equal(mayOverlap('src/a.js', 'src/**'), true)
 assert.equal(mayOverlap('src/a*.js', 'docs/**'), false)
@@ -370,7 +527,7 @@ const policy = {
 }
 function addition(n, path = `area${n}/**`, wave = n) {
   return {
-    issue: { number: n, title: `Issue ${n}`, url: `https://example.test/issues/${n}`, verdict: 'valid', candidate_files: [path], blocked_by: [] },
+    issue: { number: n, title: `Issue ${n}`, url: `https://github.com/example/repo/issues/${n}`, verdict: 'valid', candidate_files: [path], blocked_by: [] },
     lane: { lane: `l${n}`, issue: n, wave, branch: `issue-${n}`, run_id: `run-${n}`, fence: [{ path }], expansions: [] },
     profile: { lane: `l${n}`, policy },
   }
@@ -386,8 +543,13 @@ function fixture(issues = '1,2,3,4,5') {
   mkdirSync(repo)
   const git = (...args) => execFileSync('git', args, { cwd: repo, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim()
   git('init', '-q', '-b', 'main')
+  writeFileSync(join(repo, 'agent-registry.json'), JSON.stringify({ trusted_orchestrator_actor_ids: [12345] }))
+  git('add', 'agent-registry.json')
   git('-c', 'user.name=t', '-c', 'user.email=t@example.test', 'commit', '--allow-empty', '-qm', 'base')
   const root = join(repo, '.git/dev-flow-v2'), canonical = join(root, 'slates/s/plan.json')
+  const claimRecord = join(repo, 'claim-record.md'), registrySnapshot = join(repo, 'registry.json')
+  writeFileSync(claimRecord, 'Claiming — starting implementation on branch issue-1 (session fixture).\n\nClaim record (for `/wrap` — undo only what this claim added):\n')
+  writeFileSync(registrySnapshot, JSON.stringify({ families: [{ slug: 'gpt' }] }))
   const token = execFileSync(process.execPath, [writer, 'lock', 'acquire', '--slate', 's', '--session', 'owner', '--issues', issues], { cwd: repo, encoding: 'utf8' }).trim()
   const plan = content(git('rev-parse', 'HEAD'), [addition(1)])
   let calls = 0
@@ -398,8 +560,20 @@ function fixture(issues = '1,2,3,4,5') {
       writeFileSync(file, JSON.stringify(input))
       inputArgs.push('--input', file)
     }
+    if (command === 'reactivate' && !flags.includes('--claim-record-file')) {
+      const issueIndex = flags.indexOf('--issue')
+      const issue = issueIndex >= 0 ? flags[issueIndex + 1] : '1'
+      const currentPlan = existsSync(canonical) ? JSON.parse(readFileSync(canonical)).revisions.at(-1).plan : null
+      const retained = currentPlan?.retained_lanes?.find((entry) => String(entry.lane.issue) === issue)
+      const branch = retained?.lane.branch ?? `issue-${issue}`
+      writeFileSync(claimRecord, `Claiming — starting implementation on branch ${branch} (session fixture).\n\nClaim record (for \`/wrap\` — undo only what this claim added):\n`)
+    }
+    const claimArgs = command === 'reactivate' && !flags.includes('--claim-record-file')
+      ? ['--claim-record-file', claimRecord, '--claim-label', 'claim:gpt', '--model-label', 'none',
+        '--family', 'gpt', '--registry-snapshot', registrySnapshot]
+      : []
     return spawnSync(process.execPath, [reviser, command, '--slate', 's', '--session', 'owner',
-      ...(ownerToken === null ? [] : ['--owner-token', ownerToken]), '--reason', 'verified operator decision', '--at', at, ...inputArgs, ...flags], { cwd: repo, encoding: 'utf8' })
+      ...(ownerToken === null ? [] : ['--owner-token', ownerToken]), '--reason', 'verified operator decision', '--at', at, ...inputArgs, ...flags, ...claimArgs], { cwd: repo, encoding: 'utf8' })
   }
   function ok(command, options) {
     const r = call(command, options)
@@ -417,8 +591,172 @@ function fixture(issues = '1,2,3,4,5') {
     assert.match(r.stderr, message)
     assert.equal(existsSync(canonical) ? readFileSync(canonical, 'utf8') : null, before, 'refusal mutated canonical plan')
   }
-  return { repo, root, canonical, token, plan, ok, refuse }
+  return { repo, root, canonical, token, plan, call, ok, refuse }
 }
+{
+// #1802: complete resolver JSON is projected by the same exported function as lane-init.
+const { planPolicy, lanePolicyProjection } = await import(writer)
+const { resolvePolicy } = await import(join(assets, 'devflow-policy.mjs'))
+const { parseToml } = await import(join(assets, 'lib/toml-lite.mjs'))
+const fullPolicy = JSON.parse(JSON.stringify(resolvePolicy(parseToml(readFileSync(join(assets, '../../../../../.devflow.toml'), 'utf8')))))
+const projectedPolicy = planPolicy(fullPolicy)
+// Real migration fixtures retain the historical shared integration budget.
+// They remain valid inputs to solo-init's shared projection helper.
+for (const name of ['merge-base-legacy-to-v2', 'merge-base-v1-mutation-invariant']) {
+  const fixtureDir = join(assets, '../../../../schemas/fixtures/exit', name)
+  const historical = resolvePolicy(parseToml(readFileSync(join(fixtureDir, 'policy.toml'), 'utf8')), {
+    mergeBaseDoc: parseToml(readFileSync(join(fixtureDir, 'policy.merge-base.toml'), 'utf8')),
+  })
+  assert.equal(historical.rounds.integration_exempt, 0)
+  assert.equal(historical.rounds.shared_budget, true)
+  const projected = planPolicy(historical)
+  assert.equal(projected.caps.integration, historical.rounds.integration)
+  assert.equal(projected.rigor, historical.rigor.level)
+  assert.deepEqual(projected.role_tiers, Object.fromEntries(Object.entries(historical.roles).map(([role, value]) => [role, value.tier])))
+}
+console.log('  PASS: shared policy projection accepts both historical merge-base migration fixtures')
+
+const resolvedAddition = (n, wave = n) => {
+  const input = addition(n, `area${n}/**`, wave)
+  delete input.profile
+  return input
+}
+const resolved = fixture()
+resolved.ok('genesis', { input: resolved.plan })
+const policyFile = join(resolved.repo, 'policy.json')
+writeFileSync(policyFile, JSON.stringify(fullPolicy))
+const policyFlags = ['--policy', policyFile]
+let resolvedPlan = resolved.ok('add-issue', { input: resolvedAddition(2), flags: policyFlags })
+assert.deepEqual(resolvedPlan.lane_profiles.find((p) => p.lane === 'l2').policy, projectedPolicy)
+assert.deepEqual(lanePolicyProjection(resolvedPlan, resolvedPlan.lanes[1], policyFile), {
+  ...fullPolicy, rigor: { ...fullPolicy.rigor, source: projectedPolicy.rigor_source },
+})
+resolvedPlan = resolved.ok('done', { flags: ['--issue', '1', ...policyFlags], input: { addition: resolvedAddition(3, 2) } })
+assert.deepEqual(resolvedPlan.lane_profiles.find((p) => p.lane === 'l3').policy, projectedPolicy)
+const invalidAddition = resolvedAddition(4)
+writeFileSync(policyFile, JSON.stringify({ ...fullPolicy, stages: undefined }))
+resolved.refuse('add-issue', { input: invalidAddition, flags: policyFlags }, /not a complete resolved policy projection/)
+resolved.refuse('done', { flags: ['--issue', '2', ...policyFlags], input: { addition: invalidAddition } }, /not a complete resolved policy projection/)
+writeFileSync(policyFile, JSON.stringify(fullPolicy))
+const ambiguousPolicy = resolvedAddition(4)
+ambiguousPolicy.profile = addition(4).profile
+resolved.refuse('add-issue', { input: ambiguousPolicy, flags: policyFlags }, /not both/)
+console.log('  PASS: additions and done-with-addition project complete resolver JSON identically to lane-init')
+
+// Run/profile replacement is one validated revision and is closed once provisioned.
+const replacement = fixture()
+const operatorPins = ['Do not terminate any process', 'Preserve the existing deployment configuration']
+replacement.plan.lane_profiles[0].policy = { ...replacement.plan.lane_profiles[0].policy, operator_pins: operatorPins }
+replacement.ok('genesis', { input: replacement.plan })
+const replacementPolicy = join(replacement.repo, 'policy.json')
+writeFileSync(replacementPolicy, JSON.stringify(fullPolicy))
+const replacementFlags = ['--lane', 'l1', '--run-id', 'fresh-run', '--policy', replacementPolicy]
+replacement.refuse('replace-unprovisioned', { flags: replacementFlags, ownerToken: 'wrong' }, /owner token/)
+mkdirSync(join(replacement.root, 'runs/run-1'), { recursive: true })
+replacement.refuse('replace-unprovisioned', { flags: replacementFlags }, /previous run directory exists/)
+// Directory-only provisioning is sufficient; no run.json is required.
+execFileSync('rmdir', [join(replacement.root, 'runs/run-1')])
+mkdirSync(join(replacement.root, 'runs/fresh-run'))
+replacement.refuse('replace-unprovisioned', { flags: replacementFlags }, /fresh unused run_id/)
+execFileSync('rmdir', [join(replacement.root, 'runs/fresh-run')])
+writeFileSync(replacementPolicy, JSON.stringify({ ...fullPolicy, stages: undefined }))
+replacement.refuse('replace-unprovisioned', { flags: replacementFlags }, /not a complete resolved policy projection/)
+writeFileSync(replacementPolicy, JSON.stringify(fullPolicy))
+const replaced = replacement.ok('replace-unprovisioned', { flags: replacementFlags })
+assert.equal(replaced.lanes[0].run_id, 'fresh-run')
+assert.deepEqual(replaced.lanes[0].fence, replacement.plan.lanes[0].fence)
+assert.deepEqual(replaced.lane_profiles[0].policy, { ...projectedPolicy, operator_pins: operatorPins })
+assert.doesNotThrow(() => lanePolicyProjection(replaced, replaced.lanes[0], replacementPolicy))
+const { buildBriefValues } = await import(join(assets, '../../orchestrate/assets/lane-brief-values.mjs'))
+const facts = Object.fromEntries(['worktree_path', 'harness', 'harness_text', 'effort', 'codex_model_id', 'codex_launch_flags',
+  'scratch_dir', 'gate_bounds_override', 'gate_commands', 'git_sandbox_note', 'known_environmental_failure',
+  'pr_title', 'verified_facts_and_rulings'].map((name) => [name, 'fixture']))
+const brief = buildBriefValues({ plan: replaced, lane: replaced.lanes[0],
+  facts: { ...facts, repo_tier: 'standard', unit_kind: 'implementation', claim_handoff: {} },
+  nonce: 'pins', at: '2026-10-22T12:00:00Z', generation: 1, active: 'active.json',
+  runDir: join(replacement.root, 'runs/fresh-run'), defaultBranch: 'main' })
+assert.deepEqual(brief.envelope.operator_pins, operatorPins)
+assert.equal(brief.values['operator-pins'], `\n\n${operatorPins.map((pin) => `- ${pin}`).join('\n')}`)
+const history = JSON.parse(readFileSync(replacement.canonical)).revisions
+assert.equal(history.length, 2)
+assert.equal(history[0].plan.lanes[0].run_id, 'run-1')
+assert.deepEqual(history[0].plan.lane_profiles, replacement.plan.lane_profiles)
+replacement.refuse('replace-unprovisioned', { flags: ['--lane', 'l1', '--run-id', 'run-1', '--policy', replacementPolicy] }, /fresh unused run_id/)
+console.log('  PASS: unprovisioned run/profile replacement is atomic and refuses provisioned, reused and malformed inputs')
+
+// Every touched provisioned lane needs its own explicit authenticated decision.
+const moved = fixture()
+moved.ok('genesis', { input: content(moved.plan.base_sha, [addition(1), addition(2)]) })
+for (const n of [1, 2]) mkdirSync(join(moved.root, `runs/run-${n}`), { recursive: true })
+for (const n of [1, 2]) {
+  mkdirSync(join(moved.repo, `area${n}`))
+  writeFileSync(join(moved.repo, `area${n}/file`), 'base change')
+}
+execFileSync('git', ['add', '.'], { cwd: moved.repo })
+execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.test', 'commit', '-qm', 'base move'], { cwd: moved.repo })
+const movedBase = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: moved.repo, encoding: 'utf8' }).trim()
+const baseFlags = ['--new-base', movedBase]
+const verifiedOne = { lane: 'l1', status: 'caught-up', sha: movedBase }
+const verifiedTwo = { lane: 'l2', status: 'catch-up-owed' }
+moved.refuse('base-move', { flags: baseFlags }, /touches lane/)
+moved.refuse('base-move', { flags: baseFlags, input: { lanes: [verifiedOne] } }, /lane l2/)
+for (const bad of [
+  { lane: 'unknown', status: 'catch-up-owed' },
+  { ...verifiedOne, sha: 'short' },
+  { ...verifiedOne, sha: [movedBase] },
+  { ...verifiedTwo, sha: movedBase },
+  { ...verifiedOne, fence: [] },
+]) moved.refuse('base-move', { flags: baseFlags, input: { lanes: [bad] } }, /verification|immutable/)
+moved.refuse('base-move', { flags: baseFlags, input: { lanes: [verifiedOne, verifiedOne] } }, /duplicate/)
+const verifiedPlan = moved.ok('base-move', { flags: baseFlags, input: { lanes: [verifiedOne, verifiedTwo] } })
+assert.equal(verifiedPlan.base_sha, movedBase)
+assert.deepEqual(verifiedPlan.lanes.map((lane) => lane.fence), [addition(1).lane.fence, addition(2).lane.fence])
+assert.match(JSON.parse(readFileSync(moved.canonical)).revisions.at(-1).reason, /caught-up.*catch-up-owed/)
+console.log('  PASS: base-move refuses unnamed provisioned collisions and records caught-up and catch-up-owed owner decisions')
+
+}
+
+// Two existing lanes can acquire an explicit decision for an expansion-held path.
+for (const resolution of ['serialize', 'split']) {
+  const f = fixture('1,2')
+  f.ok('genesis', { input: f.plan })
+  const doc = JSON.parse(readFileSync(f.canonical))
+  const plan = structuredClone(doc.revisions.at(-1).plan)
+  const second = addition(2)
+  plan.issues.push(second.issue); plan.lanes.push(second.lane); plan.lane_profiles.push(second.profile)
+  plan.waves.push({ number: 2, issues: [2] })
+  plan.lanes[0].expansions.push({ path: 'shared/test.sh', at: '2026-10-22T12:00:00Z', reason: 'accepted earlier' }, { path: 'other/test.sh', at: '2026-10-22T12:00:00Z', reason: 'accepted earlier' }, { path: 'app/[id]/page.tsx', at: '2026-10-22T12:00:00Z', reason: 'accepted earlier' })
+  plan.lanes[1].fence.push({ path: 'shared/**' })
+  const { chainDigest } = await import(writer)
+  const prev_digest = doc.revisions.at(-1).digest
+  const revision = { seq: doc.revisions.length, plan, at: '2026-10-22T12:00:00Z', reason: 'fixture' }
+  doc.revisions.push({ ...revision, prev_digest, digest: chainDigest(revision, prev_digest) })
+  writeFileSync(f.canonical, JSON.stringify(doc))
+  const flags = ['--lane-a', 'l1', '--lane-b', 'l2', '--path', 'shared/test.sh', '--resolution', resolution, '--before', '1', '--after', '2']
+  f.refuse('overlap', { flags: [...flags.slice(0, 1), 'missing', ...flags.slice(2)] }, /live lanes/)
+  f.refuse('overlap', { flags: flags.map((v) => v === 'shared/test.sh' ? 'missing' : v) }, /covered by a lane/)
+  for (const path of ['shared/*.sh', 'shared/?.sh', 'shared/\\test.sh']) {
+    f.refuse('overlap', { flags: flags.map((v) => v === 'shared/test.sh' ? path : v) }, /concrete path/)
+  }
+  f.refuse('overlap', { flags: flags.map((v, i) => i === 9 ? '2' : i === 11 ? '1' : v) }, /increasing waves/)
+  let result = f.ok('overlap', { flags })
+  assert.deepEqual(result.overlaps[0].paths, ['shared/test.sh'])
+  f.refuse('overlap', { flags }, /duplicate overlap/)
+  const additional = flags.map((value) => value === 'shared/test.sh' ? 'other/test.sh' : value)
+  f.refuse('overlap', { flags: additional.map((value) => value === resolution ? (resolution === 'split' ? 'serialize' : 'split') : value) }, /different resolution/)
+  result = f.ok('overlap', { flags: additional })
+  assert.deepEqual(result.overlaps[0].paths, ['other/test.sh', 'shared/test.sh'])
+  result = f.ok('overlap', { flags: flags.map((v) => v === 'shared/test.sh' ? 'app/[id]/page.tsx' : v) })
+  assert.deepEqual(result.overlaps[0].paths, ['app/[id]/page.tsx', 'other/test.sh', 'shared/test.sh'])
+  result = f.ok('handoff', { flags: ['--issue', '1', '--pr', '101'] })
+  assert.deepEqual(result.overlaps[0].paths, ['app/[id]/page.tsx', 'other/test.sh', 'shared/test.sh'])
+  f.refuse('overlap', { flags }, /live lanes/)
+}
+console.log('  PASS: overlap decisions accept expansions, reject invalid requests, and survive revisions')
+const notice = fixture('1')
+const noticeResult = notice.call('genesis', { input: notice.plan })
+assert.equal(noticeResult.status, 0, noticeResult.stderr)
+assert.match(noticeResult.stdout, /membership: example\/repo has no slated label; skipped/)
 const a = fixture('1')
 a.refuse('genesis', { input: a.plan, ownerToken: null }, /requires --owner-token/)
 a.refuse('genesis', { input: a.plan, ownerToken: 'wrong' }, /owner token does not match/)
@@ -427,10 +765,13 @@ const unlocked = fixture()
 execFileSync(process.execPath, [writer, 'lock', 'release', '--slate', 's', '--session', 'owner', '--owner-token', unlocked.token], { cwd: unlocked.repo })
 unlocked.refuse('genesis', { input: unlocked.plan }, /lock acquire/)
 assert.equal(existsSync(join(unlocked.root, 'locks/s.json')), false, 'genesis acquired a lock')
-a.ok('genesis', { input: a.plan })
+a.plan.input = { kind: 'epic', url: 'https://github.com/example/repo/issues/99' }
+assert.deepEqual(a.ok('genesis', { input: a.plan }).input, a.plan.input)
 a.refuse('genesis', { input: a.plan }, /already has a plan/)
+a.refuse('done', { flags: ['--issue', '1', '--dry-run'] }, /unknown flag --dry-run/, 2)
 a.refuse('add-issue', { input: { issue: addition(2).issue, lane: addition(2).lane } }, /complete resolved profile/)
 let current = a.ok('add-issue', { input: addition(2) })
+assert.deepEqual(current.input, a.plan.input, 'add-issue must preserve original slate provenance')
 assert.deepEqual(current.lane_profiles.find((p) => p.lane === 'l2'), addition(2).profile)
 assert.deepEqual(JSON.parse(readFileSync(join(a.root, 'locks/s.json'))).issues, [1, 2])
 a.refuse('add-issue', { input: addition(2) }, /already exists/)
@@ -438,6 +779,7 @@ a.refuse('expand', { flags: ['--lane', 'missing', '--path', 'free.txt'] }, /unkn
 a.refuse('expand', { flags: ['--lane', 'l1', '--path', 'area2/deep/file.js'] }, /another live lane l2/)
 a.refuse('expand', { flags: ['--lane', 'l1', '--path', 'free.txt'], at: '2026-10-21T00:00:00Z' }, /precedes revision/)
 current = a.ok('expand', { flags: ['--lane', 'l1', '--path', 'free.txt'] })
+assert.deepEqual(current.input, a.plan.input, 'expand must preserve original slate provenance')
 assert.deepEqual(current.lanes[0].fence, a.plan.lanes[0].fence)
 assert.deepEqual(current.lanes[0].expansions, [{ path: 'free.txt', at: '2026-10-22T12:00:00Z', reason: 'verified operator decision' }])
 a.refuse('expand', { flags: ['--lane', 'l1', '--path', 'free.txt'] }, /already covered/)
@@ -445,16 +787,22 @@ a.refuse('expand', { flags: ['--lane', 'l1', '--path', 'free.txt'] }, /already c
 a.refuse('done', { input: { plan: { lanes: [{ ...current.lanes[1], fence: ['replacement'] }] } }, flags: ['--issue', '1'] }, /original fences are immutable/)
 a.refuse('release', { flags: ['--issue', '1', '--lane', 'l2', '--path', 'not-owned.txt'] }, /outside finished lane/)
 current = a.ok('release', { flags: ['--issue', '1', '--lane', 'l2', '--path', 'free.txt'] })
+assert.deepEqual(current.input, a.plan.input, 'release must preserve original slate provenance')
 assert.equal(current.issues[0].verdict, 'done')
 assert.equal(current.lanes.length, 1)
 assert.deepEqual(current.lanes[0].fence, addition(2).lane.fence)
 assert.equal(current.lanes[0].expansions[0].path, 'free.txt')
 a.refuse('done', { flags: ['--issue', '1'] }, /no live source lane/)
 current = a.ok('done', { flags: ['--issue', '2'] })
+assert.deepEqual(current.input, a.plan.input, 'done must preserve original slate provenance')
 assert.deepEqual(current.lanes, [])
 assert.deepEqual(current.waves, [])
 assert.deepEqual(current.lane_profiles, [])
-console.log('  PASS: genesis, add-issue, expand, release and done publish validated chains and refuse invalid decisions')
+execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.test', 'commit', '--allow-empty', '-qm', 'base moved'], { cwd: a.repo })
+const provenanceBase = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: a.repo, encoding: 'utf8' }).trim()
+current = a.ok('base-move', { flags: ['--new-base', provenanceBase] })
+assert.deepEqual(current.input, a.plan.input, 'base-move must preserve original slate provenance')
+console.log('  PASS: genesis, add-issue, expand, release, done and base-move publish validated chains preserving provenance and refuse invalid decisions')
 // Both genesis and add-issue refuse cross-wave glob intersections without a
 // recorded decision; exact-string schema validation alone would accept these.
 const b = fixture()
@@ -479,6 +827,9 @@ const shared = content(c.plan.base_sha, [two, one])
 shared.overlaps = [{ issue_a: 2, issue_b: 1, paths: ['invented.txt'], resolution: 'serialize', merge_dependency: { before: 1, after: 2 } }]
 current = c.ok('genesis', { input: shared })
 assert.deepEqual(current.overlaps, [{ issue_a: 1, issue_b: 2, paths: ['shared.txt'], resolution: 'serialize', merge_dependency: { before: 1, after: 2 } }])
+c.ok('expand', { flags: ['--lane', 'l1', '--path', 'validator/test.sh'] })
+current = c.ok('overlap', { flags: ['--lane-a', 'l1', '--lane-b', 'l2', '--path', 'validator/test.sh', '--resolution', 'serialize', '--before', '1', '--after', '2'] })
+assert.deepEqual(current.overlaps[0].paths, ['shared.txt', 'validator/test.sh'])
 const three = addition(3, 'shared.txt', 3)
 three.overlaps = [1, 2].map((n) => ({ issue_a: 3, issue_b: n, resolution: 'split', merge_dependency: { before: n, after: 3 } }))
 current = c.ok('add-issue', { input: three })
@@ -637,7 +988,7 @@ assert.deepEqual(current.overlaps, queuePlan.overlaps)
 assert.deepEqual(current.lanes.map((lane) => [lane.issue, lane.wave]), [[2, 2], [3, 3]])
 assert.deepEqual(current.lane_profiles.map((entry) => entry.lane), ['l2', 'l3'])
 assert.deepEqual(current.waves, queuePlan.waves)
-queued.refuse('handoff', { flags: ['--issue', '1', '--pr', '101'] }, /no live source lane/)
+queued.ok('handoff', { flags: ['--issue', '1', '--pr', '101'] })
 queued.refuse('handoff', { flags: ['--issue', '2', '--pr', '101'] }, /duplicate PR/)
 current = queued.ok('handoff', { flags: ['--issue', '2', '--pr', '102'] })
 assert.deepEqual(current.overlaps, queuePlan.overlaps)
@@ -664,7 +1015,212 @@ current = queued.ok('done', { flags: ['--issue', '1'] })
 assert.equal(current.issues[0].verdict, 'done')
 assert.deepEqual(current.merge_queue, [{ issue: 3, pr: 103 }, { issue: 2, pr: 102 }])
 assert.deepEqual(current.overlaps, [])
-console.log('  PASS: handoff preserves overlaps and retires lanes; queue-order validates a permutation and dependencies; base-move preserves the queue; done removes queued issues')
+console.log('  PASS: handoff preserves overlaps and releases Working slots; queue-order validates a permutation and dependencies; base-move preserves the queue; done removes queued issues')
+
+// Claim lifecycle writes are part of the supported handoff/reactivation paths.
+writeFileSync(process.env.CLAIM_HELPER_LOG, '')
+const lifecycle = fixture('1,2')
+lifecycle.ok('genesis', { input: content(lifecycle.plan.base_sha, [addition(1), addition(2)]) })
+const preHandoff = readFileSync(lifecycle.canonical, 'utf8')
+process.env.MOCK_RELEASE_FAIL = 'yes'
+lifecycle.refuse('handoff', { flags: ['--issue', '1', '--pr', '101'] }, /handoff claim release failed/)
+delete process.env.MOCK_RELEASE_FAIL
+assert.equal(readFileSync(lifecycle.canonical, 'utf8'), preHandoff, 'a failed claim release must not record handoff')
+let lifecyclePlan = lifecycle.ok('handoff', { flags: ['--issue', '1', '--pr', '101'] })
+const helperLog = () => readFileSync(process.env.CLAIM_HELPER_LOG, 'utf8')
+assert.match(helperLog(), /release .*--repo example\/repo --issue 1 .*--branch issue-1 --idempotency-key [a-f0-9]{64}/)
+const { assertDispatchCapacity: capacityForHandoff } = await import(writer)
+assert.deepEqual(capacityForHandoff(lifecycle.root, lifecyclePlan, lifecyclePlan.lanes.find((lane) => lane.issue === 2), 's'),
+  { working: 1, in_flight: 2 }, 'a handed-off issue with an open PR remains in flight but no longer consumes Working capacity')
+// A plan-write retry after a successful release uses the same deterministic key.
+lifecyclePlan = lifecycle.ok('handoff', { flags: ['--issue', '1', '--pr', '101'] })
+assert.equal((helperLog().match(/release /g) ?? []).length, 3, 'failed call, successful release, and idempotent retry all route through release helper')
+assert.equal((helperLog().match(/--idempotency-key ([a-f0-9]{64})/g) ?? []).length, 3)
+lifecycle.ok('fix-request', { flags: ['--issue', '1'] })
+const beforeFailedReactivation = readFileSync(lifecycle.canonical, 'utf8')
+process.env.MOCK_CLAIM_REQUIRE_APPROVAL = 'yes'
+lifecycle.refuse('reactivate', { flags: ['--issue', '1'] }, /reactivation claim restoration failed.*needs-review requires/)
+assert.equal((helperLog().match(/restore /g) ?? []).length, 1, 'default reactivation reaches helper without approval and is refused')
+delete process.env.MOCK_CLAIM_REQUIRE_APPROVAL
+process.env.MOCK_CLAIM_FAIL = 'yes'
+lifecycle.refuse('reactivate', { flags: ['--issue', '1'] }, /reactivation claim restoration failed/)
+delete process.env.MOCK_CLAIM_FAIL
+assert.equal(readFileSync(lifecycle.canonical, 'utf8'), beforeFailedReactivation,
+  'a failed claim restoration must not publish a plan transition')
+const matchingRecord = readFileSync(join(lifecycle.repo, 'claim-record.md'), 'utf8')
+const mismatchedRecordPath = join(lifecycle.repo, 'mismatched-claim-record.md')
+writeFileSync(mismatchedRecordPath, matchingRecord.replace('branch issue-1 ', 'branch other-branch '))
+const helperCallsBeforeMismatch = helperLog()
+const mismatchedFlags = ['--issue', '1', '--claim-record-file', mismatchedRecordPath, '--claim-label', 'claim:gpt', '--model-label', 'none', '--family', 'gpt', '--registry-snapshot', join(lifecycle.repo, 'registry.json')]
+lifecycle.refuse('reactivate', { flags: mismatchedFlags }, /claim record branch other-branch does not match retained lane branch issue-1/)
+lifecycle.refuse('reactivate', { flags: [...mismatchedFlags, '--approve-review-pullback'] }, /claim record branch other-branch does not match retained lane branch issue-1/)
+const laterLineRecordPath = join(lifecycle.repo, 'later-line-claim-record.md')
+writeFileSync(laterLineRecordPath, `not a claim record\n${matchingRecord}`)
+lifecycle.refuse('reactivate', { flags: [...mismatchedFlags.slice(0, 3), laterLineRecordPath, ...mismatchedFlags.slice(4)] }, /claim record branch \(unreadable\) does not match retained lane branch issue-1/)
+assert.equal(helperLog(), helperCallsBeforeMismatch,
+  'wrong or malformed first-line claim records must be refused before any external claim helper write')
+lifecyclePlan = lifecycle.ok('reactivate', { flags: ['--issue', '1', '--approve-review-pullback'] })
+assert.equal(lifecyclePlan.retained_lanes.find((entry) => entry.lane.issue === 1).state, 'working')
+assert.match(helperLog(), /restore .*--record-file .*claim-record\.md --claim-label claim:gpt --model-label none --family gpt .*--registry-snapshot .*registry\.json/)
+assert.match(helperLog(), /restore .*--approve-review-pullback/, 'explicit review-pullback approval is forwarded to the claim transaction')
+console.log('  PASS: handoff releases claims before recording, retries use a deterministic key, reactivation restores only after admission, and handed-off claims free Working capacity')
+
+// A retained lane whose new working fence overlaps a current lane is refused
+// before invoking the external claim helper.
+const overlapReactivation = fixture('1,2')
+overlapReactivation.ok('genesis', { input: content(overlapReactivation.plan.base_sha, [addition(1), addition(2)]) })
+overlapReactivation.ok('handoff', { flags: ['--issue', '1', '--pr', '101'] })
+overlapReactivation.ok('fix-request', { flags: ['--issue', '1'] })
+overlapReactivation.ok('expand', { flags: ['--lane', 'l2', '--path', 'area1/sub/file.js'] })
+const helperCallsBeforeOverlap = (helperLog().match(/restore /g) ?? []).length
+overlapReactivation.refuse('reactivate', { flags: ['--issue', '1'] }, /unresolved effective fence overlap/)
+assert.equal((helperLog().match(/restore /g) ?? []).length, helperCallsBeforeOverlap,
+  'an overlap refusal must happen before invoking the claim helper')
+
+// Only release-helper exit 3 with its exact no-claim diagnostic is a no-op.
+const unclaimed = fixture('1')
+unclaimed.ok('genesis', { input: unclaimed.plan })
+process.env.MOCK_RELEASE_UNCLAIMED = 'yes'
+const unclaimedPlan = unclaimed.ok('handoff', { flags: ['--issue', '1', '--pr', '101'] })
+delete process.env.MOCK_RELEASE_UNCLAIMED
+assert.equal(unclaimedPlan.issues[0].verdict, 'handed-off')
+assert.match(readFileSync(process.env.CLAIM_API_LOG, 'utf8'), /repos\/example\/repo\/issues\/1/,
+  'handoff verifies the canonical issue repository and issue number')
+const inherited = fixture('1')
+inherited.ok('genesis', { input: inherited.plan })
+const inheritedBefore = readFileSync(inherited.canonical, 'utf8')
+process.env.MOCK_CLAIM_API_RESPONSE = '{"labels":[{"name":"claim:unowned"}]}'
+inherited.refuse('handoff', { flags: ['--issue', '1', '--pr', '101'] }, /claim:unowned remains/)
+assert.equal(readFileSync(inherited.canonical, 'utf8'), inheritedBefore,
+  'a successful release helper must not publish handoff while any Working marker remains')
+process.env.MOCK_CLAIM_API_RESPONSE = '{"labels":[]}'
+const unreadable = fixture('1')
+unreadable.ok('genesis', { input: unreadable.plan })
+process.env.MOCK_CLAIM_API_FAIL = 'yes'
+unreadable.refuse('handoff', { flags: ['--issue', '1', '--pr', '101'] }, /claim verification failed.*simulated issue read failure/)
+delete process.env.MOCK_CLAIM_API_FAIL
+process.env.MOCK_CLAIM_API_RESPONSE = '{"labels":[{}]}'
+const malformedLabels = fixture('1')
+malformedLabels.ok('genesis', { input: malformedLabels.plan })
+malformedLabels.refuse('handoff', { flags: ['--issue', '1', '--pr', '101'] }, /malformed issue labels response/)
+delete process.env.MOCK_CLAIM_API_RESPONSE
+const wrongBranch = fixture('1')
+wrongBranch.ok('genesis', { input: wrongBranch.plan })
+process.env.MOCK_RELEASE_WRONG_BRANCH = 'yes'
+wrongBranch.refuse('handoff', { flags: ['--issue', '1', '--pr', '101'] }, /handoff claim release failed.*newer-branch/)
+delete process.env.MOCK_RELEASE_WRONG_BRANCH
+const unsupportedIdentity = fixture('1')
+unsupportedIdentity.ok('genesis', { input: unsupportedIdentity.plan })
+const unsupportedDoc = JSON.parse(readFileSync(unsupportedIdentity.canonical, 'utf8'))
+const unsupportedPlan = structuredClone(unsupportedDoc.revisions.at(-1).plan)
+unsupportedPlan.issues[0].url = 'https://example.test/issues/1'
+const unsupportedPrevious = unsupportedDoc.revisions.at(-1).digest
+const unsupportedRevision = {
+  seq: unsupportedDoc.revisions.length,
+  at: '2026-10-22T12:00:00Z',
+  reason: 'fixture unsupported issue identity',
+  plan: unsupportedPlan,
+}
+unsupportedDoc.revisions.push({
+  ...unsupportedRevision,
+  prev_digest: unsupportedPrevious,
+  digest: chainDigest(unsupportedRevision, unsupportedPrevious),
+})
+writeFileSync(unsupportedIdentity.canonical, JSON.stringify(unsupportedDoc))
+const helperLogBeforeUnsupported = helperLog()
+unsupportedIdentity.refuse('handoff', { flags: ['--issue', '1', '--pr', '101'] }, /unsupported issue identity/)
+assert.equal(helperLog(), helperLogBeforeUnsupported, 'unsupported issue identities must refuse before calling the release helper')
+console.log('  PASS: genuinely unclaimed handoffs accept the helper no-op; wrong-branch and unsupported identities remain refusals')
+
+// Retained sessions and queued fixes share the dispatch admission boundary.
+const retained = fixture('1,2,3,4,5')
+retained.ok('genesis', { input: content(retained.plan.base_sha, [1,2,3,4,5].map((n) => addition(n))) })
+for (const n of [1,2,3,4]) retained.ok('handoff', { flags: ['--issue', String(n), '--pr', String(100+n)] })
+for (const n of [2,3,4]) {
+  retained.ok('fix-request', { flags: ['--issue', String(n)] })
+  retained.ok('reactivate', { flags: ['--issue', String(n)] })
+}
+// Both handoff-before-request and request-before-repeated-handoff retain priority.
+current = retained.ok('fix-request', { flags: ['--issue', '1'] })
+assert.equal(current.retained_lanes.find((entry) => entry.lane.issue === 1).state, 'pending')
+current = retained.ok('handoff', { flags: ['--issue', '1', '--pr', '101'] })
+assert.equal(current.retained_lanes.find((entry) => entry.lane.issue === 1).state, 'pending')
+retained.refuse('reactivate', { flags: ['--issue', '1'] }, /max_parallel_agents 3/)
+const { assertDispatchCapacity } = await import(writer)
+assert.throws(() => assertDispatchCapacity(retained.root, current, current.lanes[0], 's'), /pending fix/)
+// An old initial handoff or a stale completion cannot release a working slot.
+const handoffRevision = () => String(JSON.parse(readFileSync(retained.canonical)).revisions.at(-1).seq)
+retained.refuse('handoff', { flags: ['--issue', '2', '--pr', '102'] }, /working retained lane requires handoff --expected-revision/)
+retained.refuse('handoff', { flags: ['--issue', '2', '--pr', '102', '--expected-revision', '0'] }, /does not match the current plan revision/)
+// The matching completion works even at capacity, without capacity admission.
+const previousCompletion = handoffRevision()
+current = retained.ok('handoff', { flags: ['--issue', '2', '--pr', '102', '--expected-revision', previousCompletion] })
+retained.ok('fix-request', { flags: ['--issue', '2'] })
+retained.ok('reactivate', { flags: ['--issue', '2'] })
+retained.refuse('handoff', { flags: ['--issue', '2', '--pr', '102', '--expected-revision', previousCompletion] }, /does not match the current plan revision/)
+current = retained.ok('handoff', { flags: ['--issue', '2', '--pr', '102', '--expected-revision', handoffRevision()] })
+assert.equal(current.retained_lanes.find((entry) => entry.lane.issue === 2).state, 'idle')
+current = retained.ok('reactivate', { flags: ['--issue', '1'] })
+assert.deepEqual(assertDispatchCapacity(retained.root, current, current.retained_lanes[0].lane, 's'), { working: 3, in_flight: 4 })
+process.env.MOCK_MERGED_PR = '104'
+assert.deepEqual(assertDispatchCapacity(retained.root, current, current.retained_lanes[0].lane, 's'), { working: 2, in_flight: 3 })
+retained.refuse('fix-request', { flags: ['--issue', '4'] }, /open delivery PR/)
+current = retained.ok('done', { flags: ['--issue', '4'] })
+assert.equal(current.retained_lanes.some((entry) => entry.lane.issue === 4), false)
+delete process.env.MOCK_MERGED_PR
+// Working retained lanes accept expansions and releases, including while dispatch is locked.
+writeFileSync(join(retained.root, 'dispatch.wlock'), JSON.stringify({ pid: process.pid, host: hostname() }))
+current = retained.ok('expand', { flags: ['--lane', 'l1', '--path', 'fix-regression.txt'] })
+unlinkSync(join(retained.root, 'dispatch.wlock'))
+assert.equal(current.retained_lanes.find((entry) => entry.lane.issue === 1).lane.expansions[0].path, 'fix-regression.txt')
+retained.refuse('expand', { flags: ['--lane', 'l1', '--path', 'area3/sub/file.js'] }, /another live lane l3/)
+const collidingAddition = addition(6, 'area6/**', 4)
+collidingAddition.lane.fence = [{ path: 'area1/sub/**' }]
+retained.refuse('add-issue', { input: collidingAddition }, /effective fence overlap/)
+current = retained.ok('release', { flags: ['--issue', '5', '--lane', 'l1', '--path', 'area5/released.js'] })
+assert.equal(current.retained_lanes.find((entry) => entry.lane.issue === 1).lane.expansions[1].path, 'area5/released.js')
+// A fresh fix run retains lane/session identity without rewriting the terminal run.
+retained.ok('handoff', { flags: ['--issue', '1', '--pr', '101', '--expected-revision', handoffRevision()] })
+const oldDir = join(retained.root, 'runs/run-1')
+mkdirSync(oldDir, { recursive: true })
+const oldFile = join(oldDir, 'run.json')
+writeFileSync(oldFile, JSON.stringify({ schema: 2, run_id: 'run-1', initiated_by: 'human',
+  started_at: '2026-10-22T12:00:00Z', stage_transitions: [{stage:'kickoff', entered_at:'2026-10-22T12:00:00Z'}],
+  receipts: [], interventions: [], outcome: null, pr: null, evidence_comments: [], evidence_registrations: [],
+  pr_bindings: [], outcome_transitions: [], settlements: [], promotion: null }))
+execFileSync(process.execPath, [writer, 'close', '--slate', 's', '--session', 'owner', '--owner-token', retained.token,
+  '--run-id', 'run-1', '--outcome', 'abandoned', '--exit', 'fixture terminal run', '--at', '2026-10-22T12:00:00Z'], {cwd: retained.repo, stdio: 'pipe'})
+const terminalBytes = readFileSync(oldFile, 'utf8')
+retained.ok('fix-request', { flags: ['--issue', '1'] })
+retained.refuse('reactivate', { flags: ['--issue', '1'] }, /terminal previous run requires reactivate --run-id/)
+current = retained.ok('reactivate', { flags: ['--issue', '1', '--run-id', 'run-1-fix'] })
+const resumed = current.retained_lanes.find((entry) => entry.lane.issue === 1)
+assert.equal(resumed.lane.run_id, 'run-1-fix')
+assert.equal(resumed.lane.lane, 'l1')
+assert.equal(resumed.lane.branch, 'issue-1')
+assert.equal(resumed.state, 'working')
+assert.deepEqual(resumed.lane.expansions, [])
+assert.deepEqual(resumed.lane.fence.map(({path}) => path), ['area1/**', 'fix-regression.txt', 'area5/released.js'])
+// Complete the fresh-run admission with a full matching resolver projection.
+assert.match(readFileSync(join(assets, 'devflow-policy.mjs'), 'utf8'), /Default to 8 runs, 3 Working lanes and 9 in-flight/, 'fallback comment must describe the actual 8/3/9 allowance')
+const { resolveAbsentPolicy } = await import(join(assets, 'devflow-policy.mjs'))
+const full = resolveAbsentPolicy()
+full.rigor = { ...full.rigor, level: policy.rigor, source: policy.rigor_source }
+full.rounds = { ...full.rounds, ...policy.caps, integration_exempt: policy.caps.integration }
+full.breadth = { ...full.breadth, ...policy.breadth }
+full.strategy.name = policy.strategy
+for (const [role, tier] of Object.entries(policy.role_tiers)) full.roles[role].tier = tier
+for (const args of [['update-ref', 'refs/remotes/origin/main', retained.plan.base_sha],
+  ['symbolic-ref', 'refs/remotes/origin/HEAD', 'refs/remotes/origin/main'], ['branch', 'issue-1', retained.plan.base_sha]]) {
+  execFileSync('git', args, { cwd: retained.repo, stdio: 'pipe' })
+}
+const policyFile = join(retained.repo, 'policy.json')
+writeFileSync(policyFile, JSON.stringify(full))
+execFileSync(process.execPath, [writer, 'lane-init', '--slate', 's', '--session', 'owner', '--owner-token', retained.token,
+  '--lane', 'l1', '--policy', policyFile, '--at', '2026-10-22T12:00:00Z'], {cwd: retained.repo, stdio: 'pipe'})
+assert.equal(JSON.parse(readFileSync(join(retained.root, 'runs/run-1-fix/run.json'))).run_id, 'run-1-fix')
+assert.equal(readFileSync(oldFile, 'utf8'), terminalBytes)
+console.log('  PASS: retained idle counts only in flight; queued fixes precede new dispatch, full-cap reactivation holds, re-handoff frees capacity, merged counts neither')
 
 // R1 invariant: successors may finish first, retaining a PR outside the queue.
 const waiting = fixture('1,2,3')
@@ -760,7 +1316,7 @@ assert.deepEqual(current.merge_queue ?? [], [])
 current = blockedQueue.ok('handoff', { flags: ['--issue', '1', '--pr', '101'] })
 assert.deepEqual(current.merge_queue, [{ issue: 1, pr: 101 }, { issue: 2, pr: 102 }])
 blockedQueue.refuse('queue-order', { input: { issues: [2, 1] } }, /merge dependency requires issue 1 before 2/)
-// B1/B4: handoff retires the lane, not the blocker's dispatch-order slot.
+// B1/B4: handoff releases the Working slot, not the blocker's dispatch-order slot.
 const dispatchBlock = fixture('1,2')
 dispatchBlock.ok('genesis', { input: { ...blockedPlan, base_sha: dispatchBlock.plan.base_sha } })
 current = dispatchBlock.ok('handoff', { flags: ['--issue', '1', '--pr', '101'] })
@@ -808,6 +1364,39 @@ preference.ok('handoff', { flags: ['--issue', '2', '--pr', '102'] })
 current = preference.ok('wave-release', { flags: ['--wave', '3'] })
 assert.equal(current.waves[2].released, true)
 console.log('  PASS: preference waves release sequentially on handoff, retaining bindings, fences, base and revision reason')
+
+// Capacity belongs to dispatch, even under equal ceilings and an accumulated
+// delivery queue. Fact writers must remain usable before the queue drains.
+for (const legacy of [false, true]) {
+  const facts = fixture('1,2,3')
+  const plan = content(facts.plan.base_sha, [addition(1), addition(2), addition(3)])
+  plan.policy = structuredClone(policy)
+  plan.policy.breadth.max_parallel_agents = 1
+  if (legacy) delete plan.policy.breadth.max_in_flight
+  else plan.policy.breadth.max_in_flight = 1
+  plan.dispatcher.parallel_cap = 1
+  for (const profile of plan.lane_profiles) profile.policy = structuredClone(plan.policy)
+  facts.ok('genesis', { input: plan })
+  facts.ok('handoff', { flags: ['--issue', '1', '--pr', '101'] })
+  facts.ok('wave-release', { flags: ['--wave', '2'] })
+  facts.ok('handoff', { flags: ['--issue', '2', '--pr', '102'] })
+  facts.ok('wave-release', { flags: ['--wave', '3'] })
+  execFileSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.test', 'commit', '--allow-empty', '-qm', 'base moves at capacity'], { cwd: facts.repo })
+  const base = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: facts.repo, encoding: 'utf8' }).trim()
+  facts.ok('base-move', { flags: ['--new-base', base] })
+  facts.ok('done', { flags: ['--issue', '1'] })
+}
+console.log('  PASS: equal and legacy ceilings never block handoff, release, done or base movement')
+
+const oversized = fixture('1,2,3')
+const oversizedPlan = content(oversized.plan.base_sha, [addition(1), addition(2), addition(3, 'area3/**', 2)])
+oversizedPlan.policy = structuredClone(policy)
+oversizedPlan.policy.breadth.max_parallel_agents = 1
+oversizedPlan.dispatcher.parallel_cap = 1
+for (const profile of oversizedPlan.lane_profiles) profile.policy = structuredClone(oversizedPlan.policy)
+oversizedPlan.waves = [{ number: 1, issues: [1] }, { number: 2, issues: [2, 3] }]
+oversized.refuse('genesis', { input: oversizedPlan }, /wave 2 has 2 issues, exceeding dispatcher cap 1/)
+console.log('  PASS: oversized later wave is rejected before any dispatch or handoff')
 
 // Placement decisions cannot forge or erase a release, including nested input.
 const protectedRelease = fixture()
@@ -885,4 +1474,267 @@ console.log('  PASS: issue and queue PR bindings release preferences; blocked_by
 NODE
 
 [ -z "$(find "$tmp" -name '*.candidate.*')" ] || fail "a candidate file was left behind"
+REVISER="$reviser" WRITER="$writer" TEST_ROOT="$tmp" node --input-type=module <<'MEMBERSHIP_TEST'
+import assert from 'node:assert/strict'
+import { mkdirSync } from 'node:fs'
+import { join } from 'node:path'
+import { hostname } from 'node:os'
+const { reconcileMembership, membershipActions } = await import(process.env.REVISER)
+const { acquireSlateLock, releaseSlateLock } = await import(process.env.WRITER)
+const issue = { number: 42, url: 'https://github.com/example/repo/issues/42' }
+const state = { labels: [], comments: [] }
+let concurrent = false
+const github = (args) => {
+  if (args[0] === 'label') return JSON.stringify([{ name: 'slated' }])
+  if (args[0] === 'api') return JSON.stringify([state.comments])
+  if (args[1] === 'view') return JSON.stringify({ labels: state.labels })
+  if (args[1] === 'comment') state.comments.push({ body: args.at(-1) })
+  if (args.includes('--add-label')) state.labels = [{ name: 'slated' }]
+  if (args.includes('--remove-label')) {
+    state.labels = []
+    if (concurrent) state.comments.push({ body: 'Slate membership:\n- session: other\n- slate: other\n- action: add' })
+  }
+  return ''
+}
+const run = (session, slate, action) => reconcileMembership({ root: process.env.TEST_ROOT, session, slate, issue, action, github })
+run('one', 'first', 'add')
+run('one', 'first', 'add')
+assert.equal(state.comments.length, 1)
+assert.equal(state.labels[0].name, 'slated')
+run('two', 'second', 'add')
+run('one', 'first', 'remove')
+assert.equal(state.labels[0].name, 'slated')
+run('two', 'second', 'remove')
+assert.deepEqual(state.labels, [])
+run('one', 'first', 'add')
+concurrent = true
+run('one', 'first', 'remove')
+assert.equal(state.labels[0].name, 'slated')
+// Dotted identifiers round-trip, and a foreign duplicate cannot take ownership.
+concurrent = false
+state.labels = []
+state.comments = []
+run('session.1', 'slate.1', 'add')
+state.comments[0].user = { login: 'original' }
+state.comments.push({ body: state.comments[0].body, user: { login: 'foreign' } })
+// The mock publishes the removal as the original author.
+const originalGithub = (args) => {
+  const result = github(args)
+  if (args[1] === 'comment') state.comments.at(-1).user = { login: 'original' }
+  return result
+}
+reconcileMembership({ root: process.env.TEST_ROOT, session: 'session.1', slate: 'slate.1', issue, action: 'remove', github: originalGithub })
+assert.deepEqual(state.labels, [])
+// Force-release recovery follows the recorded transfer chain, but leaves other slates alone.
+const recoveryRoot = join(process.env.TEST_ROOT, 'recovery-test')
+const locked = acquireSlateLock({ root: recoveryRoot, slate: 'recovered', session: 'old', issues: [42], create: true })
+releaseSlateLock({ root: recoveryRoot, slate: 'recovered', session: 'middle', force: true, reason: 'recovery' })
+acquireSlateLock({ root: recoveryRoot, slate: 'recovered', session: 'middle', issues: [42], create: true })
+releaseSlateLock({ root: recoveryRoot, slate: 'recovered', session: 'new', force: true, reason: 'recovery again' })
+acquireSlateLock({ root: recoveryRoot, slate: 'recovered', session: 'new', issues: [42], create: true })
+assert.ok(locked.mintedToken)
+state.comments = []
+state.labels = []
+const recover = (session, slate, action) => reconcileMembership({ root: recoveryRoot, session, slate, issue, action, github })
+recover('old', 'recovered', 'add')
+state.comments.at(-1).user = { login: 'alice' }
+state.comments.at(-1).author_association = 'COLLABORATOR'
+recover('other', 'unrelated', 'add')
+const bobGithub = (args) => {
+  const result = github(args)
+  if (args[1] === 'comment') {
+    state.comments.at(-1).user = { login: 'bob' }
+    state.comments.at(-1).author_association = 'OWNER'
+  }
+  return result
+}
+reconcileMembership({ root: recoveryRoot, session: 'new', slate: 'recovered', issue, action: 'remove', github: bobGithub })
+assert.equal(state.labels[0].name, 'slated')
+assert.ok(state.comments.some((comment) => comment.body.includes('session: old\n- slate: recovered\n- action: remove')))
+recover('other', 'unrelated', 'remove')
+assert.deepEqual(state.labels, [])
+
+// An outsider cannot preseed ownership, including for login-only test mocks.
+state.comments = [{ body: 'Slate membership:\n- session: original\n- slate: secure\n- action: add',
+  user: { login: 'outsider' }, author_association: 'NONE' }]
+state.labels = []
+const ownerGithub = (args) => {
+  const result = github(args)
+  if (args[1] === 'comment') state.comments.at(-1).user = { login: 'owner' }
+  return result
+}
+const ownerRun = (action) => reconcileMembership({ root: recoveryRoot, session: 'original', slate: 'secure', issue, action, github: ownerGithub })
+ownerRun('add')
+ownerRun('remove')
+assert.equal(state.comments.filter((comment) => comment.user?.login === 'owner').length, 2)
+assert.deepEqual(state.labels, [])
+
+// An authenticated publisher with author_association NONE and an unlisted actor id is trusted for its own comments,
+// and an ordinary non-force lock release followed by re-acquisition retires the prior session on that slate.
+const normalRoot = join(process.env.TEST_ROOT, 'normal-transfer-test')
+const normalLock = acquireSlateLock({ root: normalRoot, slate: 'normal-transfer', session: 'prior-session', issues: [42], create: true })
+const botGithub = (args) => {
+  const result = github(args)
+  if (args[1] === 'comment') {
+    state.comments.at(-1).user = { id: 999999999, login: 'unlisted-bot[bot]' }
+    state.comments.at(-1).author_association = 'NONE'
+  }
+  return result
+}
+state.comments = []
+state.labels = []
+reconcileMembership({ root: normalRoot, session: 'prior-session', slate: 'normal-transfer', issue, action: 'add', github: botGithub })
+assert.equal(state.labels[0]?.name, 'slated')
+releaseSlateLock({ root: normalRoot, slate: 'normal-transfer', session: 'prior-session', ownerToken: normalLock.mintedToken })
+acquireSlateLock({ root: normalRoot, slate: 'normal-transfer', session: 'next-session', issues: [42], create: true })
+reconcileMembership({ root: normalRoot, session: 'next-session', slate: 'normal-transfer', issue, action: 'remove', github: botGithub })
+assert.ok(state.comments.some((comment) => comment.body.includes('session: prior-session\n- slate: normal-transfer\n- action: remove')))
+assert.deepEqual(state.labels, [])
+
+// Two independent clones sharing a slate name do not retire each other's active membership.
+const cloneA = join(process.env.TEST_ROOT, 'clone-a')
+const cloneB = join(process.env.TEST_ROOT, 'clone-b')
+acquireSlateLock({ root: cloneA, slate: 'sprint', session: 'alice', issues: [42], create: true })
+acquireSlateLock({ root: cloneB, slate: 'sprint', session: 'bob', issues: [42], create: true })
+reconcileMembership({ root: cloneA, session: 'alice', slate: 'sprint', issue, action: 'add', github: bobGithub })
+reconcileMembership({ root: cloneB, session: 'bob', slate: 'sprint', issue, action: 'add', github: bobGithub })
+reconcileMembership({ root: cloneB, session: 'bob', slate: 'sprint', issue, action: 'remove', github: bobGithub })
+assert.equal(state.labels[0]?.name, 'slated')
+reconcileMembership({ root: cloneA, session: 'alice', slate: 'sprint', issue, action: 'remove', github: bobGithub })
+assert.deepEqual(state.labels, [])
+const unstarted = { number: 43, url: 'https://github.com/example/repo/issues/43', verdict: 'valid' }
+const started = { ...issue, verdict: 'valid' }
+const document = { revisions: [{ plan: { issues: [started, unstarted], lanes: [
+  { issue: 42, run_id: 'started' }, { issue: 43, run_id: 'unstarted' },
+] } }] }
+mkdirSync(join(process.env.TEST_ROOT, 'runs', 'started'), { recursive: true })
+assert.deepEqual(membershipActions(document, process.env.TEST_ROOT, true).map((entry) => entry.action), ['add', 'remove'])
+console.log('  PASS: membership add, drop, close and concurrent add reconciliation')
+MEMBERSHIP_TEST
+
+# Two repositories share issue and PR numbers, paths, and a wave without overlap.
+repo="$(new_repo multi-repo)"
+git -C "$repo" remote add origin https://github.com/owner/a.git
+write_plan "$repo" seed '[]'
+jq '.revisions[0].plan | .repo = "owner/a" |
+  .issues = [.issues[0], .issues[1]] |
+  .issues[0] |= (.number = 7 | .url = "https://github.com/owner/a/issues/7" | .candidate_files = ["same.txt"]) |
+  .issues[1] |= (.repo = "owner/b" | .number = 7 | .url = "https://github.com/owner/b/issues/7" | .candidate_files = ["same.txt"]) |
+  .lanes = [.lanes[0], .lanes[1]] |
+  .lanes[0] |= (.issue = 7 | .fence = ["same.txt"]) |
+  .lanes[1] |= (.repo = "owner/b" | .issue = 7 | .fence = ["same.txt"]) |
+  .waves = [{number: 1, issues: [7, "owner/b#7"]}] | .overlaps = [] |
+  .lane_profiles = [.lanes[] | {lane: .lane, policy: null}] |
+  . as $p | .lane_profiles |= map(.policy = $p.policy)' \
+    "$repo/.git/dev-flow-v2/slates/seed/plan.json" >"$tmp/multi-plan.json"
+foreign_repo="$(new_repo multi-foreign)"
+git -C "$foreign_repo" remote add origin https://github.com/owner/b.git
+foreign_base="$(git -C "$foreign_repo" rev-parse HEAD)"
+jq --arg base "$foreign_base" '.repository_bases = [{repo:"owner/b",base_sha:$base}] | .lanes[1].base_sha = $base' "$tmp/multi-plan.json" >"$tmp/multi-with-base.json"
+mv "$tmp/multi-with-base.json" "$tmp/multi-plan.json"
+multi_token="$(cd "$repo" && node "$writer" lock acquire --slate fleet --session owner --issues '7,owner/b#7')"
+jq 'del(.repository_bases)' "$tmp/multi-plan.json" >"$tmp/missing-base.json"
+if (cd "$repo" && node "$reviser" genesis --slate fleet --session owner --owner-token "$multi_token" --input "$tmp/missing-base.json" --reason invalid) >"$tmp/multi-refusal" 2>&1; then
+    fail 'genesis accepted a foreign repository without its base'
+fi
+grep -qF 'requires a repository_bases entry' "$tmp/multi-refusal" || fail 'missing genesis base diagnostic'
+(cd "$repo" && node "$reviser" genesis --slate fleet --session owner --owner-token "$multi_token" --input "$tmp/multi-plan.json" --reason 'two repositories')
+multi_plan="$repo/.git/dev-flow-v2/slates/fleet/plan.json"
+a_lane="$(jq -r '.revisions[-1].plan.lanes[0].lane' "$multi_plan")"
+b_lane="$(jq -r '.revisions[-1].plan.lanes[1].lane' "$multi_plan")"
+b_branch="$(jq -r '.revisions[-1].plan.lanes[1].branch' "$multi_plan")"
+(cd "$repo" && node "$reviser" expand --slate fleet --session owner --owner-token "$multi_token" --repo owner/b --lane "$b_lane" --path extra.txt --reason 'B expansion')
+jq -e '.revisions[-1].plan | (.lanes[0].expansions | length == 0) and (.lanes[1].expansions[0].path == "extra.txt")' "$multi_plan" >/dev/null || fail 'expansion selected the wrong repository'
+if (cd "$repo" && node "$reviser" expand --slate fleet --session owner --owner-token "$multi_token" --repo owner/a --lane "$b_lane" --path other.txt --reason wrong) >"$tmp/multi-refusal" 2>&1; then
+    fail 'expand accepted mismatched repository'
+fi
+if (cd "$repo" && node "$reviser" release --slate fleet --session owner --owner-token "$multi_token" --repo owner/b --issue 7 --lane "$a_lane" --path same.txt --reason wrong) >"$tmp/multi-refusal" 2>&1; then
+    fail 'release crossed repository boundary'
+fi
+grep -qF 'cannot release a fence across repositories' "$tmp/multi-refusal" || fail 'release selected wrong same-number source'
+(cd "$repo" && node "$reviser" handoff --slate fleet --session owner --owner-token "$multi_token" --repo owner/b --issue 7 --pr 9 --reason 'B handed off')
+multi_plan="$repo/.git/dev-flow-v2/slates/fleet/plan.json"
+jq -e '.revisions[-1].plan | .issues[0].verdict == "valid" and .issues[1].verdict == "handed-off" and .merge_queue == [{repo:"owner/b",issue:7,pr:9}]' "$multi_plan" >/dev/null || fail 'foreign handoff selected the conductor issue'
+printf 'Claiming — starting implementation on branch %s (session test-session).\n\n' "$b_branch" >"$tmp/foreign-claim-record.md"
+cat >>"$tmp/foreign-claim-record.md" <<'EOF'
+Claim record (for `/wrap` — undo only what this claim added):
+- assignee added by this claim: no
+- `claim:` label added by this claim: claim:gpt
+- `claim:` model label added by this claim: n/a
+- `claim:` label displaced by this claim: none
+- assignee logins owned by this claim chain: none
+- `claim:` label owned by this claim chain: claim:gpt
+- `claim:` model label owned by this claim chain: n/a
+- `claim:` label displaced by this claim chain: none
+EOF
+printf '%s\n' '{"families":[{"slug":"gpt"}]}' >"$tmp/foreign-registry.json"
+(cd "$repo" && node "$reviser" fix-request --slate fleet --session owner --owner-token "$multi_token" --repo owner/b --issue 7 --reason 'foreign PR finding')
+(cd "$repo" && node "$reviser" reactivate --slate fleet --session owner --owner-token "$multi_token" --repo owner/b --issue 7 --reason 'foreign PR finding' \
+    --claim-record-file "$tmp/foreign-claim-record.md" --claim-label claim:gpt --model-label none --family gpt --registry-snapshot "$tmp/foreign-registry.json")
+jq -e '.revisions[-1].plan.retained_lanes[] | select(.lane.issue == 7 and .lane.repo == "owner/b") | .state == "working"' "$multi_plan" >/dev/null || fail 'foreign reactivation selected the conductor issue'
+(cd "$repo" && node "$reviser" handoff --slate fleet --session owner --owner-token "$multi_token" --issue 7 --pr 9 --reason 'A handed off')
+jq -e '.revisions[-1].plan.merge_queue | length == 2' "$multi_plan" >/dev/null || fail 'equal PR numbers across repositories collided'
+printf '%s\n' '{"issues":[7,"owner/b#7"]}' >"$tmp/multi-order.json"
+(cd "$repo" && node "$reviser" queue-order --slate fleet --session owner --owner-token "$multi_token" --input "$tmp/multi-order.json" --reason 'A first')
+printf 'foreign moved\n' >"$foreign_repo/unrelated.txt"
+git -C "$foreign_repo" add unrelated.txt
+git -C "$foreign_repo" commit -qm 'move B base'
+foreign_moved="$(git -C "$foreign_repo" rev-parse HEAD)"
+(cd "$repo" && node "$reviser" base-move --slate fleet --session owner --owner-token "$multi_token" --repo owner/b --repo-root "$foreign_repo" --new-base "$foreign_moved" --done 7 --reason 'B merged')
+jq -e --arg base "$foreign_moved" '.revisions[-1].plan.repository_bases == [{repo:"owner/b",base_sha:$base}]' "$multi_plan" >/dev/null || fail 'foreign base did not move'
+
+jq -e '.revisions[-1].plan | .issues[0].verdict == "handed-off" and .issues[1].verdict == "done" and .merge_queue == [{issue:7,pr:9}]' "$multi_plan" >/dev/null || fail 'foreign done removed conductor queue entry'
+pass 'multi-repo schema, handoff, done and queue selectors preserve same-number identities'
+
+# First entry owns the repository base; subsequent issues reuse it.
+jq --arg base "$foreign_base" '{
+  issue: (.issues[1] | .repo = "owner/c" | .number = 8 | .url = "https://github.com/owner/c/issues/8" | .candidate_files = ["c8.txt"]),
+  lane: (.lanes[1] | .repo = "owner/c" | .issue = 8 | .lane = "c8" | .branch = "feat/c8" | .run_id = "run-c8" | .fence = ["c8.txt"] | .base_sha = $base),
+  profile: {lane: "c8", policy: .policy},
+  repository_base: {repo: "owner/c", base_sha: $base}
+}' "$tmp/multi-plan.json" >"$tmp/add-c8.json"
+jq 'del(.repository_base)' "$tmp/add-c8.json" >"$tmp/add-no-base.json"
+if (cd "$repo" && node "$reviser" add-issue --slate fleet --session owner --owner-token "$multi_token" --input "$tmp/add-no-base.json" --reason invalid) >"$tmp/multi-refusal" 2>&1; then
+    fail 'addition accepted first foreign issue without a base'
+fi
+grep -qF 'requires repository_base' "$tmp/multi-refusal" || fail 'missing addition base diagnostic'
+(cd "$repo" && node "$reviser" add-issue --slate fleet --session owner --owner-token "$multi_token" --input "$tmp/add-c8.json" --reason 'first C issue')
+jq 'del(.repository_base) | .issue.number = 9 | .issue.url = "https://github.com/owner/c/issues/9" | .issue.candidate_files = ["c9.txt"] | .lane.issue = 9 | .lane.wave = 2 | .lane.lane = "c9" | .lane.branch = "feat/c9" | .lane.run_id = "run-c9" | .lane.fence = ["c9.txt"] | .profile.lane = "c9"' "$tmp/add-c8.json" >"$tmp/add-c9.json"
+(cd "$repo" && node "$reviser" add-issue --slate fleet --session owner --owner-token "$multi_token" --input "$tmp/add-c9.json" --reason 'second C issue')
+jq -e --arg base "$foreign_base" '[.revisions[-1].plan.repository_bases[] | select(.repo == "owner/c")] == [{repo:"owner/c",base_sha:$base}]' "$multi_plan" >/dev/null || fail 'addition did not preserve exactly one C base'
+pass 'foreign additions require an initial base and reuse the recorded entry'
+
+REVISER="$reviser" PLAN="$tmp/multi-plan.json" node --input-type=module <<'BASE_MOVE_TEST'
+import assert from 'node:assert/strict'
+import { readFileSync, mkdtempSync, mkdirSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
+import { hostname } from 'node:os'
+const { reviseForBaseMove } = await import(process.env.REVISER)
+const plan = JSON.parse(readFileSync(process.env.PLAN, 'utf8'))
+const newBase = 'b'.repeat(40)
+const options = { newBase, repo: 'owner/b', done: [7], changed: ['same.txt'] }
+const revised = reviseForBaseMove(plan, options)
+assert.equal(revised.issues[0].verdict, 'valid')
+assert.equal(revised.issues[1].verdict, 'done')
+assert.deepEqual(revised.lanes, [plan.lanes[0]])
+assert.deepEqual(revised.waves[0].issues, [7])
+assert.equal(revised.base_sha, plan.base_sha)
+assert.equal(revised.repository_bases.find((entry) => entry.repo === 'owner/b').base_sha, newBase)
+assert.throws(() => reviseForBaseMove(plan, { ...options, done: [8] }), /not in the plan/)
+assert.throws(() => reviseForBaseMove(plan, { ...options, done: [] }), /touches lane/)
+const root = mkdtempSync(join(tmpdir(), 'base-move-selectors-'))
+mkdirSync(join(root, 'runs', plan.lanes[0].run_id), { recursive: true })
+const reverified = reviseForBaseMove(plan, { ...options, done: [], reverified: [7], root })
+assert.equal(reverified.lanes[1].base_sha, newBase)
+assert.deepEqual(reverified.lanes[0], plan.lanes[0])
+mkdirSync(join(root, 'runs', plan.lanes[1].run_id), { recursive: true })
+assert.throws(() => reviseForBaseMove(plan, { ...options, done: [], reverified: [7], root }), /provisioned lane/)
+const conductor = reviseForBaseMove(plan, { newBase, done: [7], changed: ['same.txt'] })
+assert.equal(conductor.base_sha, newBase)
+assert.equal(conductor.issues[1].verdict, 'valid')
+assert.deepEqual(conductor.waves[0].issues, ['owner/b#7'])
+console.log('PASS: base-move scopes done, reverified, waves and fences to repository identities')
+BASE_MOVE_TEST
+
 echo "test-plan-revise: all cases passed"

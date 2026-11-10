@@ -21,7 +21,11 @@ unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_CONFIG_COUNT GIT_CONFIG_PARAMETER
 unset FOREMAN_DEVCONTAINER
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_NOSYSTEM=1
 
-tmp="$(mktemp -d)"
+# macOS ignores TMPDIR for a bare `mktemp -d` and returns a /var/folders path;
+# /var is a symlink to /private/var, so the guard's physical paths would differ
+# from the fixture paths the matrix feeds it (#2009). Name the parent and resolve it.
+tmp="$(mktemp -d "${TMPDIR:-/tmp}/merge-guard.XXXXXX")" || exit 1
+tmp="$(cd "$tmp" && pwd -P)" || exit 1
 trap 'rm -rf "$tmp"' EXIT
 fixture() { # dir default-branch feature-branch set-remote-head(yes|no) [remote-name]
     local rem=${5:-origin}
@@ -39,6 +43,7 @@ fixture() { # dir default-branch feature-branch set-remote-head(yes|no) [remote-
 r="${tmp}/repo"
 fixture "$r" main feat yes
 git -C "$r" worktree add -q "${r}/wt" feat
+mkdir -p "${r}/wt/sub"
 git -C "$r" remote add 'origin&cd' "${tmp}/absent.git"
 git -C "$r" remote add unsafe "${tmp}/absent.git"
 git -C "$r" config remote.unsafe.fetch '+refs/heads/*:refs/heads/*'
@@ -83,27 +88,120 @@ git -C "$pp" update-ref refs/remotes/origin/feat HEAD
 git -C "$pp" remote add backup "${tmp}/absent.git"
 git -C "$pp" symbolic-ref refs/remotes/backup/HEAD refs/remotes/backup/main
 
+# Isolate multivalued merge-source mutations from the ordinary sync cases.
+ms="${tmp}/merge-sources"
+fixture "$ms" main feat yes
+
+# A real local remote proves --ff-only overrides pull.rebase=true: it can
+# fast-forward, but must refuse divergence without rewriting the local commit.
+rb_source="${tmp}/rebase-origin"
+fixture "$rb_source" main feat yes
+rb="${tmp}/rebase-true"
+git clone -q --no-local "$rb_source" "$rb"
+git -C "$rb" checkout -q -b feat --track origin/main
+git -C "$rb" config pull.rebase true
+git -C "$rb_source" -c user.name=t -c user.email=t@t commit -q --allow-empty -m 'chore: upstream advances'
+echo "==> pull.rebase=true permits fast-forward-only pulls without rewriting"
+git -C "$rb" pull --ff-only >"${tmp}/rebase-ff.log" 2>&1
+if [[ $(git -C "$rb" rev-parse HEAD) != "$(git -C "$rb_source" rev-parse HEAD)" ]]; then
+    echo "TEST FAIL: --ff-only did not fast-forward with pull.rebase=true" >&2
+    exit 1
+fi
+git -C "$rb" -c user.name=t -c user.email=t@t commit -q --allow-empty -m 'chore: local divergence'
+local_head="$(git -C "$rb" rev-parse HEAD)"
+git -C "$rb_source" -c user.name=t -c user.email=t@t commit -q --allow-empty -m 'chore: upstream divergence'
+if LC_ALL=C git -C "$rb" pull --ff-only >"${tmp}/rebase-diverged.log" 2>&1; then
+    echo "TEST FAIL: --ff-only accepted divergence with pull.rebase=true" >&2
+    exit 1
+fi
+if [[ $(git -C "$rb" rev-parse HEAD) != "$local_head" ||
+$(git -C "$rb" rev-parse refs/remotes/origin/main) != "$(git -C "$rb_source" rev-parse HEAD)" ]] ||
+    ! grep -q 'Not possible to fast-forward' "${tmp}/rebase-diverged.log"; then
+    cat "${tmp}/rebase-diverged.log" >&2
+    echo "TEST FAIL: --ff-only must fetch then refuse divergence without rewriting HEAD" >&2
+    exit 1
+fi
+
 failures=0
 case_count=0
-decide() { # guard cwd command -> silent|ask|rc<N>
-    local out rc
-    out="$(jq -nc --arg c "$3" --arg d "$2" \
-        '{tool_name:"Bash",tool_input:{command:$c},cwd:$d}' | python3 "$1")" && rc=0 || rc=$?
+decide() { # guard cwd command [reason] -> silent|ask|reason|rc<N>
+    local input out rc
+    if input="$(jq -nc --arg c "$3" --arg d "$2" \
+        '{tool_name:"Bash",tool_input:{command:$c},cwd:$d}')"; then
+        :
+    else
+        rc=$?
+        echo "rc${rc}"
+        return
+    fi
+    if out="$(python3 "$1" <<<"$input")"; then
+        rc=0
+    else
+        rc=$?
+    fi
     if [[ $rc -ne 0 ]]; then
         echo "rc${rc}"
     elif [[ -z $out ]]; then
         echo silent
     elif jq -e '.hookSpecificOutput.permissionDecision == "ask"
         and (.hookSpecificOutput.permissionDecisionReason | length > 0)' <<<"$out" >/dev/null; then
-        echo ask
+        if [[ ${4:-} == reason ]]; then
+            jq -r '.hookSpecificOutput.permissionDecisionReason' <<<"$out"
+        else
+            echo ask
+        fi
     else
         echo "unexpected:${out}"
     fi
 }
-case_() { # guard expected cwd command
+echo "==> merge-guard JSON transport regressions"
+large_command="$(python3 -c 'print("x" * 98304, end="")')"
+if jq -nc --arg c "$large_command" --arg d "$r" \
+    'repeat({tool_name:"Bash",tool_input:{command:$c},cwd:$d})' |
+    python3 -c 'import time; time.sleep(0.1)'; then
+    old_pipeline_rc=0
+else
+    old_pipeline_rc=$?
+fi
+if [[ $old_pipeline_rc -ne 141 ]]; then
+    echo "TEST FAIL: expected old early-reader pipeline to expose jq SIGPIPE 141, got ${old_pipeline_rc}" >&2
+    exit 1
+fi
+early_guard="${tmp}/early-guard.py"
+cat >"$early_guard" <<'PY'
+#!/usr/bin/env python3
+import time
+
+time.sleep(0.1)
+PY
+chmod +x "$early_guard"
+if [[ $(decide "$early_guard" "$r" "$large_command") != silent ]]; then
+    echo "TEST FAIL: successful early-return consumer changed the direct decision" >&2
+    exit 1
+fi
+mkdir -p "${tmp}/generator-fails"
+cat >"${tmp}/generator-fails/jq" <<'SH'
+#!/bin/sh
+exit 23
+SH
+chmod +x "${tmp}/generator-fails/jq"
+if [[ $(PATH="${tmp}/generator-fails:$PATH" decide "$early_guard" "$r" command) != rc23 ]]; then
+    echo "TEST FAIL: direct JSON generator sentinel 23 was not preserved" >&2
+    exit 1
+fi
+cat >"${tmp}/failed-guard.py" <<'PY'
+#!/usr/bin/env python3
+raise SystemExit(29)
+PY
+chmod +x "${tmp}/failed-guard.py"
+if [[ $(decide "${tmp}/failed-guard.py" "$r" command) != rc29 ]]; then
+    echo "TEST FAIL: direct consumer sentinel 29 was not preserved" >&2
+    exit 1
+fi
+case_() { # guard expected cwd command [reason]
     local got
     case_count=$((case_count + 1))
-    got="$(decide "$1" "$3" "$4")"
+    got="$(decide "$1" "$3" "$4" "${5:-}")"
     if [[ $got != "$2" ]]; then
         failures=$((failures + 1))
         [[ ${QUIET:-0} == 1 ]] || echo "  FAIL expected=$2 got=${got} :: [${3#"$tmp"/}] $4" >&2
@@ -530,9 +628,12 @@ EOF"
     case_ "$g" ask "$r" 'gh api repos/o/r/pulls/1 -t "$T"$OTHER'
     case_ "$g" ask "$r" "gh api graphql -f 'query=mutation { resolveReviewThread(input: {}) { clientMutationId } # comment${cr} mergePullRequest(input: {}) { clientMutationId } }'"
     case_ "$g" ask "$r" "gh api graphql -f 'query={ viewer { login } }$(printf '\001')'"
-    # R3-4 deferred: a PR whose head is main still takes this sanctioned path;
-    # proving that head would require a network lookup inside this offline hook.
+    # #1849: REST and GraphQL catch-ups are offline allowlist decisions, even
+    # from a protected local checkout. Neither looks up the PR's head: these
+    # stay silent for feature heads AND default-branch heads (including fork
+    # main). The ADR records this deliberate limitation; no gh call runs here.
     case_ "$g" silent "$r" 'gh api -X PUT repos/o/r/pulls/1/update-branch'
+    case_ "$g" silent "$r" 'gh api graphql -f '\''query=mutation { updatePullRequestBranch(input: {pullRequestId: "PR"}) { clientMutationId } }'\'''
     case_ "$g" silent "$r" 'gh api -X GET repos/o/r/pulls/1 -f state=all'
     case_ "$g" silent "$r" 'gh api -X HEAD repos/o/r/pulls/1 -f state=all'
     case_ "$g" ask "$r" 'gh api graphql -X GET -f "query=mutation { mergePullRequest(input: {}) { clientMutationId } }"'
@@ -742,6 +843,23 @@ mutation { resolveReviewThread(input: {}) { clientMutationId } }'"'"''
     case_ "$g" ask "${r}/wt" "git fetch origin main:main && git merge --ff-only feat"
     case_ "$g" ask "${r}/wt" "git fetch unsafe && git merge --ff-only feat"
     case_ "$g" ask "${r}/wt" "git fetch unconfigured && git merge --ff-only feat"
+    # #1849: every fetch destination must belong to the selected remote. A
+    # matching final value must not hide an earlier cross-remote destination.
+    git -C "$r" config --add remote.origin.fetch '+refs/heads/*:refs/remotes/origin-other/*'
+    case_ "$g" ask "${r}/wt" "git fetch origin && git merge --ff-only feat"
+    git -C "$r" config --add remote.origin.fetch '+refs/heads/feat:refs/remotes/origin/feat'
+    case_ "$g" ask "$r" "git fetch origin && git merge --ff-only refs/remotes/origin/main"
+    git -C "$r" config --unset-all remote.origin.fetch
+    git -C "$r" config --add remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
+    git -C "$r" config --add remote.origin.fetch 'refs/heads/feat:refs/remotes/origin/feat'
+    case_ "$g" silent "$r" "git fetch origin && git merge --ff-only refs/remotes/origin/main"
+    git -C "$r" config --unset-all remote.origin.fetch
+    git -C "$r" config remote.origin.fetch '+refs/heads/*:refs/remotes/origin/*'
+    case_ "$g" silent "$sl" "git fetch team/origin && git merge --ff-only refs/remotes/team/origin/trunk"
+    # Explicit -C status remains outside the companion grammar, even though
+    # the same absolute target is accepted with fetch. Do not expand it.
+    case_ "$g" ask "${r}/wt" "git -C ${r}/wt status && git merge --ff-only feat"
+    case_ "$g" silent "${r}/wt" "git -C ${r}/wt fetch origin && git merge --ff-only feat"
     case_ "$g" silent "$r" "cd ${r}/wt && git merge --ff-only origin/main"
     # V3-1: Python whitespace splitting must never change the Bash target word.
     case_ "$g" ask "$r" "git -C ${r}/wt${cr} merge --ff-only feat"
@@ -870,6 +988,24 @@ mutation { resolveReviewThread(input: {}) { clientMutationId } }'"'"''
     case_ "$g" ask "$r" "git -C ${amp} merge --ff-only feat"
     case_ "$g" ask "$r" "cd ${amp} && git merge --ff-only feat"
     # Pure syncs on main/trunk; every other default-branch merge asks.
+    # #1849: get-all cardinality includes duplicate and empty values. Test
+    # both operand forms so upstream resolution cannot conceal a second value.
+    local merge_source
+    for merge_source in refs/heads/main refs/heads/feat ''; do
+        git -C "$ms" config --add branch.main.merge "$merge_source"
+        case_ "$g" ask "$ms" "git pull --ff-only"
+        case_ "$g" ask "$ms" "git merge --ff-only refs/remotes/origin/main"
+        git -C "$ms" config --unset-all branch.main.merge
+        git -C "$ms" config branch.main.merge refs/heads/main
+    done
+    git -C "$ms" config branch.main.merge ''
+    git -C "$ms" config --add branch.main.merge refs/heads/main
+    case_ "$g" ask "$ms" "git pull --ff-only"
+    case_ "$g" ask "$ms" "git merge --ff-only refs/remotes/origin/main"
+    git -C "$ms" config --unset-all branch.main.merge
+    git -C "$ms" config branch.main.merge refs/heads/main
+    case_ "$g" silent "$ms" "git pull --ff-only"
+    case_ "$g" silent "$ms" "git merge --ff-only refs/remotes/origin/main"
     case_ "$g" silent "$r" "git pull --ff-only"
     case_ "$g" ask "$r" "git pull --ff-only origin main"
     case_ "$g" silent "$r" "git pull --ff-only origin refs/heads/main"
@@ -900,12 +1036,26 @@ mutation { resolveReviewThread(input: {}) { clientMutationId } }'"'"''
     case_ "$g" ask "${r}/wt" "git checkout main && git merge --ff-only origin/main"
     case_ "$g" ask "${r}/wt" "cd ${r} || git merge --ff-only origin/main"
     case_ "$g" ask "$r" "git -C ${tmp}/missing merge --ff-only main"
+    # #1849: only a completely recognised grammar earns a target diagnostic.
+    # Preserve the actual -C/cd target, rather than naming the caller's cwd.
+    local target_reason='git-merge-guard: merge/pull would land on main/master or a remote default branch, or the target is unverifiable:'
+    case_ "$g" "$target_reason $r" "$r" "git merge feat" reason
+    case_ "$g" "$target_reason $tr" "${r}/wt" "git -C ${tr} merge --ff-only feat" reason
+    case_ "$g" "$target_reason $r" "${r}/wt" "cd ${r} && git merge --ff-only feat" reason
+    case_ "$g" "$target_reason ${r}/det" "${r}/det" "git merge feat" reason
+    case_ "$g" "$target_reason ${nh}/wt" "${nh}/wt" "git merge trunk" reason
+    case_ "$g" "$target_reason ${tmp}/missing" "$r" "git -C ${tmp}/missing merge --ff-only main" reason
+    case_ "$g" 'git-merge-guard: merge/pull or GitHub merge in a form this guard does not allowlist' "$r" "git merge --ff-only feat && git checkout main" reason
     # Allowlisted merges into a verified feature branch: no opinion.
     case_ "$g" silent "${r}/wt" "git merge origin/main --no-edit"
+    case_ "$g" silent "${r}/wt/sub" "git merge origin/main --no-edit"
     case_ "$g" silent "${r}/wt" "git merge --no-ff main"
     case_ "$g" silent "${r}/wt" "git merge --continue"
     case_ "$g" silent "${r}/wt" "git merge --quit"
     case_ "$g" silent "${r}/wt" "git pull --ff-only"
+    case_ "$g" silent "$rb" "git pull --ff-only"
+    case_ "$g" ask "$rb" "git pull"
+    case_ "$g" ask "$rb" "git pull --rebase"
     case_ "$g" silent "${r}/wt" "git pull --no-rebase origin main --no-edit"
     case_ "$g" silent "${tr}/wt" "git merge trunk --no-edit"
     case_ "$g" silent "${sl}/wt" "git merge trunk --no-edit"
@@ -1295,6 +1445,20 @@ fi
 settings="${repo_root}/.claude/settings.json"
 if [[ -z ${GUARD:-} && -f $settings ]]; then
     echo "==> git-merge-guard is registered in .claude/settings.json and fails closed"
+    # Match the rendered-settings contract: merge prompts belong to the hook
+    # or the dev-only drop-in, while protected/force-push backstops stay here.
+    if ! jq -e '[.permissions.ask[] | select(test("^Bash\\(git merge"))] | length == 0' "$settings" >/dev/null; then
+        echo "TEST FAIL: project settings still ask on every git merge" >&2
+        exit 1
+    fi
+    if ! jq -e '[.permissions.ask[] | select(test("^Bash\\(gh pr merge"))] | length == 0' "$settings" >/dev/null; then
+        echo "TEST FAIL: project settings still ask on gh pr merge" >&2
+        exit 1
+    fi
+    if ! jq -e '.permissions.ask | (index("Bash(git push origin main)") != null) and (index("Bash(git push --force:*)") != null)' "$settings" >/dev/null; then
+        echo "TEST FAIL: project settings lost the push-to-main / force-push ask rules" >&2
+        exit 1
+    fi
     registered="$(jq -r '[.hooks.PreToolUse[]? | select(.matcher == "Bash") | .hooks[]?
         | select(.type == "command" and (.command | contains("git-merge-guard.py")))
         | .command] | first // empty' "$settings")"
@@ -1302,15 +1466,25 @@ if [[ -z ${GUARD:-} && -f $settings ]]; then
         echo "TEST FAIL: no PreToolUse Bash hook in .claude/settings.json runs git-merge-guard.py" >&2
         exit 1
     fi
-    registered_decision() { # project-dir cwd command -> silent|ask|other
-        local out
-        out="$(jq -nc --arg c "$3" --arg d "$2" \
-            '{tool_name:"Bash",tool_input:{command:$c},cwd:$d}' |
-            CLAUDE_PROJECT_DIR="$1" bash -c "$registered" 2>/dev/null)" || true
+    registered_decision() { # project-dir cwd command [reason] -> silent|ask|reason|other
+        local input out rc
+        if input="$(jq -nc --arg c "$3" --arg d "$2" \
+            '{tool_name:"Bash",tool_input:{command:$c},cwd:$d}')"; then
+            :
+        else
+            rc=$?
+            echo "rc${rc}"
+            return
+        fi
+        out="$(CLAUDE_PROJECT_DIR="$1" bash -c "$registered" 2>/dev/null <<<"$input")" || true
         if [[ -z $out ]]; then
             echo silent
         elif jq -e '.hookSpecificOutput.permissionDecision == "ask"' <<<"$out" >/dev/null 2>&1; then
-            echo ask
+            if [[ ${4:-} == reason ]]; then
+                jq -r '.hookSpecificOutput.permissionDecisionReason' <<<"$out"
+            else
+                echo ask
+            fi
         else
             echo other
         fi
@@ -1323,10 +1497,40 @@ if [[ -z ${GUARD:-} && -f $settings ]]; then
             exit 1
         fi
     }
+    actual_registered=$registered
+    registered="python3 -c 'import time; time.sleep(0.1)'"
+    if [[ $(registered_decision "$repo_root" "$r" "$large_command") != silent ]]; then
+        echo "TEST FAIL: successful early-return consumer changed registered decision" >&2
+        exit 1
+    fi
+    if [[ $(PATH="${tmp}/generator-fails:$PATH" registered_decision "$repo_root" "$r" command) != rc23 ]]; then
+        echo "TEST FAIL: registered JSON generator sentinel 23 was not preserved" >&2
+        exit 1
+    fi
+    registered="exit 29"
+    if [[ $(registered_decision "$repo_root" "$r" command) != silent ]]; then
+        echo "TEST FAIL: registered consumer fallback semantics changed" >&2
+        exit 1
+    fi
+    registered=$actual_registered
     expect_registered ask "$repo_root" "$r" "git merge feat"
     expect_registered silent "$repo_root" "${r}/wt" "git merge origin/main --no-edit"
     # A guard that cannot be run must ask, never stay silent.
     expect_registered ask "${tmp}/no-such-project" "${r}/wt" "git merge origin/main --no-edit"
+    # Remove python3 from PATH entirely; jq and bash still run the registered
+    # command and inspect its existing generic fail-closed fallback.
+    mkdir -p "${tmp}/no-python"
+    ln -s "$(command -v jq)" "${tmp}/no-python/jq"
+    ln -s "$(command -v bash)" "${tmp}/no-python/bash"
+    if PATH="${tmp}/no-python" command -v python3 >/dev/null; then
+        echo "TEST FAIL: missing-interpreter fixture still finds python3" >&2
+        exit 1
+    fi
+    PATH="${tmp}/no-python" expect_registered ask "$repo_root" "${r}/wt" "git merge origin/main --no-edit"
+    if [[ $(PATH="${tmp}/no-python" registered_decision "$repo_root" "${r}/wt" "git merge origin/main --no-edit" reason) != 'git-merge-guard failed to run' ]]; then
+        echo "TEST FAIL: missing python3 changed the generic registered fallback reason" >&2
+        exit 1
+    fi
 fi
 
 echo "==> git-merge-guard OK (${primary_case_count} decision cases)"

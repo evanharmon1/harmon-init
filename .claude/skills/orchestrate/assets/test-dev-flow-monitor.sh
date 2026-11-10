@@ -4,6 +4,7 @@
 # revision resolution, and fail-closed behavior on absent/malformed inputs.
 # Refs #780, #741.
 set -euo pipefail
+unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_PREFIX
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 MONITOR="$SCRIPT_DIR/dev-flow-monitor.sh"
@@ -25,6 +26,19 @@ command -v git >/dev/null 2>&1 || fail "git is required"
 
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
+
+source_root="$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel)"
+# Execute tools from a current, isolated Git root, independent of the outer branch.
+tool_root="${tmp}/tool-root"
+mkdir -p "$tool_root"
+cp -R "${source_root}/ai" "$tool_root/ai"
+cp "${source_root}/.devflow.toml" "${source_root}/agent-registry.json" "$tool_root/"
+git init -q -b main "$tool_root"
+git -C "$tool_root" add ai .devflow.toml agent-registry.json
+git -C "$tool_root" -c user.name=test -c user.email=test@example.test commit -qm 'controlled executing tools'
+git -C "$tool_root" update-ref refs/remotes/origin/main HEAD
+git -C "$tool_root" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+MONITOR="$tool_root/ai/skills/universal/orchestrate/assets/dev-flow-monitor.sh"
 
 sha256_of() {
     if command -v sha256sum >/dev/null 2>&1; then
@@ -57,10 +71,22 @@ setup_fixture() {
     git clone -q --bare "$base/source" "$base/remote.git"
     git clone -q "$base/remote.git" "$base/work"
     git -C "$base/work" remote set-head origin main
+    git -C "$base/work" config user.name "test"
+    git -C "$base/work" config user.email "test@test.com"
 
     FIXTURE_REPO="$base/work"
     FIXTURE_REV="$(git -C "$FIXTURE_REPO" log -1 --format='%H' origin/main -- agent-registry.json)"
     return 0
+}
+
+# Monitor tests start with an admitted run; admission itself is tested by provisioning.
+admit_run() {
+    local repo="$1" run_id="$2" record
+    record="$(dirname "$("$MONITOR" state-path --run-id "$run_id" --repo-root "$repo")")/run.json"
+    mkdir -p "$(dirname "$record")"
+    printf 'fixture\n' >"$(dirname "$record")/owner-slate"
+    jq -n --arg run "$run_id" '{schema: 2, run_id: $run, outcome: null,
+        dispatch_admission: {slate: "fixture", working: 1, in_flight: 1, at: "2026-01-01T00:00:00Z"}}' >"$record"
 }
 
 # Helper: activate a run and return the generation
@@ -68,6 +94,7 @@ activate_run() {
     local repo="$1" run_id="$2" branch="$3" rev="$4"
     local active_state
     active_state="$("$MONITOR" active-path --branch "$branch" --repo-root "$repo")"
+    admit_run "$repo" "$run_id"
     "$MONITOR" activate --active-state "$active_state" --run-id "$run_id" \
         --branch "$branch" --expected-predecessor absent --expected-generation 0 \
         --registry-revision "$rev" --writer feature-owner --repo-root "$repo"
@@ -296,6 +323,7 @@ grep -qF 'retired run run-retire active pointer' <<<"$output" || fail "matching 
 [ ! -e "$retire_pointer" ] || fail "retire left the matching pointer behind"
 race_output=""
 race_rc=0
+admit_run "$FIXTURE_REPO" run-retire-race
 race_output="$("$MONITOR" activate --active-state "$retire_pointer" --run-id run-retire-race \
     --branch retire-branch --expected-predecessor run-retire --expected-generation 1 \
     --registry-revision "$FIXTURE_REV" \
@@ -327,6 +355,59 @@ replay_output="$("$MONITOR" activate --active-state "$retire_pointer" --run-id r
 [ "$replay_rc" -eq 2 ] || fail "activation replayed an ended run after an intervening run ended and retired: $replay_output"
 [ ! -e "$retire_pointer" ] || fail "intervening-run replay recreated the active pointer"
 pass "activation refuses an ended run's original request after an intervening run also ended and retired"
+# Admission is bound to the owner slate, with the existing solo exemption.
+for admission_case in mismatch missing admitted solo; do
+    admission_run="run-admission-$admission_case"
+    admission_branch="admission-$admission_case"
+    admit_run "$FIXTURE_REPO" "$admission_run"
+    admission_dir="$(dirname "$("$MONITOR" state-path --run-id "$admission_run" --repo-root "$FIXTURE_REPO")")"
+    case "$admission_case" in
+    mismatch) printf 'other\n' >"$admission_dir/owner-slate" ;;
+    missing) rm "$admission_dir/owner-slate" ;;
+    solo)
+        printf 'solo-%s\n' "$admission_run" >"$admission_dir/owner-slate"
+        jq 'del(.dispatch_admission)' "$admission_dir/run.json" >"$admission_dir/new.json"
+        mv "$admission_dir/new.json" "$admission_dir/run.json"
+        ;;
+    esac
+    admission_pointer="$("$MONITOR" active-path --branch "$admission_branch" --repo-root "$FIXTURE_REPO")"
+    admission_rc=0
+    admission_output="$("$MONITOR" activate --active-state "$admission_pointer" --run-id "$admission_run" \
+        --branch "$admission_branch" --expected-predecessor absent --expected-generation 0 \
+        --registry-revision "$FIXTURE_REV" --writer feature-owner --repo-root "$FIXTURE_REPO" 2>&1)" || admission_rc=$?
+    case "$admission_case" in
+    mismatch | missing)
+        [ "$admission_rc" -eq 2 ] || fail "$admission_case owner slate accepted: $admission_output"
+        grep -qF 'activation refused:' <<<"$admission_output" || fail "unclear refusal: $admission_output"
+        [ ! -e "$admission_pointer" ] || fail "$admission_case wrote an active pointer"
+        ;;
+    *) [ "$admission_rc" -eq 0 ] && [ "$admission_output" = 1 ] || fail "$admission_case activation failed: $admission_output" ;;
+    esac
+    pass "activation admission: $admission_case"
+done
+# A legacy active generation must refuse re-arm with an actionable migration.
+legacy_run=run-admission-legacy
+legacy_branch=admission-legacy
+admit_run "$FIXTURE_REPO" "$legacy_run"
+legacy_dir="$(dirname "$("$MONITOR" state-path --run-id "$legacy_run" --repo-root "$FIXTURE_REPO")")"
+legacy_pointer="$("$MONITOR" active-path --branch "$legacy_branch" --repo-root "$FIXTURE_REPO")"
+"$MONITOR" activate --active-state "$legacy_pointer" --run-id "$legacy_run" --branch "$legacy_branch" \
+    --expected-predecessor absent --expected-generation 0 --registry-revision "$FIXTURE_REV" \
+    --writer feature-owner --repo-root "$FIXTURE_REPO" >/dev/null
+rearm_output="$("$MONITOR" activate --active-state "$legacy_pointer" --run-id "$legacy_run" --branch "$legacy_branch" \
+    --expected-predecessor absent --expected-generation 0 --registry-revision "$FIXTURE_REV" \
+    --writer feature-owner --repo-root "$FIXTURE_REPO" 2>&1)" || fail "admitted re-arm failed: $rearm_output"
+[ "$rearm_output" = 1 ] || fail "admitted re-arm changed generation: $rearm_output"
+pass "admitted active generation can re-arm"
+jq 'del(.dispatch_admission)' "$legacy_dir/run.json" >"$legacy_dir/new.json"
+mv "$legacy_dir/new.json" "$legacy_dir/run.json"
+legacy_rc=0
+legacy_output="$("$MONITOR" activate --active-state "$legacy_pointer" --run-id "$legacy_run" --branch "$legacy_branch" \
+    --expected-predecessor absent --expected-generation 0 --registry-revision "$FIXTURE_REV" \
+    --writer feature-owner --repo-root "$FIXTURE_REPO" 2>&1)" || legacy_rc=$?
+[ "$legacy_rc" -eq 2 ] || fail "legacy re-arm unexpectedly succeeded: $legacy_output"
+grep -qF 'retire the legacy run (reconcile its events and prune its active pointer if required), then provision a replacement run' <<<"$legacy_output" || fail "legacy migration missing: $legacy_output"
+pass "legacy active generation refuses re-arm with migration guidance"
 ended_target=run-activate-ended
 ended_record="$(dirname "$("$MONITOR" state-path --run-id "$ended_target" --repo-root "$FIXTURE_REPO")")/run.json"
 mkdir -p "$(dirname "$ended_record")"
@@ -370,6 +451,7 @@ jq -n '{schema: 2, run_id: "run-aba-a", outcome: "abandoned"}' >"$aba_old_record
 aba_live_record="$(dirname "$("$MONITOR" state-path --run-id run-aba-b --repo-root "$FIXTURE_REPO")")/run.json"
 jq -n '{schema: 2, run_id: "run-aba-b", outcome: null}' >"$aba_live_record"
 aba_rc=0
+admit_run "$FIXTURE_REPO" run-aba-c
 aba_output="$("$MONITOR" activate --active-state "$aba_pointer" --run-id run-aba-c --branch "$aba_branch" \
     --expected-predecessor run-aba-a --expected-generation 1 --registry-revision "$FIXTURE_REV" \
     --writer feature-owner --repo-root "$FIXTURE_REPO" 2>&1)" || aba_rc=$?
@@ -387,6 +469,7 @@ pass "stale generation-1 activation is refused without replacing or damaging the
 
 activate_run "$FIXTURE_REPO" run-retire-old replace-branch "$FIXTURE_REV" >/dev/null
 replace_pointer="$("$MONITOR" active-path --branch replace-branch --repo-root "$FIXTURE_REPO")"
+admit_run "$FIXTURE_REPO" run-retire-new
 "$MONITOR" activate --active-state "$replace_pointer" --run-id run-retire-new \
     --branch replace-branch --expected-predecessor run-retire-old --expected-generation 1 \
     --registry-revision "$FIXTURE_REV" \
@@ -410,6 +493,7 @@ grep -qF 'run record is invalid or still open' <<<"$output" || fail "open-run re
 [ -f "$open_retire_pointer" ] || fail "refused retirement removed an open run's pointer"
 
 activate_run "$FIXTURE_REPO" run-retire-missing missing-retire-branch "$FIXTURE_REV" >/dev/null
+rm "$(dirname "$("$MONITOR" state-path --run-id run-retire-missing --repo-root "$FIXTURE_REPO")")/run.json"
 missing_retire_pointer="$("$MONITOR" active-path --branch missing-retire-branch --repo-root "$FIXTURE_REPO")"
 retire_rc=0
 output="$("$MONITOR" retire --run-id run-retire-missing --repo-root "$FIXTURE_REPO" 2>&1)" || retire_rc=$?
@@ -435,6 +519,7 @@ grep -qF 'monitor.json has an unreconciled reserved action' <<<"$output" ||
     fail "unreconciled reservation did not defer retirement: $output"
 [ -f "$reserved_pointer" ] || fail "retire deleted a pointer with an unreconciled reservation"
 activation_rc=0
+admit_run "$FIXTURE_REPO" run-retire-next-reserved
 activation_output="$("$MONITOR" activate --active-state "$reserved_pointer" --run-id run-retire-next-reserved \
     --branch reserved-branch --expected-predecessor run-retire-reserved --expected-generation 1 \
     --registry-revision "$FIXTURE_REV" \
@@ -509,6 +594,7 @@ eventless_retire_output="$("$MONITOR" retire --run-id run-retire-eventless --rep
 grep -qF 'unreconciled reserved action' <<<"$eventless_retire_output" ||
     fail "eventless reservation did not defer retirement: $eventless_retire_output"
 eventless_activate_rc=0
+admit_run "$FIXTURE_REPO" run-eventless-next
 eventless_activate_output="$("$MONITOR" activate --active-state "$eventless_pointer" --run-id run-eventless-next \
     --branch eventless-branch --expected-predecessor run-retire-eventless --expected-generation 1 \
     --registry-revision "$FIXTURE_REV" --writer feature-owner --repo-root "$FIXTURE_REPO" 2>&1)" ||
@@ -543,6 +629,39 @@ grep -qF 'run run-cancel-live is live' <<<"$cancel_output" || fail "live cancell
 jq -e '.actions[0].state == "reserved"' "$live_cancel_state" >/dev/null ||
     fail "refused cancellation changed the live reservation"
 pass "cancel refuses a live run without changing its reservation"
+
+# Use the actual pointer branch, keeping the negative identity tests explicit.
+live_cancel_identity=(--writer feature-owner --active-state "$live_cancel_pointer"
+    --branch "$(jq -r .branch "$live_cancel_pointer")" --generation 1)
+for bad_generation in 2 0; do
+    cancel_rc=0
+    "$MONITOR" cancel --state "$live_cancel_state" --run-id run-cancel-live --event evt-live-cancel \
+        --writer feature-owner --active-state "$live_cancel_pointer" \
+        --branch "$(jq -r .branch "$live_cancel_pointer")" --generation "$bad_generation" \
+        --observed "$tmp/live-cancel-observed.json" --reason 'stale caller' --repo-root "$FIXTURE_REPO" \
+        >"$tmp/live-cancel-error" 2>&1 || cancel_rc=$?
+    [ "$cancel_rc" -eq 2 ] || fail "live cancellation accepted a stale/invalid generation"
+done
+"$MONITOR" cancel --state "$live_cancel_state" --run-id run-cancel-live --event evt-live-cancel \
+    "${live_cancel_identity[@]}" --observed "$tmp/live-cancel-observed.json" \
+    --reason 'owner observed absent push' --repo-root "$FIXTURE_REPO" >/dev/null
+jq -e '.actions[0].state == "cancelled" and .actions[0].cancellation.observation.status == "absent"' \
+    "$live_cancel_state" >/dev/null || fail "live owner cancellation was not recorded"
+pass "live push cancellation requires matching active generation and records absence"
+printf '%s\n' '{"integrated_lanes":["a"],"discarded_lanes":[]}' >"$tmp/live-assembly.json"
+"$MONITOR" reserve --state "$live_cancel_state" --run-id run-cancel-live --event assembly-live \
+    --action assembly --expected-head "$live_cancel_head" --writer feature-owner \
+    --active-state "$live_cancel_pointer" --branch live-cancel-branch --generation 1 \
+    --assembly-plan "$tmp/live-assembly.json" --repo-root "$FIXTURE_REPO" >/dev/null
+jq -n --arg head "$live_cancel_head" '{status:"absent",event:"assembly-live",action:"assembly",head:$head}' \
+    >"$tmp/live-assembly-absent.json"
+cancel_rc=0
+"$MONITOR" cancel --state "$live_cancel_state" --run-id run-cancel-live --event assembly-live \
+    "${live_cancel_identity[@]}" --observed "$tmp/live-assembly-absent.json" \
+    --reason 'non-push owner attempt' --repo-root "$FIXTURE_REPO" >"$tmp/live-cancel-error" 2>&1 || cancel_rc=$?
+[ "$cancel_rc" -eq 2 ] || fail 'live owner cancelled a non-push reservation'
+jq -e '.actions[1].state == "reserved"' "$live_cancel_state" >/dev/null || fail 'non-push cancellation modified state'
+pass "live cancellation remains push-only"
 
 activate_run "$FIXTURE_REPO" run-retire-serial serial-branch "$FIXTURE_REV" >/dev/null
 serial_pointer="$("$MONITOR" active-path --branch serial-branch --repo-root "$FIXTURE_REPO")"
@@ -629,6 +748,7 @@ binding="$(dirname "$("$MONITOR" state-path --run-id run-prune-mismatch --repo-r
 jq '.branch = "other-branch"' "$binding" >"$binding.tmp"
 mv "$binding.tmp" "$binding"
 activate_run "$FIXTURE_REPO" run-prune-missing missing-branch "$FIXTURE_REV" >/dev/null
+rm "$(dirname "$("$MONITOR" state-path --run-id run-prune-missing --repo-root "$FIXTURE_REPO")")/run.json"
 missing_pointer="$("$MONITOR" active-path --branch missing-branch --repo-root "$FIXTURE_REPO")"
 activate_run "$FIXTURE_REPO" run-prune-reserved reserved-prune-branch "$FIXTURE_REV" >/dev/null
 reserved_prune_pointer="$("$MONITOR" active-path --branch reserved-prune-branch --repo-root "$FIXTURE_REPO")"
@@ -678,4 +798,394 @@ grep -qF "removed ${terminal_pointer##*/} (run run-prune-terminal" <<<"$output" 
 pass "prune dry-run is read-only; actual pruning removes the terminal run and reports all skip classes"
 
 echo ""
+
+# #1722: every guarded boundary refuses stale tools before touching state.
+setup_fixture '{"trusted_orchestrator_actor_ids": [12345]}'
+mkdir -p "$FIXTURE_REPO/skills/orchestrate/assets"
+cp "$MONITOR" "$FIXTURE_REPO/skills/orchestrate/assets/dev-flow-monitor.sh"
+fixture_monitor="$FIXTURE_REPO/skills/orchestrate/assets/dev-flow-monitor.sh"
+printf 'source:\n  ref: v1\n' >"$FIXTURE_REPO/.skills-sync.yaml"
+git -C "$FIXTURE_REPO" add .skills-sync.yaml skills
+git -C "$FIXTURE_REPO" commit -qm 'old pin'
+old_head="$(git -C "$FIXTURE_REPO" rev-parse HEAD)"
+printf 'source:\n  ref: v2\n' >"$FIXTURE_REPO/.skills-sync.yaml"
+git -C "$FIXTURE_REPO" commit -qam 'new pin'
+new_head="$(git -C "$FIXTURE_REPO" rev-parse HEAD)"
+git -C "$FIXTURE_REPO" update-ref refs/remotes/origin/main "$new_head"
+git -C "$FIXTURE_REPO" checkout -q --detach "$old_head"
+for boundary in check-assets activate reserve-agent-run reserve; do
+    rc=0
+    output="$("$fixture_monitor" "$boundary" --repo-root "$FIXTURE_REPO" 2>&1)" || rc=$?
+    [ "$rc" -eq 2 ] || fail "$boundary accepted stale tools"
+    for expected in BLOCKER "$old_head" "$new_head" v1 v2 'fetch origin' 'merge --ff-only origin/main'; do
+        [[ "$output" == *"$expected"* ]] || fail "$boundary omitted $expected: $output"
+    done
+done
+git -C "$FIXTURE_REPO" checkout -q --detach "$new_head"
+"$fixture_monitor" check-assets --repo-root "$FIXTURE_REPO"
+printf 'source:\n  ref: v1\n' >"$FIXTURE_REPO/.skills-sync.yaml"
+rc=0
+output="$("$fixture_monitor" check-assets --repo-root "$FIXTURE_REPO" 2>&1)" || rc=$?
+[ "$rc" -eq 2 ] && [[ "$output" == *'skills pin v1, default pin v2'* ]] || fail "pin-only mismatch accepted"
+git -C "$FIXTURE_REPO" restore .skills-sync.yaml
+# The target lane is current, but a script in an older sibling checkout is not.
+mkdir -p "$FIXTURE_REPO/skills/orchestrate/assets"
+cp "$MONITOR" "$FIXTURE_REPO/skills/orchestrate/assets/dev-flow-monitor.sh"
+git -C "$FIXTURE_REPO" add skills
+git -C "$FIXTURE_REPO" commit --allow-empty -qm 'vendored monitor'
+script_head="$(git -C "$FIXTURE_REPO" rev-parse HEAD)"
+git -C "$FIXTURE_REPO" -c user.name=test -c user.email=test@test.com commit --allow-empty -qm 'default advances'
+fresh_head="$(git -C "$FIXTURE_REPO" rev-parse HEAD)"
+git -C "$FIXTURE_REPO" update-ref refs/remotes/origin/main "$fresh_head"
+git -C "$FIXTURE_REPO" worktree add -q --detach "$tmp/current-lane" "$fresh_head"
+git -C "$FIXTURE_REPO" checkout -q --detach "$script_head"
+rc=0
+output="$(bash "$FIXTURE_REPO/skills/orchestrate/assets/dev-flow-monitor.sh" check-assets --repo-root "$tmp/current-lane" 2>&1)" || rc=$?
+[ "$rc" -eq 2 ] && [[ "$output" == *"HEAD $script_head, default $fresh_head"* ]] || fail "current lane hid stale asset checkout: $output"
+pass "stale HEAD and pins refuse all boundaries; current tools pass (#1722)"
+
+# Challenge r1: executing assets keep their identity across clone boundaries.
+git -C "$tmp/current-lane" status --porcelain >/dev/null
+for layout in extracted separate; do
+    tools="$tmp/$layout-tools"
+    mkdir -p "$tools/skills/orchestrate/assets"
+    cp "$MONITOR" "$tools/skills/orchestrate/assets/dev-flow-monitor.sh"
+    if [ "$layout" = separate ]; then
+        git -C "$tools" init -q -b main
+        git -C "$tools" config user.name test
+        git -C "$tools" config user.email test@test.com
+        printf 'source:\n  ref: v1\n' >"$tools/.skills-sync.yaml"
+        git -C "$tools" add .
+        git -C "$tools" commit -qm 'separate tools v1'
+        git -C "$tools" update-ref refs/remotes/origin/main HEAD
+        git -C "$tools" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+    else
+        printf '# ref: v1 (fixture)\n' >"$tools/skills/.SKILLS_PROVENANCE"
+    fi
+    rc=0
+    output="$(bash "$tools/skills/orchestrate/assets/dev-flow-monitor.sh" check-assets --repo-root "$tmp/current-lane" 2>&1)" || rc=$?
+    [ "$rc" -eq 2 ] && [[ "$output" == *BLOCKER* && "$output" == *v1* && "$output" == *v2* ]] || fail "$layout assets lost their own stale pin: $output"
+    if [ "$layout" = separate ]; then
+        printf 'source:\n  ref: v2\n' >"$tools/.skills-sync.yaml"
+        git -C "$tools" commit -qam 'separate tools v2'
+        git -C "$tools" update-ref refs/remotes/origin/main HEAD
+    else
+        printf '# ref: v2 (fixture)\n' >"$tools/skills/.SKILLS_PROVENANCE"
+    fi
+    bash "$tools/skills/orchestrate/assets/dev-flow-monitor.sh" check-assets --repo-root "$tmp/current-lane"
+    if [ "$layout" = separate ]; then
+        tools_head="$(git -C "$tools" rev-parse HEAD)"
+        git -C "$tools" commit --allow-empty -qm 'separate default advances'
+        tools_tip="$(git -C "$tools" rev-parse HEAD)"
+        git -C "$tools" update-ref refs/remotes/origin/main HEAD
+        git -C "$tools" checkout -q --detach "$tools_head"
+        rc=0
+        output="$(bash "$tools/skills/orchestrate/assets/dev-flow-monitor.sh" check-assets --repo-root "$tmp/current-lane" 2>&1)" || rc=$?
+        [ "$rc" -eq 2 ] && [[ "$output" == *"$tools_head"* && "$output" == *"$tools_tip"* ]] || fail "current target hid behind separate tools: $output"
+    fi
+done
+pass "separate and extracted tools retain pins; separate checkout ancestry is checked"
+
+# Challenge r2: current executing tools accept feature targets before catch-up.
+primary="$tmp/separate-tools"
+git -C "$primary" checkout -q --detach refs/remotes/origin/main
+primary_head="$(git -C "$primary" rev-parse HEAD)"
+git -C "$primary" worktree add -q --detach "$tmp/diverged-same-clone" "$tools_head"
+git -C "$tmp/diverged-same-clone" commit --allow-empty -qm 'feature changes before catch-up'
+[ "$(git -C "$tmp/diverged-same-clone" rev-list --count HEAD..refs/remotes/origin/main)" -gt 0 ] || fail 'same-clone target must be behind the base'
+bash "$primary/skills/orchestrate/assets/dev-flow-monitor.sh" check-assets --repo-root "$tmp/diverged-same-clone"
+git -C "$tmp/current-lane" checkout -q --detach "$script_head"
+git -C "$tmp/current-lane" commit --allow-empty -qm 'separate feature changes before catch-up'
+[ "$(git -C "$tmp/current-lane" rev-list --count HEAD..refs/remotes/origin/main)" -gt 0 ] || fail 'separate-clone target must be behind the base'
+bash "$primary/skills/orchestrate/assets/dev-flow-monitor.sh" check-assets --repo-root "$tmp/current-lane"
+pass "current primary assets accept diverged same-clone and separate-clone feature targets"
+# A Git-backed asset checkout must never skip its own ancestry proof.
+git -C "$primary" symbolic-ref --delete refs/remotes/origin/HEAD
+git -C "$primary" update-ref -d refs/remotes/origin/main
+rc=0
+output="$(bash "$primary/skills/orchestrate/assets/dev-flow-monitor.sh" check-assets --repo-root "$tmp/current-lane" 2>&1)" || rc=$?
+[ "$rc" -eq 2 ] && [[ "$output" == *BLOCKER* ]] || fail "missing executing default refs passed: $output"
+git -C "$primary" update-ref refs/remotes/origin/main "$primary_head"
+git -C "$primary" symbolic-ref refs/remotes/origin/HEAD refs/remotes/origin/main
+pass "separate Git-backed assets fail closed when default tracking refs are missing"
+
+# Challenge r1: an active generation cannot reserve work after its tools go stale.
+setup_fixture '{"trusted_orchestrator_actor_ids": [12345]}'
+mkdir -p "$FIXTURE_REPO/skills/orchestrate/assets"
+cp "$MONITOR" "$FIXTURE_REPO/skills/orchestrate/assets/dev-flow-monitor.sh"
+git -C "$FIXTURE_REPO" add skills
+git -C "$FIXTURE_REPO" commit -qm 'executing fixture monitor'
+git -C "$FIXTURE_REPO" update-ref refs/remotes/origin/main HEAD
+fixture_monitor="$FIXTURE_REPO/skills/orchestrate/assets/dev-flow-monitor.sh"
+activate_run "$FIXTURE_REPO" run-stale-reserve stale-reserve "$FIXTURE_REV" >/dev/null
+active="$("$MONITOR" active-path --branch stale-reserve --repo-root "$FIXTURE_REPO")"
+state="$("$MONITOR" state-path --run-id run-stale-reserve --repo-root "$FIXTURE_REPO")"
+reserve_head="$(git -C "$FIXTURE_REPO" rev-parse HEAD)"
+"$fixture_monitor" reserve --state "$state" --event before-stale --action push \
+    --expected-head "$reserve_head" --writer feature-owner --active-state "$active" \
+    --run-id run-stale-reserve --branch stale-reserve --generation 1 --repo-root "$FIXTURE_REPO" >/dev/null
+cp "$state" "$tmp/reservation-before-stale.json"
+git -C "$FIXTURE_REPO" commit --allow-empty -qm 'default advances after activation'
+git -C "$FIXTURE_REPO" update-ref refs/remotes/origin/main HEAD
+git -C "$FIXTURE_REPO" checkout -q --detach "$reserve_head"
+rc=0
+output="$("$fixture_monitor" reserve --state "$state" --event after-stale --action push \
+    --expected-head "$reserve_head" --writer feature-owner --active-state "$active" \
+    --run-id run-stale-reserve --branch stale-reserve --generation 1 --repo-root "$FIXTURE_REPO" 2>&1)" || rc=$?
+[ "$rc" -eq 2 ] && [[ "$output" == *BLOCKER* ]] || fail "stale active run reserved a push: $output"
+cmp -s "$state" "$tmp/reservation-before-stale.json" || fail 'stale reservation changed monitor state'
+pass "reserve refuses after activation when tools become stale, without durable writes"
+
+# Resume from only durable records; no session directory or local agent exists.
+node --input-type=module - "$tool_root" "$tmp" <<'NODE'
+import assert from 'node:assert/strict'
+import { execFileSync, spawnSync } from 'node:child_process'
+import { chmodSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
+import { join } from 'node:path'
+import { createHash } from 'node:crypto'
+const [tools, temporary] = process.argv.slice(2)
+process.argv[1] = tools
+const assets = join(tools, 'ai/skills/universal/orchestrate/assets')
+const { chainDigest } = await import(join(assets, '../../dev-flow-support/assets/run-record.mjs'))
+const fixture = join(tools, 'ai/schemas/fixtures')
+const repo = join(temporary, 'resume-only')
+mkdirSync(repo)
+const git = (...args) => execFileSync('git', ['-C', repo, ...args], { encoding: 'utf8' }).trim()
+git('init', '-q', '-b', '935-plan')
+writeFileSync(join(repo, 'agent-registry.json'), JSON.stringify({ finders: [{ trusted_actor_id: '424242' }] }))
+git('add', 'agent-registry.json')
+git('-c', 'user.name=test', '-c', 'user.email=test@example.test', 'commit', '--allow-empty', '-qm', 'fixture')
+const head = git('rev-parse', 'HEAD')
+// The live conductor and tool checkout both differ from the immutable kickoff registry.
+writeFileSync(join(repo, 'agent-registry.json'), JSON.stringify({ finders: [{ trusted_actor_id: '424243' }] }))
+const root = join(repo, '.git/dev-flow-v2')
+const save = (file, data) => { mkdirSync(join(file, '..'), { recursive: true }); writeFileSync(file, typeof data === 'string' ? data : JSON.stringify(data)) }
+const json = file => JSON.parse(readFileSync(file, 'utf8'))
+const planDoc = json(join(fixture, 'plan/valid/interactive.json'))
+const revision = planDoc.revisions[0]
+const lane = revision.plan.lanes[0]
+const runDir = join(root, 'runs', lane.run_id)
+const run = json(join(fixture, 'run.schema/valid/fresh-kickoff.json'))
+run.run_id = lane.run_id
+run.stage_transitions = ['kickoff', 'claim', 'implement', 'verify', 'security', 'integration'].map((stage, index) =>
+  ({ stage, entered_at: `2026-08-29T09:0${index}:00Z`, ...(index < 5 ? { exit: 'fixture gate passed' } : {}) }))
+run.receipts = run.stage_transitions.slice(1).map(({ stage, entered_at }) => ({ kind: 'transition', stage, entered_at }))
+run.pr = { number: 123, url: 'https://github.com/bound/delivery/pull/123' }
+const binding = { number: 123, url: run.pr.url, bound_at: '2026-08-29T09:05:00Z' }
+run.pr_bindings = [{ seq: 0, ...binding, prev_digest: 'genesis', digest: chainDigest(binding, 'genesis') }]
+const runFile = join(runDir, 'run.json')
+save(runFile, run)
+save(join(runDir, 'owner-slate'), planDoc.slate_id)
+save(join(runDir, 'branch.json'), { version: 1, run_id: lane.run_id, branch: lane.branch })
+const pointer = join(root, 'active', createHash('sha256').update(lane.branch).digest('hex') + '.json')
+save(pointer, { version: 1, run_id: lane.run_id, branch: lane.branch, generation: 2, registry_revision: head })
+const reservation = { event: 'pending-push', action: 'push', state: 'reserved', expected_head: head }
+save(join(runDir, 'monitor.json'), { version: 1, cursor: 0, actions: [reservation] })
+save(join(root, 'slates', planDoc.slate_id, 'plan.json'), planDoc)
+const briefTemplate = readFileSync(join(fixture, 'brief.envelope/valid/minimal.md'), 'utf8')
+const facts = JSON.parse(briefTemplate.match(/```json\n([\s\S]*?)\n```/)[1])
+Object.assign(facts, { run_id: lane.run_id, branch: lane.branch, generation: 2, record_directory: runDir,
+  active_state_path: pointer, worktree_path: repo, deadline: '2099-01-01T00:00:00Z',
+  issue: { number: 935, title: 'fixture', url: 'https://github.com/example/repo/issues/935' } })
+facts.claim_handoff.branch = lane.branch
+facts.sentinels = { ready: 'MERGE-READY-planning-a1', handoff: 'DRAFT-PUBLISHED-planning-a1', blocked: 'BLOCKED-planning-a1', attempt_nonce: 'a1' }
+const brief = briefTemplate.replace(/```json\n[\s\S]*?\n```/, '```json\n' + JSON.stringify(facts) + '\n```')
+save(join(runDir, 'lane-brief-a1.md'), brief)
+save(join(runDir, 'lane-status-a1.json'), { state: 'working', seq: 1, stage: 'implement', round: 0, head,
+  updated_at: '2026-11-04T21:00:00Z', summary: 'fixture working' })
+// Terminal pointer eligibility is identical to the existing prune predicate.
+const ended = 'run-terminal'
+save(join(root, 'runs', ended, 'run.json'), { schema: 2, run_id: ended, outcome: 'abandoned' })
+save(join(root, 'runs', ended, 'branch.json'), { version: 1, run_id: ended, branch: 'ended' })
+const endedPointer = join(root, 'active', createHash('sha256').update('ended').digest('hex') + '.json')
+save(endedPointer, { version: 1, run_id: ended, branch: 'ended', generation: 1, registry_revision: head })
+const snapshot = dir => readdirSync(dir, { withFileTypes: true }).sort((a,b) => a.name.localeCompare(b.name)).flatMap(entry =>
+  entry.isDirectory() ? snapshot(join(dir, entry.name)) : [[join(dir, entry.name), readFileSync(join(dir, entry.name), 'base64')]])
+const before = snapshot(root)
+const invoke = (rootArgs = ['--repo-root', repo], cwd = tools) => spawnSync('bash',
+  [join(assets, 'dev-flow-monitor.sh'), 'resume', '--slate-id', planDoc.slate_id, ...rootArgs], { cwd, encoding: 'utf8' })
+const output = invoke()
+assert.equal(output.status, 0, output.stderr + output.stdout)
+const view = JSON.parse(output.stdout)
+assert.deepEqual(snapshot(root), before, 'resume wrote durable state')
+assert.equal(view.lanes[0].run_id, lane.run_id)
+assert.equal(view.lanes[0].generation, 2)
+assert.equal(view.lanes[0].stage, 'integration')
+assert.equal(view.lanes[0].branch, lane.branch)
+assert.equal(view.lanes[0].pr.number, 123)
+assert.deepEqual(view.lanes[0].unreconciled_reservations, [reservation])
+assert.equal(view.lanes[0].lane_status.seq, 1)
+assert.equal(view.lanes[0].lane_status_freshness, 'current')
+assert.equal(view.lanes[0].local_branch_head, head)
+assert.equal(view.undispatched.length, 1)
+assert.match(view.terminal_pointers, /would remove .*run-terminal/)
+assert.ok(view.watcher.argv.includes('planning:935-plan:a1:bound/delivery:cloud'))
+assert.equal(view.watcher.argv[view.watcher.argv.indexOf('--registry') + 1], join(repo, 'agent-registry.json'))
+assert.equal(view.watcher.argv[view.watcher.argv.indexOf('--registry-revision') + 1], head)
+// Nested invocation must emit the same root-bound, executable watcher command.
+const nested = join(repo, 'nested', 'directory')
+mkdirSync(nested, { recursive: true })
+const nestedViews = [invoke([], nested), invoke(['--repo-root', nested])].map(output => {
+  assert.equal(output.status, 0, output.stderr + output.stdout)
+  const nestedView = JSON.parse(output.stdout)
+  assert.deepEqual(nestedView, view)
+  return nestedView
+})
+assert.deepEqual(snapshot(root), before, 'nested resume wrote durable state')
+// Exercise the actual watcher parser and observation loop with offline reads.
+const bin = join(temporary, 'resume-bin')
+mkdirSync(bin)
+const calls = join(temporary, 'resume-gh-calls')
+save(join(bin, 'gh'), `#!/bin/sh
+printf '%s\\n' "$*" >>"$RESUME_GH_CALLS"
+case "$*" in
+  *--include*) printf 'HTTP/2 404\\n\\n{}\\n' ;;
+  *issues/123/comments*) printf '%s\\n' '${JSON.stringify([
+    { id: 101, user: { id: 424242, type: 'Bot', login: 'pinned-bot' }, created_at: '2026-11-04T21:00:00Z', body: 'pinned' },
+    { id: 102, user: { id: 424243, type: 'Bot', login: 'drift-bot' }, created_at: '2026-11-04T21:00:00Z', body: 'drift' },
+    { id: 103, user: { id: 199175422, type: 'Bot', login: 'tool-bot' }, created_at: '2026-11-04T21:00:00Z', body: 'tool' },
+  ])}' ;;
+  'pr view 123 '*) printf '%s\\n' '${JSON.stringify({ number: 123, isDraft: true, state: 'OPEN', headRefOid: head })}' ;;
+  'pr list '*) printf '%s\\n' '${JSON.stringify([{ number: 999, isDraft: true, state: 'OPEN', headRefOid: head }])}' ;;
+  *) printf '[]\\n' ;;
+esac
+`)
+chmodSync(join(bin, 'gh'), 0o755)
+const watchLane = (argv = view.watcher.argv) => spawnSync('bash', [view.watcher.executable,
+  '--iterations', '1', ...argv],
+{ cwd: tools, encoding: 'utf8', env: { ...process.env, RESUME_GH_CALLS: calls, PATH: bin + ':' + process.env.PATH } })
+const watch = watchLane()
+assert.equal(watch.status, 0, watch.stderr)
+assert.match(watch.stdout, /LANE-STATUS planning: seq=1 state=working/)
+assert.match(watch.stdout, /BRANCH planning: absent/) // unpushed local branch
+assert.match(watch.stdout, /PR planning: bound\/delivery#123 /)
+assert.match(watch.stdout, /PR-ACTIVITY planning: bound\/delivery#123 pinned-bot comment 101 /)
+assert.doesNotMatch(watch.stdout, /drift-bot|tool-bot/)
+assert.doesNotMatch(readFileSync(calls, 'utf8'), /pr list/)
+assert.match(readFileSync(calls, 'utf8'), /pr view 123 --repo bound\/delivery/)
+for (const nestedView of nestedViews) {
+  const nestedWatch = watchLane(nestedView.watcher.argv)
+  assert.equal(nestedWatch.status, 0, nestedWatch.stderr)
+}
+// Recovered argv observes new durable waits without Herdr or a remote branch.
+let sequence = 1
+for (const state of ['decision-request', 'blocked', 'handoff']) {
+  save(join(runDir, 'lane-status-a1.json'), { state, seq: ++sequence, stage: 'challenge', round: 1, head,
+    ...(state === 'decision-request' ? { request_id: 'DR-recovered' } : {}),
+    updated_at: '2026-11-04T21:01:00Z', summary: 'recovered ' + state })
+  const observed = watchLane()
+  assert.equal(observed.status, 0, observed.stderr)
+  assert.match(observed.stdout, new RegExp(`LANE-STATUS planning: seq=${sequence} state=${state}`))
+}
+// A conductor checkout or missing recorded root cannot substitute for the lane's head.
+const missingRoot = [...view.watcher.argv]
+missingRoot[missingRoot.indexOf('--status-root') + 1] = 'planning=' + join(temporary, 'absent-worktree')
+assert.doesNotMatch(watchLane(missingRoot).stdout, /LANE-STATUS/)
+// Reconstruction preserves historical status while explicitly qualifying its head.
+git('-c', 'user.name=test', '-c', 'user.email=test@example.test', 'commit', '--allow-empty', '-qm', 'advance lane')
+const advancedHead = git('rev-parse', 'HEAD')
+const stale = JSON.parse(invoke().stdout).lanes[0]
+assert.equal(stale.lane_status_freshness, 'stale')
+assert.equal(stale.local_branch_head, advancedHead)
+assert.equal(stale.lane_status.head, head)
+assert.doesNotMatch(watchLane().stdout, /LANE-STATUS/)
+git('update-ref', 'refs/heads/' + lane.branch, head)
+save(join(runDir, 'lane-brief-a1.md'), brief.replace('"worktree_path":' + JSON.stringify(repo),
+  '"worktree_path":' + JSON.stringify(join(temporary, 'absent-worktree'))))
+const unavailable = JSON.parse(invoke().stdout).lanes[0]
+assert.equal(unavailable.lane_status_freshness, 'unverifiable')
+assert.equal(unavailable.local_branch_head, null)
+assert.equal(unavailable.lane_status.head, head)
+save(join(runDir, 'lane-brief-a1.md'), brief)
+// Missing pins and unreadable immutable registry objects never select current trust.
+const originalPointer = json(pointer)
+for (const registry_revision of [undefined, '0'.repeat(40)]) {
+  save(pointer, { ...originalPointer, registry_revision })
+  const refused = invoke()
+  assert.equal(refused.status, 1, refused.stdout + refused.stderr)
+  assert.equal(JSON.parse(refused.stdout).watcher, null)
+}
+save(pointer, originalPointer)
+for (const [option, value] of [['--registry-revision', 'main'], ['--registry-revision', '0'.repeat(40)],
+  ['--registry', join(repo, 'not-the-registry.json')]]) {
+  const invalidArgs = [...view.watcher.argv]
+  invalidArgs[invalidArgs.indexOf(option) + 1] = value
+  assert.equal(watchLane(invalidArgs).status, 2)
+}
+// Missing run records with each independent kind of dispatch evidence block.
+const untouched = revision.plan.lanes[1]
+const untouchedDir = join(root, 'runs', untouched.run_id)
+// Terminal PR observation still needs its immutable pin after session loss.
+const terminal = structuredClone(run)
+terminal.outcome = 'abandoned'
+terminal.stage_transitions.at(-1).exit = 'fixture ended'
+const terminalOutcome = { outcome: 'abandoned', at: '2026-11-04T21:00:00Z' }
+terminal.outcome_transitions = [{ seq: 0, ...terminalOutcome, prev_digest: 'genesis',
+  digest: chainDigest(terminalOutcome, 'genesis') }]
+save(runFile, terminal)
+rmSync(pointer)
+const unpinnedTerminal = invoke()
+assert.equal(unpinnedTerminal.status, 1, unpinnedTerminal.stdout + unpinnedTerminal.stderr)
+assert.equal(JSON.parse(unpinnedTerminal.stdout).lanes.length, 1, unpinnedTerminal.stdout + unpinnedTerminal.stderr)
+assert.equal(JSON.parse(unpinnedTerminal.stdout).lanes[0].outcome, 'abandoned')
+assert.equal(JSON.parse(unpinnedTerminal.stdout).watcher, null)
+assert.match(unpinnedTerminal.stdout, /lacks a matching kickoff-pinned registry revision/)
+save(pointer, originalPointer)
+assert.equal(invoke().status, 0, 'terminal run with retained pin should remain watchable')
+save(runFile, run)
+save(join(untouchedDir, 'run.json'), { ...terminal, run_id: untouched.run_id })
+save(join(untouchedDir, 'owner-slate'), planDoc.slate_id)
+save(join(untouchedDir, 'branch.json'), { version: 1, run_id: untouched.run_id, branch: untouched.branch })
+const otherPointer = join(root, 'active', createHash('sha256').update(untouched.branch).digest('hex') + '.json')
+save(otherPointer, { version: 1, run_id: untouched.run_id, branch: untouched.branch, generation: 1, registry_revision: advancedHead })
+const mismatchedPins = invoke()
+assert.equal(mismatchedPins.status, 1, mismatchedPins.stdout + mismatchedPins.stderr)
+assert.equal(JSON.parse(mismatchedPins.stdout).watcher, null)
+assert.match(mismatchedPins.stdout, /different kickoff-pinned registry revisions/)
+rmSync(otherPointer)
+rmSync(untouchedDir, { recursive: true })
+const expectMissingBlock = () => {
+  const missing = invoke()
+  assert.equal(missing.status, 1, missing.stderr + missing.stdout)
+  assert.ok(missing.stdout, missing.stderr)
+  const state = JSON.parse(missing.stdout)
+  assert.equal(state.watcher, null)
+  assert.ok(state.blockers.some(entry => entry.run_id === untouched.run_id && /surviving dispatch evidence/.test(entry.reason)))
+}
+for (const evidence of ['branch.json', 'monitor.json', 'lane-brief-a1.md']) {
+  save(join(untouchedDir, evidence), '{}')
+  expectMissingBlock()
+  rmSync(untouchedDir, { recursive: true })
+}
+const ownerAttempt = join(root, 'slates', planDoc.slate_id, 'orchestrator', untouched.run_id)
+save(join(ownerAttempt, 'a1', 'lane-brief.md'), 'surviving attempt')
+expectMissingBlock()
+rmSync(ownerAttempt, { recursive: true })
+const strayPointer = join(root, 'active', createHash('sha256').update('other-branch').digest('hex') + '.json')
+save(strayPointer, { version: 1, run_id: untouched.run_id, branch: 'other-branch', generation: 1, registry_revision: head })
+expectMissingBlock()
+rmSync(strayPointer)
+revision.plan.lanes.pop()
+const retainedIssue = revision.plan.issues.find(issue => issue.number === untouched.issue)
+const priorIssue = structuredClone(retainedIssue)
+Object.assign(retainedIssue, { verdict: 'handed-off', pr: 456 })
+revision.plan.retained_lanes = [{ lane: untouched, policy: revision.plan.policy, state: 'idle' }]
+const rehash = () => { revision.digest = chainDigest({ seq: revision.seq, at: revision.at, reason: revision.reason, plan: revision.plan }, 'genesis'); save(join(root, 'slates', planDoc.slate_id, 'plan.json'), planDoc) }
+rehash()
+expectMissingBlock()
+revision.plan.lanes.push(untouched)
+Object.keys(retainedIssue).forEach(key => delete retainedIssue[key])
+Object.assign(retainedIssue, priorIssue)
+delete revision.plan.retained_lanes
+rehash()
+assert.equal(invoke().status, 0)
+// Conflicting attempts and corrupted records never yield an actionable watcher.
+save(join(runDir, 'lane-brief-a2.md'), brief.replaceAll('-a1', '-a2').replace('"attempt_nonce":"a1"', '"attempt_nonce":"a2"'))
+const ambiguous = invoke()
+assert.equal(ambiguous.status, 1, ambiguous.stderr)
+assert.equal(JSON.parse(ambiguous.stdout).watcher, null)
+assert.match(ambiguous.stdout, /expected one current-generation attempt/)
+console.log('  PASS: read-only resume reconstructs slate and re-arms real watcher without a session directory')
+NODE
+
 echo "=== All dev-flow-monitor trust contract tests passed ==="

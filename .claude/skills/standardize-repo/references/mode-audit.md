@@ -107,6 +107,33 @@ canonical remote itself — and it refuses to run at all on a repo with no
    lint to a Taskfile target, is itself a finding (the standard is "every hook /
    CI job delegates to a `task` target").
 
+   **Run the live ruleset comparison when the target defines `audit:ruleset`.**
+   `assets/verify-applied.sh "$TARGET"` detects it with
+   `task --color=false --summary audit:ruleset`, which resolves aliases. It uses
+   `task --color=false --list-all` only to prove the Taskfile can be listed, then
+   runs `task --color=false --exit-code --output=interleaved audit:ruleset` in
+   the target. WARN and INFO lines go to stderr; the captured audit output,
+   including any diff, goes to stdout. Capture both streams in the fleet gap
+   report. Fleet audits must include this advisory check even when no
+   remediation is applied.
+   The `--exit-code` flag preserves the helper's status through go-task. A
+   result is reported only when its status and output marker agree:
+
+   | Result | Gap-report entry |
+   | --- | --- |
+   | 0 + `RULESET AUDIT CLEAN:` — identical | OK: live ruleset matches the checked-in file |
+   | 1 + `RULESET AUDIT DRIFT:` — drift | advisory: include the emitted diff and propose reconciliation |
+   | 2 + `RULESET AUDIT UNAVAILABLE:` — unavailable (permissions / absent ruleset) | not checked: include the diagnostic; never report drift or OK |
+   | No Taskfile or task absent | skipped: target does not ship `audit:ruleset` |
+   | Taskfile present but `task` unavailable | not checked: install go-task and retry |
+   | Discovery failure, unexpected status, missing or mismatched marker | not checked: retain the diagnostic |
+
+   Ruleset drift does not fail the applied-state verifier or raise a blocker by
+   itself. Preserve its diff in the fleet gap report as **advisory**, separately
+   from the structural ruleset findings in drift classes D/D2. This comparison
+   is read-only; any change to GitHub's live ruleset follows the explicit
+   remediation approval in §4.
+
 4. **Record each comparison as a gap-report line** (format in §2). Skip nothing:
    an area that fully matches is recorded as "OK" so the report is a complete
    ledger, not just a problem list.
@@ -127,6 +154,8 @@ carries a **severity** and a **concrete fix** (the exact file/edit/command, not
   the same pass unless explicitly deferred.
 - **nice** — cosmetic / low-risk normalization (naming consistency, legacy
   graveyard cleanup).
+- **advisory** — live-vs-file ruleset drift from `audit:ruleset`; retain its
+  diff for review without failing the audit gate.
 
 ### Template
 
@@ -139,6 +168,11 @@ carries a **severity** and a **concrete fix** (the exact file/edit/command, not
 - [should] <one-line gap>
   - Evidence: ...
   - Fix: ...
+- [advisory] <live ruleset drift>
+  - Evidence: <audit:ruleset diff>
+  - Fix: <proposed reconciliation for approval>
+- not checked — <unavailable live check and diagnostic>
+- skipped — <capability absent>
 - OK — <areas/items that already conform> (so the ledger is complete)
 ```
 
@@ -304,7 +338,9 @@ repository must set `use_skills_sync=true` with `universal` in
 `skill_categories` — **unless the repo is the skills source itself**, i.e. it
 ships the classifier natively as a git-tracked, non-symlink executable regular
 file at `ai/skills/universal/integrate/assets/check-codex-cloud-review.sh`,
-*and* tracks the `integrate` skill's entry point
+*and* ships `ai/skills/universal/integrate/assets/require-marker.sh` as a
+tracked, non-symlink executable regular file (index mode `100755`) present in
+the worktree, *and* tracks the `integrate` skill's entry point
 `ai/skills/universal/integrate/SKILL.md` as a regular file — index mode `100644`
 or `100755`, so a `120000` symlink does not qualify however valid its target,
 the same `-type f` stance `verify-skills.sh` takes — with valid frontmatter: the
@@ -324,7 +360,7 @@ contract the integrate stage reads — `emit pending` with `exit 11` and
 `emit escalate` with `exit 13` (harmon-devkit, which may keep
 `use_skills_sync=false`). For such a repo the sync/`universal` requirement is
 waived, matching the update-mode guard in `mode-update.md` — which applies
-exactly that tracked/non-symlink/executable test plus those two, so an ignored,
+those tracked/non-symlink/executable tests plus the entry-point and structure tests, so an ignored,
 untracked, or symlinked helper does **not** qualify here, and neither does a
 `100755` stub, a tree whose `SKILL.md` is missing, untracked, or frontmatter-less,
 or a no-op helper whose **comments merely print** the usage forms. That last case
@@ -332,7 +368,13 @@ is why the anchors are structural: the guard strips comment lines before matchin
 so a printed banner cannot stand in for a dispatch table. All of these probes are
 **static**: they establish that the interface is shipped, never that it runs
 correctly — audit is a read-only stage and must not execute the repo to find out,
-and a helper deliberately shaped to match the anchors would still pass. Do not report its `use_skills_sync=false` as G4 drift when that native
+and a helper deliberately shaped to match the anchors would still pass. The asset probes check the classifier and `require-marker.sh`. The entry-point
+check also helps identify the source, but these checks do not verify a complete
+vendor. The classifier itself sources `asset-freshness.sh` and
+`trusted-registry.sh`; a vendor missing either cannot run it, although the
+probe still identifies the source. Other
+procedure assets are deliberately unprobed because their presence is unnecessary
+for identity; `mode-update.md` lists them for review as procedures change. Do not report its `use_skills_sync=false` as G4 drift when that native
 classifier is present. The rendered `AGENTS.md` plus `integrate` skill must require a terminal result
 attributable to every current PR head, preserve exact trigger-attempt state,
 and escalate after two unavailable attempts without a CI-only fallback. The

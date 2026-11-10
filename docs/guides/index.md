@@ -5,6 +5,8 @@ Calm, repeatable how-tos read *in advance* (the crisis counterpart is
 
 - [onboarding.md](onboarding.md) — get a new dev or agent productive: setup,
   where things live, the dev loop. The human entry procedure.
+- [dependency-maintenance.md](dependency-maintenance.md) — measure dependency
+  update maintenance proxies across cycles.
 - [deploying.md](deploying.md) — how to cut/promote a release (the calm
   procedure); cross-links a rollback runbook for when it goes wrong.
 - [troubleshooting.md](troubleshooting.md) — symptom → cause → fix for **dev**
@@ -53,5 +55,8 @@ Calm, repeatable how-tos read *in advance* (the crisis counterpart is
   network policy generated from the shared egress allowlist and applied from
   outside the VM, Herdr attachment, and the observations still pending a
   provisioned Sprite.
+- [renovate-preset-publication.md](renovate-preset-publication.md) — publish
+  the shared Renovate preset, then adopt it after release with policy parity
+  checks and pilot repositories.
 
 TODO: add more guides, e.g. "local development setup", "add a feature", "how X works".

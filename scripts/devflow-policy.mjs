@@ -49,7 +49,22 @@ const TOP_LEVEL_REQUIRED_KEYS = [
   'stage',
   'strategy'
 ]
-const TOP_LEVEL_OPTIONAL_KEYS = ['spend', 'tier', 'run']
+const TOP_LEVEL_OPTIONAL_KEYS = ['spend', 'tier', 'run', 'review_guidelines']
+// [review_guidelines] (harmon-init#1530; the interface is shared with
+// harmon-devkit#1289): WHERE the repository's reviewer instructions live, so
+// the local finders and the PR-side reviewers read one copy. Every key is
+// optional. `file` is a repo-relative path to the canonical guidelines and
+// `text` an inline alternative — mutually exclusive. The two *_focus strings
+// are appended to the matching local pass only when the CLI gives no focus
+// text of its own. This reader never OPENS the file: the caller reads it from
+// the review's base revision (codex-review.sh), and a branch that edits
+// .devflow.toml itself is already covered by the merge-base rule below. It
+// cannot be named [review]: detectShape reads a non-empty [review] table as a
+// v1 marker and refuses a v2 file carrying one as mixed.
+const REVIEW_GUIDELINES_KEYS = ['file', 'text', 'challenge_focus', 'review_focus']
+const REVIEW_GUIDELINES_FILE_MAX_BYTES = 255
+const REVIEW_GUIDELINES_TEXT_MAX_BYTES = 16 * 1024
+const REVIEW_GUIDELINES_FOCUS_MAX_BYTES = 2 * 1024
 const GATE_KEYS = ['round_code', 'round_docs', 'secret_scan', 'pre_pr']
 const ROLES = ['orchestrator', 'implementer', 'challenger', 'reviewer', 'integrator']
 const CONFIDENCE_STAGES = ['challenge', 'review']
@@ -367,6 +382,7 @@ export function resolveAbsentPolicy({ rigor: requestedRigor, strategy: requested
     roles,
     stages: builtinStagesDefault(),
     strategy: { ...BUILTIN_STRATEGY_DEFAULT },
+    review_guidelines: null,
     // Empty role/stage preferences are intentional when no policy exists;
     // crossValidate uses this marker to distinguish them from a malformed v2
     // policy that silently omitted all executable actors.
@@ -2118,6 +2134,7 @@ export function resolveV2(doc, opts = {}) {
   const stages = resolveStages(doc)
   const strategy = resolveStrategy(doc, requestedStrategy)
   const tierMatrix = resolveTierMatrix(doc, tierOrder)
+  const reviewGuidelines = resolveReviewGuidelines(doc)
 
   return {
     source: 'operating',
@@ -2132,9 +2149,65 @@ export function resolveV2(doc, opts = {}) {
     roles,
     stages,
     strategy,
+    review_guidelines: reviewGuidelines,
     ...(runWarnings.length ? { warnings: runWarnings } : {}),
     ...(selectedRun ? { run: { name: opts.run, source: 'operator', ...(selectedRun.gates ? { gates: structuredClone(selectedRun.gates) } : {}) } } : {})
   }
+}
+
+/**
+ * Why a `[review_guidelines].file` value is unsafe to hand to `git show
+ * <rev>:<file>`, or null when it is a plain repo-relative POSIX path. The rules
+ * are the shared interface's (harmon-devkit#1289), stated once here so the
+ * schema's pattern and this reader refuse the same strings: no leading `/`
+ * (absolute) or `-` (reads as an option), no `..` segment (escapes the tree),
+ * no backslash or NUL (not a POSIX path), and at most 255 bytes.
+ */
+export function reviewGuidelinesPathProblem(file) {
+  if (typeof file !== 'string' || file.length === 0) return 'must be a non-empty string'
+  if (Buffer.byteLength(file, 'utf8') > REVIEW_GUIDELINES_FILE_MAX_BYTES) {
+    return `must be at most ${REVIEW_GUIDELINES_FILE_MAX_BYTES} bytes`
+  }
+  if (file.startsWith('/')) return 'must be repo-relative, not absolute'
+  if (file.startsWith('-')) return 'must not start with "-"'
+  if (file.includes('\\') || file.includes('\0')) return 'must be a POSIX path (no backslash or NUL)'
+  if (file.split('/').includes('..')) return 'must not contain a ".." segment'
+  return null
+}
+
+// Validate [review_guidelines] whole and project it as the shared shape:
+// every key present as a string or null, or the whole object null when the
+// table is absent. Whether or not this invocation reviews anything, so a
+// malformed table fails at authoring time rather than on the first review
+// that reads it.
+function resolveReviewGuidelines(doc) {
+  if (!Object.hasOwn(doc, 'review_guidelines')) return null
+  const table = doc.review_guidelines
+  requireClosedTable(table, [], REVIEW_GUIDELINES_KEYS, '[review_guidelines]')
+  for (const key of REVIEW_GUIDELINES_KEYS) {
+    if (Object.hasOwn(table, key) && typeof table[key] !== 'string') {
+      throw new PolicyError(`[review_guidelines].${key} must be a string, got ${JSON.stringify(table[key])}`)
+    }
+  }
+  if (Object.hasOwn(table, 'file') && Object.hasOwn(table, 'text')) {
+    throw new PolicyError('[review_guidelines] sets both file and text; they are mutually exclusive')
+  }
+  if (Object.hasOwn(table, 'file')) {
+    const problem = reviewGuidelinesPathProblem(table.file)
+    if (problem) throw new PolicyError(`[review_guidelines].file ${problem}, got ${JSON.stringify(table.file)}`)
+  }
+  if (Object.hasOwn(table, 'text')) {
+    if (table.text.length === 0) throw new PolicyError('[review_guidelines].text must be a non-empty string')
+    if (Buffer.byteLength(table.text, 'utf8') > REVIEW_GUIDELINES_TEXT_MAX_BYTES) {
+      throw new PolicyError(`[review_guidelines].text must be at most ${REVIEW_GUIDELINES_TEXT_MAX_BYTES} bytes`)
+    }
+  }
+  for (const key of ['challenge_focus', 'review_focus']) {
+    if (Object.hasOwn(table, key) && Buffer.byteLength(table[key], 'utf8') > REVIEW_GUIDELINES_FOCUS_MAX_BYTES) {
+      throw new PolicyError(`[review_guidelines].${key} must be at most ${REVIEW_GUIDELINES_FOCUS_MAX_BYTES} bytes`)
+    }
+  }
+  return Object.fromEntries(REVIEW_GUIDELINES_KEYS.map((key) => [key, Object.hasOwn(table, key) ? table[key] : null]))
 }
 
 // [tier.matrix] is optional: a policy without it simply has no derived-Tier
@@ -2454,6 +2527,7 @@ export function decodeHistoricalPolicy(
     roles: decodeHistoricalRoles(doc, level, tierOrder, { required: isV1 }),
     stages: builtinStagesDefault(),
     strategy: decodeHistoricalStrategy(doc, requestedStrategy, { required: isV1 }),
+    review_guidelines: null,
     decodedFrom: detection.shape
   }
 }
@@ -3367,6 +3441,18 @@ function cliResolve(args) {
     const integration = resolved.stages.integration
     console.log(
       `stage[integration]: finders=[${integration.finders.join(', ')}] review_trigger=${integration.review_trigger}`
+    )
+    const guidelines = resolved.review_guidelines ?? null
+    console.log(
+      `review guidelines: ${
+        guidelines === null
+          ? 'none ([review_guidelines] absent)'
+          : guidelines.file !== null
+            ? `file ${guidelines.file}`
+            : guidelines.text !== null
+              ? `inline text (${Buffer.byteLength(guidelines.text, 'utf8')} bytes)`
+              : 'conventional path (neither file nor text set)'
+      }${guidelines?.challenge_focus ? ' challenge_focus=set' : ''}${guidelines?.review_focus ? ' review_focus=set' : ''}`
     )
     const implementer = resolved.roles.implementer
     console.log(

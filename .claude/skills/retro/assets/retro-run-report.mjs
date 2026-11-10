@@ -1051,6 +1051,13 @@ function classProvenanceRows(counts) {
     .sort((a, b) => b.count - a.count || a.class.localeCompare(b.class) || a.provenance.localeCompare(b.provenance))
 }
 
+// Owner integration-review authority captures share interventions[] with
+// human touchpoints (dev-flow-support's isAuthorityCapture). This report runs
+// without that package installed, so it carries the same one-line predicate.
+function isAuthorityCapture(entry) {
+  return entry?.kind === 'other' && typeof entry?.note === 'string' && entry.note.startsWith('integration-review-authority v1 ')
+}
+
 function measure(trajectory, policy) {
   const transitions = Array.isArray(trajectory.stage_transitions) ? trajectory.stage_transitions : []
   const rounds = Array.isArray(trajectory.rounds) ? trajectory.rounds : []
@@ -1253,17 +1260,30 @@ function renderMarkdown(report) {
   const t = report.trajectory
   l.push(`## Run evidence — run \`${safe(report.run_id)}\``)
   l.push('')
+  l.push(`- Skills pin: \`${safe(report.skills.pin)}\``)
+  if (report.skills.warning) l.push(safe(report.skills.warning))
   l.push(`- Issue: #${t.issue ?? '—'} · PR: ${t.pr ? `#${t.pr.number}` : '—'}`)
   l.push(`- Initiated by: \`${safe(t.initiated_by)}\` at ${safe(t.started_at)}`)
   l.push(`- Outcome: \`${safe(t.outcome ?? 'in-flight')}\``)
   l.push(
     `- Promotion: ${t.promotion ? `${safe(t.promotion.promoted_at)} at head ${safe(t.promotion.head).slice(0, 7)}` : 'none recorded'}`
   )
+  if (t.recovered_promotion) {
+    const recovery = t.recovered_promotion
+    l.push(`- Outcome after takeover: promoted by orchestrator ${safe(recovery.actor)} (${safe(recovery.slate)}/${safe(recovery.session)})`)
+    l.push(`- Takeover promotion: ${safe(recovery.at)} at head ${safe(recovery.head)}; lane blocker: ${safe(recovery.reason)}; recovery is not unattended success`)
+  } else if (t.takeover_history?.length) {
+    l.push(`- Takeover: ${safe(t.takeover_history[0].actor)}; promotion not yet recorded; lane blocker: ${safe(t.takeover_history[0].reason)}`)
+  }
   l.push(`- Evidence source: \`${safe(report.source.harvester)}\`, run id from ${safe(report.source.run_id_from)}`)
   l.push(`- Trust root: ${safe(report.source.trusted_actors)}`)
   if (report.source.pr_binding) l.push(`- PR binding: ${safe(report.source.pr_binding)}`)
   if (report.as_of) {
-    l.push(`- Reconstructed as of: ${safe(report.as_of)} — **the run record and its comment evidence only.**`)
+    l.push(
+      t.local_record_current_state
+        ? `- As-of cutoff: ${safe(report.as_of)} — **the local run record is current-state, not reconstructed at this cutoff.**`
+        : `- Reconstructed as of: ${safe(report.as_of)} — **the run record and its comment evidence only.**`
+    )
     l.push(
       '  These inputs are **not** reconstructed and are read as they stand now: the **linked-issue set** (the PR\'s closing references plus same-repository non-closing references and run-id issue numbers parsed from its body, which decide which issues a fallback search reaches), the **PR body** the disclosed caps above come from, and the **default trust set** (the target repository\'s default-branch-head registry, when no explicit trust flags are supplied). A replay with --as-of trusts the default allowlist as it is now, while the harvester still applies write-time registry revisions to legacy evidence. Re-linking an issue, editing the body, or changing that allowlist changes those inputs even for a fixed cutoff.'
     )
@@ -1316,7 +1336,15 @@ function renderMarkdown(report) {
       const authorized = stage.authorized_ceiling === undefined ? '' : `; authorized ceiling ${stage.authorized_ceiling}`
       const remediationCap = stage.remediation_cap === null ? 'no cap recorded' : `cap ${stage.remediation_cap} (disclosed, unverified)`
       l.push(`- Remediation pushes: ${stage.remediation_pushes} / ${remediationCap}`)
-      l.push(`- Rounds/passes/findings: not measured from local evidence (${cap}${authorized}) — integration passes carry no authenticated evidence marker today.`)
+      const evidence = stage.integration_evidence
+      if (evidence && typeof evidence === 'object' && evidence.measurement === 'authenticated-receipt-backed') {
+        l.push(`- Passes: ${evidence.passes} authenticated receipt-backed pass(es) / ${cap}${authorized}`)
+        for (const [finder, count] of Object.entries(evidence.findings_by_finder ?? {})) {
+          l.push(`- Findings (${safe(finder)}): ${count}`)
+        }
+      } else {
+        l.push(`- Rounds/passes/findings: not measured from local evidence (${cap}${authorized}) — no authenticated receipt-backed integration pass was found.`)
+      }
     } else if (stage.cap !== null || stage.rounds_spent > 0 || stage.authorized_ceiling !== undefined) {
       const cap = stage.cap === null ? 'no cap recorded' : `cap ${stage.cap} (disclosed, unverified)`
       l.push(`- Rounds spent: ${stage.rounds_spent} / ${cap}${stage.authorized_ceiling === undefined ? '' : `; authorized ceiling ${stage.authorized_ceiling}`}`)
@@ -1469,7 +1497,9 @@ function renderMarkdown(report) {
     // saying otherwise contradicts the outcome line above it (review round 2,
     // confirmed P2).
     l.push(
-      report.trajectory.outcome
+      report.trajectory.takeover_history?.length
+        ? 'Orchestrator takeover recorded separately; recovery is not unattended success.'
+        : report.trajectory.outcome
         ? 'None — the run reached its outcome unattended.'
         : 'None recorded so far. The run has no terminal outcome yet, so this is not yet an unattended run — only one that has not needed a human up to this point.'
     )
@@ -1716,6 +1746,10 @@ function renderLocalUnverified(args, runId, requestedPr) {
   add('Started at', record.started_at)
   add('Initiated by', record.initiated_by)
   add('Outcome', record.outcome ?? 'not recorded')
+  for (const entry of record.takeover_history ?? []) {
+    add(entry.kind === 'promotion' ? 'Takeover promotion recorded locally' : 'Takeover recorded locally',
+      `${entry.actor} (${entry.slate}/${entry.session}) at ${entry.at}; ${entry.reason}${entry.head ? `; head ${entry.head}; fingerprint ${entry.gate_fingerprint}` : ''}; original lane outcome ${record.outcome}; not unattended success`)
+  }
   add('PR recorded locally', record.pr ? `#${record.pr.number} (${record.pr.url})` : 'not recorded')
   if (args.pr !== undefined && !record.pr) {
     add('PR binding', `no PR is recorded locally; this record is not bound to PR #${args.pr}`)
@@ -1727,11 +1761,12 @@ function renderLocalUnverified(args, runId, requestedPr) {
     ? 'not measured — local adjudications are not authenticated'
     : 'not recorded — adjudications/ is absent')
   add('Findings and convergence', 'not measured — no authenticated adjudication evidence')
-  if (record.interventions.length === 0) add('Interventions', 'none recorded')
-  for (const [stage, count] of Object.entries(promptCountsByStage(record.interventions, record.stage_transitions))) {
+  const interventions = record.interventions.filter((entry) => !isAuthorityCapture(entry))
+  if (interventions.length === 0) add('Interventions', 'none recorded')
+  for (const [stage, count] of Object.entries(promptCountsByStage(interventions, record.stage_transitions))) {
     add('Answered approval prompts', `${stage}: ${count}`)
   }
-  for (const entry of record.interventions) add('Intervention', `${entry.at}: ${entry.kind}; ${entry.note}${promptSummary(entry)}`)
+  for (const entry of interventions) add('Intervention', `${entry.at}: ${entry.kind}; ${entry.note}${promptSummary(entry)}`)
   if (record.settlements.length === 0) add('Settlements', 'none recorded')
   for (const entry of record.settlements) {
     add('Settlement recorded locally', `${entry.finding_id}: ${entry.disposition} at ${entry.settled_at}; ${entry.reference.type} ${entry.reference.value}`)
@@ -1739,18 +1774,52 @@ function renderLocalUnverified(args, runId, requestedPr) {
   add('Promotion recorded locally', record.promotion
     ? `${record.promotion.head} at ${record.promotion.promoted_at}; fingerprint ${record.promotion.gate_fingerprint}`
     : 'not recorded')
+  const skills = args.skills
   const report = {
-    schema: 'retro-run-report.v1', status: 'local-unverified', verified: false,
+    schema: 'retro-run-report.v1', status: 'local-unverified', verified: false, skills,
     run_id: runId, provenance: LOCAL_PROVENANCE, source: { local_record: resolved }, measurements
   }
   return args.json ? JSON.stringify(report, null, 2).replace(/[\u007f-\u009f\u061c\u200e\u200f\u202a-\u202e\u2066-\u2069]/g, (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, '0')}`) : [
     `## Run evidence — run \`${localSafe(runId)}\` — ${LOCAL_PROVENANCE}`, '',
+    `- Skills pin: ${localSafe(skills.pin)} — ${LOCAL_PROVENANCE}`,
+    ...(skills.warning ? [`${localSafe(skills.warning)} — ${LOCAL_PROVENANCE}`] : []),
     ...measurements.map((entry) => `- ${entry.measurement}: ${localSafe(entry.value)} — ${entry.provenance}`)
   ].join('\n')
 }
 
 function deletedEntryReason(missing, source) {
   return `${missing}, but a trusted evidence marker (${source}) names it. An indexed run whose evidence the harvester cannot find is deleted-entry tampering, never a run that did not happen.`
+}
+
+// Local disclosure only: never add GitHub reads to the evidence discovery protocol.
+function skillsDisclosure() {
+  const git = (cwd, ...args) => {
+    try { return execFileSync('git', ['--no-replace-objects', '-C', cwd, ...args],
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trim() } catch { return '' }
+  }
+  const assets = path.dirname(realpathSync(fileURLToPath(import.meta.url)))
+  const target = git(process.cwd(), 'rev-parse', '--show-toplevel')
+  const assetRoot = git(assets, 'rev-parse', '--show-toplevel')
+  const read = file => existsSync(file) ? readFileSync(file, 'utf8') : ''
+  const ref = text => text.match(/^\s*(?:#\s*)?ref:\s*["']?([^\s"'#()]+)/m)?.[1] || ''
+  const rootPin = root => root ? ref(read(path.join(root, '.SKILLS_PROVENANCE'))) || ref(read(path.join(root, '.skills-sync.yaml'))) : ''
+  const packageProvenance = path.join(path.dirname(path.dirname(assets)), '.SKILLS_PROVENANCE')
+  const sourceRelative = assetRoot ? path.relative(path.join(assetRoot, 'ai/skills'), assets) : '..'
+  const sourceOwned = assetRoot && sourceRelative !== '..' && !sourceRelative.startsWith('../') && !path.isAbsolute(sourceRelative) &&
+    !existsSync(packageProvenance) && !existsSync(path.join(assetRoot, '.SKILLS_PROVENANCE'))
+  const assetPin = ref(read(packageProvenance)) || (assetRoot ? ref(read(path.join(assetRoot, '.SKILLS_PROVENANCE'))) ||
+    (sourceOwned ? '' : ref(read(path.join(assetRoot, '.skills-sync.yaml')))) : '')
+  const pin = assetPin || (!assetRoot ? rootPin(target) : '') || `source-tree@${git(assetRoot || target || '.', 'rev-parse', '--short', 'HEAD') || 'unknown'}`
+  const defaultPinFor = root => {
+    if (!root) return ''
+    const defaultRef = git(root, 'symbolic-ref', 'refs/remotes/origin/HEAD') || 'refs/remotes/origin/main'
+    return ref(git(root, 'show', `${defaultRef}:.skills-sync.yaml`))
+  }
+  const common = root => root ? git(root, 'rev-parse', '--path-format=absolute', '--git-common-dir') : ''
+  const sameClone = Boolean(assetRoot && target && common(assetRoot) === common(target))
+  const defaultPin = sourceOwned && sameClone ? null : defaultPinFor(target) || defaultPinFor(assetRoot) || null
+  return { pin, default_pin: defaultPin, warning: defaultPin && pin !== defaultPin
+    ? `WARNING: report skills pin ${pin} differs from default branch pin ${defaultPin}` : null }
 }
 
 function run(argv) {
@@ -1760,6 +1829,8 @@ function run(argv) {
     return 0
   }
   validateArgs(args)
+  const skills = skillsDisclosure()
+  if (skills.warning) console.error(`${TOOL}: ${skills.warning}`)
 
   // Trust first: discovery gates on the same actor-id set the harvester will
   // use, so it has to be resolved before a single marker is read.
@@ -1883,7 +1954,7 @@ function run(argv) {
           reportIgnoredMarkers(discovered.untrusted, discovered.malformed)
           reportIgnoredHints(discovered.ignoredHints)
         }
-        const local = renderLocalUnverified(args, runId, discovered?.pr || pr)
+        const local = renderLocalUnverified({ ...args, skills }, runId, discovered?.pr || pr)
         if (local !== null) {
           console.log(local)
           return 13
@@ -1913,6 +1984,7 @@ function run(argv) {
       : `bound to PR #${evidencePr}`
     const evidenceOnly = {
       schema: 'retro-run-report.v1',
+      skills,
       run_id: runId,
       status: 'evidence-only',
       issue: harvested.trajectory.issue,
@@ -1925,6 +1997,8 @@ function run(argv) {
     else {
       console.log(`## Run evidence — run \`${safe(runId)}\``)
       console.log('')
+      console.log(`- Skills pin: ${safe(skills.pin)}`)
+      if (skills.warning) console.log(safe(skills.warning))
       console.log(`- Status: \`evidence-only\``)
       console.log(`- Trust source: ${safe(evidenceOnly.source.trusted_actors)}`)
       console.log(`- Issue: #${evidenceOnly.issue}`)
@@ -1985,6 +2059,7 @@ function run(argv) {
   const measurements = measure(harvested.trajectory, policy)
   const report = {
     schema: 'retro-run-report.v1',
+    skills,
     run_id: runId,
     as_of: args.asOf || null,
     source: {

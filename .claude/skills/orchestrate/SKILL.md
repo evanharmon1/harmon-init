@@ -9,6 +9,19 @@ description: >-
 
 # Orchestrate
 
+**Asset checkout freshness.** Orchestrator assets run from the default-branch tip
+(a fast-forwarded primary checkout or an extracted copy), never from a stale tree.
+`git fetch` alone does not sync the tools. On activation, before each dispatch,
+and before each promotion, compare the checkout holding the vendored assets with
+`refs/remotes/origin/HEAD`: stop with a `BLOCKER` when HEAD is behind or the
+`.skills-sync.yaml` ref (or actual `.SKILLS_PROVENANCE` ref) differs from the
+default branch pin. The blocker names both commits or pins and the command
+`git -C <checkout> fetch origin && git -C <checkout> merge --ff-only origin/<default-branch> --no-edit`.
+`assets/dev-flow-monitor.sh check-assets` is the shared read-only predicate,
+called by activation, agent-run reservation, provisioning and promotion. Fetch
+origin before these boundaries so the local default ref is current. A missing
+default ref is indeterminate and blocks execution.
+
 The canonical [label transition table](https://github.com/evanharmon1/harmon-devkit/blob/main/docs/dev-loop/label-lifecycle.md) owns lifecycle events, writer skills, object scope and coexistence. Follow it for label coordination; do not derive state from a second definition in this skill.
 
 **Runtime assets travel with the skills.** Every executable this skill names is
@@ -125,8 +138,29 @@ harmon-init#1475. Disclose it; never guess a Tier.
 
 ## Planning
 
-Before provisioning or dispatching a slate, turn its milestone or explicit
-issue list and the resolved policy into a durable plan at
+Multi-repository slates record the conductor origin as `plan.repo`. Each issue,
+lane, overlap and merge-queue binding may carry `repo` (`owner/name`); omission
+means the conductor. Identity is `(repo, number)`, never the number alone.
+Foreign wave members and queue-order selectors use `owner/repo#N`; legacy
+integer members remain conductor-local. `blocked_by` numbers and overlap merge
+edges are local to their issue/overlap repository; cross-repository edges are
+not supported. Independent repositories may own the same file path.
+
+Use `plan-revise.mjs --repo owner/repo` beside `--issue N` for handoff, done
+and release; expand may assert `--repo` beside its lane selector. Foreign lanes
+record a provisioning snapshot in `base_sha`. At genesis, supply exactly one
+`plan.repository_bases` entry (`{repo, base_sha}`) for each foreign repository
+with issues, using that clone's fetched default branch. An addition introducing
+a foreign repository supplies `repository_base: {repo, base_sha}`; later additions
+reuse the recorded entry and omit this field. Only `base-move --repo` updates
+an existing base. Entries survive handoff and completion because done issues
+remain in the plan; entries without any issue are invalid. Lane snapshots are
+never a source for repository bases. Conductor
+base moves do not move foreign bases or test their fences against unrelated files.
+
+Before provisioning or dispatching a slate, turn its single issue, explicit
+issue list, milestone, or epic/umbrella issue with native sub-issues and the
+resolved policy into a durable plan at
 `<git-common-dir>/dev-flow-v2/slates/<slate-id>/plan.json`. Resolve the common
 Git directory with `git rev-parse --git-common-dir`; a linked worktree's `.git`
 path is a file and is never the shared-state root. Planning is orchestrator
@@ -135,15 +169,52 @@ and append-only recompute rule make its deterministic parts checkable.
 A second writer of the same `plan.json` is a blocker: the slate lock in
 § "Durable orchestrator state" refuses it, by slate id and by the work itself.
 
+Resolve the input read-only before building the graph:
+
+```sh
+node orchestrate/assets/slate-input.mjs --repo <owner/repo> --issue <number-or-issue-url>
+node orchestrate/assets/slate-input.mjs --repo <owner/repo> --issues <number-or-url,number-or-url,…>
+node orchestrate/assets/slate-input.mjs --repo <owner/repo> --milestone <number>
+```
+
+The JSON result records `input.kind` as `single`, `list`, `milestone`, or
+`epic`. A single issue automatically becomes `epic` when its paginated native
+GitHub sub-issue list is nonempty; the epic itself supplies context, never a
+lane. Explicit lists stay literal and do not expand their members. Open
+sub-issues become candidates, closed ones are listed as already `done`
+(closed state takes precedence over labels), and open `human` or `umbrella`
+sub-issues are excluded with a reason. The same state/label rules apply to
+single issues, lists and milestones; milestone reads exclude pull requests.
+Only direct sub-issues are expanded; an umbrella child is excluded rather than
+recursively dispatched. An epic/umbrella without native children is treated
+as a single issue and is excluded if labelled `human` or `umbrella`.
+
+Cross-repository children follow the same candidate/done/excluded rules and
+carry `repo`; keep that identity when constructing the plan. Require exit 0
+and `ok: true`; a failed read must stop planning even when partial candidates
+were returned. An empty
+candidate set creates no dispatch work. Discovery never claims issues or
+writes GitHub metadata. It does not replace the graph, live re-verification,
+`needs-review` ownership checks or exclusion of blocked dependents below.
+
+Copy the result's `input` object into the complete genesis input as
+`plan.input`: `{kind: "single", url}` or `{kind: "epic", url}`,
+`{kind: "list", urls: [...]}`, or `{kind: "milestone", number}`. Both plan
+schemas validate this optional provenance; older plans without it remain
+valid. `plan-revise.mjs genesis` retains it, and later revisions preserve it.
+Reports can link to the epic using `plan.input.url`. Record the resolver's
+`done` issues with verified `done` verdicts and exclude its excluded/refused
+work from lanes; step 2 still owes live verification and dependency filtering.
+
 Build and publish the plan in this order:
 
 1. **Graph.** When `.foreman.toml` exists and the slate is milestone-backed,
    consume `task foreman:plan -- --milestone <n>` for dependencies, waves, and
    the ready set instead of reimplementing Foreman's graph. Otherwise read
    native blocked-by edges and the fixed `Blocked by:` fallback lines from
-   `breakdown` §4. For an explicit issue list in a Foreman repository, include
-   its containing milestone in the graph input or stop if no authoritative
-   Foreman graph can cover the list.
+   `breakdown` §4. For single-issue, explicit-list or epic input in a Foreman
+   repository, include its containing milestone in the graph input or stop if
+   no authoritative Foreman graph can cover the candidate set.
 2. **Re-verify.** Check every ready issue read-only against the live target
    tree. Record `valid`, `partial`, or `done` and a complete candidate-file
    list; issue-body line numbers are hints, never evidence. Remove `done`
@@ -155,6 +226,21 @@ Build and publish the plan in this order:
    for them, and a dependent kept without its blocker would either dangle or
    dispatch early). The dependents re-enter a later plan once a human closes
    the precondition, and the run's human-work summary names all of them.
+   For `needs-review`, use the [canonical label lifecycle](https://github.com/evanharmon1/harmon-devkit/blob/main/docs/dev-loop/label-lifecycle.md)
+   and [glossary](https://github.com/evanharmon1/harmon-devkit/blob/main/docs/glossary.md).
+   Exclude a `needs-review` issue only when it is open and has no lane in the
+   current plan. Exclude its blocked dependents from dispatch too; retain the
+   exclusion reason so they can be reconsidered after the precondition clears.
+   A lane this run promoted stays in the plan as awaiting merge, and its
+   dependents stay blocked until step 7 releases them. A closed issue is
+   recorded `done` whatever its marker says; evaluate closed state before the
+   `needs-review` exclusion. Labels alone never prove a merge or handoff.
+   Current-plan ownership includes `verdict: "handed-off"` issues with a bound
+   PR in `plan.issues` or `merge_queue`, whether parked or promoted, even after
+   their `plan.lanes` entry releases its Working slot at handoff. Neither parked nor promoted
+   handoffs owned by this plan are excluded when `needs-review` is present; both
+   stay awaiting merge with dependents blocked until step 7 verifies the merge
+   and releases them.
 3. **Overlap.** Compare every pair of dispatchable candidate-file lists. Record
    the complete shared-path intersection for each overlapping pair, choose
    `serialize` or `split`, and record the resulting merge dependency. A split
@@ -163,8 +249,15 @@ Build and publish the plan in this order:
 4. **Cap.** Record which dispatcher applies and the cap it actually uses. An
    interactive orchestrator uses the resolved
    `[breadth].max_parallel_agents` directly. Only when Foreman is the dispatcher
-   is that policy cap intersected with `.foreman.toml`'s `max_parallel`; a
+   is that working-lane cap intersected with `.foreman.toml`'s `max_parallel`; a
    configured Foreman limit never lowers an interactive run's cap.
+   An operator instruction naming only a lane count ("up to N parallel lanes")
+   sets the working-lane cap. Keep the profile's in-flight cap, raised to N
+   if N is larger, and announce both values. When N exceeds the profile's
+   `max_parallel_agents`, record an operator pin on `max_parallel_agents`;
+   when N also exceeds `max_in_flight`, pin that value too, preserving
+   `max_in_flight >= max_parallel_agents`. Open tabs follow the in-flight
+   set, including idle handed-off lanes, rather than the working set.
 5. **Project.** In a complete revision `plan`, record the resolved policy
    snapshot; re-verified issues and candidate files; pairwise overlaps and
    resolutions; waves; and lane, issue, branch, run id, and fence assignments.
@@ -209,8 +302,8 @@ Build and publish the plan in this order:
    Run lock acquisition as its own command.
    Read its one-time token from the visible result.
    Include the optional milestone with the lock command,
-   adding `--milestone <n>` for a milestone-backed slate (the milestone exists
-   only in the lock):
+   adding `--milestone <n>` for a milestone-backed slate (the lock reserves
+   its scope; `plan.input` records its provenance):
 
    ```sh
    node dev-flow-support/assets/run-record.mjs lock acquire --slate <slate-id> --session <session> --issues <n,n,…> [--milestone <n>]
@@ -235,13 +328,21 @@ Build and publish the plan in this order:
    writers refuse while the canonical plan names an issue outside the
    reservation, so a later revision that adds issues widens the reservation
    with `lock acquire --issues --owner-token <token>` first.
+   Before dispatch, run `assets/validator-dependency-scan.sh --check-plan <plan.json>`
+   with `--lane <id>` for each lane, against that lane’s repository checkout, to
+   identify missing fence candidates and their reasons.
+   Include each candidate or record an orchestrator waiver as described under
+   [File-scope fences](#file-scope-fences); provisioning checks the selected lane again.
    Immediately before each lane dispatch, compare the live target head with the
    last revision's `plan.base_sha`; when they differ, recompute and validate the
    plan before dispatching.
 7. **Recompute after every external merge.** Re-read the new default-branch
    head, release newly unblocked dependents, rebuild waves, and repeat live
-   re-verification and pairwise overlap checks. Append the next `revisions[]`
-   entry with the complete new `plan` plus `seq`, `prev_digest`, `digest`, `at`,
+   re-verification and pairwise overlap checks. Recompute the plan’s merge queue
+   under [Merge queue procedure](#merge-queue-procedure); if its head merged,
+   advance only the next eligible PR through catch-up and the live handoff check.
+   Leave parked drafts behind until they reach the queue head. Append the next
+   `revisions[]` entry with the complete new `plan` plus `seq`, `prev_digest`, `digest`, `at`,
    and `reason`, using the same canonical-JSON SHA-256 chain convention as
    `run.schema.json`; the digest covers the complete sorted-key `plan` and the
    chain fields. The last revision is current, and earlier revisions remain
@@ -253,13 +354,38 @@ Build and publish the plan in this order:
    The mechanical half of a base move — bump `base_sha`, retire done issues
    and their lanes, extend the chain — is
    `dev-flow-support/assets/plan-revise.mjs base-move`, which runs exactly
-   that sequence. It refuses, naming the paths or issues, whenever the move
+   that sequence. `--repo owner/name` selects a repository (default: conductor);
+   `--done` and `--reverified` resolve issue numbers only there. Foreign moves
+   inspect the matching sibling clone, or `--repo-root PATH` with a verified
+   origin, and update the repository’s `repository_bases` entry plus its lane base snapshots.
+   Legacy plans without that map use their consistent foreign lane bases.
+   The conductor continues to use `base_sha`. It refuses, naming the paths or issues, whenever the move
    needs judgment: the new commits touch a live lane's fence or candidate
-   files, or a done issue releases a dependent. Fence expansions, overlap
+   files, or a done issue releases a dependent. After read-only re-verification
+   against the new base, pass repeatable `--reverified <issue>` with a non-empty
+   `--reason` to accept collisions for a live planned lane only when its run
+   directory does not exist. The revision records the decision; original fences
+   and candidate files stay unchanged. Other collisions and judgment refusals
+   still block the whole revision. Fence expansions, overlap
    choices and wave changes stay yours; supply those decisions to the writers
    below. Every writer extends the digest chain and runs the same candidate,
    validate, rename and canonical-readback sequence. Original fences of existing
    runs never change; only dated expansions grow.
+
+Apply step 2's `needs-review` exclusion on every step 7 recompute against the
+current plan's lane membership and live issue state: exclude only open issues
+without a lane in this plan, retain this run's promoted lanes as awaiting merge
+with dependents blocked until their merge is verified, and record closed issues
+as `done` regardless of markers before releasing newly unblocked dependents.
+Exclude a `needs-review` issue only when it is open and has no lane in the
+current plan. A lane this run promoted stays in the plan as awaiting merge,
+and its dependents stay blocked until step 7 releases them.
+Current-plan ownership includes `verdict: "handed-off"` issues with a bound PR
+in `plan.issues` or `merge_queue`, whether parked or promoted, even after their
+`plan.lanes` entry releases its Working slot at handoff. Neither parked nor promoted handoffs
+owned by this plan are excluded when `needs-review` is present; both stay
+awaiting merge with dependents blocked until step 7 verifies the merge and
+releases them.
 
 ### Wave release
 
@@ -281,18 +407,93 @@ the supplied reason, preserving issue membership, PR bindings, lane assignments
 and merge order. It refuses a skipped wave, incomplete predecessor handoffs,
 or an unmerged prerequisite. Existing plans without release markers retain
 their implicitly released first wave; later waves need an explicit release.
-The validator still rejects an oversized wave even after earlier lanes retire.
+The validator still rejects an oversized wave even after earlier lanes release their Working slots.
 
 Release establishes eligibility; dispatch must respect both Working lanes
 (`max_parallel_agents`) and all in-flight issues (`max_in_flight`, defaulting
 to `max_parallel_agents` for older profiles). Count an issue once when it has
 `claim:*` or an open delivery PR, including parked and promoted PRs. A release
-does not reserve a slot or dispatch lanes. Dispatch-time live counting and
-ceiling enforcement are tracked in harmon-devkit#1704; until that mechanism
-lands, the orchestrator owes the live check before dispatch. Recording handoff,
+does not reserve a slot or dispatch lanes. `run-record.mjs` enforces both
+ceilings at `lane-init` and retained-lane reactivation, under a
+shared dispatch mutex held through the admission writes. `provision-lane.mjs` uses `lane-init`. The run record
+stores the slate, projected counts and admission time; monitor `activate` requires
+that admission and performs no capacity read. `solo-init` creates a
+separate single-lane `solo-*` slate and is outside these per-slate breadth limits.
+The guard counts dispatched issues from durable run records and historical plan assignments,
+plus delivery PRs bound in run records, issue `pr` fields or `merge_queue`,
+within the candidate slate. An open issue counts as Working when it carries `claim:*`,
+or has an admitted, non-terminal slate run that has not yet reached the `claim`
+stage. The pre-claim reservation applies only to capacity. A [handoff](https://github.com/evanharmon1/harmon-devkit/blob/main/docs/glossary.md#handoff)
+follows a passing [handoff check](https://github.com/evanharmon1/harmon-devkit/blob/main/docs/glossary.md#handoff-check),
+when the claim is removed. Closed issues occupy neither Working nor in-flight slots; fresh PR state
+retains parked and promoted open deliveries in flight.
+The candidate occupies one slot in both counts, even before initialization.
+Planned, undispatched lanes occupy neither. A failed or incomplete live read
+refuses dispatch; a refusal names the ceiling and projected counts. Older
+profiles default the in-flight ceiling to the parallel ceiling. Recording handoff,
 done or base movement must not fail because that count is at its ceiling.
-`slated` membership writes are tracked separately in harmon-devkit#1688;
-`wave-release` writes no GitHub labels.
+Plan revisions publish `slated` membership through `plan-revise.mjs`: each
+addition or removal writes a structured session, slate and action comment.
+If a GitHub write fails after the plan commits, rerun `plan-revise.mjs
+membership --slate <id> --session <session> --owner-token <token>` to reconcile
+the recorded plan; do not append another revision merely to retry. A repository
+without the `slated` label is reported as skipped. `wave-release` writes no
+GitHub labels.
+
+### Working-slot release and reactivation
+
+Handoff releases a Working slot; it does not tear down a lane. After the passing
+handoff check, use `plan-revise.mjs handoff`; that writer releases the current
+branch's chain-owned claim through `track-work/assets/release-claim.sh` before
+recording the handoff. A release refusal or partial release is an error, never a
+successful handoff. The writer then reads the canonical issue's live labels and
+requires a valid response with no `claim:*` marker; even a successful release
+that preserves a marker it does not own cannot publish a handoff. The release
+key is deterministic for the issue, PR and branch, so retrying after a
+successful GitHub release but interrupted plan write can verify that exact
+release and continue; a different branch, a newer claim, a failed or malformed
+label read, or surviving claim markers still refuses. The plan moves the lane and its
+complete policy to typed `retained_lanes`, with state `idle`. It counts only
+toward `max_in_flight` while its delivery PR is open.
+Only § Lane teardown closes tabs/panes or removes worktrees, after merge; a PR
+closed without merging still requires the maintainer's go-ahead for teardown.
+
+Send every post-handoff code-change round—late finding, red required CI, or a
+conflicting catch-up—to that lane's existing session while it is alive. Record
+`plan-revise.mjs fix-request --issue N --reason <finding>` with the usual slate,
+session and owner-token arguments. This records `pending` before admission.
+Run `plan-revise.mjs reactivate --issue N --reason <round>` with the claim
+resolver's explicit `--claim-record-file`, `--claim-label`, `--model-label`,
+`--family`, and fetched `--registry-snapshot` inputs (plus
+`--runtime-environment` where recorded; use `--claim-label none
+--allow-label-less` only for a label-less resolver result). Never infer a model
+or re-add a label directly. If a verified late-review fix explicitly requires
+pulling back an existing `needs-review` marker, pass
+`--approve-review-pullback` only with the human's approval; by default the
+claim transaction continues to refuse that pull-back. The writer first holds the shared dispatch mutex and
+checks the same capacity predicate as `lane-init`; only after admission and
+the complete working-state plan candidate passes overlap and schema validation does it invoke the existing
+`claim/assets/claim-transaction.sh` with those inputs, then record `working`.
+A failed helper leaves the plan pending; retry the same record through the
+transaction helper's idempotent path. Pending open-PR fixes take the next free
+Working slot before any new lane. On success, send the fix round; the lane now
+counts toward both ceilings.
+After another passing handoff check, `handoff --issue N --pr P
+--expected-revision R` returns it to `idle`. Capture the plan's current revision
+`R` with that check; the writer compares it under the plan mutex. An unqualified
+or stale handoff cannot release a working retained lane. If the revision moved,
+repeat the live check before retrying. Initial handoff needs no revision flag.
+Handoff, re-handoff and terminal `done` bookkeeping never check either ceiling.
+
+Where integrate §6 requires a fresh run, pass `--run-id <fresh-id>` to
+`reactivate`, then initialize that retained lane with `run-record.mjs lane-init`
+and its immutable policy projection. For a retained lane, `lane-init` also
+activates the monitor, creates `branch.json`, and advances the branch's active
+pointer to the next generation. Deliver its returned `branch`, `generation`,
+and `active_state_path` together with `run_id` and `record_directory` to the
+retained session. The previous run must be terminal and stays unchanged.
+A fresh implementer/session is allowed only when the original session is gone;
+the status update must name the crash, usage limit or ended cloud lane.
 
 **Keep the session's live slate.** A session adds issues to its live slate as
 its queue grows. Use `dev-flow-support/assets/plan-revise.mjs add-issue --input
@@ -327,13 +528,49 @@ live lane. Supply complete `waves` when a merge changes placement; the writer
 updates lane wave assignments and validates the resulting graph.
 
 Candidate overlaps and effective fences are checked with glob-aware coverage
-across all live lanes, not just one wave. An unresolved collision is refused.
+across all live lanes in the same repository, not just one wave. An unresolved collision is refused.
 The schema records exact candidate-file intersections: when a glob-only
 intersection cannot be represented, the writer refuses and asks for a shared
 candidate entry plus the operator's resolution. It never invents fence scope or
 overlap decisions. `base-move` keeps its mechanical-only refusal contract.
 
 ## Durable orchestrator state
+
+After a restart, first run `assets/dev-flow-monitor.sh resume --slate-id ID`.
+This read-only command reconstructs the latest slate from the Git common
+directory: live runs, stages, generations, branches, bound PRs, lane statuses,
+unreconciled reservations, terminal pointer prune candidates, and watcher argv.
+Run it from the conductor checkout (or pass `--repo-root DIR`). Its JSON output
+includes `watcher.argv` for `lane-watch.sh`; review it before re-arming the watcher.
+The recovered watcher observes GitHub and durable lane status without guessing
+lost session names. Reconnect local session supervision explicitly when needed.
+Recovered live lanes preserve bound PR numbers and use each brief's recorded
+local worktree for status head checks, including foreign and unpushed branches.
+Saved statuses are labelled `current`, `stale`, or `unverifiable` against the
+captured `local_branch_head`; an unavailable local head cannot attest a status.
+Watcher arguments bind the conductor's registry path and immutable kickoff
+revision through `--registry` and `--registry-revision`, independent of the tool
+checkout and subsequent registry edits. Watched runs must retain matching active
+pointers with the same registry revision. A terminal PR whose pointer has been
+retired cannot supply that evidence and blocks watcher reconstruction; its
+summary remains available. Different pinned revisions also block a shared watcher.
+A missing run record is
+undispatched only when no dispatch evidence survives; retained lanes, attempt
+records, run files or active pointers make that loss a blocker.
+Missing or ambiguous attempt evidence is reported as a blocker rather than a
+watcher specification. No locks, records, pointers or watcher state are written.
+
+The conductor owns slate plans, locks, run records, briefs, reports, sentinels
+and the merge queue across repositories. Run control writers from its checkout.
+`provision-lane.mjs` resolves foreign clones by verified GitHub origin in sibling
+directories beside the conductor clone, or repeated explicit
+`--repo-root owner/repo=/absolute/path` mappings. A missing, ambiguous or
+wrong-origin clone is refused; directory names are never repository identity.
+For a new foreign worktree, supply `facts.worktree_path` as
+`<target-clone>/.worktrees/<lane>`; provisioning creates its branch at the
+recorded lane base. Existing prepared worktrees must match clone, branch and base.
+Do not infer a target clone from a fleet decisions file. Lane PR references
+outside the conductor use `owner/repo#N`; watcher events name the repository.
 
 Everything you need in order to resume lives under the Git common directory,
 never in the session scratchpad, with one deliberate exception: the owner token
@@ -487,7 +724,7 @@ overlap choices, and merge dependencies rather than reconstructing them from
 session prose.
 
 Use `assets/provision-lane.mjs` to render a PR-owning lane brief from the last validated plan revision.
-Run it from the target clone after preparing the lane branch/worktree and
+Run it from the conductor clone after preparing the lane facts and
 transactionally refreshing its claim:
 
 ```sh
@@ -527,22 +764,55 @@ The facts file is a JSON object with only these per-lane dispatch facts:
 Codex facts. No plan-owned value may be overridden in facts. The builder uses
 the last revision's lane profile (or its slate profile when lane profiles are
 absent), fence plus expansions, and other live lanes; overlap text is never
-copied from a previous brief. The prepared worktree must belong to this clone,
-name the lane branch, and still be at the plan's base, which must equal the
+copied from a previous brief. A prepared worktree must belong to the lane's
+verified repository clone, name the lane branch, and still be at its recorded
+base (`plan.repository_bases` for a foreign repository), which must equal the
 locally fetched target tracking head. Fetch and recheck target freshness under
 § Planning before invoking the command.
 
 ### File-scope fences
 
-A file-scope fence is the closed list of paths and globs a lane may write. Derive
-it from the issue's named surface, every repository test that asserts on those
-files, and the consumers reported by
-`assets/validator-dependency-scan.sh <path>...` for each manifest, schema, or
-registry in that surface. The scan is a read-only, grep-based inventory of
-consumers under `scripts/`, `ai/skills/**/assets`, `taskfiles/`, and
-`Taskfile.yml`; it finds file names and hard-coded keys, not YAML/TOML scalar
-values. Inspect its candidates and add the validators and tests that would
-reject the lane's change. Release-please's `CHANGELOG.md` is never
+A file-scope fence is the closed list of paths and globs a lane may write. Before
+provisioning, `assets/validator-dependency-scan.sh --check-plan <plan.json> --lane <id>`
+scans exactly one hop from the lane's **original** `fence`: executable tests and
+validators that name an original path, and tests or validators named by original
+fenced text. Accepted `expansions` provide coverage and are checked for readability,
+but never become scan sources. The candidate set therefore stays bounded when
+expansions are appended. Reverse candidates must have a test/validator name, live
+under a test directory with a supported code extension, or have an executable bit
+or shebang. Taskfile and workflow wiring files are neither forward sources nor
+reverse candidates. Plain reference documents and other prose that merely
+mention a path are not rejecting validators and are excluded. It resolves component suffixes only against the repository
+root and the referring file's directory. A reference whose suffix is neither
+root-relative nor relative to the referring file's directory, such as
+`$assets/promote.sh`, is not discovered;
+review and add such tests by hand. [Issue #1766](https://github.com/evanharmon1/harmon-devkit/issues/1766)
+tracks this limit. Shell and Markdown punctuation delimit path tokens; prose and
+comments are included conservatively. Reverse consumer reads replace invalid UTF-8
+bytes. Missing candidates refuse provisioning before durable writes. Unmatched fence globs and
+fenced paths that cannot be read as text also refuse, naming the path and reason,
+unless a dated expansion or exemption is recorded in the latest plan revision.
+A candidate owned by another live lane in the same repository (including its
+expansions) is a **shared-validator overlap**, not a missing path to take. Stop
+provisioning until the orchestrator records a `serialize` or `split` overlap for
+that lane pair and validator path, with its merge dependency, in a validated plan using
+`plan-revise.mjs overlap --lane-a <lane> --lane-b <lane> --path <path> --resolution serialize|split --before <issue> --after <issue>` and the common slate owner arguments. The path must be covered by at least one
+lane; an existing decision can gain a new path with the same resolution and order.
+The scan honors that recorded decision; provisioning still requires the existing
+overlap and section-note checks. Alternatively, sequence the validator edit in its
+owning lane and revise the plan after that lane finishes, or explicitly reassign
+ownership. An omission waiver alone does not settle shared ownership; do not
+expand into another live fence without the recorded decision.
+Fence expansions count as coverage. An orchestrator may waive a candidate by recording
+`fence-waiver: <lane> <path>: <reason>` (or `fence-waiver: <path>: <reason>`)
+in the latest plan's dated operator pins or revision reason. Review each candidate and waiver;
+the textual inventory over-approximates and cannot prove discovery of dynamic
+references. Derive the fence from the issue's named surface and the candidates
+reported by `assets/validator-dependency-scan.sh <path>...`. Inspect and add the
+validators and tests that would reject the lane's change. The positional scan no
+longer discovers consumers by manifest keys or enum values: that mode returned
+266 noisy candidates versus 35 path-based candidates in the measured comparison.
+Release-please's `CHANGELOG.md` is never
 lane-owned and never belongs in a fence; lockfiles are ordinary fence entries.
 
 Across live lanes, enforce one writer per file. When an overlap is unavoidable,
@@ -590,10 +860,13 @@ table before their intended sections.
 | `{{gate-commands}}` | The repository's actual gate invocations, one per line |
 | `{{generation}}` | Active pointer generation |
 | `{{active-state-path}}` | `assets/dev-flow-monitor.sh active-path` |
+| `{{conductor-common-dir}}` | Conductor common Git directory containing the validated run record directory |
 | `{{record-directory}}` | Active run record directory |
 | `{{policy-projection}}` | Resolved policy projection recorded at kickoff |
 | `{{file-scope-fence}}` | Orchestrator's lane ownership plan |
 | `{{live-lane-overlaps}}` | Body rendering is `None.` only when no other live lane exists; otherwise every other live lane, disjoint ones included, appears as a canonical entry prefixed with `-` and a space, one per line; the envelope grammar is defined in `brief.envelope.schema.json`. |
+| `{{repository}}` | Lane repository from the plan, defaulting to conductor origin |
+| `{{issue-reference}}` | Repository-qualified foreign issue reference; conductor-local #N |
 | `{{issue-number}}` | Claimed GitHub issue number |
 | `{{issue-title}}` | Fresh canonical-target `gh issue view` result |
 | `{{issue-url}}` | Canonical target-repository issue URL |
@@ -750,31 +1023,38 @@ run identity and resolved gate inputs as the only promotion path. It owns the
 immediate check → promote once → scalar read → fingerprint compare → head
 re-read → run-record promotion. Freeze body and review content until it returns;
 never concatenate a diagnostic gate with a bare ready command. A nonzero
-result blocks the handoff. The later watch below is a separate act; reversing
-a recorded handoff requires a fresh run as integrate §6 specifies.
+result blocks the handoff. Apply `merge-ready`, and make any ready claim, only
+when the live handoff check's own verdict on the current head is a pass.
+A failed or indeterminate check leaves `merge-ready` off or removes it.
+For promotion, the label write and the ready claim alike, branch on the gate's
+exit status, never on a downstream command's; never concatenate a diagnostic
+gate with an unconditional label write or ready claim. The later watch below is a separate act; reversing
+a recorded handoff requires a fresh run as integrate §6 specifies, delivered to the same retained session while it is alive.
 
-The maintainer-facing ready report is the last message about a promoted PR,
-not the first one after promotion. **Invariant: the ready report is sent
-only for a `POST-PROMOTION-CLOSED` event that names the promotion event id
-the watcher armed on, with zero activity rows in that window, and only
-after one re-read taken after the close shows the same head, the same
+Before every maintainer-facing message calling a PR merge-ready, run a fresh
+handoff check in the same turn, following
+[AGENTS.md § Handoff check](https://github.com/evanharmon1/harmon-devkit/blob/main/AGENTS.md#handoff-check);
+a previous check or promotion never authorizes a later ready claim.
+**Invariant: the ready report is sent
+only after a `PR-WATCHING` event for the promoted PR's current head with `draft=false` and
+a fresh handoff re-read shows the same head, the same
 readiness fingerprint, and every check still concluded green; any other
-observation (a different promotion id, any activity row, any changed
+observation (any activity row, any changed
 value, any indeterminate read) withdraws the report and re-arms.** The
-re-read uses the same mechanisms `AGENTS.md` § Readiness gate names for the
+re-read uses the same mechanisms `AGENTS.md` § Handoff check names for the
 promotion-time check (`headRefOid`/`isDraft`, required CI status, and
 `readiness-gate.sh fingerprint`); promotion itself is never reported as
-readiness, and a status sent during the watch instead reads "promoted at
-T, post-promotion watch until T+15", never "ready". Matching the vendored
-`/integrate` skill's own handling of an invalidated promotion
-(`.claude/skills/integrate/SKILL.md` step 6): withdrawing runs
+readiness. An interim status reads "promoted; watching until merge or close".
+Matching the vendored `/integrate` skill's own handling of an invalidated
+promotion (`.claude/skills/integrate/SKILL.md` step 6): withdrawing runs
 `gh pr ready --undo` and confirms the PR is draft on the current head
 before deciding whether to re-verify or escalate. The mechanism that
-satisfies this invariant — window arming, activity/close correlation by
-promotion event id, retry on an indeterminate read — belongs to
-`assets/lane-watch.sh`; this section states only what must be true before
+satisfies this invariant — continuous PR observation and retry on an
+indeterminate read — belongs to `assets/lane-watch.sh`; this section states only what must be true before
 the report is sent, never the ordering or per-endpoint steps the watcher
-uses to get there.
+uses to get there. The ready report does not stop observation. Until
+`PR-MERGED` or `PR-CLOSED` ends the watch, handle late events under
+`AGENTS.md` § "Merge queue and ownership".
 This maintainer-facing report is distinct from § Persistent supervision's
 internal per-lane ledger entry ("a ready PR is reported"), which is
 orchestrator bookkeeping, not the maintainer-facing message this rule defines.
@@ -782,6 +1062,55 @@ orchestrator bookkeeping, not the maintainer-facing message this rule defines.
 If the orchestrator reverses its own promotion (`gh pr ready --undo`, for any
 reason, including mid-watch), the withdrawal is announced before anything
 else in the next maintainer-facing message — "#n is no longer ready: `<reason>`; back to draft on `<head>`" — ahead of any other status in that same message.
+
+## Lane teardown
+
+After a lane's PR merges, the orchestrator tears down the lane. Verify the PR
+is `MERGED` with a fresh `gh pr view <n> --repo <owner/repo> --json state,headRefOid`
+or GitHub API read. Never trust a watcher `PR-MERGED` or `PR-CLOSED` event alone;
+watcher close events can be spurious. A failed or indeterminate read stops
+teardown and is reported.
+
+**Check preconditions before closing the lane or removing its worktree.**
+Resolve the recorded lane worktree and confirm its branch and path match the
+lane assignment. It must have no uncommitted tracked changes (staged or
+unstaged, including edits hidden by index flags), no in-progress Git operation
+or autostash, and no commits that are not on the PR's head branch. Fetch and
+compare against the live PR's `headRefOid`, never a stale upstream ref; if that
+head cannot be fetched or any local commit is absent from it, stop teardown
+and report the remaining work. Inspect untracked and ignored state too: preserve
+anything outside the disposable state named below before proceeding. Any failed
+precondition stops teardown and is reported; `--force` never overrides it.
+
+Once those checks pass:
+
+1. Close only the lane's own Herdr tab or pane that the orchestrator created
+   for that lane, verified against the recorded tab/pane identity; never close
+   another session's surface. If its identity cannot be verified, stop and
+   report rather than guessing. Any signal follows the process-ending convention
+   in § Lane launch and waits, subject to repository rules.
+2. From outside that worktree, run `task worktree:rm -- <name>`. Use
+   `task worktree:rm -- <name> --force` only after the preconditions above pass
+   and a plain removal refuses solely because of the throwaway anonymous Convex
+   sandbox under `.convex/local/`. That sandbox is the only additional disposable
+   local state this section authorizes force removal to discard; other local
+   data, tracked edits, unpublished commits, or another refusal stop teardown
+   and are reported. Confirm removal succeeded before retiring the lane.
+3. Drop the lane's spec (or its lost-session PR-only spec) from the
+   watcher's lane list for the next re-arm. Preserve the same watcher state
+   and every other lane's spec; do not stop another session's watcher.
+4. Record the lane as retired in the slate plan with
+   `dev-flow-support/assets/plan-revise.mjs done --issue <n> --reason <merge-evidence>`,
+   or `base-move --done <n>` when recomputing after the merge. Use the common
+   revision arguments and validated writer from § Planning; retain run records
+   and lane reports in the common Git directory. Report any incomplete step.
+
+**Authority:** teardown of a verified merged lane is a routine orchestrator
+step and needs no per-lane approval. Repository rules still take precedence.
+An unmerged lane — abandoned, closed without merge, or escalated — is torn down
+only with the maintainer's go-ahead; a close event grants no teardown authority.
+In the next status update, state which lanes were torn down and report any
+lane whose teardown stopped or remains incomplete.
 
 ## Implementer selection
 
@@ -902,6 +1231,15 @@ had to be killed). Never follow a wait, or the delivery check, with `; echo`,
 never read as settled. `lane-watch.sh` below stays the persistent monitor;
 this asset is for a single bounded wait.
 
+If the harness streaming monitor cannot reach `gh` or `herdr`, run the
+existing `settle-wait.sh` command as a finite background Bash pass from a
+shell outside that sandbox and capture its full output and exit status; do
+not send it through `Monitor`. Each pass ends at its requested timeout. If a
+lane watcher is also active, keep its same
+`<git-common-dir>/dev-flow-v2/slates/<slate>/lane-watch.state` across every
+re-arm. A failed Herdr state read remains exit 5 and a failed GitHub read
+remains exit 3; neither is settled.
+
 ### Antigravity (agy) lane permission posture
 
 Choose the agy permission posture using `FOREMAN_DEVCONTAINER`: `bot`, `agent`,
@@ -969,30 +1307,46 @@ lane is planned, fenced and claimed like any other.
 ## Persistent supervision
 
 Watching is the standing mode, not a one-shot step.
-Use only `assets/lane-watch.sh` under the harness streaming monitor (Claude Code: `Monitor`).
-Invoke it as that file. The monitor is the
-session-lifetime persistent monitor primitive that streams its output.
-Never inline its loop, write a substitute, or run it as an unobserved background shell job.
-The monitor polls fresh
-lane-agent and PR state and emits transitions (`idle`, `done`, `blocked`,
-`unknown`, and PR deltas), approval prompts, stalls, and periodic heartbeat
-summaries. On every monitor expiry or exit notification before a terminal outcome, re-arm first, before any other tool call, with the same `--state-file`;
-then check lane staleness before other work. Never interpret monitor termination as human cancellation. If
-no persistent primitive is available, block instead of silently falling back
-to occasional manual polling.
+Consume the watcher's output unfiltered; never hide events for a lane still in
+the current plan, including an idle handed-off lane. No noise reduction is
+shipped.
+Use only `assets/lane-watch.sh`; invoke that file rather than inlining its
+loop or writing a substitute. Prefer the harness streaming monitor (Claude
+Code: `Monitor`) when its command can reach both `gh` and `herdr`. It polls
+fresh lane-agent and PR state and streams transitions (`idle`, `done`,
+`blocked`, `unknown`, and PR deltas), approval prompts, stalls, and heartbeat
+summaries.
+
+If the streaming monitor is sandboxed from either `gh` or `herdr`, do not send
+the watcher through `Monitor` and do not block while a bounded path is
+available. From a shell outside that sandbox, launch a finite background Bash
+pass of the same watcher, for example `bash <skill-dir>/assets/lane-watch.sh
+--iterations <n> --state-file <same-state-file> --registry <kickoff-registry>
+<latest-deadline> <lane-specs...>`, and capture the pass output for review.
+The pass exits after `--iterations`; keep exactly one pass active per slate
+and reuse the same `--state-file` on each re-arm. Events surface at pass end,
+so the pass length bounds how long a lane can wait on an approval. On every
+streaming-monitor expiry or nonterminal pass exit, re-arm first, before any
+other tool call, with the same state file; then check lane staleness before
+other work. Never interpret monitor or pass termination as human cancellation.
+If neither the streaming monitor nor an outside-sandbox Bash pass can reach
+both CLIs, block instead of falling back to manual polling.
 
 On every other wakeup (a user message or monitor event), first compare the current
 time with each lane's last observed change; read and act on any lane silent
 past the stall threshold before other work.
-Keep exactly one watcher per slate.
-Replace a watcher by letting its monitor expire on the harness's own schedule (Claude Code: within 30 minutes) and re-arming. For an early harness monitor-stop (Claude Code: `TaskStop` on that monitor's task), follow the process-ending convention above.
-Pass the watcher the latest `{{deadline}}` among the slate's live lanes, never the earliest: `lane-watch.sh` takes one deadline, so the earliest would stop supervising every later lane and make each re-arm exit at once. A lane past its own deadline is capped by the dispatch-time clock check below, not by the watcher, and its spec leaves the watcher at the next re-arm.
-A watcher exit reporting `WALLCLOCK run: deadline <deadline> reached` is a terminal outcome for every lane it watched, not an expiry: do not re-arm with that deadline; record each lane's capped transition and render its blocker first, then re-arm only for lanes with a later deadline.
+Keep exactly one watcher per slate. Replace a streaming watcher by letting
+its monitor expire on the harness's own schedule (Claude Code: within 30
+minutes) and re-arming; bounded Bash passes exit naturally after their
+iteration limit. For an early harness monitor-stop (Claude Code: `TaskStop` on
+that monitor's task), follow the process-ending convention above.
+Pass the watcher the latest `{{deadline}}` among the slate's live lanes, never the earliest: `lane-watch.sh` takes one deadline, so the earliest would stop supervising every later lane and make each re-arm exit at once. A lane past its own deadline is capped by the dispatch-time clock check below, not by the watcher, and its spec leaves the watcher only if it has no open delivery PR. Keep both session and PR observation for retained lanes past that deadline.
+A `WALLCLOCK run: deadline <deadline> reached` event caps implementation time, not supervision of lanes with open delivery PRs: record their capped transitions and render their blockers before re-arming timed lanes with a later deadline. PR-only specs are re-armed regardless of that deadline until `PR-MERGED`, `PR-CLOSED`, or `PR-UNREADABLE`; an exit with outstanding active PR-only specs is an expiry to re-arm. `WATCH-COMPLETE run: no active specs` confirms that none remain. PR-only polling uses `--pr-interval-seconds` (default 300 seconds); timed lanes retain the fast cadence. `RATE-LIMITED github: until=<epoch>` pauses GitHub reads for the primary reset or secondary retry interval while local supervision continues. `PR-UNREADABLE <spec>: #<number> reason=<reason>` retires only that PR-only spec after six consecutive polls return definitive identity/access failures (NOT_FOUND, HTTP 404, or Could not resolve to a PullRequest or Repository). Temporary 5xx, timeout and transport failures stay degraded and keep polling at the PR-only cadence; they never retire a PR-only spec. A timed spec whose degradation window is exhausted keeps its existing `lane-watch: <label>` diagnostic and retires for the current process only. Other active specs keep polling; if none remain active, the watcher exits 1. The next re-arm with the same state file reads that timed spec again and resumes supervision once the read heals; a still-failing read retires it again in that process. Surface stderr on exit 1 and re-arm only after the failing read is reconciled. An exhausted shared Herdr-list episode retires the affected local specs for that process; other specs continue. Reconcile a `PR-UNREADABLE` spec’s access or identity before explicitly starting a new watch state. This event is never readiness.
 
 Harness monitor primitives may run their command under a non-Bash shell, so
 always invoke the file as
 `bash <skill-dir>/assets/lane-watch.sh --state-file <git-common-dir>/dev-flow-v2/slates/<slate>/lane-watch.state --registry
-<kickoff-registry-snapshot> <deadline> <agent:branch:nonce:owner/repo:report-path:lane-label>...`;
+<kickoff-registry-snapshot> <deadline> <agent:branch:nonce:owner/repo:report-path:lane-label>... 2>&1`;
 never paste its loop inline. The first spec token is the **herdr agent name**;
 herdr requires lowercase names (for example `lane-d1220`), while the brief's
 lane label may be `L-d1220`. Pass the exact rendered `{{report-path}}` as an
@@ -1037,6 +1391,10 @@ The watcher also emits these supervision events:
   after `--stall-minutes` (default 10). Read the pane and act: investigate,
   re-brief, or escalate within authority. Pane content or Herdr revision/state
   changes reset the timer; a terminal report or pane sentinel suppresses it.
+- `OBSERVATION-DEGRADED <lane>: <detail>` fires once per failure episode when a
+  Herdr or `gh` read fails (`herdr` names the shared agent-list read). A failed
+  read is never absence or health: investigate the endpoint, and expect the
+  affected timed specs to retire for this process if it keeps failing.
 - `HEARTBEAT <lane>: state=<state> age=<seconds>s pr=<state>; ...` summarizes
   every lane after `--heartbeat-minutes` (default 15), including cloud lanes.
   Cloud age measures branch/PR changes; unavailable local progress has age
@@ -1053,46 +1411,48 @@ successful list is `absent` regardless of explain. Cloud lanes have no pane,
 so receive heartbeat summaries alongside their GitHub events, with no `PROMPT` or `STALL` events.
 Keep the state file across re-arms so prompt episodes and re-emission times,
 stall episodes, heartbeat timing, reported
-sentinels and post-promotion activity remain deduplicated. The watcher bounds
+sentinels and PR activity remain deduplicated. The watcher bounds
 every `herdr` and `gh` read, prefers each lane's explicit report-path sentinel,
-tags pane-only fallback results, and watches reviews plus top-level and inline
-comments for 15 minutes after a draft becomes ready. When a lane's
-post-promotion window's promotion event cannot be resolved before that
-window's own deadline passes, the watcher emits
-`POST-PROMOTION-INDETERMINATE <lane>: #<pr>` instead of silently abandoning
-the window — the event means only that the promotion epoch could not be
-confirmed in time; that path also clears the lane's tracked `PR` state as it
-tears the window down, so the very next observation — the watcher's own next
-poll, or a fresh process restarted against the same `<git-common-dir>/dev-flow-v2/slates/<slate>/lane-watch.state` — sees
-the still-promoted PR as newly observed and re-arms a fresh window on its
-own, which is what makes restarting with the same state file a genuine
-retry rather than a no-op. Keep the registry argument
-bound to the immutable kickoff snapshot across every re-arm. It only reports
-events; the orchestrator remains responsible for every action. The watcher-owned
-`<git-common-dir>/dev-flow-v2/slates/<slate>/lane-watch.state` is separate from the run's canonical `monitor.json`; never
-pass that JSON monitor state to `--state-file`.
+and tags pane-only fallback results. It watches reviews plus top-level and
+inline comments (`PR-ACTIVITY`), new or reopened review threads (`PR-THREAD`),
+required-CI conclusions (`PR-CI`, from the GraphQL check rollup), and base moves
+that make the PR behind (`PR-BEHIND`, compare `behind_by` at most every 300s).
+A complete observation emits `PR-WATCHING` for the head; this is observation,
+not a readiness verdict. `PR-MERGED` and `PR-CLOSED` are terminal events.
+There is no fixed post-promotion window.
 
-The watcher's own restart durability does not, by itself, make the
-orchestrator's reporting durable: `POST-PROMOTION-ACTIVITY` and
-`POST-PROMOTION-CLOSED` are lines on the watcher's stdout, consumed by a
-separate orchestrator process, and the § PR-open confirmation gate depends
-on the orchestrator having durably seen every activity line for the
-*current* window — never merely on what its own live stdout stream has shown
-since its own last restart. An orchestrator restart mid-window must not
-silently default to "no activity seen"; confirm that against durable state,
-either by re-deriving what happened over the window's `[since,until]`
-directly from the same GitHub activity sources `lane-watch.sh` itself polls,
-or by maintaining its own durable log of every `POST-PROMOTION-ACTIVITY` /
-`POST-PROMOTION-CLOSED` line it has actually processed.
+At handoff, keep the live lane spec and its session, tab, panes, worktree and
+branch. The watcher supervises both session and PR until merge or close; an
+open delivery PR keeps observation alive beyond the run deadline. A deadline
+still caps implementation work, never this supervision.
+Only when the original session is gone (crash, usage limit, or ended cloud lane)
+replace its spec with `'<label>:<pr-number>:<nonce>:<owner/repo>:pr'` and report
+why a replacement session is needed. This PR-only watch uses no local session
+or branch lookup. Keep the same state file so PR observations do not replay.
+Keep the registry argument bound to the immutable kickoff snapshot across
+every re-arm. It only reports events; the orchestrator remains responsible
+for every action. The watcher-owned
+`<git-common-dir>/dev-flow-v2/slates/<slate>/lane-watch.state` is separate from
+the run's canonical `monitor.json`; never pass that JSON monitor state to
+`--state-file`.
+
+The watcher's restart durability does not make the orchestrator's event
+consumption durable. Keep a durable log of `PR-ACTIVITY`, `PR-THREAD`,
+`PR-CI`, `PR-BEHIND`, `PR-WATCHING`, `PR-MERGED`, `PR-CLOSED`,
+`PR-UNREADABLE`, `RATE-LIMITED`, `WATCH-COMPLETE` and degradation events actually processed, or re-read those GitHub surfaces on resume.
+Silence since an orchestrator restart never proves that nothing changed.
 
 Every emitted transition terminates in a recorded action: idle reads and
 adjudicates the lane status (including any unsupported claim that the user was
 asked); done validates and assembles or records a blocker; blocked/unknown
 surfaces the evidence and stops or re-briefs within authority; a ready PR is
 reported with merge-queue externalities; a dirty PR returns to its owning lane;
-and an external merge releases dependents, recomputes the queue, and rechecks
-stacked branches. Keep a visible per-lane ledger of assignment, fresh state,
-last progress, and next action. Hand off the run record before primary-session
+and an external merge releases dependents, recomputes the queue, and advances
+only its next eligible head under [Merge queue procedure](#merge-queue-procedure),
+then rechecks stacked live lanes (branches built on another lane's branch or
+with a branch-update dependency), while parked PRs are not caught up.
+Keep a visible per-lane ledger of assignment, fresh state, last progress, and
+next action. Hand off the run record before primary-session
 context exhaustion so a fresh driver can re-arm the same monitor.
 
 Resolve the shared run directory with `git rev-parse --git-common-dir`, never by
@@ -1144,11 +1504,55 @@ all dispatches, code pushes, ordinary comment writes, and merge-queue mutations.
 A cached time check or a check performed only after the write cannot enforce
 this ceiling.
 
+### Merge queue procedure
+
+Follow [AGENTS.md § Merge queue and ownership](https://github.com/evanharmon1/harmon-devkit/blob/main/AGENTS.md#merge-queue-and-ownership)
+and use the [glossary](https://github.com/evanharmon1/harmon-devkit/blob/main/docs/glossary.md)
+for state names. Keep the ordered queue in the plan’s `merge_queue`, using the
+validated `queue-order` writer. Order by `merge_dependency` first, then smaller
+independent units first (fewer changed files, then the lower issue number);
+use complete file lists and pairwise overlap to respect merge dependencies
+and disclose catch-up and re-review costs.
+
+- This orchestrator's own queue has at most one merge-ready head. Catch up
+  that head, run the live handoff check, and promote through
+  `integrate/assets/promote.sh` for recorded runs only when it passes;
+  apply `merge-ready` only when a fresh live check on that head passes.
+- When another owner's PR in the same repository already carries `merge-ready`,
+  never touch that PR or its label; report the coexistence to the maintainer
+  in the merge-ready report. Still apply the live check to this queue's head.
+- Keep every other passed PR a draft labelled `parked`; report it as parked,
+  report its base drift, and do not catch it up while parked.
+- When the head merges, recompute the plan, catch up the next eligible PR once,
+  re-check it, promote it, and apply `merge-ready` only after another live check passes.
+  Use the server merge-mode update-branch procedure from AGENTS.md; never rebase.
+
+The orchestrator owns promoted and parked PRs until merge or close; Working-slot release
+never ends that ownership. Continue the session-and-PR watch and preserve
+the withdrawal-first maintainer message above. A late review, red required CI,
+or base move removes `merge-ready`; settle or remediate under the linked policy
+before making another ready claim.
+
+Coordinate `claim:*`, `needs-review`, `parked`, `blocked`, and `merge-ready`
+through the canonical [label transition table](https://github.com/evanharmon1/harmon-devkit/blob/main/docs/dev-loop/label-lifecycle.md):
+claim marks active work, needs-review marks agent review work owed, parked marks
+a passed non-head draft, blocked names the missing human input while the PR
+stays draft, and merge-ready marks only the checked, promoted queue head.
+Use that table’s writer ownership, object scope and coexistence rules; confirm
+`parked` and `merge-ready` are provisioned before applying either label.
+
+For a failure in a file the PR does not touch, permit one recorded re-run.
+On the second sighting, file and fix the flake; never re-run it again. Follow
+[AGENTS.md § Flake policy](https://github.com/evanharmon1/harmon-devkit/blob/main/AGENTS.md#flake-policy)
+only. Record the failure, affected file and re-run result as an intervention
+in the run record while the run is open, otherwise in the slate's rulings file.
+The record names the PR, head, run and job IDs and the failing test.
+A resumed session reads that record before re-running so it cannot spend the
+allowance again.
+
 Bound parallel implementers by `[breadth]` and strategy and heavy local stages
-by host capacity. Maintain a merge queue from complete file lists, pairwise
-overlap, dependencies, stage, and re-verification cost. Recommend
-oldest-terminal/highest-cost first and disclose externalities. Product, scope,
-consent, and safety decisions stop for a human; re-scoping requires two traces.
+by host capacity. Product, scope, consent, and safety decisions stop for a
+human; re-scoping requires two traces.
 A human *task* is not such a decision: when a lane reports a step only a human
 can do, queue it for its collector (`track-work` §5): an action for the
 `(HUMAN):` collector of that issue's milestone, else epic, else repository;
@@ -1166,3 +1570,12 @@ appended to or whose scope covers the slate, the `(QA):` issue's items that
 came from the slate, each with its unticked items, plus any `human`
 precondition issues — so the maintainer circles back once, not once per
 lane.
+
+Foreign worktree provisioning uses the target repository's `task worktree:new`
+when present, with the lane branch and recorded base. Without that task it
+creates the tree with Git and writes the unprepared dependency/hook status
+and preparation instructions in the brief. The fence scan reads the resulting
+lane worktree at the recorded base, including when the clone's current
+checkout differs. A refused scan retains that tree for inspection and retry;
+it does not publish a run. Provisioning records the verified foreign clone
+and repository in the conductor's run branch binding for later stages.

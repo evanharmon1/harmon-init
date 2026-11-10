@@ -21,6 +21,7 @@
 
 import { spawnSync } from "node:child_process";
 import { authorizedCeiling } from "../../dev-flow-support/assets/lib/cap-authorizations.mjs";
+import { isAuthorityCapture } from "../../dev-flow-support/assets/lib/integrator-review-authority.mjs";
 import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdtempSync, mkdirSync, readdirSync, rmSync, writeFileSync, readFileSync, realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -1411,6 +1412,7 @@ const CHAIN_FIELDS = {
   evidence_registrations: ["id", "author_actor_id", "login", "payload_digest", "marker", "registered_at"],
   pr_bindings: ["number", "url", "bound_at"],
   outcome_transitions: ["outcome", "at"],
+  takeover_history: ["kind", "slate", "session", "actor", "reason", "pr", "terminal_digest", "at", "head", "gate_fingerprint"],
 };
 const CHAIN_TIMESTAMP_FIELD = {
   stage_transitions: "entered_at",
@@ -1420,6 +1422,7 @@ const CHAIN_TIMESTAMP_FIELD = {
   evidence_registrations: "registered_at",
   pr_bindings: "bound_at",
   outcome_transitions: "at",
+  takeover_history: "at",
 };
 
 // #738 (open, unimplemented as of this writing): these three arrays are
@@ -1475,6 +1478,40 @@ function verifyRunRecordChains(body) {
   return result;
 }
 
+function verifyTakeoverHistory(document) {
+  const errors = [];
+
+  const entries = document.takeover_history ?? [];
+  if (!Array.isArray(entries) || entries.some((entry) => entry === null || typeof entry !== 'object' || Array.isArray(entry))) throw new EvidenceError('invalid takeover history');
+  if (entries.length === 0) return;
+  const terminal = document.outcome_transitions?.at(-1);
+  const start = entries[0];
+  if (!['escalated', 'capped'].includes(document.outcome) || !terminal || !document.pr) {
+    errors.push('$run.takeover_history: requires an escalated or capped run with a bound PR');
+  }
+  for (const [index, entry] of entries.entries()) {
+    if (entry.kind !== (index === 0 ? 'takeover' : 'promotion') || index > 1) {
+      errors.push('$run.takeover_history: expected one takeover followed by at most one promotion');
+    }
+    if (canonicalJson(entry.pr) !== canonicalJson(document.pr) || entry.terminal_digest !== terminal?.digest) {
+      errors.push('$run.takeover_history: must bind the original terminal outcome digest and same PR');
+    }
+    for (const field of ['slate', 'session', 'actor', 'reason']) {
+      if (typeof entry[field] !== 'string' || entry[field].trim() === '' || entry[field] !== start[field]) {
+        errors.push(`$run.takeover_history: ${field} must retain the taking-over orchestrator identity and reason`);
+      }
+    }
+    if (!Number.isFinite(Date.parse(entry.at)) || Date.parse(entry.at) < Date.parse(index === 0 ? terminal?.at : entries[index - 1].at)) {
+      errors.push('$run.takeover_history: timestamp must not precede terminal outcome or takeover');
+    }
+    if (index === 0 ? (entry.head !== undefined || entry.gate_fingerprint !== undefined)
+      : (!/^[0-9a-f]{40}$/.test(entry.head ?? '') || typeof entry.gate_fingerprint !== 'string' || entry.gate_fingerprint.trim() === '')) {
+      errors.push('$run.takeover_history: only promotion records an exact head and gate fingerprint, both required');
+    }
+  }
+  if (errors.length) throw new EvidenceError(errors.join("; "));
+}
+
 // Recomputes the flat evidence_comments[]/pr/outcome fields from their
 // verified chains — the projection deriveProjections/verifyProjections
 // compare the live record against, so an edited or deleted registration is
@@ -1528,6 +1565,7 @@ function reconstructAsOf(body, cutoffIso, recordCreatedAt) {
   // means the record is untrustworthy at any --as-of, the same reasoning
   // the complete-chain-first rule already applies below (round 4 of #663).
   verifyProjections(body, chains);
+  verifyTakeoverHistory(body);
   const cutoff = cutoffIso ? Date.parse(cutoffIso) : Infinity;
   // evidence_registrations[]'s own registered_at is never actually
   // consumed below (this function's return value carries no
@@ -1592,6 +1630,7 @@ function reconstructAsOf(body, cutoffIso, recordCreatedAt) {
     evidence_registrations: filtered.evidence_registrations,
     pr_bindings: filtered.pr_bindings,
     outcome_transitions: filtered.outcome_transitions,
+    takeover_history: filtered.takeover_history,
     pr,
     promotion,
     outcome,
@@ -2864,6 +2903,20 @@ function loadLocalEvidenceRun(repo, recordRoot, runId, issueNumber, issueComment
       }
     }
 
+    // A receipt proves that this local artifact is immutable, but it does not
+    // prove that the run published the corresponding integration round.  Keep
+    // every retained receipt in the raw record projection while measuring the
+    // authenticated metric only where the same trusted marker names its
+    // integration-round coordinate.
+    const authenticatedIntegrationRounds = new Set(
+      visibleMarkers
+        .filter(({ marker }) => marker.stage === "integration" && marker.round !== null)
+        .map(({ marker }) => marker.round),
+    );
+    const authenticatedIntegratorPasses = retainedIntegratorPasses.filter(
+      (pass) => authenticatedIntegrationRounds.has(pass?.payload?.integration_round),
+    );
+
     return {
       status: "ok",
       runId,
@@ -2877,6 +2930,8 @@ function loadLocalEvidenceRun(repo, recordRoot, runId, issueNumber, issueComment
       futureAdjudicationFiles: [],
       remediationCap: recordedRounds?.remediation ?? null,
       retainedIntegrationFinderCounts: integrationFinderCounts(retainedIntegratorPasses),
+      authenticatedIntegrationFinderCounts: integrationFinderCounts(authenticatedIntegratorPasses),
+      authenticatedIntegrationPassCount: authenticatedIntegratorPasses.length,
       localRecordCurrentState: Boolean(asOf),
       trajectoryDiagnostics: diagnostics,
       authorizedCeilings,
@@ -3043,7 +3098,7 @@ function isStale(state, staleAfterDays, asOfEpoch) {
 }
 
 function runInterventionCount(state) {
-  return state.interventions.filter((i) => i.kind === "other").length;
+  return state.interventions.filter((i) => i.kind === "other" && !isAuthorityCapture(i)).length;
 }
 
 function runAskedCount(state) {
@@ -3404,6 +3459,8 @@ function renderTrajectory(run) {
     outcome: run.state.outcome,
     pr: run.state.pr,
     promotion: run.state.promotion,
+    takeover_history: run.state.takeover_history ?? [],
+    recovered_promotion: run.state.takeover_history?.find((entry) => entry.kind === "promotion") ?? null,
     stage_transitions: run.state.stage_transitions,
     remediation_cap: run.remediationCap ?? null,
     remediation_pushes: (run.state.stage_transitions || [])
@@ -3413,7 +3470,7 @@ function renderTrajectory(run) {
     findings_by_stage_finder: findingsByStageFinder(rounds.filter((entry) => entry.stage !== "integration")),
     retained_record_findings_by_stage_finder: run.retainedIntegrationFinderCounts === undefined
       ? null : { integration: run.retainedIntegrationFinderCounts },
-    interventions: run.state.interventions,
+    interventions: run.state.interventions.filter((entry) => !isAuthorityCapture(entry)),
     answered_prompts_by_stage: run.state.interventions.filter((entry) => entry.kind === "prompt").reduce((counts, entry) => {
       const stage = [...run.state.stage_transitions].reverse().find((transition) => Date.parse(transition.entered_at) <= Date.parse(entry.at))?.stage ?? "unknown";
       counts[stage] = (counts[stage] ?? 0) + 1;
@@ -3457,11 +3514,17 @@ function renderTrajectory(run) {
     local_record_current_state: Boolean(run.localRecordCurrentState),
     trajectory_diagnostics: run.trajectoryDiagnostics || [],
     ...(Object.keys(run.authorizedCeilings ?? {}).length > 0 ? { authorized_ceiling: run.authorizedCeilings } : {}),
-    // Integration passes carry no authenticated evidence marker today (unlike
-    // challenge/review, which the review skill posts to the issue), so there
-    // is no trustworthy local-evidence count to report — disclose that
-    // plainly rather than a count that would always read as zero.
-    integration_evidence: "not-measured",
+    // An integration metric exists only when the same authenticated issue
+    // marker and immutable receipt chain that retained the pass above exists.
+    // Keep the legacy/missing-record spelling for records without that proof;
+    // an empty finding count is evidence only when it names a retained pass.
+    integration_evidence: (run.authenticatedIntegrationPassCount ?? 0) > 0
+      ? {
+          measurement: "authenticated-receipt-backed",
+          passes: run.authenticatedIntegrationPassCount,
+          findings_by_finder: run.authenticatedIntegrationFinderCounts,
+        }
+      : "not-measured",
     // Renamed from the misleading untrusted_comments — shepherd round 2,
     // Codex-confirmed (P2): this field has only ever held TRUSTED-but-
     // unlisted orphans, never untrusted ones. forged_comments is the new,
@@ -3485,6 +3548,10 @@ function renderTrajectory(run) {
 function renderTrajectoryTable(trajectory) {
   const lines = [];
   lines.push(`run ${trajectory.run_id} (issue #${trajectory.issue}) — outcome: ${trajectory.outcome ?? "in-flight"}`);
+  if (trajectory.recovered_promotion) {
+    const recovery = trajectory.recovered_promotion;
+    lines.push(`Takeover: promoted by orchestrator ${recovery.actor} (${recovery.slate}/${recovery.session}) at ${recovery.at}, head ${recovery.head}; original lane outcome: ${trajectory.outcome}; blocker: ${recovery.reason}`);
+  }
   lines.push(`initiated_by=${trajectory.initiated_by} started_at=${trajectory.started_at}`);
   if (trajectory.pr) lines.push(`pr: #${trajectory.pr.number}`);
   lines.push("");
@@ -3511,7 +3578,14 @@ function renderTrajectoryTable(trajectory) {
   for (const [stage, counts] of Object.entries(trajectory.retained_record_findings_by_stage_finder ?? {})) {
     for (const [finder, count] of Object.entries(counts)) lines.push(`  ${stage}/${finder}: ${count}`);
   }
-  lines.push("integration: not measured from local evidence");
+  if (trajectory.integration_evidence === "not-measured") {
+    lines.push("integration: not measured from local evidence");
+  } else {
+    lines.push(`integration: ${trajectory.integration_evidence.passes} authenticated receipt-backed pass(es)`);
+    for (const [finder, count] of Object.entries(trajectory.integration_evidence.findings_by_finder)) {
+      lines.push(`  ${finder}: ${count} finding(s)`);
+    }
+  }
   for (const [stage, ceiling] of Object.entries(trajectory.authorized_ceiling ?? {})) {
     lines.push(`${stage}: authorized ceiling ${ceiling}`);
   }
