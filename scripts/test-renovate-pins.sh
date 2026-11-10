@@ -516,7 +516,7 @@ for label, cfg in [("renovate.json", root_cfg), ("template/renovate.json.jinja",
 def check_lockfile_policy(label, cfg):
     import fnmatch
     rules = cfg.get("packageRules", [])
-    supported = {"matchManagers", "matchUpdateTypes", "matchDepTypes", "matchDatasources", "matchFileNames", "matchPackageNames"}
+    supported = {"matchManagers", "matchUpdateTypes", "matchDepTypes", "matchDatasources", "matchFileNames", "matchPackageNames", "matchDepNames"}
     errors_before_validation = len(errors)
     for rule in rules:
         unknown = {k for k in rule if k.startswith("match")} - supported
@@ -524,7 +524,7 @@ def check_lockfile_policy(label, cfg):
             errors.append(f"{label}: unsupported finite policy matcher(s): {sorted(unknown)}")
         if any("**/" in pattern for pattern in rule.get("matchFileNames", [])):
             errors.append(f"{label}: unsupported globstar-directory filename pattern: {rule['matchFileNames']!r}")
-        for field in ("matchDatasources", "matchDepTypes"):
+        for field in ("matchDatasources", "matchDepTypes", "matchDepNames"):
             if any(any(c in value for c in "*!?[]{}()/\\") for value in rule.get(field, [])):
                 errors.append(f"{label}: unsupported non-literal {field} selector: {rule[field]!r}")
         if any(any(c in value for c in "*!?[]{}()/\\") for value in rule.get("matchManagers", [])):
@@ -557,6 +557,10 @@ def check_lockfile_policy(label, cfg):
             if "matchFileNames" in rule and not match_file_patterns([p.lower() for p in rule["matchFileNames"]], path.lower()):
                 continue
             if "matchPackageNames" in rule and not names_match(rule["matchPackageNames"], package):
+                continue
+            # Literal-only (validated above); every case here uses the package
+            # name as its depName, as Renovate does for these managers.
+            if "matchDepNames" in rule and package not in rule["matchDepNames"]:
                 continue
             result.update({k: rule[k] for k in ("groupName", "enabled", "allowedVersions", "dependencyDashboardApproval") if k in rule})
             result["prBodyNotes"].extend(rule.get("prBodyNotes", []))
@@ -595,6 +599,18 @@ def check_lockfile_policy(label, cfg):
         for path, dep, expected in (("tests/fixtures/web-astro/package.json", "astro", "web-astro fixture"), ("tests/fixtures/web-app/package.json", "react", "web-app fixture")):
             if resolve("npm", "minor", dep, path, "devDependencies", "npm")["groupName"] != expected:
                 errors.append(f"{label}: {path} lost its independent fixture group")
+    # The Node runtime hold (#2013) selects both runtime extractions and leaves
+    # engines.node and @types/node alone. scripts/test-renovate-node-hold.sh
+    # proves the extraction side against Renovate itself.
+    for manager, path, datasource in (("custom.regex", ".github/actions/setup/action.yml", "node-version"),
+                                      ("github-actions", ".github/workflows/ci.yml", "github-releases")):
+        if resolve(manager, "major", "node", path, None, datasource).get("allowedVersions") != "<25":
+            errors.append(f"{label}: Node runtime hold lost for {manager}")
+    for manager, dep, dep_type, datasource in (("npm", "node", "engines", "node-version"),
+                                               ("npm", "@types/node", "devDependencies", "npm"),
+                                               ("github-actions", "node", "container", "docker")):
+        if resolve(manager, "major", dep, "package.json", dep_type, datasource).get("allowedVersions") == "<25":
+            errors.append(f"{label}: Node runtime hold wrongly selects {manager} {dep_type} {dep}")
     if cfg.get("vulnerabilityAlerts", {}).get("groupName", None) is not None:
         errors.append(f"{label}: vulnerability alerts must bypass groups")
 
