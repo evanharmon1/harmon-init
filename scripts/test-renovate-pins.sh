@@ -510,11 +510,15 @@ for label, cfg in [("renovate.json", root_cfg), ("template/renovate.json.jinja",
     if cfg.get("vulnerabilityAlerts", {}).get("enabled") is not True:
         errors.append(f"{label}: vulnerabilityAlerts.enabled must be true")
 
+# Root Docker images group specimens (#1994): (package, update type) pairs, all
+# at .github/workflows/remote-bootstrap.yml. ubuntu's major is held separately.
+DOCKER_GROUP_CASES = [("ubuntu", u) for u in ("minor", "patch", "pin", "digest")] + [
+    ("node", u) for u in ("minor", "patch", "pin", "digest", "major")
+]
+
 # Check effective rule ordering for representative lockfile updates and majors.
 # This deliberately exercises the shipped rules, including package-specific
 # formatter and fixture groups, rather than merely counting group names.
-DOCKER_GROUP_UPDATES = ("minor", "patch", "pin", "digest", "major")
-
 def check_lockfile_policy(label, cfg):
     import fnmatch
     rules = cfg.get("packageRules", [])
@@ -599,15 +603,23 @@ def check_lockfile_policy(label, cfg):
                 errors.append(f"{label}: {path} lost its independent fixture group")
         # Root Docker images group (#1994). Kept out of the `cases` table above
         # on purpose: that table's ecosystems require ungrouped majors, while
-        # the root Docker rule groups majors too. The specimen is the image
-        # pinned Renovate 44.216.5 extracts from this repo (manager
-        # github-actions, depType container, datasource docker, package
-        # ubuntu); its lookup files the digest and the major update on
-        # renovate/docker-images and renovate/major-docker-images.
-        for update in DOCKER_GROUP_UPDATES:
-            actual = resolve("github-actions", update, "ubuntu", ".github/workflows/remote-bootstrap.yml", "container", "docker")["groupName"]
-            if actual != "Docker images":
-                errors.append(f"{label}: Docker image ubuntu {update} in .github/workflows/remote-bootstrap.yml resolves to {actual!r}, expected 'Docker images'")
+        # the root Docker rule groups majors too. Specimen metadata is what
+        # pinned Renovate 44.216.5 extracts (manager github-actions, depType
+        # container, datasource docker). ubuntu is the image this workflow
+        # pins; its lookup files the digest on renovate/docker-images, but the
+        # Ubuntu LTS hold disables its majors ("Filtered out 1 disabled
+        # update(s)"), so its major leg asserts the hold instead of a group.
+        # node, swapped into the same workflow, is the enabled-major specimen:
+        # its lookup files the minor on renovate/docker-images and the major
+        # on renovate/major-docker-images, with nothing filtered.
+        for package, update in DOCKER_GROUP_CASES:
+            got = resolve("github-actions", update, package, ".github/workflows/remote-bootstrap.yml", "container", "docker")
+            if got["groupName"] != "Docker images":
+                errors.append(f"{label}: Docker image {package} {update} in .github/workflows/remote-bootstrap.yml resolves to {got['groupName']!r}, expected 'Docker images'")
+            if got["enabled"] is not True:
+                errors.append(f"{label}: Docker image {package} {update} in .github/workflows/remote-bootstrap.yml is disabled")
+        if resolve("github-actions", "major", "ubuntu", ".github/workflows/remote-bootstrap.yml", "container", "docker")["enabled"] is not False:
+            errors.append(f"{label}: Ubuntu LTS hold lost: ubuntu major in .github/workflows/remote-bootstrap.yml is enabled")
     if cfg.get("vulnerabilityAlerts", {}).get("groupName", None) is not None:
         errors.append(f"{label}: vulnerability alerts must bypass groups")
 
@@ -617,7 +629,7 @@ for label, cfg in [("renovate.json", root_cfg), ("template/renovate.json.jinja",
 
 # Controls for the Docker group assertion: an isolated in-memory removal of the
 # root Docker rule, and an override of its groupName, must each fail with
-# exactly the Docker grouping diagnostic (one per update type) and nothing else.
+# exactly the Docker grouping diagnostic (one per specimen case) and nothing else.
 docker_rules = [i for i, rule in enumerate(root_cfg.get("packageRules", []))
                 if rule.get("matchDatasources") == ["docker"] and rule.get("groupName") == "Docker images"]
 if len(docker_rules) != 1:
@@ -632,7 +644,8 @@ else:
         check_lockfile_policy("renovate.json", mutant)
         found = errors[before:]
         del errors[before:]
-        if len(found) != len(DOCKER_GROUP_UPDATES) or not all(e.startswith("renovate.json: Docker image ubuntu ") for e in found):
+        expected = sorted(f"renovate.json: Docker image {package} {update} in .github/workflows/remote-bootstrap.yml resolves to " for package, update in DOCKER_GROUP_CASES)
+        if sorted(e.split("resolves to ", 1)[0] + "resolves to " for e in found) != expected or not all(e.endswith("expected 'Docker images'") for e in found):
             errors.append(f"renovate.json: Docker group {control} control did not fail with only the Docker grouping diagnostic: {found!r}")
 
 if errors:
@@ -644,5 +657,5 @@ print("renovate pins: every annotated shell pin is extractable and in scope")
 print("renovate pins: every composite-action pin (both layers) is extractable and in scope")
 print("renovate pins: root files and their template twins resolve to the same group")
 print("renovate pins: rendered template rules route consumer pins to the right groups")
-print("renovate pins: root Docker images group holds for every update type; removal and override controls fail")
+print("renovate pins: root Docker images group holds for every enabled update type, majors included; the Ubuntu LTS major hold stands; removal and override controls fail")
 PY
