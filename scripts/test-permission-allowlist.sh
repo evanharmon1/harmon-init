@@ -81,9 +81,16 @@ narrowed_commands=(
 
 # Commands whose allow rule was dropped entirely (not narrowed) because no
 # safe prefix shape existed — arbitrary-exec or silent-write escapes.
+#   gh api / curl / wget (harmon-init#2033): no prefix form can exclude the
+#   write variants (-X POST, -f, --input, -d, -o). Read-only `gh api` is
+#   approved per call by the PreToolUse guard's proved-read grammar, never by
+#   a rule here; public fetches use WebFetch or a maintainer sandbox setting.
 dropped_prefixes=(
     'Bash(git grep'
     'Bash(shfmt'
+    'Bash(gh api'
+    'Bash(curl'
+    'Bash(wget'
 )
 
 # Grants a fix DEPENDS on: removing one re-breaks the thing it fixed, and no
@@ -144,8 +151,24 @@ if [ "$root_block" != "$template_block" ]; then
     diff <(printf '%s\n' "$root_block") <(printf '%s\n' "$template_block") >&2 || true
 fi
 
+# ---------------------------------------------------------------------------
+# 4: no sandbox escape ships in project settings (harmon-init#2033).
+# excludedCommands and the unix-socket keys apply to EVERY session that loads
+# the file, lane workers included, so a shipped entry would run a lane's
+# commands outside the sandbox it exists to enforce. They are a maintainer
+# step in the user's own settings (docs/guides/herdr.md), never project config.
+# ---------------------------------------------------------------------------
+
+for file in "$root_settings" "$template_settings"; do
+    for key in excludedCommands allowUnsandboxedCommands allowUnixSockets allowAllUnixSockets enableWeakerNetworkIsolation; do
+        if grep -q "\"${key}\"" "$file"; then
+            note_fail "$file: sandbox key \"${key}\" must not ship in project settings (maintainer step; see docs/guides/herdr.md)"
+        fi
+    done
+done
+
 if [ "$fail" -eq 0 ]; then
-    echo "test-permission-allowlist: narrowed/dropped/required grants intact, allow arrays match"
+    echo "test-permission-allowlist: narrowed/dropped/required grants intact, allow arrays match, no sandbox escape shipped"
 fi
 
 exit "$fail"

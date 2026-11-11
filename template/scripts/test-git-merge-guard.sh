@@ -19,6 +19,9 @@ guard="${GUARD:-${repo_root}/.claude/hooks/git-merge-guard.py}"
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS
 # The matrix tests the guarded (dev) profile; the profile section sets its own.
 unset FOREMAN_DEVCONTAINER
+# The read-allow proof reads the host from the environment: the ordinary matrix
+# runs with none set, and each host case sets its own explicitly.
+unset GH_HOST GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_NOSYSTEM=1
 
 # macOS ignores TMPDIR for a bare `mktemp -d` and returns a /var/folders path;
@@ -124,7 +127,7 @@ fi
 
 failures=0
 case_count=0
-decide() { # guard cwd command [reason] -> silent|ask|reason|rc<N>
+decide() { # guard cwd command [reason] -> silent|allow|ask|reason|rc<N>
     local input out rc
     if input="$(jq -nc --arg c "$3" --arg d "$2" \
         '{tool_name:"Bash",tool_input:{command:$c},cwd:$d}')"; then
@@ -150,6 +153,11 @@ decide() { # guard cwd command [reason] -> silent|ask|reason|rc<N>
         else
             echo ask
         fi
+    elif jq -e '.hookSpecificOutput.permissionDecision == "allow"
+        and (.hookSpecificOutput.permissionDecisionReason | startswith("git-merge-guard: gh api proved read-only"))' \
+        <<<"$out" >/dev/null; then
+        # The only approval the guard ever gives: a proved read-only `gh api`.
+        echo allow
     else
         echo "unexpected:${out}"
     fi
@@ -231,8 +239,11 @@ matrix() { # guard
     for cmd in 'gh api graphql -F query=@file' 'gh api graphql --input file' 'gh api graphql' 'gh api -X "$METHOD" repos/o/r/pulls/1/merge'; do
         case_ "$g" ask "$r" "$cmd"
     done
-    for cmd in 'gh pr view 1' 'gh pr list' 'gh pr ready 1' 'gh api repos/o/r/pulls/1' 'gh api -X GET repos/o/r/pulls/1/merge' 'gh api graphql -f "query={ viewer { login } }"'; do
+    for cmd in 'gh pr view 1' 'gh pr list' 'gh pr ready 1' 'gh api graphql -f "query={ viewer { login } }"'; do
         case_ "$g" silent "$r" "$cmd"
+    done
+    for cmd in 'gh api repos/o/r/pulls/1' 'gh api -X GET repos/o/r/pulls/1/merge'; do
+        case_ "$g" allow "$r" "$cmd"
     done
     for cmd in 'HEAD:main' '+HEAD:main' ':main' 'refs/heads/main' 'feat:master' '--delete main' '--all' '--mirror'; do
         case_ "$g" ask "${r}/wt" "git push origin $cmd"
@@ -284,6 +295,8 @@ matrix() { # guard
         case_ "$g" ask "$r" "gh api -X PUT '$cmd'"
     done
     case_ "$g" ask "$r" 'gh api -X POST "$ENDPOINT"'
+    # gh's {owner}/{repo} placeholders expand from GH_REPO (which can name any
+    # path or URL): they are outside the read-allow grammar, so no approval.
     case_ "$g" silent "$r" 'gh api repos/{owner}/{repo}/pulls/1'
     case_ "$g" silent "$r" 'gh api repos/{owner}/{repo}/pulls/1/comments'
     case_ "$g" silent "$r" 'gh api -X POST repos/o/r/issues/1/comments -f body=hello'
@@ -1395,6 +1408,129 @@ mutation { resolveReviewThread(input: {}) { clientMutationId } }'"'"''
     case_ "$g" silent "$r" "git --help merge"
     case_ "$g" silent "$r" "git --version pull"
     case_ "$g" silent "$r" "echo \"\$SHELL\""
+    # harmon-init#2033: a fast-forward to a full object id is the catch-up step
+    # AGENTS.md § Policy invariants requires. It is already silent on a verified
+    # feature branch (never an allow: it stays in the normal permission flow) and
+    # asks anywhere that could land on a default or unverifiable branch.
+    local oid
+    oid="$(git -C "${r}/wt" rev-parse HEAD)"
+    case_ "$g" silent "${r}/wt" "git merge --ff-only ${oid}"
+    case_ "$g" silent "$r" "git -C ${r}/wt merge --ff-only ${oid}"
+    case_ "$g" silent "$r" "cd ${r}/wt && git merge --ff-only ${oid}"
+    case_ "$g" silent "${r}/wt" "git fetch origin && git merge --ff-only ${oid}"
+    case_ "$g" ask "$r" "git merge --ff-only ${oid}"
+    case_ "$g" ask "${r}/det" "git merge --ff-only ${oid}"
+    case_ "$g" ask "${tr}" "git merge --ff-only ${oid}"
+    case_ "$g" ask "${r}/wt" "git -C ${r} merge --ff-only ${oid}"
+    case_ "$g" ask "${r}/wt" "git merge --ff-only ${oid} || git -C ${r} merge ${oid}"
+    case_ "$g" ask "${r}/wt" "git merge --ff-only \$(git rev-parse origin/main)"
+    # harmon-init#2033: the guard's only approval is a PROVED read-only `gh api`:
+    # one literal GET/HEAD call to a relative REST path. Everything else keeps its
+    # old decision (ask or no opinion); an approval is never given by exclusion.
+    for cmd in 'gh api repos/o/r/pulls/1' 'gh api repos/o/r/tarball/main' \
+        'gh api -X GET repos/o/r/pulls/1' 'gh api --method=HEAD repos/o/r' \
+        'gh api repos/o/r/pulls/1/comments --paginate' \
+        "gh api 'repos/o/r/pulls/1/comments?per_page=100' --paginate" \
+        "gh api repos/o/r/pulls --jq '.[] | .number'" \
+        "gh api -H 'Accept: application/vnd.github.raw' repos/o/r/contents/README.md" \
+        'gh api repos/o/r/pulls/1 --cache 1h -i --silent'; do
+        case_ "$g" allow "$r" "$cmd"
+        case_ "$g" allow "${r}/wt" "$cmd"
+    done
+    # Writes and write-capable inputs are never approved, however they are spelled.
+    for cmd in 'gh api -X POST repos/o/r/issues' 'gh api -XPOST repos/o/r/issues' \
+        'gh api --method DELETE repos/o/r/git/refs/heads/x' 'gh api repos/o/r/issues -f title=x' \
+        'gh api repos/o/r/issues -F title=@file' 'gh api repos/o/r --input f' \
+        'gh api repos/o/r/pulls/1/merge -X PUT' 'gh api repos/o/r repos/o/s' 'gh api' \
+        'gh api repos/o/r --jq . --unknown x' 'gh api repos/$X' 'gh api repos/*/r' 'gh api repos/o/r?x=1' \
+        'gh api repos/o/r --jq env' 'gh api repos/o/r -q env' 'gh api repos/o/r --jq=env' \
+        "gh api repos/o/r --jq 'env | .HOME'" "gh api repos/o/r --jq '.[] | env'" \
+        'gh api repos/o/r --jq input' 'gh api repos/o/r --jq inputs' 'gh api repos/o/r --jq input_filename' \
+        'gh api repos/o/r --jq builtins' "gh api repos/o/r --jq '.a | getpath([\"b\"])'" \
+        "gh api repos/o/r --jq '.a // 1'" "gh api repos/o/r --jq '.[] | select(.x)'"; do
+        [[ $(decide "$g" "$r" "$cmd") != allow ]] || {
+            failures=$((failures + 1))
+            echo "  FAIL approved a write-capable form :: $cmd" >&2
+        }
+    done
+    # Not read-only by the proof's grammar: stay in the normal flow (no approval).
+    for cmd in 'gh api graphql -f "query={ viewer { login } }"' 'gh api https://example.com/x' \
+        'gh api /repos/o/r' 'gh api repos/o/r > out' 'gh api repos/o/r >out' 'gh api repos/o/r 2>&1' \
+        'gh api repos/o/r | jq .' 'gh api repos/o/r && rm x' 'gh api repos/o/r; rm x' \
+        'gh api repos/o/r/../../user' "gh api -H 'X-HTTP-Method-Override: DELETE' repos/o/r" \
+        'gh api -H "Authorization: token x" repos/o/r' 'gh api --hostname evil.example repos/o/r' \
+        'gh -R o/r api repos/o/r' 'GH_HOST=evil gh api repos/o/r' 'env gh api repos/o/r' \
+        '/usr/bin/gh api repos/o/r' "gh api repos/o/r --jq '\$ENV'" 'gh api repos/o/r --jq "$(printf x)"' \
+        'gh api repos/o/r -t "{{.}}"' 'gh api ~/x' 'gh api repos/o/r # -X POST' \
+        'gh pr view 1' 'herdr pane list' 'gh api repos/o/r/pulls/1/reviews -f event=COMMENT -f body=x'; do
+        [[ $(decide "$g" "$r" "$cmd") != allow ]] || {
+            failures=$((failures + 1))
+            echo "  FAIL approved outside the proved-read grammar :: $cmd" >&2
+        }
+    done
+    # An ask is never turned into an allow: merge, push and default-branch cases
+    # keep their decision even when a proved read is chained beside them.
+    case_ "$g" ask "$r" 'gh api repos/o/r/pulls/1 && gh pr merge 1'
+    case_ "$g" ask "${r}/wt" 'gh api repos/o/r/pulls/1; git push origin HEAD:main'
+    # Round 1 findings: the whole input must be exactly ONE simple command, proved
+    # from the raw text. Shell control flow, grouping and backgrounding around an
+    # otherwise-allowed call give no opinion (never allow).
+    for cmd in 'until gh api repos/o/r; do done' '( gh api repos/o/r )' '(gh api repos/o/r)' \
+        '{ gh api repos/o/r; }' 'gh api repos/o/r &' 'gh api repos/o/r & gh api repos/o/s' \
+        'while gh api repos/o/r; do done' 'if gh api repos/o/r; then :; fi' \
+        'for i in 1; do gh api repos/o/r; done' '! gh api repos/o/r' 'time gh api repos/o/r'; do
+        [[ $(decide "$g" "$r" "$cmd") == silent ]] || {
+            failures=$((failures + 1))
+            echo "  FAIL control flow around a read is not silent :: $cmd" >&2
+        }
+    done
+    # Property: every reserved word and list/grouping operator, before or after an
+    # otherwise-allowed call, is never approved.
+    local kw
+    for kw in 'until' 'while' 'for' 'if' 'then' 'elif' 'else' 'fi' 'case' 'esac' 'select' 'function' \
+        'time' '!' 'coproc' 'do' 'done' '{' '}' '(' ')' '((' '[[' '&' ';' '&&' '||' '|' '|&' ';;' 'nohup' 'exec' 'command' 'builtin'; do
+        for cmd in "${kw} gh api repos/o/r" "${kw} gh api repos/o/r; ${kw}" "gh api repos/o/r ${kw}" \
+            "gh api repos/o/r ${kw} gh api repos/o/s" "x=1 ${kw} gh api repos/o/r"; do
+            [[ $(decide "$g" "$r" "$cmd") != allow ]] || {
+                failures=$((failures + 1))
+                echo "  FAIL approved a read wrapped in shell syntax (${kw}) :: $cmd" >&2
+            }
+        done
+    done
+    # An operator glued to the path is outside the grammar too (a glued WORD is
+    # just a longer literal path, so only operator tokens are tried).
+    for kw in '&' ';' '&&' '||' '|' '|&' ';;' ')' '('; do
+        [[ $(decide "$g" "$r" "gh api repos/o/r${kw}") != allow ]] || {
+            failures=$((failures + 1))
+            echo "  FAIL approved a read with a glued operator (${kw})" >&2
+        }
+    done
+    for cmd in $'gh api repos/o/r\ngh api repos/o/s' $'gh api repos/o/r\n' $' gh api repos/o/r' \
+        $'gh api repos/o/r\t-i' 'gh api repos/{owner}/{repo}/x{,y}' 'gh api repos/{o,p}/r' \
+        'gh api repos/{owner}/{repo}/pulls/1' 'gh api {owner}/{repo}' 'gh api repos/o/{repo}' \
+        'gh api repos/{branch}' "gh api 'repos/{owner}/{repo}/pulls/1'" 'gh api repos/o/r/{x}' \
+        'gh api repos/o/r }' 'gh api repos/o/r {'; do
+        [[ $(decide "$g" "$r" "$cmd") != allow ]] || {
+            failures=$((failures + 1))
+            echo "  FAIL approved outside the single-command grammar :: $cmd" >&2
+        }
+    done
+    # Round 1 finding: the effective host must be github.com.
+    local ghcmd='gh api repos/o/r/pulls/1' host_got
+    host_got() { env -u GH_HOST -u GH_ENTERPRISE_TOKEN -u GITHUB_ENTERPRISE_TOKEN "$@" bash -c "$(declare -f decide); decide \"\$0\" \"\$1\" \"\$2\"" "$g" "$r" "$ghcmd"; }
+    for hostenv in GH_HOST=evil.example.com GH_HOST=ghe.corp.example GH_HOST=api.github.com \
+        GH_ENTERPRISE_TOKEN=x GITHUB_ENTERPRISE_TOKEN=x; do
+        [[ $(host_got "$hostenv") != allow ]] || {
+            failures=$((failures + 1))
+            echo "  FAIL approved under ${hostenv%%=*} :: $ghcmd" >&2
+        }
+    done
+    for hostenv in GH_HOST=github.com GH_HOST=GitHub.com GH_HOST= FOO=bar; do
+        [[ $(host_got "$hostenv") == allow ]] || {
+            failures=$((failures + 1))
+            echo "  FAIL not approved with ${hostenv} :: $ghcmd" >&2
+        }
+    done
 }
 
 echo "==> git-merge-guard decision matrix"
@@ -1424,6 +1560,11 @@ done
 for profile in "" dev; do
     profile_case "$profile" ask "$r" "git merge feat"
     profile_case "$profile" silent "${r}/wt" "git merge origin/main --no-edit"
+    profile_case "$profile" allow "$r" 'gh api repos/o/r/pulls/1'
+done
+# Bot and agent postures carry no guard at all: no approval, no opinion.
+for profile in bot agent; do
+    profile_case "$profile" silent "$r" 'gh api repos/o/r/pulls/1'
 done
 
 echo "==> git-merge-guard matrix catches a guard that never checks the target branch"
@@ -1438,6 +1579,40 @@ if [[ $failures -eq 0 ]]; then
     echo "TEST FAIL: matrix passed a guard that allows merges into main" >&2
     exit 1
 fi
+
+echo "==> git-merge-guard matrix catches a guard whose read proof admits writes"
+failures=0
+read_mutant="${tmp}/read-mutant.py"
+sed 's/^GH_READ_METHODS = .*$/GH_READ_METHODS = {"GET", "HEAD", "POST", "DELETE"}/' "$guard" >"$read_mutant"
+if cmp -s "$guard" "$read_mutant"; then
+    echo "TEST FAIL: mutation did not apply (GH_READ_METHODS line changed?)" >&2
+    exit 1
+fi
+QUIET=1 matrix "$read_mutant"
+if [[ $failures -eq 0 ]]; then
+    echo "TEST FAIL: matrix passed a guard whose gh api read proof admits POST/DELETE" >&2
+    exit 1
+fi
+failures=0
+
+# Each single check of the read proof must be load-bearing: removing the
+# single-simple-command proof, or the host proof, must fail the matrix.
+for mut in 'shape:^    if not GH_READ_SHAPE.fullmatch(command):$' \
+    'host:^    if not gh_host_is_github():$'; do
+    echo "==> git-merge-guard matrix catches a read proof without its ${mut%%:*} check"
+    check_mutant="${tmp}/check-mutant-${mut%%:*}.py"
+    sed "s/${mut#*:}/    if False:/" "$guard" >"$check_mutant"
+    if cmp -s "$guard" "$check_mutant"; then
+        echo "TEST FAIL: mutation did not apply (${mut%%:*} check line changed?)" >&2
+        exit 1
+    fi
+    QUIET=1 matrix "$check_mutant"
+    if [[ $failures -eq 0 ]]; then
+        echo "TEST FAIL: matrix passed a read proof with the ${mut%%:*} check removed" >&2
+        exit 1
+    fi
+    failures=0
+done
 
 # The guard only protects anything if settings.json runs it. Exercise the
 # REGISTERED command, not the file: a removed or misspelled entry, or a broken

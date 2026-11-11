@@ -350,8 +350,10 @@ first-to-merge, and small independent units may go ahead.
 The orchestrator owns each PR until it merges or closes and watches for as long
 as it is open; there is no fixed post-promotion watch window. At a passing
 handoff check (parked or merge-ready), a lane releases its Working slot, but its
-session stays alive and idle for integration fix rounds. Tear it down only after
-the PR merges; a PR closed unmerged waits for maintainer go-ahead. The orchestrator
+worktree and branch stay until the PR merges or closes. The orchestrator may close
+the lane's pane or tab then and relaunch the lane from its brief and disposition
+files for a fix round. Tear down the worktree and branch only after the PR
+merges; a PR closed unmerged waits for maintainer go-ahead. The orchestrator
 owns parked drafts, including their catch-up and re-check at the queue head.
 A lane's draft-publication signal is `DRAFT-PUBLISHED-`, the queue-head
 report is the merge-ready report, and the PR body section is `Deferred findings`.
