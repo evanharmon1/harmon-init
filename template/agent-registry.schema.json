@@ -376,7 +376,9 @@
                   "uniqueItems": true,
                   "items": { "enum": ["reaction", "comment", "review", "inline"] }
                 },
-                "head_binding": { "enum": ["reviewed-commit-line", "review-commit-id", "commit-link"] },
+                "head_binding": {
+                  "enum": ["reviewed-commit-line", "review-commit-id", "commit-link"]
+                },
                 "verdict_mode": {
                   "enum": ["clean-sentence", "actionable-count", "inline-comment-count"]
                 },
