@@ -1,6 +1,6 @@
 # VENDORED from harmon-devkit — DO NOT EDIT the managed agents here.
 # source: https://github.com/evanharmon1/harmon-devkit.git
-# ref: v0.68.0 (292b53a30eb8af02748be72f89d81f7c5e2b65e3)
+# ref: v0.69.0 (d221d2a8a2bca88c110d52aa18ca0bb67f27796b)
 # path: ai/agents
 # names: *
 # managed: challenger, implementer, integrator, reviewer
