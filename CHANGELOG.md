@@ -8,6 +8,26 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [5.19.0](https://github.com/evanharmon1/harmon-init/compare/v5.18.2...v5.19.0) (2026-11-11)
+
+
+### Features
+
+* **agents:** approve proved read-only gh api calls in the merge guard ([#2038](https://github.com/evanharmon1/harmon-init/issues/2038)) ([95163b1](https://github.com/evanharmon1/harmon-init/commit/95163b1d2bff32d0415e204dfbdd375a9bcaf179))
+* **devcontainer:** install herdr-core for the Herdr desktop app ([#2039](https://github.com/evanharmon1/harmon-init/issues/2039)) ([0c68c3f](https://github.com/evanharmon1/harmon-init/commit/0c68c3fe762796f04d87dd0b53b69e2ff1dafa2f))
+
+
+### Bug Fixes
+
+* **deps:** rebase behind Renovate PRs and catch bot PRs up with the rebase checkbox ([#2015](https://github.com/evanharmon1/harmon-init/issues/2015)) ([561d731](https://github.com/evanharmon1/harmon-init/commit/561d731b11a3fd3a50af9935aad39b7865d9dbe0))
+* **deps:** update devcontainer ([#1997](https://github.com/evanharmon1/harmon-init/issues/1997)) ([8be3fd9](https://github.com/evanharmon1/harmon-init/commit/8be3fd9df1b0f94db1b71ec4073a16f7deafadd4))
+* **deps:** validate Renovate hold metadata in .github/renovate.json ([#2028](https://github.com/evanharmon1/harmon-init/issues/2028)) ([999df07](https://github.com/evanharmon1/harmon-init/commit/999df070b2e2cf2ce8e6eb61cc0ed7b672594d17))
+* **devcontainer:** update shared image to 8be3fd9d ([#2043](https://github.com/evanharmon1/harmon-init/issues/2043)) ([0e074e9](https://github.com/evanharmon1/harmon-init/commit/0e074e9c17478bca3376f6b56ae7915f29482031))
+* **renovate:** hold the Node runtime major in the template Renovate config ([#2017](https://github.com/evanharmon1/harmon-init/issues/2017)) ([f2c815c](https://github.com/evanharmon1/harmon-init/commit/f2c815c15e88e93be514927ddcd60c763bedf4f8))
+* **template:** mirror the corrected Greptile terminal-signal profile ([#2044](https://github.com/evanharmon1/harmon-init/issues/2044)) ([8e933bc](https://github.com/evanharmon1/harmon-init/commit/8e933bcc006bad20eb2dfb86961c45791a03c57f))
+* **template:** sync harmon-devkit skills to v0.69.0 ([#2042](https://github.com/evanharmon1/harmon-init/issues/2042)) ([7829401](https://github.com/evanharmon1/harmon-init/commit/782940110df8d76e602a48d044b525be240ab417))
+* **worktree:** create lane branches without a default-branch upstream ([#2034](https://github.com/evanharmon1/harmon-init/issues/2034)) ([0d72b6e](https://github.com/evanharmon1/harmon-init/commit/0d72b6e8cc34cb14fe520e35e96966085f319126))
+
 ## [5.18.2](https://github.com/evanharmon1/harmon-init/compare/v5.18.1...v5.18.2) (2026-11-09)
 
 
