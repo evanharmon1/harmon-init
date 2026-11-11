@@ -124,7 +124,7 @@ fi
 
 failures=0
 case_count=0
-decide() { # guard cwd command [reason] -> silent|ask|reason|rc<N>
+decide() { # guard cwd command [reason] -> silent|allow|ask|reason|rc<N>
     local input out rc
     if input="$(jq -nc --arg c "$3" --arg d "$2" \
         '{tool_name:"Bash",tool_input:{command:$c},cwd:$d}')"; then
@@ -150,6 +150,11 @@ decide() { # guard cwd command [reason] -> silent|ask|reason|rc<N>
         else
             echo ask
         fi
+    elif jq -e '.hookSpecificOutput.permissionDecision == "allow"
+        and (.hookSpecificOutput.permissionDecisionReason | startswith("git-merge-guard: gh api proved read-only"))' \
+        <<<"$out" >/dev/null; then
+        # The only approval the guard ever gives: a proved read-only `gh api`.
+        echo allow
     else
         echo "unexpected:${out}"
     fi
@@ -231,8 +236,11 @@ matrix() { # guard
     for cmd in 'gh api graphql -F query=@file' 'gh api graphql --input file' 'gh api graphql' 'gh api -X "$METHOD" repos/o/r/pulls/1/merge'; do
         case_ "$g" ask "$r" "$cmd"
     done
-    for cmd in 'gh pr view 1' 'gh pr list' 'gh pr ready 1' 'gh api repos/o/r/pulls/1' 'gh api -X GET repos/o/r/pulls/1/merge' 'gh api graphql -f "query={ viewer { login } }"'; do
+    for cmd in 'gh pr view 1' 'gh pr list' 'gh pr ready 1' 'gh api graphql -f "query={ viewer { login } }"'; do
         case_ "$g" silent "$r" "$cmd"
+    done
+    for cmd in 'gh api repos/o/r/pulls/1' 'gh api -X GET repos/o/r/pulls/1/merge'; do
+        case_ "$g" allow "$r" "$cmd"
     done
     for cmd in 'HEAD:main' '+HEAD:main' ':main' 'refs/heads/main' 'feat:master' '--delete main' '--all' '--mirror'; do
         case_ "$g" ask "${r}/wt" "git push origin $cmd"
@@ -284,8 +292,8 @@ matrix() { # guard
         case_ "$g" ask "$r" "gh api -X PUT '$cmd'"
     done
     case_ "$g" ask "$r" 'gh api -X POST "$ENDPOINT"'
-    case_ "$g" silent "$r" 'gh api repos/{owner}/{repo}/pulls/1'
-    case_ "$g" silent "$r" 'gh api repos/{owner}/{repo}/pulls/1/comments'
+    case_ "$g" allow "$r" 'gh api repos/{owner}/{repo}/pulls/1'
+    case_ "$g" allow "$r" 'gh api repos/{owner}/{repo}/pulls/1/comments'
     case_ "$g" silent "$r" 'gh api -X POST repos/o/r/issues/1/comments -f body=hello'
     case_ "$g" silent "$r" 'gh api -X POST repos/o/r/pulls/1/comments/2/replies -f body=hello'
     case_ "$g" silent "$r" 'gh api graphql -f "query=mutation { resolveReviewThread(input: {}) { clientMutationId } }"'
@@ -1395,6 +1403,70 @@ mutation { resolveReviewThread(input: {}) { clientMutationId } }'"'"''
     case_ "$g" silent "$r" "git --help merge"
     case_ "$g" silent "$r" "git --version pull"
     case_ "$g" silent "$r" "echo \"\$SHELL\""
+    # harmon-init#2033: a fast-forward to a full object id is the catch-up step
+    # AGENTS.md § Policy invariants requires. It is already silent on a verified
+    # feature branch (never an allow: it stays in the normal permission flow) and
+    # asks anywhere that could land on a default or unverifiable branch.
+    local oid
+    oid="$(git -C "${r}/wt" rev-parse HEAD)"
+    case_ "$g" silent "${r}/wt" "git merge --ff-only ${oid}"
+    case_ "$g" silent "$r" "git -C ${r}/wt merge --ff-only ${oid}"
+    case_ "$g" silent "$r" "cd ${r}/wt && git merge --ff-only ${oid}"
+    case_ "$g" silent "${r}/wt" "git fetch origin && git merge --ff-only ${oid}"
+    case_ "$g" ask "$r" "git merge --ff-only ${oid}"
+    case_ "$g" ask "${r}/det" "git merge --ff-only ${oid}"
+    case_ "$g" ask "${tr}" "git merge --ff-only ${oid}"
+    case_ "$g" ask "${r}/wt" "git -C ${r} merge --ff-only ${oid}"
+    case_ "$g" ask "${r}/wt" "git merge --ff-only ${oid} || git -C ${r} merge ${oid}"
+    case_ "$g" ask "${r}/wt" "git merge --ff-only \$(git rev-parse origin/main)"
+    # harmon-init#2033: the guard's only approval is a PROVED read-only `gh api`:
+    # one literal GET/HEAD call to a relative REST path. Everything else keeps its
+    # old decision (ask or no opinion); an approval is never given by exclusion.
+    for cmd in 'gh api repos/o/r/pulls/1' 'gh api repos/o/r/tarball/main' \
+        'gh api -X GET repos/o/r/pulls/1' 'gh api --method=HEAD repos/o/r' \
+        'gh api repos/{owner}/{repo}/pulls/1/comments --paginate' \
+        "gh api 'repos/o/r/pulls/1/comments?per_page=100' --paginate" \
+        "gh api repos/o/r/pulls --jq '.[] | .number'" \
+        "gh api -H 'Accept: application/vnd.github.raw' repos/o/r/contents/README.md" \
+        'gh api repos/o/r/pulls/1 --cache 1h -i --silent'; do
+        case_ "$g" allow "$r" "$cmd"
+        case_ "$g" allow "${r}/wt" "$cmd"
+    done
+    # Writes and write-capable inputs are never approved, however they are spelled.
+    for cmd in 'gh api -X POST repos/o/r/issues' 'gh api -XPOST repos/o/r/issues' \
+        'gh api --method DELETE repos/o/r/git/refs/heads/x' 'gh api repos/o/r/issues -f title=x' \
+        'gh api repos/o/r/issues -F title=@file' 'gh api repos/o/r --input f' \
+        'gh api repos/o/r/pulls/1/merge -X PUT' 'gh api repos/o/r repos/o/s' 'gh api' \
+        'gh api repos/o/r --jq . --unknown x' 'gh api repos/$X' 'gh api repos/*/r' 'gh api repos/o/r?x=1' \
+        'gh api repos/o/r --jq env' 'gh api repos/o/r -q env' 'gh api repos/o/r --jq=env' \
+        "gh api repos/o/r --jq 'env | .HOME'" "gh api repos/o/r --jq '.[] | env'" \
+        'gh api repos/o/r --jq input' 'gh api repos/o/r --jq inputs' 'gh api repos/o/r --jq input_filename' \
+        'gh api repos/o/r --jq builtins' "gh api repos/o/r --jq '.a | getpath([\"b\"])'" \
+        "gh api repos/o/r --jq '.a // 1'" "gh api repos/o/r --jq '.[] | select(.x)'"; do
+        [[ $(decide "$g" "$r" "$cmd") != allow ]] || {
+            failures=$((failures + 1))
+            echo "  FAIL approved a write-capable form :: $cmd" >&2
+        }
+    done
+    # Not read-only by the proof's grammar: stay in the normal flow (no approval).
+    for cmd in 'gh api graphql -f "query={ viewer { login } }"' 'gh api https://example.com/x' \
+        'gh api /repos/o/r' 'gh api repos/o/r > out' 'gh api repos/o/r >out' 'gh api repos/o/r 2>&1' \
+        'gh api repos/o/r | jq .' 'gh api repos/o/r && rm x' 'gh api repos/o/r; rm x' \
+        'gh api repos/o/r/../../user' "gh api -H 'X-HTTP-Method-Override: DELETE' repos/o/r" \
+        'gh api -H "Authorization: token x" repos/o/r' 'gh api --hostname evil.example repos/o/r' \
+        'gh -R o/r api repos/o/r' 'GH_HOST=evil gh api repos/o/r' 'env gh api repos/o/r' \
+        '/usr/bin/gh api repos/o/r' "gh api repos/o/r --jq '\$ENV'" 'gh api repos/o/r --jq "$(printf x)"' \
+        'gh api repos/o/r -t "{{.}}"' 'gh api ~/x' 'gh api repos/o/r # -X POST' \
+        'gh pr view 1' 'herdr pane list' 'gh api repos/o/r/pulls/1/reviews -f event=COMMENT -f body=x'; do
+        [[ $(decide "$g" "$r" "$cmd") != allow ]] || {
+            failures=$((failures + 1))
+            echo "  FAIL approved outside the proved-read grammar :: $cmd" >&2
+        }
+    done
+    # An ask is never turned into an allow: merge, push and default-branch cases
+    # keep their decision even when a proved read is chained beside them.
+    case_ "$g" ask "$r" 'gh api repos/o/r/pulls/1 && gh pr merge 1'
+    case_ "$g" ask "${r}/wt" 'gh api repos/o/r/pulls/1; git push origin HEAD:main'
 }
 
 echo "==> git-merge-guard decision matrix"
@@ -1424,6 +1496,11 @@ done
 for profile in "" dev; do
     profile_case "$profile" ask "$r" "git merge feat"
     profile_case "$profile" silent "${r}/wt" "git merge origin/main --no-edit"
+    profile_case "$profile" allow "$r" 'gh api repos/o/r/pulls/1'
+done
+# Bot and agent postures carry no guard at all: no approval, no opinion.
+for profile in bot agent; do
+    profile_case "$profile" silent "$r" 'gh api repos/o/r/pulls/1'
 done
 
 echo "==> git-merge-guard matrix catches a guard that never checks the target branch"
@@ -1438,6 +1515,21 @@ if [[ $failures -eq 0 ]]; then
     echo "TEST FAIL: matrix passed a guard that allows merges into main" >&2
     exit 1
 fi
+
+echo "==> git-merge-guard matrix catches a guard whose read proof admits writes"
+failures=0
+read_mutant="${tmp}/read-mutant.py"
+sed 's/^GH_READ_METHODS = .*$/GH_READ_METHODS = {"GET", "HEAD", "POST", "DELETE"}/' "$guard" >"$read_mutant"
+if cmp -s "$guard" "$read_mutant"; then
+    echo "TEST FAIL: mutation did not apply (GH_READ_METHODS line changed?)" >&2
+    exit 1
+fi
+QUIET=1 matrix "$read_mutant"
+if [[ $failures -eq 0 ]]; then
+    echo "TEST FAIL: matrix passed a guard whose gh api read proof admits POST/DELETE" >&2
+    exit 1
+fi
+failures=0
 
 # The guard only protects anything if settings.json runs it. Exercise the
 # REGISTERED command, not the file: a removed or misspelled entry, or a broken

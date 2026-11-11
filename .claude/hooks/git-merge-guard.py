@@ -20,6 +20,17 @@ Review argument counts require literal words or literal text with quoted command
 substitutions; parameter expansions in review arguments/fields ask even when
 quoted. Parameters inside a command-substitution body belong to its nested command.
 
+The hook's only approval is `allow` for a `gh api` call PROVED read-only up
+front (#2033, `gh_api_proved_read`): one simple, fully literal command, a
+relative REST path, GET/HEAD, and presentation flags. It lists no dangerous
+variants: fields, --input, --hostname, URLs, graphql, a header other than
+Accept, pipes, redirects, expansions and compounds all fall outside the grammar
+and keep the normal permission flow. A hook allow never overrides a settings
+ask/deny rule or the merge/push asks above, which are decided first. Silence
+from this hook is still "no opinion", not an approval: `git merge --ff-only
+<full OID>` on a verified feature branch is silent here and then follows the
+normal permission rules.
+
 Replaces the `Bash(git merge)` / `Bash(git merge:*)` permissions.ask rules,
 which prompt on every merge (including routine catch-up merges of main into
 a lane branch) yet miss `git -C <dir> merge` entirely, because permission
@@ -1892,6 +1903,95 @@ def feature_branch(cwd):
     return branch
 
 
+# The one thing this hook may APPROVE: a single, fully literal `gh api` read.
+# Every other outcome stays "ask" or no opinion. A call is approved only when it
+# is PROVED read-only up front -- one simple command, `gh api`, a literal
+# relative REST path, GET/HEAD, presentation flags -- never by listing the
+# dangerous variants. Anything outside that closed grammar (fields, --input,
+# --hostname, a URL or graphql endpoint, a header other than Accept, a pipe,
+# redirect, expansion or compound) keeps the normal permission flow. A hook
+# allow never overrides a settings ask/deny rule (Claude Code permissions docs,
+# "Precedence among rules, hooks, and mods"), so this cannot widen a gated call.
+GH_READ_PATH = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]*")
+GH_READ_QUERY = re.compile(r"[A-Za-z0-9._=%,+/-]*")
+GH_READ_ACCEPT = re.compile(r"accept: ?[A-Za-z0-9.+/;=_ -]+", re.I)
+# --jq is a jq PROGRAM (`env`, `input`, `$ENV` would print secrets), so it is
+# accepted only as path expressions: every term starts with `.` and the only
+# operators are `|` and `,`. No bare identifier, call, string or `$` can occur.
+GH_READ_JQ_TERM = r"\.(?:[A-Za-z_][A-Za-z0-9_]*)?(?:\.[A-Za-z_][A-Za-z0-9_]*|\[[0-9]*\])*"
+GH_READ_JQ = re.compile(rf" *{GH_READ_JQ_TERM}(?: *[|,] *{GH_READ_JQ_TERM})* *")
+GH_READ_BOOLS = {"--paginate", "--slurp", "-i", "--include", "--silent"}
+GH_READ_METHODS = {"GET", "HEAD"}
+
+
+def gh_api_proved_read(command):
+    """True only for a `gh api` call proved to read and nothing else."""
+    # The parser does not model redirects, expansions or escapes: ban them raw.
+    if re.search(r"[^\x20-\x7e]|[<>`$\\~#!]", command):
+        return False
+    try:
+        commands, uncertain = parse(command)
+    except (ParseError, IndexError, RecursionError):
+        return False
+    if uncertain or len(commands) != 1 or commands[0].stdin:
+        return False
+    words = commands[0].words
+    if len(words) < 3 or [w.value for w in words[:2]] != ["gh", "api"]:
+        return False
+    if any(w.unquoted_dynamic or w.has_param for w in words):
+        return False
+    args = words[2:]
+    endpoint = None
+    j = 0
+    while j < len(args):
+        w = args[j]
+        v = w.value
+        name, eq, inline = v.partition("=")
+        if v in ("-X", "--method", "-H", "--header", "-q", "--jq", "--cache"):
+            name = v
+            j += 1
+            if j >= len(args) or not args[j].literal:
+                return False
+            value = args[j].value
+        elif eq and name in ("--method", "--header", "--jq", "--cache"):
+            value = inline
+        elif v in GH_READ_BOOLS:
+            j += 1
+            continue
+        elif v.startswith("-"):
+            return False  # fields, --input, --hostname, clusters, unknown flags
+        elif endpoint is None:
+            endpoint = w
+            j += 1
+            continue
+        else:
+            return False
+        if not w.literal:
+            return False
+        if name in ("-X", "--method") and value.upper() not in GH_READ_METHODS:
+            return False
+        if name in ("-H", "--header") and not GH_READ_ACCEPT.fullmatch(value):
+            return False
+        if name == "--cache" and not re.fullmatch(r"[0-9]+[smh]", value):
+            return False
+        if name in ("-q", "--jq") and not GH_READ_JQ.fullmatch(value):
+            return False
+        j += 1
+    if endpoint is None:
+        return False
+    path, _, query = endpoint.value.partition("?")
+    # An unquoted `?` is a glob. gh's own {owner}/{repo}/{branch} placeholders
+    # are the only non-literal text accepted, and the regexes below admit no
+    # other brace, glob or expansion character.
+    if "?" in endpoint.value and not endpoint.literal:
+        return False
+    masked = re.sub(r"\{(?:owner|repo|branch)\}", "x", path)
+    if not GH_READ_PATH.fullmatch(masked) or not GH_READ_QUERY.fullmatch(query):
+        return False
+    segments = masked.split("/")
+    return ".." not in segments and segments[0].lower() != "graphql"
+
+
 def decide(command, cwd):
     """Return None (no opinion) or the reason to ask."""
     try:
@@ -1926,6 +2026,24 @@ def main():
         reason = decide(command, payload.get("cwd") or os.getcwd())
     except Exception as exc:  # fail closed
         reason = f"guard could not analyse the command ({exc.__class__.__name__})"
+    if not reason:
+        try:
+            proved = gh_api_proved_read(command)
+        except Exception:  # an allow is never worth a crash: no opinion
+            proved = False
+        if proved:
+            json.dump(
+                {
+                    "hookSpecificOutput": {
+                        "hookEventName": "PreToolUse",
+                        "permissionDecision": "allow",
+                        "permissionDecisionReason": "git-merge-guard: gh api proved read-only "
+                        "(one literal GET/HEAD call, no fields or input)",
+                    }
+                },
+                sys.stdout,
+            )
+            return
     if reason:
         json.dump(
             {

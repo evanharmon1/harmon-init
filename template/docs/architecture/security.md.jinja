@@ -366,6 +366,36 @@ application-specific controls. A deployed web application should evaluate them;
 a library or docs repository usually should not.
 [% if devcontainer %]
 
+## Claude Code permission prompts: what the merge guard approves
+
+`.claude/hooks/git-merge-guard.py` is the PreToolUse(Bash) guard for the host
+and dev postures. It returns `ask` for merges, pulls and pushes it cannot place
+on a feature branch, and no opinion otherwise. Its one approval is `allow` for
+a `gh api` call **proved** read-only up front, so a lane's read never waits on
+a prompt nobody can answer. The proof is a closed grammar, not a list of bad
+variants: a single simple command, `gh api`, a relative REST path of letters,
+digits and `._/-` (plus a query string and gh's `{owner}`/`{repo}`/`{branch}`
+placeholders), GET or HEAD, and only `--paginate`, `--slurp`, `-i`,
+`--include`, `--silent`, `--cache`, `-X`/`--method GET|HEAD`, an `Accept` header
+and a `--jq`/`-q` filter made only of path expressions (`.[] | .number`; a jq
+program such as `env` or `input` could print the environment, so none is accepted). Fields, `--input`, `--hostname`, URLs, `graphql`, any other
+header, pipes, redirects, expansions, comments, wrappers and compounds fall
+outside it and keep the normal permission flow.
+
+- **Precedence.** A hook `allow` never overrides a settings `ask` or `deny`
+  rule, and the guard decides its merge and push asks first. The bot and agent
+  postures run no guard, so they gain nothing.
+- **Blast radius.** A lane can read anything its `gh` credential can read
+  through the REST API, and can encode data in the request path to
+  `api.github.com`. It cannot write, and no allow rule was widened.
+- **Rollback.** Revert the `gh_api_proved_read` call in `main()` (or the whole
+  change); every `gh api` call then returns to the normal permission flow.
+- **Not approved by design.** `git merge --ff-only <full OID>` on a feature
+  branch is silent in the guard and still follows the normal rules; sandbox
+  escapes (`excludedCommands`, `allowUnixSockets`) are never shipped in project
+  settings. [Herdr guide](../guides/herdr.md#sandbox-and-permission-settings-maintainer-step)
+  has the orchestrator's launch-time snippet.
+
 ## Bot devcontainer: fail-closed non-interactive policy
 
 The bot profile's Docker container is its isolation boundary, so every agent

@@ -384,6 +384,46 @@ Worker briefs should also say: never set gate or approval variables yourself;
 if a script refuses, stop and report. A capable model will otherwise export
 the variable to get unstuck.
 
+## Sandbox and permission settings (maintainer step)
+
+A sandboxed Claude Code session on macOS cannot run `gh` at all (Go TLS
+verification fails under Seatbelt: `x509: OSStatus -26276`) and cannot reach
+Herdr's control socket, so an orchestrator retries each `herdr`, `gh` and gate
+call unsandboxed and the maintainer answers a prompt per call. What the
+repository ships and what it cannot:
+
+| Prompt | Shipped | Not shipped (why) |
+| --- | --- | --- |
+| `gh api` read in a lane | The merge guard approves one literal GET/HEAD `gh api` call ([security.md](../architecture/security.md#claude-code-permission-prompts-what-the-merge-guard-approves)). `gh issue view`/`pr view`/`pr checks`/`run view`/`search` were already allowed. | A `Bash(gh api:*)` rule admits `-X POST`, `-f` and `--input`. |
+| `git merge --ff-only <full OID>` | Nothing: the guard is already silent on a feature branch and asks on `main` (decision-matrix cases pin both). | Silence is "no opinion", so the normal permission rules still decide. |
+| `herdr`, `gh` (Keychain), `task verify`/`security`/`challenge`/`review` | Nothing. | `sandbox.excludedCommands` and `sandbox.network.allowUnixSockets` apply to every session that loads the file, lane workers included, so a shipped entry runs a lane outside its sandbox. |
+| Public fetch (`curl`, tarballs) | `WebFetch` for documentation. | No `curl` rule can exclude `-X POST`, `-d`, `-o`. |
+
+Give the orchestrator, and only the orchestrator, the escapes it needs by
+launching it with `--settings`, which applies to that session alone and above
+user and project settings. An excluded command still goes through the regular
+permission flow (allow rules, ask rules, the merge guard, the auto-mode
+classifier), and every command in a chained call must match an entry for the
+call to leave the sandbox:
+
+```sh
+claude --settings '{
+  "sandbox": {
+    "network": { "allowUnixSockets": ["<value of $HERDR_SOCKET_PATH>"] },
+    "excludedCommands": ["gh *", "task verify", "task security", "task challenge *", "task review *"]
+  }
+}'
+```
+
+Check the key spellings against the Claude Code settings reference before
+relying on them. `allowUnixSockets` keeps the orchestrator sandboxed and opens
+only Herdr's socket; if it does not take effect, add `"herdr *"` to
+`excludedCommands` instead. The `gh *` entry runs `gh` with the operator's full
+credentials, which is why it belongs in this session and not in a shared file.
+To let lane workers download public upstream source, launch each lane with
+`--settings '{"sandbox":{"network":{"allowedDomains":["codeload.github.com","raw.githubusercontent.com"]}}}'`:
+the sandbox proxy then admits any method to those hosts, with no credentials.
+
 ## Cheat sheet
 
 ```bash
