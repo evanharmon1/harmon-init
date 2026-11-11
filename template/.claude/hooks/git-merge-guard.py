@@ -23,8 +23,10 @@ quoted. Parameters inside a command-substitution body belong to its nested comma
 The hook's only approval is `allow` for a `gh api` call PROVED read-only up
 front (#2033, `gh_api_proved_read`): the raw text is exactly one simple, fully
 literal command (a closed token grammar, so no control keyword, grouping or
-`&`), the effective host is github.com (no `GH_HOST` elsewhere, no enterprise
-token), a relative REST path, GET/HEAD, and presentation flags. It lists no dangerous
+`&`), no `GH_HOST` naming another host and no enterprise token in the
+environment (it does NOT resolve gh's configuration: where gh is configured for
+another host, the read goes there with that host's own credential), a literal
+relative REST path, GET/HEAD, and presentation flags. It lists no dangerous
 variants: fields, --input, --hostname, URLs, graphql, a header other than
 Accept, pipes, redirects, expansions and compounds all fall outside the grammar
 and keep the normal permission flow. A hook allow never overrides a settings
@@ -1926,19 +1928,26 @@ GH_READ_BOOLS = {"--paginate", "--slurp", "-i", "--include", "--silent"}
 GH_READ_METHODS = {"GET", "HEAD"}
 # The accepted RAW text, stated as a grammar and proved before anything else: the
 # whole input is `gh api` followed by space-separated arguments, each a run of
-# bare characters, one of gh's three placeholders, or a quoted string. A
+# bare characters or a quoted string (no braces: gh's {owner}/{repo} placeholders
+# expand from GH_REPO and are not part of the grammar). A
 # reserved word, grouping, `&`, `;`, `|`, newline, assignment prefix or any
 # other shell syntax cannot occur at command position because nothing outside
 # this grammar matches. The tokenisation is unambiguous (a quote always opens
 # the quoted alternative and ends at its own closing quote), so it equals the
 # shell's.
 GH_READ_SHAPE = re.compile(
-    r"gh api(?: +(?:[A-Za-z0-9._/=%,+:-]|\{(?:owner|repo|branch)\}|'[^']*'|\"[^\"]*\")+)+ *"
+    r"gh api(?: +(?:[A-Za-z0-9._/=%,+:-]|'[^']*'|\"[^\"]*\")+)+ *"
 )
 
 
 def gh_host_is_github():
-    """False when the environment redirects `gh` away from github.com."""
+    """False when the ENVIRONMENT names another host or an enterprise token.
+
+    This does not resolve gh's own configuration (hosts.yml, an api_host
+    override): the command text cannot prove gh's effective destination. On a
+    machine whose gh is configured for another host the read goes there with
+    that host's own credential (accepted limitation, maintainer 2026-11-10).
+    """
     host = os.environ.get("GH_HOST", "").strip().lower()
     if host and host != "github.com":
         return False
@@ -2006,15 +2015,14 @@ def gh_api_proved_read(command):
     if endpoint is None:
         return False
     path, _, query = endpoint.value.partition("?")
-    # An unquoted `?` is a glob. gh's own {owner}/{repo}/{branch} placeholders
-    # are the only non-literal text accepted, and the regexes below admit no
-    # other brace, glob or expansion character.
+    # An unquoted `?` is a glob. The regexes below admit no brace (so no gh
+    # {owner}/{repo} placeholder, which expands from GH_REPO), glob or expansion
+    # character: the endpoint is literal text.
     if "?" in endpoint.value and not endpoint.literal:
         return False
-    masked = re.sub(r"\{(?:owner|repo|branch)\}", "x", path)
-    if not GH_READ_PATH.fullmatch(masked) or not GH_READ_QUERY.fullmatch(query):
+    if not GH_READ_PATH.fullmatch(path) or not GH_READ_QUERY.fullmatch(query):
         return False
-    segments = masked.split("/")
+    segments = path.split("/")
     return ".." not in segments and segments[0].lower() != "graphql"
 
 

@@ -19,6 +19,9 @@ guard="${GUARD:-${repo_root}/.claude/hooks/git-merge-guard.py}"
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS
 # The matrix tests the guarded (dev) profile; the profile section sets its own.
 unset FOREMAN_DEVCONTAINER
+# The read-allow proof reads the host from the environment: the ordinary matrix
+# runs with none set, and each host case sets its own explicitly.
+unset GH_HOST GH_ENTERPRISE_TOKEN GITHUB_ENTERPRISE_TOKEN
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null GIT_CONFIG_NOSYSTEM=1
 
 # macOS ignores TMPDIR for a bare `mktemp -d` and returns a /var/folders path;
@@ -292,8 +295,10 @@ matrix() { # guard
         case_ "$g" ask "$r" "gh api -X PUT '$cmd'"
     done
     case_ "$g" ask "$r" 'gh api -X POST "$ENDPOINT"'
-    case_ "$g" allow "$r" 'gh api repos/{owner}/{repo}/pulls/1'
-    case_ "$g" allow "$r" 'gh api repos/{owner}/{repo}/pulls/1/comments'
+    # gh's {owner}/{repo} placeholders expand from GH_REPO (which can name any
+    # path or URL): they are outside the read-allow grammar, so no approval.
+    case_ "$g" silent "$r" 'gh api repos/{owner}/{repo}/pulls/1'
+    case_ "$g" silent "$r" 'gh api repos/{owner}/{repo}/pulls/1/comments'
     case_ "$g" silent "$r" 'gh api -X POST repos/o/r/issues/1/comments -f body=hello'
     case_ "$g" silent "$r" 'gh api -X POST repos/o/r/pulls/1/comments/2/replies -f body=hello'
     case_ "$g" silent "$r" 'gh api graphql -f "query=mutation { resolveReviewThread(input: {}) { clientMutationId } }"'
@@ -1424,7 +1429,7 @@ mutation { resolveReviewThread(input: {}) { clientMutationId } }'"'"''
     # old decision (ask or no opinion); an approval is never given by exclusion.
     for cmd in 'gh api repos/o/r/pulls/1' 'gh api repos/o/r/tarball/main' \
         'gh api -X GET repos/o/r/pulls/1' 'gh api --method=HEAD repos/o/r' \
-        'gh api repos/{owner}/{repo}/pulls/1/comments --paginate' \
+        'gh api repos/o/r/pulls/1/comments --paginate' \
         "gh api 'repos/o/r/pulls/1/comments?per_page=100' --paginate" \
         "gh api repos/o/r/pulls --jq '.[] | .number'" \
         "gh api -H 'Accept: application/vnd.github.raw' repos/o/r/contents/README.md" \
@@ -1501,7 +1506,10 @@ mutation { resolveReviewThread(input: {}) { clientMutationId } }'"'"''
         }
     done
     for cmd in $'gh api repos/o/r\ngh api repos/o/s' $'gh api repos/o/r\n' $' gh api repos/o/r' \
-        $'gh api repos/o/r\t-i' 'gh api repos/{owner}/{repo}/x{,y}' 'gh api repos/{o,p}/r'; do
+        $'gh api repos/o/r\t-i' 'gh api repos/{owner}/{repo}/x{,y}' 'gh api repos/{o,p}/r' \
+        'gh api repos/{owner}/{repo}/pulls/1' 'gh api {owner}/{repo}' 'gh api repos/o/{repo}' \
+        'gh api repos/{branch}' "gh api 'repos/{owner}/{repo}/pulls/1'" 'gh api repos/o/r/{x}' \
+        'gh api repos/o/r }' 'gh api repos/o/r {'; do
         [[ $(decide "$g" "$r" "$cmd") != allow ]] || {
             failures=$((failures + 1))
             echo "  FAIL approved outside the single-command grammar :: $cmd" >&2
@@ -1509,7 +1517,7 @@ mutation { resolveReviewThread(input: {}) { clientMutationId } }'"'"''
     done
     # Round 1 finding: the effective host must be github.com.
     local ghcmd='gh api repos/o/r/pulls/1' host_got
-    host_got() { env "$@" bash -c "$(declare -f decide); decide \"\$0\" \"\$1\" \"\$2\"" "$g" "$r" "$ghcmd"; }
+    host_got() { env -u GH_HOST -u GH_ENTERPRISE_TOKEN -u GITHUB_ENTERPRISE_TOKEN "$@" bash -c "$(declare -f decide); decide \"\$0\" \"\$1\" \"\$2\"" "$g" "$r" "$ghcmd"; }
     for hostenv in GH_HOST=evil.example.com GH_HOST=ghe.corp.example GH_HOST=api.github.com \
         GH_ENTERPRISE_TOKEN=x GITHUB_ENTERPRISE_TOKEN=x; do
         [[ $(host_got "$hostenv") != allow ]] || {
