@@ -39,7 +39,7 @@ if grep -Fq 'HARMON_INIT_VALIDATE_RENOVATE' Taskfile.yml; then
 fi
 
 python3 - <<'PY'
-import copy, json, re, sys, pathlib
+import copy, json, re, subprocess, sys, pathlib
 
 def load_shell_manager(path, probe="scripts/example.sh"):
     """The `FOO_VERSION=` manager that covers shell SCRIPTS.
@@ -167,6 +167,68 @@ for p in sorted(pathlib.Path(".").glob("scripts/*.sh")) + sorted(
                 f"{p}: not matched by any managerFilePatterns in {cfg_name} "
                 f"(tested as {path_for_match!r}) — the pin is invisible to Renovate"
             )
+
+# ── Dockerfile ARG pins ──────────────────────────────────────────────────────
+# Same adjacency failure, Dockerfile syntax: a comment between `# renovate:`
+# and its `ARG` leaves the pin unextracted, so it never updates and any
+# packageRules hold on it is inert (HERDR_VERSION sat at 0.8.2 that way).
+# Every annotation must START a match of some manager whose
+# managerFilePatterns cover the file — the version manager or the digest one.
+def load_managers(path):
+    raw = pathlib.Path(path).read_text(encoding="utf-8")
+    try:
+        return json.loads(raw).get("customManagers", [])
+    except json.JSONDecodeError:
+        found = []
+        for m in re.finditer(r'\{[^{}]*"matchStrings"\s*:\s*\[[^\]]*\][^{}]*\}', raw, re.S):
+            try:
+                found.append(json.loads(m.group(0)))
+            except json.JSONDecodeError:
+                pass
+        return found
+
+DOCKER_ANNOT = re.compile(r"^[ \t]*(#\s*renovate:\s*datasource=)", re.M)
+all_mgrs = {cfg: load_managers(cfg) for cfg in ("renovate.json", "template/renovate.json.jinja")}
+docker_files = subprocess.run(
+    ["git", "ls-files", "-z", "*Dockerfile", "*Dockerfile.jinja"],
+    capture_output=True, text=True, check=True,
+).stdout.split("\0")
+docker_files = [p for p in docker_files if p]
+for p in docker_files:
+    text = pathlib.Path(p).read_text(encoding="utf-8", errors="replace")
+    # Position at the `#`, where a manager match starts: ANNOT's leading
+    # `^\s*` would otherwise swallow indentation and preceding blank lines.
+    annots = [mo.start(1) for mo in DOCKER_ANNOT.finditer(text)]
+    if not annots:
+        continue
+    configs = [("renovate.json", p)]
+    if p.startswith("template/"):
+        configs.insert(0, ("template/renovate.json.jinja", rendered(p)))
+    for cfg_name, path_for_match in configs:
+        starts = set()
+        covered = False
+        for m in all_mgrs[cfg_name]:
+            pats = [re.compile(x.strip("/")) for x in m.get("managerFilePatterns", [])]
+            if not any(rx.search(path_for_match) for rx in pats):
+                continue
+            covered = True
+            for ms in m.get("matchStrings", []):
+                for mo in re.finditer(js_to_py(ms), text):
+                    starts.add(mo.start())
+                    val = mo.groupdict().get("currentValue") or ""
+                    if val[:1] in ('"', "'"):
+                        line = text.count("\n", 0, mo.start()) + 1
+                        errors.append(f"{p}:{line}: pin value {val} is quoted; quotes end up inside currentValue")
+        if not covered:
+            errors.append(f"{p}: not matched by any managerFilePatterns in {cfg_name} — its pins are invisible to Renovate")
+            continue
+        for pos in annots:
+            if pos not in starts:
+                line = text.count("\n", 0, pos) + 1
+                errors.append(
+                    f"{p}:{line}: '# renovate:' annotation not extractable by {cfg_name} — "
+                    f"check adjacency (no comment between annotation and ARG) and that the value is unquoted"
+                )
 
 # ── Composite actions: `<tool>_version:` inputs and `uses:` SHA pins ────────
 # Same silent-rot failure mode, different syntax — and the template's

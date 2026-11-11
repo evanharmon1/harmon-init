@@ -37,22 +37,22 @@ ARG WORKMUX_VERSION=0.1.278
 # renovate: datasource=github-releases depName=njbrake/agent-of-empires extractVersion=^v?(?<version>.+)$
 ARG AOE_VERSION=1.21.0
 # renovate: datasource=npm depName=@anthropic-ai/claude-code
-ARG CLAUDE_CODE_VERSION=2.1.316
+ARG CLAUDE_CODE_VERSION=2.1.318
 # renovate: datasource=npm depName=@github/copilot
 ARG COPILOT_VERSION=1.0.105
 # renovate: datasource=npm depName=@earendil-works/pi-coding-agent
-ARG PI_VERSION=1.4.0
+ARG PI_VERSION=1.5.0
 # renovate: datasource=github-releases depName=can1357/oh-my-pi extractVersion=^v?(?<version>.+)$
-ARG OH_MY_PI_VERSION=18.14.2
+ARG OH_MY_PI_VERSION=18.18.6
 # oh-my-pi ships unsigned release binaries: the version pin above is
 # Renovate-managed, but these architecture-specific digests are not. Before
 # moving them, a person must download the new release's omp-linux-x64 and
 # omp-linux-arm64 binaries (not the source archives), check the release notes
 # and provenance, and compute their sha256. scripts/test-oh-my-pi-pin.sh fails
 # fast until the marker below is moved to match OH_MY_PI_VERSION.
-# verified-for: 18.14.2
-ARG OH_MY_PI_SHA256_AMD64=cde0bc4ac8ec333c4880039a5242ff33dbfc6544747d67aeb99bb077874aeec1
-ARG OH_MY_PI_SHA256_ARM64=afbdf04be3ddbe34a07e91c913ddb6d335a3a0210f520ac5a197a245888ad63e
+# verified-for: 18.18.6
+ARG OH_MY_PI_SHA256_AMD64=a8059b95de5eaba0b3fb6f7182842d661feae29cb2931cdbeba2986db4751ecb
+ARG OH_MY_PI_SHA256_ARM64=aa9d69380f7ded098bcd3d8023a67edcc8fc3cc0529360a98dededc21cfa101b
 # renovate: datasource=npm depName=opencode-ai
 ARG OPENCODE_VERSION=1.19.5
 # Pinned from Google's per-platform release manifests. Keep the version, build,
@@ -60,19 +60,25 @@ ARG OPENCODE_VERSION=1.19.5
 ARG ANTIGRAVITY_CLI_VERSION=1.1.11
 ARG ANTIGRAVITY_CLI_BUILD=4956531888881664
 # renovate: datasource=github-releases depName=asheshgoplani/agent-deck extractVersion=^v?(?<version>.+)$
-ARG AGENT_DECK_VERSION=1.16.35
-# renovate: datasource=github-releases depName=joshmedeski/sesh extractVersion=^v?(?<version>.+)$
+ARG AGENT_DECK_VERSION=1.16.36
 # Upstream v2.30.0 was published without release assets; stay on 2.29.0 until fixed
+# renovate: datasource=github-releases depName=joshmedeski/sesh extractVersion=^v?(?<version>.+)$
 ARG SESH_VERSION=2.29.0
-# renovate: datasource=github-releases depName=herdrdev/herdr extractVersion=^v?(?<version>.+)$
 # Apache-2.0 as of v0.8.0 (AGPL-3.0 before) — never pin below 0.8.0
+# renovate: datasource=github-releases depName=herdrdev/herdr extractVersion=^v?(?<version>.+)$
 ARG HERDR_VERSION=0.8.2
+# herdr-core (`hc`) is the backend the Herdr desktop app (herdrdev/herdr-app)
+# drives over SSH; it is a separate project from the `herdr` TUI above and
+# both stay installed. Apache-2.0. Binaries ship from releases.herdr.dev, not
+# GitHub release assets, so Renovate tracks the tag only.
+# renovate: datasource=github-tags depName=herdrdev/herdr-core extractVersion=^v?(?<version>.+)$
+ARG HERDR_CORE_VERSION=0.1.20
 # renovate: datasource=npm depName=dmux
 ARG DMUX_VERSION=5.11.1
 # renovate: datasource=github-releases depName=getsops/sops extractVersion=^v?(?<version>.+)$
 ARG SOPS_VERSION=3.13.3
 # renovate: datasource=github-releases depName=nektos/act extractVersion=^v?(?<version>.+)$
-ARG ACT_VERSION=0.2.94
+ARG ACT_VERSION=0.2.97
 # renovate: datasource=github-releases depName=wagoodman/dive extractVersion=^v?(?<version>.+)$
 ARG DIVE_VERSION=0.13.1
 # renovate: datasource=github-releases depName=antonmedv/fx extractVersion=^v?(?<version>.+)$
@@ -99,8 +105,8 @@ ARG TTT_SHA256_ARM64=a8019bb62205dd631664bf563bb1a00c2a735ba69405840e9c84ae77573
 ARG GLOW_VERSION=3.0.0
 # renovate: datasource=github-releases depName=jesseduffield/lazygit extractVersion=^v?(?<version>.+)$
 ARG LAZYGIT_VERSION=0.66.2
-# renovate: datasource=github-releases depName=XAMPPRocky/tokei extractVersion=^v?(?<version>.+)$
 # Upstream v13.0.0+ publishes no prebuilt binary assets; stay on 13.0.0-alpha.0
+# renovate: datasource=github-releases depName=XAMPPRocky/tokei extractVersion=^v?(?<version>.+)$
 ARG TOKEI_VERSION=13.0.0-alpha.0
 # renovate: datasource=github-releases depName=dlvhdr/gh-dash extractVersion=^v?(?<version>.+)$
 ARG GH_DASH_VERSION=4.26.2
@@ -354,6 +360,31 @@ RUN case "${TARGETARCH}" in \
 # persist — harmless but not covered.)
 ENV HERDR_SOCKET_PATH=/tmp/herdr.sock
 
+# herdr-core: the Herdr desktop app's backend. The app adds this container as
+# an SSH machine (`coder.<workspace>.devcontainer`) and runs `hc connect`
+# here, so `hc` must be on the non-interactive PATH. The archive is checked
+# against the sha256 in that version's release manifest. It comes from the
+# same origin as the binary, so it catches corruption and a moved artifact,
+# not a compromised release host (the `herdr` download above has no check).
+# The core keeps its socket and state under ~/.local/state/herdr-core, which
+# is container-local, so no stale socket survives a rebuild.
+RUN case "${TARGETARCH}" in \
+        "amd64") export HC_TARGET="linux-x86_64" ;; \
+        "arm64") export HC_TARGET="linux-aarch64" ;; \
+        *) echo "Unsupported TARGETARCH: ${TARGETARCH}" >&2; exit 1 ;; \
+    esac \
+    && hc_base="https://releases.herdr.dev/core/${HERDR_CORE_VERSION}" \
+    && curl -fsSL "${hc_base}/manifest.json" -o /tmp/hc-manifest.json \
+    && [ "$(jq -r '.version' /tmp/hc-manifest.json)" = "${HERDR_CORE_VERSION}" ] \
+    && hc_sha256="$(jq -er --arg t "${HC_TARGET}" '.targets[$t].sha256' /tmp/hc-manifest.json)" \
+    && curl -fsSL "${hc_base}/herdr-core-${HC_TARGET}.tar.gz" -o /tmp/herdr-core.tar.gz \
+    && echo "${hc_sha256}  /tmp/herdr-core.tar.gz" | sha256sum --check - \
+    && tar -xzf /tmp/herdr-core.tar.gz -C /tmp herdr-core \
+    && install -m 0755 /tmp/herdr-core /usr/local/bin/herdr-core \
+    && ln -sf herdr-core /usr/local/bin/hc \
+    && rm -f /tmp/herdr-core /tmp/herdr-core.tar.gz /tmp/hc-manifest.json \
+    && hc --version
+
 # ---------- prompt tooling ----------
 # uv is installed by the shared core tier above, from its checksum-pinned
 # GitHub release rather than the astral.sh installer.
@@ -546,6 +577,7 @@ RUN set -a \
         "agent-deck=${AGENT_DECK_VERSION}" \
         "sesh=${SESH_VERSION}" \
         "herdr=${HERDR_VERSION}" \
+        "herdr-core=${HERDR_CORE_VERSION}" \
         "dmux=${DMUX_VERSION}" \
         "semgrep=${SEMGREP_VERSION}" \
         "copier=${COPIER_VERSION}" \
