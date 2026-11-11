@@ -15,6 +15,7 @@
 #   --base <ref>      base for a NEW branch (default: the main worktree's
 #                     HEAD, verified against its configured upstream; also
 #                     skips the live remote lookup for the branch name)
+#                     A new branch never inherits an upstream from the base.
 #   --no-install      skip the per-tree dependency install
 #
 # Exits non-zero with the fix in the message when a precondition is missing, and
@@ -625,9 +626,9 @@ trap cleanup EXIT
 #
 # An EXPLICIT --base opts out of the lookup entirely: the caller named the start
 # point, so there is nothing to guess, and refusing an ambiguous remote name
-# would reject the very command that resolves the ambiguity. Git's own
-# branch.autoSetupMerge still sets up tracking when that base is a
-# remote-tracking ref.
+# would reject the very command that resolves the ambiguity. The new branch is
+# still created WITHOUT an upstream even when that base is a remote-tracking
+# ref (see --no-track below).
 #
 # The remotes are ENUMERATED and each tracking ref tested exactly, rather than
 # globbed as `refs/remotes/*/<branch>`: a remote name may itself contain a
@@ -792,7 +793,15 @@ else
     [ "$base_origin" = "explicit" ] || verify_default_base
     echo "==> Creating branch '$branch' from '$base'"
     branch_created=1
-    LEFTHOOK=0 git worktree add "$tree" -b "$branch" "$base"
+    # --no-track: a NEW branch has no remote counterpart yet, so it must carry
+    # no upstream. When $base is a remote-tracking ref (`--base origin/main`),
+    # git's branch.autoSetupMerge would otherwise make that ref the upstream,
+    # and a bare `git push` from the new tree would read as a push to the
+    # default branch — tripping merge guards, or refused under
+    # push.default=simple (harmon-init#2032). Creating it without one, rather
+    # than unsetting afterwards, leaves no window in which the branch is
+    # tracked. The first push names its own upstream (`git push -u`).
+    LEFTHOOK=0 git worktree add --no-track "$tree" -b "$branch" "$base"
 fi
 
 have() { command -v "$1" >/dev/null 2>&1; }
