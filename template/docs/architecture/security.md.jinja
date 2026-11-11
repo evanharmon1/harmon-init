@@ -366,6 +366,50 @@ application-specific controls. A deployed web application should evaluate them;
 a library or docs repository usually should not.
 [% if devcontainer %]
 
+## Claude Code permission prompts: what the merge guard approves
+
+`.claude/hooks/git-merge-guard.py` is the PreToolUse(Bash) guard for the host
+and dev postures. It returns `ask` for merges, pulls and pushes it cannot place
+on a feature branch, and no opinion otherwise. Its one approval is `allow` for
+a `gh api` call **proved** read-only up front, so a lane's read never waits on
+a prompt nobody can answer. The proof is a closed grammar, not a list of bad
+variants: the raw text is exactly one simple command (`gh api` plus plain or
+quoted arguments, so no control keyword, grouping, `&`, `;`, pipe or assignment
+prefix can occur), no `GH_HOST` naming another host and no enterprise token in the
+environment, a literal relative REST path of letters, digits and `._/-` (plus a
+query string; gh's `{owner}`/`{repo}` placeholders expand from `GH_REPO`, so any
+brace gives no opinion), GET or HEAD, and only `--paginate`, `--slurp`, `-i`,
+`--include`, `--silent`, `--cache`, `-X`/`--method GET|HEAD`, an `Accept` header
+and a `--jq`/`-q` filter made only of path expressions (`.[] | .number`; a jq
+program such as `env` or `input` could print the environment, so none is accepted). Fields, `--input`, `--hostname`, URLs, `graphql`, any other
+header, pipes, redirects, expansions, comments, wrappers and compounds fall
+outside it and keep the normal permission flow.
+
+- **Precedence.** A hook `allow` never overrides a settings `ask` or `deny`
+  rule, and the guard decides its merge and push asks first. The bot and agent
+  postures run no guard, so they gain nothing.
+- **Blast radius.** A prompt-free read can return anything the token may
+  read through the REST API, and can encode data in the request path. It cannot
+  write, and no allow rule was widened.
+- **Accepted limitation (maintainer decision, 2026-11-10).** The hook checks
+  `GH_HOST` and the enterprise-token variables in its environment but does not
+  resolve gh's own configuration (a sole host in `hosts.yml`, an `api_host`
+  override), because command text cannot prove gh's effective destination and
+  parsing that configuration inside a security hook adds more risk than it
+  removes. On a machine whose gh is configured for another host, the read goes
+  to that host with that host's own credential: per
+  [`gh help environment`](https://cli.github.com/manual/gh_help_environment),
+  `GH_TOKEN`/`GITHUB_TOKEN` apply to github.com and `ghe.com` subdomains, and
+  `GH_ENTERPRISE_TOKEN` to a GitHub Enterprise Server host. It is still one GET
+  or HEAD, so it cannot write.
+- **Rollback.** Revert the `gh_api_proved_read` call in `main()` (or the whole
+  change); every `gh api` call then returns to the normal permission flow.
+- **Not approved by design.** `git merge --ff-only <full OID>` on a feature
+  branch is silent in the guard and still follows the normal rules; sandbox
+  escapes (`excludedCommands`, `allowUnixSockets`) are never shipped in project
+  settings. [Herdr guide](../guides/herdr.md#sandbox-and-permission-settings-maintainer-step)
+  has the orchestrator's launch-time snippet.
+
 ## Bot devcontainer: fail-closed non-interactive policy
 
 The bot profile's Docker container is its isolation boundary, so every agent
