@@ -977,6 +977,41 @@ new remote-only >/dev/null || fail "worktree-new.sh failed for a remote-only bra
 rm_wt remote-only >/dev/null || fail "cleanup of the remote-only tree failed"
 git -C "$fixture" branch -D remote-only >/dev/null 2>&1 || true
 
+# ── a NEW lane branch never inherits an upstream (harmon-init#2032) ───
+# git's branch.autoSetupMerge makes `worktree add -b <b> <remote-tracking-ref>`
+# track that ref, so a lane branch based on origin/main would carry origin/main
+# as its upstream — a bare `git push` then reads as a push to main and trips the
+# merge guard (or is refused under push.default=simple). The property is "no
+# upstream configured", asserted on the branch config AND on what git resolves,
+# not on any one git invocation.
+echo "==> a new branch based on a remote-tracking ref has no upstream"
+assert_no_upstream() {
+    for _k in remote merge; do
+        if git -C "$fixture" config --local --get-all "branch.$1.$_k" >/dev/null 2>&1; then
+            fail "$2: branch.$1.$_k is configured — the new branch inherited an upstream"
+        fi
+    done
+    if git -C "$fixture" rev-parse --verify --quiet "$1@{upstream}" >/dev/null 2>&1; then
+        fail "$2: $1@{upstream} resolves — the new branch inherited an upstream"
+    fi
+}
+git -C "$fixture" rev-parse --verify --quiet refs/remotes/origin/remote-only >/dev/null ||
+    fail "fixture: the remote-tracking base ref is missing"
+new no-upstream-lane --base origin/remote-only >/dev/null ||
+    fail "worktree-new.sh failed creating a branch from a remote-tracking base"
+[ "$(git -C "$fixture/.worktrees/no-upstream-lane" rev-parse HEAD)" = "$remote_tip" ] ||
+    fail "the new branch was not based on the remote-tracking ref it was given"
+assert_no_upstream no-upstream-lane "--base <remote-tracking ref>"
+echo "==> a new branch on the defaulted base has no upstream either"
+git -C "$fixture" branch --set-upstream-to=origin/remote-only "$(git -C "$fixture" symbolic-ref --short HEAD)" >/dev/null ||
+    fail "fixture: could not give the main checkout's branch an upstream"
+new no-upstream-default >/dev/null ||
+    fail "worktree-new.sh failed creating a branch on the defaulted base"
+assert_no_upstream no-upstream-default "defaulted base"
+rm_wt no-upstream-default >/dev/null || fail "cleanup of the no-upstream-default tree failed"
+rm_wt no-upstream-lane >/dev/null || fail "cleanup of the no-upstream-lane tree failed"
+git -C "$fixture" branch --unset-upstream "$(git -C "$fixture" symbolic-ref --short HEAD)" >/dev/null 2>&1 || true
+
 # ── partial-failure rollback ─────────────────────────────────────────
 # `git worktree add` is not atomic: a failing post-checkout hook leaves the tree
 # registered and the branch created while the command still exits non-zero. The

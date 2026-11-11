@@ -21,10 +21,15 @@ Compatibility holds use Renovate's `description` field with `Reason:`,
 The removal condition names a test, and the canary is a public repository that
 tries the removal first. Harmon-init is the Node and Astro canary: test the
 candidate version in its image or rendered Node/Astro profiles before lifting a
-hold. `task lint:renovate-holds` checks the records and shared hold parity. The
-TypeScript rule remains inline in root and template until preset adoption; the
-Node Corepack constraint and missing-binary exclusions are root-local. Do not
-copy the missing-binary exclusions into the shared preset.
+hold. `task lint:renovate-holds` checks the records and shared hold parity. It
+selects the config the way Renovate does: the first of `renovate.json`,
+`renovate.jsonc`, `renovate.json5`, then the same three names under
+`.github/`. It checks only `renovate.json` or `.github/renovate.json` and
+fails closed when Renovate would read a `.jsonc` or `.json5` file first. The
+TypeScript hold and the Node runtime hold (Node 24 across both runtime
+extractions, from issue #2013) are shared: the preset carries them, and they
+stay inline in root and template until preset adoption. The missing-binary exclusions are root-local.
+Do not copy them into the shared preset.
 
 The strict Renovate configuration CI task validates the preset and root
 `renovate.json` with the pinned `renovate-config-validator`, then validates the

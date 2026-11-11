@@ -4,6 +4,7 @@
   "timezone": "America/Chicago",
   "schedule": ["* * * * 6", "* 0-4 * * 0"],
   "updateNotScheduled": false,
+  "rebaseWhen": "behind-base-branch",
   "prConcurrentLimit": 10,
   "automerge": false,
   "dependencyDashboard": true,
@@ -240,9 +241,10 @@
       "allowedVersions": "<=13.0.0-alpha.0"
     },
     {
-      "description": "Reason: the shared image installer relies on Corepack bundled with Node, which Node 25 removes; Upstream: https://github.com/nodejs/node/pull/51981; Remove when: the shared image installs pnpm independently of bundled Corepack and its Node 25 build and checks pass; Canary: https://github.com/evanharmon1/harmon-init",
-      "matchDatasources": ["node-version"],
-      "matchPackageNames": ["node"],
+      "description": "Reason: Node 25 drops the bundled Corepack that the shared devcontainer image installer and the packageManager convention rely on, and a runtime major moves the runtime under the whole repository at once, so it must never ride along inside the batched GitHub Actions PR. Matches both extractions of the runtime: the annotated regex pins (custom.regex, datasource node-version) and setup-node's node-version input (github-actions manager, uses-with, datasource github-releases). The datasource matcher keeps out node Docker images, which the github-actions manager also extracts as depName node from a job container or service, and package.json engines.node and @types/node are not matched either: none of them is the runtime; Upstream: https://github.com/nodejs/node/pull/51981; Remove when: the runtime moves to the next major deliberately, the shared image provisions pnpm without bundled Corepack, and the canary builds and checks pass on that major; Canary: https://github.com/evanharmon1/harmon-init",
+      "matchManagers": ["github-actions", "custom.regex"],
+      "matchDepNames": ["node"],
+      "matchDatasources": ["node-version", "github-releases"],
       "allowedVersions": "<25"
     },
     {

@@ -1161,6 +1161,20 @@ jq -e '.vulnerabilityAlerts.enabled == true' renovate.json >/dev/null ||
 # and tasks, not JSON fields, so nothing else here would notice.
 jq -e '.osvVulnerabilityAlerts == true' renovate.json >/dev/null ||
     err "Renovate OSV vulnerability alerts must be enabled"
+# Rendered repos protect the default branch with a ruleset, not classic branch
+# protection, so Renovate's default rebaseWhen=auto rebases a behind PR only
+# on conflict (#2012). The catch-up rule for bot PRs in AGENTS.md depends on
+# this, so both travel together, and the root dogfood copy says the same.
+jq -e '.rebaseWhen == "behind-base-branch"' renovate.json >/dev/null ||
+    err "Renovate must rebase PRs that fall behind the base branch (rebaseWhen)"
+for agents_file in AGENTS.md "$repo_root/AGENTS.md"; do
+    grep -Fq 'Catch a Renovate PR up with its rebase checkbox, never update-branch.' "$agents_file" ||
+        err "$agents_file is missing the Renovate PR catch-up rule"
+    grep -Fq 'only when every non-bot commit is a clean catch-up merge' "$agents_file" ||
+        err "$agents_file is missing the modified bot-branch recovery rule"
+    grep -Fq 'PR through its rebase checkbox, never update-branch.' "$agents_file" ||
+        err "$agents_file handoff check does not scope update-branch away from Renovate PRs"
+done
 # Check every rendered profile, including profiles without a given ecosystem:
 # later package-specific rules must not take a lockfile update out of its group.
 python3 - renovate.json <<'PYGROUP' || err "rendered Renovate lockfile grouping is incomplete"
@@ -1185,7 +1199,7 @@ for manager, expected in (("npm", "npm dependencies"), ("pep621", "Python depend
 # just the presence of the four group declarations. This is a finite glob
 # subset for these fixtures; unknown matcher keys fail rather than being ignored.
 import fnmatch
-supported = {"matchManagers", "matchUpdateTypes", "matchDepTypes", "matchDatasources", "matchFileNames", "matchPackageNames"}
+supported = {"matchManagers", "matchUpdateTypes", "matchDepTypes", "matchDatasources", "matchFileNames", "matchPackageNames", "matchDepNames"}
 for rule in rules:
     unknown = {key for key in rule if key.startswith("match")} - supported
     if unknown:
@@ -1210,7 +1224,7 @@ for manager, name, path, dep_type, datasource, expected in (
 ):
     for update in ("minor", "patch", "pin", "digest", "major"):
         group = None
-        attributes = {"matchManagers": manager, "matchPackageNames": name, "matchFileNames": path,
+        attributes = {"matchManagers": manager, "matchPackageNames": name, "matchDepNames": name, "matchFileNames": path,
                       "matchDepTypes": dep_type, "matchDatasources": datasource, "matchUpdateTypes": update}
         for rule in rules:
             if all(matches(rule[key], value) for key, value in attributes.items() if key in rule):
@@ -1262,6 +1276,25 @@ if profile == "minimal":
         sys.exit("published Renovate preset must enable both vulnerability feeds")
 PYGUARD
     err "published Renovate preset failed policy parity or feed checks"
+# The Node runtime hold renders in every profile, because every profile ships
+# the composite action's setup-node pin, and it is the preset's hold verbatim
+# (#2013). The renovate-config scope proves what it matches.
+python3 - "$repo_root/renovate/default.json" renovate.json <<'PYNODEHOLD' ||
+import json
+import sys
+
+expected = {"matchManagers": ["github-actions", "custom.regex"], "matchDepNames": ["node"], "matchDatasources": ["node-version", "github-releases"], "allowedVersions": "<25"}
+configs = [json.load(open(path, encoding="utf-8")) for path in sys.argv[1:3]]
+holds = [[rule for rule in config["packageRules"] if rule.get("matchDepNames") == ["node"]] for config in configs]
+for label, found in zip(("preset", "render"), holds):
+    if len(found) != 1:
+        sys.exit(f"{label} carries {len(found)} Node runtime holds, expected 1")
+    if {key: value for key, value in found[0].items() if key != "description"} != expected:
+        sys.exit(f"{label} Node runtime hold has unexpected matchers: {found[0]}")
+if holds[0][0] != holds[1][0]:
+    sys.exit("rendered Node runtime hold differs from the preset")
+PYNODEHOLD
+    err "Node runtime hold is missing or differs from the preset"
 if [ "$profile" = "minimal" ]; then
     grep -Fq 'renovate-config-validator --strict --no-global renovate/default.json' "$repo_root/scripts/test-renovate-config.sh" ||
         err "strict shared Renovate preset validation route is missing"
@@ -1292,6 +1325,17 @@ if [ "$validation_scope" = "renovate-config" ] && [ -f .coderabbit.yaml ]; then
             err "rendered .coderabbit.yaml fails CodeRabbit's schema"
     else
         err "required tool 'uvx' is not installed for CodeRabbit schema validation"
+    fi
+fi
+# Every profile renders the composite action's setup-node pin, so every profile
+# carries the Node runtime hold. Prove with Renovate's own extraction that it
+# selects both runtime extractions and nothing else (#2013).
+if [ "$validation_scope" = "renovate-config" ]; then
+    if have npx; then
+        run_quiet renovate-node-hold "$repo_root/scripts/test-renovate-node-hold.sh" . ||
+            err "Node runtime hold does not select exactly the runtime pins"
+    else
+        err "required tool 'npx' is not installed for the Node runtime hold extraction test"
     fi
 fi
 if [ "$validation_scope" = "renovate-config" ]; then
