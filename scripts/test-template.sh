@@ -2747,8 +2747,28 @@ if [ "$profile" = "full" ] || [ "$profile" = "minimal" ]; then
         err "AGENTS missing independent Greptile section (use_greptile=true)"
     grep -Fq '**Greptile is advisory and orchestrator-triggered.**' AGENTS.md ||
         err "AGENTS missing Greptile advisory policy (use_greptile=true)"
+    # The terminal-signal profile mirrors harmon-devkit's agent-registry.json
+    # from v0.69.0 (harmon-devkit#1927): a clean Greptile answer is one
+    # top-level `<!-- greptile_summary -->` comment that links the reviewed
+    # commit, not a review. Schema validity is section 1a's; this pins the
+    # value so a revert to the review-only profile fails here (#2031).
+    jq -e '[.finders[] | select(.slug == "greptile")] | length == 1 and
+        (.[0].collection.terminal_signals == {
+            "surfaces": ["comment", "review", "inline"],
+            "head_binding": "commit-link",
+            "verdict_mode": "inline-comment-count",
+            "clean_verdict": null, "actionable_pattern": null,
+            "severity_marker": null,
+            "metadata_line": "^<!-- greptile_summary -->$",
+            "about_summary": null, "heading": null,
+            "carrier_sentence": "last reviewed commit:",
+            "success_reaction": null, "pending_reaction": null
+        })' agent-registry.json >/dev/null ||
+        err "agent-registry.json greptile terminal_signals drift from harmon-devkit v0.69.0's profile"
 else
     [ ! -d .greptile ] || err ".greptile rendered but use_greptile is off"
+    jq -e 'all(.finders[]; .slug != "greptile")' agent-registry.json >/dev/null ||
+        err "agent-registry.json carries a greptile finder but use_greptile is off"
     ! grep -iq 'greptile' docs/CHECKLIST.md AGENTS.md ||
         err "Greptile text rendered but use_greptile is off"
 fi
