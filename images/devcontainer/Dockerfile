@@ -43,16 +43,16 @@ ARG COPILOT_VERSION=1.0.105
 # renovate: datasource=npm depName=@earendil-works/pi-coding-agent
 ARG PI_VERSION=1.5.0
 # renovate: datasource=github-releases depName=can1357/oh-my-pi extractVersion=^v?(?<version>.+)$
-ARG OH_MY_PI_VERSION=18.16.0
+ARG OH_MY_PI_VERSION=18.18.6
 # oh-my-pi ships unsigned release binaries: the version pin above is
 # Renovate-managed, but these architecture-specific digests are not. Before
 # moving them, a person must download the new release's omp-linux-x64 and
 # omp-linux-arm64 binaries (not the source archives), check the release notes
 # and provenance, and compute their sha256. scripts/test-oh-my-pi-pin.sh fails
 # fast until the marker below is moved to match OH_MY_PI_VERSION.
-# verified-for: 18.14.2
-ARG OH_MY_PI_SHA256_AMD64=cde0bc4ac8ec333c4880039a5242ff33dbfc6544747d67aeb99bb077874aeec1
-ARG OH_MY_PI_SHA256_ARM64=afbdf04be3ddbe34a07e91c913ddb6d335a3a0210f520ac5a197a245888ad63e
+# verified-for: 18.18.6
+ARG OH_MY_PI_SHA256_AMD64=a8059b95de5eaba0b3fb6f7182842d661feae29cb2931cdbeba2986db4751ecb
+ARG OH_MY_PI_SHA256_ARM64=aa9d69380f7ded098bcd3d8023a67edcc8fc3cc0529360a98dededc21cfa101b
 # renovate: datasource=npm depName=opencode-ai
 ARG OPENCODE_VERSION=1.19.5
 # Pinned from Google's per-platform release manifests. Keep the version, build,
