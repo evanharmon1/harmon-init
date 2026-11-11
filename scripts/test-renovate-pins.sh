@@ -187,6 +187,7 @@ def load_managers(path):
                 pass
         return found
 
+DOCKER_ANNOT = re.compile(r"^[ \t]*(#\s*renovate:\s*datasource=)", re.M)
 all_mgrs = {cfg: load_managers(cfg) for cfg in ("renovate.json", "template/renovate.json.jinja")}
 docker_files = subprocess.run(
     ["git", "ls-files", "-z", "*Dockerfile", "*Dockerfile.jinja"],
@@ -195,7 +196,9 @@ docker_files = subprocess.run(
 docker_files = [p for p in docker_files if p]
 for p in docker_files:
     text = pathlib.Path(p).read_text(encoding="utf-8", errors="replace")
-    annots = [mo.start() for mo in ANNOT.finditer(text)]
+    # Position at the `#`, where a manager match starts: ANNOT's leading
+    # `^\s*` would otherwise swallow indentation and preceding blank lines.
+    annots = [mo.start(1) for mo in DOCKER_ANNOT.finditer(text)]
     if not annots:
         continue
     configs = [("renovate.json", p)]
@@ -210,7 +213,12 @@ for p in docker_files:
                 continue
             covered = True
             for ms in m.get("matchStrings", []):
-                starts.update(mo.start() for mo in re.finditer(js_to_py(ms), text))
+                for mo in re.finditer(js_to_py(ms), text):
+                    starts.add(mo.start())
+                    val = mo.groupdict().get("currentValue") or ""
+                    if val[:1] in ('"', "'"):
+                        line = text.count("\n", 0, mo.start()) + 1
+                        errors.append(f"{p}:{line}: pin value {val} is quoted; quotes end up inside currentValue")
         if not covered:
             errors.append(f"{p}: not matched by any managerFilePatterns in {cfg_name} — its pins are invisible to Renovate")
             continue
