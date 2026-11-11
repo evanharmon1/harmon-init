@@ -281,7 +281,10 @@ and dev postures. It returns `ask` for merges, pulls and pushes it cannot place
 on a feature branch, and no opinion otherwise. Its one approval is `allow` for
 a `gh api` call **proved** read-only up front, so a lane's read never waits on
 a prompt nobody can answer. The proof is a closed grammar, not a list of bad
-variants: a single simple command, `gh api`, a relative REST path of letters,
+variants: the raw text is exactly one simple command (`gh api` plus plain or
+quoted arguments, so no control keyword, grouping, `&`, `;`, pipe or assignment
+prefix can occur), the effective host is github.com (no `GH_HOST` naming another
+host, no enterprise token in the environment), a relative REST path of letters,
 digits and `._/-` (plus a query string and gh's `{owner}`/`{repo}`/`{branch}`
 placeholders), GET or HEAD, and only `--paginate`, `--slurp`, `-i`,
 `--include`, `--silent`, `--cache`, `-X`/`--method GET|HEAD`, an `Accept` header

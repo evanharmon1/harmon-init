@@ -21,8 +21,10 @@ substitutions; parameter expansions in review arguments/fields ask even when
 quoted. Parameters inside a command-substitution body belong to its nested command.
 
 The hook's only approval is `allow` for a `gh api` call PROVED read-only up
-front (#2033, `gh_api_proved_read`): one simple, fully literal command, a
-relative REST path, GET/HEAD, and presentation flags. It lists no dangerous
+front (#2033, `gh_api_proved_read`): the raw text is exactly one simple, fully
+literal command (a closed token grammar, so no control keyword, grouping or
+`&`), the effective host is github.com (no `GH_HOST` elsewhere, no enterprise
+token), a relative REST path, GET/HEAD, and presentation flags. It lists no dangerous
 variants: fields, --input, --hostname, URLs, graphql, a header other than
 Accept, pipes, redirects, expansions and compounds all fall outside the grammar
 and keep the normal permission flow. A hook allow never overrides a settings
@@ -1922,10 +1924,34 @@ GH_READ_JQ_TERM = r"\.(?:[A-Za-z_][A-Za-z0-9_]*)?(?:\.[A-Za-z_][A-Za-z0-9_]*|\[[
 GH_READ_JQ = re.compile(rf" *{GH_READ_JQ_TERM}(?: *[|,] *{GH_READ_JQ_TERM})* *")
 GH_READ_BOOLS = {"--paginate", "--slurp", "-i", "--include", "--silent"}
 GH_READ_METHODS = {"GET", "HEAD"}
+# The accepted RAW text, stated as a grammar and proved before anything else: the
+# whole input is `gh api` followed by space-separated arguments, each a run of
+# bare characters, one of gh's three placeholders, or a quoted string. A
+# reserved word, grouping, `&`, `;`, `|`, newline, assignment prefix or any
+# other shell syntax cannot occur at command position because nothing outside
+# this grammar matches. The tokenisation is unambiguous (a quote always opens
+# the quoted alternative and ends at its own closing quote), so it equals the
+# shell's.
+GH_READ_SHAPE = re.compile(
+    r"gh api(?: +(?:[A-Za-z0-9._/=%,+:-]|\{(?:owner|repo|branch)\}|'[^']*'|\"[^\"]*\")+)+ *"
+)
+
+
+def gh_host_is_github():
+    """False when the environment redirects `gh` away from github.com."""
+    host = os.environ.get("GH_HOST", "").strip().lower()
+    if host and host != "github.com":
+        return False
+    # An enterprise token implies a GHES host: never approve under one.
+    return not any(os.environ.get(v) for v in ("GH_ENTERPRISE_TOKEN", "GITHUB_ENTERPRISE_TOKEN"))
 
 
 def gh_api_proved_read(command):
     """True only for a `gh api` call proved to read and nothing else."""
+    if not GH_READ_SHAPE.fullmatch(command):
+        return False
+    if not gh_host_is_github():
+        return False
     # The parser does not model redirects, expansions or escapes: ban them raw.
     if re.search(r"[^\x20-\x7e]|[<>`$\\~#!]", command):
         return False

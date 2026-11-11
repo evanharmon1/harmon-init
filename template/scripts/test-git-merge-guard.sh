@@ -1467,6 +1467,62 @@ mutation { resolveReviewThread(input: {}) { clientMutationId } }'"'"''
     # keep their decision even when a proved read is chained beside them.
     case_ "$g" ask "$r" 'gh api repos/o/r/pulls/1 && gh pr merge 1'
     case_ "$g" ask "${r}/wt" 'gh api repos/o/r/pulls/1; git push origin HEAD:main'
+    # Round 1 findings: the whole input must be exactly ONE simple command, proved
+    # from the raw text. Shell control flow, grouping and backgrounding around an
+    # otherwise-allowed call give no opinion (never allow).
+    for cmd in 'until gh api repos/o/r; do done' '( gh api repos/o/r )' '(gh api repos/o/r)' \
+        '{ gh api repos/o/r; }' 'gh api repos/o/r &' 'gh api repos/o/r & gh api repos/o/s' \
+        'while gh api repos/o/r; do done' 'if gh api repos/o/r; then :; fi' \
+        'for i in 1; do gh api repos/o/r; done' '! gh api repos/o/r' 'time gh api repos/o/r'; do
+        [[ $(decide "$g" "$r" "$cmd") == silent ]] || {
+            failures=$((failures + 1))
+            echo "  FAIL control flow around a read is not silent :: $cmd" >&2
+        }
+    done
+    # Property: every reserved word and list/grouping operator, before or after an
+    # otherwise-allowed call, is never approved.
+    local kw
+    for kw in 'until' 'while' 'for' 'if' 'then' 'elif' 'else' 'fi' 'case' 'esac' 'select' 'function' \
+        'time' '!' 'coproc' 'do' 'done' '{' '}' '(' ')' '((' '[[' '&' ';' '&&' '||' '|' '|&' ';;' 'nohup' 'exec' 'command' 'builtin'; do
+        for cmd in "${kw} gh api repos/o/r" "${kw} gh api repos/o/r; ${kw}" "gh api repos/o/r ${kw}" \
+            "gh api repos/o/r ${kw} gh api repos/o/s" "x=1 ${kw} gh api repos/o/r"; do
+            [[ $(decide "$g" "$r" "$cmd") != allow ]] || {
+                failures=$((failures + 1))
+                echo "  FAIL approved a read wrapped in shell syntax (${kw}) :: $cmd" >&2
+            }
+        done
+    done
+    # An operator glued to the path is outside the grammar too (a glued WORD is
+    # just a longer literal path, so only operator tokens are tried).
+    for kw in '&' ';' '&&' '||' '|' '|&' ';;' ')' '('; do
+        [[ $(decide "$g" "$r" "gh api repos/o/r${kw}") != allow ]] || {
+            failures=$((failures + 1))
+            echo "  FAIL approved a read with a glued operator (${kw})" >&2
+        }
+    done
+    for cmd in $'gh api repos/o/r\ngh api repos/o/s' $'gh api repos/o/r\n' $' gh api repos/o/r' \
+        $'gh api repos/o/r\t-i' 'gh api repos/{owner}/{repo}/x{,y}' 'gh api repos/{o,p}/r'; do
+        [[ $(decide "$g" "$r" "$cmd") != allow ]] || {
+            failures=$((failures + 1))
+            echo "  FAIL approved outside the single-command grammar :: $cmd" >&2
+        }
+    done
+    # Round 1 finding: the effective host must be github.com.
+    local ghcmd='gh api repos/o/r/pulls/1' host_got
+    host_got() { env "$@" bash -c "$(declare -f decide); decide \"\$0\" \"\$1\" \"\$2\"" "$g" "$r" "$ghcmd"; }
+    for hostenv in GH_HOST=evil.example.com GH_HOST=ghe.corp.example GH_HOST=api.github.com \
+        GH_ENTERPRISE_TOKEN=x GITHUB_ENTERPRISE_TOKEN=x; do
+        [[ $(host_got "$hostenv") != allow ]] || {
+            failures=$((failures + 1))
+            echo "  FAIL approved under ${hostenv%%=*} :: $ghcmd" >&2
+        }
+    done
+    for hostenv in GH_HOST=github.com GH_HOST=GitHub.com GH_HOST= FOO=bar; do
+        [[ $(host_got "$hostenv") == allow ]] || {
+            failures=$((failures + 1))
+            echo "  FAIL not approved with ${hostenv} :: $ghcmd" >&2
+        }
+    done
 }
 
 echo "==> git-merge-guard decision matrix"
@@ -1530,6 +1586,25 @@ if [[ $failures -eq 0 ]]; then
     exit 1
 fi
 failures=0
+
+# Each single check of the read proof must be load-bearing: removing the
+# single-simple-command proof, or the host proof, must fail the matrix.
+for mut in 'shape:^    if not GH_READ_SHAPE.fullmatch(command):$' \
+    'host:^    if not gh_host_is_github():$'; do
+    echo "==> git-merge-guard matrix catches a read proof without its ${mut%%:*} check"
+    check_mutant="${tmp}/check-mutant-${mut%%:*}.py"
+    sed "s/${mut#*:}/    if False:/" "$guard" >"$check_mutant"
+    if cmp -s "$guard" "$check_mutant"; then
+        echo "TEST FAIL: mutation did not apply (${mut%%:*} check line changed?)" >&2
+        exit 1
+    fi
+    QUIET=1 matrix "$check_mutant"
+    if [[ $failures -eq 0 ]]; then
+        echo "TEST FAIL: matrix passed a read proof with the ${mut%%:*} check removed" >&2
+        exit 1
+    fi
+    failures=0
+done
 
 # The guard only protects anything if settings.json runs it. Exercise the
 # REGISTERED command, not the file: a removed or misspelled entry, or a broken
