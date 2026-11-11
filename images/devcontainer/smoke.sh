@@ -40,7 +40,7 @@ shellcheck_version="$(shellcheck --version | sed -n 's/^version: //p')"
     fail "shellcheck ${shellcheck_version:-unknown} does not match the manifest"
 
 for tool in git shellcheck task node npm gh markdownlint-cli2 shfmt hadolint actionlint terraform-docs terraform tflint yq lefthook gitleaks sops act uv semgrep copier \
-    claude codex copilot pi omp opencode agy agent-deck playwright playwright-cli zellij workmux aoe sesh herdr dmux starship \
+    claude codex copilot pi omp opencode agy agent-deck playwright playwright-cli zellij workmux aoe sesh herdr herdr-core hc dmux starship \
     dive fx glow lazygit tokei xh gum gh-dash wtfutil lychee tv fresh ttt mc nano; do
     command -v "$tool" >/dev/null 2>&1 || fail "$tool is not on PATH"
 done
@@ -97,6 +97,7 @@ run_version zellij zellij --version
 run_version aoe aoe --version
 run_version sesh sesh --version
 run_version herdr herdr --version
+run_version herdr-core hc --version
 run_version starship starship --version
 run_version dive dive --version
 run_version fx fx --version
