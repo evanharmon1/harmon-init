@@ -711,6 +711,33 @@ ignore that override and keep sockets under `~/.config/herdr/sessions/<name>/`,
 so a stale named-session socket can survive a rebuild — harmless, but if a
 named session misbehaves after a rebuild, delete its `herdr.sock` and reattach.
 
+### Herdr desktop app (herdr-core)
+
+The Herdr desktop app ([herdrdev/herdr-app](https://github.com/herdrdev/herdr-app))
+is a separate client from the `herdr` TUI: its terminals run in **herdr-core**
+(`hc`), which the image installs beside `herdr`. Both are on `PATH`, and they
+keep separate servers and state, so using one does not touch the other's
+sessions. To work in the container from the app on a laptop, run
+`coder config-ssh` once, then add an SSH machine (Settings → Machines, or
+Add machine in the sidebar) with the target `coder.<workspace>.devcontainer`.
+The app runs `hc` in the container over that SSH connection, and its spaces
+keep running there after the window closes. The CLI form is
+`hc machine add coder.<workspace>.devcontainer --name <workspace>`.
+
+herdr-core keeps its socket and state under `~/.local/state/herdr-core`,
+which is not a volume: a rebuild starts the core fresh, with no stale socket.
+If the app reports the container's core as too old, prefer a newer image: a
+core the app copies into `~/.local/bin` sits outside the image's pin and is
+gone after the next rebuild.
+
+The app's agent sidebar (working / blocked / done / idle) shows what each
+agent reports itself through OSC 7501, the Program Status Protocol; herdr-core
+never guesses status from the screen, and `herdr integration install` (above)
+configures only the TUI. Claude Code, Codex, pi and oh-my-pi report it at the
+versions the image pins. Antigravity reports it from 1.4.0 and OpenCode only
+from OpenCode 2; Copilot CLI does not report it yet. An agent that sends no
+reports still runs normally in the app, without a status.
+
 ## Secrets — 1Password Environments (the standard)
 
 Don't hand-write or copy `devcontainer.env`. The standard is **1Password
