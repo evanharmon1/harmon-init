@@ -8,7 +8,7 @@
 #               (architecture, authz, data loss, rollback, races, hidden
 #               coupling, operational failure modes, overdesign).
 #
-# Usage: codex-review.sh <review|challenge> [--repo-root <path>] [--profile standardize --release <release> --frozen-render <bundle>] [--base <ref>|--uncommitted|--commit <sha>] [focus text ...]
+# Usage: codex-review.sh <review|challenge> [--repo-root <path>] [--model <model>] [--reasoning <low|medium|high|xhigh>] [--profile standardize --release <release> --frozen-render <bundle>] [--base <ref>|--uncommitted|--commit <sha>] [focus text ...]
 #
 # Target selection when no explicit flag is given: whatever exists is in
 # scope. Commits beyond the default base AND a dirty working tree are reviewed
@@ -40,7 +40,7 @@ script_dir="$(cd "$(dirname "$0")" && pwd)"
 . "$script_dir/lib/review-scope.sh"
 
 usage() {
-    echo "usage: $0 <review|challenge> [--repo-root <path>] [--profile standardize --release <release> --frozen-render <bundle>] [--base <ref>|--uncommitted|--commit <sha>] [focus text ...]" >&2
+    echo "usage: $0 <review|challenge> [--repo-root <path>] [--model <model>] [--reasoning <low|medium|high|xhigh>] [--profile standardize --release <release> --frozen-render <bundle>] [--base <ref>|--uncommitted|--commit <sha>] [focus text ...]" >&2
 }
 
 MODE="${1:-}"
@@ -54,10 +54,14 @@ esac
 
 # Ordinarily the trusted runner lives inside the checkout it reviews. A
 # confidence-stage launcher can instead hold these runner/library bytes fixed
-# and point them at a separate candidate checkout. Strip only this runner-owned
-# option; review-scope.sh receives every remaining argument unchanged.
+# and point them at a separate candidate checkout. Strip the runner-owned
+# options; review-scope.sh receives the scope/profile options and focus text.
 repo_root="$script_dir/.."
 repo_root_seen=false
+review_model="gpt-6.1-sol"
+review_reasoning="high"
+model_set=false
+reasoning_set=false
 review_args=()
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -70,6 +74,59 @@ while [ "$#" -gt 0 ]; do
         repo_root="$2"
         repo_root_seen=true
         shift 2
+        ;;
+    --model)
+        [ $# -ge 2 ] || {
+            echo "--model requires a value" >&2
+            exit 2
+        }
+        [ "$model_set" = false ] || {
+            echo "--model may be specified only once" >&2
+            exit 2
+        }
+        [[ "$2" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || {
+            echo "invalid model name: $2" >&2
+            exit 2
+        }
+        review_model="$2"
+        model_set=true
+        shift 2
+        ;;
+    --reasoning)
+        [ $# -ge 2 ] || {
+            echo "--reasoning requires a value" >&2
+            exit 2
+        }
+        [ "$reasoning_set" = false ] || {
+            echo "--reasoning may be specified only once" >&2
+            exit 2
+        }
+        case "$2" in
+        low | medium | high | xhigh) review_reasoning="$2" ;;
+        *)
+            echo "unsupported reasoning level: $2" >&2
+            exit 2
+            ;;
+        esac
+        reasoning_set=true
+        shift 2
+        ;;
+    --base | --commit | --profile | --release | --frozen-render)
+        [ $# -ge 2 ] || {
+            echo "$1 requires a value" >&2
+            exit 2
+        }
+        review_args+=("$1" "$2")
+        shift 2
+        ;;
+    --uncommitted)
+        review_args+=("$1")
+        shift
+        ;;
+    -*)
+        echo "unrecognised flag: $1" >&2
+        usage
+        exit 2
         ;;
     *)
         review_args+=("$1")
@@ -471,6 +528,6 @@ bound_stderr_lines() {
 # first. Under pipefail the filter exits 0, leaving codex's own status as the
 # rightmost non-zero, so a failed review still fails the task.
 { printf '%s\n' "$instructions" | codex exec review \
-    --model gpt-6.1-sol \
-    --config model_reasoning_effort=high \
+    --model "$review_model" \
+    --config "model_reasoning_effort=$review_reasoning" \
     - 2>&1 1>&3 3>&- | bound_stderr_lines >&2; } 3>&1
