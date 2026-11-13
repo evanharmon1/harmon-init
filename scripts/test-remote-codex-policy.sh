@@ -406,7 +406,7 @@ scan() {
             }
             function seq_reset() { sq = 0; sn = 0; ni = 0; sqhit = 0 }
             # seq_eval(F, S) — after each item: is there a `codex`, options (a listed
-            # value-taking one consuming the next word) and `login` across items?
+            # value-taking one consuming the next item) and `login` across items?
             function seq_eval(f, s,   i, j, x, out, k) {
                 if (sqhit) return
                 for (i = 1; i <= sn; i++) {
@@ -432,7 +432,7 @@ scan() {
             # seq_step(F, S, TT, IND, KCOL) — track a block sequence under a command key and
             # join its consecutive items. Blank and comment lines are transparent; a sibling
             # key, a dedent, or a mapping item ends it; deeper lines continue an item.
-            function seq_step(f, s, tt, ind, kcol,   body, m, w, k) {
+            function seq_step(f, s, tt, ind, kcol,   body, q) {
                 if (tt == "" || tt ~ /^#/) return
                 if (tt ~ CMDKEY) {
                     seq_reset()
@@ -456,19 +456,19 @@ scan() {
                 body = tt
                 sub(/^- ?/, "", body)
                 sub(/ #.*$/, "", body)
-                gsub(QUOTES, "", body)
                 sub(/ +$/, "", body)
+                # Strip enclosing YAML quotes only; each scalar is one argv token,
+                # even when its value contains spaces or embedded shell quotes.
+                q = substr(body, 1, 1)
+                if (q ~ QUOTES && substr(body, length(body), 1) == q) body = substr(body, 2, length(body) - 2)
                 if (body == "") return
                 if (body ~ MAPITEM) { sq = 0; return }
                 ni++
                 itxt[ni] = body
                 iline[ni] = s
-                m = split(body, w, " ")
-                for (k = 1; k <= m; k++) {
-                    sn++
-                    tok[sn] = w[k]
-                    tokitem[sn] = ni
-                }
+                sn++
+                tok[sn] = body
+                tokitem[sn] = ni
                 seq_eval(f, s)
             }
             function emit(f, s, t,   i, tt, hit, ind, kcol) {
@@ -1074,14 +1074,25 @@ seq_action args codex -c model=foo login
 expect_hit "an args sequence with a value-taking option and its value" "$seqf" "5-8: "
 seq_action args codex --config model=foo login
 expect_hit "an args sequence with --config and its value" "$seqf" "5-8: "
+# A sequence scalar is one argument, whether quoted or plain and containing spaces.
+seq_action args codex --config "'developer_instructions=\"Never login without permission\"'"
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "login inside a quoted config value must pass, got: ${SCAN_HITS}"
+seq_action args codex --cd '/workspace/my project' login
+expect_hit "an args sequence with a plain directory value containing a space" "$seqf" "5-8: "
+seq_action args codex --cd '"project folder"' login
+expect_hit "an args sequence with a quoted directory value containing a space" "$seqf" "5-8: "
 seq_action args codex --no-alt-screen -c model=foo login
 expect_hit "an args sequence with an option, then a value-taking option and its value" "$seqf" "5-9: "
 seq_action args '"codex"' "'login'"
 expect_hit "quoted args items" "$seqf" "5-6: "
 seq_action args '/usr/local/bin/codex' login
 expect_hit "an args sequence naming codex by path" "$seqf" "5-6: "
+# In exec-form args each scalar is one argv word: an option and login inside
+# one scalar next to codex is not a login subcommand.
 seq_action args codex '--no-alt-screen login'
-expect_hit "an args item holding an option and login" "$seqf" "5-6: "
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "an option and login inside one args scalar must pass, got: ${SCAN_HITS}"
 for key in command cmd entrypoint; do
     seq_action "$key" codex login
     expect_hit "a ${key} sequence codex / login" "$seqf" "5-6: "
