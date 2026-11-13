@@ -484,9 +484,10 @@ scan() {
                 # opens with options and `login` (FOLDTAIL), or, when the last
                 # option takes a separate value, with that value first (FOLDTAILVAL).
                 # A `login` that is a mapping key or an assignment (KEYLOGIN) is not the
-                # subcommand. Reported with both real lines.
+                # subcommand, but may be a pending option value before the real login.
+                # Reported with both real lines.
                 if (pend != "" && tt != "") {
-                    if ((tt ~ FOLDTAIL || (pendval && tt ~ FOLDTAILVAL)) && tt !~ KEYLOGIN) print pfile ":" pline "-" s ": " pend " / " tt
+                    if ((tt ~ FOLDTAIL && tt !~ KEYLOGIN) || (pendval && tt ~ FOLDTAILVAL)) print pfile ":" pline "-" s ": " pend " / " tt
                     pend = ""
                 }
                 # One rule: outside the strict tier a line counts only if it
@@ -533,9 +534,9 @@ scan() {
                 # is that option value.
                 FOLDTAILVAL = "^[^ -][^ ]* (-[^ ]+ ([^ -][^ ]* )?)*login([^A-Za-z0-9_-]|$)"
                 # A tail whose `login` is a mapping key (`login:` or `login :`) or a shell
-                # assignment (`login=...`). It is always the first word of the tail, so a later
-                # `login:` word does not count, and a real `codex login` later on that line is
-                # still reported by the one-line rule.
+                # assignment (`login=...`). Only exclude it from the direct subcommand
+                # match: a pending value-taking option consumes that first word instead.
+                # A real `codex login` later on that line is still reported by the one-line rule.
                 KEYLOGIN = "^login( ?:|=)"
                 nv = split(valopts, V, "\037")
                 for (i = 1; i <= nv; i++) if (V[i] != "") VT[V[i]] = 1
@@ -1007,6 +1008,10 @@ fold_run() {
     # fold_run HEAD TAIL — a workflow whose run scalar folds HEAD and TAIL (lines 6-7).
     printf 'name: x\njobs:\n  a:\n    steps:\n      - run: >-\n          %s\n          %s\n' "$1" "$2" >"${FIX}/.github/workflows/folded.yml"
 }
+fold_run 'codex --config' 'login=true login'
+expect_hit "a folded codex --config, then login=true as its value and login" ".github/workflows/folded.yml" "6-7: "
+fold_run 'codex --config login=true login' ''
+expect_hit "a one-line codex --config login=true login" ".github/workflows/folded.yml" "6:"
 fold_run 'codex --config' 'model=foo login'
 expect_hit "a folded codex --config, then its value and login" ".github/workflows/folded.yml" "6-7: "
 fold_run 'codex --model' 'gpt-5 login --device-auth'
