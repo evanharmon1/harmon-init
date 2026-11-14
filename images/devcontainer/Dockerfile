@@ -17,33 +17,33 @@ ARG IMAGE_REVISION
 # renovate: datasource=github-releases depName=terraform-docs/terraform-docs extractVersion=^v?(?<version>.+)$
 ARG TERRAFORM_DOCS_VERSION=0.24.0
 # renovate: datasource=github-releases depName=hashicorp/terraform extractVersion=^v?(?<version>.+)$
-ARG TERRAFORM_VERSION=1.17.1
+ARG TERRAFORM_VERSION=1.17.2
 # renovate: datasource=github-releases depName=terraform-linters/tflint extractVersion=^v?(?<version>.+)$
-ARG TFLINT_VERSION=0.65.0
+ARG TFLINT_VERSION=0.66.0
 # pin-pair: tflint
 # Renovate computes these release-attachment digests at lookup time; builds
 # verify downloaded assets against the pinned values. The same applies to the
 # managed fresh and ttt digests below.
-# renovate: datasource=github-release-attachments depName=terraform-linters/tflint digestVersion=v0.65.0
-ARG TFLINT_SHA256_AMD64=d4c545ed2e29d6338604b586f34f544f380f70f243aa72f7b484713835eaec61
+# renovate: datasource=github-release-attachments depName=terraform-linters/tflint digestVersion=v0.66.0
+ARG TFLINT_SHA256_AMD64=22be11cadc25cd02401e94c0ccc91aa63467debb8485c2a755d98f4c0a9d1e2e
 # pin-pair: tflint
-# renovate: datasource=github-release-attachments depName=terraform-linters/tflint digestVersion=v0.65.0
-ARG TFLINT_SHA256_ARM64=843017c47a98be1de4d88fa038daa293770fe25cd01656c4f08b2e30d1d3b3a0
+# renovate: datasource=github-release-attachments depName=terraform-linters/tflint digestVersion=v0.66.0
+ARG TFLINT_SHA256_ARM64=1105a0a5ddee7cdac7957a3475571a946b839192ea1bc0c722c6c4686001067e
 # pin-pair: tflint
 # renovate: datasource=github-releases depName=zellij-org/zellij extractVersion=^v?(?<version>.+)$
-ARG ZELLIJ_VERSION=0.45.1
+ARG ZELLIJ_VERSION=0.46.0
 # renovate: datasource=github-releases depName=raine/workmux extractVersion=^v?(?<version>.+)$
-ARG WORKMUX_VERSION=0.1.278
+ARG WORKMUX_VERSION=0.1.282
 # renovate: datasource=github-releases depName=njbrake/agent-of-empires extractVersion=^v?(?<version>.+)$
-ARG AOE_VERSION=1.21.0
+ARG AOE_VERSION=1.22.3
 # renovate: datasource=npm depName=@anthropic-ai/claude-code
-ARG CLAUDE_CODE_VERSION=2.1.318
+ARG CLAUDE_CODE_VERSION=2.1.322
 # renovate: datasource=npm depName=@github/copilot
-ARG COPILOT_VERSION=1.0.105
+ARG COPILOT_VERSION=1.0.109
 # renovate: datasource=npm depName=@earendil-works/pi-coding-agent
-ARG PI_VERSION=1.5.0
+ARG PI_VERSION=1.5.2
 # renovate: datasource=github-releases depName=can1357/oh-my-pi extractVersion=^v?(?<version>.+)$
-ARG OH_MY_PI_VERSION=18.18.6
+ARG OH_MY_PI_VERSION=18.18.8
 # oh-my-pi ships unsigned release binaries: the version pin above is
 # Renovate-managed, but these architecture-specific digests are not. Before
 # moving them, a person must download the new release's omp-linux-x64 and
@@ -60,13 +60,13 @@ ARG OPENCODE_VERSION=1.19.5
 ARG ANTIGRAVITY_CLI_VERSION=1.1.11
 ARG ANTIGRAVITY_CLI_BUILD=4956531888881664
 # renovate: datasource=github-releases depName=asheshgoplani/agent-deck extractVersion=^v?(?<version>.+)$
-ARG AGENT_DECK_VERSION=1.16.36
+ARG AGENT_DECK_VERSION=1.16.38
 # Upstream v2.30.0 was published without release assets; stay on 2.29.0 until fixed
 # renovate: datasource=github-releases depName=joshmedeski/sesh extractVersion=^v?(?<version>.+)$
 ARG SESH_VERSION=2.29.0
 # Apache-2.0 as of v0.8.0 (AGPL-3.0 before) — never pin below 0.8.0
 # renovate: datasource=github-releases depName=herdrdev/herdr extractVersion=^v?(?<version>.+)$
-ARG HERDR_VERSION=0.8.2
+ARG HERDR_VERSION=0.9.5
 # herdr-core (`hc`) is the backend the Herdr desktop app (herdrdev/herdr-app)
 # drives over SSH; it is a separate project from the `herdr` TUI above and
 # both stay installed. Apache-2.0. Binaries ship from releases.herdr.dev, not
@@ -84,27 +84,27 @@ ARG DIVE_VERSION=0.13.1
 # renovate: datasource=github-releases depName=antonmedv/fx extractVersion=^v?(?<version>.+)$
 ARG FX_VERSION=40.0.1
 # renovate: datasource=github-releases depName=sinelaw/fresh extractVersion=^v?(?<version>.+)$
-ARG FRESH_VERSION=0.5.7
+ARG FRESH_VERSION=0.5.8
 # pin-pair: fresh
-# renovate: datasource=github-release-attachments depName=sinelaw/fresh digestVersion=v0.5.7
-ARG FRESH_SHA256_AMD64=4112b8b131e02bf4896a09146c4dd7b3383a2332ab554c3638394932ce94baff
+# renovate: datasource=github-release-attachments depName=sinelaw/fresh digestVersion=v0.5.8
+ARG FRESH_SHA256_AMD64=182787fe491b52a9a145ce25c934c654233b498665f100de44275a1ce98d45da
 # pin-pair: fresh
-# renovate: datasource=github-release-attachments depName=sinelaw/fresh digestVersion=v0.5.7
-ARG FRESH_SHA256_ARM64=ffb4f056417bc653ddd073921e123491dbe3509e83f3fd55436be372a35e8f84
+# renovate: datasource=github-release-attachments depName=sinelaw/fresh digestVersion=v0.5.8
+ARG FRESH_SHA256_ARM64=abd13f30a474ad5466f5dfd16e5494fb52be968185b00c7deb0f9e211d43bb00
 # pin-pair: fresh
 # renovate: datasource=github-releases depName=eugenioenko/ttt extractVersion=^v?(?<version>.+)$
-ARG TTT_VERSION=1.10.0
+ARG TTT_VERSION=1.11.0
 # pin-pair: ttt
-# renovate: datasource=github-release-attachments depName=eugenioenko/ttt digestVersion=v1.10.0
-ARG TTT_SHA256_AMD64=0e9344c396a783eaf4fc60f1d6f76b85de2b2c303bba2cb07e563a09950097a0
+# renovate: datasource=github-release-attachments depName=eugenioenko/ttt digestVersion=v1.11.0
+ARG TTT_SHA256_AMD64=c3c4a382c99b8e291d83a1b527db1b40b8607de8d7373d341bd3e0e926258584
 # pin-pair: ttt
-# renovate: datasource=github-release-attachments depName=eugenioenko/ttt digestVersion=v1.10.0
-ARG TTT_SHA256_ARM64=a8019bb62205dd631664bf563bb1a00c2a735ba69405840e9c84ae7757365978
+# renovate: datasource=github-release-attachments depName=eugenioenko/ttt digestVersion=v1.11.0
+ARG TTT_SHA256_ARM64=0997ae503c138ec6d12c027726deaefe57b67c4194e1aada13011a2d56f28544
 # pin-pair: ttt
 # renovate: datasource=github-releases depName=charmbracelet/glow extractVersion=^v?(?<version>.+)$
 ARG GLOW_VERSION=3.0.0
 # renovate: datasource=github-releases depName=jesseduffield/lazygit extractVersion=^v?(?<version>.+)$
-ARG LAZYGIT_VERSION=0.66.2
+ARG LAZYGIT_VERSION=0.66.3
 # Upstream v13.0.0+ publishes no prebuilt binary assets; stay on 13.0.0-alpha.0
 # renovate: datasource=github-releases depName=XAMPPRocky/tokei extractVersion=^v?(?<version>.+)$
 ARG TOKEI_VERSION=13.0.0-alpha.0
