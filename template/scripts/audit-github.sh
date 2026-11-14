@@ -1,10 +1,16 @@
 #!/usr/bin/env bash
-# Read-only checklist audit. Stdout is NDJSON; diagnostics go to stderr.
+# Checklist audit. Default: read-only NDJSON; diagnostics go to stderr.
+# --issue explicitly creates/rewrites one trusted marker-owned status issue via gh.
+# Exit 4 refuses an unsafe issue target; exit 2 includes unavailable writes.
+# Optional --human-collector URL#fragment records a human-action link; bare runs
+# preserve recorded links and use a fixed placeholder when no link exists.
 # Requires python3 and gh. No secret value endpoint is ever requested.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 exec python3 -B - "$@" <<'PY'
 import argparse
+from datetime import date
+import tempfile
 import json
 import re
 import subprocess
@@ -17,6 +23,8 @@ parser.add_argument('--all', action='store_true', help='audit every catalog entr
 parser.add_argument('--foreman', action='store_true', help='include Foreman labels in registry comparison')
 parser.add_argument('--release-please', action='store_true', help='include release-please labels in registry comparison')
 parser.add_argument('--bot-collaborator', help='expected bot login for the repository settings probe')
+parser.add_argument('--issue', action='store_true', help='create or rewrite the marker-owned GitHub configuration status issue; unchanged bodies are not edited; exit 4: refused target, 2: unavailable; otherwise retain audit exit codes')
+parser.add_argument('--human-collector', help='https URL with fragment linking to the (HUMAN): collector line for human-only rows; optional; existing links are carried forward, otherwise render collector: not linked')
 args = parser.parse_args()
 
 
@@ -403,6 +411,94 @@ def probe(entry):
     return ('manual', manual)
 
 
+MARKER = '<!-- harmon-github-config-status -->'
+TRUSTED = {'OWNER', 'MEMBER', 'COLLABORATOR'}
+
+
+class Refused(Exception):
+    pass
+
+
+def issue_read(path, pages=False):
+    # Do not reuse probe-cache data: identity and live body must be read afresh.
+    cache.clear()
+    return read(path, pages=pages)
+
+
+def safe_link(value):
+    return isinstance(value, str) and re.fullmatch(r'https://[^\s<>|()]+#[^\s<>|()]+', value)
+
+
+def publish(rows):
+    if target_error:
+        raise Unavailable(target_error)
+    candidates = issue_read('issues?state=open', pages=True)
+    targets = []
+    for candidate in candidates:
+        if 'pull_request' in candidate or MARKER not in (candidate.get('body') or ''):
+            continue
+        live = issue_read('issues/' + str(int(candidate['number'])))
+        if live.get('author_association') in TRUSTED:
+            targets.append(live)
+    if len(targets) > 1:
+        raise Refused('multiple trusted open issues carry the status marker; close the extras')
+    live = targets[0] if targets else None
+    if live is not None:
+        # A disappearing marker must refuse, never create a replacement.
+        live = issue_read('issues/' + str(int(live['number'])))
+        if MARKER not in (live.get('body') or ''):
+            raise Refused('target issue live body no longer carries the status marker')
+        if live.get('author_association') not in TRUSTED or live.get('state') != 'open':
+            raise Refused('target issue is no longer trusted and open')
+    old_body = live.get('body') or '' if live else ''
+    previous = {}
+    for line in old_body.splitlines():
+        if not line.startswith('| ') or not line.endswith(' |'):
+            continue
+        cells = line[2:-2].split(' | ')
+        if len(cells) == 6:
+            previous[cells[0]] = cells
+    body = [MARKER, '', '# GitHub configuration status', '',
+            'Updated by `task audit:github -- --issue`. Dates record the last change to each probe result and reason.',
+            'Manual results require human verification; this issue contains probe state, not acceptance criteria.', '',
+            '| Item | Class | Last probe result | Evidence | Result changed | Human action |',
+            '| --- | --- | --- | --- | --- | --- |']
+    def cell(value):
+        return re.sub(r'- \[([ xX])\]', r'- &#91;\1&#93;', str(value).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;').replace('|', '&#124;').replace('\n', ' ').replace('\r', ' '))
+    for row in rows:
+        item, kind, result, reason = (cell(row[key]) for key in ('id', 'class', 'result', 'reason'))
+        old = previous.get(item)
+        changed = old[4] if old and old[2:4] == [result, reason] and re.fullmatch(r'\d{4}-\d{2}-\d{2}', old[4]) else date.today().isoformat()
+        action = '—'
+        if kind == 'human-only':
+            link = args.human_collector
+            if link is None and old:
+                match = re.fullmatch(r'\[\(HUMAN\): collector line\]\((.+)\)', old[5])
+                link = match[1] if match else None
+            if link is not None and not safe_link(link):
+                raise Unavailable('--human-collector must be an https URL with a fragment linking to the (HUMAN): collector line')
+            action = ('[(HUMAN): collector line](' + link + ')' if link is not None
+                      else 'collector: not linked')
+        body.append('| ' + ' | '.join([item, kind, result, reason, changed, action]) + ' |')
+    rendered = '\n'.join(body) + '\n'
+    if rendered == old_body:
+        return
+    # gh issue accepts a body file; no credentials or response bodies are logged.
+    with tempfile.TemporaryDirectory(prefix='audit-github-status-') as tmp:
+        body_file = Path(tmp) / 'body.md'
+        body_file.write_text(rendered)
+        selector = ((host + '/') if host else '') + repo
+        argv = (['gh', 'issue', 'edit', str(live['number'])] if live else
+                ['gh', 'issue', 'create', '--title', '(github): Configuration status'])
+        argv += ['--repo', selector, '--body-file', str(body_file)]
+        try:
+            written = subprocess.run(argv, capture_output=True, text=True, timeout=60, check=False)
+        except (OSError, subprocess.TimeoutExpired):
+            raise Unavailable('status issue write unavailable or timed out; inspect before retrying') from None
+        if written.returncode:
+            raise Unavailable('status issue write failed; inspect before retrying')
+
+
 try:
     catalog = json.loads(Path('checklist-classes.json').read_text())
     entries = catalog['entries']
@@ -422,6 +518,7 @@ except (OSError, ValueError, KeyError, TypeError) as error:
     sys.exit(2)
 
 exit_code = 0
+rows = []
 for entry in entries:
     try:
         result, reason = probe(entry)
@@ -431,7 +528,18 @@ for entry in entries:
         exit_code = 2
     elif result == 'fail' and exit_code == 0:
         exit_code = 1
-    print(json.dumps({'id': entry['id'], 'class': entry['class'], 'result': result,
-                      'reason': reason, 'write_task': entry['write_task']}))
+    row = {'id': entry['id'], 'class': entry['class'], 'result': result,
+           'reason': reason, 'write_task': entry['write_task']}
+    rows.append(row)
+    print(json.dumps(row))
+if args.issue:
+    try:
+        publish(rows)
+    except Refused as error:
+        print('audit:github refused: ' + str(error), file=sys.stderr)
+        sys.exit(4)
+    except (Unavailable, KeyError, TypeError, ValueError, OSError) as error:
+        print('audit:github unavailable: ' + str(error), file=sys.stderr)
+        sys.exit(2)
 sys.exit(exit_code)
 PY

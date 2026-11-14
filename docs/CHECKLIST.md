@@ -10,13 +10,25 @@ checklist state based on the findings. Only edit a checklist item when the human
 user clearly and explicitly asks for that specific checklist update.
 -->
 
-Work through this after generating the repo from harmon-init. Delete items
-that don't apply, then keep this file as a record of what was configured.
+This is a static setup guide; checklist items still require manual verification.
+Copier re-renders this file; its ticks are not durable configuration state.
 
 Run **`task status:setup`** at any point to audit setup completeness — local
 credentials (gh, Codex), GitHub config, toolchain, devcontainer, and dev
 environment — against the items below
 (✓ done · ✗ missing · ? unknown · – n/a).
+
+Probe state lives in the standing [GitHub configuration status issue](https://github.com/evanharmon1/harmon-init/issues?q=is%3Aissue+is%3Aopen+in%3Abody+%22harmon-github-config-status%22).
+Run `task audit:github` for a read-only NDJSON audit, or explicitly publish with
+`task audit:github -- --issue`. Human-only rows without a recorded collector
+show `collector: not linked`. Optionally add
+`--human-collector https://github.com/OWNER/REPO/issues/NUMBER#issuecomment-ID`
+to link the `(HUMAN):` collector line. Existing human-action links are preserved
+when that option is omitted. Unchanged results retain their dates and
+an identical body makes no edit. Standalone `reconcile-id` comments below keep
+probed items in the audit's active index; their results live in the issue
+without task lists. Their setup and migration guidance remains here as prose. Their setup and migration guidance remains here as prose. Partial probes (reviewer preferences,
+ruleset content, language coverage, and Snyk posture) still need the items here.
 
 ## 1. Local setup
 
@@ -94,35 +106,38 @@ the compatibility reason in the rule's `description`.
 
 ## 2. GitHub repo settings
 
-- [ ] **[agent-apply]** Probe: Read repository settings and Actions variables with the GitHub REST API and compare them with the configured desired values. Write: `task setup:github`. <!-- reconcile-id: root-automated-settings-run-task-setup-gi-008 --> **Automated settings** — run `task setup:github` (idempotent, safe to
-      re-run): sets `delete_branch_on_merge: true`, `allow_update_branch: true`,
-      and `allow_auto_merge: false`, verifies those settings, and enables **Dependabot alerts** and **private vulnerability
-      reporting** when public. Routing uses `CI_RUNS_ON`, `BROWSER_RUNS_ON`,
-      `IMAGE_BUILD_RUNS_ON`, `MULTICORE_RUNS_ON` and `ISOLATED_RUNS_ON`. Public
-      repositories always create or replace all five repository overrides as
-      `"ubuntu-latest"`, even without flags, so inherited persistent runners
-      cannot reach jobs.
-      On private/internal repositories, the script creates missing values only
-      with `--ci-runs-on`, `--browser-runs-on`, `--multicore-runs-on`,
-      `--image-build-runs-on` or `--isolated-runs-on`; intentional replacement
-      also requires the matching `--replace-*` flag. `task setup:github`
-      supplies the rendered CI answer; pass other class flags after `--`,
-      for example `task setup:github -- --browser-runs-on '"ubuntu-latest"'`.
-      Repository values shadow organization values. Isolated selectors may be
-      strings, label arrays, or objects with usable `labels`; `self-hosted` is
-      refused case-insensitively, and unsupported shapes fail closed. Requested
-      invalid isolated values fail before any GitHub access or writes. Repair
-      an existing unsafe repository value with a safe `--isolated-runs-on` plus
-      `--replace-isolated-runs-on` (public repositories repair unsafe and
-      unsupported values automatically before organization checks). Private/internal unsupported shapes fail
-      closed. Unsafe or unsupported organization values fail only when inherited,
-      with no repository isolated override. A safe repository value or an explicit
-      safe isolated value plus replace flag shadows them and succeeds with a
-      warning. Otherwise ask the organization's routing owner (whoever manages
-      organization Actions variables) to repair them, or create a safe override.
-      Unreadable organization values report unknown without failing setup; `task status:setup` reports known violations. Do not add
-      `dependabot.yml`: Renovate owns routine and vulnerability-remediation PRs;
-      Dependabot owns advisory alerts.
+<!-- reconcile-id: root-automated-settings-run-task-setup-gi-008 -->
+
+**Automated settings** — run `task setup:github` (idempotent, safe to
+re-run): sets `delete_branch_on_merge: true`, `allow_update_branch: true`,
+and `allow_auto_merge: false`, verifies those settings, and enables **Dependabot alerts** and **private vulnerability
+reporting** when public. Routing uses `CI_RUNS_ON`, `BROWSER_RUNS_ON`,
+`IMAGE_BUILD_RUNS_ON`, `MULTICORE_RUNS_ON` and `ISOLATED_RUNS_ON`. Public
+repositories always create or replace all five repository overrides as
+`"ubuntu-latest"`, even without flags, so inherited persistent runners
+cannot reach jobs.
+On private/internal repositories, the script creates missing values only
+with `--ci-runs-on`, `--browser-runs-on`, `--multicore-runs-on`,
+`--image-build-runs-on` or `--isolated-runs-on`; intentional replacement
+also requires the matching `--replace-*` flag. `task setup:github`
+supplies the rendered CI answer; pass other class flags after `--`,
+for example `task setup:github -- --browser-runs-on '"ubuntu-latest"'`.
+Repository values shadow organization values. Isolated selectors may be
+strings, label arrays, or objects with usable `labels`; `self-hosted` is
+refused case-insensitively, and unsupported shapes fail closed. Requested
+invalid isolated values fail before any GitHub access or writes. Repair
+an existing unsafe repository value with a safe `--isolated-runs-on` plus
+`--replace-isolated-runs-on` (public repositories repair unsafe and
+unsupported values automatically before organization checks). Private/internal unsupported shapes fail
+closed. Unsafe or unsupported organization values fail only when inherited,
+with no repository isolated override. A safe repository value or an explicit
+safe isolated value plus replace flag shadows them and succeeds with a
+warning. Otherwise ask the organization's routing owner (whoever manages
+organization Actions variables) to repair them, or create a safe override.
+Unreadable organization values report unknown without failing setup; `task status:setup` reports known violations. Do not add
+`dependabot.yml`: Renovate owns routine and vulnerability-remediation PRs;
+Dependabot owns advisory alerts.
+
 - [ ] **[human-only]** Probe: Read the live repository rulesets and required checks through the GitHub API. Write: none. <!-- reconcile-id: root-import-the-branch-ruleset-see-archit-009 --> Import the branch ruleset (see [architecture/branch-protection.md](architecture/branch-protection.md)) — do this once `build.yml` and `devcontainer-build.yml` are on `main`, together with `remote-bootstrap.yml`, so the required `verify`/`security`/`devcontainer-verify`/`remote-bootstrap-verify` checks resolve. Merge first, let the `remote-bootstrap-verify` aggregate report on `main`, then import or edit the ruleset. **Use the UI import:** Settings → Rules → Rulesets → **New ruleset ▸ Import a ruleset** → select `.github/Branch Protection Ruleset - Protect Main.json`. (Prefer the UI over `gh api … rulesets`: the API `POST` is not idempotent — re-running creates a duplicate ruleset — and currently rejects the `merge_queue` rule. Check the imported ruleset for rules GitHub omitted as unavailable. To later change the ruleset, edit the existing one in the UI rather than re-importing.) **Import it before provisioning the bot and agent PATs below:** those postures carry no local merge guard ([decision](decisions/2026-10-07-bot-and-agent-postures-carry-no-merge-guards.md)), so this ruleset's code-owner approval and required checks are the only thing between their PAT and an unreviewed merge into `main`.
 - [ ] **[human-only]** Probe: Read the existing token coverage and the latest authenticated GitHub workflow result without exposing token values. Write: none. <!-- reconcile-id: root-bot-pat-the-agent-s-gh-token-if-a-fi-010 --> **Bot PAT** — the agent's `GH_TOKEN`. If a fine-grained PAT already covers
       `evanharmon1`, just add this repo to its **selected repositories**; a token is
@@ -171,14 +186,17 @@ the compatibility reason in the rule's `description`.
       matching additional-approval setting. Do not re-import the JSON: GitHub
       creates a duplicate ruleset rather than updating the live one.
 
-- [ ] **[human-only]** Probe: Read the repository app installation and the Renovate dashboard issue. Write: none. <!-- reconcile-id: root-install-and-activate-renovate-instal-015 --> **Install and activate Renovate** — install the
-      [Renovate app](https://github.com/apps/renovate) for **Only select
-      repositories** and select this repo. In the Mend Developer Portal choose
-      the **Renovate** product and **Scan and Alert** mode. Do not choose **Scan
-      Only**: it puts Renovate in silent mode, which scans without creating
-      checks, issues (including the Dependency Dashboard), or update/remediation
-      PRs. This repo already has `renovate.json`; keep that configuration rather
-      than replacing it with a generic onboarding config.
+<!-- reconcile-id: root-install-and-activate-renovate-instal-015 -->
+
+**Install and activate Renovate** — install the
+[Renovate app](https://github.com/apps/renovate) for **Only select
+repositories** and select this repo. In the Mend Developer Portal choose
+the **Renovate** product and **Scan and Alert** mode. Do not choose **Scan
+Only**: it puts Renovate in silent mode, which scans without creating
+checks, issues (including the Dependency Dashboard), or update/remediation
+PRs. This repo already has `renovate.json`; keep that configuration rather
+than replacing it with a generic onboarding config.
+
 - [x] **[human-only]** Probe: Read the repository app installation and review settings in the GitHub and CodeRabbit interfaces. Write: none. <!-- reconcile-id: root-install-the-coderabbit-app-https-git-016 --> Install the [CodeRabbit app](https://github.com/apps/coderabbitai) on the repo
       (`.coderabbit.yaml` turns automatic reviews off; the dev loop requests them with
       `@coderabbitai review`). Confirm the organization's **Automatic Review**
@@ -209,10 +227,14 @@ the compatibility reason in the rule's `description`.
       A reviewer that skips drafts first reports *after* promotion, so the
       readiness gate would hand a human a PR it had not actually reviewed.
       Leave it off rather than run it blind to the workbench.
-- [ ] **[human-only]** Probe: Read Actions secret names with gh secret list and compare the expected name. Write: none. <!-- reconcile-id: root-actions-secret-claude-code-oauth-tok-021 --> Actions secret: `CLAUDE_CODE_OAUTH_TOKEN` (claude-* workflows) — generate
-      with `claude setup-token`; the value must start **`sk-ant-oat01-`** (an OAuth
-      token, billed to your Claude subscription), **not** `sk-ant-api03-` (a raw API
-      key, billed at pay-as-you-go API rates). Then `gh secret set CLAUDE_CODE_OAUTH_TOKEN`
+
+<!-- reconcile-id: root-actions-secret-claude-code-oauth-tok-021 -->
+
+Actions secret: `CLAUDE_CODE_OAUTH_TOKEN` (claude-* workflows) — generate
+with `claude setup-token`; the value must start **`sk-ant-oat01-`** (an OAuth
+token, billed to your Claude subscription), **not** `sk-ant-api03-` (a raw API
+key, billed at pay-as-you-go API rates). Then `gh secret set CLAUDE_CODE_OAUTH_TOKEN`
+
 - [ ] **[human-only]** Probe: Read Foreman configuration and the names of its credential references without revealing credentials. Write: none. <!-- reconcile-id: root-foreman-operator-setup-provision-the-022 --> **Foreman operator setup** — provision the separate READ-ONLY PAT that
       foreman hands to dispatched agents: export/store it as
       `FOREMAN_AGENT_GH_TOKEN` where the bot devcontainer's `init-env.sh` can
@@ -298,44 +320,55 @@ the compatibility reason in the rule's `description`.
       installation**; until then, `create-github-app-token` fails and
       claude-implement cannot start. See
       [architecture/security.md](architecture/security.md#ci-automation-identity-github-app).
-- [ ] **[human-only]** Probe: Read GitHub App installations for this repository. Write: none. <!-- reconcile-id: root-install-the-app-on-this-repo-install-029 --> **Install** the App on this repo — **Install App → Only select repositories**
-      (the harmon-init repos that run release-please / claude-* / project-automation),
-      **not "All"**. **Creating the App is not enough:** an App whose credentials are
-      set but which is *not installed* on the repo makes
-      `actions/create-github-app-token` fail at runtime with a **404**
-      (`Not Found` — "not installed on this repository"). This is the single
-      easiest step to miss.
-- [ ] **[human-only]** Probe: Read Actions variable and secret names with gh variable list and gh secret list. Write: none. <!-- reconcile-id: root-set-ci-app-client-id-actions-variabl-030 --> Set `CI_APP_CLIENT_ID` (Actions **variable**) + `CI_APP_PRIVATE_KEY` (Actions
-      **secret**) — **pipe the `.pem` in** (never paste it; flattened newlines break
-      the key), and **scope both to those same repos** (least privilege — the key can
-      act as the App: commits, PRs, releases, workflow edits):
 
-      ```bash
-      gh secret set CI_APP_PRIVATE_KEY --org evanharmon1 \
-        --visibility selected --repos <repo-a>,<repo-b> < evanharmon1-ci.private-key.pem
-      gh variable set CI_APP_CLIENT_ID --org evanharmon1 \
-        --visibility selected --repos <repo-a>,<repo-b> --body "<client-id>"  # Iv…-style, not the numeric App ID
-      ```
+<!-- reconcile-id: root-install-the-app-on-this-repo-install-029 -->
 
-      Personal account: use `--repo evanharmon1/harmon-init` instead of
-      `--org`/`--visibility`/`--repos`. Re-running `--repos` **replaces** the list —
-      re-run with the full list to add a repo. Drives release-please, the claude-*
-      workflows, and project-automation; blast-radius + rotation in
-      [architecture/security.md](architecture/security.md).
+**Install** the App on this repo — **Install App → Only select repositories**
+(the harmon-init repos that run release-please / claude-* / project-automation),
+**not "All"**. **Creating the App is not enough:** an App whose credentials are
+set but which is *not installed* on the repo makes
+`actions/create-github-app-token` fail at runtime with a **404**
+(`Not Found` — "not installed on this repository"). This is the single
+easiest step to miss.
+
+<!-- reconcile-id: root-set-ci-app-client-id-actions-variabl-030 -->
+
+Set `CI_APP_CLIENT_ID` (Actions **variable**) + `CI_APP_PRIVATE_KEY` (Actions
+**secret**) — **pipe the `.pem` in** (never paste it; flattened newlines break
+the key), and **scope both to those same repos** (least privilege — the key can
+act as the App: commits, PRs, releases, workflow edits):
+
+```bash
+gh secret set CI_APP_PRIVATE_KEY --org evanharmon1 \
+  --visibility selected --repos <repo-a>,<repo-b> < evanharmon1-ci.private-key.pem
+gh variable set CI_APP_CLIENT_ID --org evanharmon1 \
+  --visibility selected --repos <repo-a>,<repo-b> --body "<client-id>"  # Iv…-style, not the numeric App ID
+```
+
+Personal account: use `--repo evanharmon1/harmon-init` instead of
+`--org`/`--visibility`/`--repos`. Re-running `--repos` **replaces** the list —
+re-run with the full list to add a repo. Drives release-please, the claude-*
+workflows, and project-automation; blast-radius + rotation in
+[architecture/security.md](architecture/security.md).
+
 - [ ] **[human-only]** Probe: Read package publishing permissions and the current package list. Write: none. <!-- reconcile-id: root-ghcr-ensure-the-org-user-allows-publ-031 --> GHCR: ensure the org/user allows publishing packages; the first
       devcontainer prebuild populates `ghcr.io/evanharmon1/harmon-init-devcontainer` on merge to main
-- [ ] **[agent-apply]** Probe: Read the owner project list and project fields with gh project list and gh project field-list. Write: `task setup:github-project`. <!-- reconcile-id: root-github-project-run-task-setup-github-032 --> GitHub Project: run `task setup:github-project` (needs
-      `gh auth refresh -s project`) to create the owner's default project (titled
-      `evanharmon1 Project`) and idempotently sync its `Status` pipeline — see
-      [project-management.md](project-management.md).
-      On a personal account it also creates Product as a project field (issue
-      fields are org-only; there is deliberately no Priority, Size, Domain, or
-      Layer field — see project-management.md, "Fields" and "Label or
-      field?"); status automation is a separate follow-up — the board is set
-      up, but issue/PR status isn't auto-synced yet. Re-runs **append** any
-      starter option the Status field is missing (so a value added by a later
-      harmon-init release lands on the next run) and never touch, reorder, or
-      delete the options you added.
+
+<!-- reconcile-id: root-github-project-run-task-setup-github-032 -->
+
+GitHub Project: run `task setup:github-project` (needs
+`gh auth refresh -s project`) to create the owner's default project (titled
+`evanharmon1 Project`) and idempotently sync its `Status` pipeline — see
+[project-management.md](project-management.md).
+On a personal account it also creates Product as a project field (issue
+fields are org-only; there is deliberately no Priority, Size, Domain, or
+Layer field — see project-management.md, "Fields" and "Label or
+field?"); status automation is a separate follow-up — the board is set
+up, but issue/PR status isn't auto-synced yet. Re-runs **append** any
+starter option the Status field is missing (so a value added by a later
+harmon-init release lands on the next run) and never touch, reorder, or
+delete the options you added.
+
 - [ ] **[human-only]** Probe: Read the project field list and compare it with the documented migration state. Write: none. <!-- reconcile-id: root-upgrading-from-a-release-before-875-033 --> **Upgrading from a release before #875?** If this repo's board still
       carries `Domain`/`Layer` fields from an earlier harmon-init release, they
       are not deleted automatically — retiring them is a deliberate,
@@ -365,14 +398,18 @@ the compatibility reason in the rule's `description`.
       associations for matching issues, PRs, and discussions found in its paginated snapshots,
       re-reads them, and only then allows `--prune` to remove zero-association
       retired labels.
-- [ ] **[agent-apply]** Probe: Read repository labels with gh label list and compare them with the label registry. Write: `task setup:github-labels`. <!-- reconcile-id: root-labels-run-task-setup-github-labels-036 --> Labels: run `task setup:github-labels` to seed this repo's starter label
-      families from `label-registry.json` (see the generated taxonomy table in
-      [project-management.md](project-management.md)) — grow `domain:` values
-      there as the product's own problem-space vocabulary and `area:` values as
-      its solution-space subsystems; both starter lists are a floor. `layer:`
-      is product-independent and normally needs no edits. Labels are per-repo,
-      so run it in each repo; org default labels (org Settings → Repository,
-      UI-only) only seed new repos.
+
+<!-- reconcile-id: root-labels-run-task-setup-github-labels-036 -->
+
+Labels: run `task setup:github-labels` to seed this repo's starter label
+families from `label-registry.json` (see the generated taxonomy table in
+[project-management.md](project-management.md)) — grow `domain:` values
+there as the product's own problem-space vocabulary and `area:` values as
+its solution-space subsystems; both starter lists are a floor. `layer:`
+is product-independent and normally needs no edits. Labels are per-repo,
+so run it in each repo; org default labels (org Settings → Repository,
+UI-only) only seed new repos.
+
 - [ ] **[human-only]** Probe: Read issue Tier labels and the tier pin labels before classification. Write: none. <!-- reconcile-id: root-pin-any-hand-applied-tier-before-the-037 --> **Pin any hand-applied Tier before the first classification
       write** — on an existing repository an unqualified `tier:<value>` label
       used to be a human's implementer override; it is now the cache automation
@@ -384,13 +421,17 @@ the compatibility reason in the rule's `description`.
       personal-account repository, monthly on an organization one).
       Before that first write, add `tier:pinned` to each open issue whose
       hand-set tier label you want to keep.
-- [ ] **[agent-apply]** Probe: Read the repository label list and compare it with the label registry. Write: `task setup:github-labels`. <!-- reconcile-id: root-after-a-copier-update-that-adds-labe-038 --> **After a `copier update` that adds label families** (e.g. `impact:*` — a
-      pure addition), re-run `task setup:github-labels` to provision the new
-      labels here — it is additive and never deletes, so existing labels and
-      the issues they sit on are untouched — then classify open issues with the
-      added families. A RENAMED family (like `method:*` → `strategy:*` above)
-      is not a pure addition — provision the new destinations first, then
-      migrate the old associations before retiring their labels.
+
+<!-- reconcile-id: root-after-a-copier-update-that-adds-labe-038 -->
+
+**After a `copier update` that adds label families** (e.g. `impact:*` — a
+pure addition), re-run `task setup:github-labels` to provision the new
+labels here — it is additive and never deletes, so existing labels and
+the issues they sit on are untouched — then classify open issues with the
+added families. A RENAMED family (like `method:*` → `strategy:*` above)
+is not a pure addition — provision the new destinations first, then
+migrate the old associations before retiring their labels.
+
 - [ ] **[human-only]** Probe: Read the repository label list and its issue usage before considering retirement. Write: none. <!-- reconcile-id: root-inspect-live-label-drift-before-reti-039 --> **Inspect live label drift before retiring anything** — keep
       the default setup path additive, then run
       `./scripts/setup-github-labels.sh --repo <owner/repo> --report-unregistered`
@@ -401,91 +442,95 @@ the compatibility reason in the rule's `description`.
       live labels, all-state issues and pull requests, and repository
       discussions, and reports separate association counts. An indeterminate read is a stop, not
       permission to clean up.
-- [ ] **[human-only]** Probe: Read legacy label names and their issue usage. Write: none. <!-- reconcile-id: root-retire-any-legacy-agent-claim-labels-040 --> **Retire any legacy `agent:*` claim labels or pre-2026
-      `codex`/`copilot` labels** — use the guarded maintenance flow, never a
-      direct `gh label delete` or a hand-written association list. Perform its
-      write path in a quiescent maintenance window: pause claim/release,
-      Foreman, release-please, and other human/API label writers for the whole
-      run. `--report-unregistered` is read-only, but its counts are a snapshot;
-      run it again immediately before `--prune`.
 
-      `suggest:*` (superseded by the derived Tier) and `tier:adaptive` (no rung
-      on the Tier scale) have no `--migrate` destination, and the command
-      refuses one: remove the label from every issue, pull request and
-      discussion that carries it (an issue then resolves through its derived
-      Tier), then run `--prune`.
+<!-- reconcile-id: root-retire-any-legacy-agent-claim-labels-040 -->
 
-      For fixed-family sources, these mappings are authoritative:
-      `agent:claude-code` → `claim:claude`, `agent:codex` → `claim:gpt`,
-      `agent:gemini-cli` → `claim:gemini`, `agent:kimi-k2` → `claim:kimi`, `agent:qwen-code` →
-      `claim:qwen`, and `claim:codex` → `claim:gpt`. Pass one repeatable
-      `--migrate OLD=NEW` per exact live
-      source, together with `--prune`; for example,
-      `./scripts/setup-github-labels.sh --repo <owner/repo> --prune
-      --migrate agent:gemini-cli=claim:gemini`. `--migrate` does not match a
-      prefix, so each live model-level source needs its own mapping. The
-      `OLD=NEW` form contains exactly one `=`; a label name containing `=` must
-      be relabeled per record instead of passed to bulk migration. Move only
-      the family segment for fixed mappings and preserve the recorded model
-      suffix, e.g. `claim:codex:sol` → `claim:gpt:sol`; model-level labels
-      refine rather
-      than replace their family-level label, and the command retains or adds
-      both associations. If a recognized model-level
-      destination is absent, the command creates it after confirmation by
-      copying metadata from the live family label; missing family labels stop
-      maintenance and require setup first.
+**Retire any legacy `agent:*` claim labels or pre-2026
+`codex`/`copilot` labels** — use the guarded maintenance flow, never a
+direct `gh label delete` or a hand-written association list. Perform its
+write path in a quiescent maintenance window: pause claim/release,
+Foreman, release-please, and other human/API label writers for the whole
+run. `--report-unregistered` is read-only, but its counts are a snapshot;
+run it again immediately before `--prune`.
 
-      Use this association-migration path, not `gh label edit` or a hand-written
-      create-then-delete sequence: the command validates a live registry
-      destination or creates a recognized on-demand model destination as
-      described above, attempts the association move for each matching issue,
-      PR, and discussion found in its paginated snapshots, then permits
-      `--prune` only when a fresh snapshot
-      shows the source has zero associations. Enumerate
-      model-level names explicitly with `gh label list --repo <owner/repo>
-      --limit 1000 --json name --jq '.[].name' | grep -E
-      '^claim:(codex|copilot):'`; for each source, inspect all-state
-      `gh issue list --label <old> --state all --limit 1000` **and**
-      `gh pr list --label <old> --state all --limit 1000`. An exactly-full
-      manual result is capped; increase the limit and rerun before writes. The
-      maintenance path itself uses `gh api --paginate` and refuses an
-      indeterminate read.
+`suggest:*` (superseded by the derived Tier) and `tier:adaptive` (no rung
+on the Tier scale) have no `--migrate` destination, and the command
+refuses one: remove the label from every issue, pull request and
+discussion that carries it (an issue then resolves through its derived
+Tier), then run `--prune`.
 
-      Copilot is a broker, not a fixed family: `mai` is only the picker default
-      and is never a guessed destination. Do **not** pass
-      `agent:github-copilot*` or `claim:copilot*` to bulk
-      `--migrate` — the command rejects broker-derived sources because one
-      destination cannot represent mixed runtime records. For `claim:copilot`,
-      inspect each issue/PR's claim/session record and relabel that record to
-      `claim:<actual-family>`; use `claim:mai` only when the record confirms
-      MAI. Apply the same per-record distinction to
-      `claim:copilot:<model>` and preserve a model
-      suffix only after the actual family is known. Include Discussions in that
-      per-record inventory: the read-only report gives their association count,
-      and the Discussions UI or GraphQL API identifies the records to relabel.
-      If a live claim's record is
-      missing, settle it with its owner or leave the label untouched rather
-      than guess. Add and verify the per-record destination before removing the
-      old association; after every record is handled, a fresh zero-association
-      snapshot may permit guarded `--prune` to attempt retiring the source.
+For fixed-family sources, these mappings are authoritative:
+`agent:claude-code` → `claim:claude`, `agent:codex` → `claim:gpt`,
+`agent:gemini-cli` → `claim:gemini`, `agent:kimi-k2` → `claim:kimi`, `agent:qwen-code` →
+`claim:qwen`, and `claim:codex` → `claim:gpt`. Pass one repeatable
+`--migrate OLD=NEW` per exact live
+source, together with `--prune`; for example,
+`./scripts/setup-github-labels.sh --repo <owner/repo> --prune
+--migrate agent:gemini-cli=claim:gemini`. `--migrate` does not match a
+prefix, so each live model-level source needs its own mapping. The
+`OLD=NEW` form contains exactly one `=`; a label name containing `=` must
+be relabeled per record instead of passed to bulk migration. Move only
+the family segment for fixed mappings and preserve the recorded model
+suffix, e.g. `claim:codex:sol` → `claim:gpt:sol`; model-level labels
+refine rather
+than replace their family-level label, and the command retains or adds
+both associations. If a recognized model-level
+destination is absent, the command creates it after confirmation by
+copying metadata from the live family label; missing family labels stop
+maintenance and require setup first.
 
-      Before moving any in-flight `claim:*`/legacy `agent:*` marker, settle the
-      claim or amend its durable record in the same sitting: its release path
-      names the exact label it will remove, and moving only the issue/PR
-      association strands the replacement marker. Interactive runs confirm on
-      the TTY; automation must state destructive intent again with separate
-      `--yes` (piped stdin is refused).
+Use this association-migration path, not `gh label edit` or a hand-written
+create-then-delete sequence: the command validates a live registry
+destination or creates a recognized on-demand model destination as
+described above, attempts the association move for each matching issue,
+PR, and discussion found in its paginated snapshots, then permits
+`--prune` only when a fresh snapshot
+shows the source has zero associations. Enumerate
+model-level names explicitly with `gh label list --repo <owner/repo>
+--limit 1000 --json name --jq '.[].name' | grep -E
+'^claim:(codex|copilot):'`; for each source, inspect all-state
+`gh issue list --label <old> --state all --limit 1000` **and**
+`gh pr list --label <old> --state all --limit 1000`. An exactly-full
+manual result is capped; increase the limit and rerun before writes. The
+maintenance path itself uses `gh api --paginate` and refuses an
+indeterminate read.
 
-      The command verifies each migration around source removal, then takes one
-      complete, bounded post-migration association snapshot before the deletion
-      batch and fails closed on read/verification errors, but GitHub has no transaction or
-      compare-and-swap that binds the final read to the following edit/DELETE.
-      A concurrent writer can still change labels after that read and before
-      the request, and the command cannot undo a successful concurrent
-      mutation. If writers were not paused or any verification drifts, treat
-      the operation as incomplete, reconcile live associations, and rerun in a
-      new quiet window; do not infer association preservation from a successful
-      exit alone; this is a guarded best-effort operation at that API boundary.
+Copilot is a broker, not a fixed family: `mai` is only the picker default
+and is never a guessed destination. Do **not** pass
+`agent:github-copilot*` or `claim:copilot*` to bulk
+`--migrate` — the command rejects broker-derived sources because one
+destination cannot represent mixed runtime records. For `claim:copilot`,
+inspect each issue/PR's claim/session record and relabel that record to
+`claim:<actual-family>`; use `claim:mai` only when the record confirms
+MAI. Apply the same per-record distinction to
+`claim:copilot:<model>` and preserve a model
+suffix only after the actual family is known. Include Discussions in that
+per-record inventory: the read-only report gives their association count,
+and the Discussions UI or GraphQL API identifies the records to relabel.
+If a live claim's record is
+missing, settle it with its owner or leave the label untouched rather
+than guess. Add and verify the per-record destination before removing the
+old association; after every record is handled, a fresh zero-association
+snapshot may permit guarded `--prune` to attempt retiring the source.
+
+Before moving any in-flight `claim:*`/legacy `agent:*` marker, settle the
+claim or amend its durable record in the same sitting: its release path
+names the exact label it will remove, and moving only the issue/PR
+association strands the replacement marker. Interactive runs confirm on
+the TTY; automation must state destructive intent again with separate
+`--yes` (piped stdin is refused).
+
+The command verifies each migration around source removal, then takes one
+complete, bounded post-migration association snapshot before the deletion
+batch and fails closed on read/verification errors, but GitHub has no transaction or
+compare-and-swap that binds the final read to the following edit/DELETE.
+A concurrent writer can still change labels after that read and before
+the request, and the command cannot undo a successful concurrent
+mutation. If writers were not paused or any verification drifts, treat
+the operation as incomplete, reconcile live associations, and rerun in a
+new quiet window; do not infer association preservation from a successful
+exit alone; this is a guarded best-effort operation at that API boundary.
+
 - [ ] **[human-only]** Probe: none. Write: none. <!-- reconcile-id: root-project-views-create-the-starter-vie-041 --> Project views: create the starter views that the Views section of
       [project-management.md](project-management.md) specifies — including
       Needs review and Human queue — in the Project UI. Projects V2 has no view

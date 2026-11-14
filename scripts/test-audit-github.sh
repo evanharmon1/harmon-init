@@ -6,6 +6,7 @@ python3 -B - <<'PY'
 import copy
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -31,6 +32,13 @@ with open(os.environ['AUDIT_TEST_LOG'], 'a') as out:
 if args[:2] == ['repo', 'view']:
     print(os.environ.get('AUDIT_TEST_REPO_VIEW', 'null'))
     sys.exit(0)
+state_path = Path(os.environ['AUDIT_TEST_STATE'])
+state = json.loads(state_path.read_text()) if state_path.exists() else None
+if args[:2] in (['issue', 'create'], ['issue', 'edit']):
+    body = Path(args[args.index('--body-file') + 1]).read_text()
+    state_path.write_text(json.dumps({'number': 17, 'body': body, 'state': 'open', 'author_association': 'OWNER'}))
+    print('https://github.com/acme/widget/issues/17')
+    sys.exit(0)
 assert args[:3] == ['api', '--method', 'GET'] or args[:2] == ['api', 'graphql'], args
 assert not any(word in args for word in ['--input', 'POST', 'PUT', 'PATCH', 'DELETE'])
 endpoint = args[3] if args[1] == '--method' else 'graphql'
@@ -43,6 +51,12 @@ value = data.get(endpoint, data.get(key, {'error': 403}) if page == 1 else
                   if isinstance(data.get(key), dict) and 'error' not in data[key] else []))
 if key in ('orgs/acme/issue-types', 'orgs/acme/issue-fields'):
     value = data.get(key, {'error': 403})
+if key == 'repos/acme/widget/issues' and state and page == 1:
+    value = list(value) + [state]
+if key == 'repos/acme/widget/issues/17':
+    value = dict(state)
+    if os.environ.get('AUDIT_TEST_STRIP_MARKER'):
+        value['body'] = value['body'].replace('<!-- harmon-github-config-status -->', '')
 if isinstance(value, dict) and 'error' in value:
     print('gh: permission unavailable (HTTP ' + str(value['error']) + ')', file=sys.stderr)
     sys.exit(1)
@@ -50,7 +64,7 @@ print(json.dumps(value) if value is not None else '')
 ''')
     gh.chmod(0o755)
     env = dict(os.environ, PATH=str(fixture / 'bin') + os.pathsep + os.environ['PATH'],
-               AUDIT_TEST_LOG=str(fixture / 'calls'), AUDIT_TEST_DATA=str(fixture / 'data.json'))
+               AUDIT_TEST_STATE=str(fixture / 'issue.json'), AUDIT_TEST_LOG=str(fixture / 'calls'), AUDIT_TEST_DATA=str(fixture / 'data.json'))
     def entry(fragment):
         return next(row for row in sorted(catalog['entries'], key=lambda row: row['source'] != 'root') if fragment in row['id'])
     settings = entry('automated-settings-')
@@ -87,6 +101,9 @@ print(json.dumps(value) if value is not None else '')
         (fixture / 'calls').write_text('')
         result = subprocess.run(['bash', str(fixture / 'scripts/audit-github.sh'), '--repo', 'acme/widget', *extra], env=env, capture_output=True, text=True, check=False)
         assert result.returncode == expected, (result.returncode, result.stdout, result.stderr)
+        if '--issue' not in extra:
+            calls = [json.loads(line) for line in (fixture / 'calls').read_text().splitlines()]
+            assert all(call[:2] not in (['issue', 'create'], ['issue', 'edit']) for call in calls), 'read-only mode wrote an issue'
         output = [json.loads(line) for line in result.stdout.splitlines()]
         assert len(output) == len(rows), (len(output), len(rows))
         assert {row['id'] for row in output} == {row['id'] for row in rows}
@@ -376,6 +393,113 @@ print(json.dumps(value) if value is not None else '')
     assert '10 pages' in run([labels], 2, many)[0]['reason']
     later = dict(many, **{'repos/acme/widget/labels?per_page=100&page=2': {'error': 403}})
     assert '403' in run([labels], 2, later)[0]['reason']
+    # Status issue contract, entirely offline. Mutation runs exercise each
+    # assertion with the corresponding production rule disabled in a temp copy.
+    original_script = (fixture / 'scripts/audit-github.sh').read_text()
+    state_file = fixture / 'issue.json'
+    marker = '<!-- harmon-github-config-status -->'
+    collector = 'https://github.com/acme/widget/issues/9#issuecomment-123'
+    def issue_case(case):
+        state_file.unlink(missing_ok=True)
+        (fixture / 'docs/CHECKLIST.md').write_text('\n'.join(
+            '<!-- reconcile-id: ' + row['id'] + ' -->' for row in [settings, secrets]))
+        (fixture / 'data.json').write_text(json.dumps(data))
+        def invoke(extra=(), overrides=None):
+            (fixture / 'calls').write_text('')
+            result = subprocess.run(['bash', str(fixture / 'scripts/audit-github.sh'),
+                                     '--repo', 'acme/widget', *extra],
+                                    env=dict(env, **(overrides or {})), capture_output=True, text=True, check=False)
+            calls = [json.loads(line) for line in (fixture / 'calls').read_text().splitlines()]
+            writes = [call for call in calls if call[:2] in (['issue', 'create'], ['issue', 'edit'])]
+            return result, writes
+        flags = ['--issue', '--human-collector', collector]
+        if case == 'read-only':
+            result, writes = invoke(['--human-collector', collector])
+            assert result.returncode == 0 and not writes, 'default mode wrote'
+            return
+        result, writes = invoke(['--issue'] if case == 'bare' else flags)
+        assert result.returncode == 0, result.stderr
+        published = json.loads(state_file.read_text())['body']
+        table_rows = [line for line in published.splitlines() if line.startswith('| ')]
+        assert all(len(line.split('|')) == 8 for line in table_rows), 'table must have exactly six columns'
+        if case == 'bare':
+            assert len(writes) == 1 and writes[0][1] == 'create', 'bare mode did not publish'
+            assert 'collector: not linked' in published and collector not in published, 'missing deterministic placeholder'
+            before = state_file.read_bytes()
+            result, writes = invoke(['--issue'])
+            assert result.returncode == 0 and not writes and state_file.read_bytes() == before, 'bare placeholder is unstable'
+            result, writes = invoke(flags)
+            assert result.returncode == 0 and len(writes) == 1, 'supplied collector not recorded'
+            published = json.loads(state_file.read_text())['body']
+            assert '](' + collector + ')' in published and 'collector: not linked' not in published
+            before = state_file.read_bytes()
+            result, writes = invoke(['--issue'])
+            assert result.returncode == 0 and not writes and state_file.read_bytes() == before, 'bare mode dropped recorded collector'
+            return
+        if case == 'create':
+            assert len(writes) == 1 and writes[0][:2] == ['issue', 'create'], 'absent issue not created'
+            assert marker in json.loads(state_file.read_text())['body'], 'missing own marker'
+            return
+        state = json.loads(state_file.read_text())
+        if case == 'checkboxes':
+            assert not re.search(r'- \[[ xX]\]', state['body']), 'task-list leaked into status body'
+            assert '[(HUMAN): collector line](' + collector + ')' in state['body']
+            return
+        if case == 'marker':
+            result, writes = invoke(flags, {'AUDIT_TEST_STRIP_MARKER': '1'})
+            assert result.returncode == 4 and 'no longer carries' in result.stderr and not writes, 'missing marker did not refuse'
+            return
+        if case == 'author':
+            state['author_association'] = 'NONE'
+            state_file.write_text(json.dumps(state))
+            result, writes = invoke(flags)
+            assert result.returncode == 0 and len(writes) == 1 and writes[0][1] == 'create', 'forged marker accepted'
+            return
+        # Seed historical dates: running on another day must not edit unchanged rows.
+        state['body'] = re.sub(r'\d{4}-\d{2}-\d{2}', '2001-01-01', state['body'])
+        state_file.write_text(json.dumps(state))
+        before = state_file.read_bytes()
+        if case == 'identical':
+            result, writes = invoke(['--issue'])
+            assert result.returncode == 0 and not writes and state_file.read_bytes() == before, 'unchanged body edited'
+            return
+        drifted = copy.deepcopy(data)
+        drifted['repos/acme/widget/actions/secrets'] = {'secrets': []}
+        (fixture / 'data.json').write_text(json.dumps(drifted))
+        result, writes = invoke(['--issue'])
+        assert result.returncode == 1 and len(writes) == 1 and writes[0][1] == 'edit', 'changed probe not edited'
+        body = json.loads(state_file.read_text())['body']
+        rows = {cells[0]: cells for line in body.splitlines() if line.startswith('| root-')
+                for cells in [[cell.strip() for cell in line.split('|')[1:-1]]]}
+        assert set(rows) == {settings['id'], secrets['id']}
+        assert rows[settings['id']][4] == '2001-01-01', 'unchanged row date moved'
+        assert rows[secrets['id']][2] == 'fail' and rows[secrets['id']][4] != '2001-01-01', 'changed row date did not move'
+    cases = ['bare', 'create', 'identical', 'marker', 'checkboxes', 'dates', 'read-only', 'author']
+    for case in cases:
+        issue_case(case)
+    mutations = {
+        'create': ("['gh', 'issue', 'create', '--title'", "['gh', 'issue', 'edit', '--title'"),
+        'identical': ('if rendered == old_body:', 'if False:'),
+        'marker': ("if MARKER not in (live.get('body') or ''):", 'if False:'),
+        'checkboxes': ("body = [MARKER, '',", "body = [MARKER, '- [ ] accidental criteria',"),
+        'dates': ("changed = old[4] if old and", "changed = old[4] if False and old and"),
+        'changed-date': ("and old[2:4] == [result, reason]", "and True"),
+        'read-only': ('if args.issue:', 'if True:'),
+        'author': ("if live.get('author_association') in TRUSTED:", 'if True:'),
+    }
+    for case, (old, new) in mutations.items():
+        assert old in original_script, ('missing mutation target', case)
+        (fixture / 'scripts/audit-github.sh').write_text(original_script.replace(old, new, 1))
+        try:
+            issue_case('dates' if case == 'changed-date' else case)
+        except (AssertionError, FileNotFoundError):
+            pass
+        else:
+            raise AssertionError('surviving mutation: ' + case)
+        finally:
+            (fixture / 'scripts/audit-github.sh').write_text(original_script)
+    state_file.unlink(missing_ok=True)
+    print('status issue: create, identical/no edit, marker refusal, no checkboxes, row dates, read-only and author guard; eight mutations killed')
     # Unknown checklist IDs are rejected before any GitHub read.
     (fixture / 'docs/CHECKLIST.md').write_text('<!-- reconcile-id: unregistered -->')
     result = subprocess.run(['bash', str(fixture / 'scripts/audit-github.sh'), '--repo', 'acme/widget'], env=env, capture_output=True, text=True, check=False)
