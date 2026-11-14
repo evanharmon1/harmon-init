@@ -71,7 +71,7 @@ git -c core.hooksPath=/dev/null -c user.name=fixture -c user.email=fixture@examp
     -c commit.gpgsign=false commit -qm fixture
 
 # renovate: datasource=npm depName=renovate
-RENOVATE_VALIDATOR_VERSION=44.216.2
+RENOVATE_VALIDATOR_VERSION=44.232.0
 # Renovate's exit status is not the signal: it exits non-zero on a host whose
 # Node it does not support even after a complete extraction. The logged
 # packageFiles are the evidence, and the analysis below fails when they are
