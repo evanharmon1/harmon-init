@@ -565,16 +565,16 @@ printf '%s' "$absent_resolved" | jq -e '
 }
 
 # Family, harness, and model tier must intersect in one executable tuple.
-# Gemini can run through Antigravity and Claude has an apex model, but
-# Antigravity cannot execute Claude; independent existence checks would accept
-# this impossible role configuration.
+# Qwen can run through qwen-code and Claude has an apex model, but qwen-code
+# cannot execute Claude and Qwen has no apex model; independent existence
+# checks would accept this impossible role configuration.
 reset_policy
 replace_in_table role.implementer \
     'families  = ["claude", "gpt", "gemini"]' \
-    'families  = ["gemini", "claude"]'
+    'families  = ["qwen", "claude"]'
 replace_in_table role.implementer \
     'harnesses = ["claude-code", "codex-cli", "antigravity"]' \
-    'harnesses = ["antigravity"]'
+    'harnesses = ["qwen-code"]'
 replace_in_table rigor.standard 'orchestrator_tier = "frontier"' 'orchestrator_tier = "apex"'
 replace_in_table rigor.standard 'implementer_tier  = "standard"' 'implementer_tier  = "apex"'
 replace_in_table rigor.standard 'challenger_tier   = "frontier"' 'challenger_tier   = "apex"'

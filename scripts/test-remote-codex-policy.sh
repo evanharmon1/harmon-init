@@ -25,10 +25,28 @@
 # folded hit cannot be allowlisted, the source has to be rewritten. One rule, in
 # every scanned file whatever its context: a line that ENDS in `codex` plus option
 # words arms the fold, and the next non-blank line completes it when it begins
-# with option words and then `login`. The one exception: a `login` that is a
-# mapping key (`login:` or `login :`) is never the subcommand, so consecutive
-# mapping lines such as `provider: codex` / `login: oauth`, or `- codex` /
-# `login: [oauth]`, pass.
+# with option words and then `login`. When the head's LAST option takes a separate
+# value (VALUE_OPTIONS: `-c`/`--config`, `-m`/`--model`, `-p`/`--profile`, ...) and
+# has none on its own line, the tail's first word is that value, so `codex --config`
+# / `model=foo login` is a login too. Only those listed options consume the tail's
+# first word: `codex --version` or `codex --no-alt-screen` followed by another
+# tool's `login` (`docker login`, `exec login`) is not a Codex login and passes. The
+# one exception: a `login` that is a mapping key (`login:` or `login :`) or a shell
+# assignment (`login=...`) is never the subcommand, so consecutive lines such as
+# `provider: codex` / `login: oauth`, `- codex` / `login: [oauth]`, or `agent=codex`
+# / `login="$(whoami)"` pass.
+#
+# A YAML block SEQUENCE under a command key (COMMAND_KEYS: `args`, `command`, `cmd`,
+# `entrypoint` — the argv-shaped keys, e.g. a docker action's `runs.args`) is joined
+# across its consecutive items, whatever their number: `- codex` / `- login`, with
+# optional `- --option` items (and a `- value` after a listed value-taking option)
+# between them, is `codex login` and is reported as `file:L1-L2: <item> / <item> ...`
+# from the item holding `codex` to the item holding `login`. The same value-taking
+# rule applies: `- codex` / `- --version` / `- docker` / `- login` passes. A sequence
+# under any other key (`with:` inputs, a `steps:` list of names, `cmds:`/`script:`
+# lists whose items are separate commands) is never joined, a sibling key or a
+# mapping item (`- login: x`) ends the sequence, and a line holding both words is
+# already reported by the one-line rule.
 #
 # `auth.json` is matched as a complete basename: `auth.json` and
 # `~/.codex/auth.json` hit, `oauth.json`, `myauth.json` and `auth.json.example`
@@ -66,11 +84,16 @@
 #     `$HOME/.codex` or `/home/vscode/.codex` without a slash is not. A bare
 #     `.codex` token is deliberately not used: the agent devcontainer mounts that
 #     directory legitimately, and the persistent login lives in it.
-#   - An option whose value opens the next line (`codex --config` / `model=foo
-#     login`) is not joined, as before this change (tracked as
-#     evanharmon1/harmon-init#1488).
-#   - A command folded across THREE lines whose middle line holds only options
-#     (`codex` / `--opt` / `login`) is not joined; only two-line folds are.
+#   - Which options take a separate value is an allowlist (VALUE_OPTIONS): an
+#     unlisted value-taking option (or a new Codex release's) leaves its folded
+#     `<value> login` tail unjoined, the deliberate fail-open that keeps another
+#     tool's `login` from being reported as Codex's.
+#   - A command folded across THREE lines (`codex` / `--opt` / `login`) is not
+#     joined; only two-line folds are. Sequence items are the exception: any
+#     number of consecutive items under a command key are joined.
+#   - A flow sequence (`args: [codex, login]`), a sequence under a key not in
+#     COMMAND_KEYS, and a sequence item whose scalar continues on deeper lines are
+#     not joined.
 #   - Outside the strict tier, a token with `codex` only on a neighbouring line
 #     is not caught. Inside the strict tier that does not apply.
 #   - Hard-wrapped prose that ends a line in `codex` with `login` opening the next
@@ -114,6 +137,39 @@ TOKENS=(
     '--with-access-token'
     '~/.codex'
     '.codex/'
+)
+
+# Codex options that take a SEPARATE value (`-c key=val`, `--model gpt`). Only these
+# let the first word after them be their value, on the next line of a fold or the
+# next item of a sequence; any other option (`--version`, `--no-alt-screen`, ...) is
+# complete without one, so what follows it is another command. An option written
+# with `=` (`--config=x`) never takes a separate value either way.
+VALUE_OPTIONS=(
+    '-c' '--config'
+    '-m' '--model'
+    '-p' '--profile'
+    '-s' '--sandbox'
+    '-a' '--ask-for-approval'
+    '-C' '--cd'
+    '-i' '--image'
+    '--add-dir'
+    '--color'
+    '--enable'
+    '--disable'
+    '--local-provider'
+    '--output-schema'
+    '-o' '--output-last-message'
+    '--remote'
+    '--remote-auth-token-env'
+)
+# Argv-shaped YAML keys whose block-sequence items are ONE command line, joined for
+# the login rule. Keys whose items are separate commands (`cmds`, `script`, `run`
+# lists) or unrelated data (`with`, `steps`) are deliberately absent.
+COMMAND_KEYS=(
+    'args'
+    'command'
+    'cmd'
+    'entrypoint'
 )
 
 # Scope rule: remote-environment configuration and documentation are scanned.
@@ -253,7 +309,7 @@ done
 # tokens across all the text files, so a scan costs two processes, not three per
 # file — the self-test runs it many times.
 scan() {
-    local root="$1" file line text tokstr strictstr namestr rc hits allowed listing d f k scanned=0
+    local root="$1" file line text tokstr strictstr namestr valstr keystr rc hits allowed listing d f k scanned=0
     local files=() textfiles=() prune_args=() stricts=() dirs=() x g
     for x in ${EXCLUDE_DIRS[@]+"${EXCLUDE_DIRS[@]}"}; do
         prune_args+=(-path "${root}/${x}" -prune -o)
@@ -317,25 +373,142 @@ scan() {
         done
         strictstr="$(printf '%s\037' "${stricts[@]}")"
         namestr="$(printf '%s\037' "${STRICT_NAMES[@]}")"
+        valstr="$(printf '%s\037' "${VALUE_OPTIONS[@]}")"
+        keystr="$(IFS='|' && printf '%s' "${COMMAND_KEYS[*]}")"
         rc=0
-        hits="$(cd "$root" && awk -v tokens="$tokstr" -v strictlist="$strictstr" -v namelist="$namestr" '
+        hits="$(cd "$root" && awk -v tokens="$tokstr" -v strictlist="$strictstr" -v namelist="$namestr" -v valopts="$valstr" -v cmdkeys="$keystr" '
             # has_tok(T, TOK) — a plain substring, except auth.json, which must be a
             # complete basename: not `oauth.json` or `myauth.json`.
             function has_tok(t, tok) {
                 if (tok == "auth.json") return (t ~ AUTHJSON)
                 return index(t, tok)
             }
-            function emit(f, s, t,   i, tt, hit) {
+            # is_codex(W) — the word codex, or a path ending in /codex.
+            function is_codex(w) {
+                return (w == "codex" || w ~ /[\/]codex$/)
+            }
+            # head_needs_value(T) — T ends in `codex` plus options (FOLDHEAD): true when
+            # its LAST option takes a separate value and none follows it on the line.
+            function head_needs_value(t,   run, m, w, j, x) {
+                if (!match(t, FOLDHEAD)) return 0
+                run = substr(t, RSTART, RLENGTH)
+                run = substr(run, index(run, "codex") + 5)
+                m = split(run, w, " ")
+                for (j = 1; j <= m; ) {
+                    x = w[j]
+                    if (x !~ /^-/) return 0
+                    if (x in VT) {
+                        if (j == m) return 1
+                        j += 2
+                    } else j++
+                }
+                return 0
+            }
+            # seq_scalar(T, A) — one argv word plus its plain-mapping classification.
+            # Only plain scalars have comments or mapping syntax; quoted scalars may
+            # contain either as data, and an empty quoted scalar is still an item.
+            function seq_scalar(t, a,   q, i, c, out) {
+                a["mapping"] = 0
+                q = substr(t, 1, 1)
+                if (q !~ QUOTES) {
+                    sub(/ #.*$/, "", t)
+                    sub(/ +$/, "", t)
+                    if (t == "" || t ~ /^#/) return 0
+                    a["value"] = t
+                    a["mapping"] = (t ~ MAPITEM)
+                    return 1
+                }
+                out = ""
+                for (i = 2; i <= length(t); i++) {
+                    c = substr(t, i, 1)
+                    if (c == q) {
+                        if (q == sprintf("%c", 39) && substr(t, i + 1, 1) == q) {
+                            out = out q
+                            i++
+                            continue
+                        }
+                        a["value"] = out
+                        return 1
+                    }
+                    if (q == "\"" && c == "\\" && i < length(t)) {
+                        out = out c substr(t, i + 1, 1)
+                        i++
+                    } else out = out c
+                }
+                return 0
+            }
+            function seq_reset() { sq = 0; nitems = 0; sqhit = 0 }
+            # seq_eval(F, S) — after each item: is there a `codex`, options (a listed
+            # value-taking one consuming the next item) and `login` across items?
+            function seq_eval(f, s,   i, j, x, out, k) {
+                if (sqhit) return
+                for (i = 1; i <= nitems; i++) {
+                    if (!is_codex(tok[i])) continue
+                    for (j = i + 1; j <= nitems; ) {
+                        x = tok[j]
+                        if (x == "login") {
+                            out = tok[i]
+                            for (k = i + 1; k <= nitems; k++) out = out " / " tok[k]
+                            print substr(f, 3) ":" iline[i] "-" s ": " out
+                            sqhit = 1
+                            return
+                        }
+                        if (x !~ /^-/) break
+                        if (x in VT) j += 2
+                        else j++
+                    }
+                }
+            }
+            # seq_step(F, S, TT, IND, KCOL) — track a block sequence under a command key and
+            # join its consecutive items. Blank and comment lines are transparent; a sibling
+            # key, a dedent, or a mapping item ends it; deeper lines continue an item.
+            function seq_step(f, s, tt, ind, kcol,   body, scalar) {
+                if (tt == "" || tt ~ /^#/) return
+                if (tt ~ CMDKEY) {
+                    seq_reset()
+                    sq = 1
+                    sk = kcol
+                    sind = -1
+                    return
+                }
+                if (!sq) return
+                if (tt !~ /^-( |$)/) {
+                    if (sind < 0 || ind <= sind) sq = 0
+                    return
+                }
+                if (sind < 0) {
+                    if (ind < sk) { sq = 0; return }
+                    sind = ind
+                } else if (ind < sind) {
+                    sq = 0
+                    return
+                } else if (ind > sind) return
+                body = tt
+                sub(/^- ?/, "", body)
+                if (!seq_scalar(body, scalar)) return
+                if (scalar["mapping"]) { sq = 0; return }
+                nitems++
+                tok[nitems] = scalar["value"]
+                iline[nitems] = s
+                seq_eval(f, s)
+            }
+            function emit(f, s, t,   i, tt, hit, ind, kcol) {
+                ind = match(t, /[^ \t]/) ? RSTART - 1 : 0
+                match(t, /^[ \t]*(-[ \t]+)?/)
+                kcol = RLENGTH
                 gsub(/[ \t]+/, " ", t)
                 tt = t
                 sub(/^ /, "", tt)
+                seq_step(f, s, tt, ind, kcol)
                 # A Codex command folded across two lines (a YAML `>-` step): a line
                 # ends in `codex` and options (FOLDHEAD); the next non-blank line
-                # opens with options and `login` (FOLDTAIL). A `login` that is a
-                # mapping key (KEYLOGIN) is not the subcommand. Reported with both
-                # real lines.
+                # opens with options and `login` (FOLDTAIL), or, when the last
+                # option takes a separate value, with that value first (FOLDTAILVAL).
+                # A `login` that is a mapping key or an assignment (KEYLOGIN) is not the
+                # subcommand, but may be a pending option value before the real login.
+                # Reported with both real lines.
                 if (pend != "" && tt != "") {
-                    if (tt ~ FOLDTAIL && tt !~ KEYLOGIN) print pfile ":" pline "-" s ": " pend " / " tt
+                    if ((tt ~ FOLDTAIL && tt !~ KEYLOGIN) || (pendval && tt ~ FOLDTAILVAL)) print pfile ":" pline "-" s ": " pend " / " tt
                     pend = ""
                 }
                 # One rule: outside the strict tier a line counts only if it
@@ -353,6 +526,7 @@ scan() {
                 }
                 if (!hit && t ~ FOLDHEAD) {
                     pend = t
+                    pendval = head_needs_value(t)
                     pfile = substr(f, 3)
                     pline = s
                 }
@@ -377,9 +551,19 @@ scan() {
                 LOGIN = W " login([^A-Za-z0-9_-]|$)"
                 FOLDHEAD = W " ?$"
                 FOLDTAIL = "^(-[^ ]+ ([^ -][^ ]* )?)*login([^A-Za-z0-9_-]|$)"
-                # A tail whose `login` is a mapping key: `login:` or `login :`. A key is
-                # always the first word of the tail, so a later `login:` word does not count.
-                KEYLOGIN = "^login ?:"
+                # The same tail when the head ended in a value-taking option: its first word
+                # is that option value.
+                FOLDTAILVAL = "^[^ -][^ ]* (-[^ ]+ ([^ -][^ ]* )?)*login([^A-Za-z0-9_-]|$)"
+                # A tail whose `login` is a mapping key (`login:` or `login :`) or a shell
+                # assignment (`login=...`). Only exclude it from the direct subcommand
+                # match: a pending value-taking option consumes that first word instead.
+                # A real `codex login` later on that line is still reported by the one-line rule.
+                KEYLOGIN = "^login( ?:|=)"
+                nv = split(valopts, V, "\037")
+                for (i = 1; i <= nv; i++) if (V[i] != "") VT[V[i]] = 1
+                QUOTES = sprintf("[%c%c]", 34, 39)
+                CMDKEY = "^(- )?" QUOTES "?(" cmdkeys ")" QUOTES "? ?: ?(#.*)?$"
+                MAPITEM = "^[A-Za-z0-9_.-]+:( |$)"
                 # auth.json as a complete basename: no name character before it
                 # (a `.` or `-` would make it part of a longer name), no word
                 # character after it. A trailing `.` is sentence punctuation before
@@ -393,6 +577,7 @@ scan() {
                 if (cont) { emit(pf, start, buf); buf = ""; cont = 0 }
                 pf = FILENAME
                 pend = ""
+                seq_reset()
                 strict = is_strict(substr(FILENAME, 3))
             }
             {
@@ -836,6 +1021,189 @@ printf 'jobs:\n  a:\n    steps:\n      - run: |\n          codex --version\n    
 fixture_hits
 [ -z "$SCAN_HITS" ] || fail "codex --version then another tool login must not be reported, got: ${SCAN_HITS}"
 rm -f "${FIX}/.github/workflows/folded.yml" "${FIX}/docs/guides/planted-app.md"
+
+# Only an option that takes a SEPARATE value (VALUE_OPTIONS) lets the tail's first word
+# be that value: `codex --config` / `model=foo login` is a folded login, whatever the
+# option's spelling, and the same tail after a no-value option is another command.
+fold_run() {
+    # fold_run HEAD TAIL — a workflow whose run scalar folds HEAD and TAIL (lines 6-7).
+    printf 'name: x\njobs:\n  a:\n    steps:\n      - run: >-\n          %s\n          %s\n' "$1" "$2" >"${FIX}/.github/workflows/folded.yml"
+}
+fold_run 'codex --config' 'login=true login'
+expect_hit "a folded codex --config, then login=true as its value and login" ".github/workflows/folded.yml" "6-7: "
+fold_run 'codex --config login=true login' ''
+expect_hit "a one-line codex --config login=true login" ".github/workflows/folded.yml" "6:"
+fold_run 'codex --config' 'model=foo login'
+expect_hit "a folded codex --config, then its value and login" ".github/workflows/folded.yml" "6-7: "
+fold_run 'codex --model' 'gpt-5 login --device-auth'
+expect_hit "a folded codex --model, then its value and login" ".github/workflows/folded.yml" "6-7: "
+fold_run 'codex --no-alt-screen -c' 'model=foo login'
+expect_hit "a folded codex, an option, a value-taking option, then its value and login" ".github/workflows/folded.yml" "6-7: "
+fold_run 'codex -p' 'ci -c x=y login'
+expect_hit "a folded codex -p, then its value, an option with a value, and login" ".github/workflows/folded.yml" "6-7: "
+fold_run 'codex --config' 'login'
+expect_hit "a folded codex --config, then login" ".github/workflows/folded.yml" "6-7: "
+fold_run 'codex --version' 'docker login ghcr.io -u user --password-stdin'
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "a folded codex --version then another tool login must not be reported, got: ${SCAN_HITS}"
+fold_run 'codex --no-alt-screen' 'exec login'
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "a folded codex --no-alt-screen then exec login must not be reported, got: ${SCAN_HITS}"
+fold_run 'codex --config' 'model=foo'
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "a value-taking option and its value with no login must not be reported, got: ${SCAN_HITS}"
+fold_run 'codex --config=model=foo' 'docker login ghcr.io'
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "an option written with = takes no separate value, got: ${SCAN_HITS}"
+fold_run 'codex -c x=y' 'npm login'
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "a value-taking option that already has its value must not join the next tool, got: ${SCAN_HITS}"
+# A shell assignment to login is not the subcommand, and a real login still is.
+fold_run 'agent=codex' 'login="$(whoami)"'
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "agent=codex then login=\"\$(whoami)\" must not be reported, got: ${SCAN_HITS}"
+fold_run 'agent=codex' 'login=x'
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "agent=codex then login=x must not be reported, got: ${SCAN_HITS}"
+fold_run 'agent=codex' 'login="$(whoami)" && codex login'
+expect_hit "a login assignment line that also runs codex login" ".github/workflows/folded.yml" "7:"
+fold_run 'agent=codex' 'login'
+expect_hit "agent=codex then a bare login" ".github/workflows/folded.yml" "6-7: "
+rm -f "${FIX}/.github/workflows/folded.yml"
+
+# A YAML block sequence under a command key (a docker action's runs.args) is one command:
+# consecutive items join, with optional option items between them. Reported from the
+# item holding codex to the item holding login.
+mkdir -p "${FIX}/.github/actions/planted"
+seqf=".github/actions/planted/action.yml"
+seq_action() {
+    # seq_action KEY ITEM... — a docker action whose KEY sequence holds the items (KEY on line 4, items from 5).
+    local key="$1"
+    shift
+    {
+        printf 'runs:\n  using: docker\n  image: Dockerfile\n  %s:\n' "$key"
+        printf '    - %s\n' "$@"
+    } >"${FIX}/${seqf}"
+}
+seq_action args codex login --device-auth
+expect_hit "a docker action args sequence codex / login" "$seqf" "5-6: "
+seq_action args codex --no-alt-screen login
+expect_hit "a docker action args sequence with an option item between" "$seqf" "5-7: "
+seq_action args codex --no-alt-screen --search login
+expect_hit "a docker action args sequence with two option items between" "$seqf" "5-8: "
+seq_action args codex -c model=foo login
+expect_hit "an args sequence with a value-taking option and its value" "$seqf" "5-8: "
+seq_action args codex --config model=foo login
+expect_hit "an args sequence with --config and its value" "$seqf" "5-8: "
+# A sequence scalar is one argument, whether quoted or plain and containing spaces.
+seq_action args codex --config "'developer_instructions=\"Never login without permission\"'"
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "login inside a quoted config value must pass, got: ${SCAN_HITS}"
+seq_action args codex --cd '/workspace/my project' login
+expect_hit "an args sequence with a plain directory value containing a space" "$seqf" "5-8: "
+seq_action args codex --cd '"project folder"' login
+expect_hit "an args sequence with a quoted directory value containing a space" "$seqf" "5-8: "
+seq_action args codex --no-alt-screen -c model=foo login
+expect_hit "an args sequence with an option, then a value-taking option and its value" "$seqf" "5-9: "
+seq_action args '"codex"' "'login'"
+expect_hit "quoted args items" "$seqf" "5-6: "
+seq_action args '/usr/local/bin/codex' login
+expect_hit "an args sequence naming codex by path" "$seqf" "5-6: "
+# One scalar tokenizer handles quoted data, comments, mapping syntax, and empty argv words.
+seq_action args codex '"--config=developer_instructions='"'"'ignore # comment'"'"'"' login
+expect_hit "a quoted option containing a comment marker" "$seqf" "5-7: "
+seq_action args codex --config '"instructions: be careful"' login
+expect_hit "a quoted mapping-like option value" "$seqf" "5-8: "
+seq_action args codex '""' login
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "an empty double-quoted scalar must break login adjacency, got: ${SCAN_HITS}"
+seq_action args codex ''"'"''"'"'' login
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "an empty single-quoted scalar must break login adjacency, got: ${SCAN_HITS}"
+seq_action args 'codex # note' '--no-alt-screen # note' 'login # note'
+expect_hit "plain scalar items with trailing comments" "$seqf" "5-7: "
+seq_action args codex ''"'"'--config=note=it'"'"''"'"'s # data'"'"' # note' login
+expect_hit "a single-quoted scalar with an escaped quote and comment data" "$seqf" "5-7: "
+seq_action args codex '"--config=note=\"ignore # comment\"" # note' login
+expect_hit "a double-quoted scalar with escaped quotes and comment data" "$seqf" "5-7: "
+seq_action args codex --config '""' login
+expect_hit "an empty quoted scalar consumed as an option value" "$seqf" "5-8: "
+# In exec-form args each scalar is one argv word: an option and login inside
+# one scalar next to codex is not a login subcommand.
+seq_action args codex '--no-alt-screen login'
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "an option and login inside one args scalar must pass, got: ${SCAN_HITS}"
+for key in command cmd entrypoint; do
+    seq_action "$key" codex login
+    expect_hit "a ${key} sequence codex / login" "$seqf" "5-6: "
+done
+# Only the items from the one holding codex are reported.
+seq_action args node app.js codex login
+expect_hit "an args sequence with other words before codex" "$seqf" "7-8: "
+# The sequence may sit at the key's indent, under a list item's key, with comments between.
+printf 'runs:\n  using: docker\n  args:\n  - codex\n  - login\n' >"${FIX}/${seqf}"
+expect_hit "an args sequence at the key's own indent" "$seqf" "4-5: "
+printf 'services:\n  - name: x\n    args:\n      - codex\n      # then sign in\n\n      - login\n' >"${FIX}/${seqf}"
+expect_hit "an args sequence under a list item's key, across a comment and a blank" "$seqf" "4-7: "
+printf -- '- args:\n    - codex\n    - login\n' >"${FIX}/${seqf}"
+expect_hit "an args key written as a list item" "$seqf" "2-3: "
+printf 'runs:\n  "args":\n    - codex\n    - login\n' >"${FIX}/${seqf}"
+expect_hit "a quoted args key" "$seqf" "3-4: "
+printf 'a:\n  args: # argv\n    - codex\n    - login\n' >"${FIX}/${seqf}"
+expect_hit "an args key with a trailing comment" "$seqf" "3-4: "
+# Items that are not one command pass: another tool's login after a no-value option, a
+# sibling key, a mapping item, other words between, a non-command key, separate commands.
+seq_action args codex --version docker login
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "an args sequence codex --version then another tool login must pass, got: ${SCAN_HITS}"
+seq_action args codex --no-alt-screen exec login
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "an args sequence codex --no-alt-screen then exec login must pass, got: ${SCAN_HITS}"
+seq_action args codex -c model=foo
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "an args sequence with no login must pass, got: ${SCAN_HITS}"
+seq_action args codex review login
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "an args sequence with another subcommand before login must pass, got: ${SCAN_HITS}"
+seq_action args docker login ghcr.io
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "an args sequence logging in to another tool must pass, got: ${SCAN_HITS}"
+printf 'runs:\n  args:\n    - codex\n  env:\n    - login\n' >"${FIX}/${seqf}"
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "a sibling key must end the sequence, got: ${SCAN_HITS}"
+printf 'runs:\n  args:\n    - codex\n    - login: oauth\n' >"${FIX}/${seqf}"
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "a mapping item must end the sequence, got: ${SCAN_HITS}"
+printf 'runs:\n  args:\n    - name: codex\n    - login\n' >"${FIX}/${seqf}"
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "a mapping item must not feed the join, got: ${SCAN_HITS}"
+printf 'runs:\n  args:\n    - codex\n  command:\n    - login\n' >"${FIX}/${seqf}"
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "two command keys must not join each other's items, got: ${SCAN_HITS}"
+printf 'runs:\n  args: codex\n  other:\n    - login\n' >"${FIX}/${seqf}"
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "an args scalar must not join a later sequence, got: ${SCAN_HITS}"
+printf 'runs:\n  using: composite\n  steps:\n    - uses: x\n      with:\n        words:\n          - codex\n          - login\n' >"${FIX}/${seqf}"
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "a with: inputs sequence of codex / login must pass, got: ${SCAN_HITS}"
+printf 'jobs:\n  a:\n    steps:\n      - uses: x\n        with:\n          - codex\n          - login\n' >"${FIX}/${seqf}"
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "a sequence directly under with: must pass, got: ${SCAN_HITS}"
+printf 'steps:\n  - codex\n  - login\n  - --device-auth\n' >"${FIX}/${seqf}"
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "a steps list of names codex / login must pass, got: ${SCAN_HITS}"
+printf 'cmds:\n  - codex\n  - login\nscript:\n  - codex\n  - login\n' >"${FIX}/${seqf}"
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "cmds and script lists hold separate commands and must pass, got: ${SCAN_HITS}"
+# A bounded sequence rule leaves the one-line rule alone: no second report for one line.
+seq_action args 'codex login'
+fixture_hits
+case "$SCAN_HITS" in
+"${seqf}:5:"*) ;;
+*) fail "an args item holding codex login is reported by the one-line rule, got: ${SCAN_HITS:-<none>}" ;;
+esac
+[ "$(printf '%s\n' "$SCAN_HITS" | wc -l | tr -d ' ')" -eq 1 ] || fail "one line must be reported once, got: ${SCAN_HITS}"
+rm -rf "${FIX}/.github/actions/planted"
 
 # A surface line that merely contains the guard-error marker is a violation (it
 # carries a token), never mistaken for a guard error.
