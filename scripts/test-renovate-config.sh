@@ -27,7 +27,7 @@ fi
 
 # Validate the dogfood layer and published preset before rendering profiles.
 # renovate: datasource=npm depName=renovate
-RENOVATE_VALIDATOR_VERSION=44.216.5
+RENOVATE_VALIDATOR_VERSION=44.232.0
 npx --yes --package "renovate@${RENOVATE_VALIDATOR_VERSION}" -- \
     renovate-config-validator --strict renovate.json
 npx --yes --package "renovate@${RENOVATE_VALIDATOR_VERSION}" -- \
