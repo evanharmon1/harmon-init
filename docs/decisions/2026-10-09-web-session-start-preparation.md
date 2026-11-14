@@ -44,13 +44,30 @@ retains the observed evidence separately from this decision.
    observe it instead of starting another setup. Only a disposable waiter has a
    90 s deadline. Expiry never signals preparation: the hook exits 0 with a
    still-running summary naming the PID, log and status file when the worker
-   holds the run lock. If the worker ended without a status, a warning names
-   the log and asks for `task setup:remote` again. Hooks, related
-   repos and dependencies may not be ready; the agent must wait for that status
-   before work or a manual setup retry. Without `timeout` or Python 3, the
+   holds the run lock or its recorded `task` is still alive. If the worker ended
+   without a status, a warning names the log and asks for `task setup:remote`
+   again. Hooks, related repos and dependencies may not be ready; the agent
+   must wait for that status before work, and re-run `task setup:remote` only
+   if the status file is still missing and the warning's worker PID is no
+   longer running (`kill -0 <PID>` fails); a manual run takes no lock. Without `timeout` or Python 3, the
    wrapper skips preparation, warns to run `task setup:remote` manually and
    exits 0. Direct manual task invocations do not take the hook's lock, so they
    must wait for its worker to finish.
+
+   Two invariants from the 2026-11-14 amendment (#1926). The run lock is held
+   by the Python supervisor, so it proves the supervisor lives, not that setup
+   does. `task` therefore records its PID and start time in its run directory
+   before it execs, still holding the lock it inherited, so the lock is held
+   without a gap until the record exists. A launcher that finds the lock free
+   but a recorded task alive observes that run and never starts a peer; the
+   hook still never signals preparation. Making `task`'s process tree hold the
+   lock was rejected: one child escaping the tree could hold it forever. Run
+   directories are bounded by supersession, not by a sweep: a launch that has
+   proved the previous worker gone marks every run directory `superseded`,
+   atomically with publishing the new active run, and deletes a directory only
+   once it has been superseded for 24 hours. Hooks attach only to the active
+   run and live under 90 s, so nothing reads such a directory; the active
+   run is never deleted.
 3. `task setup:remote` installs current lefthook shims, bootstraps missing siblings
    and fetches existing siblings into the checkout's parent directory, then
    installs frozen dependencies where lockfiles exist. Slow installs run last,
