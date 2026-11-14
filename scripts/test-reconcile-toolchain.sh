@@ -92,11 +92,19 @@ def check_gate_coverage(root):
     assert selectors == registered, (selectors, registered)
 
 
+def check_unknown_gate(root, registered):
+    # Derive the negative selector from this checkout, including consumer rows.
+    unknown = "new-tool"
+    while unknown in registered:
+        unknown += "-unregistered"
+    assert gate_errors(f'bash scripts/reconcile-toolchain.sh --check {unknown}', registered) == {unknown}
+    assert gate_errors('local_version="$(new-tool --version)"', registered)
+    rc, out = run(["bash", "scripts/reconcile-toolchain.sh", "--check", unknown], root)
+    assert rc != 0 and "unregistered" in out, out
+
+
 check_gate_coverage(source)
-assert gate_errors('bash scripts/reconcile-toolchain.sh --check new-tool') == {"new-tool"}
-assert gate_errors('local_version="$(new-tool --version)"')
-rc, out = run(["bash", "scripts/reconcile-toolchain.sh", "--check", "new-tool"])
-assert rc != 0 and "unregistered" in out, out
+check_unknown_gate(source, registry)
 print("OK: gate registry coverage rejects unknown tools and private gate probes")
 
 with tempfile.TemporaryDirectory(prefix="reconcile-") as scratch:
@@ -242,6 +250,61 @@ exec {shlex.quote(real_task)} "$@"
     assert rc == 0 and not out, out
     rc, out = run(["bash", "scripts/reconcile-toolchain.sh", "--list"], repo)
     assert rc == 0 and out.split() == ["shellcheck", "foo"], out
+    rc, out = run(["bash", "scripts/reconcile-toolchain.sh", "--check", "shellcheck foo"], repo)
+    assert rc != 0 and "unregistered gate-checked tool" in out, (rc, out)
+    print("OK: multi-name gate selector fails closed; exact foo selector passes")
+
+    # A consumer may register the old negative-test selector legitimately.
+    custom_registry.write_text(registration + "new-tool Dockerfile FOO_VERSION scripts/probe-foo.sh\n")
+    new_gate = repo / "scripts/lint-new-tool.sh"
+    new_gate.write_text("bash scripts/reconcile-toolchain.sh --check new-tool\n")
+    check_gate_coverage(repo)
+    check_unknown_gate(repo, {"shellcheck", "foo", "new-tool"})
+    rc, out = run(["bash", str(new_gate)], repo)
+    assert rc == 0 and not out, out
+    new_gate.unlink()
+    custom_registry.write_text(registration)
+    print("OK: negative gate tests survive a registered new-tool")
+
+    # An accepted path named builtin must execute as a repo-owned probe.
+    builtin_probe = repo / "builtin"
+    builtin_probe.write_text("printf '4.5.6\\n'\ntouch builtin-ran\n")
+    custom_registry.write_text("foo Dockerfile FOO_VERSION builtin\n")
+    rc, out = run(["bash", "scripts/lint-foo.sh"], repo)
+    assert rc == 0 and (repo / "builtin-ran").exists(), (rc, out)
+    custom_pin.write_text("")
+    rc, out = run(["bash", "scripts/lint-foo.sh"], repo)
+    assert rc != 0 and "no FOO_VERSION pin" in out, (rc, out)
+    custom_pin.write_text("ARG FOO_VERSION=4.5.6\n")
+    builtin_probe.unlink()
+    (repo / "builtin-ran").unlink()
+    custom_registry.write_text(registration)
+    print("OK: builtin path executes its probe and has no missing-pin exemption")
+
+    # Broken registry data must not suppress the bootstrap's managed PATH.
+    old_tool("7.8.9")
+    rc, expected_export, err = run_streams(
+        ["bash", "scripts/reconcile-toolchain.sh", "--session-env"], repo, env)
+    assert rc == 0 and "export PATH=" in expected_export, (rc, expected_export, err)
+    deleted_probe = repo / "deleted-probe"
+    deleted_probe.write_text("echo 4.5.6\n")
+    deleted_probe.unlink()
+    for broken in ("invalid row\n", registration + "deleted Dockerfile FOO_VERSION deleted-probe\n"):
+        custom_registry.write_text(broken)
+        for mode in ("--check", "--reconcile", "--status"):
+            rc, out = run(["bash", "scripts/reconcile-toolchain.sh", mode, "shellcheck"], repo, env)
+            assert rc != 0 and "ERROR:" in out, (mode, rc, out)
+        rc, export, warning = run_streams(
+            ["bash", "scripts/reconcile-toolchain.sh", "--session-env"], repo, env)
+        assert rc == 0 and export == expected_export, (rc, export, warning)
+        problem = "invalid pin name" if broken.startswith("invalid") else "missing pin file or probe for deleted"
+        assert warning.count("WARNING:") == 1 and str(custom_registry) in warning and problem in warning, warning
+        assert len(warning.splitlines()) == 1, warning
+        rc, out = run(["bash", "-c", export + '\nprintf "%s\\n" "${PATH%%:*}"'], repo, env)
+        assert rc == 0 and out.strip() == str(prefix / "bin"), out
+    custom_registry.write_text(registration)
+    print("OK: invalid rows and deleted probes preserve session PATH; other modes fail closed")
+
     # Registration never permits private version probes in a gate.
     assert gate_errors('foo --version', {"foo"}) == {"direct version check outside registry"}
     assert gate_errors('FOO_VERSION=4.5.6', {"foo"}) == {"direct version check outside registry"}
