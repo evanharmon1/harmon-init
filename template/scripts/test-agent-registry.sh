@@ -900,6 +900,105 @@ if (!ids.every((id) => Number.isInteger(id) && id >= 1)) {
 NODE
     echo "PASS: harmon-init root registry populates trusted_orchestrator_actor_ids with integer ids"
 fi
+
+# ── Root vs template/agent-registry.json.jinja parity (#2047) ───────────────
+# Keep canonical agent-registry.json and template/agent-registry.json.jinja
+# aligned on Gemini model lines/versions/tiers and Antigravity's effort ladder.
+if [ -f template/agent-registry.json.jinja ] && [ "$registry" = "agent-registry.json" ]; then
+    node --input-type=module - "$registry" "template/agent-registry.json.jinja" <<'NODE'
+import assert from 'node:assert/strict'
+import { readFile } from 'node:fs/promises'
+
+const [rootPath, templatePath] = process.argv.slice(2)
+const root = JSON.parse(await readFile(rootPath, 'utf8'))
+const templateText = await readFile(templatePath, 'utf8')
+
+// Extract a top-level JSON array property from the Jinja twin without
+// evaluating unrelated Jinja conditionals in other keys (finders, allowlist).
+function extractTopLevelArray(source, key) {
+  const match = new RegExp(`^  "${key}":\\s*\\[`, 'm').exec(source)
+  if (!match) {
+    throw new Error(`${templatePath} is missing top-level "${key}" array`)
+  }
+  const start = match.index + match[0].length - 1
+  let depth = 0
+  let inString = false
+  let escaped = false
+  for (let index = start; index < source.length; index += 1) {
+    const ch = source[index]
+    if (inString) {
+      if (escaped) {
+        escaped = false
+      } else if (ch === '\\') {
+        escaped = true
+      } else if (ch === '"') {
+        inString = false
+      }
+      continue
+    }
+    if (ch === '"') {
+      inString = true
+    } else if (ch === '[' || ch === '{') {
+      depth += 1
+    } else if (ch === ']' || ch === '}') {
+      depth -= 1
+      if (depth === 0) {
+        return JSON.parse(source.slice(start, index + 1))
+      }
+    }
+  }
+  throw new Error(`${templatePath} "${key}" array has unterminated brackets`)
+}
+
+function assertGeminiAndAntigravityParity(canonicalRegistry, twinFamilies, twinHarnesses) {
+  const rootGemini = canonicalRegistry.families.find((family) => family.slug === 'gemini')
+  const twinGemini = twinFamilies.find((family) => family.slug === 'gemini')
+  assert.ok(rootGemini, 'canonical registry missing gemini family')
+  assert.ok(twinGemini, 'template registry missing gemini family')
+  assert.deepStrictEqual(
+    twinGemini.models,
+    rootGemini.models,
+    'template/agent-registry.json.jinja gemini models disagree with agent-registry.json'
+  )
+
+  const rootAntigravity = canonicalRegistry.harnesses.find(
+    (harness) => harness.slug === 'antigravity'
+  )
+  const twinAntigravity = twinHarnesses.find((harness) => harness.slug === 'antigravity')
+  assert.ok(rootAntigravity, 'canonical registry missing antigravity harness')
+  assert.ok(twinAntigravity, 'template registry missing antigravity harness')
+  assert.deepStrictEqual(
+    twinAntigravity.efforts,
+    rootAntigravity.efforts,
+    'template/agent-registry.json.jinja antigravity efforts disagree with agent-registry.json'
+  )
+}
+
+const templateFamilies = extractTopLevelArray(templateText, 'families')
+const templateHarnesses = extractTopLevelArray(templateText, 'harnesses')
+
+assertGeminiAndAntigravityParity(root, templateFamilies, templateHarnesses)
+console.log(
+  'PASS: agent-registry.json and template/agent-registry.json.jinja agree on gemini models and antigravity efforts'
+)
+
+const skewedGeminiFamilies = structuredClone(templateFamilies)
+skewedGeminiFamilies.find((family) => family.slug === 'gemini').models.pop()
+assert.throws(
+  () => assertGeminiAndAntigravityParity(root, skewedGeminiFamilies, templateHarnesses),
+  /gemini models disagree/
+)
+console.log('PASS: twin parity check fails when gemini models disagree')
+
+const skewedAntigravityHarnesses = structuredClone(templateHarnesses)
+skewedAntigravityHarnesses.find((harness) => harness.slug === 'antigravity').efforts = []
+assert.throws(
+  () => assertGeminiAndAntigravityParity(root, templateFamilies, skewedAntigravityHarnesses),
+  /antigravity efforts disagree/
+)
+console.log('PASS: twin parity check fails when antigravity efforts disagree')
+NODE
+fi
 accepts "a registry with no trusted_orchestrator_actor_ids at all (schema-legal; consumers fail closed at the revision in effect)" \
     'allowlist-missing'
 accepts "versions listed newest first (3.8, 3.7, 3.6)" \
