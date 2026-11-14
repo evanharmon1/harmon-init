@@ -776,12 +776,12 @@ Adjudicate it; never disable the gate to get past a BLOCK.
   repository's copies and will not catch this on its own: a container built
   before the split keeps the old `/etc/codex/managed_config.toml` no matter what
   the checkout says, so the check passes while the running container still pins
-  the effort. Rebuild the container once the files are right. Under a
-  ChatGPT-account login on the pinned CLI, `low`, `medium`, `high`, and `xhigh`
-  take effect for every supported model once the key is out of the managed
-  layer. The `max` availability was observed on Codex CLI `0.163.0` on
-  2026-10-18: `max` is offered only for models whose catalog lists it; the
-  catalog lists `max` for `gpt-6.1-sol`, `gpt-6-sol`, `gpt-6-astra` and
-  `gpt-6-luna`. A 2026-10-27 check of the `/model` picker on Codex CLI `0.163.0`
-  showed `max` for `gpt-5.6-terra` (Terra 5.6; catalog listing; take-effect
-  not probed).
+  the effort. Rebuild the container once the files are right.
+  The wrapper accepts `low | medium | high | xhigh | max | ultra`.
+  A 2026-11-14 probe on `gpt-6.1-sol` confirmed that Codex CLI accepted
+  `max` and `ultra`: each printed its run header and returned a reply.
+  The API refused `minimal`: "Unsupported value: 'minimal' is not supported
+  with the 'gpt-6.1-sol' model. Supported values are: 'low', 'medium', 'high',
+  'xhigh', and 'max'." The models cache lists `ultra` on 6 of 10 models and
+  `minimal` on none. This proves **acceptance**, not take-effect; take-effect
+  remains unproven and tracked by #1847.

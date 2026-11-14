@@ -1432,7 +1432,7 @@ provisions the vocabulary.
 
 #### Harnesses
 
-Effort ladder: `minimal` < `low` < `medium` < `high` < `xhigh` < `max`.
+Effort ladder: `minimal` < `low` < `medium` < `high` < `xhigh` < `max` < `ultra`.
 
 | Harness | Product | Family | Foreman adapter | Model selected by | Efforts |
 | --- | --- | --- | --- | --- | --- |
@@ -1444,7 +1444,7 @@ Effort ladder: `minimal` < `low` < `medium` < `high` < `xhigh` < `max`.
 | `claude-code-minimax` | Claude Code provider wrapper | `minimax` | — | `provider-wrapper` | — |
 | `claude-code-qwen` | Claude Code provider wrapper | `qwen` | — | `provider-wrapper` | — |
 | `claude-code-qwen-local` | Claude Code provider wrapper | `qwen` | — | `provider-wrapper` | — |
-| `codex-cli` | OpenAI Codex CLI | `gpt` | `codex-cli` — production, not dispatchable, no label | `runner-config` | `minimal`, `low`, `medium`, `high`, `xhigh`, `max` |
+| `codex-cli` | OpenAI Codex CLI | `gpt` | `codex-cli` — production, not dispatchable, no label | `runner-config` | `low`, `medium`, `high`, `xhigh`, `max`, `ultra` |
 | `copilot-cli` | GitHub Copilot CLI | any (multi-provider; default `mai`) | — | `harness-runtime` | `low`, `medium`, `high`, `xhigh`, `max` |
 | `qwen-code` | Qwen Code CLI | `qwen` | — | `runner-config` | `low`, `medium`, `high`, `xhigh`, `max` |
 | `antigravity` | Google Antigravity | `gemini` | — | `harness-runtime` | `low`, `medium`, `high`, `xhigh` |

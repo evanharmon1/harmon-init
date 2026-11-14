@@ -527,6 +527,12 @@ switch (mutation) {
   case 'harness-effort-off-ladder':
     registry.effort_ladder = registry.effort_ladder.filter((effort) => effort !== 'max')
     break
+  case 'harness-ultra-off-ladder':
+    registry.effort_ladder = registry.effort_ladder.filter((effort) => effort !== 'ultra')
+    break
+  case 'effort-ladder-ultra-out-of-order':
+    registry.effort_ladder = ['minimal', 'low', 'medium', 'high', 'xhigh', 'ultra', 'max']
+    break
   case 'harness-efforts-out-of-order':
     harness('codex-cli').efforts.reverse()
     break
@@ -592,6 +598,9 @@ switch (mutation) {
     ]
     break
   }
+  case 'codex-minimal-on-ladder':
+    harness('codex-cli').efforts.unshift('minimal')
+    break
   case 'effort-ladder-subset':
     registry.effort_ladder = registry.effort_ladder.filter((effort) => effort !== 'minimal')
     for (const entry of registry.harnesses) {
@@ -870,9 +879,15 @@ rejects "a harness with no efforts list" \
 rejects "a harness effort that is not on the ladder" \
     'harness-effort-off-ladder' \
     'harness claude-code declares effort(s) max that are not on effort_ladder'
+rejects "codex-cli ultra missing from the ladder" \
+    'harness-ultra-off-ladder' \
+    'harness codex-cli declares effort(s) ultra that are not on effort_ladder'
+rejects "ultra before max on the ladder" \
+    'effort-ladder-ultra-out-of-order' \
+    'effort_ladder ["minimal","low","medium","high","xhigh","ultra","max"] is out of order'
 rejects "harness efforts out of ladder order" \
     'harness-efforts-out-of-order' \
-    'harness codex-cli efforts ["max","xhigh","high","medium","low","minimal"] are out of ladder order'
+    'harness codex-cli efforts ["ultra","max","xhigh","high","medium","low"] are out of ladder order'
 rejects "a repeated harness effort" \
     'harness-duplicate-effort' \
     'items must be unique'
@@ -1005,6 +1020,8 @@ accepts "versions listed newest first (3.8, 3.7, 3.6)" \
     'versions-newest-first'
 accepts "numeric version components compared as numbers (3.10 before 3.9)" \
     'versions-numeric-order'
+accepts "codex-cli declaring minimal when it is on the ladder" \
+    'codex-minimal-on-ladder'
 accepts "an effort_ladder that omits a level but keeps canonical order" \
     'effort-ladder-subset'
 rejects "an empty trusted_orchestrator_actor_ids allowlist" \
