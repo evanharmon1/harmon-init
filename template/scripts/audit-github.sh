@@ -429,13 +429,18 @@ def safe_link(value):
     return isinstance(value, str) and re.fullmatch(r'https://[^\s<>|()]+#[^\s<>|()]+', value)
 
 
+def owns_status_issue(body):
+    """Only the publisher's exact first marker line establishes ownership."""
+    return isinstance(body, str) and body.partition('\n')[0].rstrip() == MARKER
+
+
 def publish(rows):
     if target_error:
         raise Unavailable(target_error)
     candidates = issue_read('issues?state=open', pages=True)
     targets = []
     for candidate in candidates:
-        if 'pull_request' in candidate or MARKER not in (candidate.get('body') or ''):
+        if 'pull_request' in candidate or not owns_status_issue(candidate.get('body')):
             continue
         live = issue_read('issues/' + str(int(candidate['number'])))
         if live.get('author_association') in TRUSTED:
@@ -446,7 +451,7 @@ def publish(rows):
     if live is not None:
         # A disappearing marker must refuse, never create a replacement.
         live = issue_read('issues/' + str(int(live['number'])))
-        if MARKER not in (live.get('body') or ''):
+        if not owns_status_issue(live.get('body')):
             raise Refused('target issue live body no longer carries the status marker')
         if live.get('author_association') not in TRUSTED or live.get('state') != 'open':
             raise Refused('target issue is no longer trusted and open')
