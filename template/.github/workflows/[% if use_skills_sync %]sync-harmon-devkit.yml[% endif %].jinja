@@ -2,7 +2,9 @@ name: Sync harmon-devkit skills
 run-name: sync-harmon-devkit reconciling the vendored skills pin
 
 # Pull-based twin of harmon-init's root sync workflow: this repo pulls the
-# latest harmon-devkit release on its own daily schedule. All logic lives in
+# latest harmon-devkit release on its own weekly schedule (Sunday 06:17 UTC).
+# Only harmon-init receives the release repository_dispatch; other repos pick
+# up a release at their next weekly run. All logic lives in
 # scripts/sync-devkit-release.sh (shellcheck'd, unit-tested by
 # task test:sync-devkit-release). Never merges anything.
 #

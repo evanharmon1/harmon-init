@@ -98,6 +98,47 @@ run() {
     ./scripts/codex-review.sh "$@" 2>&1
 }
 
+# Runtime selection must reach argv, rather than disappearing into focus text.
+echo "==> model/reasoning defaults and overrides reach codex argv"
+for mode in review challenge; do
+    out="$(run "$mode")" || fail "default selection failed: $out"
+    grep -Fxq 'exec review --model gpt-6.1-sol --config model_reasoning_effort=high -' "$stub_argv" ||
+        fail "default model/reasoning changed: $out"
+    for level in low medium high xhigh; do
+        : >"$stub_argv"
+        out="$(run "$mode" --base origin/develop --model gpt-6-astra --reasoning "$level" focus on rollback)" ||
+            fail "explicit selection failed: $out"
+        [ "$(cat "$stub_argv")" = "exec review --model gpt-6-astra --config model_reasoning_effort=$level -" ] ||
+            fail "requested model/reasoning did not reach codex: $out"
+        grep -q 'focus on rollback' <<<"$out" || fail "focus lost with model flags: $out"
+    done
+done
+
+echo "==> invalid runtime options and unknown flags fail before codex"
+selection_cases=10
+assert_bad_selection() {
+    local status=0 out
+    : >"$stub_argv"
+    out="$(run review "$@")" || status=$?
+    [ "$status" -eq 2 ] || fail "expected usage exit 2 for $*: $out"
+    [ ! -s "$stub_argv" ] || fail "codex invoked for invalid options $*: $out"
+    selection_cases=$((selection_cases + 1))
+}
+assert_bad_selection --model
+assert_bad_selection --model ''
+assert_bad_selection --model --uncommitted
+assert_bad_selection --model 'bad model'
+assert_bad_selection --model '$(touch injected)'
+assert_bad_selection --model one --model two
+assert_bad_selection --reasoning
+assert_bad_selection --reasoning ''
+assert_bad_selection --reasoning --uncommitted
+assert_bad_selection --reasoning invalid
+assert_bad_selection --reasoning low --reasoning high
+assert_bad_selection --modle gpt-6-astra
+assert_bad_selection focus --unknown
+assert_bad_selection -x
+
 standardize_helper=""
 for candidate in .claude/skills/standardize-repo/assets/diff-template.sh \
     .agents/skills/standardize-repo/assets/diff-template.sh; do
@@ -1508,4 +1549,4 @@ if out="$(CLAUDE_CONFIG_DIR="${fake_claude}2" CLAUDE_PLUGIN_DATA="${test_tmp}/pl
 fi
 grep -q "non-interactive" <<<"$out" || fail "missing non-interactive disable refusal message: $out"
 
-echo "codex-review + codex-gate guards OK ($((75 + standardize_cases)) cases)"
+echo "codex-review + codex-gate guards OK ($((75 + standardize_cases + selection_cases)) cases)"

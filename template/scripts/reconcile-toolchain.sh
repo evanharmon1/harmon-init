@@ -5,8 +5,77 @@
 # Gate callers use --check <tool>; test-reconcile-toolchain.sh checks coverage.
 set -euo pipefail
 
+# Repositories may create .toolchain-registry (not template-owned):
+#   foo .devcontainer/Dockerfile FOO_VERSION scripts/probe-foo.sh
+# Four whitespace-separated fields: tool, pin file, pin name, probe script.
+# Blank lines and full-line comments are allowed; paths cannot contain spaces.
+# Gates call this script with --check foo, never probe versions themselves.
+# The repo-owned probe runs with bash from ROOT, prints exactly X.Y.Z, and
+# must not install. Remote preparation diagnoses drift; the repo owns installs.
+ROOT="$(git rev-parse --show-toplevel 2>/dev/null || { cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P; })"
 tools=(shellcheck)
+pin_files=(.github/actions/setup/action.yml)
+pin_names=(SHELLCHECK_VERSION)
+# Colons cannot occur in an accepted repo_path.
+probes=(:builtin:)
 mode="${1:---reconcile}"
+registry="${ROOT}/.toolchain-registry"
+registry_error() {
+    if [ "$mode" = --session-env ]; then
+        printf 'WARNING: %s: %s; using built-in tools for managed PATH.\n' "$registry" "$*" >&2
+    else
+        echo "ERROR: ${registry}: $*" >&2
+    fi
+}
+repo_path() {
+    # Keep rows literal data and paths relative to the checkout.
+    [[ "$1" =~ ^[a-zA-Z0-9_.][a-zA-Z0-9_./-]*$ ]] &&
+        [[ "/$1/" != *"/../"* && "/$1/" != *"/./"* ]]
+}
+load_registry() {
+    if [ -e "$registry" ]; then
+        [ -f "$registry" ] && [ -r "$registry" ] || {
+            registry_error 'expected a readable file'
+            return 1
+        }
+        while IFS= read -r row || [ -n "$row" ]; do
+            [[ "$row" =~ ^[[:space:]]*(#|$) ]] && continue
+            read -r name pin_file pin_key probe extra <<<"$row"
+            [[ "$name" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || {
+                registry_error "invalid tool: $name"
+                return 1
+            }
+            [[ "$pin_key" =~ ^[A-Z_][A-Z0-9_]*$ ]] || {
+                registry_error "invalid pin name: $pin_key"
+                return 1
+            }
+            [ -z "$extra" ] && repo_path "$pin_file" && repo_path "$probe" || {
+                registry_error "invalid row: $row"
+                return 1
+            }
+            case " ${tools[*]} " in
+            *" $name "*)
+                registry_error "duplicate tool: $name"
+                return 1
+                ;;
+            esac
+            [ -f "${ROOT}/$pin_file" ] && [ -r "${ROOT}/$probe" ] && [ -f "${ROOT}/$probe" ] || {
+                registry_error "missing pin file or probe for $name"
+                return 1
+            }
+            tools+=("$name")
+            pin_files+=("$pin_file")
+            pin_names+=("$pin_key")
+            probes+=("$probe")
+        done <"$registry"
+    fi
+}
+if ! load_registry; then
+    [ "$mode" = --session-env ] || exit 1
+    # Discard even valid rows preceding the bad one; PATH fallback uses only
+    # the built-in registry and the bootstrap manifest, never partial data.
+    tools=(shellcheck)
+fi
 if [ "$mode" = --list ]; then
     printf '%s\n' "${tools[@]}"
     exit 0
@@ -22,28 +91,43 @@ esac
 if [ "$mode" != --check ] && [ "${CLAUDE_CODE_REMOTE:-}" != true ]; then
     exit 0
 fi
-ROOT="$(git rev-parse --show-toplevel 2>/dev/null || { cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P; })"
 setup_action="${ROOT}/.github/actions/setup/action.yml"
 
 read_pin() {
     local file="$1" name="$2"
     [ -f "$file" ] || return 0
     sed -nE \
-        -e "s/^[[:space:]]*${name}=([0-9]+\.[0-9]+\.[0-9]+)([[:space:]]+#.*)?[[:space:]]*$/\1/p" \
-        -e "s/^[[:space:]]*${name}=\"([0-9]+\.[0-9]+\.[0-9]+)\"([[:space:]]+#.*)?[[:space:]]*$/\1/p" \
-        -e "s/^[[:space:]]*${name}='([0-9]+\.[0-9]+\.[0-9]+)'([[:space:]]+#.*)?[[:space:]]*$/\1/p" \
+        -e "s/^[[:space:]]*(ARG[[:space:]]+)?${name}=([0-9]+\.[0-9]+\.[0-9]+)([[:space:]]+#.*)?[[:space:]]*$/\2/p" \
+        -e "s/^[[:space:]]*(ARG[[:space:]]+)?${name}=\"([0-9]+\.[0-9]+\.[0-9]+)\"([[:space:]]+#.*)?[[:space:]]*$/\2/p" \
+        -e "s/^[[:space:]]*(ARG[[:space:]]+)?${name}='([0-9]+\.[0-9]+\.[0-9]+)'([[:space:]]+#.*)?[[:space:]]*$/\2/p" \
         "$file"
 }
 
+probe_version() {
+    if [ "$probe" = :builtin: ]; then
+        "$tool" --version
+    else
+        (cd "$ROOT" && bash "$ROOT/$probe")
+    fi
+}
+parse_version() {
+    if [ "$probe" = :builtin: ]; then
+        sed -n 's/^version: //p'
+    else
+        # Reject extra output rather than accidentally accepting a substring.
+        local value
+        value="$(cat)"
+        [[ "$value" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+        printf '%s\n' "$value"
+    fi
+}
 installed_version() {
     local output output_file rc=0
     # The lint gate never needs temporary storage. Keep it outside the bounded
     # capture path so TMPDIR cannot create a false version mismatch in --check.
     if [ "$mode" = --check ]; then
-        output="$("$1" --version 2>/dev/null)" || return 1
-        case "$1" in
-        shellcheck) printf '%s\n' "$output" | sed -n 's/^version: //p' ;;
-        esac
+        output="$(probe_version 2>/dev/null)" || return 1
+        printf '%s\n' "$output" | parse_version || return 1
         return 0
     fi
     # SessionStart must be able to report even a broken or hanging executable.
@@ -51,11 +135,13 @@ installed_version() {
     # lets the probe finish without waiting for that writer to close a pipe.
     # Status 2 means capture storage is unavailable, not that a tool drifted.
     output_file="$(mktemp "${TMPDIR:-/tmp}/reconcile-probe.XXXXXX" 2>/dev/null)" || return 2
-    timeout --kill-after=1s 2s "$1" --version >"$output_file" 2>/dev/null || rc=$?
+    if [ "$probe" = :builtin: ]; then
+        timeout --kill-after=1s 2s "$tool" --version >"$output_file" 2>/dev/null || rc=$?
+    else
+        (cd "$ROOT" && timeout --kill-after=1s 2s bash "$ROOT/$probe") >"$output_file" 2>/dev/null || rc=$?
+    fi
     if [ "$rc" -eq 0 ]; then
-        case "$1" in
-        shellcheck) sed -n 's/^version: //p' "$output_file" ;;
-        esac
+        parse_version <"$output_file" || rc=1
     fi
     rm -f "$output_file"
     [ "$rc" -eq 0 ]
@@ -130,6 +216,11 @@ warn_toolchain() {
         reason="${bin} must be writable and precede other ${tool} copies on PATH"
         remedy="make ${bin} writable and place it before other ${tool} copies on PATH, then run task setup:remote again"
         ;;
+    repo-tool)
+        printf 'WARNING: %s installed %s, checkout pin %s: run repository-owned preparation for %s, then rerun --check %s.\n' \
+            "$tool" "${seen:-unknown}" "$pin" "$tool" "$tool"
+        return
+        ;;
     installer) reason="shared installer unavailable" ;;
     metadata) reason="installer checksum metadata does not cover the checkout pin" ;;
     unreconciled) reason="preparation left this tool unreconciled" ;;
@@ -161,18 +252,25 @@ warn_toolchain() {
 }
 
 if [ "$mode" = --check ]; then
-    case " ${tools[*]} " in
-    *" ${2:-} "*) tools=("$2") ;;
-    *)
+    registered=false
+    for tool in "${tools[@]}"; do
+        if [ "$tool" = "${2:-}" ]; then
+            registered=true
+            break
+        fi
+    done
+    if [ "$registered" != true ]; then
         echo "ERROR: unregistered gate-checked tool: ${2:-missing tool}" >&2
         exit 1
-        ;;
-    esac
+    fi
 fi
 
-for tool in "${tools[@]}"; do
-    # This mapping owns the gate's pin source in root and generated checkouts.
-    case "$tool" in shellcheck) pin_name=SHELLCHECK_VERSION ;; esac
+for index in "${!tools[@]}"; do
+    tool="${tools[$index]}"
+    [ "$mode" != --check ] || [ "$tool" = "$2" ] || continue
+    setup_action="${ROOT}/${pin_files[$index]}"
+    pin_name="${pin_names[$index]}"
+    probe="${probes[$index]}"
     pin="$(read_pin "$setup_action" "$pin_name")"
     case "$pin" in
     *$'\n'*)
@@ -188,6 +286,9 @@ for tool in "${tools[@]}"; do
     esac
     if [ -z "$pin" ]; then
         if [ "$mode" = --check ]; then
+            warn_toolchain missing-pin
+            [ "$probe" = :builtin: ] || exit 1
+        elif [ "$probe" != :builtin: ]; then
             warn_toolchain missing-pin
         fi
         continue
@@ -206,6 +307,10 @@ for tool in "${tools[@]}"; do
     if [ "$mode" = --check ]; then
         echo "ERROR: local ${tool} ${seen:-unknown} differs from CI's pinned $pin; rebuild the devcontainer, or install ${tool} $pin." >&2
         exit 1
+    fi
+    if [ "$probe" != :builtin: ]; then
+        warn_toolchain repo-tool
+        continue
     fi
     # Prefer checkout assets in harmon-init. Generated repositories reuse the
     # bootstrap's persisted assets. Never fetch installer code from a branch.
