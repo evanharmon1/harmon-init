@@ -8,6 +8,24 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [5.20.0](https://github.com/evanharmon1/harmon-init/compare/v5.19.0...v5.20.0) (2026-11-14)
+
+
+### Features
+
+* **agent-registry:** add Gemini 4 Carbon and Hydrogen and antigravity efforts ([6de2c2e](https://github.com/evanharmon1/harmon-init/commit/6de2c2ecec80b29465d8117dff4533da60d274b6))
+* **agent-registry:** add Gemini 4 Carbon and Hydrogen and the antigravity efforts ladder ([#2054](https://github.com/evanharmon1/harmon-init/issues/2054)) ([6de2c2e](https://github.com/evanharmon1/harmon-init/commit/6de2c2ecec80b29465d8117dff4533da60d274b6))
+
+
+### Bug Fixes
+
+* **remote-env:** join YAML sequence items under a command key in the remote Codex policy guard ([#2056](https://github.com/evanharmon1/harmon-init/issues/2056)) ([7f7d72a](https://github.com/evanharmon1/harmon-init/commit/7f7d72abb8d9cb25d6cba13edcc6ccd9786f4dfc))
+* **review:** let codex-review.sh take resolved model and reasoning ([b46a046](https://github.com/evanharmon1/harmon-init/commit/b46a046e235ed6a2f941f8544b67e40cae2efeb4)), closes [#1958](https://github.com/evanharmon1/harmon-init/issues/1958)
+* **review:** let codex-review.sh take the model a run resolves ([#2049](https://github.com/evanharmon1/harmon-init/issues/2049)) ([b46a046](https://github.com/evanharmon1/harmon-init/commit/b46a046e235ed6a2f941f8544b67e40cae2efeb4))
+* **template:** allow repo-owned lint tool registration ([#2050](https://github.com/evanharmon1/harmon-init/issues/2050)) ([7a2580b](https://github.com/evanharmon1/harmon-init/commit/7a2580bd7ea94e37cfbb082eedf9977de6a01e29)), closes [#2016](https://github.com/evanharmon1/harmon-init/issues/2016)
+* **template:** close toolchain registry validation gaps ([#2057](https://github.com/evanharmon1/harmon-init/issues/2057)) ([04777fb](https://github.com/evanharmon1/harmon-init/commit/04777fb8c596a37d4f7a12816a5cfab2becb1253)), closes [#2053](https://github.com/evanharmon1/harmon-init/issues/2053)
+* **template:** describe the weekly schedule in the sync workflow header ([#2048](https://github.com/evanharmon1/harmon-init/issues/2048)) ([484c4a0](https://github.com/evanharmon1/harmon-init/commit/484c4a0f1c0d00a010c07517279bdd9502baac50)), closes [#2004](https://github.com/evanharmon1/harmon-init/issues/2004)
+
 ## [5.19.0](https://github.com/evanharmon1/harmon-init/compare/v5.18.2...v5.19.0) (2026-11-11)
 
 
