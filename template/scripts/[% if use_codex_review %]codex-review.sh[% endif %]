@@ -8,7 +8,7 @@
 #               (architecture, authz, data loss, rollback, races, hidden
 #               coupling, operational failure modes, overdesign).
 #
-# Usage: codex-review.sh <review|challenge> [--repo-root <path>] [--model <model>] [--reasoning <low|medium|high|xhigh>] [--profile standardize --release <release> --frozen-render <bundle>] [--base <ref>|--uncommitted|--commit <sha>] [focus text ...]
+# Usage: codex-review.sh <review|challenge> [--repo-root <path>] [--model <model>] [--reasoning <low|medium|high|xhigh|max|ultra>] [--profile standardize --release <release> --frozen-render <bundle>] [--base <ref>|--uncommitted|--commit <sha>] [focus text ...]
 #
 # Target selection when no explicit flag is given: whatever exists is in
 # scope. Commits beyond the default base AND a dirty working tree are reviewed
@@ -40,7 +40,7 @@ script_dir="$(cd "$(dirname "$0")" && pwd)"
 . "$script_dir/lib/review-scope.sh"
 
 usage() {
-    echo "usage: $0 <review|challenge> [--repo-root <path>] [--model <model>] [--reasoning <low|medium|high|xhigh>] [--profile standardize --release <release> --frozen-render <bundle>] [--base <ref>|--uncommitted|--commit <sha>] [focus text ...]" >&2
+    echo "usage: $0 <review|challenge> [--repo-root <path>] [--model <model>] [--reasoning <low|medium|high|xhigh|max|ultra>] [--profile standardize --release <release> --frozen-render <bundle>] [--base <ref>|--uncommitted|--commit <sha>] [focus text ...]" >&2
 }
 
 MODE="${1:-}"
@@ -102,7 +102,7 @@ while [ "$#" -gt 0 ]; do
             exit 2
         }
         case "$2" in
-        low | medium | high | xhigh) review_reasoning="$2" ;;
+        low | medium | high | xhigh | max | ultra) review_reasoning="$2" ;;
         *)
             echo "unsupported reasoning level: $2" >&2
             exit 2

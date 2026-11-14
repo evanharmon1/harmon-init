@@ -104,7 +104,7 @@ for mode in review challenge; do
     out="$(run "$mode")" || fail "default selection failed: $out"
     grep -Fxq 'exec review --model gpt-6.1-sol --config model_reasoning_effort=high -' "$stub_argv" ||
         fail "default model/reasoning changed: $out"
-    for level in low medium high xhigh; do
+    for level in low medium high xhigh max ultra; do
         : >"$stub_argv"
         out="$(run "$mode" --base origin/develop --model gpt-6-astra --reasoning "$level" focus on rollback)" ||
             fail "explicit selection failed: $out"
@@ -115,7 +115,7 @@ for mode in review challenge; do
 done
 
 echo "==> invalid runtime options and unknown flags fail before codex"
-selection_cases=10
+selection_cases=14
 assert_bad_selection() {
     local status=0 out
     : >"$stub_argv"
@@ -133,6 +133,9 @@ assert_bad_selection --model one --model two
 assert_bad_selection --reasoning
 assert_bad_selection --reasoning ''
 assert_bad_selection --reasoning --uncommitted
+for level in minimal turbo HIGH; do
+    assert_bad_selection --reasoning "$level"
+done
 assert_bad_selection --reasoning invalid
 assert_bad_selection --reasoning low --reasoning high
 assert_bad_selection --modle gpt-6-astra

@@ -38,7 +38,7 @@
       }
     },
     "effort_ladder": {
-      "description": "The one registry-wide reasoning-effort ladder (#1516), weakest to strongest. Every harness's `efforts` list is drawn from it. Each item comes from a closed vocabulary; cross-file validation (scripts/validate-agent-registry.mjs) additionally requires the ladder to keep the canonical order minimal < low < medium < high < xhigh < max, so a registry may omit a level but never reorder one. Added without a schema_version bump: the vendored breakdown discovery accepts only schema_version 2 or 3, and this field is additive.",
+      "description": "The one registry-wide reasoning-effort ladder (#1516), weakest to strongest. Every harness's `efforts` list is drawn from it. Each item comes from a closed vocabulary; cross-file validation (scripts/validate-agent-registry.mjs) additionally requires the ladder to keep the canonical order minimal < low < medium < high < xhigh < max < ultra, so a registry may omit a level but never reorder one. Added without a schema_version bump: the vendored breakdown discovery accepts only schema_version 2 or 3, and this field is additive.",
       "type": "array",
       "minItems": 1,
       "uniqueItems": true,
@@ -101,7 +101,7 @@
       }
     },
     "effort": {
-      "enum": ["minimal", "low", "medium", "high", "xhigh", "max"]
+      "enum": ["minimal", "low", "medium", "high", "xhigh", "max", "ultra"]
     },
     "model": {
       "description": "A model LINE (#1516): its slug names the product line and stays stable across releases (`opus`, `flash`), never a version — versions live in `versions`. Model-level claim labels (claim:<family>:<line>) derive from the line slug.",

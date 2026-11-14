@@ -578,7 +578,7 @@ if (errors.length === 0) {
 
   // ── reasoning efforts (#1516) — one registry-wide ladder in canonical
   // order; each harness draws its accepted efforts from it, in ladder order.
-  const EFFORT_ORDER = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max']
+  const EFFORT_ORDER = ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultra']
   const ladderRank = (ladder) => ladder.map((effort) => EFFORT_ORDER.indexOf(effort))
   const ascending = (ranks) => ranks.every((rank, index) => index === 0 || rank > ranks[index - 1])
   if (!ascending(ladderRank(registry.effort_ladder))) {
