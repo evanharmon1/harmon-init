@@ -60,6 +60,13 @@ def validate(path, source, subset=False):
         heading = re.match(r"^## (.+?)\s*$", line)
         if heading:
             section = heading.group(1)
+        indexed = re.fullmatch(r"<!-- reconcile-id: ([a-z0-9-]+) -->", line)
+        if indexed:
+            item_id = indexed.group(1)
+            assert item_id in expected, f"{path}:{line_no}: unknown status index id"
+            assert item_id not in found, f"{path}:{line_no}: duplicate status index id"
+            assert section == expected[item_id]["section"], f"{path}:{line_no}: status index section differs"
+            found.add(item_id)
         if not is_item(line):
             continue
         match = re.search(r"<!-- reconcile-id: ([a-z0-9-]+) -->", line)
