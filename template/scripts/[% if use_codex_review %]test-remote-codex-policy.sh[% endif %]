@@ -404,24 +404,54 @@ scan() {
                 }
                 return 0
             }
-            function seq_reset() { sq = 0; sn = 0; ni = 0; sqhit = 0 }
+            # seq_scalar(T, A) — one argv word plus its plain-mapping classification.
+            # Only plain scalars have comments or mapping syntax; quoted scalars may
+            # contain either as data, and an empty quoted scalar is still an item.
+            function seq_scalar(t, a,   q, i, c, out) {
+                a["mapping"] = 0
+                q = substr(t, 1, 1)
+                if (q !~ QUOTES) {
+                    sub(/ #.*$/, "", t)
+                    sub(/ +$/, "", t)
+                    if (t == "" || t ~ /^#/) return 0
+                    a["value"] = t
+                    a["mapping"] = (t ~ MAPITEM)
+                    return 1
+                }
+                out = ""
+                for (i = 2; i <= length(t); i++) {
+                    c = substr(t, i, 1)
+                    if (c == q) {
+                        if (q == sprintf("%c", 39) && substr(t, i + 1, 1) == q) {
+                            out = out q
+                            i++
+                            continue
+                        }
+                        a["value"] = out
+                        return 1
+                    }
+                    if (q == "\"" && c == "\\" && i < length(t)) {
+                        out = out c substr(t, i + 1, 1)
+                        i++
+                    } else out = out c
+                }
+                return 0
+            }
+            function seq_reset() { sq = 0; nitems = 0; sqhit = 0 }
             # seq_eval(F, S) — after each item: is there a `codex`, options (a listed
             # value-taking one consuming the next item) and `login` across items?
             function seq_eval(f, s,   i, j, x, out, k) {
                 if (sqhit) return
-                for (i = 1; i <= sn; i++) {
+                for (i = 1; i <= nitems; i++) {
                     if (!is_codex(tok[i])) continue
-                    for (j = i + 1; j <= sn; ) {
+                    for (j = i + 1; j <= nitems; ) {
                         x = tok[j]
                         if (x == "login") {
-                            if (tokitem[j] != tokitem[i]) {
-                                out = itxt[tokitem[i]]
-                                for (k = tokitem[i] + 1; k <= ni; k++) out = out " / " itxt[k]
-                                print substr(f, 3) ":" iline[tokitem[i]] "-" s ": " out
-                                sqhit = 1
-                                return
-                            }
-                            break
+                            out = tok[i]
+                            for (k = i + 1; k <= nitems; k++) out = out " / " tok[k]
+                            print substr(f, 3) ":" iline[i] "-" s ": " out
+                            sqhit = 1
+                            return
                         }
                         if (x !~ /^-/) break
                         if (x in VT) j += 2
@@ -432,7 +462,7 @@ scan() {
             # seq_step(F, S, TT, IND, KCOL) — track a block sequence under a command key and
             # join its consecutive items. Blank and comment lines are transparent; a sibling
             # key, a dedent, or a mapping item ends it; deeper lines continue an item.
-            function seq_step(f, s, tt, ind, kcol,   body, q) {
+            function seq_step(f, s, tt, ind, kcol,   body, scalar) {
                 if (tt == "" || tt ~ /^#/) return
                 if (tt ~ CMDKEY) {
                     seq_reset()
@@ -455,20 +485,11 @@ scan() {
                 } else if (ind > sind) return
                 body = tt
                 sub(/^- ?/, "", body)
-                sub(/ #.*$/, "", body)
-                sub(/ +$/, "", body)
-                # Strip enclosing YAML quotes only; each scalar is one argv token,
-                # even when its value contains spaces or embedded shell quotes.
-                q = substr(body, 1, 1)
-                if (q ~ QUOTES && substr(body, length(body), 1) == q) body = substr(body, 2, length(body) - 2)
-                if (body == "") return
-                if (body ~ MAPITEM) { sq = 0; return }
-                ni++
-                itxt[ni] = body
-                iline[ni] = s
-                sn++
-                tok[sn] = body
-                tokitem[sn] = ni
+                if (!seq_scalar(body, scalar)) return
+                if (scalar["mapping"]) { sq = 0; return }
+                nitems++
+                tok[nitems] = scalar["value"]
+                iline[nitems] = s
                 seq_eval(f, s)
             }
             function emit(f, s, t,   i, tt, hit, ind, kcol) {
@@ -1088,6 +1109,25 @@ seq_action args '"codex"' "'login'"
 expect_hit "quoted args items" "$seqf" "5-6: "
 seq_action args '/usr/local/bin/codex' login
 expect_hit "an args sequence naming codex by path" "$seqf" "5-6: "
+# One scalar tokenizer handles quoted data, comments, mapping syntax, and empty argv words.
+seq_action args codex '"--config=developer_instructions='"'"'ignore # comment'"'"'"' login
+expect_hit "a quoted option containing a comment marker" "$seqf" "5-7: "
+seq_action args codex --config '"instructions: be careful"' login
+expect_hit "a quoted mapping-like option value" "$seqf" "5-8: "
+seq_action args codex '""' login
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "an empty double-quoted scalar must break login adjacency, got: ${SCAN_HITS}"
+seq_action args codex ''"'"''"'"'' login
+fixture_hits
+[ -z "$SCAN_HITS" ] || fail "an empty single-quoted scalar must break login adjacency, got: ${SCAN_HITS}"
+seq_action args 'codex # note' '--no-alt-screen # note' 'login # note'
+expect_hit "plain scalar items with trailing comments" "$seqf" "5-7: "
+seq_action args codex ''"'"'--config=note=it'"'"''"'"'s # data'"'"' # note' login
+expect_hit "a single-quoted scalar with an escaped quote and comment data" "$seqf" "5-7: "
+seq_action args codex '"--config=note=\"ignore # comment\"" # note' login
+expect_hit "a double-quoted scalar with escaped quotes and comment data" "$seqf" "5-7: "
+seq_action args codex --config '""' login
+expect_hit "an empty quoted scalar consumed as an option value" "$seqf" "5-8: "
 # In exec-form args each scalar is one argv word: an option and login inside
 # one scalar next to codex is not a login subcommand.
 seq_action args codex '--no-alt-screen login'
