@@ -62,7 +62,7 @@ fi
 #   * Never signal preparation. Observers only read.
 #   * The run lock says the supervisor lives; it does not say setup lives. The
 #     supervisor can die alone while task keeps running. So task records
-#     itself (PID plus start time, which survives a reused PID) in its run
+#     itself (PID plus start time when known, to detect a reused PID) in its run
 #     directory's task.json *before* it execs, still holding the run lock it
 #     inherited from the supervisor: the lock is held without a gap until the
 #     record exists. A launcher that finds the lock free but a recorded task
@@ -103,13 +103,24 @@ def write_json(path, value):
 
 
 def process_start(pid):
-    """The process's start time as ps prints it ("" when ps cannot say)."""
+    """Return ps state and start time; None means ps cannot say."""
     try:
-        listing = subprocess.run(["ps", "-o", "stat=,lstart=", "-p", str(pid)], capture_output=True,
-                                 text=True, env=dict(os.environ, TZ="UTC", LC_ALL="C")).stdout
+        result = subprocess.run(["ps", "-o", "stat=,lstart=", "-p", str(pid)], capture_output=True,
+                                text=True, env=dict(os.environ, TZ="UTC", LC_ALL="C"))
     except OSError:
-        return ""
-    return listing.strip()
+        return None, None
+    if result.returncode != 0:
+        return None, None
+    fields = result.stdout.split(None, 1)
+    return (fields[0], fields[1].strip() or None) if len(fields) == 2 else (None, None)
+
+
+def process_state(pid):
+    """Read Linux state even when ps is unavailable (comm may contain spaces or ')')."""
+    try:
+        return Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()[0]
+    except (OSError, IndexError):
+        return None
 
 
 def task_alive(directory):
@@ -124,12 +135,15 @@ def task_alive(directory):
         return False
     except PermissionError:
         pass
-    now = process_start(pid)
-    if not now:
-        return True
-    stat, _, start = now.partition(" ")
-    # A zombie has exited; a different start time is a reused PID.
-    return not stat.startswith("Z") and start.strip() == record.get("start", start.strip())
+    stat, start = process_start(pid)
+    if (stat and stat.startswith(("Z", "X"))) or process_state(pid) in ("Z", "X"):
+        return False
+    recorded = record.get("start")
+    if recorded and start:
+        return start == recorded
+    # Unknown identity: existence plus state is all we have. If neither ps nor
+    # /proc can say, assume alive rather than risk starting a second setup.
+    return True
 
 
 def retire_runs(state):
@@ -190,7 +204,7 @@ def supervise(root, directory):
             try:
                 # Still holding the inherited run lock: record before exec,
                 # which then drops that descriptor (close-on-exec).
-                write_json(directory / "task.json", {"pid": os.getpid(), "start": process_start(os.getpid()).partition(" ")[2].strip()})
+                write_json(directory / "task.json", {"pid": os.getpid(), "start": process_start(os.getpid())[1]})
                 os.closerange(3, 65536)
                 os.execvp("task", ["task", "--dir", root, "setup:remote"])
             except BaseException as error:
