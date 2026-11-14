@@ -16,35 +16,66 @@ ROOT="$(git rev-parse --show-toplevel 2>/dev/null || { cd "$(dirname "${BASH_SOU
 tools=(shellcheck)
 pin_files=(.github/actions/setup/action.yml)
 pin_names=(SHELLCHECK_VERSION)
-probes=(builtin)
+# Colons cannot occur in an accepted repo_path.
+probes=(:builtin:)
+mode="${1:---reconcile}"
 registry="${ROOT}/.toolchain-registry"
 registry_error() {
-    echo "ERROR: ${registry}: $*" >&2
-    exit 1
+    if [ "$mode" = --session-env ]; then
+        printf 'WARNING: %s: %s; using built-in tools for managed PATH.\n' "$registry" "$*" >&2
+    else
+        echo "ERROR: ${registry}: $*" >&2
+    fi
 }
 repo_path() {
     # Keep rows literal data and paths relative to the checkout.
     [[ "$1" =~ ^[a-zA-Z0-9_.][a-zA-Z0-9_./-]*$ ]] &&
         [[ "/$1/" != *"/../"* && "/$1/" != *"/./"* ]]
 }
-if [ -e "$registry" ]; then
-    [ -f "$registry" ] && [ -r "$registry" ] || registry_error 'expected a readable file'
-    while IFS= read -r row || [ -n "$row" ]; do
-        [[ "$row" =~ ^[[:space:]]*(#|$) ]] && continue
-        read -r name pin_file pin_key probe extra <<<"$row"
-        [[ "$name" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || registry_error "invalid tool: $name"
-        [[ "$pin_key" =~ ^[A-Z_][A-Z0-9_]*$ ]] || registry_error "invalid pin name: $pin_key"
-        [ -z "$extra" ] && repo_path "$pin_file" && repo_path "$probe" || registry_error "invalid row: $row"
-        case " ${tools[*]} " in *" $name "*) registry_error "duplicate tool: $name" ;; esac
-        [ -f "${ROOT}/$pin_file" ] && [ -r "${ROOT}/$probe" ] && [ -f "${ROOT}/$probe" ] ||
-            registry_error "missing pin file or probe for $name"
-        tools+=("$name")
-        pin_files+=("$pin_file")
-        pin_names+=("$pin_key")
-        probes+=("$probe")
-    done <"$registry"
+load_registry() {
+    if [ -e "$registry" ]; then
+        [ -f "$registry" ] && [ -r "$registry" ] || {
+            registry_error 'expected a readable file'
+            return 1
+        }
+        while IFS= read -r row || [ -n "$row" ]; do
+            [[ "$row" =~ ^[[:space:]]*(#|$) ]] && continue
+            read -r name pin_file pin_key probe extra <<<"$row"
+            [[ "$name" =~ ^[a-z0-9][a-z0-9_-]*$ ]] || {
+                registry_error "invalid tool: $name"
+                return 1
+            }
+            [[ "$pin_key" =~ ^[A-Z_][A-Z0-9_]*$ ]] || {
+                registry_error "invalid pin name: $pin_key"
+                return 1
+            }
+            [ -z "$extra" ] && repo_path "$pin_file" && repo_path "$probe" || {
+                registry_error "invalid row: $row"
+                return 1
+            }
+            case " ${tools[*]} " in
+            *" $name "*)
+                registry_error "duplicate tool: $name"
+                return 1
+                ;;
+            esac
+            [ -f "${ROOT}/$pin_file" ] && [ -r "${ROOT}/$probe" ] && [ -f "${ROOT}/$probe" ] || {
+                registry_error "missing pin file or probe for $name"
+                return 1
+            }
+            tools+=("$name")
+            pin_files+=("$pin_file")
+            pin_names+=("$pin_key")
+            probes+=("$probe")
+        done <"$registry"
+    fi
+}
+if ! load_registry; then
+    [ "$mode" = --session-env ] || exit 1
+    # Discard even valid rows preceding the bad one; PATH fallback uses only
+    # the built-in registry and the bootstrap manifest, never partial data.
+    tools=(shellcheck)
 fi
-mode="${1:---reconcile}"
 if [ "$mode" = --list ]; then
     printf '%s\n' "${tools[@]}"
     exit 0
@@ -73,14 +104,14 @@ read_pin() {
 }
 
 probe_version() {
-    if [ "$probe" = builtin ]; then
+    if [ "$probe" = :builtin: ]; then
         "$tool" --version
     else
         (cd "$ROOT" && bash "$ROOT/$probe")
     fi
 }
 parse_version() {
-    if [ "$probe" = builtin ]; then
+    if [ "$probe" = :builtin: ]; then
         sed -n 's/^version: //p'
     else
         # Reject extra output rather than accidentally accepting a substring.
@@ -104,7 +135,7 @@ installed_version() {
     # lets the probe finish without waiting for that writer to close a pipe.
     # Status 2 means capture storage is unavailable, not that a tool drifted.
     output_file="$(mktemp "${TMPDIR:-/tmp}/reconcile-probe.XXXXXX" 2>/dev/null)" || return 2
-    if [ "$probe" = builtin ]; then
+    if [ "$probe" = :builtin: ]; then
         timeout --kill-after=1s 2s "$tool" --version >"$output_file" 2>/dev/null || rc=$?
     else
         (cd "$ROOT" && timeout --kill-after=1s 2s bash "$ROOT/$probe") >"$output_file" 2>/dev/null || rc=$?
@@ -221,13 +252,17 @@ warn_toolchain() {
 }
 
 if [ "$mode" = --check ]; then
-    case " ${tools[*]} " in
-    *" ${2:-} "*) [ -n "${2:-}" ] || exit 1 ;;
-    *)
+    registered=false
+    for tool in "${tools[@]}"; do
+        if [ "$tool" = "${2:-}" ]; then
+            registered=true
+            break
+        fi
+    done
+    if [ "$registered" != true ]; then
         echo "ERROR: unregistered gate-checked tool: ${2:-missing tool}" >&2
         exit 1
-        ;;
-    esac
+    fi
 fi
 
 for index in "${!tools[@]}"; do
@@ -252,8 +287,8 @@ for index in "${!tools[@]}"; do
     if [ -z "$pin" ]; then
         if [ "$mode" = --check ]; then
             warn_toolchain missing-pin
-            [ "$probe" = builtin ] || exit 1
-        elif [ "$probe" != builtin ]; then
+            [ "$probe" = :builtin: ] || exit 1
+        elif [ "$probe" != :builtin: ]; then
             warn_toolchain missing-pin
         fi
         continue
@@ -273,7 +308,7 @@ for index in "${!tools[@]}"; do
         echo "ERROR: local ${tool} ${seen:-unknown} differs from CI's pinned $pin; rebuild the devcontainer, or install ${tool} $pin." >&2
         exit 1
     fi
-    if [ "$probe" != builtin ]; then
+    if [ "$probe" != :builtin: ]; then
         warn_toolchain repo-tool
         continue
     fi
