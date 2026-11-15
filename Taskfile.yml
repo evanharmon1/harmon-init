@@ -145,6 +145,7 @@ tasks:
       - task: test:oh-my-pi-pin
       - task: test:render-parity-cases
       - task: test:lint-hygiene
+      - task: test:review-guidelines
       - task: test:claude-workflow-result
       - task: test:release-title
       - task: test:claim-release-merged
@@ -188,7 +189,22 @@ tasks:
   # ── Quality Checks ────────────────────────────────────────────
   check:
     desc: Run all linters in parallel (set TASK_CONCURRENCY=1 for serial execution)
-    deps: [lint]
+    deps: [lint, guard:review-guidelines]
+
+  guard:review-guidelines:
+    desc: Fail when reviewer copies drift from the canonical guidelines
+    cmds:
+      - ./scripts/render-review-guidelines.sh --check
+
+  render:review-guidelines:
+    desc: Refresh reviewer copies after editing docs/review-guidelines.md
+    cmds:
+      - ./scripts/render-review-guidelines.sh --write
+
+  test:review-guidelines:
+    desc: Prove hand edits fail the drift guard and re-render repairs them
+    cmds:
+      - ./scripts/test-review-guidelines.sh
 
   audit:agent-instructions:
     desc: Warn when AGENTS.md exceeds Codex's default 32 KiB discovery budget

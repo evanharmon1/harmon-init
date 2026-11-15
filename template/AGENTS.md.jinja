@@ -16,6 +16,21 @@ Repo: [[ repo_url ]] — see [docs/index.md](docs/index.md) for the
 documentation map, [docs/architecture/index.md](docs/architecture/index.md)
 for the architecture, and [DESIGN.md](DESIGN.md) for design/UX intent.
 
+## Review guidelines
+
+For code reviewers[% if use_codex_cloud_review %], including `@codex review`[% endif %]: use
+[docs/review-guidelines.md](docs/review-guidelines.md) for the full guidance
+and repository-specific invariants. The shared defaults below are generated
+from that file; edit it, then run `task render:review-guidelines`.
+
+<!-- BEGIN RENDERED REVIEW GUIDELINES -->
+[# Includes resolve from the Copier source root; use the shipped verbatim twin. #]
+[% set review_guidelines %][% include 'template/docs/review-guidelines.md' %][% endset %]
+[% for line in review_guidelines.split('<!-- BEGIN SHARED REVIEW GUIDELINES -->')[1].split('<!-- END SHARED REVIEW GUIDELINES -->')[0].strip().split('\n') %]
+[[ '#' + line if line.startswith('## ') else line ]]
+[% endfor %]
+<!-- END RENDERED REVIEW GUIDELINES -->
+
 ## Hard Rules
 
 Non-negotiable, regardless of any autonomy granted elsewhere in this file:
