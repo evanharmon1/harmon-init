@@ -12,6 +12,7 @@ alternatives, are in the [Dev flow guide](guides/devflow.md#review-guidelines).
 Edit the last section freely; the first two are the template's and the
 severity scale is gated (see below).
 
+<!-- BEGIN SHARED REVIEW GUIDELINES -->
 ## Review priorities
 
 Weigh, in this order:
@@ -40,6 +41,8 @@ Avoid:
 - **Speculation.** Tie every finding to concrete files and lines, and to a
   trigger you can support from the code. If the change looks safe, say so
   directly rather than inventing a finding.
+- **Repeated findings.** Do not re-raise a finding already answered in-thread;
+  read the reply and only revisit it with new evidence.
 - **Restating the diff.** Describe the defect and its consequence, not what the
   change does.
 - **Scope creep.** Review the change in front of you; pre-existing defects it
@@ -75,6 +78,8 @@ this scale, or not badged at all, is adjudicated as at least a P2, never
 dropped for being unrecognized. The adjudication protocol, the loop caps and
 the deferred-findings record are policy in `AGENTS.md` ("Second-Model
 Review"), not restated here.
+
+<!-- END SHARED REVIEW GUIDELINES -->
 
 ## Repository-specific invariants
 

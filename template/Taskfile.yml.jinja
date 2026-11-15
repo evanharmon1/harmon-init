@@ -169,6 +169,7 @@ tasks:
       - task: test:remote-codex-policy
 [% endif %]
       - task: test:lint-hygiene
+      - task: test:review-guidelines
       - task: test:claude-workflow-result
 [% if use_release_please %]
       - task: test:release-title
@@ -221,9 +222,25 @@ tasks:
     desc: Fast local gate — all linters (and TypeScript checking when enabled), in parallel (set TASK_CONCURRENCY=1 for serial execution)
     deps:
       - lint
+      - guard:review-guidelines
 [% if use_node %]
       - lint:typescript
 [% endif %]
+
+  guard:review-guidelines:
+    desc: Fail when reviewer copies drift from the canonical guidelines
+    cmds:
+      - ./scripts/render-review-guidelines.sh --check
+
+  render:review-guidelines:
+    desc: Refresh reviewer copies after editing docs/review-guidelines.md
+    cmds:
+      - ./scripts/render-review-guidelines.sh --write
+
+  test:review-guidelines:
+    desc: Prove hand edits fail the drift guard and re-render repairs them
+    cmds:
+      - ./scripts/test-review-guidelines.sh
 
   audit:agent-instructions:
     desc: Warn when AGENTS.md exceeds Codex's default 32 KiB discovery budget

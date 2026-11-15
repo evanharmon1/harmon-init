@@ -2776,8 +2776,8 @@ fi
 if [ "$profile" = "full" ]; then
     [ -f .gemini/config.yaml ] || err ".gemini/config.yaml missing (use_gemini_code_assist=true)"
     [ -f .gemini/styleguide.md ] || err ".gemini/styleguide.md missing (use_gemini_code_assist=true)"
-    grep -Eq '^  comment_severity_threshold: LOW$' .gemini/config.yaml ||
-        err ".gemini/config.yaml severity threshold is not LOW"
+    grep -Eq '^  comment_severity_threshold: MEDIUM$' .gemini/config.yaml ||
+        err ".gemini/config.yaml severity threshold is not MEDIUM"
     grep -Fq 'Connect Gemini Code Assist on GitHub' docs/CHECKLIST.md ||
         err "CHECKLIST missing Gemini Code Assist setup (use_gemini_code_assist=true)"
 else
@@ -2787,6 +2787,39 @@ else
         err ".gemini/styleguide.md rendered but use_gemini_code_assist is off"
     ! grep -Fq 'Connect Gemini Code Assist on GitHub' docs/CHECKLIST.md ||
         err "CHECKLIST mentions Gemini Code Assist setup but use_gemini_code_assist is off"
+fi
+
+# Every profile must carry the canonical review defaults, including without Gemini.
+bash scripts/render-review-guidelines.sh --check || err "review guidelines drift after render"
+bash scripts/test-review-guidelines.sh || err "review-guidelines guard regression tests failed"
+grep -Fq '## Review guidelines' AGENTS.md || err "AGENTS missing reviewer guidance"
+# The shared section is unconditional, but the cloud trigger is opt-in.
+review_guidelines_section=$(awk '
+    /^## Review guidelines$/ { inside=1; next }
+    inside && /^## / { exit }
+    inside { print }
+' AGENTS.md)
+if [ "$profile" = full ]; then
+    grep -Fq 'For code reviewers, including `@codex review`: use' <<<"$review_guidelines_section" ||
+        err "reviewer guidance missing the opted-in Codex cloud trigger"
+else
+    grep -Fxq 'For code reviewers: use' <<<"$review_guidelines_section" ||
+        err "reviewer guidance missing its cloud-independent introduction"
+    ! grep -Fq '@codex review' <<<"$review_guidelines_section" ||
+        err "reviewer guidance names Codex cloud review without opt-in"
+fi
+for priority in P0 P1 P2 P3; do
+    grep -q "$priority —" AGENTS.md || err "AGENTS missing $priority scale"
+done
+if [ -f .github/workflows/claude-review.yml ]; then
+    [ "$(grep -c "PR's base commit (base.sha)" .github/workflows/claude-review.yml)" = 2 ] ||
+        err "both Claude prompts must resolve the PR base SHA"
+    [ "$(grep -c 'GitHub file-content tool with ref set to that exact base SHA' .github/workflows/claude-review.yml)" = 2 ] ||
+        err "both Claude prompts must read guidelines at the base SHA"
+    [ "$(grep -c -- '--allowedTools mcp__github__get_file_contents,mcp__github__pull_request_read' .github/workflows/claude-review.yml)" = 2 ] ||
+        err "both Claude attempts must allow the read tools used by the prompt"
+    [ "$(grep -c "P2, or P3 using the canonical file's scale" .github/workflows/claude-review.yml)" = 2 ] ||
+        err "both Claude prompts must use the canonical severity scale"
 fi
 
 # ── 9d5. the draft-PR workbench lifecycle renders in every profile ──
