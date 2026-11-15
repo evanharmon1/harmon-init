@@ -13,7 +13,7 @@ Weigh, in this order:
 1. **Correctness and contracts.** Does the change do what it claims, on every
    path a reader can reach — including the ones it did not add tests for? Does
    it keep every existing contract: exit codes, file formats, documented
-   behaviour, the invariants listed at the end of this file?
+   behaviour, and repository-specific invariants?
 2. **Trust boundaries and data.** Authorization bypasses, inputs trusted where
    they should be verified, data-loss or corruption paths, unsafe rollback or
    migration behaviour, secrets reaching logs or arguments.
@@ -43,10 +43,7 @@ Avoid:
 
 ### Severity scale
 
-Label every finding with a priority, as its first token. This is the scale's
-single normative statement: `scripts/codex-review.sh` sends exactly these
-lines to the reviewer, and `task test:codex-review` fails when the two differ,
-so a change to the scale is made here and mirrored there in the same commit.
+Label every finding with a priority, as its first token. Use this scale:
 
 ```text
   P0 — a defect that breaks correctness, security, or data integrity in
@@ -68,9 +65,7 @@ hypothesis; the adjudicated severity is the verdict**, whichever reviewer
 produced it — the reader verifies each finding against the code, fixes what is
 confirmed, and records the evidence for what is declined. A finding badged off
 this scale, or not badged at all, is adjudicated as at least a P2, never
-dropped for being unrecognized. The adjudication protocol, the loop caps and
-the deferred-findings record are policy in `AGENTS.md` ("Second-Model
-Review"), not restated here.
+dropped for being unrecognized.
 <!-- END RENDERED REVIEW GUIDELINES -->
 
 ## Gemini-specific guidance

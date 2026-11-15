@@ -2811,13 +2811,23 @@ fi
 for priority in P0 P1 P2 P3; do
     grep -q "$priority —" AGENTS.md || err "AGENTS missing $priority scale"
 done
+for review_copy in AGENTS.md .gemini/styleguide.md; do
+    [ -f "$review_copy" ] || continue
+    shared_review_copy=$(awk '
+        /^<!-- BEGIN RENDERED REVIEW GUIDELINES -->$/ { inside=1; next }
+        /^<!-- END RENDERED REVIEW GUIDELINES -->$/ { inside=0 }
+        inside { print }
+    ' "$review_copy")
+    ! grep -Eq 'codex-review\.sh|end of this file|Second-Model Review' <<<"$shared_review_copy" ||
+        err "$review_copy shared defaults contain copy-specific or optional local-review pointers"
+done
 if [ -f .github/workflows/claude-review.yml ]; then
-    [ "$(grep -c "PR's base commit (base.sha)" .github/workflows/claude-review.yml)" = 2 ] ||
+    [ "$(grep -c "PR's base commit (base.sha) with mcp__github__get_pull_request" .github/workflows/claude-review.yml)" = 2 ] ||
         err "both Claude prompts must resolve the PR base SHA"
-    [ "$(grep -c 'GitHub file-content tool with ref set to that exact base SHA' .github/workflows/claude-review.yml)" = 2 ] ||
+    [ "$(grep -c 'use mcp__github__get_file_contents with ref set to that exact SHA' .github/workflows/claude-review.yml)" = 2 ] ||
         err "both Claude prompts must read guidelines at the base SHA"
-    [ "$(grep -c -- '--allowedTools mcp__github__get_file_contents,mcp__github__pull_request_read' .github/workflows/claude-review.yml)" = 2 ] ||
-        err "both Claude attempts must allow the read tools used by the prompt"
+    # test-review-guidelines.sh above checks every attempt's exact allowlist
+    # against its offline catalog for the action's pinned GitHub MCP server.
     [ "$(grep -c "P2, or P3 using the canonical file's scale" .github/workflows/claude-review.yml)" = 2 ] ||
         err "both Claude prompts must use the canonical severity scale"
 fi
