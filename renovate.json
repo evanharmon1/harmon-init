@@ -58,7 +58,7 @@
       "description": "Workflow and composite-action tool pins (both layers), `version:`/`<tool>_version:` style. Composite actions are included because template/.github/actions/setup/action.yml.jinja pins setup-task and setup-tflint this way, and a `workflows/`-only pattern leaves them invisible here — the same silent rot the SHA manager below was added for.",
       "managerFilePatterns": ["/(workflows|actions)/.*\\.ya?ml(\\[% endif %\\])?(\\.jinja)?$/"],
       "matchStrings": [
-        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+version:\\s*(?<currentValue>\\S+)",
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+version:\\s*[\"']?(?<currentValue>[^\"'\\s]+)[\"']?",
         "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+[\\w-]+[-_]version: \"?(?<currentValue>[^\"\\s]+)\"?"
       ]
     },
