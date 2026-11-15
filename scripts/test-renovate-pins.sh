@@ -509,6 +509,32 @@ except json.JSONDecodeError as exc:
     tmpl_on = tmpl_off = tmpl_python_off = None
     errors.append(f"template/renovate.json.jinja does not render to valid JSON: {exc}")
 
+# Bare version inputs must exclude YAML syntax from the version while keeping
+# annotation metadata. Run the shipped patterns, selected by their file scope.
+preset_cfg = json.loads(pathlib.Path("renovate/default.json").read_text(encoding="utf-8"))
+bare_patterns = set()
+for label, cfg in (("root", root_cfg), ("preset", preset_cfg), ("template", tmpl_on)):
+    if cfg is None:
+        continue
+    for path in (".github/workflows/fixture.yml", ".github/actions/fixture/action.yml"):
+        managers = [m for m in cfg["customManagers"]
+                    if any(re.search(p.strip("/"), path) for p in m["managerFilePatterns"])
+                    and any("version:\\s*" in x for x in m["matchStrings"])]
+        if len(managers) != 1:
+            errors.append(f"{label}: expected one bare-version manager for {path}")
+            continue
+        pattern = next(x for x in managers[0]["matchStrings"] if "version:\\s*" in x)
+        bare_patterns.add(pattern)
+        for quote in ("", "'", '\"'):
+            for metadata in ("", " extractVersion=^v(?<version>.+)$"):
+                fixture = f"# renovate: datasource=github-releases depName=go-task/task{metadata}\nversion: {quote}3.44.1{quote}"
+                match = re.search(js_to_py(pattern), fixture)
+                expected = dict(datasource="github-releases", depName="go-task/task", currentValue="3.44.1", extractVersion="^v(?<version>.+)$" if metadata else None)
+                if match is None or match.groupdict() != expected:
+                    errors.append(f"{label}: bare-version extraction failed for {path}: {fixture!r}")
+if len(bare_patterns) != 1:
+    errors.append("root/preset/rendered template bare-version patterns differ")
+
 if tmpl_on:
     for path, dep, ds, want in [
         ("scripts/devcontainer-assert.sh", "@devcontainers/cli", "npm", "Devcontainer"),
