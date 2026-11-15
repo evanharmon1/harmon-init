@@ -1252,7 +1252,7 @@ active = json.loads((root / ".git/session-start-remote/active.json").read_text()
 assert active["pid"] == parent, active
 command = subprocess.check_output(["ps", "-p", str(parent), "-o", "command="], text=True).rstrip("\n")
 state_dir = root / ".git/session-start-remote"
-suffix = f" - {root} {state_dir}"
+suffix = f" - launch {root} {state_dir}"
 expected = {os.path.realpath(sys.executable)}
 if sys.platform == "darwin":
     expected.add(os.path.realpath(os.path.join(sys.base_prefix, "Resources/Python.app/Contents/MacOS/Python")))
@@ -1265,8 +1265,8 @@ def worker_command_matches(value):
 
 assert worker_command_matches(command), command
 executable = command[:-len(suffix)]
-assert not worker_command_matches(f"{executable} - {root}-wrong {state_dir}")
-assert not worker_command_matches(f"{executable} - {root} {state_dir}-wrong")
+assert not worker_command_matches(f"{executable} - launch {root}-wrong {state_dir}")
+assert not worker_command_matches(f"{executable} - launch {root} {state_dir}-wrong")
 assert not worker_command_matches(f"{root / 'wrong-interpreter'}{suffix}")
 assert shutil.which("bash") and not worker_command_matches(f"bash{suffix}")
 os.kill(parent, signal.SIGTERM)
@@ -1329,6 +1329,334 @@ PYDEADWORKER
     python3 -m venv --without-pip "${TMP}/worker-venv"
     make_fixture hook-dead-worker-venv -
     run_dead_worker "${TMP}/worker-venv/bin"
+
+    echo "==> SessionStart never starts a second setup beside a live task whose supervisor died"
+    make_fixture hook-supervisor-death -
+    cat >"${TMP}/hook-bin/task" <<'EOF2'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${HOOK_TASK_LOG}"
+echo "$$" >"${HOOK_TASK_PID}"
+# Finite: wait for the test's release, never for a signal.
+n=0
+while [ ! -f "${HOOK_RELEASE}" ] && [ "$n" -lt 400 ]; do
+    sleep 0.05
+    n=$((n + 1))
+done
+echo 'task completed' >>"${HOOK_TASK_LOG}"
+EOF2
+    cat >"${TMP}/hook-bin/timeout" <<EOF2
+#!/usr/bin/env bash
+[ "\$1" = '90s' ] || exit 99
+shift
+exec "${REAL_TIMEOUT}" 1s "\$@"
+EOF2
+    chmod +x "${TMP}/hook-bin/task" "${TMP}/hook-bin/timeout"
+    python3 - "${FIX}/scripts/session-start-remote.sh" "${TMP}/hook-bin:${MIN_BIN}" "${TMP}" <<'PYSUPERVISOR'
+import fcntl
+import json
+import os
+import pathlib
+import re
+import signal
+import subprocess
+import sys
+import time
+
+script, path, fixture_tmp = sys.argv[1:]
+root = pathlib.Path(script).parent.parent
+state = root / ".git/session-start-remote"
+log, pid_file, release = (pathlib.Path(fixture_tmp) / name for name in ("sup.log", "sup.pid", "sup.release"))
+env = dict(os.environ, CLAUDE_CODE_REMOTE="true", PATH=path, HOOK_TASK_LOG=str(log),
+           HOOK_TASK_PID=str(pid_file), HOOK_RELEASE=str(release))
+
+
+def hook():
+    return subprocess.run(["bash", script], env=env, capture_output=True, text=True, timeout=30)
+
+
+def pid_of(result):
+    return int(re.search(r"worker PID (\d+)", result.stdout).group(1))
+
+
+def setups():
+    return log.read_text().count("--dir ")
+
+
+first = subprocess.Popen(["bash", script], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+try:
+    for _ in range(500):
+        if pid_file.exists() and pid_file.read_text().strip():
+            break
+        time.sleep(0.01)
+    task_pid = int(pid_file.read_text())
+    active = json.loads((state / "active.json").read_text())
+    supervisor = active["pid"]
+    assert supervisor != task_pid, active
+    command = subprocess.check_output(["ps", "-p", str(supervisor), "-o", "command="], text=True).rstrip("\n")
+    assert command.endswith(f" - launch {root} {state}"), command
+    # This test alone ends the supervisor, and only the supervisor: task keeps running.
+    os.kill(supervisor, signal.SIGKILL)
+    with (state / "run.lock").open("a") as probe:
+        for _ in range(500):
+            try:
+                fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                break
+            except BlockingIOError:
+                time.sleep(0.01)
+        else:
+            raise AssertionError("the run lock outlived its supervisor")
+    os.kill(task_pid, 0)
+    out, err = first.communicate(timeout=30)
+    assert first.returncode == 0 and "setup:remote still running" in out, (out, err)
+    assert pid_of(subprocess.CompletedProcess([], 0, out)) == task_pid, out
+    assert "kill -0" in out and "no longer running" in out and "takes no lock" in out, out
+
+    second = hook()
+    assert second.returncode == 0 and "setup:remote still running" in second.stdout, second
+    assert pid_of(second) == task_pid, (second, task_pid)
+    assert "ended without a status" not in second.stdout, second
+    assert setups() == 1, "a second setup started beside the live one:\n" + log.read_text()
+    assert len(list(state.glob("run-*"))) == 1, "a second run directory was created"
+    run = pathlib.Path(json.loads((state / "active.json").read_text())["directory"])
+    assert not (run / "status").exists()
+    os.kill(task_pid, 0)  # the hook never signalled the running task
+finally:
+    release.touch()
+    for _ in range(400):
+        if log.exists() and "task completed" in log.read_text():
+            break
+        time.sleep(0.02)
+assert "task completed" in log.read_text(), log.read_text()
+for _ in range(200):  # task has exited; wait for the process to be gone or reaped
+    probe = subprocess.run(["ps", "-o", "stat=", "-p", str(task_pid)], capture_output=True, text=True).stdout.strip()
+    if not probe or probe.startswith("Z"):
+        break
+    time.sleep(0.02)
+# With task gone and no status ever published, the next hook may start fresh.
+third = hook()
+assert third.returncode == 0 and "setup:remote completed." in third.stdout, third
+assert setups() == 2, log.read_text()
+assert (run / "superseded").exists(), "the dead run was not superseded"
+print("OK: a dead supervisor with a live task is observed, never duplicated; a finished one is replaced")
+PYSUPERVISOR
+
+    # Keep the working-ps supervisor-only-death case above unchanged. Exercise
+    # unknown identity separately, including a real unreaped child on Linux.
+    for ps_case in first-fails unavailable-live unavailable-zombie; do
+        echo "==> SessionStart unknown process identity: ${ps_case}"
+        make_fixture "hook-identity-${ps_case}" -
+        cat >"${TMP}/hook-bin/task" <<'EOFIDENTITY'
+#!/usr/bin/env bash
+printf '%s\n' "$*" >>"${HOOK_TASK_LOG}"
+echo "$$" >"${HOOK_TASK_PID}"
+n=0
+while [ ! -f "${HOOK_RELEASE}" ] && [ "$n" -lt 400 ]; do
+    sleep 0.05
+    n=$((n + 1))
+done
+echo 'task completed' >>"${HOOK_TASK_LOG}"
+EOFIDENTITY
+        cat >"${TMP}/hook-bin/ps" <<'EOFPS'
+#!/usr/bin/env bash
+if [ "$HOOK_PS_CASE" = first-fails ] && [ -f "$HOOK_PS_SEEN" ]; then
+    exec "$HOOK_REAL_PS" "$@"
+fi
+touch "$HOOK_PS_SEEN"
+exit 1
+EOFPS
+        chmod +x "${TMP}/hook-bin/task" "${TMP}/hook-bin/ps"
+        python3 - "${FIX}/scripts/session-start-remote.sh" "${TMP}/hook-bin:${MIN_BIN}" "${ps_case}" "$(command -v ps)" <<'PYIDENTITY'
+import ctypes
+import fcntl
+import json
+import os
+from pathlib import Path
+import re
+import signal
+import subprocess
+import sys
+import time
+
+script, path, case, real_ps = sys.argv[1:]
+if case == "unavailable-zombie" and not Path("/proc/self/stat").exists():
+    print("SKIP: unreaped-zombie fallback requires Linux /proc")
+    sys.exit(0)
+# Adopt the orphan task so it can be left genuinely unreaped, then reaped by
+# this fixture. Never depend on the host's PID 1 reaping (or not reaping) it.
+subreaper = sys.platform.startswith("linux")
+if subreaper:
+    assert ctypes.CDLL(None, use_errno=True).prctl(36, 1, 0, 0, 0) == 0
+root = Path(script).parent.parent
+state = root / ".git/session-start-remote"
+log, pid_file, release, seen = (root / name for name in ("task.log", "task.pid", "release", "ps.seen"))
+env = dict(os.environ, CLAUDE_CODE_REMOTE="true", PATH=path, HOOK_PS_CASE=case,
+           HOOK_REAL_PS=real_ps, HOOK_PS_SEEN=str(seen), HOOK_TASK_LOG=str(log),
+           HOOK_TASK_PID=str(pid_file), HOOK_RELEASE=str(release))
+
+
+def hook():
+    return subprocess.run(["bash", script], env=env, capture_output=True, text=True, timeout=15)
+
+
+def wait_for(predicate):
+    for _ in range(500):
+        if predicate():
+            return
+        time.sleep(0.01)
+    raise AssertionError("fixture condition timed out")
+
+
+def running(result, pid):
+    assert result.returncode == 0 and "setup:remote still running" in result.stdout, result
+    assert int(re.search(r"worker PID (\d+)", result.stdout).group(1)) == pid, result
+
+
+first = subprocess.Popen(["bash", script], env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+task_pid = None
+try:
+    wait_for(lambda: pid_file.exists() and pid_file.read_text().strip())
+    task_pid = int(pid_file.read_text())
+    active = json.loads((state / "active.json").read_text())
+    run = Path(active["directory"])
+    supervisor = active["pid"]
+    command = subprocess.check_output([real_ps, "-p", str(supervisor), "-o", "command="], text=True).strip()
+    assert supervisor != task_pid and command.endswith(f" - launch {root} {state}"), command
+    os.kill(supervisor, signal.SIGKILL)  # fixture only; never signal preparation
+    with (state / "run.lock").open("a") as probe:
+        def unlocked():
+            try:
+                fcntl.flock(probe, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return True
+            except BlockingIOError:
+                return False
+        wait_for(unlocked)
+    out, err = first.communicate(timeout=15)
+    if case == "unavailable-zombie":
+        running(subprocess.CompletedProcess([], first.returncode, out, err), task_pid)
+        release.touch()
+        proc = Path(f"/proc/{task_pid}/stat")
+        wait_for(lambda: proc.read_text().rsplit(")", 1)[1].split()[0] == "Z")
+        os.kill(task_pid, 0)  # succeeds for the zombie, but must not imply alive
+        # Observe the ended state before a fresh launcher supersedes this run.
+        hook_program = Path(script).read_text()
+        embedded = hook_program.split("<<'PY'\n", 1)[1].split("\nPY\n", 1)[0]
+        observed = subprocess.run([sys.executable, "-", "check", str(state), str(run)],
+                                  input=embedded, env=env, capture_output=True, text=True, timeout=5)
+        assert observed.returncode == 0 and observed.stdout.startswith("ended\n"), observed
+        second = hook()
+        assert second.returncode == 0 and "setup:remote completed." in second.stdout, second
+        assert log.read_text().count("--dir ") == 2, log.read_text()
+        assert (run / "superseded").exists()
+    else:
+        # Run subsequent hooks even if the first misreported the task. This
+        # catches the original duplicate-setup hazard, not only warning text.
+        second, third = hook(), hook()
+        assert log.read_text().count("--dir ") == 1, "a second concurrent setup started: " + log.read_text()
+        for result in (subprocess.CompletedProcess([], first.returncode, out, err), second, third):
+            running(result, task_pid)
+        assert len(list(state.glob("run-*"))) == 1
+        os.kill(task_pid, 0)
+    recorded = json.loads((run / "task.json").read_text())
+    assert recorded["start"] is None, "unknown start must be null, never an empty identity"
+finally:
+    release.touch()
+    first.communicate(timeout=15)
+    if task_pid:
+        if subreaper:
+            # Blocking wait is bounded by the stub's finite release loop.
+            os.waitpid(task_pid, 0)
+        else:
+            wait_for(lambda: log.exists() and "task completed" in log.read_text())
+print(f"OK: {case}: unknown start normalized; liveness and replacement preserved")
+PYIDENTITY
+    done
+    rm "${TMP}/hook-bin/ps"
+
+    echo "==> SessionStart bounds superseded run directories and never deletes one still in use"
+    make_fixture hook-prune -
+    cat >"${TMP}/hook-bin/task" <<'EOF2'
+#!/usr/bin/env bash
+echo "ran $*"
+EOF2
+    cat >"${TMP}/hook-bin/timeout" <<'EOF2'
+#!/usr/bin/env bash
+[ "$1" = '90s' ] || exit 99
+shift
+exec "$@"
+EOF2
+    chmod +x "${TMP}/hook-bin/task" "${TMP}/hook-bin/timeout"
+    python3 - "${FIX}/scripts/session-start-remote.sh" "${TMP}/hook-bin:${MIN_BIN}" "${TMP}" <<'PYPRUNE'
+import json
+import os
+import pathlib
+import subprocess
+import sys
+import time
+
+script, path, fixture_tmp = sys.argv[1:]
+root = pathlib.Path(script).parent.parent
+state = root / ".git/session-start-remote"
+env = dict(os.environ, CLAUDE_CODE_REMOTE="true", PATH=path)
+DAY = 24 * 60 * 60
+
+
+def hook():
+    result = subprocess.run(["bash", script], env=env, capture_output=True, text=True, timeout=30)
+    assert result.returncode == 0 and "setup:remote completed." in result.stdout, result
+    return pathlib.Path(json.loads((state / "active.json").read_text())["directory"])
+
+
+def age(run, seconds, marker=True):
+    when = time.time() - seconds
+    for item in [*run.rglob("*"), run]:
+        os.utime(item, (when, when))
+    if marker:
+        (run / "superseded").write_text("")
+        os.utime(run / "superseded", (when, when))
+
+
+def runs():
+    return {item.name for item in state.glob("run-*")}
+
+
+def plant(name, **kwargs):
+    run = state / name
+    run.mkdir()
+    (run / "output.log").write_text("old\n")
+    (run / "status").write_text("0\n")
+    age(run, kwargs.pop("seconds"), **kwargs)
+    return run
+
+
+first = hook()
+assert runs() == {first.name} and not (first / "superseded").exists(), "the active run must stay unmarked"
+age(first, 3 * DAY, marker=False)  # ancient files, but still the active run
+stale = plant("run-stale", seconds=2 * DAY)
+recent = plant("run-recent", seconds=600)
+future = plant("run-future", seconds=-600)
+legacy = plant("run-legacy", seconds=3 * DAY, marker=False)  # left by a hook that never marked runs
+outside = pathlib.Path(fixture_tmp) / "outside-target"
+outside.mkdir()
+(outside / "keep").write_text("keep\n")
+(state / "run-link").symlink_to(outside)
+
+second = hook()
+assert first.exists() and (first / "superseded").exists(), "the previous run is superseded, not deleted"
+assert not stale.exists(), "a run superseded for over a day must be pruned"
+assert recent.exists() and future.exists(), "a recently superseded run may still be read"
+assert legacy.exists() and (legacy / "superseded").exists(), "an unmarked run is adopted, not deleted"
+assert (outside / "keep").exists() and (state / "run-link").is_symlink(), "pruning must not follow symlinks"
+assert second.exists() and not (second / "superseded").exists(), "the new active run is untouched"
+assert second.name not in {first.name, stale.name}
+
+age(first, 2 * DAY)
+age(legacy, 2 * DAY)
+third = hook()
+assert not first.exists() and not legacy.exists(), "old superseded runs must be pruned"
+assert recent.exists() and second.exists() and (second / "superseded").exists() and third.exists()
+assert runs() == {recent.name, future.name, second.name, third.name, "run-link"}, runs()
+print("OK: superseded runs age out after a day; the active run, fresh runs and symlinks survive")
+PYPRUNE
 
 else
     echo "skip: timeout is unavailable; the real deadline scenario cannot run"

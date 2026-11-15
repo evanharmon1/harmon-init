@@ -1127,14 +1127,27 @@ preparation completed with warnings (skipped required steps or warnings), a fail
 requiring a retry, setup still running, or setup ended without a status. The
 still-running case names the worker PID, log and status file, and warns that
 lefthook hooks, related repos and dependencies
-may not be ready. Wait for the status file before working or manually re-running
-`task setup:remote`; `0` means setup finished. The last
+may not be ready. Wait for the status file before working. Re-run
+`task setup:remote` only if that file is still missing and the warning's worker
+PID is no longer running (`kill -0 <PID>` fails); a manual run takes no lock.
+`0` means setup finished. The last
 `==> setup:remote completed` line in the named log says whether it finished
 cleanly or with warnings; any other status value means failure. If the
 worker ended without a status, the warning names its log and asks the agent to
 run `task setup:remote` again. The hook's lock prevents overlapping hook setups;
 direct manual task invocations do
-not acquire that lock. Logs and status files persist for inspection. Missing
+not acquire that lock. The lock belongs to the Python supervisor, which can die
+alone while `task` keeps running, so `task` records its own PID and start time
+(`task.json` in the run directory) before it execs, and a later hook that finds
+the lock free but that task alive observes the run instead of starting a second
+one; the reported worker PID is then the task's, so the re-run rule above stays
+true. The hook never signals the task in any case. Logs and status files
+persist for inspection: each hook that starts a setup marks the previous run
+directory `superseded` (it has proved that run's worker gone and stopped
+publishing it as the active run), and a run directory is deleted only once it
+has been superseded for 24 hours, far beyond the 90 s any hook can read one, so
+the cached snapshot cannot accumulate `run-*` directories. The active run is
+never superseded or deleted. Missing
 tools for applicable steps, a missing bootstrap helper, or an unwritable clone
 parent degrade the summary; routine not-applicable skips (no lockfiles, hook
 config, or related-repository list) do not. Details
