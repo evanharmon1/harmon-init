@@ -2824,10 +2824,10 @@ done
 if [ -f .github/workflows/claude-review.yml ]; then
     [ "$(grep -c "PR's base commit (base.sha) with mcp__github__get_pull_request" .github/workflows/claude-review.yml)" = 2 ] ||
         err "both Claude prompts must resolve the PR base SHA"
-    [ "$(grep -c 'use mcp__github__get_file_contents with ref set to that exact SHA' .github/workflows/claude-review.yml)" = 2 ] ||
+    [ "$(grep -c 'read docs/review-guidelines.md at exactly that commit with' .github/workflows/claude-review.yml)" = 2 ] ||
         err "both Claude prompts must read guidelines at the base SHA"
-    # test-review-guidelines.sh above checks every attempt's exact allowlist
-    # against its offline catalog for the action's pinned GitHub MCP server.
+    ! grep -Fq 'ref set' .github/workflows/claude-review.yml ||
+        err "Claude review prompt must state the base-commit invariant without a ref parameter"
     [ "$(grep -c "P2, or P3 using the canonical file's scale" .github/workflows/claude-review.yml)" = 2 ] ||
         err "both Claude prompts must use the canonical severity scale"
 fi
