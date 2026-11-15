@@ -9,7 +9,7 @@ revision** — the merge base for a branch review, `HEAD` for `--uncommitted` �
 never from the working tree, so a change can never rewrite the instructions
 that review it. How the file is resolved, and the inline `text` and `*_focus`
 alternatives, are in the [Dev flow guide](guides/devflow.md#review-guidelines).
-Edit the last section freely; the first two are the template's and the
+Edit the last section freely; the shared sections are the template's and the
 severity scale is gated (see below).
 
 <!-- BEGIN SHARED REVIEW GUIDELINES -->
@@ -73,6 +73,26 @@ produced it — the reader verifies each finding against the code, fixes what is
 confirmed, and records the evidence for what is declined. A finding badged off
 this scale, or not badged at all, is adjudicated as at least a P2, never
 dropped for being unrecognized.
+
+## Standardize profile
+
+When the PR description has a `## Review scope` section naming the
+`standardize` profile, apply this profile; otherwise the default guidance applies.
+
+Run a STANDARDIZE-APPLICATION review. Judge whether the requested harmon-init
+release was applied appropriately to this repository: repository customizations
+are preserved, conflicts and `.rej` files are resolved, answers are correct for
+this repository, intentional divergences stay intentional, renames are handled,
+repo-only tasks and workflows remain wired, version pins agree, and the
+repository's actual stack and deployment edge cases still work.
+
+Treat template content as given when reviewing its application. The default
+disposition for a finding about template content is **filed upstream**: this
+sets where the fix is made, never the finding's severity. A confirmed P0 or P1
+that affects this repository still blocks the lane. It needs a repository-local
+override, a release choice that avoids the defect, or escalation; file the
+template defect upstream as well. Do not downgrade a finding because its fix is
+upstream.
 
 <!-- END SHARED REVIEW GUIDELINES -->
 

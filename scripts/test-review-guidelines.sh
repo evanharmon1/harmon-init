@@ -35,6 +35,26 @@ print("Claude review per-attempt read-only tool invariants passed")
 PYTOOLS
 fi
 
+# Check the real reviewer carriers before the synthetic drift fixtures below.
+for file in docs/review-guidelines.md AGENTS.md .gemini/styleguide.md; do
+    [ -f "$file" ] || continue
+    grep -Eq '^###? Standardize profile$' "$file" || {
+        echo "$file: missing standardize profile" >&2
+        exit 1
+    }
+    grep -Fq 'standardize` profile, apply this profile; otherwise the default guidance applies.' "$file"
+    grep -Fq '## Review scope' "$file"
+    grep -Fq 'Treat template content as given when reviewing its application.' "$file"
+    grep -Fq '**filed upstream**' "$file"
+    grep -Fq 'A confirmed P0 or P1' "$file"
+done
+for file in .coderabbit.yaml .greptile/config.json; do
+    [ -f "$file" ] || continue
+    grep -Fq 'docs/review-guidelines.md' "$file"
+    grep -Fq '## Review scope' "$file"
+    grep -Fq 'standardize profile' "$file"
+done
+
 scratch=$(mktemp -d "${TMPDIR:-/tmp}/test-review-guidelines.XXXXXX")
 trap 'rm -rf "$scratch"' EXIT
 mkdir -p "$scratch/scripts" "$scratch/docs" "$scratch/.gemini"
