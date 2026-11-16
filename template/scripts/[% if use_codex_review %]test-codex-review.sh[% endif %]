@@ -771,7 +771,7 @@ import sys
 
 repo = Path(sys.argv[1])
 doc = (repo / "docs/review-guidelines.md").read_text()
-profile = doc.split("## Standardize profile\n\n", 1)[1].split("<!-- END SHARED REVIEW GUIDELINES -->", 1)[0]
+profile = doc.split("## Standardize profile\n\n", 1)[1].split("\n<!-- END SHARED REVIEW GUIDELINES -->\n", 1)[0]
 paragraphs = profile.strip().split("\n\n")
 runner = (repo / "scripts/lib/review-instructions/standardize.txt").read_text().strip().split("\n\n")
 assert len(paragraphs) == 3, "expected selector, scope, and disposition paragraphs"

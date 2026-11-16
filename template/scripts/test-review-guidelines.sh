@@ -110,6 +110,31 @@ rm .gemini/styleguide.md
 check # Gemini opted out
 printf 'code_review:\n' >.gemini/config.yaml
 reject 'missing styleguide with Gemini enabled'
+# Reuse the real profile assertion, so an inline END marker cannot truncate
+# its input while the renderer accepts the same canonical block.
+if [ -f "$repo/scripts/test-codex-review.sh" ]; then
+    profile_dir="$scratch/inline-end-profile"
+    mkdir -p "$profile_dir/docs" "$profile_dir/scripts/lib/review-instructions"
+    cp "$repo/scripts/render-review-guidelines.sh" "$profile_dir/scripts/"
+    cp "$repo/scripts/lib/review-instructions/standardize.txt" "$profile_dir/scripts/lib/review-instructions/"
+    cp "$repo/AGENTS.md" "$profile_dir/"
+    python3 - "$repo/docs/review-guidelines.md" "$profile_dir/docs/review-guidelines.md" <<'PYINLINE'
+from pathlib import Path
+import sys
+
+text = Path(sys.argv[1]).read_text()
+heading = "## Standardize profile\n\n"
+assert text.count(heading) == 1
+text = text.replace(heading, heading + "A sentence quotes <!-- END SHARED REVIEW GUIDELINES --> inline. ", 1)
+Path(sys.argv[2]).write_text(text)
+PYINLINE
+    bash "$profile_dir/scripts/render-review-guidelines.sh" --write
+    bash "$profile_dir/scripts/render-review-guidelines.sh" --check
+    sed -n "/<<'PYPROFILE'/,/^PYPROFILE$/p" "$repo/scripts/test-codex-review.sh" |
+        sed '1d;$d' >"$scratch/check-standardize.py"
+    [ -s "$scratch/check-standardize.py" ]
+    python3 "$scratch/check-standardize.py" "$profile_dir"
+fi
 # Source-only regression: render the real Jinja blocks against adversarial
 # Markdown, then compare both copies with the consumer renderer. Generated
 # consumers have no template tree and therefore need no Copier dependency.
