@@ -91,6 +91,12 @@ reviews:
         credentials; use env vars or 1Password-provisioned secrets.
 [% endif %]
 
+    - path: "**"
+      instructions: >-
+        Read docs/review-guidelines.md for the canonical review guidance.
+        When the PR description has a ## Review scope section naming the
+        standardize profile, apply that profile; otherwise the default guidance applies.
+
 chat:
 [% if coderabbit_review_trigger == 'automatic' %]
   auto_reply: true

@@ -2728,8 +2728,10 @@ if [ "$profile" = "iac" ]; then
     # `automatic` sees no change. The fixture is that file rendered for this
     # profile from 4287ea9; change it only together with a deliberate change
     # to the automatic config.
-    cmp -s .coderabbit.yaml "$repo_root/tests/fixtures/coderabbit/automatic-iac.yaml" ||
-        err "automatic CodeRabbit config differs from the pre-#1908 file (tests/fixtures/coderabbit/automatic-iac.yaml)"
+    diff <(yq -o json .coderabbit.yaml | jq -S '
+        .reviews.path_instructions |= map(select(.instructions | contains("## Review scope") | not))') \
+        <(yq -o json "$repo_root/tests/fixtures/coderabbit/automatic-iac.yaml" | jq -S .) ||
+        err "automatic CodeRabbit settings beyond the new profile pointer differ from the pre-#1908 fixture"
     grep -Fq 'auto_review.drafts: true' docs/CHECKLIST.md ||
         err "automatic CHECKLIST lost the draft auto-review note"
     grep -q '^coderabbit_review_trigger: automatic$' .copier-answers.yml ||
@@ -2818,10 +2820,26 @@ for review_copy in AGENTS.md .gemini/styleguide.md; do
         /^<!-- END RENDERED REVIEW GUIDELINES -->$/ { inside=0 }
         inside { print }
     ' "$review_copy")
+    grep -Fq '### Standardize profile' <<<"$shared_review_copy" ||
+        err "$review_copy missing standardize profile"
+    grep -Fq '## Review scope' <<<"$shared_review_copy" ||
+        err "$review_copy missing PR-body profile selector"
+    grep -Fq '**filed upstream**' <<<"$shared_review_copy" ||
+        err "$review_copy missing template-content disposition"
     ! grep -Eq 'codex-review\.sh|end of this file|Second-Model Review' <<<"$shared_review_copy" ||
         err "$review_copy shared defaults contain copy-specific or optional local-review pointers"
 done
+for review_config in .coderabbit.yaml .greptile/config.json; do
+    [ -f "$review_config" ] || continue
+    grep -Fq 'standardize profile' "$review_config" || err "$review_config missing standardize selector"
+    grep -Fq '## Review scope' "$review_config" || err "$review_config missing PR-body selector"
+    grep -Fq 'docs/review-guidelines.md' "$review_config" || err "$review_config missing canonical pointer"
+done
 if [ -f .github/workflows/claude-review.yml ]; then
+    grep -Fq '## Standardize profile' docs/review-guidelines.md ||
+        err "Claude canonical carrier missing standardize profile"
+    grep -Fq '## Review scope' docs/review-guidelines.md ||
+        err "Claude canonical carrier missing PR-body selector"
     [ "$(grep -c "PR's base commit (base.sha) with mcp__github__get_pull_request" .github/workflows/claude-review.yml)" = 2 ] ||
         err "both Claude prompts must resolve the PR base SHA"
     [ "$(grep -c 'read docs/review-guidelines.md at exactly that commit with' .github/workflows/claude-review.yml)" = 2 ] ||
