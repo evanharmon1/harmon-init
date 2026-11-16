@@ -41,6 +41,20 @@ if [ -f .gemini/config.yaml ] || [ -f .gemini/styleguide.md ]; then
     files+=(.gemini/styleguide.md)
 fi
 failed=0
+# Copier includes this generated source artifact before consumer scripts exist.
+# It lives outside _subdirectory: template, so it never ships to consumers.
+if [ -f template/AGENTS.md.jinja ]; then
+    partial=partials/shared-review-guidelines.md
+    if [ "$mode" = --check ]; then
+        if ! printf '%s\n' "$shared" | cmp -s "$partial" -; then
+            echo "$partial: review guidelines drift; run task render:review-guidelines" >&2
+            failed=1
+        fi
+    else
+        mkdir -p partials
+        printf '%s\n' "$shared" >"$partial"
+    fi
+fi
 for file in "${files[@]}"; do
     actual=$(extract "$file" RENDERED) || {
         echo "Invalid rendered review-guidelines markers: $file" >&2
