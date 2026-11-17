@@ -8,6 +8,36 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [5.20.0](https://github.com/evanharmon1/harmon-init/compare/v5.19.0...v5.20.0) (2026-11-17)
+
+
+### Features
+
+* **agent-registry:** add Gemini 4 Carbon and Hydrogen and antigravity efforts ([6de2c2e](https://github.com/evanharmon1/harmon-init/commit/6de2c2ecec80b29465d8117dff4533da60d274b6))
+* **agent-registry:** add Gemini 4 Carbon and Hydrogen and the antigravity efforts ladder ([#2054](https://github.com/evanharmon1/harmon-init/issues/2054)) ([6de2c2e](https://github.com/evanharmon1/harmon-init/commit/6de2c2ecec80b29465d8117dff4533da60d274b6))
+* **audit:** keep a standing GitHub configuration status issue ([#2060](https://github.com/evanharmon1/harmon-init/issues/2060)) ([eaed0d7](https://github.com/evanharmon1/harmon-init/commit/eaed0d7ce5412319d4ed4f2e53846f5b64362c3f))
+* **review:** add the standardize review-scope profile to the canonical guidelines ([cff4cda](https://github.com/evanharmon1/harmon-init/commit/cff4cda4ed660afe1e79ac5e31a07b1855ae43e7)), closes [#1834](https://github.com/evanharmon1/harmon-init/issues/1834)
+* **review:** add the standardize review-scope profile to the canonical review guidelines ([#2076](https://github.com/evanharmon1/harmon-init/issues/2076)) ([cff4cda](https://github.com/evanharmon1/harmon-init/commit/cff4cda4ed660afe1e79ac5e31a07b1855ae43e7))
+* **review:** render default reviewer guidelines on every review surface ([#2073](https://github.com/evanharmon1/harmon-init/issues/2073)) ([fadeec6](https://github.com/evanharmon1/harmon-init/commit/fadeec6aa3aad784d9181563ed1e9c67f195e887))
+
+
+### Bug Fixes
+
+* **deps:** keep quotes out of regex-managed Renovate version captures ([#2068](https://github.com/evanharmon1/harmon-init/issues/2068)) ([c2e0dc9](https://github.com/evanharmon1/harmon-init/commit/c2e0dc971e5a3d60715ae6691bf44bc3b532913a)), closes [#1963](https://github.com/evanharmon1/harmon-init/issues/1963)
+* **devcontainer:** update shared image to 6018a312 ([#2072](https://github.com/evanharmon1/harmon-init/issues/2072)) ([afe3fb4](https://github.com/evanharmon1/harmon-init/commit/afe3fb47c6b5cd82559b70cc395347bc35d78a5e))
+* **remote-env:** close the SessionStart worker gaps left by [#1671](https://github.com/evanharmon1/harmon-init/issues/1671) ([#2065](https://github.com/evanharmon1/harmon-init/issues/2065)) ([6bec659](https://github.com/evanharmon1/harmon-init/commit/6bec6591ecb3578c38028d32427b25994c16ae5d))
+* **remote-env:** join YAML sequence items under a command key in the remote Codex policy guard ([#2056](https://github.com/evanharmon1/harmon-init/issues/2056)) ([7f7d72a](https://github.com/evanharmon1/harmon-init/commit/7f7d72abb8d9cb25d6cba13edcc6ccd9786f4dfc))
+* **review:** accept confirmed Codex reasoning levels ([08025a1](https://github.com/evanharmon1/harmon-init/commit/08025a1e0aad506b3f3db088f6e6ec8559413252)), closes [#2052](https://github.com/evanharmon1/harmon-init/issues/2052)
+* **review:** accept confirmed Codex reasoning levels in the review wrapper and registry ([#2066](https://github.com/evanharmon1/harmon-init/issues/2066)) ([08025a1](https://github.com/evanharmon1/harmon-init/commit/08025a1e0aad506b3f3db088f6e6ec8559413252))
+* **review:** let codex-review.sh take resolved model and reasoning ([b46a046](https://github.com/evanharmon1/harmon-init/commit/b46a046e235ed6a2f941f8544b67e40cae2efeb4)), closes [#1958](https://github.com/evanharmon1/harmon-init/issues/1958)
+* **review:** let codex-review.sh take the model a run resolves ([#2049](https://github.com/evanharmon1/harmon-init/issues/2049)) ([b46a046](https://github.com/evanharmon1/harmon-init/commit/b46a046e235ed6a2f941f8544b67e40cae2efeb4))
+* **review:** parse the shared review guidelines block in one place ([#2078](https://github.com/evanharmon1/harmon-init/issues/2078)) ([7a52d7e](https://github.com/evanharmon1/harmon-init/commit/7a52d7eb185368b0de15ef215512ced748c28eab))
+* **template:** allow repo-owned lint tool registration ([#2050](https://github.com/evanharmon1/harmon-init/issues/2050)) ([7a2580b](https://github.com/evanharmon1/harmon-init/commit/7a2580bd7ea94e37cfbb082eedf9977de6a01e29)), closes [#2016](https://github.com/evanharmon1/harmon-init/issues/2016)
+* **template:** close toolchain registry validation gaps ([#2057](https://github.com/evanharmon1/harmon-init/issues/2057)) ([04777fb](https://github.com/evanharmon1/harmon-init/commit/04777fb8c596a37d4f7a12816a5cfab2becb1253)), closes [#2053](https://github.com/evanharmon1/harmon-init/issues/2053)
+* **template:** describe the weekly schedule in the sync workflow header ([#2048](https://github.com/evanharmon1/harmon-init/issues/2048)) ([484c4a0](https://github.com/evanharmon1/harmon-init/commit/484c4a0f1c0d00a010c07517279bdd9502baac50)), closes [#2004](https://github.com/evanharmon1/harmon-init/issues/2004)
+* **tests:** stop the reconcile-toolchain test depending on elapsed time ([bf49659](https://github.com/evanharmon1/harmon-init/commit/bf49659cecdb246dc3950ba6ddc734d56e34e7a6)), closes [#2069](https://github.com/evanharmon1/harmon-init/issues/2069)
+* **tests:** stop the reconcile-toolchain test failing on a wall-clock deadline under load ([#2077](https://github.com/evanharmon1/harmon-init/issues/2077)) ([bf49659](https://github.com/evanharmon1/harmon-init/commit/bf49659cecdb246dc3950ba6ddc734d56e34e7a6))
+
 ## [5.19.0](https://github.com/evanharmon1/harmon-init/compare/v5.18.2...v5.19.0) (2026-11-11)
 
 
