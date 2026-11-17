@@ -9,9 +9,10 @@ revision** — the merge base for a branch review, `HEAD` for `--uncommitted` �
 never from the working tree, so a change can never rewrite the instructions
 that review it. How the file is resolved, and the inline `text` and `*_focus`
 alternatives, are in the [Dev flow guide](guides/devflow.md#review-guidelines).
-Edit the last section freely; the first two are the template's and the
+Edit the last section freely; the shared sections are the template's and the
 severity scale is gated (see below).
 
+<!-- BEGIN SHARED REVIEW GUIDELINES -->
 ## Review priorities
 
 Weigh, in this order:
@@ -19,7 +20,7 @@ Weigh, in this order:
 1. **Correctness and contracts.** Does the change do what it claims, on every
    path a reader can reach — including the ones it did not add tests for? Does
    it keep every existing contract: exit codes, file formats, documented
-   behaviour, the invariants listed at the end of this file?
+   behaviour, and repository-specific invariants?
 2. **Trust boundaries and data.** Authorization bypasses, inputs trusted where
    they should be verified, data-loss or corruption paths, unsafe rollback or
    migration behaviour, secrets reaching logs or arguments.
@@ -40,6 +41,8 @@ Avoid:
 - **Speculation.** Tie every finding to concrete files and lines, and to a
   trigger you can support from the code. If the change looks safe, say so
   directly rather than inventing a finding.
+- **Repeated findings.** Do not re-raise a finding already answered in-thread;
+  read the reply and only revisit it with new evidence.
 - **Restating the diff.** Describe the defect and its consequence, not what the
   change does.
 - **Scope creep.** Review the change in front of you; pre-existing defects it
@@ -47,10 +50,7 @@ Avoid:
 
 ## Severity scale
 
-Label every finding with a priority, as its first token. This is the scale's
-single normative statement: `scripts/codex-review.sh` sends exactly these
-lines to the reviewer, and `task test:codex-review` fails when the two differ,
-so a change to the scale is made here and mirrored there in the same commit.
+Label every finding with a priority, as its first token. Use this scale:
 
 ```text
   P0 — a defect that breaks correctness, security, or data integrity in
@@ -72,9 +72,35 @@ hypothesis; the adjudicated severity is the verdict**, whichever reviewer
 produced it — the reader verifies each finding against the code, fixes what is
 confirmed, and records the evidence for what is declined. A finding badged off
 this scale, or not badged at all, is adjudicated as at least a P2, never
-dropped for being unrecognized. The adjudication protocol, the loop caps and
-the deferred-findings record are policy in `AGENTS.md` ("Second-Model
-Review"), not restated here.
+dropped for being unrecognized.
+
+## Standardize profile
+
+When the PR description has a `## Review scope` section naming the
+`standardize` profile, apply this profile; otherwise the default guidance applies.
+
+Run a STANDARDIZE-APPLICATION review. Judge whether the requested harmon-init
+release was applied appropriately to this repository: repository customizations
+are preserved, conflicts and `.rej` files are resolved, answers are correct for
+this repository, intentional divergences stay intentional, renames are handled,
+repo-only tasks and workflows remain wired, version pins agree, and the
+repository's actual stack and deployment edge cases still work.
+
+Treat template content as given when reviewing its application. The default
+disposition for a finding about template content is **filed upstream**: this
+sets where the fix is made, never the finding's severity. A confirmed P0 or P1
+that affects this repository still blocks the lane. It needs a repository-local
+override, a release choice that avoids the defect, or escalation; file the
+template defect upstream as well. Do not downgrade a finding because its fix is
+upstream.
+
+<!-- END SHARED REVIEW GUIDELINES -->
+
+The severity scale above is the single normative statement.
+`scripts/codex-review.sh`, when enabled, sends the same definitions;
+`task test:codex-review` checks they match. Change the scale here and mirror
+it there in the same commit. The adjudication protocol, loop caps and
+findings record follow the enabled review policy in `AGENTS.md`.
 
 ## Repository-specific invariants
 

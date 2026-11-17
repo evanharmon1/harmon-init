@@ -1,6 +1,9 @@
 code_review:
   disable: false
-  comment_severity_threshold: LOW
+  # MEDIUM filters native LOW noise (wording/style) while keeping MEDIUM defects.
+  # This filter is separate from the shared P0–P3 finding badges.
+  # https://docs.cloud.google.com/gemini/docs/code-review/customize-repo-review
+  comment_severity_threshold: MEDIUM
   max_review_comments: 10
   pull_request_opened:
     help: false

@@ -405,6 +405,7 @@ identity_source="$work/identity-source"
 mkdir -p "$identity_source"
 cp "$repo/copier.yml" "$identity_source/copier.yml"
 cp -a "$repo/template" "$identity_source/template"
+cp -a "$repo/partials" "$identity_source/partials"
 render_identity_defaults() {
     copier copy --trust --defaults --skip-tasks \
         --data project_name="Identity Test" --data git_init=false \

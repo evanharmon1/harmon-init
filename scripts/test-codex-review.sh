@@ -763,6 +763,23 @@ else
     echo "    (docs/review-guidelines.md is absent here; nothing to compare the prompt's scale against)"
 fi
 
+echo "==> the standardize scope and disposition match the canonical guidelines"
+if [ -f "${repo}/docs/review-guidelines.md" ]; then
+    python3 - "$repo" <<'PYPROFILE'
+from pathlib import Path
+import sys
+
+repo = Path(sys.argv[1])
+doc = (repo / "docs/review-guidelines.md").read_text()
+profile = doc.split("## Standardize profile\n\n", 1)[1].split("\n<!-- END SHARED REVIEW GUIDELINES -->\n", 1)[0]
+paragraphs = profile.strip().split("\n\n")
+runner = (repo / "scripts/lib/review-instructions/standardize.txt").read_text().strip().split("\n\n")
+assert len(paragraphs) == 3, "expected selector, scope, and disposition paragraphs"
+assert paragraphs[1] == runner[0], "canonical standardize scope differs from the runner"
+assert paragraphs[2] == runner[-1], "canonical standardize disposition differs from the runner"
+PYPROFILE
+fi
+
 echo "==> guidelines come from the base revision: worktree and branch edits do not reach a --base review"
 conv="${test_tmp}/guidelines-conventional"
 guidelines_fixture "$conv"
