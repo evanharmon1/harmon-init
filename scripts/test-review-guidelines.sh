@@ -1,0 +1,246 @@
+#!/usr/bin/env bash
+# Prove drift detection and repair without changing the checkout under test.
+set -euo pipefail
+cd "$(dirname "$0")/.."
+repo=$PWD
+# Verified against github-mcp-server v0.17.1 (the image claude-code-action v1.0.269 starts) on 2026-11-15: get_pull_request returns the PR JSON including base.sha, and get_file_contents takes the commit in `sha`, not `ref`. These tool semantics are not checkable offline; re-verify them when a claude-code-action bump changes the pinned server image.
+if [ -f .github/workflows/claude-review.yml ]; then
+    python3 - .github/workflows/claude-review.yml <<'PYTOOLS'
+import re, shlex, sys
+from pathlib import Path
+
+text = Path(sys.argv[1]).read_text()
+attempts = re.findall(
+    r'(?m)^( +)claude_args: "([^"\n]*)"\n\1prompt: \|\n((?:(?:\1  [^\n]*)?\n)+)', text)
+if len(attempts) != 2:
+    raise ValueError("expected exactly two Claude review attempts with prompts")
+for _, command, prompt in attempts:
+    args = shlex.split(command)
+    if args.count("--allowedTools") != 1:
+        raise ValueError("expected exactly one allowlist per attempt")
+    value = args[args.index("--allowedTools") + 1]
+    if value != "mcp__github__get_file_contents,mcp__github__get_pull_request":
+        raise ValueError("Claude review must allow exactly the two required read tools")
+    for tool in value.split(","):
+        if tool not in prompt:
+            raise ValueError(f"allowlisted tool missing from the same attempt's prompt: {tool}")
+        if set(tool.rsplit("__", 1)[-1].split("_")) & {"create", "update", "merge", "delete", "push", "add", "fork"}:
+            raise ValueError(f"write tool is not allowed for review: {tool}")
+    if args.count("--disallowedTools") != 1:
+        raise ValueError("expected exactly one disallowed-tools setting per attempt")
+    index = args.index("--disallowedTools")
+    if args[index + 1:index + 4] != ["Edit", "Write", "Bash"]:
+        raise ValueError("Claude review must disallow Edit Write Bash in each attempt")
+print("Claude review per-attempt read-only tool invariants passed")
+PYTOOLS
+fi
+
+# Check the real reviewer carriers before the synthetic drift fixtures below.
+for file in docs/review-guidelines.md AGENTS.md .gemini/styleguide.md; do
+    [ -f "$file" ] || continue
+    grep -Eq '^###? Standardize profile$' "$file" || {
+        echo "$file: missing standardize profile" >&2
+        exit 1
+    }
+    grep -Fq 'standardize` profile, apply this profile; otherwise the default guidance applies.' "$file"
+    grep -Fq '## Review scope' "$file"
+    grep -Fq 'Treat template content as given when reviewing its application.' "$file"
+    grep -Fq '**filed upstream**' "$file"
+    grep -Fq 'A confirmed P0 or P1' "$file"
+done
+for file in .coderabbit.yaml .greptile/config.json; do
+    [ -f "$file" ] || continue
+    grep -Fq 'docs/review-guidelines.md' "$file"
+    grep -Fq '## Review scope' "$file"
+    grep -Fq 'standardize profile' "$file"
+done
+
+scratch=$(mktemp -d "${TMPDIR:-/tmp}/test-review-guidelines.XXXXXX")
+trap 'rm -rf "$scratch"' EXIT
+mkdir -p "$scratch/scripts" "$scratch/docs" "$scratch/.gemini"
+cp scripts/render-review-guidelines.sh "$scratch/scripts/"
+cp docs/review-guidelines.md "$scratch/docs/"
+cp AGENTS.md "$scratch/"
+# Exercise Gemini even in a consumer that opted out of the integration.
+cp AGENTS.md "$scratch/.gemini/styleguide.md"
+cd "$scratch"
+check() { bash scripts/render-review-guidelines.sh --check; }
+reject() {
+    if check >"$scratch/rejection.log" 2>&1; then
+        echo "FAIL: accepted $1" >&2
+        exit 1
+    fi
+}
+check
+# Mutate by marker location, so legitimate prose/heading changes cannot make
+# these regressions silently stop editing the fixture.
+mutate_block() {
+    awk -v marker="$2" '
+        /^<!-- END (SHARED|RENDERED) REVIEW GUIDELINES -->$/ { print marker }
+        { print }
+    ' "$1"
+}
+for file in AGENTS.md .gemini/styleguide.md; do
+    cp "$file" "$scratch/before"
+    mutate_block "$scratch/before" review-guidelines-copy-mutation >"$file"
+    cp "$file" "$scratch/edited"
+    reject "hand edit to $file"
+    cmp "$file" "$scratch/edited" # check never repairs silently
+    bash scripts/render-review-guidelines.sh --write
+    check
+    cmp "$file" "$scratch/before"
+done
+cp docs/review-guidelines.md "$scratch/canonical"
+mutate_block "$scratch/canonical" review-guidelines-canonical-mutation >docs/review-guidelines.md
+reject 'canonical update without re-render'
+bash scripts/render-review-guidelines.sh --write
+check
+grep -q 'review-guidelines-canonical-mutation' AGENTS.md
+grep -q 'review-guidelines-canonical-mutation' .gemini/styleguide.md
+for file in AGENTS.md docs/review-guidelines.md; do
+    cp "$file" "$scratch/before"
+    sed '/<!-- END .* REVIEW GUIDELINES -->/d' "$scratch/before" >"$file"
+    reject "missing end marker in $file"
+    cp "$scratch/before" "$file"
+    cat "$scratch/before" >>"$file"
+    reject "duplicate markers in $file"
+    cp "$scratch/before" "$file"
+done
+rm .gemini/styleguide.md
+check # Gemini opted out
+printf 'code_review:\n' >.gemini/config.yaml
+reject 'missing styleguide with Gemini enabled'
+# Reuse the real profile assertion, so an inline END marker cannot truncate
+# its input while the renderer accepts the same canonical block.
+if [ -f "$repo/scripts/test-codex-review.sh" ]; then
+    profile_dir="$scratch/inline-end-profile"
+    mkdir -p "$profile_dir/docs" "$profile_dir/scripts/lib/review-instructions"
+    cp "$repo/scripts/render-review-guidelines.sh" "$profile_dir/scripts/"
+    cp "$repo/scripts/lib/review-instructions/standardize.txt" "$profile_dir/scripts/lib/review-instructions/"
+    cp "$repo/AGENTS.md" "$profile_dir/"
+    python3 - "$repo/docs/review-guidelines.md" "$profile_dir/docs/review-guidelines.md" <<'PYINLINE'
+from pathlib import Path
+import sys
+
+text = Path(sys.argv[1]).read_text()
+heading = "## Standardize profile\n\n"
+assert text.count(heading) == 1
+text = text.replace(heading, heading + "A sentence quotes <!-- END SHARED REVIEW GUIDELINES --> inline. ", 1)
+Path(sys.argv[2]).write_text(text)
+PYINLINE
+    bash "$profile_dir/scripts/render-review-guidelines.sh" --write
+    bash "$profile_dir/scripts/render-review-guidelines.sh" --check
+    sed -n "/<<'PYPROFILE'/,/^PYPROFILE$/p" "$repo/scripts/test-codex-review.sh" |
+        sed '1d;$d' >"$scratch/check-standardize.py"
+    [ -s "$scratch/check-standardize.py" ]
+    python3 "$scratch/check-standardize.py" "$profile_dir"
+fi
+# Source-only regression: render the real Jinja blocks against adversarial
+# Markdown, then compare both copies with the consumer renderer. Generated
+# consumers have no template tree and therefore need no Copier dependency.
+if [ -f "$repo/template/AGENTS.md.jinja" ]; then
+    source_dir="$scratch/jinja-source"
+    render_dir="$scratch/jinja-render"
+    mkdir -p "$source_dir/template/docs" "$source_dir/template/.gemini"
+    cp "$repo/copier.yml" "$source_dir/"
+    for file in AGENTS.md.jinja '.gemini/styleguide.md.jinja'; do
+        input="$repo/template/$file"
+        if [ "$file" = '.gemini/styleguide.md.jinja' ]; then
+            input="$repo/template/[% if use_gemini_code_assist %].gemini[% endif %]/styleguide.md.jinja"
+        fi
+        awk '
+            /^<!-- BEGIN RENDERED REVIEW GUIDELINES -->$/ { inside=1 }
+            inside { print }
+            /^<!-- END RENDERED REVIEW GUIDELINES -->$/ { inside=0 }
+        ' "$input" >"$source_dir/template/$file"
+    done
+    mkdir -p "$source_dir/scripts" "$source_dir/docs" "$source_dir/.gemini"
+    cp "$repo/scripts/render-review-guidelines.sh" "$source_dir/scripts/"
+    cp "$repo/AGENTS.md" "$source_dir/AGENTS.md"
+    cp "$repo/AGENTS.md" "$source_dir/.gemini/styleguide.md"
+    source_render() { bash "$source_dir/scripts/render-review-guidelines.sh" "$1"; }
+    for variant in plain blank inline; do
+        {
+            if [ "$variant" = inline ]; then
+                printf 'Prose mentioning <!-- BEGIN SHARED REVIEW GUIDELINES --> inline.\n'
+            fi
+            printf '<!-- BEGIN SHARED REVIEW GUIDELINES -->\n'
+            if [ "$variant" = blank ]; then
+                printf '\n'
+            fi
+            cat <<'MARKDOWN'
+## First heading
+A sentence with inline ## stays unchanged.
+### Existing third-level heading
+## Another second-level heading
+<!-- END SHARED REVIEW GUIDELINES -->
+MARKDOWN
+        } >"$source_dir/docs/review-guidelines.md"
+        cp "$source_dir/docs/review-guidelines.md" "$source_dir/template/docs/"
+        source_render --write
+        source_render --check
+        # Isolate partial drift from carrier drift, and prove --check is read-only.
+        cp "$source_dir/partials/shared-review-guidelines.md" "$scratch/partial-before"
+        printf 'stale partial\n' >"$source_dir/partials/shared-review-guidelines.md"
+        if source_render --check >"$scratch/partial-rejection.log" 2>&1; then
+            echo 'FAIL: accepted stale source partial' >&2
+            exit 1
+        fi
+        grep -Fq 'partials/shared-review-guidelines.md: review guidelines drift' "$scratch/partial-rejection.log"
+        grep -Fxq 'stale partial' "$source_dir/partials/shared-review-guidelines.md"
+        rm "$source_dir/partials/shared-review-guidelines.md"
+        if source_render --check >"$scratch/partial-rejection.log" 2>&1; then
+            echo 'FAIL: accepted missing source partial' >&2
+            exit 1
+        fi
+        source_render --write
+        cmp "$source_dir/partials/shared-review-guidelines.md" "$scratch/partial-before"
+        render_dir="$scratch/jinja-render-$variant"
+        copier copy --trust --defaults --skip-tasks \
+            --data project_name='Review heading fixture' "$source_dir" "$render_dir" \
+            >"$scratch/jinja-render.log" 2>&1 || {
+            cat "$scratch/jinja-render.log" >&2
+            exit 1
+        }
+        # The include is readable from the source root, but is never shipped.
+        [ ! -e "$render_dir/partials" ]
+        mkdir -p "$render_dir/scripts"
+        cp "$repo/scripts/render-review-guidelines.sh" "$render_dir/scripts/"
+        bash "$render_dir/scripts/render-review-guidelines.sh" --check
+        cp "$render_dir/AGENTS.md" "$scratch/jinja-before"
+        cp "$render_dir/.gemini/styleguide.md" "$scratch/jinja-gemini-before"
+        bash "$render_dir/scripts/render-review-guidelines.sh" --write
+        cmp "$render_dir/AGENTS.md" "$scratch/jinja-before"
+        cmp "$render_dir/.gemini/styleguide.md" "$scratch/jinja-gemini-before"
+        grep -Fxq 'A sentence with inline ## stays unchanged.' "$render_dir/AGENTS.md"
+        grep -Fxq '### Existing third-level heading' "$render_dir/AGENTS.md"
+        grep -Fxq '### First heading' "$render_dir/AGENTS.md"
+    done
+    # Invalid canonical input never updates the generated include, so the
+    # source gate and consumer renderer reject it through the same parser.
+    cp "$source_dir/docs/review-guidelines.md" "$scratch/valid-canonical"
+    for malformed in missing duplicate reversed empty; do
+        case "$malformed" in
+        missing) sed '/^<!-- END SHARED REVIEW GUIDELINES -->$/d' "$scratch/valid-canonical" ;;
+        duplicate) cat "$scratch/valid-canonical" "$scratch/valid-canonical" ;;
+        reversed)
+            printf '<!-- END SHARED REVIEW GUIDELINES -->\n'
+            cat "$scratch/valid-canonical"
+            ;;
+        empty) printf '<!-- BEGIN SHARED REVIEW GUIDELINES -->\n<!-- END SHARED REVIEW GUIDELINES -->\n' ;;
+        esac >"$source_dir/docs/review-guidelines.md"
+        cp "$source_dir/docs/review-guidelines.md" "$render_dir/docs/review-guidelines.md"
+        if source_render --write >"$scratch/source-error" 2>&1; then
+            echo "FAIL: accepted $malformed canonical block at source" >&2
+            exit 1
+        fi
+        if bash "$render_dir/scripts/render-review-guidelines.sh" --write >"$scratch/consumer-error" 2>&1; then
+            echo "FAIL: accepted $malformed canonical block in consumer" >&2
+            exit 1
+        fi
+        cmp "$scratch/source-error" "$scratch/consumer-error"
+        grep -Fxq 'Invalid shared review-guidelines markers' "$scratch/source-error"
+        cmp "$source_dir/partials/shared-review-guidelines.md" "$scratch/partial-before"
+    done
+fi
+echo 'review-guidelines drift and re-render tests passed'

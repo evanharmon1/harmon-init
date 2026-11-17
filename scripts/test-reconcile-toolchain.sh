@@ -16,7 +16,6 @@ import subprocess
 import sys
 import tarfile
 import tempfile
-import time
 
 source = Path.cwd()
 base_env = os.environ.copy()
@@ -205,7 +204,7 @@ cp "$tmp/shellcheck-v7.8.9/shellcheck" "$HARMON_BIN/shellcheck"
 echo download >>"$RECONCILE_TEST_LOG"
 case "${RECONCILE_TEST_MODE:-}" in
 fail) exit 22 ;;
-slow) sleep 10; exit 1 ;;
+slow) "$RECONCILE_WAIT" "$RECONCILE_NEVER"; exit 1 ;;
 esac
 while [ "$#" -gt 0 ]; do
     if [ "$1" = -o ]; then cp "$RECONCILE_TEST_ARCHIVE" "$2"; exit; fi
@@ -226,10 +225,30 @@ exec {shlex.quote(real_timeout)} "$@"
 if [ "${{RECONCILE_TEST_MODE:-}}" = setup-failure ]; then exit 7; fi
 exec {shlex.quote(real_task)} "$@"
 ''')
+    # Release files establish ordering. The deadline and owner check only bound
+    # cleanup after a failed/aborted fixture; neither makes an assertion pass.
+    wait_file = stubs / "wait-file"
+    executable(wait_file, f'''#!{sys.executable}
+import os
+from pathlib import Path
+import sys
+import time
+release = Path(sys.argv[1])
+deadline = time.monotonic() + 120
+while not release.exists():
+    if not release.parent.exists() or time.monotonic() >= deadline:
+        raise SystemExit("fixture release was abandoned")
+    try:
+        os.kill(int(os.environ["RECONCILE_OWNER"]), 0)
+    except ProcessLookupError:
+        raise SystemExit("fixture owner exited")
+    time.sleep(0.01)
+''')
     env = base_env | {"CLAUDE_CODE_REMOTE": "true", "HARMON_PREFIX": str(prefix),
                       "PATH": f"{prefix / 'bin'}:{stubs}:{base_env['PATH']}",
                       "RECONCILE_TEST_LOG": str(log), "RECONCILE_TEST_ARCHIVE": str(archive),
-                      "TMPDIR": str(scratch)}
+                      "TMPDIR": str(scratch), "RECONCILE_OWNER": str(os.getpid()),
+                      "RECONCILE_WAIT": str(wait_file), "RECONCILE_NEVER": str(scratch / "never-release")}
 
     # A consumer adds only repo-owned files; both template-owned scripts stay
     # byte-identical while the same registry coverage check sees its new gate.
@@ -637,6 +656,8 @@ printf '%s\\n' "$PATH"
     executable(stubs / "timeout", f'''#!/usr/bin/env bash
 if [ "${{1:-}}" = 90s ]; then
     shift
+    # Start the short waiter only after the held task publishes its PID.
+    "$RECONCILE_WAIT" "$RECONCILE_PID" || exit 1
     exec {shlex.quote(real_timeout)} 0.1s "$@"
 fi
 exec {shlex.quote(real_timeout)} "$@"
@@ -646,24 +667,24 @@ trap 'echo TERM >>"$RECONCILE_SIGNALS"' TERM
 trap 'echo INT >>"$RECONCILE_SIGNALS"' INT
 trap 'echo HUP >>"$RECONCILE_SIGNALS"' HUP
 echo "$$" >"$RECONCILE_PID"
-sleep 1
+"$RECONCILE_WAIT" "$RECONCILE_RELEASE" || exit 1
 echo complete >"$RECONCILE_DONE"
 ''')
     signal_file, pid_file, done_file = (scratch / name for name in ("signals", "setup.pid", "setup.done"))
-    current_env = env | {"RECONCILE_SIGNALS": str(signal_file), "RECONCILE_PID": str(pid_file),
+    release_file = scratch / "setup.release"
+    current_env = env | {"RECONCILE_RELEASE": str(release_file), "RECONCILE_SIGNALS": str(signal_file), "RECONCILE_PID": str(pid_file),
                          "RECONCILE_DONE": str(done_file)}
-    rc, out = run(["bash", "scripts/session-start-remote.sh"], repo, current_env)
     try:
+        rc, out = run(["bash", "scripts/session-start-remote.sh"], repo, current_env)
         assert rc == 0 and "setup:remote still running" in out, out
         os.kill(int(pid_file.read_text()), 0)
         assert not signal_file.exists(), signal_file.read_text()
         assert not done_file.exists(), out
         assert "unreconciled" not in out and "failed" not in out, out
     finally:
-        for _ in range(200):
-            if done_file.exists():
-                break
-            time.sleep(0.01)
+        release_file.touch()
+        rc, cleanup = run([str(wait_file), str(done_file)], env=current_env)
+        assert rc == 0, cleanup
     assert done_file.read_text().strip() == "complete"
     assert not signal_file.exists(), signal_file.read_text()
     print("OK: a SessionStart deadline reports running setup without signals or a fabricated drift/failure cause")
@@ -673,27 +694,35 @@ exec {shlex.quote(real_task)} "$@"
 ''')
     executable(stubs / "timeout", f'#!/usr/bin/env bash\nexec {shlex.quote(real_timeout)} "$@"\n')
 
-    # This child escapes timeout's process group and retains stdout for 8s
-    # after the version command exits. A pipe capture used to wait for it.
-    executable(prefix / "bin/shellcheck", f'''#!/usr/bin/env bash
+    # Hold stdout until AFTER the caller returns. A pipe-based probe capture
+    # deadlocks here and hits run()'s safety timeout instead of passing by luck.
+    for index, (args, mode) in enumerate(((["bash", "scripts/reconcile-toolchain.sh", "--status"], ""),
+                                         (["bash", "scripts/session-start-remote.sh"], "setup-failure"))):
+        probe_release, probe_ready, probe_done = (scratch / f"probe-{index}.{suffix}"
+                                                 for suffix in ("release", "ready", "done"))
+        child_code = ("from pathlib import Path; import subprocess; "
+                      f"Path({str(probe_ready)!r}).touch(); "
+                      f"subprocess.run([{str(wait_file)!r}, {str(probe_release)!r}], check=True); "
+                      f"Path({str(probe_done)!r}).touch()")
+        executable(prefix / "bin/shellcheck", f'''#!/usr/bin/env bash
 exec {shlex.quote(sys.executable)} - <<'PYPROBE'
 import subprocess
 import sys
-subprocess.Popen([sys.executable, "-c", "import time; time.sleep(8)"],
+subprocess.Popen([sys.executable, "-c", {child_code!r}],
                  start_new_session=True, stdin=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+subprocess.run([{str(wait_file)!r}, {str(probe_ready)!r}], check=True)
 print("version: 1.2.3", flush=True)
 PYPROBE
 ''')
-    for args, mode in ((["bash", "scripts/reconcile-toolchain.sh", "--status"], ""),
-                       (["bash", "scripts/session-start-remote.sh"], "setup-failure")):
-        started = time.monotonic()
-        rc, out = run(args, repo, env | {"RECONCILE_TEST_MODE": mode})
-        elapsed = time.monotonic() - started
-        assert rc == 0 and "installed 1.2.3" in out, out
-        # The actual probe budget is 2s + 1s kill grace; allow 0.5s for the
-        # wrapper/metadata probes. Waiting for the 8s child fails decisively.
-        assert elapsed < 3.5, (args, elapsed, out)
-        print(f"OK: stdout-holding descendant cannot extend {args[1]} beyond the probe budget ({elapsed:.2f}s)")
+        try:
+            rc, out = run(args, repo, env | {"RECONCILE_TEST_MODE": mode})
+            assert rc == 0 and "installed 1.2.3" in out, out
+            assert probe_ready.exists() and not probe_done.exists(), out
+        finally:
+            probe_release.touch()
+            rc, cleanup = run([str(wait_file), str(probe_done)], env=env)
+            assert rc == 0, cleanup
+        print(f"OK: stdout-holding descendant cannot block {args[1]} before release")
 
 print("reconcile-toolchain OK")
 PY

@@ -58,6 +58,12 @@ reviews:
         delegate to Taskfile tasks so CI, local hooks, and manual runs
         execute identical commands. Do not duplicate command logic here.
 
+    - path: "**"
+      instructions: >-
+        Read docs/review-guidelines.md for the canonical review guidance.
+        When the PR description has a ## Review scope section naming the
+        standardize profile, apply that profile; otherwise the default guidance applies.
+
 chat:
   # Answer only when mentioned. The dev loop replies in every review thread,
   # and an automatic answer to each reply is a review nobody asked for.
