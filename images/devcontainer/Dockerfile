@@ -50,9 +50,9 @@ ARG OH_MY_PI_VERSION=18.20.0
 # omp-linux-arm64 binaries (not the source archives), check the release notes
 # and provenance, and compute their sha256. scripts/test-oh-my-pi-pin.sh fails
 # fast until the marker below is moved to match OH_MY_PI_VERSION.
-# verified-for: 18.18.6
-ARG OH_MY_PI_SHA256_AMD64=a8059b95de5eaba0b3fb6f7182842d661feae29cb2931cdbeba2986db4751ecb
-ARG OH_MY_PI_SHA256_ARM64=aa9d69380f7ded098bcd3d8023a67edcc8fc3cc0529360a98dededc21cfa101b
+# verified-for: 18.20.0
+ARG OH_MY_PI_SHA256_AMD64=c8694be8c6e6a1f45e3636dd8a8e9eaa78878ad629a89000b403ec5e456d3f89
+ARG OH_MY_PI_SHA256_ARM64=8b5e197db7c58b7ebabf83c6f03597f89bae3a766a84c6481b3a942a125f5e22
 # renovate: datasource=npm depName=opencode-ai
 ARG OPENCODE_VERSION=1.19.5
 # Pinned from Google's per-platform release manifests. Keep the version, build,
