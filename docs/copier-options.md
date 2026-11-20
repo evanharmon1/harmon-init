@@ -25,7 +25,7 @@ recipes in [Regeneration recipes](#regeneration-recipes).
 
 ---
 
-## Asked questions (62)
+## Asked questions (63)
 
 In prompt order, as defined in `copier.yml`. "Asked when" is the question's
 `when:`; when the condition is false the key is **absent** from the repo's
@@ -42,8 +42,9 @@ In prompt order, as defined in `copier.yml`. "Asked when" is the question's
 | 3d | `author_email` | str | `evan@evanharmon.com` | always | Per-repo author identity |
 | 3e | `author_url` | str | `https://evanharmon.com` | always | Per-repo author identity |
 | 3f | `author_git_provider_username` | str | `evanharmon1` | always | **Security-sensitive**: seeds repository owner, code owner and Claude allowlist defaults |
-| 4 | `github_org` | str | `[[ author_git_provider_username ]]` | always | Repo URL, GHCR namespace; **≠ author ⇒ org-only files render** |
-| 4a | `merge_queue_available` | bool | **no** | `github_org != author_git_provider_username` | Opt in to the merge queue rule for public organization repositories or private organizations on Enterprise Cloud; unavailable on private Team repositories |
+| 4 | `github_org` | str | `[[ author_git_provider_username ]]` | always | Repo URL, GHCR namespace; **≠ author ⇒ `task setup:github` adds the bot collaborator**, and seeds the `github_owner_kind` default |
+| 4a | `github_owner_kind` | choice `organization`/`user` | `organization` when `github_org` ≠ author, else `user` | always | Whether the owner is an organization or a personal account: **`organization` ⇒ org-only files and branches render** (native issue types and fields, `project-automation.yml`, the organization ruleset bypass, the merge-queue question). The default is the old inference; answer `user` for a personal account that is not the author's own (#872) |
+| 4b | `merge_queue_available` | bool | **no** | `github_owner_kind == 'organization'` | Opt in to the merge queue rule for public organization repositories or private organizations on Enterprise Cloud; unavailable on private Team repositories |
 | 5 | `code_owner` | str | `[[ author_git_provider_username ]]` | always | `.github/CODEOWNERS` (frozen after first render — see `_skip_if_exists`) |
 | 6 | `claude_authorized_members` | str (CSV) | `[[ author_git_provider_username ]]` | always | allowlist for the `@claude` commands (plan/implement/review) |
 | 7 | `project_type` | choice `general`/`web-astro`/`web-app`/`iac`/`docs` | `general` | always | Taskfile, CI jobs, devcontainer tooling; **seeds 6 asked answers** (+ hidden `use_node`/`use_python`, and it gates `deploy_cloudflare_workers`'s `when:`) |
@@ -214,9 +215,9 @@ false condition renders the name empty and copier drops the path.
 | `project_management == 'github'` | `docs/project-management.md`, `setup-github-project.sh` + its test |
 | `project_type in ['web-astro','web-app']` | `design-language.md`, `tests/a11y.spec.ts` |
 | `project_type == 'web-app'` | `eslint.config.js`, `codegen.sh` |
-| `project_management == 'github' and github_org != author_git_provider_username` | `setup-github-issue-fields.sh` + its test |
+| `project_management == 'github' and github_owner_kind == 'organization'` | `setup-github-issue-fields.sh` + its test |
 | `include_ansible` | `ansible/`, `.ansible-lint` |
-| `github_org != author_git_provider_username` | `project-automation.yml`, `setup-github-issue-types.sh` |
+| `github_owner_kind == 'organization'` | `project-automation.yml`, `setup-github-issue-types.sh` |
 | `deploy_cloudflare_workers` | `wrangler.jsonc`, `deploy-preview.yml` |
 | `use_skills_sync and use_shared_agents` | `.codex/agents/implementer.toml` |
 | `use_release_please and release_content_paths` | `release-content-guard.yml` |

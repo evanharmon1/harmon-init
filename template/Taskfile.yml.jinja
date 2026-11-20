@@ -182,7 +182,7 @@ tasks:
       - task: test:setup-github-project
       - task: test:classification-reconcile
 [% endif %]
-[% if project_management == 'github' and github_org != author_git_provider_username %]
+[% if project_management == 'github' and github_owner_kind == 'organization' %]
       - task: test:setup-github-issue-fields
 [% endif %]
 [% if use_skills_sync %]
@@ -898,6 +898,11 @@ tasks:
     cmds:
       - ./scripts/test-ci-results.sh
 
+[# The bot-collaborator flag below, and setup:github's, stay on the
+   author/owner inequality on purpose: the bot is added as a collaborator
+   whenever the owner is not the author's own account, whatever kind of
+   account the owner is. Organization-only features branch on
+   github_owner_kind instead (#872). #]
   audit:github:
     desc: Read-only GitHub checklist audit (NDJSON; 0 clean, 1 drift, 2 unavailable)
     # Preserve machine-readable stdout under the global grouped output mode.
@@ -1031,7 +1036,7 @@ tasks:
     cmds:
       - env FOREMAN_DEVCONTAINER=bot GH_TOKEN=dummy GITHUB_TOKEN=dummy SYNC_DEVKIT_TAG=v0.48.0 SYNC_DEVKIT_ALLOW_DOWNGRADE=true AGENT_SKILLS_DIR=.agents/elsewhere ./scripts/test-sync-devkit-release.sh
 [% endif %]
-[% if project_management == 'github' and github_org != author_git_provider_username %]
+[% if project_management == 'github' and github_owner_kind == 'organization' %]
 
   test:setup-github-issue-fields:
     desc: Unit-test the org issue-field option reconciliation (stubbed gh, no network)
@@ -1398,7 +1403,7 @@ tasks:
       - ./scripts/setup-github-labels.sh --repo "{{.REPO}}"[% if use_foreman %] --foreman[% endif %][% if use_release_please %] --release-please[% endif %]
 [% endif %]
 [% if project_management == 'github' %]
-[% if github_org != author_git_provider_username %]
+[% if github_owner_kind == 'organization' %]
 
   setup:github-issue-fields:
     desc: >-
@@ -1416,7 +1421,7 @@ tasks:
       - ./scripts/setup-github-issue-fields.sh --org "[[ github_org ]]"
 [% endif %]
 [% endif %]
-[% if github_org != author_git_provider_username %]
+[% if github_owner_kind == 'organization' %]
 
   setup:github-issue-types:
     desc: Idempotently ensure the org's issue types are Bug/Feature/Task/Research (adds any missing; keeps the defaults). Requires `gh` with the admin:org scope.

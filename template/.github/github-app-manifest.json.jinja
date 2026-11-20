@@ -15,7 +15,7 @@
     "statuses": "read",
     "actions": "read",
     "workflows": "write",
-    "metadata": "read"[% if github_org != author_git_provider_username %],
+    "metadata": "read"[% if github_owner_kind == 'organization' %],
     "members": "read",
     "organization_projects": "write"[% endif +%]
   }

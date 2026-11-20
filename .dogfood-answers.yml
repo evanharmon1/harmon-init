@@ -32,6 +32,9 @@ organization_url: https://harmonlab.net
 organization_email: evan@evanharmon.com
 
 github_org: evanharmon1
+# evanharmon1 is a personal account, so the root renders every personal-owner
+# branch (work-type labels on the issue forms, no org issue types or fields).
+github_owner_kind: user
 code_owner: evanharmon1
 claude_authorized_members: evanharmon1,evanharmon1-bot,admiralfraggle,admiralfraggle-bot
 

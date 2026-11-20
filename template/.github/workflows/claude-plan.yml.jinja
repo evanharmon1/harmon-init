@@ -166,7 +166,7 @@ jobs:
           permission-contents: read
           permission-issues: write
           permission-pull-requests: write
-[% if github_org != author_git_provider_username %]
+[% if github_owner_kind == 'organization' %]
       # Separate token for the project-board update only. continue-on-error so a
       # missing organization-projects grant (e.g. a personal fork) skips the
       # status update instead of failing the whole plan job. issues:read lets
@@ -192,7 +192,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           token: ${{ steps.app-token.outputs.token }}
-[% if github_org != author_git_provider_username %]
+[% if github_owner_kind == 'organization' %]
       - name: Set issue status to Shaping
         if: steps.app-token-projects.outputs.token != ''
         continue-on-error: true

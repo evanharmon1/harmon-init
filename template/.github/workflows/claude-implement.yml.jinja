@@ -173,7 +173,7 @@ jobs:
           permission-checks: read
           permission-statuses: read
           permission-actions: read
-[% if github_org != author_git_provider_username %]
+[% if github_owner_kind == 'organization' %]
       # Separate token for the project-board update only — organization-projects
       # to move the Status card plus issues:read to resolve it by issue number.
       # Claude inherits neither, so it is never wired into checkout, git identity,
@@ -226,7 +226,7 @@ jobs:
 [% if use_node %]
           cache: "false"
 [% endif %]
-[% if github_org != author_git_provider_username %]
+[% if github_owner_kind == 'organization' %]
       - name: Set issue status to In Progress
         if: steps.app-token-projects.outputs.token != ''
         continue-on-error: true

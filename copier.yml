@@ -114,11 +114,26 @@ github_org:
   help: "[security-sensitive] GITHUB ORG: GitHub org/user that will own the repo (drives repo URL, GHCR images, workflows)"
   default: "[[ author_git_provider_username ]]"
 
+github_owner_kind:
+  type: str
+  help: "OWNER KIND: Is the owner named in github_org a GitHub organization or a personal (user) account? Organization-only features (native issue types and fields, the organization project board, the organization-admin ruleset bypass, the merge queue) render only for an organization."
+  choices:
+    "organization (a GitHub organization)": organization
+    "user (a personal account)": user
+  # The default is the inference every template condition made before this
+  # answer existed (an owner that differs from the author is an organization),
+  # so a repository that never sets it renders exactly as it did. That
+  # inference is wrong for one supported setup, a personal account that is not
+  # the author's own: answer `user` there. Always asked and always recorded,
+  # with no `when`: Copier honours --data for a question whose `when` is false
+  # but never records it, so a gated answer would revert at the next update.
+  default: "[[ 'organization' if github_org != author_git_provider_username else 'user' ]]"
+
 merge_queue_available:
   type: bool
   help: "MERGE QUEUE: Available for public organization repositories or private organization repositories on GitHub Enterprise Cloud; private Team repositories cannot use it. Enable only when available."
   default: false
-  when: "[[ github_org != author_git_provider_username ]]"
+  when: "[[ github_owner_kind == 'organization' ]]"
 
 code_owner:
   type: str

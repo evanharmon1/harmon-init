@@ -2,7 +2,7 @@ name: Research
 description: Track a research question or investigation
 assignees:
   - [[ author_git_provider_username ]]
-[% if github_org != author_git_provider_username %]
+[% if github_owner_kind == 'organization' %]
 type: Research
 [% endif %]
 [# labels: is gated on the same condition as scripts/setup-github-labels.sh's
@@ -11,7 +11,7 @@ type: Research
    referencing ones nothing guarantees. #]
 [% if project_management == 'github' or use_foreman %]
 labels:
-[% if github_org != author_git_provider_username %]
+[% if github_owner_kind == 'organization' %]
   - needs-triage
 [% else %]
   - research

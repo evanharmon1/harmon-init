@@ -17,7 +17,7 @@
     }
   ],
   "bypass_actors": [
-[% if github_org != author_git_provider_username %]
+[% if github_owner_kind == 'organization' %]
     {
       "actor_id": null,
       "actor_type": "OrganizationAdmin",
