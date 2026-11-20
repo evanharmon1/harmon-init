@@ -591,6 +591,17 @@ Nothing in that depends on which reviewer produced the badge, so no
 provenance rule is needed: an under-labelled finding is caught by adjudicating
 it, wherever it came from.
 
+**Calibration.** In the guidelines file the fenced scale is followed by a few
+short examples of where a P1 badge usually belongs at P2 or P3, and where it
+stays P1, because a finder left to the abstract definitions over-badges P1.
+They sit outside the fence, so the built-in prompt is unchanged. They reach
+the local finder because it sends the whole guidelines file
+(`task test:codex-review` checks that they do), and the PR-side reviewers
+because they read that file or its rendered copies. To calibrate for your own
+repository, add examples to that file's repository-specific section, the one
+it marks as yours to edit. Like any guidelines edit, they govern reviews of
+branches based after the edit merges.
+
 **The mechanism belongs to the integration stage, not to this prose.** How a
 cloud finding is answered depends on the surface it landed on, and `AGENTS.md`
 is the authority — it carries both procedures, because a repository can answer
