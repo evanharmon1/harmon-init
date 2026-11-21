@@ -8,6 +8,19 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [5.20.1](https://github.com/evanharmon1/harmon-init/compare/v5.20.0...v5.20.1) (2026-11-21)
+
+
+### Bug Fixes
+
+* **agent-registry:** record Fable 5.2 as the current Fable version ([#2090](https://github.com/evanharmon1/harmon-init/issues/2090)) ([7f40cd2](https://github.com/evanharmon1/harmon-init/commit/7f40cd27ae293b4ddc136d74d8804712522f3c02))
+* **ci:** skip project-automation on Dependabot-actor pull requests ([#2088](https://github.com/evanharmon1/harmon-init/issues/2088)) ([cce3b74](https://github.com/evanharmon1/harmon-init/commit/cce3b7488f892c5034a73e2a9db4d5799adbdeca))
+* **devcontainer:** skip env files and pipes in the smoke-isolation fixture copy ([#2084](https://github.com/evanharmon1/harmon-init/issues/2084)) ([108d540](https://github.com/evanharmon1/harmon-init/commit/108d540f6a46d5e91025e0d8e183f3481a1ea4f4))
+* **lint:** lint only tracked Markdown by default ([#2085](https://github.com/evanharmon1/harmon-init/issues/2085)) ([fc2d88d](https://github.com/evanharmon1/harmon-init/commit/fc2d88d8dc14bdd35213516b95649972a1216450))
+* **renovate:** migrate dependencyDashboard and bump the validator to 44.239.1 ([#2079](https://github.com/evanharmon1/harmon-init/issues/2079)) ([a4a34fe](https://github.com/evanharmon1/harmon-init/commit/a4a34fedbbf784407396c3b7082cbd300b05100f))
+* **renovate:** migrate dependencyDashboard to its object form with validator 44.239.1 ([a4a34fe](https://github.com/evanharmon1/harmon-init/commit/a4a34fedbbf784407396c3b7082cbd300b05100f))
+* **review:** calibrate the severity scale with P1 and P2 examples ([#2086](https://github.com/evanharmon1/harmon-init/issues/2086)) ([b3515a0](https://github.com/evanharmon1/harmon-init/commit/b3515a0298e9e412eceb698b1e68a3605232696f))
+
 ## [5.20.0](https://github.com/evanharmon1/harmon-init/compare/v5.19.0...v5.20.0) (2026-11-17)
 
 
