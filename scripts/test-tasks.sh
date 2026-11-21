@@ -598,6 +598,9 @@ mkdir -p "${markdown_repo}/.lane"
 git -C "$markdown_repo" init -q
 printf '%s\n' '.lane/' '.lane-report.md' >>"${markdown_repo}/.git/info/exclude"
 printf '%s\n' '# Fixture' >"${markdown_repo}/valid.md"
+# Tracked, so every check below lints at least one file and cannot pass on an
+# empty default set.
+git -C "$markdown_repo" add valid.md
 printf '%s\n' '| A | B |' '| --- | --- |' '| one |' >"${markdown_repo}/.lane-report.md"
 cp "${markdown_repo}/.lane-report.md" "${markdown_repo}/.lane/x.md"
 printf '%s\n' '{"unformatted":true}' >"${markdown_repo}/.lane/x.json"
@@ -610,8 +613,19 @@ git -C "$markdown_repo" add -f .lane/x.md
     cd "$markdown_repo"
     "$repo/scripts/markdownlint.sh" check
 ) || fail "Markdown lint scanned tracked files under .lane/"
-# A non-lane Markdown file must still be checked, including spaces in paths.
+echo "==> Markdown lint reads tracked files only by default"
+# Untracked Markdown is not the repository's: scratch beside the code, and run
+# records a workflow keeps inside the git directory, must not fail the gate.
+mkdir -p "${markdown_repo}/.git/run-records"
+cp "${markdown_repo}/.lane/x.md" "${markdown_repo}/.git/run-records/report.md"
 cp "${markdown_repo}/.lane/x.md" "${markdown_repo}/bad file.md"
+(
+    cd "$markdown_repo"
+    "$repo/scripts/markdownlint.sh" check
+) || fail "Markdown lint scanned untracked Markdown"
+# Once tracked, a non-lane Markdown file must be checked, including spaces in
+# paths. Staging is enough: the default set is the index, not the last commit.
+git -C "$markdown_repo" add "bad file.md"
 out=$(
     cd "$markdown_repo"
     "$repo/scripts/markdownlint.sh" check 2>&1
@@ -621,7 +635,45 @@ case "$out" in
 *'MD056'*) ;;
 *) fail "non-lane Markdown failed for the wrong reason: $out" ;;
 esac
+git -C "$markdown_repo" rm -q --cached "bad file.md"
 rm "${markdown_repo}/bad file.md"
+# The config's `ignores` list still filters the tracked set (CHANGELOG.md in a
+# generated repository), which a literal-path argument would bypass.
+cp "${markdown_repo}/.lane/x.md" "${markdown_repo}/GENERATED.md"
+printf '%s\n' '{ "ignores": ["GENERATED.md"] }' >"${markdown_repo}/.markdownlint-cli2.jsonc"
+git -C "$markdown_repo" add GENERATED.md
+(
+    cd "$markdown_repo"
+    "$repo/scripts/markdownlint.sh" check
+) || fail "Markdown lint ignored the config's ignores list for a tracked file"
+git -C "$markdown_repo" rm -q --cached GENERATED.md
+rm "${markdown_repo}/GENERATED.md" "${markdown_repo}/.markdownlint-cli2.jsonc"
+# A path holding glob characters is linted as itself, not expanded.
+mkdir -p "${markdown_repo}/we[i]rd"
+cp "${markdown_repo}/.lane/x.md" "${markdown_repo}/we[i]rd/b*d.md"
+git -C "$markdown_repo" add "we[i]rd"
+out=$(
+    cd "$markdown_repo"
+    "$repo/scripts/markdownlint.sh" check 2>&1
+) && rc=0 || rc=$?
+case "$rc:$out" in
+1:*'we[i]rd/b*d.md'*'MD056'*) ;;
+*) fail "tracked Markdown with glob characters in its path was not checked: $out" ;;
+esac
+git -C "$markdown_repo" rm -q -r --cached "we[i]rd"
+rm -r "${markdown_repo}/we[i]rd"
+# Without a Git work tree there is no index, so the tree is globbed instead.
+markdown_tree="${test_tmp}/markdown-tree"
+mkdir -p "$markdown_tree"
+cp "${markdown_repo}/.lane/x.md" "${markdown_tree}/bad.md"
+out=$(
+    cd "$markdown_tree"
+    GIT_CEILING_DIRECTORIES="$test_tmp" "$repo/scripts/markdownlint.sh" check 2>&1
+) && rc=0 || rc=$?
+case "$rc:$out" in
+1:*'MD056'*) ;;
+*) fail "Markdown lint outside a Git work tree skipped the tree: $out" ;;
+esac
 
 prettier_ignore="$repo/.prettierignore"
 if [ ! -f "$prettier_ignore" ]; then
