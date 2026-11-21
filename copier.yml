@@ -23,6 +23,7 @@
 _sensitive_questions:
   - author_git_provider_username
   - github_org
+  - github_owner_kind
   - code_owner
   - claude_authorized_members
   - snyk_scan_schedule
@@ -116,7 +117,7 @@ github_org:
 
 github_owner_kind:
   type: str
-  help: "OWNER KIND: Is the owner named in github_org a GitHub organization or a personal (user) account? Organization-only features (native issue types and fields, the organization project board, the organization-admin ruleset bypass, the merge queue) render only for an organization."
+  help: "[security-sensitive] OWNER KIND: Is the owner named in github_org a GitHub organization or a personal (user) account? Organization-only features (native issue types and fields, the organization project board, the organization-admin ruleset bypass, the merge queue) render only for an organization."
   choices:
     "organization (a GitHub organization)": organization
     "user (a personal account)": user
