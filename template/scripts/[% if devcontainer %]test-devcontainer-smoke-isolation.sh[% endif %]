@@ -38,6 +38,41 @@ def config(path):
     return json.loads(clean)
 
 
+# A consumer's working tree can hold untracked local files beside the tracked
+# devcontainer config: the template's .gitignore covers
+# .devcontainer/**/devcontainer.env, and a host that injects those through named
+# pipes leaves FIFOs there. The fixture needs the config, not the host's
+# environment, so the copy skips those env files (they can carry secrets) and
+# anything that is neither a regular file nor a directory, which copytree
+# cannot copy and reports as an error. The filter is by name and file type
+# rather than by `git ls-files`, so it holds in a tree that is not a checkout.
+def tracked_shape_only(directory, names):
+    skipped = []
+    for name in names:
+        entry = Path(directory) / name
+        if name == 'devcontainer.env' or not (entry.is_dir() or entry.is_file()):
+            skipped.append(name)
+    return skipped
+
+
+def copy_devcontainer(source_dir, dest_dir):
+    shutil.copytree(source_dir, dest_dir, ignore=tracked_shape_only)
+
+
+# Runs on both paths below, because the dogfood path never takes the copy.
+probe = work / 'copy-probe'
+(probe / 'source' / 'dev').mkdir(parents=True)
+(probe / 'source' / 'devcontainer.json').write_text('{}\n')
+(probe / 'source' / 'dev' / 'devcontainer.json').write_text('{}\n')
+(probe / 'source' / 'devcontainer.env').write_text('SECRET=1\n')
+os.mkfifo(probe / 'source' / 'dev' / 'devcontainer.env')
+os.mkfifo(probe / 'source' / 'dev' / 'other.pipe')
+copy_devcontainer(probe / 'source', probe / 'dest')
+check(sorted(str(path.relative_to(probe / 'dest'))
+             for path in (probe / 'dest').rglob('*') if not path.is_dir())
+      == ['dev/devcontainer.json', 'devcontainer.json'],
+      'fixture copy took an env file or a non-regular file')
+
 fixture = work / 'workspace'
 if (repo / '.dogfood-answers.yml').exists():
     source = work / 'source'
@@ -55,7 +90,7 @@ if (repo / '.dogfood-answers.yml').exists():
          '-d', 'git_init=false', '-d', 'run_task_install=false',
          str(source), str(fixture)])
 else:
-    shutil.copytree(repo / '.devcontainer', fixture / '.devcontainer')
+    copy_devcontainer(repo / '.devcontainer', fixture / '.devcontainer')
 
 scripts = fixture / 'scripts'
 scripts.mkdir(exist_ok=True)
