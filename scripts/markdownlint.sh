@@ -13,7 +13,8 @@
 # Usage:
 #   markdownlint.sh check [glob-or-file ...]   # read-only gate
 #   markdownlint.sh fix   [glob-or-file ...]   # best-effort auto-fix
-# With no glob/file args, a canonical repo-wide default set is used.
+# With no glob/file args, a canonical repo-wide default set is used: the tracked
+# Markdown files in a Git work tree, or a glob over the tree anywhere else.
 set -euo pipefail
 
 mode="${1:-check}"
@@ -22,23 +23,23 @@ if [ "$#" -gt 0 ]; then shift; fi
 # Canonical excludes: generated output (dist, .task, .terraform, .venv,
 # node_modules), vendored agent assets (.claude/skills, .agents/skills, _bmad),
 # scratch worktrees, spec fixtures, and the template/ tree (jinja markdown —
-# present only in the template repo itself, an inert glob everywhere else).
-default_globs=(
-    '**/*.md'
-    '#template/**'
-    '#.claude/**'
-    '#.agents/skills/**'
-    '#_bmad/**'
-    '#specs/*/**'
-    '#**/node_modules/**'
-    '#dist/**'
-    '#.worktrees/**'
-    '#**/.terraform/**'
-    '#**/.venv/**'
-    '#**/.task/**'
-    '#.foreman/**'
-    '#.lane/**'
-    '#**/.lane-report.md'
+# present only in the template repo itself, an inert pattern everywhere else).
+# One list feeds both default sources below, so they cannot drift apart.
+default_excludes=(
+    'template/**'
+    '.claude/**'
+    '.agents/skills/**'
+    '_bmad/**'
+    'specs/*/**'
+    '**/node_modules/**'
+    'dist/**'
+    '.worktrees/**'
+    '**/.terraform/**'
+    '**/.venv/**'
+    '**/.task/**'
+    '.foreman/**'
+    '.lane/**'
+    '**/.lane-report.md'
 )
 
 # renovate: datasource=npm depName=markdownlint-cli2
@@ -103,8 +104,58 @@ else
     run=(npx --yes "markdownlint-cli2@${MARKDOWNLINT_VERSION}")
 fi
 
+# THE DEFAULT SET IS THE TRACKED FILES. The gate judges what the repository
+# holds, never an agent's or a tool's untracked scratch beside it: a driver's
+# status file, an orchestrator brief, a run record a workflow keeps under .git/.
+# A glob over the working tree reads all of those, so a clean checkout failed
+# `task check` on files nobody could commit. `git ls-files` lists the index, so
+# a file that is staged but not yet committed is still linted; one that is only
+# on disk is not, until it is added. The lefthook hook and `task format` pass
+# their files explicitly and are unaffected.
+#
+# markdownlint-cli2 reads every argument as a glob, and a plain path is a glob
+# that matches itself, so it is handed over as it is: that keeps the `ignores`
+# list in .markdownlint-cli2.jsonc in force (CHANGELOG.md, vendored trees). A
+# path holding glob characters would match something else, and backslash
+# escapes do not survive the tool's own path normalisation, so that path alone
+# takes the `:` prefix, which marks a literal. A literal is not filtered by
+# `ignores`; that is the cost of linting such a file at all, and it applies only
+# to a tracked Markdown file with one of those characters in its name. A tracked
+# file missing from the working tree is skipped: a deletion not yet staged is
+# not a lint failure.
+#
+# Outside a Git work tree (a fresh scaffold before `git init`, an unpacked
+# archive) there is no index to read, so the same excludes apply to a glob.
 if [ "$#" -eq 0 ]; then
-    set -- "${default_globs[@]}"
+    if git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        pathspecs=(':(glob)**/*.md')
+        for exclude in "${default_excludes[@]}"; do
+            pathspecs+=(":(exclude,glob)${exclude}")
+        done
+        tracked_list="$(mktemp)"
+        trap 'rm -f "$tracked_list"' EXIT
+        # Status first, then the listing: a failed read is not an empty answer.
+        if ! git ls-files -z -- "${pathspecs[@]}" >"$tracked_list"; then
+            echo "markdownlint.sh: could not list tracked Markdown files" >&2
+            exit 2
+        fi
+        while IFS= read -r -d '' tracked; do
+            [ -f "$tracked" ] || continue
+            case "$tracked" in
+            *[][*?{}\(\)!+@\|#:\\]*) set -- "$@" ":${tracked}" ;;
+            *) set -- "$@" "$tracked" ;;
+            esac
+        done <"$tracked_list"
+        if [ "$#" -eq 0 ]; then
+            echo "markdownlint.sh: no tracked Markdown files to lint"
+            exit 0
+        fi
+    else
+        set -- '**/*.md'
+        for exclude in "${default_excludes[@]}"; do
+            set -- "$@" "#${exclude}"
+        done
+    fi
 fi
 
 case "$mode" in
