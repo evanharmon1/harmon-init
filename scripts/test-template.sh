@@ -1563,6 +1563,11 @@ full)
     *"pull_request.head.repo.full_name == github.repository"*) ;;
     *) err "project-automation.yml lost the pull_request_review head-repository fork guard" ;;
     esac
+    # GitHub withholds the App key from Dependabot-actor pull_request runs, so
+    # the job must skip them rather than fail minting a token.
+    grep -q "github.actor != 'dependabot\[bot\]'" \
+        .github/workflows/project-automation.yml ||
+        err "project-automation.yml lost the Dependabot-actor pull_request guard"
     # Approving is not a repo permission, so Ready to Merge also needs a trusted reviewer.
     grep -q "github.event.review.author_association" \
         .github/workflows/project-automation.yml ||
