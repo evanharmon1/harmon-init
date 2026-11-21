@@ -50,6 +50,22 @@ Label every finding with a priority, as its first token. Use this scale:
        floor for findings worth stating, not a licence to report nits.
 ```
 
+**Calibration.** Check a P1 against these before applying it. They draw the
+line; they never license inflating a finding to be heard or softening one
+because it does not gate.
+
+- **P2, not P1:** a race or ordering bug that needs two rare events together
+  and moves no money or data. State the trigger and why it is rare.
+- **P2, not P1:** behaviour in code the change touches that already exists at
+  the merge base and that the change does not widen. Say "pre-existing at
+  base" in the finding. In code it does not touch, Scope creep above applies.
+- **P2 or P3, not P1:** documentation wording, or doc/code drift, that would
+  not lead an operator to a wrong action.
+- **P1 stays P1:** a defect the change introduces or widens that moves money
+  twice or in the wrong direction, crosses a tenant boundary, loses data, or
+  leaves drift that would lead an operator to a wrong action — a value that
+  breaks a configuration, an unverified safety claim an operator would rely on.
+
 Only P0 and P1 gate the local loops; P2s are reported in full and carried into
 the pull request description, never withheld for being non-gating; P3s are
 reported as P3s. Use these four labels and no others. **A label is a

@@ -14,7 +14,9 @@
 # the file are read from the review's BASE revision, never the working tree;
 # the unconfigured prompt is held to a golden copy byte for byte; and the
 # severity scale's normative statement in docs/review-guidelines.md and the
-# prompt's copy are compared, so the two sites can never disagree (#964).
+# prompt's copy are compared, so the two sites can never disagree (#964);
+# the calibration examples that follow the scale reach a configured prompt
+# verbatim (#1531).
 # Run via `task test:codex-review`.
 set -euo pipefail
 
@@ -761,6 +763,50 @@ if [ -f "${repo}/docs/review-guidelines.md" ]; then
     fi
 else
     echo "    (docs/review-guidelines.md is absent here; nothing to compare the prompt's scale against)"
+fi
+
+echo "==> the calibration examples after the scale reach the prompt when the guidelines file is configured"
+# The examples (harmon-init#1531) live outside the fenced scale, so the golden
+# built-in prompt above stays byte-identical; they reach Codex only through the
+# guidelines file. Hold the block's shape here, then prove a review of a
+# branch whose base carries this file sends the block verbatim.
+if [ -f "${repo}/docs/review-guidelines.md" ]; then
+    calibration="$(awk '/^\*\*Calibration\.\*\*/ { f = 1 } f && /^- / { l = 1 } f && l && /^$/ { exit } f' "${repo}/docs/review-guidelines.md")"
+    [ -n "$calibration" ] || fail "docs/review-guidelines.md has no **Calibration.** block after the severity scale"
+    # Only the FIRST **Calibration.** line and the first Standardize heading
+    # place the block: a repository's own later calibration paragraph, in its
+    # repository-specific section, must not read as a misplaced block.
+    calibration_in_scale_section() {
+        awk '/^## Severity scale$/ { s = NR } /^\*\*Calibration\.\*\*/ && !c { c = NR } /^## Standardize profile$/ && !p { p = NR }
+            END { exit !(s && c > s && (!p || c < p)) }' "$1"
+    }
+    calibration_in_scale_section "${repo}/docs/review-guidelines.md" ||
+        fail "the calibration block is not inside the Severity scale section"
+    local_calibration="${test_tmp}/guidelines-local-calibration.md"
+    cp "${repo}/docs/review-guidelines.md" "$local_calibration"
+    printf '\n**Calibration.** A repository-specific example added after the invariants.\n' >>"$local_calibration"
+    calibration_in_scale_section "$local_calibration" ||
+        fail "a second **Calibration.** paragraph in the repository-specific section failed the position check"
+    [ "$(grep -Ec '^- \*\*(P2, not P1|P2 or P3, not P1|P1 stays P1):\*\*' <<<"$calibration")" -eq 4 ] ||
+        fail "the calibration block does not carry its four labelled examples: $calibration"
+    grep -Fq 'pre-existing at' <<<"$calibration" || fail "the calibration block lost its pre-existing-at-base example: $calibration"
+    grep -Fq 'is adjudicated as at least a P2' "${repo}/docs/review-guidelines.md" ||
+        fail "docs/review-guidelines.md lost the off-scale floor next to the calibration"
+    cal="${test_tmp}/guidelines-calibration"
+    guidelines_fixture "$cal"
+    cp "${repo}/docs/review-guidelines.md" "$cal/docs/review-guidelines.md"
+    git -C "$cal" add -A
+    git_t -C "$cal" commit -qm 'test: base with the canonical guidelines'
+    git -C "$cal" checkout -qb feature
+    printf 'change\n' >"$cal/src.txt"
+    git -C "$cal" add -A
+    git_t -C "$cal" commit -qm 'test: work'
+    out="$(cd "$cal" && ./scripts/codex-review.sh challenge --base main 2>&1)" ||
+        fail "challenge with the canonical guidelines failed: $out"
+    prompt="$(prompt_of "$out")"
+    [[ "$prompt" == *"$calibration"* ]] || fail "the calibration examples did not reach the challenge prompt verbatim: $out"
+else
+    echo "    (docs/review-guidelines.md is absent here; no calibration examples to carry)"
 fi
 
 echo "==> the standardize scope and disposition match the canonical guidelines"
