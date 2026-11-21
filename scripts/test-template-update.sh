@@ -264,6 +264,16 @@ grep -Fq 'Confirm CodeRabbit has no access' "$gen/docs/CHECKLIST.md" ||
     err "CHECKLIST omitted CodeRabbit App-access confirmation after opt-out"
 ! grep -Fq 'coderabbitai[bot]' "$gen/.github/workflows/claude-review.yml" ||
     err "Claude review retained CodeRabbit trust after use_coderabbit=false update"
+# The owner kind (#872). The legacy answers predate github_owner_kind, so this
+# update must derive `organization` for an owner that differs from the author,
+# record it, and keep the organization-only files. Their template sources were
+# renamed to the new condition; the rendered paths did not change, so nothing
+# may be deleted or left behind.
+grep -qx 'github_owner_kind: organization' "$gen/.copier-answers.yml" ||
+    err "update did not record github_owner_kind: organization for a legacy organization repository"
+for org_only in .github/workflows/project-automation.yml scripts/setup-github-issue-types.sh; do
+    [ -f "$gen/$org_only" ] || err "organization-only $org_only did not survive the update that renamed its template source"
+done
 markers="$(grep -rl '^<<<<<<<' "$gen" 2>/dev/null | grep -v '/\.git/' || true)"
 [ -z "$markers" ] || err "conflict markers left in: $markers"
 rejs="$(find "$gen" -name '*.rej' -not -path '*/.git/*' || true)"

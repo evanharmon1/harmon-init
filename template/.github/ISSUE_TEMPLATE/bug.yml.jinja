@@ -2,7 +2,7 @@ name: Bug
 description: Report something that's broken or behaving incorrectly
 assignees:
   - [[ author_git_provider_username ]]
-[% if github_org != author_git_provider_username %]
+[% if github_owner_kind == 'organization' %]
 type: Bug
 [% endif %]
 [# labels: is gated on the same condition as scripts/setup-github-labels.sh's
@@ -11,7 +11,7 @@ type: Bug
    referencing ones nothing guarantees. #]
 [% if project_management == 'github' or use_foreman %]
 labels:
-[% if github_org != author_git_provider_username %]
+[% if github_owner_kind == 'organization' %]
   - needs-triage
 [% else %]
   - bug

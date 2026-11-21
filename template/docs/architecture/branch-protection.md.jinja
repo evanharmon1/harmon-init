@@ -171,7 +171,7 @@ permissions and nothing more:
 > hold it — it was briefly offered, then withdrawn. Don't go looking for it: CI
 > state comes from **Actions** (workflow runs) and **Commit statuses** (the PR
 > rollup), which is what the tooling actually reads.
-[% if devcontainer and github_org != author_git_provider_username and project_management == 'github' %]
+[% if devcontainer and github_owner_kind == 'organization' and project_management == 'github' %]
 Plus these **organization** permissions:
 
 | Permission | Level | Purpose |
@@ -186,7 +186,7 @@ Plus these **organization** permissions:
 > deliberately so the claim lifecycle can move cards; the cost is that a
 > compromised token can write to every board the org owns, not just this
 > repo's. Revisit the day the org holds a repo the bot should not see.
-[% elif devcontainer and github_org != author_git_provider_username %]
+[% elif devcontainer and github_owner_kind == 'organization' %]
 Plus this **organization** permission:
 
 | Permission | Level | Purpose |
@@ -199,11 +199,11 @@ Plus this **organization** permission:
 > repos deliberately left off that list. Read access to non-secret CI config
 > is low impact and gives agents context they can use.
 [% endif %]
-[% if devcontainer and github_org != author_git_provider_username and project_management == 'github' %]
+[% if devcontainer and github_owner_kind == 'organization' and project_management == 'github' %]
 **Read is cheap; write is the line — and Projects crosses it deliberately.**
 Variables stay read-only for a reason that is not squeamishness — see the
 exclusions below.
-[% elif devcontainer and github_org != author_git_provider_username %]
+[% elif devcontainer and github_owner_kind == 'organization' %]
 **Read is cheap; write is the line.** Variables are read-only above for a
 reason that is not squeamishness — see the exclusions below.
 [% else %]
@@ -316,7 +316,7 @@ This mirrors the importable
           }
         ]
       }
-[% if github_org != author_git_provider_username and merge_queue_available | default(false) %]
+[% if github_owner_kind == 'organization' and merge_queue_available | default(false) %]
     },
     {
       "type": "merge_queue",
@@ -334,7 +334,7 @@ This mirrors the importable
   ],
   "bypass_actors": [
     {
-[% if github_org != author_git_provider_username %]
+[% if github_owner_kind == 'organization' %]
       "actor_id": null,
       "actor_type": "OrganizationAdmin",
       "bypass_mode": "pull_request"
@@ -366,7 +366,7 @@ The ruleset targets branches matching `~DEFAULT_BRANCH` and `refs/heads/main`. T
 > because a solo maintainer otherwise can't merge anything; with multiple human
 > reviewers you can drop the bypass entirely instead.
 
-[% if github_org != author_git_provider_username %]
+[% if github_owner_kind == 'organization' %]
 Only **organization admins** (`OrganizationAdmin`) can bypass these rules, and only in
 `pull_request` mode — they can **merge** a PR that hasn't met every requirement (e.g.
 a stuck check, or their own PR that no one else can review), but they **cannot push
@@ -467,7 +467,7 @@ the aggregate verifies exactly that. This is the same shape as the required
 `verify` and `security` checks, which skip `check`, `repo-guards`[% if project_type == 'web-app' %], `codegen-guard`[% endif %][% if devcontainer %], `devcontainer-permissions`[% endif %], `security`[% if use_node %], `build-test`, `e2e`[% endif %] the same
 way — a green aggregate on a fork PR means "the trust boundary held", not
 "validation passed".
-[% if github_org != author_git_provider_username and merge_queue_available | default(false) %]
+[% if github_owner_kind == 'organization' and merge_queue_available | default(false) %]
 This repository has the merge queue enabled, which closes the gap: a queued
 entry raises a `merge_group` event, which is not a fork event, so `fmt` and
 `validate` run against the trusted merged result before it reaches `main`.
@@ -538,7 +538,7 @@ push trigger.[% endif %] Only a high-consequence repository that deliberately ad
 paid Snyk should consider per-PR scans and whether to make them merge
 requirements. See [security.md](security.md) for the scanner policy.
 
-[% if github_org != author_git_provider_username and merge_queue_available | default(false) %]
+[% if github_owner_kind == 'organization' and merge_queue_available | default(false) %]
 ### `merge_queue`
 
 Merges go through a merge queue (`grouping_strategy: ALLGREEN`): GitHub batches queued

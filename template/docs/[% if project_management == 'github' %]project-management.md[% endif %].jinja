@@ -117,7 +117,7 @@ one, so `task status:gh` can only report the check as **unknown**, and
 `gh auth refresh` cannot help — a token supplied through the environment as
 `GH_TOKEN` cannot be refreshed at all. Grant it **Projects: Read and write** at
 the source (organization permissions, for an org-owned board) instead.
-[% if devcontainer and github_org != author_git_provider_username %]
+[% if devcontainer and github_owner_kind == 'organization' %]
 That matters here because the bot credential this template documents
 ([bot-account.md](guides/bot-account.md)) deliberately grants it **`Projects:
 Read and write`** — so an agent running as the bot **can** move cards through
@@ -289,7 +289,7 @@ issue/PR events are repo-local. That splits automation three ways:
    the repo where the activity happens; a workflow in one repo never sees
    another's PR events. In a polyrepo org the same automation runs in every repo
    whose issues/PRs feed the project.
-[% if github_org != author_git_provider_username %]
+[% if github_owner_kind == 'organization' %]
    [[ project_name ]] ships one as `.github/workflows/project-automation.yml`,
    syncing `Status` from PR/CI events.
 [% endif %]
@@ -309,7 +309,7 @@ What is automated, and by which of the three:
 | Event | Sets `Status` to | Mechanism |
 |---|---|---|
 | Item added to the project | **Inbox** | built-in workflow |
-[% if github_org != author_git_provider_username %]
+[% if github_owner_kind == 'organization' %]
 | PR opened / pushed to / reopened | **Verifying** | Actions (`project-automation.yml`) |
 | Build run completes without failing | **In Review** | Actions (`project-automation.yml`) — any conclusion outside `failure`/`cancelled`/`timed_out`/`action_required` counts, so `skipped`, `neutral` and `startup_failure` advance the card too |
 | Build run concludes `failure`, `cancelled`, `timed_out` or `action_required` | **Verifying** (stays) | Actions (`project-automation.yml`) |
@@ -337,7 +337,7 @@ exists to prevent, and every one of them needs correcting by hand. Left off,
 occasional issue that completes without a merged PR is moved by hand. An issue
 closed as not-planned simply keeps whatever `Status` it had — vestigial, and
 invisible to every open-filtered view.
-[% if github_org != author_git_provider_username %]
+[% if github_owner_kind == 'organization' %]
 
 The Actions half is `.github/workflows/project-automation.yml`. It resolves the
 issue from the PR's `claude/issue-N` branch name or a `Closes` / `Fixes` /
@@ -702,7 +702,7 @@ destroys every value on it, unrecoverably.
      labels are not — a repo that never ran the script has neither label
      family yet.
   2. List every issue with `Domain`/`Layer` set.
-[% if github_org != author_git_provider_username %]
+[% if github_owner_kind == 'organization' %]
      This is an **org issue field** — the value lives on the issue
      independent of project membership, so an issue can carry it without
      belonging to the Project you're migrating from. A single Project's
@@ -773,7 +773,7 @@ destroys every value on it, unrecoverably.
   5. Only then delete each field — Project settings → the field → *Delete
      field* — on a personal account both, on an organization `Size` only.
 
-[% if github_org != author_git_provider_username %]
+[% if github_owner_kind == 'organization' %]
 **Priority and Product are org issue fields**: org-level, defined once, and —
 unlike a project field — the value lives on the **issue**, stays consistent
 across every project the issue belongs to, and shows in the issue timeline.
@@ -798,7 +798,7 @@ lands on the next run.
 | Field | Type | Values | Provisioned by |
 |---|---|---|---|
 | **Status** | project single-select | Inbox, Icebox, Next, Todo, Shaping, Ready, Agent Queue, In Progress, Verifying, In Review, Ready to Merge, Done, Deployed, Accepted | `setup:github-project` |
-[% if github_org != author_git_provider_username %]
+[% if github_owner_kind == 'organization' %]
 | **Priority** | org issue field | GitHub's built-in field, left at its defaults | GitHub |
 | **Product** | org issue field, text | free text | `setup:github-issue-fields` |
 | **Impact** | org issue field, single-select | minimal, low, medium, high, massive | `setup:github-issue-fields` |
@@ -819,7 +819,7 @@ On a personal account `Priority` is the `priority:*` label family, never a
 project field.
 [% endif %]
 
-[% if github_org != author_git_provider_username %]
+[% if github_owner_kind == 'organization' %]
 ## Issue types → commit types → releases
 
 The **issue type** (Bug / Feature / Task / Research) is an org-level, largely
