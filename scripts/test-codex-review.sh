@@ -773,9 +773,20 @@ echo "==> the calibration examples after the scale reach the prompt when the gui
 if [ -f "${repo}/docs/review-guidelines.md" ]; then
     calibration="$(awk '/^\*\*Calibration\.\*\*/ { f = 1 } f && /^- / { l = 1 } f && l && /^$/ { exit } f' "${repo}/docs/review-guidelines.md")"
     [ -n "$calibration" ] || fail "docs/review-guidelines.md has no **Calibration.** block after the severity scale"
-    awk '/^## Severity scale$/ { s = NR } /^\*\*Calibration\.\*\*/ { c = NR } /^## Standardize profile$/ { p = NR }
-        END { exit !(s && c > s && (!p || c < p)) }' "${repo}/docs/review-guidelines.md" ||
+    # Only the FIRST **Calibration.** line and the first Standardize heading
+    # place the block: a repository's own later calibration paragraph, in its
+    # repository-specific section, must not read as a misplaced block.
+    calibration_in_scale_section() {
+        awk '/^## Severity scale$/ { s = NR } /^\*\*Calibration\.\*\*/ && !c { c = NR } /^## Standardize profile$/ && !p { p = NR }
+            END { exit !(s && c > s && (!p || c < p)) }' "$1"
+    }
+    calibration_in_scale_section "${repo}/docs/review-guidelines.md" ||
         fail "the calibration block is not inside the Severity scale section"
+    local_calibration="${test_tmp}/guidelines-local-calibration.md"
+    cp "${repo}/docs/review-guidelines.md" "$local_calibration"
+    printf '\n**Calibration.** A repository-specific example added after the invariants.\n' >>"$local_calibration"
+    calibration_in_scale_section "$local_calibration" ||
+        fail "a second **Calibration.** paragraph in the repository-specific section failed the position check"
     [ "$(grep -Ec '^- \*\*(P2, not P1|P2 or P3, not P1|P1 stays P1):\*\*' <<<"$calibration")" -eq 4 ] ||
         fail "the calibration block does not carry its four labelled examples: $calibration"
     grep -Fq 'pre-existing at' <<<"$calibration" || fail "the calibration block lost its pre-existing-at-base example: $calibration"

@@ -69,10 +69,10 @@ because it does not gate.
   base" in the finding. In code it does not touch, Scope creep above applies.
 - **P2 or P3, not P1:** documentation wording, or doc/code drift, that would
   not lead an operator to a wrong action.
-- **P1 stays P1:** money moving twice or in the wrong direction, a tenant
-  boundary crossed, data lost, or drift that would lead an operator to a wrong
-  action — a value that breaks a configuration, an unverified safety claim an
-  operator would rely on.
+- **P1 stays P1:** a defect the change introduces or widens that moves money
+  twice or in the wrong direction, crosses a tenant boundary, loses data, or
+  leaves drift that would lead an operator to a wrong action — a value that
+  breaks a configuration, an unverified safety claim an operator would rely on.
 
 Only P0 and P1 gate the local loops; P2s are reported in full and carried into
 the pull request description, never withheld for being non-gating; P3s are

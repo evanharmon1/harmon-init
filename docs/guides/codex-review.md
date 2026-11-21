@@ -597,10 +597,15 @@ stays P1, because a finder left to the abstract definitions over-badges P1.
 They sit outside the fence, so the built-in prompt is unchanged. They reach
 the local finder because it sends the whole guidelines file
 (`task test:codex-review` checks that they do), and the PR-side reviewers
-because they read that file or its rendered copies. To calibrate for your own
-repository, add examples to that file's repository-specific section, the one
-it marks as yours to edit. Like any guidelines edit, they govern reviews of
-branches based after the edit merges.
+because they read that file or the rendered copy of its shared block. To
+calibrate for your own repository, add examples to the repository-specific
+part of that file, after the invariants list and under their own label (a
+**Repository calibration.** paragraph, say), not as invariants: the file
+treats every invariant violation as at least a P1. Only the shared block is
+rendered into `AGENTS.md` and the other reviewer copies, so your own examples
+reach the reviewers that read the guidelines file itself, the local finder
+included, and not those copies. Like any guidelines edit, they govern reviews
+of branches based after the edit merges.
 
 **The mechanism belongs to the integration stage, not to this prose.** How a
 cloud finding is answered depends on the surface it landed on, and `AGENTS.md`
