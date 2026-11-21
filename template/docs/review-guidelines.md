@@ -141,8 +141,9 @@ review workflow is enabled.
   The Claude review reads at the base commit GitHub records for the pull
   request (`base.sha`); the local finder reads at the merge base. Accepted: for
   a pull request into the default branch both commits are on that protected
-  branch, so neither is under the pull request's control, and at worst the two
-  read adjacent versions of the same rules. No action is needed.
+  branch, so neither is under the pull request's control, but a branch that
+  falls behind can have the two read different versions of the rules. Catching
+  the branch up with its base brings them back together.
 - **The Claude review needs a runner that can start containers.** Its GitHub
   tools run in a container. Accepted: GitHub-hosted runners support it. Confirm
   container support before pointing the review at an isolated runner pool.
