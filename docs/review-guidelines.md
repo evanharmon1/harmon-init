@@ -119,6 +119,34 @@ it there in the same commit. The calibration examples are not part of that
 copy: they reach the finder through this file. The adjudication protocol,
 loop caps and findings record follow the enabled review policy in `AGENTS.md`.
 
+## Known limits
+
+Accepted gaps in how reviewers read these guidelines, each with its reason and
+what a maintainer does about it. The last three apply only where the Claude
+review workflow is enabled.
+
+- **A pull request can edit the shared sections and their rendered copies
+  together.** Reviewers that load agent instruction files or a styleguide read
+  those copies from the pull request head, and the drift guard compares head
+  with head. Accepted: the rest of those files is head-resident too, the local
+  finder and the Claude review read this file at the base revision, and the
+  edit is in the diff a human reviews before merge. Review any change to the
+  shared sections, or to their copies, as a change to review policy.
+- **The pull request that adds this file cannot get a completed Claude
+  review.** Its base has no copy to read, so the review reports itself
+  incomplete and never posts a completion marker. Accepted: it happens once per
+  repository, and a bootstrap that read the file from the pull request would
+  reopen the first limit. Rely on the other reviewers for that pull request.
+- **The Claude review and the local finder can read different base commits.**
+  The Claude review reads at the base commit GitHub records for the pull
+  request (`base.sha`); the local finder reads at the merge base. Accepted: for
+  a pull request into the default branch both commits are on that protected
+  branch, so neither is under the pull request's control, and at worst the two
+  read adjacent versions of the same rules. No action is needed.
+- **The Claude review needs a runner that can start containers.** Its GitHub
+  tools run in a container. Accepted: GitHub-hosted runners support it. Confirm
+  container support before pointing the review at an isolated runner pool.
+
 ## Repository-specific invariants
 
 Rules every change to this repository must keep that a reviewer could not infer
