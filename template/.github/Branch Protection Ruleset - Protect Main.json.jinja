@@ -74,7 +74,7 @@
           }
         ]
       }
-[% if github_org != author_git_provider_username and merge_queue_available | default(false) %]
+[% if github_owner_kind == 'organization' and merge_queue_available | default(false) %]
     },
     {
       "type": "merge_queue",
@@ -92,7 +92,7 @@
   ],
   "bypass_actors": [
     {
-[% if github_org != author_git_provider_username %]
+[% if github_owner_kind == 'organization' %]
       "actor_id": null,
       "actor_type": "OrganizationAdmin",
       "bypass_mode": "pull_request"

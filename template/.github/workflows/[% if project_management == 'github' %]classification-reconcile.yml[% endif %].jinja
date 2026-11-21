@@ -33,7 +33,7 @@ run-name: >-
 
 on:
   schedule:
-[% if github_org != author_git_provider_username %]
+[% if github_owner_kind == 'organization' %]
     # Monthly (the 1st): an organization repository. Team-plan minutes are
     # shared across the organization and most of its repositories are
     # private; the opt-in daily organization-level walk is in ci-cd.md.

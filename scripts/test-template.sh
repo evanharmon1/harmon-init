@@ -168,29 +168,45 @@ if ! have copier; then
 fi
 
 # Exercise the owner/answer combinations independently of the large rendered
-# profiles. The fixture contains the real copier.yml and only the Creation
-# ruleset template, so Copier renders precisely the file whose whitespace is
+# profiles. The fixture contains the real copier.yml, the two ruleset
+# templates and the four issue forms, so Copier renders precisely the files
 # under test. It intentionally has no Git metadata: `--vcs-ref=HEAD` is used
 # only for Git-backed sources, where it prevents rendering a stale tag.
+#
+# Three owner cases, because the owner KIND and the author/owner inequality
+# are separate facts (#872): `user` (the author's own account), `org` (an
+# organization, left to the github_owner_kind default so the derivation an
+# existing repository relies on is what renders), and `user-other` (a personal
+# account that is not the author's, which only an explicit
+# github_owner_kind=user renders correctly).
 run_ruleset_matrix() {
     local matrix_source="$job_tmp/ruleset-matrix-source"
     local owner_case github_org answer_case render_dir ruleset_file baseline_file golden_file actual_block
-    mkdir -p "$matrix_source/template/.github"
+    local form_triple form form_rest form_type form_label form_file
+    local issue_fields_script issue_fields_template
+    mkdir -p "$matrix_source/template/.github/ISSUE_TEMPLATE" "$matrix_source/template/scripts"
     cp "$repo_root/copier.yml" "$matrix_source/copier.yml"
     cp "$repo_root/template/.github/[% if use_foreman %]Tag Protection Ruleset - Version Tag Creation.json[% endif %].jinja" \
         "$matrix_source/template/.github/[% if use_foreman %]Tag Protection Ruleset - Version Tag Creation.json[% endif %].jinja"
     cp "$repo_root/template/.github/Branch Protection Ruleset - Protect Main.json.jinja" "$matrix_source/template/.github/"
+    for form in bug feature task research; do
+        cp "$repo_root/template/.github/ISSUE_TEMPLATE/$form.yml.jinja" "$matrix_source/template/.github/ISSUE_TEMPLATE/"
+    done
+    for issue_fields_script in setup-github-issue-fields.sh test-setup-github-issue-fields.sh; do
+        issue_fields_template="[% if project_management == 'github' and github_owner_kind == 'organization' %]${issue_fields_script}[% endif %]"
+        cp "$repo_root/template/scripts/$issue_fields_template" "$matrix_source/template/scripts/$issue_fields_template"
+    done
 
-    for owner_case in user org; do
-        if [ "$owner_case" = user ]; then
-            github_org=evanharmon1
-        else
-            github_org=test-org
-        fi
+    for owner_case in user org user-other; do
+        case "$owner_case" in
+        user) github_org=evanharmon1 ;;
+        org) github_org=test-org ;;
+        user-other) github_org=someone-else ;;
+        esac
         baseline_file=""
         golden_file="$job_tmp/ruleset-$owner_case-bypass.golden"
         case "$owner_case" in
-        user)
+        user | user-other)
             cat >"$golden_file" <<'GOLDEN'
   "bypass_actors": [
     {
@@ -224,7 +240,13 @@ GOLDEN
                 --data "author_git_provider_username=evanharmon1"
                 --data "github_org=$github_org"
                 --data use_foreman=true
+                --data project_management=github
             )
+            # Only the personal account that is not the author's states its
+            # kind; `user` and `org` render the default.
+            if [ "$owner_case" = user-other ]; then
+                copier_args+=(--data github_owner_kind=user)
+            fi
             case "$answer_case" in
             empty) copier_args+=(--data ci_app_integration_id=) ;;
             set) copier_args+=(--data ci_app_integration_id=4109947 --data merge_queue_available=true) ;;
@@ -244,6 +266,58 @@ GOLDEN
                 err "merge_queue rule count mismatch for $owner_case/$answer_case"
                 return 1
             fi
+
+            # Native issue types exist only on organizations, and the
+            # work-type label is the personal-owner carrier: exactly one of
+            # the two per form, chosen by the owner kind (#872).
+            for form_triple in "bug:Bug:bug" "feature:Feature:feature" "task:Task:task" "research:Research:research"; do
+                form="${form_triple%%:*}"
+                form_rest="${form_triple#*:}"
+                form_type="${form_rest%%:*}"
+                form_label="${form_rest#*:}"
+                form_file="$render_dir/.github/ISSUE_TEMPLATE/$form.yml"
+                [ -f "$form_file" ] || {
+                    err "$form.yml missing from the $owner_case/$answer_case matrix render"
+                    return 1
+                }
+                grep -qx '  - needs-triage' "$form_file" || {
+                    err "$form.yml lacks needs-triage for $owner_case/$answer_case"
+                    return 1
+                }
+                if [ "$owner_case" = org ]; then
+                    grep -qx "type: $form_type" "$form_file" || {
+                        err "$form.yml lacks 'type: $form_type' for an organization owner ($answer_case)"
+                        return 1
+                    }
+                    if grep -qx "  - $form_label" "$form_file"; then
+                        err "$form.yml applies the $form_label work-type label for an organization owner ($answer_case)"
+                        return 1
+                    fi
+                else
+                    if grep -q '^type:' "$form_file"; then
+                        err "$form.yml has a type: key for the personal owner case $owner_case/$answer_case (organization-only)"
+                        return 1
+                    fi
+                    grep -qx "  - $form_label" "$form_file" || {
+                        err "$form.yml lacks the $form_label work-type label for the personal owner case $owner_case/$answer_case"
+                        return 1
+                    }
+                fi
+            done
+
+            # Issue fields exist only on organizations, so the setup script and
+            # its test render for the organization owner alone (#872).
+            for issue_fields_script in setup-github-issue-fields.sh test-setup-github-issue-fields.sh; do
+                if [ "$owner_case" = org ]; then
+                    [ -f "$render_dir/scripts/$issue_fields_script" ] || {
+                        err "scripts/$issue_fields_script missing for an organization owner ($answer_case)"
+                        return 1
+                    }
+                elif [ -e "$render_dir/scripts/$issue_fields_script" ]; then
+                    err "organization-only scripts/$issue_fields_script rendered for the personal owner case $owner_case/$answer_case"
+                    return 1
+                fi
+            done
 
             ruleset_file="$render_dir/.github/Tag Protection Ruleset - Version Tag Creation.json"
             [ -f "$ruleset_file" ] || {
@@ -329,6 +403,24 @@ GOLDEN
         fi
     done
 
+    # The templates compare github_owner_kind to the literal `organization`,
+    # so a near-miss (`org`, `Organization`) must be refused, never rendered
+    # as a personal owner.
+    local invalid_kind invalid_kind_log
+    for invalid_kind in org Organization; do
+        invalid_kind_log="$job_tmp/ruleset-invalid-owner-kind-$invalid_kind.log"
+        if copier copy "${invalid_args[@]}" --data github_org=test-org \
+            --data "github_owner_kind=$invalid_kind" \
+            "$matrix_source" "$job_tmp/ruleset-invalid-owner-kind-$invalid_kind" >"$invalid_kind_log" 2>&1; then
+            err "github_owner_kind '$invalid_kind' was accepted (only organization and user are choices)"
+            return 1
+        elif ! grep -Fq "Invalid choice for 'github_owner_kind'" "$invalid_kind_log"; then
+            cat "$invalid_kind_log" >&2
+            err "invalid github_owner_kind '$invalid_kind' failed without the expected choice error"
+            return 1
+        fi
+    done
+
     local trimmed_dest="$job_tmp/ruleset-trimmed-id"
     local trimmed_file="$trimmed_dest/.github/Tag Protection Ruleset - Version Tag Creation.json"
     local trimmed_args=(
@@ -398,6 +490,13 @@ web)
     ;;
 webapp)
     data_args+=(--data project_type=web-app)
+    # A PERSONAL owner that is not the author's own account (#872): the one
+    # setup the author/owner inequality misreads as an organization. Every
+    # other personal profile owns the repo as the author, and `full` is the
+    # organization, so this is the only full render where github_owner_kind
+    # and the inequality disagree; § 9d-owner-kind asserts which one each
+    # site follows.
+    data_args+=(--data github_org=someone-else --data github_owner_kind=user)
     ;;
 iac)
     data_args+=(--data project_type=iac)
@@ -2109,7 +2208,7 @@ for triple in "bug.yml:Bug:bug" "feature.yml:Feature:feature" "task.yml:Task:tas
     grep -q '^assignees:' ".github/ISSUE_TEMPLATE/$form" || err "$form is missing the default assignee"
     grep -qx '      label: Problem' ".github/ISSUE_TEMPLATE/$form" || err "$form's opening field is not labeled 'Problem' (authoring-standard skeleton)"
     case "$profile" in
-    full) # org repo (github_org != author) → the form declares the org issue type
+    full) # org repo (github_owner_kind=organization) → the form declares the org issue type
         grep -qx "type: ${org_type}" ".github/ISSUE_TEMPLATE/$form" || err "$form missing 'type: ${org_type}' on an org repo"
         if [ "$labels_provisioned" = 1 ]; then
             grep -qx '  - needs-triage' ".github/ISSUE_TEMPLATE/$form" || err "$form missing needs-triage on an org repo with labels provisioned"
@@ -2129,6 +2228,49 @@ for triple in "bug.yml:Bug:bug" "feature.yml:Feature:feature" "task.yml:Task:tas
         ;;
     esac
 done
+
+# ── 9d-owner-kind. github_owner_kind — not the author/owner inequality —
+#                  selects the organization-only output (#872). `full` and
+#                  the author-owned profiles never state the answer, so they
+#                  also prove the default still derives what the inequality
+#                  used to: an existing repository renders unchanged. ──
+case "$profile" in
+webapp) # a personal owner that is not the author: github_owner_kind=user
+    grep -qx 'github_org: someone-else' .copier-answers.yml ||
+        err ".copier-answers.yml does not record the personal owner that differs from the author"
+    grep -qx 'github_owner_kind: user' .copier-answers.yml ||
+        err ".copier-answers.yml does not record github_owner_kind: user"
+    # webapp renders project_management=none, so the issue-field scripts are
+    # absent here whatever the owner kind; run_ruleset_matrix covers that guard.
+    for org_only in .github/workflows/project-automation.yml scripts/setup-github-issue-types.sh \
+        scripts/setup-github-issue-fields.sh scripts/test-setup-github-issue-fields.sh; do
+        [ ! -e "$org_only" ] || err "organization-only $org_only rendered for a personal owner that differs from the author"
+    done
+    jq -e '.bypass_actors == [{"actor_id": 5, "actor_type": "RepositoryRole", "bypass_mode": "pull_request"}]' \
+        '.github/Branch Protection Ruleset - Protect Main.json' >/dev/null ||
+        err "Protect Main does not use the repository-admin bypass for a personal owner (OrganizationAdmin does not exist there)"
+    ! grep -Eq '"(members|organization_projects)"' .github/github-app-manifest.json ||
+        err "github-app-manifest.json requests organization permissions for a personal owner"
+    ! grep -q 'app-token-projects' .github/workflows/claude-plan.yml .github/workflows/claude-implement.yml ||
+        err "the claude workflows mint the organization-projects token for a personal owner"
+    ! grep -Eq '^  setup:github-issue-(types|fields):' Taskfile.yml ||
+        err "Taskfile.yml renders the organization issue-type/field setup tasks for a personal owner"
+    # Deliberately still on the inequality: the bot is added as a collaborator
+    # whenever the owner is not the author's own account, whatever its kind.
+    [ "$(grep -c -- '--bot-collaborator "evanharmon1-bot"' Taskfile.yml)" = 2 ] ||
+        err "Taskfile.yml lost the bot-collaborator flag for an owner that is not the author (setup:github and audit:github)"
+    ;;
+full) # an organization, from the default alone
+    grep -qx 'github_owner_kind: organization' .copier-answers.yml ||
+        err "github_owner_kind did not default to organization for an owner that differs from the author"
+    ;;
+*) # the author's own account, from the default alone
+    grep -qx 'github_owner_kind: user' .copier-answers.yml ||
+        err "github_owner_kind did not default to user for the author's own account"
+    ! grep -q -- '--bot-collaborator' Taskfile.yml ||
+        err "Taskfile.yml passes the bot-collaborator flag for the author's own account"
+    ;;
+esac
 
 # ── 9d-titles. No issue form sets a title: prefix key — titles are free-form,
 #              structured-data-free statements (#852) ──

@@ -77,8 +77,8 @@ seat.
 ### 2. Repo access — the collaborator grant
 
 This repo lives under the personal account `evanharmon1`,
-so `task setup:github` does **not** add the bot — that step only runs for org
-repos. Add it by hand if the bot needs access:
+so `task setup:github` does **not** add the bot: it adds the bot only when the
+repository's owner is not your own account. Add it by hand if the bot needs access:
 
 ```bash
 gh api repos/evanharmon1/<repo>/collaborators/evanharmon1-bot \
