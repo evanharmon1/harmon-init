@@ -96,6 +96,9 @@ the compatibility reason in the rule's `description`.
 
 <!-- reconcile-id: template-automated-settings-run-task-setup-gi-009 -->
 
+[# The bot-collaborator clause below stays on the author/owner inequality on
+   purpose: `task setup:github` adds the bot whenever the owner is not the
+   author's own account, whatever kind of account the owner is (#872). #]
 **Automated settings** — run `task setup:github` (idempotent, safe to
 re-run): sets `delete_branch_on_merge: true`, `allow_update_branch: true`,
 and `allow_auto_merge: false`, verifies those settings, and enables **Dependabot alerts** and **private vulnerability
@@ -129,7 +132,7 @@ Dependabot owns advisory alerts.
 - [ ] **[human-only]** Probe: Read the live repository rulesets and required checks through the GitHub API. Write: none. <!-- reconcile-id: template-import-the-branch-ruleset-see-archit-010 --> Import the branch ruleset (see [architecture/branch-protection.md](architecture/branch-protection.md)) — do this once `build.yml`[% if use_codeql %], `codeql.yml`[% endif %][% if include_terraform %], `terraform.yml`[% endif %][% if devcontainer %], `devcontainer-build.yml`[% endif %] are on `main` so the required `verify`/`security`[% if use_codeql %]/`codeql-verify`[% endif %][% if include_terraform %]/`terraform-verify`[% endif %][% if devcontainer %]/`devcontainer-verify`[% endif %] checks resolve. **Use the UI import:** Settings → Rules → Rulesets → **New ruleset ▸ Import a ruleset** → select `.github/Branch Protection Ruleset - Protect Main.json`. (Prefer the UI over `gh api … rulesets`: the API `POST` is not idempotent — re-running creates a duplicate ruleset — and currently rejects the `merge_queue` rule. Check the imported ruleset for rules GitHub omitted as unavailable. To later change the ruleset, edit the existing one in the UI rather than re-importing.)[% if devcontainer %] **Import it before provisioning the bot and agent PATs below:** those postures carry no local merge guard, so this ruleset's code-owner approval and required checks are the only thing between their PAT and an unreviewed merge into `main`.[% endif +%]
 [% if devcontainer %]
 - [ ] **[human-only]** Probe: Read the existing token coverage and the latest authenticated GitHub workflow result without exposing token values. Write: none. <!-- reconcile-id: template-bot-pat-the-agent-s-gh-token-if-a-fi-011 --> **Bot PAT** — the agent's `GH_TOKEN`. If a fine-grained PAT already covers
-      [% if github_org != author_git_provider_username %]`[[ github_org ]]`[% else %]`[[ author_git_provider_username ]]`[% endif %],
+`[[ github_org ]]`,
       just add this repo to its **selected repositories**; a token is scoped to one
       resource owner, so a **new owner needs a new PAT**. Both layers are required —
       the collaborator grant above sets the ceiling, the PAT's repo list reaches it.
@@ -425,7 +428,7 @@ GitHub Project: run `task setup:github-project` (needs
 `gh auth refresh -s project`) to create the owner's default project (titled
 `[[ github_org ]] Project`) and idempotently sync its `Status` pipeline —
 see [project-management.md](project-management.md).
-[% if github_org != author_git_provider_username %]
+[% if github_owner_kind == 'organization' %]
 It also writes the project id to the `ORG_PROJECT_ID` org variable that
 project-automation.yml and the claude-* workflows read (they fall back to
 the project title).
@@ -463,7 +466,7 @@ and never touch, reorder, or delete the options you added.
 [% endif %]
 
 - [ ] **[human-only]** Probe: Read the project field list and compare it with the documented migration state. Write: none. <!-- reconcile-id: template-upgrading-from-a-release-before-harm-041 --> **Upgrading from a release before harmon-init#875?**
-[% if github_org != author_git_provider_username %]
+[% if github_owner_kind == 'organization' %]
       Check the org's issue-field settings (**Settings → Planning → Issue
       fields**), not just this repo's board — `Domain`/`Layer` from an
       earlier release are org issue fields, so they can survive on issues
@@ -652,7 +655,7 @@ exit alone; this is a guarded best-effort operation at that API boundary.
       needs a static project number). See
       [project-management.md](project-management.md).
 [% endif %]
-[% if github_org != author_git_provider_username %]
+[% if github_owner_kind == 'organization' %]
 
 <!-- reconcile-id: template-org-issue-types-run-task-setup-githu-051 -->
 

@@ -65,7 +65,8 @@ marker = "[security-sensitive]"
 # Includes every legacy confirm-answers.sh key present in copier.yml;
 # setup_github/setup_labels/setup_branch_protection are not questions here.
 required = set("""
-author_git_provider_username github_org code_owner claude_authorized_members
+author_git_provider_username github_org github_owner_kind code_owner
+claude_authorized_members
 snyk_scan_schedule ci_runner ci_runner_labels
 use_release_please use_skills_sync use_shared_agents
 use_foreman ci_app_integration_id foreman_additional_trusted_actors

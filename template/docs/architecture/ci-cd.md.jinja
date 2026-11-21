@@ -229,7 +229,7 @@ No deployment or measurement is performed on this path.
 [% if use_release_please %]
 - `release.yml` — release-please maintains the rolling release PR.
 [% endif %]
-[% if github_org != author_git_provider_username %]
+[% if github_owner_kind == 'organization' %]
 - `project-automation.yml` — syncs the org Project board status from PR/CI events.
 [% endif %]
 [% if use_release_please and project_management == 'github' %]
