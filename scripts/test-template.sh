@@ -183,13 +183,18 @@ run_ruleset_matrix() {
     local matrix_source="$job_tmp/ruleset-matrix-source"
     local owner_case github_org answer_case render_dir ruleset_file baseline_file golden_file actual_block
     local form_triple form form_rest form_type form_label form_file
-    mkdir -p "$matrix_source/template/.github/ISSUE_TEMPLATE"
+    local issue_fields_script issue_fields_template
+    mkdir -p "$matrix_source/template/.github/ISSUE_TEMPLATE" "$matrix_source/template/scripts"
     cp "$repo_root/copier.yml" "$matrix_source/copier.yml"
     cp "$repo_root/template/.github/[% if use_foreman %]Tag Protection Ruleset - Version Tag Creation.json[% endif %].jinja" \
         "$matrix_source/template/.github/[% if use_foreman %]Tag Protection Ruleset - Version Tag Creation.json[% endif %].jinja"
     cp "$repo_root/template/.github/Branch Protection Ruleset - Protect Main.json.jinja" "$matrix_source/template/.github/"
     for form in bug feature task research; do
         cp "$repo_root/template/.github/ISSUE_TEMPLATE/$form.yml.jinja" "$matrix_source/template/.github/ISSUE_TEMPLATE/"
+    done
+    for issue_fields_script in setup-github-issue-fields.sh test-setup-github-issue-fields.sh; do
+        issue_fields_template="[% if project_management == 'github' and github_owner_kind == 'organization' %]${issue_fields_script}[% endif %]"
+        cp "$repo_root/template/scripts/$issue_fields_template" "$matrix_source/template/scripts/$issue_fields_template"
     done
 
     for owner_case in user org user-other; do
@@ -297,6 +302,20 @@ GOLDEN
                         err "$form.yml lacks the $form_label work-type label for the personal owner case $owner_case/$answer_case"
                         return 1
                     }
+                fi
+            done
+
+            # Issue fields exist only on organizations, so the setup script and
+            # its test render for the organization owner alone (#872).
+            for issue_fields_script in setup-github-issue-fields.sh test-setup-github-issue-fields.sh; do
+                if [ "$owner_case" = org ]; then
+                    [ -f "$render_dir/scripts/$issue_fields_script" ] || {
+                        err "scripts/$issue_fields_script missing for an organization owner ($answer_case)"
+                        return 1
+                    }
+                elif [ -e "$render_dir/scripts/$issue_fields_script" ]; then
+                    err "organization-only scripts/$issue_fields_script rendered for the personal owner case $owner_case/$answer_case"
+                    return 1
                 fi
             done
 
@@ -2216,6 +2235,8 @@ webapp) # a personal owner that is not the author: github_owner_kind=user
         err ".copier-answers.yml does not record the personal owner that differs from the author"
     grep -qx 'github_owner_kind: user' .copier-answers.yml ||
         err ".copier-answers.yml does not record github_owner_kind: user"
+    # webapp renders project_management=none, so the issue-field scripts are
+    # absent here whatever the owner kind; run_ruleset_matrix covers that guard.
     for org_only in .github/workflows/project-automation.yml scripts/setup-github-issue-types.sh \
         scripts/setup-github-issue-fields.sh scripts/test-setup-github-issue-fields.sh; do
         [ ! -e "$org_only" ] || err "organization-only $org_only rendered for a personal owner that differs from the author"
