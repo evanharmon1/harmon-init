@@ -250,6 +250,40 @@ else
     hint_stale_worktree
 fi
 
+render_owner_kind() {
+    local org="$1" kind="$2" out="$3"
+    rm -rf "$out"
+    copier copy --vcs-ref=HEAD --trust --defaults --skip-tasks \
+        --data project_name="Validator Test" \
+        --data project_slug="validator-test" \
+        --data author_git_provider_username=validator-author \
+        --data "github_org=$org" \
+        --data "github_owner_kind=$kind" \
+        . "$out" >"$work/render.log" 2>&1
+}
+
+echo "==> github_owner_kind refuses organization for the author's own account"
+if render_owner_kind validator-author organization "$work/bad-owner-kind"; then
+    fail "accepted github_owner_kind=organization for the author's own account"
+elif grep -q 'Validation error' "$work/render.log"; then
+    pass "rejected github_owner_kind=organization for the author's own account"
+else
+    fail "rejected organization for the author's own account for an unexpected reason"
+    sed 's/^/      /' "$work/render.log" >&2
+    hint_stale_worktree
+fi
+for owner_case in 'validator-author user' 'test-org organization'; do
+    owner_org="${owner_case% *}"
+    owner_kind="${owner_case#* }"
+    if render_owner_kind "$owner_org" "$owner_kind" "$work/good-owner-kind"; then
+        pass "accepted github_org=$owner_org with github_owner_kind=$owner_kind"
+    else
+        fail "rejected github_org=$owner_org with github_owner_kind=$owner_kind"
+        sed 's/^/      /' "$work/render.log" >&2
+        hint_stale_worktree
+    fi
+done
+
 echo "==> unsafe characters are rejected at answer time"
 # Each of these breaks the YAML scalar, the shell quoting, or both.
 i=0

@@ -128,7 +128,12 @@ github_owner_kind:
   # the author's own: answer `user` there. Always asked and always recorded,
   # with no `when`: Copier honours --data for a question whose `when` is false
   # but never records it, so a gated answer would revert at the next update.
+  # Once recorded, the answer no longer follows github_org, so a repository
+  # that moves between a personal account and an organization must change
+  # github_owner_kind together with github_org.
   default: "[[ 'organization' if github_org != author_git_provider_username else 'user' ]]"
+  # The author's own account is always a personal account.
+  validator: "[% if github_owner_kind == 'organization' and github_org == author_git_provider_username %]github_owner_kind is organization, but github_org is your own account (author_git_provider_username), which is a personal account: answer user, or set github_org to the organization.[% endif %]"
 
 merge_queue_available:
   type: bool
