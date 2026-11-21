@@ -33,8 +33,17 @@ jobs:
     # The board write is advisory state and the merge itself stays
     # ruleset-protected either way — these guards make the card honest, they
     # are not the merge security.
+    #
+    # Dependabot. GitHub withholds Actions secrets from a `pull_request` run
+    # whose actor is dependabot[bot], so CI_APP_PRIVATE_KEY arrives empty and
+    # the token step fails. The job skips those runs instead: a dependency
+    # bump has no issue card to move. The test is on the actor, not the PR
+    # author, because that is what decides whether the secret is readable;
+    # a maintainer's push or merge on the same PR still syncs.
     if: >-
-      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository) &&
+      (github.event_name != 'pull_request' ||
+       (github.event.pull_request.head.repo.full_name == github.repository &&
+        github.actor != 'dependabot[bot]')) &&
       (github.event_name != 'workflow_run' || github.event.workflow_run.head_repository.full_name == github.repository) &&
       (github.event_name != 'pull_request_review' ||
        (github.event.pull_request.head.repo.full_name == github.repository &&
