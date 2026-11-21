@@ -119,6 +119,46 @@ it there in the same commit. The calibration examples are not part of that
 copy: they reach the finder through this file. The adjudication protocol,
 loop caps and findings record follow the enabled review policy in `AGENTS.md`.
 
+## Known limits
+
+Accepted gaps in how reviewers read these guidelines, each with its reason and
+what a maintainer does about it. The last four apply only where the Claude
+review workflow is enabled.
+
+- **A pull request can edit the shared sections and their rendered copies
+  together.** Reviewers that load agent instruction files or a styleguide read
+  those copies from the pull request head, and the drift guard compares head
+  with head. Accepted: the rest of those files is head-resident too, the local
+  finder and the Claude review, where enabled, read this file at the base
+  revision, and the edit is in the diff a human reviews before merge. Review
+  any change to the shared sections, or to their copies, as a change to review
+  policy.
+- **The pull request that adds this file cannot get a Claude review governed
+  by this file.** A comment-triggered review runs the default branch's copy of
+  the workflow, and the base has no copy of this file, so the pull request gets
+  no review, a review under an older prompt, or an incomplete report with no
+  completion marker. Accepted: it happens once per repository, and a bootstrap
+  that read the file from the pull request would reopen the first limit. Rely
+  on the other reviewers for that pull request.
+- **The Claude review and the local finder can read different base commits.**
+  The Claude review reads at the base commit GitHub records for the pull
+  request (`base.sha`); the local finder reads at the merge base. Accepted: for
+  a pull request into the default branch both commits are on that protected
+  branch, so neither is under the pull request's control, but a branch that
+  falls behind can have the two read different versions of the rules. Catching
+  the branch up with its base brings them back together.
+- **The Claude review needs a runner that can start containers.** Its GitHub
+  tools run in a container. Accepted: GitHub-hosted runners support it. Confirm
+  container support before pointing the review at an isolated runner pool.
+- **A pull request that edits the Claude review workflow controls how its own
+  review reads this file.** A review triggered by a pull request review or
+  review comment runs the workflow from the pull request's merge ref, so for a
+  same-repository pull request the edited workflow is the one that runs.
+  Accepted: the workflow edit is in the diff a human reviews before merge, and
+  pull requests from forks get no secrets. When a pull request changes the
+  review workflow, request the Claude review with a comment, which runs the
+  default branch's workflow.
+
 ## Repository-specific invariants
 
 Rules every change to this repository must keep that a reviewer could not infer
