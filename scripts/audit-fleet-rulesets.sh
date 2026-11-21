@@ -63,124 +63,194 @@ command -v jq >/dev/null 2>&1 || {
 tmp_dir="$(mktemp -d "${TMPDIR:-/tmp}/harmon-init-fleet-XXXXXX")"
 trap 'rm -rf "$tmp_dir"' EXIT
 records="$tmp_dir/records.jsonl"
+owners="$tmp_dir/owners.jsonl"
 : >"$records"
+: >"$owners"
 
-# get ENDPOINT OUT [gh-api options...] — one GET into OUT. Returns 0 on
-# success, 4 on HTTP 404 (genuinely absent), 1 on any other failure; the
-# reason for a failure is left in $tmp_dir/err.
-get() {
+# ── The one read path ─────────────────────────────────────────────────────────
+# Invariant: every GitHub read goes through fetch/fetch_pages and every value
+# taken from a response goes through decode. Their only outcomes are success,
+# HTTP 404 (4: absence, which callers accept only once readability is proven)
+# and failure (1: unknown). `why` holds a credential-free reason.
+why=""
+
+# fetch ENDPOINT OUT CHECK [gh-api options...] — one GET into OUT, then CHECK
+# (a jq predicate; empty for none) must hold on what came back.
+fetch() {
+    local endpoint="$1" out="$2" check="$3"
+    shift 3
+    if ! gh_rest_api "$endpoint" "$@" >"$out" 2>"$tmp_dir/err"; then
+        if grep -q 'HTTP 404' "$tmp_dir/err"; then
+            why="HTTP 404"
+            return 4
+        fi
+        why="$(grep -o 'HTTP [0-9][0-9][0-9]' "$tmp_dir/err" | head -n 1 || true)"
+        why="${why:-request failed}"
+        return 1
+    fi
+    if [ -n "$check" ] && ! jq -e "$check" "$out" >/dev/null 2>&1; then
+        why="malformed response"
+        return 1
+    fi
+    return 0
+}
+
+# fetch_pages ENDPOINT OUT — every page of a list endpoint, combined into one
+# JSON array in OUT.
+fetch_pages() {
     local endpoint="$1" out="$2"
+    if ! gh_rest_paginate_array "$endpoint" 0 >"$tmp_dir/pages" 2>"$tmp_dir/err"; then
+        why="$(grep -o 'HTTP [0-9][0-9][0-9]' "$tmp_dir/err" | head -n 1 || true)"
+        why="${why:-request failed}"
+        return 1
+    fi
+    if ! jq -s 'add // []' "$tmp_dir/pages" >"$out" 2>/dev/null ||
+        ! jq -e 'type == "array"' "$out" >/dev/null 2>&1; then
+        why="malformed response"
+        return 1
+    fi
+    return 0
+}
+
+# decode FILE FILTER [jq options...] — print FILTER's raw output on FILE.
+decode() {
+    local file="$1" filter="$2"
     shift 2
-    if gh_rest_api "$endpoint" "$@" >"$out" 2>"$tmp_dir/err"; then
+    if jq -r "$@" "$filter" "$file" 2>/dev/null; then
         return 0
     fi
-    grep -q 'HTTP 404' "$tmp_dir/err" && return 4
+    why="malformed response"
     return 1
 }
 
-# fail_reason — one line naming why the last get failed, credential-free.
-fail_reason() {
-    local line
-    line="$(grep -o 'HTTP [0-9][0-9][0-9]' "$tmp_dir/err" | head -n 1 || true)"
-    printf '%s\n' "${line:-request failed}"
+uri() { jq -rn --arg v "$1" '$v | @uri'; }
+note() { reason="${reason:+$reason; }$1"; }
+record() { jq -nc "$@" >>"$records"; }
+unknown_record() { # unknown_record REPO REASON [LISTING]
+    record --arg repo "$1" --arg reason "$2" --arg listing "${3:-named}" \
+        '{repo: $repo, listing: $listing, default_branch: null, managed: "unknown",
+          ruleset: "unknown", enforcement: null, expected: null, required: null,
+          other_rulesets: null, missing: null, extra: null, policy: "n/a",
+          status: "unknown", reason: $reason}'
 }
 
-# list_repos OWNER — print "full_name<TAB>default_branch" for each active
-# repository the owner owns. Returns 1 when the owner cannot be listed.
-me=""
+# contexts FILTER — sorted unique required contexts of one ruleset document.
+readonly contexts='[.rules[]? | select(.type == "required_status_checks")
+    | .parameters.required_status_checks[]?.context] | unique'
+
+# list_repos OWNER — record the owner's listing in $owners and print
+# "full_name<TAB>default_branch<TAB>listing" for each active repository.
+# Returns 1 (listing unknown) when anything about the listing is unproven.
+me="" me_state=unread
 list_repos() {
-    local owner="$1" kind endpoint
-    get "users/$owner" "$tmp_dir/owner.json" || return 1
-    kind="$(jq -r '.type // empty' "$tmp_dir/owner.json")"
+    local owner="$1" login kind endpoint listing=complete
+    fetch "users/$owner" "$tmp_dir/owner.json" 'type == "object"' || return 1
+    login="$(decode "$tmp_dir/owner.json" '.login // empty')" && [ -n "$login" ] || return 1
+    kind="$(decode "$tmp_dir/owner.json" '.type // empty')" || return 1
     case "$kind" in
-    Organization) endpoint="orgs/$owner/repos?type=all" ;;
+    Organization) endpoint="orgs/$login/repos?type=all" ;;
     User)
-        if [ -z "$me" ] && get user "$tmp_dir/me.json"; then
-            me="$(jq -r '.login // empty' "$tmp_dir/me.json")"
+        if [ "$me_state" = unread ]; then
+            me_state=unknown
+            if fetch user "$tmp_dir/me.json" 'type == "object"' &&
+                me="$(decode "$tmp_dir/me.json" '.login // empty')" && [ -n "$me" ]; then
+                me_state=known
+            fi
         fi
-        if [ -n "$me" ] && [ "$me" = "$owner" ]; then
+        if [ "$me_state" != known ]; then
+            why="identity read failed"
+            return 1
+        fi
+        if [ "$me" = "$login" ]; then
             endpoint="user/repos?affiliation=owner&visibility=all"
         else
-            endpoint="users/$owner/repos?type=owner"
+            # A personal account other than the token's lists public
+            # repositories only; the listing says so rather than looking complete.
+            endpoint="users/$login/repos?type=owner"
+            listing=public-only
         fi
         ;;
-    *) return 1 ;;
+    *)
+        why="unknown owner type"
+        return 1
+        ;;
     esac
-    gh_rest_paginate_array "$endpoint" 0 >"$tmp_dir/pages.json" 2>"$tmp_dir/err" || return 1
-    jq -s -r --arg owner "$owner" 'add // [] | .[]
+    fetch_pages "$endpoint" "$tmp_dir/repos.json" || return 1
+    decode "$tmp_dir/repos.json" 'all(.[]; (.full_name | type) == "string"
+        and (.default_branch | type) == "string" and (.owner.login | type) == "string")' -e >/dev/null || return 1
+    jq -nc --arg owner "$login" --arg kind "$kind" --arg listing "$listing" \
+        '{owner: $owner, kind: $kind, listing: $listing}' >>"$owners"
+    decode "$tmp_dir/repos.json" '.[]
         | select(.fork == false and .archived == false and .owner.login == $owner)
-        | "\(.full_name)\t\(.default_branch)"' "$tmp_dir/pages.json" | sort
+        | "\(.full_name)\t\(.default_branch)\t\($listing)"' --arg owner "$login" --arg listing "$listing" |
+        sort
 }
-
-# contexts FILE — sorted unique required contexts of one ruleset document.
-contexts() {
-    jq -c '[.rules[]? | select(.type == "required_status_checks")
-        | .parameters.required_status_checks[]?.context] | unique' "$1"
-}
-
-record() { jq -nc "$@" >>"$records"; }
 
 audit_repo() {
-    local repo="$1" branch="$2" managed expected=null expected_state required=null ruleset
-    local enforcement="" policy="n/a" reason="" name="$default_ruleset_name" rc count id
-    local others="[]"
+    local repo="$1" branch="$2" listing="$3" ref managed expected=null expected_state
+    local required=null ruleset enforcement="" policy="n/a" reason="" name="$default_ruleset_name"
+    local rc count id others="[]" readable=0
     local encoded="${ruleset_path// /%20}"
+    ref="$(uri "$branch")"
+
+    # Absence is reported only when proven: a 404 for a file counts as "absent"
+    # once a contents read of the same ref has succeeded; otherwise unknown.
+    fetch "repos/$repo/contents?ref=$ref" "$tmp_dir/root.json" 'type == "array"' && readable=1 ||
+        note "contents of $branch unreadable: $why"
 
     rc=0
-    get "repos/$repo/contents/.copier-answers.yml?ref=$branch" "$tmp_dir/answers" || rc=$?
-    case "$rc" in
-    0) managed=yes ;;
-    4) managed=no ;;
-    *) managed=unknown reason="copier answers: $(fail_reason)" ;;
+    fetch "repos/$repo/contents/.copier-answers.yml?ref=$ref" "$tmp_dir/answers" '.type == "file"' || rc=$?
+    case "$rc:$readable" in
+    0:*) managed=yes ;;
+    4:1) managed=no ;;
+    *) managed=unknown && note "copier answers: $why" ;;
     esac
 
     rc=0
-    get "repos/$repo/contents/$encoded?ref=$branch" "$tmp_dir/file.json" \
+    fetch "repos/$repo/contents/$encoded?ref=$ref" "$tmp_dir/file.json" \
+        'type == "object" and (.name | type) == "string"' \
         -H 'Accept: application/vnd.github.raw+json' || rc=$?
-    case "$rc" in
-    0)
-        if expected="$(contexts "$tmp_dir/file.json" 2>/dev/null)" &&
-            name="$(jq -er '.name' "$tmp_dir/file.json" 2>/dev/null)"; then
+    case "$rc:$readable" in
+    0:*)
+        if expected="$(decode "$tmp_dir/file.json" "$contexts" -c)" &&
+            name="$(decode "$tmp_dir/file.json" '.name')"; then
             expected_state=present
         else
             expected=null expected_state=unknown name="$default_ruleset_name"
-            reason="${reason:+$reason; }checked-in ruleset is not valid JSON"
+            note "checked-in ruleset: $why"
         fi
         ;;
-    4) expected_state=absent ;;
-    *) expected_state=unknown reason="${reason:+$reason; }checked-in ruleset: $(fail_reason)" ;;
+    4:1) expected_state=absent ;;
+    *) expected_state=unknown && note "checked-in ruleset: $why" ;;
     esac
 
-    rc=0
-    gh_rest_paginate_array "repos/$repo/rulesets?includes_parents=false" 0 \
-        >"$tmp_dir/list-pages.json" 2>"$tmp_dir/err" || rc=$?
-    if [ "$rc" -ne 0 ]; then
-        ruleset=unknown reason="${reason:+$reason; }rulesets: $(fail_reason)"
+    if ! fetch_pages "repos/$repo/rulesets?includes_parents=false" "$tmp_dir/list.json"; then
+        ruleset=unknown && note "rulesets: $why"
+    elif ! others="$(decode "$tmp_dir/list.json" '[.[] | select(.name != $name) | .name] | unique' -c --arg name "$name")" ||
+        ! count="$(decode "$tmp_dir/list.json" '[.[] | select(.name == $name and .source_type == "Repository")] | length' --arg name "$name")"; then
+        others="[]" ruleset=unknown && note "rulesets: $why"
     else
-        jq -s 'add // []' "$tmp_dir/list-pages.json" >"$tmp_dir/list.json"
-        others="$(jq -c --arg name "$name" '[.[] | select(.name != $name) | .name] | unique' "$tmp_dir/list.json")"
-        count="$(jq --arg name "$name" '[.[] | select(.name == $name and .source_type == "Repository")] | length' "$tmp_dir/list.json")"
         case "$count" in
         0) ruleset=absent ;;
         1)
-            id="$(jq -r --arg name "$name" '.[] | select(.name == $name and .source_type == "Repository") | .id' "$tmp_dir/list.json")"
-            if get "repos/$repo/rulesets/$id" "$tmp_dir/live.json" && required="$(contexts "$tmp_dir/live.json" 2>/dev/null)"; then
+            if id="$(decode "$tmp_dir/list.json" '.[] | select(.name == $name and .source_type == "Repository") | .id' --arg name "$name")" &&
+                fetch "repos/$repo/rulesets/$id" "$tmp_dir/live.json" 'type == "object"' &&
+                required="$(decode "$tmp_dir/live.json" "$contexts" -c)" &&
+                enforcement="$(decode "$tmp_dir/live.json" '.enforcement // empty')"; then
                 ruleset=present
-                enforcement="$(jq -r '.enforcement // empty' "$tmp_dir/live.json")"
             else
-                ruleset=unknown required=null reason="${reason:+$reason; }ruleset $id: $(fail_reason)"
+                ruleset=unknown required=null enforcement="" && note "ruleset ${id:-?}: $why"
             fi
             ;;
-        *) ruleset=unknown reason="${reason:+$reason; }$count rulesets named $name" ;;
+        *) ruleset=unknown && note "$count rulesets named $name" ;;
         esac
     fi
 
     # Full-policy verdict from audit-ruleset.sh's own lookup and normalization,
-    # fed the documents already fetched (no second set of API calls).
+    # fed the documents already fetched (no second set of API calls). It counts
+    # only when the exit status and its verdict line agree: under `set -e` an
+    # internal failure also exits 1, which must not read as drift.
     if [ "$expected_state" = present ] && [ "$ruleset" = present ]; then
-        # A verdict counts only when the exit status and its own verdict line
-        # agree: under `set -e` any internal failure also exits 1, which must
-        # not read as drift.
         rc=0
         RULESET_AUDIT_FILE="$tmp_dir/file.json" RULESET_AUDIT_REPO="$repo" \
             RULESET_AUDIT_LIVE_LIST="$tmp_dir/list.json" \
@@ -191,22 +261,25 @@ audit_repo() {
             policy=clean
         elif [ "$rc" -eq 1 ] && grep -q '^RULESET AUDIT DRIFT: ' "$tmp_dir/policy"; then
             policy=drift
+        else
+            note "full-policy comparison failed"
         fi
     fi
 
-    record --arg repo "$repo" --arg branch "$branch" --arg managed "$managed" \
+    record --arg repo "$repo" --arg listing "$listing" --arg branch "$branch" --arg managed "$managed" \
         --arg ruleset "$ruleset" --arg name "$name" --arg enforcement "$enforcement" --arg policy "$policy" \
         --arg reason "$reason" --arg expected_state "$expected_state" \
         --argjson expected "$expected" --argjson required "$required" --argjson others "$others" '
         ($expected // []) as $e | ($required // []) as $r
-        | {repo: $repo, default_branch: $branch, managed: $managed, ruleset: $ruleset,
+        | {repo: $repo, listing: $listing, default_branch: $branch, managed: $managed, ruleset: $ruleset,
            enforcement: (if $enforcement == "" then null else $enforcement end),
            expected: $expected, required: $required, other_rulesets: $others,
            missing: (if $expected == null or $required == null then null else $e - $r end),
            extra: (if $expected == null or $required == null then null else $r - $e end),
            policy: $policy}
+        # Any unknown field makes the record unknown.
         | .status = (
-            if $managed == "unknown" or $ruleset == "unknown" or $expected_state == "unknown" then "unknown"
+            if [$managed, $ruleset, $expected_state, $policy] | index("unknown") then "unknown"
             elif $expected_state == "absent" and $managed == "yes" then "unknown"
             elif $expected_state == "absent" then "unmanaged"
             elif $ruleset == "absent" or ($r | length) == 0 or .enforcement != "active" then "ungated"
@@ -221,32 +294,29 @@ audit_repo() {
             else null end)'
 }
 
-listing_failed=0
 for target in "${targets[@]}"; do
     case "$target" in
-    */*/* | /* | */) echo "audit-fleet-rulesets: not OWNER or OWNER/REPO: $target" >&2 && exit 2 ;;
+    */*/* | /* | */)
+        echo "audit-fleet-rulesets: not OWNER or OWNER/REPO: $target" >&2
+        exit 2
+        ;;
     */*)
-        if get "repos/$target" "$tmp_dir/repo.json"; then
-            branch="$(jq -r '.default_branch' "$tmp_dir/repo.json")"
-            audit_repo "$(jq -r '.full_name' "$tmp_dir/repo.json")" "$branch"
+        if fetch "repos/$target" "$tmp_dir/repo.json" \
+            '(.full_name | type) == "string" and (.default_branch | type) == "string"'; then
+            audit_repo "$(decode "$tmp_dir/repo.json" '.full_name')" \
+                "$(decode "$tmp_dir/repo.json" '.default_branch')" named
         else
-            record --arg repo "$target" --arg reason "repository: $(fail_reason)" \
-                '{repo: $repo, default_branch: null, managed: "unknown", ruleset: "unknown", enforcement: null,
-                  expected: null, required: null, other_rulesets: null, missing: null, extra: null, policy: "n/a",
-                  status: "unknown", reason: $reason}'
+            unknown_record "$target" "repository: $why"
         fi
         ;;
     *)
         if list_repos "$target" >"$tmp_dir/repos.tsv"; then
-            while IFS="$(printf '\t')" read -r repo branch; do
-                [ -n "$repo" ] && audit_repo "$repo" "$branch"
+            while IFS="$(printf '\t')" read -r repo branch listing; do
+                [ -n "$repo" ] && audit_repo "$repo" "$branch" "$listing"
             done <"$tmp_dir/repos.tsv"
         else
-            listing_failed=1
-            record --arg repo "$target/*" --arg reason "owner listing: $(fail_reason)" \
-                '{repo: $repo, default_branch: null, managed: "unknown", ruleset: "unknown", enforcement: null,
-                  expected: null, required: null, other_rulesets: null, missing: null, extra: null, policy: "n/a",
-                  status: "unknown", reason: $reason}'
+            jq -nc --arg owner "$target" '{owner: $owner, kind: null, listing: "unknown"}' >>"$owners"
+            unknown_record "$target/*" "owner listing: $why" unknown
         fi
         ;;
     esac
@@ -257,7 +327,9 @@ done
     exit 2
 }
 
-report="$(jq -s '{repositories: ., summary: (group_by(.status) | map({key: .[0].status, value: length}) | from_entries)}' "$records")"
+report="$(jq -n --slurpfile repos "$records" --slurpfile owners "$owners" \
+    '{owners: $owners, repositories: $repos,
+      summary: ($repos | group_by(.status) | map({key: .[0].status, value: length}) | from_entries)}')"
 
 if [ "$format" = json ]; then
     printf '%s\n' "$report"
@@ -274,10 +346,12 @@ else
                 "$repo" "$managed" "$ruleset" "$status" "$policy" "$required" "$missing" "$extra"
             [ -z "$reason" ] || printf '  %s\n' "$reason"
         done
+    jq -r '.owners[] | "owner \(.owner): \(.kind // "unknown") listing \(.listing)"
+        + (if .listing == "public-only" then " (public repositories only: the token is not this account)" else "" end)' <<<"$report"
     jq -r '.summary | to_entries | map("\(.key)=\(.value)") | "summary: " + join(" ")' <<<"$report"
 fi
 
-if [ "$listing_failed" -ne 0 ] || jq -e '.summary.unknown // 0 > 0' >/dev/null <<<"$report"; then
+if jq -e '(.summary.unknown // 0) > 0' >/dev/null <<<"$report"; then
     exit 2
 fi
 if jq -e '(.summary.drift // 0) + (.summary.ungated // 0) > 0' >/dev/null <<<"$report"; then
