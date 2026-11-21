@@ -209,7 +209,10 @@ def required_checks():
             raise Unavailable('setup-ruleset.sh comparison unavailable or timed out') from None
     out, err = result.stdout.splitlines(), result.stderr.splitlines()
     mismatch = [line[4:] for line in err if line.startswith('  ! ')]
-    note = ('; integration_id mismatch needs a manual edit (task audit:ruleset): ' + ', '.join(mismatch)) if mismatch else ''
+    # A same-named check bound to another app (or to none) is drift the write
+    # task never repairs: setup-ruleset.sh only adds missing contexts.
+    note = ('; integration_id mismatch needs a manual edit that task setup:ruleset does not repair (task audit:ruleset): '
+            + ', '.join(mismatch)) if mismatch else ''
     header = next(((index, match) for index, line in enumerate(out) if (match := re.fullmatch(
         r'RULESET SETUP: .* is missing (\d+) required status check\(s\):', line))), None)
     if header is not None:
@@ -224,7 +227,7 @@ def required_checks():
     if result.returncode == 0 and any(line.startswith('RULESET SETUP CLEAN: ') for line in out):
         return ('pass', 'live ruleset requires every checked-in required check')
     if result.returncode == 1 and mismatch and any(line.startswith('RULESET SETUP INCOMPLETE: nothing to add') for line in err):
-        return ('pass', 'live ruleset requires every checked-in required check by context' + note)
+        return ('fail', 'live ruleset requires every checked-in context' + note)
     prefix = 'RULESET SETUP UNAVAILABLE: '
     refusal = next((line[len(prefix):] for line in err + out if line.startswith(prefix)), None)
     raise Unavailable('setup-ruleset.sh comparison: ' + (refusal or 'exit ' + str(result.returncode)))

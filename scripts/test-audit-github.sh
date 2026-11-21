@@ -398,12 +398,26 @@ print(json.dumps(value) if value is not None else '')
     row = run([required], 1, live_rulesets(live=absent_rule))[0]
     assert row['result'] == 'fail' and all(check['context'] in row['reason'] for rule in ruleset['rules']
         if rule['type'] == 'required_status_checks' for check in rule['parameters']['required_status_checks']), row
-    # A same-named check from another integration is present by context: pass,
-    # with the mismatch named, because the write task cannot repair it.
-    mismatched = copy.deepcopy(ruleset)
-    next(rule for rule in mismatched['rules'] if rule['type'] == 'required_status_checks')['parameters']['required_status_checks'][0]['integration_id'] = 1
-    row = run([required], 0, live_rulesets(live=mismatched))[0]
-    assert row['result'] == 'pass' and 'integration_id mismatch' in row['reason'], row
+    # A same-named check bound to another app, or to none, can be satisfied by
+    # the wrong producer: fail, naming the mismatch and the manual edit, because
+    # the write task only adds missing contexts and never repairs a binding.
+    def rebound(integration_id, *missing):
+        live = without(*missing)
+        check = next(rule for rule in live['rules'] if rule['type'] == 'required_status_checks')['parameters']['required_status_checks'][0]
+        if integration_id is ...:
+            del check['integration_id']
+        else:
+            check['integration_id'] = integration_id
+        return live, check['context']
+
+    for binding in (1, None, ...):
+        live, context = rebound(binding)
+        row = run([required], 1, live_rulesets(live=live))[0]
+        assert row['result'] == 'fail' and context in row['reason'] and all(text in row['reason'] for text in (
+            'integration_id mismatch', 'manual edit', 'task setup:ruleset does not repair')), (binding, row)
+    live, context = rebound(1, 'closing-keywords')
+    row = run([required], 1, live_rulesets(live=live))[0]
+    assert row['result'] == 'fail' and all(text in row['reason'] for text in ('closing-keywords', context, 'integration_id mismatch')), row
     # Either ruleset unreadable, or the named ruleset not live exactly once: unknown.
     duplicate = listed + [dict(listed[0], id=8)]
     organization = [dict(listed[0], source_type='Organization')]
