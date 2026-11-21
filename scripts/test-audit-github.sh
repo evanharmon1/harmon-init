@@ -20,6 +20,12 @@ with tempfile.TemporaryDirectory(prefix='audit-github-') as tmp:
     (fixture / 'docs').mkdir()
     (fixture / 'bin').mkdir()
     shutil.copy2(root / 'scripts/audit-github.sh', fixture / 'scripts/audit-github.sh')
+    # The required-checks probe reuses setup-ruleset.sh's comparison offline.
+    shutil.copy2(root / 'scripts/setup-ruleset.sh', fixture / 'scripts/setup-ruleset.sh')
+    ruleset_name = 'Branch Protection Ruleset - Protect Main.json'
+    (fixture / '.github').mkdir()
+    shutil.copy2(root / '.github' / ruleset_name, fixture / '.github' / ruleset_name)
+    ruleset = json.loads((root / '.github' / ruleset_name).read_text())
     (fixture / 'scripts/label-registry-render.mjs').write_text("console.log('feature|abcdef|Feature work')\n")
     (fixture / 'checklist-classes.json').write_text(json.dumps(catalog))
     gh = fixture / 'bin/gh'
@@ -352,10 +358,73 @@ print(json.dumps(value) if value is not None else '')
         row = run([snyk], 0, changed('repos/acme/widget/actions/secrets', {'secrets': tokens}))[0]
         assert row['result'] == 'manual' and 'require operator verification' in row['reason']
     assert run([snyk], 2, changed('repos/acme/widget/actions/secrets', {'error': 403}))[0]['result'] == 'unknown'
-    rules = [entry('add-closing-keywords-'), entry('enable-unattributed-')]
-    output = run(rules, 0, changed('repos/acme/widget/rulesets', []))
-    assert all(row['result'] == 'manual' and 'manual applicability review' in row['reason'] for row in output)
-    assert all(row['result'] == 'unknown' for row in run(rules, 2))
+    approval = entry('enable-unattributed-')
+    row = run([approval], 0, changed('repos/acme/widget/rulesets', []))[0]
+    assert row['result'] == 'manual' and 'manual applicability review' in row['reason'], row
+    assert run([approval], 2)[0]['result'] == 'unknown'
+    # The live-ruleset required-checks item: pass, fail naming each missing
+    # context, or unknown -- never manual -- from setup-ruleset.sh's comparison.
+    required = entry('add-closing-keywords-')
+    assert required['write_task'] == 'task setup:ruleset'
+    listed = [{'id': 7, 'name': ruleset['name'], 'source_type': 'Repository', 'enforcement': 'active'}]
+
+    def live_rulesets(rows=listed, live=ruleset):
+        return dict(data, **{'repos/acme/widget/rulesets': rows, 'repos/acme/widget/rulesets/7': live})
+
+    def without(*contexts):
+        live = copy.deepcopy(ruleset)
+        for rule in live['rules']:
+            if rule['type'] == 'required_status_checks':
+                checks = rule['parameters']['required_status_checks']
+                checks[:] = [check for check in checks if check['context'] not in contexts]
+        return live
+
+    def gh_calls():
+        return [json.loads(line) for line in (fixture / 'calls').read_text().splitlines()]
+
+    row = run([required], 0, live_rulesets())[0]
+    assert row['result'] == 'pass' and row['write_task'] == 'task setup:ruleset', row
+    # Only the audit's own GET reads; setup-ruleset.sh never calls gh itself.
+    assert [call[3].split('?')[0] for call in gh_calls()] == ['repos/acme/widget/rulesets'] * 2 + ['repos/acme/widget/rulesets/7'], gh_calls()
+    extra = copy.deepcopy(ruleset)
+    next(rule for rule in extra['rules'] if rule['type'] == 'required_status_checks')['parameters']['required_status_checks'].append({'context': 'extra-live-check'})
+    assert run([required], 0, live_rulesets(live=extra))[0]['result'] == 'pass'
+    row = run([required], 1, live_rulesets(live=without('closing-keywords')))[0]
+    assert row['result'] == 'fail' and row['reason'] == 'live ruleset lacks required checks: closing-keywords', row
+    row = run([required], 1, live_rulesets(live=without('closing-keywords', 'security')))[0]
+    assert row['result'] == 'fail' and all(name in row['reason'] for name in ('closing-keywords', 'security')), row
+    absent_rule = copy.deepcopy(ruleset)
+    absent_rule['rules'] = [rule for rule in absent_rule['rules'] if rule['type'] != 'required_status_checks']
+    row = run([required], 1, live_rulesets(live=absent_rule))[0]
+    assert row['result'] == 'fail' and all(check['context'] in row['reason'] for rule in ruleset['rules']
+        if rule['type'] == 'required_status_checks' for check in rule['parameters']['required_status_checks']), row
+    # A same-named check from another integration is present by context: pass,
+    # with the mismatch named, because the write task cannot repair it.
+    mismatched = copy.deepcopy(ruleset)
+    next(rule for rule in mismatched['rules'] if rule['type'] == 'required_status_checks')['parameters']['required_status_checks'][0]['integration_id'] = 1
+    row = run([required], 0, live_rulesets(live=mismatched))[0]
+    assert row['result'] == 'pass' and 'integration_id mismatch' in row['reason'], row
+    # Either ruleset unreadable, or the named ruleset not live exactly once: unknown.
+    duplicate = listed + [dict(listed[0], id=8)]
+    organization = [dict(listed[0], source_type='Organization')]
+    for payload, text in ((changed('repos/acme/widget/rulesets', {'error': 403}), '403'),
+                          (live_rulesets(live={'error': 403}), '403'),
+                          (live_rulesets(rows=[]), 'not found exactly once'),
+                          (live_rulesets(rows=duplicate), 'not found exactly once'),
+                          (live_rulesets(rows=organization), 'not found exactly once'),
+                          (live_rulesets(live={'name': ruleset['name']}), 'malformed')):
+        row = run([required], 2, payload)[0]
+        assert row['result'] == 'unknown' and text in row['reason'], (text, row)
+    (fixture / 'scripts/setup-ruleset.sh').unlink()
+    row = run([required], 2, live_rulesets())[0]
+    assert row['result'] == 'unknown' and 'setup-ruleset.sh' in row['reason'], row
+    shutil.copy2(root / 'scripts/setup-ruleset.sh', fixture / 'scripts/setup-ruleset.sh')
+    # The import item stays a presence probe, and no presence-probed row names
+    # the write task that refuses until that import has happened.
+    output = run(catalog['entries'], 2, live_rulesets(), extra=['--all'])
+    assert any('presence only' in row['reason'] for row in output)
+    assert all(row['write_task'] != 'task setup:ruleset' for row in output if 'presence' in row['reason'])
+    assert all(row['result'] in ('pass', 'fail', 'unknown') for row in output if row['write_task'] == 'task setup:ruleset')
     row = run([sast], 0, changed('repos/acme/widget/code-scanning/default-setup', {'state': 'configured'}))[0]
     assert row['result'] == 'manual' and 'language coverage requires manual verification' in row['reason']
     assert run([labels], 0, changed('repos/acme/widget/labels', [{'name': 'FEATURE', 'color': 'abcdef', 'description': 'Feature work'}]))[0]['result'] == 'pass'

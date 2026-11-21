@@ -110,6 +110,40 @@ else
     [ "$status" -eq 2 ] || fail "duplicate-ruleset exit was $status, expected 2"
 fi
 grep -q 'not found exactly once' "$tmp_dir/out" || fail "wrong duplicate-ruleset message"
+
+echo "==> the non-interactive write form refuses when the named ruleset is not live"
+# A fleet standardization parent runs the catalog write as
+# `task setup:ruleset -- --yes`. Importing the ruleset stays a human step, so
+# that form must refuse -- not create or guess -- when the import has not happened.
+for listing in '[]' \
+    '[{"id":3,"name":"Protect Main","source_type":"Organization"}]' \
+    '[{"id":4,"name":"Another Ruleset","source_type":"Repository"}]'; do
+    printf '%s\n' "$listing" >"$list"
+    rm -f "$RULESET_TEST_GH_CALLS"
+    if run_setup --yes </dev/null >"$tmp_dir/out" 2>&1; then
+        fail "non-interactive run against a ruleset that is not live was allowed: $listing"
+    else
+        status=$?
+        [ "$status" -eq 2 ] || fail "not-live exit was $status, expected 2: $listing"
+    fi
+    grep -q 'not found exactly once: Protect Main — import it first' "$tmp_dir/out" ||
+        fail "wrong not-live refusal: $(cat "$tmp_dir/out")"
+    [ ! -f "$wrote" ] || fail "not-live refusal still wrote: $listing"
+    [ ! -s "$RULESET_TEST_GH_CALLS" ] || fail "not-live refusal called gh: $(cat "$RULESET_TEST_GH_CALLS")"
+done
+if command -v task >/dev/null 2>&1; then
+    # The same refusal through the documented task form, proving --yes reaches it.
+    printf '[]\n' >"$list"
+    rm -f "$wrote" "$RULESET_TEST_GH_CALLS"
+    if RULESET_AUDIT_FILE="$file" RULESET_AUDIT_LIVE_LIST="$list" RULESET_AUDIT_LIVE_DETAIL="$live" \
+        RULESET_SETUP_WRITE_OUT="$wrote" task setup:ruleset -- --yes </dev/null >"$tmp_dir/out" 2>&1; then
+        fail "task setup:ruleset -- --yes against a ruleset that is not live was allowed"
+    fi
+    grep -q 'setup-ruleset.sh --yes' "$tmp_dir/out" || fail "task did not forward --yes: $(cat "$tmp_dir/out")"
+    grep -q 'import it first' "$tmp_dir/out" || fail "wrong task refusal: $(cat "$tmp_dir/out")"
+    [ ! -f "$wrote" ] || fail "task refusal still wrote"
+    [ ! -s "$RULESET_TEST_GH_CALLS" ] || fail "task refusal called gh: $(cat "$RULESET_TEST_GH_CALLS")"
+fi
 printf '[{"id":42,"name":"Protect Main","source_type":"Repository"}]\n' >"$list"
 
 echo "==> a live ruleset with NO required_status_checks rule gets one CREATED"

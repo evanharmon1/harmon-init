@@ -46,6 +46,38 @@ for entry in entries:
     assert entry["write_task"] is None or re.fullmatch(r"task [\w:-]+", entry["write_task"]), f"invalid write task for {entry['id']}"
     by_source.setdefault(entry["source"], {})[entry["id"]] = entry
 
+# The live-ruleset required-checks item is the one fleet-approval write of
+# task setup:ruleset. The import stays human-only: its probe is ruleset
+# presence, and setup:ruleset refuses until the named ruleset is live, so a
+# write scheduled there would always refuse. The approval-condition item stays
+# human-only too: setup:ruleset touches only required_status_checks.
+RULESET_WRITE = "task setup:ruleset"
+ruleset_writers = {e["id"] for e in entries if e["write_task"] == RULESET_WRITE}
+assert ruleset_writers and ruleset_writers == {
+    e["id"] for e in entries if "-add-closing-keywords-to-the-live-bra-" in e["id"]
+}, f"task setup:ruleset writers differ from the live-ruleset required-checks items: {sorted(ruleset_writers)}"
+for entry in entries:
+    if entry["write_task"] == RULESET_WRITE:
+        assert entry["class"] == "agent-apply-with-fleet-approval", f"{entry['id']}: setup:ruleset is a fleet-approval write"
+    if re.search(r"-(import-the-branch-ruleset|enable-unattributed-changes-approval)-", entry["id"]):
+        assert entry["class"] == "human-only" and entry["write_task"] is None, f"{entry['id']}: must stay human-only with no write"
+presence = [e for e in entries if "-import-the-branch-ruleset-" in e["id"]]
+assert presence and all(e["write_task"] != RULESET_WRITE for e in presence), "a ruleset-presence item names task setup:ruleset"
+
+def check_noninteractive(path, text):
+    """Every setup:ruleset item states the parent's non-interactive form."""
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        match = re.search(r"<!-- reconcile-id: ([a-z0-9-]+) -->", line)
+        if not (match and match.group(1) in ruleset_writers and line.startswith("- [")):
+            continue
+        block = [line]
+        for more in lines[index + 1:]:
+            if not more.startswith(" "):
+                break
+            block.append(more)
+        assert "`task setup:ruleset -- --yes`" in " ".join(" ".join(block).split()), f"{path}:{index + 1}: non-interactive write form not stated"
+
 def is_item(line):
     return re.match(r"^- \[[ xX]\]", line) is not None
 
@@ -90,6 +122,7 @@ def validate(path, source, subset=False):
         expected_write = f"Write: `{write}`." if write else "Write: none."
         assert expected_write in line, f"{path}:{line_no}: write task missing or differs from catalog"
     assert subset or found == set(expected), f"{path}: catalog/document item mismatch; missing={sorted(set(expected)-found)}, extra={sorted(found-set(expected))}"
+    check_noninteractive(path, text)
 
 template = root / "template/docs/CHECKLIST.md.jinja"
 if template.exists():
@@ -139,6 +172,15 @@ with tempfile.TemporaryDirectory(prefix="checklist-classes-") as tmp:
             pass
         else:
             raise AssertionError("invalid checklist fixture passed")
+ruleset_lines = [line for line in original if is_item(line) and any(
+    "reconcile-id: " + item + " " in line for item in ruleset_writers)]
+if ruleset_lines:
+    try:
+        check_noninteractive("fixture", ruleset_lines[0] + "\n      Run `task setup:ruleset`.\n")
+    except AssertionError:
+        pass
+    else:
+        raise AssertionError("setup:ruleset item without the non-interactive form passed")
 for probe in ("Read state; gh api -X POST /repos/x", "Read state with task setup:github", "Read state with curl -XPOST example"):
     assert not safe_probe(probe), f"mutating probe accepted: {probe}"
 print("checklist classes: catalog, checklist metadata, and negative fixtures valid")
