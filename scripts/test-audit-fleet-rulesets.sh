@@ -22,11 +22,17 @@ fail() {
 check_record() {
     local jinja="$1" doc="$2" got context answer
     # context<TAB>answer for each context in the required_status_checks list; a
-    # context outside any [% if %] is "always". Only a top-level simple
-    # `[% if name %]` … `[% endif %]` is modelled: any other `[%` line in the
-    # block (nested, compound, else) fails rather than misreports.
+    # context outside any [% if %] is "always". Conditional scope is tracked
+    # across the WHOLE file up to the end of that list: it must be reached at
+    # depth 0 (nothing encloses it), and inside it only a top-level simple
+    # `[% if name %]` … `[% endif %]` is modelled. Any other `[%` tag on the way
+    # (compound, nested, else, inline) fails rather than misreports.
     awk '
-        /"required_status_checks": \[/ { inside = 1; cond = "always"; next }
+        !inside && /^\[% if .* %\]$/ { depth++; next }
+        !inside && /^\[% endif %\]$/ { depth--; next }
+        !inside && /\[%/ { print "UNSUPPORTED"; exit }
+        !inside && /"required_status_checks": \[/ { if (depth != 0) { print "UNSUPPORTED"; exit }
+                                                    inside = 1; cond = "always"; next }
         inside && /^\[% if [a-z_]+ %\]$/ { if (cond != "always") { print "UNSUPPORTED"; exit }
                                            cond = $3; next }
         inside && /^\[% endif %\]$/ { if (cond == "always") { print "UNSUPPORTED"; exit }
@@ -35,7 +41,7 @@ check_record() {
         inside && /"context":/ { match($0, /"context": "[^"]+"/)
                                  c = substr($0, RSTART + 12, RLENGTH - 13)
                                  print c "\t" cond }
-        inside && /^ *\]$/ { inside = 0 }
+        inside && /^ *\]$/ { exit }
     ' "$jinja" >"$tmp_dir/template-contexts.tsv"
     if grep -q UNSUPPORTED "$tmp_dir/template-contexts.tsv"; then
         fail "unsupported conditional structure in $jinja"
@@ -94,6 +100,16 @@ for inner in "[% if github_owner_kind == 'organization' %]" "[% else %]" "[% if 
     grep -q 'unsupported conditional structure' "$tmp_dir/guard.err" ||
         fail "record guard failed for another reason on '$inner': $(cat "$tmp_dir/guard.err")"
 done
+
+# Regression (challenge r2 finding 3): a condition ENCLOSING the whole rule
+# makes verify/security/closing-keywords conditional; the guard must refuse it.
+echo "==> record guard refuses a condition enclosing the required-check rule"
+awk '/"type": "required_status_checks",/ { print "[% if devcontainer %]" } { print }' "$jinja" >"$tmp_dir/mutated.jinja"
+if (check_record "$tmp_dir/mutated.jinja" "$doc") 2>"$tmp_dir/guard.err"; then
+    fail "record guard accepted an enclosing condition"
+fi
+grep -q 'unsupported conditional structure' "$tmp_dir/guard.err" ||
+    fail "record guard failed for another reason on an enclosing condition: $(cat "$tmp_dir/guard.err")"
 
 # ── Fleet audit against a stubbed gh ─────────────────────────────────────────
 fixtures="$tmp_dir/fixtures"
@@ -196,14 +212,33 @@ ok "$(contents broken .copier-answers.yml)" "$answers"
 ok "$(contents broken "$rs_path")" "$std"
 broken 'repos/acme/broken/rulesets?includes_parents=false&per_page=100&page=1'
 
-# Regression (challenge r1 finding 1): the full-policy comparison fails (rules
-# is an object: contexts still decode, audit-ruleset.sh's normalization does
-# not) → the record is unknown, never gated.
+# Regression (challenge r2 finding 2): a checked-in ruleset whose `rules` is an
+# object is malformed → expected unknown, never decoded leniently.
 odd="$(jq -c '.rules |= (to_entries | map({key: (.key | tostring), value}) | from_entries)' <<<"$std")"
 ok "$(contents policyfail .copier-answers.yml)" "$answers"
 ok "$(contents policyfail "$rs_path")" "$odd"
 ok 'repos/acme/policyfail/rulesets?includes_parents=false&per_page=100&page=1' "$(summary 11 "Protect Main")"
 ok repos/acme/policyfail/rulesets/11 "$(live 11 <<<"$std")"
+
+# Regression (r2 finding 1): the contents probe would fail, but every file is
+# found, so no absence is claimed and no probe is made → gated.
+ok repos/acme/probefail '{"full_name":"acme/probefail","default_branch":"main"}'
+broken 'repos/acme/probefail/contents?ref=main'
+ok "$(contents probefail .copier-answers.yml)" "$answers"
+ok "$(contents probefail "$rs_path")" "$std"
+ok 'repos/acme/probefail/rulesets?includes_parents=false&per_page=100&page=1' "$(summary 13 "Protect Main")"
+ok repos/acme/probefail/rulesets/13 "$(live 13 <<<"$std")"
+
+# Regression (r2 finding 2): a ruleset list entry with no name/source_type, and
+# a repository listing entry missing `archived`.
+ok repos/acme/emptyentry '{"full_name":"acme/emptyentry","default_branch":"main"}'
+readable acme/emptyentry
+ok "$(contents emptyentry .copier-answers.yml)" "$answers"
+ok "$(contents emptyentry "$rs_path")" "$std"
+ok 'repos/acme/emptyentry/rulesets?includes_parents=false&per_page=100&page=1' '[{}]'
+ok users/loose '{"login":"loose","type":"Organization"}'
+ok 'orgs/loose/repos?type=all&per_page=100&page=1' \
+    '[{"full_name":"loose/x","default_branch":"main","fork":false,"owner":{"login":"loose"}}]'
 
 # Regression (finding 3): every file read 404s but the repository's contents
 # were never shown readable → unknown, not unmanaged.
@@ -290,9 +325,29 @@ jq -e '.repositories[0] | .status == "unknown" and (.reason | test("unmapped|req
     "$tmp_dir/out" >/dev/null || fail "acme/ghost record wrong"
 
 echo "==> unknown full-policy verdict makes the record unknown (finding 1)"
-expect_exit 2 --json acme/policyfail
+# audit-ruleset.sh's own RULESET_AUDIT_ERROR makes the comparison unavailable
+# while every read the fleet audit makes succeeds.
+expect_exit 0 --json acme/gated
+RULESET_AUDIT_ERROR=injected expect_exit 2 --json acme/gated
 jq -e '.repositories[0] | .status == "unknown" and .policy == "unknown" and .missing == []
-    and (.reason | test("full-policy comparison failed"))' "$tmp_dir/out" >/dev/null || fail "acme/policyfail record wrong"
+    and (.reason | test("full-policy comparison failed"))' "$tmp_dir/out" >/dev/null || fail "policy-unknown record wrong"
+
+echo "==> malformed list entries and ruleset documents are unknown (r2 finding 2)"
+expect_exit 2 --json acme/policyfail
+jq -e '.repositories[0] | .status == "unknown" and .expected == null
+    and (.reason | test("checked-in ruleset: malformed response"))' "$tmp_dir/out" >/dev/null || fail "acme/policyfail record wrong"
+expect_exit 2 --json acme/emptyentry
+jq -e '.repositories[0] | .status == "unknown" and .ruleset == "unknown"
+    and (.reason | test("rulesets: malformed response"))' "$tmp_dir/out" >/dev/null || fail "acme/emptyentry record wrong"
+expect_exit 2 --json loose
+jq -e '.owners == [{"owner":"loose","kind":null,"listing":"unknown"}] and .repositories[0].status == "unknown"
+    and (.repositories[0].reason | test("malformed response"))' "$tmp_dir/out" >/dev/null || fail "loose listing not unknown"
+
+echo "==> no absence proof is sought when nothing is claimed absent (r2 finding 1)"
+expect_exit 0 --json acme/probefail
+jq -e '.repositories[0] | .status == "gated" and .reason == null' "$tmp_dir/out" >/dev/null ||
+    fail "acme/probefail record wrong"
+if grep -q 'repos/acme/probefail/contents?ref' "$calls"; then fail "absence probe ran with nothing absent"; fi
 
 echo "==> a 404 without proven readability is unknown, not absent (finding 3)"
 expect_exit 2 --json acme/nocontents

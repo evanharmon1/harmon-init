@@ -95,17 +95,17 @@ fetch() {
     return 0
 }
 
-# fetch_pages ENDPOINT OUT — every page of a list endpoint, combined into one
-# JSON array in OUT.
+# fetch_pages ENDPOINT OUT CHECK — every page of a list endpoint, combined into
+# one JSON array in OUT; CHECK must hold on that array.
 fetch_pages() {
-    local endpoint="$1" out="$2"
+    local endpoint="$1" out="$2" check="$3"
     if ! gh_rest_paginate_array "$endpoint" 0 >"$tmp_dir/pages" 2>"$tmp_dir/err"; then
         why="$(grep -o 'HTTP [0-9][0-9][0-9]' "$tmp_dir/err" | head -n 1 || true)"
         why="${why:-request failed}"
         return 1
     fi
     if ! jq -s 'add // []' "$tmp_dir/pages" >"$out" 2>/dev/null ||
-        ! jq -e 'type == "array"' "$out" >/dev/null 2>&1; then
+        ! jq -e "type == \"array\" and ($check)" "$out" >/dev/null 2>&1; then
         why="malformed response"
         return 1
     fi
@@ -134,9 +134,19 @@ unknown_record() { # unknown_record REPO REASON [LISTING]
           status: "unknown", reason: $reason}'
 }
 
-# contexts FILTER — sorted unique required contexts of one ruleset document.
-readonly contexts='[.rules[]? | select(.type == "required_status_checks")
-    | .parameters.required_status_checks[]?.context] | unique'
+# The decode checks. Each validates every field the filters below consume, so
+# a malformed entry is unknown rather than filtered out or read as absent.
+readonly owner_check='(.login | type) == "string" and (.type | type) == "string"'
+readonly repos_check='all(.[]; (.full_name | type) == "string" and (.default_branch | type) == "string"
+    and (.owner.login | type) == "string" and (.fork | type) == "boolean" and (.archived | type) == "boolean")'
+readonly rulesets_check='all(.[]; (.name | type) == "string" and (.source_type | type) == "string")'
+readonly ruleset_check='type == "object" and (.name | type) == "string" and (.rules | type) == "array"
+    and all(.rules[]; (.type | type) == "string")
+    and all(.rules[] | select(.type == "required_status_checks") | .parameters.required_status_checks
+        | if type == "array" then .[] else null end; (.context | type) == "string")'
+# contexts — sorted unique required contexts of one ruleset document.
+readonly contexts='[.rules[] | select(.type == "required_status_checks")
+    | .parameters.required_status_checks[].context] | unique'
 
 # list_repos OWNER — record the owner's listing in $owners and print
 # "full_name<TAB>default_branch<TAB>listing" for each active repository.
@@ -144,7 +154,7 @@ readonly contexts='[.rules[]? | select(.type == "required_status_checks")
 me="" me_state=unread
 list_repos() {
     local owner="$1" login kind endpoint listing=complete
-    fetch "users/$owner" "$tmp_dir/owner.json" 'type == "object"' || return 1
+    fetch "users/$owner" "$tmp_dir/owner.json" "$owner_check" || return 1
     login="$(decode "$tmp_dir/owner.json" '.login // empty')" && [ -n "$login" ] || return 1
     kind="$(decode "$tmp_dir/owner.json" '.type // empty')" || return 1
     case "$kind" in
@@ -152,7 +162,7 @@ list_repos() {
     User)
         if [ "$me_state" = unread ]; then
             me_state=unknown
-            if fetch user "$tmp_dir/me.json" 'type == "object"' &&
+            if fetch user "$tmp_dir/me.json" '(.login | type) == "string"' &&
                 me="$(decode "$tmp_dir/me.json" '.login // empty')" && [ -n "$me" ]; then
                 me_state=known
             fi
@@ -175,9 +185,7 @@ list_repos() {
         return 1
         ;;
     esac
-    fetch_pages "$endpoint" "$tmp_dir/repos.json" || return 1
-    decode "$tmp_dir/repos.json" 'all(.[]; (.full_name | type) == "string"
-        and (.default_branch | type) == "string" and (.owner.login | type) == "string")' -e >/dev/null || return 1
+    fetch_pages "$endpoint" "$tmp_dir/repos.json" "$repos_check" || return 1
     jq -nc --arg owner "$login" --arg kind "$kind" --arg listing "$listing" \
         '{owner: $owner, kind: $kind, listing: $listing}' >>"$owners"
     decode "$tmp_dir/repos.json" '.[]
@@ -189,42 +197,52 @@ list_repos() {
 audit_repo() {
     local repo="$1" branch="$2" listing="$3" ref managed expected=null expected_state
     local required=null ruleset enforcement="" policy="n/a" reason="" name="$default_ruleset_name"
-    local rc count id others="[]" readable=0
+    local rc count id others="[]" readable="" probe_why=""
     local encoded="${ruleset_path// /%20}"
     ref="$(uri "$branch")"
 
-    # Absence is reported only when proven: a 404 for a file counts as "absent"
-    # once a contents read of the same ref has succeeded; otherwise unknown.
-    fetch "repos/$repo/contents?ref=$ref" "$tmp_dir/root.json" 'type == "array"' && readable=1 ||
-        note "contents of $branch unreadable: $why"
+    # proven_absent — a file read just returned 404. Absence is reported only
+    # when proven: a contents read of the same ref succeeds (once per
+    # repository). Sought only for a claimed absence, so its outcome always
+    # lands in the field that claims it; otherwise that field is unknown.
+    proven_absent() {
+        if [ -z "$readable" ]; then
+            readable=no
+            if fetch "repos/$repo/contents?ref=$ref" "$tmp_dir/root.json" 'type == "array"'; then
+                readable=yes
+            else
+                probe_why="404 not proven absent: contents of $branch unreadable ($why)"
+            fi
+        fi
+        [ "$readable" = yes ] && return 0
+        why="$probe_why"
+        return 1
+    }
 
     rc=0
     fetch "repos/$repo/contents/.copier-answers.yml?ref=$ref" "$tmp_dir/answers" '.type == "file"' || rc=$?
-    case "$rc:$readable" in
-    0:*) managed=yes ;;
-    4:1) managed=no ;;
-    *) managed=unknown && note "copier answers: $why" ;;
-    esac
+    if [ "$rc" -eq 0 ]; then
+        managed=yes
+    elif [ "$rc" -eq 4 ] && proven_absent; then
+        managed=no
+    else
+        managed=unknown && note "copier answers: $why"
+    fi
 
     rc=0
-    fetch "repos/$repo/contents/$encoded?ref=$ref" "$tmp_dir/file.json" \
-        'type == "object" and (.name | type) == "string"' \
+    fetch "repos/$repo/contents/$encoded?ref=$ref" "$tmp_dir/file.json" "$ruleset_check" \
         -H 'Accept: application/vnd.github.raw+json' || rc=$?
-    case "$rc:$readable" in
-    0:*)
-        if expected="$(decode "$tmp_dir/file.json" "$contexts" -c)" &&
-            name="$(decode "$tmp_dir/file.json" '.name')"; then
-            expected_state=present
-        else
-            expected=null expected_state=unknown name="$default_ruleset_name"
-            note "checked-in ruleset: $why"
-        fi
-        ;;
-    4:1) expected_state=absent ;;
-    *) expected_state=unknown && note "checked-in ruleset: $why" ;;
-    esac
+    if [ "$rc" -eq 0 ] && expected="$(decode "$tmp_dir/file.json" "$contexts" -c)" &&
+        name="$(decode "$tmp_dir/file.json" '.name')"; then
+        expected_state=present
+    elif [ "$rc" -eq 4 ] && proven_absent; then
+        expected_state=absent
+    else
+        expected=null expected_state=unknown name="$default_ruleset_name"
+        note "checked-in ruleset: $why"
+    fi
 
-    if ! fetch_pages "repos/$repo/rulesets?includes_parents=false" "$tmp_dir/list.json"; then
+    if ! fetch_pages "repos/$repo/rulesets?includes_parents=false" "$tmp_dir/list.json" "$rulesets_check"; then
         ruleset=unknown && note "rulesets: $why"
     elif ! others="$(decode "$tmp_dir/list.json" '[.[] | select(.name != $name) | .name] | unique' -c --arg name "$name")" ||
         ! count="$(decode "$tmp_dir/list.json" '[.[] | select(.name == $name and .source_type == "Repository")] | length' --arg name "$name")"; then
@@ -233,10 +251,10 @@ audit_repo() {
         case "$count" in
         0) ruleset=absent ;;
         1)
-            if id="$(decode "$tmp_dir/list.json" '.[] | select(.name == $name and .source_type == "Repository") | .id' --arg name "$name")" &&
-                fetch "repos/$repo/rulesets/$id" "$tmp_dir/live.json" 'type == "object"' &&
+            if id="$(decode "$tmp_dir/list.json" '.[] | select(.name == $name and .source_type == "Repository") | .id | numbers' -e --arg name "$name")" &&
+                fetch "repos/$repo/rulesets/$id" "$tmp_dir/live.json" "$ruleset_check and (.enforcement | type) == \"string\"" &&
                 required="$(decode "$tmp_dir/live.json" "$contexts" -c)" &&
-                enforcement="$(decode "$tmp_dir/live.json" '.enforcement // empty')"; then
+                enforcement="$(decode "$tmp_dir/live.json" '.enforcement')"; then
                 ruleset=present
             else
                 ruleset=unknown required=null enforcement="" && note "ruleset ${id:-?}: $why"
