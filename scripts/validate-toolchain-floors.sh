@@ -1,0 +1,255 @@
+#!/usr/bin/env bash
+# validate-toolchain-floors.sh — keep the template's own toolchain pins at or
+# above the floors toolchain-floors.json declares (task validate:toolchain-floors).
+#
+# For every floor it validates the declaration against toolchain-floors.schema.json,
+# then for every pin with a non-null `template_path` reads that file's raw text
+# (Jinja and all), checks every `pattern` match against the floor, and fails
+# when a match is below it or when the file has no match at all. A pin with a
+# null `template_path` is repository-owned (package.json `packageManager`): the
+# template never writes it, so it is reported as consumer-checked and skipped.
+# A `copier` floor is held to `_min_copier_version` in copier.yml, and `when`
+# must name a boolean answer in copier.yml.
+#
+# `ancestor` floors ask local git only (`git merge-base --is-ancestor`), never
+# the network. A commit absent from the local history is "unknown" and fails
+# closed — fetch full history, do not weaken the check.
+#
+# Usage: validate-toolchain-floors.sh [--root DIR] [--floors FILE] [--schema FILE]
+#   --root    repository to check (default: this repository); every relative
+#             path and the git history resolve against it
+#   --floors  declaration (default: ROOT/toolchain-floors.json)
+#   --schema  schema      (default: ROOT/toolchain-floors.schema.json)
+# Exit: 0 all floors hold; 1 a floor is violated or unverifiable; 2 usage.
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+FLOORS=""
+SCHEMA=""
+
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+    --root)
+        [ "$#" -ge 2 ] || {
+            echo "validate-toolchain-floors: --root needs a directory" >&2
+            exit 2
+        }
+        ROOT="$(cd "$2" && pwd)"
+        shift 2
+        ;;
+    --floors)
+        [ "$#" -ge 2 ] || {
+            echo "validate-toolchain-floors: --floors needs a file" >&2
+            exit 2
+        }
+        FLOORS="$2"
+        shift 2
+        ;;
+    --schema)
+        [ "$#" -ge 2 ] || {
+            echo "validate-toolchain-floors: --schema needs a file" >&2
+            exit 2
+        }
+        SCHEMA="$2"
+        shift 2
+        ;;
+    -h | --help)
+        sed -n '2,/^set -euo/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//'
+        exit 0
+        ;;
+    *)
+        echo "validate-toolchain-floors: unknown argument: $1" >&2
+        exit 2
+        ;;
+    esac
+done
+
+: "${FLOORS:=${ROOT}/toolchain-floors.json}"
+: "${SCHEMA:=${ROOT}/toolchain-floors.schema.json}"
+command -v node >/dev/null 2>&1 || {
+    echo "validate-toolchain-floors: node is required" >&2
+    exit 1
+}
+
+exec node --input-type=module - "$ROOT" "$FLOORS" "$SCHEMA" "${SCRIPT_DIR}/lib/json-schema-subset.mjs" <<'NODE'
+import { spawnSync } from 'node:child_process'
+import fs from 'node:fs'
+import path from 'node:path'
+import { pathToFileURL } from 'node:url'
+
+const [root, floorsPath, schemaPath, enginePath] = process.argv.slice(2)
+const { createSchemaValidator } = await import(pathToFileURL(enginePath).href)
+
+const errors = []
+const fail = (message) => errors.push(message)
+const say = (message) => console.log(message)
+
+function loadJson(file, label) {
+  try {
+    return JSON.parse(fs.readFileSync(file, 'utf8'))
+  } catch (error) {
+    console.error(`toolchain-floors: cannot read valid JSON for ${label} from ${file}: ${error.message}`)
+    process.exit(1)
+  }
+}
+
+const declaration = loadJson(floorsPath, 'the floors file')
+const schema = loadJson(schemaPath, 'the schema')
+const engine = createSchemaValidator(schema)
+try {
+  engine.assertSupportedSchema(schema)
+} catch (error) {
+  console.error(`toolchain-floors: invalid or unsupported schema: ${error.message}`)
+  process.exit(1)
+}
+const schemaErrors = engine.validate(declaration, schema, '$floors')
+if (schemaErrors.length > 0) {
+  for (const message of schemaErrors) console.error(`toolchain-floors: ${message}`)
+  console.error('toolchain-floors: FAIL — the declaration does not match its schema')
+  process.exit(1)
+}
+
+// Dotted numeric versions: compare component-wise, missing components are 0.
+function compareVersions(left, right) {
+  const a = left.split('.').map(Number)
+  const b = right.split('.').map(Number)
+  for (let i = 0; i < Math.max(a.length, b.length); i += 1) {
+    const diff = (a[i] ?? 0) - (b[i] ?? 0)
+    if (diff !== 0) return diff < 0 ? -1 : 1
+  }
+  return 0
+}
+
+// A path from the declaration must stay inside the checked repository.
+function insideRoot(relative) {
+  const resolved = path.resolve(root, relative)
+  return !path.isAbsolute(relative) && (resolved === root || resolved.startsWith(root + path.sep))
+    ? resolved
+    : null
+}
+
+function git(args) {
+  return spawnSync('git', ['-C', root, ...args], { encoding: 'utf8' })
+}
+
+const hasCommit = (sha) => git(['cat-file', '-e', `${sha}^{commit}`]).status === 0
+
+function checkAncestor(label, minimum, pinned) {
+  const missing = [minimum, pinned].filter((sha) => !hasCommit(sha))
+  if (missing.length > 0) {
+    fail(
+      `${label}: unknown — commit ${missing.join(', ')} is not in the local git history ` +
+        '(fetch full history; the check never asks the network and fails closed)'
+    )
+    return false
+  }
+  const result = git(['merge-base', '--is-ancestor', minimum, pinned])
+  if (result.status === 0) return true
+  if (result.status === 1) {
+    fail(`${label}: pinned commit ${pinned} does not descend from the floor commit ${minimum}`)
+  } else {
+    fail(`${label}: unknown — git merge-base --is-ancestor exited ${result.status}: ${result.stderr.trim()}`)
+  }
+  return false
+}
+
+// copier.yml: the declared minimum copier and the boolean answers `when` may name.
+let copierYml = null
+const copierYmlPath = path.join(root, 'copier.yml')
+if (fs.existsSync(copierYmlPath)) copierYml = fs.readFileSync(copierYmlPath, 'utf8')
+
+function booleanAnswer(name) {
+  if (copierYml === null) return null
+  const lines = copierYml.split('\n')
+  const start = lines.findIndex((line) => line === `${name}:`)
+  if (start === -1) return false
+  for (let i = start + 1; i < lines.length && /^(\s|$)/.test(lines[i]); i += 1) {
+    if (/^\s+type:\s*bool\s*$/.test(lines[i])) return true
+  }
+  return false
+}
+
+const seenTools = new Set()
+for (const floor of declaration.floors) {
+  const { tool, minimum, compare, pins } = floor
+  const gate = floor.when ? `, when ${floor.when}` : ''
+  say(`toolchain-floors: ${tool} (${compare} >= ${minimum}${gate})`)
+  if (seenTools.has(tool)) fail(`${tool}: declared more than once`)
+  seenTools.add(tool)
+
+  if (floor.when !== undefined) {
+    const answer = booleanAnswer(floor.when)
+    if (answer === null) fail(`${tool}: cannot check when "${floor.when}" — no copier.yml in ${root}`)
+    else if (!answer) fail(`${tool}: when "${floor.when}" is not a boolean answer in copier.yml`)
+  }
+
+  if (tool === 'copier') {
+    if (compare !== 'version') fail('copier: must compare by version')
+    const declared = copierYml === null ? null : /^_min_copier_version:\s*["']?([0-9][0-9.]*)["']?\s*(?:#.*)?$/m.exec(copierYml)
+    if (declared === null) {
+      fail('copier: copier.yml declares no _min_copier_version to hold the floor against')
+    } else if (compare === 'version' && compareVersions(minimum, declared[1]) > 0) {
+      fail(`copier: floor ${minimum} exceeds _min_copier_version ${declared[1]} in copier.yml`)
+    } else {
+      say(`  ok   copier.yml _min_copier_version ${declared[1]} >= floor ${minimum}`)
+    }
+  }
+
+  for (const pin of pins) {
+    const label = `${tool} ${pin.path}`
+    if (pin.template_path === null) {
+      say(`  consumer-checked  ${pin.path}${pin.json_pointer ? ` (${pin.json_pointer})` : ''} — repository-owned, not in the template`)
+      continue
+    }
+    if (pin.json_pointer !== undefined) {
+      fail(`${label}: json_pointer needs a consumer file; a template_path pin is matched as raw text`)
+      continue
+    }
+    let regex
+    try {
+      regex = new RegExp(pin.pattern, 'gm')
+    } catch (error) {
+      fail(`${label}: pattern does not compile: ${error.message}`)
+      continue
+    }
+    const file = insideRoot(pin.template_path)
+    if (file === null) {
+      fail(`${label}: template_path ${pin.template_path} leaves the repository`)
+      continue
+    }
+    if (!fs.existsSync(file) || !fs.statSync(file).isFile()) {
+      fail(`${label}: template_path ${pin.template_path} does not exist`)
+      continue
+    }
+    const matches = [...fs.readFileSync(file, 'utf8').matchAll(regex)]
+    if (matches.length === 0) {
+      fail(`${label}: pattern matches nothing in ${pin.template_path}`)
+      continue
+    }
+    for (const match of matches) {
+      const pinned = match[1]
+      const here = `${label} (${pin.template_path})`
+      if (pinned === undefined) {
+        fail(`${here}: pattern has no capture group 1`)
+      } else if (compare === 'ancestor') {
+        if (!/^[0-9a-f]{40}$/.test(pinned)) fail(`${here}: "${pinned}" is not a 40-character commit`)
+        else if (checkAncestor(here, minimum, pinned)) say(`  ok   ${here}: ${pinned} descends from ${minimum}`)
+      } else if (!/^[0-9]+(\.[0-9]+)*$/.test(pinned) || (compare === 'major' && !/^[0-9]+$/.test(pinned))) {
+        fail(`${here}: "${pinned}" is not a ${compare === 'major' ? 'major version' : 'dotted numeric version'}`)
+      } else if (compare === 'major' ? Number(pinned) < Number(minimum) : compareVersions(pinned, minimum) < 0) {
+        fail(`${here}: pinned ${pinned} is below the floor ${minimum}`)
+      } else {
+        say(`  ok   ${here}: ${pinned} >= ${minimum}`)
+      }
+    }
+  }
+}
+
+if (errors.length > 0) {
+  for (const message of errors) console.error(`toolchain-floors: ${message}`)
+  console.error(`toolchain-floors: FAIL — ${errors.length} problem(s)`)
+  process.exit(1)
+}
+say('toolchain-floors: ok')
+NODE

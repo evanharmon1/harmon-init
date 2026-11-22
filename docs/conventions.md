@@ -405,6 +405,23 @@ has.
   repository cannot safely decide another repository's close policy. Use
   `Refs #N` for partial work. The check reruns when a PR is edited or new
   commits are pushed; run `task guard:closing-keywords` to pre-flight it.
+- **A release declares its toolchain floors.** `toolchain-floors.json` (with
+  `toolchain-floors.schema.json`, at the repository root and never rendered into
+  generated repositories) lists the oldest Node, pnpm major, copier, task, and
+  devcontainer image the release's template output works with. Consumers read
+  it from the frozen template commit (`git show <commit>:toolchain-floors.json`)
+  before applying an update. **A change that raises a toolchain requirement
+  updates `toolchain-floors.json` in the same PR**, and
+  `task validate:toolchain-floors` (part of `verify` and the Build workflow's
+  `repo-guards` job) enforces it for every template pin the file covers: it
+  fails when a pin matched by a floor's `pattern` is below the floor, when a
+  `template_path` is missing or matches nothing, or when the `copier` floor
+  exceeds `_min_copier_version` in `copier.yml`. An `ancestor` floor (the
+  devcontainer image) compares commits in local git history only, so a
+  shallow clone fails closed. A repository-owned pin such as `packageManager`
+  (`template_path: null`) is not in the template; the check lists it as
+  consumer-checked and consumers enforce it. A release that raises nothing
+  leaves the file unchanged.
 - Issue types map many-to-one onto these commit types. Personal-account repos
   use the equivalent work-type labels as that mapping's substrate because native
   issue Type is unavailable there; organization repos use native Type and no
