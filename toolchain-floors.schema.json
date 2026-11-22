@@ -43,7 +43,7 @@
       ]
     },
     "pin": {
-      "description": "Where a floor's tool is pinned. `path` is the location in a generated repository, which is what the standardize-repo skill checks. `template_path` is the literal template source path (Jinja in the filename included) the validator reads as raw text, or null for a repository-owned pin such as package.json `packageManager`, which the template never writes and only consumers can check. `pattern` must capture the pinned value in group 1. It is a JavaScript regular expression applied to the file's whole text with the multiline flag (`^` and `$` match at line boundaries, so a pattern may span lines to anchor a value to its step); against a consumer file with `json_pointer` it applies to the string at that pointer instead. Patterns read the template files as block-style YAML; the template is the source of truth for how it spells a pin, and a pattern is not a YAML parser. A pin applies where its file exists: a repository that does not render `path` (a conditionally included workflow) has nothing to check, while a `template_path` that does not exist is an error.",
+      "description": "Where a floor's tool is pinned. `path` is the location in a generated repository, which is what the standardize-repo skill checks. `template_path` is the literal template source path (Jinja in the filename included) the validator reads as raw text, or null for a repository-owned pin such as package.json `packageManager`, which the template never writes and only consumers can check. `pattern` must capture the pinned value in group 1. It is a JavaScript regular expression applied to the file's whole text by default, with the multiline flag (`^` and `$` match at line boundaries, so a pattern may span lines to anchor a value to its step); against a consumer file with `json_pointer` it applies to the string at that pointer instead. Patterns read the template files as block-style YAML; the template is the source of truth for how it spells a pin, and a pattern is not a YAML parser. A pin applies where its file exists: a repository that does not render `path` (a conditionally included workflow) has nothing to check, while a `template_path` that does not exist is an error.",
       "type": "object",
       "additionalProperties": false,
       "required": ["path", "template_path", "pattern"],
@@ -51,8 +51,24 @@
         "path": { "type": "string", "minLength": 1 },
         "template_path": { "type": ["string", "null"], "minLength": 1 },
         "json_pointer": { "type": "string", "pattern": "^/" },
-        "pattern": { "type": "string", "minLength": 1 }
-      }
+        "pattern": { "type": "string", "minLength": 1 },
+        "step": {
+          "description": "For a template workflow or composite action, require each step that uses this action to have exactly one recognized input. The validator applies the locator to the whole original file, associates capture group 1 with a step input by source position, and requires the captured value to equal the parsed input. Every locator match is checked against the floor, including matches outside covered steps. Flow-style mappings are unsupported.",
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["action", "input"],
+          "properties": {
+            "action": { "type": "string", "pattern": "^[a-z0-9_.-]+/[a-z0-9_.-]+$" },
+            "input": { "type": "string", "pattern": "^[a-zA-Z0-9_-]+$" }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "required": ["step"] },
+          "then": { "properties": { "template_path": { "type": "string" } } }
+        }
+      ]
     }
   }
 }

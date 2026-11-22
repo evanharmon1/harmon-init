@@ -5,8 +5,9 @@
 # For every floor it validates the declaration against toolchain-floors.schema.json,
 # then for every pin with a non-null `template_path` reads that file's raw text
 # (Jinja and all), checks every `pattern` match against the floor, and fails
-# when a match is below it or when the file has no match at all. A pin with a
-# null `template_path` is repository-owned (package.json `packageManager`): the
+# when a match is below it or when the file has no match at all. A `step` pin
+# uses yq to find the action's steps and requires a recognized input in each.
+# A pin with a null `template_path` is repository-owned (package.json `packageManager`): the
 # template never writes it, so it is reported as consumer-checked and skipped.
 # A `copier` floor is held to `_min_copier_version` in copier.yml, and `when`
 # must name a boolean answer in copier.yml.
@@ -200,6 +201,87 @@ function booleanAnswer(name) {
   return false
 }
 
+function associateStepPins(label, source, { action, input }, versions) {
+  // Blank Jinja control lines and mask substitutions for structural parsing.
+  // Preserve source line numbers and apply the pattern to the original text.
+  const lines = source.split(/\r?\n/)
+  const jinjaControl = /^ *\[%.*%\] *$/
+  const yaml = lines.map((line) => jinjaControl.test(line) ? '' : line.replace(/\[\[.*?\]\]/g, 'JINJA')).join('\n')
+  const result = spawnSync('yq', ['-o=json', '-I=0', `
+    [(.runs.steps[]?, .jobs[].steps[]?)
+      | explode(.)
+      | select(tag == "!!map")
+      | select((.uses | downcase | split("@") | .[0]) == strenv(FLOOR_STEP_ACTION))]
+    | map({"line": line, "usesLine": (.uses | line), "style": style, "inputStyle": (.with | style),
+         "inputs": [(.with | select(tag == "!!map") | to_entries | .[]
+           | select(.key == strenv(FLOOR_STEP_INPUT))
+           | {"line": (.key | line), "value": (.value | to_string)})]})
+  `, '-'], {
+    input: yaml,
+    encoding: 'utf8',
+    env: { ...process.env, FLOOR_STEP_ACTION: action, FLOOR_STEP_INPUT: input }
+  })
+  if (result.status !== 0) {
+    fail(`${label}: cannot enumerate ${action} steps with Mike Farah yq: ${result.error?.message ?? result.stderr.trim()}`)
+    return
+  }
+
+  let steps
+  try {
+    steps = JSON.parse(result.stdout)
+    if (!Array.isArray(steps)) throw new Error('expected a YAML step list')
+  } catch (error) {
+    fail(`${label}: cannot read ${action} steps from yq: ${error.message}`)
+    return
+  }
+  if (steps.length === 0) fail(`${label}: no ${action} steps found`)
+
+  // Use capture group 1's position, since the match can span lines.
+  const capturesByLine = new Map()
+  for (const version of versions) {
+    const { capture, pinned } = version
+    if (capture === undefined) continue
+    if (pinned.includes('\n')) continue
+    const [start] = capture
+    const line = source.slice(0, start).split('\n').length
+    const captures = capturesByLine.get(line) ?? []
+    captures.push(version)
+    capturesByLine.set(line, captures)
+  }
+
+  for (const step of steps) {
+    const here = `${label}:${step.line}`
+    if (step.style === 'flow' || step.inputStyle === 'flow') {
+      fail(`${here}: ${action} step uses an unsupported flow-style mapping`)
+      continue
+    }
+    if (step.inputs.length !== 1) {
+      fail(`${here}: ${action} step needs exactly one ${input} input (found ${step.inputs.length})`)
+      continue
+    }
+    const [version] = step.inputs
+    let first = Math.min(step.line, step.usesLine, version.line) - 1
+    const last = Math.max(step.usesLine, version.line) - 1
+    // yq reports the first key for a mapping whose list dash is on its own
+    // line. Include any directives between that dash and the first key.
+    let previous = first - 1
+    while (previous >= 0 && (/^\s*(?:#.*)?$/.test(lines[previous]) || jinjaControl.test(lines[previous]))) previous -= 1
+    if (previous >= 0 && /^ *- *(?:#.*)?$/.test(lines[previous])) first = previous
+    // Ignore whole-step guards outside this range and controls after both
+    // fields, such as the shared setup action's conditional cache input.
+    if (lines.slice(first, last + 1).some((line) => jinjaControl.test(line))) {
+      fail(`${here}: Jinja control prevents verifying the ${action} step's uses and ${input} input together`)
+      continue
+    }
+    const captures = capturesByLine.get(version.line) ?? []
+    if (captures.length !== 1 || captures[0].pinned !== version.value) {
+      fail(`${here}: ${action} step needs exactly one recognized ${input} version`)
+      continue
+    }
+    captures[0].locations.push(here)
+  }
+}
+
 const seenTools = new Set()
 for (const floor of declaration.floors) {
   const { tool, minimum, compare, pins } = floor
@@ -237,7 +319,7 @@ for (const floor of declaration.floors) {
     // 9: a pattern is a published contract whoever owns the pin, so compile it first.
     let regex
     try {
-      regex = new RegExp(pin.pattern, 'gm')
+      regex = new RegExp(pin.pattern, pin.step === undefined ? 'gm' : 'gmd')
     } catch (error) {
       fail(`${label}: pattern does not compile: ${error.message}`)
       continue
@@ -269,25 +351,36 @@ for (const floor of declaration.floors) {
       fail(`${label}: template_path ${pin.template_path} does not exist`)
       continue
     }
-    const matches = [...fs.readFileSync(file, 'utf8').matchAll(regex)]
-    if (matches.length === 0) {
+    const source = fs.readFileSync(file, 'utf8')
+    const fileLabel = `${label} (${pin.template_path})`
+    const versions = [...source.matchAll(regex)].map((match) => ({
+      pinned: match[1], capture: match.indices?.[1], locations: []
+    }))
+    if (pin.step !== undefined) {
+      associateStepPins(fileLabel, source, pin.step, versions)
+    } else if (versions.length === 0) {
       fail(`${label}: pattern matches nothing in ${pin.template_path}`)
-      continue
     }
-    for (const match of matches) {
-      const pinned = match[1]
-      const here = `${label} (${pin.template_path})`
+    // Check each locator match once, including matches outside covered steps.
+    for (const { pinned, locations } of versions) {
+      const here = locations[0] ?? fileLabel
+      let success
       if (pinned === undefined) {
         fail(`${here}: pattern has no capture group 1`)
       } else if (compare === 'ancestor') {
         if (!/^[0-9a-f]{40}$/.test(pinned)) fail(`${here}: "${pinned}" is not a 40-character commit`)
-        else if (checkAncestor(here, minimum, pinned)) say(`  ok   ${here}: ${pinned} descends from ${minimum}`)
+        else if (checkAncestor(here, minimum, pinned)) success = `${pinned} descends from ${minimum}`
       } else if (!/^[0-9]+(\.[0-9]+)*$/.test(pinned) || (compare === 'major' && !/^[0-9]+$/.test(pinned))) {
         fail(`${here}: "${pinned}" is not a ${compare === 'major' ? 'major version' : 'dotted numeric version'}`)
       } else if (compare === 'major' ? Number(pinned) < Number(minimum) : compareVersions(pinned, minimum) < 0) {
         fail(`${here}: pinned ${pinned} is below the floor ${minimum}`)
       } else {
-        say(`  ok   ${here}: ${pinned} >= ${minimum}`)
+        success = `${pinned} >= ${minimum}`
+      }
+      if (success !== undefined) {
+        for (const location of locations.length === 0 ? [fileLabel] : locations) {
+          say(`  ok   ${location}: ${success}`)
+        }
       }
     }
   }

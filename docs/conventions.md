@@ -413,13 +413,21 @@ has.
   before applying an update. **A change that raises a toolchain requirement
   updates `toolchain-floors.json` in the same PR**.
   `task validate:toolchain-floors` (part of `verify` and the Build workflow's
-  `repo-guards` job) checks one side only: it fails when a pin matched by a
-  floor's `pattern` is below the floor, when a `template_path` is missing or
-  matches nothing, or when the `copier` floor exceeds `_min_copier_version` in
-  `copier.yml`. It cannot detect a floor left too low after a requirement
-  rises, so raising the floor alongside a real requirement is the author's and
-  the reviewer's job. An `ancestor` floor (the
-  devcontainer image) compares commits in local git history only, so a
+  `repo-guards` job) checks every match of a pin's `pattern` in the whole file
+  against the floor. It fails when a match is below the floor, when a
+  `template_path` is missing or matches nothing, or when the `copier` floor
+  exceeds `_min_copier_version` in `copier.yml`. A floor pin may carry a
+  `step` with an `action` and an `input`. The step check requires Mike Farah
+  `yq` on `PATH` to enumerate steps using that action in the covered file.
+  Each step must have exactly one recognized version input whose value matches
+  the pin's `pattern` capture. A missing input or an unsupported form such as
+  a flow-style mapping fails the check. A template workflow or the shared setup
+  action using `actions/setup-node` or `arduino/setup-task` needs a floor pin
+  naming the file. The inventory in `task test:validate-toolchain-floors` (part of
+  `verify`) fails if the pin is missing. The validator cannot detect a floor
+  left too low after a requirement rises, so raising the floor alongside a
+  real requirement is the author's and the reviewer's job. An `ancestor` floor
+  (the devcontainer image) compares commits in local git history only, so a
   shallow clone fails closed. A repository-owned pin such as `packageManager`
   (`template_path: null`) is not in the template; the check lists it as
   consumer-checked and consumers enforce it. A release that raises nothing
