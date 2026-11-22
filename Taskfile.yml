@@ -126,6 +126,7 @@ tasks:
       - task: test:comment-annotators
       - task: test:artifact-retention
       - task: test:audit-ruleset
+      - task: test:audit-fleet-rulesets
       - task: test:setup-ruleset
       - task: test:devcontainer-changed
       - task: test:summarize-gitleaks
@@ -902,6 +903,11 @@ tasks:
     cmds:
       - ./scripts/audit-ruleset.sh
 
+  audit:fleet-rulesets:
+    desc: Report each fleet repository's required merge checks against its checked-in ruleset as a table (read-only; owners or owner/repo as args; JSON and exit codes via the script)
+    cmds:
+      - ./scripts/audit-fleet-rulesets.sh {{.CLI_ARGS}}
+
   setup:ruleset:
     desc: Add missing required status checks to the live ruleset (additive only; prompts unless --yes)
     # Grouped output would hide the confirmation prompt from a terminal user.
@@ -918,6 +924,11 @@ tasks:
     desc: Unit-test ruleset audit normalization with offline fixtures
     cmds:
       - ./scripts/test-audit-ruleset.sh
+
+  test:audit-fleet-rulesets:
+    desc: Unit-test the fleet ruleset audit (stubbed gh) and the per-profile required-check record
+    cmds:
+      - ./scripts/test-audit-fleet-rulesets.sh
 
   test:codex-review:
     desc: Unit-test codex-review.sh target selection (offline, stubbed codex)

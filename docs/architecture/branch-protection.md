@@ -111,6 +111,78 @@ update. Add the contexts to the existing ruleset in the UI instead; never
 re-import, create a duplicate, or remove an existing rule to make the API accept
 it. Confirm with `task audit:ruleset`. Other policy drift remains a manual edit.
 
+### Auditing the fleet
+
+`task audit:fleet-rulesets` runs the same comparison read-only across every
+active, non-fork, non-archived repository of the platform owners (default
+`evanharmon1 harmonops ponderousdev sommerlawn`; pass owners or `owner/repo`
+names to narrow it, e.g. `task audit:fleet-rulesets -- ponderousdev/foreman`).
+Per repository it reports whether it is managed (`.copier-answers.yml` on the
+default branch), whether the checked-in ruleset exists, whether exactly one
+live repository ruleset carries that name, the live required contexts, and the
+contexts missing from or extra to the checked-in (expected) set. Each
+repository's own checked-in JSON is the expected set, so the audit needs no copy
+of the profile table below. The full-policy verdict comes from `task
+audit:ruleset`'s own comparison, fed the fetched files.
+
+The status column is `gated` (live contexts equal the expected set **and** the
+full-policy comparison is clean), `drift` (contexts differ, or the full policy
+does — conditions that miss the default branch, other bypass actors),
+`ungated` (an expected set with no live ruleset, a ruleset with zero required
+checks, or enforcement other than `active`), `unmanaged` (no expected set;
+informational), or `unknown` when any read or comparison is unproven — never a
+pass. Every field the audit computes feeds the status except the other live
+rulesets it lists and the owner's listing scope, which are informational. The
+scope is `token-visible` for an Organization and for the token's own account
+(the repositories that token can read; nothing proves the list complete, so a
+private repository the token cannot see is absent without trace),
+`public-only` for any other personal account, and `unknown` when the listing
+itself could not be read.
+
+The task prints the table. For machine use, call the script directly:
+`./scripts/audit-fleet-rulesets.sh --json [OWNER | OWNER/REPO]...` prints the
+JSON form, and the script exits 2 when any repository is `unknown`, 1 when any
+is `drift` or `ungated`, and 0 otherwise. Task maps every failing exit to 201;
+a task caller that needs the distinction runs `task --exit-code
+audit:fleet-rulesets`. The audit issues GET requests only and changes nothing.
+Close a gap with `task setup:ruleset` in that repository, or record it as
+deliberately ungated.
+
+## Required-check set per copier profile
+
+The authoritative list of contexts a generated repository's `Protect Main`
+ruleset requires, and the copier answer that turns each one on. It is derived
+from `template/.github/Branch Protection Ruleset - Protect Main.json.jinja`;
+`task test:audit-fleet-rulesets` fails when a context in that template (or in
+this repository's checked-in ruleset) is missing here, names a different
+answer, or a row here names no context the ruleset can emit.
+
+| Context | Copier answer | Reasoning |
+| ------- | ------------- | --------- |
+| `verify` | always | The aggregate of `build.yml`: one stable context however many leaf jobs `check`, `repo-guards`, `build-test` and the rest grow into. Requiring leaf jobs would make every new job a ruleset change. |
+| `security` | always | Secrets (gitleaks), the dependency audit, and Semgrep CE where this job owns SAST — the checks a reviewer cannot see in a diff. The dependency audit stays a PR gate at `--audit-level=high` (maintainer decision 2026-11-21): it does not move to `critical` and is not split into its own job, because #392's automated remediation PR makes a `high` advisory cheap to clear, and weakening the gate would weaken it exactly when a real advisory lands. A ruleset keyed on a job name cannot make it advisory for content-only PRs either. |
+| `closing-keywords` | always | Its own workflow so it can keep the `pull_request.edited` trigger the build matrix must not have (#1328). `needs:` cannot cross workflows, so only a live ruleset entry enforces the closing policy. |
+| `codeql-verify` | `use_codeql` | CodeQL's stable aggregate; a successful not-applicable result on free private repositories and fork PRs, so requiring it never wedges them (see [security.md](security.md)). |
+| `terraform-verify` | `include_terraform` | The aggregate of `terraform.yml`, which runs on every event with no `paths:` filter; required only where the workflow ships. |
+| `devcontainer-verify` | `devcontainer` | The aggregate of `devcontainer-build.yml`, which runs on every event with no `paths:` filter; required only where the devcontainer ships. |
+| `remote-bootstrap-verify` | root only | harmon-init's own ruleset: generated repositories consume the remote bootstrap but do not ship its producer workflow, so their ruleset must not require it. |
+
+Nothing else is required: Snyk's scheduled workflow is advisory with no PR
+trigger, and the `a11y` job ships non-blocking. The `merge_queue` rule
+(`github_owner_kind == 'organization'` with `merge_queue_available`) adds no
+context; it re-runs these on `merge_group`, which is why each one must run on
+that event.
+
+## Repository merge settings
+
+`delete_branch_on_merge: true` is the standard (#411): GitHub deletes a pull
+request's head branch when it merges. `task setup:github` turns it on —
+`scripts/setup-github.sh` PATCHes `delete_branch_on_merge=true` (with
+`allow_update_branch: true` and `allow_auto_merge: false`) and reads the values
+back (#1835). It is a plain idempotent repository-settings PATCH, unlike the
+ruleset. Local clones keep stale remote-tracking refs for deleted branches until
+`git fetch --prune` (or `remote.origin.prune=true`).
+
 ## Dependabot and Renovate
 
 Routine updates and vulnerability-remediation PRs are owned by **Renovate**

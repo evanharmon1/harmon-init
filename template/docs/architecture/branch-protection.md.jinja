@@ -109,6 +109,16 @@ update. Add the contexts to the existing ruleset in the UI instead; never
 re-import, create a duplicate, or remove an existing rule to make the API accept
 it. Confirm with `task audit:ruleset`. Other policy drift remains a manual edit.
 
+## Repository merge settings
+
+`delete_branch_on_merge: true` is the standard: GitHub deletes a pull
+request's head branch when it merges. `task setup:github` turns it on —
+`scripts/setup-github.sh` PATCHes `delete_branch_on_merge=true` (with
+`allow_update_branch: true` and `allow_auto_merge: false`) and reads the values
+back. It is a plain idempotent repository-settings PATCH, unlike the ruleset.
+Local clones keep stale remote-tracking refs for deleted branches until
+`git fetch --prune` (or `remote.origin.prune=true`).
+
 ## Dependabot and Renovate
 
 Routine updates and vulnerability-remediation PRs are owned by **Renovate**
