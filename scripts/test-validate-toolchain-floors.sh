@@ -87,11 +87,12 @@ if [ -z "${TOOLCHAIN_FLOORS_TEST_NESTED:-}" ]; then
     pnpm_path="$(node -e 'const f=JSON.parse(require("fs").readFileSync("toolchain-floors.json","utf8")).floors.find((x)=>x.tool==="pnpm");process.stdout.write(f.pins[0].path)')"
     [ "$pnpm_path" = "package.json" ] || fail "the pnpm pin must name package.json, got ${pnpm_path}"
     [ "$pnpm_pointer" = "/packageManager" ] || fail "the pnpm pin must locate /packageManager, got ${pnpm_pointer}"
-    for value in 'pnpm@11.2.0' 'pnpm@11.2.0+sha512.abc123'; do
+    for value in 'pnpm@11.2.0' 'pnpm@11.2.0-rc.1' 'pnpm@11.2.0+sha512.abc123' 'pnpm@11.2.0-rc.1+sha512.abc123'; do
         major="$(node -e 'const f=JSON.parse(require("fs").readFileSync("toolchain-floors.json","utf8")).floors.find((x)=>x.tool==="pnpm");const m=new RegExp(f.pins[0].pattern).exec(process.argv[1]);process.stdout.write(m?m[1]:"")' "$value")"
         [ "$major" = "11" ] || fail "the pnpm pattern captured '${major}' from ${value}, want 11"
     done
-    for value in 'npm@10.0.0' 'yarn@4.0.0' 'pnpm-ish@11.0.0' 'pnpm@11.' 'pnpm@11.not-a-version'; do
+    for value in 'npm@10.0.0' 'yarn@4.0.0' 'pnpm-ish@11.0.0' 'pnpm@11.' 'pnpm@11.not-a-version' \
+        'pnpm@11.2.0-' 'pnpm@11.2.0+' 'pnpm@11.2.0+sha512..abc123' 'pnpm@11.2.0+sha512/abc123'; do
         major="$(node -e 'const f=JSON.parse(require("fs").readFileSync("toolchain-floors.json","utf8")).floors.find((x)=>x.tool==="pnpm");const m=new RegExp(f.pins[0].pattern).exec(process.argv[1]);process.stdout.write(m?m[1]:"")' "$value")"
         [ -z "$major" ] || fail "the pnpm pattern matched ${value}"
     done
@@ -412,9 +413,9 @@ floors "$(node_floor 24 "$SETUP_NODE")"
 node_step "node-version: '22'"
 expect "a single-quoted node-version below the floor is caught" 1 "pinned 22 is below the floor 24"
 node_step 'node-version: ${{ inputs.node }}'
-expect "an uninterpretable node-version fails" 1 "is not a major version"
+expect "an uninterpretable node-version fails" 1 "pattern matches nothing"
 node_step "node-version: \${{ vars.NODE_VERSION || '22' }}"
-expect "an expression containing apostrophes fails" 1 "is not a major version"
+expect "an expression containing apostrophes fails" 1 "pattern matches nothing"
 node_step 'node-version-file: .nvmrc'
 expect "a node-version-file step is not a pin and fails the setup action's check" 1 "pattern matches nothing"
 rm -f "${fx}/template/setup-node.yml.jinja"
@@ -448,6 +449,19 @@ floors "$(node_floor 24 "$(declared_pin node 1)")"
 two_jobs "$node_good" "$node_good" >"$NODE_WORKFLOW"
 expect "both Node workflow steps pass independently" 0 "toolchain-floors: ok"
 [ "$(grep -Fc ': 24 >= 24' "$out")" = 2 ] || fail "both Node versions must be compared"
+two_jobs "$node_good" '      - uses: actions/setup-node@0000
+        with:
+          node-version: "24.21.0" # supported exact version' >"$NODE_WORKFLOW"
+expect "an exact Node pin contributes its major to the floor check" 0 "toolchain-floors: ok"
+[ "$(grep -Fc ': 24 >= 24' "$out")" = 2 ] || fail "both the major and exact Node pins must be compared"
+two_jobs "$node_good" '      - uses: actions/setup-node@0000
+        with:
+          node-version: "23.21.0"' >"$NODE_WORKFLOW"
+expect "an exact Node pin below the major floor fails" 1 "pinned 23 is below the floor 24"
+two_jobs "$node_good" '      - uses: actions/setup-node@0000
+        with:
+          node-version: "24 # main"' >"$NODE_WORKFLOW"
+expect "a hash inside a quoted Node pin is part of the value" 1 "needs exactly one recognized node-version version"
 two_jobs "$node_good" '      - uses: ./local-action
         with:
           node-version: "20"' >"$NODE_WORKFLOW"
@@ -493,7 +507,7 @@ expect "a cache-only Jinja control after the unconditional version passes" 0 "to
 two_jobs "$node_good" '      - uses: actions/setup-node@0000
         with:
           node-version: ${{ vars.NODE_VERSION || '\''22'\'' }}' >"$NODE_WORKFLOW"
-expect "a Node expression with apostrophes fails beside a valid Node step" 1 "is not a major version"
+expect "a Node expression with apostrophes fails beside a valid Node step" 1 "needs exactly one recognized node-version version"
 two_jobs "$node_good" '      - uses: actions/setup-node@0000
         with: {node-version: "24"}' >"$NODE_WORKFLOW"
 expect "a flow-style input mapping fails beside a valid Node step" 1 "unsupported flow-style mapping"
@@ -509,6 +523,31 @@ expect "a workflow with no Node setup steps fails" 1 "no actions/setup-node step
 floors "$(task_floor 3.51.1 "$(declared_pin task 1)")"
 two_jobs "$task_good" "$task_good" >"$TASK_WORKFLOW"
 expect "both Task workflow steps pass independently" 0 "toolchain-floors: ok"
+two_jobs "$task_good" '      - name: Set up Task
+        uses: arduino/setup-task@0000
+        env:
+          version: 1.0.0
+        with:
+          repo-token: token-value
+          version: "3.51.1" # supported quoted version' >"$TASK_WORKFLOW"
+expect "a name-first Task step uses its quoted with.version despite an earlier version" 0 "toolchain-floors: ok"
+[ "$(grep -Fc ': 3.51.1 >= 3.51.1' "$out")" = 2 ] || fail "both Task versions must be compared"
+two_jobs "$task_good" '      - name: Set up Task
+        uses: arduino/setup-task@0000
+        env:
+          version: 9.0.0
+        with:
+          version: "3.50.0"' >"$TASK_WORKFLOW"
+expect "a higher version elsewhere in the Task step does not mask a low with.version" 1 "pinned 3.50.0 is below the floor 3.51.1"
+two_jobs "$task_good" '      - name: Set up Task
+        uses: arduino/setup-task@0000
+        with:
+          repo-token: token-value
+        env:
+          version: 3.51.1' >"$TASK_WORKFLOW"
+expect "a version after the Task with mapping cannot stand in for with.version" 1 "needs exactly one version input (found 0)"
+[ "$(grep -Fc ': 3.51.1 >= 3.51.1' "$out")" = 1 ] || fail "only the valid Task input should be compared"
+two_jobs "$task_good" "$task_good" >"$TASK_WORKFLOW"
 adjacent_task_pin="$(declared_pin task 1 | jq -c '.pattern = "^\\s*- uses: arduino/setup-task@[^\\n]*\\n\\s*version: ([0-9]+\\.[0-9]+\\.[0-9]+)$"')"
 floors "$(task_floor 3.51.1 "$adjacent_task_pin")"
 expect "a pattern requiring adjacent uses and version fails across the real with line" 1 "needs exactly one recognized version version"

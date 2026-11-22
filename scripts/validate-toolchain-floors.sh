@@ -215,7 +215,7 @@ function associateStepPins(label, source, { action, input }, versions) {
     | map({"line": line, "usesLine": (.uses | line), "style": style, "inputStyle": (.with | style),
          "inputs": [(.with | select(tag == "!!map") | to_entries | .[]
            | select(.key == strenv(FLOOR_STEP_INPUT))
-           | {"line": (.key | line), "value": (.value | to_string)})]})
+           | (.key | line))]})
   `, '-'], {
     input: yaml,
     encoding: 'utf8',
@@ -259,9 +259,9 @@ function associateStepPins(label, source, { action, input }, versions) {
       fail(`${here}: ${action} step needs exactly one ${input} input (found ${step.inputs.length})`)
       continue
     }
-    const [version] = step.inputs
-    let first = Math.min(step.line, step.usesLine, version.line) - 1
-    const last = Math.max(step.usesLine, version.line) - 1
+    const [inputLine] = step.inputs
+    let first = Math.min(step.line, step.usesLine, inputLine) - 1
+    const last = Math.max(step.usesLine, inputLine) - 1
     // yq reports the first key for a mapping whose list dash is on its own
     // line. Include any directives between that dash and the first key.
     let previous = first - 1
@@ -273,8 +273,8 @@ function associateStepPins(label, source, { action, input }, versions) {
       fail(`${here}: Jinja control prevents verifying the ${action} step's uses and ${input} input together`)
       continue
     }
-    const captures = capturesByLine.get(version.line) ?? []
-    if (captures.length !== 1 || captures[0].pinned !== version.value) {
+    const captures = capturesByLine.get(inputLine) ?? []
+    if (captures.length !== 1) {
       fail(`${here}: ${action} step needs exactly one recognized ${input} version`)
       continue
     }
