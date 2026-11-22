@@ -38,12 +38,14 @@ if [ -z "${TOOLCHAIN_FLOORS_TEST_NESTED:-}" ]; then
     [ "$tools" = "copier devcontainer-image node pnpm task " ] || fail "declared tools differ: ${tools}"
     # The published pnpm locator, applied to representative packageManager values.
     pnpm_pointer="$(node -e 'const f=JSON.parse(require("fs").readFileSync("toolchain-floors.json","utf8")).floors.find((x)=>x.tool==="pnpm");process.stdout.write(f.pins[0].json_pointer)')"
+    pnpm_path="$(node -e 'const f=JSON.parse(require("fs").readFileSync("toolchain-floors.json","utf8")).floors.find((x)=>x.tool==="pnpm");process.stdout.write(f.pins[0].path)')"
+    [ "$pnpm_path" = "package.json" ] || fail "the pnpm pin must name package.json, got ${pnpm_path}"
     [ "$pnpm_pointer" = "/packageManager" ] || fail "the pnpm pin must locate /packageManager, got ${pnpm_pointer}"
     for value in 'pnpm@11.2.0' 'pnpm@11.2.0+sha512.abc123'; do
         major="$(node -e 'const f=JSON.parse(require("fs").readFileSync("toolchain-floors.json","utf8")).floors.find((x)=>x.tool==="pnpm");const m=new RegExp(f.pins[0].pattern).exec(process.argv[1]);process.stdout.write(m?m[1]:"")' "$value")"
         [ "$major" = "11" ] || fail "the pnpm pattern captured '${major}' from ${value}, want 11"
     done
-    for value in 'npm@10.0.0' 'yarn@4.0.0' 'pnpm-ish@11.0.0'; do
+    for value in 'npm@10.0.0' 'yarn@4.0.0' 'pnpm-ish@11.0.0' 'pnpm@11.' 'pnpm@11.not-a-version'; do
         major="$(node -e 'const f=JSON.parse(require("fs").readFileSync("toolchain-floors.json","utf8")).floors.find((x)=>x.tool==="pnpm");const m=new RegExp(f.pins[0].pattern).exec(process.argv[1]);process.stdout.write(m?m[1]:"")' "$value")"
         [ -z "$major" ] || fail "the pnpm pattern matched ${value}"
     done
@@ -54,7 +56,7 @@ fi
 # the caller's real repository (scripts/test-worktree.sh does the same).
 unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY \
     GIT_ALTERNATE_OBJECT_DIRECTORIES GIT_PREFIX GIT_NAMESPACE GIT_CEILING_DIRECTORIES \
-    GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS
+    GIT_CONFIG GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS
 for _i in 0 1 2 3 4 5 6 7 8 9; do unset "GIT_CONFIG_KEY_${_i}" "GIT_CONFIG_VALUE_${_i}"; done
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
 export GIT_AUTHOR_NAME=fixture GIT_AUTHOR_EMAIL=fixture@example.com
@@ -174,19 +176,19 @@ expect "a longer minimum outranks a shorter pin" 1 "is below the floor 3.51.1.1"
 
 floors "$(node_floor 24 '{"path":".github/action/setup/action.yml","template_path":"template/.github/actions/setup/action.yml.jinja","pattern":'"${NODE_PATTERN}"'}')"
 expect "a consumer path that is not what template_path renders to fails" 1 "path is not what template/.github/actions/setup/action.yml.jinja renders to (.github/actions/setup/action.yml)"
-floors "$(node_floor 24 '{"path":"a","template_path":"template/missing.jinja","pattern":"(x)"}')"
+floors "$(node_floor 24 '{"path":"missing","template_path":"template/missing.jinja","pattern":"(x)"}')"
 expect "a template_path that does not exist fails" 1 "template/missing.jinja does not exist"
-floors "$(node_floor 24 '{"path":"a","template_path":"../outside","pattern":"(x)"}')"
+floors "$(node_floor 24 '{"path":"../outside","template_path":"../outside","pattern":"(x)"}')"
 expect "a template_path leaving the repository fails" 1 "leaves the repository"
-floors "$(node_floor 24 '{"path":"a","template_path":"template/.github/actions/setup/action.yml.jinja","pattern":"^nothing-here: ([0-9]+)$"}')"
+floors "$(node_floor 24 '{"path":".github/actions/setup/action.yml","template_path":"template/.github/actions/setup/action.yml.jinja","pattern":"^nothing-here: ([0-9]+)$"}')"
 expect "a pattern with no match fails" 1 "pattern matches nothing"
-floors "$(node_floor 24 '{"path":"a","template_path":"template/.github/actions/setup/action.yml.jinja","pattern":"^\\s*node-version: \"[0-9]+\"$"}')"
+floors "$(node_floor 24 '{"path":".github/actions/setup/action.yml","template_path":"template/.github/actions/setup/action.yml.jinja","pattern":"^\\s*node-version: \"[0-9]+\"$"}')"
 expect "a pattern with no capture group fails" 1 "no capture group 1"
-floors "$(node_floor 24 '{"path":"a","template_path":"template/.github/actions/setup/action.yml.jinja","pattern":"("}')"
+floors "$(node_floor 24 '{"path":".github/actions/setup/action.yml","template_path":"template/.github/actions/setup/action.yml.jinja","pattern":"("}')"
 expect "a pattern that does not compile fails" 1 "pattern does not compile"
-floors "$(node_floor 24 '{"path":"a","template_path":"template/.github/actions/setup/action.yml.jinja","pattern":"^(\\s*)node-version"}')"
+floors "$(node_floor 24 '{"path":".github/actions/setup/action.yml","template_path":"template/.github/actions/setup/action.yml.jinja","pattern":"^(\\s*)node-version"}')"
 expect "a non-numeric capture fails" 1 "is not a major version"
-floors "$(node_floor 24 '{"path":"a","template_path":"template/.github/actions/setup/action.yml.jinja","json_pointer":"/x","pattern":"(x)"}')"
+floors "$(node_floor 24 '{"path":".github/actions/setup/action.yml","template_path":"template/.github/actions/setup/action.yml.jinja","json_pointer":"/x","pattern":"(x)"}')"
 expect "json_pointer on a template pin fails" 1 "json_pointer needs a consumer file"
 
 floors "$(node_floor 24 '{"path":"package.json","template_path":null,"json_pointer":"/packageManager","pattern":"^pnpm@([0-9]+)\\."}')"
@@ -355,11 +357,13 @@ cat >"${fx}/template/two-node.yml.jinja" <<'EOF'
       with:
         node-version: '22'
 EOF
-TWO_NODE='{"path":"w.yml","template_path":"template/two-node.yml.jinja","pattern":'"${NODE_PATTERN}"'}'
+TWO_NODE='{"path":"two-node.yml","template_path":"template/two-node.yml.jinja","pattern":'"${NODE_PATTERN}"'}'
 floors "$(node_floor 24 "$TWO_NODE")"
 expect "a single-quoted node-version below the floor is caught" 1 "pinned 22 is below the floor 24"
 printf '    - uses: actions/setup-node@0000\n      with:\n        node-version: "24"\n    - uses: actions/setup-node@0000\n      with:\n        node-version: ${{ inputs.node }}\n' >"${fx}/template/two-node.yml.jinja"
 expect "an uninterpretable node-version fails even beside a valid one" 1 "is not a major version"
+printf '    - uses: actions/setup-node@0000\n      with:\n        node-version: "24"\n    - uses: actions/setup-node@0000\n      with:\n        node-version: ${{ vars.NODE_VERSION || '"'"'22'"'"' }}\n' >"${fx}/template/two-node.yml.jinja"
+expect "an expression containing apostrophes fails beside a valid pin" 1 "is not a major version"
 rm -f "${fx}/template/two-node.yml.jinja"
 
 # Fail closed outside a git repository: no history means ancestry is unknown.
@@ -383,7 +387,8 @@ rc=0
 if [ -z "${TOOLCHAIN_FLOORS_TEST_NESTED:-}" ]; then
     echo "==> the suite ignores a caller's GIT_DIR and leaves that repository untouched"
     rc=0
-    TOOLCHAIN_FLOORS_TEST_NESTED=1 GIT_DIR="$decoy" GIT_INDEX_FILE="${decoy}/index" GIT_WORK_TREE="$work" \
+    : >"${work}/decoy.gitconfig"
+    TOOLCHAIN_FLOORS_TEST_NESTED=1 GIT_CONFIG="${work}/decoy.gitconfig" GIT_DIR="$decoy" GIT_INDEX_FILE="${decoy}/index" GIT_WORK_TREE="$work" \
         "$self" >"$out" 2>&1 || rc=$?
     [ "$rc" = 0 ] || {
         cat "$out" >&2
@@ -392,6 +397,7 @@ if [ -z "${TOOLCHAIN_FLOORS_TEST_NESTED:-}" ]; then
     [ -z "$(git --git-dir="$decoy" for-each-ref)" ] || fail "the suite wrote a ref into the caller's repository"
     git --git-dir="$decoy" rev-parse --verify -q HEAD >/dev/null && fail "the suite committed into the caller's repository"
     [ ! -e "${decoy}/index" ] || fail "the suite wrote the caller's index"
+    [ ! -s "${work}/decoy.gitconfig" ] || fail "the suite wrote the caller's GIT_CONFIG file"
 fi
 
 echo "OK: validate-toolchain-floors"

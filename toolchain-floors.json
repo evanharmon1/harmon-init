@@ -9,17 +9,17 @@
         {
           "path": ".github/actions/setup/action.yml",
           "template_path": "template/.github/actions/setup/action.yml.jinja",
-          "pattern": "^\\s*node-version: [\"']?([^\"'#\\n]*?)[\"']?\\s*(?:#.*)?$"
+          "pattern": "^\\s*node-version: [\"']?(.*?)[\"']?\\s*(?:\\s#.*)?$"
         },
         {
           "path": ".github/workflows/devcontainer-build.yml",
           "template_path": "template/.github/workflows/[% if devcontainer %]devcontainer-build.yml[% endif %].jinja",
-          "pattern": "^\\s*node-version: [\"']?([^\"'#\\n]*?)[\"']?\\s*(?:#.*)?$"
+          "pattern": "^\\s*node-version: [\"']?(.*?)[\"']?\\s*(?:\\s#.*)?$"
         },
         {
           "path": ".github/workflows/classification-reconcile.yml",
           "template_path": "template/.github/workflows/[% if project_management == 'github' %]classification-reconcile.yml[% endif %].jinja",
-          "pattern": "^\\s*node-version: [\"']?([^\"'#\\n]*?)[\"']?\\s*(?:#.*)?$"
+          "pattern": "^\\s*node-version: [\"']?(.*?)[\"']?\\s*(?:\\s#.*)?$"
         }
       ]
     },
@@ -33,7 +33,7 @@
           "path": "package.json",
           "template_path": null,
           "json_pointer": "/packageManager",
-          "pattern": "^pnpm@([0-9]+)\\."
+          "pattern": "^pnpm@([0-9]+)\\.[0-9]+\\.[0-9]+(?:[-+].*)?$"
         }
       ]
     },
