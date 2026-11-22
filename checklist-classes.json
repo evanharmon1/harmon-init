@@ -130,9 +130,9 @@
       "source": "template",
       "section": "2. GitHub repo settings",
       "label": "**Add `closing-keywords` to the live branch ruleset** —",
-      "class": "human-only",
-      "probe": "Read required checks in the live branch ruleset through the GitHub API.",
-      "write_task": null
+      "class": "agent-apply-with-fleet-approval",
+      "probe": "Read the live branch ruleset's required checks through the GitHub API and compare them with the checked-in ruleset.",
+      "write_task": "task setup:ruleset"
     },
     {
       "id": "template-enable-unattributed-changes-approval-015",
@@ -985,9 +985,9 @@
       "source": "root",
       "section": "2. GitHub repo settings",
       "label": "**Add `closing-keywords` to the live branch ruleset** —",
-      "class": "human-only",
-      "probe": "Read required checks in the live branch ruleset through the GitHub API.",
-      "write_task": null
+      "class": "agent-apply-with-fleet-approval",
+      "probe": "Read the live branch ruleset's required checks through the GitHub API and compare them with the checked-in ruleset.",
+      "write_task": "task setup:ruleset"
     },
     {
       "id": "root-enable-unattributed-changes-approval-014",

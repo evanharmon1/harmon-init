@@ -55,14 +55,18 @@
           "slug": "astra",
           "display_name": "Astra",
           "tier": "apex",
-          "versions": [{ "slug": "6", "display_name": "Astra 6", "retired": false }]
+          "versions": [
+            { "slug": "6.2", "display_name": "Astra 6.2", "retired": false },
+            { "slug": "6", "display_name": "Astra 6", "retired": true }
+          ]
         },
         {
           "slug": "sol",
           "display_name": "Sol",
           "tier": "frontier",
           "versions": [
-            { "slug": "6.1", "display_name": "Sol 6.1", "retired": false },
+            { "slug": "6.2", "display_name": "Sol 6.2", "retired": false },
+            { "slug": "6.1", "display_name": "Sol 6.1", "retired": true },
             { "slug": "5.6", "display_name": "Sol 5.6", "retired": true }
           ]
         },
@@ -88,16 +92,25 @@
       "display_name": "MAI",
       "models": [
         {
-          "slug": "code-flash",
-          "display_name": "Code Flash",
-          "tier": "economy",
-          "versions": [{ "slug": "1.1", "display_name": "Code-1.1-Flash", "retired": false }]
+          "slug": "code",
+          "display_name": "Code",
+          "tier": "frontier",
+          "versions": [{ "slug": "2", "display_name": "Code-2", "retired": false }]
         },
         {
           "slug": "thinking",
           "display_name": "Thinking",
           "tier": "standard",
           "versions": [{ "slug": "1", "display_name": "Thinking-1", "retired": false }]
+        },
+        {
+          "slug": "code-flash",
+          "display_name": "Code Flash",
+          "tier": "economy",
+          "versions": [
+            { "slug": "2", "display_name": "Code-2-Flash", "retired": false },
+            { "slug": "1.1", "display_name": "Code-1.1-Flash", "retired": true }
+          ]
         }
       ]
     },
@@ -110,7 +123,10 @@
           "slug": "max",
           "display_name": "Max",
           "tier": "frontier",
-          "versions": [{ "slug": "3.8", "display_name": "3.8 Max", "retired": false }]
+          "versions": [
+            { "slug": "4", "display_name": "4 Max", "retired": false },
+            { "slug": "3.8", "display_name": "3.8 Max", "retired": true }
+          ]
         },
         {
           "slug": "coder-plus",
@@ -200,6 +216,12 @@
       "legacy_claim_labels": ["agent:kimi-k2"],
       "models": [
         {
+          "slug": "k-pro",
+          "display_name": "K Pro",
+          "tier": "frontier",
+          "versions": [{ "slug": "3.1", "display_name": "K3.1 Pro", "retired": false }]
+        },
+        {
           "slug": "k",
           "display_name": "K",
           "tier": "standard",
@@ -216,6 +238,12 @@
           "display_name": "M",
           "tier": "standard",
           "versions": [{ "slug": "3", "display_name": "M3", "retired": false }]
+        },
+        {
+          "slug": "flash",
+          "display_name": "Flash",
+          "tier": "economy",
+          "versions": [{ "slug": "3.1", "display_name": "M3.1 Flash", "retired": false }]
         }
       ]
     },
@@ -231,10 +259,16 @@
           "versions": [{ "slug": "4", "display_name": "4 Carbon", "retired": false }]
         },
         {
+          "slug": "neon",
+          "display_name": "Neon",
+          "tier": "frontier",
+          "default": true,
+          "versions": [{ "slug": "4", "display_name": "4 Neon", "retired": false }]
+        },
+        {
           "slug": "argon",
           "display_name": "Argon",
           "tier": "frontier",
-          "default": true,
           "versions": [{ "slug": "4", "display_name": "4 Argon", "retired": false }]
         },
         {
@@ -272,6 +306,13 @@
       "slug": "mistral",
       "display_name": "Mistral",
       "models": [
+        {
+          "slug": "large",
+          "display_name": "Large",
+          "tier": "frontier",
+          "default": true,
+          "versions": [{ "slug": "4", "display_name": "Large 4", "retired": false }]
+        },
         {
           "slug": "medium",
           "display_name": "Medium",
