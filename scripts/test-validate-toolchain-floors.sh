@@ -59,6 +59,8 @@ unset GIT_DIR GIT_WORK_TREE GIT_INDEX_FILE GIT_COMMON_DIR GIT_OBJECT_DIRECTORY \
     GIT_CONFIG GIT_CONFIG_COUNT GIT_CONFIG_PARAMETERS
 for _i in 0 1 2 3 4 5 6 7 8 9; do unset "GIT_CONFIG_KEY_${_i}" "GIT_CONFIG_VALUE_${_i}"; done
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
+# Commit ids are 40 hex characters whatever the caller's init.defaultObjectFormat / GIT_DEFAULT_HASH.
+export GIT_DEFAULT_HASH=sha1
 export GIT_AUTHOR_NAME=fixture GIT_AUTHOR_EMAIL=fixture@example.com
 export GIT_COMMITTER_NAME=fixture GIT_COMMITTER_EMAIL=fixture@example.com
 
