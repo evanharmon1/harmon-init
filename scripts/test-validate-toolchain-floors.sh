@@ -502,6 +502,10 @@ expect "a workflow with no Node setup steps fails" 1 "no actions/setup-node step
 floors "$(task_floor 3.51.1 "$(declared_pin task 1)")"
 two_jobs "$task_good" "$task_good" >"$TASK_WORKFLOW"
 expect "both Task workflow steps pass independently" 0 "toolchain-floors: ok"
+adjacent_task_pin="$(declared_pin task 1 | jq -c '.pattern = "^\\s*- uses: arduino/setup-task@[^\\n]*\\n\\s*version: ([0-9]+\\.[0-9]+\\.[0-9]+)$"')"
+floors "$(task_floor 3.51.1 "$adjacent_task_pin")"
+expect "a pattern requiring adjacent uses and version fails across the real with line" 1 "needs exactly one recognized version version"
+floors "$(task_floor 3.51.1 "$(declared_pin task 1)")"
 two_jobs "$task_good" '      - uses: arduino/setup-task@0000
       - uses: other/action@0000
         with:

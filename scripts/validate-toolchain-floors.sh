@@ -204,7 +204,8 @@ function booleanAnswer(name) {
 function stepPins(label, source, { action, input }, regex) {
   // Blank Jinja control lines and mask substitutions for structural parsing.
   // Preserve source line numbers and apply the pattern to the original text.
-  const lines = source.split(/\r?\n/)
+  const rawLines = source.split('\n')
+  const lines = rawLines.map((line) => line.replace(/\r$/, ''))
   const jinjaControl = /^ *\[%.*%\] *$/
   const yaml = lines.map((line) => jinjaControl.test(line) ? '' : line.replace(/\[\[.*?\]\]/g, 'JINJA')).join('\n')
   const result = spawnSync('yq', ['-o=json', '-I=0', `
@@ -261,7 +262,9 @@ function stepPins(label, source, { action, input }, regex) {
       fail(`${here}: Jinja control prevents verifying the ${action} step's uses and ${input} input together`)
       continue
     }
-    const stepText = [lines[step.usesLine - 1], lines[version.line - 1]].join('\n')
+    // Apply the published locator to the original source span, including any
+    // intervening lines and the source's line endings.
+    const stepText = rawLines.slice(Math.min(step.usesLine, version.line) - 1, last + 1).join('\n')
     const matches = [...stepText.matchAll(regex)]
     if (matches.length !== 1 || matches[0][1] !== version.value) {
       fail(`${here}: ${action} step needs exactly one recognized ${input} version`)
