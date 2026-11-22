@@ -421,7 +421,10 @@ has.
   shallow clone fails closed. A repository-owned pin such as `packageManager`
   (`template_path: null`) is not in the template; the check lists it as
   consumer-checked and consumers enforce it. A release that raises nothing
-  leaves the file unchanged.
+  leaves the file unchanged. A PR that changes only `toolchain-floors.json` or
+  its schema is outside the release-content guard (which covers `template/`),
+  so give it a `fix:` or `feat:` title, or consumers keep reading the previous
+  release's floors.
 - Issue types map many-to-one onto these commit types. Personal-account repos
   use the equivalent work-type labels as that mapping's substrate because native
   issue Type is unavailable there; organization repos use native Type and no
