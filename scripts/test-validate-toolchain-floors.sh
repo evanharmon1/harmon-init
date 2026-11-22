@@ -456,6 +456,11 @@ expect "an exact Node pin contributes its major to the floor check" 0 "toolchain
 [ "$(grep -Fc ': 24 >= 24' "$out")" = 2 ] || fail "both the major and exact Node pins must be compared"
 two_jobs "$node_good" '      - uses: actions/setup-node@0000
         with:
+          node-version: 24
+            || 22' >"$NODE_WORKFLOW"
+expect "a continued Node scalar must be validated as a whole" 1 "needs exactly one recognized node-version version"
+two_jobs "$node_good" '      - uses: actions/setup-node@0000
+        with:
           node-version: "23.21.0"' >"$NODE_WORKFLOW"
 expect "an exact Node pin below the major floor fails" 1 "pinned 23 is below the floor 24"
 two_jobs "$node_good" '      - uses: actions/setup-node@0000
@@ -539,6 +544,12 @@ two_jobs "$task_good" '      - name: Set up Task
         with:
           version: "3.50.0"' >"$TASK_WORKFLOW"
 expect "a higher version elsewhere in the Task step does not mask a low with.version" 1 "pinned 3.50.0 is below the floor 3.51.1"
+two_jobs "$task_good" '      - name: Set up Task
+        uses: arduino/setup-task@0000
+        with:
+          version: 3.51.1
+            || 1.0.0' >"$TASK_WORKFLOW"
+expect "a continued Task scalar must be validated as a whole" 1 "needs exactly one recognized version version"
 two_jobs "$task_good" '      - name: Set up Task
         uses: arduino/setup-task@0000
         with:

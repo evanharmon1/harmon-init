@@ -420,8 +420,9 @@ has.
   `step` with an `action` and an `input`. The step check requires Mike Farah
   `yq` on `PATH` to enumerate steps using that action in the covered file.
   Each step must have exactly one recognized version input with one locator
-  capture on its line. The floor check compares the captured component, such
-  as `24` from a Node pin of `"24.21.0"`. A missing input or an unsupported
+  capture on its line. The parsed value must equal the capture, with dotted
+  numeric components allowed after a major capture such as `24` from
+  `"24.21.0"`. The floor check compares the capture. A missing input or an unsupported
   form such as a flow-style mapping fails the check. A template workflow or the
   shared setup action using `actions/setup-node` or `arduino/setup-task` needs a floor pin
   naming the file. The inventory in `task test:validate-toolchain-floors` (part of

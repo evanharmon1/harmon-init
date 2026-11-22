@@ -201,7 +201,7 @@ function booleanAnswer(name) {
   return false
 }
 
-function associateStepPins(label, source, { action, input }, versions) {
+function associateStepPins(label, source, { action, input }, versions, compare) {
   // Blank Jinja control lines and mask substitutions for structural parsing.
   // Preserve source line numbers and apply the pattern to the original text.
   const lines = source.split(/\r?\n/)
@@ -215,7 +215,7 @@ function associateStepPins(label, source, { action, input }, versions) {
     | map({"line": line, "usesLine": (.uses | line), "style": style, "inputStyle": (.with | style),
          "inputs": [(.with | select(tag == "!!map") | to_entries | .[]
            | select(.key == strenv(FLOOR_STEP_INPUT))
-           | (.key | line))]})
+           | {"line": (.key | line), "value": (.value | to_string)})]})
   `, '-'], {
     input: yaml,
     encoding: 'utf8',
@@ -259,7 +259,7 @@ function associateStepPins(label, source, { action, input }, versions) {
       fail(`${here}: ${action} step needs exactly one ${input} input (found ${step.inputs.length})`)
       continue
     }
-    const [inputLine] = step.inputs
+    const [{ line: inputLine, value }] = step.inputs
     let first = Math.min(step.line, step.usesLine, inputLine) - 1
     const last = Math.max(step.usesLine, inputLine) - 1
     // yq reports the first key for a mapping whose list dash is on its own
@@ -274,7 +274,11 @@ function associateStepPins(label, source, { action, input }, versions) {
       continue
     }
     const captures = capturesByLine.get(inputLine) ?? []
-    if (captures.length !== 1) {
+    const pinned = captures[0]?.pinned
+    const matchesValue = pinned === value ||
+      (compare === 'major' && pinned !== undefined && value.startsWith(pinned) &&
+        /^(?:\.[0-9]+)+$/.test(value.slice(pinned.length)))
+    if (captures.length !== 1 || !matchesValue) {
       fail(`${here}: ${action} step needs exactly one recognized ${input} version`)
       continue
     }
@@ -357,7 +361,7 @@ for (const floor of declaration.floors) {
       pinned: match[1], capture: match.indices?.[1], locations: []
     }))
     if (pin.step !== undefined) {
-      associateStepPins(fileLabel, source, pin.step, versions)
+      associateStepPins(fileLabel, source, pin.step, versions, compare)
     } else if (versions.length === 0) {
       fail(`${label}: pattern matches nothing in ${pin.template_path}`)
     }
