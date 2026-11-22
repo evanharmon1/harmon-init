@@ -5,8 +5,9 @@
 # For every floor it validates the declaration against toolchain-floors.schema.json,
 # then for every pin with a non-null `template_path` reads that file's raw text
 # (Jinja and all), checks every `pattern` match against the floor, and fails
-# when a match is below it or when the file has no match at all. A pin with a
-# null `template_path` is repository-owned (package.json `packageManager`): the
+# when a match is below it or when the file has no match at all. A `step` pin
+# uses yq to find the action's steps and requires a recognized input in each.
+# A pin with a null `template_path` is repository-owned (package.json `packageManager`): the
 # template never writes it, so it is reported as consumer-checked and skipped.
 # A `copier` floor is held to `_min_copier_version` in copier.yml, and `when`
 # must name a boolean answer in copier.yml.
@@ -200,6 +201,63 @@ function booleanAnswer(name) {
   return false
 }
 
+function stepPins(label, source, { action, input }, regex) {
+  // Blank Jinja control lines and mask substitutions for structural parsing.
+  // Preserve source line numbers and apply the pattern to the original text.
+  const yaml = source.replace(/^ *\[%.*%\] *$/gm, '').replace(/\[\[[^\r\n]*?\]\]/g, 'JINJA')
+  const result = spawnSync('yq', ['-o=json', '-I=0', `
+    [(.runs.steps[]?, .jobs[].steps[]?)
+      | explode(.)
+      | select(tag == "!!map")
+      | select((.uses | downcase | split("@") | .[0]) == strenv(FLOOR_STEP_ACTION))]
+    | map({"line": line, "usesLine": (.uses | line), "style": style, "inputStyle": (.with | style),
+         "inputs": [(.with | select(tag == "!!map") | to_entries | .[]
+           | select(.key == strenv(FLOOR_STEP_INPUT))
+           | {"line": (.key | line), "value": (.value | to_string)})]})
+  `, '-'], {
+    input: yaml,
+    encoding: 'utf8',
+    env: { ...process.env, FLOOR_STEP_ACTION: action, FLOOR_STEP_INPUT: input }
+  })
+  if (result.status !== 0) {
+    fail(`${label}: cannot enumerate ${action} steps with Mike Farah yq: ${result.error?.message ?? result.stderr.trim()}`)
+    return []
+  }
+
+  let steps
+  try {
+    steps = JSON.parse(result.stdout)
+    if (!Array.isArray(steps)) throw new Error('expected a YAML step list')
+  } catch (error) {
+    fail(`${label}: cannot read ${action} steps from yq: ${error.message}`)
+    return []
+  }
+  if (steps.length === 0) fail(`${label}: no ${action} steps found`)
+
+  const lines = source.split(/\r?\n/)
+  const pins = []
+  for (const step of steps) {
+    const here = `${label}:${step.line}`
+    if (step.style === 'flow' || step.inputStyle === 'flow') {
+      fail(`${here}: ${action} step uses an unsupported flow-style mapping`)
+      continue
+    }
+    if (step.inputs.length !== 1) {
+      fail(`${here}: ${action} step needs exactly one ${input} input (found ${step.inputs.length})`)
+      continue
+    }
+    const [version] = step.inputs
+    const stepText = [lines[step.usesLine - 1], lines[version.line - 1]].join('\n')
+    const matches = [...stepText.matchAll(regex)]
+    if (matches.length !== 1 || matches[0][1] !== version.value) {
+      fail(`${here}: ${action} step needs exactly one recognized ${input} version`)
+      continue
+    }
+    pins.push({ pinned: matches[0][1], here })
+  }
+  return pins
+}
+
 const seenTools = new Set()
 for (const floor of declaration.floors) {
   const { tool, minimum, compare, pins } = floor
@@ -269,14 +327,15 @@ for (const floor of declaration.floors) {
       fail(`${label}: template_path ${pin.template_path} does not exist`)
       continue
     }
-    const matches = [...fs.readFileSync(file, 'utf8').matchAll(regex)]
-    if (matches.length === 0) {
+    const source = fs.readFileSync(file, 'utf8')
+    const here = `${label} (${pin.template_path})`
+    const versions = pin.step === undefined
+      ? [...source.matchAll(regex)].map((match) => ({ pinned: match[1], here }))
+      : stepPins(here, source, pin.step, regex)
+    if (pin.step === undefined && versions.length === 0) {
       fail(`${label}: pattern matches nothing in ${pin.template_path}`)
-      continue
     }
-    for (const match of matches) {
-      const pinned = match[1]
-      const here = `${label} (${pin.template_path})`
+    for (const { pinned, here } of versions) {
       if (pinned === undefined) {
         fail(`${here}: pattern has no capture group 1`)
       } else if (compare === 'ancestor') {

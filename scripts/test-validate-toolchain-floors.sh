@@ -34,6 +34,12 @@ if [ -z "${TOOLCHAIN_FLOORS_TEST_NESTED:-}" ]; then
         fail "the current template violates its own floors"
     }
     grep -E 'consumer-checked +package.json' "$out" >/dev/null || fail "pnpm pin is not reported as consumer-checked"
+    [ "$(grep -Fc 'ok   node .github/workflows/devcontainer-build.yml' "$out")" = 2 ] ||
+        fail "both devcontainer-build Node steps must be checked"
+    [ "$(grep -Fc 'ok   node .github/workflows/classification-reconcile.yml' "$out")" = 1 ] ||
+        fail "the classification-reconcile Node step must be checked"
+    [ "$(grep -Fc 'ok   task .github/workflows/release-content-guard.yml' "$out")" = 1 ] ||
+        fail "the release-content-guard Task step must be checked"
     tools="$(sed -n 's/^toolchain-floors: \([a-z-]*\) (.*/\1/p' "$out" | sort | tr '\n' ' ')"
     [ "$tools" = "copier devcontainer-image node pnpm task " ] || fail "declared tools differ: ${tools}"
     # The published pnpm locator, applied to representative packageManager values.
@@ -119,6 +125,9 @@ help_trap:
 EOF
 # Two unrelated actions carry a bare `version:` next to the setup-task one.
 cat >"${fx}/template/.github/actions/setup/action.yml.jinja" <<'EOF'
+runs:
+  using: composite
+  steps:
     - uses: pnpm/action-setup@0000 # v1
       with:
         version: 9.0.0
@@ -138,9 +147,11 @@ cp toolchain-floors.schema.json "${fx}/toolchain-floors.schema.json"
 # floors JSON -> write the fixture declaration with the given floor objects.
 floors() { printf '{"schema_version":1,"floors":[%s]}\n' "$1" >"${fx}/toolchain-floors.json"; }
 NODE_PATTERN="$(node -e 'const f=JSON.parse(require("fs").readFileSync("toolchain-floors.json","utf8")).floors.find((x)=>x.tool==="node");process.stdout.write(JSON.stringify(f.pins[0].pattern))')"
-NODE_PIN='{"path":".github/actions/setup/action.yml","template_path":"template/.github/actions/setup/action.yml.jinja","pattern":'"${NODE_PATTERN}"'}'
-TASK_PATTERN="$(node -e 'const f=JSON.parse(require("fs").readFileSync("toolchain-floors.json","utf8")).floors.find((x)=>x.tool==="task");process.stdout.write(JSON.stringify(f.pins[0].pattern))')"
-TASK_PIN='{"path":".github/actions/setup/action.yml","template_path":"template/.github/actions/setup/action.yml.jinja","pattern":'"${TASK_PATTERN}"'}'
+declared_pin() {
+    node -e 'const f=JSON.parse(require("fs").readFileSync("toolchain-floors.json","utf8")).floors.find((x)=>x.tool===process.argv[1]);process.stdout.write(JSON.stringify(f.pins[Number(process.argv[2])]))' "$1" "$2"
+}
+NODE_PIN="$(declared_pin node 0)"
+TASK_PIN="$(declared_pin task 0)"
 IMAGE_PIN='{"path":".devcontainer/Dockerfile","template_path":"'"${JINJA_DIR}"'/Dockerfile","pattern":"^FROM ghcr\\.io/evanharmon1/harmon-devcontainer:sha-([0-9a-f]{40})@"}'
 node_floor() { printf '{"tool":"node","minimum":"%s","compare":"major","pins":[%s]}' "$1" "${2:-$NODE_PIN}"; }
 task_floor() { printf '{"tool":"task","minimum":"%s","compare":"version","pins":[%s]}' "$1" "${2:-$TASK_PIN}"; }
@@ -260,7 +271,7 @@ text = open(path).read().replace("        version: 3.51.1\n", "")
 open(path, "w").write(text)
 PY
 floors "$(task_floor 3.51.1)"
-expect "another action's version: cannot satisfy the task pin" 1 "pattern matches nothing"
+expect "another action's version: cannot satisfy the task pin" 1 "needs exactly one version input (found 0)"
 cp "${work}/action.bak" "${fx}/template/.github/actions/setup/action.yml.jinja"
 floors "$(task_floor 3.51.1)"
 expect "the task pin is read from its own step" 0 ": 3.51.1 >= 3.51.1"
@@ -364,6 +375,75 @@ expect "an expression containing apostrophes fails" 1 "is not a major version"
 node_step 'node-version-file: .nvmrc'
 expect "a node-version-file step is not a pin and fails the setup action's check" 1 "pattern matches nothing"
 rm -f "${fx}/template/setup-node.yml.jinja"
+
+# Exercise the real workflow declarations against two jobs. A correct step
+# cannot cover an invalid sibling even across separate steps lists.
+WORKFLOW_DIR="${fx}/template/.github/workflows"
+NODE_WORKFLOW="${WORKFLOW_DIR}/[% if devcontainer %]devcontainer-build.yml[% endif %].jinja"
+TASK_WORKFLOW="${WORKFLOW_DIR}/[% if use_release_please and release_content_paths %]release-content-guard.yml[% endif %].jinja"
+mkdir -p "$WORKFLOW_DIR"
+two_jobs() {
+    cat <<'EOF'
+jobs:
+  first:
+    steps:
+EOF
+    printf '%s\n' "$1"
+    cat <<'EOF'
+  second:
+    steps:
+EOF
+    printf '%s\n' "$2"
+}
+node_good='      - uses: actions/setup-node@0000
+        with:
+          node-version: "24"'
+task_good='      - uses: arduino/setup-task@0000
+        with:
+          version: 3.51.1'
+floors "$(node_floor 24 "$(declared_pin node 1)")"
+two_jobs "$node_good" "$node_good" >"$NODE_WORKFLOW"
+expect "both Node workflow steps pass independently" 0 "toolchain-floors: ok"
+[ "$(grep -Fc ': 24 >= 24' "$out")" = 2 ] || fail "both Node versions must be compared"
+two_jobs '      - &setup_node
+        uses: actions/setup-node@0000
+        with:
+          node-version: "24"' '      - *setup_node' >"$NODE_WORKFLOW"
+expect "a Node step referenced by an alias is still counted" 0 "toolchain-floors: ok"
+[ "$(grep -Fc ': 24 >= 24' "$out")" = 2 ] || fail "the Node step and its alias must both be compared"
+two_jobs "$node_good" '      - uses: actions/setup-node@0000
+        with:
+          node-version-file: .nvmrc' >"$NODE_WORKFLOW"
+expect "one node-version-file step fails beside a valid Node step" 1 "needs exactly one node-version input (found 0)"
+two_jobs "$node_good" '      - uses: actions/setup-node@0000
+        with:
+          node-version: ${{ vars.NODE_VERSION || '\''22'\'' }}' >"$NODE_WORKFLOW"
+expect "a Node expression with apostrophes fails beside a valid Node step" 1 "is not a major version"
+two_jobs "$node_good" '      - uses: actions/setup-node@0000
+        with: {node-version: "24"}' >"$NODE_WORKFLOW"
+expect "a flow-style input mapping fails beside a valid Node step" 1 "unsupported flow-style mapping"
+two_jobs "$node_good" '      - {uses: actions/setup-node@0000, with: {node-version: "24"}}' >"$NODE_WORKFLOW"
+expect "a flow-style step mapping fails beside a valid Node step" 1 "unsupported flow-style mapping"
+two_jobs "$node_good" '      - name: Set up Node
+        uses: actions/setup-node@0000' >"$NODE_WORKFLOW"
+expect "a name-first Node step is still counted" 1 "needs exactly one node-version input (found 0)"
+two_jobs '      - name: No setup action
+        run: echo hello' '      - run: echo goodbye' >"$NODE_WORKFLOW"
+expect "a workflow with no Node setup steps fails" 1 "no actions/setup-node steps found"
+
+floors "$(task_floor 3.51.1 "$(declared_pin task 1)")"
+two_jobs "$task_good" "$task_good" >"$TASK_WORKFLOW"
+expect "both Task workflow steps pass independently" 0 "toolchain-floors: ok"
+two_jobs "$task_good" '      - uses: arduino/setup-task@0000
+      - uses: other/action@0000
+        with:
+          version: 3.51.1' >"$TASK_WORKFLOW"
+expect "one Task setup step without a version fails beside a valid step" 1 "needs exactly one version input (found 0)"
+two_jobs "$task_good" '      - uses: arduino/setup-task@0000
+        with:
+          version: 3.51.1
+          version: 3.51.1' >"$TASK_WORKFLOW"
+expect "two versions in a single Task step fail" 1 "needs exactly one version input (found 2)"
 
 # Fail closed outside a git repository: no history means ancestry is unknown.
 nogit="${work}/nogit"
