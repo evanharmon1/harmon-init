@@ -45,6 +45,7 @@ fi
 # Extract the production helper verbatim. This keeps the fixture attached to
 # the implementation instead of growing a second, drifting permissions routine.
 tmp_root="$(mktemp -d -t harmon-git-ownership-XXXXXX)"
+tmp_root="$(cd "$tmp_root" && pwd -P)"
 # The initial fixture expects the invoking user's primary group.
 chgrp "$(id -g)" "$tmp_root"
 trap 'rm -rf "$tmp_root"' EXIT
