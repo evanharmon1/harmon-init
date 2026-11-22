@@ -21,6 +21,51 @@ trap 'rm -rf "$work"' EXIT
 fx="${work}/fx"
 out="${work}/out.txt"
 
+check_step_inventory() {
+    node --input-type=module - "$1" <<'NODE'
+import { spawnSync } from 'node:child_process'
+import fs from 'node:fs'
+import path from 'node:path'
+
+const [root] = process.argv.slice(2)
+const actions = new Map([['actions/setup-node', 'node'], ['arduino/setup-task', 'task']])
+const { floors } = JSON.parse(fs.readFileSync(path.join(root, 'toolchain-floors.json'), 'utf8'))
+const workflowDir = 'template/.github/workflows'
+const workflows = fs.readdirSync(path.join(root, workflowDir), { withFileTypes: true })
+  .filter((entry) => entry.isFile())
+  .map((entry) => path.join(workflowDir, entry.name))
+const files = ['template/.github/actions/setup/action.yml.jinja', ...workflows]
+
+for (const file of files) {
+  const source = fs.readFileSync(path.join(root, file), 'utf8')
+  // Only candidate files need parsing. The YAML steps, not the version
+  // patterns or the declared pin paths, determine which actions are present.
+  if (![...actions.keys()].some((action) => source.toLowerCase().includes(action))) continue
+  const yaml = source.replace(/^ *\[%.*%\] *\r?$/gm, '').replace(/\[\[[^\r\n]*?\]\]/g, 'JINJA')
+  const result = spawnSync('yq', ['-o=json', '-I=0', `
+    [(.runs.steps[]?, .jobs[].steps[]?)
+      | explode(.)
+      | select(tag == "!!map")
+      | .uses | select(tag == "!!str") | downcase | split("@") | .[0]]
+  `, '-'], { input: yaml, encoding: 'utf8' })
+  if (result.status !== 0) {
+    console.error(`cannot inventory setup steps in ${file}: ${result.error?.message ?? result.stderr.trim()}`)
+    process.exitCode = 1
+    continue
+  }
+  for (const action of new Set(JSON.parse(result.stdout))) {
+    const tool = actions.get(action)
+    if (!tool) continue
+    const floor = floors.find((entry) => entry.tool === tool)
+    if (!floor?.pins.some((pin) => pin.template_path === file && pin.step?.action === action)) {
+      console.error(`${file}: undeclared ${action} step in the ${tool} floor`)
+      process.exitCode = 1
+    }
+  }
+}
+NODE
+}
+
 # The real tree runs FIRST, with the caller's own Git configuration: a devcontainer
 # bind mount can depend on a global safe.directory entry, and only the throwaway
 # fixture below may discard it.
@@ -34,12 +79,7 @@ if [ -z "${TOOLCHAIN_FLOORS_TEST_NESTED:-}" ]; then
         fail "the current template violates its own floors"
     }
     grep -E 'consumer-checked +package.json' "$out" >/dev/null || fail "pnpm pin is not reported as consumer-checked"
-    [ "$(grep -Fc 'ok   node .github/workflows/devcontainer-build.yml' "$out")" = 2 ] ||
-        fail "both devcontainer-build Node steps must be checked"
-    [ "$(grep -Fc 'ok   node .github/workflows/classification-reconcile.yml' "$out")" = 1 ] ||
-        fail "the classification-reconcile Node step must be checked"
-    [ "$(grep -Fc 'ok   task .github/workflows/release-content-guard.yml' "$out")" = 1 ] ||
-        fail "the release-content-guard Task step must be checked"
+    check_step_inventory "$repo" || fail "the template has a workflow or shared setup action outside the declared step pins"
     tools="$(sed -n 's/^toolchain-floors: \([a-z-]*\) (.*/\1/p' "$out" | sort | tr '\n' ' ')"
     [ "$tools" = "copier devcontainer-image node pnpm task " ] || fail "declared tools differ: ${tools}"
     # The published pnpm locator, applied to representative packageManager values.
@@ -417,6 +457,34 @@ two_jobs "$node_good" '      - uses: actions/setup-node@0000
 expect "one node-version-file step fails beside a valid Node step" 1 "needs exactly one node-version input (found 0)"
 two_jobs "$node_good" '      - uses: actions/setup-node@0000
         with:
+[% if use_node %]
+          node-version: "24"
+[% endif %]' >"$NODE_WORKFLOW"
+expect "a Jinja control between uses and node-version fails" 1 "Jinja control prevents verifying"
+two_jobs "$node_good" '      - uses: actions/setup-node@0000
+        with:
+[% if use_node %]
+          node-version: "24"
+[% else %]
+          node-version-file: .nvmrc
+[% endif %]' >"$NODE_WORKFLOW"
+expect "alternative version inputs under Jinja if and else fail" 1 "Jinja control prevents verifying"
+two_jobs "$node_good" '      -
+[% if use_node %]
+        uses: actions/setup-node@0000
+[% endif %]
+        with:
+          node-version: "24"' >"$NODE_WORKFLOW"
+expect "a Jinja control wrapping uses after a standalone step dash fails" 1 "Jinja control prevents verifying"
+two_jobs "$node_good" '      - uses: actions/setup-node@0000
+        with:
+          node-version: "24"
+[% if use_node %]
+          cache: pnpm
+[% endif %]' >"$NODE_WORKFLOW"
+expect "a cache-only Jinja control after the unconditional version passes" 0 "toolchain-floors: ok"
+two_jobs "$node_good" '      - uses: actions/setup-node@0000
+        with:
           node-version: ${{ vars.NODE_VERSION || '\''22'\'' }}' >"$NODE_WORKFLOW"
 expect "a Node expression with apostrophes fails beside a valid Node step" 1 "is not a major version"
 two_jobs "$node_good" '      - uses: actions/setup-node@0000
@@ -444,6 +512,21 @@ two_jobs "$task_good" '      - uses: arduino/setup-task@0000
           version: 3.51.1
           version: 3.51.1' >"$TASK_WORKFLOW"
 expect "two versions in a single Task step fail" 1 "needs exactly one version input (found 2)"
+
+# Exercise the inventory independently of the published pin list. Give the
+# fixture both shared pins and the known workflow pins, then add another file.
+floors "$(node_floor 24 "${NODE_PIN},$(declared_pin node 1)"),$(task_floor 3.51.1 "${TASK_PIN},$(declared_pin task 1)")"
+two_jobs "$node_good" "$node_good" >"$NODE_WORKFLOW"
+two_jobs "$task_good" "$task_good" >"$TASK_WORKFLOW"
+check_step_inventory "$fx" || fail "the inventory rejected covered setup actions"
+two_jobs "$node_good" "$task_good" >"${WORKFLOW_DIR}/undeclared.yml"
+rc=0
+check_step_inventory "$fx" >"$out" 2>&1 || rc=$?
+[ "$rc" = 1 ] || fail "the inventory accepted an undeclared workflow"
+grep -F 'undeclared.yml: undeclared actions/setup-node step' "$out" >/dev/null ||
+    fail "the inventory missed the undeclared Node step"
+grep -F 'undeclared.yml: undeclared arduino/setup-task step' "$out" >/dev/null ||
+    fail "the inventory missed the undeclared Task step"
 
 # Fail closed outside a git repository: no history means ancestry is unknown.
 nogit="${work}/nogit"

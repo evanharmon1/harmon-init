@@ -204,7 +204,9 @@ function booleanAnswer(name) {
 function stepPins(label, source, { action, input }, regex) {
   // Blank Jinja control lines and mask substitutions for structural parsing.
   // Preserve source line numbers and apply the pattern to the original text.
-  const yaml = source.replace(/^ *\[%.*%\] *$/gm, '').replace(/\[\[[^\r\n]*?\]\]/g, 'JINJA')
+  const lines = source.split(/\r?\n/)
+  const jinjaControl = /^ *\[%.*%\] *$/
+  const yaml = lines.map((line) => jinjaControl.test(line) ? '' : line.replace(/\[\[.*?\]\]/g, 'JINJA')).join('\n')
   const result = spawnSync('yq', ['-o=json', '-I=0', `
     [(.runs.steps[]?, .jobs[].steps[]?)
       | explode(.)
@@ -234,7 +236,6 @@ function stepPins(label, source, { action, input }, regex) {
   }
   if (steps.length === 0) fail(`${label}: no ${action} steps found`)
 
-  const lines = source.split(/\r?\n/)
   const pins = []
   for (const step of steps) {
     const here = `${label}:${step.line}`
@@ -247,6 +248,19 @@ function stepPins(label, source, { action, input }, regex) {
       continue
     }
     const [version] = step.inputs
+    let first = Math.min(step.line, step.usesLine, version.line) - 1
+    const last = Math.max(step.usesLine, version.line) - 1
+    // yq reports the first key for a mapping whose list dash is on its own
+    // line. Include any directives between that dash and the first key.
+    let previous = first - 1
+    while (previous >= 0 && (/^\s*(?:#.*)?$/.test(lines[previous]) || jinjaControl.test(lines[previous]))) previous -= 1
+    if (previous >= 0 && /^ *- *(?:#.*)?$/.test(lines[previous])) first = previous
+    // Ignore whole-step guards outside this range and controls after both
+    // fields, such as the shared setup action's conditional cache input.
+    if (lines.slice(first, last + 1).some((line) => jinjaControl.test(line))) {
+      fail(`${here}: Jinja control prevents verifying the ${action} step's uses and ${input} input together`)
+      continue
+    }
     const stepText = [lines[step.usesLine - 1], lines[version.line - 1]].join('\n')
     const matches = [...stepText.matchAll(regex)]
     if (matches.length !== 1 || matches[0][1] !== version.value) {
