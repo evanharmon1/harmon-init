@@ -250,6 +250,12 @@ for (const floor of declaration.floors) {
       say(`  consumer-checked  ${pin.path}${pin.json_pointer ? ` (${pin.json_pointer})` : ''} — repository-owned, not in the template`)
       continue
     }
+    // The consumer path is what template_path renders to: drop the template/ root,
+    // each [% … %] tag, and the .jinja suffix.
+    const rendered = pin.template_path.replace(/^template\//, '').replace(/\[%[^%]*%\]/g, '').replace(/\.jinja$/, '')
+    if (rendered !== pin.path) {
+      fail(`${label}: path is not what ${pin.template_path} renders to (${rendered})`)
+    }
     if (pin.json_pointer !== undefined) {
       fail(`${label}: json_pointer needs a consumer file; a template_path pin is matched as raw text`)
       continue

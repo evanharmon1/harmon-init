@@ -24,16 +24,30 @@ out="${work}/out.txt"
 # The real tree runs FIRST, with the caller's own Git configuration: a devcontainer
 # bind mount can depend on a global safe.directory entry, and only the throwaway
 # fixture below may discard it.
-echo "==> the real tree passes and names its consumer-checked pin"
-rc=0
-"$validator" >"$out" 2>&1 || rc=$?
-[ "$rc" = 0 ] || {
-    cat "$out" >&2
-    fail "the current template violates its own floors"
-}
-grep -E 'consumer-checked +package.json' "$out" >/dev/null || fail "pnpm pin is not reported as consumer-checked"
-tools="$(sed -n 's/^toolchain-floors: \([a-z-]*\) (.*/\1/p' "$out" | sort | tr '\n' ' ')"
-[ "$tools" = "copier devcontainer-image node pnpm task " ] || fail "declared tools differ: ${tools}"
+# The nested run (below) has the scrubbed Git config; the outer run already checked the real tree.
+if [ -z "${TOOLCHAIN_FLOORS_TEST_NESTED:-}" ]; then
+    echo "==> the real tree passes and names its consumer-checked pin"
+    rc=0
+    "$validator" >"$out" 2>&1 || rc=$?
+    [ "$rc" = 0 ] || {
+        cat "$out" >&2
+        fail "the current template violates its own floors"
+    }
+    grep -E 'consumer-checked +package.json' "$out" >/dev/null || fail "pnpm pin is not reported as consumer-checked"
+    tools="$(sed -n 's/^toolchain-floors: \([a-z-]*\) (.*/\1/p' "$out" | sort | tr '\n' ' ')"
+    [ "$tools" = "copier devcontainer-image node pnpm task " ] || fail "declared tools differ: ${tools}"
+    # The published pnpm locator, applied to representative packageManager values.
+    pnpm_pointer="$(node -e 'const f=JSON.parse(require("fs").readFileSync("toolchain-floors.json","utf8")).floors.find((x)=>x.tool==="pnpm");process.stdout.write(f.pins[0].json_pointer)')"
+    [ "$pnpm_pointer" = "/packageManager" ] || fail "the pnpm pin must locate /packageManager, got ${pnpm_pointer}"
+    for value in 'pnpm@11.2.0' 'pnpm@11.2.0+sha512.abc123'; do
+        major="$(node -e 'const f=JSON.parse(require("fs").readFileSync("toolchain-floors.json","utf8")).floors.find((x)=>x.tool==="pnpm");const m=new RegExp(f.pins[0].pattern).exec(process.argv[1]);process.stdout.write(m?m[1]:"")' "$value")"
+        [ "$major" = "11" ] || fail "the pnpm pattern captured '${major}' from ${value}, want 11"
+    done
+    for value in 'npm@10.0.0' 'yarn@4.0.0' 'pnpm-ish@11.0.0'; do
+        major="$(node -e 'const f=JSON.parse(require("fs").readFileSync("toolchain-floors.json","utf8")).floors.find((x)=>x.tool==="pnpm");const m=new RegExp(f.pins[0].pattern).exec(process.argv[1]);process.stdout.write(m?m[1]:"")' "$value")"
+        [ -z "$major" ] || fail "the pnpm pattern matched ${value}"
+    done
+fi
 
 # Keep the fixture's git independent of the caller: hooks export GIT_DIR /
 # GIT_WORK_TREE / GIT_INDEX_FILE, which would retarget every fixture command at
@@ -158,6 +172,8 @@ expect "versions compare numerically, not as text" 0 "toolchain-floors: ok"
 floors "$(task_floor 3.51.1.1)"
 expect "a longer minimum outranks a shorter pin" 1 "is below the floor 3.51.1.1"
 
+floors "$(node_floor 24 '{"path":".github/action/setup/action.yml","template_path":"template/.github/actions/setup/action.yml.jinja","pattern":'"${NODE_PATTERN}"'}')"
+expect "a consumer path that is not what template_path renders to fails" 1 "path is not what template/.github/actions/setup/action.yml.jinja renders to (.github/actions/setup/action.yml)"
 floors "$(node_floor 24 '{"path":"a","template_path":"template/missing.jinja","pattern":"(x)"}')"
 expect "a template_path that does not exist fails" 1 "template/missing.jinja does not exist"
 floors "$(node_floor 24 '{"path":"a","template_path":"../outside","pattern":"(x)"}')"
