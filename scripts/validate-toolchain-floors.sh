@@ -204,8 +204,7 @@ function booleanAnswer(name) {
 function stepPins(label, source, { action, input }, regex) {
   // Blank Jinja control lines and mask substitutions for structural parsing.
   // Preserve source line numbers and apply the pattern to the original text.
-  const rawLines = source.split('\n')
-  const lines = rawLines.map((line) => line.replace(/\r$/, ''))
+  const lines = source.split(/\r?\n/)
   const jinjaControl = /^ *\[%.*%\] *$/
   const yaml = lines.map((line) => jinjaControl.test(line) ? '' : line.replace(/\[\[.*?\]\]/g, 'JINJA')).join('\n')
   const result = spawnSync('yq', ['-o=json', '-I=0', `
@@ -237,6 +236,20 @@ function stepPins(label, source, { action, input }, regex) {
   }
   if (steps.length === 0) fail(`${label}: no ${action} steps found`)
 
+  // Evaluate the locator against the untouched file, including context outside
+  // the step. Use capture group 1's position, since the match can span lines.
+  const capturesByLine = new Map()
+  for (const match of source.matchAll(new RegExp(regex, regex.flags + 'd'))) {
+    const capture = match.indices[1]
+    if (capture === undefined) continue
+    const [start, end] = capture
+    if (source.slice(start, end).includes('\n')) continue
+    const line = source.slice(0, start).split('\n').length
+    const captures = capturesByLine.get(line) ?? []
+    captures.push(match[1])
+    capturesByLine.set(line, captures)
+  }
+
   const pins = []
   for (const step of steps) {
     const here = `${label}:${step.line}`
@@ -262,15 +275,12 @@ function stepPins(label, source, { action, input }, regex) {
       fail(`${here}: Jinja control prevents verifying the ${action} step's uses and ${input} input together`)
       continue
     }
-    // Apply the published locator to the original source span, including any
-    // intervening lines and the source's line endings.
-    const stepText = rawLines.slice(Math.min(step.usesLine, version.line) - 1, last + 1).join('\n')
-    const matches = [...stepText.matchAll(regex)]
-    if (matches.length !== 1 || matches[0][1] !== version.value) {
+    const captures = capturesByLine.get(version.line) ?? []
+    if (captures.length !== 1 || captures[0] !== version.value) {
       fail(`${here}: ${action} step needs exactly one recognized ${input} version`)
       continue
     }
-    pins.push({ pinned: matches[0][1], here })
+    pins.push({ pinned: captures[0], here })
   }
   return pins
 }

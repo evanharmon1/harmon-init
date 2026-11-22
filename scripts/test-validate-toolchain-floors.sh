@@ -317,6 +317,9 @@ floors "$(task_floor 3.51.1)"
 expect "the task pin is read from its own step" 0 ": 3.51.1 >= 3.51.1"
 grep -F "9.0.0" "$out" >/dev/null && fail "the pnpm action's version leaked into the task comparison"
 grep -F "1.0.0" "$out" >/dev/null && fail "a later action's version leaked into the task comparison"
+lookahead_task_pin="$(printf '%s' "$TASK_PIN" | jq -c '.pattern += "(?!\\n\\s*repo-token:)"')"
+floors "$(task_floor 3.51.1 "$lookahead_task_pin")"
+expect "a locator whose lookahead excludes the real next line fails" 1 "needs exactly one recognized version version"
 
 # An empty pins list enforces nothing; only copier has a separate check.
 floors '{"tool":"node","minimum":"24","compare":"major","pins":[]}'
