@@ -348,23 +348,20 @@ floors '{"tool":"copier","minimum":"9.4.0","compare":"version","pins":[]}'
 expect "a malformed _min_copier_version is unverifiable, not sufficient" 1 'is not a dotted numeric version, so the floor cannot be verified'
 cp "${work}/copier.yml.bak" "${fx}/copier.yml"
 
-# Every setup-node step is held to the floor, whatever its quoting.
-cat >"${fx}/template/two-node.yml.jinja" <<'EOF'
-    - uses: actions/setup-node@0000 # v7
-      with:
-        node-version: "24"
-    - uses: actions/setup-node@0000 # v7
-      with:
-        node-version: '22'
-EOF
-TWO_NODE='{"path":"two-node.yml","template_path":"template/two-node.yml.jinja","pattern":'"${NODE_PATTERN}"'}'
-floors "$(node_floor 24 "$TWO_NODE")"
+# The setup action's node pin: quoting is tolerated, and anything that is not a
+# verifiable major fails rather than passing unseen.
+SETUP_NODE='{"path":"setup-node.yml","template_path":"template/setup-node.yml.jinja","pattern":'"${NODE_PATTERN}"'}'
+node_step() { printf '    - uses: actions/setup-node@0000 # v7\n      with:\n        %s\n' "$1" >"${fx}/template/setup-node.yml.jinja"; }
+floors "$(node_floor 24 "$SETUP_NODE")"
+node_step "node-version: '22'"
 expect "a single-quoted node-version below the floor is caught" 1 "pinned 22 is below the floor 24"
-printf '    - uses: actions/setup-node@0000\n      with:\n        node-version: "24"\n    - uses: actions/setup-node@0000\n      with:\n        node-version: ${{ inputs.node }}\n' >"${fx}/template/two-node.yml.jinja"
-expect "an uninterpretable node-version fails even beside a valid one" 1 "is not a major version"
-printf '    - uses: actions/setup-node@0000\n      with:\n        node-version: "24"\n    - uses: actions/setup-node@0000\n      with:\n        node-version: ${{ vars.NODE_VERSION || '"'"'22'"'"' }}\n' >"${fx}/template/two-node.yml.jinja"
-expect "an expression containing apostrophes fails beside a valid pin" 1 "is not a major version"
-rm -f "${fx}/template/two-node.yml.jinja"
+node_step 'node-version: ${{ inputs.node }}'
+expect "an uninterpretable node-version fails" 1 "is not a major version"
+node_step "node-version: \${{ vars.NODE_VERSION || '22' }}"
+expect "an expression containing apostrophes fails" 1 "is not a major version"
+node_step 'node-version-file: .nvmrc'
+expect "a node-version-file step is not a pin and fails the setup action's check" 1 "pattern matches nothing"
+rm -f "${fx}/template/setup-node.yml.jinja"
 
 # Fail closed outside a git repository: no history means ancestry is unknown.
 nogit="${work}/nogit"
