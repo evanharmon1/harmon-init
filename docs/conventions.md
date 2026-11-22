@@ -411,12 +411,14 @@ has.
   devcontainer image the release's template output works with. Consumers read
   it from the frozen template commit (`git show <commit>:toolchain-floors.json`)
   before applying an update. **A change that raises a toolchain requirement
-  updates `toolchain-floors.json` in the same PR**, and
+  updates `toolchain-floors.json` in the same PR**.
   `task validate:toolchain-floors` (part of `verify` and the Build workflow's
-  `repo-guards` job) enforces it for every template pin the file covers: it
-  fails when a pin matched by a floor's `pattern` is below the floor, when a
-  `template_path` is missing or matches nothing, or when the `copier` floor
-  exceeds `_min_copier_version` in `copier.yml`. An `ancestor` floor (the
+  `repo-guards` job) checks one side only: it fails when a pin matched by a
+  floor's `pattern` is below the floor, when a `template_path` is missing or
+  matches nothing, or when the `copier` floor exceeds `_min_copier_version` in
+  `copier.yml`. It cannot detect a floor left too low after a requirement
+  rises, so raising the floor alongside a real requirement is the author's and
+  the reviewer's job. An `ancestor` floor (the
   devcontainer image) compares commits in local git history only, so a
   shallow clone fails closed. A repository-owned pin such as `packageManager`
   (`template_path: null`) is not in the template; the check lists it as
