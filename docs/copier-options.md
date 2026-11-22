@@ -248,7 +248,7 @@ Not answers — copier's own configuration, all in `copier.yml`.
 
 | Key | Value / effect |
 |---|---|
-| `_min_copier_version` | `9.4.0` |
+| `_min_copier_version` | `9.8.0` |
 | `_subdirectory` | `template` |
 | `_preserve_symlinks` | `true` — keeps `CLAUDE.md`/`GEMINI.md` as symlinks to `AGENTS.md` rather than dereferenced duplicates |
 | `_envops` | `[[ ]]` / `[% %]` / `[# #]`, `trim_blocks`, `lstrip_blocks` — so Actions `${{ }}`, go-task `{{.VAR}}`, and lefthook `{staged_files}` appear verbatim with zero escaping |
