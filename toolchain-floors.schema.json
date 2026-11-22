@@ -16,7 +16,7 @@
   },
   "$defs": {
     "floor": {
-      "description": "One tool's floor. `compare` selects how a pin's captured value is held to `minimum`: major = integer major at least the minimum; version = dotted numeric at least the minimum; ancestor = the pinned harmon-init commit descends from the minimum commit (how an image digest gets a floor at all, since its tag names the commit it was built from). `when` names a boolean Copier answer gating the floor; absent, the floor always applies. `pins` may be empty for a tool whose only template-side declaration lives in copier.yml (copier: checked against _min_copier_version).",
+      "description": "One tool's floor. `compare` selects how a pin's captured value is held to `minimum`: major = integer major at least the minimum; version = dotted numeric at least the minimum; ancestor = the pinned harmon-init commit descends from the minimum commit (how an image digest gets a floor at all, since its tag names the commit it was built from). `when` names a boolean Copier answer gating the floor; absent, the floor always applies. A gate is evaluated against the target template's resolved answers, computed ones such as use_node included, which are never saved in .copier-answers.yml (how a consumer obtains them is the standardize-repo skill's concern). `pins` may be empty for a tool whose only template-side declaration lives in copier.yml (copier: checked against _min_copier_version).",
       "type": "object",
       "additionalProperties": false,
       "required": ["tool", "minimum", "compare", "pins"],

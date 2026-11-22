@@ -5,11 +5,20 @@
       "tool": "node",
       "minimum": "24",
       "compare": "major",
-      "when": "use_node",
       "pins": [
         {
           "path": ".github/actions/setup/action.yml",
           "template_path": "template/.github/actions/setup/action.yml.jinja",
+          "pattern": "^\\s*node-version: \"([0-9]+)\"$"
+        },
+        {
+          "path": ".github/workflows/devcontainer-build.yml",
+          "template_path": "template/.github/workflows/[% if devcontainer %]devcontainer-build.yml[% endif %].jinja",
+          "pattern": "^\\s*node-version: \"([0-9]+)\"$"
+        },
+        {
+          "path": ".github/workflows/classification-reconcile.yml",
+          "template_path": "template/.github/workflows/[% if project_management == 'github' %]classification-reconcile.yml[% endif %].jinja",
           "pattern": "^\\s*node-version: \"([0-9]+)\"$"
         }
       ]
@@ -42,7 +51,12 @@
         {
           "path": ".github/actions/setup/action.yml",
           "template_path": "template/.github/actions/setup/action.yml.jinja",
-          "pattern": "^\\s*version: ([0-9]+\\.[0-9]+\\.[0-9]+)$"
+          "pattern": "^\\s*- uses: arduino/setup-task@[^\\n]*\\n(?:(?!\\s*- )[^\\n]*\\n)*?\\s*version: ([0-9]+\\.[0-9]+\\.[0-9]+)$"
+        },
+        {
+          "path": ".github/workflows/release-content-guard.yml",
+          "template_path": "template/.github/workflows/[% if use_release_please and release_content_paths %]release-content-guard.yml[% endif %].jinja",
+          "pattern": "^\\s*- uses: arduino/setup-task@[^\\n]*\\n(?:(?!\\s*- )[^\\n]*\\n)*?\\s*version: ([0-9]+\\.[0-9]+\\.[0-9]+)$"
         }
       ]
     },

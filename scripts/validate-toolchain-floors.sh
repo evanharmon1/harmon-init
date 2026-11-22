@@ -65,8 +65,11 @@ while [ "$#" -gt 0 ]; do
     esac
 done
 
-: "${FLOORS:=${ROOT}/toolchain-floors.json}"
-: "${SCHEMA:=${ROOT}/toolchain-floors.schema.json}"
+# A relative --floors/--schema resolves against ROOT, as the usage says.
+: "${FLOORS:=toolchain-floors.json}"
+: "${SCHEMA:=toolchain-floors.schema.json}"
+case "$FLOORS" in /*) ;; *) FLOORS="${ROOT}/${FLOORS}" ;; esac
+case "$SCHEMA" in /*) ;; *) SCHEMA="${ROOT}/${SCHEMA}" ;; esac
 command -v node >/dev/null 2>&1 || {
     echo "validate-toolchain-floors: node is required" >&2
     exit 1
@@ -129,8 +132,19 @@ function insideRoot(relative) {
     : null
 }
 
+// Git runs against ROOT alone: a hook-exported GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE
+// must not retarget it, and a partial clone must not fetch a missing object.
+const gitEnv = Object.fromEntries(
+  Object.entries(process.env).filter(
+    ([name]) =>
+      !/^GIT_(DIR|WORK_TREE|INDEX_FILE|COMMON_DIR|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|PREFIX|NAMESPACE|CEILING_DIRECTORIES)$/.test(name)
+  )
+)
+gitEnv.GIT_NO_LAZY_FETCH = '1'
+gitEnv.GIT_TERMINAL_PROMPT = '0'
+
 function git(args) {
-  return spawnSync('git', ['-C', root, ...args], { encoding: 'utf8' })
+  return spawnSync('git', ['-C', root, ...args], { encoding: 'utf8', env: gitEnv })
 }
 
 const hasCommit = (sha) => git(['cat-file', '-e', `${sha}^{commit}`]).status === 0
@@ -147,7 +161,14 @@ function checkAncestor(label, minimum, pinned) {
   const result = git(['merge-base', '--is-ancestor', minimum, pinned])
   if (result.status === 0) return true
   if (result.status === 1) {
-    fail(`${label}: pinned commit ${pinned} does not descend from the floor commit ${minimum}`)
+    if (git(['rev-parse', '--is-shallow-repository']).stdout.trim() === 'true') {
+      fail(
+        `${label}: unknown — this clone is shallow, so no path from ${minimum} to ${pinned} is unproven, not disproven ` +
+          '(fetch full history; the check never asks the network and fails closed)'
+      )
+    } else {
+      fail(`${label}: pinned commit ${pinned} does not descend from the floor commit ${minimum}`)
+    }
   } else {
     fail(`${label}: unknown — git merge-base --is-ancestor exited ${result.status}: ${result.stderr.trim()}`)
   }
@@ -162,10 +183,12 @@ if (fs.existsSync(copierYmlPath)) copierYml = fs.readFileSync(copierYmlPath, 'ut
 function booleanAnswer(name) {
   if (copierYml === null) return null
   const lines = copierYml.split('\n')
-  const start = lines.findIndex((line) => line === `${name}:`)
+  const start = lines.findIndex((line) => new RegExp(`^${name}:\\s*(?:#.*)?$`).test(line))
   if (start === -1) return false
+  // Only the question's own `type:` (two-space indent) counts; deeper lines are
+  // block-scalar text such as `help:`.
   for (let i = start + 1; i < lines.length && /^(\s|$)/.test(lines[i]); i += 1) {
-    if (/^\s+type:\s*bool\s*$/.test(lines[i])) return true
+    if (/^ {2}type:\s*bool\s*(?:#.*)?$/.test(lines[i])) return true
   }
   return false
 }
@@ -196,21 +219,30 @@ for (const floor of declaration.floors) {
     }
   }
 
+  if (pins.length === 0 && tool !== 'copier') {
+    fail(`${tool}: declares no pins, so nothing enforces its floor (only copier is checked against copier.yml)`)
+  }
+
   for (const pin of pins) {
     const label = `${tool} ${pin.path}`
+    // 9: a pattern is a published contract whoever owns the pin, so compile it first.
+    let regex
+    try {
+      regex = new RegExp(pin.pattern, 'gm')
+    } catch (error) {
+      fail(`${label}: pattern does not compile: ${error.message}`)
+      continue
+    }
+    if (new RegExp(`${pin.pattern}|`, 'm').exec('').length < 2) {
+      fail(`${label}: pattern has no capture group 1`)
+      continue
+    }
     if (pin.template_path === null) {
       say(`  consumer-checked  ${pin.path}${pin.json_pointer ? ` (${pin.json_pointer})` : ''} — repository-owned, not in the template`)
       continue
     }
     if (pin.json_pointer !== undefined) {
       fail(`${label}: json_pointer needs a consumer file; a template_path pin is matched as raw text`)
-      continue
-    }
-    let regex
-    try {
-      regex = new RegExp(pin.pattern, 'gm')
-    } catch (error) {
-      fail(`${label}: pattern does not compile: ${error.message}`)
       continue
     }
     const file = insideRoot(pin.template_path)
