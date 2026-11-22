@@ -461,12 +461,18 @@ two_jobs "$node_good" '      - uses: actions/setup-node@0000
 expect "a continued Node scalar must be validated as a whole" 1 "needs exactly one recognized node-version version"
 two_jobs "$node_good" '      - uses: actions/setup-node@0000
         with:
+          node-version: 24.21.0
+            || 22' >"$NODE_WORKFLOW"
+expect "a continued exact Node scalar must be validated as a whole" 1 "needs exactly one recognized node-version version"
+two_jobs "$node_good" '      - uses: actions/setup-node@0000
+        with:
           node-version: "23.21.0"' >"$NODE_WORKFLOW"
 expect "an exact Node pin below the major floor fails" 1 "pinned 23 is below the floor 24"
 two_jobs "$node_good" '      - uses: actions/setup-node@0000
         with:
           node-version: "24 # main"' >"$NODE_WORKFLOW"
 expect "a hash inside a quoted Node pin is part of the value" 1 "needs exactly one recognized node-version version"
+[ "$(grep -Fc ': 24 >= 24' "$out")" = 1 ] || fail "only the valid Node pin should be compared"
 two_jobs "$node_good" '      - uses: ./local-action
         with:
           node-version: "20"' >"$NODE_WORKFLOW"
