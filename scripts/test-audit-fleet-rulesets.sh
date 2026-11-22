@@ -373,7 +373,7 @@ ok users/ACME '{"login":"acme","type":"Organization"}'
 expect_exit 2 --json ACME
 [ "$(jq '[.repositories[] | select(.repo | startswith("acme/"))] | length' "$tmp_dir/out")" -eq 9 ] ||
     fail "ACME scan did not audit acme's nine active repositories"
-jq -e '.owners == [{"owner":"acme","kind":"Organization","listing":"complete"}]' "$tmp_dir/out" >/dev/null ||
+jq -e '.owners == [{"owner":"acme","kind":"Organization","listing":"token-visible"}]' "$tmp_dir/out" >/dev/null ||
     fail "ACME owner entry wrong"
 
 echo "==> default branch is percent-encoded in content reads (finding 5)"
@@ -388,13 +388,23 @@ jq -e '[.repositories[] | {repo, status}] == [{"repo":"acme/garbled","status":"u
     "$tmp_dir/out" >/dev/null || fail "garbled metadata not isolated"
 jq -e '.repositories[0].reason | test("malformed response")' "$tmp_dir/out" >/dev/null || fail "garbled reason wrong"
 
-echo "==> personal owners: own complete, other public-only, identity failure unknown (finding 2)"
+echo "==> personal owners: own token-visible, other public-only, identity failure unknown (finding 2)"
 expect_exit 0 --json tokenuser other
-jq -e '.owners == [{"owner":"tokenuser","kind":"User","listing":"complete"},{"owner":"other","kind":"User","listing":"public-only"}]
+jq -e '.owners == [{"owner":"tokenuser","kind":"User","listing":"token-visible"},{"owner":"other","kind":"User","listing":"public-only"}]
     and (.repositories | map({repo, listing, status}) == [{"repo":"other/pub","listing":"public-only","status":"unmanaged"}])' \
     "$tmp_dir/out" >/dev/null || fail "personal-owner listing wrong"
 expect_exit 0 other
 grep -q '^owner other: User listing public-only (public repositories only' "$tmp_dir/out" || fail "table hides public-only listing"
+
+# Regression (integration r1 finding 1): no listing is ever claimed complete.
+echo "==> no owner listing is reported complete (integration r1 finding 1)"
+expect_exit 0 tokenuser other
+grep -q '^owner tokenuser: User listing token-visible (repositories this token can read; not proven complete)' "$tmp_dir/out" ||
+    fail "table does not state the token-visible scope"
+expect_exit 2 --json acme tokenuser other
+jq -e '[.owners[].listing] == ["token-visible","token-visible","public-only"]
+    and ([.repositories[].listing] | index("complete") | not)' "$tmp_dir/out" >/dev/null ||
+    fail "a listing still claims complete"
 rm "$fixtures/$(key user).json"
 broken user
 expect_exit 2 --json other

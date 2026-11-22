@@ -132,8 +132,12 @@ does — conditions that miss the default branch, other bypass actors),
 checks, or enforcement other than `active`), `unmanaged` (no expected set;
 informational), or `unknown` when any read or comparison is unproven — never a
 pass. Every field the audit computes feeds the status except the other live
-rulesets it lists and the owner's listing scope (`public-only` when the token
-is not that personal account), which are informational.
+rulesets it lists and the owner's listing scope, which are informational. The
+scope is `token-visible` for an Organization and for the token's own account
+(the repositories that token can read; nothing proves the list complete, so a
+private repository the token cannot see is absent without trace),
+`public-only` for any other personal account, and `unknown` when the listing
+itself could not be read.
 
 The task prints the table. For machine use, call the script directly:
 `./scripts/audit-fleet-rulesets.sh --json [OWNER | OWNER/REPO]...` prints the

@@ -17,6 +17,10 @@
 #   policy    audit-ruleset.sh's full-policy verdict on the same two documents
 #   status    gated (contexts equal AND policy clean) | drift | ungated |
 #             unmanaged | unknown; other_rulesets and listing are informational
+#   listing   which repositories the owner scan could see: token-visible (an
+#             Organization, or the token's own account: what the token can
+#             read, never proven complete), public-only (another personal
+#             account), unknown, or named (an OWNER/REPO operand)
 #
 # Every GitHub call is a GET through scripts/lib/gh-rest.sh; nothing is written
 # and no credential is printed. A read that fails is `unknown`, never a pass.
@@ -154,7 +158,9 @@ readonly contexts='[.rules[] | select(.type == "required_status_checks")
 # Returns 1 (listing unknown) when anything about the listing is unproven.
 me="" me_state=unread
 list_repos() {
-    local owner="$1" login kind endpoint listing=complete
+    # No read proves a listing complete (private repositories the token cannot
+    # see are absent without trace), so the scope claimed is what it saw.
+    local owner="$1" login kind endpoint listing=token-visible
     fetch "users/$owner" "$tmp_dir/owner.json" "$owner_check" || return 1
     login="$(decode "$tmp_dir/owner.json" '.login // empty')" && [ -n "$login" ] || return 1
     kind="$(decode "$tmp_dir/owner.json" '.type // empty')" || return 1
@@ -176,7 +182,7 @@ list_repos() {
             endpoint="user/repos?affiliation=owner&visibility=all"
         else
             # A personal account other than the token's lists public
-            # repositories only; the listing says so rather than looking complete.
+            # repositories only; the listing says so.
             endpoint="users/$login/repos?type=owner"
             listing=public-only
         fi
@@ -374,7 +380,8 @@ else
             [ -z "$reason" ] || printf '  %s\n' "$reason"
         done
     jq -r '.owners[] | "owner \(.owner): \(.kind // "unknown") listing \(.listing)"
-        + (if .listing == "public-only" then " (public repositories only: the token is not this account)" else "" end)' <<<"$report"
+        + (if .listing == "public-only" then " (public repositories only: the token is not this account)"
+           elif .listing == "token-visible" then " (repositories this token can read; not proven complete)" else "" end)' <<<"$report"
     jq -r '.summary | to_entries | map("\(.key)=\(.value)") | "summary: " + join(" ")' <<<"$report"
 fi
 
