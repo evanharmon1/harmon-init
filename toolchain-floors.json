@@ -9,6 +9,19 @@
         {
           "path": ".github/actions/setup/action.yml",
           "template_path": "template/.github/actions/setup/action.yml.jinja",
+          "step": { "action": "actions/setup-node", "input": "node-version" },
+          "pattern": "^\\s*node-version: [\"']?(.*?)[\"']?\\s*(?:\\s#.*)?$"
+        },
+        {
+          "path": ".github/workflows/devcontainer-build.yml",
+          "template_path": "template/.github/workflows/[% if devcontainer %]devcontainer-build.yml[% endif %].jinja",
+          "step": { "action": "actions/setup-node", "input": "node-version" },
+          "pattern": "^\\s*node-version: [\"']?(.*?)[\"']?\\s*(?:\\s#.*)?$"
+        },
+        {
+          "path": ".github/workflows/classification-reconcile.yml",
+          "template_path": "template/.github/workflows/[% if project_management == 'github' %]classification-reconcile.yml[% endif %].jinja",
+          "step": { "action": "actions/setup-node", "input": "node-version" },
           "pattern": "^\\s*node-version: [\"']?(.*?)[\"']?\\s*(?:\\s#.*)?$"
         }
       ]
@@ -29,7 +42,7 @@
     },
     {
       "tool": "copier",
-      "minimum": "9.4.0",
+      "minimum": "9.8.0",
       "compare": "version",
       "pins": []
     },
@@ -41,6 +54,13 @@
         {
           "path": ".github/actions/setup/action.yml",
           "template_path": "template/.github/actions/setup/action.yml.jinja",
+          "step": { "action": "arduino/setup-task", "input": "version" },
+          "pattern": "^\\s*- uses: arduino/setup-task@[^\\n]*\\n(?:(?!\\s*- )[^\\n]*\\n)*?\\s*version: ([0-9]+\\.[0-9]+\\.[0-9]+)$"
+        },
+        {
+          "path": ".github/workflows/release-content-guard.yml",
+          "template_path": "template/.github/workflows/[% if use_release_please and release_content_paths %]release-content-guard.yml[% endif %].jinja",
+          "step": { "action": "arduino/setup-task", "input": "version" },
           "pattern": "^\\s*- uses: arduino/setup-task@[^\\n]*\\n(?:(?!\\s*- )[^\\n]*\\n)*?\\s*version: ([0-9]+\\.[0-9]+\\.[0-9]+)$"
         }
       ]

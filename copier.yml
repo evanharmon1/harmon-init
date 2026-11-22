@@ -955,7 +955,7 @@ _tasks:
 # integration stages still need evanharmon1/harmon-devkit#1819.
 _min_harmon_devkit_skills: "v0.63.1"
 
-_min_copier_version: "9.4.0"
+_min_copier_version: "9.8.0"
 
 _subdirectory: template
 
