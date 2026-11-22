@@ -80,6 +80,7 @@ tasks:
     cmds:
       - task: check
       - task: audit:agent-instructions
+      - task: validate:toolchain-floors
       - task: test:suite
       - task: test:template
 
@@ -89,6 +90,7 @@ tasks:
     desc: Repository instruction audit and test suite, plus skills drift
     cmds:
       - task: audit:agent-instructions
+      - task: validate:toolchain-floors
       - task: test:suite
       - task: verify:skills
 
@@ -122,6 +124,7 @@ tasks:
       - task: test:ci-results
       - task: test:ci-changes-classify
       - task: test:checklist-classes
+      - task: test:validate-toolchain-floors
       - task: test:audit-github
       - task: test:comment-annotators
       - task: test:artifact-retention
@@ -605,6 +608,16 @@ tasks:
     desc: Validate checklist reconcile classes and their machine-readable catalog
     cmds:
       - ./scripts/test-checklist-classes.sh
+
+  validate:toolchain-floors:
+    desc: Fail when a template pin sits below a toolchain floor declared in toolchain-floors.json
+    cmds:
+      - ./scripts/validate-toolchain-floors.sh
+
+  test:validate-toolchain-floors:
+    desc: Fixture-test the toolchain-floors validator (below-floor pins, missing paths, ancestry, copier)
+    cmds:
+      - ./scripts/test-validate-toolchain-floors.sh
 
   test:ci-changes-classify:
     desc: Unit-test the fail-closed docs-only CI classifier
