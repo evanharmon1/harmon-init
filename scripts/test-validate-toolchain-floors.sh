@@ -16,6 +16,25 @@ fail() {
     exit 1
 }
 
+work="$(mktemp -d "${TMPDIR:-/tmp}/toolchain-floors-test.XXXXXX")"
+trap 'rm -rf "$work"' EXIT
+fx="${work}/fx"
+out="${work}/out.txt"
+
+# The real tree runs FIRST, with the caller's own Git configuration: a devcontainer
+# bind mount can depend on a global safe.directory entry, and only the throwaway
+# fixture below may discard it.
+echo "==> the real tree passes and names its consumer-checked pin"
+rc=0
+"$validator" >"$out" 2>&1 || rc=$?
+[ "$rc" = 0 ] || {
+    cat "$out" >&2
+    fail "the current template violates its own floors"
+}
+grep -E 'consumer-checked +package.json' "$out" >/dev/null || fail "pnpm pin is not reported as consumer-checked"
+tools="$(sed -n 's/^toolchain-floors: \([a-z-]*\) (.*/\1/p' "$out" | sort | tr '\n' ' ')"
+[ "$tools" = "copier devcontainer-image node pnpm task " ] || fail "declared tools differ: ${tools}"
+
 # Keep the fixture's git independent of the caller: hooks export GIT_DIR /
 # GIT_WORK_TREE / GIT_INDEX_FILE, which would retarget every fixture command at
 # the caller's real repository (scripts/test-worktree.sh does the same).
@@ -26,11 +45,6 @@ for _i in 0 1 2 3 4 5 6 7 8 9; do unset "GIT_CONFIG_KEY_${_i}" "GIT_CONFIG_VALUE
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
 export GIT_AUTHOR_NAME=fixture GIT_AUTHOR_EMAIL=fixture@example.com
 export GIT_COMMITTER_NAME=fixture GIT_COMMITTER_EMAIL=fixture@example.com
-
-work="$(mktemp -d "${TMPDIR:-/tmp}/toolchain-floors-test.XXXXXX")"
-trap 'rm -rf "$work"' EXIT
-fx="${work}/fx"
-out="${work}/out.txt"
 
 JINJA_DIR='template/[% if devcontainer %].devcontainer[% endif %]'
 
@@ -71,6 +85,14 @@ commented_bool:
   type: bool # derived from project_type
   default: false
 
+quoted_bool:
+  type: 'bool'
+  default: false
+
+hash_bool:
+  type: bool#note
+  default: false
+
 help_trap:
   type: str
   help: |
@@ -97,7 +119,8 @@ cp toolchain-floors.schema.json "${fx}/toolchain-floors.schema.json"
 
 # floors JSON -> write the fixture declaration with the given floor objects.
 floors() { printf '{"schema_version":1,"floors":[%s]}\n' "$1" >"${fx}/toolchain-floors.json"; }
-NODE_PIN='{"path":".github/actions/setup/action.yml","template_path":"template/.github/actions/setup/action.yml.jinja","pattern":"^\\s*node-version: \"([0-9]+)\"$"}'
+NODE_PATTERN="$(node -e 'const f=JSON.parse(require("fs").readFileSync("toolchain-floors.json","utf8")).floors.find((x)=>x.tool==="node");process.stdout.write(JSON.stringify(f.pins[0].pattern))')"
+NODE_PIN='{"path":".github/actions/setup/action.yml","template_path":"template/.github/actions/setup/action.yml.jinja","pattern":'"${NODE_PATTERN}"'}'
 TASK_PATTERN="$(node -e 'const f=JSON.parse(require("fs").readFileSync("toolchain-floors.json","utf8")).floors.find((x)=>x.tool==="task");process.stdout.write(JSON.stringify(f.pins[0].pattern))')"
 TASK_PIN='{"path":".github/actions/setup/action.yml","template_path":"template/.github/actions/setup/action.yml.jinja","pattern":'"${TASK_PATTERN}"'}'
 IMAGE_PIN='{"path":".devcontainer/Dockerfile","template_path":"'"${JINJA_DIR}"'/Dockerfile","pattern":"^FROM ghcr\\.io/evanharmon1/harmon-devcontainer:sha-([0-9a-f]{40})@"}'
@@ -122,17 +145,6 @@ expect() {
         fail "${name}: output lacks: ${pattern}"
     }
 }
-
-echo "==> the real tree passes and names its consumer-checked pin"
-rc=0
-"$validator" >"$out" 2>&1 || rc=$?
-[ "$rc" = 0 ] || {
-    cat "$out" >&2
-    fail "the current template violates its own floors"
-}
-grep -E 'consumer-checked +package.json' "$out" >/dev/null || fail "pnpm pin is not reported as consumer-checked"
-tools="$(sed -n 's/^toolchain-floors: \([a-z-]*\) (.*/\1/p' "$out" | sort | tr '\n' ' ')"
-[ "$tools" = "copier devcontainer-image node pnpm task " ] || fail "declared tools differ: ${tools}"
 
 floors "$(node_floor 24),$(task_floor 3.51.1)"
 expect "pins at the floor pass" 0 "toolchain-floors: ok"
@@ -248,12 +260,14 @@ floors "$(node_floor 24 '{"path":"package.json","template_path":null,"pattern":"
 expect "a consumer-owned pattern needs a capture group" 1 "no capture group 1"
 
 # `when`: a trailing comment is fine; a type: line quoted inside help text is not a type.
-for ok in commented_bool; do
+for ok in commented_bool quoted_bool; do
     printf '{"schema_version":1,"floors":[{"tool":"node","minimum":"24","compare":"major","when":"%s","pins":[%s]}]}\n' "$ok" "$NODE_PIN" >"${fx}/toolchain-floors.json"
     expect "when ${ok} (type: bool with a trailing comment) passes" 0 "when ${ok}"
 done
 printf '{"schema_version":1,"floors":[{"tool":"node","minimum":"24","compare":"major","when":"help_trap","pins":[%s]}]}\n' "$NODE_PIN" >"${fx}/toolchain-floors.json"
 expect "when naming a question whose help text quotes type: bool fails" 1 'when "help_trap" is not a boolean answer'
+printf '{"schema_version":1,"floors":[{"tool":"node","minimum":"24","compare":"major","when":"hash_bool","pins":[%s]}]}\n' "$NODE_PIN" >"${fx}/toolchain-floors.json"
+expect "type: bool#note is not the scalar bool" 1 'when "hash_bool" is not a boolean answer'
 
 # A relative --floors resolves against --root, not the caller's directory.
 mkdir -p "${work}/elsewhere"
@@ -267,7 +281,7 @@ rc=0
     fail "a relative --floors read the caller's directory instead of --root"
 }
 
-# Git runs against --root only: not the caller's GIT_DIR, never a lazy fetch.
+# Git runs against --root only, not the caller's GIT_DIR.
 floors "$(image_floor "$base")"
 decoy="${work}/decoy.git"
 git init -q --bare "$decoy"
@@ -278,23 +292,6 @@ GIT_DIR="$decoy" GIT_INDEX_FILE="${decoy}/index" "$validator" --root "$fx" >"$ou
     cat "$out" >&2
     fail "ancestry followed the caller's GIT_DIR"
 }
-echo "==> every ancestry git call disables lazy fetching"
-mkdir -p "${work}/shim"
-real_git="$(command -v git)"
-cat >"${work}/shim/git" <<SHIM
-#!/bin/sh
-printf '%s\n' "\${GIT_NO_LAZY_FETCH:-unset}" >>"${work}/lazy.log"
-exec "${real_git}" "\$@"
-SHIM
-chmod +x "${work}/shim/git"
-: >"${work}/lazy.log"
-PATH="${work}/shim:${PATH}" "$validator" --root "$fx" >"$out" 2>&1 || {
-    cat "$out" >&2
-    fail "the validator failed under the git shim"
-}
-[ -s "${work}/lazy.log" ] || fail "the git shim was never used"
-[ "$(sort -u "${work}/lazy.log")" = "1" ] || fail "a git call ran without GIT_NO_LAZY_FETCH=1"
-
 # Shallow: both endpoints present but the connecting history cut is unknown, not a rollback.
 git -C "$fx" config uploadpack.allowAnySHA1InWant true
 shallow="${work}/shallow"
@@ -314,6 +311,40 @@ grep -F "unknown — this clone is shallow" "$out" >/dev/null || {
     fail "a shallow negative must be reported as unknown"
 }
 grep -F "does not descend" "$out" >/dev/null && fail "a shallow negative was reported as a proven rollback"
+
+# An annotated tag's object id is not the commit it points at.
+git -C "$fx" tag -a -m "annotated" annotated "$child"
+tagobj="$(git -C "$fx" rev-parse annotated)"
+floors "$(image_floor "$base")"
+write_dockerfile "$tagobj"
+expect "an annotated tag id is not accepted as the pinned commit" 1 "${tagobj} is a tag object, not a commit"
+floors "$(image_floor "$tagobj")"
+write_dockerfile "$child"
+expect "an annotated tag id is not accepted as the floor commit" 1 "${tagobj} is a tag object, not a commit"
+write_dockerfile "$child"
+
+# A _min_copier_version that is not dotted numeric cannot be compared.
+cp "${fx}/copier.yml" "${work}/copier.yml.bak"
+sed 's/^_min_copier_version:.*/_min_copier_version: "9.4..0"/' "${work}/copier.yml.bak" >"${fx}/copier.yml"
+floors '{"tool":"copier","minimum":"9.4.0","compare":"version","pins":[]}'
+expect "a malformed _min_copier_version is unverifiable, not sufficient" 1 'is not a dotted numeric version, so the floor cannot be verified'
+cp "${work}/copier.yml.bak" "${fx}/copier.yml"
+
+# Every setup-node step is held to the floor, whatever its quoting.
+cat >"${fx}/template/two-node.yml.jinja" <<'EOF'
+    - uses: actions/setup-node@0000 # v7
+      with:
+        node-version: "24"
+    - uses: actions/setup-node@0000 # v7
+      with:
+        node-version: '22'
+EOF
+TWO_NODE='{"path":"w.yml","template_path":"template/two-node.yml.jinja","pattern":'"${NODE_PATTERN}"'}'
+floors "$(node_floor 24 "$TWO_NODE")"
+expect "a single-quoted node-version below the floor is caught" 1 "pinned 22 is below the floor 24"
+printf '    - uses: actions/setup-node@0000\n      with:\n        node-version: "24"\n    - uses: actions/setup-node@0000\n      with:\n        node-version: ${{ inputs.node }}\n' >"${fx}/template/two-node.yml.jinja"
+expect "an uninterpretable node-version fails even beside a valid one" 1 "is not a major version"
+rm -f "${fx}/template/two-node.yml.jinja"
 
 # Fail closed outside a git repository: no history means ancestry is unknown.
 nogit="${work}/nogit"

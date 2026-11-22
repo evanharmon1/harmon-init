@@ -133,24 +133,31 @@ function insideRoot(relative) {
 }
 
 // Git runs against ROOT alone: a hook-exported GIT_DIR/GIT_WORK_TREE/GIT_INDEX_FILE
-// must not retarget it, and a partial clone must not fetch a missing object.
+// must not retarget it.
 const gitEnv = Object.fromEntries(
   Object.entries(process.env).filter(
     ([name]) =>
       !/^GIT_(DIR|WORK_TREE|INDEX_FILE|COMMON_DIR|OBJECT_DIRECTORY|ALTERNATE_OBJECT_DIRECTORIES|PREFIX|NAMESPACE|CEILING_DIRECTORIES)$/.test(name)
   )
 )
-gitEnv.GIT_NO_LAZY_FETCH = '1'
-gitEnv.GIT_TERMINAL_PROMPT = '0'
 
 function git(args) {
   return spawnSync('git', ['-C', root, ...args], { encoding: 'utf8', env: gitEnv })
 }
 
-const hasCommit = (sha) => git(['cat-file', '-e', `${sha}^{commit}`]).status === 0
+// The unpeeled object type: an annotated tag's id is not the commit it points at.
+function objectType(sha) {
+  const result = git(['cat-file', '-t', sha])
+  return result.status === 0 ? result.stdout.trim() : null
+}
 
 function checkAncestor(label, minimum, pinned) {
-  const missing = [minimum, pinned].filter((sha) => !hasCommit(sha))
+  const notCommits = [minimum, pinned].filter((sha) => ![null, 'commit'].includes(objectType(sha)))
+  if (notCommits.length > 0) {
+    for (const sha of notCommits) fail(`${label}: ${sha} is a ${objectType(sha)} object, not a commit`)
+    return false
+  }
+  const missing = [minimum, pinned].filter((sha) => objectType(sha) === null)
   if (missing.length > 0) {
     fail(
       `${label}: unknown — commit ${missing.join(', ')} is not in the local git history ` +
@@ -188,7 +195,7 @@ function booleanAnswer(name) {
   // Only the question's own `type:` (two-space indent) counts; deeper lines are
   // block-scalar text such as `help:`.
   for (let i = start + 1; i < lines.length && /^(\s|$)/.test(lines[i]); i += 1) {
-    if (/^ {2}type:\s*bool\s*(?:#.*)?$/.test(lines[i])) return true
+    if (/^ {2}type:\s*(?:bool|'bool'|"bool")(?:\s+#.*)?\s*$/.test(lines[i])) return true
   }
   return false
 }
@@ -212,6 +219,8 @@ for (const floor of declaration.floors) {
     const declared = copierYml === null ? null : /^_min_copier_version:\s*["']?([0-9][0-9.]*)["']?\s*(?:#.*)?$/m.exec(copierYml)
     if (declared === null) {
       fail('copier: copier.yml declares no _min_copier_version to hold the floor against')
+    } else if (!/^[0-9]+(\.[0-9]+)*$/.test(declared[1])) {
+      fail(`copier: _min_copier_version "${declared[1]}" is not a dotted numeric version, so the floor cannot be verified`)
     } else if (compare === 'version' && compareVersions(minimum, declared[1]) > 0) {
       fail(`copier: floor ${minimum} exceeds _min_copier_version ${declared[1]} in copier.yml`)
     } else {
