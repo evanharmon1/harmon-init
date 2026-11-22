@@ -371,53 +371,80 @@ print(json.dumps(value) if value is not None else '')
     def live_rulesets(rows=listed, live=ruleset):
         return dict(data, **{'repos/acme/widget/rulesets': rows, 'repos/acme/widget/rulesets/7': live})
 
-    def without(*contexts):
-        live = copy.deepcopy(ruleset)
-        for rule in live['rules']:
-            if rule['type'] == 'required_status_checks':
-                checks = rule['parameters']['required_status_checks']
-                checks[:] = [check for check in checks if check['context'] not in contexts]
-        return live
+    def checks_of(document):
+        return next(rule for rule in document['rules'] if rule['type'] == 'required_status_checks')['parameters']['required_status_checks']
 
     def gh_calls():
         return [json.loads(line) for line in (fixture / 'calls').read_text().splitlines()]
 
-    row = run([required], 0, live_rulesets())[0]
-    assert row['result'] == 'pass' and row['write_task'] == 'task setup:ruleset', row
-    # Only the audit's own GET reads; setup-ruleset.sh never calls gh itself.
-    assert [call[3].split('?')[0] for call in gh_calls()] == ['repos/acme/widget/rulesets'] * 2 + ['repos/acme/widget/rulesets/7'], gh_calls()
-    extra = copy.deepcopy(ruleset)
-    next(rule for rule in extra['rules'] if rule['type'] == 'required_status_checks')['parameters']['required_status_checks'].append({'context': 'extra-live-check'})
-    assert run([required], 0, live_rulesets(live=extra))[0]['result'] == 'pass'
-    row = run([required], 1, live_rulesets(live=without('closing-keywords')))[0]
-    assert row['result'] == 'fail' and row['reason'] == 'live ruleset lacks required checks: closing-keywords', row
-    row = run([required], 1, live_rulesets(live=without('closing-keywords', 'security')))[0]
-    assert row['result'] == 'fail' and all(name in row['reason'] for name in ('closing-keywords', 'security')), row
-    absent_rule = copy.deepcopy(ruleset)
-    absent_rule['rules'] = [rule for rule in absent_rule['rules'] if rule['type'] != 'required_status_checks']
-    row = run([required], 1, live_rulesets(live=absent_rule))[0]
-    assert row['result'] == 'fail' and all(check['context'] in row['reason'] for rule in ruleset['rules']
-        if rule['type'] == 'required_status_checks' for check in rule['parameters']['required_status_checks']), row
-    # A same-named check bound to another app, or to none, can be satisfied by
-    # the wrong producer: fail, naming the mismatch and the manual edit, because
-    # the write task only adds missing contexts and never repairs a binding.
-    def rebound(integration_id, *missing):
-        live = without(*missing)
-        check = next(rule for rule in live['rules'] if rule['type'] == 'required_status_checks')['parameters']['required_status_checks'][0]
-        if integration_id is ...:
-            del check['integration_id']
-        else:
-            check['integration_id'] = integration_id
-        return live, check['context']
+    # The pass/fail cases read every context and binding from the checked-in
+    # ruleset they run against, so a repository that customized its required
+    # checks runs them unchanged.
+    def required_check_cases(desired):
+        (fixture / '.github' / ruleset_name).write_text(json.dumps(desired))
+        contexts = [check['context'] for check in checks_of(desired)]
+        assert len(contexts) >= 2, ('the required-checks cases need two checked-in contexts', contexts)
 
-    for binding in (1, None, ...):
-        live, context = rebound(binding)
-        row = run([required], 1, live_rulesets(live=live))[0]
-        assert row['result'] == 'fail' and context in row['reason'] and all(text in row['reason'] for text in (
-            'integration_id mismatch', 'manual edit', 'task setup:ruleset does not repair')), (binding, row)
-    live, context = rebound(1, 'closing-keywords')
-    row = run([required], 1, live_rulesets(live=live))[0]
-    assert row['result'] == 'fail' and all(text in row['reason'] for text in ('closing-keywords', context, 'integration_id mismatch')), row
+        def without(*missing):
+            live = copy.deepcopy(desired)
+            checks_of(live)[:] = [check for check in checks_of(live) if check['context'] not in missing]
+            return live
+
+        row = run([required], 0, live_rulesets(live=desired))[0]
+        assert row['result'] == 'pass' and row['write_task'] == 'task setup:ruleset', row
+        # Only the audit's own GET reads; setup-ruleset.sh never calls gh itself.
+        assert [call[3].split('?')[0] for call in gh_calls()] == ['repos/acme/widget/rulesets'] * 2 + ['repos/acme/widget/rulesets/7'], gh_calls()
+        extra = copy.deepcopy(desired)
+        checks_of(extra).append({'context': 'extra-live-check'})
+        assert run([required], 0, live_rulesets(live=extra))[0]['result'] == 'pass'
+        row = run([required], 1, live_rulesets(live=without(contexts[0])))[0]
+        assert row['result'] == 'fail' and row['reason'] == 'live ruleset lacks required checks: ' + contexts[0], row
+        row = run([required], 1, live_rulesets(live=without(*contexts[:2])))[0]
+        assert row['result'] == 'fail' and all(name in row['reason'] for name in contexts[:2]), row
+        absent_rule = copy.deepcopy(desired)
+        absent_rule['rules'] = [rule for rule in absent_rule['rules'] if rule['type'] != 'required_status_checks']
+        row = run([required], 1, live_rulesets(live=absent_rule))[0]
+        assert row['result'] == 'fail' and all(context in row['reason'] for context in contexts), row
+        # A same-named check bound to another app, or to none, can be satisfied
+        # by the wrong producer: fail, naming the mismatch and the manual edit,
+        # because the write task only adds missing contexts and never repairs a
+        # binding. Only a pinned check can be rebound to none; an unpinned one
+        # is still mismatched by any app binding.
+        pinned = [check for check in checks_of(desired) if check.get('integration_id') is not None]
+        target = (pinned or checks_of(desired))[0]
+        wrong = (target.get('integration_id') or 0) + 1
+        other = next(context for context in contexts if context != target['context'])
+
+        def rebound(integration_id, *missing):
+            live = without(*missing)
+            check = next(check for check in checks_of(live) if check['context'] == target['context'])
+            if integration_id is ...:
+                del check['integration_id']
+            else:
+                check['integration_id'] = integration_id
+            return live
+
+        for binding in ((wrong, None, ...) if pinned else (wrong,)):
+            row = run([required], 1, live_rulesets(live=rebound(binding)))[0]
+            assert row['result'] == 'fail' and target['context'] in row['reason'] and all(text in row['reason'] for text in (
+                'integration_id mismatch', 'manual edit', 'task setup:ruleset does not repair')), (binding, row)
+        row = run([required], 1, live_rulesets(live=rebound(wrong, other)))[0]
+        assert row['result'] == 'fail' and all(text in row['reason'] for text in (other, target['context'], 'integration_id mismatch')), row
+
+    required_check_cases(ruleset)
+    # Self-check: the cases depend on no shipped name or position. Rerun them
+    # against customized rulesets: one without closing-keywords whose first
+    # check is unpinned, and one with no pinned check at all.
+    customized = copy.deepcopy(ruleset)
+    checks_of(customized)[:] = [check for check in checks_of(customized) if check['context'] != 'closing-keywords']
+    checks_of(customized)[0].pop('integration_id', None)
+    checks_of(customized).append({'context': 'custom-check', 'integration_id': 4242})
+    unpinned = copy.deepcopy(customized)
+    for check in checks_of(unpinned):
+        check.pop('integration_id', None)
+    for variant in (customized, unpinned):
+        required_check_cases(variant)
+    shutil.copy2(root / '.github' / ruleset_name, fixture / '.github' / ruleset_name)
     # Either ruleset unreadable, or the named ruleset not live exactly once: unknown.
     duplicate = listed + [dict(listed[0], id=8)]
     organization = [dict(listed[0], source_type='Organization')]
