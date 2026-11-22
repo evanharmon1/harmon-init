@@ -53,7 +53,7 @@
         "json_pointer": { "type": "string", "pattern": "^/" },
         "pattern": { "type": "string", "minLength": 1 },
         "step": {
-          "description": "For a template workflow or composite action, require each step that uses this action to have exactly one recognized input. The validator applies the pattern to the original uses and input lines for that step and checks the captured value against the parsed input. Flow-style mappings are unsupported.",
+          "description": "For a template workflow or composite action, require each step that uses this action to have exactly one recognized input. The validator applies the locator to the whole original file, associates capture group 1 with a step input by source position, and requires the captured value to equal the parsed input. Every locator match is checked against the floor, including matches outside covered steps. Flow-style mappings are unsupported.",
           "type": "object",
           "additionalProperties": false,
           "required": ["action", "input"],

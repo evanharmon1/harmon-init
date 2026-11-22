@@ -201,7 +201,7 @@ function booleanAnswer(name) {
   return false
 }
 
-function stepPins(label, source, { action, input }, regex) {
+function associateStepPins(label, source, { action, input }, versions) {
   // Blank Jinja control lines and mask substitutions for structural parsing.
   // Preserve source line numbers and apply the pattern to the original text.
   const lines = source.split(/\r?\n/)
@@ -223,7 +223,7 @@ function stepPins(label, source, { action, input }, regex) {
   })
   if (result.status !== 0) {
     fail(`${label}: cannot enumerate ${action} steps with Mike Farah yq: ${result.error?.message ?? result.stderr.trim()}`)
-    return []
+    return
   }
 
   let steps
@@ -232,25 +232,23 @@ function stepPins(label, source, { action, input }, regex) {
     if (!Array.isArray(steps)) throw new Error('expected a YAML step list')
   } catch (error) {
     fail(`${label}: cannot read ${action} steps from yq: ${error.message}`)
-    return []
+    return
   }
   if (steps.length === 0) fail(`${label}: no ${action} steps found`)
 
-  // Evaluate the locator against the untouched file, including context outside
-  // the step. Use capture group 1's position, since the match can span lines.
+  // Use capture group 1's position, since the match can span lines.
   const capturesByLine = new Map()
-  for (const match of source.matchAll(new RegExp(regex, regex.flags + 'd'))) {
-    const capture = match.indices[1]
+  for (const version of versions) {
+    const { capture, pinned } = version
     if (capture === undefined) continue
-    const [start, end] = capture
-    if (source.slice(start, end).includes('\n')) continue
+    if (pinned.includes('\n')) continue
+    const [start] = capture
     const line = source.slice(0, start).split('\n').length
     const captures = capturesByLine.get(line) ?? []
-    captures.push(match[1])
+    captures.push(version)
     capturesByLine.set(line, captures)
   }
 
-  const pins = []
   for (const step of steps) {
     const here = `${label}:${step.line}`
     if (step.style === 'flow' || step.inputStyle === 'flow') {
@@ -276,13 +274,12 @@ function stepPins(label, source, { action, input }, regex) {
       continue
     }
     const captures = capturesByLine.get(version.line) ?? []
-    if (captures.length !== 1 || captures[0] !== version.value) {
+    if (captures.length !== 1 || captures[0].pinned !== version.value) {
       fail(`${here}: ${action} step needs exactly one recognized ${input} version`)
       continue
     }
-    pins.push({ pinned: captures[0], here })
+    captures[0].locations.push(here)
   }
-  return pins
 }
 
 const seenTools = new Set()
@@ -322,7 +319,7 @@ for (const floor of declaration.floors) {
     // 9: a pattern is a published contract whoever owns the pin, so compile it first.
     let regex
     try {
-      regex = new RegExp(pin.pattern, 'gm')
+      regex = new RegExp(pin.pattern, pin.step === undefined ? 'gm' : 'gmd')
     } catch (error) {
       fail(`${label}: pattern does not compile: ${error.message}`)
       continue
@@ -355,25 +352,35 @@ for (const floor of declaration.floors) {
       continue
     }
     const source = fs.readFileSync(file, 'utf8')
-    const here = `${label} (${pin.template_path})`
-    const versions = pin.step === undefined
-      ? [...source.matchAll(regex)].map((match) => ({ pinned: match[1], here }))
-      : stepPins(here, source, pin.step, regex)
-    if (pin.step === undefined && versions.length === 0) {
+    const fileLabel = `${label} (${pin.template_path})`
+    const versions = [...source.matchAll(regex)].map((match) => ({
+      pinned: match[1], capture: match.indices?.[1], locations: []
+    }))
+    if (pin.step !== undefined) {
+      associateStepPins(fileLabel, source, pin.step, versions)
+    } else if (versions.length === 0) {
       fail(`${label}: pattern matches nothing in ${pin.template_path}`)
     }
-    for (const { pinned, here } of versions) {
+    // Check each locator match once, including matches outside covered steps.
+    for (const { pinned, locations } of versions) {
+      const here = locations[0] ?? fileLabel
+      let success
       if (pinned === undefined) {
         fail(`${here}: pattern has no capture group 1`)
       } else if (compare === 'ancestor') {
         if (!/^[0-9a-f]{40}$/.test(pinned)) fail(`${here}: "${pinned}" is not a 40-character commit`)
-        else if (checkAncestor(here, minimum, pinned)) say(`  ok   ${here}: ${pinned} descends from ${minimum}`)
+        else if (checkAncestor(here, minimum, pinned)) success = `${pinned} descends from ${minimum}`
       } else if (!/^[0-9]+(\.[0-9]+)*$/.test(pinned) || (compare === 'major' && !/^[0-9]+$/.test(pinned))) {
         fail(`${here}: "${pinned}" is not a ${compare === 'major' ? 'major version' : 'dotted numeric version'}`)
       } else if (compare === 'major' ? Number(pinned) < Number(minimum) : compareVersions(pinned, minimum) < 0) {
         fail(`${here}: pinned ${pinned} is below the floor ${minimum}`)
       } else {
-        say(`  ok   ${here}: ${pinned} >= ${minimum}`)
+        success = `${pinned} >= ${minimum}`
+      }
+      if (success !== undefined) {
+        for (const location of locations.length === 0 ? [fileLabel] : locations) {
+          say(`  ok   ${location}: ${success}`)
+        }
       }
     }
   }

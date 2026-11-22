@@ -448,6 +448,10 @@ floors "$(node_floor 24 "$(declared_pin node 1)")"
 two_jobs "$node_good" "$node_good" >"$NODE_WORKFLOW"
 expect "both Node workflow steps pass independently" 0 "toolchain-floors: ok"
 [ "$(grep -Fc ': 24 >= 24' "$out")" = 2 ] || fail "both Node versions must be compared"
+two_jobs "$node_good" '      - uses: ./local-action
+        with:
+          node-version: "20"' >"$NODE_WORKFLOW"
+expect "a Node locator match outside a setup step still has to meet the floor" 1 "pinned 20 is below the floor 24"
 two_jobs '      - &setup_node
         uses: actions/setup-node@0000
         with:
