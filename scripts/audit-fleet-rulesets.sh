@@ -15,7 +15,8 @@
 #   required  required contexts in the live ruleset
 #   missing / extra   expected-not-required / required-not-expected
 #   policy    audit-ruleset.sh's full-policy verdict on the same two documents
-#   status    gated | drift | ungated | unmanaged | unknown
+#   status    gated (contexts equal AND policy clean) | drift | ungated |
+#             unmanaged | unknown; other_rulesets and listing are informational
 #
 # Every GitHub call is a GET through scripts/lib/gh-rest.sh; nothing is written
 # and no credential is printed. A read that fails is `unknown`, never a pass.
@@ -295,20 +296,28 @@ audit_repo() {
            missing: (if $expected == null or $required == null then null else $e - $r end),
            extra: (if $expected == null or $required == null then null else $r - $e end),
            policy: $policy}
-        # Any unknown field makes the record unknown.
+        # Every computed field reaches the status except other_rulesets and the
+        # owner listing, which are informational. Any unknown field makes the
+        # record unknown, and gated needs the full-policy comparison clean too:
+        # equal contexts on a ruleset whose conditions miss the default branch,
+        # or with extra bypass actors, do not gate merges.
         | .status = (
             if [$managed, $ruleset, $expected_state, $policy] | index("unknown") then "unknown"
             elif $expected_state == "absent" and $managed == "yes" then "unknown"
             elif $expected_state == "absent" then "unmanaged"
             elif $ruleset == "absent" or ($r | length) == 0 or .enforcement != "active" then "ungated"
             elif (.missing | length) > 0 or (.extra | length) > 0 then "drift"
-            else "gated" end)
+            elif $policy == "drift" then "drift"
+            elif $policy == "clean" then "gated"
+            else "unknown" end)
         | .reason = (if $reason != "" then $reason
             elif .status == "unknown" then "managed repository has no checked-in ruleset"
             elif .status == "ungated" and $ruleset == "absent" then "no live ruleset named \($name)"
                 + (if ($others | length) > 0 then " (other rulesets: \($others | join(", ")))" else "" end)
             elif .status == "ungated" and ($r | length) == 0 then "live ruleset requires no status check"
             elif .status == "ungated" then "live ruleset enforcement is \(.enforcement // "unset")"
+            elif .status == "drift" and (.missing | length) == 0 and (.extra | length) == 0 then
+                "full policy differs from the checked-in ruleset (task audit:ruleset in that repository shows the diff)"
             else null end)'
 }
 

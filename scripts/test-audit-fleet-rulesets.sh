@@ -202,6 +202,15 @@ ok "$(contents drift "$rs_path")" "$(ruleset "Protect Main" active verify securi
 ok 'repos/acme/drift/rulesets?includes_parents=false&per_page=100&page=1' "$(summary 10 "Protect Main")"
 ok repos/acme/drift/rulesets/10 "$(ruleset "Protect Main" active verify security codeql-verify | live 10)"
 
+# Regression (review r1 finding 1): equal contexts, but the live ruleset's
+# conditions miss the default branch → full policy drift → drift, never gated.
+ok repos/acme/nocover '{"full_name":"acme/nocover","default_branch":"main"}'
+readable acme/nocover
+ok "$(contents nocover .copier-answers.yml)" "$answers"
+ok "$(contents nocover "$rs_path")" "$(jq -c '. + {conditions: {ref_name: {include: ["~DEFAULT_BRANCH"], exclude: []}}}' <<<"$std")"
+ok 'repos/acme/nocover/rulesets?includes_parents=false&per_page=100&page=1' "$(summary 14 "Protect Main")"
+ok repos/acme/nocover/rulesets/14 "$(jq -c '. + {conditions: {ref_name: {include: ["refs/heads/other"], exclude: []}}}' <<<"$std" | live 14)"
+
 # unmanaged: no answers file, no checked-in ruleset, no ruleset.
 missing "$(contents plain .copier-answers.yml)"
 missing "$(contents plain "$rs_path")"
@@ -308,6 +317,11 @@ echo "==> drift names missing and extra contexts"
 expect_exit 1 --json acme/drift
 jq -e '.repositories[0] | .status == "drift" and .missing == ["closing-keywords","devcontainer-verify"]
     and .extra == ["codeql-verify"] and .policy == "drift"' "$tmp_dir/out" >/dev/null || fail "acme/drift record wrong"
+
+echo "==> full-policy drift with equal contexts is drift, never gated (review r1 finding 1)"
+expect_exit 1 --json acme/nocover
+jq -e '.repositories[0] | .status == "drift" and .policy == "drift" and .missing == [] and .extra == []
+    and (.reason | test("full policy differs"))' "$tmp_dir/out" >/dev/null || fail "acme/nocover record wrong"
 
 echo "==> unmanaged repository is informational"
 expect_exit 0 --json acme/plain

@@ -125,14 +125,24 @@ repository's own checked-in JSON is the expected set, so the audit needs no copy
 of the profile table below. The full-policy verdict comes from `task
 audit:ruleset`'s own comparison, fed the fetched files.
 
-The status column is `gated` (live contexts equal the expected set), `drift`,
-`ungated` (an expected set with no live ruleset, or a ruleset with zero
-required checks), `unmanaged` (no expected set; informational), or `unknown`
-when any read fails — never a pass. `--json` prints the machine-readable form.
-It issues GET requests only and changes nothing; it exits 2 when any repository
-is `unknown`, 1 when any is `drift` or `ungated`, and 0 otherwise. Close a gap
-with `task setup:ruleset` in that repository, or record it as deliberately
-ungated.
+The status column is `gated` (live contexts equal the expected set **and** the
+full-policy comparison is clean), `drift` (contexts differ, or the full policy
+does — conditions that miss the default branch, other bypass actors),
+`ungated` (an expected set with no live ruleset, a ruleset with zero required
+checks, or enforcement other than `active`), `unmanaged` (no expected set;
+informational), or `unknown` when any read or comparison is unproven — never a
+pass. Every field the audit computes feeds the status except the other live
+rulesets it lists and the owner's listing scope (`public-only` when the token
+is not that personal account), which are informational.
+
+The task prints the table. For machine use, call the script directly:
+`./scripts/audit-fleet-rulesets.sh --json [OWNER | OWNER/REPO]...` prints the
+JSON form, and the script exits 2 when any repository is `unknown`, 1 when any
+is `drift` or `ungated`, and 0 otherwise. Task maps every failing exit to 201;
+a task caller that needs the distinction runs `task --exit-code
+audit:fleet-rulesets`. The audit issues GET requests only and changes nothing.
+Close a gap with `task setup:ruleset` in that repository, or record it as
+deliberately ungated.
 
 ## Required-check set per copier profile
 

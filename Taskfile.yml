@@ -904,7 +904,7 @@ tasks:
       - ./scripts/audit-ruleset.sh
 
   audit:fleet-rulesets:
-    desc: Report each fleet repository's required merge checks against its checked-in ruleset (read-only; --json; owners or owner/repo as args)
+    desc: Report each fleet repository's required merge checks against its checked-in ruleset as a table (read-only; owners or owner/repo as args; JSON and exit codes via the script)
     cmds:
       - ./scripts/audit-fleet-rulesets.sh {{.CLI_ARGS}}
 
