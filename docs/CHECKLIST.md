@@ -160,7 +160,7 @@ Dependabot owns advisory alerts.
       its Codex CLI in by hand through `sprite console`; an agent never does,
       and that login is never copied to another machine. Procedure:
       [guides/sprites.md](guides/sprites.md).
-- [ ] **[human-only]** Probe: Read required checks in the live branch ruleset through the GitHub API. Write: none. <!-- reconcile-id: root-add-closing-keywords-to-the-live-bra-013 --> **Add `closing-keywords` to the live branch ruleset** —
+- [ ] **[agent-apply-with-fleet-approval]** Probe: Read the live branch ruleset's required checks through the GitHub API and compare them with the checked-in ruleset. Write: `task setup:ruleset`. <!-- reconcile-id: root-add-closing-keywords-to-the-live-bra-013 --> **Add `closing-keywords` to the live branch ruleset** —
       **required, not optional, and no longer deferrable.** Until
       harmon-init#1328 the guard was enforced *transitively*: the job sat in
       `build.yml` and fed the aggregate `verify` check, so a failing guard
@@ -175,7 +175,12 @@ Dependabot owns advisory alerts.
       existing ruleset via `PUT`, preserving live conditions, bypass actors
       and other rules. It only adds missing contexts: extra live checks stay,
       and integration mismatches need a manual edit and exit non-zero even
-      when additions were applied. Non-interactive writes require `--yes`.
+      when additions were applied. Non-interactive writes require `--yes`:
+      a fleet standardization parent holding the release's fleet approval
+      runs the catalog write as `task setup:ruleset -- --yes` (it appends
+      `-- --yes` to the catalog `write_task`), then re-probes with
+      `task audit:github`. That form still refuses when the named ruleset
+      is not live exactly once: the import stays the human-only item above.
       Do **not** re-import the JSON: that creates a duplicate ruleset.
       `task audit:ruleset` confirms the result and reports other policy drift.
       If the API rejects a rule (for example `merge_queue`), add the checks

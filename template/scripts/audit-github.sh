@@ -12,6 +12,7 @@ import argparse
 from datetime import date
 import tempfile
 import json
+import os
 import re
 import subprocess
 import sys
@@ -180,6 +181,58 @@ class Evidence:
                 '; '.join(details) if details else reason)
 
 
+def required_checks():
+    """Reuse setup-ruleset.sh's comparison over snapshots read here, GET-only."""
+    script = Path('scripts/setup-ruleset.sh')
+    desired = Path('.github/Branch Protection Ruleset - Protect Main.json')
+    if not script.is_file() or not desired.is_file():
+        raise Unavailable('setup-ruleset.sh or the checked-in ruleset is unavailable')
+    rules = read('rulesets?includes_parents=true', pages=True)
+    name = json.loads(desired.read_text()).get('name')
+    ids = [row.get('id') for row in rules if isinstance(row, dict) and
+           row.get('name') == name and row.get('source_type') == 'Repository']
+    with tempfile.TemporaryDirectory(prefix='audit-github-ruleset-') as tmp:
+        listing, detail = Path(tmp) / 'list.json', Path(tmp) / 'detail.json'
+        listing.write_text(json.dumps(rules))
+        # setup-ruleset.sh owns the exactly-once rule: without a unique match the
+        # detail stays absent and the script refuses before it would read one.
+        if len(ids) == 1 and type(ids[0]) is int:
+            detail.write_text(json.dumps(read('rulesets/' + str(ids[0]))))
+        # Offline snapshots, --dry-run, no --yes and no stdin: no gh call, no write.
+        env = {key: value for key, value in os.environ.items() if not key.startswith('RULESET_')}
+        env.update(RULESET_AUDIT_LIVE_LIST=str(listing), RULESET_AUDIT_LIVE_DETAIL=str(detail))
+        try:
+            result = subprocess.run(['bash', str(script), '--repo', repo, '--dry-run'], env=env,
+                                    stdin=subprocess.DEVNULL, capture_output=True, text=True,
+                                    timeout=60, check=False)
+        except (OSError, subprocess.TimeoutExpired):
+            raise Unavailable('setup-ruleset.sh comparison unavailable or timed out') from None
+    out, err = result.stdout.splitlines(), result.stderr.splitlines()
+    mismatch = [line[4:] for line in err if line.startswith('  ! ')]
+    # A same-named check bound to another app (or to none) is drift the write
+    # task never repairs: setup-ruleset.sh only adds missing contexts.
+    note = ('; integration_id mismatch needs a manual edit that task setup:ruleset does not repair (task audit:ruleset): '
+            + ', '.join(mismatch)) if mismatch else ''
+    header = next(((index, match) for index, line in enumerate(out) if (match := re.fullmatch(
+        r'RULESET SETUP: .* is missing (\d+) required status check\(s\):', line))), None)
+    if header is not None:
+        missing = []
+        for line in out[header[0] + 1:]:
+            if not line.startswith('  + '):
+                break
+            missing.append(line[4:])
+        if not missing or len(missing) != int(header[1][1]):
+            raise Unavailable('setup-ruleset.sh missing-check report is incomplete')
+        return ('fail', 'live ruleset lacks required checks: ' + ', '.join(missing) + note)
+    if result.returncode == 0 and any(line.startswith('RULESET SETUP CLEAN: ') for line in out):
+        return ('pass', 'live ruleset requires every checked-in required check')
+    if result.returncode == 1 and mismatch and any(line.startswith('RULESET SETUP INCOMPLETE: nothing to add') for line in err):
+        return ('fail', 'live ruleset requires every checked-in context' + note)
+    prefix = 'RULESET SETUP UNAVAILABLE: '
+    refusal = next((line[len(prefix):] for line in err + out if line.startswith(prefix)), None)
+    raise Unavailable('setup-ruleset.sh comparison: ' + (refusal or 'exit ' + str(result.returncode)))
+
+
 def probe(entry):
     if target_error:
         raise Unavailable(target_error)
@@ -293,12 +346,14 @@ def probe(entry):
                 observed = True
                 break
         return ('manual', login + (' review evidence present' if observed else ' not observed in latest 20 updated PRs') + '; connection and service preferences require manual verification')
-    if 'import-the-branch-ruleset-' in item or 'add-closing-keywords-' in item or 'enable-unattributed-' in item:
+    if 'add-closing-keywords-' in item:
+        return required_checks()
+    if 'import-the-branch-ruleset-' in item or 'enable-unattributed-' in item:
         rules = read('rulesets?includes_parents=true', pages=True)
         if 'import-the-branch' in item:
             desired = json.loads(Path('.github/Branch Protection Ruleset - Protect Main.json').read_text())
             return outcome(any(row.get('name') == desired['name'] and row.get('enforcement') == 'active' for row in rules), 'named active ruleset presence only; content comparison: task audit:ruleset')
-        return ('manual', 'read ' + str(len(rules)) + ' rulesets; approval/check conditions require task audit:ruleset and manual applicability review')
+        return ('manual', 'read ' + str(len(rules)) + ' rulesets; approval conditions require task audit:ruleset and manual applicability review')
     if 'disable-github-codeql-' in item:
         return outcome(field(read('code-scanning/default-setup'), 'state') == 'not-configured', 'CodeQL default setup state')
     if 'free-sast-' in item or 'sast-coverage-' in item:
