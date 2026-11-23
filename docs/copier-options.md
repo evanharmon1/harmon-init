@@ -48,6 +48,7 @@ In prompt order, as defined in `copier.yml`. "Asked when" is the question's
 | 5 | `code_owner` | str | `[[ author_git_provider_username ]]` | always | `.github/CODEOWNERS` (frozen after first render — see `_skip_if_exists`) |
 | 6 | `claude_authorized_members` | str (CSV) | `[[ author_git_provider_username ]]` | always | allowlist for the `@claude` commands (plan/implement/review) |
 | 7 | `project_type` | choice `general`/`web-astro`/`web-app`/`iac`/`docs` | `general` | always | Taskfile, CI jobs, devcontainer tooling; **seeds 6 asked answers** (+ hidden `use_node`/`use_python`, and it gates `deploy_cloudflare_workers`'s `when:`) |
+| 7a | `use_renovate_preset` | bool | **no** | `web-astro` or `web-app` | Opts into the [Renovate preset pilot](guides/renovate-preset-publication.md#node-pilot) using the existing Renovate installation |
 | 8 | `snyk_scan_schedule` | choice `off`/`weekly`/`daily` | `off` | always | `snyk-scheduled.yml` + its cron (`weekly` = Sunday `23 6 * * 0`) |
 | 9 | `include_terraform` | bool | `project_type == 'iac'` | always | `terraform/`, `.tflint.hcl`, `terraform.yml`, 4 terraform scripts |
 | 10 | `include_ansible` | bool | `project_type == 'iac'` | always | `ansible/`, `.ansible-lint`; seeds `use_python` |
