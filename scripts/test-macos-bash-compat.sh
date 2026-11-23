@@ -250,4 +250,19 @@ EOF
     fi
 fi
 
+# ── 8. Root workflow pull_request.paths covers template workflow/action/taskfile twins ──
+workflow_file="${repo_root}/.github/workflows/macos-bash-compat.yml"
+if [ -f "$workflow_file" ]; then
+    for required_glob in \
+        '".github/workflows/**"' \
+        '".github/actions/**"' \
+        '"template/.github/workflows/**"' \
+        '"template/.github/actions/**"' \
+        '"template/*taskfiles*/**"' \
+        '"template/*.devcontainer*/scripts/**"'; do
+        grep -Fq -- "$required_glob" "$workflow_file" ||
+            fail "macos-bash-compat.yml pull_request.paths is missing ${required_glob}"
+    done
+fi
+
 echo "test-macos-bash-compat: PASS"
