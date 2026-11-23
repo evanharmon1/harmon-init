@@ -918,14 +918,15 @@ meets its exit condition on round 1 is done, whatever the cap allowed.
 - Commit messages follow **Conventional Commits** (enforced by commitlint):
   types `build, chore, ci, docs, feat, fix, perf, refactor, revert, style,
   test`.
-- **A PR that changes `template/` must use a `fix:`/`feat:` (or breaking) PR
-  title.** Consumers receive harmon-init only via `copier update` to a released
-  tag, and squash-merge feeds the PR title to release-please, which tags only
-  feat/fix/breaking — so a `chore:`/`docs:` title over `template/` would merge
-  without cutting a release and downstream repos would never pick the change up.
+- **A PR that changes `template/`, `toolchain-floors.json`, or
+  `toolchain-floors.schema.json` must use a `fix:`/`feat:` (or breaking) PR
+  title.** Consumers update the template and read the toolchain floors from a
+  release tag. Squash-merge feeds the PR title to release-please, which tags
+  only feat/fix/breaking. A `chore:`/`docs:` title over any of these paths would
+  merge without cutting a release, so consumers would miss the change.
   The `release-content-guard.yml` check enforces this; **retitle rather than
-  bypass** (e.g. `fix: update to harmon-init …`, not `chore:`). Non-`template/`
-  changes (docs, this repo's own tooling) keep their normal type. Pre-flight it
+  bypass** (e.g. `fix: update to harmon-init …`, not `chore:`). Changes outside
+  the guarded paths keep their normal type. Pre-flight it
   locally before opening the PR with your intended title:
   `PR_TITLE="<title>" BASE_SHA=main task guard:release-title`.
 - **A PR that closes an issue must pre-flight `guard:closing-keywords` too —
@@ -1472,8 +1473,8 @@ the workflow rules above:
   Codex.
 - `release.yml` runs release-please: releases stay intentional (merge the rolling
   release PR to cut a tag); `task release:*` remains a manual override.
-- `release-content-guard.yml` fails a PR that changes `template/` under a
-  non-releasing title (see Development Workflow) — the guard logic is
+- `release-content-guard.yml` fails a PR that changes a release-worthy path
+  under a non-releasing title (see Development Workflow) — the guard logic is
   `scripts/require-release-title.sh` (unit-tested by `task test:release-title`),
   driven by the `RELEASE_CONTENT_PATHS` var on the `guard:release-title` task.
   Generated repos render the same guard from the `release_content_paths` copier
