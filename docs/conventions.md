@@ -413,20 +413,26 @@ has.
   before applying an update. **A change that raises a toolchain requirement
   updates `toolchain-floors.json` in the same PR**.
   `task validate:toolchain-floors` (part of `verify` and the Build workflow's
-  `repo-guards` job) checks every match of a pin's `pattern` in the whole file
-  against the floor. It fails when a match is below the floor, when a
-  `template_path` is missing or matches nothing, or when the `copier` floor
-  exceeds `_min_copier_version` in `copier.yml`. A floor pin may carry a
-  `step` with an `action` and an `input`. The step check requires Mike Farah
-  `yq` on `PATH` to enumerate steps using that action in the covered file.
-  Each step must have exactly one recognized version input with one locator
-  capture on its line. The parsed value must equal the capture, with dotted
-  numeric components allowed after a major capture such as `24` from
-  `"24.21.0"`. The floor check compares the capture. A missing input or an unsupported
-  form such as a flow-style mapping fails the check. A template workflow or the
-  shared setup action using `actions/setup-node` or `arduino/setup-task` needs a floor pin
-  naming the file. The inventory in `task test:validate-toolchain-floors` (part of
-  `verify`) fails if the pin is missing. The validator cannot detect a floor
+  `repo-guards` job) checks every match within a pin's locator scope against the
+  floor. It fails when a match is below the floor, when a `template_path` is
+  missing or its pin matches nothing, or when the `copier` floor exceeds
+  `_min_copier_version` in `copier.yml`. For a pin declaring a `step`, it uses
+  Copier and Mike Farah `yq` to check rendered YAML in the fewest smoke-test
+  profiles that together render all declared step files. Each covered action
+  step must have exactly one recognized version input. The inventory checks
+  rendered workflows ending in `.yml` or `.yaml` and the shared setup action
+  for declarations naming the file, action and required input.
+
+  Consumers apply whole-file patterns with the multiline flag to their own
+  files. In whole-file step mode (Node), capture group 1 must start at the
+  parsed input's value and every locator match is checked, including matches
+  outside covered steps. In `step.pattern_scope: value` mode (Task), the
+  pattern applies to the parsed scalar of the selected step input. For either
+  mode the parsed value must equal the capture, with dotted numeric components
+  allowed after a major capture such as `24` from `"24.21.0"`. A missing
+  input or a flow-style step or input mapping fails the check. Non-step
+  template pins use the template text. Consumer pins with a `json_pointer` use
+  the string at that pointer. The validator cannot detect a floor
   left too low after a requirement rises, so raising the floor alongside a
   real requirement is the author's and the reviewer's job. An `ancestor` floor
   (the devcontainer image) compares commits in local git history only, so a

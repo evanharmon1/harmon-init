@@ -2,6 +2,7 @@
 # test-template.sh — render the Copier template into a temp dir and validate it.
 #
 # Usage: ./scripts/test-template.sh <profile> [full|renovate-config|ruleset-matrix]
+#        ./scripts/test-template.sh <profile> render-only <destination> <source>
 # Profiles: minimal | web | webapp | iac | full | meta
 #
 # IMPORTANT: files with CONDITIONAL NAMES are never even compiled by jinja
@@ -36,6 +37,12 @@ profile="${1:-minimal}"
 validation_scope="${2:-full}"
 case "$validation_scope" in
 full | renovate-config | ruleset-matrix) ;;
+render-only)
+    if [ "$#" -ne 4 ]; then
+        echo "render-only needs a destination and a Copier source" >&2
+        exit 2
+    fi
+    ;;
 *)
     echo "Unknown validation scope: ${validation_scope}" >&2
     exit 2
@@ -577,6 +584,12 @@ meta)
     exit 2
     ;;
 esac
+
+if [ "$validation_scope" = "render-only" ]; then
+    # The floor guard needs the same answers but no scaffold tasks or smoke tests.
+    copier copy --quiet --trust --defaults --vcs-ref=HEAD --skip-tasks "${data_args[@]}" "$4" "$3"
+    exit 0
+fi
 
 if [ "$validation_scope" = "ruleset-matrix" ]; then
     run_ruleset_matrix || fail=1

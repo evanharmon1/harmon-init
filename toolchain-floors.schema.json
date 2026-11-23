@@ -43,7 +43,7 @@
       ]
     },
     "pin": {
-      "description": "Where a floor's tool is pinned. `path` is the location in a generated repository, which is what the standardize-repo skill checks. `template_path` is the literal template source path (Jinja in the filename included) the validator reads as raw text, or null for a repository-owned pin such as package.json `packageManager`, which the template never writes and only consumers can check. `pattern` must capture the pinned value or the version component used for comparison in group 1. It is a JavaScript regular expression applied to the file's whole text by default, with the multiline flag (`^` and `$` match at line boundaries, so a pattern may span lines to anchor a value to its step); against a consumer file with `json_pointer` it applies to the string at that pointer instead. Patterns read the template files as block-style YAML; the template is the source of truth for how it spells a pin, and a pattern is not a YAML parser. A pin applies where its file exists: a repository that does not render `path` (a conditionally included workflow) has nothing to check, while a `template_path` that does not exist is an error.",
+      "description": "Where a floor's tool is pinned. `path` is the location in a generated repository. `template_path` is the literal template source path, including any Jinja in the filename, or null for a repository-owned pin. `pattern` is a JavaScript regular expression with the pinned value or comparison component in capture group 1. By default it applies to whole file text with the multiline flag: rendered YAML for step pins, raw template text for other template pins, and the consumer's own file text for consumer validation. If `json_pointer` is set, it applies to the string at that pointer instead. A step with `pattern_scope: value` applies it to the parsed scalar of its selected input. A missing literal template source is an error. A step pin must render in at least one checked profile.",
       "type": "object",
       "additionalProperties": false,
       "required": ["path", "template_path", "pattern"],
@@ -53,13 +53,14 @@
         "json_pointer": { "type": "string", "pattern": "^/" },
         "pattern": { "type": "string", "minLength": 1 },
         "step": {
-          "description": "For a template workflow or composite action, require each step that uses this action to have exactly one recognized input. The validator applies the locator to the whole original file, and requires exactly one group 1 capture on the line of the parsed input. The parsed value must equal the capture, with dotted numeric components allowed after the capture for a major comparison. Every locator match is checked against the floor, including matches outside covered steps. Flow-style mappings are unsupported.",
+          "description": "Select direct action steps in rendered workflow or composite-action YAML and require exactly one recognized input in each. With the default whole-file scope, capture group 1 must start at the parsed input's value position, and all whole-file matches are checked, including outside covered steps. With value scope, all matches are checked within the parsed input of each selected step. The parsed value must equal the capture, with dotted numeric components allowed after a major capture. Flow-style mappings are unsupported.",
           "type": "object",
           "additionalProperties": false,
           "required": ["action", "input"],
           "properties": {
             "action": { "type": "string", "pattern": "^[a-z0-9_.-]+/[a-z0-9_.-]+$" },
-            "input": { "type": "string", "pattern": "^[a-zA-Z0-9_-]+$" }
+            "input": { "type": "string", "pattern": "^[a-zA-Z0-9_-]+$" },
+            "pattern_scope": { "const": "value" }
           }
         }
       },

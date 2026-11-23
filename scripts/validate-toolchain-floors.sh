@@ -3,10 +3,9 @@
 # above the floors toolchain-floors.json declares (task validate:toolchain-floors).
 #
 # For every floor it validates the declaration against toolchain-floors.schema.json,
-# then for every pin with a non-null `template_path` reads that file's raw text
-# (Jinja and all), checks every `pattern` match against the floor, and fails
-# when a match is below it or when the file has no match at all. A `step` pin
-# uses yq to find the action's steps and requires a recognized input in each.
+# checks every locator match against the floor, and fails when a match is below
+# it or the pin has no match. Step pins check rendered YAML using Copier and yq.
+# Each covered action step must have exactly one recognized input.
 # A pin with a null `template_path` is repository-owned (package.json `packageManager`): the
 # template never writes it, so it is reported as consumer-checked and skipped.
 # A `copier` floor is held to `_min_copier_version` in copier.yml, and `when`
@@ -17,10 +16,13 @@
 # closed — fetch full history, do not weaken the check.
 #
 # Usage: validate-toolchain-floors.sh [--root DIR] [--floors FILE] [--schema FILE]
+#                                    [--rendered DIR] [--inventory]
 #   --root    repository to check (default: this repository); every relative
 #             path and the git history resolve against it
 #   --floors  declaration (default: ROOT/toolchain-floors.json)
 #   --schema  schema      (default: ROOT/toolchain-floors.schema.json)
+#   --rendered  one pre-rendered tree (for offline fixtures)
+#   --inventory  also inventory workflows in a pre-rendered tree
 # Exit: 0 all floors hold; 1 a floor is violated or unverifiable; 2 usage.
 set -euo pipefail
 
@@ -28,6 +30,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 FLOORS=""
 SCHEMA=""
+RENDERED=""
+INVENTORY=0
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -55,6 +59,18 @@ while [ "$#" -gt 0 ]; do
         SCHEMA="$2"
         shift 2
         ;;
+    --rendered)
+        [ "$#" -ge 2 ] && [ -d "$2" ] || {
+            echo "validate-toolchain-floors: --rendered needs a directory" >&2
+            exit 2
+        }
+        RENDERED="$(cd "$2" && pwd)"
+        shift 2
+        ;;
+    --inventory)
+        INVENTORY=1
+        shift
+        ;;
     -h | --help)
         sed -n '2,/^set -euo/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//'
         exit 0
@@ -76,14 +92,15 @@ command -v node >/dev/null 2>&1 || {
     exit 1
 }
 
-exec node --input-type=module - "$ROOT" "$FLOORS" "$SCHEMA" "${SCRIPT_DIR}/lib/json-schema-subset.mjs" <<'NODE'
+exec node --input-type=module - "$ROOT" "$FLOORS" "$SCHEMA" "$SCRIPT_DIR" "$RENDERED" "$INVENTORY" <<'NODE'
 import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
+import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-const [root, floorsPath, schemaPath, enginePath] = process.argv.slice(2)
-const { createSchemaValidator } = await import(pathToFileURL(enginePath).href)
+const [root, floorsPath, schemaPath, scripts, rendered, inventory] = process.argv.slice(2)
+const { createSchemaValidator } = await import(pathToFileURL(path.join(scripts, 'lib/json-schema-subset.mjs')).href)
 
 const errors = []
 const fail = (message) => errors.push(message)
@@ -201,90 +218,176 @@ function booleanAnswer(name) {
   return false
 }
 
-function associateStepPins(label, source, { action, input }, versions, compare) {
-  // Blank Jinja control lines and mask substitutions for structural parsing.
-  // Preserve source line numbers and apply the pattern to the original text.
-  const lines = source.split(/\r?\n/)
-  const jinjaControl = /^ *\[%.*%\] *$/
-  const yaml = lines.map((line) => jinjaControl.test(line) ? '' : line.replace(/\[\[.*?\]\]/g, 'JINJA')).join('\n')
+function readSteps(label, source) {
   const result = spawnSync('yq', ['-o=json', '-I=0', `
-    [(.runs.steps[]?, .jobs[].steps[]?)
+    [(.runs.steps, .jobs[].steps) | select(tag == "!!seq") | .[]
       | explode(.)
       | select(tag == "!!map")
-      | select((.uses | downcase | split("@") | .[0]) == strenv(FLOOR_STEP_ACTION))]
-    | map({"line": line, "usesLine": (.uses | line), "style": style, "inputStyle": (.with | style),
+      | {"uses": .uses, "line": line, "style": style,
+         "inputStyle": (.with | style),
          "inputs": [(.with | select(tag == "!!map") | to_entries | .[]
-           | select(.key == strenv(FLOOR_STEP_INPUT))
-           | {"line": (.key | line), "value": (.value | to_string)})]})
-  `, '-'], {
-    input: yaml,
-    encoding: 'utf8',
-    env: { ...process.env, FLOOR_STEP_ACTION: action, FLOOR_STEP_INPUT: input }
-  })
+           | {"name": .key, "line": (.value | line), "column": (.value | column),
+              "value": (.value | to_string)})]}]
+  `, '-'], { input: source, encoding: 'utf8' })
   if (result.status !== 0) {
-    fail(`${label}: cannot enumerate ${action} steps with Mike Farah yq: ${result.error?.message ?? result.stderr.trim()}`)
-    return
+    fail(`${label}: cannot enumerate steps with Mike Farah yq: ${result.error?.message ?? result.stderr.trim()}`)
+    return []
   }
 
-  let steps
   try {
-    steps = JSON.parse(result.stdout)
-    if (!Array.isArray(steps)) throw new Error('expected a YAML step list')
+    return JSON.parse(result.stdout).map((step) => ({
+      ...step,
+      action: typeof step.uses === 'string' ? step.uses.toLowerCase().split('@')[0].replace(/\/\.$/, '') : ''
+    }))
   } catch (error) {
-    fail(`${label}: cannot read ${action} steps from yq: ${error.message}`)
-    return
+    fail(`${label}: cannot read steps from yq: ${error.message}`)
+    return []
   }
-  if (steps.length === 0) fail(`${label}: no ${action} steps found`)
+}
 
-  // Use capture group 1's position, since the match can span lines.
-  const capturesByLine = new Map()
-  for (const version of versions) {
-    const { capture, pinned } = version
-    if (capture === undefined) continue
-    if (pinned.includes('\n')) continue
-    const [start] = capture
-    const line = source.slice(0, start).split('\n').length
-    const captures = capturesByLine.get(line) ?? []
-    captures.push(version)
-    capturesByLine.set(line, captures)
-  }
+function versionsIn(source, regex) {
+  return [...source.matchAll(regex)].map((match) => ({
+    pinned: match[1], capture: match.indices?.[1]?.[0], locations: []
+  }))
+}
 
-  for (const step of steps) {
+function associateStepPins(label, source, steps, { action, input, pattern_scope: scope }, versions, regex, compare) {
+  const covered = steps.filter((step) => step.action === action)
+  if (covered.length === 0) fail(`${label}: no ${action} steps found`)
+
+  const lines = source.split('\n')
+  const starts = [0]
+  for (const line of lines) starts.push(starts[starts.length - 1] + line.length + 1)
+
+  for (const step of covered) {
     const here = `${label}:${step.line}`
     if (step.style === 'flow' || step.inputStyle === 'flow') {
       fail(`${here}: ${action} step uses an unsupported flow-style mapping`)
       continue
     }
-    if (step.inputs.length !== 1) {
-      fail(`${here}: ${action} step needs exactly one ${input} input (found ${step.inputs.length})`)
+    const inputs = step.inputs.filter(({ name }) => name === input)
+    if (inputs.length !== 1) {
+      fail(`${here}: ${action} step needs exactly one ${input} input (found ${inputs.length})`)
       continue
     }
-    const [{ line: inputLine, value }] = step.inputs
-    let first = Math.min(step.line, step.usesLine, inputLine) - 1
-    const last = Math.max(step.usesLine, inputLine) - 1
-    // yq reports the first key for a mapping whose list dash is on its own
-    // line. Include any directives between that dash and the first key.
-    let previous = first - 1
-    while (previous >= 0 && (/^\s*(?:#.*)?$/.test(lines[previous]) || jinjaControl.test(lines[previous]))) previous -= 1
-    if (previous >= 0 && /^ *- *(?:#.*)?$/.test(lines[previous])) first = previous
-    // Ignore whole-step guards outside this range and controls after both
-    // fields, such as the shared setup action's conditional cache input.
-    if (lines.slice(first, last + 1).some((line) => jinjaControl.test(line))) {
-      fail(`${here}: Jinja control prevents verifying the ${action} step's uses and ${input} input together`)
-      continue
+
+    const [{ line, column, value }] = inputs
+    const location = `${label}:${line}:${column}`
+    let captures
+    if (scope === 'value') {
+      captures = versionsIn(value, regex)
+      for (const capture of captures) capture.locations.push(location)
+      versions.push(...captures)
+    } else {
+      // yq columns count characters; RegExp indices count UTF-16 code units.
+      const text = lines[line - 1] ?? ''
+      const prefix = Array.from(text).slice(0, column - 1).join('')
+      const start = starts[line - 1] + prefix.length
+      const valueStart = /^["']/.test(source[start]) ? start + 1 : start
+      captures = versions.filter(({ capture }) => capture === valueStart)
     }
-    const captures = capturesByLine.get(inputLine) ?? []
     const pinned = captures[0]?.pinned
     const matchesValue = pinned === value ||
       (compare === 'major' && pinned !== undefined && value.startsWith(pinned) &&
         /^(?:\.[0-9]+)+$/.test(value.slice(pinned.length)))
     if (captures.length !== 1 || !matchesValue) {
-      fail(`${here}: ${action} step needs exactly one recognized ${input} version`)
+      fail(`${location}: ${action} step needs exactly one recognized ${input} version`)
       continue
     }
-    captures[0].locations.push(here)
+    if (scope !== 'value') captures[0].locations.push(location)
   }
 }
+
+function isFile(file) {
+  return fs.statSync(file, { throwIfNoEntry: false })?.isFile() === true
+}
+
+// Try the maximal smoke-test profile first. A single complete render is already
+// minimal. If coverage is split, choose the smallest cover of the six profiles.
+function floorRenders(stepPaths) {
+  if (rendered) return [{ dir: rendered, name: 'rendered' }]
+  for (const [command, name] of [['copier', 'Copier'], ['yq', 'Mike Farah yq']]) {
+    const result = spawnSync(command, ['--version'], { encoding: 'utf8' })
+    if (result.status !== 0 || (command === 'yq' && !result.stdout.includes('mikefarah/yq'))) {
+      fail(`${name} is required to check rendered YAML — run 'task install'`)
+    }
+  }
+  if (errors.length > 0) return []
+
+  const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'toolchain-floors-'))
+  process.on('exit', () => fs.rmSync(scratch, { recursive: true, force: true }))
+  const profiles = []
+  for (const name of ['full', 'minimal', 'web', 'webapp', 'iac', 'meta']) {
+    const dir = path.join(scratch, name)
+    const result = spawnSync(path.join(scripts, 'test-template.sh'), [name, 'render-only', dir, root], {
+      encoding: 'utf8', env: gitEnv
+    })
+    if (result.status !== 0) {
+      fail(`${name}: Copier render failed: ${result.error?.message ?? result.stderr.trim()}`)
+      return []
+    }
+    const covered = new Set(stepPaths.filter((file) => isFile(path.join(dir, file))))
+    profiles.push({ dir, name, covered })
+    if (covered.size === stepPaths.length) return [profiles[profiles.length - 1]]
+  }
+
+  const available = stepPaths.filter((file) => profiles.some(({ covered }) => covered.has(file)))
+  for (const file of stepPaths.filter((file) => !available.includes(file))) {
+    fail(`${file}: absent from every rendered smoke-test profile`)
+  }
+  let smallest = profiles
+  for (let mask = 1; mask < 2 ** profiles.length; mask += 1) {
+    const candidate = profiles.filter((_, index) => mask & (1 << index))
+    if (candidate.length < smallest.length &&
+        available.every((file) => candidate.some(({ covered }) => covered.has(file)))) {
+      smallest = candidate
+    }
+  }
+  return smallest
+}
+
+const knownSteps = new Map([
+  ['actions/setup-node', { tool: 'node', input: 'node-version' }],
+  ['arduino/setup-task', { tool: 'task', input: 'version' }]
+])
+
+function checkInventory(dir, getSteps) {
+  const workflows = '.github/workflows'
+  const workflowDir = path.join(dir, workflows)
+  const files = fs.existsSync(workflowDir)
+    ? fs.readdirSync(workflowDir).filter((name) => /\.ya?ml$/.test(name)).map((name) => path.join(workflows, name))
+    : []
+  files.push('.github/actions/setup/action.yml')
+  for (const file of files) {
+    if (!isFile(path.join(dir, file))) continue
+    for (const { action, line } of getSteps(file)) {
+      const known = knownSteps.get(action)
+      if (!known) continue
+      const floor = declaration.floors.find(({ tool }) => tool === known.tool)
+      if (!floor?.pins.some((pin) => pin.path === file && pin.step?.action === action && pin.step.input === known.input)) {
+        fail(`${file}:${line}: undeclared ${action} step with input ${known.input} in the ${known.tool} floor`)
+      }
+    }
+  }
+}
+
+function renderPath(templatePath) {
+  return templatePath.replace(/^template\//, '').replace(/\[%[^%]*%\]/g, '').replace(/\.jinja$/, '')
+}
+
+const stepPaths = [...new Set(declaration.floors.flatMap(({ pins }) => pins
+  .filter((pin) => pin.step && insideRoot(pin.path) && insideRoot(pin.template_path) &&
+    renderPath(pin.template_path) === pin.path && isFile(insideRoot(pin.template_path)))
+  .map((pin) => pin.path)))]
+const renders = floorRenders(stepPaths).map(({ dir, name }) => {
+  const cache = new Map()
+  function getSteps(file) {
+    if (!cache.has(file)) cache.set(file, readSteps(`${name} ${file}`, fs.readFileSync(path.join(dir, file), 'utf8')))
+    return cache.get(file)
+  }
+  if (!rendered || inventory === '1') checkInventory(dir, getSteps)
+  return { dir, name, getSteps }
+})
 
 const seenTools = new Set()
 for (const floor of declaration.floors) {
@@ -338,9 +441,10 @@ for (const floor of declaration.floors) {
     }
     // The consumer path is what template_path renders to: drop the template/ root,
     // each [% … %] tag, and the .jinja suffix.
-    const rendered = pin.template_path.replace(/^template\//, '').replace(/\[%[^%]*%\]/g, '').replace(/\.jinja$/, '')
-    if (rendered !== pin.path) {
-      fail(`${label}: path is not what ${pin.template_path} renders to (${rendered})`)
+    const target = renderPath(pin.template_path)
+    if (target !== pin.path) {
+      fail(`${label}: path is not what ${pin.template_path} renders to (${target})`)
+      continue
     }
     if (pin.json_pointer !== undefined) {
       fail(`${label}: json_pointer needs a consumer file; a template_path pin is matched as raw text`)
@@ -355,15 +459,26 @@ for (const floor of declaration.floors) {
       fail(`${label}: template_path ${pin.template_path} does not exist`)
       continue
     }
-    const source = fs.readFileSync(file, 'utf8')
     const fileLabel = `${label} (${pin.template_path})`
-    const versions = [...source.matchAll(regex)].map((match) => ({
-      pinned: match[1], capture: match.indices?.[1], locations: []
-    }))
-    if (pin.step !== undefined) {
-      associateStepPins(fileLabel, source, pin.step, versions, compare)
-    } else if (versions.length === 0) {
-      fail(`${label}: pattern matches nothing in ${pin.template_path}`)
+    const versions = []
+    if (pin.step === undefined) {
+      versions.push(...versionsIn(fs.readFileSync(file, 'utf8'), regex))
+      if (versions.length === 0) fail(`${label}: pattern matches nothing in ${pin.template_path}`)
+    } else {
+      let found = false
+      for (const { dir, name, getSteps } of renders) {
+        const output = path.join(dir, pin.path)
+        if (!isFile(output)) continue
+        found = true
+        const source = fs.readFileSync(output, 'utf8')
+        const matches = pin.step.pattern_scope === 'value' ? [] : versionsIn(source, regex)
+        associateStepPins(`${fileLabel} [${name}]`, source, getSteps(pin.path), pin.step, matches, regex, compare)
+        for (const match of matches) {
+          if (match.locations.length === 0) match.locations.push(`${fileLabel} [${name}]`)
+          versions.push(match)
+        }
+      }
+      if (!found) fail(`${label}: ${pin.template_path} is absent from every checked render`)
     }
     // Check each locator match once, including matches outside covered steps.
     for (const { pinned, locations } of versions) {
