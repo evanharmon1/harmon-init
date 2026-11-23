@@ -94,6 +94,15 @@ tasks:
       - task: test:suite
       - task: verify:skills
 
+  verify:macos-bash-compat:
+    # Root-only: runs lint:shell, test:suite, test:ci-results, and
+    # test:agent-profile under Apple /bin/bash 3.2 with a hostile PATH
+    # (spaces + shell/sed metacharacters). Exercised in CI by the non-blocking
+    # .github/workflows/macos-bash-compat.yml workflow on macos-26.
+    desc: Exercise shell and guard suites under Apple /bin/bash 3.2 and a hostile PATH (macOS only)
+    cmds:
+      - ./scripts/verify-macos-bash-compat.sh {{.CLI_ARGS}}
+
   test:suite:
     # The ONE list of `test:*` targets that both `verify` and the required Build
     # workflow's `repo-guards` job run (through ci:repo-guards), so
@@ -121,6 +130,7 @@ tasks:
       - task: test:pnpm-install
       - task: test:grep-q-pipes
       - task: test:mktemp-explicit
+      - task: test:macos-bash-compat
       - task: test:ci-results
       - task: test:ci-changes-classify
       - task: test:checklist-classes
@@ -598,6 +608,13 @@ tasks:
     desc: Reject a bare mktemp (no explicit parent) in test scripts — macOS ignores TMPDIR
     cmds:
       - ./scripts/test-mktemp-explicit.sh
+
+  # Root-only: unit-tests verify-macos-bash-compat.sh hermetically on both Linux
+  # and macOS without recursing into test:suite.
+  test:macos-bash-compat:
+    desc: Unit-test the macOS Bash 3.2 compatibility runner (interpreter check, shim, hostile PATH)
+    cmds:
+      - ./scripts/test-macos-bash-compat.sh
 
   test:verify-ci-parity:
     desc: Fail if the Build workflow stops calling test:suite or verify stops running it
