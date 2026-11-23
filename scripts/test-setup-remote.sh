@@ -138,7 +138,14 @@ if [ -n "\${STUB_CHECKOUT_HISTORY:-}" ]; then
         [ "\$*" = 'fetch --unshallow origin' ] || exit 99
         case "\${STUB_CHECKOUT_HISTORY}" in
         fail) exit 1 ;;
-        slow) sleep 5 ;;
+        slow)
+            # Start the short deadline only after the fetch has logged its start.
+            if [ -n "\${STUB_HISTORY_TIMEOUT:-}" ]; then
+                "\${STUB_HISTORY_TIMEOUT}" --kill-after=1s 0.1s sleep 5 || exit "\$?"
+            else
+                sleep 5
+            fi
+            ;;
         incomplete) exit 0 ;;
         esac
         touch "\${STUB_LOG_DIR}/unshallow.done"
@@ -794,16 +801,19 @@ if [ -n "$HISTORY_TIMEOUT" ]; then
 #!/usr/bin/env bash
 [ "\$1" = '--kill-after=2s' ] && [ "\$2" = 20s ] || exit 99
 shift 2
-exec "${HISTORY_TIMEOUT}" --kill-after=1s 0.1s "\$@"
+[ "\$*" = 'git fetch --unshallow origin' ] || exit 99
+STUB_HISTORY_TIMEOUT="${HISTORY_TIMEOUT}" exec "\$@"
 EOF
     echo "==> a real deadline interrupts a slow unshallow and preparation continues"
     make_fixture history-real-timeout -
     printf '#!/usr/bin/env bash\nexit 0\n' >"${FIX}/scripts/reconcile-toolchain.sh"
-    rm -f "${LOG_DIR}/unshallow.log" "${LOG_DIR}/unshallow.done"
+    rm -f "${LOG_DIR}/unshallow.log" "${LOG_DIR}/unshallow.done" "${LOG_DIR}/lefthook.log"
     run_setup "${HISTORY_BIN}:${STUBS_PATH}" CLAUDE_CODE_REMOTE=true STUB_CHECKOUT_HISTORY=slow
     [ "$rc" -eq 0 ] || fail "real history timeout must exit 0: $(all_output)"
     [ "$(cat "${LOG_DIR}/unshallow.log")" = 'fetch --unshallow origin' ] || fail "real timeout must start exactly one fetch"
     [ ! -e "${LOG_DIR}/unshallow.done" ] || fail "real deadline must interrupt the slow fetch"
+    [ -s "${LOG_DIR}/lefthook.log" ] || fail "later preparation must continue after the real deadline"
+    output_has 'unshallow fetch timed out or was killed' || fail "real deadline must report a timed-out fetch"
     output_has 'completed with warnings: checkout history is shallow' || fail "real timeout must warn in summary"
     output_has 'run git fetch --unshallow origin by hand in this checkout without a timeout' || fail "real timeout must name the unbounded manual remedy"
 
