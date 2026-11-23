@@ -615,16 +615,11 @@ wrong_node_pin="$(declared_pin node "$NODE_WORKFLOW_PATH" | jq -c '.step.input =
 floors "$(node_floor 24 "${NODE_PIN},${wrong_node_pin}"),$(task_floor 3.51.1 "${TASK_PIN},$(declared_pin task "$TASK_WORKFLOW_PATH")")"
 expect "inventory rejects a declaration covering the wrong input" 1 "undeclared actions/setup-node step with input node-version" --inventory
 
-mkdir "$work/foreign-bin"
-printf '#!/bin/sh\ntouch "%s"\n' "$work/task-spawned" >"$work/foreign-bin/task"
-chmod +x "$work/foreign-bin/task"
-rc=0
-PATH="$work/foreign-bin:$PATH" "$validator" --root "$fx" --with-template-tests >"$out" 2>&1 || rc=$?
-[ "$rc" = 2 ] && [ ! -e "$work/task-spawned" ] &&
-    grep -Fq -- "--with-template-tests requires the validator's own repository" "$out" ||
-    fail "smoke-test reuse must reject a foreign root before spawning Task"
-
 if [ -z "${TOOLCHAIN_FLOORS_TEST_NESTED:-}" ]; then
+    render_failure() {
+        cat "$out" >&2
+        fail "$1"
+    }
     echo "==> Copier renders the fixture and the standalone guard checks each rendered step"
     e2e="$work/e2e"
     e2e_workflow='.github/workflows/render-regressions.yml'
@@ -716,26 +711,72 @@ jobs:
       - uses: actions/setup-node@v6
 EOF
     cp "$e2e/$iac_source" "$e2e/$absent_source"
+    sample='template/.github/workflows/examples/sample.yml.jinja'
+    mkdir -p "$(dirname "$e2e/$sample")"
+    cp "$e2e/$iac_source" "$e2e/$sample"
     git -C "$e2e" init -q
     git -C "$e2e" add .
     git -C "$e2e" commit -qm fixture
     rc=0
     "$validator" --root "$e2e" >"$out" 2>&1 || rc=$?
-    task_profiles="$(yq -r '.tasks."test:template:all".deps[] | select(. != "test:template:update") | sub("^test:template:", "")' Taskfile.yml | sort)"
-    checked_profiles="$(sed -nE 's|^  ok +node .github/workflows/render-regressions\.yml .*\[([^]]+)\]:.*24 >= 24$|\1|p' "$out" | sort -u)"
-    [ "$task_profiles" = "$checked_profiles" ] || fail "the floor matrix must check the same render profiles as test:template:all"
-    reg_errors="$(grep -Ec 'render-regressions\.yml .*needs exactly one node-version input \(found 0\)' "$out")"
-    profile_errors="$(grep -Ec '^toolchain-floors: node .github/workflows/profile-specific\.yml ' "$out")"
+    task_profiles="$(yq -r '.tasks."test:template:all".deps[] | select(. != "test:template:update") | sub("^test:template:", "")' Taskfile.yml | sort)" ||
+        render_failure "could not enumerate the Taskfile's smoke profiles"
+    checked_profiles="$(sed -nE 's|^  ok +node .github/workflows/render-regressions\.yml .*\[([^]]+)\]:.*24 >= 24$|\1|p' "$out" | sort -u)" ||
+        render_failure "could not read the floor check's smoke profiles"
+    [ "$task_profiles" = "$checked_profiles" ] || render_failure "the floor matrix must check the same render profiles as test:template:all"
+    reg_errors="$(grep -Ec 'render-regressions\.yml .*needs exactly one node-version input \(found 0\)' "$out" || true)"
+    profile_errors="$(grep -Ec '^toolchain-floors: node .github/workflows/profile-specific\.yml ' "$out" || true)"
     if [ "$rc" != 1 ] ||
         [ "$reg_errors" != "$((7 * $(printf '%s\n' "$task_profiles" | wc -l)))" ] ||
         [ "$profile_errors" != 1 ] ||
         ! grep -Eq 'profile-specific\.yml .*\[full\]:.+24 >= 24' "$out" ||
         ! grep -Eq 'profile-specific\.yml .*\[iac\]:.+needs exactly one node-version input' "$out" ||
         ! grep -Eq 'iac-undeclared\.yml \[iac\]:[0-9]+: undeclared actions/setup-node step' "$out" ||
-        ! grep -Fq "$absent_source: workflow or action source does not render in any checked profile" "$out"; then
-        cat "$out" >&2
-        fail "the render matrix must distinguish absent sources, absent steps and unpinned steps"
+        ! grep -Fq "$absent_source: workflow or action source does not render in any checked profile" "$out" ||
+        grep -Fq 'examples/sample.yml' "$out"; then
+        render_failure "the render matrix must distinguish absent sources, absent steps, unpinned steps and nested samples"
     fi
+
+    mkdir "$work/copier-bin"
+    printf 'trust: ["/"]\n' >"$work/ambient-copier.yml"
+    cat >"$work/copier-bin/copier" <<'EOF'
+#!/usr/bin/env bash
+set -eu
+if [ "$1" = --version ]; then
+    echo 'copier fixture'
+else
+    [ "$(cat "$COPIER_SETTINGS_PATH")" = '{}' ]
+    if [ "$RENDER_FIXTURE" = empty ]; then
+        mkdir "${!#}"
+    fi
+fi
+EOF
+    chmod +x "$work/copier-bin/copier"
+    for state in missing empty; do
+        rc=0
+        PATH="$work/copier-bin:$PATH" COPIER_SETTINGS_PATH="$work/ambient-copier.yml" RENDER_FIXTURE="$state" \
+            "$validator" --root "$e2e" >"$out" 2>&1 || rc=$?
+        [ "$rc" = 1 ] && grep -Fq 'full: Copier render directory is missing or empty' "$out" ||
+            render_failure "the $state render must fail with the profile named and Copier settings isolated"
+    done
+
+    unsupported_sources=(
+        'template/.github/workflows/[% if true %]a.yml[% else %]b.yml[% endif %].jinja'
+        'template/.github/workflows/[[ setup_name ]].yml.jinja'
+        'template/.github/[% if false %]workflows[% endif %]/conditional-dir.yml.jinja'
+    )
+    for file in "${unsupported_sources[@]}"; do
+        mkdir -p "$(dirname "$e2e/$file")"
+        cp "$e2e/$iac_source" "$e2e/$file"
+        git -C "$e2e" add -- "$file"
+    done
+    rc=0
+    "$validator" --root "$e2e" >"$out" 2>&1 || rc=$?
+    [ "$rc" = 1 ] || render_failure "unsupported Jinja source names must fail closed"
+    for file in "${unsupported_sources[@]}"; do
+        grep -Fq "$file: unsupported Jinja in template source path" "$out" ||
+            render_failure "the unsupported name diagnostic must identify $file"
+    done
 fi
 
 # Fail closed outside a git repository: no history means ancestry is unknown.

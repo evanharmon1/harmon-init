@@ -16,25 +16,22 @@
 # closed — fetch full history, do not weaken the check.
 #
 # Usage: validate-toolchain-floors.sh [--root DIR] [--floors FILE] [--schema FILE]
-#                                    [--rendered DIR] [--inventory] [--with-template-tests]
+#                                    [--rendered DIR] [--inventory]
 #   --root    repository to check (default: this repository); every relative
 #             path and the git history resolve against it
 #   --floors  declaration (default: ROOT/toolchain-floors.json)
 #   --schema  schema      (default: ROOT/toolchain-floors.schema.json)
 #   --rendered  one pre-rendered tree (for offline fixtures)
 #   --inventory  also inventory workflows in a pre-rendered tree
-#   --with-template-tests  reuse task test:template outputs for this repository
 # Exit: 0 all floors hold; 1 a floor is violated or unverifiable; 2 usage.
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
-REPO_ROOT="$(dirname "$SCRIPT_DIR")"
-ROOT="$REPO_ROOT"
+ROOT="$(dirname "$SCRIPT_DIR")"
 FLOORS=""
 SCHEMA=""
 RENDERED=""
 INVENTORY=0
-WITH_TEMPLATE_TESTS=0
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -74,10 +71,6 @@ while [ "$#" -gt 0 ]; do
         INVENTORY=1
         shift
         ;;
-    --with-template-tests)
-        WITH_TEMPLATE_TESTS=1
-        shift
-        ;;
     -h | --help)
         sed -n '2,/^set -euo/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//'
         exit 0
@@ -99,19 +92,14 @@ command -v node >/dev/null 2>&1 || {
     exit 1
 }
 
-if [ "$WITH_TEMPLATE_TESTS" = 1 ] && { [ "$ROOT" != "$REPO_ROOT" ] || [ -n "$RENDERED" ]; }; then
-    echo "validate-toolchain-floors: --with-template-tests requires the validator's own repository and no --rendered argument" >&2
-    exit 2
-fi
-
-exec node --input-type=module - "$ROOT" "$FLOORS" "$SCHEMA" "$SCRIPT_DIR" "$RENDERED" "$INVENTORY" "$WITH_TEMPLATE_TESTS" <<'NODE'
+exec node --input-type=module - "$ROOT" "$FLOORS" "$SCHEMA" "$SCRIPT_DIR" "$RENDERED" "$INVENTORY" <<'NODE'
 import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-const [root, floorsPath, schemaPath, scripts, rendered, inventory, withTemplateTests] = process.argv.slice(2)
+const [root, floorsPath, schemaPath, scripts, rendered, inventory] = process.argv.slice(2)
 const { createSchemaValidator } = await import(pathToFileURL(path.join(scripts, 'lib/json-schema-subset.mjs')).href)
 
 const errors = []
@@ -332,28 +320,16 @@ function floorRenders() {
   process.on('exit', () => fs.rmSync(scratch, { recursive: true, force: true }))
   const profiles = ['full', 'minimal', 'web', 'webapp', 'iac', 'meta']
     .map((name) => ({ dir: path.join(scratch, name), name }))
-  if (withTemplateTests === '1') {
-    const result = spawnSync('task', ['test:template'], {
-      cwd: root, stdio: 'inherit', env: { ...gitEnv, TOOLCHAIN_FLOORS_SMOKE_OUTPUT: scratch }
-    })
-    if (result.status !== 0) {
-      fail(`template smoke tests failed: ${result.error?.message ?? result.signal ?? result.status}`)
-      return []
-    }
-    for (const { dir, name } of profiles) {
-      if (!fs.statSync(dir, { throwIfNoEntry: false })?.isDirectory()) {
-        fail(`${name}: template smoke test did not provide its render`)
-        return []
-      }
-    }
-    return profiles
-  }
   for (const { dir, name } of profiles) {
     const result = spawnSync(path.join(scripts, 'test-template.sh'), [name, 'render-only', dir, root], {
       encoding: 'utf8', env: gitEnv
     })
     if (result.status !== 0) {
       fail(`${name}: Copier render failed: ${result.error?.message ?? result.stderr.trim()}`)
+      return []
+    }
+    if (!fs.statSync(dir, { throwIfNoEntry: false })?.isDirectory() || fs.readdirSync(dir).length === 0) {
+      fail(`${name}: Copier render directory is missing or empty`)
       return []
     }
   }
@@ -366,16 +342,16 @@ const knownSteps = new Map([
 ])
 
 const workflows = '.github/workflows'
-const actions = '.github/actions'
-function filesUnder(dir, subdir) {
-  const base = path.join(dir, subdir)
-  return fs.existsSync(base) ? fs.readdirSync(base, { withFileTypes: true, recursive: true })
-    .filter((entry) => entry.isFile() || entry.isSymbolicLink())
-    .map((entry) => path.relative(dir, path.join(entry.parentPath, entry.name))) : []
-}
+const yamlName = /\.ya?ml$/
+const actionManifest = /(?:^|\/)action\.ya?ml$/
+const jinja = /\[(?:%|\[|#)/
 
 function checkInventory(dir, profile, getSteps) {
-  const files = [...filesUnder(dir, workflows).filter((name) => /\.ya?ml$/.test(name)), `${actions}/setup/action.yml`]
+  const workflowDir = path.join(dir, workflows)
+  const files = fs.existsSync(workflowDir)
+    ? fs.readdirSync(workflowDir).filter((name) => yamlName.test(name)).map((name) => path.join(workflows, name))
+    : []
+  files.push('.github/actions/setup/action.yml')
   for (const file of files) {
     if (!isFile(path.join(dir, file))) continue
     for (const { action, line } of getSteps(file)) {
@@ -389,10 +365,38 @@ function checkInventory(dir, profile, getSteps) {
   }
 }
 
-function renderPath(templatePath) {
-  return templatePath.replace(/^template\//, '').replace(/\[%[^%]*%\]/g, '').replace(/\.jinja$/, '')
+function renderedPath(file) {
+  const dir = path.dirname(file)
+  const filename = path.basename(file)
+  const wrapper = /^\[% if (.+?) %\](.+)\[% endif %\]\.jinja$/.exec(filename)
+  const name = wrapper?.[2] ?? filename.replace(/\.jinja$/, '')
+  if ([dir, name, wrapper?.[1] ?? ''].some((part) => jinja.test(part))) {
+    fail(`${file}: unsupported Jinja in template source path`)
+    return null
+  }
+  return path.join(dir, name).replace(/^template\//, '')
 }
 
+function trackedInventory() {
+  const result = git(['ls-files', '-z', '--', 'template/.github'])
+  if (result.status !== 0) {
+    fail(`cannot list tracked template workflow and action sources: ${result.error?.message ?? result.stderr.trim()}`)
+    return []
+  }
+  return result.stdout.split('\0').filter(Boolean).flatMap((file) => {
+    const [, , area, ...tail] = file.split('/')
+    const name = tail.at(-1)?.replace(/\.jinja$/, '') ?? ''
+    const workflow = (area === 'workflows' || jinja.test(area)) && tail.length === 1
+    const action = area === 'actions' || jinja.test(area)
+    if (!(workflow && (yamlName.test(name) || jinja.test(name))) &&
+        !(action && (actionManifest.test(name) || jinja.test(name)))) return []
+    const output = renderedPath(file)
+    return output && (path.dirname(output) === workflows && yamlName.test(output) ||
+      output.startsWith('.github/actions/') && actionManifest.test(output)) ? [{ file, output }] : []
+  })
+}
+
+const sources = rendered ? [] : trackedInventory()
 const renders = floorRenders().map(({ dir, name }) => {
   const cache = new Map()
   function getSteps(file) {
@@ -403,15 +407,9 @@ const renders = floorRenders().map(({ dir, name }) => {
   return { dir, name, getSteps }
 })
 
-if (!rendered && renders.length > 0) {
-  for (const subdir of [workflows, actions]) {
-    for (const file of filesUnder(root, `template/${subdir}`)) {
-      const output = renderPath(file)
-      if (!(subdir === workflows ? /\.ya?ml$/ : /\/action\.ya?ml$/).test(output)) continue
-      if (!renders.some(({ dir }) => isFile(path.join(dir, output)))) {
-        fail(`${file}: workflow or action source does not render in any checked profile`)
-      }
-    }
+for (const { file, output } of sources) {
+  if (renders.length > 0 && !renders.some(({ dir }) => isFile(path.join(dir, output)))) {
+    fail(`${file}: workflow or action source does not render in any checked profile`)
   }
 }
 
@@ -465,9 +463,10 @@ for (const floor of declaration.floors) {
       say(`  consumer-checked  ${pin.path}${pin.json_pointer ? ` (${pin.json_pointer})` : ''} — repository-owned, not in the template`)
       continue
     }
-    // The consumer path is what template_path renders to: drop the template/ root,
-    // each [% … %] tag, and the .jinja suffix.
-    const target = renderPath(pin.template_path)
+    // The existing raw Dockerfile pin has a conditional directory in its source.
+    const target = renderedPath(pin.template_path.replace(
+      /^template\/\[% if devcontainer %\]\.devcontainer\[% endif %\]\//, 'template/.devcontainer/'))
+    if (target === null) continue
     if (target !== pin.path) {
       fail(`${label}: path is not what ${pin.template_path} renders to (${target})`)
       continue

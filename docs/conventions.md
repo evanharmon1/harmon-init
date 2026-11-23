@@ -419,13 +419,16 @@ has.
   when a match is below the floor, when a `template_path` is missing or its pin
   matches nothing, or when the `copier` floor exceeds `_min_copier_version` in
   `copier.yml`. For step pins it uses Copier and Mike Farah `yq` to check
-  every smoke-test profile. Each workflow and action source must render in at
-  least one profile, even when it has no floor declaration. Each declared
+  every smoke-test profile using isolated Copier settings. Each tracked
+  workflow and action source must render in at least one profile, even when
+  it has no floor declaration. A covered filename can be plain, end in
+  `.jinja`, or use a single `[% if … %]NAME[% endif %].jinja` wrapper. Other
+  Jinja in a covered filename or directory is rejected. Each declared
   action must appear in at least one render of its file. Every occurrence
   must have exactly one recognized version input. The inventory checks
-  rendered workflows ending in `.yml` or `.yaml` and the shared setup action
-  for declarations naming the file, action and required input. Local
-  `verify` reuses the smoke tests' renders.
+  `.yml` and `.yaml` files directly under the rendered `.github/workflows`
+  directory and the shared setup action for declarations naming the file,
+  action and required input.
 
   Schema v2 adds `step.pattern_scope: value` for patterns applied to the
   parsed scalar of the selected step input (Task). The default retains v1's

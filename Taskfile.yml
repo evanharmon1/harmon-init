@@ -80,9 +80,9 @@ tasks:
     cmds:
       - task: check
       - task: audit:agent-instructions
+      - task: validate:toolchain-floors
       - task: test:suite
-      # Run test:template once and validate the floor pins in its renders.
-      - ./scripts/validate-toolchain-floors.sh --with-template-tests
+      - task: test:template
 
   ci:repo-guards:
     # CI-only aggregate: verify lists its offline members separately.

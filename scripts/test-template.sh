@@ -586,8 +586,10 @@ meta)
 esac
 
 if [ "$validation_scope" = "render-only" ]; then
-    # A caller-supplied source must not gain permission to run Copier extensions.
-    copier copy --quiet --defaults --vcs-ref=HEAD --skip-tasks "${data_args[@]}" "$4" "$3"
+    # A caller-supplied source must not inherit permission to run Copier extensions.
+    printf '{}\n' >"$job_tmp/copier-settings.yml"
+    COPIER_SETTINGS_PATH="$job_tmp/copier-settings.yml" \
+        copier copy --quiet --defaults --vcs-ref=HEAD --skip-tasks "${data_args[@]}" "$4" "$3"
     exit 0
 fi
 
@@ -604,11 +606,6 @@ fi
 
 echo "Rendering profile '${profile}' into ${dest}"
 copier copy --trust --defaults --vcs-ref=HEAD "${copier_flags[@]+"${copier_flags[@]}"}" "${data_args[@]}" "$repo_root" "$dest"
-
-if [ -n "${TOOLCHAIN_FLOORS_SMOKE_OUTPUT:-}" ]; then
-    # The smoke checks can modify the project. Preserve the initial render for the floor guard.
-    cp -R "$dest" "$TOOLCHAIN_FLOORS_SMOKE_OUTPUT/$profile"
-fi
 
 if [ "$profile" = "full" ]; then
     invalid_id_dest="$job_tmp/render-invalid-integration-id"
