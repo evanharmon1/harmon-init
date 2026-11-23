@@ -724,10 +724,11 @@ EOF
     checked_profiles="$(sed -nE 's|^  ok +node .github/workflows/render-regressions\.yml .*\[([^]]+)\]:.*24 >= 24$|\1|p' "$out" | sort -u)" ||
         render_failure "could not read the floor check's smoke profiles"
     [ "$task_profiles" = "$checked_profiles" ] || render_failure "the floor matrix must check the same render profiles as test:template:all"
+    profile_count="$(wc -l <<<"$task_profiles")" || render_failure "could not count the Taskfile's smoke profiles"
     reg_errors="$(grep -Ec 'render-regressions\.yml .*needs exactly one node-version input \(found 0\)' "$out" || true)"
     profile_errors="$(grep -Ec '^toolchain-floors: node .github/workflows/profile-specific\.yml ' "$out" || true)"
     if [ "$rc" != 1 ] ||
-        [ "$reg_errors" != "$((7 * $(printf '%s\n' "$task_profiles" | wc -l)))" ] ||
+        [ "$reg_errors" != "$((7 * profile_count))" ] ||
         [ "$profile_errors" != 1 ] ||
         ! grep -Eq 'profile-specific\.yml .*\[full\]:.+24 >= 24' "$out" ||
         ! grep -Eq 'profile-specific\.yml .*\[iac\]:.+needs exactly one node-version input' "$out" ||
