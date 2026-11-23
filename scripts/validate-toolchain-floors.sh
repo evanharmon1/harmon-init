@@ -23,12 +23,13 @@
 #   --schema  schema      (default: ROOT/toolchain-floors.schema.json)
 #   --rendered  one pre-rendered tree (for offline fixtures)
 #   --inventory  also inventory workflows in a pre-rendered tree
-#   --with-template-tests  check the six outputs of task test:template
+#   --with-template-tests  reuse task test:template outputs for this repository
 # Exit: 0 all floors hold; 1 a floor is violated or unverifiable; 2 usage.
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd -P)"
+REPO_ROOT="$(dirname "$SCRIPT_DIR")"
+ROOT="$REPO_ROOT"
 FLOORS=""
 SCHEMA=""
 RENDERED=""
@@ -42,7 +43,7 @@ while [ "$#" -gt 0 ]; do
             echo "validate-toolchain-floors: --root needs a directory" >&2
             exit 2
         }
-        ROOT="$(cd "$2" && pwd)"
+        ROOT="$(cd "$2" && pwd -P)"
         shift 2
         ;;
     --floors)
@@ -98,10 +99,10 @@ command -v node >/dev/null 2>&1 || {
     exit 1
 }
 
-[ -z "$RENDERED" ] || [ "$WITH_TEMPLATE_TESTS" = 0 ] || {
-    echo "validate-toolchain-floors: --rendered and --with-template-tests are mutually exclusive" >&2
+if [ "$WITH_TEMPLATE_TESTS" = 1 ] && { [ "$ROOT" != "$REPO_ROOT" ] || [ -n "$RENDERED" ]; }; then
+    echo "validate-toolchain-floors: --with-template-tests requires the validator's own repository and no --rendered argument" >&2
     exit 2
-}
+fi
 
 exec node --input-type=module - "$ROOT" "$FLOORS" "$SCHEMA" "$SCRIPT_DIR" "$RENDERED" "$INVENTORY" "$WITH_TEMPLATE_TESTS" <<'NODE'
 import { spawnSync } from 'node:child_process'
@@ -267,7 +268,7 @@ function versionsIn(source, regex) {
 
 function associateStepPins(label, source, steps, { action, input, pattern_scope: scope }, versions, regex, compare) {
   const covered = steps.filter((step) => step.action === action)
-  if (covered.length === 0) fail(`${label}: no ${action} steps found`)
+  if (covered.length === 0) return false
 
   const lines = source.split('\n')
   const starts = [0]
@@ -310,6 +311,7 @@ function associateStepPins(label, source, steps, { action, input, pattern_scope:
     }
     if (scope !== 'value') captures[0].locations.push(location)
   }
+  return true
 }
 
 function isFile(file) {
@@ -363,13 +365,17 @@ const knownSteps = new Map([
   ['arduino/setup-task', { tool: 'task', input: 'version' }]
 ])
 
+const workflows = '.github/workflows'
+const actions = '.github/actions'
+function filesUnder(dir, subdir) {
+  const base = path.join(dir, subdir)
+  return fs.existsSync(base) ? fs.readdirSync(base, { withFileTypes: true, recursive: true })
+    .filter((entry) => entry.isFile() || entry.isSymbolicLink())
+    .map((entry) => path.relative(dir, path.join(entry.parentPath, entry.name))) : []
+}
+
 function checkInventory(dir, profile, getSteps) {
-  const workflows = '.github/workflows'
-  const workflowDir = path.join(dir, workflows)
-  const files = fs.existsSync(workflowDir)
-    ? fs.readdirSync(workflowDir).filter((name) => /\.ya?ml$/.test(name)).map((name) => path.join(workflows, name))
-    : []
-  files.push('.github/actions/setup/action.yml')
+  const files = [...filesUnder(dir, workflows).filter((name) => /\.ya?ml$/.test(name)), `${actions}/setup/action.yml`]
   for (const file of files) {
     if (!isFile(path.join(dir, file))) continue
     for (const { action, line } of getSteps(file)) {
@@ -396,6 +402,18 @@ const renders = floorRenders().map(({ dir, name }) => {
   if (!rendered || inventory === '1') checkInventory(dir, name, getSteps)
   return { dir, name, getSteps }
 })
+
+if (!rendered && renders.length > 0) {
+  for (const subdir of [workflows, actions]) {
+    for (const file of filesUnder(root, `template/${subdir}`)) {
+      const output = renderPath(file)
+      if (!(subdir === workflows ? /\.ya?ml$/ : /\/action\.ya?ml$/).test(output)) continue
+      if (!renders.some(({ dir }) => isFile(path.join(dir, output)))) {
+        fail(`${file}: workflow or action source does not render in any checked profile`)
+      }
+    }
+  }
+}
 
 const seenTools = new Set()
 for (const floor of declaration.floors) {
@@ -463,7 +481,7 @@ for (const floor of declaration.floors) {
       fail(`${label}: template_path ${pin.template_path} leaves the repository`)
       continue
     }
-    if (!fs.existsSync(file) || !fs.statSync(file).isFile()) {
+    if (!isFile(file)) {
       fail(`${label}: template_path ${pin.template_path} does not exist`)
       continue
     }
@@ -473,20 +491,19 @@ for (const floor of declaration.floors) {
       versions.push(...versionsIn(fs.readFileSync(file, 'utf8'), regex))
       if (versions.length === 0) fail(`${label}: pattern matches nothing in ${pin.template_path}`)
     } else {
-      let found = false
-      for (const { dir, name, getSteps } of renders) {
-        const output = path.join(dir, pin.path)
-        if (!isFile(output)) continue
-        found = true
-        const source = fs.readFileSync(output, 'utf8')
+      const outputs = renders.filter(({ dir }) => isFile(path.join(dir, pin.path)))
+      let foundAction = false
+      for (const { dir, name, getSteps } of outputs) {
+        const source = fs.readFileSync(path.join(dir, pin.path), 'utf8')
         const matches = pin.step.pattern_scope === 'value' ? [] : versionsIn(source, regex)
-        associateStepPins(`${fileLabel} [${name}]`, source, getSteps(pin.path), pin.step, matches, regex, compare)
+        foundAction = associateStepPins(`${fileLabel} [${name}]`, source, getSteps(pin.path), pin.step, matches, regex, compare) || foundAction
         for (const match of matches) {
           if (match.locations.length === 0) match.locations.push(`${fileLabel} [${name}]`)
           versions.push(match)
         }
       }
-      if (!found) fail(`${label}: ${pin.template_path} is absent from every checked render`)
+      if (outputs.length === 0) fail(`${label}: ${pin.template_path} is absent from every checked render`)
+      else if (!foundAction) fail(`${fileLabel}: no ${pin.step.action} steps found in any checked render`)
     }
     // Check each locator match once, including matches outside covered steps.
     for (const { pinned, locations } of versions) {
