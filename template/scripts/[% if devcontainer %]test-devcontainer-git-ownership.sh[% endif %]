@@ -45,12 +45,10 @@ fi
 # Extract the production helper verbatim. This keeps the fixture attached to
 # the implementation instead of growing a second, drifting permissions routine.
 tmp_root="$(mktemp -d -t harmon-git-ownership-XXXXXX)"
+tmp_root="$(cd "$tmp_root" && pwd -P)"
 # The initial fixture expects the invoking user's primary group.
 chgrp "$(id -g)" "$tmp_root"
 trap 'rm -rf "$tmp_root"' EXIT
-# Canonicalize once so every derived fixture path agrees with
-# reconcile_workspace_permissions's physical `pwd -P` on macOS (/var -> /private/var).
-tmp_root="$(cd "$tmp_root" && pwd -P)"
 helpers="$tmp_root/workspace-permissions.sh"
 sed -n '/^resolve_workspace_root()/,/^# --- End workspace permissions reconciliation ---$/p' "$post_create" | sed '$d' >"$helpers"
 [ -s "$helpers" ] || fail "could not extract workspace permissions helpers"
@@ -194,13 +192,11 @@ git_mode() {
     mode="$(stat -f '%Mp%Lp' "$1")"
     printf '%s\n' "${mode#0}"
 }
-file_inode() {
-    stat -c '%i' "$1" 2>/dev/null || stat -f '%i' "$1"
-}
-file_owner_mode() {
-    local ug
-    ug="$(stat -c '%u:%g' "$1" 2>/dev/null || stat -f '%u:%g' "$1")"
-    printf '%s:%s\n' "$ug" "$(git_mode "$1")"
+git_owner_mode() {
+    local owner mode
+    owner="$(stat -c '%u:%g' "$1" 2>/dev/null || stat -f '%u:%g' "$1")" || return
+    mode="$(git_mode "$1")" || return
+    printf '%s:%s\n' "$owner" "$mode"
 }
 expected_owner="$(id -u):$(id -g)"
 # The fake sudo shim logs its args verbatim, so the ownership reclaim's
@@ -387,15 +383,13 @@ echo "==> setgid survives reconciliation even when the invoking user is NOT a me
 # dropped. Constructing the fixture itself also needs real sudo (chgrp to
 # a group the invoking user does not belong to is exactly as restricted).
 nonmember_gid=""
-if command -v getent >/dev/null 2>&1; then
-    for candidate_gid in $(getent group | awk -F: '{print $3}'); do
-        case " $(id -G) " in
-        *" $candidate_gid "*) continue ;;
-        esac
-        nonmember_gid="$candidate_gid"
-        break
-    done
-fi
+for candidate_gid in $(getent group | awk -F: '{print $3}'); do
+    case " $(id -G) " in
+    *" $candidate_gid "*) continue ;;
+    esac
+    nonmember_gid="$candidate_gid"
+    break
+done
 if [ -n "$nonmember_gid" ] && sudo -n true 2>/dev/null; then
     nonmember_repo="$fixture/workspaces/nonmember-gid"
     nonmember_xdg="$fixture/nonmember-xdg"
@@ -442,13 +436,13 @@ f23_object="$(find "$f23_source/.git/objects" -type f | sort | head -1)"
 [ -n "$f23_object" ] || fail "fixture setup: source repo has no loose objects to test with"
 f23_object_relative="${f23_object#"$f23_source"/}"
 f23_clone_object="$f23_clone/$f23_object_relative"
-[ "$(file_inode "$f23_object")" = "$(file_inode "$f23_clone_object")" ] ||
+[ "$(stat -c '%i' "$f23_object" 2>/dev/null || stat -f '%i' "$f23_object")" = "$(stat -c '%i' "$f23_clone_object" 2>/dev/null || stat -f '%i' "$f23_clone_object")" ] ||
     fail "fixture setup: git clone --local did not hard-link objects (same inode expected) — cannot exercise F23 without this"
-f23_before="$(file_owner_mode "$f23_object")"
+f23_before="$(git_owner_mode "$f23_object")"
 f23_resolved="$(run_reconcile_at "$f23_clone" "$f23_xdg" "$f23_log")"
 [ "$f23_resolved" = "$f23_clone" ] ||
     fail "reconciliation of a locally-cloned checkout did not resolve its own workspace root (resolved '$f23_resolved', expected '$f23_clone')"
-f23_after="$(file_owner_mode "$f23_object")"
+f23_after="$(git_owner_mode "$f23_object")"
 [ "$f23_before" = "$f23_after" ] ||
     fail "reconciling the clone changed the SOURCE repository's hard-linked object (before='$f23_before' after='$f23_after') — an out-of-scope mutation outside \$git_dir"
 # The reconciliation must still do its job on the clone's own, non-hard-linked
@@ -487,7 +481,7 @@ if [ "$(id -u)" -ne 0 ] && sudo -n true 2>/dev/null; then
     [ -n "$f2_object" ] || fail "fixture setup: source repo has no loose objects to test with"
     f2_object_relative="${f2_object#"$f2_source"/}"
     f2_clone_object="$f2_clone/$f2_object_relative"
-    [ "$(file_inode "$f2_object")" = "$(file_inode "$f2_clone_object")" ] ||
+    [ "$(stat -c '%i' "$f2_object" 2>/dev/null || stat -f '%i' "$f2_object")" = "$(stat -c '%i' "$f2_clone_object" 2>/dev/null || stat -f '%i' "$f2_clone_object")" ] ||
         fail "fixture setup: git clone --local did not hard-link objects — cannot exercise this finding without it"
     # Simulate the real-world gap directly: a restrictive host-side umask at
     # clone time can leave a hard-linked object unreadable to a different
@@ -497,7 +491,7 @@ if [ "$(id -u)" -ne 0 ] && sudo -n true 2>/dev/null; then
     # exactly like the gap this fixture proves closed.
     chmod 0000 "$f2_object"
     [ ! -r "$f2_object" ] || fail "fixture setup: object is still readable to the invoking user, cannot exercise this finding"
-    f2_source_inode_before="$(file_inode "$f2_object")"
+    f2_source_inode_before="$(stat -c '%i' "$f2_object" 2>/dev/null || stat -f '%i' "$f2_object")"
     # REAL sudo, not the logging shim above (same reasoning as the F13
     # non-member-gid fixture): breaking the hard link needs genuine
     # privilege to read a mode-0000 object, which the shim's unprivileged
@@ -509,11 +503,11 @@ if [ "$(id -u)" -ne 0 ] && sudo -n true 2>/dev/null; then
     )" || fail "reconciliation failed against the umask-027 hard-linked-object fixture"
     [ "$f2_resolved" = "$f2_clone" ] ||
         fail "reconciliation of the umask-027 clone did not resolve its own workspace root (resolved '$f2_resolved', expected '$f2_clone')"
-    [ "$(file_inode "$f2_object")" = "$f2_source_inode_before" ] ||
+    [ "$(stat -c '%i' "$f2_object" 2>/dev/null || stat -f '%i' "$f2_object")" = "$f2_source_inode_before" ] ||
         fail "breaking the hard link changed the SOURCE repository's object inode — the shared object outside \$git_dir must never be mutated"
     [ ! -r "$f2_object" ] ||
         fail "the SOURCE repository's object became readable — its mode must be untouched, only the clone's own copy is fixed"
-    [ "$(file_inode "$f2_clone_object")" != "$f2_source_inode_before" ] ||
+    [ "$(stat -c '%i' "$f2_clone_object" 2>/dev/null || stat -f '%i' "$f2_clone_object")" != "$f2_source_inode_before" ] ||
         fail "the clone's object is still hard-linked to the source after reconciliation — the link was never broken"
     [ -r "$f2_clone_object" ] ||
         fail "the clone's own copy of the object is still unreadable to the container user after reconciliation"
@@ -536,18 +530,18 @@ git -C "$hook_hl_repo" init -q
 printf '%s\n' '#!/bin/sh' 'echo pre-existing-shared-hook' >"$hook_hl_shared"
 chmod 0644 "$hook_hl_shared"
 ln "$hook_hl_shared" "$hook_hl_repo/.git/hooks/pre-commit"
-[ "$(file_inode "$hook_hl_shared")" = "$(file_inode "$hook_hl_repo/.git/hooks/pre-commit")" ] ||
+[ "$(stat -c '%i' "$hook_hl_shared" 2>/dev/null || stat -f '%i' "$hook_hl_shared")" = "$(stat -c '%i' "$hook_hl_repo/.git/hooks/pre-commit" 2>/dev/null || stat -f '%i' "$hook_hl_repo/.git/hooks/pre-commit")" ] ||
     fail "fixture setup: pre-commit was not hard-linked to the shared source"
-hook_hl_shared_inode_before="$(file_inode "$hook_hl_shared")"
+hook_hl_shared_inode_before="$(stat -c '%i' "$hook_hl_shared" 2>/dev/null || stat -f '%i' "$hook_hl_shared")"
 hook_hl_shared_mode_before="$(git_mode "$hook_hl_shared")"
 hook_hl_resolved="$(run_reconcile_at "$hook_hl_repo" "$hook_hl_xdg" "$hook_hl_log")"
 [ "$hook_hl_resolved" = "$hook_hl_repo" ] ||
     fail "reconciliation of the hard-linked-hook fixture did not resolve its own workspace root (resolved '$hook_hl_resolved', expected '$hook_hl_repo')"
-[ "$(file_inode "$hook_hl_shared")" = "$hook_hl_shared_inode_before" ] ||
+[ "$(stat -c '%i' "$hook_hl_shared" 2>/dev/null || stat -f '%i' "$hook_hl_shared")" = "$hook_hl_shared_inode_before" ] ||
     fail "un-linking the repo's hook changed the SHARED source's inode — it must never be mutated"
 [ "$(git_mode "$hook_hl_shared")" = "$hook_hl_shared_mode_before" ] ||
     fail "un-linking the repo's hook changed the SHARED source's mode — it must never be mutated"
-[ "$(file_inode "$hook_hl_repo/.git/hooks/pre-commit")" != "$hook_hl_shared_inode_before" ] ||
+[ "$(stat -c '%i' "$hook_hl_repo/.git/hooks/pre-commit" 2>/dev/null || stat -f '%i' "$hook_hl_repo/.git/hooks/pre-commit")" != "$hook_hl_shared_inode_before" ] ||
     fail "the repo's own hooks/pre-commit is still hard-linked to the shared source after reconciliation — the objects/-only exemption leaked outside objects/"
 [ "$(git_mode "$hook_hl_repo/.git/hooks/pre-commit")" = "664" ] ||
     fail "the repo's own (now single-linked) hooks/pre-commit was not reconciled to this workspace's target mode"
