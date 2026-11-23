@@ -308,7 +308,7 @@ tasks:
     # (CI passes PR_TITLE/PR_BODY + BASE_SHA/HEAD_SHA; CHANGED_FILES overrides the diff.)
     desc: "Guard: a PR touching release-worthy paths needs a fix:/feat: title"
     vars:
-      RELEASE_CONTENT_PATHS: template
+      RELEASE_CONTENT_PATHS: "template toolchain-floors.json toolchain-floors.schema.json"
     cmds:
       - ./scripts/require-release-title.sh {{.RELEASE_CONTENT_PATHS}}
 
@@ -754,6 +754,7 @@ tasks:
     desc: Unit-test the release-content title guard (require-release-title.sh)
     cmds:
       - ./scripts/test-release-title.sh
+      - ./scripts/test-release-floors-guard.sh
 
   test:claim-release-merged:
     desc: Unit-test terminal delivery claim release and review cleanup (offline, stubbed gh)
