@@ -130,13 +130,16 @@ harmon_fetch() {
 }
 
 # harmon_verify_sha256 <file> <expected-hex>
+# Pass `-` explicitly for stdin: macOS 26+ ships BSD /sbin/sha256sum, which
+# rejects `sha256sum --check --status` with no file operand ("usage: sha256sum
+# [-bctwz] [files ...]"). Both GNU sha256sum and shasum accept `-`.
 harmon_verify_sha256() {
     [ -n "${2:-}" ] || harmon_die "no checksum supplied for $1"
     if command -v sha256sum >/dev/null 2>&1; then
-        printf '%s  %s\n' "$2" "$1" | sha256sum --check --status ||
+        printf '%s  %s\n' "$2" "$1" | sha256sum --check --status - ||
             harmon_die "checksum mismatch for $1 (expected $2)"
     elif command -v shasum >/dev/null 2>&1; then
-        printf '%s  %s\n' "$2" "$1" | shasum -a 256 --check --status ||
+        printf '%s  %s\n' "$2" "$1" | shasum -a 256 --check --status - ||
             harmon_die "checksum mismatch for $1 (expected $2)"
     else
         harmon_die "sha256sum or shasum is required to verify $1"

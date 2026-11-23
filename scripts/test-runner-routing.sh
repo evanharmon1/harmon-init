@@ -109,10 +109,13 @@ def expression(cls, default):
     return "${{ fromJSON(" + chain + " || '" + fallback + "') }}"
 
 
-def placement(cls, note, default):
+def placement(cls, note, default, root_only=False):
     ordinary = expression(cls, default)
     if "hard-coded `ubuntu-latest`" in note:
         return "ubuntu-latest"
+    if "hard-coded `macos-26`" in note:
+        require(root_only, "hard-coded `macos-26` is permitted only for root-only jobs")
+        return "macos-26"
     if "`merge_group` → `ubuntu-latest` ternary" in note:
         return "${{ github.event_name == 'merge_group' && 'ubuntu-latest' || " + ordinary[4:-3] + " }}"
     return ordinary
@@ -120,7 +123,7 @@ def placement(cls, note, default):
 
 def resolve(value, values, merge_group=False):
     """Evaluate only the pinned placement grammar, without executing code."""
-    if value == "ubuntu-latest":
+    if value in ("ubuntu-latest", "macos-26"):
         return value
     body = value.removeprefix("${{ ").removesuffix(" }}")
     prefix = "github.event_name == 'merge_group' && 'ubuntu-latest' || "
@@ -172,18 +175,20 @@ def check_tree(directory, rows, default):
                 continue
             require(len(runs) == 1 and not callers, f"ambiguous runs-on in {path.name}:{job}")
             actual = runs[0]
-            expected = placement(cls, note, default)
+            expected = placement(cls, note, default, root_only=key in root_rows)
             require(actual == expected,
                     f"{path.name}:{job} ({cls})\n  expected: {expected}\n  actual:   {actual}")
             no_vars = resolve(actual, {})
-            pinned = actual == "ubuntu-latest"
-            target = "ubuntu-latest" if cls == "isolated" or pinned else json.loads(default)
+            pinned = actual in ("ubuntu-latest", "macos-26")
+            if actual == "macos-26":
+                require(key in root_rows, f"{path.name}:{job} uses macos-26 outside root-only assignments")
+            target = actual if pinned else ("ubuntu-latest" if cls == "isolated" else json.loads(default))
             require(no_vars == target, f"{path.name}:{job} unset variables resolve to {no_vars!r}")
             # Empty variables must take the same fallback as missing variables.
             require(resolve(actual, {v: "" for vs in variables.values() for v in vs}) == target,
                     f"{path.name}:{job} empty-variable fallback")
             require(resolve(actual, {"CI_RUNS_ON": '["default-pool"]'}) ==
-                    ("ubuntu-latest" if cls == "isolated" or pinned else ["default-pool"]),
+                    (actual if pinned else ("ubuntu-latest" if cls == "isolated" else ["default-pool"])),
                     f"{path.name}:{job} CI_RUNS_ON precedence or isolation")
             if not pinned:
                 override = {
@@ -215,6 +220,12 @@ template_workflows = {
     for path in (repo / "template/.github/workflows").iterdir() if path.is_file()
 }
 require(template_workflows, "no template workflow files found")
+try:
+    placement("default", "hard-coded `macos-26`", '"ubuntu-latest"', root_only=False)
+except SystemExit:
+    pass
+else:
+    raise SystemExit("FAIL: template job was permitted to hard-code macos-26")
 for directory in sorted(p for p in work.glob("*-web-*") if p.is_dir()):
     profile = re.fullmatch(r"(ubuntu-latest|self-hosted)-(web-astro|web-app)", directory.name)
     require(profile, f"unknown fixture profile: {directory.name}")
