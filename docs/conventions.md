@@ -389,10 +389,12 @@ has.
   **release-content guard** (`release-content-guard.yml` →
   `scripts/require-release-title.sh`, unit-tested by `task test:release-title`)
   fails a PR that changes release-worthy paths under a non-releasing title. For
-  harmon-init that path is `template/` (all consumers get it via `copier update`
-  to a tag); generated repos configure their own via the `release_content_paths`
-  copier answer (empty = no guard). Automated dependency PRs (Renovate/Dependabot)
-  are skipped — retitle by hand if a dep bump to guarded content must ship.
+  harmon-init the guarded paths are `template/`, `toolchain-floors.json`, and
+  `toolchain-floors.schema.json` because consumers get the template and floors
+  from a release tag. Generated repos configure their own paths via the
+  `release_content_paths` copier answer (empty = no guard). Automated
+  dependency PRs (Renovate/Dependabot) are skipped — retitle by hand if a dep bump
+  to guarded content must ship.
 - **Closing an issue is guarded separately.** The `closing-keywords` job in
   `closing-keywords.yml` — its own workflow, so that it can keep the
   `pull_request.edited` trigger `build.yml` deliberately drops — reads only PR
@@ -433,10 +435,8 @@ has.
   shallow clone fails closed. A repository-owned pin such as `packageManager`
   (`template_path: null`) is not in the template; the check lists it as
   consumer-checked and consumers enforce it. A release that raises nothing
-  leaves the file unchanged. A PR that changes only `toolchain-floors.json` or
-  its schema is outside the release-content guard (which covers `template/`),
-  so give it a `fix:` or `feat:` title, or consumers keep reading the previous
-  release's floors.
+  leaves the file unchanged. The release-content guard requires a releasing
+  title for a PR that changes either floors file.
 - Issue types map many-to-one onto these commit types. Personal-account repos
   use the equivalent work-type labels as that mapping's substrate because native
   issue Type is unavailable there; organization repos use native Type and no

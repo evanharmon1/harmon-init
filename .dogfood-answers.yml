@@ -41,10 +41,10 @@ claude_authorized_members: evanharmon1,evanharmon1-bot,admiralfraggle,admiralfra
 license: mit
 ci_runner: ubuntu-latest
 
-# Releases are intentional via release-please; `template/` is the release-worthy
-# path, so a PR touching it must carry a fix:/feat: title (release-content-guard).
+# Releases are intentional via release-please. The paths below require a
+# releasing PR title (release-content-guard).
 use_release_please: true
-release_content_paths: template
+release_content_paths: template toolchain-floors.json toolchain-floors.schema.json
 
 # Vendors the `repo` category (the standardize-repo skill) from harmon-devkit.
 use_skills_sync: true
