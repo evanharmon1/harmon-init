@@ -72,6 +72,7 @@ cat >"${STUB_BIN}/lefthook" <<'EOF'
 echo "$*" >>"${STUB_LOG_DIR}/lefthook.log"
 [ "${STUB_LEFTHOOK:-}" = "fail" ] && { echo "lefthook: simulated failure" >&2; exit 1; }
 [ "${1:-}" = "install" ] || exit 2
+[ "${STUB_CHECKOUT_HISTORY:-}" != slow ] || echo lefthook >>"${STUB_LOG_DIR}/history-events.log"
 [ "${STUB_MUTATE_SETUP:-}" != 1 ] || printf "mutation\n" > .git/setup-mutation
 [ "${STUB_MUTATE_SETUP:-}" != content ] || printf "mutation\n" >> lefthook.yml
 hook=.git/hooks/pre-push
@@ -134,18 +135,11 @@ if [ -n "\${STUB_CHECKOUT_HISTORY:-}" ]; then
         fi
         exit 0
     elif [ "\${1:-}" = fetch ]; then
-        echo "\$*" >>"\${STUB_LOG_DIR}/unshallow.log"
+        [ "\${STUB_CHECKOUT_HISTORY}" = slow ] || echo "\$*" >>"\${STUB_LOG_DIR}/unshallow.log"
         [ "\$*" = 'fetch --unshallow origin' ] || exit 99
         case "\${STUB_CHECKOUT_HISTORY}" in
         fail) exit 1 ;;
-        slow)
-            # Start the short deadline only after the fetch has logged its start.
-            if [ -n "\${STUB_HISTORY_TIMEOUT:-}" ]; then
-                "\${STUB_HISTORY_TIMEOUT}" --kill-after=1s 0.1s sleep 5 || exit "\$?"
-            else
-                sleep 5
-            fi
-            ;;
+        slow) sleep 5 ;;
         incomplete) exit 0 ;;
         esac
         touch "\${STUB_LOG_DIR}/unshallow.done"
@@ -802,17 +796,22 @@ if [ -n "$HISTORY_TIMEOUT" ]; then
 [ "\$1" = '--kill-after=2s' ] && [ "\$2" = 20s ] || exit 99
 shift 2
 [ "\$*" = 'git fetch --unshallow origin' ] || exit 99
-STUB_HISTORY_TIMEOUT="${HISTORY_TIMEOUT}" exec "\$@"
+# Record the invocation before the child has to run.
+echo "\${*:2}" >>"\${STUB_LOG_DIR}/unshallow.log"
+rc=0
+(exec "${HISTORY_TIMEOUT}" --kill-after=1s 0.1s "\$@") || rc=\$?
+echo timeout-complete >>"\${STUB_LOG_DIR}/history-events.log"
+exit "\$rc"
 EOF
     echo "==> a real deadline interrupts a slow unshallow and preparation continues"
     make_fixture history-real-timeout -
     printf '#!/usr/bin/env bash\nexit 0\n' >"${FIX}/scripts/reconcile-toolchain.sh"
-    rm -f "${LOG_DIR}/unshallow.log" "${LOG_DIR}/unshallow.done" "${LOG_DIR}/lefthook.log"
+    rm -f "${LOG_DIR}/unshallow.log" "${LOG_DIR}/unshallow.done" "${LOG_DIR}/lefthook.log" "${LOG_DIR}/history-events.log"
     run_setup "${HISTORY_BIN}:${STUBS_PATH}" CLAUDE_CODE_REMOTE=true STUB_CHECKOUT_HISTORY=slow
     [ "$rc" -eq 0 ] || fail "real history timeout must exit 0: $(all_output)"
     [ "$(cat "${LOG_DIR}/unshallow.log")" = 'fetch --unshallow origin' ] || fail "real timeout must start exactly one fetch"
     [ ! -e "${LOG_DIR}/unshallow.done" ] || fail "real deadline must interrupt the slow fetch"
-    [ -s "${LOG_DIR}/lefthook.log" ] || fail "later preparation must continue after the real deadline"
+    [ "$(cat "${LOG_DIR}/history-events.log")" = "$(printf 'timeout-complete\nlefthook')" ] || fail "lefthook must run after the real deadline"
     output_has 'unshallow fetch timed out or was killed' || fail "real deadline must report a timed-out fetch"
     output_has 'completed with warnings: checkout history is shallow' || fail "real timeout must warn in summary"
     output_has 'run git fetch --unshallow origin by hand in this checkout without a timeout' || fail "real timeout must name the unbounded manual remedy"
