@@ -216,7 +216,18 @@ if [ -f "$install_lib" ]; then
         [ -z "$tool_path" ] || ln -s "$tool_path" "${bsd_sha_bin}/${tool}"
         [ -z "$tool_path" ] || ln -s "$tool_path" "${shasum_only_bin}/${tool}"
     done
-    python3_bin="$(command -v python3)"
+    # Resolve sys.executable through a #!/usr/bin/env bash shim (matching pyenv
+    # or mise wrapper setups) so the generated #! stubs run directly when PATH
+    # is restricted to bsd_sha_bin / shasum_only_bin without bash on PATH.
+    python_shim_bin="${work}/python-shim-bin"
+    mkdir -p "$python_shim_bin"
+    real_python3="$(command -v python3)"
+    cat >"${python_shim_bin}/python3" <<EOF
+#!/usr/bin/env bash
+exec "${real_python3}" "\$@"
+EOF
+    chmod +x "${python_shim_bin}/python3"
+    python3_bin="$(PATH="${python_shim_bin}:${PATH}" python3 -c 'import sys; print(sys.executable)')"
     payload="${work}/payload.bin"
     printf 'macos-26-bsd-sha256sum\n' >"$payload"
     payload_sha="$("$python3_bin" -c 'import hashlib, pathlib, sys; print(hashlib.sha256(pathlib.Path(sys.argv[1]).read_bytes()).hexdigest())' "$payload")"
