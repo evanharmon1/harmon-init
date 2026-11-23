@@ -158,6 +158,22 @@ jobs:
             UV_TOOL_BIN_DIR="$lint_tools_bin" \
             uv tool install --force copier
 
+          # Suite timeouts (test:worktree, test:devcontainer-smoke-isolation,
+          # test:reconcile-toolchain) require timeout or gtimeout. Homebrew's
+          # coreutils installs g-prefixed binaries (gtimeout) without placing
+          # libexec/gnubin on PATH, so /usr/bin/sed and BSD userland remain active.
+          if ! command -v timeout >/dev/null 2>&1 && ! command -v gtimeout >/dev/null 2>&1; then
+            HOMEBREW_NO_AUTO_UPDATE=1 HOMEBREW_NO_INSTALL_CLEANUP=1 brew install coreutils
+            brew_bin="$(brew --prefix)/bin"
+            case ":${PATH}:" in
+              *":${brew_bin}:"*) ;;
+              *)
+                printf '%s\n' "$brew_bin" >> "$GITHUB_PATH"
+                export PATH="${PATH}:${brew_bin}"
+                ;;
+            esac
+          fi
+
           # Prepend job-private Darwin tools ahead of any pre-installed Homebrew
           # binaries on the macOS runner image.
           printf '%s\n' "$lint_tools_bin" >> "$GITHUB_PATH"
@@ -173,5 +189,7 @@ jobs:
           IFS= read -r installed_yamllint_version <<<"$(yamllint --version)"
           [ "${installed_yamllint_version#yamllint }" = "$yamllint_version" ]
           copier --version >/dev/null
+          command -v timeout >/dev/null 2>&1 || command -v gtimeout >/dev/null 2>&1
+          [ "$(command -v sed)" = "/usr/bin/sed" ]
       - name: Verify shell and guard suites under Apple Bash 3.2
         run: task verify:macos-bash-compat

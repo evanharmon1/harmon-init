@@ -263,6 +263,10 @@ if [ -f "$workflow_file" ]; then
         grep -Fq -- "$required_glob" "$workflow_file" ||
             fail "macos-bash-compat.yml pull_request.paths is missing ${required_glob}"
     done
+    grep -Fq 'brew install coreutils' "$workflow_file" ||
+        fail "macos-bash-compat.yml must ensure coreutils (gtimeout) is available on macos-26"
+    grep -Fq '[ "$(command -v sed)" = "/usr/bin/sed" ]' "$workflow_file" ||
+        fail "macos-bash-compat.yml must verify BSD /usr/bin/sed remains unshadowed"
 fi
 
 echo "test-macos-bash-compat: PASS"
