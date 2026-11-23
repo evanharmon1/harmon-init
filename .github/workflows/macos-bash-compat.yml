@@ -1,0 +1,173 @@
+name: macOS Bash 3.2 Compatibility
+run-name: ${{ github.actor }} is running macOS Bash 3.2 Compatibility
+
+# ROOT-ONLY, non-blocking. Public harmon-init runs GitHub-hosted macos-26
+# runners at zero cost so template-originated shell scripts, Taskfiles,
+# workflows, and hooks are exercised under Apple /bin/bash 3.2 and BSD userland
+# upstream rather than spending paid macOS Actions minutes in private consumer
+# repositories (harmon-init#2116).
+on:
+  push:
+    branches: [main]
+  pull_request:
+    types: [opened, synchronize, reopened]
+    branches: [main]
+    paths:
+      - "scripts/**"
+      - "template/scripts/**"
+      - "template/.devcontainer/scripts/**"
+      - ".devcontainer/scripts/**"
+      - "images/devcontainer/**"
+      - "**/*.sh"
+      - "**/*.bash"
+      - "**/*.sh.jinja"
+      - "Taskfile.yml"
+      - "taskfiles/**"
+      - "template/Taskfile.yml.jinja"
+      - ".github/workflows/**"
+      - ".github/actions/**"
+      - "lefthook.yml"
+      - "template/lefthook.yml.jinja"
+  workflow_dispatch:
+
+concurrency:
+  group: macos-bash-compat-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  contents: read
+
+jobs:
+  macos-bash-compat:
+    if: >-
+      github.event_name != 'pull_request' ||
+      github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: macos-26
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # Full history + tags make test:tag-hygiene and merge-base guards real assertions.
+          fetch-depth: 0
+      # Shared toolchain setup installs Node, pnpm (with job-private store),
+      # Python 3.13, uv, and Task. Keep lint-tools="false" (default) because
+      # setup's lint-tools step downloads Linux release binaries.
+      - uses: ./.github/actions/setup
+      - name: Install pinned Darwin lint tools and copier
+        shell: bash
+        run: |
+          read_pin() {
+            local name="$1" pin
+            pin="$(/usr/bin/sed -nE "s/^[[:space:]]*${name}=([0-9]+\.[0-9]+\.[0-9]+)([[:space:]]+#.*)?[[:space:]]*\$/\1/p" .github/actions/setup/action.yml)"
+            if [ -z "$pin" ]; then
+              echo "::error::Could not read ${name} from .github/actions/setup/action.yml" >&2
+              exit 1
+            fi
+            case "$pin" in
+              *$'\n'*)
+                echo "::error::Multiple ${name} pins in .github/actions/setup/action.yml" >&2
+                exit 1
+                ;;
+            esac
+            printf '%s' "$pin"
+          }
+
+          shellcheck_version="$(read_pin SHELLCHECK_VERSION)"
+          # renovate: datasource=github-releases depName=mvdan/sh extractVersion=^v?(?<version>.+)$
+          SHFMT_VERSION=3.14.1 # pin-pair: shfmt
+          actionlint_version="$(read_pin ACTIONLINT_VERSION)"
+          yamllint_version="$(read_pin YAMLLINT_VERSION)"
+          # renovate: datasource=github-releases depName=mikefarah/yq extractVersion=^v?(?<version>.+)$
+          YQ_VERSION=4.54.3 # pin-pair: yq
+          [ "$SHFMT_VERSION" = "$(read_pin SHFMT_VERSION)" ] || {
+            echo "::error::SHFMT_VERSION in macos-bash-compat.yml drifted from .github/actions/setup/action.yml" >&2
+            exit 1
+          }
+          [ "$YQ_VERSION" = "$(read_pin YQ_VERSION)" ] || {
+            echo "::error::YQ_VERSION in macos-bash-compat.yml drifted from .github/actions/setup/action.yml" >&2
+            exit 1
+          }
+
+          runner_arch="${RUNNER_ARCH:-$(uname -m)}"
+          case "$runner_arch" in
+            X64|x86_64)
+              shellcheck_arch=x86_64
+              shfmt_arch=amd64
+              # renovate: datasource=github-release-attachments depName=mvdan/sh digestVersion=v3.14.1
+              shfmt_sha256=d33eee0da0f92835b3562e9767a05cee7e4eaeef47daa03bfd09da17b4b590a6 # pin-pair: shfmt
+              actionlint_arch=amd64
+              yq_arch=amd64
+              # renovate: datasource=github-release-attachments depName=mikefarah/yq digestVersion=v4.54.3
+              yq_sha256=96d5105ffd693d6845c54fbd825b2d1bbdb8619e0a2ce6af95e5654e841e0984 # pin-pair: yq
+              ;;
+            ARM64|arm64|aarch64)
+              shellcheck_arch=aarch64
+              shfmt_arch=arm64
+              # renovate: datasource=github-release-attachments depName=mvdan/sh digestVersion=v3.14.1
+              shfmt_sha256=b7c872db63553ccffc7253aba3ed7d4885a27d83f1ba567b1138c6315a5847e5 # pin-pair: shfmt
+              actionlint_arch=arm64
+              yq_arch=arm64
+              # renovate: datasource=github-release-attachments depName=mikefarah/yq digestVersion=v4.54.3
+              yq_sha256=a2aebb93b5bdcb61bb76f630e42a0ef6a3ee10842a6516cd7b9e4080786ec593 # pin-pair: yq
+              ;;
+            *)
+              echo "::error::Unsupported runner architecture for Darwin lint tools: ${runner_arch}" >&2
+              exit 1
+              ;;
+          esac
+
+          : "${RUNNER_TEMP:?RUNNER_TEMP is required for job-private Darwin lint tools}"
+          : "${GITHUB_PATH:?GITHUB_PATH is required to publish Darwin lint tools}"
+          lint_tools_bin="${RUNNER_TEMP}/harmon-init-darwin-lint-tools/${shellcheck_version}-${SHFMT_VERSION}-${actionlint_version}-${yamllint_version}-${YQ_VERSION}/${runner_arch}"
+          mkdir -p "$lint_tools_bin"
+          lint_tools_tmp="$(mktemp -d "${RUNNER_TEMP}/harmon-init-darwin-lint-tools-download.XXXXXX")"
+          trap 'rm -rf "$lint_tools_tmp"' EXIT
+
+          curl -fsSL --retry 3 -o "${lint_tools_tmp}/shellcheck.tar.xz" \
+            "https://github.com/koalaman/shellcheck/releases/download/v${shellcheck_version}/shellcheck-v${shellcheck_version}.darwin.${shellcheck_arch}.tar.xz"
+          /usr/bin/tar -xJf "${lint_tools_tmp}/shellcheck.tar.xz" -C "$lint_tools_tmp"
+          install -m 0755 "${lint_tools_tmp}/shellcheck-v${shellcheck_version}/shellcheck" "${lint_tools_bin}/shellcheck"
+
+          curl -fsSL --retry 3 -o "${lint_tools_tmp}/shfmt" \
+            "https://github.com/mvdan/sh/releases/download/v${SHFMT_VERSION}/shfmt_v${SHFMT_VERSION}_darwin_${shfmt_arch}"
+          printf '%s  %s\n' "$shfmt_sha256" "${lint_tools_tmp}/shfmt" | /usr/bin/shasum -a 256 --check --status -
+          install -m 0755 "${lint_tools_tmp}/shfmt" "${lint_tools_bin}/shfmt"
+
+          curl -fsSL --retry 3 -o "${lint_tools_tmp}/actionlint.tar.gz" \
+            "https://github.com/rhysd/actionlint/releases/download/v${actionlint_version}/actionlint_${actionlint_version}_darwin_${actionlint_arch}.tar.gz"
+          /usr/bin/tar -xzf "${lint_tools_tmp}/actionlint.tar.gz" -C "$lint_tools_tmp" actionlint
+          install -m 0755 "${lint_tools_tmp}/actionlint" "${lint_tools_bin}/actionlint"
+
+          curl -fsSL --retry 3 -o "${lint_tools_tmp}/yq" \
+            "https://github.com/mikefarah/yq/releases/download/v${YQ_VERSION}/yq_darwin_${yq_arch}"
+          printf '%s  %s\n' "$yq_sha256" "${lint_tools_tmp}/yq" | /usr/bin/shasum -a 256 --check --status -
+          install -m 0755 "${lint_tools_tmp}/yq" "${lint_tools_bin}/yq"
+
+          yamllint_venv="${RUNNER_TEMP}/harmon-init-darwin-lint-tools/yamllint-${yamllint_version}"
+          python3 -m venv "$yamllint_venv"
+          "${yamllint_venv}/bin/python" -m pip install --disable-pip-version-check \
+            "yamllint==${yamllint_version}"
+          ln -sfn "${yamllint_venv}/bin/yamllint" "${lint_tools_bin}/yamllint"
+
+          UV_TOOL_DIR="${RUNNER_TEMP}/harmon-init-darwin-lint-tools/uv-tools" \
+            UV_TOOL_BIN_DIR="$lint_tools_bin" \
+            uv tool install --force copier
+
+          # Prepend job-private Darwin tools ahead of any pre-installed Homebrew
+          # binaries on the macOS runner image.
+          printf '%s\n' "$lint_tools_bin" >> "$GITHUB_PATH"
+          export PATH="${lint_tools_bin}:${PATH}"
+
+          bash ./scripts/reconcile-toolchain.sh --check shellcheck
+          IFS= read -r installed_shfmt_version <<<"$(shfmt --version)"
+          [ "${installed_shfmt_version#v}" = "$SHFMT_VERSION" ]
+          IFS= read -r installed_actionlint_version <<<"$(actionlint --version)"
+          [ "${installed_actionlint_version#v}" = "$actionlint_version" ]
+          IFS= read -r installed_yq_version <<<"$(yq --version)"
+          [ "${installed_yq_version##* version v}" = "$YQ_VERSION" ]
+          IFS= read -r installed_yamllint_version <<<"$(yamllint --version)"
+          [ "${installed_yamllint_version#yamllint }" = "$yamllint_version" ]
+          copier --version >/dev/null
+      - name: Verify shell and guard suites under Apple Bash 3.2
+        run: task verify:macos-bash-compat
