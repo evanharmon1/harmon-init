@@ -8,6 +8,33 @@ remains a manual override. New entries are appended above by release-please;
 entries at and below v3.0.0 were hand-written in
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) style.
 
+## [5.21.0](https://github.com/evanharmon1/harmon-init/compare/v5.20.0...v5.21.0) (2026-11-23)
+
+
+### Features
+
+* **agent-registry:** refresh model lines and versions across families ([#2101](https://github.com/evanharmon1/harmon-init/issues/2101)) ([83d0a15](https://github.com/evanharmon1/harmon-init/commit/83d0a15e35d6c63d3fa814b8acee0ffbab1f5f8d))
+* **checklist:** classify the live-ruleset required-checks item as fleet-approval ([#2102](https://github.com/evanharmon1/harmon-init/issues/2102)) ([e9eb8d5](https://github.com/evanharmon1/harmon-init/commit/e9eb8d5ac5fdc38d131ebafc1ccb77ee469dd3f0))
+* **ci:** audit required merge checks across the fleet and record the per-profile set ([#2104](https://github.com/evanharmon1/harmon-init/issues/2104)) ([560da06](https://github.com/evanharmon1/harmon-init/commit/560da06e7700ffe2380bccf04305e0121f2c38d4))
+* **toolchain:** cover multi-step template workflow pins with a per-step floor check ([#2114](https://github.com/evanharmon1/harmon-init/issues/2114)) ([129d420](https://github.com/evanharmon1/harmon-init/commit/129d4207940ed57f1d235b812c3936481061b62c))
+* **toolchain:** declare per-release toolchain floors and check template pins against them ([#2107](https://github.com/evanharmon1/harmon-init/issues/2107)) ([dff6ad1](https://github.com/evanharmon1/harmon-init/commit/dff6ad13a382fdb74979bfdff854d2767495336e))
+
+
+### Bug Fixes
+
+* **agent-registry:** record Fable 5.2 as the current Fable version ([#2090](https://github.com/evanharmon1/harmon-init/issues/2090)) ([7f40cd2](https://github.com/evanharmon1/harmon-init/commit/7f40cd27ae293b4ddc136d74d8804712522f3c02))
+* **ci:** skip project-automation on Dependabot-actor pull requests ([#2088](https://github.com/evanharmon1/harmon-init/issues/2088)) ([cce3b74](https://github.com/evanharmon1/harmon-init/commit/cce3b7488f892c5034a73e2a9db4d5799adbdeca))
+* **copier:** model the repository owner kind explicitly instead of inferring it from github_org ([#2094](https://github.com/evanharmon1/harmon-init/issues/2094)) ([c72911e](https://github.com/evanharmon1/harmon-init/commit/c72911e3712ba4541da1a1b534da48f890b8ccf1))
+* **copier:** require 9.8.0 for template copy and update ([#2112](https://github.com/evanharmon1/harmon-init/issues/2112)) ([9c165d1](https://github.com/evanharmon1/harmon-init/commit/9c165d140dced6d62629047f397261ee1da59c9d))
+* **devcontainer:** skip env files and pipes in the smoke-isolation fixture copy ([#2084](https://github.com/evanharmon1/harmon-init/issues/2084)) ([108d540](https://github.com/evanharmon1/harmon-init/commit/108d540f6a46d5e91025e0d8e183f3481a1ea4f4))
+* **lint:** lint only tracked Markdown by default ([#2085](https://github.com/evanharmon1/harmon-init/issues/2085)) ([fc2d88d](https://github.com/evanharmon1/harmon-init/commit/fc2d88d8dc14bdd35213516b95649972a1216450))
+* **renovate:** migrate dependencyDashboard and bump the validator to 44.239.1 ([#2079](https://github.com/evanharmon1/harmon-init/issues/2079)) ([a4a34fe](https://github.com/evanharmon1/harmon-init/commit/a4a34fedbbf784407396c3b7082cbd300b05100f))
+* **renovate:** migrate dependencyDashboard to its object form with validator 44.239.1 ([a4a34fe](https://github.com/evanharmon1/harmon-init/commit/a4a34fedbbf784407396c3b7082cbd300b05100f))
+* **review:** calibrate the severity scale with P1 and P2 examples ([#2086](https://github.com/evanharmon1/harmon-init/issues/2086)) ([b3515a0](https://github.com/evanharmon1/harmon-init/commit/b3515a0298e9e412eceb698b1e68a3605232696f))
+* **review:** record the accepted limits of the review guideline surfaces ([#2096](https://github.com/evanharmon1/harmon-init/issues/2096)) ([64eae81](https://github.com/evanharmon1/harmon-init/commit/64eae81b8f4114615c50bf5e954093988c92de2f))
+* **test:** portable stat in git-ownership test so task verify passes on macOS ([#2117](https://github.com/evanharmon1/harmon-init/issues/2117)) ([e2a183d](https://github.com/evanharmon1/harmon-init/commit/e2a183d5cbf2e144b0a119f575b9a6f51b803f0d))
+* **toolchain:** accept the real forms of the node, task and pnpm floor pins ([#2119](https://github.com/evanharmon1/harmon-init/issues/2119)) ([672ab55](https://github.com/evanharmon1/harmon-init/commit/672ab55446ebaae84d161e75f6cb357057e333f3))
+
 ## [5.20.0](https://github.com/evanharmon1/harmon-init/compare/v5.19.0...v5.20.0) (2026-11-17)
 
 
