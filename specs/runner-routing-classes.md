@@ -182,6 +182,7 @@ and updates these root-only jobs to match the same class definitions.
 | `remote-bootstrap.yml` | `remote-bootstrap-verify` | default | Aggregate; preserve `merge_group` → `ubuntu-latest` ternary |
 | `build.yml` | `template-test` | default | Renders and validates Copier profiles |
 | `build.yml` | `session-cleanup-stress` | default | Runs the cleanup regression 20 consecutive times |
+| `macos-bash-compat.yml` | `macos-bash-compat` | default | Preserve hard-coded `macos-26` for root-only Apple Bash 3.2 compatibility |
 
 ### Shared package-cache contract and existing exceptions
 

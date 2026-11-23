@@ -217,6 +217,21 @@ scheduling only.
   context after merge and after it reports on main, as
   [branch-protection.md](branch-protection.md#applying-the-ruleset) describes.
   See [remote-environments.md](remote-environments.md).
+- `macos-bash-compat.yml` — **root-only**, non-blocking: runs
+  `task verify:macos-bash-compat` (`scripts/verify-macos-bash-compat.sh`) on
+  `macos-26` on pushes to `main`, `workflow_dispatch`, and pull requests
+  touching shell scripts, Taskfiles, workflows, or hooks. It checks that
+  `/bin/bash` is Apple Bash `3.2.*`, prepends a `bash` shim targeting
+  `/bin/bash` plus a hostile `PATH` entry containing spaces and shell/sed
+  metacharacters (with a tripwire that fails closed if `PATH` is ever
+  reinterpreted as shell syntax), and runs `task lint:shell`, `task test:suite`,
+  `task test:ci-results`, and `task test:agent-profile` against the Darwin
+  versions of the lint tools pinned in `.github/actions/setup/action.yml` plus
+  `copier`. It skips the heavy `test:template` profile render matrix and stays
+  out of `Protect Main`'s required status checks while proving speed and
+  stability on `main`. Public `harmon-init` runs GitHub-hosted `macos-26`
+  minutes at zero cost so private consumer repositories do not pay macOS runner
+  rates to validate template-originated shell scripts.
 
 ## Issue classification reconciler
 
@@ -482,7 +497,8 @@ Most root workflows are the rendered form of a `template/` twin and must be
 edited in lockstep (AGENTS.md, "Dogfood parity"). A few are **root-only**: they
 exist because harmon-init sits inside harmon-platform, and a generated repo has
 no such edge. `close-milestone-on-release.yml`, `sync-harmon-devkit.yml`,
-`publish-harmon-devcontainer.yml`, and `remote-bootstrap.yml` are root-only;
+`publish-harmon-devcontainer.yml`, `remote-bootstrap.yml`, and
+`macos-bash-compat.yml` are root-only;
 they have no `template/`
 counterpart, and the dogfood checks are
 twin-driven (they walk `template/`), so root-only files are correctly invisible
@@ -653,7 +669,9 @@ Browser, image-build and multicore fall back from their class variable to
 `CI_RUNS_ON`, then that rendered default. The rendered default is `"ubuntu-latest"` for
 GitHub-hosted profiles or the configured JSON label list for self-hosted profiles.
 Existing merge-group GitHub-hosted pins remain. Root-only `remote-bootstrap.yml`
-`bootstrap` uses image-build because its stock container requires Docker.
+`bootstrap` uses image-build because its stock container requires Docker;
+root-only `macos-bash-compat.yml` pins `macos-26` directly because its job
+exists specifically to exercise Apple `/bin/bash` 3.2 and BSD userland.
 
 Isolated uses `${{ fromJSON(vars.ISOLATED_RUNS_ON || '"ubuntu-latest"') }}`
 on every profile: it never inherits `CI_RUNS_ON` or the rendered default.
