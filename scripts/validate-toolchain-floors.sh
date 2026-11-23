@@ -16,13 +16,14 @@
 # closed — fetch full history, do not weaken the check.
 #
 # Usage: validate-toolchain-floors.sh [--root DIR] [--floors FILE] [--schema FILE]
-#                                    [--rendered DIR] [--inventory]
+#                                    [--rendered DIR] [--inventory] [--with-template-tests]
 #   --root    repository to check (default: this repository); every relative
 #             path and the git history resolve against it
 #   --floors  declaration (default: ROOT/toolchain-floors.json)
 #   --schema  schema      (default: ROOT/toolchain-floors.schema.json)
 #   --rendered  one pre-rendered tree (for offline fixtures)
 #   --inventory  also inventory workflows in a pre-rendered tree
+#   --with-template-tests  check the six outputs of task test:template
 # Exit: 0 all floors hold; 1 a floor is violated or unverifiable; 2 usage.
 set -euo pipefail
 
@@ -32,6 +33,7 @@ FLOORS=""
 SCHEMA=""
 RENDERED=""
 INVENTORY=0
+WITH_TEMPLATE_TESTS=0
 
 while [ "$#" -gt 0 ]; do
     case "$1" in
@@ -71,6 +73,10 @@ while [ "$#" -gt 0 ]; do
         INVENTORY=1
         shift
         ;;
+    --with-template-tests)
+        WITH_TEMPLATE_TESTS=1
+        shift
+        ;;
     -h | --help)
         sed -n '2,/^set -euo/p' "${BASH_SOURCE[0]}" | sed '$d' | sed 's/^# \{0,1\}//'
         exit 0
@@ -92,14 +98,19 @@ command -v node >/dev/null 2>&1 || {
     exit 1
 }
 
-exec node --input-type=module - "$ROOT" "$FLOORS" "$SCHEMA" "$SCRIPT_DIR" "$RENDERED" "$INVENTORY" <<'NODE'
+[ -z "$RENDERED" ] || [ "$WITH_TEMPLATE_TESTS" = 0 ] || {
+    echo "validate-toolchain-floors: --rendered and --with-template-tests are mutually exclusive" >&2
+    exit 2
+}
+
+exec node --input-type=module - "$ROOT" "$FLOORS" "$SCHEMA" "$SCRIPT_DIR" "$RENDERED" "$INVENTORY" "$WITH_TEMPLATE_TESTS" <<'NODE'
 import { spawnSync } from 'node:child_process'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL } from 'node:url'
 
-const [root, floorsPath, schemaPath, scripts, rendered, inventory] = process.argv.slice(2)
+const [root, floorsPath, schemaPath, scripts, rendered, inventory, withTemplateTests] = process.argv.slice(2)
 const { createSchemaValidator } = await import(pathToFileURL(path.join(scripts, 'lib/json-schema-subset.mjs')).href)
 
 const errors = []
@@ -128,6 +139,10 @@ const schemaErrors = engine.validate(declaration, schema, '$floors')
 if (schemaErrors.length > 0) {
   for (const message of schemaErrors) console.error(`toolchain-floors: ${message}`)
   console.error('toolchain-floors: FAIL — the declaration does not match its schema')
+  process.exit(1)
+}
+if (declaration?.schema_version !== 2) {
+  console.error('toolchain-floors: unsupported schema_version; expected 2')
   process.exit(1)
 }
 
@@ -220,8 +235,7 @@ function booleanAnswer(name) {
 
 function readSteps(label, source) {
   const result = spawnSync('yq', ['-o=json', '-I=0', `
-    [(.runs.steps, .jobs[].steps) | select(tag == "!!seq") | .[]
-      | explode(.)
+    [(.runs.steps, .jobs[].steps) | explode(.) | select(tag == "!!seq") | .[]
       | select(tag == "!!map")
       | {"uses": .uses, "line": line, "style": style,
          "inputStyle": (.with | style),
@@ -302,9 +316,7 @@ function isFile(file) {
   return fs.statSync(file, { throwIfNoEntry: false })?.isFile() === true
 }
 
-// Try the maximal smoke-test profile first. A single complete render is already
-// minimal. If coverage is split, choose the smallest cover of the six profiles.
-function floorRenders(stepPaths) {
+function floorRenders() {
   if (rendered) return [{ dir: rendered, name: 'rendered' }]
   for (const [command, name] of [['copier', 'Copier'], ['yq', 'Mike Farah yq']]) {
     const result = spawnSync(command, ['--version'], { encoding: 'utf8' })
@@ -316,9 +328,25 @@ function floorRenders(stepPaths) {
 
   const scratch = fs.mkdtempSync(path.join(os.tmpdir(), 'toolchain-floors-'))
   process.on('exit', () => fs.rmSync(scratch, { recursive: true, force: true }))
-  const profiles = []
-  for (const name of ['full', 'minimal', 'web', 'webapp', 'iac', 'meta']) {
-    const dir = path.join(scratch, name)
+  const profiles = ['full', 'minimal', 'web', 'webapp', 'iac', 'meta']
+    .map((name) => ({ dir: path.join(scratch, name), name }))
+  if (withTemplateTests === '1') {
+    const result = spawnSync('task', ['test:template'], {
+      cwd: root, stdio: 'inherit', env: { ...gitEnv, TOOLCHAIN_FLOORS_SMOKE_OUTPUT: scratch }
+    })
+    if (result.status !== 0) {
+      fail(`template smoke tests failed: ${result.error?.message ?? result.signal ?? result.status}`)
+      return []
+    }
+    for (const { dir, name } of profiles) {
+      if (!fs.statSync(dir, { throwIfNoEntry: false })?.isDirectory()) {
+        fail(`${name}: template smoke test did not provide its render`)
+        return []
+      }
+    }
+    return profiles
+  }
+  for (const { dir, name } of profiles) {
     const result = spawnSync(path.join(scripts, 'test-template.sh'), [name, 'render-only', dir, root], {
       encoding: 'utf8', env: gitEnv
     })
@@ -326,24 +354,8 @@ function floorRenders(stepPaths) {
       fail(`${name}: Copier render failed: ${result.error?.message ?? result.stderr.trim()}`)
       return []
     }
-    const covered = new Set(stepPaths.filter((file) => isFile(path.join(dir, file))))
-    profiles.push({ dir, name, covered })
-    if (covered.size === stepPaths.length) return [profiles[profiles.length - 1]]
   }
-
-  const available = stepPaths.filter((file) => profiles.some(({ covered }) => covered.has(file)))
-  for (const file of stepPaths.filter((file) => !available.includes(file))) {
-    fail(`${file}: absent from every rendered smoke-test profile`)
-  }
-  let smallest = profiles
-  for (let mask = 1; mask < 2 ** profiles.length; mask += 1) {
-    const candidate = profiles.filter((_, index) => mask & (1 << index))
-    if (candidate.length < smallest.length &&
-        available.every((file) => candidate.some(({ covered }) => covered.has(file)))) {
-      smallest = candidate
-    }
-  }
-  return smallest
+  return profiles
 }
 
 const knownSteps = new Map([
@@ -351,7 +363,7 @@ const knownSteps = new Map([
   ['arduino/setup-task', { tool: 'task', input: 'version' }]
 ])
 
-function checkInventory(dir, getSteps) {
+function checkInventory(dir, profile, getSteps) {
   const workflows = '.github/workflows'
   const workflowDir = path.join(dir, workflows)
   const files = fs.existsSync(workflowDir)
@@ -365,7 +377,7 @@ function checkInventory(dir, getSteps) {
       if (!known) continue
       const floor = declaration.floors.find(({ tool }) => tool === known.tool)
       if (!floor?.pins.some((pin) => pin.path === file && pin.step?.action === action && pin.step.input === known.input)) {
-        fail(`${file}:${line}: undeclared ${action} step with input ${known.input} in the ${known.tool} floor`)
+        fail(`${file} [${profile}]:${line}: undeclared ${action} step with input ${known.input} in the ${known.tool} floor`)
       }
     }
   }
@@ -375,17 +387,13 @@ function renderPath(templatePath) {
   return templatePath.replace(/^template\//, '').replace(/\[%[^%]*%\]/g, '').replace(/\.jinja$/, '')
 }
 
-const stepPaths = [...new Set(declaration.floors.flatMap(({ pins }) => pins
-  .filter((pin) => pin.step && insideRoot(pin.path) && insideRoot(pin.template_path) &&
-    renderPath(pin.template_path) === pin.path && isFile(insideRoot(pin.template_path)))
-  .map((pin) => pin.path)))]
-const renders = floorRenders(stepPaths).map(({ dir, name }) => {
+const renders = floorRenders().map(({ dir, name }) => {
   const cache = new Map()
   function getSteps(file) {
     if (!cache.has(file)) cache.set(file, readSteps(`${name} ${file}`, fs.readFileSync(path.join(dir, file), 'utf8')))
     return cache.get(file)
   }
-  if (!rendered || inventory === '1') checkInventory(dir, getSteps)
+  if (!rendered || inventory === '1') checkInventory(dir, name, getSteps)
   return { dir, name, getSteps }
 })
 

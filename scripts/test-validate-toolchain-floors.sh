@@ -23,9 +23,20 @@ fx="${work}/fx"
 rendered="${work}/rendered"
 out="${work}/out.txt"
 
-# Run the consumer-owned pattern and the end-to-end Copier fixture once; the
+# Run the published declaration checks and the end-to-end Copier fixture once; the
 # nested invocation checks that the offline validator fixtures isolate Git.
 if [ -z "${TOOLCHAIN_FLOORS_TEST_NESTED:-}" ]; then
+    check_published_tools() {
+        local tools
+        tools="$(jq -ce '[.floors[].tool] | sort' "$1")" || return 1
+        [ "$tools" = '["copier","devcontainer-image","node","pnpm","task"]' ]
+    }
+    check_published_tools toolchain-floors.json || fail "the published tool list differs from the expected tools"
+    jq 'del(.floors[] | select(.tool == "copier"))' toolchain-floors.json >"$work/missing-tool.json"
+    if check_published_tools "$work/missing-tool.json"; then
+        fail "the published tool list check accepted a missing Copier entry"
+    fi
+
     pnpm_pin="$(jq -ce '.floors[] | select(.tool == "pnpm") | .pins[] | select(.template_path == null and .path == "package.json")' toolchain-floors.json)"
     # The published pnpm locator, applied to representative packageManager values.
     pnpm_pointer="$(jq -r .json_pointer <<<"$pnpm_pin")"
@@ -134,7 +145,7 @@ EOF
 cp toolchain-floors.schema.json "${fx}/toolchain-floors.schema.json"
 
 # floors JSON -> write the fixture declaration with the given floor objects.
-floors() { printf '{"schema_version":1,"floors":[%s]}\n' "$1" >"${fx}/toolchain-floors.json"; }
+floors() { printf '{"schema_version":2,"floors":[%s]}\n' "$1" >"${fx}/toolchain-floors.json"; }
 ACTION_PATH='template/.github/actions/setup/action.yml.jinja'
 NODE_WORKFLOW_PATH='template/.github/workflows/[% if devcontainer %]devcontainer-build.yml[% endif %].jinja'
 TASK_WORKFLOW_PATH='template/.github/workflows/[% if use_release_please and release_content_paths %]release-content-guard.yml[% endif %].jinja'
@@ -237,10 +248,10 @@ expect "a pin value that is not a commit matches nothing and fails" 1 "pattern m
 write_dockerfile "$child"
 
 # `when` must name a boolean answer in copier.yml.
-printf '{"schema_version":1,"floors":[{"tool":"node","minimum":"24","compare":"major","when":"use_node","pins":[%s]}]}\n' "$NODE_PIN" >"${fx}/toolchain-floors.json"
+printf '{"schema_version":2,"floors":[{"tool":"node","minimum":"24","compare":"major","when":"use_node","pins":[%s]}]}\n' "$NODE_PIN" >"${fx}/toolchain-floors.json"
 expect "when naming a boolean answer passes" 0 "node (major >= 24, when use_node)"
 for bad in not_a_bool no_such_answer; do
-    printf '{"schema_version":1,"floors":[{"tool":"node","minimum":"24","compare":"major","when":"%s","pins":[%s]}]}\n' "$bad" "$NODE_PIN" >"${fx}/toolchain-floors.json"
+    printf '{"schema_version":2,"floors":[{"tool":"node","minimum":"24","compare":"major","when":"%s","pins":[%s]}]}\n' "$bad" "$NODE_PIN" >"${fx}/toolchain-floors.json"
     expect "when ${bad} fails" 1 "when \"${bad}\" is not a boolean answer in copier.yml"
 done
 floors "$(node_floor 24),$(node_floor 24)"
@@ -257,8 +268,10 @@ floors '{"tool":"node","minimum":"24","compare":"major"}'
 expect "a floor without pins fails the schema" 1 "does not match its schema"
 floors '{"tool":"node","minimum":"24","compare":"major","pins":[{"path":"a","pattern":"(x)"}]}'
 expect "a pin must say whether it is repository-owned" 1 "does not match its schema"
-printf '{"schema_version":2,"floors":[]}\n' >"${fx}/toolchain-floors.json"
-expect "an unsupported schema_version fails" 1 "does not match its schema"
+printf '{"schema_version":1,"floors":[%s]}\n' "$(node_floor 24)" >"${fx}/toolchain-floors.json"
+expect "schema v1 fails even with an otherwise valid declaration" 1 "does not match its schema"
+jq '.properties.schema_version.const = 1' "$fx/toolchain-floors.schema.json" >"$work/schema-v1.json"
+expect "a supplied schema cannot opt the validator back into v1" 1 "unsupported schema_version; expected 2" --schema "$work/schema-v1.json"
 printf '{not json\n' >"${fx}/toolchain-floors.json"
 expect "unreadable JSON fails" 1 "cannot read valid JSON"
 
@@ -295,17 +308,17 @@ expect "a consumer-owned pattern needs a capture group" 1 "no capture group 1"
 
 # `when`: a trailing comment is fine; a type: line quoted inside help text is not a type.
 for ok in commented_bool quoted_bool; do
-    printf '{"schema_version":1,"floors":[{"tool":"node","minimum":"24","compare":"major","when":"%s","pins":[%s]}]}\n' "$ok" "$NODE_PIN" >"${fx}/toolchain-floors.json"
+    printf '{"schema_version":2,"floors":[{"tool":"node","minimum":"24","compare":"major","when":"%s","pins":[%s]}]}\n' "$ok" "$NODE_PIN" >"${fx}/toolchain-floors.json"
     expect "when ${ok} (type: bool with a trailing comment) passes" 0 "when ${ok}"
 done
-printf '{"schema_version":1,"floors":[{"tool":"node","minimum":"24","compare":"major","when":"help_trap","pins":[%s]}]}\n' "$NODE_PIN" >"${fx}/toolchain-floors.json"
+printf '{"schema_version":2,"floors":[{"tool":"node","minimum":"24","compare":"major","when":"help_trap","pins":[%s]}]}\n' "$NODE_PIN" >"${fx}/toolchain-floors.json"
 expect "when naming a question whose help text quotes type: bool fails" 1 'when "help_trap" is not a boolean answer'
-printf '{"schema_version":1,"floors":[{"tool":"node","minimum":"24","compare":"major","when":"hash_bool","pins":[%s]}]}\n' "$NODE_PIN" >"${fx}/toolchain-floors.json"
+printf '{"schema_version":2,"floors":[{"tool":"node","minimum":"24","compare":"major","when":"hash_bool","pins":[%s]}]}\n' "$NODE_PIN" >"${fx}/toolchain-floors.json"
 expect "type: bool#note is not the scalar bool" 1 'when "hash_bool" is not a boolean answer'
 
 # A relative --floors resolves against --root, not the caller's directory.
 mkdir -p "${work}/elsewhere"
-printf '{"schema_version":1,"floors":[{"tool":"node","minimum":"99","compare":"major","pins":[%s]}]}\n' "$NODE_PIN" >"${work}/elsewhere/toolchain-floors.json"
+printf '{"schema_version":2,"floors":[{"tool":"node","minimum":"99","compare":"major","pins":[%s]}]}\n' "$NODE_PIN" >"${work}/elsewhere/toolchain-floors.json"
 floors "$(node_floor 24)"
 echo "==> a relative --floors resolves against --root"
 rc=0
@@ -448,6 +461,18 @@ two_jobs '      - uses: actions/setup-node@0000
         with: *node_inputs' >"$NODE_WORKFLOW"
 expect "a Node version from the selected with alias is recognized" 0 "toolchain-floors: ok"
 [ "$(grep -Fc ': 24 >= 24' "$out")" = 2 ] || fail "both steps using the anchored version must be compared"
+cat >"$NODE_WORKFLOW" <<'EOF'
+jobs:
+  fixture:
+    strategy:
+      matrix:
+        shared: &shared_steps
+          - uses: actions/setup-node@v6
+            with:
+              node-version: "24"
+    steps: *shared_steps
+EOF
+expect "an aliased steps list from a job matrix is recognized" 0 ": 24 >= 24"
 two_jobs "$node_good" '      - uses: actions/setup-node@0000
         with:
           node-version-file: .nvmrc' >"$NODE_WORKFLOW"
@@ -594,10 +619,12 @@ if [ -z "${TOOLCHAIN_FLOORS_TEST_NESTED:-}" ]; then
     echo "==> Copier renders the fixture and the standalone guard checks each rendered step"
     e2e="$work/e2e"
     e2e_workflow='.github/workflows/render-regressions.yml'
+    profile_workflow='.github/workflows/profile-specific.yml'
     mkdir -p "$e2e/template/.github/workflows"
     cp "$fx/toolchain-floors.schema.json" "$e2e"
     e2e_pin="$(jq -c --arg file "$e2e_workflow" '.path = $file | .template_path = ("template/" + $file + ".jinja")' <<<"$NODE_PIN")"
-    printf '{"schema_version":1,"floors":[%s]}\n' "$(node_floor 24 "$e2e_pin")" >"$e2e/toolchain-floors.json"
+    profile_pin="$(jq -c --arg file "$profile_workflow" '.path = $file | .template_path = ("template/" + $file + ".jinja")' <<<"$NODE_PIN")"
+    printf '{"schema_version":2,"floors":[%s]}\n' "$(node_floor 24 "$e2e_pin,$profile_pin")" >"$e2e/toolchain-floors.json"
     cat >"$e2e/copier.yml" <<'EOF'
 _subdirectory: template
 _envops:
@@ -612,6 +639,9 @@ _envops:
 setup_name:
   type: str
   default: node
+project_type:
+  type: str
+  default: base
 EOF
     cat >"$e2e/template/$e2e_workflow.jinja" <<'EOF'
 jobs:
@@ -655,15 +685,28 @@ jobs:
           node-version:
             "24.21.0"
 EOF
+    cat >"$e2e/template/$profile_workflow.jinja" <<'EOF'
+jobs:
+  setup:
+    steps:
+      - uses: actions/setup-node@v6
+[% if project_type != 'iac' %]
+        with:
+          node-version: "24"
+[% endif %]
+EOF
     git -C "$e2e" init -q
     git -C "$e2e" add .
     git -C "$e2e" commit -qm fixture
     rc=0
     "$validator" --root "$e2e" >"$out" 2>&1 || rc=$?
-    if [ "$rc" != 1 ] || [ "$(grep -Fc 'needs exactly one node-version input (found 0)' "$out")" != 7 ] ||
-        [ "$(grep -Fc ': 24 >= 24' "$out")" != 2 ]; then
+    if [ "$rc" != 1 ] ||
+        [ "$(grep -Fc 'needs exactly one node-version input (found 0)' "$out")" != 43 ] ||
+        [ "$(grep -Fc ': 24 >= 24' "$out")" != 17 ] ||
+        ! grep -Eq 'profile-specific\.yml .*\[full\]:.+24 >= 24' "$out" ||
+        ! grep -Eq 'profile-specific\.yml .*\[iac\]:.+needs exactly one node-version input' "$out"; then
         cat "$out" >&2
-        fail "the rendered fixture must identify all seven unpinned steps and both valid steps"
+        fail "each render must identify its seven unpinned steps and both valid steps, plus the profile-specific input"
     fi
 fi
 

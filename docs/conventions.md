@@ -408,26 +408,29 @@ has.
 - **A release declares its toolchain floors.** `toolchain-floors.json` (with
   `toolchain-floors.schema.json`, at the repository root and never rendered into
   generated repositories) lists the oldest Node, pnpm major, copier, task, and
-  devcontainer image the release's template output works with. Consumers read
-  it from the frozen template commit (`git show <commit>:toolchain-floors.json`)
-  before applying an update. **A change that raises a toolchain requirement
+  devcontainer image the release's template output works with. A downstream
+  reader can load it from the frozen template commit
+  (`git show <commit>:toolchain-floors.json`) before applying an update.
+  **A change that raises a toolchain requirement
   updates `toolchain-floors.json` in the same PR**.
-  `task validate:toolchain-floors` (part of `verify` and the Build workflow's
-  `repo-guards` job) checks every match within a pin's locator scope against the
-  floor. It fails when a match is below the floor, when a `template_path` is
-  missing or its pin matches nothing, or when the `copier` floor exceeds
-  `_min_copier_version` in `copier.yml`. For a pin declaring a `step`, it uses
-  Copier and Mike Farah `yq` to check rendered YAML in the fewest smoke-test
-  profiles that together render all declared step files. Each covered action
-  step must have exactly one recognized version input. The inventory checks
-  rendered workflows ending in `.yml` or `.yaml` and the shared setup action
-  for declarations naming the file, action and required input.
+  The floor check runs under `verify` and the Build workflow's `repo-guards`
+  job, and is available on its own as `task validate:toolchain-floors`. It
+  checks every match within a pin's locator scope against the floor. It fails
+  when a match is below the floor, when a `template_path` is missing or its pin
+  matches nothing, or when the `copier` floor exceeds `_min_copier_version` in
+  `copier.yml`. For step pins it uses Copier and Mike Farah `yq` to check
+  every smoke-test profile. Each declared step file must appear in at least
+  one profile, and each covered action step must have exactly one recognized
+  version input. The inventory checks rendered workflows ending in `.yml` or
+  `.yaml` and the shared setup action for declarations naming the file, action
+  and required input. Local `verify` reuses the smoke tests' renders.
 
-  Consumers apply whole-file patterns with the multiline flag to their own
-  files. In whole-file step mode (Node), capture group 1 must start at the
-  parsed input's value and every locator match is checked, including matches
-  outside covered steps. In `step.pattern_scope: value` mode (Task), the
-  pattern applies to the parsed scalar of the selected step input. For either
+  Schema v2 adds `step.pattern_scope: value` for patterns applied to the
+  parsed scalar of the selected step input (Task). The default retains v1's
+  whole-file scope with the multiline flag (Node), and no downstream tool
+  consumes the declaration yet. For whole-file step patterns, capture group 1
+  must start at the parsed input's value. Every locator match is checked,
+  including matches outside covered steps. For either
   mode the parsed value must equal the capture, with dotted numeric components
   allowed after a major capture such as `24` from `"24.21.0"`. A missing
   input or a flow-style step or input mapping fails the check. Non-step
