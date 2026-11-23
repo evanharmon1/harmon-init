@@ -172,12 +172,24 @@ TEST_TASK_CALLS="$task_calls" \
 expected_calls="${work}/expected-calls.txt"
 cat >"$expected_calls" <<'EOF'
 lint:shell
-test:suite
+--concurrency 3 test:suite
 test:ci-results
 test:agent-profile
 EOF
 diff -u "$expected_calls" "$task_calls" ||
     fail "default zero-argument target list drifted"
+
+for bad_concurrency in "" "0" "03" "abc"; do
+    out="$(MACOS_BASH_COMPAT_CONCURRENCY="$bad_concurrency" \
+        MACOS_BASH_COMPAT_APPLE_BASH="${stubs}/bash-3.2" \
+        "$verifier" sh -c 'exit 0' 2>&1)" && rc=0 || rc=$?
+    if [ -z "$bad_concurrency" ]; then
+        # Empty falls back to default 3 via :-3 and succeeds.
+        [ "$rc" -eq 0 ] || fail "empty MACOS_BASH_COMPAT_CONCURRENCY did not fall back to default: ${out}"
+    else
+        [ "$rc" -ne 0 ] || fail "accepted invalid MACOS_BASH_COMPAT_CONCURRENCY='${bad_concurrency}'"
+    fi
+done
 
 # ── 6. Live /bin/bash 3.2 smoke on macOS hosts ───────────────────────
 if [ -x /bin/bash ]; then

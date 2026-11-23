@@ -8,12 +8,21 @@
 # template-originated shell scripts.
 #
 # Overrides for hermetic unit tests (scripts/test-macos-bash-compat.sh):
-#   MACOS_BASH_COMPAT_APPLE_BASH — path to the Bash 3.2 interpreter (default: /bin/bash)
-#   positional arguments         — command to run instead of the four default Task targets
+#   MACOS_BASH_COMPAT_APPLE_BASH  — path to the Bash 3.2 interpreter (default: /bin/bash)
+#   MACOS_BASH_COMPAT_CONCURRENCY — max concurrent Task targets for test:suite (default: 3, matching 3-vCPU macos-26)
+#   positional arguments          — command to run instead of the four default Task targets
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd -P)"
 cd "$repo_root"
+
+suite_concurrency="${MACOS_BASH_COMPAT_CONCURRENCY:-3}"
+case "$suite_concurrency" in
+'' | *[!0-9]* | 0*)
+    echo "verify-macos-bash-compat: MACOS_BASH_COMPAT_CONCURRENCY must be a positive integer, got '${suite_concurrency}'" >&2
+    exit 1
+    ;;
+esac
 
 apple_bash="${MACOS_BASH_COMPAT_APPLE_BASH:-/bin/bash}"
 if [ ! -x "$apple_bash" ] || [ -d "$apple_bash" ]; then
@@ -98,8 +107,8 @@ if [ "$#" -gt 0 ]; then
 else
     echo "==> macOS Bash ${active_bash_version}: task lint:shell"
     run_checked task lint:shell
-    echo "==> macOS Bash ${active_bash_version}: task test:suite"
-    run_checked task test:suite
+    echo "==> macOS Bash ${active_bash_version}: task --concurrency ${suite_concurrency} test:suite"
+    run_checked task --concurrency "$suite_concurrency" test:suite
     echo "==> macOS Bash ${active_bash_version}: task test:ci-results"
     run_checked task test:ci-results
     echo "==> macOS Bash ${active_bash_version}: task test:agent-profile"
