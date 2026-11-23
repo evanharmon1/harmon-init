@@ -419,10 +419,12 @@ has.
   exceeds `_min_copier_version` in `copier.yml`. A floor pin may carry a
   `step` with an `action` and an `input`. The step check requires Mike Farah
   `yq` on `PATH` to enumerate steps using that action in the covered file.
-  Each step must have exactly one recognized version input whose value matches
-  the pin's `pattern` capture. A missing input or an unsupported form such as
-  a flow-style mapping fails the check. A template workflow or the shared setup
-  action using `actions/setup-node` or `arduino/setup-task` needs a floor pin
+  Each step must have exactly one recognized version input with one locator
+  capture on its line. The parsed value must equal the capture, with dotted
+  numeric components allowed after a major capture such as `24` from
+  `"24.21.0"`. The floor check compares the capture. A missing input or an unsupported
+  form such as a flow-style mapping fails the check. A template workflow or the
+  shared setup action using `actions/setup-node` or `arduino/setup-task` needs a floor pin
   naming the file. The inventory in `task test:validate-toolchain-floors` (part of
   `verify`) fails if the pin is missing. The validator cannot detect a floor
   left too low after a requirement rises, so raising the floor alongside a
