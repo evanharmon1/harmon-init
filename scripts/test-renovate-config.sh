@@ -108,6 +108,22 @@ for profile in "${policy_profiles[@]}"; do
     fi
 done
 
+# Exercise each local manager as the sole member of the opted-in array. These
+# fixtures compare current inline and opted-in policy without a golden update.
+case "$requested" in
+all | update | web)
+    for single in skills-only devcontainer-only; do
+        case "$single" in
+        skills-only) opts=(--data use_skills_sync=true --data devcontainer=false) ;;
+        devcontainer-only) opts=(--data use_skills_sync=false --data devcontainer=true) ;;
+        esac
+        fixture_copy v0.0.2 "$fixture/web-$single-inline" --data project_type=web-astro "${opts[@]}"
+        fixture_copy v0.0.2 "$fixture/web-$single-opted" --data project_type=web-astro "${opts[@]}" \
+            --data use_renovate_preset=true
+    done
+    ;;
+esac
+
 # The pilot uses this release's immutable blob. A local preset edit must not
 # make the resolution test pass for bytes consumers cannot fetch.
 preset_tag=v5.21.0
@@ -213,10 +229,16 @@ try {
     set(buildCacheKey('preset', reference), tagged);
     const normalized = (config) => massageConfig(migrateConfig(config).migratedConfig);
     const resolved = async (config) => (await resolveConfigPresets(normalized(config))).config;
+    const effectivePolicy = async (dep, packageRules) => {
+        const { packageRules: _, description, ...effective } = await applyPackageRules({ ...dep, packageRules });
+        return effective;
+    };
     const existsIn = (object, list) => list.some((value) => isDeepStrictEqual(value, object));
     const policyFields = ({ description, ...fields }) => fields;
     const inherited = await resolved({ extends: [reference] });
-    const pinPolicy = { matchManagers: ['renovate-config'], matchPackageNames: [repo], enabled: false };
+    const pinPolicy = {
+        matchManagers: ['renovate-config'], matchDatasources: ['github-tags'], matchPackageNames: [repo], enabled: false,
+    };
     const lockfileManagers = ['npm', 'pep621', 'gomod', 'terraform'];
     const precedenceRules = tagged.packageRules.filter((rule) => rule.matchUpdateTypes &&
         rule.matchManagers?.every((manager) => lockfileManagers.includes(manager)) &&
@@ -278,7 +300,11 @@ try {
         ['ansible/defaults/main.yml.j2', pin('ubuntu', 'ubuntu_image: "ubuntu:24.04"', 'docker')],
     ];
 
-    for (const profile of ['web', 'webapp', 'full', 'meta']) {
+    const singleManagerPaths = {
+        'web-skills-only': '.skills-sync.yaml',
+        'web-devcontainer-only': '.devcontainer/Dockerfile',
+    };
+    for (const profile of ['web', 'webapp', 'full', 'meta', ...Object.keys(singleManagerPaths)]) {
         const optedPath = `${profile}-opted/renovate.json`;
         if (!existsSync(resolve(fixture, optedPath))) continue;
         const inlineRaw = readConfig(`${profile}-inline/renovate.json`);
@@ -292,6 +318,11 @@ try {
         assert.deepEqual(optedCommon, inlineCommon, `${profile}: common policy`);
         const localManagers = inlineRaw.customManagers.filter((manager) => !existsIn(manager, tagged.customManagers));
         assert.deepEqual(optedRaw.customManagers, localManagers, `${profile}: local manager order`);
+        if (singleManagerPaths[profile]) {
+            assert.equal(optedRaw.customManagers.length, 1, `${profile}: expected one local manager`);
+            assert.ok(matchRegexOrGlobList(singleManagerPaths[profile], optedRaw.customManagers[0].managerFilePatterns),
+                `${profile}: expected local manager owns the fixture path`);
+        }
         assert.deepEqual(optedManagers, [...inherited.customManagers, ...normalized({ customManagers: localManagers }).customManagers],
             `${profile}: inherited manager order`);
         assert.equal(optedManagers.length, inlineManagers.length, `${profile}: manager count`);
@@ -328,10 +359,7 @@ try {
         for (const [manager, name, datasource, packageFile, depType] of dependencies) {
             for (const updateType of [undefined, 'major', 'minor', 'patch', 'pin', 'digest', 'lockFileMaintenance']) {
                 const dep = { manager, depName: name, packageName: name, datasource, packageFile, depType, updateType };
-                const [before, after] = await Promise.all([inlineRules, optedRules].map(async (packageRules) => {
-                    const { packageRules: _, description, ...effective } = await applyPackageRules({ ...dep, packageRules });
-                    return effective;
-                }));
+                const [before, after] = await Promise.all([inlineRules, optedRules].map((rules) => effectivePolicy(dep, rules)));
                 assert.deepEqual(after, before, `${profile}: ${manager} ${name} in ${packageFile} (${updateType})`);
             }
         }
@@ -343,10 +371,15 @@ try {
         }
         const { deps } = extractConfig(JSON.stringify(optedRaw), 'renovate.json');
         assert.deepEqual(deps, [{ depName: repo, datasource: 'github-tags', currentValue: tag }]);
-        const ownPin = await applyPackageRules({
-            ...deps[0], packageName: deps[0].depName, manager: 'renovate-config', packageRules: optedRules,
-        });
-        assert.equal(ownPin.enabled, false, `${profile}: automatic preset bumps must stay disabled`);
+        const ownPin = { ...deps[0], packageName: deps[0].depName, manager: 'renovate-config' };
+        const githubPin = await effectivePolicy(ownPin, optedRules);
+        assert.equal(githubPin.enabled, false, `${profile}: automatic GitHub preset bumps must stay disabled`);
+        const gitlabPin = { ...ownPin, datasource: 'gitlab-tags' };
+        assert.deepEqual(
+            await effectivePolicy(gitlabPin, optedRules),
+            await effectivePolicy(gitlabPin, inlineRules),
+            `${profile}: the same repository path on GitLab must retain its inline policy`,
+        );
         console.log(`Pinned Renovate: resolved policy and extraction match for ${profile}`);
     }
 } finally {

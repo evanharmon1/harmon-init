@@ -47,8 +47,12 @@ Roll out in this order:
 Set `use_renovate_preset` to `true` for a `web-astro` or `web-app` project
 participating in the pilot. The answer defaults off. The generated config
 extends `github>evanharmon1/harmon-init//renovate/default#v5.21.0` and
-preserves the project's local exceptions. It uses the project's existing
+includes the template-generated exceptions. It uses the project's existing
 Renovate installation. The root and other project types use inline policy.
+
+Before switching, compare Renovate's resolved configuration for the repository
+with its effective inline policy. Translate any rules you intentionally deleted
+from the inline config into explicit local overrides for the inherited rules.
 
 The released preset adds an unconditional TypeScript hold to non-Node
 projects. In the root it also adds the Astro formatter note and overlaps

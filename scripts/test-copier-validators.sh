@@ -66,7 +66,7 @@ marker = "[security-sensitive]"
 # setup_github/setup_labels/setup_branch_protection are not questions here.
 required = set("""
 author_git_provider_username github_org github_owner_kind code_owner
-claude_authorized_members
+claude_authorized_members use_renovate_preset
 snyk_scan_schedule ci_runner ci_runner_labels
 use_release_please use_skills_sync use_shared_agents
 use_foreman ci_app_integration_id foreman_additional_trusted_actors
@@ -122,7 +122,7 @@ else
 fi
 
 # Mutate fixtures and exercise the same checker used on the real configuration.
-for mutation in missing-marker missing-entry unknown-question missing-both duplicate-entry \
+for mutation in missing-marker missing-entry unknown-question missing-both missing-renovate-markers duplicate-entry \
     legacy-sensitive-help legacy-dangerous-help hidden-variable gated-jinja-default; do
     cp "$repo/copier.yml" "$work/sensitive.yml"
     case "$mutation" in
@@ -131,6 +131,9 @@ for mutation in missing-marker missing-entry unknown-question missing-both dupli
     unknown-question) yq -i '._sensitive_questions += ["no_such_question"]' "$work/sensitive.yml" ;;
     missing-both)
         yq -i 'del(._sensitive_questions[] | select(. == "code_owner")) | .code_owner.help = "CODE OWNER: missing marker"' "$work/sensitive.yml"
+        ;;
+    missing-renovate-markers)
+        yq -i 'del(._sensitive_questions[] | select(. == "use_renovate_preset")) | .use_renovate_preset.help = "RENOVATE: missing marker"' "$work/sensitive.yml"
         ;;
     legacy-sensitive-help)
         yq -i '.project_description.help = "A SeCuRiTy-SeNsItIvE option"' "$work/sensitive.yml"

@@ -26,6 +26,7 @@ _sensitive_questions:
   - github_owner_kind
   - code_owner
   - claude_authorized_members
+  - use_renovate_preset
   - snyk_scan_schedule
   - ci_runner
   - ci_runner_labels
@@ -174,7 +175,7 @@ project_type:
 use_renovate_preset:
   type: bool
   help: >-
-    RENOVATE: Join the web-astro or web-app pilot for the versioned public
+    [security-sensitive] RENOVATE: Join the web-astro or web-app pilot for the versioned public
     Renovate preset? Off keeps the inline configuration. This uses your
     existing Renovate installation, including its existing plan and repository
     access. It does not install or require a paid service.
