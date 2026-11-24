@@ -1,3 +1,136 @@
+[# Both policy paths apply the lockfile groups after their local grouping rules. #]
+[% if use_renovate_preset | default(false) and use_node and project_type in ['web-astro', 'web-app'] %]
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "extends": ["github>evanharmon1/harmon-init//renovate/default#v5.21.0"],
+  "customManagers": [
+[% if use_skills_sync %]
+    {
+      "customType": "regex",
+      "description": "Released harmon-devkit tag pinned by the skills-sync manifest",
+      "managerFilePatterns": [
+        "/\\.skills-sync\\.ya?ml/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)\\s+ref:\\s*(?<currentValue>\\S+)"
+      ]
+    }[% if devcontainer or include_ansible %],[% endif +%]
+[% endif %]
+[% if devcontainer %]
+    {
+      "customType": "regex",
+      "description": "Devcontainer Dockerfile ARG pins annotated with renovate comments",
+      "managerFilePatterns": [
+        "/Dockerfile$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\s+ARG \\w+=(?<currentValue>\\S+)"
+      ]
+    }[% if include_ansible %],[% endif +%]
+[% endif %]
+[% if include_ansible %]
+    {
+      "customType": "regex",
+      "description": "Ansible: annotated container images in group_vars / role defaults / Jinja2 compose templates (invisible to the docker-compose manager)",
+      "managerFilePatterns": [
+        "/^ansible/.*\\.ya?ml(\\.j2)?$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: versioning=(?<versioning>\\S+))?\\n\\s*[\\w-]*image:\\s*\"[^\"]*:(?<currentValue>[^\"]+)\""
+      ]
+    },
+    {
+      "customType": "regex",
+      "description": "Ansible: annotated `*_version` vars (e.g. a pinned binary in role defaults)",
+      "managerFilePatterns": [
+        "/^ansible/.*\\.ya?ml$/"
+      ],
+      "matchStrings": [
+        "# renovate: datasource=(?<datasource>\\S+) depName=(?<depName>\\S+)(?: extractVersion=(?<extractVersion>\\S+))?\\n\\s*\\w+_version:\\s*\"(?<currentValue>[^\"]+)\""
+      ]
+    }
+[% endif %]
+  ],
+  "packageRules": [
+    {
+      "description": "Bump the shared preset pin in a reviewed Copier change after verifying the release contains the preset",
+      "matchManagers": ["renovate-config"],
+      "matchDatasources": ["github-tags"],
+      "matchPackageNames": ["evanharmon1/harmon-init"],
+      "enabled": false
+    },
+[% if use_skills_sync %]
+    {
+      "description": "Surface harmon-devkit releases for deliberate pin-and-sync updates",
+      "matchManagers": [
+        "custom.regex"
+      ],
+      "matchPackageNames": [
+        "evanharmon1/harmon-devkit"
+      ],
+      "groupName": "harmon-devkit skills",
+      "dependencyDashboardApproval": true,
+      "dependencyDashboardCategory": "Agent skills",
+      "prBodyNotes": [
+        "After approving this update, run `task sync:skills` and push the refreshed `.claude/skills/` as a separate commit; do not amend Renovate's commit."
+      ]
+    },
+[% endif %]
+[% if devcontainer %]
+    {
+      "description": "Batch all devcontainer updates (base image + annotated tools) into one PR — must come after the Docker images rule so the base image lands here instead. The devcontainer-coupled scripts are listed explicitly (NOT scripts/** — that would couple unrelated pins like markdownlint-cli2 and pip-audit to this batch): the devcontainer CLI wrappers, plus run-semgrep.sh because semgrep is pinned in both the Dockerfile and that script and must move in one PR",
+      "matchFileNames": [
+        ".devcontainer/**",
+        "scripts/devcontainer-assert.sh",
+        "scripts/devcontainer-smoke.sh",
+        "scripts/run-semgrep.sh"
+      ],
+      "groupName": "Devcontainer"
+    },
+[% endif %]
+    {
+      "description": "Require explicit approval for package-manager majors because pnpm/npm/yarn migrations can change lockfiles, install behavior, and CI bootstrapping",
+      "matchManagers": [
+        "npm"
+      ],
+      "matchDepTypes": [
+        "packageManager"
+      ],
+      "matchUpdateTypes": [
+        "major"
+      ],
+      "dependencyDashboardApproval": true,
+      "prBodyNotes": [
+        "Before approving this update, follow the [package-manager major-upgrade checklist](docs/CHECKLIST.md#package-manager-major-upgrades). If this repository deliberately stays on an older major, add a local disabling package rule whose description records why."
+      ]
+    },
+    {
+      "description": "Disable auto-update for npm overrides used as security pins — Renovate runs npm install <pkg>@<version> to update overrides, which causes EOVERRIDE when the package also appears as a transitive dep. The template-owned security floors in pnpm-workspace.yaml are major-bounded on purpose, and Renovate reads that file under its own depType (pnpm-workspace.overrides), so without this rule it proposes widening a floor across the major the block forbids",
+      "matchManagers": [
+        "npm"
+      ],
+      "matchDepTypes": [
+        "overrides",
+        "pnpm.overrides",
+        "pnpm-workspace.overrides"
+      ],
+      "enabled": false
+    },
+    {
+      "description": "Restore the shared markdownlint-cli2 grouping after the local devcontainer rule",
+      "matchPackageNames": ["markdownlint-cli2"],
+      "groupName": "Formatters"
+    },
+    {
+      "description": "Extend the shared formatter policy to this project's formatters",
+      "matchPackageNames": ["prettier", "prettier-plugin-*", "prettier-config-*"[% if use_python %], "black"[% endif %]],
+      "groupName": "Formatters",
+      "prBodyNotes": [
+        "Run `task fix` and commit the reformat as a separate commit from this dependency bump; do not amend Renovate's commit.",
+        "web-astro only: before merging, run `task test:render-parity` — a prettier-plugin-astro bump can silently reflow whitespace-sensitive inline markup when this repo's `astroCompressHTML` setting (prettier.config.cjs) disagrees with `astro.config`'s `compressHTML` (see docs/CHECKLIST.md and scripts/test-astro-compress-parity.sh)."
+      ]
+    },
+[% else %]
 {
   "$schema": "https://docs.renovatebot.com/renovate-schema.json",
   "extends": ["config:recommended"],
@@ -205,7 +338,7 @@
         "Run `task fix` and commit the reformat as a separate commit from this dependency bump; do not amend Renovate's commit.",
         "web-astro only: before merging, run `task test:render-parity` — a prettier-plugin-astro bump can silently reflow whitespace-sensitive inline markup when this repo's `astroCompressHTML` setting (prettier.config.cjs) disagrees with `astro.config`'s `compressHTML` (see docs/CHECKLIST.md and scripts/test-astro-compress-parity.sh)."
       ]
-    },
+    },[% endif +%]
     {
       "description": "Group non-major npm lockfile updates",
       "matchManagers": [

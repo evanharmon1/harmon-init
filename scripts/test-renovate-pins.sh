@@ -41,6 +41,14 @@ fi
 python3 - <<'PY'
 import copy, json, re, subprocess, sys, pathlib
 
+def read_config_source(path):
+    raw = pathlib.Path(path).read_text(encoding="utf-8")
+    if pathlib.Path(path).suffix == ".jinja":
+        # The offline pin guard checks the default inline policy. The strict
+        # Renovate gate renders and resolves the opt-in branch with Renovate.
+        raw = raw.split("\n[% else %]\n", 1)[1].replace("},[% endif +%]\n", "},\n", 1)
+    return raw
+
 def load_shell_manager(path, probe="scripts/example.sh"):
     """The `FOO_VERSION=` manager that covers shell SCRIPTS.
 
@@ -51,7 +59,7 @@ def load_shell_manager(path, probe="scripts/example.sh"):
     covered scripts/*.sh pin as invisible to Renovate. Order in customManagers
     means nothing to Renovate, so it must mean nothing here either.
     """
-    raw = pathlib.Path(path).read_text(encoding="utf-8")
+    raw = read_config_source(path)
     # The template config is jinja-templated, so it is not always valid JSON;
     # pull the manager out textually and fall back to a JSON parse when clean.
     try:
@@ -175,7 +183,7 @@ for p in sorted(pathlib.Path(".").glob("scripts/*.sh")) + sorted(
 # Every annotation must START a match of some manager whose
 # managerFilePatterns cover the file — the version manager or the digest one.
 def load_managers(path):
-    raw = pathlib.Path(path).read_text(encoding="utf-8")
+    raw = read_config_source(path)
     try:
         return json.loads(raw).get("customManagers", [])
     except json.JSONDecodeError:
@@ -489,7 +497,7 @@ if validator_group is not None:
 # while unrelated script pins (markdownlint-cli2, pip-audit) stay out of it.
 
 def render_template_config(answers):
-    raw = pathlib.Path("template/renovate.json.jinja").read_text(encoding="utf-8")
+    raw = read_config_source("template/renovate.json.jinja")
     rendered = re.sub(
         r"\[%[-+]?\s*if (\w+)\s*%\](.*?)\[%[-+]?\s*endif\s*[-+]?%\]",
         lambda m: m.group(2) if answers.get(m.group(1)) else "",
