@@ -33,17 +33,17 @@ ARG TFLINT_SHA256_ARM64=1105a0a5ddee7cdac7957a3475571a946b839192ea1bc0c722c6c468
 # renovate: datasource=github-releases depName=zellij-org/zellij extractVersion=^v?(?<version>.+)$
 ARG ZELLIJ_VERSION=0.46.0
 # renovate: datasource=github-releases depName=raine/workmux extractVersion=^v?(?<version>.+)$
-ARG WORKMUX_VERSION=0.1.282
+ARG WORKMUX_VERSION=0.1.283
 # renovate: datasource=github-releases depName=njbrake/agent-of-empires extractVersion=^v?(?<version>.+)$
-ARG AOE_VERSION=1.23.0
+ARG AOE_VERSION=1.25.0
 # renovate: datasource=npm depName=@anthropic-ai/claude-code
-ARG CLAUDE_CODE_VERSION=2.1.325
+ARG CLAUDE_CODE_VERSION=2.1.330
 # renovate: datasource=npm depName=@github/copilot
-ARG COPILOT_VERSION=1.0.112
+ARG COPILOT_VERSION=1.0.114
 # renovate: datasource=npm depName=@earendil-works/pi-coding-agent
-ARG PI_VERSION=1.5.2
+ARG PI_VERSION=1.6.0
 # renovate: datasource=github-releases depName=can1357/oh-my-pi extractVersion=^v?(?<version>.+)$
-ARG OH_MY_PI_VERSION=18.20.0
+ARG OH_MY_PI_VERSION=18.22.2
 # oh-my-pi ships unsigned release binaries: the version pin above is
 # Renovate-managed, but these architecture-specific digests are not. Before
 # moving them, a person must download the new release's omp-linux-x64 and
@@ -54,13 +54,13 @@ ARG OH_MY_PI_VERSION=18.20.0
 ARG OH_MY_PI_SHA256_AMD64=c8694be8c6e6a1f45e3636dd8a8e9eaa78878ad629a89000b403ec5e456d3f89
 ARG OH_MY_PI_SHA256_ARM64=8b5e197db7c58b7ebabf83c6f03597f89bae3a766a84c6481b3a942a125f5e22
 # renovate: datasource=npm depName=opencode-ai
-ARG OPENCODE_VERSION=1.19.5
+ARG OPENCODE_VERSION=1.19.6
 # Pinned from Google's per-platform release manifests. Keep the version, build,
 # URLs, and SHA-512 values here and in ensure-antigravity-cli.sh in one update.
 ARG ANTIGRAVITY_CLI_VERSION=1.1.11
 ARG ANTIGRAVITY_CLI_BUILD=4956531888881664
 # renovate: datasource=github-releases depName=asheshgoplani/agent-deck extractVersion=^v?(?<version>.+)$
-ARG AGENT_DECK_VERSION=1.16.38
+ARG AGENT_DECK_VERSION=1.16.39
 # Upstream v2.30.0 was published without release assets; stay on 2.29.0 until fixed
 # renovate: datasource=github-releases depName=joshmedeski/sesh extractVersion=^v?(?<version>.+)$
 ARG SESH_VERSION=2.29.0
@@ -78,28 +78,28 @@ ARG DMUX_VERSION=5.11.1
 # renovate: datasource=github-releases depName=getsops/sops extractVersion=^v?(?<version>.+)$
 ARG SOPS_VERSION=3.13.3
 # renovate: datasource=github-releases depName=nektos/act extractVersion=^v?(?<version>.+)$
-ARG ACT_VERSION=0.2.97
+ARG ACT_VERSION=0.2.98
 # renovate: datasource=github-releases depName=wagoodman/dive extractVersion=^v?(?<version>.+)$
 ARG DIVE_VERSION=0.13.1
 # renovate: datasource=github-releases depName=antonmedv/fx extractVersion=^v?(?<version>.+)$
-ARG FX_VERSION=40.0.1
+ARG FX_VERSION=40.0.2
 # renovate: datasource=github-releases depName=sinelaw/fresh extractVersion=^v?(?<version>.+)$
-ARG FRESH_VERSION=0.5.8
+ARG FRESH_VERSION=0.5.9
 # pin-pair: fresh
-# renovate: datasource=github-release-attachments depName=sinelaw/fresh digestVersion=v0.5.8
-ARG FRESH_SHA256_AMD64=182787fe491b52a9a145ce25c934c654233b498665f100de44275a1ce98d45da
+# renovate: datasource=github-release-attachments depName=sinelaw/fresh digestVersion=v0.5.9
+ARG FRESH_SHA256_AMD64=b3ef8fd6629f194210d8864232c743a06e10c945635aaa5e830ae277825b34b8
 # pin-pair: fresh
-# renovate: datasource=github-release-attachments depName=sinelaw/fresh digestVersion=v0.5.8
-ARG FRESH_SHA256_ARM64=abd13f30a474ad5466f5dfd16e5494fb52be968185b00c7deb0f9e211d43bb00
+# renovate: datasource=github-release-attachments depName=sinelaw/fresh digestVersion=v0.5.9
+ARG FRESH_SHA256_ARM64=ae0c6d1f68578f75e1ba27394e159c7c551084a8bd5fe60774d864df96911747
 # pin-pair: fresh
 # renovate: datasource=github-releases depName=eugenioenko/ttt extractVersion=^v?(?<version>.+)$
-ARG TTT_VERSION=1.12.1
+ARG TTT_VERSION=1.13.0
 # pin-pair: ttt
-# renovate: datasource=github-release-attachments depName=eugenioenko/ttt digestVersion=v1.12.1
-ARG TTT_SHA256_AMD64=e6b5bb64b897810349fb46f8319559f65c6e5f1a40e26a93bd6860b6f7f7b6de
+# renovate: datasource=github-release-attachments depName=eugenioenko/ttt digestVersion=v1.13.0
+ARG TTT_SHA256_AMD64=c1b66aa25b33f8dbe966c9d0b0cd8c2a198ae72e2df180dce294ba84e55b3d13
 # pin-pair: ttt
-# renovate: datasource=github-release-attachments depName=eugenioenko/ttt digestVersion=v1.12.1
-ARG TTT_SHA256_ARM64=f88c3f38b726efb1ce35dede745e6a0f3d7083c15fd6f75f17dc8fb68c7c857b
+# renovate: datasource=github-release-attachments depName=eugenioenko/ttt digestVersion=v1.13.0
+ARG TTT_SHA256_ARM64=9183fce65ef4468a9d5b5671cd8499657a4a1c275c329eab8f9720bf9f37a463
 # pin-pair: ttt
 # renovate: datasource=github-releases depName=charmbracelet/glow extractVersion=^v?(?<version>.+)$
 ARG GLOW_VERSION=3.0.0
