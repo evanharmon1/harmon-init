@@ -154,7 +154,7 @@ const { init } = await load('logger/index.js');
 await init();
 const { GlobalConfig } = await load('config/global.js');
 const localDir = mkdtempSync(resolve(tmpdir(), 'renovate-version-quotes-'));
-GlobalConfig.set({ localDir });
+GlobalConfig.set({ localDir, presetCachePersistence: false });
 try {
     const { extractPackageFile } = await load('modules/manager/custom/regex/index.js');
     const { doAutoReplace } = await load('workers/repository/update/branch/auto-replace.js');
@@ -162,9 +162,11 @@ try {
     const { massageConfig } = await load('config/massage.js');
     const { migrateConfig } = await load('config/migration.js');
     const { parsePreset } = await load('config/presets/parse.js');
+    const { removedPresets } = await load('config/presets/common.js');
+    const { getPreset: getBuiltinPreset } = await load('config/presets/internal/index.js');
     const { resolveConfigPresets } = await load('config/presets/index.js');
     const { validateConfig } = await load('config/validation.js');
-    const { set } = await load('util/cache/memory/index.js');
+    const { init: initMemoryCache, get, set } = await load('util/cache/memory/index.js');
     const { buildCacheKey } = await load('util/cache/package/key.js');
     const { applyPackageRules } = await load('util/package-rules/index.js');
     const { matchRegexOrGlobList } = await load('util/string-match.js');
@@ -224,11 +226,46 @@ try {
         presetSource: 'github', presetPath: 'renovate', repo, presetName: 'default', tag,
         params: undefined, rawParams: undefined,
     });
-    // Seed only the named preset fetch. Built-ins and every merge operation
-    // still go through Renovate's normal resolver.
-    set(buildCacheKey('preset', reference), tagged);
     const normalized = (config) => massageConfig(migrateConfig(config).migratedConfig);
-    const resolved = async (config) => (await resolveConfigPresets(normalized(config))).config;
+    const checkedBuiltins = new Set();
+    function assertOfflinePresets(config) {
+        if (!config || typeof config !== 'object') return;
+        if (Object.hasOwn(config, 'extends')) {
+            assert.ok(Array.isArray(config.extends), 'Probe extends must be an array');
+            for (const preset of config.extends) {
+                if (preset === reference || checkedBuiltins.has(preset)) continue;
+                assert.ok(typeof preset === 'string' && !preset.includes('{{'), 'Probe presets must be literal strings');
+                const parsed = parsePreset(preset);
+                const builtin = parsed.presetSource === 'internal' && getBuiltinPreset(parsed);
+                assert.ok(builtin && !Object.hasOwn(removedPresets, preset), `Unseeded preset in probe: ${preset}`);
+                checkedBuiltins.add(preset);
+                assertOfflinePresets(normalized(builtin));
+            }
+        }
+        Object.values(config).forEach(assertOfflinePresets);
+    }
+    const offlineConfig = (config) => {
+        const input = normalized(config);
+        assertOfflinePresets(input);
+        return input;
+    };
+    const resolved = async (config) => (await resolveConfigPresets(offlineConfig(config))).config;
+
+    // Prove the native resolver sees the cache entry before using the tagged
+    // bytes. A live copy of the tag cannot contain this test-only rule.
+    initMemoryCache();
+    const presetKey = buildCacheKey('preset', reference);
+    const seed = (config) => {
+        offlineConfig(config);
+        set(presetKey, config);
+        assert.equal(get(presetKey), config, 'Renovate preset cache did not retain the seed');
+    };
+    const sentinelRule = { matchPackageNames: ['fixture/preset-cache-sentinel'], enabled: false };
+    seed({ packageRules: [sentinelRule] });
+    assert.deepEqual((await resolved({ extends: [reference] })).packageRules, [sentinelRule],
+        'Renovate must resolve the cache sentinel instead of fetching the preset');
+    seed(tagged);
+
     const effectivePolicy = async (dep, packageRules) => {
         const { packageRules: _, description, ...effective } = await applyPackageRules({ ...dep, packageRules });
         return effective;
@@ -311,7 +348,7 @@ try {
         const optedRaw = readConfig(optedPath);
         assert.deepEqual(optedRaw.extends, [reference], profile);
         assert.equal(migrateConfig(optedRaw).isMigrated, false, `${profile}: opt-in requires a config migration`);
-        assert.deepEqual(await validateConfig('repo', normalized(optedRaw)), { errors: [], warnings: [] }, profile);
+        assert.deepEqual(await validateConfig('repo', offlineConfig(optedRaw)), { errors: [], warnings: [] }, profile);
 
         const { packageRules: inlineRules, customManagers: inlineManagers, ...inlineCommon } = await resolved(inlineRaw);
         const { packageRules: optedRules, customManagers: optedManagers, ...optedCommon } = await resolved(optedRaw);
