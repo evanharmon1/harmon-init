@@ -43,7 +43,7 @@ ARG COPILOT_VERSION=1.0.114
 # renovate: datasource=npm depName=@earendil-works/pi-coding-agent
 ARG PI_VERSION=1.6.0
 # renovate: datasource=github-releases depName=can1357/oh-my-pi extractVersion=^v?(?<version>.+)$
-ARG OH_MY_PI_VERSION=18.22.2
+ARG OH_MY_PI_VERSION=19.0.1
 # oh-my-pi ships unsigned release binaries: the version pin above is
 # Renovate-managed, but these architecture-specific digests are not. Before
 # moving them, a person must download the new release's omp-linux-x64 and
