@@ -50,9 +50,9 @@ extends `github>evanharmon1/harmon-init//renovate/default#v5.21.0` and
 includes the template-generated exceptions. It uses the project's existing
 Renovate installation. The root and other project types use inline policy.
 
-Before switching, compare Renovate's resolved configuration for the repository
-with its effective inline policy. Translate any rules you intentionally deleted
-from the inline config into explicit local overrides for the inherited rules.
+Opt in only if Renovate's resolved configuration for the repository matches
+its effective inline policy. If they differ, keep `use_renovate_preset` off.
+The parity test covers fresh template renders.
 
 The released preset adds an unconditional TypeScript hold to non-Node
 projects. In the root it also adds the Astro formatter note and overlaps

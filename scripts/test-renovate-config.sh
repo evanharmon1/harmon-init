@@ -40,7 +40,7 @@ for file in copier.yml template/renovate.json.jinja "$answers"; do
 done
 
 fixture_git() {
-    git -C "$1" -c user.name=fixture -c user.email=fixture@example.org -c commit.gpgsign=false "${@:2}"
+    git -C "$1" -c user.name=fixture -c user.email=fixture@example.org -c commit.gpgsign=false -c tag.gpgSign=false "${@:2}"
 }
 fixture_git "$source" init -q
 fixture_git "$source" add -A
